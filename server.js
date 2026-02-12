@@ -4187,10 +4187,10 @@ app.put('/api/pedidos/:id/items', withAuth, async (req, res) => {
 
             // RESTA: Descontamos stock al chofer
             await client.query(`
-              UPDATE chofer_stock 
-              SET cantidad = cantidad - $1 
-              WHERE chofer_id = $2 AND producto_id = $3`,
-              [cantidadDescontar, chofer_id, prodId]
+              UPDATE chofer_stock
+              SET cantidad = cantidad - $1
+              WHERE empresa_id = $2 AND chofer_id = $3 AND producto_id = $4`,
+              [cantidadDescontar, empresaId, chofer_id, prodId]
             );
             
             // Registrar movimiento
@@ -4203,12 +4203,16 @@ app.put('/api/pedidos/:id/items', withAuth, async (req, res) => {
       }
     }
     
-    // 5. Recalcular monto total del pedido
+    // 5. Recalcular monto total del pedido (tenant-safe)
     await client.query(`
-      UPDATE pedidos 
-      SET monto = (SELECT COALESCE(SUM(cantidad*precio_unitario),0) FROM items_pedido WHERE pedido_id=$1)
-      WHERE id=$1`, 
-      [pedidoId]
+      UPDATE pedidos
+      SET monto = (
+        SELECT COALESCE(SUM(cantidad*precio_unitario),0)
+        FROM items_pedido
+        WHERE pedido_id=$1
+      )
+      WHERE id=$1 AND empresa_id=$2`,
+      [pedidoId, empresaId]
     );
 
     await client.query('COMMIT'); // <--- Confirmar cambios
@@ -4233,13 +4237,12 @@ app.get('/api/pedidos/:id/items', withAuth, async (req, res) => {
     const esSuper   = isSuper(req);
     const myEmpresa = getEmpresaIdFromToken(req);
 
-    // Validar acceso
-    const ped = await query('SELECT empresa_id FROM pedidos WHERE id=$1', [pedidoId]);
+    // Validar acceso (tenant-safe)
+    const ped = await query(
+      'SELECT empresa_id FROM pedidos WHERE id=$1 AND ($2::int IS NULL OR empresa_id=$2) LIMIT 1',
+      [pedidoId, esSuper ? null : Number(myEmpresa)]
+    );
     if (!ped.length) return res.status(404).json({ error: 'Pedido no encontrado' });
-
-    if (!esSuper && ped[0].empresa_id !== myEmpresa) {
-      return res.status(403).json({ error: 'No autorizado' });
-    }
 
     const items = await query(
       `SELECT id, producto, cantidad, precio_unitario
