@@ -2166,7 +2166,7 @@ app.get('/api/zonas/choferes', withAuth, async (req, res) => {
     `;
     const params = [];
     if (empresaId) { 
-      sql += ` WHERE z.empresa_id=$1`; 
+      sql += ` WHERE z.empresa_id=$1 AND zc.empresa_id=$1`; 
       params.push(empresaId); 
     }
     
