@@ -81,6 +81,7 @@ async function getPagoPendientePorPedido({ pedidoId, empresaId }) {
      WHERE pedido_id = $1
        AND empresa_id = $2
        AND estado = 'pendiente'
+       AND (vence_at IS NULL OR vence_at > NOW())
      ORDER BY id DESC
      LIMIT 1
     `,

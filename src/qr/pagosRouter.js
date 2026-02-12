@@ -8,11 +8,14 @@ const router = Router();
 // Todas estas rutas requieren auth + licencia activa
 router.use(withAuth, checkLicencia);
 
-// Opcional: si querés que solo los super/admin usen esto:
+// Permisos mínimos: evitar que repartidores/roles limitados generen links de cobro
 router.use((req, res, next) => {
-  // Si querés limitar solo a super:
-  // if (!isSuper(req)) return res.status(403).json({ error: 'No autorizado.' });
-  next();
+  const role = String(req.user?.role || '').toLowerCase();
+  if (role === 'repartidor') {
+    return res.status(403).json({ error: 'No autorizado.' });
+  }
+  // Permitimos super + admins/usuarios de backoffice (por ahora cualquier no-repartidor)
+  return next();
 });
 
 /**
