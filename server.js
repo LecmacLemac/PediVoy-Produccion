@@ -4807,8 +4807,15 @@ app.put('/api/clientes/:id', withAuth, async (req, res) => {
 
     if (sets.length === 0) return res.json({ ok: true });
 
+    // Seguridad multi-tenant: filtrar en SQL también (no solo en el check previo)
     vals.push(id);
-    await query(`UPDATE puntos_entrega SET ${sets.join(', ')} WHERE id=$${idx}`, vals);
+    const tenantParam = esSuper ? null : Number(myEmpresa);
+    vals.push(tenantParam);
+
+    await query(
+      `UPDATE puntos_entrega SET ${sets.join(', ')} WHERE id=$${idx} AND ($${idx + 1}::int IS NULL OR empresa_id=$${idx + 1})`,
+      vals
+    );
     res.json({ ok: true });
 
   } catch (e) {
