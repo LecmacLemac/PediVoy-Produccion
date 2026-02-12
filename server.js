@@ -4053,6 +4053,15 @@ app.put('/api/pedidos/:id', withAuth, async (req, res) => {
           console.error('Error en notificación background:', err)
         );
       }
+
+      // Opcional: invalidar tracking_token al entregar (hardening de privacidad)
+      if (estado === 'entregado' && process.env.TRACK_CLEAR_ON_DELIVER === '1') {
+        const emp = Number(r[0].empresa_id);
+        await query(
+          'UPDATE pedidos SET tracking_token = NULL WHERE id = $1 AND empresa_id = $2',
+          [req.params.id, emp]
+        );
+      }
       // -----------------------------------------
     }
 

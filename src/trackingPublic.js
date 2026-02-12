@@ -4,6 +4,46 @@ import { query } from './db.js';
 
 export const trackingPublicRouter = express.Router();
 
+// --------------------------------------------------
+// Rate limit simple (in-memory) por IP para tracking público
+// --------------------------------------------------
+const RL_WINDOW_MS = Number(process.env.TRACK_PUBLIC_RL_WINDOW_MS || 60_000);
+const RL_MAX = Number(process.env.TRACK_PUBLIC_RL_MAX || 60); // 60 req/min por IP (default)
+
+/** @type {Map<string, number[]>} */
+const rlHits = new Map();
+
+function rateLimitTracking(req, res, next) {
+  try {
+    const ip = (req.headers['x-forwarded-for'] || req.ip || '').toString().split(',')[0].trim() || 'unknown';
+    const now = Date.now();
+
+    const arr = rlHits.get(ip) || [];
+    const cutoff = now - RL_WINDOW_MS;
+    const recent = arr.filter((t) => t >= cutoff);
+    recent.push(now);
+    rlHits.set(ip, recent);
+
+    // limpieza básica para que no crezca infinito
+    if (rlHits.size > 10_000) {
+      for (const [k, v] of rlHits.entries()) {
+        if (!v.length || v[v.length - 1] < cutoff) rlHits.delete(k);
+      }
+    }
+
+    if (recent.length > RL_MAX) {
+      res.setHeader('Retry-After', String(Math.ceil(RL_WINDOW_MS / 1000)));
+      return res.status(429).json({ error: 'Demasiadas solicitudes, intentá de nuevo en un momento.' });
+    }
+
+    return next();
+  } catch {
+    // si falla el rate limiter, no bloqueamos tracking
+    return next();
+  }
+}
+
+
 /**
  * GET /api/public/tracking/:token
  * Responde con:
@@ -12,7 +52,7 @@ export const trackingPublicRouter = express.Router();
  * driverLocation: { latitud, longitud, timestamp } | null
  * }
  */
-trackingPublicRouter.get('/tracking/:token', async (req, res) => {
+trackingPublicRouter.get('/tracking/:token', rateLimitTracking, async (req, res) => {
   const { token } = req.params;
 
   try {
