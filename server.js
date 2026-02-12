@@ -4824,14 +4824,17 @@ app.delete('/api/clientes/:id', withAuth, async (req, res) => {
     const myEmpresa = getEmpresaIdFromToken(req);
 
     const checkSql = esSuper 
-      ? 'SELECT id FROM puntos_entrega WHERE id=$1' 
-      : 'SELECT id FROM puntos_entrega WHERE id=$1 AND empresa_id=$2';
+      ? 'SELECT id, empresa_id FROM puntos_entrega WHERE id=$1' 
+      : 'SELECT id, empresa_id FROM puntos_entrega WHERE id=$1 AND empresa_id=$2';
     
     const check = await query(checkSql, esSuper ? [id] : [id, myEmpresa]);
     if (!check.length) return res.status(404).json({ error: 'Cliente no encontrado' });
 
-    await query(`DELETE FROM pedidos WHERE punto_entrega_id=$1`, [id]);
-    await query(`DELETE FROM puntos_entrega WHERE id=$1`, [id]);
+    const targetEmpresa = Number(check[0].empresa_id);
+
+    // Borrado tenant-safe (evita borrar pedidos de otra empresa por accidente)
+    await query(`DELETE FROM pedidos WHERE punto_entrega_id=$1 AND empresa_id=$2`, [id, targetEmpresa]);
+    await query(`DELETE FROM puntos_entrega WHERE id=$1 AND empresa_id=$2`, [id, targetEmpresa]);
 
     res.json({ ok: true });
   } catch (e) {
