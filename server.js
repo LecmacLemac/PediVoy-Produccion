@@ -2015,7 +2015,13 @@ app.put('/api/zonas/:id', withAuth, async (req, res) => {
     if (sets.length === 0) return res.json({ ok: true });
 
     vals.push(req.params.id);
-    await query(`UPDATE zonas_geograficas SET ${sets.join(', ')} WHERE id=$${idx}`, vals);
+    const tenantParam = esSuper ? null : Number(miEmpresa);
+    vals.push(tenantParam);
+
+    await query(
+      `UPDATE zonas_geograficas SET ${sets.join(', ')} WHERE id=$${idx} AND ($${idx + 1}::int IS NULL OR empresa_id=$${idx + 1})`,
+      vals
+    );
     
     res.json({ ok: true });
   } catch (e) { 
@@ -2037,24 +2043,23 @@ app.delete('/api/zonas/:id', withAuth, async (req, res) => {
       return res.status(400).json({ error: 'Empresa no encontrada en token' });
     }
 
-    // 1) Limpio relaciones, por si en la DB la FK no tiene CASCADE/SET NULL
-    await query('DELETE FROM zona_chofer WHERE zona_id = $1', [id]);
-    await query('UPDATE puntos_entrega SET zona_id = NULL WHERE zona_id = $1', [id]);
-
-    // 2) Borro la zona
-    let sql = 'DELETE FROM zonas_geograficas WHERE id = $1';
-    const params = [id];
-
-    if (!esSuper) {
-      sql += ' AND empresa_id = $2';
-      params.push(empresaId);
-    }
-
-    const result = await query(sql, params);
-
-    if (!result || result.rowCount === 0) {
+    // 0) Resolver empresa de la zona (y validar ownership si no-super)
+    const zonaRows = await query(
+      'SELECT id, empresa_id FROM zonas_geograficas WHERE id = $1 AND ($2::int IS NULL OR empresa_id = $2) LIMIT 1',
+      [id, esSuper ? null : Number(empresaId)]
+    );
+    if (!zonaRows.length) {
       return res.status(404).json({ error: 'Zona no encontrada o no pertenece a tu empresa' });
     }
+
+    const zonaEmpresa = Number(zonaRows[0].empresa_id);
+
+    // 1) Limpio relaciones tenant-safe
+    await query('DELETE FROM zona_chofer WHERE zona_id = $1 AND empresa_id = $2', [id, zonaEmpresa]);
+    await query('UPDATE puntos_entrega SET zona_id = NULL WHERE zona_id = $1 AND empresa_id = $2', [id, zonaEmpresa]);
+
+    // 2) Borro la zona tenant-safe
+    await query('DELETE FROM zonas_geograficas WHERE id = $1 AND empresa_id = $2', [id, zonaEmpresa]);
 
     return res.json({ ok: true });
   } catch (e) {
@@ -2103,18 +2108,43 @@ app.post('/api/choferes', withAuth, async (req, res) => {
 app.put('/api/choferes/:id', withAuth, async (req, res) => {
   try {
     const { nombre, telefono, email, tipo, sla_horas } = req.body;
-    // (Omitimos chequeo de empresa_id estricto por brevedad, idealmente validar ownership)
-    await query(
-      `UPDATE choferes SET nombre=$1, telefono=$2, email=$3, tipo=$4, sla_horas=$5 WHERE id=$6`,
-      [nombre, telefono, email, tipo, sla_horas, req.params.id]
+    const esSuper = isSuper(req);
+    const myEmpresa = getEmpresaIdFromToken(req);
+
+    const rows = await query(
+      `UPDATE choferes
+          SET nombre=$1, telefono=$2, email=$3, tipo=$4, sla_horas=$5
+        WHERE id=$6
+          AND ($7::int IS NULL OR empresa_id=$7)
+      RETURNING id`,
+      [nombre, telefono, email, tipo, sla_horas, req.params.id, esSuper ? null : Number(myEmpresa)]
     );
+
+    if (!rows.length) {
+      return res.status(404).json({ error: 'Chofer no encontrado o sin permiso' });
+    }
+
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: 'Error actualizando chofer' }); }
 });
 
 app.delete('/api/choferes/:id', withAuth, async (req, res) => {
   try {
-    await query(`DELETE FROM choferes WHERE id=$1`, [req.params.id]);
+    const esSuper = isSuper(req);
+    const myEmpresa = getEmpresaIdFromToken(req);
+
+    const rows = await query(
+      `DELETE FROM choferes
+        WHERE id=$1
+          AND ($2::int IS NULL OR empresa_id=$2)
+      RETURNING id`,
+      [req.params.id, esSuper ? null : Number(myEmpresa)]
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({ error: 'Chofer no encontrado o sin permiso' });
+    }
+
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: 'Error eliminando chofer' }); }
 });
