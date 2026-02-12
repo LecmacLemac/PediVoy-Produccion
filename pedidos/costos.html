@@ -1,0 +1,1359 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Costos – MultiEmpresas</title>
+  
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+  <style>
+    :root {
+      --bg: #0b1020;
+      --bg-2: #0f172a;
+      --ink: #f1f5f9;
+      --muted: #94a3b8;
+      --brand: #06b6d4;
+      --brand-hover: #22d3ee;
+      --surface: rgba(30, 41, 59, 0.7);
+      --border: rgba(148, 163, 184, 0.15);
+      --glass: rgba(15, 23, 42, 0.95);
+      --radius: 12px;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+    }
+
+    * {
+      box-sizing: border-box;
+      outline: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 15% 50%, rgba(6, 182, 212, 0.05), transparent 25%),
+        radial-gradient(circle at 85% 30%, rgba(59, 130, 246, 0.05), transparent 25%),
+        var(--bg);
+      min-height: 100vh;
+      font-size: 14px;
+      padding-bottom: 80px;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0 20px;
+    }
+
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      background: var(--glass);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      padding: 0.8rem 0;
+    }
+
+    nav {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .brand {
+      display: flex;
+      gap: 0.8rem;
+      align-items: center;
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: #fff;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+
+    .brand-dot {
+      width: 10px;
+      height: 10px;
+      background: var(--brand);
+      border-radius: 50%;
+      box-shadow: 0 0 10px var(--brand);
+    }
+
+    .role-badge {
+      background: rgba(6, 182, 212, 0.1);
+      border: 1px solid rgba(6, 182, 212, 0.3);
+      color: var(--brand);
+      padding: 2px 8px;
+      border-radius: 99px;
+      font-size: 0.75rem;
+    }
+
+    .menu {
+      list-style: none;
+      display: flex;
+      gap: 1.5rem;
+      margin: 0;
+      padding: 0;
+    }
+
+    .menu a {
+      text-decoration: none;
+      color: var(--muted);
+      font-weight: 500;
+      transition: 0.2s;
+      white-space: nowrap;
+    }
+
+    .menu a:hover,
+    .menu a.active {
+      color: #fff;
+    }
+
+    .menu a.active {
+      border-bottom: 2px solid var(--brand);
+      padding-bottom: 4px;
+    }
+
+    @media (max-width: 768px) {
+      nav {
+        flex-direction: column;
+        gap: 1rem;
+        align-items: stretch;
+      }
+
+      .brand {
+        justify-content: space-between;
+      }
+
+      .menu {
+        overflow-x: auto;
+        padding-bottom: 5px;
+        gap: 20px;
+      }
+
+      .menu::-webkit-scrollbar {
+        display: none;
+      }
+    }
+
+    main {
+      padding-top: 2rem;
+      padding-bottom: 4rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+
+    .page-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      flex-wrap: wrap;
+      gap: 1rem;
+    }
+
+    h1 {
+      font-size: 1.8rem;
+      margin: 0;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      line-height: 1.2;
+    }
+
+    p.subtitle {
+      color: var(--muted);
+      margin: 0.5rem 0 0 0;
+      font-size: 0.95rem;
+    }
+
+    @media (max-width: 600px) {
+      .page-header {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      .page-header .btn {
+        width: 100%;
+        justify-content: center;
+      }
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.5rem;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .table-responsive {
+      overflow-x: auto;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      background: var(--bg-2);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+    }
+
+    th {
+      background: rgba(15, 23, 42, 0.9);
+      color: var(--muted);
+      font-weight: 600;
+      padding: 1rem;
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+
+    td {
+      padding: 1rem;
+      border-bottom: 1px solid var(--border);
+      color: var(--ink);
+      font-size: 0.9rem;
+      vertical-align: middle;
+      white-space: nowrap;
+    }
+
+    tr:last-child td {
+      border-bottom: none;
+    }
+
+    tr:hover td {
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    label {
+      font-size: 0.75rem;
+      color: var(--muted);
+      font-weight: 700;
+      display: block;
+      margin-bottom: 0.4rem;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    input,
+    select,
+    textarea {
+      background: var(--bg-2);
+      border: 1px solid var(--border);
+      color: #fff;
+      padding: 0.7rem 0.8rem;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      width: 100%;
+      transition: 0.2s;
+      margin-bottom: 1rem;
+    }
+
+    input:focus,
+    select:focus,
+    textarea:focus {
+      border-color: var(--brand);
+      box-shadow: 0 0 0 2px rgba(6, 182, 212, 0.2);
+    }
+
+    .btn {
+      padding: 0.7rem 1.2rem;
+      border-radius: 8px;
+      font-weight: 600;
+      cursor: pointer;
+      border: 1px solid transparent;
+      transition: 0.2s;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.9rem;
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--ink);
+      border-color: var(--border);
+      text-decoration: none;
+      white-space: nowrap;
+      justify-content: center;
+    }
+
+    .btn:hover {
+      background: rgba(255, 255, 255, 0.1);
+      color: #fff;
+      border-color: var(--brand);
+    }
+
+    .btn-primary {
+      background: var(--brand);
+      color: #000;
+      border: none;
+    }
+
+    .btn-primary:hover {
+      background: var(--brand-hover);
+      box-shadow: 0 4px 12px rgba(6, 182, 212, 0.3);
+    }
+
+    .btn-icon {
+      padding: 0.5rem;
+      border-radius: 6px;
+      color: var(--muted);
+      background: transparent;
+      border: 1px solid var(--border);
+      cursor: pointer;
+    }
+
+    .btn-icon:hover {
+      color: #fff;
+      background: rgba(255, 255, 255, 0.1);
+      border-color: var(--brand);
+    }
+
+    .btn-danger {
+      color: var(--danger);
+      border-color: rgba(239,68,68,0.4);
+      background: rgba(239,68,68,0.08);
+    }
+
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.8);
+      backdrop-filter: blur(4px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s;
+      padding: 10px;
+    }
+
+    .modal-backdrop.open {
+      opacity: 1;
+      pointer-events: all;
+    }
+
+    .modal {
+      background: #1e293b;
+      color: #fff;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      width: 100%;
+      max-width: 640px;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
+      display: flex;
+      flex-direction: column;
+      max-height: 90vh;
+    }
+
+    .modal-header {
+      padding: 1.2rem;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: rgba(0, 0, 0, 0.2);
+    }
+
+    .modal-body {
+      padding: 1.5rem;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .modal-footer {
+      padding: 1.2rem;
+      border-top: 1px solid var(--border);
+      display: flex;
+      justify-content: flex-end;
+      gap: 1rem;
+      background: rgba(0, 0, 0, 0.2);
+    }
+
+    .form-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+    }
+
+    @media (max-width: 600px) {
+      .form-row {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .section-label {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--brand);
+      margin-top: 0.5rem;
+      margin-bottom: 0.5rem;
+      font-weight: 700;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 5px;
+    }
+
+    .toast {
+      position: fixed;
+      right: 20px;
+      bottom: 30px;
+      background: #fff;
+      color: #0f172a;
+      padding: 10px 20px;
+      border-radius: 99px;
+      font-weight: 600;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+      opacity: 0;
+      pointer-events: none;
+      transition: 0.3s;
+      z-index: 2000;
+    }
+
+    .toast.show {
+      opacity: 1;
+      transform: translateY(-10px);
+    }
+
+    /* Extras específicos de esta pantalla */
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .toolbar-left,
+    .toolbar-right {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      align-items: center;
+    }
+
+    .empty-row {
+      text-align: center;
+      padding: 1.5rem;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+
+    .text-right { text-align: right; }
+    .text-muted { color: var(--muted); }
+    .text-danger { color: var(--danger); }
+    .text-success { color: var(--success); }
+
+    .small-text {
+      font-size: 0.8rem;
+      color: var(--muted);
+    }
+
+    .input-inline {
+      max-width: 260px;
+      margin-bottom: 0;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      font-size: 0.75rem;
+      color: var(--muted);
+      gap: 4px;
+    }
+
+    .pill i {
+      font-size: 0.7rem;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <nav class="container">
+      <div class="brand">
+        <div class="brand-dot"></div>
+        MultiEmpresas
+        <span id="roleBadge" class="role-badge">Admin</span>
+      </div>
+      <ul class="menu" id="mainMenu">
+        <li><a href="/pedidos/inicio/inicial.html">🚀 Inicio</a></li>
+        <li><a href="/pedidos/dashboard.html">Dashboard</a></li>
+        <li><a href="/pedidos/costos.html" class="active">Costos</a></li>
+        <li><a href="/pedidos/activos.html">Activos</a></li>
+        <li><a href="/pedidos/alquileres.html">Alquileres</a></li>
+        <li><a href="/pedidos/inicio/empresa.html">Empresas</a></li>
+        <li><a href="#" id="logout" style="color: var(--danger)">Salir</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <div class="container">
+    <main>
+      <div class="page-header">
+        <div>
+          <h1>
+            <i class="fa-solid fa-scale-balanced"></i>
+            Costos
+          </h1>
+          <p class="subtitle">
+            Cargá y administrá los costos fijos de la empresa y los costos variables por producto.
+          </p>
+        </div>
+
+        <div class="toolbar-right">
+          <div id="empresaSelectorWrap" style="display:none; min-width:220px;">
+            <label style="margin-bottom:4px;">Empresa</label>
+            <select id="empresaSelector" class="input-inline">
+              <option value="">-- Seleccionar empresa --</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <section class="card">
+        <div class="toolbar">
+          <div class="toolbar-left">
+            <div class="section-label">Costos fijos operativos</div>
+          </div>
+          <div class="toolbar-right">
+             <button class="btn btn-primary" id="btnNuevoFijo">
+                <i class="fa-solid fa-plus"></i>
+                Nuevo costo fijo
+             </button>
+          </div>
+        </div>
+
+        <div class="table-responsive">
+          <table>
+            <thead>
+              <tr>
+                <th>Nombre</th>
+                <th>Monto</th>
+                <th>Frecuencia</th>
+                <th>Equivalente mensual</th>
+                <th>Creado</th>
+                <th style="text-align:right;">Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="tbodyFijos">
+              <tr>
+                <td class="empty-row" colspan="6">Cargando costos fijos...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-top:0.75rem; flex-wrap:wrap; gap:0.5rem;">
+          <div class="small-text">
+            Frecuencia: mensual, semanal, anual o único (no prorratea).
+          </div>
+          <div class="small-text">
+            Total mensual equivalente:&nbsp;
+            <span id="totalFijosMensual" style="font-weight:700; color:#fff;">$ 0</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="toolbar">
+          <div class="toolbar-left">
+            <div class="section-label">Variables de Costo (Configuración Global)</div>
+          </div>
+          <div class="toolbar-right">
+             <button class="btn btn-primary" id="btnNuevaDefinicion">
+                <i class="fa-solid fa-plus"></i>
+                Nueva Variable
+             </button>
+          </div>
+        </div>
+        <p class="small-text" style="margin-top:-0.5rem; margin-bottom:1rem;">
+          Definí conceptos como Comisiones, Impuestos, Regalías, etc. Luego aplicá reglas masivas o personalizalas por producto.
+        </p>
+
+        <div class="table-responsive">
+          <table>
+            <thead>
+              <tr>
+                <th>Orden</th>
+                <th>Nombre</th>
+                <th>Código</th>
+                <th>Tipo de Cálculo</th>
+                <th style="text-align:right;">Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="tbodyDefiniciones">
+               <tr><td class="empty-row" colspan="5">Cargando definiciones...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="toolbar">
+          <div class="toolbar-left">
+            <div class="section-label">Costos por producto</div>
+          </div>
+          <div class="toolbar-right" style="gap:0.5rem;">
+            <input
+              type="search"
+              id="buscarProducto"
+              class="input-inline"
+              placeholder="Buscar producto..."
+            />
+          </div>
+        </div>
+
+        <div class="table-responsive">
+          <table>
+            <thead>
+              <tr>
+                <th>Producto</th>
+                <th>Categoría</th>
+                <th>Precio de venta</th>
+                <th>Visibilidad</th>
+                <th style="text-align:right;">Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="tbodyVars">
+              <tr>
+                <td class="empty-row" colspan="5">Cargando productos...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="small-text">
+          Al editar un producto, podrás ver sus costos específicos y las variables aplicadas por herencia (empresa/categoría).
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div class="modal-backdrop" id="modalFijo">
+    <div class="modal">
+      <div class="modal-header">
+        <h2 id="modalFijoTitulo" style="font-size:1.1rem; margin:0;">Nuevo costo fijo</h2>
+        <button class="btn-icon" type="button" onclick="cerrarModalFijo()" title="Cerrar">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div>
+          <label for="fijoNombre">Nombre</label>
+          <input id="fijoNombre" type="text" placeholder="Ej: Alquiler, Sueldos administrativos..." />
+        </div>
+
+        <div class="form-row">
+          <div>
+            <label for="fijoMonto">Monto (ARS)</label>
+            <input id="fijoMonto" type="number" min="0" step="0.01" placeholder="0.00" />
+          </div>
+          <div>
+            <label for="fijoFrecuencia">Frecuencia</label>
+            <select id="fijoFrecuencia">
+              <option value="mensual">Mensual</option>
+              <option value="semanal">Semanal</option>
+              <option value="anual">Anual</option>
+              <option value="unico">Único (no prorratea)</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" type="button" onclick="cerrarModalFijo()">Cancelar</button>
+        <button class="btn btn-primary" type="button" id="btnGuardarFijo">Guardar</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="modalDef">
+    <div class="modal">
+      <div class="modal-header">
+        <h2 id="modalDefTitulo" style="font-size:1.1rem; margin:0;">Nueva Variable</h2>
+        <button class="btn-icon" type="button" onclick="cerrarModalDef()" title="Cerrar">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+      <div class="modal-body">
+         <label for="defNombre">Nombre de la variable</label>
+         <input id="defNombre" type="text" placeholder="Ej: Comisión Vendedor, IIBB..." />
+         
+         <div class="form-row">
+            <div>
+              <label for="defCodigo">Código (opcional)</label>
+              <input id="defCodigo" type="text" placeholder="COM_VEND" />
+            </div>
+            <div>
+              <label for="defOrden">Orden (prioridad)</label>
+              <input id="defOrden" type="number" value="0" />
+            </div>
+         </div>
+
+         <label for="defTipo">Tipo de cálculo</label>
+         <select id="defTipo">
+            <option value="unitario">Monto Fijo por Unidad ($)</option>
+            <option value="%_sobre_precio">% sobre Precio de Venta</option>
+            <option value="%_sobre_costo">% sobre Costo Directo</option>
+         </select>
+         <p class="small-text">Define cómo se calcula el valor monetario de esta variable.</p>
+      </div>
+      <div class="modal-footer">
+         <button class="btn" type="button" onclick="cerrarModalDef()">Cancelar</button>
+         <button class="btn btn-primary" type="button" id="btnGuardarDef">Guardar Definición</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="modalMass">
+    <div class="modal">
+      <div class="modal-header">
+        <h2 style="font-size:1.1rem; margin:0;">Aplicar Variable Masivamente</h2>
+        <button class="btn-icon" type="button" onclick="cerrarModalMass()" title="Cerrar">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+      <div class="modal-body">
+         <div style="background: var(--bg-2); padding: 10px; border-radius: 8px; margin-bottom: 1rem;">
+            <div class="small-text">Variable seleccionada:</div>
+            <div id="massVarName" style="font-weight:700; font-size:1rem;"></div>
+         </div>
+
+         <label for="massNivel">Aplicar a nivel:</label>
+         <select id="massNivel" onchange="toggleMassInputs()">
+            <option value="empresa">Toda la Empresa</option>
+            <option value="categoria">Categoría específica</option>
+            <option value="etiqueta">Etiqueta específica</option>
+         </select>
+
+         <div id="massTargetWrap" style="display:none;">
+            <label for="massTargetValue" id="massTargetLabel">Nombre de Categoría/Etiqueta</label>
+            <input id="massTargetValue" type="text" placeholder="Ej: Bebidas, Oferta..." />
+         </div>
+
+         <label for="massValor">Valor a aplicar</label>
+         <div style="display:flex; gap:10px;">
+           <input id="massValor" type="number" step="0.01" placeholder="0.00" />
+           <div id="massUnidad" style="padding-top:10px; font-weight:600; font-size:0.9rem;">$</div>
+         </div>
+         <p class="small-text">
+           Este valor se aplicará como regla general. Los productos pueden sobreescribirlo individualmente.
+         </p>
+      </div>
+      <div class="modal-footer">
+         <button class="btn" type="button" onclick="cerrarModalMass()">Cancelar</button>
+         <button class="btn btn-primary" type="button" id="btnGuardarMass">Aplicar Regla</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="modalVar">
+    <div class="modal">
+      <div class="modal-header">
+        <h2 id="modalVarTitulo" style="font-size:1.1rem; margin:0;">Costos del producto</h2>
+        <button class="btn-icon" type="button" onclick="cerrarModalVar()" title="Cerrar">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div style="margin-bottom:0.75rem;">
+          <div class="small-text">Producto</div>
+          <div id="varNombreProducto" style="font-weight:600; font-size:1rem; margin-top:2px;"></div>
+        </div>
+
+        <div class="form-row">
+          <div>
+            <label for="varCostoBase">Costo mercadería (ARS)</label>
+            <input id="varCostoBase" type="number" min="0" step="0.01" placeholder="0.00" />
+          </div>
+          <div>
+            <label for="varPackaging">Costo packaging (ARS)</label>
+            <input id="varPackaging" type="number" min="0" step="0.01" placeholder="0.00" />
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div>
+            <label for="varPrecioVenta">Precio de venta (ARS)</label>
+            <input id="varPrecioVenta" type="number" min="0" step="0.01" placeholder="0.00" />
+          </div>
+          <div>
+            <label>Costo fijo unitario promedio</label>
+            <input id="varCostoFijoUnitario" type="text" disabled placeholder="Automático" />
+          </div>
+        </div>
+
+        <div id="varVariablesExtraWrap" style="margin-top: 1rem;">
+          <div class="section-label">Variables aplicadas</div>
+          <div class="small-text" style="margin-bottom: 0.5rem;">
+            Ajustá el valor específico para este producto. Si dejás en blanco, hereda de categoría/empresa. Poné 0 para anular.
+          </div>
+          <div class="table-responsive">
+            <table>
+              <thead>
+                <tr>
+                  <th>Variable</th>
+                  <th>Nivel</th>
+                  <th style="width: 140px;">Valor</th>
+                  <th style="width: 140px;">Impacto ($)</th>
+                </tr>
+              </thead>
+              <tbody id="tbodyVariablesExtra">
+                <tr><td colspan="4" class="empty-row small-text">Cargando...</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div id="varDesgloseVariablesExtra" class="small-text" style="margin-top:0.35rem; font-weight:600; color:var(--brand);"></div>
+        </div>
+
+        <div style="margin-top:1rem;">
+          <label for="varMotivo">Motivo del cambio</label>
+          <textarea id="varMotivo" rows="2" placeholder="Ej: Aumento proveedor..."></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-danger" type="button" id="btnResetVar" title="Poner en 0">
+           Reset
+        </button>
+        <button class="btn btn-primary" type="button" id="btnGuardarVar">
+          <i class="fa-solid fa-floppy-disk"></i>
+          Guardar Cambios
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const $ = (s) => document.querySelector(s);
+    const LOGIN_URL = '/pedidos/login.html';
+
+    function toast(msg) {
+      const t = $('#toast');
+      if (!t) return;
+      t.textContent = msg;
+      t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 2800);
+    }
+
+    const fmtMoney = new Intl.NumberFormat('es-AR', {
+      style: 'currency',
+      currency: 'ARS',
+      maximumFractionDigits: 2,
+    });
+
+    function formatDateTime(value) {
+      if (!value) return '-';
+      const d = new Date(value);
+      if (isNaN(d.getTime())) return '-';
+      return d.toLocaleDateString('es-AR');
+    }
+
+    function tipoVariableLabel(tipoRaw) {
+      const t = String(tipoRaw || '').toLowerCase();
+      if (t === 'unitario') return '$ Fijo';
+      if (t === '%_sobre_precio') return '% Precio';
+      if (t === '%_sobre_costo') return '% Costo';
+      return t;
+    }
+
+    // --- API helper ---
+    async function api(endpoint, opts = {}) {
+      const token = localStorage.getItem('token');
+      if (!token) {
+        window.location.href = LOGIN_URL;
+        return;
+      }
+
+      const headers = {
+        'Authorization': 'Bearer ' + token,
+        'Content-Type': 'application/json',
+        ...(opts.headers || {}),
+      };
+
+      try {
+        const res = await fetch(endpoint, { ...opts, headers });
+        if (res.status === 401) {
+          window.location.href = LOGIN_URL;
+          return;
+        }
+        if (res.status === 204) return null;
+        return await res.json();
+      } catch (e) {
+        console.error(e);
+        toast('Error de conexión');
+        return { error: 'Error de red' };
+      }
+    }
+
+    // --- Estado global ---
+    const STATE = {
+      user: null,
+      isSuper: false,
+      empresaId: null,
+      fijos: [],
+      totalFijosMensual: 0,
+      productos: [],
+      definiciones: [], // Variables def
+    };
+
+    let editFijoId = null;
+    let editDefId = null;
+    let currentProducto = null;
+    let massVarId = null; // ID variable para modal masivo
+    let massVarTipo = null;
+
+    // --- INIT ---
+    async function init() {
+      try {
+        const me = await api('/api/me');
+        if (me && me.user) {
+          STATE.user = me.user;
+          STATE.isSuper = String(me.user.role || '').toLowerCase() === 'super';
+          $('#roleBadge').textContent = STATE.isSuper ? 'SUPER ADMIN' : 'Admin';
+        }
+
+        if (STATE.isSuper) {
+          await cargarEmpresasParaSuper();
+        }
+
+        await cargarTodo();
+      } catch (e) { console.error(e); }
+    }
+
+    async function cargarTodo() {
+       await Promise.all([
+         cargarCostosFijos(),
+         cargarVariablesDef(),
+         cargarProductos()
+       ]);
+    }
+
+    // --- COSTOS FIJOS ---
+    async function cargarCostosFijos() {
+      let url = '/api/admin/costos/fijos';
+      if (STATE.isSuper && STATE.empresaId) url += `?empresa_id=${STATE.empresaId}`;
+      else if (STATE.isSuper && !STATE.empresaId) {
+         STATE.fijos = []; renderCostosFijos(); return;
+      }
+
+      const data = await api(url);
+      if (data && !data.error) {
+        STATE.fijos = data.items || [];
+        STATE.totalFijosMensual = Number(data.total_mensual || 0);
+      } else {
+        STATE.fijos = [];
+      }
+      renderCostosFijos();
+    }
+
+    function renderCostosFijos() {
+      const tbody = $('#tbodyFijos');
+      if (!STATE.fijos.length) {
+        tbody.innerHTML = `<tr><td class="empty-row" colspan="6">No hay costos fijos cargados.</td></tr>`;
+        $('#totalFijosMensual').textContent = '$ 0';
+        return;
+      }
+      tbody.innerHTML = STATE.fijos.map(c => `
+        <tr>
+          <td>${c.nombre}</td>
+          <td>${fmtMoney.format(c.monto)}</td>
+          <td>${c.frecuencia}</td>
+          <td>-</td>
+          <td>${formatDateTime(c.created_at)}</td>
+          <td class="text-right">
+             <button class="btn-icon" onclick="abrirModalFijo(false, ${c.id})"><i class="fa-solid fa-pen"></i></button>
+             <button class="btn-icon btn-danger" onclick="eliminarFijo(${c.id})"><i class="fa-solid fa-trash"></i></button>
+          </td>
+        </tr>
+      `).join('');
+      $('#totalFijosMensual').textContent = fmtMoney.format(STATE.totalFijosMensual);
+    }
+
+    // --- VARIABLES DE COSTO (DEFINICIONES) ---
+    async function cargarVariablesDef() {
+       let url = '/api/admin/costos/variables/definiciones';
+       if (STATE.isSuper && STATE.empresaId) url += `?empresa_id=${STATE.empresaId}`;
+       
+       const data = await api(url);
+       if(data && Array.isArray(data.items)) {
+          STATE.definiciones = data.items;
+       } else {
+          STATE.definiciones = [];
+       }
+       renderDefiniciones();
+    }
+
+    function renderDefiniciones() {
+       const tbody = $('#tbodyDefiniciones');
+       if(!STATE.definiciones.length) {
+          tbody.innerHTML = `<tr><td class="empty-row" colspan="5">No hay variables definidas.</td></tr>`;
+          return;
+       }
+       tbody.innerHTML = STATE.definiciones.map(d => `
+          <tr style="opacity: ${d.activo ? 1 : 0.5}">
+             <td>${d.orden}</td>
+             <td style="font-weight:600;">${d.nombre}</td>
+             <td><span class="pill">${d.codigo || '-'}</span></td>
+             <td>${tipoVariableLabel(d.tipo_calculo)}</td>
+             <td class="text-right">
+                <button class="btn-icon" title="Aplicar Reglas" onclick="abrirModalMass(${d.id})"><i class="fa-solid fa-layer-group"></i></button>
+                <button class="btn-icon" title="Editar" onclick="abrirModalDef(${d.id})"><i class="fa-solid fa-pen"></i></button>
+                <button class="btn-icon btn-danger" title="Desactivar/Borrar" onclick="borrarDef(${d.id})"><i class="fa-solid fa-trash"></i></button>
+             </td>
+          </tr>
+       `).join('');
+    }
+
+    // CRUD Definiciones
+    function abrirModalDef(id = null) {
+       editDefId = id;
+       if(id) {
+          const d = STATE.definiciones.find(x => x.id === id);
+          $('#modalDefTitulo').textContent = 'Editar Variable';
+          $('#defNombre').value = d.nombre;
+          $('#defCodigo').value = d.codigo || '';
+          $('#defOrden').value = d.orden;
+          $('#defTipo').value = d.tipo_calculo;
+       } else {
+          $('#modalDefTitulo').textContent = 'Nueva Variable';
+          $('#defNombre').value = '';
+          $('#defCodigo').value = '';
+          $('#defOrden').value = 0;
+          $('#defTipo').value = 'unitario';
+       }
+       $('#modalDef').classList.add('open');
+    }
+
+    function cerrarModalDef() { $('#modalDef').classList.remove('open'); }
+
+    async function guardarDef() {
+       const nombre = $('#defNombre').value.trim();
+       if(!nombre) return toast('Nombre requerido');
+       
+       const body = {
+          nombre,
+          codigo: $('#defCodigo').value.trim(),
+          orden: $('#defOrden').value,
+          tipo_calculo: $('#defTipo').value
+       };
+       if(STATE.isSuper && STATE.empresaId) body.empresa_id = STATE.empresaId;
+
+       let url = '/api/admin/costos/variables/definiciones';
+       let method = 'POST';
+       if(editDefId) {
+          url += `/${editDefId}`;
+          method = 'PUT';
+       }
+
+       const res = await api(url, { method, body: JSON.stringify(body) });
+       if(res && !res.error) {
+          toast('Variable guardada');
+          cerrarModalDef();
+          cargarVariablesDef();
+       } else {
+          toast('Error guardando variable');
+       }
+    }
+    
+    async function borrarDef(id) {
+       if(!confirm('¿Eliminar/Desactivar esta variable?')) return;
+       let url = `/api/admin/costos/variables/definiciones/${id}`;
+       if(STATE.isSuper && STATE.empresaId) url += `?empresa_id=${STATE.empresaId}`;
+       await api(url, { method: 'DELETE' });
+       cargarVariablesDef();
+    }
+
+
+    // --- APLICACIÓN MASIVA (REGLAS) ---
+    function abrirModalMass(defId) {
+       const def = STATE.definiciones.find(x => x.id === defId);
+       if(!def) return;
+       massVarId = defId;
+       massVarTipo = def.tipo_calculo;
+
+       $('#massVarName').textContent = def.nombre;
+       $('#massNivel').value = 'empresa';
+       $('#massTargetValue').value = '';
+       $('#massValor').value = '';
+       toggleMassInputs(); // Actualizar visibilidad de inputs y labels
+       
+       $('#modalMass').classList.add('open');
+    }
+
+    function toggleMassInputs() {
+       const nivel = $('#massNivel').value;
+       const targetWrap = $('#massTargetWrap');
+       const targetLabel = $('#massTargetLabel');
+       const unitLabel = $('#massUnidad');
+       
+       if(nivel === 'empresa') {
+          targetWrap.style.display = 'none';
+       } else {
+          targetWrap.style.display = 'block';
+          if(nivel === 'categoria') targetLabel.textContent = 'Nombre exacto de la Categoría';
+          if(nivel === 'etiqueta') targetLabel.textContent = 'Nombre exacto de la Etiqueta';
+       }
+
+       if(massVarTipo === 'unitario') unitLabel.textContent = '$ ARS';
+       else unitLabel.textContent = '%';
+    }
+
+    function cerrarModalMass() { $('#modalMass').classList.remove('open'); }
+
+    async function guardarMassRule() {
+       const nivel = $('#massNivel').value;
+       const target = $('#massTargetValue').value.trim();
+       const valor = parseFloat($('#massValor').value);
+
+       if((nivel === 'categoria' || nivel === 'etiqueta') && !target) return toast('Falta el nombre de categoría/etiqueta');
+       if(isNaN(valor)) return toast('Valor inválido');
+
+       const body = {
+          variable_id: massVarId,
+          nivel: nivel,
+          valor: valor,
+          activo: true
+       };
+       if(nivel === 'categoria') body.categoria = target;
+       if(nivel === 'etiqueta') body.etiqueta = target;
+       if(STATE.isSuper && STATE.empresaId) body.empresa_id = STATE.empresaId;
+
+       const res = await api('/api/admin/costos/variables/aplicacion', { 
+          method: 'POST', 
+          body: JSON.stringify(body) 
+       });
+
+       if(res && !res.error) {
+          toast('Regla aplicada correctamente');
+          cerrarModalMass();
+       } else {
+          toast(res?.error || 'Error aplicando regla');
+       }
+    }
+
+
+    // --- PRODUCTOS Y EDICIÓN ---
+    async function cargarProductos() {
+      let url = '/api/productos';
+      if (STATE.isSuper && STATE.empresaId) url += `?empresa_id=${STATE.empresaId}`;
+      const data = await api(url);
+      STATE.productos = Array.isArray(data) ? data : [];
+      renderProductos();
+    }
+
+    function renderProductos() {
+      const q = $('#buscarProducto').value.toLowerCase();
+      const tbody = $('#tbodyVars');
+      const filtered = STATE.productos.filter(p => (p.nombre||'').toLowerCase().includes(q));
+
+      if(!filtered.length) {
+         tbody.innerHTML = `<tr><td class="empty-row" colspan="5">Sin productos</td></tr>`;
+         return;
+      }
+      tbody.innerHTML = filtered.map(p => `
+         <tr>
+            <td>
+              <div style="font-weight:600;">${p.nombre}</div>
+              <div class="small-text">ID: ${p.id}</div>
+            </td>
+            <td>${p.categoria || '-'}</td>
+            <td>${fmtMoney.format(p.precio)}</td>
+            <td>${p.mostrar_en_catalogo ? 'App' : ''} ${p.mostrar_en_landing ? 'Web' : ''}</td>
+            <td class="text-right">
+               <button class="btn-icon" onclick="abrirModalVar(${p.id})"><i class="fa-solid fa-coins"></i></button>
+            </td>
+         </tr>
+      `).join('');
+    }
+
+    // Modal Edición Producto
+    async function abrirModalVar(productoId) {
+      currentProducto = STATE.productos.find(p => p.id === productoId);
+      if(!currentProducto) return;
+      
+      $('#varNombreProducto').textContent = currentProducto.nombre;
+      $('#varCostoBase').value = '';
+      $('#varPackaging').value = '';
+      $('#varPrecioVenta').value = currentProducto.precio || '';
+      $('#varMotivo').value = '';
+      
+      $('#tbodyVariablesExtra').innerHTML = '<tr><td colspan="4" class="empty-row small-text">Calculando...</td></tr>';
+      $('#modalVar').classList.add('open');
+
+      // Simular precio para traer desglose
+      let url = `/api/admin/costos/simular/${productoId}`;
+      if (STATE.isSuper && STATE.empresaId) url += `?empresa_id=${STATE.empresaId}`;
+      
+      const res = await api(url);
+      if(res && res.analisis) {
+         const an = res.analisis;
+         $('#varCostoBase').value = an.costos_directos.mercaderia || 0;
+         $('#varPackaging').value = an.costos_directos.packaging || 0;
+         $('#varCostoFijoUnitario').value = fmtMoney.format(an.absorcion_fijos.costo_fijo_unitario);
+         
+         // Renderizar variables aplicadas (mix de herencia y específicas)
+         const vars = an.variables_extra.items || [];
+         renderVarsTable(vars);
+         $('#varDesgloseVariablesExtra').textContent = `Total Extra: ${fmtMoney.format(an.variables_extra.total_unitario)}`;
+      }
+    }
+
+    function renderVarsTable(vars) {
+       const tbody = $('#tbodyVariablesExtra');
+       if(!vars.length) {
+          tbody.innerHTML = `<tr><td colspan="4" class="empty-row small-text">No hay variables aplicadas</td></tr>`;
+          return;
+       }
+       // Creamos inputs para poder hacer override
+       tbody.innerHTML = vars.map(v => {
+          // Si el nivel es "producto", significa que tiene un valor específico seteado
+          // Si es "empresa/categoria", es heredado.
+          // El input value muestra el valor actual.
+          const isInherited = v.nivel !== 'producto';
+          const badgeColor = isInherited ? 'background: #3b82f6; color:#fff;' : 'background: #10b981; color:#fff;';
+          
+          return `
+            <tr>
+              <td>
+                 <div style="font-weight:600;">${v.nombre}</div>
+                 <div class="small-text">${tipoVariableLabel(v.tipo_calculo)}</div>
+              </td>
+              <td><span class="pill" style="${badgeColor}">${v.nivel}</span></td>
+              <td style="width:140px;">
+                 <input type="number" step="0.01" class="input-inline var-extra-input" 
+                        data-var-id="${v.id}" value="${v.valor}" placeholder="Heredado" />
+              </td>
+              <td>${fmtMoney.format(v.monto_unitario)}</td>
+            </tr>
+          `;
+       }).join('');
+    }
+
+    function cerrarModalVar() { $('#modalVar').classList.remove('open'); currentProducto = null; }
+
+    async function guardarVar() {
+       if(!currentProducto) return;
+       const body = {
+          producto_id: currentProducto.id,
+          costo_base: parseFloat($('#varCostoBase').value) || 0,
+          costo_packaging: parseFloat($('#varPackaging').value) || 0,
+          precio_venta: parseFloat($('#varPrecioVenta').value) || 0,
+          motivo: $('#varMotivo').value,
+          variables_extra: []
+       };
+
+       // Recolectar overrides de variables
+       document.querySelectorAll('.var-extra-input').forEach(inp => {
+          const val = parseFloat(inp.value);
+          const varId = inp.getAttribute('data-var-id');
+          if(!isNaN(val)) { // Si tiene número, lo mandamos como override a nivel producto
+             body.variables_extra.push({
+                variable_id: varId,
+                valor: val
+             });
+          }
+       });
+
+       if(STATE.isSuper && STATE.empresaId) body.empresa_id = STATE.empresaId;
+       
+       const res = await api('/api/admin/costos/actualizar', { method: 'POST', body: JSON.stringify(body)});
+       if(res && !res.error) {
+          toast('Costos actualizados');
+          cerrarModalVar();
+          cargarProductos(); // Refrescar lista (precios pueden haber cambiado)
+       } else {
+          toast('Error guardando');
+       }
+    }
+
+    // Resetear costos a 0
+    $('#btnResetVar').addEventListener('click', async () => {
+       if(!confirm('¿Poner costos de mercadería y packaging en 0?')) return;
+       if(!currentProducto) return;
+       const body = {
+          producto_id: currentProducto.id,
+          costo_base: 0,
+          costo_packaging: 0,
+          motivo: 'Reset manual'
+       };
+       if(STATE.isSuper && STATE.empresaId) body.empresa_id = STATE.empresaId;
+       await api('/api/admin/costos/actualizar', { method: 'POST', body: JSON.stringify(body)});
+       toast('Costos reseteados');
+       cerrarModalVar();
+    });
+
+    // --- Helpers de UI ---
+    $('#btnNuevoFijo').addEventListener('click', () => abrirModalFijo(true));
+    $('#btnGuardarFijo').addEventListener('click', guardarFijo);
+    $('#btnNuevaDefinicion').addEventListener('click', () => abrirModalDef());
+    $('#btnGuardarDef').addEventListener('click', guardarDef);
+    $('#btnGuardarMass').addEventListener('click', guardarMassRule);
+    $('#buscarProducto').addEventListener('input', renderProductos);
+    $('#btnGuardarVar').addEventListener('click', guardarVar);
+
+    // Helpers modal fijos
+    window.abrirModalFijo = (nuevo, id) => {
+       editFijoId = id;
+       const item = nuevo ? null : STATE.fijos.find(x => x.id === id);
+       $('#fijoNombre').value = item ? item.nombre : '';
+       $('#fijoMonto').value = item ? item.monto : '';
+       $('#fijoFrecuencia').value = item ? item.frecuencia : 'mensual';
+       $('#modalFijo').classList.add('open');
+    };
+    function cerrarModalFijo() { $('#modalFijo').classList.remove('open'); }
+    async function guardarFijo() {
+       const body = {
+          nombre: $('#fijoNombre').value,
+          monto: $('#fijoMonto').value,
+          frecuencia: $('#fijoFrecuencia').value
+       };
+       if(STATE.isSuper && STATE.empresaId) body.empresa_id = STATE.empresaId;
+       let url = '/api/admin/costos/fijos';
+       if(editFijoId) { url += `/${editFijoId}`; body.id = editFijoId; await api(url, {method:'PUT', body:JSON.stringify(body)}); }
+       else { await api(url, {method:'POST', body:JSON.stringify(body)}); }
+       cerrarModalFijo(); cargarCostosFijos();
+    }
+    window.eliminarFijo = async (id) => {
+       if(!confirm('Borrar?')) return;
+       let url = `/api/admin/costos/fijos/${id}`;
+       if(STATE.isSuper && STATE.empresaId) url += `?empresa_id=${STATE.empresaId}`;
+       await api(url, {method:'DELETE'});
+       cargarCostosFijos();
+    };
+    
+    // Super admin helper
+    async function cargarEmpresasParaSuper() {
+       const list = await api('/api/empresas');
+       const sel = $('#empresaSelector');
+       if(Array.isArray(list)) {
+          $('#empresaSelectorWrap').style.display='block';
+          sel.innerHTML = '<option value="">-- Seleccionar --</option>' + list.map(e=>`<option value="${e.id}">${e.nombre}</option>`).join('');
+          sel.addEventListener('change', () => {
+             STATE.empresaId = sel.value || null;
+             cargarTodo();
+          });
+       }
+    }
+
+    init();
+  </script>
+</body>
+</html>

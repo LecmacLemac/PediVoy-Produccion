@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+  <title>Control de Tesorería | Admin</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <style>
+    :root {
+      --bg: #0f172a;
+      --surface: #1e293b;
+      --surface-hover: #334155;
+      --border: #334155;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      
+      --primary: #3b82f6;
+      --primary-hover: #2563eb;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --radius: 12px;
+    }
+
+    * { box-sizing: border-box; outline: none; }
+    body {
+      margin: 0; font-family: 'Inter', system-ui, sans-serif;
+      background: var(--bg); color: var(--text); font-size: 14px;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* HEADER PRO */
+    header {
+      background: rgba(15, 23, 42, 0.95); backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border); padding: 1rem 1.5rem;
+      position: sticky; top: 0; z-index: 50;
+      display: flex; justify-content: space-between; align-items: center;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+    }
+    .brand { display: flex; align-items: center; gap: 12px; font-size: 1.25rem; font-weight: 700; color: #fff; }
+    .brand i { color: var(--success); }
+    
+    .btn-back { 
+      text-decoration: none; color: var(--text-muted); font-weight: 500; 
+      display: flex; align-items: center; gap: 8px; transition: 0.2s;
+      padding: 8px 16px; border-radius: 8px;
+    }
+    .btn-back:hover { background: var(--surface); color: #fff; }
+
+    /* LAYOUT */
+    main { max-width: 1400px; margin: 0 auto; padding: 25px; }
+
+    /* KPI CARDS */
+    .kpi-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 1.5rem;
+    }
+    .kpi-card {
+      background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 1.2rem; display: flex; flex-direction: column; gap: 5px;
+    }
+    .kpi-title { color: var(--text-muted); font-size: 0.85rem; font-weight: 600; text-transform: uppercase; }
+    .kpi-value { font-size: 1.5rem; font-weight: 700; color: #fff; }
+    .kpi-icon { float: right; opacity: 0.2; font-size: 2rem; margin-top: -30px; }
+
+    /* FILTERS BAR */
+    .filters-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 1.2rem; margin-bottom: 1.5rem;
+      display: flex; gap: 1rem; flex-wrap: wrap; align-items: flex-end;
+    }
+    
+    .field { display: flex; flex-direction: column; gap: 6px; }
+    label { font-size: 0.75rem; color: var(--text-muted); font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
+    
+    select, input {
+      background: var(--bg); border: 1px solid var(--border); color: #fff;
+      padding: 0.7rem 1rem; border-radius: 8px; font-size: 0.9rem; min-width: 160px;
+      transition: 0.2s;
+    }
+    select:focus, input:focus { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2); }
+
+    /* BUTTONS */
+    .btn {
+      padding: 0.7rem 1.2rem; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 0.9rem;
+      border: 1px solid transparent; display: inline-flex; align-items: center; gap: 8px;
+      transition: all 0.2s;
+    }
+    .btn-primary { background: var(--primary); color: #fff; }
+    .btn-primary:hover { background: var(--primary-hover); transform: translateY(-1px); }
+    
+    .btn-icon { padding: 8px; aspect-ratio: 1; justify-content: center; }
+    .btn-ghost { background: transparent; color: var(--text-muted); border: 1px solid var(--border); }
+    .btn-ghost:hover { background: var(--surface-hover); color: #fff; border-color: var(--text-muted); }
+
+    .btn-danger { background: rgba(239, 68, 68, 0.1); color: var(--danger); border: 1px solid rgba(239, 68, 68, 0.3); }
+    .btn-danger:hover { background: var(--danger); color: #fff; }
+
+    /* TABLE */
+    .table-container {
+      background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+      overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    }
+    .table-responsive { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; text-align: left; white-space: nowrap; }
+    
+    th { 
+      background: #182235; padding: 1rem 1.5rem; color: var(--text-muted); 
+      font-weight: 600; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.5px;
+    }
+    td { padding: 1rem 1.5rem; border-top: 1px solid var(--border); vertical-align: middle; }
+    tr:hover td { background: var(--surface-hover); }
+
+    /* STATUS & BADGES */
+    .badge { 
+      padding: 4px 10px; border-radius: 99px; font-size: 0.75rem; font-weight: 700; 
+      text-transform: uppercase; display: inline-flex; align-items: center; gap: 6px; 
+    }
+    .badge-success { background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.2); }
+    .badge-warning { background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.2); }
+    .badge-info    { background: rgba(59, 130, 246, 0.15); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.2); }
+    .badge-danger  { background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.2); }
+    
+    .text-cell { display: flex; flex-direction: column; }
+    .text-main { font-weight: 600; color: #fff; }
+    .text-sub { font-size: 0.8rem; color: var(--text-muted); margin-top: 2px; }
+
+    /* MODAL */
+    .modal-overlay {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.85); backdrop-filter: blur(4px);
+      z-index: 100; display: none; justify-content: center; align-items: center; padding: 20px;
+      animation: fadeIn 0.2s ease-out;
+    }
+    .modal-content {
+      background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+      width: 100%; max-width: 650px; display: flex; flex-direction: column; overflow: hidden;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+      animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .modal-header { padding: 1rem 1.5rem; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.2); }
+    .modal-body { padding: 0; background: #000; display: flex; justify-content: center; align-items: center; min-height: 400px; max-height: 70vh; }
+    .modal-body img { max-width: 100%; max-height: 70vh; object-fit: contain; }
+    
+    /* TOAST */
+    .toast { 
+      position: fixed; bottom: 30px; right: 30px; background: #fff; color: #0f172a; 
+      padding: 12px 24px; border-radius: 12px; font-weight: 600; 
+      box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+      transform: translateY(150%); transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1); z-index: 200; 
+      display: flex; align-items: center; gap: 10px;
+    }
+    .toast.show { transform: translateY(0); }
+
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+      .filters-card { flex-direction: column; align-items: stretch; }
+      select, input { min-width: 100%; }
+      .kpi-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <i class="fa-solid fa-vault"></i>
+    <span>Tesorería</span>
+  </div>
+  <a href="dashboard.html" class="btn-back"><i class="fa-solid fa-arrow-left"></i> Dashboard</a>
+</header>
+
+<main>
+  
+  <div class="kpi-grid">
+    <div class="kpi-card">
+      <span class="kpi-title">Monto Total</span>
+      <span class="kpi-value" id="kpiTotal">$ 0</span>
+      <i class="fa-solid fa-sack-dollar kpi-icon"></i>
+    </div>
+    <div class="kpi-card">
+      <span class="kpi-title">Verificados</span>
+      <span class="kpi-value" id="kpiVerificados" style="color: var(--success)">0</span>
+      <i class="fa-solid fa-check-circle kpi-icon"></i>
+    </div>
+    <div class="kpi-card">
+      <span class="kpi-title">Pendientes</span>
+      <span class="kpi-value" id="kpiPendientes" style="color: var(--warning)">0</span>
+      <i class="fa-solid fa-clock kpi-icon"></i>
+    </div>
+  </div>
+
+  <div class="filters-card">
+    <div class="field" id="wrapEmpresa" style="display:none;">
+      <label><i class="fa-solid fa-building"></i> Empresa (Super)</label>
+      <select id="fEmpresa" onchange="loadPagos()">
+        <option value="">Todas</option>
+      </select>
+    </div>
+
+    <div class="field">
+      <label><i class="fa-solid fa-calendar"></i> Fecha</label>
+      <input type="date" id="fFecha">
+    </div>
+
+    <div class="field">
+      <label><i class="fa-solid fa-filter"></i> Estado / Tipo</label>
+      <select id="fEstado">
+        <option value="">Todo</option>
+        <option value="pendiente">⏳ Pendientes</option>
+        <option value="verificado">✅ Verificados</option>
+        <option value="orphan">⚠️ Huérfanos (Sin Pedido)</option>
+      </select>
+    </div>
+
+    <div class="field">
+      <label><i class="fa-solid fa-truck"></i> Chofer</label>
+      <select id="fChofer"><option value="">Todos</option></select>
+    </div>
+
+    <button class="btn btn-primary" onclick="loadPagos()">
+      <i class="fa-solid fa-magnifying-glass"></i> Filtrar
+    </button>
+  </div>
+
+  <div class="table-container">
+    <div class="table-responsive">
+      <table>
+        <thead>
+          <tr>
+            <th>Hora</th>
+            <th>Origen / Cliente</th>
+            <th>Pedido</th>
+            <th>Método</th>
+            <th>Monto</th>
+            <th>Referencia</th>
+            <th>Archivo</th>
+            <th>Estado</th>
+            <th style="text-align:right">Acciones</th>
+          </tr>
+        </thead>
+        <tbody id="rows">
+          <tr><td colspan="9" style="padding:3rem; text-align:center; color: var(--text-muted);">
+            <i class="fa-solid fa-circle-notch fa-spin"></i> Cargando datos...
+          </td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</main>
+
+<div id="modalVisor" class="modal-overlay" onclick="if(event.target===this) closeModal()">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h3 style="margin:0; font-size:1.1rem"><i class="fa-solid fa-receipt"></i> Comprobante</h3>
+      <button class="btn btn-ghost btn-icon" onclick="closeModal()"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="modal-body" id="visorContainer"></div>
+    <div style="padding:15px; display:flex; justify-content:center; gap:10px; background:var(--surface);">
+      <button class="btn btn-ghost" onclick="closeModal()">Cerrar</button>
+      <button class="btn btn-primary" id="btnVerificarModal" onclick="verificarDesdeModal()">
+        <i class="fa-solid fa-check-double"></i> Validar Pago
+      </button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast"><i class="fa-solid fa-circle-check"></i> <span>Acción realizada</span></div>
+
+<script>
+  // --- Configuración y Auth ---
+  const token = localStorage.getItem('token');
+  if(!token) window.location.href = 'login.html';
+
+  const $ = s => document.querySelector(s);
+  const money = n => '$ ' + Number(n).toLocaleString('es-AR', {minimumFractionDigits: 0});
+  
+  const api = async (url, opts={}) => {
+    try {
+      const res = await fetch(url, { ...opts, headers: { ...opts.headers, 'Authorization': 'Bearer '+token }});
+      if(res.status === 401) window.location.href = 'login.html';
+      return res.json();
+    } catch(e) { console.error(e); return null; }
+  };
+
+  let currentTransferenciaId = null;
+  let currentUser = null;
+
+  // --- Inicialización ---
+  (async () => {
+    // 1. Obtener usuario actual para saber si es SUPER
+    const me = await api('/api/me');
+    if(me && me.user) {
+      currentUser = me.user;
+      
+      // Si es Super Admin, cargar empresas
+      if(currentUser.role === 'super') {
+        $('#wrapEmpresa').style.display = 'flex';
+        const empresas = await api('/api/empresas');
+        if(Array.isArray(empresas)) {
+          $('#fEmpresa').innerHTML = '<option value="">🏢 Todas las Empresas</option>' + 
+            empresas.map(e => `<option value="${e.id}">${e.nombre}</option>`).join('');
+        }
+      }
+    }
+
+    // 2. Cargar Choferes
+    const choferes = await api('/api/choferes');
+    if(Array.isArray(choferes)) {
+      $('#fChofer').innerHTML = '<option value="">🚛 Todos</option>' + 
+        choferes.map(c => `<option value="${c.id}">${c.nombre}</option>`).join('');
+    }
+    
+    // 3. Fecha default
+    $('#fFecha').value = new Date().toISOString().split('T')[0];
+    
+    loadPagos();
+  })();
+
+  // --- Cargar Pagos corregido ---
+  async function loadPagos() {
+    const fecha = $('#fFecha').value;
+    const estadoFiltro = $('#fEstado').value;
+    const chofer = $('#fChofer').value;
+    const empresa = $('#fEmpresa').value;
+
+    let url = `/api/transferencias?fecha=${fecha}`;
+    
+    if(estadoFiltro === 'verificado') url += `&estado=verificado`;
+    if(estadoFiltro === 'pendiente') url += `&estado=pendiente`;
+    if(chofer) url += `&chofer_id=${chofer}`;
+    if(empresa) url += `&empresa_id=${empresa}`;
+
+    $('#rows').innerHTML = '<tr><td colspan="9" style="padding:3rem; text-align:center; color: var(--text-muted);"><i class="fa-solid fa-circle-notch fa-spin"></i> Cargando datos...</td></tr>';
+
+    let data = await api(url);
+    if(!Array.isArray(data)) data = [];
+
+    // FILTRO CLAVE: Solo mostrar transferencias, ignorar registros de efectivo
+    // Esto evita que aparezcan como "pendientes" pagos que ya se cobraron en mano
+    data = data.filter(t => !(t.metodo_pago || '').toLowerCase().includes('efec'));
+
+    // --- Lógica de Filtro Cliente (Huérfanos) ---
+    if(estadoFiltro === 'orphan') {
+      data = data.filter(t => !t.pedido_id);
+    }
+
+    updateKPIs(data);
+    renderTable(data);
+  }
+    
+  function updateKPIs(list) {
+  // Solo sumamos y contamos lo que NO es efectivo
+  const transferenciasOnly = list.filter(i => (i.metodo_pago || '').toLowerCase().includes('trans'));
+  const total = transferenciasOnly.reduce((sum, item) => sum + Number(item.monto||0), 0);
+  const verificados = transferenciasOnly.filter(i => i.validado == 1).length;
+  const pendientes = transferenciasOnly.length - verificados;
+
+  $('#kpiTotal').textContent = money(total);
+  $('#kpiVerificados').textContent = verificados;
+  $('#kpiPendientes').textContent = pendientes;
+  }
+
+  // --- Renderizar Tabla ---
+  function renderTable(list) {
+  if(list.length === 0) {
+    $('#rows').innerHTML = `<tr><td colspan="9" style="text-align:center; opacity:0.6;">Sin datos.</td></tr>`;
+    return;
+  }
+
+  $('#rows').innerHTML = list.map(t => {
+    const metodo = (t.metodo_pago || '').toLowerCase();
+    const esEfectivo = metodo.includes('efec');
+    const isValidado = t.validado == 1 || esEfectivo; // El efectivo se considera "auto-validado" aquí
+
+    // Badge de Estado Inteligente
+    let statusHtml = esEfectivo 
+      ? `<span class="badge badge-success"><i class="fa-solid fa-money-bill"></i> Efectivo</span>`
+      : (isValidado 
+          ? `<span class="badge badge-success"><i class="fa-solid fa-check"></i> Verificado</span>` 
+          : `<span class="badge badge-warning"><i class="fa-solid fa-hourglass"></i> Pendiente</span>`);
+
+    // Método Badge
+    const metodoBadge = esEfectivo 
+      ? `<span class="badge badge-info"><i class="fa-solid fa-money-bill"></i> Efec</span>` 
+      : `<span class="badge badge-info"><i class="fa-solid fa-mobile-screen"></i> Transf</span>`;
+
+    // Botón de Validar: solo se muestra si NO es efectivo y NO está validado
+    const btnValidar = (!esEfectivo && !t.validado)
+      ? `<button class="btn btn-primary btn-icon" onclick="verificarPago(${t.id})" title="Validar"><i class="fa-solid fa-check"></i></button>`
+      : `<span style="width:32px; display:inline-block"></span>`;
+
+    return `
+      <tr>
+        <td style="color:var(--text-muted)">${t.fecha ? t.fecha.slice(11,16) : '--:--'}</td>
+        <td>
+            <div class="text-cell">
+              <span class="text-main">${t.cliente || 'S/D'}</span>
+              <span class="text-sub">${t.zona_nombre || ''}</span>
+            </div>
+        </td>
+        <td>#${t.pedido_id || '-'}</td>
+        <td>${metodoBadge}</td>
+        <td style="font-weight:700; font-size:1rem; color:${esEfectivo ? '#34d399' : '#fff'}">${money(t.monto)}</td>
+        <td>
+          <div class="text-cell">
+            <span class="text-main">${t.banco_origen || (esEfectivo ? 'Cobro en mano' : 'Banco?')}</span>
+            <span class="text-sub">Ref: ${t.nro_operacion || '-'}</span>
+          </div>
+        </td>
+        <td style="text-align:center">${t.comprobante_path ? `<button class="btn btn-ghost btn-icon" onclick="verComprobante('${t.comprobante_path}', ${t.id}, ${isValidado})"><i class="fa-regular fa-eye"></i></button>` : '-'}</td>
+        <td>${statusHtml}</td>
+        <td style="text-align:right">
+          ${btnValidar}
+          <button class="btn btn-danger btn-icon" onclick="eliminarPago(${t.id})"><i class="fa-solid fa-trash-can"></i></button>
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
+// --- Funciones del Modal y Acciones ---
+  function verComprobante(path, id, isValidado) {
+    const container = $('#visorContainer');
+    const ext = path.split('.').pop().toLowerCase();
+    
+    if(ext === 'pdf') {
+      container.innerHTML = `<iframe src="${path}" style="width:100%; height:100%; border:none;"></iframe>`;
+    } else {
+      container.innerHTML = `<img src="${path}" alt="Comprobante" />`;
+    }
+
+    currentTransferenciaId = id;
+    $('#btnVerificarModal').style.display = isValidado ? 'none' : 'inline-flex';
+    $('#modalVisor').style.display = 'flex';
+  }
+
+  function closeModal() {
+    $('#modalVisor').style.display = 'none';
+    $('#visorContainer').innerHTML = '';
+    currentTransferenciaId = null;
+  }
+
+  async function verificarPago(id) {
+    // Si tienes SweetAlert2, úsalo aquí. Si no, native confirm:
+    if(!confirm('¿Confirmar que el dinero ingresó a la cuenta?')) return;
+    
+    // Llamada al endpoint existente en server.js
+    const res = await api(`/api/transferencias/${id}/verificar?enviarAviso=1`, { method: 'POST' });
+    
+    if(res && res.ok) {
+      toast('Pago verificado y registrado');
+      loadPagos();
+      closeModal();
+    } else {
+      alert('Error al verificar pago');
+    }
+  }
+
+  async function eliminarPago(id) {
+    if(!confirm('⚠️ ¿Estás seguro de ELIMINAR este comprobante?\nEsta acción no se puede deshacer.')) return;
+
+    // NOTA: Asumimos que existe un endpoint DELETE para transferencias o comprobantes.
+    // Si tu server.js no lo tiene explícito, deberías agregarlo. 
+    // Por lo general, se usa DELETE /api/transferencias/:id o similar.
+    // Aquí intentaremos llamar a la ruta genérica de eliminación (si no existe, fallará).
+    // Si falla, es porque falta agregar `app.delete('/api/transferencias/:id', ...)` en el backend.
+    
+    const res = await fetch(`/api/transferencias/${id}`, { 
+        method: 'DELETE',
+        headers: { 'Authorization': 'Bearer '+token }
+    });
+    
+    if(res.ok) {
+        toast('🗑️ Comprobante eliminado');
+        loadPagos();
+    } else {
+        alert('No se pudo eliminar. Verifica que tengas permisos o que el endpoint exista.');
+    }
+  }
+
+  function verificarDesdeModal() {
+    if(currentTransferenciaId) verificarPago(currentTransferenciaId);
+  }
+
+  function toast(msg) {
+    const t = $('#toast');
+    t.querySelector('span').textContent = msg;
+    t.classList.add('show');
+    setTimeout(() => t.classList.remove('show'), 3000);
+  }
+</script>
+
+</body>
+</html>

@@ -1,0 +1,523 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Choferes – MultiEmpresas</title>
+  
+<style>
+  :root {
+    /* Palette Dark Theme */
+    --bg: #0b1020;
+    --bg-2: #0f172a;
+    --ink: #f1f5f9;
+    --muted: #94a3b8;
+    --brand: #06b6d4;       /* Cyan */
+    --brand-hover: #22d3ee;
+    --surface: rgba(30, 41, 59, 0.7);
+    --border: rgba(148, 163, 184, 0.15);
+    --glass: rgba(15, 23, 42, 0.95); /* Más opaco para móvil */
+    --radius: 12px;
+    
+    --success: #10b981;
+    --warning: #f59e0b;
+    --danger: #ef4444;
+  }
+
+  * { box-sizing: border-box; outline: none; -webkit-tap-highlight-color: transparent; }
+  
+  body {
+    margin: 0; 
+    font-family: system-ui, -apple-system, sans-serif;
+    color: var(--ink);
+    background: 
+      radial-gradient(circle at 15% 50%, rgba(6, 182, 212, 0.05), transparent 25%),
+      radial-gradient(circle at 85% 30%, rgba(59, 130, 246, 0.05), transparent 25%),
+      var(--bg);
+    min-height: 100vh;
+    font-size: 14px;
+    padding-bottom: 80px; /* Espacio para scroll en móvil */
+  }
+
+  .container { max-width: 1200px; margin: 0 auto; padding: 0 20px; }
+
+  /* --- HEADER & NAV RESPONSIVE --- */
+  header {
+    position: sticky; top: 0; z-index: 50;
+    background: var(--glass);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+    padding: 0.8rem 0;
+  }
+  
+  nav { display: flex; justify-content: space-between; align-items: center; }
+  
+  .brand { 
+    display: flex; gap: 0.8rem; align-items: center; 
+    font-size: 1.1rem; font-weight: 700; color: #fff; text-decoration: none; 
+    white-space: nowrap;
+  }
+  .brand-dot { width: 10px; height: 10px; background: var(--brand); border-radius: 50%; box-shadow: 0 0 10px var(--brand); }
+  
+  .role-badge { 
+    background: rgba(6, 182, 212, 0.1); border: 1px solid rgba(6, 182, 212, 0.3);
+    color: var(--brand); padding: 2px 8px; border-radius: 99px; font-size: 0.75rem; 
+  }
+
+  .menu { list-style: none; display: flex; gap: 1.5rem; margin: 0; padding: 0; }
+  .menu a { text-decoration: none; color: var(--muted); font-weight: 500; transition: 0.2s; white-space: nowrap; }
+  .menu a:hover, .menu a.active { color: #fff; }
+  .menu a.active { border-bottom: 2px solid var(--brand); padding-bottom: 4px; }
+
+  /* Adaptación Móvil del Menú */
+  @media (max-width: 768px) {
+    nav { flex-direction: column; gap: 1rem; align-items: stretch; }
+    .brand { justify-content: space-between; }
+    .menu { 
+      overflow-x: auto; 
+      padding-bottom: 5px; 
+      gap: 20px;
+      -webkit-overflow-scrolling: touch; /* Scroll suave en iOS */
+    }
+    .menu::-webkit-scrollbar { display: none; } /* Ocultar barra scroll */
+  }
+
+  main { padding-top: 2rem; padding-bottom: 4rem; display: flex; flex-direction: column; gap: 1.5rem; }
+
+  /* --- PAGE HEADER --- */
+  .page-header {
+    display: flex; justify-content: space-between; align-items: flex-end; flex-wrap: wrap; gap: 1rem;
+  }
+  h1 { font-size: 1.8rem; margin: 0; color: #fff; display: flex; align-items: center; gap: 10px; line-height: 1.2; }
+  p.subtitle { color: var(--muted); margin: 0.5rem 0 0 0; font-size: 0.95rem; }
+
+  @media (max-width: 600px) {
+    .page-header { flex-direction: column; align-items: stretch; }
+    .page-header .btn { width: 100%; justify-content: center; }
+  }
+
+  /* --- CARDS & LAYOUTS --- */
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 1.5rem;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+    display: flex; flex-direction: column;
+  }
+
+  /* Layout Split (Zona/Asignar) */
+  .layout-split { display: grid; grid-template-columns: 1fr 380px; gap: 20px; height: calc(100vh - 140px); min-height: 600px; }
+  .map-wrapper { position: relative; width: 100%; height: 100%; border-radius: var(--radius); border: 1px solid var(--border); overflow: hidden; }
+  #map { width: 100%; height: 100%; z-index: 1; background: #1e293b; }
+
+  @media(max-width: 900px) { 
+    .layout-split { grid-template-columns: 1fr; height: auto; display: flex; flex-direction: column-reverse; } 
+    .map-wrapper { height: 400px; } /* Altura fija mapa móvil */
+  }
+
+  /* --- TOOLBARS & FILTERS --- */
+  .toolbar { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.5rem; }
+  .toolbar > * { flex: 1; }
+  .toolbar select, .toolbar input { margin-bottom: 0; min-width: 150px; }
+  
+  @media (max-width: 600px) {
+    .toolbar { flex-direction: column; align-items: stretch; gap: 0.8rem; }
+    .search-box { width: 100%; }
+  }
+
+  /* --- INPUTS & BUTTONS --- */
+  label { font-size: 0.8rem; color: var(--muted); font-weight: 600; display: block; margin-bottom: 0.4rem; text-transform: uppercase; letter-spacing: 0.5px;}
+  
+  input, select, textarea {
+    background: var(--bg-2); border: 1px solid var(--border); color: #fff;
+    padding: 0.7rem 0.8rem; border-radius: 8px; font-size: 0.95rem; /* Texto más grande para móvil */
+    width: 100%; transition: 0.2s;
+  }
+  input:focus, select:focus, textarea:focus { border-color: var(--brand); box-shadow: 0 0 0 2px rgba(6,182,212,0.2); }
+
+  .btn {
+    padding: 0.7rem 1.2rem; border-radius: 8px; font-weight: 600; cursor: pointer;
+    border: 1px solid transparent; transition: 0.2s; display: inline-flex; align-items: center; gap: 0.5rem;
+    font-size: 0.9rem; background: rgba(255,255,255,0.05); color: var(--ink); border-color: var(--border);
+    text-decoration: none; white-space: nowrap; justify-content: center;
+  }
+  .btn:hover { background: rgba(255,255,255,0.1); color: #fff; border-color: var(--brand); }
+  
+  .btn-primary { background: var(--brand); color: #000; border: none; }
+  .btn-primary:hover { background: var(--brand-hover); box-shadow: 0 4px 12px rgba(6,182,212,0.3); }
+  
+  .btn-danger { color: var(--danger); border-color: rgba(239,68,68,0.3); background: rgba(239,68,68,0.1); }
+  .btn-icon { padding: 0.5rem; border-radius: 6px; color: var(--muted); background: transparent; border: 1px solid var(--border); cursor: pointer; }
+  .btn-icon:hover { color: #fff; background: rgba(255,255,255,0.1); border-color: var(--brand); }
+
+  /* --- TABLES --- */
+  .table-responsive { overflow-x: auto; border-radius: var(--radius); border: 1px solid var(--border); background: var(--bg-2); }
+  table { width: 100%; border-collapse: collapse; text-align: left; }
+  th { 
+    background: rgba(15, 23, 42, 0.9); color: var(--muted); font-weight: 600; 
+    padding: 1rem; font-size: 0.8rem; text-transform: uppercase; 
+    border-bottom: 1px solid var(--border); white-space: nowrap;
+  }
+  td { padding: 1rem; border-bottom: 1px solid var(--border); color: var(--ink); font-size: 0.9rem; vertical-align: middle; white-space: nowrap; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: rgba(255,255,255,0.02); }
+
+  /* --- MODAL --- */
+  .modal-backdrop {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(4px);
+    display: flex; align-items: center; justify-content: center; z-index: 1000;
+    opacity: 0; pointer-events: none; transition: opacity 0.2s; padding: 10px;
+  }
+  .modal-backdrop.open { opacity: 1; pointer-events: all; }
+  
+  .modal {
+    background: #1e293b; color: #fff; border: 1px solid var(--border); border-radius: var(--radius);
+    width: 100%; max-width: 550px; box-shadow: 0 20px 50px rgba(0,0,0,0.6);
+    display: flex; flex-direction: column; max-height: 90vh; /* Límite altura móvil */
+  }
+  
+  .modal-header { 
+    padding: 1.2rem; border-bottom: 1px solid var(--border); 
+    display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.2); 
+  }
+  .modal-header h3 { margin: 0; font-size: 1.2rem; }
+  
+  .modal-body { padding: 1.5rem; overflow-y: auto; display: flex; flex-direction: column; gap: 1.2rem; }
+  
+  .modal-footer { 
+    padding: 1.2rem; border-top: 1px solid var(--border); 
+    display: flex; justify-content: flex-end; gap: 1rem; background: rgba(0,0,0,0.2); 
+  }
+
+  /* Grid en formularios */
+  .form-row, .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  @media (max-width: 600px) {
+    .form-row, .form-grid { grid-template-columns: 1fr; } /* Columna única en móvil */
+    .modal-footer { flex-direction: column-reverse; } /* Botones apilados */
+    .modal-footer .btn { width: 100%; }
+  }
+
+  /* --- EXTRAS (Badges, Lists, Toasts) --- */
+  .badge, .status-badge { padding: 2px 8px; border-radius: 99px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; white-space: nowrap; }
+  .badge-admin, .badge-user, .tag-propio, .st-active { background: rgba(16,185,129,0.15); color: #34d399; }
+  .badge-repartidor, .tag-promo { background: rgba(59,130,246,0.15); color: #60a5fa; }
+  .badge-super, .tag-fletero, .st-inactive { background: rgba(245,158,11,0.15); color: #fbbf24; }
+
+  .toast { position: fixed; right: 20px; bottom: 30px; background: #fff; color: #0f172a; padding: 10px 20px; border-radius: 99px; font-weight: 600; box-shadow: 0 10px 30px rgba(0,0,0,0.3); opacity: 0; pointer-events: none; transition: 0.3s; z-index: 2000; }
+  .toast.show { opacity: 1; transform: translateY(-10px); }
+
+  /* Elementos específicos de zona.html */
+  .sidebar-list { overflow-y: auto; display: flex; flex-direction: column; gap: 0.8rem; flex: 1; }
+  .zona-item { background: var(--bg-2); border: 1px solid var(--border); padding: 1rem; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
+  
+  /* Elementos específicos de inicial.html */
+  .step-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.5rem; display: flex; gap: 1rem; margin-bottom: 1rem; align-items: flex-start; }
+  .step-num { flex-shrink: 0; width: 40px; height: 40px; background: var(--bg-2); border: 1px solid var(--border); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; }
+  @media(max-width: 600px) { 
+    .step-card { flex-direction: column; } 
+    .check-icon { position: static; transform: none; opacity: 1; } 
+  }
+
+  /* Leaflet Dark Override */
+  .leaflet-bar { border: none !important; box-shadow: 0 4px 10px rgba(0,0,0,0.3) !important; }
+  .leaflet-bar a { background-color: var(--bg-2) !important; color: #fff !important; border-bottom: 1px solid var(--border) !important; }
+</style>
+</head>
+<body>
+
+  <header>
+    <nav class="container">
+      <div class="brand">
+        <div class="brand-dot"></div>
+        MultiEmpresas
+        <span id="roleBadge" class="role-badge">Admin</span>
+      </div>
+      <ul class="menu" id="mainMenu">
+        <li><a href="inicial.html">🚀 Inicio</a></li>
+        <li><a href="/pedidos/dashboard.html">Dashboard</a></li>
+        <li><a href="choferes.html" class="active">Choferes</a></li>
+        <li><a href="#" id="logout" style="color: var(--danger)">Salir</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <main class="container">
+    
+    <div class="page-header">
+      <div>
+        <h1>🚚 Gestión de Choferes</h1>
+        <p class="subtitle">Administra tu flota de repartidores propios y fleteros.</p>
+      </div>
+      <button class="btn btn-primary" onclick="openModal()">＋ Nuevo Chofer</button>
+    </div>
+
+    <div class="card">
+      <div class="toolbar">
+        <div id="empFilterWrap" style="display:none; min-width: 250px;">
+          <select id="empFilter">
+            <option value="">-- Seleccionar Empresa --</option>
+          </select>
+        </div>
+        </div>
+
+      <div class="table-responsive">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:60px">ID</th>
+              <th>Nombre</th>
+              <th>Contacto</th>
+              <th>Tipo</th>
+              <th>SLA (Hs)</th>
+              <th style="width:100px; text-align:right;">Acciones</th>
+            </tr>
+          </thead>
+          <tbody id="tbBody">
+            <tr><td colspan="6" style="text-align:center; padding:3rem; color:var(--muted);">Cargando flota...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </main>
+
+  <div id="modal" class="modal-backdrop">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 id="modalTitle">Nuevo Chofer</h3>
+        <button class="btn-icon" onclick="closeModal()">✕</button>
+      </div>
+      <form id="formChofer" class="modal-body" onsubmit="event.preventDefault(); save();">
+        <input type="hidden" id="c_id">
+        
+        <div id="modalEmpWrap" style="display:none;">
+          <label>Asignar a Empresa *</label>
+          <select id="c_empresa_id"></select>
+        </div>
+
+        <div>
+          <label>Nombre Completo *</label>
+          <input type="text" id="c_nombre" required placeholder="Ej: Juan Pérez">
+        </div>
+
+        <div class="form-row">
+          <div>
+            <label>Teléfono</label>
+            <input type="tel" id="c_telefono" placeholder="+54 9...">
+          </div>
+          <div>
+            <label>Email (Opcional)</label>
+            <input type="email" id="c_email" placeholder="email@ejemplo.com">
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div>
+            <label>Tipo de Contratación</label>
+            <select id="c_tipo">
+              <option value="propio">Empleado Propio</option>
+              <option value="fletero">Fletero / Externo</option>
+            </select>
+          </div>
+          <div>
+            <label>SLA (Tiempo objetivo)</label>
+            <input type="number" id="c_sla" placeholder="Horas" value="24">
+          </div>
+        </div>
+
+      </form>
+      <div class="modal-footer">
+        <button class="btn" onclick="closeModal()">Cancelar</button>
+        <button class="btn btn-primary" onclick="save()">Guardar</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script>
+    // --- Utils ---
+    const $ = s => document.querySelector(s);
+    function toast(msg) {
+      const t = $('#toast'); t.textContent = msg; t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 3000);
+    }
+
+    // --- Logout ---
+    $('#logout').onclick = () => { localStorage.removeItem('token'); location.href = 'login.html'; };
+
+    // --- State ---
+    let STATE = { isSuper: false, user: null };
+    let choferes = [];
+
+    // --- API ---
+    async function api(endpoint, opts = {}) {
+      const token = localStorage.getItem('token');
+      if (!token) return window.location.href = '../login.html';
+      
+      const headers = { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json', ...(opts.headers || {}) };
+      try {
+        const res = await fetch(endpoint, { ...opts, headers });
+        if (res.status === 401) return window.location.href = '../login.html';
+        return res.json();
+      } catch (e) {
+        console.error(e);
+        toast('Error de conexión');
+        return { error: 'Error' };
+      }
+    }
+
+    // --- Logic ---
+    async function load() {
+      let url = '/api/choferes';
+      const empId = $('#empFilter').value;
+      
+      if (STATE.isSuper) {
+        if (empId) url += `?empresa_id=${empId}`;
+        else {
+           $('#tbBody').innerHTML = `<tr><td colspan="6" style="text-align:center; padding:3rem; color:var(--muted);">Selecciona una empresa para ver sus choferes.</td></tr>`;
+           choferes = [];
+           return;
+        }
+      }
+
+      const data = await api(url);
+      if (Array.isArray(data)) {
+        choferes = data;
+        render();
+      } else {
+        $('#tbBody').innerHTML = `<tr><td colspan="6" style="text-align:center; color:var(--danger);">Error cargando datos</td></tr>`;
+      }
+    }
+
+    function render() {
+      const tbody = $('#tbBody');
+      if (!choferes.length) {
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:3rem; color:var(--muted);">No hay choferes registrados.</td></tr>`;
+        return;
+      }
+      tbody.innerHTML = choferes.map(c => {
+        const tipoClass = c.tipo === 'fletero' ? 'tag-fletero' : 'tag-propio';
+        const tipoLabel = c.tipo === 'fletero' ? 'Fletero' : 'Propio';
+        
+        return `
+        <tr>
+          <td style="color:var(--muted); font-family:monospace;">#${c.id}</td>
+          <td style="font-weight:600; color:#fff;">${c.nombre}</td>
+          <td>${c.telefono || '<span style="color:var(--muted)">-</span>'}</td>
+          <td><span class="status-badge ${tipoClass}">${tipoLabel}</span></td>
+          <td>${c.sla_horas ? c.sla_horas + ' hs' : '-'}</td>
+          <td style="text-align:right;">
+            <button class="btn-icon" onclick="edit(${c.id})" title="Editar">✏️</button>
+            <button class="btn-icon" onclick="del(${c.id})" title="Eliminar" style="color:var(--danger); border-color:rgba(239,68,68,0.3);">🗑️</button>
+          </td>
+        </tr>
+      `}).join('');
+    }
+
+    // --- Actions ---
+    function openModal() {
+      if (STATE.isSuper && !$('#empFilter').value) {
+        return toast('⚠️ Selecciona una empresa en el filtro primero.');
+      }
+
+      $('#modal').classList.add('open');
+      $('#modalTitle').textContent = 'Nuevo Chofer';
+      $('#formChofer').reset();
+      $('#c_id').value = '';
+      $('#c_tipo').value = 'propio';
+      $('#c_sla').value = '24';
+      
+      if (STATE.isSuper) {
+          $('#c_empresa_id').value = $('#empFilter').value || '';
+      }
+
+      $('#c_nombre').focus();
+    }
+
+    function closeModal() { $('#modal').classList.remove('open'); }
+
+    function edit(id) {
+      const c = choferes.find(x => x.id === id);
+      if (!c) return;
+      $('#modal').classList.add('open');
+      $('#modalTitle').textContent = 'Editar Chofer';
+      $('#c_id').value = c.id;
+      $('#c_nombre').value = c.nombre;
+      $('#c_telefono').value = c.telefono || '';
+      $('#c_email').value = c.email || '';
+      $('#c_tipo').value = c.tipo || 'propio';
+      $('#c_sla').value = c.sla_horas || '';
+      
+      if (STATE.isSuper) {
+          $('#c_empresa_id').value = $('#empFilter').value;
+      }
+    }
+
+    async function save() {
+      const id = $('#c_id').value;
+      const body = {
+        nombre: $('#c_nombre').value,
+        telefono: $('#c_telefono').value,
+        email: $('#c_email').value,
+        tipo: $('#c_tipo').value,
+        sla_horas: $('#c_sla').value ? Number($('#c_sla').value) : null
+      };
+
+      if (!body.nombre) return toast('El nombre es obligatorio');
+      
+      if (STATE.isSuper) {
+          const empId = $('#c_empresa_id').value;
+          if (!empId) return toast('⚠️ Debes asignar una empresa');
+          body.empresa_id = empId;
+      }
+
+      const method = id ? 'PUT' : 'POST';
+      const url = id ? `/api/choferes/${id}` : '/api/choferes';
+
+      const res = await api(url, { method, body: JSON.stringify(body) });
+      
+      if (res.error) {
+        toast('❌ ' + res.error);
+      } else {
+        toast(id ? '✅ Actualizado' : '✅ Creado');
+        closeModal();
+        load();
+      }
+    }
+
+    async function del(id) {
+      if (!confirm('¿Eliminar chofer?')) return;
+      const res = await api(`/api/choferes/${id}`, { method: 'DELETE' });
+      if (res.error) { toast('❌ Error al eliminar'); } 
+      else { toast('🗑️ Chofer eliminado'); load(); }
+    }
+
+    // --- Init ---
+    (async () => {
+      try {
+        const me = await api('/api/me');
+        STATE.user = me?.user || {};
+        STATE.isSuper = (STATE.user.role || '').toLowerCase() === 'super';
+        
+        $('#roleBadge').textContent = STATE.isSuper ? 'SUPER ADMIN' : (STATE.user.role || 'Admin').toUpperCase();
+
+        if (STATE.isSuper) {
+          $('#empFilterWrap').style.display = 'block';
+          $('#modalEmpWrap').style.display = 'block';
+
+          const empresas = await api('/api/empresas');
+          if (Array.isArray(empresas)) {
+             const opts = '<option value="">-- Seleccionar Empresa --</option>' + 
+                          empresas.map(e => `<option value="${e.id}">${e.nombre}</option>`).join('');
+             $('#empFilter').innerHTML = opts;
+             $('#c_empresa_id').innerHTML = opts;
+             $('#empFilter').addEventListener('change', load);
+          }
+        } else {
+          load();
+        }
+      } catch (e) { console.error('Init error', e); }
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Crear usuario – MultiEmpresas</title>
+
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+
+  <style>
+    :root { --brand:#0ea5e9; }
+    body{max-width:900px;margin:auto}
+    header .brand{display:flex;gap:.6rem;align-items:center}
+    .brand .dot{width:.9rem;height:.9rem;border-radius:2px;background:var(--brand)}
+    .pill{background:#eef6ff;border:1px solid #cfe8ff;color:#095aba;padding:.15rem .5rem;border-radius:999px;font-size:.8rem}
+    .card{border:1px solid #eaeaea;padding:1rem;border-radius:12px;margin-top:1rem}
+    .grid2{display:grid;gap:1rem;grid-template-columns:1fr 1fr}
+    @media (max-width: 760px){ .grid2{grid-template-columns:1fr} }
+    small.muted{opacity:.65}
+    .row{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}
+    .toast{
+      position:fixed;left:50%;bottom:18px;transform:translateX(-50%);
+      background:#111;color:#fff;padding:.55rem .8rem;border-radius:10px;
+      font-size:.95rem;opacity:0;transition:opacity .15s;z-index:99
+    }
+    .toast.show{opacity:.95}
+    .help{background:#f8fafc;border:1px dashed #e2e8f0;padding:.6rem .7rem;border-radius:10px}
+    input[aria-invalid="true"], select[aria-invalid="true"] { border-color:#ef4444; }
+    .hint-req { color:#ef4444; font-weight:600; }
+    [hidden]{display:none!important}
+  </style>
+</head>
+<body>
+  <header class="container" style="margin-top:1rem">
+    <nav>
+      <ul>
+        <li class="brand">
+          <span class="dot"></span>
+          <strong>MultiEmpresas</strong>
+          <span class="pill">Usuarios</span>
+        </li>
+      </ul>
+      <ul>
+        <li><a href="dashboard.html">Dashboard</a></li>
+        <li><a href="admin.html" aria-current="page">Admin</a></li>
+        <li><a href="login.html" id="logout">Salir</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <main class="container">
+    <section class="card">
+      <h3>➕ Crear usuario</h3>
+      <p class="muted">Cargá nombre de usuario, clave, rol y empresa (solo si aplica).</p>
+
+      <form id="fUser">
+        <div class="grid2">
+          <label>Nombre de usuario
+            <input id="uName" placeholder="ej: admin01" required autocomplete="off" />
+          </label>
+
+          <label>Clave
+            <div class="row">
+              <input id="uPass" type="password" placeholder="mín. 6 caracteres" required minlength="6" autocomplete="new-password" style="flex:1" />
+              <button type="button" id="togglePass" class="secondary" aria-label="Mostrar/ocultar clave">👁</button>
+            </div>
+          </label>
+        </div>
+
+        <div class="grid2">
+          <label>Rol / Tipo
+            <select id="uRole" required>
+              <option value="super">super (admin global)</option>
+              <option value="user" selected>user (admin empresa)</option>
+              <option value="repartidor">repartidor (chofer/app)</option>
+            </select>
+            <small class="muted" id="roleHint">
+              “super” no requiere empresa. “user” y “repartidor” deben pertenecer a una empresa.
+            </small>
+          </label>
+
+          <div id="empresaBlock">
+            <label>Empresa <span class="hint-req" id="reqEmp">*</span>
+              <select id="uEmpresa"></select>
+            </label>
+            <small class="muted">Si no aparece la empresa, podés escribir el ID manual abajo.</small>
+
+            <details class="help" style="margin-top:.5rem">
+              <summary>Empresa ID manual (opcional)</summary>
+              <label style="margin-top:.5rem">empresa_id
+                <input id="uEmpresaManual" type="number" min="1" step="1" placeholder="ej: 1" />
+              </label>
+            </details>
+          </div>
+        </div>
+
+        <div class="row" style="margin-top:1rem">
+          <button type="submit">Crear usuario</button>
+          <button type="reset" class="secondary">Limpiar</button>
+        </div>
+
+        <small class="muted">
+          Este formulario POSTea a <code>/api/admin/usuarios</code>.  
+          Si tu backend usa otra ruta, cambiá la constante <code>API_CREATE_USER</code>.
+        </small>
+      </form>
+    </section>
+
+    <section class="card">
+      <h4>Últimos usuarios</h4>
+      <div style="overflow:auto">
+        <table>
+          <thead>
+            <tr><th>ID</th><th>Username</th><th>Role</th><th>Empresa</th><th>Creado</th></tr>
+          </thead>
+          <tbody id="rows"><tr><td colspan="5" class="muted">Sin datos</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<script>
+const API_EMPRESAS     = '/api/empresas';          // <- ajustá si tu ruta es otra
+const API_LIST_USERS   = '/api/admin/usuarios';   // GET
+const API_CREATE_USER  = '/api/admin/usuarios';   // POST
+const API_CREATE_USER  = '/api/bootstrap/crear-usuario';
+
+const $ = s => document.querySelector(s);
+const toast = (msg, ms=2200) => {
+  const t = $('#toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'), ms);
+};
+
+function token(){
+  return localStorage.getItem('token') || '';
+}
+
+async function fetchJson(url, opts={}){
+  const headers = Object.assign({'Content-Type':'application/json'}, opts.headers||{});
+  const tk = token();
+  if (tk) headers['Authorization'] = 'Bearer ' + tk;
+  const res = await fetch(url, {...opts, headers});
+  const txt = await res.text();
+  let data = null;
+  try { data = txt ? JSON.parse(txt) : null; } catch { data = txt; }
+  if (!res.ok) throw new Error((data && data.error) || res.statusText);
+  return data;
+}
+
+async function loadEmpresas(){
+  const sel = $('#uEmpresa');
+  sel.innerHTML = '<option value="">Cargando…</option>';
+  try{
+    const rows = await fetchJson(API_EMPRESAS);
+    sel.innerHTML = '<option value="">Elegí empresa…</option>';
+    if (!rows || !rows.length) {
+      sel.innerHTML = '<option value="">(sin empresas)</option>';
+      return;
+    }
+    for (const e of rows){
+      const opt = document.createElement('option');
+      opt.value = e.id;
+      opt.textContent = `#${e.id} — ${e.nombre || e.razon_social || 'Empresa'}`;
+      sel.appendChild(opt);
+    }
+  }catch(err){
+    sel.innerHTML = '<option value="">(no se pudo cargar empresas)</option>';
+    toast('No pude cargar empresas. Usá el ID manual.');
+  }
+}
+
+async function loadUsers(){
+  const body = $('#rows');
+  body.innerHTML = '<tr><td colspan="5" class="muted">Cargando…</td></tr>';
+  try{
+    const rows = await fetchJson(API_LIST_USERS);
+    if (!rows || !rows.length){
+      body.innerHTML = '<tr><td colspan="5" class="muted">Sin datos</td></tr>';
+      return;
+    }
+    body.innerHTML = '';
+    for (const u of rows){
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${u.id ?? ''}</td>
+        <td>${u.username ?? ''}</td>
+        <td>${u.role ?? ''}</td>
+        <td>${u.empresa_id ?? ''}</td>
+        <td>${u.created_at ? new Date(u.created_at).toLocaleString() : ''}</td>`;
+      body.appendChild(tr);
+    }
+  }catch(err){
+    body.innerHTML = '<tr><td colspan="5" class="muted">No se pudo cargar usuarios</td></tr>';
+  }
+}
+
+function syncRoleUI(){
+  const role = $('#uRole').value;
+  const block = $('#empresaBlock');
+  const reqStar = $('#reqEmp');
+
+  if (role === 'super'){
+    block.hidden = true;
+    reqStar.hidden = true;
+    $('#uEmpresa').setAttribute('aria-invalid','false');
+    $('#uEmpresaManual').value = '';
+  } else {
+    block.hidden = false;
+    reqStar.hidden = false;
+  }
+}
+
+$('#uRole').addEventListener('change', syncRoleUI);
+
+$('#togglePass').addEventListener('click', ()=>{
+  const inp = $('#uPass');
+  inp.type = inp.type === 'password' ? 'text' : 'password';
+});
+
+$('#fUser').addEventListener('submit', async (ev)=>{
+  ev.preventDefault();
+  const username = $('#uName').value.trim();
+  const password = $('#uPass').value;
+  const role     = $('#uRole').value;
+
+  // empresa solo requerida para user/repartidor
+  const manual = Number($('#uEmpresaManual').value || 0);
+  const selEmp = Number($('#uEmpresa').value || 0);
+
+  let empresa_id = null;
+  if (role !== 'super'){
+    empresa_id = manual || selEmp || 0;
+    if (!empresa_id){
+      $('#uEmpresa').setAttribute('aria-invalid','true');
+      toast('Elegí una empresa o escribí empresa_id');
+      return;
+    }
+  }
+
+  if (!username){
+    $('#uName').setAttribute('aria-invalid','true');
+    toast('Falta username');
+    return;
+  }
+  if (!password || password.length < 6){
+    $('#uPass').setAttribute('aria-invalid','true');
+    toast('Clave muy corta');
+    return;
+  }
+
+  try{
+    // armamos payload. Si es super no mandamos empresa_id.
+    const payload = { username, password, role };
+    if (role !== 'super') payload.empresa_id = empresa_id;
+
+    await fetchJson(API_CREATE_USER, {
+      method:'POST',
+      body: JSON.stringify(payload)
+    });
+
+    toast('✅ Usuario creado');
+    ev.target.reset();
+    syncRoleUI();
+    await loadUsers();
+  }catch(err){
+    console.error(err);
+    toast('❌ ' + err.message);
+  }
+});
+
+loadEmpresas();
+loadUsers();
+syncRoleUI();
+</script>
+</body>
+</html>

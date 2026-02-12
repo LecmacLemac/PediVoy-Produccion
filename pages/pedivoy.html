@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MultiEmpresas — Marketplace</title>
+  <meta name="description" content="Encontrá los mejores comercios en tu zona. Pedí por WhatsApp con tracking en vivo." />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🚚</text></svg>">
+  <style>
+    :root{
+      --bg:#0b1020; --fg:#e9eefb; --muted:#b6c2e3; --brand:#74c0fc; --card:#131a33; --ok:#51cf66; --warn:#fcc419;
+      --shadow:0 10px 30px rgba(0,0,0,.25);
+    }
+    *{box-sizing:border-box}
+    html,body{margin:0;padding:0;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,Segoe UI,Roboto,Inter,Ubuntu,'Helvetica Neue',Arial,sans-serif;line-height:1.5}
+    a{color:var(--brand);text-decoration:none}
+    a:hover{text-decoration:underline}
+    header{position:sticky;top:0;background:rgba(11,16,32,.75);backdrop-filter:saturate(140%) blur(10px);border-bottom:1px solid rgba(255,255,255,.06);z-index:5}
+    .wrap{max-width:1100px;margin:0 auto;padding:0 20px}
+    nav{display:flex;align-items:center;justify-content:space-between;min-height:64px}
+    nav .brand{display:flex;gap:10px;align-items:center;font-weight:700}
+    nav .brand .logo{width:34px;height:34px;display:grid;place-items:center;border-radius:10px;background:linear-gradient(135deg,#364fc7,#12b886)}
+    
+    /* Hero simplificado para Marketplace */
+    .hero{text-align:center; padding: 40px 0 20px;}
+    .hero h1{font-size:36px; margin-bottom: 10px;}
+    
+    .section{padding:36px 0}
+    .section h2{margin:0 0 20px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 10px;}
+    
+    /* Grid de Empresas */
+    .grid-empresas { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 24px; }
+    
+    /* Tarjeta de Empresa */
+    .empresa-card { 
+      background: var(--card); border: 1px solid rgba(255,255,255,.06); 
+      border-radius: 16px; padding: 20px; box-shadow: var(--shadow);
+      display: flex; flex-direction: column; gap: 15px; transition: transform 0.2s;
+    }
+    .empresa-card:hover { transform: translateY(-3px); border-color: var(--brand); }
+    
+    .emp-header { display: flex; justify-content: space-between; align-items: start; }
+    .emp-title h3 { margin: 0; font-size: 1.2rem; color: #fff; }
+    .emp-meta { font-size: 0.85rem; color: var(--muted); margin-top: 4px; }
+    .badge { background: rgba(116, 192, 252, 0.15); color: var(--brand); padding: 2px 8px; border-radius: 6px; font-size: 0.75rem; text-transform: uppercase; font-weight: 600;}
+
+    /* Mini productos dentro de la tarjeta */
+    .mini-products { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 5px; }
+    .mini-prod { min-width: 60px; text-align: center; }
+    .mini-prod img { width: 50px; height: 50px; border-radius: 8px; object-fit: cover; background: #000; border: 1px solid rgba(255,255,255,0.1); }
+    .mini-prod span { display: block; font-size: 0.7rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 60px; }
+
+    /* Botón Ver Tienda */
+    .btn-store {
+      display: block; text-align: center; width: 100%;
+      background: linear-gradient(135deg,#364fc7,#4263eb); 
+      color: #fff; padding: 10px; border-radius: 10px; font-weight: 600; 
+      text-decoration: none !important; margin-top: auto;
+    }
+    .btn-store:hover { filter: brightness(1.1); }
+
+    .loader { text-align: center; padding: 40px; color: var(--muted); }
+
+    .foot{display:flex;gap:16px;align-items:center;flex-wrap:wrap;font-size:14px;color:var(--muted);padding:28px 0;border-top:1px solid rgba(255,255,255,.06)}
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <nav>
+        <div class="brand">
+          <div class="logo">📦</div>
+          <div>MultiEmpresas Market</div>
+        </div>
+      </nav>
+    </div>
+  </header>
+
+  <main class="wrap">
+    
+    <div class="hero">
+      <h1>Tiendas cerca de ti</h1>
+      <p style="color:var(--muted)">Explorá comercios, pedí por WhatsApp y seguí tu envío en vivo.</p>
+    </div>
+
+    <section class="section">
+      <h2 id="tituloZona">Todas las tiendas</h2>
+      <div id="marketplaceGrid" class="grid-empresas">
+        <div class="loader">Cargando comercios...</div>
+      </div>
+    </section>
+
+    <div class="foot">
+      <div>© <span id="y"></span> MultiEmpresas</div>
+      <div>Plataforma de Pedidos y Logística</div>
+    </div>
+  </main>
+
+  <script>
+    const $ = (s)=>document.querySelector(s);
+    document.getElementById('y').textContent = new Date().getFullYear();
+
+    // ==========================================
+    // 1. LÓGICA DE URL (Dominio vs Slug)
+    // ==========================================
+    function getStoreUrl(empresa) {
+        // A. Prioridad: Dominio Propio
+        if (empresa.landing_domain) {
+            const domain = empresa.landing_domain.trim();
+            // Aseguramos que tenga protocolo
+            return domain.startsWith('http') ? domain : `https://${domain}`;
+        }
+        
+        // B. Fallback: Slug (URL interna del sistema)
+        // server.js maneja la ruta raíz "/" detectando ?slug=nombre
+        if (empresa.landing_slug) {
+            return `/?slug=${empresa.landing_slug}`;
+        }
+
+        // C. Fallback final (si no tiene nada configurado)
+        return '#';
+    }
+
+    // ==========================================
+    // 2. CARGA DEL MARKETPLACE
+    // ==========================================
+    async function loadMarketplace() {
+        const grid = $('#marketplaceGrid');
+        
+        try {
+            // Intentamos obtener ubicación del usuario para filtrar
+            let lat = '', lng = '';
+            
+            // Función wrapper para geolocation con Promise
+            const getPos = () => new Promise((resolve) => {
+                if(navigator.geolocation) {
+                    navigator.geolocation.getCurrentPosition(
+                        (p) => resolve({lat: p.coords.latitude, lng: p.coords.longitude}),
+                        () => resolve(null), 
+                        {timeout: 4000} // Timeout corto para no trabar la carga
+                    );
+                } else resolve(null);
+            });
+
+            const pos = await getPos();
+            if(pos) {
+                lat = pos.lat; lng = pos.lng;
+                $('#tituloZona').innerText = "Tiendas en tu zona";
+            }
+
+            // Llamada al backend
+            const r = await fetch(`/public/marketplace?lat=${lat}&lng=${lng}`);
+            if(!r.ok) throw new Error('Error de conexión');
+            
+            const empresas = await r.json();
+
+            if (empresas.length === 0) {
+                grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--muted)">No encontramos tiendas disponibles en este momento.</div>';
+                return;
+            }
+
+            // Renderizado
+            grid.innerHTML = empresas.map(emp => {
+                // Generamos la URL usando la lógica solicitada
+                const linkTienda = getStoreUrl(emp);
+                
+                // Generamos HTML de productos destacados (si tiene)
+                const productsHtml = (emp.productos || []).map(p => `
+                    <div class="mini-prod">
+                        <img src="${p.imagen || 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%25%22 height=%22100%25%22 fill=%22%23222%22/></svg>'}" loading="lazy" alt="prod">
+                        <span>${p.nombre}</span>
+                    </div>
+                `).join('');
+
+                return `
+                <div class="empresa-card">
+                    <div class="emp-header">
+                        <div class="emp-title">
+                            <h3>${emp.nombre}</h3>
+                            <div class="emp-meta">
+                                ${emp.rubro ? `<span>${emp.rubro}</span>` : 'Comercio'} 
+                                ${emp.etiquetas ? `• ${emp.etiquetas}` : ''}
+                            </div>
+                        </div>
+                        <span class="badge">ABIERTO</span>
+                    </div>
+
+                    ${productsHtml ? `<div class="mini-products">${productsHtml}</div>` : ''}
+
+                    <a href="${linkTienda}" class="btn-store">Ver Tienda</a>
+                </div>
+                `;
+            }).join('');
+
+        } catch (e) {
+            console.error(e);
+            grid.innerHTML = '<div style="color:var(--warn)">Hubo un error cargando el listado.</div>';
+        }
+    }
+
+    // Iniciar
+    loadMarketplace();
+
+  </script>
+</body>
+</html>

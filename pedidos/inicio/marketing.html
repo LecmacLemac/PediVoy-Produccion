@@ -1,0 +1,383 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Marketing Automático – MultiEmpresas</title>
+  
+<style>
+  :root {
+    /* Palette Dark Theme */
+    --bg: #0b1020;
+    --bg-2: #0f172a;
+    --ink: #f1f5f9;
+    --muted: #94a3b8;
+    --brand: #06b6d4;
+    --brand-hover: #22d3ee;
+    --surface: rgba(30, 41, 59, 0.7);
+    --border: rgba(148, 163, 184, 0.15);
+    --glass: rgba(15, 23, 42, 0.95);
+    --radius: 12px;
+    --success: #10b981;
+    --warning: #f59e0b;
+    --danger: #ef4444;
+  }
+
+  * { box-sizing: border-box; outline: none; }
+  
+  body {
+    margin: 0; 
+    font-family: system-ui, -apple-system, sans-serif;
+    color: var(--ink);
+    background: radial-gradient(circle at 15% 50%, rgba(6, 182, 212, 0.05), transparent 25%), var(--bg);
+    min-height: 100vh;
+    font-size: 14px;
+    padding-bottom: 80px;
+  }
+
+  .container { max-width: 800px; margin: 0 auto; padding: 0 20px; }
+
+  /* HEADER & NAV */
+  header {
+    position: sticky; top: 0; z-index: 50;
+    background: var(--glass);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+    padding: 0.8rem 0;
+    margin-bottom: 2rem;
+  }
+  
+  nav { display: flex; justify-content: space-between; align-items: center; max-width: 1200px; margin: 0 auto; padding: 0 20px; }
+  
+  .brand { display: flex; gap: 0.8rem; align-items: center; font-size: 1.1rem; font-weight: 700; color: #fff; text-decoration: none; }
+  .brand-dot { width: 10px; height: 10px; background: var(--brand); border-radius: 50%; box-shadow: 0 0 10px var(--brand); }
+  
+  .menu { list-style: none; display: flex; gap: 1.5rem; margin: 0; padding: 0; }
+  .menu a { text-decoration: none; color: var(--muted); font-weight: 500; transition: 0.2s; white-space: nowrap; }
+  .menu a:hover, .menu a.active { color: #fff; }
+  .menu a.active { border-bottom: 2px solid var(--brand); padding-bottom: 4px; }
+
+  /* FILTER BAR (SUPER ADMIN) */
+  .filter-bar {
+    background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px;
+    padding: 10px; margin-bottom: 20px; display: none; /* Oculto por defecto */
+    align-items: center; gap: 10px;
+  }
+  .filter-bar select {
+    background: var(--bg); color: #fff; border: 1px solid var(--border);
+    padding: 8px; border-radius: 6px; flex: 1;
+  }
+
+  /* ESTRATEGIA STYLES */
+  .page-header { text-align: center; margin-bottom: 2rem; }
+  h1 { font-size: 1.8rem; margin: 0; color: #fff; }
+  p.subtitle { color: var(--muted); margin: 0.5rem 0 0 0; font-size: 0.95rem; }
+
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 2rem;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+  }
+
+  .strategy-box { 
+    border-radius: 12px; padding: 20px; margin-bottom: 20px; 
+    border: 1px solid transparent; 
+    color: #0f172a; 
+  }
+  
+  /* Colores distintivos */
+  .box-vecinos { background: #e0f2fe; border-color: #bae6fd; }
+  .box-predictivo { background: #dcfce7; border-color: #bbf7d0; }
+  .box-referidos { background: #fef9c3; border-color: #fde047; }
+
+  .switch-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .switch-label { font-size: 1.1rem; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+  
+  .desc { font-size: 0.9rem; color: #334155; margin-bottom: 15px; line-height: 1.4; }
+
+  label { display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 5px; color: #475569; margin-top: 12px; text-transform: uppercase; }
+  
+  input[type="text"], input[type="number"], textarea, select {
+      width: 100%; padding: 10px; border: 1px solid #cbd5e1; border-radius: 8px;
+      font-family: inherit; box-sizing: border-box; background: rgba(255,255,255,0.9);
+      color: #0f172a;
+  }
+  input:focus, textarea:focus, select:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 3px rgba(6,182,212,0.2); }
+
+  .btn-save {
+      background: var(--brand); color: #000; border: none; padding: 14px; 
+      border-radius: 10px; width: 100%; font-size: 1rem; font-weight: 700; cursor: pointer;
+      box-shadow: 0 4px 15px rgba(6,182,212,0.3); transition: transform 0.2s;
+      margin-top: 1rem;
+  }
+  .btn-save:hover { background: var(--brand-hover); transform: translateY(-2px); }
+
+  /* Toggle Switch */
+  .toggle { position: relative; display: inline-block; width: 50px; height: 26px; margin: 0; }
+  .toggle input { opacity: 0; width: 0; height: 0; }
+  .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #94a3b8; transition: .4s; border-radius: 34px; }
+  .slider:before { position: absolute; content: ""; height: 20px; width: 20px; left: 3px; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%; }
+  input:checked + .slider { background-color: var(--success); } 
+  input:checked + .slider:before { transform: translateX(24px); }
+
+  @media(max-width: 600px) {
+      .container { padding: 0 15px; }
+      nav { justify-content: center; }
+      .menu { display: none; }
+  }
+</style>
+</head>
+<body>
+
+  <header>
+    <nav>
+      <a href="/pedidos/dashboard.html" class="brand">
+        <div class="brand-dot"></div>
+        MultiEmpresas
+      </a>
+      <ul class="menu">
+        <li><a href="/pedidos/dashboard.html">Dashboard</a></li>
+        <li><a href="marketing.html" class="active">Marketing</a></li>
+        <li><a href="#" id="logout" style="color: var(--danger)">Salir</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <div class="container">
+    <div class="page-header">
+        <h1>🚀 Piloto Automático</h1>
+        <p class="subtitle">Configurá las estrategias de IA para vender más sin esfuerzo.</p>
+    </div>
+
+    <div id="empFilterWrap" class="filter-bar">
+        <label style="color:#fff; margin:0; min-width:80px;">Empresa:</label>
+        <select id="empFilter">
+            <option value="">-- Cargar Empresas --</option>
+        </select>
+    </div>
+
+    <form id="marketingForm" class="card">
+        
+        <!-- ESTRATEGIA 1: VECINOS -->
+        <div class="strategy-box box-vecinos">
+            <div class="switch-row">
+                <div class="switch-label">🏠 Radar de Vecinos</div>
+                <label class="toggle">
+                    <input type="checkbox" id="vecinos_activado">
+                    <span class="slider"></span>
+                </label>
+            </div>
+            <p class="desc">Cuando un pedido sale "En Ruta", avisa a los vecinos cercanos (200m) que no compran hace tiempo.</p>
+            
+            <label>Mensaje (usa {cliente} para el nombre):</label>
+            <textarea id="vecinos_mensaje" rows="2">Hola {cliente} 👋, el camión está en tu cuadra. Avisame si te dejo algo!</textarea>
+            
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+                <div>
+                    <label>Radio (metros):</label>
+                    <input type="number" id="vecinos_radio" value="200">
+                </div>
+                <div>
+                    <label>Días sin compra:</label>
+                    <input type="number" id="vecinos_dias" value="7">
+                </div>
+            </div>
+        </div>
+
+        <!-- ESTRATEGIA 2: PREDICTIVO -->
+        <div class="strategy-box box-predictivo">
+            <div class="switch-row">
+                <div class="switch-label">🧠 Mayordomo IA (Predictivo)</div>
+                <label class="toggle">
+                    <input type="checkbox" id="predictivo_activado">
+                    <span class="slider"></span>
+                </label>
+            </div>
+            <p class="desc">Analiza el consumo histórico y envía un mensaje proactivo el día exacto de reposición.</p>
+            
+            <label>Mensaje:</label>
+            <textarea id="predictivo_mensaje" rows="2">Hola {cliente}, calculo que te queda poca agua. ¿Te llevo mañana?</textarea>
+        </div>
+
+        <!-- ESTRATEGIA 3: REFERIDOS CON PREMIO -->
+        <div class="strategy-box box-referidos">
+            <div class="switch-row">
+                <div class="switch-label">🎁 Dominación de Zona (Viral)</div>
+                <label class="toggle">
+                    <input type="checkbox" id="referidos_activado">
+                    <span class="slider"></span>
+                </label>
+            </div>
+            <p class="desc">Cuando entregás un pedido, envía un link único. Si un vecino compra, <b>premiamos al cliente</b>.</p>
+            
+            <!-- PANEL DE RECOMPENSA AGREGADO -->
+            <div style="background:rgba(255,255,255,0.9); padding:15px; border-radius:8px; border:1px dashed #ca8a04; margin-bottom:15px;">
+                <label style="color:#854d0e; margin-top:0; font-weight:800;">🏆 Premio para el cliente que refiere:</label>
+                <div style="display:flex; gap:10px; margin-top:5px;">
+                    <div style="flex:3">
+                        <select id="referidos_producto_id">
+                            <option value="">Cargando productos...</option>
+                        </select>
+                    </div>
+                    <div style="flex:1">
+                        <input type="number" id="referidos_cantidad" placeholder="Cant." value="1" min="1">
+                    </div>
+                </div>
+            </div>
+
+            <label>Mensaje de Invitación (para el vecino):</label>
+            <textarea id="referidos_mensaje" rows="2" placeholder="Gracias {cliente}! Link: {link}"></textarea>
+            
+            <label>Mensaje de Éxito (cuando gana el premio):</label>
+            <textarea id="referidos_exito_mensaje" rows="2" placeholder="¡Ganaste un {producto} gratis! Se agrega a tu próximo pedido."></textarea>
+        </div>
+
+        <button type="submit" class="btn-save">Guardar Configuración</button>
+    </form>
+  </div>
+
+<script>
+    // Utils
+    const $ = s => document.querySelector(s);
+    
+    // Logout
+    document.getElementById('logout').onclick = () => { localStorage.removeItem('token'); window.location.href = '/pedidos/login.html'; };
+
+    // --- Init ---
+    (async () => {
+        try {
+            const token = localStorage.getItem('token');
+            if(!token) return window.location.href = '/pedidos/login.html';
+
+            // 1. Verificar Rol (Super Admin)
+            const meRes = await fetch('/api/me', { headers: { 'Authorization': `Bearer ${token}` } });
+            const meData = await meRes.json();
+            const isSuper = (meData.user?.role || '').toLowerCase() === 'super';
+
+            if (isSuper) {
+                // Mostrar Selector
+                $('#empFilterWrap').style.display = 'flex';
+                
+                // Cargar Lista de Empresas
+                const empRes = await fetch('/api/empresas', { headers: { 'Authorization': `Bearer ${token}` } });
+                const empresas = await empRes.json();
+                
+                if(Array.isArray(empresas)) {
+                    const opts = empresas.map(e => `<option value="${e.id}">${e.nombre}</option>`).join('');
+                    $('#empFilter').innerHTML = opts;
+                    
+                    // Si ya tengo una seleccionada, la uso
+                    if (empresas.length > 0) {
+                        changeEmpresa(empresas[0].id);
+                    }
+                    
+                    // Evento Change
+                    $('#empFilter').addEventListener('change', (e) => changeEmpresa(e.target.value));
+                }
+            } else {
+                // Usuario Normal: Carga su propia config
+                changeEmpresa(null);
+            }
+
+        } catch(e) { console.error(e); }
+    })();
+
+    // Orquestador de cambio de empresa
+    async function changeEmpresa(empId) {
+        await loadProducts(empId); // Cargar productos de esa empresa para el combo
+        await loadConfig(empId);   // Cargar la configuración
+    }
+
+    // Cargar Productos para el Dropdown
+    async function loadProducts(empId) {
+        try {
+            const token = localStorage.getItem('token');
+            const url = empId ? `/api/productos?empresa_id=${empId}` : '/api/productos';
+            
+            const res = await fetch(url, { headers: { 'Authorization': `Bearer ${token}` } });
+            const prods = await res.json();
+            
+            const opts = '<option value="">-- Seleccionar Producto --</option>' + 
+                         (Array.isArray(prods) ? prods.map(p => `<option value="${p.id}">${p.nombre}</option>`).join('') : '');
+            
+            $('#referidos_producto_id').innerHTML = opts;
+        } catch (e) { console.error('Error loading products', e); }
+    }
+
+    // Cargar Configuración
+    async function loadConfig(empresaId) {
+        try {
+            const token = localStorage.getItem('token');
+            const url = empresaId ? `/api/marketing/config?empresa_id=${empresaId}` : '/api/marketing/config';
+
+            const res = await fetch(url, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            
+            if(res.ok) {
+                const data = await res.json();
+                
+                // Helpers
+                const setVal = (id, val, def) => { const el = document.getElementById(id); if(el) el.value = val || def || ''; };
+                const setCheck = (id, val) => { const el = document.getElementById(id); if(el) el.checked = !!val; };
+
+                // Populate Form
+                setCheck('vecinos_activado', data.vecinos_activado);
+                setVal('vecinos_mensaje', data.vecinos_mensaje, 'Hola {cliente} 👋, el camión está en tu cuadra.');
+                setVal('vecinos_radio', data.vecinos_radio, 200);
+                setVal('vecinos_dias', data.vecinos_dias, 7);
+
+                setCheck('predictivo_activado', data.predictivo_activado);
+                setVal('predictivo_mensaje', data.predictivo_mensaje, 'Hola {cliente}, te queda poca agua?');
+
+                setCheck('referidos_activado', data.referidos_activado);
+                setVal('referidos_producto_id', data.referidos_producto_id); // Asigna producto guardado
+                setVal('referidos_cantidad', data.referidos_cantidad, 1);
+                setVal('referidos_mensaje', data.referidos_mensaje, 'Gracias {cliente}! Link: {link}');
+                setVal('referidos_exito_mensaje', data.referidos_exito_mensaje, '¡Ganaste un {producto} gratis!');
+            }
+        } catch(e) { console.error('Error loading config:', e); }
+    }
+
+    // Guardar config
+    document.getElementById('marketingForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const token = localStorage.getItem('token');
+        
+        const empSelect = document.getElementById('empFilter');
+        const selectedEmpId = (empSelect && empSelect.offsetParent !== null) ? empSelect.value : null;
+
+        const config = {
+            empresa_id: selectedEmpId ? Number(selectedEmpId) : undefined,
+
+            vecinos_activado: document.getElementById('vecinos_activado').checked,
+            vecinos_mensaje: document.getElementById('vecinos_mensaje').value,
+            vecinos_radio: parseInt(document.getElementById('vecinos_radio').value),
+            vecinos_dias: parseInt(document.getElementById('vecinos_dias').value),
+            
+            predictivo_activado: document.getElementById('predictivo_activado').checked,
+            predictivo_mensaje: document.getElementById('predictivo_mensaje').value,
+            
+            referidos_activado: document.getElementById('referidos_activado').checked,
+            referidos_producto_id: document.getElementById('referidos_producto_id').value, // ID Producto
+            referidos_cantidad: document.getElementById('referidos_cantidad').value,       // Cantidad
+            referidos_mensaje: document.getElementById('referidos_mensaje').value,
+            referidos_exito_mensaje: document.getElementById('referidos_exito_mensaje').value
+        };
+
+        const res = await fetch('/api/marketing/config', {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify(config)
+        });
+
+        if(res.ok) alert('✅ Estrategias actualizadas correctamente');
+        else alert('❌ Hubo un error al guardar');
+    });
+</script>
+
+</body>
+</html>

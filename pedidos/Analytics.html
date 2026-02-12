@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Analytics - Panel</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<!-- Chart.js -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<style>
+  body {
+    font-family: Arial, sans-serif;
+    margin: 0;
+    background: #f4f6f9;
+  }
+
+  header {
+    background: #1a73e8;
+    color: white;
+    padding: 15px;
+    text-align: center;
+    font-size: 22px;
+    font-weight: bold;
+  }
+
+  .container {
+    padding: 20px;
+    max-width: 1200px;
+    margin: auto;
+  }
+
+  .cards {
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+    margin-bottom: 25px;
+  }
+  .card {
+    flex: 1;
+    min-width: 200px;
+    background: white;
+    padding: 20px;
+    border-radius: 10px;
+    text-align: center;
+    box-shadow: 0 2px 4px rgba(0,0,0,.1);
+  }
+  .card h3 {
+    margin: 0;
+    font-size: 30px;
+    color: #1a73e8;
+  }
+  .card p {
+    margin: 0;
+    font-size: 14px;
+    color: #666;
+  }
+
+  .box {
+    background: white;
+    padding: 20px;
+    margin-top: 25px;
+    border-radius: 10px;
+    box-shadow: 0 2px 4px rgba(0,0,0,.1);
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 15px;
+  }
+  th, td {
+    padding: 8px;
+    border-bottom: 1px solid #ddd;
+  }
+  th {
+    background: #f0f0f0;
+  }
+
+  .filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 15px;
+    margin-bottom: 20px;
+  }
+  .filters label {
+    font-weight: bold;
+    font-size: 14px;
+  }
+  .filters input, .filters select {
+    padding: 6px;
+    border-radius: 5px;
+    border: 1px solid #ccc;
+  }
+
+  .btn {
+    padding: 8px 14px;
+    background: #1a73e8;
+    color: white;
+    border-radius: 6px;
+    cursor: pointer;
+    border: none;
+  }
+  .btn:hover {
+    opacity: .8;
+  }
+</style>
+</head>
+
+<body>
+
+<header>📊 Panel de Analytics</header>
+
+<div class="container">
+
+  <!-- ====================== FILTROS ====================== -->
+  <div class="box">
+    <h2>Filtros</h2>
+
+    <div class="filters">
+      <div>
+        <label>Desde:</label><br>
+        <input type="date" id="fecha-desde">
+      </div>
+
+      <div>
+        <label>Hasta:</label><br>
+        <input type="date" id="fecha-hasta">
+      </div>
+
+      <div>
+        <label>Página:</label><br>
+        <select id="filtro-pagina">
+          <option value="">Todas</option>
+        </select>
+      </div>
+
+      <div>
+        <label>Tipo de usuario:</label><br>
+        <select id="filtro-usuario">
+          <option value="">Todos</option>
+          <option value="empresa">Empresa</option>
+          <option value="chofer">Chofer</option>
+          <option value="desconocido">Desconocido</option>
+        </select>
+      </div>
+
+      <div>
+        <label>Comparar con otro rango:</label><br>
+        <input type="checkbox" id="cmp-toggle" onchange="toggleCompare()">
+      </div>
+
+      <button class="btn" onclick="loadAll()">Aplicar</button>
+    </div>
+
+    <div id="cmp-area" style="display:none; margin-top:20px;">
+      <h3>Rango adicional para comparar</h3>
+      <div class="filters">
+        <div>
+          <label>Desde (cmp):</label><br>
+          <input type="date" id="cmp-desde">
+        </div>
+        <div>
+          <label>Hasta (cmp):</label><br>
+          <input type="date" id="cmp-hasta">
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ====================== CARDS ====================== -->
+  <div class="cards">
+    <div class="card">
+      <h3 id="cardViews">0</h3>
+      <p>Vistas Totales</p>
+    </div>
+    <div class="card">
+      <h3 id="cardUnique">0</h3>
+      <p>Visitantes Únicos</p>
+    </div>
+    <div class="card">
+      <h3 id="cardPages">0</h3>
+      <p>Páginas Monitorizadas</p>
+    </div>
+  </div>
+
+  <!-- ====================== GRÁFICOS ====================== -->
+  <div class="box">
+    <h2>Actividad últimos 30 días</h2>
+    <canvas id="chartTimeseries" height="100"></canvas>
+  </div>
+
+  <div class="box">
+    <h2>Páginas más vistas</h2>
+    <canvas id="chartPages" height="100"></canvas>
+  </div>
+
+  <div class="box">
+    <h2>Dispositivos usados</h2>
+    <canvas id="chartDevices" height="100"></canvas>
+  </div>
+
+  <div class="box">
+    <h2>Tipos de usuario</h2>
+    <canvas id="chartUsers" height="100"></canvas>
+  </div>
+
+  <div class="box">
+    <h2>Mapa de calor por zona</h2>
+    <canvas id="chartHeatmap" height="120"></canvas>
+  </div>
+
+  <!-- ====================== TABLA EVENTOS ====================== -->
+  <div class="box">
+    <h2>Últimos eventos</h2>
+    <button class="btn" onclick="exportCSV()">CSV</button>
+    <button class="btn" onclick="exportExcel()">Excel</button>
+
+    <table id="tableEventos">
+      <thead>
+        <tr>
+          <th>Fecha</th>
+          <th>Página</th>
+          <th>Método</th>
+          <th>Usuario</th>
+          <th>Dispositivo</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+</div>
+
+<script>
+const token = localStorage.getItem("token") || "";
+
+async function api(url) {
+  const res = await fetch(url, {
+    headers: { "Authorization": "Bearer " + token }
+  });
+  return res.json();
+}
+
+let chartTime, chartPages, chartDevices, chartUsers, chartHeatmap;
+
+/* ================================
+   CARGA PRINCIPAL
+================================ */
+
+async function loadAll() {
+  const summary = await api("/api/analytics/summary");
+
+  document.getElementById("cardViews").textContent = summary.totales.views;
+  document.getElementById("cardUnique").textContent = summary.totales.unique_visitors;
+  document.getElementById("cardPages").textContent = summary.topPages.length;
+
+  await loadPageFilter();
+
+  const timeseries = await api("/api/analytics/timeseries?days=30");
+  drawTimeseries(timeseries.data);
+
+  const top = await api("/api/analytics/top-pages?limit=10");
+  drawPages(top.data);
+
+  const devices = await api("/api/analytics/devices");
+  drawDevices(devices.data);
+
+  const users = await api("/api/analytics/users");
+  drawUsers(users.data);
+
+  drawHeatmap();
+
+  fillEvents(summary.eventos);
+}
+
+/* ================================
+   FILTRO DE PÁGINAS
+================================ */
+async function loadPageFilter() {
+  const top = await api("/api/analytics/top-pages?limit=200");
+  const sel = document.getElementById("filtro-pagina");
+  sel.innerHTML = '<option value="">Todas</option>';
+
+  top.data.forEach(p => {
+    const op = document.createElement("option");
+    op.value = p.path;
+    op.textContent = p.path;
+    sel.appendChild(op);
+  });
+}
+
+/* ================================
+   COMPARACIÓN DE RANGOS
+================================ */
+function toggleCompare() {
+  document.getElementById("cmp-area").style.display =
+    document.getElementById("cmp-toggle").checked ? "block" : "none";
+}
+
+async function loadComparison(chart) {
+  const from = document.getElementById("cmp-desde").value;
+  const to = document.getElementById("cmp-hasta").value;
+  if (!from || !to) return;
+
+  const cmp = await api(`/api/analytics/timeseries-range?from=${from}&to=${to}`);
+
+  chart.data.datasets.push({
+    label: "Comparación",
+    data: cmp.data.map(r => r.views),
+    borderWidth: 2,
+    borderDash: [5, 5]
+  });
+
+  chart.update();
+}
+
+/* ================================
+   GRÁFICOS
+================================ */
+
+function drawTimeseries(list) {
+  const ctx = document.getElementById("chartTimeseries").getContext("2d");
+  if (chartTime) chartTime.destroy();
+
+  chartTime = new Chart(ctx, {
+    type: "line",
+    data: {
+      labels: list.map(r => r.day),
+      datasets: [{
+        label: "Visitas",
+        data: list.map(r => r.views),
+        borderWidth: 2
+      }]
+    }
+  });
+
+  loadComparison(chartTime);
+}
+
+function drawPages(list) {
+  const ctx = document.getElementById("chartPages").getContext("2d");
+  if (chartPages) chartPages.destroy();
+
+  chartPages = new Chart(ctx, {
+    type: "bar",
+    data: {
+      labels: list.map(r => r.path),
+      datasets: [{
+        label: "Vistas",
+        data: list.map(r => r.views),
+        borderWidth: 1
+      }]
+    }
+  });
+}
+
+function drawDevices(list) {
+  const ctx = document.getElementById("chartDevices").getContext("2d");
+  if (chartDevices) chartDevices.destroy();
+
+  chartDevices = new Chart(ctx, {
+    type: "doughnut",
+    data: {
+      labels: list.map(r => r.dispositivo),
+      datasets: [{
+        data: list.map(r => r.total)
+      }]
+    }
+  });
+}
+
+function drawUsers(list) {
+  const ctx = document.getElementById("chartUsers").getContext("2d");
+  if (chartUsers) chartUsers.destroy();
+
+  chartUsers = new Chart(ctx, {
+    type: "bar",
+    data: {
+      labels: list.map(r => r.user_tipo),
+      datasets: [{
+        label: "Usuarios",
+        data: list.map(r => r.total)
+      }]
+    }
+  });
+}
+
+async function drawHeatmap() {
+  const ctx = document.getElementById("chartHeatmap").getContext("2d");
+  const zonas = await api("/api/analytics/zonas");
+
+  if (chartHeatmap) chartHeatmap.destroy();
+
+  chartHeatmap = new Chart(ctx, {
+    type: "bar",
+    data: {
+      labels: zonas.data.map(r => r.zona),
+      datasets: [{
+        label: "Visitas",
+        data: zonas.data.map(r => r.visitas),
+        backgroundColor: zonas.data.map(() => "rgba(255, 99, 132, 0.4)")
+      }]
+    },
+    options: {
+      indexAxis: "y"
+    }
+  });
+}
+
+/* ================================
+   TABLA DE EVENTOS
+================================ */
+function fillEvents(list) {
+  const tbody = document.querySelector("#tableEventos tbody");
+  tbody.innerHTML = "";
+
+  list.forEach(e => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${e.timestamp}</td>
+      <td>${e.path}</td>
+      <td>${e.metodo}</td>
+      <td>${e.user_tipo}</td>
+      <td>${e.dispositivo}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+/* ================================
+   EXPORTAR CSV / EXCEL
+================================ */
+function exportCSV() {
+  const rows = [...document.querySelectorAll("#tableEventos tr")]
+    .map(tr => [...tr.children].map(td => td.innerText).join(","));
+
+  const blob = new Blob([rows.join("\n")], { type: "text/csv" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "analytics_eventos.csv";
+  a.click();
+}
+
+function exportExcel() {
+  const rows = [...document.querySelectorAll("#tableEventos tr")].map(
+    tr => [...tr.children].map(td => td.innerText)
+  );
+
+  let xml =
+    '<?xml version="1.0"?><?mso-application progid="Excel.Sheet"?>' +
+    '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet">' +
+    '<Worksheet ss:Name="Eventos"><Table>';
+
+  rows.forEach(r => {
+    xml += "<Row>";
+    r.forEach(c => xml += `<Cell><Data ss:Type="String">${c}</Data></Cell>`);
+    xml += "</Row>";
+  });
+
+  xml += "</Table></Worksheet></Workbook>";
+
+  const blob = new Blob([xml], { type: "application/vnd.ms-excel" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "analytics_eventos.xls";
+  a.click();
+}
+
+loadAll();
+</script>
+
+</body>
+</html>

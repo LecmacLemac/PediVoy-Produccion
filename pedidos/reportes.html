@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Reportes – MultiEmpresas</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  <style>
+    :root { --brand:#0ea5e9; }
+    body{max-width:1280px;margin:auto}
+    header .brand{display:flex;gap:.6rem;align-items:center}
+    .card{border:1px solid #eaeaea;padding:1rem;border-radius:12px}
+    .grid2{display:grid;gap:1rem;grid-template-columns:1fr 1fr}
+    @media (max-width: 980px){ .grid2{grid-template-columns:1fr} }
+    .pill{display:inline-flex;gap:.35rem;align-items:center;padding:.15rem .6rem;border-radius:999px;background:#eef6ff;color:#075985}
+    .wrap{white-space:normal;max-width:320px}
+    table{font-size:.95rem}
+    thead th{white-space:nowrap}
+    td,th{vertical-align:top}
+    .wpp-link{display:inline-flex;align-items:center;gap:.25rem;text-decoration:none}
+    .wpp-link svg{width:18px;height:18px}
+    .row{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}
+  </style>
+</head>
+<body>
+  <header>
+    <nav>
+      <ul>
+        <li class="brand">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 2C8 2 6 6 6 9 c0 4 6 13 6 13s6-9 6-13c0-3-2-7-6-7Zm0 9a3 3 0 1 1 0-6 3 3 0 0 1 0 6Z" fill="var(--brand)"/></svg>
+          <strong>Reportes</strong>
+        </li>
+      </ul>
+      <ul>
+        <li><a href="dashboard.html">Dashboard</a></li>
+        <li><a href="productos.html">Productos</a></li>
+        <li><a href="repartidores.html">Repartidores</a></li>
+        <li><a href="zonas.html">Zonas</a></li>
+        <li><a href="gastos.html">Gastos</a></li>
+        <li><a href="stock.html">Stock</a></li>
+        <li><a href="reportes.html">Reportes</a></li>
+        <li><a href="estadisticas.html" aria-current="page">Estadísticas</a></li>
+        <li><a href="admin.html">Admin</a></li>
+        <li><a href="login.html" id="logout">Salir</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <main>
+    <!-- Filtros -->
+    <section class="card">
+      <h3>Filtros</h3>
+      <div class="row" style="justify-content:space-between">
+        <div class="row">
+          <label id="rowEmp" style="display:none">Empresa
+            <select id="empFilter"></select>
+          </label>
+          <label>Zona
+            <select id="zonaFilter"><option value="">Todas</option></select>
+          </label>
+          <label>Repartidor
+            <select id="repFilter"><option value="">Todos</option></select>
+          </label>
+          <label>Pago
+            <select id="payFilter">
+              <option value="">Todos</option>
+              <option value="efectivo">Efectivo</option>
+              <option value="transferencia">Transferencia</option>
+            </select>
+          </label>
+          <label>Desde
+            <input type="date" id="fromFilter" />
+          </label>
+          <label>Hasta
+            <input type="date" id="toFilter" />
+          </label>
+        </div>
+        <div class="row">
+          <button id="btnRef">Aplicar</button>
+          <button id="btnCSV" class="secondary">Descargar CSV</button>
+          <span class="pill"><span id="count">0</span> entregas</span>
+        </div>
+      </div>
+      <small class="muted">Este reporte trae sólo pedidos con estado <b>entregado</b> desde el backend (<code>/api/reportes/entregados</code>).</small>
+    </section>
+
+    <!-- KPIs -->
+    <section class="grid2" style="margin-top:1rem">
+      <article class="card">
+        <header><small>Entregas</small></header>
+        <h2 id="kpiEntregas">0</h2>
+        <span>📦</span>
+      </article>
+      <article class="card">
+        <header><small>Monto total</small></header>
+        <h2 id="kpiMonto">$ 0</h2>
+        <span>🧮</span>
+      </article>
+    </section>
+
+    <!-- Tabla -->
+    <section class="card" style="margin-top:1rem">
+      <h3>Entregas</h3>
+      <div style="overflow:auto">
+        <table>
+          <thead>
+            <tr>
+              <th>WA</th>
+              <th>ID</th>
+              <th>Fecha</th>
+              <th>Cliente</th>
+              <th>Teléfono</th>
+              <th>Dirección</th>
+              <th>Zona</th>
+              <th>Repartidor</th>
+              <th>Pago</th>
+              <th>Cant. Entregada</th>
+              <th>Monto</th>              
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const token = localStorage.getItem('token');
+    if (!token) location.href = 'login.html';
+
+    const $ = s => document.querySelector(s);
+    const rows = $('#rows');
+    const count = $('#count');
+
+    const rowEmp = $('#rowEmp');
+    const empFilter = $('#empFilter');
+    const zonaFilter = $('#zonaFilter');
+    const repFilter = $('#repFilter');
+    const payFilter = $('#payFilter');
+    const fromFilter = $('#fromFilter');
+    const toFilter = $('#toFilter');
+
+    const btnRef = $('#btnRef');
+    const btnCSV = $('#btnCSV');
+
+    const kpiEntregas = $('#kpiEntregas');
+    const kpiMonto = $('#kpiMonto');
+
+    $('#logout').onclick = () => { localStorage.removeItem('token'); location.href = 'login.html'; };
+
+    let isSuper = false;
+    let zonas = [];
+    let choferes = [];
+    let data = [];
+
+    const money = (n) => new Intl.NumberFormat('es-AR',{ style:'currency', currency:'ARS', maximumFractionDigits:0 }).format(Number(n)||0);
+    const fmtDate = (iso) => (iso||'').slice(0,10);
+    const esc = (s) => String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const pagoLabel = (mp) => {
+      const m = String(mp||'').toLowerCase();
+      if (!m) return '-';
+      if (m.startsWith('trans')) return 'Transferencia';
+      if (m.startsWith('efect')) return 'Efectivo';
+      return m.charAt(0).toUpperCase() + m.slice(1);
+    };
+    const normalizePago = (mp) => {
+      const m = String(mp||'').toLowerCase();
+      if (m.startsWith('trans')) return 'transferencia';
+      if (m.startsWith('efect')) return 'efectivo';
+      return m || '';
+    };
+
+    (async function boot(){
+      try{
+        const me = await whoAmI();
+        await setupEmpresas(me);
+        setDefaultDates();
+        await loadZonas();
+        await loadChoferes();
+        await loadReport();
+        btnRef.onclick = () => loadReport();
+        btnCSV.onclick = () => downloadCSV();
+        [zonaFilter, repFilter, payFilter, fromFilter, toFilter, empFilter].forEach(el => el.onchange = () => loadReport());
+      }catch(e){
+        alert('Error inicializando: '+(e.message||e));
+        location.href = 'login.html';
+      }
+    })();
+
+    async function whoAmI(){
+      const r = await fetch('/api/me', { headers:{ Authorization:'Bearer '+token }});
+      const j = await r.json();
+      isSuper = String(j?.user?.role||'').toLowerCase()==='super';
+      return j?.user;
+    }
+
+    async function setupEmpresas(me){
+      const r = await fetch('/api/empresas', { headers:{ Authorization:'Bearer '+token }});
+      const list = await r.json();
+      if (isSuper){
+        rowEmp.style.display = '';
+        empFilter.innerHTML = list.map(e => `<option value="${e.id}">${e.id} — ${e.nombre}</option>`).join('');
+        empFilter.value = String(me.empresa_id);
+      } else {
+        rowEmp.style.display = 'none';
+        empFilter.innerHTML = `<option value="${me.empresa_id}">${me.empresa_id}</option>`;
+      }
+    }
+
+    function empresaQS(){
+      return isSuper && empFilter.value ? `?empresa_id=${encodeURIComponent(empFilter.value)}` : '';
+    }
+
+    function setDefaultDates(){
+      const to = new Date();
+      const from = new Date(); from.setDate(to.getDate()-30);
+      toFilter.value = to.toISOString().slice(0,10);
+      fromFilter.value = from.toISOString().slice(0,10);
+    }
+
+    async function loadZonas(){
+      const r = await fetch('/api/zonas'+empresaQS(), { headers:{ Authorization:'Bearer '+token }});
+      zonas = await r.json();
+      zonaFilter.innerHTML = '<option value="">Todas</option>' + (zonas||[]).map(z => `<option value="${z.id}">${z.nombre}</option>`).join('');
+    }
+
+    async function loadChoferes(){
+      const r = await fetch('/api/choferes'+empresaQS(), { headers:{ Authorization:'Bearer '+token }});
+      choferes = await r.json();
+      repFilter.innerHTML = '<option value="">Todos</option>' + (choferes||[]).map(c => `<option value="${c.id}">${c.nombre}</option>`).join('');
+    }
+
+    async function loadReport(){
+      const params = new URLSearchParams();
+      const from = fromFilter.value; if (from) params.set('from', from);
+      const to = toFilter.value; if (to) params.set('to', to);
+      const zid = Number(zonaFilter.value)||0; if (zid) params.set('zona_id', String(zid));
+      const rid = Number(repFilter.value)||0; if (rid) params.set('chofer_id', String(rid));
+      // mandamos pay como hint (el backend actual puede ignorarlo)
+      const pay = String(payFilter.value||''); if (pay) params.set('metodo_pago', pay);
+
+      const qsEmpresa = empresaQS();
+      const url = '/api/reportes/entregados' + (qsEmpresa ? (qsEmpresa + (params.toString() ? '&'+params.toString() : '')) : (params.toString()?('?'+params.toString()):''));
+      const r = await fetch(url, { headers:{ Authorization:'Bearer '+token }});
+      data = await r.json();
+      render();
+    }
+
+    function nombreZona(id){
+      const z = (zonas||[]).find(x => Number(x.id)===Number(id));
+      return z ? z.nombre : '-';
+    }
+    function nombreChofer(id, fallback){
+      const c = (choferes||[]).find(x => Number(x.id)===Number(id));
+      return c?.nombre || fallback || '-';
+    }
+
+    function digitsOnly(v){ return String(v||'').replace(/\D+/g, ''); }
+    function toWaNumber(raw){
+      // heurística simple AR: si tiene menos de 11 dígitos, prefijo 54
+      let d = digitsOnly(raw);
+      if (!d) return '';
+      if (d.startsWith('549')) d = d; // ok
+      else if (d.startsWith('54')) d = d;
+      else if (d.length <= 10) d = '54' + d;
+      return d;
+    }
+
+    function render(){
+      // 1) filtrado por pago (cliente pidió)
+      const paySel = String(payFilter.value||'');
+      let list = Array.isArray(data) ? data.slice() : [];
+      if (paySel) {
+        list = list.filter(p => normalizePago(p.metodo_pago) === paySel);
+      }
+
+      // 2) KPIs y contenido
+      count.textContent = String((list||[]).length);
+      const totalMonto = (list||[]).reduce((acc,p)=>acc + Number(p.monto||0), 0);
+      kpiEntregas.textContent = String((list||[]).length);
+      kpiMonto.textContent = money(totalMonto);
+
+      rows.innerHTML = (list||[]).map(p => {
+        const tel = esc(p.telefono||'');
+        const wa = toWaNumber(p.telefono||'');
+        const msg = encodeURIComponent(`Hola ${p.cliente||''}, sobre tu pedido #${p.id}`.trim());
+        const waHref = wa ? `https://wa.me/${wa}?text=${msg}` : '';
+        return `
+          <tr>
+            <td>
+              ${waHref ? `<a class="wpp-link" href="${waHref}" target="_blank" rel="noopener" title="Escribir por WhatsApp">
+                <svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                  <path fill="currentColor" d="M16 .5C7.44.5.5 7.44.5 16c0 2.74.73 5.3 2 7.52L.5 31.5l8.22-2c2.15 1.18 4.63 1.85 7.28 1.85 8.56 0 15.5-6.94 15.5-15.5S24.56.5 16 .5Zm0 28c-2.35 0-4.52-.68-6.35-1.85l-.45-.28-4.84 1.18 1.3-4.71-.29-.48A12.5 12.5 0 1 1 28.5 16 12.5 12.5 0 0 1 16 28.5Zm7.22-9.42c-.4-.2-2.36-1.16-2.73-1.3-.37-.13-.64-.2-.9.2-.27.4-1.04 1.3-1.27 1.57-.23.27-.47.3-.87.1-.4-.2-1.67-.61-3.18-1.95-1.18-1.06-1.98-2.37-2.21-2.77-.23-.4-.02-.62.18-.82.18-.18.4-.47.61-.7.2-.24.27-.4.4-.67.13-.27.07-.5-.03-.7-.1-.2-.9-2.17-1.22-2.97-.32-.8-.64-.7-.9-.7h-.77c-.27 0-.7.1-1.07.5-.37.4-1.4 1.37-1.4 3.34 0 1.97 1.44 3.88 1.64 4.16.2.27 2.83 4.32 6.85 6.04.96.42 1.7.66 2.28.85.96.3 1.83.26 2.51.16.77-.12 2.36-.96 2.7-1.89.33-.93.33-1.74.23-1.9-.1-.16-.36-.27-.76-.46Z"/>
+                </svg>
+              </a>` : ''}
+            <td>${p.id}</td>
+            <td>${fmtDate(p.fecha)}</td>
+            <td class="wrap">${esc(p.cliente||'')}</td>
+            <td>${tel}</td>
+            <td class="wrap">${esc(p.direccion||'')}</td>
+            <td>${esc(nombreZona(p.zona_id))}</td>
+            <td>${esc(p.chofer_nombre || nombreChofer(p.chofer_id, '-'))}</td>
+            <td>${esc(pagoLabel(p.metodo_pago))}</td>
+            <td>${Number(p.cantidad_entregada)||0}</td>
+            <td>${money(p.monto)}</td>
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    function downloadCSV(){
+      const cols = ['id','fecha','cliente','telefono','direccion','zona','chofer','metodo_pago','cantidad_entregada','monto'];
+      const lines = [cols.join(';')];
+
+      // aplicar el mismo filtro de pago al CSV
+      const paySel = String(payFilter.value||'');
+      const list = (Array.isArray(data) ? data : []).filter(p => !paySel || normalizePago(p.metodo_pago) === paySel);
+
+      for (const p of (list||[])){
+        const row = [
+          p.id,
+          fmtDate(p.fecha),
+          (p.cliente||'').replace(/;/g,','),
+          (p.telefono||'').replace(/;/g,','),
+          (p.direccion||'').replace(/;/g,','),
+          nombreZona(p.zona_id),
+          p.chofer_nombre || nombreChofer(p.chofer_id, '-'),
+          pagoLabel(p.metodo_pago),
+          Number(p.cantidad_entregada)||0,
+          Number(p.monto)||0
+        ];
+        lines.push(row.map(v => String(v ?? '').replace(/\r?\n/g,' ')).join(';'));
+      }
+      const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'reporte_entregados.csv';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    }
+  </script>
+</body>
+</html>

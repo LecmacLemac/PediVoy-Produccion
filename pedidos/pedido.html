@@ -1,0 +1,766 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Estado del Pedido</title>
+  <meta name="color-scheme" content="light only">
+  <!-- Pico CSS base -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  
+  <style>
+    :root {
+      --brand: #0ea5e9;
+      --brand-hover: #0284c7;
+      --ink: #0f172a;
+      --muted: #64748b;
+      --surface: #ffffff;
+      --bg: #0f172a;
+      --border: #e2e8f0;
+      --ok: #10b981;
+      --warn: #f59e0b;
+      --err: #ef4444;
+      --shadow-soft: 0 18px 45px rgba(15, 23, 42, 0.45);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: radial-gradient(circle at top, #0ea5e9 0, #0f172a 40%, #020617 100%);
+      color: var(--ink);
+      display: flex;
+      flex-direction: column;
+    }
+
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      background: linear-gradient(to bottom, rgba(15, 23, 42, 0.92), transparent);
+      padding: 0.75rem 1.25rem 0.5rem;
+    }
+
+    header .container {
+      max-width: 720px;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.6rem;
+      color: #e5e7eb;
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 0.95rem;
+    }
+
+    .brand svg {
+      width: 24px;
+      height: 24px;
+    }
+
+    .brand span {
+      white-space: nowrap;
+    }
+
+    main {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1.5rem 1rem 2rem;
+    }
+
+    .status-card {
+      position: relative;
+      max-width: 720px;
+      width: 100%;
+      background:
+        radial-gradient(circle at top left, rgba(14, 165, 233, 0.18), transparent 55%)
+        var(--surface);
+      border-radius: 1.5rem;
+      padding: 1.8rem 1.6rem 1.6rem;
+      box-shadow: var(--shadow-soft);
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      overflow: hidden;
+    }
+
+    @media (min-width: 640px) {
+      .status-card {
+        padding: 2rem 2.25rem 1.9rem;
+        border-radius: 1.75rem;
+      }
+    }
+
+    .status-icon {
+      width: 72px;
+      height: 72px;
+      border-radius: 999px;
+      border: 3px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 1rem;
+      background: radial-gradient(circle at 10% 0, #eff6ff, #e0f2fe, #f9fafb);
+      color: var(--brand);
+      box-shadow: 0 10px 30px rgba(15, 23, 42, 0.25);
+    }
+
+    .status-icon span {
+      font-size: 2rem;
+    }
+
+    h1 {
+      margin: 0 0 0.35rem 0;
+      font-size: 1.6rem;
+      color: #0f172a;
+      letter-spacing: -0.02em;
+    }
+
+    .subtitle {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+
+    .stepper {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 1.8rem;
+      margin-bottom: 2rem;
+      position: relative;
+    }
+
+    .stepper::before {
+      content: '';
+      position: absolute;
+      top: 16px;
+      left: 10%;
+      right: 10%;
+      height: 2px;
+      background: rgba(148, 163, 184, 0.5);
+      z-index: 0;
+    }
+
+    .step {
+      position: relative;
+      z-index: 1;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.4rem;
+    }
+
+    .dot {
+      width: 32px;
+      height: 32px;
+      border-radius: 999px;
+      border: 3px solid #cbd5e1;
+      background: #ffffff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.8rem;
+      font-weight: 700;
+      color: var(--muted);
+      transition: all 0.25s ease;
+    }
+
+    .label {
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    .step.active .dot {
+      border-color: var(--brand);
+      background: #eff6ff;
+      box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.22);
+      color: var(--brand);
+    }
+
+    .step.active .label {
+      color: var(--brand);
+    }
+
+    .step.completed .dot {
+      border: none;
+      background: var(--ok);
+      color: #f9fafb;
+      box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.26);
+    }
+
+    .step.completed .label {
+      color: var(--ok);
+    }
+
+    .order-details {
+      background: rgba(248, 250, 252, 0.98);
+      border-radius: 0.9rem;
+      padding: 0.95rem 1rem;
+      border: 1px solid rgba(226, 232, 240, 0.9);
+      margin-bottom: 1.4rem;
+    }
+
+    .detail-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 0.75rem;
+      font-size: 0.9rem;
+      margin-bottom: 0.25rem;
+    }
+
+    .detail-row:last-child {
+      margin-bottom: 0;
+    }
+
+    .detail-label {
+      font-weight: 600;
+      color: #475569;
+    }
+
+    .detail-value {
+      text-align: right;
+      color: #0f172a;
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      margin-top: 0.5rem;
+    }
+
+    button.btn-whatsapp,
+    button.btn-back {
+      border-radius: 999px;
+      padding: 0.7rem 1.1rem;
+      font-size: 0.95rem;
+      font-weight: 500;
+      border: none;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.45rem;
+      transition:
+        transform 0.12s ease,
+        box-shadow 0.18s ease,
+        background-color 0.18s ease,
+        color 0.18s ease,
+        border-color 0.18s ease;
+      outline: none;
+    }
+
+    button.btn-whatsapp:active,
+    button.btn-back:active {
+      transform: translateY(1px) scale(0.99);
+    }
+
+    .btn-whatsapp {
+      background: #22c55e;
+      color: #f9fafb;
+      box-shadow: 0 10px 25px rgba(22, 163, 74, 0.4);
+    }
+
+    .btn-whatsapp:hover {
+      background: #16a34a;
+    }
+
+    .btn-back {
+      background: transparent;
+      color: #e5e7eb;
+      border: 1px solid rgba(148, 163, 184, 0.9);
+    }
+
+    .btn-back:hover {
+      background: rgba(15, 23, 42, 0.8);
+      border-color: var(--brand);
+    }
+
+    .confetti {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      overflow: hidden;
+      z-index: 0;
+    }
+
+    .confetti i {
+      position: absolute;
+      width: 8px;
+      height: 12px;
+      opacity: 0;
+      border-radius: 2px;
+      animation: fall 2.4s ease-out forwards;
+    }
+
+    @keyframes fall {
+      0% {
+        transform: translateY(-24px) rotate(0deg);
+        opacity: 1;
+      }
+      100% {
+        transform: translateY(360px) rotate(720deg);
+        opacity: 0;
+      }
+    }
+
+    @media (max-width: 480px) {
+      .status-card {
+        padding: 1.4rem 1.1rem 1.3rem;
+      }
+
+      .status-icon {
+        width: 64px;
+        height: 64px;
+        margin-bottom: 0.8rem;
+      }
+
+      h1 {
+        font-size: 1.35rem;
+      }
+
+      .stepper {
+        margin-top: 1.4rem;
+        margin-bottom: 1.6rem;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Sonidos de notificación -->
+  <audio id="snd-nuevo" src="sounds/nuevo.mp3"></audio>
+  <audio id="snd-enruta" src="sounds/en_ruta.mp3"></audio>
+  <audio id="snd-entregado" src="sounds/entregado.mp3"></audio>
+
+  <header>
+    <div class="container">
+      <a href="index.html" class="brand">
+        <svg viewBox="0 0 24 24" fill="none"
+             xmlns="http://www.w3.org/2000/svg"
+             stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+        </svg>
+        <span id="headerTitle">Mi Pedido</span>
+      </a>
+      <div style="font-size: 0.85rem; color: var(--muted); font-weight: 600;"
+           id="orderIdDisplay">
+        Cargando...
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <div class="status-card" id="panel">
+      <div class="confetti" id="confetti"></div>
+
+      <div class="status-icon" id="statusIcon">
+        <span id="iconContent">⏳</span>
+      </div>
+
+      <h1 id="statusTitle">Buscando pedido...</h1>
+      <p class="subtitle" id="statusDesc">Por favor aguarde un momento.</p>
+
+      <div class="stepper">
+        <div class="step" id="step1">
+          <div class="dot">1</div>
+          <span class="label">Recibido</span>
+        </div>
+        <div class="step" id="step2">
+          <div class="dot">2</div>
+          <span class="label">En Camino</span>
+        </div>
+        <div class="step" id="step3">
+          <div class="dot">3</div>
+          <span class="label">Entregado</span>
+        </div>
+      </div>
+
+      <div class="order-details" id="orderDetails" style="display: none;">
+        <div class="detail-row">
+          <span class="detail-label">Cliente:</span>
+          <span class="detail-value" id="valCliente">-</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">Dirección:</span>
+          <span class="detail-value" id="valDireccion">-</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">Monto:</span>
+          <span class="detail-value" id="valMonto">-</span>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button id="btnWhats" class="btn-whatsapp" type="button">
+          <span style="font-size: 1.2rem;">💬</span>
+          <span>Consultar por WhatsApp</span>
+        </button>
+        <button class="btn-back" type="button" onclick="location.href='index.html'">
+          ← Volver al inicio
+        </button>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    const qs = (name) => new URLSearchParams(window.location.search).get(name);
+    const $ = (id) => document.getElementById(id);
+
+    let EMPRESA_ID = 1;
+    let EMPRESA_TEL = '';
+    let CHOFER_WA = '';
+    let currentStatusKey = '';
+    let pollInterval = null;
+
+    async function init() {
+      // 1) Config de empresa
+      try {
+        const res = await fetch('/public/config');
+        if (res.ok) {
+          const cfg = await res.json();
+          EMPRESA_ID = Number(cfg.empresa_id) || 1;
+          if (cfg.nombre_empresa) {
+            $('headerTitle').textContent = cfg.nombre_empresa;
+          }
+          fetchEmpresaInfo(EMPRESA_ID);
+        }
+      } catch (err) {
+        console.error('Error config:', err);
+      }
+
+      // 2) Resolver ID del pedido
+      const rawOrder = window.sessionStorage.getItem('last_order');
+      let sessionData = {};
+      try {
+        sessionData = JSON.parse(rawOrder || '{}');
+      } catch {}
+
+      let pedidoId = Number(qs('id') || sessionData.id);
+      const telefonoQuery = qs('telefono');
+
+      // Caso especial: viene sólo teléfono
+      if (!pedidoId && telefonoQuery) {
+        $('statusTitle').textContent = 'Buscando tu pedido...';
+        try {
+          const res = await fetch(
+            `/public/ultimo-pedido?empresa_id=${EMPRESA_ID}&telefono=${telefonoQuery}`
+          );
+          if (res.ok) {
+            const data = await res.json();
+            if (data && data.pedido && data.pedido.id) {
+              pedidoId = Number(data.pedido.id);
+              const newUrl = new URL(window.location.href);
+              newUrl.searchParams.set('id', pedidoId);
+              window.history.replaceState({}, '', newUrl);
+            }
+          }
+        } catch (err) {
+          console.error('Error buscando por tel:', err);
+        }
+      }
+
+      // 3) Validación final
+      if (!pedidoId) {
+        renderState(
+          'error',
+          'Pedido no encontrado',
+          'No pudimos localizar un pedido reciente. Verificá el enlace.'
+        );
+        return;
+      }
+
+      $('orderIdDisplay').textContent = ``;
+
+      // Cargar info de chofer y empezar a escuchar cambios
+      loadChoferData(pedidoId);
+      startPolling(pedidoId);
+    }
+
+    // Normaliza teléfono a formato WhatsApp argentino (549…)
+    function normalizeWhatsNumber(raw) {
+      let s = (raw || '').toString().replace(/\D/g, '');
+      if (!s) return '';
+      if (s.length === 13 && s.startsWith('549')) return s;
+      if (s.length === 12 && s.startsWith('54')) return '549' + s.substring(2);
+      if (s.length === 11 && s.startsWith('0')) return '549' + s.substring(1);
+      if (s.length === 10) return '549' + s;
+      return s;
+    }
+
+    async function fetchEmpresaInfo(id) {
+      try {
+        const res = await fetch(`/public/empresa?empresa_id=${id}`);
+        if (!res.ok) return;
+        const empresa = await res.json();
+        if (empresa.telefono) {
+          EMPRESA_TEL = normalizeWhatsNumber(empresa.telefono);
+        }
+      } catch (err) {
+        console.error('Error fetchEmpresaInfo', err);
+      }
+    }
+
+    async function loadChoferData(pedidoId) {
+      try {
+        const res = await fetch(`/public/pedido-chofer-wpp?pedido_id=${pedidoId}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.ok && (data.chofer?.wa || data.chofer?.telefono)) {
+          CHOFER_WA = data.chofer.wa || data.chofer.telefono;
+        }
+      } catch (err) {
+        console.error('Error loadChoferData', err);
+      }
+    }
+
+    async function fetchEstado(id) {
+      try {
+        const res = await fetch(`/public/pedido-estado?id=${id}`, { cache: 'no-store' });
+        if (!res.ok) return null;
+        return await res.json();
+      } catch {
+        return null;
+      }
+    }
+
+    function mapBackendState(dbState) {
+      const s = String(dbState || '').trim().toLowerCase();
+
+      if (s === 'pendiente') {
+        return {
+          k: 'recibido',
+          t: 'Pedido confirmado',
+          d: 'Estamos preparando tu pedido.'
+        };
+      }
+
+      if (s === 'en_ruta' || s === 'en_camino') {
+        return {
+          k: 'en_camino',
+          t: '¡En camino!',
+          d: 'El repartidor se dirige a tu domicilio.'
+        };
+      }
+
+      if (s === 'entregado') {
+        return {
+          k: 'entregado',
+          t: '¡Disfrutalo!',
+          d: 'El pedido fue entregado correctamente.'
+        };
+      }
+
+      if (s === 'cancelado') {
+        return {
+          k: 'cancelado',
+          t: 'Cancelado',
+          d: 'El pedido fue cancelado.'
+        };
+      }
+
+      return {
+        k: 'recibido',
+        t: 'Procesando...',
+        d: 'Aguarde un momento.'
+      };
+    }
+
+    function renderState(key, title, desc, extraData = null) {
+      if (currentStatusKey === key) {
+        if (extraData) {
+          updateDetails(extraData);
+        }
+        return;
+      }
+
+      currentStatusKey = key;
+
+      const iconDiv = $('statusIcon');
+      const contentSpan = $('iconContent');
+
+      iconDiv.className = 'status-icon';
+      iconDiv.style.borderColor = 'var(--border)';
+      iconDiv.style.color = 'var(--brand)';
+      $('confetti').innerHTML = '';
+
+      const setStep = (n, state) => {
+        const el = document.getElementById(`step${n}`);
+        el.className = 'step';
+        if (state) el.classList.add(state);
+      };
+
+      let soundId = null;
+
+      switch (key) {
+        case 'recibido':
+          contentSpan.textContent = '⏳';
+          iconDiv.style.borderColor = 'var(--warn)';
+          iconDiv.style.color = 'var(--warn)';
+          setStep(1, 'active');
+          setStep(2, '');
+          setStep(3, '');
+          soundId = 'snd-nuevo';
+          break;
+
+        case 'en_camino':
+          contentSpan.textContent = '🚚';
+          iconDiv.style.borderColor = 'var(--brand)';
+          iconDiv.style.color = 'var(--brand)';
+          setStep(1, 'completed');
+          setStep(2, 'active');
+          setStep(3, '');
+          soundId = 'snd-enruta';
+          break;
+
+        case 'entregado':
+          contentSpan.textContent = '🎉';
+          iconDiv.style.borderColor = 'var(--ok)';
+          iconDiv.style.color = 'var(--ok)';
+          setStep(1, 'completed');
+          setStep(2, 'completed');
+          setStep(3, 'completed');
+          soundId = 'snd-entregado';
+          spawnConfetti();
+          break;
+
+        case 'cancelado':
+          contentSpan.textContent = '❌';
+          iconDiv.style.borderColor = 'var(--err)';
+          iconDiv.style.color = 'var(--err)';
+          setStep(1, '');
+          setStep(2, '');
+          setStep(3, '');
+          break;
+
+        case 'error':
+        default:
+          contentSpan.textContent = '🔍';
+          setStep(1, '');
+          setStep(2, '');
+          setStep(3, '');
+          break;
+      }
+
+      $('statusTitle').textContent = title;
+      $('statusDesc').textContent = desc;
+
+      if (extraData) {
+        updateDetails(extraData);
+      }
+
+      if (soundId) {
+        playSound(soundId);
+      }
+    }
+
+    function updateDetails(extraData) {
+      $('valCliente').textContent = extraData.cliente || '-';
+      $('valDireccion').textContent = extraData.direccion || '-';
+
+    if (extraData.monto != null) {
+      const fmt = new Intl.NumberFormat('es-AR', {
+        style: 'currency',
+        currency: 'ARS',
+        maximumFractionDigits: 0
+      }).format(extraData.monto);
+
+      $('valMonto').textContent = fmt;
+    }
+
+    $('orderDetails').style.display = 'block';
+    }
+
+    function startPolling(id) {
+      const run = async () => {
+        const data = await fetchEstado(id);
+        if (!data) return;
+
+        const ui = mapBackendState(data.estado);
+        renderState(ui.k, ui.t, ui.d, data);
+
+        if (ui.k === 'entregado' || ui.k === 'cancelado') {
+          if (pollInterval) {
+            clearInterval(pollInterval);
+            pollInterval = null;
+          }
+        }
+      };
+
+      run();
+      pollInterval = setInterval(run, 5000);
+    }
+
+    function spawnConfetti() {
+      const container = $('confetti');
+      if (!container || container.children.length > 0) return;
+
+      const colors = ['#60a5fa', '#f59e0b', '#10b981', '#ef4444', '#a855f7'];
+
+      for (let i = 0; i < 40; i++) {
+        const el = document.createElement('i');
+        el.style.left = Math.random() * 100 + '%';
+        el.style.backgroundColor = colors[Math.floor(Math.random() * colors.length)];
+        el.style.animationDelay = Math.random() * 1.5 + 's';
+        el.style.transform = `rotate(${Math.random() * 360}deg)`;
+        container.appendChild(el);
+      }
+    }
+
+    function playSound(id) {
+      try {
+        const audio = $(id);
+        if (audio) {
+          audio.volume = 0.5;
+          audio.currentTime = 0;
+          audio.play().catch(() => {});
+        }
+      } catch {}
+    }
+
+    // Botón WhatsApp + init
+    document.addEventListener('DOMContentLoaded', () => {
+      $('btnWhats').addEventListener('click', () => {
+        const phone = CHOFER_WA || EMPRESA_TEL;
+        const idText = $('orderIdDisplay').textContent || 'mi pedido';
+        const cliente = $('valCliente').textContent || '';
+        const direccion = $('valDireccion').textContent || '';
+
+        let message = `Hola, consulto por el estado de ${idText}.`;
+        if (cliente && cliente !== '-') {
+          message += ` Soy ${cliente}.`;
+        }
+        if (direccion && direccion !== '-') {
+          message += ` La dirección es ${direccion}.`;
+        }
+
+        const text = encodeURIComponent(message.trim());
+        const url = phone
+          ? `https://wa.me/${phone}?text=${text}`
+          : `https://wa.me/?text=${text}`;
+
+        window.open(url, '_blank');
+      });
+
+      init();
+    });
+  </script>
+</body>
+</html>

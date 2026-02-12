@@ -1,0 +1,574 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>IA Web Builder – MultiEmpresas</title>
+  
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+  <style>
+    :root {
+      /* Palette idéntica a dashboard.html y qr.html */
+      --bg: #0b1020;
+      --bg-2: #0f172a;
+      --ink: #f1f5f9;
+      --muted: #94a3b8;
+      --brand: #06b6d4;
+      --brand-hover: #22d3ee;
+      --surface: rgba(30, 41, 59, 0.7);
+      --border: rgba(148, 163, 184, 0.15);
+      --glass: rgba(15, 23, 42, 0.85);
+      --radius: 12px;
+      
+      --success: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+    }
+
+    * { box-sizing: border-box; outline: none; }
+    
+    body {
+      margin: 0; 
+      font-family: system-ui, -apple-system, sans-serif;
+      color: var(--ink);
+      background: 
+        radial-gradient(circle at 15% 50%, rgba(6, 182, 212, 0.05), transparent 25%),
+        radial-gradient(circle at 85% 30%, rgba(59, 130, 246, 0.05), transparent 25%),
+        var(--bg);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden; /* App-like feel */
+    }
+
+    .container { max-width: 1300px; margin: 0 auto; padding: 0 20px; }
+
+    /* HEADER (Igual al resto del sistema) */
+    header {
+      background: var(--glass);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      padding: 0.8rem 0;
+      z-index: 50;
+      flex-shrink: 0;
+    }
+    
+    nav { display: flex; justify-content: space-between; align-items: center; }
+    
+    .brand { 
+      display: flex; gap: 0.8rem; align-items: center; 
+      font-size: 1.1rem; font-weight: 700; color: #fff; text-decoration: none; 
+    }
+    .brand-dot { width: 10px; height: 10px; background: var(--brand); border-radius: 50%; box-shadow: 0 0 10px var(--brand); }
+    
+    .role-badge { 
+      background: rgba(6, 182, 212, 0.1); border: 1px solid rgba(6, 182, 212, 0.3);
+      color: var(--brand); padding: 2px 8px; border-radius: 99px; font-size: 0.75rem; 
+    }
+
+    .menu { list-style: none; display: flex; gap: 1.5rem; margin: 0; padding: 0; }
+    .menu a { text-decoration: none; color: var(--muted); font-weight: 500; transition: 0.2s; }
+    .menu a:hover, .menu a.active { color: #fff; }
+    .menu a.active { border-bottom: 2px solid var(--brand); padding-bottom: 4px; }
+
+    /* WORKSPACE (Layout Específico de IA Builder) */
+    .workspace {
+      display: flex;
+      flex: 1;
+      height: calc(100vh - 70px); /* Resto de altura menos header aprox */
+      overflow: hidden;
+    }
+
+    /* PANEL IZQUIERDO (Controles) */
+    .controls {
+      width: 400px;
+      background: var(--bg-2);
+      border-right: 1px solid var(--border);
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      overflow-y: auto;
+      flex-shrink: 0;
+    }
+
+    h2 {
+      margin: 0 0 10px 0; font-size: 1rem; 
+      color: var(--brand); text-transform: uppercase; letter-spacing: 1px;
+      display: flex; align-items: center; gap: 10px;
+    }
+
+    p.hint {
+      font-size: 0.85rem; color: var(--muted); margin: 0 0 15px 0; line-height: 1.5;
+    }
+
+    textarea {
+      background: rgba(0,0,0,0.3);
+      border: 1px solid var(--border);
+      color: #fff;
+      padding: 15px;
+      border-radius: var(--radius);
+      width: 100%;
+      min-height: 150px;
+      resize: vertical;
+      font-size: 0.95rem;
+      line-height: 1.5;
+      font-family: inherit;
+      transition: 0.2s;
+    }
+    textarea:focus { border-color: var(--brand); box-shadow: 0 0 0 2px rgba(6, 182, 212, 0.2); }
+
+    select, input[type="text"] {
+      background: rgba(0,0,0,0.3);
+      border: 1px solid var(--border);
+      color: #fff;
+      padding: 10px;
+      border-radius: 8px;
+      width: 100%;
+      font-size: 0.9rem;
+      margin-bottom: 10px;
+    }
+    select:focus, input:focus { border-color: var(--brand); outline: none; }
+
+    .info-box {
+      background: rgba(6, 182, 212, 0.05);
+      border: 1px solid rgba(6, 182, 212, 0.2);
+      padding: 12px;
+      border-radius: 8px;
+      font-size: 0.85rem;
+      color: var(--ink);
+      margin-bottom: 15px;
+    }
+    .info-box strong { color: var(--brand); }
+    .info-box a { color: var(--brand-hover); text-decoration: none; border-bottom: 1px dashed; }
+
+    /* BOTONES */
+    .btn {
+      padding: 12px; border-radius: 8px; font-weight: 600; cursor: pointer;
+      border: 1px solid transparent; transition: 0.2s; display: flex; align-items: center; justify-content: center; gap: 8px;
+      font-size: 0.95rem; width: 100%;
+    }
+    
+    .btn-primary {
+      background: var(--brand); color: #000;
+    }
+    .btn-primary:hover {
+      background: var(--brand-hover);
+      box-shadow: 0 4px 15px rgba(6, 182, 212, 0.3);
+    }
+    
+    .btn-success {
+      background: var(--success); color: #000;
+    }
+    .btn-success:hover {
+      filter: brightness(1.1);
+      box-shadow: 0 4px 15px rgba(16, 185, 129, 0.3);
+    }
+
+    .btn:disabled { opacity: 0.5; cursor: wait; transform: none; box-shadow: none; }
+
+    /* PANEL DERECHO (Preview) */
+    .preview-area {
+      flex: 1;
+      background: #000;
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background-image: radial-gradient(#334155 1px, transparent 1px);
+      background-size: 20px 20px;
+    }
+
+    .toolbar {
+      position: absolute;
+      top: 15px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      backdrop-filter: blur(8px);
+      padding: 5px;
+      border-radius: 99px;
+      display: flex;
+      gap: 5px;
+      z-index: 10;
+    }
+
+    .toolbar button {
+      background: transparent; border: none; color: var(--muted);
+      width: 36px; height: 36px; border-radius: 50%; cursor: pointer;
+      font-size: 1rem; transition: 0.2s;
+    }
+    .toolbar button:hover, .toolbar button.active {
+      background: rgba(255,255,255,0.1); color: #fff;
+    }
+
+    iframe {
+      background: #fff;
+      border: none;
+      transition: width 0.4s ease, height 0.4s ease;
+      box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+    }
+
+    /* Devices Sizes */
+    iframe.desktop { width: 100%; height: 100%; border-radius: 0; }
+    iframe.tablet { width: 768px; height: 90%; border-radius: 12px; border: 10px solid #1e293b; }
+    iframe.mobile { width: 375px; height: 90%; border-radius: 20px; border: 10px solid #1e293b; }
+
+    .loader {
+      display: none;
+      text-align: center;
+      color: var(--muted);
+      margin-top: 15px;
+      font-size: 0.9rem;
+    }
+    .loader i { animation: spin 1s infinite linear; color: var(--brand); margin-right: 5px; }
+    @keyframes spin { 100% { transform: rotate(360deg); } }
+
+    /* Toast Notification */
+    .toast {
+      position: fixed;
+      bottom: 30px;
+      right: 30px;
+      background: #fff;
+      color: #0f172a;
+      padding: 12px 24px;
+      border-radius: 99px;
+      font-weight: 600;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+      opacity: 0;
+      pointer-events: none;
+      transition: 0.3s;
+      z-index: 2000;
+      transform: translateY(10px);
+    }
+    .toast.show { opacity: 1; transform: translateY(0); }
+
+    @media (max-width: 900px) {
+      .workspace { flex-direction: column; overflow-y: auto; height: auto; }
+      .controls { width: 100%; height: auto; border-right: none; border-bottom: 1px solid var(--border); }
+      .preview-area { height: 600px; }
+      nav { flex-direction: column; gap: 1rem; }
+      .menu { overflow-x: auto; max-width: 100%; padding-bottom: 5px; }
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <nav class="container">
+      <div class="brand">
+        <div class="brand-dot"></div>
+        MultiEmpresas
+        <span id="roleBadge" class="role-badge"></span>
+      </div>
+      <ul class="menu" id="mainMenu">
+        <li><a href="/pedidos/inicio/inicial.html">🚀 Inicio</a></li>
+        <li><a href="dashboard.html">Dashboard</a></li>
+        <li><a href="pagos.html">Pagos</a></li>
+        <li><a href="gastos.html">Gastos</a></li>
+        <li><a href="stock.html">Stock</a></li>
+        <li><a href="repartidores.html">Repartidor</a></li>
+        <li><a href="estadisticas.html">Estadisticas</a></li>
+        <li><a href="iaweb.html" class="active">IAweb</a></li>
+        <li><a href="qr.html">QR</a></li>
+        <li><a href="#" id="logout" style="color: var(--danger)">Salir</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <div class="workspace">
+    
+    <div class="controls">
+      
+      <div id="adminSelector" style="display:none; padding-bottom: 20px; border-bottom: 1px dashed var(--border); margin-bottom: 20px;">
+        <h2><i class="fa-solid fa-user-shield"></i> Selección de Empresa</h2>
+        <p class="hint">Elige sobre qué empresa trabajará la IA.</p>
+        <select id="empresaSelect" onchange="onEmpresaChange()">
+          <option value="">Cargando empresas...</option>
+        </select>
+      </div>
+
+      <div>
+        <h2><i class="fa-solid fa-circle-info"></i> Configuración Actual</h2>
+        <div id="configInfo" class="info-box">
+          <i class="fa-solid fa-spinner fa-spin"></i> Cargando datos...
+        </div>
+      </div>
+
+      <div>
+        <h2><i class="fa-solid fa-wand-magic-sparkles"></i> Describe tu Negocio</h2>
+        <p class="hint">
+          Cuéntale a la IA qué vendes, colores preferidos y estilo (ej: "Verdulería rústica, fondo papel kraft, botones verdes").
+        </p>
+        <textarea id="promptInput" placeholder="Ej: Soy una tienda de ropa llamada 'Urbana'. Quiero un estilo minimalista, colores pastel y fotos grandes. Destaca que tenemos envío gratis."></textarea>
+      </div>
+
+      <div>
+        <button class="btn btn-primary" id="btnGenerate" onclick="generateSite()">
+          <i class="fa-solid fa-bolt"></i> Generar Diseño
+        </button>
+        <div class="loader" id="loader">
+          <i class="fa-solid fa-circle-notch"></i> Diseñando y programando tu web...<br>
+          <small>Esto puede tomar unos 30 segundos</small>
+        </div>
+      </div>
+
+      <div style="margin-top: auto; padding-top: 20px; border-top: 1px dashed var(--border);">
+        <h2><i class="fa-solid fa-cloud-arrow-up"></i> Publicar</h2>
+        <p class="hint">
+          ¿Te gusta el resultado? Guárdalo como tu página oficial. Reemplazará el diseño actual.
+        </p>
+        <button class="btn btn-success" id="btnSave" onclick="saveSite()" disabled>
+          <i class="fa-solid fa-check"></i> Publicar Web
+        </button>
+      </div>
+    </div>
+
+    <div class="preview-area">
+      <div class="toolbar">
+        <button onclick="setDevice('desktop')" class="active" title="Escritorio"><i class="fa-solid fa-desktop"></i></button>
+        <button onclick="setDevice('tablet')" title="Tablet"><i class="fa-solid fa-tablet-screen-button"></i></button>
+        <button onclick="setDevice('mobile')" title="Móvil"><i class="fa-solid fa-mobile-screen-button"></i></button>
+      </div>
+      <iframe id="previewFrame" class="desktop"></iframe>
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script>
+    // --- ESTADO GLOBAL ---
+    let generatedHtml = '';
+    let currentEmpresaId = null;
+    let companiesList = []; 
+    const token = localStorage.getItem('token');
+
+    // --- UTILIDADES ---
+    function toast(msg) {
+      const t = document.getElementById('toast');
+      t.innerText = msg;
+      t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 3000);
+    }
+
+    function setDevice(mode) {
+      const iframe = document.getElementById('previewFrame');
+      iframe.className = mode;
+      document.querySelectorAll('.toolbar button').forEach(b => b.classList.remove('active'));
+      event.currentTarget.classList.add('active');
+    }
+
+    // --- AUTH & LOGOUT ---
+    document.getElementById('logout').onclick = () => {
+      localStorage.removeItem('token');
+      window.location.href = 'login.html';
+    };
+
+    // --- INICIALIZACIÓN ---
+    (async function init() {
+      if (!token) {
+        window.location.href = 'pedidos/login.html';
+        return;
+      }
+
+      try {
+        // 1. Obtener quién soy
+        const resMe = await fetch('/api/me', { headers: { 'Authorization': `Bearer ${token}` } });
+        const dataMe = await resMe.json();
+        
+        if (!dataMe.user) throw new Error('Token inválido');
+        const role = dataMe.user.role;
+        
+        // Badge de Rol en Header
+        const roleBadge = document.getElementById('roleBadge');
+        roleBadge.textContent = role === 'super' ? 'SUPER ADMIN' : role.toUpperCase();
+
+        // 2. Obtener lista de empresas
+        const resEmp = await fetch('/api/empresas', { headers: { 'Authorization': `Bearer ${token}` } });
+        companiesList = await resEmp.json();
+
+        // 3. Lógica según Rol
+        const urlParams = new URLSearchParams(window.location.search);
+        const urlId = urlParams.get('empresa_id');
+
+        if (role === 'super') {
+          // Mostrar selector
+          document.getElementById('adminSelector').style.display = 'block';
+          const select = document.getElementById('empresaSelect');
+          
+          select.innerHTML = companiesList.map(c => 
+            `<option value="${c.id}">#${c.id} - ${c.nombre}</option>`
+          ).join('');
+
+          // Seleccionar la que vino por URL o la primera
+          if (urlId) {
+            select.value = urlId;
+          } else if (companiesList.length > 0) {
+            select.value = companiesList[0].id;
+          }
+          
+          onEmpresaChange();
+
+        } else {
+          // Usuario Normal: Forzar su ID
+          if (companiesList.length > 0) {
+            currentEmpresaId = companiesList[0].id;
+            updateUIInfo(companiesList[0]);
+          } else {
+            document.getElementById('configInfo').innerHTML = 'No tienes una empresa asignada.';
+          }
+        }
+
+      } catch (e) {
+        console.error(e);
+        toast('Error de sesión o conexión');
+      }
+    })();
+
+    // --- CAMBIO EN SELECTOR (SUPER ADMIN) ---
+    function onEmpresaChange() {
+      const select = document.getElementById('empresaSelect');
+      const id = Number(select.value);
+      const empresa = companiesList.find(c => c.id === id);
+      
+      if (empresa) {
+        currentEmpresaId = empresa.id;
+        updateUIInfo(empresa);
+      }
+    }
+
+    // --- ACTUALIZAR VISUALIZACIÓN DE SLUG/URL ---
+    function updateUIInfo(empresa) {
+      const infoBox = document.getElementById('configInfo');
+      
+      // Slug y URL
+      const slug = empresa.landing_slug || '(sin slug)';
+      let urlPreview = '#';
+      let urlText = 'No configurada (Falta Slug)';
+
+      if (empresa.landing_slug) {
+        urlPreview = `/pages/${empresa.landing_slug}.html`;
+        urlText = `${window.location.origin}/pages/${empresa.landing_slug}.html`;
+      }
+
+      infoBox.innerHTML = `
+        <div style="margin-bottom:6px;"><strong>Empresa:</strong> ${empresa.nombre} (#${empresa.id})</div>
+        <div style="margin-bottom:6px;"><strong>Slug:</strong> <span style="font-family:monospace; background:rgba(255,255,255,0.1); padding:2px 4px; border-radius:4px;">${slug}</span></div>
+        <div style="margin-bottom:4px;"><strong>URL Pública:</strong></div>
+        <a href="${urlPreview}" target="_blank" style="word-break:break-all; font-size:0.8rem;">${urlText}</a>
+      `;
+    }
+
+    // --- GENERAR SITIO (LLAMADA A LA IA) ---
+    async function generateSite() {
+      // 1. Validaciones básicas
+      const userDescription = document.getElementById('promptInput').value.trim();
+      
+      // Obtenemos el estilo visual seleccionado (radio buttons)
+      const styleInput = document.querySelector('input[name="vis_style"]:checked');
+      const visualStyle = styleInput ? styleInput.value : "Moderno y limpio";
+
+      if (!userDescription) return toast('⚠️ Por favor, describe tu negocio.');
+      if (!currentEmpresaId) return toast('⚠️ Error: No hay empresa seleccionada.');
+
+      // 2. Preparar UI
+      const btn = document.getElementById('btnGenerate');
+      const loader = document.getElementById('loader');
+      btn.disabled = true;
+      loader.style.display = 'block';
+
+      // 3. --- EL SECRETO: INYECCIÓN DE CONTEXTO ---
+      // Creamos un mensaje técnico para la IA que incluye el ID REAL
+      const promptContextualizado = `
+      [SISTEMA_DATA]
+      EMPRESA_ID_OBLIGATORIO: ${currentEmpresaId}
+      
+      [PREFERENCIAS_VISUALES]
+      Estilo: ${visualStyle}
+      
+      [DESCRIPCIÓN_DEL_USUARIO]
+      "${userDescription}"
+      `;
+
+      try {
+        const res = await fetch('/api/ai/build-site', {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          // Enviamos el prompt enriquecido con el ID
+          body: JSON.stringify({ 
+            prompt: promptContextualizado, 
+            empresa_id: currentEmpresaId 
+          })
+        });
+
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+
+        generatedHtml = data.html;
+        
+        // Preview
+        const iframe = document.getElementById('previewFrame');
+        iframe.srcdoc = generatedHtml;
+
+        document.getElementById('btnSave').disabled = false;
+        toast('✨ Diseño generado para Empresa #' + currentEmpresaId);
+
+      } catch (e) {
+        console.error(e);
+        toast('❌ Error: ' + e.message);
+      } finally {
+        btn.disabled = false;
+        loader.style.display = 'none';
+      }
+    }
+    // --- PUBLICAR (SUBIR HTML AL SERVIDOR) ---
+    async function saveSite() {
+      if (!generatedHtml) return;
+      if (!currentEmpresaId) return toast('Error: No hay empresa seleccionada');
+
+      if (!confirm('¿Confirmas publicar este diseño?\nReemplazará tu Landing Page actual inmediatamente.')) return;
+
+      const btn = document.getElementById('btnSave');
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Publicando...';
+
+      try {
+        const blob = new Blob([generatedHtml], { type: 'text/html' });
+        const formData = new FormData();
+        formData.append('file', blob, 'index.html'); 
+
+        const res = await fetch(`/api/empresas/${currentEmpresaId}/landing-page`, {
+          method: 'POST',
+          headers: { 
+            'Authorization': `Bearer ${token}`
+          },
+          body: formData
+        });
+
+        const data = await res.json();
+
+        if (res.ok) {
+          toast('🚀 ¡Publicado correctamente!');
+          setTimeout(() => {
+             if (data.path) window.open(data.path, '_blank'); 
+             window.location.reload(); // Recargar para ver cambios
+          }, 1500);
+        } else {
+          throw new Error(data.error || 'Error al subir');
+        }
+
+      } catch (e) {
+        console.error(e);
+        toast('❌ Error publicando: ' + e.message);
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fa-solid fa-check"></i> Publicar Web';
+      }
+    }
+  </script>
+</body>
+</html>

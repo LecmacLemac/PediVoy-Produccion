@@ -1,0 +1,2043 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Empresas – MultiEmpresas</title>
+  
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+  <style>
+    :root {
+      --bg: #0b1020;
+      --bg-2: #0f172a;
+      --ink: #f1f5f9;
+      --muted: #94a3b8;
+      --brand: #06b6d4;
+      --brand-hover: #22d3ee;
+      --surface: rgba(30, 41, 59, 0.7);
+      --border: rgba(148, 163, 184, 0.15);
+      --glass: rgba(15, 23, 42, 0.95);
+      --radius: 12px;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+    }
+
+    * {
+      box-sizing: border-box;
+      outline: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 15% 50%, rgba(6, 182, 212, 0.05), transparent 25%),
+        radial-gradient(circle at 85% 30%, rgba(59, 130, 246, 0.05), transparent 25%),
+        var(--bg);
+      min-height: 100vh;
+      font-size: 14px;
+      padding-bottom: 80px;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0 20px;
+    }
+
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      background: var(--glass);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      padding: 0.8rem 0;
+    }
+
+    nav {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .brand {
+      display: flex;
+      gap: 0.8rem;
+      align-items: center;
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: #fff;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+
+    .brand-dot {
+      width: 10px;
+      height: 10px;
+      background: var(--brand);
+      border-radius: 50%;
+      box-shadow: 0 0 10px var(--brand);
+    }
+
+    .role-badge {
+      background: rgba(6, 182, 212, 0.1);
+      border: 1px solid rgba(6, 182, 212, 0.3);
+      color: var(--brand);
+      padding: 2px 8px;
+      border-radius: 99px;
+      font-size: 0.75rem;
+    }
+
+    .menu {
+      list-style: none;
+      display: flex;
+      gap: 1.5rem;
+      margin: 0;
+      padding: 0;
+    }
+
+    .menu a {
+      text-decoration: none;
+      color: var(--muted);
+      font-weight: 500;
+      transition: 0.2s;
+      white-space: nowrap;
+    }
+
+    .menu a:hover,
+    .menu a.active {
+      color: #fff;
+    }
+
+    .menu a.active {
+      border-bottom: 2px solid var(--brand);
+      padding-bottom: 4px;
+    }
+
+    @media (max-width: 768px) {
+      nav {
+        flex-direction: column;
+        gap: 1rem;
+        align-items: stretch;
+      }
+
+      .brand {
+        justify-content: space-between;
+      }
+
+      .menu {
+        overflow-x: auto;
+        padding-bottom: 5px;
+        gap: 20px;
+      }
+
+      .menu::-webkit-scrollbar {
+        display: none;
+      }
+    }
+
+    main {
+      padding-top: 2rem;
+      padding-bottom: 4rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+
+    .page-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      flex-wrap: wrap;
+      gap: 1rem;
+    }
+
+    h1 {
+      font-size: 1.8rem;
+      margin: 0;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      line-height: 1.2;
+    }
+
+    p.subtitle {
+      color: var(--muted);
+      margin: 0.5rem 0 0 0;
+      font-size: 0.95rem;
+    }
+
+    @media (max-width: 600px) {
+      .page-header {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      .page-header .btn {
+        width: 100%;
+        justify-content: center;
+      }
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.5rem;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+      display: flex;
+      flex-direction: column;
+    }
+
+    .table-responsive {
+      overflow-x: auto;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      background: var(--bg-2);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+    }
+
+    th {
+      background: rgba(15, 23, 42, 0.9);
+      color: var(--muted);
+      font-weight: 600;
+      padding: 1rem;
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+
+    td {
+      padding: 1rem;
+      border-bottom: 1px solid var(--border);
+      color: var(--ink);
+      font-size: 0.9rem;
+      vertical-align: middle;
+      white-space: nowrap;
+    }
+
+    tr:last-child td {
+      border-bottom: none;
+    }
+
+    tr:hover td {
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    label {
+      font-size: 0.75rem;
+      color: var(--muted);
+      font-weight: 700;
+      display: block;
+      margin-bottom: 0.4rem;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    input,
+    select,
+    textarea {
+      background: var(--bg-2);
+      border: 1px solid var(--border);
+      color: #fff;
+      padding: 0.7rem 0.8rem;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      width: 100%;
+      transition: 0.2s;
+      margin-bottom: 1rem;
+    }
+
+    input:focus,
+    select:focus,
+    textarea:focus {
+      border-color: var(--brand);
+      box-shadow: 0 0 0 2px rgba(6, 182, 212, 0.2);
+    }
+
+    .btn {
+      padding: 0.7rem 1.2rem;
+      border-radius: 8px;
+      font-weight: 600;
+      cursor: pointer;
+      border: 1px solid transparent;
+      transition: 0.2s;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.9rem;
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--ink);
+      border-color: var(--border);
+      text-decoration: none;
+      white-space: nowrap;
+      justify-content: center;
+    }
+
+    .btn:hover {
+      background: rgba(255, 255, 255, 0.1);
+      color: #fff;
+      border-color: var(--brand);
+    }
+
+    .btn-primary {
+      background: var(--brand);
+      color: #000;
+      border: none;
+    }
+
+    .btn-primary:hover {
+      background: var(--brand-hover);
+      box-shadow: 0 4px 12px rgba(6, 182, 212, 0.3);
+    }
+
+    .btn-icon {
+      padding: 0.5rem;
+      border-radius: 6px;
+      color: var(--muted);
+      background: transparent;
+      border: 1px solid var(--border);
+      cursor: pointer;
+    }
+
+    .btn-icon:hover {
+      color: #fff;
+      background: rgba(255, 255, 255, 0.1);
+      border-color: var(--brand);
+    }
+
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.8);
+      backdrop-filter: blur(4px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s;
+      padding: 10px;
+    }
+
+    .modal-backdrop.open {
+      opacity: 1;
+      pointer-events: all;
+    }
+
+    .modal {
+      background: #1e293b;
+      color: #fff;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      width: 100%;
+      max-width: 600px;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
+      display: flex;
+      flex-direction: column;
+      max-height: 90vh;
+    }
+
+    .modal-header {
+      padding: 1.2rem;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: rgba(0, 0, 0, 0.2);
+    }
+
+    .modal-body {
+      padding: 1.5rem;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .modal-footer {
+      padding: 1.2rem;
+      border-top: 1px solid var(--border);
+      display: flex;
+      justify-content: flex-end;
+      gap: 1rem;
+      background: rgba(0, 0, 0, 0.2);
+    }
+
+    .form-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+    }
+
+    @media (max-width: 600px) {
+      .form-row {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .section-label {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--brand);
+      margin-top: 0.5rem;
+      margin-bottom: 0.5rem;
+      font-weight: 700;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 5px;
+    }
+
+    .account-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .account-item {
+      background: var(--bg-2);
+      border: 1px solid var(--border);
+      padding: 12px;
+      border-radius: 8px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .account-info {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .account-bank {
+      font-weight: 700;
+      color: #fff;
+      font-size: 1rem;
+    }
+
+    .account-detail {
+      font-size: 0.85rem;
+      color: var(--muted);
+      font-family: monospace;
+    }
+
+    .account-holder {
+      font-size: 0.8rem;
+      color: var(--brand);
+      margin-top: 2px;
+    }
+
+    .toast {
+      position: fixed;
+      right: 20px;
+      bottom: 30px;
+      background: #fff;
+      color: #0f172a;
+      padding: 10px 20px;
+      border-radius: 99px;
+      font-weight: 600;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+      opacity: 0;
+      pointer-events: none;
+      transition: 0.3s;
+      z-index: 2000;
+    }
+
+    .toast.show {
+      opacity: 1;
+      transform: translateY(-10px);
+    }
+
+    .pill-group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-bottom: 0.5rem;
+    }
+
+    .pill-group label {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      font-size: 0.75rem;
+      color: var(--muted);
+      cursor: pointer;
+    }
+
+    .pill-group input {
+      margin-right: 4px;
+    }
+
+    .pill-group label:has(input:checked) {
+      background: rgba(6, 182, 212, 0.1);
+      color: var(--brand);
+      border-color: var(--brand);
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <nav class="container">
+      <div class="brand">
+        <div class="brand-dot"></div>
+        MultiEmpresas
+        <span id="roleBadge" class="role-badge">Admin</span>
+      </div>
+      <ul class="menu" id="mainMenu">
+        <li><a href="inicial.html">🚀 Inicio</a></li>
+        <li><a href="/pedidos/dashboard.html">Dashboard</a></li>
+        <li><a href="/pedidos/costos.html">Costos</a></li>
+        <li><a href="/pedidos/activos.html">Activos</a></li>
+        <li><a href="/pedidos/alquileres.html">Alquileres</a></li>
+        <li><a href="empresa.html" class="active">Empresas</a></li>
+        <li><a href="#" id="logout" style="color: var(--danger)">Salir</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <main class="container">
+    <div class="page-header">
+      <div>
+        <h1>🏢 Gestión de Empresas</h1>
+        <p class="subtitle">Administra datos fiscales, landings y cuentas bancarias.</p>
+      </div>
+      <button class="btn btn-primary" onclick="openModal()">＋ Nueva Empresa</button>
+    </div>
+
+    <div class="card">
+      <div class="table-responsive">
+        <table>
+  <thead>
+    <tr>
+      <th style="width:50px">ID</th>
+      <th>Empresa / Razón Social</th>
+      <th>Licencia / Plan</th>
+      <th>Contacto / CUIT</th>
+      <th>Configuración</th>
+      <th style="text-align:right;">Acciones</th>
+    </tr>
+  </thead>
+  <tbody id="tbBody">
+    <tr>
+      <td colspan="6" style="text-align:center; padding:3rem; color:var(--muted);">
+        Cargando empresas...
+      </td>
+    </tr>
+  </tbody>
+        </table>
+
+      </div>
+    </div>
+  </main>
+
+  <div id="modal" class="modal-backdrop">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 id="modalTitle">Nueva Empresa</h3>
+        <button class="btn-icon" onclick="closeModal()">✕</button>
+      </div>
+
+<form id="formEmpresa" class="modal-body" onsubmit="event.preventDefault(); save();">
+        <input type="hidden" id="e_id">
+
+        <div class="section-label">Datos Generales</div>
+
+        <div>
+          <label>Nombre Fantasía *</label>
+          <input type="text" id="e_nombre" required placeholder="Ej: Hidro Distribuidora">
+        </div>
+
+        <div>
+          <label>Rubro Principal</label>
+          <input type="text" id="e_rubro" placeholder="Ej: Gomería y Alineación">
+        </div>
+
+        <div class="form-row">
+          <div>
+            <label>Teléfono</label>
+            <input type="tel" id="e_telefono" placeholder="+54 9 ...">
+          </div>
+          <div>
+            <label>Email</label>
+            <input type="email" id="e_email" placeholder="contacto@empresa.com">
+          </div>
+        </div>
+
+        <div class="section-label">Datos Fiscales</div>
+
+        <div class="form-row">
+          <div>
+            <label>Razón Social</label>
+            <input type="text" id="e_razon_social" placeholder="Razón Social SRL">
+          </div>
+          <div>
+            <label>CUIT</label>
+            <input type="text" id="e_cuit" placeholder="20-12345678-9">
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div>
+            <label>Condición IVA</label>
+            <select id="e_condicion_iva">
+              <option value="">-- Seleccionar --</option>
+              <option value="Responsable Inscripto">Responsable Inscripto</option>
+              <option value="Monotributo">Monotributo</option>
+              <option value="Exento">Exento</option>
+              <option value="Consumidor Final">Consumidor Final</option>
+            </select>
+          </div>
+          <div>
+            <label>Ciudad / Loc.</label>
+            <input type="text" id="e_ciudad" placeholder="Córdoba">
+          </div>
+        </div>
+
+        <div>
+          <label>Dirección Fiscal/Comercial</label>
+          <input type="text" id="e_direccion" placeholder="Av. Colón 1234">
+        </div>
+
+        <div class="section-label">Configuración Web</div>
+
+        <div class="form-row">
+          <div>
+            <label>Slug (URL)</label>
+            <input type="text" id="e_slug" placeholder="ej: hidro-cba">
+          </div>
+          <div>
+            <label>Dominio Propio</label>
+            <input type="text" id="e_domain" placeholder="ej: miempresa.com">
+          </div>
+        </div>
+
+        <div style="background:rgba(255,255,255,0.03); padding:10px; border-radius:8px; border:1px solid var(--border); margin-bottom:1rem;">
+          <label style="color:var(--brand);">Landing Page Personalizada (HTML)</label>
+          <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-top:5px;">
+            <input type="file" id="e_landing_file" accept=".html" style="margin-bottom:0; flex:1;">
+            <button type="button" class="btn" onclick="uploadLanding()">⬆ Subir</button>
+            <button type="button" class="btn" style="color:var(--danger); border-color:rgba(239,68,68,0.3);" onclick="deleteLanding()">🗑 Borrar</button>
+          </div>
+          <small style="color:var(--muted); margin-top:4px; display:block;">
+            Sube un archivo <code>.html</code> para reemplazar la plantilla por defecto. Se recomienda guardar la empresa (Slug) primero.
+          </small>
+        </div>
+
+
+
+
+        <div class="section-label">Cobros y Pagos</div>
+
+        <!-- Preferencias de cobro -->
+        <div class="form-row">
+          <div>
+            <label>Canales de cobro habilitados</label>
+            <div class="pill-group">
+              <label><input type="checkbox" id="e_cobro_efectivo" checked> Efectivo</label>
+              <label><input type="checkbox" id="e_cobro_transferencia" checked> Transferencia bancaria</label>
+              <label><input type="checkbox" id="e_cobro_qr"> QR dinámico / billetera</label>
+            </div>
+            <small style="color:var(--muted); font-size:0.8rem;">
+              Esto controla qué métodos de pago ve el repartidor al marcar la entrega.
+            </small>
+          </div>
+
+          <div>
+            <label>Método de cobro preferido</label>
+            <select id="e_cobro_preferido">
+              <option value="">Sin preferencia</option>
+              <option value="efectivo">Efectivo</option>
+              <option value="transferencia">Transferencia</option>
+              <option value="qr_dinamico">QR dinámico / billetera</option>
+            </select>
+            <small style="color:var(--muted); font-size:0.8rem;">
+              Se usa como sugerencia en el flujo de pedidos / WhatsApp.
+            </small>
+          </div>
+        </div>
+
+        <!-- Cuentas bancarias -->
+        <div class="section-label">Cuentas bancarias (transferencias)</div>
+
+        <ul id="e_cuentas_list" class="account-list">
+          <!-- Se llena por JS -->
+        </ul>
+
+        <div class="form-row">
+          <div>
+            <label>Banco</label>
+            <input type="text" id="e_cta_banco" placeholder="Ej: Banco Nación">
+          </div>
+          <div>
+            <label>Alias / CBU</label>
+            <input type="text" id="e_cta_alias" placeholder="alias o CBU">
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div>
+            <label>Titular</label>
+            <input type="text" id="e_cta_titular" placeholder="Nombre del titular">
+          </div>
+          <div>
+            <label>Prioridad</label>
+            <input type="number" id="e_cta_prioridad" min="1" value="1">
+          </div>
+        </div>
+
+        <button type="button" class="btn" onclick="agregarCuentaEnMemoria()">
+          <i class="fa fa-plus"></i> Agregar cuenta a la empresa
+        </button>
+
+        <small style="color:var(--muted); font-size:0.8rem; display:block; margin-top:6px;">
+          La cuenta con menor prioridad (1) se usa como principal en los mensajes de transferencia.
+        </small>
+
+        <!-- Pagos digitales / billetera -->
+        <div class="section-label">Pagos digitales / Billeteras (QR dinámico)</div>
+
+        <div class="form-row">
+          <div>
+            <label>Proveedor de pagos</label>
+            <select id="e_pagos_proveedor">
+              <option value="">Sin configurar</option>
+              <option value="fake">Fake (testing)</option>
+              <option value="mercado_pago">Mercado Pago</option>
+              <option value="banco_x">Banco / Adquirente</option>
+            </select>
+            <small style="color:var(--muted); font-size:0.8rem;">
+              Se usa para generar links y QR dinámicos por pedido.
+            </small>
+          </div>
+          <div>
+            <label>Auto-confirmar pagos por webhook</label>
+            <div class="pill-group">
+              <label><input type="radio" name="e_pagos_auto_conf" value="true"> Sí</label>
+              <label><input type="radio" name="e_pagos_auto_conf" value="false" checked> No</label>
+            </div>
+            <small style="color:var(--muted); font-size:0.8rem;">
+              Si está en “Sí”, los pagos acreditados se marcan como pagados automáticamente.
+            </small>
+          </div>
+        </div>
+
+        <div>
+          <label>Access Token / API Key del proveedor</label>
+          <input type="password" id="e_pagos_token" placeholder="Token o credencial secreta">
+          <small style="color:var(--muted); font-size:0.8rem;">
+            Se guarda en <code>config_integraciones.pagos.access_token</code> (no se muestra completo al volver a editar).
+          </small>
+        </div>
+
+        <div>
+          <label>Webhook URL (solo lectura)</label>
+          <input type="text" id="e_pagos_webhook" readonly>
+          <small style="color:var(--muted); font-size:0.8rem;">
+            Configurá esta URL en Mercado Pago / banco para recibir confirmaciones de pago.
+          </small>
+        </div>
+
+
+        <div class="section-label">Horarios y Entrega</div>
+
+        <div class="form-row">
+          <div>
+            <label>Días de entrega</label>
+            <div id="e_dias_entrega" class="pill-group">
+              <label><input type="checkbox" value="1" checked> Lun</label>
+              <label><input type="checkbox" value="2" checked> Mar</label>
+              <label><input type="checkbox" value="3" checked> Mié</label>
+              <label><input type="checkbox" value="4" checked> Jue</label>
+              <label><input type="checkbox" value="5" checked> Vie</label>
+              <label><input type="checkbox" value="6" checked> Sáb</label>
+              <label><input type="checkbox" value="0"> Dom</label>
+            </div>
+            <small style="color:var(--muted); font-size:0.8rem;">
+              Se usa para calcular el día estimado de entrega (0=Dom, 1=Lun, …, 6=Sáb).
+            </small>
+          </div>
+
+          <div>
+            <label>Demora estándar (días)</label>
+            <input type="number" min="0" id="e_tiempo_entrega_dias" placeholder="0">
+            <small style="color:var(--muted); font-size:0.8rem;">
+              Días de preparación antes de empezar a contar la entrega.
+            </small>
+          </div>
+        </div>
+
+        <div>
+          <label>Horario mostrado al cliente</label>
+          <input type="text" id="e_horarios" placeholder="Ej: Lunes a sábado de 9 a 18 hs">
+          <small style="color:var(--muted); font-size:0.8rem;">
+            Este texto aparece en el WhatsApp de confirmación (campo ⏰ Horario).
+          </small>
+        </div>
+
+        <div class="form-row">
+          <div>
+            <label>Franja de reparto (desde)</label>
+            <input type="time" id="e_franja_desde">
+          </div>
+          <div>
+            <label>Franja de reparto (hasta)</label>
+            <input type="time" id="e_franja_hasta">
+          </div>
+        </div>
+        <div>
+          <small style="color:var(--muted); font-size:0.8rem;">
+            Franja orientativa de reparto (ej: 14:00 a 18:00).
+          </small>
+        </div>
+
+        <div>
+          <label>Feriados (uno por línea, formato DD/MM - Motivo)</label>
+          <textarea id="e_feriados" rows="3" placeholder="01/01 - Año Nuevo&#10;25/12 - Navidad"></textarea>
+          <small style="color:var(--muted); font-size:0.8rem;">
+            Si un pedido cae en uno de estos días, se reprograma al siguiente hábil.
+          </small>
+        </div>
+
+        <div class="section-label">Inteligencia Artificial (Chatbot)</div>
+
+        <div>
+          <label>Etiquetas / Palabras Clave (Separadas por coma)</label>
+          <textarea id="e_etiquetas" rows="2" placeholder="Ej: Agua en bidón, Dispenser, Envío a domicilio"></textarea>
+        </div>
+
+        <div style="margin-top:10px;">
+          <label>Prompt Vendedor (Personalizado)</label>
+          <textarea id="e_prompt_vendedor" rows="3" placeholder="Opcional: prompt específico para ventas de esta empresa."></textarea>
+        </div>
+
+        <div>
+          <label>Prompt General / Soporte (Personalizado)</label>
+          <textarea id="e_prompt_general" rows="3" placeholder="Opcional: reglas o políticas de soporte."></textarea>
+        </div>
+                <div class="section-label">Módulos / Alcance ERP / FSM</div>
+        <div class="form-row">
+          <div>
+            <label>Módulos habilitados</label>
+            <div id="e_modulos_group" class="pill-group">
+              <label><input type="checkbox" id="e_mod_pedidos" checked> Pedidos &amp; Ventas</label>
+              <label><input type="checkbox" id="e_mod_logistica" checked> Logística &amp; Repartos</label>
+              <label><input type="checkbox" id="e_mod_activos" checked> Activos / Comodatos</label>
+              <label><input type="checkbox" id="e_mod_costos"> Costos / Finanzas</label>
+            </div>
+            <small style="color:var(--muted); font-size:0.8rem;">
+              Podés encender o apagar módulos por empresa. Ideal para multi-clientes con distinto alcance de servicio.
+            </small>
+          </div>
+        </div>
+
+        <div class="section-label">Parámetros Operativos (ERP)</div>
+        <div class="form-row">
+          <div>
+            <label>Zona horaria</label>
+            <select id="e_tz">
+              <option value="">Usar por defecto del sistema</option>
+              <option value="America/Argentina/Buenos_Aires" selected>America/Argentina/Buenos_Aires</option>
+              <option value="America/Montevideo">America/Montevideo</option>
+              <option value="America/Sao_Paulo">America/Sao_Paulo</option>
+            </select>
+            <small style="color:var(--muted); font-size:0.8rem;">
+              Los horarios se guardan en UTC pero se muestran en esta zona horaria.
+            </small>
+          </div>
+          <div>
+            <label>Moneda principal</label>
+            <select id="e_moneda">
+              <option value="">No definido</option>
+              <option value="ARS" selected>ARS</option>
+              <option value="USD">USD</option>
+              <option value="BRL">BRL</option>
+            </select>
+            <small style="color:var(--muted); font-size:0.8rem;">
+              Se usa para reportes de costos, activos y logística.
+            </small>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div>
+            <label>País</label>
+            <input type="text" id="e_pais" placeholder="Ej: AR">
+          </div>
+          <div>
+            <label>Provincia / Estado</label>
+            <input type="text" id="e_prov_oper" placeholder="Ej: Córdoba">
+          </div>
+          <div>
+            <label>Unidad de distancia</label>
+            <select id="e_unidad_dist">
+              <option value="km" selected>km</option>
+              <option value="mi">millas</option>
+            </select>
+          </div>
+          <div>
+            <label>Unidad de volumen</label>
+            <select id="e_unidad_vol">
+              <option value="litros" selected>litros</option>
+              <option value="m3">m3</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="section-label">Configuración Logística Avanzada (FSM)</div>
+        <div class="form-row">
+          <div>
+            <label>Nombre de base logística</label>
+            <input type="text" id="e_base_nombre" placeholder="Depósito Central, Planta Norte, etc.">
+            <small style="color:var(--muted); font-size:0.8rem;">
+              Punto de origen para rutas, asignación y cálculos de distancia.
+            </small>
+          </div>
+          <div>
+            <label>Coordenadas base (lng, lat)</label>
+            <div class="form-row">
+              <div>
+                <input type="number" step="0.000001" id="e_base_lng" placeholder="-64.200000">
+              </div>
+              <div>
+                <input type="number" step="0.000001" id="e_base_lat" placeholder="-31.400000">
+              </div>
+            </div>
+            <small style="color:var(--muted); font-size:0.8rem;">
+              GeoJSON usa el orden [lng, lat]. Estos valores alimentan PostGIS.
+            </small>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div>
+            <label>Modo de asignación de pedidos</label>
+            <select id="e_modo_asignacion">
+              <option value="manual">Manual</option>
+              <option value="zona_auto">Por zona automática</option>
+              <option value="proximidad">Por proximidad (PostGIS)</option>
+            </select>
+          </div>
+          <div>
+            <label>Hora de corte para mismo día</label>
+            <input type="time" id="e_hora_corte" placeholder="12:00">
+          </div>
+          <div>
+            <label>SLA objetivo (horas)</label>
+            <input type="number" min="0" id="e_sla_horas" placeholder="24">
+          </div>
+          <div>
+            <label>Máx. pedidos por chofer/turno</label>
+            <input type="number" min="0" id="e_max_pedidos_chofer" placeholder="40">
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div>
+            <label>Texto extra para tracking / WhatsApp</label>
+            <textarea id="e_tracking_extra" rows="2" placeholder="Ej: Recordá tener tus envases listos 🙌"></textarea>
+          </div>
+          <div>
+            <label>Mostrar nombre del chofer al cliente</label>
+            <select id="e_mostrar_chofer">
+              <option value="">Usar por defecto</option>
+              <option value="true">Sí, mostrar</option>
+              <option value="false">No mostrar</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="section-label">Activos &amp; Comodatos (FSM)</div>
+        <div class="form-row">
+          <div>
+            <label>Usa activos en comodato</label>
+            <select id="e_usa_comodato">
+              <option value="">No definido</option>
+              <option value="true">Sí, manejamos comodatos</option>
+              <option value="false">No, solo stock interno</option>
+            </select>
+          </div>
+          <div>
+            <label>Monto alquiler mensual (por defecto)</label>
+            <input type="number" min="0" step="0.01" id="e_alquiler_mensual" placeholder="0">
+          </div>
+          <div>
+            <label>Plazo mínimo de comodato (meses)</label>
+            <input type="number" min="0" id="e_plazo_minimo" placeholder="12">
+          </div>
+          <div>
+            <label>Cobra cargo de retiro</label>
+            <select id="e_cobra_retiro">
+              <option value="">No definido</option>
+              <option value="true">Sí</option>
+              <option value="false">No</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div>
+            <label>Prefijo código de activo</label>
+            <input type="text" id="e_prefijo_activo" placeholder="DISP, TANQ, VEH, etc.">
+          </div>
+          <div>
+            <label>Longitud correlativo</label>
+            <input type="number" min="1" max="10" id="e_longitud_correlativo" placeholder="5">
+          </div>
+          <div>
+            <label>Intervalo de sanitización (días)</label>
+            <input type="number" min="0" id="e_sanit_dias" placeholder="90">
+          </div>
+          <div>
+            <label>Alerta preventiva (días antes)</label>
+            <input type="number" min="0" id="e_alerta_dias" placeholder="10">
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div>
+            <label>Requiere foto de sanitización</label>
+            <select id="e_req_foto">
+              <option value="">No definido</option>
+              <option value="true">Sí</option>
+              <option value="false">No</option>
+            </select>
+          </div>
+          <div>
+            <label>Requiere firma del cliente</label>
+            <select id="e_req_firma">
+              <option value="">No definido</option>
+              <option value="true">Sí</option>
+              <option value="false">No</option>
+            </select>
+          </div>
+          <div>
+            <label>Máx. activos por cliente</label>
+            <input type="number" min="0" id="e_max_activos_cliente" placeholder="3">
+          </div>
+        </div>
+
+        <div class="section-label">Integraciones externas (ERP)</div>
+        <div class="form-row">
+          <div>
+            <label>Código en ERP externo</label>
+            <input type="text" id="e_codigo_externo" placeholder="ID o código de la empresa en otro sistema">
+          </div>
+          <div>
+            <label>Webhook / Callback URL</label>
+            <input type="url" id="e_webhook_url" placeholder="https://pedivoy.com/hooks/hidro">
+            <small style="color:var(--muted); font-size:0.8rem;">
+              Se puede usar para notificar nuevos pedidos, movimientos de activos o cambios de estado.
+            </small>
+          </div>
+        </div>
+
+
+        <div id="panelLicencia" style="display:none; border: 1px solid var(--warning); background: rgba(245, 158, 11, 0.05); padding: 15px; border-radius: 8px; margin-top: 20px;">
+          <div class="section-label" style="color: var(--warning); border-color: var(--warning);">👑 Zona Super Admin: Licencia</div>
+          
+          <div class="form-row">
+            <div>
+              <label>Estado del Plan</label>
+              <select id="e_plan_estado">
+                <option value="active">🟢 Activo</option>
+                <option value="expired">🔴 Vencido</option>
+              </select>
+            </div>
+            <div>
+              <label>Tipo de Plan</label>
+              <select id="e_plan_tipo">
+                <option value="trial">Prueba (Trial)</option>
+                <option value="mensual">Mensual</option>
+                <option value="anual">Anual</option>
+                <option value="unlimited">Ilimitado (Admin)</option>
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label>Fecha de Vencimiento</label>
+            <input type="datetime-local" id="e_plan_vencimiento">
+            <small style="color:var(--muted)">Establecer fecha límite de acceso.</small>
+          </div>
+        </div>
+
+      </form>
+
+      <div class="modal-footer">
+        <button class="btn" type="button" onclick="closeModal()">Cancelar</button>
+        <button class="btn btn-primary" type="button" onclick="save()">Guardar</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="modalCuentas" class="modal-backdrop">
+    <div class="modal">
+      <div class="modal-header">
+        <div>
+          <h3 style="margin:0;">Cuentas Bancarias</h3>
+          <small id="lblEmpresaCuentas" style="color:var(--brand); font-weight:600;"></small>
+        </div>
+        <button class="btn-icon" onclick="closeCuentasModal()">✕</button>
+      </div>
+
+      <div class="modal-body">
+        <ul id="listaCuentas" class="account-list">
+          <li style="padding:10px; text-align:center; color:var(--muted);">Cargando...</li>
+        </ul>
+
+        <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px dashed var(--border);">
+          <div class="section-label">Agregar Nueva Cuenta</div>
+
+          <div class="form-row">
+            <div>
+              <label>Banco</label>
+              <input type="text" id="new_banco" placeholder="Ej: Galicia">
+            </div>
+            <div>
+              <label>Titular</label>
+              <input type="text" id="new_titular" placeholder="Juan Perez">
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div>
+              <label>Alias</label>
+              <input type="text" id="new_alias" placeholder="ALIAS.MP">
+            </div>
+            <div>
+              <label>CBU / CVU</label>
+              <input type="text" id="new_cbu" placeholder="000000...">
+            </div>
+          </div>
+
+          <div style="display:flex; justify-content:flex-end;">
+            <button class="btn btn-primary" type="button" onclick="addCuenta()">
+              <i class="fa-solid fa-plus"></i> Agregar Cuenta
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script>
+    const $ = (s) => document.querySelector(s);
+    const LOGIN_URL = '/pedidos/login.html';
+    
+    function parseMaybeJson(v) {
+      if (!v) return {};
+      if (typeof v === 'string') {
+        try { return JSON.parse(v); } catch { return {}; }
+      }
+      if (typeof v === 'object') return v;
+      return {};
+    }
+
+    function toast(msg) {
+      const t = $('#toast');
+      t.textContent = msg;
+      t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 3000);
+    }
+
+    async function api(endpoint, opts = {}) {
+      const token = localStorage.getItem('token');
+      if (!token) {
+        window.location.href = LOGIN_URL;
+        return;
+      }
+
+      const headers = {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        ...(opts.headers || {}),
+      };
+
+      try {
+        const res = await fetch(endpoint, { ...opts, headers });
+        if (res.status === 401) {
+          window.location.href = LOGIN_URL;
+          return;
+        }
+        return res.json();
+      } catch (e) {
+        console.error(e);
+        toast('Error de conexión');
+        return { error: 'Error' };
+      }
+    }
+
+$('#logout').onclick = () => {
+  localStorage.removeItem('token');
+  location.href = LOGIN_URL;
+};
+
+
+// --- CORRECCIÓN EN EL SCRIPT ---
+    let companies = [];
+    let currentEmpresaIdCuentas = null;
+    let esSuperAdmin = false; 
+
+    (async function boot() {
+      try {
+        const me = await api('/api/me');
+        if (me && me.user) {
+          const role = String(me.user.role || '').toLowerCase();
+          $('#roleBadge').textContent = role === 'super' ? 'SUPER ADMIN' : role.toUpperCase();
+
+          if (role === 'super') {
+            esSuperAdmin = true;
+            // Mostrar el panel oculto en el modal
+            const panel = $('#panelLicencia');
+            if (panel) panel.style.display = 'block'; 
+          }
+        }
+        load();
+      } catch (e) {
+        console.error(e);
+      }
+    })();
+
+    async function load() {
+      const data = await api('/api/empresas');
+      const tbody = $('#tbBody');
+      if (Array.isArray(data)) {
+        companies = data;
+        render();
+      } else {
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:var(--danger);">Error: ${data?.error || ''}</td></tr>`;
+      }
+    }
+
+    function render() {
+      const tbody = $('#tbBody');
+      
+      // 1. Si no hay empresas, mostrar mensaje vacío
+      if (!companies.length) {
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:3rem; color:var(--muted);">No hay empresas registradas.</td></tr>`;
+        return;
+      }
+
+      const base = location.origin;
+
+      tbody.innerHTML = companies.map((c) => {
+        const slug = c.landing_slug || '';
+        const domain = c.landing_domain || '';
+
+      // 1. Detectar Timezone de la empresa (o default)
+    let empresaTz = 'America/Argentina/Buenos_Aires'; // Default del sistema
+    try {
+      // config_operativa puede venir como string JSON o como objeto, aseguramos el parseo
+      const opCfg = typeof c.config_operativa === 'string' 
+        ? JSON.parse(c.config_operativa) 
+        : (c.config_operativa || {});
+        
+      if (opCfg.timezone) {
+        empresaTz = opCfg.timezone;
+      }
+    } catch (e) {
+      console.warn('Error parseando config_operativa para TZ', e);
+    }
+ 
+    const estado = c.plan_estado === 'active' ? '🟢 Activo' : '🔴 Vencido';
+    
+    // Usamos el timezone detectado para formatear la fecha visualmente
+    const vencimiento = c.plan_vencimiento 
+      ? new Date(c.plan_vencimiento).toLocaleDateString('es-AR', { 
+          timeZone: empresaTz,
+          year: 'numeric', 
+          month: '2-digit', 
+          day: '2-digit' 
+        }) 
+      : 'Perpetuo';
+        // ----------------------------------
+
+        // Lógica de URL de la Landing
+        let landingUrl;
+        if (domain) {
+          const proto = location.protocol || 'https:';
+          landingUrl = `${proto}//${domain}`;
+        } else if (slug) {
+          landingUrl = `${base}/?slug=${encodeURIComponent(slug)}`;
+        } else {
+          landingUrl = `${base}/?empresa_id=${c.id}`;
+        }
+
+        // Lógica de Configuración de Entrega (Logistics)
+        let logistics = '-';
+        if (c.config_entrega) {
+          try {
+            const cfg = typeof c.config_entrega === 'string'
+              ? JSON.parse(c.config_entrega)
+              : c.config_entrega;
+            const parts = [];
+            if (cfg.horarios) {
+              parts.push('🕒 ' + cfg.horarios);
+            }
+            if (cfg.franja_desde && cfg.franja_hasta) {
+              parts.push('🛵 ' + cfg.franja_desde + '–' + cfg.franja_hasta);
+            }
+            logistics = parts.join(' · ') || '-';
+          } catch (e) {
+            // ignore error
+          }
+        }
+
+        // Resumen de módulos y base logística (si existen)
+        let modSummary = '';
+        try {
+          const mods = parseMaybeJson(c.modulos);
+          const mParts = [];
+          if (mods.pedidos) mParts.push('Pedidos');
+          if (mods.logistica) mParts.push('Logística');
+          if (mods.activos) mParts.push('Activos');
+          if (mods.costos) mParts.push('Costos');
+          modSummary = mParts.join(' · ');
+        } catch (e) {
+          // ignore
+        }
+
+        let baseLogistica = '';
+        try {
+          const lc = parseMaybeJson(c.config_logistica);
+          const nombreBase = lc.base_nombre || '';
+          const coords = lc.base_coords;
+          if (nombreBase) {
+            baseLogistica = nombreBase;
+          }
+          if (coords && coords.length === 2 && coords[0] != null && coords[1] != null) {
+            const coordTxt = '[' + coords[0] + ', ' + coords[1] + ']';
+            baseLogistica = baseLogistica ? baseLogistica + ' · ' + coordTxt : coordTxt;
+          }
+        } catch (e) {
+          // ignore
+        }
+
+        const modSummaryHtml = modSummary
+          ? '<div style="font-size:0.75rem; color:var(--muted); margin-top:2px;">Módulos: ' + modSummary + '</div>'
+          : '';
+
+        const baseLogisticaHtml = baseLogistica
+          ? '<div style="font-size:0.75rem; color:var(--muted); margin-top:2px;">Base: ' + baseLogistica + '</div>'
+          : '';
+
+        // Retornamos la fila HTML
+        return `
+          <tr>
+            <td style="color:var(--muted); font-family:monospace;">#${c.id}</td>
+            
+            <td>
+              <div style="font-weight:700; color:#fff; font-size:1rem; margin-bottom:2px;">${c.nombre}</div>
+              <div style="font-size:0.8rem; color:var(--muted);">
+                <i class="fa-solid fa-briefcase"></i> ${c.razon_social || 'Sin Razón Social'}
+              </div>
+            </td>
+
+            <td>
+              <div style="font-size:0.85rem; font-weight:bold;">${estado}</div>
+              <div style="font-size:0.75rem; color:var(--muted);">Vence: ${vencimiento}</div>
+              <div style="font-size:0.75rem; color:var(--brand); text-transform:uppercase;">${c.plan_tipo || 'Trial'}</div>
+            </td>
+
+            <td>
+              <div style="font-size:0.85rem;"><i class="fa-solid fa-phone"></i> ${c.telefono || '-'}</div>
+              <div style="font-size:0.85rem; color:var(--muted);">CUIT: ${c.cuit || '-'}</div>
+            </td>
+
+            <td>
+              <div style="font-size:0.75rem; color:var(--muted); margin-bottom:4px;">
+                Slug: <span style="color:var(--brand);">${slug || '-'}</span>
+              </div>
+              <div style="font-size:0.75rem; color:#fff;">
+                ${logistics}
+              </div>
+              ${modSummaryHtml}${baseLogisticaHtml}
+            </td>
+
+            <td style="text-align:right; white-space:nowrap;">
+              <button class="btn-icon" onclick="manageCuentas(${c.id}, '${c.nombre.replace(/'/g, "\\'")}')" title="Cuentas Bancarias">
+                <i class="fa-solid fa-building-columns"></i>
+              </button>
+              <button class="btn-icon" onclick="copyLanding(${c.id})" title="Copiar Link">
+                <i class="fa-solid fa-link"></i>
+              </button>
+              <button class="btn-icon" onclick="edit(${c.id})" title="Editar">
+                <i class="fa-solid fa-pen"></i>
+              </button>
+              <button class="btn-icon" onclick="del(${c.id})" title="Eliminar" style="color:var(--danger); border-color:rgba(239,68,68,0.3);">
+                <i class="fa-solid fa-trash"></i>
+              </button>
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+    
+    function openModal() {
+      $('#modal').classList.add('open');
+      $('#modalTitle').textContent = 'Nueva Empresa';
+      $('#formEmpresa').reset();
+      $('#e_id').value = '';
+      $('#e_landing_file').value = ''; // Reset file input
+      $('#e_nombre').focus();
+
+      // Default: Lun a Sáb
+      document.querySelectorAll('#e_dias_entrega input[type="checkbox"]').forEach((chk) => {
+        chk.checked = [1, 2, 3, 4, 5, 6].includes(Number(chk.value));
+      });
+    }
+
+    function closeModal() {
+      $('#modal').classList.remove('open');
+    }
+
+    function edit(id) {
+      const c = companies.find((x) => x.id === id);
+      if (!c) return;
+
+      $('#modal').classList.add('open');
+      $('#modalTitle').textContent = 'Editar Empresa';
+      $('#e_landing_file').value = ''; // Reset file input
+
+      // 1. Datos básicos
+      $('#e_id').value = c.id;
+      $('#e_nombre').value = c.nombre || '';
+      $('#e_telefono').value = c.telefono || '';
+      $('#e_email').value = c.email || '';
+
+      $('#e_razon_social').value = c.razon_social || '';
+      $('#e_cuit').value = c.cuit || '';
+      $('#e_condicion_iva').value = c.condicion_iva || '';
+      $('#e_ciudad').value = c.ciudad || '';
+      $('#e_direccion').value = c.direccion || '';
+
+      $('#e_slug').value = c.landing_slug || '';
+      $('#e_domain').value = c.landing_domain || '';
+
+      // 2. Configuración de Entrega
+      const cfg = parseMaybeJson(c.config_entrega);
+      const dias = Array.isArray(cfg.dias_habiles)
+        ? cfg.dias_habiles.map(Number)
+        : [];
+
+      document
+        .querySelectorAll('#e_dias_entrega input[type="checkbox"]')
+        .forEach((chk) => {
+          const v = Number(chk.value);
+          if (dias.length) {
+            chk.checked = dias.includes(v);
+          } else {
+            chk.checked = [1, 2, 3, 4, 5, 6].includes(v);
+          }
+        });
+
+      $('#e_tiempo_entrega_dias').value = cfg.tiempo_entrega_dias ?? '';
+      $('#e_horarios').value = cfg.horarios || '';
+      $('#e_franja_desde').value = cfg.franja_desde || '';
+      $('#e_franja_hasta').value = cfg.franja_hasta || '';
+
+      if (Array.isArray(cfg.feriados) && cfg.feriados.length) {
+        $('#e_feriados').value = cfg.feriados
+          .map(
+            (f) =>
+              `${(f.fecha || '').trim()} - ${(f.motivo || '').trim()}`.trim()
+          )
+          .join('\n');
+      } else {
+        $('#e_feriados').value = '';
+      }
+
+      // 3. IA / Contexto
+      $('#e_rubro').value = c.rubro || '';
+      $('#e_etiquetas').value = c.etiquetas || '';
+      $('#e_prompt_vendedor').value = c.prompt_ia_vendedor || '';
+      $('#e_prompt_general').value = c.prompt_ia_general || '';
+
+      // 4. Módulos y config ERP/FSM
+      const modCfg = parseMaybeJson(c.modulos);
+      $('#e_mod_pedidos').checked = modCfg.pedidos ?? true;
+      $('#e_mod_logistica').checked = modCfg.logistica ?? true;
+      $('#e_mod_activos').checked = modCfg.activos ?? true;
+      $('#e_mod_costos').checked = modCfg.costos ?? false;
+
+      const opCfg = parseMaybeJson(c.config_operativa);
+      $('#e_tz').value = opCfg.timezone || '';
+      $('#e_moneda').value = opCfg.moneda || '';
+      $('#e_pais').value = opCfg.pais || '';
+      $('#e_prov_oper').value = opCfg.provincia || '';
+      $('#e_unidad_dist').value = opCfg.unidad_distancia || 'km';
+      $('#e_unidad_vol').value = opCfg.unidad_volumen || 'litros';
+
+      const logCfg = parseMaybeJson(c.config_logistica);
+      $('#e_base_nombre').value = logCfg.base_nombre || '';
+      $('#e_base_lng').value =
+        logCfg.base_coords && logCfg.base_coords[0] != null
+          ? logCfg.base_coords[0]
+          : '';
+      $('#e_base_lat').value =
+        logCfg.base_coords && logCfg.base_coords[1] != null
+          ? logCfg.base_coords[1]
+          : '';
+      $('#e_modo_asignacion').value =
+        logCfg.modo_asignacion_pedidos || 'manual';
+      $('#e_hora_corte').value = logCfg.hora_corte_mismo_dia || '';
+      $('#e_sla_horas').value = logCfg.sla_horas ?? '';
+      $('#e_max_pedidos_chofer').value =
+        logCfg.max_pedidos_por_chofer_turno ?? '';
+      $('#e_tracking_extra').value = logCfg.texto_tracking_extra || '';
+      $('#e_mostrar_chofer').value =
+        typeof logCfg.mostrar_nombre_chofer_al_cliente === 'boolean'
+          ? String(logCfg.mostrar_nombre_chofer_al_cliente)
+          : '';
+
+      const actCfg = parseMaybeJson(c.config_activos);
+      $('#e_usa_comodato').value =
+        typeof actCfg.usa_comodato === 'boolean'
+          ? String(actCfg.usa_comodato)
+          : '';
+      $('#e_alquiler_mensual').value =
+        actCfg.monto_alquiler_mensual_default ?? '';
+      $('#e_plazo_minimo').value = actCfg.plazo_minimo_meses ?? '';
+      $('#e_cobra_retiro').value =
+        typeof actCfg.cobra_cargo_retiro === 'boolean'
+          ? String(actCfg.cobra_cargo_retiro)
+          : '';
+      $('#e_prefijo_activo').value = actCfg.prefijo_codigo_activo || '';
+      $('#e_longitud_correlativo').value =
+        actCfg.longitud_correlativo ?? '';
+      $('#e_sanit_dias').value =
+        actCfg.sanitizacion_intervalo_dias ?? '';
+      $('#e_alerta_dias').value = actCfg.alerta_preventiva_dias ?? '';
+      $('#e_req_foto').value =
+        typeof actCfg.requiere_foto_sanitizacion === 'boolean'
+          ? String(actCfg.requiere_foto_sanitizacion)
+          : '';
+      $('#e_req_firma').value =
+        typeof actCfg.requiere_firma_cliente === 'boolean'
+          ? String(actCfg.requiere_firma_cliente)
+          : '';
+      $('#e_max_activos_cliente').value =
+        actCfg.max_activos_por_cliente ?? '';
+
+      // 5. Integraciones (incluye pagos)
+      const intCfg = parseMaybeJson(c.config_integraciones);
+      $('#e_codigo_externo').value = intCfg.codigo_externo || '';
+      $('#e_webhook_url').value = intCfg.webhook_url || '';
+
+      // Rellenar bloque "Cobros y Pagos"
+      setPagosConfigInForm(intCfg, c.id);
+
+      // 6. Licencia (solo super admin)
+      if (typeof esSuperAdmin !== 'undefined' && esSuperAdmin) {
+        $('#e_plan_estado').value = c.plan_estado || 'active';
+        $('#e_plan_tipo').value = c.plan_tipo || 'trial';
+
+        if (c.plan_vencimiento) {
+          const d = new Date(c.plan_vencimiento);
+          // Ajuste para que el input datetime-local tome bien la hora local
+          d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+          $('#e_plan_vencimiento').value = d.toISOString().slice(0, 16);
+        } else {
+          $('#e_plan_vencimiento').value = '';
+        }
+      }
+    }
+
+    async function uploadLanding() {
+      const id = $('#e_id').value;
+      const fileInput = $('#e_landing_file');
+      
+      if (!id) {
+        toast('Primero guarda la empresa para obtener un ID.');
+        return;
+      }
+      
+      if (!fileInput.files.length) {
+        toast('Selecciona un archivo .html primero');
+        return;
+      }
+
+      const file = fileInput.files[0];
+      const formData = new FormData();
+      formData.append('file', file);
+
+      try {
+        const token = localStorage.getItem('token');
+        const res = await fetch(`/api/empresas/${id}/landing-page`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`
+            // No seteamos Content-Type, el navegador lo pone con el boundary correcto
+          },
+          body: formData
+        });
+
+        const json = await res.json();
+        if (res.ok) {
+          toast('✅ Landing subida correctamente');
+          fileInput.value = ''; // Limpiar input
+        } else {
+          toast('❌ Error: ' + (json.error || 'Error subiendo archivo'));
+        }
+      } catch (e) {
+        console.error(e);
+        toast('Error de conexión al subir');
+      }
+    }
+
+    async function deleteLanding() {
+      const id = $('#e_id').value;
+      if (!id) return;
+
+      if (!confirm('¿Estás seguro de borrar la landing page personalizada? Volverá a usarse el diseño por defecto.')) {
+        return;
+      }
+
+      const res = await api(`/api/empresas/${id}/landing-page`, {
+        method: 'DELETE'
+      });
+
+      if (res && res.error) {
+        toast('❌ ' + res.error);
+      } else {
+        toast('🗑️ Landing personalizada eliminada');
+      }
+    }
+
+    let pagosTokenActual = null;
+        
+    function getPagosConfigFromForm() {
+      const proveedor = document.getElementById('e_pagos_proveedor').value || null;
+
+      const tokenInput = document.getElementById('e_pagos_token').value || '';
+      let token = null;
+
+      if (!tokenInput) {
+        // Si está vacío, no cambias nada: usás el que tenías antes (si había)
+        token = pagosTokenActual || null;
+      } else if (tokenInput === '********') {
+        // El usuario no tocó el campo → mantener el token actual
+        token = pagosTokenActual || null;
+      } else {
+        // El usuario pegó un token nuevo
+        token = tokenInput.trim();
+      }
+
+      const autoConfirm =
+        document.querySelector('input[name="e_pagos_auto_conf"]:checked')?.value === 'true';
+
+      const canales = {
+        efectivo: document.getElementById('e_cobro_efectivo').checked,
+        transferencia: document.getElementById('e_cobro_transferencia').checked,
+        qr_dinamico: document.getElementById('e_cobro_qr').checked,
+      };
+
+      const preferido = document.getElementById('e_cobro_preferido').value || null;
+
+      return {
+        proveedor,
+        access_token: token,
+        auto_confirmar: autoConfirm,
+        canales,
+        preferido,
+      };
+    }
+
+    function setPagosConfigInForm(configIntegraciones, empresaId) {
+      const cfg = configIntegraciones || {};
+      const pagos = cfg.pagos || {};
+      const canales = pagos.canales || {};
+
+      // Guardamos el token real en memoria para poder manejar el placeholder
+      pagosTokenActual = pagos.access_token || null;
+
+      // Canales de cobro habilitados
+      document.getElementById('e_cobro_efectivo').checked =
+        (canales.efectivo !== undefined) ? !!canales.efectivo : true;
+
+      document.getElementById('e_cobro_transferencia').checked =
+        (canales.transferencia !== undefined) ? !!canales.transferencia : true;
+
+      document.getElementById('e_cobro_qr').checked = !!canales.qr_dinamico;
+
+      // Medio de cobro preferido (efectivo / transferencia / qr / vacío)
+      document.getElementById('e_cobro_preferido').value = pagos.preferido || '';
+
+      // Proveedor (mercado_pago, modo, banco_x, etc.)
+      const proveedor = pagos.proveedor || 'mercado_pago';
+      document.getElementById('e_pagos_proveedor').value = proveedor;
+
+      // Token: si hay uno en DB, mostramos ****, si no, vacío
+      document.getElementById('e_pagos_token').value = pagos.access_token ? '********' : '';
+
+      // Auto-confirmar pagos acreditados (radio true/false)
+      const autoTrue = document.querySelector('input[name="e_pagos_auto_conf"][value="true"]');
+      const autoFalse = document.querySelector('input[name="e_pagos_auto_conf"][value="false"]');
+
+      if (pagos.auto_confirmar === true) {
+        autoTrue.checked = true;
+        autoFalse.checked = false;
+      } else {
+        autoTrue.checked = false;
+        autoFalse.checked = true;
+      }
+
+      // Webhook sugerida (solo informativa en el panel)
+      // Usa el endpoint genérico: /api/webhooks/pagos/:proveedor
+      const baseUrl = window.location.origin;
+      const webhookSugerida = `${baseUrl}/api/webhooks/pagos/${proveedor}`;
+      const webhookInput = document.getElementById('e_pagos_webhook');
+      if (webhookInput) {
+        webhookInput.value = webhookSugerida;
+      }
+    }
+
+    async function save() {
+      const id = $('#e_id').value;
+
+      const body = {
+        nombre: $('#e_nombre').value,
+        telefono: $('#e_telefono').value,
+        email: $('#e_email').value,
+        razon_social: $('#e_razon_social').value,
+        cuit: $('#e_cuit').value,
+        condicion_iva: $('#e_condicion_iva').value,
+        ciudad: $('#e_ciudad').value,
+        direccion: $('#e_direccion').value,
+        landing_slug: $('#e_slug').value,
+        landing_domain: $('#e_domain').value,
+        rubro: $('#e_rubro').value,
+        etiquetas: $('#e_etiquetas').value,
+        prompt_ia_vendedor: $('#e_prompt_vendedor').value,
+        prompt_ia_general: $('#e_prompt_general').value,
+      };
+
+      // Módulos habilitados
+      const modulos = {
+        pedidos: $('#e_mod_pedidos').checked,
+        logistica: $('#e_mod_logistica').checked,
+        activos: $('#e_mod_activos').checked,
+        costos: $('#e_mod_costos').checked,
+      };
+      body.modulos = modulos;
+
+      // Configuración operativa
+      const config_operativa = {
+        timezone: $('#e_tz').value || null,
+        pais: $('#e_pais').value || null,
+        provincia: $('#e_prov_oper').value || null,
+        moneda: $('#e_moneda').value || null,
+        unidad_distancia: $('#e_unidad_dist').value || 'km',
+        unidad_volumen: $('#e_unidad_vol').value || 'litros',
+      };
+      body.config_operativa = config_operativa;
+
+      // Config logística
+      const baseLng = $('#e_base_lng').value;
+      const baseLat = $('#e_base_lat').value;
+      const baseCoords = (baseLng && baseLat)
+        ? [Number(baseLng), Number(baseLat)]
+        : null;
+
+      const config_logistica = {
+        base_nombre: $('#e_base_nombre').value || null,
+        base_coords: baseCoords,
+        modo_asignacion_pedidos: $('#e_modo_asignacion').value || 'manual',
+        hora_corte_mismo_dia: $('#e_hora_corte').value || null,
+        sla_horas: $('#e_sla_horas').value ? Number($('#e_sla_horas').value) : null,
+        max_pedidos_por_chofer_turno: $('#e_max_pedidos_chofer').value ? Number($('#e_max_pedidos_chofer').value) : null,
+        texto_tracking_extra: $('#e_tracking_extra').value || null,
+        mostrar_nombre_chofer_al_cliente: (function () {
+          const val = $('#e_mostrar_chofer').value;
+          if (val === 'true') return true;
+          if (val === 'false') return false;
+          return null;
+        })()
+      };
+      body.config_logistica = config_logistica;
+
+      // Config activos
+      const config_activos = {
+        usa_comodato: (function () {
+          const v = $('#e_usa_comodato').value;
+          if (v === 'true') return true;
+          if (v === 'false') return false;
+          return null;
+        })(),
+        monto_alquiler_mensual_default: $('#e_alquiler_mensual').value ? Number($('#e_alquiler_mensual').value) : null,
+        plazo_minimo_meses: $('#e_plazo_minimo').value ? Number($('#e_plazo_minimo').value) : null,
+        cobra_cargo_retiro: (function () {
+          const v = $('#e_cobra_retiro').value;
+          if (v === 'true') return true;
+          if (v === 'false') return false;
+          return null;
+        })(),
+        prefijo_codigo_activo: $('#e_prefijo_activo').value || null,
+        longitud_correlativo: $('#e_longitud_correlativo').value ? Number($('#e_longitud_correlativo').value) : null,
+        sanitizacion_intervalo_dias: $('#e_sanit_dias').value ? Number($('#e_sanit_dias').value) : null,
+        alerta_preventiva_dias: $('#e_alerta_dias').value ? Number($('#e_alerta_dias').value) : null,
+        requiere_foto_sanitizacion: (function () {
+          const v = $('#e_req_foto').value;
+          if (v === 'true') return true;
+          if (v === 'false') return false;
+          return null;
+        })(),
+        requiere_firma_cliente: (function () {
+          const v = $('#e_req_firma').value;
+          if (v === 'true') return true;
+          if (v === 'false') return false;
+          return null;
+        })(),
+        max_activos_por_cliente: $('#e_max_activos_cliente').value ? Number($('#e_max_activos_cliente').value) : null,
+      };
+      body.config_activos = config_activos;
+
+      // 🔹 Config integraciones (incluye pagos)
+      const pagosCfg = getPagosConfigFromForm(); // usa el form de "Cobros y Pagos"
+
+      const config_integraciones = {
+        codigo_externo: $('#e_codigo_externo').value || null,
+        webhook_url: $('#e_webhook_url').value || null,
+        pagos: pagosCfg,
+      };
+      body.config_integraciones = config_integraciones;
+
+      // --- Licencia (solo super admin) ---
+      if (typeof esSuperAdmin !== 'undefined' && esSuperAdmin) {
+        body.plan_estado = $('#e_plan_estado').value;
+        body.plan_tipo = $('#e_plan_tipo').value;
+
+        const vencRaw = $('#e_plan_vencimiento').value;
+        body.plan_vencimiento = vencRaw ? new Date(vencRaw).toISOString() : null;
+      }
+
+      // Config entrega
+      const diasSel = Array.from(
+        document.querySelectorAll('#e_dias_entrega input[type="checkbox"]:checked')
+      )
+        .map((chk) => Number(chk.value))
+        .filter((n) => Number.isFinite(n));
+
+      const tiempo = Number($('#e_tiempo_entrega_dias').value || 0);
+      const horarios = $('#e_horarios').value.trim();
+      const franjaDesde = $('#e_franja_desde').value;
+      const franjaHasta = $('#e_franja_hasta').value;
+
+      const feriadosRaw = $('#e_feriados').value
+        .split('\n')
+        .map((s) => s.trim())
+        .filter(Boolean);
+
+      const feriados = feriadosRaw
+        .map((line) => {
+          const partes = line.split('-');
+          if (partes.length < 2) return null;
+          const fecha = partes[0].trim();
+          const motivo = partes.slice(1).join('-').trim();
+          return fecha ? { fecha, motivo } : null;
+        })
+        .filter(Boolean);
+
+      body.config_entrega = {
+        dias_habiles: diasSel.length ? diasSel : [1, 2, 3, 4, 5, 6],
+        tiempo_entrega_dias: Number.isFinite(tiempo) ? tiempo : 0,
+        horarios: horarios || undefined,
+        franja_desde: franjaDesde || undefined,
+        franja_hasta: franjaHasta || undefined,
+        feriados,
+      };
+
+      if (!body.nombre) {
+        toast('El nombre es obligatorio');
+        return;
+      }
+
+      const method = id ? 'PUT' : 'POST';
+      const url = id ? `/api/empresas/${id}` : '/api/empresas';
+
+      const res = await api(url, {
+        method,
+        body: JSON.stringify(body),
+      });
+
+      if (res && res.error) {
+        toast('❌ ' + res.error);
+      } else {
+        toast(id ? '✅ Actualizado' : '✅ Creado');
+
+        if (!id && res.id) {
+          // recién creada: cierro y recargo
+          closeModal();
+          load();
+        } else {
+          // editando: recargo lista pero dejo modal abierto
+          load();
+        }
+      }
+    }
+
+    async function del(id) {
+      if (!confirm('¿Eliminar empresa?\n\n⚠️ SE BORRARÁN TODOS SUS DATOS (Pedidos, Clientes, etc).')) {
+        return;
+      }
+
+      const res = await api(`/api/empresas/${id}`, { method: 'DELETE' });
+      if (res && res.error) {
+        toast('❌ ' + res.error);
+      } else {
+        toast('🗑️ Empresa eliminada');
+        load();
+      }
+    }
+
+    function copyLanding(id) {
+      const c = companies.find((x) => x.id === id);
+      if (!c) return;
+
+      const base = location.origin;
+      const slug = c.landing_slug || '';
+      const domain = c.landing_domain || '';
+
+      let landingUrl;
+      if (domain) {
+        const proto = location.protocol || 'https:';
+        landingUrl = `${proto}//${domain}`;
+      } else if (slug) {
+        landingUrl = `${base}/?slug=${encodeURIComponent(slug)}`;
+      } else {
+        landingUrl = `${base}/?empresa_id=${c.id}`;
+      }
+
+      navigator.clipboard
+        .writeText(landingUrl)
+        .then(() => toast('🔗 Link copiado'))
+        .catch(() => toast('No se pudo copiar'));
+    }
+
+    function openCuentasModal() {
+      $('#modalCuentas').classList.add('open');
+    }
+
+    function closeCuentasModal() {
+      $('#modalCuentas').classList.remove('open');
+    }
+
+    function manageCuentas(id, nombre) {
+      currentEmpresaIdCuentas = id;
+      $('#lblEmpresaCuentas').textContent = nombre;
+      openCuentasModal();
+      loadCuentas(id);
+    }
+
+    async function loadCuentas(id) {
+      const ul = $('#listaCuentas');
+      ul.innerHTML = '<li style="padding:10px; text-align:center; color:var(--muted);">Cargando...</li>';
+
+      const res = await api(`/api/empresas/${id}/cuentas`);
+
+      if (res && res.error) {
+        ul.innerHTML = '<li style="padding:10px; text-align:center; color:var(--danger);">Error cargando cuentas</li>';
+        return;
+      }
+
+      if (!res || !res.length) {
+        ul.innerHTML =
+          '<li style="padding:10px; text-align:center; color:var(--muted); font-size:0.9rem;">No hay cuentas configuradas.</li>';
+        return;
+      }
+
+      res.sort((a, b) => (b.activa === true) - (a.activa === true));
+
+      ul.innerHTML = res
+        .map(
+          (cta) => `
+        <li class="account-item" style="border-left: 3px solid ${cta.activa ? 'var(--success)' : 'var(--muted)'};">
+          <div class="account-info">
+            <div style="display:flex; align-items:center; gap:8px;">
+              <span class="account-bank">${cta.banco || 'Banco'}</span>
+              ${cta.activa ? '<i class="fa-solid fa-circle-check" style="color:var(--success); font-size:0.8rem;" title="Cuenta activa"></i>' : ''}
+            </div>
+            <span class="account-detail">
+              ${cta.alias ? 'Alias: <strong style="color:#fff">' + cta.alias + '</strong>' : ''} 
+              ${cta.cbu ? '<br>CBU: ' + cta.cbu : ''}
+            </span>
+            ${cta.titular ? `<span class="account-holder">${cta.titular}</span>` : ''}
+          </div>
+          <button class="btn-icon" style="color:var(--danger); border:none;" onclick="delCuenta(${cta.id})">
+            <i class="fa-solid fa-trash"></i>
+          </button>
+        </li>
+      `
+        )
+        .join('');
+    }
+
+    async function addCuenta() {
+      const banco = $('#new_banco').value.trim();
+      const alias = $('#new_alias').value.trim();
+      const cbu = $('#new_cbu').value.trim();
+      const titular = $('#new_titular').value.trim();
+
+      if (!banco && !alias && !cbu) {
+        toast('Completa al menos el Banco y Alias/CBU');
+        return;
+      }
+
+      const res = await api(`/api/empresas/${currentEmpresaIdCuentas}/cuentas`, {
+        method: 'POST',
+        body: JSON.stringify({ banco, alias, cbu, titular }),
+      });
+
+      if (res && res.error) {
+        toast('❌ Error: ' + (res.error || 'No se pudo agregar'));
+      } else {
+        toast('✅ Cuenta agregada');
+        $('#new_banco').value = '';
+        $('#new_alias').value = '';
+        $('#new_cbu').value = '';
+        $('#new_titular').value = '';
+        loadCuentas(currentEmpresaIdCuentas);
+      }
+    }
+
+    async function delCuenta(cuentaId) {
+      if (!confirm('¿Borrar esta cuenta bancaria?')) return;
+
+      const res = await api(`/api/empresas/cuentas/${cuentaId}`, {
+        method: 'DELETE',
+      });
+
+      if (res && res.error) {
+        toast('❌ Error al borrar');
+      } else {
+        toast('🗑️ Cuenta eliminada');
+        loadCuentas(currentEmpresaIdCuentas);
+      }
+    }
+  
+    
+  
+  </script>
+</body>
+</html>

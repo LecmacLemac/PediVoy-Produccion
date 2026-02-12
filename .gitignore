@@ -1,0 +1,14 @@
+﻿*
+!*/
+!.gitignore
+!*.html
+!*.js
+!.gitkeep
+
+!package.json
+!package-lock.json
+!README.md
+!.env.example
+
+
+!.gitkeep

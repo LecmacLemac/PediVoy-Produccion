@@ -1,0 +1,173 @@
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Balanceado</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@3.0.0/dist/tailwind.min.css" rel="stylesheet">
+</head>
+<body class="bg-gray-100 text-gray-900">
+
+    <!-- Header -->
+    <header class="bg-white shadow">
+        <div class="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
+            <h1 id="headerBrandName" class="text-2xl font-bold brand-name">Balanceado</h1>
+            <button id="orderButton" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors">Mis Pedidos</button>
+        </div>
+    </header>
+
+    <!-- Hero Section -->
+    <section class="bg-blue-500 text-white py-20">
+        <div class="max-w-2xl mx-auto text-center">
+            <h2 class="text-4xl font-bold mb-4">¡Bienvenido a Balanceado!</h2>
+            <p class="text-lg">La mejor tienda para mascotas. Encuentra las mejores ofertas para tus amigos peludos.</p>
+        </div>
+    </section>
+
+    <!-- Grilla de Ofertas -->
+    <section class="max-w-7xl mx-auto px-4 py-10">
+        <h3 class="text-3xl font-bold mb-6 text-center">Ofertas del Día</h3>
+        <div id="comboGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <!-- Productos cargados dinámicamente aquí -->
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="bg-white py-4 shadow mt-10">
+        <div class="max-w-7xl mx-auto px-4 text-center">
+            <p id="footerBrand" class="text-sm text-gray-500">&copy; <span id="currentYear"></span> Balanceado. Todos los derechos reservados.</p>
+        </div>
+    </footer>
+
+    <!-- Modal/Popover para Buscar Pedidos -->
+    <div id="statusForm" class="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center hidden">
+        <div class="bg-white rounded-lg shadow-lg p-6">
+            <h4 class="text-xl font-bold mb-4">Buscar Pedido</h4>
+            <form id="searchForm" class="space-y-4">
+                <input type="text" id="phoneInput" class="w-full border border-gray-300 p-2 rounded-lg" placeholder="Ingresa tu número de teléfono">
+                <button type="submit" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors">Buscar</button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        // Actualiza el año en el footer
+        document.getElementById('currentYear').textContent = new Date().getFullYear();
+
+        // --- CONFIGURACIÓN ---
+        let EMPRESA_ID = 4; // Fallback inicial
+        const ARS = new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 });
+
+        // --- UTILIDADES ---
+        function normalizePhone(s) { return String(s || '').replace(/\D+/g, ''); }
+        
+        function buildTelefonoDB(raw) {
+            let s = normalizePhone(raw);
+            if (s.length === 10) return '549' + s;
+            if (s.length === 11 && s.startsWith('0')) return '549' + s.substring(1);
+            return s;
+        }
+
+        function toast(msg) {
+            const t = document.createElement('div');
+            t.style = 'position:fixed;bottom:20px;right:20px;background:#333;color:#fff;padding:10px 20px;border-radius:8px;z-index:99;animation:fadeIn 0.3s';
+            t.innerText = msg;
+            document.body.appendChild(t);
+            setTimeout(() => t.remove(), 3000);
+        }
+
+        // --- 1. IDENTIDAD Y CARGA ---
+        async function init() {
+            try {
+                const res = await fetch('/api/public/config'); 
+                if (res.ok) {
+                    const cfg = await res.json();
+                    if (cfg.empresa_id) {
+                        EMPRESA_ID = cfg.empresa_id;
+                        if(cfg.nombre) {
+                            document.querySelectorAll('.brand-name').forEach(el => el.textContent = cfg.nombre);
+                            document.title = cfg.nombre;
+                        }
+                    }
+                }
+            } catch(e) { console.log('Uso ID por defecto:', EMPRESA_ID); }
+            
+            loadCatalogo();
+        }
+
+        // --- 2. CATÁLOGO ---
+        async function loadCatalogo() {
+            const grid = document.getElementById('comboGrid');
+            if(!grid) return;
+            grid.innerHTML = '<p class="text-center col-span-full opacity-50">Cargando ofertas...</p>';
+
+            try {
+                const res = await fetch(`/api/public/catalog/${EMPRESA_ID}`);
+                if(!res.ok) throw new Error('Err');
+                const prods = await res.json();
+
+                if(!prods.length) {
+                    grid.innerHTML = '<p class="text-center col-span-full">No hay promociones activas hoy.</p>';
+                    return;
+                }
+
+                grid.innerHTML = prods.map(p => `
+                    <div class="bg-white rounded-lg shadow-md overflow-hidden hover:shadow-lg transition-all relative group">
+                        ${p.etiqueta ? '<span class="absolute top-2 right-2 bg-red-500 text-white text-xs font-bold px-2 py-1 rounded-full z-10">'+p.etiqueta+'</span>' : ''}
+                        <img src="${p.imagen || 'https://via.placeholder.com/300x200?text=Sin+Imagen'}" class="w-full h-48 object-cover group-hover:scale-105 transition-transform duration-500">
+                        <div class="p-4">
+                            <h3 class="font-bold text-lg mb-1">${p.nombre}</h3>
+                            <p class="text-gray-500 text-sm mb-3 line-clamp-2">${p.descripcion || ''}</p>
+                            <div class="flex justify-between items-center">
+                                <span class="text-xl font-bold text-green-600">${ARS.format(p.precio)}</span>
+                                <a href="/pedidos/index.html?add=${p.id}" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium text-sm transition-colors">
+                                    Pedir
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                `).join('');
+            } catch(e) {
+                grid.innerHTML = '<p class="text-center text-red-500 col-span-full">Hubo un error cargando el menú.</p>';
+            }
+        }
+
+        // --- 3. BUSCADOR DE PEDIDOS ---
+        async function buscarPedido(e) {
+            e.preventDefault();
+            const input = document.getElementById('phoneInput');
+            const btn = e.target.querySelector('button');
+            if(!input.value) return toast('Ingresa tu número');
+
+            const originalText = btn.innerText;
+            btn.innerText = '...';
+            btn.disabled = true;
+
+            try {
+                const tel = buildTelefonoDB(input.value);
+                const res = await fetch(`/api/public/pedidos/ultimo?telefono=${tel}&empresa_id=${EMPRESA_ID}`);
+                if(res.ok) {
+                    const data = await res.json();
+                    if(data.id) window.location.href = `/pedidos/pedido.html?id=${data.id}`;
+                    else throw new Error('No encontrado');
+                } else {
+                    throw new Error('Sin pedidos recientes');
+                }
+            } catch(err) {
+                toast('❌ No encontramos pedidos recientes para ese número.');
+            } finally {
+                btn.innerText = originalText;
+                btn.disabled = false;
+            }
+        }
+
+        // Iniciar
+        init();
+        
+        // Listeners
+        const searchForm = document.getElementById('searchForm');
+        if(searchForm) searchForm.addEventListener('submit', buscarPedido);
+    </script>
+</body>
+</html>

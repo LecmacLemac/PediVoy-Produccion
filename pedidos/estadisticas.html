@@ -1,0 +1,1000 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Estadísticas y Rentabilidad – MultiEmpresas</title>
+  
+  <style>
+    :root {
+      /* Palette */
+      --bg: #0b1020;
+      --ink: #f1f5f9;
+      --muted: #94a3b8;
+      --brand: #06b6d4;
+      --brand-hover: #22d3ee;
+      --surface: rgba(30, 41, 59, 0.7);
+      --border: rgba(148, 163, 184, 0.15);
+      --glass: rgba(15, 23, 42, 0.85);
+      --radius: 12px;
+      
+      --success: #10b981;
+      --danger: #ef4444;
+      --warning: #f59e0b;
+    }
+
+    * { box-sizing: border-box; outline: none; }
+    
+    body {
+      margin: 0; 
+      font-family: system-ui, -apple-system, sans-serif;
+      color: var(--ink);
+      background: 
+        radial-gradient(circle at 15% 50%, rgba(6, 182, 212, 0.05), transparent 25%),
+        radial-gradient(circle at 85% 30%, rgba(59, 130, 246, 0.05), transparent 25%),
+        var(--bg);
+      min-height: 100vh;
+      font-size: 14px;
+    }
+
+    .container { max-width: 1400px; margin: 0 auto; padding: 0 20px; }
+
+    /* HEADER */
+    header {
+      position: sticky; top: 0; z-index: 50;
+      background: var(--glass); backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border); padding: 0.8rem 0;
+    }
+    nav { display: flex; justify-content: space-between; align-items: center; }
+    .brand { font-size: 1.1rem; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 0.5rem; }
+    .role-badge { background: rgba(6,182,212,0.1); color: var(--brand); padding: 2px 8px; border-radius: 99px; font-size: 0.75rem; border: 1px solid rgba(6,182,212,0.3); }
+    
+    .menu { list-style: none; display: flex; gap: 1.5rem; margin: 0; padding: 0; }
+    .menu a { text-decoration: none; color: var(--muted); font-weight: 500; transition: 0.2s; }
+    .menu a:hover, .menu a.active { color: #fff; }
+    .menu a.active { border-bottom: 2px solid var(--brand); padding-bottom: 4px; }
+
+    /* LAYOUT */
+    main { padding: 2rem 0 4rem; display: grid; gap: 1.5rem; }
+    
+    .card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 1.5rem;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+    }
+
+    /* KPIs GRIDS */
+    .grid-kpi { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; }
+    .kpi-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 1.2rem;
+      display: flex; flex-direction: column; justify-content: center;
+    }
+    .kpi-val h3 { font-size: 1.6rem; margin: 0; color: #fff; font-weight: 700; }
+    .kpi-val p { margin: 0; color: var(--muted); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.5px; }
+    .kpi-sub { font-size: 0.8rem; color: var(--muted); margin-top: 0.5rem; border-top: 1px solid var(--border); padding-top: 0.5rem; }
+
+    /* TOOLBAR & INPUTS */
+    .toolbar { display: flex; flex-wrap: wrap; gap: 1rem; align-items: end; justify-content: space-between; }
+    .filters { display: flex; flex-wrap: wrap; gap: 1rem; align-items: end; }
+    
+    label { display: block; font-size: 0.8rem; color: var(--muted); font-weight: 600; margin-bottom: 0.4rem; }
+    
+    input, select {
+      background: #0f172a; border: 1px solid var(--border); color: #fff;
+      padding: 0.6rem 0.8rem; border-radius: 8px; font-size: 0.9rem; transition: 0.2s; min-width: 140px;
+    }
+    input:focus, select:focus { border-color: var(--brand); box-shadow: 0 0 0 2px rgba(6,182,212,0.2); }
+
+    /* BUTTONS */
+    .btn {
+      padding: 0.6rem 1.2rem; border-radius: 8px; font-weight: 600; cursor: pointer;
+      border: none; font-size: 0.9rem; transition: 0.2s;
+      display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem;
+    }
+    .btn-primary { background: var(--brand); color: #000; box-shadow: 0 4px 15px rgba(6,182,212,0.2); }
+    .btn-primary:hover { background: var(--brand-hover); transform: translateY(-1px); }
+    .btn-secondary { background: rgba(255,255,255,0.05); color: var(--ink); border: 1px solid var(--border); }
+    .btn-secondary:hover { background: rgba(255,255,255,0.1); color: #fff; }
+
+    /* TABLE */
+    .table-responsive { overflow-x: auto; border-radius: var(--radius); border: 1px solid var(--border); }
+    table { width: 100%; border-collapse: collapse; text-align: left; }
+    th { 
+      background: rgba(15, 23, 42, 0.5); color: var(--muted); font-weight: 600; 
+      padding: 1rem; font-size: 0.8rem; text-transform: uppercase; border-bottom: 1px solid var(--border); white-space: nowrap;
+    }
+    td { padding: 1rem; border-bottom: 1px solid var(--border); color: var(--ink); font-size: 0.9rem; vertical-align: middle; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: rgba(255,255,255,0.02); }
+    
+    .numeric { text-align: right; font-variant-numeric: tabular-nums; }
+    .ok { color: var(--success); font-weight: 600; }
+    .bad { color: var(--danger); font-weight: 600; }
+
+    /* CHARTS GRID */
+    .grid-charts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.5rem; }
+    @media(max-width: 900px) { .grid-charts { grid-template-columns: 1fr; } }
+    
+    .chart-box { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem; }
+    .chart-box h3 { margin: 0 0 1rem; color: var(--muted); font-size: 0.9rem; text-transform: uppercase; }
+    .svgwrap { width: 100%; height: 260px; }
+
+    /* MODAL */
+    dialog {
+      background: #1e293b; color: #fff; border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 0; width: 95%; max-width: 800px; box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+    }
+    dialog::backdrop { background: rgba(0,0,0,0.7); backdrop-filter: blur(4px); }
+    
+    .modal-header { padding: 1.2rem; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.2); }
+    .modal-body { padding: 1.5rem; max-height: 70vh; overflow-y: auto; }
+
+    /* UTILS */
+    [hidden] { display: none !important; }
+    .flex-between { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
+    
+    /* Lists */
+    .list-stats { list-style: none; padding: 0; margin: 0; }
+    .list-stats li { display: flex; justify-content: space-between; border-bottom: 1px solid var(--border); padding: 0.8rem 0; font-size: 0.9rem; }
+    .list-stats li:last-child { border: none; }
+
+    /* WhatsApp Button */
+    .wa-btn {
+        display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px;
+        border-radius: 50%; border: 1px solid var(--border); color: var(--muted); transition: 0.2s;
+    }
+    .wa-btn.ok { color: var(--success); border-color: var(--success); background: rgba(16,185,129,0.1); }
+    .wa-btn:hover { background: rgba(255,255,255,0.1); color: #fff; }
+
+  </style>
+</head>
+<body>
+
+  <header>
+    <nav class="container">
+      <div class="brand">
+        MultiEmpresas <span id="rolePill" class="role-badge"></span>
+      </div>
+     <ul class="menu" id="mainMenu">
+        <li><a href="inicio/inicial.html">🚀 Inicio</a></li>
+        <li><a href="dashboard.html">Dashboard</a></li>
+        <li><a href="gastos.html">Gastos</a></li>
+        <li><a href="stock.html" >Stock</a></li>
+        <li><a href="repartidores.html">Repartidor</a></li>
+        <li><a href="estadisticas.html" class="active">Estadisticas</a></li>
+        <li><a href="iaweb.html">IAweb</a></li>
+        <li><a href="qr.html">QR</a></li>
+        <li><a href="#" id="logout" style="color: var(--danger)">Salir</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <main class="container">
+    
+    <section class="card">
+      <div class="toolbar">
+        <div class="filters">
+          <div id="empWrap">
+            <label>ID Empresa</label>
+            <select id="empSel">
+              <option value="">Cargando empresas...</option>
+            </select>
+          </div>
+          <div>
+            <label>Desde</label>
+            <input type="date" id="fFrom">
+          </div>
+          <div>
+            <label>Hasta</label>
+            <input type="date" id="fTo">
+          </div>
+          <div>
+            <label>Chofer</label>
+            <select id="fFilChofer">
+              <option value="">Todos</option>
+            </select>
+          </div>
+        </div>
+        <div style="display:flex; gap:0.5rem; align-items:end;">
+          <button id="btnCalcular" class="btn btn-primary">Calcular Rentabilidad</button>
+          <button id="btnExport" class="btn btn-secondary">Descargar CSV</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="grid-kpi" id="kpis">
+      <div class="kpi-card">
+        <div class="kpi-val">
+          <h3 id="kpiVentas">$ 0,00</h3>
+          <p>Ventas Totales</p>
+        </div>
+        <div class="kpi-sub" id="kpiPedidos">0 Pedidos</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-val">
+          <h3 id="kpiRent" style="color:var(--success)">$ 0,00</h3>
+          <p>Rentabilidad Neta</p>
+        </div>
+        <div class="kpi-sub" id="kpiMargen">Margen: 0%</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-val">
+          <h3 id="kpiUnidades">0</h3>
+          <p>Unidades Vendidas</p>
+        </div>
+        <div class="kpi-sub" id="kpiUpp">Promedio: 0 un/ped</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-val">
+          <h3 id="kpiTicket">$ 0,00</h3>
+          <p>Ticket Promedio</p>
+        </div>
+        <div class="kpi-sub">&nbsp;</div>
+      </div>
+    </section>
+
+    <section class="grid-kpi" style="margin-top:1.5rem">
+      <div class="kpi-card">
+        <div class="kpi-val">
+          <h3 id="kpiCV" style="color:var(--warning)">$ 0,00</h3>
+          <p>Comisiones Repartidores (CV)</p>
+        </div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-val">
+          <h3 id="kpiCF" style="color:var(--danger)">$ 0,00</h3>
+          <p>Gastos Operativos (Combustible, etc)</p>
+        </div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-val">
+          <h3 id="kpiCP" style="color:var(--muted)">$ 0,00</h3>
+          <p>Costo Mercadería Vendida (CMV)</p>
+        </div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-val">
+          <h3 style="font-size:1.1rem; margin-bottom:0.5rem">Medios de Pago</h3>
+          <div style="font-size:0.85rem; color:var(--muted); display:flex; justify-content:space-between;">
+            <span>Efectivo:</span> <span id="kpiEfectivo" style="color:#fff">$ 0,00</span>
+          </div>
+          <div style="font-size:0.85rem; color:var(--muted); display:flex; justify-content:space-between; margin-top:4px;">
+            <span>Transfer:</span> <span id="kpiTransferencia" style="color:#fff">$ 0,00</span>
+          </div>
+        </div>
+        <div class="kpi-sub">
+            <button id="btnVerTransfer" class="btn btn-secondary" style="width:100%; padding:4px; font-size:0.75rem;">Ver Transferencias</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="grid-charts" style="margin-top:1.5rem">
+      <div class="chart-box">
+        <h3>Top Ventas por Chofer</h3>
+        <div class="svgwrap" id="chartVentas"></div>
+      </div>
+      <div class="chart-box">
+        <h3>Rentabilidad por Chofer</h3>
+        <div class="svgwrap" id="chartRent"></div>
+      </div>
+      <div class="chart-box">
+        <h3>Margen %</h3>
+        <div class="svgwrap" id="chartMargen"></div>
+      </div>
+      <div class="chart-box" style="grid-column: span 3;">
+        <h3>Evolución Diaria: Ventas vs Rentabilidad</h3>
+        <div class="svgwrap" id="chartSerie"></div>
+      </div>
+    </section>
+
+    <section class="grid-charts" style="margin-top:1.5rem">
+      <div class="card">
+        <h3>🏆 Top Productos (Unidades)</h3>
+        <ul class="list-stats" id="topProductos"></ul>
+      </div>
+      <div class="card">
+        <h3>⭐ Chofer Estrella (Rentabilidad)</h3>
+        <ul class="list-stats" id="choferEstrella"></ul>
+      </div>
+      <div class="card">
+        <h3>⚡ Mayor Eficiencia (Margen %)</h3>
+        <ul class="list-stats" id="choferEficiente"></ul>
+      </div>
+    </section>
+
+    <section>
+      <div class="flex-between" style="margin-top:2rem">
+        <h3>Detalle por Repartidor</h3>
+      </div>
+      <div class="card table-responsive" style="padding:0; overflow:hidden;">
+        <table>
+          <thead>
+            <tr>
+              <th>Chofer</th>
+              <th>Tipo</th>
+              <th class="numeric">Pedidos</th>
+              <th class="numeric">Unid.</th>
+              <th class="numeric">Comisión</th>
+              <th class="numeric">Ventas</th>
+              <th class="numeric">Gastos Op.</th>
+              <th class="numeric">Costo Merc.</th>
+              <th class="numeric">Ticket</th>
+              <th class="numeric">Margen</th>
+              <th class="numeric">Rentabilidad</th>
+            </tr>
+          </thead>
+          <tbody id="tbBody">
+            <tr><td colspan="11" style="text-align:center; padding:2rem; color:var(--muted)">Selecciona un rango y calcula.</td></tr>
+          </tbody>
+          <tfoot>
+            <tr style="background:rgba(255,255,255,0.05); font-weight:bold;">
+              <td colspan="4" class="numeric">TOTALES</td>
+              <td class="numeric" id="tfCV">$ 0</td>
+              <td class="numeric" id="tfVentas">$ 0</td>
+              <td class="numeric" id="tfCF">$ 0</td>
+              <td class="numeric" id="tfCP">$ 0</td>
+              <td class="numeric" id="tfTicket">$ 0</td>
+              <td class="numeric" id="tfMargen">0%</td>
+              <td class="numeric" id="tfRent">$ 0</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </section>
+
+  </main>
+
+  <dialog id="transferModal">
+    <div class="modal-header">
+      <strong style="font-size:1.1rem">Control de Transferencias</strong>
+      <button onclick="document.getElementById('transferModal').close()" style="background:none; border:none; color:#fff; cursor:pointer">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="flex-between">
+        <span class="role-badge" id="transferResumen">Cargando...</span>
+        <button id="btnOnlyPend" class="btn btn-secondary btn-sm">Mostrar solo pendientes</button>
+      </div>
+      <div class="table-responsive" style="border:1px solid var(--border); max-height:400px; margin-top:1rem;">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:40px">#</th>
+              <th style="width:40px">OK</th>
+              <th style="width:60px">WA</th>
+              <th>Pedido</th>
+              <th>Cliente</th>
+              <th class="numeric">Monto</th>
+            </tr>
+          </thead>
+          <tbody id="transferList"></tbody>
+        </table>
+      </div>
+    </div>
+  </dialog>
+
+  <div id="toast" class="toast"></div>
+
+  <script>    
+    // ====== CONFIG ======
+    const API_BASE = '';
+
+    // ====== AUTH & UTILS ======
+    const token = localStorage.getItem('token');
+
+    // Check auth antes de cargar nada
+    if (!token) {
+      console.warn("No hay token, redirigiendo...");
+      // Para producción descomentar:
+      // location.href = 'login.html';
+    }
+
+    const $ = s => document.querySelector(s);
+    const num = n => Number(n) || 0;
+    const money = n => '$ ' + num(n).toLocaleString('es-AR', { minimumFractionDigits: 2 });
+    const pct = n => num(n).toLocaleString('es-AR', { minimumFractionDigits: 2 }) + '%';
+    const esc = s => String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":"&#39;"}[c]));
+
+    function dateISO(date) {
+      const d = date instanceof Date ? date : new Date(date);
+      const parts = d
+        .toLocaleDateString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' })
+        .split('/'); // dd/mm/aaaa
+      const [dd, mm, yyyy] = parts;
+      return `${yyyy}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}`;
+    }
+
+    // SVG WhatsApp icon
+    const waIcon = `<svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91C2.13 13.66 2.59 15.36 3.45 16.86L2.05 22L7.3 20.62C8.75 21.41 10.38 21.83 12.04 21.83C17.5 21.83 21.95 17.38 21.95 11.92C21.95 9.27 20.92 6.78 19.05 4.91C17.18 3.03 14.69 2 12.04 2ZM12.05 3.66C14.25 3.66 16.31 4.51 17.87 6.07C19.42 7.63 20.28 9.7 20.28 11.92C20.28 16.46 16.58 20.17 12.04 20.17C10.59 20.17 9.17 19.78 7.92 19.04L7.62 18.86L4.5 19.68L5.33 16.64L5.14 16.33C4.35 15.06 3.93 13.59 3.93 12.08C3.93 12.03 3.93 11.97 3.93 11.91C3.93 7.45 7.57 3.8 12.05 3.66Z"/></svg>`;
+
+    // ====== STATE ======
+    let isSuper = false;
+    let empresaId = null;
+    let empresaLabelText = '';
+    let choferes = [];
+    let __productosByName = new Map();
+    let __payAgg = {};
+    window.__transfers = [];
+    window.__transfers_total = 0;
+    window.__transfers_total_all = 0;
+    window.__transfers_pend = 0;
+    window.__onlyPendTransfers = false;
+
+    // ====== API HELPER ======
+    async function api(path, opts = {}) {
+      const { headers = {}, body, ...rest } = opts;
+      const fullUrl = path.startsWith('http') ? path : (API_BASE + path);
+
+      try {
+        const r = await fetch(fullUrl, {
+          ...rest,
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: 'Bearer ' + token,
+            ...headers
+          },
+          body: body ? JSON.stringify(body) : undefined
+        });
+
+        if (r.status === 401) {
+          console.error("Token no autorizado o expirado.");
+          location.href = 'login.html';
+          return null;
+        }
+
+        const text = await r.text();
+        try {
+          return JSON.parse(text);
+        } catch (jsonErr) {
+          console.error(`ERROR DE API: Respuesta no JSON en ${fullUrl}`, text);
+          throw new Error(`Error ${r.status}: respuesta inválida del servidor`);
+        }
+      } catch (e) {
+        console.error("Fetch falló completamente:", e);
+        throw e;
+      }
+    }
+
+    // ====== EMPRESA / ROL ======
+// MODIFICADO: Esta función ahora prioriza siempre el ID seleccionado en el combo
+function qsEmpresa() {
+  const selectedId = $('#empSel')?.value;
+  // Si hay un ID seleccionado, lo usamos. Si no, usamos el del token.
+  const idAUsar = selectedId || empresaId;
+  return idAUsar ? `?empresa_id=${idAUsar}` : '';
+}
+
+async function init() {
+  try {
+    if (!token) return;
+
+    // 1) Obtener mis datos básicos
+    const meResp = await api('/api/me');
+    const u = meResp.user || meResp;
+    isSuper = u.role?.toUpperCase() === 'SUPER';
+    empresaId = u.empresa_id;
+
+    // 2) Cargar lista de Empresas
+    let empresas = [];
+    try {
+      empresas = await api('/api/empresas');
+    } catch (e) { console.warn("Error empresas", e); }
+
+    // 3) Configurar el Selector de Empresa ID
+    const sel = $('#empSel');
+    if (sel) {
+      if (empresas.length > 0) {
+        sel.innerHTML = empresas.map(e => `
+          <option value="${e.id}" ${Number(e.id) === Number(empresaId) ? 'selected' : ''}>
+            ID: ${e.id} - ${e.nombre}
+          </option>
+        `).join('');
+      } else {
+        sel.innerHTML = '<option value="">Sin acceso a empresas</option>';
+      }
+
+      // EVENTO CLAVE: Cuando cambias el ID, refrescamos todo el contexto
+      sel.onchange = async () => {
+        const nuevoId = sel.value;
+        showToast("Cambiando contexto de Empresa...");
+        
+        // Actualizamos labels
+        const nombreEmp = sel.options[sel.selectedIndex].text;
+        $('#rolePill').textContent = `${u.role} · ${nombreEmp}`;
+        
+        // Recargamos datos dependientes de la empresa
+        await loadChoferes();
+        await loadProductosMap();
+        
+        // Limpiamos tabla para evitar confusión de datos entre empresas
+        $('#tbBody').innerHTML = `<tr><td colspan="11" style="text-align:center; padding:2rem; color:var(--muted)">Empresa cambiada. Presione "Calcular" para actualizar.</td></tr>`;
+      };
+    }
+
+    // Mostrar el selector solo si es Super o si hay más de una empresa disponible
+    $('#empWrap').hidden = !isSuper && empresas.length <= 1;
+
+    // 4) Carga inicial de datos de apoyo
+    await loadChoferes();
+    await loadProductosMap();
+
+    // 5) Configurar fechas por defecto
+    const today = new Date();
+    $('#fTo').value = dateISO(today);
+    const fromDate = new Date(today);
+    fromDate.setDate(fromDate.getDate() - 30);
+    $('#fFrom').value = dateISO(fromDate);
+
+    // Listeners de botones
+    $('#btnCalcular').onclick = calcular;
+    $('#btnExport').onclick = exportCSV;
+    $('#btnVerTransfer').onclick = openTransferModal;
+
+  } catch (e) {
+    console.error("Error init:", e);
+  }
+}
+    async function loadChoferes() {
+      try {
+        const list = await api('/api/choferes' + qsEmpresa());
+        choferes = Array.isArray(list) ? list : [];
+        const sel = $('#fFilChofer');
+        if (!sel) return;
+        sel.innerHTML = '<option value="">Todos</option>' +
+          choferes.map(c => `<option value="${c.id}">${c.nombre}</option>`).join('');
+      } catch (e) {
+        console.warn("Error cargando choferes", e);
+      }
+    }
+
+    async function loadProductosMap() {
+      try {
+        const rows = await api('/api/productos' + qsEmpresa());
+        __productosByName = new Map();
+        (Array.isArray(rows) ? rows : []).forEach(p => {
+          if (p.nombre) __productosByName.set(p.nombre.toLowerCase().trim(), p.id);
+        });
+      } catch (e) {
+        console.warn("Error cargando productos", e);
+      }
+    }
+
+    // ====== ESTADÍSTICAS ======
+    async function calcular() {
+      const from = $('#fFrom').value;
+      const to = $('#fTo').value;
+      if (!from || !to) return alert('Fechas requeridas');
+
+      $('#btnCalcular').disabled = true;
+      $('#btnCalcular').textContent = 'Calculando...';
+      $('#tbBody').innerHTML = `<tr><td colspan="11" style="text-align:center; padding:2rem">Procesando datos...</td></tr>`;
+
+      try {
+        const base = `/api/estadisticas/dashboard${qsEmpresa()}`;
+        const sep = base.includes('?') ? '&' : '?';
+        const choferId = $('#fFilChofer').value;
+        const url = `${base}${sep}from=${from}&to=${to}` + (choferId ? `&chofer_id=${choferId}` : '');
+
+        const res = await api(url);
+        if (!res || !res.report) throw new Error('Respuesta del servidor incompleta');
+
+        const rows = res.report || [];
+        const products = res.products || [];
+        const evolution = res.evolution || [];
+
+        renderReport(rows, products, evolution);
+
+        // Medios de pago
+        await loadTransferenciasData(from, to);
+        await loadEfectivoData(from, to);
+      } catch (e) {
+        console.error(e);
+        $('#tbBody').innerHTML = `<tr><td colspan="11" class="bad" style="text-align:center">Error: ${e.message}</td></tr>`;
+      } finally {
+        $('#btnCalcular').disabled = false;
+        $('#btnCalcular').textContent = 'Calcular Rentabilidad';
+      }
+    }
+
+    function renderReport(rows, products, evolution) {
+  if (!rows || !rows.length) {
+    $('#tbBody').innerHTML = `<tr><td colspan="11" style="text-align:center; padding:2rem">No hay datos en este período.</td></tr>`;
+    // Limpiar KPIs
+    const kpis = ['#kpiVentas', '#kpiRent', '#kpiTicket', '#kpiCV', '#kpiCF', '#kpiCP'];
+    kpis.forEach(id => $(id).textContent = money(0));
+    
+    $('#kpiPedidos').textContent = '0 Pedidos';
+    $('#kpiMargen').textContent = 'Margen: 0,00%';
+    $('#kpiUnidades').textContent = '0';
+    $('#kpiUpp').textContent = 'Promedio: 0 un/ped';
+    
+    $('#topProductos').innerHTML = `<li class="muted" style="font-size:0.8rem">Sin datos de productos</li>`;
+    ['#choferEstrella', '#choferEficiente'].forEach(id => $(id).innerHTML = `<li class="muted">Sin datos</li>`);
+    
+    ['#chartVentas', '#chartRent', '#chartMargen', '#chartSerie'].forEach(id => $(id).innerHTML = '');
+    return;
+  }
+
+  // Cálculos de Totales Globales
+  const sum = k => rows.reduce((a, b) => a + num(b[k]), 0);
+  
+  const totV = sum('ventas');     // Total Facturado
+  const totCV = sum('cv');        // Total Comisiones Choferes
+  const totCF = sum('cf');        // Total Gastos Operativos
+  const totCP = sum('cp');        // Total Costo Mercadería (CMV)
+  const totPed = sum('pedidos');
+  const totUni = sum('unidades');
+
+  // La rentabilidad neta global debe reflejar la resta de todos los costos
+  const totR = totV - totCV - totCF - totCP;
+
+  // Actualización de KPIs Superiores
+  $('#kpiVentas').textContent = money(totV);
+  $('#kpiRent').textContent = money(totR);
+  $('#kpiRent').style.color = totR >= 0 ? 'var(--success)' : 'var(--danger)';
+  $('#kpiPedidos').textContent = `${totPed} Pedidos`;
+  $('#kpiMargen').textContent = `Margen: ${pct(totV ? (totR / totV * 100) : 0)}`;
+  $('#kpiUnidades').textContent = String(totUni);
+  $('#kpiUpp').textContent = `Promedio: ${(totPed ? totUni / totPed : 0).toFixed(2)} un/ped`;
+  $('#kpiTicket').textContent = money(totPed ? totV / totPed : 0);
+
+  // KPIs de Desglose de Costos
+  $('#kpiCV').textContent = money(totCV);
+  $('#kpiCF').textContent = money(totCF);
+  $('#kpiCP').textContent = money(totCP);
+
+  // Tabla de Detalle por Chofer
+  // Ordenamos por rentabilidad neta para ver quién es más valioso para el negocio
+  rows = rows.slice().sort((a, b) => b.rent - a.rent);
+  
+  $('#tbBody').innerHTML = rows.map(r => `
+    <tr>
+      <td style="font-weight:600; color:#fff">${r.chofer}</td>
+      <td><span class="role-badge">${r.tipo}</span></td>
+      <td class="numeric">${r.pedidos}</td>
+      <td class="numeric">${r.unidades}</td>
+      <td class="numeric" style="color:var(--warning)">${money(r.cv)}</td>
+      <td class="numeric" style="color:#fff; font-weight:bold">${money(r.ventas)}</td>
+      <td class="numeric" style="color:var(--danger)">${money(r.cf)}</td>
+      <td class="numeric" style="color:var(--muted)">${money(r.cp)}</td>
+      <td class="numeric">${money(r.pedidos ? r.ventas / r.pedidos : 0)}</td>
+      <td class="numeric ${r.margen >= 0 ? 'ok' : 'bad'}">${pct(r.margen)}</td>
+      <td class="numeric ${r.rent >= 0 ? 'ok' : 'bad'}" style="font-weight:bold; font-size:1rem;">${money(r.rent)}</td>
+    </tr>
+  `).join('');
+
+  // Footer de Totales en Tabla
+  $('#tfVentas').textContent = money(totV);
+  $('#tfCV').textContent = money(totCV);
+  $('#tfCF').textContent = money(totCF);
+  $('#tfCP').textContent = money(totCP);
+  $('#tfRent').textContent = money(totR);
+  $('#tfMargen').textContent = pct(totV ? (totR / totV * 100) : 0);
+  $('#tfTicket').textContent = money(totPed ? totV / totPed : 0);
+
+  // Tarjetas de Mérito (Chofer Estrella y Eficiencia)
+  const estrella = rows[0]; // Ya ordenamos por rentabilidad arriba
+  $('#choferEstrella').innerHTML = estrella
+    ? `<li><span>${estrella.chofer}</span><span class="ok">${money(estrella.rent)}</span></li>`
+    : `<li class="muted">Sin datos</li>`;
+
+  const eficiente = rows.slice().sort((a, b) => b.margen - a.margen)[0];
+  $('#choferEficiente').innerHTML = eficiente
+    ? `<li><span>${eficiente.chofer}</span><span class="ok">${pct(eficiente.margen)}</span></li>`
+    : `<li class="muted">Sin datos</li>`;
+
+  // Top productos
+  const topProd = (products || []).slice().sort((a, b) => b.cantidad - a.cantidad).slice(0, 5);
+  if (!topProd.length) {
+    $('#topProductos').innerHTML = `<li class="muted" style="font-size:0.8rem">Sin datos de productos en este rango</li>`;
+  } else {
+    $('#topProductos').innerHTML = topProd.map(p => `
+      <li>
+        <span>${p.producto}</span>
+        <span>${p.cantidad} u · ${money(p.ventas)}</span>
+      </li>
+    `).join('');
+  }
+
+  // Actualizar Gráficos con los datos procesados
+  renderCharts(rows, evolution);
+}
+    // ====== CHARTS (SVG) ======
+    function renderCharts(rows, evolution) {
+      const top5 = rows.slice(0, 5);
+      const labels = top5.map(r => (r.chofer || '').split(' ')[0] || 'Chofer');
+
+      $('#chartVentas').innerHTML = barSVG(labels, top5.map(r => r.ventas), '#0ea5e9', false);
+      $('#chartRent').innerHTML = barSVG(labels, top5.map(r => r.rent), '#10b981', false);
+      $('#chartMargen').innerHTML = barSVG(labels, top5.map(r => r.margen), '#f59e0b', true);
+
+      // Serie temporal de evolución
+      const cont = $('#chartSerie');
+      if (!cont) return;
+
+      if (!evolution || !evolution.length) {
+        cont.innerHTML = `<div style="display:flex; align-items:center; justify-content:center; height:100%; color:var(--muted)">Sin datos de evolución para este rango</div>`;
+        return;
+      }
+
+      cont.innerHTML = lineSVG(evolution);
+    }
+
+    function barSVG(labels, values, color, isPct = false) {
+      if (!values.length) return '';
+      const h = 260, w = 400, pad = 30;
+      const max = Math.max(...values.map(v => Math.abs(v)), 1);
+      const innerW = w - pad * 2;
+      const bw = innerW / values.length;
+
+      const bars = values.map((v, i) => {
+        const val = Number(v) || 0;
+        const height = (Math.abs(val) / max) * (h - pad * 2);
+        const x = pad + i * bw;
+        const y = h - pad - height;
+        const labelVal = isPct ? `${val.toFixed(1)}%` : money(val);
+        const name = labels[i] || '';
+
+        return `
+          <rect x="${x + 4}" y="${y}" width="${bw - 8}" height="${height}" rx="4" fill="${color}" opacity="0.85"></rect>
+          <text x="${x + bw / 2}" y="${h - 8}" text-anchor="middle" fill="#94a3b8" font-size="10">${name}</text>
+          <text x="${x + bw / 2}" y="${y - 4}" text-anchor="middle" fill="#e5e7eb" font-size="10">${labelVal}</text>
+        `;
+      }).join('');
+
+      return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid meet">${bars}</svg>`;
+    }
+
+    function lineSVG(points) {
+      // points: [{fecha, ventas, rent}, ...]
+      const parsed = points
+        .map(p => ({
+          fecha: new Date(p.fecha),
+          ventas: Number(p.ventas) || 0,
+          rent: Number(p.rent) || 0
+        }))
+        .sort((a, b) => a.fecha - b.fecha);
+
+      if (!parsed.length) return '';
+
+      const w = 800, h = 260, pad = 30;
+      const maxVentas = Math.max(...parsed.map(p => p.ventas), 1);
+      const maxRent = Math.max(...parsed.map(p => p.rent), 1);
+      const maxVal = Math.max(maxVentas, maxRent);
+
+      const scaleX = i => pad + i * ((w - pad * 2) / Math.max(parsed.length - 1, 1));
+      const scaleY = v => h - pad - (v / maxVal) * (h - pad * 2);
+
+      const pathVentas = parsed.map((p, i) => `${i === 0 ? 'M' : 'L'} ${scaleX(i)} ${scaleY(p.ventas)}`).join(' ');
+      const pathRent = parsed.map((p, i) => `${i === 0 ? 'M' : 'L'} ${scaleX(i)} ${scaleY(p.rent)}`).join(' ');
+
+      const circlesVentas = parsed.map((p, i) =>
+        `<circle cx="${scaleX(i)}" cy="${scaleY(p.ventas)}" r="2"></circle>`).join('');
+      const circlesRent = parsed.map((p, i) =>
+        `<circle cx="${scaleX(i)}" cy="${scaleY(p.rent)}" r="2"></circle>`).join('');
+
+      const labels = parsed.map((p, i) => {
+        const d = p.fecha;
+        const dd = String(d.getDate()).padStart(2, '0');
+        const mm = String(d.getMonth() + 1).padStart(2, '0');
+        return `<text x="${scaleX(i)}" y="${h - 8}" text-anchor="middle" fill="#94a3b8" font-size="9">${dd}/${mm}</text>`;
+      }).join('');
+
+      return `
+        <svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid meet">
+          <path d="${pathVentas}" fill="none" stroke="#0ea5e9" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
+          <path d="${pathRent}" fill="none" stroke="#22c55e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
+          ${circlesVentas}
+          ${circlesRent}
+          ${labels}
+        </svg>
+      `;
+    }
+
+    // ====== TRANSFERENCIAS & MEDIOS DE PAGO ======
+    function buildEntregadosUrl(from, to, metodo_pago) {
+      const base = '/api/reportes/entregados';
+      const params = new URLSearchParams();
+      if (from) params.set('from', from);
+      if (to) params.set('to', to);
+      const choferId = $('#fFilChofer')?.value;
+      if (choferId) params.set('chofer_id', choferId);
+      if (metodo_pago) params.set('metodo_pago', metodo_pago);
+
+      const emp = qsEmpresa();
+      let url = base;
+      if (emp) {
+        url += emp;
+        const qs = params.toString();
+        if (qs) url += '&' + qs;
+      } else {
+        const qs = params.toString();
+        if (qs) url += '?' + qs;
+      }
+      return url;
+    }
+
+    async function loadTransferenciasData(from, to) {
+      try {
+        const url = buildEntregadosUrl(from, to, 'transferencia');
+        const res = await api(url);
+        const list = Array.isArray(res) ? res : (Array.isArray(res?.rows) ? res.rows : []);
+        const totalAll = list.reduce((a, t) => a + num(t.monto), 0);
+        const totalPaid = list.reduce((a, t) => a + (t.pagado ? num(t.monto) : 0), 0);
+        const pend = list.filter(t => !t.pagado).length;
+
+        window.__transfers = list;
+        window.__transfers_total = totalPaid;
+        window.__transfers_total_all = totalAll;
+        window.__transfers_pend = pend;
+
+        $('#kpiTransferencia').textContent = money(totalPaid);
+        $('#transferResumen').textContent = list.length
+          ? `${list.length} transferencias (${pend} pendientes)`
+          : 'Sin transferencias en el rango';
+      } catch (e) {
+        console.error(e);
+        window.__transfers = [];
+        window.__transfers_total = 0;
+        window.__transfers_total_all = 0;
+        window.__transfers_pend = 0;
+        $('#kpiTransferencia').textContent = money(0);
+        $('#transferResumen').textContent = 'Error cargando transferencias';
+      }
+    }
+
+    async function loadEfectivoData(from, to) {
+      try {
+        const url = buildEntregadosUrl(from, to, 'efectivo');
+        const res = await api(url);
+        const list = Array.isArray(res) ? res : (Array.isArray(res?.rows) ? res.rows : []);
+        const total = list.reduce((a, t) => a + num(t.monto), 0);
+        $('#kpiEfectivo').textContent = money(total);
+      } catch (e) {
+        console.error(e);
+        $('#kpiEfectivo').textContent = money(0);
+      }
+    }
+
+    function getTransfersForModal() {
+      const list = window.__transfers || [];
+      return window.__onlyPendTransfers ? list.filter(t => !t.pagado) : list;
+    }
+
+    function openTransferModal() {
+  const list = getTransfersForModal();
+  const tb = $('#transferList');
+  const modal = document.getElementById('transferModal');
+
+  if (!modal) return;
+
+  // Configurar botón de filtro dentro del modal
+  const btnOnly = $('#btnOnlyPend');
+  if (btnOnly) {
+    btnOnly.textContent = window.__onlyPendTransfers ? 'Mostrar todas' : 'Mostrar solo pendientes';
+    btnOnly.onclick = () => {
+      window.__onlyPendTransfers = !window.__onlyPendTransfers;
+      openTransferModal();
+    };
+  }
+
+  // Renderizar la tabla
+  if (!list.length) {
+    tb.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:1rem">No hay transferencias para mostrar.</td></tr>';
+  } else {
+    tb.innerHTML = list.map((t, i) => `
+      <tr data-id="${t.id}">
+        <td class="numeric">${i + 1}</td>
+        <td class="numeric">
+          <input type="checkbox" ${t.pagado ? 'checked' : ''} onchange="togglePagoPedido(${t.id}, this)">
+        </td>
+        <td class="numeric">
+          <a href="${waLink(t.telefono)}" target="_blank" class="wa-btn" title="WhatsApp">
+            ${waIcon}
+          </a>
+        </td>
+        <td>#${t.id}</td>
+        <td>${esc(t.cliente || '')}</td>
+        <td class="numeric" style="color:#fff">${money(t.monto)}</td>
+      </tr>
+    `).join('');
+  }
+
+  // Abrir el modal correctamente
+  if (typeof modal.showModal === 'function') {
+    modal.showModal();
+  } else {
+    modal.setAttribute('open', '');
+  }
+}
+    async function togglePagoPedido(pedidoId, checkbox) {
+      const nuevoEstado = checkbox.checked;
+      const estadoPrevio = !nuevoEstado;
+      checkbox.disabled = true;
+
+      try {
+        const res = await api(`/api/pedidos/${pedidoId}/toggle-pago`, {
+          method: 'POST',
+          body: { marcado: nuevoEstado }
+        });
+
+        if (!res || res.error || res.ok !== true) {
+          throw new Error(res?.error || 'No se pudo actualizar');
+        }
+
+        showToast(nuevoEstado ? 'Transferencia marcada como PAGADA ✅' : 'Transferencia marcada como NO pagada ⚠️');
+
+        const list = window.__transfers || [];
+        const idx = list.findIndex(x => Number(x.id) === Number(pedidoId));
+        if (idx >= 0) list[idx].pagado = !!nuevoEstado;
+
+        const totalAll = list.reduce((a, t) => a + num(t.monto), 0);
+        const totalPaid = list.reduce((a, t) => a + (t.pagado ? num(t.monto) : 0), 0);
+        const pend = list.filter(t => !t.pagado).length;
+
+        window.__transfers_total = totalPaid;
+        window.__transfers_total_all = totalAll;
+        window.__transfers_pend = pend;
+
+        $('#kpiTransferencia').textContent = money(totalPaid);
+        $('#transferResumen').textContent = list.length
+          ? `${list.length} transferencias (${pend} pendientes)`
+          : 'Sin transferencias en el rango';
+
+        if (window.__onlyPendTransfers) openTransferModal();
+      } catch (e) {
+        console.error(e);
+        alert('No se pudo actualizar el estado del pago.');
+        checkbox.checked = estadoPrevio;
+      } finally {
+        checkbox.disabled = false;
+      }
+    }
+
+    function showToast(msg) {
+      const t = $('#toast');
+      if (!t) return;
+      t.textContent = msg;
+      t.className = 'toast show';
+      setTimeout(() => { t.className = 'toast'; }, 3000);
+    }
+
+    // ====== EXPORT ======
+    function exportCSV() {
+      try {
+        const tbody = document.getElementById('tbBody');
+        const table = tbody?.closest('table');
+        if (!table) return alert('No hay tabla para exportar.');
+
+        const headers = [...table.querySelectorAll('thead th')].map(th => th.textContent.trim());
+        const rows = [...table.querySelectorAll('tbody tr')].map(tr =>
+          [...tr.querySelectorAll('td')].map(td => td.textContent.replace(/\s+/g, ' ').trim())
+        );
+
+        const esc = v => `"${String(v).replace(/"/g, '""')}"`;
+        const csv = [headers.map(esc).join(','), ...rows.map(r => r.map(esc).join(','))].join('\n');
+
+        const from = $('#fFrom')?.value || 'from';
+        const to = $('#fTo')?.value || 'to';
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `estadisticas_${from}_${to}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(a.href);
+      } catch (e) {
+        console.error(e);
+        alert('No se pudo exportar el CSV.');
+      }
+    }
+
+    function waLink(tel) {
+      return `https://wa.me/${String(tel).replace(/\D/g, '')}?text=Por Favor, Adjuntar Transferencia de Pago 👆🏻🙏🏻.`;
+    }
+
+    if (token) init();
+  </script>
+</body>
+</html>

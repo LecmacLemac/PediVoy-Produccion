@@ -1,0 +1,1067 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Clientes – MultiEmpresas</title>
+  
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+  
+<style>
+  :root {
+    /* Palette Dark Theme */
+    --bg: #0b1020;
+    --bg-2: #0f172a;
+    --ink: #f1f5f9;
+    --muted: #94a3b8;
+    --brand: #06b6d4;       /* Cyan */
+    --brand-hover: #22d3ee;
+    --surface: rgba(30, 41, 59, 0.7);
+    --border: rgba(148, 163, 184, 0.15);
+    --glass: rgba(15, 23, 42, 0.95); /* Más opaco para móvil */
+    --radius: 12px;
+    
+    --success: #10b981;
+    --warning: #f59e0b;
+    --danger: #ef4444;
+  }
+
+  * { box-sizing: border-box; outline: none; -webkit-tap-highlight-color: transparent; }
+  
+  body {
+    margin: 0; 
+    font-family: system-ui, -apple-system, sans-serif;
+    color: var(--ink);
+    background: 
+      radial-gradient(circle at 15% 50%, rgba(6, 182, 212, 0.05), transparent 25%),
+      radial-gradient(circle at 85% 30%, rgba(59, 130, 246, 0.05), transparent 25%),
+      var(--bg);
+    min-height: 100vh;
+    font-size: 14px;
+    padding-bottom: 80px; /* Espacio para scroll en móvil */
+  }
+
+  .container { max-width: 1200px; margin: 0 auto; padding: 0 20px; }
+
+  /* --- HEADER & NAV RESPONSIVE --- */
+  header {
+    position: sticky; top: 0; z-index: 50;
+    background: var(--glass);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+    padding: 0.8rem 0;
+  }
+  
+  nav { display: flex; justify-content: space-between; align-items: center; }
+  
+  .brand { 
+    display: flex; gap: 0.8rem; align-items: center; 
+    font-size: 1.1rem; font-weight: 700; color: #fff; text-decoration: none; 
+    white-space: nowrap;
+  }
+  .brand-dot { width: 10px; height: 10px; background: var(--brand); border-radius: 50%; box-shadow: 0 0 10px var(--brand); }
+  
+  .role-badge { 
+    background: rgba(6, 182, 212, 0.1); border: 1px solid rgba(6, 182, 212, 0.3);
+    color: var(--brand); padding: 2px 8px; border-radius: 99px; font-size: 0.75rem; 
+  }
+
+  .menu { list-style: none; display: flex; gap: 1.5rem; margin: 0; padding: 0; }
+  .menu a { text-decoration: none; color: var(--muted); font-weight: 500; transition: 0.2s; white-space: nowrap; }
+  .menu a:hover, .menu a.active { color: #fff; }
+  .menu a.active { border-bottom: 2px solid var(--brand); padding-bottom: 4px; }
+
+  /* Adaptación Móvil del Menú */
+  @media (max-width: 768px) {
+    nav { flex-direction: column; gap: 1rem; align-items: stretch; }
+    .brand { justify-content: space-between; }
+    .menu { 
+      overflow-x: auto; 
+      padding-bottom: 5px; 
+      gap: 20px;
+      -webkit-overflow-scrolling: touch; /* Scroll suave en iOS */
+    }
+    .menu::-webkit-scrollbar { display: none; } /* Ocultar barra scroll */
+  }
+
+  main { padding-top: 2rem; padding-bottom: 4rem; display: flex; flex-direction: column; gap: 1.5rem; }
+
+  /* --- PAGE HEADER --- */
+  .page-header {
+    display: flex; justify-content: space-between; align-items: flex-end; flex-wrap: wrap; gap: 1rem;
+  }
+  h1 { font-size: 1.8rem; margin: 0; color: #fff; display: flex; align-items: center; gap: 10px; line-height: 1.2; }
+  p.subtitle { color: var(--muted); margin: 0.5rem 0 0 0; font-size: 0.95rem; }
+
+  @media (max-width: 600px) {
+    .page-header { flex-direction: column; align-items: stretch; }
+    .page-header .btn { width: 100%; justify-content: center; }
+  }
+
+  /* --- CARDS & LAYOUTS --- */
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 1.5rem;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+    display: flex; flex-direction: column;
+  }
+
+  /* Layout Split (Zona/Asignar) */
+  .layout-split { display: grid; grid-template-columns: 1fr 380px; gap: 20px; height: calc(100vh - 140px); min-height: 600px; }
+  .map-wrapper { position: relative; width: 100%; height: 100%; border-radius: var(--radius); border: 1px solid var(--border); overflow: hidden; }
+  #map { width: 100%; height: 100%; z-index: 1; background: #1e293b; }
+
+  @media(max-width: 900px) { 
+    .layout-split { grid-template-columns: 1fr; height: auto; display: flex; flex-direction: column-reverse; } 
+    .map-wrapper { height: 400px; } /* Altura fija mapa móvil */
+  }
+
+  /* --- TOOLBARS & FILTERS --- */
+  .toolbar { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.5rem; }
+  .toolbar > * { flex: 1; }
+  .toolbar select, .toolbar input { margin-bottom: 0; min-width: 150px; }
+  
+  @media (max-width: 600px) {
+    .toolbar { flex-direction: column; align-items: stretch; gap: 0.8rem; }
+    .search-box { width: 100%; }
+  }
+
+  /* --- INPUTS & BUTTONS --- */
+  label { font-size: 0.8rem; color: var(--muted); font-weight: 600; display: block; margin-bottom: 0.4rem; text-transform: uppercase; letter-spacing: 0.5px;}
+  
+  input, select, textarea {
+    background: var(--bg-2); border: 1px solid var(--border); color: #fff;
+    padding: 0.7rem 0.8rem; border-radius: 8px; font-size: 0.95rem; /* Texto más grande para móvil */
+    width: 100%; transition: 0.2s;
+  }
+  input:focus, select:focus, textarea:focus { border-color: var(--brand); box-shadow: 0 0 0 2px rgba(6,182,212,0.2); }
+
+  .btn {
+    padding: 0.7rem 1.2rem; border-radius: 8px; font-weight: 600; cursor: pointer;
+    border: 1px solid transparent; transition: 0.2s; display: inline-flex; align-items: center; gap: 0.5rem;
+    font-size: 0.9rem; background: rgba(255,255,255,0.05); color: var(--ink); border-color: var(--border);
+    text-decoration: none; white-space: nowrap; justify-content: center;
+  }
+  .btn:hover { background: rgba(255,255,255,0.1); color: #fff; border-color: var(--brand); }
+  
+  .btn-primary { background: var(--brand); color: #000; border: none; }
+  .btn-primary:hover { background: var(--brand-hover); box-shadow: 0 4px 12px rgba(6,182,212,0.3); }
+  
+  .btn-danger { color: var(--danger); border-color: rgba(239,68,68,0.3); background: rgba(239,68,68,0.1); }
+  .btn-icon { padding: 0.5rem; border-radius: 6px; color: var(--muted); background: transparent; border: 1px solid var(--border); cursor: pointer; }
+  .btn-icon:hover { color: #fff; background: rgba(255,255,255,0.1); border-color: var(--brand); }
+
+  /* --- TABLES --- */
+  .table-responsive { overflow-x: auto; border-radius: var(--radius); border: 1px solid var(--border); background: var(--bg-2); }
+  table { width: 100%; border-collapse: collapse; text-align: left; }
+  th { 
+    background: rgba(15, 23, 42, 0.9); color: var(--muted); font-weight: 600; 
+    padding: 1rem; font-size: 0.8rem; text-transform: uppercase; 
+    border-bottom: 1px solid var(--border); white-space: nowrap;
+  }
+  td { padding: 1rem; border-bottom: 1px solid var(--border); color: var(--ink); font-size: 0.9rem; vertical-align: middle; white-space: nowrap; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: rgba(255,255,255,0.02); }
+
+  /* --- MODAL --- */
+  .modal-backdrop {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(4px);
+    display: flex; align-items: center; justify-content: center; z-index: 1000;
+    opacity: 0; pointer-events: none; transition: opacity 0.2s; padding: 10px;
+  }
+  .modal-backdrop.open { opacity: 1; pointer-events: all; }
+  
+  .modal {
+    background: #1e293b; color: #fff; border: 1px solid var(--border); border-radius: var(--radius);
+    width: 100%; max-width: 550px; box-shadow: 0 20px 50px rgba(0,0,0,0.6);
+    display: flex; flex-direction: column; max-height: 90vh; /* Límite altura móvil */
+  }
+  
+  .modal-header { 
+    padding: 1.2rem; border-bottom: 1px solid var(--border); 
+    display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.2); 
+  }
+  .modal-header h3 { margin: 0; font-size: 1.2rem; }
+  
+  .modal-body { padding: 1.5rem; overflow-y: auto; display: flex; flex-direction: column; gap: 1.2rem; }
+  
+  .modal-footer { 
+    padding: 1.2rem; border-top: 1px solid var(--border); 
+    display: flex; justify-content: flex-end; gap: 1rem; background: rgba(0,0,0,0.2); 
+  }
+
+  /* Grid en formularios */
+  .form-row, .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  @media (max-width: 600px) {
+    .form-row, .form-grid { grid-template-columns: 1fr; } /* Columna única en móvil */
+    .modal-footer { flex-direction: column-reverse; } /* Botones apilados */
+    .modal-footer .btn { width: 100%; }
+  }
+
+  /* --- EXTRAS (Badges, Lists, Toasts) --- */
+  .badge, .status-badge { padding: 2px 8px; border-radius: 99px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; white-space: nowrap; }
+  .badge-admin, .badge-user, .tag-propio, .st-active { background: rgba(16,185,129,0.15); color: #34d399; }
+  .badge-repartidor, .tag-promo { background: rgba(59,130,246,0.15); color: #60a5fa; }
+  .badge-super, .tag-fletero, .st-inactive { background: rgba(245,158,11,0.15); color: #fbbf24; }
+
+  .toast { position: fixed; right: 20px; bottom: 30px; background: #fff; color: #0f172a; padding: 10px 20px; border-radius: 99px; font-weight: 600; box-shadow: 0 10px 30px rgba(0,0,0,0.3); opacity: 0; pointer-events: none; transition: 0.3s; z-index: 2000; }
+  .toast.show { opacity: 1; transform: translateY(-10px); }
+
+  /* Elementos específicos de zona.html */
+  .sidebar-list { overflow-y: auto; display: flex; flex-direction: column; gap: 0.8rem; flex: 1; }
+  .zona-item { background: var(--bg-2); border: 1px solid var(--border); padding: 1rem; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
+  
+  /* Elementos específicos de inicial.html */
+  .step-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.5rem; display: flex; gap: 1rem; margin-bottom: 1rem; align-items: flex-start; }
+  .step-num { flex-shrink: 0; width: 40px; height: 40px; background: var(--bg-2); border: 1px solid var(--border); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; }
+  @media(max-width: 600px) { 
+    .step-card { flex-direction: column; } 
+    .check-icon { position: static; transform: none; opacity: 1; } 
+  }
+
+  /* Estilos para la tabla de diferencias */
+.diff-table th { background: rgba(0,0,0,0.3); }
+.diff-row.changed { background: rgba(255, 255, 255, 0.05); }
+.val-old { color: #f87171; text-decoration: line-through; margin-right: 5px; opacity: 0.7; }
+.val-new { color: #4ade80; font-weight: bold; }
+.val-same { color: var(--muted); opacity: 0.5; }
+
+  /* Leaflet Dark Override */
+  .leaflet-bar { border: none !important; box-shadow: 0 4px 10px rgba(0,0,0,0.3) !important; }
+  .leaflet-bar a { background-color: var(--bg-2) !important; color: #fff !important; border-bottom: 1px solid var(--border) !important; }
+</style>
+</head>
+<body>
+
+  <header>
+    <nav class="container">
+      <div class="brand">
+        <div class="brand-dot"></div>
+        MultiEmpresas
+        <span id="roleBadge" class="role-badge">Admin</span>
+      </div>
+      <ul class="menu" id="mainMenu">
+        <li><a href="inicial.html">🚀 Inicio</a></li>
+        <li><a href="/pedidos/dashboard.html">Dashboard</a></li>
+        <li><a href="clientes.html" class="active">Clientes</a></li>
+        <li><a href="#" id="logout" style="color: var(--danger)">Salir</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <main class="container">
+    
+  <div>
+    <h1>👥 Directorio de Clientes</h1>
+    <p class="subtitle">Gestiona tu base de datos de clientes, ubicaciones y zonas.</p>
+  </div>
+  <div style="display:flex; gap:10px;">
+    <input type="file" id="importFile" accept=".txt,.csv" style="display:none" onchange="processImportFile(this)">
+    
+    <button class="btn" onclick="document.getElementById('importFile').click()">📥 Importar .TXT</button>
+    <button class="btn" onclick="exportToTxt()">📄 Exportar .TXT</button>
+    <button class="btn btn-primary" onclick="openModal()">＋ Nuevo Cliente</button>
+  </div>
+
+    <div class="card">
+      <div class="toolbar">
+        
+        <div id="empFilterWrap" style="display:none; max-width: 250px;">
+           <select id="empFilter">
+             <option value="">-- Seleccionar Empresa --</option>
+           </select>
+        </div>
+
+        <div class="search-box">
+          <span class="search-icon">🔍</span>
+          <input type="text" id="q" placeholder="Buscar por nombre, teléfono, dirección...">
+        </div>
+      </div>
+
+      <div class="table-responsive">
+        <table>
+          <thead>
+            <tr>
+              <th>Cliente</th>
+              <th>Teléfono</th>
+              <th>Dirección</th>
+              <th>Zona</th>
+              <th style="text-align:right;">Acciones</th>
+            </tr>
+          </thead>
+          <tbody id="tbBody">
+            <tr><td colspan="5" style="text-align:center; padding:3rem; color:var(--muted);">Cargando directorio...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </main>
+
+  <div id="modal" class="modal-backdrop">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 id="modalTitle">Nuevo Cliente</h3>
+        <button class="btn-icon" onclick="closeModal()">✕</button>
+      </div>
+      <form id="formClient" class="modal-body" onsubmit="event.preventDefault(); save();">
+        <input type="hidden" id="c_id">
+        
+        <div id="modalEmpWrap" style="display:none;">
+            <label>Asignar a Empresa (Admin) *</label>
+            <select id="c_empresa_id" onchange="loadContextForModal()"></select>
+        </div>
+
+        <div>
+          <label>Nombre / Razón Social *</label>
+          <input type="text" id="c_cliente" required placeholder="Ej: Kiosco El Paso">
+        </div>
+
+        <div class="form-row">
+          <div>
+            <label>Teléfono</label>
+            <input type="tel" id="c_telefono" placeholder="+54 9...">
+          </div>
+          <div>
+            <label>Zona de Reparto</label>
+            <select id="c_zona" onchange="updateDriverInfo()">
+              <option value="">-- Sin Zona --</option>
+            </select>
+            <div id="zoneDriverInfo" class="driver-info empty">Sin zona seleccionada</div>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div style="grid-column: span 2;">
+            <label>Dirección</label>
+            <input type="text" id="c_direccion" placeholder="Calle y número">
+          </div>
+          <div>
+            <label>Ciudad</label>
+            <input type="text" id="c_ciudad">
+          </div>
+          <div>
+            <label>Provincia</label>
+            <input type="text" id="c_provincia">
+          </div>
+        </div>
+
+        <div>
+          <label>Ubicación Geográfica (Pin en Mapa)</label>
+          <div class="map-container">
+            <div id="map"></div>
+          </div>
+          <div class="form-row">
+            <div>
+                <label>Latitud</label>
+                <input type="number" step="any" id="c_latitud" placeholder="-31...">
+            </div>
+            <div>
+                <label>Longitud</label>
+                <input type="number" step="any" id="c_longitud" placeholder="-64...">
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <label>Notas Internas</label>
+          <textarea id="c_notas" rows="2" placeholder="Horarios, referencias, etc."></textarea>
+        </div>
+
+      </form>
+      <div class="modal-footer">
+        <button class="btn btn-danger" type="button" id="btnDelete" onclick="del()" style="display:none;">Eliminar</button>
+        <div style="display:flex; gap:10px; margin-left:auto;">
+          <button class="btn" type="button" onclick="closeModal()">Cancelar</button>
+          <button class="btn btn-primary" type="button" onclick="save()">Guardar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="page-header">
+
+  </div>
+
+  <div id="modalConflict" class="modal-backdrop">
+    <div class="modal" style="max-width: 700px;">
+      <div class="modal-header" style="background: rgba(245, 158, 11, 0.2);">
+        <h3 style="color: #fbbf24;">⚠️ Cliente Duplicado Detectado</h3>
+        </div>
+      <div class="modal-body">
+        <p>El cliente <strong id="conf_name" style="color:#fff; font-size:1.1rem;"></strong> ya existe en la base de datos.</p>
+        <p style="font-size:0.9rem; color:var(--muted)">Compara los datos y decide qué hacer:</p>
+        
+        <div class="table-responsive" style="margin-top:10px;">
+          <table class="diff-table">
+            <thead>
+              <tr>
+                <th>Campo</th>
+                <th>Valor Actual (DB)</th>
+                <th>Valor Nuevo (Archivo)</th>
+              </tr>
+            </thead>
+            <tbody id="conf_tbody">
+              </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" onclick="resolveConflict('skip')">Ignorar (Mantener Actual)</button>
+        <button class="btn" onclick="resolveConflict('create')">Crear como Copia</button>
+        <button class="btn btn-primary" onclick="resolveConflict('overwrite')">🔄 Sobrescribir</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+  <script>
+    // --- Utils ---
+    const $ = s => document.querySelector(s);
+    function toast(msg) {
+      const t = $('#toast'); t.textContent = msg; t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 3000);
+    }
+
+    // --- Logout ---
+    $('#logout').onclick = () => { localStorage.removeItem('token'); location.href = 'login.html'; };
+
+    // --- API ---
+    async function api(endpoint, opts = {}) {
+      const token = localStorage.getItem('token');
+      if (!token) return window.location.href = '../login.html';
+      
+      const headers = { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json', ...(opts.headers || {}) };
+      try {
+        const res = await fetch(endpoint, { ...opts, headers });
+        if (res.status === 401) return window.location.href = '../login.html';
+        return res.json();
+      } catch (e) { console.error(e); return { error: 'Error de conexión' }; }
+    }
+
+    // --- State ---
+    let STATE = { isSuper: false, user: null };
+    let clients = [];
+    let zones = [];
+    let zoneDriverMap = {}; 
+    let map, marker;
+
+    // --- Logic ---
+    async function load() {
+      let urlClients = '/api/clientes/master';
+      let urlZones = '/api/zonas';
+
+      const empId = $('#empFilter').value;
+      
+      if (STATE.isSuper) {
+          if (empId) {
+             const q = `?empresa_id=${empId}`;
+             urlClients += q;
+             urlZones += q;
+          } else {
+             clients = []; zones = [];
+             $('#tbBody').innerHTML = `<tr><td colspan="5" style="text-align:center; padding:3rem; color:var(--muted);">Selecciona una empresa para ver clientes.</td></tr>`;
+             return;
+          }
+      }
+
+      const [resClients, resZones] = await Promise.all([
+        api(urlClients),
+        api(urlZones)
+      ]);
+
+      if (Array.isArray(resClients)) clients = resClients;
+      if (Array.isArray(resZones)) zones = resZones;
+      
+      renderList();
+      renderZoneSelect(zones);
+    }
+
+    function renderList() {
+      const q = $('#q').value.toLowerCase();
+      const filtered = clients.filter(c => 
+        (c.cliente||'').toLowerCase().includes(q) || 
+        (c.telefono||'').includes(q) || 
+        (c.direccion||'').toLowerCase().includes(q)
+      );
+
+      const tbody = $('#tbBody');
+      if (!filtered.length) {
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; padding:3rem; color:var(--muted);">No se encontraron clientes.</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = filtered.map(c => {
+        const zoneName = zones.find(z => z.id === c.zona_id)?.nombre || '<span style="color:var(--muted)">—</span>';
+        return `
+        <tr>
+          <td style="font-weight:600; color:#fff;">${c.cliente}</td>
+          <td>${c.telefono || '<span style="color:var(--muted)">-</span>'}</td>
+          <td style="color:var(--muted); font-size:0.9rem;">${c.direccion || '-'}</td>
+          <td><span class="tag-zona">${zoneName}</span></td>
+          <td style="text-align:right;">
+            <button class="btn-icon" onclick="edit(${c.id})" title="Editar">✏️</button>
+          </td>
+        </tr>
+      `}).join('');
+    }
+
+    function renderZoneSelect(list) {
+      const sel = $('#c_zona');
+      if(!list) list = [];
+      sel.innerHTML = '<option value="">-- Sin Zona --</option>' + 
+        list.map(z => `<option value="${z.id}">${z.nombre}</option>`).join('');
+    }
+
+    // --- CARGA DE CONTEXTO MODAL ---
+    async function loadContextForModal() {
+        let empId = null;
+        if (STATE.isSuper) {
+            empId = $('#c_empresa_id').value;
+        }
+
+        const qs = empId ? `?empresa_id=${empId}` : '';
+        
+        // Cargar Zonas
+        const resZones = await api(`/api/zonas${qs}`);
+        if(Array.isArray(resZones)) {
+            zones = resZones; 
+            renderZoneSelect(resZones);
+        }
+
+        // Cargar Asignaciones
+        const [assignments, choferes] = await Promise.all([
+            api(`/api/zonas/choferes${qs}`),
+            api(`/api/choferes${qs}`)
+        ]);
+        
+        zoneDriverMap = {}; 
+
+        if (Array.isArray(assignments) && Array.isArray(choferes)) {
+            assignments.forEach(assign => {
+                if (assign.choferes && assign.choferes.length > 0) {
+                    const choferId = assign.choferes[0].id; 
+                    const chData = choferes.find(c => c.id === choferId);
+                    if (chData) {
+                        zoneDriverMap[assign.zona_id] = chData.nombre;
+                    }
+                }
+            });
+        }
+        
+        updateDriverInfo(); 
+    }
+
+    function updateDriverInfo() {
+        const zoneId = $('#c_zona').value;
+        const el = $('#zoneDriverInfo');
+        
+        if (!zoneId) {
+            el.innerHTML = 'Sin zona seleccionada';
+            el.className = 'driver-info empty';
+            return;
+        }
+
+        const driverName = zoneDriverMap[zoneId];
+        if (driverName) {
+            el.innerHTML = `🚚 Repartidor: ${driverName}`;
+            el.className = 'driver-info';
+        } else {
+            el.innerHTML = 'Sin repartidor asignado';
+            el.className = 'driver-info empty';
+        }
+    }
+
+    // --- MAPA LEAFLET ---
+    function initMap(lat, lng) {
+      const defLat = -32.4113; const defLng = -63.2374;
+      const targetLat = lat || defLat;
+      const targetLng = lng || defLng;
+      
+      if (!map) {
+        map = L.map('map').setView([targetLat, targetLng], 13);
+        // Capa oscura
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+            attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
+            subdomains: 'abcd',
+            maxZoom: 20
+        }).addTo(map);
+        
+        map.on('click', function(e) { updateMarker(e.latlng.lat, e.latlng.lng); });
+      } else {
+        map.setView([targetLat, targetLng], lat ? 15 : 13);
+        setTimeout(() => map.invalidateSize(), 200);
+      }
+
+      if (lat && lng) updateMarker(lat, lng, false);
+      else if (marker) { map.removeLayer(marker); marker = null; }
+    }
+
+    function updateMarker(lat, lng, updateInputs = true) {
+      if (updateInputs) {
+        $('#c_latitud').value = lat.toFixed(6);
+        $('#c_longitud').value = lng.toFixed(6);
+      }
+      if (marker) marker.setLatLng([lat, lng]);
+      else {
+        marker = L.marker([lat, lng], { draggable: true }).addTo(map);
+        marker.on('dragend', e => {
+          const pos = e.target.getLatLng();
+          $('#c_latitud').value = pos.lat.toFixed(6);
+          $('#c_longitud').value = pos.lng.toFixed(6);
+        });
+      }
+    }
+
+    // --- Modal Actions ---
+    function openModal() {
+      if (STATE.isSuper && !$('#empFilter').value) {
+          return toast('⚠️ Selecciona una empresa en el filtro principal.');
+      }
+
+      $('#modal').classList.add('open');
+      $('#modalTitle').textContent = 'Nuevo Cliente';
+      $('#formClient').reset();
+      $('#c_id').value = '';
+      $('#btnDelete').style.display = 'none';
+      $('#zoneDriverInfo').innerHTML = '';
+      
+      if (STATE.isSuper) {
+          $('#c_empresa_id').value = $('#empFilter').value;
+      }
+      
+      loadContextForModal();
+      setTimeout(() => initMap(), 100);
+    }
+
+    function closeModal() { $('#modal').classList.remove('open'); }
+
+    async function edit(id) {
+      const c = clients.find(x => x.id === id);
+      if (!c) return;
+      
+      $('#modal').classList.add('open');
+      $('#modalTitle').textContent = 'Editar Cliente';
+      
+      $('#c_id').value = c.id;
+      $('#c_cliente').value = c.cliente;
+      $('#c_telefono').value = c.telefono || '';
+      $('#c_direccion').value = c.direccion || '';
+      $('#c_ciudad').value = c.ciudad || '';
+      $('#c_provincia').value = c.provincia || '';
+      $('#c_latitud').value = c.latitud || '';
+      $('#c_longitud').value = c.longitud || '';
+      $('#c_notas').value = c.notas || '';
+      
+      if (STATE.isSuper) {
+          $('#c_empresa_id').value = c.empresa_id;
+      }
+      
+      await loadContextForModal();
+
+      $('#c_zona').value = c.zona_id || '';
+      updateDriverInfo();
+      
+      $('#btnDelete').style.display = 'block';
+      setTimeout(() => initMap(c.latitud, c.longitud), 100);
+    }
+
+    async function save() {
+      const id = $('#c_id').value;
+      const body = {
+        cliente: $('#c_cliente').value,
+        telefono: $('#c_telefono').value,
+        direccion: $('#c_direccion').value,
+        ciudad: $('#c_ciudad').value,
+        provincia: $('#c_provincia').value,
+        latitud: $('#c_latitud').value,
+        longitud: $('#c_longitud').value,
+        notas: $('#c_notas').value,
+        zona_id: $('#c_zona').value
+      };
+
+      if (!body.cliente) return toast('Nombre requerido');
+
+      if (STATE.isSuper) {
+          const empId = $('#c_empresa_id').value;
+          if(!empId) return toast('⚠️ Asigna una empresa al cliente');
+          body.empresa_id = empId;
+      }
+
+      const method = id ? 'PUT' : 'POST';
+      const url = id ? `/api/clientes/${id}` : '/api/clientes'; 
+
+      const res = await api(url, { method, body: JSON.stringify(body) });
+      
+      if (res.error) toast('❌ ' + res.error);
+      else {
+        toast(id ? '✅ Actualizado' : '✅ Creado');
+        closeModal();
+        load();
+      }
+    }
+
+    async function del() {
+      const id = $('#c_id').value;
+      if (!confirm('¿Eliminar cliente? Borrará todo su historial.')) return;
+      const res = await api(`/api/clientes/${id}`, { method: 'DELETE' });
+      if (res.error) toast('❌ ' + res.error);
+      else { toast('🗑️ Cliente eliminado'); closeModal(); load(); }
+    }
+
+    // --- VARIABLES GLOBALES PARA IMPORTACIÓN ---
+    let importQueue = [];      // Lista de conflictos pendientes
+    let importPendingCreate = []; // Lista de clientes nuevos seguros para crear
+    let importPendingUpdate = []; // Lista de clientes para actualizar
+    let currentConflict = null;   // Conflicto actual en pantalla
+
+    // 1. Procesar el archivo seleccionado
+    async function processImportFile(input) {
+      const file = input.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        const text = e.target.result;
+        const lines = text.split('\n');
+        
+        // Resetear colas
+        importQueue = [];
+        importPendingCreate = [];
+        importPendingUpdate = [];
+
+        // Mapeo rápido de Zonas (Nombre -> ID)
+        // zones es la variable global que ya tienes cargada en load()
+        const zoneMap = {};
+        zones.forEach(z => zoneMap[z.nombre.toUpperCase().trim()] = z.id);
+
+        // Iterar líneas (saltando cabecera si existe)
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i].trim();
+          if (!line) continue;
+          
+          // Detectar cabecera simple
+          if (i === 0 && line.toUpperCase().includes('RAZON SOCIAL')) continue;
+
+          const cols = line.split(';');
+          if (cols.length < 2) continue; // Línea inválida
+
+          // Mapear columnas a objeto (Asegúrate que coincida con tu orden de exportación)
+          // Orden Export: NOMBRE;TELEFONO;ZONA;REPARTIDOR;DIRECCION;CIUDAD;PROVINCIA;LAT;LNG;NOTAS
+          const rawZone = (cols[2] || '').trim().toUpperCase();
+          const zoneId = zoneMap[rawZone] || null; // Convertir Nombre a ID
+
+          const newItem = {
+            cliente: cleanCell(cols[0]),
+            telefono: cleanCell(cols[1]),
+            zona_id: zoneId,
+            // Ignoramos Repartidor (cols[3]) porque se asigna por zona automáticamente
+            direccion: cleanCell(cols[4]),
+            ciudad: cleanCell(cols[5]),
+            provincia: cleanCell(cols[6]),
+            latitud: parseFloat(cols[7]) || null,
+            longitud: parseFloat(cols[8]) || null,
+            notas: cleanCell(cols[9])
+          };
+          
+          if (STATE.isSuper) {
+              // Si es super, necesitamos asignar la empresa. 
+              // Opción A: Usar la del filtro actual.
+              const empId = $('#empFilter').value;
+              if(empId) newItem.empresa_id = empId;
+          }
+
+          // BUSCAR DUPLICADO (Por Nombre Exacto)
+          // clients es la variable global de tu script actual
+          const existing = clients.find(c => c.cliente.toLowerCase().trim() === newItem.cliente.toLowerCase().trim());
+
+          if (existing) {
+            // ¡Conflicto! Lo agregamos a la cola para preguntar al usuario
+            importQueue.push({ existing, newItem });
+          } else {
+            // Nuevo, va directo a crear
+            importPendingCreate.push(newItem);
+          }
+        }
+
+        // Limpiar input para poder seleccionar el mismo archivo de nuevo si se quiere
+        input.value = '';
+
+        // INICIAR PROCESO
+        if (importQueue.length > 0) {
+          showNextConflict();
+        } else {
+          finishImport();
+        }
+      };
+      reader.readAsText(file);
+    }
+
+    function cleanCell(txt) {
+      return (txt || '').trim();
+    }
+
+    // 2. Mostrar el siguiente conflicto en el Modal
+    function showNextConflict() {
+      if (importQueue.length === 0) {
+        // Se acabaron los conflictos, finalizar
+        $('#modalConflict').classList.remove('open');
+        finishImport();
+        return;
+      }
+
+      currentConflict = importQueue.shift(); // Sacar el primero
+      const { existing, newItem } = currentConflict;
+
+      $('#modalConflict').classList.add('open');
+      $('#conf_name').textContent = existing.cliente;
+      
+      const tbody = $('#conf_tbody');
+      tbody.innerHTML = '';
+
+      // Campos a comparar
+      const fields = [
+        { key: 'telefono', label: 'Teléfono' },
+        { key: 'direccion', label: 'Dirección' },
+        { key: 'ciudad', label: 'Ciudad' },
+        { key: 'zona_id', label: 'Zona (ID)', transform: (v) => {
+            // Mostrar nombre de zona si es posible
+            const z = zones.find(z => z.id == v);
+            return z ? z.nombre : (v || 'Sin Zona');
+        }},
+        { key: 'notas', label: 'Notas' }
+      ];
+
+      fields.forEach(f => {
+        let valOld = existing[f.key] || '';
+        let valNew = newItem[f.key] || '';
+        
+        // Transformación visual (ej: ID zona a Nombre)
+        let displayOld = f.transform ? f.transform(valOld) : valOld;
+        let displayNew = f.transform ? f.transform(valNew) : valNew;
+
+        // Detectar diferencia
+        const isDiff = String(valOld).trim() !== String(valNew).trim();
+        
+        const row = document.createElement('tr');
+        if (isDiff) row.classList.add('diff-row', 'changed');
+
+        row.innerHTML = `
+          <td>${f.label}</td>
+          <td><span class="${isDiff ? 'val-old' : 'val-same'}">${displayOld || '-'}</span></td>
+          <td><span class="${isDiff ? 'val-new' : 'val-same'}">${displayNew || '-'}</span></td>
+        `;
+        tbody.appendChild(row);
+      });
+    }
+
+    // 3. Resolver decisión del usuario
+    function resolveConflict(action) {
+      const { existing, newItem } = currentConflict;
+
+      if (action === 'overwrite') {
+        // Añadimos ID al objeto nuevo para que la API sepa cuál actualizar
+        newItem.id = existing.id;
+        // Mantenemos empresa_id original por seguridad
+        newItem.empresa_id = existing.empresa_id; 
+        importPendingUpdate.push(newItem);
+      } 
+      else if (action === 'create') {
+        // Crear como copia (duplicado intencional)
+        // Aseguramos que tenga empresa_id si es super
+        if (STATE.isSuper && $('#empFilter').value) {
+            newItem.empresa_id = $('#empFilter').value;
+        } else if (existing.empresa_id) {
+            newItem.empresa_id = existing.empresa_id;
+        }
+        importPendingCreate.push(newItem);
+      }
+      // Si es 'skip', simplemente no hacemos nada con este registro
+
+      // Siguiente
+      showNextConflict();
+    }
+
+    // 4. Ejecutar todas las operaciones en lote (Batch)
+    async function finishImport() {
+      const totalCreate = importPendingCreate.length;
+      const totalUpdate = importPendingUpdate.length;
+
+      if (totalCreate === 0 && totalUpdate === 0) {
+        return toast('ℹ️ Nada para importar.');
+      }
+
+      const btn = document.querySelector('button[onclick*="importFile"]');
+      const originalText = btn.textContent;
+      btn.textContent = '⏳ Guardando...';
+      btn.disabled = true;
+
+      try {
+        let errors = 0;
+
+        // Procesar CREACIONES (POST)
+        // Nota: Idealmente el backend soportaría bulk insert, pero aquí haremos loop
+        for (const item of importPendingCreate) {
+          const res = await api('/api/clientes', { 
+            method: 'POST', 
+            body: JSON.stringify(item) 
+          });
+          if (res.error) errors++;
+        }
+
+        // Procesar ACTUALIZACIONES (PUT)
+        for (const item of importPendingUpdate) {
+          const res = await api(`/api/clientes/${item.id}`, { 
+            method: 'PUT', 
+            body: JSON.stringify(item) 
+          });
+          if (res.error) errors++;
+        }
+
+        if (errors > 0) {
+          toast(`⚠️ Proceso terminado con ${errors} errores.`);
+        } else {
+          toast(`✅ Importación exitosa: ${totalCreate} creados, ${totalUpdate} actualizados.`);
+        }
+
+        // Recargar tabla
+        load(); 
+
+      } catch (e) {
+        console.error(e);
+        toast('❌ Error crítico en importación');
+      } finally {
+        btn.textContent = originalText;
+        btn.disabled = false;
+      }
+    }
+
+    // --- FUNCIÓN DE EXPORTACIÓN ---
+    async function exportToTxt() {
+      if (!clients || clients.length === 0) {
+        return toast('⚠️ No hay clientes para exportar');
+      }
+
+      const btn = document.querySelector('button[onclick="exportToTxt()"]');
+      const originalText = btn.textContent;
+      btn.textContent = '⏳ Generando...';
+      btn.disabled = true;
+
+      try {
+        // 1. Detectar filtros y preparar URLs
+        let qs = '';
+        if (STATE.isSuper) {
+            const empId = $('#empFilter').value;
+            if (empId) qs = `?empresa_id=${empId}`;
+        }
+
+        // 2. Obtener datos de choferes para cruzar (ya que en clients[] solo tenemos zona_id)
+        const [assignments, choferesList] = await Promise.all([
+            api(`/api/zonas/choferes${qs}`),
+            api(`/api/choferes${qs}`)
+        ]);
+
+        // Mapa: Zona ID -> Nombre Chofer
+        const zonaToChoferName = {};
+        if (Array.isArray(assignments) && Array.isArray(choferesList)) {
+            assignments.forEach(a => {
+                if (a.choferes && a.choferes.length > 0) {
+                    const cId = a.choferes[0].id;
+                    const chofer = choferesList.find(c => c.id === cId);
+                    if (chofer) {
+                        zonaToChoferName[a.id] = chofer.nombre;
+                    }
+                }
+            });
+        }
+
+        // 3. Generar contenido
+        let content = "NOMBRE / RAZON SOCIAL;TELEFONO;ZONA DE REPARTO;REPARTIDOR ASIGNADO;DIRECCION;CIUDAD;PROVINCIA;LATITUD;LONGITUD;NOTAS INTERNAS\n";
+        
+        // Helper para limpiar texto (quitar ; y saltos de línea)
+        const clean = (txt) => String(txt || '').replace(/;/g, ',').replace(/(\r\n|\n|\r)/g, ' ').trim();
+
+        clients.forEach(c => {
+          const zoneName = zones.find(z => z.id === c.zona_id)?.nombre || 'Sin Zona';
+          const driverName = c.zona_id && zonaToChoferName[c.zona_id] 
+                             ? zonaToChoferName[c.zona_id] 
+                             : 'Sin Asignar';
+
+          const line = [
+            clean(c.cliente),
+            clean(c.telefono),
+            clean(zoneName),
+            clean(driverName),
+            clean(c.direccion),
+            clean(c.ciudad),
+            clean(c.provincia),
+            c.latitud || '',
+            c.longitud || '',
+            clean(c.notas)
+          ].join(';');
+
+          content += line + "\n";
+        });
+
+        // 4. Descargar
+        const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `clientes_export_${new Date().toISOString().slice(0,10)}.txt`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+        
+        toast('✅ Archivo descargado');
+
+      } catch (e) {
+        console.error(e);
+        toast('❌ Error al exportar');
+      } finally {
+        btn.textContent = originalText;
+        btn.disabled = false;
+      }
+    }
+
+    // --- Init ---
+    (async () => {
+        try {
+            const me = await api('/api/me');
+            STATE.user = me?.user || {};
+            STATE.isSuper = (STATE.user.role || '').toLowerCase() === 'super';
+            
+            $('#roleBadge').textContent = STATE.isSuper ? 'SUPER ADMIN' : (STATE.user.role || 'Admin').toUpperCase();
+
+            if (STATE.isSuper) {
+                $('#empFilterWrap').style.display = 'block';
+                $('#modalEmpWrap').style.display = 'block';
+
+                const list = await api('/api/empresas');
+                if (Array.isArray(list)) {
+                    const opts = '<option value="">-- Seleccionar Empresa --</option>' + 
+                                 list.map(e => `<option value="${e.id}">${e.nombre}</option>`).join('');
+                    
+                    $('#empFilter').innerHTML = opts;
+                    $('#c_empresa_id').innerHTML = opts;
+                    $('#empFilter').addEventListener('change', load);
+                }
+            } else {
+                load();
+            }
+        } catch(e) { console.error(e); }
+
+        let debounceTimer;
+        $('#q').addEventListener('input', () => {
+          clearTimeout(debounceTimer);
+          debounceTimer = setTimeout(() => { renderList(); }, 300);
+        });
+        
+    })();
+  </script>
+</body>
+</html>

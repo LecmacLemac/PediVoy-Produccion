@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="es">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+
+    <title>Presentación MultiEmpresas</title>
+
+    <!-- Reveal.js & Dependencies -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/4.5.0/reset.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/4.5.0/reveal.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/4.5.0/theme/black.min.css">
+    
+    <!-- Icons & Fonts -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <style>
+        /* TU BRANDING PERSONALIZADO */
+        :root {
+            --bg: #0b1020;
+            --brand: #06b6d4;
+            --brand-hover: #22d3ee;
+            --text: #f1f5f9;
+            --surface: rgba(30, 41, 59, 0.7);
+            --border: rgba(148, 163, 184, 0.15);
+        }
+
+        body {
+            background: 
+                radial-gradient(circle at 15% 50%, rgba(6, 182, 212, 0.1), transparent 25%),
+                radial-gradient(circle at 85% 30%, rgba(59, 130, 246, 0.1), transparent 25%),
+                var(--bg);
+        }
+
+        .reveal { color: var(--text); font-family: system-ui, -apple-system, sans-serif; }
+        .reveal h1, .reveal h2, .reveal h3 { color: #fff; text-transform: none; font-weight: 700; }
+        .reveal h1 { background: linear-gradient(to right, #fff, var(--brand)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        
+        .accent { color: var(--brand); }
+        
+        /* Cards */
+        .feature-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-top: 40px; }
+        .feature-card { 
+            background: var(--surface); border: 1px solid var(--border); 
+            border-radius: 12px; padding: 30px; text-align: center;
+            transition: transform 0.3s;
+        }
+        .feature-card:hover { transform: translateY(-10px); border-color: var(--brand); }
+        .feature-icon { font-size: 3rem; color: var(--brand); margin-bottom: 20px; }
+        .feature-card h4 { font-size: 1.2rem; }
+        .feature-card p { font-size: 0.8rem; color: #94a3b8; }
+
+        /* Code snippets style (Reduced Usage) */
+        .code-wrapper { background: #1e1e1e; border-radius: 10px; padding: 20px; font-family: monospace; text-align: left; border: 1px solid var(--border); box-shadow: 0 10px 30px rgba(0,0,0,0.5); font-size: 0.8em; line-height: 1.4; }
+        .hl-kw { color: #c678dd; } .hl-str { color: #98c379; } .hl-fn { color: #61afef; }
+
+        /* Stats Demo */
+        .kpi-row { display: flex; justify-content: space-around; margin-bottom: 30px; }
+        .kpi { text-align: center; }
+        .kpi h2 { margin: 0; color: var(--brand); font-size: 2.5rem; }
+        .kpi span { font-size: 0.8rem; color: #94a3b8; text-transform: uppercase; }
+
+        /* Step Visuals for Non-Tech Audience */
+        .process-step { 
+            background: rgba(255,255,255,0.03); border: 1px solid var(--border);
+            padding: 20px; border-radius: 15px; text-align: center;
+            transition: all 0.3s ease;
+        }
+        .process-step:hover { background: rgba(255,255,255,0.08); transform: translateY(-5px); border-color: var(--brand); }
+        .step-icon-circle {
+            width: 80px; height: 80px; border-radius: 50%; margin: 0 auto 20px auto;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 2.5rem; border: 2px solid;
+        }
+
+    </style>
+</head>
+<body>
+    <div class="reveal">
+        <div class="slides">
+
+            <!-- SLIDE 1: PORTADA -->
+            <section>
+                <div style="font-size: 5rem; color: var(--brand); margin-bottom: 20px;">
+                    <i class="fa-solid fa-cubes-stacked"></i>
+                </div>
+                <h1>MultiEmpresas</h1>
+                <h3>El Sistema Operativo para tu Distribuidora</h3>
+                <p style="color: #94a3b8; margin-top: 2rem;">Logística · Finanzas · Automatización</p>
+            </section>
+
+            <!-- SLIDE 2: EL PROBLEMA -->
+            <section>
+                <h2>¿Tu logística se ve así?</h2>
+                <div class="feature-grid">
+                    <div class="feature-card fragment">
+                        <div class="feature-icon" style="color: #ef4444;"><i class="fa-brands fa-whatsapp"></i></div>
+                        <h4>Caos en WhatsApp</h4>
+                        <p>Mensajes perdidos, reclamos constantes y comprobantes falsos.</p>
+                    </div>
+                    <div class="feature-card fragment">
+                        <div class="feature-icon" style="color: #f59e0b;"><i class="fa-solid fa-money-bill-transfer"></i></div>
+                        <h4>Ceguera Financiera</h4>
+                        <p>¿Cuánto ganaste hoy realmente después de pagar todos los gastos?</p>
+                    </div>
+                    <div class="feature-card fragment">
+                        <div class="feature-icon" style="color: #8b5cf6;"><i class="fa-solid fa-map-location-dot"></i></div>
+                        <h4>Rutas a Ciegas</h4>
+                        <p>Choferes decidiendo por su cuenta y zonas mal asignadas.</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- SLIDE 3: LA SOLUCIÓN -->
+            <section>
+                <h2>La Solución Integral</h2>
+                <p>Ordena tu negocio de punta a punta.</p>
+                
+                <div style="display: flex; align-items: center; justify-content: center; gap: 50px; margin-top: 40px;">
+                    <ul style="list-style: none; text-align: left; font-size: 1.5rem;">
+                        <li class="fragment" style="margin-bottom: 20px;"><i class="fa-solid fa-check accent"></i> <strong>Tu Propio Espacio:</strong> Datos seguros y privados.</li>
+                        <li class="fragment" style="margin-bottom: 20px;"><i class="fa-solid fa-check accent"></i> <strong>Control Total:</strong> Caja, gastos y stock real.</li>
+                        <li class="fragment" style="margin-bottom: 20px;"><i class="fa-solid fa-check accent"></i> <strong>Mapa Inteligente:</strong> Asignación automática.</li>
+                        <li class="fragment"><i class="fa-solid fa-check accent"></i> <strong>WhatsApp 24/7:</strong> Responde solo.</li>
+                    </ul>
+                    <div class="fragment" style="width: 350px; height: 350px; background: radial-gradient(circle, rgba(6,182,212,0.2) 0%, rgba(0,0,0,0) 70%); display: flex; align-items: center; justify-content: center;">
+                        <i class="fa-solid fa-rocket" style="font-size: 10rem; color: var(--brand); filter: drop-shadow(0 0 20px var(--brand));"></i>
+                    </div>
+                </div>
+            </section>
+
+            <!-- SLIDE 4: DEMO INTERACTIVA (Chart.js) -->
+            <section>
+                <h2>Tus Números Claros</h2>
+                <p style="font-size: 0.9rem;">El sistema calcula tu ganancia real en vivo.</p>
+                
+                <div style="background: rgba(15, 23, 42, 0.8); padding: 30px; border-radius: 12px; border: 1px solid var(--border); margin-top: 20px;">
+                    <div class="kpi-row">
+                        <div class="kpi">
+                            <h2 id="kpiVentas">$0</h2>
+                            <span>Ventas Brutas</span>
+                        </div>
+                        <div class="kpi">
+                            <h2 id="kpiRent" style="color: #10b981;">$0</h2>
+                            <span>Ganancia Neta</span>
+                        </div>
+                    </div>
+                    <div style="height: 300px; width: 80%; margin: 0 auto;">
+                        <canvas id="rentChart"></canvas>
+                    </div>
+                </div>
+                <!-- Simulación Script -->
+                <script>
+                    let chartInstance = null;
+                    function initChart() {
+                        const ctx = document.getElementById('rentChart').getContext('2d');
+                        if(chartInstance) chartInstance.destroy();
+                        let v = 0, r = 0;
+                        const interval = setInterval(() => {
+                            v += 50000; r += 32000;
+                            document.getElementById('kpiVentas').innerText = '$' + v.toLocaleString();
+                            document.getElementById('kpiRent').innerText = '$' + r.toLocaleString();
+                            if(v >= 1500000) clearInterval(interval);
+                        }, 50);
+                        chartInstance = new Chart(ctx, {
+                            type: 'bar',
+                            data: {
+                                labels: ['Juan', 'Pedro', 'Ana', 'Luis'],
+                                datasets: [
+                                    { label: 'Ventas', data: [450000, 320000, 580000, 150000], backgroundColor: '#06b6d4' },
+                                    { label: 'Rentabilidad', data: [120000, 90000, 210000, 15000], backgroundColor: '#10b981' }
+                                ]
+                            },
+                            options: { animation: { duration: 2000 }, plugins: { legend: { labels: { color: 'white' } } }, scales: { y: { ticks: { color: '#94a3b8' } }, x: { ticks: { color: '#94a3b8' } } } }
+                        });
+                    }
+                    document.addEventListener('keydown', (e) => { if(e.key === 'ArrowRight' || e.key === ' ') setTimeout(initChart, 1000); });
+                </script>
+            </section>
+
+            <!-- SLIDE 5: TECNOLOGÍA VISUAL (Sin Código) -->
+            <section>
+                <h2>Automatización Inteligente</h2>
+                <p>El sistema trabaja por ti mientras duermes.</p>
+                
+                <div style="display: flex; justify-content: space-around; align-items: center; margin-top: 50px;">
+                    <div class="fragment fade-up" style="text-align: center;">
+                        <i class="fa-solid fa-truck-fast" style="font-size: 4rem; color: #f59e0b; margin-bottom: 20px;"></i>
+                        <h4>Pedido Entregado</h4>
+                        <p style="font-size: 0.7em; color: #94a3b8;">Chofer marca la entrega</p>
+                    </div>
+                    <div class="fragment fade-up" style="font-size: 2rem; color: #555;">
+                        <i class="fa-solid fa-arrow-right"></i>
+                    </div>
+                    <div class="fragment fade-up" style="text-align: center;">
+                        <i class="fa-brands fa-whatsapp" style="font-size: 4rem; color: #22c55e; margin-bottom: 20px;"></i>
+                        <h4>Aviso al Cliente</h4>
+                        <p style="font-size: 0.7em; color: #94a3b8;">Mensaje automático de gracias</p>
+                    </div>
+                    <div class="fragment fade-up" style="font-size: 2rem; color: #555;">
+                        <i class="fa-solid fa-arrow-right"></i>
+                    </div>
+                    <div class="fragment fade-up" style="text-align: center;">
+                        <i class="fa-solid fa-bullhorn" style="font-size: 4rem; color: #06b6d4; margin-bottom: 20px;"></i>
+                        <h4>Marketing Vecinos</h4>
+                        <p style="font-size: 0.7em; color: #94a3b8;">Oferta enviada a la zona</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- SLIDE 6: INFRAESTRUCTURA VISUAL -->
+            <section>
+                <h2>Seguridad y Nube</h2>
+                <p>Tu información siempre disponible y protegida.</p>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 30px; margin-top: 40px;">
+                    <div class="feature-card fragment">
+                        <i class="fa-solid fa-cloud-arrow-up feature-icon" style="color: #3b82f6;"></i>
+                        <h4>Siempre Online</h4>
+                        <p>Accede desde tu celular, tablet o PC. Sin instalar nada. Tus datos viven seguros en la nube.</p>
+                    </div>
+                    <div class="feature-card fragment">
+                        <i class="fa-solid fa-shield-halved feature-icon" style="color: #22c55e;"></i>
+                        <h4>Blindaje Total</h4>
+                        <p>Copias de seguridad automáticas y conexiones encriptadas (candadito verde) como los bancos.</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- SLIDE 7: PUESTA EN MARCHA (Visual & Simple) -->
+            <section>
+                <h2>Puesta en Marcha</h2>
+                <p style="font-size: 0.9rem; color: #94a3b8;">Tu empresa operativa en 3 pasos simples.</p>
+
+                <div style="display: flex; justify-content: space-between; gap: 20px; margin-top: 50px;">
+                    
+                    <!-- PASO 1 -->
+                    <div class="process-step fragment fade-up" style="flex: 1;">
+                        <div class="step-icon-circle" style="color: var(--brand); border-color: var(--brand); background: rgba(6,182,212,0.1);">
+                            <i class="fa-solid fa-clipboard-list"></i>
+                        </div>
+                        <h4>1. Tus Datos</h4>
+                        <p style="font-size: 0.7rem; color: #94a3b8;">Cargamos tu logo, productos y zonas de reparto.</p>
+                    </div>
+
+                    <!-- ARROW -->
+                    <div class="fragment fade-up" style="align-self: center; font-size: 2rem; color: #555;">
+                        <i class="fa-solid fa-chevron-right"></i>
+                    </div>
+
+                    <!-- PASO 2 -->
+                    <div class="process-step fragment fade-up" style="flex: 1;">
+                        <div class="step-icon-circle" style="color: #f59e0b; border-color: #f59e0b; background: rgba(245,158,11,0.1);">
+                            <i class="fa-solid fa-wand-magic-sparkles"></i>
+                        </div>
+                        <h4>2. Configuración</h4>
+                        <p style="font-size: 0.7rem; color: #94a3b8;">El sistema crea tu espacio y conecta el WhatsApp.</p>
+                    </div>
+
+                    <!-- ARROW -->
+                    <div class="fragment fade-up" style="align-self: center; font-size: 2rem; color: #555;">
+                        <i class="fa-solid fa-chevron-right"></i>
+                    </div>
+
+                    <!-- PASO 3 -->
+                    <div class="process-step fragment fade-up" style="flex: 1;">
+                        <div class="step-icon-circle" style="color: #22c55e; border-color: #22c55e; background: rgba(34,197,94,0.1);">
+                            <i class="fa-solid fa-shop"></i>
+                        </div>
+                        <h4>3. ¡A Vender!</h4>
+                        <p style="font-size: 0.7rem; color: #94a3b8;">Recibes tu enlace único y empiezas a tomar pedidos.</p>
+                    </div>
+
+                </div>
+            </section>
+
+            <!-- SLIDE 8: CIERRE -->
+            <section>
+                <h1>¿Listo para crecer?</h1>
+                <p>Deja de administrar papeles. Empieza a gestionar el éxito.</p>
+                <br>
+                <button style="background: var(--brand); color: #000; border: none; padding: 15px 40px; font-size: 1.5rem; border-radius: 8px; cursor: pointer; font-weight: bold; box-shadow: 0 0 20px rgba(6,182,212,0.5);">
+                    Solicitar Prueba
+                </button>
+                <div style="margin-top: 40px; font-size: 0.9rem; color: #94a3b8;">
+                    <i class="fa-solid fa-envelope"></i> contacto@multiempresas.com
+                </div>
+            </section>
+
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/4.5.0/reveal.min.js"></script>
+    <script>
+        Reveal.initialize({
+            controls: true,
+            progress: true,
+            center: true,
+            hash: true,
+            transition: 'convex',
+            backgroundTransition: 'zoom'
+        });
+    </script>
+</body>
+</html>

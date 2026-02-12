@@ -1,0 +1,1925 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>Detalle de Activo | ERP / FSM</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <style>
+    :root {
+      /* Palette Dark Theme */
+      --bg: #0b1020;
+      --bg-2: #0f172a;
+      --ink: #f1f5f9;
+      --muted: #94a3b8;
+      --brand: #06b6d4;       /* Cyan */
+      --brand-hover: #22d3ee;
+      --surface: rgba(30, 41, 59, 0.7);
+      --border: rgba(148, 163, 184, 0.15);
+      --glass: rgba(15, 23, 42, 0.95);
+      --radius: 12px;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --info: #3b82f6;
+    }
+
+    * {
+      box-sizing: border-box;
+      outline: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 15% 50%, rgba(6, 182, 212, 0.05), transparent 25%),
+        radial-gradient(circle at 85% 30%, rgba(59, 130, 246, 0.05), transparent 25%),
+        var(--bg);
+      min-height: 100vh;
+      font-size: 14px;
+      padding-bottom: 80px;
+    }
+
+    .container { max-width: 1400px; margin: 0 auto; padding: 0 20px; }
+
+    /* --- HEADER --- */
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      background: var(--glass);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      padding: 0.8rem 0;
+    }
+
+    nav {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .brand {
+      display: flex;
+      gap: 0.8rem;
+      align-items: center;
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: #fff;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+
+    .brand-dot {
+      width: 10px;
+      height: 10px;
+      background: var(--brand);
+      border-radius: 50%;
+      box-shadow: 0 0 10px var(--brand);
+    }
+
+    .menu {
+      list-style: none;
+      display: flex;
+      gap: 1.5rem;
+      margin: 0;
+      padding: 0;
+    }
+
+    .menu a {
+      text-decoration: none;
+      color: var(--muted);
+      font-weight: 500;
+      transition: 0.2s;
+      white-space: nowrap;
+    }
+
+    .menu a:hover,
+    .menu a.active {
+      color: #fff;
+    }
+
+    .menu a.active {
+      border-bottom: 2px solid var(--brand);
+      padding-bottom: 4px;
+    }
+
+    .user-chip {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      padding: 0.3rem 0.7rem;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: rgba(15, 23, 42, 0.7);
+    }
+
+    .role-badge {
+      background: rgba(6, 182, 212, 0.1);
+      border: 1px solid rgba(6, 182, 212, 0.3);
+      color: var(--brand);
+      padding: 2px 8px;
+      border-radius: 99px;
+      font-size: 0.75rem;
+    }
+
+    @media (max-width: 768px) {
+      nav {
+        flex-direction: column;
+        gap: 0.8rem;
+        align-items: stretch;
+      }
+      .brand { justify-content: space-between; }
+      .menu {
+        overflow-x: auto;
+        padding-bottom: 5px;
+        gap: 20px;
+      }
+      .menu::-webkit-scrollbar { display: none; }
+      .user-chip { align-self: flex-start; }
+    }
+
+    main {
+      padding-top: 1.8rem;
+      padding-bottom: 4rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+
+    /* --- BUTTONS --- */
+    .btn {
+      padding: 0.7rem 1.2rem;
+      border-radius: 8px;
+      font-weight: 600;
+      cursor: pointer;
+      border: 1px solid transparent;
+      transition: 0.2s;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.9rem;
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--ink);
+      border-color: var(--border);
+      text-decoration: none;
+      justify-content: center;
+    }
+
+    .btn:hover {
+      background: rgba(255, 255, 255, 0.1);
+      color: #fff;
+      border-color: var(--brand);
+    }
+
+    .btn-primary {
+      background: var(--brand);
+      color: #000;
+      border: none;
+    }
+
+    .btn-primary:hover {
+      background: var(--brand-hover);
+      box-shadow: 0 4px 12px rgba(6, 182, 212, 0.3);
+    }
+
+    .btn-sm {
+      padding: 0.4rem 0.8rem;
+      font-size: 0.8rem;
+    }
+
+    .btn-icon {
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.3rem 0.5rem;
+      cursor: pointer;
+      font-size: 0.9rem;
+      color: var(--muted);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.25rem;
+    }
+
+    .btn-icon:hover {
+      border-color: var(--brand);
+      background: rgba(255, 255, 255, 0.05);
+      color: #fff;
+    }
+
+    /* --- TOOLBAR CARD --- */
+    .toolbar {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.4rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .toolbar-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+
+    .toolbar-title {
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+
+    .toolbar-title h1 {
+      font-size: 1.4rem;
+      margin: 0;
+    }
+
+    .toolbar-title p {
+      margin: 0;
+      font-size: 0.85rem;
+      color: var(--muted);
+      max-width: 620px;
+    }
+
+    .breadcrumbs {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin-bottom: 0.35rem;
+    }
+
+    .breadcrumbs a {
+      color: var(--muted);
+      text-decoration: none;
+    }
+
+    .breadcrumbs a:hover {
+      color: var(--ink);
+    }
+
+    .toolbar-right {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 0.4rem;
+      min-width: 220px;
+    }
+
+    /* --- FIELDS --- */
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+      flex: 1;
+      min-width: 140px;
+    }
+
+    label {
+      font-size: 0.75rem;
+      color: var(--muted);
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    input,
+    select,
+    textarea {
+      background: var(--bg-2);
+      border: 1px solid var(--border);
+      color: #fff;
+      padding: 0.7rem 0.8rem;
+      border-radius: 8px;
+      font-size: 0.9rem;
+      width: 100%;
+      transition: 0.2s;
+      font-family: inherit;
+    }
+
+    input:focus,
+    select:focus,
+    textarea:focus {
+      border-color: var(--brand);
+      box-shadow: 0 0 0 2px rgba(6, 182, 212, 0.2);
+    }
+
+    textarea {
+      resize: vertical;
+      min-height: 60px;
+      max-height: 220px;
+    }
+
+    .pill {
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+    }
+
+    .pill-light {
+      background: rgba(15, 23, 42, 0.8);
+    }
+
+    .text-subtle {
+      color: var(--muted);
+      font-size: 0.8rem;
+    }
+
+    /* --- GRID LAYOUTS --- */
+    .grid-2 {
+      display: grid;
+      grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+      gap: 1rem;
+    }
+
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 0.8rem;
+    }
+
+    @media (max-width: 900px) {
+      .grid-2 {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* --- STATUS BADGES --- */
+    .status-badge {
+      padding: 4px 10px;
+      border-radius: 99px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .st-activo-disponible {
+      background: rgba(16, 185, 129, 0.12);
+      color: #6ee7b7;
+      border: 1px solid rgba(16, 185, 129, 0.2);
+    }
+
+    .st-activo-prestado {
+      background: rgba(59, 130, 246, 0.12);
+      color: #93c5fd;
+      border: 1px solid rgba(59, 130, 246, 0.25);
+    }
+
+    .st-activo-reparacion {
+      background: rgba(245, 158, 11, 0.12);
+      color: #fbbf24;
+      border: 1px solid rgba(245, 158, 11, 0.25);
+    }
+
+    .st-activo-baja {
+      background: rgba(148, 163, 184, 0.2);
+      color: #e5e7eb;
+      border: 1px solid rgba(148, 163, 184, 0.4);
+    }
+
+    .mant-badge {
+      padding: 3px 9px;
+      border-radius: 999px;
+      font-size: 0.72rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .mant-ok {
+      background: rgba(16, 185, 129, 0.15);
+      border: 1px solid rgba(16, 185, 129, 0.25);
+      color: #6ee7b7;
+    }
+
+    .mant-pronto {
+      background: rgba(245, 158, 11, 0.18);
+      border: 1px solid rgba(245, 158, 11, 0.28);
+      color: #fbbf24;
+    }
+
+    .mant-vencido {
+      background: rgba(239, 68, 68, 0.18);
+      border: 1px solid rgba(239, 68, 68, 0.28);
+      color: #fecaca;
+    }
+
+    .mant-sin-plan {
+      background: rgba(148, 163, 184, 0.18);
+      border: 1px solid rgba(148, 163, 184, 0.28);
+      color: #e5e7eb;
+    }
+
+    .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      display: inline-block;
+      margin-right: 4px;
+    }
+
+    .dot-ok { background: #10b981; }
+    .dot-pronto { background: #f59e0b; }
+    .dot-vencido { background: #ef4444; }
+
+    /* --- CARDS / HISTORIAL --- */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.3rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.9rem;
+    }
+
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 0.8rem;
+      flex-wrap: wrap;
+    }
+
+    .card-title {
+      font-size: 1rem;
+      font-weight: 600;
+      margin: 0;
+    }
+
+    .card-subtitle {
+      font-size: 0.83rem;
+      color: var(--muted);
+      margin: 0.1rem 0 0;
+    }
+
+    .hist-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.82rem;
+    }
+
+    .hist-table th,
+    .hist-table td {
+      padding: 0.5rem 0.4rem;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+      text-align: left;
+      white-space: nowrap;
+    }
+
+    .hist-table th {
+      text-transform: uppercase;
+      font-size: 0.72rem;
+      color: var(--muted);
+      letter-spacing: 0.06em;
+      background: rgba(15, 23, 42, 0.8);
+    }
+
+    .hist-table tr:last-child td {
+      border-bottom: none;
+    }
+
+    .hist-empty {
+      text-align: center;
+      padding: 0.9rem 0;
+      color: var(--muted);
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      font-size: 0.72rem;
+      color: var(--muted);
+    }
+
+    /* --- DIALOG / MODAL --- */
+    dialog {
+      background: #1e293b;
+      color: #fff;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+      max-width: 520px;
+      width: 95%;
+      padding: 0;
+      animation: fadeIn 0.2s ease-out;
+    }
+
+    dialog::backdrop {
+      background: rgba(0, 0, 0, 0.8);
+      backdrop-filter: blur(4px);
+    }
+
+    .modal-header {
+      padding: 1.1rem 1.3rem;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: rgba(0, 0, 0, 0.2);
+    }
+
+    .modal-title {
+      font-size: 1rem;
+      font-weight: 600;
+    }
+
+    .modal-subtitle {
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin-top: 0.15rem;
+    }
+
+    .modal-body {
+      padding: 1.2rem 1.3rem;
+      overflow-y: auto;
+      max-height: 70vh;
+      display: flex;
+      flex-direction: column;
+      gap: 0.9rem;
+    }
+
+    .modal-footer {
+      padding: 1.1rem 1.3rem;
+      border-top: 1px solid var(--border);
+      display: flex;
+      justify-content: flex-end;
+      gap: 0.8rem;
+      background: rgba(0, 0, 0, 0.2);
+    }
+
+    /* Toast */
+    .toast {
+      position: fixed;
+      right: 20px;
+      bottom: 30px;
+      background: #fff;
+      color: #0f172a;
+      padding: 10px 20px;
+      border-radius: 99px;
+      font-weight: 600;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+      opacity: 0;
+      pointer-events: none;
+      transition: 0.3s;
+      z-index: 2000;
+    }
+
+    .toast.show {
+      opacity: 1;
+      transform: translateY(-10px);
+    }
+
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+        transform: translateY(10px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    /* --- Buscador de clientes --- */
+    .cliente-search-wrapper {
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+    }
+
+    .cliente-search-results {
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: rgba(15, 23, 42, 0.96);
+      max-height: 210px;
+      overflow-y: auto;
+      font-size: 0.83rem;
+    }
+
+    .cliente-search-item {
+      width: 100%;
+      padding: 0.45rem 0.75rem;
+      border: 0;
+      background: transparent;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 0.15rem;
+      cursor: pointer;
+      text-align: left;
+    }
+
+    .cliente-search-item + .cliente-search-item {
+      border-top: 1px solid rgba(148, 163, 184, 0.2);
+    }
+
+    .cliente-search-item:hover {
+      background: rgba(15, 23, 42, 0.9);
+    }
+
+    .cliente-search-name {
+      font-weight: 600;
+    }
+
+    .cliente-search-extra {
+      font-size: 0.78rem;
+      color: var(--muted);
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="container">
+      <nav>
+        <a href="/pedidos/dashboard.html" class="brand">
+          <span class="brand-dot"></span>
+          <span>ERP / FSM</span>
+        </a>
+        <ul class="menu">
+          <li><a href="/pedidos/inicio/inicial.html">🚀 Inicio</a></li>
+          <li><a href="/pedidos/dashboard.html">Dashboard</a></li>
+          <li><a href="/pedidos/activos.html">Activos</a></li>
+          <li><a href="/pedidos/activo-detalle.html" class="active">ERP / FSM</a></li>
+        </ul>
+        <div class="user-chip">
+          <span class="role-badge" id="userRoleBadge">Admin</span>
+        </div>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+    <!-- HEADER DETALLE -->
+    <section class="toolbar">
+      <div class="toolbar-header">
+        <div class="toolbar-title">
+          <div class="breadcrumbs">
+            <a href="/pedidos/activos.html">Activos</a>
+            <span>›</span>
+            <span id="bcCodigo">Detalle</span>
+          </div>
+          <h1 id="tituloActivo">Activo</h1>
+          <p>
+            Ficha completa del equipo, ciclo de vida de comodatos y mantenimiento.
+            Los horarios se muestran en hora de Argentina (UTC-3).
+          </p>
+        </div>
+
+        <div class="toolbar-right">
+          <div style="display:flex; gap:0.4rem; align-items:center;">
+            <span id="estadoBadge" class="status-badge st-activo-disponible">DISPONIBLE</span>
+            <span id="idInternoPill" class="pill pill-light">ID –</span>
+          </div>
+
+          <div id="empresaFilterWrapper"
+               class="field"
+               style="display:none; margin-top:0.25rem; min-width:220px;">
+            <label for="empresaSelect" style="font-size:0.75rem;">Empresa (Super Admin)</label>
+            <select id="empresaSelect">
+              <option value="">(Seleccionar empresa)</option>
+            </select>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- INFO PRINCIPAL + MANTENIMIENTO -->
+    <section class="grid-2">
+      <!-- Info general + edición -->
+      <section class="card">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">Ficha del activo</h2>
+            <p class="card-subtitle" id="cardSubTitle">–</p>
+          </div>
+          <button class="btn-icon btn-sm" type="button" id="btnGuardarFicha">
+            💾 <span>Guardar cambios</span>
+          </button>
+        </div>
+
+        <div class="grid-3">
+          <div class="field">
+            <label for="codigoInput">Código interno</label>
+            <input id="codigoInput" type="text" placeholder="Ej: DISP-001" />
+          </div>
+          <div class="field">
+            <label for="tipoInput">Tipo de equipo</label>
+            <input id="tipoInput" type="text" placeholder="dispenser_frio_calor, volquete, router…" />
+          </div>
+          <div class="field">
+            <label for="estadoLabel">Estado</label>
+            <div id="estadoLabel" class="text-subtle">–</div>
+          </div>
+        </div>
+
+        <div class="grid-3">
+          <div class="field">
+            <label for="marcaInput">Marca</label>
+            <input id="marcaInput" type="text" />
+          </div>
+          <div class="field">
+            <label for="modeloInput">Modelo</label>
+            <input id="modeloInput" type="text" />
+          </div>
+          <div class="field">
+            <label for="valorInput">Valor de compra (AR$)</label>
+            <input id="valorInput" type="number" step="0.01" min="0" />
+          </div>
+        </div>
+
+        <div class="grid-3">
+          <div class="field">
+            <label for="fechaCompraInput">Fecha de compra</label>
+            <input id="fechaCompraInput" type="date" />
+          </div>
+          <div class="field">
+            <label>Creado</label>
+            <div id="creadoLabel" class="text-subtle">–</div>
+          </div>
+          <div class="field">
+            <label>Última actualización</label>
+            <div id="actualizadoLabel" class="text-subtle">–</div>
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="notasInput">Notas internas</label>
+          <textarea id="notasInput"
+            placeholder="Observaciones sobre el equipo, desgaste, ubicación habitual, etc."></textarea>
+        </div>
+
+        <div class="field">
+          <label for="detallesInput">Detalles técnicos (JSON)</label>
+          <textarea id="detallesInput"
+            placeholder='Ej: {"serie":"ABC123","mac":"AA:BB:CC:DD:EE:FF"}'></textarea>
+          <div class="text-subtle">
+            Podés guardar datos técnicos libres: número de serie, MAC, lotes, presión, volumen, etc.
+          </div>
+        </div>
+      </section>
+
+      <!-- Mantenimiento + Cliente actual + Acciones FSM -->
+      <section class="card">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">Mantenimiento &amp; ciclo de vida</h2>
+            <p class="card-subtitle">
+              Estado del plan de sanitización, vida útil y comodato actual.
+            </p>
+          </div>
+        </div>
+
+        <div class="grid-3">
+          <div class="field">
+            <label for="frecuenciaInput">Frecuencia de mantenimiento</label>
+            <input id="frecuenciaInput" type="number" min="0" step="1" placeholder="Meses" />
+            <div class="text-subtle">0 o vacío = sin plan definido.</div>
+          </div>
+          <div class="field">
+            <label>Últ. sanitización (AR)</label>
+            <div id="ultimaSanitLabel" class="text-subtle">–</div>
+          </div>
+          <div class="field">
+            <label>Próxima estimada</label>
+            <div id="proximaSanitLabel" class="text-subtle">–</div>
+          </div>
+        </div>
+
+        <div class="grid-3" style="margin-top:0.6rem;">
+          <div>
+            <label>Estado del plan</label><br />
+            <span id="mantStatusBadge" class="mant-badge mant-sin-plan">Sin plan</span>
+          </div>
+          <div>
+            <label>Días restantes</label><br />
+            <span id="mantDiasLabel" class="text-subtle">–</span>
+          </div>
+          <div>
+            <label>&nbsp;</label><br />
+            <button class="btn btn-sm" type="button" id="btnSanitizar">
+              🧪 Registrar sanitización
+            </button>
+          </div>
+        </div>
+
+        <hr style="border:none;border-top:1px solid var(--border);margin:1rem 0;" />
+
+        <div class="field">
+          <label>Cliente actual</label>
+          <div id="clienteActualBlock" class="text-subtle">–</div>
+        </div>
+
+        <div class="field">
+          <label for="clienteSearchInput">Asignar / cambiar cliente</label>
+          <div class="cliente-search-wrapper">
+            <input
+              id="clienteSearchInput"
+              type="text"
+              placeholder="Buscar por nombre, dirección, teléfono, razón social o CUIT…"
+              autocomplete="off"
+            />
+            <input type="hidden" id="clienteSelectedId" />
+            <div id="clienteSearchMeta" class="text-subtle">
+              Empezá a tipear para buscar el cliente…
+            </div>
+            <div
+              id="clienteSearchResults"
+              class="cliente-search-results"
+              style="display:none;"
+            ></div>
+          </div>
+          <div class="text-subtle">
+            El activo se asigna al cliente seleccionado cuando presionás “Asignar a cliente”.
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="asignarNotasInput">Notas para la asignación / devolución</label>
+          <textarea id="asignarNotasInput"
+            placeholder="Ej: Instalado en mostrador principal, validar presión en próximo servicio."></textarea>
+        </div>
+
+        <div style="display:flex; flex-direction:column; gap:0.6rem; margin-top:0.3rem;">
+          <div class="text-subtle">Acciones disponibles según el estado actual:</div>
+          <div id="accionesFSM" style="display:flex; flex-wrap:wrap; gap:0.4rem;">
+            <!-- Botones dinámicos -->
+          </div>
+          <div class="text-subtle">
+            Cada acción actualiza el estado del activo y registra un evento en el historial con fecha UTC y usuario.
+          </div>
+        </div>
+      </section>
+    </section>
+
+    <!-- HISTORIAL DE MOVIMIENTOS -->
+    <section class="card">
+      <div class="card-header">
+        <div>
+          <h2 class="card-title">Historial de movimientos</h2>
+          <p class="card-subtitle">
+            Trazabilidad completa del activo: asignaciones, devoluciones, mantenimientos, reparaciones y bajas.
+          </p>
+        </div>
+        <div>
+          <span class="tag">
+            <span class="dot dot-ok"></span> Horarios en AR (UTC-3)
+          </span>
+        </div>
+      </div>
+
+      <div style="overflow-x:auto; border-radius:10px; border:1px solid var(--border);">
+        <table class="hist-table">
+          <thead>
+            <tr>
+              <th>Fecha (AR)</th>
+              <th>Acción</th>
+              <th>Usuario</th>
+              <th>Cliente</th>
+              <th>Detalle</th>
+            </tr>
+          </thead>
+          <tbody id="historialBody">
+            <tr>
+              <td colspan="5" class="hist-empty">Cargando historial…</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <!-- Modal genérico para acciones (reparación / baja) -->
+  <dialog id="accionModal">
+    <div class="modal-header">
+      <div>
+        <div class="modal-title" id="accionModalTitle">Acción sobre el activo</div>
+        <div class="modal-subtitle" id="accionModalSubtitle">–</div>
+      </div>
+      <button class="btn-icon btn-sm" type="button" id="btnCerrarAccionModal">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="field">
+        <label for="accionNotasInput">Notas (opcional)</label>
+        <textarea id="accionNotasInput" placeholder="Comentarios para esta acción…"></textarea>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-sm" type="button" id="btnCancelarAccion">Cancelar</button>
+      <button class="btn btn-primary btn-sm" type="button" id="btnConfirmarAccion">Confirmar acción</button>
+    </div>
+  </dialog>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const DEFAULT_TZ = 'America/Argentina/Buenos_Aires';
+    let currentTimezone = DEFAULT_TZ;
+
+    let activoId = null;
+    let activo = null;
+    let historial = [];
+    let accionModalContext = null; // { type: ... }
+
+    // contexto multi-empresa
+    let currentUser = null;
+    let esSuperAdmin = false;
+    let targetEmpresaId = null;
+    let empresasCache = [];
+
+    function getAuthHeaders() {
+      const headers = { 'Content-Type': 'application/json' };
+      const token = localStorage.getItem('token');
+      if (token) headers['Authorization'] = 'Bearer ' + token;
+      return headers;
+    }
+
+    function showToast(message, type = 'info') {
+      const toast = document.getElementById('toast');
+      if (!toast) return;
+      toast.textContent = message;
+      toast.style.background = '#fff';
+      toast.style.color = '#0f172a';
+
+      const root = document.documentElement;
+      const getVar = (v) => getComputedStyle(root).getPropertyValue(v) || '#22d3ee';
+
+      if (type === 'success') {
+        toast.style.borderLeft = '4px solid ' + getVar('--success');
+      } else if (type === 'error') {
+        toast.style.borderLeft = '4px solid ' + getVar('--danger');
+      } else if (type === 'warning') {
+        toast.style.borderLeft = '4px solid ' + getVar('--warning');
+      } else {
+        toast.style.borderLeft = '4px solid ' + getVar('--info');
+      }
+
+      toast.classList.add('show');
+      setTimeout(() => toast.classList.remove('show'), 3000);
+    }
+
+    function toLocalDateTime(isoString) {
+      if (!isoString) return '–';
+      const d = new Date(isoString);
+      if (Number.isNaN(d.getTime())) return '–';
+      return d.toLocaleString('es-AR', {
+        timeZone: currentTimezone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    }
+
+    function toLocalDate(isoString) {
+      if (!isoString) return '–';
+      const d = new Date(isoString);
+      if (Number.isNaN(d.getTime())) return '–';
+      return d.toLocaleDateString('es-AR', {
+        timeZone: currentTimezone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+      });
+    }
+
+    function addMonths(date, months) {
+      const d = new Date(date.getTime());
+      const day = d.getDate();
+      d.setMonth(d.getMonth() + months);
+      if (d.getDate() < day) {
+        d.setDate(0);
+      }
+      return d;
+    }
+
+    function diffDays(from, to) {
+      const ms = to.getTime() - from.getTime();
+      return Math.round(ms / (1000 * 60 * 60 * 24));
+    }
+
+    function getMantenimientoStatus(a) {
+      const freq = Number(a.frecuencia_mantenimiento || 0);
+      const ultima = a.ultima_sanitizacion ? new Date(a.ultima_sanitizacion) : null;
+
+      if (!freq || !ultima || Number.isNaN(ultima.getTime())) {
+        return { key: 'sin-plan', label: 'Sin plan', dias: null, proxima: null };
+      }
+
+      const proxima = addMonths(ultima, freq);
+      const now = new Date();
+      const dias = diffDays(now, proxima);
+
+      if (dias < 0) {
+        return { key: 'vencido', label: 'Vencido', dias, proxima };
+      } else if (dias <= 30) {
+        return { key: 'pronto', label: 'Próx. ' + dias + ' días', dias, proxima };
+      } else {
+        return { key: 'ok', label: 'Al día', dias, proxima };
+      }
+    }
+
+    function formatoEstadoActivo(estado) {
+      const e = (estado || '').toLowerCase();
+      let cls = 'status-badge';
+      let suffix = '';
+      let label = estado || '–';
+
+      if (e === 'disponible') {
+        suffix = ' st-activo-disponible';
+        label = 'Disponible';
+      } else if (e === 'prestado') {
+        suffix = ' st-activo-prestado';
+        label = 'Prestado';
+      } else if (e === 'reparacion') {
+        suffix = ' st-activo-reparacion';
+        label = 'En reparación';
+      } else if (e === 'baja') {
+        suffix = ' st-activo-baja';
+        label = 'Baja';
+      }
+
+      return '<span class="' + cls + suffix + '">' + label + '</span>';
+    }
+
+    function getActivoIdFromUrl() {
+      const params = new URLSearchParams(window.location.search);
+      const raw = params.get('id');
+      const id = Number(raw);
+      return Number.isInteger(id) && id > 0 ? id : null;
+    }
+
+    function getEmpresaIdFromUrl() {
+      const params = new URLSearchParams(window.location.search);
+      const raw = params.get('empresa_id') || params.get('empresaId');
+      const id = Number(raw);
+      return Number.isInteger(id) && id > 0 ? id : null;
+    }
+
+    async function loadUserInfo() {
+      try {
+        const res = await fetch('/api/me', {
+          method: 'GET',
+          headers: getAuthHeaders(),
+          credentials: 'same-origin'
+        });
+
+        if (res.status === 401) {
+          window.location.href = 'login.html';
+          return;
+        }
+
+        const data = await res.json();
+        if (!data || !data.user) return;
+
+        const { user } = data;
+        currentUser = user;
+        esSuperAdmin = String(user.role || '').toLowerCase() === 'super';
+
+        if (!targetEmpresaId) {
+          targetEmpresaId = user.empresa_id || user.empresaId || null;
+        }
+
+        const userRoleBadge = document.getElementById('userRoleBadge');
+        if (userRoleBadge) {
+          let roleLabel = 'Operador';
+          if (user.role === 'super') roleLabel = 'Super Admin';
+          else if (user.role === 'repartidor') roleLabel = 'Repartidor';
+          else if (user.role === 'admin') roleLabel = 'Admin';
+          userRoleBadge.textContent = roleLabel;
+        }
+
+        const tzFromUser = user.empresa_timezone || user.timezone || user.tz;
+        if (tzFromUser && typeof tzFromUser === 'string') {
+          currentTimezone = tzFromUser;
+        } else {
+          currentTimezone = DEFAULT_TZ;
+        }
+
+        if (esSuperAdmin) {
+          await setupEmpresaSelector();
+        }
+      } catch (e) {
+        console.error('Error cargando /api/me', e);
+      }
+    }
+
+    async function setupEmpresaSelector() {
+      const wrapper = document.getElementById('empresaFilterWrapper');
+      const select  = document.getElementById('empresaSelect');
+      if (!wrapper || !select) return;
+
+      wrapper.style.display = 'block';
+      select.innerHTML = '<option value="">Cargando empresas…</option>';
+
+      try {
+        const res = await fetch('/api/admin/empresas-list', {
+          method: 'GET',
+          headers: getAuthHeaders(),
+          credentials: 'same-origin'
+        });
+
+        if (!res.ok) {
+          console.warn('No se pudo cargar lista de empresas', res.status);
+          wrapper.style.display = 'none';
+          return;
+        }
+
+        const json = await res.json();
+        const empresas = Array.isArray(json)
+          ? json
+          : (Array.isArray(json.data) ? json.data : []);
+        empresasCache = empresas;
+
+        if (!empresas.length) {
+          select.innerHTML = '<option value="">(Sin empresas)</option>';
+          return;
+        }
+
+        select.innerHTML = '<option value="">(Seleccionar empresa)</option>';
+        empresas.forEach(emp => {
+          const opt = document.createElement('option');
+          opt.value = emp.id;
+          opt.textContent = emp.id + ' · ' + (emp.nombre || emp.razon_social || '');
+          select.appendChild(opt);
+        });
+
+        if (!targetEmpresaId && currentUser) {
+          targetEmpresaId = currentUser.empresa_id || currentUser.empresaId || null;
+        }
+        if (targetEmpresaId) {
+          select.value = String(targetEmpresaId);
+        }
+
+        select.addEventListener('change', () => {
+          const val = select.value;
+          targetEmpresaId = val ? Number(val) : null;
+
+          if (targetEmpresaId && empresasCache.length) {
+            const emp = empresasCache.find(e => Number(e.id) === targetEmpresaId);
+            if (emp) {
+              try {
+                let conf = typeof emp.config_operativa === 'string'
+                  ? JSON.parse(emp.config_operativa)
+                  : (emp.config_operativa || {});
+
+                if (conf.timezone) {
+                  currentTimezone = conf.timezone;
+                } else {
+                  currentTimezone = DEFAULT_TZ;
+                }
+              } catch (e) {
+                console.warn('Error parseando config_operativa', e);
+                currentTimezone = DEFAULT_TZ;
+              }
+            }
+          }
+
+          loadActivoAndRender();
+          loadHistorial();
+        });
+      } catch (e) {
+        console.error('Error setupEmpresaSelector', e);
+        wrapper.style.display = 'none';
+      }
+    }
+
+    async function fetchActivoById(id) {
+      let url = '/api/admin/activos/' + id;
+      if (esSuperAdmin && targetEmpresaId) {
+        url += '?empresa_id=' + encodeURIComponent(targetEmpresaId);
+      }
+
+      const res = await fetch(url, {
+        method: 'GET',
+        headers: getAuthHeaders(),
+        credentials: 'same-origin'
+      });
+
+      if (!res.ok) {
+        throw new Error('No se pudo obtener el activo (HTTP ' + res.status + ')');
+      }
+
+      const json = await res.json();
+
+      if (Array.isArray(json) && json[0]) return json[0];
+      if (json && json.data) return json.data;
+      if (json && json.id) return json;
+
+      throw new Error('Respuesta inválida del servidor al obtener activo');
+    }
+
+    async function loadHistorial() {
+      const tbody = document.getElementById('historialBody');
+      if (!tbody) return;
+      tbody.innerHTML =
+        '<tr><td colspan="5" class="hist-empty">Cargando historial…</td></tr>';
+
+      if (!activoId) return;
+
+      try {
+        let url = '/api/admin/activos/' + activoId + '/historial';
+        if (esSuperAdmin && targetEmpresaId) {
+          url += '?empresa_id=' + encodeURIComponent(targetEmpresaId);
+        }
+
+        const res = await fetch(url, {
+          method: 'GET',
+          headers: getAuthHeaders(),
+          credentials: 'same-origin'
+        });
+
+        if (!res.ok) {
+          tbody.innerHTML =
+            '<tr><td colspan="5" class="hist-empty">No se pudo obtener el historial (' +
+            res.status + ').</td></tr>';
+          return;
+        }
+
+        const json = await res.json();
+        const rows = Array.isArray(json)
+          ? json
+          : (Array.isArray(json.data) ? json.data : []);
+        historial = rows;
+
+        if (!rows.length) {
+          tbody.innerHTML =
+            '<tr><td colspan="5" class="hist-empty">Sin movimientos registrados.</td></tr>';
+          return;
+        }
+
+        const out = rows.map(row => {
+          const fecha   = toLocalDateTime(row.fecha);
+          const accion  = row.accion || '–';
+          const usuario = row.usuario || '–';
+          const cliente = row.cliente_nombre || '–';
+          const detalle = row.observacion || row.detalle || '–';
+          return `
+            <tr>
+              <td>${fecha}</td>
+              <td>${accion}</td>
+              <td>${usuario}</td>
+              <td>${cliente}</td>
+              <td>${detalle}</td>
+            </tr>
+          `;
+        }).join('');
+
+        tbody.innerHTML = out;
+      } catch (e) {
+        console.error('Error loadHistorial', e);
+        tbody.innerHTML =
+          '<tr><td colspan="5" class="hist-empty">Error de red al obtener historial.</td></tr>';
+      }
+    }
+
+    // --- NUEVO: buscador de clientes ---
+
+    function setupListeners() {
+      // --- 1. Botones y Modales (Se mantienen igual) ---
+      document.getElementById('btnGuardarFicha').addEventListener('click', onClickGuardarFicha);
+      document.getElementById('btnSanitizar').addEventListener('click', onClickSanitizar);
+
+      const accionModal = document.getElementById('accionModal');
+      document.getElementById('btnCerrarAccionModal').addEventListener('click', closeAccionModal);
+      document.getElementById('btnCancelarAccion').addEventListener('click', closeAccionModal);
+      document.getElementById('btnConfirmarAccion').addEventListener('click', confirmarAccionModal);
+
+      accionModal.addEventListener('cancel', (e) => {
+        e.preventDefault();
+        closeAccionModal();
+      });
+
+      // --- 2. Buscador de Clientes (OPTIMIZADO SERVER-SIDE) ---
+      const searchInput = document.getElementById('clienteSearchInput');
+      const searchMeta = document.getElementById('clienteSearchMeta');
+
+      if (searchInput) {
+        let searchDebounce = null;
+
+        searchInput.addEventListener('input', () => {
+          const term = searchInput.value.trim();
+          
+          // Limpiamos el timer anterior para evitar búsquedas intermedias
+          clearTimeout(searchDebounce);
+
+          // Si el texto es muy corto, ocultamos resultados y no buscamos
+          if (term.length < 2) {
+            const cont = document.getElementById('clienteSearchResults');
+            if (cont) cont.style.display = 'none';
+            if (searchMeta) searchMeta.textContent = 'Ingresá al menos 2 letras...';
+            return;
+          }
+
+          // Feedback visual inmediato
+          if (searchMeta) searchMeta.textContent = 'Buscando...';
+
+          // Esperamos 300ms antes de llamar al servidor (Debounce)
+          searchDebounce = setTimeout(async () => {
+            // Llamamos a la nueva función de búsqueda en servidor
+            const resultados = await searchClientesServer(term);
+            // Renderizamos los resultados que trajo la API
+            renderClienteSearchResults(resultados, term);
+          }, 300);
+        });
+        
+        // Opcional: Al hacer click/focus, si ya hay texto válido, reactivar búsqueda
+        searchInput.addEventListener('focus', () => {
+           if (searchInput.value.trim().length >= 2) {
+              // Disparar el evento input manualmente para refrescar
+              searchInput.dispatchEvent(new Event('input'));
+           }
+        });
+      }
+
+      // Listener para cerrar el dropdown si se hace click fuera
+      document.addEventListener('click', hideClienteSearchResultsIfClickOutside);
+    }
+
+    function getClienteLabel(c) {
+      let label = c.cliente || c.nombre || ('ID ' + c.id);
+      const extras = [];
+      if (c.direccion) extras.push(c.direccion);
+      if (c.ciudad) extras.push(c.ciudad);
+      if (c.telefono) extras.push(c.telefono);
+      if (c.razon_social) extras.push(c.razon_social);
+      if (c.cuit) extras.push('CUIT ' + c.cuit);
+      if (extras.length) label += ' · ' + extras.join(' · ');
+      return label;
+    }
+
+    async function searchClientesServer(termino) {
+      try {
+        let url = '/api/clientes/buscar?q=' + encodeURIComponent(termino);
+        if (esSuperAdmin && targetEmpresaId) {
+          url += '&empresa_id=' + encodeURIComponent(targetEmpresaId);
+        }
+        const res = await fetch(url, {
+          method: 'GET',
+          headers: getAuthHeaders(),
+          credentials: 'same-origin'
+        });
+        if (!res.ok) return [];
+        return await res.json();
+      } catch (e) {
+        console.error('Error searchClientesServer', e);
+        return [];
+      }
+    }
+
+    function renderClienteSearchResults(results, term) {
+      const cont = document.getElementById('clienteSearchResults');
+      const meta = document.getElementById('clienteSearchMeta');
+      if (!cont || !meta) return;
+
+      cont.innerHTML = '';
+
+      if (!results || results.length === 0) {
+        cont.style.display = 'none';
+        meta.textContent = 'No se encontraron clientes para “' + term + '”.';
+        return;
+      }
+
+      results.forEach(c => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'cliente-search-item';
+        
+        // Texto principal
+        const name = document.createElement('div');
+        name.className = 'cliente-search-name';
+        name.textContent = c.cliente || c.nombre || ('ID ' + c.id);
+
+        // Texto secundario (Dirección, Tel, CUIT...)
+        const extra = document.createElement('div');
+        extra.className = 'cliente-search-extra';
+        const extras = [];
+        if (c.direccion) extras.push(c.direccion);
+        if (c.ciudad) extras.push(c.ciudad);
+        if (c.telefono) extras.push(c.telefono);
+        if (c.cuit) extras.push('CUIT ' + c.cuit);
+        extra.textContent = extras.join(' · ');
+
+        btn.appendChild(name);
+        if (extras.length) btn.appendChild(extra);
+
+        // Al hacer click
+        btn.addEventListener('click', () => {
+          const hidden = document.getElementById('clienteSelectedId');
+          const input = document.getElementById('clienteSearchInput');
+          if (hidden) hidden.value = c.id;
+          if (input) input.value = name.textContent; 
+          meta.textContent = 'Cliente seleccionado.';
+          cont.style.display = 'none';
+        });
+
+        cont.appendChild(btn);
+      });
+
+      cont.style.display = 'block';
+      meta.textContent = `Resultados: ${results.length} coincidencias.`;
+    }
+
+    function hideClienteSearchResultsIfClickOutside(ev) {
+          const cont = document.getElementById('clienteSearchResults');
+          const input = document.getElementById('clienteSearchInput');
+          if (!cont || !input) return;
+          if (!cont.style.display || cont.style.display === 'none') return;
+          const isInside = cont.contains(ev.target) || input.contains(ev.target);
+          if (!isInside) {
+            cont.style.display = 'none';
+          }
+        }
+
+    function renderAccionesFSM() {
+      const cont = document.getElementById('accionesFSM');
+      if (!cont) return;
+      cont.innerHTML = '';
+
+      if (!activo) return;
+      const estado = (activo.estado || '').toLowerCase();
+
+      function createButton(text, icon, action) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'btn btn-sm';
+        btn.textContent = icon + ' ' + text;
+        btn.addEventListener('click', action);
+        cont.appendChild(btn);
+      }
+
+      if (estado === 'disponible') {
+        createButton('Asignar a cliente', '📍', onClickAsignar);
+        createButton('Enviar a reparación', '🛠️', () => openAccionModal('reparacion'));
+        createButton('Marcar baja definitiva', '🗑️', () => openAccionModal('baja'));
+      } else if (estado === 'prestado') {
+        createButton('Registrar devolución', '↩️', onClickDevolver);
+        createButton('Enviar a reparación', '🛠️', () => openAccionModal('reparacion'));
+        createButton('Registrar sanitización', '🧪', () => document.getElementById('btnSanitizar').click());
+      } else if (estado === 'reparacion') {
+        createButton('Finalizar reparación', '✅', () => openAccionModal('fin-reparacion'));
+        createButton('Marcar baja definitiva', '🗑️', () => openAccionModal('baja'));
+      } else if (estado === 'baja') {
+        cont.innerHTML = '<span class="text-subtle">El activo está dado de baja. Solo se permite consulta del historial y la ficha.</span>';
+      } else {
+        cont.innerHTML = '<span class="text-subtle">Estado desconocido. Revisar configuración.</span>';
+      }
+    }
+
+    async function loadActivoAndRender() {
+      const titulo = document.getElementById('tituloActivo');
+      const cardSubTitle = document.getElementById('cardSubTitle');
+      const estadoBadge = document.getElementById('estadoBadge');
+      const idPill = document.getElementById('idInternoPill');
+      const bcCodigo = document.getElementById('bcCodigo');
+
+      if (!activoId) {
+        showToast('ID de activo inválido', 'error');
+        return;
+      }
+
+      try {
+        activo = await fetchActivoById(activoId);
+
+        if (!activo) {
+          showToast('Activo no encontrado.', 'error');
+          return;
+        }
+
+        if (titulo) titulo.textContent = activo.codigo || ('Activo #' + activo.id);
+        if (cardSubTitle) cardSubTitle.textContent =
+          (activo.tipo || 'Tipo no definido') + ' · ' +
+          (activo.marca || 'Marca') + ' · ' +
+          (activo.modelo || 'Modelo');
+        if (bcCodigo) bcCodigo.textContent = activo.codigo || ('ID ' + activo.id);
+
+        if (estadoBadge) {
+          estadoBadge.innerHTML = formatoEstadoActivo(activo.estado);
+        }
+        if (idPill) idPill.textContent = 'ID ' + (activo.id || '–');
+
+        document.getElementById('codigoInput').value = activo.codigo || '';
+        document.getElementById('tipoInput').value = activo.tipo || '';
+        document.getElementById('marcaInput').value = activo.marca || '';
+        document.getElementById('modeloInput').value = activo.modelo || '';
+        document.getElementById('valorInput').value =
+          activo.valor_compra != null ? activo.valor_compra : '';
+        document.getElementById('fechaCompraInput').value =
+          activo.fecha_compra ? String(activo.fecha_compra).slice(0, 10) : '';
+        document.getElementById('estadoLabel').textContent = activo.estado || '–';
+        document.getElementById('creadoLabel').textContent = toLocalDateTime(activo.created_at);
+        document.getElementById('actualizadoLabel').textContent = toLocalDateTime(activo.updated_at);
+
+        const notasInput = document.getElementById('notasInput');
+        if (notasInput) {
+          notasInput.value = activo.notas || '';
+        }
+
+        const detallesInput = document.getElementById('detallesInput');
+        if (detallesInput) {
+          try {
+            const jsonStr = JSON.stringify(activo.detalles_tecnicos || {}, null, 2);
+            detallesInput.value = jsonStr;
+          } catch {
+            detallesInput.value = '{}';
+          }
+        }
+
+        // Mantenimiento
+        document.getElementById('frecuenciaInput').value =
+          activo.frecuencia_mantenimiento != null ? activo.frecuencia_mantenimiento : '';
+        document.getElementById('ultimaSanitLabel').textContent = toLocalDate(activo.ultima_sanitizacion);
+
+        const mantStatus = getMantenimientoStatus(activo);
+        const mantBadge = document.getElementById('mantStatusBadge');
+        mantBadge.className = 'mant-badge ' +
+          (mantStatus.key === 'ok'
+            ? 'mant-ok'
+            : mantStatus.key === 'pronto'
+            ? 'mant-pronto'
+            : mantStatus.key === 'vencido'
+            ? 'mant-vencido'
+            : 'mant-sin-plan');
+        mantBadge.textContent = mantStatus.label;
+
+        const proximaTxt = mantStatus.proxima ? toLocalDate(mantStatus.proxima.toISOString()) : '–';
+        document.getElementById('proximaSanitLabel').textContent = proximaTxt;
+
+        let diasTxt = '–';
+        if (mantStatus.dias != null) {
+          diasTxt = mantStatus.dias + ' días';
+        }
+        document.getElementById('mantDiasLabel').textContent = diasTxt;
+
+        // Cliente actual
+        const clienteBlock = document.getElementById('clienteActualBlock');
+        if (clienteBlock) {
+          if (activo.cliente_nombre || activo.cliente) {
+            let txt = (activo.cliente_nombre || activo.cliente);
+            if (activo.cliente_direccion) txt += ' · ' + activo.cliente_direccion;
+            if (activo.cliente_telefono) txt += ' · ' + activo.cliente_telefono;
+            clienteBlock.textContent = txt;
+          } else {
+            clienteBlock.textContent = 'Sin cliente asignado (en depósito).';
+          }
+        }
+
+        // Prellenar buscador con el cliente actual (si existe)
+        const clienteSelectedId = document.getElementById('clienteSelectedId');
+        const clienteSearchInput = document.getElementById('clienteSearchInput');
+        const clienteSearchMeta = document.getElementById('clienteSearchMeta');
+        if (clienteSelectedId && clienteSearchInput && clienteSearchMeta) {
+          if (activo.cliente_id) {
+            clienteSelectedId.value = activo.cliente_id;
+            // usamos los mismos datos de "cliente actual"
+            clienteSearchInput.value = clienteBlock ? clienteBlock.textContent : '';
+            clienteSearchMeta.textContent = 'Cliente actual del activo.';
+          } else {
+            clienteSelectedId.value = '';
+            clienteSearchInput.value = '';
+            clienteSearchMeta.textContent = 'Empezá a tipear para buscar el cliente…';
+          }
+        }
+
+        renderAccionesFSM();
+      } catch (e) {
+        console.error('Error loadActivoAndRender', e);
+        showToast('Error de red al cargar el activo.', 'error');
+      }
+    }
+
+    function openAccionModal(type) {
+      const modal = document.getElementById('accionModal');
+      const title = document.getElementById('accionModalTitle');
+      const subtitle = document.getElementById('accionModalSubtitle');
+      const notasInput = document.getElementById('accionNotasInput');
+
+      accionModalContext = { type };
+      if (notasInput) notasInput.value = document.getElementById('asignarNotasInput').value || '';
+
+      if (type === 'reparacion') {
+        title.textContent = 'Enviar activo a reparación';
+        subtitle.textContent = 'El activo cambiará de estado a “En reparación”.';
+      } else if (type === 'fin-reparacion') {
+        title.textContent = 'Finalizar reparación';
+        subtitle.textContent = 'El activo volverá a estado “Disponible”.';
+      } else if (type === 'baja') {
+        title.textContent = 'Dar de baja definitiva';
+        subtitle.textContent = 'El activo quedará marcado como “Baja” y no podrá reasignarse.';
+      } else {
+        title.textContent = 'Acción sobre el activo';
+        subtitle.textContent = '';
+      }
+
+      if (modal && typeof modal.showModal === 'function') {
+        modal.showModal();
+      }
+    }
+
+    function closeAccionModal() {
+      const modal = document.getElementById('accionModal');
+      if (modal && modal.open) modal.close();
+      accionModalContext = null;
+    }
+
+    async function confirmarAccionModal() {
+      if (!accionModalContext) {
+        closeAccionModal();
+        return;
+      }
+      const notas = document.getElementById('accionNotasInput').value || '';
+      document.getElementById('asignarNotasInput').value = notas;
+
+      const type = accionModalContext.type;
+
+      try {
+        if (type === 'reparacion') {
+          const payload = { activo_id: activoId, notas };
+          if (esSuperAdmin && targetEmpresaId) {
+            payload.empresa_id = targetEmpresaId;
+          }
+
+          const res = await fetch('/api/admin/activos/en-reparacion', {
+            method: 'POST',
+            headers: getAuthHeaders(),
+            credentials: 'same-origin',
+            body: JSON.stringify(payload)
+          });
+
+          if (!res.ok) {
+            const txt = await res.text();
+            console.error('Error en-reparacion', res.status, txt);
+            showToast('No se pudo marcar reparación (' + res.status + ')', 'error');
+          } else {
+            showToast('Activo marcado en reparación.', 'success');
+          }
+
+        } else if (type === 'fin-reparacion') {
+          const payload = { activo_id: activoId, notas };
+          if (esSuperAdmin && targetEmpresaId) {
+            payload.empresa_id = targetEmpresaId;
+          }
+
+          const res = await fetch('/api/admin/activos/fin-reparacion', {
+            method: 'POST',
+            headers: getAuthHeaders(),
+            credentials: 'same-origin',
+            body: JSON.stringify(payload)
+          });
+
+          if (!res.ok) {
+            const txt = await res.text();
+            console.error('Error fin-reparacion', res.status, txt);
+            showToast('No se pudo finalizar la reparación (' + res.status + ')', 'error');
+          } else {
+            showToast('Reparación finalizada.', 'success');
+          }
+
+        } else if (type === 'baja') {
+          const payload = { id: activoId, notas };
+          if (esSuperAdmin && targetEmpresaId) {
+            payload.empresa_id = targetEmpresaId;
+          }
+
+          const res = await fetch('/api/admin/activos/' + activoId + '/baja', {
+            method: 'POST',
+            headers: getAuthHeaders(),
+            credentials: 'same-origin',
+            body: JSON.stringify(payload)
+          });
+
+          if (!res.ok) {
+            const txt = await res.text();
+            console.error('Error baja', res.status, txt);
+            showToast('No se pudo marcar la baja (' + res.status + ')', 'error');
+          } else {
+            showToast('Activo dado de baja.', 'success');
+          }
+        }
+      } catch (e) {
+        console.error('Error confirmarAccionModal', e);
+        showToast('Error de red ejecutando acción', 'error');
+      }
+
+      closeAccionModal();
+      await loadActivoAndRender();
+      await loadHistorial();
+    }
+
+    async function onClickAsignar() {
+          // 1. ELIMINAMOS LA CARGA MASIVA
+          // await loadClientes();  <-- Esta línea se borra
+
+          const hidden = document.getElementById('clienteSelectedId');
+          const notas = document.getElementById('asignarNotasInput').value || '';
+          const searchInput = document.getElementById('clienteSearchInput');
+
+          // Validamos que se haya seleccionado un cliente del buscador (que llena el input hidden)
+          if (!hidden || !hidden.value) {
+            showToast('Seleccioná un cliente desde el buscador para asignar el activo.', 'warning');
+            return;
+          }
+
+          const clienteId = Number(hidden.value);
+          if (!Number.isInteger(clienteId) || clienteId <= 0) {
+            showToast('Cliente inválido.', 'error');
+            return;
+          }
+
+          try {
+            const payload = {
+              activo_id: activoId,
+              cliente_id: clienteId,
+              notas
+            };
+            
+            if (esSuperAdmin && targetEmpresaId) {
+              payload.empresa_id = targetEmpresaId;
+            }
+
+            const res = await fetch('/api/admin/activos/asignar', {
+              method: 'POST',
+              headers: getAuthHeaders(),
+              credentials: 'same-origin',
+              body: JSON.stringify(payload)
+            });
+
+            if (!res.ok) {
+              const txt = await res.text();
+              console.error('Error asignar', res.status, txt);
+              showToast('No se pudo asignar el activo (' + res.status + ')', 'error');
+              return;
+            }
+
+            showToast('Activo asignado correctamente.', 'success');
+            
+            if (searchInput) {
+              searchInput.blur();
+            }
+            
+            // Recargamos la ficha para ver el nuevo estado y cliente asignado
+            await loadActivoAndRender();
+            await loadHistorial();
+            
+          } catch (e) {
+            console.error('Error onClickAsignar', e);
+            showToast('Error de red al asignar activo', 'error');
+          }
+        }
+
+    async function onClickDevolver() {
+      const notas = document.getElementById('asignarNotasInput').value || '';
+      if (!confirm('¿Confirmás la devolución del activo al depósito?')) return;
+
+      try {
+        const payload = { activo_id: activoId, notas };
+        if (esSuperAdmin && targetEmpresaId) {
+          payload.empresa_id = targetEmpresaId;
+        }
+
+        const res = await fetch('/api/admin/activos/devolver', {
+          method: 'POST',
+          headers: getAuthHeaders(),
+          credentials: 'same-origin',
+          body: JSON.stringify(payload)
+        });
+
+        if (!res.ok) {
+          const txt = await res.text();
+          console.error('Error devolver', res.status, txt);
+          showToast('No se pudo registrar la devolución (' + res.status + ')', 'error');
+          return;
+        }
+
+        showToast('Devolución registrada.', 'success');
+        await loadActivoAndRender();
+        await loadHistorial();
+      } catch (e) {
+        console.error('Error onClickDevolver', e);
+        showToast('Error de red al devolver activo', 'error');
+      }
+    }
+
+    async function onClickSanitizar() {
+      const notas = prompt(
+        'Notas para esta sanitización (opcional):',
+        document.getElementById('asignarNotasInput').value || ''
+      );
+      if (notas === null) return;
+
+      try {
+        const payload = { activo_id: activoId, notas };
+        if (esSuperAdmin && targetEmpresaId) {
+          payload.empresa_id = targetEmpresaId;
+        }
+
+        const res = await fetch('/api/admin/activos/sanitizar', {
+          method: 'POST',
+          headers: getAuthHeaders(),
+          credentials: 'same-origin',
+          body: JSON.stringify(payload)
+        });
+
+        if (!res.ok) {
+          const txt = await res.text();
+          console.error('Error sanitizar', res.status, txt);
+          showToast('No se pudo registrar la sanitización (' + res.status + ')', 'error');
+          return;
+        }
+
+        showToast('Mantenimiento registrado.', 'success');
+        await loadActivoAndRender();
+        await loadHistorial();
+      } catch (e) {
+        console.error('Error onClickSanitizar', e);
+        showToast('Error de red al registrar mantenimiento', 'error');
+      }
+    }
+
+    async function onClickGuardarFicha() {
+      if (!activo) return;
+
+      const payload = {
+        codigo: document.getElementById('codigoInput').value || null,
+        tipo: document.getElementById('tipoInput').value || null,
+        marca: document.getElementById('marcaInput').value || null,
+        modelo: document.getElementById('modeloInput').value || null,
+        valor_compra: document.getElementById('valorInput').value || null,
+        fecha_compra: document.getElementById('fechaCompraInput').value || null,
+        notas: document.getElementById('notasInput').value || null,
+        frecuencia_mantenimiento: document.getElementById('frecuenciaInput').value || null
+      };
+
+      const detallesRaw = document.getElementById('detallesInput').value;
+      if (detallesRaw.trim()) {
+        try {
+          payload.detalles_tecnicos = JSON.parse(detallesRaw);
+        } catch (e) {
+          if (!confirm('Los detalles técnicos no son JSON válido. ¿Guardar la ficha sin esos cambios?')) {
+            return;
+          }
+        }
+      }
+
+      if (esSuperAdmin && targetEmpresaId) {
+        payload.empresa_id = targetEmpresaId;
+      }
+
+      try {
+        const res = await fetch('/api/admin/activos/' + activoId, {
+          method: 'PUT',
+          headers: getAuthHeaders(),
+          credentials: 'same-origin',
+          body: JSON.stringify(payload)
+        });
+
+        if (!res.ok) {
+          const txt = await res.text();
+          console.error('Error actualizar activo', res.status, txt);
+          showToast('No se pudieron guardar los cambios (' + res.status + ')', 'error');
+          return;
+        }
+
+        showToast('Ficha actualizada.', 'success');
+        await loadActivoAndRender();
+        await loadHistorial();
+      } catch (e) {
+        console.error('Error onClickGuardarFicha', e);
+        showToast('Error de red al guardar la ficha', 'error');
+      }
+    }
+
+    document.addEventListener('DOMContentLoaded', async () => {
+      activoId = getActivoIdFromUrl();
+      const empIdFromUrl = getEmpresaIdFromUrl();
+      if (empIdFromUrl) {
+        targetEmpresaId = empIdFromUrl;
+      }
+
+      setupListeners();
+      await loadUserInfo();
+      await loadActivoAndRender();
+      await loadHistorial();
+    });
+  </script>
+</body>
+</html>

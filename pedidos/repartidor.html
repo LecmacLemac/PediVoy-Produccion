@@ -1,0 +1,1953 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>Repartos – Dashboard</title>
+  
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js"></script>
+
+  <style>
+    :root {
+      /* Palette Dark Theme */
+      --bg: #0b1020;
+      --bg-input: #0f172a;
+      --ink: #f1f5f9;
+      --muted: #94a3b8;
+      --brand: #06b6d4;       /* Cyan */
+      --brand-hover: #22d3ee;
+      --surface: rgba(30, 41, 59, 0.7);
+      --border: rgba(148, 163, 184, 0.15);
+      --glass: rgba(15, 23, 42, 0.85);
+      --radius: 12px;
+      
+      --success: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+    }
+
+    * { box-sizing: border-box; outline: none; -webkit-tap-highlight-color: transparent; }
+    
+    body {
+      margin: 0; 
+      font-family: system-ui, -apple-system, sans-serif;
+      color: var(--ink);
+      background: 
+        radial-gradient(circle at 15% 50%, rgba(6, 182, 212, 0.05), transparent 25%),
+        radial-gradient(circle at 85% 30%, rgba(59, 130, 246, 0.05), transparent 25%),
+        var(--bg);
+      min-height: 100vh;
+      font-size: 14px;
+      padding-bottom: 80px; /* Space for mobile nav */
+    }
+
+    .container { max-width: 1100px; margin: 0 auto; padding: 0 16px; }
+
+    /* HEADER */
+    header {
+      position: sticky; top: 0; z-index: 1000;
+      background: var(--glass); backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border); padding: 0.8rem 0;
+    }
+    .app-nav { display: flex; justify-content: space-between; align-items: center; }
+    
+    .brand { font-size: 1.1rem; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 0.6rem; }
+    .brand .dot { width: 10px; height: 10px; background: var(--brand); border-radius: 50%; box-shadow: 0 0 10px var(--brand); }
+
+    /* MENU (Mobile & Desktop) */
+    .menu-btn {
+      display: none; background: transparent; border: 1px solid var(--border); 
+      color: var(--ink); border-radius: 8px; padding: 6px; cursor: pointer;
+    }
+    .menu-panel { display: flex; gap: 0.5rem; align-items: center; }
+    .nav-link { 
+      text-decoration: none; color: var(--muted); font-weight: 500; transition: 0.2s; 
+      padding: 0.4rem 0.8rem; border-radius: 8px; cursor: pointer; font-size: 0.9rem;
+    }
+    .nav-link:hover, .nav-link[aria-current="page"] { color: #fff; background: rgba(255,255,255,0.08); }
+    .nav-link[aria-current="page"] { border: 1px solid var(--border); color: var(--brand); }
+
+    @media (max-width: 768px) {
+      .menu-btn { display: flex; }
+      .menu-panel {
+        display: none; flex-direction: column; position: absolute;
+        top: 100%; right: 16px; width: 200px; background: #1e293b;
+        border: 1px solid var(--border); border-radius: var(--radius);
+        padding: 1rem; box-shadow: 0 10px 40px rgba(0,0,0,0.5); z-index: 1001;
+      }
+      .menu-panel.show { display: flex; }
+      .nav-link { width: 100%; text-align: left; padding: 0.8rem; border-bottom: 1px solid rgba(255,255,255,0.05); }
+    }
+
+    /* LAYOUT COMPONENTS */
+    main { padding-top: 1.5rem; }
+    
+    .card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 1.2rem; margin-bottom: 1.5rem;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+    }
+
+    h3, h4, h5 { margin: 0 0 1rem; color: #fff; font-weight: 700; }
+    small.muted { color: var(--muted); display: block; }
+    .row { display: flex; gap: 0.8rem; align-items: center; flex-wrap: wrap; }
+    
+    /* FORMS */
+    label { display: block; font-size: 0.75rem; color: var(--muted); font-weight: 600; margin-bottom: 0.3rem; text-transform: uppercase; letter-spacing: 0.5px; }
+    input, select, textarea {
+      width: 100%; background: var(--bg-input); border: 1px solid var(--border); color: #fff;
+      padding: 0.7rem; border-radius: 8px; font-size: 0.95rem; transition: 0.2s;
+    }
+    input:focus, select:focus { border-color: var(--brand); box-shadow: 0 0 0 2px rgba(6,182,212,0.2); }
+    input[type="checkbox"] { width: auto; accent-color: var(--brand); transform: scale(1.2); }
+    input[readonly], input[disabled] { background: rgba(0,0,0,0.2); color: var(--muted); cursor: not-allowed; border-style: dashed; }
+
+    /* BUTTONS */
+    .iconbtn {
+      display: inline-flex; align-items: center; gap: 0.5rem; justify-content: center;
+      padding: 0.6rem 1rem; border-radius: 8px; font-weight: 600; font-size: 0.9rem;
+      cursor: pointer; border: 1px solid transparent; transition: 0.2s; text-decoration: none;
+      background: var(--surface); color: var(--ink); border-color: var(--border);
+    }
+    .iconbtn:active { transform: scale(0.98); }
+    .iconbtn.primary { background: var(--brand); color: #000; border: none; }
+    .iconbtn.success { background: rgba(16, 185, 129, 0.2); color: #6ee7b7; border-color: rgba(16, 185, 129, 0.4); }
+    .iconbtn.ghost { background: transparent; border-color: transparent; color: var(--muted); }
+
+    /* PEDIDO CARD */
+    .pedido-card {
+      position: relative; margin-bottom: 1rem;
+      background: rgba(15, 23, 42, 0.6); border: 1px solid var(--border); 
+      border-radius: 14px; padding: 1rem 1rem 1rem 1.2rem;
+      transition: transform 0.2s;
+    }
+    /* Stripe indicador de estado */
+    .pedido-card::before {
+      content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 5px;
+      border-radius: 14px 0 0 14px; background: var(--tone);
+    }
+    .pedido-card.pendiente { --tone: var(--warning); }
+    .pedido-card.en_ruta { --tone: var(--brand); }
+    .pedido-card.entregado { --tone: var(--success); opacity: 0.7; }
+    .pedido-card.cancelado { --tone: var(--danger); opacity: 0.6; }
+
+    .pc-top { display: flex; justify-content: space-between; align-items: flex-start; }
+    .pc-client { font-size: 1.1rem; font-weight: 700; color: #fff; }
+    
+    .pc-addr { 
+      color: #e2e8f0;   
+      font-size: 1.15rem; 
+      font-weight: 500;
+      margin-top: 4px;
+      line-height: 1.4;
+    }
+    
+    .pc-state-btn {
+      width: 42px; height: 42px; border-radius: 50%; border: none; cursor: pointer;
+      display: grid; place-items: center; font-size: 1.2rem; color: #fff;
+      background: var(--tone); box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+    }
+
+    /* Payments Toggle */
+    .pay-row { display: flex; gap: 0.5rem; margin-top: 0.8rem; overflow-x: auto; padding-bottom: 4px; }
+    .pay-opt {
+      border: 1px solid var(--border); color: var(--muted); padding: 4px 12px; border-radius: 20px; 
+      font-size: 0.8rem; cursor: pointer; white-space: nowrap;
+    }
+    .pay-opt.active.efectivo { background: rgba(16,185,129,0.2); border-color: var(--success); color: #6ee7b7; }
+    .pay-opt.active.transferencia { background: rgba(6,182,212,0.2); border-color: var(--brand); color: #67e8f9; }
+    .verified-badge { background: rgba(16,185,129,0.1); color: var(--success); border: 1px solid var(--success); padding: 2px 8px; border-radius: 12px; font-size: 0.7rem; display: inline-flex; align-items: center; gap: 4px;}
+
+    .pc-actions { display: flex; gap: 0.5rem; margin-top: 1rem; border-top: 1px solid var(--border); padding-top: 0.8rem; flex-wrap: wrap; }
+
+    /* STATS GRID */
+    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 1rem; }
+    .tile { background: rgba(255,255,255,0.03); border: 1px solid var(--border); border-radius: 12px; padding: 1rem; text-align: center; }
+    .tile .num { font-size: 1.6rem; font-weight: 700; color: #fff; margin-top: 0.3rem; }
+
+    /* MAPA */
+    .mapbox { height: 65vh; width: 100%; border-radius: 12px; border: 1px solid var(--border); z-index: 1; }
+    /* Icono mapa personalizado */
+    .m-label { 
+      background: #1e293b; color: #fff; padding: 4px 8px; border-radius: 6px; 
+      border: 1px solid var(--border); font-size: 0.8rem; box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+      white-space: nowrap; font-weight: 600;
+    }
+
+    /* TABLES */
+    .table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 12px; }
+    table { width: 100%; border-collapse: collapse; text-align: left; }
+    th { background: rgba(15,23,42,0.8); padding: 1rem; font-size: 0.75rem; text-transform: uppercase; color: var(--muted); }
+    td { padding: 1rem; border-top: 1px solid var(--border); vertical-align: middle; }
+
+    /* UTILS */
+    [hidden] { display: none !important; }
+    .flex-bt { display: flex; justify-content: space-between; align-items: center; }
+    .toast { position: fixed; left: 50%; bottom: 80px; transform: translateX(-50%) translateY(20px); background: #fff; color: #000; padding: 10px 20px; border-radius: 50px; font-weight: 600; opacity: 0; pointer-events: none; transition: 0.3s; z-index: 2000; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+    /* === MODAL ACTIVOS REPARTIDOR === */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.85);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 2000;
+    }
+    .modal-card {
+      width: 100%;
+      max-width: 480px;
+      background: var(--glass);
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      padding: 1.2rem;
+      box-shadow: 0 20px 40px rgba(0,0,0,0.5);
+    }
+    .modal-list {
+      max-height: 260px;
+      overflow-y: auto;
+      margin: 0.8rem 0;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 0.75rem;
+      border-radius: 999px;
+      padding: 2px 8px;
+      background: rgba(148, 163, 184, 0.2);
+      color: var(--muted);
+    }
+    .modal-card small.muted {
+      margin-top: 0.2rem;
+    }
+    #activosModal select[data-am-nuevo] {
+      opacity: 0.6;
+    }
+    #activosModal select[data-am-nuevo]:not([disabled]) {
+      opacity: 1;
+    }
+
+      /* Estilos rápidos para el escáner */
+  .scan-list-container {
+    max-height: 300px;
+    overflow-y: auto;
+    margin: 15px 0;
+  }
+  .scan-item-row {
+    background: rgba(255,255,255,0.05);
+    padding: 10px;
+    border-radius: 8px;
+    margin-bottom: 10px;
+    border: 1px solid var(--border);
+  }
+  .scan-label {
+    display: block; 
+    font-size: 0.85rem; 
+    color: var(--brand); 
+    margin-bottom: 5px;
+  }
+  .scan-input-group {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 5px;
+  }
+  .scan-input {
+    flex: 1;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    color: white;
+    padding: 8px;
+    border-radius: 6px;
+  }
+  .scan-input:focus {
+    border-color: var(--brand);
+  }
+    
+  </style>
+
+</head>
+<body>
+
+<header>
+  <div class="container app-nav">
+    <div class="brand">
+      <span class="dot"></span>
+      <strong id="brandTitle">Dashboard</strong>
+    </div>
+    <button id="menuToggle" class="menu-btn">
+      <svg width="24" height="24" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
+    </button>
+    <div id="menuPanel" class="menu-panel">
+      <a class="nav-link" data-sec="pedidos" aria-current="page">📦 Pedidos</a>
+      <a class="nav-link" data-sec="mapa">🗺️ Mapa</a>
+      <a class="nav-link" data-sec="gastos">💸 Movimientos</a>
+      <a class="nav-link" data-sec="resumen">📊 Resumen</a>
+      <a class="nav-link" data-sec="transf">🏦 Transf.</a>
+      <a id="logout" class="nav-link" style="color:var(--danger)">Salir</a>
+    </div>
+  </div>
+</header>
+
+<main class="container">
+
+  <section id="sec-pedidos">
+    <div class="card">
+      <div class="flex-bt" style="margin-bottom:1rem; cursor:pointer" onclick="toggleFilters()">
+        <h3>Filtros</h3>
+        <span class="iconbtn ghost" style="font-size:1.2rem">⚙️</span>
+      </div>
+      <div id="filterBox">
+        <div class="row" style="align-items:flex-end">
+          <div style="flex:1">
+            <label>Estado</label>
+            <select id="fEstado">
+              <option value="activos">Pendientes y En Ruta</option>
+              <option value="pendiente">Solo Pendientes</option>
+              <option value="en_ruta">Solo En Ruta</option>
+              <option value="entregado">Entregados</option>
+              <option value="">Todos</option>
+            </select>
+          </div>
+          <div style="flex:1">
+            <label>Zona</label>
+            <select id="fZona"><option value="">Todas</option></select>
+          </div>
+          <div style="padding-bottom:0.8rem">
+            <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer">
+              <input type="checkbox" id="fHoy" checked> Solo Hoy
+            </label>
+          </div>
+        </div>
+        
+        <div class="row" style="margin-top:1rem">
+          <input id="fSearch" placeholder="Buscar cliente..." style="flex:2">
+          
+          <button class="iconbtn ghost" id="btnRef">↻ Refrescar</button>
+          
+          <button class="iconbtn primary" id="btnOpt" style="font-size:0.9rem;">⚡ Optimizar Ruta</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="cardsContainer"></div>
+    <div id="emptyMsg" class="card muted" style="text-align:center" hidden>No hay pedidos.</div>
+  </section>
+
+  <section id="sec-mapa" hidden>
+    <div class="card" style="height: calc(100vh - 140px); display:flex; flex-direction:column;">
+      <div class="flex-bt" style="margin-bottom:0.5rem">
+        <h3 style="margin:0">Mapa de Ruta</h3>
+        <button class="iconbtn ghost" id="mapRefBtn">↻</button>
+      </div>
+      
+      <div class="row" style="margin-bottom:0.5rem; background:rgba(0,0,0,0.2); padding:0.5rem; border-radius:8px;">
+        <select id="mapFiltroEstado" style="padding:0.4rem; width:auto;">
+          <option value="en_ruta">En Ruta (Prioridad)</option>
+          <option value="">Todos los Estados</option>
+          <option value="pendiente">Solo Pendientes</option>
+        </select>
+        <label style="display:flex; align-items:center; gap:0.5rem; margin:0; font-size:0.8rem; color:#fff;">
+          <input type="checkbox" id="mapSoloHoy" checked style="width:auto; transform:scale(1)"> Solo Hoy
+        </label>
+      </div>
+
+      <div id="map" class="mapbox" style="flex:1;"></div>
+      <small class="muted" style="margin-top:5px" id="mapHint">Cargando...</small>
+    </div>
+  </section>
+
+  <section id="sec-gastos" hidden>
+    <div class="card">
+      <div class="flex-bt">
+        <h3>Registrar Movimiento</h3>
+        <button class="iconbtn ghost" onclick="gInit()">Limpiar</button>
+      </div>
+
+      <form id="gForm">
+        <div class="row" style="align-items:flex-end; margin-bottom:1rem">
+          <div style="flex:1">
+            <label>Fecha</label>
+            <input type="date" id="gFecha" required>
+          </div>
+          <div style="flex:2">
+            <label>Tipo de Operación</label>
+            <select id="gTipo" required>
+              <optgroup label="Gastos Comunes">
+                <option value="combustible">⛽ Combustible</option>
+                <option value="insumos">🔧 Insumos / Mantenimiento</option>
+                <option value="varios">🧾 Otros Gastos</option>
+              </optgroup>
+              <optgroup label="Stock / Mercadería">
+                <option value="carga_llenos">📥 Carga de Llenos (Compra)</option>
+                <option value="descarga_vacios">📤 Descarga de Vacíos</option>
+              </optgroup>
+            </select>
+          </div>
+        </div>
+
+        <div class="row" id="gProdRow" hidden style="margin-bottom:1rem">
+          <div style="width:100%">
+            <label style="color:var(--brand)">Seleccionar Producto</label>
+            <select id="gProducto"><option value="">Cargando productos...</option></select>
+          </div>
+        </div>
+
+        <div class="row" id="gCalcRow" hidden style="margin-bottom:1rem">
+          <div style="flex:1">
+            <label>Cantidad</label>
+            <input type="number" id="gCant" step="0.01" placeholder="0" min="0">
+          </div>
+          <div style="flex:1" id="gPuBox">
+            <label>Costo Unit.</label>
+            <input type="number" id="gPu" step="0.01" placeholder="$" min="0">
+          </div>
+          <div style="flex:1">
+            <label>Total Estimado</label>
+            <input id="gTotalCalc" disabled style="font-weight:bold; color:var(--brand)" placeholder="$ 0.00">
+          </div>
+        </div>
+
+        <div class="row" id="gMontoRow" style="margin-bottom:1rem">
+          <div style="width:100%">
+            <label>Monto Total ($)</label>
+            <input type="number" id="gMonto" step="0.01" placeholder="$ 0.00" style="font-size:1.2rem; font-weight:bold; color:#fff">
+          </div>
+        </div>
+
+        <div class="row" style="margin-bottom:1.5rem">
+          <div style="flex:2">
+            <label>Nota / Detalle</label>
+            <input id="gDesc" placeholder="Opcional">
+          </div>
+          <div style="flex:1">
+            <label>Foto</label>
+            <input type="file" id="gFile" accept="image/*" style="padding:0.4rem">
+          </div>
+        </div>
+
+        <button type="submit" class="iconbtn primary" style="width:100%; padding:1rem;">GUARDAR REGISTRO</button>
+      </form>
+    </div>
+
+    <h4 style="margin-left:10px">Historial Reciente</h4>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Fecha</th><th>Tipo</th><th>Detalle</th><th>Monto/Cant</th></tr></thead>
+        <tbody id="gList"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="sec-resumen" hidden>
+    <div class="card">
+      <div class="row" style="margin-bottom:1.5rem">
+        <label>Resumen del día:</label>
+        <input type="date" id="resDate" style="width:auto">
+      </div>
+
+      <div class="stats">
+        <div class="tile">
+          <small class="muted">ENTREGADOS</small>
+          <div class="num" id="rEnt" style="color:var(--success)">0</div>
+        </div>
+        <div class="tile">
+          <small class="muted">EFECTIVO</small>
+          <div class="num" id="rCash">$0</div>
+        </div>
+        <div class="tile">
+          <small class="muted">TRANSFERENCIAS</small>
+          <div class="num" id="rTrans">$0</div>
+        </div>
+        <div class="tile">
+          <small class="muted">GASTOS</small>
+          <div class="num" id="rGastos" style="color:var(--danger)">$0</div>
+        </div>
+      </div>
+
+      <div class="tile" style="margin-top:1rem; border-color:var(--brand); background:rgba(6,182,212,0.1)">
+        <small style="color:var(--brand); font-weight:bold; letter-spacing:1px">A RENDIR (Efectivo - Gastos)</small>
+        <div class="num" id="rRendir" style="font-size:2rem">$ 0</div>
+      </div>
+
+      <div style="margin-top:2rem">
+        <h4>Texto para WhatsApp</h4>
+        <textarea id="resText" rows="12" style="font-family:monospace; font-size:0.9rem; color:var(--muted); width:100%; background:rgba(0,0,0,0.3); border:1px solid var(--border); border-radius:8px; padding:10px;" readonly></textarea>
+        <button class="iconbtn primary" style="margin-top:0.5rem; width:100%" onclick="copyRes()">Copiar Texto</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="sec-transf" hidden>
+    <div class="card">
+      <div class="flex-bt">
+        <h3>Transferencias</h3>
+        <button class="iconbtn ghost" onclick="loadTransf()">↻</button>
+      </div>
+      <div class="row" style="margin-bottom:1rem">
+        <input type="date" id="tfDate">
+        <select id="tfFilter">
+          <option value="">Todas</option>
+          <option value="pendiente">Pendientes</option>
+          <option value="verificado">Verificadas</option>
+        </select>
+      </div>
+      
+      <div class="table-wrap">
+        <table style="font-size:0.85rem">
+          <thead><tr><th>Pedido</th><th>Cliente</th><th>Monto</th><th>Estado</th></tr></thead>
+          <tbody id="tfList"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<div id="activosModal" class="modal-overlay" hidden>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="amTitle">
+    <div class="flex-bt" style="gap:.75rem; align-items:flex-start;">
+      <div>
+        <h3 id="amTitle" style="margin-top:0">Activos en este pedido</h3>
+        <small class="muted" id="amPedidoTitle"></small>
+      </div>
+      <button type="button" class="iconbtn ghost" onclick="cerrarActivosModal()" aria-label="Cerrar">✕</button>
+    </div>
+
+    <div id="amContenido" class="modal-list" style="margin-top:0.6rem;">
+      </div>
+
+    <label style="margin-top:0.5rem;">Observaciones</label>
+    <textarea id="amObs" rows="2" placeholder="Notas opcionales..."
+      style="width:100%; resize:vertical; background:var(--bg-input); border-radius:8px; border:1px solid var(--border); color:#fff; padding:0.5rem;"></textarea>
+
+    <div class="row" style="margin-top:1rem; justify-content:flex-end;">
+      <button type="button" class="iconbtn ghost" onclick="cerrarActivosModal()">Cancelar</button>
+      <button type="button" class="iconbtn primary" onclick="confirmarEntregaConActivos()">Confirmar entrega</button>
+    </div>
+  </div>
+</div>
+
+<div id="modalEscanearActivos" class="modal-overlay" style="display: none;">
+  <div class="modal-card"> <h3>📦 Gestión de Activos</h3>
+    <p style="color:var(--muted); font-size:0.9rem; margin-bottom:1rem;">
+      Este pedido incluye equipos. Escanea los códigos para continuar.
+    </p>
+    
+    <div id="listaActivosEscanear" class="scan-list-container">
+      </div>
+
+    <div class="row" style="margin-top:1rem; justify-content:flex-end;">
+      <button onclick="cerrarModalEscaneo()" class="iconbtn ghost">Cancelar</button>
+      
+      <button onclick="confirmarEntregaScanner()" class="iconbtn primary">Confirmar Entrega</button>
+    </div>
+  </div>
+</div>
+
+<div id="modalPagoQR" class="modal-overlay" style="display:none;">
+  <div class="modal-card">
+    <div class="row" style="justify-content:space-between; align-items:center; margin-bottom:0.5rem;">
+      <h3>📱 Pago con QR</h3>
+      <button type="button" class="iconbtn ghost" onclick="cerrarModalPagoQR()" aria-label="Cerrar">✕</button>
+    </div>
+    <p id="qrInfoTexto" style="color:var(--muted); font-size:0.9rem; margin-bottom:1rem;">
+      Mostrá este QR al cliente para que escanee y pague el pedido.
+    </p>
+    <div style="display:flex; justify-content:center; margin:1rem 0;">
+      <canvas id="qrCanvas" width="240" height="240" style="border-radius:12px;"></canvas>
+    </div>
+    <div class="row" style="justify-content:flex-end; margin-top:1rem;">
+      <button type="button" class="iconbtn ghost" onclick="cerrarModalPagoQR()">Cancelar</button>
+      <button type="button" class="iconbtn primary" onclick="confirmarPagoQR()">Ya pagó</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast">Notificación</div>
+
+<script>
+// --- AUTH & GLOBALS ---
+const token = localStorage.getItem('token');
+if(!token) location.href = 'login.html';
+
+// ====== UTILS & HELPERS ======
+const $ = s => document.querySelector(s);
+const $$ = s => document.querySelectorAll(s);
+
+// Función de escape HTML (seguridad)
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+  '&': '&amp;',
+  '<': '&lt;',
+  '>': '&gt;',
+  '"': '&quot;',
+  "'": '&#39;'
+}[c]));
+
+// Formateo de dinero ARS
+const money = n => '$ ' + Number(n||0).toLocaleString('es-AR');
+
+// Obtiene la fecha local de HOY (YYYY-MM-DD)
+const getOyString = () => {
+    const d = new Date();
+    d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+    return d.toISOString().slice(0,10);
+};
+
+// Convierte fecha UTC de DB a Local YYYY-MM-DD para comparar
+const isoToLocalYMD = (iso) => {
+    if(!iso) return '';
+    const d = new Date(iso);
+    d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+    return d.toISOString().slice(0,10);
+};
+
+// Fecha + hora en AR (para movimientos de activos)
+const formatFechaHoraAR = (iso) => {
+  if (!iso) return '';
+  return new Date(iso).toLocaleString('es-AR', {
+    timeZone: 'America/Argentina/Buenos_Aires',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  });
+};
+
+// ====== STATE ======
+let me = null, pedidos = [], zonas = [], misZonas = [], verificadas = new Set();
+let map, mapMarkers, myCosts = {};
+let activosModalState = { pedidoId: null, data: null };
+let qrPagoState = { pedidoId: null, link: null };
+let pedidoEnProcesoId = null;
+
+// Config de pagos de la empresa (canales habilitados)
+let pagosCanales = {
+  efectivo: true,
+  transferencia: true,
+  qr_dinamico: false,
+};
+let preferidoPago = null;
+
+
+// --- API HELPER ---
+async function api(path, opts = {}) {
+  const { body } = opts;
+  const isFD = body instanceof FormData;
+
+  const r = await fetch(path, {
+    method: opts.method || 'GET',
+    headers: {
+      ...(isFD ? {} : { 'Content-Type': 'application/json' }),
+      Authorization: 'Bearer ' + token
+    },
+    body: isFD ? body : (body ? JSON.stringify(body) : undefined)
+  });
+
+  if (r.status === 401) {
+    localStorage.removeItem('token');
+    location.href = 'login.html';
+    return;
+  }
+
+  const txt = await r.text();
+  if (!txt) return {};
+
+  const ct = r.headers.get('content-type') || '';
+  if (!ct.includes('application/json')) {
+    console.error('Respuesta NO JSON de', path, 'status', r.status, 'body:', txt.slice(0, 200));
+    throw new Error(`Respuesta no JSON (${r.status})`);
+  }
+
+  return JSON.parse(txt);
+}
+
+// --- INITIALIZATION ---
+(async function boot() {
+  try {
+    // 1. Cargar Usuario
+    const j = await api('/api/me');
+    me = j.user;
+    $('#brandTitle').textContent = `Hola, ${me.username}`;
+
+    // 2. Config de pagos de la empresa (canales habilitados)
+    try {
+      const cfg = await api('/api/empresa/config');
+      const pagos = cfg.pagos || {};
+      const canales = pagos.canales || {};
+
+      pagosCanales = {
+        efectivo: canales.efectivo !== false,
+        transferencia: canales.transferencia !== false,
+        qr_dinamico: !!canales.qr_dinamico,
+      };
+      preferidoPago = pagos.preferido || null;
+    } catch (e) {
+      console.warn('Sin config de pagos, usando defaults', e);
+      // dejamos pagosCanales con los defaults definidos arriba
+    }
+
+    // 3. Cargar Costos del Chofer
+    try {
+      const costosRes = await api(`/api/choferes/${me.chofer_id}/costos`);
+      if (Array.isArray(costosRes)) {
+        costosRes.forEach(c => {
+          myCosts[c.producto_id] = c.costo_unitario;
+        });
+      }
+    } catch (e) {
+      console.warn('Sin costos asignados');
+    }
+
+    // 4. Inicializar Fechas
+    const today = getOyString();
+    $('#resDate').value = today;
+    $('#gFecha').value = today;
+    $('#tfDate').value = today;
+
+    // 5. Cargar Datos Principales
+    await Promise.all([
+      loadZonas(),
+      loadMisZonas(),
+      loadPedidos(),
+      gLoadProductos()
+    ]);
+
+  } catch (e) {
+    console.error(e);
+  }
+})();
+
+// --- EVENT LISTENERS (GLOBAL) ---
+const btn = $('#menuToggle'), panel = $('#menuPanel');
+btn.onclick = () => panel.classList.toggle('show');
+$$('.nav-link').forEach(l => l.onclick = (e) => {
+  e.preventDefault();
+  if(l.id === 'logout') { localStorage.removeItem('token'); location.href='login.html'; return; }
+  
+  // Switch Tabs
+  $$('.nav-link').forEach(n => n.removeAttribute('aria-current'));
+  l.setAttribute('aria-current', 'page');
+  $$('main > section').forEach(s => s.hidden = true);
+  
+  const sec = l.dataset.sec;
+  $('#sec-'+sec).hidden = false;
+  panel.classList.remove('show');
+
+  // Actions
+  if(sec === 'mapa') setTimeout(renderMap, 200);
+  if(sec === 'gastos') gInit();
+  if(sec === 'resumen') calcResumen();
+  if(sec === 'transf') loadTransf();
+});
+
+// Pedidos Filters
+function toggleFilters(){ const b = $('#filterBox'); b.style.display = b.style.display==='none'?'block':'none'; }
+['fEstado','fZona','fHoy','fSearch'].forEach(id => $('#'+id).addEventListener('change', renderCards));
+$('#fSearch').addEventListener('input', renderCards);
+$('#btnRef').onclick = loadPedidos;
+// EVENTO PARA OPTIMIZAR RUTA
+$('#btnOpt').onclick = optimizarRuta;
+
+// Map Filters
+$('#mapFiltroEstado').addEventListener('change', renderMap);
+$('#mapSoloHoy').addEventListener('change', renderMap);
+$('#mapRefBtn').onclick = () => { loadPedidos().then(renderMap); };
+
+// Gastos Inputs
+$('#gTipo').addEventListener('change', gToggle);
+$('#gCant').addEventListener('input', gCalc);
+$('#gPu').addEventListener('input', gCalc);
+$('#gProducto').addEventListener('change', gAutoPrice);
+
+// --- GASTOS SUBMIT ---
+$('#gForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = e.submitter || e.target.querySelector('button');
+    if(btn) btn.disabled = true;
+
+    try {
+        const type = $('#gTipo').value;
+        const fecha = $('#gFecha').value;
+        const descManual = $('#gDesc').value;
+        const file = $('#gFile').files[0];
+        let finalBody = {};
+
+        // Escenario A: Carga Stock (Cantidad x Precio)
+        if (type === 'carga_llenos') {
+            const pid = $('#gProducto').value;
+            const nombreProd = $('#gProducto').options[$('#gProducto').selectedIndex]?.text || '';
+            const qty = Number($('#gCant').value);
+            const pu = Number($('#gPu').value);
+
+            if (!pid) throw new Error('Selecciona un producto.');
+            if (!qty || qty <= 0) throw new Error('Ingresa cantidad.');
+            
+            finalBody = {
+                fecha: fecha,
+                tipo: type,
+                descripcion: `Carga: ${qty}u ${nombreProd}. ${descManual}`, 
+                monto: qty * pu,
+                cantidad: qty,
+                precio_unitario: pu,
+                producto_id: pid
+            };
+        } 
+        // Escenario B: Gasto Directo (Monto fijo)
+        else {
+            const montoDirecto = Number($('#gMonto').value);
+            if (!montoDirecto || montoDirecto <= 0) throw new Error('Ingresa el monto.');
+            finalBody = {
+                fecha: fecha,
+                tipo: type,
+                descripcion: descManual,
+                monto: montoDirecto
+            };
+        }
+
+        const formData = new FormData();
+        formData.append('fecha', finalBody.fecha);
+        formData.append('tipo', finalBody.tipo);
+        formData.append('descripcion', finalBody.descripcion);
+        formData.append('monto', String(finalBody.monto));
+        
+        // Agregar campos opcionales al FormData
+        if(finalBody.cantidad) formData.append('cantidad', String(finalBody.cantidad));
+        if(finalBody.producto_id) formData.append('producto_id', String(finalBody.producto_id));
+        
+        if(file) formData.append('comprobante', file);
+        
+        await api('/api/gastos', { method: 'POST', body: formData });
+
+        toast('✅ Registro guardado');
+        gInit(); 
+
+    } catch (err) {
+        alert('❌ ' + (err.message || 'Error'));
+    } finally {
+        if(btn) btn.disabled = false;
+    }
+});
+
+// Transferencias & Resumen
+$('#tfDate').onchange = loadTransf; $('#tfFilter').onchange = loadTransf;
+$('#resDate').onchange = calcResumen;
+
+
+async function loadZonas(){
+  try { const zs = await api('/api/zonas/choferes'); zonas = zs || []; $('#fZona').innerHTML = '<option value="">Todas</option>' + zonas.map(z=>`<option value="${z.id}">${z.nombre}</option>`).join(''); } catch{}
+}
+
+async function loadMisZonas(){
+  try {
+    const zs = await api('/api/repartidor/mis-zonas');
+    misZonas = Array.isArray(zs) ? zs : [];
+  } catch(e) {
+    console.warn('No se pudieron cargar mis zonas', e);
+    misZonas = [];
+  }
+}
+
+async function loadPedidos(){
+  try {
+    const list = await api('/api/repartidor/pedidos');
+    pedidos = Array.isArray(list) ? list : [];
+    const trs = await api('/api/transferencias?estado=verificado');
+    verificadas = new Set((Array.isArray(trs)?trs:trs.rows||[]).map(t=>Number(t.pedido_id)));
+    renderCards();
+    return list;
+  } catch(e){ toast('Error cargando pedidos'); }
+}
+
+// ==========================================
+// NUEVA FUNCIÓN: OPTIMIZADOR DE RUTA (PostGIS)
+// ==========================================
+
+async function optimizarRuta() {
+  if (!navigator.geolocation) return toast('GPS no disponible');
+
+  const btn = $('#btnOpt');
+  btn.disabled = true; 
+  btn.innerHTML = '⏳ Calculando...';
+
+  navigator.geolocation.getCurrentPosition(async (pos) => {
+      try {
+          const { latitude, longitude } = pos.coords;
+          const res = await api('/api/repartidor/optimizar-ruta', {
+              method: 'POST',
+              body: { lat: latitude, lng: longitude }
+          });
+
+          if (res.ok && res.ruta && res.ruta.length > 0) {
+              // Obtenemos el orden devuelto por la API (nearest neighbor)
+              const optimizedIds = res.ruta.map(r => r.id);
+              
+              // Mapa para búsqueda rápida de índice
+              const orderMap = new Map(optimizedIds.map((id, index) => [id, index]));
+
+              // Reordenamos el array local 'pedidos'
+              pedidos.sort((a, b) => {
+                  const idxA = orderMap.has(a.id) ? orderMap.get(a.id) : 9999;
+                  const idxB = orderMap.has(b.id) ? orderMap.get(b.id) : 9999;
+                  return idxA - idxB;
+              });
+
+              renderCards();
+              toast('🚀 Ruta optimizada con éxito');
+          } else {
+              toast('⚠️ No se pudo optimizar (quizás no hay pedidos activos)');
+          }
+      } catch (e) {
+          console.error(e);
+          toast('Error al optimizar');
+      } finally {
+          btn.disabled = false;
+          btn.innerHTML = '⚡ Optimizar Ruta';
+      }
+  }, (err) => {
+      console.warn(err);
+      toast('Necesito permiso de ubicación');
+      btn.disabled = false;
+      btn.innerHTML = '⚡ Optimizar Ruta';
+  });
+}
+
+function renderCards() {
+  const fEst = $('#fEstado').value;
+  const fZon = $('#fZona').value;
+  const fHoy = $('#fHoy').checked;
+  const fTxt = $('#fSearch').value.toLowerCase();
+  const today = getOyString();
+
+  // 1. FILTRADO
+  let list = pedidos.filter(p => {
+    const isActive = ['pendiente', 'en_ruta', 'en_camino'].includes(p.estado);
+
+    // Filtro de "Solo Hoy" (aplica solo si no está activo/pendiente)
+    if (fHoy && !isActive) {
+      const fDb = p.fecha_entrega || p.fecha;
+      if (isoToLocalYMD(fDb) !== today) return false;
+    }
+
+    // Filtros de Zona, Texto y Estado
+    if (fZon && String(p.zona_id) !== fZon) return false;
+    if (fTxt && !JSON.stringify(p).toLowerCase().includes(fTxt)) return false;
+    
+    if (fEst === 'activos') {
+      if (!isActive) return false;
+    } else if (fEst && p.estado !== fEst) {
+      return false;
+    }
+    return true;
+  });
+
+  // 2. GENERACIÓN DE HTML
+  const html = list.map(p => {
+    const st = p.estado;
+    const isVerif = verificadas.has(Number(p.id)) || p.validado;
+    const met = (p.metodo_pago || 'efectivo').toLowerCase();
+    
+    // --- A. PROCESAR ÍTEMS CON PRECIOS ---
+    let itemsHtml = '';
+    if (Array.isArray(p.items) && p.items.length > 0) {
+      itemsHtml = '<div style="margin-top:8px; font-size:0.9rem; color:var(--ink);">';
+      p.items.forEach(it => {
+        const prodName = it.producto || it.nombre || 'Prod';
+        const pu = Number(it.precio_unitario || 0);
+        const qty = Number(it.cantidad || 0);
+        const totalLinea = pu * qty;
+        const precioTxt = totalLinea > 0
+          ? `<span style="color:var(--muted); font-size:0.85rem">${money(totalLinea)}</span>`
+          : '';
+
+        itemsHtml += `
+          <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px dashed rgba(255,255,255,0.1); padding:4px 0;">
+            <div style="display:flex; gap:6px;">
+              <strong style="color:var(--brand)">${qty}x</strong>
+              <span>${esc(prodName)}</span>
+            </div>
+            ${precioTxt}
+          </div>`;
+      });
+      itemsHtml += '</div>';
+    } else {
+      itemsHtml = '<div style="margin-top:5px; font-style:italic; color:var(--muted); font-size:0.85rem">Sin detalle de ítems</div>';
+    }
+
+    // --- B. NOTAS DESTACADAS ---
+    const notasHtml = p.notas 
+      ? `<div style="margin-top:10px; background:rgba(245, 158, 11, 0.15); color:#fbbf24; padding:8px; border-radius:6px; font-size:0.85rem; border:1px solid rgba(245, 158, 11, 0.3); display:flex; gap:6px; align-items:start;">
+          <span>📝</span> <span>${esc(p.notas)}</span>
+         </div>` 
+      : '';
+
+    // --- C. BOTONES DE ACCIÓN (Lógica de cambio de estado) ---
+    const btnCancel = `<button class="iconbtn ghost" style="color:var(--danger); border-color:rgba(239, 68, 68, 0.3); margin-left:auto" onclick="setStatus(${p.id}, 'cancelado')">❌ Cancelar</button>`;
+    
+    let actions = '';
+    if (st === 'pendiente') {
+      actions = `
+        <button class="iconbtn primary" onclick="setStatus(${p.id}, 'en_ruta')">🚚 Iniciar Ruta</button>
+        ${btnCancel}
+      `;
+    } else if (st === 'en_ruta' || st === 'en_camino') {
+      actions = `
+        <button class="iconbtn success" onclick="setStatus(${p.id}, 'entregado')">✅ Entregar</button>
+        <button class="iconbtn ghost" style="border-color:var(--warning); color:var(--warning);" onclick="setStatus(${p.id}, 'pendiente')">↩ Pausar (Pendiente)</button>
+        ${btnCancel}
+      `;
+    }
+    
+    const icon = { pendiente:'🕒', en_ruta:'🚚', entregado:'✅', cancelado:'❌' }[st] || '•';
+    const mapLink = p.latitud 
+      ? `<a href="https://www.google.com/maps?q=${p.latitud},${p.longitud}" target="_blank" class="iconbtn ghost">📍 Ir</a>` 
+      : '';
+    const wppLink = p.telefono 
+      ? `<a href="https://wa.me/${p.telefono.replace(/\D/g,'')}" target="_blank" class="iconbtn ghost">💬 Chat</a>` 
+      : '';
+
+    // --- D. BOTONES DE PAGO SEGÚN CANALES HABILITADOS ---
+    const showEfec = !pagosCanales || pagosCanales.efectivo !== false;
+    const showTrans = !pagosCanales || pagosCanales.transferencia !== false;
+
+    let payButtons = '';
+    if (showEfec) {
+      payButtons += `
+        <div 
+          class="pay-opt ${met === 'efectivo' ? 'active efectivo' : ''}"
+          onclick="setPay(${p.id}, 'efectivo')"
+        >
+          💵 Efectivo
+        </div>`;
+    }
+
+    if (showTrans) {
+      payButtons += `
+        <div 
+          class="pay-opt ${met === 'transferencia' ? 'active transferencia' : ''}"
+          onclick="setPay(${p.id}, 'transferencia')"
+        >
+          📱 Transf.
+        </div>`;
+    }
+
+    if (isVerif) {
+      payButtons += `<span class="verified-badge">✓ Verificada</span>`;
+    }
+
+    const payRowHtml = payButtons
+      ? `<div class="pay-row">${payButtons}</div>`
+      : '';
+
+    return `
+      <div class="pedido-card ${st}">
+        <div class="pc-top">
+          <div style="flex:1">
+            <div class="pc-client">${esc(p.cliente)} <small style="opacity:0.6">#${p.id}</small></div>
+            <div class="pc-addr">${esc(p.direccion)}</div>
+          </div>
+          <button class="pc-state-btn">${icon}</button>
+        </div>
+        ${itemsHtml}
+        ${notasHtml}
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-top:12px; padding-top:8px; border-top:1px solid var(--border);">
+          <span style="color:var(--muted); font-size:0.9rem; text-transform:uppercase; letter-spacing:0.5px;">Total a Cobrar</span>
+          <span style="font-size:1.4rem; font-weight:bold; color:#fff; text-shadow:0 0 10px rgba(0,0,0,0.5)">${money(p.monto)}</span>
+        </div>
+        ${payRowHtml}
+        <div class="pc-actions">
+          ${mapLink}
+          ${wppLink}
+          ${actions}
+        </div>
+      </div>`;
+  }).join('');
+
+  $('#cardsContainer').innerHTML = html;
+  $('#emptyMsg').hidden = list.length > 0;
+}
+
+
+async function resolverZonaParaPedido(pedidoId){
+  const pedido = pedidos.find(p => p.id === pedidoId);
+  if (!pedido) return null;
+
+  // Si ya tiene zona, no hacemos nada
+  if (pedido.zona_id != null) return null;
+
+  if (!Array.isArray(misZonas) || misZonas.length === 0) {
+    // No tiene zonas asignadas -> dejamos "Sin zona"
+    return null;
+  }
+
+  // Una sola zona -> auto-asignar
+  if (misZonas.length === 1) {
+    const z = misZonas[0];
+    pedido.zona_id = z.id; // actualizamos en memoria para no volver a preguntar
+    return z.id;
+  }
+
+  // Varias zonas -> que el repartidor elija
+  const opciones = misZonas.map((z, idx) => `${idx + 1}) ${z.nombre}`).join('\n');
+  const resp = prompt(
+    'Tenés varias zonas asignadas.\n' +
+    'Elegí la zona para este pedido escribiendo el número:\n\n' +
+    opciones
+  );
+
+  if (resp === null) return null; // Canceló
+
+  const idx = Number(resp) - 1;
+  if (!Number.isInteger(idx) || idx < 0 || idx >= misZonas.length) {
+    alert('Selección de zona inválida');
+    return null;
+  }
+
+  const zona = misZonas[idx];
+  pedido.zona_id = zona.id; // guardamos en memoria para siguientes acciones
+  return zona.id;
+}
+
+async function abrirActivosPaso(pedidoId) {
+  activosModalState.pedidoId = pedidoId;
+
+  try {
+    const data = await api(`/api/repartidor/pedidos/${pedidoId}/activos-resumen`);
+    activosModalState.data = data;
+
+    const itemsActivos = Array.isArray(data.items_activos) ? data.items_activos : [];
+
+    // 🔴 CASO 1: NO hay productos activos -> entregar directo (TRANSACCIONAL)
+    if (itemsActivos.length === 0) {
+      const zonaId = await resolverZonaParaPedido(pedidoId);
+
+      await api(`/api/repartidor/pedidos/${pedidoId}/entregar`, {
+        method: 'POST',
+        body: {
+          zona_id: zonaId != null ? zonaId : null,
+          movimientos: []
+        }
+      });
+
+      toast('✅ Pedido entregado');
+      activosModalState.pedidoId = null;
+      activosModalState.data = null;
+      await loadPedidos();
+      return;
+    }
+
+    // 🟢 CASO 2: SÍ hay productos activos -> mostrar modal
+
+    const ped = data.pedido || {};
+    $('#amPedidoTitle').textContent = [
+      ped.cliente || '',
+      ped.direccion || '',
+      `#${pedidoId}`,
+      ped.monto != null ? money(ped.monto) : null
+    ].filter(Boolean).join(' · ');
+
+    const c = $('#amContenido');
+    let html = '';
+
+    const actosCliente = Array.isArray(data.activos_cliente) ? data.activos_cliente : [];
+    const actosDisp    = Array.isArray(data.activos_disponibles) ? data.activos_disponibles : [];
+
+    // Opciones de activos disponibles (las usamos para entrega nueva y para cambio)
+    const opcionesDisp = actosDisp.map(ad => `
+      <option value="${ad.id}">
+        ${esc(ad.codigo || ad.tipo || '')}
+        ${ad.numero_serie ? ' · ' + esc(ad.numero_serie) : ''}
+        ${ad.alquiler_mensual != null ? ' · ' + money(ad.alquiler_mensual) : ''}
+      </option>
+    `).join('');
+
+    // 1) Productos activos del pedido
+    html += `
+      <div>
+        <small class="muted">Productos de este pedido marcados como activo</small>
+        <ul style="list-style:none; padding:0; margin:0.4rem 0;">
+          ${itemsActivos.map(it => `
+            <li style="padding:3px 0;">
+              <strong>${it.cantidad}x</strong> ${esc(it.producto || '')}
+            </li>
+          `).join('')}
+        </ul>
+      </div>
+    `;
+
+    html += `<hr style="border-color:rgba(148,163,184,0.3); margin:0.6rem 0;">`;
+
+    // 2) NUEVO: Seleccionar activos a ENTREGAR (aunque el cliente no tenga activos)
+    //    (1 select por unidad según cantidad)
+    if (!actosDisp.length) {
+      html += `
+        <div style="background: rgba(245,158,11,0.10); padding:0.8rem; border-radius:10px; border:1px solid rgba(245,158,11,0.35);">
+          <div><strong>⚠️ No tenés activos disponibles</strong></div>
+          <div class="muted" style="font-size:0.85rem; margin-top:4px;">
+            Este pedido requiere entregar activos, pero tu stock disponible figura vacío.
+          </div>
+        </div>
+      `;
+    } else {
+      html += `<small class="muted">Seleccionar activos disponibles para entregar</small>`;
+      html += `<div class="modal-list" style="margin-top:0.4rem;">`;
+
+      itemsActivos.forEach((it, idx) => {
+        const qty = Number(it.cantidad) || 1;
+        const itemId = it.item_pedido_id ?? it.id ?? null;
+        const productoId = it.producto_id ?? null;
+
+        for (let q = 0; q < qty; q++) {
+          html += `
+            <div style="padding:6px 0; border-bottom:1px dashed rgba(148,163,184,0.25);">
+              <div style="display:flex; justify-content:space-between; gap:10px; align-items:center;">
+                <div>
+                  <div><strong>${esc(it.producto || 'Activo')}</strong> <span class="muted" style="font-size:0.85rem;">(${q + 1}/${qty})</span></div>
+                  <div class="muted" style="font-size:0.8rem;">Seleccioná el equipo a entregar</div>
+                </div>
+                <div style="min-width:240px;">
+                  <select
+                    data-am-entrega="1"
+                    data-am-item-id="${itemId != null ? String(itemId) : ''}"
+                    data-am-producto-id="${productoId != null ? String(productoId) : ''}"
+                    style="width:100%;">
+                    <option value="">Elegir activo...</option>
+                    ${opcionesDisp}
+                  </select>
+                </div>
+              </div>
+            </div>
+          `;
+        }
+      });
+
+      html += `</div>`;
+    }
+
+    html += `<hr style="border-color:rgba(148,163,184,0.3); margin:0.6rem 0;">`;
+
+    // 3) Activos vinculados al cliente (retiro/mantenimiento/cambio)
+    if (actosCliente.length) {
+      html += `<small class="muted">Activos actualmente vinculados a este cliente</small>`;
+      html += `<div class="modal-list" style="margin-top:0.4rem;">`;
+
+      html += actosCliente.map(a => `
+        <div style="padding:6px 0; border-bottom:1px dashed rgba(148,163,184,0.25);">
+          <div style="display:flex; justify-content:space-between; gap:8px; align-items:center;">
+            <div>
+              <div><strong>${esc(a.codigo || a.tipo || '')}</strong></div>
+              <div style="font-size:0.8rem; color:var(--muted);">
+                ${esc(a.tipo || '')} · Estado: ${esc(a.estado || '')}
+                ${a.numero_serie ? ' · N° Serie: ' + esc(a.numero_serie) : ''}
+                ${a.alquiler_mensual != null ? ' · Alquiler: ' + money(a.alquiler_mensual) : ''}
+              </div>
+            </div>
+
+            <div style="min-width:170px;">
+              <select data-am-accion="${a.id}" style="width:100%; margin-bottom:4px;">
+                <option value="">(Sin cambios)</option>
+                <option value="retiro">Retirar</option>
+                <option value="mantenimiento">Retirar a mant.</option>
+                <option value="cambio"${actosDisp.length ? '' : ' disabled'}>Cambiar por...</option>
+              </select>
+
+              <select data-am-nuevo="${a.id}" style="width:100%;" ${actosDisp.length ? 'disabled' : 'disabled'}>
+                <option value="">Elegir activo nuevo...</option>
+                ${opcionesDisp}
+              </select>
+            </div>
+          </div>
+        </div>
+      `).join('');
+
+      html += `</div>`;
+    } else {
+      html += `<p class="muted" style="margin:0.4rem 0;">No hay activos registrados para este cliente.</p>`;
+    }
+
+    // 4) Historial de movimientos ya registrados
+    const movimientos = Array.isArray(data.movimientos_existentes) ? data.movimientos_existentes : [];
+    if (movimientos.length) {
+      const idxActivos = {};
+      [...actosCliente, ...actosDisp].forEach(a => {
+        if (!a || a.id == null) return;
+        idxActivos[a.id] = a;
+      });
+
+      const describeActivo = (id) => {
+        if (!id) return '';
+        const a = idxActivos[id];
+        if (!a) return `Activo #${id}`;
+        let label = a.codigo || a.tipo || `Activo #${id}`;
+        if (a.numero_serie) label += ` · N° ${a.numero_serie}`;
+        return label;
+      };
+
+      html += `<hr style="border-color:rgba(148,163,184,0.3); margin:0.6rem 0;">`;
+      html += `<small class="muted">Historial de movimientos en este pedido</small>`;
+      html += `<div class="modal-list" style="margin-top:0.4rem; max-height:160px; overflow-y:auto;">`;
+
+      html += movimientos.map(m => {
+        const tipoTxt   = (m.tipo_operacion || '').toUpperCase();
+        const estadoTxt = m.estado || '';
+        const obsTxt    = m.observacion || '';
+        const fechaTxt  = m.accion_at_utc ? formatFechaHoraAR(m.accion_at_utc) : '';
+
+        const principal   = describeActivo(m.activo_id);
+        const relacionado = describeActivo(m.activo_relacionado_id);
+
+        let activosHtml = esc(principal);
+        if (m.tipo_operacion === 'cambio' && m.activo_relacionado_id) {
+          activosHtml += ' → ' + esc(relacionado);
+        }
+
+        const metaLine = [fechaTxt, tipoTxt, estadoTxt].filter(Boolean).join(' · ');
+
+        return `
+          <div style="padding:4px 0; border-bottom:1px dashed rgba(148,163,184,0.25);">
+            <div style="font-size:0.78rem; text-transform:uppercase; letter-spacing:0.04em; color:var(--muted);">
+              ${esc(metaLine)}
+            </div>
+            <div style="font-size:0.9rem;">
+              ${activosHtml}
+            </div>
+            ${obsTxt ? `<div style="font-size:0.8rem; color:var(--muted); margin-top:2px;">Nota: ${esc(obsTxt)}</div>` : ''}
+          </div>
+        `;
+      }).join('');
+
+      html += `</div>`;
+    }
+
+    c.innerHTML = html;
+    $('#amObs').value = '';
+    $('#activosModal').hidden = false;
+
+    // Listeners: habilitar combo "nuevo activo" cuando eligen CAMBIO
+    $$('#activosModal select[data-am-accion]').forEach(sel => {
+      sel.addEventListener('change', () => {
+        const idViejo = sel.getAttribute('data-am-accion');
+        const nuevoSel = $(`#activosModal select[data-am-nuevo="${idViejo}"]`);
+        if (!nuevoSel) return;
+
+        if (sel.value === 'cambio') {
+          nuevoSel.disabled = false;
+        } else {
+          nuevoSel.disabled = true;
+          nuevoSel.value = '';
+        }
+      });
+    });
+
+  } catch (e) {
+    console.error(e);
+    alert('No se pudieron cargar los activos de este pedido.');
+    activosModalState.pedidoId = null;
+    activosModalState.data = null;
+  }
+}
+
+function cerrarActivosModal() {
+  $('#activosModal').hidden = true;
+  activosModalState = { pedidoId: null, data: null };
+}
+
+async function confirmarEntregaConActivos() {
+  const pid = activosModalState.pedidoId;
+  if (!pid) {
+    cerrarActivosModal();
+    return;
+  }
+
+  if (!confirm('¿Confirmás la entrega y los movimientos de activos seleccionados?')) {
+    return;
+  }
+
+  const movimientos = [];
+  let faltaSeleccionNuevo = false;
+  let faltaEntregaNuevo = false;
+
+  // 0) NUEVO: ENTREGAS (activos disponibles seleccionados para entregar)
+  // 1 select por unidad: data-am-entrega="1" + data-am-item-id + data-am-producto-id
+  $$('#activosModal select[data-am-entrega="1"]').forEach(sel => {
+    const activoId = Number(sel.value || 0);
+    const itemPedidoId = Number(sel.getAttribute('data-am-item-id') || 0) || null;
+    const productoId = Number(sel.getAttribute('data-am-producto-id') || 0) || null;
+
+    // Si existe el select, se espera que el repartidor elija un activo
+    if (!activoId) {
+      faltaEntregaNuevo = true;
+      return;
+    }
+
+    movimientos.push({
+      tipoOperacion: 'entrega',
+      activoId,
+      itemPedidoId,
+      productoId
+    });
+  });
+
+  if (faltaEntregaNuevo) {
+    alert('Faltan activos a entregar: seleccioná un equipo en cada "Elegir activo..."');
+    return;
+  }
+
+  // 1) Movimientos sobre activos del cliente (retiro / mantenimiento / cambio)
+  $$('#activosModal select[data-am-accion]').forEach(sel => {
+    const tipo = sel.value;
+    const activoViejoId = Number(sel.getAttribute('data-am-accion'));
+    if (!tipo || !activoViejoId) return;
+
+    if (tipo === 'retiro' || tipo === 'mantenimiento') {
+      movimientos.push({
+        tipoOperacion: tipo,
+        activoId: activoViejoId
+        // motivo: opcional (si después agregás UI: 'reparacion' | 'devolucion')
+      });
+    } else if (tipo === 'cambio') {
+      const nuevoSel = $(`#activosModal select[data-am-nuevo="${activoViejoId}"]`);
+      const nuevoId = nuevoSel ? Number(nuevoSel.value) : 0;
+
+      if (!nuevoId) {
+        faltaSeleccionNuevo = true;
+        return;
+      }
+
+      movimientos.push({
+        tipoOperacion: 'cambio',
+        activoId: nuevoId,                 // entra
+        activoRelacionadoId: activoViejoId // sale
+        // motivo: opcional
+      });
+    }
+  });
+
+  if (faltaSeleccionNuevo) {
+    alert('Seleccionaste "Cambiar por..." pero no elegiste el activo nuevo en al menos un caso.');
+    return;
+  }
+
+  // 2) Evitar duplicados en la misma entrega (entrega + cambios)
+  const idsUsados = movimientos
+    .filter(m => m.tipoOperacion === 'entrega' || m.tipoOperacion === 'cambio')
+    .map(m => Number(m.activoId))
+    .filter(Boolean);
+
+  const setIds = new Set(idsUsados);
+  if (idsUsados.length !== setIds.size) {
+    alert('Estás asignando el mismo activo nuevo más de una vez. Corregilo antes de confirmar.');
+    return;
+  }
+
+  // 3) Observación común
+  const obs = $('#amObs')?.value || '';
+  movimientos.forEach(m => { m.observacion = obs; });
+
+  try {
+    const zonaId = await resolverZonaParaPedido(pid);
+
+    // ✅ ÚNICA llamada transaccional: entrega + movimientos + stock chofer (backend)
+    const body = { movimientos };
+    if (zonaId != null) body.zona_id = zonaId;
+
+    await api(`/api/repartidor/pedidos/${pid}/entregar`, {
+      method: 'POST',
+      body
+    });
+
+    toast('✅ Entrega registrada');
+    cerrarActivosModal();
+    await loadPedidos();
+  } catch (e) {
+    console.error(e);
+    alert('Error guardando la entrega y los movimientos de activos.');
+  }
+}
+
+async function confirmarEntregaScanner() {
+  // 1. Capturamos los inputs del modal de escaneo
+  const inputsAsignar = document.querySelectorAll('.input-asignar');
+  const inputsRetirar = document.querySelectorAll('.input-retirar');
+  
+  const movimientos = [];
+  let error = false;
+
+  // 2. Recorremos cada fila (cada ítem del pedido)
+  inputsAsignar.forEach((inp, idx) => {
+    const valorAsignar = inp.value.trim();                // ID Nuevo (Entrega)
+    const valorRetirar = inputsRetirar[idx].value.trim(); // ID Viejo (Retiro)
+    const prodId = parseInt(inp.dataset.prodId, 10);
+
+    // Validación visual: marcar rojo si ambos están vacíos
+    if (!valorAsignar && !valorRetirar) {
+      inp.style.border = '1px solid red';
+      error = true;
+    } else {
+      inp.style.border = '1px solid var(--border)';
+      
+      // A. ENTREGA: Si hay un valor en el input de asignar, es una entrega
+      if (valorAsignar) {
+        movimientos.push({
+          tipoOperacion: 'entrega',
+          activoId: parseInt(valorAsignar, 10),
+          productoId: prodId,
+          origen: 'scanner_app'
+        });
+      }
+
+      // B. RETIRO: Si hay un valor en el input de retirar, es un retiro
+      if (valorRetirar) {
+        movimientos.push({
+          tipoOperacion: 'retiro',
+          activoId: parseInt(valorRetirar, 10),
+          productoId: prodId,
+          observacion: 'Retiro registrado por escáner'
+        });
+      }
+    }
+  });
+
+  // 3. Validaciones finales
+  if (error) {
+    toast('⚠️ Escaneá al menos un equipo (entrega o retiro) por ítem.');
+    return;
+  }
+
+  if (movimientos.length === 0) {
+    toast('⚠️ No hay datos para enviar.');
+    return;
+  }
+
+  // 4. Enviar al servidor
+  const modal = document.getElementById('modalEscanearActivos');
+  modal.style.display = 'none';
+  
+  try {
+    // Usamos la variable global pedidoEnProcesoId que seteaste en iniciarProcesoEntrega
+    if (!pedidoEnProcesoId) throw new Error('ID de pedido perdido');
+
+    // Igual que en confirmarEntregaConActivos: resolvemos zona (si aplica)
+    const zonaId = await resolverZonaParaPedido(pedidoEnProcesoId);
+
+    const body = { movimientos };
+    if (zonaId != null) body.zona_id = zonaId;
+
+    // Llamada transaccional: entrega + movimientos + stock chofer
+    const res = await api(`/api/repartidor/pedidos/${pedidoEnProcesoId}/entregar`, {
+      method: 'POST',
+      body
+    });
+
+    // El helper api NO lanza en 500, así que chequeamos error explícito
+    if (res && res.error) {
+      throw new Error(res.error);
+    }
+
+    toast('✅ Entrega registrada (Escáner)');
+    pedidoEnProcesoId = null;
+    await loadPedidos(); // Recargar la lista
+
+  } catch (e) {
+    console.error(e);
+    toast('❌ Error: ' + (e.message || 'Error al procesar entrega'));
+    // Si falla, volvemos a mostrar el modal
+    modal.style.display = 'flex';
+  }
+}
+
+function cerrarModalEscaneo() {
+  const modal = document.getElementById('modalEscanearActivos');
+  if (modal) modal.style.display = 'none';
+  // Si querés, limpiar los inputs:
+  document.querySelectorAll('.input-asignar, .input-retirar').forEach(i => i.value = '');
+}
+
+async function abrirModalPagoQR(pedidoId) {
+  const pedido = pedidos.find(p => p.id === pedidoId);
+  if (!pedido) {
+    toast('Pedido no encontrado');
+    return;
+  }
+
+  qrPagoState.pedidoId = pedidoId;
+  qrPagoState.link = null;
+
+  const modal = document.getElementById('modalPagoQR');
+  const infoEl = document.getElementById('qrInfoTexto');
+  const canvas = document.getElementById('qrCanvas');
+
+  infoEl.textContent = `Mostrá este QR al cliente para pagar ${money(pedido.monto)}.`;
+
+  // Limpiar canvas
+  if (canvas && canvas.getContext) {
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+  }
+
+  modal.style.display = 'flex';
+
+  try {
+    const pago = await api(`/api/admin/qr/pedidos/${pedidoId}/link`, {
+      method: 'POST',
+      body: {
+        canal: 'repartidor',      // desde el chofer
+        metodoPago: 'qr_dinamico' // método de pago canónico
+      }
+    });
+
+    // Texto por si el proveedor devuelve checkout_url, etc.
+    infoEl.textContent = `Mostrá este QR al cliente para pagar ${money(pedido.monto)}.`;
+
+    const qrValue = pago.qr_payload || pago.checkout_url;
+    if (!qrValue) {
+      infoEl.textContent = 'No se pudo generar el QR de pago.';
+      return;
+    }
+
+    // Generar código QR en el canvas
+    new QRious({
+      element: canvas,
+      value: qrValue,
+      size: 240
+    });
+
+    qrPagoState.link = qrValue;
+  } catch (e) {
+    console.error('Error generando pago QR', e);
+    infoEl.textContent = 'Error generando el QR de pago.';
+  }
+}
+
+function cerrarModalPagoQR() {
+  const modal = document.getElementById('modalPagoQR');
+  if (modal) modal.style.display = 'none';
+  qrPagoState = { pedidoId: null, link: null };
+}
+
+async function confirmarPagoQR() {
+  const id = qrPagoState.pedidoId;
+  cerrarModalPagoQR();
+  if (!id) return;
+  // Después del QR, seguimos con el flujo normal de entrega (activos)
+  await abrirActivosPaso(id);
+}
+
+async function setStatus(id, st){
+
+  if (st === 'entregado') {
+    const pedido = pedidos.find(p => p.id === id);
+    const met = (pedido && pedido.metodo_pago ? String(pedido.metodo_pago) : '').toLowerCase();
+
+    const esTransferencia = met === 'transferencia';
+    const qrHabilitado = !!(pagosCanales && pagosCanales.qr_dinamico);
+
+    if (esTransferencia && qrHabilitado) {
+      await abrirModalPagoQR(id);
+      return;
+    }
+
+    await abrirActivosPaso(id);
+    return;
+  }
+
+  if (st === 'cancelado' && !confirm(
+    '⚠️ ¿Estás seguro de que deseas CANCELAR este pedido?\nEsta acción lo quitará de tu lista activa.'
+  )) return;
+
+  // Resolver zona si el pedido no tiene
+  const zonaId = await resolverZonaParaPedido(id);
+
+  const body = { estado: st };
+  if (zonaId != null) body.zona_id = zonaId;
+
+  await api(`/api/repartidor/pedidos/${id}`, { method:'PUT', body });
+
+  if (st === 'en_ruta' && navigator.geolocation) {
+    navigator.geolocation.getCurrentPosition(pos => {
+      api('/api/track/update', { 
+        method:'POST', 
+        body:{ pedido_id:id, lat:pos.coords.latitude, lng:pos.coords.longitude }
+      });
+    }, err => console.warn('GPS Error', err));
+  }
+
+  loadPedidos();
+}
+
+async function setPay(id, met) {
+  // Normalizar y validar método
+  const metodo = String(met || '').toLowerCase();
+  const permitidos = ['efectivo', 'transferencia'];
+
+  if (!permitidos.includes(metodo)) {
+    toast('Método de pago inválido');
+    return;
+  }
+
+  // Respetar canales habilitados por la empresa
+  if (pagosCanales && pagosCanales[metodo] === false) {
+    toast('Este método de cobro no está habilitado para tu empresa.');
+    return;
+  }
+
+  // También acá: si el pedido sigue sin zona, la resolvemos al cambiar forma de pago
+  const zonaId = await resolverZonaParaPedido(id);
+
+  const body = { metodo_pago: metodo };
+  if (zonaId != null) body.zona_id = zonaId;
+
+  await api(`/api/repartidor/pedidos/${id}`, { method: 'PUT', body });
+  loadPedidos();
+}
+
+function toast(m){ const t = $('#toast'); t.textContent = m; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'), 2000); }
+
+// --- MAPA ---
+function renderMap(){
+  if(!map) { map = L.map('map').setView([-31.4, -64.18], 12); L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map); mapMarkers = L.layerGroup().addTo(map); }
+  map.invalidateSize(); mapMarkers.clearLayers();
+
+  const fSt = $('#mapFiltroEstado').value, fHoy = $('#mapSoloHoy').checked, today = getOyString();
+  const bounds = [];
+  pedidos.forEach(p => {
+    if(!p.latitud || !p.longitud) return;
+    if(fHoy) { const fDb = p.fecha_entrega || p.fecha; if(isoToLocalYMD(fDb) !== today) return; }
+    if(fSt && p.estado !== fSt) return;
+    const lat = Number(p.latitud), lng = Number(p.longitud);
+    const color = p.estado==='entregado'?'#10b981' : p.estado==='en_ruta'?'#06b6d4':'#f59e0b';
+    const icon = L.divIcon({ className: '', html: `<div class="m-label" style="border-left:4px solid ${color}">${esc(p.cliente.split(' ')[0])}</div>` });
+    L.marker([lat, lng], {icon}).addTo(mapMarkers).bindPopup(`<b>${esc(p.cliente)}</b><br>${esc(p.direccion)}<br>${p.estado}`);
+    bounds.push([lat, lng]);
+  });
+  if(bounds.length) map.fitBounds(bounds, {padding:[50,50], maxZoom:16});
+  $('#mapHint').textContent = `${bounds.length} puntos visibles`;
+}
+
+// --- GASTOS LOGIC ---
+async function gLoadProductos() {
+  try {
+    const ps = await api('/api/productos');
+    $('#gProducto').innerHTML = '<option value="">Seleccionar.</option>' + ps.map(p => `<option value="${p.id}">${p.nombre}</option>`).join('');
+  } catch {}
+}
+
+function gInit(){ $('#gForm').reset(); $('#gFecha').value = getOyString(); gToggle(); loadGHist(); }
+
+function gToggle(){
+  const t = $('#gTipo').value;
+  const isStock = t === 'carga_llenos'; 
+  $('#gProdRow').hidden = !t.includes('carga') && !t.includes('descarga');
+  $('#gCalcRow').hidden = !isStock; 
+  $('#gPuBox').hidden = !isStock;
+  $('#gMontoRow').hidden = isStock; 
+}
+
+function gAutoPrice() {
+  const pid = $('#gProducto').value;
+  if (pid && myCosts[pid]) { $('#gPu').value = myCosts[pid]; gCalc(); toast(`Costo cargado: $${myCosts[pid]}`); }
+}
+
+function gCalc(){ const q = Number($('#gCant').value)||0; const p = Number($('#gPu').value)||0; $('#gTotalCalc').value = '$ ' + (q*p).toFixed(2); }
+
+async function loadGHist(){
+  try {
+    if (!me || !me.chofer_id) { $('#gList').innerHTML = ''; return; }
+    const gs = await api(`/api/gastos?chofer_id=${me.chofer_id}&limit=5`);
+    const arr = Array.isArray(gs) ? gs : (gs.rows || []);
+    
+    // CORRECCIÓN HORA ARGENTINA: Mostrar DD/MM usando la zona horaria correcta
+    $('#gList').innerHTML = arr.map(g => `<tr><td>${formatFechaAR(g.fecha)}</td><td>${g.tipo}</td><td>${esc(g.descripcion)}</td><td>$${g.monto}</td></tr>`).join('');
+  } catch {}
+}
+
+// --- RESUMEN ---
+async function calcResumen(){
+  const d = $('#resDate').value;
+  if (!d) return;
+
+  const list = pedidos.filter(p => { const fDb = p.fecha_entrega || p.fecha; return isoToLocalYMD(fDb) === d && p.estado === 'entregado'; });
+
+  let cash = 0, transf = 0, artsV = 0;
+  let cntCash = 0, cntTransf = 0;
+
+  list.forEach(p => { 
+    if ((p.metodo_pago || '').toLowerCase().includes('trans')) {
+        transf += Number(p.monto);
+        cntTransf++;
+    } else {
+        cash += Number(p.monto); 
+        cntCash++;
+    }
+    // CORRECCIÓN AQUÍ: No usamos p.cantidad del header, calculamos abajo
+  });
+
+  const prodMap = {};
+  list.forEach(p => {
+    const items = Array.isArray(p.items) ? p.items : [];
+    items.forEach(it => {
+      if (!it) return;
+      const nombre = it.producto || it.nombre || 'Producto';
+      const q = Number(it.cantidad || 0);
+      if (!q) return;
+      if (!prodMap[nombre]) prodMap[nombre] = 0;
+      prodMap[nombre] += q;
+      
+      // SUMAMOS AL TOTAL GENERAL AQUÍ
+      artsV += q; 
+    });
+  });
+
+  const detalleArt = Object.keys(prodMap).length ? Object.entries(prodMap).map(([nombre, q]) => `• ${q} u. ${nombre}`).join('\n') : '• (sin detalle)';
+
+  let gas = 0, artsC = 0;
+  let detalleGastos = '', detalleCarga = '';
+  
+  try { 
+    const gs = await api(`/api/gastos?from=${d}&to=${d}&chofer_id=${me?.chofer_id||''}`); 
+    const arr = Array.isArray(gs) ? gs : (gs.rows || []);
+    arr.forEach(g => {
+      const tipo = (g.tipo||'').toLowerCase();
+      const m = Number(g.monto||0);
+      gas += m;
+      
+      if (tipo.includes('carga_llenos') || tipo.includes('carga_vacios')) {
+        artsC += Number(g.cantidad || 0);
+        detalleCarga += `• ${g.cantidad||0} u. ${g.descripcion||g.tipo} ($${m})\n`;
+      } else { 
+        detalleGastos += `• ${g.descripcion||g.tipo}: $${m}\n`; 
+      }
+    });
+  } catch(e){ console.error(e); }
+
+  let pagoChofer = 0;
+  try { const pago = await api(`/api/repartidor/pago-dia?fecha=${d}`); pagoChofer = Number(pago?.monto || pago?.pago || 0); } catch(e){ console.error(e); }
+
+  const aRendir = cash - gas - pagoChofer;
+
+  $('#rEnt').textContent = list.length; 
+  $('#rCash').textContent = money(cash);
+  $('#rTrans').textContent = money(transf); 
+  $('#rGastos').textContent = money(gas);
+  $('#rRendir').textContent = money(aRendir);
+
+  const dNice = d.split('-').reverse().join('/');
+  
+  const txt = `📅 *RESUMEN DEL DÍA* ${dNice}\n
+📦 *OPERATORIA*
+• Entregados: ${list.length}
+• Efectivo: ${cntCash} ped. (${money(cash)})
+• Transf.:  ${cntTransf} ped. (${money(transf)})
+----------------
+📈 *Venta Total:* ${money(cash + transf)}
+
+🧾 *MERCADERÍA*
+🔢 Tot. Artículos: ${artsV} u.
+${detalleArt}
+
+💸 *MOVIMIENTOS DE CAJA*
++ Ingreso Efvo: ${money(cash)}
+- Gastos/Compras: ${money(gas)}
+- Retiro/Comisión: ${money(pagoChofer)}
+================
+💰 *EFECTIVO A RENDIR: ${money(aRendir)}*
+
+📝 *DETALLE GASTOS*
+${detalleGastos || '(Ninguno)'}
+${detalleCarga ? '\n📦 *REPOSICIONES*\n' + detalleCarga : ''}`;
+
+  $('#resText').value = txt;
+}
+
+function copyRes(){ navigator.clipboard.writeText($('#resText').value).then(()=>toast('Copiado!')); }
+
+// --- TRANSF ---
+async function loadTransf(){
+  const d = $('#tfDate').value, st = $('#tfFilter').value;
+  try {
+      let q = `/api/transferencias?fecha=${d}`; 
+      if(st) q += `&estado=${st}`;
+      
+      const res = await api(q);
+      const lista = res.rows || res;
+
+      $('#tfList').innerHTML = lista.map(t => `
+        <tr>
+          <td>#${t.pedido_id||'-'}</td>
+          <td>${t.cliente}</td>
+          <td><b>${money(t.monto)}</b></td>
+          <td style="text-align:center">
+            ${t.pedido_id 
+              ? `<input type="checkbox" 
+                        style="transform: scale(1.5); cursor: pointer;" 
+                        ${t.validado ? 'checked' : ''} 
+                        onchange="togglePagoRepartidor(${t.pedido_id}, this)">` 
+              : (t.validado ? '✅' : '⏳') // Si no tiene pedido asociado, mostramos solo estado
+            }
+          </td>
+        </tr>
+      `).join('');
+  } catch(e) { console.error(e); }
+}
+
+async function togglePagoRepartidor(pedidoId, checkbox) {
+  if (!confirm(checkbox.checked ? '¿Validar este pago?' : '¿Anular validación?')) {
+    checkbox.checked = !checkbox.checked;
+    return;
+  }
+
+  const marcado = checkbox.checked;
+  checkbox.disabled = true;
+
+  try {
+    const res = await api(`/api/pedidos/${pedidoId}/toggle-pago`, {
+      method: 'POST',
+      body: { marcado }
+    });
+
+    if (res && res.ok) {
+      toast(marcado ? '✅ Transferencia validada' : '↩️ Validación anulada');
+      // si tenés alguna función para refrescar resumen/caja, llamala acá
+      // loadCaja?.();
+    } else {
+      throw new Error(res?.error || 'Error al guardar');
+    }
+  } catch (e) {
+    console.error(e);
+    toast('❌ Error al actualizar pago');
+    checkbox.checked = !marcado;
+  } finally {
+    checkbox.disabled = false;
+  }
+}
+
+// --- GPS TRACKING LOOP ---
+
+setInterval(() => {
+  const hayActivos = pedidos.some(p => p.estado === 'en_ruta');
+  if (hayActivos && navigator.geolocation) {
+    navigator.geolocation.getCurrentPosition(pos => {
+      const activePed = pedidos.find(p => p.estado === 'en_ruta');
+      if (activePed) {
+        api('/api/track/update', {
+          method: 'POST',
+          body: {
+            pedido_id: activePed.id,
+            lat: pos.coords.latitude,
+            lng: pos.coords.longitude
+          }
+        }).then(() => console.log('📍 GPS Background Sync'));
+      }
+    }, err => console.warn('GPS Off'), { enableHighAccuracy: true });
+  }
+}, 60000);
+
+</script>
+</body>
+</html>

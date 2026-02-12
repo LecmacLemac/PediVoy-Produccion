@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Zonas de Entrega – MultiEmpresas</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css" />
+  <style>
+    :root { --brand:#0ea5e9; }
+    body{max-width:1200px;margin:auto}
+    header .brand{display:flex;gap:.6rem;align-items:center}
+    .card{border:1px solid #eaeaea;padding:1rem;border-radius:12px}
+    .grid2{display:grid;gap:1rem;grid-template-columns:1fr 1fr}
+    @media (max-width: 980px){ .grid2{grid-template-columns:1fr} }
+    #map{height:480px;border-radius:12px;border:1px solid #e5e7eb}
+    .row{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}
+    table td, table th{white-space:nowrap}
+    td.wrap{white-space:normal;max-width:360px}
+    .muted{color:#6b7280}
+    textarea{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;}
+  </style>
+</head>
+<body>
+  <header>
+    <nav>
+      <ul>
+        <li class="brand">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 2C8 2 6 6 6 9c0 4 6 13 6 13s6-9 6-13c0-3-2-7-6-7Zm0 9a3 3 0 1 1 0-6 3 3 0 0 1 0 6Z" fill="var(--brand)"/></svg>
+          <strong>Zonas de Entrega</strong>
+        </li>
+      </ul>
+      <ul>
+        <li><a href="dashboard.html">Dashboard</a></li>
+        <li><a href="productos.html">Productos</a></li>
+        <li><a href="repartidores.html">Choferes</a></li>
+        <li><a aria-current="page">Zonas</a></li>
+        <li><a href="reportes.html">Reportes</a></li>
+        <li><button id="logout" class="secondary">Salir</button></li>
+      </ul>
+    </nav>
+  </header>
+
+  <main class="grid2">
+    <section class="card">
+      <h3 id="formTitle">➕ Crear zona</h3>
+      <form id="fZona">
+        <input type="hidden" id="zId" />
+        <div class="grid2">
+          <label>Nombre de la zona
+            <input id="zNombre" placeholder="Norte, Centro, Sur…" required />
+          </label>
+          <label id="rowEmpresa" style="display:none">Empresa
+            <select id="zEmpresa"></select>
+          </label>
+        </div>
+        <div class="grid2">
+          <div>
+            <label>Mapa (dibujar o editar polígono)</label>
+            <div id="map"></div>
+          </div>
+          <label>Coordenadas (JSON [[lat,lng],...])
+            <textarea id="zCoords" rows="12" placeholder="[[ -31.42, -64.18 ], [ -31.43, -64.19 ], ... ]"></textarea>
+            <small class="muted">Podés pegar coordenadas manualmente y presionar <b>Importar</b>.</small>
+            <div class="row">
+              <button id="btnImport" type="button" class="secondary">Importar</button>
+              <button id="btnClear" type="button" class="secondary">Limpiar mapa</button>
+            </div>
+          </label>
+        </div>
+        <div class="row">
+          <button id="btnGuardar" type="submit">Guardar</button>
+          <button id="btnCancelar" type="button" class="secondary" style="display:none">Cancelar edición</button>
+        </div>
+        <small class="muted">Consejo: asegurá que el polígono no se cruce a sí mismo y tenga ≥ 3 puntos.</small>
+      </form>
+    </section>
+
+    <section class="card">
+      <div class="row" style="justify-content:space-between">
+        <h3>📋 Zonas registradas</h3>
+        <div class="row" style="align-items:end">
+          <label id="rowFiltroEmp" style="display:none">Empresa
+            <select id="empFilter"></select>
+          </label>
+          <button id="btnRef">Actualizar</button>
+          <span class="muted"><span id="count">0</span> items</span>
+        </div>
+      </div>
+      <div style="overflow:auto">
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Nombre</th>
+              <th>Puntos</th>
+              <th>Acciones</th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+<script>
+  const token = localStorage.getItem('token');
+  if (!token) location.href = 'login.html';
+
+  const $ = s => document.querySelector(s);
+  const rows = $('#rows');
+  const count = $('#count');
+
+  const formTitle = $('#formTitle');
+  const fZona = $('#fZona');
+  const zId = $('#zId');
+  const zNombre = $('#zNombre');
+  const zCoords = $('#zCoords');
+  const zEmpresa = $('#zEmpresa');
+  const rowEmpresa = $('#rowEmpresa');
+  const rowFiltroEmp = $('#rowFiltroEmp');
+  const empFilter = $('#empFilter');
+  const btnImport = $('#btnImport');
+  const btnClear = $('#btnClear');
+  const btnGuardar = $('#btnGuardar');
+  const btnCancelar = $('#btnCancelar');
+
+  $('#logout').onclick = () => { localStorage.removeItem('token'); location.href='login.html'; };
+  $('#btnRef').onclick = () => load();
+
+  let isSuper = false;
+
+  // ---------- Helpers de coordenadas / geometría ----------
+  const EPS = 1e-9;
+  const toNum = (v) => {
+    const s = (typeof v === 'string') ? v.trim().replace(',', '.') : v;
+    const n = Number(s);
+    return Number.isFinite(n) ? n : null;
+  };
+  const toPair = (p) => [toNum(p?.[0]), toNum(p?.[1])];
+  const isFinitePair = (p) => Number.isFinite(p?.[0]) && Number.isFinite(p?.[1]);
+  const eq = (a, b) => Math.abs(Number(a) - Number(b)) < EPS;
+
+  /** Devuelve polígono cerrado [[lat,lng],...,[lat0,lng0]] con puntos válidos */
+  function closeRing(coords) {
+    const arr = (Array.isArray(coords) ? coords : []).map(toPair).filter(isFinitePair);
+    // eliminar consecutivos duplicados
+    const uniq = [];
+    for (const p of arr) {
+      const last = uniq[uniq.length - 1];
+      if (!last || !eq(last[0], p[0]) || !eq(last[1], p[1])) uniq.push(p);
+    }
+    if (uniq.length < 3) return [];
+    const first = uniq[0], last = uniq[uniq.length - 1];
+    if (eq(first[0], last[0]) && eq(first[1], last[1])) return uniq; // ya está cerrado
+    return [...uniq, first];
+  }
+
+  /** Cuenta vértices reales (sin el último si repite al primero) */
+  function countVerts(c) {
+    const n = Array.isArray(c) ? c.length : 0;
+    if (n >= 4) {
+      const f = c[0] || [], l = c[n - 1] || [];
+      if (eq(f[0], l[0]) && eq(f[1], l[1])) return n - 1;
+    }
+    return n;
+  }
+
+  // ----- Leaflet Map -----
+  let map, drawnItems, drawControl;
+  function initMap(){
+    if (map) return;
+    map = L.map('map').setView([-31.4201, -64.1888], 12); // Córdoba, AR
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19, attribution: '&copy; OpenStreetMap'
+    }).addTo(map);
+
+    drawnItems = new L.FeatureGroup();
+    map.addLayer(drawnItems);
+
+    drawControl = new L.Control.Draw({
+      draw: { polygon: { allowIntersection:false, showArea:true }, polyline:false, rectangle:false, circle:false, circlemarker:false, marker:false },
+      edit: { featureGroup: drawnItems }
+    });
+    map.addControl(drawControl);
+
+    map.on(L.Draw.Event.CREATED, e => {
+      drawnItems.clearLayers();
+      drawnItems.addLayer(e.layer);
+      syncCoordsFromMap();
+    });
+    map.on(L.Draw.Event.EDITED, syncCoordsFromMap);
+    map.on(L.Draw.Event.DELETED, () => { zCoords.value = ''; });
+  }
+
+  function syncCoordsFromMap(){
+    const layer = firstLayer();
+    if (!layer) return;
+    const latlngsOpen = (layer.getLatLngs?.()[0] || []).map(p => [round(p.lat), round(p.lng)]);
+    const closed = closeRing(latlngsOpen);
+    zCoords.value = JSON.stringify(closed);
+  }
+
+  function firstLayer(){
+    let layer = null; drawnItems.eachLayer(l => { if (!layer) layer = l; }); return layer;
+  }
+
+  function round(n){ return Math.round(Number(n)*1e6)/1e6; }
+
+  function loadPolygonToMap(coords){
+    try{
+      drawnItems.clearLayers();
+      if (!Array.isArray(coords)) return;
+      const closed = closeRing(coords);
+      if (closed.length < 4) return; // 3 vértices + cierre
+      const poly = L.polygon(closed, { color:'#2563eb' });
+      drawnItems.addLayer(poly);
+      const b = poly.getBounds();
+      if (b.isValid()) map.fitBounds(b.pad(0.2));
+    }catch{}
+  }
+
+  btnImport.onclick = () => {
+    const arr = safeParse(zCoords.value);
+    const closed = closeRing(arr);
+    if (closed.length < 4) return alert('Pegá un JSON de [[lat,lng],...] con al menos 3 puntos válidos');
+    zCoords.value = JSON.stringify(closed);
+    loadPolygonToMap(closed);
+  };
+
+  btnClear.onclick = () => { drawnItems.clearLayers(); zCoords.value=''; };
+
+  // ----- API helpers -----
+  async function whoAmI(){
+    const r = await fetch('/api/me', { headers:{ Authorization:'Bearer '+token }});
+    const j = await r.json();
+    isSuper = String(j?.user?.role||'').toLowerCase()==='super';
+    return j?.user;
+  }
+
+  async function loadEmpresas(){
+    const r = await fetch('/api/empresas', { headers:{ Authorization:'Bearer '+token }});
+    const list = await r.json();
+    const opts = list.map(e => `<option value="${e.id}">${e.id} — ${esc(e.nombre)}</option>`).join('');
+    zEmpresa.innerHTML = opts;
+    empFilter.innerHTML = opts;
+    return list;
+  }
+
+  function currentEmpresaQS(){
+    return isSuper && empFilter.value ? `?empresa_id=${encodeURIComponent(empFilter.value)}` : '';
+  }
+
+  async function load(){
+    const r = await fetch('/api/zonas'+currentEmpresaQS(), { headers:{ Authorization:'Bearer '+token }});
+    const list = await r.json();
+    render(list);
+  }
+
+  function render(list){
+    rows.innerHTML = (list||[]).map(z => `
+      <tr>
+        <td>${z.id}</td>
+        <td class="wrap">${esc(z.nombre||'')}</td>
+        <td>${Array.isArray(z.poligono)? countVerts(z.poligono): 0}</td>
+        <td>
+          <button class="secondary" onclick="editZona(${z.id})">Editar</button>
+          <button class="contrast" onclick="delZona(${z.id})">Eliminar</button>
+        </td>
+      </tr>
+    `).join('');
+    count.textContent = (list||[]).length;
+  }
+
+  // ----- CRUD -----
+  fZona.onsubmit = async (e) => {
+    e.preventDefault();
+    const id = Number(zId.value) || null;
+    const nombre = zNombre.value.trim();
+    const parsed = safeParse(zCoords.value);
+    const poligono = closeRing(parsed);
+
+    if (!nombre) return alert('Ingresá un nombre');
+    if (poligono.length < 4) return alert('Dibujá o pegá un polígono con al menos 3 puntos válidos');
+
+    const body = { nombre, poligono };
+    if (isSuper && zEmpresa.value) body.empresa_id = Number(zEmpresa.value);
+
+    btnGuardar.setAttribute('aria-busy','true'); btnGuardar.disabled = true;
+    try{
+      if (!id){
+        const r = await fetch('/api/zonas', {
+          method:'POST', headers:{ 'Content-Type':'application/json', Authorization:'Bearer '+token },
+          body: JSON.stringify(body)
+        });
+        const j = await r.json();
+        if (!r.ok || !j?.id) throw new Error(j?.error||'No se pudo crear');
+        resetForm();
+      } else {
+        const qs = isSuper && zEmpresa.value ? `?empresa_id=${encodeURIComponent(zEmpresa.value)}` : '';
+        const r = await fetch('/api/zonas/'+id+qs, {
+          method:'PUT', headers:{ 'Content-Type':'application/json', Authorization:'Bearer '+token },
+          body: JSON.stringify(body)
+        });
+        if (!r.ok) throw new Error((await r.text())||'No se pudo actualizar');
+        resetForm();
+      }
+      await load();
+    }catch(e){ alert('Error: '+(e.message||e)); }
+    finally{ btnGuardar.removeAttribute('aria-busy'); btnGuardar.disabled = false; }
+  };
+
+  window.editZona = async (id) => {
+    try{
+      // Traemos todas y buscamos (la API no tiene GET /zonas/:id)
+      const r = await fetch('/api/zonas'+currentEmpresaQS(), { headers:{ Authorization:'Bearer '+token }});
+      const list = await r.json();
+      const z = (list||[]).find(x => Number(x.id)===Number(id));
+      if (!z) return alert('Zona no encontrada');
+      formTitle.textContent = '✏️ Editar zona #'+z.id;
+      zId.value = z.id;
+      zNombre.value = z.nombre || '';
+      // asegurar cerrado también al cargar existentes
+      const closed = closeRing(Array.isArray(z.poligono)? z.poligono : []);
+      zCoords.value = JSON.stringify(closed);
+      if (isSuper && empFilter.value) zEmpresa.value = String(empFilter.value);
+      loadPolygonToMap(closed);
+      btnCancelar.style.display = '';
+      window.scrollTo({ top: 0, behavior:'smooth' });
+    }catch(e){ alert('Error: '+(e.message||e)); }
+  };
+
+  window.delZona = async (id) => {
+    if (!confirm('¿Eliminar zona #'+id+'?')) return;
+    const qs = currentEmpresaQS();
+    try{
+      const r = await fetch('/api/zonas/'+id+qs, { method:'DELETE', headers:{ Authorization:'Bearer '+token } });
+      const t = await r.text();
+      if (!r.ok) throw new Error(t||'No se pudo eliminar');
+      await load();
+    }catch(e){ alert('Error: '+(e.message||e)); }
+  };
+
+  btnCancelar.onclick = resetForm;
+  function resetForm(){
+    formTitle.textContent = '➕ Crear zona';
+    zId.value = '';
+    zNombre.value = '';
+    zCoords.value = '';
+    drawnItems && drawnItems.clearLayers();
+    btnCancelar.style.display = 'none';
+  }
+
+  function safeParse(t){ try{ return JSON.parse(t); }catch{ return null; } }
+  function esc(s){ return String(s||'').replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c])); }
+
+  // Boot
+  (async ()=>{
+    try {
+      initMap();
+      const me = await whoAmI();
+      if (isSuper) {
+        rowEmpresa.style.display = '';
+        rowFiltroEmp.style.display = '';
+        const emps = await loadEmpresas();
+        empFilter.value = String(emps?.[0]?.id || me.empresa_id);
+        zEmpresa.value = empFilter.value;
+        empFilter.onchange = async ()=>{ zEmpresa.value = empFilter.value; await load(); };
+      } else { // no super → forzar su empresa
+        const emps = await loadEmpresas();
+        const val = String(me.empresa_id);
+        zEmpresa.innerHTML = `<option value="${val}">${val}</option>`;
+        empFilter.innerHTML = `<option value="${val}">${val}</option>`;
+        rowEmpresa.style.display = 'none';
+        rowFiltroEmp.style.display = 'none';
+      }
+      await load();
+    } catch (e) {
+      alert('Error inicializando: '+(e.message||e));
+      location.href = 'login.html';
+    }
+  })();
+</script>
+
+</body>
+</html>

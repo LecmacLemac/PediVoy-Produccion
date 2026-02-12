@@ -1,0 +1,592 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sistema – MultiEmpresas</title>
+  
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+  <style>
+    :root {
+      /* Palette idéntica a dashboard.html */
+      --bg: #0b1020;
+      --bg-2: #0f172a;
+      --ink: #f1f5f9;
+      --muted: #94a3b8;
+      --brand: #06b6d4;
+      --brand-hover: #22d3ee;
+      --surface: rgba(30, 41, 59, 0.7);
+      --border: rgba(148, 163, 184, 0.15);
+      --glass: rgba(15, 23, 42, 0.85);
+      --radius: 12px;
+      
+      --success: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+    }
+
+    * { box-sizing: border-box; outline: none; }
+    
+    body {
+      margin: 0; 
+      font-family: system-ui, -apple-system, sans-serif;
+      color: var(--ink);
+      background: 
+        radial-gradient(circle at 15% 50%, rgba(6, 182, 212, 0.05), transparent 25%),
+        radial-gradient(circle at 85% 30%, rgba(59, 130, 246, 0.05), transparent 25%),
+        var(--bg);
+      min-height: 100vh;
+      font-size: 14px;
+    }
+
+    .container { max-width: 1300px; margin: 0 auto; padding: 0 20px; }
+
+    /* HEADER */
+    header {
+      position: sticky; top: 0; z-index: 50;
+      background: var(--glass);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      padding: 0.8rem 0;
+    }
+    
+    nav { display: flex; justify-content: space-between; align-items: center; }
+    
+    .brand { 
+      display: flex; gap: 0.8rem; align-items: center; 
+      font-size: 1.1rem; font-weight: 700; color: #fff; text-decoration: none; 
+    }
+    .brand-dot { width: 10px; height: 10px; background: var(--brand); border-radius: 50%; box-shadow: 0 0 10px var(--brand); }
+    
+    .role-badge { 
+      background: rgba(6, 182, 212, 0.1); border: 1px solid rgba(6, 182, 212, 0.3);
+      color: var(--brand); padding: 2px 8px; border-radius: 99px; font-size: 0.75rem; 
+    }
+
+    .menu { list-style: none; display: flex; gap: 1.5rem; margin: 0; padding: 0; }
+    .menu a { text-decoration: none; color: var(--muted); font-weight: 500; transition: 0.2s; }
+    .menu a:hover, .menu a.active { color: #fff; }
+    .menu a.active { border-bottom: 2px solid var(--brand); padding-bottom: 4px; }
+
+    /* MAIN LAYOUT */
+    main { 
+        padding-top: 2rem; padding-bottom: 4rem; 
+        display: grid; grid-template-columns: 1fr; gap: 2rem;
+    }
+    @media(min-width: 900px) {
+        /* Si es admin view, dividimos en columnas: QR (izquierda pequeña) - Config (derecha amplia) */
+        main.admin-view { grid-template-columns: 350px 1fr; }
+    }
+
+    /* CARD STYLES */
+    .card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 2rem; 
+      box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+      text-align: center;
+    }
+    .card.left-align { text-align: left; }
+
+    h1 { margin: 0 0 0.5rem 0; font-size: 1.5rem; color: #fff; }
+    h2 { margin: 0 0 1rem 0; font-size: 1.2rem; color: #fff; border-bottom: 1px solid var(--border); padding-bottom: 10px; }
+    p.subtitle { color: var(--muted); margin-bottom: 2rem; }
+
+    /* QR Specific - FIX SIZE */
+    .qr-container {
+      background: var(--bg-2);
+      border: 2px dashed var(--border);
+      border-radius: var(--radius);
+      padding: 1rem;
+      min-height: 350px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 2rem;
+      overflow: hidden;
+      position: relative;
+    }
+    iframe { 
+        width: 320px; 
+        height: 320px; 
+        max-width: 100%;
+        border: none; 
+        background: #fff; 
+        border-radius: 8px; 
+        box-shadow: 0 0 15px rgba(0,0,0,0.3);
+    }
+
+    .instructions {
+        text-align: left;
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 1rem 1.5rem;
+        font-size: 0.9rem;
+        color: var(--muted);
+    }
+    .instructions ol { margin: 0.5rem 0 0 0; padding-left: 1.2rem; }
+    .instructions li { margin-bottom: 0.4rem; }
+
+    /* ADMIN CONFIG STYLES - GRID IMPROVEMENT */
+    .prompt-grid { 
+        display: grid; 
+        gap: 1.5rem;
+        /* Rejilla responsive: crea columnas automáticamente según el espacio */
+        grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    }
+    
+    .prompt-item {
+        background: var(--bg-2); border: 1px solid var(--border);
+        border-radius: 8px; padding: 1.5rem;
+        transition: 0.2s;
+        display: flex; flex-direction: column;
+    }
+    .prompt-item:hover { border-color: var(--brand); transform: translateY(-2px); }
+    
+    .prompt-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+    .prompt-type { font-weight: 700; color: var(--brand); text-transform: uppercase; letter-spacing: 1px; font-size: 0.85rem; }
+    
+    .prompt-preview { 
+        color: var(--muted); font-size: 0.9rem; white-space: pre-wrap; 
+        /* Limitar altura visual del texto */
+        display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical;
+        overflow: hidden; text-overflow: ellipsis;
+        background: rgba(0,0,0,0.2);
+        padding: 10px; border-radius: 6px;
+        border: 1px solid rgba(255,255,255,0.05);
+    }
+
+    /* FORMS & BUTTONS */
+    .btn {
+      padding: 0.7rem 1.2rem; border-radius: 8px; font-weight: 600; cursor: pointer;
+      border: 1px solid transparent; transition: 0.2s; display: inline-flex; align-items: center; gap: 0.5rem;
+      font-size: 0.95rem; background: var(--brand); color: #000;
+    }
+    .btn:hover { background: var(--brand-hover); box-shadow: 0 4px 12px rgba(6,182,212,0.3); }
+    .btn-ghost { background: transparent; color: var(--muted); border: 1px solid var(--border); }
+    .btn-ghost:hover { color: #fff; background: rgba(255,255,255,0.05); }
+    .btn-icon { padding: 0.5rem; aspect-ratio: 1; justify-content: center; }
+    .btn-sm { padding: 0.4rem 0.8rem; font-size: 0.85rem; }
+
+    .whatsapp-icon {
+        font-size: 3rem; margin-bottom: 1rem; color: #25D366; 
+        background: rgba(37, 211, 102, 0.1); 
+        width: 80px; height: 80px; 
+        display: inline-flex; align-items: center; justify-content: center;
+        border-radius: 50%;
+        box-shadow: 0 0 20px rgba(37, 211, 102, 0.2);
+    }
+
+    /* MODAL */
+    .modal-backdrop {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(4px);
+      display: flex; align-items: center; justify-content: center; z-index: 1000;
+      opacity: 0; pointer-events: none; transition: opacity 0.2s; padding: 10px;
+    }
+    .modal-backdrop.open { opacity: 1; pointer-events: all; }
+    
+    .modal {
+      background: #1e293b; color: #fff; border: 1px solid var(--border); border-radius: var(--radius);
+      width: 100%; max-width: 700px; box-shadow: 0 20px 50px rgba(0,0,0,0.6);
+      display: flex; flex-direction: column; max-height: 90vh;
+    }
+    .modal-header { padding: 1.2rem; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.2); }
+    .modal-body { padding: 1.5rem; overflow-y: auto; display: flex; flex-direction: column; gap:1rem; }
+    .modal-footer { padding: 1.2rem; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 1rem; background: rgba(0,0,0,0.2); }
+
+    textarea {
+        background: var(--bg-2); border: 1px solid var(--border); color: #fff;
+        padding: 1rem; border-radius: 8px; width: 100%; font-family: monospace; font-size: 0.9rem;
+        min-height: 300px; resize: vertical;
+    }
+    textarea:focus { outline:none; border-color: var(--brand); }
+
+    .toast { position: fixed; right: 20px; bottom: 30px; background: #fff; color: #0f172a; padding: 10px 20px; border-radius: 99px; font-weight: 600; box-shadow: 0 10px 30px rgba(0,0,0,0.3); opacity: 0; pointer-events: none; transition: 0.3s; z-index: 2000; }
+    .toast.show { opacity: 1; transform: translateY(-10px); }
+  </style>
+</head>
+<body>
+
+  <header>
+    <nav class="container">
+      <div class="brand">
+        <div class="brand-dot"></div>
+        MultiEmpresas
+        <span id="roleBadge" class="role-badge"></span>
+      </div>
+      <ul class="menu" id="mainMenu">
+        <li><a href="inicio/inicial.html">🚀 Inicio</a></li>
+        <li><a href="dashboard.html">Dashboard</a></li>
+        <li><a href="pagos.html">Pagos</a></li>
+        <li><a href="gastos.html">Gastos</a></li>
+        <li><a href="stock.html">Stock</a></li>
+        <li><a href="repartidores.html">Repartidor</a></li>
+        <li><a href="estadisticas.html">Estadisticas</a></li>
+        <li><a href="iaweb.html">IAweb</a></li>
+        <li><a href="qr.html" class="active">QR</a></li>
+        <li><a href="#" id="logout" style="color: var(--danger)">Salir</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <main class="container" id="mainLayout">
+    
+    <div class="card">
+        <div class="whatsapp-icon">
+            <i class="fa-brands fa-whatsapp"></i>
+        </div>
+
+        <h1>Vincular Bot</h1>
+        <p class="subtitle">Escanea para conectar el motor de WhatsApp.</p>
+
+        <div id="qr-container" class="qr-container">
+            <span style="color:var(--brand); animation: pulse 1s infinite;">Conectando...</span>
+        </div>
+
+        <div class="instructions">
+            <ol>
+                <li>Abre WhatsApp > Configuración.</li>
+                <li>Dispositivos vinculados > Vincular.</li>
+                <li>Escanea el código QR.</li>
+            </ol>
+        </div>
+
+        <div style="margin-top:1.5rem; display:flex; gap:.5rem; justify-content:center; flex-wrap:wrap;">
+          <button onclick="reloadQR()" class="btn">
+              <i class="fa-solid fa-rotate-right" style="margin-right:8px"></i> Recargar QR
+          </button>
+
+          <button onclick="resetWppSession()" class="btn btn-ghost">
+              <i class="fa-solid fa-trash-can" style="margin-right:8px"></i> Resetear sesión
+          </button>
+        </div>
+    </div>
+
+    <div class="card left-align" id="adminConfig">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; flex-wrap:wrap; gap:10px;">
+            <h2><i class="fa-solid fa-robot"></i> Configuración Global IA</h2>
+            <div style="display:flex; gap:5px">
+                <button class="btn btn-ghost btn-sm" onclick="editPrompt('vendedor')">+ Vendedor</button>
+                <button class="btn btn-ghost btn-sm" onclick="editPrompt('soporte')">+ Soporte</button>
+                <button class="btn btn-ghost btn-sm" onclick="editPrompt('general')">+ General</button>
+                
+                <button class="btn btn-ghost btn-sm" style="border-color:var(--brand); color:var(--brand);" onclick="editPrompt('builder_web')">
+                    <i class="fa-solid fa-code"></i> + Generador Web
+                </button>
+            </div>
+        </div>
+        
+        <p class="subtitle" style="text-align:left">
+            Estos son los mensajes <strong>por defecto</strong> que usará el bot para todas las empresas que no tengan su propia configuración personalizada.
+        </p>
+
+        <div id="promptsList" class="prompt-grid">
+            <div style="padding:2rem; text-align:center; color:var(--muted); grid-column: 1 / -1;">Cargando configuración...</div>
+        </div>
+    </div>
+
+  </main>
+
+  <div id="modalEditor" class="modal-backdrop">
+    <div class="modal">
+        <div class="modal-header">
+            <h3>Editar Prompt Global: <span id="lblTipo" style="color:var(--brand)"></span></h3>
+            <button class="btn btn-ghost btn-icon" onclick="closeModal()">✕</button>
+        </div>
+        <div class="modal-body">
+            <textarea id="txtContent" placeholder="Escribe aquí las instrucciones para la IA..."></textarea>
+            <div style="font-size:0.8rem; color:var(--muted)">
+                <i class="fa-solid fa-circle-info"></i> Este texto será usado como base (System Prompt) para todas las empresas que no tengan uno propio.
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-danger" onclick="deletePrompt()">Restaurar Original (Eliminar)</button>
+            <div style="flex:1"></div>
+            <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+            <button class="btn btn-primary" onclick="savePrompt()">Guardar Global</button>
+        </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script>
+    // ====== Auth Logic ======
+    const token = localStorage.getItem('token');
+    // if (!token) location.href = 'login.html'; // Activar en producción
+
+    const $ = s => document.querySelector(s);
+    function toast(msg) {
+      const t = $('#toast'); t.textContent = msg; t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 3000);
+    }
+    
+    $('#logout').onclick = () => { localStorage.removeItem('token'); location.href = 'login.html'; };
+
+    // Estado local
+    let currentTipo = '';
+    // Guardamos localmente los prompts cargados para no usar hardcodeo al editar
+    let loadedPrompts = [];
+
+    // ====== Init ======
+
+    function parseJwt(token) {
+        try { return JSON.parse(atob(token.split('.')[1])); } catch (e) { return null; }
+    }
+
+    (async function boot(){
+        try {
+            // 1. Leer rol real del token
+            const payload = parseJwt(token);
+            const role = payload ? payload.role : '';
+            const isSuper = (role === 'super'); // Valida si es 'super'
+            
+            $('#roleBadge').textContent = isSuper ? 'SUPER ADMIN' : role.toUpperCase();
+
+            // 2. BLOQUEO DE SEGURIDAD VISUAL
+            if (!isSuper) {
+                // Si NO es super admin, borramos el contenido y mostramos aviso
+                $('#mainLayout').innerHTML = `
+                    <div class="card" style="max-width:500px; margin: 4rem auto; text-align:center;">
+                        <h1 style="color:var(--danger); margin-bottom:1rem;">⛔ Acceso Restringido</h1>
+                        <p class="subtitle">Esta configuración es exclusiva para Super Administradores.</p>
+                        <a href="dashboard.html" class="btn" style="justify-content:center;">Volver al Dashboard</a>
+                    </div>
+                `;
+                // Detenemos la ejecución aquí para que no cargue nada más
+                return;
+            }
+
+            // 3. Si es Super Admin, cargamos las herramientas
+            loadQR();
+
+            // Habilitamos la vista de admin
+            $('#mainLayout').classList.add('admin-view');
+            $('#adminConfig').style.display = 'block';
+            loadGlobalPrompts();
+
+        } catch (e) { console.error(e); }
+    })();
+
+    // ====== QR Logic ======
+    function loadQR() {
+        const container = document.getElementById('qr-container');
+        const timestamp = new Date().getTime();
+        container.innerHTML = `<iframe src="/api/whatsapp/qr?t=${timestamp}"></iframe>`;
+    }
+    function reloadQR() { loadQR(); }
+
+    // NUEVA FUNCIÓN: resetear sesión de WhatsApp
+    async function resetWppSession() {
+        if (!confirm('¿Seguro que querés resetear la sesión de WhatsApp? Se desvinculará el celular actual.')) {
+            return;
+        }
+
+        try {
+            const r = await fetch('/api/whatsapp/reset', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer ' + (token || '')
+                }
+            });
+
+            if (!r.ok) {
+                let msg = 'No se pudo resetear la sesión.';
+                try {
+                    const data = await r.json();
+                    if (data && data.error) msg = data.error;
+                } catch (e) {}
+                toast(msg);
+                return;
+            }
+
+            toast('Sesión reseteada. Esperá unos segundos y escaneá el nuevo QR.');
+            setTimeout(loadQR, 1500);
+        } catch (e) {
+            console.error(e);
+            toast('Error de red al intentar resetear la sesión.');
+        }
+    }
+
+    // ====== Global Config Logic ======
+    async function loadGlobalPrompts() {
+        try {
+            const r = await fetch('/api/admin/prompts/global', { headers:{ Authorization:'Bearer '+token } });
+            
+            if (!r.ok) throw new Error("API Falló");
+            const data = await r.json();
+            
+            // Guardamos en variable global para usar en editPrompt
+            loadedPrompts = data || [];
+            
+            renderPrompts(loadedPrompts);
+        } catch (e) {
+            console.warn('Usando datos mock para visualización (Error de conexión)');
+            renderPrompts([
+                { tipo: 'vendedor', contenido: 'Eres un vendedor experto en ventas consultivas. Tu objetivo es...' },
+                { tipo: 'soporte', contenido: 'Eres un asistente de soporte técnico nivel 1. Responde con amabilidad...' },
+                { tipo: 'general', contenido: 'Eres un asistente virtual general para la empresa...' }
+            ]);
+        }
+    }
+
+    function renderPrompts(list) {
+        const container = $('#promptsList');
+        if (!list || list.length === 0) {
+            container.innerHTML = `<div style="padding:1rem; border:1px dashed var(--border); border-radius:8px; grid-column: 1 / -1;">No hay configuración global guardada.</div>`;
+            return;
+        }
+
+        container.innerHTML = list.map(p => `
+            <div class="prompt-item">
+                <div class="prompt-header">
+                    <span class="prompt-type">${p.tipo}</span>
+                    <button class="btn btn-ghost btn-sm" onclick="editPrompt('${p.tipo}')">
+                        <i class="fa-solid fa-pen"></i> Editar
+                    </button>
+                </div>
+                <div class="prompt-preview">${escapeHtml(p.contenido)}</div>
+            </div>
+        `).join('');
+    }
+
+    // Modal Actions
+    async function editPrompt(tipo) {
+        currentTipo = tipo;
+        $('#lblTipo').textContent = tipo.toUpperCase();
+        $('#txtContent').value = 'Cargando...';
+        $('#modalEditor').classList.add('open');
+
+        // 1. Buscamos primero en lo que vino de la DB
+        const foundInDb = loadedPrompts.find(x => x.tipo === tipo);
+        
+        if (foundInDb) {
+            $('#txtContent').value = foundInDb.contenido;
+        } else {
+            // 2. Si no existe en DB, cargamos el DEFAULT según el tipo
+            const defaults = [
+                { tipo: 'vendedor', contenido: 'Eres un vendedor experto en ventas consultivas. Tu objetivo es...' },
+                { tipo: 'soporte', contenido: 'Eres un asistente de soporte técnico nivel 1. Responde con amabilidad...' },
+                { tipo: 'general', contenido: 'Eres un asistente virtual general para la empresa...' },
+                
+// --- NUEVO: Template PRO para el GENERADOR WEB ---
+                { 
+                  tipo: 'builder_web', 
+                  contenido: `👷 ROL: Eres un Desarrollador Frontend Senior experto en E-commerce.
+Tu tarea es generar el código fuente completo de una Single Page Application (SPA) en un único archivo HTML.
+
+🎨 DISEÑO VISUAL (Tailwind CSS):
+1.  Usa **Tailwind CSS** (CDN) para todo.
+2.  **Estilo:** Limpio, "Mobile First".
+3.  **Componentes:** Navbar sticky con contador de carrito, Buscador en tiempo real, Grilla de productos responsive.
+
+⚙️ LÓGICA JAVASCRIPT (OBLIGATORIA):
+Inyecta un script al final del body con esta lógica exacta:
+
+1.  **Constantes**:
+    \`const EMPRESA_ID = {ID_EMPRESA};\`
+    \`const SLUG = '{SLUG_EMPRESA}';\`
+
+2.  **Carga de Datos**:
+    -   Haz fetch a \`/api/public/catalog/\${EMPRESA_ID}\`.
+    -   Renderiza los productos usando \`Intl.NumberFormat('es-AR', {style:'currency', currency:'ARS', maximumFractionDigits:0})\`.
+
+3.  **Funcionalidad**:
+    -   Buscador que filtre el array de productos.
+    -   Carrito persistente en \`localStorage\`.
+
+4.  **Checkout (Integración API)**:
+    -   El botón "Finalizar" abre un formulario (Nombre, Teléfono, Dirección).
+    -   Al confirmar, realiza un **POST** a \`/api/public/pedidos\`:
+        Body: \`{
+          "empresa_id": EMPRESA_ID,
+          "cliente": "...",
+          "telefono": "...",
+          "direccion": "...",
+          "items": carrito, 
+          "metodo_pago": "efectivo"
+        }\`
+    -   Maneja la respuesta: Si es \`{ok: true}\`, muestra éxito y vacía el carrito.
+
+🚫 RESTRICCIONES:
+-   Devuelve **SOLO** el código HTML. Sin markdown.` 
+                }
+            ];
+            
+            const def = defaults.find(x => x.tipo === tipo);
+            $('#txtContent').value = def ? def.contenido : '';
+        }
+    }
+
+    async function savePrompt() {
+        const contenido = $('#txtContent').value;
+        if(!contenido) return toast('Escribe un contenido');
+        
+        const btn = document.querySelector('#modalEditor .btn-primary');
+        const originalText = btn.textContent;
+        btn.textContent = 'Guardando...';
+        btn.disabled = true;
+
+        try {
+            const res = await fetch('/api/admin/prompts/global', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer ' + token
+                },
+                body: JSON.stringify({ tipo: currentTipo, contenido })
+            });
+
+            if (res.ok) {
+                toast('✅ Guardado correctamente');
+                closeModal();
+                loadGlobalPrompts(); // Recargar lista real
+            } else {
+                toast('❌ Error al guardar');
+            }
+        } catch (e) {
+            console.error(e);
+            toast('Error de conexión');
+        } finally {
+            btn.textContent = originalText;
+            btn.disabled = false;
+        }
+    }
+
+    async function deletePrompt() {
+        if(!confirm('¿Estás seguro? Al eliminar, el sistema volverá a usar el texto "Hardcoded" original del código (o plantilla por defecto).')) return;
+        
+        try {
+            const res = await fetch(`/api/admin/prompts/global/${currentTipo}`, {
+                method: 'DELETE',
+                headers: { 'Authorization': 'Bearer ' + token }
+            });
+
+            if (res.ok) {
+                toast('🗑️ Restaurado a default');
+                closeModal();
+                loadGlobalPrompts();
+            } else {
+                toast('❌ Error al eliminar');
+            }
+        } catch (e) {
+            console.error(e);
+            toast('Error de conexión');
+        }
+    }
+
+    function closeModal() { $('#modalEditor').classList.remove('open'); }
+    function escapeHtml(text) {
+        if (!text) return '';
+        return text
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#039;");
+    }
+  </script>
+</body>
+</html>

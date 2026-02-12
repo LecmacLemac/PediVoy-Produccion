@@ -1,0 +1,541 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Control de Stock – MultiEmpresas</title>
+  
+  <style>
+    :root {
+      /* Palette */
+      --bg: #0b1020;
+      --ink: #f1f5f9;
+      --muted: #94a3b8;
+      --brand: #06b6d4;
+      --brand-hover: #22d3ee;
+      --surface: rgba(30, 41, 59, 0.7);
+      --border: rgba(148, 163, 184, 0.15);
+      --glass: rgba(15, 23, 42, 0.85);
+      --radius: 12px;
+      
+      --success: #10b981;
+      --danger: #ef4444;
+      --warning: #f59e0b;
+    }
+
+    * { box-sizing: border-box; outline: none; }
+    
+    body {
+      margin: 0; 
+      font-family: system-ui, -apple-system, sans-serif;
+      color: var(--ink);
+      background: 
+        radial-gradient(circle at 15% 50%, rgba(6, 182, 212, 0.05), transparent 25%),
+        radial-gradient(circle at 85% 30%, rgba(59, 130, 246, 0.05), transparent 25%),
+        var(--bg);
+      min-height: 100vh;
+      font-size: 14px;
+    }
+
+    .container { max-width: 1200px; margin: 0 auto; padding: 0 20px; }
+
+    /* HEADER */
+    header {
+      position: sticky; top: 0; z-index: 50;
+      background: var(--glass); backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border); padding: 0.8rem 0;
+    }
+    nav { display: flex; justify-content: space-between; align-items: center; }
+    .brand { font-size: 1.1rem; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 0.5rem; }
+    .role-badge { background: rgba(6,182,212,0.1); color: var(--brand); padding: 2px 8px; border-radius: 99px; font-size: 0.75rem; border: 1px solid rgba(6,182,212,0.3); }
+    
+    .menu { list-style: none; display: flex; gap: 1.5rem; margin: 0; padding: 0; }
+    .menu a { text-decoration: none; color: var(--muted); font-weight: 500; transition: 0.2s; }
+    .menu a:hover, .menu a.active { color: #fff; }
+    .menu a.active { border-bottom: 2px solid var(--brand); padding-bottom: 4px; }
+
+    /* LAYOUT */
+    main { padding: 2rem 0 4rem; display: grid; gap: 1.5rem; }
+    
+    .card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 1.5rem;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+    }
+
+    /* KPIs */
+    .grid-kpi { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; }
+    .kpi-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 1.2rem;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .kpi-val h3 { font-size: 1.8rem; margin: 0; color: #fff; font-weight: 700; }
+    .kpi-val p { margin: 0; color: var(--muted); font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.5px; }
+    .kpi-icon { font-size: 2rem; opacity: 0.8; }
+
+    /* TOOLBAR & INPUTS */
+    .toolbar { display: flex; flex-wrap: wrap; gap: 1rem; align-items: end; justify-content: space-between; }
+    
+    label { display: block; font-size: 0.8rem; color: var(--muted); font-weight: 600; margin-bottom: 0.4rem; }
+    
+    input, select {
+      width: 100%; background: #0f172a; border: 1px solid var(--border); color: #fff;
+      padding: 0.7rem; border-radius: 8px; font-size: 0.9rem; transition: 0.2s;
+    }
+    input:focus, select:focus { border-color: var(--brand); box-shadow: 0 0 0 2px rgba(6,182,212,0.2); }
+
+    .search-box { flex: 1; min-width: 250px; position: relative; }
+    .search-box input { padding-left: 2.2rem; }
+    .search-icon { position: absolute; left: 0.8rem; top: 50%; transform: translateY(-50%); color: var(--muted); }
+
+    /* BUTTONS */
+    .btn {
+      padding: 0.7rem 1.2rem; border-radius: 8px; font-weight: 600; cursor: pointer;
+      border: none; font-size: 0.9rem; transition: 0.2s;
+      display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem;
+    }
+    .btn-primary { background: var(--brand); color: #000; box-shadow: 0 4px 15px rgba(6,182,212,0.2); }
+    .btn-primary:hover { background: var(--brand-hover); transform: translateY(-1px); }
+    
+    .btn-secondary { background: rgba(255,255,255,0.05); color: var(--ink); border: 1px solid var(--border); }
+    .btn-secondary:hover { background: rgba(255,255,255,0.1); color: #fff; }
+
+    .btn-sm { padding: 0.4rem 0.8rem; font-size: 0.8rem; }
+
+    /* TABLE */
+    .table-responsive { overflow-x: auto; border-radius: var(--radius); border: 1px solid var(--border); }
+    table { width: 100%; border-collapse: collapse; text-align: left; }
+    th { 
+      background: rgba(15, 23, 42, 0.5); color: var(--muted); font-weight: 600; 
+      padding: 1rem; font-size: 0.8rem; text-transform: uppercase; border-bottom: 1px solid var(--border); white-space: nowrap;
+    }
+    td { padding: 1rem; border-bottom: 1px solid var(--border); color: var(--ink); font-size: 0.9rem; vertical-align: middle; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: rgba(255,255,255,0.02); }
+
+    /* Badges */
+    .badge { padding: 4px 10px; border-radius: 99px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; }
+    .bg-ok { background: rgba(16, 185, 129, 0.15); color: #34d399; }
+    .bg-low { background: rgba(245, 158, 11, 0.15); color: #fbbf24; }
+    .bg-neg { background: rgba(239, 68, 68, 0.15); color: #f87171; }
+
+    /* MODAL */
+    dialog {
+      background: #1e293b; color: #fff; border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 0; width: 95%; max-width: 500px; box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+    }
+    dialog::backdrop { background: rgba(0,0,0,0.7); backdrop-filter: blur(4px); }
+    
+    .modal-header { padding: 1.2rem; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.2); }
+    .modal-body { padding: 1.5rem; max-height: 70vh; overflow-y: auto; }
+    .modal-footer { padding: 1.2rem; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 1rem; background: rgba(0,0,0,0.2); }
+
+    /* KARDEX DRAWER */
+    .drawer { 
+      position: fixed; top: 0; right: -100%; width: 100%; max-width: 500px; height: 100%; 
+      background: #1e293b; border-left: 1px solid var(--border); z-index: 100;
+      transition: right 0.3s cubic-bezier(0.16, 1, 0.3, 1); box-shadow: -10px 0 50px rgba(0,0,0,0.5);
+      display: flex; flex-direction: column;
+    }
+    .drawer.open { right: 0; }
+    .drawer-backdrop {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.5); backdrop-filter: blur(2px); 
+      z-index: 90; opacity: 0; visibility: hidden; transition: 0.3s;
+    }
+    .drawer-backdrop.show { opacity: 1; visibility: visible; }
+
+    [hidden] { display: none !important; }
+    .flex-between { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
+    .text-right { text-align: right; }
+  </style>
+</head>
+<body>
+
+  <header>
+    <nav class="container">
+      <div class="brand">
+        MultiEmpresas <span id="rolePill" class="role-badge"></span>
+      </div>
+     <ul class="menu" id="mainMenu">
+        <li><a href="inicio/inicial.html">🚀 Inicio</a></li>
+        <li><a href="dashboard.html">Dashboard</a></li>
+        <li><a href="gastos.html">Gastos</a></li>
+        <li><a href="stock.html" class="active"> Stock</a></li>
+        <li><a href="stock_movimientos.html">Movimientos</a></li>
+        <li><a href="repartidores.html">Repartidor</a></li>
+        <li><a href="estadisticas.html">Estadisticas</a></li>
+        <li><a href="iaweb.html">IAweb</a></li>
+        <li><a href="qr.html">QR</a></li>
+        <li><a href="#" id="logout" style="color: var(--danger)">Salir</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <main class="container">
+    
+    <section class="grid-kpi">
+      <div class="kpi-card">
+        <div class="kpi-val">
+          <h3 id="kpiTotal">0</h3>
+          <p>Total Productos</p>
+        </div>
+        <div class="kpi-icon">📦</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-val">
+          <h3 id="kpiLow" style="color:var(--warning)">0</h3>
+          <p>Stock Bajo</p>
+        </div>
+        <div class="kpi-icon">⚠️</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-val">
+          <h3 id="kpiNeg" style="color:var(--danger)">0</h3>
+          <p>En Negativo</p>
+        </div>
+        <div class="kpi-icon">📉</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="toolbar">
+        <div style="display:flex; gap:1rem; flex-wrap:wrap;">
+          <div id="rowEmp" hidden>
+            <label>Empresa</label>
+            <select id="empFilter"><option>Cargando...</option></select>
+          </div>
+          <div>
+            <label>Estado Stock</label>
+            <select id="statusFilter">
+              <option value="">Todos</option>
+              <option value="ok">Normal</option>
+              <option value="bajo">Bajo Mínimo</option>
+              <option value="negativo">Negativo</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="search-box">
+          <span class="search-icon">🔍</span>
+          <input type="search" id="q" placeholder="Buscar producto..." autocomplete="off">
+        </div>
+
+        <button id="btnRef" class="btn btn-secondary">↻ Recargar</button>
+      </div>
+    </section>
+
+    <section>
+      <div class="card table-responsive" style="padding:0; overflow:hidden;">
+        <table>
+          <thead>
+            <tr>
+              <th>Producto</th>
+              <th class="text-right">Propios</th>
+              <th class="text-right">Fleteros</th>
+              <th class="text-right">Total</th>
+              <th class="text-right">Mín</th>
+              <th class="text-right">Máx</th>
+              <th style="text-align:center">Estado</th>
+              <th class="text-right">Acciones</th>
+            </tr>
+          </thead>
+          <tbody id="rows">
+            <tr><td colspan="8" style="text-align:center; padding:2rem; color:var(--muted)">Cargando inventario...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+  </main>
+
+  <dialog id="dlgAjuste">
+    <div class="modal-header">
+      <strong style="font-size:1.1rem">Ajustar Stock</strong>
+      <button onclick="dlgAjuste.close()" style="background:none; border:none; color:#fff; cursor:pointer">✕</button>
+    </div>
+    <form id="frmAjuste" class="modal-body">
+      <input type="hidden" id="ajId">
+      <h3 id="ajProdName" style="margin-top:0; color:var(--brand)">Producto</h3>
+      
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:1rem; margin-bottom:1rem;">
+        <div>
+          <label>Tipo Movimiento</label>
+          <select id="ajTipo">
+            <option value="ADJUST+">➕ Entrada</option>
+            <option value="ADJUST-">➖ Salida</option>
+          </select>
+        </div>
+        <div>
+          <label>Cantidad</label>
+          <input type="number" id="ajQty" min="0.01" step="0.01" required>
+        </div>
+      </div>
+
+      <div style="margin-bottom:1rem;">
+        <label>Chofer Responsable</label>
+        <select id="ajChofer"></select>
+      </div>
+
+      <div>
+        <label>Motivo / Nota</label>
+        <input type="text" id="ajNota" placeholder="Ej: Rotura, Conteo mensual...">
+      </div>
+    </form>
+    <div class="modal-footer">
+      <button onclick="dlgAjuste.close()" class="btn btn-secondary">Cancelar</button>
+      <button id="btnSaveAj" class="btn btn-primary">Confirmar Ajuste</button>
+    </div>
+  </dialog>
+
+  <div class="drawer-backdrop" id="backdrop" onclick="closeKardex()"></div>
+  <aside class="drawer" id="kardexDrawer">
+    <div class="modal-header">
+      <strong>Movimientos (Kardex)</strong>
+      <button onclick="closeKardex()" style="background:none; border:none; color:#fff; cursor:pointer">✕</button>
+    </div>
+    <div class="modal-body" style="flex:1; overflow:auto;">
+      <h4 id="kxProdName" style="color:var(--brand)"></h4>
+      <table style="font-size:0.85rem;">
+        <thead>
+          <tr>
+            <th>Fecha</th>
+            <th>Tipo</th>
+            <th class="text-right">Cant.</th>
+            <th>Nota</th>
+          </tr>
+        </thead>
+        <tbody id="kxRows"></tbody>
+      </table>
+    </div>
+  </aside>
+
+  <script>
+    // ====== AUTH ======
+    const token = localStorage.getItem('token');
+    if (!token) location.href = 'login.html';
+
+    const $ = s => document.querySelector(s);
+    let role='', isSuper=false;
+    let products = [];
+    let choferes = [];
+
+    // ====== UTILS ======
+    const num = n => Number(n)||0;
+    const fmtNum = n => num(n).toLocaleString('es-AR');
+    const dateStr = s => new Date(s).toLocaleString('es-AR', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'});
+
+    // ====== LOGIC ======
+    async function init() {
+      try {
+        const r = await fetch('/api/me', { headers:{ Authorization:'Bearer '+token }});
+        if(!r.ok) throw new Error();
+        const me = (await r.json()).user;
+        role = (me.role||'').toLowerCase();
+        isSuper = role === 'super';
+        
+        $('#rolePill').textContent = role.toUpperCase();
+        if(isSuper) {
+            $('#rolePill').style.borderColor = 'var(--warning)';
+            $('#rowEmp').hidden = false;
+            await loadEmpresas();
+        }
+
+        await loadChoferes();
+        await loadStock();
+
+      } catch { location.href='login.html'; }
+    }
+
+    async function loadEmpresas() {
+        const r = await fetch('/api/empresas', { headers:{ Authorization:'Bearer '+token }});
+        const list = await r.json();
+        const sel = $('#empFilter');
+        sel.innerHTML = list.map(e => `<option value="${e.id}">${e.nombre}</option>`).join('');
+        // cuando cambia empresa, recargo choferes y stock
+        sel.addEventListener('change', async () => {
+          await loadChoferes();
+          await loadStock();
+        });
+    }
+
+    async function loadChoferes() {
+        const qs = isSuper && $('#empFilter').value ? `?empresa_id=${$('#empFilter').value}` : '';
+        const r = await fetch('/api/choferes'+qs, { headers:{ Authorization:'Bearer '+token }});
+        choferes = await r.json();
+        
+        // MODIFICACIÓN: Agregamos (${c.tipo}) al texto de la opción
+        $('#ajChofer').innerHTML = choferes.map(c => 
+            `<option value="${c.id}">${c.nombre} (${c.tipo.toUpperCase()})</option>`
+        ).join('');
+    }
+    
+    // Normaliza respuesta de /api/stock/por-tipo a un array de productos
+    function normalizeStockPorTipo(rows) {
+      const map = new Map();
+      for (const row of rows || []) {
+        const id = row.producto_id || row.id || row.product_id;
+        if (id == null) continue;
+        const key = String(id);
+        if (!map.has(key)) {
+          map.set(key, {
+            id: id,
+            nombre: row.nombre || '',
+            stock_min: num(row.stock_min),
+            stock_max: num(row.stock_max),
+            stock_propios: 0,
+            stock_fleteros: 0,
+            stock_fisico: 0
+          });
+        }
+        const p = map.get(key);
+        const tipo = (row.tipo_chofer || row.tipo || '').toLowerCase();
+        if (tipo === 'propio') {
+          p.stock_propios = num(row.stock);
+        } else if (tipo === 'fletero') {
+          p.stock_fleteros = num(row.stock);
+        }
+      }
+      for (const p of map.values()) {
+        p.stock_fisico = num(p.stock_propios) + num(p.stock_fleteros);
+      }
+      return Array.from(map.values());
+    }
+
+    async function loadStock() {
+      const qs = isSuper && $('#empFilter').value ? `?empresa_id=${$('#empFilter').value}` : '';
+      const r = await fetch('/api/stock/por-tipo'+qs, { headers:{ Authorization:'Bearer '+token }});
+      const rows = await r.json();
+      products = normalizeStockPorTipo(rows);
+      render();
+    }
+
+    function render() {
+      const term = $('#q').value.toLowerCase();
+      const status = $('#statusFilter').value; // ok, bajo, negativo
+
+      const filtered = products.filter(p => {
+        const matchTxt = p.nombre.toLowerCase().includes(term);
+        let matchSt = true;
+        
+        const stock = num(p.stock_fisico);
+        const min = num(p.stock_min);
+
+        if(status === 'bajo') matchSt = stock <= min && stock >= 0;
+        if(status === 'negativo') matchSt = stock < 0;
+        if(status === 'ok') matchSt = stock > min;
+
+        return matchTxt && matchSt;
+      });
+
+      // KPIs
+      $('#kpiTotal').textContent = filtered.length;
+      $('#kpiLow').textContent = filtered.filter(p => num(p.stock_fisico) <= num(p.stock_min) && num(p.stock_fisico) >= 0).length;
+      $('#kpiNeg').textContent = filtered.filter(p => num(p.stock_fisico) < 0).length;
+
+      // Table
+      const html = filtered.map(p => {
+        const sProp = num(p.stock_propios);
+        const sFlet = num(p.stock_fleteros);
+        const s = num(p.stock_fisico);
+        const min = num(p.stock_min);
+        let badge = '<span class="badge bg-ok">OK</span>';
+        if(s < 0) badge = '<span class="badge bg-neg">NEGATIVO</span>';
+        else if(s <= min) badge = '<span class="badge bg-low">BAJO</span>';
+
+        return `
+          <tr>
+            <td style="font-weight:600; color:#fff">${p.nombre}</td>
+            <td class="text-right">${fmtNum(sProp)}</td>
+            <td class="text-right">${fmtNum(sFlet)}</td>
+            <td class="text-right">${fmtNum(s)}</td>
+            <td class="text-right text-muted">${min}</td>
+            <td class="text-right text-muted">${p.stock_max}</td>
+            <td style="text-align:center">${badge}</td>
+            <td class="text-right">
+              <button class="btn btn-secondary btn-sm" onclick="openKardex(${p.id})">📜 Hist</button>
+              <button class="btn btn-primary btn-sm" onclick="openAjuste(${p.id})">🛠 Ajuste</button>
+            </td>
+          </tr>
+        `;
+      }).join('');
+
+      $('#rows').innerHTML = html || '<tr><td colspan="8" style="text-align:center; padding:2rem">Sin resultados.</td></tr>';
+    }
+
+    // ====== ACTIONS ======
+    
+    // Ajuste
+    window.openAjuste = (id) => {
+        const p = products.find(x => x.id === id);
+        $('#ajId').value = id;
+        $('#ajProdName').textContent = p ? p.nombre : '';
+        $('#ajQty').value = '';
+        $('#ajNota').value = '';
+        $('#dlgAjuste').showModal();
+    };
+
+    $('#btnSaveAj').onclick = async () => {
+        const body = {
+            producto_id: $('#ajId').value,
+            qty: $('#ajQty').value,
+            tipo: $('#ajTipo').value,
+            chofer_id: $('#ajChofer').value,
+            motivo: $('#ajNota').value,
+            empresa_id: isSuper ? $('#empFilter').value : undefined
+        };
+
+        if(!body.qty || body.qty <= 0) return alert('Cantidad inválida');
+
+        const r = await fetch('/api/stock/ajuste', {
+            method: 'POST',
+            headers: {'Content-Type':'application/json', Authorization:'Bearer '+token},
+            body: JSON.stringify(body)
+        });
+
+        if(r.ok) {
+            alert('Ajuste realizado');
+            $('#dlgAjuste').close();
+            loadStock();
+        } else {
+            alert('Error al ajustar');
+        }
+    };
+
+    // Kardex
+    window.openKardex = async (id) => {
+        const p = products.find(x => x.id === id);
+        $('#kxProdName').textContent = p ? p.nombre : '';
+        $('#kxRows').innerHTML = '<tr><td colspan="4">Cargando...</td></tr>';
+        
+        $('#backdrop').classList.add('show');
+        $('#kardexDrawer').classList.add('open');
+
+        const r = await fetch(`/api/stock/kardex/${id}`, { headers:{ Authorization:'Bearer '+token }});
+        const moves = await r.json();
+
+        $('#kxRows').innerHTML = moves.map(m => `
+            <tr>
+                <td>${dateStr(m.fecha)}</td>
+                <td>${m.tipo}</td>
+                <td class="text-right" style="font-weight:bold; color:${m.cantidad>0?'var(--success)':'var(--danger)'}">${m.cantidad}</td>
+                <td style="color:var(--muted)">${m.notas || '-'}</td>
+            </tr>
+        `).join('');
+    };
+
+    window.closeKardex = () => {
+        $('#backdrop').classList.remove('show');
+        $('#kardexDrawer').classList.remove('open');
+    };
+
+    // Events
+    $('#q').addEventListener('input', render);
+    $('#statusFilter').addEventListener('change', render);
+    $('#btnRef').addEventListener('click', loadStock);
+    $('#logout').addEventListener('click', () => { localStorage.removeItem('token'); location.href='login.html'; });
+
+    init();
+  </script>
+</body>
+</html>
