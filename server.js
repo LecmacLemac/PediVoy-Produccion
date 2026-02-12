@@ -3988,7 +3988,18 @@ app.get('/api/pedidos', withAuth, checkLicencia, async (req, res) => {
 app.put('/api/pedidos/:id', withAuth, async (req, res) => {
   try {
     const { estado, metodo_pago, empresa_id, chofer_id, zona_id } = req.body;
-    
+    const esSuper = isSuper(req);
+    const myEmpresa = getEmpresaIdFromToken(req);
+
+    // Resolver empresa objetivo (super puede override explícito; sino, queda la del token)
+    const targetEmpresa = esSuper
+      ? (empresa_id != null ? Number(empresa_id) : null)
+      : Number(myEmpresa);
+
+    if (!esSuper && !targetEmpresa) {
+      return res.status(400).json({ error: 'Falta empresa.' });
+    }
+
     const sets = [];
     const vals = [];
     let idx = 1;
@@ -4001,10 +4012,13 @@ app.put('/api/pedidos/:id', withAuth, async (req, res) => {
       sets.push(`metodo_pago = $${idx++}`);
       vals.push(metodo_pago);
     }
-    if (empresa_id != null) {
+
+    // Solo super puede cambiar empresa_id del pedido
+    if (esSuper && empresa_id != null) {
       sets.push(`empresa_id = $${idx++}`);
-      vals.push(empresa_id);
+      vals.push(Number(empresa_id));
     }
+
     if (chofer_id != null) {
       sets.push(`chofer_id = $${idx++}`);
       vals.push(chofer_id);
@@ -4016,13 +4030,26 @@ app.put('/api/pedidos/:id', withAuth, async (req, res) => {
 
     if (sets.length) {
       vals.push(req.params.id);
-      await query(`UPDATE pedidos SET ${sets.join(', ')} WHERE id = $${idx}`, vals);
+      const idPos = idx++;
+      vals.push(targetEmpresa);
+      const empPos = idx++;
+
+      const r = await query(
+        `UPDATE pedidos SET ${sets.join(', ')}
+         WHERE id = $${idPos}
+           AND ($${empPos}::int IS NULL OR empresa_id = $${empPos})
+         RETURNING id, empresa_id`,
+        vals
+      );
+
+      if (!r.length) {
+        return res.status(404).json({ error: 'Pedido no encontrado o sin permiso' });
+      }
 
       // --- LÓGICA DE NOTIFICACIÓN AUTOMÁTICA ---
       if (estado === 'en_ruta') {
-        const targetEmpresa = empresa_id || getEmpresaIdFromToken(req);
-        // Ejecutamos sin await para no demorar la respuesta de la API
-        notificarEnRuta(req.params.id, targetEmpresa).catch(err => 
+        const emp = Number(r[0].empresa_id);
+        notificarEnRuta(req.params.id, emp).catch(err =>
           console.error('Error en notificación background:', err)
         );
       }
@@ -4044,31 +4071,25 @@ app.delete('/api/pedidos/:id', withAuth, async (req, res) => {
     const esSuper = isSuper(req);
     const myEmpresa = getEmpresaIdFromToken(req);
 
-    // 1. Verificamos que el pedido exista y pertenezca a tu empresa
-    const rows = await query('SELECT id, empresa_id FROM pedidos WHERE id=$1', [id]);
+    // 1. Verificamos que el pedido exista y pertenezca a tu empresa (tenant-safe)
+    const rows = await query(
+      'SELECT id, empresa_id FROM pedidos WHERE id=$1 AND ($2::int IS NULL OR empresa_id=$2) LIMIT 1',
+      [id, esSuper ? null : Number(myEmpresa)]
+    );
     if (!rows.length) {
       return res.status(404).json({ error: 'Pedido no encontrado' });
     }
 
     const pedido = rows[0];
+    const targetEmpresa = Number(pedido.empresa_id);
 
-    // Seguridad: Si no eres super, solo puedes borrar pedidos de tu empresa
-    if (!esSuper && pedido.empresa_id !== myEmpresa) {
-      return res.status(403).json({ error: 'No tienes permiso para borrar este pedido' });
-    }
-
-    // 2. Borrado en Cascada Manual (para limpiar tablas satélite)
-    // Primero borramos los ítems del pedido
-    await query('DELETE FROM items_pedido WHERE pedido_id=$1', [id]);
-    
-    // CORRECCIÓN IMPORTANTE: La tabla se llama "pedido_track_points"
-    await query('DELETE FROM pedido_track_points WHERE pedido_id=$1', [id]); 
-    
-    // Borramos comprobantes asociados si existen
-    await query('DELETE FROM comprobantes_transferencia WHERE pedido_id=$1', [id]);
+    // 2. Borrado en Cascada Manual (tenant-safe)
+    await query('DELETE FROM items_pedido WHERE pedido_id=$1 AND empresa_id=$2', [id, targetEmpresa]);
+    await query('DELETE FROM pedido_track_points WHERE pedido_id=$1 AND empresa_id=$2', [id, targetEmpresa]);
+    await query('DELETE FROM comprobantes_transferencia WHERE pedido_id=$1 AND empresa_id=$2', [id, targetEmpresa]);
 
     // 3. Finalmente borramos el pedido principal
-    await query('DELETE FROM pedidos WHERE id=$1', [id]);
+    await query('DELETE FROM pedidos WHERE id=$1 AND empresa_id=$2', [id, targetEmpresa]);
 
     res.json({ ok: true });
 
@@ -4091,8 +4112,8 @@ app.put('/api/pedidos/:id/items', withAuth, async (req, res) => {
 
     // 1. Obtener datos clave del pedido (estado y chofer)
     const pedData = await client.query(
-      'SELECT chofer_id, estado, empresa_id FROM pedidos WHERE id = $1', 
-      [pedidoId]
+      'SELECT chofer_id, estado, empresa_id FROM pedidos WHERE id = $1 AND empresa_id = $2',
+      [pedidoId, empresaId]
     );
 
     if (pedData.rows.length === 0) {
