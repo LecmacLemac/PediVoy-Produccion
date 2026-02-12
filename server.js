@@ -4938,8 +4938,8 @@ async function notificarEnRuta(pedidoId, empresaId) {
     if (!token) {
       token = crypto.randomBytes(16).toString('hex');
       await query(
-        `UPDATE pedidos SET tracking_token = $1 WHERE id = $2`,
-        [token, pedidoId]
+        `UPDATE pedidos SET tracking_token = $1 WHERE id = $2 AND empresa_id = $3`,
+        [token, pedidoId, empresaId]
       );
     }
 
