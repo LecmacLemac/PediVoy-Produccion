@@ -1,14 +1,40 @@
 ﻿*
 !*/
 !.gitignore
+
+# Allow source/assets
 !*.html
 !*.js
-!.gitkeep
+!*.css
+!*.json
+!*.sql
+!*.md
+!*.yml
+!*.yaml
 
+# Allow key project files
 !package.json
 !package-lock.json
 !README.md
+!render.yaml
+!docker-compose.yml
 !.env.example
 
-
+# Keep placeholders
 !.gitkeep
+
+# Explicitly ignore secrets even if patterns above allow them
+.env
+.env.*
+credentials.json
+
+# OpenClaw workspace meta (no mezclar con el proyecto)
+AGENTS.md
+BOOTSTRAP.md
+HEARTBEAT.md
+IDENTITY.md
+SOUL.md
+TOOLS.md
+USER.md
+MEMORY.md
+memory/
