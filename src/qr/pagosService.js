@@ -81,14 +81,30 @@ async function getPagoPendientePorPedido({ pedidoId, empresaId }) {
      WHERE pedido_id = $1
        AND empresa_id = $2
        AND estado = 'pendiente'
-       AND (vence_at IS NULL OR vence_at > NOW())
      ORDER BY id DESC
      LIMIT 1
     `,
     [pedidoId, empresaId]
   );
 
-  return rows[0] || null;
+  const pago = rows[0] || null;
+  if (!pago) return null;
+
+  // Si está vencido, lo marcamos como expired y devolvemos null para forzar creación nueva
+  if (pago.vence_at && new Date(pago.vence_at).getTime() <= Date.now()) {
+    await query(
+      `UPDATE pedido_pagos
+          SET estado = 'expired',
+              updated_at = NOW()
+        WHERE id = $1
+          AND empresa_id = $2
+          AND estado = 'pendiente'`,
+      [pago.id, empresaId]
+    );
+    return null;
+  }
+
+  return pago;
 }
 
 /**
