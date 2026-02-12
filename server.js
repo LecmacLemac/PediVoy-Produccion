@@ -2198,10 +2198,10 @@ app.post('/api/asignarChofer', withAuth, async (req, res) => {
     const esSuper = isSuper(req);
     let empresaId = esSuper && empresa_id ? Number(empresa_id) : getEmpresaIdFromToken(req);
 
-    // 1) Validar zona y obtener empresa real de la zona
+    // 1) Validar zona y obtener empresa real de la zona (tenant-safe)
     const zonaRows = await query(
-      'SELECT id, empresa_id FROM zonas_geograficas WHERE id = $1',
-      [zonaIdNum]
+      'SELECT id, empresa_id FROM zonas_geograficas WHERE id = $1 AND ($2::int IS NULL OR empresa_id=$2) LIMIT 1',
+      [zonaIdNum, esSuper ? null : Number(empresaId)]
     );
     if (!zonaRows.length) {
       return res.status(400).json({ error: 'Zona no encontrada' });
@@ -2216,10 +2216,10 @@ app.post('/api/asignarChofer', withAuth, async (req, res) => {
     // Forzamos empresaId a la de la zona para que quede consistente
     empresaId = empresaZonaId;
 
-    // 2) Validar chofer y coherencia de empresa
+    // 2) Validar chofer y coherencia de empresa (tenant-safe)
     const choferRows = await query(
-      'SELECT id, empresa_id FROM choferes WHERE id = $1',
-      [choferIdNum]
+      'SELECT id, empresa_id FROM choferes WHERE id = $1 AND ($2::int IS NULL OR empresa_id=$2) LIMIT 1',
+      [choferIdNum, esSuper ? null : Number(empresaId)]
     );
     if (!choferRows.length) {
       return res.status(400).json({ error: 'Chofer no encontrado' });
@@ -2247,7 +2247,7 @@ app.post('/api/asignarChofer', withAuth, async (req, res) => {
 
 app.delete('/api/desasignarChofer', withAuth, async (req, res) => {
   try {
-    const { chofer_id, zona_id } = req.body || {};
+    const { chofer_id, zona_id, empresa_id } = req.body || {};
     const choferIdNum = Number(chofer_id);
     const zonaIdNum = Number(zona_id);
 
@@ -2255,14 +2255,23 @@ app.delete('/api/desasignarChofer', withAuth, async (req, res) => {
       return res.status(400).json({ error: 'chofer_id y zona_id deben ser enteros' });
     }
 
-    await query(
-      'DELETE FROM zona_chofer WHERE chofer_id=$1 AND zona_id=$2',
-      [choferIdNum, zonaIdNum]
+    const esSuper = isSuper(req);
+    const myEmpresa = getEmpresaIdFromToken(req);
+    const empresaId = esSuper && empresa_id ? Number(empresa_id) : myEmpresa;
+
+    const rows = await query(
+      'DELETE FROM zona_chofer WHERE chofer_id=$1 AND zona_id=$2 AND ($3::int IS NULL OR empresa_id=$3) RETURNING zona_id',
+      [choferIdNum, zonaIdNum, esSuper ? null : Number(empresaId)]
     );
+
+    if (!rows.length) {
+      return res.status(404).json({ error: 'Asignación no encontrada o sin permiso' });
+    }
+
     res.json({ ok: true });
-  } catch (e) { 
+  } catch (e) {
     console.error('ERROR DESASIGNAR:', e);
-    res.status(500).json({ error: 'Error desasignando' }); 
+    res.status(500).json({ error: 'Error desasignando' });
   }
 });
 
