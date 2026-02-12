@@ -827,6 +827,11 @@ CREATE INDEX IF NOT EXISTS idx_pedido_pagos_pendientes_empresa ON pedido_pagos (
 CREATE INDEX IF NOT EXISTS idx_pedido_pagos_pagados_empresa ON pedido_pagos (empresa_id, settlement_at) WHERE estado = 'pagado';
 CREATE INDEX IF NOT EXISTS idx_pedido_pagos_conciliacion ON pedido_pagos (empresa_id, conciliado, settlement_at) WHERE conciliado = FALSE;
 
+-- Garantiza 1 solo pago pendiente por pedido y empresa (evita duplicados por race conditions)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pedido_pagos_one_pending_per_order
+  ON pedido_pagos (empresa_id, pedido_id)
+  WHERE estado = 'pendiente';
+
 
 -- =========================================================
 -- 13. DATOS SEMILLA (Reset Admin)
