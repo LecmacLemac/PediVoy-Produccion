@@ -4622,30 +4622,23 @@ app.post('/api/pedidos/:id/toggle-pago', withAuth, async (req, res) => {
     const pedidoId = Number(req.params.id);
     const { marcado } = req.body; // true = validar, false = anular validación
     const esSuper = isSuper(req);
-    let empresaId = getEmpresaIdFromToken(req);
+    const myEmpresa = getEmpresaIdFromToken(req);
 
     if (!pedidoId) return res.status(400).json({ error: 'ID inválido' });
 
-    // Si es SuperAdmin y no viene empresa en el token, resolvemos por el pedido.
-    // Si NO es super, exigimos empresaId y validamos que el pedido pertenezca a esa empresa.
-    let pRows = [];
-    if (esSuper && !empresaId) {
-      pRows = await query(
-        'SELECT empresa_id, monto, chofer_id, fecha FROM pedidos WHERE id = $1',
-        [pedidoId]
-      );
-      if (pRows.length) empresaId = Number(pRows[0].empresa_id);
-    } else {
-      if (!empresaId) return res.status(400).json({ error: 'Empresa inválida' });
-      pRows = await query(
-        'SELECT monto, chofer_id, fecha FROM pedidos WHERE id = $1 AND empresa_id = $2',
-        [pedidoId, empresaId]
-      );
-    }
+    // Resolver pedido (tenant-safe). Super puede ver cualquiera, no-super solo su empresa.
+    const pRows = await query(
+      'SELECT empresa_id, monto, chofer_id, fecha FROM pedidos WHERE id = $1 AND ($2::int IS NULL OR empresa_id = $2) LIMIT 1',
+      [pedidoId, esSuper ? null : Number(myEmpresa)]
+    );
     if (!pRows.length) return res.status(404).json({ error: 'Pedido no encontrado' });
-    const p = pRows[0];
 
-    if (marcado) {
+    const p = pRows[0];
+    const empresaId = Number(p.empresa_id);
+
+    const marcadoBool = !!marcado;
+
+    if (marcadoBool) {
       // 1) MARCAR COMO PAGADO: crear registro contable en transferencias (si no existe)
       const existe = await query(
         'SELECT id FROM transferencias WHERE pedido_id = $1 AND empresa_id = $2',
