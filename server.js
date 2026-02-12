@@ -2579,11 +2579,17 @@ app.delete('/api/productos/:id', withAuth, async (req, res) => {
 
 app.get('/api/choferes/:id/costos', withAuth, async (req, res) => {
   try {
+    const esSuper = isSuper(req);
+    const myEmpresa = getEmpresaIdFromToken(req);
+
     const rows = await query(
-      `SELECT cc.*, p.nombre as producto_nombre 
+      `SELECT cc.*, p.nombre as producto_nombre
        FROM chofer_costos cc
        JOIN productos p ON p.id = cc.producto_id
-       WHERE cc.chofer_id = $1`, [req.params.id]
+       WHERE cc.chofer_id = $1
+         AND ($2::int IS NULL OR cc.empresa_id = $2)
+       ORDER BY cc.producto_id ASC`,
+      [req.params.id, esSuper ? null : Number(myEmpresa)]
     );
     res.json(rows);
   } catch (e) { res.status(500).json({ error: 'Error costos' }); }
@@ -2593,43 +2599,76 @@ app.get('/api/choferes/:id/costos', withAuth, async (req, res) => {
 app.post('/api/choferes/:id/costos', withAuth, async (req, res) => {
   try {
     const { producto_id, costo_unitario } = req.body;
-    
-    // Obtener empresa_id del chofer
-    const empresaId = getEmpresaIdFromToken(req) || 
-      (await query('SELECT empresa_id FROM choferes WHERE id=$1', [req.params.id]))[0]?.empresa_id;
-    
-    if (!empresaId) return res.status(400).json({ error: 'No se pudo determinar la empresa del chofer' });
+    const esSuper = isSuper(req);
+    const myEmpresa = getEmpresaIdFromToken(req);
 
-    // Usamos ON CONFLICT para que actúe como "Guardar o Actualizar"
+    // Resolver empresa del chofer (tenant-safe)
+    const rowsChofer = await query(
+      'SELECT empresa_id FROM choferes WHERE id=$1 AND ($2::int IS NULL OR empresa_id=$2) LIMIT 1',
+      [req.params.id, esSuper ? null : Number(myEmpresa)]
+    );
+    if (!rowsChofer.length) {
+      return res.status(404).json({ error: 'Chofer no encontrado o sin permiso' });
+    }
+
+    const empresaId = Number(rowsChofer[0].empresa_id);
+
+    // Upsert
     await query(
-      `INSERT INTO chofer_costos (empresa_id, chofer_id, producto_id, costo_unitario) 
+      `INSERT INTO chofer_costos (empresa_id, chofer_id, producto_id, costo_unitario)
        VALUES ($1, $2, $3, $4)
-       ON CONFLICT (empresa_id, chofer_id, producto_id) 
+       ON CONFLICT (empresa_id, chofer_id, producto_id)
        DO UPDATE SET costo_unitario = EXCLUDED.costo_unitario`,
       [empresaId, req.params.id, producto_id, costo_unitario]
     );
-    
+
     res.json({ ok: true });
-  } catch (e) { 
-    console.error('ERROR COSTOS:', e); // Esto te mostrará el error real en los logs de Render
-    res.status(500).json({ error: 'Error guardando costo: ' + (e.message || e) }); 
+  } catch (e) {
+    console.error('ERROR COSTOS:', e);
+    res.status(500).json({ error: 'Error guardando costo: ' + (e.message || e) });
   }
 });
 
 app.put('/api/choferes/:id/costos/:pid', withAuth, async (req, res) => {
   try {
     const { costo_unitario } = req.body;
-    await query(
-      `UPDATE chofer_costos SET costo_unitario=$1 WHERE chofer_id=$2 AND producto_id=$3`,
-      [costo_unitario, req.params.id, req.params.pid]
+    const esSuper = isSuper(req);
+    const myEmpresa = getEmpresaIdFromToken(req);
+
+    const rows = await query(
+      `UPDATE chofer_costos
+          SET costo_unitario=$1
+        WHERE chofer_id=$2 AND producto_id=$3
+          AND ($4::int IS NULL OR empresa_id=$4)
+      RETURNING chofer_id`,
+      [costo_unitario, req.params.id, req.params.pid, esSuper ? null : Number(myEmpresa)]
     );
+
+    if (!rows.length) {
+      return res.status(404).json({ error: 'Costo no encontrado o sin permiso' });
+    }
+
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: 'Error actualizando costo' }); }
 });
 
 app.delete('/api/choferes/:id/costos/:pid', withAuth, async (req, res) => {
   try {
-    await query(`DELETE FROM chofer_costos WHERE chofer_id=$1 AND producto_id=$2`, [req.params.id, req.params.pid]);
+    const esSuper = isSuper(req);
+    const myEmpresa = getEmpresaIdFromToken(req);
+
+    const rows = await query(
+      `DELETE FROM chofer_costos
+        WHERE chofer_id=$1 AND producto_id=$2
+          AND ($3::int IS NULL OR empresa_id=$3)
+      RETURNING chofer_id`,
+      [req.params.id, req.params.pid, esSuper ? null : Number(myEmpresa)]
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({ error: 'Costo no encontrado o sin permiso' });
+    }
+
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: 'Error borrando costo' }); }
 });
@@ -2640,10 +2679,28 @@ app.delete('/api/choferes/:id/costos/:pid', withAuth, async (req, res) => {
 
 app.get('/api/choferes/:id/escalas', withAuth, async (req, res) => {
   try {
-    const escalas = await query(`SELECT * FROM chofer_escalas WHERE chofer_id=$1`, [req.params.id]);
+    const esSuper = isSuper(req);
+    const myEmpresa = getEmpresaIdFromToken(req);
+
+    const escalas = await query(
+      `SELECT *
+       FROM chofer_escalas
+       WHERE chofer_id=$1
+         AND ($2::int IS NULL OR empresa_id=$2)
+       ORDER BY id DESC`,
+      [req.params.id, esSuper ? null : Number(myEmpresa)]
+    );
+
     for (let e of escalas) {
-      e.tramos = await query(`SELECT * FROM chofer_escala_tramos WHERE escala_id=$1 ORDER BY rango_min`, [e.id]);
+      e.tramos = await query(
+        `SELECT *
+         FROM chofer_escala_tramos
+         WHERE escala_id=$1
+         ORDER BY rango_min`,
+        [e.id]
+      );
     }
+
     res.json(escalas);
   } catch (e) { res.status(500).json({ error: 'Error escalas' }); }
 });
@@ -2651,8 +2708,19 @@ app.get('/api/choferes/:id/escalas', withAuth, async (req, res) => {
 app.post('/api/choferes/:id/escalas', withAuth, async (req, res) => {
   try {
     const { nombre, vigente_desde, vigente_hasta, notas } = req.body;
-    // Obtener empresa_id
-    const empresaId = getEmpresaIdFromToken(req) || (await query('SELECT empresa_id FROM choferes WHERE id=$1', [req.params.id]))[0]?.empresa_id;
+    const esSuper = isSuper(req);
+    const myEmpresa = getEmpresaIdFromToken(req);
+
+    // Resolver empresa del chofer (tenant-safe)
+    const rowsChofer = await query(
+      'SELECT empresa_id FROM choferes WHERE id=$1 AND ($2::int IS NULL OR empresa_id=$2) LIMIT 1',
+      [req.params.id, esSuper ? null : Number(myEmpresa)]
+    );
+    if (!rowsChofer.length) {
+      return res.status(404).json({ error: 'Chofer no encontrado o sin permiso' });
+    }
+
+    const empresaId = Number(rowsChofer[0].empresa_id);
 
     await query(
       `INSERT INTO chofer_escalas (empresa_id, chofer_id, nombre, vigente_desde, vigente_hasta, notas)
@@ -2666,14 +2734,43 @@ app.post('/api/choferes/:id/escalas', withAuth, async (req, res) => {
 app.put('/api/escalas/:id', withAuth, async (req, res) => {
   try {
     const { nombre, vigente_desde, vigente_hasta, notas } = req.body;
-    if (nombre) await query(`UPDATE chofer_escalas SET nombre=$1, vigente_desde=$2, vigente_hasta=$3, notas=$4 WHERE id=$5`, [nombre, vigente_desde, vigente_hasta, notas, req.params.id]);
+    const esSuper = isSuper(req);
+    const myEmpresa = getEmpresaIdFromToken(req);
+
+    const rows = await query(
+      `UPDATE chofer_escalas
+          SET nombre=$1, vigente_desde=$2, vigente_hasta=$3, notas=$4
+        WHERE id=$5
+          AND ($6::int IS NULL OR empresa_id=$6)
+      RETURNING id`,
+      [nombre, vigente_desde, vigente_hasta, notas, req.params.id, esSuper ? null : Number(myEmpresa)]
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({ error: 'Escala no encontrada o sin permiso' });
+    }
+
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: 'Error editando escala' }); }
 });
 
 app.delete('/api/escalas/:id', withAuth, async (req, res) => {
   try {
-    await query(`DELETE FROM chofer_escalas WHERE id=$1`, [req.params.id]);
+    const esSuper = isSuper(req);
+    const myEmpresa = getEmpresaIdFromToken(req);
+
+    const rows = await query(
+      `DELETE FROM chofer_escalas
+        WHERE id=$1
+          AND ($2::int IS NULL OR empresa_id=$2)
+      RETURNING id`,
+      [req.params.id, esSuper ? null : Number(myEmpresa)]
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({ error: 'Escala no encontrada o sin permiso' });
+    }
+
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: 'Error borrando escala' }); }
 });
@@ -2681,7 +2778,26 @@ app.delete('/api/escalas/:id', withAuth, async (req, res) => {
 app.post('/api/escalas/:id/tramos', withAuth, async (req, res) => {
   try {
     const { rango_min, rango_max, monto } = req.body;
-    await query(`INSERT INTO chofer_escala_tramos (escala_id, rango_min, rango_max, monto) VALUES ($1, $2, $3, $4)`, [req.params.id, rango_min, rango_max || null, monto]);
+    const esSuper = isSuper(req);
+    const myEmpresa = getEmpresaIdFromToken(req);
+
+    // Validar que la escala pertenece a la empresa
+    const esc = await query(
+      `SELECT id
+       FROM chofer_escalas
+       WHERE id=$1
+         AND ($2::int IS NULL OR empresa_id=$2)
+       LIMIT 1`,
+      [req.params.id, esSuper ? null : Number(myEmpresa)]
+    );
+    if (!esc.length) return res.status(404).json({ error: 'Escala no encontrada o sin permiso' });
+
+    await query(
+      `INSERT INTO chofer_escala_tramos (escala_id, rango_min, rango_max, monto)
+       VALUES ($1, $2, $3, $4)`,
+      [req.params.id, rango_min, rango_max || null, monto]
+    );
+
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: 'Error creando tramo' }); }
 });
@@ -2689,14 +2805,49 @@ app.post('/api/escalas/:id/tramos', withAuth, async (req, res) => {
 app.put('/api/tramos/:id', withAuth, async (req, res) => {
   try {
     const { rango_min, rango_max, monto } = req.body;
-    await query(`UPDATE chofer_escala_tramos SET rango_min=$1, rango_max=$2, monto=$3 WHERE id=$4`, [rango_min, rango_max || null, monto, req.params.id]);
+    const esSuper = isSuper(req);
+    const myEmpresa = getEmpresaIdFromToken(req);
+
+    const rows = await query(
+      `UPDATE chofer_escala_tramos t
+          SET rango_min=$1, rango_max=$2, monto=$3
+        WHERE t.id=$4
+          AND EXISTS (
+            SELECT 1
+            FROM chofer_escalas e
+            WHERE e.id = t.escala_id
+              AND ($5::int IS NULL OR e.empresa_id=$5)
+          )
+      RETURNING t.id`,
+      [rango_min, rango_max || null, monto, req.params.id, esSuper ? null : Number(myEmpresa)]
+    );
+
+    if (!rows.length) return res.status(404).json({ error: 'Tramo no encontrado o sin permiso' });
+
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: 'Error editando tramo' }); }
 });
 
 app.delete('/api/tramos/:id', withAuth, async (req, res) => {
   try {
-    await query(`DELETE FROM chofer_escala_tramos WHERE id=$1`, [req.params.id]);
+    const esSuper = isSuper(req);
+    const myEmpresa = getEmpresaIdFromToken(req);
+
+    const rows = await query(
+      `DELETE FROM chofer_escala_tramos t
+        WHERE t.id=$1
+          AND EXISTS (
+            SELECT 1
+            FROM chofer_escalas e
+            WHERE e.id = t.escala_id
+              AND ($2::int IS NULL OR e.empresa_id=$2)
+          )
+      RETURNING t.id`,
+      [req.params.id, esSuper ? null : Number(myEmpresa)]
+    );
+
+    if (!rows.length) return res.status(404).json({ error: 'Tramo no encontrado o sin permiso' });
+
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: 'Error borrando tramo' }); }
 });
