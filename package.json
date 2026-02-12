@@ -15,7 +15,7 @@
     "test": "echo \"No tests configured\" && exit 0",
     "db:backup": "node backup.js",
     "db:restore": "node restore.js",
-    "postinstall": "echo \"Usando Chromium del sistema en Render\" && if [ -z \"$RENDER\" ]; then PUPPETEER_CACHE_DIR=.puppeteer npx puppeteer browsers install chrome; fi"
+    "postinstall": "echo \"Instalando Chromium para Puppeteer (local)\" && if [ -z \"$RENDER\" ]; then PUPPETEER_CACHE_DIR=\"$PWD/.puppeteer\" npx puppeteer browsers install chrome; fi"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

@@ -694,8 +694,9 @@ app.post('/api/transferencias/:id/verificar', withAuth, async (req, res) => {
       LEFT JOIN pedidos p         ON p.id = ct.pedido_id
       LEFT JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
       WHERE ct.id = $1
+        AND ($2::int IS NULL OR ct.empresa_id = $2)
       LIMIT 1
-    `, [id]);
+    `, [id, esSuper ? null : Number(myEmpresa)]);
 
     if (!rows.length) {
       return res.status(404).json({ error: 'transferencia no encontrada' });
@@ -703,18 +704,16 @@ app.post('/api/transferencias/:id/verificar', withAuth, async (req, res) => {
 
     const ct = rows[0];
 
-    // Seguridad por empresa
-    if (!esSuper && myEmpresa && Number(ct.empresa_id) !== Number(myEmpresa)) {
-      return res.status(403).json({ error: 'No autorizado' });
-    }
+    // Nota: la seguridad por empresa se hace en SQL (WHERE ... empresa_id)
 
     // 1) Marcar como validado en comprobantes_transferencia
     await query(
       `UPDATE comprobantes_transferencia
        SET validado = 1,
            updated_at = NOW()
-       WHERE id = $1`,
-      [id]
+       WHERE id = $1
+         AND ($2::int IS NULL OR empresa_id = $2)`,
+      [id, esSuper ? null : Number(myEmpresa)]
     );
 
     // 2) Insertar consolidado en tabla transferencias (si no existe)
@@ -822,15 +821,15 @@ app.delete('/api/transferencias/:id', withAuth, async (req, res) => {
     const myEmpresa = getEmpresaIdFromToken(req);
 
     // 1. Verificar existencia y permisos
-    const rows = await query('SELECT id, empresa_id, archivo_path FROM comprobantes_transferencia WHERE id=$1', [id]);
+    const rows = await query(
+      'SELECT id, empresa_id, archivo_path FROM comprobantes_transferencia WHERE id=$1 AND ($2::int IS NULL OR empresa_id=$2)',
+      [id, esSuper ? null : Number(myEmpresa)]
+    );
     if (!rows.length) return res.status(404).json({ error: 'Comprobante no encontrado' });
     
     const comp = rows[0];
 
-    // Seguridad: solo borrar si es mi empresa o soy super
-    if (!esSuper && Number(comp.empresa_id) !== Number(myEmpresa)) {
-      return res.status(403).json({ error: 'No autorizado' });
-    }
+    // Nota: permisos ya filtrados en SQL (WHERE ... empresa_id)
 
     // 2. Eliminar archivo físico (Opcional, para no dejar basura)
     if (comp.archivo_path) {
@@ -843,7 +842,10 @@ app.delete('/api/transferencias/:id', withAuth, async (req, res) => {
     }
 
     // 3. Eliminar registro de la DB
-    await query('DELETE FROM comprobantes_transferencia WHERE id=$1', [id]);
+    await query(
+      'DELETE FROM comprobantes_transferencia WHERE id=$1 AND ($2::int IS NULL OR empresa_id=$2)',
+      [id, esSuper ? null : Number(myEmpresa)]
+    );
 
     res.json({ ok: true });
   } catch (e) {
