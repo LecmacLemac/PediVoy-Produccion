@@ -4877,15 +4877,17 @@ app.post('/api/track/update', withAuth, async (req, res) => {
       SELECT empresa_id, chofer_id
       FROM pedidos
       WHERE id = $1
+        AND empresa_id = $2
       LIMIT 1
-    `, [pid]);
+    `, [pid, empresaId]);
 
     if (!pedRows.length) {
+      // si no está, puede ser inexistente o de otra empresa → no filtramos info
       return res.status(404).json({ error: 'Pedido no encontrado' });
     }
 
     const ped = pedRows[0];
-    if (ped.chofer_id !== choferId || ped.empresa_id !== empresaId) {
+    if (ped.chofer_id !== choferId) {
       return res.status(403).json({ error: 'No puedes actualizar este pedido' });
     }
 
