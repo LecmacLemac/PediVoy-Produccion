@@ -222,6 +222,9 @@ export function createApp(deps) {
     handlers,
     enqueueWppMessage,
     checkLicencia,
+
+    withAuth,
+    isSuper,
   });
 
   // --------------------------------------------------

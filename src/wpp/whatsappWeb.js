@@ -15,6 +15,10 @@ export function registerWhatsAppWeb(app, deps) {
     handlers,
     enqueueWppMessage,
     checkLicencia,
+
+    // auth helpers (usados en endpoints /api/whatsapp/*)
+    withAuth,
+    isSuper,
   } = deps || {};
 
   if (!app) throw new Error('registerWhatsAppWeb: falta app');
