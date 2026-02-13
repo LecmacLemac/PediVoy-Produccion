@@ -31,6 +31,7 @@ import { createPedidosItemsRouter } from './src/routes/pedidosItems.js';
 import { createPedidosPagoRouter } from './src/routes/pedidosPago.js';
 import { createEstadisticasRouter } from './src/routes/estadisticas.js';
 import { createStockRouter } from './src/routes/stock.js';
+import { createReportesRouter } from './src/routes/reportes.js';
 import { createLicenciasMpRouter, createMercadoPagoWebhookRouter } from './src/routes/licenciasMp.js';
 import { createPromptsGlobalesRouter } from './src/routes/promptsGlobales.js';
 
@@ -486,6 +487,7 @@ app.use('/api/pedidos', createPedidosItemsRouter());
 app.use('/api/pedidos', createPedidosPagoRouter());
 app.use('/api/estadisticas', createEstadisticasRouter());
 app.use('/api/stock', createStockRouter());
+app.use('/api/reportes', createReportesRouter());
 app.use('/api/transferencias', createTransferenciasRouter({ TRANSF_DIR }));
 
 // Licencias Mercado Pago
@@ -3506,82 +3508,7 @@ app.get('/api/repartidor/mis-zonas', withAuth, async (req, res) => {
 
 // Stock movido a src/routes/stock.js
 
-// --------------------------------------------------
-// REPORTES - PEDIDOS ENTREGADOS
-// --------------------------------------------------
-
-app.get('/api/reportes/entregados', withAuth, async (req, res) => {
-  try {
-    const { from, to, zona_id, chofer_id, metodo_pago, empresa_id } = req.query || {};
-    const esSuper       = isSuper(req);
-    const myEmpresa     = getEmpresaIdFromToken(req);
-    const targetEmpresa = (esSuper && empresa_id) ? Number(empresa_id) : myEmpresa;
-
-    if (!targetEmpresa) {
-      return res.status(400).json({ error: 'Empresa no determinada' });
-    }
-
-    // MODIFICADO: Agregamos LEFT JOIN con transferencias para saber si ya está "pagado" (validado)
-    let sql = `
-      SELECT 
-        p.id,
-        p.fecha,
-        pe.cliente,
-        pe.telefono,
-        pe.direccion,
-        p.metodo_pago,
-        p.monto,
-        p.cantidad_entregada,
-        p.chofer_id,
-        c.nombre AS chofer_nombre,
-        pe.zona_id,
-        -- Devuelve true si existe un registro en la tabla financiera para este pedido
-        (CASE WHEN t.id IS NOT NULL THEN true ELSE false END) as pagado 
-      FROM pedidos p
-      JOIN puntos_entrega pe ON p.punto_entrega_id = pe.id
-      LEFT JOIN choferes c   ON p.chofer_id = c.id
-      LEFT JOIN transferencias t ON t.pedido_id = p.id AND t.empresa_id = p.empresa_id
-      WHERE p.estado = 'entregado'
-        AND pe.empresa_id = $1
-    `;
-
-    const params = [targetEmpresa];
-    let idx = 2;
-
-    // Fechas como rango
-    if (from) {
-      sql += ` AND p.fecha >= $${idx++}::date`;
-      params.push(from.toString().slice(0, 10));
-    }
-    if (to) {
-      sql += ` AND p.fecha < ($${idx++}::date + INTERVAL '1 day')`;
-      params.push(to.toString().slice(0, 10));
-    }
-
-    if (zona_id) {
-      sql += ` AND pe.zona_id = $${idx++}`;
-      params.push(Number(zona_id));
-    }
-
-    if (chofer_id) {
-      sql += ` AND p.chofer_id = $${idx++}`;
-      params.push(Number(chofer_id));
-    }
-
-    if (metodo_pago) {
-      sql += ` AND p.metodo_pago = $${idx++}`;
-      params.push(metodo_pago);
-    }
-
-    sql += ` ORDER BY p.fecha DESC, p.id DESC`;
-
-    const rows = await query(sql, params);
-    res.json(rows);
-  } catch (e) {
-    console.error('ERROR /api/reportes/entregados', e);
-    res.status(500).json({ error: 'Error generando reporte de entregados' });
-  }
-});
+// Reportes movidos a src/routes/reportes.js
 
 // Endpoint para el Checkbox (Toggle Pago)
 // toggle-pago movido a src/routes/pedidosPago.js
