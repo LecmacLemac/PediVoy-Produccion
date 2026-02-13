@@ -76,5 +76,17 @@ export function createAuthRouter() {
     }
   });
 
+  // POST /api/logout
+  // Limpia la cookie httpOnly para cerrar sesión (modo seguro: sin tokens en localStorage)
+  router.post('/logout', (_req, res) => {
+    res.cookie('token', '', {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: process.env.NODE_ENV === 'production',
+      maxAge: 0,
+    });
+    res.json({ ok: true });
+  });
+
   return router;
 }

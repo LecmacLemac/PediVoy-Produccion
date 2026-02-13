@@ -191,17 +191,15 @@
         remember.checked = true;
       }
 
-      // Check sesión existente
-      const token = localStorage.getItem('token');
-      if(token) {
-        try {
-          const r = await fetch('/api/me', { headers:{ Authorization:'Bearer '+token }});
-          if(r.ok) {
-            const d = await r.json();
-            redirectByRole(d?.user?.role);
-          }
-        } catch {}
-      }
+      // Check sesión existente (modo seguro: cookie httpOnly)
+      try {
+        const r = await fetch('/api/me', { credentials: 'include' });
+        if (r.ok) {
+          const d = await r.json();
+          redirectByRole(d?.user?.role);
+        }
+      } catch {}
+      
     })();
 
     // --- Logic ---
@@ -220,6 +218,7 @@
         const res = await fetch('/api/login', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
+          credentials: 'include',
           body: JSON.stringify({ 
             username: user.value.trim(), 
             password: pass.value 
@@ -237,18 +236,21 @@
             throw new Error(data.error || 'Credenciales incorrectas');
         }
         
-        if(!data.token) throw new Error('Error de servidor: Sin token');
+        // Éxito: el backend setea cookie httpOnly.
+        // No guardamos token en localStorage (modo seguro).
 
-        // Éxito
-        localStorage.setItem('token', data.token);
-        
         if(remember.checked) localStorage.setItem('lastUsername', user.value.trim());
         else localStorage.removeItem('lastUsername');
 
-        // Redirección inteligente
+        // Redirección inteligente: consultamos /api/me para rol real
         const next = new URLSearchParams(location.search).get('next');
-        if(next) location.href = next;
-        else redirectByRole(readRole(data.token));
+        if(next) {
+          location.href = next;
+        } else {
+          const me = await fetch('/api/me', { credentials: 'include' });
+          const j = me.ok ? await me.json() : {};
+          redirectByRole(j?.user?.role);
+        }
 
       } catch(e) {
         showError(e.message);
@@ -266,12 +268,7 @@
       else location.href = 'dashboard.html'; // Dashboard admin/super
     }
 
-    function readRole(token) {
-      try {
-        const payload = JSON.parse(atob(token.split('.')[1]));
-        return payload.role;
-      } catch { return 'user'; }
-    }
+    // readRole(token) ya no se usa (modo seguro: cookie httpOnly)
 
     function setLoading(isLoading) {
       btn.disabled = isLoading;

@@ -441,9 +441,11 @@
   <div id="toast" class="toast"></div>
 
   <script type="module">
-    // ====== Auth ======
-    const token = localStorage.getItem('token');
-    if (!token) location.href = 'login.html';
+    // ====== Auth (modo seguro: cookie httpOnly) ======
+    const authFetch = (url, opts = {}) => {
+      const headers = opts.headers || {};
+      return fetch(url, { ...opts, headers, credentials: 'include' });
+    };
 
     const $ = s => document.querySelector(s);
     const rows = $('#rows');
@@ -514,7 +516,10 @@
     }
 
     // ====== Initialization ======
-    $('#logout').onclick   = () => { localStorage.removeItem('token'); location.href = 'login.html'; };
+    $('#logout').onclick = async () => {
+      try { await authFetch('/api/logout', { method: 'POST' }); } catch {}
+      location.href = 'login.html';
+    };
     $('#btnRef').onclick   = () => { q.value=''; initLoad(); };
 
     $('#btnClear').onclick = () => {
@@ -591,9 +596,7 @@
     // ====== API helpers ======
 
     async function whoAmI(){
-      const r = await fetch('/api/me', {
-        headers:{ Authorization:'Bearer '+token }
-      });
+      const r = await authFetch('/api/me');
       if (r.status === 401) {
         location.href = 'login.html';
         return;
@@ -612,9 +615,7 @@
 
     async function setupEmpresas(me){
       try {
-        const r    = await fetch('/api/empresas', {
-          headers:{ Authorization:'Bearer '+token }
-        });
+        const r    = await authFetch('/api/empresas');
         const list = await r.json();
 
         if (Array.isArray(list) && list.length > 0) {
@@ -650,9 +651,7 @@
       }
 
       try {
-        const r = await fetch('/api/choferes' + qs, {
-          headers: { Authorization: 'Bearer ' + token }
-        });
+        const r = await authFetch('/api/choferes' + qs);
         const list = await r.json();
 
         const baseOptions = `
@@ -690,9 +689,7 @@
       const qs  = eid ? `?empresa_id=${eid}` : '';
 
       try {
-        const r = await fetch('/api/productos'+qs, {
-          headers:{ Authorization:'Bearer '+token }
-        });
+        const r = await authFetch('/api/productos'+qs);
         if (!r.ok) { productosEmpresa = []; return; }
 
         productosEmpresa = await r.json();
@@ -731,9 +728,7 @@
       }
 
       try {
-        const r = await fetch('/api/pedidos?' + params.toString(), {
-          headers: { Authorization: 'Bearer ' + token }
-        });
+        const r = await authFetch('/api/pedidos?' + params.toString());
         if (!r.ok) {
           pedidos = [];
           return;
@@ -839,9 +834,7 @@
       dlg.showModal();
 
       try {
-        const r = await fetch(`/api/pedidos/${id}/items`, {
-          headers:{ Authorization:'Bearer '+token }
-        });
+        const r = await authFetch(`/api/pedidos/${id}/items`);
         const items = await r.json();
         const list  = items.length ? items : [{producto:'', cantidad:1, precio_unitario:0}];
         dlg_itemsBody.innerHTML = list.map(renderItemRow).join('');
@@ -855,9 +848,8 @@
       if (!confirm(`¿Estás seguro de ELIMINAR el pedido #${id}?\nEsta acción no se puede deshacer.`)) return;
 
       try {
-        const r = await fetch(`/api/pedidos/${id}`, {
-          method: 'DELETE',
-          headers:{ Authorization:'Bearer '+token }
+        const r = await authFetch(`/api/pedidos/${id}`, {
+          method: 'DELETE'
         });
 
         if (r.ok) {
@@ -938,11 +930,10 @@
       const zonaId    = Number($('#dlg_zona_id').value)    || null;
 
       try {
-        await fetch(`/api/pedidos/${editingId}`, {
+        await authFetch(`/api/pedidos/${editingId}`, {
           method: 'PUT',
           headers:{
-            'Content-Type':'application/json',
-            Authorization:'Bearer '+token
+            'Content-Type':'application/json'
           },
           body: JSON.stringify({
             estado:      $('#dlg_estado').value,
@@ -953,11 +944,10 @@
           })
         });
 
-        await fetch(`/api/pedidos/${editingId}/items`, {
+        await authFetch(`/api/pedidos/${editingId}/items`, {
           method: 'PUT',
           headers:{
-            'Content-Type':'application/json',
-            Authorization:'Bearer '+token
+            'Content-Type':'application/json'
           },
           body: JSON.stringify({ items })
         });
