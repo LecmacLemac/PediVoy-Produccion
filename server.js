@@ -36,6 +36,7 @@ import { createReportesRouter } from './src/routes/reportes.js';
 import { createRepartidorStatsRouter } from './src/routes/repartidorStats.js';
 import { createLicenciasMpRouter, createMercadoPagoWebhookRouter } from './src/routes/licenciasMp.js';
 import { createPromptsGlobalesRouter } from './src/routes/promptsGlobales.js';
+import { trackingPublicRouter } from './src/trackingPublic.js';
 
 // --------------------------------------------------
 // Config express
