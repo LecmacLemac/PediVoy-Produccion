@@ -26,6 +26,7 @@ import { createTransferenciasRouter } from './src/routes/transferencias.js';
 import { createAuthRouter } from './src/routes/auth.js';
 import { createClientesRouter } from './src/routes/clientes.js';
 import { createTrackingRouter } from './src/routes/tracking.js';
+import { createPedidosRouter } from './src/routes/pedidos.js';
 import { createLicenciasMpRouter, createMercadoPagoWebhookRouter } from './src/routes/licenciasMp.js';
 import { createPromptsGlobalesRouter } from './src/routes/promptsGlobales.js';
 
@@ -476,6 +477,7 @@ registerRoutes(app);
 app.use('/api', createAuthRouter());
 app.use('/api/clientes', createClientesRouter());
 app.use('/api/track', createTrackingRouter());
+app.use('/api/pedidos', createPedidosRouter());
 app.use('/api/transferencias', createTransferenciasRouter({ TRANSF_DIR }));
 
 // Licencias Mercado Pago
@@ -3490,198 +3492,7 @@ app.get('/api/repartidor/mis-zonas', withAuth, async (req, res) => {
 // --------------------------------------------------
 // PEDIDOS (ADMIN / DASHBOARD)
 // --------------------------------------------------
-
-app.get('/api/pedidos', withAuth, checkLicencia, async (req, res) => {
-  try {
-    const { from, to, estado, chofer_id, empresa_id } = req.query || {};
-    const esSuper = isSuper(req);
-    
-    let targetEmpresa = esSuper 
-      ? (empresa_id ? Number(empresa_id) : null) 
-      : getEmpresaIdFromToken(req);
-
-    let sql = `
-      SELECT 
-        p.id,
-        p.fecha,
-        p.estado,
-        p.monto,
-        p.metodo_pago,
-        pe.cliente,
-        pe.telefono,
-        pe.direccion,
-        p.empresa_id,
-        p.zona_id,
-        p.chofer_id,
-        c.nombre AS chofer_nombre
-      FROM pedidos p
-      JOIN puntos_entrega pe ON p.punto_entrega_id = pe.id
-      LEFT JOIN choferes c   ON p.chofer_id = c.id
-      WHERE 1=1
-    `;
-    
-    const params = [];
-    let idx = 1;
-
-    // Empresa
-    if (targetEmpresa) {
-      sql += ` AND pe.empresa_id = $${idx++}`;
-      params.push(targetEmpresa);
-    }
-
-    // Filtros varios
-    if (chofer_id) {
-      sql += ` AND p.chofer_id = $${idx++}`;
-      params.push(Number(chofer_id));
-    }
-    if (estado) {
-      sql += ` AND p.estado = $${idx++}`;
-      params.push(estado);
-    }
-
-    // Fechas (rango, sin tocar la columna)
-    if (from) {
-      sql += ` AND p.fecha >= $${idx++}::date`;
-      params.push(from.toString().slice(0, 10));
-    }
-    if (to) {
-      sql += ` AND p.fecha < ($${idx++}::date + INTERVAL '1 day')`;
-      params.push(to.toString().slice(0, 10));
-    }
-
-    sql += ` ORDER BY p.fecha DESC, p.id DESC LIMIT 500`;
-
-    const rows = await query(sql, params);
-    res.json(rows);
-
-  } catch (e) {
-    console.error('ERROR GET PEDIDOS:', e);
-    res.status(500).json({ error: 'Error cargando pedidos' });
-  }
-});
-
-app.put('/api/pedidos/:id', withAuth, async (req, res) => {
-  try {
-    const { estado, metodo_pago, empresa_id, chofer_id, zona_id } = req.body;
-    const esSuper = isSuper(req);
-    const myEmpresa = getEmpresaIdFromToken(req);
-
-    // Resolver empresa objetivo (super puede override explícito; sino, queda la del token)
-    const targetEmpresa = esSuper
-      ? (empresa_id != null ? Number(empresa_id) : null)
-      : Number(myEmpresa);
-
-    if (!esSuper && !targetEmpresa) {
-      return res.status(400).json({ error: 'Falta empresa.' });
-    }
-
-    const sets = [];
-    const vals = [];
-    let idx = 1;
-
-    if (estado) {
-      sets.push(`estado = $${idx++}`);
-      vals.push(estado);
-    }
-    if (metodo_pago) {
-      sets.push(`metodo_pago = $${idx++}`);
-      vals.push(metodo_pago);
-    }
-
-    // Solo super puede cambiar empresa_id del pedido
-    if (esSuper && empresa_id != null) {
-      sets.push(`empresa_id = $${idx++}`);
-      vals.push(Number(empresa_id));
-    }
-
-    if (chofer_id != null) {
-      sets.push(`chofer_id = $${idx++}`);
-      vals.push(chofer_id);
-    }
-    if (zona_id != null) {
-      sets.push(`zona_id = $${idx++}`);
-      vals.push(zona_id);
-    }
-
-    if (sets.length) {
-      vals.push(req.params.id);
-      const idPos = idx++;
-      vals.push(targetEmpresa);
-      const empPos = idx++;
-
-      const r = await query(
-        `UPDATE pedidos SET ${sets.join(', ')}
-         WHERE id = $${idPos}
-           AND ($${empPos}::int IS NULL OR empresa_id = $${empPos})
-         RETURNING id, empresa_id`,
-        vals
-      );
-
-      if (!r.length) {
-        return res.status(404).json({ error: 'Pedido no encontrado o sin permiso' });
-      }
-
-      // --- LÓGICA DE NOTIFICACIÓN AUTOMÁTICA ---
-      if (estado === 'en_ruta') {
-        const emp = Number(r[0].empresa_id);
-        notificarEnRuta(req.params.id, emp).catch(err =>
-          console.error('Error en notificación background:', err)
-        );
-      }
-
-      // Opcional: invalidar tracking_token al entregar (hardening de privacidad)
-      if (estado === 'entregado' && process.env.TRACK_CLEAR_ON_DELIVER === '1') {
-        const emp = Number(r[0].empresa_id);
-        await query(
-          'UPDATE pedidos SET tracking_token = NULL WHERE id = $1 AND empresa_id = $2',
-          [req.params.id, emp]
-        );
-      }
-      // -----------------------------------------
-    }
-
-    res.json({ ok: true });
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: 'Error actualizando pedido' });
-  }
-});
-
-app.delete('/api/pedidos/:id', withAuth, async (req, res) => {
-  try {
-    const id = Number(req.params.id);
-    if (!id) return res.status(400).json({ error: 'ID inválido' });
-
-    const esSuper = isSuper(req);
-    const myEmpresa = getEmpresaIdFromToken(req);
-
-    // 1. Verificamos que el pedido exista y pertenezca a tu empresa (tenant-safe)
-    const rows = await query(
-      'SELECT id, empresa_id FROM pedidos WHERE id=$1 AND ($2::int IS NULL OR empresa_id=$2) LIMIT 1',
-      [id, esSuper ? null : Number(myEmpresa)]
-    );
-    if (!rows.length) {
-      return res.status(404).json({ error: 'Pedido no encontrado' });
-    }
-
-    const pedido = rows[0];
-    const targetEmpresa = Number(pedido.empresa_id);
-
-    // 2. Borrado en Cascada Manual (tenant-safe)
-    await query('DELETE FROM items_pedido WHERE pedido_id=$1 AND empresa_id=$2', [id, targetEmpresa]);
-    await query('DELETE FROM pedido_track_points WHERE pedido_id=$1 AND empresa_id=$2', [id, targetEmpresa]);
-    await query('DELETE FROM comprobantes_transferencia WHERE pedido_id=$1 AND empresa_id=$2', [id, targetEmpresa]);
-
-    // 3. Finalmente borramos el pedido principal
-    await query('DELETE FROM pedidos WHERE id=$1 AND empresa_id=$2', [id, targetEmpresa]);
-
-    res.json({ ok: true });
-
-  } catch (e) {
-    console.error('ERROR DELETE PEDIDO:', e);
-    res.status(500).json({ error: 'Error interno al eliminar el pedido' });
-  }
-});
+// Rutas base movidas a src/routes/pedidos.js (GET /api/pedidos, PUT/DELETE /api/pedidos/:id)
 
 app.put('/api/pedidos/:id/items', withAuth, async (req, res) => {
   const pedidoId = req.params.id;
