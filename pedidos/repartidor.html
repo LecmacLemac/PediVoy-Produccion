@@ -895,13 +895,15 @@ $('#gForm').addEventListener('submit', async (e) => {
         
         if(file) formData.append('comprobante', file);
         
-        await api('/api/gastos', { method: 'POST', body: formData });
+        await withLock('gastos:submit', async () => {
+          await api('/api/gastos', { method: 'POST', body: formData });
+        });
 
         toast('✅ Registro guardado');
         gInit(); 
 
     } catch (err) {
-        alert('❌ ' + (err.message || 'Error'));
+        notifyError(err?.message || 'Error guardando gasto', err);
     } finally {
         if(btn) btn.disabled = false;
     }
@@ -958,34 +960,36 @@ async function optimizarRuta() {
 
   navigator.geolocation.getCurrentPosition(async (pos) => {
       try {
-          const { latitude, longitude } = pos.coords;
-          const res = await api('/api/repartidor/optimizar-ruta', {
-              method: 'POST',
-              body: { lat: latitude, lng: longitude }
+          await withLock('ruta:optimizar', async () => {
+            const { latitude, longitude } = pos.coords;
+            const res = await api('/api/repartidor/optimizar-ruta', {
+                method: 'POST',
+                body: { lat: latitude, lng: longitude }
+            });
+
+            if (res.ok && res.ruta && res.ruta.length > 0) {
+                // Obtenemos el orden devuelto por la API (nearest neighbor)
+                const optimizedIds = res.ruta.map(r => r.id);
+                
+                // Mapa para búsqueda rápida de índice
+                const orderMap = new Map(optimizedIds.map((id, index) => [id, index]));
+
+                // Reordenamos el array local 'pedidos'
+                pedidos.sort((a, b) => {
+                    const idxA = orderMap.has(a.id) ? orderMap.get(a.id) : 9999;
+                    const idxB = orderMap.has(b.id) ? orderMap.get(b.id) : 9999;
+                    return idxA - idxB;
+                });
+
+                renderCards();
+                toast('🚀 Ruta optimizada con éxito');
+            } else {
+                toast('⚠️ No se pudo optimizar (quizás no hay pedidos activos)');
+            }
           });
-
-          if (res.ok && res.ruta && res.ruta.length > 0) {
-              // Obtenemos el orden devuelto por la API (nearest neighbor)
-              const optimizedIds = res.ruta.map(r => r.id);
-              
-              // Mapa para búsqueda rápida de índice
-              const orderMap = new Map(optimizedIds.map((id, index) => [id, index]));
-
-              // Reordenamos el array local 'pedidos'
-              pedidos.sort((a, b) => {
-                  const idxA = orderMap.has(a.id) ? orderMap.get(a.id) : 9999;
-                  const idxB = orderMap.has(b.id) ? orderMap.get(b.id) : 9999;
-                  return idxA - idxB;
-              });
-
-              renderCards();
-              toast('🚀 Ruta optimizada con éxito');
-          } else {
-              toast('⚠️ No se pudo optimizar (quizás no hay pedidos activos)');
-          }
       } catch (e) {
           console.error(e);
-          toast('Error al optimizar');
+          notifyError(e?.message || 'Error al optimizar', e);
       } finally {
           btn.disabled = false;
           btn.innerHTML = '⚡ Optimizar Ruta';
@@ -1987,21 +1991,23 @@ async function togglePagoRepartidor(pedidoId, checkbox) {
   checkbox.disabled = true;
 
   try {
-    const res = await api(`/api/pedidos/${pedidoId}/toggle-pago`, {
-      method: 'POST',
-      body: { marcado }
-    });
+    await withLock(`pago:${pedidoId}`, async () => {
+      const res = await api(`/api/pedidos/${pedidoId}/toggle-pago`, {
+        method: 'POST',
+        body: { marcado }
+      });
 
-    if (res && res.ok) {
-      toast(marcado ? '✅ Transferencia validada' : '↩️ Validación anulada');
-      // si tenés alguna función para refrescar resumen/caja, llamala acá
-      // loadCaja?.();
-    } else {
-      throw new Error(res?.error || 'Error al guardar');
-    }
+      if (res && res.ok) {
+        toast(marcado ? '✅ Transferencia validada' : '↩️ Validación anulada');
+        // si tenés alguna función para refrescar resumen/caja, llamala acá
+        // loadCaja?.();
+      } else {
+        throw new Error(res?.error || 'Error al guardar');
+      }
+    });
   } catch (e) {
     console.error(e);
-    toast('❌ Error al actualizar pago');
+    notifyError(e?.message || 'Error al actualizar pago', e);
     checkbox.checked = !marcado;
   } finally {
     checkbox.disabled = false;
