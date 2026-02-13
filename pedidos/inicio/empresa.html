@@ -1161,21 +1161,20 @@
       setTimeout(() => t.classList.remove('show'), 3000);
     }
 
-    async function api(endpoint, opts = {}) {
-      const token = localStorage.getItem('token');
-      if (!token) {
-        window.location.href = LOGIN_URL;
-        return;
-      }
+    // Modo seguro: auth por cookie httpOnly
+    const authFetch = (url, opts = {}) => {
+      const { headers = {}, ...rest } = opts;
+      return fetch(url, { ...rest, headers, credentials: 'include' });
+    };
 
+    async function api(endpoint, opts = {}) {
       const headers = {
-        'Authorization': `Bearer ${token}`,
         'Content-Type': 'application/json',
         ...(opts.headers || {}),
       };
 
       try {
-        const res = await fetch(endpoint, { ...opts, headers });
+        const res = await authFetch(endpoint, { ...opts, headers });
         if (res.status === 401) {
           window.location.href = LOGIN_URL;
           return;
@@ -1188,8 +1187,9 @@
       }
     }
 
-$('#logout').onclick = () => {
-  localStorage.removeItem('token');
+$('#logout').onclick = async (e) => {
+  e.preventDefault();
+  try { await authFetch('/api/logout', { method: 'POST' }); } catch {}
   location.href = LOGIN_URL;
 };
 

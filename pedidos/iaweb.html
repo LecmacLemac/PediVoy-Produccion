@@ -342,7 +342,12 @@
     let generatedHtml = '';
     let currentEmpresaId = null;
     let companiesList = []; 
-    const token = localStorage.getItem('token');
+
+    // Modo seguro: auth por cookie httpOnly
+    const authFetch = (url, opts = {}) => {
+      const { headers = {}, ...rest } = opts;
+      return fetch(url, { ...rest, headers, credentials: 'include' });
+    };
 
     // --- UTILIDADES ---
     function toast(msg) {
@@ -360,24 +365,24 @@
     }
 
     // --- AUTH & LOGOUT ---
-    document.getElementById('logout').onclick = () => {
-      localStorage.removeItem('token');
+    document.getElementById('logout').onclick = async (e) => {
+      e.preventDefault();
+      try { await authFetch('/api/logout', { method: 'POST' }); } catch {}
       window.location.href = 'login.html';
     };
 
     // --- INICIALIZACIÓN ---
     (async function init() {
-      if (!token) {
-        window.location.href = 'pedidos/login.html';
-        return;
-      }
-
       try {
         // 1. Obtener quién soy
-        const resMe = await fetch('/api/me', { headers: { 'Authorization': `Bearer ${token}` } });
+        const resMe = await authFetch('/api/me');
+        if (resMe.status === 401) {
+          window.location.href = 'login.html';
+          return;
+        }
         const dataMe = await resMe.json();
-        
-        if (!dataMe.user) throw new Error('Token inválido');
+
+        if (!dataMe.user) throw new Error('Sesión inválida');
         const role = dataMe.user.role;
         
         // Badge de Rol en Header
@@ -385,7 +390,7 @@
         roleBadge.textContent = role === 'super' ? 'SUPER ADMIN' : role.toUpperCase();
 
         // 2. Obtener lista de empresas
-        const resEmp = await fetch('/api/empresas', { headers: { 'Authorization': `Bearer ${token}` } });
+        const resEmp = await authFetch('/api/empresas');
         companiesList = await resEmp.json();
 
         // 3. Lógica según Rol
@@ -492,11 +497,10 @@
       `;
 
       try {
-        const res = await fetch('/api/ai/build-site', {
+        const res = await authFetch('/api/ai/build-site', {
           method: 'POST',
           headers: { 
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`
+            'Content-Type': 'application/json'
           },
           // Enviamos el prompt enriquecido con el ID
           body: JSON.stringify({ 
@@ -541,11 +545,8 @@
         const formData = new FormData();
         formData.append('file', blob, 'index.html'); 
 
-        const res = await fetch(`/api/empresas/${currentEmpresaId}/landing-page`, {
+        const res = await authFetch(`/api/empresas/${currentEmpresaId}/landing-page`, {
           method: 'POST',
-          headers: { 
-            'Authorization': `Bearer ${token}`
-          },
           body: formData
         });
 

@@ -329,6 +329,12 @@
   <script>
     // --- CONFIGURACIÓN ---
     const API_URL = '/api';
+
+    // Modo seguro: auth por cookie httpOnly
+    const authFetch = (url, opts = {}) => {
+      const { headers = {}, ...rest } = opts;
+      return fetch(url, { ...rest, headers, credentials: 'include' });
+    };
     let empresasList = [];
     let currentEmpresaId = null;
     let isSuper = false; 
@@ -339,17 +345,15 @@
 
 // --- 1. INICIALIZACIÓN Y AUTH ---
     async function init() {
-      const token = localStorage.getItem('token');
-      if (!token) return window.location.href = '/pedidos/login.html';
+      // cookie session
+      const token = null;
 
       // Chequear si viene de Mercado Pago
       const params = new URLSearchParams(window.location.search);
       const status = params.get('status');
 
       try {
-        const resMe = await fetch(`${API_URL}/me`, {
-             headers: { 'Authorization': `Bearer ${token}` }
-        });
+        const resMe = await authFetch(`${API_URL}/me`);
 
         if (!resMe.ok) throw new Error('Falló autenticación');
         
@@ -481,8 +485,8 @@
         }
     }
 
-    function logout() {
-      localStorage.removeItem('token');
+    async function logout() {
+      try { await authFetch('/api/logout', { method: 'POST' }); } catch {}
       window.location.href = '/pedidos/login.html';
     }
 
@@ -495,9 +499,7 @@
     async function cargarListaEmpresas() {
       const select = document.getElementById('empresaSelect');
       try {
-        const res = await fetch(`${API_URL}/empresas`, {
-          headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
-        });
+        const res = await authFetch(`${API_URL}/empresas`);
         
         if (!res.ok) throw new Error('Error de conexión');
         
