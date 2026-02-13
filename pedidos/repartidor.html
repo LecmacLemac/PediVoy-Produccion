@@ -656,16 +656,53 @@ async function api(path, opts = {}) {
     return;
   }
 
-  const txt = await r.text();
-  if (!txt) return {};
+  if (r.status === 204) return null;
 
-  const ct = r.headers.get('content-type') || '';
-  if (!ct.includes('application/json')) {
-    console.error('Respuesta NO JSON de', path, 'status', r.status, 'body:', txt.slice(0, 200));
-    throw new Error(`Respuesta no JSON (${r.status})`);
+  const ct = (r.headers.get('content-type') || '').toLowerCase();
+  const txt = await r.text();
+
+  // Intentar extraer mensaje de error útil
+  const buildErr = (fallback) => {
+    const msg = fallback || `HTTP ${r.status}`;
+    const e = new Error(msg);
+    e.status = r.status;
+    e.url = path;
+    return e;
+  };
+
+  // Si no hay body
+  if (!txt) {
+    if (!r.ok) throw buildErr();
+    return {};
   }
 
-  return JSON.parse(txt);
+  // Si viene JSON
+  if (ct.includes('application/json')) {
+    let data;
+    try {
+      data = JSON.parse(txt);
+    } catch {
+      // JSON inválido
+      if (!r.ok) throw buildErr(`Error ${r.status}: JSON inválido`);
+      throw buildErr(`Respuesta JSON inválida (${r.status})`);
+    }
+
+    if (!r.ok) {
+      const msg = (data && (data.error || data.message)) || `Error ${r.status}`;
+      throw buildErr(msg);
+    }
+
+    return data;
+  }
+
+  // No JSON
+  if (!r.ok) {
+    console.error('Respuesta NO JSON de', path, 'status', r.status, 'body:', txt.slice(0, 200));
+    throw buildErr(`Error ${r.status}: respuesta no JSON`);
+  }
+
+  // OK pero no JSON (no debería pasar en esta app); devolvemos texto para no romper
+  return { ok: true, text: txt };
 }
 
 // --- INITIALIZATION ---
