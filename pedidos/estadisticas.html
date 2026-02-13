@@ -582,8 +582,8 @@ async function init() {
         const products = res.products || [];
         const evolution = res.evolution || [];
 
-        // Comparación vs período anterior (mismo largo)
-        const prev = await loadPrevPeriod(from, to);
+        // Comparación vs período anterior (backend)
+        const prev = res.prev || null;
 
         renderReport(rows, products, evolution, prev);
 
@@ -804,50 +804,7 @@ async function init() {
     }
 
     // ====== COMPARACIÓN VS PERÍODO ANTERIOR ======
-    function daysBetweenInclusive(fromISO, toISO) {
-      // from/to en YYYY-MM-DD
-      const a = new Date(fromISO + 'T00:00:00');
-      const b = new Date(toISO + 'T00:00:00');
-      const ms = b - a;
-      const days = Math.floor(ms / (24*60*60*1000)) + 1;
-      return Math.max(days, 1);
-    }
-
-    function addDays(iso, deltaDays) {
-      const d = new Date(iso + 'T00:00:00');
-      d.setDate(d.getDate() + deltaDays);
-      return dateISO(d);
-    }
-
-    async function loadPrevPeriod(from, to) {
-      try {
-        const len = daysBetweenInclusive(from, to);
-        const prevTo = addDays(from, -1);
-        const prevFrom = addDays(prevTo, -(len - 1));
-
-        const base = `/api/estadisticas/dashboard${qsEmpresa()}`;
-        const sep = base.includes('?') ? '&' : '?';
-        const choferId = $('#fFilChofer').value;
-        const url = `${base}${sep}from=${prevFrom}&to=${prevTo}` + (choferId ? `&chofer_id=${choferId}` : '');
-
-        const res = await api(url);
-        const rows = res?.report || [];
-        const sum = k => rows.reduce((a, b) => a + num(b[k]), 0);
-        const ventas = sum('ventas');
-        const cv = sum('cv');
-        const cf = sum('cf');
-        const cp = sum('cp');
-        const pedidos = sum('pedidos');
-        const rent = ventas - cv - cf - cp;
-        const ticket = pedidos ? ventas / pedidos : 0;
-
-        return { from: prevFrom, to: prevTo, ventas, rent, ticket };
-      } catch (e) {
-        console.warn('No se pudo cargar período anterior', e);
-        return null;
-      }
-    }
-
+    // Backend devuelve `prev: { from, to, ventas, rent, ticket }`
     function fmtDelta(cur, prev) {
       const d = cur - prev;
       const sign = d >= 0 ? '+' : '';
