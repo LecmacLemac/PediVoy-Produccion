@@ -62,14 +62,18 @@ export async function registrarMovimientosActivosDesdePedido({
     if (ownTx) await client.query('BEGIN');
 
     // Resolver empresa / cliente en base al pedido si hace falta
+    // y asegurar coherencia multi-tenant (si empresaId viene seteado, el pedido debe pertenecer a esa empresa)
     if (!empresaId || !clienteId) {
+      const empresaParam = empresaId ? Number(empresaId) : null;
       const pedRes = await client.query(
         `
         SELECT empresa_id, punto_entrega_id AS cliente_id
         FROM pedidos
         WHERE id = $1
+          AND ($2::int IS NULL OR empresa_id = $2)
+        LIMIT 1
         `,
-        [pedidoId]
+        [pedidoId, empresaParam]
       );
       if (!pedRes.rowCount) {
         throw new Error('Pedido no encontrado para registrar movimientos de activos');
@@ -77,6 +81,15 @@ export async function registrarMovimientosActivosDesdePedido({
       const ped = pedRes.rows[0];
       empresaId = empresaId || ped.empresa_id;
       clienteId = clienteId || ped.cliente_id;
+    }
+
+    // Validar que el cliente pertenezca a la empresa (evita cross-tenant por cliente_id)
+    const cRes = await client.query(
+      'SELECT id FROM puntos_entrega WHERE id = $1 AND empresa_id = $2 LIMIT 1',
+      [clienteId, empresaId]
+    );
+    if (!cRes.rowCount) {
+      throw new Error('Cliente no pertenece a la empresa del pedido');
     }
 
     // 👉 ahora incluimos 'entrega'
@@ -110,6 +123,9 @@ export async function registrarMovimientosActivosDesdePedido({
           `
           SELECT COALESCE(ip.producto_id, p.id) AS producto_id, p.config_activo
           FROM items_pedido ip
+          JOIN pedidos ped
+            ON ped.id = ip.pedido_id
+           AND ped.empresa_id = $2
           LEFT JOIN productos p
             ON p.empresa_id = $2
            AND (
