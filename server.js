@@ -27,6 +27,7 @@ import { createAuthGuestSignupRouter } from './src/routes/authGuestSignup.js';
 import { createPublicLandingRouter } from './src/routes/publicLanding.js';
 import { createEmpresasRouter } from './src/routes/empresas.js';
 import { createEntregaConfigRouter } from './src/routes/entregaConfig.js';
+import { createAiSiteBuilderRouter } from './src/routes/aiSiteBuilder.js';
 import { createZonasRouter } from './src/routes/zonas.js';
 import { createChoferesRouter } from './src/routes/choferes.js';
 import { createAsignacionesZonasRouter } from './src/routes/asignacionesZonas.js';
@@ -226,78 +227,7 @@ app.use('/api/entrega', createEntregaConfigRouter({ query, withAuth, resolveEmpr
 // GENERADOR WEB CON IA (Database Driven + Slug Aware)
 // ==================================================
 
-app.post('/api/ai/build-site', withAuth, async (req, res) => {
-  try {
-    const { prompt, empresa_id } = req.body;
-    const esSuper = isSuper(req);
-    const myEmpresa = getEmpresaIdFromToken(req);
-    
-    // 1. LÓGICA DE ID (Super vs User)
-    // Si es Super, usa el ID que viene en el body (o el suyo propio si no viene nada).
-    // Si es User normal, SIEMPRE forzamos su propio ID (seguridad).
-    const targetId = esSuper ? (Number(empresa_id) || myEmpresa) : myEmpresa;
-
-    // 2. Obtener datos de la empresa (Teléfono, Nombre, Rubro y SLUG)
-    const empRows = await query(
-      'SELECT telefono, nombre, rubro, landing_slug FROM empresas WHERE id = $1', 
-      [targetId]
-    );
-    
-    if (!empRows.length) return res.status(404).json({ error: 'Empresa no encontrada' });
-    const empresaData = empRows[0];
-    
-    // Normalizar datos para inyección
-    const telWpp = (empresaData.telefono || '').replace(/\D/g, '');
-    // Si no tiene slug, usamos uno genérico temporal
-    const slug = empresaData.landing_slug || `empresa-${targetId}`;
-
-    if (!process.env.OPENAI_API_KEY) {
-      return res.status(500).json({ error: 'Falta API Key de OpenAI' });
-    }
-
-    // 3. Buscar el Prompt "builder_web" en la DB
-    const promptRows = await query(
-      `SELECT contenido FROM empresa_prompts WHERE tipo = 'builder_web' AND empresa_id IS NULL LIMIT 1`
-    );
-
-    let systemPrompt = promptRows.length > 0 
-      ? promptRows[0].contenido 
-      : 'Eres un desarrollador web...'; // Fallback
-
-    // 4. INYECCIÓN DE VARIABLES (ID, Teléfono y SLUG)
-    // Aquí es donde le "enseñamos" a la IA los datos reales de ESTA empresa
-    systemPrompt = systemPrompt
-      .replace('{ID_EMPRESA}', targetId)
-      .replace('{TELEFONO_EMPRESA}', telWpp || '5491100000000')
-      .replace('{SLUG_EMPRESA}', slug);
-
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
-    // 5. Llamada a la IA
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o", 
-      messages: [
-        { role: "system", content: systemPrompt },
-        { 
-          role: "user", 
-          content: `Empresa: ${empresaData.nombre}. Rubro: ${empresaData.rubro}. Slug: ${slug}.
-          Descripción del usuario: "${prompt}".
-          Genera el código HTML completo ahora.` 
-        }
-      ],
-      temperature: 0.7,
-    });
-
-    let html = completion.choices[0].message.content;
-    html = html.replace(/```html/g, '').replace(/```/g, '');
-
-    res.json({ html });
-
-  } catch (e) {
-    console.error('AI BUILDER ERROR:', e);
-    res.status(500).json({ error: 'Error generando sitio: ' + e.message });
-  }
-});
+app.use('/api/ai', createAiSiteBuilderRouter({ query, withAuth, isSuper, getEmpresaIdFromToken }));
 
 // --------------------------------------------------
 // ZONAS (CRUD - Tabla: zonas_geograficas con PostGIS)
