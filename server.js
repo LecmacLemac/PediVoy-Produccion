@@ -31,6 +31,7 @@ import { createZonasRouter } from './src/routes/zonas.js';
 import { createChoferesRouter } from './src/routes/choferes.js';
 import { createAsignacionesZonasRouter } from './src/routes/asignacionesZonas.js';
 import { createProductosRouter } from './src/routes/productos.js';
+import { createAdminUsuariosRouter } from './src/routes/adminUsuarios.js';
 import { createTransferenciasRouter } from './src/routes/transferencias.js';
 import { createGastosRouter } from './src/routes/gastos.js';
 import { createAuthRouter } from './src/routes/auth.js';
@@ -323,91 +324,7 @@ app.use('/api/productos', createProductosRouter({ query, withAuth, isSuper, getE
 // USUARIOS (ADMIN - Creación/Gestión)
 // --------------------------------------------------
 
-app.post('/api/admin/usuarios', withAuth, async (req, res) => {
-  try {
-    const esSuper = isSuper(req);
-    const { username, password, role, empresa_id, chofer_id } = req.body || {};
-    const cleanUser = String(username || '').trim();
-    if (!cleanUser) return res.status(400).json({ error: 'Falta username' });
-    if (!password || String(password).length < 6) return res.status(400).json({ error: 'Clave min 6 chars' });
-
-    let targetEmpresa = null;
-    if (role === 'super') {
-       if (!esSuper) return res.status(403).json({ error: 'Solo super crea super' });
-    } else if (esSuper) {
-       targetEmpresa = Number(empresa_id);
-    } else {
-       targetEmpresa = getEmpresaIdFromToken(req);
-    }
-
-    const salt = await bcrypt.genSalt(10);
-    const hash = await bcrypt.hash(String(password), salt);
-
-    const rows = await query(
-      `INSERT INTO usuarios (username, password, role, empresa_id, chofer_id) VALUES ($1, $2, $3, $4, $5) RETURNING id, username`,
-      [cleanUser, hash, role || 'user', targetEmpresa, chofer_id || null]
-    );
-    res.json(rows[0]);
-  } catch (e) { 
-    if(e.message.includes('unique')) return res.status(400).json({error: 'Username en uso'});
-    res.status(500).json({ error: 'Error interno' });
-  }
-});
-
-app.get('/api/admin/usuarios', withAuth, async (req, res) => {
-  try {
-    const esSuper = isSuper(req);
-    const empresaId = esSuper ? (Number(req.query.empresa_id) || null) : getEmpresaIdFromToken(req);
-    let sql = `SELECT id, username, role, empresa_id, chofer_id FROM usuarios`;
-    const params = [];
-    if (empresaId) { sql += ` WHERE empresa_id=$1`; params.push(empresaId); }
-    sql += ` ORDER BY id ASC`;
-    const rows = await query(sql, params);
-    res.json(rows);
-  } catch (e) { res.status(500).json({ error: 'Error usuarios' }); }
-});
-
-app.put('/api/admin/usuarios/:id', withAuth, async (req, res) => {
-  if (!isSuper(req)) return res.status(403).json({ error: 'Solo superadmin' });
-  try {
-    const { username, password, role, empresa_id, chofer_id } = req.body;
-    const sets = []; const vals = []; let idx = 1;
-
-    if (username) { sets.push(`username=$${idx++}`); vals.push(username); }
-    if (password && String(password).trim().length > 0) { 
-      const salt = await bcrypt.genSalt(10);
-      const hash = await bcrypt.hash(String(password), salt);
-      sets.push(`password=$${idx++}`); vals.push(hash); 
-    } 
-    if (role) { sets.push(`role=$${idx++}`); vals.push(role); }
-    if (empresa_id !== undefined) { sets.push(`empresa_id=$${idx++}`); vals.push(Number(empresa_id) || null); }
-    if (chofer_id !== undefined) { sets.push(`chofer_id=$${idx++}`); vals.push(Number(chofer_id) || null); }
-
-    if (!sets.length) return res.json({ ok: true });
-    vals.push(req.params.id);
-    await query(`UPDATE usuarios SET ${sets.join(', ')} WHERE id=$${idx}`, vals);
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: 'Error actualizando usuario' }); }
-});
-
-app.delete('/api/admin/usuarios/:id', withAuth, async (req, res) => {
-  if (!isSuper(req)) return res.status(403).json({ error: 'Solo super' });
-  try {
-    await query(`DELETE FROM usuarios WHERE id=$1`, [req.params.id]);
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: 'Error borrando usuario' }); }
-});
-
-app.get('/api/admin/empresas-list', withAuth, async (req, res) => {
-  if (req.user.role !== 'super') return res.sendStatus(403);
-  
-  try {
-    const empresas = await query('SELECT id, nombre FROM empresas ORDER BY id ASC');
-    res.json(empresas);
-  } catch (e) {
-    res.status(500).json({ error: 'Error al listar empresas' });
-  }
-});
+app.use('/api/admin', createAdminUsuariosRouter({ query, withAuth, isSuper, getEmpresaIdFromToken }));
 
 // --------------------------------------------------
 // API REPARTIDOR (Dashboard Chofer)
