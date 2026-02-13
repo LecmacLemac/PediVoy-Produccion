@@ -107,8 +107,11 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
 <script>
-  const token = localStorage.getItem('token');
-  if (!token) location.href = 'login.html';
+  // Modo seguro: auth por cookie httpOnly
+  const authFetch = (url, opts = {}) => {
+    const headers = opts.headers || {};
+    return fetch(url, { ...opts, headers, credentials: 'include' });
+  };
 
   const $ = s => document.querySelector(s);
   const rows = $('#rows');
@@ -128,7 +131,10 @@
   const btnGuardar = $('#btnGuardar');
   const btnCancelar = $('#btnCancelar');
 
-  $('#logout').onclick = () => { localStorage.removeItem('token'); location.href='login.html'; };
+  $('#logout').onclick = async () => {
+    try { await authFetch('/api/logout', { method: 'POST' }); } catch {}
+    location.href='login.html';
+  };
   $('#btnRef').onclick = () => load();
 
   let isSuper = false;
@@ -235,14 +241,14 @@
 
   // ----- API helpers -----
   async function whoAmI(){
-    const r = await fetch('/api/me', { headers:{ Authorization:'Bearer '+token }});
+    const r = await authFetch('/api/me');
     const j = await r.json();
     isSuper = String(j?.user?.role||'').toLowerCase()==='super';
     return j?.user;
   }
 
   async function loadEmpresas(){
-    const r = await fetch('/api/empresas', { headers:{ Authorization:'Bearer '+token }});
+    const r = await authFetch('/api/empresas');
     const list = await r.json();
     const opts = list.map(e => `<option value="${e.id}">${e.id} — ${esc(e.nombre)}</option>`).join('');
     zEmpresa.innerHTML = opts;
@@ -255,7 +261,7 @@
   }
 
   async function load(){
-    const r = await fetch('/api/zonas'+currentEmpresaQS(), { headers:{ Authorization:'Bearer '+token }});
+    const r = await authFetch('/api/zonas'+currentEmpresaQS());
     const list = await r.json();
     render(list);
   }
@@ -292,8 +298,9 @@
     btnGuardar.setAttribute('aria-busy','true'); btnGuardar.disabled = true;
     try{
       if (!id){
-        const r = await fetch('/api/zonas', {
-          method:'POST', headers:{ 'Content-Type':'application/json', Authorization:'Bearer '+token },
+        const r = await authFetch('/api/zonas', {
+          method:'POST',
+          headers:{ 'Content-Type':'application/json' },
           body: JSON.stringify(body)
         });
         const j = await r.json();
@@ -301,8 +308,9 @@
         resetForm();
       } else {
         const qs = isSuper && zEmpresa.value ? `?empresa_id=${encodeURIComponent(zEmpresa.value)}` : '';
-        const r = await fetch('/api/zonas/'+id+qs, {
-          method:'PUT', headers:{ 'Content-Type':'application/json', Authorization:'Bearer '+token },
+        const r = await authFetch('/api/zonas/'+id+qs, {
+          method:'PUT',
+          headers:{ 'Content-Type':'application/json' },
           body: JSON.stringify(body)
         });
         if (!r.ok) throw new Error((await r.text())||'No se pudo actualizar');
@@ -316,7 +324,7 @@
   window.editZona = async (id) => {
     try{
       // Traemos todas y buscamos (la API no tiene GET /zonas/:id)
-      const r = await fetch('/api/zonas'+currentEmpresaQS(), { headers:{ Authorization:'Bearer '+token }});
+      const r = await authFetch('/api/zonas'+currentEmpresaQS());
       const list = await r.json();
       const z = (list||[]).find(x => Number(x.id)===Number(id));
       if (!z) return alert('Zona no encontrada');
@@ -337,7 +345,7 @@
     if (!confirm('¿Eliminar zona #'+id+'?')) return;
     const qs = currentEmpresaQS();
     try{
-      const r = await fetch('/api/zonas/'+id+qs, { method:'DELETE', headers:{ Authorization:'Bearer '+token } });
+      const r = await authFetch('/api/zonas/'+id+qs, { method:'DELETE' });
       const t = await r.text();
       if (!r.ok) throw new Error(t||'No se pudo eliminar');
       await load();
