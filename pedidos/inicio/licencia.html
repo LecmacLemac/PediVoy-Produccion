@@ -444,9 +444,7 @@
 
     async function cargarHistorialPagos(id) {
         try {
-            const res = await fetch(`${API_URL}/empresas/${id}/pagos`, {
-                headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
-            });
+            const res = await authFetch(`${API_URL}/empresas/${id}/pagos`);
             
             if (!res.ok) return;
             const pagos = await res.json();
@@ -652,13 +650,11 @@
         const nuevoPrecio = document.getElementById('inputPrecio').value;
         if (nuevoPrecio === '') return alert('Ingresa un valor válido');
 
-        const token = localStorage.getItem('token');
         try {
-            const res = await fetch(`${API_URL}/empresas/${currentEmpresaId}`, {
+            const res = await authFetch(`${API_URL}/empresas/${currentEmpresaId}`, {
                 method: 'PUT',
                 headers: { 
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({ plan_precio: nuevoPrecio })
             });
@@ -683,7 +679,6 @@
       if (!isSuper) return; 
       if (!currentEmpresaId) return;
 
-      const token = localStorage.getItem('token');
       let empresaObj = empresasList.find(e => e.id == currentEmpresaId);
       if (!empresaObj && !isSuper) return;
 
@@ -716,11 +711,10 @@
       if (!confirm(msgConfirm)) return;
 
       try {
-        const res = await fetch(`${API_URL}/empresas/${currentEmpresaId}`, {
+        const res = await authFetch(`${API_URL}/empresas/${currentEmpresaId}`, {
           method: 'PUT',
           headers: { 
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`
+            'Content-Type': 'application/json'
           },
           body: JSON.stringify(payload)
         });
@@ -752,11 +746,10 @@
         feedback.style.display = 'none';
 
         try {
-            const res = await fetch(`${API_URL}/admin/licencia/generar-pago`, {
+            const res = await authFetch(`${API_URL}/admin/licencia/generar-pago`, {
                 method: 'POST',
                 headers: { 
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${localStorage.getItem('token')}`
+                    'Content-Type': 'application/json'
                 }
             });
             const data = await res.json();

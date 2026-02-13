@@ -306,20 +306,23 @@
     let totalSteps = 8; 
     let currentSteps = {};
 
+    // Modo seguro: auth por cookie httpOnly
+    const authFetch = (url, opts = {}) => {
+      const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
+      return fetch(url, { ...opts, headers, credentials: 'include' });
+    };
+
     // --- Logout ---
-    document.getElementById('logout').onclick = () => { 
-        localStorage.removeItem('token'); 
+    document.getElementById('logout').onclick = async (e) => {
+        e.preventDefault();
+        try { await authFetch('/api/logout', { method: 'POST' }); } catch {}
         window.location.href = '../login.html'; 
     };
 
     // --- API Utils ---
     async function api(endpoint, opts = {}) {
-      const token = localStorage.getItem('token');
-      if (!token) return window.location.href = '../login.html';
-      
-      const headers = { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json', ...(opts.headers || {}) };
       try {
-        const res = await fetch(endpoint, { ...opts, headers });
+        const res = await authFetch(endpoint, opts);
         if (res.status === 401) return window.location.href = '../login.html';
         return res.json();
       } catch (e) {

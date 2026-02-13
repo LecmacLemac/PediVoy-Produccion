@@ -240,17 +240,26 @@
     // Utils
     const $ = s => document.querySelector(s);
     
+    // Modo seguro: auth por cookie httpOnly
+    const authFetch = (url, opts = {}) => {
+      const { headers = {}, ...rest } = opts;
+      return fetch(url, { ...rest, headers, credentials: 'include' });
+    };
+
     // Logout
-    document.getElementById('logout').onclick = () => { localStorage.removeItem('token'); window.location.href = '/pedidos/login.html'; };
+    document.getElementById('logout').onclick = async (e) => {
+      e.preventDefault();
+      try { await authFetch('/api/logout', { method: 'POST' }); } catch {}
+      window.location.href = '/pedidos/login.html';
+    };
 
     // --- Init ---
     (async () => {
         try {
-            const token = localStorage.getItem('token');
-            if(!token) return window.location.href = '/pedidos/login.html';
-
             // 1. Verificar Rol (Super Admin)
-            const meRes = await fetch('/api/me', { headers: { 'Authorization': `Bearer ${token}` } });
+            const meRes = await authFetch('/api/me');
+            if (meRes.status === 401) return window.location.href = '/pedidos/login.html';
+
             const meData = await meRes.json();
             const isSuper = (meData.user?.role || '').toLowerCase() === 'super';
 
@@ -259,7 +268,7 @@
                 $('#empFilterWrap').style.display = 'flex';
                 
                 // Cargar Lista de Empresas
-                const empRes = await fetch('/api/empresas', { headers: { 'Authorization': `Bearer ${token}` } });
+                const empRes = await authFetch('/api/empresas');
                 const empresas = await empRes.json();
                 
                 if(Array.isArray(empresas)) {
@@ -291,10 +300,9 @@
     // Cargar Productos para el Dropdown
     async function loadProducts(empId) {
         try {
-            const token = localStorage.getItem('token');
             const url = empId ? `/api/productos?empresa_id=${empId}` : '/api/productos';
             
-            const res = await fetch(url, { headers: { 'Authorization': `Bearer ${token}` } });
+            const res = await authFetch(url);
             const prods = await res.json();
             
             const opts = '<option value="">-- Seleccionar Producto --</option>' + 
@@ -307,12 +315,9 @@
     // Cargar Configuración
     async function loadConfig(empresaId) {
         try {
-            const token = localStorage.getItem('token');
             const url = empresaId ? `/api/marketing/config?empresa_id=${empresaId}` : '/api/marketing/config';
 
-            const res = await fetch(url, {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
+            const res = await authFetch(url);
             
             if(res.ok) {
                 const data = await res.json();
@@ -342,8 +347,6 @@
     // Guardar config
     document.getElementById('marketingForm').addEventListener('submit', async (e) => {
         e.preventDefault();
-        const token = localStorage.getItem('token');
-        
         const empSelect = document.getElementById('empFilter');
         const selectedEmpId = (empSelect && empSelect.offsetParent !== null) ? empSelect.value : null;
 
@@ -365,11 +368,10 @@
             referidos_exito_mensaje: document.getElementById('referidos_exito_mensaje').value
         };
 
-        const res = await fetch('/api/marketing/config', {
+        const res = await authFetch('/api/marketing/config', {
             method: 'PUT',
             headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${token}`
+                'Content-Type': 'application/json'
             },
             body: JSON.stringify(config)
         });

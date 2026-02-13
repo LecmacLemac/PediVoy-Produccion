@@ -1583,13 +1583,8 @@ $('#logout').onclick = async (e) => {
       formData.append('file', file);
 
       try {
-        const token = localStorage.getItem('token');
-        const res = await fetch(`/api/empresas/${id}/landing-page`, {
+        const res = await authFetch(`/api/empresas/${id}/landing-page`, {
           method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${token}`
-            // No seteamos Content-Type, el navegador lo pone con el boundary correcto
-          },
           body: formData
         });
 
