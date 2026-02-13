@@ -34,6 +34,4 @@ export function registerRoutes(app) {
   // Health
   app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
-  // 404 api fallback (optional)
-  app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found' }));
 }
