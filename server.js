@@ -20,6 +20,7 @@ import { notificarEnRuta, notificarPedidoTransferencia } from './src/services/no
 import { registerRoutes } from './src/routes/index.js';
 import { registerLandingRoutes } from './src/routes/landingRoutes.js';
 import { createAuthGuestSignupRouter } from './src/routes/authGuestSignup.js';
+import { createSetupRouter } from './src/routes/setup.js';
 import { createPublicLandingRouter } from './src/routes/publicLanding.js';
 import { createEmpresasRouter } from './src/routes/empresas.js';
 import { createEntregaConfigRouter } from './src/routes/entregaConfig.js';
@@ -154,47 +155,7 @@ app.use('/api/admin/prompts', createPromptsGlobalesRouter());
 // ONBOARDING / CONFIGURACIÓN INICIAL
 // --------------------------------------------------
 
-// Obtener progreso
-app.get('/api/setup/progress', withAuth, async (req, res) => {
-  try {
-    const empresaId = getEmpresaIdFromToken(req);
-    const rows = await query('SELECT setup_steps FROM empresas WHERE id=$1', [empresaId]);
-    
-    let steps = {};
-    if (rows.length && rows[0].setup_steps) {
-      try { steps = JSON.parse(rows[0].setup_steps); } catch {}
-    }
-    res.json(steps);
-  } catch (e) {
-    res.status(500).json({ error: 'Error obteniendo progreso' });
-  }
-});
-
-// Actualizar un paso (Marcar/Desmarcar)
-app.post('/api/setup/step', withAuth, async (req, res) => {
-  try {
-    const { step, done } = req.body; // step: numero, done: boolean
-    const empresaId = getEmpresaIdFromToken(req);
-
-    // 1. Obtener estado actual
-    const rows = await query('SELECT setup_steps FROM empresas WHERE id=$1', [empresaId]);
-    let steps = {};
-    if (rows.length && rows[0].setup_steps) {
-      try { steps = JSON.parse(rows[0].setup_steps); } catch {}
-    }
-
-    // 2. Actualizar el paso específico
-    steps[step] = !!done;
-
-    // 3. Guardar
-    await query('UPDATE empresas SET setup_steps=$1 WHERE id=$2', [JSON.stringify(steps), empresaId]);
-    
-    res.json({ ok: true, steps });
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: 'Error guardando paso' });
-  }
-});
+app.use('/api/setup', createSetupRouter({ query, withAuth, getEmpresaIdFromToken }));
 
 // --------------------------------------------------
 // EMPRESAS (CRUD + cuentas)
