@@ -312,9 +312,11 @@
   <div id="toast" class="toast"></div>
 
   <script>
-    // ====== Auth Logic ======
-    const token = localStorage.getItem('token');
-    // if (!token) location.href = 'login.html'; // Activar en producción
+    // ====== Auth Logic (modo seguro: cookie httpOnly) ======
+    const authFetch = (url, opts = {}) => {
+      const { headers = {}, ...rest } = opts;
+      return fetch(url, { ...rest, headers, credentials: 'include' });
+    };
 
     const $ = s => document.querySelector(s);
     function toast(msg) {
@@ -322,7 +324,11 @@
       setTimeout(() => t.classList.remove('show'), 3000);
     }
     
-    $('#logout').onclick = () => { localStorage.removeItem('token'); location.href = 'login.html'; };
+    $('#logout').onclick = async (e) => {
+      e.preventDefault();
+      try { await authFetch('/api/logout', { method: 'POST' }); } catch {}
+      location.href = 'login.html';
+    };
 
     // Estado local
     let currentTipo = '';
@@ -331,17 +337,14 @@
 
     // ====== Init ======
 
-    function parseJwt(token) {
-        try { return JSON.parse(atob(token.split('.')[1])); } catch (e) { return null; }
-    }
-
     (async function boot(){
         try {
-            // 1. Leer rol real del token
-            const payload = parseJwt(token);
-            const role = payload ? payload.role : '';
-            const isSuper = (role === 'super'); // Valida si es 'super'
-            
+            const meRes = await authFetch('/api/me');
+            if (meRes.status === 401) return location.href = 'login.html';
+            const meData = await meRes.json();
+            const role = (meData.user?.role || '').toLowerCase();
+            const isSuper = (role === 'super');
+
             $('#roleBadge').textContent = isSuper ? 'SUPER ADMIN' : role.toUpperCase();
 
             // 2. BLOQUEO DE SEGURIDAD VISUAL
@@ -384,11 +387,10 @@
         }
 
         try {
-            const r = await fetch('/api/whatsapp/reset', {
+            const r = await authFetch('/api/whatsapp/reset', {
                 method: 'POST',
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': 'Bearer ' + (token || '')
+                    'Content-Type': 'application/json'
                 }
             });
 
@@ -413,7 +415,7 @@
     // ====== Global Config Logic ======
     async function loadGlobalPrompts() {
         try {
-            const r = await fetch('/api/admin/prompts/global', { headers:{ Authorization:'Bearer '+token } });
+            const r = await authFetch('/api/admin/prompts/global');
             
             if (!r.ok) throw new Error("API Falló");
             const data = await r.json();
@@ -530,11 +532,10 @@ Inyecta un script al final del body con esta lógica exacta:
         btn.disabled = true;
 
         try {
-            const res = await fetch('/api/admin/prompts/global', {
+            const res = await authFetch('/api/admin/prompts/global', {
                 method: 'POST',
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': 'Bearer ' + token
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({ tipo: currentTipo, contenido })
             });
@@ -559,9 +560,8 @@ Inyecta un script al final del body con esta lógica exacta:
         if(!confirm('¿Estás seguro? Al eliminar, el sistema volverá a usar el texto "Hardcoded" original del código (o plantilla por defecto).')) return;
         
         try {
-            const res = await fetch(`/api/admin/prompts/global/${currentTipo}`, {
-                method: 'DELETE',
-                headers: { 'Authorization': 'Bearer ' + token }
+            const res = await authFetch(`/api/admin/prompts/global/${currentTipo}`, {
+                method: 'DELETE'
             });
 
             if (res.ok) {

@@ -945,11 +945,15 @@
     let targetEmpresaId = null;
     let empresasCache = [];
 
+    // Modo seguro: auth por cookie httpOnly
+    const authFetch = (url, opts = {}) => {
+      const { headers = {}, ...rest } = opts;
+      return fetch(url, { ...rest, headers, credentials: 'include' });
+    };
+
     function getAuthHeaders() {
-      const headers = { 'Content-Type': 'application/json' };
-      const token = localStorage.getItem('token');
-      if (token) headers['Authorization'] = 'Bearer ' + token;
-      return headers;
+      // Ya no enviamos Authorization: Bearer desde el browser
+      return { 'Content-Type': 'application/json' };
     }
 
     function showToast(message, type = 'info') {

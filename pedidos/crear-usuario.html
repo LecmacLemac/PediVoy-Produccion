@@ -135,15 +135,19 @@ const toast = (msg, ms=2200) => {
   setTimeout(()=>t.classList.remove('show'), ms);
 };
 
-function token(){
-  return localStorage.getItem('token') || '';
-}
+// Modo seguro: auth por cookie httpOnly
+const authFetch = (url, opts = {}) => {
+  const { headers = {}, ...rest } = opts;
+  return fetch(url, { ...rest, headers, credentials: 'include' });
+};
 
 async function fetchJson(url, opts={}){
   const headers = Object.assign({'Content-Type':'application/json'}, opts.headers||{});
-  const tk = token();
-  if (tk) headers['Authorization'] = 'Bearer ' + tk;
-  const res = await fetch(url, {...opts, headers});
+  const res = await authFetch(url, {...opts, headers});
+  if (res.status === 401) {
+    window.location.href = '/pedidos/login.html';
+    return;
+  }
   const txt = await res.text();
   let data = null;
   try { data = txt ? JSON.parse(txt) : null; } catch { data = txt; }

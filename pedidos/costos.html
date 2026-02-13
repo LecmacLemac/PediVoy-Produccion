@@ -874,22 +874,16 @@
       return t;
     }
 
+    // Modo seguro: auth por cookie httpOnly
+    const authFetch = (url, opts = {}) => {
+      const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
+      return fetch(url, { ...opts, headers, credentials: 'include' });
+    };
+
     // --- API helper ---
     async function api(endpoint, opts = {}) {
-      const token = localStorage.getItem('token');
-      if (!token) {
-        window.location.href = LOGIN_URL;
-        return;
-      }
-
-      const headers = {
-        'Authorization': 'Bearer ' + token,
-        'Content-Type': 'application/json',
-        ...(opts.headers || {}),
-      };
-
       try {
-        const res = await fetch(endpoint, { ...opts, headers });
+        const res = await authFetch(endpoint, opts);
         if (res.status === 401) {
           window.location.href = LOGIN_URL;
           return;

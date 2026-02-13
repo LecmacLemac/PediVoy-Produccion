@@ -823,11 +823,15 @@
       maximumFractionDigits: 2
     });
 
+    // Modo seguro: auth por cookie httpOnly
+    const authFetch = (url, opts = {}) => {
+      const { headers = {}, ...rest } = opts;
+      return fetch(url, { ...rest, headers, credentials: 'include' });
+    };
+
     function getAuthHeaders() {
-      const headers = { 'Content-Type': 'application/json' };
-      const token = localStorage.getItem('token');
-      if (token) headers['Authorization'] = 'Bearer ' + token;
-      return headers;
+      // Ya no enviamos Authorization: Bearer desde el browser
+      return { 'Content-Type': 'application/json' };
     }
 
     function showToast(msg, type = 'info') {
@@ -893,10 +897,9 @@
 
     async function loadUserInfo() {
       try {
-        const res = await fetch('/api/me', {
+        const res = await authFetch('/api/me', {
           method: 'GET',
-          headers: getAuthHeaders(),
-          credentials: 'same-origin'
+          headers: getAuthHeaders()
         });
 
         if (res.status === 401) {
@@ -944,10 +947,9 @@
       select.innerHTML = '<option value="">Cargando empresas…</option>';
 
       try {
-        const res = await fetch('/api/admin/empresas-list', {
+        const res = await authFetch('/api/admin/empresas-list', {
           method: 'GET',
-          headers: getAuthHeaders(),
-          credentials: 'same-origin'
+          headers: getAuthHeaders()
         });
 
         if (!res.ok) {
@@ -1005,10 +1007,9 @@
           params.append('empresa_id', String(targetEmpresaId));
         }
 
-        const res = await fetch(API_BASE + '/resumen?' + params.toString(), {
+        const res = await authFetch(API_BASE + '/resumen?' + params.toString(), {
           method: 'GET',
-          headers: getAuthHeaders(),
-          credentials: 'same-origin'
+          headers: getAuthHeaders()
         });
 
         if (!res.ok) return;
@@ -1052,10 +1053,9 @@
           params.append('empresa_id', String(targetEmpresaId));
         }
 
-        const res = await fetch(API_BASE + '?' + params.toString(), {
+        const res = await authFetch(API_BASE + '?' + params.toString(), {
           method: 'GET',
-          headers: getAuthHeaders(),
-          credentials: 'same-origin'
+          headers: getAuthHeaders()
         });
 
         let json;
@@ -1229,7 +1229,7 @@
           body.empresa_id = targetEmpresaId;
         }
 
-        const res = await fetch(API_BASE + '/mp-link', {
+        const res = await authFetch(API_BASE + '/mp-link', {
           method: 'POST',
           headers: getAuthHeaders(),
           body: JSON.stringify(body)
@@ -1287,7 +1287,7 @@
           body.empresa_id = targetEmpresaId;
         }
 
-        const res = await fetch(API_BASE + '/marcar-cobrado', {
+        const res = await authFetch(API_BASE + '/marcar-cobrado', {
           method: 'POST',
           headers: getAuthHeaders(),
           body: JSON.stringify(body)
@@ -1425,7 +1425,7 @@
 
               try {
                 // NOTA: Asegúrate de que esta ruta coincida con tu backend (/api/admin/activos)
-                const res = await fetch('/api/admin/activos/reportes/ociosos?dias=60', {
+                const res = await authFetch('/api/admin/activos/reportes/ociosos?dias=60', {
                   method: 'GET',
                   headers: getAuthHeaders()
                 });
@@ -1573,7 +1573,7 @@
                   payload.empresa_id = targetEmpresaId;
                 }
 
-                const res = await fetch(API_BASE + '/generar', {
+                const res = await authFetch(API_BASE + '/generar', {
                   method: 'POST',
                   headers: getAuthHeaders(),
                   body: JSON.stringify(payload)
