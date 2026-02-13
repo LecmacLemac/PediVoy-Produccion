@@ -26,6 +26,7 @@ import { registerLandingRoutes } from './src/routes/landingRoutes.js';
 import { createAuthGuestSignupRouter } from './src/routes/authGuestSignup.js';
 import { createPublicLandingRouter } from './src/routes/publicLanding.js';
 import { createEmpresasRouter } from './src/routes/empresas.js';
+import { createEntregaConfigRouter } from './src/routes/entregaConfig.js';
 import { createTransferenciasRouter } from './src/routes/transferencias.js';
 import { createGastosRouter } from './src/routes/gastos.js';
 import { createAuthRouter } from './src/routes/auth.js';
@@ -212,42 +213,7 @@ app.use(
 // CONFIGURACIÓN DE ENTREGA POR EMPRESA
 // --------------------------------------------------
 
-app.get('/api/entrega/config', withAuth, async (req, res) => {
-  try {
-    // Igual que marketing: respeta empresa del token o parámetro si sos super
-    const empresaId = resolveEmpresaId(req);
-
-    const rows = await query(
-      'SELECT config_entrega FROM empresas WHERE id=$1',
-      [empresaId]
-    );
-
-    res.json(rows[0]?.config_entrega || {});
-  } catch (e) {
-    console.error('ENTREGA CONFIG GET ERROR', e);
-    res.status(500).json({ error: 'Error leyendo configuración de entrega' });
-  }
-});
-
-app.put('/api/entrega/config', withAuth, async (req, res) => {
-  try {
-    const empresaId = resolveEmpresaId(req);
-    const nuevaConfig = req.body || {};
-
-    // Si viene empresa_id para el helper, lo sacamos del JSON a guardar
-    delete nuevaConfig.empresa_id;
-
-    await query(
-      'UPDATE empresas SET config_entrega = $1 WHERE id = $2',
-      [JSON.stringify(nuevaConfig), empresaId]
-    );
-
-    res.json({ ok: true });
-  } catch (e) {
-    console.error('ENTREGA CONFIG PUT ERROR', e);
-    res.status(500).json({ error: 'Error guardando configuración de entrega' });
-  }
-});
+app.use('/api/entrega', createEntregaConfigRouter({ query, withAuth, resolveEmpresaId }));
 
 // ==================================================
 // GENERADOR WEB CON IA (Database Driven + Slug Aware)
