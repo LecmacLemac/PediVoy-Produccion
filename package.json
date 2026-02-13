@@ -14,7 +14,6 @@
     "init-db": "node initDb.js",
     "test": "echo \"No tests configured\" && exit 0",
     "db:backup": "node backup.js",
-    "db:restore": "node restore.js",
     "postinstall": "echo \"Instalando Chromium para Puppeteer (local)\" && if [ -z \"$RENDER\" ]; then PUPPETEER_CACHE_DIR=\"$PWD/.puppeteer\" npx puppeteer browsers install chrome; fi"
   },
   "dependencies": {
