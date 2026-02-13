@@ -125,8 +125,11 @@
   </main>
 
   <script>
-    const token = localStorage.getItem('token');
-    if (!token) location.href = 'login.html';
+    // Modo seguro: auth por cookie httpOnly
+    const authFetch = (url, opts = {}) => {
+      const headers = opts.headers || {};
+      return fetch(url, { ...opts, headers, credentials: 'include' });
+    };
 
     const $ = s => document.querySelector(s);
     const rows = $('#rows');
@@ -146,7 +149,10 @@
     const kpiEntregas = $('#kpiEntregas');
     const kpiMonto = $('#kpiMonto');
 
-    $('#logout').onclick = () => { localStorage.removeItem('token'); location.href = 'login.html'; };
+    $('#logout').onclick = async () => {
+      try { await authFetch('/api/logout', { method: 'POST' }); } catch {}
+      location.href = 'login.html';
+    };
 
     let isSuper = false;
     let zonas = [];
@@ -188,14 +194,14 @@
     })();
 
     async function whoAmI(){
-      const r = await fetch('/api/me', { headers:{ Authorization:'Bearer '+token }});
+      const r = await authFetch('/api/me');
       const j = await r.json();
       isSuper = String(j?.user?.role||'').toLowerCase()==='super';
       return j?.user;
     }
 
     async function setupEmpresas(me){
-      const r = await fetch('/api/empresas', { headers:{ Authorization:'Bearer '+token }});
+      const r = await authFetch('/api/empresas');
       const list = await r.json();
       if (isSuper){
         rowEmp.style.display = '';
@@ -219,13 +225,13 @@
     }
 
     async function loadZonas(){
-      const r = await fetch('/api/zonas'+empresaQS(), { headers:{ Authorization:'Bearer '+token }});
+      const r = await authFetch('/api/zonas'+empresaQS());
       zonas = await r.json();
       zonaFilter.innerHTML = '<option value="">Todas</option>' + (zonas||[]).map(z => `<option value="${z.id}">${z.nombre}</option>`).join('');
     }
 
     async function loadChoferes(){
-      const r = await fetch('/api/choferes'+empresaQS(), { headers:{ Authorization:'Bearer '+token }});
+      const r = await authFetch('/api/choferes'+empresaQS());
       choferes = await r.json();
       repFilter.innerHTML = '<option value="">Todos</option>' + (choferes||[]).map(c => `<option value="${c.id}">${c.nombre}</option>`).join('');
     }
@@ -241,7 +247,7 @@
 
       const qsEmpresa = empresaQS();
       const url = '/api/reportes/entregados' + (qsEmpresa ? (qsEmpresa + (params.toString() ? '&'+params.toString() : '')) : (params.toString()?('?'+params.toString()):''));
-      const r = await fetch(url, { headers:{ Authorization:'Bearer '+token }});
+      const r = await authFetch(url);
       data = await r.json();
       render();
     }

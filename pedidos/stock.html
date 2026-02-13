@@ -311,9 +311,11 @@
   </aside>
 
   <script>
-    // ====== AUTH ======
-    const token = localStorage.getItem('token');
-    if (!token) location.href = 'login.html';
+    // ====== AUTH (modo seguro: cookie httpOnly) ======
+    const authFetch = (url, opts = {}) => {
+      const headers = opts.headers || {};
+      return fetch(url, { ...opts, headers, credentials: 'include' });
+    };
 
     const $ = s => document.querySelector(s);
     let role='', isSuper=false;
@@ -328,7 +330,7 @@
     // ====== LOGIC ======
     async function init() {
       try {
-        const r = await fetch('/api/me', { headers:{ Authorization:'Bearer '+token }});
+        const r = await authFetch('/api/me');
         if(!r.ok) throw new Error();
         const me = (await r.json()).user;
         role = (me.role||'').toLowerCase();
@@ -348,7 +350,7 @@
     }
 
     async function loadEmpresas() {
-        const r = await fetch('/api/empresas', { headers:{ Authorization:'Bearer '+token }});
+        const r = await authFetch('/api/empresas');
         const list = await r.json();
         const sel = $('#empFilter');
         sel.innerHTML = list.map(e => `<option value="${e.id}">${e.nombre}</option>`).join('');
@@ -361,7 +363,7 @@
 
     async function loadChoferes() {
         const qs = isSuper && $('#empFilter').value ? `?empresa_id=${$('#empFilter').value}` : '';
-        const r = await fetch('/api/choferes'+qs, { headers:{ Authorization:'Bearer '+token }});
+        const r = await authFetch('/api/choferes'+qs);
         choferes = await r.json();
         
         // MODIFICACIÓN: Agregamos (${c.tipo}) al texto de la opción
@@ -404,7 +406,7 @@
 
     async function loadStock() {
       const qs = isSuper && $('#empFilter').value ? `?empresa_id=${$('#empFilter').value}` : '';
-      const r = await fetch('/api/stock/por-tipo'+qs, { headers:{ Authorization:'Bearer '+token }});
+      const r = await authFetch('/api/stock/por-tipo'+qs);
       const rows = await r.json();
       products = normalizeStockPorTipo(rows);
       render();
@@ -489,7 +491,7 @@
 
         const r = await fetch('/api/stock/ajuste', {
             method: 'POST',
-            headers: {'Content-Type':'application/json', Authorization:'Bearer '+token},
+            headers: {'Content-Type':'application/json'},
             body: JSON.stringify(body)
         });
 
@@ -511,7 +513,7 @@
         $('#backdrop').classList.add('show');
         $('#kardexDrawer').classList.add('open');
 
-        const r = await fetch(`/api/stock/kardex/${id}`, { headers:{ Authorization:'Bearer '+token }});
+        const r = await authFetch(`/api/stock/kardex/${id}`);
         const moves = await r.json();
 
         $('#kxRows').innerHTML = moves.map(m => `
@@ -533,7 +535,11 @@
     $('#q').addEventListener('input', render);
     $('#statusFilter').addEventListener('change', render);
     $('#btnRef').addEventListener('click', loadStock);
-    $('#logout').addEventListener('click', () => { localStorage.removeItem('token'); location.href='login.html'; });
+    $('#logout').addEventListener('click', async (e) => {
+      e.preventDefault();
+      try { await authFetch('/api/logout', { method: 'POST' }); } catch {}
+      location.href='login.html';
+    });
 
     init();
   </script>
