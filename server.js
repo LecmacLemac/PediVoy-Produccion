@@ -10,7 +10,7 @@ import qrcode from 'qrcode';
 
 import { createApp } from './src/app.js';
 
-import { registerOrderRoutes, notifyEstadoPedidoPush, getEmpresaById } from './backend.js';
+import { notifyEstadoPedidoPush, getEmpresaById, registerOrderRoutes } from './backend.js';
 import { query, pool } from './src/db.js';
 import {
   withAuth,
@@ -72,9 +72,9 @@ const app = createApp({
     enqueueWppMessage,
     checkLicencia,
   },
-});
 
-// Rutas legacy que siguen viviendo en backend.js (mantener igual)
-registerOrderRoutes(app);
+  // legacy backend routes
+  registerOrderRoutes,
+});
 
 app.listen(PORT, () => console.log(`🚀 Servidor unificado corriendo en puerto ${PORT}`));

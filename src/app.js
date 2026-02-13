@@ -79,6 +79,9 @@ export function createApp(deps) {
       enqueueWppMessage,
       checkLicencia,
     } = {},
+
+    // legacy backend routes
+    registerOrderRoutes,
   } = deps || {};
 
   if (!projectDir) throw new Error('createApp: falta projectDir');
@@ -220,6 +223,13 @@ export function createApp(deps) {
     enqueueWppMessage,
     checkLicencia,
   });
+
+  // --------------------------------------------------
+  // Rutas legacy que siguen viviendo en backend.js
+  // --------------------------------------------------
+  if (typeof registerOrderRoutes === 'function') {
+    registerOrderRoutes(app);
+  }
 
   app.get('/health', (_req, res) => res.json({ ok: true }));
 
