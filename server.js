@@ -25,6 +25,7 @@ import { registerRoutes } from './src/routes/index.js';
 import { createTransferenciasRouter } from './src/routes/transferencias.js';
 import { createAuthRouter } from './src/routes/auth.js';
 import { createClientesRouter } from './src/routes/clientes.js';
+import { createTrackingRouter } from './src/routes/tracking.js';
 
 // --------------------------------------------------
 // Config express
@@ -472,6 +473,7 @@ app.use('/api/public', trackingPublicRouter);
 registerRoutes(app);
 app.use('/api', createAuthRouter());
 app.use('/api/clientes', createClientesRouter());
+app.use('/api/track', createTrackingRouter());
 app.use('/api/transferencias', createTransferenciasRouter({ TRANSF_DIR }));
 
 // --------------------------------------------------
@@ -4445,55 +4447,7 @@ app.get('/api/estadisticas/dashboard', withAuth, checkLicencia, async (req, res)
 // ENDPOINT DE TRACKING (Necesario para el Repartidor)
 // --------------------------------------------------
 
-app.post('/api/track/update', withAuth, async (req, res) => {
-  try {
-    const { pedido_id, lat, lng } = req.body;
-    const choferId = req.user?.chofer_id;
-    const empresaId = req.user?.empresa_id;
-
-    if (!choferId) {
-      return res.status(403).json({ error: 'No autorizado' });
-    }
-
-    const pid = Number(pedido_id);
-    const latN = Number(lat);
-    const lngN = Number(lng);
-
-    if (!Number.isFinite(pid) || !Number.isFinite(latN) || !Number.isFinite(lngN)) {
-      return res.status(400).json({ error: 'Datos inválidos' });
-    }
-
-    // 1) Validar que el pedido sea del chofer y de la misma empresa
-    const pedRows = await query(`
-      SELECT empresa_id, chofer_id
-      FROM pedidos
-      WHERE id = $1
-        AND empresa_id = $2
-      LIMIT 1
-    `, [pid, empresaId]);
-
-    if (!pedRows.length) {
-      // si no está, puede ser inexistente o de otra empresa → no filtramos info
-      return res.status(404).json({ error: 'Pedido no encontrado' });
-    }
-
-    const ped = pedRows[0];
-    if (ped.chofer_id !== choferId) {
-      return res.status(403).json({ error: 'No puedes actualizar este pedido' });
-    }
-
-    // 2) Insertar punto en historial
-    await query(`
-      INSERT INTO pedido_track_points (pedido_id, latitud, longitud, timestamp, source, precision, speed, heading)
-      VALUES ($1, $2, $3, NOW(), 'gps', 0, 0, 0)
-    `, [pid, latN, lngN]);
-
-    res.json({ ok: true });
-  } catch (e) {
-    console.error('TRACK UPDATE ERROR:', e);
-    res.status(500).json({ error: 'Error guardando ubicación' });
-  }
-});
+// POST /api/track/update movido a src/routes/tracking.js
 
 /**
  * Genera token (si no existe) y envía WPP de 'En Ruta' **solo la primera vez**
