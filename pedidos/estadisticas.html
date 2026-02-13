@@ -379,15 +379,14 @@
     // ====== CONFIG ======
     const API_BASE = '';
 
-    // ====== AUTH & UTILS ======
-    const token = localStorage.getItem('token');
+    // ====== AUTH & UTILS (modo seguro: cookie httpOnly) ======
+    const authFetch = (url, opts = {}) => {
+      const { headers = {}, ...rest } = opts;
+      return fetch(url, { ...rest, headers, credentials: 'include' });
+    };
 
-    // Check auth antes de cargar nada
-    if (!token) {
-      console.warn("No hay token, redirigiendo...");
-      // Para producción descomentar:
-      // location.href = 'login.html';
-    }
+    // token legacy (antes venía de localStorage). En modo seguro no se usa.
+    const token = null;
 
     const $ = s => document.querySelector(s);
     const num = n => Number(n) || 0;
@@ -426,11 +425,10 @@
       const fullUrl = path.startsWith('http') ? path : (API_BASE + path);
 
       try {
-        const r = await fetch(fullUrl, {
+        const r = await authFetch(fullUrl, {
           ...rest,
           headers: {
             'Content-Type': 'application/json',
-            Authorization: 'Bearer ' + token,
             ...headers
           },
           body: body ? JSON.stringify(body) : undefined
@@ -466,7 +464,7 @@ function qsEmpresa() {
 
 async function init() {
   try {
-    if (!token) return;
+    // (modo seguro) no dependemos de token local
 
     // 1) Obtener mis datos básicos
     const meResp = await api('/api/me');
@@ -994,7 +992,17 @@ async function init() {
       return `https://wa.me/${String(tel).replace(/\D/g, '')}?text=Por Favor, Adjuntar Transferencia de Pago 👆🏻🙏🏻.`;
     }
 
-    if (token) init();
+    // Logout
+    const logoutEl = document.getElementById('logout');
+    if (logoutEl) {
+      logoutEl.addEventListener('click', async (e) => {
+        e.preventDefault();
+        try { await authFetch('/api/logout', { method: 'POST' }); } catch {}
+        location.href = 'login.html';
+      });
+    }
+
+    init();
   </script>
 </body>
 </html>

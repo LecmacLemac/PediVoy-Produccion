@@ -664,12 +664,16 @@
     // === Helpers generales ===
     const AR_TZ = 'America/Argentina/Buenos_Aires';
 
+    // Modo seguro: auth por cookie httpOnly
     function getAuthHeaders() {
-      const headers = { 'Content-Type': 'application/json' };
-      const token = localStorage.getItem('token');
-      if (token) headers['Authorization'] = 'Bearer ' + token;
-      return headers;
+      // ya no enviamos Authorization: Bearer desde el browser
+      return { 'Content-Type': 'application/json' };
     }
+
+    const authFetch = (url, opts = {}) => {
+      const headers = opts.headers || {};
+      return fetch(url, { ...opts, headers, credentials: 'include' });
+    };
 
     function showToast(message, type = 'info') {
       const toast = document.getElementById('toast');
@@ -799,7 +803,7 @@
     // === Carga de usuario / empresa ===
     async function loadUserInfo() {
       try {
-        const res = await fetch('/api/me', {
+        const res = await authFetch('/api/me', {
           method: 'GET',
           headers: getAuthHeaders()
         });
@@ -849,7 +853,7 @@
       select.innerHTML = '<option value="">Cargando empresas…</option>';
 
       try {
-        const res = await fetch('/api/admin/empresas-list', {
+        const res = await authFetch('/api/admin/empresas-list', {
           method: 'GET', headers: getAuthHeaders()
         });
 
