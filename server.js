@@ -33,6 +33,7 @@ import { createPedidosPagoRouter } from './src/routes/pedidosPago.js';
 import { createEstadisticasRouter } from './src/routes/estadisticas.js';
 import { createStockRouter } from './src/routes/stock.js';
 import { createReportesRouter } from './src/routes/reportes.js';
+import { createRepartidorStatsRouter } from './src/routes/repartidorStats.js';
 import { createLicenciasMpRouter, createMercadoPagoWebhookRouter } from './src/routes/licenciasMp.js';
 import { createPromptsGlobalesRouter } from './src/routes/promptsGlobales.js';
 
@@ -490,6 +491,7 @@ app.use('/api/pedidos', createPedidosPagoRouter());
 app.use('/api/estadisticas', createEstadisticasRouter());
 app.use('/api/stock', createStockRouter());
 app.use('/api/reportes', createReportesRouter());
+app.use('/api/repartidor', createRepartidorStatsRouter());
 app.use('/api/transferencias', createTransferenciasRouter({ TRANSF_DIR }));
 
 // Licencias Mercado Pago
@@ -2970,156 +2972,7 @@ app.get('/api/repartidor/activos/stock-disponible', withAuth, async (req, res) =
   res.json({ ok: true, data: rows });
 });
 
-// 5. Resumen del día del repartidor
-app.get('/api/repartidor/resumen-dia', withAuth, async (req, res) => {
-  try {
-    const { chofer_id } = req.user || {};
-    if (!chofer_id) {
-      return res.json({ entregados: 0, pendientes: 0, dinero: 0 });
-    }
-
-    const sql = `
-      SELECT 
-        COUNT(*) FILTER (WHERE estado = 'entregado') AS entregados,
-        COUNT(*) FILTER (WHERE estado IN ('pendiente','en_ruta','en_camino')) AS pendientes,
-        COALESCE(SUM(monto) FILTER (WHERE estado = 'entregado'), 0) AS dinero
-      FROM pedidos
-      WHERE chofer_id = $1
-        AND fecha >= CURRENT_DATE
-        AND fecha < (CURRENT_DATE + INTERVAL '1 day')
-    `;
-    
-    const rows = await query(sql, [chofer_id]);
-    res.json(rows[0] || { entregados: 0, pendientes: 0, dinero: 0 });
-  } catch (e) {
-    console.error('ERROR /api/repartidor/resumen-dia', e);
-    res.status(500).json({ error: 'Error resumen' });
-  }
-});
-
-// 6. Stock del repartidor (por chofer)
-app.get('/api/repartidor/stock', withAuth, async (req, res) => {
-  try {
-    const { chofer_id } = req.user || {};
-    const empId = getEmpresaIdFromToken(req);
-
-    if (!chofer_id || !empId) {
-      return res.status(400).json({ error: 'Faltan datos de empresa/chofer' });
-    }
-
-    const at = (req.query.at || '').toString().slice(0, 10);
-    let rows;
-
-    if (at) {
-      // Saldo histórico hasta esa fecha (incluida) desde chofer_stock_mov
-      rows = await query(`
-        SELECT
-          csm.producto_id,
-          p.nombre AS producto,
-          COALESCE(SUM(csm.cantidad), 0) AS cantidad
-        FROM chofer_stock_mov csm
-        JOIN productos p
-          ON p.id = csm.producto_id
-        WHERE csm.empresa_id = $1
-          AND csm.chofer_id  = $2
-          AND csm.fecha < ($3::date + INTERVAL '1 day')
-        GROUP BY csm.producto_id, p.nombre
-        HAVING COALESCE(SUM(csm.cantidad), 0) <> 0
-        ORDER BY p.nombre
-      `, [empId, chofer_id, at]);
-    } else {
-      // Stock "actual" desde la tabla agregada chofer_stock
-      rows = await query(`
-        SELECT
-          cs.producto_id,
-          p.nombre AS producto,
-          COALESCE(cs.cantidad, 0) AS cantidad
-        FROM chofer_stock cs
-        JOIN productos p
-          ON p.id = cs.producto_id
-        WHERE cs.empresa_id = $1
-          AND cs.chofer_id  = $2
-          AND COALESCE(cs.cantidad, 0) <> 0
-        ORDER BY p.nombre
-      `, [empId, chofer_id]);
-    }
-
-    res.json(rows);
-  } catch (e) {
-    console.error('REPARTIDOR STOCK ERROR', e);
-    res.status(500).json({ error: 'Error cargando stock del repartidor' });
-  }
-});
-
-// 7. Pago diario del chofer según escala (usado por panel del repartidor)
-app.get('/api/repartidor/pago-dia', withAuth, async (req, res) => {
-  try {
-    const user = req.user;
-    if (!user || !user.chofer_id) {
-      return res.status(400).json({ error: 'Usuario sin chofer asociado' });
-    }
-
-    const choferId = user.chofer_id;
-    const fecha = (req.query.fecha || new Date().toISOString().slice(0, 10)).slice(0, 10);
-
-    const empresaId =
-      getEmpresaIdFromToken(req) ||
-      (await query('SELECT empresa_id FROM choferes WHERE id=$1', [choferId]))[0]?.empresa_id;
-
-    if (!empresaId) {
-      return res.status(400).json({ error: 'No se pudo determinar la empresa del chofer' });
-    }
-
-    const row = (
-      await query(
-        `
-        WITH entregas AS (
-          SELECT COALESCE(SUM(it.cantidad),0) AS q
-          FROM items_pedido it
-          JOIN pedidos p          ON p.id = it.pedido_id
-          JOIN puntos_entrega pe  ON pe.id = p.punto_entrega_id
-          WHERE pe.empresa_id = $1
-            AND p.chofer_id  = $2
-            AND p.fecha >= $3::date
-            AND p.fecha < ($3::date + INTERVAL '1 day')
-            AND LOWER(p.estado) = 'entregado'
-        ),
-        escala_sel AS (
-          SELECT ce.id
-          FROM chofer_escalas ce
-          WHERE ce.empresa_id = $4
-            AND (ce.chofer_id = $5 OR ce.chofer_id IS NULL)
-            AND $6::date BETWEEN DATE(ce.vigente_desde)
-                             AND DATE(COALESCE(ce.vigente_hasta,'9999-12-31'))
-          ORDER BY (ce.chofer_id IS NOT NULL) DESC, ce.vigente_desde DESC
-          LIMIT 1
-        ),
-        monto_sel AS (
-          SELECT t.monto
-          FROM chofer_escala_tramos t
-          JOIN entregas e ON TRUE
-          JOIN escala_sel s ON t.escala_id = s.id
-          WHERE e.q BETWEEN t.rango_min AND COALESCE(t.rango_max, 999999)
-          LIMIT 1
-        )
-        SELECT
-          (SELECT q FROM entregas) AS cantidad,
-          COALESCE((SELECT monto FROM monto_sel), 0) AS pago
-      `,
-        [empresaId, choferId, fecha, empresaId, choferId, fecha]
-      )
-    )[0] || {};
-
-    res.json({
-      fecha,
-      cantidad: Number(row.cantidad || 0),
-      pago: Number(row.pago || 0),
-    });
-  } catch (e) {
-    console.error('ERROR /api/repartidor/pago-dia', e);
-    res.status(500).json({ error: 'Error calculando pago del día' });
-  }
-});
+// Repartidor stats (resumen-dia, pago-dia) movidos a src/routes/repartidorStats.js
 
 // 8. Tomar pedido vacante (chofer_id IS NULL)
 app.post('/api/repartidor/tomar/:id', withAuth, async (req, res) => {
