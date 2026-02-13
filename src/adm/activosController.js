@@ -675,7 +675,9 @@ export async function activosMantenimientoPendiente(req, res) {
          (a.ultima_sanitizacion + (a.frecuencia_mantenimiento || ' months')::interval) AS proxima_fecha,
          FLOOR(EXTRACT(EPOCH FROM ((a.ultima_sanitizacion + (a.frecuencia_mantenimiento || ' months')::interval) - NOW())) / 86400)::int AS dias_restantes
        FROM empresa_activos a
-       LEFT JOIN puntos_entrega p ON p.id = a.cliente_id
+       LEFT JOIN puntos_entrega p
+         ON p.id = a.cliente_id
+        AND p.empresa_id = a.empresa_id
       WHERE a.empresa_id = $1
         AND a.frecuencia_mantenimiento IS NOT NULL AND a.frecuencia_mantenimiento > 0 AND a.ultima_sanitizacion IS NOT NULL
         AND (a.ultima_sanitizacion + (a.frecuencia_mantenimiento || ' months')::interval) <= NOW() + INTERVAL '60 days'
@@ -717,7 +719,10 @@ export async function reporteActivosOciosos(req, res) {
       FROM empresa_activos a
       JOIN puntos_entrega pe ON a.cliente_id = pe.id
       -- Left join para traer pedidos, incluso si no existen
-      LEFT JOIN pedidos p ON p.punto_entrega_id = pe.id AND p.estado != 'cancelado'
+      LEFT JOIN pedidos p
+        ON p.punto_entrega_id = pe.id
+       AND p.empresa_id = $1
+       AND p.estado != 'cancelado'
       WHERE a.empresa_id = $1
         AND a.estado = 'prestado'
       GROUP BY a.id, pe.id
