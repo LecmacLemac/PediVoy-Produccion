@@ -305,6 +305,39 @@
       </div>
     </section>
 
+    <section class="grid-charts" style="margin-top:1.5rem">
+      <div class="card">
+        <h3>💳 Estado de Pagos (Entregados)</h3>
+        <ul class="list-stats" id="payStatus">
+          <li><span>Pagados</span><span class="ok" id="payPaid">—</span></li>
+          <li><span>Pendientes</span><span class="bad" id="payPend">—</span></li>
+          <li><span>% Pagados</span><span id="payPct">—</span></li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>🧾 Top Clientes (por Ventas)</h3>
+        <ul class="list-stats" id="topClientes"></ul>
+      </div>
+      <div class="card">
+        <h3>📅 Ventas por Día</h3>
+        <div class="table-responsive" style="max-height:260px;">
+          <table>
+            <thead>
+              <tr>
+                <th>Fecha</th>
+                <th class="numeric">Pedidos</th>
+                <th class="numeric">Ventas</th>
+                <th class="numeric">% Pagado</th>
+              </tr>
+            </thead>
+            <tbody id="ventasDiaRows">
+              <tr><td colspan="4" style="text-align:center; padding:1rem; color:var(--muted)">Calculá para ver datos.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
     <section>
       <div class="flex-between" style="margin-top:2rem">
         <h3>Detalle por Repartidor</h3>
@@ -590,6 +623,9 @@ async function init() {
         // Medios de pago
         await loadTransferenciasData(from, to);
         await loadEfectivoData(from, to);
+
+        // Extra stats (top clientes, ventas por día, pagados vs no)
+        await loadEntregadosStats(from, to);
       } catch (e) {
         console.error(e);
         $('#tbBody').innerHTML = `<tr><td colspan="11" class="bad" style="text-align:center">Error: ${e.message}</td></tr>`;
@@ -902,6 +938,115 @@ async function init() {
       } catch (e) {
         console.error(e);
         $('#kpiEfectivo').textContent = money(0);
+      }
+    }
+
+    async function loadEntregadosStats(from, to) {
+      const topClientesEl = $('#topClientes');
+      const rowsEl = $('#ventasDiaRows');
+      const paidEl = $('#payPaid');
+      const pendEl = $('#payPend');
+      const pctEl = $('#payPct');
+
+      try {
+        const url = buildEntregadosUrl(from, to, null);
+        const res = await api(url);
+        const list = Array.isArray(res) ? res : (Array.isArray(res?.rows) ? res.rows : []);
+
+        // Pagados vs pendientes (monto + count)
+        let paidMonto = 0, pendMonto = 0, paidCount = 0, pendCount = 0;
+        for (const r of list) {
+          const monto = num(r.monto);
+          if (r.pagado) { paidMonto += monto; paidCount += 1; }
+          else { pendMonto += monto; pendCount += 1; }
+        }
+        const totalCount = paidCount + pendCount;
+        const paidPct = totalCount ? (paidCount / totalCount * 100) : 0;
+
+        if (paidEl) paidEl.textContent = `${paidCount} · ${money(paidMonto)}`;
+        if (pendEl) pendEl.textContent = `${pendCount} · ${money(pendMonto)}`;
+        if (pctEl) pctEl.textContent = `${paidPct.toFixed(1)}%`;
+
+        // Top clientes por ventas
+        const mapCli = new Map();
+        for (const r of list) {
+          const key = String(r.telefono || r.cliente || 'sin-id');
+          const cur = mapCli.get(key) || {
+            cliente: r.cliente || 'S/N',
+            telefono: r.telefono || '',
+            pedidos: 0,
+            ventas: 0,
+            pagados: 0,
+          };
+          cur.pedidos += 1;
+          cur.ventas += num(r.monto);
+          if (r.pagado) cur.pagados += 1;
+          mapCli.set(key, cur);
+        }
+        const top = Array.from(mapCli.values())
+          .sort((a, b) => b.ventas - a.ventas)
+          .slice(0, 8);
+
+        if (topClientesEl) {
+          if (!top.length) topClientesEl.innerHTML = `<li class="muted">Sin datos</li>`;
+          else {
+            topClientesEl.innerHTML = top.map(c => {
+              const paidp = c.pedidos ? (c.pagados / c.pedidos * 100) : 0;
+              const tel = String(c.telefono || '').replace(/\D/g, '');
+              const wa = tel
+                ? `<a class="wa-btn ok" href="https://wa.me/${tel}" target="_blank" rel="noopener">${waIcon}</a>`
+                : `<span class="wa-btn">${waIcon}</span>`;
+              return `
+                <li>
+                  <span style="display:flex; align-items:center; gap:8px; min-width:0;">
+                    ${wa}
+                    <span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${esc(c.cliente)}</span>
+                  </span>
+                  <span>${money(c.ventas)} · ${c.pedidos}p · ${paidp.toFixed(0)}%</span>
+                </li>
+              `;
+            }).join('');
+          }
+        }
+
+        // Ventas por día (tabla)
+        const byDay = new Map();
+        for (const r of list) {
+          const day = String(r.fecha).slice(0, 10);
+          const prev = byDay.get(day) || { fecha: day, pedidos: 0, ventas: 0, paid: 0, total: 0 };
+          prev.pedidos += 1;
+          prev.ventas += num(r.monto);
+          prev.total += 1;
+          if (r.pagado) prev.paid += 1;
+          byDay.set(day, prev);
+        }
+        const days = Array.from(byDay.values()).sort((a, b) => a.fecha.localeCompare(b.fecha));
+
+        if (rowsEl) {
+          if (!days.length) {
+            rowsEl.innerHTML = `<tr><td colspan="4" style="text-align:center; padding:1rem; color:var(--muted)">Sin datos</td></tr>`;
+          } else {
+            rowsEl.innerHTML = days.map(d => {
+              const pp = d.total ? (d.paid / d.total * 100) : 0;
+              return `
+                <tr>
+                  <td>${d.fecha}</td>
+                  <td class="numeric">${d.pedidos}</td>
+                  <td class="numeric">${money(d.ventas)}</td>
+                  <td class="numeric">${pp.toFixed(0)}%</td>
+                </tr>
+              `;
+            }).join('');
+          }
+        }
+
+      } catch (e) {
+        console.error('Error loadEntregadosStats', e);
+        if (topClientesEl) topClientesEl.innerHTML = `<li class="muted">Error</li>`;
+        if (rowsEl) rowsEl.innerHTML = `<tr><td colspan="4" style="text-align:center; padding:1rem; color:var(--muted)">Error</td></tr>`;
+        if (paidEl) paidEl.textContent = '—';
+        if (pendEl) pendEl.textContent = '—';
+        if (pctEl) pctEl.textContent = '—';
       }
     }
 
