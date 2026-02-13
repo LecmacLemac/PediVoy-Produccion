@@ -27,6 +27,7 @@ import { createAuthRouter } from './src/routes/auth.js';
 import { createClientesRouter } from './src/routes/clientes.js';
 import { createTrackingRouter } from './src/routes/tracking.js';
 import { createPedidosRouter } from './src/routes/pedidos.js';
+import { createPedidosItemsRouter } from './src/routes/pedidosItems.js';
 import { createLicenciasMpRouter, createMercadoPagoWebhookRouter } from './src/routes/licenciasMp.js';
 import { createPromptsGlobalesRouter } from './src/routes/promptsGlobales.js';
 
@@ -478,6 +479,7 @@ app.use('/api', createAuthRouter());
 app.use('/api/clientes', createClientesRouter());
 app.use('/api/track', createTrackingRouter());
 app.use('/api/pedidos', createPedidosRouter());
+app.use('/api/pedidos', createPedidosItemsRouter());
 app.use('/api/transferencias', createTransferenciasRouter({ TRANSF_DIR }));
 
 // Licencias Mercado Pago
@@ -3494,165 +3496,7 @@ app.get('/api/repartidor/mis-zonas', withAuth, async (req, res) => {
 // --------------------------------------------------
 // Rutas base movidas a src/routes/pedidos.js (GET /api/pedidos, PUT/DELETE /api/pedidos/:id)
 
-app.put('/api/pedidos/:id/items', withAuth, async (req, res) => {
-  const pedidoId = req.params.id;
-  const { items: nuevosItems } = req.body; // Array de { producto, cantidad, precio_unitario }
-  const empresaId = getEmpresaIdFromToken(req);
-
-  // Usamos un cliente específico para poder hacer ROLLBACK si algo falla
-  const client = await pool.connect();
-
-  try {
-    await client.query('BEGIN'); // <--- Inicio Transacción
-
-    // 1. Obtener datos clave del pedido (estado y chofer)
-    const pedData = await client.query(
-      'SELECT chofer_id, estado, empresa_id FROM pedidos WHERE id = $1 AND empresa_id = $2',
-      [pedidoId, empresaId]
-    );
-
-    if (pedData.rows.length === 0) {
-      await client.query('ROLLBACK');
-      client.release();
-      return res.status(404).json({ error: 'Pedido no encontrado' });
-    }
-
-    const { chofer_id, estado } = pedData.rows[0];
-
-    // --- CORRECCIÓN DE BUG DE STOCK ---
-    // Solo tocamos stock físico si el pedido ya fue marcado como "entregado".
-    const stockYaDescontado = (estado === 'entregado');
-
-    // 2. Si corresponde, obtener ítems viejos para DEVOLVER el stock antes de borrar
-    if (chofer_id && stockYaDescontado) {
-      const itemsViejos = await client.query(
-        'SELECT producto, cantidad FROM items_pedido WHERE pedido_id = $1',
-        [pedidoId]
-      );
-
-      for (const oldIt of itemsViejos.rows) {
-        // Buscamos ID producto
-        const prod = await client.query(
-          'SELECT id FROM productos WHERE nombre = $1 AND empresa_id = $2',
-          [oldIt.producto, empresaId]
-        );
-        
-        if (prod.rows.length > 0) {
-          const prodId = prod.rows[0].id;
-          
-          // DEVOLUCIÓN: Sumamos stock al chofer
-          await client.query(`
-            INSERT INTO chofer_stock (empresa_id, chofer_id, producto_id, cantidad)
-            VALUES ($1, $2, $3, $4)
-            ON CONFLICT (empresa_id, chofer_id, producto_id)
-            DO UPDATE SET cantidad = chofer_stock.cantidad + EXCLUDED.cantidad
-          `, [empresaId, chofer_id, prodId, Number(oldIt.cantidad)]);
-
-          // Registrar movimiento (Auditoría)
-          await client.query(`
-              INSERT INTO chofer_stock_mov (empresa_id, chofer_id, producto_id, cantidad, tipo, motivo, referencia)
-              VALUES ($1, $2, $3, $4, 'DEVOLUCION', 'Corrección items pedido (Restauración)', $5)
-            `, [empresaId, chofer_id, prodId, Number(oldIt.cantidad), `Edit Pedido #${pedidoId}`]);
-        }
-      }
-    }
-
-    // 3. Reemplazo de Ítems en la BD
-    // Borrar viejos
-    await client.query(`DELETE FROM items_pedido WHERE pedido_id=$1`, [pedidoId]);
-    
-    // Insertar nuevos
-    if (Array.isArray(nuevosItems)) {
-      for (const it of nuevosItems) {
-        await client.query(
-          `INSERT INTO items_pedido (pedido_id, producto, cantidad, precio_unitario) VALUES ($1, $2, $3, $4)`,
-          [pedidoId, it.producto, Number(it.cantidad), Number(it.precio_unitario)]
-        );
-
-        // 4. Si corresponde, DESCONTAR el nuevo stock
-        if (chofer_id && stockYaDescontado) {
-          const prod = await client.query(
-            'SELECT id FROM productos WHERE nombre = $1 AND empresa_id = $2',
-            [it.producto, empresaId]
-          );
-          
-          if (prod.rows.length > 0) {
-            const prodId = prod.rows[0].id;
-            const cantidadDescontar = Number(it.cantidad);
-
-            // RESTA: Descontamos stock al chofer
-            await client.query(`
-              UPDATE chofer_stock
-              SET cantidad = cantidad - $1
-              WHERE empresa_id = $2 AND chofer_id = $3 AND producto_id = $4`,
-              [cantidadDescontar, empresaId, chofer_id, prodId]
-            );
-            
-            // Registrar movimiento
-            await client.query(`
-              INSERT INTO chofer_stock_mov (empresa_id, chofer_id, producto_id, cantidad, tipo, motivo, referencia)
-              VALUES ($1, $2, $3, $4, 'venta', 'Corrección items pedido (Nueva salida)', $5)
-            `, [empresaId, chofer_id, prodId, -cantidadDescontar, `Edit Pedido #${pedidoId}`]);
-          }
-        }
-      }
-    }
-    
-    // 5. Recalcular monto total del pedido (tenant-safe)
-    await client.query(`
-      UPDATE pedidos
-      SET monto = (
-        SELECT COALESCE(SUM(cantidad*precio_unitario),0)
-        FROM items_pedido
-        WHERE pedido_id=$1
-      )
-      WHERE id=$1 AND empresa_id=$2`,
-      [pedidoId, empresaId]
-    );
-
-    await client.query('COMMIT'); // <--- Confirmar cambios
-    client.release();
-    res.json({ ok: true });
-
-  } catch (e) { 
-    await client.query('ROLLBACK'); // <--- Cancelar todo si hay error
-    client.release();
-    console.error('Error editando ítems y stock:', e);
-    res.status(500).json({ error: 'Error procesando cambios y stock' }); 
-  }
-});
-
-app.get('/api/pedidos/:id/items', withAuth, async (req, res) => {
-  try {
-    const pedidoId = Number(req.params.id);
-    if (!Number.isInteger(pedidoId)) {
-      return res.status(400).json({ error: 'ID de pedido inválido' });
-    }
-
-    const esSuper   = isSuper(req);
-    const myEmpresa = getEmpresaIdFromToken(req);
-
-    // Validar acceso (tenant-safe)
-    const ped = await query(
-      'SELECT empresa_id FROM pedidos WHERE id=$1 AND ($2::int IS NULL OR empresa_id=$2) LIMIT 1',
-      [pedidoId, esSuper ? null : Number(myEmpresa)]
-    );
-    if (!ped.length) return res.status(404).json({ error: 'Pedido no encontrado' });
-
-    const items = await query(
-      `SELECT id, producto, cantidad, precio_unitario
-         FROM items_pedido
-        WHERE pedido_id=$1
-        ORDER BY id`,
-      [pedidoId]
-    );
-
-    res.json(items);
-  } catch (e) {
-    console.error('ERROR GET ITEMS PEDIDO:', e);
-    res.status(500).json({ error: 'Error cargando ítems' });
-  }
-});
+// Items de pedidos movidos a src/routes/pedidosItems.js
 
 // --------------------------------------------------
 // STOCK
