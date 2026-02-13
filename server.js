@@ -22,6 +22,7 @@ import { handleIncomingComprobanteFromBotPg } from './src/transferenciasPipeline
 import { registrarMovimientosActivosDesdePedido, registrarActivosDesdePedidoEntrega } from './src/adm/pedidoActivosService.js';
 import { notificarEnRuta, notificarPedidoTransferencia } from './src/services/notificacionesPedidos.js';
 import { registerRoutes } from './src/routes/index.js';
+import { registerLandingRoutes } from './src/routes/landingRoutes.js';
 import { createTransferenciasRouter } from './src/routes/transferencias.js';
 import { createGastosRouter } from './src/routes/gastos.js';
 import { createAuthRouter } from './src/routes/auth.js';
@@ -72,155 +73,13 @@ const __dirname = path.dirname(__filename);
 // RUTEO INTELIGENTE (LANDINGS vs INDEX GLOBAL)
 // ==================================================
 
-const PAGES_DIR = path.join(__dirname, 'pages');
-if (!fs.existsSync(PAGES_DIR)) fs.mkdirSync(PAGES_DIR, { recursive: true });
-
-// Helper: nombre y path del archivo HTML asociado a una empresa
-function getEmpresaLandingFilename(empresaId) {
-  return `empresa_${empresaId}.html`;
-}
-function getEmpresaLandingPath(empresaId) {
-  return path.join(PAGES_DIR, getEmpresaLandingFilename(empresaId));
-}
-
-// Uploader para LANDINGS HTML
-const pagesUploader = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 512 * 1024 }, // máx ~500KB de HTML
-  fileFilter: (_, file, cb) => {
-    const name = (file.originalname || '').toLowerCase();
-    const isHtml =
-      file.mimetype === 'text/html' ||
-      name.endsWith('.html') ||
-      name.endsWith('.htm');
-
-    cb(isHtml ? null : new Error('Solo se permiten archivos .html'), isHtml);
-  }
+registerLandingRoutes(app, {
+  projectDir: __dirname,
+  query,
+  withAuth,
+  resolveEmpresaId,
+  isSuper,
 });
-
-// 1. Detectar archivo index por defecto en la raíz
-function resolveDefaultIndex() {
-  const htm  = path.join(__dirname, 'index.htm');
-  const html = path.join(__dirname, 'index.html');
-  if (fs.existsSync(htm))  return htm;
-  if (fs.existsSync(html)) return html;
-  return null;
-}
-const DEFAULT_INDEX = resolveDefaultIndex();
-
-// 2. Función auxiliar para normalizar host (quitar www y puerto)
-function normalizeHost(host) {
-  const h = String(host || '').split(':')[0].toLowerCase();
-  return h.replace(/^www\./, '');
-}
-
-// 3. Resolver ruta física del archivo HTML basado en Dominio / Slug / empresa_id
-async function resolvePagePath(req) {
-  // A. ¿Viene forzado por parámetro ?slug=xyz?
-  const slugParamRaw = (req.query?.slug || '').toString().trim().toLowerCase();
-  if (slugParamRaw) {
-    // Si el slug es numérico, lo interpretamos directamente como empresa_id
-    if (/^\d+$/.test(slugParamRaw)) {
-      const empresaId = Number(slugParamRaw);
-      const byId = getEmpresaLandingPath(empresaId);
-      if (fs.existsSync(byId)) return byId;
-    } else {
-      // Slug "texto": buscamos la empresa por landing_slug
-      const cleanSlug = slugParamRaw.replace(/[^a-z0-9\-]/g, '');
-      if (cleanSlug) {
-        try {
-          // --- CORRECCIÓN AQUÍ: Quitamos { } ---
-          const rows = await query(
-            `SELECT id
-             FROM empresas
-             WHERE LOWER(landing_slug) = $1
-             LIMIT 1`,
-            [cleanSlug]
-          );
-          if (rows && rows.length) {
-            const empresaId = rows[0].id;
-            const bySlug = getEmpresaLandingPath(empresaId);
-            if (fs.existsSync(bySlug)) return bySlug;
-          }
-        } catch (e) {
-          console.error('Error resolviendo slug landing:', e.message);
-        }
-      }
-    }
-  }
-
-  // B. ¿Viene empresa_id explícito en la query? (?empresa_id=123)
-  const empresaIdParam = (req.query?.empresa_id || '').toString().trim();
-  if (empresaIdParam && /^\d+$/.test(empresaIdParam)) {
-    const empresaId = Number(empresaIdParam);
-    const byEmpresaParam = getEmpresaLandingPath(empresaId);
-    if (fs.existsSync(byEmpresaParam)) return byEmpresaParam;
-  }
-
-  // C. Detección por Dominio en Base de Datos
-  const host = normalizeHost(req.headers['x-forwarded-host'] || req.headers.host);
-
-  // Evitamos consultar DB si es localhost o IP directa (optimización opcional)
-  if (host.includes('localhost') || host.match(/^\d+\.\d+\.\d+\.\d+$/)) {
-    return null;
-  }
-
-  try {
-    const rows = await query(
-      `SELECT id
-       FROM empresas
-       WHERE LOWER(landing_domain) = $1
-          OR LOWER(landing_domain) = $2
-       LIMIT 1`,
-      [host, `www.${host}`]
-    );
-
-    if (rows && rows.length) {
-      const empresaId = rows[0].id;
-      const byDomain = getEmpresaLandingPath(empresaId);
-      if (fs.existsSync(byDomain)) return byDomain;
-    }
-  } catch (e) {
-    console.error('Error resolviendo dominio landing:', e.message);
-  }
-
-  return null; // No se encontró página específica
-}
-
-// 4. Handler Principal (Middleware)
-async function serveDetectedPage(req, res) {
-  try {
-    // a) Intentamos resolver página específica
-    const customPage = await resolvePagePath(req);
-    if (customPage) return res.sendFile(customPage);
-
-    // b) Si no hay específica, servimos index global
-    if (DEFAULT_INDEX) return res.sendFile(DEFAULT_INDEX);
-
-    // c) Si no hay index global, mandamos al carrito/login
-    return res.redirect('/pedidos/login.html');
-  } catch (err) {
-    console.error('Error en serveDetectedPage:', err);
-    res.status(500).send('Error interno en ruteo');
-  }
-}
-
-// --- CONFIGURACIÓN DE RUTAS RAÍZ ---
-
-// Servir estáticos de la carpeta pages (por si se piden recursos relativos)
-if (fs.existsSync(PAGES_DIR)) {
-  app.use('/pages', express.static(PAGES_DIR, { index: false }));
-}
-
-// Archivos sueltos específicos en raíz
-app.get('/simple-cart.js', (req, res) => res.sendFile(path.join(__dirname, 'simple-cart.js')));
-
-// Rutas principales que disparan la detección
-app.get('/', serveDetectedPage);
-app.get(['/index', '/index.html', '/index.htm'], serveDetectedPage);
-
-// EXCLUYENDO: /api, /public, /pedidos, /Transferencia, /Gastos
-app.get(/^\/(?!api\/|public\/|pedidos\/|Transferencia\/|Gastos\/).*/, serveDetectedPage);
 
 // ==================================================
 // CARPETAS ESTÁTICAS DEL SISTEMA (Carrito, etc.)
@@ -1001,95 +860,7 @@ app.delete('/api/empresas/cuentas/:id', withAuth, async (req, res) => {
   }
 });
 
-// 5. Subir/actualizar landing HTML de una empresa
-app.post('/api/empresas/:id/landing-page', withAuth, pagesUploader.single('file'),
-  async (req, res) => {
-    try {
-      const requestedId = Number(req.params.id);
-      if (!Number.isFinite(requestedId) || requestedId <= 0) {
-        return res.status(400).json({ error: 'empresa_id inválido' });
-      }
-
-      // Empresa del usuario autenticado (o la que elija si es super)
-      const authEmpresaId = resolveEmpresaId(req);
-
-      // Solo súper admin puede subir para otra empresa
-      if (!isSuper(req) && authEmpresaId !== requestedId) {
-        return res.status(403).json({ error: 'No podés modificar esta empresa' });
-      }
-
-      if (!req.file) {
-        return res.status(400).json({ error: 'Falta archivo .html' });
-      }
-
-      // --- CORRECCIÓN AQUÍ: Quitamos las llaves { } ---
-      const rows = await query(
-        'SELECT landing_slug FROM empresas WHERE id = $1 LIMIT 1',
-        [requestedId]
-      );
-
-      if (!rows || !rows.length) {
-        return res.status(404).json({ error: 'Empresa no encontrada' });
-      }
-
-      // HTML subido
-      const html = req.file.buffer.toString('utf8');
-
-      // Nos aseguramos que la carpeta pages exista
-      if (!fs.existsSync(PAGES_DIR)) {
-        await fs.promises.mkdir(PAGES_DIR, { recursive: true });
-      }
-
-      // Guardamos SIEMPRE con el ID interno (empresa_X.html)
-      const filePath = getEmpresaLandingPath(requestedId);
-      
-      await fs.promises.writeFile(filePath, html, 'utf8');
-
-      console.log('Landing actualizada:', filePath);
-
-      return res.json({
-        ok: true,
-        slug: rows[0].landing_slug || '(sin slug)', 
-        path: `/pages/empresa_${requestedId}.html` // Devolvemos ruta técnica o url pública si prefieres
-      });
-    } catch (err) {
-      console.error('Error subiendo landing html:', err);
-      return res.status(500).json({ error: 'Error guardando página' });
-    }
-  }
-);
-
-// 5. Borrar landing HTML de una empresa
-app.delete('/api/empresas/:id/landing-page', withAuth, async (req, res) => {
-  try {
-    const requestedId = Number(req.params.id);
-    if (!Number.isFinite(requestedId) || requestedId <= 0) {
-      return res.status(400).json({ error: 'empresa_id inválido' });
-    }
-
-    const authEmpresaId = resolveEmpresaId(req);
-    if (!isSuper(req) && authEmpresaId !== requestedId) {
-      return res.status(403).json({ error: 'No podés modificar esta empresa' });
-    }
-
-    const filePath = getEmpresaLandingPath(requestedId);
-
-    try {
-      await fs.promises.unlink(filePath);
-    } catch (e) {
-      if (e.code !== 'ENOENT') {
-        console.error('Error eliminando landing:', e);
-        return res.status(500).json({ error: 'Error eliminando página' });
-      }
-      // Si no existía, igual devolvemos ok
-    }
-
-    return res.json({ ok: true });
-  } catch (err) {
-    console.error('Error en delete landing html:', err);
-    return res.status(500).json({ error: 'Error interno' });
-  }
-});
+// (Landing) Endpoints /api/empresas/:id/landing-page movidos a src/routes/landingRoutes.js
 
 // --------------------------------------------------
 // CONFIGURACIÓN DE ENTREGA POR EMPRESA
