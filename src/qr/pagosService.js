@@ -170,56 +170,66 @@ export async function crearPagoParaPedido({ pedidoId, empresaId }, options = {})
     }
   });
 
-  const rows = await query(
-    `
-    INSERT INTO pedido_pagos (
-      empresa_id,
-      pedido_id,
-      cliente_id,
-      chofer_id,
-      metodo_pago,
-      canal,
-      descripcion,
-      proveedor,
-      provider_payment_id,
-      estado,
-      monto,
-      moneda,
-      checkout_url,
-      qr_payload,
-      vence_at,
-      created_at,
-      updated_at
-    )
-    VALUES (
-      $1, $2, $3, $4,
-      $5, $6, $7,
-      $8, $9,
-      'pendiente',
-      $10, $11, $12, $13, $14,
-      NOW(), NOW()
-    )
-    RETURNING *
-    `,
-    [
-      pedido.empresa_id,
-      pedido.id,
-      pedido.punto_entrega_id,
-      pedido.chofer_id,
-      metodoPago,
-      canal,
-      proveedorResp.descripcion,
-      proveedor,
-      proveedorResp.providerPaymentId,
-      monto,
-      proveedorResp.moneda || 'ARS',
-      proveedorResp.checkoutUrl,
-      proveedorResp.qrPayload,
-      venceAt
-    ]
-  );
+  try {
+    const rows = await query(
+      `
+      INSERT INTO pedido_pagos (
+        empresa_id,
+        pedido_id,
+        cliente_id,
+        chofer_id,
+        metodo_pago,
+        canal,
+        descripcion,
+        proveedor,
+        provider_payment_id,
+        estado,
+        monto,
+        moneda,
+        checkout_url,
+        qr_payload,
+        vence_at,
+        created_at,
+        updated_at
+      )
+      VALUES (
+        $1, $2, $3, $4,
+        $5, $6, $7,
+        $8, $9,
+        'pendiente',
+        $10, $11, $12, $13, $14,
+        NOW(), NOW()
+      )
+      RETURNING *
+      `,
+      [
+        pedido.empresa_id,
+        pedido.id,
+        pedido.punto_entrega_id,
+        pedido.chofer_id,
+        metodoPago,
+        canal,
+        proveedorResp.descripcion,
+        proveedor,
+        proveedorResp.providerPaymentId,
+        monto,
+        proveedorResp.moneda || 'ARS',
+        proveedorResp.checkoutUrl,
+        proveedorResp.qrPayload,
+        venceAt
+      ]
+    );
 
-  return rows[0];
+    return rows[0];
+  } catch (e) {
+    // Si dos requests corren en paralelo, el índice parcial (1 pendiente por pedido/empresa)
+    // puede disparar unique violation. En ese caso, re-fetch y devolvemos el pendiente vigente.
+    if (e?.code === '23505') {
+      const existente2 = await getPagoPendientePorPedido({ pedidoId, empresaId });
+      if (existente2) return existente2;
+    }
+    throw e;
+  }
 }
 
 /**
