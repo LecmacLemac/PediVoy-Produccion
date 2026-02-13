@@ -29,6 +29,7 @@ import { createEmpresasRouter } from './src/routes/empresas.js';
 import { createEntregaConfigRouter } from './src/routes/entregaConfig.js';
 import { createZonasRouter } from './src/routes/zonas.js';
 import { createChoferesRouter } from './src/routes/choferes.js';
+import { createAsignacionesZonasRouter } from './src/routes/asignacionesZonas.js';
 import { createTransferenciasRouter } from './src/routes/transferencias.js';
 import { createGastosRouter } from './src/routes/gastos.js';
 import { createAuthRouter } from './src/routes/auth.js';
@@ -306,97 +307,8 @@ app.use('/api/zonas', createZonasRouter({ query, withAuth, isSuper, getEmpresaId
 
 app.use('/api', createChoferesRouter({ query, withAuth, isSuper, getEmpresaIdFromToken }));
 
-// (ASIGNACIONES) GET /api/zonas/choferes movido a src/routes/zonas.js
-
-app.post('/api/asignarChofer', withAuth, async (req, res) => {
-  try {
-    const { chofer_id, zona_id, empresa_id } = req.body || {};
-    const choferIdNum = Number(chofer_id);
-    const zonaIdNum = Number(zona_id);
-
-    if (!Number.isInteger(choferIdNum) || !Number.isInteger(zonaIdNum)) {
-      return res.status(400).json({ error: 'chofer_id y zona_id deben ser enteros' });
-    }
-
-    const esSuper = isSuper(req);
-    let empresaId = esSuper && empresa_id ? Number(empresa_id) : getEmpresaIdFromToken(req);
-
-    // 1) Validar zona y obtener empresa real de la zona (tenant-safe)
-    const zonaRows = await query(
-      'SELECT id, empresa_id FROM zonas_geograficas WHERE id = $1 AND ($2::int IS NULL OR empresa_id=$2) LIMIT 1',
-      [zonaIdNum, esSuper ? null : Number(empresaId)]
-    );
-    if (!zonaRows.length) {
-      return res.status(400).json({ error: 'Zona no encontrada' });
-    }
-    const empresaZonaId = zonaRows[0].empresa_id;
-
-    // Si el token trae empresa, chequear coherencia (salvo super)
-    if (!esSuper && empresaId && empresaId !== empresaZonaId) {
-      return res.status(403).json({ error: 'Zona no pertenece a tu empresa' });
-    }
-
-    // Forzamos empresaId a la de la zona para que quede consistente
-    empresaId = empresaZonaId;
-
-    // 2) Validar chofer y coherencia de empresa (tenant-safe)
-    const choferRows = await query(
-      'SELECT id, empresa_id FROM choferes WHERE id = $1 AND ($2::int IS NULL OR empresa_id=$2) LIMIT 1',
-      [choferIdNum, esSuper ? null : Number(empresaId)]
-    );
-    if (!choferRows.length) {
-      return res.status(400).json({ error: 'Chofer no encontrado' });
-    }
-    const empresaChoferId = choferRows[0].empresa_id;
-
-    if (empresaChoferId !== empresaId) {
-      return res.status(400).json({ error: 'Chofer y zona pertenecen a empresas distintas' });
-    }
-
-    // 3) Insertar asignación
-    await query(
-      `INSERT INTO zona_chofer (empresa_id, zona_id, chofer_id)
-       VALUES ($1, $2, $3)
-       ON CONFLICT (zona_id, chofer_id) DO NOTHING`,
-      [empresaId, zonaIdNum, choferIdNum]
-    );
-
-    res.json({ ok: true });
-  } catch (e) {
-    console.error('ERROR ASIGNAR:', e);
-    res.status(500).json({ error: 'Error asignando: ' + (e.message || e) });
-  }
-});
-
-app.delete('/api/desasignarChofer', withAuth, async (req, res) => {
-  try {
-    const { chofer_id, zona_id, empresa_id } = req.body || {};
-    const choferIdNum = Number(chofer_id);
-    const zonaIdNum = Number(zona_id);
-
-    if (!Number.isInteger(choferIdNum) || !Number.isInteger(zonaIdNum)) {
-      return res.status(400).json({ error: 'chofer_id y zona_id deben ser enteros' });
-    }
-
-    const esSuper = isSuper(req);
-    const myEmpresa = getEmpresaIdFromToken(req);
-    const empresaId = esSuper && empresa_id ? Number(empresa_id) : myEmpresa;
-
-    const rows = await query(
-      'DELETE FROM zona_chofer WHERE chofer_id=$1 AND zona_id=$2 AND ($3::int IS NULL OR empresa_id=$3) RETURNING zona_id',
-      [choferIdNum, zonaIdNum, esSuper ? null : Number(empresaId)]
-    );
-
-    if (!rows.length) {
-      return res.status(404).json({ error: 'Asignación no encontrada o sin permiso' });
-    }
-
-    res.json({ ok: true });
-  } catch (e) {
-    console.error('ERROR DESASIGNAR:', e);
-    res.status(500).json({ error: 'Error desasignando' });
-  }
-});
+// (ASIGNACIONES) /api/asignarChofer y /api/desasignarChofer movidos a src/routes/asignacionesZonas.js
+app.use('/api', createAsignacionesZonasRouter({ query, withAuth, isSuper, getEmpresaIdFromToken }));
 
 // --------------------------------------------------
 // PRODUCTOS (CRUD)
