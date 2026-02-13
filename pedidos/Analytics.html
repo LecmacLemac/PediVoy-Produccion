@@ -234,12 +234,18 @@
 </div>
 
 <script>
-const token = localStorage.getItem("token") || "";
+// Modo seguro: auth por cookie httpOnly
+const authFetch = (url, opts = {}) => {
+  const { headers = {}, ...rest } = opts;
+  return fetch(url, { ...rest, headers, credentials: 'include' });
+};
 
 async function api(url) {
-  const res = await fetch(url, {
-    headers: { "Authorization": "Bearer " + token }
-  });
+  const res = await authFetch(url);
+  if (res.status === 401) {
+    location.href = 'login.html';
+    return {};
+  }
   return res.json();
 }
 

@@ -270,16 +270,18 @@
 <div id="toast" class="toast"><i class="fa-solid fa-circle-check"></i> <span>Acción realizada</span></div>
 
 <script>
-  // --- Configuración y Auth ---
-  const token = localStorage.getItem('token');
-  if(!token) window.location.href = 'login.html';
+  // --- Configuración y Auth (modo seguro: cookie httpOnly) ---
+  const authFetch = (url, opts = {}) => {
+    const { headers = {}, ...rest } = opts;
+    return fetch(url, { ...rest, headers, credentials: 'include' });
+  };
 
   const $ = s => document.querySelector(s);
   const money = n => '$ ' + Number(n).toLocaleString('es-AR', {minimumFractionDigits: 0});
   
   const api = async (url, opts={}) => {
     try {
-      const res = await fetch(url, { ...opts, headers: { ...opts.headers, 'Authorization': 'Bearer '+token }});
+      const res = await authFetch(url, opts);
       if(res.status === 401) window.location.href = 'login.html';
       return res.json();
     } catch(e) { console.error(e); return null; }
