@@ -18,6 +18,26 @@ function timingSafeEqualHex(a, b) {
   }
 }
 
+function sanitizeWebhookPayload({ body, providerStatus, canonicalEstado, ip }) {
+  // Guardamos solo lo mínimo útil para auditoría (sin secretos ni datos de tarjeta)
+  return {
+    webhook: {
+      received_at: new Date().toISOString(),
+      ip: ip || null
+    },
+    provider: {
+      status: providerStatus ? String(providerStatus) : null,
+      canonical_estado: String(canonicalEstado)
+    },
+    // del body guardamos solo whitelist
+    body: {
+      proveedor: body?.proveedor ? String(body.proveedor) : null,
+      providerPaymentId: body?.providerPaymentId ? String(body.providerPaymentId) : null,
+      nuevoEstado: body?.nuevoEstado ? String(body.nuevoEstado) : null
+    }
+  };
+}
+
 /**
  * Webhook genérico para pedido_pagos.
  *
@@ -91,11 +111,20 @@ router.post('/pagos', async (req, res) => {
     }
 
     // 4) Actualizar estado del pago
+    const ip = (req.headers['x-forwarded-for'] || req.ip || '').toString().split(',')[0].trim();
+    const providerPayload = sanitizeWebhookPayload({
+      body: req.body,
+      providerStatus,
+      canonicalEstado,
+      ip
+    });
+
     const updated = await actualizarEstadoPagoScoped({
       proveedor: String(proveedor),
       providerPaymentId: String(providerPaymentId),
       nuevoEstado: String(canonicalEstado),
-      providerStatus: providerStatus ? String(providerStatus) : null
+      providerStatus: providerStatus ? String(providerStatus) : null,
+      providerPayload
     });
 
     // Idempotente: si ya estaba, updated puede ser null; igual devolvemos ok

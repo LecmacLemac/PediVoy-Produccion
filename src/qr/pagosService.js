@@ -256,7 +256,7 @@ export async function actualizarEstadoPago({ providerPaymentId, nuevoEstado, pro
  * Variante más segura: ata el update por (proveedor, provider_payment_id)
  * para evitar colisiones cross-provider.
  */
-export async function actualizarEstadoPagoScoped({ proveedor, providerPaymentId, nuevoEstado, providerStatus = null }) {
+export async function actualizarEstadoPagoScoped({ proveedor, providerPaymentId, nuevoEstado, providerStatus = null, providerPayload = null }) {
   const rows = await query(
     `
     UPDATE pedido_pagos
@@ -266,12 +266,16 @@ export async function actualizarEstadoPagoScoped({ proveedor, providerPaymentId,
              ELSE settlement_at
            END,
            provider_status = COALESCE($4, provider_status),
+           provider_payload = CASE
+             WHEN $5::jsonb IS NULL THEN provider_payload
+             ELSE COALESCE(provider_payload, '{}'::jsonb) || $5::jsonb
+           END,
            updated_at = NOW()
      WHERE proveedor = $2
        AND provider_payment_id = $3
      RETURNING *
     `,
-    [nuevoEstado, proveedor, providerPaymentId, providerStatus]
+    [nuevoEstado, proveedor, providerPaymentId, providerStatus, providerPayload]
   );
 
   return rows[0] || null;
