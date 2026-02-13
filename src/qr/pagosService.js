@@ -270,6 +270,11 @@ export async function actualizarEstadoPagoScoped({ proveedor, providerPaymentId,
              WHEN $5::jsonb IS NULL THEN provider_payload
              ELSE COALESCE(provider_payload, '{}'::jsonb) || $5::jsonb
            END,
+           metadata = COALESCE(metadata, '{}'::jsonb)
+             || jsonb_build_object(
+                  'last_webhook_at', NOW(),
+                  'webhook_count', COALESCE((metadata->>'webhook_count')::int, 0) + 1
+                ),
            updated_at = NOW()
      WHERE proveedor = $2
        AND provider_payment_id = $3
