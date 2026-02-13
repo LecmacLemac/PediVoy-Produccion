@@ -1,7 +1,7 @@
 // src/adm/pagosRouter.js
 import { Router } from 'express';
 import { withAuth, isSuper, checkLicencia, resolveEmpresaId } from '../services.js';
-import { crearPagoParaPedido } from '../qr/pagosService.js';
+import { crearPagoParaPedido, listarPagosPorPedido } from '../qr/pagosService.js';
 
 const router = Router();
 
@@ -16,6 +16,36 @@ router.use((req, res, next) => {
   }
   // Permitimos super + admins/usuarios de backoffice (por ahora cualquier no-repartidor)
   return next();
+});
+
+/**
+ * Lista pagos para un pedido.
+ *
+ * GET /api/admin/qr/pedidos/:pedidoId/pagos
+ */
+router.get('/pedidos/:pedidoId/pagos', async (req, res) => {
+  try {
+    const role = String(req.user?.role || '').toLowerCase();
+    if (!isSuper(req) && role !== 'admin') {
+      return res.status(403).json({ error: 'No autorizado.' });
+    }
+
+    const pedidoId = Number(req.params.pedidoId);
+    if (!Number.isInteger(pedidoId) || pedidoId <= 0) {
+      return res.status(400).json({ error: 'pedidoId inválido' });
+    }
+
+    const empresaId = resolveEmpresaId(req);
+    if (!empresaId || !Number.isInteger(empresaId) || empresaId <= 0) {
+      return res.status(400).json({ error: 'empresa_id inválido' });
+    }
+
+    const pagos = await listarPagosPorPedido({ pedidoId, empresaId });
+    return res.json(pagos);
+  } catch (err) {
+    console.error('Error listando pagos de pedido', err);
+    return res.status(500).json({ error: 'Error interno' });
+  }
 });
 
 /**

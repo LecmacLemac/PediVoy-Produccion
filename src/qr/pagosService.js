@@ -253,6 +253,44 @@ export async function actualizarEstadoPago({ providerPaymentId, nuevoEstado, pro
 }
 
 /**
+ * Lista pagos (historial) para un pedido dentro de una empresa.
+ */
+export async function listarPagosPorPedido({ pedidoId, empresaId }) {
+  const rows = await query(
+    `
+    SELECT
+      id,
+      empresa_id,
+      pedido_id,
+      metodo_pago,
+      canal,
+      descripcion,
+      proveedor,
+      provider_payment_id,
+      provider_status,
+      estado,
+      monto,
+      moneda,
+      checkout_url,
+      qr_payload,
+      vence_at,
+      settlement_at,
+      conciliado,
+      metadata,
+      created_at,
+      updated_at
+    FROM pedido_pagos
+    WHERE pedido_id = $1
+      AND empresa_id = $2
+    ORDER BY id DESC
+    `,
+    [pedidoId, empresaId]
+  );
+
+  return rows;
+}
+
+/**
  * Variante más segura: ata el update por (proveedor, provider_payment_id)
  * para evitar colisiones cross-provider.
  */
