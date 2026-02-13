@@ -261,6 +261,10 @@ export async function actualizarEstadoPagoScoped({ proveedor, providerPaymentId,
     `
     UPDATE pedido_pagos
        SET estado = $1,
+           settlement_at = CASE
+             WHEN $1 = 'pagado' AND settlement_at IS NULL THEN NOW()
+             ELSE settlement_at
+           END,
            provider_status = COALESCE($4, provider_status),
            updated_at = NOW()
      WHERE proveedor = $2

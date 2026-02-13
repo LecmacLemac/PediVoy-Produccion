@@ -3,6 +3,7 @@ import { Router } from 'express';
 import crypto from 'node:crypto';
 import { query } from '../db.js';
 import { actualizarEstadoPagoScoped } from './pagosService.js';
+import { normalizePagoEstado } from './pagosEstado.js';
 
 const router = Router();
 
@@ -35,6 +36,16 @@ router.post('/pagos', async (req, res) => {
 
     if (!proveedor || !providerPaymentId || !nuevoEstado) {
       return res.status(400).json({ error: 'Payload inválido' });
+    }
+
+    const canonicalEstado = normalizePagoEstado({
+      proveedor,
+      providerStatus,
+      nuevoEstado
+    });
+
+    if (!canonicalEstado) {
+      return res.status(400).json({ error: 'Estado no soportado' });
     }
 
     // 1) Resolver empresa a partir del pago (guard-rail multi-tenant)
@@ -72,7 +83,7 @@ router.post('/pagos', async (req, res) => {
 
     // 3) Verificar firma
     const providedSig = req.headers['x-pagos-signature'];
-    const msg = `${proveedor}|${providerPaymentId}|${nuevoEstado}`;
+    const msg = `${proveedor}|${providerPaymentId}|${canonicalEstado}`;
     const expectedSig = crypto.createHmac('sha256', String(secret)).update(msg).digest('hex');
 
     if (!timingSafeEqualHex(providedSig, expectedSig)) {
@@ -83,7 +94,7 @@ router.post('/pagos', async (req, res) => {
     const updated = await actualizarEstadoPagoScoped({
       proveedor: String(proveedor),
       providerPaymentId: String(providerPaymentId),
-      nuevoEstado: String(nuevoEstado),
+      nuevoEstado: String(canonicalEstado),
       providerStatus: providerStatus ? String(providerStatus) : null
     });
 
