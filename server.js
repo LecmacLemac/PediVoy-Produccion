@@ -24,6 +24,7 @@ import { notificarEnRuta, notificarPedidoTransferencia } from './src/services/no
 import { registerRoutes } from './src/routes/index.js';
 import { registerLandingRoutes } from './src/routes/landingRoutes.js';
 import { createAuthGuestSignupRouter } from './src/routes/authGuestSignup.js';
+import { createPublicLandingRouter } from './src/routes/publicLanding.js';
 import { createTransferenciasRouter } from './src/routes/transferencias.js';
 import { createGastosRouter } from './src/routes/gastos.js';
 import { createAuthRouter } from './src/routes/auth.js';
@@ -106,84 +107,7 @@ app.use('/api/auth', createAuthGuestSignupRouter({ query, withAuth }));
 // RUTAS PÚBLICAS PARA LANDINGS (SIN AUTH)
 // ==================================================
 
-// Helper local: normalizar host (quitar www y puerto)
-function normalizeHost(host) {
-  const h = String(host || '').split(':')[0].toLowerCase();
-  return h.replace(/^www\./, '');
-}
-
-
-// 1. Configuración (Título de la web)
-app.get('/api/public/config', async (req, res) => {
-  try {
-    const host = normalizeHost(req.headers['x-forwarded-host'] || req.headers.host);
-    // Buscamos si el dominio coincide con alguna empresa
-    const rows = await query(
-      'SELECT id AS empresa_id, nombre, landing_slug FROM empresas WHERE landing_domain = $1 LIMIT 1', 
-      [host]
-    );
-    // Si encuentra, devuelve info, si no, devuelve objeto vacío (el front usa el ID hardcodeado igual)
-    res.json(rows[0] || {});
-  } catch (e) {
-    res.status(500).json({});
-  }
-});
-
-// 2. Productos (Catálogo visible)
-app.get('/api/public/productos', async (req, res) => {
-  try {
-    const empresaId = Number(req.query.empresa_id);
-    const scope = req.query.scope; // 'landing' o null
-
-    if (!empresaId) return res.json([]);
-
-    let sql = `
-      SELECT id, nombre, descripcion, precio, imagen, imagen_promo, etiqueta, categoria
-      FROM productos 
-      WHERE empresa_id = $1 
-        AND activo = true
-    `;
-
-    // Si la web pide scope=landing, filtramos estrictamente
-    if (scope === 'landing') {
-       sql += ` AND mostrar_en_landing = true`;
-    }
-
-    sql += ` ORDER BY orden ASC, id DESC`;
-
-    const rows = await query(sql, [empresaId]);
-    res.json(rows);
-  } catch (e) {
-    console.error('Error public products:', e);
-    res.status(500).json({ error: 'Error cargando catálogo' });
-  }
-});
-
-// 3. Buscador de Pedidos (Estado del pedido)
-app.get('/api/public/pedidos/ultimo', async (req, res) => {
-  try {
-    const empresaId = Number(req.query.empresa_id);
-    const telefono = req.query.telefono;
-    
-    if(!empresaId || !telefono) return res.status(400).json({ error: 'Datos incompletos' });
-
-    const rows = await query(`
-      SELECT p.id, p.estado, p.monto, p.fecha 
-      FROM pedidos p
-      JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
-      WHERE pe.empresa_id = $1 
-        AND pe.telefono_normalizado LIKE '%' || $2 
-      ORDER BY p.id DESC LIMIT 1
-    `, [empresaId, telefono.slice(-10)]); // Buscamos por los últimos 10 dígitos
-
-    if (rows.length) res.json(rows[0]);
-    else res.json({}); 
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: 'Error buscando pedido' });
-  }
-});
-
+app.use('/api/public', createPublicLandingRouter({ query }));
 app.use('/api/public', trackingPublicRouter);
 
 // Routers modulares
