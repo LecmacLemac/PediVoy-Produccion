@@ -4731,11 +4731,13 @@ app.get('/api/estadisticas/dashboard', withAuth, checkLicencia, async (req, res)
             0
           ) as unidades
         FROM pedidos p
-        JOIN puntos_entrega pe ON p.punto_entrega_id = pe.id
+        JOIN puntos_entrega pe
+          ON pe.id = p.punto_entrega_id
+         AND pe.empresa_id = $1
         WHERE p.estado = 'entregado'
-          AND pe.empresa_id = $1
+          AND p.empresa_id = $1
           AND p.fecha >= $2 AND p.fecha <= $3
-          ${chofer_id ? 'AND p.chofer_id = ' + Number(chofer_id) : ''}
+          AND ($4::int IS NULL OR p.chofer_id = $4)
         GROUP BY 1, 2
       )
       SELECT
@@ -4763,7 +4765,7 @@ app.get('/api/estadisticas/dashboard', withAuth, checkLicencia, async (req, res)
       WHERE empresa_id = $1
         AND fecha >= $2 AND fecha <= $3
         AND tipo IN ('carga_llenos', 'compra_mercaderia')
-        ${chofer_id ? 'AND chofer_id = ' + Number(chofer_id) : ''}
+        AND ($4::int IS NULL OR chofer_id = $4)
       GROUP BY 1
     `;
 
@@ -4774,7 +4776,7 @@ app.get('/api/estadisticas/dashboard', withAuth, checkLicencia, async (req, res)
       WHERE empresa_id = $1
         AND fecha >= $2 AND fecha <= $3
         AND tipo NOT IN ('carga_llenos', 'compra_mercaderia', 'descarga_vacios', 'stock')
-        ${chofer_id ? 'AND chofer_id = ' + Number(chofer_id) : ''}
+        AND ($4::int IS NULL OR chofer_id = $4)
       GROUP BY 1
     `;
 
@@ -4793,16 +4795,18 @@ app.get('/api/estadisticas/dashboard', withAuth, checkLicencia, async (req, res)
        AND pe.empresa_id = $1
       WHERE p.estado = 'entregado'
         AND p.fecha >= $2 AND p.fecha <= $3
-        ${chofer_id ? 'AND p.chofer_id = ' + Number(chofer_id) : ''}
+        AND ($4::int IS NULL OR p.chofer_id = $4)
       GROUP BY it.producto
     `;
 
+    const choferIdParam = chofer_id ? Number(chofer_id) : null;
+
     const [dailyRes, prodRes, fixedRes, choferesRes, topProdRes] = await Promise.all([
-      query(sqlDaily,      [targetEmpresa, dateFrom, dateTo]),
-      query(sqlProdCosts,  [targetEmpresa, dateFrom, dateTo]),
-      query(sqlFixedCosts, [targetEmpresa, dateFrom, dateTo]),
+      query(sqlDaily,      [targetEmpresa, dateFrom, dateTo, choferIdParam]),
+      query(sqlProdCosts,  [targetEmpresa, dateFrom, dateTo, choferIdParam]),
+      query(sqlFixedCosts, [targetEmpresa, dateFrom, dateTo, choferIdParam]),
       query('SELECT id, nombre, tipo FROM choferes WHERE empresa_id=$1', [targetEmpresa]),
-      query(sqlTopProducts,[targetEmpresa, dateFrom, dateTo]),
+      query(sqlTopProducts,[targetEmpresa, dateFrom, dateTo, choferIdParam]),
     ]);
 
     // === Consolidado por chofer + mapa para prorrateo ===
