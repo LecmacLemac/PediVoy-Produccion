@@ -705,6 +705,12 @@ async function api(path, opts = {}) {
   return { ok: true, text: txt };
 }
 
+function notifyError(userMsg, err) {
+  // Mensaje corto para el repartidor + log técnico en consola
+  if (err) console.warn(userMsg, err);
+  try { toast('❌ ' + userMsg); } catch {}
+}
+
 // --- INITIALIZATION ---
 (async function boot() {
   try {
@@ -882,7 +888,14 @@ $('#resDate').onchange = calcResumen;
 
 
 async function loadZonas(){
-  try { const zs = await api('/api/zonas/choferes'); zonas = zs || []; $('#fZona').innerHTML = '<option value="">Todas</option>' + zonas.map(z=>`<option value="${z.id}">${z.nombre}</option>`).join(''); } catch{}
+  try {
+    const zs = await api('/api/zonas/choferes');
+    zonas = zs || [];
+    $('#fZona').innerHTML = '<option value="">Todas</option>' + zonas.map(z=>`<option value="${z.id}">${z.nombre}</option>`).join('');
+  } catch(e) {
+    zonas = [];
+    notifyError('Error cargando zonas', e);
+  }
 }
 
 async function loadMisZonas(){
@@ -892,6 +905,7 @@ async function loadMisZonas(){
   } catch(e) {
     console.warn('No se pudieron cargar mis zonas', e);
     misZonas = [];
+    notifyError('No se pudieron cargar tus zonas', e);
   }
 }
 
