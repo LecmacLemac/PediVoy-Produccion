@@ -727,7 +727,7 @@ async function api(path, opts = {}) {
 // --- EVENT LISTENERS (GLOBAL) ---
 const btn = $('#menuToggle'), panel = $('#menuPanel');
 btn.onclick = () => panel.classList.toggle('show');
-$$('.nav-link').forEach(l => l.onclick = (e) => {
+$$('.nav-link').forEach(l => l.onclick = async (e) => {
   e.preventDefault();
   if(l.id === 'logout') {
     try { await authFetch('/api/logout', { method: 'POST' }); } catch {}
