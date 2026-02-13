@@ -27,6 +27,7 @@ import { createAuthRouter } from './src/routes/auth.js';
 import { createClientesRouter } from './src/routes/clientes.js';
 import { createTrackingRouter } from './src/routes/tracking.js';
 import { createLicenciasMpRouter, createMercadoPagoWebhookRouter } from './src/routes/licenciasMp.js';
+import { createPromptsGlobalesRouter } from './src/routes/promptsGlobales.js';
 
 // --------------------------------------------------
 // Config express
@@ -480,6 +481,9 @@ app.use('/api/transferencias', createTransferenciasRouter({ TRANSF_DIR }));
 // Licencias Mercado Pago
 app.use('/api/admin/licencia', createLicenciasMpRouter({ crearPreferenciaLicencia }));
 app.use('/api/webhooks', createMercadoPagoWebhookRouter({ obtenerPago }));
+
+// Prompts globales (super admin)
+app.use('/api/admin/prompts', createPromptsGlobalesRouter());
 
 // --------------------------------------------------
 // Transferencias (comprobantes de transferencia)
@@ -4465,65 +4469,7 @@ app.get('/api/estadisticas/dashboard', withAuth, checkLicencia, async (req, res)
 // ==================================================
 // Movido a src/routes/licenciasMp.js
 
-// --------------------------------------------------
-// CONFIGURACIÓN GLOBAL Prompts (Solo Super Admin)
-// --------------------------------------------------
-
-// 1. Obtener Prompts Globales
-app.get('/api/admin/prompts/global', withAuth, async (req, res) => {
-  if (!isSuper(req)) return res.status(403).json({ error: 'Acceso denegado' });
-  try {
-    const rows = await query(
-      `SELECT tipo, contenido, updated_at 
-       FROM empresa_prompts 
-       WHERE empresa_id IS NULL 
-       ORDER BY tipo`
-    );
-    res.json(rows);
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: 'Error al leer configuración' });
-  }
-});
-
-// 2. Guardar/Actualizar Prompt Global
-app.post('/api/admin/prompts/global', withAuth, async (req, res) => {
-  if (!isSuper(req)) return res.status(403).json({ error: 'Acceso denegado' });
-  
-  const { tipo, contenido } = req.body;
-  if (!tipo || !contenido) return res.status(400).json({ error: 'Datos incompletos' });
-
-  try {
-    // Usamos Upsert compatible con el índice parcial (WHERE empresa_id IS NULL)
-    await query(`
-      INSERT INTO empresa_prompts (empresa_id, tipo, contenido, updated_at)
-      VALUES (NULL, $1, $2, NOW())
-      ON CONFLICT (tipo) WHERE empresa_id IS NULL
-      DO UPDATE SET 
-        contenido = EXCLUDED.contenido,
-        updated_at = NOW()
-    `, [tipo, contenido]);
-
-    res.json({ ok: true });
-  } catch (e) {
-    console.error('Error guardando prompt global:', e);
-    res.status(500).json({ error: 'Error al guardar' });
-  }
-});
-
-// 3. Eliminar Prompt Global (Volver a hardcoded)
-app.delete('/api/admin/prompts/global/:tipo', withAuth, async (req, res) => {
-  if (!isSuper(req)) return res.status(403).json({ error: 'Acceso denegado' });
-  try {
-    await query(
-      `DELETE FROM empresa_prompts WHERE empresa_id IS NULL AND tipo = $1`, 
-      [req.params.tipo]
-    );
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ error: 'Error al eliminar' });
-  }
-});
+// Prompts globales movidos a src/routes/promptsGlobales.js
 
 registerOrderRoutes(app);
 
