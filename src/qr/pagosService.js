@@ -273,7 +273,8 @@ export async function actualizarEstadoPagoScoped({ proveedor, providerPaymentId,
            metadata = COALESCE(metadata, '{}'::jsonb)
              || jsonb_build_object(
                   'last_webhook_at', NOW(),
-                  'webhook_count', COALESCE((metadata->>'webhook_count')::int, 0) + 1
+                  'webhook_count', COALESCE((metadata->>'webhook_count')::int, 0) + 1,
+                  'last_canonical_estado', $1
                 ),
            updated_at = NOW()
      WHERE proveedor = $2
