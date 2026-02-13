@@ -23,6 +23,7 @@ import { handleIncomingComprobanteFromBotPg } from './src/transferenciasPipeline
 import { registrarMovimientosActivosDesdePedido, registrarActivosDesdePedidoEntrega } from './src/adm/pedidoActivosService.js';
 import { registerRoutes } from './src/routes/index.js';
 import { createTransferenciasRouter } from './src/routes/transferencias.js';
+import { createAuthRouter } from './src/routes/auth.js';
 
 // --------------------------------------------------
 // Config express
@@ -468,6 +469,7 @@ app.use('/api/public', trackingPublicRouter);
 
 // Routers modulares
 registerRoutes(app);
+app.use('/api', createAuthRouter());
 app.use('/api/transferencias', createTransferenciasRouter({ TRANSF_DIR }));
 
 // --------------------------------------------------
@@ -734,67 +736,7 @@ app.delete('/api/gastos/:id', withAuth, async (req, res) => {
 // --------------------------------------------------
 // AUTH (login + /me)
 // --------------------------------------------------
-
-app.get('/api/me', (req, res) => {
-  try {
-    let token = null;
-    const h = req.headers.authorization || '';
-    if (h.startsWith('Bearer ')) token = h.slice(7);
-    if (!token && req.cookies?.token) token = req.cookies.token;
-    if (!token) return res.status(401).json({ error: 'No token' });
-
-    const user = jwt.verify(token, process.env.JWT_SECRET || 'dev');
-    res.json({ user });
-  } catch {
-    res.status(401).json({ error: 'Token inválido' });
-  }
-});
-
-app.post('/api/login', async (req, res) => {
-  try {
-    const { username, password } = req.body || {};
-    if (!username || !password) return res.status(400).json({ error: 'Faltan credenciales' });
-
-    // 1. Traemos también los datos de la empresa para verificar el plan
-    const rows = await query(
-      `SELECT u.id, u.username, u.password, u.role, u.empresa_id, u.chofer_id,
-              e.plan_estado, e.plan_vencimiento
-       FROM usuarios u
-       LEFT JOIN empresas e ON u.empresa_id = e.id
-       WHERE u.username = $1 LIMIT 1`,
-      [username]
-    );
-
-    if (!rows.length) return res.status(401).json({ error: 'Credenciales inválidas' });
-    const user = rows[0];
-
-    // --- NUEVA VALIDACIÓN DE LICENCIA ---
-    // Si no es Super Admin y la empresa está vencida, bloqueamos
-    if (user.role !== 'super' && user.plan_estado === 'expired') {
-       return res.status(402).json({ 
-         error: '⛔ Tu licencia ha vencido. Realiza el pago para reactivar el servicio.' 
-       });
-    }
-    // ------------------------------------
-
-    const match = await bcrypt.compare(String(password), String(user.password));
-    if (!match) return res.status(401).json({ error: 'Credenciales inválidas' });
-
-    const token = jwt.sign({
-      uid: user.id, username: user.username, empresa_id: user.empresa_id,
-      role: user.role, chofer_id: user.chofer_id ?? null
-    }, process.env.JWT_SECRET || 'dev', { expiresIn: '8h' });
-    
-    res.cookie('token', token, {
-      httpOnly: true, sameSite: 'lax',
-      secure: process.env.NODE_ENV === 'production', maxAge: 8 * 60 * 60 * 1000,
-    });
-    res.json({ token });
-  } catch (e) {
-    console.error('LOGIN ERROR:', e);
-    res.status(500).json({ error: 'Error interno' });
-  }
-});
+// Movido a src/routes/auth.js
 
 // --------------------------------------------------
 // ONBOARDING / CONFIGURACIÓN INICIAL
