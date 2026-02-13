@@ -28,6 +28,15 @@
 .env.*
 credentials.json
 
+# Local build/runtime artifacts
+node_modules/
+.puppeteer/
+.wwebjs_auth/
+Gastos/
+Transferencia/
+logs/
+pedidos/css/
+
 # OpenClaw workspace meta (no mezclar con el proyecto)
 AGENTS.md
 BOOTSTRAP.md
