@@ -28,6 +28,7 @@ import { createClientesRouter } from './src/routes/clientes.js';
 import { createTrackingRouter } from './src/routes/tracking.js';
 import { createPedidosRouter } from './src/routes/pedidos.js';
 import { createPedidosItemsRouter } from './src/routes/pedidosItems.js';
+import { createPedidosPagoRouter } from './src/routes/pedidosPago.js';
 import { createLicenciasMpRouter, createMercadoPagoWebhookRouter } from './src/routes/licenciasMp.js';
 import { createPromptsGlobalesRouter } from './src/routes/promptsGlobales.js';
 
@@ -480,6 +481,7 @@ app.use('/api/clientes', createClientesRouter());
 app.use('/api/track', createTrackingRouter());
 app.use('/api/pedidos', createPedidosRouter());
 app.use('/api/pedidos', createPedidosItemsRouter());
+app.use('/api/pedidos', createPedidosPagoRouter());
 app.use('/api/transferencias', createTransferenciasRouter({ TRANSF_DIR }));
 
 // Licencias Mercado Pago
@@ -3856,73 +3858,7 @@ app.get('/api/reportes/entregados', withAuth, async (req, res) => {
 });
 
 // Endpoint para el Checkbox (Toggle Pago)
-app.post('/api/pedidos/:id/toggle-pago', withAuth, async (req, res) => {
-  try {
-    const pedidoId = Number(req.params.id);
-    const { marcado } = req.body; // true = validar, false = anular validación
-    const esSuper = isSuper(req);
-    const myEmpresa = getEmpresaIdFromToken(req);
-
-    if (!pedidoId) return res.status(400).json({ error: 'ID inválido' });
-
-    // Resolver pedido (tenant-safe). Super puede ver cualquiera, no-super solo su empresa.
-    const pRows = await query(
-      'SELECT empresa_id, monto, chofer_id, fecha FROM pedidos WHERE id = $1 AND ($2::int IS NULL OR empresa_id = $2) LIMIT 1',
-      [pedidoId, esSuper ? null : Number(myEmpresa)]
-    );
-    if (!pRows.length) return res.status(404).json({ error: 'Pedido no encontrado' });
-
-    const p = pRows[0];
-    const empresaId = Number(p.empresa_id);
-
-    const marcadoBool = !!marcado;
-
-    if (marcadoBool) {
-      // 1) MARCAR COMO PAGADO: crear registro contable en transferencias (si no existe)
-      const existe = await query(
-        'SELECT id FROM transferencias WHERE pedido_id = $1 AND empresa_id = $2',
-        [pedidoId, empresaId]
-      );
-
-      if (!existe.length) {
-        await query(
-          `
-          INSERT INTO transferencias (
-            empresa_id, chofer_id, fecha, monto, metodo_pago,
-            referencia, estado, tipo, pedido_id, created_at, updated_at
-          ) VALUES ($1, $2, $3, $4, 'transferencia',
-            'Verificado manual desde Estadísticas', 'verificado', 'transferencia', $5, NOW(), NOW()
-          )
-          `,
-          [empresaId, p.chofer_id, p.fecha, p.monto, pedidoId]
-        );
-      }
-
-      // 2) Validar comprobante asociado (si existe)
-      await query(
-        'UPDATE comprobantes_transferencia SET validado = 1 WHERE pedido_id = $1 AND empresa_id = $2',
-        [pedidoId, empresaId]
-      );
-    } else {
-      // DESMARCAR: eliminar registro contable asociado a este pedido (solo dentro de la empresa)
-      await query(
-        'DELETE FROM transferencias WHERE pedido_id = $1 AND empresa_id = $2',
-        [pedidoId, empresaId]
-      );
-
-      // Desvalidar comprobante asociado (si existe)
-      await query(
-        'UPDATE comprobantes_transferencia SET validado = 0 WHERE pedido_id = $1 AND empresa_id = $2',
-        [pedidoId, empresaId]
-      );
-    }
-
-    res.json({ ok: true });
-  } catch (e) {
-    console.error('ERROR TOGGLE PAGO:', e);
-    res.status(500).json({ error: 'Error actualizando pago' });
-  }
-});
+// toggle-pago movido a src/routes/pedidosPago.js
 
 // --------------------------------------------------
 // ESTADÍSTICAS AVANZADAS 
