@@ -518,9 +518,7 @@
 
     async function cargarMiEmpresa(id) {
       try {
-        const res = await fetch(`${API_URL}/empresas/${id}`, {
-          headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
-        });
+        const res = await authFetch(`${API_URL}/empresas/${id}`);
 
         if (!res.ok) throw new Error('Error server');
         
