@@ -450,9 +450,11 @@
   </main>
 
   <script>
-    // ====== AUTH & SETUP ======
-    const token = localStorage.getItem('token');
-    if (!token) location.href = 'login.html';
+    // ====== AUTH & SETUP (modo seguro: cookie httpOnly) ======
+    const authFetch = (url, opts = {}) => {
+      const headers = opts.headers || {};
+      return fetch(url, { ...opts, headers, credentials: 'include' });
+    };
 
     const $ = s => document.querySelector(s);
     
@@ -569,7 +571,7 @@
 
     // ====== DATA LOADING ======
     async function loadEmpresas(){
-      const r = await fetch('/api/empresas', { headers:{ Authorization:'Bearer '+token }});
+      const r = await authFetch('/api/empresas');
       const emps = await r.json();
       
       empresaFilter.innerHTML = 
@@ -585,7 +587,7 @@
       const empIdForApi = (ctxEmpresaId === 'orphans') ? '' : ctxEmpresaId;
       
       const qs = (isSuper && empIdForApi) ? `?empresa_id=${encodeURIComponent(empIdForApi)}` : '';
-      const r = await fetch('/api/choferes'+qs, { headers:{ Authorization:'Bearer '+token }});
+      const r = await authFetch('/api/choferes'+qs);
       const data = await r.json();
       const list = Array.isArray(data) ? data : [];
       
@@ -611,7 +613,7 @@
       url += qs;
 
       try {
-        const r = await fetch(url, { headers:{ Authorization:'Bearer '+token }});
+        const r = await authFetch(url);
         let rows = await r.json();
         if (!Array.isArray(rows)) rows = [];
 
@@ -771,10 +773,7 @@
 
     window.delG = async (id) => {
       if (!confirm('¿Eliminar este gasto?')) return;
-      const r = await fetch('/api/gastos/' + id, { 
-        method:'DELETE', 
-        headers:{ Authorization:'Bearer '+token }
-      });
+      const r = await authFetch('/api/gastos/' + id, { method:'DELETE' });
       if (r.ok) loadGastos();
       else alert('Error al eliminar');
     };
@@ -832,10 +831,9 @@
       if (file) fd.append('comprobante', file);
 
       try {
-        const r = await fetch('/api/gastos', { 
-          method: 'POST', 
-          headers:{ Authorization:'Bearer '+token }, 
-          body: fd 
+        const r = await authFetch('/api/gastos', {
+          method: 'POST',
+          body: fd
         });
 
         if (!r.ok) throw new Error();
@@ -911,9 +909,8 @@
       }
 
       try {
-        const r = await fetch('/api/gastos/' + editingId, {
+        const r = await authFetch('/api/gastos/' + editingId, {
           method: 'PUT',
-          headers: { Authorization: 'Bearer ' + token },
           body: fd
         });
         if (!r.ok) throw new Error();
@@ -928,7 +925,11 @@
     });
 
     // ====== INIT / LISTENERS ======
-    $('#logout').addEventListener('click', () => { localStorage.removeItem('token'); location.href='login.html'; });
+    $('#logout').addEventListener('click', async (e) => {
+      e.preventDefault();
+      try { await authFetch('/api/logout', { method: 'POST' }); } catch {}
+      location.href='login.html';
+    });
     
     // Filtros rápidos
     $('#btnHoy').onclick = () => { 
@@ -959,7 +960,7 @@
 
     (async function boot(){
       try {
-        const r = await fetch('/api/me', { headers:{ Authorization:'Bearer '+token }});
+        const r = await authFetch('/api/me');
         if(!r.ok) throw new Error();
         const me = (await r.json()).user;
         

@@ -160,8 +160,11 @@
   <script>
     const $ = sel => document.querySelector(sel);
     const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-    const token = localStorage.getItem('token') || '';
-    if (!token) location.href = 'login.html';
+    // Modo seguro: auth por cookie httpOnly
+    const authFetch = (url, opts = {}) => {
+      const { headers = {}, ...rest } = opts;
+      return fetch(url, { ...rest, headers, credentials: 'include' });
+    };
 
     // Estado
     let isSuper = false;
@@ -171,16 +174,19 @@
 
     // Helpers
 async function api(path, opts={}) {
-  const token = localStorage.getItem('token') || '';
   const { headers={}, body, ...rest } = opts;
   const isFD = (typeof FormData !== 'undefined') && body instanceof FormData;
-  const r = await fetch(path, {
+  const r = await authFetch(path, {
     method: 'GET',
     ...rest,
-    headers: { ...(isFD?{}:{'Content-Type':'application/json'}), Authorization: 'Bearer '+token, ...headers },
+    headers: { ...(isFD?{}:{'Content-Type':'application/json'}), ...headers },
     body: isFD ? body : (body && typeof body!=='string' ? JSON.stringify(body) : body)
   });
-  const t = await r.text(); if (!r.ok) throw new Error(t || (r.status+' '+r.statusText));
+  const t = await r.text();
+  if (!r.ok) {
+    if (r.status === 401) { location.href = 'login.html'; return; }
+    throw new Error(t || (r.status+' '+r.statusText));
+  }
   try { return JSON.parse(t); } catch { return t; }
 }
 
@@ -344,8 +350,11 @@ async function api(path, opts={}) {
     $('#btnEmpRef').onclick = () => { loadEmpresasRows(); };
 
     // Boot
-    // logout clears token
-    document.getElementById('logout').addEventListener('click', (e)=>{ localStorage.removeItem('token'); });
+    // logout (modo seguro)
+    document.getElementById('logout').addEventListener('click', async (e)=>{
+      e.preventDefault();
+      try { await authFetch('/api/logout', { method: 'POST' }); } catch {}
+    });
     (async function init(){
       try{
         await whoAmI();
