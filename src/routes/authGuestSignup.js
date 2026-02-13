@@ -1,0 +1,182 @@
+// src/routes/authGuestSignup.js
+// Extraído desde server.js para reducir el monolito.
+
+import express from 'express';
+import jwt from 'jsonwebtoken';
+import bcrypt from 'bcryptjs';
+import crypto from 'node:crypto';
+
+export function createAuthGuestSignupRouter(deps) {
+  const { query, withAuth } = deps || {};
+  if (typeof query !== 'function') throw new Error('createAuthGuestSignupRouter: falta query(fn)');
+  if (typeof withAuth !== 'function') throw new Error('createAuthGuestSignupRouter: falta withAuth(fn)');
+
+  const router = express.Router();
+
+  // ==================================================
+  // LÓGICA DE USUARIOS EFÍMEROS (OPCIÓN A)
+  // ==================================================
+
+  // POST /api/auth/guest
+  router.post('/guest', async (req, res) => {
+    try {
+      const empresa_id = Number(req.body?.empresa_id) || 1;
+      const randomSuffix = crypto.randomBytes(4).toString('hex');
+      const tempUsername = `guest_${Date.now()}_${randomSuffix}`;
+
+      const result = await query(
+        `INSERT INTO usuarios (username, password, role, empresa_id, es_invitado, fecha_expiracion)
+         VALUES ($1, NULL, 'guest', $2, TRUE, NOW() + INTERVAL '2 hours')
+         RETURNING id, username, role, empresa_id`,
+        [tempUsername, empresa_id]
+      );
+
+      const user = result[0];
+
+      const token = jwt.sign(
+        {
+          uid: user.id,
+          username: user.username,
+          empresa_id: user.empresa_id,
+          role: 'guest',
+        },
+        process.env.JWT_SECRET || 'dev',
+        { expiresIn: '2h' }
+      );
+
+      res.cookie('token', token, {
+        httpOnly: true,
+        sameSite: 'lax',
+        secure: process.env.NODE_ENV === 'production',
+        maxAge: 2 * 60 * 60 * 1000,
+      });
+
+      return res.json({ ok: true, token, user });
+    } catch (e) {
+      console.error('ERROR GUEST:', e);
+      return res.status(500).json({ error: 'Error creando sesión de invitado' });
+    }
+  });
+
+  // POST /api/auth/register
+  router.post('/register', withAuth, async (req, res) => {
+    try {
+      const { username, password, telefono } = req.body || {};
+      const userId = req.user.uid; // token actual
+
+      if (!username || !password) return res.status(400).json({ error: 'Datos incompletos' });
+
+      const check = await query('SELECT es_invitado FROM usuarios WHERE id=$1', [userId]);
+      if (!check.length || !check[0].es_invitado) {
+        return res.status(400).json({ error: 'Este usuario ya está registrado o no existe.' });
+      }
+
+      const salt = await bcrypt.genSalt(10);
+      const hash = await bcrypt.hash(String(password), salt);
+
+      await query(
+        `UPDATE usuarios
+         SET username = $1,
+             password = $2,
+             telefono = $3,
+             es_invitado = FALSE,
+             fecha_expiracion = NULL,
+             role = 'user'
+         WHERE id = $4`,
+        [username, hash, telefono || null, userId]
+      );
+
+      const newToken = jwt.sign(
+        { uid: userId, username, empresa_id: req.user.empresa_id, role: 'user' },
+        process.env.JWT_SECRET || 'dev',
+        { expiresIn: '7d' }
+      );
+
+      return res.json({ ok: true, message: 'Cuenta creada con éxito', token: newToken });
+    } catch (e) {
+      if (e?.message?.includes('unique')) return res.status(400).json({ error: 'El email ya está en uso' });
+      console.error('REGISTER ERROR:', e);
+      return res.status(500).json({ error: 'Error en registro' });
+    }
+  });
+
+  // ==================================================
+  // REGISTRO "PRO" (Usuario + Nueva Empresa + Trial)
+  // ==================================================
+
+  // POST /api/auth/signup-full
+  router.post('/signup-full', async (req, res) => {
+    try {
+      const { username, password, telefono, email, empresa_nombre, rubro } = req.body || {};
+
+      if (!username || !password || !empresa_nombre) {
+        return res.status(400).json({ error: 'Faltan datos obligatorios' });
+      }
+      if (String(password).length < 6) {
+        return res.status(400).json({ error: 'La contraseña debe tener al menos 6 caracteres' });
+      }
+
+      const salt = await bcrypt.genSalt(10);
+      const hash = await bcrypt.hash(String(password), salt);
+
+      const slug =
+        String(empresa_nombre)
+          .toLowerCase()
+          .replace(/[^a-z0-9]/g, '-') +
+        '-' +
+        Date.now().toString().slice(-4);
+
+      await query('BEGIN');
+
+      try {
+        const empRes = await query(
+          `INSERT INTO empresas (
+              nombre, telefono, email, rubro, landing_slug,
+              plan_estado, plan_tipo, plan_vencimiento, setup_steps
+           )
+           VALUES ($1, $2, $3, $4, $5, 'active', 'trial', NOW() + INTERVAL '30 days', '{}')
+           RETURNING id`,
+          [empresa_nombre, telefono, email, rubro || 'general', slug]
+        );
+
+        const newEmpresaId = empRes[0].id;
+
+        const userRes = await query(
+          `INSERT INTO usuarios (username, password, role, empresa_id, telefono)
+           VALUES ($1, $2, 'user', $3, $4)
+           RETURNING id, username, role, empresa_id`,
+          [username, hash, newEmpresaId, telefono]
+        );
+
+        const newUser = userRes[0];
+
+        await query('COMMIT');
+
+        const token = jwt.sign(
+          {
+            uid: newUser.id,
+            username: newUser.username,
+            empresa_id: newUser.empresa_id,
+            role: newUser.role,
+          },
+          process.env.JWT_SECRET || 'dev',
+          { expiresIn: '7d' }
+        );
+
+        return res.json({ ok: true, token, user: newUser, message: '¡Empresa creada con éxito!' });
+      } catch (err) {
+        await query('ROLLBACK');
+        console.error('ROLLBACK SIGNUP:', err);
+        if (err?.message?.includes('users_username_key') || err?.message?.includes('unique')) {
+          return res.status(400).json({ error: 'El usuario o empresa ya existen.' });
+        }
+        throw err;
+      }
+    } catch (e) {
+      console.error('SIGNUP ERROR:', e);
+      return res.status(500).json({ error: 'Error interno al crear cuenta.' });
+    }
+  });
+
+  return router;
+}

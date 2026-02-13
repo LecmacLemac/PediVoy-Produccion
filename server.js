@@ -23,6 +23,7 @@ import { registrarMovimientosActivosDesdePedido, registrarActivosDesdePedidoEntr
 import { notificarEnRuta, notificarPedidoTransferencia } from './src/services/notificacionesPedidos.js';
 import { registerRoutes } from './src/routes/index.js';
 import { registerLandingRoutes } from './src/routes/landingRoutes.js';
+import { createAuthGuestSignupRouter } from './src/routes/authGuestSignup.js';
 import { createTransferenciasRouter } from './src/routes/transferencias.js';
 import { createGastosRouter } from './src/routes/gastos.js';
 import { createAuthRouter } from './src/routes/auth.js';
@@ -96,175 +97,21 @@ const GASTOS_DIR = path.join(__dirname, 'Gastos');
 if (!fs.existsSync(GASTOS_DIR)) fs.mkdirSync(GASTOS_DIR, { recursive: true });
 app.use('/Gastos', express.static(GASTOS_DIR));
 
-// ==================================================
-// LÓGICA DE USUARIOS EFÍMEROS (OPCIÓN A)
-// ==================================================
-
-// 1. Crear Usuario Invitado (Nace la sesión temporal)
-app.post('/api/auth/guest', async (req, res) => {
-  try {
-    const empresa_id = Number(req.body.empresa_id) || 1;
-    // Generamos un username aleatorio para cumplir el UNIQUE de la DB
-    const randomSuffix = crypto.randomBytes(4).toString('hex'); 
-    const tempUsername = `guest_${Date.now()}_${randomSuffix}`;
-
-    // Insertamos usuario con expiración (ej: 2 horas)
-    const result = await query(
-      `INSERT INTO usuarios (username, password, role, empresa_id, es_invitado, fecha_expiracion)
-       VALUES ($1, NULL, 'guest', $2, TRUE, NOW() + INTERVAL '2 hours')
-       RETURNING id, username, role, empresa_id`,
-      [tempUsername, empresa_id]
-    );
-
-    const user = result[0];
-
-    // Generamos Token (igual que en login)
-    const token = jwt.sign({
-      uid: user.id, 
-      username: user.username, 
-      empresa_id: user.empresa_id,
-      role: 'guest'
-    }, process.env.JWT_SECRET || 'dev', { expiresIn: '2h' });
-
-    // Cookie opcional
-    res.cookie('token', token, {
-      httpOnly: true, sameSite: 'lax',
-      secure: process.env.NODE_ENV === 'production', maxAge: 2 * 60 * 60 * 1000,
-    });
-
-    res.json({ ok: true, token, user });
-  } catch (e) {
-    console.error('ERROR GUEST:', e);
-    res.status(500).json({ error: 'Error creando sesión de invitado' });
-  }
-});
-
-// 2. Convertir Invitado a Usuario Real (El "Salvavidas")
-app.post('/api/auth/register', withAuth, async (req, res) => {
-  try {
-    const { username, password, telefono } = req.body;
-    const userId = req.user.uid; // ID del token actual (el invitado)
-
-    if (!username || !password) return res.status(400).json({ error: 'Datos incompletos' });
-
-    // Verificamos si el usuario actual es realmente un invitado
-    const check = await query('SELECT es_invitado FROM usuarios WHERE id=$1', [userId]);
-    if (!check.length || !check[0].es_invitado) {
-      return res.status(400).json({ error: 'Este usuario ya está registrado o no existe.' });
-    }
-
-    const salt = await bcrypt.genSalt(10);
-    const hash = await bcrypt.hash(String(password), salt);
-
-    // ACTUALIZAMOS el registro existente (así se queda con el historial de pedidos/carrito)
-    await query(
-      `UPDATE usuarios 
-       SET username = $1, 
-           password = $2, 
-           telefono = $3,
-           es_invitado = FALSE, 
-           fecha_expiracion = NULL,
-           role = 'user'
-       WHERE id = $4`,
-      [username, hash, telefono || null, userId]
-    );
-
-    // Opcional: regenerar token con nuevo rol 'user' y expiración larga
-    const newToken = jwt.sign({
-      uid: userId, username, empresa_id: req.user.empresa_id, role: 'user'
-    }, process.env.JWT_SECRET || 'dev', { expiresIn: '7d' });
-
-    res.json({ ok: true, message: 'Cuenta creada con éxito', token: newToken });
-
-  } catch (e) {
-    if (e.message.includes('unique')) return res.status(400).json({ error: 'El email ya está en uso' });
-    console.error('REGISTER ERROR:', e);
-    res.status(500).json({ error: 'Error en registro' });
-  }
-});
-
-// ==================================================
-// REGISTRO "PRO" (Usuario + Nueva Empresa + Trial 30 días)
-// ==================================================
-app.post('/api/auth/signup-full', async (req, res) => {
-  try {
-    const { 
-      username, password, telefono, email, // Datos Usuario
-      empresa_nombre, rubro                // Datos Empresa
-    } = req.body;
-
-    // 1. Validaciones básicas
-    if (!username || !password || !empresa_nombre) {
-      return res.status(400).json({ error: 'Faltan datos obligatorios' });
-    }
-    if (password.length < 6) {
-      return res.status(400).json({ error: 'La contraseña debe tener al menos 6 caracteres' });
-    }
-
-    // 2. Hash password
-    const salt = await bcrypt.genSalt(10);
-    const hash = await bcrypt.hash(String(password), salt);
-
-    // 3. Generar slug y dominio provisional (slug.tuapp.com)
-    const slug = empresa_nombre.toLowerCase().replace(/[^a-z0-9]/g, '-') + '-' + Date.now().toString().slice(-4);
-    
-    // INICIO TRANSACCIÓN (Todo o Nada)
-    await query('BEGIN');
-
-    try {
-      // A. Crear Empresa (30 días de trial automáticos por default en DB)
-      // Ajustamos el vencimiento explícitamente para asegurar
-      const empRes = await query(
-        `INSERT INTO empresas (
-            nombre, telefono, email, rubro, landing_slug, 
-            plan_estado, plan_tipo, plan_vencimiento, setup_steps
-         )
-         VALUES ($1, $2, $3, $4, $5, 'active', 'trial', NOW() + INTERVAL '30 days', '{}')
-         RETURNING id`,
-        [empresa_nombre, telefono, email, rubro || 'general', slug]
-      );
-      const newEmpresaId = empRes[0].id;
-
-      // B. Crear Usuario Admin (Role: user, vinculado a la empresa)
-      const userRes = await query(
-        `INSERT INTO usuarios (username, password, role, empresa_id, telefono)
-         VALUES ($1, $2, 'user', $3, $4)
-         RETURNING id, username, role, empresa_id`,
-        [username, hash, newEmpresaId, telefono]
-      );
-      const newUser = userRes[0];
-
-      // C. Confirmar Transacción
-      await query('COMMIT');
-
-      // 4. Auto-Login (Generar Token)
-      const token = jwt.sign({
-        uid: newUser.id, 
-        username: newUser.username, 
-        empresa_id: newUser.empresa_id,
-        role: newUser.role
-      }, process.env.JWT_SECRET || 'dev', { expiresIn: '7d' });
-
-      res.json({ ok: true, token, user: newUser, message: '¡Empresa creada con éxito!' });
-
-    } catch (err) {
-      await query('ROLLBACK'); // Si falla algo, deshacemos todo
-      console.error('ROLLBACK SIGNUP:', err);
-      if (err.message.includes('users_username_key') || err.message.includes('unique')) {
-        return res.status(400).json({ error: 'El usuario o empresa ya existen.' });
-      }
-      throw err;
-    }
-
-  } catch (e) {
-    console.error('SIGNUP ERROR:', e);
-    res.status(500).json({ error: 'Error interno al crear cuenta.' });
-  }
-});
+// --------------------------------------------------
+// AUTH /api/auth (guest/register/signup-full)
+// --------------------------------------------------
+app.use('/api/auth', createAuthGuestSignupRouter({ query, withAuth }));
 
 // ==================================================
 // RUTAS PÚBLICAS PARA LANDINGS (SIN AUTH)
 // ==================================================
+
+// Helper local: normalizar host (quitar www y puerto)
+function normalizeHost(host) {
+  const h = String(host || '').split(':')[0].toLowerCase();
+  return h.replace(/^www\./, '');
+}
+
 
 // 1. Configuración (Título de la web)
 app.get('/api/public/config', async (req, res) => {
