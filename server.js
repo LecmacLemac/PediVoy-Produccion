@@ -4727,7 +4727,7 @@ app.get('/api/estadisticas/dashboard', withAuth, checkLicencia, async (req, res)
           COUNT(DISTINCT p.id) as pedidos,
           COALESCE(SUM(p.monto), 0) as ventas,
           COALESCE(
-            SUM((SELECT SUM(cantidad) FROM items_pedido WHERE pedido_id = p.id)),
+            SUM((SELECT SUM(cantidad) FROM items_pedido it WHERE it.pedido_id = p.id)),
             0
           ) as unidades
         FROM pedidos p
@@ -4785,10 +4785,13 @@ app.get('/api/estadisticas/dashboard', withAuth, checkLicencia, async (req, res)
         SUM(it.cantidad) AS cantidad,
         SUM(it.cantidad * it.precio_unitario) AS ventas
       FROM items_pedido it
-      JOIN pedidos p         ON p.id = it.pedido_id
-      JOIN puntos_entrega pe ON p.punto_entrega_id = pe.id
+      JOIN pedidos p
+        ON p.id = it.pedido_id
+       AND p.empresa_id = $1
+      JOIN puntos_entrega pe
+        ON pe.id = p.punto_entrega_id
+       AND pe.empresa_id = $1
       WHERE p.estado = 'entregado'
-        AND pe.empresa_id = $1
         AND p.fecha >= $2 AND p.fecha <= $3
         ${chofer_id ? 'AND p.chofer_id = ' + Number(chofer_id) : ''}
       GROUP BY it.producto
