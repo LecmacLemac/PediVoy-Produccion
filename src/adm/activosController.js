@@ -180,7 +180,17 @@ export async function asignarActivo(req, res) {
       return res.status(400).json({ error: 'Activo no disponible.' });
     }
 
-    // 2) Marcamos como prestado al cliente
+    // 2) Validar que el cliente pertenezca a la misma empresa
+    const { rows: cRows } = await client.query(
+      'SELECT id FROM puntos_entrega WHERE id = $1 AND empresa_id = $2 LIMIT 1',
+      [cliente_id, empresaId]
+    );
+    if (!cRows.length) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Cliente no encontrado para esta empresa' });
+    }
+
+    // 3) Marcamos como prestado al cliente
     await client.query(
       `
       UPDATE empresa_activos 
@@ -192,7 +202,7 @@ export async function asignarActivo(req, res) {
       [cliente_id, empresaId, activo_id]
     );
 
-    // 3) Registramos en historial
+    // 4) Registramos en historial
     await client.query(
       `
       INSERT INTO historial_activos 
@@ -491,7 +501,9 @@ export async function getHistorialActivo(req, res) {
     const rows = await query(
       `SELECT h.*, p.cliente AS cliente_nombre
          FROM historial_activos h
-         LEFT JOIN puntos_entrega p ON p.id = h.cliente_id
+         LEFT JOIN puntos_entrega p
+           ON p.id = h.cliente_id
+          AND p.empresa_id = h.empresa_id
         WHERE h.empresa_id = $1 AND h.activo_id = $2
         ORDER BY h.fecha DESC, h.id DESC`,
       [empresaId, id]
