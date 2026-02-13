@@ -210,6 +210,7 @@
           <p>Ventas Totales</p>
         </div>
         <div class="kpi-sub" id="kpiPedidos">0 Pedidos</div>
+        <div class="kpi-sub" id="kpiVentasDelta" style="border-top:none; padding-top:0; margin-top:0;">&nbsp;</div>
       </div>
       <div class="kpi-card">
         <div class="kpi-val">
@@ -217,6 +218,7 @@
           <p>Rentabilidad Neta</p>
         </div>
         <div class="kpi-sub" id="kpiMargen">Margen: 0%</div>
+        <div class="kpi-sub" id="kpiRentDelta" style="border-top:none; padding-top:0; margin-top:0;">&nbsp;</div>
       </div>
       <div class="kpi-card">
         <div class="kpi-val">
@@ -230,7 +232,7 @@
           <h3 id="kpiTicket">$ 0,00</h3>
           <p>Ticket Promedio</p>
         </div>
-        <div class="kpi-sub">&nbsp;</div>
+        <div class="kpi-sub" id="kpiTicketDelta">&nbsp;</div>
       </div>
     </section>
 
@@ -580,7 +582,10 @@ async function init() {
         const products = res.products || [];
         const evolution = res.evolution || [];
 
-        renderReport(rows, products, evolution);
+        // Comparación vs período anterior (mismo largo)
+        const prev = await loadPrevPeriod(from, to);
+
+        renderReport(rows, products, evolution, prev);
 
         // Medios de pago
         await loadTransferenciasData(from, to);
@@ -594,21 +599,26 @@ async function init() {
       }
     }
 
-    function renderReport(rows, products, evolution) {
+    function renderReport(rows, products, evolution, prev = null) {
   if (!rows || !rows.length) {
     $('#tbBody').innerHTML = `<tr><td colspan="11" style="text-align:center; padding:2rem">No hay datos en este período.</td></tr>`;
     // Limpiar KPIs
     const kpis = ['#kpiVentas', '#kpiRent', '#kpiTicket', '#kpiCV', '#kpiCF', '#kpiCP'];
     kpis.forEach(id => $(id).textContent = money(0));
-    
+
     $('#kpiPedidos').textContent = '0 Pedidos';
     $('#kpiMargen').textContent = 'Margen: 0,00%';
     $('#kpiUnidades').textContent = '0';
     $('#kpiUpp').textContent = 'Promedio: 0 un/ped';
-    
+
+    // deltas
+    if ($('#kpiVentasDelta')) $('#kpiVentasDelta').textContent = '';
+    if ($('#kpiRentDelta')) $('#kpiRentDelta').textContent = '';
+    if ($('#kpiTicketDelta')) $('#kpiTicketDelta').textContent = '';
+
     $('#topProductos').innerHTML = `<li class="muted" style="font-size:0.8rem">Sin datos de productos</li>`;
     ['#choferEstrella', '#choferEficiente'].forEach(id => $(id).innerHTML = `<li class="muted">Sin datos</li>`);
-    
+
     ['#chartVentas', '#chartRent', '#chartMargen', '#chartSerie'].forEach(id => $(id).innerHTML = '');
     return;
   }
@@ -627,6 +637,7 @@ async function init() {
   const totR = totV - totCV - totCF - totCP;
 
   // Actualización de KPIs Superiores
+  const ticket = (totPed ? totV / totPed : 0);
   $('#kpiVentas').textContent = money(totV);
   $('#kpiRent').textContent = money(totR);
   $('#kpiRent').style.color = totR >= 0 ? 'var(--success)' : 'var(--danger)';
@@ -634,7 +645,10 @@ async function init() {
   $('#kpiMargen').textContent = `Margen: ${pct(totV ? (totR / totV * 100) : 0)}`;
   $('#kpiUnidades').textContent = String(totUni);
   $('#kpiUpp').textContent = `Promedio: ${(totPed ? totUni / totPed : 0).toFixed(2)} un/ped`;
-  $('#kpiTicket').textContent = money(totPed ? totV / totPed : 0);
+  $('#kpiTicket').textContent = money(ticket);
+
+  // Deltas vs período anterior (si hay)
+  renderDeltas({ ventas: totV, rent: totR, ticket }, prev);
 
   // KPIs de Desglose de Costos
   $('#kpiCV').textContent = money(totCV);
@@ -787,6 +801,86 @@ async function init() {
           ${labels}
         </svg>
       `;
+    }
+
+    // ====== COMPARACIÓN VS PERÍODO ANTERIOR ======
+    function daysBetweenInclusive(fromISO, toISO) {
+      // from/to en YYYY-MM-DD
+      const a = new Date(fromISO + 'T00:00:00');
+      const b = new Date(toISO + 'T00:00:00');
+      const ms = b - a;
+      const days = Math.floor(ms / (24*60*60*1000)) + 1;
+      return Math.max(days, 1);
+    }
+
+    function addDays(iso, deltaDays) {
+      const d = new Date(iso + 'T00:00:00');
+      d.setDate(d.getDate() + deltaDays);
+      return dateISO(d);
+    }
+
+    async function loadPrevPeriod(from, to) {
+      try {
+        const len = daysBetweenInclusive(from, to);
+        const prevTo = addDays(from, -1);
+        const prevFrom = addDays(prevTo, -(len - 1));
+
+        const base = `/api/estadisticas/dashboard${qsEmpresa()}`;
+        const sep = base.includes('?') ? '&' : '?';
+        const choferId = $('#fFilChofer').value;
+        const url = `${base}${sep}from=${prevFrom}&to=${prevTo}` + (choferId ? `&chofer_id=${choferId}` : '');
+
+        const res = await api(url);
+        const rows = res?.report || [];
+        const sum = k => rows.reduce((a, b) => a + num(b[k]), 0);
+        const ventas = sum('ventas');
+        const cv = sum('cv');
+        const cf = sum('cf');
+        const cp = sum('cp');
+        const pedidos = sum('pedidos');
+        const rent = ventas - cv - cf - cp;
+        const ticket = pedidos ? ventas / pedidos : 0;
+
+        return { from: prevFrom, to: prevTo, ventas, rent, ticket };
+      } catch (e) {
+        console.warn('No se pudo cargar período anterior', e);
+        return null;
+      }
+    }
+
+    function fmtDelta(cur, prev) {
+      const d = cur - prev;
+      const sign = d >= 0 ? '+' : '';
+      return sign + money(d);
+    }
+
+    function renderDeltas(cur, prev) {
+      const vEl = $('#kpiVentasDelta');
+      const rEl = $('#kpiRentDelta');
+      const tEl = $('#kpiTicketDelta');
+      if (!prev) {
+        if (vEl) vEl.textContent = '—';
+        if (rEl) rEl.textContent = '—';
+        if (tEl) tEl.textContent = '—';
+        return;
+      }
+
+      if (vEl) {
+        const txt = `vs ${prev.from}→${prev.to}: ${fmtDelta(cur.ventas, prev.ventas)}`;
+        vEl.textContent = txt;
+        vEl.style.color = (cur.ventas - prev.ventas) >= 0 ? 'var(--success)' : 'var(--danger)';
+      }
+      if (rEl) {
+        const txt = `vs ${prev.from}→${prev.to}: ${fmtDelta(cur.rent, prev.rent)}`;
+        rEl.textContent = txt;
+        rEl.style.color = (cur.rent - prev.rent) >= 0 ? 'var(--success)' : 'var(--danger)';
+      }
+      if (tEl) {
+        const d = cur.ticket - prev.ticket;
+        const sign = d >= 0 ? '+' : '';
+        tEl.textContent = `Ticket vs ant.: ${sign}${money(d)}`;
+        tEl.style.color = d >= 0 ? 'var(--success)' : 'var(--danger)';
+      }
     }
 
     // ====== TRANSFERENCIAS & MEDIOS DE PAGO ======
