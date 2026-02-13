@@ -392,20 +392,20 @@
     /**
      * API CLIENT
      */
+    // Modo seguro: auth por cookie httpOnly
+    const authFetch = (url, opts = {}) => {
+      const { headers = {}, ...rest } = opts;
+      return fetch(url, { ...rest, headers, credentials: 'include' });
+    };
+
     async function api(endpoint, opts = {}) {
-      const token = localStorage.getItem('token');
-      if (!token && !endpoint.includes('login')) {
-        window.location.href = 'login.html';
-        return;
-      }
-      const headers = { 'Authorization': `Bearer ${token}`, ...(opts.headers || {}) };
+      const headers = { ...(opts.headers || {}) };
       if (!opts.body || !(opts.body instanceof FormData)) {
         headers['Content-Type'] = 'application/json';
       }
       try {
-        const res = await fetch(endpoint, { ...opts, headers });
+        const res = await authFetch(endpoint, { ...opts, headers });
         if (res.status === 401) {
-          localStorage.removeItem('token');
           window.location.href = `login.html?next=${encodeURIComponent(window.location.pathname)}`;
           throw new Error('Sesión expirada');
         }
