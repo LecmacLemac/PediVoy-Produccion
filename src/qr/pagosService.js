@@ -251,3 +251,25 @@ export async function actualizarEstadoPago({ providerPaymentId, nuevoEstado, pro
 
   return rows[0] || null;
 }
+
+/**
+ * Variante más segura: ata el update por (proveedor, provider_payment_id)
+ * para evitar colisiones cross-provider.
+ */
+export async function actualizarEstadoPagoScoped({ proveedor, providerPaymentId, nuevoEstado, providerStatus = null }) {
+  const rows = await query(
+    `
+    UPDATE pedido_pagos
+       SET estado = $1,
+           provider_status = COALESCE($4, provider_status),
+           updated_at = NOW()
+     WHERE proveedor = $2
+       AND provider_payment_id = $3
+     RETURNING *
+    `,
+    [nuevoEstado, proveedor, providerPaymentId, providerStatus]
+  );
+
+  return rows[0] || null;
+}
+

@@ -25,6 +25,8 @@ import costosRouter from './src/adm/costosRouter.js';
 import activosRouter from './src/adm/activosRouter.js';
 import alquileresRouter from './src/adm/alquileresRouter.js'; 
 import {registrarMovimientosActivosDesdePedido,registrarActivosDesdePedidoEntrega } from './src/adm/pedidoActivosService.js';
+import pagosQrRouter from './src/qr/pagosRouter.js';
+import pagosWebhookRouter from './src/qr/pagosWebhookRouter.js';
 
 // --------------------------------------------------
 // Config express
@@ -472,6 +474,11 @@ app.use('/api/public', trackingPublicRouter);
 app.use('/api/admin/costos', costosRouter);
 app.use('/api/admin/activos', activosRouter);
 app.use('/api/admin/alquileres', alquileresRouter);
+
+// Pagos QR (pedido_pagos)
+app.use('/api/admin/qr', pagosQrRouter);
+// Webhook genérico para cambios de estado de pedido_pagos
+app.use('/api/webhooks', pagosWebhookRouter);
 
 // --------------------------------------------------
 // Transferencias (comprobantes de transferencia)
