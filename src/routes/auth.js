@@ -69,7 +69,12 @@ export function createAuthRouter() {
         maxAge: 8 * 60 * 60 * 1000
       });
 
-      res.json({ token });
+      // Por defecto NO devolvemos el token en JSON (modo seguro: cookie httpOnly).
+      // Compat opcional para clientes legacy: ?includeToken=1 o header x-include-token: 1
+      const includeToken = String(req.query?.includeToken || req.headers['x-include-token'] || '') === '1';
+
+      if (includeToken) return res.json({ token });
+      return res.json({ ok: true, user: { uid: user.id, username: user.username, empresa_id: user.empresa_id, role: user.role, chofer_id: user.chofer_id ?? null } });
     } catch (e) {
       console.error('LOGIN ERROR:', e);
       res.status(500).json({ error: 'Error interno' });
