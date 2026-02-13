@@ -571,9 +571,11 @@
 <div id="toast" class="toast">Notificación</div>
 
 <script>
-// --- AUTH & GLOBALS ---
-const token = localStorage.getItem('token');
-if(!token) location.href = 'login.html';
+// --- AUTH & GLOBALS (modo seguro: cookie httpOnly) ---
+const authFetch = (url, opts = {}) => {
+  const { headers = {}, ...rest } = opts;
+  return fetch(url, { ...rest, headers, credentials: 'include' });
+};
 
 // ====== UTILS & HELPERS ======
 const $ = s => document.querySelector(s);
@@ -641,17 +643,15 @@ async function api(path, opts = {}) {
   const { body } = opts;
   const isFD = body instanceof FormData;
 
-  const r = await fetch(path, {
+  const r = await authFetch(path, {
     method: opts.method || 'GET',
     headers: {
-      ...(isFD ? {} : { 'Content-Type': 'application/json' }),
-      Authorization: 'Bearer ' + token
+      ...(isFD ? {} : { 'Content-Type': 'application/json' })
     },
     body: isFD ? body : (body ? JSON.stringify(body) : undefined)
   });
 
   if (r.status === 401) {
-    localStorage.removeItem('token');
     location.href = 'login.html';
     return;
   }
@@ -729,7 +729,11 @@ const btn = $('#menuToggle'), panel = $('#menuPanel');
 btn.onclick = () => panel.classList.toggle('show');
 $$('.nav-link').forEach(l => l.onclick = (e) => {
   e.preventDefault();
-  if(l.id === 'logout') { localStorage.removeItem('token'); location.href='login.html'; return; }
+  if(l.id === 'logout') {
+    try { await authFetch('/api/logout', { method: 'POST' }); } catch {}
+    location.href='login.html';
+    return;
+  }
   
   // Switch Tabs
   $$('.nav-link').forEach(n => n.removeAttribute('aria-current'));

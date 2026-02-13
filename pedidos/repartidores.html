@@ -423,8 +423,11 @@
     const $ = (s, r = document) => r.querySelector(s);
     const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
 
-    const token = localStorage.getItem('token') || '';
-    if (!token) location.href = 'login.html';
+    // Modo seguro: auth por cookie httpOnly
+    const authFetch = (url, opts = {}) => {
+      const { headers = {}, ...rest } = opts;
+      return fetch(url, { ...rest, headers, credentials: 'include' });
+    };
 
     // State
     let isSuper = false;
@@ -445,16 +448,15 @@
     async function api(path, opts = {}) {
       const { headers = {}, body, ...rest } = opts;
       const isFD = (typeof FormData !== 'undefined') && body instanceof FormData;
-      
+
       try {
-        const r = await fetch(path, {
+        const r = await authFetch(path, {
           method: 'GET',
           ...rest,
-          headers: { ...(isFD ? {} : { 'Content-Type': 'application/json' }), Authorization: 'Bearer ' + token, ...headers },
+          headers: { ...(isFD ? {} : { 'Content-Type': 'application/json' }), ...headers },
           body: isFD ? body : (body && typeof body !== 'string' ? JSON.stringify(body) : body)
         });
         if (r.status === 401) {
-          localStorage.removeItem('token');
           location.href = 'login.html';
           return;
         }
@@ -923,7 +925,10 @@
 
 
     // Boot
-    $('#logout').onclick = () => { localStorage.removeItem('token'); location.href='login.html'; };
+    $('#logout').onclick = async () => {
+      try { await authFetch('/api/logout', { method: 'POST' }); } catch {}
+      location.href='login.html';
+    };
     $('#uCreate').onchange = (e) => $('#uWrap').hidden = !e.target.checked;
 
     (async () => {
