@@ -140,9 +140,9 @@
 
         if (!res.ok) throw new Error(json.error || 'Error al crear cuenta');
 
-        // Éxito: Guardar token y redirigir
-        localStorage.setItem('token', json.token);
-        
+        // Éxito (modo seguro): el backend setea cookie httpOnly.
+        // No guardamos token en localStorage.
+
         // Efecto visual de éxito
         btn.style.background = 'var(--success)';
         btn.textContent = '¡CUENTA CREADA!';

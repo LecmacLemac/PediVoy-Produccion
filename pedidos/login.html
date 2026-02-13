@@ -178,11 +178,8 @@
 
     // --- Init ---
     (async function boot(){
-      // Limpieza preventiva si venimos de logout explícito
-      if(location.pathname.includes('login.html')) {
-        // No borramos localStorage completo para mantener 'lastUsername'
-        localStorage.removeItem('token'); 
-      }
+      // Nota: en modo seguro no usamos token en localStorage.
+      // Mantenemos lastUsername si está habilitado.
 
       // Cargar usuario recordado
       const lastUser = localStorage.getItem('lastUsername');
