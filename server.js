@@ -3,24 +3,20 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
-import multer from 'multer';
 import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import jwt from 'jsonwebtoken';
-import bcrypt from 'bcryptjs';
-import { registerOrderRoutes, notifyEstadoPedidoPush, getEmpresaById } from './backend.js';
-import { query, pool } from './src/db.js';
-import { withAuth, isSuper, getEmpresaIdFromToken, normalizePhone, resolveEmpresaId, enqueueWppMessage, checkLicencia } from './src/services.js'; 
+
 import pkg from 'whatsapp-web.js';
 import qrcode from 'qrcode';
-import { ejecutarReposicionPredictiva, ejecutarEstrategiaVecinos } from './src/estrategias.js';
-import OpenAI from 'openai';
+
+import { registerOrderRoutes, notifyEstadoPedidoPush, getEmpresaById } from './backend.js';
+import { query, pool } from './src/db.js';
+import { withAuth, isSuper, getEmpresaIdFromToken, resolveEmpresaId, enqueueWppMessage, checkLicencia } from './src/services.js';
 import { crearPreferenciaLicencia, obtenerPago } from './src/mercadoPagoService.js';
 import handlers from './src/handlers.js';
-import { handleIncomingComprobanteFromBotPg } from './src/transferenciasPipeline.js';
-import { registrarMovimientosActivosDesdePedido, registrarActivosDesdePedidoEntrega } from './src/adm/pedidoActivosService.js';
 import { notificarEnRuta, notificarPedidoTransferencia } from './src/services/notificacionesPedidos.js';
+
 import { registerRoutes } from './src/routes/index.js';
 import { registerLandingRoutes } from './src/routes/landingRoutes.js';
 import { createAuthGuestSignupRouter } from './src/routes/authGuestSignup.js';
@@ -35,6 +31,7 @@ import { createProductosRouter } from './src/routes/productos.js';
 import { createAdminUsuariosRouter } from './src/routes/adminUsuarios.js';
 import { createRepartidorApiRouter } from './src/routes/repartidorApi.js';
 import { registerWhatsAppWeb } from './src/wpp/whatsappWeb.js';
+
 import { createTransferenciasRouter } from './src/routes/transferencias.js';
 import { createGastosRouter } from './src/routes/gastos.js';
 import { createAuthRouter } from './src/routes/auth.js';
