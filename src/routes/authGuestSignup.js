@@ -163,7 +163,22 @@ export function createAuthGuestSignupRouter(deps) {
           { expiresIn: '7d' }
         );
 
-        return res.json({ ok: true, token, user: newUser, message: '¡Empresa creada con éxito!' });
+        // Set cookie httpOnly (modo seguro)
+        res.cookie('token', token, {
+          httpOnly: true,
+          sameSite: 'lax',
+          secure: process.env.NODE_ENV === 'production',
+          maxAge: 7 * 24 * 60 * 60 * 1000,
+        });
+
+        // Por defecto NO devolvemos el token en JSON.
+        // Compat opcional: ?includeToken=1 o header x-include-token: 1
+        const includeToken = String(req.query?.includeToken || req.headers['x-include-token'] || '') === '1';
+        if (includeToken) {
+          return res.json({ ok: true, token, user: newUser, message: '¡Empresa creada con éxito!' });
+        }
+
+        return res.json({ ok: true, user: newUser, message: '¡Empresa creada con éxito!' });
       } catch (err) {
         await query('ROLLBACK');
         console.error('ROLLBACK SIGNUP:', err);
