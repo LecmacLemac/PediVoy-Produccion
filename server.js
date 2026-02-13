@@ -13,7 +13,6 @@ import { registerOrderRoutes, notifyEstadoPedidoPush, getEmpresaById } from './b
 import { query, pool } from './src/db.js';
 import { withAuth, isSuper, getEmpresaIdFromToken, normalizePhone, resolveEmpresaId, enqueueWppMessage, checkLicencia } from './src/services.js'; 
 import pkg from 'whatsapp-web.js';
-import crypto from 'node:crypto';
 import qrcode from 'qrcode';
 import { ejecutarReposicionPredictiva, ejecutarEstrategiaVecinos } from './src/estrategias.js';
 import OpenAI from 'openai';
@@ -21,6 +20,7 @@ import { crearPreferenciaLicencia, obtenerPago } from './src/mercadoPagoService.
 import handlers from './src/handlers.js';
 import { handleIncomingComprobanteFromBotPg } from './src/transferenciasPipeline.js';
 import { registrarMovimientosActivosDesdePedido, registrarActivosDesdePedidoEntrega } from './src/adm/pedidoActivosService.js';
+import { notificarEnRuta, notificarPedidoTransferencia } from './src/services/notificacionesPedidos.js';
 import { registerRoutes } from './src/routes/index.js';
 import { createTransferenciasRouter } from './src/routes/transferencias.js';
 import { createAuthRouter } from './src/routes/auth.js';
@@ -4453,176 +4453,7 @@ app.get('/api/estadisticas/dashboard', withAuth, checkLicencia, async (req, res)
  * Genera token (si no existe) y envía WPP de 'En Ruta' **solo la primera vez**
  */
 
-async function notificarEnRuta(pedidoId, empresaId) {
-  try {
-    // 1. Buscamos datos Y el token existente
-    const rows = await query(`
-      SELECT 
-        p.id, 
-        p.monto, 
-        p.tracking_token,           -- token actual (si ya se generó antes)
-        pe.cliente, 
-        pe.telefono, 
-        pe.direccion,
-        e.landing_domain, 
-        e.landing_slug
-      FROM pedidos p
-      JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
-      JOIN empresas e        ON e.id = pe.empresa_id
-      WHERE p.id = $1 AND pe.empresa_id = $2
-    `, [pedidoId, empresaId]);
-
-    if (!rows.length) return;
-    const datos = rows[0];
-
-    // 2) Saber si ya tenía token (ya se envió link alguna vez)
-    let token = datos.tracking_token;
-    const yaTeniaToken = !!token;
-
-    // Si no tenía token, lo generamos y lo guardamos
-    if (!token) {
-      token = crypto.randomBytes(16).toString('hex');
-      await query(
-        `UPDATE pedidos SET tracking_token = $1 WHERE id = $2 AND empresa_id = $3`,
-        [token, pedidoId, empresaId]
-      );
-    }
-
-    // 3) Armar URL de tracking (siempre reutilizamos el mismo token)
-    let host = datos.landing_domain || 'https://aguahidro.com.ar';
-    if (!host.startsWith('http')) host = 'https://' + host;
-
-    const trackingUrl = `${host}/pedidos/seguimiento.html?t=${token}`;
-
-    // 4) Si el pedido YA tenía token, asumimos que el link ya fue enviado
-    //    -> NO reenviamos el WhatsApp para evitar mensajes duplicados.
-    if (yaTeniaToken) {
-      if (process.env.DEBUG_ORDERS === '1') {
-        console.log(
-          `[TRACKING] Pedido ${pedidoId} ya tenía tracking_token, no reenvío link`
-        );
-      }
-      return;
-    }
-
-    // 5) Primera vez: armamos y enviamos el mensaje
-    const mensaje =
-      `🚚 *¡Tu pedido está en camino!*\n\n` +
-      `Hola ${datos.cliente}, tu pedido ya salió hacia ${datos.direccion}.\n\n` +
-      `🗺️ *Seguí al repartidor en vivo aquí:*\n${trackingUrl}\n\n` +
-      `¡Nos vemos pronto! 👋`;
-
-    await enqueueWppMessage({
-      phone: datos.telefono,
-      message: mensaje,
-      empresa_id: empresaId
-    });
-
-  } catch (e) {
-    console.error('Error enviando notificación en ruta:', e);
-  }
-}
-
-/**
- * Notifica al cliente que su pedido se pagará por transferencia,
- * busca la cuenta principal (por prioridad) de empresa_cuentas_bancarias
- * y muestra el alias (y otros datos si existen).
- */
-
-async function notificarPedidoTransferencia(pedidoId, empresaId) {
-  try {
-    // 1) Datos del pedido + cliente + empresa
-    const rows = await query(`
-      SELECT 
-        p.id,
-        p.monto,
-        pe.cliente,
-        pe.telefono,
-        pe.direccion,
-        e.nombre AS empresa_nombre,
-        e.id    AS empresa_id
-      FROM pedidos p
-      JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
-      JOIN empresas e        ON e.id = pe.empresa_id
-      WHERE p.id = $1 AND pe.empresa_id = $2
-    `, [pedidoId, empresaId]);
-
-    if (!rows.length) return;
-
-    const datos = rows[0];
-    if (!datos.telefono) return;
-
-    // 2) Buscar la cuenta principal (por prioridad) de esa empresa
-    const cuentas = await query(`
-      SELECT alias, banco, tipo, cbu, titular
-      FROM empresa_cuentas_bancarias
-      WHERE empresa_id = $1
-        AND activa = TRUE
-      ORDER BY prioridad DESC, id ASC
-      LIMIT 1
-    `, [empresaId]);
-
-    const cuenta = cuentas[0]; // puede ser undefined si no hay cuentas
-
-    // 3) Formatear monto
-    const montoNumber = Number(datos.monto || 0);
-    const montoFmt = new Intl.NumberFormat('es-AR', {
-      style: 'currency',
-      currency: 'ARS',
-      minimumFractionDigits: 2
-    }).format(montoNumber);
-
-    const empresaLabel = datos.empresa_nombre || 'Hidro';
-
-    // 4) Armar el mensaje
-    let mensaje =
-      `🏦 *Pago por transferencia*\n\n` +
-      `Hola ${datos.cliente || ''}, tu pedido fue marcado para pagar por *transferencia* (${montoFmt}).\n\n`;
-
-    // 4.1. Si encontramos una cuenta bancaria principal, mostramos sus datos
-    if (cuenta) {
-      const alias   = (cuenta.alias   || '').trim();
-      const banco   = (cuenta.banco   || '').trim();
-      const cbu     = (cuenta.cbu     || '').trim();
-      const titular = (cuenta.titular || '').trim();
-
-      mensaje += `💳 *Datos para transferir:*\n`;
-
-      // 👉 alias principal (lo que te interesaba)
-      if (alias) {
-        mensaje += `Alias: ${alias}\n`;
-      }
-
-      // Extras útiles si están cargados (podés borrar lo que no quieras)
-      if (cbu) {
-        mensaje += `CBU: ${cbu}\n`;
-      }
-      if (banco) {
-        mensaje += `Banco: ${banco}\n`;
-      }
-      if (titular) {
-        mensaje += `Titular: ${titular}\n`;
-      }
-
-      mensaje += `\n`;
-    }
-
-    // 4.2. Cierre del mensaje
-    mensaje +=
-      `Por favor, adjuntá el *comprobante de transferencia* respondiendo a este mensaje ` +
-      `para poder acreditar el pago.\n\n` +
-      `¡Muchas gracias!\n${empresaLabel}`;
-
-    // 5) Encolar mensaje de WhatsApp
-    await enqueueWppMessage({
-      phone: datos.telefono,
-      message: mensaje,
-      empresa_id: empresaId
-    });
-  } catch (e) {
-    console.error('Error enviando notificación de pago por transferencia:', e);
-  }
-}
+// Helpers de notificaciones movidos a src/services/notificacionesPedidos.js
 
 // ==================================================
 // 💰 SISTEMA DE COBRO DE LICENCIAS (Mercado Pago)
