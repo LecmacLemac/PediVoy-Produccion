@@ -629,6 +629,21 @@ let activosModalState = { pedidoId: null, data: null };
 let qrPagoState = { pedidoId: null, link: null };
 let pedidoEnProcesoId = null;
 
+// Locks simples para evitar doble envío (doble tap / mala señal)
+const __locks = new Map();
+async function withLock(key, fn) {
+  if (__locks.get(key)) {
+    toast('⏳ Ya estoy procesando...');
+    return null;
+  }
+  __locks.set(key, true);
+  try {
+    return await fn();
+  } finally {
+    __locks.delete(key);
+  }
+}
+
 // Config de pagos de la empresa (canales habilitados)
 let pagosCanales = {
   efectivo: true,
@@ -643,13 +658,23 @@ async function api(path, opts = {}) {
   const { body } = opts;
   const isFD = body instanceof FormData;
 
-  const r = await authFetch(path, {
-    method: opts.method || 'GET',
-    headers: {
-      ...(isFD ? {} : { 'Content-Type': 'application/json' })
-    },
-    body: isFD ? body : (body ? JSON.stringify(body) : undefined)
-  });
+  let r;
+  try {
+    r = await authFetch(path, {
+      method: opts.method || 'GET',
+      headers: {
+        ...(isFD ? {} : { 'Content-Type': 'application/json' })
+      },
+      body: isFD ? body : (body ? JSON.stringify(body) : undefined)
+    });
+  } catch (err) {
+    // Errores de red (offline, timeout, DNS, etc.)
+    const e = new Error('Sin conexión. Reintentá.');
+    e.cause = err;
+    e.status = 0;
+    e.url = path;
+    throw e;
+  }
 
   if (r.status === 401) {
     location.href = 'login.html';
@@ -1182,12 +1207,14 @@ async function abrirActivosPaso(pedidoId) {
     if (itemsActivos.length === 0) {
       const zonaId = await resolverZonaParaPedido(pedidoId);
 
-      await api(`/api/repartidor/pedidos/${pedidoId}/entregar`, {
-        method: 'POST',
-        body: {
-          zona_id: zonaId != null ? zonaId : null,
-          movimientos: []
-        }
+      await withLock(`entregar:${pedidoId}`, async () => {
+        await api(`/api/repartidor/pedidos/${pedidoId}/entregar`, {
+          method: 'POST',
+          body: {
+            zona_id: zonaId != null ? zonaId : null,
+            movimientos: []
+          }
+        });
       });
 
       toast('✅ Pedido entregado');
@@ -1512,9 +1539,11 @@ async function confirmarEntregaConActivos() {
     const body = { movimientos };
     if (zonaId != null) body.zona_id = zonaId;
 
-    await api(`/api/repartidor/pedidos/${pid}/entregar`, {
-      method: 'POST',
-      body
+    await withLock(`entregar:${pid}`, async () => {
+      await api(`/api/repartidor/pedidos/${pid}/entregar`, {
+        method: 'POST',
+        body
+      });
     });
 
     toast('✅ Entrega registrada');
@@ -1595,15 +1624,12 @@ async function confirmarEntregaScanner() {
     if (zonaId != null) body.zona_id = zonaId;
 
     // Llamada transaccional: entrega + movimientos + stock chofer
-    const res = await api(`/api/repartidor/pedidos/${pedidoEnProcesoId}/entregar`, {
-      method: 'POST',
-      body
+    await withLock(`entregar:${pedidoEnProcesoId}`, async () => {
+      await api(`/api/repartidor/pedidos/${pedidoEnProcesoId}/entregar`, {
+        method: 'POST',
+        body
+      });
     });
-
-    // El helper api NO lanza en 500, así que chequeamos error explícito
-    if (res && res.error) {
-      throw new Error(res.error);
-    }
 
     toast('✅ Entrega registrada (Escáner)');
     pedidoEnProcesoId = null;
