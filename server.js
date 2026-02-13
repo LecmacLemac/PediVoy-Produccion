@@ -12,7 +12,6 @@ import bcrypt from 'bcryptjs';
 import { registerOrderRoutes, notifyEstadoPedidoPush, getEmpresaById } from './backend.js';
 import { query, pool } from './src/db.js';
 import { withAuth, isSuper, getEmpresaIdFromToken, normalizePhone, resolveEmpresaId, enqueueWppMessage, checkLicencia } from './src/services.js'; 
-import { trackingPublicRouter } from './src/trackingPublic.js';
 import pkg from 'whatsapp-web.js';
 import crypto from 'node:crypto';
 import qrcode from 'qrcode';
@@ -21,12 +20,8 @@ import OpenAI from 'openai';
 import { crearPreferenciaLicencia, obtenerPago } from './src/mercadoPagoService.js';
 import handlers from './src/handlers.js';
 import { handleIncomingComprobanteFromBotPg } from './src/transferenciasPipeline.js';
-import costosRouter from './src/adm/costosRouter.js';
-import activosRouter from './src/adm/activosRouter.js';
-import alquileresRouter from './src/adm/alquileresRouter.js'; 
-import {registrarMovimientosActivosDesdePedido,registrarActivosDesdePedidoEntrega } from './src/adm/pedidoActivosService.js';
-import pagosQrRouter from './src/qr/pagosRouter.js';
-import pagosWebhookRouter from './src/qr/pagosWebhookRouter.js';
+import { registrarMovimientosActivosDesdePedido, registrarActivosDesdePedidoEntrega } from './src/adm/pedidoActivosService.js';
+import { registerRoutes } from './src/routes/index.js';
 
 // --------------------------------------------------
 // Config express
@@ -470,15 +465,8 @@ app.get('/api/public/pedidos/ultimo', async (req, res) => {
 
 app.use('/api/public', trackingPublicRouter);
 
-// Módulo de Administración de Costos / Activos
-app.use('/api/admin/costos', costosRouter);
-app.use('/api/admin/activos', activosRouter);
-app.use('/api/admin/alquileres', alquileresRouter);
-
-// Pagos QR (pedido_pagos)
-app.use('/api/admin/qr', pagosQrRouter);
-// Webhook genérico para cambios de estado de pedido_pagos
-app.use('/api/webhooks', pagosWebhookRouter);
+// Routers modulares
+registerRoutes(app);
 
 // --------------------------------------------------
 // Transferencias (comprobantes de transferencia)
