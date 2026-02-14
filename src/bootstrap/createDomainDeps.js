@@ -1,5 +1,5 @@
-import { notifyEstadoPedidoPush, getEmpresaById, registerOrderRoutes } from '../../backend.js';
 import { query, pool } from '../db.js';
+import { createLegacyBackendDeps } from '../legacy/backendAdapter.js';
 import {
   withAuth,
   isSuper,
@@ -12,6 +12,10 @@ import { ejecutarEstrategiaVecinos } from '../estrategias.js';
 import { registrarMovimientosActivosDesdePedido } from '../adm/pedidoActivosService.js';
 
 export function createDomainDeps({ projectDir }) {
+  const legacy = createLegacyBackendDeps();
+
+  const { notifyEstadoPedidoPush, getEmpresaById, registerOrderRoutes } = legacy;
+
   return {
     projectDir,
 
