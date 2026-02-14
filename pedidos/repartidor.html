@@ -278,6 +278,7 @@
     <div class="brand">
       <span class="dot"></span>
       <strong id="brandTitle">Dashboard</strong>
+      <button id="btnGpsHelp" class="iconbtn ghost" style="padding:4px 8px; font-size:0.8rem;" hidden>📍 GPS</button>
     </div>
     <button id="menuToggle" class="menu-btn">
       <svg width="24" height="24" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
@@ -736,6 +737,20 @@ function notifyError(userMsg, err) {
   try { toast('❌ ' + userMsg); } catch {}
 }
 
+function showGpsHelp() {
+  const msg = [
+    '📍 GPS desactivado o sin permiso.',
+    '',
+    'Cómo habilitarlo:',
+    '1) Tocá el candado/ícono de ubicación en la barra del navegador.',
+    '2) Permitir Ubicación para este sitio.',
+    '3) Recargá la página.',
+    '',
+    'Tip: también revisá Ajustes > Privacidad > Ubicación (en el teléfono).'
+  ].join('\n');
+  alert(msg);
+}
+
 // --- INITIALIZATION ---
 (async function boot() {
   try {
@@ -743,6 +758,12 @@ function notifyError(userMsg, err) {
     const j = await api('/api/me');
     me = j.user;
     $('#brandTitle').textContent = `Hola, ${me.username}`;
+
+    // Botón ayuda GPS
+    const gpsBtn = document.getElementById('btnGpsHelp');
+    if (gpsBtn) {
+      gpsBtn.onclick = (e) => { e.preventDefault(); showGpsHelp(); };
+    }
 
     // 2. Config de pagos de la empresa (canales habilitados)
     try {
@@ -2045,6 +2066,8 @@ async function gpsTick() {
   if (!navigator.geolocation || gpsSyncState.denied) {
     // Sin GPS o permiso denegado: frenamos y no molestamos
     gpsSyncState.disabled = true;
+    const gpsBtn = document.getElementById('btnGpsHelp');
+    if (gpsBtn) gpsBtn.hidden = false;
     return;
   }
 
@@ -2077,6 +2100,8 @@ async function gpsTick() {
       gpsSyncState.denied = true;
       gpsSyncState.disabled = true;
       toast('📍 GPS desactivado: sin permiso.');
+      const gpsBtn = document.getElementById('btnGpsHelp');
+      if (gpsBtn) gpsBtn.hidden = false;
       return;
     }
 
