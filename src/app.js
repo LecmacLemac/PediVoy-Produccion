@@ -116,7 +116,7 @@ export function createApp(deps) {
     getEmpresaById: deps?.getEmpresaById,
   });
 
-  // Endpoints legacy ya migrados fuera de backend.js
+  // Endpoints públicos migrados a módulos dedicados
   app.use('/public', createPublicLegacyCatalogRouter({ query }));
   app.use('/public', createPublicLegacyMarketplaceRouter({ query }));
   app.use('/public', createPublicLegacyPedidosRouter({ query }));
@@ -142,7 +142,7 @@ export function createApp(deps) {
     isSuper,
   });
 
-  // Rutas legacy desde backend.js desactivadas (migradas a src/routes/*)
+  // Sin fallback legacy: toda ruta pública vive en src/routes/*
 
   app.get('/health', (_req, res) => res.json({ ok: true }));
 
