@@ -158,7 +158,30 @@ export function createApp(deps) {
 
   // Sin fallback legacy: toda ruta pública vive en src/routes/*
 
-  app.get('/health', (_req, res) => res.json({ ok: true }));
+  const healthPayload = () => ({
+    ok: true,
+    service: 'hidro-api',
+    timestamp: new Date().toISOString(),
+    uptimeSec: Math.round(process.uptime()),
+  });
+
+  app.get('/health', (_req, res) => res.json(healthPayload()));
+  app.get('/api/health', (_req, res) => res.json(healthPayload()));
+
+  app.use((req, res) => {
+    res.status(404).json({
+      error: 'Not Found',
+      path: req.originalUrl,
+    });
+  });
+
+  app.use((err, _req, res, _next) => {
+    console.error('Unhandled error:', err);
+    if (res.headersSent) return;
+    res.status(err?.statusCode || 500).json({
+      error: err?.message || 'Internal Server Error',
+    });
+  });
 
   return app;
 }
