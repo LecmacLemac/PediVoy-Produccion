@@ -1,7 +1,61 @@
 import express from 'express';
+import { z } from 'zod';
 
 function onlyDigits(v) {
   return String(v || '').replace(/\D+/g, '');
+}
+
+const PUSH_RATE_LIMIT_WINDOW_MS = Number(process.env.PUBLIC_PUSH_RATE_LIMIT_WINDOW_MS || 60_000);
+const PUSH_RATE_LIMIT_MAX = Number(process.env.PUBLIC_PUSH_RATE_LIMIT_MAX || 30);
+const pushRateState = new Map();
+
+const pushSubscribeSchema = z.object({
+  endpoint: z.string().url().max(2000).optional(),
+  p256dh: z.string().max(1024).optional(),
+  auth: z.string().max(1024).optional(),
+  keys: z.object({
+    p256dh: z.string().max(1024).optional(),
+    auth: z.string().max(1024).optional(),
+  }).optional(),
+  subscription: z.object({
+    endpoint: z.string().url().max(2000),
+    keys: z.object({
+      p256dh: z.string().max(1024),
+      auth: z.string().max(1024),
+    }).optional(),
+  }).optional(),
+  empresa_id: z.coerce.number().int().positive().optional(),
+  pedido_id: z.coerce.number().int().positive().optional(),
+});
+
+const pushUnsubscribeSchema = z.object({
+  endpoint: z.string().url().max(2000).optional(),
+  subscription: z.object({ endpoint: z.string().url().max(2000) }).optional(),
+});
+
+function clientIp(req) {
+  const xff = req.headers['x-forwarded-for'];
+  if (typeof xff === 'string' && xff.trim()) return xff.split(',')[0].trim();
+  return req.socket?.remoteAddress || 'unknown';
+}
+
+function checkRateLimit(req) {
+  const now = Date.now();
+  const key = clientIp(req);
+  const current = pushRateState.get(key);
+
+  if (!current || now > current.resetAt) {
+    const next = { count: 1, resetAt: now + PUSH_RATE_LIMIT_WINDOW_MS };
+    pushRateState.set(key, next);
+    return { allowed: true, remaining: PUSH_RATE_LIMIT_MAX - 1, resetAt: next.resetAt };
+  }
+
+  current.count += 1;
+  if (current.count > PUSH_RATE_LIMIT_MAX) {
+    return { allowed: false, remaining: 0, resetAt: current.resetAt };
+  }
+
+  return { allowed: true, remaining: Math.max(0, PUSH_RATE_LIMIT_MAX - current.count), resetAt: current.resetAt };
 }
 
 function toWhatsAppE164AR(tel) {
@@ -105,7 +159,21 @@ export function createPublicLegacyPedidosRouter({ query }) {
 
   router.post('/push/subscribe', async (req, res) => {
     try {
-      const body = req.body || {};
+      const rl = checkRateLimit(req);
+      res.set('x-ratelimit-limit', String(PUSH_RATE_LIMIT_MAX));
+      res.set('x-ratelimit-remaining', String(rl.remaining));
+      res.set('x-ratelimit-reset', String(Math.ceil(rl.resetAt / 1000)));
+      if (!rl.allowed) return res.status(429).json({ error: 'Demasiadas solicitudes' });
+
+      const parsed = pushSubscribeSchema.safeParse(req.body || {});
+      if (!parsed.success) {
+        return res.status(400).json({
+          error: 'payload inválido',
+          details: parsed.error.issues.slice(0, 3).map((i) => ({ path: i.path.join('.'), message: i.message })),
+        });
+      }
+
+      const body = parsed.data;
       const sub = body.subscription
         ? body.subscription
         : {
@@ -154,7 +222,21 @@ export function createPublicLegacyPedidosRouter({ query }) {
 
   router.post('/push/unsubscribe', async (req, res) => {
     try {
-      const body = req.body || {};
+      const rl = checkRateLimit(req);
+      res.set('x-ratelimit-limit', String(PUSH_RATE_LIMIT_MAX));
+      res.set('x-ratelimit-remaining', String(rl.remaining));
+      res.set('x-ratelimit-reset', String(Math.ceil(rl.resetAt / 1000)));
+      if (!rl.allowed) return res.status(429).json({ error: 'Demasiadas solicitudes' });
+
+      const parsed = pushUnsubscribeSchema.safeParse(req.body || {});
+      if (!parsed.success) {
+        return res.status(400).json({
+          error: 'payload inválido',
+          details: parsed.error.issues.slice(0, 3).map((i) => ({ path: i.path.join('.'), message: i.message })),
+        });
+      }
+
+      const body = parsed.data;
       const endpoint = body.endpoint || body.subscription?.endpoint;
       if (!endpoint) return res.status(400).json({ error: 'endpoint requerido' });
 
