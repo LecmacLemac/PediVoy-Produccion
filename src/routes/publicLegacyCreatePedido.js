@@ -4,6 +4,7 @@ import { ejecutarEstrategiaVecinos } from '../estrategias.js';
 
 const RATE_LIMIT_WINDOW_MS = Number(process.env.PUBLIC_PEDIDOS_RATE_LIMIT_WINDOW_MS || 60_000);
 const RATE_LIMIT_MAX = Number(process.env.PUBLIC_PEDIDOS_RATE_LIMIT_MAX || 20);
+const PUBLIC_PEDIDOS_MAX_BODY_BYTES = Number(process.env.PUBLIC_PEDIDOS_MAX_BODY_BYTES || 256 * 1024);
 const rateLimitState = new Map();
 
 function clientIp(req) {
@@ -68,7 +69,7 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
     ejecutarEstrategiaVecinosFn = ejecutarEstrategiaVecinos,
   } = deps;
 
-  const DEBUG_ORDERS = process.env.DEBUG_ORDERS === '1';
+  const DEBUG_ORDERS = process.env.DEBUG_ORDERS === '1' && process.env.NODE_ENV !== 'test';
   const tStart = (label) => { if (DEBUG_ORDERS) console.time(label); };
   const tEnd = (label) => { if (DEBUG_ORDERS) console.timeEnd(label); };
 
@@ -95,6 +96,16 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
 
     try {
       if (txClient) await txClient.query('BEGIN');
+
+      const contentLength = Number(req.headers['content-length'] || 0);
+      if (Number.isFinite(contentLength) && contentLength > PUBLIC_PEDIDOS_MAX_BODY_BYTES) {
+        await rollbackIfNeeded();
+        tEnd(`[public/pedidos] ${reqId} TOTAL`);
+        return res.status(413).json({
+          error: 'Payload demasiado grande para crear pedido',
+          reqId,
+        });
+      }
 
       const rl = checkRateLimit(req);
       res.set('x-ratelimit-limit', String(RATE_LIMIT_MAX));

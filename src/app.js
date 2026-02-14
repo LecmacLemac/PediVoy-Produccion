@@ -71,9 +71,27 @@ export function createApp(deps) {
 
   app.set('trust proxy', 1);
   app.use(cors({ origin: true, credentials: true }));
-  app.use(express.json({ limit: '10mb' }));
-  app.use(express.urlencoded({ extended: true }));
+  app.use(express.json({ limit: '1mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '1mb' }));
   app.use(cookieParser());
+
+  app.use((req, res, next) => {
+    res.set('X-Content-Type-Options', 'nosniff');
+    res.set('X-Frame-Options', 'DENY');
+    res.set('Referrer-Policy', 'no-referrer');
+    res.set('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+    next();
+  });
+
+  const httpMetrics = new Map();
+  const pushMetric = (key, ms, statusCode) => {
+    const bucket = httpMetrics.get(key) || { count: 0, errors: 0, durations: [] };
+    bucket.count += 1;
+    if (statusCode >= 400) bucket.errors += 1;
+    bucket.durations.push(ms);
+    if (bucket.durations.length > 200) bucket.durations.shift();
+    httpMetrics.set(key, bucket);
+  };
 
   app.use((req, res, next) => {
     const requestId = req.headers['x-request-id'] || randomUUID();
@@ -83,10 +101,27 @@ export function createApp(deps) {
     const startedAt = Date.now();
     res.on('finish', () => {
       const ms = Date.now() - startedAt;
+      const key = `${req.method} ${req.path}`;
+      pushMetric(key, ms, res.statusCode);
       console.info(`[http] ${req.method} ${req.originalUrl} -> ${res.statusCode} (${ms}ms) reqId=${req.requestId}`);
     });
 
     next();
+  });
+
+  app.get('/api/metrics/http', (_req, res) => {
+    const out = {};
+    for (const [key, value] of httpMetrics.entries()) {
+      const sorted = [...value.durations].sort((a, b) => a - b);
+      const p95Index = sorted.length ? Math.max(0, Math.ceil(sorted.length * 0.95) - 1) : 0;
+      out[key] = {
+        count: value.count,
+        errors: value.errors,
+        errorRate: value.count ? Number((value.errors / value.count).toFixed(4)) : 0,
+        p95Ms: sorted.length ? sorted[p95Index] : 0,
+      };
+    }
+    res.json({ ok: true, metrics: out });
   });
 
   // ==================================================

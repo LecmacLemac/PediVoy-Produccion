@@ -14,7 +14,7 @@
     "dev": "nodemon server.js",
     "worker": "node src/wppWorker.js",
     "init-db": "node initDb.js",
-    "test": "node --test tests/**/*.test.js",
+    "test": "NODE_ENV=test node --test tests/**/*.test.js",
     "test:smoke:public": "node scripts/smoke-public.js",
     "db:backup": "node backup.js",
     "postinstall": "echo \"Instalando Chromium para Puppeteer (local)\" && if [ -z \"$RENDER\" ]; then PUPPETEER_CACHE_DIR=\"$PWD/.puppeteer\" npx puppeteer browsers install chrome; fi"
