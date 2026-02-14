@@ -906,7 +906,7 @@ app.get('/public/ultimo-pedido', async (req, res) => {
 
 // Endpoint para el Marketplace: Trae empresas (con filtro de zona opcional)
 
-app.get('/public/marketplace', async (req, res) => {
+app.get('/public/marketplace-legacy', async (req, res) => {
   try {
     const lat = parseFloat(req.query.lat);
     const lng = parseFloat(req.query.lng);
