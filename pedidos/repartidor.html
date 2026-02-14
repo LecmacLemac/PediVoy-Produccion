@@ -2014,26 +2014,87 @@ async function togglePagoRepartidor(pedidoId, checkbox) {
   }
 }
 
-// --- GPS TRACKING LOOP ---
+// --- GPS TRACKING LOOP (endurecido) ---
+// Objetivo: no spamear requests, manejar mala señal, y evitar concurrencia.
 
-setInterval(() => {
-  const hayActivos = pedidos.some(p => p.estado === 'en_ruta');
-  if (hayActivos && navigator.geolocation) {
-    navigator.geolocation.getCurrentPosition(pos => {
-      const activePed = pedidos.find(p => p.estado === 'en_ruta');
-      if (activePed) {
-        api('/api/track/update', {
-          method: 'POST',
-          body: {
-            pedido_id: activePed.id,
-            lat: pos.coords.latitude,
-            lng: pos.coords.longitude
-          }
-        }).then(() => console.log('📍 GPS Background Sync'));
-      }
-    }, err => console.warn('GPS Off'), { enableHighAccuracy: true });
+const gpsSyncState = {
+  disabled: false,
+  denied: false,
+  nextInMs: 60_000,
+  maxMs: 10 * 60_000,
+  lastOkAt: null,
+};
+
+function scheduleNextGpsTick(mult = 1) {
+  gpsSyncState.nextInMs = Math.min(Math.max(15_000, Math.floor(gpsSyncState.nextInMs * mult)), gpsSyncState.maxMs);
+}
+
+async function gpsTick() {
+  if (gpsSyncState.disabled) return;
+
+  // Solo si hay pedidos en ruta
+  const activePed = pedidos.find(p => p.estado === 'en_ruta');
+  if (!activePed) return;
+
+  // Si el navegador dice offline, no insistimos
+  if (typeof navigator.onLine === 'boolean' && !navigator.onLine) {
+    scheduleNextGpsTick(1.8);
+    return;
   }
-}, 60000);
+
+  if (!navigator.geolocation || gpsSyncState.denied) {
+    // Sin GPS o permiso denegado: frenamos y no molestamos
+    gpsSyncState.disabled = true;
+    return;
+  }
+
+  try {
+    await withLock('gps:track', async () => {
+      const pos = await new Promise((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, {
+          enableHighAccuracy: true,
+          timeout: 8000,
+          maximumAge: 30_000,
+        });
+      });
+
+      await api('/api/track/update', {
+        method: 'POST',
+        body: {
+          pedido_id: activePed.id,
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+        }
+      });
+    });
+
+    gpsSyncState.lastOkAt = Date.now();
+    gpsSyncState.nextInMs = 60_000; // reset al ritmo normal
+  } catch (e) {
+    // Si es permiso denegado, deshabilitar definitivamente
+    const code = e?.cause?.code; // geolocation error code
+    if (code === 1) { // PERMISSION_DENIED
+      gpsSyncState.denied = true;
+      gpsSyncState.disabled = true;
+      toast('📍 GPS desactivado: sin permiso.');
+      return;
+    }
+
+    // Backoff progresivo ante fallos (red/timeout/etc)
+    scheduleNextGpsTick(1.6);
+    // Evitar spam de toasts; solo avisar si hace rato no sincroniza
+    if (!gpsSyncState.lastOkAt || (Date.now() - gpsSyncState.lastOkAt) > 5 * 60_000) {
+      console.warn('GPS sync failed', e);
+    }
+  }
+}
+
+(async function gpsLoop(){
+  while (true) {
+    await gpsTick();
+    await new Promise(r => setTimeout(r, gpsSyncState.nextInMs));
+  }
+})();
 
 </script>
 </body>
