@@ -5,6 +5,10 @@ import {
   isSuper,
   getEmpresaIdFromToken,
   resolveEmpresaId,
+  geocodeIfNeeded,
+  normalizePhone,
+  pointInAnyZone,
+  enqueueWppMessage,
 } from '../services.js';
 import { crearPreferenciaLicencia, obtenerPago } from '../mercadoPagoService.js';
 import { notificarEnRuta, notificarPedidoTransferencia } from '../services/notificacionesPedidos.js';
@@ -28,6 +32,12 @@ export function createDomainDeps({ projectDir }) {
     isSuper,
     getEmpresaIdFromToken,
     resolveEmpresaId,
+
+    // public pedidos deps
+    geocodeIfNeeded,
+    normalizePhone,
+    pointInAnyZone,
+    enqueueWppMessage,
 
     // empresas helper
     getEmpresaById,

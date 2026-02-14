@@ -12,6 +12,8 @@ import { mountApiModules } from './routes/mountApiModules.js';
 import { createPublicLegacyPedidosRouter } from './routes/publicLegacyPedidos.js';
 import { createPublicLegacyCatalogRouter } from './routes/publicLegacyCatalog.js';
 import { createPublicLegacyMarketplaceRouter } from './routes/publicLegacyMarketplace.js';
+import { registerPublicLegacyCreatePedidoRoute } from './routes/publicLegacyCreatePedido.js';
+import { toNum, inRange, round, buildOrderSummary, getAliasEmpresa } from './public/pedidosLegacyHelpers.js';
 import { registerWhatsAppWeb } from './wpp/whatsappWeb.js';
 import { assertProductionEnv } from './bootstrap/env.js';
 
@@ -120,6 +122,18 @@ export function createApp(deps) {
   app.use('/public', createPublicLegacyCatalogRouter({ query }));
   app.use('/public', createPublicLegacyMarketplaceRouter({ query }));
   app.use('/public', createPublicLegacyPedidosRouter({ query }));
+  registerPublicLegacyCreatePedidoRoute(app, {
+    query,
+    geocodeIfNeeded: deps?.geocodeIfNeeded,
+    normalizePhone: deps?.normalizePhone,
+    pointInAnyZone: deps?.pointInAnyZone,
+    enqueueWppMessage: deps?.enqueueWppMessage,
+    toNum,
+    inRange,
+    round,
+    buildOrderSummary,
+    getAliasEmpresa,
+  });
 
   // --------------------------------------------------
   // WhatsApp Web integrado
