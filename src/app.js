@@ -84,6 +84,13 @@ export function createApp(deps) {
   });
 
   const httpMetrics = new Map();
+  const METRICS_ALERT_ERROR_RATE = Number(process.env.METRICS_ALERT_ERROR_RATE || 0.2);
+  const METRICS_ALERT_P95_MS = Number(process.env.METRICS_ALERT_P95_MS || 1500);
+
+  const requireSuper = (req, res, next) => {
+    if (!isSuper(req)) return res.status(403).json({ error: 'Forbidden' });
+    return next();
+  };
   const pushMetric = (key, ms, statusCode) => {
     const bucket = httpMetrics.get(key) || { count: 0, errors: 0, durations: [] };
     bucket.count += 1;
@@ -103,13 +110,15 @@ export function createApp(deps) {
       const ms = Date.now() - startedAt;
       const key = `${req.method} ${req.path}`;
       pushMetric(key, ms, res.statusCode);
-      console.info(`[http] ${req.method} ${req.originalUrl} -> ${res.statusCode} (${ms}ms) reqId=${req.requestId}`);
+      if (process.env.NODE_ENV !== 'test') {
+        console.info(`[http] ${req.method} ${req.originalUrl} -> ${res.statusCode} (${ms}ms) reqId=${req.requestId}`);
+      }
     });
 
     next();
   });
 
-  app.get('/api/metrics/http', (_req, res) => {
+  const snapshotMetrics = () => {
     const out = {};
     for (const [key, value] of httpMetrics.entries()) {
       const sorted = [...value.durations].sort((a, b) => a - b);
@@ -121,7 +130,54 @@ export function createApp(deps) {
         p95Ms: sorted.length ? sorted[p95Index] : 0,
       };
     }
-    res.json({ ok: true, metrics: out });
+    return out;
+  };
+
+  app.get('/api/metrics/http', withAuth, requireSuper, (_req, res) => {
+    res.json({ ok: true, metrics: snapshotMetrics() });
+  });
+
+  app.get('/api/metrics/alerts', withAuth, requireSuper, (_req, res) => {
+    const metrics = snapshotMetrics();
+    const alerts = Object.entries(metrics)
+      .filter(([, m]) => m.errorRate >= METRICS_ALERT_ERROR_RATE || m.p95Ms >= METRICS_ALERT_P95_MS)
+      .map(([route, m]) => ({
+        route,
+        errorRate: m.errorRate,
+        p95Ms: m.p95Ms,
+        level: (m.errorRate >= METRICS_ALERT_ERROR_RATE * 2 || m.p95Ms >= METRICS_ALERT_P95_MS * 2) ? 'high' : 'medium',
+      }));
+
+    res.json({
+      ok: true,
+      thresholds: {
+        errorRate: METRICS_ALERT_ERROR_RATE,
+        p95Ms: METRICS_ALERT_P95_MS,
+      },
+      alerts,
+    });
+  });
+
+  app.get('/api/metrics/prometheus', withAuth, requireSuper, (_req, res) => {
+    const metrics = snapshotMetrics();
+    const lines = [
+      '# HELP hidrov1_http_requests_total Total HTTP requests by route',
+      '# TYPE hidrov1_http_requests_total gauge',
+      '# HELP hidrov1_http_errors_total Total HTTP errors by route',
+      '# TYPE hidrov1_http_errors_total gauge',
+      '# HELP hidrov1_http_p95_ms HTTP p95 latency in milliseconds by route',
+      '# TYPE hidrov1_http_p95_ms gauge',
+    ];
+
+    for (const [route, m] of Object.entries(metrics)) {
+      const label = route.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+      lines.push(`hidrov1_http_requests_total{route="${label}"} ${m.count}`);
+      lines.push(`hidrov1_http_errors_total{route="${label}"} ${m.errors}`);
+      lines.push(`hidrov1_http_p95_ms{route="${label}"} ${m.p95Ms}`);
+    }
+
+    res.set('Content-Type', 'text/plain; version=0.0.4; charset=utf-8');
+    res.send(lines.join('\n') + '\n');
   });
 
   // ==================================================
