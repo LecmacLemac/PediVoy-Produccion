@@ -12,7 +12,6 @@ import { mountApiModules } from './routes/mountApiModules.js';
 import { createPublicLegacyPedidosRouter } from './routes/publicLegacyPedidos.js';
 import { createPublicLegacyCatalogRouter } from './routes/publicLegacyCatalog.js';
 import { createPublicLegacyMarketplaceRouter } from './routes/publicLegacyMarketplace.js';
-import { mountPublicLegacyFromBackend } from './routes/publicLegacyFromBackend.js';
 import { registerWhatsAppWeb } from './wpp/whatsappWeb.js';
 import { assertProductionEnv } from './bootstrap/env.js';
 
@@ -143,10 +142,7 @@ export function createApp(deps) {
     isSuper,
   });
 
-  // --------------------------------------------------
-  // Rutas públicas legacy (desde backend.js)
-  // --------------------------------------------------
-  mountPublicLegacyFromBackend(app);
+  // Rutas legacy desde backend.js desactivadas (migradas a src/routes/*)
 
   app.get('/health', (_req, res) => res.json({ ok: true }));
 

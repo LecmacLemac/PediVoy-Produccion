@@ -98,7 +98,7 @@ export function registerOrderRoutes (
   // ------------------------------------------------------------
   // Config pública (multi-tenant por dominio / query)
   // ------------------------------------------------------------
-app.get('/public/config', async (req, res) => {
+app.get('/public/config-legacy', async (req, res) => {
   try {
     // 1) Si ya viene empresa_id en la URL, lo respetamos SIEMPRE
     const rawId = req.query.empresa_id;
@@ -206,7 +206,7 @@ app.get('/public/config', async (req, res) => {
   // ------------------------------------------------------------
   // Datos públicos de la empresa (contacto, etc.)
   // ------------------------------------------------------------
-  app.get('/public/empresa', async (req, res) => {
+  app.get('/public/empresa-legacy', async (req, res) => {
     try {
       const rawId = req.query.empresa_id;
       const empresaId = Number(rawId);
@@ -260,7 +260,7 @@ app.get('/public/config', async (req, res) => {
 // ------------------------------------------------------------
 // Productos públicos (Landing vs Catálogo, con categoría + orden)
 // ------------------------------------------------------------
-app.get('/public/productos', async (req, res) => {
+app.get('/public/productos-legacy', async (req, res) => {
   try {
     const empresa_id = Number(req.query.empresa_id) || 1
     const scope = req.query.scope || 'all' // 'catalog' | 'landing' | 'all'
@@ -317,7 +317,7 @@ app.get('/public/productos', async (req, res) => {
   // ------------------------------------------------------------
   // Buscar contacto
   // ------------------------------------------------------------
-app.get('/public/contacto', async (req, res) => {
+app.get('/public/contacto-legacy', async (req, res) => {
   try {
     const empresa_id   = Number(req.query.empresa_id || 1)
     const telefonoRaw  = req.query.telefono
@@ -837,7 +837,7 @@ app.get('/public/contacto', async (req, res) => {
   // ------------------------------------------------------------
   // Ultimo pedido
   // ------------------------------------------------------------
-app.get('/public/ultimo-pedido', async (req, res) => {
+app.get('/public/ultimo-pedido-legacy', async (req, res) => {
   try {
     const empresa_id = Number(req.query.empresa_id) || 1
     const telefonoIn = String(req.query.telefono || '').trim()
@@ -966,7 +966,7 @@ app.get('/public/marketplace-legacy', async (req, res) => {
   // WPP Chofer
   // ------------------------------------------------------------
 
-app.get('/public/pedido-chofer-wpp', async (req, res) => {
+app.get('/public/pedido-chofer-wpp-legacy', async (req, res) => {
     try {
       const pedido_id = Number(req.query.pedido_id || req.query.id)
       if (!Number.isFinite(pedido_id)) {
@@ -1029,7 +1029,7 @@ app.get('/public/pedido-chofer-wpp', async (req, res) => {
   // ------------------------------------------------------------
   // Estado pedido
   // ------------------------------------------------------------
-app.get('/public/pedido-estado', async (req, res) => {
+app.get('/public/pedido-estado-legacy', async (req, res) => {
     try {
       const id = Number(req.query.id)
       if (!id) return res.status(400).json({ error: 'id requerido' })
@@ -1071,11 +1071,11 @@ app.get('/public/pedido-estado', async (req, res) => {
   // ------------------------------------------------------------
   // PUSH
   // ------------------------------------------------------------
-app.get('/public/push/vapid-key', (req, res) => {
+app.get('/public/push/vapid-key-legacy', (req, res) => {
     res.json({ key: VAPID_PUBLIC_KEY || '' })
   })
 
-app.post('/public/push/subscribe', async (req, res) => {
+app.post('/public/push/subscribe-legacy', async (req, res) => {
     try {
       const body = req.body || {}
       const sub = body.subscription ? body.subscription : {
@@ -1120,7 +1120,7 @@ app.post('/public/push/subscribe', async (req, res) => {
     }
   })
 
-app.post('/public/push/unsubscribe', async (req, res) => {
+app.post('/public/push/unsubscribe-legacy', async (req, res) => {
     try {
       const body     = req.body || {}
       const endpoint = body.endpoint || body.subscription?.endpoint
