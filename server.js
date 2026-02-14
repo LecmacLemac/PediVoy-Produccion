@@ -6,9 +6,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 import { createApp } from './src/app.js';
-import { createServerDeps } from './src/bootstrap/createServerDeps.js';
-import { getServerEnv } from './src/bootstrap/env.js';
-import { startServer } from './src/bootstrap/startServer.js';
+import { createServerDeps, getServerEnv, startServer } from './src/bootstrap/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
