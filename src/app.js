@@ -139,6 +139,7 @@ export function createApp(deps) {
   app.use('/public', createPublicLegacyPedidosRouter({ query }));
   registerPublicLegacyCreatePedidoRoute(app, {
     query,
+    pool,
     geocodeIfNeeded: deps?.geocodeIfNeeded,
     normalizePhone: deps?.normalizePhone,
     pointInAnyZone: deps?.pointInAnyZone,

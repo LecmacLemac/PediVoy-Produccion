@@ -55,6 +55,7 @@ const createPedidoSchema = z.object({
 export function registerPublicLegacyCreatePedidoRoute(app, deps) {
   const {
     query,
+    pool,
     geocodeIfNeeded,
     normalizePhone,
     pointInAnyZone,
@@ -72,6 +73,12 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
   const tEnd = (label) => { if (DEBUG_ORDERS) console.timeEnd(label); };
 
   app.post('/public/pedidos', async (req, res) => {
+    const txClient = pool ? await pool.connect() : null;
+    const txQuery = async (sql, params = []) => {
+      if (!txClient) return query(sql, params);
+      const result = await txClient.query(sql, params);
+      return result.rows;
+    };
     const reqId = `ped-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     const log = (...a) => DEBUG_ORDERS && console.log('[public/pedidos]', reqId, '-', ...a);
     const errlog = (...a) => console.error('[public/pedidos]', reqId, '-', ...a);
@@ -79,12 +86,22 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
     res.set('x-request-id', reqId);
     tStart(`[public/pedidos] ${reqId} TOTAL`);
 
+    let txFinished = false;
+    const rollbackIfNeeded = async () => {
+      if (!txClient || txFinished) return;
+      await txClient.query('ROLLBACK');
+      txFinished = true;
+    };
+
     try {
+      if (txClient) await txClient.query('BEGIN');
+
       const rl = checkRateLimit(req);
       res.set('x-ratelimit-limit', String(RATE_LIMIT_MAX));
       res.set('x-ratelimit-remaining', String(rl.remaining));
       res.set('x-ratelimit-reset', String(Math.ceil(rl.resetAt / 1000)));
       if (!rl.allowed) {
+        await rollbackIfNeeded();
         tEnd(`[public/pedidos] ${reqId} TOTAL`);
         return res.status(429).json({
           error: 'Demasiadas solicitudes. Intentá de nuevo en unos segundos.',
@@ -94,6 +111,7 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
 
       const parse = createPedidoSchema.safeParse(req.body || {});
       if (!parse.success) {
+        await rollbackIfNeeded();
         tEnd(`[public/pedidos] ${reqId} TOTAL`);
         return res.status(400).json({
           error: 'payload inválido',
@@ -143,7 +161,7 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
           const searchPhone = phoneNorm.length > 7 ? phoneNorm.slice(-7) : phoneNorm;
 
           if (searchPhone.length >= 4) {
-            const history = await query(
+            const history = await txQuery(
               `SELECT direccion, ciudad, latitud, longitud
                FROM puntos_entrega
                WHERE empresa_id=$1
@@ -196,7 +214,7 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
         const searchPhone = phoneNorm.length > 7 ? phoneNorm.slice(-7) : phoneNorm;
 
         if (searchPhone && direccion) {
-          const existingPoints = await query(
+          const existingPoints = await txQuery(
             `SELECT id, latitud, longitud, zona_id
              FROM puntos_entrega
              WHERE empresa_id = $1
@@ -224,7 +242,7 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
 
       if (!punto_entrega_id) {
         const telNorm = normalizePhone(telefono || '');
-        const peRows = await query(
+        const peRows = await txQuery(
           `INSERT INTO puntos_entrega (
             empresa_id, cliente, telefono, telefono_normalizado, direccion, ciudad, provincia, pais,
             latitud, longitud, notas, zona_id
@@ -239,7 +257,7 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
       let chofer_id = null;
       if (zona_id != null) {
         try {
-          const chRows = await query(
+          const chRows = await txQuery(
             `SELECT c.id
              FROM zona_chofer zc
              JOIN choferes c ON c.id = zc.chofer_id
@@ -263,6 +281,7 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
         .filter(it => it.producto && Number.isFinite(it.cantidad) && it.cantidad > 0 && Number.isFinite(it.precio_unitario) && it.precio_unitario >= 0);
 
       if (normItems.length === 0) {
+        await rollbackIfNeeded();
         tEnd(`[public/pedidos] ${reqId} TOTAL`);
         return res.status(400).json({ error: 'items inválidos', reqId });
       }
@@ -270,7 +289,7 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
       let rewardIdsToUpdate = [];
       if (punto_entrega_id) {
         try {
-          const premios = await query(
+          const premios = await txQuery(
             `SELECT cr.id, cr.cantidad, p.nombre
              FROM cliente_recompensas cr
              JOIN productos p ON p.id = cr.producto_id
@@ -298,9 +317,20 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
       const pagoTag = mPago ? (mPago === 'transferencia' ? ' (Transferencia)' : mPago === 'efectivo' ? ' (Efectivo)' : ` (${mPago})`) : '';
       const resumenTxt = buildOrderSummary(normItems) + pagoTag;
 
-      const pedExist = await query(`SELECT id, estado, monto FROM pedidos WHERE submission_id=$1`, [submission_id]);
+      if (submission_id) {
+        await txQuery('SELECT pg_advisory_xact_lock(hashtext($1))', [`pedido:${empId}:${submission_id}`]);
+      }
+
+      const pedExist = submission_id
+        ? await txQuery(
+            `SELECT id, estado, monto FROM pedidos WHERE empresa_id=$1 AND submission_id=$2 LIMIT 1`,
+            [empId, submission_id]
+          )
+        : [];
+
       if (submission_id && pedExist.length) {
         const existing = pedExist[0];
+        await rollbackIfNeeded();
         tEnd(`[public/pedidos] ${reqId} TOTAL`);
         return res.json({
           ok: true,
@@ -315,13 +345,13 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
 
       let padrinoId = null;
       if (referral_code && referral_code.startsWith('VECINO-')) {
-        const historial = await query('SELECT id FROM pedidos WHERE punto_entrega_id=$1 LIMIT 1', [punto_entrega_id]);
+        const historial = await txQuery('SELECT id FROM pedidos WHERE punto_entrega_id=$1 LIMIT 1', [punto_entrega_id]);
         const esClienteNuevo = historial.length === 0;
 
         if (esClienteNuevo) {
           const idOrigen = parseInt(referral_code.split('-')[1]);
           if (Number.isInteger(idOrigen)) {
-            const rowPadrino = await query(`SELECT punto_entrega_id FROM pedidos WHERE id=$1`, [idOrigen]);
+            const rowPadrino = await txQuery(`SELECT punto_entrega_id FROM pedidos WHERE id=$1`, [idOrigen]);
             if (rowPadrino.length > 0) {
               const candidatoId = rowPadrino[0].punto_entrega_id;
               if (candidatoId !== punto_entrega_id) {
@@ -333,7 +363,7 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
         }
       }
 
-      const pedRows = await query(
+      const pedRows = await txQuery(
         `INSERT INTO pedidos (
           empresa_id, punto_entrega_id, fecha, estado,
           cantidad, cantidad_entregada, monto,
@@ -348,7 +378,7 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
       const pedido = pedRows[0];
 
       for (const it of normItems) {
-        await query(
+        await txQuery(
           `INSERT INTO items_pedido (pedido_id, producto, cantidad, precio_unitario)
            VALUES ($1,$2,$3,$4)`,
           [pedido.id, it.producto, it.cantidad, it.precio_unitario]
@@ -357,7 +387,7 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
 
       if (rewardIdsToUpdate.length > 0) {
         try {
-          await query(
+          await txQuery(
             `UPDATE cliente_recompensas
              SET reclamado = TRUE,
                  fecha_reclamado = NOW(),
@@ -372,17 +402,17 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
       }
 
       try {
-        const empRows = await query('SELECT config_entrega FROM empresas WHERE id=$1', [empId]);
+        const empRows = await txQuery('SELECT config_entrega FROM empresas WHERE id=$1', [empId]);
         const configEntrega = empRows[0]?.config_entrega || {};
 
         let repData = null;
         if (chofer_id) {
-          const cRows = await query('SELECT nombre, telefono FROM choferes WHERE id=$1', [chofer_id]);
+          const cRows = await txQuery('SELECT nombre, telefono FROM choferes WHERE id=$1', [chofer_id]);
           if (cRows.length) repData = cRows[0];
         }
 
         const isTransf = String(metodo_pago).toLowerCase().includes('transf');
-        const aliasDB = isTransf ? await getAliasEmpresa(empId, query) : null;
+        const aliasDB = isTransf ? await getAliasEmpresa(empId, txQuery) : null;
 
         let mensaje = armarMensajeConfirmado({
           cliente,
@@ -408,6 +438,11 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
         errlog('VECINOS.ESTRATEGIA.ERROR', e?.message || e);
       }
 
+      if (txClient && !txFinished) {
+        await txClient.query('COMMIT');
+        txFinished = true;
+      }
+
       tEnd(`[public/pedidos] ${reqId} TOTAL`);
 
       return res.json({
@@ -420,6 +455,7 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
         reqId
       });
     } catch (err) {
+      await rollbackIfNeeded();
       errlog('UNHANDLED', {
         message: err?.message,
         stack: err?.stack,
@@ -428,6 +464,8 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
       });
       tEnd(`[public/pedidos] ${reqId} TOTAL`);
       return res.status(500).json({ error: 'No se pudo crear el pedido', reqId });
+    } finally {
+      if (txClient) txClient.release();
     }
   });
 }

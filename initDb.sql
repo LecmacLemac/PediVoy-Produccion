@@ -382,6 +382,10 @@ CREATE TABLE IF NOT EXISTS pedidos (
   created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pedidos_empresa_submission_id_uniq
+  ON pedidos (empresa_id, submission_id)
+  WHERE submission_id IS NOT NULL;
+
 CREATE TABLE IF NOT EXISTS items_pedido (
   id              SERIAL PRIMARY KEY,
   pedido_id       INTEGER NOT NULL REFERENCES pedidos(id) ON DELETE CASCADE,
