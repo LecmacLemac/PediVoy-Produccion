@@ -23,6 +23,7 @@ import {
   getAliasEmpresa,
   getLocationFromIp,
 } from './src/public/pedidosLegacyHelpers.js';
+import { registerPublicLegacyCreatePedidoRoute } from './src/routes/publicLegacyCreatePedido.js';
 
 // -------------------------------------------------------------------
 // Debug
@@ -349,9 +350,23 @@ app.get('/public/contacto', async (req, res) => {
 })
 
 // ------------------------------------------------------------
-  // Crear pedido (POST) - LÓGICA COMPLETA + CORRECCIÓN CHOFER
+  // Crear pedido (POST) - migrado a router dedicado
   // ------------------------------------------------------------
-  app.post('/public/pedidos', async (req, res) => {
+  registerPublicLegacyCreatePedidoRoute(app, {
+    query,
+    geocodeIfNeeded,
+    normalizePhone,
+    pointInAnyZone: corePointInAnyZone,
+    enqueueWppMessage,
+    toNum,
+    inRange,
+    round,
+    buildOrderSummary,
+    getAliasEmpresa,
+  })
+
+  // Legacy temporal (desactivado para evitar doble registro)
+  app.post('/public/pedidos-legacy', async (req, res) => {
     const reqId  = `ped-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
     const log    = (...a) => DEBUG_ORDERS && console.log('[public/pedidos]', reqId, '-', ...a)
     const errlog = (...a) => console.error('[public/pedidos]', reqId, '-', ...a)
