@@ -8,9 +8,11 @@
     "node": "20.x"
   },
   "scripts": {
+    "prestart": "node scripts/check-node.js",
     "start": "node server.js",
-    "worker": "node src/wppWorker.js",
+    "predev": "node scripts/check-node.js",
     "dev": "nodemon server.js",
+    "worker": "node src/wppWorker.js",
     "init-db": "node initDb.js",
     "test": "echo \"No tests configured\" && exit 0",
     "db:backup": "node backup.js",

@@ -42,7 +42,12 @@ Infraestructura: Soporte para WebPush, Multer (archivos), JWT (Auth).
 
 Requisitos previos
 
-Node.js v18+
+- Node.js **20.x** (requerido; ver `package.json` → `engines.node`).
+  - Si usás nvm: `nvm install 20 && nvm use 20` (hay `.nvmrc`).
+  - Más detalle: `docs/NODE.md`.
+- (Override) `ALLOW_NODE_MISMATCH=1` para arrancar igual, no recomendado.
+
+PostgreSQL con extensión PostGIS instalada.
 
 PostgreSQL con extensión PostGIS instalada.
 
