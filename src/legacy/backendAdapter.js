@@ -1,9 +1,8 @@
-import { notifyEstadoPedidoPush, getEmpresaById, registerOrderRoutes } from '../../backend.js';
+import { notifyEstadoPedidoPush, getEmpresaById } from '../../backend.js';
 
 export function createLegacyBackendDeps() {
   return {
     notifyEstadoPedidoPush,
     getEmpresaById,
-    registerOrderRoutes,
   };
 }

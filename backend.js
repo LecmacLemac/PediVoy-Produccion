@@ -1163,7 +1163,7 @@ export async function notifyByPedido (pedido_id, payload) {
 
 export const pointInAnyZone = corePointInAnyZone
 
-export default { registerOrderRoutes, notifyByPedido, pointInAnyZone }
+export default { notifyByPedido, pointInAnyZone }
 
 export async function getEmpresaById(req, res) {
   try {
