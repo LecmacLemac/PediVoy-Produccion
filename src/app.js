@@ -148,6 +148,7 @@ export function createApp(deps) {
     round,
     buildOrderSummary,
     getAliasEmpresa,
+    ejecutarEstrategiaVecinosFn: ejecutarEstrategiaVecinos,
   });
 
   // --------------------------------------------------
@@ -190,11 +191,19 @@ export function createApp(deps) {
     });
   });
 
-  app.use((err, _req, res, _next) => {
-    console.error('Unhandled error:', err);
+  app.use((err, req, res, _next) => {
+    console.error('[http.error]', {
+      reqId: req?.requestId,
+      method: req?.method,
+      path: req?.originalUrl,
+      statusCode: err?.statusCode || 500,
+      message: err?.message,
+      stack: err?.stack,
+    });
     if (res.headersSent) return;
     res.status(err?.statusCode || 500).json({
       error: err?.message || 'Internal Server Error',
+      reqId: req?.requestId,
     });
   });
 

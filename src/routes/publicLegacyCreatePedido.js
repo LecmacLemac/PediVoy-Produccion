@@ -2,6 +2,35 @@ import { z } from 'zod';
 import { armarMensajeConfirmado } from '../utils.js';
 import { ejecutarEstrategiaVecinos } from '../estrategias.js';
 
+const RATE_LIMIT_WINDOW_MS = Number(process.env.PUBLIC_PEDIDOS_RATE_LIMIT_WINDOW_MS || 60_000);
+const RATE_LIMIT_MAX = Number(process.env.PUBLIC_PEDIDOS_RATE_LIMIT_MAX || 20);
+const rateLimitState = new Map();
+
+function clientIp(req) {
+  const xff = req.headers['x-forwarded-for'];
+  if (typeof xff === 'string' && xff.trim()) return xff.split(',')[0].trim();
+  return req.socket?.remoteAddress || 'unknown';
+}
+
+function checkRateLimit(req) {
+  const now = Date.now();
+  const key = clientIp(req);
+  const current = rateLimitState.get(key);
+
+  if (!current || now > current.resetAt) {
+    const next = { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS };
+    rateLimitState.set(key, next);
+    return { allowed: true, remaining: RATE_LIMIT_MAX - 1, resetAt: next.resetAt };
+  }
+
+  current.count += 1;
+  if (current.count > RATE_LIMIT_MAX) {
+    return { allowed: false, remaining: 0, resetAt: current.resetAt };
+  }
+
+  return { allowed: true, remaining: Math.max(0, RATE_LIMIT_MAX - current.count), resetAt: current.resetAt };
+}
+
 const createPedidoSchema = z.object({
   empresa_id: z.coerce.number().int().positive().optional(),
   cliente: z.string().trim().min(2, 'cliente es requerido'),
@@ -35,6 +64,7 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
     round,
     buildOrderSummary,
     getAliasEmpresa,
+    ejecutarEstrategiaVecinosFn = ejecutarEstrategiaVecinos,
   } = deps;
 
   const DEBUG_ORDERS = process.env.DEBUG_ORDERS === '1';
@@ -50,6 +80,18 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
     tStart(`[public/pedidos] ${reqId} TOTAL`);
 
     try {
+      const rl = checkRateLimit(req);
+      res.set('x-ratelimit-limit', String(RATE_LIMIT_MAX));
+      res.set('x-ratelimit-remaining', String(rl.remaining));
+      res.set('x-ratelimit-reset', String(Math.ceil(rl.resetAt / 1000)));
+      if (!rl.allowed) {
+        tEnd(`[public/pedidos] ${reqId} TOTAL`);
+        return res.status(429).json({
+          error: 'Demasiadas solicitudes. Intentá de nuevo en unos segundos.',
+          reqId,
+        });
+      }
+
       const parse = createPedidoSchema.safeParse(req.body || {});
       if (!parse.success) {
         tEnd(`[public/pedidos] ${reqId} TOTAL`);
@@ -361,7 +403,7 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
       }
 
       try {
-        await ejecutarEstrategiaVecinos(query, pedido.id, punto_entrega_id, empId);
+        await ejecutarEstrategiaVecinosFn({ pedidoId: pedido.id, empresaId: empId });
       } catch (e) {
         errlog('VECINOS.ESTRATEGIA.ERROR', e?.message || e);
       }
@@ -378,6 +420,12 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
         reqId
       });
     } catch (err) {
+      errlog('UNHANDLED', {
+        message: err?.message,
+        stack: err?.stack,
+        path: req.originalUrl,
+        method: req.method,
+      });
       tEnd(`[public/pedidos] ${reqId} TOTAL`);
       return res.status(500).json({ error: 'No se pudo crear el pedido', reqId });
     }

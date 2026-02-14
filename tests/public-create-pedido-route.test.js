@@ -23,6 +23,7 @@ function buildTestApp(overrides = {}) {
     round,
     buildOrderSummary,
     getAliasEmpresa: overrides.getAliasEmpresa || (async () => null),
+    ejecutarEstrategiaVecinosFn: overrides.ejecutarEstrategiaVecinosFn || (async () => null),
   });
 
   return app;
