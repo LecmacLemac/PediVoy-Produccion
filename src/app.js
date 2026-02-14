@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import { registerLandingRoutes } from './routes/landingRoutes.js';
 import { mountApiModules } from './routes/mountApiModules.js';
 import { createPublicLegacyPedidosRouter } from './routes/publicLegacyPedidos.js';
+import { createPublicLegacyCatalogRouter } from './routes/publicLegacyCatalog.js';
 import { mountPublicLegacyFromBackend } from './routes/publicLegacyFromBackend.js';
 import { registerWhatsAppWeb } from './wpp/whatsappWeb.js';
 import { assertProductionEnv } from './bootstrap/env.js';
@@ -116,6 +117,7 @@ export function createApp(deps) {
   });
 
   // Endpoints legacy ya migrados fuera de backend.js
+  app.use('/public', createPublicLegacyCatalogRouter({ query }));
   app.use('/public', createPublicLegacyPedidosRouter({ query }));
 
   // --------------------------------------------------
