@@ -107,6 +107,12 @@ server.js: Servidor Express y configuración de rutas.
 
 initDb.sql: Schema de base de datos.
 
+## 🧭 Operación técnica (nuevo)
+
+- Changelog técnico de mejoras recientes: `docs/CHANGELOG_TECH_2026-02-14.md`
+- Checklist de seguridad para deploy: `docs/DEPLOY_SECURITY_CHECKLIST.md`
+- Runbook de staging/producción/rollback: `docs/DEPLOY_RUNBOOK.md`
+
 🤝 Contribución
 
 Las Pull Requests son bienvenidas. Para cambios mayores, por favor abre un issue primero para discutir lo que te gustaría cambiar.
