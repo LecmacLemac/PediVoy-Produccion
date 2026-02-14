@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import { registerLandingRoutes } from './routes/landingRoutes.js';
 import { mountApiModules } from './routes/mountApiModules.js';
 import { registerWhatsAppWeb } from './wpp/whatsappWeb.js';
+import { assertProductionEnv } from './bootstrap/env.js';
 
 /**
  * createApp(deps)
@@ -61,14 +62,8 @@ export function createApp(deps) {
 
   const app = express();
 
-  // Seguridad producción (mantener igual que server.js)
-  if (process.env.NODE_ENV === 'production') {
-    const secret = process.env.JWT_SECRET;
-    if (!secret || secret === 'dev' || secret.length < 32) {
-      console.error('🔴 ERROR FATAL: JWT_SECRET inseguro en producción.');
-      process.exit(1);
-    }
-  }
+  // Seguridad producción
+  assertProductionEnv();
 
   app.set('trust proxy', 1);
   app.use(cors({ origin: true, credentials: true }));
