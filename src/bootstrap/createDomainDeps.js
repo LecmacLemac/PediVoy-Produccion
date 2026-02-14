@@ -14,7 +14,7 @@ import { registrarMovimientosActivosDesdePedido } from '../adm/pedidoActivosServ
 export function createDomainDeps({ projectDir }) {
   const legacy = createLegacyBackendDeps();
 
-  const { notifyEstadoPedidoPush, getEmpresaById, registerOrderRoutes } = legacy;
+  const { notifyEstadoPedidoPush, getEmpresaById } = legacy;
 
   return {
     projectDir,
@@ -43,7 +43,5 @@ export function createDomainDeps({ projectDir }) {
     ejecutarEstrategiaVecinos,
     registrarMovimientosActivosDesdePedido,
 
-    // legacy backend routes
-    registerOrderRoutes,
   };
 }

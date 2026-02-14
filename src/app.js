@@ -9,6 +9,7 @@ import fs from 'node:fs';
 
 import { registerLandingRoutes } from './routes/landingRoutes.js';
 import { mountApiModules } from './routes/mountApiModules.js';
+import { mountPublicLegacyFromBackend } from './routes/publicLegacyFromBackend.js';
 import { registerWhatsAppWeb } from './wpp/whatsappWeb.js';
 import { assertProductionEnv } from './bootstrap/env.js';
 
@@ -52,8 +53,6 @@ export function createApp(deps) {
       checkLicencia,
     } = {},
 
-    // legacy backend routes
-    registerOrderRoutes,
   } = deps || {};
 
   if (!projectDir) throw new Error('createApp: falta projectDir');
@@ -137,11 +136,9 @@ export function createApp(deps) {
   });
 
   // --------------------------------------------------
-  // Rutas legacy que siguen viviendo en backend.js
+  // Rutas públicas legacy (desde backend.js)
   // --------------------------------------------------
-  if (typeof registerOrderRoutes === 'function') {
-    registerOrderRoutes(app);
-  }
+  mountPublicLegacyFromBackend(app);
 
   app.get('/health', (_req, res) => res.json({ ok: true }));
 
