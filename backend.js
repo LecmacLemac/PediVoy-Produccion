@@ -86,7 +86,7 @@ export async function notifyEstadoPedidoPush (pedido_id, estado) {
 // -------------------------------------------------------------------
 // Registro de rutas
 // -------------------------------------------------------------------
-export function registerOrderRoutes (
+function registerOrderRoutesLegacy (
   app,
   {
     withAuth      = defaultWithAuth,
