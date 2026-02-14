@@ -1,5 +1,27 @@
+import { z } from 'zod';
 import { armarMensajeConfirmado } from '../utils.js';
 import { ejecutarEstrategiaVecinos } from '../estrategias.js';
+
+const createPedidoSchema = z.object({
+  empresa_id: z.coerce.number().int().positive().optional(),
+  cliente: z.string().trim().min(2, 'cliente es requerido'),
+  telefono: z.string().trim().min(6, 'telefono es requerido'),
+  direccion: z.string().trim().min(3, 'direccion es requerida'),
+  ciudad: z.string().trim().optional(),
+  provincia: z.string().trim().optional(),
+  pais: z.string().trim().optional(),
+  latitud: z.union([z.number(), z.string()]).optional(),
+  longitud: z.union([z.number(), z.string()]).optional(),
+  notas: z.string().optional(),
+  metodo_pago: z.string().optional(),
+  submission_id: z.union([z.string(), z.number()]).optional(),
+  referral_code: z.string().optional(),
+  items: z.array(z.object({
+    producto: z.string().trim().min(1),
+    cantidad: z.coerce.number().positive(),
+    precio_unitario: z.coerce.number().nonnegative(),
+  })).min(1, 'items es requerido y no puede estar vacío'),
+});
 
 export function registerPublicLegacyCreatePedidoRoute(app, deps) {
   const {
@@ -28,6 +50,19 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
     tStart(`[public/pedidos] ${reqId} TOTAL`);
 
     try {
+      const parse = createPedidoSchema.safeParse(req.body || {});
+      if (!parse.success) {
+        tEnd(`[public/pedidos] ${reqId} TOTAL`);
+        return res.status(400).json({
+          error: 'payload inválido',
+          details: parse.error.issues.slice(0, 3).map((i) => ({
+            path: i.path.join('.'),
+            message: i.message,
+          })),
+          reqId,
+        });
+      }
+
       const {
         empresa_id = 1,
         cliente,
@@ -41,32 +76,15 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
         notas,
         metodo_pago,
         submission_id,
-        items = [],
+        items,
         referral_code,
-      } = req.body || {};
+      } = parse.data;
 
       log('REQ IN', {
         empresa_id, cliente, telefono, direccion, ciudad, provincia, pais,
         latitud, longitud, notas, metodo_pago, submission_id,
-        itemsCount: Array.isArray(items) ? items.length : 'n/a'
+        itemsCount: items.length,
       });
-
-      if (!cliente || String(cliente).trim().length < 2) {
-        tEnd(`[public/pedidos] ${reqId} TOTAL`);
-        return res.status(400).json({ error: 'cliente es requerido', reqId });
-      }
-      if (!telefono || String(telefono).trim().length < 6) {
-        tEnd(`[public/pedidos] ${reqId} TOTAL`);
-        return res.status(400).json({ error: 'telefono es requerido', reqId });
-      }
-      if (!direccion) {
-        tEnd(`[public/pedidos] ${reqId} TOTAL`);
-        return res.status(400).json({ error: 'direccion es requerida', reqId });
-      }
-      if (!Array.isArray(items) || items.length === 0) {
-        tEnd(`[public/pedidos] ${reqId} TOTAL`);
-        return res.status(400).json({ error: 'items es requerido y no puede estar vacío', reqId });
-      }
 
       const empId = Number(empresa_id) > 0 ? Number(empresa_id) : 1;
 

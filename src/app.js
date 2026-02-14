@@ -6,6 +6,7 @@ import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import path from 'node:path';
 import fs from 'node:fs';
+import { randomUUID } from 'node:crypto';
 
 import { registerLandingRoutes } from './routes/landingRoutes.js';
 import { mountApiModules } from './routes/mountApiModules.js';
@@ -73,6 +74,20 @@ export function createApp(deps) {
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true }));
   app.use(cookieParser());
+
+  app.use((req, res, next) => {
+    const requestId = req.headers['x-request-id'] || randomUUID();
+    req.requestId = String(requestId);
+    res.set('x-request-id', req.requestId);
+
+    const startedAt = Date.now();
+    res.on('finish', () => {
+      const ms = Date.now() - startedAt;
+      console.info(`[http] ${req.method} ${req.originalUrl} -> ${res.statusCode} (${ms}ms) reqId=${req.requestId}`);
+    });
+
+    next();
+  });
 
   // ==================================================
   // RUTEO INTELIGENTE (LANDINGS vs INDEX GLOBAL)
