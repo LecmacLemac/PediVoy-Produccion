@@ -443,6 +443,13 @@
   <script>
     // --- Utils ---
     const $ = (s) => document.querySelector(s);
+    const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;'
+    }[c]));
     
     function toast(msg) {
       const t = $('#toast');
@@ -460,6 +467,8 @@
     // --- State ---
     let STATE = { isSuper: false, user: null };
     let products = [];
+    let saveBusy = false;
+    let deleteBusy = false;
 
     // Modo seguro: auth por cookie httpOnly
     const authFetch = (url, opts = {}) => {
@@ -550,13 +559,13 @@
         return `
           <tr style="opacity: ${isActive ? 1 : 0.5}">
             <td style="font-weight:600; color:#fff;">
-              <div style="font-size:0.75rem; color:var(--muted)">#${p.id}${p.sku ? ` · ${p.sku}` : ``}</div>
-              ${p.nombre} ${metaBadges}
+              <div style="font-size:0.75rem; color:var(--muted)">#${Number(p.id)}${p.sku ? ` · ${esc(p.sku)}` : ``}</div>
+              ${esc(p.nombre)} ${metaBadges}
             </td>
-            <td>${p.categoria || '<span style="color:var(--muted)">-</span>'}</td>
-            <td>${p.orden != null ? p.orden : '<span style="color:var(--muted)">-</span>'}</td>
-            <td class="price-tag">${fmtMoney.format(p.precio)}</td>
-            <td>${p.etiqueta ? `<span class="tag-promo">${p.etiqueta}</span>` : '-'}</td>
+            <td>${p.categoria ? esc(p.categoria) : '<span style="color:var(--muted)">-</span>'}</td>
+            <td>${p.orden != null ? Number(p.orden) : '<span style="color:var(--muted)">-</span>'}</td>
+            <td class="price-tag">${fmtMoney.format(Number(p.precio || 0))}</td>
+            <td>${p.etiqueta ? `<span class="tag-promo">${esc(p.etiqueta)}</span>` : '-'}</td>
             <td style="font-size:0.85rem">${visText}</td>
             <td>
               <span class="status-badge ${isActive ? 'st-active' : 'st-inactive'}">
@@ -564,8 +573,8 @@
               </span>
             </td>
             <td style="text-align:right;">
-              <button class="btn-icon" onclick="edit(${p.id})" title="Editar">✏️</button>
-              <button class="btn-icon" onclick="del(${p.id})" title="Eliminar" style="color:var(--danger); border-color:rgba(239,68,68,0.3)">🗑️</button>
+              <button class="btn-icon" onclick="edit(${Number(p.id)})" title="Editar">✏️</button>
+              <button class="btn-icon" onclick="del(${Number(p.id)}, this)" title="Eliminar" style="color:var(--danger); border-color:rgba(239,68,68,0.3)">🗑️</button>
             </td>
           </tr>
         `;
@@ -628,6 +637,7 @@
     }
 
     async function save() {
+      if (saveBusy) return;
       const id = $('#p_id').value;
 
       // Armar config_activo a partir del formulario
@@ -674,21 +684,54 @@
       const method = id ? 'PUT' : 'POST';
       const url = id ? `/api/productos/${id}` : '/api/productos';
 
-      const res = await api(url, { method, body: JSON.stringify(body) });
-      if (res && !res.error) {
-        toast(id ? '✅ Actualizado' : '✅ Creado');
-        closeModal();
-        load();
-      } else {
-        toast('❌ Error al guardar');
+      const saveBtn = document.querySelector('#modal .modal-footer .btn.btn-primary');
+      const prevTxt = saveBtn ? saveBtn.textContent : '';
+      saveBusy = true;
+      if (saveBtn) {
+        saveBtn.disabled = true;
+        saveBtn.textContent = 'Guardando...';
+      }
+
+      try {
+        const res = await api(url, { method, body: JSON.stringify(body) });
+        if (res && !res.error) {
+          toast(id ? '✅ Actualizado' : '✅ Creado');
+          closeModal();
+          load();
+        } else {
+          toast('❌ Error al guardar');
+        }
+      } finally {
+        saveBusy = false;
+        if (saveBtn) {
+          saveBtn.disabled = false;
+          saveBtn.textContent = prevTxt;
+        }
       }
     }
 
-    async function del(id) {
+    async function del(id, btnEl = null) {
+      if (deleteBusy) return;
       if (!confirm('¿Eliminar producto?')) return;
-      const res = await api(`/api/productos/${id}`, { method: 'DELETE' });
-      if (res && !res.error) { toast('🗑️ Eliminado'); load(); } 
-      else { toast('❌ Error al eliminar'); }
+
+      deleteBusy = true;
+      const prev = btnEl ? btnEl.textContent : '';
+      if (btnEl) {
+        btnEl.disabled = true;
+        btnEl.textContent = '…';
+      }
+
+      try {
+        const res = await api(`/api/productos/${id}`, { method: 'DELETE' });
+        if (res && !res.error) { toast('🗑️ Eliminado'); load(); }
+        else { toast('❌ Error al eliminar'); }
+      } finally {
+        deleteBusy = false;
+        if (btnEl) {
+          btnEl.disabled = false;
+          btnEl.textContent = prev;
+        }
+      }
     }
 
     // --- Init ---
@@ -706,7 +749,7 @@
           const sel = $('#empSel');
           if (Array.isArray(list)) {
             sel.innerHTML = '<option value="">-- Seleccionar Empresa --</option>' + 
-              list.map((e) => `<option value="${e.id}">${e.nombre}</option>`).join('');
+              list.map((e) => `<option value="${Number(e.id)}">${esc(e.nombre)}</option>`).join('');
             sel.addEventListener('change', load);
           }
         } else {
