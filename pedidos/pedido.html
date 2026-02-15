@@ -752,11 +752,12 @@
         }
 
         const text = encodeURIComponent(message.trim());
-        const url = phone
-          ? `https://wa.me/${phone}?text=${text}`
+        const safePhone = String(phone || '').replace(/[^0-9]/g, '');
+        const url = safePhone
+          ? `https://wa.me/${safePhone}?text=${text}`
           : `https://wa.me/?text=${text}`;
 
-        window.open(url, '_blank');
+        window.open(url, '_blank', 'noopener');
       });
 
       init();

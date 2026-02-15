@@ -357,6 +357,15 @@
       setTimeout(() => t.classList.remove('show'), 3000);
     }
 
+    function escapeHtml(value) {
+      return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
     function safeHttpUrl(value) {
       if (!value) return null;
       try {
@@ -412,10 +421,13 @@
           // Mostrar selector
           document.getElementById('adminSelector').style.display = 'block';
           const select = document.getElementById('empresaSelect');
-          
-          select.innerHTML = companiesList.map(c => 
-            `<option value="${c.id}">#${c.id} - ${c.nombre}</option>`
-          ).join('');
+          select.innerHTML = '';
+          companiesList.forEach(c => {
+            const opt = document.createElement('option');
+            opt.value = String(c.id);
+            opt.textContent = `#${c.id} - ${c.nombre}`;
+            select.appendChild(opt);
+          });
 
           // Seleccionar la que vino por URL o la primera
           if (urlId) {
@@ -432,7 +444,7 @@
             currentEmpresaId = companiesList[0].id;
             updateUIInfo(companiesList[0]);
           } else {
-            document.getElementById('configInfo').innerHTML = 'No tienes una empresa asignada.';
+            document.getElementById('configInfo').textContent = 'No tienes una empresa asignada.';
           }
         }
 
@@ -464,15 +476,16 @@
       let urlText = 'No configurada (Falta Slug)';
 
       if (empresa.landing_slug) {
-        urlPreview = `/pages/${empresa.landing_slug}.html`;
-        urlText = `${window.location.origin}/pages/${empresa.landing_slug}.html`;
+        urlPreview = `/pages/${encodeURIComponent(empresa.landing_slug)}.html`;
+        urlText = `${window.location.origin}/pages/${encodeURIComponent(empresa.landing_slug)}.html`;
       }
 
+      const safePreview = safeHttpUrl(urlPreview) || '#';
       infoBox.innerHTML = `
-        <div style="margin-bottom:6px;"><strong>Empresa:</strong> ${empresa.nombre} (#${empresa.id})</div>
-        <div style="margin-bottom:6px;"><strong>Slug:</strong> <span style="font-family:monospace; background:rgba(255,255,255,0.1); padding:2px 4px; border-radius:4px;">${slug}</span></div>
+        <div style="margin-bottom:6px;"><strong>Empresa:</strong> ${escapeHtml(empresa.nombre)} (#${Number(empresa.id)})</div>
+        <div style="margin-bottom:6px;"><strong>Slug:</strong> <span style="font-family:monospace; background:rgba(255,255,255,0.1); padding:2px 4px; border-radius:4px;">${escapeHtml(slug)}</span></div>
         <div style="margin-bottom:4px;"><strong>URL Pública:</strong></div>
-        <a href="${urlPreview}" target="_blank" style="word-break:break-all; font-size:0.8rem;">${urlText}</a>
+        <a href="${safePreview}" target="_blank" rel="noopener" style="word-break:break-all; font-size:0.8rem;">${escapeHtml(urlText)}</a>
       `;
     }
 
