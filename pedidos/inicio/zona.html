@@ -270,6 +270,14 @@
           <h2 style="margin:0; font-size:1.2rem; color:#fff;">Mis Zonas</h2>
           <button class="btn" onclick="startNewZone()">+ Dibujar</button>
         </div>
+
+        <div id="editModeBar" style="display:none; margin-bottom:1rem; padding:0.7rem; border:1px dashed var(--warning); border-radius:8px; background:rgba(245,158,11,0.1);">
+          <div style="font-size:0.85rem; color:#fbbf24; margin-bottom:0.5rem;">Modo edición de puntos activo</div>
+          <div style="display:flex; gap:0.5rem;">
+            <button class="btn btn-primary" onclick="savePolygonEdit()">Guardar puntos</button>
+            <button class="btn" onclick="cancelPolygonEdit()">Cancelar</button>
+          </div>
+        </div>
         
         <div id="zonasList" class="sidebar-list">
           <div style="text-align:center; padding:2rem; color:var(--muted);">Cargando...</div>
@@ -339,6 +347,9 @@
     let layersByZoneId = {};
     let currentNewPolygon = null;
     let currentLayer = null;
+    let polygonEditState = { zoneId: null, layer: null, originalCoords: null };
+    let saveBusy = false;
+    let deleteBusy = false;
 
     // --- API ---
     async function api(endpoint, opts = {}) {
@@ -459,8 +470,9 @@
             <p>ID: ${id}</p>
           </div>
           <div style="display:flex; gap:0.5rem;">
-            <button class="btn-icon" onclick="event.stopPropagation(); editName(${id})" title="Editar">✏️</button>
-            <button class="btn-icon" onclick="event.stopPropagation(); del(${id})" title="Eliminar" style="color:var(--danger); border-color:rgba(239,68,68,0.3);">🗑️</button>
+            <button class="btn-icon" onclick="event.stopPropagation(); startEditPoints(${id})" title="Editar puntos">📍</button>
+            <button class="btn-icon" onclick="event.stopPropagation(); editName(${id})" title="Editar nombre">✏️</button>
+            <button class="btn-icon" onclick="event.stopPropagation(); del(${id}, this)" title="Eliminar" style="color:var(--danger); border-color:rgba(239,68,68,0.3);">🗑️</button>
           </div>
         </div>
       `;
@@ -468,6 +480,7 @@
     }
 
     function renderMapShapes() {
+      cancelPolygonEdit(false);
       drawnItems.clearLayers();
       layersByZoneId = {}; 
 
@@ -518,7 +531,63 @@
       focusZone(id);
     }
 
+    function startEditPoints(id) {
+      const layer = layersByZoneId[id];
+      if (!layer) return toast('No se encontró la geometría de la zona');
+
+      // Cerrar edición previa si existe
+      cancelPolygonEdit(false);
+
+      polygonEditState.zoneId = id;
+      polygonEditState.layer = layer;
+      polygonEditState.originalCoords = (layer.getLatLngs()[0] || []).map(p => [p.lng, p.lat]);
+
+      layer.editing.enable();
+      $('#editModeBar').style.display = 'block';
+      focusZone(id);
+      toast('Modo edición: mové los puntos del polígono y luego guardá.');
+    }
+
+    async function savePolygonEdit() {
+      const { zoneId, layer } = polygonEditState;
+      if (!zoneId || !layer) return;
+
+      const latLngs = layer.getLatLngs()[0] || [];
+      const coords = latLngs.map(p => [p.lng, p.lat]);
+      if (coords.length < 3) {
+        toast('El polígono debe tener al menos 3 puntos');
+        return;
+      }
+
+      const z = zonas.find(x => x.id === zoneId);
+      const nombre = z?.nombre || `Zona ${zoneId}`;
+      await updateZoneDirect(zoneId, nombre, coords);
+
+      layer.editing.disable();
+      polygonEditState = { zoneId: null, layer: null, originalCoords: null };
+      $('#editModeBar').style.display = 'none';
+      await load();
+    }
+
+    function cancelPolygonEdit(showToast = true) {
+      const { layer, originalCoords } = polygonEditState;
+      if (layer && layer.editing) {
+        layer.editing.disable();
+      }
+
+      if (layer && Array.isArray(originalCoords) && originalCoords.length >= 3) {
+        const latLngs = originalCoords.map(([lng, lat]) => [lat, lng]);
+        layer.setLatLngs(latLngs);
+      }
+
+      polygonEditState = { zoneId: null, layer: null, originalCoords: null };
+      $('#editModeBar').style.display = 'none';
+      if (showToast) toast('Edición cancelada');
+    }
+
     async function saveForm() {
+      if (saveBusy) return;
+
       const id = $('#z_id').value;
       const nombre = $('#z_nombre').value;
       const empId = $('#empSel').value;
@@ -539,16 +608,32 @@
       const method = id ? 'PUT' : 'POST';
       const url = id ? `/api/zonas/${id}` : '/api/zonas';
 
-      const res = await api(url, { method, body: JSON.stringify(body) });
+      const saveBtn = document.querySelector('#modal .btn.btn-primary');
+      const prevText = saveBtn ? saveBtn.textContent : '';
+      saveBusy = true;
+      if (saveBtn) {
+        saveBtn.disabled = true;
+        saveBtn.textContent = 'Guardando...';
+      }
 
-      if (res.error) {
-        toast('❌ ' + res.error);
-      } else {
-        toast(id ? '✅ Actualizado' : '✅ Zona creada');
-        closeModal();
-        currentNewPolygon = null;
-        currentLayer = null; 
-        load();
+      try {
+        const res = await api(url, { method, body: JSON.stringify(body) });
+
+        if (res.error) {
+          toast('❌ ' + res.error);
+        } else {
+          toast(id ? '✅ Actualizado' : '✅ Zona creada');
+          closeModal();
+          currentNewPolygon = null;
+          currentLayer = null; 
+          load();
+        }
+      } finally {
+        saveBusy = false;
+        if (saveBtn) {
+          saveBtn.disabled = false;
+          saveBtn.textContent = prevText;
+        }
       }
     }
 
@@ -562,11 +647,34 @@
         if (z) z.poligono = coords; 
     }
 
-    async function del(id) {
-      if (!confirm('¿Eliminar esta zona?')) return;
-      const res = await api(`/api/zonas/${id}`, { method: 'DELETE' });
-      if (res.error) toast('❌ ' + res.error);
-      else { toast('🗑️ Zona eliminada'); load(); }
+    async function del(id, btnEl = null) {
+      if (deleteBusy) return;
+
+      if (!confirm('¿Eliminar esta zona? Esta acción no se puede deshacer.')) return;
+      const check = prompt('Para confirmar, escribí ELIMINAR');
+      if (check !== 'ELIMINAR') {
+        toast('Eliminación cancelada');
+        return;
+      }
+
+      deleteBusy = true;
+      const prevText = btnEl ? btnEl.textContent : '';
+      if (btnEl) {
+        btnEl.disabled = true;
+        btnEl.textContent = '…';
+      }
+
+      try {
+        const res = await api(`/api/zonas/${id}`, { method: 'DELETE' });
+        if (res.error) toast('❌ ' + res.error);
+        else { toast('🗑️ Zona eliminada'); load(); }
+      } finally {
+        deleteBusy = false;
+        if (btnEl) {
+          btnEl.disabled = false;
+          btnEl.textContent = prevText;
+        }
+      }
     }
 
     function openModal() { $('#modal').classList.add('open'); $('#z_nombre').focus(); }
