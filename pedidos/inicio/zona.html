@@ -307,6 +307,13 @@
   <script>
     // --- Utils ---
     const $ = s => document.querySelector(s);
+    const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;'
+    }[c]));
     function toast(msg) {
       const t = $('#toast'); t.textContent = msg; t.classList.add('show');
       setTimeout(() => t.classList.remove('show'), 3000);
@@ -443,18 +450,21 @@
         list.innerHTML = `<div style="text-align:center; padding:2rem; color:var(--muted);">No hay zonas creadas.</div>`;
         return;
       }
-      list.innerHTML = zonas.map(z => `
-        <div class="zona-item" onclick="focusZone(${z.id})">
+      list.innerHTML = zonas.map(z => {
+        const id = Number(z.id);
+        return `
+        <div class="zona-item" onclick="focusZone(${id})">
           <div class="zona-info">
-            <h3>${z.nombre}</h3>
-            <p>ID: ${z.id}</p>
+            <h3>${esc(z.nombre)}</h3>
+            <p>ID: ${id}</p>
           </div>
           <div style="display:flex; gap:0.5rem;">
-            <button class="btn-icon" onclick="event.stopPropagation(); editName(${z.id})" title="Editar">✏️</button>
-            <button class="btn-icon" onclick="event.stopPropagation(); del(${z.id})" title="Eliminar" style="color:var(--danger); border-color:rgba(239,68,68,0.3);">🗑️</button>
+            <button class="btn-icon" onclick="event.stopPropagation(); editName(${id})" title="Editar">✏️</button>
+            <button class="btn-icon" onclick="event.stopPropagation(); del(${id})" title="Eliminar" style="color:var(--danger); border-color:rgba(239,68,68,0.3);">🗑️</button>
           </div>
         </div>
-      `).join('');
+      `;
+      }).join('');
     }
 
     function renderMapShapes() {
@@ -470,7 +480,7 @@
         
         const poly = L.polygon(latLngs, { color: '#06b6d4', weight: 2, fillOpacity: 0.2 });
         poly.zonaId = z.id;
-        poly.bindTooltip(z.nombre, { permanent: true, direction:"center", className: "zona-label" });
+        poly.bindTooltip(esc(z.nombre), { permanent: true, direction:"center", className: "zona-label" });
         
         drawnItems.addLayer(poly);
         layersByZoneId[z.id] = poly; 
@@ -584,7 +594,7 @@
                 const sel = $('#empSel');
                 if (Array.isArray(list)) {
                     sel.innerHTML = '<option value="">-- Seleccionar Empresa --</option>' + 
-                    list.map(e => `<option value="${e.id}">${e.nombre}</option>`).join('');
+                    list.map(e => `<option value="${Number(e.id)}">${esc(e.nombre)}</option>`).join('');
                     
                     sel.addEventListener('change', () => { drawnItems.clearLayers(); load(); });
                 }
