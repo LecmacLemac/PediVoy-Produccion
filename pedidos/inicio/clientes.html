@@ -421,6 +421,13 @@
   <script>
     // --- Utils ---
     const $ = s => document.querySelector(s);
+    const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;'
+    }[c]));
     function toast(msg) {
       const t = $('#toast'); t.textContent = msg; t.classList.add('show');
       setTimeout(() => t.classList.remove('show'), 3000);
@@ -454,6 +461,8 @@
     let zones = [];
     let zoneDriverMap = {}; 
     let map, marker;
+    let saveBusy = false;
+    let deleteBusy = false;
 
     // --- Logic ---
     async function load() {
@@ -504,12 +513,12 @@
         const zoneName = zones.find(z => z.id === c.zona_id)?.nombre || '<span style="color:var(--muted)">—</span>';
         return `
         <tr>
-          <td style="font-weight:600; color:#fff;">${c.cliente}</td>
-          <td>${c.telefono || '<span style="color:var(--muted)">-</span>'}</td>
-          <td style="color:var(--muted); font-size:0.9rem;">${c.direccion || '-'}</td>
-          <td><span class="tag-zona">${zoneName}</span></td>
+          <td style="font-weight:600; color:#fff;">${esc(c.cliente)}</td>
+          <td>${c.telefono ? esc(c.telefono) : '<span style="color:var(--muted)">-</span>'}</td>
+          <td style="color:var(--muted); font-size:0.9rem;">${esc(c.direccion || '-')}</td>
+          <td><span class="tag-zona">${typeof zoneName === 'string' && zoneName.includes('<span') ? zoneName : esc(zoneName)}</span></td>
           <td style="text-align:right;">
-            <button class="btn-icon" onclick="edit(${c.id})" title="Editar">✏️</button>
+            <button class="btn-icon" onclick="edit(${Number(c.id)})" title="Editar">✏️</button>
           </td>
         </tr>
       `}).join('');
@@ -519,7 +528,7 @@
       const sel = $('#c_zona');
       if(!list) list = [];
       sel.innerHTML = '<option value="">-- Sin Zona --</option>' + 
-        list.map(z => `<option value="${z.id}">${z.nombre}</option>`).join('');
+        list.map(z => `<option value="${Number(z.id)}">${esc(z.nombre)}</option>`).join('');
     }
 
     // --- CARGA DE CONTEXTO MODAL ---
@@ -566,17 +575,17 @@
         const el = $('#zoneDriverInfo');
         
         if (!zoneId) {
-            el.innerHTML = 'Sin zona seleccionada';
+            el.textContent = 'Sin zona seleccionada';
             el.className = 'driver-info empty';
             return;
         }
 
         const driverName = zoneDriverMap[zoneId];
         if (driverName) {
-            el.innerHTML = `🚚 Repartidor: ${driverName}`;
+            el.textContent = `🚚 Repartidor: ${driverName}`;
             el.className = 'driver-info';
         } else {
-            el.innerHTML = 'Sin repartidor asignado';
+            el.textContent = 'Sin repartidor asignado';
             el.className = 'driver-info empty';
         }
     }
@@ -676,6 +685,7 @@
     }
 
     async function save() {
+      if (saveBusy) return;
       const id = $('#c_id').value;
       const body = {
         cliente: $('#c_cliente').value,
@@ -700,22 +710,56 @@
       const method = id ? 'PUT' : 'POST';
       const url = id ? `/api/clientes/${id}` : '/api/clientes'; 
 
-      const res = await api(url, { method, body: JSON.stringify(body) });
-      
-      if (res.error) toast('❌ ' + res.error);
-      else {
-        toast(id ? '✅ Actualizado' : '✅ Creado');
-        closeModal();
-        load();
+      const saveBtn = document.querySelector('#modal .modal-footer .btn.btn-primary');
+      const prevTxt = saveBtn ? saveBtn.textContent : '';
+      saveBusy = true;
+      if (saveBtn) {
+        saveBtn.disabled = true;
+        saveBtn.textContent = 'Guardando...';
+      }
+
+      try {
+        const res = await api(url, { method, body: JSON.stringify(body) });
+        
+        if (res.error) toast('❌ ' + res.error);
+        else {
+          toast(id ? '✅ Actualizado' : '✅ Creado');
+          closeModal();
+          load();
+        }
+      } finally {
+        saveBusy = false;
+        if (saveBtn) {
+          saveBtn.disabled = false;
+          saveBtn.textContent = prevTxt;
+        }
       }
     }
 
     async function del() {
+      if (deleteBusy) return;
       const id = $('#c_id').value;
       if (!confirm('¿Eliminar cliente? Borrará todo su historial.')) return;
-      const res = await api(`/api/clientes/${id}`, { method: 'DELETE' });
-      if (res.error) toast('❌ ' + res.error);
-      else { toast('🗑️ Cliente eliminado'); closeModal(); load(); }
+
+      const delBtn = document.getElementById('btnDelete');
+      const prevTxt = delBtn ? delBtn.textContent : '';
+      deleteBusy = true;
+      if (delBtn) {
+        delBtn.disabled = true;
+        delBtn.textContent = 'Eliminando...';
+      }
+
+      try {
+        const res = await api(`/api/clientes/${id}`, { method: 'DELETE' });
+        if (res.error) toast('❌ ' + res.error);
+        else { toast('🗑️ Cliente eliminado'); closeModal(); load(); }
+      } finally {
+        deleteBusy = false;
+        if (delBtn) {
+          delBtn.disabled = false;
+          delBtn.textContent = prevTxt;
+        }
+      }
     }
 
     // --- VARIABLES GLOBALES PARA IMPORTACIÓN ---
@@ -856,9 +900,9 @@
         if (isDiff) row.classList.add('diff-row', 'changed');
 
         row.innerHTML = `
-          <td>${f.label}</td>
-          <td><span class="${isDiff ? 'val-old' : 'val-same'}">${displayOld || '-'}</span></td>
-          <td><span class="${isDiff ? 'val-new' : 'val-same'}">${displayNew || '-'}</span></td>
+          <td>${esc(f.label)}</td>
+          <td><span class="${isDiff ? 'val-old' : 'val-same'}">${esc(displayOld || '-')}</span></td>
+          <td><span class="${isDiff ? 'val-new' : 'val-same'}">${esc(displayNew || '-')}</span></td>
         `;
         tbody.appendChild(row);
       });
@@ -1050,7 +1094,7 @@
                 const list = await api('/api/empresas');
                 if (Array.isArray(list)) {
                     const opts = '<option value="">-- Seleccionar Empresa --</option>' + 
-                                 list.map(e => `<option value="${e.id}">${e.nombre}</option>`).join('');
+                                 list.map(e => `<option value="${Number(e.id)}">${esc(e.nombre)}</option>`).join('');
                     
                     $('#empFilter').innerHTML = opts;
                     $('#c_empresa_id').innerHTML = opts;
