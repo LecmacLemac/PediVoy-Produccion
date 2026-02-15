@@ -33,6 +33,11 @@ export function registerWhatsAppWeb(app, deps) {
   let isReadyWpp = false;     // 💡 Solo true cuando el cliente está realmente READY (outbox)
   let wppClient = null;
   let wppHandlersStarted = false;
+
+  // Candados para evitar dobles reset accidentales
+  let isResetInProgress = false;
+  let lastResetAt = 0;
+  const RESET_COOLDOWN_MS = 15000;
   
   if (ENABLE_WPP) {
     console.log('[WPP SERVER] WhatsApp habilitado. Inicializando cliente...');
@@ -384,15 +389,28 @@ export function registerWhatsAppWeb(app, deps) {
     if (!ENABLE_WPP) {
       return res.status(503).json({ error: 'WhatsApp deshabilitado en este entorno' });
     }
-  
+
+    // Solo super admin por seguridad
+    if (!isSuper(req)) {
+      return res.status(403).json({ error: 'Solo SUPER ADMIN puede resetear la sesión de WhatsApp' });
+    }
+
+    // Evitar doble click / retrys / llamadas en paralelo
+    if (isResetInProgress) {
+      return res.status(202).json({ ok: true, skipped: true, reason: 'reset_in_progress' });
+    }
+
+    const now = Date.now();
+    if (now - lastResetAt < RESET_COOLDOWN_MS) {
+      return res.status(202).json({ ok: true, skipped: true, reason: 'cooldown' });
+    }
+
+    isResetInProgress = true;
+    lastResetAt = now;
+
     try {
-      // Solo super admin por seguridad
-      if (!isSuper(req)) {
-        return res.status(403).json({ error: 'Solo SUPER ADMIN puede resetear la sesión de WhatsApp' });
-      }
-  
-      console.log('[WPP SERVER] Reset de sesión solicitado por', req.user?.id);
-  
+      console.log('[WPP SERVER] Reset de sesión solicitado por', req.user?.id || 'unknown');
+
       // 0) LIMPIAR COLA: descartar todos los pendientes para que no salgan masivamente
       try {
         await query(`
@@ -405,7 +423,7 @@ export function registerWhatsAppWeb(app, deps) {
       } catch (e) {
         console.warn('[WPP SERVER] No se pudo limpiar wpp_outbox en reset:', e.message);
       }
-  
+
       // 1) Intentar logout (si está conectado)
       try {
         if (wppClient) {
@@ -414,7 +432,7 @@ export function registerWhatsAppWeb(app, deps) {
       } catch (e) {
         console.warn('[WPP SERVER] Error en logout (puede no estar logueado):', e.message);
       }
-  
+
       // 2) Borrar carpeta de sesión de LocalAuth (coincide con clientId: 'server_session_hidro')
       try {
         const sessionDir = path.join(__dirname, '.wwebjs_auth', 'server_session_hidro');
@@ -423,12 +441,12 @@ export function registerWhatsAppWeb(app, deps) {
       } catch (e) {
         console.warn('[WPP SERVER] No se pudo borrar carpeta de sesión:', e.message);
       }
-  
+
       // 3) Resetear flags y re-inicializar para que dispare un nuevo QR
       lastQr = null;
       isConnected = false;
       isReadyWpp = false;
-  
+
       try {
         if (wppClient) {
           await wppClient.initialize();
@@ -436,11 +454,13 @@ export function registerWhatsAppWeb(app, deps) {
       } catch (e) {
         console.warn('[WPP SERVER] Error re-inicializando cliente WPP:', e.message);
       }
-  
+
       return res.json({ ok: true });
     } catch (e) {
       console.error('[WPP SERVER] Error general en reset de sesión:', e);
       return res.status(500).json({ error: 'No se pudo resetear la sesión de WhatsApp' });
+    } finally {
+      isResetInProgress = false;
     }
   });
   
