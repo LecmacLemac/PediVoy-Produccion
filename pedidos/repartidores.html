@@ -491,7 +491,7 @@
     async function loadEmpresas() {
       const list = await api('/api/empresas');
       empresasCache = list || [];
-      const opts = empresasCache.map(e => `<option value="${e.id}">${esc(e.nombre)}</option>`).join('');
+      const opts = empresasCache.map(e => `<option value="${Number(e.id)}">ID ${Number(e.id)} | ${esc(e.nombre)}</option>`).join('');
       $('#empSel').innerHTML = opts;
       $('#empFilter').innerHTML = opts;
     }
@@ -499,7 +499,7 @@
     async function loadProductos() {
       const list = await api('/api/productos' + currentEmpresaQS());
       productosCache = Array.isArray(list) ? list : [];
-      const opts = productosCache.map(p => `<option value="${p.id}">${esc(p.nombre)}</option>`).join('');
+      const opts = productosCache.map(p => `<option value="${Number(p.id)}">${esc(p.nombre)}</option>`).join('');
       
       $('#costoProducto').innerHTML = opts;
       $('#gProdSel').innerHTML = opts;
@@ -534,40 +534,40 @@
     function render(list) {
       const rows = (list || []).map(c => `
         <tr>
-          <td class="text-muted">#${c.id}</td>
+          <td class="text-muted">#${Number(c.id)}</td>
           <td>
-            <input id="n_${c.id}" value="${esc(c.nombre || '')}" style="font-weight:600; color:#fff"/>
+            <input id="n_${Number(c.id)}" value="${esc(c.nombre || '')}" style="font-weight:600; color:#fff"/>
           </td>
           <td>
-            <input id="t_${c.id}" type="tel" value="${esc(c.telefono || '')}" placeholder="Teléfono"/>
+            <input id="t_${Number(c.id)}" type="tel" value="${esc(c.telefono || '')}" placeholder="Teléfono"/>
           </td>
           <td>
-            <div class="chips" id="chips_${c.id}">
-              ${renderChips(c.id)}
+            <div class="chips" id="chips_${Number(c.id)}">
+              ${renderChips(Number(c.id))}
             </div>
           </td>
           <td>
             <div style="display:flex; gap:0.5rem">
-              <select id="zsel_${c.id}">
-                ${zonasCache.map(z => `<option value="${z.id}">${esc(z.nombre)}</option>`).join('')}
+              <select id="zsel_${Number(c.id)}">
+                ${zonasCache.map(z => `<option value="${Number(z.id)}">${esc(z.nombre)}</option>`).join('')}
               </select>
-              <button class="btn btn-secondary btn-sm" onclick="asignar(${c.id})">+</button>
+              <button class="btn btn-secondary btn-sm" onclick="asignar(${Number(c.id)})">+</button>
             </div>
           </td>
           <td>
             <div class="grid-2" style="gap:0.5rem">
-                <select id="tipo_${c.id}">
+                <select id="tipo_${Number(c.id)}">
                   <option value="propio" ${c.tipo === 'propio' ? 'selected' : ''}>Propio</option>
                   <option value="fletero" ${c.tipo === 'fletero' ? 'selected' : ''}>Fletero</option>
                 </select>
-                <button class="btn btn-secondary btn-sm" onclick="openCostos(${c.id}, '${esc(c.nombre || '')}')">Costos</button>
+                <button class="btn btn-secondary btn-sm" onclick="openCostos(${Number(c.id)}, '${esc(c.nombre || '')}')">Costos</button>
             </div>
           </td>
           <td style="text-align:right;">
-            <button class="btn btn-primary btn-sm" onclick="upd(${c.id})" title="Guardar">💾</button>
-            <button class="btn btn-secondary btn-sm" onclick="openPagoDiario(${c.id}, '${esc(c.nombre || '')}')" title="Pagos">💲</button>
-            <button class="btn btn-secondary btn-sm" onclick="openEscalas(${c.id}, '${esc(c.nombre || '')}')" title="Escalas">📈</button>
-            <button class="btn btn-danger btn-sm" onclick="delCh(${c.id})" title="Eliminar">🗑️</button>
+            <button class="btn btn-primary btn-sm" onclick="upd(${Number(c.id)})" title="Guardar">💾</button>
+            <button class="btn btn-secondary btn-sm" onclick="openPagoDiario(${Number(c.id)}, '${esc(c.nombre || '')}')" title="Pagos">💲</button>
+            <button class="btn btn-secondary btn-sm" onclick="openEscalas(${Number(c.id)}, '${esc(c.nombre || '')}')" title="Escalas">📈</button>
+            <button class="btn btn-danger btn-sm" onclick="delCh(${Number(c.id)})" title="Eliminar">🗑️</button>
           </td>
         </tr>
       `).join('');
@@ -757,11 +757,11 @@
       $('#escList').innerHTML = list.map(e => {
         const tramos = (e.tramos || []).map(t => `
           <tr>
-            <td>${t.rango_min}</td>
-            <td>${t.rango_max ?? '∞'}</td>
+            <td>${esc(t.rango_min)}</td>
+            <td>${esc(t.rango_max ?? '∞')}</td>
             <td>$ ${Number(t.monto).toFixed(2)}</td>
             <td style="text-align:right">
-              <button class="btn btn-secondary btn-sm" onclick="delTramo(${t.id}, ${e.id})">✕</button>
+              <button class="btn btn-secondary btn-sm" onclick="delTramo(${Number(t.id)}, ${Number(e.id)})">✕</button>
             </td>
           </tr>
         `).join('');
@@ -772,11 +772,11 @@
               <div>
                 <strong style="color:white">${esc(e.nombre)}</strong>
                 ${e.es_default ? '<span class="role-badge" style="margin-left:5px">Default</span>' : ''}
-                <br><small class="text-muted">${e.vigente_desde} → ${e.vigente_hasta || '∞'}</small>
+                <br><small class="text-muted">${esc(e.vigente_desde)} → ${esc(e.vigente_hasta || '∞')}</small>
               </div>
               <div style="display:flex; gap:0.5rem">
-                <button class="btn btn-secondary btn-sm" onclick="editEscala(${e.id})">✏️</button>
-                <button class="btn btn-danger btn-sm" onclick="delEscala(${e.id})">🗑️</button>
+                <button class="btn btn-secondary btn-sm" onclick="editEscala(${Number(e.id)})">✏️</button>
+                <button class="btn btn-danger btn-sm" onclick="delEscala(${Number(e.id)})">🗑️</button>
               </div>
             </div>
             
@@ -787,10 +787,10 @@
               </table>
             </div>
 
-            <form onsubmit="return addTramo(event, ${e.id})" style="display:flex; gap:0.5rem">
-               <input id="min_${e.id}" type="number" placeholder="Min" required style="width:60px">
-               <input id="max_${e.id}" type="number" placeholder="Max" style="width:60px">
-               <input id="monto_${e.id}" type="number" placeholder="$" required style="width:80px">
+            <form onsubmit="return addTramo(event, ${Number(e.id)})" style="display:flex; gap:0.5rem">
+               <input id="min_${Number(e.id)}" type="number" placeholder="Min" required style="width:60px">
+               <input id="max_${Number(e.id)}" type="number" placeholder="Max" style="width:60px">
+               <input id="monto_${Number(e.id)}" type="number" placeholder="$" required style="width:80px">
                <button class="btn btn-secondary btn-sm">+</button>
             </form>
           </div>
