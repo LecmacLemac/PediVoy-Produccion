@@ -361,6 +361,11 @@
                 <input type="number" step="any" id="c_longitud" placeholder="-64...">
             </div>
           </div>
+          <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;">
+            <button type="button" class="btn" onclick="useMyLocation()">📍 Usar mi ubicación</button>
+            <button type="button" class="btn" onclick="applyLatLngInputs()">🔄 Actualizar pin</button>
+            <span id="geoStatus" style="font-size:0.85rem; color:var(--muted); align-self:center;">Sin ubicación seleccionada</span>
+          </div>
         </div>
 
         <div>
@@ -627,8 +632,48 @@
           const pos = e.target.getLatLng();
           $('#c_latitud').value = pos.lat.toFixed(6);
           $('#c_longitud').value = pos.lng.toFixed(6);
+          const gs = document.getElementById('geoStatus');
+          if (gs) gs.textContent = `Ubicación: ${pos.lat.toFixed(6)}, ${pos.lng.toFixed(6)}`;
         });
       }
+
+      const gs = document.getElementById('geoStatus');
+      if (gs) gs.textContent = `Ubicación: ${Number(lat).toFixed(6)}, ${Number(lng).toFixed(6)}`;
+    }
+
+    function applyLatLngInputs() {
+      const lat = Number($('#c_latitud').value);
+      const lng = Number($('#c_longitud').value);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+        toast('Ingresa latitud y longitud válidas');
+        return;
+      }
+      updateMarker(lat, lng, false);
+      if (map) map.setView([lat, lng], 15);
+    }
+
+    function useMyLocation() {
+      if (!navigator.geolocation) {
+        toast('Geolocalización no disponible en este dispositivo');
+        return;
+      }
+
+      const gs = document.getElementById('geoStatus');
+      if (gs) gs.textContent = 'Buscando ubicación...';
+
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const lat = pos.coords.latitude;
+          const lng = pos.coords.longitude;
+          updateMarker(lat, lng, true);
+          if (map) map.setView([lat, lng], 16);
+        },
+        () => {
+          if (gs) gs.textContent = 'No se pudo obtener ubicación';
+          toast('No se pudo obtener tu ubicación');
+        },
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 }
+      );
     }
 
     // --- Modal Actions ---
@@ -643,6 +688,8 @@
       $('#c_id').value = '';
       $('#btnDelete').style.display = 'none';
       $('#zoneDriverInfo').innerHTML = '';
+      const gs = document.getElementById('geoStatus');
+      if (gs) gs.textContent = 'Sin ubicación seleccionada';
       
       if (STATE.isSuper) {
           $('#c_empresa_id').value = $('#empFilter').value;
@@ -1110,6 +1157,11 @@
           clearTimeout(debounceTimer);
           debounceTimer = setTimeout(() => { renderList(); }, 300);
         });
+
+        const latEl = document.getElementById('c_latitud');
+        const lngEl = document.getElementById('c_longitud');
+        if (latEl) latEl.addEventListener('change', applyLatLngInputs);
+        if (lngEl) lngEl.addEventListener('change', applyLatLngInputs);
         
     })();
   </script>
