@@ -277,6 +277,13 @@
   };
 
   const $ = s => document.querySelector(s);
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  }[c]));
   const money = n => '$ ' + Number(n).toLocaleString('es-AR', {minimumFractionDigits: 0});
   
   const api = async (url, opts={}) => {
@@ -289,6 +296,8 @@
 
   let currentTransferenciaId = null;
   let currentUser = null;
+  let verifyBusy = false;
+  let deleteBusy = false;
 
   // --- Inicialización ---
   (async () => {
@@ -303,7 +312,7 @@
         const empresas = await api('/api/empresas');
         if(Array.isArray(empresas)) {
           $('#fEmpresa').innerHTML = '<option value="">🏢 Todas las Empresas</option>' + 
-            empresas.map(e => `<option value="${e.id}">${e.nombre}</option>`).join('');
+            empresas.map(e => `<option value="${Number(e.id)}">ID ${Number(e.id)} | ${esc(e.nombre)}</option>`).join('');
         }
       }
     }
@@ -312,7 +321,7 @@
     const choferes = await api('/api/choferes');
     if(Array.isArray(choferes)) {
       $('#fChofer').innerHTML = '<option value="">🚛 Todos</option>' + 
-        choferes.map(c => `<option value="${c.id}">${c.nombre}</option>`).join('');
+        choferes.map(c => `<option value="${Number(c.id)}">${esc(c.nombre)}</option>`).join('');
     }
     
     // 3. Fecha default
@@ -396,27 +405,27 @@
 
     return `
       <tr>
-        <td style="color:var(--text-muted)">${t.fecha ? t.fecha.slice(11,16) : '--:--'}</td>
+        <td style="color:var(--text-muted)">${esc(t.fecha ? t.fecha.slice(11,16) : '--:--')}</td>
         <td>
             <div class="text-cell">
-              <span class="text-main">${t.cliente || 'S/D'}</span>
-              <span class="text-sub">${t.zona_nombre || ''}</span>
+              <span class="text-main">${esc(t.cliente || 'S/D')}</span>
+              <span class="text-sub">${esc(t.zona_nombre || '')}</span>
             </div>
         </td>
-        <td>#${t.pedido_id || '-'}</td>
+        <td>#${t.pedido_id ? Number(t.pedido_id) : '-'}</td>
         <td>${metodoBadge}</td>
         <td style="font-weight:700; font-size:1rem; color:${esEfectivo ? '#34d399' : '#fff'}">${money(t.monto)}</td>
         <td>
           <div class="text-cell">
-            <span class="text-main">${t.banco_origen || (esEfectivo ? 'Cobro en mano' : 'Banco?')}</span>
-            <span class="text-sub">Ref: ${t.nro_operacion || '-'}</span>
+            <span class="text-main">${esc(t.banco_origen || (esEfectivo ? 'Cobro en mano' : 'Banco?'))}</span>
+            <span class="text-sub">Ref: ${esc(t.nro_operacion || '-')}</span>
           </div>
         </td>
-        <td style="text-align:center">${t.comprobante_path ? `<button class="btn btn-ghost btn-icon" onclick="verComprobante('${t.comprobante_path}', ${t.id}, ${isValidado})"><i class="fa-regular fa-eye"></i></button>` : '-'}</td>
+        <td style="text-align:center">${t.comprobante_path ? `<button class="btn btn-ghost btn-icon" onclick='verComprobante(${JSON.stringify(String(t.comprobante_path || ''))}, ${Number(t.id)}, ${isValidado})'><i class="fa-regular fa-eye"></i></button>` : '-'}</td>
         <td>${statusHtml}</td>
         <td style="text-align:right">
           ${btnValidar}
-          <button class="btn btn-danger btn-icon" onclick="eliminarPago(${t.id})"><i class="fa-solid fa-trash-can"></i></button>
+          <button class="btn btn-danger btn-icon" onclick="eliminarPago(${Number(t.id)})"><i class="fa-solid fa-trash-can"></i></button>
         </td>
       </tr>
     `;
@@ -446,8 +455,17 @@
   }
 
   async function verificarPago(id) {
+    if (verifyBusy) return;
     // Si tienes SweetAlert2, úsalo aquí. Si no, native confirm:
     if(!confirm('¿Confirmar que el dinero ingresó a la cuenta?')) return;
+
+    verifyBusy = true;
+    const btn = document.getElementById('btnVerificarModal');
+    const prev = btn ? btn.innerHTML : '';
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Validando...';
+    }
     
     // Llamada al endpoint existente en server.js
     const res = await api(`/api/transferencias/${id}/verificar?enviarAviso=1`, { method: 'POST' });
@@ -459,26 +477,38 @@
     } else {
       alert('Error al verificar pago');
     }
+
+    verifyBusy = false;
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = prev;
+    }
   }
 
   async function eliminarPago(id) {
+    if (deleteBusy) return;
     if(!confirm('⚠️ ¿Estás seguro de ELIMINAR este comprobante?\nEsta acción no se puede deshacer.')) return;
+
+    deleteBusy = true;
 
     // NOTA: Asumimos que existe un endpoint DELETE para transferencias o comprobantes.
     // Si tu server.js no lo tiene explícito, deberías agregarlo. 
     // Por lo general, se usa DELETE /api/transferencias/:id o similar.
     // Aquí intentaremos llamar a la ruta genérica de eliminación (si no existe, fallará).
     // Si falla, es porque falta agregar `app.delete('/api/transferencias/:id', ...)` en el backend.
-    
-    const res = await authFetch(`/api/transferencias/${id}`, { 
-        method: 'DELETE'
-    });
-    
-    if(res.ok) {
-        toast('🗑️ Comprobante eliminado');
-        loadPagos();
-    } else {
-        alert('No se pudo eliminar. Verifica que tengas permisos o que el endpoint exista.');
+    try {
+      const res = await authFetch(`/api/transferencias/${id}`, { 
+          method: 'DELETE'
+      });
+      
+      if(res.ok) {
+          toast('🗑️ Comprobante eliminado');
+          loadPagos();
+      } else {
+          alert('No se pudo eliminar. Verifica que tengas permisos o que el endpoint exista.');
+      }
+    } finally {
+      deleteBusy = false;
     }
   }
 
