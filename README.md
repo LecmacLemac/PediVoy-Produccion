@@ -113,6 +113,19 @@ initDb.sql: Schema de base de datos.
 - Checklist de seguridad para deploy: `docs/DEPLOY_SECURITY_CHECKLIST.md`
 - Runbook de staging/producción/rollback: `docs/DEPLOY_RUNBOOK.md`
 
+### Smoke post-deploy (rápido)
+
+```bash
+# público (sin credenciales)
+SMOKE_BASE_URL=https://tu-dominio.com npm run test:smoke:postdeploy
+
+# público + auth (si pasás usuario/clave de prueba)
+SMOKE_BASE_URL=https://tu-dominio.com \
+SMOKE_USER=usuario_test \
+SMOKE_PASS=clave_test \
+npm run test:smoke:postdeploy
+```
+
 🤝 Contribución
 
 Las Pull Requests son bienvenidas. Para cambios mayores, por favor abre un issue primero para discutir lo que te gustaría cambiar.
