@@ -106,7 +106,7 @@
       overflow: hidden;
       position: relative;
     }
-    iframe { 
+    .qr-container img { 
         width: 320px; 
         height: 320px; 
         max-width: 100%;
@@ -114,6 +114,7 @@
         background: #fff; 
         border-radius: 8px; 
         box-shadow: 0 0 15px rgba(0,0,0,0.3);
+        object-fit: contain;
     }
 
     .instructions {
@@ -373,10 +374,25 @@
     })();
 
     // ====== QR Logic ======
-    function loadQR() {
+    async function loadQR() {
         const container = document.getElementById('qr-container');
         const timestamp = new Date().getTime();
-        container.innerHTML = `<iframe src="/api/whatsapp/qr?t=${timestamp}"></iframe>`;
+
+        try {
+            container.innerHTML = `<span style="color:var(--muted)">Cargando QR...</span>`;
+            const res = await authFetch(`/api/whatsapp/qr?t=${timestamp}`);
+
+            if (!res.ok) {
+                container.innerHTML = `<span style="color:var(--danger)">No se pudo cargar el QR (${res.status}).</span>`;
+                return;
+            }
+
+            const html = await res.text();
+            container.innerHTML = html;
+        } catch (e) {
+            console.error(e);
+            container.innerHTML = `<span style="color:var(--danger)">Error de red cargando el QR.</span>`;
+        }
     }
     function reloadQR() { loadQR(); }
 
