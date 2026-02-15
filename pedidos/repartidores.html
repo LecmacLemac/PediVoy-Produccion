@@ -161,7 +161,7 @@
         <li><a href="gastos.html">Gastos</a></li>
         <li><a href="stock.html">Stock</a></li>
         <li><a href="repartidor.html" class="active">Repartidor</a></li>
-        <li><a href="estadisticas.html">Estadisticas</li>
+        <li><a href="estadisticas.html">Estadisticas</a></li>
         <li><a href="iaweb.html">IAweb</a></li>
         <li><a href="qr.html">QR</a></li>  
         <li><a href="#" id="logout" style="color: var(--danger)">Salir</a></li>
@@ -439,6 +439,9 @@
     let productosCache = [];
     let costosState = { chofer_id: 0, costos: [] };
     let escalasState = { chofer_id: 0, list: [] };
+    let createBusy = false;
+    const updateBusy = new Set();
+    const deleteBusy = new Set();
 
     function esc(s) {
       return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -576,6 +579,7 @@
 
     async function onCreate(ev) {
       ev.preventDefault();
+      if (createBusy) return;
       const btn = ev.submitter || ev.target.querySelector('button');
       
       const nombre = $('#cNombre').value.trim();
@@ -591,7 +595,12 @@
       
       if (isSuper && $('#empSel').value) body.empresa_id = Number($('#empSel').value);
 
-      btn.disabled = true;
+      const prevTxt = btn ? btn.textContent : '';
+      createBusy = true;
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Creando...';
+      }
       try {
         const ch = await api('/api/choferes' + currentEmpresaQS(), { method: 'POST', body });
         if (!ch?.id) throw new Error('Error al crear');
@@ -612,16 +621,24 @@
         $('#uWrap').hidden = true;
         await load();
       } catch (e) { alert(e.message); } 
-      finally { btn.disabled = false; }
+      finally {
+        createBusy = false;
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = prevTxt;
+        }
+      }
     }
 
     window.upd = async function(id) {
+      if (updateBusy.has(id)) return;
       const body = {
         nombre: ($('#n_' + id).value || '').trim(),
         telefono: ($('#t_' + id).value || '').trim(),
         tipo: ($('#tipo_' + id).value || 'propio').toLowerCase()
       };
       if (!body.nombre) return alert('Nombre requerido');
+      updateBusy.add(id);
       try {
         await api('/api/choferes/' + id + currentEmpresaQS(), { method: 'PUT', body });
         // Feedback visual simple
@@ -629,14 +646,18 @@
         el.style.borderColor = 'var(--success)';
         setTimeout(()=> el.style.borderColor = 'var(--border)', 1000);
       } catch (e) { alert(e.message); }
+      finally { updateBusy.delete(id); }
     }
 
     window.delCh = async function(id) {
+      if (deleteBusy.has(id)) return;
       if (!confirm('¿Eliminar chofer y sus asignaciones?')) return;
+      deleteBusy.add(id);
       try {
         await api('/api/choferes/' + id + currentEmpresaQS(), { method: 'DELETE' });
         load();
       } catch (e) { alert(e.message); }
+      finally { deleteBusy.delete(id); }
     }
 
     // Zonas
@@ -853,8 +874,8 @@
       if(!defaults.length) $('#gEscalasList').innerHTML = '<p class="text-muted">No se encontraron escalas marcadas como Default.</p>';
       else $('#gEscalasList').innerHTML = defaults.map(d => `
         <div style="background:rgba(255,255,255,0.05); padding:0.5rem; border-radius:6px; margin-bottom:0.5rem; border-left:3px solid var(--warning)">
-            <strong>${esc(d.nombre)}</strong> <small class="text-muted">(${d.chName})</small>
-            <br><small>${d.vigente_desde} -> ${d.vigente_hasta||'∞'}</small>
+            <strong>${esc(d.nombre)}</strong> <small class="text-muted">(${esc(d.chName)})</small>
+            <br><small>${esc(d.vigente_desde)} -> ${esc(d.vigente_hasta||'∞')}</small>
         </div>
       `).join('');
     };
@@ -930,6 +951,7 @@
       location.href='login.html';
     };
     $('#uCreate').onchange = (e) => $('#uWrap').hidden = !e.target.checked;
+    $('#fNuevo').addEventListener('submit', onCreate);
 
     (async () => {
       try {
@@ -943,10 +965,10 @@
            const sel = $('#empFilter');
            const createSel = $('#empSel');
            if(empresasCache.length) {
-               createSel.innerHTML = empresasCache.map(e=>`<option value="${e.id}">${e.nombre}</option>`).join('');
+               createSel.innerHTML = empresasCache.map(e=>`<option value="${Number(e.id)}">ID ${Number(e.id)} | ${esc(e.nombre)}</option>`).join('');
                sel.innerHTML = createSel.innerHTML;
-               createSel.value = empresasCache[0].id;
-               sel.value = empresasCache[0].id;
+               createSel.value = String(empresasCache[0].id);
+               sel.value = String(empresasCache[0].id);
            }
            sel.onchange = () => { createSel.value = sel.value; load(); };
         }
