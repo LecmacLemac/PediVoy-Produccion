@@ -16,6 +16,10 @@ export function registerWhatsAppWeb(app, deps) {
     enqueueWppMessage,
     checkLicencia,
 
+    // estrategias (cron)
+    ejecutarReposicionPredictiva,
+    ejecutarCampaniaClima,
+
     // auth helpers (usados en endpoints /api/whatsapp/*)
     withAuth,
     isSuper,
@@ -1104,8 +1108,22 @@ export function registerWhatsAppWeb(app, deps) {
   
   // Iniciar la programación (ej: 09:00 AM)
   programarTareaDiaria(9, 0, () => {
+    if (typeof ejecutarReposicionPredictiva !== 'function') return;
     console.log('[CRON] Ejecutando Reposición Predictiva...');
     ejecutarReposicionPredictiva().catch(err => console.error('[CRON ERROR]', err));
+  });
+
+  // Campaña por clima (media mañana y tarde)
+  programarTareaDiaria(11, 0, () => {
+    if (typeof ejecutarCampaniaClima !== 'function') return;
+    console.log('[CRON] Ejecutando Campaña por Clima...');
+    ejecutarCampaniaClima().catch(err => console.error('[CRON ERROR CLIMA]', err));
+  });
+
+  programarTareaDiaria(17, 0, () => {
+    if (typeof ejecutarCampaniaClima !== 'function') return;
+    console.log('[CRON] Ejecutando Campaña por Clima...');
+    ejecutarCampaniaClima().catch(err => console.error('[CRON ERROR CLIMA]', err));
   });
   
   // CRON: Limpieza diaria de puntos de tracking antiguos

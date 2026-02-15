@@ -12,7 +12,7 @@ import {
 } from '../services.js';
 import { crearPreferenciaLicencia, obtenerPago } from '../mercadoPagoService.js';
 import { notificarEnRuta, notificarPedidoTransferencia } from '../services/notificacionesPedidos.js';
-import { ejecutarEstrategiaVecinos } from '../estrategias.js';
+import { ejecutarEstrategiaVecinos, ejecutarReposicionPredictiva, ejecutarCampaniaClima } from '../estrategias.js';
 import { registrarMovimientosActivosDesdePedido } from '../adm/pedidoActivosService.js';
 
 export function createDomainDeps({ projectDir }) {
@@ -51,6 +51,8 @@ export function createDomainDeps({ projectDir }) {
     notificarEnRuta,
     notificarPedidoTransferencia,
     ejecutarEstrategiaVecinos,
+    ejecutarReposicionPredictiva,
+    ejecutarCampaniaClima,
     registrarMovimientosActivosDesdePedido,
 
   };

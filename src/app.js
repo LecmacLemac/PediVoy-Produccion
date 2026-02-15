@@ -45,6 +45,8 @@ export function createApp(deps) {
     notificarEnRuta,
     notificarPedidoTransferencia,
     ejecutarEstrategiaVecinos,
+    ejecutarReposicionPredictiva,
+    ejecutarCampaniaClima,
     registrarMovimientosActivosDesdePedido,
 
     // wpp
@@ -259,6 +261,9 @@ export function createApp(deps) {
     handlers,
     enqueueWppMessage,
     checkLicencia,
+
+    ejecutarReposicionPredictiva,
+    ejecutarCampaniaClima,
 
     withAuth,
     isSuper,

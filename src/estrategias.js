@@ -119,6 +119,92 @@ export async function ejecutarReposicionPredictiva() {
 }
 
 /**
+ * ESTRATEGIA 6: CAMPAÑA POR CLIMA
+ * Disparador: Cron diario (ej: 11:00 y 17:00)
+ */
+export async function ejecutarCampaniaClima() {
+  const empresas = await query(`
+    SELECT id, config_estrategias
+    FROM empresas
+    WHERE config_estrategias->>'clima_activado' = 'true'
+  `);
+
+  for (const emp of empresas) {
+    const empresaId = emp.id;
+    const config = emp.config_estrategias || {};
+
+    const tempAlta = Number(config.clima_temp_alta ?? 30);
+    const tempBaja = Number(config.clima_temp_baja ?? 8);
+
+    // 1) Ubicación de referencia: promedio de puntos con coordenadas de la empresa
+    const geo = await query(`
+      SELECT AVG(latitud)::float AS lat, AVG(longitud)::float AS lng
+      FROM puntos_entrega
+      WHERE empresa_id = $1
+        AND latitud IS NOT NULL
+        AND longitud IS NOT NULL
+    `, [empresaId]);
+
+    const lat = geo?.[0]?.lat;
+    const lng = geo?.[0]?.lng;
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+
+    // 2) Clima actual (Open-Meteo sin API key)
+    let tempActual = null;
+    try {
+      const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current_weather=true&timezone=auto`;
+      const resp = await fetch(url, { signal: AbortSignal.timeout(8000) });
+      if (!resp.ok) continue;
+      const wx = await resp.json();
+      tempActual = Number(wx?.current_weather?.temperature);
+    } catch {
+      continue;
+    }
+
+    if (!Number.isFinite(tempActual)) continue;
+
+    let mensajeBase = null;
+    if (tempActual >= tempAlta) {
+      mensajeBase = config.clima_mensaje_calor || 'Se viene calor hoy 🔥 ¿Te llevo agua antes de que te quedes sin stock?';
+    } else if (tempActual <= tempBaja) {
+      mensajeBase = config.clima_mensaje_frio || 'Hoy está feo para salir 🌧️ Si querés te lo llevo a domicilio.';
+    }
+
+    if (!mensajeBase) continue; // No dispara en temperatura templada
+
+    // 3) Segmento objetivo: clientes sin compra en los últimos N días
+    const diasSinCompra = Number(config.clima_dias_sin_compra ?? 5);
+    const limite = Number(config.clima_max_envios ?? 25);
+
+    const clientes = await query(`
+      SELECT pe.cliente, pe.telefono
+      FROM puntos_entrega pe
+      WHERE pe.empresa_id = $1
+        AND pe.telefono IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1
+          FROM pedidos p
+          WHERE p.punto_entrega_id = pe.id
+            AND p.fecha > NOW() - ($2::text || ' days')::interval
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM wpp_outbox o
+          WHERE o.empresa_id = $1
+            AND o.telefono = regexp_replace(pe.telefono, '\\D+', '', 'g')
+            AND o.created_at > NOW() - INTERVAL '20 hours'
+        )
+      LIMIT $3
+    `, [empresaId, diasSinCompra, limite]);
+
+    for (const c of clientes) {
+      const msg = String(mensajeBase).replace('{cliente}', c.cliente || 'Cliente');
+      await encolarMensaje(empresaId, c.telefono, msg);
+    }
+  }
+}
+
+/**
  * ESTRATEGIA 3: DOMINACIÓN DE ZONA (Referidos Viral)
  * Disparador: Cuando un pedido cambia a "Entregado".
  * Acción: Envía un link al cliente actual para que invite a un vecino.
