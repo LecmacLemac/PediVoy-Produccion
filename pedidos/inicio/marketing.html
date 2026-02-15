@@ -239,6 +239,17 @@
 <script>
     // Utils
     const $ = s => document.querySelector(s);
+    const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;'
+    }[c]));
+    const toPosInt = (v, fallback) => {
+      const n = Number.parseInt(v, 10);
+      return Number.isFinite(n) && n > 0 ? n : fallback;
+    };
     
     // Modo seguro: auth por cookie httpOnly
     const authFetch = (url, opts = {}) => {
@@ -269,11 +280,12 @@
                 
                 // Cargar Lista de Empresas
                 const empRes = await authFetch('/api/empresas');
+                if (!empRes.ok) throw new Error('No se pudo cargar empresas');
                 const empresas = await empRes.json();
                 
                 if(Array.isArray(empresas)) {
-                    const opts = empresas.map(e => `<option value="${e.id}">${e.nombre}</option>`).join('');
-                    $('#empFilter').innerHTML = opts;
+                    const opts = empresas.map(e => `<option value="${Number(e.id)}">${esc(e.nombre)}</option>`).join('');
+                    $('#empFilter').innerHTML = opts || '<option value="">Sin empresas</option>';
                     
                     // Si ya tengo una seleccionada, la uso
                     if (empresas.length > 0) {
@@ -303,10 +315,11 @@
             const url = empId ? `/api/productos?empresa_id=${empId}` : '/api/productos';
             
             const res = await authFetch(url);
+            if (!res.ok) throw new Error('No se pudieron cargar productos');
             const prods = await res.json();
             
             const opts = '<option value="">-- Seleccionar Producto --</option>' + 
-                         (Array.isArray(prods) ? prods.map(p => `<option value="${p.id}">${p.nombre}</option>`).join('') : '');
+                         (Array.isArray(prods) ? prods.map(p => `<option value="${Number(p.id)}">${esc(p.nombre)}</option>`).join('') : '');
             
             $('#referidos_producto_id').innerHTML = opts;
         } catch (e) { console.error('Error loading products', e); }
@@ -347,37 +360,66 @@
     // Guardar config
     document.getElementById('marketingForm').addEventListener('submit', async (e) => {
         e.preventDefault();
-        const empSelect = document.getElementById('empFilter');
-        const selectedEmpId = (empSelect && empSelect.offsetParent !== null) ? empSelect.value : null;
 
-        const config = {
-            empresa_id: selectedEmpId ? Number(selectedEmpId) : undefined,
+        const submitBtn = e.target.querySelector('button[type="submit"]');
+        const oldTxt = submitBtn ? submitBtn.textContent : '';
+        if (submitBtn) {
+          submitBtn.disabled = true;
+          submitBtn.textContent = 'Guardando...';
+        }
 
-            vecinos_activado: document.getElementById('vecinos_activado').checked,
-            vecinos_mensaje: document.getElementById('vecinos_mensaje').value,
-            vecinos_radio: parseInt(document.getElementById('vecinos_radio').value),
-            vecinos_dias: parseInt(document.getElementById('vecinos_dias').value),
-            
-            predictivo_activado: document.getElementById('predictivo_activado').checked,
-            predictivo_mensaje: document.getElementById('predictivo_mensaje').value,
-            
-            referidos_activado: document.getElementById('referidos_activado').checked,
-            referidos_producto_id: document.getElementById('referidos_producto_id').value, // ID Producto
-            referidos_cantidad: document.getElementById('referidos_cantidad').value,       // Cantidad
-            referidos_mensaje: document.getElementById('referidos_mensaje').value,
-            referidos_exito_mensaje: document.getElementById('referidos_exito_mensaje').value
-        };
+        try {
+          const empSelect = document.getElementById('empFilter');
+          const selectedEmpId = (empSelect && empSelect.offsetParent !== null) ? empSelect.value : null;
 
-        const res = await authFetch('/api/marketing/config', {
-            method: 'PUT',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(config)
-        });
+          const referidosProdRaw = document.getElementById('referidos_producto_id').value;
+          const referidosProdId = referidosProdRaw ? Number(referidosProdRaw) : null;
 
-        if(res.ok) alert('✅ Estrategias actualizadas correctamente');
-        else alert('❌ Hubo un error al guardar');
+          const config = {
+              empresa_id: selectedEmpId ? Number(selectedEmpId) : undefined,
+
+              vecinos_activado: document.getElementById('vecinos_activado').checked,
+              vecinos_mensaje: document.getElementById('vecinos_mensaje').value.trim(),
+              vecinos_radio: toPosInt(document.getElementById('vecinos_radio').value, 200),
+              vecinos_dias: toPosInt(document.getElementById('vecinos_dias').value, 7),
+              
+              predictivo_activado: document.getElementById('predictivo_activado').checked,
+              predictivo_mensaje: document.getElementById('predictivo_mensaje').value.trim(),
+              
+              referidos_activado: document.getElementById('referidos_activado').checked,
+              referidos_producto_id: Number.isFinite(referidosProdId) ? referidosProdId : null,
+              referidos_cantidad: toPosInt(document.getElementById('referidos_cantidad').value, 1),
+              referidos_mensaje: document.getElementById('referidos_mensaje').value.trim(),
+              referidos_exito_mensaje: document.getElementById('referidos_exito_mensaje').value.trim()
+          };
+
+          const res = await authFetch('/api/marketing/config', {
+              method: 'PUT',
+              headers: {
+                  'Content-Type': 'application/json'
+              },
+              body: JSON.stringify(config)
+          });
+
+          if(res.ok) {
+            alert('✅ Estrategias actualizadas correctamente');
+          } else {
+            let msg = '❌ Hubo un error al guardar';
+            try {
+              const data = await res.json();
+              if (data?.error) msg = `❌ ${data.error}`;
+            } catch {}
+            alert(msg);
+          }
+        } catch (err) {
+          console.error(err);
+          alert('❌ Error de red al guardar configuración');
+        } finally {
+          if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.textContent = oldTxt;
+          }
+        }
     });
 </script>
 
