@@ -457,6 +457,13 @@
     };
 
     const $ = s => document.querySelector(s);
+    const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;'
+    }[c]));
     
     // UI Refs
     const rolePill      = $('#rolePill');
@@ -494,6 +501,9 @@
     let myChoferId = 0;
     let editingId = null;
     let role = '';
+    let saveBusy = false;
+    let editBusy = false;
+    let deleteBusy = false;
 
     window.__gastos = [];
 
@@ -577,10 +587,10 @@
       empresaFilter.innerHTML = 
         `<option value="">-- Todas las empresas --</option>` +
         `<option value="orphans">⚠️ Solo Huérfanos</option>` +
-        emps.map(e=>`<option value="${e.id}">${e.nombre}</option>`).join('');
+        emps.map(e=>`<option value="${Number(e.id)}">${esc(e.nombre)}</option>`).join('');
       
       $('#empresaCreate').innerHTML = `<option value="">-- Seleccionar --</option>` + 
-        emps.map(e=>`<option value="${e.id}">${e.nombre}</option>`).join('');
+        emps.map(e=>`<option value="${Number(e.id)}">${esc(e.nombre)}</option>`).join('');
     }
 
     async function loadChoferes(ctxEmpresaId){
@@ -592,10 +602,10 @@
       const list = Array.isArray(data) ? data : [];
       
       choferFilter.innerHTML = `<option value="">Todos</option>` +
-        list.map(c=>`<option value="${c.id}">${c.nombre}</option>`).join('');
+        list.map(c=>`<option value="${Number(c.id)}">${esc(c.nombre)}</option>`).join('');
       
       $('#choferCreate').innerHTML = `<option value="">-- Seleccionar --</option>` +
-        list.map(c=>`<option value="${c.id}">${c.nombre}</option>`).join('');
+        list.map(c=>`<option value="${Number(c.id)}">${esc(c.nombre)}</option>`).join('');
     }
 
     async function loadGastos(){
@@ -653,21 +663,21 @@
         if (isOrphan) orphansCount++;
 
         const empCol = isSuper 
-          ? `<td>${isOrphan ? '<span class="badge bg-orphan">Huérfano</span>' : `<span class="text-muted">#${g.empresa_id}</span>`}</td>`
+          ? `<td>${isOrphan ? '<span class="badge bg-orphan">Huérfano</span>' : `<span class="text-muted">#${Number(g.empresa_id)}</span>`}</td>`
           : '';
-        const chCol  = (isSuper || isUser) ? `<td>${g.chofer_nombre || ('#'+g.chofer_id)}</td>` : '';
+        const chCol  = (isSuper || isUser) ? `<td>${esc(g.chofer_nombre || ('#'+g.chofer_id))}</td>` : '';
         
         const actions = canEdit ? `
-          <button class="btn" style="padding:4px 8px; font-size:0.75rem;" onclick="editG(${g.id})">✏️</button>
-          <button class="btn-danger" style="padding:4px 8px; font-size:0.75rem;" onclick="delG(${g.id})">🗑️</button>
+          <button class="btn" style="padding:4px 8px; font-size:0.75rem;" onclick="editG(${Number(g.id)})">✏️</button>
+          <button class="btn-danger" style="padding:4px 8px; font-size:0.75rem;" onclick="delG(${Number(g.id)})">🗑️</button>
         ` : '';
         
         return `
           <tr>
-            <td class="text-muted">#${g.id}</td>
-            <td>${fecha}</td>
-            <td><span class="badge ${getBadgeClass(g.tipo)}">${g.tipo}</span></td>
-            <td>${g.descripcion || '-'}</td>
+            <td class="text-muted">#${Number(g.id)}</td>
+            <td>${esc(fecha)}</td>
+            <td><span class="badge ${getBadgeClass(g.tipo)}">${esc(g.tipo)}</span></td>
+            <td>${esc(g.descripcion || '-')}</td>
             <td class="text-right" style="font-weight:600;">${money(g.monto)}</td>
             ${empCol}
             ${chCol}
@@ -772,16 +782,23 @@
     };
 
     window.delG = async (id) => {
+      if (deleteBusy) return;
       if (!confirm('¿Eliminar este gasto?')) return;
-      const r = await authFetch('/api/gastos/' + id, { method:'DELETE' });
-      if (r.ok) loadGastos();
-      else alert('Error al eliminar');
+      deleteBusy = true;
+      try {
+        const r = await authFetch('/api/gastos/' + id, { method:'DELETE' });
+        if (r.ok) loadGastos();
+        else alert('Error al eliminar');
+      } finally {
+        deleteBusy = false;
+      }
     };
 
     // Crear nuevo gasto
     const frmGasto = document.querySelector('#frmGasto');
     if (frmGasto) frmGasto.addEventListener('submit', async (e) => {
       e.preventDefault();
+      if (saveBusy) return;
       
       const tipo  = tipoEl.value;
       const fecha = document.querySelector('#fecha').value;
@@ -830,6 +847,14 @@
       const file = document.querySelector('#comprobante').files[0];
       if (file) fd.append('comprobante', file);
 
+      const submitBtn = frmGasto.querySelector('button[type="submit"]');
+      const prevTxt = submitBtn ? submitBtn.textContent : '';
+      saveBusy = true;
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Guardando...';
+      }
+
       try {
         const r = await authFetch('/api/gastos', {
           method: 'POST',
@@ -847,12 +872,19 @@
       } catch (err) {
         console.error(err);
         alert('❌ Error al guardar');
+      } finally {
+        saveBusy = false;
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.textContent = prevTxt;
+        }
       }
     });
 
     // Guardar cambios desde modal edición
     if (frmGastoEdit) frmGastoEdit.addEventListener('submit', async (e) => {
       e.preventDefault();
+      if (editBusy) return;
       if (!editingId) return;
 
       const g = (window.__gastos || []).find(x => Number(x.id) === Number(editingId));
@@ -908,6 +940,14 @@
         fd.append('chofer_id', g.chofer_id);
       }
 
+      const editBtn = frmGastoEdit.querySelector('button[type="submit"]');
+      const prevTxt = editBtn ? editBtn.textContent : '';
+      editBusy = true;
+      if (editBtn) {
+        editBtn.disabled = true;
+        editBtn.textContent = 'Guardando...';
+      }
+
       try {
         const r = await authFetch('/api/gastos/' + editingId, {
           method: 'PUT',
@@ -921,6 +961,12 @@
       } catch (err) {
         console.error(err);
         alert('❌ Error al actualizar');
+      } finally {
+        editBusy = false;
+        if (editBtn) {
+          editBtn.disabled = false;
+          editBtn.textContent = prevTxt;
+        }
       }
     });
 
