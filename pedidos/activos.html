@@ -512,7 +512,7 @@
           </thead>
           <tbody id="activosTableBody">
             <tr class="loading-row">
-              <td colspan="10">Cargando activos…</td>
+              <td colspan="12">Cargando activos…</td>
             </tr>
           </tbody>
         </table>
@@ -696,6 +696,15 @@
       setTimeout(() => toast.classList.remove('show'), 3000);
     }
 
+    function escapeHtml(value) {
+      return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
     function toLocalDateTime(isoString) {
       if (!isoString) return '–';
       const d = new Date(isoString);
@@ -769,7 +778,7 @@
       else if (e === 'reparacion') label = 'En reparación';
       else if (e === 'baja') label = 'Baja';
       else label = estado || '–';
-      return '<span class="' + cls + '">' + label + '</span>';
+      return '<span class="' + cls + '">' + escapeHtml(label) + '</span>';
     }
 
     function debounce(fn, delay) {
@@ -835,9 +844,11 @@
         if (userRoleBadge) userRoleBadge.textContent = roleLabel;
 
         if (esSuperAdmin) {
-          setupEmpresaSelector();
+          await setupEmpresaSelector();
         } else {
-          loadProductosActivos();
+          await loadProductosActivos();
+          await loadResumenActivos();
+          await loadActivos();
         }
       } catch (e) {
         console.error('Error cargando /api/me', e);
@@ -893,6 +904,10 @@
           loadActivos();
           loadProductosActivos();
         });
+
+        await loadProductosActivos();
+        await loadResumenActivos();
+        await loadActivos();
       } catch (e) {
         console.error('Error setupEmpresaSelector', e);
         wrapper.style.display = 'none';
@@ -1065,22 +1080,22 @@
           const alquilerVal = a.alquiler_mensual ? `$${Number(a.alquiler_mensual).toLocaleString('es-AR')}` : '-';
 
           return `
-            <tr data-id="${a.id}">
-              <td>${a.codigo || '–'}</td>
-              <td>${a.tipo || '–'}</td>
-              <td>${marcaModelo}</td>
-              <td>${alquilerVal}</td> <td>${fechaInicio}</td> <td>${formatoEstadoActivo(a.estado)}</td>
-              <td>${a.cliente_nombre || '–'}</td>
+            <tr data-id="${Number(a.id)}">
+              <td>${escapeHtml(a.codigo || '–')}</td>
+              <td>${escapeHtml(a.tipo || '–')}</td>
+              <td>${escapeHtml(marcaModelo)}</td>
+              <td>${escapeHtml(alquilerVal)}</td> <td>${escapeHtml(fechaInicio)}</td> <td>${formatoEstadoActivo(a.estado)}</td>
+              <td>${escapeHtml(a.cliente_nombre || '–')}</td>
               <td>${mantenimientoBadgeHtml(mantStatus)}</td>
-              <td>${toLocalDate(a.ultima_sanitizacion)}</td>
-              <td>${proxima}</td>
+              <td>${escapeHtml(toLocalDate(a.ultima_sanitizacion))}</td>
+              <td>${escapeHtml(proxima)}</td>
               <td>${diasHtml}</td>
               <td>
                 <div class="col-actions">
-                  <button class="btn-icon btn-sm" data-action="editar" data-id="${a.id}" title="Editar Precio/Fecha">
+                  <button class="btn-icon btn-sm" data-action="editar" data-id="${Number(a.id)}" title="Editar Precio/Fecha">
                     ✏️
                   </button>
-                  <button class="btn-icon btn-sm" data-action="ver-historial" data-id="${a.id}" title="Ver Ficha">
+                  <button class="btn-icon btn-sm" data-action="ver-historial" data-id="${Number(a.id)}" title="Ver Ficha">
                     📜
                   </button>
                 </div>
@@ -1133,10 +1148,9 @@
       document.getElementById('newAlquiler').value = activo.alquiler_mensual || '';
 
       if (activo.fecha_inicio_alquiler) {
-        const d = new Date(activo.fecha_inicio_alquiler);
-        // Ajuste zona horaria simple o slice ISO
-        const iso = d.toISOString().split('T')[0]; 
-        document.getElementById('newFechaInicio').value = iso;
+        const raw = String(activo.fecha_inicio_alquiler);
+        const isoDate = /^\d{4}-\d{2}-\d{2}/.test(raw) ? raw.slice(0, 10) : '';
+        document.getElementById('newFechaInicio').value = isoDate;
       } else {
         document.getElementById('newFechaInicio').value = '';
       }
@@ -1233,7 +1247,10 @@
       if (esSuperAdmin && targetEmpresaId) url += '?empresa_id=' + encodeURIComponent(targetEmpresaId);
 
       fetch(url, { method: 'GET', headers: getAuthHeaders() })
-        .then(res => res.json())
+        .then(async res => {
+          if (!res.ok) throw new Error('Error ' + res.status);
+          return res.json();
+        })
         .then(json => {
           const rows = Array.isArray(json.data) ? json.data : [];
           if (!rows.length) {
@@ -1242,11 +1259,11 @@
           }
           tbody.innerHTML = rows.map(h => `
             <tr>
-              <td>${toLocalDateTime(h.fecha)}</td>
-              <td>${(h.accion || '').toUpperCase()}</td>
-              <td>${h.usuario || '–'}</td>
-              <td>${h.cliente_nombre || '–'}</td>
-              <td>${h.observacion || '–'}</td>
+              <td>${escapeHtml(toLocalDateTime(h.fecha))}</td>
+              <td>${escapeHtml((h.accion || '').toUpperCase())}</td>
+              <td>${escapeHtml(h.usuario || '–')}</td>
+              <td>${escapeHtml(h.cliente_nombre || '–')}</td>
+              <td>${escapeHtml(h.observacion || '–')}</td>
             </tr>
           `).join('');
         })
@@ -1258,6 +1275,32 @@
     }
 
     function closeHistorialModal() { document.getElementById('historialModal').close(); }
+
+    function exportActivosCsv() {
+      if (!activosRaw.length) {
+        showToast('No hay datos para exportar', 'warning');
+        return;
+      }
+      const headers = ['id','codigo','tipo','marca','modelo','estado','cliente','alquiler_mensual','fecha_inicio_alquiler'];
+      const rows = activosRaw.map(a => [
+        a.id || '', a.codigo || '', a.tipo || '', a.marca || '', a.modelo || '', a.estado || '',
+        a.cliente_nombre || '', a.alquiler_mensual || '', a.fecha_inicio_alquiler || ''
+      ]);
+      let csv = headers.join(',') + '\n' + rows.map(cols => cols.map(v => {
+        const s = String(v ?? '');
+        return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+      }).join(',')).join('\n');
+
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'activos.csv';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
 
     // === Listeners ===
     function setupEventListeners() {
@@ -1274,6 +1317,13 @@
       if (mantSelect) mantSelect.addEventListener('change', () => { filtros.mant = mantSelect.value; renderActivosTable(); });
 
       document.getElementById('btnReload').addEventListener('click', () => { filtros.modoMantPendiente = false; loadActivos(); loadResumenActivos(); });
+      document.getElementById('btnExportCsv').addEventListener('click', exportActivosCsv);
+      document.getElementById('btnVerMantPendiente').addEventListener('click', () => {
+        filtros.mant = 'pronto';
+        const mantSelect = document.getElementById('mantSelect');
+        if (mantSelect) mantSelect.value = 'pronto';
+        renderActivosTable();
+      });
       
       // Botón Nuevo Activo
       document.getElementById('btnNuevoActivo').addEventListener('click', openNuevoActivo);
@@ -1309,8 +1359,6 @@
     document.addEventListener('DOMContentLoaded', () => {
       setupEventListeners();
       loadUserInfo();
-      loadResumenActivos();
-      loadActivos();
     });
   </script>
 </body>

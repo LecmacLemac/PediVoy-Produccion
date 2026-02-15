@@ -859,6 +859,15 @@
       maximumFractionDigits: 2,
     });
 
+    function escapeHtml(value) {
+      return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
     function formatDateTime(value) {
       if (!value) return '-';
       const d = new Date(value);
@@ -965,19 +974,24 @@
         $('#totalFijosMensual').textContent = '$ 0';
         return;
       }
-      tbody.innerHTML = STATE.fijos.map(c => `
+      tbody.innerHTML = STATE.fijos.map(c => {
+        const freq = String(c.frecuencia || '').toLowerCase();
+        const monto = Number(c.monto || 0);
+        const mensualEq = Number(c.monto_mensual_equivalente ?? (freq === 'semanal' ? monto * 4 : freq === 'anual' ? monto / 12 : freq === 'mensual' ? monto : 0));
+        return `
         <tr>
-          <td>${c.nombre}</td>
-          <td>${fmtMoney.format(c.monto)}</td>
-          <td>${c.frecuencia}</td>
-          <td>-</td>
-          <td>${formatDateTime(c.created_at)}</td>
+          <td>${escapeHtml(c.nombre)}</td>
+          <td>${fmtMoney.format(monto)}</td>
+          <td>${escapeHtml(c.frecuencia)}</td>
+          <td>${mensualEq ? fmtMoney.format(mensualEq) : '-'}</td>
+          <td>${escapeHtml(formatDateTime(c.created_at))}</td>
           <td class="text-right">
-             <button class="btn-icon" onclick="abrirModalFijo(false, ${c.id})"><i class="fa-solid fa-pen"></i></button>
-             <button class="btn-icon btn-danger" onclick="eliminarFijo(${c.id})"><i class="fa-solid fa-trash"></i></button>
+             <button class="btn-icon" onclick="abrirModalFijo(false, ${Number(c.id)})"><i class="fa-solid fa-pen"></i></button>
+             <button class="btn-icon btn-danger" onclick="eliminarFijo(${Number(c.id)})"><i class="fa-solid fa-trash"></i></button>
           </td>
         </tr>
-      `).join('');
+      `;
+      }).join('');
       $('#totalFijosMensual').textContent = fmtMoney.format(STATE.totalFijosMensual);
     }
 
@@ -985,7 +999,10 @@
     async function cargarVariablesDef() {
        let url = '/api/admin/costos/variables/definiciones';
        if (STATE.isSuper && STATE.empresaId) url += `?empresa_id=${STATE.empresaId}`;
-       
+       else if (STATE.isSuper && !STATE.empresaId) {
+         STATE.definiciones = []; renderDefiniciones(); return;
+       }
+
        const data = await api(url);
        if(data && Array.isArray(data.items)) {
           STATE.definiciones = data.items;
@@ -1003,14 +1020,14 @@
        }
        tbody.innerHTML = STATE.definiciones.map(d => `
           <tr style="opacity: ${d.activo ? 1 : 0.5}">
-             <td>${d.orden}</td>
-             <td style="font-weight:600;">${d.nombre}</td>
-             <td><span class="pill">${d.codigo || '-'}</span></td>
-             <td>${tipoVariableLabel(d.tipo_calculo)}</td>
+             <td>${Number(d.orden || 0)}</td>
+             <td style="font-weight:600;">${escapeHtml(d.nombre)}</td>
+             <td><span class="pill">${escapeHtml(d.codigo || '-')}</span></td>
+             <td>${escapeHtml(tipoVariableLabel(d.tipo_calculo))}</td>
              <td class="text-right">
-                <button class="btn-icon" title="Aplicar Reglas" onclick="abrirModalMass(${d.id})"><i class="fa-solid fa-layer-group"></i></button>
-                <button class="btn-icon" title="Editar" onclick="abrirModalDef(${d.id})"><i class="fa-solid fa-pen"></i></button>
-                <button class="btn-icon btn-danger" title="Desactivar/Borrar" onclick="borrarDef(${d.id})"><i class="fa-solid fa-trash"></i></button>
+                <button class="btn-icon" title="Aplicar Reglas" onclick="abrirModalMass(${Number(d.id)})"><i class="fa-solid fa-layer-group"></i></button>
+                <button class="btn-icon" title="Editar" onclick="abrirModalDef(${Number(d.id)})"><i class="fa-solid fa-pen"></i></button>
+                <button class="btn-icon btn-danger" title="Desactivar/Borrar" onclick="borrarDef(${Number(d.id)})"><i class="fa-solid fa-trash"></i></button>
              </td>
           </tr>
        `).join('');
@@ -1148,6 +1165,9 @@
     async function cargarProductos() {
       let url = '/api/productos';
       if (STATE.isSuper && STATE.empresaId) url += `?empresa_id=${STATE.empresaId}`;
+      else if (STATE.isSuper && !STATE.empresaId) {
+        STATE.productos = []; renderProductos(); return;
+      }
       const data = await api(url);
       STATE.productos = Array.isArray(data) ? data : [];
       renderProductos();
@@ -1165,14 +1185,14 @@
       tbody.innerHTML = filtered.map(p => `
          <tr>
             <td>
-              <div style="font-weight:600;">${p.nombre}</div>
-              <div class="small-text">ID: ${p.id}</div>
+              <div style="font-weight:600;">${escapeHtml(p.nombre)}</div>
+              <div class="small-text">ID: ${Number(p.id)}</div>
             </td>
-            <td>${p.categoria || '-'}</td>
-            <td>${fmtMoney.format(p.precio)}</td>
+            <td>${escapeHtml(p.categoria || '-')}</td>
+            <td>${fmtMoney.format(Number(p.precio || 0))}</td>
             <td>${p.mostrar_en_catalogo ? 'App' : ''} ${p.mostrar_en_landing ? 'Web' : ''}</td>
             <td class="text-right">
-               <button class="btn-icon" onclick="abrirModalVar(${p.id})"><i class="fa-solid fa-coins"></i></button>
+               <button class="btn-icon" onclick="abrirModalVar(${Number(p.id)})"><i class="fa-solid fa-coins"></i></button>
             </td>
          </tr>
       `).join('');
@@ -1218,24 +1238,21 @@
        }
        // Creamos inputs para poder hacer override
        tbody.innerHTML = vars.map(v => {
-          // Si el nivel es "producto", significa que tiene un valor específico seteado
-          // Si es "empresa/categoria", es heredado.
-          // El input value muestra el valor actual.
           const isInherited = v.nivel !== 'producto';
           const badgeColor = isInherited ? 'background: #3b82f6; color:#fff;' : 'background: #10b981; color:#fff;';
           
           return `
             <tr>
               <td>
-                 <div style="font-weight:600;">${v.nombre}</div>
-                 <div class="small-text">${tipoVariableLabel(v.tipo_calculo)}</div>
+                 <div style="font-weight:600;">${escapeHtml(v.nombre)}</div>
+                 <div class="small-text">${escapeHtml(tipoVariableLabel(v.tipo_calculo))}</div>
               </td>
-              <td><span class="pill" style="${badgeColor}">${v.nivel}</span></td>
+              <td><span class="pill" style="${badgeColor}">${escapeHtml(v.nivel)}</span></td>
               <td style="width:140px;">
                  <input type="number" step="0.01" class="input-inline var-extra-input" 
-                        data-var-id="${v.id}" value="${v.valor}" placeholder="Heredado" />
+                        data-var-id="${Number(v.id)}" value="${Number(v.valor || 0)}" placeholder="Heredado" />
               </td>
-              <td>${fmtMoney.format(v.monto_unitario)}</td>
+              <td>${fmtMoney.format(Number(v.monto_unitario || 0))}</td>
             </tr>
           `;
        }).join('');

@@ -605,7 +605,7 @@
         <li><a href="/pedidos/costos.html">Costos</a></li>
         <li><a href="/pedidos/activos.html">Activos</a></li>
         <li><a href="/pedidos/alquileres.html" class="active">Alquileres</a></li>
-        <li><a href="/pedidos/empresa.html">Empresas</a></li>
+        <li><a href="/pedidos/inicio/empresa.html">Empresas</a></li>
       </ul>
 
       <div class="user-chip">
@@ -802,6 +802,35 @@
   </div>
 </dialog>
 
+<!-- MODAL: ACTIVOS OCIOSOS -->
+<dialog id="ociososModal">
+  <div class="modal-header">
+    <div>
+      <div style="font-size:0.95rem; font-weight:600;">Activos ociosos (sin compra reciente)</div>
+      <div class="text-subtle">Prestados con más de 60 días sin compra</div>
+    </div>
+    <button class="btn-icon btn-sm" type="button" id="btnCloseOciosos">✕</button>
+  </div>
+  <div class="modal-body">
+    <div class="table-responsive" style="max-height: 55vh;">
+      <table>
+        <thead>
+          <tr>
+            <th>Cliente</th>
+            <th>Teléfono</th>
+            <th>Activo</th>
+            <th>Última compra</th>
+            <th>Días sin compra</th>
+          </tr>
+        </thead>
+        <tbody id="ociososTableBody">
+          <tr class="loading-row"><td colspan="5">Cargando…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</dialog>
+
 <div class="toast" id="toast"></div>
 
 
@@ -848,6 +877,26 @@
 
       t.classList.add('show');
       setTimeout(() => t.classList.remove('show'), 3000);
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function safeHttpUrl(value) {
+      if (!value) return null;
+      try {
+        const u = new URL(String(value), window.location.origin);
+        if (u.protocol === 'http:' || u.protocol === 'https:') return u.href;
+        return null;
+      } catch {
+        return null;
+      }
     }
 
     function toLocalDate(iso) {
@@ -1162,23 +1211,28 @@
           }
         }
 
+        const safeMpLink = safeHttpUrl(mpLink);
         let mpCol = '<span class="badge-mp">Sin link</span>';
-        if (mpLink) {
-          mpCol = '<a href="' + mpLink + '" target="_blank" rel="noopener" class="badge-mp">Link generado</a>';
+        if (safeMpLink) {
+          mpCol = '<a href="' + safeMpLink + '" target="_blank" rel="noopener" class="badge-mp">Link generado</a>';
         }
+
+        const clienteNombreEsc = escapeHtml(clienteNombre);
+        const clienteDireccionEsc = clienteDireccion ? escapeHtml(clienteDireccion) : '';
+        const clienteTelefonoEsc = clienteTelefono ? escapeHtml(clienteTelefono) : '';
 
         return `
           <tr data-id="${row.id || ''}" data-cliente-id="${row.cliente_id || ''}" data-periodo="${periodo}">
             <td>
-              <div style="font-weight:600;">${clienteNombre}</div>
-              ${clienteDireccion ? '<div class="text-subtle">' + clienteDireccion + '</div>' : ''}
-              ${clienteTelefono  ? '<div class="text-subtle">📱 ' + clienteNombre + ' · ' + clienteTelefono + '</div>' : ''}
+              <div style="font-weight:600;">${clienteNombreEsc}</div>
+              ${clienteDireccionEsc ? '<div class="text-subtle">' + clienteDireccionEsc + '</div>' : ''}
+              ${clienteTelefonoEsc  ? '<div class="text-subtle">📱 ' + clienteNombreEsc + ' · ' + clienteTelefonoEsc + '</div>' : ''}
             </td>
             <td>${formatPeriodoHuman(periodo)}</td>
             <td>${activos}</td>
             <td>${currencyFmt.format(monto)}</td>
             <td>${estadoBadge(estado)}</td>
-            <td>${pagoText}</td>
+            <td>${escapeHtml(pagoText)}</td>
             <td>${mpCol}</td>
             <td>
               <div class="col-actions">
@@ -1444,25 +1498,32 @@
                     const wppLink = telefonoRaw ? `https://wa.me/${telefonoRaw}` : '#';
                     const ultimaFecha = row.ultima_compra ? new Date(row.ultima_compra).toLocaleDateString('es-AR') : 'Nunca';
 
+                    const clienteNombre = escapeHtml(row.cliente_nombre || 'S/N');
+                    const clienteDireccion = escapeHtml(row.cliente_direccion || '');
+                    const clienteTelefono = escapeHtml(row.cliente_telefono || '');
+                    const modelo = escapeHtml(row.modelo || 'Equipo');
+                    const codigo = escapeHtml(row.codigo || '');
+                    const dias = Number(row.dias_sin_compra || 0);
+
                     return `
                       <tr>
                         <td>
-                          <div style="font-weight:600;">${row.cliente_nombre || 'S/N'}</div>
-                          <div class="text-subtle" style="font-size:0.75rem;">${row.cliente_direccion || ''}</div>
+                          <div style="font-weight:600;">${clienteNombre}</div>
+                          <div class="text-subtle" style="font-size:0.75rem;">${clienteDireccion}</div>
                         </td>
                         <td>
                           ${telefonoRaw ? 
-                            `<a href="${wppLink}" target="_blank" style="color:var(--brand); text-decoration:none;">📞 ${row.cliente_telefono}</a>` : 
+                            `<a href="${wppLink}" target="_blank" rel="noopener" style="color:var(--brand); text-decoration:none;">📞 ${clienteTelefono}</a>` : 
                             '<span class="text-subtle">Sin tel.</span>'
                           }
                         </td>
                         <td>
-                          <div>${row.modelo || 'Equipo'}</div>
-                          <div class="text-subtle" style="font-size:0.75rem;">${row.codigo}</div>
+                          <div>${modelo}</div>
+                          <div class="text-subtle" style="font-size:0.75rem;">${codigo}</div>
                         </td>
-                        <td>${ultimaFecha}</td>
+                        <td>${escapeHtml(ultimaFecha)}</td>
                         <td style="color: var(--danger); font-weight:bold; text-align:center;">
-                          ${row.dias_sin_compra} días
+                          ${dias} días
                         </td>
                       </tr>
                     `;
@@ -1643,9 +1704,9 @@
           '<p class="text-subtle">No hay activos registrados en el snapshot de este alquiler.</p>';
       } else {
         const rowsHtml = detalle.map((a, idx) => {
-          const cod = a.codigo || a.codigo_activo || '';
-          const tipo = a.tipo || '';
-          const marcaModelo = [a.marca, a.modelo].filter(Boolean).join(' ');
+          const cod = escapeHtml(a.codigo || a.codigo_activo || '');
+          const tipo = escapeHtml(a.tipo || '');
+          const marcaModelo = escapeHtml([a.marca, a.modelo].filter(Boolean).join(' '));
           const monto = Number(a.alquiler_mensual || a.monto || 0);
           const fIni = a.fecha_inicio_alquiler ? toLocalDate(a.fecha_inicio_alquiler) : '–';
           const fFin = a.fecha_fin_alquiler ? toLocalDate(a.fecha_fin_alquiler) : '–';
@@ -1656,8 +1717,8 @@
               <td>${cod || '–'}</td>
               <td>${tipo || '–'}</td>
               <td>${marcaModelo || '–'}</td>
-              <td>${fIni}</td>
-              <td>${fFin}</td>
+              <td>${escapeHtml(fIni)}</td>
+              <td>${escapeHtml(fFin)}</td>
               <td>${monto ? currencyFmt.format(monto) : '–'}</td>
             </tr>
           `;
