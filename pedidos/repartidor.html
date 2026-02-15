@@ -1096,18 +1096,18 @@ function renderCards() {
       : '';
 
     // --- C. BOTONES DE ACCIÓN (Lógica de cambio de estado) ---
-    const btnCancel = `<button class="iconbtn ghost" style="color:var(--danger); border-color:rgba(239, 68, 68, 0.3); margin-left:auto" onclick="setStatus(${p.id}, 'cancelado')">❌ Cancelar</button>`;
+    const btnCancel = `<button class="iconbtn ghost" style="color:var(--danger); border-color:rgba(239, 68, 68, 0.3); margin-left:auto" onclick="setStatus(${p.id}, 'cancelado', this)">❌ Cancelar</button>`;
     
     let actions = '';
     if (st === 'pendiente') {
       actions = `
-        <button class="iconbtn primary" onclick="setStatus(${p.id}, 'en_ruta')">🚚 Iniciar Ruta</button>
+        <button class="iconbtn primary" onclick="setStatus(${p.id}, 'en_ruta', this)">🚚 Iniciar Ruta</button>
         ${btnCancel}
       `;
     } else if (st === 'en_ruta' || st === 'en_camino') {
       actions = `
-        <button class="iconbtn success" onclick="setStatus(${p.id}, 'entregado')">✅ Entregar</button>
-        <button class="iconbtn ghost" style="border-color:var(--warning); color:var(--warning);" onclick="setStatus(${p.id}, 'pendiente')">↩ Pausar (Pendiente)</button>
+        <button class="iconbtn success" onclick="setStatus(${p.id}, 'entregado', this)">✅ Entregar</button>
+        <button class="iconbtn ghost" style="border-color:var(--warning); color:var(--warning);" onclick="setStatus(${p.id}, 'pendiente', this)">↩ Pausar (Pendiente)</button>
         ${btnCancel}
       `;
     }
@@ -1129,7 +1129,7 @@ function renderCards() {
       payButtons += `
         <div 
           class="pay-opt ${met === 'efectivo' ? 'active efectivo' : ''}"
-          onclick="setPay(${p.id}, 'efectivo')"
+          onclick="setPay(${p.id}, 'efectivo', this)"
         >
           💵 Efectivo
         </div>`;
@@ -1139,7 +1139,7 @@ function renderCards() {
       payButtons += `
         <div 
           class="pay-opt ${met === 'transferencia' ? 'active transferencia' : ''}"
-          onclick="setPay(${p.id}, 'transferencia')"
+          onclick="setPay(${p.id}, 'transferencia', this)"
         >
           📱 Transf.
         </div>`;
@@ -1748,12 +1748,48 @@ async function confirmarPagoQR() {
   await abrirActivosPaso(id);
 }
 
-async function setStatus(id, st){
+function setActionBusy(el, busy = true) {
+  if (!el) return () => {};
+
+  const tag = (el.tagName || '').toLowerCase();
+  const originalHtml = el.innerHTML;
+  const hadDisabled = !!el.disabled;
+  const originalPointer = el.style.pointerEvents;
+  const originalOpacity = el.style.opacity;
+
+  if (busy) {
+    if (tag === 'button') {
+      el.disabled = true;
+      el.innerHTML = '⏳ Procesando...';
+    } else {
+      el.style.pointerEvents = 'none';
+      el.style.opacity = '0.6';
+      if (!/Procesando/.test(el.textContent || '')) {
+        el.innerHTML = '⏳ Procesando...';
+      }
+    }
+  }
+
+  return () => {
+    if (tag === 'button') {
+      el.disabled = hadDisabled;
+      el.innerHTML = originalHtml;
+    } else {
+      el.style.pointerEvents = originalPointer;
+      el.style.opacity = originalOpacity;
+      el.innerHTML = originalHtml;
+    }
+  };
+}
+
+async function setStatus(id, st, el = null){
   const statusPermitidos = ['pendiente', 'en_ruta', 'en_camino', 'entregado', 'cancelado'];
   if (!statusPermitidos.includes(String(st))) {
     toast('Estado inválido');
     return;
   }
+
+  const restoreBtn = setActionBusy(el, true);
 
   try {
     await withLock(`status:${id}`, async () => {
@@ -1798,10 +1834,12 @@ async function setStatus(id, st){
     });
   } catch (e) {
     notifyError(e?.message || 'No se pudo actualizar el estado del pedido', e);
+  } finally {
+    restoreBtn();
   }
 }
 
-async function setPay(id, met) {
+async function setPay(id, met, el = null) {
   // Normalizar y validar método
   const metodo = String(met || '').toLowerCase();
   const permitidos = ['efectivo', 'transferencia'];
@@ -1817,6 +1855,8 @@ async function setPay(id, met) {
     return;
   }
 
+  const restoreBtn = setActionBusy(el, true);
+
   try {
     await withLock(`pay:${id}`, async () => {
       // También acá: si el pedido sigue sin zona, la resolvemos al cambiar forma de pago
@@ -1830,6 +1870,8 @@ async function setPay(id, met) {
     });
   } catch (e) {
     notifyError(e?.message || 'No se pudo actualizar el método de pago', e);
+  } finally {
+    restoreBtn();
   }
 }
 
