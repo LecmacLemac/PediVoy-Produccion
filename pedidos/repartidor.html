@@ -939,7 +939,7 @@ async function loadZonas(){
   try {
     const zs = await api('/api/zonas/choferes');
     zonas = zs || [];
-    $('#fZona').innerHTML = '<option value="">Todas</option>' + zonas.map(z=>`<option value="${z.id}">${z.nombre}</option>`).join('');
+    $('#fZona').innerHTML = '<option value="">Todas</option>' + zonas.map(z=>`<option value="${Number(z.id)}">${esc(z.nombre)}</option>`).join('');
   } catch(e) {
     zonas = [];
     notifyError('Error cargando zonas', e);
@@ -1840,7 +1840,7 @@ function renderMap(){
 async function gLoadProductos() {
   try {
     const ps = await api('/api/productos');
-    $('#gProducto').innerHTML = '<option value="">Seleccionar.</option>' + ps.map(p => `<option value="${p.id}">${p.nombre}</option>`).join('');
+    $('#gProducto').innerHTML = '<option value="">Seleccionar.</option>' + ps.map(p => `<option value="${Number(p.id)}">${esc(p.nombre)}</option>`).join('');
   } catch {}
 }
 
@@ -1983,22 +1983,27 @@ async function loadTransf(){
       const res = await api(q);
       const lista = res.rows || res;
 
-      $('#tfList').innerHTML = lista.map(t => `
+      $('#tfList').innerHTML = lista.map(t => {
+        const pedidoId = Number(t.pedido_id);
+        const hasPedido = Number.isFinite(pedidoId) && pedidoId > 0;
+
+        return `
         <tr>
-          <td>#${t.pedido_id||'-'}</td>
-          <td>${t.cliente}</td>
+          <td>#${hasPedido ? pedidoId : '-'}</td>
+          <td>${esc(t.cliente)}</td>
           <td><b>${money(t.monto)}</b></td>
           <td style="text-align:center">
-            ${t.pedido_id 
+            ${hasPedido
               ? `<input type="checkbox" 
                         style="transform: scale(1.5); cursor: pointer;" 
                         ${t.validado ? 'checked' : ''} 
-                        onchange="togglePagoRepartidor(${t.pedido_id}, this)">` 
+                        onchange="togglePagoRepartidor(${pedidoId}, this)">`
               : (t.validado ? '✅' : '⏳') // Si no tiene pedido asociado, mostramos solo estado
             }
           </td>
         </tr>
-      `).join('');
+      `;
+      }).join('');
   } catch(e) { console.error(e); }
 }
 
