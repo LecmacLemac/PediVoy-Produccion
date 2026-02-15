@@ -1161,6 +1161,14 @@
       setTimeout(() => t.classList.remove('show'), 3000);
     }
 
+    const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;'
+    }[c]));
+
     // Modo seguro: auth por cookie httpOnly
     const authFetch = (url, opts = {}) => {
       const { headers = {}, ...rest } = opts;
@@ -1226,7 +1234,7 @@ $('#logout').onclick = async (e) => {
         companies = data;
         render();
       } else {
-        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:var(--danger);">Error: ${data?.error || ''}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:var(--danger);">Error: ${esc(data?.error || '')}</td></tr>`;
       }
     }
 
@@ -1335,48 +1343,48 @@ $('#logout').onclick = async (e) => {
         }
 
         const modSummaryHtml = modSummary
-          ? '<div style="font-size:0.75rem; color:var(--muted); margin-top:2px;">Módulos: ' + modSummary + '</div>'
+          ? '<div style="font-size:0.75rem; color:var(--muted); margin-top:2px;">Módulos: ' + esc(modSummary) + '</div>'
           : '';
 
         const baseLogisticaHtml = baseLogistica
-          ? '<div style="font-size:0.75rem; color:var(--muted); margin-top:2px;">Base: ' + baseLogistica + '</div>'
+          ? '<div style="font-size:0.75rem; color:var(--muted); margin-top:2px;">Base: ' + esc(baseLogistica) + '</div>'
           : '';
 
         // Retornamos la fila HTML
         return `
           <tr>
-            <td style="color:var(--muted); font-family:monospace;">#${c.id}</td>
+            <td style="color:var(--muted); font-family:monospace;">#${Number(c.id)}</td>
             
             <td>
-              <div style="font-weight:700; color:#fff; font-size:1rem; margin-bottom:2px;">${c.nombre}</div>
+              <div style="font-weight:700; color:#fff; font-size:1rem; margin-bottom:2px;">${esc(c.nombre)}</div>
               <div style="font-size:0.8rem; color:var(--muted);">
-                <i class="fa-solid fa-briefcase"></i> ${c.razon_social || 'Sin Razón Social'}
+                <i class="fa-solid fa-briefcase"></i> ${esc(c.razon_social || 'Sin Razón Social')}
               </div>
             </td>
 
             <td>
               <div style="font-size:0.85rem; font-weight:bold;">${estado}</div>
               <div style="font-size:0.75rem; color:var(--muted);">Vence: ${vencimiento}</div>
-              <div style="font-size:0.75rem; color:var(--brand); text-transform:uppercase;">${c.plan_tipo || 'Trial'}</div>
+              <div style="font-size:0.75rem; color:var(--brand); text-transform:uppercase;">${esc(c.plan_tipo || 'Trial')}</div>
             </td>
 
             <td>
-              <div style="font-size:0.85rem;"><i class="fa-solid fa-phone"></i> ${c.telefono || '-'}</div>
-              <div style="font-size:0.85rem; color:var(--muted);">CUIT: ${c.cuit || '-'}</div>
+              <div style="font-size:0.85rem;"><i class="fa-solid fa-phone"></i> ${esc(c.telefono || '-')}</div>
+              <div style="font-size:0.85rem; color:var(--muted);">CUIT: ${esc(c.cuit || '-')}</div>
             </td>
 
             <td>
               <div style="font-size:0.75rem; color:var(--muted); margin-bottom:4px;">
-                Slug: <span style="color:var(--brand);">${slug || '-'}</span>
+                Slug: <span style="color:var(--brand);">${esc(slug || '-')}</span>
               </div>
               <div style="font-size:0.75rem; color:#fff;">
-                ${logistics}
+                ${esc(logistics)}
               </div>
               ${modSummaryHtml}${baseLogisticaHtml}
             </td>
 
             <td style="text-align:right; white-space:nowrap;">
-              <button class="btn-icon" onclick="manageCuentas(${c.id}, '${c.nombre.replace(/'/g, "\\'")}')" title="Cuentas Bancarias">
+              <button class="btn-icon" onclick='manageCuentas(${Number(c.id)}, ${JSON.stringify(String(c.nombre || ''))})' title="Cuentas Bancarias">
                 <i class="fa-solid fa-building-columns"></i>
               </button>
               <button class="btn-icon" onclick="copyLanding(${c.id})" title="Copiar Link">
@@ -1970,16 +1978,16 @@ $('#logout').onclick = async (e) => {
         <li class="account-item" style="border-left: 3px solid ${cta.activa ? 'var(--success)' : 'var(--muted)'};">
           <div class="account-info">
             <div style="display:flex; align-items:center; gap:8px;">
-              <span class="account-bank">${cta.banco || 'Banco'}</span>
+              <span class="account-bank">${esc(cta.banco || 'Banco')}</span>
               ${cta.activa ? '<i class="fa-solid fa-circle-check" style="color:var(--success); font-size:0.8rem;" title="Cuenta activa"></i>' : ''}
             </div>
             <span class="account-detail">
-              ${cta.alias ? 'Alias: <strong style="color:#fff">' + cta.alias + '</strong>' : ''} 
-              ${cta.cbu ? '<br>CBU: ' + cta.cbu : ''}
+              ${cta.alias ? 'Alias: <strong style="color:#fff">' + esc(cta.alias) + '</strong>' : ''} 
+              ${cta.cbu ? '<br>CBU: ' + esc(cta.cbu) : ''}
             </span>
-            ${cta.titular ? `<span class="account-holder">${cta.titular}</span>` : ''}
+            ${cta.titular ? `<span class="account-holder">${esc(cta.titular)}</span>` : ''}
           </div>
-          <button class="btn-icon" style="color:var(--danger); border:none;" onclick="delCuenta(${cta.id})">
+          <button class="btn-icon" style="color:var(--danger); border:none;" onclick="delCuenta(${Number(cta.id)})">
             <i class="fa-solid fa-trash"></i>
           </button>
         </li>
