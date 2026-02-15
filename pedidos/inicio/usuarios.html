@@ -333,6 +333,13 @@
   <script>
     // --- Utils ---
     const $ = s => document.querySelector(s);
+    const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;'
+    }[c]));
     function toast(msg) {
       const t = $('#toast'); t.textContent = msg; t.classList.add('show');
       setTimeout(() => t.classList.remove('show'), 3000);
@@ -355,6 +362,8 @@
     let STATE = { isSuper: false, user: null };
     let users = [];
     let drivers = [];
+    let saveBusy = false;
+    let deleteBusy = false;
 
     // --- API ---
     async function api(endpoint, opts = {}) {
@@ -389,7 +398,7 @@
       const [resUsers, resDrivers] = await Promise.all([api(urlUsers), api(urlDrivers)]);
 
       if (Array.isArray(resUsers)) users = resUsers;
-      else $('#tbBody').innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--danger);">Error: ${resUsers.error}</td></tr>`;
+      else $('#tbBody').innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--danger);">Error: ${esc(resUsers?.error || '')}</td></tr>`;
 
       if (Array.isArray(resDrivers)) {
         drivers = resDrivers;
@@ -408,20 +417,22 @@
       
       tbody.innerHTML = users.map(u => {
         const driverName = u.chofer_id 
-          ? (drivers.find(d => d.id === u.chofer_id)?.nombre || `ID: ${u.chofer_id}`) 
+          ? esc(drivers.find(d => d.id === u.chofer_id)?.nombre || `ID: ${u.chofer_id}`)
           : '<span style="color:var(--muted)">—</span>';
         
-        const roleLabel = u.role === 'user' ? 'Admin' : (u.role === 'super' ? 'Super Admin' : u.role);
+        const roleRaw = String(u.role || '').toLowerCase();
+        const roleClass = ['admin','user','repartidor','super'].includes(roleRaw) ? roleRaw : 'user';
+        const roleLabel = roleRaw === 'user' ? 'Admin' : (roleRaw === 'super' ? 'Super Admin' : roleRaw);
         
         return `
         <tr>
-          <td style="font-weight:600; color:#fff;">${u.username}</td>
-          <td><span class="badge badge-${u.role}">${roleLabel}</span></td>
-          <td style="color:var(--muted); font-family:monospace;">${u.empresa_id || (u.role==='super'?'GLOBAL':'-')}</td>
+          <td style="font-weight:600; color:#fff;">${esc(u.username)}</td>
+          <td><span class="badge badge-${roleClass}">${esc(roleLabel)}</span></td>
+          <td style="color:var(--muted); font-family:monospace;">${u.empresa_id ? Number(u.empresa_id) : (roleRaw==='super'?'GLOBAL':'-')}</td>
           <td>${driverName}</td>
           <td style="text-align:right;">
-            <button class="btn-icon" onclick="edit(${u.id})" title="Editar">✏️</button>
-            <button class="btn-icon" onclick="del(${u.id})" title="Eliminar" style="color:var(--danger); border-color:rgba(239,68,68,0.3);">🗑️</button>
+            <button class="btn-icon" onclick="edit(${Number(u.id)})" title="Editar">✏️</button>
+            <button class="btn-icon" onclick="del(${Number(u.id)}, this)" title="Eliminar" style="color:var(--danger); border-color:rgba(239,68,68,0.3);">🗑️</button>
           </td>
         </tr>
       `}).join('');
@@ -434,7 +445,7 @@
         return;
       }
       sel.innerHTML = '<option value="">-- Seleccionar Chofer --</option>' + 
-        list.map(d => `<option value="${d.id}">${d.nombre}</option>`).join('');
+        list.map(d => `<option value="${Number(d.id)}">${esc(d.nombre)}</option>`).join('');
     }
 
     function toggleChoferField() {
@@ -529,6 +540,7 @@
     }
 
     async function save() {
+      if (saveBusy) return;
       const id = $('#u_id').value;
       const username = $('#u_username').value;
       const password = $('#u_password').value;
@@ -556,21 +568,54 @@
       const method = id ? 'PUT' : 'POST';
       const url = id ? `/api/admin/usuarios/${id}` : '/api/admin/usuarios';
 
-      const res = await api(url, { method, body: JSON.stringify(body) });
-      
-      if (res.error) toast('❌ ' + res.error);
-      else {
-        toast(id ? '✅ Actualizado' : '✅ Creado');
-        closeModal();
-        load();
+      const saveBtn = document.querySelector('#modal .modal-footer .btn.btn-primary');
+      const prevTxt = saveBtn ? saveBtn.textContent : '';
+      saveBusy = true;
+      if (saveBtn) {
+        saveBtn.disabled = true;
+        saveBtn.textContent = 'Guardando...';
+      }
+
+      try {
+        const res = await api(url, { method, body: JSON.stringify(body) });
+        
+        if (res.error) toast('❌ ' + res.error);
+        else {
+          toast(id ? '✅ Actualizado' : '✅ Creado');
+          closeModal();
+          load();
+        }
+      } finally {
+        saveBusy = false;
+        if (saveBtn) {
+          saveBtn.disabled = false;
+          saveBtn.textContent = prevTxt;
+        }
       }
     }
 
-    async function del(id) {
+    async function del(id, btnEl = null) {
+      if (deleteBusy) return;
       if (!confirm('¿Eliminar este usuario?')) return;
-      const res = await api(`/api/admin/usuarios/${id}`, { method: 'DELETE' });
-      if (res.error) toast('❌ ' + res.error);
-      else { toast('🗑️ Eliminado'); load(); }
+
+      deleteBusy = true;
+      const prevTxt = btnEl ? btnEl.textContent : '';
+      if (btnEl) {
+        btnEl.disabled = true;
+        btnEl.textContent = '…';
+      }
+
+      try {
+        const res = await api(`/api/admin/usuarios/${id}`, { method: 'DELETE' });
+        if (res.error) toast('❌ ' + res.error);
+        else { toast('🗑️ Eliminado'); load(); }
+      } finally {
+        deleteBusy = false;
+        if (btnEl) {
+          btnEl.disabled = false;
+          btnEl.textContent = prevTxt;
+        }
+      }
     }
 
     // --- Init ---
@@ -588,7 +633,7 @@
                 const list = await api('/api/empresas');
                 if (Array.isArray(list)) {
                     const opts = '<option value="">-- Seleccionar Empresa --</option>' + 
-                                 list.map(e => `<option value="${e.id}">${e.nombre}</option>`).join('');
+                                 list.map(e => `<option value="${Number(e.id)}">${esc(e.nombre)}</option>`).join('');
                     $('#empFilter').innerHTML = opts;
                     $('#u_empresa_id').innerHTML = opts;
                     $('#empFilter').addEventListener('change', load);
