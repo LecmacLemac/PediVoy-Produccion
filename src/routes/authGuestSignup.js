@@ -6,6 +6,37 @@ import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import crypto from 'node:crypto';
 
+const SIGNUP_WINDOW_MS = Number(process.env.SIGNUP_RATE_WINDOW_MS || 60 * 60 * 1000);
+const SIGNUP_MAX_ATTEMPTS = Number(process.env.SIGNUP_RATE_MAX || 8);
+const signupAttempts = new Map();
+
+const USERNAME_RE = /^[a-zA-Z0-9_.-]{3,30}$/;
+const PHONE_RE = /^[0-9+\-\s()]{8,20}$/;
+
+function getClientIp(req) {
+  return String(
+    req.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
+    req.ip ||
+    req.socket?.remoteAddress ||
+    'unknown'
+  );
+}
+
+function hitRateLimit(map, key, windowMs, max) {
+  const now = Date.now();
+  for (const [k, v] of map.entries()) {
+    if (!v || now - v.start > windowMs) map.delete(k);
+  }
+  const cur = map.get(key);
+  if (!cur || now - cur.start > windowMs) {
+    map.set(key, { count: 1, start: now });
+    return false;
+  }
+  cur.count += 1;
+  map.set(key, cur);
+  return cur.count > max;
+}
+
 export function createAuthGuestSignupRouter(deps) {
   const { query, withAuth } = deps || {};
   if (typeof query !== 'function') throw new Error('createAuthGuestSignupRouter: falta query(fn)');
@@ -109,11 +140,23 @@ export function createAuthGuestSignupRouter(deps) {
     try {
       const { username, password, telefono, email, empresa_nombre, rubro } = req.body || {};
 
+      const ip = getClientIp(req);
+      const rateKey = `ip:${ip}`;
+      if (hitRateLimit(signupAttempts, rateKey, SIGNUP_WINDOW_MS, SIGNUP_MAX_ATTEMPTS)) {
+        return res.status(429).json({ error: 'Demasiados intentos de registro. Reintentá más tarde.' });
+      }
+
       if (!username || !password || !empresa_nombre) {
         return res.status(400).json({ error: 'Faltan datos obligatorios' });
       }
-      if (String(password).length < 6) {
-        return res.status(400).json({ error: 'La contraseña debe tener al menos 6 caracteres' });
+      if (!USERNAME_RE.test(String(username))) {
+        return res.status(400).json({ error: 'Usuario inválido' });
+      }
+      if (String(password).length < 8) {
+        return res.status(400).json({ error: 'La contraseña debe tener al menos 8 caracteres' });
+      }
+      if (telefono && !PHONE_RE.test(String(telefono))) {
+        return res.status(400).json({ error: 'Teléfono inválido' });
       }
 
       const salt = await bcrypt.genSalt(10);
@@ -174,6 +217,9 @@ export function createAuthGuestSignupRouter(deps) {
         // Por defecto NO devolvemos el token en JSON.
         // Compat opcional: ?includeToken=1 o header x-include-token: 1
         const includeToken = String(req.query?.includeToken || req.headers['x-include-token'] || '') === '1';
+        // Registro correcto: limpiamos bucket de rate-limit para este IP
+        signupAttempts.delete(rateKey);
+
         if (includeToken) {
           return res.json({ ok: true, token, user: newUser, message: '¡Empresa creada con éxito!' });
         }

@@ -4,6 +4,38 @@ import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import { query } from '../db.js';
 
+const LOGIN_WINDOW_MS = Number(process.env.LOGIN_RATE_WINDOW_MS || 10 * 60 * 1000);
+const LOGIN_MAX_ATTEMPTS = Number(process.env.LOGIN_RATE_MAX || 10);
+const loginAttempts = new Map();
+
+function getClientIp(req) {
+  return String(
+    req.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
+    req.ip ||
+    req.socket?.remoteAddress ||
+    'unknown'
+  );
+}
+
+function cleanupRateBucket(map, now, windowMs) {
+  for (const [key, v] of map.entries()) {
+    if (!v || now - v.start > windowMs) map.delete(key);
+  }
+}
+
+function hitRateLimit(map, key, windowMs, max) {
+  const now = Date.now();
+  cleanupRateBucket(map, now, windowMs);
+  const cur = map.get(key);
+  if (!cur || now - cur.start > windowMs) {
+    map.set(key, { count: 1, start: now });
+    return false;
+  }
+  cur.count += 1;
+  map.set(key, cur);
+  return cur.count > max;
+}
+
 export function createAuthRouter() {
   const router = express.Router();
 
@@ -29,6 +61,16 @@ export function createAuthRouter() {
       const { username, password } = req.body || {};
       if (!username || !password) return res.status(400).json({ error: 'Faltan credenciales' });
 
+      const ip = getClientIp(req);
+      const keyIp = `ip:${ip}`;
+      const keyUser = `ip:${ip}:user:${String(username).toLowerCase()}`;
+      if (
+        hitRateLimit(loginAttempts, keyIp, LOGIN_WINDOW_MS, LOGIN_MAX_ATTEMPTS) ||
+        hitRateLimit(loginAttempts, keyUser, LOGIN_WINDOW_MS, Math.max(5, Math.floor(LOGIN_MAX_ATTEMPTS / 2)))
+      ) {
+        return res.status(429).json({ error: 'Demasiados intentos. Reintentá en unos minutos.' });
+      }
+
       const rows = await query(
         `SELECT u.id, u.username, u.password, u.role, u.empresa_id, u.chofer_id,
                 e.plan_estado, e.plan_vencimiento
@@ -49,6 +91,10 @@ export function createAuthRouter() {
 
       const match = await bcrypt.compare(String(password), String(user.password));
       if (!match) return res.status(401).json({ error: 'Credenciales inválidas' });
+
+      // Login correcto: limpiamos buckets de rate-limit para esta combinación
+      loginAttempts.delete(keyIp);
+      loginAttempts.delete(keyUser);
 
       const token = jwt.sign(
         {

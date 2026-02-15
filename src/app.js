@@ -78,6 +78,19 @@ export function createApp(deps) {
   app.use(cookieParser());
 
   app.use((req, res, next) => {
+    const csp = [
+      "default-src 'self'",
+      "base-uri 'self'",
+      "object-src 'none'",
+      "frame-ancestors 'none'",
+      "img-src 'self' data: https:",
+      "font-src 'self' data: https:",
+      "style-src 'self' 'unsafe-inline' https:",
+      "script-src 'self' 'unsafe-inline' https:",
+      "connect-src 'self' https: ws: wss:",
+    ].join('; ');
+
+    res.set('Content-Security-Policy', csp);
     res.set('X-Content-Type-Options', 'nosniff');
     res.set('X-Frame-Options', 'DENY');
     res.set('Referrer-Policy', 'no-referrer');
