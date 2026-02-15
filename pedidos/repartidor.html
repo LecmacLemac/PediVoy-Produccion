@@ -1054,7 +1054,10 @@ function renderCards() {
 
   // 2. GENERACIÓN DE HTML
   const html = list.map(p => {
-    const st = p.estado;
+    const stRaw = String(p.estado || '').toLowerCase();
+    const st = ['pendiente', 'en_ruta', 'en_camino', 'entregado', 'cancelado'].includes(stRaw)
+      ? stRaw
+      : 'pendiente';
     const isVerif = verificadas.has(Number(p.id)) || p.validado;
     const met = (p.metodo_pago || 'efectivo').toLowerCase();
     
@@ -1829,7 +1832,7 @@ function renderMap(){
     const lat = Number(p.latitud), lng = Number(p.longitud);
     const color = p.estado==='entregado'?'#10b981' : p.estado==='en_ruta'?'#06b6d4':'#f59e0b';
     const icon = L.divIcon({ className: '', html: `<div class="m-label" style="border-left:4px solid ${color}">${esc(p.cliente.split(' ')[0])}</div>` });
-    L.marker([lat, lng], {icon}).addTo(mapMarkers).bindPopup(`<b>${esc(p.cliente)}</b><br>${esc(p.direccion)}<br>${p.estado}`);
+    L.marker([lat, lng], {icon}).addTo(mapMarkers).bindPopup(`<b>${esc(p.cliente)}</b><br>${esc(p.direccion)}<br>${esc(p.estado || '')}`);
     bounds.push([lat, lng]);
   });
   if(bounds.length) map.fitBounds(bounds, {padding:[50,50], maxZoom:16});
@@ -1869,7 +1872,7 @@ async function loadGHist(){
     const arr = Array.isArray(gs) ? gs : (gs.rows || []);
     
     // CORRECCIÓN HORA ARGENTINA: Mostrar DD/MM usando la zona horaria correcta
-    $('#gList').innerHTML = arr.map(g => `<tr><td>${formatFechaAR(g.fecha)}</td><td>${g.tipo}</td><td>${esc(g.descripcion)}</td><td>$${g.monto}</td></tr>`).join('');
+    $('#gList').innerHTML = arr.map(g => `<tr><td>${formatFechaAR(g.fecha)}</td><td>${esc(g.tipo)}</td><td>${esc(g.descripcion)}</td><td>${money(g.monto)}</td></tr>`).join('');
   } catch {}
 }
 
