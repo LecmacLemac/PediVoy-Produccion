@@ -328,9 +328,12 @@
 
 
     <section>
-      <div style="display:flex; justify-content:space-between; margin-bottom:0.5rem; align-items:center;">
+      <div style="display:flex; justify-content:space-between; margin-bottom:0.5rem; align-items:center; gap:8px; flex-wrap:wrap;">
         <h3 style="margin:0; color:#fff;">Listado de Pedidos</h3>
-        <span class="role-badge"><span id="totalCount">0</span> registros</span>
+        <div style="display:flex; align-items:center; gap:8px;">
+          <small id="syncInfo" style="color:var(--muted); font-size:0.8rem;">Sin sincronizar</small>
+          <span class="role-badge"><span id="totalCount">0</span> registros</span>
+        </div>
       </div>
       
       <div class="table-responsive" id="tableCard">
@@ -487,6 +490,7 @@
     const FILTERS_LS_KEY = 'dashboard:filters:v1';
     let refreshTimer = null;
     let refreshInFlight = false;
+    let lastSyncAt = null;
 
     // ====== Utils ======
     const ARS = new Intl.NumberFormat('es-AR', {
@@ -564,6 +568,21 @@
         choferFilter.value = pChofer;
         delete choferFilter.dataset.pendingValue;
       }
+    }
+
+    function updateSyncInfo(){
+      const el = document.getElementById('syncInfo');
+      if (!el) return;
+
+      if (!lastSyncAt) {
+        el.textContent = 'Sin sincronizar';
+        return;
+      }
+
+      const sec = Math.max(0, Math.floor((Date.now() - lastSyncAt) / 1000));
+      if (sec < 5) el.textContent = 'Actualizado recién';
+      else if (sec < 60) el.textContent = `Actualizado hace ${sec}s`;
+      else el.textContent = `Actualizado hace ${Math.floor(sec / 60)}m`;
     }
 
     function scheduleAutoRefresh(delayMs = null){
@@ -672,6 +691,8 @@
         window.addEventListener('offline', () => scheduleAutoRefresh());
 
         scheduleAutoRefresh();
+        updateSyncInfo();
+        setInterval(updateSyncInfo, 15000);
 
       } catch (e) {
         console.error(e);
@@ -822,8 +843,11 @@
           return;
         }
         pedidos = await r.json();
+        lastSyncAt = Date.now();
+        updateSyncInfo();
       } catch {
         pedidos = [];
+        updateSyncInfo();
       }
     }
 
