@@ -956,6 +956,15 @@
       return { 'Content-Type': 'application/json' };
     }
 
+    function escapeHtml(value) {
+      return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
     function showToast(message, type = 'info') {
       const toast = document.getElementById('toast');
       if (!toast) return;
@@ -1062,7 +1071,7 @@
         label = 'Baja';
       }
 
-      return '<span class="' + cls + suffix + '">' + label + '</span>';
+      return '<span class="' + cls + suffix + '">' + escapeHtml(label) + '</span>';
     }
 
     function getActivoIdFromUrl() {
@@ -1272,11 +1281,11 @@
         }
 
         const out = rows.map(row => {
-          const fecha   = toLocalDateTime(row.fecha);
-          const accion  = row.accion || '–';
-          const usuario = row.usuario || '–';
-          const cliente = row.cliente_nombre || '–';
-          const detalle = row.observacion || row.detalle || '–';
+          const fecha   = escapeHtml(toLocalDateTime(row.fecha));
+          const accion  = escapeHtml(row.accion || '–');
+          const usuario = escapeHtml(row.usuario || '–');
+          const cliente = escapeHtml(row.cliente_nombre || '–');
+          const detalle = escapeHtml(row.observacion || row.detalle || '–');
           return `
             <tr>
               <td>${fecha}</td>
