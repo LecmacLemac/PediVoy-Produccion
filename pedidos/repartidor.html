@@ -638,6 +638,35 @@ let activosModalState = { pedidoId: null, data: null };
 let qrPagoState = { pedidoId: null, link: null };
 let pedidoEnProcesoId = null;
 
+const FILTROS_LS_KEY = 'repartidor:filtros:v1';
+
+function saveFiltrosUI() {
+  try {
+    const payload = {
+      estado: $('#fEstado')?.value || '',
+      zona: $('#fZona')?.value || '',
+      soloHoy: !!$('#fHoy')?.checked,
+      search: $('#fSearch')?.value || ''
+    };
+    localStorage.setItem(FILTROS_LS_KEY, JSON.stringify(payload));
+  } catch {}
+}
+
+function restoreFiltrosUI() {
+  try {
+    const raw = localStorage.getItem(FILTROS_LS_KEY);
+    if (!raw) return;
+    const data = JSON.parse(raw);
+
+    if ($('#fEstado') && typeof data.estado === 'string') $('#fEstado').value = data.estado;
+    if ($('#fSearch') && typeof data.search === 'string') $('#fSearch').value = data.search;
+    if ($('#fHoy') && typeof data.soloHoy === 'boolean') $('#fHoy').checked = data.soloHoy;
+
+    // fZona se re-aplica en loadZonas() cuando existan options
+    if ($('#fZona') && typeof data.zona === 'string') $('#fZona').dataset.pendingValue = data.zona;
+  } catch {}
+}
+
 // Locks simples para evitar doble envío (doble tap / mala señal)
 const __locks = new Map();
 async function withLock(key, fn) {
@@ -808,7 +837,10 @@ function showGpsHelp() {
     $('#gFecha').value = today;
     $('#tfDate').value = today;
 
-    // 5. Cargar Datos Principales
+    // 5. Restaurar filtros de Pedidos persistidos
+    restoreFiltrosUI();
+
+    // 6. Cargar Datos Principales
     await Promise.all([
       loadZonas(),
       loadMisZonas(),
@@ -850,8 +882,14 @@ $$('.nav-link').forEach(l => l.onclick = async (e) => {
 
 // Pedidos Filters
 function toggleFilters(){ const b = $('#filterBox'); b.style.display = b.style.display==='none'?'block':'none'; }
-['fEstado','fZona','fHoy','fSearch'].forEach(id => $('#'+id).addEventListener('change', renderCards));
-$('#fSearch').addEventListener('input', debounce(renderCards, 200));
+['fEstado','fZona','fHoy','fSearch'].forEach(id => $('#'+id).addEventListener('change', () => {
+  saveFiltrosUI();
+  renderCards();
+}));
+$('#fSearch').addEventListener('input', debounce(() => {
+  saveFiltrosUI();
+  renderCards();
+}, 200));
 $('#btnRef').onclick = loadPedidos;
 // EVENTO PARA OPTIMIZAR RUTA
 $('#btnOpt').onclick = optimizarRuta;
@@ -947,7 +985,15 @@ async function loadZonas(){
   try {
     const zs = await api('/api/zonas/choferes');
     zonas = zs || [];
-    $('#fZona').innerHTML = '<option value="">Todas</option>' + zonas.map(z=>`<option value="${Number(z.id)}">${esc(z.nombre)}</option>`).join('');
+    const fZonaEl = $('#fZona');
+    fZonaEl.innerHTML = '<option value="">Todas</option>' + zonas.map(z=>`<option value="${Number(z.id)}">${esc(z.nombre)}</option>`).join('');
+
+    // Reaplicar zona persistida cuando ya existen las opciones
+    const pendingZona = fZonaEl.dataset.pendingValue;
+    if (typeof pendingZona === 'string') {
+      fZonaEl.value = pendingZona;
+      delete fZonaEl.dataset.pendingValue;
+    }
   } catch(e) {
     zonas = [];
     notifyError('Error cargando zonas', e);
