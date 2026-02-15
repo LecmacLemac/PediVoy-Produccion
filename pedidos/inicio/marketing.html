@@ -89,6 +89,10 @@
   .box-vecinos { background: #e0f2fe; border-color: #bae6fd; }
   .box-predictivo { background: #dcfce7; border-color: #bbf7d0; }
   .box-referidos { background: #fef9c3; border-color: #fde047; }
+  .box-reactivacion { background: #fee2e2; border-color: #fecaca; }
+  .box-postentrega { background: #ede9fe; border-color: #ddd6fe; }
+  .box-clima { background: #e0f2fe; border-color: #bae6fd; }
+  .box-vip { background: #fae8ff; border-color: #f5d0fe; }
 
   .switch-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
   .switch-label { font-size: 1.1rem; font-weight: 700; display: flex; align-items: center; gap: 8px; }
@@ -232,6 +236,113 @@
             <textarea id="referidos_exito_mensaje" rows="2" placeholder="¡Ganaste un {producto} gratis! Se agrega a tu próximo pedido."></textarea>
         </div>
 
+        <!-- ESTRATEGIA 4: REACTIVACIÓN -->
+        <div class="strategy-box box-reactivacion">
+            <div class="switch-row">
+                <div class="switch-label">🔁 Reactivación Inteligente</div>
+                <label class="toggle">
+                    <input type="checkbox" id="reactivacion_activado">
+                    <span class="slider"></span>
+                </label>
+            </div>
+            <p class="desc">Detecta clientes sin compra reciente y dispara una campaña automática para recuperarlos.</p>
+
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+                <div>
+                    <label>Días sin compra (trigger):</label>
+                    <input type="number" id="reactivacion_dias" value="21" min="1">
+                </div>
+                <div>
+                    <label>Máx. intentos por cliente:</label>
+                    <input type="number" id="reactivacion_intentos_max" value="3" min="1">
+                </div>
+            </div>
+
+            <label>Mensaje:</label>
+            <textarea id="reactivacion_mensaje" rows="2">Hola {cliente}, hace rato no te pedimos 😊 ¿Te llevo agua hoy?</textarea>
+        </div>
+
+        <!-- ESTRATEGIA 5: POST-ENTREGA + UPSELL -->
+        <div class="strategy-box box-postentrega">
+            <div class="switch-row">
+                <div class="switch-label">📦 Post-Entrega + Upsell</div>
+                <label class="toggle">
+                    <input type="checkbox" id="postentrega_activado">
+                    <span class="slider"></span>
+                </label>
+            </div>
+            <p class="desc">Después de entregar, hace seguimiento y propone compra complementaria.</p>
+
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+                <div>
+                    <label>Horas post-entrega:</label>
+                    <input type="number" id="postentrega_horas" value="4" min="1">
+                </div>
+                <div>
+                    <label>Producto sugerido (opcional):</label>
+                    <input type="text" id="postentrega_producto" placeholder="Ej: Bidón 20L / Dispenser">
+                </div>
+            </div>
+
+            <label>Mensaje:</label>
+            <textarea id="postentrega_mensaje" rows="2">Hola {cliente}, ¿todo bien con la entrega? Si querés te sumo {producto} para mañana.</textarea>
+        </div>
+
+        <!-- ESTRATEGIA 6: CLIMA -->
+        <div class="strategy-box box-clima">
+            <div class="switch-row">
+                <div class="switch-label">🌤️ Campaña por Clima</div>
+                <label class="toggle">
+                    <input type="checkbox" id="clima_activado">
+                    <span class="slider"></span>
+                </label>
+            </div>
+            <p class="desc">Activa mensajes especiales en días de calor/frío para anticipar demanda.</p>
+
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+                <div>
+                    <label>Umbral calor (°C):</label>
+                    <input type="number" id="clima_temp_alta" value="30">
+                </div>
+                <div>
+                    <label>Umbral frío (°C):</label>
+                    <input type="number" id="clima_temp_baja" value="8">
+                </div>
+            </div>
+
+            <label>Mensaje calor:</label>
+            <textarea id="clima_mensaje_calor" rows="2">Se viene calor hoy 🔥 ¿Te llevo agua antes de que te quedes sin stock?</textarea>
+
+            <label>Mensaje frío/lluvia:</label>
+            <textarea id="clima_mensaje_frio" rows="2">Hoy está feo para salir 🌧️ Si querés te lo llevo a domicilio.</textarea>
+        </div>
+
+        <!-- ESTRATEGIA 7: VIP / LEALTAD -->
+        <div class="strategy-box box-vip">
+            <div class="switch-row">
+                <div class="switch-label">👑 Programa VIP</div>
+                <label class="toggle">
+                    <input type="checkbox" id="vip_activado">
+                    <span class="slider"></span>
+                </label>
+            </div>
+            <p class="desc">Premia la frecuencia de compra para mejorar retención y recompra.</p>
+
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+                <div>
+                    <label>Pedidos para nivel VIP:</label>
+                    <input type="number" id="vip_pedidos_min" value="10" min="1">
+                </div>
+                <div>
+                    <label>Beneficio:</label>
+                    <input type="text" id="vip_beneficio" placeholder="Ej: 1 bidón bonificado">
+                </div>
+            </div>
+
+            <label>Mensaje VIP:</label>
+            <textarea id="vip_mensaje" rows="2">¡{cliente}, ya sos VIP! 🎉 Desde ahora tenés: {beneficio}.</textarea>
+        </div>
+
         <button type="submit" class="btn-save">Guardar Configuración</button>
     </form>
   </div>
@@ -359,6 +470,27 @@
                 setVal('referidos_cantidad', data.referidos_cantidad, 1);
                 setVal('referidos_mensaje', data.referidos_mensaje, 'Gracias {cliente}! Link: {link}');
                 setVal('referidos_exito_mensaje', data.referidos_exito_mensaje, '¡Ganaste un {producto} gratis!');
+
+                setCheck('reactivacion_activado', data.reactivacion_activado);
+                setVal('reactivacion_dias', data.reactivacion_dias, 21);
+                setVal('reactivacion_intentos_max', data.reactivacion_intentos_max, 3);
+                setVal('reactivacion_mensaje', data.reactivacion_mensaje, 'Hola {cliente}, hace rato no te pedimos 😊 ¿Te llevo agua hoy?');
+
+                setCheck('postentrega_activado', data.postentrega_activado);
+                setVal('postentrega_horas', data.postentrega_horas, 4);
+                setVal('postentrega_producto', data.postentrega_producto, '');
+                setVal('postentrega_mensaje', data.postentrega_mensaje, 'Hola {cliente}, ¿todo bien con la entrega? Si querés te sumo {producto} para mañana.');
+
+                setCheck('clima_activado', data.clima_activado);
+                setVal('clima_temp_alta', data.clima_temp_alta, 30);
+                setVal('clima_temp_baja', data.clima_temp_baja, 8);
+                setVal('clima_mensaje_calor', data.clima_mensaje_calor, 'Se viene calor hoy 🔥 ¿Te llevo agua antes de que te quedes sin stock?');
+                setVal('clima_mensaje_frio', data.clima_mensaje_frio, 'Hoy está feo para salir 🌧️ Si querés te lo llevo a domicilio.');
+
+                setCheck('vip_activado', data.vip_activado);
+                setVal('vip_pedidos_min', data.vip_pedidos_min, 10);
+                setVal('vip_beneficio', data.vip_beneficio, '');
+                setVal('vip_mensaje', data.vip_mensaje, '¡{cliente}, ya sos VIP! 🎉 Desde ahora tenés: {beneficio}.');
             } else {
                 // Defaults seguros si no hay config guardada
                 setCheck('vecinos_activado', false);
@@ -372,6 +504,27 @@
                 setVal('referidos_cantidad', null, 1);
                 setVal('referidos_mensaje', null, 'Gracias {cliente}! Link: {link}');
                 setVal('referidos_exito_mensaje', null, '¡Ganaste un {producto} gratis!');
+
+                setCheck('reactivacion_activado', false);
+                setVal('reactivacion_dias', null, 21);
+                setVal('reactivacion_intentos_max', null, 3);
+                setVal('reactivacion_mensaje', null, 'Hola {cliente}, hace rato no te pedimos 😊 ¿Te llevo agua hoy?');
+
+                setCheck('postentrega_activado', false);
+                setVal('postentrega_horas', null, 4);
+                setVal('postentrega_producto', null, '');
+                setVal('postentrega_mensaje', null, 'Hola {cliente}, ¿todo bien con la entrega? Si querés te sumo {producto} para mañana.');
+
+                setCheck('clima_activado', false);
+                setVal('clima_temp_alta', null, 30);
+                setVal('clima_temp_baja', null, 8);
+                setVal('clima_mensaje_calor', null, 'Se viene calor hoy 🔥 ¿Te llevo agua antes de que te quedes sin stock?');
+                setVal('clima_mensaje_frio', null, 'Hoy está feo para salir 🌧️ Si querés te lo llevo a domicilio.');
+
+                setCheck('vip_activado', false);
+                setVal('vip_pedidos_min', null, 10);
+                setVal('vip_beneficio', null, '');
+                setVal('vip_mensaje', null, '¡{cliente}, ya sos VIP! 🎉 Desde ahora tenés: {beneficio}.');
             }
         } catch(e) { console.error('Error loading config:', e); }
     }
@@ -409,7 +562,28 @@
               referidos_producto_id: Number.isFinite(referidosProdId) ? referidosProdId : null,
               referidos_cantidad: toPosInt(document.getElementById('referidos_cantidad').value, 1),
               referidos_mensaje: document.getElementById('referidos_mensaje').value.trim(),
-              referidos_exito_mensaje: document.getElementById('referidos_exito_mensaje').value.trim()
+              referidos_exito_mensaje: document.getElementById('referidos_exito_mensaje').value.trim(),
+
+              reactivacion_activado: document.getElementById('reactivacion_activado').checked,
+              reactivacion_dias: toPosInt(document.getElementById('reactivacion_dias').value, 21),
+              reactivacion_intentos_max: toPosInt(document.getElementById('reactivacion_intentos_max').value, 3),
+              reactivacion_mensaje: document.getElementById('reactivacion_mensaje').value.trim(),
+
+              postentrega_activado: document.getElementById('postentrega_activado').checked,
+              postentrega_horas: toPosInt(document.getElementById('postentrega_horas').value, 4),
+              postentrega_producto: document.getElementById('postentrega_producto').value.trim(),
+              postentrega_mensaje: document.getElementById('postentrega_mensaje').value.trim(),
+
+              clima_activado: document.getElementById('clima_activado').checked,
+              clima_temp_alta: Number(document.getElementById('clima_temp_alta').value || 30),
+              clima_temp_baja: Number(document.getElementById('clima_temp_baja').value || 8),
+              clima_mensaje_calor: document.getElementById('clima_mensaje_calor').value.trim(),
+              clima_mensaje_frio: document.getElementById('clima_mensaje_frio').value.trim(),
+
+              vip_activado: document.getElementById('vip_activado').checked,
+              vip_pedidos_min: toPosInt(document.getElementById('vip_pedidos_min').value, 10),
+              vip_beneficio: document.getElementById('vip_beneficio').value.trim(),
+              vip_mensaje: document.getElementById('vip_mensaje').value.trim()
           };
 
           const res = await authFetch('/api/marketing/config', {
