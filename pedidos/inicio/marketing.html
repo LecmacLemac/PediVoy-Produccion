@@ -99,6 +99,31 @@
   
   .desc { font-size: 0.9rem; color: #334155; margin-bottom: 15px; line-height: 1.4; }
 
+  .help-box {
+    margin-bottom: 12px;
+    border: 1px dashed rgba(15,23,42,0.25);
+    border-radius: 8px;
+    background: rgba(255,255,255,0.7);
+  }
+  .help-box summary {
+    cursor: pointer;
+    list-style: none;
+    padding: 10px 12px;
+    font-size: 0.88rem;
+    font-weight: 700;
+    color: #0f172a;
+    user-select: none;
+  }
+  .help-box summary::-webkit-details-marker { display: none; }
+  .help-box summary::before { content: 'ℹ️ '; }
+  .help-content {
+    padding: 0 12px 12px 12px;
+    font-size: 0.86rem;
+    color: #334155;
+    line-height: 1.45;
+  }
+  .help-content ul { margin: 8px 0 0 18px; padding: 0; }
+
   label { display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 5px; color: #475569; margin-top: 12px; text-transform: uppercase; }
   
   input[type="text"], input[type="number"], textarea, select {
@@ -172,6 +197,17 @@
                 </label>
             </div>
             <p class="desc">Cuando un pedido sale "En Ruta", avisa a los vecinos cercanos (200m) que no compran hace tiempo.</p>
+            <details class="help-box">
+                <summary>Cómo funciona esta estrategia</summary>
+                <div class="help-content">
+                    Se activa cuando un pedido pasa a <b>En Ruta</b>. El sistema busca clientes cercanos que cumplan los días sin compra y les envía este mensaje.
+                    <ul>
+                        <li><b>Radio:</b> distancia máxima desde el punto de entrega.</li>
+                        <li><b>Días sin compra:</b> evita enviar a clientes muy recientes.</li>
+                        <li>Podés usar <code>{cliente}</code> para personalizar el texto.</li>
+                    </ul>
+                </div>
+            </details>
             
             <label>Mensaje (usa {cliente} para el nombre):</label>
             <textarea id="vecinos_mensaje" rows="2">Hola {cliente} 👋, el camión está en tu cuadra. Avisame si te dejo algo!</textarea>
@@ -198,6 +234,17 @@
                 </label>
             </div>
             <p class="desc">Analiza el consumo histórico y envía un mensaje proactivo el día exacto de reposición.</p>
+            <details class="help-box">
+                <summary>Cómo funciona esta estrategia</summary>
+                <div class="help-content">
+                    Estima la próxima fecha de recompra según historial del cliente y dispara un mensaje antes de que se quede sin stock.
+                    <ul>
+                        <li>Ideal para clientes frecuentes con patrón estable.</li>
+                        <li>Usá mensajes cortos y con propuesta concreta.</li>
+                        <li>Podés usar <code>{cliente}</code> para personalizar.</li>
+                    </ul>
+                </div>
+            </details>
             
             <label>Mensaje:</label>
             <textarea id="predictivo_mensaje" rows="2">Hola {cliente}, calculo que te queda poca agua. ¿Te llevo mañana?</textarea>
@@ -213,6 +260,17 @@
                 </label>
             </div>
             <p class="desc">Cuando entregás un pedido, envía un link único. Si un vecino compra, <b>premiamos al cliente</b>.</p>
+            <details class="help-box">
+                <summary>Cómo funciona esta estrategia</summary>
+                <div class="help-content">
+                    Cada cliente recibe un link/referencia. Si trae una venta válida, se genera una recompensa automática.
+                    <ul>
+                        <li><b>Producto y cantidad:</b> definen el premio.</li>
+                        <li><b>Mensaje invitación:</b> texto que recibe para compartir.</li>
+                        <li><b>Mensaje éxito:</b> confirmación cuando gana el premio.</li>
+                    </ul>
+                </div>
+            </details>
             
             <!-- PANEL DE RECOMPENSA AGREGADO -->
             <div style="background:rgba(255,255,255,0.9); padding:15px; border-radius:8px; border:1px dashed #ca8a04; margin-bottom:15px;">
@@ -246,6 +304,17 @@
                 </label>
             </div>
             <p class="desc">Detecta clientes sin compra reciente y dispara una campaña automática para recuperarlos.</p>
+            <details class="help-box">
+                <summary>Cómo funciona esta estrategia</summary>
+                <div class="help-content">
+                    Revisa clientes inactivos y los contacta de forma gradual para recuperar ventas.
+                    <ul>
+                        <li><b>Días sin compra:</b> define cuándo entra en campaña.</li>
+                        <li><b>Máx. intentos:</b> limita insistencia por cliente.</li>
+                        <li>Recomendación: empezar con mensajes amigables, no agresivos.</li>
+                    </ul>
+                </div>
+            </details>
 
             <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
                 <div>
@@ -272,6 +341,17 @@
                 </label>
             </div>
             <p class="desc">Después de entregar, hace seguimiento y propone compra complementaria.</p>
+            <details class="help-box">
+                <summary>Cómo funciona esta estrategia</summary>
+                <div class="help-content">
+                    Envía un mensaje automáticamente unas horas después de la entrega para confirmar satisfacción y abrir upsell.
+                    <ul>
+                        <li><b>Horas post-entrega:</b> espera antes del contacto.</li>
+                        <li><b>Producto sugerido:</b> opcional para completar el mensaje.</li>
+                        <li>Funciona mejor con tono consultivo: “¿te agrego…?”.</li>
+                    </ul>
+                </div>
+            </details>
 
             <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
                 <div>
@@ -298,6 +378,17 @@
                 </label>
             </div>
             <p class="desc">Activa mensajes especiales en días de calor/frío para anticipar demanda.</p>
+            <details class="help-box">
+                <summary>Cómo funciona esta estrategia</summary>
+                <div class="help-content">
+                    Evalúa la temperatura del día y dispara mensajes distintos según calor o frío/lluvia.
+                    <ul>
+                        <li><b>Umbral calor:</b> desde qué temperatura usa campaña de calor.</li>
+                        <li><b>Umbral frío:</b> desde qué temperatura usa campaña de frío.</li>
+                        <li>Definí mensajes cortos y con CTA claro.</li>
+                    </ul>
+                </div>
+            </details>
 
             <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
                 <div>
@@ -327,6 +418,17 @@
                 </label>
             </div>
             <p class="desc">Premia la frecuencia de compra para mejorar retención y recompra.</p>
+            <details class="help-box">
+                <summary>Cómo funciona esta estrategia</summary>
+                <div class="help-content">
+                    Al alcanzar cierta cantidad de pedidos, el cliente entra en nivel VIP y recibe un beneficio definido.
+                    <ul>
+                        <li><b>Pedidos mín.:</b> condición para activar beneficio.</li>
+                        <li><b>Beneficio:</b> texto libre (ej. bidón bonificado).</li>
+                        <li>Se recomienda mantener beneficio simple y medible.</li>
+                    </ul>
+                </div>
+            </details>
 
             <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
                 <div>
