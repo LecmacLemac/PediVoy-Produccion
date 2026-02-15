@@ -737,11 +737,13 @@
           empFilter.innerHTML = optionTodas + optionSinEmp + optionsEmpresas;
           applyPendingFilterValues();
 
-          if (me && me.empresa_id) {
+          // En SUPER ADMIN no fijamos empresa, aunque tenga empresa_id en su usuario
+          if (!isSuper && me && me.empresa_id) {
             empFilter.value   = String(me.empresa_id);
             empFilter.disabled = true;
           } else {
             empFilter.value = ''; // Por defecto "Todas"
+            empFilter.disabled = false;
           }
 
           await loadChoferes();
