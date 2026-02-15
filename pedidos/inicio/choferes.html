@@ -337,6 +337,13 @@
   <script>
     // --- Utils ---
     const $ = s => document.querySelector(s);
+    const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;'
+    }[c]));
     function toast(msg) {
       const t = $('#toast'); t.textContent = msg; t.classList.add('show');
       setTimeout(() => t.classList.remove('show'), 3000);
@@ -358,6 +365,8 @@
     // --- State ---
     let STATE = { isSuper: false, user: null };
     let choferes = [];
+    let saveBusy = false;
+    let deleteBusy = false;
 
     // --- API ---
     async function api(endpoint, opts = {}) {
@@ -405,16 +414,17 @@
         const tipoClass = c.tipo === 'fletero' ? 'tag-fletero' : 'tag-propio';
         const tipoLabel = c.tipo === 'fletero' ? 'Fletero' : 'Propio';
         
+        const id = Number(c.id);
         return `
         <tr>
-          <td style="color:var(--muted); font-family:monospace;">#${c.id}</td>
-          <td style="font-weight:600; color:#fff;">${c.nombre}</td>
-          <td>${c.telefono || '<span style="color:var(--muted)">-</span>'}</td>
+          <td style="color:var(--muted); font-family:monospace;">#${id}</td>
+          <td style="font-weight:600; color:#fff;">${esc(c.nombre)}</td>
+          <td>${c.telefono ? esc(c.telefono) : '<span style="color:var(--muted)">-</span>'}</td>
           <td><span class="status-badge ${tipoClass}">${tipoLabel}</span></td>
-          <td>${c.sla_horas ? c.sla_horas + ' hs' : '-'}</td>
+          <td>${c.sla_horas ? Number(c.sla_horas) + ' hs' : '-'}</td>
           <td style="text-align:right;">
-            <button class="btn-icon" onclick="edit(${c.id})" title="Editar">✏️</button>
-            <button class="btn-icon" onclick="del(${c.id})" title="Eliminar" style="color:var(--danger); border-color:rgba(239,68,68,0.3);">🗑️</button>
+            <button class="btn-icon" onclick="edit(${id})" title="Editar">✏️</button>
+            <button class="btn-icon" onclick="del(${id}, this)" title="Eliminar" style="color:var(--danger); border-color:rgba(239,68,68,0.3);">🗑️</button>
           </td>
         </tr>
       `}).join('');
@@ -460,6 +470,7 @@
     }
 
     async function save() {
+      if (saveBusy) return;
       const id = $('#c_id').value;
       const body = {
         nombre: $('#c_nombre').value,
@@ -480,22 +491,55 @@
       const method = id ? 'PUT' : 'POST';
       const url = id ? `/api/choferes/${id}` : '/api/choferes';
 
-      const res = await api(url, { method, body: JSON.stringify(body) });
-      
-      if (res.error) {
-        toast('❌ ' + res.error);
-      } else {
-        toast(id ? '✅ Actualizado' : '✅ Creado');
-        closeModal();
-        load();
+      const saveBtn = document.querySelector('#modal .modal-footer .btn.btn-primary');
+      const prevTxt = saveBtn ? saveBtn.textContent : '';
+      saveBusy = true;
+      if (saveBtn) {
+        saveBtn.disabled = true;
+        saveBtn.textContent = 'Guardando...';
+      }
+
+      try {
+        const res = await api(url, { method, body: JSON.stringify(body) });
+        
+        if (res.error) {
+          toast('❌ ' + res.error);
+        } else {
+          toast(id ? '✅ Actualizado' : '✅ Creado');
+          closeModal();
+          load();
+        }
+      } finally {
+        saveBusy = false;
+        if (saveBtn) {
+          saveBtn.disabled = false;
+          saveBtn.textContent = prevTxt;
+        }
       }
     }
 
-    async function del(id) {
+    async function del(id, btnEl = null) {
+      if (deleteBusy) return;
       if (!confirm('¿Eliminar chofer?')) return;
-      const res = await api(`/api/choferes/${id}`, { method: 'DELETE' });
-      if (res.error) { toast('❌ Error al eliminar'); } 
-      else { toast('🗑️ Chofer eliminado'); load(); }
+
+      deleteBusy = true;
+      const prevTxt = btnEl ? btnEl.textContent : '';
+      if (btnEl) {
+        btnEl.disabled = true;
+        btnEl.textContent = '…';
+      }
+
+      try {
+        const res = await api(`/api/choferes/${id}`, { method: 'DELETE' });
+        if (res.error) { toast('❌ Error al eliminar'); }
+        else { toast('🗑️ Chofer eliminado'); load(); }
+      } finally {
+        deleteBusy = false;
+        if (btnEl) {
+          btnEl.disabled = false;
+          btnEl.textContent = prevTxt;
+        }
+      }
     }
 
     // --- Init ---
@@ -514,7 +558,7 @@
           const empresas = await api('/api/empresas');
           if (Array.isArray(empresas)) {
              const opts = '<option value="">-- Seleccionar Empresa --</option>' + 
-                          empresas.map(e => `<option value="${e.id}">${e.nombre}</option>`).join('');
+                          empresas.map(e => `<option value="${Number(e.id)}">${esc(e.nombre)}</option>`).join('');
              $('#empFilter').innerHTML = opts;
              $('#c_empresa_id').innerHTML = opts;
              $('#empFilter').addEventListener('change', load);
