@@ -397,9 +397,27 @@
     function reloadQR() { loadQR(); }
 
     // NUEVA FUNCIÓN: resetear sesión de WhatsApp
+    let isResetSubmitting = false;
+
     async function resetWppSession() {
+        if (isResetSubmitting) {
+            toast('Ya hay un reset en curso...');
+            return;
+        }
+
         if (!confirm('¿Seguro que querés resetear la sesión de WhatsApp? Se desvinculará el celular actual.')) {
             return;
+        }
+
+        const resetBtn = document.querySelector('button[onclick="resetWppSession()"]');
+        const originalResetBtnHtml = resetBtn ? resetBtn.innerHTML : '';
+
+        isResetSubmitting = true;
+        if (resetBtn) {
+            resetBtn.disabled = true;
+            resetBtn.style.opacity = '0.7';
+            resetBtn.style.cursor = 'not-allowed';
+            resetBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin" style="margin-right:8px"></i> Reseteando...';
         }
 
         try {
@@ -410,13 +428,18 @@
                 }
             });
 
+            let data = null;
+            try { data = await r.json(); } catch (e) {}
+
             if (!r.ok) {
-                let msg = 'No se pudo resetear la sesión.';
-                try {
-                    const data = await r.json();
-                    if (data && data.error) msg = data.error;
-                } catch (e) {}
+                const msg = (data && data.error) ? data.error : 'No se pudo resetear la sesión.';
                 toast(msg);
+                return;
+            }
+
+            if (data?.skipped) {
+                toast('Reset ya en curso. Esperá unos segundos y recargá el QR.');
+                setTimeout(loadQR, 1200);
                 return;
             }
 
@@ -425,6 +448,16 @@
         } catch (e) {
             console.error(e);
             toast('Error de red al intentar resetear la sesión.');
+        } finally {
+            setTimeout(() => {
+                isResetSubmitting = false;
+                if (resetBtn) {
+                    resetBtn.disabled = false;
+                    resetBtn.style.opacity = '';
+                    resetBtn.style.cursor = '';
+                    resetBtn.innerHTML = originalResetBtnHtml;
+                }
+            }, 1500);
         }
     }
 
