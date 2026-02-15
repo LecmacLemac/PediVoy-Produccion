@@ -244,6 +244,13 @@
     };
 
     const $ = s => document.querySelector(s);
+    const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;'
+    }[c]));
     let role = '';
     let isSuper = false;
     let movimientos = [];
@@ -298,7 +305,7 @@
       const r = await authFetch('/api/empresas');
       const list = await r.json();
       const sel = $('#empFilter');
-      sel.innerHTML = list.map(e => `<option value="${e.id}">${e.nombre}</option>`).join('');
+      sel.innerHTML = list.map(e => `<option value="${Number(e.id)}">ID ${Number(e.id)} | ${esc(e.nombre)}</option>`).join('');
       sel.addEventListener('change', () => loadMovimientos());
     }
 
@@ -396,8 +403,8 @@
 
         return `
           <tr>
-            <td style="font-weight:600; color:#fff">${row.nombre || ''}</td>
-            <td>${tipoLabel}</td>
+            <td style="font-weight:600; color:#fff">${esc(row.nombre || '')}</td>
+            <td>${esc(tipoLabel)}</td>
             <td class="text-right">${fmtNum(cargado)}</td>
             <td class="text-right">${fmtNum(entregado)}</td>
             <td class="text-right" style="font-weight:600; color:${neto >= 0 ? 'var(--success)' : 'var(--danger)'}">
