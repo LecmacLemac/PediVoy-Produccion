@@ -176,23 +176,20 @@
     const remember = $('#remember');
     const toggleBtn = $('#togglePwd');
 
+    const USERNAME_RE = /^[a-zA-Z0-9_\.\-]{3,30}$/;
+
     // --- Init ---
     (async function boot(){
-      // Nota: en modo seguro no usamos token en localStorage.
-      // Mantenemos lastUsername si está habilitado.
-
-      // Cargar usuario recordado
       const lastUser = localStorage.getItem('lastUsername');
       if(lastUser) {
         user.value = lastUser;
         remember.checked = true;
       }
 
-      // Check sesión existente (modo seguro: cookie httpOnly)
       try {
         const r = await fetch('/api/me', { credentials: 'include' });
         if (r.ok) {
-          const d = await r.json();
+          const d = await parseResponseSafe(r);
           redirectByRole(d?.user?.role);
         }
       } catch {}
@@ -208,64 +205,90 @@
 
     f.onsubmit = async (e) => {
       e.preventDefault();
+      const username = user.value.trim();
+      if (!USERNAME_RE.test(username)) {
+        showError('Usuario inválido. Usá 3-30 caracteres: letras, números, _, . o -');
+        return;
+      }
+
       setLoading(true);
       showError(null);
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15000);
 
       try {
         const res = await fetch('/api/login', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
           credentials: 'include',
-          body: JSON.stringify({ 
-            username: user.value.trim(), 
-            password: pass.value 
-          })
+          signal: controller.signal,
+          body: JSON.stringify({ username, password: pass.value })
         });
 
-        const data = await res.json();
+        const data = await parseResponseSafe(res);
 
-        // Manejo de errores específicos
         if(!res.ok) {
-            // Si es un error de "Licencia vencida" (402 o 403 con mensaje específico)
-            if (res.status === 402 || (data.error && data.error.includes('finalizado'))) {
+            if (res.status === 402 || (data.error && String(data.error).includes('finalizado'))) {
                 throw new Error('⏳ Tu periodo de prueba ha finalizado. Contacta a soporte.');
             }
             throw new Error(data.error || 'Credenciales incorrectas');
         }
-        
-        // Éxito: el backend setea cookie httpOnly.
-        // No guardamos token en localStorage (modo seguro).
 
-        if(remember.checked) localStorage.setItem('lastUsername', user.value.trim());
+        if(remember.checked) localStorage.setItem('lastUsername', username);
         else localStorage.removeItem('lastUsername');
 
-        // Redirección inteligente: consultamos /api/me para rol real
-        const next = new URLSearchParams(location.search).get('next');
-        if(next) {
-          location.href = next;
+        const safeNext = getSafeInternalNext();
+        if(safeNext) {
+          location.href = safeNext;
         } else {
           const me = await fetch('/api/me', { credentials: 'include' });
-          const j = me.ok ? await me.json() : {};
+          const j = me.ok ? await parseResponseSafe(me) : {};
           redirectByRole(j?.user?.role);
         }
 
       } catch(e) {
-        showError(e.message);
+        if (e.name === 'AbortError') {
+          showError('La solicitud tardó demasiado. Reintentá en unos segundos.');
+        } else {
+          showError(e.message || 'No se pudo iniciar sesión');
+        }
         pass.value = '';
+        pass.type = 'password';
+        toggleBtn.textContent = 'Ver';
         pass.focus();
       } finally {
+        clearTimeout(timeout);
         setLoading(false);
       }
     };
 
     // --- Helpers ---
-    function redirectByRole(role) {
-      role = String(role||'').toLowerCase();
-      if(role === 'repartidor') location.href = 'repartidor.html'; // Dashboard móvil
-      else location.href = 'dashboard.html'; // Dashboard admin/super
+    function getSafeInternalNext() {
+      const next = new URLSearchParams(location.search).get('next');
+      if (!next) return null;
+      if (next.startsWith('//')) return null;
+      if (/^https?:/i.test(next)) return null;
+      if (!next.startsWith('/')) return null;
+      return next;
     }
 
-    // readRole(token) ya no se usa (modo seguro: cookie httpOnly)
+    async function parseResponseSafe(res) {
+      try {
+        const ct = res.headers.get('content-type') || '';
+        if (ct.includes('application/json')) return await res.json();
+        const text = await res.text();
+        return { error: text || 'Respuesta inválida del servidor' };
+      } catch {
+        return {};
+      }
+    }
+
+    function redirectByRole(role) {
+      role = String(role||'').toLowerCase();
+      if(role === 'repartidor') location.href = 'repartidor.html';
+      else location.href = 'dashboard.html';
+    }
 
     function setLoading(isLoading) {
       btn.disabled = isLoading;

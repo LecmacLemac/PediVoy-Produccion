@@ -104,7 +104,7 @@
 
       <div class="form-group">
         <label>Contraseña</label>
-        <input type="password" name="password" placeholder="••••••••" minlength="6" required>
+        <input type="password" name="password" placeholder="••••••••" minlength="8" required>
       </div>
 
       <button type="submit" id="btnSub">🚀 COMENZAR PRUEBA</button>
@@ -120,43 +120,110 @@
     const err = document.getElementById('err');
     const btn = document.getElementById('btnSub');
 
+    const USERNAME_RE = /^[a-zA-Z0-9_\.\-]{3,30}$/;
+    const PHONE_RE = /^[0-9+\-\s()]{8,20}$/;
+
+    function showError(message) {
+      err.textContent = '⚠️ ' + message;
+      err.style.display = 'block';
+    }
+
+    function clearError() {
+      err.textContent = '';
+      err.style.display = 'none';
+    }
+
+    function resetButton() {
+      btn.disabled = false;
+      btn.textContent = '🚀 COMENZAR PRUEBA';
+    }
+
+    function validateData(data) {
+      const empresa = String(data.empresa_nombre || '').trim();
+      const telefono = String(data.telefono || '').trim();
+      const username = String(data.username || '').trim();
+      const password = String(data.password || '');
+      const email = String(data.email || '').trim();
+
+      if (!empresa || empresa.length < 2) {
+        return 'Ingresá un nombre de empresa válido.';
+      }
+      if (!PHONE_RE.test(telefono)) {
+        return 'Ingresá un teléfono válido (8 a 20 caracteres).';
+      }
+      if (!USERNAME_RE.test(username)) {
+        return 'Usuario inválido. Usá 3-30 caracteres: letras, números, _, . o -';
+      }
+      if (password.length < 8) {
+        return 'La contraseña debe tener al menos 8 caracteres.';
+      }
+      if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        return 'Ingresá un email válido o dejalo vacío.';
+      }
+
+      data.empresa_nombre = empresa;
+      data.telefono = telefono;
+      data.username = username;
+      data.email = email;
+      return null;
+    }
+
+    async function parseResponseSafe(res) {
+      try {
+        const ct = res.headers.get('content-type') || '';
+        if (ct.includes('application/json')) return await res.json();
+        const text = await res.text();
+        return { error: text || 'Respuesta inválida del servidor' };
+      } catch {
+        return {};
+      }
+    }
+
     f.onsubmit = async (e) => {
       e.preventDefault();
       btn.disabled = true;
       btn.textContent = 'Creando entorno...';
-      err.style.display = 'none';
+      clearError();
 
       const formData = new FormData(f);
       const data = Object.fromEntries(formData.entries());
+
+      const validationError = validateData(data);
+      if (validationError) {
+        showError(validationError);
+        resetButton();
+        return;
+      }
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15000);
 
       try {
         const res = await fetch('/api/auth/signup-full', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(data)
+          body: JSON.stringify(data),
+          signal: controller.signal
         });
 
-        const json = await res.json();
-
+        const json = await parseResponseSafe(res);
         if (!res.ok) throw new Error(json.error || 'Error al crear cuenta');
 
-        // Éxito (modo seguro): el backend setea cookie httpOnly.
-        // No guardamos token en localStorage.
-
-        // Efecto visual de éxito
         btn.style.background = 'var(--success)';
         btn.textContent = '¡CUENTA CREADA!';
-        
-        setTimeout(() => {
-            // Redirigir al setup inicial o dashboard
-            location.href = 'dashboard.html?welcome=1'; 
-        }, 1000);
 
+        setTimeout(() => {
+          location.href = 'dashboard.html?welcome=1';
+        }, 1000);
       } catch (e) {
-        err.textContent = '⚠️ ' + e.message;
-        err.style.display = 'block';
-        btn.disabled = false;
-        btn.textContent = '🚀 COMENZAR PRUEBA';
+        if (e.name === 'AbortError') {
+          showError('La solicitud tardó demasiado. Reintentá en unos segundos.');
+        } else {
+          showError(e.message || 'Error inesperado al crear cuenta');
+        }
+        resetButton();
+      } finally {
+        clearTimeout(timeout);
       }
     };
   </script>
