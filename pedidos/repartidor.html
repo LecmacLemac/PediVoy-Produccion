@@ -331,6 +331,8 @@
           <button class="iconbtn ghost" id="btnRef">↻ Refrescar</button>
           
           <button class="iconbtn primary" id="btnOpt" style="font-size:0.9rem;">⚡ Optimizar Ruta</button>
+
+          <small id="pedidosSyncInfo" class="muted" style="margin-left:auto; white-space:nowrap;">Sin sincronizar</small>
         </div>
       </div>
     </div>
@@ -637,6 +639,7 @@ let map, mapMarkers, myCosts = {};
 let activosModalState = { pedidoId: null, data: null };
 let qrPagoState = { pedidoId: null, link: null };
 let pedidoEnProcesoId = null;
+let pedidosLastSyncAt = null;
 
 const FILTROS_LS_KEY = 'repartidor:filtros:v1';
 
@@ -665,6 +668,26 @@ function restoreFiltrosUI() {
     // fZona se re-aplica en loadZonas() cuando existan options
     if ($('#fZona') && typeof data.zona === 'string') $('#fZona').dataset.pendingValue = data.zona;
   } catch {}
+}
+
+function updatePedidosSyncInfo() {
+  const el = $('#pedidosSyncInfo');
+  if (!el) return;
+
+  if (!pedidosLastSyncAt) {
+    el.textContent = 'Sin sincronizar';
+    return;
+  }
+
+  const diffSec = Math.max(0, Math.floor((Date.now() - pedidosLastSyncAt) / 1000));
+  if (diffSec < 5) {
+    el.textContent = 'Actualizado recién';
+  } else if (diffSec < 60) {
+    el.textContent = `Actualizado hace ${diffSec}s`;
+  } else {
+    const mins = Math.floor(diffSec / 60);
+    el.textContent = `Actualizado hace ${mins}m`;
+  }
 }
 
 // Locks simples para evitar doble envío (doble tap / mala señal)
@@ -1020,9 +1043,14 @@ async function loadPedidos(){
     pedidos = Array.isArray(list) ? list : [];
     const trs = await api('/api/transferencias?estado=verificado');
     verificadas = new Set((Array.isArray(trs)?trs:trs.rows||[]).map(t=>Number(t.pedido_id)));
+    pedidosLastSyncAt = Date.now();
+    updatePedidosSyncInfo();
     renderCards();
     return list;
-  } catch(e){ toast('Error cargando pedidos'); }
+  } catch(e){
+    toast('Error cargando pedidos');
+    updatePedidosSyncInfo();
+  }
 }
 
 // ==========================================
@@ -2025,6 +2053,8 @@ window.addEventListener('offline', () => {
 window.addEventListener('beforeunload', () => {
   stopPedidosAutoRefresh();
 });
+
+setInterval(updatePedidosSyncInfo, 15_000);
 
 // --- MAPA ---
 function renderMap(){
