@@ -848,6 +848,9 @@ function showGpsHelp() {
       gLoadProductos()
     ]);
 
+    // Auto refresh suave de pedidos para operación en tiempo real
+    startPedidosAutoRefresh();
+
   } catch (e) {
     console.error(e);
   }
@@ -1941,6 +1944,87 @@ async function setPay(id, met, el = null) {
 }
 
 function toast(m){ const t = $('#toast'); t.textContent = m; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'), 2000); }
+
+// --- AUTO-REFRESH PEDIDOS (inteligente) ---
+const pedidosRefreshState = {
+  baseMs: 45_000,
+  hiddenMs: 120_000,
+  offlineMs: 180_000,
+  timer: null,
+  inFlight: false,
+  stopped: false,
+};
+
+function isMapaVisible() {
+  const secMapa = document.getElementById('sec-mapa');
+  return !!(secMapa && !secMapa.hidden);
+}
+
+function getPedidosRefreshDelay() {
+  if (pedidosRefreshState.stopped) return null;
+  if (typeof navigator.onLine === 'boolean' && !navigator.onLine) return pedidosRefreshState.offlineMs;
+  if (document.hidden) return pedidosRefreshState.hiddenMs;
+  return pedidosRefreshState.baseMs;
+}
+
+function schedulePedidosRefresh(nextMs = null) {
+  if (pedidosRefreshState.timer) {
+    clearTimeout(pedidosRefreshState.timer);
+    pedidosRefreshState.timer = null;
+  }
+
+  const delay = nextMs ?? getPedidosRefreshDelay();
+  if (!delay) return;
+
+  pedidosRefreshState.timer = setTimeout(runPedidosRefresh, delay);
+}
+
+async function runPedidosRefresh() {
+  if (pedidosRefreshState.stopped || pedidosRefreshState.inFlight) {
+    schedulePedidosRefresh();
+    return;
+  }
+
+  pedidosRefreshState.inFlight = true;
+  try {
+    await loadPedidos();
+    if (isMapaVisible()) renderMap();
+  } catch (e) {
+    console.warn('Auto-refresh de pedidos falló', e);
+  } finally {
+    pedidosRefreshState.inFlight = false;
+    schedulePedidosRefresh();
+  }
+}
+
+function startPedidosAutoRefresh() {
+  pedidosRefreshState.stopped = false;
+  schedulePedidosRefresh(pedidosRefreshState.baseMs);
+}
+
+function stopPedidosAutoRefresh() {
+  pedidosRefreshState.stopped = true;
+  if (pedidosRefreshState.timer) {
+    clearTimeout(pedidosRefreshState.timer);
+    pedidosRefreshState.timer = null;
+  }
+}
+
+document.addEventListener('visibilitychange', () => {
+  schedulePedidosRefresh();
+});
+
+window.addEventListener('online', () => {
+  schedulePedidosRefresh(5_000);
+});
+
+window.addEventListener('offline', () => {
+  schedulePedidosRefresh();
+});
+
+window.addEventListener('beforeunload', () => {
+  stopPedidosAutoRefresh();
+});
 
 // --- MAPA ---
 function renderMap(){
