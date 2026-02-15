@@ -289,11 +289,14 @@
                     
                     // Si ya tengo una seleccionada, la uso
                     if (empresas.length > 0) {
-                        changeEmpresa(empresas[0].id);
+                        changeEmpresa(Number(empresas[0].id));
                     }
                     
                     // Evento Change
-                    $('#empFilter').addEventListener('change', (e) => changeEmpresa(e.target.value));
+                    $('#empFilter').addEventListener('change', (e) => {
+                        const v = e.target.value;
+                        changeEmpresa(v ? Number(v) : null);
+                    });
                 }
             } else {
                 // Usuario Normal: Carga su propia config
@@ -332,12 +335,15 @@
 
             const res = await authFetch(url);
             
+            // Helpers
+            const setVal = (id, val, def) => {
+              const el = document.getElementById(id);
+              if (el) el.value = (val ?? def ?? '');
+            };
+            const setCheck = (id, val) => { const el = document.getElementById(id); if(el) el.checked = !!val; };
+
             if(res.ok) {
                 const data = await res.json();
-                
-                // Helpers
-                const setVal = (id, val, def) => { const el = document.getElementById(id); if(el) el.value = val || def || ''; };
-                const setCheck = (id, val) => { const el = document.getElementById(id); if(el) el.checked = !!val; };
 
                 // Populate Form
                 setCheck('vecinos_activado', data.vecinos_activado);
@@ -353,6 +359,19 @@
                 setVal('referidos_cantidad', data.referidos_cantidad, 1);
                 setVal('referidos_mensaje', data.referidos_mensaje, 'Gracias {cliente}! Link: {link}');
                 setVal('referidos_exito_mensaje', data.referidos_exito_mensaje, '¡Ganaste un {producto} gratis!');
+            } else {
+                // Defaults seguros si no hay config guardada
+                setCheck('vecinos_activado', false);
+                setVal('vecinos_mensaje', null, 'Hola {cliente} 👋, el camión está en tu cuadra.');
+                setVal('vecinos_radio', null, 200);
+                setVal('vecinos_dias', null, 7);
+                setCheck('predictivo_activado', false);
+                setVal('predictivo_mensaje', null, 'Hola {cliente}, te queda poca agua?');
+                setCheck('referidos_activado', false);
+                setVal('referidos_producto_id', null, '');
+                setVal('referidos_cantidad', null, 1);
+                setVal('referidos_mensaje', null, 'Gracias {cliente}! Link: {link}');
+                setVal('referidos_exito_mensaje', null, '¡Ganaste un {producto} gratis!');
             }
         } catch(e) { console.error('Error loading config:', e); }
     }
