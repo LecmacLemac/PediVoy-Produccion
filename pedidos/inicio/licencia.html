@@ -339,6 +339,16 @@
     let currentEmpresaId = null;
     let isSuper = false; 
     let empresaDataGlobal = null; // 🔍 NUEVO: Para guardar datos para el update optimista
+    let priceBusy = false;
+    let licenseBusy = false;
+
+    const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;'
+    }[c]));
 
     // Helper simple para notificaciones
     const toast = (msg) => alert(msg);
@@ -426,7 +436,8 @@
         // 1. Actualizar texto de vencimiento
         document.getElementById('planVencimiento').textContent = nuevaFechaStr;
         // 2. Actualizar badge de estado
-        document.getElementById('planEstado').innerHTML = `<span class="badge badge-active">ACTIVO</span>`;
+        const pe = document.getElementById('planEstado');
+        pe.innerHTML = '<span class="badge badge-active">ACTIVO</span>';
         // 3. Actualizar Modal
         document.getElementById('modalNewDate').textContent = nuevaFechaStr;
         // 4. Actualizar días restantes
@@ -470,10 +481,10 @@
                 const tr = document.createElement('tr');
                 tr.style.borderBottom = '1px solid rgba(255,255,255,0.05)';
                 tr.innerHTML = `
-                    <td style="padding:12px 10px; color:var(--ink)">${fecha}</td>
-                    <td style="padding:12px 10px; color:var(--muted); font-size:0.85rem">#${p.referencia || '-'}</td>
-                    <td style="padding:12px 10px; text-transform:capitalize">${p.metodo}</td>
-                    <td style="padding:12px 10px; text-align:right; color:var(--success); font-weight:bold">${fmt.format(p.monto)}</td>
+                    <td style="padding:12px 10px; color:var(--ink)">${esc(fecha)}</td>
+                    <td style="padding:12px 10px; color:var(--muted); font-size:0.85rem">#${esc(p.referencia || '-')}</td>
+                    <td style="padding:12px 10px; text-transform:capitalize">${esc(p.metodo || '-')}</td>
+                    <td style="padding:12px 10px; text-align:right; color:var(--success); font-weight:bold">${esc(fmt.format(p.monto || 0))}</td>
                 `;
                 tbody.appendChild(tr);
             });
@@ -574,12 +585,12 @@
 
       // 3. Badge de Estado
       const estadoEl = document.getElementById('planEstado');
-      const estado = empresa.plan_estado || 'inactive';
+      const estado = String(empresa.plan_estado || 'inactive').toLowerCase();
       
       let badgeHtml = '';
-      if(estado === 'active')  badgeHtml = `<span class="badge badge-active">ACTIVO</span>`;
-      else if(estado === 'expired') badgeHtml = `<span class="badge badge-expired">VENCIDO</span>`;
-      else badgeHtml = `<span class="badge badge-trial">${estado.toUpperCase()}</span>`;
+      if (estado === 'active') badgeHtml = '<span class="badge badge-active">ACTIVO</span>';
+      else if (estado === 'expired') badgeHtml = '<span class="badge badge-expired">VENCIDO</span>';
+      else badgeHtml = `<span class="badge badge-trial">${esc(estado.toUpperCase())}</span>`;
 
       estadoEl.innerHTML = badgeHtml;
 
@@ -643,10 +654,18 @@
 
     // --- 4. ACCIONES (GUARDAR PRECIO Y ESTADO) ---
     async function guardarPrecio() {
-        if (!isSuper || !currentEmpresaId) return;
+        if (!isSuper || !currentEmpresaId || priceBusy) return;
 
         const nuevoPrecio = document.getElementById('inputPrecio').value;
         if (nuevoPrecio === '') return alert('Ingresa un valor válido');
+
+        const btn = document.querySelector('button[onclick="guardarPrecio()"]');
+        const prev = btn ? btn.textContent : '';
+        priceBusy = true;
+        if (btn) {
+          btn.disabled = true;
+          btn.textContent = 'Guardando...';
+        }
 
         try {
             const res = await authFetch(`${API_URL}/empresas/${currentEmpresaId}`, {
@@ -670,11 +689,17 @@
         } catch (e) {
             console.error(e);
             toast('❌ Error de conexión');
+        } finally {
+            priceBusy = false;
+            if (btn) {
+              btn.disabled = false;
+              btn.textContent = prev;
+            }
         }
     }
 
     async function modificarLicencia(accion) {
-      if (!isSuper) return; 
+      if (!isSuper || licenseBusy) return; 
       if (!currentEmpresaId) return;
 
       let empresaObj = empresasList.find(e => e.id == currentEmpresaId);
@@ -708,6 +733,10 @@
 
       if (!confirm(msgConfirm)) return;
 
+      const actionBtns = Array.from(document.querySelectorAll('#actionsBar .actions-bar button'));
+      licenseBusy = true;
+      actionBtns.forEach(b => b.disabled = true);
+
       try {
         const res = await authFetch(`${API_URL}/empresas/${currentEmpresaId}`, {
           method: 'PUT',
@@ -730,6 +759,9 @@
       } catch (e) {
         console.error(e);
         toast('❌ Error de conexión');
+      } finally {
+        licenseBusy = false;
+        actionBtns.forEach(b => b.disabled = false);
       }
     }
 
