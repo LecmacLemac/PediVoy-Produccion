@@ -1205,7 +1205,9 @@ $('#logout').onclick = async (e) => {
 // --- CORRECCIÓN EN EL SCRIPT ---
     let companies = [];
     let currentEmpresaIdCuentas = null;
-    let esSuperAdmin = false; 
+    let esSuperAdmin = false;
+    let saveBusy = false;
+    let deleteBusy = false;
 
     (async function boot() {
       try {
@@ -1393,7 +1395,7 @@ $('#logout').onclick = async (e) => {
               <button class="btn-icon" onclick="edit(${c.id})" title="Editar">
                 <i class="fa-solid fa-pen"></i>
               </button>
-              <button class="btn-icon" onclick="del(${c.id})" title="Eliminar" style="color:var(--danger); border-color:rgba(239,68,68,0.3);">
+              <button class="btn-icon" onclick="del(${Number(c.id)}, this)" title="Eliminar" style="color:var(--danger); border-color:rgba(239,68,68,0.3);">
                 <i class="fa-solid fa-trash"></i>
               </button>
             </td>
@@ -1717,6 +1719,8 @@ $('#logout').onclick = async (e) => {
     }
 
     async function save() {
+      if (saveBusy) return;
+
       const id = $('#e_id').value;
 
       const body = {
@@ -1879,38 +1883,76 @@ $('#logout').onclick = async (e) => {
       const method = id ? 'PUT' : 'POST';
       const url = id ? `/api/empresas/${id}` : '/api/empresas';
 
-      const res = await api(url, {
-        method,
-        body: JSON.stringify(body),
-      });
+      const saveBtn = document.querySelector('#modal .modal-footer .btn.btn-primary');
+      const prevTxt = saveBtn ? saveBtn.textContent : '';
+      saveBusy = true;
+      if (saveBtn) {
+        saveBtn.disabled = true;
+        saveBtn.textContent = 'Guardando...';
+      }
 
-      if (res && res.error) {
-        toast('❌ ' + res.error);
-      } else {
-        toast(id ? '✅ Actualizado' : '✅ Creado');
+      try {
+        const res = await api(url, {
+          method,
+          body: JSON.stringify(body),
+        });
 
-        if (!id && res.id) {
-          // recién creada: cierro y recargo
-          closeModal();
-          load();
+        if (res && res.error) {
+          toast('❌ ' + res.error);
         } else {
-          // editando: recargo lista pero dejo modal abierto
-          load();
+          toast(id ? '✅ Actualizado' : '✅ Creado');
+
+          if (!id && res.id) {
+            // recién creada: cierro y recargo
+            closeModal();
+            load();
+          } else {
+            // editando: recargo lista pero dejo modal abierto
+            load();
+          }
+        }
+      } finally {
+        saveBusy = false;
+        if (saveBtn) {
+          saveBtn.disabled = false;
+          saveBtn.textContent = prevTxt;
         }
       }
     }
 
-    async function del(id) {
+    async function del(id, btnEl = null) {
+      if (deleteBusy) return;
       if (!confirm('¿Eliminar empresa?\n\n⚠️ SE BORRARÁN TODOS SUS DATOS (Pedidos, Clientes, etc).')) {
         return;
       }
 
-      const res = await api(`/api/empresas/${id}`, { method: 'DELETE' });
-      if (res && res.error) {
-        toast('❌ ' + res.error);
-      } else {
-        toast('🗑️ Empresa eliminada');
-        load();
+      const check = prompt('Para confirmar, escribí ELIMINAR');
+      if (check !== 'ELIMINAR') {
+        toast('Eliminación cancelada');
+        return;
+      }
+
+      deleteBusy = true;
+      const prev = btnEl ? btnEl.innerHTML : '';
+      if (btnEl) {
+        btnEl.disabled = true;
+        btnEl.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+      }
+
+      try {
+        const res = await api(`/api/empresas/${id}`, { method: 'DELETE' });
+        if (res && res.error) {
+          toast('❌ ' + res.error);
+        } else {
+          toast('🗑️ Empresa eliminada');
+          load();
+        }
+      } finally {
+        deleteBusy = false;
+        if (btnEl) {
+          btnEl.disabled = false;
+          btnEl.innerHTML = prev;
+        }
       }
     }
 
