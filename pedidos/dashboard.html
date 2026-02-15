@@ -480,6 +480,8 @@
     let productosEmpresa = [];
     let zonasEmpresa = [];
     let editingId    = null;
+    let saveBusy      = false;
+    let deleteBusy    = false;
 
     // ====== Utils ======
     const ARS = new Intl.NumberFormat('es-AR', {
@@ -510,7 +512,7 @@
     }
 
     function showToast(msg){
-      toastEl.innerHTML = `<i class="fa-solid fa-circle-check"></i> ${msg}`;
+      toastEl.innerHTML = `<i class="fa-solid fa-circle-check"></i> ${esc(msg)}`;
       toastEl.classList.add('show');
       setTimeout(() => toastEl.classList.remove('show'), 2000);
     }
@@ -624,7 +626,7 @@
           const optionTodas  = `<option value="">⭐ Ver Todas</option>`;
           const optionSinEmp = `<option value="null">⚠️ Huérfanos</option>`;
           const optionsEmpresas = list
-            .map(e => `<option value="${e.id}">${esc(e.nombre)}</option>`)
+            .map(e => `<option value="${Number(e.id)}">${esc(e.nombre)}</option>`)
             .join('');
 
           empFilter.innerHTML = optionTodas + optionSinEmp + optionsEmpresas;
@@ -660,7 +662,7 @@
         `;
 
         const choferOptions = Array.isArray(list)
-          ? list.map(c => `<option value="${c.id}">${esc(c.nombre)}</option>`).join('')
+          ? list.map(c => `<option value="${Number(c.id)}">${esc(c.nombre)}</option>`).join('')
           : '';
 
         choferFilter.innerHTML = baseOptions + choferOptions;
@@ -797,12 +799,12 @@
             <td style="font-weight:600; color:#fff;">${esc(p.cliente || '')}</td>
             <td>${esc(p.telefono || '')}</td>
             <td style="font-size:0.9rem">${esc(p.direccion || '')}</td>
-            <td><span class="status-badge ${stClass}">${stLabel}</span></td>
+            <td><span class="status-badge ${stClass}">${esc(stLabel)}</span></td>
             <td style="font-size:0.85rem; color:var(--muted)">${esc(p.metodo_pago || '-')}</td>
             <td style="font-weight:bold; color:#fff; font-size:1rem;">${money(p.monto)}</td>
             <td style="white-space:nowrap; text-align:right;">
-              <button class="btn-icon" onclick="openPedido(${p.id})" title="Editar">✏️</button>
-              <button class="btn-icon" style="color:var(--danger); border-color:rgba(239,68,68,0.3);" onclick="deletePedido(${p.id})" title="Eliminar"><i class="fa-solid fa-trash"></i></button>
+              <button class="btn-icon" onclick="openPedido(${Number(p.id)})" title="Editar">✏️</button>
+              <button class="btn-icon" style="color:var(--danger); border-color:rgba(239,68,68,0.3);" onclick="deletePedido(${Number(p.id)})" title="Eliminar"><i class="fa-solid fa-trash"></i></button>
             </td>
           </tr>`;
       }).join('');
@@ -845,8 +847,10 @@
     };
 
     window.deletePedido = async (id) => {
+      if (deleteBusy) return;
       if (!confirm(`¿Estás seguro de ELIMINAR el pedido #${id}?\nEsta acción no se puede deshacer.`)) return;
 
+      deleteBusy = true;
       try {
         const r = await authFetch(`/api/pedidos/${id}`, {
           method: 'DELETE'
@@ -863,6 +867,8 @@
       } catch (e) {
         console.error(e);
         alert('Error de conexión al eliminar');
+      } finally {
+        deleteBusy = false;
       }
     };
 
@@ -914,6 +920,8 @@
     };
 
     btnSaveAll.onclick = async () => {
+      if (saveBusy) return;
+
       const items = Array.from(dlg_itemsBody.querySelectorAll('tr'))
         .map(tr => {
           const i = tr.querySelectorAll('input');
@@ -928,6 +936,11 @@
       const empresaId = Number($('#dlg_empresa_id').value) || null;
       const choferId  = Number($('#dlg_chofer_id').value)  || null;
       const zonaId    = Number($('#dlg_zona_id').value)    || null;
+
+      const prevTxt = btnSaveAll.textContent;
+      saveBusy = true;
+      btnSaveAll.disabled = true;
+      btnSaveAll.textContent = 'Guardando...';
 
       try {
         await authFetch(`/api/pedidos/${editingId}`, {
@@ -958,6 +971,10 @@
         applyFilters();
       } catch {
         alert('Error al guardar');
+      } finally {
+        saveBusy = false;
+        btnSaveAll.disabled = false;
+        btnSaveAll.textContent = prevTxt;
       }
     };
 
