@@ -7,10 +7,7 @@
 async function modificarLicencia(empresaId) {
   console.log(`[Admin] Iniciando panel de modificación para empresa ID: ${empresaId}`);
 
-  const token = localStorage.getItem('token');
-  if (!token) {
-    return Swal.fire('Error', 'No hay sesión activa.', 'error');
-  }
+  // Modo seguro: sesión por cookie httpOnly
 
   // 1. Mostrar Formulario Modal
   const { value: formValues } = await Swal.fire({
@@ -70,9 +67,9 @@ async function modificarLicencia(empresaId) {
 
     const res = await fetch(`/api/empresas/${empresaId}`, {
       method: 'PUT',
+      credentials: 'include',
       headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}` // Autenticación vital
+        'Content-Type': 'application/json'
       },
       body: JSON.stringify(formValues)
     });
