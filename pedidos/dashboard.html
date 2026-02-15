@@ -483,6 +483,11 @@
     let saveBusy      = false;
     let deleteBusy    = false;
 
+    // Persistencia + auto-refresh
+    const FILTERS_LS_KEY = 'dashboard:filters:v1';
+    let refreshTimer = null;
+    let refreshInFlight = false;
+
     // ====== Utils ======
     const ARS = new Intl.NumberFormat('es-AR', {
       style: 'currency',
@@ -517,12 +522,75 @@
       setTimeout(() => toastEl.classList.remove('show'), 2000);
     }
 
+    function saveFiltersState(){
+      try {
+        const payload = {
+          emp: empFilter?.value || '',
+          chofer: choferFilter?.value || '',
+          estado: estadoFilter?.value || '',
+          from: fromFilter?.value || '',
+          to: toFilter?.value || '',
+          q: q?.value || ''
+        };
+        localStorage.setItem(FILTERS_LS_KEY, JSON.stringify(payload));
+      } catch {}
+    }
+
+    function restoreFiltersState(){
+      try {
+        const raw = localStorage.getItem(FILTERS_LS_KEY);
+        if (!raw) return;
+        const f = JSON.parse(raw);
+
+        if (typeof f.estado === 'string') estadoFilter.value = f.estado;
+        if (typeof f.from === 'string') fromFilter.value = f.from;
+        if (typeof f.to === 'string') toFilter.value = f.to;
+        if (typeof f.q === 'string') q.value = f.q;
+
+        // emp/chofer se aplican luego de cargar opciones
+        if (typeof f.emp === 'string') empFilter.dataset.pendingValue = f.emp;
+        if (typeof f.chofer === 'string') choferFilter.dataset.pendingValue = f.chofer;
+      } catch {}
+    }
+
+    function applyPendingFilterValues(){
+      const pEmp = empFilter.dataset.pendingValue;
+      if (typeof pEmp === 'string') {
+        empFilter.value = pEmp;
+        delete empFilter.dataset.pendingValue;
+      }
+      const pChofer = choferFilter.dataset.pendingValue;
+      if (typeof pChofer === 'string') {
+        choferFilter.value = pChofer;
+        delete choferFilter.dataset.pendingValue;
+      }
+    }
+
+    function scheduleAutoRefresh(delayMs = null){
+      if (refreshTimer) clearTimeout(refreshTimer);
+      const base = document.hidden ? 120000 : (navigator.onLine ? 45000 : 180000);
+      const wait = delayMs ?? base;
+      refreshTimer = setTimeout(runAutoRefresh, wait);
+    }
+
+    async function runAutoRefresh(){
+      if (refreshInFlight) return scheduleAutoRefresh();
+      refreshInFlight = true;
+      try {
+        await loadPedidos();
+        applyFilters();
+      } finally {
+        refreshInFlight = false;
+        scheduleAutoRefresh();
+      }
+    }
+
     // ====== Initialization ======
     $('#logout').onclick = async () => {
       try { await authFetch('/api/logout', { method: 'POST' }); } catch {}
       location.href = 'login.html';
     };
-    $('#btnRef').onclick   = () => { q.value=''; initLoad(); };
+    $('#btnRef').onclick   = () => { q.value=''; saveFiltersState(); initLoad(); scheduleAutoRefresh(); };
 
     $('#btnClear').onclick = () => {
       estadoFilter.value = '';
@@ -532,7 +600,9 @@
       q.value            = '';
 
       // Antes: applyFilters();
+      saveFiltersState();
       initLoad(); // recarga pedidos desde el backend con filtros limpios
+      scheduleAutoRefresh();
     };
 
     $('#btnExport').onclick = () => exportCSV();
@@ -544,6 +614,8 @@
     // ====== Boot principal (una sola vez) ======
     (async function boot(){
       try {
+        restoreFiltersState();
+
         // Fechas default (30 días) según hora local Argentina
         if (!fromFilter.value) {
           const getLocalISO = (dateObj) => {
@@ -576,18 +648,30 @@
 
         // Listeners
         empFilter.addEventListener('change', async () => {
+          saveFiltersState();
           await loadChoferes(); // Recargar choferes de la nueva empresa
           await initLoad();     // Recargar pedidos y productos
+          scheduleAutoRefresh();
         });
 
-        choferFilter.addEventListener('change', () => initLoad());
+        choferFilter.addEventListener('change', async () => {
+          saveFiltersState();
+          await initLoad();
+          scheduleAutoRefresh();
+        });
 
         // 🆕 Estado sigue siendo front-only, fechas recargan del backend
-        estadoFilter.onchange = () => applyFilters();
-        fromFilter.onchange   = () => initLoad();
-        toFilter.onchange     = () => initLoad();
+        estadoFilter.onchange = () => { saveFiltersState(); applyFilters(); };
+        fromFilter.onchange   = async () => { saveFiltersState(); await initLoad(); scheduleAutoRefresh(); };
+        toFilter.onchange     = async () => { saveFiltersState(); await initLoad(); scheduleAutoRefresh(); };
 
-        q.oninput = () => applyFilters();
+        q.oninput = () => { saveFiltersState(); applyFilters(); };
+
+        document.addEventListener('visibilitychange', () => scheduleAutoRefresh());
+        window.addEventListener('online', () => scheduleAutoRefresh(5000));
+        window.addEventListener('offline', () => scheduleAutoRefresh());
+
+        scheduleAutoRefresh();
 
       } catch (e) {
         console.error(e);
@@ -630,6 +714,7 @@
             .join('');
 
           empFilter.innerHTML = optionTodas + optionSinEmp + optionsEmpresas;
+          applyPendingFilterValues();
 
           if (me && me.empresa_id) {
             empFilter.value   = String(me.empresa_id);
@@ -666,6 +751,7 @@
           : '';
 
         choferFilter.innerHTML = baseOptions + choferOptions;
+        applyPendingFilterValues();
       } catch {
         choferFilter.innerHTML = `
           <option value="">Error al cargar</option>
