@@ -51,6 +51,12 @@ export function createAuthGuestSignupRouter(deps) {
   // POST /api/auth/guest
   router.post('/guest', async (req, res) => {
     try {
+      const ip = getClientIp(req);
+      const rateKey = `guest:ip:${ip}`;
+      if (hitRateLimit(signupAttempts, rateKey, SIGNUP_WINDOW_MS, SIGNUP_MAX_ATTEMPTS * 2)) {
+        return res.status(429).json({ error: 'Demasiados intentos. Reintentá más tarde.' });
+      }
+
       const empresa_id = Number(req.body?.empresa_id) || 1;
       const randomSuffix = crypto.randomBytes(4).toString('hex');
       const tempUsername = `guest_${Date.now()}_${randomSuffix}`;
@@ -82,7 +88,9 @@ export function createAuthGuestSignupRouter(deps) {
         maxAge: 2 * 60 * 60 * 1000,
       });
 
-      return res.json({ ok: true, token, user });
+      const includeToken = String(req.query?.includeToken || req.headers['x-include-token'] || '') === '1';
+      if (includeToken) return res.json({ ok: true, token, user });
+      return res.json({ ok: true, user });
     } catch (e) {
       console.error('ERROR GUEST:', e);
       return res.status(500).json({ error: 'Error creando sesión de invitado' });
@@ -96,6 +104,9 @@ export function createAuthGuestSignupRouter(deps) {
       const userId = req.user.uid; // token actual
 
       if (!username || !password) return res.status(400).json({ error: 'Datos incompletos' });
+      if (!USERNAME_RE.test(String(username))) return res.status(400).json({ error: 'Usuario inválido' });
+      if (String(password).length < 8) return res.status(400).json({ error: 'La contraseña debe tener al menos 8 caracteres' });
+      if (telefono && !PHONE_RE.test(String(telefono))) return res.status(400).json({ error: 'Teléfono inválido' });
 
       const check = await query('SELECT es_invitado FROM usuarios WHERE id=$1', [userId]);
       if (!check.length || !check[0].es_invitado) {
@@ -123,7 +134,16 @@ export function createAuthGuestSignupRouter(deps) {
         { expiresIn: '7d' }
       );
 
-      return res.json({ ok: true, message: 'Cuenta creada con éxito', token: newToken });
+      res.cookie('token', newToken, {
+        httpOnly: true,
+        sameSite: 'lax',
+        secure: process.env.NODE_ENV === 'production',
+        maxAge: 7 * 24 * 60 * 60 * 1000,
+      });
+
+      const includeToken = String(req.query?.includeToken || req.headers['x-include-token'] || '') === '1';
+      if (includeToken) return res.json({ ok: true, message: 'Cuenta creada con éxito', token: newToken });
+      return res.json({ ok: true, message: 'Cuenta creada con éxito' });
     } catch (e) {
       if (e?.message?.includes('unique')) return res.status(400).json({ error: 'El email ya está en uso' });
       console.error('REGISTER ERROR:', e);
