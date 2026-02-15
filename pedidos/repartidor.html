@@ -582,6 +582,14 @@ const authFetch = (url, opts = {}) => {
 const $ = s => document.querySelector(s);
 const $$ = s => document.querySelectorAll(s);
 
+function debounce(fn, wait = 250) {
+  let t = null;
+  return (...args) => {
+    clearTimeout(t);
+    t = setTimeout(() => fn(...args), wait);
+  };
+}
+
 // Función de escape HTML (seguridad)
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
   '&': '&amp;',
@@ -843,7 +851,7 @@ $$('.nav-link').forEach(l => l.onclick = async (e) => {
 // Pedidos Filters
 function toggleFilters(){ const b = $('#filterBox'); b.style.display = b.style.display==='none'?'block':'none'; }
 ['fEstado','fZona','fHoy','fSearch'].forEach(id => $('#'+id).addEventListener('change', renderCards));
-$('#fSearch').addEventListener('input', renderCards);
+$('#fSearch').addEventListener('input', debounce(renderCards, 200));
 $('#btnRef').onclick = loadPedidos;
 // EVENTO PARA OPTIMIZAR RUTA
 $('#btnOpt').onclick = optimizarRuta;
@@ -1042,7 +1050,18 @@ function renderCards() {
 
     // Filtros de Zona, Texto y Estado
     if (fZon && String(p.zona_id) !== fZon) return false;
-    if (fTxt && !JSON.stringify(p).toLowerCase().includes(fTxt)) return false;
+    if (fTxt) {
+      const haystack = [
+        p.id,
+        p.cliente,
+        p.direccion,
+        p.telefono,
+        p.notas,
+        p.estado,
+        p.metodo_pago
+      ].map(v => String(v ?? '').toLowerCase()).join(' | ');
+      if (!haystack.includes(fTxt)) return false;
+    }
     
     if (fEst === 'activos') {
       if (!isActive) return false;
