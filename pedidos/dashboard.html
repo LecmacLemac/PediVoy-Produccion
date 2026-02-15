@@ -1038,7 +1038,7 @@
         .map(tr => {
           const i = tr.querySelectorAll('input');
           return {
-            producto:        i[0].value,
+            producto:        String(i[0].value || '').trim(),
             cantidad:        Number(i[1].value),
             precio_unitario: Number(i[2].value)
           };
@@ -1048,6 +1048,32 @@
       const empresaId = Number($('#dlg_empresa_id').value) || null;
       const choferId  = Number($('#dlg_chofer_id').value)  || null;
       const zonaId    = Number($('#dlg_zona_id').value)    || null;
+
+      // Validaciones fuertes
+      if (!items.length) {
+        alert('Agregá al menos un ítem válido.');
+        return;
+      }
+
+      const hasInvalid = items.some(it => !it.producto || !Number.isFinite(it.cantidad) || it.cantidad <= 0 || !Number.isFinite(it.precio_unitario) || it.precio_unitario < 0);
+      if (hasInvalid) {
+        alert('Revisá los ítems: cantidad debe ser > 0 y precio >= 0.');
+        return;
+      }
+
+      const estadoVal = String($('#dlg_estado').value || '').trim();
+      const estadosPermitidos = ['pendiente', 'en_ruta', 'entregado', 'cancelado'];
+      if (!estadosPermitidos.includes(estadoVal)) {
+        alert('Estado inválido.');
+        return;
+      }
+
+      const metodoVal = String($('#dlg_metodo').value || '').toLowerCase();
+      const metodosPermitidos = ['', 'efectivo', 'transferencia'];
+      if (!metodosPermitidos.includes(metodoVal)) {
+        alert('Método de pago inválido.');
+        return;
+      }
 
       const prevTxt = btnSaveAll.textContent;
       saveBusy = true;
@@ -1061,8 +1087,8 @@
             'Content-Type':'application/json'
           },
           body: JSON.stringify({
-            estado:      $('#dlg_estado').value,
-            metodo_pago: $('#dlg_metodo').value,
+            estado:      estadoVal,
+            metodo_pago: metodoVal,
             empresa_id:  empresaId,
             chofer_id:   choferId,
             zona_id:     zonaId
