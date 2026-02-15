@@ -318,9 +318,17 @@
     };
 
     const $ = s => document.querySelector(s);
+    const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;'
+    }[c]));
     let role='', isSuper=false;
     let products = [];
     let choferes = [];
+    let adjustBusy = false;
 
     // ====== UTILS ======
     const num = n => Number(n)||0;
@@ -353,7 +361,7 @@
         const r = await authFetch('/api/empresas');
         const list = await r.json();
         const sel = $('#empFilter');
-        sel.innerHTML = list.map(e => `<option value="${e.id}">${e.nombre}</option>`).join('');
+        sel.innerHTML = list.map(e => `<option value="${Number(e.id)}">ID ${Number(e.id)} | ${esc(e.nombre)}</option>`).join('');
         // cuando cambia empresa, recargo choferes y stock
         sel.addEventListener('change', async () => {
           await loadChoferes();
@@ -368,7 +376,7 @@
         
         // MODIFICACIÓN: Agregamos (${c.tipo}) al texto de la opción
         $('#ajChofer').innerHTML = choferes.map(c => 
-            `<option value="${c.id}">${c.nombre} (${c.tipo.toUpperCase()})</option>`
+            `<option value="${Number(c.id)}">${esc(c.nombre)} (${esc((c.tipo || '').toUpperCase())})</option>`
         ).join('');
     }
     
@@ -447,16 +455,16 @@
 
         return `
           <tr>
-            <td style="font-weight:600; color:#fff">${p.nombre}</td>
+            <td style="font-weight:600; color:#fff">${esc(p.nombre)}</td>
             <td class="text-right">${fmtNum(sProp)}</td>
             <td class="text-right">${fmtNum(sFlet)}</td>
             <td class="text-right">${fmtNum(s)}</td>
             <td class="text-right text-muted">${min}</td>
-            <td class="text-right text-muted">${p.stock_max}</td>
+            <td class="text-right text-muted">${fmtNum(p.stock_max)}</td>
             <td style="text-align:center">${badge}</td>
             <td class="text-right">
-              <button class="btn btn-secondary btn-sm" onclick="openKardex(${p.id})">📜 Hist</button>
-              <button class="btn btn-primary btn-sm" onclick="openAjuste(${p.id})">🛠 Ajuste</button>
+              <button class="btn btn-secondary btn-sm" onclick="openKardex(${Number(p.id)})">📜 Hist</button>
+              <button class="btn btn-primary btn-sm" onclick="openAjuste(${Number(p.id)})">🛠 Ajuste</button>
             </td>
           </tr>
         `;
@@ -478,18 +486,29 @@
     };
 
     $('#btnSaveAj').onclick = async () => {
+        if (adjustBusy) return;
+
         const body = {
-            producto_id: $('#ajId').value,
-            qty: $('#ajQty').value,
-            tipo: $('#ajTipo').value,
-            chofer_id: $('#ajChofer').value,
-            motivo: $('#ajNota').value,
-            empresa_id: isSuper ? $('#empFilter').value : undefined
+            producto_id: Number($('#ajId').value),
+            qty: Number($('#ajQty').value),
+            tipo: String($('#ajTipo').value || ''),
+            chofer_id: Number($('#ajChofer').value),
+            motivo: String($('#ajNota').value || '').trim(),
+            empresa_id: isSuper ? Number($('#empFilter').value || 0) || undefined : undefined
         };
 
-        if(!body.qty || body.qty <= 0) return alert('Cantidad inválida');
+        if(!Number.isFinite(body.qty) || body.qty <= 0) return alert('Cantidad inválida');
+        if(!['ADJUST+','ADJUST-'].includes(body.tipo)) return alert('Tipo de ajuste inválido');
 
-        const r = await fetch('/api/stock/ajuste', {
+        const btn = document.getElementById('btnSaveAj');
+        const prev = btn ? btn.textContent : '';
+        adjustBusy = true;
+        if (btn) {
+          btn.disabled = true;
+          btn.textContent = 'Guardando...';
+        }
+
+        const r = await authFetch('/api/stock/ajuste', {
             method: 'POST',
             headers: {'Content-Type':'application/json'},
             body: JSON.stringify(body)
@@ -501,6 +520,12 @@
             loadStock();
         } else {
             alert('Error al ajustar');
+        }
+
+        adjustBusy = false;
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = prev;
         }
     };
 
@@ -518,10 +543,10 @@
 
         $('#kxRows').innerHTML = moves.map(m => `
             <tr>
-                <td>${dateStr(m.fecha)}</td>
-                <td>${m.tipo}</td>
-                <td class="text-right" style="font-weight:bold; color:${m.cantidad>0?'var(--success)':'var(--danger)'}">${m.cantidad}</td>
-                <td style="color:var(--muted)">${m.notas || '-'}</td>
+                <td>${esc(dateStr(m.fecha))}</td>
+                <td>${esc(m.tipo)}</td>
+                <td class="text-right" style="font-weight:bold; color:${m.cantidad>0?'var(--success)':'var(--danger)'}">${esc(m.cantidad)}</td>
+                <td style="color:var(--muted)">${esc(m.notas || '-')}</td>
             </tr>
         `).join('');
     };
