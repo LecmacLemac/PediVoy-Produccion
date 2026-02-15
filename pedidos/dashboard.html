@@ -731,7 +731,7 @@
           const optionTodas  = `<option value="">⭐ Ver Todas</option>`;
           const optionSinEmp = `<option value="null">⚠️ Huérfanos</option>`;
           const optionsEmpresas = list
-            .map(e => `<option value="${Number(e.id)}">${esc(e.nombre)}</option>`)
+            .map(e => `<option value="${Number(e.id)}">ID ${Number(e.id)} | ${esc(e.nombre)}</option>`)
             .join('');
 
           empFilter.innerHTML = optionTodas + optionSinEmp + optionsEmpresas;
