@@ -290,6 +290,13 @@
   <script>
     // --- Utils ---
     const $ = s => document.querySelector(s);
+    const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;'
+    }[c]));
     
     function toast(msg) {
       const t = $('#toast'); t.textContent = msg; t.classList.add('show');
@@ -314,6 +321,8 @@
     let zones = [];
     let drivers = [];
     let assignments = {};
+    let assignBusy = false;
+    let unassignBusy = false;
 
     // --- API ---
     async function api(endpoint, opts = {}) {
@@ -372,10 +381,10 @@
       const selZona = $('#selZona');
 
       if (!drivers.length) selChofer.innerHTML = '<option value="">No hay choferes disponibles</option>';
-      else selChofer.innerHTML = drivers.map(d => `<option value="${d.id}">${d.nombre}</option>`).join('');
+      else selChofer.innerHTML = drivers.map(d => `<option value="${Number(d.id)}">${esc(d.nombre)}</option>`).join('');
 
       if (!zones.length) selZona.innerHTML = '<option value="">No hay zonas disponibles</option>';
-      else selZona.innerHTML = zones.map(z => `<option value="${z.id}">${z.nombre}</option>`).join('');
+      else selZona.innerHTML = zones.map(z => `<option value="${Number(z.id)}">${esc(z.nombre)}</option>`).join('');
     }
 
     function renderGrid() {
@@ -394,9 +403,9 @@
               <div class="driver-chip">
                 <div class="driver-info">
                   <span class="driver-icon">${d.tipo === 'fletero' ? '🚛' : '🛵'}</span>
-                  <span>${d.nombre}</span>
+                  <span>${esc(d.nombre)}</span>
                 </div>
-                <button class="btn-remove" onclick="unassign(${z.id}, ${d.id})" title="Desvincular">
+                <button class="btn-remove" onclick="unassign(${Number(z.id)}, ${Number(d.id)}, this)" title="Desvincular">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
                 </button>
               </div>
@@ -406,7 +415,7 @@
         return `
           <div class="zone-card">
             <div class="zone-header">
-              <h3>${z.nombre}</h3>
+              <h3>${esc(z.nombre)}</h3>
               <span class="badge-count">${assignedDrivers.length}</span>
             </div>
             <div class="zone-body">
@@ -419,6 +428,7 @@
 
     // --- Actions ---
     async function assign() {
+      if (assignBusy) return;
       if (STATE.isSuper && !$('#empSel').value) return toast('⚠️ Selecciona una empresa primero');
 
       const chofer_id = $('#selChofer').value;
@@ -429,25 +439,57 @@
       const current = assignments[zona_id] || [];
       if (current.includes(Number(chofer_id))) return toast('ℹ️ Ya está asignado');
 
-      const res = await api('/api/asignarChofer', {
-        method: 'POST',
-        body: JSON.stringify({ chofer_id, zona_id })
-      });
+      const btn = document.querySelector('.form-inline .btn');
+      const prevTxt = btn ? btn.textContent : '';
+      assignBusy = true;
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Vinculando...';
+      }
 
-      if (res.error) toast('❌ ' + res.error);
-      else { toast('✅ Asignado correctamente'); load(); }
+      try {
+        const res = await api('/api/asignarChofer', {
+          method: 'POST',
+          body: JSON.stringify({ chofer_id, zona_id })
+        });
+
+        if (res.error) toast('❌ ' + res.error);
+        else { toast('✅ Asignado correctamente'); load(); }
+      } finally {
+        assignBusy = false;
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = prevTxt;
+        }
+      }
     }
 
-    async function unassign(zona_id, chofer_id) {
+    async function unassign(zona_id, chofer_id, btnEl = null) {
+      if (unassignBusy) return;
       if (!confirm('¿Desvincular chofer de esta zona?')) return;
 
-      const res = await api('/api/desasignarChofer', {
-        method: 'DELETE',
-        body: JSON.stringify({ zona_id, chofer_id })
-      });
+      unassignBusy = true;
+      const prev = btnEl ? btnEl.innerHTML : '';
+      if (btnEl) {
+        btnEl.disabled = true;
+        btnEl.textContent = '…';
+      }
 
-      if (res.error) toast('❌ ' + res.error);
-      else { toast('🗑️ Desvinculado'); load(); }
+      try {
+        const res = await api('/api/desasignarChofer', {
+          method: 'DELETE',
+          body: JSON.stringify({ zona_id, chofer_id })
+        });
+
+        if (res.error) toast('❌ ' + res.error);
+        else { toast('🗑️ Desvinculado'); load(); }
+      } finally {
+        unassignBusy = false;
+        if (btnEl) {
+          btnEl.disabled = false;
+          btnEl.innerHTML = prev;
+        }
+      }
     }
 
     // --- Init ---
@@ -465,7 +507,7 @@
                 const sel = $('#empSel');
                 if (Array.isArray(list)) {
                     sel.innerHTML = '<option value="">-- Seleccionar Empresa --</option>' + 
-                    list.map(e => `<option value="${e.id}">${e.nombre}</option>`).join('');
+                    list.map(e => `<option value="${Number(e.id)}">${esc(e.nombre)}</option>`).join('');
                     sel.addEventListener('change', load);
                 }
             } else {
