@@ -1749,45 +1749,56 @@ async function confirmarPagoQR() {
 }
 
 async function setStatus(id, st){
-
-  if (st === 'entregado') {
-    const pedido = pedidos.find(p => p.id === id);
-    const met = (pedido && pedido.metodo_pago ? String(pedido.metodo_pago) : '').toLowerCase();
-
-    const esTransferencia = met === 'transferencia';
-    const qrHabilitado = !!(pagosCanales && pagosCanales.qr_dinamico);
-
-    if (esTransferencia && qrHabilitado) {
-      await abrirModalPagoQR(id);
-      return;
-    }
-
-    await abrirActivosPaso(id);
+  const statusPermitidos = ['pendiente', 'en_ruta', 'en_camino', 'entregado', 'cancelado'];
+  if (!statusPermitidos.includes(String(st))) {
+    toast('Estado inválido');
     return;
   }
 
-  if (st === 'cancelado' && !confirm(
-    '⚠️ ¿Estás seguro de que deseas CANCELAR este pedido?\nEsta acción lo quitará de tu lista activa.'
-  )) return;
+  try {
+    await withLock(`status:${id}`, async () => {
+      if (st === 'entregado') {
+        const pedido = pedidos.find(p => p.id === id);
+        const met = (pedido && pedido.metodo_pago ? String(pedido.metodo_pago) : '').toLowerCase();
 
-  // Resolver zona si el pedido no tiene
-  const zonaId = await resolverZonaParaPedido(id);
+        const esTransferencia = met === 'transferencia';
+        const qrHabilitado = !!(pagosCanales && pagosCanales.qr_dinamico);
 
-  const body = { estado: st };
-  if (zonaId != null) body.zona_id = zonaId;
+        if (esTransferencia && qrHabilitado) {
+          await abrirModalPagoQR(id);
+          return;
+        }
 
-  await api(`/api/repartidor/pedidos/${id}`, { method:'PUT', body });
+        await abrirActivosPaso(id);
+        return;
+      }
 
-  if (st === 'en_ruta' && navigator.geolocation) {
-    navigator.geolocation.getCurrentPosition(pos => {
-      api('/api/track/update', { 
-        method:'POST', 
-        body:{ pedido_id:id, lat:pos.coords.latitude, lng:pos.coords.longitude }
-      });
-    }, err => console.warn('GPS Error', err));
+      if (st === 'cancelado' && !confirm(
+        '⚠️ ¿Estás seguro de que deseas CANCELAR este pedido?\nEsta acción lo quitará de tu lista activa.'
+      )) return;
+
+      // Resolver zona si el pedido no tiene
+      const zonaId = await resolverZonaParaPedido(id);
+
+      const body = { estado: st };
+      if (zonaId != null) body.zona_id = zonaId;
+
+      await api(`/api/repartidor/pedidos/${id}`, { method:'PUT', body });
+
+      if (st === 'en_ruta' && navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(pos => {
+          api('/api/track/update', {
+            method:'POST',
+            body:{ pedido_id:id, lat:pos.coords.latitude, lng:pos.coords.longitude }
+          });
+        }, err => console.warn('GPS Error', err));
+      }
+
+      await loadPedidos();
+    });
+  } catch (e) {
+    notifyError(e?.message || 'No se pudo actualizar el estado del pedido', e);
   }
-
-  loadPedidos();
 }
 
 async function setPay(id, met) {
@@ -1806,14 +1817,20 @@ async function setPay(id, met) {
     return;
   }
 
-  // También acá: si el pedido sigue sin zona, la resolvemos al cambiar forma de pago
-  const zonaId = await resolverZonaParaPedido(id);
+  try {
+    await withLock(`pay:${id}`, async () => {
+      // También acá: si el pedido sigue sin zona, la resolvemos al cambiar forma de pago
+      const zonaId = await resolverZonaParaPedido(id);
 
-  const body = { metodo_pago: metodo };
-  if (zonaId != null) body.zona_id = zonaId;
+      const body = { metodo_pago: metodo };
+      if (zonaId != null) body.zona_id = zonaId;
 
-  await api(`/api/repartidor/pedidos/${id}`, { method: 'PUT', body });
-  loadPedidos();
+      await api(`/api/repartidor/pedidos/${id}`, { method: 'PUT', body });
+      await loadPedidos();
+    });
+  } catch (e) {
+    notifyError(e?.message || 'No se pudo actualizar el método de pago', e);
+  }
 }
 
 function toast(m){ const t = $('#toast'); t.textContent = m; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'), 2000); }
