@@ -209,7 +209,7 @@
 
     <div id="selectionCard" class="card hidden">
       <label for="empresaSelect">🔍 Auditar Empresa (Super Admin)</label>
-      <select id="empresaSelect" onchange="onEmpresaChange()">
+      <select id="empresaSelect">
         <option value="">-- Cargando lista... --</option>
       </select>
     </div>
@@ -272,7 +272,7 @@
           realiza el pago de <span id="payAmount" class="payment-highlight">...</span>.
         </p>
         
-        <button id="btnPagar" class="btn btn-primary" style="padding: 1rem 2rem; font-size: 1.1rem;" onclick="pagarLicencia()">
+        <button id="btnPagar" class="btn btn-primary" style="padding: 1rem 2rem; font-size: 1.1rem;">
           💸 Pagar con Mercado Pago
         </button>
         
@@ -289,14 +289,14 @@
                 <label for="inputPrecio" style="margin-bottom:5px; display:block;">Establecer Precio Pactado ($)</label>
                 <input type="number" id="inputPrecio" placeholder="Ej: 50000" style="background:var(--bg-2); border:1px solid var(--border); padding:8px; width:100%; color:white; border-radius:6px;">
             </div>
-            <button class="btn btn-primary" onclick="guardarPrecio()">💾 Guardar Precio</button>
+            <button id="btnGuardarPrecio" class="btn btn-primary">💾 Guardar Precio</button>
         </div>
 
         <h4 style="margin: 0 0 10px 0; color: var(--muted); font-weight: 500; font-size: 0.9rem;">Acciones Rápidas</h4>
         <div class="actions-bar" style="border-top:none; padding-top:0; margin-top:0;">
-          <button class="btn btn-primary" onclick="modificarLicencia('extend')">📅 +30 Días</button>
-          <button class="btn btn-success" onclick="modificarLicencia('activate')">✅ Activar</button>
-          <button class="btn btn-danger" onclick="modificarLicencia('expire')">🚫 Suspender</button>
+          <button id="btnExtendLic" class="btn btn-primary">📅 +30 Días</button>
+          <button id="btnActivateLic" class="btn btn-success">✅ Activar</button>
+          <button id="btnExpireLic" class="btn btn-danger">🚫 Suspender</button>
         </div>
       </div>
 
@@ -322,7 +322,7 @@
         <div id="modalNewDate" style="font-size:1.5rem; font-weight:bold; color:var(--success);">...</div>
       </div>
 
-      <button class="btn btn-primary" style="width:100%" onclick="cerrarModal()">Entendido</button>
+      <button id="btnCerrarModal" class="btn btn-primary" style="width:100%">Entendido</button>
     </div>
   </div>
 
@@ -658,7 +658,7 @@
         const nuevoPrecio = document.getElementById('inputPrecio').value;
         if (nuevoPrecio === '') return alert('Ingresa un valor válido');
 
-        const btn = document.querySelector('button[onclick="guardarPrecio()"]');
+        const btn = document.getElementById('btnGuardarPrecio');
         const prev = btn ? btn.textContent : '';
         priceBusy = true;
         if (btn) {
@@ -809,6 +809,27 @@
         await logout();
       });
     }
+
+    const empresaSelect = document.getElementById('empresaSelect');
+    if (empresaSelect) empresaSelect.addEventListener('change', onEmpresaChange);
+
+    const btnPagar = document.getElementById('btnPagar');
+    if (btnPagar) btnPagar.addEventListener('click', pagarLicencia);
+
+    const btnGuardarPrecio = document.getElementById('btnGuardarPrecio');
+    if (btnGuardarPrecio) btnGuardarPrecio.addEventListener('click', guardarPrecio);
+
+    const btnExtendLic = document.getElementById('btnExtendLic');
+    if (btnExtendLic) btnExtendLic.addEventListener('click', () => modificarLicencia('extend'));
+
+    const btnActivateLic = document.getElementById('btnActivateLic');
+    if (btnActivateLic) btnActivateLic.addEventListener('click', () => modificarLicencia('activate'));
+
+    const btnExpireLic = document.getElementById('btnExpireLic');
+    if (btnExpireLic) btnExpireLic.addEventListener('click', () => modificarLicencia('expire'));
+
+    const btnCerrarModal = document.getElementById('btnCerrarModal');
+    if (btnCerrarModal) btnCerrarModal.addEventListener('click', cerrarModal);
 
     init();
   </script>
