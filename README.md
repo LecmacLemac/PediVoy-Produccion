@@ -124,6 +124,9 @@ SMOKE_BASE_URL=https://tu-dominio.com \
 SMOKE_USER=usuario_test \
 SMOKE_PASS=clave_test \
 npm run test:smoke:postdeploy
+
+# security headers (strict)
+SMOKE_BASE_URL=https://tu-dominio.com npm run test:smoke:security
 ```
 
 🤝 Contribución

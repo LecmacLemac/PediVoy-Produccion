@@ -17,6 +17,7 @@
     "test": "NODE_ENV=test node --test tests/**/*.test.js",
     "test:smoke:public": "node scripts/smoke-public.js",
     "test:smoke:postdeploy": "node scripts/smoke-postdeploy.js",
+    "test:smoke:security": "node scripts/smoke-security-headers.js",
     "db:backup": "node backup.js",
     "postinstall": "echo \"Instalando Chromium para Puppeteer (local)\" && if [ -z \"$RENDER\" ]; then PUPPETEER_CACHE_DIR=\"$PWD/.puppeteer\" npx puppeteer browsers install chrome; fi"
   },
