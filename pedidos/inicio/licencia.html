@@ -193,7 +193,7 @@
          <li><a href="inicial.html">🚀 Inicio</a></li>
         <li><a href="/pedidos/dashboard.html">Dashboard</a></li>
         <li><a href="licencia.html" class="active">🔑 Licencia</a></li>
-        <li><a href="#" onclick="logout()" style="color: var(--danger)">Salir</a></li>
+        <li><a href="#" id="logout" style="color: var(--danger)">Salir</a></li>
       </ul>
     </nav>
   </header>
@@ -372,9 +372,8 @@
         const role = user.role || '';
         const myEmpresaId = user.empresa_id; 
 
-        document.getElementById('roleBadge').textContent = role.toUpperCase();
-        
         isSuper = (role === 'super');
+        document.getElementById('roleBadge').textContent = isSuper ? 'SUPER ADMIN' : 'Admin';
 
         if (isSuper) {
           // >> MODO SUPER ADMIN
@@ -803,6 +802,14 @@
     }
 
     // Arrancar script
+    const logoutLink = document.getElementById('logout');
+    if (logoutLink) {
+      logoutLink.addEventListener('click', async (ev) => {
+        ev.preventDefault();
+        await logout();
+      });
+    }
+
     init();
   </script>
 </body>
