@@ -1221,8 +1221,12 @@
         const clienteDireccionEsc = clienteDireccion ? escapeHtml(clienteDireccion) : '';
         const clienteTelefonoEsc = clienteTelefono ? escapeHtml(clienteTelefono) : '';
 
+        const rowIdAttr = escapeHtml(String(row.id ?? ''));
+        const clienteIdAttr = escapeHtml(String(row.cliente_id ?? ''));
+        const periodoAttr = escapeHtml(String(periodo ?? ''));
+
         return `
-          <tr data-id="${row.id || ''}" data-cliente-id="${row.cliente_id || ''}" data-periodo="${periodo}">
+          <tr data-id="${rowIdAttr}" data-cliente-id="${clienteIdAttr}" data-periodo="${periodoAttr}">
             <td>
               <div style="font-weight:600;">${clienteNombreEsc}</div>
               ${clienteDireccionEsc ? '<div class="text-subtle">' + clienteDireccionEsc + '</div>' : ''}
