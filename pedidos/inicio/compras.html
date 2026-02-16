@@ -18,6 +18,8 @@
     table{width:100%;border-collapse:collapse}th,td{padding:8px;border-bottom:1px solid var(--border);font-size:.9rem}th{color:var(--muted);text-align:left}
     .modal{position:fixed;inset:0;background:rgba(2,6,23,.72);display:none;align-items:center;justify-content:center;padding:16px;z-index:100}
     .modal.open{display:flex}.modal-card{width:min(560px,96vw);background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:14px}
+    .toast{position:fixed;right:18px;bottom:18px;background:#111827;color:#fff;border:1px solid var(--border);padding:10px 12px;border-radius:10px;opacity:0;transform:translateY(8px);transition:.2s;z-index:120;pointer-events:none}
+    .toast.show{opacity:1;transform:translateY(0)}
   </style>
 </head>
 <body>
@@ -77,6 +79,16 @@
     </div>
   </div>
 
+  <div id="confirmModal" class="modal" aria-hidden="true">
+    <div class="modal-card" style="max-width:460px">
+      <h3 style="margin:0 0 8px">Confirmar eliminación</h3>
+      <div id="confirmText" style="color:var(--muted)">¿Seguro que querés eliminar este proveedor?</div>
+      <div class="row" style="justify-content:flex-end;margin-top:12px"><button id="confirmCancel" type="button">Cancelar</button><button id="confirmOk" type="button" style="border-color:rgba(239,68,68,.45);color:var(--danger)">Eliminar</button></div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
   <script>
     const authFetch=(url,opts={})=>fetch(url,{...opts,headers:{'Content-Type':'application/json',...(opts.headers||{})},credentials:'include'});
     const fmt=new Intl.NumberFormat('es-AR',{style:'currency',currency:'ARS',maximumFractionDigits:0});
@@ -84,7 +96,10 @@
     const setStatus=(t,e=false)=>{const el=document.getElementById('status');el.textContent=t;el.style.color=e?'var(--danger)':'var(--muted)';};
     const apiUrl=(p)=>st.isSuper&&st.empresaId?(p+(p.includes('?')?'&':'?')+'empresa_id='+encodeURIComponent(String(st.empresaId))):p;
     const modal=document.getElementById('provModal');
+    const confirmModal=document.getElementById('confirmModal');
+    const toastEl=document.getElementById('toast');
 
+    function toast(msg){ if(!toastEl) return; toastEl.textContent=msg; toastEl.classList.add('show'); setTimeout(()=>toastEl.classList.remove('show'),2200); }
     function closeProvModal(){ st.editingProvId=null; modal.classList.remove('open'); modal.setAttribute('aria-hidden','true'); }
     function openProvModal(p){
       st.editingProvId=Number(p.id);
@@ -127,7 +142,7 @@
     document.getElementById('btnAddProv').addEventListener('click', async ()=>{ if(st.isSuper&&!st.empresaId) return setStatus('Seleccioná empresa primero',true);
       const body={ nombre:document.getElementById('provNombre').value.trim(), contacto:document.getElementById('provContacto').value.trim(), telefono:document.getElementById('provTelefono').value.trim() }; if(st.isSuper) body.empresa_id=st.empresaId;
       const r=await authFetch('/api/setup/fase2/proveedores',{method:'POST',body:JSON.stringify(body)}); const j=await r.json(); if(!r.ok) return setStatus(j.error||'No se pudo crear proveedor',true);
-      document.getElementById('provNombre').value=''; document.getElementById('provContacto').value=''; document.getElementById('provTelefono').value=''; refreshAll();
+      document.getElementById('provNombre').value=''; document.getElementById('provContacto').value=''; document.getElementById('provTelefono').value=''; toast('Proveedor creado'); refreshAll();
     });
 
     document.getElementById('btnCrearOrden').addEventListener('click', async ()=>{ if(st.isSuper&&!st.empresaId) return setStatus('Seleccioná empresa primero',true);
@@ -163,18 +178,33 @@
       if(!r.ok) return setStatus(j.error||'No se pudo editar proveedor',true);
       closeProvModal();
       setStatus('Proveedor actualizado.');
+      toast('Proveedor actualizado');
       refreshAll();
     });
 
-    document.getElementById('provDelete').addEventListener('click', async ()=>{
+    function openConfirm(){ confirmModal.classList.add('open'); confirmModal.setAttribute('aria-hidden','false'); }
+    function closeConfirm(){ confirmModal.classList.remove('open'); confirmModal.setAttribute('aria-hidden','true'); }
+
+    document.getElementById('provDelete').addEventListener('click', ()=>{
       const id=Number(st.editingProvId); if(!Number.isFinite(id)||id<=0) return;
-      if(!confirm('¿Eliminar proveedor? Esta acción no se puede deshacer.')) return;
+      const p=st.proveedores.find(x=>Number(x.id)===id);
+      document.getElementById('confirmText').textContent=`¿Seguro que querés eliminar el proveedor "${p?.nombre||''}"? Esta acción no se puede deshacer.`;
+      openConfirm();
+    });
+
+    document.getElementById('confirmCancel').addEventListener('click', closeConfirm);
+    confirmModal.addEventListener('click', (ev)=>{ if(ev.target===confirmModal) closeConfirm(); });
+
+    document.getElementById('confirmOk').addEventListener('click', async ()=>{
+      const id=Number(st.editingProvId); if(!Number.isFinite(id)||id<=0) return;
       const body={}; if(st.isSuper) body.empresa_id=st.empresaId;
       const r=await authFetch(`/api/setup/fase2/proveedores/${id}`,{method:'DELETE',body:JSON.stringify(body)});
       const j=await r.json();
       if(!r.ok) return setStatus(j.error||'No se pudo eliminar proveedor',true);
+      closeConfirm();
       closeProvModal();
       setStatus('Proveedor eliminado.');
+      toast('Proveedor eliminado');
       refreshAll();
     });
 
