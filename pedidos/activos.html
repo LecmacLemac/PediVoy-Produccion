@@ -1065,6 +1065,8 @@
         const rowsHtml = filtrados.map(a => {
           const mantStatus = getMantenimientoStatus(a);
           const proxima = mantStatus.proxima ? toLocalDate(mantStatus.proxima) : '–';
+          const rowId = Number(a.id);
+          const rowIdAttr = Number.isFinite(rowId) && rowId > 0 ? String(rowId) : '';
           
           // Formato colores para días
           let diasHtml = mantStatus.dias != null ? mantStatus.dias : '–';
@@ -1081,7 +1083,7 @@
           const alquilerVal = a.alquiler_mensual ? `$${Number(a.alquiler_mensual).toLocaleString('es-AR')}` : '-';
 
           return `
-            <tr data-id="${Number(a.id)}">
+            <tr data-id="${rowIdAttr}">
               <td>${escapeHtml(a.codigo || '–')}</td>
               <td>${escapeHtml(a.tipo || '–')}</td>
               <td>${escapeHtml(marcaModelo)}</td>
@@ -1093,10 +1095,10 @@
               <td>${diasHtml}</td>
               <td>
                 <div class="col-actions">
-                  <button class="btn-icon btn-sm" data-action="editar" data-id="${Number(a.id)}" title="Editar Precio/Fecha">
+                  <button class="btn-icon btn-sm" data-action="editar" data-id="${rowIdAttr}" title="Editar Precio/Fecha">
                     ✏️
                   </button>
-                  <button class="btn-icon btn-sm" data-action="ver-historial" data-id="${Number(a.id)}" title="Ver Ficha">
+                  <button class="btn-icon btn-sm" data-action="ver-historial" data-id="${rowIdAttr}" title="Ver Ficha">
                     📜
                   </button>
                 </div>
@@ -1340,13 +1342,15 @@
           if (!btn) return;
           
           const action = btn.getAttribute('data-action');
-          const id = btn.getAttribute('data-id');
+          const idRaw = btn.getAttribute('data-id');
+          const id = Number(idRaw);
+          if (!Number.isFinite(id) || id <= 0) return;
 
           if (action === 'ver-historial') {
             openHistorialModal(id);
           } else if (action === 'editar') {
              // Buscar el objeto completo
-             const activo = activosRaw.find(a => a.id == id);
+             const activo = activosRaw.find(a => Number(a.id) === id);
              if (activo) abrirEdicion(activo);
           }
         });
