@@ -2345,5 +2345,145 @@ export function createSetupRouter(deps) {
     }
   });
 
+  // GET /api/setup/fase3/incidencias
+  router.get('/fase3/incidencias', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req);
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+      const estado = String(req.query?.estado || '').trim();
+      const tipo = String(req.query?.tipo || '').trim();
+
+      const params = [empresaId];
+      let where = 'WHERE i.empresa_id=$1';
+      if (estado) { params.push(estado); where += ` AND i.estado=$${params.length}`; }
+      if (tipo) { params.push(tipo); where += ` AND i.tipo=$${params.length}`; }
+
+      const rows = await query(
+        `SELECT i.*, p.cliente AS cliente_nombre
+         FROM incidencias_operativas i
+         LEFT JOIN puntos_entrega p ON p.id=i.cliente_id
+         ${where}
+         ORDER BY i.created_at DESC
+         LIMIT 500`,
+        params
+      );
+      return res.json({ ok: true, items: rows });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error obteniendo incidencias' });
+    }
+  });
+
+  // POST /api/setup/fase3/incidencias
+  router.post('/fase3/incidencias', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+      const b = req.body || {};
+      const titulo = String(b.titulo || '').trim();
+      if (!titulo) return res.status(400).json({ error: 'titulo requerido' });
+
+      const [row] = await query(
+        `INSERT INTO incidencias_operativas (
+          empresa_id, pedido_id, cliente_id, chofer_id, tipo, severidad, estado,
+          titulo, detalle, accion_recomendada, created_by
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+         RETURNING *`,
+        [
+          empresaId,
+          b.pedido_id ? Number(b.pedido_id) : null,
+          b.cliente_id ? Number(b.cliente_id) : null,
+          b.chofer_id ? Number(b.chofer_id) : null,
+          b.tipo || 'entrega',
+          b.severidad || 'media',
+          b.estado || 'abierta',
+          titulo,
+          b.detalle || null,
+          b.accion_recomendada || null,
+          req?.user?.id ? Number(req.user.id) : null,
+        ]
+      );
+
+      return res.json({ ok: true, item: row });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error creando incidencia' });
+    }
+  });
+
+  // PUT /api/setup/fase3/incidencias/:id
+  router.put('/fase3/incidencias/:id', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+      const id = Number(req.params.id);
+      if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: 'id inválido' });
+      const b = req.body || {};
+
+      const estado = b.estado ?? null;
+      const isResuelta = estado === 'resuelta';
+      const [row] = await query(
+        `UPDATE incidencias_operativas
+         SET tipo=COALESCE($1,tipo),
+             severidad=COALESCE($2,severidad),
+             estado=COALESCE($3,estado),
+             titulo=COALESCE($4,titulo),
+             detalle=COALESCE($5,detalle),
+             accion_recomendada=COALESCE($6,accion_recomendada),
+             resuelta_at=CASE WHEN $7 THEN NOW() ELSE resuelta_at END,
+             resuelta_por=CASE WHEN $7 THEN $8 ELSE resuelta_por END,
+             updated_at=NOW()
+         WHERE id=$9 AND empresa_id=$10
+         RETURNING *`,
+        [
+          b.tipo ?? null,
+          b.severidad ?? null,
+          estado,
+          b.titulo ?? null,
+          b.detalle ?? null,
+          b.accion_recomendada ?? null,
+          isResuelta,
+          req?.user?.id ? Number(req.user.id) : null,
+          id,
+          empresaId,
+        ]
+      );
+      if (!row) return res.status(404).json({ error: 'Incidencia no encontrada' });
+      return res.json({ ok: true, item: row });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error actualizando incidencia' });
+    }
+  });
+
+  // GET /api/setup/fase3/incidencias/dashboard
+  router.get('/fase3/incidencias/dashboard', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req);
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+      const [k] = await query(
+        `SELECT
+           COUNT(*)::int AS total,
+           COUNT(*) FILTER (WHERE estado='abierta')::int AS abiertas,
+           COUNT(*) FILTER (WHERE estado='en_progreso')::int AS en_progreso,
+           COUNT(*) FILTER (WHERE estado='resuelta')::int AS resueltas,
+           COUNT(*) FILTER (WHERE severidad IN ('alta','critica') AND estado IN ('abierta','en_progreso'))::int AS criticas_activas
+         FROM incidencias_operativas
+         WHERE empresa_id=$1`,
+        [empresaId]
+      );
+      return res.json({ ok: true, kpis: {
+        total: Number(k?.total || 0),
+        abiertas: Number(k?.abiertas || 0),
+        en_progreso: Number(k?.en_progreso || 0),
+        resueltas: Number(k?.resueltas || 0),
+        criticas_activas: Number(k?.criticas_activas || 0),
+      } });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error obteniendo dashboard de incidencias' });
+    }
+  });
+
   return router;
 }

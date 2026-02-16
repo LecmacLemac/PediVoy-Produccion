@@ -992,6 +992,32 @@ CREATE UNIQUE INDEX IF NOT EXISTS presupuesto_mensual_unique_idx
 CREATE INDEX IF NOT EXISTS presupuesto_mensual_empresa_periodo_idx
   ON presupuesto_mensual (empresa_id, anio, mes, categoria);
 
+-- 14.e Incidencias operativas (entrega/cobranza/servicio)
+CREATE TABLE IF NOT EXISTS incidencias_operativas (
+  id                  SERIAL PRIMARY KEY,
+  empresa_id          INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+  pedido_id           INTEGER REFERENCES pedidos(id) ON DELETE SET NULL,
+  cliente_id          INTEGER REFERENCES puntos_entrega(id) ON DELETE SET NULL,
+  chofer_id           INTEGER REFERENCES choferes(id) ON DELETE SET NULL,
+  tipo                TEXT NOT NULL DEFAULT 'entrega', -- entrega|cobranza|producto|cliente|sistema
+  severidad           TEXT NOT NULL DEFAULT 'media',   -- baja|media|alta|critica
+  estado              TEXT NOT NULL DEFAULT 'abierta', -- abierta|en_progreso|resuelta|cancelada
+  titulo              TEXT NOT NULL,
+  detalle             TEXT,
+  accion_recomendada  TEXT,
+  resuelta_at         TIMESTAMPTZ,
+  resuelta_por        INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
+  created_by          INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS incidencias_operativas_empresa_estado_idx
+  ON incidencias_operativas (empresa_id, estado, severidad, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS incidencias_operativas_empresa_tipo_idx
+  ON incidencias_operativas (empresa_id, tipo, created_at DESC);
+
 -- =========================================================
 -- 15. ÍNDICES DE RENDIMIENTO (OPTIMIZACIÓN)
 -- =========================================================
