@@ -1468,5 +1468,75 @@ export function createSetupRouter(deps) {
     }
   });
 
+  // GET /api/setup/fase2/alertas
+  router.get('/fase2/alertas', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req);
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+
+      const [comp] = await query(
+        `SELECT
+           COUNT(*) FILTER (WHERE estado IN ('emitida','parcial') AND fecha_entrega_estimada IS NOT NULL AND fecha_entrega_estimada < CURRENT_DATE)::int AS compras_vencidas,
+           COUNT(*) FILTER (WHERE estado IN ('emitida','parcial') AND fecha_entrega_estimada IS NOT NULL AND fecha_entrega_estimada <= CURRENT_DATE + INTERVAL '3 days')::int AS compras_por_vencer
+         FROM compras_ordenes
+         WHERE empresa_id=$1`,
+        [empresaId]
+      );
+
+      const [tes] = await query(
+        `SELECT
+           COUNT(*) FILTER (WHERE conciliado=FALSE)::int AS pendientes_conciliacion,
+           COALESCE(SUM(monto) FILTER (WHERE conciliado=FALSE),0)::numeric AS monto_pendiente,
+           COALESCE(SUM(monto) FILTER (WHERE tipo='egreso' AND fecha >= NOW() - INTERVAL '7 days'),0)::numeric AS egresos_7d,
+           COALESCE(SUM(monto) FILTER (WHERE tipo='egreso' AND fecha >= NOW() - INTERVAL '30 days' AND fecha < NOW() - INTERVAL '7 days'),0)::numeric AS egresos_30d_previos
+         FROM tesoreria_movimientos
+         WHERE empresa_id=$1`,
+        [empresaId]
+      );
+
+      const eg7 = Number(tes?.egresos_7d || 0);
+      const egPrev = Number(tes?.egresos_30d_previos || 0);
+      const avgSemana = egPrev > 0 ? egPrev / Math.max(1, 23 / 7) : 0;
+      const ratioEgreso = avgSemana > 0 ? (eg7 / avgSemana) : 1;
+
+      const alerts = [];
+      const push = (nivel, titulo, detalle, valor = null, meta = {}) => alerts.push({ nivel, titulo, detalle, valor, ...meta });
+
+      if (Number(comp?.compras_vencidas || 0) > 0) {
+        push('alta', 'Compras vencidas', `${Number(comp.compras_vencidas)} órdenes superaron la fecha estimada de entrega`, Number(comp.compras_vencidas), { key: 'compras_vencidas' });
+      }
+      if (Number(comp?.compras_por_vencer || 0) > 0) {
+        push('media', 'Compras por vencer', `${Number(comp.compras_por_vencer)} órdenes vencen en los próximos 3 días`, Number(comp.compras_por_vencer), { key: 'compras_por_vencer' });
+      }
+
+      const pendientes = Number(tes?.pendientes_conciliacion || 0);
+      const montoPend = Number(tes?.monto_pendiente || 0);
+      if (pendientes >= 10 || montoPend >= 500000) {
+        push('alta', 'Conciliación atrasada', `${pendientes} movimientos pendientes por ${montoPend.toFixed(0)}`, montoPend, { key: 'conciliacion_atrasada' });
+      } else if (pendientes >= 5) {
+        push('media', 'Pendientes de conciliación', `${pendientes} movimientos aún no conciliados`, pendientes, { key: 'conciliacion_pendiente' });
+      }
+
+      if (ratioEgreso >= 1.5 && eg7 > 0) {
+        push('alta', 'Desvío de egresos', `Egresos últimos 7d ${eg7.toFixed(0)} (x${ratioEgreso.toFixed(2)} vs promedio semanal previo)`, ratioEgreso, { key: 'desvio_egresos' });
+      }
+
+      return res.json({
+        ok: true,
+        totals: {
+          compras_vencidas: Number(comp?.compras_vencidas || 0),
+          compras_por_vencer: Number(comp?.compras_por_vencer || 0),
+          pendientes_conciliacion: pendientes,
+          monto_pendiente_conciliar: montoPend,
+          ratio_egresos_7d: Number(ratioEgreso.toFixed(2)),
+        },
+        items: alerts,
+      });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error obteniendo alertas fase2' });
+    }
+  });
+
   return router;
 }
