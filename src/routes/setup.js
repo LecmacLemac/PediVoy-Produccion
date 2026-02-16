@@ -1670,5 +1670,65 @@ export function createSetupRouter(deps) {
     }
   });
 
+  // GET /api/setup/fase2/tesoreria/proyeccion-caja
+  router.get('/fase2/tesoreria/proyeccion-caja', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req);
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+
+      const saldoInicial = Number(req.query?.saldo_inicial || 0);
+      const [m] = await query(
+        `SELECT
+           COALESCE(SUM(monto) FILTER (WHERE tipo='ingreso' AND fecha >= NOW() - INTERVAL '30 days'),0)::numeric AS ingresos_30d,
+           COALESCE(SUM(monto) FILTER (WHERE tipo='egreso' AND fecha >= NOW() - INTERVAL '30 days'),0)::numeric AS egresos_30d,
+           COUNT(DISTINCT DATE(fecha)) FILTER (WHERE fecha >= NOW() - INTERVAL '30 days')::int AS dias_activos
+         FROM tesoreria_movimientos
+         WHERE empresa_id=$1`,
+        [empresaId]
+      );
+
+      const dias = Math.max(1, Number(m?.dias_activos || 0));
+      const ingresosDiarios = Number(m?.ingresos_30d || 0) / dias;
+      const egresosDiarios = Number(m?.egresos_30d || 0) / dias;
+      const netoDiario = ingresosDiarios - egresosDiarios;
+
+      const horizons = [7, 15, 30].map((d) => {
+        const flujo = netoDiario * d;
+        const proyectado = saldoInicial + flujo;
+        return {
+          dias: d,
+          flujo_estimado: Number(flujo.toFixed(2)),
+          saldo_proyectado: Number(proyectado.toFixed(2)),
+          riesgo: proyectado < 0 ? 'alto' : (proyectado < (saldoInicial * 0.25) ? 'medio' : 'bajo'),
+        };
+      });
+
+      const alertas = horizons
+        .filter((h) => h.saldo_proyectado < 0 || h.riesgo !== 'bajo')
+        .map((h) => ({
+          nivel: h.saldo_proyectado < 0 ? 'alta' : 'media',
+          titulo: `Proyección ${h.dias} días`,
+          detalle: `Saldo proyectado ${h.saldo_proyectado.toFixed(0)} (${h.riesgo})`,
+          dias: h.dias,
+        }));
+
+      return res.json({
+        ok: true,
+        base: {
+          saldo_inicial: saldoInicial,
+          ingresos_diarios_estimados: Number(ingresosDiarios.toFixed(2)),
+          egresos_diarios_estimados: Number(egresosDiarios.toFixed(2)),
+          neto_diario_estimado: Number(netoDiario.toFixed(2)),
+          dias_muestra: dias,
+        },
+        items: horizons,
+        alertas,
+      });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error obteniendo proyección de caja' });
+    }
+  });
+
   return router;
 }
