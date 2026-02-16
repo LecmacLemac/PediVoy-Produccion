@@ -1324,6 +1324,11 @@ if (logoutLink) {
       const base = location.origin;
 
       tbody.innerHTML = companies.map((c) => {
+        const rawId = c?.id;
+        const numericId = Number(rawId);
+        const hasNumericId = Number.isFinite(numericId) && numericId > 0;
+        const displayId = hasNumericId ? String(numericId) : String(rawId ?? '-');
+
         const slug = c.landing_slug || '';
         const domain = c.landing_domain || '';
 
@@ -1363,7 +1368,7 @@ if (logoutLink) {
         } else if (slug) {
           landingUrl = `${base}/?slug=${encodeURIComponent(slug)}`;
         } else {
-          landingUrl = `${base}/?empresa_id=${c.id}`;
+          landingUrl = `${base}/?empresa_id=${encodeURIComponent(displayId)}`;
         }
 
         // Lógica de Configuración de Entrega (Logistics)
@@ -1427,7 +1432,7 @@ if (logoutLink) {
         // Retornamos la fila HTML
         return `
           <tr>
-            <td style="color:var(--muted); font-family:monospace;">#${Number(c.id)}</td>
+            <td style="color:var(--muted); font-family:monospace;">#${esc(displayId)}</td>
             
             <td>
               <div style="font-weight:700; color:#fff; font-size:1rem; margin-bottom:2px;">${esc(c.nombre)}</div>
@@ -1458,16 +1463,16 @@ if (logoutLink) {
             </td>
 
             <td style="text-align:right; white-space:nowrap;">
-              <button class="btn-icon" data-action="manage-cuentas" data-id="${Number(c.id)}" data-name="${esc(String(c.nombre || ''))}" title="Cuentas Bancarias">
+              <button class="btn-icon" data-action="manage-cuentas" data-id="${hasNumericId ? numericId : ''}" data-name="${esc(String(c.nombre || ''))}" title="Cuentas Bancarias" ${hasNumericId ? '' : 'disabled'}>
                 <i class="fa-solid fa-building-columns"></i>
               </button>
-              <button class="btn-icon" data-action="copy-landing" data-id="${Number(c.id)}" title="Copiar Link">
+              <button class="btn-icon" data-action="copy-landing" data-id="${hasNumericId ? numericId : ''}" title="Copiar Link" ${hasNumericId ? '' : 'disabled'}>
                 <i class="fa-solid fa-link"></i>
               </button>
-              <button class="btn-icon" data-action="edit" data-id="${Number(c.id)}" title="Editar">
+              <button class="btn-icon" data-action="edit" data-id="${hasNumericId ? numericId : ''}" title="Editar" ${hasNumericId ? '' : 'disabled'}>
                 <i class="fa-solid fa-pen"></i>
               </button>
-              <button class="btn-icon" data-action="delete" data-id="${Number(c.id)}" title="Eliminar" style="color:var(--danger); border-color:rgba(239,68,68,0.3);">
+              <button class="btn-icon" data-action="delete" data-id="${hasNumericId ? numericId : ''}" title="Eliminar" style="color:var(--danger); border-color:rgba(239,68,68,0.3);" ${hasNumericId ? '' : 'disabled'}>
                 <i class="fa-solid fa-trash"></i>
               </button>
             </td>
