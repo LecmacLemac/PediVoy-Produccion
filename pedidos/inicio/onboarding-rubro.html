@@ -33,6 +33,11 @@
       <h1>Onboarding por Rubro</h1>
       <p>Elegí un vertical preconfigurado para acelerar la puesta en marcha de tu empresa.</p>
       <div class="row">
+        <div id="empresaFilterWrapper" style="display:none;">
+          <select id="empresaSelect" title="Seleccionar empresa">
+            <option value="">Seleccionar empresa…</option>
+          </select>
+        </div>
         <select id="verticalSelect">
           <option value="">Cargando verticales...</option>
         </select>
@@ -68,7 +73,13 @@
       return fetch(url, { ...opts, headers, credentials: 'include' });
     };
 
-    const state = { items: [] };
+    const state = {
+      items: [],
+      user: null,
+      esSuperAdmin: false,
+      targetEmpresaId: null,
+      empresas: []
+    };
     const moneyFmt = new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 });
 
     function escapeHtml(v){
@@ -89,6 +100,21 @@
       el.textContent = msg;
     }
 
+    function withEmpresaQuery(urlBase) {
+      if (state.esSuperAdmin && state.targetEmpresaId) {
+        const sep = urlBase.includes('?') ? '&' : '?';
+        return urlBase + sep + 'empresa_id=' + encodeURIComponent(String(state.targetEmpresaId));
+      }
+      return urlBase;
+    }
+
+    function ensureSuperEmpresaSelected() {
+      if (!state.esSuperAdmin) return true;
+      if (state.targetEmpresaId) return true;
+      setStatus('Seleccioná una empresa para continuar.', 'err');
+      return false;
+    }
+
     function renderTemplates() {
       const box = document.getElementById('templates');
       box.innerHTML = state.items.map(it => `
@@ -106,11 +132,18 @@
     async function loadKpis() {
       const box = document.getElementById('kpiGrid');
       const sug = document.getElementById('suggestionsBox');
+
+      if (state.esSuperAdmin && !state.targetEmpresaId) {
+        box.innerHTML = '<div class="muted">Seleccioná una empresa para ver KPIs.</div>';
+        sug.textContent = 'Seleccioná una empresa para ver sugerencias.';
+        return;
+      }
+
       box.innerHTML = '<div class="muted">Cargando KPIs...</div>';
       sug.textContent = 'Cargando sugerencias...';
 
-      const res = await authFetch('/api/setup/activation-kpis');
-      if (res.status === 401) return window.location.href = '../login.html';
+      const res = await authFetch(withEmpresaQuery('/api/setup/activation-kpis'));
+      if (res.status === 401) return window.location.href = '/pedidos/login.html';
       const json = await res.json();
       const k = json?.kpis || {};
       const suggestions = Array.isArray(json?.suggestions) ? json.suggestions : [];
@@ -140,8 +173,18 @@
     }
 
     async function loadTemplates() {
-      const res = await authFetch('/api/setup/vertical-templates');
-      if (res.status === 401) return window.location.href = '../login.html';
+      if (state.esSuperAdmin && !state.targetEmpresaId) {
+        state.items = [];
+        const select = document.getElementById('verticalSelect');
+        if (select) {
+          select.innerHTML = '<option value="">Seleccionar empresa primero</option>';
+        }
+        renderTemplates();
+        return;
+      }
+
+      const res = await authFetch(withEmpresaQuery('/api/setup/vertical-templates'));
+      if (res.status === 401) return window.location.href = '/pedidos/login.html';
       const json = await res.json();
       state.items = Array.isArray(json.items) ? json.items : [];
 
@@ -159,6 +202,8 @@
     }
 
     async function applyVertical() {
+      if (!ensureSuperEmpresaSelected()) return;
+
       const sel = document.getElementById('verticalSelect');
       const v = sel.value;
       if (!v) return setStatus('Seleccioná un vertical primero.', 'err');
@@ -168,9 +213,14 @@
       btn.disabled = true;
       setStatus('Aplicando vertical y catálogo base...', 'muted');
       try {
+        const body = { vertical: v, overwrite };
+        if (state.esSuperAdmin && state.targetEmpresaId) {
+          body.empresa_id = state.targetEmpresaId;
+        }
+
         const res = await authFetch('/api/setup/apply-vertical-full', {
           method: 'POST',
-          body: JSON.stringify({ vertical: v, overwrite }),
+          body: JSON.stringify(body),
         });
         const json = await res.json();
         if (!res.ok) throw new Error(json.error || 'No se pudo aplicar vertical');
@@ -184,13 +234,77 @@
       }
     }
 
+    async function setupEmpresaSelector() {
+      const wrapper = document.getElementById('empresaFilterWrapper');
+      const select = document.getElementById('empresaSelect');
+      if (!wrapper || !select) return;
+
+      wrapper.style.display = 'block';
+      select.innerHTML = '<option value="">Cargando empresas…</option>';
+
+      const res = await authFetch('/api/admin/empresas-list', { method: 'GET' });
+      if (!res.ok) {
+        wrapper.style.display = 'none';
+        return;
+      }
+
+      const json = await res.json();
+      const empresas = Array.isArray(json) ? json : (Array.isArray(json.data) ? json.data : []);
+      state.empresas = empresas;
+
+      if (!empresas.length) {
+        select.innerHTML = '<option value="">(Sin empresas)</option>';
+        state.targetEmpresaId = null;
+        return;
+      }
+
+      select.innerHTML = '<option value="">Seleccionar empresa</option>';
+      empresas.forEach(e => {
+        const opt = document.createElement('option');
+        opt.value = String(Number(e.id) || '');
+        opt.textContent = `${e.id} · ${e.nombre}`;
+        select.appendChild(opt);
+      });
+
+      if (state.targetEmpresaId) {
+        select.value = String(state.targetEmpresaId);
+      }
+
+      select.addEventListener('change', async () => {
+        const v = select.value;
+        state.targetEmpresaId = v ? Number(v) : null;
+
+        await loadTemplates().catch((e) => setStatus(e.message || 'Error cargando verticales', 'err'));
+        await loadKpis().catch((e) => setStatus(e.message || 'Error cargando KPIs', 'err'));
+      });
+    }
+
+    async function loadUserInfo() {
+      const res = await authFetch('/api/me', { method: 'GET' });
+      if (res.status === 401) return window.location.href = '/pedidos/login.html';
+      const json = await res.json();
+      const user = json?.user || null;
+      state.user = user;
+      state.esSuperAdmin = String(user?.role || '').toLowerCase() === 'super';
+      state.targetEmpresaId = user?.empresa_id || null;
+
+      if (state.esSuperAdmin) {
+        await setupEmpresaSelector();
+      }
+    }
+
+    async function init() {
+      await loadUserInfo();
+      await loadTemplates().catch((e) => setStatus(e.message || 'Error cargando verticales', 'err'));
+      await loadKpis().catch((e) => setStatus(e.message || 'Error cargando KPIs', 'err'));
+    }
+
     document.getElementById('btnApply').addEventListener('click', applyVertical);
     document.getElementById('btnRefreshKpis').addEventListener('click', () => {
       loadKpis().catch((e) => setStatus(e.message || 'Error cargando KPIs', 'err'));
     });
 
-    loadTemplates().catch((e) => setStatus(e.message || 'Error cargando verticales', 'err'));
-    loadKpis().catch((e) => setStatus(e.message || 'Error cargando KPIs', 'err'));
+    init().catch((e) => setStatus(e.message || 'Error inicializando onboarding', 'err'));
   </script>
 </body>
 </html>
