@@ -49,6 +49,18 @@
   </div>
 
   <div class="card">
+    <h2 style="margin:0 0 8px;font-size:1rem">Presupuesto mensual vs ejecutado</h2>
+    <div class="row" style="margin-bottom:8px">
+      <input id="presCategoria" placeholder="Categoría" value="pago_proveedor" />
+      <select id="presProveedor" style="min-width:220px"></select>
+      <input id="presMonto" type="number" placeholder="Monto presupuestado" style="width:180px" />
+      <button id="btnAddPres" class="primary">Guardar presupuesto</button>
+    </div>
+    <div id="presSummary" style="color:var(--muted);margin-bottom:8px"></div>
+    <div style="overflow:auto"><table><thead><tr><th>Categoría</th><th>Proveedor</th><th>Presupuestado</th><th>Ejecutado</th><th>Desvío</th><th>Semáforo</th></tr></thead><tbody id="presBody"></tbody></table></div>
+  </div>
+
+  <div class="card">
     <h2 style="margin:0 0 8px;font-size:1rem">Movimientos (últimos 500)</h2>
     <div style="overflow:auto"><table><thead><tr><th>Fecha</th><th>Tipo</th><th>Proveedor</th><th>Categoría</th><th>Monto</th><th>Estado</th><th></th></tr></thead><tbody id="movBody"></tbody></table></div>
   </div>
@@ -72,7 +84,9 @@
   }
 
   async function loadProveedores(){ if(st.isSuper&&!st.empresaId) return; const r=await authFetch(apiUrl('/api/setup/fase2/proveedores')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error proveedores'); st.proveedores=Array.isArray(j.items)?j.items:[];
-    const sel=document.getElementById('movProveedor'); sel.innerHTML='<option value="">Sin proveedor</option>'+st.proveedores.map(p=>`<option value="${Number(p.id)}">${p.nombre}</option>`).join('');
+    const options='<option value="">Sin proveedor</option>'+st.proveedores.map(p=>`<option value="${Number(p.id)}">${p.nombre}</option>`).join('');
+    const sel=document.getElementById('movProveedor'); sel.innerHTML=options;
+    const sel2=document.getElementById('presProveedor'); sel2.innerHTML=options;
   }
 
   async function loadDashboard(){ if(st.isSuper&&!st.empresaId) return; const r=await authFetch(apiUrl('/api/setup/fase2/tesoreria/dashboard')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error dashboard tesorería');
@@ -93,8 +107,19 @@
     box.innerHTML=items.map(a=>`<div style="border:1px solid var(--border);border-left:4px solid ${color(a.nivel)};border-radius:10px;padding:10px;background:var(--bg2)"><div style="font-weight:700">${a.titulo}</div><div style="font-size:.9rem;color:var(--muted)">${a.detalle||''}</div></div>`).join('');
   }
 
-  async function refreshAll(){ if(st.isSuper&&!st.empresaId){ setStatus('Seleccioná empresa para ver tesorería.',true); ['kpiGrid','movBody','alertas'].forEach(id=>{const el=document.getElementById(id); if(el) el.innerHTML='';}); return; }
-    setStatus('Actualizando…'); try{ await Promise.all([loadProveedores(),loadDashboard(),loadMovs(),loadAlerts()]); setStatus('Actualizado.'); } catch(e){ setStatus(e.message||'Error',true); }
+  async function loadPresupuestoVsEjecutado(){
+    if(st.isSuper&&!st.empresaId) return;
+    const r=await authFetch(apiUrl('/api/setup/fase2/presupuesto-vs-ejecutado')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error presupuesto');
+    const s=j.summary||{};
+    document.getElementById('presSummary').textContent=`Presupuestado: ${fmt.format(Number(s.presupuestado||0))} · Ejecutado: ${fmt.format(Number(s.ejecutado||0))} · Desvío: ${fmt.format(Number(s.desvio||0))}`;
+    const items=Array.isArray(j.items)?j.items:[];
+    const sem=(d,p)=>{ if(p<=0) return d>0?'⚠️':'✅'; const r=d/p; if(r>0.2) return '🔴'; if(r>0.05) return '🟡'; return '🟢'; };
+    const body=document.getElementById('presBody');
+    body.innerHTML=items.length?items.map(x=>`<tr><td>${x.categoria||'-'}</td><td>${x.proveedor_nombre||'-'}</td><td>${fmt.format(Number(x.presupuestado||0))}</td><td>${fmt.format(Number(x.ejecutado||0))}</td><td>${fmt.format(Number(x.desvio||0))}</td><td>${sem(Number(x.desvio||0), Number(x.presupuestado||0))}</td></tr>`).join(''):'<tr><td colspan="6" style="color:var(--muted)">Sin datos del período.</td></tr>';
+  }
+
+  async function refreshAll(){ if(st.isSuper&&!st.empresaId){ setStatus('Seleccioná empresa para ver tesorería.',true); ['kpiGrid','movBody','alertas','presBody','presSummary'].forEach(id=>{const el=document.getElementById(id); if(el) el.innerHTML='';}); return; }
+    setStatus('Actualizando…'); try{ await Promise.all([loadProveedores(),loadDashboard(),loadMovs(),loadAlerts(),loadPresupuestoVsEjecutado()]); setStatus('Actualizado.'); } catch(e){ setStatus(e.message||'Error',true); }
   }
 
   document.getElementById('btnAddMov').addEventListener('click', async ()=>{
@@ -104,6 +129,20 @@
     if(st.isSuper) body.empresa_id=st.empresaId;
     const r=await authFetch('/api/setup/fase2/tesoreria',{method:'POST',body:JSON.stringify(body)}); const j=await r.json(); if(!r.ok) return setStatus(j.error||'No se pudo registrar',true);
     document.getElementById('movMonto').value=''; document.getElementById('movRef').value=''; refreshAll();
+  });
+
+  document.getElementById('btnAddPres').addEventListener('click', async ()=>{
+    if(st.isSuper&&!st.empresaId) return setStatus('Seleccioná empresa primero',true);
+    const categoria=document.getElementById('presCategoria').value.trim();
+    const monto=Number(document.getElementById('presMonto').value||0);
+    const proveedor_id=Number(document.getElementById('presProveedor').value||0)||null;
+    if(!categoria) return setStatus('Categoría requerida',true);
+    if(!(monto>0)) return setStatus('Monto presupuestado inválido',true);
+    const body={ categoria, monto_presupuestado:monto, proveedor_id };
+    if(st.isSuper) body.empresa_id=st.empresaId;
+    const r=await authFetch('/api/setup/fase2/presupuesto',{method:'POST',body:JSON.stringify(body)}); const j=await r.json(); if(!r.ok) return setStatus(j.error||'No se pudo guardar presupuesto',true);
+    document.getElementById('presMonto').value='';
+    refreshAll();
   });
 
   document.getElementById('movBody').addEventListener('click', async (ev)=>{

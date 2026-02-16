@@ -1538,5 +1538,137 @@ export function createSetupRouter(deps) {
     }
   });
 
+  // GET /api/setup/fase2/presupuesto
+  router.get('/fase2/presupuesto', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req);
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+      const now = new Date();
+      const anio = Number(req.query?.anio || now.getFullYear());
+      const mes = Number(req.query?.mes || (now.getMonth() + 1));
+
+      const rows = await query(
+        `SELECT b.*, p.nombre AS proveedor_nombre
+         FROM presupuesto_mensual b
+         LEFT JOIN proveedores p ON p.id=b.proveedor_id
+         WHERE b.empresa_id=$1 AND b.anio=$2 AND b.mes=$3
+         ORDER BY b.categoria ASC, p.nombre ASC NULLS LAST`,
+        [empresaId, anio, mes]
+      );
+
+      return res.json({ ok: true, periodo: { anio, mes }, items: rows });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error obteniendo presupuesto' });
+    }
+  });
+
+  // POST /api/setup/fase2/presupuesto
+  router.post('/fase2/presupuesto', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+      const b = req.body || {};
+      const now = new Date();
+      const anio = Number(b.anio || now.getFullYear());
+      const mes = Number(b.mes || (now.getMonth() + 1));
+      const categoria = String(b.categoria || '').trim();
+      const monto = Number(b.monto_presupuestado || 0);
+      const proveedorId = b.proveedor_id ? Number(b.proveedor_id) : null;
+      if (!categoria) return res.status(400).json({ error: 'categoria requerida' });
+      if (!(mes >= 1 && mes <= 12)) return res.status(400).json({ error: 'mes inválido' });
+      if (!(monto > 0)) return res.status(400).json({ error: 'monto_presupuestado inválido' });
+
+      const [existing] = await query(
+        `SELECT id FROM presupuesto_mensual
+         WHERE empresa_id=$1 AND anio=$2 AND mes=$3 AND categoria=$4 AND COALESCE(proveedor_id,0)=COALESCE($5,0)
+         LIMIT 1`,
+        [empresaId, anio, mes, categoria, proveedorId]
+      );
+
+      let row;
+      if (existing?.id) {
+        [row] = await query(
+          `UPDATE presupuesto_mensual
+           SET monto_presupuestado=$1, updated_at=NOW()
+           WHERE id=$2 AND empresa_id=$3
+           RETURNING *`,
+          [monto, existing.id, empresaId]
+        );
+      } else {
+        [row] = await query(
+          `INSERT INTO presupuesto_mensual (empresa_id, anio, mes, categoria, proveedor_id, monto_presupuestado, created_by)
+           VALUES ($1,$2,$3,$4,$5,$6,$7)
+           RETURNING *`,
+          [empresaId, anio, mes, categoria, proveedorId, monto, req?.user?.id ? Number(req.user.id) : null]
+        );
+      }
+
+      return res.json({ ok: true, item: row });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error guardando presupuesto' });
+    }
+  });
+
+  // GET /api/setup/fase2/presupuesto-vs-ejecutado
+  router.get('/fase2/presupuesto-vs-ejecutado', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req);
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+      const now = new Date();
+      const anio = Number(req.query?.anio || now.getFullYear());
+      const mes = Number(req.query?.mes || (now.getMonth() + 1));
+
+      const rows = await query(
+        `WITH bud AS (
+           SELECT categoria, proveedor_id, SUM(monto_presupuestado)::numeric AS presupuestado
+           FROM presupuesto_mensual
+           WHERE empresa_id=$1 AND anio=$2 AND mes=$3
+           GROUP BY categoria, proveedor_id
+         ), exe AS (
+           SELECT categoria, proveedor_id, SUM(monto)::numeric AS ejecutado
+           FROM tesoreria_movimientos
+           WHERE empresa_id=$1
+             AND tipo='egreso'
+             AND EXTRACT(YEAR FROM fecha)=$2
+             AND EXTRACT(MONTH FROM fecha)=$3
+           GROUP BY categoria, proveedor_id
+         )
+         SELECT COALESCE(bud.categoria, exe.categoria) AS categoria,
+                COALESCE(bud.proveedor_id, exe.proveedor_id) AS proveedor_id,
+                p.nombre AS proveedor_nombre,
+                COALESCE(bud.presupuestado,0)::numeric AS presupuestado,
+                COALESCE(exe.ejecutado,0)::numeric AS ejecutado,
+                (COALESCE(exe.ejecutado,0) - COALESCE(bud.presupuestado,0))::numeric AS desvio
+         FROM bud
+         FULL OUTER JOIN exe
+           ON exe.categoria=bud.categoria
+          AND COALESCE(exe.proveedor_id,0)=COALESCE(bud.proveedor_id,0)
+         LEFT JOIN proveedores p
+           ON p.id=COALESCE(bud.proveedor_id, exe.proveedor_id)
+         ORDER BY ABS(COALESCE(exe.ejecutado,0) - COALESCE(bud.presupuestado,0)) DESC, categoria ASC`,
+        [empresaId, anio, mes]
+      );
+
+      const summary = rows.reduce((acc, r) => {
+        acc.presupuestado += Number(r.presupuestado || 0);
+        acc.ejecutado += Number(r.ejecutado || 0);
+        return acc;
+      }, { presupuestado: 0, ejecutado: 0 });
+      summary.desvio = summary.ejecutado - summary.presupuestado;
+
+      return res.json({ ok: true, periodo: { anio, mes }, summary, items: rows.map((r) => ({
+        ...r,
+        presupuestado: Number(r.presupuestado || 0),
+        ejecutado: Number(r.ejecutado || 0),
+        desvio: Number(r.desvio || 0),
+      })) });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error obteniendo presupuesto vs ejecutado' });
+    }
+  });
+
   return router;
 }

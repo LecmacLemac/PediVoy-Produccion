@@ -971,6 +971,27 @@ CREATE INDEX IF NOT EXISTS tesoreria_movimientos_empresa_fecha_idx
 CREATE INDEX IF NOT EXISTS tesoreria_movimientos_conciliado_idx
   ON tesoreria_movimientos (empresa_id, conciliado, fecha DESC);
 
+-- 14.d Presupuesto mensual (compras/tesorería)
+CREATE TABLE IF NOT EXISTS presupuesto_mensual (
+  id                  SERIAL PRIMARY KEY,
+  empresa_id          INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+  anio                INTEGER NOT NULL,
+  mes                 INTEGER NOT NULL,
+  categoria           TEXT NOT NULL,
+  proveedor_id        INTEGER REFERENCES proveedores(id) ON DELETE SET NULL,
+  monto_presupuestado NUMERIC(12,2) NOT NULL DEFAULT 0,
+  created_by          INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT presupuesto_mensual_mes_chk CHECK (mes BETWEEN 1 AND 12)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS presupuesto_mensual_unique_idx
+  ON presupuesto_mensual (empresa_id, anio, mes, categoria, COALESCE(proveedor_id, 0));
+
+CREATE INDEX IF NOT EXISTS presupuesto_mensual_empresa_periodo_idx
+  ON presupuesto_mensual (empresa_id, anio, mes, categoria);
+
 -- =========================================================
 -- 15. ÍNDICES DE RENDIMIENTO (OPTIMIZACIÓN)
 -- =========================================================
