@@ -200,6 +200,14 @@ CREATE TABLE IF NOT EXISTS puntos_entrega (
   created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+ALTER TABLE puntos_entrega
+  ADD COLUMN IF NOT EXISTS crm_estado TEXT DEFAULT 'activo',
+  ADD COLUMN IF NOT EXISTS crm_segmento TEXT,
+  ADD COLUMN IF NOT EXISTS crm_riesgo TEXT DEFAULT 'bajo',
+  ADD COLUMN IF NOT EXISTS crm_ticket_objetivo NUMERIC(12,2),
+  ADD COLUMN IF NOT EXISTS crm_proxima_accion TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS crm_ultima_accion TIMESTAMPTZ;
+
 -- =========================================================
 -- 7. PRODUCTOS Y STOCK (La Base Fundamental)
 -- =========================================================
@@ -438,6 +446,71 @@ CREATE TABLE IF NOT EXISTS gastos_repartidor (
   producto_id      INTEGER REFERENCES productos(id) ON DELETE SET NULL,
   created_at       TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- CRM comercial: pipeline de oportunidades
+CREATE TABLE IF NOT EXISTS crm_oportunidades (
+  id                  SERIAL PRIMARY KEY,
+  empresa_id          INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+  cliente_id          INTEGER REFERENCES puntos_entrega(id) ON DELETE SET NULL,
+  nombre              TEXT NOT NULL,
+  rubro               TEXT,
+  canal               TEXT,
+  etapa               TEXT NOT NULL DEFAULT 'prospecto',
+  probabilidad        INTEGER DEFAULT 20,
+  monto_estimado      NUMERIC(12,2) DEFAULT 0,
+  fecha_cierre_estimada DATE,
+  origen              TEXT,
+  proxima_accion      TIMESTAMPTZ,
+  responsable_usuario_id INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
+  notas               TEXT,
+  perdida_motivo      TEXT,
+  estado              TEXT NOT NULL DEFAULT 'abierta',
+  created_at          TIMESTAMPTZ DEFAULT NOW(),
+  updated_at          TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS crm_oportunidades_empresa_etapa_idx
+  ON crm_oportunidades (empresa_id, etapa, estado);
+CREATE INDEX IF NOT EXISTS crm_oportunidades_empresa_prox_accion_idx
+  ON crm_oportunidades (empresa_id, proxima_accion);
+
+CREATE TABLE IF NOT EXISTS crm_oportunidad_actividades (
+  id               SERIAL PRIMARY KEY,
+  empresa_id       INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+  oportunidad_id   INTEGER NOT NULL REFERENCES crm_oportunidades(id) ON DELETE CASCADE,
+  tipo             TEXT NOT NULL DEFAULT 'nota',
+  descripcion      TEXT,
+  usuario_id       INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
+  fecha_programada TIMESTAMPTZ,
+  completada       BOOLEAN DEFAULT FALSE,
+  created_at       TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS crm_oportunidad_actividades_empresa_idx
+  ON crm_oportunidad_actividades (empresa_id, oportunidad_id, created_at DESC);
+
+-- Cuenta corriente por cliente (debe/haber + saldo)
+CREATE TABLE IF NOT EXISTS cliente_cta_corriente_mov (
+  id               SERIAL PRIMARY KEY,
+  empresa_id       INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+  cliente_id       INTEGER NOT NULL REFERENCES puntos_entrega(id) ON DELETE CASCADE,
+  pedido_id        INTEGER REFERENCES pedidos(id) ON DELETE SET NULL,
+  tipo             TEXT NOT NULL,
+  concepto         TEXT,
+  debe             NUMERIC(12,2) DEFAULT 0,
+  haber            NUMERIC(12,2) DEFAULT 0,
+  fecha            TIMESTAMPTZ DEFAULT NOW(),
+  vencimiento      TIMESTAMPTZ,
+  estado           TEXT DEFAULT 'pendiente',
+  referencia       TEXT,
+  usuario_id       INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
+  created_at       TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS cliente_cta_corriente_empresa_cliente_idx
+  ON cliente_cta_corriente_mov (empresa_id, cliente_id, fecha DESC);
+CREATE INDEX IF NOT EXISTS cliente_cta_corriente_empresa_estado_idx
+  ON cliente_cta_corriente_mov (empresa_id, estado, vencimiento);
 
 CREATE TABLE IF NOT EXISTS transferencias (
   id               SERIAL PRIMARY KEY,

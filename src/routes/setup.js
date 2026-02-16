@@ -144,10 +144,25 @@ export function createSetupRouter(deps) {
 
   const router = express.Router();
 
+  const resolveEmpresaIdForSetup = (req, { fromBody = false } = {}) => {
+    const role = String(req?.user?.role || '').toLowerCase();
+    const ownEmpresaId = Number(getEmpresaIdFromToken(req));
+
+    if (role === 'super') {
+      const raw = fromBody ? req?.body?.empresa_id : req?.query?.empresa_id;
+      const eid = Number(raw);
+      if (Number.isFinite(eid) && eid > 0) return eid;
+      return null;
+    }
+
+    return Number.isFinite(ownEmpresaId) && ownEmpresaId > 0 ? ownEmpresaId : null;
+  };
+
   // GET /api/setup/progress
   router.get('/progress', withAuth, async (req, res) => {
     try {
-      const empresaId = getEmpresaIdFromToken(req);
+      const empresaId = resolveEmpresaIdForSetup(req);
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
       const rows = await query('SELECT setup_steps FROM empresas WHERE id=$1', [empresaId]);
 
       let steps = {};
@@ -169,7 +184,8 @@ export function createSetupRouter(deps) {
   router.post('/step', withAuth, async (req, res) => {
     try {
       const { step, done } = req.body || {};
-      const empresaId = getEmpresaIdFromToken(req);
+      const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
 
       const rows = await query('SELECT setup_steps FROM empresas WHERE id=$1', [empresaId]);
       let steps = {};
@@ -194,7 +210,8 @@ export function createSetupRouter(deps) {
   // GET /api/setup/activation-kpis
   router.get('/activation-kpis', withAuth, async (req, res) => {
     try {
-      const empresaId = getEmpresaIdFromToken(req);
+      const empresaId = resolveEmpresaIdForSetup(req);
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
 
       const [productosRow] = await query(
         `SELECT COUNT(*)::int AS c
@@ -325,7 +342,8 @@ export function createSetupRouter(deps) {
   // POST /api/setup/apply-vertical
   router.post('/apply-vertical', withAuth, async (req, res) => {
     try {
-      const empresaId = getEmpresaIdFromToken(req);
+      const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
       const vertical = String(req.body?.vertical || '').trim();
       const tpl = VERTICAL_TEMPLATES[vertical];
       if (!tpl) return res.status(400).json({ error: 'Vertical inválida' });
@@ -366,7 +384,8 @@ export function createSetupRouter(deps) {
   // POST /api/setup/seed-catalog
   router.post('/seed-catalog', withAuth, async (req, res) => {
     try {
-      const empresaId = getEmpresaIdFromToken(req);
+      const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
       const vertical = String(req.body?.vertical || '').trim();
       const overwrite = !!req.body?.overwrite;
       if (!CATALOG_TEMPLATES[vertical]) {
@@ -384,7 +403,8 @@ export function createSetupRouter(deps) {
   // POST /api/setup/apply-vertical-full
   router.post('/apply-vertical-full', withAuth, async (req, res) => {
     try {
-      const empresaId = getEmpresaIdFromToken(req);
+      const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
       const vertical = String(req.body?.vertical || '').trim();
       const overwrite = !!req.body?.overwrite;
       const tpl = VERTICAL_TEMPLATES[vertical];
@@ -409,6 +429,368 @@ export function createSetupRouter(deps) {
     } catch (e) {
       console.error(e);
       return res.status(500).json({ error: 'Error aplicando vertical completo' });
+    }
+  });
+
+  // =========================
+  // FASE 1: CRM + Cta Cte + Dashboard Unificado
+  // =========================
+
+  // GET /api/setup/fase1/dashboard
+  router.get('/fase1/dashboard', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req);
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+
+      const [ventas30] = await query(
+        `SELECT COUNT(*)::int AS pedidos, COALESCE(SUM(monto),0)::numeric AS monto
+         FROM pedidos
+         WHERE empresa_id=$1 AND created_at >= NOW() - INTERVAL '30 days'`,
+        [empresaId]
+      );
+
+      const [cobranzas30] = await query(
+        `SELECT COALESCE(SUM(monto),0)::numeric AS monto
+         FROM transferencias
+         WHERE empresa_id=$1
+           AND created_at >= NOW() - INTERVAL '30 days'
+           AND (tipo='cobro' OR tipo IS NULL)`,
+        [empresaId]
+      );
+
+      const [saldoRow] = await query(
+        `SELECT COALESCE(SUM(debe - haber),0)::numeric AS saldo
+         FROM cliente_cta_corriente_mov
+         WHERE empresa_id=$1`,
+        [empresaId]
+      );
+
+      const [vencidoRow] = await query(
+        `SELECT COUNT(*)::int AS c
+         FROM cliente_cta_corriente_mov
+         WHERE empresa_id=$1
+           AND estado='pendiente'
+           AND vencimiento IS NOT NULL
+           AND vencimiento < NOW()
+           AND (debe - haber) > 0`,
+        [empresaId]
+      );
+
+      const [clientesRow] = await query(
+        `SELECT COUNT(*)::int AS total,
+                COUNT(*) FILTER (WHERE crm_riesgo IN ('alto','critico') OR crm_estado='en_riesgo')::int AS en_riesgo
+         FROM puntos_entrega
+         WHERE empresa_id=$1`,
+        [empresaId]
+      );
+
+      const [pipelineRow] = await query(
+        `SELECT COALESCE(SUM(monto_estimado),0)::numeric AS total,
+                COALESCE(SUM(monto_estimado * (GREATEST(LEAST(probabilidad,100),0)::numeric/100.0)),0)::numeric AS ponderado,
+                COUNT(*)::int AS oportunidades
+         FROM crm_oportunidades
+         WHERE empresa_id=$1 AND estado='abierta'`,
+        [empresaId]
+      );
+
+      const serie = await query(
+        `SELECT TO_CHAR(date_trunc('month', d), 'YYYY-MM') AS mes,
+                COALESCE(SUM(p.monto),0)::numeric AS facturacion,
+                COALESCE((
+                  SELECT SUM(t.monto)
+                  FROM transferencias t
+                  WHERE t.empresa_id=$1
+                    AND date_trunc('month', t.created_at)=date_trunc('month', d)
+                    AND (t.tipo='cobro' OR t.tipo IS NULL)
+                ),0)::numeric AS cobranzas
+         FROM generate_series(date_trunc('month', NOW()) - INTERVAL '5 months', date_trunc('month', NOW()), INTERVAL '1 month') d
+         LEFT JOIN pedidos p
+           ON p.empresa_id=$1 AND date_trunc('month', p.created_at)=date_trunc('month', d)
+         GROUP BY 1
+         ORDER BY 1`,
+        [empresaId]
+      );
+
+      return res.json({
+        ok: true,
+        kpis: {
+          ventas_30d: Number(ventas30?.monto || 0),
+          pedidos_30d: Number(ventas30?.pedidos || 0),
+          cobranzas_30d: Number(cobranzas30?.monto || 0),
+          saldo_cta_corriente: Number(saldoRow?.saldo || 0),
+          vencimientos_pendientes: Number(vencidoRow?.c || 0),
+          clientes_total: Number(clientesRow?.total || 0),
+          clientes_en_riesgo: Number(clientesRow?.en_riesgo || 0),
+          pipeline_abierto: Number(pipelineRow?.total || 0),
+          pipeline_ponderado: Number(pipelineRow?.ponderado || 0),
+          oportunidades_abiertas: Number(pipelineRow?.oportunidades || 0),
+        },
+        serie_mensual: serie.map((r) => ({
+          mes: r.mes,
+          facturacion: Number(r.facturacion || 0),
+          cobranzas: Number(r.cobranzas || 0),
+        })),
+      });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error construyendo dashboard fase 1' });
+    }
+  });
+
+  // GET /api/setup/fase1/pipeline
+  router.get('/fase1/pipeline', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req);
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+
+      const etapa = String(req.query?.etapa || '').trim();
+      const estado = String(req.query?.estado || 'abierta').trim();
+      const params = [empresaId];
+      let where = 'WHERE o.empresa_id=$1';
+
+      if (estado) {
+        params.push(estado);
+        where += ` AND o.estado=$${params.length}`;
+      }
+      if (etapa) {
+        params.push(etapa);
+        where += ` AND o.etapa=$${params.length}`;
+      }
+
+      const rows = await query(
+        `SELECT o.*, c.cliente AS cliente_nombre
+         FROM crm_oportunidades o
+         LEFT JOIN puntos_entrega c ON c.id=o.cliente_id
+         ${where}
+         ORDER BY o.proxima_accion NULLS LAST, o.updated_at DESC
+         LIMIT 500`,
+        params
+      );
+
+      return res.json({ ok: true, items: rows });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error obteniendo pipeline' });
+    }
+  });
+
+  // POST /api/setup/fase1/pipeline
+  router.post('/fase1/pipeline', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+
+      const body = req.body || {};
+      const nombre = String(body.nombre || '').trim();
+      if (!nombre) return res.status(400).json({ error: 'nombre requerido' });
+
+      const [row] = await query(
+        `INSERT INTO crm_oportunidades (
+          empresa_id, cliente_id, nombre, rubro, canal, etapa, probabilidad, monto_estimado,
+          fecha_cierre_estimada, origen, proxima_accion, responsable_usuario_id, notas, estado
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'abierta')
+        RETURNING *`,
+        [
+          empresaId,
+          body.cliente_id ? Number(body.cliente_id) : null,
+          nombre,
+          body.rubro || null,
+          body.canal || null,
+          body.etapa || 'prospecto',
+          Number(body.probabilidad || 20),
+          Number(body.monto_estimado || 0),
+          body.fecha_cierre_estimada || null,
+          body.origen || null,
+          body.proxima_accion || null,
+          req?.user?.id ? Number(req.user.id) : null,
+          body.notas || null,
+        ]
+      );
+
+      return res.json({ ok: true, item: row });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error creando oportunidad' });
+    }
+  });
+
+  // PUT /api/setup/fase1/pipeline/:id
+  router.put('/fase1/pipeline/:id', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+
+      const id = Number(req.params.id);
+      if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: 'id inválido' });
+
+      const b = req.body || {};
+      const [row] = await query(
+        `UPDATE crm_oportunidades
+         SET nombre=COALESCE($1,nombre),
+             cliente_id=COALESCE($2,cliente_id),
+             rubro=COALESCE($3,rubro),
+             canal=COALESCE($4,canal),
+             etapa=COALESCE($5,etapa),
+             probabilidad=COALESCE($6,probabilidad),
+             monto_estimado=COALESCE($7,monto_estimado),
+             fecha_cierre_estimada=COALESCE($8,fecha_cierre_estimada),
+             proxima_accion=COALESCE($9,proxima_accion),
+             notas=COALESCE($10,notas),
+             estado=COALESCE($11,estado),
+             perdida_motivo=COALESCE($12,perdida_motivo),
+             updated_at=NOW()
+         WHERE id=$13 AND empresa_id=$14
+         RETURNING *`,
+        [
+          b.nombre ?? null,
+          b.cliente_id ? Number(b.cliente_id) : null,
+          b.rubro ?? null,
+          b.canal ?? null,
+          b.etapa ?? null,
+          b.probabilidad != null ? Number(b.probabilidad) : null,
+          b.monto_estimado != null ? Number(b.monto_estimado) : null,
+          b.fecha_cierre_estimada ?? null,
+          b.proxima_accion ?? null,
+          b.notas ?? null,
+          b.estado ?? null,
+          b.perdida_motivo ?? null,
+          id,
+          empresaId,
+        ]
+      );
+
+      if (!row) return res.status(404).json({ error: 'Oportunidad no encontrada' });
+      return res.json({ ok: true, item: row });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error actualizando oportunidad' });
+    }
+  });
+
+  // POST /api/setup/fase1/pipeline/:id/actividad
+  router.post('/fase1/pipeline/:id/actividad', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+      const id = Number(req.params.id);
+      if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: 'id inválido' });
+
+      const b = req.body || {};
+      const [row] = await query(
+        `INSERT INTO crm_oportunidad_actividades (
+           empresa_id, oportunidad_id, tipo, descripcion, usuario_id, fecha_programada, completada
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7)
+         RETURNING *`,
+        [
+          empresaId,
+          id,
+          b.tipo || 'nota',
+          b.descripcion || null,
+          req?.user?.id ? Number(req.user.id) : null,
+          b.fecha_programada || null,
+          !!b.completada,
+        ]
+      );
+
+      await query(
+        `UPDATE crm_oportunidades
+         SET proxima_accion=COALESCE($1,proxima_accion), updated_at=NOW()
+         WHERE id=$2 AND empresa_id=$3`,
+        [b.fecha_programada || null, id, empresaId]
+      );
+
+      return res.json({ ok: true, item: row });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error guardando actividad' });
+    }
+  });
+
+  // GET /api/setup/fase1/cuentas-corrientes/resumen
+  router.get('/fase1/cuentas-corrientes/resumen', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req);
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+
+      const q = String(req.query?.q || '').trim().toLowerCase();
+      const params = [empresaId];
+      let where = 'WHERE p.empresa_id=$1';
+      if (q) {
+        params.push(`%${q}%`);
+        where += ` AND (LOWER(p.cliente) LIKE $${params.length} OR LOWER(COALESCE(p.telefono,'')) LIKE $${params.length})`;
+      }
+
+      const rows = await query(
+        `SELECT p.id AS cliente_id,
+                p.cliente,
+                p.telefono,
+                COALESCE(SUM(m.debe - m.haber),0)::numeric AS saldo,
+                COUNT(*) FILTER (WHERE m.estado='pendiente' AND m.vencimiento < NOW() AND (m.debe-m.haber)>0)::int AS vencidos
+         FROM puntos_entrega p
+         LEFT JOIN cliente_cta_corriente_mov m
+           ON m.cliente_id=p.id AND m.empresa_id=p.empresa_id
+         ${where}
+         GROUP BY p.id, p.cliente, p.telefono
+         ORDER BY saldo DESC, p.cliente ASC
+         LIMIT 500`,
+        params
+      );
+
+      return res.json({ ok: true, items: rows.map((r) => ({
+        ...r,
+        saldo: Number(r.saldo || 0),
+        vencidos: Number(r.vencidos || 0),
+      })) });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error obteniendo cuentas corrientes' });
+    }
+  });
+
+  // POST /api/setup/fase1/cuentas-corrientes/movimiento
+  router.post('/fase1/cuentas-corrientes/movimiento', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+
+      const b = req.body || {};
+      const clienteId = Number(b.cliente_id);
+      if (!Number.isFinite(clienteId) || clienteId <= 0) {
+        return res.status(400).json({ error: 'cliente_id inválido' });
+      }
+
+      const debe = Number(b.debe || 0);
+      const haber = Number(b.haber || 0);
+      if (debe <= 0 && haber <= 0) {
+        return res.status(400).json({ error: 'debe o haber debe ser mayor a 0' });
+      }
+
+      const [row] = await query(
+        `INSERT INTO cliente_cta_corriente_mov (
+          empresa_id, cliente_id, pedido_id, tipo, concepto, debe, haber,
+          fecha, vencimiento, estado, referencia, usuario_id
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+        RETURNING *`,
+        [
+          empresaId,
+          clienteId,
+          b.pedido_id ? Number(b.pedido_id) : null,
+          b.tipo || (debe > 0 ? 'cargo_manual' : 'cobro_manual'),
+          b.concepto || null,
+          debe,
+          haber,
+          b.fecha || new Date().toISOString(),
+          b.vencimiento || null,
+          b.estado || 'pendiente',
+          b.referencia || null,
+          req?.user?.id ? Number(req.user.id) : null,
+        ]
+      );
+
+      return res.json({ ok: true, item: row });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error guardando movimiento de cuenta corriente' });
     }
   });
 
