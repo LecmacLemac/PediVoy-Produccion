@@ -700,7 +700,9 @@
             $('#empresa_id').value = 1;
             await loadProducts();
         } else {
-            $('#loading').innerHTML = '❌ Error cargando la tienda.<br><button onclick="location.reload()" style="margin-top:1rem">Reintentar</button>';
+            $('#loading').innerHTML = '❌ Error cargando la tienda.<br><button id="btnRetryLoad" type="button" style="margin-top:1rem">Reintentar</button>';
+            const btnRetryLoad = document.getElementById('btnRetryLoad');
+            if (btnRetryLoad) btnRetryLoad.addEventListener('click', () => location.reload());
         }
       }
     }
@@ -759,11 +761,11 @@
       const cardClass = p.etiqueta ? 'card promo' : 'card';
       const imgUrl = p.imagen_promo || p.imagen || 'https://placehold.co/400x300/f1f5f9/94a3b8?text=Sin+Imagen';
 
-      // Safe JSON for onclick
-      const safeP = JSON.stringify(p).replace(/'/g, '');
+      const pid = Number(p.id);
+      const safePid = Number.isFinite(pid) && pid > 0 ? String(pid) : '';
 
       return (
-        '<article class="' + cardClass + '">' +
+        '<article class="' + cardClass + '" data-product-id="' + safePid + '">' +
           badge +
           '<div class="pimg-wrap">' +
              '<img src="' + imgUrl + '" class="pimg" alt="' + p.nombre + '" loading="lazy">' +
@@ -775,7 +777,7 @@
             '<p class="pdesc">' + (p.descripcion || '') + '</p>' +
             '<div style="margin-top:auto">' +
                '<div class="pprice" style="margin-bottom:0.8rem">' + ARS.format(p.precio) + '</div>' +
-               '<button type="button" class="' + btnClass + '" onclick=\'addToCart(' + safeP + ')\'>' +
+               '<button type="button" class="' + btnClass + '" data-action="add-to-cart" data-product-id="' + safePid + '">' +
                   '<span>' + btnIcon + '</span> ' + btnText +
                '</button>' +
             '</div>' +
@@ -794,6 +796,32 @@
         renderFiltered(filtered);
       }, 300);
     });
+
+    function bindProductListEvents(containerId) {
+      const el = document.getElementById(containerId);
+      if (!el) return;
+      el.addEventListener('click', (ev) => {
+        const btn = ev.target.closest('button[data-action="add-to-cart"][data-product-id]');
+        if (!btn) return;
+        const id = Number(btn.getAttribute('data-product-id'));
+        if (!Number.isFinite(id) || id <= 0) return;
+        addToCartById(id);
+      });
+    }
+
+    bindProductListEvents('promosList');
+    bindProductListEvents('prodsList');
+
+    if (cartEl) {
+      cartEl.addEventListener('click', (ev) => {
+        const btn = ev.target.closest('button[data-action="mod-cart"][data-idx][data-delta]');
+        if (!btn) return;
+        const idx = Number(btn.getAttribute('data-idx'));
+        const delta = Number(btn.getAttribute('data-delta'));
+        if (!Number.isFinite(idx) || !Number.isFinite(delta)) return;
+        modCart(idx, delta);
+      });
+    }
 
     // --- 2. CARRITO ---
     function addToCart(p) {
@@ -839,9 +867,9 @@
             '</div>' +
           '</div>' +
           '<div class="cart-controls">' +
-            '<button class="cbtn" onclick="modCart(' + i + ', -1)">−</button>' +
+            '<button class="cbtn" type="button" data-action="mod-cart" data-idx="' + i + '" data-delta="-1">−</button>' +
             '<span class="cqty">' + it.cantidad + '</span>' +
-            '<button class="cbtn" onclick="modCart(' + i + ', 1)">+</button>' +
+            '<button class="cbtn" type="button" data-action="mod-cart" data-idx="' + i + '" data-delta="1">+</button>' +
           '</div>' +
         '</div>'
       )).join('');
@@ -850,13 +878,19 @@
       updateTotal(total);
     }
 
-    window.addToCart = addToCart;
-    window.modCart = (idx, delta) => {
+    function modCart(idx, delta) {
+      if (!Number.isFinite(idx) || idx < 0 || idx >= carrito.length) return;
       carrito[idx].cantidad += delta;
       if (carrito[idx].cantidad <= 0) carrito.splice(idx, 1);
       renderCart();
       renderFiltered(allProducts);
-    };
+    }
+
+    function addToCartById(id) {
+      const p = allProducts.find((x) => Number(x.id) === Number(id));
+      if (!p) return;
+      addToCart(p);
+    }
 
     function updateTotal(val) {
       const txt = ARS.format(val);

@@ -247,7 +247,7 @@
         <h1>👤 Gestión de Usuarios</h1>
         <p class="subtitle">Controla el acceso al panel y a la aplicación móvil.</p>
       </div>
-      <button class="btn btn-primary" onclick="openModal()">＋ Nuevo Usuario</button>
+      <button id="btnNuevoUsuario" type="button" class="btn btn-primary">＋ Nuevo Usuario</button>
     </div>
 
     <div class="card">
@@ -283,14 +283,14 @@
     <div class="modal">
       <div class="modal-header">
         <h3 id="modalTitle">Nuevo Usuario</h3>
-        <button class="btn-icon" onclick="closeModal()">✕</button>
+        <button id="btnCloseModalTop" type="button" class="btn-icon">✕</button>
       </div>
-      <form id="formUser" class="modal-body" onsubmit="event.preventDefault(); save();">
+      <form id="formUser" class="modal-body">
         <input type="hidden" id="u_id">
 
         <div id="modalEmpWrap" style="display:none;">
             <label>Asignar a Empresa *</label>
-            <select id="u_empresa_id" onchange="loadDriversForModal()"></select>
+            <select id="u_empresa_id"></select>
         </div>
 
         <div>
@@ -306,7 +306,7 @@
 
         <div>
           <label>Rol de Acceso</label>
-          <select id="u_role" onchange="toggleChoferField()">
+          <select id="u_role">
             <option value="repartidor">📱 Repartidor (App Móvil)</option>
             <option value="user">💻 Administrador (Panel Web)</option>
           </select>
@@ -322,8 +322,8 @@
 
       </form>
       <div class="modal-footer">
-        <button class="btn" onclick="closeModal()">Cancelar</button>
-        <button class="btn btn-primary" onclick="save()">Guardar</button>
+        <button id="btnCancelModal" type="button" class="btn">Cancelar</button>
+        <button id="btnSaveUsuario" type="button" class="btn btn-primary">Guardar</button>
       </div>
     </div>
   </div>
@@ -352,11 +352,14 @@
     };
 
     // --- Logout ---
-    $('#logout').onclick = async (e) => {
-      e.preventDefault();
-      try { await authFetch('/api/logout', { method: 'POST' }); } catch {}
-      location.href = '../login.html';
-    };
+    const logoutLink = $('#logout');
+    if (logoutLink) {
+      logoutLink.addEventListener('click', async (e) => {
+        e.preventDefault();
+        try { await authFetch('/api/logout', { method: 'POST' }); } catch {}
+        location.href = '../login.html';
+      });
+    }
 
     // --- State ---
     let STATE = { isSuper: false, user: null };
@@ -431,8 +434,8 @@
           <td style="color:var(--muted); font-family:monospace;">${u.empresa_id ? Number(u.empresa_id) : (roleRaw==='super'?'GLOBAL':'-')}</td>
           <td>${driverName}</td>
           <td style="text-align:right;">
-            <button class="btn-icon" onclick="edit(${Number(u.id)})" title="Editar">✏️</button>
-            <button class="btn-icon" onclick="del(${Number(u.id)}, this)" title="Eliminar" style="color:var(--danger); border-color:rgba(239,68,68,0.3);">🗑️</button>
+            <button class="btn-icon" data-action="edit" data-id="${Number(u.id)}" title="Editar">✏️</button>
+            <button class="btn-icon" data-action="delete" data-id="${Number(u.id)}" title="Eliminar" style="color:var(--danger); border-color:rgba(239,68,68,0.3);">🗑️</button>
           </td>
         </tr>
       `}).join('');
@@ -568,7 +571,7 @@
       const method = id ? 'PUT' : 'POST';
       const url = id ? `/api/admin/usuarios/${id}` : '/api/admin/usuarios';
 
-      const saveBtn = document.querySelector('#modal .modal-footer .btn.btn-primary');
+      const saveBtn = document.getElementById('btnSaveUsuario');
       const prevTxt = saveBtn ? saveBtn.textContent : '';
       saveBusy = true;
       if (saveBtn) {
@@ -618,6 +621,47 @@
       }
     }
 
+    const btnNuevoUsuario = document.getElementById('btnNuevoUsuario');
+    if (btnNuevoUsuario) btnNuevoUsuario.addEventListener('click', openModal);
+
+    const btnCloseModalTop = document.getElementById('btnCloseModalTop');
+    if (btnCloseModalTop) btnCloseModalTop.addEventListener('click', closeModal);
+
+    const btnCancelModal = document.getElementById('btnCancelModal');
+    if (btnCancelModal) btnCancelModal.addEventListener('click', closeModal);
+
+    const btnSaveUsuario = document.getElementById('btnSaveUsuario');
+    if (btnSaveUsuario) btnSaveUsuario.addEventListener('click', save);
+
+    const formUser = document.getElementById('formUser');
+    if (formUser) {
+      formUser.addEventListener('submit', (ev) => {
+        ev.preventDefault();
+        save();
+      });
+    }
+
+    const uEmpresaId = document.getElementById('u_empresa_id');
+    if (uEmpresaId) uEmpresaId.addEventListener('change', loadDriversForModal);
+
+    const uRole = document.getElementById('u_role');
+    if (uRole) uRole.addEventListener('change', toggleChoferField);
+
+    const tbBody = document.getElementById('tbBody');
+    if (tbBody) {
+      tbBody.addEventListener('click', (ev) => {
+        const btn = ev.target.closest('button[data-action][data-id]');
+        if (!btn) return;
+
+        const action = btn.getAttribute('data-action');
+        const id = Number(btn.getAttribute('data-id'));
+        if (!Number.isFinite(id) || id <= 0) return;
+
+        if (action === 'edit') edit(id);
+        else if (action === 'delete') del(id, btn);
+      });
+    }
+
     // --- Init ---
     (async () => {
         try {
@@ -625,7 +669,7 @@
             STATE.user = me?.user || {};
             STATE.isSuper = (STATE.user.role || '').toLowerCase() === 'super';
             
-            $('#roleBadge').textContent = STATE.isSuper ? 'SUPER ADMIN' : (STATE.user.role || 'Admin').toUpperCase();
+            $('#roleBadge').textContent = STATE.isSuper ? 'SUPER ADMIN' : 'Admin';
 
             if (STATE.isSuper) {
                 $('#empFilterWrap').style.display = 'block';
