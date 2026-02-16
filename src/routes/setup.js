@@ -3,6 +3,24 @@
 
 import express from 'express';
 
+const CATALOG_TEMPLATES = {
+  distribuidora_b2b: [
+    { sku: 'B2B-LIMP-5L', nombre: 'Detergente Industrial 5L', precio: 12500, categoria: 'Limpieza', unidad_medida: 'unidad', descripcion: 'Bidón 5 litros para uso profesional.' },
+    { sku: 'B2B-ROL-8', nombre: 'Rollo Industrial x8', precio: 9800, categoria: 'Papel', unidad_medida: 'pack', descripcion: 'Pack x8 rollos industriales.' },
+    { sku: 'B2B-GUANT-100', nombre: 'Guantes Nitrilo x100', precio: 15400, categoria: 'Descartables', unidad_medida: 'caja', descripcion: 'Caja x100 unidades.' },
+  ],
+  gastronomia: [
+    { sku: 'GASTRO-COMBO-1', nombre: 'Combo Clásico', precio: 8900, categoria: 'Combos', unidad_medida: 'unidad', descripcion: 'Principal + guarnición + bebida.' },
+    { sku: 'GASTRO-PIZZA-MUZ', nombre: 'Pizza Muzza', precio: 11200, categoria: 'Pizzas', unidad_medida: 'unidad', descripcion: 'Muzzarella tradicional 8 porciones.' },
+    { sku: 'GASTRO-EMP-DOZ', nombre: 'Empanadas x12', precio: 15600, categoria: 'Empanadas', unidad_medida: 'docena', descripcion: 'Docena surtida.' },
+  ],
+  farmacia_barrio: [
+    { sku: 'FARM-IBU-400', nombre: 'Ibuprofeno 400mg x10', precio: 4300, categoria: 'OTC', unidad_medida: 'unidad', descripcion: 'Analgésico/antitérmico de venta libre.' },
+    { sku: 'FARM-ALC-GEL', nombre: 'Alcohol en Gel 250ml', precio: 3200, categoria: 'Higiene', unidad_medida: 'unidad', descripcion: 'Higiene de manos.' },
+    { sku: 'FARM-SHAM-400', nombre: 'Shampoo 400ml', precio: 6700, categoria: 'Perfumería', unidad_medida: 'unidad', descripcion: 'Uso diario.' },
+  ],
+};
+
 const VERTICAL_TEMPLATES = {
   distribuidora_b2b: {
     id: 'distribuidora_b2b',
@@ -60,6 +78,63 @@ const VERTICAL_TEMPLATES = {
     ],
   },
 };
+
+async function upsertCatalogTemplate({ query, empresaId, vertical, overwrite = false }) {
+  const items = CATALOG_TEMPLATES[vertical] || [];
+  if (!items.length) return { inserted: 0, updated: 0, skipped: 0, total: 0 };
+
+  let inserted = 0;
+  let updated = 0;
+  let skipped = 0;
+
+  for (const it of items) {
+    const sku = String(it.sku || '').trim();
+    if (!sku) continue;
+
+    const existing = await query(
+      `SELECT id FROM productos
+       WHERE empresa_id = $1
+         AND lower(sku) = lower($2)
+         AND deleted_at IS NULL
+       LIMIT 1`,
+      [empresaId, sku]
+    );
+
+    if (existing.length && !overwrite) {
+      skipped += 1;
+      continue;
+    }
+
+    if (existing.length && overwrite) {
+      await query(
+        `UPDATE productos
+         SET nombre = $1,
+             descripcion = $2,
+             precio = $3,
+             categoria = $4,
+             unidad_medida = $5,
+             activo = TRUE,
+             mostrar_en_catalogo = TRUE,
+             updated_at = NOW()
+         WHERE id = $6`,
+        [it.nombre, it.descripcion || null, Number(it.precio || 0), it.categoria || null, it.unidad_medida || 'unidad', existing[0].id]
+      );
+      updated += 1;
+      continue;
+    }
+
+    await query(
+      `INSERT INTO productos (
+          empresa_id, nombre, descripcion, precio, categoria, unidad_medida,
+          activo, mostrar_en_catalogo, mostrar_en_landing, sku
+       ) VALUES ($1,$2,$3,$4,$5,$6,TRUE,TRUE,TRUE,$7)`,
+      [empresaId, it.nombre, it.descripcion || null, Number(it.precio || 0), it.categoria || null, it.unidad_medida || 'unidad', sku]
+    );
+    inserted += 1;
+  }
+
+  return { inserted, updated, skipped, total: items.length };
+}
 
 export function createSetupRouter(deps) {
   const { query, withAuth, getEmpresaIdFromToken } = deps || {};
@@ -166,6 +241,55 @@ export function createSetupRouter(deps) {
     } catch (e) {
       console.error(e);
       return res.status(500).json({ error: 'Error aplicando vertical' });
+    }
+  });
+
+  // POST /api/setup/seed-catalog
+  router.post('/seed-catalog', withAuth, async (req, res) => {
+    try {
+      const empresaId = getEmpresaIdFromToken(req);
+      const vertical = String(req.body?.vertical || '').trim();
+      const overwrite = !!req.body?.overwrite;
+      if (!CATALOG_TEMPLATES[vertical]) {
+        return res.status(400).json({ error: 'Vertical inválida para catálogo' });
+      }
+
+      const summary = await upsertCatalogTemplate({ query, empresaId, vertical, overwrite });
+      return res.json({ ok: true, vertical, summary });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error aplicando catálogo base' });
+    }
+  });
+
+  // POST /api/setup/apply-vertical-full
+  router.post('/apply-vertical-full', withAuth, async (req, res) => {
+    try {
+      const empresaId = getEmpresaIdFromToken(req);
+      const vertical = String(req.body?.vertical || '').trim();
+      const overwrite = !!req.body?.overwrite;
+      const tpl = VERTICAL_TEMPLATES[vertical];
+      if (!tpl) return res.status(400).json({ error: 'Vertical inválida' });
+
+      const rows = await query('SELECT setup_steps FROM empresas WHERE id=$1', [empresaId]);
+      let steps = {};
+      if (rows.length && rows[0].setup_steps) {
+        try { steps = JSON.parse(rows[0].setup_steps); } catch { steps = {}; }
+      }
+
+      const mergedSteps = { ...steps, ...tpl.suggestedSteps };
+      await query('UPDATE empresas SET rubro=$1, setup_steps=$2 WHERE id=$3', [tpl.rubro, JSON.stringify(mergedSteps), empresaId]);
+      const summary = await upsertCatalogTemplate({ query, empresaId, vertical, overwrite });
+
+      return res.json({
+        ok: true,
+        applied: { id: tpl.id, title: tpl.title, rubro: tpl.rubro, checklist: tpl.checklist },
+        steps: mergedSteps,
+        catalog: summary,
+      });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error aplicando vertical completo' });
     }
   });
 

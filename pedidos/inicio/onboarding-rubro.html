@@ -36,7 +36,11 @@
         <select id="verticalSelect">
           <option value="">Cargando verticales...</option>
         </select>
-        <button id="btnApply" type="button">Aplicar configuración base</button>
+        <label class="muted" style="display:flex;gap:6px;align-items:center;">
+          <input id="overwriteCatalog" type="checkbox" />
+          Sobrescribir catálogo existente
+        </label>
+        <button id="btnApply" type="button">Aplicar vertical + catálogo base</button>
         <a href="inicial.html">← Volver a Configuración Inicial</a>
       </div>
       <div id="status" class="muted" style="margin-top:10px;">Listo para seleccionar.</div>
@@ -101,17 +105,19 @@
       const v = sel.value;
       if (!v) return setStatus('Seleccioná un vertical primero.', 'err');
 
+      const overwrite = !!document.getElementById('overwriteCatalog')?.checked;
       const btn = document.getElementById('btnApply');
       btn.disabled = true;
-      setStatus('Aplicando configuración base...', 'muted');
+      setStatus('Aplicando vertical y catálogo base...', 'muted');
       try {
-        const res = await authFetch('/api/setup/apply-vertical', {
+        const res = await authFetch('/api/setup/apply-vertical-full', {
           method: 'POST',
-          body: JSON.stringify({ vertical: v }),
+          body: JSON.stringify({ vertical: v, overwrite }),
         });
         const json = await res.json();
         if (!res.ok) throw new Error(json.error || 'No se pudo aplicar vertical');
-        setStatus(`Listo: ${json.applied?.title || v} aplicado.`, 'ok');
+        const c = json.catalog || {};
+        setStatus(`Listo: ${json.applied?.title || v}. Catálogo -> +${c.inserted || 0} / ~${c.updated || 0} / omitidos ${c.skipped || 0}.`, 'ok');
       } catch (e) {
         setStatus(e.message || 'Error aplicando vertical', 'err');
       } finally {
