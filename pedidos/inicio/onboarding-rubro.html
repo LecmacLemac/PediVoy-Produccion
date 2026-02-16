@@ -75,6 +75,14 @@
       return String(v ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
     }
 
+    function safeInternalPath(value) {
+      const s = String(value || '');
+      if (!s.startsWith('/')) return null;
+      if (s.startsWith('//')) return null;
+      if (/^https?:/i.test(s)) return null;
+      return s;
+    }
+
     function setStatus(msg, kind='muted') {
       const el = document.getElementById('status');
       el.className = kind;
@@ -121,7 +129,12 @@
       } else {
         sug.innerHTML = suggestions.map(s => {
           const dot = s.level === 'high' ? '🔴' : '🟡';
-          return `<div style="margin-bottom:8px;">${dot} ${escapeHtml(s.text || s.code || 'Sugerencia')}</div>`;
+          const actionPath = safeInternalPath(s.actionPath);
+          const actionLabel = escapeHtml(s.actionLabel || 'Abrir');
+          const action = actionPath
+            ? ` <a href="${actionPath}" style="margin-left:8px;">${actionLabel} →</a>`
+            : '';
+          return `<div style="margin-bottom:8px;">${dot} ${escapeHtml(s.text || s.code || 'Sugerencia')}${action}</div>`;
         }).join('');
       }
     }

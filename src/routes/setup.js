@@ -249,22 +249,58 @@ export function createSetupRouter(deps) {
 
       const suggestions = [];
       if (kpis.setup_completion < 100) {
-        suggestions.push({ level: 'high', code: 'setup_incomplete', text: 'Completá el setup inicial para desbloquear operación plena.' });
+        suggestions.push({
+          level: 'high',
+          code: 'setup_incomplete',
+          text: 'Completá el setup inicial para desbloquear operación plena.',
+          actionLabel: 'Abrir Configuración Inicial',
+          actionPath: '/pedidos/inicio/inicial.html',
+        });
       }
       if (kpis.productos_activos === 0) {
-        suggestions.push({ level: 'high', code: 'no_products', text: 'No hay productos activos. Cargá catálogo para empezar a vender.' });
+        suggestions.push({
+          level: 'high',
+          code: 'no_products',
+          text: 'No hay productos activos. Cargá catálogo para empezar a vender.',
+          actionLabel: 'Ir a Productos',
+          actionPath: '/pedidos/inicio/producto.html',
+        });
       }
       if (kpis.clientes === 0) {
-        suggestions.push({ level: 'high', code: 'no_clients', text: 'No hay clientes cargados. Importá clientes para activar ventas.' });
+        suggestions.push({
+          level: 'high',
+          code: 'no_clients',
+          text: 'No hay clientes cargados. Importá clientes para activar ventas.',
+          actionLabel: 'Ir a Clientes',
+          actionPath: '/pedidos/inicio/clientes.html',
+        });
       }
       if (kpis.choferes_activos === 0) {
-        suggestions.push({ level: 'medium', code: 'no_drivers', text: 'No hay choferes activos. Registrá al menos un chofer para despachar.' });
+        suggestions.push({
+          level: 'medium',
+          code: 'no_drivers',
+          text: 'No hay choferes activos. Registrá al menos un chofer para despachar.',
+          actionLabel: 'Ir a Choferes',
+          actionPath: '/pedidos/inicio/choferes.html',
+        });
       }
       if (kpis.pedidos_7d === 0) {
-        suggestions.push({ level: 'medium', code: 'no_orders_7d', text: 'No hubo pedidos en los últimos 7 días. Activá campañas o revisá canales.' });
+        suggestions.push({
+          level: 'medium',
+          code: 'no_orders_7d',
+          text: 'No hubo pedidos en los últimos 7 días. Activá campañas o revisá canales.',
+          actionLabel: 'Ir a Marketing',
+          actionPath: '/pedidos/inicio/marketing.html',
+        });
       }
       if (kpis.pedidos_7d > 0 && kpis.facturacion_7d <= 0) {
-        suggestions.push({ level: 'medium', code: 'no_revenue_7d', text: 'Hubo pedidos pero facturación 0. Revisá precios y métodos de cobro.' });
+        suggestions.push({
+          level: 'medium',
+          code: 'no_revenue_7d',
+          text: 'Hubo pedidos pero facturación 0. Revisá precios y métodos de cobro.',
+          actionLabel: 'Ir a Costos',
+          actionPath: '/pedidos/costos.html',
+        });
       }
 
       return res.json({ ok: true, kpis, suggestions });
