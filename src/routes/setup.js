@@ -238,17 +238,36 @@ export function createSetupRouter(deps) {
 
       const setupCompletion = totalSteps ? Math.round((done / totalSteps) * 100) : 0;
 
-      return res.json({
-        ok: true,
-        kpis: {
-          productos_activos: Number(productosRow?.c || 0),
-          clientes: Number(clientesRow?.c || 0),
-          choferes_activos: Number(choferesRow?.c || 0),
-          pedidos_7d: Number(pedidosRow?.c || 0),
-          facturacion_7d: Number(pedidosRow?.monto || 0),
-          setup_completion: setupCompletion,
-        },
-      });
+      const kpis = {
+        productos_activos: Number(productosRow?.c || 0),
+        clientes: Number(clientesRow?.c || 0),
+        choferes_activos: Number(choferesRow?.c || 0),
+        pedidos_7d: Number(pedidosRow?.c || 0),
+        facturacion_7d: Number(pedidosRow?.monto || 0),
+        setup_completion: setupCompletion,
+      };
+
+      const suggestions = [];
+      if (kpis.setup_completion < 100) {
+        suggestions.push({ level: 'high', code: 'setup_incomplete', text: 'Completá el setup inicial para desbloquear operación plena.' });
+      }
+      if (kpis.productos_activos === 0) {
+        suggestions.push({ level: 'high', code: 'no_products', text: 'No hay productos activos. Cargá catálogo para empezar a vender.' });
+      }
+      if (kpis.clientes === 0) {
+        suggestions.push({ level: 'high', code: 'no_clients', text: 'No hay clientes cargados. Importá clientes para activar ventas.' });
+      }
+      if (kpis.choferes_activos === 0) {
+        suggestions.push({ level: 'medium', code: 'no_drivers', text: 'No hay choferes activos. Registrá al menos un chofer para despachar.' });
+      }
+      if (kpis.pedidos_7d === 0) {
+        suggestions.push({ level: 'medium', code: 'no_orders_7d', text: 'No hubo pedidos en los últimos 7 días. Activá campañas o revisá canales.' });
+      }
+      if (kpis.pedidos_7d > 0 && kpis.facturacion_7d <= 0) {
+        suggestions.push({ level: 'medium', code: 'no_revenue_7d', text: 'Hubo pedidos pero facturación 0. Revisá precios y métodos de cobro.' });
+      }
+
+      return res.json({ ok: true, kpis, suggestions });
     } catch (e) {
       console.error(e);
       return res.status(500).json({ error: 'Error obteniendo KPIs de activación' });

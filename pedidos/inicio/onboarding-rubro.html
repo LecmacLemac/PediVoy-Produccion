@@ -54,6 +54,11 @@
       <div id="kpiGrid" class="grid" style="margin-top:10px;"></div>
     </div>
 
+    <div class="card">
+      <h2 style="margin:0 0 10px; font-size:1.1rem;">Sugerencias accionables</h2>
+      <div id="suggestionsBox" class="muted">Sin datos aún.</div>
+    </div>
+
     <section id="templates" class="grid"></section>
   </main>
 
@@ -92,11 +97,16 @@
 
     async function loadKpis() {
       const box = document.getElementById('kpiGrid');
+      const sug = document.getElementById('suggestionsBox');
       box.innerHTML = '<div class="muted">Cargando KPIs...</div>';
+      sug.textContent = 'Cargando sugerencias...';
+
       const res = await authFetch('/api/setup/activation-kpis');
       if (res.status === 401) return window.location.href = '../login.html';
       const json = await res.json();
       const k = json?.kpis || {};
+      const suggestions = Array.isArray(json?.suggestions) ? json.suggestions : [];
+
       box.innerHTML = `
         <div class="tpl"><div class="muted">Setup completado</div><div style="font-size:1.4rem;font-weight:700;">${Number(k.setup_completion || 0)}%</div></div>
         <div class="tpl"><div class="muted">Productos activos</div><div style="font-size:1.4rem;font-weight:700;">${Number(k.productos_activos || 0)}</div></div>
@@ -105,6 +115,15 @@
         <div class="tpl"><div class="muted">Pedidos (7d)</div><div style="font-size:1.4rem;font-weight:700;">${Number(k.pedidos_7d || 0)}</div></div>
         <div class="tpl"><div class="muted">Facturación (7d)</div><div style="font-size:1.4rem;font-weight:700;">${moneyFmt.format(Number(k.facturacion_7d || 0))}</div></div>
       `;
+
+      if (!suggestions.length) {
+        sug.innerHTML = '<span class="ok">✅ Excelente: no hay alertas prioritarias. Seguí optimizando conversión y recompra.</span>';
+      } else {
+        sug.innerHTML = suggestions.map(s => {
+          const dot = s.level === 'high' ? '🔴' : '🟡';
+          return `<div style="margin-bottom:8px;">${dot} ${escapeHtml(s.text || s.code || 'Sugerencia')}</div>`;
+        }).join('');
+      }
     }
 
     async function loadTemplates() {
