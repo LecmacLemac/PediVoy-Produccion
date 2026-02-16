@@ -2035,6 +2035,71 @@ export function createSetupRouter(deps) {
     }
   });
 
+  // GET /api/setup/fase3/semaforo-operativo
+  router.get('/fase3/semaforo-operativo', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req);
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+
+      const [k] = await query(
+        `SELECT
+           COALESCE(SUM(monto) FILTER (WHERE tipo='ingreso' AND fecha >= NOW() - INTERVAL '30 days'),0)::numeric AS ingresos_30d,
+           COALESCE(SUM(monto) FILTER (WHERE tipo='egreso' AND fecha >= NOW() - INTERVAL '30 days'),0)::numeric AS egresos_30d,
+           COUNT(*) FILTER (WHERE conciliado=FALSE)::int AS pendientes_conciliacion
+         FROM tesoreria_movimientos
+         WHERE empresa_id=$1`,
+        [empresaId]
+      );
+
+      const [v] = await query(
+        `SELECT COUNT(*)::int AS compras_vencidas
+         FROM compras_ordenes
+         WHERE empresa_id=$1
+           AND estado IN ('emitida','parcial')
+           AND fecha_entrega_estimada IS NOT NULL
+           AND fecha_entrega_estimada < CURRENT_DATE`,
+        [empresaId]
+      );
+
+      const [p] = await query(
+        `SELECT COALESCE(SUM(monto_estimado * (probabilidad/100.0)) FILTER (WHERE estado='abierta'),0)::numeric AS pipeline_ponderado
+         FROM crm_oportunidades
+         WHERE empresa_id=$1`,
+        [empresaId]
+      );
+
+      const ingresos = Number(k?.ingresos_30d || 0);
+      const egresos = Number(k?.egresos_30d || 0);
+      const pendientes = Number(k?.pendientes_conciliacion || 0);
+      const vencidas = Number(v?.compras_vencidas || 0);
+      const pipe = Number(p?.pipeline_ponderado || 0);
+
+      let score = 100;
+      if (ingresos > 0 && egresos > ingresos) score -= Math.min(35, Math.round(((egresos - ingresos) / ingresos) * 100));
+      score -= Math.min(25, pendientes * 2);
+      score -= Math.min(20, vencidas * 4);
+      if (egresos > 0 && pipe < egresos * 0.7) score -= 15;
+      score = Math.max(0, Math.min(100, score));
+
+      const nivel = score >= 75 ? 'verde' : (score >= 50 ? 'amarillo' : 'rojo');
+      return res.json({
+        ok: true,
+        score,
+        nivel,
+        factores: {
+          ingresos_30d: ingresos,
+          egresos_30d: egresos,
+          pendientes_conciliacion: pendientes,
+          compras_vencidas: vencidas,
+          pipeline_ponderado: pipe,
+        },
+      });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error obteniendo semáforo operativo' });
+    }
+  });
+
   // GET /api/setup/fase3/resumen-diario
   router.get('/fase3/resumen-diario', withAuth, async (req, res) => {
     try {

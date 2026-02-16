@@ -30,6 +30,7 @@
   </div>
 
   <div class="card"><h2 style="margin:0 0 8px;font-size:1rem">KPI unificado</h2><div id="kpiGrid" class="grid"></div></div>
+  <div class="card"><h2 style="margin:0 0 8px;font-size:1rem">Semáforo operativo</h2><div id="semaforo"></div></div>
   <div class="card"><h2 style="margin:0 0 8px;font-size:1rem">Recomendaciones automáticas</h2><div id="recos" style="display:grid;gap:8px"></div></div>
   <div class="card">
     <h2 style="margin:0 0 8px;font-size:1rem">Resumen diario ejecutivo</h2>
@@ -63,6 +64,14 @@ async function loadDashboard(){
   document.getElementById('kpiGrid').innerHTML=items.map(([l,v])=>`<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div></div>`).join('');
 }
 
+async function loadSemaforo(){
+  if(st.isSuper&&!st.empresaId) return;
+  const r=await authFetch(apiUrl('/api/setup/fase3/semaforo-operativo')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error semáforo operativo');
+  const color=j.nivel==='verde'?'#22c55e':(j.nivel==='amarillo'?'#f59e0b':'#ef4444');
+  const f=j.factores||{};
+  document.getElementById('semaforo').innerHTML=`<div style="border:1px solid var(--border);border-left:6px solid ${color};border-radius:10px;padding:10px;background:var(--bg2)"><div style="font-weight:700">Nivel ${String(j.nivel||'-').toUpperCase()} · Score ${Number(j.score||0)}/100</div><div style="font-size:.9rem;color:var(--muted);margin-top:4px">Ingresos 30d: ${fmt.format(Number(f.ingresos_30d||0))} · Egresos 30d: ${fmt.format(Number(f.egresos_30d||0))} · Pend. conciliación: ${Number(f.pendientes_conciliacion||0)} · Compras vencidas: ${Number(f.compras_vencidas||0)}</div></div>`;
+}
+
 async function loadRecos(){
   if(st.isSuper&&!st.empresaId) return;
   const r=await authFetch(apiUrl('/api/setup/fase3/recomendaciones')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error recomendaciones');
@@ -77,8 +86,8 @@ async function loadResumen(){
   document.getElementById('resumenText').value=j.resumen||'';
 }
 
-async function refreshAll(){ if(st.isSuper&&!st.empresaId){ setStatus('Seleccioná empresa para ver el tablero ejecutivo.',true); ['kpiGrid','recos'].forEach(id=>{const el=document.getElementById(id); if(el) el.innerHTML='';}); const tx=document.getElementById('resumenText'); if(tx) tx.value=''; return; }
-  setStatus('Actualizando…'); try{ await Promise.all([loadDashboard(),loadRecos(),loadResumen()]); setStatus('Actualizado.'); } catch(e){ setStatus(e.message||'Error',true); }
+async function refreshAll(){ if(st.isSuper&&!st.empresaId){ setStatus('Seleccioná empresa para ver el tablero ejecutivo.',true); ['kpiGrid','semaforo','recos'].forEach(id=>{const el=document.getElementById(id); if(el) el.innerHTML='';}); const tx=document.getElementById('resumenText'); if(tx) tx.value=''; return; }
+  setStatus('Actualizando…'); try{ await Promise.all([loadDashboard(),loadSemaforo(),loadRecos(),loadResumen()]); setStatus('Actualizado.'); } catch(e){ setStatus(e.message||'Error',true); }
 }
 
 document.getElementById('btnRefresh').addEventListener('click',refreshAll);
