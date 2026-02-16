@@ -520,7 +520,7 @@
         <h1>🏢 Gestión de Empresas</h1>
         <p class="subtitle">Administra datos fiscales, landings y cuentas bancarias.</p>
       </div>
-      <button class="btn btn-primary" onclick="openModal()">＋ Nueva Empresa</button>
+      <button id="btnNuevaEmpresa" type="button" class="btn btn-primary">＋ Nueva Empresa</button>
     </div>
 
     <div class="card">
@@ -553,10 +553,10 @@
     <div class="modal">
       <div class="modal-header">
         <h3 id="modalTitle">Nueva Empresa</h3>
-        <button class="btn-icon" onclick="closeModal()">✕</button>
+        <button id="btnCloseModalTop" type="button" class="btn-icon">✕</button>
       </div>
 
-<form id="formEmpresa" class="modal-body" onsubmit="event.preventDefault(); save();">
+<form id="formEmpresa" class="modal-body">
         <input type="hidden" id="e_id">
 
         <div class="section-label">Datos Generales</div>
@@ -634,8 +634,8 @@
           <label style="color:var(--brand);">Landing Page Personalizada (HTML)</label>
           <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-top:5px;">
             <input type="file" id="e_landing_file" accept=".html" style="margin-bottom:0; flex:1;">
-            <button type="button" class="btn" onclick="uploadLanding()">⬆ Subir</button>
-            <button type="button" class="btn" style="color:var(--danger); border-color:rgba(239,68,68,0.3);" onclick="deleteLanding()">🗑 Borrar</button>
+            <button id="btnUploadLanding" type="button" class="btn">⬆ Subir</button>
+            <button id="btnDeleteLanding" type="button" class="btn" style="color:var(--danger); border-color:rgba(239,68,68,0.3);">🗑 Borrar</button>
           </div>
           <small style="color:var(--muted); margin-top:4px; display:block;">
             Sube un archivo <code>.html</code> para reemplazar la plantilla por defecto. Se recomienda guardar la empresa (Slug) primero.
@@ -704,7 +704,7 @@
           </div>
         </div>
 
-        <button type="button" class="btn" onclick="agregarCuentaEnMemoria()">
+        <button id="btnAgregarCuentaMemoria" type="button" class="btn">
           <i class="fa fa-plus"></i> Agregar cuenta a la empresa
         </button>
 
@@ -1083,8 +1083,8 @@
       </form>
 
       <div class="modal-footer">
-        <button class="btn" type="button" onclick="closeModal()">Cancelar</button>
-        <button class="btn btn-primary" type="button" onclick="save()">Guardar</button>
+        <button id="btnCancelModal" class="btn" type="button">Cancelar</button>
+        <button id="btnSaveEmpresa" class="btn btn-primary" type="button">Guardar</button>
       </div>
     </div>
   </div>
@@ -1096,7 +1096,7 @@
           <h3 style="margin:0;">Cuentas Bancarias</h3>
           <small id="lblEmpresaCuentas" style="color:var(--brand); font-weight:600;"></small>
         </div>
-        <button class="btn-icon" onclick="closeCuentasModal()">✕</button>
+        <button id="btnCloseCuentasModal" class="btn-icon" type="button">✕</button>
       </div>
 
       <div class="modal-body">
@@ -1130,7 +1130,7 @@
           </div>
 
           <div style="display:flex; justify-content:flex-end;">
-            <button class="btn btn-primary" type="button" onclick="addCuenta()">
+            <button id="btnAddCuenta" class="btn btn-primary" type="button">
               <i class="fa-solid fa-plus"></i> Agregar Cuenta
             </button>
           </div>
@@ -1195,11 +1195,14 @@
       }
     }
 
-$('#logout').onclick = async (e) => {
-  e.preventDefault();
-  try { await authFetch('/api/logout', { method: 'POST' }); } catch {}
-  location.href = LOGIN_URL;
-};
+const logoutLink = $('#logout');
+if (logoutLink) {
+  logoutLink.addEventListener('click', async (e) => {
+    e.preventDefault();
+    try { await authFetch('/api/logout', { method: 'POST' }); } catch {}
+    location.href = LOGIN_URL;
+  });
+}
 
 
 // --- CORRECCIÓN EN EL SCRIPT ---
@@ -1208,6 +1211,75 @@ $('#logout').onclick = async (e) => {
     let esSuperAdmin = false;
     let saveBusy = false;
     let deleteBusy = false;
+
+    const btnNuevaEmpresa = document.getElementById('btnNuevaEmpresa');
+    if (btnNuevaEmpresa) btnNuevaEmpresa.addEventListener('click', openModal);
+
+    const btnCloseModalTop = document.getElementById('btnCloseModalTop');
+    if (btnCloseModalTop) btnCloseModalTop.addEventListener('click', closeModal);
+
+    const btnUploadLanding = document.getElementById('btnUploadLanding');
+    if (btnUploadLanding) btnUploadLanding.addEventListener('click', uploadLanding);
+
+    const btnDeleteLanding = document.getElementById('btnDeleteLanding');
+    if (btnDeleteLanding) btnDeleteLanding.addEventListener('click', deleteLanding);
+
+    const btnAgregarCuentaMemoria = document.getElementById('btnAgregarCuentaMemoria');
+    if (btnAgregarCuentaMemoria) btnAgregarCuentaMemoria.addEventListener('click', agregarCuentaEnMemoria);
+
+    const btnCancelModal = document.getElementById('btnCancelModal');
+    if (btnCancelModal) btnCancelModal.addEventListener('click', closeModal);
+
+    const btnSaveEmpresa = document.getElementById('btnSaveEmpresa');
+    if (btnSaveEmpresa) btnSaveEmpresa.addEventListener('click', save);
+
+    const formEmpresa = document.getElementById('formEmpresa');
+    if (formEmpresa) {
+      formEmpresa.addEventListener('submit', (ev) => {
+        ev.preventDefault();
+        save();
+      });
+    }
+
+    const btnCloseCuentasModal = document.getElementById('btnCloseCuentasModal');
+    if (btnCloseCuentasModal) btnCloseCuentasModal.addEventListener('click', closeCuentasModal);
+
+    const btnAddCuenta = document.getElementById('btnAddCuenta');
+    if (btnAddCuenta) btnAddCuenta.addEventListener('click', addCuenta);
+
+    const tbBody = document.getElementById('tbBody');
+    if (tbBody) {
+      tbBody.addEventListener('click', (ev) => {
+        const btn = ev.target.closest('button[data-action][data-id]');
+        if (!btn) return;
+
+        const action = btn.getAttribute('data-action');
+        const id = Number(btn.getAttribute('data-id'));
+        if (!Number.isFinite(id) || id <= 0) return;
+
+        if (action === 'manage-cuentas') {
+          const name = btn.getAttribute('data-name') || '';
+          manageCuentas(id, name);
+        } else if (action === 'copy-landing') {
+          copyLanding(id);
+        } else if (action === 'edit') {
+          edit(id);
+        } else if (action === 'delete') {
+          del(id, btn);
+        }
+      });
+    }
+
+    const listaCuentas = document.getElementById('listaCuentas');
+    if (listaCuentas) {
+      listaCuentas.addEventListener('click', (ev) => {
+        const btn = ev.target.closest('button[data-action="delete-cuenta"][data-id]');
+        if (!btn) return;
+        const id = Number(btn.getAttribute('data-id'));
+        if (!Number.isFinite(id) || id <= 0) return;
+        delCuenta(id);
+      });
+    }
 
     (async function boot() {
       try {
@@ -1386,16 +1458,16 @@ $('#logout').onclick = async (e) => {
             </td>
 
             <td style="text-align:right; white-space:nowrap;">
-              <button class="btn-icon" onclick='manageCuentas(${Number(c.id)}, ${JSON.stringify(String(c.nombre || ''))})' title="Cuentas Bancarias">
+              <button class="btn-icon" data-action="manage-cuentas" data-id="${Number(c.id)}" data-name="${esc(String(c.nombre || ''))}" title="Cuentas Bancarias">
                 <i class="fa-solid fa-building-columns"></i>
               </button>
-              <button class="btn-icon" onclick="copyLanding(${c.id})" title="Copiar Link">
+              <button class="btn-icon" data-action="copy-landing" data-id="${Number(c.id)}" title="Copiar Link">
                 <i class="fa-solid fa-link"></i>
               </button>
-              <button class="btn-icon" onclick="edit(${c.id})" title="Editar">
+              <button class="btn-icon" data-action="edit" data-id="${Number(c.id)}" title="Editar">
                 <i class="fa-solid fa-pen"></i>
               </button>
-              <button class="btn-icon" onclick="del(${Number(c.id)}, this)" title="Eliminar" style="color:var(--danger); border-color:rgba(239,68,68,0.3);">
+              <button class="btn-icon" data-action="delete" data-id="${Number(c.id)}" title="Eliminar" style="color:var(--danger); border-color:rgba(239,68,68,0.3);">
                 <i class="fa-solid fa-trash"></i>
               </button>
             </td>
@@ -1883,7 +1955,7 @@ $('#logout').onclick = async (e) => {
       const method = id ? 'PUT' : 'POST';
       const url = id ? `/api/empresas/${id}` : '/api/empresas';
 
-      const saveBtn = document.querySelector('#modal .modal-footer .btn.btn-primary');
+      const saveBtn = document.getElementById('btnSaveEmpresa');
       const prevTxt = saveBtn ? saveBtn.textContent : '';
       saveBusy = true;
       if (saveBtn) {
@@ -2029,7 +2101,7 @@ $('#logout').onclick = async (e) => {
             </span>
             ${cta.titular ? `<span class="account-holder">${esc(cta.titular)}</span>` : ''}
           </div>
-          <button class="btn-icon" style="color:var(--danger); border:none;" onclick="delCuenta(${Number(cta.id)})">
+          <button class="btn-icon" data-action="delete-cuenta" data-id="${Number(cta.id)}" style="color:var(--danger); border:none;">
             <i class="fa-solid fa-trash"></i>
           </button>
         </li>
