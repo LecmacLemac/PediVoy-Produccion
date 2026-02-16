@@ -1225,7 +1225,15 @@ if (logoutLink) {
     if (btnDeleteLanding) btnDeleteLanding.addEventListener('click', deleteLanding);
 
     const btnAgregarCuentaMemoria = document.getElementById('btnAgregarCuentaMemoria');
-    if (btnAgregarCuentaMemoria) btnAgregarCuentaMemoria.addEventListener('click', agregarCuentaEnMemoria);
+    if (btnAgregarCuentaMemoria) {
+      btnAgregarCuentaMemoria.addEventListener('click', () => {
+        if (typeof agregarCuentaEnMemoria === 'function') {
+          agregarCuentaEnMemoria();
+        } else {
+          toast('Función de cuenta temporal no disponible en esta versión.');
+        }
+      });
+    }
 
     const btnCancelModal = document.getElementById('btnCancelModal');
     if (btnCancelModal) btnCancelModal.addEventListener('click', closeModal);
