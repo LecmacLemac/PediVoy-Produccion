@@ -2259,5 +2259,43 @@ export function createSetupRouter(deps) {
     }
   });
 
+  // GET /api/setup/fase3/automatizaciones
+  router.get('/fase3/automatizaciones', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req);
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+
+      // Referencia operativa: jobs programados en OpenClaw para seguimiento ejecutivo.
+      const jobs = [
+        {
+          id: 'f9258056-a087-4332-86e5-5f59bbe56477',
+          nombre: 'Resumen ejecutivo diario (Fase 3)',
+          cron: '0 9 * * 1-6',
+          tz: 'America/Argentina/Salta',
+          objetivo: 'Arranque de jornada con foco en tablero ejecutivo y tesorería',
+        },
+        {
+          id: '4f286c37-81d0-4486-8a6d-77a1ad401bdc',
+          nombre: 'Cierre operativo diario (Fase 3)',
+          cron: '30 18 * * 1-6',
+          tz: 'America/Argentina/Salta',
+          objetivo: 'Checklist de cierre: conciliación, vencimientos, desvíos y resumen',
+        },
+        {
+          id: '8856423f-9fab-4888-b084-60c9fa13efa0',
+          nombre: 'Planificación semanal ejecutiva (Fase 3)',
+          cron: '30 8 * * 1',
+          tz: 'America/Argentina/Salta',
+          objetivo: 'Definir foco semanal en caja, comercial y compras críticas',
+        },
+      ];
+
+      return res.json({ ok: true, items: jobs });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error obteniendo automatizaciones fase3' });
+    }
+  });
+
   return router;
 }
