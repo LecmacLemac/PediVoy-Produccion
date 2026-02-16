@@ -477,11 +477,14 @@
     };
 
     // --- Logout ---
-    $('#logout').onclick = async (e) => {
-      e.preventDefault();
-      try { await authFetch('/api/logout', { method: 'POST' }); } catch {}
-      location.href = '../login.html';
-    };
+    const logoutLink = $('#logout');
+    if (logoutLink) {
+      logoutLink.addEventListener('click', async (e) => {
+        e.preventDefault();
+        try { await authFetch('/api/logout', { method: 'POST' }); } catch {}
+        location.href = '../login.html';
+      });
+    }
 
     // --- API ---
     async function api(endpoint, opts = {}) {
@@ -741,7 +744,7 @@
         STATE.user = me?.user || {};
         STATE.isSuper = (STATE.user.role || '').toLowerCase() === 'super';
         
-        $('#roleBadge').textContent = STATE.isSuper ? 'SUPER ADMIN' : (STATE.user.role || 'Admin').toUpperCase();
+        $('#roleBadge').textContent = STATE.isSuper ? 'SUPER ADMIN' : 'Admin';
 
         if (STATE.isSuper) {
           $('#empWrap').style.display = 'block';
