@@ -247,7 +247,7 @@
         <h1>🚚 Gestión de Choferes</h1>
         <p class="subtitle">Administra tu flota de repartidores propios y fleteros.</p>
       </div>
-      <button class="btn btn-primary" onclick="openModal()">＋ Nuevo Chofer</button>
+      <button id="btnNuevoChofer" type="button" class="btn btn-primary">＋ Nuevo Chofer</button>
     </div>
 
     <div class="card">
@@ -284,9 +284,9 @@
     <div class="modal">
       <div class="modal-header">
         <h3 id="modalTitle">Nuevo Chofer</h3>
-        <button class="btn-icon" onclick="closeModal()">✕</button>
+        <button id="btnCloseModalTop" type="button" class="btn-icon">✕</button>
       </div>
-      <form id="formChofer" class="modal-body" onsubmit="event.preventDefault(); save();">
+      <form id="formChofer" class="modal-body">
         <input type="hidden" id="c_id">
         
         <div id="modalEmpWrap" style="display:none;">
@@ -326,8 +326,8 @@
 
       </form>
       <div class="modal-footer">
-        <button class="btn" onclick="closeModal()">Cancelar</button>
-        <button class="btn btn-primary" onclick="save()">Guardar</button>
+        <button id="btnCancelModal" type="button" class="btn">Cancelar</button>
+        <button id="btnSaveChofer" type="button" class="btn btn-primary">Guardar</button>
       </div>
     </div>
   </div>
@@ -356,11 +356,14 @@
     };
 
     // --- Logout ---
-    $('#logout').onclick = async (e) => {
-      e.preventDefault();
-      try { await authFetch('/api/logout', { method: 'POST' }); } catch {}
-      location.href = '../login.html';
-    };
+    const logoutLink = $('#logout');
+    if (logoutLink) {
+      logoutLink.addEventListener('click', async (e) => {
+        e.preventDefault();
+        try { await authFetch('/api/logout', { method: 'POST' }); } catch {}
+        location.href = '../login.html';
+      });
+    }
 
     // --- State ---
     let STATE = { isSuper: false, user: null };
@@ -423,8 +426,8 @@
           <td><span class="status-badge ${tipoClass}">${tipoLabel}</span></td>
           <td>${c.sla_horas ? Number(c.sla_horas) + ' hs' : '-'}</td>
           <td style="text-align:right;">
-            <button class="btn-icon" onclick="edit(${id})" title="Editar">✏️</button>
-            <button class="btn-icon" onclick="del(${id}, this)" title="Eliminar" style="color:var(--danger); border-color:rgba(239,68,68,0.3);">🗑️</button>
+            <button class="btn-icon" data-action="edit" data-id="${id}" title="Editar">✏️</button>
+            <button class="btn-icon" data-action="delete" data-id="${id}" title="Eliminar" style="color:var(--danger); border-color:rgba(239,68,68,0.3);">🗑️</button>
           </td>
         </tr>
       `}).join('');
@@ -491,7 +494,7 @@
       const method = id ? 'PUT' : 'POST';
       const url = id ? `/api/choferes/${id}` : '/api/choferes';
 
-      const saveBtn = document.querySelector('#modal .modal-footer .btn.btn-primary');
+      const saveBtn = document.getElementById('btnSaveChofer');
       const prevTxt = saveBtn ? saveBtn.textContent : '';
       saveBusy = true;
       if (saveBtn) {
@@ -542,6 +545,41 @@
       }
     }
 
+    const btnNuevoChofer = document.getElementById('btnNuevoChofer');
+    if (btnNuevoChofer) btnNuevoChofer.addEventListener('click', openModal);
+
+    const btnCloseModalTop = document.getElementById('btnCloseModalTop');
+    if (btnCloseModalTop) btnCloseModalTop.addEventListener('click', closeModal);
+
+    const btnCancelModal = document.getElementById('btnCancelModal');
+    if (btnCancelModal) btnCancelModal.addEventListener('click', closeModal);
+
+    const btnSaveChofer = document.getElementById('btnSaveChofer');
+    if (btnSaveChofer) btnSaveChofer.addEventListener('click', save);
+
+    const formChofer = document.getElementById('formChofer');
+    if (formChofer) {
+      formChofer.addEventListener('submit', (ev) => {
+        ev.preventDefault();
+        save();
+      });
+    }
+
+    const tbBody = document.getElementById('tbBody');
+    if (tbBody) {
+      tbBody.addEventListener('click', (ev) => {
+        const btn = ev.target.closest('button[data-action][data-id]');
+        if (!btn) return;
+
+        const action = btn.getAttribute('data-action');
+        const id = Number(btn.getAttribute('data-id'));
+        if (!Number.isFinite(id) || id <= 0) return;
+
+        if (action === 'edit') edit(id);
+        else if (action === 'delete') del(id, btn);
+      });
+    }
+
     // --- Init ---
     (async () => {
       try {
@@ -549,7 +587,7 @@
         STATE.user = me?.user || {};
         STATE.isSuper = (STATE.user.role || '').toLowerCase() === 'super';
         
-        $('#roleBadge').textContent = STATE.isSuper ? 'SUPER ADMIN' : (STATE.user.role || 'Admin').toUpperCase();
+        $('#roleBadge').textContent = STATE.isSuper ? 'SUPER ADMIN' : 'Admin';
 
         if (STATE.isSuper) {
           $('#empFilterWrap').style.display = 'block';
