@@ -68,6 +68,11 @@
     </div>
 
     <div class="card">
+      <h2 style="margin:0 0 8px;font-size:1rem">A contactar hoy (prioridad)</h2>
+      <div style="overflow:auto"><table><thead><tr><th>Cliente</th><th>Estado/Riesgo</th><th>Últ. pedido</th><th>90d</th><th>Score</th><th></th></tr></thead><tbody id="priorizadosBody"></tbody></table></div>
+    </div>
+
+    <div class="card">
       <div class="row" style="justify-content:space-between"><h2 style="margin:0;font-size:1rem">Pipeline (Kanban)</h2></div>
       <div class="row" style="margin:8px 0">
         <input id="opNombre" placeholder="Nombre oportunidad" style="min-width:220px" />
@@ -111,7 +116,7 @@
   <script>
     const authFetch = (url, opts={}) => fetch(url, { ...opts, headers: { 'Content-Type':'application/json', ...(opts.headers||{}) }, credentials:'include' });
     const fmt = new Intl.NumberFormat('es-AR', { style:'currency', currency:'ARS', maximumFractionDigits:0 });
-    const st = { isSuper:false, empresaId:null, dashboard:null, pipeline:[], cta:[], aging:null, alerts:[], crmClientes:[] };
+    const st = { isSuper:false, empresaId:null, dashboard:null, pipeline:[], cta:[], aging:null, alerts:[], crmClientes:[], priorizados:[] };
 
     function setStatus(t, err=false){ const el=document.getElementById('status'); el.textContent=t; el.style.color=err?'var(--danger)':'var(--muted'); }
     function apiUrl(path){ if (st.isSuper && st.empresaId) { const sep=path.includes('?')?'&':'?'; return path + sep + 'empresa_id=' + encodeURIComponent(String(st.empresaId)); } return path; }
@@ -203,7 +208,7 @@
           <td><select data-action="crm-set" data-id="${Number(c.id)}" data-field="crm_riesgo"><option value="bajo" ${String(c.crm_riesgo)==='bajo'?'selected':''}>bajo</option><option value="medio" ${String(c.crm_riesgo)==='medio'?'selected':''}>medio</option><option value="alto" ${String(c.crm_riesgo)==='alto'?'selected':''}>alto</option><option value="critico" ${String(c.crm_riesgo)==='critico'?'selected':''}>crítico</option></select></td>
           <td><input data-action="crm-set-blur" data-id="${Number(c.id)}" data-field="crm_motivo" value="${String(c.crm_motivo || '').replace(/"/g, '&quot;')}" placeholder="motivo" /></td>
           <td><input type="datetime-local" data-action="crm-set" data-id="${Number(c.id)}" data-field="crm_proxima_accion" value="${c.crm_proxima_accion ? new Date(c.crm_proxima_accion).toISOString().slice(0,16) : ''}" /></td>
-          <td><button type="button" data-action="crm-save" data-id="${Number(c.id)}">Guardar</button></td>
+          <td class="row" style="gap:6px"><button type="button" data-action="crm-save" data-id="${Number(c.id)}">Guardar</button><button type="button" data-action="crm-create-opp" data-id="${Number(c.id)}">+ Oportunidad</button></td>
         </tr>`).join('') : '<tr><td colspan="7" style="color:var(--muted)">Sin clientes para mostrar.</td></tr>';
     }
 
@@ -216,6 +221,33 @@
       if (!r.ok) { setStatus(j.error || 'No se pudo guardar CRM cliente', true); return; }
       setStatus('CRM cliente actualizado.');
       await loadCrmClientes();
+    }
+
+    async function loadPriorizados(){
+      if (st.isSuper && !st.empresaId) return;
+      const r = await authFetch(apiUrl('/api/setup/fase1/clientes-priorizados')); const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Error priorización');
+      st.priorizados = Array.isArray(j.items) ? j.items : [];
+      const tb = document.getElementById('priorizadosBody');
+      tb.innerHTML = st.priorizados.length ? st.priorizados.map(c => `
+        <tr>
+          <td>${c.cliente || '-'}</td>
+          <td>${c.crm_estado || '-'} / ${c.crm_riesgo || '-'}</td>
+          <td>${c.last_order_at ? new Date(c.last_order_at).toLocaleDateString('es-AR') : 'Sin compras'}</td>
+          <td>${fmt.format(Number(c.revenue_90d || 0))}</td>
+          <td><span class="pill">${Number(c.prioridad_score || 0)}</span></td>
+          <td><button type="button" data-action="prior-create-opp" data-id="${Number(c.id)}">Crear oportunidad</button></td>
+        </tr>`).join('') : '<tr><td colspan="6" style="color:var(--muted)">Sin datos de priorización.</td></tr>';
+    }
+
+    async function createOppFromClient(clienteId){
+      if (!Number.isFinite(clienteId) || clienteId <= 0) return;
+      const body = {};
+      if (st.isSuper) body.empresa_id = st.empresaId;
+      const r = await authFetch(`/api/setup/fase1/clientes-crm/${clienteId}/oportunidad`, { method:'POST', body: JSON.stringify(body) });
+      const j = await r.json();
+      if (!r.ok) return setStatus(j.error || 'No se pudo crear oportunidad', true);
+      setStatus('Oportunidad creada desde cliente.');
+      await loadPipeline();
     }
 
     async function loadCtas(){
@@ -258,12 +290,12 @@
     async function refreshAll(){
       if (st.isSuper && !st.empresaId) {
         setStatus('Seleccioná una empresa para cargar datos.', true);
-        ['kpiGrid','kanban','crmClientesBody','ctaBody','agingGrid','alerts'].forEach(id => { const el=document.getElementById(id); if (el) el.innerHTML=''; });
+        ['kpiGrid','kanban','crmClientesBody','priorizadosBody','ctaBody','agingGrid','alerts'].forEach(id => { const el=document.getElementById(id); if (el) el.innerHTML=''; });
         return;
       }
       setStatus('Actualizando…');
       try {
-        await Promise.all([loadDashboard(), loadPipeline(), loadCrmClientes(), loadCtas(), loadAging(), loadAlerts()]);
+        await Promise.all([loadDashboard(), loadPipeline(), loadCrmClientes(), loadPriorizados(), loadCtas(), loadAging(), loadAlerts()]);
         setStatus('Actualizado.');
       } catch (e) { setStatus(e.message || 'Error actualizando panel', true); }
     }
@@ -298,9 +330,18 @@
     const crmClientesBody = document.getElementById('crmClientesBody');
     if (crmClientesBody) {
       crmClientesBody.addEventListener('click', (ev) => {
-        const btn = ev.target.closest('button[data-action="crm-save"][data-id]');
+        const btn = ev.target.closest('button[data-action][data-id]');
         if (!btn) return;
+        const action = btn.getAttribute('data-action');
         const id = Number(btn.getAttribute('data-id'));
+        if (!Number.isFinite(id) || id <= 0) return;
+
+        if (action === 'crm-create-opp') {
+          createOppFromClient(id);
+          return;
+        }
+        if (action !== 'crm-save') return;
+
         const row = btn.closest('tr');
         if (!row) return;
         const estado = row.querySelector('[data-field="crm_estado"]')?.value || null;
@@ -329,7 +370,18 @@
       }, true);
     }
 
-document.getElementById('btnAddOpp').addEventListener('click', async ()=>{
+    const priorizadosBody = document.getElementById('priorizadosBody');
+    if (priorizadosBody) {
+      priorizadosBody.addEventListener('click', (ev) => {
+        const btn = ev.target.closest('button[data-action="prior-create-opp"][data-id]');
+        if (!btn) return;
+        const id = Number(btn.getAttribute('data-id'));
+        if (!Number.isFinite(id) || id <= 0) return;
+        createOppFromClient(id);
+      });
+    }
+
+    document.getElementById('btnAddOpp').addEventListener('click', async ()=>{
       if (st.isSuper && !st.empresaId) return setStatus('Seleccioná empresa primero.', true);
       const body = { nombre: document.getElementById('opNombre').value.trim(), etapa: document.getElementById('opEtapa').value, monto_estimado: Number(document.getElementById('opMonto').value || 0) };
       if (st.isSuper) body.empresa_id = st.empresaId;

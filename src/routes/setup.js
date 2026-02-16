@@ -986,5 +986,98 @@ export function createSetupRouter(deps) {
     }
   });
 
+  // GET /api/setup/fase1/clientes-priorizados
+  // Ranking simple (RFM + riesgo CRM) para "a contactar hoy".
+  router.get('/fase1/clientes-priorizados', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req);
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+
+      const rows = await query(
+        `WITH base AS (
+           SELECT c.id, c.cliente, c.telefono, c.crm_estado, c.crm_riesgo,
+                  MAX(p.created_at) AS last_order_at,
+                  COUNT(p.id)::int AS orders_90d,
+                  COALESCE(SUM(p.monto),0)::numeric AS revenue_90d,
+                  COALESCE(c.crm_ticket_objetivo,0)::numeric AS ticket_objetivo
+           FROM puntos_entrega c
+           LEFT JOIN pedidos p
+             ON p.punto_entrega_id=c.id
+            AND p.empresa_id=c.empresa_id
+            AND p.created_at >= NOW() - INTERVAL '90 days'
+           WHERE c.empresa_id=$1
+           GROUP BY c.id, c.cliente, c.telefono, c.crm_estado, c.crm_riesgo, c.crm_ticket_objetivo
+         )
+         SELECT *,
+           (
+             CASE WHEN crm_estado='perdido' THEN 50 WHEN crm_estado='en_riesgo' THEN 35 WHEN crm_estado='nuevo' THEN 20 ELSE 0 END +
+             CASE WHEN crm_riesgo='critico' THEN 40 WHEN crm_riesgo='alto' THEN 30 WHEN crm_riesgo='medio' THEN 15 ELSE 5 END +
+             CASE WHEN last_order_at IS NULL THEN 30
+                  WHEN last_order_at < NOW() - INTERVAL '30 days' THEN 25
+                  WHEN last_order_at < NOW() - INTERVAL '14 days' THEN 15 ELSE 5 END +
+             CASE WHEN ticket_objetivo > revenue_90d THEN 15 ELSE 0 END
+           )::int AS prioridad_score
+         FROM base
+         ORDER BY prioridad_score DESC, revenue_90d DESC, cliente ASC
+         LIMIT 30`,
+        [empresaId]
+      );
+
+      return res.json({ ok: true, items: rows.map((r) => ({
+        ...r,
+        revenue_90d: Number(r.revenue_90d || 0),
+        ticket_objetivo: Number(r.ticket_objetivo || 0),
+      })) });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error obteniendo clientes priorizados' });
+    }
+  });
+
+  // POST /api/setup/fase1/clientes-crm/:id/oportunidad
+  router.post('/fase1/clientes-crm/:id/oportunidad', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+      const clienteId = Number(req.params.id);
+      if (!Number.isFinite(clienteId) || clienteId <= 0) return res.status(400).json({ error: 'id inválido' });
+
+      const [cliente] = await query(
+        `SELECT id, cliente, crm_segmento, crm_ticket_objetivo
+         FROM puntos_entrega
+         WHERE id=$1 AND empresa_id=$2`,
+        [clienteId, empresaId]
+      );
+      if (!cliente) return res.status(404).json({ error: 'Cliente no encontrado' });
+
+      const b = req.body || {};
+      const [row] = await query(
+        `INSERT INTO crm_oportunidades (
+          empresa_id, cliente_id, nombre, rubro, canal, etapa, probabilidad, monto_estimado,
+          proxima_accion, responsable_usuario_id, notas, estado
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'abierta')
+        RETURNING *`,
+        [
+          empresaId,
+          cliente.id,
+          b.nombre || `Upsell / seguimiento · ${cliente.cliente}`,
+          b.rubro || cliente.crm_segmento || null,
+          b.canal || 'whatsapp',
+          b.etapa || 'calificado',
+          b.probabilidad != null ? Number(b.probabilidad) : 35,
+          b.monto_estimado != null ? Number(b.monto_estimado) : Number(cliente.crm_ticket_objetivo || 0),
+          b.proxima_accion || new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+          req?.user?.id ? Number(req.user.id) : null,
+          b.notas || 'Creada desde CRM de cliente',
+        ]
+      );
+
+      return res.json({ ok: true, item: row });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error creando oportunidad desde cliente' });
+    }
+  });
+
   return router;
 }
