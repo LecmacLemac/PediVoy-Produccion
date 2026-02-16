@@ -32,6 +32,7 @@
   <div class="card"><h2 style="margin:0 0 8px;font-size:1rem">KPI unificado</h2><div id="kpiGrid" class="grid"></div></div>
   <div class="card"><h2 style="margin:0 0 8px;font-size:1rem">Semáforo operativo</h2><div id="semaforo"></div></div>
   <div class="card"><h2 style="margin:0 0 8px;font-size:1rem">Recomendaciones automáticas</h2><div id="recos" style="display:grid;gap:8px"></div></div>
+  <div class="card"><h2 style="margin:0 0 8px;font-size:1rem">Control de cierre diario</h2><div id="cierreChecklist" style="display:grid;gap:8px"></div></div>
   <div class="card">
     <h2 style="margin:0 0 8px;font-size:1rem">Resumen diario ejecutivo</h2>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px"><button id="btnResumen" type="button">Actualizar resumen</button><button id="btnCopyResumen" type="button">Copiar resumen</button></div>
@@ -80,14 +81,22 @@ async function loadRecos(){
   document.getElementById('recos').innerHTML=items.length?items.map(x=>`<div style="border:1px solid var(--border);border-left:4px solid ${color(x.prioridad)};border-radius:10px;padding:10px;background:var(--bg2)"><div style="font-weight:700">${x.titulo}</div><div style="font-size:.9rem;color:var(--muted)">${x.detalle||''}</div><div style="font-size:.85rem;margin-top:4px">➡️ ${x.accion||''}</div></div>`).join(''):'<div style="color:var(--muted)">Sin recomendaciones.</div>';
 }
 
+async function loadControlCierre(){
+  if(st.isSuper&&!st.empresaId) return;
+  const r=await authFetch(apiUrl('/api/setup/fase3/control-cierre')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error control cierre');
+  const items=Array.isArray(j.checklist)?j.checklist:[];
+  const icon=(s)=>s==='ok'?'✅':(s==='atencion'?'🟡':'🔴');
+  document.getElementById('cierreChecklist').innerHTML=items.length?items.map(x=>`<div style="border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--bg2)"><div style="font-weight:700">${icon(x.status)} ${x.titulo}</div><div style="font-size:.9rem;color:var(--muted)">${x.detalle||''}</div></div>`).join(''):'<div style="color:var(--muted)">Sin items de cierre.</div>';
+}
+
 async function loadResumen(){
   if(st.isSuper&&!st.empresaId) return;
   const r=await authFetch(apiUrl('/api/setup/fase3/resumen-diario')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error resumen diario');
   document.getElementById('resumenText').value=j.resumen||'';
 }
 
-async function refreshAll(){ if(st.isSuper&&!st.empresaId){ setStatus('Seleccioná empresa para ver el tablero ejecutivo.',true); ['kpiGrid','semaforo','recos'].forEach(id=>{const el=document.getElementById(id); if(el) el.innerHTML='';}); const tx=document.getElementById('resumenText'); if(tx) tx.value=''; return; }
-  setStatus('Actualizando…'); try{ await Promise.all([loadDashboard(),loadSemaforo(),loadRecos(),loadResumen()]); setStatus('Actualizado.'); } catch(e){ setStatus(e.message||'Error',true); }
+async function refreshAll(){ if(st.isSuper&&!st.empresaId){ setStatus('Seleccioná empresa para ver el tablero ejecutivo.',true); ['kpiGrid','semaforo','recos','cierreChecklist'].forEach(id=>{const el=document.getElementById(id); if(el) el.innerHTML='';}); const tx=document.getElementById('resumenText'); if(tx) tx.value=''; return; }
+  setStatus('Actualizando…'); try{ await Promise.all([loadDashboard(),loadSemaforo(),loadRecos(),loadControlCierre(),loadResumen()]); setStatus('Actualizado.'); } catch(e){ setStatus(e.message||'Error',true); }
 }
 
 document.getElementById('btnRefresh').addEventListener('click',refreshAll);

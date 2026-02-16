@@ -2176,5 +2176,88 @@ export function createSetupRouter(deps) {
     }
   });
 
+  // GET /api/setup/fase3/control-cierre
+  router.get('/fase3/control-cierre', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req);
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+
+      const [pend] = await query(
+        `SELECT COUNT(*)::int AS pendientes,
+                COALESCE(SUM(monto),0)::numeric AS monto
+         FROM tesoreria_movimientos
+         WHERE empresa_id=$1 AND conciliado=FALSE`,
+        [empresaId]
+      );
+
+      const [venc] = await query(
+        `SELECT COUNT(*)::int AS vencidas
+         FROM compras_ordenes
+         WHERE empresa_id=$1
+           AND estado IN ('emitida','parcial')
+           AND fecha_entrega_estimada IS NOT NULL
+           AND fecha_entrega_estimada < CURRENT_DATE`,
+        [empresaId]
+      );
+
+      const now = new Date();
+      const anio = Number(req.query?.anio || now.getFullYear());
+      const mes = Number(req.query?.mes || (now.getMonth() + 1));
+
+      const [pres] = await query(
+        `WITH b AS (
+           SELECT COALESCE(SUM(monto_presupuestado),0)::numeric AS presupuestado
+           FROM presupuesto_mensual
+           WHERE empresa_id=$1 AND anio=$2 AND mes=$3
+         ), e AS (
+           SELECT COALESCE(SUM(monto),0)::numeric AS ejecutado
+           FROM tesoreria_movimientos
+           WHERE empresa_id=$1 AND tipo='egreso'
+             AND EXTRACT(YEAR FROM fecha)=$2 AND EXTRACT(MONTH FROM fecha)=$3
+         )
+         SELECT b.presupuestado, e.ejecutado, (e.ejecutado - b.presupuestado)::numeric AS desvio
+         FROM b, e`,
+        [empresaId, anio, mes]
+      );
+
+      const pendientes = Number(pend?.pendientes || 0);
+      const montoPendiente = Number(pend?.monto || 0);
+      const comprasVencidas = Number(venc?.vencidas || 0);
+      const presupuestado = Number(pres?.presupuestado || 0);
+      const ejecutado = Number(pres?.ejecutado || 0);
+      const desvio = Number(pres?.desvio || 0);
+
+      const checklist = [
+        {
+          key: 'conciliacion',
+          titulo: 'Conciliar pendientes críticos',
+          status: pendientes === 0 ? 'ok' : (pendientes <= 5 ? 'atencion' : 'critico'),
+          detalle: pendientes === 0
+            ? 'Sin pendientes de conciliación.'
+            : `${pendientes} pendientes por ${Math.round(montoPendiente)}.`,
+        },
+        {
+          key: 'vencimientos',
+          titulo: 'Revisar vencimientos proveedores',
+          status: comprasVencidas === 0 ? 'ok' : (comprasVencidas <= 3 ? 'atencion' : 'critico'),
+          detalle: comprasVencidas === 0 ? 'Sin compras vencidas.' : `${comprasVencidas} órdenes vencidas.`,
+        },
+        {
+          key: 'presupuesto',
+          titulo: 'Validar desvío presupuesto vs ejecutado',
+          status: presupuestado <= 0
+            ? (ejecutado > 0 ? 'atencion' : 'ok')
+            : (desvio > presupuestado * 0.2 ? 'critico' : (desvio > presupuestado * 0.05 ? 'atencion' : 'ok')),
+          detalle: `Presupuestado ${Math.round(presupuestado)} · Ejecutado ${Math.round(ejecutado)} · Desvío ${Math.round(desvio)}.`,
+        },
+      ];
+
+      return res.json({ ok: true, periodo: { anio, mes }, checklist });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error obteniendo control de cierre' });
+    }
+  });
+
   return router;
 }
