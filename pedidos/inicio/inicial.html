@@ -277,14 +277,26 @@
         <div class="check-icon">✅</div>
       </div>
 
-      <!-- Paso 9 (Marketing - Solo Super Admin) -->
-      <div class="step-card" id="step9" style="display:none; border-color:var(--brand);">
+      <!-- Paso 9 -->
+      <div class="step-card" id="step9" style="border-color:var(--brand);">
         <div class="step-num" style="background:var(--brand); color:#000;">9</div>
+        <div class="step-content">
+          <h3 style="color:var(--brand);">Onboarding por Rubro</h3>
+          <p>Aplicá una configuración base por vertical para acelerar salida a producción.</p>
+          <a href="onboarding-rubro.html" class="btn btn-primary">Ir a Onboarding →</a>
+          <button class="btn btn-check" onclick="toggleStep(9)">Marcar como listo</button>
+        </div>
+        <div class="check-icon">✅</div>
+      </div>
+
+      <!-- Paso 10 (Marketing - Solo Super Admin) -->
+      <div class="step-card" id="step10" style="display:none; border-color:var(--brand);">
+        <div class="step-num" style="background:var(--brand); color:#000;">10</div>
         <div class="step-content">
           <h3 style="color:var(--brand);">Configuración Marketing</h3>
           <p>Activa estrategias automáticas (Vecinos, Predictivo, Referidos) para vender más.</p>
           <a href="marketing.html" class="btn btn-primary">Ir a Marketing →</a>
-          <button class="btn btn-check" onclick="toggleStep(9)">Marcar como listo</button>
+          <button class="btn btn-check" onclick="toggleStep(10)">Marcar como listo</button>
         </div>
         <div class="check-icon">✅</div>
       </div>
@@ -302,8 +314,8 @@
   </main>
 
   <script>
-    // Configuración base: 8 pasos para usuario normal (incluyendo Licencia)
-    let totalSteps = 8; 
+    // Configuración base: 9 pasos para usuario normal (incluyendo Onboarding por Rubro)
+    let totalSteps = 9; 
     let currentSteps = {};
 
     // Modo seguro: auth por cookie httpOnly
@@ -344,10 +356,10 @@
           }
       } catch {}
 
-      // 2. Ajustar UI para Super Admin (Mostrar paso 9 de Marketing)
+      // 2. Ajustar UI para Super Admin (Mostrar paso 10 de Marketing)
       if (isSuper) {
-          totalSteps = 9;
-          document.getElementById('step9').style.display = 'flex';
+          totalSteps = 10;
+          document.getElementById('step10').style.display = 'flex';
       }
 
       // 3. Obtener progreso

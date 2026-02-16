@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Onboarding por Rubro</title>
+  <style>
+    :root {
+      --bg:#0b1020; --ink:#f1f5f9; --muted:#94a3b8; --brand:#06b6d4; --surface:rgba(30,41,59,.7);
+      --border:rgba(148,163,184,.18); --radius:12px; --success:#10b981; --danger:#ef4444;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--ink)}
+    .wrap{max-width:980px;margin:0 auto;padding:24px}
+    .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:16px}
+    h1{margin:0 0 8px}
+    p{color:var(--muted)}
+    select,button{padding:10px 12px;border-radius:10px;border:1px solid var(--border);background:#0f172a;color:#fff}
+    button{background:var(--brand);color:#001018;border:none;font-weight:700;cursor:pointer}
+    button:disabled{opacity:.7;cursor:wait}
+    .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
+    .tpl{border:1px solid var(--border);border-radius:10px;padding:12px;background:#0f172a}
+    .muted{color:var(--muted);font-size:.92rem}
+    .ok{color:var(--success)}
+    .err{color:var(--danger)}
+    a{color:var(--brand)}
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <div class="card">
+      <h1>Onboarding por Rubro</h1>
+      <p>Elegí un vertical preconfigurado para acelerar la puesta en marcha de tu empresa.</p>
+      <div class="row">
+        <select id="verticalSelect">
+          <option value="">Cargando verticales...</option>
+        </select>
+        <button id="btnApply" type="button">Aplicar configuración base</button>
+        <a href="inicial.html">← Volver a Configuración Inicial</a>
+      </div>
+      <div id="status" class="muted" style="margin-top:10px;">Listo para seleccionar.</div>
+    </div>
+
+    <section id="templates" class="grid"></section>
+  </main>
+
+  <script>
+    const authFetch = (url, opts = {}) => {
+      const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
+      return fetch(url, { ...opts, headers, credentials: 'include' });
+    };
+
+    const state = { items: [] };
+
+    function escapeHtml(v){
+      return String(v ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+    }
+
+    function setStatus(msg, kind='muted') {
+      const el = document.getElementById('status');
+      el.className = kind;
+      el.textContent = msg;
+    }
+
+    function renderTemplates() {
+      const box = document.getElementById('templates');
+      box.innerHTML = state.items.map(it => `
+        <article class="tpl">
+          <h3 style="margin:0 0 6px;">${escapeHtml(it.title)}</h3>
+          <div class="muted" style="margin-bottom:8px;">${escapeHtml(it.summary || '')}</div>
+          <div class="muted"><strong>Rubro:</strong> ${escapeHtml(it.rubro)}</div>
+          <ul>
+            ${(it.checklist || []).map(c => `<li>${escapeHtml(c)}</li>`).join('')}
+          </ul>
+        </article>
+      `).join('');
+    }
+
+    async function loadTemplates() {
+      const res = await authFetch('/api/setup/vertical-templates');
+      if (res.status === 401) return window.location.href = '../login.html';
+      const json = await res.json();
+      state.items = Array.isArray(json.items) ? json.items : [];
+
+      const select = document.getElementById('verticalSelect');
+      select.innerHTML = '<option value="">Seleccionar vertical</option>';
+      state.items.forEach(it => {
+        const opt = document.createElement('option');
+        opt.value = it.id;
+        opt.textContent = `${it.title} (${it.rubro})`;
+        select.appendChild(opt);
+      });
+
+      renderTemplates();
+      setStatus('Verticales cargadas.', 'ok');
+    }
+
+    async function applyVertical() {
+      const sel = document.getElementById('verticalSelect');
+      const v = sel.value;
+      if (!v) return setStatus('Seleccioná un vertical primero.', 'err');
+
+      const btn = document.getElementById('btnApply');
+      btn.disabled = true;
+      setStatus('Aplicando configuración base...', 'muted');
+      try {
+        const res = await authFetch('/api/setup/apply-vertical', {
+          method: 'POST',
+          body: JSON.stringify({ vertical: v }),
+        });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error || 'No se pudo aplicar vertical');
+        setStatus(`Listo: ${json.applied?.title || v} aplicado.`, 'ok');
+      } catch (e) {
+        setStatus(e.message || 'Error aplicando vertical', 'err');
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    document.getElementById('btnApply').addEventListener('click', applyVertical);
+    loadTemplates().catch((e) => setStatus(e.message || 'Error cargando verticales', 'err'));
+  </script>
+</body>
+</html>
