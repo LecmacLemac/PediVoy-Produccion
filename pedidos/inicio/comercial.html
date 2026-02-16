@@ -119,7 +119,7 @@
     const fmt = new Intl.NumberFormat('es-AR', { style:'currency', currency:'ARS', maximumFractionDigits:0 });
     const st = { isSuper:false, empresaId:null, dashboard:null, pipeline:[], cta:[], aging:null, alerts:[], crmClientes:[], priorizados:[] };
 
-    function setStatus(t, err=false){ const el=document.getElementById('status'); el.textContent=t; el.style.color=err?'var(--danger)':'var(--muted'); }
+    function setStatus(t, err=false){ const el=document.getElementById('status'); el.textContent=t; el.style.color=err?'var(--danger)':'var(--muted)'; }
     function renderTenantBadge(){
       const el = document.getElementById('tenantBadge');
       if (!el) return;
