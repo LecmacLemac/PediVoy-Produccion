@@ -188,7 +188,7 @@
           <h3>Configurar Empresa</h3>
           <p>Define el nombre, teléfono y datos de contacto de tu negocio.</p>
           <a href="empresa.html" class="btn btn-primary">Ir a Empresas →</a>
-          <button class="btn btn-check" onclick="toggleStep(1)">Marcar como listo</button>
+          <button class="btn btn-check" data-action="toggle-step" data-step="1">Marcar como listo</button>
         </div>
         <div class="check-icon">✅</div>
       </div>
@@ -200,7 +200,7 @@
           <h3>Crear Zonas de Reparto</h3>
           <p>Dibuja o nombra las áreas geográficas (Centro, Norte) para organizar la logística.</p>
           <a href="zona.html" class="btn btn-primary">Ir a Zonas →</a>
-          <button class="btn btn-check" onclick="toggleStep(2)">Marcar como listo</button>
+          <button class="btn btn-check" data-action="toggle-step" data-step="2">Marcar como listo</button>
         </div>
         <div class="check-icon">✅</div>
       </div>
@@ -212,7 +212,7 @@
           <h3>Cargar Productos</h3>
           <p>Sube tus artículos (Bidones, Soda) y configura precios y stock.</p>
           <a href="producto.html" class="btn btn-primary">Ir a Productos →</a>
-          <button class="btn btn-check" onclick="toggleStep(3)">Marcar como listo</button>
+          <button class="btn btn-check" data-action="toggle-step" data-step="3">Marcar como listo</button>
         </div>
         <div class="check-icon">✅</div>
       </div>
@@ -224,7 +224,7 @@
           <h3>Registrar Choferes</h3>
           <p>Da de alta a tu equipo de reparto para asignarles pedidos.</p>
           <a href="choferes.html" class="btn btn-primary">Ir a Choferes →</a>
-          <button class="btn btn-check" onclick="toggleStep(4)">Marcar como listo</button>
+          <button class="btn btn-check" data-action="toggle-step" data-step="4">Marcar como listo</button>
         </div>
         <div class="check-icon">✅</div>
       </div>
@@ -236,7 +236,7 @@
           <h3>Asignar Choferes a Zonas</h3>
           <p>Vincula automáticamente quién reparte en cada zona geográfica.</p>
           <a href="asignar.html" class="btn btn-primary">Ir a Asignaciones →</a>
-          <button class="btn btn-check" onclick="toggleStep(5)">Marcar como listo</button>
+          <button class="btn btn-check" data-action="toggle-step" data-step="5">Marcar como listo</button>
         </div>
         <div class="check-icon">✅</div>
       </div>
@@ -248,7 +248,7 @@
           <h3>Crear Usuarios de Sistema</h3>
           <p>Genera las credenciales de acceso para que los choferes usen la App.</p>
           <a href="usuarios.html" class="btn btn-primary">Ir a Usuarios →</a>
-          <button class="btn btn-check" onclick="toggleStep(6)">Marcar como listo</button>
+          <button class="btn btn-check" data-action="toggle-step" data-step="6">Marcar como listo</button>
         </div>
         <div class="check-icon">✅</div>
       </div>
@@ -260,7 +260,7 @@
           <h3>Cargar Clientes</h3>
           <p>Importa o crea tu base de clientes y asígnales su zona correspondiente.</p>
           <a href="clientes.html" class="btn btn-primary">Ir a Clientes →</a>
-          <button class="btn btn-check" onclick="toggleStep(7)">Marcar como listo</button>
+          <button class="btn btn-check" data-action="toggle-step" data-step="7">Marcar como listo</button>
         </div>
         <div class="check-icon">✅</div>
       </div>
@@ -272,7 +272,7 @@
           <h3>Planes y Suscripción</h3>
           <p>Gestiona tu plan y método de pago para habilitar todas las funciones.</p>
           <a href="licencia.html" class="btn btn-primary">Ir a Planes →</a>
-          <button class="btn btn-check" onclick="toggleStep(8)">Marcar como listo</button>
+          <button class="btn btn-check" data-action="toggle-step" data-step="8">Marcar como listo</button>
         </div>
         <div class="check-icon">✅</div>
       </div>
@@ -284,7 +284,7 @@
           <h3 style="color:var(--brand);">Onboarding por Rubro</h3>
           <p>Aplicá una configuración base por vertical para acelerar salida a producción.</p>
           <a href="onboarding-rubro.html" class="btn btn-primary">Ir a Onboarding →</a>
-          <button class="btn btn-check" onclick="toggleStep(9)">Marcar como listo</button>
+          <button class="btn btn-check" data-action="toggle-step" data-step="9">Marcar como listo</button>
         </div>
         <div class="check-icon">✅</div>
       </div>
@@ -296,7 +296,7 @@
           <h3 style="color:var(--brand);">Configuración Marketing</h3>
           <p>Activa estrategias automáticas (Vecinos, Predictivo, Referidos) para vender más.</p>
           <a href="marketing.html" class="btn btn-primary">Ir a Marketing →</a>
-          <button class="btn btn-check" onclick="toggleStep(10)">Marcar como listo</button>
+          <button class="btn btn-check" data-action="toggle-step" data-step="10">Marcar como listo</button>
         </div>
         <div class="check-icon">✅</div>
       </div>
@@ -325,11 +325,14 @@
     };
 
     // --- Logout ---
-    document.getElementById('logout').onclick = async (e) => {
+    const logoutLink = document.getElementById('logout');
+    if (logoutLink) {
+      logoutLink.addEventListener('click', async (e) => {
         e.preventDefault();
         try { await authFetch('/api/logout', { method: 'POST' }); } catch {}
-        window.location.href = '../login.html'; 
-    };
+        window.location.href = '../login.html';
+      });
+    }
 
     // --- API Utils ---
     async function api(endpoint, opts = {}) {
@@ -352,7 +355,7 @@
           if(me?.user) {
              const role = String(me.user.role || '').toLowerCase();
              isSuper = (role === 'super');
-             document.getElementById('roleBadge').textContent = isSuper ? 'SUPER ADMIN' : role.toUpperCase();
+             document.getElementById('roleBadge').textContent = isSuper ? 'SUPER ADMIN' : 'Admin';
           }
       } catch {}
 
@@ -438,6 +441,18 @@
           bar.style.background = 'var(--brand)';
           bar.style.boxShadow = 'none';
       }
+    }
+
+
+    const stepsContainer = document.getElementById('stepsContainer');
+    if (stepsContainer) {
+      stepsContainer.addEventListener('click', (ev) => {
+        const btn = ev.target.closest('button[data-action="toggle-step"][data-step]');
+        if (!btn) return;
+        const step = Number(btn.getAttribute('data-step'));
+        if (!Number.isFinite(step) || step <= 0) return;
+        toggleStep(step);
+      });
     }
 
     loadProgress();
