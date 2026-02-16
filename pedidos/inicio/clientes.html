@@ -256,11 +256,11 @@
     <p class="subtitle">Gestiona tu base de datos de clientes, ubicaciones y zonas.</p>
   </div>
   <div style="display:flex; gap:10px;">
-    <input type="file" id="importFile" accept=".txt,.csv" style="display:none" onchange="processImportFile(this)">
+    <input type="file" id="importFile" accept=".txt,.csv" style="display:none">
     
-    <button class="btn" onclick="document.getElementById('importFile').click()">📥 Importar .TXT</button>
-    <button class="btn" onclick="exportToTxt()">📄 Exportar .TXT</button>
-    <button class="btn btn-primary" onclick="openModal()">＋ Nuevo Cliente</button>
+    <button id="btnImportTxt" type="button" class="btn">📥 Importar .TXT</button>
+    <button id="btnExportTxt" type="button" class="btn">📄 Exportar .TXT</button>
+    <button id="btnNuevoCliente" type="button" class="btn btn-primary">＋ Nuevo Cliente</button>
   </div>
 
     <div class="card">
@@ -302,14 +302,14 @@
     <div class="modal">
       <div class="modal-header">
         <h3 id="modalTitle">Nuevo Cliente</h3>
-        <button class="btn-icon" onclick="closeModal()">✕</button>
+        <button id="btnCloseModalTop" type="button" class="btn-icon">✕</button>
       </div>
-      <form id="formClient" class="modal-body" onsubmit="event.preventDefault(); save();">
+      <form id="formClient" class="modal-body">
         <input type="hidden" id="c_id">
         
         <div id="modalEmpWrap" style="display:none;">
             <label>Asignar a Empresa (Admin) *</label>
-            <select id="c_empresa_id" onchange="loadContextForModal()"></select>
+            <select id="c_empresa_id"></select>
         </div>
 
         <div>
@@ -324,7 +324,7 @@
           </div>
           <div>
             <label>Zona de Reparto</label>
-            <select id="c_zona" onchange="updateDriverInfo()">
+            <select id="c_zona">
               <option value="">-- Sin Zona --</option>
             </select>
             <div id="zoneDriverInfo" class="driver-info empty">Sin zona seleccionada</div>
@@ -362,8 +362,8 @@
             </div>
           </div>
           <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;">
-            <button type="button" class="btn" onclick="useMyLocation()">📍 Usar mi ubicación</button>
-            <button type="button" class="btn" onclick="applyLatLngInputs()">🔄 Actualizar pin</button>
+            <button type="button" id="btnUseMyLocation" class="btn">📍 Usar mi ubicación</button>
+            <button type="button" id="btnApplyLatLng" class="btn">🔄 Actualizar pin</button>
             <span id="geoStatus" style="font-size:0.85rem; color:var(--muted); align-self:center;">Sin ubicación seleccionada</span>
           </div>
         </div>
@@ -375,10 +375,10 @@
 
       </form>
       <div class="modal-footer">
-        <button class="btn btn-danger" type="button" id="btnDelete" onclick="del()" style="display:none;">Eliminar</button>
+        <button class="btn btn-danger" type="button" id="btnDelete" style="display:none;">Eliminar</button>
         <div style="display:flex; gap:10px; margin-left:auto;">
-          <button class="btn" type="button" onclick="closeModal()">Cancelar</button>
-          <button class="btn btn-primary" type="button" onclick="save()">Guardar</button>
+          <button id="btnCancelModal" class="btn" type="button">Cancelar</button>
+          <button id="btnSaveCliente" class="btn btn-primary" type="button">Guardar</button>
         </div>
       </div>
     </div>
@@ -412,9 +412,9 @@
         </div>
       </div>
       <div class="modal-footer">
-        <button class="btn" onclick="resolveConflict('skip')">Ignorar (Mantener Actual)</button>
-        <button class="btn" onclick="resolveConflict('create')">Crear como Copia</button>
-        <button class="btn btn-primary" onclick="resolveConflict('overwrite')">🔄 Sobrescribir</button>
+        <button id="btnConflictSkip" type="button" class="btn">Ignorar (Mantener Actual)</button>
+        <button id="btnConflictCreate" type="button" class="btn">Crear como Copia</button>
+        <button id="btnConflictOverwrite" type="button" class="btn btn-primary">🔄 Sobrescribir</button>
       </div>
     </div>
   </div>
@@ -445,11 +445,14 @@
     };
 
     // --- Logout ---
-    $('#logout').onclick = async (e) => {
-      e.preventDefault();
-      try { await authFetch('/api/logout', { method: 'POST' }); } catch {}
-      location.href = '../login.html';
-    };
+    const logoutLink = $('#logout');
+    if (logoutLink) {
+      logoutLink.addEventListener('click', async (e) => {
+        e.preventDefault();
+        try { await authFetch('/api/logout', { method: 'POST' }); } catch {}
+        location.href = '../login.html';
+      });
+    }
 
     // --- API ---
     async function api(endpoint, opts = {}) {
@@ -523,7 +526,7 @@
           <td style="color:var(--muted); font-size:0.9rem;">${esc(c.direccion || '-')}</td>
           <td><span class="tag-zona">${typeof zoneName === 'string' && zoneName.includes('<span') ? zoneName : esc(zoneName)}</span></td>
           <td style="text-align:right;">
-            <button class="btn-icon" onclick="edit(${Number(c.id)})" title="Editar">✏️</button>
+            <button class="btn-icon" data-action="edit" data-id="${Number(c.id)}" title="Editar">✏️</button>
           </td>
         </tr>
       `}).join('');
@@ -991,7 +994,7 @@
         return toast('ℹ️ Nada para importar.');
       }
 
-      const btn = document.querySelector('button[onclick*="importFile"]');
+      const btn = document.getElementById('btnImportTxt');
       const originalText = btn.textContent;
       btn.textContent = '⏳ Guardando...';
       btn.disabled = true;
@@ -1042,7 +1045,7 @@
         return toast('⚠️ No hay clientes para exportar');
       }
 
-      const btn = document.querySelector('button[onclick="exportToTxt()"]');
+      const btn = document.getElementById('btnExportTxt');
       const originalText = btn.textContent;
       btn.textContent = '⏳ Generando...';
       btn.disabled = true;
@@ -1125,6 +1128,71 @@
       }
     }
 
+    const importFileInput = document.getElementById('importFile');
+    const btnImportTxt = document.getElementById('btnImportTxt');
+    if (btnImportTxt && importFileInput) {
+      btnImportTxt.addEventListener('click', () => importFileInput.click());
+      importFileInput.addEventListener('change', (ev) => processImportFile(ev.target));
+    }
+
+    const btnExportTxt = document.getElementById('btnExportTxt');
+    if (btnExportTxt) btnExportTxt.addEventListener('click', exportToTxt);
+
+    const btnNuevoCliente = document.getElementById('btnNuevoCliente');
+    if (btnNuevoCliente) btnNuevoCliente.addEventListener('click', openModal);
+
+    const btnCloseModalTop = document.getElementById('btnCloseModalTop');
+    if (btnCloseModalTop) btnCloseModalTop.addEventListener('click', closeModal);
+
+    const btnUseMyLocation = document.getElementById('btnUseMyLocation');
+    if (btnUseMyLocation) btnUseMyLocation.addEventListener('click', useMyLocation);
+
+    const btnApplyLatLng = document.getElementById('btnApplyLatLng');
+    if (btnApplyLatLng) btnApplyLatLng.addEventListener('click', applyLatLngInputs);
+
+    const btnDelete = document.getElementById('btnDelete');
+    if (btnDelete) btnDelete.addEventListener('click', del);
+
+    const btnCancelModal = document.getElementById('btnCancelModal');
+    if (btnCancelModal) btnCancelModal.addEventListener('click', closeModal);
+
+    const btnSaveCliente = document.getElementById('btnSaveCliente');
+    if (btnSaveCliente) btnSaveCliente.addEventListener('click', save);
+
+    const formClient = document.getElementById('formClient');
+    if (formClient) {
+      formClient.addEventListener('submit', (ev) => {
+        ev.preventDefault();
+        save();
+      });
+    }
+
+    const cEmpresaId = document.getElementById('c_empresa_id');
+    if (cEmpresaId) cEmpresaId.addEventListener('change', loadContextForModal);
+
+    const cZona = document.getElementById('c_zona');
+    if (cZona) cZona.addEventListener('change', updateDriverInfo);
+
+    const btnConflictSkip = document.getElementById('btnConflictSkip');
+    if (btnConflictSkip) btnConflictSkip.addEventListener('click', () => resolveConflict('skip'));
+
+    const btnConflictCreate = document.getElementById('btnConflictCreate');
+    if (btnConflictCreate) btnConflictCreate.addEventListener('click', () => resolveConflict('create'));
+
+    const btnConflictOverwrite = document.getElementById('btnConflictOverwrite');
+    if (btnConflictOverwrite) btnConflictOverwrite.addEventListener('click', () => resolveConflict('overwrite'));
+
+    const tbBody = document.getElementById('tbBody');
+    if (tbBody) {
+      tbBody.addEventListener('click', (ev) => {
+        const btn = ev.target.closest('button[data-action="edit"][data-id]');
+        if (!btn) return;
+        const id = Number(btn.getAttribute('data-id'));
+        if (!Number.isFinite(id) || id <= 0) return;
+        edit(id);
+      });
+    }
+
     // --- Init ---
     (async () => {
         try {
@@ -1132,7 +1200,7 @@
             STATE.user = me?.user || {};
             STATE.isSuper = (STATE.user.role || '').toLowerCase() === 'super';
             
-            $('#roleBadge').textContent = STATE.isSuper ? 'SUPER ADMIN' : (STATE.user.role || 'Admin').toUpperCase();
+            $('#roleBadge').textContent = STATE.isSuper ? 'SUPER ADMIN' : 'Admin';
 
             if (STATE.isSuper) {
                 $('#empFilterWrap').style.display = 'block';
