@@ -2345,6 +2345,25 @@ export function createSetupRouter(deps) {
     }
   });
 
+  // GET /api/setup/fase3/usuarios
+  router.get('/fase3/usuarios', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req);
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+      const rows = await query(
+        `SELECT id, username, role, empresa_id
+         FROM usuarios
+         WHERE empresa_id=$1 OR role='super'
+         ORDER BY role='super' DESC, username ASC`,
+        [empresaId]
+      );
+      return res.json({ ok: true, items: rows });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error obteniendo usuarios fase3' });
+    }
+  });
+
   // GET /api/setup/fase3/incidencias
   router.get('/fase3/incidencias', withAuth, async (req, res) => {
     try {
