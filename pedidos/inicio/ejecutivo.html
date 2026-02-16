@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Tablero Ejecutivo – MultiEmpresas</title>
+  <style>
+    :root{--bg:#0b1020;--bg2:#0f172a;--ink:#f1f5f9;--muted:#94a3b8;--brand:#06b6d4;--border:rgba(148,163,184,.18);--danger:#ef4444}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,sans-serif}
+    .container{max-width:1240px;margin:0 auto;padding:0 20px}header{position:sticky;top:0;background:rgba(15,23,42,.95);border-bottom:1px solid var(--border);padding:.8rem 0}
+    nav{display:flex;justify-content:space-between;align-items:center}.menu{display:flex;gap:1rem;list-style:none;margin:0;padding:0}.menu a{color:var(--muted);text-decoration:none}.menu a.active,.menu a:hover{color:#fff}
+    main{padding:1rem 0 3rem}.card{background:rgba(30,41,59,.7);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:12px}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:.8rem}.kpi{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px}.kpi .l{font-size:.75rem;color:var(--muted);text-transform:uppercase}.kpi .v{font-size:1.2rem;font-weight:700}
+  </style>
+</head>
+<body>
+<header>
+  <nav class="container">
+    <div><strong>MultiEmpresas</strong> <span id="roleBadge" style="font-size:.75rem;color:var(--brand)">Admin</span></div>
+    <ul class="menu"><li><a href="inicial.html">🚀 Inicio</a></li><li><a href="comercial.html">Comercial</a></li><li><a href="compras.html">Compras</a></li><li><a href="tesoreria.html">Tesorería</a></li><li><a href="ejecutivo.html" class="active">Ejecutivo</a></li><li><a href="#" id="logout" style="color:var(--danger)">Salir</a></li></ul>
+  </nav>
+</header>
+<main class="container">
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:center">
+      <h1 style="margin:0;font-size:1.2rem">Fase 3 · Tablero ejecutivo</h1>
+      <div style="display:flex;gap:8px;align-items:center"><div id="empresaWrap" style="display:none"><select id="empresaSelect"><option value="">Seleccionar empresa…</option></select></div><button id="btnRefresh" type="button">Actualizar</button></div>
+    </div>
+    <div id="status" style="color:var(--muted);margin-top:6px">Listo.</div>
+  </div>
+
+  <div class="card"><h2 style="margin:0 0 8px;font-size:1rem">KPI unificado</h2><div id="kpiGrid" class="grid"></div></div>
+  <div class="card"><h2 style="margin:0 0 8px;font-size:1rem">Recomendaciones automáticas</h2><div id="recos" style="display:grid;gap:8px"></div></div>
+</main>
+<script>
+const authFetch=(url,opts={})=>fetch(url,{...opts,headers:{'Content-Type':'application/json',...(opts.headers||{})},credentials:'include'});
+const fmt=new Intl.NumberFormat('es-AR',{style:'currency',currency:'ARS',maximumFractionDigits:0});
+const st={isSuper:false,empresaId:null};
+const setStatus=(t,e=false)=>{const el=document.getElementById('status');el.textContent=t;el.style.color=e?'var(--danger)':'var(--muted)';};
+const apiUrl=(p)=>st.isSuper&&st.empresaId?(p+(p.includes('?')?'&':'?')+'empresa_id='+encodeURIComponent(String(st.empresaId))):p;
+
+async function loadMe(){
+  const r=await authFetch('/api/me'); if(r.status===401) return location.href='/pedidos/login.html';
+  const me=await r.json(); st.isSuper=String(me?.user?.role||'').toLowerCase()==='super'; st.empresaId=me?.user?.empresa_id||null;
+  document.getElementById('roleBadge').textContent=st.isSuper?'SUPER ADMIN':'Admin';
+  if(st.isSuper){ st.empresaId=null; const wrap=document.getElementById('empresaWrap'); wrap.style.display='block'; const sel=document.getElementById('empresaSelect');
+    let list=[]; const r1=await authFetch('/api/admin/empresas-list'); if(r1.ok){const j=await r1.json().catch(()=>[]); list=Array.isArray(j)?j:(Array.isArray(j.data)?j.data:[]);} if(!list.length){const r2=await authFetch('/api/empresas'); if(r2.ok){const j2=await r2.json().catch(()=>[]); list=Array.isArray(j2)?j2:(Array.isArray(j2.data)?j2.data:[]);} }
+    sel.innerHTML='<option value="">Seleccionar empresa</option>'; list.forEach(e=>{const o=document.createElement('option');o.value=String(Number(e.id)||'');o.textContent=`${e.id} · ${e.nombre}`;sel.appendChild(o);});
+    sel.addEventListener('change',()=>{st.empresaId=sel.value?Number(sel.value):null; refreshAll();});
+  }
+}
+
+async function loadDashboard(){
+  if(st.isSuper&&!st.empresaId) return;
+  const r=await authFetch(apiUrl('/api/setup/fase3/dashboard')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error dashboard ejecutivo');
+  const k=j.kpis||{};
+  const items=[['Oportunidades abiertas',k.oportunidades_abiertas||0],['Pipeline total',fmt.format(k.pipeline_total||0)],['Pipeline ponderado',fmt.format(k.pipeline_ponderado||0)],['Ingresos 30d',fmt.format(k.ingresos_30d||0)],['Egresos 30d',fmt.format(k.egresos_30d||0)],['Pend. conciliación',k.pendientes_conciliacion||0],['Compras abiertas',k.compras_abiertas||0],['Comprometido compras',fmt.format(k.compras_comprometidas||0)]];
+  document.getElementById('kpiGrid').innerHTML=items.map(([l,v])=>`<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div></div>`).join('');
+}
+
+async function loadRecos(){
+  if(st.isSuper&&!st.empresaId) return;
+  const r=await authFetch(apiUrl('/api/setup/fase3/recomendaciones')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error recomendaciones');
+  const items=Array.isArray(j.items)?j.items:[];
+  const color=(p)=>p==='alta'?'#ef4444':(p==='media'?'#f59e0b':'#22c55e');
+  document.getElementById('recos').innerHTML=items.length?items.map(x=>`<div style="border:1px solid var(--border);border-left:4px solid ${color(x.prioridad)};border-radius:10px;padding:10px;background:var(--bg2)"><div style="font-weight:700">${x.titulo}</div><div style="font-size:.9rem;color:var(--muted)">${x.detalle||''}</div><div style="font-size:.85rem;margin-top:4px">➡️ ${x.accion||''}</div></div>`).join(''):'<div style="color:var(--muted)">Sin recomendaciones.</div>';
+}
+
+async function refreshAll(){ if(st.isSuper&&!st.empresaId){ setStatus('Seleccioná empresa para ver el tablero ejecutivo.',true); ['kpiGrid','recos'].forEach(id=>{const el=document.getElementById(id); if(el) el.innerHTML='';}); return; }
+  setStatus('Actualizando…'); try{ await Promise.all([loadDashboard(),loadRecos()]); setStatus('Actualizado.'); } catch(e){ setStatus(e.message||'Error',true); }
+}
+
+document.getElementById('btnRefresh').addEventListener('click',refreshAll);
+document.getElementById('logout').addEventListener('click',async (e)=>{e.preventDefault(); try{await authFetch('/api/logout',{method:'POST'});}catch{} location.href='/pedidos/login.html';});
+(async()=>{ await loadMe(); await refreshAll(); })();
+</script>
+</body>
+</html>

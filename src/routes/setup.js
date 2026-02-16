@@ -1912,5 +1912,128 @@ export function createSetupRouter(deps) {
     }
   });
 
+  // =========================
+  // FASE 3: TABLERO EJECUTIVO + REGLAS AUTOMÁTICAS (MVP)
+  // =========================
+
+  // GET /api/setup/fase3/dashboard
+  router.get('/fase3/dashboard', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req);
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+
+      const [comercial] = await query(
+        `SELECT
+           COUNT(*) FILTER (WHERE estado='abierta')::int AS oportunidades_abiertas,
+           COALESCE(SUM(monto_estimado) FILTER (WHERE estado='abierta'),0)::numeric AS pipeline_total,
+           COALESCE(SUM(monto_estimado * (probabilidad/100.0)) FILTER (WHERE estado='abierta'),0)::numeric AS pipeline_ponderado
+         FROM crm_oportunidades
+         WHERE empresa_id=$1`,
+        [empresaId]
+      );
+
+      const [teso] = await query(
+        `SELECT
+           COALESCE(SUM(monto) FILTER (WHERE tipo='ingreso' AND fecha >= NOW() - INTERVAL '30 days'),0)::numeric AS ingresos_30d,
+           COALESCE(SUM(monto) FILTER (WHERE tipo='egreso' AND fecha >= NOW() - INTERVAL '30 days'),0)::numeric AS egresos_30d,
+           COUNT(*) FILTER (WHERE conciliado=FALSE)::int AS pendientes_conciliacion
+         FROM tesoreria_movimientos
+         WHERE empresa_id=$1`,
+        [empresaId]
+      );
+
+      const [compras] = await query(
+        `SELECT
+           COUNT(*) FILTER (WHERE estado IN ('emitida','parcial'))::int AS compras_abiertas,
+           COALESCE(SUM(total) FILTER (WHERE estado IN ('emitida','parcial')),0)::numeric AS compras_comprometidas
+         FROM compras_ordenes
+         WHERE empresa_id=$1`,
+        [empresaId]
+      );
+
+      return res.json({
+        ok: true,
+        kpis: {
+          oportunidades_abiertas: Number(comercial?.oportunidades_abiertas || 0),
+          pipeline_total: Number(comercial?.pipeline_total || 0),
+          pipeline_ponderado: Number(comercial?.pipeline_ponderado || 0),
+          ingresos_30d: Number(teso?.ingresos_30d || 0),
+          egresos_30d: Number(teso?.egresos_30d || 0),
+          pendientes_conciliacion: Number(teso?.pendientes_conciliacion || 0),
+          compras_abiertas: Number(compras?.compras_abiertas || 0),
+          compras_comprometidas: Number(compras?.compras_comprometidas || 0),
+        },
+      });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error obteniendo dashboard fase3' });
+    }
+  });
+
+  // GET /api/setup/fase3/recomendaciones
+  router.get('/fase3/recomendaciones', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req);
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+
+      const [k] = await query(
+        `SELECT
+           COALESCE(SUM(monto) FILTER (WHERE tipo='ingreso' AND fecha >= NOW() - INTERVAL '30 days'),0)::numeric AS ingresos_30d,
+           COALESCE(SUM(monto) FILTER (WHERE tipo='egreso' AND fecha >= NOW() - INTERVAL '30 days'),0)::numeric AS egresos_30d,
+           COUNT(*) FILTER (WHERE conciliado=FALSE)::int AS pendientes_conciliacion
+         FROM tesoreria_movimientos
+         WHERE empresa_id=$1`,
+        [empresaId]
+      );
+
+      const [p] = await query(
+        `SELECT COALESCE(SUM(monto_estimado * (probabilidad/100.0)) FILTER (WHERE estado='abierta'),0)::numeric AS pipeline_ponderado
+         FROM crm_oportunidades
+         WHERE empresa_id=$1`,
+        [empresaId]
+      );
+
+      const [ov] = await query(
+        `SELECT COUNT(*)::int AS vencidas
+         FROM compras_ordenes
+         WHERE empresa_id=$1
+           AND estado IN ('emitida','parcial')
+           AND fecha_entrega_estimada IS NOT NULL
+           AND fecha_entrega_estimada < CURRENT_DATE`,
+        [empresaId]
+      );
+
+      const ingresos = Number(k?.ingresos_30d || 0);
+      const egresos = Number(k?.egresos_30d || 0);
+      const pendientes = Number(k?.pendientes_conciliacion || 0);
+      const pipe = Number(p?.pipeline_ponderado || 0);
+      const vencidas = Number(ov?.vencidas || 0);
+
+      const items = [];
+      const add = (prioridad, titulo, detalle, accion) => items.push({ prioridad, titulo, detalle, accion });
+
+      if (egresos > ingresos * 1.15) {
+        add('alta', 'Caja en tensión', 'Egresos 30d superan ingresos en más de 15%.', 'Revisar pagos no críticos y acelerar cobranzas de clientes prioritarios.');
+      }
+      if (pendientes >= 8) {
+        add('media', 'Conciliación atrasada', `Hay ${pendientes} movimientos pendientes de conciliación.`, 'Asignar bloque de 30 minutos diario para dejar saldo real al día.');
+      }
+      if (vencidas > 0) {
+        add('alta', 'Compras vencidas', `Hay ${vencidas} órdenes de compra vencidas.`, 'Contactar proveedores hoy y reprogramar entregas críticas.');
+      }
+      if (pipe < egresos * 0.7) {
+        add('media', 'Pipeline débil vs egresos', 'El pipeline ponderado no cubre bien la presión de egresos.', 'Empujar cierres de oportunidades con mayor probabilidad esta semana.');
+      }
+      if (!items.length) {
+        add('baja', 'Operación estable', 'No se detectaron desvíos críticos hoy.', 'Mantener rutina de conciliación y seguimiento comercial diario.');
+      }
+
+      return res.json({ ok: true, items });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error obteniendo recomendaciones fase3' });
+    }
+  });
+
   return router;
 }
