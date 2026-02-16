@@ -2372,12 +2372,19 @@ export function createSetupRouter(deps) {
       const estado = String(req.query?.estado || '').trim();
       const tipo = String(req.query?.tipo || '').trim();
       const severidad = String(req.query?.severidad || '').trim();
+      const soloMias = ['1', 'true', 'si', 'sí'].includes(String(req.query?.mias || '').toLowerCase());
 
       const params = [empresaId];
       let where = 'WHERE i.empresa_id=$1';
       if (estado) { params.push(estado); where += ` AND i.estado=$${params.length}`; }
       if (tipo) { params.push(tipo); where += ` AND i.tipo=$${params.length}`; }
       if (severidad) { params.push(severidad); where += ` AND i.severidad=$${params.length}`; }
+      if (soloMias) {
+        const uid = req?.user?.id ? Number(req.user.id) : null;
+        if (!uid) return res.status(400).json({ error: 'usuario inválido para filtro mías' });
+        params.push(uid);
+        where += ` AND i.responsable_usuario_id=$${params.length}`;
+      }
 
       const rows = await query(
         `SELECT i.*, p.cliente AS cliente_nombre, u.username AS responsable_nombre
