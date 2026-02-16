@@ -276,7 +276,7 @@
         <h1>📦 Catálogo de Productos</h1>
         <p class="subtitle">Administra inventario, precios y visibilidad en la app.</p>
       </div>
-      <button class="btn btn-primary" onclick="openModal()">＋ Nuevo Producto</button>
+      <button id="btnNuevoProducto" type="button" class="btn btn-primary">＋ Nuevo Producto</button>
     </div>
 
     <div class="card">
@@ -319,9 +319,9 @@
     <div class="modal">
       <div class="modal-header">
         <h3 id="modalTitle">Nuevo Producto</h3>
-        <button class="btn-icon" onclick="closeModal()">✕</button>
+        <button id="btnCloseModalTop" type="button" class="btn-icon">✕</button>
       </div>
-      <form id="formProd" class="modal-body" onsubmit="event.preventDefault(); save();">
+      <form id="formProd" class="modal-body">
         <input type="hidden" id="p_id">
 
         <div class="form-grid">
@@ -432,8 +432,8 @@
 
       </form>
       <div class="modal-footer">
-        <button class="btn" onclick="closeModal()">Cancelar</button>
-        <button class="btn btn-primary" onclick="save()">Guardar Producto</button>
+        <button id="btnCancelModal" class="btn">Cancelar</button>
+        <button id="btnSaveProducto" class="btn btn-primary">Guardar Producto</button>
       </div>
     </div>
   </div>
@@ -576,8 +576,8 @@
               </span>
             </td>
             <td style="text-align:right;">
-              <button class="btn-icon" onclick="edit(${Number(p.id)})" title="Editar">✏️</button>
-              <button class="btn-icon" onclick="del(${Number(p.id)}, this)" title="Eliminar" style="color:var(--danger); border-color:rgba(239,68,68,0.3)">🗑️</button>
+              <button class="btn-icon" data-action="edit" data-id="${Number(p.id)}" title="Editar">✏️</button>
+              <button class="btn-icon" data-action="delete" data-id="${Number(p.id)}" title="Eliminar" style="color:var(--danger); border-color:rgba(239,68,68,0.3)">🗑️</button>
             </td>
           </tr>
         `;
@@ -687,7 +687,7 @@
       const method = id ? 'PUT' : 'POST';
       const url = id ? `/api/productos/${id}` : '/api/productos';
 
-      const saveBtn = document.querySelector('#modal .modal-footer .btn.btn-primary');
+      const saveBtn = document.getElementById('btnSaveProducto');
       const prevTxt = saveBtn ? saveBtn.textContent : '';
       saveBusy = true;
       if (saveBtn) {
@@ -735,6 +735,41 @@
           btnEl.textContent = prev;
         }
       }
+    }
+
+    const btnNuevoProducto = document.getElementById('btnNuevoProducto');
+    if (btnNuevoProducto) btnNuevoProducto.addEventListener('click', openModal);
+
+    const btnCloseModalTop = document.getElementById('btnCloseModalTop');
+    if (btnCloseModalTop) btnCloseModalTop.addEventListener('click', closeModal);
+
+    const btnCancelModal = document.getElementById('btnCancelModal');
+    if (btnCancelModal) btnCancelModal.addEventListener('click', closeModal);
+
+    const btnSaveProducto = document.getElementById('btnSaveProducto');
+    if (btnSaveProducto) btnSaveProducto.addEventListener('click', save);
+
+    const formProd = document.getElementById('formProd');
+    if (formProd) {
+      formProd.addEventListener('submit', (ev) => {
+        ev.preventDefault();
+        save();
+      });
+    }
+
+    const tbBody = document.getElementById('tbBody');
+    if (tbBody) {
+      tbBody.addEventListener('click', (ev) => {
+        const btn = ev.target.closest('button[data-action][data-id]');
+        if (!btn) return;
+
+        const action = btn.getAttribute('data-action');
+        const id = Number(btn.getAttribute('data-id'));
+        if (!Number.isFinite(id) || id <= 0) return;
+
+        if (action === 'edit') edit(id);
+        else if (action === 'delete') del(id, btn);
+      });
     }
 
     // --- Init ---
