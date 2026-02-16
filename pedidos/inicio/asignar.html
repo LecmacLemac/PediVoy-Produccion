@@ -267,7 +267,7 @@
           <label for="selZona">Seleccionar Zona</label>
           <select id="selZona"><option value="">Cargando...</option></select>
         </div>
-        <button class="btn" onclick="assign()">
+        <button id="btnAssign" type="button" class="btn">
           <span>+ Vincular</span>
         </button>
       </div>
@@ -310,11 +310,14 @@
     };
 
     // --- Logout ---
-    $('#logout').onclick = async (e) => {
-      e.preventDefault();
-      try { await authFetch('/api/logout', { method: 'POST' }); } catch {}
-      location.href = '../login.html';
-    };
+    const logoutLink = $('#logout');
+    if (logoutLink) {
+      logoutLink.addEventListener('click', async (e) => {
+        e.preventDefault();
+        try { await authFetch('/api/logout', { method: 'POST' }); } catch {}
+        location.href = '../login.html';
+      });
+    }
 
     // --- State ---
     let STATE = { isSuper: false, user: null };
@@ -405,7 +408,7 @@
                   <span class="driver-icon">${d.tipo === 'fletero' ? '🚛' : '🛵'}</span>
                   <span>${esc(d.nombre)}</span>
                 </div>
-                <button class="btn-remove" onclick="unassign(${Number(z.id)}, ${Number(d.id)}, this)" title="Desvincular">
+                <button class="btn-remove" data-action="unassign" data-zona-id="${Number(z.id)}" data-chofer-id="${Number(d.id)}" title="Desvincular">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
                 </button>
               </div>
@@ -492,6 +495,24 @@
       }
     }
 
+    const btnAssign = document.getElementById('btnAssign');
+    if (btnAssign) btnAssign.addEventListener('click', assign);
+
+    const gridZonas = document.getElementById('gridZonas');
+    if (gridZonas) {
+      gridZonas.addEventListener('click', (ev) => {
+        const btn = ev.target.closest('button[data-action="unassign"]');
+        if (!btn) return;
+
+        const zonaId = Number(btn.getAttribute('data-zona-id'));
+        const choferId = Number(btn.getAttribute('data-chofer-id'));
+        if (!Number.isFinite(zonaId) || zonaId <= 0) return;
+        if (!Number.isFinite(choferId) || choferId <= 0) return;
+
+        unassign(zonaId, choferId, btn);
+      });
+    }
+
     // --- Init ---
     (async () => {
         try {
@@ -499,7 +520,7 @@
             STATE.user = me?.user || {};
             STATE.isSuper = (STATE.user.role || '').toLowerCase() === 'super';
             
-            $('#roleBadge').textContent = STATE.isSuper ? 'SUPER ADMIN' : (STATE.user.role || 'Admin').toUpperCase();
+            $('#roleBadge').textContent = STATE.isSuper ? 'SUPER ADMIN' : 'Admin';
 
             if (STATE.isSuper) {
                 $('#empWrap').style.display = 'block';
