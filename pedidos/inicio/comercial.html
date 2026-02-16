@@ -154,16 +154,35 @@
       document.getElementById('roleBadge').textContent = st.isSuper ? 'SUPER ADMIN' : 'Admin';
 
       if (st.isSuper){
+        // Forzar selección explícita de empresa para evitar mezclar tenant.
+        st.empresaId = null;
+
         const wrap=document.getElementById('empresaWrap'); wrap.style.display='block';
         const sel=document.getElementById('empresaSelect');
         sel.innerHTML='<option value="">Cargando empresas…</option>';
+
+        let list = [];
         const er = await authFetch('/api/admin/empresas-list');
-        const ej = await er.json().catch(()=>[]);
-        const list = Array.isArray(ej) ? ej : (Array.isArray(ej.data)?ej.data:[]);
+        if (er.ok) {
+          const ej = await er.json().catch(()=>[]);
+          list = Array.isArray(ej) ? ej : (Array.isArray(ej.data)?ej.data:[]);
+        }
+        // Fallback para instalaciones con endpoint legacy
+        if (!list.length) {
+          const er2 = await authFetch('/api/empresas');
+          if (er2.ok) {
+            const ej2 = await er2.json().catch(()=>[]);
+            list = Array.isArray(ej2) ? ej2 : (Array.isArray(ej2.data)?ej2.data:[]);
+          }
+        }
+
         sel.innerHTML = '<option value="">Seleccionar empresa</option>';
-        list.forEach(e=>{ const o=document.createElement('option'); o.value=String(e.id); o.textContent=`${e.id} · ${e.nombre}`; sel.appendChild(o); });
-        if (st.empresaId) sel.value=String(st.empresaId);
-        sel.addEventListener('change', ()=>{ st.empresaId = sel.value ? Number(sel.value) : null; refreshAll(); });
+        list.forEach(e=>{ const o=document.createElement('option'); o.value=String(Number(e.id)||''); o.textContent=`${e.id} · ${e.nombre}`; sel.appendChild(o); });
+
+        sel.addEventListener('change', ()=>{
+          st.empresaId = sel.value ? Number(sel.value) : null;
+          refreshAll();
+        });
       }
     }
 
