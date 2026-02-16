@@ -268,14 +268,14 @@
 
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
           <h2 style="margin:0; font-size:1.2rem; color:#fff;">Mis Zonas</h2>
-          <button class="btn" onclick="startNewZone()">+ Dibujar</button>
+          <button id="btnStartNewZone" type="button" class="btn">+ Dibujar</button>
         </div>
 
         <div id="editModeBar" style="display:none; margin-bottom:1rem; padding:0.7rem; border:1px dashed var(--warning); border-radius:8px; background:rgba(245,158,11,0.1);">
           <div style="font-size:0.85rem; color:#fbbf24; margin-bottom:0.5rem;">Modo edición de puntos activo</div>
           <div style="display:flex; gap:0.5rem;">
-            <button class="btn btn-primary" onclick="savePolygonEdit()">Guardar puntos</button>
-            <button class="btn" onclick="cancelPolygonEdit()">Cancelar</button>
+            <button id="btnSavePolygonEdit" type="button" class="btn btn-primary">Guardar puntos</button>
+            <button id="btnCancelPolygonEdit" type="button" class="btn">Cancelar</button>
           </div>
         </div>
         
@@ -291,9 +291,9 @@
     <div class="modal">
       <div class="modal-header">
         <h3 style="margin:0;">Guardar Zona</h3>
-        <button class="btn-icon" onclick="closeModal()">✕</button>
+        <button id="btnCloseModalTop" type="button" class="btn-icon">✕</button>
       </div>
-      <form id="formZona" class="modal-body" onsubmit="event.preventDefault(); saveForm();">
+      <form id="formZona" class="modal-body">
         <input type="hidden" id="z_id">
         <div>
           <label>Nombre de la Zona</label>
@@ -301,8 +301,8 @@
         </div>
       </form>
       <div class="modal-footer">
-        <button class="btn" onclick="closeModal()">Cancelar</button>
-        <button class="btn btn-primary" onclick="saveForm()">Guardar</button>
+        <button id="btnCancelModal" type="button" class="btn">Cancelar</button>
+        <button id="btnSaveZona" type="button" class="btn btn-primary">Guardar</button>
       </div>
     </div>
   </div>
@@ -334,11 +334,14 @@
     };
 
     // --- Logout ---
-    $('#logout').onclick = async (e) => {
-      e.preventDefault();
-      try { await authFetch('/api/logout', { method: 'POST' }); } catch {}
-      location.href = '../login.html';
-    };
+    const logoutLink = $('#logout');
+    if (logoutLink) {
+      logoutLink.addEventListener('click', async (e) => {
+        e.preventDefault();
+        try { await authFetch('/api/logout', { method: 'POST' }); } catch {}
+        location.href = '../login.html';
+      });
+    }
 
     // --- State ---
     let STATE = { isSuper: false, user: null };
@@ -464,15 +467,15 @@
       list.innerHTML = zonas.map(z => {
         const id = Number(z.id);
         return `
-        <div class="zona-item" onclick="focusZone(${id})">
+        <div class="zona-item" data-zone-id="${id}">
           <div class="zona-info">
             <h3>${esc(z.nombre)}</h3>
             <p>ID: ${id}</p>
           </div>
           <div style="display:flex; gap:0.5rem;">
-            <button class="btn-icon" onclick="event.stopPropagation(); startEditPoints(${id})" title="Editar puntos">📍</button>
-            <button class="btn-icon" onclick="event.stopPropagation(); editName(${id})" title="Editar nombre">✏️</button>
-            <button class="btn-icon" onclick="event.stopPropagation(); del(${id}, this)" title="Eliminar" style="color:var(--danger); border-color:rgba(239,68,68,0.3);">🗑️</button>
+            <button class="btn-icon" data-action="edit-points" data-id="${id}" title="Editar puntos">📍</button>
+            <button class="btn-icon" data-action="edit-name" data-id="${id}" title="Editar nombre">✏️</button>
+            <button class="btn-icon" data-action="delete" data-id="${id}" title="Eliminar" style="color:var(--danger); border-color:rgba(239,68,68,0.3);">🗑️</button>
           </div>
         </div>
       `;
@@ -608,7 +611,7 @@
       const method = id ? 'PUT' : 'POST';
       const url = id ? `/api/zonas/${id}` : '/api/zonas';
 
-      const saveBtn = document.querySelector('#modal .btn.btn-primary');
+      const saveBtn = document.getElementById('btnSaveZona');
       const prevText = saveBtn ? saveBtn.textContent : '';
       saveBusy = true;
       if (saveBtn) {
@@ -686,6 +689,56 @@
         }
     }
 
+    const btnStartNewZone = document.getElementById('btnStartNewZone');
+    if (btnStartNewZone) btnStartNewZone.addEventListener('click', startNewZone);
+
+    const btnSavePolygonEdit = document.getElementById('btnSavePolygonEdit');
+    if (btnSavePolygonEdit) btnSavePolygonEdit.addEventListener('click', savePolygonEdit);
+
+    const btnCancelPolygonEdit = document.getElementById('btnCancelPolygonEdit');
+    if (btnCancelPolygonEdit) btnCancelPolygonEdit.addEventListener('click', () => cancelPolygonEdit());
+
+    const btnCloseModalTop = document.getElementById('btnCloseModalTop');
+    if (btnCloseModalTop) btnCloseModalTop.addEventListener('click', closeModal);
+
+    const btnCancelModal = document.getElementById('btnCancelModal');
+    if (btnCancelModal) btnCancelModal.addEventListener('click', closeModal);
+
+    const btnSaveZona = document.getElementById('btnSaveZona');
+    if (btnSaveZona) btnSaveZona.addEventListener('click', saveForm);
+
+    const formZona = document.getElementById('formZona');
+    if (formZona) {
+      formZona.addEventListener('submit', (ev) => {
+        ev.preventDefault();
+        saveForm();
+      });
+    }
+
+    const zonasList = document.getElementById('zonasList');
+    if (zonasList) {
+      zonasList.addEventListener('click', (ev) => {
+        const btn = ev.target.closest('button[data-action][data-id]');
+        if (btn) {
+          ev.stopPropagation();
+          const action = btn.getAttribute('data-action');
+          const id = Number(btn.getAttribute('data-id'));
+          if (!Number.isFinite(id) || id <= 0) return;
+
+          if (action === 'edit-points') startEditPoints(id);
+          else if (action === 'edit-name') editName(id);
+          else if (action === 'delete') del(id, btn);
+          return;
+        }
+
+        const item = ev.target.closest('.zona-item[data-zone-id]');
+        if (!item) return;
+        const zoneId = Number(item.getAttribute('data-zone-id'));
+        if (!Number.isFinite(zoneId) || zoneId <= 0) return;
+        focusZone(zoneId);
+      });
+    }
+
     // --- Init ---
     (async () => {
         initMap();
@@ -694,7 +747,7 @@
             STATE.user = me?.user || {};
             STATE.isSuper = (STATE.user.role || '').toLowerCase() === 'super';
             
-            $('#roleBadge').textContent = STATE.isSuper ? 'SUPER ADMIN' : (STATE.user.role || 'Admin').toUpperCase();
+            $('#roleBadge').textContent = STATE.isSuper ? 'SUPER ADMIN' : 'Admin';
 
             if (STATE.isSuper) {
                 $('#empWrap').style.display = 'block';
