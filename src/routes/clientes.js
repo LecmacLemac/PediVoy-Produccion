@@ -75,7 +75,8 @@ export function createClientesRouter() {
       const {
         cliente, telefono, direccion, ciudad, provincia, pais,
         latitud, longitud, notas, empresa_id, zona_id,
-        razon_social, cuit, condicion_iva
+        razon_social, cuit, condicion_iva,
+        crm_estado, crm_riesgo, crm_segmento, crm_motivo, crm_ticket_objetivo, crm_proxima_accion
       } = req.body;
 
       const esSuperUser = isSuper(req);
@@ -91,16 +92,20 @@ export function createClientesRouter() {
           cliente, telefono, telefono_normalizado, direccion,
           ciudad, provincia, pais, latitud, longitud, notas,
           empresa_id, zona_id,
-          razon_social, cuit, condicion_iva
+          razon_social, cuit, condicion_iva,
+          crm_estado, crm_riesgo, crm_segmento, crm_motivo, crm_ticket_objetivo, crm_proxima_accion
         )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, $13, $14, $15)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
         RETURNING id
       `, [
         cliente, telefono || null, telNorm, direccion || null,
         ciudad || null, provincia || null, pais || 'Argentina',
         latitud ? Number(latitud) : null, longitud ? Number(longitud) : null, notas || null,
         targetEmpresa, zona_id ? Number(zona_id) : null,
-        razon_social || null, cuit || null, condicion_iva || null
+        razon_social || null, cuit || null, condicion_iva || null,
+        crm_estado || 'activo', crm_riesgo || 'bajo', crm_segmento || null, crm_motivo || null,
+        crm_ticket_objetivo != null ? Number(crm_ticket_objetivo) : null,
+        crm_proxima_accion || null
       ]);
 
       res.json({ ok: true, id: rows[0].id });
@@ -117,7 +122,8 @@ export function createClientesRouter() {
       const {
         cliente, telefono, direccion, ciudad, provincia, pais,
         latitud, longitud, notas, empresa_id, zona_id,
-        razon_social, cuit, condicion_iva
+        razon_social, cuit, condicion_iva,
+        crm_estado, crm_riesgo, crm_segmento, crm_motivo, crm_ticket_objetivo, crm_proxima_accion
       } = req.body;
 
       const esSuperUser = isSuper(req);
@@ -152,6 +158,16 @@ export function createClientesRouter() {
       if (razon_social !== undefined) add('razon_social', razon_social);
       if (cuit !== undefined) add('cuit', cuit);
       if (condicion_iva !== undefined) add('condicion_iva', condicion_iva);
+
+      if (crm_estado !== undefined) add('crm_estado', crm_estado);
+      if (crm_riesgo !== undefined) add('crm_riesgo', crm_riesgo);
+      if (crm_segmento !== undefined) add('crm_segmento', crm_segmento);
+      if (crm_motivo !== undefined) add('crm_motivo', crm_motivo);
+      if (crm_ticket_objetivo !== undefined) add('crm_ticket_objetivo', crm_ticket_objetivo != null ? Number(crm_ticket_objetivo) : null);
+      if (crm_proxima_accion !== undefined) add('crm_proxima_accion', crm_proxima_accion || null);
+      if (crm_estado !== undefined || crm_riesgo !== undefined || crm_segmento !== undefined || crm_motivo !== undefined || crm_ticket_objetivo !== undefined || crm_proxima_accion !== undefined) {
+        add('crm_ultima_accion', new Date().toISOString());
+      }
 
       if (sets.length === 0) return res.json({ ok: true });
 

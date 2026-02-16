@@ -204,6 +204,7 @@ ALTER TABLE puntos_entrega
   ADD COLUMN IF NOT EXISTS crm_estado TEXT DEFAULT 'activo',
   ADD COLUMN IF NOT EXISTS crm_segmento TEXT,
   ADD COLUMN IF NOT EXISTS crm_riesgo TEXT DEFAULT 'bajo',
+  ADD COLUMN IF NOT EXISTS crm_motivo TEXT,
   ADD COLUMN IF NOT EXISTS crm_ticket_objetivo NUMERIC(12,2),
   ADD COLUMN IF NOT EXISTS crm_proxima_accion TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS crm_ultima_accion TIMESTAMPTZ;

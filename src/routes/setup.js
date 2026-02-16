@@ -916,5 +916,75 @@ export function createSetupRouter(deps) {
     }
   });
 
+  // GET /api/setup/fase1/clientes-crm
+  router.get('/fase1/clientes-crm', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req);
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+
+      const q = String(req.query?.q || '').trim().toLowerCase();
+      const params = [empresaId];
+      let where = 'WHERE empresa_id=$1';
+      if (q) {
+        params.push(`%${q}%`);
+        where += ` AND (LOWER(cliente) LIKE $${params.length} OR LOWER(COALESCE(telefono,'')) LIKE $${params.length})`;
+      }
+
+      const rows = await query(
+        `SELECT id, cliente, telefono, crm_estado, crm_riesgo, crm_segmento, crm_motivo, crm_ticket_objetivo, crm_proxima_accion, crm_ultima_accion
+         FROM puntos_entrega
+         ${where}
+         ORDER BY cliente ASC
+         LIMIT 500`,
+        params
+      );
+
+      return res.json({ ok: true, items: rows });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error obteniendo CRM de clientes' });
+    }
+  });
+
+  // PUT /api/setup/fase1/clientes-crm/:id
+  router.put('/fase1/clientes-crm/:id', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+      const id = Number(req.params.id);
+      if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: 'id inválido' });
+
+      const b = req.body || {};
+      const [row] = await query(
+        `UPDATE puntos_entrega
+         SET crm_estado = COALESCE($1, crm_estado),
+             crm_riesgo = COALESCE($2, crm_riesgo),
+             crm_segmento = COALESCE($3, crm_segmento),
+             crm_motivo = COALESCE($4, crm_motivo),
+             crm_ticket_objetivo = COALESCE($5, crm_ticket_objetivo),
+             crm_proxima_accion = COALESCE($6, crm_proxima_accion),
+             crm_ultima_accion = NOW()
+         WHERE id=$7 AND empresa_id=$8
+         RETURNING id, cliente, telefono, crm_estado, crm_riesgo, crm_segmento, crm_motivo, crm_ticket_objetivo, crm_proxima_accion, crm_ultima_accion`,
+        [
+          b.crm_estado ?? null,
+          b.crm_riesgo ?? null,
+          b.crm_segmento ?? null,
+          b.crm_motivo ?? null,
+          b.crm_ticket_objetivo != null ? Number(b.crm_ticket_objetivo) : null,
+          b.crm_proxima_accion ?? null,
+          id,
+          empresaId,
+        ]
+      );
+
+      if (!row) return res.status(404).json({ error: 'Cliente no encontrado' });
+      return res.json({ ok: true, item: row });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error actualizando CRM de cliente' });
+    }
+  });
+
   return router;
 }
