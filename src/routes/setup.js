@@ -494,20 +494,36 @@ export function createSetupRouter(deps) {
       );
 
       const serie = await query(
-        `SELECT TO_CHAR(date_trunc('month', d), 'YYYY-MM') AS mes,
-                COALESCE(SUM(p.monto),0)::numeric AS facturacion,
-                COALESCE((
-                  SELECT SUM(t.monto)
-                  FROM transferencias t
-                  WHERE t.empresa_id=$1
-                    AND date_trunc('month', t.created_at)=date_trunc('month', d)
-                    AND (t.tipo='cobro' OR t.tipo IS NULL)
-                ),0)::numeric AS cobranzas
-         FROM generate_series(date_trunc('month', NOW()) - INTERVAL '5 months', date_trunc('month', NOW()), INTERVAL '1 month') d
-         LEFT JOIN pedidos p
-           ON p.empresa_id=$1 AND date_trunc('month', p.created_at)=date_trunc('month', d)
-         GROUP BY 1
-         ORDER BY 1`,
+        `WITH meses AS (
+           SELECT date_trunc('month', gs.mes) AS mes
+           FROM generate_series(
+             date_trunc('month', NOW()) - INTERVAL '5 months',
+             date_trunc('month', NOW()),
+             INTERVAL '1 month'
+           ) AS gs(mes)
+         ),
+         fact AS (
+           SELECT date_trunc('month', p.created_at) AS mes, COALESCE(SUM(p.monto),0)::numeric AS facturacion
+           FROM pedidos p
+           WHERE p.empresa_id=$1
+             AND p.created_at >= date_trunc('month', NOW()) - INTERVAL '5 months'
+           GROUP BY 1
+         ),
+         cob AS (
+           SELECT date_trunc('month', t.created_at) AS mes, COALESCE(SUM(t.monto),0)::numeric AS cobranzas
+           FROM transferencias t
+           WHERE t.empresa_id=$1
+             AND (t.tipo='cobro' OR t.tipo IS NULL)
+             AND t.created_at >= date_trunc('month', NOW()) - INTERVAL '5 months'
+           GROUP BY 1
+         )
+         SELECT TO_CHAR(m.mes, 'YYYY-MM') AS mes,
+                COALESCE(f.facturacion,0)::numeric AS facturacion,
+                COALESCE(c.cobranzas,0)::numeric AS cobranzas
+         FROM meses m
+         LEFT JOIN fact f ON f.mes=m.mes
+         LEFT JOIN cob c ON c.mes=m.mes
+         ORDER BY m.mes`,
         [empresaId]
       );
 
