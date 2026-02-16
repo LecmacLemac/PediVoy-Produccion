@@ -771,7 +771,8 @@
 
     function formatoEstadoActivo(estado) {
       const e = (estado || '').toLowerCase();
-      const cls = 'status-badge st-activo-' + e;
+      const safeKey = ['disponible', 'prestado', 'reparacion', 'baja'].includes(e) ? e : 'desconocido';
+      const cls = 'status-badge st-activo-' + safeKey;
       let label = e;
       if (e === 'disponible') label = 'Disponible';
       else if (e === 'prestado') label = 'Prestado';
@@ -1063,7 +1064,7 @@
       } else {
         const rowsHtml = filtrados.map(a => {
           const mantStatus = getMantenimientoStatus(a);
-          const proxima = mantStatus.proxima ? toLocalDate(mantStatus.proxima.toISOString()) : '–';
+          const proxima = mantStatus.proxima ? toLocalDate(mantStatus.proxima) : '–';
           
           // Formato colores para días
           let diasHtml = mantStatus.dias != null ? mantStatus.dias : '–';

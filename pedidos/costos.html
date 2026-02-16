@@ -1356,7 +1356,20 @@
        const sel = $('#empresaSelector');
        if(Array.isArray(list)) {
           $('#empresaSelectorWrap').style.display='block';
-          sel.innerHTML = '<option value="">-- Seleccionar --</option>' + list.map(e=>`<option value="${e.id}">${e.nombre}</option>`).join('');
+          sel.innerHTML = '';
+
+          const first = document.createElement('option');
+          first.value = '';
+          first.textContent = '-- Seleccionar --';
+          sel.appendChild(first);
+
+          list.forEach(e => {
+            const opt = document.createElement('option');
+            opt.value = String(Number(e.id) || '');
+            opt.textContent = String(e.nombre || 'Sin nombre');
+            sel.appendChild(opt);
+          });
+
           sel.addEventListener('change', () => {
              STATE.empresaId = sel.value || null;
              cargarTodo();
