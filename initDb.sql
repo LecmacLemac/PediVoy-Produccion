@@ -946,6 +946,31 @@ CREATE TABLE IF NOT EXISTS compras_recepcion_items (
 CREATE INDEX IF NOT EXISTS compras_recepciones_empresa_idx
   ON compras_recepciones (empresa_id, fecha_recepcion DESC);
 
+-- 14.c Tesorería proveedores (MVP)
+CREATE TABLE IF NOT EXISTS tesoreria_movimientos (
+  id                    SERIAL PRIMARY KEY,
+  empresa_id            INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+  tipo                  TEXT NOT NULL DEFAULT 'egreso', -- egreso|ingreso
+  categoria             TEXT NOT NULL DEFAULT 'pago_proveedor',
+  proveedor_id          INTEGER REFERENCES proveedores(id) ON DELETE SET NULL,
+  compra_orden_id       INTEGER REFERENCES compras_ordenes(id) ON DELETE SET NULL,
+  fecha                 TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  monto                 NUMERIC(12,2) NOT NULL DEFAULT 0,
+  medio_pago            TEXT,
+  referencia            TEXT,
+  notas                 TEXT,
+  conciliado            BOOLEAN NOT NULL DEFAULT FALSE,
+  conciliado_at         TIMESTAMPTZ,
+  created_by            INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS tesoreria_movimientos_empresa_fecha_idx
+  ON tesoreria_movimientos (empresa_id, fecha DESC);
+
+CREATE INDEX IF NOT EXISTS tesoreria_movimientos_conciliado_idx
+  ON tesoreria_movimientos (empresa_id, conciliado, fecha DESC);
+
 -- =========================================================
 -- 15. ÍNDICES DE RENDIMIENTO (OPTIMIZACIÓN)
 -- =========================================================

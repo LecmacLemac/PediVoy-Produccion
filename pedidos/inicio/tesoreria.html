@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Tesorería & Conciliación – MultiEmpresas</title>
+  <style>
+    :root{--bg:#0b1020;--bg2:#0f172a;--ink:#f1f5f9;--muted:#94a3b8;--brand:#06b6d4;--border:rgba(148,163,184,.18);--danger:#ef4444}
+    *{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--ink)}
+    .container{max-width:1240px;margin:0 auto;padding:0 20px}header{position:sticky;top:0;background:rgba(15,23,42,.95);border-bottom:1px solid var(--border);padding:.8rem 0}
+    nav{display:flex;justify-content:space-between;align-items:center}.menu{display:flex;gap:1rem;list-style:none;margin:0;padding:0}.menu a{color:var(--muted);text-decoration:none}.menu a.active,.menu a:hover{color:#fff}
+    .brand{font-weight:700}.role{font-size:.75rem;color:var(--brand);border:1px solid rgba(6,182,212,.35);padding:2px 8px;border-radius:99px;margin-left:8px}
+    main{padding:1rem 0 3rem}.card{background:rgba(30,41,59,.7);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:12px}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:.8rem}.kpi{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px}.kpi .l{font-size:.75rem;color:var(--muted);text-transform:uppercase}.kpi .v{font-size:1.2rem;font-weight:700}
+    .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}input,select,button{background:var(--bg2);border:1px solid var(--border);color:#fff;border-radius:8px;padding:8px 10px}button{cursor:pointer}.primary{background:var(--brand);color:#001018;border:none;font-weight:700}
+    table{width:100%;border-collapse:collapse}th,td{padding:8px;border-bottom:1px solid var(--border);font-size:.9rem}th{color:var(--muted);text-align:left}
+  </style>
+</head>
+<body>
+<header>
+  <nav class="container">
+    <div class="brand">MultiEmpresas <span id="roleBadge" class="role">Admin</span></div>
+    <ul class="menu"><li><a href="inicial.html">🚀 Inicio</a></li><li><a href="compras.html">Compras</a></li><li><a href="tesoreria.html" class="active">Tesorería</a></li><li><a href="#" id="logout" style="color:var(--danger)">Salir</a></li></ul>
+  </nav>
+</header>
+<main class="container">
+  <div class="card">
+    <div class="row" style="justify-content:space-between"><h1 style="margin:0;font-size:1.2rem">Fase 2 · Tesorería y conciliación</h1><div class="row"><div id="empresaWrap" style="display:none"><select id="empresaSelect"><option value="">Seleccionar empresa…</option></select></div><button id="btnRefresh">Actualizar</button></div></div>
+    <div id="status" style="margin-top:6px;color:var(--muted)">Listo.</div>
+  </div>
+
+  <div class="card"><h2 style="margin:0 0 8px;font-size:1rem">KPIs Tesorería</h2><div id="kpiGrid" class="grid"></div></div>
+
+  <div class="card">
+    <h2 style="margin:0 0 8px;font-size:1rem">Nuevo movimiento</h2>
+    <div class="row">
+      <select id="movTipo"><option value="egreso">Egreso</option><option value="ingreso">Ingreso</option></select>
+      <input id="movCategoria" placeholder="Categoría" value="pago_proveedor" />
+      <select id="movProveedor" style="min-width:220px"></select>
+      <input id="movMonto" type="number" placeholder="Monto" style="width:140px" />
+      <input id="movRef" placeholder="Referencia" />
+      <button id="btnAddMov" class="primary">Registrar</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2 style="margin:0 0 8px;font-size:1rem">Movimientos (últimos 500)</h2>
+    <div style="overflow:auto"><table><thead><tr><th>Fecha</th><th>Tipo</th><th>Proveedor</th><th>Categoría</th><th>Monto</th><th>Estado</th><th></th></tr></thead><tbody id="movBody"></tbody></table></div>
+  </div>
+</main>
+<script>
+  const authFetch=(url,opts={})=>fetch(url,{...opts,headers:{'Content-Type':'application/json',...(opts.headers||{})},credentials:'include'});
+  const fmt=new Intl.NumberFormat('es-AR',{style:'currency',currency:'ARS',maximumFractionDigits:0});
+  const st={isSuper:false,empresaId:null,proveedores:[],movs:[]};
+  const setStatus=(t,e=false)=>{const el=document.getElementById('status');el.textContent=t;el.style.color=e?'var(--danger)':'var(--muted)';};
+  const apiUrl=(p)=>st.isSuper&&st.empresaId?(p+(p.includes('?')?'&':'?')+'empresa_id='+encodeURIComponent(String(st.empresaId))):p;
+
+  async function loadMe(){
+    const r=await authFetch('/api/me'); if(r.status===401) return location.href='/pedidos/login.html';
+    const me=await r.json(); st.isSuper=String(me?.user?.role||'').toLowerCase()==='super'; st.empresaId=me?.user?.empresa_id||null;
+    document.getElementById('roleBadge').textContent=st.isSuper?'SUPER ADMIN':'Admin';
+    if(st.isSuper){ st.empresaId=null; const wrap=document.getElementById('empresaWrap'); wrap.style.display='block'; const sel=document.getElementById('empresaSelect');
+      let list=[]; const r1=await authFetch('/api/admin/empresas-list'); if(r1.ok){const j=await r1.json().catch(()=>[]); list=Array.isArray(j)?j:(Array.isArray(j.data)?j.data:[]);} if(!list.length){const r2=await authFetch('/api/empresas'); if(r2.ok){const j2=await r2.json().catch(()=>[]); list=Array.isArray(j2)?j2:(Array.isArray(j2.data)?j2.data:[]);} }
+      sel.innerHTML='<option value="">Seleccionar empresa</option>'; list.forEach(e=>{const o=document.createElement('option');o.value=String(Number(e.id)||'');o.textContent=`${e.id} · ${e.nombre}`;sel.appendChild(o);});
+      sel.addEventListener('change',()=>{st.empresaId=sel.value?Number(sel.value):null; refreshAll();});
+    }
+  }
+
+  async function loadProveedores(){ if(st.isSuper&&!st.empresaId) return; const r=await authFetch(apiUrl('/api/setup/fase2/proveedores')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error proveedores'); st.proveedores=Array.isArray(j.items)?j.items:[];
+    const sel=document.getElementById('movProveedor'); sel.innerHTML='<option value="">Sin proveedor</option>'+st.proveedores.map(p=>`<option value="${Number(p.id)}">${p.nombre}</option>`).join('');
+  }
+
+  async function loadDashboard(){ if(st.isSuper&&!st.empresaId) return; const r=await authFetch(apiUrl('/api/setup/fase2/tesoreria/dashboard')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error dashboard tesorería');
+    const k=j.kpis||{}; document.getElementById('kpiGrid').innerHTML=[['Egresos 30d',fmt.format(k.egresos_30d||0)],['Ingresos 30d',fmt.format(k.ingresos_30d||0)],['Pend. conciliación',k.pendientes_conciliacion||0],['Monto pend. conciliar',fmt.format(k.monto_pendiente_conciliar||0)]].map(([l,v])=>`<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div></div>`).join('');
+  }
+
+  async function loadMovs(){ if(st.isSuper&&!st.empresaId) return; const r=await authFetch(apiUrl('/api/setup/fase2/tesoreria')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error movimientos'); st.movs=Array.isArray(j.items)?j.items:[];
+    const body=document.getElementById('movBody'); body.innerHTML=st.movs.length?st.movs.map(m=>`<tr><td>${m.fecha?new Date(m.fecha).toLocaleDateString('es-AR'):'-'}</td><td>${m.tipo}</td><td>${m.proveedor_nombre||'-'}</td><td>${m.categoria||'-'}</td><td>${fmt.format(Number(m.monto||0))}</td><td>${m.conciliado?'Conciliado':'Pendiente'}</td><td>${m.conciliado?'':`<button type="button" data-action="conciliar" data-id="${Number(m.id)}">Conciliar</button>`}</td></tr>`).join(''):'<tr><td colspan="7" style="color:var(--muted)">Sin movimientos.</td></tr>';
+  }
+
+  async function refreshAll(){ if(st.isSuper&&!st.empresaId){ setStatus('Seleccioná empresa para ver tesorería.',true); ['kpiGrid','movBody'].forEach(id=>{const el=document.getElementById(id); if(el) el.innerHTML='';}); return; }
+    setStatus('Actualizando…'); try{ await Promise.all([loadProveedores(),loadDashboard(),loadMovs()]); setStatus('Actualizado.'); } catch(e){ setStatus(e.message||'Error',true); }
+  }
+
+  document.getElementById('btnAddMov').addEventListener('click', async ()=>{
+    if(st.isSuper&&!st.empresaId) return setStatus('Seleccioná empresa primero',true);
+    const monto=Number(document.getElementById('movMonto').value||0); if(!(monto>0)) return setStatus('Monto inválido',true);
+    const body={ tipo:document.getElementById('movTipo').value, categoria:document.getElementById('movCategoria').value.trim()||'general', proveedor_id:Number(document.getElementById('movProveedor').value||0)||null, monto, referencia:document.getElementById('movRef').value.trim()||null };
+    if(st.isSuper) body.empresa_id=st.empresaId;
+    const r=await authFetch('/api/setup/fase2/tesoreria',{method:'POST',body:JSON.stringify(body)}); const j=await r.json(); if(!r.ok) return setStatus(j.error||'No se pudo registrar',true);
+    document.getElementById('movMonto').value=''; document.getElementById('movRef').value=''; refreshAll();
+  });
+
+  document.getElementById('movBody').addEventListener('click', async (ev)=>{
+    const btn=ev.target.closest('button[data-action="conciliar"][data-id]'); if(!btn) return;
+    const id=Number(btn.getAttribute('data-id')); if(!Number.isFinite(id)||id<=0) return;
+    const body={}; if(st.isSuper) body.empresa_id=st.empresaId;
+    const r=await authFetch(`/api/setup/fase2/tesoreria/${id}/conciliar`,{method:'PUT',body:JSON.stringify(body)}); const j=await r.json(); if(!r.ok) return setStatus(j.error||'No se pudo conciliar',true);
+    refreshAll();
+  });
+
+  document.getElementById('btnRefresh').addEventListener('click',refreshAll);
+  document.getElementById('logout').addEventListener('click',async (e)=>{e.preventDefault(); try{await authFetch('/api/logout',{method:'POST'});}catch{} location.href='/pedidos/login.html';});
+  (async()=>{ await loadMe(); await refreshAll(); })();
+</script>
+</body>
+</html>

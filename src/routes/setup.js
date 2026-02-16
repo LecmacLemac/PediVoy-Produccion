@@ -1336,5 +1336,137 @@ export function createSetupRouter(deps) {
     }
   });
 
+  // GET /api/setup/fase2/tesoreria
+  router.get('/fase2/tesoreria', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req);
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+
+      const rows = await query(
+        `SELECT t.*, p.nombre AS proveedor_nombre, o.referencia_externa
+         FROM tesoreria_movimientos t
+         LEFT JOIN proveedores p ON p.id=t.proveedor_id
+         LEFT JOIN compras_ordenes o ON o.id=t.compra_orden_id
+         WHERE t.empresa_id=$1
+         ORDER BY t.fecha DESC, t.id DESC
+         LIMIT 500`,
+        [empresaId]
+      );
+      return res.json({ ok: true, items: rows });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error obteniendo tesorería' });
+    }
+  });
+
+  // POST /api/setup/fase2/tesoreria
+  router.post('/fase2/tesoreria', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+      const b = req.body || {};
+      const tipo = String(b.tipo || 'egreso').toLowerCase();
+      const categoria = String(b.categoria || 'pago_proveedor').trim() || 'pago_proveedor';
+      const monto = Number(b.monto || 0);
+      if (!['egreso', 'ingreso'].includes(tipo)) return res.status(400).json({ error: 'tipo inválido' });
+      if (!(monto > 0)) return res.status(400).json({ error: 'monto inválido' });
+
+      const [row] = await query(
+        `INSERT INTO tesoreria_movimientos (
+          empresa_id, tipo, categoria, proveedor_id, compra_orden_id, fecha,
+          monto, medio_pago, referencia, notas, conciliado, conciliado_at, created_by
+         ) VALUES ($1,$2,$3,$4,$5,COALESCE($6,NOW()),$7,$8,$9,$10,$11,$12,$13)
+         RETURNING *`,
+        [
+          empresaId,
+          tipo,
+          categoria,
+          b.proveedor_id ? Number(b.proveedor_id) : null,
+          b.compra_orden_id ? Number(b.compra_orden_id) : null,
+          b.fecha || null,
+          monto,
+          b.medio_pago || null,
+          b.referencia || null,
+          b.notas || null,
+          Boolean(b.conciliado),
+          b.conciliado ? new Date().toISOString() : null,
+          req?.user?.id ? Number(req.user.id) : null,
+        ]
+      );
+
+      return res.json({ ok: true, item: row });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error creando movimiento de tesorería' });
+    }
+  });
+
+  // PUT /api/setup/fase2/tesoreria/:id/conciliar
+  router.put('/fase2/tesoreria/:id/conciliar', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+      const id = Number(req.params.id);
+      if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: 'id inválido' });
+
+      const [row] = await query(
+        `UPDATE tesoreria_movimientos
+         SET conciliado=TRUE, conciliado_at=NOW()
+         WHERE id=$1 AND empresa_id=$2
+         RETURNING *`,
+        [id, empresaId]
+      );
+      if (!row) return res.status(404).json({ error: 'Movimiento no encontrado' });
+      return res.json({ ok: true, item: row });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error conciliando movimiento' });
+    }
+  });
+
+  // GET /api/setup/fase2/tesoreria/dashboard
+  router.get('/fase2/tesoreria/dashboard', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req);
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+
+      const [k] = await query(
+        `SELECT
+           COALESCE(SUM(monto) FILTER (WHERE tipo='egreso' AND fecha >= NOW() - INTERVAL '30 days'),0)::numeric AS egresos_30d,
+           COALESCE(SUM(monto) FILTER (WHERE tipo='ingreso' AND fecha >= NOW() - INTERVAL '30 days'),0)::numeric AS ingresos_30d,
+           COUNT(*) FILTER (WHERE conciliado=FALSE)::int AS pendientes_conciliacion,
+           COALESCE(SUM(monto) FILTER (WHERE conciliado=FALSE),0)::numeric AS monto_pendiente_conciliar
+         FROM tesoreria_movimientos
+         WHERE empresa_id=$1`,
+        [empresaId]
+      );
+
+      const byProv = await query(
+        `SELECT p.id, p.nombre, COALESCE(SUM(t.monto),0)::numeric AS total_egresos
+         FROM tesoreria_movimientos t
+         JOIN proveedores p ON p.id=t.proveedor_id
+         WHERE t.empresa_id=$1 AND t.tipo='egreso' AND t.fecha >= NOW() - INTERVAL '90 days'
+         GROUP BY p.id, p.nombre
+         ORDER BY total_egresos DESC
+         LIMIT 5`,
+        [empresaId]
+      );
+
+      return res.json({
+        ok: true,
+        kpis: {
+          egresos_30d: Number(k?.egresos_30d || 0),
+          ingresos_30d: Number(k?.ingresos_30d || 0),
+          pendientes_conciliacion: Number(k?.pendientes_conciliacion || 0),
+          monto_pendiente_conciliar: Number(k?.monto_pendiente_conciliar || 0),
+        },
+        top_egresos_proveedor: byProv.map((r) => ({ ...r, total_egresos: Number(r.total_egresos || 0) })),
+      });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error obteniendo dashboard de tesorería' });
+    }
+  });
+
   return router;
 }
