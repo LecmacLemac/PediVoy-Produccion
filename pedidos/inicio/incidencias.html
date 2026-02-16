@@ -92,7 +92,21 @@
     const editModal=document.getElementById('editModal');
     const historyModal=document.getElementById('historyModal');
 
+    const esc=(s)=>String(s==null?'':s).replace(/[&<>"']/g,(c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     function toLocalInput(iso){ if(!iso) return ''; const d=new Date(iso); const pad=n=>String(n).padStart(2,'0'); return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`; }
+    const fieldLabel=(k)=>({estado:'Estado',severidad:'Severidad',responsable_usuario_id:'Responsable',vence_at:'Vence SLA'}[k]||k);
+    const fmtVal=(k,v)=>{ if(v==null||v==='') return '-'; if(k==='vence_at') return new Date(v).toLocaleString('es-AR'); return String(v); };
+    function formatHistoryPayload(payload){
+      if(!payload||typeof payload!=='object') return '<div style="color:var(--muted)">Sin detalle.</div>';
+      const before=payload.before||null; const after=payload.after||null;
+      if(before&&after){
+        const keys=[...new Set([...Object.keys(before),...Object.keys(after)])];
+        const changed=keys.filter(k=>JSON.stringify(before[k]??null)!==JSON.stringify(after[k]??null));
+        if(!changed.length) return '<div style="color:var(--muted)">Sin cambios de campos.</div>';
+        return `<div style="display:grid;gap:6px">${changed.map(k=>`<div><strong>${esc(fieldLabel(k))}:</strong> <span style="color:var(--muted)">${esc(fmtVal(k,before[k]))}</span> → <span>${esc(fmtVal(k,after[k]))}</span></div>`).join('')}</div>`;
+      }
+      return `<pre style="white-space:pre-wrap;margin:8px 0 0;font-size:.78rem;color:#cbd5e1">${esc(JSON.stringify(payload,null,2))}</pre>`;
+    }
 
     async function loadMe(){
       const r=await authFetch('/api/me'); if(r.status===401) return location.href='/pedidos/login.html';
@@ -145,9 +159,9 @@
       historyModal.classList.add('open'); historyModal.setAttribute('aria-hidden','false');
       const path=apiUrl(`/api/setup/fase3/incidencias/${id}/historial`);
       const r=await authFetch(path); const j=await r.json();
-      if(!r.ok){ document.getElementById('historyList').innerHTML=`<div style="color:var(--danger)">${j.error||'Error cargando historial'}</div>`; return; }
+      if(!r.ok){ document.getElementById('historyList').innerHTML=`<div style="color:var(--danger)">${esc(j.error||'Error cargando historial')}</div>`; return; }
       const rows=Array.isArray(j.items)?j.items:[];
-      document.getElementById('historyList').innerHTML=rows.length?rows.map(h=>`<div style="border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--bg2)"><div style="font-weight:700">${h.evento||'-'}</div><div style="font-size:.8rem;color:var(--muted)">${h.created_at?new Date(h.created_at).toLocaleString('es-AR'):''} · ${h.actor_username||'sistema'}</div><pre style="white-space:pre-wrap;margin:8px 0 0;font-size:.78rem;color:#cbd5e1">${JSON.stringify(h.payload||{},null,2)}</pre></div>`).join(''):'<div style="color:var(--muted)">Sin historial.</div>';
+      document.getElementById('historyList').innerHTML=rows.length?rows.map(h=>`<div style="border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--bg2)"><div style="font-weight:700">${esc(h.evento||'-')}</div><div style="font-size:.8rem;color:var(--muted)">${h.created_at?new Date(h.created_at).toLocaleString('es-AR'):''} · ${esc(h.actor_username||'sistema')}</div>${formatHistoryPayload(h.payload||{})}</div>`).join(''):'<div style="color:var(--muted)">Sin historial.</div>';
     }
     function closeHistory(){ historyModal.classList.remove('open'); historyModal.setAttribute('aria-hidden','true'); }
 
