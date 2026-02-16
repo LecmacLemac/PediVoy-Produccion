@@ -74,6 +74,10 @@
         <input id="opMonto" type="number" placeholder="Monto estimado" />
         <button id="btnAddOpp" class="btn-primary" type="button">+ Crear</button>
       </div>
+      <div class="row" style="margin:-2px 0 8px 0">
+        <input id="pipeSearch" placeholder="Filtrar por nombre..." style="min-width:220px" />
+        <select id="pipeFilterStage"><option value="">Todas las etapas</option><option value="prospecto">Prospecto</option><option value="calificado">Calificado</option><option value="propuesta">Propuesta</option><option value="negociacion">Negociación</option></select>
+      </div>
       <div id="kanban" class="kanban"></div>
     </div>
 
@@ -138,18 +142,38 @@
       if (st.isSuper && !st.empresaId) return;
       const r = await authFetch(apiUrl('/api/setup/fase1/pipeline')); const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Error pipeline');
       st.pipeline = Array.isArray(j.items) ? j.items : [];
+
+      const term = String(document.getElementById('pipeSearch')?.value || '').toLowerCase().trim();
+      const stageFilter = String(document.getElementById('pipeFilterStage')?.value || '').trim();
+      const visible = st.pipeline.filter((x) => {
+        if (stageFilter && String(x.etapa || '') !== stageFilter) return false;
+        if (term && !String(x.nombre || '').toLowerCase().includes(term)) return false;
+        return true;
+      });
+
       const cols = [
         ['prospecto','Prospecto'], ['calificado','Calificado'], ['propuesta','Propuesta'], ['negociacion','Negociación']
       ];
       const html = cols.map(([k,title])=>{
-        const items = st.pipeline.filter(x => String(x.etapa||'')===k);
-        const cards = items.length ? items.map(o=>`<div class="kb-card"><div style="font-weight:700">${o.nombre||'-'}</div><div style="font-size:.8rem;color:var(--muted)">${fmt.format(Number(o.monto_estimado||0))} · ${Number(o.probabilidad||0)}%</div></div>`).join('') : '<div style="font-size:.82rem;color:var(--muted)">Sin oportunidades</div>';
+        const items = visible.filter(x => String(x.etapa||'')===k);
+        const cards = items.length ? items.map(o=>`<div class="kb-card" data-opp-id="${Number(o.id)}"><div style="font-weight:700">${o.nombre||'-'}</div><div style="font-size:.8rem;color:var(--muted)">${fmt.format(Number(o.monto_estimado||0))} · ${Number(o.probabilidad||0)}%</div><div style="margin-top:6px"><select data-action="set-stage" data-id="${Number(o.id)}" style="font-size:.8rem;padding:6px 8px"><option value="prospecto" ${String(o.etapa)==='prospecto'?'selected':''}>Prospecto</option><option value="calificado" ${String(o.etapa)==='calificado'?'selected':''}>Calificado</option><option value="propuesta" ${String(o.etapa)==='propuesta'?'selected':''}>Propuesta</option><option value="negociacion" ${String(o.etapa)==='negociacion'?'selected':''}>Negociación</option></select></div></div>`).join('') : '<div style="font-size:.82rem;color:var(--muted)">Sin oportunidades</div>';
         return `<div class="kb-col"><div class="kb-title">${title} (${items.length})</div>${cards}</div>`;
       }).join('');
       document.getElementById('kanban').innerHTML = html;
     }
 
-    async function loadCtas(){
+    async function updateOppStage(id, etapa) {
+      if (!Number.isFinite(id) || id <= 0) return;
+      const body = { etapa };
+      if (st.isSuper) body.empresa_id = st.empresaId;
+      const r = await authFetch(`/api/setup/fase1/pipeline/${id}`, { method:'PUT', body: JSON.stringify(body) });
+      const j = await r.json();
+      if (!r.ok) return setStatus(j.error || 'No se pudo mover la etapa', true);
+      setStatus('Etapa actualizada.');
+      await loadPipeline();
+    }
+
+async function loadCtas(){
       if (st.isSuper && !st.empresaId) return;
       const r = await authFetch(apiUrl('/api/setup/fase1/cuentas-corrientes/resumen')); const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Error cuentas corrientes');
       st.cta = Array.isArray(j.items)?j.items:[];
@@ -197,6 +221,23 @@
         await Promise.all([loadDashboard(), loadPipeline(), loadCtas(), loadAging(), loadAlerts()]);
         setStatus('Actualizado.');
       } catch (e) { setStatus(e.message || 'Error actualizando panel', true); }
+    }
+
+    
+    const pipeSearch = document.getElementById('pipeSearch');
+    const pipeFilterStage = document.getElementById('pipeFilterStage');
+    if (pipeSearch) pipeSearch.addEventListener('input', () => loadPipeline());
+    if (pipeFilterStage) pipeFilterStage.addEventListener('change', () => loadPipeline());
+
+    const kanbanEl = document.getElementById('kanban');
+    if (kanbanEl) {
+      kanbanEl.addEventListener('change', (ev) => {
+        const sel = ev.target.closest('select[data-action="set-stage"][data-id]');
+        if (!sel) return;
+        const id = Number(sel.getAttribute('data-id'));
+        const etapa = sel.value;
+        updateOppStage(id, etapa);
+      });
     }
 
     document.getElementById('btnAddOpp').addEventListener('click', async ()=>{
