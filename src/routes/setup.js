@@ -2352,16 +2352,19 @@ export function createSetupRouter(deps) {
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
       const estado = String(req.query?.estado || '').trim();
       const tipo = String(req.query?.tipo || '').trim();
+      const severidad = String(req.query?.severidad || '').trim();
 
       const params = [empresaId];
       let where = 'WHERE i.empresa_id=$1';
       if (estado) { params.push(estado); where += ` AND i.estado=$${params.length}`; }
       if (tipo) { params.push(tipo); where += ` AND i.tipo=$${params.length}`; }
+      if (severidad) { params.push(severidad); where += ` AND i.severidad=$${params.length}`; }
 
       const rows = await query(
-        `SELECT i.*, p.cliente AS cliente_nombre
+        `SELECT i.*, p.cliente AS cliente_nombre, u.username AS responsable_nombre
          FROM incidencias_operativas i
          LEFT JOIN puntos_entrega p ON p.id=i.cliente_id
+         LEFT JOIN usuarios u ON u.id=i.responsable_usuario_id
          ${where}
          ORDER BY i.created_at DESC
          LIMIT 500`,
@@ -2386,8 +2389,8 @@ export function createSetupRouter(deps) {
       const [row] = await query(
         `INSERT INTO incidencias_operativas (
           empresa_id, pedido_id, cliente_id, chofer_id, tipo, severidad, estado,
-          titulo, detalle, accion_recomendada, created_by
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+          titulo, detalle, accion_recomendada, responsable_usuario_id, vence_at, created_by
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
          RETURNING *`,
         [
           empresaId,
@@ -2400,6 +2403,8 @@ export function createSetupRouter(deps) {
           titulo,
           b.detalle || null,
           b.accion_recomendada || null,
+          b.responsable_usuario_id ? Number(b.responsable_usuario_id) : null,
+          b.vence_at || null,
           req?.user?.id ? Number(req.user.id) : null,
         ]
       );
@@ -2430,10 +2435,12 @@ export function createSetupRouter(deps) {
              titulo=COALESCE($4,titulo),
              detalle=COALESCE($5,detalle),
              accion_recomendada=COALESCE($6,accion_recomendada),
-             resuelta_at=CASE WHEN $7 THEN NOW() ELSE resuelta_at END,
-             resuelta_por=CASE WHEN $7 THEN $8 ELSE resuelta_por END,
+             responsable_usuario_id=COALESCE($7,responsable_usuario_id),
+             vence_at=COALESCE($8,vence_at),
+             resuelta_at=CASE WHEN $9 THEN NOW() ELSE resuelta_at END,
+             resuelta_por=CASE WHEN $9 THEN $10 ELSE resuelta_por END,
              updated_at=NOW()
-         WHERE id=$9 AND empresa_id=$10
+         WHERE id=$11 AND empresa_id=$12
          RETURNING *`,
         [
           b.tipo ?? null,
@@ -2442,6 +2449,8 @@ export function createSetupRouter(deps) {
           b.titulo ?? null,
           b.detalle ?? null,
           b.accion_recomendada ?? null,
+          b.responsable_usuario_id ?? null,
+          b.vence_at ?? null,
           isResuelta,
           req?.user?.id ? Number(req.user.id) : null,
           id,
@@ -2467,7 +2476,8 @@ export function createSetupRouter(deps) {
            COUNT(*) FILTER (WHERE estado='abierta')::int AS abiertas,
            COUNT(*) FILTER (WHERE estado='en_progreso')::int AS en_progreso,
            COUNT(*) FILTER (WHERE estado='resuelta')::int AS resueltas,
-           COUNT(*) FILTER (WHERE severidad IN ('alta','critica') AND estado IN ('abierta','en_progreso'))::int AS criticas_activas
+           COUNT(*) FILTER (WHERE severidad IN ('alta','critica') AND estado IN ('abierta','en_progreso'))::int AS criticas_activas,
+           COUNT(*) FILTER (WHERE vence_at IS NOT NULL AND vence_at < NOW() AND estado IN ('abierta','en_progreso'))::int AS sla_vencidas
          FROM incidencias_operativas
          WHERE empresa_id=$1`,
         [empresaId]
@@ -2478,10 +2488,37 @@ export function createSetupRouter(deps) {
         en_progreso: Number(k?.en_progreso || 0),
         resueltas: Number(k?.resueltas || 0),
         criticas_activas: Number(k?.criticas_activas || 0),
+        sla_vencidas: Number(k?.sla_vencidas || 0),
       } });
     } catch (e) {
       console.error(e);
       return res.status(500).json({ error: 'Error obteniendo dashboard de incidencias' });
+    }
+  });
+
+  // GET /api/setup/fase3/incidencias/alertas
+  router.get('/fase3/incidencias/alertas', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req);
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+      const [k] = await query(
+        `SELECT
+           COUNT(*) FILTER (WHERE severidad='critica' AND estado IN ('abierta','en_progreso'))::int AS criticas_abiertas,
+           COUNT(*) FILTER (WHERE vence_at IS NOT NULL AND vence_at < NOW() AND estado IN ('abierta','en_progreso'))::int AS sla_vencidas
+         FROM incidencias_operativas
+         WHERE empresa_id=$1`,
+        [empresaId]
+      );
+      const items = [];
+      const crit = Number(k?.criticas_abiertas || 0);
+      const sla = Number(k?.sla_vencidas || 0);
+      if (crit > 0) items.push({ nivel:'alta', titulo:'Incidencias críticas activas', detalle:`${crit} incidencias críticas sin resolver.` });
+      if (sla > 0) items.push({ nivel:'alta', titulo:'SLA vencido', detalle:`${sla} incidencias vencieron su fecha objetivo.` });
+      if (!items.length) items.push({ nivel:'baja', titulo:'Sin alertas críticas', detalle:'No hay incidencias críticas ni SLA vencido.' });
+      return res.json({ ok:true, items });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error obteniendo alertas de incidencias' });
     }
   });
 

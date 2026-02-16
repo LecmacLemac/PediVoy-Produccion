@@ -1005,12 +1005,19 @@ CREATE TABLE IF NOT EXISTS incidencias_operativas (
   titulo              TEXT NOT NULL,
   detalle             TEXT,
   accion_recomendada  TEXT,
+  responsable_usuario_id INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
+  vence_at            TIMESTAMPTZ,
   resuelta_at         TIMESTAMPTZ,
   resuelta_por        INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
   created_by          INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
   created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE incidencias_operativas
+  ADD COLUMN IF NOT EXISTS responsable_usuario_id INTEGER REFERENCES usuarios(id) ON DELETE SET NULL;
+ALTER TABLE incidencias_operativas
+  ADD COLUMN IF NOT EXISTS vence_at TIMESTAMPTZ;
 
 CREATE INDEX IF NOT EXISTS incidencias_operativas_empresa_estado_idx
   ON incidencias_operativas (empresa_id, estado, severidad, created_at DESC);
