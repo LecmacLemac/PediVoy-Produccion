@@ -49,6 +49,7 @@
           <div id="empresaWrap" style="display:none"><select id="empresaSelect"><option value="">Seleccionar empresa…</option></select></div>
           <button id="btnRefresh" type="button">Actualizar</button>
           <button id="btnExportCsv" type="button">Export CSV</button>
+          <button id="btnCopySummary" type="button">Copiar resumen diario</button>
         </div>
       </div>
       <div id="status" style="color:var(--muted);margin-top:6px">Listo.</div>
@@ -260,6 +261,18 @@ async function loadCtas(){
 
     document.getElementById('btnExportCsv').addEventListener('click', exportAllCsv);
     document.getElementById('btnRefresh').addEventListener('click', refreshAll);
+    document.getElementById('btnCopySummary').addEventListener('click', async () => {
+      if (st.isSuper && !st.empresaId) return setStatus('Seleccioná empresa primero.', true);
+      const r = await authFetch(apiUrl('/api/setup/fase1/alertas-resumen'));
+      const j = await r.json();
+      if (!r.ok) return setStatus(j.error || 'No se pudo obtener resumen', true);
+      try {
+        await navigator.clipboard.writeText(j.summary || '');
+        setStatus('Resumen diario copiado al portapapeles.');
+      } catch {
+        setStatus('No se pudo copiar. Revisá permisos del navegador.', true);
+      }
+    });
     document.getElementById('logout').addEventListener('click', async (e)=>{ e.preventDefault(); try { await authFetch('/api/logout', { method:'POST' }); } catch {} location.href='/pedidos/login.html'; });
 
     (async ()=>{ await loadMe(); await refreshAll(); })();

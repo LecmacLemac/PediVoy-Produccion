@@ -874,5 +874,47 @@ export function createSetupRouter(deps) {
     }
   });
 
+  // GET /api/setup/fase1/alertas-resumen
+  // Devuelve un resumen textual listo para enviar por recordatorio diario.
+  router.get('/fase1/alertas-resumen', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req);
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+
+      const [empresa] = await query('SELECT nombre FROM empresas WHERE id=$1', [empresaId]);
+      const [vencidos] = await query(
+        `SELECT COUNT(*)::int AS c, COALESCE(SUM(debe - haber),0)::numeric AS monto
+         FROM cliente_cta_corriente_mov
+         WHERE empresa_id=$1 AND estado='pendiente' AND vencimiento < NOW() AND (debe - haber) > 0`,
+        [empresaId]
+      );
+      const [opp] = await query(
+        `SELECT COUNT(*)::int AS c
+         FROM crm_oportunidades
+         WHERE empresa_id=$1 AND estado='abierta'
+           AND (proxima_accion IS NULL OR proxima_accion < NOW() - INTERVAL '7 days')`,
+        [empresaId]
+      );
+      const [ventas30] = await query(
+        `SELECT COALESCE(SUM(monto),0)::numeric AS monto
+         FROM pedidos
+         WHERE empresa_id=$1 AND created_at >= NOW() - INTERVAL '30 days'`,
+        [empresaId]
+      );
+
+      const lines = [];
+      lines.push(`Resumen diario · ${empresa?.nombre || 'Empresa'} · ${new Date().toLocaleString('es-AR')}`);
+      lines.push(`Ventas 30d: ${Number(ventas30?.monto || 0).toFixed(2)}`);
+      lines.push(`Vencidos cta corriente: ${Number(vencidos?.c || 0)} (${Number(vencidos?.monto || 0).toFixed(2)})`);
+      lines.push(`Oportunidades sin seguimiento: ${Number(opp?.c || 0)}`);
+      lines.push('Siguiente acción sugerida: priorizar cobranzas vencidas y seguimiento comercial.');
+
+      return res.json({ ok: true, summary: lines.join('\n') });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error construyendo resumen de alertas' });
+    }
+  });
+
   return router;
 }
