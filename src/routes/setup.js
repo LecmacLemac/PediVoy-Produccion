@@ -1079,5 +1079,262 @@ export function createSetupRouter(deps) {
     }
   });
 
+  // =========================
+  // FASE 2: COMPRAS / PROVEEDORES (MVP)
+  // =========================
+
+  // GET /api/setup/fase2/proveedores
+  router.get('/fase2/proveedores', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req);
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+      const rows = await query(
+        `SELECT *
+         FROM proveedores
+         WHERE empresa_id=$1
+         ORDER BY activo DESC, nombre ASC`,
+        [empresaId]
+      );
+      return res.json({ ok: true, items: rows });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error obteniendo proveedores' });
+    }
+  });
+
+  // POST /api/setup/fase2/proveedores
+  router.post('/fase2/proveedores', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+      const b = req.body || {};
+      const nombre = String(b.nombre || '').trim();
+      if (!nombre) return res.status(400).json({ error: 'nombre requerido' });
+
+      const [row] = await query(
+        `INSERT INTO proveedores (empresa_id, nombre, cuit, telefono, email, contacto, condiciones_pago, activo, notas)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+         RETURNING *`,
+        [empresaId, nombre, b.cuit || null, b.telefono || null, b.email || null, b.contacto || null, b.condiciones_pago || null, b.activo !== false, b.notas || null]
+      );
+
+      return res.json({ ok: true, item: row });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error creando proveedor' });
+    }
+  });
+
+  // PUT /api/setup/fase2/proveedores/:id
+  router.put('/fase2/proveedores/:id', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+      const id = Number(req.params.id);
+      if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: 'id inválido' });
+      const b = req.body || {};
+
+      const [row] = await query(
+        `UPDATE proveedores
+         SET nombre=COALESCE($1,nombre),
+             cuit=COALESCE($2,cuit),
+             telefono=COALESCE($3,telefono),
+             email=COALESCE($4,email),
+             contacto=COALESCE($5,contacto),
+             condiciones_pago=COALESCE($6,condiciones_pago),
+             activo=COALESCE($7,activo),
+             notas=COALESCE($8,notas),
+             updated_at=NOW()
+         WHERE id=$9 AND empresa_id=$10
+         RETURNING *`,
+        [b.nombre ?? null, b.cuit ?? null, b.telefono ?? null, b.email ?? null, b.contacto ?? null, b.condiciones_pago ?? null, b.activo ?? null, b.notas ?? null, id, empresaId]
+      );
+      if (!row) return res.status(404).json({ error: 'Proveedor no encontrado' });
+      return res.json({ ok: true, item: row });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error actualizando proveedor' });
+    }
+  });
+
+  // GET /api/setup/fase2/compras
+  router.get('/fase2/compras', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req);
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+      const rows = await query(
+        `SELECT o.*, p.nombre AS proveedor_nombre
+         FROM compras_ordenes o
+         LEFT JOIN proveedores p ON p.id=o.proveedor_id
+         WHERE o.empresa_id=$1
+         ORDER BY o.fecha_emision DESC, o.id DESC
+         LIMIT 500`,
+        [empresaId]
+      );
+      return res.json({ ok: true, items: rows });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error obteniendo compras' });
+    }
+  });
+
+  // POST /api/setup/fase2/compras
+  router.post('/fase2/compras', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+      const b = req.body || {};
+      const proveedorId = b.proveedor_id ? Number(b.proveedor_id) : null;
+      const items = Array.isArray(b.items) ? b.items : [];
+      if (!items.length) return res.status(400).json({ error: 'items requeridos' });
+
+      let subtotal = 0;
+      const normalized = items.map((it) => {
+        const cantidad = Number(it.cantidad || 0);
+        const costo = Number(it.costo_unitario || 0);
+        const imp = Number(it.impuesto_pct || 0);
+        const st = (cantidad * costo) * (1 + imp / 100);
+        subtotal += st;
+        return {
+          producto_id: it.producto_id ? Number(it.producto_id) : null,
+          descripcion: it.descripcion || null,
+          cantidad,
+          costo_unitario: costo,
+          impuesto_pct: imp,
+          subtotal: st,
+        };
+      });
+
+      const impuestos = Number(b.impuestos || 0);
+      const total = subtotal + impuestos;
+
+      const [orden] = await query(
+        `INSERT INTO compras_ordenes (
+          empresa_id, proveedor_id, estado, fecha_entrega_estimada,
+          subtotal, impuestos, total, moneda, referencia_externa, observaciones, created_by, updated_by
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+         RETURNING *`,
+        [
+          empresaId,
+          proveedorId,
+          b.estado || 'emitida',
+          b.fecha_entrega_estimada || null,
+          subtotal,
+          impuestos,
+          total,
+          b.moneda || 'ARS',
+          b.referencia_externa || null,
+          b.observaciones || null,
+          req?.user?.id ? Number(req.user.id) : null,
+          req?.user?.id ? Number(req.user.id) : null,
+        ]
+      );
+
+      for (const it of normalized) {
+        await query(
+          `INSERT INTO compras_orden_items (orden_id, producto_id, descripcion, cantidad, costo_unitario, impuesto_pct, subtotal)
+           VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+          [orden.id, it.producto_id, it.descripcion, it.cantidad, it.costo_unitario, it.impuesto_pct, it.subtotal]
+        );
+      }
+
+      return res.json({ ok: true, item: orden });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error creando orden de compra' });
+    }
+  });
+
+  // POST /api/setup/fase2/compras/:id/recepcionar
+  router.post('/fase2/compras/:id/recepcionar', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+      const id = Number(req.params.id);
+      if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: 'id inválido' });
+
+      const [orden] = await query(`SELECT * FROM compras_ordenes WHERE id=$1 AND empresa_id=$2`, [id, empresaId]);
+      if (!orden) return res.status(404).json({ error: 'Orden no encontrada' });
+
+      const [rec] = await query(
+        `INSERT INTO compras_recepciones (empresa_id, orden_id, proveedor_id, numero_remito, observaciones, created_by)
+         VALUES ($1,$2,$3,$4,$5,$6)
+         RETURNING *`,
+        [empresaId, orden.id, orden.proveedor_id, req.body?.numero_remito || null, req.body?.observaciones || null, req?.user?.id ? Number(req.user.id) : null]
+      );
+
+      const items = await query(`SELECT * FROM compras_orden_items WHERE orden_id=$1`, [orden.id]);
+      for (const it of items) {
+        await query(
+          `INSERT INTO compras_recepcion_items (recepcion_id, producto_id, cantidad, costo_unitario, subtotal)
+           VALUES ($1,$2,$3,$4,$5)`,
+          [rec.id, it.producto_id, it.cantidad, it.costo_unitario, it.subtotal]
+        );
+      }
+
+      await query(
+        `UPDATE compras_ordenes
+         SET estado='recibida', updated_at=NOW(), updated_by=$1
+         WHERE id=$2 AND empresa_id=$3`,
+        [req?.user?.id ? Number(req.user.id) : null, orden.id, empresaId]
+      );
+
+      return res.json({ ok: true, recepcion: rec });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error recepcionando compra' });
+    }
+  });
+
+  // GET /api/setup/fase2/dashboard
+  router.get('/fase2/dashboard', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req);
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+
+      const [ord] = await query(
+        `SELECT COUNT(*)::int AS total,
+                COUNT(*) FILTER (WHERE estado='emitida' OR estado='parcial')::int AS abiertas,
+                COALESCE(SUM(total) FILTER (WHERE fecha_emision >= NOW() - INTERVAL '30 days'),0)::numeric AS total_30d
+         FROM compras_ordenes
+         WHERE empresa_id=$1`,
+        [empresaId]
+      );
+
+      const [prov] = await query(
+        `SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE activo=TRUE)::int AS activos
+         FROM proveedores
+         WHERE empresa_id=$1`,
+        [empresaId]
+      );
+
+      const topProv = await query(
+        `SELECT p.id, p.nombre, COALESCE(SUM(o.total),0)::numeric AS total
+         FROM compras_ordenes o
+         JOIN proveedores p ON p.id=o.proveedor_id
+         WHERE o.empresa_id=$1 AND o.fecha_emision >= NOW() - INTERVAL '90 days'
+         GROUP BY p.id, p.nombre
+         ORDER BY total DESC
+         LIMIT 5`,
+        [empresaId]
+      );
+
+      return res.json({
+        ok: true,
+        kpis: {
+          ordenes_total: Number(ord?.total || 0),
+          ordenes_abiertas: Number(ord?.abiertas || 0),
+          compras_30d: Number(ord?.total_30d || 0),
+          proveedores_total: Number(prov?.total || 0),
+          proveedores_activos: Number(prov?.activos || 0),
+        },
+        top_proveedores: topProv.map((r) => ({ ...r, total: Number(r.total || 0) })),
+      });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error obteniendo dashboard de compras' });
+    }
+  });
+
   return router;
 }

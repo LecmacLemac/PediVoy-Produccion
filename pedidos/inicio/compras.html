@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Compras & Proveedores – MultiEmpresas</title>
+  <style>
+    :root{--bg:#0b1020;--bg2:#0f172a;--ink:#f1f5f9;--muted:#94a3b8;--brand:#06b6d4;--border:rgba(148,163,184,.18);--danger:#ef4444;--success:#10b981}
+    *{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--ink)}
+    .container{max-width:1240px;margin:0 auto;padding:0 20px}header{position:sticky;top:0;z-index:40;background:rgba(15,23,42,.95);backdrop-filter:blur(12px);border-bottom:1px solid var(--border);padding:.8rem 0}
+    nav{display:flex;justify-content:space-between;align-items:center}.brand{display:flex;gap:.8rem;align-items:center;font-weight:700}.brand-dot{width:10px;height:10px;border-radius:50%;background:var(--brand);box-shadow:0 0 10px var(--brand)}
+    .role-badge{border:1px solid rgba(6,182,212,.35);color:var(--brand);padding:2px 8px;border-radius:99px;font-size:.75rem}
+    .menu{list-style:none;display:flex;gap:1rem;margin:0;padding:0}.menu a{color:var(--muted);text-decoration:none}.menu a.active,.menu a:hover{color:#fff}
+    main{padding:1rem 0 3rem}.card{background:rgba(30,41,59,.7);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:12px}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:.8rem}.kpi{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px}.kpi .l{font-size:.75rem;color:var(--muted);text-transform:uppercase}.kpi .v{font-size:1.25rem;font-weight:700}
+    .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+    input,select,textarea,button{background:var(--bg2);border:1px solid var(--border);color:#fff;border-radius:8px;padding:9px 10px}button{cursor:pointer}.btn-primary{background:var(--brand);color:#001018;border:none;font-weight:700}
+    table{width:100%;border-collapse:collapse}th,td{padding:8px;border-bottom:1px solid var(--border);font-size:.9rem}th{color:var(--muted);text-align:left}
+  </style>
+</head>
+<body>
+  <header>
+    <nav class="container">
+      <div class="brand"><div class="brand-dot"></div>MultiEmpresas <span id="roleBadge" class="role-badge">Admin</span></div>
+      <ul class="menu">
+        <li><a href="inicial.html">🚀 Inicio</a></li><li><a href="/pedidos/dashboard.html">Dashboard</a></li>
+        <li><a href="compras.html" class="active">Compras</a></li>
+        <li><a href="#" id="logout" style="color:var(--danger)">Salir</a></li>
+      </ul>
+    </nav>
+  </header>
+  <main class="container">
+    <div class="card">
+      <div class="row" style="justify-content:space-between">
+        <h1 style="margin:0;font-size:1.2rem">Fase 2 · Compras y Proveedores</h1>
+        <div class="row"><div id="empresaWrap" style="display:none"><select id="empresaSelect"><option value="">Seleccionar empresa…</option></select></div><button id="btnRefresh" type="button">Actualizar</button></div>
+      </div>
+      <div id="status" style="color:var(--muted);margin-top:6px">Listo.</div>
+    </div>
+
+    <div class="card"><h2 style="margin:0 0 8px;font-size:1rem">Dashboard de compras</h2><div id="kpiGrid" class="grid"></div></div>
+
+    <div class="card">
+      <h2 style="margin:0 0 8px;font-size:1rem">Proveedores</h2>
+      <div class="row" style="margin:8px 0">
+        <input id="provNombre" placeholder="Nombre proveedor" style="min-width:220px" />
+        <input id="provContacto" placeholder="Contacto" />
+        <input id="provTelefono" placeholder="Teléfono" />
+        <button id="btnAddProv" class="btn-primary" type="button">+ Agregar</button>
+      </div>
+      <div style="overflow:auto"><table><thead><tr><th>Nombre</th><th>Contacto</th><th>Teléfono</th><th>Activo</th></tr></thead><tbody id="provBody"></tbody></table></div>
+    </div>
+
+    <div class="card">
+      <h2 style="margin:0 0 8px;font-size:1rem">Orden de compra rápida</h2>
+      <div class="row" style="margin:8px 0">
+        <select id="ordenProveedor" style="min-width:260px"></select>
+        <input id="ordenDesc" placeholder="Descripción item" style="min-width:220px" />
+        <input id="ordenCant" type="number" placeholder="Cantidad" style="width:120px" />
+        <input id="ordenCosto" type="number" placeholder="Costo unit." style="width:140px" />
+        <button id="btnCrearOrden" class="btn-primary" type="button">Crear orden</button>
+      </div>
+      <div style="overflow:auto"><table><thead><tr><th>ID</th><th>Proveedor</th><th>Estado</th><th>Total</th><th>Fecha</th><th></th></tr></thead><tbody id="ordenBody"></tbody></table></div>
+    </div>
+  </main>
+
+  <script>
+    const authFetch=(url,opts={})=>fetch(url,{...opts,headers:{'Content-Type':'application/json',...(opts.headers||{})},credentials:'include'});
+    const fmt=new Intl.NumberFormat('es-AR',{style:'currency',currency:'ARS',maximumFractionDigits:0});
+    const st={isSuper:false,empresaId:null,proveedores:[],ordenes:[]};
+    const setStatus=(t,e=false)=>{const el=document.getElementById('status');el.textContent=t;el.style.color=e?'var(--danger)':'var(--muted)';};
+    const apiUrl=(p)=>st.isSuper&&st.empresaId?(p+(p.includes('?')?'&':'?')+'empresa_id='+encodeURIComponent(String(st.empresaId))):p;
+
+    async function loadMe(){
+      const r=await authFetch('/api/me'); if(r.status===401) return location.href='/pedidos/login.html';
+      const me=await r.json(); st.isSuper=String(me?.user?.role||'').toLowerCase()==='super'; st.empresaId=me?.user?.empresa_id||null;
+      document.getElementById('roleBadge').textContent=st.isSuper?'SUPER ADMIN':'Admin';
+      if(st.isSuper){ st.empresaId=null; const wrap=document.getElementById('empresaWrap');wrap.style.display='block'; const sel=document.getElementById('empresaSelect');
+        let list=[]; const r1=await authFetch('/api/admin/empresas-list'); if(r1.ok){const j=await r1.json().catch(()=>[]); list=Array.isArray(j)?j:(Array.isArray(j.data)?j.data:[]);} if(!list.length){const r2=await authFetch('/api/empresas'); if(r2.ok){const j2=await r2.json().catch(()=>[]); list=Array.isArray(j2)?j2:(Array.isArray(j2.data)?j2.data:[]);} }
+        sel.innerHTML='<option value="">Seleccionar empresa</option>'; list.forEach(e=>{const o=document.createElement('option');o.value=String(Number(e.id)||'');o.textContent=`${e.id} · ${e.nombre}`;sel.appendChild(o);});
+        sel.addEventListener('change',()=>{st.empresaId=sel.value?Number(sel.value):null; refreshAll();});
+      }
+    }
+
+    async function loadDashboard(){ if(st.isSuper&&!st.empresaId) return; const r=await authFetch(apiUrl('/api/setup/fase2/dashboard')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error dashboard');
+      const k=j.kpis||{}; document.getElementById('kpiGrid').innerHTML=[['Órdenes',k.ordenes_total||0],['Abiertas',k.ordenes_abiertas||0],['Compras 30d',fmt.format(k.compras_30d||0)],['Proveedores',k.proveedores_total||0],['Proveedores activos',k.proveedores_activos||0]].map(([l,v])=>`<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div></div>`).join('');
+    }
+
+    async function loadProveedores(){ if(st.isSuper&&!st.empresaId) return; const r=await authFetch(apiUrl('/api/setup/fase2/proveedores')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error proveedores'); st.proveedores=Array.isArray(j.items)?j.items:[];
+      const body=document.getElementById('provBody'); body.innerHTML=st.proveedores.length?st.proveedores.map(p=>`<tr><td>${p.nombre||'-'}</td><td>${p.contacto||'-'}</td><td>${p.telefono||'-'}</td><td>${p.activo?'Sí':'No'}</td></tr>`).join(''):'<tr><td colspan="4" style="color:var(--muted)">Sin proveedores.</td></tr>';
+      const sel=document.getElementById('ordenProveedor'); sel.innerHTML='<option value="">Seleccionar proveedor</option>'+st.proveedores.map(p=>`<option value="${Number(p.id)}">${p.nombre}</option>`).join('');
+    }
+
+    async function loadOrdenes(){ if(st.isSuper&&!st.empresaId) return; const r=await authFetch(apiUrl('/api/setup/fase2/compras')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error compras'); st.ordenes=Array.isArray(j.items)?j.items:[];
+      const body=document.getElementById('ordenBody'); body.innerHTML=st.ordenes.length?st.ordenes.map(o=>`<tr><td>#${o.id}</td><td>${o.proveedor_nombre||'-'}</td><td>${o.estado}</td><td>${fmt.format(Number(o.total||0))}</td><td>${o.fecha_emision?new Date(o.fecha_emision).toLocaleDateString('es-AR'):'-'}</td><td>${o.estado!=='recibida'?`<button type="button" data-action="recepcionar" data-id="${Number(o.id)}">Recepcionar</button>`:''}</td></tr>`).join(''):'<tr><td colspan="6" style="color:var(--muted)">Sin órdenes.</td></tr>';
+    }
+
+    async function refreshAll(){ if(st.isSuper&&!st.empresaId){ setStatus('Seleccioná una empresa para cargar compras.',true); ['kpiGrid','provBody','ordenBody'].forEach(id=>{const el=document.getElementById(id); if(el) el.innerHTML='';}); return; }
+      setStatus('Actualizando…'); try{ await Promise.all([loadDashboard(),loadProveedores(),loadOrdenes()]); setStatus('Actualizado.'); } catch(e){ setStatus(e.message||'Error',true); }
+    }
+
+    document.getElementById('btnAddProv').addEventListener('click', async ()=>{ if(st.isSuper&&!st.empresaId) return setStatus('Seleccioná empresa primero',true);
+      const body={ nombre:document.getElementById('provNombre').value.trim(), contacto:document.getElementById('provContacto').value.trim(), telefono:document.getElementById('provTelefono').value.trim() }; if(st.isSuper) body.empresa_id=st.empresaId;
+      const r=await authFetch('/api/setup/fase2/proveedores',{method:'POST',body:JSON.stringify(body)}); const j=await r.json(); if(!r.ok) return setStatus(j.error||'No se pudo crear proveedor',true);
+      document.getElementById('provNombre').value=''; document.getElementById('provContacto').value=''; document.getElementById('provTelefono').value=''; refreshAll();
+    });
+
+    document.getElementById('btnCrearOrden').addEventListener('click', async ()=>{ if(st.isSuper&&!st.empresaId) return setStatus('Seleccioná empresa primero',true);
+      const proveedor_id=Number(document.getElementById('ordenProveedor').value||0); const descripcion=document.getElementById('ordenDesc').value.trim(); const cantidad=Number(document.getElementById('ordenCant').value||0); const costo=Number(document.getElementById('ordenCosto').value||0);
+      if(!proveedor_id||!descripcion||cantidad<=0||costo<=0) return setStatus('Completá proveedor, descripción, cantidad y costo',true);
+      const body={ proveedor_id, items:[{descripcion,cantidad,costo_unitario:costo}], estado:'emitida' }; if(st.isSuper) body.empresa_id=st.empresaId;
+      const r=await authFetch('/api/setup/fase2/compras',{method:'POST',body:JSON.stringify(body)}); const j=await r.json(); if(!r.ok) return setStatus(j.error||'No se pudo crear orden',true);
+      document.getElementById('ordenDesc').value=''; document.getElementById('ordenCant').value=''; document.getElementById('ordenCosto').value=''; refreshAll();
+    });
+
+    document.getElementById('ordenBody').addEventListener('click', async (ev)=>{
+      const btn=ev.target.closest('button[data-action="recepcionar"][data-id]'); if(!btn) return;
+      const id=Number(btn.getAttribute('data-id')); if(!Number.isFinite(id)||id<=0) return;
+      const body={}; if(st.isSuper) body.empresa_id=st.empresaId;
+      const r=await authFetch(`/api/setup/fase2/compras/${id}/recepcionar`,{method:'POST',body:JSON.stringify(body)}); const j=await r.json(); if(!r.ok) return setStatus(j.error||'No se pudo recepcionar',true);
+      refreshAll();
+    });
+
+    document.getElementById('btnRefresh').addEventListener('click', refreshAll);
+    document.getElementById('logout').addEventListener('click', async (e)=>{e.preventDefault(); try{await authFetch('/api/logout',{method:'POST'});}catch{} location.href='/pedidos/login.html';});
+
+    (async()=>{ await loadMe(); await refreshAll(); })();
+  </script>
+</body>
+</html>

@@ -864,6 +864,89 @@ CREATE TABLE IF NOT EXISTS pedido_activos (
 );
 
 -- =========================================================
+-- 14.b FASE 2 - COMPRAS Y PROVEEDORES
+-- =========================================================
+CREATE TABLE IF NOT EXISTS proveedores (
+  id                SERIAL PRIMARY KEY,
+  empresa_id        INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+  nombre            TEXT NOT NULL,
+  cuit              TEXT,
+  telefono          TEXT,
+  email             TEXT,
+  contacto          TEXT,
+  condiciones_pago  TEXT,
+  activo            BOOLEAN DEFAULT TRUE,
+  notas             TEXT,
+  created_at        TIMESTAMPTZ DEFAULT NOW(),
+  updated_at        TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS proveedores_empresa_idx
+  ON proveedores (empresa_id, activo, nombre);
+
+CREATE TABLE IF NOT EXISTS compras_ordenes (
+  id                    SERIAL PRIMARY KEY,
+  empresa_id            INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+  proveedor_id          INTEGER REFERENCES proveedores(id) ON DELETE SET NULL,
+  estado                TEXT NOT NULL DEFAULT 'borrador',
+  fecha_emision         TIMESTAMPTZ DEFAULT NOW(),
+  fecha_entrega_estimada DATE,
+  subtotal              NUMERIC(12,2) DEFAULT 0,
+  impuestos             NUMERIC(12,2) DEFAULT 0,
+  total                 NUMERIC(12,2) DEFAULT 0,
+  moneda                TEXT DEFAULT 'ARS',
+  referencia_externa    TEXT,
+  observaciones         TEXT,
+  created_by            INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
+  updated_by            INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
+  created_at            TIMESTAMPTZ DEFAULT NOW(),
+  updated_at            TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS compras_ordenes_empresa_estado_idx
+  ON compras_ordenes (empresa_id, estado, fecha_emision DESC);
+
+CREATE TABLE IF NOT EXISTS compras_orden_items (
+  id                SERIAL PRIMARY KEY,
+  orden_id          INTEGER NOT NULL REFERENCES compras_ordenes(id) ON DELETE CASCADE,
+  producto_id       INTEGER REFERENCES productos(id) ON DELETE SET NULL,
+  descripcion       TEXT,
+  cantidad          NUMERIC(12,2) NOT NULL DEFAULT 0,
+  costo_unitario    NUMERIC(12,2) NOT NULL DEFAULT 0,
+  impuesto_pct      NUMERIC(6,2) DEFAULT 0,
+  subtotal          NUMERIC(12,2) DEFAULT 0,
+  created_at        TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS compras_orden_items_orden_idx
+  ON compras_orden_items (orden_id);
+
+CREATE TABLE IF NOT EXISTS compras_recepciones (
+  id                SERIAL PRIMARY KEY,
+  empresa_id        INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+  orden_id          INTEGER REFERENCES compras_ordenes(id) ON DELETE SET NULL,
+  proveedor_id      INTEGER REFERENCES proveedores(id) ON DELETE SET NULL,
+  fecha_recepcion   TIMESTAMPTZ DEFAULT NOW(),
+  numero_remito     TEXT,
+  observaciones     TEXT,
+  created_by        INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
+  created_at        TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS compras_recepcion_items (
+  id                SERIAL PRIMARY KEY,
+  recepcion_id      INTEGER NOT NULL REFERENCES compras_recepciones(id) ON DELETE CASCADE,
+  producto_id       INTEGER REFERENCES productos(id) ON DELETE SET NULL,
+  cantidad          NUMERIC(12,2) NOT NULL DEFAULT 0,
+  costo_unitario    NUMERIC(12,2) NOT NULL DEFAULT 0,
+  subtotal          NUMERIC(12,2) DEFAULT 0,
+  created_at        TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS compras_recepciones_empresa_idx
+  ON compras_recepciones (empresa_id, fecha_recepcion DESC);
+
+-- =========================================================
 -- 15. ÍNDICES DE RENDIMIENTO (OPTIMIZACIÓN)
 -- =========================================================
 
