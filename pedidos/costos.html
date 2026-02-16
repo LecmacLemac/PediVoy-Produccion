@@ -986,8 +986,8 @@
           <td>${mensualEq ? fmtMoney.format(mensualEq) : '-'}</td>
           <td>${escapeHtml(formatDateTime(c.created_at))}</td>
           <td class="text-right">
-             <button class="btn-icon" onclick="abrirModalFijo(false, ${Number(c.id)})"><i class="fa-solid fa-pen"></i></button>
-             <button class="btn-icon btn-danger" onclick="eliminarFijo(${Number(c.id)})"><i class="fa-solid fa-trash"></i></button>
+             <button class="btn-icon" data-action="editar-fijo" data-id="${Number(c.id)}"><i class="fa-solid fa-pen"></i></button>
+             <button class="btn-icon btn-danger" data-action="eliminar-fijo" data-id="${Number(c.id)}"><i class="fa-solid fa-trash"></i></button>
           </td>
         </tr>
       `;
@@ -1025,9 +1025,9 @@
              <td><span class="pill">${escapeHtml(d.codigo || '-')}</span></td>
              <td>${escapeHtml(tipoVariableLabel(d.tipo_calculo))}</td>
              <td class="text-right">
-                <button class="btn-icon" title="Aplicar Reglas" onclick="abrirModalMass(${Number(d.id)})"><i class="fa-solid fa-layer-group"></i></button>
-                <button class="btn-icon" title="Editar" onclick="abrirModalDef(${Number(d.id)})"><i class="fa-solid fa-pen"></i></button>
-                <button class="btn-icon btn-danger" title="Desactivar/Borrar" onclick="borrarDef(${Number(d.id)})"><i class="fa-solid fa-trash"></i></button>
+                <button class="btn-icon" title="Aplicar Reglas" data-action="aplicar-reglas" data-id="${Number(d.id)}"><i class="fa-solid fa-layer-group"></i></button>
+                <button class="btn-icon" title="Editar" data-action="editar-def" data-id="${Number(d.id)}"><i class="fa-solid fa-pen"></i></button>
+                <button class="btn-icon btn-danger" title="Desactivar/Borrar" data-action="borrar-def" data-id="${Number(d.id)}"><i class="fa-solid fa-trash"></i></button>
              </td>
           </tr>
        `).join('');
@@ -1192,7 +1192,7 @@
             <td>${fmtMoney.format(Number(p.precio || 0))}</td>
             <td>${p.mostrar_en_catalogo ? 'App' : ''} ${p.mostrar_en_landing ? 'Web' : ''}</td>
             <td class="text-right">
-               <button class="btn-icon" onclick="abrirModalVar(${Number(p.id)})"><i class="fa-solid fa-coins"></i></button>
+               <button class="btn-icon" data-action="editar-var" data-id="${Number(p.id)}"><i class="fa-solid fa-coins"></i></button>
             </td>
          </tr>
       `).join('');
@@ -1320,15 +1320,33 @@
     $('#buscarProducto').addEventListener('input', renderProductos);
     $('#btnGuardarVar').addEventListener('click', guardarVar);
 
+    // Delegación de eventos para acciones de filas (evita onclick inline)
+    document.addEventListener('click', (ev) => {
+      const btn = ev.target.closest('button[data-action][data-id]');
+      if (!btn) return;
+
+      const action = btn.getAttribute('data-action');
+      const id = Number(btn.getAttribute('data-id'));
+      if (!Number.isFinite(id) || id <= 0) return;
+
+      if (action === 'editar-fijo') abrirModalFijo(false, id);
+      else if (action === 'eliminar-fijo') eliminarFijo(id);
+      else if (action === 'aplicar-reglas') abrirModalMass(id);
+      else if (action === 'editar-def') abrirModalDef(id);
+      else if (action === 'borrar-def') borrarDef(id);
+      else if (action === 'editar-var') abrirModalVar(id);
+    });
+
     // Helpers modal fijos
-    window.abrirModalFijo = (nuevo, id) => {
+    function abrirModalFijo(nuevo, id) {
        editFijoId = id;
        const item = nuevo ? null : STATE.fijos.find(x => x.id === id);
        $('#fijoNombre').value = item ? item.nombre : '';
        $('#fijoMonto').value = item ? item.monto : '';
        $('#fijoFrecuencia').value = item ? item.frecuencia : 'mensual';
        $('#modalFijo').classList.add('open');
-    };
+    }
+    window.abrirModalFijo = abrirModalFijo;
     function cerrarModalFijo() { $('#modalFijo').classList.remove('open'); }
     async function guardarFijo() {
        const body = {
@@ -1342,13 +1360,14 @@
        else { await api(url, {method:'POST', body:JSON.stringify(body)}); }
        cerrarModalFijo(); cargarCostosFijos();
     }
-    window.eliminarFijo = async (id) => {
+    async function eliminarFijo(id) {
        if(!confirm('Borrar?')) return;
        let url = `/api/admin/costos/fijos/${id}`;
        if(STATE.isSuper && STATE.empresaId) url += `?empresa_id=${STATE.empresaId}`;
        await api(url, {method:'DELETE'});
        cargarCostosFijos();
-    };
+    }
+    window.eliminarFijo = eliminarFijo;
     
     // Super admin helper
     async function cargarEmpresasParaSuper() {
