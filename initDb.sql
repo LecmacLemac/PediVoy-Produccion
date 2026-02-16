@@ -1025,6 +1025,19 @@ CREATE INDEX IF NOT EXISTS incidencias_operativas_empresa_estado_idx
 CREATE INDEX IF NOT EXISTS incidencias_operativas_empresa_tipo_idx
   ON incidencias_operativas (empresa_id, tipo, created_at DESC);
 
+CREATE TABLE IF NOT EXISTS incidencias_operativas_historial (
+  id                  SERIAL PRIMARY KEY,
+  incidencia_id       INTEGER NOT NULL REFERENCES incidencias_operativas(id) ON DELETE CASCADE,
+  empresa_id          INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+  evento              TEXT NOT NULL, -- creada|actualizada|estado|resuelta
+  payload             JSONB,
+  actor_usuario_id    INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS incidencias_historial_incidencia_idx
+  ON incidencias_operativas_historial (incidencia_id, created_at DESC);
+
 -- =========================================================
 -- 15. ÍNDICES DE RENDIMIENTO (OPTIMIZACIÓN)
 -- =========================================================

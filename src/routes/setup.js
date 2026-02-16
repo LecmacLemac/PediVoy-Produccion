@@ -2412,6 +2412,7 @@ export function createSetupRouter(deps) {
       const titulo = String(b.titulo || '').trim();
       if (!titulo) return res.status(400).json({ error: 'titulo requerido' });
 
+      const actorId = req?.user?.id ? Number(req.user.id) : null;
       const [row] = await query(
         `INSERT INTO incidencias_operativas (
           empresa_id, pedido_id, cliente_id, chofer_id, tipo, severidad, estado,
@@ -2431,8 +2432,14 @@ export function createSetupRouter(deps) {
           b.accion_recomendada || null,
           b.responsable_usuario_id ? Number(b.responsable_usuario_id) : null,
           b.vence_at || null,
-          req?.user?.id ? Number(req.user.id) : null,
+          actorId,
         ]
+      );
+
+      await query(
+        `INSERT INTO incidencias_operativas_historial (incidencia_id, empresa_id, evento, payload, actor_usuario_id)
+         VALUES ($1,$2,'creada',$3,$4)`,
+        [row.id, empresaId, JSON.stringify({ estado: row.estado, severidad: row.severidad, responsable_usuario_id: row.responsable_usuario_id, vence_at: row.vence_at }), actorId]
       );
 
       return res.json({ ok: true, item: row });
@@ -2453,6 +2460,10 @@ export function createSetupRouter(deps) {
 
       const estado = b.estado ?? null;
       const isResuelta = estado === 'resuelta';
+      const actorId = req?.user?.id ? Number(req.user.id) : null;
+      const [before] = await query(`SELECT * FROM incidencias_operativas WHERE id=$1 AND empresa_id=$2`, [id, empresaId]);
+      if (!before) return res.status(404).json({ error: 'Incidencia no encontrada' });
+
       const [row] = await query(
         `UPDATE incidencias_operativas
          SET tipo=COALESCE($1,tipo),
@@ -2478,12 +2489,26 @@ export function createSetupRouter(deps) {
           b.responsable_usuario_id ?? null,
           b.vence_at ?? null,
           isResuelta,
-          req?.user?.id ? Number(req.user.id) : null,
+          actorId,
           id,
           empresaId,
         ]
       );
       if (!row) return res.status(404).json({ error: 'Incidencia no encontrada' });
+
+      const evento = isResuelta ? 'resuelta' : (estado ? 'estado' : 'actualizada');
+      await query(
+        `INSERT INTO incidencias_operativas_historial (incidencia_id, empresa_id, evento, payload, actor_usuario_id)
+         VALUES ($1,$2,$3,$4,$5)`,
+        [
+          row.id,
+          empresaId,
+          evento,
+          JSON.stringify({ before: { estado: before.estado, severidad: before.severidad, responsable_usuario_id: before.responsable_usuario_id, vence_at: before.vence_at }, after: { estado: row.estado, severidad: row.severidad, responsable_usuario_id: row.responsable_usuario_id, vence_at: row.vence_at } }),
+          actorId,
+        ]
+      );
+
       return res.json({ ok: true, item: row });
     } catch (e) {
       console.error(e);
@@ -2555,6 +2580,30 @@ export function createSetupRouter(deps) {
     } catch (e) {
       console.error(e);
       return res.status(500).json({ error: 'Error obteniendo dashboard de incidencias' });
+    }
+  });
+
+  // GET /api/setup/fase3/incidencias/:id/historial
+  router.get('/fase3/incidencias/:id/historial', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req);
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+      const id = Number(req.params.id);
+      if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: 'id inválido' });
+
+      const rows = await query(
+        `SELECT h.*, u.username AS actor_username
+         FROM incidencias_operativas_historial h
+         LEFT JOIN usuarios u ON u.id=h.actor_usuario_id
+         WHERE h.empresa_id=$1 AND h.incidencia_id=$2
+         ORDER BY h.created_at DESC
+         LIMIT 200`,
+        [empresaId, id]
+      );
+      return res.json({ ok: true, items: rows });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error obteniendo historial de incidencia' });
     }
   });
 
