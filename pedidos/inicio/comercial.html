@@ -5,24 +5,27 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>CRM & Finanzas – MultiEmpresas</title>
   <style>
-    :root {
-      --bg:#0b1020; --bg2:#0f172a; --ink:#f1f5f9; --muted:#94a3b8; --brand:#06b6d4; --border:rgba(148,163,184,.18); --danger:#ef4444; --success:#10b981;
-    }
+    :root { --bg:#0b1020; --bg2:#0f172a; --ink:#f1f5f9; --muted:#94a3b8; --brand:#06b6d4; --border:rgba(148,163,184,.18); --danger:#ef4444; --success:#10b981; }
     *{box-sizing:border-box} body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--ink)}
-    .container{max-width:1200px;margin:0 auto;padding:0 20px}
+    .container{max-width:1240px;margin:0 auto;padding:0 20px}
     header{position:sticky;top:0;z-index:40;background:rgba(15,23,42,.95);backdrop-filter:blur(12px);border-bottom:1px solid var(--border);padding:.8rem 0}
     nav{display:flex;justify-content:space-between;align-items:center}
     .brand{display:flex;gap:.8rem;align-items:center;font-weight:700}.brand-dot{width:10px;height:10px;border-radius:50%;background:var(--brand);box-shadow:0 0 10px var(--brand)}
     .role-badge{border:1px solid rgba(6,182,212,.35);color:var(--brand);padding:2px 8px;border-radius:99px;font-size:.75rem}
     .menu{list-style:none;display:flex;gap:1rem;margin:0;padding:0}.menu a{color:var(--muted);text-decoration:none}.menu a.active,.menu a:hover{color:#fff}
-    main{padding:1.25rem 0 3rem}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:.8rem}
+    main{padding:1rem 0 3rem}
     .card{background:rgba(30,41,59,.7);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:12px}
-    .kpi{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px}.kpi .l{font-size:.75rem;color:var(--muted);text-transform:uppercase}.kpi .v{font-size:1.3rem;font-weight:700}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:.8rem}
+    .kpi{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px}.kpi .l{font-size:.75rem;color:var(--muted);text-transform:uppercase}.kpi .v{font-size:1.25rem;font-weight:700}
     .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
     input,select,textarea,button{background:var(--bg2);border:1px solid var(--border);color:#fff;border-radius:8px;padding:9px 10px}
     button{cursor:pointer}.btn-primary{background:var(--brand);color:#001018;border:none;font-weight:700}
-    table{width:100%;border-collapse:collapse} th,td{padding:8px;border-bottom:1px solid var(--border);font-size:.9rem}
-    th{color:var(--muted);text-align:left}
+    .kanban{display:grid;grid-template-columns:repeat(4,minmax(230px,1fr));gap:10px;overflow:auto}
+    .kb-col{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:8px;min-height:140px}
+    .kb-title{font-weight:700;font-size:.85rem;color:var(--muted);margin-bottom:8px;text-transform:uppercase}
+    .kb-card{background:rgba(148,163,184,.07);border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:8px}
+    .alerts li{margin:6px 0}
+    table{width:100%;border-collapse:collapse} th,td{padding:8px;border-bottom:1px solid var(--border);font-size:.9rem} th{color:var(--muted);text-align:left}
     .pill{padding:2px 8px;border-radius:99px;border:1px solid var(--border);font-size:.75rem}
   </style>
 </head>
@@ -31,8 +34,7 @@
     <nav class="container">
       <div class="brand"><div class="brand-dot"></div>MultiEmpresas <span id="roleBadge" class="role-badge">Admin</span></div>
       <ul class="menu">
-        <li><a href="inicial.html">🚀 Inicio</a></li>
-        <li><a href="/pedidos/dashboard.html">Dashboard</a></li>
+        <li><a href="inicial.html">🚀 Inicio</a></li><li><a href="/pedidos/dashboard.html">Dashboard</a></li>
         <li><a href="comercial.html" class="active">CRM & Finanzas</a></li>
         <li><a href="#" id="logout" style="color:var(--danger)">Salir</a></li>
       </ul>
@@ -42,30 +44,37 @@
   <main class="container">
     <div class="card">
       <div class="row" style="justify-content:space-between">
-        <h1 style="margin:0;font-size:1.2rem">Fase 1 · Comercial & Administración</h1>
-        <div id="empresaWrap" style="display:none">
-          <select id="empresaSelect"><option value="">Seleccionar empresa…</option></select>
+        <h1 style="margin:0;font-size:1.2rem">Fase 1 · Comercial + Administración</h1>
+        <div class="row">
+          <div id="empresaWrap" style="display:none"><select id="empresaSelect"><option value="">Seleccionar empresa…</option></select></div>
+          <button id="btnRefresh" type="button">Actualizar</button>
+          <button id="btnExportCsv" type="button">Export CSV</button>
         </div>
       </div>
       <div id="status" style="color:var(--muted);margin-top:6px">Listo.</div>
     </div>
 
+    <div class="card"><h2 style="margin:0 0 8px;font-size:1rem">Dashboard unificado</h2><div id="kpiGrid" class="grid"></div></div>
+
     <div class="card">
-      <h2 style="margin:0 0 8px;font-size:1rem">Dashboard comercial/financiero unificado</h2>
-      <div id="kpiGrid" class="grid"></div>
+      <h2 style="margin:0 0 8px;font-size:1rem">Alertas operativas</h2>
+      <ul id="alerts" class="alerts" style="padding-left:18px; margin:0;"></ul>
     </div>
 
     <div class="card">
-      <div class="row" style="justify-content:space-between"><h2 style="margin:0;font-size:1rem">Pipeline comercial</h2></div>
+      <h2 style="margin:0 0 8px;font-size:1rem">Aging de cuentas corrientes</h2>
+      <div id="agingGrid" class="grid"></div>
+    </div>
+
+    <div class="card">
+      <div class="row" style="justify-content:space-between"><h2 style="margin:0;font-size:1rem">Pipeline (Kanban)</h2></div>
       <div class="row" style="margin:8px 0">
         <input id="opNombre" placeholder="Nombre oportunidad" style="min-width:220px" />
-        <select id="opEtapa">
-          <option value="prospecto">Prospecto</option><option value="calificado">Calificado</option><option value="propuesta">Propuesta</option><option value="negociacion">Negociación</option>
-        </select>
+        <select id="opEtapa"><option value="prospecto">Prospecto</option><option value="calificado">Calificado</option><option value="propuesta">Propuesta</option><option value="negociacion">Negociación</option></select>
         <input id="opMonto" type="number" placeholder="Monto estimado" />
         <button id="btnAddOpp" class="btn-primary" type="button">+ Crear</button>
       </div>
-      <div style="overflow:auto"><table><thead><tr><th>Nombre</th><th>Etapa</th><th>Monto</th><th>Prob.</th><th>Próx acción</th></tr></thead><tbody id="pipelineBody"></tbody></table></div>
+      <div id="kanban" class="kanban"></div>
     </div>
 
     <div class="card">
@@ -84,16 +93,10 @@
   <script>
     const authFetch = (url, opts={}) => fetch(url, { ...opts, headers: { 'Content-Type':'application/json', ...(opts.headers||{}) }, credentials:'include' });
     const fmt = new Intl.NumberFormat('es-AR', { style:'currency', currency:'ARS', maximumFractionDigits:0 });
-    const st = { isSuper:false, empresaId:null };
+    const st = { isSuper:false, empresaId:null, dashboard:null, pipeline:[], cta:[], aging:null, alerts:[] };
 
-    function setStatus(t, err=false){ const el=document.getElementById('status'); el.textContent=t; el.style.color=err?'var(--danger)':'var(--muted)'; }
-    function apiUrl(path){
-      if (st.isSuper && st.empresaId) {
-        const sep = path.includes('?') ? '&' : '?';
-        return path + sep + 'empresa_id=' + encodeURIComponent(String(st.empresaId));
-      }
-      return path;
-    }
+    function setStatus(t, err=false){ const el=document.getElementById('status'); el.textContent=t; el.style.color=err?'var(--danger)':'var(--muted'); }
+    function apiUrl(path){ if (st.isSuper && st.empresaId) { const sep=path.includes('?')?'&':'?'; return path + sep + 'empresa_id=' + encodeURIComponent(String(st.empresaId)); } return path; }
 
     async function loadMe(){
       const r = await authFetch('/api/me');
@@ -118,83 +121,107 @@
     }
 
     async function loadDashboard(){
-      if (st.isSuper && !st.empresaId) { setStatus('Seleccioná una empresa para cargar el dashboard.', true); return; }
-      const r = await authFetch(apiUrl('/api/setup/fase1/dashboard'));
-      const j = await r.json();
-      if (!r.ok) return setStatus(j.error || 'Error dashboard', true);
+      if (st.isSuper && !st.empresaId) return;
+      const r = await authFetch(apiUrl('/api/setup/fase1/dashboard')); const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Error dashboard');
+      st.dashboard = j;
       const k = j.kpis || {};
       const entries = [
-        ['Ventas 30d', fmt.format(k.ventas_30d||0)], ['Cobranzas 30d', fmt.format(k.cobranzas_30d||0)],
-        ['Saldo Cta Cte', fmt.format(k.saldo_cta_corriente||0)], ['Vencimientos', String(k.vencimientos_pendientes||0)],
-        ['Clientes en riesgo', String(k.clientes_en_riesgo||0)], ['Pipeline abierto', fmt.format(k.pipeline_abierto||0)]
+        ['Ventas 30d', fmt.format(k.ventas_30d||0)], ['Pedidos 30d', String(k.pedidos_30d||0)],
+        ['Cobranzas 30d', fmt.format(k.cobranzas_30d||0)], ['Saldo Cta Cte', fmt.format(k.saldo_cta_corriente||0)],
+        ['Vencimientos', String(k.vencimientos_pendientes||0)], ['Clientes en riesgo', String(k.clientes_en_riesgo||0)],
+        ['Pipeline abierto', fmt.format(k.pipeline_abierto||0)], ['Pipeline ponderado', fmt.format(k.pipeline_ponderado||0)]
       ];
       document.getElementById('kpiGrid').innerHTML = entries.map(([l,v])=>`<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div></div>`).join('');
     }
 
     async function loadPipeline(){
       if (st.isSuper && !st.empresaId) return;
-      const r = await authFetch(apiUrl('/api/setup/fase1/pipeline'));
-      const j = await r.json();
-      const rows = Array.isArray(j.items)?j.items:[];
-      const tb = document.getElementById('pipelineBody');
-      tb.innerHTML = rows.length ? rows.map(o => `<tr><td>${o.nombre||'-'}</td><td><span class="pill">${o.etapa||'-'}</span></td><td>${fmt.format(Number(o.monto_estimado||0))}</td><td>${Number(o.probabilidad||0)}%</td><td>${o.proxima_accion ? new Date(o.proxima_accion).toLocaleString('es-AR') : '-'}</td></tr>`).join('') : '<tr><td colspan="5" style="color:var(--muted)">Sin oportunidades.</td></tr>';
+      const r = await authFetch(apiUrl('/api/setup/fase1/pipeline')); const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Error pipeline');
+      st.pipeline = Array.isArray(j.items) ? j.items : [];
+      const cols = [
+        ['prospecto','Prospecto'], ['calificado','Calificado'], ['propuesta','Propuesta'], ['negociacion','Negociación']
+      ];
+      const html = cols.map(([k,title])=>{
+        const items = st.pipeline.filter(x => String(x.etapa||'')===k);
+        const cards = items.length ? items.map(o=>`<div class="kb-card"><div style="font-weight:700">${o.nombre||'-'}</div><div style="font-size:.8rem;color:var(--muted)">${fmt.format(Number(o.monto_estimado||0))} · ${Number(o.probabilidad||0)}%</div></div>`).join('') : '<div style="font-size:.82rem;color:var(--muted)">Sin oportunidades</div>';
+        return `<div class="kb-col"><div class="kb-title">${title} (${items.length})</div>${cards}</div>`;
+      }).join('');
+      document.getElementById('kanban').innerHTML = html;
     }
 
     async function loadCtas(){
       if (st.isSuper && !st.empresaId) return;
-      const r = await authFetch(apiUrl('/api/setup/fase1/cuentas-corrientes/resumen'));
-      const j = await r.json();
-      const rows = Array.isArray(j.items)?j.items:[];
+      const r = await authFetch(apiUrl('/api/setup/fase1/cuentas-corrientes/resumen')); const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Error cuentas corrientes');
+      st.cta = Array.isArray(j.items)?j.items:[];
       const tb = document.getElementById('ctaBody');
-      tb.innerHTML = rows.length ? rows.map(c => `<tr><td>${c.cliente||'-'}</td><td>${c.telefono||'-'}</td><td>${fmt.format(Number(c.saldo||0))}</td><td>${Number(c.vencidos||0)}</td></tr>`).join('') : '<tr><td colspan="4" style="color:var(--muted)">Sin datos.</td></tr>';
+      tb.innerHTML = st.cta.length ? st.cta.map(c => `<tr><td>${c.cliente||'-'}</td><td>${c.telefono||'-'}</td><td>${fmt.format(Number(c.saldo||0))}</td><td>${Number(c.vencidos||0)}</td></tr>`).join('') : '<tr><td colspan="4" style="color:var(--muted)">Sin datos.</td></tr>';
+    }
+
+    async function loadAging(){
+      if (st.isSuper && !st.empresaId) return;
+      const r = await authFetch(apiUrl('/api/setup/fase1/cuentas-corrientes/aging')); const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Error aging');
+      st.aging = j.aging || {};
+      const entries = [
+        ['Al día', st.aging.al_dia||0], ['0-30 días', st.aging.d30||0], ['31-60 días', st.aging.d60||0], ['60+ días', st.aging.d90||0]
+      ];
+      document.getElementById('agingGrid').innerHTML = entries.map(([l,v])=>`<div class="kpi"><div class="l">${l}</div><div class="v">${fmt.format(Number(v||0))}</div></div>`).join('');
+    }
+
+    async function loadAlerts(){
+      if (st.isSuper && !st.empresaId) return;
+      const r = await authFetch(apiUrl('/api/setup/fase1/alertas')); const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Error alertas');
+      st.alerts = Array.isArray(j.items)?j.items:[];
+      const el = document.getElementById('alerts');
+      el.innerHTML = st.alerts.length ? st.alerts.map(a => `<li>${a.nivel==='high'?'🔴':'🟡'} ${a.texto}</li>`).join('') : '<li style="color:var(--success)">✅ Sin alertas críticas.</li>';
+    }
+
+    function toCsv(rows, headers){ return headers.join(',') + '\n' + rows.map(r => headers.map(h => { const s=String(r[h]??''); return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s; }).join(',')).join('\n'); }
+    function downloadCsv(name, content){ const b=new Blob([content],{type:'text/csv;charset=utf-8'}); const u=URL.createObjectURL(b); const a=document.createElement('a'); a.href=u; a.download=name; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(u); }
+
+    function exportAllCsv(){
+      const rows = [];
+      (st.pipeline||[]).forEach(p => rows.push({ tipo:'pipeline', nombre:p.nombre, etapa:p.etapa, monto:p.monto_estimado, probabilidad:p.probabilidad, proxima_accion:p.proxima_accion || '' }));
+      (st.cta||[]).forEach(c => rows.push({ tipo:'cta_corriente', nombre:c.cliente, etapa:'', monto:c.saldo, probabilidad:'', proxima_accion:`vencidos:${c.vencidos}` }));
+      const csv = toCsv(rows, ['tipo','nombre','etapa','monto','probabilidad','proxima_accion']);
+      downloadCsv('fase1-comercial-finanzas.csv', csv);
     }
 
     async function refreshAll(){
-      await Promise.all([loadDashboard(), loadPipeline(), loadCtas()]);
-      setStatus('Actualizado.');
+      if (st.isSuper && !st.empresaId) {
+        setStatus('Seleccioná una empresa para cargar datos.', true);
+        ['kpiGrid','kanban','ctaBody','agingGrid','alerts'].forEach(id => { const el=document.getElementById(id); if (el) el.innerHTML=''; });
+        return;
+      }
+      setStatus('Actualizando…');
+      try {
+        await Promise.all([loadDashboard(), loadPipeline(), loadCtas(), loadAging(), loadAlerts()]);
+        setStatus('Actualizado.');
+      } catch (e) { setStatus(e.message || 'Error actualizando panel', true); }
     }
 
     document.getElementById('btnAddOpp').addEventListener('click', async ()=>{
       if (st.isSuper && !st.empresaId) return setStatus('Seleccioná empresa primero.', true);
-      const body = {
-        nombre: document.getElementById('opNombre').value.trim(),
-        etapa: document.getElementById('opEtapa').value,
-        monto_estimado: Number(document.getElementById('opMonto').value || 0),
-      };
+      const body = { nombre: document.getElementById('opNombre').value.trim(), etapa: document.getElementById('opEtapa').value, monto_estimado: Number(document.getElementById('opMonto').value || 0) };
       if (st.isSuper) body.empresa_id = st.empresaId;
       const r = await authFetch('/api/setup/fase1/pipeline', { method:'POST', body: JSON.stringify(body) });
-      const j = await r.json();
-      if (!r.ok) return setStatus(j.error || 'No se pudo crear oportunidad', true);
-      document.getElementById('opNombre').value=''; document.getElementById('opMonto').value='';
-      refreshAll();
+      const j = await r.json(); if (!r.ok) return setStatus(j.error || 'No se pudo crear oportunidad', true);
+      document.getElementById('opNombre').value=''; document.getElementById('opMonto').value=''; refreshAll();
     });
 
     document.getElementById('btnAddMov').addEventListener('click', async ()=>{
       if (st.isSuper && !st.empresaId) return setStatus('Seleccioná empresa primero.', true);
-      const body = {
-        cliente_id: Number(document.getElementById('movClienteId').value || 0),
-        concepto: document.getElementById('movConcepto').value.trim(),
-        debe: Number(document.getElementById('movDebe').value || 0),
-        haber: Number(document.getElementById('movHaber').value || 0),
-      };
+      const body = { cliente_id: Number(document.getElementById('movClienteId').value || 0), concepto: document.getElementById('movConcepto').value.trim(), debe: Number(document.getElementById('movDebe').value || 0), haber: Number(document.getElementById('movHaber').value || 0) };
       if (st.isSuper) body.empresa_id = st.empresaId;
       const r = await authFetch('/api/setup/fase1/cuentas-corrientes/movimiento', { method:'POST', body: JSON.stringify(body) });
-      const j = await r.json();
-      if (!r.ok) return setStatus(j.error || 'No se pudo registrar movimiento', true);
-      document.getElementById('movConcepto').value=''; document.getElementById('movDebe').value=''; document.getElementById('movHaber').value='';
-      refreshAll();
+      const j = await r.json(); if (!r.ok) return setStatus(j.error || 'No se pudo registrar movimiento', true);
+      document.getElementById('movConcepto').value=''; document.getElementById('movDebe').value=''; document.getElementById('movHaber').value=''; refreshAll();
     });
 
-    document.getElementById('logout').addEventListener('click', async (e)=>{
-      e.preventDefault();
-      try { await authFetch('/api/logout', { method:'POST' }); } catch {}
-      location.href='/pedidos/login.html';
-    });
+    document.getElementById('btnExportCsv').addEventListener('click', exportAllCsv);
+    document.getElementById('btnRefresh').addEventListener('click', refreshAll);
+    document.getElementById('logout').addEventListener('click', async (e)=>{ e.preventDefault(); try { await authFetch('/api/logout', { method:'POST' }); } catch {} location.href='/pedidos/login.html'; });
 
-    (async ()=>{
-      await loadMe();
-      await refreshAll();
-    })();
+    (async ()=>{ await loadMe(); await refreshAll(); })();
   </script>
 </body>
 </html>

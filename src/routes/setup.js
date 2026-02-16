@@ -794,5 +794,85 @@ export function createSetupRouter(deps) {
     }
   });
 
+  // GET /api/setup/fase1/cuentas-corrientes/aging
+  router.get('/fase1/cuentas-corrientes/aging', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req);
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+
+      const [row] = await query(
+        `SELECT
+            COALESCE(SUM(CASE WHEN vencimiento IS NULL OR NOW() <= vencimiento THEN (debe - haber) ELSE 0 END),0)::numeric AS al_dia,
+            COALESCE(SUM(CASE WHEN NOW() > vencimiento AND NOW() <= vencimiento + INTERVAL '30 days' THEN (debe - haber) ELSE 0 END),0)::numeric AS d30,
+            COALESCE(SUM(CASE WHEN NOW() > vencimiento + INTERVAL '30 days' AND NOW() <= vencimiento + INTERVAL '60 days' THEN (debe - haber) ELSE 0 END),0)::numeric AS d60,
+            COALESCE(SUM(CASE WHEN NOW() > vencimiento + INTERVAL '60 days' THEN (debe - haber) ELSE 0 END),0)::numeric AS d90
+         FROM cliente_cta_corriente_mov
+         WHERE empresa_id=$1 AND estado='pendiente'`,
+        [empresaId]
+      );
+
+      return res.json({
+        ok: true,
+        aging: {
+          al_dia: Number(row?.al_dia || 0),
+          d30: Number(row?.d30 || 0),
+          d60: Number(row?.d60 || 0),
+          d90: Number(row?.d90 || 0),
+        },
+      });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error obteniendo aging de cuentas corrientes' });
+    }
+  });
+
+  // GET /api/setup/fase1/alertas
+  router.get('/fase1/alertas', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req);
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+
+      const alertas = [];
+
+      const [vencidos] = await query(
+        `SELECT COUNT(*)::int AS c, COALESCE(SUM(debe - haber),0)::numeric AS monto
+         FROM cliente_cta_corriente_mov
+         WHERE empresa_id=$1 AND estado='pendiente' AND vencimiento < NOW() AND (debe - haber) > 0`,
+        [empresaId]
+      );
+      if (Number(vencidos?.c || 0) > 0) {
+        alertas.push({
+          nivel: 'high',
+          tipo: 'cobranzas_vencidas',
+          texto: `Hay ${Number(vencidos.c)} movimientos vencidos por ${Number(vencidos.monto || 0).toFixed(2)}`,
+        });
+      }
+
+      const stale = await query(
+        `SELECT id, nombre, etapa, proxima_accion
+         FROM crm_oportunidades
+         WHERE empresa_id=$1 AND estado='abierta'
+           AND (proxima_accion IS NULL OR proxima_accion < NOW() - INTERVAL '7 days')
+         ORDER BY updated_at ASC
+         LIMIT 10`,
+        [empresaId]
+      );
+
+      stale.forEach((o) => {
+        alertas.push({
+          nivel: 'medium',
+          tipo: 'oportunidad_sin_seguimiento',
+          oportunidad_id: o.id,
+          texto: `Oportunidad sin seguimiento: ${o.nombre} (${o.etapa || 'sin etapa'})`,
+        });
+      });
+
+      return res.json({ ok: true, items: alertas });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error obteniendo alertas' });
+    }
+  });
+
   return router;
 }
