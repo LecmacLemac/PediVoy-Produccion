@@ -1173,6 +1173,38 @@ export function createSetupRouter(deps) {
     }
   });
 
+  // DELETE /api/setup/fase2/proveedores/:id
+  router.delete('/fase2/proveedores/:id', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+      const id = Number(req.params.id);
+      if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: 'id inválido' });
+
+      const [inUse] = await query(
+        `SELECT COUNT(*)::int AS c
+         FROM compras_ordenes
+         WHERE empresa_id=$1 AND proveedor_id=$2`,
+        [empresaId, id]
+      );
+      if (Number(inUse?.c || 0) > 0) {
+        return res.status(400).json({ error: 'No se puede eliminar: proveedor con órdenes asociadas' });
+      }
+
+      const [row] = await query(
+        `DELETE FROM proveedores
+         WHERE id=$1 AND empresa_id=$2
+         RETURNING id`,
+        [id, empresaId]
+      );
+      if (!row) return res.status(404).json({ error: 'Proveedor no encontrado' });
+      return res.json({ ok: true, id: row.id });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error eliminando proveedor' });
+    }
+  });
+
   // GET /api/setup/fase2/compras
   router.get('/fase2/compras', withAuth, async (req, res) => {
     try {

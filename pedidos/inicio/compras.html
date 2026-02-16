@@ -16,6 +16,8 @@
     .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
     input,select,textarea,button{background:var(--bg2);border:1px solid var(--border);color:#fff;border-radius:8px;padding:9px 10px}button{cursor:pointer}.btn-primary{background:var(--brand);color:#001018;border:none;font-weight:700}
     table{width:100%;border-collapse:collapse}th,td{padding:8px;border-bottom:1px solid var(--border);font-size:.9rem}th{color:var(--muted);text-align:left}
+    .modal{position:fixed;inset:0;background:rgba(2,6,23,.72);display:none;align-items:center;justify-content:center;padding:16px;z-index:100}
+    .modal.open{display:flex}.modal-card{width:min(560px,96vw);background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:14px}
   </style>
 </head>
 <body>
@@ -65,12 +67,34 @@
     </div>
   </main>
 
+  <div id="provModal" class="modal" aria-hidden="true">
+    <div class="modal-card">
+      <div class="row" style="justify-content:space-between"><h3 style="margin:0">Editar proveedor</h3><button id="provModalClose" type="button">Cerrar</button></div>
+      <div class="row" style="margin-top:10px"><input id="provEditNombre" placeholder="Nombre" style="flex:1;min-width:220px" /></div>
+      <div class="row" style="margin-top:8px"><input id="provEditContacto" placeholder="Contacto" style="flex:1;min-width:220px" /><input id="provEditTelefono" placeholder="Teléfono" style="flex:1;min-width:220px" /></div>
+      <div class="row" style="margin-top:8px"><label style="display:flex;align-items:center;gap:8px"><input id="provEditActivo" type="checkbox" checked /> Activo</label></div>
+      <div class="row" style="justify-content:flex-end;margin-top:12px"><button id="provDelete" type="button" style="border-color:rgba(239,68,68,.45);color:var(--danger)">Eliminar</button><button id="provSave" class="btn-primary" type="button">Guardar cambios</button></div>
+    </div>
+  </div>
+
   <script>
     const authFetch=(url,opts={})=>fetch(url,{...opts,headers:{'Content-Type':'application/json',...(opts.headers||{})},credentials:'include'});
     const fmt=new Intl.NumberFormat('es-AR',{style:'currency',currency:'ARS',maximumFractionDigits:0});
-    const st={isSuper:false,empresaId:null,proveedores:[],ordenes:[]};
+    const st={isSuper:false,empresaId:null,proveedores:[],ordenes:[],editingProvId:null};
     const setStatus=(t,e=false)=>{const el=document.getElementById('status');el.textContent=t;el.style.color=e?'var(--danger)':'var(--muted)';};
     const apiUrl=(p)=>st.isSuper&&st.empresaId?(p+(p.includes('?')?'&':'?')+'empresa_id='+encodeURIComponent(String(st.empresaId))):p;
+    const modal=document.getElementById('provModal');
+
+    function closeProvModal(){ st.editingProvId=null; modal.classList.remove('open'); modal.setAttribute('aria-hidden','true'); }
+    function openProvModal(p){
+      st.editingProvId=Number(p.id);
+      document.getElementById('provEditNombre').value=p.nombre||'';
+      document.getElementById('provEditContacto').value=p.contacto||'';
+      document.getElementById('provEditTelefono').value=p.telefono||'';
+      document.getElementById('provEditActivo').checked=Boolean(p.activo);
+      modal.classList.add('open');
+      modal.setAttribute('aria-hidden','false');
+    }
 
     async function loadMe(){
       const r=await authFetch('/api/me'); if(r.status===401) return location.href='/pedidos/login.html';
@@ -114,20 +138,43 @@
       document.getElementById('ordenDesc').value=''; document.getElementById('ordenCant').value=''; document.getElementById('ordenCosto').value=''; refreshAll();
     });
 
-    document.getElementById('provBody').addEventListener('click', async (ev)=>{
+    document.getElementById('provBody').addEventListener('click', (ev)=>{
       const btn=ev.target.closest('button[data-action="edit-prov"][data-id]'); if(!btn) return;
       const id=Number(btn.getAttribute('data-id')); if(!Number.isFinite(id)||id<=0) return;
       const p=st.proveedores.find(x=>Number(x.id)===id); if(!p) return;
-      const nombre=prompt('Nombre proveedor', p.nombre||''); if(nombre===null) return;
-      const contacto=prompt('Contacto', p.contacto||''); if(contacto===null) return;
-      const telefono=prompt('Teléfono', p.telefono||''); if(telefono===null) return;
-      const activo=confirm('¿Proveedor activo? (Aceptar = Sí, Cancelar = No)');
-      const body={ nombre:nombre.trim()||p.nombre, contacto:contacto.trim(), telefono:telefono.trim(), activo };
+      openProvModal(p);
+    });
+
+    document.getElementById('provModalClose').addEventListener('click', closeProvModal);
+    modal.addEventListener('click', (ev)=>{ if(ev.target===modal) closeProvModal(); });
+
+    document.getElementById('provSave').addEventListener('click', async ()=>{
+      const id=Number(st.editingProvId); if(!Number.isFinite(id)||id<=0) return;
+      const body={
+        nombre:document.getElementById('provEditNombre').value.trim(),
+        contacto:document.getElementById('provEditContacto').value.trim(),
+        telefono:document.getElementById('provEditTelefono').value.trim(),
+        activo:document.getElementById('provEditActivo').checked,
+      };
+      if(!body.nombre) return setStatus('Nombre de proveedor requerido',true);
       if(st.isSuper) body.empresa_id=st.empresaId;
       const r=await authFetch(`/api/setup/fase2/proveedores/${id}`,{method:'PUT',body:JSON.stringify(body)});
       const j=await r.json();
       if(!r.ok) return setStatus(j.error||'No se pudo editar proveedor',true);
+      closeProvModal();
       setStatus('Proveedor actualizado.');
+      refreshAll();
+    });
+
+    document.getElementById('provDelete').addEventListener('click', async ()=>{
+      const id=Number(st.editingProvId); if(!Number.isFinite(id)||id<=0) return;
+      if(!confirm('¿Eliminar proveedor? Esta acción no se puede deshacer.')) return;
+      const body={}; if(st.isSuper) body.empresa_id=st.empresaId;
+      const r=await authFetch(`/api/setup/fase2/proveedores/${id}`,{method:'DELETE',body:JSON.stringify(body)});
+      const j=await r.json();
+      if(!r.ok) return setStatus(j.error||'No se pudo eliminar proveedor',true);
+      closeProvModal();
+      setStatus('Proveedor eliminado.');
       refreshAll();
     });
 
