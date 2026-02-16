@@ -2491,6 +2491,42 @@ export function createSetupRouter(deps) {
     }
   });
 
+  // GET /api/setup/fase3/incidencias/mis-pendientes
+  router.get('/fase3/incidencias/mis-pendientes', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req);
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+      const uid = req?.user?.id ? Number(req.user.id) : null;
+      if (!uid) return res.status(400).json({ error: 'usuario inválido' });
+
+      const rows = await query(
+        `SELECT i.*
+         FROM incidencias_operativas i
+         WHERE i.empresa_id=$1
+           AND i.responsable_usuario_id=$2
+           AND i.estado IN ('abierta','en_progreso')
+         ORDER BY (CASE WHEN i.vence_at IS NOT NULL AND i.vence_at < NOW() THEN 0 ELSE 1 END),
+                  i.severidad='critica' DESC,
+                  i.severidad='alta' DESC,
+                  i.vence_at NULLS LAST,
+                  i.created_at DESC
+         LIMIT 100`,
+        [empresaId, uid]
+      );
+
+      const kpis = {
+        total: rows.length,
+        sla_vencidas: rows.filter((r) => r.vence_at && new Date(r.vence_at).getTime() < Date.now()).length,
+        criticas: rows.filter((r) => String(r.severidad) === 'critica').length,
+      };
+
+      return res.json({ ok: true, kpis, items: rows });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error obteniendo mis pendientes' });
+    }
+  });
+
   // GET /api/setup/fase3/incidencias/dashboard
   router.get('/fase3/incidencias/dashboard', withAuth, async (req, res) => {
     try {
