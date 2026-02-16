@@ -1498,8 +1498,8 @@
                 } else {
                   // Renderizar filas
                   tbody.innerHTML = lista.map(row => {
-                    const telefonoRaw = (row.cliente_telefono || '').replace(/[^0-9]/g, '');
-                    const wppLink = telefonoRaw ? `https://wa.me/${telefonoRaw}` : '#';
+                    const telefonoRaw = String(row.cliente_telefono || '').replace(/[^0-9]/g, '');
+                    const waHref = telefonoRaw ? ('https://wa.me/' + encodeURIComponent(telefonoRaw)) : '';
                     const ultimaFecha = row.ultima_compra ? new Date(row.ultima_compra).toLocaleDateString('es-AR') : 'Nunca';
 
                     const clienteNombre = escapeHtml(row.cliente_nombre || 'S/N');
@@ -1516,9 +1516,9 @@
                           <div class="text-subtle" style="font-size:0.75rem;">${clienteDireccion}</div>
                         </td>
                         <td>
-                          ${telefonoRaw ? 
-                            `<a href="${wppLink}" target="_blank" rel="noopener" style="color:var(--brand); text-decoration:none;">📞 ${clienteTelefono}</a>` : 
-                            '<span class="text-subtle">Sin tel.</span>'
+                          ${telefonoRaw
+                            ? `<a href="${escapeHtml(waHref)}" target="_blank" rel="noopener" style="color:var(--brand); text-decoration:none;">📞 ${clienteTelefono}</a>`
+                            : '<span class="text-subtle">Sin tel.</span>'
                           }
                         </td>
                         <td>
