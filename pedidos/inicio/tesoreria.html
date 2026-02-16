@@ -47,6 +47,16 @@
   </div>
 
   <div class="card">
+    <h2 style="margin:0 0 8px;font-size:1rem">Acciones sugeridas</h2>
+    <div id="acciones" style="display:grid;gap:8px"></div>
+  </div>
+
+  <div class="card">
+    <h2 style="margin:0 0 8px;font-size:1rem">Vencimientos proveedores</h2>
+    <div style="overflow:auto"><table><thead><tr><th>OC</th><th>Proveedor</th><th>Entrega estimada</th><th>Días</th><th>Total</th><th>Nivel</th></tr></thead><tbody id="vencBody"></tbody></table></div>
+  </div>
+
+  <div class="card">
     <h2 style="margin:0 0 8px;font-size:1rem">Nuevo movimiento</h2>
     <div class="row">
       <select id="movTipo"><option value="egreso">Egreso</option><option value="ingreso">Ingreso</option></select>
@@ -68,6 +78,12 @@
     </div>
     <div id="presSummary" style="color:var(--muted);margin-bottom:8px"></div>
     <div style="overflow:auto"><table><thead><tr><th>Categoría</th><th>Proveedor</th><th>Presupuestado</th><th>Ejecutado</th><th>Desvío</th><th>Semáforo</th></tr></thead><tbody id="presBody"></tbody></table></div>
+  </div>
+
+  <div class="card">
+    <h2 style="margin:0 0 8px;font-size:1rem">Reporte mensual ejecutivo</h2>
+    <div class="row" style="margin-bottom:8px"><button id="btnReporte" type="button">Actualizar reporte</button><button id="btnReporteCsv" type="button">Exportar CSV</button></div>
+    <div id="reporteResumen" style="color:var(--muted)"></div>
   </div>
 
   <div class="card">
@@ -129,6 +145,33 @@
     document.getElementById('projGrid').innerHTML=items.map(x=>`<div class="kpi" style="border-left:4px solid ${riskColor(x.riesgo)}"><div class="l">${x.dias} días · riesgo ${x.riesgo}</div><div class="v">${fmt.format(Number(x.saldo_proyectado||0))}</div><div style="font-size:.85rem;color:var(--muted)">Flujo: ${fmt.format(Number(x.flujo_estimado||0))}</div></div>`).join('');
   }
 
+  async function loadAccionesSugeridas(){
+    if(st.isSuper&&!st.empresaId) return;
+    const r=await authFetch(apiUrl('/api/setup/fase2/acciones-sugeridas')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error acciones sugeridas');
+    const items=Array.isArray(j.items)?j.items:[];
+    const box=document.getElementById('acciones');
+    if(!items.length){ box.innerHTML='<div style="color:var(--muted)">Sin acciones sugeridas por ahora.</div>'; return; }
+    const color=(p)=>p==='alta'?'#ef4444':(p==='media'?'#f59e0b':'#22c55e');
+    box.innerHTML=items.map(a=>`<div style="border:1px solid var(--border);border-left:4px solid ${color(a.prioridad)};border-radius:10px;padding:10px;background:var(--bg2)"><div style="font-weight:700">${a.titulo}</div><div style="font-size:.9rem;color:var(--muted)">${a.detalle||''}</div></div>`).join('');
+  }
+
+  async function loadVencimientos(){
+    if(st.isSuper&&!st.empresaId) return;
+    const r=await authFetch(apiUrl('/api/setup/fase2/vencimientos-proveedores')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error vencimientos');
+    const items=Array.isArray(j.items)?j.items:[];
+    const body=document.getElementById('vencBody');
+    const sem=(n)=>n==='alta'?'🔴':(n==='media'?'🟡':'🟢');
+    body.innerHTML=items.length?items.map(x=>`<tr><td>#${x.id}</td><td>${x.proveedor_nombre||'-'}</td><td>${x.fecha_entrega_estimada?new Date(x.fecha_entrega_estimada).toLocaleDateString('es-AR'):'-'}</td><td>${Number(x.dias_restantes||0)}</td><td>${fmt.format(Number(x.total||0))}</td><td>${sem(x.nivel)}</td></tr>`).join(''):'<tr><td colspan="6" style="color:var(--muted)">Sin vencimientos.</td></tr>';
+  }
+
+  async function loadReporteMensual(){
+    if(st.isSuper&&!st.empresaId) return null;
+    const r=await authFetch(apiUrl('/api/setup/fase2/reporte-mensual')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error reporte mensual');
+    const c=j.compras||{}; const t=j.tesoreria||{}; const p=j.presupuesto||{};
+    document.getElementById('reporteResumen').textContent=`Compras: ${c.ordenes||0} órdenes (${fmt.format(Number(c.total||0))}) · Ingresos: ${fmt.format(Number(t.ingresos||0))} · Egresos: ${fmt.format(Number(t.egresos||0))} · Pendientes conciliación: ${t.pendientes_conciliacion||0} · Presupuesto: ${fmt.format(Number(p.presupuestado||0))} · Desvío: ${fmt.format(Number(p.desvio||0))}`;
+    return j;
+  }
+
   async function loadPresupuestoVsEjecutado(){
     if(st.isSuper&&!st.empresaId) return;
     const r=await authFetch(apiUrl('/api/setup/fase2/presupuesto-vs-ejecutado')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error presupuesto');
@@ -140,8 +183,8 @@
     body.innerHTML=items.length?items.map(x=>`<tr><td>${x.categoria||'-'}</td><td>${x.proveedor_nombre||'-'}</td><td>${fmt.format(Number(x.presupuestado||0))}</td><td>${fmt.format(Number(x.ejecutado||0))}</td><td>${fmt.format(Number(x.desvio||0))}</td><td>${sem(Number(x.desvio||0), Number(x.presupuestado||0))}</td></tr>`).join(''):'<tr><td colspan="6" style="color:var(--muted)">Sin datos del período.</td></tr>';
   }
 
-  async function refreshAll(){ if(st.isSuper&&!st.empresaId){ setStatus('Seleccioná empresa para ver tesorería.',true); ['kpiGrid','movBody','alertas','presBody','presSummary','projBase','projGrid'].forEach(id=>{const el=document.getElementById(id); if(el) el.innerHTML='';}); return; }
-    setStatus('Actualizando…'); try{ await Promise.all([loadProveedores(),loadDashboard(),loadMovs(),loadAlerts(),loadProyeccionCaja(),loadPresupuestoVsEjecutado()]); setStatus('Actualizado.'); } catch(e){ setStatus(e.message||'Error',true); }
+  async function refreshAll(){ if(st.isSuper&&!st.empresaId){ setStatus('Seleccioná empresa para ver tesorería.',true); ['kpiGrid','movBody','alertas','acciones','vencBody','presBody','presSummary','projBase','projGrid','reporteResumen'].forEach(id=>{const el=document.getElementById(id); if(el) el.innerHTML='';}); return; }
+    setStatus('Actualizando…'); try{ await Promise.all([loadProveedores(),loadDashboard(),loadMovs(),loadAlerts(),loadAccionesSugeridas(),loadVencimientos(),loadProyeccionCaja(),loadPresupuestoVsEjecutado(),loadReporteMensual()]); setStatus('Actualizado.'); } catch(e){ setStatus(e.message||'Error',true); }
   }
 
   document.getElementById('btnAddMov').addEventListener('click', async ()=>{
@@ -156,6 +199,36 @@
   document.getElementById('btnProj').addEventListener('click', async ()=>{
     try { await loadProyeccionCaja(); setStatus('Proyección actualizada.'); }
     catch(e){ setStatus(e.message||'Error en proyección',true); }
+  });
+
+  document.getElementById('btnReporte').addEventListener('click', async ()=>{
+    try { await loadReporteMensual(); setStatus('Reporte mensual actualizado.'); }
+    catch(e){ setStatus(e.message||'Error reporte mensual',true); }
+  });
+
+  document.getElementById('btnReporteCsv').addEventListener('click', async ()=>{
+    try {
+      const r = await loadReporteMensual();
+      if (!r) return;
+      const rows = [
+        ['periodo', `${r.periodo?.anio||''}-${String(r.periodo?.mes||'').padStart(2,'0')}`],
+        ['compras_ordenes', String(r.compras?.ordenes||0)],
+        ['compras_total', String(r.compras?.total||0)],
+        ['ingresos', String(r.tesoreria?.ingresos||0)],
+        ['egresos', String(r.tesoreria?.egresos||0)],
+        ['pendientes_conciliacion', String(r.tesoreria?.pendientes_conciliacion||0)],
+        ['presupuestado', String(r.presupuesto?.presupuestado||0)],
+        ['ejecutado', String(r.presupuesto?.ejecutado||0)],
+        ['desvio', String(r.presupuesto?.desvio||0)],
+      ];
+      const csv = rows.map(([k,v])=>`${k},${String(v).replaceAll(',', '.')}`).join('\n');
+      const blob = new Blob([csv], { type:'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'reporte_fase2_mensual.csv';
+      document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+      setStatus('CSV exportado.');
+    } catch(e){ setStatus(e.message||'Error exportando CSV',true); }
   });
 
   document.getElementById('btnAddPres').addEventListener('click', async ()=>{

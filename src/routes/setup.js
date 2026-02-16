@@ -1730,5 +1730,187 @@ export function createSetupRouter(deps) {
     }
   });
 
+  // GET /api/setup/fase2/vencimientos-proveedores
+  router.get('/fase2/vencimientos-proveedores', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req);
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+
+      const rows = await query(
+        `SELECT o.id, o.proveedor_id, p.nombre AS proveedor_nombre, o.estado,
+                o.fecha_entrega_estimada,
+                o.total,
+                (o.fecha_entrega_estimada::date - CURRENT_DATE) AS dias_restantes
+         FROM compras_ordenes o
+         LEFT JOIN proveedores p ON p.id=o.proveedor_id
+         WHERE o.empresa_id=$1
+           AND o.estado IN ('emitida','parcial')
+           AND o.fecha_entrega_estimada IS NOT NULL
+         ORDER BY o.fecha_entrega_estimada ASC
+         LIMIT 200`,
+        [empresaId]
+      );
+
+      const items = rows.map((r) => ({
+        ...r,
+        total: Number(r.total || 0),
+        dias_restantes: Number(r.dias_restantes || 0),
+        nivel: Number(r.dias_restantes || 0) < 0 ? 'alta' : (Number(r.dias_restantes || 0) <= 3 ? 'media' : 'baja'),
+      }));
+
+      return res.json({ ok: true, items });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error obteniendo vencimientos de proveedores' });
+    }
+  });
+
+  // GET /api/setup/fase2/acciones-sugeridas
+  router.get('/fase2/acciones-sugeridas', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req);
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+
+      const [pend] = await query(
+        `SELECT COUNT(*)::int AS pendientes,
+                COALESCE(SUM(monto),0)::numeric AS monto
+         FROM tesoreria_movimientos
+         WHERE empresa_id=$1 AND conciliado=FALSE`,
+        [empresaId]
+      );
+
+      const vencidas = await query(
+        `SELECT o.id, o.total, o.fecha_entrega_estimada, p.nombre AS proveedor_nombre
+         FROM compras_ordenes o
+         LEFT JOIN proveedores p ON p.id=o.proveedor_id
+         WHERE o.empresa_id=$1
+           AND o.estado IN ('emitida','parcial')
+           AND o.fecha_entrega_estimada IS NOT NULL
+           AND o.fecha_entrega_estimada < CURRENT_DATE
+         ORDER BY o.fecha_entrega_estimada ASC
+         LIMIT 5`,
+        [empresaId]
+      );
+
+      const [topCat] = await query(
+        `SELECT categoria, COALESCE(SUM(monto),0)::numeric AS total
+         FROM tesoreria_movimientos
+         WHERE empresa_id=$1 AND tipo='egreso' AND fecha >= NOW() - INTERVAL '30 days'
+         GROUP BY categoria
+         ORDER BY total DESC
+         LIMIT 1`,
+        [empresaId]
+      );
+
+      const actions = [];
+      const add = (prioridad, tipo, titulo, detalle, payload = {}) => actions.push({ prioridad, tipo, titulo, detalle, payload });
+
+      const pendientes = Number(pend?.pendientes || 0);
+      const montoPend = Number(pend?.monto || 0);
+      if (pendientes > 0) {
+        add(
+          pendientes >= 10 ? 'alta' : 'media',
+          'conciliacion',
+          'Limpiar conciliación pendiente',
+          `Conciliar ${pendientes} movimientos por ${Math.round(montoPend)} para mejorar visibilidad de caja.`,
+          { pendientes, monto: montoPend }
+        );
+      }
+
+      if (vencidas.length > 0) {
+        add(
+          'alta',
+          'compras_vencidas',
+          'Contactar proveedores con órdenes vencidas',
+          `Hay ${vencidas.length} órdenes vencidas. Priorizar seguimiento hoy.`,
+          { ordenes: vencidas.map((v) => ({ id: v.id, proveedor: v.proveedor_nombre, total: Number(v.total || 0) })) }
+        );
+      }
+
+      if (topCat?.categoria) {
+        add(
+          'media',
+          'control_egresos',
+          'Revisar categoría de mayor egreso',
+          `La categoría ${topCat.categoria} concentra ${Math.round(Number(topCat.total || 0))} en 30 días. Evaluar ahorro o renegociación.`,
+          { categoria: topCat.categoria, total_30d: Number(topCat.total || 0) }
+        );
+      }
+
+      return res.json({ ok: true, items: actions });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error obteniendo acciones sugeridas' });
+    }
+  });
+
+  // GET /api/setup/fase2/reporte-mensual
+  router.get('/fase2/reporte-mensual', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req);
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+      const now = new Date();
+      const anio = Number(req.query?.anio || now.getFullYear());
+      const mes = Number(req.query?.mes || (now.getMonth() + 1));
+
+      const [compras] = await query(
+        `SELECT COUNT(*)::int AS ordenes,
+                COALESCE(SUM(total),0)::numeric AS total
+         FROM compras_ordenes
+         WHERE empresa_id=$1
+           AND EXTRACT(YEAR FROM fecha_emision)=$2
+           AND EXTRACT(MONTH FROM fecha_emision)=$3`,
+        [empresaId, anio, mes]
+      );
+
+      const [teso] = await query(
+        `SELECT
+           COALESCE(SUM(monto) FILTER (WHERE tipo='ingreso'),0)::numeric AS ingresos,
+           COALESCE(SUM(monto) FILTER (WHERE tipo='egreso'),0)::numeric AS egresos,
+           COUNT(*) FILTER (WHERE conciliado=FALSE)::int AS pendientes_conciliacion
+         FROM tesoreria_movimientos
+         WHERE empresa_id=$1
+           AND EXTRACT(YEAR FROM fecha)=$2
+           AND EXTRACT(MONTH FROM fecha)=$3`,
+        [empresaId, anio, mes]
+      );
+
+      const [pres] = await query(
+        `WITH b AS (
+           SELECT COALESCE(SUM(monto_presupuestado),0)::numeric AS presupuestado
+           FROM presupuesto_mensual
+           WHERE empresa_id=$1 AND anio=$2 AND mes=$3
+         ), e AS (
+           SELECT COALESCE(SUM(monto),0)::numeric AS ejecutado
+           FROM tesoreria_movimientos
+           WHERE empresa_id=$1 AND tipo='egreso'
+             AND EXTRACT(YEAR FROM fecha)=$2 AND EXTRACT(MONTH FROM fecha)=$3
+         )
+         SELECT b.presupuestado, e.ejecutado, (e.ejecutado - b.presupuestado)::numeric AS desvio
+         FROM b, e`,
+        [empresaId, anio, mes]
+      );
+
+      return res.json({
+        ok: true,
+        periodo: { anio, mes },
+        compras: { ordenes: Number(compras?.ordenes || 0), total: Number(compras?.total || 0) },
+        tesoreria: {
+          ingresos: Number(teso?.ingresos || 0),
+          egresos: Number(teso?.egresos || 0),
+          pendientes_conciliacion: Number(teso?.pendientes_conciliacion || 0),
+        },
+        presupuesto: {
+          presupuestado: Number(pres?.presupuestado || 0),
+          ejecutado: Number(pres?.ejecutado || 0),
+          desvio: Number(pres?.desvio || 0),
+        },
+      });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error obteniendo reporte mensual fase2' });
+    }
+  });
+
   return router;
 }
