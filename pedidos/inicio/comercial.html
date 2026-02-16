@@ -53,6 +53,7 @@
         </div>
       </div>
       <div id="status" style="color:var(--muted);margin-top:6px">Listo.</div>
+      <div id="tenantBadge" style="margin-top:6px; font-size:.85rem; color:var(--brand);"></div>
     </div>
 
     <div class="card"><h2 style="margin:0 0 8px;font-size:1rem">Dashboard unificado</h2><div id="kpiGrid" class="grid"></div></div>
@@ -119,6 +120,21 @@
     const st = { isSuper:false, empresaId:null, dashboard:null, pipeline:[], cta:[], aging:null, alerts:[], crmClientes:[], priorizados:[] };
 
     function setStatus(t, err=false){ const el=document.getElementById('status'); el.textContent=t; el.style.color=err?'var(--danger)':'var(--muted'); }
+    function renderTenantBadge(){
+      const el = document.getElementById('tenantBadge');
+      if (!el) return;
+      if (st.isSuper) {
+        const sel = document.getElementById('empresaSelect');
+        const txt = sel?.selectedOptions?.[0]?.textContent || '';
+        if (!st.empresaId) {
+          el.textContent = 'Tenant activo: sin empresa seleccionada';
+        } else {
+          el.textContent = `Tenant activo: ${txt || ('Empresa ID ' + st.empresaId)}`;
+        }
+      } else {
+        el.textContent = `Tenant activo: tu empresa (ID ${st.empresaId || '-'})`;
+      }
+    }
     function apiUrl(path){ if (st.isSuper && st.empresaId) { const sep=path.includes('?')?'&':'?'; return path + sep + 'empresa_id=' + encodeURIComponent(String(st.empresaId)); } return path; }
 
 
@@ -181,9 +197,11 @@
 
         sel.addEventListener('change', ()=>{
           st.empresaId = sel.value ? Number(sel.value) : null;
+          renderTenantBadge();
           refreshAll();
         });
       }
+      renderTenantBadge();
     }
 
     async function loadDashboard(){
