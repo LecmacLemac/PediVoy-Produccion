@@ -46,6 +46,14 @@
       <div id="status" class="muted" style="margin-top:10px;">Listo para seleccionar.</div>
     </div>
 
+    <div class="card">
+      <div class="row" style="justify-content:space-between;">
+        <h2 style="margin:0; font-size:1.1rem;">Activación (últimos 7 días)</h2>
+        <button id="btnRefreshKpis" type="button">Refrescar KPIs</button>
+      </div>
+      <div id="kpiGrid" class="grid" style="margin-top:10px;"></div>
+    </div>
+
     <section id="templates" class="grid"></section>
   </main>
 
@@ -56,6 +64,7 @@
     };
 
     const state = { items: [] };
+    const moneyFmt = new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 });
 
     function escapeHtml(v){
       return String(v ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
@@ -79,6 +88,23 @@
           </ul>
         </article>
       `).join('');
+    }
+
+    async function loadKpis() {
+      const box = document.getElementById('kpiGrid');
+      box.innerHTML = '<div class="muted">Cargando KPIs...</div>';
+      const res = await authFetch('/api/setup/activation-kpis');
+      if (res.status === 401) return window.location.href = '../login.html';
+      const json = await res.json();
+      const k = json?.kpis || {};
+      box.innerHTML = `
+        <div class="tpl"><div class="muted">Setup completado</div><div style="font-size:1.4rem;font-weight:700;">${Number(k.setup_completion || 0)}%</div></div>
+        <div class="tpl"><div class="muted">Productos activos</div><div style="font-size:1.4rem;font-weight:700;">${Number(k.productos_activos || 0)}</div></div>
+        <div class="tpl"><div class="muted">Clientes</div><div style="font-size:1.4rem;font-weight:700;">${Number(k.clientes || 0)}</div></div>
+        <div class="tpl"><div class="muted">Choferes activos</div><div style="font-size:1.4rem;font-weight:700;">${Number(k.choferes_activos || 0)}</div></div>
+        <div class="tpl"><div class="muted">Pedidos (7d)</div><div style="font-size:1.4rem;font-weight:700;">${Number(k.pedidos_7d || 0)}</div></div>
+        <div class="tpl"><div class="muted">Facturación (7d)</div><div style="font-size:1.4rem;font-weight:700;">${moneyFmt.format(Number(k.facturacion_7d || 0))}</div></div>
+      `;
     }
 
     async function loadTemplates() {
@@ -118,6 +144,7 @@
         if (!res.ok) throw new Error(json.error || 'No se pudo aplicar vertical');
         const c = json.catalog || {};
         setStatus(`Listo: ${json.applied?.title || v}. Catálogo -> +${c.inserted || 0} / ~${c.updated || 0} / omitidos ${c.skipped || 0}.`, 'ok');
+        await loadKpis();
       } catch (e) {
         setStatus(e.message || 'Error aplicando vertical', 'err');
       } finally {
@@ -126,7 +153,12 @@
     }
 
     document.getElementById('btnApply').addEventListener('click', applyVertical);
+    document.getElementById('btnRefreshKpis').addEventListener('click', () => {
+      loadKpis().catch((e) => setStatus(e.message || 'Error cargando KPIs', 'err'));
+    });
+
     loadTemplates().catch((e) => setStatus(e.message || 'Error cargando verticales', 'err'));
+    loadKpis().catch((e) => setStatus(e.message || 'Error cargando KPIs', 'err'));
   </script>
 </body>
 </html>

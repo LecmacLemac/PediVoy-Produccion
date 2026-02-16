@@ -191,6 +191,70 @@ export function createSetupRouter(deps) {
     }
   });
 
+  // GET /api/setup/activation-kpis
+  router.get('/activation-kpis', withAuth, async (req, res) => {
+    try {
+      const empresaId = getEmpresaIdFromToken(req);
+
+      const [productosRow] = await query(
+        `SELECT COUNT(*)::int AS c
+         FROM productos
+         WHERE empresa_id=$1 AND deleted_at IS NULL AND activo=TRUE`,
+        [empresaId]
+      );
+
+      const [clientesRow] = await query(
+        `SELECT COUNT(*)::int AS c
+         FROM puntos_entrega
+         WHERE empresa_id=$1`,
+        [empresaId]
+      );
+
+      const [choferesRow] = await query(
+        `SELECT COUNT(*)::int AS c
+         FROM choferes
+         WHERE empresa_id=$1 AND activo=TRUE`,
+        [empresaId]
+      );
+
+      const [pedidosRow] = await query(
+        `SELECT COUNT(*)::int AS c, COALESCE(SUM(monto),0)::numeric AS monto
+         FROM pedidos
+         WHERE empresa_id=$1 AND created_at >= NOW() - INTERVAL '7 days'`,
+        [empresaId]
+      );
+
+      const [stepsRow] = await query('SELECT setup_steps FROM empresas WHERE id=$1', [empresaId]);
+      let steps = {};
+      if (stepsRow?.setup_steps) {
+        try { steps = JSON.parse(stepsRow.setup_steps); } catch { steps = {}; }
+      }
+
+      const totalSteps = String(req?.user?.role || '').toLowerCase() === 'super' ? 10 : 9;
+      let done = 0;
+      for (let i = 1; i <= totalSteps; i += 1) {
+        if (steps[i]) done += 1;
+      }
+
+      const setupCompletion = totalSteps ? Math.round((done / totalSteps) * 100) : 0;
+
+      return res.json({
+        ok: true,
+        kpis: {
+          productos_activos: Number(productosRow?.c || 0),
+          clientes: Number(clientesRow?.c || 0),
+          choferes_activos: Number(choferesRow?.c || 0),
+          pedidos_7d: Number(pedidosRow?.c || 0),
+          facturacion_7d: Number(pedidosRow?.monto || 0),
+          setup_completion: setupCompletion,
+        },
+      });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error obteniendo KPIs de activación' });
+    }
+  });
+
   // GET /api/setup/vertical-templates
   router.get('/vertical-templates', withAuth, (_req, res) => {
     const items = Object.values(VERTICAL_TEMPLATES).map(v => ({
