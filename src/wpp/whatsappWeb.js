@@ -1126,13 +1126,21 @@ export function registerWhatsAppWeb(app, deps) {
     ejecutarCampaniaClima().catch(err => console.error('[CRON ERROR CLIMA]', err));
   });
   
-  // CRON: Limpieza diaria de puntos de tracking antiguos
-  app.post('/internal/cron/cleanup-tracking', async (req, res) => {
-    // 🔒 (OPCIONAL pero MUY recomendable): proteger con un secreto
-    const cronSecret = process.env.CRON_SECRET;
-    if (cronSecret && req.headers['x-cron-secret'] !== cronSecret) {
+  const requireCronSecret = (req, res) => {
+    const cronSecret = String(process.env.CRON_SECRET || '').trim();
+    if (!cronSecret) {
+      return res.status(503).json({ error: 'cron_secret_not_configured' });
+    }
+    if (String(req.headers['x-cron-secret'] || '') !== cronSecret) {
       return res.status(403).json({ error: 'forbidden' });
     }
+    return null;
+  };
+
+  // CRON: Limpieza diaria de puntos de tracking antiguos
+  app.post('/internal/cron/cleanup-tracking', async (req, res) => {
+    const authError = requireCronSecret(req, res);
+    if (authError) return authError;
   
     try {
       console.log('[CRON CLEANUP] Iniciando limpieza de tracking…');
@@ -1156,11 +1164,8 @@ export function registerWhatsAppWeb(app, deps) {
   
   // CRON: Limpieza de mensajes viejos de WhatsApp (sent/error/skipped > 7 días)
   app.post('/internal/cron/cleanup-wpp', async (req, res) => {
-    // 🔒 proteger igual que el de tracking
-    const cronSecret = process.env.CRON_SECRET;
-    if (cronSecret && req.headers['x-cron-secret'] !== cronSecret) {
-      return res.status(403).json({ error: 'forbidden' });
-    }
+    const authError = requireCronSecret(req, res);
+    if (authError) return authError;
   
     try {
       console.log('[CRON CLEANUP WPP] Iniciando limpieza de wpp_outbox…');
