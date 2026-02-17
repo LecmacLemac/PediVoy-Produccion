@@ -2,6 +2,10 @@
 // Onboarding / configuración inicial (extraído desde server.js)
 
 import express from 'express';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+
+const execFileAsync = promisify(execFile);
 
 const CATALOG_TEMPLATES = {
   distribuidora_b2b: [
@@ -2345,55 +2349,79 @@ export function createSetupRouter(deps) {
     }
   });
 
+  const PEDIVOY_AGENT_META = {
+    '8ff11c9c-a6f6-4caa-af41-ca3e5c765a34': { tipo: 'qa', objetivo: 'Chequeo QA rápido de Fase 3 con foco en riesgos críticos.' },
+    '1321ce4e-55a4-4cc2-afce-7fc7be49f0b3': { tipo: 'operativo', objetivo: 'Alertar sobre SLA, conciliación, compras vencidas y señal de caja.' },
+    'bf97975b-bc23-4b04-bb60-1adda91563a8': { tipo: 'comercial', objetivo: 'Detectar pipeline estancado y proponer acciones de seguimiento.' },
+  };
+
+  async function openclawCron(args = []) {
+    const { stdout } = await execFileAsync('openclaw', ['cron', ...args], {
+      timeout: 30000,
+      maxBuffer: 1024 * 1024,
+      env: process.env,
+    });
+    return String(stdout || '');
+  }
+
   // GET /api/setup/fase3/agentes
   router.get('/fase3/agentes', withAuth, async (req, res) => {
     try {
       const empresaId = resolveEmpresaIdForSetup(req);
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
 
-      const jobs = [
-        {
-          id: '8ff11c9c-a6f6-4caa-af41-ca3e5c765a34',
-          nombre: 'PediVoy · QA diario post-cambios',
-          cron: '15 9 * * 1-5',
-          tz: 'America/Argentina/Salta',
-          tipo: 'qa',
-          objetivo: 'Chequeo QA rápido de Fase 3 con foco en riesgos críticos.',
-          estado: 'activo',
-        },
-        {
-          id: '1321ce4e-55a4-4cc2-afce-7fc7be49f0b3',
-          nombre: 'PediVoy · Monitoreo operativo',
-          cron: '0 */2 * * 1-5',
-          tz: 'America/Argentina/Salta',
-          tipo: 'operativo',
-          objetivo: 'Alertar sobre SLA, conciliación, compras vencidas y señal de caja.',
-          estado: 'activo',
-        },
-        {
-          id: 'bf97975b-bc23-4b04-bb60-1adda91563a8',
-          nombre: 'PediVoy · Pulso comercial diario',
-          cron: '45 9 * * 1-5',
-          tz: 'America/Argentina/Salta',
-          tipo: 'comercial',
-          objetivo: 'Detectar pipeline estancado y proponer acciones de seguimiento.',
-          estado: 'activo',
-        },
-      ];
+      const raw = await openclawCron(['list', '--all', '--json']);
+      let parsed = [];
+      try { parsed = JSON.parse(raw); } catch { parsed = []; }
+      const list = Array.isArray(parsed) ? parsed : (Array.isArray(parsed?.jobs) ? parsed.jobs : []);
+      const items = list
+        .filter((j) => PEDIVOY_AGENT_META[String(j.id || '')])
+        .map((j) => ({
+          id: j.id,
+          nombre: j.name || j.id,
+          cron: j.schedule?.expr || '-',
+          tz: j.schedule?.tz || 'America/Argentina/Salta',
+          tipo: PEDIVOY_AGENT_META[String(j.id)]?.tipo || 'general',
+          objetivo: PEDIVOY_AGENT_META[String(j.id)]?.objetivo || '',
+          estado: j.enabled === false ? 'pausado' : 'activo',
+          nextRunAt: j.state?.nextRunAtMs || null,
+        }));
 
       return res.json({
         ok: true,
-        items: jobs,
+        items,
         ayuda: {
-          ver: 'cron list',
-          historial: 'cron runs --jobId <id>',
-          ejecutarAhora: 'cron run --jobId <id>',
-          pausar: 'cron update --jobId <id> --patch {"enabled":false}',
+          ver: 'openclaw cron list --all --json',
+          historial: 'openclaw cron runs <id>',
+          ejecutarAhora: 'openclaw cron run <id>',
+          pausar: 'openclaw cron disable <id>',
+          reanudar: 'openclaw cron enable <id>',
         },
       });
     } catch (e) {
       console.error(e);
       return res.status(500).json({ error: 'Error obteniendo panel de agentes' });
+    }
+  });
+
+  // POST /api/setup/fase3/agentes/:id/accion
+  router.post('/fase3/agentes/:id/accion', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+      const id = String(req.params.id || '').trim();
+      const accion = String(req.body?.accion || '').trim().toLowerCase();
+      if (!PEDIVOY_AGENT_META[id]) return res.status(404).json({ error: 'Agente no permitido en panel PediVoy' });
+
+      if (accion === 'run') await openclawCron(['run', id]);
+      else if (accion === 'pause') await openclawCron(['disable', id]);
+      else if (accion === 'resume') await openclawCron(['enable', id]);
+      else return res.status(400).json({ error: 'Acción inválida. Usá: run | pause | resume' });
+
+      return res.json({ ok: true, id, accion });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error ejecutando acción de agente' });
     }
   });
 
