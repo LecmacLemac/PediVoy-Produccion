@@ -302,6 +302,14 @@
           Cuéntale a la IA qué vendes, colores preferidos y estilo (ej: "Verdulería rústica, fondo papel kraft, botones verdes").
         </p>
         <textarea id="promptInput" placeholder="Ej: Soy una tienda de ropa llamada 'Urbana'. Quiero un estilo minimalista, colores pastel y fotos grandes. Destaca que tenemos envío gratis."></textarea>
+        <label for="visualStyle" style="display:block; margin-top:10px; font-size:0.85rem; color:var(--muted);">Estilo visual base</label>
+        <select id="visualStyle">
+          <option value="Moderno y limpio">Moderno y limpio</option>
+          <option value="Minimalista premium">Minimalista premium</option>
+          <option value="Rústico y cálido">Rústico y cálido</option>
+          <option value="Corporativo profesional">Corporativo profesional</option>
+          <option value="Colorido y juvenil">Colorido y juvenil</option>
+        </select>
       </div>
 
       <div>
@@ -411,7 +419,8 @@
 
         // 2. Obtener lista de empresas
         const resEmp = await authFetch('/api/empresas');
-        companiesList = await resEmp.json();
+        const empresasPayload = await resEmp.json();
+        companiesList = Array.isArray(empresasPayload) ? empresasPayload : [];
 
         // 3. Lógica según Rol
         const urlParams = new URLSearchParams(window.location.search);
@@ -462,6 +471,9 @@
       
       if (empresa) {
         currentEmpresaId = empresa.id;
+        generatedHtml = '';
+        document.getElementById('btnSave').disabled = true;
+        document.getElementById('previewFrame').srcdoc = '';
         updateUIInfo(empresa);
       }
     }
@@ -490,11 +502,11 @@
       // 1. Validaciones básicas
       const userDescription = document.getElementById('promptInput').value.trim();
       
-      // Obtenemos el estilo visual seleccionado (radio buttons)
-      const styleInput = document.querySelector('input[name="vis_style"]:checked');
-      const visualStyle = styleInput ? styleInput.value : "Moderno y limpio";
+      const visualStyle = document.getElementById('visualStyle')?.value || 'Moderno y limpio';
 
       if (!userDescription) return toast('⚠️ Por favor, describe tu negocio.');
+      if (userDescription.length < 20) return toast('⚠️ Agregá más detalle (mínimo 20 caracteres).');
+      if (userDescription.length > 3000) return toast('⚠️ Descripción demasiado larga (máximo 3000 caracteres).');
       if (!currentEmpresaId) return toast('⚠️ Error: No hay empresa seleccionada.');
 
       // 2. Preparar UI
@@ -530,7 +542,9 @@
         });
 
         const data = await res.json();
+        if (!res.ok) throw new Error(data?.error || 'No se pudo generar el sitio');
         if (data.error) throw new Error(data.error);
+        if (!data?.html || typeof data.html !== 'string') throw new Error('Respuesta inválida del generador');
 
         generatedHtml = data.html;
         
