@@ -2372,6 +2372,7 @@ export function createSetupRouter(deps) {
       const estado = String(req.query?.estado || '').trim();
       const tipo = String(req.query?.tipo || '').trim();
       const severidad = String(req.query?.severidad || '').trim();
+      const sla = String(req.query?.sla || '').trim().toLowerCase();
       const soloMias = ['1', 'true', 'si', 'sí'].includes(String(req.query?.mias || '').toLowerCase());
 
       const params = [empresaId];
@@ -2379,6 +2380,10 @@ export function createSetupRouter(deps) {
       if (estado) { params.push(estado); where += ` AND i.estado=$${params.length}`; }
       if (tipo) { params.push(tipo); where += ` AND i.tipo=$${params.length}`; }
       if (severidad) { params.push(severidad); where += ` AND i.severidad=$${params.length}`; }
+      if (sla === 'vencida') where += ` AND i.vence_at IS NOT NULL AND i.vence_at < NOW() AND i.estado IN ('abierta','en_progreso')`;
+      if (sla === 'hoy') where += ` AND i.vence_at IS NOT NULL AND i.vence_at >= NOW() AND i.vence_at < NOW() + INTERVAL '24 hour' AND i.estado IN ('abierta','en_progreso')`;
+      if (sla === 'en_plazo') where += ` AND i.vence_at IS NOT NULL AND i.vence_at >= NOW() + INTERVAL '24 hour' AND i.estado IN ('abierta','en_progreso')`;
+      if (sla === 'sin_sla') where += ` AND i.vence_at IS NULL`;
       if (soloMias) {
         const uid = req?.user?.id ? Number(req.user.id) : null;
         if (!uid) return res.status(400).json({ error: 'usuario inválido para filtro mías' });
@@ -2411,6 +2416,7 @@ export function createSetupRouter(deps) {
       const estado = String(req.query?.estado || '').trim();
       const tipo = String(req.query?.tipo || '').trim();
       const severidad = String(req.query?.severidad || '').trim();
+      const sla = String(req.query?.sla || '').trim().toLowerCase();
       const soloMias = ['1', 'true', 'si', 'sí'].includes(String(req.query?.mias || '').toLowerCase());
 
       const params = [empresaId];
@@ -2418,6 +2424,10 @@ export function createSetupRouter(deps) {
       if (estado) { params.push(estado); where += ` AND i.estado=$${params.length}`; }
       if (tipo) { params.push(tipo); where += ` AND i.tipo=$${params.length}`; }
       if (severidad) { params.push(severidad); where += ` AND i.severidad=$${params.length}`; }
+      if (sla === 'vencida') where += ` AND i.vence_at IS NOT NULL AND i.vence_at < NOW() AND i.estado IN ('abierta','en_progreso')`;
+      if (sla === 'hoy') where += ` AND i.vence_at IS NOT NULL AND i.vence_at >= NOW() AND i.vence_at < NOW() + INTERVAL '24 hour' AND i.estado IN ('abierta','en_progreso')`;
+      if (sla === 'en_plazo') where += ` AND i.vence_at IS NOT NULL AND i.vence_at >= NOW() + INTERVAL '24 hour' AND i.estado IN ('abierta','en_progreso')`;
+      if (sla === 'sin_sla') where += ` AND i.vence_at IS NULL`;
       if (soloMias) {
         const uid = req?.user?.id ? Number(req.user.id) : null;
         if (!uid) return res.status(400).json({ error: 'usuario inválido para filtro mías' });

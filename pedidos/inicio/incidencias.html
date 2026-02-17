@@ -56,7 +56,7 @@
 
     <div class="card">
       <h2 style="margin:0 0 8px;font-size:1rem">Bandeja</h2>
-      <div class="row" style="margin-bottom:8px"><select id="fltEstado"><option value="">Estado: todos</option><option value="abierta">Abierta</option><option value="en_progreso">En progreso</option><option value="resuelta">Resuelta</option><option value="cancelada">Cancelada</option></select><select id="fltSev"><option value="">Severidad: todas</option><option value="critica">Crítica</option><option value="alta">Alta</option><option value="media">Media</option><option value="baja">Baja</option></select><label style="display:flex;align-items:center;gap:6px;color:var(--muted)"><input id="fltMias" type="checkbox" /> Solo mías</label></div>
+      <div class="row" style="margin-bottom:8px"><select id="fltEstado"><option value="">Estado: todos</option><option value="abierta">Abierta</option><option value="en_progreso">En progreso</option><option value="resuelta">Resuelta</option><option value="cancelada">Cancelada</option></select><select id="fltSev"><option value="">Severidad: todas</option><option value="critica">Crítica</option><option value="alta">Alta</option><option value="media">Media</option><option value="baja">Baja</option></select><select id="fltSla"><option value="">SLA: todos</option><option value="vencida">Vencida</option><option value="hoy">Vence hoy</option><option value="en_plazo">En plazo</option><option value="sin_sla">Sin SLA</option></select><label style="display:flex;align-items:center;gap:6px;color:var(--muted)"><input id="fltMias" type="checkbox" /> Solo mías</label></div>
       <div style="overflow:auto"><table><thead><tr><th>Fecha</th><th>Tipo</th><th>Sev.</th><th>Estado</th><th>Título</th><th>Resp.</th><th>Vence</th><th>SLA</th><th>Acción</th><th></th></tr></thead><tbody id="incBody"></tbody></table></div>
     </div>
   </main>
@@ -151,8 +151,8 @@
 
     async function loadInc(){
       if(st.isSuper&&!st.empresaId) return;
-      const fltEstado=document.getElementById('fltEstado').value||''; const fltSev=document.getElementById('fltSev').value||''; const fltMias=document.getElementById('fltMias').checked;
-      let path='/api/setup/fase3/incidencias'; const params=new URLSearchParams(); if(fltEstado) params.set('estado',fltEstado); if(fltSev) params.set('severidad',fltSev); if(fltMias) params.set('mias','1'); if(params.toString()) path += '?' + params.toString();
+      const fltEstado=document.getElementById('fltEstado').value||''; const fltSev=document.getElementById('fltSev').value||''; const fltSla=document.getElementById('fltSla').value||''; const fltMias=document.getElementById('fltMias').checked;
+      let path='/api/setup/fase3/incidencias'; const params=new URLSearchParams(); if(fltEstado) params.set('estado',fltEstado); if(fltSev) params.set('severidad',fltSev); if(fltSla) params.set('sla',fltSla); if(fltMias) params.set('mias','1'); if(params.toString()) path += '?' + params.toString();
       const r=await authFetch(apiUrl(path)); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error incidencias');
       st.items=Array.isArray(j.items)?j.items:[];
       const body=document.getElementById('incBody');
@@ -164,9 +164,11 @@
       const params=new URLSearchParams();
       const estado=document.getElementById('fltEstado').value||'';
       const severidad=document.getElementById('fltSev').value||'';
+      const sla=document.getElementById('fltSla').value||'';
       const mias=document.getElementById('fltMias').checked;
       if(estado) params.set('estado',estado);
       if(severidad) params.set('severidad',severidad);
+      if(sla) params.set('sla',sla);
       if(mias) params.set('mias','1');
       const path='/api/setup/fase3/incidencias/export.csv'+(params.toString()?`?${params.toString()}`:'');
       window.open(apiUrl(path),'_blank');
@@ -251,6 +253,7 @@
 
     document.getElementById('fltEstado').addEventListener('change', loadInc);
     document.getElementById('fltSev').addEventListener('change', loadInc);
+    document.getElementById('fltSla').addEventListener('change', loadInc);
     document.getElementById('fltMias').addEventListener('change', loadInc);
     document.getElementById('btnRefresh').addEventListener('click',refreshAll);
     document.getElementById('btnExport').addEventListener('click',exportCsv);
