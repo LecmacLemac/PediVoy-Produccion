@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Panel de Agentes – MultiEmpresas</title>
+  <style>
+    :root{--bg:#0b1020;--bg2:#0f172a;--ink:#f1f5f9;--muted:#94a3b8;--brand:#06b6d4;--border:rgba(148,163,184,.18);--danger:#ef4444}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui}
+    .container{max-width:1180px;margin:0 auto;padding:0 20px}
+    header{position:sticky;top:0;background:rgba(15,23,42,.95);border-bottom:1px solid var(--border);padding:.8rem 0}
+    nav{display:flex;justify-content:space-between;align-items:center}.menu{display:flex;gap:1rem;list-style:none;margin:0;padding:0}.menu a{color:var(--muted);text-decoration:none}.menu a.active,.menu a:hover{color:#fff}
+    .card{background:rgba(30,41,59,.7);border:1px solid var(--border);border-radius:12px;padding:14px;margin:12px 0}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:10px}
+    .agent{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px}
+    .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:space-between}
+    button{background:var(--bg2);border:1px solid var(--border);color:#fff;border-radius:8px;padding:8px 10px;cursor:pointer}
+    .pill{display:inline-block;padding:3px 8px;border-radius:99px;border:1px solid #22c55e;color:#22c55e;font-size:.75rem}
+    pre{white-space:pre-wrap;margin:0;background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:10px;color:#cbd5e1}
+  </style>
+</head>
+<body>
+<header>
+  <nav class="container">
+    <div><strong>MultiEmpresas</strong> <span id="roleBadge" style="font-size:.75rem;color:var(--brand)">Admin</span></div>
+    <ul class="menu"><li><a href="inicial.html">🚀 Inicio</a></li><li><a href="ejecutivo.html">Ejecutivo</a></li><li><a href="incidencias.html">Incidencias</a></li><li><a href="agentes.html" class="active">Agentes</a></li><li><a href="#" id="logout" style="color:var(--danger)">Salir</a></li></ul>
+  </nav>
+</header>
+<main class="container">
+  <div class="card">
+    <div class="row"><h1 style="margin:0;font-size:1.2rem">Panel de agentes · PediVoy</h1><button id="btnRefresh" type="button">Actualizar</button></div>
+    <div id="status" style="color:var(--muted);margin-top:6px">Listo.</div>
+  </div>
+
+  <div class="card"><h2 style="margin:0 0 8px;font-size:1rem">Agentes configurados</h2><div id="agentsGrid" class="grid"></div></div>
+  <div class="card"><h2 style="margin:0 0 8px;font-size:1rem">Comandos útiles</h2><pre id="helpBox">Cargando…</pre></div>
+</main>
+<script>
+const authFetch=(url,opts={})=>fetch(url,{...opts,headers:{'Content-Type':'application/json',...(opts.headers||{})},credentials:'include'});
+const st={isSuper:false,empresaId:null};
+const setStatus=(t,e=false)=>{const el=document.getElementById('status');el.textContent=t;el.style.color=e?'var(--danger)':'var(--muted)';};
+const apiUrl=(p)=>st.isSuper&&st.empresaId?(p+(p.includes('?')?'&':'?')+'empresa_id='+encodeURIComponent(String(st.empresaId))):p;
+
+async function loadMe(){
+  const r=await authFetch('/api/me'); if(r.status===401) return location.href='/pedidos/login.html';
+  const me=await r.json(); st.isSuper=String(me?.user?.role||'').toLowerCase()==='super'; st.empresaId=me?.user?.empresa_id||null;
+  document.getElementById('roleBadge').textContent=st.isSuper?'SUPER ADMIN':'Admin';
+}
+
+function copyText(t){ return navigator.clipboard.writeText(String(t||'')); }
+
+async function loadPanel(){
+  if(st.isSuper&&!st.empresaId) return setStatus('Si sos super admin, agregá ?empresa_id=<id> a la URL para analizar una empresa.',true);
+  const r=await authFetch(apiUrl('/api/setup/fase3/agentes')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error cargando agentes');
+  const items=Array.isArray(j.items)?j.items:[];
+  const box=document.getElementById('agentsGrid');
+  box.innerHTML=items.length?items.map(x=>`<div class="agent"><div class="row" style="justify-content:flex-start;gap:6px"><strong>${x.nombre||'-'}</strong><span class="pill">${x.estado||'activo'}</span></div><div style="font-size:.9rem;color:var(--muted);margin-top:6px">${x.objetivo||''}</div><div style="font-size:.86rem;color:var(--muted);margin-top:8px">ID: <code>${x.id}</code></div><div style="font-size:.86rem;color:var(--muted)">Cron: ${x.cron} · ${x.tz}</div><div class="row" style="margin-top:10px;justify-content:flex-start"><button type="button" data-copy="${x.id}">Copiar ID</button><button type="button" data-copy="cron run --jobId ${x.id}">Copiar comando: correr ahora</button></div></div>`).join(''):'<div style="color:var(--muted)">Sin agentes configurados.</div>';
+
+  const h=j.ayuda||{};
+  const help=`Ver jobs: ${h.ver||'cron list'}\nHistorial: ${h.historial||'cron runs --jobId <id>'}\nEjecutar ahora: ${h.ejecutarAhora||'cron run --jobId <id>'}\nPausar: ${h.pausar||'cron update --jobId <id> --patch {"enabled":false}'}`;
+  document.getElementById('helpBox').textContent=help;
+
+  box.querySelectorAll('button[data-copy]').forEach((b)=>b.addEventListener('click', async ()=>{
+    try{ await copyText(b.getAttribute('data-copy')); setStatus('Copiado al portapapeles.'); } catch { setStatus('No se pudo copiar.',true); }
+  }));
+}
+
+async function refreshAll(){
+  setStatus('Actualizando…');
+  try{ await loadPanel(); setStatus('Actualizado.'); }
+  catch(e){ setStatus(e.message||'Error',true); }
+}
+
+document.getElementById('btnRefresh').addEventListener('click',refreshAll);
+document.getElementById('logout').addEventListener('click',async (e)=>{e.preventDefault(); try{await authFetch('/api/logout',{method:'POST'});}catch{} location.href='/pedidos/login.html';});
+(async()=>{ await loadMe(); await refreshAll(); })();
+</script>
+</body>
+</html>

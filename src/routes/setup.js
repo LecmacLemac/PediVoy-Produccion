@@ -2345,6 +2345,58 @@ export function createSetupRouter(deps) {
     }
   });
 
+  // GET /api/setup/fase3/agentes
+  router.get('/fase3/agentes', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req);
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+
+      const jobs = [
+        {
+          id: '8ff11c9c-a6f6-4caa-af41-ca3e5c765a34',
+          nombre: 'PediVoy · QA diario post-cambios',
+          cron: '15 9 * * 1-5',
+          tz: 'America/Argentina/Salta',
+          tipo: 'qa',
+          objetivo: 'Chequeo QA rápido de Fase 3 con foco en riesgos críticos.',
+          estado: 'activo',
+        },
+        {
+          id: '1321ce4e-55a4-4cc2-afce-7fc7be49f0b3',
+          nombre: 'PediVoy · Monitoreo operativo',
+          cron: '0 */2 * * 1-5',
+          tz: 'America/Argentina/Salta',
+          tipo: 'operativo',
+          objetivo: 'Alertar sobre SLA, conciliación, compras vencidas y señal de caja.',
+          estado: 'activo',
+        },
+        {
+          id: 'bf97975b-bc23-4b04-bb60-1adda91563a8',
+          nombre: 'PediVoy · Pulso comercial diario',
+          cron: '45 9 * * 1-5',
+          tz: 'America/Argentina/Salta',
+          tipo: 'comercial',
+          objetivo: 'Detectar pipeline estancado y proponer acciones de seguimiento.',
+          estado: 'activo',
+        },
+      ];
+
+      return res.json({
+        ok: true,
+        items: jobs,
+        ayuda: {
+          ver: 'cron list',
+          historial: 'cron runs --jobId <id>',
+          ejecutarAhora: 'cron run --jobId <id>',
+          pausar: 'cron update --jobId <id> --patch {"enabled":false}',
+        },
+      });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error obteniendo panel de agentes' });
+    }
+  });
+
   // GET /api/setup/fase3/usuarios
   router.get('/fase3/usuarios', withAuth, async (req, res) => {
     try {
