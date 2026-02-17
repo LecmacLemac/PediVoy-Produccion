@@ -48,7 +48,7 @@
 <script>
 const authFetch=(url,opts={})=>fetch(url,{...opts,headers:{'Content-Type':'application/json',...(opts.headers||{})},credentials:'include'});
 const fmt=new Intl.NumberFormat('es-AR',{style:'currency',currency:'ARS',maximumFractionDigits:0});
-const st={isSuper:false,empresaId:null,dashboard:null,semaforo:null,recos:[],cierre:[],autos:[]};
+const st={isSuper:false,empresaId:null,dashboard:null,semaforo:null,recos:[],cierre:[],autos:[],incidencias:null};
 const setStatus=(t,e=false)=>{const el=document.getElementById('status');el.textContent=t;el.style.color=e?'var(--danger)':'var(--muted)';};
 const apiUrl=(p)=>st.isSuper&&st.empresaId?(p+(p.includes('?')?'&':'?')+'empresa_id='+encodeURIComponent(String(st.empresaId))):p;
 
@@ -81,6 +81,13 @@ async function loadSemaforo(){
   document.getElementById('semaforo').innerHTML=`<div style="border:1px solid var(--border);border-left:6px solid ${color};border-radius:10px;padding:10px;background:var(--bg2)"><div style="font-weight:700">Nivel ${String(j.nivel||'-').toUpperCase()} · Score ${Number(j.score||0)}/100</div><div style="font-size:.9rem;color:var(--muted);margin-top:4px">Ingresos 30d: ${fmt.format(Number(f.ingresos_30d||0))} · Egresos 30d: ${fmt.format(Number(f.egresos_30d||0))} · Pend. conciliación: ${Number(f.pendientes_conciliacion||0)} · Compras vencidas: ${Number(f.compras_vencidas||0)}</div></div>`;
 }
 
+async function loadIncidenciasResumen(){
+  if(st.isSuper&&!st.empresaId) return;
+  const r=await authFetch(apiUrl('/api/setup/fase3/incidencias/dashboard')); const j=await r.json();
+  if(!r.ok) throw new Error(j.error||'Error dashboard incidencias');
+  st.incidencias=j.kpis||{};
+}
+
 async function loadRecos(){
   if(st.isSuper&&!st.empresaId) return;
   const r=await authFetch(apiUrl('/api/setup/fase3/recomendaciones')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error recomendaciones');
@@ -94,9 +101,24 @@ async function loadControlCierre(){
   if(st.isSuper&&!st.empresaId) return;
   const r=await authFetch(apiUrl('/api/setup/fase3/control-cierre')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error control cierre');
   const items=Array.isArray(j.checklist)?j.checklist:[];
-  st.cierre=items;
+
+  // Reflejar estado de incidencias críticas/SLA vencida en control de cierre
+  const inc = st.incidencias || {};
+  const crit = Number(inc.criticas_activas || 0);
+  const sla = Number(inc.sla_vencidas || 0);
+  const incStatus = (crit === 0 && sla === 0) ? 'ok' : ((crit + sla) <= 3 ? 'atencion' : 'critico');
+  const incDetalle = (crit === 0 && sla === 0)
+    ? 'Sin incidencias críticas activas ni SLA vencido.'
+    : `Críticas activas: ${crit} · SLA vencidas: ${sla}. Priorizar resolución inmediata.`;
+
+  const merged = [
+    { titulo: 'Incidencias críticas y SLA', status: incStatus, detalle: incDetalle },
+    ...items,
+  ];
+
+  st.cierre=merged;
   const icon=(s)=>s==='ok'?'✅':(s==='atencion'?'🟡':'🔴');
-  document.getElementById('cierreChecklist').innerHTML=items.length?items.map(x=>`<div style="border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--bg2)"><div style="font-weight:700">${icon(x.status)} ${x.titulo}</div><div style="font-size:.9rem;color:var(--muted)">${x.detalle||''}</div></div>`).join(''):'<div style="color:var(--muted)">Sin items de cierre.</div>';
+  document.getElementById('cierreChecklist').innerHTML=merged.length?merged.map(x=>`<div style="border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--bg2)"><div style="font-weight:700">${icon(x.status)} ${x.titulo}</div><div style="font-size:.9rem;color:var(--muted)">${x.detalle||''}</div></div>`).join(''):'<div style="color:var(--muted)">Sin items de cierre.</div>';
 }
 
 async function loadAutomatizaciones(){
@@ -148,7 +170,7 @@ function copyUat(){
 }
 
 async function refreshAll(){ if(st.isSuper&&!st.empresaId){ setStatus('Seleccioná empresa para ver el tablero ejecutivo.',true); ['kpiGrid','semaforo','recos','cierreChecklist','autoCenter','uatChecklist'].forEach(id=>{const el=document.getElementById(id); if(el) el.innerHTML='';}); const tx=document.getElementById('resumenText'); if(tx) tx.value=''; return; }
-  setStatus('Actualizando…'); try{ await Promise.all([loadDashboard(),loadSemaforo(),loadRecos(),loadControlCierre(),loadAutomatizaciones(),loadResumen()]); renderUat(); setStatus('Actualizado.'); } catch(e){ setStatus(e.message||'Error',true); }
+  setStatus('Actualizando…'); try{ await Promise.all([loadDashboard(),loadSemaforo(),loadIncidenciasResumen(),loadRecos(),loadControlCierre(),loadAutomatizaciones(),loadResumen()]); renderUat(); setStatus('Actualizado.'); } catch(e){ setStatus(e.message||'Error',true); }
 }
 
 document.getElementById('btnRefresh').addEventListener('click',refreshAll);

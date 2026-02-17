@@ -31,7 +31,7 @@
     <div class="card">
       <div class="row" style="justify-content:space-between">
         <h1 style="margin:0;font-size:1.2rem">Fase 3 · Centro de incidencias</h1>
-        <div class="row"><div id="empresaWrap" style="display:none"><select id="empresaSelect"><option value="">Seleccionar empresa…</option></select></div><button id="btnExport">Exportar CSV</button><button id="btnRefresh">Actualizar</button></div>
+        <div class="row"><div id="empresaWrap" style="display:none"><select id="empresaSelect"><option value="">Seleccionar empresa…</option></select></div><button id="btnPriorizar" class="primary" type="button">Priorizar críticas/SLA</button><button id="btnExport">Exportar CSV</button><button id="btnRefresh">Actualizar</button></div>
       </div>
       <div id="status" style="margin-top:6px;color:var(--muted)">Listo.</div>
     </div>
@@ -147,7 +147,7 @@
 
     async function loadKpis(){ if(st.isSuper&&!st.empresaId) return; const r=await authFetch(apiUrl('/api/setup/fase3/incidencias/dashboard')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error KPI incidencias'); const k=j.kpis||{}; document.getElementById('kpiGrid').innerHTML=[['Total',k.total||0],['Abiertas',k.abiertas||0],['En progreso',k.en_progreso||0],['Resueltas',k.resueltas||0],['Críticas activas',k.criticas_activas||0],['SLA vencidas',k.sla_vencidas||0]].map(([l,v])=>`<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div></div>`).join(''); }
     async function loadMisPendientes(){ if(st.isSuper&&!st.empresaId) return; const r=await authFetch(apiUrl('/api/setup/fase3/incidencias/mis-pendientes')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error mis pendientes'); const k=j.kpis||{}; const items=Array.isArray(j.items)?j.items:[]; document.getElementById('misPendKpi').textContent=`Pendientes: ${k.total||0} · SLA vencidas: ${k.sla_vencidas||0} · Críticas: ${k.criticas||0}`; document.getElementById('misPendBody').innerHTML=items.length?items.map(x=>`<tr><td>${x.titulo||'-'}</td><td>${x.severidad||'-'}</td><td>${x.estado||'-'}</td><td>${x.vence_at?new Date(x.vence_at).toLocaleString('es-AR'):'-'}</td><td>${x.estado==='resuelta'?'':`<button type="button" data-action="quick-resolve" data-id="${Number(x.id)}">Resolver</button>`}</td></tr>`).join(''):'<tr><td colspan="5" style="color:var(--muted)">Sin pendientes asignados.</td></tr>'; }
-    async function loadAlertas(){ if(st.isSuper&&!st.empresaId) return; const r=await authFetch(apiUrl('/api/setup/fase3/incidencias/alertas')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error alertas incidencias'); const items=Array.isArray(j.items)?j.items:[]; const color=(n)=>n==='alta'?'#ef4444':(n==='media'?'#f59e0b':'#22c55e'); document.getElementById('incAlertas').innerHTML=items.map(a=>`<div style="border:1px solid var(--border);border-left:4px solid ${color(a.nivel)};border-radius:10px;padding:10px;background:var(--bg2)"><div style="font-weight:700">${a.titulo}</div><div style="font-size:.9rem;color:var(--muted)">${a.detalle||''}</div></div>`).join(''); }
+    async function loadAlertas(){ if(st.isSuper&&!st.empresaId) return; const r=await authFetch(apiUrl('/api/setup/fase3/incidencias/alertas')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error alertas incidencias'); const items=Array.isArray(j.items)?j.items:[]; const color=(n)=>n==='alta'?'#ef4444':(n==='media'?'#f59e0b':'#22c55e'); document.getElementById('incAlertas').innerHTML=items.map(a=>`<div style="border:1px solid var(--border);border-left:4px solid ${color(a.nivel)};border-radius:10px;padding:10px;background:var(--bg2)"><div style="font-weight:700">${a.titulo}</div><div style="font-size:.9rem;color:var(--muted)">${a.detalle||''}</div>${String(a.nivel)==='alta'?'<div style="margin-top:8px"><button type="button" data-action="priorizar-alerta" class="primary">Ver y resolver ahora</button></div>':''}</div>`).join(''); }
 
     async function loadInc(){
       if(st.isSuper&&!st.empresaId) return;
@@ -156,7 +156,16 @@
       const r=await authFetch(apiUrl(path)); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error incidencias');
       st.items=Array.isArray(j.items)?j.items:[];
       const body=document.getElementById('incBody');
-      body.innerHTML=st.items.length?st.items.map(x=>`<tr><td>${x.created_at?new Date(x.created_at).toLocaleDateString('es-AR'):'-'}</td><td>${x.tipo||'-'}</td><td>${x.severidad||'-'}</td><td>${x.estado||'-'}</td><td>${x.titulo||'-'}</td><td>${x.responsable_nombre||'-'}</td><td>${x.vence_at?new Date(x.vence_at).toLocaleString('es-AR'):'-'}</td><td>${slaBadge(x.vence_at,x.estado)}</td><td>${x.accion_recomendada||'-'}</td><td class="row"><button type="button" data-action="history" data-id="${Number(x.id)}">Historial</button><button type="button" data-action="edit" data-id="${Number(x.id)}">Editar</button></td></tr>`).join(''):'<tr><td colspan="10" style="color:var(--muted)">Sin incidencias.</td></tr>';
+      const prioridad = (x) => {
+        const abierta = ['abierta','en_progreso'].includes(String(x.estado||''));
+        const vencida = x.vence_at && new Date(x.vence_at).getTime() < Date.now();
+        const critica = String(x.severidad||'') === 'critica';
+        if (abierta && (critica || vencida)) return 0;
+        if (abierta) return 1;
+        return 2;
+      };
+      const sorted = st.items.slice().sort((a,b)=>prioridad(a)-prioridad(b));
+      body.innerHTML=sorted.length?sorted.map(x=>`<tr><td>${x.created_at?new Date(x.created_at).toLocaleDateString('es-AR'):'-'}</td><td>${x.tipo||'-'}</td><td>${x.severidad||'-'}</td><td>${x.estado||'-'}</td><td>${x.titulo||'-'}</td><td>${x.responsable_nombre||'-'}</td><td>${x.vence_at?new Date(x.vence_at).toLocaleString('es-AR'):'-'}</td><td>${slaBadge(x.vence_at,x.estado)}</td><td>${x.accion_recomendada||'-'}</td><td class="row">${prioridad(x)===0?'<span style="color:#ef4444;font-weight:700">PRIORIDAD</span>':''}<button type="button" data-action="history" data-id="${Number(x.id)}">Historial</button><button type="button" data-action="edit" data-id="${Number(x.id)}">Editar</button></td></tr>`).join(''):'<tr><td colspan="10" style="color:var(--muted)">Sin incidencias.</td></tr>';
     }
 
     function exportCsv(){
@@ -201,6 +210,15 @@
       renderHistoryList();
     }
     function closeHistory(){ historyModal.classList.remove('open'); historyModal.setAttribute('aria-hidden','true'); }
+
+    function aplicarFiltroPrioridad(){
+      document.getElementById('fltEstado').value='';
+      document.getElementById('fltSev').value='';
+      document.getElementById('fltSla').value='';
+      document.getElementById('fltMias').checked=false;
+      setStatus('Vista priorizada: primero críticas o SLA vencida.');
+      loadInc();
+    }
 
     async function refreshAll(){
       if(st.isSuper&&!st.empresaId){ setStatus('Seleccioná una empresa para cargar incidencias.',true); ['kpiGrid','incBody','incAlertas','misPendBody','misPendKpi'].forEach(id=>{const el=document.getElementById(id); if(el) el.innerHTML='';}); return; }
@@ -256,6 +274,12 @@
     document.getElementById('fltSla').addEventListener('change', loadInc);
     document.getElementById('fltMias').addEventListener('change', loadInc);
     document.getElementById('btnRefresh').addEventListener('click',refreshAll);
+    document.getElementById('btnPriorizar').addEventListener('click',aplicarFiltroPrioridad);
+    document.getElementById('incAlertas').addEventListener('click', (ev)=>{
+      const btn=ev.target.closest('button[data-action="priorizar-alerta"]');
+      if(!btn) return;
+      aplicarFiltroPrioridad();
+    });
     document.getElementById('btnExport').addEventListener('click',exportCsv);
     document.getElementById('logout').addEventListener('click', async (e)=>{e.preventDefault(); try{await authFetch('/api/logout',{method:'POST'});}catch{} location.href='/pedidos/login.html';});
 
