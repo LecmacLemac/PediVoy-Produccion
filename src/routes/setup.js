@@ -2356,10 +2356,19 @@ export function createSetupRouter(deps) {
   };
 
   async function openclawCron(args = []) {
-    const { stdout } = await execFileAsync('openclaw', ['cron', ...args], {
+    const node22 = '/home/lemac/.nvm/versions/node/v22.22.0/bin/node';
+    const cliEntry = '/home/lemac/.npm-global/lib/node_modules/openclaw/openclaw.mjs';
+    const nodeExec = node22;
+    const cmdArgs = [cliEntry, 'cron', ...args];
+
+    const env = { ...process.env };
+    const nodeBinDir = nodeExec.includes('/') ? nodeExec.slice(0, nodeExec.lastIndexOf('/')) : '';
+    if (nodeBinDir) env.PATH = `${nodeBinDir}:${env.PATH || ''}`;
+
+    const { stdout } = await execFileAsync(nodeExec, cmdArgs, {
       timeout: 30000,
       maxBuffer: 1024 * 1024,
-      env: process.env,
+      env,
     });
     return String(stdout || '');
   }
