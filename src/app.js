@@ -195,6 +195,17 @@ export function createApp(deps) {
     res.send(lines.join('\n') + '\n');
   });
 
+  const healthPayload = () => ({
+    ok: true,
+    service: 'hidro-api',
+    timestamp: new Date().toISOString(),
+    uptimeSec: Math.round(process.uptime()),
+  });
+
+  // Health debe registrarse antes de landing catch-all
+  app.get('/health', (_req, res) => res.json(healthPayload()));
+  app.get('/api/health', (_req, res) => res.json(healthPayload()));
+
   // ==================================================
   // RUTEO INTELIGENTE (LANDINGS vs INDEX GLOBAL)
   // ==================================================
@@ -283,16 +294,6 @@ export function createApp(deps) {
   });
 
   // Sin fallback legacy: toda ruta pública vive en src/routes/*
-
-  const healthPayload = () => ({
-    ok: true,
-    service: 'hidro-api',
-    timestamp: new Date().toISOString(),
-    uptimeSec: Math.round(process.uptime()),
-  });
-
-  app.get('/health', (_req, res) => res.json(healthPayload()));
-  app.get('/api/health', (_req, res) => res.json(healthPayload()));
 
   app.use((req, res) => {
     res.status(404).json({
