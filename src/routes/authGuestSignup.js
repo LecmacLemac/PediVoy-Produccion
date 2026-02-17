@@ -38,9 +38,10 @@ function hitRateLimit(map, key, windowMs, max) {
 }
 
 export function createAuthGuestSignupRouter(deps) {
-  const { query, withAuth } = deps || {};
+  const { query, withAuth, pool } = deps || {};
   if (typeof query !== 'function') throw new Error('createAuthGuestSignupRouter: falta query(fn)');
   if (typeof withAuth !== 'function') throw new Error('createAuthGuestSignupRouter: falta withAuth(fn)');
+  if (!pool || typeof pool.connect !== 'function') throw new Error('createAuthGuestSignupRouter: falta pool.connect(fn)');
 
   const router = express.Router();
 
@@ -189,10 +190,12 @@ export function createAuthGuestSignupRouter(deps) {
         '-' +
         Date.now().toString().slice(-4);
 
-      await query('BEGIN');
+      const client = await pool.connect();
 
       try {
-        const empRes = await query(
+        await client.query('BEGIN');
+
+        const empRes = await client.query(
           `INSERT INTO empresas (
               nombre, telefono, email, rubro, landing_slug,
               plan_estado, plan_tipo, plan_vencimiento, setup_steps
@@ -202,18 +205,18 @@ export function createAuthGuestSignupRouter(deps) {
           [empresa_nombre, telefono, email, rubro || 'general', slug]
         );
 
-        const newEmpresaId = empRes[0].id;
+        const newEmpresaId = empRes.rows[0].id;
 
-        const userRes = await query(
+        const userRes = await client.query(
           `INSERT INTO usuarios (username, password, role, empresa_id, telefono)
            VALUES ($1, $2, 'user', $3, $4)
            RETURNING id, username, role, empresa_id`,
           [username, hash, newEmpresaId, telefono]
         );
 
-        const newUser = userRes[0];
+        const newUser = userRes.rows[0];
 
-        await query('COMMIT');
+        await client.query('COMMIT');
 
         const token = jwt.sign(
           {
@@ -246,12 +249,14 @@ export function createAuthGuestSignupRouter(deps) {
 
         return res.json({ ok: true, user: newUser, message: '¡Empresa creada con éxito!' });
       } catch (err) {
-        await query('ROLLBACK');
+        await client.query('ROLLBACK');
         console.error('ROLLBACK SIGNUP:', err);
         if (err?.message?.includes('users_username_key') || err?.message?.includes('unique')) {
           return res.status(400).json({ error: 'El usuario o empresa ya existen.' });
         }
         throw err;
+      } finally {
+        client.release();
       }
     } catch (e) {
       console.error('SIGNUP ERROR:', e);

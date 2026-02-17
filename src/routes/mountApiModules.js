@@ -48,7 +48,7 @@ export function mountApiModules(app, deps) {
   } = deps;
 
   // AUTH / core multi-tenant
-  app.use('/api/auth', createAuthGuestSignupRouter({ query, withAuth }));
+  app.use('/api/auth', createAuthGuestSignupRouter({ query, withAuth, pool }));
   app.use('/api/setup', createSetupRouter({ query, withAuth, getEmpresaIdFromToken }));
   app.use('/api/public', createPublicLandingRouter({ query }));
   app.use('/api/public', trackingPublicRouter);
