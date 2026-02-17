@@ -31,7 +31,7 @@
     <div class="card">
       <div class="row" style="justify-content:space-between">
         <h1 style="margin:0;font-size:1.2rem">Fase 3 · Centro de incidencias</h1>
-        <div class="row"><div id="empresaWrap" style="display:none"><select id="empresaSelect"><option value="">Seleccionar empresa…</option></select></div><button id="btnRefresh">Actualizar</button></div>
+        <div class="row"><div id="empresaWrap" style="display:none"><select id="empresaSelect"><option value="">Seleccionar empresa…</option></select></div><button id="btnExport">Exportar CSV</button><button id="btnRefresh">Actualizar</button></div>
       </div>
       <div id="status" style="margin-top:6px;color:var(--muted)">Listo.</div>
     </div>
@@ -57,7 +57,7 @@
     <div class="card">
       <h2 style="margin:0 0 8px;font-size:1rem">Bandeja</h2>
       <div class="row" style="margin-bottom:8px"><select id="fltEstado"><option value="">Estado: todos</option><option value="abierta">Abierta</option><option value="en_progreso">En progreso</option><option value="resuelta">Resuelta</option><option value="cancelada">Cancelada</option></select><select id="fltSev"><option value="">Severidad: todas</option><option value="critica">Crítica</option><option value="alta">Alta</option><option value="media">Media</option><option value="baja">Baja</option></select><label style="display:flex;align-items:center;gap:6px;color:var(--muted)"><input id="fltMias" type="checkbox" /> Solo mías</label></div>
-      <div style="overflow:auto"><table><thead><tr><th>Fecha</th><th>Tipo</th><th>Sev.</th><th>Estado</th><th>Título</th><th>Resp.</th><th>Vence</th><th>Acción</th><th></th></tr></thead><tbody id="incBody"></tbody></table></div>
+      <div style="overflow:auto"><table><thead><tr><th>Fecha</th><th>Tipo</th><th>Sev.</th><th>Estado</th><th>Título</th><th>Resp.</th><th>Vence</th><th>SLA</th><th>Acción</th><th></th></tr></thead><tbody id="incBody"></tbody></table></div>
     </div>
   </main>
 
@@ -118,6 +118,16 @@
       const rows=(Array.isArray(st.historyRows)?st.historyRows:[]).filter(h=>!flt||String(h.evento||'')===flt);
       document.getElementById('historyList').innerHTML=rows.length?rows.map(h=>`<div style="border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--bg2)"><div class="row" style="justify-content:space-between"><div style="font-weight:700">${historyBadge(h.evento||'-')}</div><div style="font-size:.8rem;color:var(--muted)">${h.created_at?new Date(h.created_at).toLocaleString('es-AR'):''} · ${esc(h.actor_username||'sistema')}</div></div>${formatHistoryPayload(h.payload||{})}</div>`).join(''):'<div style="color:var(--muted)">Sin historial para el filtro aplicado.</div>';
     }
+    function slaBadge(venceAt, estado){
+      if(!venceAt) return '<span style="color:var(--muted)">Sin SLA</span>';
+      if(String(estado||'')==='resuelta') return '<span style="color:#22c55e">Resuelta</span>';
+      const due=new Date(venceAt).getTime();
+      if(!Number.isFinite(due)) return '<span style="color:var(--muted)">Sin SLA</span>';
+      const diff=due-Date.now();
+      if(diff<0) return '<span style="color:#ef4444;font-weight:700">Vencida</span>';
+      if(diff<=24*60*60*1000) return '<span style="color:#f59e0b;font-weight:700">Vence hoy</span>';
+      return '<span style="color:#22c55e">En plazo</span>';
+    }
 
     async function loadMe(){
       const r=await authFetch('/api/me'); if(r.status===401) return location.href='/pedidos/login.html';
@@ -146,7 +156,20 @@
       const r=await authFetch(apiUrl(path)); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error incidencias');
       st.items=Array.isArray(j.items)?j.items:[];
       const body=document.getElementById('incBody');
-      body.innerHTML=st.items.length?st.items.map(x=>`<tr><td>${x.created_at?new Date(x.created_at).toLocaleDateString('es-AR'):'-'}</td><td>${x.tipo||'-'}</td><td>${x.severidad||'-'}</td><td>${x.estado||'-'}</td><td>${x.titulo||'-'}</td><td>${x.responsable_nombre||'-'}</td><td>${x.vence_at?new Date(x.vence_at).toLocaleString('es-AR'):'-'}</td><td>${x.accion_recomendada||'-'}</td><td class="row"><button type="button" data-action="history" data-id="${Number(x.id)}">Historial</button><button type="button" data-action="edit" data-id="${Number(x.id)}">Editar</button></td></tr>`).join(''):'<tr><td colspan="9" style="color:var(--muted)">Sin incidencias.</td></tr>';
+      body.innerHTML=st.items.length?st.items.map(x=>`<tr><td>${x.created_at?new Date(x.created_at).toLocaleDateString('es-AR'):'-'}</td><td>${x.tipo||'-'}</td><td>${x.severidad||'-'}</td><td>${x.estado||'-'}</td><td>${x.titulo||'-'}</td><td>${x.responsable_nombre||'-'}</td><td>${x.vence_at?new Date(x.vence_at).toLocaleString('es-AR'):'-'}</td><td>${slaBadge(x.vence_at,x.estado)}</td><td>${x.accion_recomendada||'-'}</td><td class="row"><button type="button" data-action="history" data-id="${Number(x.id)}">Historial</button><button type="button" data-action="edit" data-id="${Number(x.id)}">Editar</button></td></tr>`).join(''):'<tr><td colspan="10" style="color:var(--muted)">Sin incidencias.</td></tr>';
+    }
+
+    function exportCsv(){
+      if(st.isSuper&&!st.empresaId) return setStatus('Seleccioná empresa primero',true);
+      const params=new URLSearchParams();
+      const estado=document.getElementById('fltEstado').value||'';
+      const severidad=document.getElementById('fltSev').value||'';
+      const mias=document.getElementById('fltMias').checked;
+      if(estado) params.set('estado',estado);
+      if(severidad) params.set('severidad',severidad);
+      if(mias) params.set('mias','1');
+      const path='/api/setup/fase3/incidencias/export.csv'+(params.toString()?`?${params.toString()}`:'');
+      window.open(apiUrl(path),'_blank');
     }
 
     function openEdit(item){
@@ -230,6 +253,7 @@
     document.getElementById('fltSev').addEventListener('change', loadInc);
     document.getElementById('fltMias').addEventListener('change', loadInc);
     document.getElementById('btnRefresh').addEventListener('click',refreshAll);
+    document.getElementById('btnExport').addEventListener('click',exportCsv);
     document.getElementById('logout').addEventListener('click', async (e)=>{e.preventDefault(); try{await authFetch('/api/logout',{method:'POST'});}catch{} location.href='/pedidos/login.html';});
 
     (async()=>{ await loadMe(); await refreshAll(); })();

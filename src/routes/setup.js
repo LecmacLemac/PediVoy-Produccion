@@ -2403,6 +2403,67 @@ export function createSetupRouter(deps) {
     }
   });
 
+  // GET /api/setup/fase3/incidencias/export.csv
+  router.get('/fase3/incidencias/export.csv', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req);
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+      const estado = String(req.query?.estado || '').trim();
+      const tipo = String(req.query?.tipo || '').trim();
+      const severidad = String(req.query?.severidad || '').trim();
+      const soloMias = ['1', 'true', 'si', 'sí'].includes(String(req.query?.mias || '').toLowerCase());
+
+      const params = [empresaId];
+      let where = 'WHERE i.empresa_id=$1';
+      if (estado) { params.push(estado); where += ` AND i.estado=$${params.length}`; }
+      if (tipo) { params.push(tipo); where += ` AND i.tipo=$${params.length}`; }
+      if (severidad) { params.push(severidad); where += ` AND i.severidad=$${params.length}`; }
+      if (soloMias) {
+        const uid = req?.user?.id ? Number(req.user.id) : null;
+        if (!uid) return res.status(400).json({ error: 'usuario inválido para filtro mías' });
+        params.push(uid);
+        where += ` AND i.responsable_usuario_id=$${params.length}`;
+      }
+
+      const rows = await query(
+        `SELECT i.id, i.created_at, i.tipo, i.severidad, i.estado, i.titulo,
+                i.accion_recomendada, i.vence_at, u.username AS responsable
+         FROM incidencias_operativas i
+         LEFT JOIN usuarios u ON u.id=i.responsable_usuario_id
+         ${where}
+         ORDER BY i.created_at DESC
+         LIMIT 2000`,
+        params
+      );
+
+      const csvEsc = (v) => {
+        if (v == null) return '';
+        const s = String(v);
+        return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+      };
+      const header = ['id', 'fecha', 'tipo', 'severidad', 'estado', 'titulo', 'responsable', 'vence_at', 'accion_recomendada'];
+      const lines = [header.join(',')].concat(rows.map((r) => [
+        r.id,
+        r.created_at ? new Date(r.created_at).toISOString() : '',
+        r.tipo,
+        r.severidad,
+        r.estado,
+        r.titulo,
+        r.responsable || '',
+        r.vence_at ? new Date(r.vence_at).toISOString() : '',
+        r.accion_recomendada || '',
+      ].map(csvEsc).join(',')));
+
+      const stamp = new Date().toISOString().slice(0, 10);
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="incidencias-${empresaId}-${stamp}.csv"`);
+      return res.status(200).send(`\uFEFF${lines.join('\n')}`);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error exportando incidencias' });
+    }
+  });
+
   // POST /api/setup/fase3/incidencias
   router.post('/fase3/incidencias', withAuth, async (req, res) => {
     try {
