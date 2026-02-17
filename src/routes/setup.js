@@ -2355,7 +2355,7 @@ export function createSetupRouter(deps) {
     'bf97975b-bc23-4b04-bb60-1adda91563a8': { tipo: 'comercial', objetivo: 'Detectar pipeline estancado y proponer acciones de seguimiento.' },
   };
 
-  async function openclawCron(args = []) {
+  async function openclawCron(args = [], opts = {}) {
     const node22 = '/home/lemac/.nvm/versions/node/v22.22.0/bin/node';
     const cliEntry = '/home/lemac/.npm-global/lib/node_modules/openclaw/openclaw.mjs';
     const nodeExec = node22;
@@ -2365,8 +2365,9 @@ export function createSetupRouter(deps) {
     const nodeBinDir = nodeExec.includes('/') ? nodeExec.slice(0, nodeExec.lastIndexOf('/')) : '';
     if (nodeBinDir) env.PATH = `${nodeBinDir}:${env.PATH || ''}`;
 
+    const timeoutMs = Number(opts.timeoutMs || 15000);
     const { stdout } = await execFileAsync(nodeExec, cmdArgs, {
-      timeout: 30000,
+      timeout: timeoutMs,
       maxBuffer: 1024 * 1024,
       env,
     });
@@ -2379,7 +2380,7 @@ export function createSetupRouter(deps) {
       const empresaId = resolveEmpresaIdForSetup(req);
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
 
-      const raw = await openclawCron(['list', '--all', '--json']);
+      const raw = await openclawCron(['list', '--all', '--json', '--timeout', '10000'], { timeoutMs: 12000 });
       let parsed = [];
       try { parsed = JSON.parse(raw); } catch { parsed = []; }
       const list = Array.isArray(parsed) ? parsed : (Array.isArray(parsed?.jobs) ? parsed.jobs : []);
@@ -2422,15 +2423,16 @@ export function createSetupRouter(deps) {
       const accion = String(req.body?.accion || '').trim().toLowerCase();
       if (!PEDIVOY_AGENT_META[id]) return res.status(404).json({ error: 'Agente no permitido en panel PediVoy' });
 
-      if (accion === 'run') await openclawCron(['run', id]);
-      else if (accion === 'pause') await openclawCron(['disable', id]);
-      else if (accion === 'resume') await openclawCron(['enable', id]);
+      if (accion === 'run') await openclawCron(['run', id, '--timeout', '10000'], { timeoutMs: 12000 });
+      else if (accion === 'pause') await openclawCron(['disable', id, '--timeout', '10000'], { timeoutMs: 12000 });
+      else if (accion === 'resume') await openclawCron(['enable', id, '--timeout', '10000'], { timeoutMs: 12000 });
       else return res.status(400).json({ error: 'Acción inválida. Usá: run | pause | resume' });
 
       return res.json({ ok: true, id, accion });
     } catch (e) {
       console.error(e);
-      return res.status(500).json({ error: 'Error ejecutando acción de agente' });
+      const msg = e?.killed ? 'La acción tardó demasiado en responder desde OpenClaw. Reintentá en unos segundos.' : 'Error ejecutando acción de agente';
+      return res.status(500).json({ error: msg });
     }
   });
 
