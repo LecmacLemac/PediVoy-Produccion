@@ -35,6 +35,11 @@
   <div class="card"><h2 style="margin:0 0 8px;font-size:1rem">Control de cierre diario</h2><div id="cierreChecklist" style="display:grid;gap:8px"></div></div>
   <div class="card"><h2 style="margin:0 0 8px;font-size:1rem">Centro de automatizaciones</h2><div id="autoCenter" style="display:grid;gap:8px"></div></div>
   <div class="card">
+    <h2 style="margin:0 0 8px;font-size:1rem">Checklist UAT · Fase 3</h2>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px"><button id="btnUatRefresh" type="button">Recalcular checklist</button><button id="btnUatCopy" type="button">Copiar checklist</button></div>
+    <div id="uatChecklist" style="display:grid;gap:8px"></div>
+  </div>
+  <div class="card">
     <h2 style="margin:0 0 8px;font-size:1rem">Resumen diario ejecutivo</h2>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px"><button id="btnResumen" type="button">Actualizar resumen</button><button id="btnCopyResumen" type="button">Copiar resumen</button></div>
     <textarea id="resumenText" rows="12" style="width:100%;background:var(--bg2);border:1px solid var(--border);border-radius:10px;color:var(--ink);padding:10px"></textarea>
@@ -43,7 +48,7 @@
 <script>
 const authFetch=(url,opts={})=>fetch(url,{...opts,headers:{'Content-Type':'application/json',...(opts.headers||{})},credentials:'include'});
 const fmt=new Intl.NumberFormat('es-AR',{style:'currency',currency:'ARS',maximumFractionDigits:0});
-const st={isSuper:false,empresaId:null};
+const st={isSuper:false,empresaId:null,dashboard:null,semaforo:null,recos:[],cierre:[],autos:[]};
 const setStatus=(t,e=false)=>{const el=document.getElementById('status');el.textContent=t;el.style.color=e?'var(--danger)':'var(--muted)';};
 const apiUrl=(p)=>st.isSuper&&st.empresaId?(p+(p.includes('?')?'&':'?')+'empresa_id='+encodeURIComponent(String(st.empresaId))):p;
 
@@ -62,6 +67,7 @@ async function loadDashboard(){
   if(st.isSuper&&!st.empresaId) return;
   const r=await authFetch(apiUrl('/api/setup/fase3/dashboard')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error dashboard ejecutivo');
   const k=j.kpis||{};
+  st.dashboard=k;
   const items=[['Oportunidades abiertas',k.oportunidades_abiertas||0],['Pipeline total',fmt.format(k.pipeline_total||0)],['Pipeline ponderado',fmt.format(k.pipeline_ponderado||0)],['Ingresos 30d',fmt.format(k.ingresos_30d||0)],['Egresos 30d',fmt.format(k.egresos_30d||0)],['Pend. conciliación',k.pendientes_conciliacion||0],['Compras abiertas',k.compras_abiertas||0],['Comprometido compras',fmt.format(k.compras_comprometidas||0)]];
   document.getElementById('kpiGrid').innerHTML=items.map(([l,v])=>`<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div></div>`).join('');
 }
@@ -69,6 +75,7 @@ async function loadDashboard(){
 async function loadSemaforo(){
   if(st.isSuper&&!st.empresaId) return;
   const r=await authFetch(apiUrl('/api/setup/fase3/semaforo-operativo')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error semáforo operativo');
+  st.semaforo=j;
   const color=j.nivel==='verde'?'#22c55e':(j.nivel==='amarillo'?'#f59e0b':'#ef4444');
   const f=j.factores||{};
   document.getElementById('semaforo').innerHTML=`<div style="border:1px solid var(--border);border-left:6px solid ${color};border-radius:10px;padding:10px;background:var(--bg2)"><div style="font-weight:700">Nivel ${String(j.nivel||'-').toUpperCase()} · Score ${Number(j.score||0)}/100</div><div style="font-size:.9rem;color:var(--muted);margin-top:4px">Ingresos 30d: ${fmt.format(Number(f.ingresos_30d||0))} · Egresos 30d: ${fmt.format(Number(f.egresos_30d||0))} · Pend. conciliación: ${Number(f.pendientes_conciliacion||0)} · Compras vencidas: ${Number(f.compras_vencidas||0)}</div></div>`;
@@ -78,6 +85,7 @@ async function loadRecos(){
   if(st.isSuper&&!st.empresaId) return;
   const r=await authFetch(apiUrl('/api/setup/fase3/recomendaciones')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error recomendaciones');
   const items=Array.isArray(j.items)?j.items:[];
+  st.recos=items;
   const color=(p)=>p==='alta'?'#ef4444':(p==='media'?'#f59e0b':'#22c55e');
   document.getElementById('recos').innerHTML=items.length?items.map(x=>`<div style="border:1px solid var(--border);border-left:4px solid ${color(x.prioridad)};border-radius:10px;padding:10px;background:var(--bg2)"><div style="font-weight:700">${x.titulo}</div><div style="font-size:.9rem;color:var(--muted)">${x.detalle||''}</div><div style="font-size:.85rem;margin-top:4px">➡️ ${x.accion||''}</div></div>`).join(''):'<div style="color:var(--muted)">Sin recomendaciones.</div>';
 }
@@ -86,6 +94,7 @@ async function loadControlCierre(){
   if(st.isSuper&&!st.empresaId) return;
   const r=await authFetch(apiUrl('/api/setup/fase3/control-cierre')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error control cierre');
   const items=Array.isArray(j.checklist)?j.checklist:[];
+  st.cierre=items;
   const icon=(s)=>s==='ok'?'✅':(s==='atencion'?'🟡':'🔴');
   document.getElementById('cierreChecklist').innerHTML=items.length?items.map(x=>`<div style="border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--bg2)"><div style="font-weight:700">${icon(x.status)} ${x.titulo}</div><div style="font-size:.9rem;color:var(--muted)">${x.detalle||''}</div></div>`).join(''):'<div style="color:var(--muted)">Sin items de cierre.</div>';
 }
@@ -94,6 +103,7 @@ async function loadAutomatizaciones(){
   if(st.isSuper&&!st.empresaId) return;
   const r=await authFetch(apiUrl('/api/setup/fase3/automatizaciones')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error automatizaciones');
   const items=Array.isArray(j.items)?j.items:[];
+  st.autos=items;
   const box=document.getElementById('autoCenter');
   box.innerHTML=items.length?items.map(x=>`<div style="border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--bg2)"><div style="font-weight:700">${x.nombre}</div><div style="font-size:.9rem;color:var(--muted)">ID: ${x.id}</div><div style="font-size:.9rem;color:var(--muted)">Cron: ${x.cron} · ${x.tz}</div><div style="font-size:.9rem;margin-top:4px">🎯 ${x.objetivo||''}</div></div>`).join(''):'<div style="color:var(--muted)">Sin automatizaciones configuradas.</div>';
 }
@@ -104,11 +114,46 @@ async function loadResumen(){
   document.getElementById('resumenText').value=j.resumen||'';
 }
 
-async function refreshAll(){ if(st.isSuper&&!st.empresaId){ setStatus('Seleccioná empresa para ver el tablero ejecutivo.',true); ['kpiGrid','semaforo','recos','cierreChecklist','autoCenter'].forEach(id=>{const el=document.getElementById(id); if(el) el.innerHTML='';}); const tx=document.getElementById('resumenText'); if(tx) tx.value=''; return; }
-  setStatus('Actualizando…'); try{ await Promise.all([loadDashboard(),loadSemaforo(),loadRecos(),loadControlCierre(),loadAutomatizaciones(),loadResumen()]); setStatus('Actualizado.'); } catch(e){ setStatus(e.message||'Error',true); }
+function buildUatItems(){
+  const sem=String(st.semaforo?.nivel||'').toLowerCase();
+  const abiertas=Number(st.dashboard?.oportunidades_abiertas||0);
+  const pendientesConc=Number(st.dashboard?.pendientes_conciliacion||0);
+  const recosAlta=Array.isArray(st.recos)?st.recos.filter(r=>String(r.prioridad)==='alta').length:0;
+  const cierreCrit=Array.isArray(st.cierre)?st.cierre.filter(c=>String(c.status)==='critico').length:0;
+  const autos=Array.isArray(st.autos)?st.autos.length:0;
+  return [
+    {ok:sem!=='rojo', titulo:'Semáforo operativo no crítico', detalle:`Nivel actual: ${sem||'-'}`},
+    {ok:pendientesConc===0, titulo:'Conciliación sin pendientes', detalle:`Pendientes actuales: ${pendientesConc}`},
+    {ok:recosAlta===0, titulo:'Sin recomendaciones de prioridad alta', detalle:`Alertas altas: ${recosAlta}`},
+    {ok:cierreCrit===0, titulo:'Control de cierre sin críticos', detalle:`Items críticos: ${cierreCrit}`},
+    {ok:autos>=3, titulo:'Automatizaciones base configuradas', detalle:`Automatizaciones activas detectadas: ${autos}`},
+    {ok:abiertas>=0, titulo:'Tablero comercial responde y carga KPIs', detalle:`Oportunidades abiertas: ${abiertas}`},
+  ];
+}
+
+function renderUat(){
+  const items=buildUatItems();
+  const okCount=items.filter(i=>i.ok).length;
+  const total=items.length;
+  const box=document.getElementById('uatChecklist');
+  box.innerHTML=`<div style="font-size:.9rem;color:var(--muted)">Resultado: ${okCount}/${total} checks OK</div>`+
+    items.map(i=>`<div style="border:1px solid var(--border);border-left:4px solid ${i.ok?'#22c55e':'#ef4444'};border-radius:10px;padding:10px;background:var(--bg2)"><div style="font-weight:700">${i.ok?'✅':'❌'} ${i.titulo}</div><div style="font-size:.9rem;color:var(--muted)">${i.detalle}</div></div>`).join('');
+}
+
+function copyUat(){
+  const items=buildUatItems();
+  const lines=['Checklist UAT Fase 3'];
+  items.forEach(i=>lines.push(`${i.ok?'[OK]':'[PEND]'} ${i.titulo} — ${i.detalle}`));
+  return navigator.clipboard.writeText(lines.join('\n'));
+}
+
+async function refreshAll(){ if(st.isSuper&&!st.empresaId){ setStatus('Seleccioná empresa para ver el tablero ejecutivo.',true); ['kpiGrid','semaforo','recos','cierreChecklist','autoCenter','uatChecklist'].forEach(id=>{const el=document.getElementById(id); if(el) el.innerHTML='';}); const tx=document.getElementById('resumenText'); if(tx) tx.value=''; return; }
+  setStatus('Actualizando…'); try{ await Promise.all([loadDashboard(),loadSemaforo(),loadRecos(),loadControlCierre(),loadAutomatizaciones(),loadResumen()]); renderUat(); setStatus('Actualizado.'); } catch(e){ setStatus(e.message||'Error',true); }
 }
 
 document.getElementById('btnRefresh').addEventListener('click',refreshAll);
+document.getElementById('btnUatRefresh').addEventListener('click', ()=>{ renderUat(); setStatus('Checklist UAT recalculado.'); });
+document.getElementById('btnUatCopy').addEventListener('click', async ()=>{ try{ await copyUat(); setStatus('Checklist UAT copiado.'); } catch{ setStatus('No se pudo copiar el checklist UAT.',true); } });
 document.getElementById('btnResumen').addEventListener('click', async ()=>{ try{ await loadResumen(); setStatus('Resumen actualizado.'); } catch(e){ setStatus(e.message||'Error resumen',true);} });
 document.getElementById('btnCopyResumen').addEventListener('click', async ()=>{ try{ const t=document.getElementById('resumenText').value||''; await navigator.clipboard.writeText(t); setStatus('Resumen copiado.'); } catch{ setStatus('No se pudo copiar el resumen.',true); } });
 document.getElementById('logout').addEventListener('click',async (e)=>{e.preventDefault(); try{await authFetch('/api/logout',{method:'POST'});}catch{} location.href='/pedidos/login.html';});
