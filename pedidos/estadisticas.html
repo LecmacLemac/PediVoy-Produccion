@@ -491,8 +491,8 @@
     // ====== EMPRESA / ROL ======
 // MODIFICADO: Esta función ahora prioriza siempre el ID seleccionado en el combo
 function qsEmpresa() {
-  const selectedId = $('#empSel')?.value;
-  // Si hay un ID seleccionado, lo usamos. Si no, usamos el del token.
+  // Seguridad front: solo SUPER puede cambiar el contexto por selector
+  const selectedId = isSuper ? $('#empSel')?.value : null;
   const idAUsar = selectedId || empresaId;
   return idAUsar ? `?empresa_id=${idAUsar}` : '';
 }
@@ -503,14 +503,18 @@ async function init() {
 
     // 1) Obtener mis datos básicos
     const meResp = await api('/api/me');
+    if (!meResp) return;
     const u = meResp.user || meResp;
-    isSuper = u.role?.toUpperCase() === 'SUPER';
-    empresaId = u.empresa_id;
+    if (!u || !u.empresa_id) throw new Error('Sesión inválida');
+
+    isSuper = String(u.role || '').toUpperCase() === 'SUPER';
+    empresaId = Number(u.empresa_id);
 
     // 2) Cargar lista de Empresas
     let empresas = [];
     try {
-      empresas = await api('/api/empresas');
+      const empresasResp = await api('/api/empresas');
+      empresas = Array.isArray(empresasResp) ? empresasResp : [];
     } catch (e) { console.warn("Error empresas", e); }
 
     // 3) Configurar el Selector de Empresa ID
@@ -528,24 +532,28 @@ async function init() {
 
       // EVENTO CLAVE: Cuando cambias el ID, refrescamos todo el contexto
       sel.onchange = async () => {
-        const nuevoId = sel.value;
+        if (!isSuper) return;
         showToast("Cambiando contexto de Empresa...");
-        
+
         // Actualizamos labels
-        const nombreEmp = sel.options[sel.selectedIndex].text;
+        const nombreEmp = sel.options[sel.selectedIndex]?.text || `ID ${sel.value}`;
         $('#rolePill').textContent = `${u.role} · ${nombreEmp}`;
-        
+
         // Recargamos datos dependientes de la empresa
         await loadChoferes();
         await loadProductosMap();
-        
+
         // Limpiamos tabla para evitar confusión de datos entre empresas
         $('#tbBody').innerHTML = `<tr><td colspan="11" style="text-align:center; padding:2rem; color:var(--muted)">Empresa cambiada. Presione "Calcular" para actualizar.</td></tr>`;
       };
     }
 
-    // Mostrar el selector solo si es Super o si hay más de una empresa disponible
-    $('#empWrap').hidden = !isSuper && empresas.length <= 1;
+    // Mostrar selector solo para SUPER
+    $('#empWrap').hidden = !isSuper;
+
+    // Badge de contexto inicial
+    const selectedTxt = $('#empSel')?.options?.[$('#empSel')?.selectedIndex || 0]?.text || `ID ${empresaId}`;
+    $('#rolePill').textContent = `${u.role || 'USER'} · ${selectedTxt}`;
 
     // 4) Carga inicial de datos de apoyo
     await loadChoferes();
