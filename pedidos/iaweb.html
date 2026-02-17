@@ -327,9 +327,9 @@
 
     <div class="preview-area">
       <div class="toolbar">
-        <button onclick="setDevice('desktop')" class="active" title="Escritorio"><i class="fa-solid fa-desktop"></i></button>
-        <button onclick="setDevice('tablet')" title="Tablet"><i class="fa-solid fa-tablet-screen-button"></i></button>
-        <button onclick="setDevice('mobile')" title="Móvil"><i class="fa-solid fa-mobile-screen-button"></i></button>
+        <button onclick="setDevice('desktop', this)" class="active" title="Escritorio"><i class="fa-solid fa-desktop"></i></button>
+        <button onclick="setDevice('tablet', this)" title="Tablet"><i class="fa-solid fa-tablet-screen-button"></i></button>
+        <button onclick="setDevice('mobile', this)" title="Móvil"><i class="fa-solid fa-mobile-screen-button"></i></button>
       </div>
       <iframe id="previewFrame" class="desktop"></iframe>
     </div>
@@ -377,11 +377,11 @@
       }
     }
 
-    function setDevice(mode) {
+    function setDevice(mode, btnEl) {
       const iframe = document.getElementById('previewFrame');
       iframe.className = mode;
       document.querySelectorAll('.toolbar button').forEach(b => b.classList.remove('active'));
-      event.currentTarget.classList.add('active');
+      if (btnEl) btnEl.classList.add('active');
     }
 
     // --- AUTH & LOGOUT ---
@@ -470,15 +470,11 @@
     function updateUIInfo(empresa) {
       const infoBox = document.getElementById('configInfo');
       
-      // Slug y URL
+      // Slug y URL real publicada (archivo por ID: empresa_<id>.html)
       const slug = empresa.landing_slug || '(sin slug)';
-      let urlPreview = '#';
-      let urlText = 'No configurada (Falta Slug)';
-
-      if (empresa.landing_slug) {
-        urlPreview = `/pages/${encodeURIComponent(empresa.landing_slug)}.html`;
-        urlText = `${window.location.origin}/pages/${encodeURIComponent(empresa.landing_slug)}.html`;
-      }
+      const landingPath = `/pages/empresa_${Number(empresa.id)}.html`;
+      const urlPreview = landingPath;
+      const urlText = `${window.location.origin}${landingPath}`;
 
       const safePreview = safeHttpUrl(urlPreview) || '#';
       infoBox.innerHTML = `
