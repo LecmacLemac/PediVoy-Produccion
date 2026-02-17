@@ -79,6 +79,13 @@ OPENAI_API_KEY=sk-tu-api-key-openai
 VAPID_PUBLIC_KEY=...
 VAPID_PRIVATE_KEY=...
 
+# Seguridad recomendada
+# Allowlist CORS explícita (CSV de orígenes permitidos)
+CORS_ALLOWED_ORIGINS=https://pedivoy.com,https://www.pedivoy.com
+
+# Requerido para endpoints internos /internal/cron/*
+CRON_SECRET=un-secreto-largo-y-aleatorio
+
 
 4. Ejecutar
 
