@@ -35,7 +35,7 @@ export function createProductosRouter(deps) {
           stock_min, stock_max,
           categoria, orden,
           etiqueta, imagen_promo, mostrar_en_catalogo, mostrar_en_landing,
-          config_activo,
+          config_activo, promo_config,
           created_at, updated_at, deleted_at
         FROM productos
         WHERE empresa_id = $1 ${whereDeleted}
@@ -71,6 +71,7 @@ export function createProductosRouter(deps) {
         sku,
         external_id,
         config_activo,
+        promo_config,
       } = req.body || {};
 
       const esSuperAdmin = isSuper(req);
@@ -94,6 +95,7 @@ export function createProductosRouter(deps) {
       const externalFinal = externalNorm && externalNorm.length ? externalNorm : null;
 
       const configActivo = config_activo === undefined ? null : config_activo;
+      const promoConfig = promo_config === undefined ? null : promo_config;
 
       const uid = req.user?.uid ?? null;
 
@@ -106,7 +108,7 @@ export function createProductosRouter(deps) {
           stock_min, stock_max,
           categoria, orden,
           etiqueta, imagen_promo, mostrar_en_catalogo, mostrar_en_landing,
-          config_activo,
+          config_activo, promo_config,
           created_by, updated_by, updated_at
         )
         VALUES (
@@ -116,8 +118,8 @@ export function createProductosRouter(deps) {
           $8, $9,
           $10, $11,
           $12, $13, $14, $15,
-          $16,
-          $17, $18, NOW()
+          $16, $17,
+          $18, $19, NOW()
         )
         RETURNING id
         `,
@@ -138,6 +140,7 @@ export function createProductosRouter(deps) {
           mostrar_en_catalogo !== undefined ? !!mostrar_en_catalogo : true,
           mostrar_en_landing !== undefined ? !!mostrar_en_landing : false,
           configActivo,
+          promoConfig,
           uid,
           uid,
         ]
@@ -173,6 +176,7 @@ export function createProductosRouter(deps) {
         sku,
         external_id,
         config_activo,
+        promo_config,
         empresa_id,
       } = req.body || {};
 
@@ -252,6 +256,10 @@ export function createProductosRouter(deps) {
       if (config_activo !== undefined) {
         sets.push(`config_activo=$${idx++}`);
         vals.push(config_activo);
+      }
+      if (promo_config !== undefined) {
+        sets.push(`promo_config=$${idx++}`);
+        vals.push(promo_config);
       }
 
       if (sku !== undefined) {

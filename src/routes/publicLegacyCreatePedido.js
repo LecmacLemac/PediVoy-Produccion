@@ -284,17 +284,96 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
       }
 
       const normItems = (Array.isArray(items) ? items : [])
-        .map(it => ({
+        .map((it) => ({
           producto: String(it?.producto || '').trim(),
           cantidad: Number(it?.cantidad ?? 0),
-          precio_unitario: Number(it?.precio_unitario ?? 0)
+          precio_unitario: Number(it?.precio_unitario ?? 0),
+          producto_id: Number(it?.producto_id ?? 0) || null,
         }))
-        .filter(it => it.producto && Number.isFinite(it.cantidad) && it.cantidad > 0 && Number.isFinite(it.precio_unitario) && it.precio_unitario >= 0);
+        .filter((it) => it.producto && Number.isFinite(it.cantidad) && it.cantidad > 0 && Number.isFinite(it.precio_unitario) && it.precio_unitario >= 0);
 
       if (normItems.length === 0) {
         await rollbackIfNeeded();
         tEnd(`[public/pedidos] ${reqId} TOTAL`);
         return res.status(400).json({ error: 'items inválidos', reqId });
+      }
+
+      const catalogRows = await txQuery(
+        `SELECT id, nombre, promo_config
+         FROM productos
+         WHERE empresa_id = $1 AND deleted_at IS NULL`,
+        [empId]
+      );
+
+      const byId = new Map();
+      const byName = new Map();
+      for (const row of catalogRows) {
+        byId.set(Number(row.id), row);
+        byName.set(String(row.nombre || '').trim().toLowerCase(), row);
+      }
+
+      for (const it of normItems) {
+        let p = null;
+        if (it.producto_id && byId.has(Number(it.producto_id))) {
+          p = byId.get(Number(it.producto_id));
+        } else {
+          p = byName.get(String(it.producto || '').trim().toLowerCase()) || null;
+        }
+        if (p) {
+          it.producto_id = Number(p.id);
+          it.producto = String(p.nombre || it.producto);
+        } else {
+          it.producto_id = null;
+        }
+      }
+
+      const pendingPromoRedemptions = [];
+      const promoAddedByTrigger = new Set();
+
+      if (punto_entrega_id) {
+        try {
+          await txQuery('SELECT pg_advisory_xact_lock(hashtext($1))', [`promo-once:${empId}:${punto_entrega_id}`]);
+
+          for (const it of [...normItems]) {
+            if (!it.producto_id) continue;
+            if (promoAddedByTrigger.has(it.producto_id)) continue;
+
+            const baseProduct = byId.get(Number(it.producto_id));
+            const promoCfg = baseProduct?.promo_config?.once_per_client_gift;
+            if (!promoCfg?.enabled) continue;
+
+            const giftProductId = Number(promoCfg.gift_product_id || 0);
+            if (!giftProductId || !byId.has(giftProductId)) continue;
+
+            const already = await txQuery(
+              `SELECT 1
+                 FROM promociones_redenciones
+                WHERE empresa_id = $1
+                  AND punto_entrega_id = $2
+                  AND trigger_producto_id = $3
+                  AND beneficio_tipo = 'gift_once_per_product'
+                LIMIT 1`,
+              [empId, punto_entrega_id, it.producto_id]
+            );
+            if (already.length) continue;
+
+            const giftProduct = byId.get(giftProductId);
+            normItems.push({
+              producto: `🎁 REGALO: ${giftProduct?.nombre || 'Promoción'}`,
+              cantidad: 1,
+              precio_unitario: 0,
+              producto_id: giftProductId,
+            });
+
+            pendingPromoRedemptions.push({
+              trigger_producto_id: it.producto_id,
+              beneficio_producto_id: giftProductId,
+            });
+            promoAddedByTrigger.add(it.producto_id);
+          }
+        } catch (e) {
+          errlog('PROMO_ONCE.ERROR', e?.message || e);
+        }
       }
 
       let rewardIdsToUpdate = [];
@@ -390,10 +469,26 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
 
       for (const it of normItems) {
         await txQuery(
-          `INSERT INTO items_pedido (pedido_id, producto, cantidad, precio_unitario)
-           VALUES ($1,$2,$3,$4)`,
-          [pedido.id, it.producto, it.cantidad, it.precio_unitario]
+          `INSERT INTO items_pedido (pedido_id, producto, producto_id, cantidad, precio_unitario)
+           VALUES ($1,$2,$3,$4,$5)`,
+          [pedido.id, it.producto, it.producto_id || null, it.cantidad, it.precio_unitario]
         );
+      }
+
+      if (pendingPromoRedemptions.length > 0) {
+        try {
+          for (const promo of pendingPromoRedemptions) {
+            await txQuery(
+              `INSERT INTO promociones_redenciones (
+                 empresa_id, punto_entrega_id, trigger_producto_id, beneficio_tipo, beneficio_producto_id, pedido_id
+               ) VALUES ($1,$2,$3,'gift_once_per_product',$4,$5)
+               ON CONFLICT DO NOTHING`,
+              [empId, punto_entrega_id, promo.trigger_producto_id, promo.beneficio_producto_id, pedido.id]
+            );
+          }
+        } catch (e) {
+          errlog('PROMO_ONCE.REDENCION.ERROR', e?.message || e);
+        }
       }
 
       if (rewardIdsToUpdate.length > 0) {

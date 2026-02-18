@@ -422,6 +422,25 @@
           </div>
         </div>
 
+        <div class="section-label">Promociones</div>
+        <div class="form-grid">
+          <div>
+            <label class="checkbox-label">
+              <input type="checkbox" id="p_promo_once_enabled">
+              Regalo por única vez por cliente
+            </label>
+            <div style="font-size:0.78rem; color:var(--muted); margin-top:0.25rem;">
+              Si el cliente compra este producto, recibe el regalo solo la primera vez.
+            </div>
+          </div>
+          <div>
+            <label>Producto de regalo</label>
+            <select id="p_promo_once_gift_product_id">
+              <option value="">-- Seleccionar regalo --</option>
+            </select>
+          </div>
+        </div>
+
         <div>
           <label>Mostrar en:</label>
           <div class="checkbox-group">
@@ -545,6 +564,7 @@
         const cfg = p.config_activo || {};
         const isActivoFisico = !!cfg.es_activo;
         const usaAlquiler = !!cfg.usa_alquiler;
+        const promoCfg = p.promo_config?.once_per_client_gift || {};
 
         let metaBadges = '';
         if (isActivoFisico) {
@@ -552,6 +572,9 @@
         }
         if (usaAlquiler) {
           metaBadges += `<span class="badge" style="margin-left:4px;">Alquiler</span>`;
+        }
+        if (promoCfg.enabled) {
+          metaBadges += `<span class="badge" style="margin-left:4px;">Promo 1° compra</span>`;
         }
         
         let visibility = [];
@@ -584,6 +607,21 @@
       }).join('');
     }
 
+    function fillGiftProductOptions(selectedId = null, currentProductId = null) {
+      const sel = $('#p_promo_once_gift_product_id');
+      if (!sel) return;
+
+      const options = ['<option value="">-- Seleccionar regalo --</option>'];
+      products
+        .filter((x) => Number(x.id) !== Number(currentProductId || 0))
+        .forEach((x) => {
+          options.push(`<option value="${Number(x.id)}">#${Number(x.id)} · ${esc(x.nombre)}</option>`);
+        });
+
+      sel.innerHTML = options.join('');
+      sel.value = selectedId ? String(selectedId) : '';
+    }
+
     // --- Modal Logic ---
     function openModal() {
       if (STATE.isSuper && !$('#empSel').value) {
@@ -602,6 +640,10 @@
       $('#p_usa_alquiler').checked = false;
       $('#p_alquiler_mensual').value = '';
       $('#p_plazo_minimo').value = '';
+
+      $('#p_promo_once_enabled').checked = false;
+      fillGiftProductOptions(null, null);
+      $('#p_promo_once_gift_product_id').disabled = true;
 
       $('#p_nombre').focus();
     }
@@ -637,6 +679,11 @@
         (cfg.monto_alquiler !== undefined && cfg.monto_alquiler !== null) ? cfg.monto_alquiler : '';
       $('#p_plazo_minimo').value =
         (cfg.plazo_minimo_meses !== undefined && cfg.plazo_minimo_meses !== null) ? cfg.plazo_minimo_meses : '';
+
+      const promoCfg = p.promo_config?.once_per_client_gift || {};
+      $('#p_promo_once_enabled').checked = !!promoCfg.enabled;
+      fillGiftProductOptions(promoCfg.gift_product_id || null, p.id);
+      $('#p_promo_once_gift_product_id').disabled = !promoCfg.enabled;
     }
 
     async function save() {
@@ -665,6 +712,19 @@
         config_activo = cfg;
       }
 
+      const promoEnabled = $('#p_promo_once_enabled').checked;
+      const promoGiftProductId = Number($('#p_promo_once_gift_product_id').value || 0) || null;
+      let promo_config = null;
+      if (promoEnabled && promoGiftProductId) {
+        promo_config = {
+          once_per_client_gift: {
+            enabled: true,
+            gift_product_id: promoGiftProductId,
+            mode: 'per_product',
+          },
+        };
+      }
+
       const body = {
         nombre: $('#p_nombre').value.trim(),
         sku: ($('#p_sku')?.value || '').trim() || null,
@@ -679,9 +739,11 @@
         mostrar_en_catalogo: $('#p_catalogo').checked,
         mostrar_en_landing: $('#p_landing').checked,
         config_activo, // ⬅ se envía al backend
+        promo_config,
       };
 
       if (!body.nombre || !body.precio) { toast('Nombre y Precio requeridos'); return; }
+      if (promoEnabled && !promoGiftProductId) { toast('Seleccioná el producto de regalo para la promo única'); return; }
       if (STATE.isSuper) body.empresa_id = $('#empSel').value;
 
       const method = id ? 'PUT' : 'POST';
@@ -748,6 +810,16 @@
 
     const btnSaveProducto = document.getElementById('btnSaveProducto');
     if (btnSaveProducto) btnSaveProducto.addEventListener('click', save);
+
+    const promoToggle = document.getElementById('p_promo_once_enabled');
+    if (promoToggle) {
+      promoToggle.addEventListener('change', () => {
+        const sel = document.getElementById('p_promo_once_gift_product_id');
+        if (!sel) return;
+        sel.disabled = !promoToggle.checked;
+        if (!promoToggle.checked) sel.value = '';
+      });
+    }
 
     const formProd = document.getElementById('formProd');
     if (formProd) {

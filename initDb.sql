@@ -247,7 +247,8 @@ ALTER TABLE productos
     ADD COLUMN IF NOT EXISTS updated_by INTEGER,
     ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ,
-    ADD COLUMN IF NOT EXISTS deleted_by INTEGER;
+    ADD COLUMN IF NOT EXISTS deleted_by INTEGER,
+    ADD COLUMN IF NOT EXISTS promo_config JSONB;
 
 CREATE UNIQUE INDEX IF NOT EXISTS productos_empresa_sku_uniq
   ON productos (empresa_id, lower(sku))
@@ -430,6 +431,21 @@ CREATE TABLE IF NOT EXISTS cliente_recompensas (
   origen_pedido_id INTEGER REFERENCES pedidos(id) ON DELETE SET NULL,
   created_at       TIMESTAMPTZ DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS promociones_redenciones (
+  id                 SERIAL PRIMARY KEY,
+  empresa_id         INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+  punto_entrega_id   INTEGER NOT NULL REFERENCES puntos_entrega(id) ON DELETE CASCADE,
+  trigger_producto_id INTEGER NOT NULL REFERENCES productos(id) ON DELETE CASCADE,
+  beneficio_tipo     TEXT NOT NULL,
+  beneficio_producto_id INTEGER REFERENCES productos(id) ON DELETE SET NULL,
+  pedido_id          INTEGER REFERENCES pedidos(id) ON DELETE SET NULL,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS promo_redencion_once_idx
+  ON promociones_redenciones (empresa_id, punto_entrega_id, trigger_producto_id, beneficio_tipo)
+  WHERE beneficio_tipo = 'gift_once_per_product';
 
 -- =========================================================
 -- 11. FINANZAS Y GASTOS
