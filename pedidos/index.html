@@ -959,14 +959,17 @@
         return;
       }
 
+      const latNum = Number(data.latitud);
+      const lngNum = Number(data.longitud);
+
       const payload = {
         ...data,
         telefono: buildTelefonoDB(data.telefono),
         empresa_id,
         items: carrito,
         submission_id: getSubmissionId(),
-        latitud: data.latitud || null,
-        longitud: data.longitud || null
+        latitud: Number.isFinite(latNum) ? latNum : null,
+        longitud: Number.isFinite(lngNum) ? lngNum : null
       };
 
       const submitBtn = formEl.querySelector('button[type="submit"]');
