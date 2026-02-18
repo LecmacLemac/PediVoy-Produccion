@@ -327,6 +327,8 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
         }
       }
 
+      const baseOrderTotal = normItems.reduce((acc, it) => acc + (it.cantidad * it.precio_unitario), 0);
+
       const pendingPromoRedemptions = [];
       const promoAddedByTrigger = new Set();
 
@@ -344,6 +346,15 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
 
             const giftProductId = Number(promoCfg.gift_product_id || 0);
             if (!giftProductId || !byId.has(giftProductId)) continue;
+
+            const minOrderTotal = Number(promoCfg.min_order_total || 0);
+            if (Number.isFinite(minOrderTotal) && minOrderTotal > 0 && baseOrderTotal < minOrderTotal) continue;
+
+            const nowMs = Date.now();
+            const fromMs = promoCfg.valid_from ? Date.parse(promoCfg.valid_from) : NaN;
+            const toMs = promoCfg.valid_to ? Date.parse(promoCfg.valid_to) : NaN;
+            if (Number.isFinite(fromMs) && nowMs < fromMs) continue;
+            if (Number.isFinite(toMs) && nowMs > toMs) continue;
 
             const promoMode = promoCfg.mode === 'global_client' ? 'global_client' : 'per_product';
             const benefitType = promoMode === 'global_client' ? 'gift_once_global' : 'gift_once_per_product';

@@ -448,6 +448,20 @@
               <option value="global_client">Una sola vez total por cliente</option>
             </select>
           </div>
+          <div>
+            <label>Mínimo total del pedido ($)</label>
+            <input type="number" id="p_promo_once_min_order_total" min="0" step="0.01" placeholder="Ej: 15000">
+          </div>
+        </div>
+        <div class="form-grid">
+          <div>
+            <label>Vigencia desde</label>
+            <input type="datetime-local" id="p_promo_once_valid_from">
+          </div>
+          <div>
+            <label>Vigencia hasta</label>
+            <input type="datetime-local" id="p_promo_once_valid_to">
+          </div>
         </div>
 
         <div>
@@ -616,6 +630,14 @@
       }).join('');
     }
 
+    function toDateTimeLocalInput(value) {
+      if (!value) return '';
+      const d = new Date(value);
+      if (Number.isNaN(d.getTime())) return '';
+      const pad = (n) => String(n).padStart(2, '0');
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    }
+
     function fillGiftProductOptions(selectedId = null, currentProductId = null) {
       const sel = $('#p_promo_once_gift_product_id');
       if (!sel) return;
@@ -655,6 +677,12 @@
       $('#p_promo_once_gift_product_id').disabled = true;
       $('#p_promo_once_mode').value = 'per_product';
       $('#p_promo_once_mode').disabled = true;
+      $('#p_promo_once_min_order_total').value = '';
+      $('#p_promo_once_min_order_total').disabled = true;
+      $('#p_promo_once_valid_from').value = '';
+      $('#p_promo_once_valid_to').value = '';
+      $('#p_promo_once_valid_from').disabled = true;
+      $('#p_promo_once_valid_to').disabled = true;
 
       $('#p_nombre').focus();
     }
@@ -697,6 +725,13 @@
       $('#p_promo_once_gift_product_id').disabled = !promoCfg.enabled;
       $('#p_promo_once_mode').value = promoCfg.mode === 'global_client' ? 'global_client' : 'per_product';
       $('#p_promo_once_mode').disabled = !promoCfg.enabled;
+      $('#p_promo_once_min_order_total').value =
+        (promoCfg.min_order_total !== undefined && promoCfg.min_order_total !== null) ? promoCfg.min_order_total : '';
+      $('#p_promo_once_min_order_total').disabled = !promoCfg.enabled;
+      $('#p_promo_once_valid_from').value = toDateTimeLocalInput(promoCfg.valid_from);
+      $('#p_promo_once_valid_to').value = toDateTimeLocalInput(promoCfg.valid_to);
+      $('#p_promo_once_valid_from').disabled = !promoCfg.enabled;
+      $('#p_promo_once_valid_to').disabled = !promoCfg.enabled;
     }
 
     async function save() {
@@ -729,12 +764,21 @@
       const promoGiftProductId = Number($('#p_promo_once_gift_product_id').value || 0) || null;
       let promo_config = null;
       const promoMode = ($('#p_promo_once_mode').value === 'global_client') ? 'global_client' : 'per_product';
+      const promoMinOrderTotal = $('#p_promo_once_min_order_total').value
+        ? Number($('#p_promo_once_min_order_total').value)
+        : null;
+      const promoValidFrom = $('#p_promo_once_valid_from').value || null;
+      const promoValidTo = $('#p_promo_once_valid_to').value || null;
+
       if (promoEnabled && promoGiftProductId) {
         promo_config = {
           once_per_client_gift: {
             enabled: true,
             gift_product_id: promoGiftProductId,
             mode: promoMode,
+            min_order_total: Number.isFinite(promoMinOrderTotal) ? promoMinOrderTotal : null,
+            valid_from: promoValidFrom,
+            valid_to: promoValidTo,
           },
         };
       }
@@ -758,6 +802,10 @@
 
       if (!body.nombre || !body.precio) { toast('Nombre y Precio requeridos'); return; }
       if (promoEnabled && !promoGiftProductId) { toast('Seleccioná el producto de regalo para la promo única'); return; }
+      if (promoEnabled && promoValidFrom && promoValidTo && new Date(promoValidFrom) > new Date(promoValidTo)) {
+        toast('La vigencia "desde" no puede ser mayor a "hasta"');
+        return;
+      }
       if (STATE.isSuper) body.empresa_id = $('#empSel').value;
 
       const method = id ? 'PUT' : 'POST';
@@ -830,12 +878,21 @@
       promoToggle.addEventListener('change', () => {
         const sel = document.getElementById('p_promo_once_gift_product_id');
         const modeSel = document.getElementById('p_promo_once_mode');
-        if (!sel || !modeSel) return;
+        const minSel = document.getElementById('p_promo_once_min_order_total');
+        const fromSel = document.getElementById('p_promo_once_valid_from');
+        const toSel = document.getElementById('p_promo_once_valid_to');
+        if (!sel || !modeSel || !minSel || !fromSel || !toSel) return;
         sel.disabled = !promoToggle.checked;
         modeSel.disabled = !promoToggle.checked;
+        minSel.disabled = !promoToggle.checked;
+        fromSel.disabled = !promoToggle.checked;
+        toSel.disabled = !promoToggle.checked;
         if (!promoToggle.checked) {
           sel.value = '';
           modeSel.value = 'per_product';
+          minSel.value = '';
+          fromSel.value = '';
+          toSel.value = '';
         }
       });
     }
