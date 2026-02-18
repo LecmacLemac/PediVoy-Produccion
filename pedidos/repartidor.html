@@ -187,6 +187,7 @@
     .flex-bt { display: flex; justify-content: space-between; align-items: center; }
     .toast { position: fixed; left: 50%; bottom: 80px; transform: translateX(-50%) translateY(20px); background: #fff; color: #000; padding: 10px 20px; border-radius: 50px; font-weight: 600; opacity: 0; pointer-events: none; transition: 0.3s; z-index: 2000; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
     .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+    #routePlanCard.sla-critical { border-color: rgba(239,68,68,.65); box-shadow: 0 0 0 2px rgba(239,68,68,.2) inset; }
 
     /* === MODAL ACTIVOS REPARTIDOR === */
     .modal-overlay {
@@ -689,6 +690,7 @@ let me = null, pedidos = [], zonas = [], misZonas = [], verificadas = new Set();
 let map, mapMarkers, myCosts = {};
 let routePlan = { orderedIds: [], currentIndex: 0, updatedAt: null };
 let slaEtaThresholdMin = 30;
+let lastSlaToastAt = 0;
 let activosModalState = { pedidoId: null, data: null };
 let qrPagoState = { pedidoId: null, link: null };
 let pedidoEnProcesoId = null;
@@ -1256,6 +1258,7 @@ function renderRoutePlanCard() {
 
   if (!routePlan.orderedIds.length) {
     card.hidden = true;
+    card.classList.remove('sla-critical');
     return;
   }
 
@@ -1266,6 +1269,7 @@ function renderRoutePlanCard() {
   if (!p) {
     body.textContent = 'Ruta guardada, esperando sincronización de pedidos…';
     meta.textContent = routePlan.updatedAt ? `Actualizado ${new Date(routePlan.updatedAt).toLocaleTimeString('es-AR')}` : '-';
+    card.classList.remove('sla-critical');
     return;
   }
 
@@ -1286,6 +1290,18 @@ function renderRoutePlanCard() {
       const eta = estimateEtaMin(km);
       const etaEl = document.getElementById('routeEtaNow');
       if (etaEl) etaEl.innerHTML = etaBadgeHtml(eta, km);
+
+      const cardEl = document.getElementById('routePlanCard');
+      const isCritical = etaLevel(eta) === 'bad';
+      if (cardEl) cardEl.classList.toggle('sla-critical', isCritical);
+
+      if (isCritical) {
+        const now = Date.now();
+        if (now - lastSlaToastAt > 120000) {
+          toast(`⚠️ ETA supera SLA (${slaEtaThresholdMin} min).`);
+          lastSlaToastAt = now;
+        }
+      }
     });
 
     let kmLeft = 0;
