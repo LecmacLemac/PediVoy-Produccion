@@ -1189,6 +1189,22 @@ function estimateEtaMin(km) {
   return Math.max(1, Math.round((Number(km || 0) / avgKmH) * 60));
 }
 
+function etaLevel(min) {
+  const m = Number(min || 0);
+  if (m <= 15) return 'ok';
+  if (m <= 30) return 'warn';
+  return 'bad';
+}
+
+function etaBadgeHtml(min, km) {
+  const level = etaLevel(min);
+  const arrival = new Date(Date.now() + Number(min || 0) * 60_000)
+    .toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+  const bg = level === 'ok' ? 'rgba(34,197,94,.18)' : level === 'warn' ? 'rgba(245,158,11,.18)' : 'rgba(239,68,68,.18)';
+  const color = level === 'ok' ? '#86efac' : level === 'warn' ? '#fde68a' : '#fecaca';
+  return `<span style="display:inline-block; padding:2px 8px; border-radius:999px; background:${bg}; color:${color}; font-weight:700;">ETA ${min} min · ${km.toFixed(1)} km · llega ${arrival}</span>`;
+}
+
 async function getCurrentPositionSafe() {
   if (!navigator.geolocation) return null;
   return new Promise((resolve) => {
@@ -1238,7 +1254,7 @@ function renderRoutePlanCard() {
       const km = haversineKm(pos.lat, pos.lng, currLat, currLng);
       const eta = estimateEtaMin(km);
       const etaEl = document.getElementById('routeEtaNow');
-      if (etaEl) etaEl.textContent = `ETA aprox: ${eta} min · ${km.toFixed(1)} km`;
+      if (etaEl) etaEl.innerHTML = etaBadgeHtml(eta, km);
     });
 
     let kmLeft = 0;
