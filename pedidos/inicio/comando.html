@@ -33,6 +33,24 @@
     .sem-dot{width:10px;height:10px;border-radius:999px;display:inline-block;margin-right:6px}
     .dot-ok{background:var(--ok)} .dot-warn{background:var(--warn)} .dot-bad{background:var(--bad)}
     .actions{margin:8px 0 0 16px;padding:0;display:grid;gap:4px}
+    .opsbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px}
+    .small{font-size:.85rem}
+    .alerts{display:grid;gap:8px}
+    .alert-item{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:10px}
+    .alert-head{display:flex;justify-content:space-between;gap:8px;align-items:center}
+    .level{font-size:.75rem;padding:2px 8px;border-radius:999px;font-weight:700}
+    .level-alta{background:rgba(239,68,68,.2);color:#fecaca}
+    .level-media{background:rgba(245,158,11,.2);color:#fde68a}
+    .level-baja{background:rgba(34,197,94,.2);color:#bbf7d0}
+    .quick{color:#93c5fd;text-decoration:none;font-size:.85rem}
+    .quick:hover{text-decoration:underline}
+    .cmdk{position:fixed;inset:0;background:rgba(2,6,23,.75);display:none;align-items:flex-start;justify-content:center;padding-top:10vh;z-index:100}
+    .cmdk.open{display:flex}
+    .cmdk-box{width:min(760px,92vw);background:var(--bg2);border:1px solid var(--border);border-radius:12px;overflow:hidden}
+    .cmdk-box input{width:100%;padding:14px;border:0;border-bottom:1px solid var(--border);background:#020617;color:#fff}
+    .cmdk-list{max-height:55vh;overflow:auto}
+    .cmdk-item{padding:10px 14px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;gap:8px;cursor:pointer}
+    .cmdk-item:hover{background:#111827}
   </style>
 </head>
 <body>
@@ -59,7 +77,12 @@
         <div class="kpi"><div class="muted">Promos activas</div><div id="k_promos">-</div></div>
         <div class="kpi"><div class="muted">Redenciones (30d)</div><div id="k_red30">-</div></div>
       </div>
-      <div style="margin-top:10px"><button class="btn" id="btnRefresh">↻ Actualizar estado</button></div>
+      <div class="opsbar">
+        <button class="btn" id="btnRefresh">↻ Actualizar estado</button>
+        <button class="btn" id="btnAuto">⏱️ Auto-refresh: ON</button>
+        <button class="btn" id="btnCmdk">⌘K Comandos</button>
+        <span class="muted small">Última actualización: <b id="lastSync">-</b> · Latencia: <b id="latency">-</b></span>
+      </div>
     </section>
 
     <section class="card">
@@ -73,51 +96,52 @@
       <ul class="actions" id="sem_actions"></ul>
     </section>
 
+    <section class="card">
+      <h2 class="title">🚨 Centro de alertas unificado</h2>
+      <div id="alerts" class="alerts"><div class="muted">Cargando alertas…</div></div>
+    </section>
+
     <section class="grid g4">
-      <article class="module">
-        <h3>📦 Operación</h3>
-        <div class="links">
-          <a href="/pedidos/dashboard.html">Dashboard pedidos</a>
-          <a href="/pedidos/repartidor.html">Repartidor</a>
-          <a href="/pedidos/inicio/incidencias.html">Incidencias</a>
-          <a href="/pedidos/inicio/ejecutivo.html">Tablero ejecutivo</a>
-          <a href="/pedidos/inicio/tesoreria.html">Tesorería</a>
-        </div>
-      </article>
-
-      <article class="module">
-        <h3>💰 Comercial</h3>
-        <div class="links">
-          <a href="/pedidos/inicio/crm.html">CRM</a>
-          <a href="/pedidos/inicio/producto.html">Catálogo de productos</a>
-          <a href="/pedidos/inicio/promociones.html">Promociones y puntos</a>
-          <a href="/pedidos/estadisticas.html">Estadísticas</a>
-        </div>
-      </article>
-
-      <article class="module">
-        <h3>⚙️ Configuración</h3>
-        <div class="links">
-          <a href="/pedidos/inicio/empresa.html">Empresa</a>
-          <a href="/pedidos/inicio/zonas.html">Zonas</a>
-          <a href="/pedidos/inicio/choferes.html">Choferes</a>
-          <a href="/pedidos/inicio/usuarios.html">Usuarios</a>
-        </div>
-      </article>
-
-      <article class="module">
-        <h3>🛠️ Administración técnica</h3>
-        <div class="links">
-          <a href="/health" target="_blank">Health endpoint</a>
-          <a href="/api/me" target="_blank">API /me</a>
-          <a href="/pedidos/inicio/observabilidad.html">Observabilidad</a>
-        </div>
-      </article>
+      <article class="module"><h3>📦 Operación</h3><div class="links">
+        <a href="/pedidos/dashboard.html">Dashboard pedidos</a><a href="/pedidos/repartidor.html">Repartidor</a><a href="/pedidos/inicio/incidencias.html">Incidencias</a><a href="/pedidos/inicio/ejecutivo.html">Tablero ejecutivo</a><a href="/pedidos/inicio/tesoreria.html">Tesorería</a>
+      </div></article>
+      <article class="module"><h3>💰 Comercial</h3><div class="links">
+        <a href="/pedidos/inicio/crm.html">CRM</a><a href="/pedidos/inicio/producto.html">Catálogo de productos</a><a href="/pedidos/inicio/promociones.html">Promociones y puntos</a><a href="/pedidos/estadisticas.html">Estadísticas</a>
+      </div></article>
+      <article class="module"><h3>⚙️ Configuración</h3><div class="links">
+        <a href="/pedidos/inicio/empresa.html">Empresa</a><a href="/pedidos/inicio/zonas.html">Zonas</a><a href="/pedidos/inicio/choferes.html">Choferes</a><a href="/pedidos/inicio/usuarios.html">Usuarios</a>
+      </div></article>
+      <article class="module"><h3>🛠️ Administración técnica</h3><div class="links">
+        <a href="/health" target="_blank">Health endpoint</a><a href="/api/me" target="_blank">API /me</a><a href="/pedidos/inicio/observabilidad.html">Observabilidad</a>
+      </div></article>
     </section>
   </main>
 
+  <div id="cmdk" class="cmdk" aria-hidden="true">
+    <div class="cmdk-box">
+      <input id="cmdkInput" type="text" placeholder="Buscar módulo, acción o ruta…" />
+      <div id="cmdkList" class="cmdk-list"></div>
+    </div>
+  </div>
+
   <script>
     const $ = (s) => document.querySelector(s);
+    let autoOn = true;
+    let autoTimer = null;
+    const COMMANDS = [
+      { label:'Dashboard pedidos', href:'/pedidos/dashboard.html', group:'Operación' },
+      { label:'Incidencias', href:'/pedidos/inicio/incidencias.html', group:'Operación' },
+      { label:'Ejecutivo', href:'/pedidos/inicio/ejecutivo.html', group:'Operación' },
+      { label:'Tesorería', href:'/pedidos/inicio/tesoreria.html', group:'Operación' },
+      { label:'Promociones y puntos', href:'/pedidos/inicio/promociones.html', group:'Comercial' },
+      { label:'Productos', href:'/pedidos/inicio/producto.html', group:'Comercial' },
+      { label:'CRM', href:'/pedidos/inicio/crm.html', group:'Comercial' },
+      { label:'Empresa', href:'/pedidos/inicio/empresa.html', group:'Configuración' },
+      { label:'Zonas', href:'/pedidos/inicio/zonas.html', group:'Configuración' },
+      { label:'Choferes', href:'/pedidos/inicio/choferes.html', group:'Configuración' },
+      { label:'Observabilidad', href:'/pedidos/inicio/observabilidad.html', group:'Técnico' },
+      { label:'Health', href:'/health', group:'Técnico' }
+    ];
 
     async function api(url, opts={}){
       const res = await fetch(url, { ...opts, credentials:'include', headers:{ 'Content-Type':'application/json', ...(opts.headers||{}) } });
@@ -125,42 +149,44 @@
       try { return await res.json(); } catch { return null; }
     }
 
-    function badge(el, kind, text){
-      el.innerHTML = `<span class="badge ${kind}">${text}</span>`;
+    function badge(el, kind, text){ if (el) el.innerHTML = `<span class="badge ${kind}">${text}</span>`; }
+    function setSem(id, dotId, level, text){ const dot=$(dotId), el=$(id); if(!dot||!el) return; dot.className=`sem-dot ${level==='ok'?'dot-ok':level==='bad'?'dot-bad':'dot-warn'}`; el.textContent=text; }
+    function addAction(msg){ const ul=$('#sem_actions'); if(!ul) return; const li=document.createElement('li'); li.textContent=msg; ul.appendChild(li); }
+
+    function addAlert(level, title, detail, href){
+      const wrap = $('#alerts'); if (!wrap) return;
+      const n = ['alta','media','baja'].includes(String(level||'').toLowerCase()) ? String(level).toLowerCase() : 'media';
+      const card = document.createElement('div'); card.className='alert-item';
+      card.innerHTML = `<div class="alert-head"><b>${title}</b><span class="level level-${n}">${n.toUpperCase()}</span></div><div class="muted" style="margin-top:6px">${detail||''}</div>${href?`<div style="margin-top:8px"><a class="quick" href="${href}">Ir ahora →</a></div>`:''}`;
+      wrap.appendChild(card);
     }
 
-    function setSem(id, dotId, level, text){
-      const dot = $(dotId);
-      const el = $(id);
-      if (!dot || !el) return;
-      dot.className = `sem-dot ${level === 'ok' ? 'dot-ok' : level === 'bad' ? 'dot-bad' : 'dot-warn'}`;
-      el.textContent = text;
+    function renderCommandList(filter=''){
+      const q = String(filter||'').toLowerCase().trim();
+      const list = $('#cmdkList'); if(!list) return;
+      const items = COMMANDS.filter(c => !q || c.label.toLowerCase().includes(q) || c.group.toLowerCase().includes(q) || c.href.toLowerCase().includes(q));
+      list.innerHTML = items.length ? items.map(it => `<div class="cmdk-item" data-href="${it.href}"><span>${it.label}</span><span class="muted small">${it.group}</span></div>`).join('') : '<div class="cmdk-item"><span class="muted">Sin resultados</span></div>';
+      list.querySelectorAll('.cmdk-item[data-href]').forEach((el) => el.addEventListener('click', () => location.href = el.getAttribute('data-href')));
     }
 
-    function addAction(msg){
-      const ul = $('#sem_actions');
-      if (!ul) return;
-      const li = document.createElement('li');
-      li.textContent = msg;
-      ul.appendChild(li);
+    function toggleAuto(){
+      autoOn = !autoOn;
+      const btn = $('#btnAuto'); if(btn) btn.textContent = `⏱️ Auto-refresh: ${autoOn ? 'ON' : 'OFF'}`;
+      if (autoTimer) clearInterval(autoTimer);
+      if (autoOn) autoTimer = setInterval(refreshState, 60000);
     }
 
     async function refreshState(){
-      const actions = $('#sem_actions');
-      if (actions) actions.innerHTML = '';
+      const start = performance.now();
+      const actions = $('#sem_actions'); if(actions) actions.innerHTML='';
+      const alerts = $('#alerts'); if(alerts) alerts.innerHTML='';
 
-      try {
-        const h = await fetch('/health');
-        badge($('#k_health'), h.ok ? 'ok' : 'bad', h.ok ? 'OK' : 'Error');
-      } catch { badge($('#k_health'), 'bad', 'Sin respuesta'); }
+      try { const h = await fetch('/health'); badge($('#k_health'), h.ok ? 'ok':'bad', h.ok ? 'OK':'Error'); }
+      catch { badge($('#k_health'),'bad','Sin respuesta'); }
 
       const me = await api('/api/me');
-      if (me?._401) {
-        badge($('#k_session'), 'bad', 'Sin sesión');
-        $('#role').textContent = '';
-        return;
-      }
-      badge($('#k_session'), 'ok', 'Activa');
+      if (me?._401) { badge($('#k_session'),'bad','Sin sesión'); $('#role').textContent=''; return; }
+      badge($('#k_session'),'ok','Activa');
       $('#role').textContent = me?.user?.role ? `(${String(me.user.role).toUpperCase()})` : '';
 
       const d = await api('/api/promociones/dashboard');
@@ -170,49 +196,44 @@
       const incAlerts = await api('/api/setup/fase3/incidencias/alertas');
       const incItems = Array.isArray(incAlerts?.items) ? incAlerts.items : [];
       const hasIncAlta = incItems.some((i) => String(i.nivel || '').toLowerCase() === 'alta');
-      if (hasIncAlta) {
-        setSem('#sem_inc', '#dot_inc', 'bad', 'Hay incidencias críticas o SLA vencido.');
-        addAction('Revisar /pedidos/inicio/incidencias.html y resolver críticas/SLA vencido.');
-      } else {
-        setSem('#sem_inc', '#dot_inc', 'ok', 'Sin críticas ni SLA vencido.');
-      }
+      if (hasIncAlta) { setSem('#sem_inc','#dot_inc','bad','Hay incidencias críticas o SLA vencido.'); addAction('Revisar incidencias críticas/SLA vencido.'); }
+      else setSem('#sem_inc','#dot_inc','ok','Sin críticas ni SLA vencido.');
+      incItems.forEach((i) => addAlert(i.nivel || 'media', i.titulo || 'Incidencias', i.detalle || '', '/pedidos/inicio/incidencias.html'));
 
       const tesDash = await api('/api/setup/fase2/tesoreria/dashboard');
       const pendientes = Number(tesDash?.kpis?.pendientes_conciliacion || 0);
       const ingresos30 = Number(tesDash?.kpis?.ingresos_30d || 0);
       const egresos30 = Number(tesDash?.kpis?.egresos_30d || 0);
-      if (pendientes > 0) {
-        setSem('#sem_tes', '#dot_tes', 'warn', `Pendientes de conciliación: ${pendientes}`);
-        addAction('Conciliar movimientos en /pedidos/inicio/tesoreria.html.');
-      } else {
-        setSem('#sem_tes', '#dot_tes', 'ok', 'Sin pendientes de conciliación.');
-      }
+      if (pendientes > 0) { setSem('#sem_tes','#dot_tes','warn',`Pendientes de conciliación: ${pendientes}`); addAction('Conciliar movimientos de tesorería.'); addAlert('media','Pendientes de conciliación',`Hay ${pendientes} movimientos sin conciliar.`, '/pedidos/inicio/tesoreria.html'); }
+      else setSem('#sem_tes','#dot_tes','ok','Sin pendientes de conciliación.');
 
       const lowData = ingresos30 === 0 && egresos30 === 0;
-      if (lowData) {
-        setSem('#sem_data', '#dot_data', 'warn', 'Sin movimientos 30d: proyección de caja débil.');
-        addAction('Cargar ingresos/egresos base de los últimos 30 días para semáforo real.');
-      } else {
-        setSem('#sem_data', '#dot_data', 'ok', 'Cobertura de datos operativa.');
-      }
+      if (lowData) { setSem('#sem_data','#dot_data','warn','Sin movimientos 30d: proyección de caja débil.'); addAction('Cargar ingresos/egresos base para semáforo real.'); addAlert('media','Cobertura de datos insuficiente','No hay ingresos/egresos en 30 días para proyectar caja.', '/pedidos/inicio/tesoreria.html'); }
+      else setSem('#sem_data','#dot_data','ok','Cobertura de datos operativa.');
 
       const globalLevel = hasIncAlta ? 'bad' : (pendientes > 0 || lowData ? 'warn' : 'ok');
-      const globalText = globalLevel === 'bad'
-        ? 'Rojo: atención inmediata en incidencias.'
-        : globalLevel === 'warn'
-          ? 'Amarillo: hay riesgos o falta de datos.'
-          : 'Verde: operación estable.';
-      setSem('#sem_global', '#dot_global', globalLevel, globalText);
+      setSem('#sem_global','#dot_global',globalLevel, globalLevel==='bad' ? 'Rojo: atención inmediata.' : globalLevel==='warn' ? 'Amarillo: riesgos o falta de datos.' : 'Verde: operación estable.');
+      if (alerts && !alerts.children.length) addAlert('baja','Sin alertas críticas','No se detectaron alertas accionables en este corte.','/pedidos/inicio/ejecutivo.html');
+
+      $('#latency').textContent = `${Math.max(1, Math.round(performance.now() - start))} ms`;
+      $('#lastSync').textContent = new Date().toLocaleString('es-AR');
     }
 
     $('#btnRefresh')?.addEventListener('click', refreshState);
-    $('#logout')?.addEventListener('click', async (e) => {
-      e.preventDefault();
-      try { await fetch('/api/logout', { method:'POST', credentials:'include' }); } catch {}
-      location.href = '../login.html';
+    $('#btnAuto')?.addEventListener('click', toggleAuto);
+    $('#btnCmdk')?.addEventListener('click', () => { $('#cmdk')?.classList.add('open'); $('#cmdkInput')?.focus(); renderCommandList(''); });
+    $('#cmdkInput')?.addEventListener('input', (e) => renderCommandList(e.target.value));
+    $('#cmdk')?.addEventListener('click', (e) => { if (e.target.id === 'cmdk') $('#cmdk').classList.remove('open'); });
+    document.addEventListener('keydown', (e) => {
+      const isCmdK = (e.key.toLowerCase() === 'k') && (e.metaKey || e.ctrlKey);
+      if (isCmdK) { e.preventDefault(); $('#cmdk')?.classList.toggle('open'); if ($('#cmdk')?.classList.contains('open')) { $('#cmdkInput')?.focus(); renderCommandList(''); } }
+      if (e.key === 'Escape') $('#cmdk')?.classList.remove('open');
     });
 
+    $('#logout')?.addEventListener('click', async (e) => { e.preventDefault(); try { await fetch('/api/logout', { method:'POST', credentials:'include' }); } catch {} location.href = '../login.html'; });
+
     refreshState();
+    autoTimer = setInterval(refreshState, 60000);
   </script>
 </body>
 </html>
