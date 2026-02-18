@@ -328,6 +328,7 @@
         
         <div class="row" style="margin-top:1rem">
           <input id="fSearch" placeholder="Buscar cliente..." style="flex:2">
+          <input id="fSlaEta" type="number" min="5" step="5" placeholder="SLA ETA min" style="max-width:120px" title="Umbral de ETA para alerta roja">
           
           <button class="iconbtn ghost" id="btnRef">↻ Refrescar</button>
           
@@ -687,6 +688,7 @@ const formatFechaHoraAR = (iso) => {
 let me = null, pedidos = [], zonas = [], misZonas = [], verificadas = new Set();
 let map, mapMarkers, myCosts = {};
 let routePlan = { orderedIds: [], currentIndex: 0, updatedAt: null };
+let slaEtaThresholdMin = 30;
 let activosModalState = { pedidoId: null, data: null };
 let qrPagoState = { pedidoId: null, link: null };
 let pedidoEnProcesoId = null;
@@ -870,6 +872,7 @@ function showGpsHelp() {
     me = j.user;
     $('#brandTitle').textContent = `Hola, ${me.username}`;
     restoreRoutePlan();
+    loadRouteSlaThreshold();
 
     // Botón ayuda GPS
     const gpsBtn = document.getElementById('btnGpsHelp');
@@ -971,6 +974,13 @@ $('#fSearch').addEventListener('input', debounce(() => {
   saveFiltrosUI();
   renderCards();
 }, 200));
+const slaInp = document.getElementById('fSlaEta');
+if (slaInp) {
+  slaInp.addEventListener('change', () => {
+    saveRouteSlaThreshold(slaInp.value);
+    renderRoutePlanCard();
+  });
+}
 $('#btnRef').onclick = loadPedidos;
 // EVENTO PARA OPTIMIZAR RUTA
 $('#btnOpt').onclick = optimizarRuta;
@@ -1125,6 +1135,26 @@ function getRoutePlanStorageKey() {
   return `repartidor:route-plan:v1:${choferId}`;
 }
 
+function getRouteSlaStorageKey() {
+  const choferId = me?.chofer_id || me?.id || 'anon';
+  return `repartidor:route-sla:v1:${choferId}`;
+}
+
+function loadRouteSlaThreshold() {
+  const raw = safeStorage.local.get(getRouteSlaStorageKey());
+  const n = Number(raw || 30);
+  slaEtaThresholdMin = Number.isFinite(n) && n >= 5 ? n : 30;
+  const inp = document.getElementById('fSlaEta');
+  if (inp) inp.value = String(slaEtaThresholdMin);
+}
+
+function saveRouteSlaThreshold(v) {
+  const n = Number(v || 0);
+  if (!Number.isFinite(n) || n < 5) return;
+  slaEtaThresholdMin = n;
+  safeStorage.local.set(getRouteSlaStorageKey(), String(n));
+}
+
 function saveRoutePlan() {
   try {
     safeStorage.local.set(getRoutePlanStorageKey(), JSON.stringify(routePlan));
@@ -1191,9 +1221,9 @@ function estimateEtaMin(km) {
 
 function etaLevel(min) {
   const m = Number(min || 0);
+  if (m > Number(slaEtaThresholdMin || 30)) return 'bad';
   if (m <= 15) return 'ok';
-  if (m <= 30) return 'warn';
-  return 'bad';
+  return 'warn';
 }
 
 function etaBadgeHtml(min, km) {
@@ -1202,7 +1232,8 @@ function etaBadgeHtml(min, km) {
     .toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
   const bg = level === 'ok' ? 'rgba(34,197,94,.18)' : level === 'warn' ? 'rgba(245,158,11,.18)' : 'rgba(239,68,68,.18)';
   const color = level === 'ok' ? '#86efac' : level === 'warn' ? '#fde68a' : '#fecaca';
-  return `<span style="display:inline-block; padding:2px 8px; border-radius:999px; background:${bg}; color:${color}; font-weight:700;">ETA ${min} min · ${km.toFixed(1)} km · llega ${arrival}</span>`;
+  const slaTxt = level === 'bad' ? ` · SLA>${slaEtaThresholdMin}m` : '';
+  return `<span style="display:inline-block; padding:2px 8px; border-radius:999px; background:${bg}; color:${color}; font-weight:700;">ETA ${min} min · ${km.toFixed(1)} km · llega ${arrival}${slaTxt}</span>`;
 }
 
 async function getCurrentPositionSafe() {
