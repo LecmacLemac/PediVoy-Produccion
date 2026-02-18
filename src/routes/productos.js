@@ -304,6 +304,85 @@ export function createProductosRouter(deps) {
     }
   });
 
+  // GET /api/productos/:id/promo-metrics
+  router.get('/:id/promo-metrics', withAuth, async (req, res) => {
+    try {
+      const esSuperAdmin = isSuper(req);
+      let targetEmpresa = !esSuperAdmin ? getEmpresaIdFromToken(req) : null;
+      if (esSuperAdmin && req.query?.empresa_id) targetEmpresa = Number(req.query.empresa_id);
+
+      if (esSuperAdmin && !targetEmpresa) {
+        const prod = await query(`SELECT empresa_id FROM productos WHERE id=$1`, [req.params.id]);
+        if (!prod.length) return res.status(404).json({ error: 'Producto no encontrado' });
+        targetEmpresa = Number(prod[0].empresa_id);
+      }
+
+      if (!targetEmpresa) return res.status(400).json({ error: 'Falta empresa.' });
+
+      const [totalRow] = await query(
+        `SELECT COUNT(*)::int AS c, COUNT(DISTINCT punto_entrega_id)::int AS u
+           FROM promociones_redenciones
+          WHERE empresa_id = $1 AND trigger_producto_id = $2`,
+        [targetEmpresa, req.params.id]
+      );
+
+      const [w7Row] = await query(
+        `SELECT COUNT(*)::int AS c
+           FROM promociones_redenciones
+          WHERE empresa_id = $1
+            AND trigger_producto_id = $2
+            AND created_at >= NOW() - INTERVAL '7 days'`,
+        [targetEmpresa, req.params.id]
+      );
+
+      const [w30Row] = await query(
+        `SELECT COUNT(*)::int AS c
+           FROM promociones_redenciones
+          WHERE empresa_id = $1
+            AND trigger_producto_id = $2
+            AND created_at >= NOW() - INTERVAL '30 days'`,
+        [targetEmpresa, req.params.id]
+      );
+
+      const [giftRow] = await query(
+        `SELECT COUNT(*)::int AS c
+           FROM promociones_redenciones
+          WHERE empresa_id = $1
+            AND trigger_producto_id = $2
+            AND beneficio_producto_id IS NOT NULL`,
+        [targetEmpresa, req.params.id]
+      );
+
+      const [discountRow] = await query(
+        `SELECT COUNT(*)::int AS c
+           FROM items_pedido ip
+           JOIN pedidos p ON p.id = ip.pedido_id
+          WHERE p.empresa_id = $1
+            AND ip.producto ILIKE '🎟️ DESCUENTO PROMO:%'
+            AND p.id IN (
+              SELECT pedido_id
+                FROM promociones_redenciones
+               WHERE empresa_id = $1
+                 AND trigger_producto_id = $2
+                 AND pedido_id IS NOT NULL
+            )`,
+        [targetEmpresa, req.params.id]
+      );
+
+      return res.json({
+        redemptions_total: Number(totalRow?.c || 0),
+        unique_clients: Number(totalRow?.u || 0),
+        redemptions_7d: Number(w7Row?.c || 0),
+        redemptions_30d: Number(w30Row?.c || 0),
+        gift_redemptions: Number(giftRow?.c || 0),
+        discount_redemptions: Number(discountRow?.c || 0),
+      });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error obteniendo métricas de promo' });
+    }
+  });
+
   // DELETE /api/productos/:id
   router.delete('/:id', withAuth, async (req, res) => {
     try {

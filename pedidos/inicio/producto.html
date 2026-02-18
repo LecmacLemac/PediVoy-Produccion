@@ -467,6 +467,26 @@
         </div>
         <div class="form-grid">
           <div>
+            <label>Descuento (%)</label>
+            <input type="number" id="p_promo_once_discount_percent" min="0" max="100" step="0.01" placeholder="Ej: 10">
+          </div>
+          <div>
+            <label>Descuento fijo ($)</label>
+            <input type="number" id="p_promo_once_discount_amount" min="0" step="0.01" placeholder="Ej: 2000">
+          </div>
+        </div>
+        <div class="form-grid">
+          <div>
+            <label>Tope total de usos</label>
+            <input type="number" id="p_promo_once_max_total" min="1" step="1" placeholder="Ej: 100">
+          </div>
+          <div>
+            <label>Tope de usos por día</label>
+            <input type="number" id="p_promo_once_max_daily" min="1" step="1" placeholder="Ej: 10">
+          </div>
+        </div>
+        <div class="form-grid">
+          <div>
             <label>Vigencia desde</label>
             <input type="datetime-local" id="p_promo_once_valid_from">
           </div>
@@ -610,6 +630,9 @@
         }
         if (promoCfg.enabled) {
           metaBadges += `<span class="badge" style="margin-left:4px;">Promo 1° compra</span>`;
+          if (Number(promoCfg.discount_percent || 0) > 0 || Number(promoCfg.discount_amount || 0) > 0) {
+            metaBadges += `<span class="badge" style="margin-left:4px;">Descuento</span>`;
+          }
         }
         
         let visibility = [];
@@ -634,6 +657,7 @@
               </span>
             </td>
             <td style="text-align:right;">
+              <button class="btn-icon" data-action="metrics" data-id="${Number(p.id)}" title="Métricas promo">📊</button>
               <button class="btn-icon" data-action="edit" data-id="${Number(p.id)}" title="Editar">✏️</button>
               <button class="btn-icon" data-action="delete" data-id="${Number(p.id)}" title="Eliminar" style="color:var(--danger); border-color:rgba(239,68,68,0.3)">🗑️</button>
             </td>
@@ -710,6 +734,14 @@
       $('#p_promo_once_trigger_min_qty').disabled = true;
       fillComboProductOptions(null, null);
       $('#p_promo_once_combo_product_id').disabled = true;
+      $('#p_promo_once_discount_percent').value = '';
+      $('#p_promo_once_discount_percent').disabled = true;
+      $('#p_promo_once_discount_amount').value = '';
+      $('#p_promo_once_discount_amount').disabled = true;
+      $('#p_promo_once_max_total').value = '';
+      $('#p_promo_once_max_total').disabled = true;
+      $('#p_promo_once_max_daily').value = '';
+      $('#p_promo_once_max_daily').disabled = true;
       $('#p_promo_once_valid_from').value = '';
       $('#p_promo_once_valid_to').value = '';
       $('#p_promo_once_valid_from').disabled = true;
@@ -764,6 +796,18 @@
       $('#p_promo_once_trigger_min_qty').disabled = !promoCfg.enabled;
       fillComboProductOptions(promoCfg.combo_required_product_id || null, p.id);
       $('#p_promo_once_combo_product_id').disabled = !promoCfg.enabled;
+      $('#p_promo_once_discount_percent').value =
+        (promoCfg.discount_percent !== undefined && promoCfg.discount_percent !== null) ? promoCfg.discount_percent : '';
+      $('#p_promo_once_discount_percent').disabled = !promoCfg.enabled;
+      $('#p_promo_once_discount_amount').value =
+        (promoCfg.discount_amount !== undefined && promoCfg.discount_amount !== null) ? promoCfg.discount_amount : '';
+      $('#p_promo_once_discount_amount').disabled = !promoCfg.enabled;
+      $('#p_promo_once_max_total').value =
+        (promoCfg.max_redemptions_total !== undefined && promoCfg.max_redemptions_total !== null) ? promoCfg.max_redemptions_total : '';
+      $('#p_promo_once_max_total').disabled = !promoCfg.enabled;
+      $('#p_promo_once_max_daily').value =
+        (promoCfg.max_redemptions_per_day !== undefined && promoCfg.max_redemptions_per_day !== null) ? promoCfg.max_redemptions_per_day : '';
+      $('#p_promo_once_max_daily').disabled = !promoCfg.enabled;
       $('#p_promo_once_valid_from').value = toDateTimeLocalInput(promoCfg.valid_from);
       $('#p_promo_once_valid_to').value = toDateTimeLocalInput(promoCfg.valid_to);
       $('#p_promo_once_valid_from').disabled = !promoCfg.enabled;
@@ -807,10 +851,22 @@
         ? Number($('#p_promo_once_trigger_min_qty').value)
         : null;
       const promoComboRequiredProductId = Number($('#p_promo_once_combo_product_id').value || 0) || null;
+      const promoDiscountPercent = $('#p_promo_once_discount_percent').value
+        ? Number($('#p_promo_once_discount_percent').value)
+        : null;
+      const promoDiscountAmount = $('#p_promo_once_discount_amount').value
+        ? Number($('#p_promo_once_discount_amount').value)
+        : null;
+      const promoMaxTotal = $('#p_promo_once_max_total').value
+        ? Number($('#p_promo_once_max_total').value)
+        : null;
+      const promoMaxDaily = $('#p_promo_once_max_daily').value
+        ? Number($('#p_promo_once_max_daily').value)
+        : null;
       const promoValidFrom = $('#p_promo_once_valid_from').value || null;
       const promoValidTo = $('#p_promo_once_valid_to').value || null;
 
-      if (promoEnabled && promoGiftProductId) {
+      if (promoEnabled) {
         promo_config = {
           once_per_client_gift: {
             enabled: true,
@@ -819,6 +875,10 @@
             min_order_total: Number.isFinite(promoMinOrderTotal) ? promoMinOrderTotal : null,
             trigger_min_qty: Number.isFinite(promoTriggerMinQty) ? promoTriggerMinQty : null,
             combo_required_product_id: promoComboRequiredProductId,
+            discount_percent: Number.isFinite(promoDiscountPercent) ? promoDiscountPercent : null,
+            discount_amount: Number.isFinite(promoDiscountAmount) ? promoDiscountAmount : null,
+            max_redemptions_total: Number.isFinite(promoMaxTotal) ? promoMaxTotal : null,
+            max_redemptions_per_day: Number.isFinite(promoMaxDaily) ? promoMaxDaily : null,
             valid_from: promoValidFrom,
             valid_to: promoValidTo,
           },
@@ -843,13 +903,32 @@
       };
 
       if (!body.nombre || !body.precio) { toast('Nombre y Precio requeridos'); return; }
-      if (promoEnabled && !promoGiftProductId) { toast('Seleccioná el producto de regalo para la promo única'); return; }
+      if (promoEnabled && !promoGiftProductId && !Number.isFinite(promoDiscountPercent) && !Number.isFinite(promoDiscountAmount)) {
+        toast('Definí un regalo o un descuento para activar la promo');
+        return;
+      }
       if (promoEnabled && promoValidFrom && promoValidTo && new Date(promoValidFrom) > new Date(promoValidTo)) {
         toast('La vigencia "desde" no puede ser mayor a "hasta"');
         return;
       }
       if (promoEnabled && Number.isFinite(promoTriggerMinQty) && promoTriggerMinQty < 1) {
         toast('La cantidad mínima del disparador debe ser mayor o igual a 1');
+        return;
+      }
+      if (promoEnabled && Number.isFinite(promoDiscountPercent) && (promoDiscountPercent < 0 || promoDiscountPercent > 100)) {
+        toast('El descuento % debe estar entre 0 y 100');
+        return;
+      }
+      if (promoEnabled && Number.isFinite(promoDiscountAmount) && promoDiscountAmount < 0) {
+        toast('El descuento fijo no puede ser negativo');
+        return;
+      }
+      if (promoEnabled && Number.isFinite(promoMaxTotal) && promoMaxTotal < 1) {
+        toast('El tope total debe ser mayor o igual a 1');
+        return;
+      }
+      if (promoEnabled && Number.isFinite(promoMaxDaily) && promoMaxDaily < 1) {
+        toast('El tope diario debe ser mayor o igual a 1');
         return;
       }
       if (STATE.isSuper) body.empresa_id = $('#empSel').value;
@@ -881,6 +960,32 @@
           saveBtn.textContent = prevTxt;
         }
       }
+    }
+
+    async function showMetrics(id) {
+      const p = products.find((x) => x.id === id);
+      if (!p) return;
+
+      let url = `/api/productos/${id}/promo-metrics`;
+      if (STATE.isSuper && $('#empSel')?.value) {
+        url += `?empresa_id=${encodeURIComponent($('#empSel').value)}`;
+      }
+
+      const data = await api(url);
+      if (!data || data.error) {
+        toast('No se pudieron cargar métricas');
+        return;
+      }
+
+      alert(
+        `📊 Métricas promo — ${p.nombre}\n\n` +
+        `Redenciones totales: ${Number(data.redemptions_total || 0)}\n` +
+        `Redenciones 7d: ${Number(data.redemptions_7d || 0)}\n` +
+        `Redenciones 30d: ${Number(data.redemptions_30d || 0)}\n` +
+        `Clientes únicos: ${Number(data.unique_clients || 0)}\n` +
+        `Con regalo: ${Number(data.gift_redemptions || 0)}\n` +
+        `Con descuento: ${Number(data.discount_redemptions || 0)}`
+      );
     }
 
     async function del(id, btnEl = null) {
@@ -927,14 +1032,22 @@
         const minSel = document.getElementById('p_promo_once_min_order_total');
         const qtySel = document.getElementById('p_promo_once_trigger_min_qty');
         const comboSel = document.getElementById('p_promo_once_combo_product_id');
+        const discountPctSel = document.getElementById('p_promo_once_discount_percent');
+        const discountAmtSel = document.getElementById('p_promo_once_discount_amount');
+        const maxTotalSel = document.getElementById('p_promo_once_max_total');
+        const maxDailySel = document.getElementById('p_promo_once_max_daily');
         const fromSel = document.getElementById('p_promo_once_valid_from');
         const toSel = document.getElementById('p_promo_once_valid_to');
-        if (!sel || !modeSel || !minSel || !qtySel || !comboSel || !fromSel || !toSel) return;
+        if (!sel || !modeSel || !minSel || !qtySel || !comboSel || !discountPctSel || !discountAmtSel || !maxTotalSel || !maxDailySel || !fromSel || !toSel) return;
         sel.disabled = !promoToggle.checked;
         modeSel.disabled = !promoToggle.checked;
         minSel.disabled = !promoToggle.checked;
         qtySel.disabled = !promoToggle.checked;
         comboSel.disabled = !promoToggle.checked;
+        discountPctSel.disabled = !promoToggle.checked;
+        discountAmtSel.disabled = !promoToggle.checked;
+        maxTotalSel.disabled = !promoToggle.checked;
+        maxDailySel.disabled = !promoToggle.checked;
         fromSel.disabled = !promoToggle.checked;
         toSel.disabled = !promoToggle.checked;
         if (!promoToggle.checked) {
@@ -943,6 +1056,10 @@
           minSel.value = '';
           qtySel.value = '';
           comboSel.value = '';
+          discountPctSel.value = '';
+          discountAmtSel.value = '';
+          maxTotalSel.value = '';
+          maxDailySel.value = '';
           fromSel.value = '';
           toSel.value = '';
         }
@@ -967,7 +1084,8 @@
         const id = Number(btn.getAttribute('data-id'));
         if (!Number.isFinite(id) || id <= 0) return;
 
-        if (action === 'edit') edit(id);
+        if (action === 'metrics') showMetrics(id);
+        else if (action === 'edit') edit(id);
         else if (action === 'delete') del(id, btn);
       });
     }

@@ -351,7 +351,7 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
             if (!promoCfg?.enabled) continue;
 
             const giftProductId = Number(promoCfg.gift_product_id || 0);
-            if (!giftProductId || !byId.has(giftProductId)) continue;
+            const hasValidGift = giftProductId > 0 && byId.has(giftProductId);
 
             const minOrderTotal = Number(promoCfg.min_order_total || 0);
             if (Number.isFinite(minOrderTotal) && minOrderTotal > 0 && baseOrderTotal < minOrderTotal) continue;
@@ -366,6 +366,33 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
             if (comboRequiredProductId > 0) {
               const comboQty = Number(qtyByProductId.get(comboRequiredProductId) || 0);
               if (comboQty <= 0) continue;
+            }
+
+            const maxRedemptionsTotal = Number(promoCfg.max_redemptions_total || 0);
+            if (Number.isFinite(maxRedemptionsTotal) && maxRedemptionsTotal > 0) {
+              const totalRedemptionsRows = await txQuery(
+                `SELECT COUNT(*)::int AS c
+                   FROM promociones_redenciones
+                  WHERE empresa_id = $1
+                    AND trigger_producto_id = $2`,
+                [empId, it.producto_id]
+              );
+              const totalRedemptions = Number(totalRedemptionsRows?.[0]?.c || 0);
+              if (totalRedemptions >= maxRedemptionsTotal) continue;
+            }
+
+            const maxRedemptionsPerDay = Number(promoCfg.max_redemptions_per_day || 0);
+            if (Number.isFinite(maxRedemptionsPerDay) && maxRedemptionsPerDay > 0) {
+              const dayRedemptionsRows = await txQuery(
+                `SELECT COUNT(*)::int AS c
+                   FROM promociones_redenciones
+                  WHERE empresa_id = $1
+                    AND trigger_producto_id = $2
+                    AND created_at >= DATE_TRUNC('day', NOW())`,
+                [empId, it.producto_id]
+              );
+              const dayRedemptions = Number(dayRedemptionsRows?.[0]?.c || 0);
+              if (dayRedemptions >= maxRedemptionsPerDay) continue;
             }
 
             const nowMs = Date.now();
@@ -399,17 +426,40 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
                 );
             if (already.length) continue;
 
-            const giftProduct = byId.get(giftProductId);
-            normItems.push({
-              producto: `🎁 REGALO: ${giftProduct?.nombre || 'Promoción'}`,
-              cantidad: 1,
-              precio_unitario: 0,
-              producto_id: giftProductId,
-            });
+            if (hasValidGift) {
+              const giftProduct = byId.get(giftProductId);
+              normItems.push({
+                producto: `🎁 REGALO: ${giftProduct?.nombre || 'Promoción'}`,
+                cantidad: 1,
+                precio_unitario: 0,
+                producto_id: giftProductId,
+              });
+            }
+
+            const discountPercent = Number(promoCfg.discount_percent || 0);
+            const discountAmount = Number(promoCfg.discount_amount || 0);
+            let discountValue = 0;
+            if (Number.isFinite(discountPercent) && discountPercent > 0) {
+              discountValue += (baseOrderTotal * discountPercent) / 100;
+            }
+            if (Number.isFinite(discountAmount) && discountAmount > 0) {
+              discountValue += discountAmount;
+            }
+            if (discountValue > 0) {
+              discountValue = Math.min(discountValue, Math.max(baseOrderTotal, 0));
+              normItems.push({
+                producto: `🎟️ DESCUENTO PROMO: ${baseProduct?.nombre || 'Promo'}`,
+                cantidad: 1,
+                precio_unitario: -round(discountValue),
+                producto_id: null,
+              });
+            }
+
+            if (!hasValidGift && discountValue <= 0) continue;
 
             pendingPromoRedemptions.push({
               trigger_producto_id: it.producto_id,
-              beneficio_producto_id: giftProductId,
+              beneficio_producto_id: hasValidGift ? giftProductId : null,
               beneficio_tipo: benefitType,
             });
             promoAddedByTrigger.add(it.producto_id);
