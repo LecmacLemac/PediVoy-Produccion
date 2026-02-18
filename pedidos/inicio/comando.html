@@ -28,6 +28,11 @@
     .badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:.78rem;font-weight:700}
     .ok{background:rgba(34,197,94,.15);color:#86efac}.warn{background:rgba(245,158,11,.15);color:#fcd34d}.bad{background:rgba(239,68,68,.15);color:#fca5a5}
     .btn{padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:#1e293b;color:#fff;cursor:pointer}
+    .semaforo{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
+    .sem-card{border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--bg2)}
+    .sem-dot{width:10px;height:10px;border-radius:999px;display:inline-block;margin-right:6px}
+    .dot-ok{background:var(--ok)} .dot-warn{background:var(--warn)} .dot-bad{background:var(--bad)}
+    .actions{margin:8px 0 0 16px;padding:0;display:grid;gap:4px}
   </style>
 </head>
 <body>
@@ -55,6 +60,17 @@
         <div class="kpi"><div class="muted">Redenciones (30d)</div><div id="k_red30">-</div></div>
       </div>
       <div style="margin-top:10px"><button class="btn" id="btnRefresh">↻ Actualizar estado</button></div>
+    </section>
+
+    <section class="card">
+      <h2 class="title">🚦 Semáforo operativo</h2>
+      <div class="semaforo">
+        <div class="sem-card"><div><span id="dot_inc" class="sem-dot dot-warn"></span><b>Incidencias/SLA</b></div><div id="sem_inc" class="muted">Chequeando…</div></div>
+        <div class="sem-card"><div><span id="dot_tes" class="sem-dot dot-warn"></span><b>Tesorería/Conciliación</b></div><div id="sem_tes" class="muted">Chequeando…</div></div>
+        <div class="sem-card"><div><span id="dot_data" class="sem-dot dot-warn"></span><b>Cobertura de datos</b></div><div id="sem_data" class="muted">Chequeando…</div></div>
+        <div class="sem-card"><div><span id="dot_global" class="sem-dot dot-warn"></span><b>Estado global</b></div><div id="sem_global" class="muted">Chequeando…</div></div>
+      </div>
+      <ul class="actions" id="sem_actions"></ul>
     </section>
 
     <section class="grid g4">
@@ -113,7 +129,26 @@
       el.innerHTML = `<span class="badge ${kind}">${text}</span>`;
     }
 
+    function setSem(id, dotId, level, text){
+      const dot = $(dotId);
+      const el = $(id);
+      if (!dot || !el) return;
+      dot.className = `sem-dot ${level === 'ok' ? 'dot-ok' : level === 'bad' ? 'dot-bad' : 'dot-warn'}`;
+      el.textContent = text;
+    }
+
+    function addAction(msg){
+      const ul = $('#sem_actions');
+      if (!ul) return;
+      const li = document.createElement('li');
+      li.textContent = msg;
+      ul.appendChild(li);
+    }
+
     async function refreshState(){
+      const actions = $('#sem_actions');
+      if (actions) actions.innerHTML = '';
+
       try {
         const h = await fetch('/health');
         badge($('#k_health'), h.ok ? 'ok' : 'bad', h.ok ? 'OK' : 'Error');
@@ -131,6 +166,43 @@
       const d = await api('/api/promociones/dashboard');
       $('#k_promos').textContent = Number(d?.kpis?.promos_activas || 0);
       $('#k_red30').textContent = Number(d?.kpis?.redemptions_30d || 0);
+
+      const incAlerts = await api('/api/setup/fase3/incidencias/alertas');
+      const incItems = Array.isArray(incAlerts?.items) ? incAlerts.items : [];
+      const hasIncAlta = incItems.some((i) => String(i.nivel || '').toLowerCase() === 'alta');
+      if (hasIncAlta) {
+        setSem('#sem_inc', '#dot_inc', 'bad', 'Hay incidencias críticas o SLA vencido.');
+        addAction('Revisar /pedidos/inicio/incidencias.html y resolver críticas/SLA vencido.');
+      } else {
+        setSem('#sem_inc', '#dot_inc', 'ok', 'Sin críticas ni SLA vencido.');
+      }
+
+      const tesDash = await api('/api/setup/fase2/tesoreria/dashboard');
+      const pendientes = Number(tesDash?.kpis?.pendientes_conciliacion || 0);
+      const ingresos30 = Number(tesDash?.kpis?.ingresos_30d || 0);
+      const egresos30 = Number(tesDash?.kpis?.egresos_30d || 0);
+      if (pendientes > 0) {
+        setSem('#sem_tes', '#dot_tes', 'warn', `Pendientes de conciliación: ${pendientes}`);
+        addAction('Conciliar movimientos en /pedidos/inicio/tesoreria.html.');
+      } else {
+        setSem('#sem_tes', '#dot_tes', 'ok', 'Sin pendientes de conciliación.');
+      }
+
+      const lowData = ingresos30 === 0 && egresos30 === 0;
+      if (lowData) {
+        setSem('#sem_data', '#dot_data', 'warn', 'Sin movimientos 30d: proyección de caja débil.');
+        addAction('Cargar ingresos/egresos base de los últimos 30 días para semáforo real.');
+      } else {
+        setSem('#sem_data', '#dot_data', 'ok', 'Cobertura de datos operativa.');
+      }
+
+      const globalLevel = hasIncAlta ? 'bad' : (pendientes > 0 || lowData ? 'warn' : 'ok');
+      const globalText = globalLevel === 'bad'
+        ? 'Rojo: atención inmediata en incidencias.'
+        : globalLevel === 'warn'
+          ? 'Amarillo: hay riesgos o falta de datos.'
+          : 'Verde: operación estable.';
+      setSem('#sem_global', '#dot_global', globalLevel, globalText);
     }
 
     $('#btnRefresh')?.addEventListener('click', refreshState);
