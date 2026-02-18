@@ -447,6 +447,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS promo_redencion_once_idx
   ON promociones_redenciones (empresa_id, punto_entrega_id, trigger_producto_id, beneficio_tipo)
   WHERE beneficio_tipo = 'gift_once_per_product';
 
+CREATE UNIQUE INDEX IF NOT EXISTS promo_redencion_once_global_idx
+  ON promociones_redenciones (empresa_id, punto_entrega_id, beneficio_tipo)
+  WHERE beneficio_tipo = 'gift_once_global';
+
 -- =========================================================
 -- 11. FINANZAS Y GASTOS
 -- =========================================================

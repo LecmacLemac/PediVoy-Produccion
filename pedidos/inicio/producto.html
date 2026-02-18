@@ -440,6 +440,15 @@
             </select>
           </div>
         </div>
+        <div class="form-grid">
+          <div>
+            <label>Alcance de la promo única</label>
+            <select id="p_promo_once_mode">
+              <option value="per_product">Una vez por este producto</option>
+              <option value="global_client">Una sola vez total por cliente</option>
+            </select>
+          </div>
+        </div>
 
         <div>
           <label>Mostrar en:</label>
@@ -644,6 +653,8 @@
       $('#p_promo_once_enabled').checked = false;
       fillGiftProductOptions(null, null);
       $('#p_promo_once_gift_product_id').disabled = true;
+      $('#p_promo_once_mode').value = 'per_product';
+      $('#p_promo_once_mode').disabled = true;
 
       $('#p_nombre').focus();
     }
@@ -684,6 +695,8 @@
       $('#p_promo_once_enabled').checked = !!promoCfg.enabled;
       fillGiftProductOptions(promoCfg.gift_product_id || null, p.id);
       $('#p_promo_once_gift_product_id').disabled = !promoCfg.enabled;
+      $('#p_promo_once_mode').value = promoCfg.mode === 'global_client' ? 'global_client' : 'per_product';
+      $('#p_promo_once_mode').disabled = !promoCfg.enabled;
     }
 
     async function save() {
@@ -715,12 +728,13 @@
       const promoEnabled = $('#p_promo_once_enabled').checked;
       const promoGiftProductId = Number($('#p_promo_once_gift_product_id').value || 0) || null;
       let promo_config = null;
+      const promoMode = ($('#p_promo_once_mode').value === 'global_client') ? 'global_client' : 'per_product';
       if (promoEnabled && promoGiftProductId) {
         promo_config = {
           once_per_client_gift: {
             enabled: true,
             gift_product_id: promoGiftProductId,
-            mode: 'per_product',
+            mode: promoMode,
           },
         };
       }
@@ -815,9 +829,14 @@
     if (promoToggle) {
       promoToggle.addEventListener('change', () => {
         const sel = document.getElementById('p_promo_once_gift_product_id');
-        if (!sel) return;
+        const modeSel = document.getElementById('p_promo_once_mode');
+        if (!sel || !modeSel) return;
         sel.disabled = !promoToggle.checked;
-        if (!promoToggle.checked) sel.value = '';
+        modeSel.disabled = !promoToggle.checked;
+        if (!promoToggle.checked) {
+          sel.value = '';
+          modeSel.value = 'per_product';
+        }
       });
     }
 

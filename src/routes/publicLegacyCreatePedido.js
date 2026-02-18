@@ -345,16 +345,29 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
             const giftProductId = Number(promoCfg.gift_product_id || 0);
             if (!giftProductId || !byId.has(giftProductId)) continue;
 
-            const already = await txQuery(
-              `SELECT 1
-                 FROM promociones_redenciones
-                WHERE empresa_id = $1
-                  AND punto_entrega_id = $2
-                  AND trigger_producto_id = $3
-                  AND beneficio_tipo = 'gift_once_per_product'
-                LIMIT 1`,
-              [empId, punto_entrega_id, it.producto_id]
-            );
+            const promoMode = promoCfg.mode === 'global_client' ? 'global_client' : 'per_product';
+            const benefitType = promoMode === 'global_client' ? 'gift_once_global' : 'gift_once_per_product';
+
+            const already = promoMode === 'global_client'
+              ? await txQuery(
+                  `SELECT 1
+                     FROM promociones_redenciones
+                    WHERE empresa_id = $1
+                      AND punto_entrega_id = $2
+                      AND beneficio_tipo = 'gift_once_global'
+                    LIMIT 1`,
+                  [empId, punto_entrega_id]
+                )
+              : await txQuery(
+                  `SELECT 1
+                     FROM promociones_redenciones
+                    WHERE empresa_id = $1
+                      AND punto_entrega_id = $2
+                      AND trigger_producto_id = $3
+                      AND beneficio_tipo = 'gift_once_per_product'
+                    LIMIT 1`,
+                  [empId, punto_entrega_id, it.producto_id]
+                );
             if (already.length) continue;
 
             const giftProduct = byId.get(giftProductId);
@@ -368,6 +381,7 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
             pendingPromoRedemptions.push({
               trigger_producto_id: it.producto_id,
               beneficio_producto_id: giftProductId,
+              beneficio_tipo: benefitType,
             });
             promoAddedByTrigger.add(it.producto_id);
           }
@@ -481,9 +495,9 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
             await txQuery(
               `INSERT INTO promociones_redenciones (
                  empresa_id, punto_entrega_id, trigger_producto_id, beneficio_tipo, beneficio_producto_id, pedido_id
-               ) VALUES ($1,$2,$3,'gift_once_per_product',$4,$5)
+               ) VALUES ($1,$2,$3,$4,$5,$6)
                ON CONFLICT DO NOTHING`,
-              [empId, punto_entrega_id, promo.trigger_producto_id, promo.beneficio_producto_id, pedido.id]
+              [empId, punto_entrega_id, promo.trigger_producto_id, promo.beneficio_tipo, promo.beneficio_producto_id, pedido.id]
             );
           }
         } catch (e) {
