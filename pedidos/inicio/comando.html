@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Tablero de Comando – PediVoy</title>
+  <style>
+    :root{--bg:#0b1020;--bg2:#0f172a;--ink:#f1f5f9;--muted:#94a3b8;--brand:#06b6d4;--surface:rgba(30,41,59,.75);--border:rgba(148,163,184,.2);--ok:#22c55e;--warn:#f59e0b;--bad:#ef4444}
+    *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,sans-serif}
+    .container{max-width:1200px;margin:0 auto;padding:0 16px}
+    header{position:sticky;top:0;background:rgba(15,23,42,.95);border-bottom:1px solid var(--border);z-index:10}
+    nav{display:flex;justify-content:space-between;align-items:center;padding:12px 0;gap:10px;flex-wrap:wrap}
+    .menu{list-style:none;display:flex;gap:14px;padding:0;margin:0;overflow:auto}
+    .menu a{text-decoration:none;color:var(--muted)} .menu a:hover,.menu a.active{color:#fff}
+    main{padding:20px 0;display:grid;gap:16px}
+    .card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px}
+    .title{margin:0 0 6px;font-size:1.15rem}
+    .muted{color:var(--muted)}
+    .grid{display:grid;gap:12px}
+    .g4{grid-template-columns:repeat(auto-fit,minmax(210px,1fr))}
+    .module{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px}
+    .module h3{margin:0 0 8px;font-size:1rem}
+    .links{display:grid;gap:6px}
+    .links a{color:#dbeafe;text-decoration:none;font-size:.93rem}
+    .links a:hover{text-decoration:underline}
+    .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}
+    .kpi{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:10px}
+    .badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:.78rem;font-weight:700}
+    .ok{background:rgba(34,197,94,.15);color:#86efac}.warn{background:rgba(245,158,11,.15);color:#fcd34d}.bad{background:rgba(239,68,68,.15);color:#fca5a5}
+    .btn{padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:#1e293b;color:#fff;cursor:pointer}
+  </style>
+</head>
+<body>
+  <header>
+    <nav class="container">
+      <div><b>🧭 Tablero de Comando</b> <span id="role" class="muted"></span></div>
+      <ul class="menu">
+        <li><a href="inicial.html">Inicio</a></li>
+        <li><a href="producto.html">Productos</a></li>
+        <li><a href="promociones.html">Promociones</a></li>
+        <li><a href="comando.html" class="active">Comando</a></li>
+        <li><a href="#" id="logout" style="color:var(--bad)">Salir</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <main class="container">
+    <section class="card">
+      <h1 class="title">Vista general del proyecto</h1>
+      <p class="muted" style="margin-top:0">Accesos rápidos a todas las áreas operativas, comerciales y técnicas desde un solo lugar.</p>
+      <div class="kpis" id="kpis">
+        <div class="kpi"><div class="muted">Servidor</div><div id="k_health"><span class="badge warn">Chequeando…</span></div></div>
+        <div class="kpi"><div class="muted">Sesión</div><div id="k_session"><span class="badge warn">Chequeando…</span></div></div>
+        <div class="kpi"><div class="muted">Promos activas</div><div id="k_promos">-</div></div>
+        <div class="kpi"><div class="muted">Redenciones (30d)</div><div id="k_red30">-</div></div>
+      </div>
+      <div style="margin-top:10px"><button class="btn" id="btnRefresh">↻ Actualizar estado</button></div>
+    </section>
+
+    <section class="grid g4">
+      <article class="module">
+        <h3>📦 Operación</h3>
+        <div class="links">
+          <a href="/pedidos/dashboard.html">Dashboard pedidos</a>
+          <a href="/pedidos/repartidor.html">Repartidor</a>
+          <a href="/pedidos/inicio/incidencias.html">Incidencias</a>
+          <a href="/pedidos/inicio/ejecutivo.html">Tablero ejecutivo</a>
+          <a href="/pedidos/inicio/tesoreria.html">Tesorería</a>
+        </div>
+      </article>
+
+      <article class="module">
+        <h3>💰 Comercial</h3>
+        <div class="links">
+          <a href="/pedidos/inicio/crm.html">CRM</a>
+          <a href="/pedidos/inicio/producto.html">Catálogo de productos</a>
+          <a href="/pedidos/inicio/promociones.html">Promociones y puntos</a>
+          <a href="/pedidos/estadisticas.html">Estadísticas</a>
+        </div>
+      </article>
+
+      <article class="module">
+        <h3>⚙️ Configuración</h3>
+        <div class="links">
+          <a href="/pedidos/inicio/empresa.html">Empresa</a>
+          <a href="/pedidos/inicio/zonas.html">Zonas</a>
+          <a href="/pedidos/inicio/choferes.html">Choferes</a>
+          <a href="/pedidos/inicio/usuarios.html">Usuarios</a>
+        </div>
+      </article>
+
+      <article class="module">
+        <h3>🛠️ Administración técnica</h3>
+        <div class="links">
+          <a href="/health" target="_blank">Health endpoint</a>
+          <a href="/api/me" target="_blank">API /me</a>
+          <a href="/pedidos/inicio/observabilidad.html">Observabilidad</a>
+        </div>
+      </article>
+    </section>
+  </main>
+
+  <script>
+    const $ = (s) => document.querySelector(s);
+
+    async function api(url, opts={}){
+      const res = await fetch(url, { ...opts, credentials:'include', headers:{ 'Content-Type':'application/json', ...(opts.headers||{}) } });
+      if (res.status === 401) return { _401:true };
+      try { return await res.json(); } catch { return null; }
+    }
+
+    function badge(el, kind, text){
+      el.innerHTML = `<span class="badge ${kind}">${text}</span>`;
+    }
+
+    async function refreshState(){
+      try {
+        const h = await fetch('/health');
+        badge($('#k_health'), h.ok ? 'ok' : 'bad', h.ok ? 'OK' : 'Error');
+      } catch { badge($('#k_health'), 'bad', 'Sin respuesta'); }
+
+      const me = await api('/api/me');
+      if (me?._401) {
+        badge($('#k_session'), 'bad', 'Sin sesión');
+        $('#role').textContent = '';
+        return;
+      }
+      badge($('#k_session'), 'ok', 'Activa');
+      $('#role').textContent = me?.user?.role ? `(${String(me.user.role).toUpperCase()})` : '';
+
+      const d = await api('/api/promociones/dashboard');
+      $('#k_promos').textContent = Number(d?.kpis?.promos_activas || 0);
+      $('#k_red30').textContent = Number(d?.kpis?.redemptions_30d || 0);
+    }
+
+    $('#btnRefresh')?.addEventListener('click', refreshState);
+    $('#logout')?.addEventListener('click', async (e) => {
+      e.preventDefault();
+      try { await fetch('/api/logout', { method:'POST', credentials:'include' }); } catch {}
+      location.href = '../login.html';
+    });
+
+    refreshState();
+  </script>
+</body>
+</html>
