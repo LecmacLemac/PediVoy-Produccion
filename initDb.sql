@@ -451,6 +451,27 @@ CREATE UNIQUE INDEX IF NOT EXISTS promo_redencion_once_global_idx
   ON promociones_redenciones (empresa_id, punto_entrega_id, beneficio_tipo)
   WHERE beneficio_tipo = 'gift_once_global';
 
+CREATE TABLE IF NOT EXISTS promociones_config (
+  empresa_id    INTEGER PRIMARY KEY REFERENCES empresas(id) ON DELETE CASCADE,
+  points_config JSONB NOT NULL DEFAULT '{}'::jsonb,
+  promos_config JSONB NOT NULL DEFAULT '{}'::jsonb,
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS puntos_movimientos (
+  id               SERIAL PRIMARY KEY,
+  empresa_id       INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+  punto_entrega_id INTEGER NOT NULL REFERENCES puntos_entrega(id) ON DELETE CASCADE,
+  pedido_id        INTEGER REFERENCES pedidos(id) ON DELETE SET NULL,
+  tipo             TEXT NOT NULL,
+  puntos           INTEGER NOT NULL,
+  detalle          TEXT,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS puntos_movimientos_empresa_cliente_idx
+  ON puntos_movimientos (empresa_id, punto_entrega_id, created_at DESC);
+
 -- =========================================================
 -- 11. FINANZAS Y GASTOS
 -- =========================================================

@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Promociones y Puntos – MultiEmpresas</title>
+  <style>
+    :root{--bg:#0b1020;--bg2:#0f172a;--ink:#f1f5f9;--muted:#94a3b8;--brand:#06b6d4;--surface:rgba(30,41,59,.75);--border:rgba(148,163,184,.2);--danger:#ef4444;}
+    *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,sans-serif}
+    header{position:sticky;top:0;background:rgba(15,23,42,.95);border-bottom:1px solid var(--border);z-index:10}
+    .container{max-width:1200px;margin:0 auto;padding:0 16px}
+    nav{display:flex;justify-content:space-between;align-items:center;padding:12px 0;gap:12px;flex-wrap:wrap}
+    .menu{list-style:none;display:flex;gap:14px;padding:0;margin:0;overflow:auto}
+    .menu a{color:var(--muted);text-decoration:none}.menu a.active,.menu a:hover{color:#fff}
+    main{padding:20px 0;display:grid;gap:16px}
+    .card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px}
+    .grid{display:grid;gap:12px}.g4{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+    .kpi{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px}
+    .kpi .v{font-size:1.3rem;font-weight:700}
+    input,select{width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--bg2);color:#fff}
+    .row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    .btn{padding:10px 14px;border-radius:8px;border:1px solid var(--border);background:#1e293b;color:#fff;cursor:pointer}
+    .btn.primary{background:var(--brand);color:#000;border:none;font-weight:700}
+    table{width:100%;border-collapse:collapse} th,td{padding:8px;border-bottom:1px solid var(--border);text-align:left;font-size:.92rem}
+    .muted{color:var(--muted)}
+  </style>
+</head>
+<body>
+  <header>
+    <nav class="container">
+      <div><b>🎯 Promociones y Puntos</b> <span id="roleBadge" class="muted"></span></div>
+      <ul class="menu">
+        <li><a href="inicial.html">🚀 Inicio</a></li>
+        <li><a href="producto.html">Productos</a></li>
+        <li><a href="promociones.html" class="active">Promociones</a></li>
+        <li><a href="#" id="logout" style="color:var(--danger)">Salir</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <main class="container">
+    <div class="card grid g4" id="kpis"></div>
+
+    <div class="card">
+      <h3 style="margin-top:0">Configuración general (Puntos)</h3>
+      <div id="empWrap" style="display:none;margin-bottom:10px">
+        <label>Empresa</label>
+        <select id="empSel"><option value="">-- Seleccionar Empresa --</option></select>
+      </div>
+      <div class="row">
+        <div><label>Programa activo</label><select id="points_enabled"><option value="1">Sí</option><option value="0">No</option></select></div>
+        <div><label>Puntos por pedido entregado</label><input type="number" id="points_per_order" min="0" step="1"></div>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <div><label>Puntos por cada $1.000</label><input type="number" id="points_per_1000" min="0" step="0.01"></div>
+        <div><label>Mínimo puntos para canje</label><input type="number" id="min_redeem_points" min="0" step="1"></div>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <div><label>Valor en $ por 1 punto</label><input type="number" id="value_per_point" min="0" step="0.01"></div>
+        <div><label class="muted">Última actualización</label><div id="updatedAt" class="muted">-</div></div>
+      </div>
+      <div style="margin-top:12px"><button class="btn primary" id="btnSave">Guardar configuración</button></div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-top:0">Promos por producto</h3>
+      <table>
+        <thead><tr><th>Producto</th><th>Modo</th><th>Redenciones (30d)</th><th>Total</th><th></th></tr></thead>
+        <tbody id="tbPromos"><tr><td colspan="5" class="muted">Cargando…</td></tr></tbody>
+      </table>
+    </div>
+  </main>
+
+  <script>
+    const $ = (s) => document.querySelector(s);
+    let isSuper = false;
+
+    async function api(url, opts = {}) {
+      const res = await fetch(url, { ...opts, headers: { 'Content-Type': 'application/json', ...(opts.headers||{}) }, credentials: 'include' });
+      if (res.status === 401) { location.href = '../login.html'; return null; }
+      return res.json();
+    }
+
+    function empresaQS() {
+      const emp = $('#empSel')?.value;
+      return (isSuper && emp) ? `?empresa_id=${encodeURIComponent(emp)}` : '';
+    }
+
+    function drawKpis(k){
+      const items = [
+        ['Promos activas', k.promos_activas],
+        ['Con regalo', k.promos_con_regalo],
+        ['Con descuento', k.promos_con_descuento],
+        ['Redenciones 30d', k.redemptions_30d],
+        ['Redenciones total', k.redemptions_total],
+        ['Clientes únicos', k.unique_clients],
+      ];
+      $('#kpis').innerHTML = items.map(([t,v]) => `<div class="kpi"><div class="muted">${t}</div><div class="v">${Number(v||0)}</div></div>`).join('');
+    }
+
+    async function loadDashboard(){
+      const d = await api('/api/promociones/dashboard' + empresaQS());
+      if (!d || d.error) return;
+      drawKpis(d.kpis || {});
+      const rows = Array.isArray(d.items) ? d.items : [];
+      $('#tbPromos').innerHTML = rows.length ? rows.map(r => {
+        const cfg = r.promo_config?.once_per_client_gift || {};
+        return `<tr>
+          <td>${r.nombre}</td>
+          <td>${cfg.mode === 'global_client' ? 'Global cliente' : 'Por producto'}</td>
+          <td>${Number(r.redemptions_30d||0)}</td>
+          <td>${Number(r.redemptions_total||0)}</td>
+          <td><a class="btn" href="producto.html">Editar</a></td>
+        </tr>`;
+      }).join('') : '<tr><td colspan="5" class="muted">No hay promos configuradas.</td></tr>';
+    }
+
+    async function loadConfig(){
+      const c = await api('/api/promociones/config' + empresaQS());
+      if (!c || c.error) return;
+      const p = c.points_config || {};
+      $('#points_enabled').value = p.enabled ? '1' : '0';
+      $('#points_per_order').value = p.points_per_order ?? 10;
+      $('#points_per_1000').value = p.points_per_1000 ?? 0;
+      $('#min_redeem_points').value = p.min_redeem_points ?? 100;
+      $('#value_per_point').value = p.value_per_point ?? 1;
+      $('#updatedAt').textContent = c.updated_at ? new Date(c.updated_at).toLocaleString('es-AR') : '-';
+    }
+
+    async function saveConfig(){
+      const body = {
+        points_config: {
+          enabled: $('#points_enabled').value === '1',
+          points_per_order: Number($('#points_per_order').value || 0),
+          points_per_1000: Number($('#points_per_1000').value || 0),
+          min_redeem_points: Number($('#min_redeem_points').value || 0),
+          value_per_point: Number($('#value_per_point').value || 0),
+        }
+      };
+      const r = await api('/api/promociones/config' + empresaQS(), { method:'PUT', body: JSON.stringify(body) });
+      if (r && !r.error) {
+        alert('✅ Configuración guardada');
+        loadConfig();
+      }
+    }
+
+    async function init(){
+      $('#logout')?.addEventListener('click', async (e) => { e.preventDefault(); try{ await api('/api/logout',{method:'POST'});}catch{} location.href='../login.html'; });
+      $('#btnSave')?.addEventListener('click', saveConfig);
+
+      const me = await api('/api/me');
+      isSuper = (me?.user?.role || '').toLowerCase() === 'super';
+      $('#roleBadge').textContent = isSuper ? '(SUPER ADMIN)' : '(Admin)';
+
+      if (isSuper) {
+        $('#empWrap').style.display = 'block';
+        const list = await api('/api/empresas');
+        const sel = $('#empSel');
+        sel.innerHTML = '<option value="">-- Seleccionar Empresa --</option>' + (Array.isArray(list) ? list.map(e => `<option value="${Number(e.id)}">${e.nombre}</option>`).join('') : '');
+        sel.addEventListener('change', async () => { await loadDashboard(); await loadConfig(); });
+      }
+
+      await loadDashboard();
+      await loadConfig();
+    }
+    init();
+  </script>
+</body>
+</html>

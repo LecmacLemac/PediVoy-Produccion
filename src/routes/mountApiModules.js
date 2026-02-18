@@ -25,6 +25,7 @@ import { createReportesRouter } from './reportes.js';
 import { createRepartidorStatsRouter } from './repartidorStats.js';
 import { createLicenciasMpRouter, createMercadoPagoWebhookRouter } from './licenciasMp.js';
 import { createPromptsGlobalesRouter } from './promptsGlobales.js';
+import { createPromocionesRouter } from './promociones.js';
 import { trackingPublicRouter } from '../trackingPublic.js';
 
 export function mountApiModules(app, deps) {
@@ -92,6 +93,7 @@ export function mountApiModules(app, deps) {
   app.use('/api', createChoferesRouter({ query, withAuth, isSuper, getEmpresaIdFromToken }));
   app.use('/api', createAsignacionesZonasRouter({ query, withAuth, isSuper, getEmpresaIdFromToken }));
   app.use('/api/productos', createProductosRouter({ query, withAuth, isSuper, getEmpresaIdFromToken }));
+  app.use('/api/promociones', createPromocionesRouter({ query, withAuth, isSuper, getEmpresaIdFromToken }));
   app.use('/api/admin', createAdminUsuariosRouter({ query, withAuth, isSuper, getEmpresaIdFromToken }));
 
   app.use(
