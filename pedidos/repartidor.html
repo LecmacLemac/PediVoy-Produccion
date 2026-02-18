@@ -524,6 +524,23 @@
     <div id="amContenido" class="modal-list" style="margin-top:0.6rem;">
       </div>
 
+    <label style="margin-top:0.5rem;">Checklist de entrega</label>
+    <div class="modal-list" style="margin-top:0.4rem;">
+      <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" id="amChkCliente" checked> Cliente presente/confirmado</label>
+      <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" id="amChkProducto" checked> Producto entregado completo</label>
+      <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" id="amChkCobro"> Cobro confirmado (si aplica)</label>
+    </div>
+
+    <label style="margin-top:0.5rem;">Evidencia opcional</label>
+    <div class="modal-list" style="margin-top:0.4rem;">
+      <label>Foto de entrega</label>
+      <input id="amFoto" type="file" accept="image/*" capture="environment" style="width:100%;" />
+      <label style="margin-top:0.5rem;">Firma cliente (opcional)</label>
+      <canvas id="amFirma" width="320" height="120" style="width:100%;max-width:420px;border:1px solid var(--border);border-radius:8px;background:#fff;"></canvas>
+      <div><button type="button" class="iconbtn ghost" onclick="limpiarFirmaEntrega()">Limpiar firma</button></div>
+      <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" id="amGeo" checked> Adjuntar geolocalización</label>
+    </div>
+
     <label style="margin-top:0.5rem;">Observaciones</label>
     <textarea id="amObs" rows="2" placeholder="Notas opcionales..."
       style="width:100%; resize:vertical; background:var(--bg-input); border-radius:8px; border:1px solid var(--border); color:#fff; padding:0.5rem;"></textarea>
@@ -1337,7 +1354,12 @@ async function abrirActivosPaso(pedidoId) {
           method: 'POST',
           body: {
             zona_id: zonaId != null ? zonaId : null,
-            movimientos: []
+            movimientos: [],
+            checklist: {
+              cliente_confirmado: true,
+              producto_entregado: true,
+              cobro_confirmado: false,
+            },
           }
         });
       });
@@ -1534,6 +1556,13 @@ async function abrirActivosPaso(pedidoId) {
 
     c.innerHTML = html;
     $('#amObs').value = '';
+    $('#amChkCliente').checked = true;
+    $('#amChkProducto').checked = true;
+    $('#amChkCobro').checked = false;
+    $('#amGeo').checked = true;
+    if ($('#amFoto')) $('#amFoto').value = '';
+    setupFirmaEntregaCanvas();
+    limpiarFirmaEntrega();
     $('#activosModal').hidden = false;
 
     // Listeners: habilitar combo "nuevo activo" cuando eligen CAMBIO
@@ -1558,6 +1587,93 @@ async function abrirActivosPaso(pedidoId) {
     activosModalState.pedidoId = null;
     activosModalState.data = null;
   }
+}
+
+function setupFirmaEntregaCanvas() {
+  const canvas = document.getElementById('amFirma');
+  if (!canvas || canvas.dataset.ready === '1') return;
+
+  const ctx = canvas.getContext('2d');
+  ctx.lineWidth = 2;
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = '#111827';
+
+  let drawing = false;
+  const pos = (e) => {
+    const r = canvas.getBoundingClientRect();
+    const t = e.touches && e.touches[0] ? e.touches[0] : e;
+    return { x: (t.clientX - r.left) * (canvas.width / r.width), y: (t.clientY - r.top) * (canvas.height / r.height) };
+  };
+
+  const start = (e) => { drawing = true; const p = pos(e); ctx.beginPath(); ctx.moveTo(p.x, p.y); canvas.dataset.hasSign = '1'; };
+  const move = (e) => { if (!drawing) return; const p = pos(e); ctx.lineTo(p.x, p.y); ctx.stroke(); };
+  const end = () => { drawing = false; };
+
+  canvas.addEventListener('mousedown', start);
+  canvas.addEventListener('mousemove', move);
+  window.addEventListener('mouseup', end);
+  canvas.addEventListener('touchstart', (e) => { e.preventDefault(); start(e); }, { passive: false });
+  canvas.addEventListener('touchmove', (e) => { e.preventDefault(); move(e); }, { passive: false });
+  canvas.addEventListener('touchend', end);
+
+  canvas.dataset.ready = '1';
+}
+
+function limpiarFirmaEntrega() {
+  const canvas = document.getElementById('amFirma');
+  if (!canvas || !canvas.getContext) return;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  canvas.dataset.hasSign = '';
+}
+
+async function readFileAsDataUrl(file) {
+  if (!file) return null;
+  return new Promise((resolve) => {
+    const r = new FileReader();
+    r.onload = () => resolve(typeof r.result === 'string' ? r.result : null);
+    r.onerror = () => resolve(null);
+    r.readAsDataURL(file);
+  });
+}
+
+async function getGeoEntregaIfEnabled() {
+  const useGeo = !!document.getElementById('amGeo')?.checked;
+  if (!useGeo || !navigator.geolocation) return null;
+
+  return new Promise((resolve) => {
+    navigator.geolocation.getCurrentPosition(
+      (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy || null }),
+      () => resolve(null),
+      { enableHighAccuracy: true, timeout: 6000, maximumAge: 15000 }
+    );
+  });
+}
+
+async function buildEntregaMeta() {
+  const checklist = {
+    cliente_confirmado: !!document.getElementById('amChkCliente')?.checked,
+    producto_entregado: !!document.getElementById('amChkProducto')?.checked,
+    cobro_confirmado: !!document.getElementById('amChkCobro')?.checked,
+  };
+
+  const fotoFile = document.getElementById('amFoto')?.files?.[0] || null;
+  const foto_data_url = await readFileAsDataUrl(fotoFile);
+
+  const firmaCanvas = document.getElementById('amFirma');
+  const firma_data_url = (firmaCanvas && firmaCanvas.dataset.hasSign === '1') ? firmaCanvas.toDataURL('image/png') : null;
+
+  const geo = await getGeoEntregaIfEnabled();
+
+  return {
+    checklist,
+    evidencia: {
+      foto_data_url,
+      firma_data_url,
+      geo,
+      ts: new Date().toISOString(),
+    },
+  };
 }
 
 function cerrarActivosModal() {
@@ -1660,8 +1776,10 @@ async function confirmarEntregaConActivos() {
   try {
     const zonaId = await resolverZonaParaPedido(pid);
 
+    const meta = await buildEntregaMeta();
+
     // ✅ ÚNICA llamada transaccional: entrega + movimientos + stock chofer (backend)
-    const body = { movimientos };
+    const body = { movimientos, checklist: meta.checklist, evidencia: meta.evidencia };
     if (zonaId != null) body.zona_id = zonaId;
 
     await withLock(`entregar:${pid}`, async () => {
@@ -1745,7 +1863,16 @@ async function confirmarEntregaScanner() {
     // Igual que en confirmarEntregaConActivos: resolvemos zona (si aplica)
     const zonaId = await resolverZonaParaPedido(pedidoEnProcesoId);
 
-    const body = { movimientos };
+    const geo = await getGeoEntregaIfEnabled();
+    const body = {
+      movimientos,
+      checklist: {
+        cliente_confirmado: true,
+        producto_entregado: true,
+        cobro_confirmado: false,
+      },
+      evidencia: { geo, ts: new Date().toISOString() },
+    };
     if (zonaId != null) body.zona_id = zonaId;
 
     // Llamada transaccional: entrega + movimientos + stock chofer

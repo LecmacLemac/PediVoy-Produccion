@@ -476,6 +476,17 @@ CREATE UNIQUE INDEX IF NOT EXISTS puntos_movimientos_entrega_uniq
   ON puntos_movimientos (empresa_id, pedido_id, tipo)
   WHERE pedido_id IS NOT NULL;
 
+CREATE TABLE IF NOT EXISTS entregas_evidencias (
+  id          SERIAL PRIMARY KEY,
+  empresa_id  INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+  pedido_id   INTEGER NOT NULL UNIQUE REFERENCES pedidos(id) ON DELETE CASCADE,
+  chofer_id   INTEGER REFERENCES choferes(id) ON DELETE SET NULL,
+  checklist   JSONB NOT NULL DEFAULT '{}'::jsonb,
+  evidencia   JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- =========================================================
 -- 11. FINANZAS Y GASTOS
 -- =========================================================

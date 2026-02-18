@@ -265,7 +265,7 @@ export function createRepartidorApiRouter(deps) {
    const { chofer_id, empresa_id, username } = req.user || {};
    const pedidoId = Number(req.params.id);
    // 'movimientos' viene del Modal de Activos del Frontend
-   const { movimientos = [], zona_id = null, metodo_pago = null } = req.body || {};
+   const { movimientos = [], zona_id = null, metodo_pago = null, checklist = null, evidencia = null } = req.body || {};
 
    if (!chofer_id) return res.status(403).json({ error: 'No autorizado: Falta chofer_id' });
    if (!Number.isFinite(pedidoId)) return res.status(400).json({ error: 'ID de pedido inválido' });
@@ -425,6 +425,23 @@ export function createRepartidorApiRouter(deps) {
            [empresa_id, chofer_id, productoId, -qty] // -qty para restar
          );
        }
+     }
+
+     // 8.b Evidencia/checklist opcional de entrega
+     const checklistSafe = (checklist && typeof checklist === 'object') ? checklist : {};
+     const evidenciaSafe = (evidencia && typeof evidencia === 'object') ? evidencia : {};
+     if (Object.keys(checklistSafe).length || Object.keys(evidenciaSafe).length) {
+       await client.query(
+         `INSERT INTO entregas_evidencias (empresa_id, pedido_id, chofer_id, checklist, evidencia, updated_at)
+          VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, NOW())
+          ON CONFLICT (pedido_id)
+          DO UPDATE SET
+            checklist = EXCLUDED.checklist,
+            evidencia = EXCLUDED.evidencia,
+            chofer_id = EXCLUDED.chofer_id,
+            updated_at = NOW()`,
+         [empresa_id, pedidoId, chofer_id || null, JSON.stringify(checklistSafe), JSON.stringify(evidenciaSafe)]
+       );
      }
 
      // -----------------------------------------------------
