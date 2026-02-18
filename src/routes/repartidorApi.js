@@ -76,6 +76,50 @@ export function createRepartidorApiRouter(deps) {
    }
 });
 
+// 1.b Evidencias de entrega (auditoría rápida)
+  router.get('/entregas-evidencias', withAuth, async (req, res) => {
+   try {
+     const { chofer_id, empresa_id, role } = req.user || {};
+     const from = String(req.query?.from || '');
+     const to = String(req.query?.to || '');
+
+     const vals = [empresa_id];
+     let idx = 2;
+     const where = ['e.empresa_id = $1'];
+
+     if (role === 'repartidor' && chofer_id) {
+       where.push(`e.chofer_id = $${idx++}`);
+       vals.push(chofer_id);
+     }
+
+     if (from) {
+       where.push(`e.updated_at >= $${idx++}::date`);
+       vals.push(from);
+     }
+     if (to) {
+       where.push(`e.updated_at < ($${idx++}::date + INTERVAL '1 day')`);
+       vals.push(to);
+     }
+
+     const rows = await query(
+       `SELECT e.pedido_id, e.chofer_id, e.checklist, e.evidencia, e.updated_at,
+               pe.cliente
+          FROM entregas_evidencias e
+          JOIN pedidos p ON p.id = e.pedido_id
+          LEFT JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
+         WHERE ${where.join(' AND ')}
+         ORDER BY e.updated_at DESC
+         LIMIT 120`,
+       vals
+     );
+
+     res.json({ ok: true, items: rows });
+   } catch (e) {
+     console.error('REPARTIDOR EVIDENCIAS ERROR:', e);
+     res.status(500).json({ error: 'Error cargando evidencias' });
+   }
+});
+
 // 2. Actualizar Estado o Pago (PUT) - Para los botones del repartidor
   router.put('/pedidos/:id', withAuth, async (req, res) => {
    try {

@@ -289,6 +289,7 @@
       <a class="nav-link" data-sec="gastos">💸 Movimientos</a>
       <a class="nav-link" data-sec="resumen">📊 Resumen</a>
       <a class="nav-link" data-sec="transf">🏦 Transf.</a>
+      <a class="nav-link" data-sec="evidencias">🧾 Evidencias</a>
       <a id="logout" class="nav-link" style="color:var(--danger)">Salir</a>
     </div>
   </div>
@@ -504,6 +505,25 @@
         <table style="font-size:0.85rem">
           <thead><tr><th>Pedido</th><th>Cliente</th><th>Monto</th><th>Estado</th></tr></thead>
           <tbody id="tfList"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section id="sec-evidencias" hidden>
+    <div class="card">
+      <div class="flex-bt">
+        <h3>Evidencias de entrega</h3>
+        <button class="iconbtn ghost" onclick="loadEvidenciasEntrega()">↻</button>
+      </div>
+      <div class="row" style="margin-bottom:1rem">
+        <input type="date" id="evDateFrom">
+        <input type="date" id="evDateTo">
+      </div>
+      <div class="table-wrap">
+        <table style="font-size:0.85rem">
+          <thead><tr><th>Fecha</th><th>Pedido</th><th>Cliente</th><th>Checklist</th><th>Evidencia</th></tr></thead>
+          <tbody id="evList"><tr><td colspan="5" class="muted">Sin datos</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -877,6 +897,8 @@ function showGpsHelp() {
     $('#resDate').value = today;
     $('#gFecha').value = today;
     $('#tfDate').value = today;
+    if ($('#evDateFrom')) $('#evDateFrom').value = today;
+    if ($('#evDateTo')) $('#evDateTo').value = today;
 
     // 5. Restaurar filtros de Pedidos persistidos
     restoreFiltrosUI();
@@ -922,6 +944,7 @@ $$('.nav-link').forEach(l => l.onclick = async (e) => {
   if(sec === 'gastos') gInit();
   if(sec === 'resumen') calcResumen();
   if(sec === 'transf') loadTransf();
+  if(sec === 'evidencias') loadEvidenciasEntrega();
 });
 
 // Pedidos Filters
@@ -942,6 +965,11 @@ $('#btnOpt').onclick = optimizarRuta;
 $('#mapFiltroEstado').addEventListener('change', renderMap);
 $('#mapSoloHoy').addEventListener('change', renderMap);
 $('#mapRefBtn').onclick = () => { loadPedidos().then(renderMap); };
+
+const evDateFrom = document.getElementById('evDateFrom');
+const evDateTo = document.getElementById('evDateTo');
+if (evDateFrom) evDateFrom.addEventListener('change', loadEvidenciasEntrega);
+if (evDateTo) evDateTo.addEventListener('change', loadEvidenciasEntrega);
 
 // Gastos Inputs
 $('#gTipo').addEventListener('change', gToggle);
@@ -2374,6 +2402,58 @@ async function loadTransf(){
       `;
       }).join('');
   } catch(e) { console.error(e); }
+}
+
+async function loadEvidenciasEntrega(){
+  try {
+    const from = document.getElementById('evDateFrom')?.value || '';
+    const to = document.getElementById('evDateTo')?.value || '';
+    const qs = new URLSearchParams();
+    if (from) qs.set('from', from);
+    if (to) qs.set('to', to);
+
+    const data = await api(`/api/repartidor/entregas-evidencias?${qs.toString()}`);
+    const rows = Array.isArray(data?.items) ? data.items : [];
+
+    const tbody = document.getElementById('evList');
+    if (!tbody) return;
+
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="5" class="muted">Sin evidencias registradas</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = rows.map((r) => {
+      const chk = r.checklist || {};
+      const ev = r.evidencia || {};
+      const checklistTxt = [
+        chk.cliente_confirmado ? '👤' : '—',
+        chk.producto_entregado ? '📦' : '—',
+        chk.cobro_confirmado ? '💵' : '—',
+      ].join(' ');
+
+      const evTxt = [
+        ev.foto_data_url ? '📷' : '',
+        ev.firma_data_url ? '✍️' : '',
+        ev.geo?.lat ? '📍' : '',
+      ].filter(Boolean).join(' ') || '-';
+
+      const fecha = r.updated_at ? new Date(r.updated_at).toLocaleString('es-AR') : '-';
+      return `
+        <tr>
+          <td>${fecha}</td>
+          <td>#${Number(r.pedido_id || 0)}</td>
+          <td>${esc(r.cliente || '-')}</td>
+          <td>${checklistTxt}</td>
+          <td>${evTxt}</td>
+        </tr>
+      `;
+    }).join('');
+  } catch (e) {
+    console.error(e);
+    const tbody = document.getElementById('evList');
+    if (tbody) tbody.innerHTML = '<tr><td colspan="5" class="muted">Error cargando evidencias</td></tr>';
+  }
 }
 
 async function togglePagoRepartidor(pedidoId, checkbox) {
