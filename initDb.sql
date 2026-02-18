@@ -472,6 +472,10 @@ CREATE TABLE IF NOT EXISTS puntos_movimientos (
 CREATE INDEX IF NOT EXISTS puntos_movimientos_empresa_cliente_idx
   ON puntos_movimientos (empresa_id, punto_entrega_id, created_at DESC);
 
+CREATE UNIQUE INDEX IF NOT EXISTS puntos_movimientos_entrega_uniq
+  ON puntos_movimientos (empresa_id, pedido_id, tipo)
+  WHERE pedido_id IS NOT NULL;
+
 -- =========================================================
 -- 11. FINANZAS Y GASTOS
 -- =========================================================

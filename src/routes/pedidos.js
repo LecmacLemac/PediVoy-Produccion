@@ -4,6 +4,7 @@ import express from 'express';
 import { withAuth, checkLicencia, isSuper, getEmpresaIdFromToken } from '../services.js';
 import { query } from '../db.js';
 import { notificarEnRuta } from '../services/notificacionesPedidos.js';
+import { awardPointsForDeliveredOrder } from '../services/puntosService.js';
 
 export function createPedidosRouter() {
   const router = express.Router();
@@ -134,7 +135,7 @@ export function createPedidosRouter() {
           `UPDATE pedidos SET ${sets.join(', ')}
            WHERE id = $${idPos}
              AND ($${empPos}::int IS NULL OR empresa_id = $${empPos})
-           RETURNING id, empresa_id`,
+           RETURNING id, empresa_id, punto_entrega_id, monto, estado`,
           vals
         );
 
@@ -155,6 +156,17 @@ export function createPedidosRouter() {
             'UPDATE pedidos SET tracking_token = NULL WHERE id = $1 AND empresa_id = $2',
             [req.params.id, emp]
           );
+        }
+
+        if (estado === 'entregado') {
+          const row = r[0];
+          awardPointsForDeliveredOrder({
+            queryFn: query,
+            empresaId: row.empresa_id,
+            puntoEntregaId: row.punto_entrega_id,
+            pedidoId: row.id,
+            monto: row.monto,
+          }).catch((err) => console.error('POINTS.AWARD.ERROR', err?.message || err));
         }
       }
 

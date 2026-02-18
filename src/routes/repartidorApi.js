@@ -2,6 +2,7 @@
 // API Repartidor (dashboard chofer) — extraído desde server.js
 
 import express from 'express';
+import { awardPointsForDeliveredOrder } from '../services/puntosService.js';
 
 export function createRepartidorApiRouter(deps) {
   const { query, pool, withAuth, getEmpresaIdFromToken, notifyEstadoPedidoPush, notificarEnRuta, notificarPedidoTransferencia, ejecutarEstrategiaVecinos, registrarMovimientosActivosDesdePedido } = deps || {};
@@ -280,7 +281,7 @@ export function createRepartidorApiRouter(deps) {
      // 2. Lock del Pedido (Evita doble entrega concurrente)
      const pedQ = await client.query(
        `
-       SELECT id, empresa_id, chofer_id, estado, metodo_pago, zona_id, punto_entrega_id
+       SELECT id, empresa_id, chofer_id, estado, metodo_pago, zona_id, punto_entrega_id, monto
        FROM pedidos
        WHERE id = $1 AND empresa_id = $2
        FOR UPDATE
@@ -443,6 +444,15 @@ export function createRepartidorApiRouter(deps) {
          ejecutarEstrategiaReferidos({ pedidoId, empresaId: empresa_id }).catch(() => {});
        })
        .catch(() => {});
+
+     // Programa de puntos (idempotente por pedido)
+     awardPointsForDeliveredOrder({
+       queryFn: query,
+       empresaId: empresa_id,
+       puntoEntregaId: pedido.punto_entrega_id,
+       pedidoId,
+       monto: pedido.monto,
+     }).catch((err) => console.error('POINTS.AWARD.ERROR', err?.message || err));
 
      // Notificar cambio a Transferencia si aplica
      if (metodo_pago && String(metodo_pago).toLowerCase().includes('trans') && !metodoPagoAnterior.includes('trans')) {

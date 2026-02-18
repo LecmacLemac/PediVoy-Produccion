@@ -94,6 +94,8 @@
         ['Redenciones 30d', k.redemptions_30d],
         ['Redenciones total', k.redemptions_total],
         ['Clientes únicos', k.unique_clients],
+        ['Puntos emitidos 30d', k.points_issued_30d],
+        ['Puntos emitidos total', k.points_issued_total],
       ];
       $('#kpis').innerHTML = items.map(([t,v]) => `<div class="kpi"><div class="muted">${t}</div><div class="v">${Number(v||0)}</div></div>`).join('');
     }

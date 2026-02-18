@@ -44,6 +44,17 @@ export function createPromocionesRouter(deps) {
         [empresaId]
       );
 
+      const [pointsRow] = await query(
+        `SELECT
+           COALESCE(SUM(puntos),0)::int AS points_issued_total,
+           COALESCE(SUM(puntos) FILTER (WHERE created_at >= NOW() - INTERVAL '30 days'),0)::int AS points_issued_30d,
+           COUNT(DISTINCT punto_entrega_id)::int AS points_clients
+         FROM puntos_movimientos
+        WHERE empresa_id = $1
+          AND tipo = 'acumulacion_entrega'`,
+        [empresaId]
+      );
+
       const items = await query(
         `SELECT
            p.id,
@@ -75,6 +86,9 @@ export function createPromocionesRouter(deps) {
           redemptions_total: Number(redemptions?.total || 0),
           redemptions_30d: Number(redemptions?.last_30d || 0),
           unique_clients: Number(redemptions?.unique_clients || 0),
+          points_issued_total: Number(pointsRow?.points_issued_total || 0),
+          points_issued_30d: Number(pointsRow?.points_issued_30d || 0),
+          points_clients: Number(pointsRow?.points_clients || 0),
         },
         items,
       });
