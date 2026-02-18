@@ -1175,6 +1175,31 @@ function syncRoutePlanWithPedidos() {
   saveRoutePlan();
 }
 
+function haversineKm(lat1, lng1, lat2, lng2) {
+  const toRad = (v) => (Number(v) * Math.PI) / 180;
+  const R = 6371;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+function estimateEtaMin(km) {
+  const avgKmH = 22; // urbano repartidor
+  return Math.max(1, Math.round((Number(km || 0) / avgKmH) * 60));
+}
+
+async function getCurrentPositionSafe() {
+  if (!navigator.geolocation) return null;
+  return new Promise((resolve) => {
+    navigator.geolocation.getCurrentPosition(
+      (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      () => resolve(null),
+      { enableHighAccuracy: false, timeout: 3500, maximumAge: 120000 }
+    );
+  });
+}
+
 function renderRoutePlanCard() {
   const card = document.getElementById('routePlanCard');
   const body = document.getElementById('routePlanBody');
@@ -1201,9 +1226,38 @@ function renderRoutePlanCard() {
     ? `https://www.google.com/maps?q=${Number(p.latitud)},${Number(p.longitud)}`
     : null;
 
+  let etaTxt = 'ETA: -';
+  let leftTxt = '';
+
+  const currLat = Number(p.latitud || 0);
+  const currLng = Number(p.longitud || 0);
+
+  if (currLat && currLng) {
+    getCurrentPositionSafe().then((pos) => {
+      if (!pos) return;
+      const km = haversineKm(pos.lat, pos.lng, currLat, currLng);
+      const eta = estimateEtaMin(km);
+      const etaEl = document.getElementById('routeEtaNow');
+      if (etaEl) etaEl.textContent = `ETA aprox: ${eta} min · ${km.toFixed(1)} km`;
+    });
+
+    let kmLeft = 0;
+    let prev = { lat: currLat, lng: currLng };
+    for (let i = routePlan.currentIndex + 1; i < routePlan.orderedIds.length; i++) {
+      const nx = pedidos.find((x) => Number(x.id) === Number(routePlan.orderedIds[i]));
+      const nLat = Number(nx?.latitud || 0);
+      const nLng = Number(nx?.longitud || 0);
+      if (!nLat || !nLng) continue;
+      kmLeft += haversineKm(prev.lat, prev.lng, nLat, nLng);
+      prev = { lat: nLat, lng: nLng };
+    }
+    if (kmLeft > 0) leftTxt = ` · Restante aprox: ${kmLeft.toFixed(1)} km`; 
+  }
+
   body.innerHTML = `
     <div><b>#${p.id}</b> · ${esc(p.cliente || 'Cliente')}</div>
     <div class="muted" style="margin-top:2px;">${esc(p.direccion || '-')}</div>
+    <div id="routeEtaNow" class="muted" style="margin-top:4px;">${etaTxt}</div>
     <div style="margin-top:6px; display:flex; gap:8px; flex-wrap:wrap;">
       <span class="muted">Estado: ${esc(String(p.estado || 'pendiente'))}</span>
       <span class="muted">Monto: ${money(p.monto)}</span>
@@ -1211,7 +1265,7 @@ function renderRoutePlanCard() {
     </div>
   `;
 
-  meta.textContent = `Parada ${routePlan.currentIndex + 1} / ${routePlan.orderedIds.length}`;
+  meta.textContent = `Parada ${routePlan.currentIndex + 1} / ${routePlan.orderedIds.length}${leftTxt}`;
   btnAdvance.disabled = routePlan.currentIndex >= routePlan.orderedIds.length - 1;
 }
 
