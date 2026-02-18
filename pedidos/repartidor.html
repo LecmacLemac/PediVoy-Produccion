@@ -338,6 +338,18 @@
       </div>
     </div>
 
+    <div class="card" id="routePlanCard" style="margin-top:0.8rem;" hidden>
+      <div class="flex-bt" style="margin-bottom:0.4rem;">
+        <h3 style="margin:0">🧭 Siguiente parada sugerida</h3>
+        <small id="routePlanMeta" class="muted">-</small>
+      </div>
+      <div id="routePlanBody" class="muted">Sin ruta optimizada aún.</div>
+      <div class="row" style="margin-top:0.8rem; justify-content:flex-end;">
+        <button type="button" class="iconbtn ghost" id="btnRouteReset">Reset ruta</button>
+        <button type="button" class="iconbtn primary" id="btnRouteAdvance">Siguiente</button>
+      </div>
+    </div>
+
     <div id="cardsContainer"></div>
     <div id="emptyMsg" class="card muted" style="text-align:center" hidden>No hay pedidos.</div>
   </section>
@@ -674,6 +686,7 @@ const formatFechaHoraAR = (iso) => {
 // ====== STATE ======
 let me = null, pedidos = [], zonas = [], misZonas = [], verificadas = new Set();
 let map, mapMarkers, myCosts = {};
+let routePlan = { orderedIds: [], currentIndex: 0, updatedAt: null };
 let activosModalState = { pedidoId: null, data: null };
 let qrPagoState = { pedidoId: null, link: null };
 let pedidoEnProcesoId = null;
@@ -856,6 +869,7 @@ function showGpsHelp() {
     const j = await api('/api/me');
     me = j.user;
     $('#brandTitle').textContent = `Hola, ${me.username}`;
+    restoreRoutePlan();
 
     // Botón ayuda GPS
     const gpsBtn = document.getElementById('btnGpsHelp');
@@ -960,6 +974,11 @@ $('#fSearch').addEventListener('input', debounce(() => {
 $('#btnRef').onclick = loadPedidos;
 // EVENTO PARA OPTIMIZAR RUTA
 $('#btnOpt').onclick = optimizarRuta;
+
+const btnRouteAdvance = document.getElementById('btnRouteAdvance');
+if (btnRouteAdvance) btnRouteAdvance.onclick = advanceRoutePlan;
+const btnRouteReset = document.getElementById('btnRouteReset');
+if (btnRouteReset) btnRouteReset.onclick = () => resetRoutePlan(true);
 
 // Map Filters
 $('#mapFiltroEstado').addEventListener('change', renderMap);
@@ -1091,12 +1110,109 @@ async function loadPedidos(){
     verificadas = new Set((Array.isArray(trs)?trs:trs.rows||[]).map(t=>Number(t.pedido_id)));
     pedidosLastSyncAt = Date.now();
     updatePedidosSyncInfo();
+    syncRoutePlanWithPedidos();
     renderCards();
+    renderRoutePlanCard();
     return list;
   } catch(e){
     toast('Error cargando pedidos');
     updatePedidosSyncInfo();
   }
+}
+
+function getRoutePlanStorageKey() {
+  const choferId = me?.chofer_id || me?.id || 'anon';
+  return `repartidor:route-plan:v1:${choferId}`;
+}
+
+function saveRoutePlan() {
+  try {
+    safeStorage.local.set(getRoutePlanStorageKey(), JSON.stringify(routePlan));
+  } catch {}
+}
+
+function restoreRoutePlan() {
+  try {
+    const raw = safeStorage.local.get(getRoutePlanStorageKey());
+    if (!raw) return;
+    const data = JSON.parse(raw);
+    routePlan = {
+      orderedIds: Array.isArray(data?.orderedIds) ? data.orderedIds.map((x) => Number(x)).filter(Boolean) : [],
+      currentIndex: Number(data?.currentIndex || 0),
+      updatedAt: data?.updatedAt || null,
+    };
+  } catch {}
+}
+
+function resetRoutePlan(showToast = false) {
+  routePlan = { orderedIds: [], currentIndex: 0, updatedAt: null };
+  saveRoutePlan();
+  renderRoutePlanCard();
+  if (showToast) toast('Ruta optimizada reiniciada');
+}
+
+function advanceRoutePlan() {
+  if (!routePlan.orderedIds.length) return;
+  routePlan.currentIndex = Math.min(routePlan.currentIndex + 1, routePlan.orderedIds.length - 1);
+  routePlan.updatedAt = new Date().toISOString();
+  saveRoutePlan();
+  renderRoutePlanCard();
+}
+
+function syncRoutePlanWithPedidos() {
+  if (!routePlan.orderedIds.length) return;
+  const activeIds = new Set(
+    (pedidos || [])
+      .filter((p) => ['pendiente', 'en_ruta', 'en_camino'].includes(String(p.estado || '').toLowerCase()))
+      .map((p) => Number(p.id))
+      .filter(Boolean)
+  );
+
+  routePlan.orderedIds = routePlan.orderedIds.filter((id) => activeIds.has(id));
+  if (routePlan.currentIndex >= routePlan.orderedIds.length) {
+    routePlan.currentIndex = Math.max(0, routePlan.orderedIds.length - 1);
+  }
+  saveRoutePlan();
+}
+
+function renderRoutePlanCard() {
+  const card = document.getElementById('routePlanCard');
+  const body = document.getElementById('routePlanBody');
+  const meta = document.getElementById('routePlanMeta');
+  const btnAdvance = document.getElementById('btnRouteAdvance');
+  if (!card || !body || !meta || !btnAdvance) return;
+
+  if (!routePlan.orderedIds.length) {
+    card.hidden = true;
+    return;
+  }
+
+  card.hidden = false;
+  const currentId = routePlan.orderedIds[routePlan.currentIndex];
+  const p = pedidos.find((x) => Number(x.id) === Number(currentId));
+
+  if (!p) {
+    body.textContent = 'Ruta guardada, esperando sincronización de pedidos…';
+    meta.textContent = routePlan.updatedAt ? `Actualizado ${new Date(routePlan.updatedAt).toLocaleTimeString('es-AR')}` : '-';
+    return;
+  }
+
+  const mapsLink = (Number(p.latitud) && Number(p.longitud))
+    ? `https://www.google.com/maps?q=${Number(p.latitud)},${Number(p.longitud)}`
+    : null;
+
+  body.innerHTML = `
+    <div><b>#${p.id}</b> · ${esc(p.cliente || 'Cliente')}</div>
+    <div class="muted" style="margin-top:2px;">${esc(p.direccion || '-')}</div>
+    <div style="margin-top:6px; display:flex; gap:8px; flex-wrap:wrap;">
+      <span class="muted">Estado: ${esc(String(p.estado || 'pendiente'))}</span>
+      <span class="muted">Monto: ${money(p.monto)}</span>
+      ${mapsLink ? `<a class="iconbtn ghost" style="padding:4px 8px; text-decoration:none;" target="_blank" href="${mapsLink}">📍 Ir ahora</a>` : ''}
+    </div>
+  `;
+
+  meta.textContent = `Parada ${routePlan.currentIndex + 1} / ${routePlan.orderedIds.length}`;
+  btnAdvance.disabled = routePlan.currentIndex >= routePlan.orderedIds.length - 1;
 }
 
 // ==========================================
@@ -1133,7 +1249,15 @@ async function optimizarRuta() {
                     return idxA - idxB;
                 });
 
+                routePlan = {
+                  orderedIds: optimizedIds,
+                  currentIndex: 0,
+                  updatedAt: new Date().toISOString(),
+                };
+                saveRoutePlan();
+
                 renderCards();
+                renderRoutePlanCard();
                 toast('🚀 Ruta optimizada con éxito');
             } else {
                 toast('⚠️ No se pudo optimizar (quizás no hay pedidos activos)');
