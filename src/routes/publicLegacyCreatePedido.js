@@ -327,6 +327,12 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
         }
       }
 
+      const qtyByProductId = new Map();
+      for (const it of normItems) {
+        if (!it.producto_id) continue;
+        qtyByProductId.set(it.producto_id, (qtyByProductId.get(it.producto_id) || 0) + Number(it.cantidad || 0));
+      }
+
       const baseOrderTotal = normItems.reduce((acc, it) => acc + (it.cantidad * it.precio_unitario), 0);
 
       const pendingPromoRedemptions = [];
@@ -349,6 +355,18 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
 
             const minOrderTotal = Number(promoCfg.min_order_total || 0);
             if (Number.isFinite(minOrderTotal) && minOrderTotal > 0 && baseOrderTotal < minOrderTotal) continue;
+
+            const triggerMinQty = Number(promoCfg.trigger_min_qty || 0);
+            if (Number.isFinite(triggerMinQty) && triggerMinQty > 1) {
+              const actualQty = Number(qtyByProductId.get(it.producto_id) || 0);
+              if (actualQty < triggerMinQty) continue;
+            }
+
+            const comboRequiredProductId = Number(promoCfg.combo_required_product_id || 0);
+            if (comboRequiredProductId > 0) {
+              const comboQty = Number(qtyByProductId.get(comboRequiredProductId) || 0);
+              if (comboQty <= 0) continue;
+            }
 
             const nowMs = Date.now();
             const fromMs = promoCfg.valid_from ? Date.parse(promoCfg.valid_from) : NaN;

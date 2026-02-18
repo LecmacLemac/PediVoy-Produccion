@@ -455,6 +455,18 @@
         </div>
         <div class="form-grid">
           <div>
+            <label>Cantidad mínima del producto disparador</label>
+            <input type="number" id="p_promo_once_trigger_min_qty" min="1" step="1" placeholder="Ej: 2 (para 2x1)">
+          </div>
+          <div>
+            <label>Producto adicional requerido (combo)</label>
+            <select id="p_promo_once_combo_product_id">
+              <option value="">-- Sin requisito adicional --</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-grid">
+          <div>
             <label>Vigencia desde</label>
             <input type="datetime-local" id="p_promo_once_valid_from">
           </div>
@@ -653,6 +665,21 @@
       sel.value = selectedId ? String(selectedId) : '';
     }
 
+    function fillComboProductOptions(selectedId = null, currentProductId = null) {
+      const sel = $('#p_promo_once_combo_product_id');
+      if (!sel) return;
+
+      const options = ['<option value="">-- Sin requisito adicional --</option>'];
+      products
+        .filter((x) => Number(x.id) !== Number(currentProductId || 0))
+        .forEach((x) => {
+          options.push(`<option value="${Number(x.id)}">#${Number(x.id)} · ${esc(x.nombre)}</option>`);
+        });
+
+      sel.innerHTML = options.join('');
+      sel.value = selectedId ? String(selectedId) : '';
+    }
+
     // --- Modal Logic ---
     function openModal() {
       if (STATE.isSuper && !$('#empSel').value) {
@@ -679,6 +706,10 @@
       $('#p_promo_once_mode').disabled = true;
       $('#p_promo_once_min_order_total').value = '';
       $('#p_promo_once_min_order_total').disabled = true;
+      $('#p_promo_once_trigger_min_qty').value = '';
+      $('#p_promo_once_trigger_min_qty').disabled = true;
+      fillComboProductOptions(null, null);
+      $('#p_promo_once_combo_product_id').disabled = true;
       $('#p_promo_once_valid_from').value = '';
       $('#p_promo_once_valid_to').value = '';
       $('#p_promo_once_valid_from').disabled = true;
@@ -728,6 +759,11 @@
       $('#p_promo_once_min_order_total').value =
         (promoCfg.min_order_total !== undefined && promoCfg.min_order_total !== null) ? promoCfg.min_order_total : '';
       $('#p_promo_once_min_order_total').disabled = !promoCfg.enabled;
+      $('#p_promo_once_trigger_min_qty').value =
+        (promoCfg.trigger_min_qty !== undefined && promoCfg.trigger_min_qty !== null) ? promoCfg.trigger_min_qty : '';
+      $('#p_promo_once_trigger_min_qty').disabled = !promoCfg.enabled;
+      fillComboProductOptions(promoCfg.combo_required_product_id || null, p.id);
+      $('#p_promo_once_combo_product_id').disabled = !promoCfg.enabled;
       $('#p_promo_once_valid_from').value = toDateTimeLocalInput(promoCfg.valid_from);
       $('#p_promo_once_valid_to').value = toDateTimeLocalInput(promoCfg.valid_to);
       $('#p_promo_once_valid_from').disabled = !promoCfg.enabled;
@@ -767,6 +803,10 @@
       const promoMinOrderTotal = $('#p_promo_once_min_order_total').value
         ? Number($('#p_promo_once_min_order_total').value)
         : null;
+      const promoTriggerMinQty = $('#p_promo_once_trigger_min_qty').value
+        ? Number($('#p_promo_once_trigger_min_qty').value)
+        : null;
+      const promoComboRequiredProductId = Number($('#p_promo_once_combo_product_id').value || 0) || null;
       const promoValidFrom = $('#p_promo_once_valid_from').value || null;
       const promoValidTo = $('#p_promo_once_valid_to').value || null;
 
@@ -777,6 +817,8 @@
             gift_product_id: promoGiftProductId,
             mode: promoMode,
             min_order_total: Number.isFinite(promoMinOrderTotal) ? promoMinOrderTotal : null,
+            trigger_min_qty: Number.isFinite(promoTriggerMinQty) ? promoTriggerMinQty : null,
+            combo_required_product_id: promoComboRequiredProductId,
             valid_from: promoValidFrom,
             valid_to: promoValidTo,
           },
@@ -804,6 +846,10 @@
       if (promoEnabled && !promoGiftProductId) { toast('Seleccioná el producto de regalo para la promo única'); return; }
       if (promoEnabled && promoValidFrom && promoValidTo && new Date(promoValidFrom) > new Date(promoValidTo)) {
         toast('La vigencia "desde" no puede ser mayor a "hasta"');
+        return;
+      }
+      if (promoEnabled && Number.isFinite(promoTriggerMinQty) && promoTriggerMinQty < 1) {
+        toast('La cantidad mínima del disparador debe ser mayor o igual a 1');
         return;
       }
       if (STATE.isSuper) body.empresa_id = $('#empSel').value;
@@ -879,18 +925,24 @@
         const sel = document.getElementById('p_promo_once_gift_product_id');
         const modeSel = document.getElementById('p_promo_once_mode');
         const minSel = document.getElementById('p_promo_once_min_order_total');
+        const qtySel = document.getElementById('p_promo_once_trigger_min_qty');
+        const comboSel = document.getElementById('p_promo_once_combo_product_id');
         const fromSel = document.getElementById('p_promo_once_valid_from');
         const toSel = document.getElementById('p_promo_once_valid_to');
-        if (!sel || !modeSel || !minSel || !fromSel || !toSel) return;
+        if (!sel || !modeSel || !minSel || !qtySel || !comboSel || !fromSel || !toSel) return;
         sel.disabled = !promoToggle.checked;
         modeSel.disabled = !promoToggle.checked;
         minSel.disabled = !promoToggle.checked;
+        qtySel.disabled = !promoToggle.checked;
+        comboSel.disabled = !promoToggle.checked;
         fromSel.disabled = !promoToggle.checked;
         toSel.disabled = !promoToggle.checked;
         if (!promoToggle.checked) {
           sel.value = '';
           modeSel.value = 'per_product';
           minSel.value = '';
+          qtySel.value = '';
+          comboSel.value = '';
           fromSel.value = '';
           toSel.value = '';
         }
