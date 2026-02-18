@@ -337,6 +337,7 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
 
       const pendingPromoRedemptions = [];
       const promoAddedByTrigger = new Set();
+      const promoCandidates = [];
 
       if (punto_entrega_id) {
         try {
@@ -426,16 +427,6 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
                 );
             if (already.length) continue;
 
-            if (hasValidGift) {
-              const giftProduct = byId.get(giftProductId);
-              normItems.push({
-                producto: `🎁 REGALO: ${giftProduct?.nombre || 'Promoción'}`,
-                cantidad: 1,
-                precio_unitario: 0,
-                producto_id: giftProductId,
-              });
-            }
-
             const discountPercent = Number(promoCfg.discount_percent || 0);
             const discountAmount = Number(promoCfg.discount_amount || 0);
             let discountValue = 0;
@@ -447,22 +438,60 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
             }
             if (discountValue > 0) {
               discountValue = Math.min(discountValue, Math.max(baseOrderTotal, 0));
-              normItems.push({
-                producto: `🎟️ DESCUENTO PROMO: ${baseProduct?.nombre || 'Promo'}`,
-                cantidad: 1,
-                precio_unitario: -round(discountValue),
-                producto_id: null,
-              });
             }
 
             if (!hasValidGift && discountValue <= 0) continue;
 
-            pendingPromoRedemptions.push({
+            const priority = Number(promoCfg.priority || 0);
+            const stackingMode = promoCfg.stacking_mode === 'exclusive' ? 'exclusive' : 'combinable';
+
+            promoCandidates.push({
               trigger_producto_id: it.producto_id,
               beneficio_producto_id: hasValidGift ? giftProductId : null,
               beneficio_tipo: benefitType,
+              gift_name: hasValidGift ? String(byId.get(giftProductId)?.nombre || 'Promoción') : null,
+              discount_value: discountValue,
+              base_name: String(baseProduct?.nombre || 'Promo'),
+              priority,
+              stacking_mode: stackingMode,
             });
             promoAddedByTrigger.add(it.producto_id);
+          }
+
+          promoCandidates.sort((a, b) => {
+            if (b.priority !== a.priority) return b.priority - a.priority;
+            return a.trigger_producto_id - b.trigger_producto_id;
+          });
+
+          const hasExclusive = promoCandidates.some((p) => p.stacking_mode === 'exclusive');
+          const promosToApply = hasExclusive
+            ? [promoCandidates.find((p) => p.stacking_mode === 'exclusive')].filter(Boolean)
+            : promoCandidates;
+
+          for (const promo of promosToApply) {
+            if (promo.beneficio_producto_id) {
+              normItems.push({
+                producto: `🎁 REGALO: ${promo.gift_name || 'Promoción'}`,
+                cantidad: 1,
+                precio_unitario: 0,
+                producto_id: promo.beneficio_producto_id,
+              });
+            }
+
+            if (promo.discount_value > 0) {
+              normItems.push({
+                producto: `🎟️ DESCUENTO PROMO: ${promo.base_name || 'Promo'}`,
+                cantidad: 1,
+                precio_unitario: -round(promo.discount_value),
+                producto_id: null,
+              });
+            }
+
+            pendingPromoRedemptions.push({
+              trigger_producto_id: promo.trigger_producto_id,
+              beneficio_producto_id: promo.beneficio_producto_id,
+              beneficio_tipo: promo.beneficio_tipo,
+            });
           }
         } catch (e) {
           errlog('PROMO_ONCE.ERROR', e?.message || e);

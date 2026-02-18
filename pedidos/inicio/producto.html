@@ -487,6 +487,19 @@
         </div>
         <div class="form-grid">
           <div>
+            <label>Prioridad de promo</label>
+            <input type="number" id="p_promo_once_priority" step="1" placeholder="Ej: 10">
+          </div>
+          <div>
+            <label>Combinación con otras promos</label>
+            <select id="p_promo_once_stacking_mode">
+              <option value="combinable">Combinable</option>
+              <option value="exclusive">Exclusiva (si compite, gana por prioridad)</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-grid">
+          <div>
             <label>Vigencia desde</label>
             <input type="datetime-local" id="p_promo_once_valid_from">
           </div>
@@ -742,6 +755,10 @@
       $('#p_promo_once_max_total').disabled = true;
       $('#p_promo_once_max_daily').value = '';
       $('#p_promo_once_max_daily').disabled = true;
+      $('#p_promo_once_priority').value = '';
+      $('#p_promo_once_priority').disabled = true;
+      $('#p_promo_once_stacking_mode').value = 'combinable';
+      $('#p_promo_once_stacking_mode').disabled = true;
       $('#p_promo_once_valid_from').value = '';
       $('#p_promo_once_valid_to').value = '';
       $('#p_promo_once_valid_from').disabled = true;
@@ -808,6 +825,11 @@
       $('#p_promo_once_max_daily').value =
         (promoCfg.max_redemptions_per_day !== undefined && promoCfg.max_redemptions_per_day !== null) ? promoCfg.max_redemptions_per_day : '';
       $('#p_promo_once_max_daily').disabled = !promoCfg.enabled;
+      $('#p_promo_once_priority').value =
+        (promoCfg.priority !== undefined && promoCfg.priority !== null) ? promoCfg.priority : '';
+      $('#p_promo_once_priority').disabled = !promoCfg.enabled;
+      $('#p_promo_once_stacking_mode').value = promoCfg.stacking_mode === 'exclusive' ? 'exclusive' : 'combinable';
+      $('#p_promo_once_stacking_mode').disabled = !promoCfg.enabled;
       $('#p_promo_once_valid_from').value = toDateTimeLocalInput(promoCfg.valid_from);
       $('#p_promo_once_valid_to').value = toDateTimeLocalInput(promoCfg.valid_to);
       $('#p_promo_once_valid_from').disabled = !promoCfg.enabled;
@@ -863,6 +885,10 @@
       const promoMaxDaily = $('#p_promo_once_max_daily').value
         ? Number($('#p_promo_once_max_daily').value)
         : null;
+      const promoPriority = $('#p_promo_once_priority').value
+        ? Number($('#p_promo_once_priority').value)
+        : null;
+      const promoStackingMode = ($('#p_promo_once_stacking_mode').value === 'exclusive') ? 'exclusive' : 'combinable';
       const promoValidFrom = $('#p_promo_once_valid_from').value || null;
       const promoValidTo = $('#p_promo_once_valid_to').value || null;
 
@@ -879,6 +905,8 @@
             discount_amount: Number.isFinite(promoDiscountAmount) ? promoDiscountAmount : null,
             max_redemptions_total: Number.isFinite(promoMaxTotal) ? promoMaxTotal : null,
             max_redemptions_per_day: Number.isFinite(promoMaxDaily) ? promoMaxDaily : null,
+            priority: Number.isFinite(promoPriority) ? promoPriority : 0,
+            stacking_mode: promoStackingMode,
             valid_from: promoValidFrom,
             valid_to: promoValidTo,
           },
@@ -1036,9 +1064,11 @@
         const discountAmtSel = document.getElementById('p_promo_once_discount_amount');
         const maxTotalSel = document.getElementById('p_promo_once_max_total');
         const maxDailySel = document.getElementById('p_promo_once_max_daily');
+        const prioritySel = document.getElementById('p_promo_once_priority');
+        const stackingSel = document.getElementById('p_promo_once_stacking_mode');
         const fromSel = document.getElementById('p_promo_once_valid_from');
         const toSel = document.getElementById('p_promo_once_valid_to');
-        if (!sel || !modeSel || !minSel || !qtySel || !comboSel || !discountPctSel || !discountAmtSel || !maxTotalSel || !maxDailySel || !fromSel || !toSel) return;
+        if (!sel || !modeSel || !minSel || !qtySel || !comboSel || !discountPctSel || !discountAmtSel || !maxTotalSel || !maxDailySel || !prioritySel || !stackingSel || !fromSel || !toSel) return;
         sel.disabled = !promoToggle.checked;
         modeSel.disabled = !promoToggle.checked;
         minSel.disabled = !promoToggle.checked;
@@ -1048,6 +1078,8 @@
         discountAmtSel.disabled = !promoToggle.checked;
         maxTotalSel.disabled = !promoToggle.checked;
         maxDailySel.disabled = !promoToggle.checked;
+        prioritySel.disabled = !promoToggle.checked;
+        stackingSel.disabled = !promoToggle.checked;
         fromSel.disabled = !promoToggle.checked;
         toSel.disabled = !promoToggle.checked;
         if (!promoToggle.checked) {
@@ -1060,6 +1092,8 @@
           discountAmtSel.value = '';
           maxTotalSel.value = '';
           maxDailySel.value = '';
+          prioritySel.value = '';
+          stackingSel.value = 'combinable';
           fromSel.value = '';
           toSel.value = '';
         }
