@@ -985,7 +985,13 @@
         const res = await r.json();
 
         if (!r.ok || !res.ok) {
-          throw new Error(res.error || 'No se pudo crear el pedido');
+          const detailTxt = Array.isArray(res?.details)
+            ? res.details.map((d) => `${d.path || 'campo'}: ${d.message || 'inválido'}`).join(' | ')
+            : '';
+          const msg = detailTxt
+            ? `${res?.error || 'Payload inválido'} — ${detailTxt}`
+            : (res?.error || 'No se pudo crear el pedido');
+          throw new Error(msg);
         }
 
         toast('✅ Pedido enviado con éxito');
