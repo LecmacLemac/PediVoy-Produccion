@@ -443,6 +443,7 @@
 
   <div id="toast" class="toast"></div>
 
+  <script src="/pedidos/info-tec/safe-storage.js"></script>
   <script type="module">
     // ====== Auth (modo seguro: cookie httpOnly) ======
     const authFetch = (url, opts = {}) => {
@@ -536,13 +537,13 @@
           to: toFilter?.value || '',
           q: q?.value || ''
         };
-        localStorage.setItem(FILTERS_LS_KEY, JSON.stringify(payload));
+        safeStorage.local.set(FILTERS_LS_KEY, JSON.stringify(payload));
       } catch {}
     }
 
     function restoreFiltersState(){
       try {
-        const raw = localStorage.getItem(FILTERS_LS_KEY);
+        const raw = safeStorage.local.get(FILTERS_LS_KEY);
         if (!raw) return;
         const f = JSON.parse(raw);
 

@@ -573,6 +573,7 @@
 
 <div id="toast" class="toast">Notificación</div>
 
+<script src="/pedidos/info-tec/safe-storage.js"></script>
 <script>
 // --- AUTH & GLOBALS (modo seguro: cookie httpOnly) ---
 const authFetch = (url, opts = {}) => {
@@ -651,13 +652,13 @@ function saveFiltrosUI() {
       soloHoy: !!$('#fHoy')?.checked,
       search: $('#fSearch')?.value || ''
     };
-    localStorage.setItem(FILTROS_LS_KEY, JSON.stringify(payload));
+    safeStorage.local.set(FILTROS_LS_KEY, JSON.stringify(payload));
   } catch {}
 }
 
 function restoreFiltrosUI() {
   try {
-    const raw = localStorage.getItem(FILTROS_LS_KEY);
+    const raw = safeStorage.local.get(FILTROS_LS_KEY);
     if (!raw) return;
     const data = JSON.parse(raw);
 

@@ -599,6 +599,7 @@
     <span>✅</span> <span id="toastMsg">Mensaje</span>
   </div>
 
+  <script src="/pedidos/info-tec/safe-storage.js"></script>
   <script>
     // --- Configuración Inicial ---
     const params = new URLSearchParams(location.search);
@@ -623,10 +624,10 @@
 
     // --- IDEMPOTENCIA ---
     const getSubmissionId = () => {
-      let sid = localStorage.getItem('submission_id');
+      let sid = safeStorage.local.get('submission_id');
       if (!sid) {
         sid = crypto.randomUUID();
-        localStorage.setItem('submission_id', sid);
+        safeStorage.local.set('submission_id', sid);
       }
       return sid;
     };
@@ -990,9 +991,9 @@
         toast('✅ Pedido enviado con éxito');
 
         if (res.pedido && res.pedido.id) {
-          localStorage.removeItem('submission_id'); 
+          safeStorage.local.remove('submission_id'); 
           const telDB = buildTelefonoDB(data.telefono);
-          localStorage.setItem('last_phone', telDB); 
+          safeStorage.local.set('last_phone', telDB); 
 
           setTimeout(() => {
             window.location.href =

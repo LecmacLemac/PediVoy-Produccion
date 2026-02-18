@@ -420,6 +420,7 @@
     </div>
   </main>
 
+  <script src="/pedidos/info-tec/safe-storage.js"></script>
   <script>
     const qs = (name) => new URLSearchParams(window.location.search).get(name);
     const $ = (id) => document.getElementById(id);
@@ -447,7 +448,7 @@
       }
 
       // 2) Resolver ID del pedido
-      const rawOrder = window.sessionStorage.getItem('last_order');
+      const rawOrder = safeStorage.session.get('last_order', '{}');
       let sessionData = {};
       try {
         sessionData = JSON.parse(rawOrder || '{}');

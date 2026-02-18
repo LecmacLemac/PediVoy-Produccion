@@ -164,6 +164,7 @@
     </div>
   </main>
 
+  <script src="/pedidos/info-tec/safe-storage.js"></script>
   <script>
     const $ = s => document.querySelector(s);
     
@@ -180,7 +181,7 @@
 
     // --- Init ---
     (async function boot(){
-      const lastUser = localStorage.getItem('lastUsername');
+      const lastUser = safeStorage.local.get('lastUsername');
       if(lastUser) {
         user.value = lastUser;
         remember.checked = true;
@@ -235,8 +236,8 @@
             throw new Error(data.error || 'Credenciales incorrectas');
         }
 
-        if(remember.checked) localStorage.setItem('lastUsername', username);
-        else localStorage.removeItem('lastUsername');
+        if (remember.checked) safeStorage.local.set('lastUsername', username);
+        else safeStorage.local.remove('lastUsername');
 
         const safeNext = getSafeInternalNext();
         if(safeNext) {
