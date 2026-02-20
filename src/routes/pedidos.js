@@ -110,7 +110,72 @@ export function createPedidosRouter() {
 
       sql += ` ORDER BY p.fecha DESC, p.id DESC LIMIT 500`;
 
-      const rows = await query(sql, params);
+      let rows = [];
+      try {
+        rows = await query(sql, params);
+      } catch (primaryErr) {
+        console.error('GET /api/pedidos fallback por query principal:', primaryErr?.message || primaryErr);
+
+        // Fallback seguro/compatibilidad: query base sin joins extra de validación.
+        let fallbackSql = `
+          SELECT
+            p.id,
+            p.fecha,
+            p.estado,
+            p.monto,
+            p.metodo_pago,
+            pe.cliente,
+            pe.telefono,
+            pe.direccion,
+            p.empresa_id,
+            p.zona_id,
+            p.chofer_id,
+            c.nombre AS chofer_nombre,
+            (p.empresa_id IS NULL OR p.empresa_id = 0 OR pe.id IS NULL) AS orphan_empresa,
+            (p.chofer_id IS NULL OR p.chofer_id = 0 OR c.id IS NULL) AS orphan_chofer
+          FROM pedidos p
+          LEFT JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
+          LEFT JOIN choferes c ON c.id = p.chofer_id
+          WHERE 1=1
+        `;
+        const fallbackParams = [];
+        let fIdx = 1;
+
+        if (targetEmpresa) {
+          fallbackSql += ` AND p.empresa_id = $${fIdx++}`;
+          fallbackParams.push(targetEmpresa);
+        }
+        if (onlyOrphanChofer) {
+          fallbackSql += ` AND (p.chofer_id IS NULL OR p.chofer_id = 0 OR c.id IS NULL)`;
+        } else if (chofer_id) {
+          fallbackSql += ` AND p.chofer_id = $${fIdx++}`;
+          fallbackParams.push(Number(chofer_id));
+        }
+        if (estado) {
+          fallbackSql += ` AND p.estado = $${fIdx++}`;
+          fallbackParams.push(estado);
+        }
+        if (from) {
+          fallbackSql += ` AND p.fecha >= $${fIdx++}::date`;
+          fallbackParams.push(from.toString().slice(0, 10));
+        }
+        if (to) {
+          fallbackSql += ` AND p.fecha < ($${fIdx++}::date + INTERVAL '1 day')`;
+          fallbackParams.push(to.toString().slice(0, 10));
+        }
+
+        fallbackSql += ` ORDER BY p.fecha DESC, p.id DESC LIMIT 500`;
+
+        rows = await query(fallbackSql, fallbackParams);
+
+        if (esSuperUser && onlyOrphanEmpresa) {
+          rows = rows.filter((r) => {
+            const empId = Number(r?.empresa_id || 0);
+            return !empId;
+          });
+        }
+      }
+
       res.json(rows);
 
     } catch (e) {
