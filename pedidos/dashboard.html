@@ -722,11 +722,12 @@
     }
 
     async function setupEmpresas(me){
+      let loadedEmpresas = false;
       try {
-        const r    = await authFetch('/api/empresas');
+        const r = await authFetch('/api/empresas');
         const list = await r.json();
 
-        if (Array.isArray(list) && list.length > 0) {
+        if (r.ok && Array.isArray(list) && list.length > 0) {
           $('#rowEmp').hidden = false;
 
           const optionTodas  = `<option value="">⭐ Ver Todas</option>`;
@@ -747,12 +748,22 @@
             empFilter.disabled = false;
           }
 
-          await loadChoferes();
-          await initLoad();
+          loadedEmpresas = true;
         }
       } catch (e) {
         console.error('Error cargando empresas', e);
       }
+
+      if (!loadedEmpresas) {
+        // Fallback: no bloquear tablero si falla /api/empresas.
+        $('#rowEmp').hidden = false;
+        empFilter.innerHTML = '<option value="">⭐ Ver Todas</option><option value="null">⚠️ Huérfanos (empresa)</option>';
+        applyPendingFilterValues();
+        empFilter.disabled = false;
+      }
+
+      await loadChoferes();
+      await initLoad();
     }
 
     async function loadChoferes() {
@@ -846,7 +857,14 @@
       try {
         const r = await authFetch('/api/pedidos?' + params.toString());
         if (!r.ok) {
+          let errMsg = `Error ${r.status} cargando pedidos`;
+          try {
+            const j = await r.json();
+            if (j?.error) errMsg = `${errMsg}: ${j.error}`;
+          } catch {}
           pedidos = [];
+          rows.innerHTML = `<tr><td colspan="9" style="text-align:center; padding:2rem; color:var(--danger)">${esc(errMsg)}</td></tr>`;
+          updateSyncInfo();
           return;
         }
         pedidos = await r.json();
@@ -854,6 +872,7 @@
         updateSyncInfo();
       } catch {
         pedidos = [];
+        rows.innerHTML = '<tr><td colspan="9" style="text-align:center; padding:2rem; color:var(--danger)">Error de conexión cargando pedidos.</td></tr>';
         updateSyncInfo();
       }
     }
