@@ -338,6 +338,7 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
       const pendingPromoRedemptions = [];
       const promoAddedByTrigger = new Set();
       const promoCandidates = [];
+      const appliedPromos = [];
 
       if (punto_entrega_id) {
         try {
@@ -491,6 +492,13 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
               trigger_producto_id: promo.trigger_producto_id,
               beneficio_producto_id: promo.beneficio_producto_id,
               beneficio_tipo: promo.beneficio_tipo,
+            });
+
+            appliedPromos.push({
+              trigger_producto_id: promo.trigger_producto_id,
+              trigger_nombre: promo.base_name,
+              regalo_nombre: promo.gift_name,
+              descuento_valor: Number(promo.discount_value || 0),
             });
           }
         } catch (e) {
@@ -651,11 +659,41 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
           configEntrega
         });
 
+        if (appliedPromos.length > 0) {
+          const promoLines = appliedPromos.map((p) => {
+            const parts = [];
+            if (p.regalo_nombre) parts.push(`🎁 Regalo: ${p.regalo_nombre}`);
+            if (Number(p.descuento_valor || 0) > 0) parts.push(`🎟️ Descuento: $${Math.round(Number(p.descuento_valor || 0)).toLocaleString('es-AR')}`);
+            return `• ${p.trigger_nombre || 'Producto'} → ${parts.join(' + ') || 'Promo aplicada'}`;
+          });
+          mensaje += `\n\n✨ Promociones aplicadas:\n${promoLines.join('\n')}`;
+        }
+
         if (isTransf && aliasDB) {
           mensaje += `\n\n📄 Alias para transferir: *${aliasDB}*\nPor favor enviá el comprobante por aquí.`;
         }
 
         await enqueueWppMessage({ phone: telefono, message: mensaje, empresa_id: empId });
+
+        if (repData?.telefono) {
+          const promoItems = normItems.filter((it) => {
+            const n = String(it?.producto || '').toUpperCase();
+            return n.includes('🎁 REGALO:') || n.includes('🎟️ DESCUENTO PROMO:');
+          });
+
+          if (promoItems.length > 0) {
+            const promoDetalle = promoItems.map((it) => `• ${Number(it.cantidad || 0)} x ${String(it.producto || '')}`).join('\n');
+            const msgRepartidor = [
+              '🧾 *Pedido con promoción aplicada*',
+              `Pedido #${pedido.id} · Cliente: ${cliente || '-'}${direccion ? ` · ${direccion}` : ''}`,
+              '',
+              'Entregar también estos ítems promo:',
+              promoDetalle,
+            ].join('\n');
+
+            await enqueueWppMessage({ phone: repData.telefono, message: msgRepartidor, empresa_id: empId });
+          }
+        }
       } catch (e) {
         errlog('WPP.NOTIFY.ERROR', e?.message || e);
       }
