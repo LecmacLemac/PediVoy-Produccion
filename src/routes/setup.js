@@ -162,6 +162,40 @@ export function createSetupRouter(deps) {
     return Number.isFinite(ownEmpresaId) && ownEmpresaId > 0 ? ownEmpresaId : null;
   };
 
+  const validateIncidenciaForeignKeys = async ({ empresaId, payload }) => {
+    const b = payload || {};
+
+    const fkChecks = [
+      { key: 'pedido_id', table: 'pedidos', col: 'id', label: 'pedido_id' },
+      { key: 'cliente_id', table: 'puntos_entrega', col: 'id', label: 'cliente_id' },
+      { key: 'chofer_id', table: 'choferes', col: 'id', label: 'chofer_id' },
+      { key: 'responsable_usuario_id', table: 'usuarios', col: 'id', label: 'responsable_usuario_id' },
+    ];
+
+    for (const fk of fkChecks) {
+      const raw = b[fk.key];
+      if (raw == null || raw === '') continue;
+      const id = Number(raw);
+      if (!Number.isFinite(id) || id <= 0) {
+        return { ok: false, error: `${fk.label} inválido` };
+      }
+
+      const rows = await query(
+        `SELECT 1
+         FROM ${fk.table}
+         WHERE ${fk.col}=$1 AND empresa_id=$2
+         LIMIT 1`,
+        [id, empresaId]
+      );
+
+      if (!rows.length) {
+        return { ok: false, error: `${fk.label} no pertenece a la empresa seleccionada` };
+      }
+    }
+
+    return { ok: true };
+  };
+
   // GET /api/setup/progress
   router.get('/progress', withAuth, async (req, res) => {
     try {
@@ -2485,8 +2519,8 @@ export function createSetupRouter(deps) {
       const rows = await query(
         `SELECT i.*, p.cliente AS cliente_nombre, u.username AS responsable_nombre
          FROM incidencias_operativas i
-         LEFT JOIN puntos_entrega p ON p.id=i.cliente_id
-         LEFT JOIN usuarios u ON u.id=i.responsable_usuario_id
+         LEFT JOIN puntos_entrega p ON p.id=i.cliente_id AND p.empresa_id=i.empresa_id
+         LEFT JOIN usuarios u ON u.id=i.responsable_usuario_id AND u.empresa_id=i.empresa_id
          ${where}
          ORDER BY i.created_at DESC
          LIMIT 500`,
@@ -2530,7 +2564,7 @@ export function createSetupRouter(deps) {
         `SELECT i.id, i.created_at, i.tipo, i.severidad, i.estado, i.titulo,
                 i.accion_recomendada, i.vence_at, u.username AS responsable
          FROM incidencias_operativas i
-         LEFT JOIN usuarios u ON u.id=i.responsable_usuario_id
+         LEFT JOIN usuarios u ON u.id=i.responsable_usuario_id AND u.empresa_id=i.empresa_id
          ${where}
          ORDER BY i.created_at DESC
          LIMIT 2000`,
@@ -2575,6 +2609,10 @@ export function createSetupRouter(deps) {
       if (!titulo) return res.status(400).json({ error: 'titulo requerido' });
 
       const actorId = req?.user?.id ? Number(req.user.id) : null;
+
+      const fkValidation = await validateIncidenciaForeignKeys({ empresaId, payload: b });
+      if (!fkValidation.ok) return res.status(400).json({ error: fkValidation.error });
+
       const [row] = await query(
         `INSERT INTO incidencias_operativas (
           empresa_id, pedido_id, cliente_id, chofer_id, tipo, severidad, estado,
@@ -2625,6 +2663,9 @@ export function createSetupRouter(deps) {
       const actorId = req?.user?.id ? Number(req.user.id) : null;
       const [before] = await query(`SELECT * FROM incidencias_operativas WHERE id=$1 AND empresa_id=$2`, [id, empresaId]);
       if (!before) return res.status(404).json({ error: 'Incidencia no encontrada' });
+
+      const fkValidation = await validateIncidenciaForeignKeys({ empresaId, payload: b });
+      if (!fkValidation.ok) return res.status(400).json({ error: fkValidation.error });
 
       const [row] = await query(
         `UPDATE incidencias_operativas

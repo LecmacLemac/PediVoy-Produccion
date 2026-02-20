@@ -170,7 +170,14 @@ function copyUat(){
 }
 
 async function refreshAll(){ if(st.isSuper&&!st.empresaId){ setStatus('Seleccioná empresa para ver el tablero ejecutivo.',true); ['kpiGrid','semaforo','recos','cierreChecklist','autoCenter','uatChecklist'].forEach(id=>{const el=document.getElementById(id); if(el) el.innerHTML='';}); const tx=document.getElementById('resumenText'); if(tx) tx.value=''; return; }
-  setStatus('Actualizando…'); try{ await Promise.all([loadDashboard(),loadSemaforo(),loadIncidenciasResumen(),loadRecos(),loadControlCierre(),loadAutomatizaciones(),loadResumen()]); renderUat(); setStatus('Actualizado.'); } catch(e){ setStatus(e.message||'Error',true); }
+  setStatus('Actualizando…');
+  try{
+    await Promise.all([loadDashboard(),loadSemaforo(),loadRecos(),loadAutomatizaciones(),loadResumen()]);
+    await loadIncidenciasResumen();
+    await loadControlCierre();
+    renderUat();
+    setStatus('Actualizado.');
+  } catch(e){ setStatus(e.message||'Error',true); }
 }
 
 document.getElementById('btnRefresh').addEventListener('click',refreshAll);

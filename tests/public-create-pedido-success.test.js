@@ -44,6 +44,7 @@ test('POST /public/pedidos crea pedido válido', async () => {
     if (sql.includes('FROM puntos_entrega') && sql.includes('telefono_normalizado LIKE')) return [];
     if (sql.includes('INSERT INTO puntos_entrega')) return [{ id: 101 }];
     if (sql.includes('FROM zona_chofer')) return [{ id: 55 }];
+    if (sql.includes('FROM productos') && sql.includes('promo_config')) return [];
     if (sql.includes('FROM cliente_recompensas')) return [];
     if (sql.includes('SELECT pg_advisory_xact_lock')) return [{ pg_advisory_xact_lock: null }];
     if (sql.includes('FROM pedidos WHERE empresa_id=$1 AND submission_id=$2')) return [];
