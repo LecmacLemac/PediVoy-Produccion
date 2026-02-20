@@ -730,7 +730,7 @@
           $('#rowEmp').hidden = false;
 
           const optionTodas  = `<option value="">⭐ Ver Todas</option>`;
-          const optionSinEmp = `<option value="null">⚠️ Huérfanos</option>`;
+          const optionSinEmp = `<option value="null">⚠️ Huérfanos (empresa)</option>`;
           const optionsEmpresas = list
             .map(e => `<option value="${Number(e.id)}">ID ${Number(e.id)} | ${esc(e.nombre)}</option>`)
             .join('');
@@ -767,7 +767,7 @@
 
         const baseOptions = `
           <option value="">Todos</option>
-          <option value="__SIN_CHOFER__">⚠️ Sin chofer (Huérfanos)</option>
+          <option value="__SIN_CHOFER__">⚠️ Huérfanos de chofer</option>
         `;
 
         const choferOptions = Array.isArray(list)
@@ -824,6 +824,8 @@
       // Empresa
       if (isSuper && valEmpresa && valEmpresa !== 'null') {
         params.set('empresa_id', valEmpresa);
+      } else if (isSuper && valEmpresa === 'null') {
+        params.set('orphan_empresa', '1');
       } else if (!isSuper && currentUser?.empresa_id) {
         params.set('empresa_id', currentUser.empresa_id);
       }
@@ -834,7 +836,9 @@
 
       // Asignación / Chofer
       const choferVal = choferFilter.value;
-      if (choferVal && choferVal !== '__SIN_CHOFER__') {
+      if (choferVal === '__SIN_CHOFER__') {
+        params.set('orphan_chofer', '1');
+      } else if (choferVal) {
         // Solo mandamos chofer_id si es un ID real
         params.set('chofer_id', choferVal);
       }
@@ -865,7 +869,8 @@
         // Empresa en front (huérfanos / sin empresa)
         if (isSuper) {
           if (empVal === 'null') {
-            if (p.empresa_id != null && p.empresa_id != 0) return false;
+            const isOrphanEmpresa = !!p.orphan_empresa || p.empresa_id == null || Number(p.empresa_id) === 0;
+            if (!isOrphanEmpresa) return false;
           }
         }
 
@@ -880,8 +885,9 @@
 
         // Asignación / Chofer
         if (cId === '__SIN_CHOFER__') {
-          // Solo pedidos sin chofer asignado
-          if (p.chofer_id != null && p.chofer_id != 0) return false;
+          // Pedidos huérfanos de chofer (sin chofer o FK inválida/cruzada)
+          const isOrphanChofer = !!p.orphan_chofer || p.chofer_id == null || Number(p.chofer_id) === 0;
+          if (!isOrphanChofer) return false;
         } else if (cId) {
           // Chofer específico
           if (String(p.chofer_id) !== cId) return false;

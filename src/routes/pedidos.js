@@ -14,15 +14,18 @@ export function createPedidosRouter() {
   // --------------------------------------------------
   router.get('/', withAuth, checkLicencia, async (req, res) => {
     try {
-      const { from, to, estado, chofer_id, empresa_id } = req.query || {};
+      const { from, to, estado, chofer_id, empresa_id, orphan_empresa, orphan_chofer } = req.query || {};
       const esSuperUser = isSuper(req);
 
       const targetEmpresa = esSuperUser
         ? (empresa_id ? Number(empresa_id) : null)
         : getEmpresaIdFromToken(req);
 
+      const onlyOrphanEmpresa = String(orphan_empresa || '') === '1';
+      const onlyOrphanChofer = String(orphan_chofer || '') === '1';
+
       let sql = `
-        SELECT 
+        SELECT
           p.id,
           p.fecha,
           p.estado,
@@ -34,12 +37,31 @@ export function createPedidosRouter() {
           p.empresa_id,
           p.zona_id,
           p.chofer_id,
-          c.nombre AS chofer_nombre
+          c.nombre AS chofer_nombre,
+          (
+            p.empresa_id IS NULL
+            OR p.empresa_id = 0
+            OR e.id IS NULL
+            OR pe.id IS NULL
+            OR (pe.empresa_id IS NOT NULL AND p.empresa_id IS NOT NULL AND pe.empresa_id <> p.empresa_id)
+          ) AS orphan_empresa,
+          (
+            p.chofer_id IS NULL
+            OR p.chofer_id = 0
+            OR c.id IS NULL
+          ) AS orphan_chofer
         FROM pedidos p
-        JOIN puntos_entrega pe
+        LEFT JOIN empresas e
+          ON e.id = p.empresa_id
+        LEFT JOIN puntos_entrega pe
           ON pe.id = p.punto_entrega_id
         LEFT JOIN choferes c
           ON c.id = p.chofer_id
+         AND (
+           p.empresa_id IS NULL
+           OR p.empresa_id = 0
+           OR c.empresa_id = p.empresa_id
+         )
         WHERE 1=1
       `;
 
@@ -52,7 +74,23 @@ export function createPedidosRouter() {
         idx++;
       }
 
-      if (chofer_id) {
+      if (esSuperUser && onlyOrphanEmpresa) {
+        sql += ` AND (
+          p.empresa_id IS NULL
+          OR p.empresa_id = 0
+          OR e.id IS NULL
+          OR pe.id IS NULL
+          OR (pe.empresa_id IS NOT NULL AND p.empresa_id IS NOT NULL AND pe.empresa_id <> p.empresa_id)
+        )`;
+      }
+
+      if (onlyOrphanChofer) {
+        sql += ` AND (
+          p.chofer_id IS NULL
+          OR p.chofer_id = 0
+          OR c.id IS NULL
+        )`;
+      } else if (chofer_id) {
         sql += ` AND p.chofer_id = $${idx++}`;
         params.push(Number(chofer_id));
       }
