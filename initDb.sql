@@ -1143,22 +1143,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_pedido_pagos_one_pending_per_order
 
 
 -- =========================================================
--- 13. DATOS SEMILLA (Reset Admin)
+-- 13. DATOS SEMILLA (deshabilitado)
 -- =========================================================
+-- Intencionalmente sin seed. La DB debe iniciar vacía.
 
--- 1. PRIMERO: Crear la Empresa por defecto (Para evitar el error FK)
-INSERT INTO empresas (id, nombre, direccion, plan_estado, plan_tipo) 
-VALUES (1, 'AguaHidro.com', 'AguaHidro.com', 'active', 'unlimited')
-ON CONFLICT (id) DO UPDATE 
-SET plan_estado = 'active'; -- Asegura que si ya existe, esté activa
-
--- 2. SEGUNDO: Crear el Usuario Admin vinculado a esa empresa
-DELETE FROM usuarios WHERE username = 'admin';
-
--- User: admin | Pass: admin123 (bcrypt hash)
-INSERT INTO usuarios (username, password, role, empresa_id, chofer_id)
-VALUES ('admin', '$2a$12$7ZrCUslQDyAF9BUeVImRCOchoIQe1.a.gz1D1HH13KyMnikvM4PnC', 'super', 1, NULL);
-
--- 3. TERCERO: Ajustar secuencias para evitar errores de IDs futuros
-SELECT setval('empresas_id_seq', (SELECT MAX(id) FROM empresas));
-SELECT setval('usuarios_id_seq', (SELECT MAX(id) FROM usuarios));
