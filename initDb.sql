@@ -1157,7 +1157,7 @@ DELETE FROM usuarios WHERE username = 'admin';
 
 -- User: admin | Pass: admin123 (bcrypt hash)
 INSERT INTO usuarios (username, password, role, empresa_id, chofer_id)
-VALUES ('admin', '$2a$12$Kj//uNChC3/X2Kzq9eA68e8OuBEv1h8KBLpD1HrU.QazadSyQn1Xi', 'super', 1, NULL);
+VALUES ('admin', '$2a$12$7ZrCUslQDyAF9BUeVImRCOchoIQe1.a.gz1D1HH13KyMnikvM4PnC', 'super', 1, NULL);
 
 -- 3. TERCERO: Ajustar secuencias para evitar errores de IDs futuros
 SELECT setval('empresas_id_seq', (SELECT MAX(id) FROM empresas));
