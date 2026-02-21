@@ -19,7 +19,7 @@
     "test:smoke:postdeploy": "node scripts/smoke-postdeploy.js",
     "test:smoke:security": "node scripts/smoke-security-headers.js",
     "db:backup": "node backup.js",
-    "postinstall": "echo \"Instalando Chromium para Puppeteer (local)\" && if [ -z \"$RENDER\" ]; then PUPPETEER_CACHE_DIR=\"$PWD/.puppeteer\" npx puppeteer browsers install chrome; fi"
+    "postinstall": "echo \"Postinstall Puppeteer\" && if [ \"$RENDER\" = \"true\" ] || [ \"$CI\" = \"true\" ] || [ \"$PUPPETEER_SKIP_DOWNLOAD\" = \"true\" ]; then echo \"Skipping Puppeteer browser install\"; else PUPPETEER_CACHE_DIR=\"$PWD/.puppeteer\" npx puppeteer browsers install chrome; fi"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

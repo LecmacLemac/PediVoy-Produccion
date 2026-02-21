@@ -4,7 +4,7 @@ services:
     runtime: node
     plan: starter
     rootDir: .
-    buildCommand: npm install
+    buildCommand: npm ci --omit=dev
     startCommand: npm start
     autoDeploy: true
     healthCheckPath: /health
@@ -25,6 +25,8 @@ services:
         sync: false
       - key: ENABLE_WPP
         value: 0
+      - key: PUPPETEER_SKIP_DOWNLOAD
+        value: "true"
       - key: CRON_SECRET
         generateValue: true
       - key: CORS_ALLOWED_ORIGINS
