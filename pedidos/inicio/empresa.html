@@ -1211,6 +1211,7 @@ if (logoutLink) {
     let esSuperAdmin = false;
     let saveBusy = false;
     let deleteBusy = false;
+    let cuentasBancariasDraft = [];
 
     const btnNuevaEmpresa = document.getElementById('btnNuevaEmpresa');
     if (btnNuevaEmpresa) btnNuevaEmpresa.addEventListener('click', openModal);
@@ -1226,13 +1227,7 @@ if (logoutLink) {
 
     const btnAgregarCuentaMemoria = document.getElementById('btnAgregarCuentaMemoria');
     if (btnAgregarCuentaMemoria) {
-      btnAgregarCuentaMemoria.addEventListener('click', () => {
-        if (typeof agregarCuentaEnMemoria === 'function') {
-          agregarCuentaEnMemoria();
-        } else {
-          toast('Función de cuenta temporal no disponible en esta versión.');
-        }
-      });
+      btnAgregarCuentaMemoria.addEventListener('click', agregarCuentaEnMemoria);
     }
 
     const btnCancelModal = document.getElementById('btnCancelModal');
@@ -1286,6 +1281,18 @@ if (logoutLink) {
         const id = Number(btn.getAttribute('data-id'));
         if (!Number.isFinite(id) || id <= 0) return;
         delCuenta(id);
+      });
+    }
+
+    const cuentasDraftList = document.getElementById('e_cuentas_list');
+    if (cuentasDraftList) {
+      cuentasDraftList.addEventListener('click', (ev) => {
+        const btn = ev.target.closest('button[data-action="delete-cuenta-draft"][data-index]');
+        if (!btn) return;
+        const idx = Number(btn.getAttribute('data-index'));
+        if (!Number.isFinite(idx) || idx < 0) return;
+        cuentasBancariasDraft.splice(idx, 1);
+        renderCuentasDraft();
       });
     }
 
@@ -1489,6 +1496,71 @@ if (logoutLink) {
       }).join('');
     }
     
+    function limpiarFormularioCuentaDraft() {
+      $('#e_cta_banco').value = '';
+      $('#e_cta_alias').value = '';
+      $('#e_cta_titular').value = '';
+      $('#e_cta_prioridad').value = '1';
+    }
+
+    function renderCuentasDraft() {
+      const ul = $('#e_cuentas_list');
+      if (!ul) return;
+
+      if (!cuentasBancariasDraft.length) {
+        ul.innerHTML = '<li style="padding:10px; text-align:center; color:var(--muted); font-size:0.9rem;">No hay cuentas temporales cargadas.</li>';
+        return;
+      }
+
+      ul.innerHTML = cuentasBancariasDraft
+        .map((cta, idx) => `
+          <li class="account-item" style="border-left: 3px solid var(--brand);">
+            <div class="account-info">
+              <div style="display:flex; align-items:center; gap:8px;">
+                <span class="account-bank">${esc(cta.banco || 'Banco')}</span>
+                <span style="font-size:0.75rem; color:var(--muted);">Prioridad ${Number(cta.prioridad) || 1}</span>
+              </div>
+              <span class="account-detail">
+                ${cta.alias ? 'Alias: <strong style="color:#fff">' + esc(cta.alias) + '</strong>' : ''}
+                ${cta.cbu ? '<br>CBU: ' + esc(cta.cbu) : ''}
+              </span>
+              ${cta.titular ? `<span class="account-holder">${esc(cta.titular)}</span>` : ''}
+            </div>
+            <button class="btn-icon" data-action="delete-cuenta-draft" data-index="${idx}" style="color:var(--danger); border:none;">
+              <i class="fa-solid fa-trash"></i>
+            </button>
+          </li>
+        `)
+        .join('');
+    }
+
+    function agregarCuentaEnMemoria() {
+      const banco = $('#e_cta_banco').value.trim();
+      const aliasOCbu = $('#e_cta_alias').value.trim();
+      const titular = $('#e_cta_titular').value.trim();
+      const prioridadRaw = Number($('#e_cta_prioridad').value);
+      const prioridad = Number.isFinite(prioridadRaw) && prioridadRaw > 0 ? Math.floor(prioridadRaw) : 1;
+
+      if (!banco || !aliasOCbu) {
+        toast('Completa Banco y Alias/CBU');
+        return;
+      }
+
+      cuentasBancariasDraft.push({
+        banco,
+        alias: aliasOCbu,
+        cbu: /^\d{22}$/.test(aliasOCbu.replace(/\s+/g, '')) ? aliasOCbu.replace(/\s+/g, '') : null,
+        titular: titular || null,
+        prioridad,
+        activa: true,
+      });
+
+      cuentasBancariasDraft.sort((a, b) => (Number(a.prioridad) || 999) - (Number(b.prioridad) || 999));
+      renderCuentasDraft();
+      limpiarFormularioCuentaDraft();
+      toast('✅ Cuenta agregada en memoria');
+    }
+
     function openModal() {
       $('#modal').classList.add('open');
       $('#modalTitle').textContent = 'Nueva Empresa';
@@ -1496,6 +1568,10 @@ if (logoutLink) {
       $('#e_id').value = '';
       $('#e_landing_file').value = ''; // Reset file input
       $('#e_nombre').focus();
+
+      cuentasBancariasDraft = [];
+      limpiarFormularioCuentaDraft();
+      renderCuentasDraft();
 
       // Default: Lun a Sáb
       document.querySelectorAll('#e_dias_entrega input[type="checkbox"]').forEach((chk) => {
@@ -1514,6 +1590,10 @@ if (logoutLink) {
       $('#modal').classList.add('open');
       $('#modalTitle').textContent = 'Editar Empresa';
       $('#e_landing_file').value = ''; // Reset file input
+
+      cuentasBancariasDraft = [];
+      limpiarFormularioCuentaDraft();
+      renderCuentasDraft();
 
       // 1. Datos básicos
       $('#e_id').value = c.id;
@@ -1963,6 +2043,17 @@ if (logoutLink) {
       if (!body.nombre) {
         toast('El nombre es obligatorio');
         return;
+      }
+
+      if (!id && Array.isArray(cuentasBancariasDraft) && cuentasBancariasDraft.length) {
+        body.cuentas_bancarias = cuentasBancariasDraft.map((cta) => ({
+          banco: cta.banco || null,
+          alias: cta.alias || null,
+          cbu: cta.cbu || null,
+          titular: cta.titular || null,
+          prioridad: Number(cta.prioridad) || 1,
+          activa: cta.activa !== false,
+        }));
       }
 
       const method = id ? 'PUT' : 'POST';

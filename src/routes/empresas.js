@@ -74,6 +74,7 @@ export function createEmpresasRouter(deps) {
       plan_tipo,
       plan_vencimiento,
       plan_precio,
+      cuentas_bancarias,
     } = req.body || {};
 
     if (!nombre) return res.status(400).json({ error: 'Nombre requerido' });
@@ -150,7 +151,29 @@ export function createEmpresasRouter(deps) {
         ]
       );
 
-      return res.json(rows[0]);
+      const nuevaEmpresa = rows[0];
+
+      if (nuevaEmpresa?.id && Array.isArray(cuentas_bancarias) && cuentas_bancarias.length) {
+        for (const cta of cuentas_bancarias) {
+          const banco = String(cta?.banco || '').trim() || null;
+          const alias = String(cta?.alias || '').trim() || null;
+          const cbu = String(cta?.cbu || '').trim() || null;
+          const titular = String(cta?.titular || '').trim() || null;
+          const prioridad = Number(cta?.prioridad) > 0 ? Number(cta.prioridad) : 1;
+          const activa = cta?.activa !== false;
+
+          if (!banco && !alias && !cbu) continue;
+
+          await query(
+            `INSERT INTO empresa_cuentas_bancarias
+              (empresa_id, banco, alias, cbu, titular, activa, prioridad)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+            [nuevaEmpresa.id, banco, alias, cbu, titular, activa, prioridad]
+          );
+        }
+      }
+
+      return res.json(nuevaEmpresa);
     } catch (e) {
       console.error('❌ [ERROR POST EMPRESA]:', e);
       if (e.code === '23505') {
