@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Analytics · PediVoy</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    :root{
+      --bg:#0b1020; --bg2:#0f172a; --card:rgba(30,41,59,.72); --ink:#f1f5f9; --muted:#94a3b8;
+      --brand:#06b6d4; --ok:#22c55e; --warn:#f59e0b; --danger:#ef4444; --border:rgba(148,163,184,.2);
+    }
+    *{box-sizing:border-box}
+    body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+    .container{max-width:1280px;margin:0 auto;padding:0 20px}
+    header{position:sticky;top:0;z-index:10;background:rgba(15,23,42,.95);backdrop-filter:blur(4px);border-bottom:1px solid var(--border)}
+    nav{display:flex;justify-content:space-between;align-items:center;padding:.9rem 0;gap:10px}
+    .brand{display:flex;align-items:center;gap:.6rem;font-weight:700}
+    .dot{width:10px;height:10px;border-radius:999px;background:var(--brand);box-shadow:0 0 14px rgba(6,182,212,.8)}
+    .top-actions{display:flex;gap:8px;flex-wrap:wrap}
+    main{padding:1rem 0 2.5rem}
+
+    .card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:14px;margin-bottom:12px}
+    .title{margin:0;font-size:1.2rem}
+    .subtitle{margin:.3rem 0 0;color:var(--muted);font-size:.92rem}
+
+    .toolbar{display:grid;grid-template-columns:repeat(6,minmax(120px,1fr));gap:10px;align-items:end}
+    .toolbar .field{display:flex;flex-direction:column;gap:5px}
+    label{font-size:.78rem;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+    input,select,button{height:38px;border-radius:10px;border:1px solid var(--border);background:var(--bg2);color:var(--ink);padding:0 10px}
+    button{cursor:pointer;background:linear-gradient(180deg,rgba(6,182,212,.22),rgba(6,182,212,.08));border-color:rgba(6,182,212,.45);font-weight:600}
+    button.secondary{background:var(--bg2);border-color:var(--border)}
+    button.danger{border-color:rgba(239,68,68,.4);color:#fecaca;background:rgba(127,29,29,.15)}
+    button:disabled{opacity:.5;cursor:not-allowed}
+
+    .kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}
+    .kpi{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:11px}
+    .kpi .k{font-size:.76rem;color:var(--muted);text-transform:uppercase}
+    .kpi .v{margin-top:4px;font-size:1.35rem;font-weight:800}
+
+    .two{display:grid;grid-template-columns:2fr 1fr;gap:12px}
+    .chart-wrap{height:320px}
+    .chart-wrap canvas{max-height:100%}
+
+    .table-wrap{overflow:auto;border:1px solid var(--border);border-radius:12px}
+    table{width:100%;border-collapse:collapse;font-size:.9rem}
+    th,td{padding:10px;border-bottom:1px solid var(--border);white-space:nowrap}
+    th{background:rgba(148,163,184,.08);text-align:left;color:#dbeafe;font-size:.78rem;text-transform:uppercase}
+    tr:hover td{background:rgba(148,163,184,.06)}
+
+    .status{font-size:.9rem;color:var(--muted)}
+    .pill{display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border-radius:999px;font-size:.75rem;border:1px solid var(--border);background:var(--bg2)}
+    .pill.ok{color:#bbf7d0;border-color:rgba(34,197,94,.35)}
+    .pill.warn{color:#fde68a;border-color:rgba(245,158,11,.35)}
+    .pill.danger{color:#fecaca;border-color:rgba(239,68,68,.35)}
+
+    @media (max-width: 980px){
+      .toolbar{grid-template-columns:repeat(2,minmax(120px,1fr))}
+      .two{grid-template-columns:1fr}
+    }
+  </style>
+</head>
+<body>
+<header>
+  <nav class="container">
+    <div class="brand"><span class="dot"></span>Analytics · PediVoy <span id="roleBadge" class="pill">Cargando…</span></div>
+    <div class="top-actions">
+      <a href="/pedidos/dashboard.html"><button type="button" class="secondary">← Dashboard</button></a>
+      <button id="btnExportCsv" type="button" class="secondary">Exportar CSV</button>
+      <button id="btnRefresh" type="button">Actualizar</button>
+      <button id="logout" type="button" class="danger">Salir</button>
+    </div>
+  </nav>
+</header>
+
+<main class="container">
+  <section class="card">
+    <h1 class="title">Panel de Analytics</h1>
+    <p class="subtitle">Monitoreo de tráfico, comportamiento y eventos operativos.</p>
+    <div class="toolbar" style="margin-top:10px">
+      <div class="field"><label>Desde</label><input id="fFrom" type="date"></div>
+      <div class="field"><label>Hasta</label><input id="fTo" type="date"></div>
+      <div class="field"><label>Página</label><select id="fPath"><option value="">Todas</option></select></div>
+      <div class="field"><label>Tipo usuario</label><select id="fUser"><option value="">Todos</option><option value="empresa">Empresa</option><option value="chofer">Chofer</option><option value="desconocido">Desconocido</option></select></div>
+      <div class="field"><label>Dispositivo</label><select id="fDevice"><option value="">Todos</option></select></div>
+      <div class="field"><button id="btnApply" type="button">Aplicar filtros</button></div>
+    </div>
+    <div id="status" class="status" style="margin-top:10px">Listo.</div>
+  </section>
+
+  <section class="card">
+    <div class="kpi-grid" id="kpiGrid"></div>
+  </section>
+
+  <section class="two">
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <h2 class="title" style="font-size:1rem">Actividad por día</h2>
+        <span id="trafficBadge" class="pill">—</span>
+      </div>
+      <div class="chart-wrap"><canvas id="chTimeseries"></canvas></div>
+    </div>
+    <div class="card">
+      <h2 class="title" style="font-size:1rem">Dispositivos</h2>
+      <div class="chart-wrap"><canvas id="chDevices"></canvas></div>
+    </div>
+  </section>
+
+  <section class="two">
+    <div class="card">
+      <h2 class="title" style="font-size:1rem">Top páginas</h2>
+      <div class="chart-wrap"><canvas id="chPages"></canvas></div>
+    </div>
+    <div class="card">
+      <h2 class="title" style="font-size:1rem">Tipos de usuario</h2>
+      <div class="chart-wrap"><canvas id="chUsers"></canvas></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2 class="title" style="font-size:1rem">Eventos recientes</h2>
+    <div class="table-wrap" style="margin-top:8px">
+      <table id="eventsTable">
+        <thead>
+          <tr><th>Fecha</th><th>Página</th><th>Método</th><th>Usuario</th><th>Dispositivo</th><th>IP</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<script>
+  const authFetch = (url, opts={}) => fetch(url, { ...opts, credentials:'include', headers:{ 'Content-Type':'application/json', ...(opts.headers||{}) }});
+  const fmtInt = new Intl.NumberFormat('es-AR');
+
+  const st = { me:null, summary:null, events:[], charts:{} };
+
+  const $ = (s) => document.querySelector(s);
+  const setStatus = (t, lvl='muted') => {
+    const el = $('#status');
+    el.textContent = t;
+    el.style.color = lvl==='danger' ? 'var(--danger)' : (lvl==='ok' ? 'var(--ok)' : 'var(--muted)');
+  };
+
+  function toISODate(d){ return d.toISOString().slice(0,10); }
+  function initDateRange(){
+    const to = new Date();
+    const from = new Date();
+    from.setDate(to.getDate() - 29);
+    $('#fFrom').value = toISODate(from);
+    $('#fTo').value = toISODate(to);
+  }
+
+  async function api(url){
+    const r = await authFetch(url);
+    if (r.status === 401){ location.href = '/pedidos/login.html'; return null; }
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
+    return j;
+  }
+
+  function buildQuery(){
+    const p = new URLSearchParams();
+    const from = $('#fFrom').value; const to = $('#fTo').value;
+    const path = $('#fPath').value; const user = $('#fUser').value; const device = $('#fDevice').value;
+    if (from) p.set('from', from);
+    if (to) p.set('to', to);
+    if (path) p.set('path', path);
+    if (user) p.set('user_tipo', user);
+    if (device) p.set('device', device);
+    return p.toString();
+  }
+
+  function safeArray(v){ return Array.isArray(v) ? v : []; }
+
+  function drawOrUpdateChart(key, ctx, config){
+    if (st.charts[key]) st.charts[key].destroy();
+    st.charts[key] = new Chart(ctx, config);
+  }
+
+  function renderKpis(summary){
+    const topPages = safeArray(summary.topPages);
+    const t = summary.totales || {};
+    const kpis = [
+      ['Vistas Totales', fmtInt.format(Number(t.views||0))],
+      ['Visitantes Únicos', fmtInt.format(Number(t.unique_visitors||0))],
+      ['Páginas Top', fmtInt.format(topPages.length)],
+      ['Eventos', fmtInt.format(safeArray(summary.eventos).length)],
+    ];
+
+    $('#kpiGrid').innerHTML = kpis.map(([k,v]) => `<div class="kpi"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');
+  }
+
+  function renderEvents(events){
+    st.events = safeArray(events);
+    const tb = $('#eventsTable tbody');
+    if (!st.events.length){
+      tb.innerHTML = '<tr><td colspan="6" style="color:var(--muted);text-align:center">Sin eventos para el filtro seleccionado.</td></tr>';
+      return;
+    }
+    tb.innerHTML = st.events.map(e => `
+      <tr>
+        <td>${e.timestamp || e.created_at || '-'}</td>
+        <td>${e.path || '-'}</td>
+        <td>${e.metodo || '-'}</td>
+        <td>${e.user_tipo || '-'}</td>
+        <td>${e.dispositivo || '-'}</td>
+        <td>${e.ip || '-'}</td>
+      </tr>
+    `).join('');
+  }
+
+  async function loadSummaryAndCharts(){
+    const q = buildQuery();
+    const suffix = q ? ('?' + q) : '';
+
+    const [summary, timeseries, topPages, devices, users] = await Promise.all([
+      api('/api/analytics/summary' + suffix),
+      api('/api/analytics/timeseries?days=30' + (q ? '&' + q : '')),
+      api('/api/analytics/top-pages?limit=10' + (q ? '&' + q : '')),
+      api('/api/analytics/devices' + suffix),
+      api('/api/analytics/users' + suffix),
+    ]);
+
+    st.summary = summary || {};
+    renderKpis(st.summary);
+    renderEvents(st.summary.eventos || []);
+
+    const ts = safeArray(timeseries?.data);
+    drawOrUpdateChart('ts', $('#chTimeseries'), {
+      type:'line',
+      data:{ labels: ts.map(r => r.day), datasets:[{ label:'Visitas', data: ts.map(r => Number(r.views||0)), borderColor:'#06b6d4', backgroundColor:'rgba(6,182,212,.2)', fill:true, tension:.25 }] },
+      options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{ labels:{ color:'#cbd5e1' }}} , scales:{ x:{ ticks:{ color:'#94a3b8' }, grid:{ color:'rgba(148,163,184,.15)' }}, y:{ ticks:{ color:'#94a3b8' }, grid:{ color:'rgba(148,163,184,.15)' }}} }
+    });
+
+    const pages = safeArray(topPages?.data);
+    drawOrUpdateChart('pages', $('#chPages'), {
+      type:'bar',
+      data:{ labels: pages.map(r => r.path || '-'), datasets:[{ label:'Vistas', data: pages.map(r => Number(r.views||0)), backgroundColor:'rgba(34,197,94,.45)', borderColor:'#22c55e', borderWidth:1 }] },
+      options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{ labels:{ color:'#cbd5e1' }}}, scales:{ x:{ ticks:{ color:'#94a3b8' }, grid:{ color:'rgba(148,163,184,.15)' }}, y:{ ticks:{ color:'#94a3b8' }, grid:{ color:'rgba(148,163,184,.15)' }}} }
+    });
+
+    const dev = safeArray(devices?.data);
+    drawOrUpdateChart('dev', $('#chDevices'), {
+      type:'doughnut',
+      data:{ labels: dev.map(r => r.dispositivo || 'otro'), datasets:[{ data: dev.map(r => Number(r.total||0)), backgroundColor:['#22c55e','#06b6d4','#f59e0b','#a78bfa','#f97316'] }] },
+      options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{ labels:{ color:'#cbd5e1' }}} }
+    });
+
+    const us = safeArray(users?.data);
+    drawOrUpdateChart('users', $('#chUsers'), {
+      type:'bar',
+      data:{ labels: us.map(r => r.user_tipo || 'desconocido'), datasets:[{ label:'Usuarios', data: us.map(r => Number(r.total||0)), backgroundColor:'rgba(167,139,250,.5)', borderColor:'#a78bfa', borderWidth:1 }] },
+      options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{ labels:{ color:'#cbd5e1' }}}, scales:{ x:{ ticks:{ color:'#94a3b8' }, grid:{ color:'rgba(148,163,184,.15)' }}, y:{ ticks:{ color:'#94a3b8' }, grid:{ color:'rgba(148,163,184,.15)' }}} }
+    });
+
+    updateTrafficBadge(ts);
+    updateFilterOptions(st.summary, dev);
+  }
+
+  function updateTrafficBadge(ts){
+    const last = Number(ts?.[ts.length-1]?.views || 0);
+    const prev = Number(ts?.[ts.length-2]?.views || 0);
+    const diff = last - prev;
+    const b = $('#trafficBadge');
+    if (!ts?.length){ b.className='pill'; b.textContent='Sin datos'; return; }
+    if (diff > 0){ b.className='pill ok'; b.textContent=`↗ +${fmtInt.format(diff)} vs ayer`; }
+    else if (diff < 0){ b.className='pill warn'; b.textContent=`↘ ${fmtInt.format(diff)} vs ayer`; }
+    else { b.className='pill'; b.textContent='= Sin cambios vs ayer'; }
+  }
+
+  function updateFilterOptions(summary, devices){
+    const pathSel = $('#fPath');
+    const devSel = $('#fDevice');
+
+    const prevPath = pathSel.value;
+    const prevDev = devSel.value;
+
+    const paths = safeArray(summary?.topPages).map(x => x.path).filter(Boolean);
+    const devs = safeArray(devices).map(x => x.dispositivo).filter(Boolean);
+
+    pathSel.innerHTML = '<option value="">Todas</option>' + [...new Set(paths)].map(p => `<option value="${p}">${p}</option>`).join('');
+    devSel.innerHTML = '<option value="">Todos</option>' + [...new Set(devs)].map(d => `<option value="${d}">${d}</option>`).join('');
+
+    if ([...pathSel.options].some(o => o.value === prevPath)) pathSel.value = prevPath;
+    if ([...devSel.options].some(o => o.value === prevDev)) devSel.value = prevDev;
+  }
+
+  function exportCSV(){
+    const header = ['Fecha','Página','Método','Usuario','Dispositivo','IP'];
+    const rows = st.events.map(e => [e.timestamp || e.created_at || '', e.path || '', e.metodo || '', e.user_tipo || '', e.dispositivo || '', e.ip || '']);
+    const csv = [header, ...rows].map(r => r.map(v => `"${String(v).replaceAll('"','""')}"`).join(',')).join('\n');
+    const blob = new Blob([csv], { type:'text/csv;charset=utf-8;' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `analytics_${new Date().toISOString().slice(0,10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  async function loadMe(){
+    const me = await api('/api/me');
+    if (!me?.user) return;
+    st.me = me.user;
+    const role = String(st.me.role || '').toLowerCase();
+    const badge = $('#roleBadge');
+    badge.textContent = role === 'super' ? 'SUPER ADMIN' : role.toUpperCase();
+    badge.className = role === 'super' ? 'pill ok' : 'pill';
+  }
+
+  async function refresh(){
+    const btn = $('#btnRefresh');
+    btn.disabled = true;
+    setStatus('Actualizando analytics…');
+    try {
+      await loadSummaryAndCharts();
+      setStatus('Analytics actualizado.', 'ok');
+    } catch (e) {
+      console.error(e);
+      setStatus('No se pudieron cargar algunos datos de analytics. Verificá endpoints /api/analytics/*', 'danger');
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  $('#btnApply').addEventListener('click', refresh);
+  $('#btnRefresh').addEventListener('click', refresh);
+  $('#btnExportCsv').addEventListener('click', exportCSV);
+  $('#logout').addEventListener('click', async () => {
+    try { await authFetch('/api/logout', { method:'POST' }); } catch {}
+    location.href = '/pedidos/login.html';
+  });
+
+  (async function boot(){
+    initDateRange();
+    try { await loadMe(); } catch {}
+    await refresh();
+  })();
+</script>
+</body>
+</html>
