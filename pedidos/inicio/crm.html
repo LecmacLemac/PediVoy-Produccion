@@ -128,7 +128,41 @@ function renderKpis(rows){
 function renderPipeline(rows){
   const list = $('#pipelineList');
   if(!rows.length){ list.innerHTML='<div class="muted">Sin oportunidades.</div>'; return; }
-  list.innerHTML = rows.map(o=>`<div class="item"><div class="row" style="justify-content:space-between"><b>${o.nombre||'Sin nombre'}</b><span class="pill">${o.probabilidad||0}%</span></div><div class="muted">${o.etapa||'-'} · ${o.estado||'-'}</div><div style="margin-top:4px">${fmt.format(Number(o.monto||0))}</div></div>`).join('');
+  list.innerHTML = rows.map(o=>`<div class="item">
+    <div class="row" style="justify-content:space-between">
+      <b>${o.nombre||'Sin nombre'}</b>
+      <span class="pill">${o.probabilidad||0}%</span>
+    </div>
+    <div class="muted">${o.etapa||'-'} · ${o.estado||'-'}</div>
+    <div style="margin-top:4px">${fmt.format(Number(o.monto||0))}</div>
+    <div class="row" style="margin-top:8px">
+      <select data-oportunidad-etapa="${Number(o.id)||0}">
+        <option value="prospecto" ${String(o.etapa)==='prospecto'?'selected':''}>Prospecto</option>
+        <option value="calificado" ${String(o.etapa)==='calificado'?'selected':''}>Calificado</option>
+        <option value="propuesta" ${String(o.etapa)==='propuesta'?'selected':''}>Propuesta</option>
+        <option value="negociacion" ${String(o.etapa)==='negociacion'?'selected':''}>Negociación</option>
+        <option value="cerrado_ganado" ${String(o.etapa)==='cerrado_ganado'?'selected':''}>Cerrado ganado</option>
+        <option value="cerrado_perdido" ${String(o.etapa)==='cerrado_perdido'?'selected':''}>Cerrado perdido</option>
+      </select>
+      <input data-oportunidad-prob="${Number(o.id)||0}" type="number" min="0" max="100" value="${Number(o.probabilidad||0)}" style="width:90px" />
+      <button class="btn" type="button" data-oportunidad-save="${Number(o.id)||0}">Guardar</button>
+    </div>
+  </div>`).join('');
+
+  list.querySelectorAll('[data-oportunidad-save]').forEach((btn)=>{
+    btn.addEventListener('click', async ()=>{
+      const id = Number(btn.getAttribute('data-oportunidad-save')||0);
+      if(!id) return;
+      const etapa = list.querySelector(`[data-oportunidad-etapa="${id}"]`)?.value || 'prospecto';
+      const prob = Number(list.querySelector(`[data-oportunidad-prob="${id}"]`)?.value || 0);
+      try{
+        await api(apiUrl(`/api/setup/fase1/pipeline/${id}`), { method:'PUT', body: JSON.stringify({ etapa, probabilidad: Math.max(0, Math.min(100, prob)) }) });
+        await refresh();
+      }catch(e){
+        alert('No se pudo actualizar oportunidad: ' + e.message);
+      }
+    });
+  });
 }
 
 function renderClientes(rows){
