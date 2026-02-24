@@ -195,6 +195,13 @@
               <option value="">Todos</option>
             </select>
           </div>
+          <div>
+            <label>Hoy</label>
+            <select id="fHoy">
+              <option value="0">No</option>
+              <option value="1">Sí</option>
+            </select>
+          </div>
         </div>
         <div style="display:flex; gap:0.5rem; align-items:end;">
           <button id="btnCalcular" class="btn btn-primary">Calcular Rentabilidad</button>
@@ -438,6 +445,12 @@
       return `${yyyy}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}`;
     }
 
+    function setHoyRange() {
+      const hoy = dateISO(new Date());
+      if ($('#fFrom')) $('#fFrom').value = hoy;
+      if ($('#fTo')) $('#fTo').value = hoy;
+    }
+
     // SVG WhatsApp icon
     const waIcon = `<svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91C2.13 13.66 2.59 15.36 3.45 16.86L2.05 22L7.3 20.62C8.75 21.41 10.38 21.83 12.04 21.83C17.5 21.83 21.95 17.38 21.95 11.92C21.95 9.27 20.92 6.78 19.05 4.91C17.18 3.03 14.69 2 12.04 2ZM12.05 3.66C14.25 3.66 16.31 4.51 17.87 6.07C19.42 7.63 20.28 9.7 20.28 11.92C20.28 16.46 16.58 20.17 12.04 20.17C10.59 20.17 9.17 19.78 7.92 19.04L7.62 18.86L4.5 19.68L5.33 16.64L5.14 16.33C4.35 15.06 3.93 13.59 3.93 12.08C3.93 12.03 3.93 11.97 3.93 11.91C3.93 7.45 7.57 3.8 12.05 3.66Z"/></svg>`;
 
@@ -566,10 +579,25 @@ async function init() {
     fromDate.setDate(fromDate.getDate() - 30);
     $('#fFrom').value = dateISO(fromDate);
 
-    // Listeners de botones
+    // Listeners de filtros/botones
     $('#btnCalcular').onclick = calcular;
     $('#btnExport').onclick = exportCSV;
     $('#btnVerTransfer').onclick = openTransferModal;
+
+    const hoySel = $('#fHoy');
+    if (hoySel) {
+      hoySel.onchange = () => {
+        if (hoySel.value === '1') setHoyRange();
+      };
+    }
+
+    const fromEl = $('#fFrom');
+    const toEl = $('#fTo');
+    const clearHoy = () => {
+      if (hoySel && hoySel.value === '1') hoySel.value = '0';
+    };
+    if (fromEl) fromEl.addEventListener('change', clearHoy);
+    if (toEl) toEl.addEventListener('change', clearHoy);
 
   } catch (e) {
     console.error("Error init:", e);
