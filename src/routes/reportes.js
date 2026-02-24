@@ -22,6 +22,7 @@ export function createReportesRouter() {
         SELECT 
           p.id,
           p.fecha,
+          p.fecha_entrega,
           pe.cliente,
           pe.telefono,
           pe.direccion,
@@ -44,11 +45,11 @@ export function createReportesRouter() {
       let idx = 2;
 
       if (from) {
-        sql += ` AND p.fecha >= $${idx++}::date`;
+        sql += ` AND COALESCE(p.fecha_entrega, p.fecha) >= $${idx++}::date`;
         params.push(from.toString().slice(0, 10));
       }
       if (to) {
-        sql += ` AND p.fecha < ($${idx++}::date + INTERVAL '1 day')`;
+        sql += ` AND COALESCE(p.fecha_entrega, p.fecha) < ($${idx++}::date + INTERVAL '1 day')`;
         params.push(to.toString().slice(0, 10));
       }
 
@@ -67,7 +68,7 @@ export function createReportesRouter() {
         params.push(metodo_pago);
       }
 
-      sql += ` ORDER BY p.fecha DESC, p.id DESC`;
+      sql += ` ORDER BY COALESCE(p.fecha_entrega, p.fecha) DESC, p.id DESC`;
 
       const rows = await query(sql, params);
       return res.json(rows);

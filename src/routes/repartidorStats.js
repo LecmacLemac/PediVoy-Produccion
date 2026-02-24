@@ -21,8 +21,8 @@ export function createRepartidorStatsRouter() {
           COALESCE(SUM(monto) FILTER (WHERE estado = 'entregado'), 0) AS dinero
         FROM pedidos
         WHERE chofer_id = $1
-          AND fecha >= CURRENT_DATE
-          AND fecha < (CURRENT_DATE + INTERVAL '1 day')
+          AND COALESCE(fecha_entrega, fecha) >= CURRENT_DATE
+          AND COALESCE(fecha_entrega, fecha) < (CURRENT_DATE + INTERVAL '1 day')
       `;
 
       const rows = await query(sql, [chofer_id]);
@@ -59,8 +59,8 @@ export function createRepartidorStatsRouter() {
             JOIN puntos_entrega pe  ON pe.id = p.punto_entrega_id
             WHERE pe.empresa_id = $1
               AND p.chofer_id  = $2
-              AND p.fecha >= $3::date
-              AND p.fecha < ($3::date + INTERVAL '1 day')
+              AND COALESCE(p.fecha_entrega, p.fecha) >= $3::date
+              AND COALESCE(p.fecha_entrega, p.fecha) < ($3::date + INTERVAL '1 day')
               AND LOWER(p.estado) = 'entregado'
           ),
           escala_sel AS (

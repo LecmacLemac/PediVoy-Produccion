@@ -488,7 +488,7 @@ async function _sqlResumenVentas({
       FROM pedidos p
       JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
       WHERE pe.empresa_id = $1
-        AND DATE(p.fecha) BETWEEN $2::date AND $3::date
+        AND DATE(COALESCE(p.fecha_entrega, p.fecha)) BETWEEN $2::date AND $3::date
         AND LOWER(p.estado) = 'entregado'
         ${whereChofer}
       GROUP BY 1
@@ -524,7 +524,7 @@ async function _sqlResumenVentas({
         JOIN pedidos p ON p.id = it.pedido_id
         JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
         WHERE pe.empresa_id = $1
-          AND DATE(p.fecha) BETWEEN $2::date AND $3::date
+          AND DATE(COALESCE(p.fecha_entrega, p.fecha)) BETWEEN $2::date AND $3::date
           AND LOWER(p.estado) = 'entregado'
           ${whereChofer2}
       `,
@@ -548,7 +548,7 @@ async function _sqlResumenVentas({
         FROM pedidos p
         JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
         WHERE pe.empresa_id = $1
-          AND DATE(p.fecha) BETWEEN $2::date AND $3::date
+          AND DATE(COALESCE(p.fecha_entrega, p.fecha)) BETWEEN $2::date AND $3::date
           AND LOWER(p.estado) = 'entregado'
           ${whereChofer3}
       `,
@@ -651,7 +651,7 @@ async function _sqlPagoChoferDia({ empresa_id, chofer_id, fecha }) {
       JOIN puntos_entrega pe  ON pe.id = p.punto_entrega_id
       WHERE pe.empresa_id = $1
         AND p.chofer_id  = $2
-        AND DATE(p.fecha) = $3::date
+        AND DATE(COALESCE(p.fecha_entrega, p.fecha)) = $3::date
         AND LOWER(p.estado) = 'entregado'
     ),
     escala_sel AS (
@@ -766,7 +766,7 @@ async function _sqlPorZona({ empresa_id, desde, hasta }) {
     JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
     LEFT JOIN zonas_geograficas z ON z.id = pe.zona_id
     WHERE pe.empresa_id = $1
-      AND DATE(p.fecha) BETWEEN $2::date AND $3::date
+      AND DATE(COALESCE(p.fecha_entrega, p.fecha)) BETWEEN $2::date AND $3::date
       AND LOWER(p.estado) = 'entregado'
     GROUP BY 1
     ORDER BY ingresos DESC
@@ -789,7 +789,7 @@ async function _sqlClientesNuevosRecurrentes({
       FROM pedidos p
       JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
       WHERE pe.empresa_id = $1
-        AND DATE(p.fecha) BETWEEN $2::date AND $3::date
+        AND DATE(COALESCE(p.fecha_entrega, p.fecha)) BETWEEN $2::date AND $3::date
         AND LOWER(p.estado)='entregado'
     ),
     prev AS (
@@ -798,7 +798,7 @@ async function _sqlClientesNuevosRecurrentes({
       JOIN pedidos p2 ON p2.punto_entrega_id = e.pe_id
       JOIN puntos_entrega pe2 ON pe2.id = p2.punto_entrega_id
       WHERE pe2.empresa_id = $1
-        AND DATE(p2.fecha) < $2::date
+        AND DATE(COALESCE(p2.fecha_entrega, p2.fecha)) < $2::date
     )
     SELECT
       (SELECT COUNT(*) FROM entregas)                                  AS clientes_rango,
@@ -868,13 +868,13 @@ async function _sqlStockChoferAl({ empresa_id, chofer_id, at }) {
 async function _seriesVentasEmpresa({ empresa_id, desde, hasta }) {
   const ventas = await query(
     `
-    SELECT DATE(p.fecha) AS f,
+    SELECT DATE(COALESCE(p.fecha_entrega, p.fecha)) AS f,
            COALESCE(SUM(COALESCE(p.monto,0)),0) AS total,
            COUNT(*) AS pedidos
     FROM pedidos p
     JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
     WHERE pe.empresa_id = $1
-      AND DATE(p.fecha) BETWEEN $2::date AND $3::date
+      AND DATE(COALESCE(p.fecha_entrega, p.fecha)) BETWEEN $2::date AND $3::date
       AND LOWER(p.estado)='entregado'
     GROUP BY 1
   `,
@@ -883,13 +883,13 @@ async function _seriesVentasEmpresa({ empresa_id, desde, hasta }) {
 
   const items = await query(
     `
-    SELECT DATE(p.fecha) AS f,
+    SELECT DATE(COALESCE(p.fecha_entrega, p.fecha)) AS f,
            COALESCE(SUM(it.cantidad),0) AS q
     FROM items_pedido it
     JOIN pedidos p ON p.id = it.pedido_id
     JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
     WHERE pe.empresa_id = $1
-      AND DATE(p.fecha) BETWEEN $2::date AND $3::date
+      AND DATE(COALESCE(p.fecha_entrega, p.fecha)) BETWEEN $2::date AND $3::date
       AND LOWER(p.estado)='entregado'
     GROUP BY 1
   `,
@@ -975,14 +975,14 @@ async function _seriesVentasEmpresa({ empresa_id, desde, hasta }) {
 async function _seriesChofer({ empresa_id, chofer_id, desde, hasta }) {
   const ventas = await query(
     `
-    SELECT DATE(p.fecha) AS f,
+    SELECT DATE(COALESCE(p.fecha_entrega, p.fecha)) AS f,
            COALESCE(SUM(COALESCE(p.monto,0)),0) AS total,
            COUNT(*) AS pedidos
     FROM pedidos p
     JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
     WHERE pe.empresa_id = $1
       AND p.chofer_id = $2
-      AND DATE(p.fecha) BETWEEN $3::date AND $4::date
+      AND DATE(COALESCE(p.fecha_entrega, p.fecha)) BETWEEN $3::date AND $4::date
       AND LOWER(p.estado)='entregado'
     GROUP BY 1
   `,
@@ -991,14 +991,14 @@ async function _seriesChofer({ empresa_id, chofer_id, desde, hasta }) {
 
   const items = await query(
     `
-    SELECT DATE(p.fecha) AS f,
+    SELECT DATE(COALESCE(p.fecha_entrega, p.fecha)) AS f,
            COALESCE(SUM(it.cantidad),0) AS q
     FROM items_pedido it
     JOIN pedidos p ON p.id = it.pedido_id
     JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
     WHERE pe.empresa_id = $1
       AND p.chofer_id = $2
-      AND DATE(p.fecha) BETWEEN $3::date AND $4::date
+      AND DATE(COALESCE(p.fecha_entrega, p.fecha)) BETWEEN $3::date AND $4::date
       AND LOWER(p.estado)='entregado'
     GROUP BY 1
   `,
@@ -1692,7 +1692,7 @@ function start(client) {
             JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
             WHERE pe.empresa_id = $1
               AND p.chofer_id = $2
-            ORDER BY DATE(p.fecha) DESC, p.id DESC
+            ORDER BY DATE(COALESCE(p.fecha_entrega, p.fecha)) DESC, p.id DESC
             LIMIT 20
           `,
             [empresa_id, chofer_id]
@@ -1705,7 +1705,7 @@ function start(client) {
             FROM pedidos p
             JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
             WHERE pe.empresa_id = $1
-            ORDER BY DATE(p.fecha) DESC, p.id DESC
+            ORDER BY DATE(COALESCE(p.fecha_entrega, p.fecha)) DESC, p.id DESC
             LIMIT 20
           `,
             [empresa_id]
@@ -1722,7 +1722,7 @@ function start(client) {
             JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
             WHERE pe.empresa_id = $1
               AND regexp_replace(COALESCE(pe.telefono,''),'\\D','','g') LIKE '%' || $2
-            ORDER BY DATE(p.fecha) DESC, p.id DESC
+            ORDER BY DATE(COALESCE(p.fecha_entrega, p.fecha)) DESC, p.id DESC
             LIMIT 20
           `,
             [empresa_id, suf10]

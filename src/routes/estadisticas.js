@@ -55,7 +55,7 @@ export function createEstadisticasRouter() {
              AND pe.empresa_id = $1
             WHERE p.estado = 'entregado'
               AND p.empresa_id = $1
-              AND p.fecha >= $2 AND p.fecha <= $3
+              AND COALESCE(p.fecha_entrega, p.fecha) >= $2 AND COALESCE(p.fecha_entrega, p.fecha) <= $3
               AND ($4::int IS NULL OR p.chofer_id = $4)
             GROUP BY 1, 2
           )
@@ -110,7 +110,7 @@ export function createEstadisticasRouter() {
             ON pe.id = p.punto_entrega_id
            AND pe.empresa_id = $1
           WHERE p.estado = 'entregado'
-            AND p.fecha >= $2 AND p.fecha <= $3
+            AND COALESCE(p.fecha_entrega, p.fecha) >= $2 AND COALESCE(p.fecha_entrega, p.fecha) <= $3
             AND ($4::int IS NULL OR p.chofer_id = $4)
           GROUP BY it.producto
         `;
