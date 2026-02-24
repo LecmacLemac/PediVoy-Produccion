@@ -474,27 +474,31 @@
       </div>
       <div class="stats" style="margin-bottom:1rem;">
         <div class="tile">
-          <small class="muted">CARGADO</small>
+          <small class="muted">SALDO INICIAL</small>
+          <div class="num" id="stKpiInicial">0 u</div>
+        </div>
+        <div class="tile">
+          <small class="muted">CARGADO (DÍA)</small>
           <div class="num" id="stKpiCarga">0 u</div>
         </div>
         <div class="tile">
-          <small class="muted">ENTREGADO</small>
+          <small class="muted">ENTREGADO (DÍA)</small>
           <div class="num" id="stKpiEntregado">0 u</div>
         </div>
         <div class="tile">
-          <small class="muted">SALDO ESPERADO</small>
-          <div class="num" id="stKpiSaldo" style="color:var(--brand)">0 u</div>
+          <small class="muted">SALDO FINAL</small>
+          <div class="num" id="stKpiSaldo">0 u</div>
         </div>
       </div>
       <div class="table-wrap">
         <table style="font-size:0.9rem">
           <thead>
-            <tr><th>Producto</th><th>Cargado</th><th>Entregado</th><th>Saldo</th></tr>
+            <tr><th>Producto</th><th>Saldo inicial</th><th>Cargado</th><th>Entregado</th><th>Saldo final</th></tr>
           </thead>
-          <tbody id="stList"><tr><td colspan="4" class="muted">Sin datos</td></tr></tbody>
+          <tbody id="stList"><tr><td colspan="5" class="muted">Sin datos</td></tr></tbody>
         </table>
       </div>
-      <small class="muted" style="margin-top:0.8rem">Saldo esperado = Cargas del día - Unidades entregadas del día.</small>
+      <small class="muted" style="margin-top:0.8rem">Saldo final = saldo inicial + cargas del día - entregas del día.</small>
     </div>
   </section>
 
@@ -2569,82 +2573,48 @@ async function loadStockRepartidor(){
   if (!tbody) return;
 
   try {
-    // 1) Cargas del día (movimientos registrados por el chofer)
-    const gs = await api(`/api/gastos?from=${d}&to=${d}&chofer_id=${me?.chofer_id||''}`);
-    const gastos = Array.isArray(gs) ? gs : (gs.rows || []);
+    const res = await api(`/api/repartidor/stock-acumulado?fecha=${encodeURIComponent(d)}`);
+    const rows = Array.isArray(res?.rows) ? res.rows : [];
+    const k = res?.kpis || {};
 
-    // 2) Entregas del día (desde pedidos ya cargados en memoria)
-    const entregados = (pedidos || []).filter(p => {
-      const fDb = p.fecha_entrega || p.fecha;
-      return isoToLocalYMD(fDb) === d && p.estado === 'entregado';
-    });
+    const sumInicial = Number(k.saldo_inicial || 0);
+    const sumCarga = Number(k.cargado || 0);
+    const sumEnt = Number(k.entregado || 0);
+    const sumSaldo = Number(k.saldo_final || 0);
 
-    const map = new Map();
-    const getRow = (key, nombre) => {
-      if (!map.has(key)) map.set(key, { key, nombre, cargado: 0, entregado: 0, saldo: 0 });
-      return map.get(key);
-    };
-
-    // Cargas: tipo carga_llenos (y compat por nombre)
-    gastos.forEach(g => {
-      const tipo = String(g.tipo || '').toLowerCase();
-      if (!(tipo.includes('carga_llenos') || tipo === 'carga')) return;
-
-      const qty = Number(g.cantidad || 0);
-      if (!qty) return;
-
-      const pid = Number(g.producto_id || 0);
-      const nombre = pid ? getProductoNombreById(pid) : (g.descripcion || 'Producto');
-      const key = pid ? `id:${pid}` : `nom:${String(nombre).toLowerCase().trim()}`;
-      const row = getRow(key, nombre);
-      row.cargado += qty;
-    });
-
-    // Entregas: suma de items entregados
-    entregados.forEach(p => {
-      const items = Array.isArray(p.items) ? p.items : [];
-      items.forEach(it => {
-        if (!it) return;
-        const qty = Number(it.cantidad || 0);
-        if (!qty) return;
-
-        const pid = Number(it.producto_id || it.id || 0);
-        const nombre = it.producto || it.nombre || (pid ? getProductoNombreById(pid) : 'Producto');
-        const key = pid ? `id:${pid}` : `nom:${String(nombre).toLowerCase().trim()}`;
-        const row = getRow(key, nombre);
-        row.entregado += qty;
-      });
-    });
-
-    const rows = Array.from(map.values())
-      .map(r => ({ ...r, saldo: r.cargado - r.entregado }))
-      .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
-
-    const sumCarga = rows.reduce((a, r) => a + Number(r.cargado || 0), 0);
-    const sumEnt = rows.reduce((a, r) => a + Number(r.entregado || 0), 0);
-    const sumSaldo = sumCarga - sumEnt;
-
+    $('#stKpiInicial').textContent = `${sumInicial} u`;
     $('#stKpiCarga').textContent = `${sumCarga} u`;
     $('#stKpiEntregado').textContent = `${sumEnt} u`;
     $('#stKpiSaldo').textContent = `${sumSaldo} u`;
-    $('#stKpiSaldo').style.color = sumSaldo >= 0 ? 'var(--brand)' : 'var(--danger)';
+
+    const colorSaldo = sumSaldo >= 0 ? 'var(--brand)' : 'var(--danger)';
+    const colorInicial = sumInicial >= 0 ? '#e5e7eb' : '#fca5a5';
+    $('#stKpiInicial').style.color = colorInicial;
+    $('#stKpiSaldo').style.color = colorSaldo;
 
     if (!rows.length) {
-      tbody.innerHTML = '<tr><td colspan="4" class="muted">Sin movimientos de carga/entrega para esta fecha</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="5" class="muted">Sin movimientos para esta fecha</td></tr>';
       return;
     }
 
-    tbody.innerHTML = rows.map(r => `
-      <tr>
-        <td>${esc(r.nombre)}</td>
-        <td>${Number(r.cargado || 0)}</td>
-        <td>${Number(r.entregado || 0)}</td>
-        <td style="font-weight:700; color:${r.saldo >= 0 ? '#67e8f9' : '#fca5a5'}">${Number(r.saldo || 0)}</td>
-      </tr>
-    `).join('');
+    tbody.innerHTML = rows.map(r => {
+      const saldoInicial = Number(r.saldo_inicial || 0);
+      const cargado = Number(r.cargado || 0);
+      const entregado = Number(r.entregado || 0);
+      const saldoFinal = Number(r.saldo_final || 0);
+      return `
+        <tr>
+          <td>${esc(r.nombre || getProductoNombreById(r.producto_id))}</td>
+          <td style="color:${saldoInicial >= 0 ? '#cbd5e1' : '#fca5a5'}">${saldoInicial}</td>
+          <td>${cargado}</td>
+          <td>${entregado}</td>
+          <td style="font-weight:700; color:${saldoFinal >= 0 ? '#67e8f9' : '#fca5a5'}">${saldoFinal}</td>
+        </tr>
+      `;
+    }).join('');
   } catch (e) {
     console.error('Error loadStockRepartidor', e);
-    tbody.innerHTML = '<tr><td colspan="4" class="muted">Error cargando stock</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="5" class="muted">Error cargando stock</td></tr>';
   }
 }
 

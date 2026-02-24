@@ -120,6 +120,112 @@ export function createRepartidorApiRouter(deps) {
    }
 });
 
+// 1.c Stock acumulado del repartidor (con arrastre)
+  router.get('/stock-acumulado', withAuth, async (req, res) => {
+   try {
+     const { chofer_id } = req.user || {};
+     const empresaId = getEmpresaIdFromToken(req);
+     const fecha = String(req.query?.fecha || new Date().toISOString().slice(0, 10)).slice(0, 10);
+
+     if (!chofer_id) return res.status(400).json({ error: 'Usuario sin chofer asociado' });
+     if (!empresaId) return res.status(400).json({ error: 'Empresa no determinada' });
+
+     const rows = await query(
+       `WITH
+          cargas_prev AS (
+            SELECT csm.producto_id, COALESCE(SUM(csm.cantidad),0) AS qty
+            FROM chofer_stock_mov csm
+            WHERE csm.empresa_id = $1
+              AND csm.chofer_id = $2
+              AND csm.cantidad > 0
+              AND csm.tipo <> 'venta'
+              AND (csm.fecha AT TIME ZONE 'UTC' AT TIME ZONE 'America/Argentina/Buenos_Aires')::date < $3::date
+            GROUP BY csm.producto_id
+          ),
+          entregas_prev AS (
+            SELECT
+              COALESCE(ip.producto_id, pr.id) AS producto_id,
+              COALESCE(SUM(ip.cantidad),0) AS qty
+            FROM pedidos p
+            JOIN items_pedido ip ON ip.pedido_id = p.id
+            LEFT JOIN productos pr ON pr.empresa_id = p.empresa_id
+              AND (
+                pr.id = ip.producto_id
+                OR (ip.producto_id IS NULL AND pr.nombre = ip.producto)
+              )
+            WHERE p.empresa_id = $1
+              AND p.chofer_id = $2
+              AND p.estado = 'entregado'
+              AND (COALESCE(p.fecha_entrega, p.fecha) AT TIME ZONE 'UTC' AT TIME ZONE 'America/Argentina/Buenos_Aires')::date < $3::date
+              AND COALESCE(ip.producto_id, pr.id) IS NOT NULL
+            GROUP BY COALESCE(ip.producto_id, pr.id)
+          ),
+          cargas_day AS (
+            SELECT csm.producto_id, COALESCE(SUM(csm.cantidad),0) AS qty
+            FROM chofer_stock_mov csm
+            WHERE csm.empresa_id = $1
+              AND csm.chofer_id = $2
+              AND csm.cantidad > 0
+              AND csm.tipo <> 'venta'
+              AND (csm.fecha AT TIME ZONE 'UTC' AT TIME ZONE 'America/Argentina/Buenos_Aires')::date = $3::date
+            GROUP BY csm.producto_id
+          ),
+          entregas_day AS (
+            SELECT
+              COALESCE(ip.producto_id, pr.id) AS producto_id,
+              COALESCE(SUM(ip.cantidad),0) AS qty
+            FROM pedidos p
+            JOIN items_pedido ip ON ip.pedido_id = p.id
+            LEFT JOIN productos pr ON pr.empresa_id = p.empresa_id
+              AND (
+                pr.id = ip.producto_id
+                OR (ip.producto_id IS NULL AND pr.nombre = ip.producto)
+              )
+            WHERE p.empresa_id = $1
+              AND p.chofer_id = $2
+              AND p.estado = 'entregado'
+              AND (COALESCE(p.fecha_entrega, p.fecha) AT TIME ZONE 'UTC' AT TIME ZONE 'America/Argentina/Buenos_Aires')::date = $3::date
+              AND COALESCE(ip.producto_id, pr.id) IS NOT NULL
+            GROUP BY COALESCE(ip.producto_id, pr.id)
+          ),
+          all_prod AS (
+            SELECT producto_id FROM cargas_prev
+            UNION SELECT producto_id FROM entregas_prev
+            UNION SELECT producto_id FROM cargas_day
+            UNION SELECT producto_id FROM entregas_day
+          )
+          SELECT
+            p.id AS producto_id,
+            p.nombre,
+            COALESCE(cp.qty,0) - COALESCE(ep.qty,0) AS saldo_inicial,
+            COALESCE(cd.qty,0) AS cargado,
+            COALESCE(ed.qty,0) AS entregado,
+            (COALESCE(cp.qty,0) - COALESCE(ep.qty,0) + COALESCE(cd.qty,0) - COALESCE(ed.qty,0)) AS saldo_final
+          FROM all_prod ap
+          JOIN productos p ON p.id = ap.producto_id AND p.empresa_id = $1
+          LEFT JOIN cargas_prev cp ON cp.producto_id = p.id
+          LEFT JOIN entregas_prev ep ON ep.producto_id = p.id
+          LEFT JOIN cargas_day cd ON cd.producto_id = p.id
+          LEFT JOIN entregas_day ed ON ed.producto_id = p.id
+          ORDER BY p.nombre`,
+       [empresaId, chofer_id, fecha]
+     );
+
+     const kpis = rows.reduce((acc, r) => {
+       acc.saldo_inicial += Number(r.saldo_inicial || 0);
+       acc.cargado += Number(r.cargado || 0);
+       acc.entregado += Number(r.entregado || 0);
+       acc.saldo_final += Number(r.saldo_final || 0);
+       return acc;
+     }, { saldo_inicial: 0, cargado: 0, entregado: 0, saldo_final: 0 });
+
+     res.json({ ok: true, fecha, rows, kpis });
+   } catch (e) {
+     console.error('REPARTIDOR STOCK-ACUMULADO ERROR:', e);
+     res.status(500).json({ error: 'Error calculando stock acumulado' });
+   }
+});
+
 // 2. Actualizar Estado o Pago (PUT) - Para los botones del repartidor
   router.put('/pedidos/:id', withAuth, async (req, res) => {
    try {
