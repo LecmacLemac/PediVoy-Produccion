@@ -288,6 +288,7 @@
       <a class="nav-link" data-sec="pedidos" aria-current="page">📦 Pedidos</a>
       <a class="nav-link" data-sec="mapa">🗺️ Mapa</a>
       <a class="nav-link" data-sec="gastos">💸 Movimientos</a>
+      <a class="nav-link" href="stock.html">📦 Stock</a>
       <a class="nav-link" data-sec="resumen">📊 Resumen</a>
       <a class="nav-link" data-sec="transf">🏦 Transf.</a>
       <a class="nav-link" data-sec="evidencias">🧾 Evidencias</a>
@@ -948,13 +949,19 @@ $$('.nav-link').forEach(l => l.onclick = async (e) => {
     location.href='login.html';
     return;
   }
+
+  const sec = l.dataset.sec;
+  if (!sec) {
+    const href = l.getAttribute('href');
+    if (href) location.href = href;
+    return;
+  }
   
   // Switch Tabs
   $$('.nav-link').forEach(n => n.removeAttribute('aria-current'));
   l.setAttribute('aria-current', 'page');
   $$('main > section').forEach(s => s.hidden = true);
   
-  const sec = l.dataset.sec;
   $('#sec-'+sec).hidden = false;
   panel.classList.remove('show');
 
