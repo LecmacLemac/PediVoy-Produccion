@@ -288,7 +288,7 @@
       <a class="nav-link" data-sec="pedidos" aria-current="page">📦 Pedidos</a>
       <a class="nav-link" data-sec="mapa">🗺️ Mapa</a>
       <a class="nav-link" data-sec="gastos">💸 Movimientos</a>
-      <a class="nav-link" href="stock.html">📦 Stock</a>
+      <a class="nav-link" data-sec="stock">📦 Stock</a>
       <a class="nav-link" data-sec="resumen">📊 Resumen</a>
       <a class="nav-link" data-sec="transf">🏦 Transf.</a>
       <a class="nav-link" data-sec="evidencias">🧾 Evidencias</a>
@@ -459,6 +459,42 @@
         <thead><tr><th>Fecha</th><th>Tipo</th><th>Detalle</th><th>Monto/Cant</th></tr></thead>
         <tbody id="gList"></tbody>
       </table>
+    </div>
+  </section>
+
+  <section id="sec-stock" hidden>
+    <div class="card">
+      <div class="flex-bt" style="margin-bottom:1rem;">
+        <h3>Stock del Repartidor</h3>
+        <button class="iconbtn ghost" onclick="loadStockRepartidor()">↻</button>
+      </div>
+      <div class="row" style="margin-bottom:1rem">
+        <label>Fecha:</label>
+        <input type="date" id="stDate" style="width:auto">
+      </div>
+      <div class="stats" style="margin-bottom:1rem;">
+        <div class="tile">
+          <small class="muted">CARGADO</small>
+          <div class="num" id="stKpiCarga">0 u</div>
+        </div>
+        <div class="tile">
+          <small class="muted">ENTREGADO</small>
+          <div class="num" id="stKpiEntregado">0 u</div>
+        </div>
+        <div class="tile">
+          <small class="muted">SALDO ESPERADO</small>
+          <div class="num" id="stKpiSaldo" style="color:var(--brand)">0 u</div>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table style="font-size:0.9rem">
+          <thead>
+            <tr><th>Producto</th><th>Cargado</th><th>Entregado</th><th>Saldo</th></tr>
+          </thead>
+          <tbody id="stList"><tr><td colspan="4" class="muted">Sin datos</td></tr></tbody>
+        </table>
+      </div>
+      <small class="muted" style="margin-top:0.8rem">Saldo esperado = Cargas del día - Unidades entregadas del día.</small>
     </div>
   </section>
 
@@ -915,6 +951,7 @@ function showGpsHelp() {
     // 4. Inicializar Fechas
     const today = getOyString();
     $('#resDate').value = today;
+    $('#stDate').value = today;
     $('#gFecha').value = today;
     $('#tfDate').value = today;
     if ($('#evDateFrom')) $('#evDateFrom').value = today;
@@ -968,6 +1005,7 @@ $$('.nav-link').forEach(l => l.onclick = async (e) => {
   // Actions
   if(sec === 'mapa') setTimeout(renderMap, 200);
   if(sec === 'gastos') gInit();
+  if(sec === 'stock') loadStockRepartidor();
   if(sec === 'resumen') calcResumen();
   if(sec === 'transf') loadTransf();
   if(sec === 'evidencias') loadEvidenciasEntrega();
@@ -1089,6 +1127,7 @@ $('#gForm').addEventListener('submit', async (e) => {
 // Transferencias & Resumen
 $('#tfDate').onchange = loadTransf; $('#tfFilter').onchange = loadTransf;
 $('#resDate').onchange = calcResumen;
+$('#stDate').onchange = loadStockRepartidor;
 
 
 async function loadZonas(){
@@ -2516,6 +2555,97 @@ async function loadGHist(){
     // CORRECCIÓN HORA ARGENTINA: Mostrar DD/MM usando la zona horaria correcta
     $('#gList').innerHTML = arr.map(g => `<tr><td>${formatFechaAR(g.fecha)}</td><td>${esc(g.tipo)}</td><td>${esc(g.descripcion)}</td><td>${money(g.monto)}</td></tr>`).join('');
   } catch {}
+}
+
+// --- STOCK REPARTIDOR (cargas vs entregas) ---
+function getProductoNombreById(id) {
+  const opt = document.querySelector(`#gProducto option[value="${Number(id)}"]`);
+  return opt?.textContent?.trim() || `Producto #${Number(id)}`;
+}
+
+async function loadStockRepartidor(){
+  const d = $('#stDate')?.value || getOyString();
+  const tbody = $('#stList');
+  if (!tbody) return;
+
+  try {
+    // 1) Cargas del día (movimientos registrados por el chofer)
+    const gs = await api(`/api/gastos?from=${d}&to=${d}&chofer_id=${me?.chofer_id||''}`);
+    const gastos = Array.isArray(gs) ? gs : (gs.rows || []);
+
+    // 2) Entregas del día (desde pedidos ya cargados en memoria)
+    const entregados = (pedidos || []).filter(p => {
+      const fDb = p.fecha_entrega || p.fecha;
+      return isoToLocalYMD(fDb) === d && p.estado === 'entregado';
+    });
+
+    const map = new Map();
+    const getRow = (key, nombre) => {
+      if (!map.has(key)) map.set(key, { key, nombre, cargado: 0, entregado: 0, saldo: 0 });
+      return map.get(key);
+    };
+
+    // Cargas: tipo carga_llenos (y compat por nombre)
+    gastos.forEach(g => {
+      const tipo = String(g.tipo || '').toLowerCase();
+      if (!(tipo.includes('carga_llenos') || tipo === 'carga')) return;
+
+      const qty = Number(g.cantidad || 0);
+      if (!qty) return;
+
+      const pid = Number(g.producto_id || 0);
+      const nombre = pid ? getProductoNombreById(pid) : (g.descripcion || 'Producto');
+      const key = pid ? `id:${pid}` : `nom:${String(nombre).toLowerCase().trim()}`;
+      const row = getRow(key, nombre);
+      row.cargado += qty;
+    });
+
+    // Entregas: suma de items entregados
+    entregados.forEach(p => {
+      const items = Array.isArray(p.items) ? p.items : [];
+      items.forEach(it => {
+        if (!it) return;
+        const qty = Number(it.cantidad || 0);
+        if (!qty) return;
+
+        const pid = Number(it.producto_id || it.id || 0);
+        const nombre = it.producto || it.nombre || (pid ? getProductoNombreById(pid) : 'Producto');
+        const key = pid ? `id:${pid}` : `nom:${String(nombre).toLowerCase().trim()}`;
+        const row = getRow(key, nombre);
+        row.entregado += qty;
+      });
+    });
+
+    const rows = Array.from(map.values())
+      .map(r => ({ ...r, saldo: r.cargado - r.entregado }))
+      .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
+
+    const sumCarga = rows.reduce((a, r) => a + Number(r.cargado || 0), 0);
+    const sumEnt = rows.reduce((a, r) => a + Number(r.entregado || 0), 0);
+    const sumSaldo = sumCarga - sumEnt;
+
+    $('#stKpiCarga').textContent = `${sumCarga} u`;
+    $('#stKpiEntregado').textContent = `${sumEnt} u`;
+    $('#stKpiSaldo').textContent = `${sumSaldo} u`;
+    $('#stKpiSaldo').style.color = sumSaldo >= 0 ? 'var(--brand)' : 'var(--danger)';
+
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="4" class="muted">Sin movimientos de carga/entrega para esta fecha</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = rows.map(r => `
+      <tr>
+        <td>${esc(r.nombre)}</td>
+        <td>${Number(r.cargado || 0)}</td>
+        <td>${Number(r.entregado || 0)}</td>
+        <td style="font-weight:700; color:${r.saldo >= 0 ? '#67e8f9' : '#fca5a5'}">${Number(r.saldo || 0)}</td>
+      </tr>
+    `).join('');
+  } catch (e) {
+    console.error('Error loadStockRepartidor', e);
+    tbody.innerHTML = '<tr><td colspan="4" class="muted">Error cargando stock</td></tr>';
+  }
 }
 
 // --- RESUMEN ---
