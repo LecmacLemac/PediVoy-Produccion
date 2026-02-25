@@ -2535,7 +2535,7 @@ async function gLoadProductos() {
     const ps = await api('/api/productos');
     const retornables = (Array.isArray(ps) ? ps : []).filter(p => !!p?.retornable);
     const emptyLabel = retornables.length ? 'Seleccionar producto retornable.' : 'Sin productos retornables configurados.';
-    $('#gProducto').innerHTML = `<option value="">${emptyLabel}</option>` + retornables.map(p => `<option value="${Number(p.id)}">${esc(p.nombre)}</option>`).join('');
+    $('#gProducto').innerHTML = `<option value="">${emptyLabel}</option>` + retornables.map(p => `<option value="${Number(p.id)}">#${Number(p.id)} · ${esc(p.nombre)}</option>`).join('');
   } catch {}
 }
 
