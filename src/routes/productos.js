@@ -33,6 +33,7 @@ export function createProductosRouter(deps) {
           nombre, descripcion, precio, imagen, activo,
           sku, external_id,
           stock_min, stock_max,
+          retornable,
           categoria, orden,
           etiqueta, imagen_promo, mostrar_en_catalogo, mostrar_en_landing,
           config_activo, promo_config,
@@ -72,6 +73,7 @@ export function createProductosRouter(deps) {
         external_id,
         config_activo,
         promo_config,
+        retornable,
       } = req.body || {};
 
       const esSuperAdmin = isSuper(req);
@@ -106,6 +108,7 @@ export function createProductosRouter(deps) {
           nombre, descripcion, precio, imagen, activo,
           sku, external_id,
           stock_min, stock_max,
+          retornable,
           categoria, orden,
           etiqueta, imagen_promo, mostrar_en_catalogo, mostrar_en_landing,
           config_activo, promo_config,
@@ -116,10 +119,11 @@ export function createProductosRouter(deps) {
           $2, $3, $4, $5, true,
           $6, $7,
           $8, $9,
-          $10, $11,
-          $12, $13, $14, $15,
-          $16, $17,
-          $18, $19, NOW()
+          $10,
+          $11, $12,
+          $13, $14, $15, $16,
+          $17, $18,
+          $19, $20, NOW()
         )
         RETURNING id
         `,
@@ -133,6 +137,7 @@ export function createProductosRouter(deps) {
           externalFinal,
           Number(stock_min || 0),
           Number(stock_max || 0),
+          !!retornable,
           categoria ? String(categoria) : null,
           ordenNum,
           etiqueta ? String(etiqueta) : null,
@@ -177,6 +182,7 @@ export function createProductosRouter(deps) {
         external_id,
         config_activo,
         promo_config,
+        retornable,
         empresa_id,
       } = req.body || {};
 
@@ -224,6 +230,10 @@ export function createProductosRouter(deps) {
       if (stock_max !== undefined) {
         sets.push(`stock_max=$${idx++}`);
         vals.push(Number(stock_max));
+      }
+      if (retornable !== undefined) {
+        sets.push(`retornable=$${idx++}`);
+        vals.push(!!retornable);
       }
 
       if (categoria !== undefined) {

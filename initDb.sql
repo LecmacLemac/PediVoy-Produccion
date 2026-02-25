@@ -239,6 +239,7 @@ ALTER TABLE productos
     ADD COLUMN IF NOT EXISTS comportamiento TEXT DEFAULT 'simple',
     ADD COLUMN IF NOT EXISTS unidad_medida TEXT DEFAULT 'unidad',
     ADD COLUMN IF NOT EXISTS requiere_activo_vacio BOOLEAN DEFAULT false,
+    ADD COLUMN IF NOT EXISTS retornable BOOLEAN DEFAULT false,
     ADD COLUMN IF NOT EXISTS stock_infinito BOOLEAN DEFAULT false,
     ADD COLUMN IF NOT EXISTS margen_meta NUMERIC(5,2) DEFAULT 30,
     ADD COLUMN IF NOT EXISTS sku TEXT,
@@ -1145,5 +1146,20 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_pedido_pagos_one_pending_per_order
 -- =========================================================
 -- 13. DATOS SEMILLA (deshabilitado)
 -- =========================================================
--- Intencionalmente sin seed. La DB debe iniciar vacía.
+-- 1. PRIMERO: Crear la Empresa por defecto (Para evitar el error FK)
+INSERT INTO empresas (id, nombre, direccion, plan_estado, plan_tipo) 
+VALUES (1, 'AguaHidro.com', 'AguaHidro.com', 'active', 'unlimited')
+ON CONFLICT (id) DO UPDATE 
+SET plan_estado = 'active'; -- Asegura que si ya existe, esté activa
+
+-- 2. SEGUNDO: Crear el Usuario Admin vinculado a esa empresa
+DELETE FROM usuarios WHERE username = 'admin';
+
+-- User: admin | Pass: admin123 (bcrypt hash)
+INSERT INTO usuarios (username, password, role, empresa_id, chofer_id)
+VALUES ('admin', '$2a$12$H/YwbDUg6CdKqS3KyK8CdeXE31rkSqGGSG3jL7GbOawPZReTMF9Em', 'super', 1, NULL);
+
+-- 3. TERCERO: Ajustar secuencias para evitar errores de IDs futuros
+SELECT setval('empresas_id_seq', (SELECT MAX(id) FROM empresas));
+SELECT setval('usuarios_id_seq', (SELECT MAX(id) FROM usuarios));
 

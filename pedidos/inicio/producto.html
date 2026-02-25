@@ -376,6 +376,9 @@
             </select>
           </div>
         </div>
+        <div style="margin-top:.5rem">
+          <label class="checkbox-label"><input type="checkbox" id="p_retornable"> Producto retornable (usa carga/descarga de vacíos/llenos)</label>
+        </div>
 
         <!-- NUEVA SECCIÓN: ACTIVOS & ALQUILER -->
         <div class="section-label">Activos & Alquiler</div>
@@ -731,6 +734,7 @@
       $('#p_id').value = '';
       $('#p_activo').value = '1';
       $('#p_catalogo').checked = true;
+      $('#p_retornable').checked = false;
 
       // Reset sección Activos & Alquiler
       $('#p_es_activo').checked = false;
@@ -791,6 +795,7 @@
       $('#p_etiqueta').value = p.etiqueta || '';
       $('#p_catalogo').checked = !!p.mostrar_en_catalogo;
       $('#p_landing').checked = !!p.mostrar_en_landing;
+      $('#p_retornable').checked = !!p.retornable;
 
       // Cargar configuración de activo/alquiler
       const cfg = p.config_activo || {};
@@ -928,6 +933,7 @@
         etiqueta: $('#p_etiqueta').value.trim() || null,
         mostrar_en_catalogo: $('#p_catalogo').checked,
         mostrar_en_landing: $('#p_landing').checked,
+        retornable: $('#p_retornable').checked,
         config_activo, // ⬅ se envía al backend
         promo_config,
       };

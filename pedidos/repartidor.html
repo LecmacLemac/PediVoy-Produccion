@@ -1070,26 +1070,31 @@ $('#gForm').addEventListener('submit', async (e) => {
         const file = $('#gFile').files[0];
         let finalBody = {};
 
-        // Escenario A: Carga Stock (Cantidad x Precio)
-        if (type === 'carga_llenos') {
+        // Escenario A: Movimientos de Stock Retornable
+        if (type === 'carga_llenos' || type === 'descarga_vacios') {
             const pid = $('#gProducto').value;
             const nombreProd = $('#gProducto').options[$('#gProducto').selectedIndex]?.text || '';
             const qty = Number($('#gCant').value);
-            const pu = Number($('#gPu').value);
+            const pu = Number($('#gPu').value || 0);
+            const montoManual = Number($('#gMonto').value || 0);
 
-            if (!pid) throw new Error('Selecciona un producto.');
+            if (!pid) throw new Error('Selecciona un producto retornable.');
             if (!qty || qty <= 0) throw new Error('Ingresa cantidad.');
-            
+
+            const isCarga = type === 'carga_llenos';
+            const montoFinal = isCarga ? (qty * pu) : montoManual;
+            const pref = isCarga ? 'Carga' : 'Descarga';
+
             finalBody = {
                 fecha: fecha,
                 tipo: type,
-                descripcion: `Carga: ${qty}u ${nombreProd}. ${descManual}`, 
-                monto: qty * pu,
+                descripcion: `${pref}: ${qty}u ${nombreProd}. ${descManual}`,
+                monto: montoFinal,
                 cantidad: qty,
                 precio_unitario: pu,
                 producto_id: pid
             };
-        } 
+        }
         // Escenario B: Gasto Directo (Monto fijo)
         else {
             const montoDirecto = Number($('#gMonto').value);
@@ -2528,7 +2533,9 @@ function renderMap(){
 async function gLoadProductos() {
   try {
     const ps = await api('/api/productos');
-    $('#gProducto').innerHTML = '<option value="">Seleccionar.</option>' + ps.map(p => `<option value="${Number(p.id)}">${esc(p.nombre)}</option>`).join('');
+    const retornables = (Array.isArray(ps) ? ps : []).filter(p => !!p?.retornable);
+    const emptyLabel = retornables.length ? 'Seleccionar producto retornable.' : 'Sin productos retornables configurados.';
+    $('#gProducto').innerHTML = `<option value="">${emptyLabel}</option>` + retornables.map(p => `<option value="${Number(p.id)}">${esc(p.nombre)}</option>`).join('');
   } catch {}
 }
 
@@ -2536,11 +2543,12 @@ function gInit(){ $('#gForm').reset(); $('#gFecha').value = getOyString(); gTogg
 
 function gToggle(){
   const t = $('#gTipo').value;
-  const isStock = t === 'carga_llenos'; 
-  $('#gProdRow').hidden = !t.includes('carga') && !t.includes('descarga');
-  $('#gCalcRow').hidden = !isStock; 
-  $('#gPuBox').hidden = !isStock;
-  $('#gMontoRow').hidden = isStock; 
+  const isStock = t === 'carga_llenos' || t === 'descarga_vacios';
+  const isCarga = t === 'carga_llenos';
+  $('#gProdRow').hidden = !isStock;
+  $('#gCalcRow').hidden = !isStock;
+  $('#gPuBox').hidden = !isCarga;
+  $('#gMontoRow').hidden = isCarga;
 }
 
 function gAutoPrice() {

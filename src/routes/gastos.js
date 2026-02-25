@@ -96,6 +96,36 @@ export function createGastosRouter({ GASTOS_DIR }) {
         return res.status(400).json({ error: 'Faltan datos de empresa o chofer' });
       }
 
+      const tipoOp = String(tipo || '').trim();
+      const esMovimientoRetornable = tipoOp === 'carga_llenos' || tipoOp === 'descarga_vacios';
+
+      const cantidadNum = (cantidad === undefined || cantidad === null || cantidad === '') ? null : Number(cantidad);
+      const productoIdNum = (producto_id === undefined || producto_id === null || producto_id === '') ? null : Number(producto_id);
+
+      if (esMovimientoRetornable) {
+        if (!productoIdNum || !Number.isFinite(productoIdNum) || productoIdNum <= 0) {
+          return res.status(400).json({ error: 'Producto requerido para movimientos de retornables.' });
+        }
+        if (!cantidadNum || !Number.isFinite(cantidadNum) || cantidadNum <= 0) {
+          return res.status(400).json({ error: 'Cantidad requerida para movimientos de retornables.' });
+        }
+
+        const pr = await query(
+          `SELECT id
+             FROM productos
+            WHERE id = $1
+              AND empresa_id = $2
+              AND COALESCE(retornable, false) = true
+              AND deleted_at IS NULL
+            LIMIT 1`,
+          [productoIdNum, targetEmpresa]
+        );
+
+        if (!pr.length) {
+          return res.status(400).json({ error: 'El producto no es retornable o no pertenece a la empresa.' });
+        }
+      }
+
       await query(
         `
         INSERT INTO gastos_repartidor (
@@ -112,14 +142,14 @@ export function createGastosRouter({ GASTOS_DIR }) {
           descripcion,
           monto || 0,
           file ? file.filename : null,
-          cantidad ? Number(cantidad) : null,
-          producto_id ? Number(producto_id) : null
+          cantidadNum,
+          productoIdNum
         ]
       );
 
       // Si el chofer carga mercadería, impactamos stock físico.
-      if (producto_id && cantidad && (tipo === 'carga_llenos' || tipo === 'compra_mercaderia')) {
-        const qtyNum = Number(cantidad);
+      if (productoIdNum && cantidadNum && (tipoOp === 'carga_llenos' || tipoOp === 'compra_mercaderia')) {
+        const qtyNum = Number(cantidadNum);
 
         await query(
           `
@@ -130,7 +160,7 @@ export function createGastosRouter({ GASTOS_DIR }) {
           [
             targetEmpresa,
             targetChofer,
-            producto_id,
+            productoIdNum,
             fecha || new Date().toISOString(),
             qtyNum,
             `Carga desde Gastos: ${descripcion || tipo}`
@@ -144,7 +174,7 @@ export function createGastosRouter({ GASTOS_DIR }) {
           ON CONFLICT (empresa_id, chofer_id, producto_id)
           DO UPDATE SET cantidad = chofer_stock.cantidad + EXCLUDED.cantidad
           `,
-          [targetEmpresa, targetChofer, producto_id, qtyNum]
+          [targetEmpresa, targetChofer, productoIdNum, qtyNum]
         );
       }
 
