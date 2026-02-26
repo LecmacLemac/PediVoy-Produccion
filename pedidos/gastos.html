@@ -23,21 +23,26 @@
       --shadow-soft: 0 18px 45px rgba(15,23,42,0.65);
     }
 
-    * { box-sizing: border-box; margin: 0; padding: 0; }
+    * { box-sizing: border-box; }
 
     body {
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
-      background: radial-gradient(circle at top, #020617 0, #020617 40%, #020617 100%);
       color: var(--ink);
+      background:
+        radial-gradient(circle at 15% 50%, rgba(6, 182, 212, 0.05), transparent 25%),
+        radial-gradient(circle at 85% 30%, rgba(59, 130, 246, 0.05), transparent 25%),
+        var(--bg);
       min-height: 100vh;
+      font-size: 14px;
+      padding-bottom: 80px;
     }
 
     a { color: inherit; text-decoration: none; }
 
     .container {
-      max-width: 1100px;
+      max-width: 1200px;
       margin: 0 auto;
-      padding: 1.25rem 1rem 3rem;
+      padding: 0 20px;
     }
 
     /* HEADER NAV */
@@ -47,16 +52,16 @@
       border-bottom: 1px solid var(--border); padding: 0.8rem 0;
     }
     nav { display: flex; justify-content: space-between; align-items: center; }
-    .brand { font-size: 1.1rem; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 0.5rem; }
-    .role-badge { background: rgba(6,182,212,0.1); color: var(--brand); border-radius: 999px; padding: 0.15rem 0.6rem; font-size: 0.75rem; border: 1px solid rgba(6,182,212,0.3); }
-    
+    .brand { font-size: 1.1rem; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 0.8rem; }
+    .role-badge { background: rgba(6,182,212,0.1); color: var(--brand); border-radius: 999px; padding: 2px 8px; font-size: 0.75rem; border: 1px solid rgba(6,182,212,0.3); }
+
     .menu { list-style: none; display: flex; gap: 1.5rem; margin: 0; padding: 0; }
-    .menu a { text-decoration: none; color: var(--muted); font-weight: 500; transition: 0.2s; }
+    .menu a { text-decoration: none; color: var(--muted); font-weight: 500; transition: 0.2s; white-space: nowrap; }
     .menu a:hover, .menu a.active { color: #fff; }
     .menu a.active { border-bottom: 2px solid var(--brand); padding-bottom: 4px; }
 
     /* LAYOUT */
-    main { display: flex; flex-direction: column; gap: 1.5rem; margin-top: 1.5rem; }
+    main { display: flex; flex-direction: column; gap: 1.5rem; padding-top: 2rem; padding-bottom: 4rem; }
 
     .card {
       background: radial-gradient(circle at top left, rgba(148,163,184,0.08), transparent 45%),
@@ -226,6 +231,7 @@
   <header>
     <nav class="container">
       <div class="brand">
+        <div class="brand-dot"></div>
         MultiEmpresas
         <span id="rolePill" class="role-badge"></span>
       </div>
