@@ -45,6 +45,15 @@
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px"><button id="btnResumen" type="button">Actualizar resumen</button><button id="btnCopyResumen" type="button">Copiar resumen</button></div>
     <textarea id="resumenText" rows="12" style="width:100%;background:var(--bg2);border:1px solid var(--border);border-radius:10px;color:var(--ink);padding:10px"></textarea>
   </div>
+
+  <div class="card">
+    <h2 style="margin:0 0 8px;font-size:1rem">Plantilla de cierre operativo (diario)</h2>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+      <button id="btnPlantillaCierre" type="button">Generar plantilla</button>
+      <button id="btnCopyPlantillaCierre" type="button">Copiar plantilla</button>
+    </div>
+    <textarea id="plantillaCierreText" rows="14" style="width:100%;background:var(--bg2);border:1px solid var(--border);border-radius:10px;color:var(--ink);padding:10px"></textarea>
+  </div>
 </main>
 <script>
 const authFetch=(url,opts={})=>fetch(url,{...opts,headers:{'Content-Type':'application/json',...(opts.headers||{})},credentials:'include'});
@@ -170,13 +179,64 @@ function copyUat(){
   return navigator.clipboard.writeText(lines.join('\n'));
 }
 
-async function refreshAll(){ if(st.isSuper&&!st.empresaId){ setStatus('Seleccioná empresa para ver el tablero ejecutivo.',true); ['kpiGrid','semaforo','recos','cierreChecklist','autoCenter','uatChecklist'].forEach(id=>{const el=document.getElementById(id); if(el) el.innerHTML='';}); const tx=document.getElementById('resumenText'); if(tx) tx.value=''; return; }
+function buildPlantillaCierre(){
+  const sem=String(st.semaforo?.nivel||'-').toUpperCase();
+  const score=Number(st.semaforo?.score||0);
+  const k=st.dashboard||{};
+  const inc=st.incidencias||{};
+  const cierreCrit=Array.isArray(st.cierre)?st.cierre.filter(c=>String(c.status)==='critico').length:0;
+  const recosAlta=Array.isArray(st.recos)?st.recos.filter(r=>String(r.prioridad)==='alta').length:0;
+  const now=new Date().toLocaleString('es-AR');
+
+  const lines=[
+    `Cierre operativo diario — ${now}`,
+    '',
+    `1) Estado global`,
+    `- Semáforo: ${sem} (score ${score}/100)`,
+    `- Control de cierre: críticos ${cierreCrit}`,
+    `- Recomendaciones altas pendientes: ${recosAlta}`,
+    '',
+    `2) Incidencias (control de cierre)`,
+    `- Críticas activas: ${Number(inc.criticas_activas||0)}`,
+    `- SLA vencidas: ${Number(inc.sla_vencidas||0)}`,
+    `- Abiertas totales: ${Number(inc.abiertas||0)}`,
+    `- En progreso: ${Number(inc.en_progreso||0)}`,
+    '',
+    `3) Comercial / Caja`,
+    `- Oportunidades abiertas: ${Number(k.oportunidades_abiertas||0)}`,
+    `- Pipeline total: ${fmt.format(Number(k.pipeline_total||0))}`,
+    `- Ingresos 30d: ${fmt.format(Number(k.ingresos_30d||0))}`,
+    `- Egresos 30d: ${fmt.format(Number(k.egresos_30d||0))}`,
+    '',
+    `4) Compras / Conciliación`,
+    `- Pendientes conciliación: ${Number(k.pendientes_conciliacion||0)}`,
+    `- Compras abiertas: ${Number(k.compras_abiertas||0)}`,
+    `- Comprometido compras: ${fmt.format(Number(k.compras_comprometidas||0))}`,
+    '',
+    `5) Acciones para próxima ventana (30-60 min)`,
+    `- [ ] Resolver incidencias críticas y SLA vencidas`,
+    `- [ ] Confirmar conciliación y movimiento de caja`,
+    `- [ ] Re-ejecutar monitoreo y validar semáforo`,
+    `- [ ] Actualizar tablero ejecutivo con estado final`,
+  ];
+
+  return lines.join('\n');
+}
+
+function renderPlantillaCierre(){
+  const el=document.getElementById('plantillaCierreText');
+  if(!el) return;
+  el.value=buildPlantillaCierre();
+}
+
+async function refreshAll(){ if(st.isSuper&&!st.empresaId){ setStatus('Seleccioná empresa para ver el tablero ejecutivo.',true); ['kpiGrid','semaforo','recos','cierreChecklist','autoCenter','uatChecklist'].forEach(id=>{const el=document.getElementById(id); if(el) el.innerHTML='';}); const tx=document.getElementById('resumenText'); if(tx) tx.value=''; const ptx=document.getElementById('plantillaCierreText'); if(ptx) ptx.value=''; return; }
   setStatus('Actualizando…');
   try{
     await Promise.all([loadDashboard(),loadSemaforo(),loadRecos(),loadAutomatizaciones(),loadResumen()]);
     await loadIncidenciasResumen();
     await loadControlCierre();
     renderUat();
+    renderPlantillaCierre();
     setStatus('Actualizado.');
   } catch(e){ setStatus(e.message||'Error',true); }
 }
@@ -186,6 +246,8 @@ document.getElementById('btnUatRefresh').addEventListener('click', ()=>{ renderU
 document.getElementById('btnUatCopy').addEventListener('click', async ()=>{ try{ await copyUat(); setStatus('Checklist UAT copiado.'); } catch{ setStatus('No se pudo copiar el checklist UAT.',true); } });
 document.getElementById('btnResumen').addEventListener('click', async ()=>{ try{ await loadResumen(); setStatus('Resumen actualizado.'); } catch(e){ setStatus(e.message||'Error resumen',true);} });
 document.getElementById('btnCopyResumen').addEventListener('click', async ()=>{ try{ const t=document.getElementById('resumenText').value||''; await navigator.clipboard.writeText(t); setStatus('Resumen copiado.'); } catch{ setStatus('No se pudo copiar el resumen.',true); } });
+document.getElementById('btnPlantillaCierre').addEventListener('click', ()=>{ renderPlantillaCierre(); setStatus('Plantilla de cierre generada.'); });
+document.getElementById('btnCopyPlantillaCierre').addEventListener('click', async ()=>{ try{ const t=document.getElementById('plantillaCierreText').value||''; await navigator.clipboard.writeText(t); setStatus('Plantilla de cierre copiada.'); } catch{ setStatus('No se pudo copiar la plantilla de cierre.',true); } });
 document.getElementById('logout').addEventListener('click',async (e)=>{e.preventDefault(); try{await authFetch('/api/logout',{method:'POST'});}catch{} location.href='/pedidos/login.html';});
 (async()=>{ await loadMe(); await refreshAll(); })();
 </script>
