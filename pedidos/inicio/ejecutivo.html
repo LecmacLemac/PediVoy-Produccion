@@ -51,8 +51,11 @@
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
       <button id="btnPlantillaCierre" type="button">Generar plantilla</button>
       <button id="btnCopyPlantillaCierre" type="button">Copiar plantilla</button>
+      <button id="btnPlantillaCierreMulti" type="button">Generar multi-empresa</button>
+      <button id="btnCopyPlantillaCierreMulti" type="button">Copiar multi-empresa</button>
     </div>
     <textarea id="plantillaCierreText" rows="14" style="width:100%;background:var(--bg2);border:1px solid var(--border);border-radius:10px;color:var(--ink);padding:10px"></textarea>
+    <textarea id="plantillaCierreMultiText" rows="16" style="margin-top:8px;width:100%;background:var(--bg2);border:1px solid var(--border);border-radius:10px;color:var(--ink);padding:10px" placeholder="Resumen multi-empresa (solo superadmin)"></textarea>
   </div>
 </main>
 <script>
@@ -229,6 +232,91 @@ function renderPlantillaCierre(){
   el.value=buildPlantillaCierre();
 }
 
+async function fetchEmpresaSnapshot(empresaId){
+  const id=Number(empresaId);
+  const q=(p)=>`${p}${p.includes('?')?'&':'?'}empresa_id=${encodeURIComponent(String(id))}`;
+
+  const [dR,sR,iR,rR,cR]=await Promise.all([
+    authFetch(q('/api/setup/fase3/dashboard')),
+    authFetch(q('/api/setup/fase3/semaforo-operativo')),
+    authFetch(q('/api/setup/fase3/incidencias/dashboard')),
+    authFetch(q('/api/setup/fase3/recomendaciones')),
+    authFetch(q('/api/setup/fase3/control-cierre')),
+  ]);
+
+  const d=await dR.json().catch(()=>({}));
+  const s=await sR.json().catch(()=>({}));
+  const i=await iR.json().catch(()=>({}));
+  const r=await rR.json().catch(()=>({}));
+  const c=await cR.json().catch(()=>({}));
+
+  if(!dR.ok||!sR.ok||!iR.ok||!rR.ok||!cR.ok){
+    throw new Error(d.error||s.error||i.error||r.error||c.error||`Error snapshot empresa ${id}`);
+  }
+
+  const cierreCrit=Array.isArray(c.checklist)?c.checklist.filter(x=>String(x.status)==='critico').length:0;
+  const recosAlta=Array.isArray(r.items)?r.items.filter(x=>String(x.prioridad)==='alta').length:0;
+
+  return {
+    empresa_id:id,
+    kpis:d.kpis||{},
+    semaforo:s||{},
+    incidencias:i.kpis||{},
+    cierre_criticos:cierreCrit,
+    recos_altas:recosAlta,
+  };
+}
+
+function buildPlantillaCierreMulti(items){
+  const now=new Date().toLocaleString('es-AR');
+  const lines=[`Cierre operativo multi-empresa — ${now}`,''];
+
+  (items||[]).forEach((it)=>{
+    const sem=String(it.semaforo?.nivel||'-').toUpperCase();
+    const score=Number(it.semaforo?.score||0);
+    const k=it.kpis||{};
+    const inc=it.incidencias||{};
+    lines.push(`Empresa #${it.empresa_id}`);
+    lines.push(`- Semáforo: ${sem} (${score}/100) · Cierre críticos: ${Number(it.cierre_criticos||0)} · Recos altas: ${Number(it.recos_altas||0)}`);
+    lines.push(`- Incidencias: críticas ${Number(inc.criticas_activas||0)} · SLA vencidas ${Number(inc.sla_vencidas||0)} · abiertas ${Number(inc.abiertas||0)}`);
+    lines.push(`- Caja/Compras: ingresos30 ${fmt.format(Number(k.ingresos_30d||0))} · egresos30 ${fmt.format(Number(k.egresos_30d||0))} · conciliar ${Number(k.pendientes_conciliacion||0)} · compras abiertas ${Number(k.compras_abiertas||0)}`);
+    lines.push('');
+  });
+
+  lines.push('Próximos pasos (global):');
+  lines.push('- [ ] Resolver críticas/SLA vencidas por prioridad.');
+  lines.push('- [ ] Re-correr monitoreo en 30-60 min.');
+  lines.push('- [ ] Confirmar cierre en tablero ejecutivo.');
+
+  return lines.join('\n');
+}
+
+async function renderPlantillaCierreMulti(){
+  const out=document.getElementById('plantillaCierreMultiText');
+  if(!out) return;
+  if(!st.isSuper){
+    out.value='Disponible solo para superadmin.';
+    return;
+  }
+
+  const listR=await authFetch('/api/empresas');
+  const listJ=await listR.json().catch(()=>[]);
+  const empresas=Array.isArray(listJ)?listJ:[];
+  const ids=empresas.map(e=>Number(e.id)).filter((n)=>Number.isFinite(n)&&n>0);
+  if(!ids.length){
+    out.value='No hay empresas para consolidar.';
+    return;
+  }
+
+  const snapshots=[];
+  for(const id of ids){
+    try{ snapshots.push(await fetchEmpresaSnapshot(id)); }
+    catch(err){ snapshots.push({empresa_id:id,semaforo:{nivel:'error',score:0},incidencias:{},kpis:{},cierre_criticos:0,recos_altas:0,_error:err?.message||'Error'}); }
+  }
+
+  out.value=buildPlantillaCierreMulti(snapshots);
+}
+
 async function refreshAll(){ if(st.isSuper&&!st.empresaId){ setStatus('Seleccioná empresa para ver el tablero ejecutivo.',true); ['kpiGrid','semaforo','recos','cierreChecklist','autoCenter','uatChecklist'].forEach(id=>{const el=document.getElementById(id); if(el) el.innerHTML='';}); const tx=document.getElementById('resumenText'); if(tx) tx.value=''; const ptx=document.getElementById('plantillaCierreText'); if(ptx) ptx.value=''; return; }
   setStatus('Actualizando…');
   try{
@@ -248,6 +336,8 @@ document.getElementById('btnResumen').addEventListener('click', async ()=>{ try{
 document.getElementById('btnCopyResumen').addEventListener('click', async ()=>{ try{ const t=document.getElementById('resumenText').value||''; await navigator.clipboard.writeText(t); setStatus('Resumen copiado.'); } catch{ setStatus('No se pudo copiar el resumen.',true); } });
 document.getElementById('btnPlantillaCierre').addEventListener('click', ()=>{ renderPlantillaCierre(); setStatus('Plantilla de cierre generada.'); });
 document.getElementById('btnCopyPlantillaCierre').addEventListener('click', async ()=>{ try{ const t=document.getElementById('plantillaCierreText').value||''; await navigator.clipboard.writeText(t); setStatus('Plantilla de cierre copiada.'); } catch{ setStatus('No se pudo copiar la plantilla de cierre.',true); } });
+document.getElementById('btnPlantillaCierreMulti').addEventListener('click', async ()=>{ try{ setStatus('Generando consolidado multi-empresa…'); await renderPlantillaCierreMulti(); setStatus('Plantilla multi-empresa generada.'); } catch(e){ setStatus(e.message||'No se pudo generar plantilla multi-empresa.',true); } });
+document.getElementById('btnCopyPlantillaCierreMulti').addEventListener('click', async ()=>{ try{ const t=document.getElementById('plantillaCierreMultiText').value||''; await navigator.clipboard.writeText(t); setStatus('Plantilla multi-empresa copiada.'); } catch{ setStatus('No se pudo copiar la plantilla multi-empresa.',true); } });
 document.getElementById('logout').addEventListener('click',async (e)=>{e.preventDefault(); try{await authFetch('/api/logout',{method:'POST'});}catch{} location.href='/pedidos/login.html';});
 (async()=>{ await loadMe(); await refreshAll(); })();
 </script>
