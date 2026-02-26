@@ -269,17 +269,19 @@ async function fetchEmpresaSnapshot(empresaId){
 
 function buildPlantillaCierreMulti(items){
   const now=new Date().toLocaleString('es-AR');
-  const lines=[`Cierre operativo multi-empresa — ${now}`,''];
+  const lines=[`Cierre operativo multi-empresa — ${now}`,'Ordenado por riesgo: Rojo → Amarillo → Verde.',''];
 
   (items||[]).forEach((it)=>{
     const sem=String(it.semaforo?.nivel||'-').toUpperCase();
     const score=Number(it.semaforo?.score||0);
     const k=it.kpis||{};
     const inc=it.incidencias||{};
-    lines.push(`Empresa #${it.empresa_id}`);
+    const nombre=String(it.empresa_nombre||`Empresa ${it.empresa_id}`);
+    lines.push(`Empresa #${it.empresa_id} · ${nombre}`);
     lines.push(`- Semáforo: ${sem} (${score}/100) · Cierre críticos: ${Number(it.cierre_criticos||0)} · Recos altas: ${Number(it.recos_altas||0)}`);
     lines.push(`- Incidencias: críticas ${Number(inc.criticas_activas||0)} · SLA vencidas ${Number(inc.sla_vencidas||0)} · abiertas ${Number(inc.abiertas||0)}`);
     lines.push(`- Caja/Compras: ingresos30 ${fmt.format(Number(k.ingresos_30d||0))} · egresos30 ${fmt.format(Number(k.egresos_30d||0))} · conciliar ${Number(k.pendientes_conciliacion||0)} · compras abiertas ${Number(k.compras_abiertas||0)}`);
+    if(it._error) lines.push(`- Nota: ${String(it._error)}`);
     lines.push('');
   });
 
@@ -302,17 +304,49 @@ async function renderPlantillaCierreMulti(){
   const listR=await authFetch('/api/empresas');
   const listJ=await listR.json().catch(()=>[]);
   const empresas=Array.isArray(listJ)?listJ:[];
-  const ids=empresas.map(e=>Number(e.id)).filter((n)=>Number.isFinite(n)&&n>0);
-  if(!ids.length){
+  const rows=empresas
+    .map(e=>({id:Number(e.id), nombre:String(e.nombre||'').trim()}))
+    .filter(e=>Number.isFinite(e.id)&&e.id>0);
+  if(!rows.length){
     out.value='No hay empresas para consolidar.';
     return;
   }
 
   const snapshots=[];
-  for(const id of ids){
-    try{ snapshots.push(await fetchEmpresaSnapshot(id)); }
-    catch(err){ snapshots.push({empresa_id:id,semaforo:{nivel:'error',score:0},incidencias:{},kpis:{},cierre_criticos:0,recos_altas:0,_error:err?.message||'Error'}); }
+  for(const row of rows){
+    try{
+      const s=await fetchEmpresaSnapshot(row.id);
+      snapshots.push({...s, empresa_nombre: row.nombre || `Empresa ${row.id}`});
+    } catch(err){
+      snapshots.push({
+        empresa_id:row.id,
+        empresa_nombre:row.nombre || `Empresa ${row.id}`,
+        semaforo:{nivel:'error',score:0},
+        incidencias:{},
+        kpis:{},
+        cierre_criticos:0,
+        recos_altas:0,
+        _error:err?.message||'Error'
+      });
+    }
   }
+
+  const riskWeight=(x)=>{
+    const lvl=String(x?.semaforo?.nivel||'').toLowerCase();
+    if(lvl==='rojo') return 0;
+    if(lvl==='amarillo') return 1;
+    if(lvl==='verde') return 2;
+    return 3;
+  };
+
+  snapshots.sort((a,b)=>{
+    const rw=riskWeight(a)-riskWeight(b);
+    if(rw!==0) return rw;
+    const sa=Number(a?.semaforo?.score||0);
+    const sb=Number(b?.semaforo?.score||0);
+    if(sa!==sb) return sa-sb;
+    return String(a?.empresa_nombre||'').localeCompare(String(b?.empresa_nombre||''), 'es');
+  });
 
   out.value=buildPlantillaCierreMulti(snapshots);
 }
