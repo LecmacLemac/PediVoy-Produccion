@@ -81,6 +81,7 @@ export function mountApiModules(app, deps) {
     '/api/empresas',
     createEmpresasRouter({
       query,
+      pool,
       withAuth,
       isSuper,
       getEmpresaIdFromToken,

@@ -1265,6 +1265,8 @@ if (logoutLink) {
           manageCuentas(id, name);
         } else if (action === 'backup') {
           backupEmpresa(id);
+        } else if (action === 'restore') {
+          restoreEmpresa(id);
         } else if (action === 'copy-landing') {
           copyLanding(id);
         } else if (action === 'edit') {
@@ -1485,6 +1487,9 @@ if (logoutLink) {
               </button>
               <button class="btn-icon" data-action="backup" data-id="${hasNumericId ? numericId : ''}" title="Descargar backup JSON" ${hasNumericId ? '' : 'disabled'}>
                 <i class="fa-solid fa-file-arrow-down"></i>
+              </button>
+              <button class="btn-icon" data-action="restore" data-id="${hasNumericId ? numericId : ''}" title="Restaurar backup JSON (solo superadmin)" ${(hasNumericId && esSuperAdmin) ? '' : 'disabled'}>
+                <i class="fa-solid fa-file-arrow-up"></i>
               </button>
               <button class="btn-icon" data-action="copy-landing" data-id="${hasNumericId ? numericId : ''}" title="Copiar Link" ${hasNumericId ? '' : 'disabled'}>
                 <i class="fa-solid fa-link"></i>
@@ -2171,6 +2176,81 @@ if (logoutLink) {
         console.error(e);
         toast('❌ Error al descargar backup');
       }
+    }
+
+    async function restoreEmpresa(id) {
+      const c = companies.find((x) => x.id === id);
+      if (!c) return;
+
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.json,application/json';
+
+      input.onchange = async () => {
+        const file = input.files && input.files[0];
+        if (!file) return;
+
+        try {
+          const text = await file.text();
+          const payload = JSON.parse(text);
+
+          const validateRes = await authFetch(`/api/empresas/${id}/backup/validate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+
+          if (validateRes.status === 401) {
+            window.location.href = LOGIN_URL;
+            return;
+          }
+
+          const validateJson = await validateRes.json().catch(() => ({}));
+          if (!validateRes.ok || !validateJson?.ok) {
+            toast('❌ ' + (validateJson?.error || 'Validación de backup fallida'));
+            return;
+          }
+
+          const tables = validateJson?.summary?.tables || {};
+          const resumen = Object.entries(tables)
+            .map(([t, s]) => `${t}: ${s.valid || 0}/${s.total || 0}`)
+            .slice(0, 8)
+            .join('\n');
+
+          const ok = confirm(
+            `Se validó el backup para empresa #${id} (${c.nombre || 'Empresa'}).\n\n` +
+            `Se restaurará en modo NO destructivo (insert/update).\n` +
+            `Resumen (válidas/total):\n${resumen || 'Sin filas'}\n\n` +
+            '¿Continuar con restauración?'
+          );
+          if (!ok) return;
+
+          const restoreRes = await authFetch(`/api/empresas/${id}/backup/restore`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+
+          if (restoreRes.status === 401) {
+            window.location.href = LOGIN_URL;
+            return;
+          }
+
+          const restoreJson = await restoreRes.json().catch(() => ({}));
+          if (!restoreRes.ok || !restoreJson?.ok) {
+            toast('❌ ' + (restoreJson?.error || 'Error en restore'));
+            return;
+          }
+
+          toast('✅ Restore aplicado');
+          await load();
+        } catch (e) {
+          console.error(e);
+          toast('❌ JSON inválido o error restaurando');
+        }
+      };
+
+      input.click();
     }
 
     function copyLanding(id) {

@@ -6,6 +6,7 @@ import express from 'express';
 export function createEmpresasRouter(deps) {
   const {
     query,
+    pool,
     withAuth,
     isSuper,
     getEmpresaIdFromToken,
@@ -21,6 +22,41 @@ export function createEmpresasRouter(deps) {
   if (typeof getEmpresaById !== 'function') throw new Error('createEmpresasRouter: falta getEmpresaById(fn)');
 
   const router = express.Router();
+
+  const quoteIdent = (v) => `"${String(v || '').replace(/"/g, '""')}"`;
+
+  async function getEmpresaScopedTables() {
+    return query(
+      `
+      SELECT c.table_name
+      FROM information_schema.columns c
+      JOIN information_schema.tables t
+        ON t.table_schema = c.table_schema
+       AND t.table_name = c.table_name
+      WHERE c.table_schema = 'public'
+        AND c.column_name = 'empresa_id'
+        AND t.table_type = 'BASE TABLE'
+      ORDER BY c.table_name
+      `
+    );
+  }
+
+  async function getTableColumns(tableName) {
+    return query(
+      `
+      SELECT column_name
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = $1
+      ORDER BY ordinal_position
+      `,
+      [tableName]
+    );
+  }
+
+  function toObject(v) {
+    return v && typeof v === 'object' && !Array.isArray(v) ? v : null;
+  }
 
   // GET /api/empresas
   router.get('/', withAuth, async (req, res) => {
@@ -429,8 +465,225 @@ export function createEmpresasRouter(deps) {
     }
   });
 
-  router.post('/:id/cuentas', withAuth, async (req, res) => {
+  // POST /api/empresas/:id/backup/validate
+  // Dry-run: valida estructura del backup y qué se podría restaurar
+  router.post('/:id/backup/validate', withAuth, async (req, res) => {
     try {
+      if (!isSuper(req)) return res.status(403).json({ error: 'Solo superadmin' });
+
+      const empresaId = Number(req.params.id);
+      if (!Number.isFinite(empresaId) || empresaId <= 0) {
+        return res.status(400).json({ error: 'ID de empresa inválido' });
+      }
+
+      const backup = toObject(req.body);
+      if (!backup) return res.status(400).json({ error: 'Body JSON inválido' });
+
+      const data = toObject(backup.data);
+      if (!data) {
+        return res.status(400).json({ error: 'Formato inválido: falta objeto data' });
+      }
+
+      const empresaRows = await query('SELECT id, nombre FROM empresas WHERE id = $1 LIMIT 1', [empresaId]);
+      if (!empresaRows.length) {
+        return res.status(404).json({ error: 'Empresa no encontrada' });
+      }
+
+      const tablesRows = await getEmpresaScopedTables();
+      const allowedTables = new Set((tablesRows || []).map((r) => String(r.table_name || '')));
+
+      const summary = {
+        empresa_id: empresaId,
+        allowed_tables: allowedTables.size,
+        tables: {},
+        warnings: [],
+      };
+
+      for (const [tableNameRaw, rowsRaw] of Object.entries(data)) {
+        const tableName = String(tableNameRaw || '').trim();
+        if (!tableName) continue;
+
+        if (!allowedTables.has(tableName)) {
+          summary.warnings.push(`Tabla no permitida: ${tableName}`);
+          continue;
+        }
+
+        if (!Array.isArray(rowsRaw)) {
+          summary.warnings.push(`Tabla ${tableName}: se esperaba array`);
+          continue;
+        }
+
+        const cols = await getTableColumns(tableName);
+        const allowedCols = new Set((cols || []).map((c) => String(c.column_name || '')));
+
+        let validRows = 0;
+        const skippedRows = [];
+
+        rowsRaw.forEach((row, idx) => {
+          const obj = toObject(row);
+          if (!obj) {
+            skippedRows.push({ index: idx, reason: 'fila no es objeto' });
+            return;
+          }
+
+          if ('empresa_id' in obj && Number(obj.empresa_id) !== empresaId) {
+            skippedRows.push({ index: idx, reason: `empresa_id distinto (${obj.empresa_id})` });
+            return;
+          }
+
+          const unknownCols = Object.keys(obj).filter((k) => !allowedCols.has(k));
+          if (unknownCols.length) {
+            skippedRows.push({ index: idx, reason: `columnas desconocidas: ${unknownCols.join(', ')}` });
+            return;
+          }
+
+          validRows += 1;
+        });
+
+        summary.tables[tableName] = {
+          total: rowsRaw.length,
+          valid: validRows,
+          skipped: skippedRows.length,
+          sample_skipped: skippedRows.slice(0, 10),
+        };
+      }
+
+      return res.json({ ok: true, dry_run: true, summary });
+    } catch (e) {
+      console.error('ERROR VALIDATE BACKUP EMPRESA:', e);
+      return res.status(500).json({ error: 'Error validando backup' });
+    }
+  });
+
+  // POST /api/empresas/:id/backup/restore
+  // Restore no destructivo (upsert por id cuando exista, insert en caso contrario)
+  router.post('/:id/backup/restore', withAuth, async (req, res) => {
+    try {
+      if (!isSuper(req)) return res.status(403).json({ error: 'Solo superadmin' });
+      if (!pool?.connect) return res.status(500).json({ error: 'Pool DB no disponible para restore' });
+
+      const empresaId = Number(req.params.id);
+      if (!Number.isFinite(empresaId) || empresaId <= 0) {
+        return res.status(400).json({ error: 'ID de empresa inválido' });
+      }
+
+      const backup = toObject(req.body);
+      if (!backup) return res.status(400).json({ error: 'Body JSON inválido' });
+
+      const data = toObject(backup.data);
+      if (!data) {
+        return res.status(400).json({ error: 'Formato inválido: falta objeto data' });
+      }
+
+      const empresaRows = await query('SELECT id, nombre FROM empresas WHERE id = $1 LIMIT 1', [empresaId]);
+      if (!empresaRows.length) {
+        return res.status(404).json({ error: 'Empresa no encontrada' });
+      }
+
+      const tablesRows = await getEmpresaScopedTables();
+      const allowedTables = (tablesRows || []).map((r) => String(r.table_name || '')).filter(Boolean);
+
+      const report = {
+        empresa_id: empresaId,
+        restored_by: req.user?.username || req.user?.id || 'unknown',
+        tables: {},
+      };
+
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+
+        for (const tableName of allowedTables) {
+          const rowsRaw = data[tableName];
+          if (!Array.isArray(rowsRaw) || !rowsRaw.length) continue;
+
+          const colsMeta = await getTableColumns(tableName);
+          const allowedCols = (colsMeta || []).map((c) => String(c.column_name || '')).filter(Boolean);
+          const hasId = allowedCols.includes('id');
+
+          let inserted = 0;
+          let updated = 0;
+          let skipped = 0;
+
+          for (const rowRaw of rowsRaw) {
+            const row = toObject(rowRaw);
+            if (!row) {
+              skipped += 1;
+              continue;
+            }
+
+            if ('empresa_id' in row && Number(row.empresa_id) !== empresaId) {
+              skipped += 1;
+              continue;
+            }
+
+            const filteredEntries = Object.entries(row).filter(([k]) => allowedCols.includes(k));
+            const clean = Object.fromEntries(filteredEntries);
+            clean.empresa_id = empresaId;
+
+            const columns = Object.keys(clean);
+            if (!columns.length) {
+              skipped += 1;
+              continue;
+            }
+
+            const values = columns.map((k) => clean[k]);
+
+            if (hasId && clean.id != null) {
+              const exists = await client.query(
+                `SELECT 1 FROM ${quoteIdent(tableName)} WHERE id = $1 AND empresa_id = $2 LIMIT 1`,
+                [clean.id, empresaId]
+              );
+
+              if (exists.rowCount > 0) {
+                const updatableCols = columns.filter((c) => c !== 'id');
+                if (!updatableCols.length) {
+                  skipped += 1;
+                  continue;
+                }
+
+                const setSql = updatableCols
+                  .map((c, idx) => `${quoteIdent(c)} = $${idx + 1}`)
+                  .join(', ');
+                const setValues = updatableCols.map((c) => clean[c]);
+
+                await client.query(
+                  `UPDATE ${quoteIdent(tableName)} SET ${setSql} WHERE id = $${updatableCols.length + 1} AND empresa_id = $${updatableCols.length + 2}`,
+                  [...setValues, clean.id, empresaId]
+                );
+                updated += 1;
+                continue;
+              }
+            }
+
+            const colSql = columns.map((c) => quoteIdent(c)).join(', ');
+            const valSql = columns.map((_, idx) => `$${idx + 1}`).join(', ');
+            await client.query(
+              `INSERT INTO ${quoteIdent(tableName)} (${colSql}) VALUES (${valSql})`,
+              values
+            );
+            inserted += 1;
+          }
+
+          report.tables[tableName] = { inserted, updated, skipped, total: rowsRaw.length };
+        }
+
+        await client.query('COMMIT');
+      } catch (txError) {
+        await client.query('ROLLBACK');
+        throw txError;
+      } finally {
+        client.release();
+      }
+
+      return res.json({ ok: true, mode: 'upsert_non_destructive', report });
+    } catch (e) {
+      console.error('ERROR RESTORE BACKUP EMPRESA:', e);
+      return res.status(500).json({ error: 'Error restaurando backup', detail: e.message });
+    }
+  });
+
+  router.post('/:id/cuentas', withAuth, async (req, res) => {    try {
       const empresaId = Number(req.params.id);
       const { banco, alias, cbu, titular } = req.body || {};
       const esSuperAdmin = isSuper(req);
