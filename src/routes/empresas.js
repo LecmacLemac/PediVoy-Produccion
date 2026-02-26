@@ -358,6 +358,77 @@ export function createEmpresasRouter(deps) {
     }
   });
 
+  // GET /api/empresas/:id/backup
+  // Exporta en JSON todos los registros de tablas que tengan columna empresa_id
+  router.get('/:id/backup', withAuth, async (req, res) => {
+    try {
+      const empresaId = Number(req.params.id);
+      if (!Number.isFinite(empresaId) || empresaId <= 0) {
+        return res.status(400).json({ error: 'ID de empresa inválido' });
+      }
+
+      const esSuperAdmin = isSuper(req);
+      const myEmpresa = getEmpresaIdFromToken(req);
+      if (!esSuperAdmin && empresaId !== myEmpresa) {
+        return res.status(403).json({ error: 'No autorizado' });
+      }
+
+      const empresaRows = await query('SELECT * FROM empresas WHERE id = $1 LIMIT 1', [empresaId]);
+      if (!empresaRows.length) {
+        return res.status(404).json({ error: 'Empresa no encontrada' });
+      }
+
+      const tables = await query(
+        `
+        SELECT c.table_name
+        FROM information_schema.columns c
+        JOIN information_schema.tables t
+          ON t.table_schema = c.table_schema
+         AND t.table_name = c.table_name
+        WHERE c.table_schema = 'public'
+          AND c.column_name = 'empresa_id'
+          AND t.table_type = 'BASE TABLE'
+        ORDER BY c.table_name
+        `
+      );
+
+      const dataset = {};
+      for (const t of tables) {
+        const tableName = String(t.table_name || '').trim();
+        if (!tableName) continue;
+
+        const safeTable = tableName.replace(/"/g, '""');
+        const rows = await query(`SELECT * FROM "${safeTable}" WHERE empresa_id = $1`, [empresaId]);
+        dataset[tableName] = rows || [];
+      }
+
+      const stamp = new Date().toISOString().replace(/[.:]/g, '-');
+      const empresaNombre = String(empresaRows[0]?.nombre || 'empresa').replace(/[^a-zA-Z0-9_-]+/g, '_');
+      const filename = `backup_empresa_${empresaId}_${empresaNombre}_${stamp}.json`;
+
+      const payload = {
+        meta: {
+          generated_at: new Date().toISOString(),
+          empresa_id: empresaId,
+          empresa_nombre: empresaRows[0]?.nombre || null,
+          source: 'api/empresas/:id/backup',
+          tables: Object.fromEntries(
+            Object.entries(dataset).map(([k, v]) => [k, Array.isArray(v) ? v.length : 0])
+          ),
+        },
+        empresa: empresaRows[0],
+        data: dataset,
+      };
+
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      return res.status(200).send(JSON.stringify(payload, null, 2));
+    } catch (e) {
+      console.error('ERROR BACKUP EMPRESA:', e);
+      return res.status(500).json({ error: 'Error generando backup' });
+    }
+  });
+
   router.post('/:id/cuentas', withAuth, async (req, res) => {
     try {
       const empresaId = Number(req.params.id);

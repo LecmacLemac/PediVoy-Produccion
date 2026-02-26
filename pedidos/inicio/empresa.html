@@ -1263,6 +1263,8 @@ if (logoutLink) {
         if (action === 'manage-cuentas') {
           const name = btn.getAttribute('data-name') || '';
           manageCuentas(id, name);
+        } else if (action === 'backup') {
+          backupEmpresa(id);
         } else if (action === 'copy-landing') {
           copyLanding(id);
         } else if (action === 'edit') {
@@ -1480,6 +1482,9 @@ if (logoutLink) {
             <td style="text-align:right; white-space:nowrap;">
               <button class="btn-icon" data-action="manage-cuentas" data-id="${hasNumericId ? numericId : ''}" data-name="${esc(String(c.nombre || ''))}" title="Cuentas Bancarias" ${hasNumericId ? '' : 'disabled'}>
                 <i class="fa-solid fa-building-columns"></i>
+              </button>
+              <button class="btn-icon" data-action="backup" data-id="${hasNumericId ? numericId : ''}" title="Descargar backup JSON" ${hasNumericId ? '' : 'disabled'}>
+                <i class="fa-solid fa-file-arrow-down"></i>
               </button>
               <button class="btn-icon" data-action="copy-landing" data-id="${hasNumericId ? numericId : ''}" title="Copiar Link" ${hasNumericId ? '' : 'disabled'}>
                 <i class="fa-solid fa-link"></i>
@@ -2129,6 +2134,42 @@ if (logoutLink) {
           btnEl.disabled = false;
           btnEl.innerHTML = prev;
         }
+      }
+    }
+
+    async function backupEmpresa(id) {
+      const c = companies.find((x) => x.id === id);
+      if (!c) return;
+
+      try {
+        const res = await authFetch(`/api/empresas/${id}/backup`, { method: 'GET' });
+
+        if (res.status === 401) {
+          window.location.href = LOGIN_URL;
+          return;
+        }
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          toast('❌ ' + (err?.error || 'No se pudo generar el backup'));
+          return;
+        }
+
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        const safeNombre = String(c.nombre || 'empresa').replace(/[^a-zA-Z0-9_-]+/g, '_');
+        a.href = url;
+        a.download = `backup_empresa_${id}_${safeNombre}.json`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+
+        toast('✅ Backup descargado');
+      } catch (e) {
+        console.error(e);
+        toast('❌ Error al descargar backup');
       }
     }
 
