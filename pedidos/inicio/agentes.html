@@ -18,6 +18,15 @@
     button{background:var(--bg2);border:1px solid var(--border);color:#fff;border-radius:8px;padding:8px 10px;cursor:pointer}
     .pill{display:inline-block;padding:3px 8px;border-radius:99px;border:1px solid #22c55e;color:#22c55e;font-size:.75rem}
     pre{white-space:pre-wrap;margin:0;background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:10px;color:#cbd5e1}
+    @media (max-width: 768px){
+      .container{padding:0 12px}
+      nav{flex-direction:column;align-items:stretch;gap:.6rem}
+      .menu{overflow-x:auto;white-space:nowrap;padding-bottom:4px}
+      .row{align-items:stretch}
+      .row > *{min-width:0 !important}
+      button,select{width:100%}
+      h1{font-size:1.05rem}
+    }
   </style>
 </head>
 <body>

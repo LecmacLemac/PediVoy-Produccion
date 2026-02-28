@@ -28,6 +28,16 @@
     .alerts li{margin:6px 0}
     table{width:100%;border-collapse:collapse} th,td{padding:8px;border-bottom:1px solid var(--border);font-size:.9rem} th{color:var(--muted);text-align:left}
     .pill{padding:2px 8px;border-radius:99px;border:1px solid var(--border);font-size:.75rem}
+    @media (max-width: 768px){
+      .container{padding:0 12px}
+      nav{flex-direction:column;align-items:stretch;gap:.6rem}
+      .menu{overflow-x:auto;white-space:nowrap;padding-bottom:4px}
+      .row{align-items:stretch}
+      .row > *{min-width:0 !important}
+      input,select,textarea,button{width:100%}
+      .kanban{grid-template-columns:1fr}
+      h1{font-size:1.05rem}
+    }
   </style>
 </head>
 <body>

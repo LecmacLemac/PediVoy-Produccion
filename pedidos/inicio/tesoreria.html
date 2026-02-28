@@ -15,6 +15,15 @@
     .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:.8rem}.kpi{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px}.kpi .l{font-size:.75rem;color:var(--muted);text-transform:uppercase}.kpi .v{font-size:1.2rem;font-weight:700}
     .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}input,select,button{background:var(--bg2);border:1px solid var(--border);color:#fff;border-radius:8px;padding:8px 10px}button{cursor:pointer}.primary{background:var(--brand);color:#001018;border:none;font-weight:700}
     table{width:100%;border-collapse:collapse}th,td{padding:8px;border-bottom:1px solid var(--border);font-size:.9rem}th{color:var(--muted);text-align:left}
+    @media (max-width: 768px){
+      .container{padding:0 12px}
+      nav{flex-direction:column;align-items:stretch;gap:.6rem}
+      .menu{overflow-x:auto;white-space:nowrap;padding-bottom:4px}
+      .row{align-items:stretch}
+      .row > *{min-width:0 !important}
+      input,select,button{width:100%}
+      h1{font-size:1.05rem}
+    }
   </style>
 </head>
 <body>
