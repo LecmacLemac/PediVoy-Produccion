@@ -77,7 +77,17 @@
             font-size: 2.5rem; border: 2px solid;
         }
 
-    </style>
+    
+
+    @media (max-width: 768px) {
+      .container { padding: 0 12px; }
+      nav { flex-direction: column; align-items: stretch; gap: 0.6rem; }
+      .menu { overflow-x: auto; white-space: nowrap; padding-bottom: 4px; }
+      .row { align-items: stretch; }
+      .row > * { min-width: 0 !important; }
+      input, select, textarea, button { width: 100%; }
+    }
+</style>
 </head>
 <body>
     <div class="reveal">

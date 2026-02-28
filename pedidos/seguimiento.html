@@ -122,7 +122,17 @@
   </div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <style> @keyframes spin { 100% { transform: rotate(360deg); } } </style>
+  <style> @keyframes spin { 100% { transform: rotate(360deg); } } 
+
+    @media (max-width: 768px) {
+      .container { padding: 0 12px; }
+      nav { flex-direction: column; align-items: stretch; gap: 0.6rem; }
+      .menu { overflow-x: auto; white-space: nowrap; padding-bottom: 4px; }
+      .row { align-items: stretch; }
+      .row > * { min-width: 0 !important; }
+      input, select, textarea, button { width: 100%; }
+    }
+</style>
 
 <script>
   // 1. Configuración y Estado
