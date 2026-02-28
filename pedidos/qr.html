@@ -206,6 +206,19 @@
 
     .toast { position: fixed; right: 20px; bottom: 30px; background: #fff; color: #0f172a; padding: 10px 20px; border-radius: 99px; font-weight: 600; box-shadow: 0 10px 30px rgba(0,0,0,0.3); opacity: 0; pointer-events: none; transition: 0.3s; z-index: 2000; }
     .toast.show { opacity: 1; transform: translateY(-10px); }
+
+    @media (max-width: 768px) {
+      .container { padding: 0 12px; }
+      nav { flex-direction: column; align-items: stretch; gap: 0.8rem; }
+      .menu { overflow-x: auto; white-space: nowrap; padding-bottom: 4px; }
+      .card { padding: 1.2rem; }
+      .qr-container { min-height: 260px; padding: 0.8rem; }
+      .qr-container img { width: min(100%, 280px); height: auto; }
+      .prompt-grid { grid-template-columns: 1fr; }
+      .modal-footer { flex-direction: column-reverse; }
+      .modal-footer .btn { width: 100%; justify-content: center; }
+      .toast { left: 12px; right: 12px; bottom: 14px; width: auto; border-radius: 12px; }
+    }
   </style>
 </head>
 <body>
