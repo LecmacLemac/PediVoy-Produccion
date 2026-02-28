@@ -102,6 +102,25 @@
     border-radius: 12px; background: rgba(255,255,255,0.05);
   }
 
+  .summary-box {
+    background: rgba(6, 182, 212, 0.08);
+    border: 1px solid rgba(6, 182, 212, 0.25);
+    border-radius: var(--radius);
+    padding: 1rem 1.2rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+  .summary-main {
+    font-size: 1rem;
+    font-weight: 700;
+    color: #fff;
+  }
+  .summary-sub {
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
+
   /* --- TOOLBAR & FILTERS --- */
   .toolbar {
     background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
@@ -266,6 +285,11 @@
       </div>
     </section>
 
+    <section class="summary-box" id="kpiDetailBox" aria-live="polite">
+      <div class="summary-main" id="kpiDetailMain">Pendientes 0 · En Ruta 0 · Entregados 0 · Monto Total $ 0</div>
+      <div class="summary-sub" id="kpiDetailSub">IDs entregados: —</div>
+    </section>
+
     <section class="toolbar">
       <div class="filters-row">
         
@@ -319,6 +343,7 @@
           <button id="btnRef" class="btn" title="Recargar">
             <i class="fa-solid fa-rotate-right"></i>
           </button>
+          <button id="btnToday" class="btn">Hoy</button>
           <button id="btnClear" class="btn">Limpiar</button>
           <button id="btnExport" class="btn btn-primary">
             <i class="fa-solid fa-file-csv"></i> Exportar
@@ -469,6 +494,8 @@
     const kpiEnt   = $('#kpiEnt');
     const kpiMonto = $('#kpiMonto');
     const totalCount = $('#totalCount');
+    const kpiDetailMain = $('#kpiDetailMain');
+    const kpiDetailSub  = $('#kpiDetailSub');
 
     // Dialog Refs
     const dlg          = $('#dlgPedido');
@@ -501,6 +528,16 @@
       maximumFractionDigits: 0
     });
     function money(n){ return ARS.format(Number(n) || 0); }
+
+    function getLocalISO(dateObj = new Date()) {
+      const parts = dateObj
+        .toLocaleDateString('es-AR', {
+          timeZone: 'America/Argentina/Buenos_Aires'
+        })
+        .split('/'); // dd/mm/aaaa
+      const [dd, mm, yyyy] = parts;
+      return `${yyyy}-${mm.padStart(2,'0')}-${dd.padStart(2,'0')}`;
+    }
 
     // Convierte un ISO UTC a fecha local Argentina (dd/mm/aaaa)
     function fmtDate(iso){
@@ -613,6 +650,16 @@
     };
     $('#btnRef').onclick   = () => { q.value=''; saveFiltersState(); initLoad(); scheduleAutoRefresh(); };
 
+    $('#btnToday').onclick = async () => {
+      const today = getLocalISO();
+      fromFilter.value = today;
+      toFilter.value = today;
+      saveFiltersState();
+      await initLoad();
+      showToast('Filtro aplicado: hoy');
+      scheduleAutoRefresh();
+    };
+
     $('#btnClear').onclick = () => {
       estadoFilter.value = '';
       fromFilter.value   = '';
@@ -639,16 +686,6 @@
 
         // Fechas default (30 días) según hora local Argentina
         if (!fromFilter.value) {
-          const getLocalISO = (dateObj) => {
-            const parts = dateObj
-              .toLocaleDateString('es-AR', {
-                timeZone: 'America/Argentina/Buenos_Aires'
-              })
-              .split('/'); // dd/mm/aaaa
-            const [dd, mm, yyyy] = parts;
-            return `${yyyy}-${mm.padStart(2,'0')}-${dd.padStart(2,'0')}`;
-          };
-
           const now = new Date();
           const d0  = new Date(now);
           d0.setDate(d0.getDate() - 30);
@@ -951,12 +988,24 @@
 
     function renderKPIs(list){
       totalCount.textContent = list.length;
-      kpiPend.textContent = list.filter(p => p.estado === 'pendiente').length;
-      kpiRuta.textContent = list.filter(p => p.estado === 'en_ruta').length;
-      kpiEnt.textContent  = list.filter(p => p.estado === 'entregado').length;
 
+      const pendientes = list.filter(p => p.estado === 'pendiente').length;
+      const enRuta = list.filter(p => p.estado === 'en_ruta').length;
+      const entregados = list.filter(p => p.estado === 'entregado').length;
       const total = list.reduce((acc, p) => acc + (Number(p.monto) || 0), 0);
+
+      kpiPend.textContent = pendientes;
+      kpiRuta.textContent = enRuta;
+      kpiEnt.textContent  = entregados;
       kpiMonto.textContent = money(total);
+
+      const entregadosIds = list
+        .filter(p => p.estado === 'entregado')
+        .map(p => `#${p.id}`)
+        .slice(0, 12);
+
+      kpiDetailMain.textContent = `Pendientes ${pendientes} · En Ruta ${enRuta} · Entregados ${entregados} · Monto Total ${money(total)}`;
+      kpiDetailSub.textContent = `IDs entregados: ${entregadosIds.length ? entregadosIds.join(', ') : '—'}`;
     }
 
     // ====== Acciones de Pedido ======
