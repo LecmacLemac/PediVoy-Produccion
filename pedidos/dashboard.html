@@ -286,8 +286,8 @@
     </section>
 
     <section class="summary-box" id="kpiDetailBox" aria-live="polite">
-      <div class="summary-main" id="kpiDetailMain">Artículos del filtro: —</div>
-      <div class="summary-sub" id="kpiDetailSub">Aplicá filtros para ver el detalle por producto.</div>
+      <div class="summary-main" id="kpiDetailMain">Artículos entregados del filtro: —</div>
+      <div class="summary-sub" id="kpiDetailSub">Aplicá filtros para ver el detalle por producto entregado.</div>
     </section>
 
     <section class="toolbar">
@@ -938,12 +938,19 @@
     async function renderArticulosDetalle(list) {
       const token = ++detalleArticulosToken;
       if (!list.length) {
-        kpiDetailMain.textContent = 'Artículos del filtro: —';
+        kpiDetailMain.textContent = 'Artículos entregados del filtro: —';
         kpiDetailSub.textContent = 'No hay pedidos con los filtros actuales.';
         return;
       }
 
-      const pedidosLimitados = list.slice(0, 80);
+      const soloEntregados = list.filter(p => String(p?.estado || '') === 'entregado');
+      if (!soloEntregados.length) {
+        kpiDetailMain.textContent = 'Artículos entregados del filtro: —';
+        kpiDetailSub.textContent = 'No hay pedidos entregados con los filtros actuales.';
+        return;
+      }
+
+      const pedidosLimitados = soloEntregados.slice(0, 80);
       const allItems = await Promise.all(
         pedidosLimitados.map(p => getPedidoItemsCached(Number(p.id)))
       );
@@ -965,15 +972,15 @@
         .slice(0, 12);
 
       const totalUnidades = Array.from(agg.values()).reduce((a, b) => a + b, 0);
-      kpiDetailMain.textContent = `Artículos del filtro: ${totalUnidades} unidades en ${agg.size || 0} producto(s)`;
+      kpiDetailMain.textContent = `Artículos entregados: ${totalUnidades} unidades en ${agg.size || 0} producto(s)`;
 
       if (!top.length) {
-        kpiDetailSub.textContent = 'No hay ítems cargados para los pedidos filtrados.';
+        kpiDetailSub.textContent = 'No hay ítems cargados para los pedidos entregados filtrados.';
         return;
       }
 
       const detalle = top.map(([nombre, qty]) => `${nombre} x${qty}`).join(' · ');
-      const masTxt = list.length > 80 ? ' · (mostrando detalle de los primeros 80 pedidos filtrados)' : '';
+      const masTxt = soloEntregados.length > 80 ? ' · (mostrando detalle de los primeros 80 pedidos entregados)' : '';
       kpiDetailSub.textContent = detalle + masTxt;
     }
 
