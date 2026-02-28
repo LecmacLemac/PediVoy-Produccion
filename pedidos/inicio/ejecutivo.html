@@ -12,6 +12,14 @@
     nav{display:flex;justify-content:space-between;align-items:center}.menu{display:flex;gap:1rem;list-style:none;margin:0;padding:0}.menu a{color:var(--muted);text-decoration:none}.menu a.active,.menu a:hover{color:#fff}
     main{padding:1rem 0 3rem}.card{background:rgba(30,41,59,.7);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:12px}
     .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:.8rem}.kpi{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px}.kpi .l{font-size:.75rem;color:var(--muted);text-transform:uppercase}.kpi .v{font-size:1.2rem;font-weight:700}
+
+    @media (max-width: 768px){
+      .container{padding:0 12px}
+      nav{flex-direction:column;align-items:flex-start;gap:.6rem}
+      .menu{overflow-x:auto;white-space:nowrap;padding-bottom:4px}
+      h1{font-size:1.05rem}
+      button,select,textarea{width:100%}
+    }
   </style>
 </head>
 <body>
