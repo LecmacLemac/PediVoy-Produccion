@@ -140,7 +140,42 @@ main {
   background: rgba(255,255,255,0.1);
 }
 
+/* Seguridad responsive global para todas las pantallas */
+html,
+body {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+img,
+video,
+canvas,
+svg,
+iframe {
+  max-width: 100%;
+  height: auto;
+}
+
+input,
+select,
+textarea,
+button {
+  max-width: 100%;
+}
+
 @media (max-width: 768px) {
+  /* Evita cortes en tablas anchas en mobile */
+  table {
+    display: block;
+    width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .container {
+    padding: 0 12px;
+  }
+
   nav {
     flex-direction: column;
     gap: 1rem;
