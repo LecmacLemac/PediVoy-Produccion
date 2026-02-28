@@ -286,8 +286,8 @@
     </section>
 
     <section class="summary-box" id="kpiDetailBox" aria-live="polite">
-      <div class="summary-main" id="kpiDetailMain">Pendientes 0 · En Ruta 0 · Entregados 0 · Monto Total $ 0</div>
-      <div class="summary-sub" id="kpiDetailSub">IDs entregados: —</div>
+      <div class="summary-main" id="kpiDetailMain">Artículos del filtro: —</div>
+      <div class="summary-sub" id="kpiDetailSub">Aplicá filtros para ver el detalle por producto.</div>
     </section>
 
     <section class="toolbar">
@@ -520,6 +520,8 @@
     let refreshTimer = null;
     let refreshInFlight = false;
     let lastSyncAt = null;
+    const itemsByPedidoCache = new Map();
+    let detalleArticulosToken = 0;
 
     // ====== Utils ======
     const ARS = new Intl.NumberFormat('es-AR', {
@@ -906,6 +908,7 @@
           return;
         }
         pedidos = await r.json();
+        itemsByPedidoCache.clear();
         lastSyncAt = Date.now();
         updateSyncInfo();
       } catch {
@@ -916,6 +919,64 @@
     }
 
     // ====== Filtros / Render ======
+    async function getPedidoItemsCached(pedidoId) {
+      if (itemsByPedidoCache.has(pedidoId)) {
+        return itemsByPedidoCache.get(pedidoId);
+      }
+      try {
+        const r = await authFetch(`/api/pedidos/${pedidoId}/items`);
+        if (!r.ok) return [];
+        const items = await r.json();
+        const safeItems = Array.isArray(items) ? items : [];
+        itemsByPedidoCache.set(pedidoId, safeItems);
+        return safeItems;
+      } catch {
+        return [];
+      }
+    }
+
+    async function renderArticulosDetalle(list) {
+      const token = ++detalleArticulosToken;
+      if (!list.length) {
+        kpiDetailMain.textContent = 'Artículos del filtro: —';
+        kpiDetailSub.textContent = 'No hay pedidos con los filtros actuales.';
+        return;
+      }
+
+      const pedidosLimitados = list.slice(0, 80);
+      const allItems = await Promise.all(
+        pedidosLimitados.map(p => getPedidoItemsCached(Number(p.id)))
+      );
+
+      if (token !== detalleArticulosToken) return;
+
+      const agg = new Map();
+      for (const items of allItems) {
+        for (const it of items) {
+          const nombre = String(it?.producto || 'Sin nombre').trim() || 'Sin nombre';
+          const cantidad = Number(it?.cantidad) || 0;
+          if (cantidad <= 0) continue;
+          agg.set(nombre, (agg.get(nombre) || 0) + cantidad);
+        }
+      }
+
+      const top = Array.from(agg.entries())
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 12);
+
+      const totalUnidades = Array.from(agg.values()).reduce((a, b) => a + b, 0);
+      kpiDetailMain.textContent = `Artículos del filtro: ${totalUnidades} unidades en ${agg.size || 0} producto(s)`;
+
+      if (!top.length) {
+        kpiDetailSub.textContent = 'No hay ítems cargados para los pedidos filtrados.';
+        return;
+      }
+
+      const detalle = top.map(([nombre, qty]) => `${nombre} x${qty}`).join(' · ');
+      const masTxt = list.length > 80 ? ' · (mostrando detalle de los primeros 80 pedidos filtrados)' : '';
+      kpiDetailSub.textContent = detalle + masTxt;
+    }
+
     function applyFilters() {
       const e      = estadoFilter.value;
       const s      = q.value.toLowerCase().trim();
@@ -955,6 +1016,7 @@
 
       renderKPIs(filtered);
       renderTable(filtered);
+      renderArticulosDetalle(filtered);
     }
 
     function renderTable(list){
@@ -999,13 +1061,7 @@
       kpiEnt.textContent  = entregados;
       kpiMonto.textContent = money(total);
 
-      const entregadosIds = list
-        .filter(p => p.estado === 'entregado')
-        .map(p => `#${p.id}`)
-        .slice(0, 12);
-
-      kpiDetailMain.textContent = `Pendientes ${pendientes} · En Ruta ${enRuta} · Entregados ${entregados} · Monto Total ${money(total)}`;
-      kpiDetailSub.textContent = `IDs entregados: ${entregadosIds.length ? entregadosIds.join(', ') : '—'}`;
+      // El detalle por artículos se renderiza en renderArticulosDetalle().
     }
 
     // ====== Acciones de Pedido ======
