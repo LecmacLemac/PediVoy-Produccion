@@ -156,9 +156,15 @@
 
     /* Responsive */
     @media (max-width: 768px) {
+      header { flex-direction: column; align-items: flex-start; gap: 0.6rem; padding: 0.8rem 1rem; }
+      .btn-back { padding: 6px 10px; }
+      main { padding: 14px 12px 24px; }
       .filters-card { flex-direction: column; align-items: stretch; }
-      select, input { min-width: 100%; }
+      .field { width: 100%; }
+      select, input { min-width: 100%; width: 100%; }
       .kpi-grid { grid-template-columns: 1fr; }
+      th, td { padding: 0.7rem 0.8rem; font-size: 0.82rem; }
+      .toast { left: 12px; right: 12px; bottom: 16px; width: auto; }
     }
   </style>
 </head>

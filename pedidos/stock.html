@@ -149,6 +149,18 @@
     [hidden] { display: none !important; }
     .flex-between { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
     .text-right { text-align: right; }
+
+    @media (max-width: 768px) {
+      .container { padding: 0 12px; }
+      nav { flex-direction: column; align-items: stretch; gap: 0.8rem; }
+      .menu { overflow-x: auto; white-space: nowrap; padding-bottom: 4px; }
+      .toolbar { flex-direction: column; align-items: stretch; }
+      .search-box { min-width: 100%; }
+      .btn { width: 100%; }
+      .modal-footer { flex-direction: column-reverse; }
+      .modal-footer .btn { width: 100%; }
+      .drawer { max-width: 100%; }
+    }
   </style>
 </head>
 <body>
