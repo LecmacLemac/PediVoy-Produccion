@@ -111,6 +111,10 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
       const estado = (req.query.estado || '').toString().trim().toLowerCase();
       const estadoRevision = (req.query.estado_revision || '').toString().trim().toLowerCase();
       const choferId = Number(req.query.chofer_id || 0) || null;
+      const limitRaw = Number(req.query.limit || 0) || 0;
+      const offsetRaw = Number(req.query.offset || 0) || 0;
+      const limit = Math.min(Math.max(limitRaw, 0), 1000);
+      const offset = Math.max(offsetRaw, 0);
 
       let sql = `
         SELECT
@@ -153,8 +157,21 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
       }));
 
       sql += ` ORDER BY ct.fecha DESC, ct.id DESC`;
+      if (limit > 0) {
+        sql += ` LIMIT $${idx++}`;
+        params.push(limit);
+        if (offset > 0) {
+          sql += ` OFFSET $${idx++}`;
+          params.push(offset);
+        }
+      }
 
       const rows = await query(sql, params);
+      if (limit > 0) {
+        res.setHeader('X-Page-Limit', String(limit));
+        res.setHeader('X-Page-Offset', String(offset));
+        res.setHeader('X-Page-Count', String(rows.length));
+      }
       res.json(rows);
     } catch (e) {
       res.status(500).json({ error: 'Error listando transferencias' });

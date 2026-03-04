@@ -235,6 +235,9 @@
     <button class="btn btn-ghost" onclick="exportarCSV()">
       <i class="fa-solid fa-file-csv"></i> Exportar CSV
     </button>
+    <button class="btn btn-ghost" id="btnVerMas" onclick="cargarMas()" style="display:none;">
+      <i class="fa-solid fa-angles-down"></i> Ver más
+    </button>
   </div>
 
   <div class="table-container">
@@ -318,6 +321,9 @@
   let verifyBusy = false;
   let deleteBusy = false;
   let currentRows = [];
+  const PAGE_LIMIT = 200;
+  let currentOffset = 0;
+  let hasMoreRows = false;
 
   // --- Inicialización ---
   (async () => {
@@ -347,23 +353,28 @@
     // 3. Fecha default
     $('#fFecha').value = new Date().toISOString().split('T')[0];
     
-    loadPagos();
+    loadPagos(true);
   })();
 
   // --- Cargar Pagos corregido ---
-  async function loadPagos() {
+  async function loadPagos(reset = true) {
     const fecha = $('#fFecha').value;
     const estadoFiltro = $('#fEstado').value;
     const chofer = $('#fChofer').value;
     const empresa = $('#fEmpresa').value;
 
-    let url = `/api/transferencias?fecha=${fecha}`;
+    if (reset) {
+      currentOffset = 0;
+      hasMoreRows = false;
+      currentRows = [];
+      $('#rows').innerHTML = '<tr><td colspan="9" style="padding:3rem; text-align:center; color: var(--text-muted);"><i class="fa-solid fa-circle-notch fa-spin"></i> Cargando datos...</td></tr>';
+    }
+
+    let url = `/api/transferencias?fecha=${fecha}&limit=${PAGE_LIMIT}&offset=${currentOffset}`;
     if(chofer) url += `&chofer_id=${chofer}`;
     if(empresa) url += `&empresa_id=${empresa}`;
     if(estadoFiltro === 'verificado' || estadoFiltro === 'pendiente') url += `&estado=${estadoFiltro}`;
     if(estadoFiltro === 'en_revision') url += `&estado_revision=en_revision`;
-
-    $('#rows').innerHTML = '<tr><td colspan="9" style="padding:3rem; text-align:center; color: var(--text-muted);"><i class="fa-solid fa-circle-notch fa-spin"></i> Cargando datos...</td></tr>';
 
     let data = await api(url);
     if(!Array.isArray(data)) data = [];
@@ -377,9 +388,18 @@
     if(estadoFiltro === 'pendiente') data = data.filter(t => Number(t.validado) !== 1);
     if(estadoFiltro === 'en_revision') data = data.filter(t => String(t.estado_revision || '').toLowerCase() === 'en_revision');
 
-    currentRows = data;
-    updateKPIs(data);
-    renderTable(data);
+    currentRows = reset ? data : currentRows.concat(data);
+    hasMoreRows = data.length === PAGE_LIMIT;
+    currentOffset += data.length;
+    $('#btnVerMas').style.display = hasMoreRows ? 'inline-flex' : 'none';
+
+    updateKPIs(currentRows);
+    renderTable(currentRows);
+  }
+
+  function cargarMas() {
+    if (!hasMoreRows) return;
+    loadPagos(false);
   }
     
   function updateKPIs(list) {
