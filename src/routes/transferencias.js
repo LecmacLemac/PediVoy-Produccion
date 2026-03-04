@@ -7,6 +7,11 @@ import { readFile, unlink } from 'node:fs/promises';
 import { withAuth, isSuper, getEmpresaIdFromToken, enqueueWppMessage } from '../services.js';
 import { query } from '../db.js';
 
+function csvCell(v) {
+  const s = String(v == null ? '' : v).replace(/"/g, '""');
+  return `"${s}"`;
+}
+
 /**
  * Router de transferencias (comprobantes_transferencia).
  *
@@ -41,6 +46,42 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
   async function calcSha256FromSavedFile(filePath) {
     const buf = await readFile(filePath);
     return createHash('sha256').update(buf).digest('hex');
+  }
+
+  function applyTransferFilters({ sql, params, idx, filters }) {
+    const { esSuperUser, myEmpresa, empresa_id, fecha, choferId, estado, estadoRevision } = filters;
+
+    if (!esSuperUser) {
+      sql += ` AND ct.empresa_id = $${idx++}`;
+      params.push(myEmpresa);
+    } else if (empresa_id) {
+      sql += ` AND ct.empresa_id = $${idx++}`;
+      params.push(Number(empresa_id));
+    }
+
+    if (fecha) {
+      sql += ` AND ct.fecha >= $${idx}::date AND ct.fecha < ($${idx}::date + INTERVAL '1 day')`;
+      params.push(fecha);
+      idx += 1;
+    }
+
+    if (choferId) {
+      sql += ` AND ct.chofer_id = $${idx++}`;
+      params.push(choferId);
+    }
+
+    if (estado === 'verificado') {
+      sql += ` AND COALESCE(ct.validado, 0) = 1`;
+    } else if (estado === 'pendiente') {
+      sql += ` AND COALESCE(ct.validado, 0) <> 1`;
+    }
+
+    if (estadoRevision && ['pendiente', 'en_revision', 'aprobado', 'rechazado', 'duplicado'].includes(estadoRevision)) {
+      sql += ` AND COALESCE(ct.estado_revision, 'pendiente') = $${idx++}`;
+      params.push(estadoRevision);
+    }
+
+    return { sql, params, idx };
   }
 
   const transferUploader = multer({
@@ -104,35 +145,12 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
       const params = [];
       let idx = 1;
 
-      if (!esSuperUser) {
-        sql += ` AND ct.empresa_id = $${idx++}`;
-        params.push(myEmpresa);
-      } else if (empresa_id) {
-        sql += ` AND ct.empresa_id = $${idx++}`;
-        params.push(Number(empresa_id));
-      }
-
-      if (fecha) {
-        sql += ` AND ct.fecha >= $${idx}::date AND ct.fecha < ($${idx}::date + INTERVAL '1 day')`;
-        params.push(fecha);
-        idx += 1;
-      }
-
-      if (choferId) {
-        sql += ` AND ct.chofer_id = $${idx++}`;
-        params.push(choferId);
-      }
-
-      if (estado === 'verificado') {
-        sql += ` AND COALESCE(ct.validado, 0) = 1`;
-      } else if (estado === 'pendiente') {
-        sql += ` AND COALESCE(ct.validado, 0) <> 1`;
-      }
-
-      if (estadoRevision && ['pendiente', 'en_revision', 'aprobado', 'rechazado', 'duplicado'].includes(estadoRevision)) {
-        sql += ` AND COALESCE(ct.estado_revision, 'pendiente') = $${idx++}`;
-        params.push(estadoRevision);
-      }
+      ({ sql, params, idx } = applyTransferFilters({
+        sql,
+        params,
+        idx,
+        filters: { esSuperUser, myEmpresa, empresa_id, fecha, choferId, estado, estadoRevision }
+      }));
 
       sql += ` ORDER BY ct.fecha DESC, ct.id DESC`;
 
@@ -140,6 +158,75 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
       res.json(rows);
     } catch (e) {
       res.status(500).json({ error: 'Error listando transferencias' });
+    }
+  });
+
+  // EXPORTAR CSV
+  router.get('/export.csv', withAuth, async (req, res) => {
+    try {
+      await ensureSchemaPromise;
+      const { empresa_id } = req.query || {};
+      const esSuperUser = isSuper(req);
+      const myEmpresa = getEmpresaIdFromToken(req);
+      const fecha = (req.query.fecha || '').toString().slice(0, 10);
+      const estado = (req.query.estado || '').toString().trim().toLowerCase();
+      const estadoRevision = (req.query.estado_revision || '').toString().trim().toLowerCase();
+      const choferId = Number(req.query.chofer_id || 0) || null;
+
+      let sql = `
+        SELECT
+          ct.id,
+          ct.fecha,
+          ct.pedido_id,
+          pe.cliente,
+          pe.telefono,
+          ct.monto,
+          ct.metodo_pago,
+          ct.validado,
+          ct.estado_revision,
+          ct.riesgo_score,
+          ct.riesgo_flags,
+          ct.nro_operacion,
+          ct.banco_origen,
+          ct.verified_by,
+          uv.username AS verified_by_username,
+          ct.verified_at,
+          ct.verified_reason,
+          ct.comprobante_path
+        FROM comprobantes_transferencia ct
+        LEFT JOIN puntos_entrega pe ON pe.id = (SELECT p.punto_entrega_id FROM pedidos p WHERE p.id = ct.pedido_id)
+        LEFT JOIN usuarios uv       ON uv.id = ct.verified_by
+        WHERE 1=1
+      `;
+
+      let params = [];
+      let idx = 1;
+      ({ sql, params, idx } = applyTransferFilters({
+        sql,
+        params,
+        idx,
+        filters: { esSuperUser, myEmpresa, empresa_id, fecha, choferId, estado, estadoRevision }
+      }));
+      sql += ' ORDER BY ct.fecha DESC, ct.id DESC';
+
+      const rows = await query(sql, params);
+      const headers = [
+        'id','fecha','pedido_id','cliente','telefono','monto','metodo_pago','validado',
+        'estado_revision','riesgo_score','riesgo_flags','nro_operacion','banco_origen',
+        'verified_by','verified_by_username','verified_at','verified_reason','comprobante_path'
+      ];
+
+      const csv = [headers.map(csvCell).join(',')]
+        .concat(rows.map((r) => headers.map((h) => csvCell(r[h])).join(',')))
+        .join('\n');
+
+      const stamp = fecha || new Date().toISOString().slice(0, 10);
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="transferencias-${stamp}.csv"`);
+      return res.status(200).send(csv);
+    } catch (e) {
+      console.error('Error exportando transferencias CSV:', e);
+      return res.status(500).json({ error: 'Error exportando transferencias' });
     }
   });
 
