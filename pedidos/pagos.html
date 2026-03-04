@@ -232,6 +232,9 @@
     <button class="btn btn-primary" onclick="loadPagos()">
       <i class="fa-solid fa-magnifying-glass"></i> Filtrar
     </button>
+    <button class="btn btn-ghost" onclick="exportarCSV()">
+      <i class="fa-solid fa-file-csv"></i> Exportar CSV
+    </button>
   </div>
 
   <div class="table-container">
@@ -314,6 +317,7 @@
   let currentUser = null;
   let verifyBusy = false;
   let deleteBusy = false;
+  let currentRows = [];
 
   // --- Inicialización ---
   (async () => {
@@ -373,6 +377,7 @@
     if(estadoFiltro === 'pendiente') data = data.filter(t => Number(t.validado) !== 1);
     if(estadoFiltro === 'en_revision') data = data.filter(t => String(t.estado_revision || '').toLowerCase() === 'en_revision');
 
+    currentRows = data;
     updateKPIs(data);
     renderTable(data);
   }
@@ -575,6 +580,59 @@
 
   function verificarDesdeModal() {
     if(currentTransferenciaId) verificarPago(currentTransferenciaId);
+  }
+
+  function csvCell(v) {
+    const s = String(v == null ? '' : v).replace(/"/g, '""');
+    return `"${s}"`;
+  }
+
+  function exportarCSV() {
+    if (!Array.isArray(currentRows) || !currentRows.length) {
+      return alert('No hay datos para exportar.');
+    }
+
+    const headers = [
+      'id','fecha','pedido_id','cliente','telefono','monto','metodo_pago','validado',
+      'estado_revision','riesgo_score','riesgo_flags','nro_operacion','banco_origen',
+      'verified_by','verified_by_username','verified_at','verified_reason','comprobante_path'
+    ];
+
+    const lines = [headers.map(csvCell).join(',')];
+    for (const r of currentRows) {
+      lines.push([
+        r.id,
+        r.fecha,
+        r.pedido_id,
+        r.cliente,
+        r.telefono,
+        r.monto,
+        r.metodo_pago,
+        r.validado,
+        r.estado_revision,
+        r.riesgo_score,
+        r.riesgo_flags,
+        r.nro_operacion,
+        r.banco_origen,
+        r.verified_by,
+        r.verified_by_username,
+        r.verified_at,
+        r.verified_reason,
+        r.comprobante_path
+      ].map(csvCell).join(','));
+    }
+
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const fecha = ($('#fFecha')?.value || new Date().toISOString().slice(0,10));
+    a.href = url;
+    a.download = `tesoreria-transferencias-${fecha}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    toast('CSV exportado');
   }
 
   function toast(msg) {
