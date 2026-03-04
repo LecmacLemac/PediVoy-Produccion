@@ -606,6 +606,13 @@ CREATE TABLE IF NOT EXISTS comprobantes_transferencia (
   procesado        BOOLEAN DEFAULT FALSE,     
   fecha_procesado  TIMESTAMPTZ,
   banco_destino    TEXT,
+  file_hash        TEXT,
+  estado_revision  TEXT DEFAULT 'pendiente',
+  riesgo_score     INTEGER DEFAULT 0,
+  riesgo_flags     TEXT,
+  verified_by      INTEGER,
+  verified_reason  TEXT,
+  verified_at      TIMESTAMPTZ,
   created_at       TIMESTAMPTZ DEFAULT NOW(),
   updated_at       TIMESTAMPTZ DEFAULT NOW()
 );
@@ -1115,6 +1122,8 @@ CREATE INDEX IF NOT EXISTS idx_items_pedido_pedido_id ON items_pedido (pedido_id
 CREATE INDEX IF NOT EXISTS idx_pedidos_chofer_estado ON pedidos (chofer_id, estado) WHERE estado IN ('pendiente', 'en_ruta', 'en_camino');
 CREATE INDEX IF NOT EXISTS idx_zonas_geom ON zonas_geograficas USING GIST (geom);
 CREATE INDEX IF NOT EXISTS idx_ct_procesado ON comprobantes_transferencia (procesado, fecha);
+CREATE INDEX IF NOT EXISTS idx_ct_empresa_file_hash ON comprobantes_transferencia (empresa_id, file_hash);
+CREATE INDEX IF NOT EXISTS idx_ct_estado_revision ON comprobantes_transferencia (estado_revision);
 CREATE INDEX IF NOT EXISTS idx_pedido_track_points_pedido_ts ON pedido_track_points (pedido_id, timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_hist_prod_fecha ON historial_costos_precios (producto_id, fecha_registro DESC);
 CREATE INDEX IF NOT EXISTS idx_hist_empresa_fecha ON historial_costos_precios (empresa_id, fecha_registro DESC);

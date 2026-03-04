@@ -2,6 +2,8 @@
 import express from 'express';
 import multer from 'multer';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
+import { readFile, unlink } from 'node:fs/promises';
 import { withAuth, isSuper, getEmpresaIdFromToken, enqueueWppMessage } from '../services.js';
 import { query } from '../db.js';
 
@@ -16,6 +18,30 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
   if (!TRANSF_DIR) throw new Error('createTransferenciasRouter requiere TRANSF_DIR');
 
   const router = express.Router();
+  const VERIFY_TOLERANCE = Number(process.env.TRANSFER_VERIFY_TOLERANCE || 1);
+
+  // Hardening incremental sin romper instalaciones existentes
+  // (si la columna ya existe, no hace nada).
+  const ensureSchemaPromise = (async () => {
+    try {
+      await query(`ALTER TABLE comprobantes_transferencia ADD COLUMN IF NOT EXISTS file_hash TEXT`);
+      await query(`ALTER TABLE comprobantes_transferencia ADD COLUMN IF NOT EXISTS estado_revision TEXT DEFAULT 'pendiente'`);
+      await query(`ALTER TABLE comprobantes_transferencia ADD COLUMN IF NOT EXISTS riesgo_score INTEGER DEFAULT 0`);
+      await query(`ALTER TABLE comprobantes_transferencia ADD COLUMN IF NOT EXISTS riesgo_flags TEXT`);
+      await query(`ALTER TABLE comprobantes_transferencia ADD COLUMN IF NOT EXISTS verified_by INTEGER`);
+      await query(`ALTER TABLE comprobantes_transferencia ADD COLUMN IF NOT EXISTS verified_reason TEXT`);
+      await query(`ALTER TABLE comprobantes_transferencia ADD COLUMN IF NOT EXISTS verified_at TIMESTAMPTZ`);
+      await query(`CREATE INDEX IF NOT EXISTS idx_ct_empresa_file_hash ON comprobantes_transferencia (empresa_id, file_hash)`);
+      await query(`CREATE INDEX IF NOT EXISTS idx_ct_estado_revision ON comprobantes_transferencia (estado_revision)`);
+    } catch (e) {
+      console.error('transferencias schema hardening error:', e?.message || e);
+    }
+  })();
+
+  async function calcSha256FromSavedFile(filePath) {
+    const buf = await readFile(filePath);
+    return createHash('sha256').update(buf).digest('hex');
+  }
 
   const transferUploader = multer({
     storage: multer.diskStorage({
@@ -35,6 +61,7 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
   // LISTAR TRANSFERENCIAS
   router.get('/', withAuth, async (req, res) => {
     try {
+      await ensureSchemaPromise;
       const { empresa_id } = req.query || {};
       const esSuperUser = isSuper(req);
       const myEmpresa = getEmpresaIdFromToken(req);
@@ -51,6 +78,9 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
           ct.comprobante_path,
           ct.pedido_id,
           ct.validado,
+          ct.estado_revision,
+          ct.riesgo_score,
+          ct.riesgo_flags,
           ct.banco_origen,
           ct.nro_operacion,
           z.nombre AS zona_nombre,
@@ -95,6 +125,7 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
     transferUploader.single('comprobante'),
     async (req, res) => {
       try {
+        await ensureSchemaPromise;
         const body = req.body || {};
         const pedidoId = Number(body.pedido_id);
         if (!Number.isFinite(pedidoId)) {
@@ -142,11 +173,52 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
         }
 
         const filename = req.file.filename;
+        const fullPath = path.join(TRANSF_DIR, filename);
+        const fileHash = await calcSha256FromSavedFile(fullPath);
+
+        const dupHashRows = await query(`
+          SELECT id, fecha, comprobante_path, validado, estado_revision
+          FROM comprobantes_transferencia
+          WHERE empresa_id = $1
+            AND file_hash = $2
+          ORDER BY id DESC
+          LIMIT 1
+        `, [ped.empresa_id, fileHash]);
+
+        // Idempotencia por reintento exacto del mismo archivo
+        if (dupHashRows.length) {
+          try { await unlink(fullPath); } catch {}
+          return res.status(200).json({
+            ok: true,
+            duplicate: true,
+            reason: 'duplicate_file_hash',
+            existing: dupHashRows[0]
+          });
+        }
+
         const archivoPath = filename;
         const comprobantePath = `/Transferencia/${filename}`;
 
         const metodo = (ped.metodo_pago || 'transferencia').toString().toLowerCase();
         const monto = Number(ped.monto || 0) || 0;
+
+        let riesgoScore = 0;
+        const riesgoFlags = [];
+
+        const repetidosMonto = await query(`
+          SELECT COUNT(*)::int AS c
+          FROM comprobantes_transferencia
+          WHERE empresa_id = $1
+            AND ABS(COALESCE(monto, 0) - $2) < 0.01
+            AND fecha >= NOW() - INTERVAL '24 hours'
+        `, [ped.empresa_id, monto]);
+
+        if (Number(repetidosMonto?.[0]?.c || 0) >= 3) {
+          riesgoScore += 30;
+          riesgoFlags.push('MONTO_REPETIDO_24H');
+        }
+
+        const estadoRevision = riesgoScore >= 30 ? 'en_revision' : 'pendiente';
 
         const rows = await query(`
           INSERT INTO comprobantes_transferencia (
@@ -160,6 +232,11 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
             pedido_id,
             zona_id,
             comprobante_path,
+            telefono,
+            file_hash,
+            estado_revision,
+            riesgo_score,
+            riesgo_flags,
             created_at,
             updated_at,
             validado
@@ -167,6 +244,7 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
           VALUES (
             $1, $2, NOW(), $3, $4, $5,
             $6, $7, $8, $9,
+            $10, $11, $12, $13, $14,
             NOW(), NOW(), 0
           )
           RETURNING
@@ -179,7 +257,10 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
             pedido_id,
             zona_id,
             chofer_id,
-            validado
+            validado,
+            estado_revision,
+            riesgo_score,
+            riesgo_flags
         `, [
           ped.empresa_id,
           choferId,
@@ -189,7 +270,12 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
           archivoPath,
           pedidoId,
           ped.zona_id || null,
-          comprobantePath
+          comprobantePath,
+          ped.telefono || null,
+          fileHash,
+          estadoRevision,
+          riesgoScore,
+          riesgoFlags.length ? riesgoFlags.join(',') : null
         ]);
 
         res.json(rows[0]);
@@ -203,6 +289,7 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
   // VERIFICAR
   router.post('/:id/verificar', withAuth, async (req, res) => {
     try {
+      await ensureSchemaPromise;
       const id = Number(req.params.id);
       if (!Number.isFinite(id)) {
         return res.status(400).json({ error: 'id inválido' });
@@ -211,6 +298,8 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
       const esSuperUser = isSuper(req);
       const myEmpresa = getEmpresaIdFromToken(req);
       const enviarAviso = String(req.query.enviarAviso || '').trim() === '1';
+      const force = String(req.query.force || '').trim() === '1';
+      const motivo = (req.body?.reason || req.query.reason || '').toString().trim() || null;
 
       const rows = await query(`
         SELECT
@@ -234,17 +323,47 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
       }
 
       const ct = rows[0];
+      const monto = Number(ct.monto ?? ct.pedido_monto ?? 0) || 0;
+      const pedidoMonto = Number(ct.pedido_monto ?? 0) || 0;
+      const hayMismatchMonto = !!ct.pedido_id && Math.abs(monto - pedidoMonto) > VERIFY_TOLERANCE;
+
+      if (hayMismatchMonto && !force) {
+        const mismatchReason = `Monto comprobante (${monto}) no coincide con pedido (${pedidoMonto})`;
+        await query(
+          `UPDATE comprobantes_transferencia
+           SET validado = 0,
+               estado_revision = 'en_revision',
+               riesgo_score = GREATEST(COALESCE(riesgo_score, 0), 70),
+               riesgo_flags = TRIM(BOTH ',' FROM CONCAT_WS(',', NULLIF(riesgo_flags, ''), 'MONTO_MISMATCH')),
+               verified_reason = COALESCE($3, $4),
+               updated_at = NOW()
+           WHERE id = $1
+             AND ($2::int IS NULL OR empresa_id = $2)`,
+          [id, esSuperUser ? null : Number(myEmpresa), motivo, mismatchReason]
+        );
+
+        return res.status(409).json({
+          ok: false,
+          needsReview: true,
+          reason: 'monto_mismatch',
+          detail: mismatchReason,
+          tolerance: VERIFY_TOLERANCE
+        });
+      }
 
       await query(
         `UPDATE comprobantes_transferencia
          SET validado = 1,
+             estado_revision = 'aprobado',
+             verified_by = $3,
+             verified_reason = COALESCE($4, verified_reason),
+             verified_at = NOW(),
              updated_at = NOW()
          WHERE id = $1
            AND ($2::int IS NULL OR empresa_id = $2)`,
-        [id, esSuperUser ? null : Number(myEmpresa)]
+        [id, esSuperUser ? null : Number(myEmpresa), Number(req.user?.uid || 0) || null, motivo]
       );
 
-      const monto = Number(ct.monto ?? ct.pedido_monto ?? 0) || 0;
       let metodo = (ct.metodo_pago || ct.pedido_metodo || 'transferencia').toString().toLowerCase();
       if (metodo !== 'efectivo') metodo = 'transferencia';
       const fecha = (ct.fecha || ct.pedido_fecha || new Date().toISOString());
