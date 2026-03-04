@@ -85,6 +85,9 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
           ct.riesgo_score,
           ct.riesgo_flags,
           ct.verified_reason,
+          ct.verified_by,
+          ct.verified_at,
+          uv.username AS verified_by_username,
           ct.banco_origen,
           ct.nro_operacion,
           z.nombre AS zona_nombre,
@@ -94,6 +97,7 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
         LEFT JOIN pedidos p           ON p.id = ct.pedido_id
         LEFT JOIN puntos_entrega pe   ON pe.id = p.punto_entrega_id
         LEFT JOIN zonas_geograficas z ON z.id = ct.zona_id
+        LEFT JOIN usuarios uv         ON uv.id = ct.verified_by
         WHERE 1=1
       `;
 

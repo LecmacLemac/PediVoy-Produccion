@@ -295,6 +295,12 @@
     "'": '&#39;'
   }[c]));
   const money = n => '$ ' + Number(n).toLocaleString('es-AR', {minimumFractionDigits: 0});
+  const fmtDateTime = (iso) => {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return '';
+    return d.toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' });
+  };
   
   const api = async (url, opts={}) => {
     try {
@@ -441,6 +447,7 @@
               <span class="text-sub">Ref: ${esc(t.nro_operacion || '-')}</span>
               ${t.riesgo_flags ? `<span class="text-sub" style="color:#fbbf24">Riesgo: ${esc(t.riesgo_flags)}</span>` : ''}
               ${t.verified_reason ? `<span class="text-sub">Nota: ${esc(t.verified_reason)}</span>` : ''}
+              ${t.verified_at ? `<span class="text-sub">Audit: ${esc(t.verified_by_username || `uid:${t.verified_by || '-'}`)} · ${esc(fmtDateTime(t.verified_at))}</span>` : ''}
             </div>
           </td>
           <td style="text-align:center">${t.comprobante_path ? `<button class="btn btn-ghost btn-icon" onclick='verComprobante(${JSON.stringify(String(t.comprobante_path || ''))}, ${Number(t.id)}, ${isValidado})'><i class="fa-regular fa-eye"></i></button>` : '-'}</td>
