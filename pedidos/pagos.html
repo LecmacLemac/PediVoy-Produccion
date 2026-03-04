@@ -400,7 +400,17 @@
     }
     $('#btnVerMas').style.display = hasMoreRows ? 'inline-flex' : 'none';
 
-    updateKPIs(currentRows);
+    let resumen = null;
+    if (reset) {
+      let resumenUrl = `/api/transferencias/resumen?fecha=${fecha}`;
+      if(chofer) resumenUrl += `&chofer_id=${chofer}`;
+      if(empresa) resumenUrl += `&empresa_id=${empresa}`;
+      if(estadoFiltro === 'verificado' || estadoFiltro === 'pendiente') resumenUrl += `&estado=${estadoFiltro}`;
+      if(estadoFiltro === 'en_revision') resumenUrl += `&estado_revision=en_revision`;
+      resumen = await api(resumenUrl);
+    }
+
+    updateKPIs(currentRows, resumen);
     renderTable(currentRows);
   }
 
@@ -409,7 +419,14 @@
     loadPagos(false);
   }
     
-  function updateKPIs(list) {
+  function updateKPIs(list, resumen = null) {
+    if (resumen && typeof resumen === 'object') {
+      $('#kpiTotal').textContent = money(Number(resumen.total_amount || 0));
+      $('#kpiVerificados').textContent = Number(resumen.verified_count || 0);
+      $('#kpiPendientes').textContent = Number(resumen.pending_count || 0);
+      return;
+    }
+
     const transferenciasOnly = list.filter(i => (i.metodo_pago || '').toLowerCase().includes('trans'));
     const total = transferenciasOnly.reduce((sum, item) => sum + Number(item.monto||0), 0);
     const verificados = transferenciasOnly.filter(i => Number(i.validado) === 1).length;

@@ -185,6 +185,53 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
     }
   });
 
+  // RESUMEN KPI
+  router.get('/resumen', withAuth, async (req, res) => {
+    try {
+      await ensureSchemaPromise;
+      const { empresa_id } = req.query || {};
+      const esSuperUser = isSuper(req);
+      const myEmpresa = getEmpresaIdFromToken(req);
+      const fecha = (req.query.fecha || '').toString().slice(0, 10);
+      const estado = (req.query.estado || '').toString().trim().toLowerCase();
+      const estadoRevision = (req.query.estado_revision || '').toString().trim().toLowerCase();
+      const choferId = Number(req.query.chofer_id || 0) || null;
+
+      let sql = `
+        SELECT
+          COUNT(*)::int AS total_count,
+          COALESCE(SUM(CASE WHEN COALESCE(ct.validado, 0) = 1 THEN 1 ELSE 0 END), 0)::int AS verified_count,
+          COALESCE(SUM(CASE WHEN COALESCE(ct.validado, 0) <> 1 THEN 1 ELSE 0 END), 0)::int AS pending_count,
+          COALESCE(SUM(CASE WHEN COALESCE(ct.estado_revision, 'pendiente') = 'en_revision' THEN 1 ELSE 0 END), 0)::int AS review_count,
+          COALESCE(SUM(COALESCE(ct.monto, 0)), 0)::numeric AS total_amount
+        FROM comprobantes_transferencia ct
+        LEFT JOIN pedidos p ON p.id = ct.pedido_id
+        WHERE 1=1
+      `;
+
+      let params = [];
+      let idx = 1;
+      ({ sql, params, idx } = applyTransferFilters({
+        sql,
+        params,
+        idx,
+        filters: { esSuperUser, myEmpresa, empresa_id, fecha, choferId, estado, estadoRevision }
+      }));
+
+      const rows = await query(sql, params);
+      return res.json(rows?.[0] || {
+        total_count: 0,
+        verified_count: 0,
+        pending_count: 0,
+        review_count: 0,
+        total_amount: 0
+      });
+    } catch (e) {
+      console.error('Error resumen transferencias:', e);
+      return res.status(500).json({ error: 'Error obteniendo resumen' });
+    }
+  });
+
   // EXPORTAR CSV
   router.get('/export.csv', withAuth, async (req, res) => {
     try {
