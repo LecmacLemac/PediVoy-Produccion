@@ -95,6 +95,8 @@
 
     .btn-danger { background: rgba(239, 68, 68, 0.1); color: var(--danger); border: 1px solid rgba(239, 68, 68, 0.3); }
     .btn-danger:hover { background: var(--danger); color: #fff; }
+    .btn-warning { background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.35); }
+    .btn-warning:hover { background: rgba(245, 158, 11, 0.3); color: #fff; }
 
     /* TABLE */
     .table-container {
@@ -345,9 +347,6 @@
     const empresa = $('#fEmpresa').value;
 
     let url = `/api/transferencias?fecha=${fecha}`;
-    
-    if(estadoFiltro === 'verificado') url += `&estado=verificado`;
-    if(estadoFiltro === 'pendiente') url += `&estado=pendiente`;
     if(chofer) url += `&chofer_id=${chofer}`;
     if(empresa) url += `&empresa_id=${empresa}`;
 
@@ -356,88 +355,99 @@
     let data = await api(url);
     if(!Array.isArray(data)) data = [];
 
-    // FILTRO CLAVE: Solo mostrar transferencias, ignorar registros de efectivo
-    // Esto evita que aparezcan como "pendientes" pagos que ya se cobraron en mano
+    // Solo transferencias (sin efectivo)
     data = data.filter(t => !(t.metodo_pago || '').toLowerCase().includes('efec'));
 
-    // --- Lógica de Filtro Cliente (Huérfanos) ---
-    if(estadoFiltro === 'orphan') {
-      data = data.filter(t => !t.pedido_id);
-    }
+    // Filtros en cliente (compat con backend actual)
+    if(estadoFiltro === 'orphan') data = data.filter(t => !t.pedido_id);
+    if(estadoFiltro === 'verificado') data = data.filter(t => Number(t.validado) === 1);
+    if(estadoFiltro === 'pendiente') data = data.filter(t => Number(t.validado) !== 1);
 
     updateKPIs(data);
     renderTable(data);
   }
     
   function updateKPIs(list) {
-  // Solo sumamos y contamos lo que NO es efectivo
-  const transferenciasOnly = list.filter(i => (i.metodo_pago || '').toLowerCase().includes('trans'));
-  const total = transferenciasOnly.reduce((sum, item) => sum + Number(item.monto||0), 0);
-  const verificados = transferenciasOnly.filter(i => i.validado == 1).length;
-  const pendientes = transferenciasOnly.length - verificados;
+    const transferenciasOnly = list.filter(i => (i.metodo_pago || '').toLowerCase().includes('trans'));
+    const total = transferenciasOnly.reduce((sum, item) => sum + Number(item.monto||0), 0);
+    const verificados = transferenciasOnly.filter(i => Number(i.validado) === 1).length;
+    const pendientes = transferenciasOnly.length - verificados;
 
-  $('#kpiTotal').textContent = money(total);
-  $('#kpiVerificados').textContent = verificados;
-  $('#kpiPendientes').textContent = pendientes;
+    $('#kpiTotal').textContent = money(total);
+    $('#kpiVerificados').textContent = verificados;
+    $('#kpiPendientes').textContent = pendientes;
+  }
+
+  function statusBadge(t, isValidado) {
+    const estado = String(t.estado_revision || '').toLowerCase();
+    const riesgo = Number(t.riesgo_score || 0);
+
+    if (estado === 'en_revision') {
+      return `<span class="badge badge-danger"><i class="fa-solid fa-triangle-exclamation"></i> En revisión</span>`;
+    }
+    if (isValidado || estado === 'aprobado') {
+      return `<span class="badge badge-success"><i class="fa-solid fa-check"></i> Verificado</span>`;
+    }
+    return `<span class="badge badge-warning"><i class="fa-solid fa-hourglass"></i> Pendiente</span>` +
+      (riesgo > 0 ? ` <span class="badge badge-danger" title="Score de riesgo"><i class="fa-solid fa-shield-halved"></i> Riesgo ${riesgo}</span>` : '');
   }
 
   // --- Renderizar Tabla ---
   function renderTable(list) {
-  if(list.length === 0) {
-    $('#rows').innerHTML = `<tr><td colspan="9" style="text-align:center; opacity:0.6;">Sin datos.</td></tr>`;
-    return;
-  }
+    if(list.length === 0) {
+      $('#rows').innerHTML = `<tr><td colspan="9" style="text-align:center; opacity:0.6;">Sin datos.</td></tr>`;
+      return;
+    }
 
-  $('#rows').innerHTML = list.map(t => {
-    const metodo = (t.metodo_pago || '').toLowerCase();
-    const esEfectivo = metodo.includes('efec');
-    const isValidado = t.validado == 1 || esEfectivo; // El efectivo se considera "auto-validado" aquí
+    $('#rows').innerHTML = list.map(t => {
+      const metodo = (t.metodo_pago || '').toLowerCase();
+      const esEfectivo = metodo.includes('efec');
+      const isValidado = Number(t.validado) === 1 || esEfectivo;
+      const estado = String(t.estado_revision || '').toLowerCase();
+      const requiereForzar = estado === 'en_revision' && !isValidado;
+      const isSuper = String(currentUser?.role || '').toLowerCase() === 'super';
 
-    // Badge de Estado Inteligente
-    let statusHtml = esEfectivo 
-      ? `<span class="badge badge-success"><i class="fa-solid fa-money-bill"></i> Efectivo</span>`
-      : (isValidado 
-          ? `<span class="badge badge-success"><i class="fa-solid fa-check"></i> Verificado</span>` 
-          : `<span class="badge badge-warning"><i class="fa-solid fa-hourglass"></i> Pendiente</span>`);
+      const metodoBadge = esEfectivo
+        ? `<span class="badge badge-info"><i class="fa-solid fa-money-bill"></i> Efec</span>`
+        : `<span class="badge badge-info"><i class="fa-solid fa-mobile-screen"></i> Transf</span>`;
 
-    // Método Badge
-    const metodoBadge = esEfectivo 
-      ? `<span class="badge badge-info"><i class="fa-solid fa-money-bill"></i> Efec</span>` 
-      : `<span class="badge badge-info"><i class="fa-solid fa-mobile-screen"></i> Transf</span>`;
+      const btnValidar = (!esEfectivo && !isValidado && !requiereForzar)
+        ? `<button class="btn btn-primary btn-icon" onclick="verificarPago(${t.id})" title="Validar"><i class="fa-solid fa-check"></i></button>`
+        : `<span style="width:32px; display:inline-block"></span>`;
 
-    // Botón de Validar: solo se muestra si NO es efectivo y NO está validado
-    const btnValidar = (!esEfectivo && !t.validado)
-      ? `<button class="btn btn-primary btn-icon" onclick="verificarPago(${t.id})" title="Validar"><i class="fa-solid fa-check"></i></button>`
-      : `<span style="width:32px; display:inline-block"></span>`;
+      const btnForzar = (!esEfectivo && !isValidado && requiereForzar && isSuper)
+        ? `<button class="btn btn-warning btn-icon" onclick="forzarVerificacion(${t.id})" title="Forzar aprobación (Super)"><i class="fa-solid fa-shield"></i></button>`
+        : '';
 
-    return `
-      <tr>
-        <td style="color:var(--text-muted)">${esc(t.fecha ? t.fecha.slice(11,16) : '--:--')}</td>
-        <td>
+      return `
+        <tr>
+          <td style="color:var(--text-muted)">${esc(t.fecha ? t.fecha.slice(11,16) : '--:--')}</td>
+          <td>
+              <div class="text-cell">
+                <span class="text-main">${esc(t.cliente || 'S/D')}</span>
+                <span class="text-sub">${esc(t.zona_nombre || '')}</span>
+              </div>
+          </td>
+          <td>#${t.pedido_id ? Number(t.pedido_id) : '-'}</td>
+          <td>${metodoBadge}</td>
+          <td style="font-weight:700; font-size:1rem; color:${esEfectivo ? '#34d399' : '#fff'}">${money(t.monto)}</td>
+          <td>
             <div class="text-cell">
-              <span class="text-main">${esc(t.cliente || 'S/D')}</span>
-              <span class="text-sub">${esc(t.zona_nombre || '')}</span>
+              <span class="text-main">${esc(t.banco_origen || (esEfectivo ? 'Cobro en mano' : 'Banco?'))}</span>
+              <span class="text-sub">Ref: ${esc(t.nro_operacion || '-')}</span>
             </div>
-        </td>
-        <td>#${t.pedido_id ? Number(t.pedido_id) : '-'}</td>
-        <td>${metodoBadge}</td>
-        <td style="font-weight:700; font-size:1rem; color:${esEfectivo ? '#34d399' : '#fff'}">${money(t.monto)}</td>
-        <td>
-          <div class="text-cell">
-            <span class="text-main">${esc(t.banco_origen || (esEfectivo ? 'Cobro en mano' : 'Banco?'))}</span>
-            <span class="text-sub">Ref: ${esc(t.nro_operacion || '-')}</span>
-          </div>
-        </td>
-        <td style="text-align:center">${t.comprobante_path ? `<button class="btn btn-ghost btn-icon" onclick='verComprobante(${JSON.stringify(String(t.comprobante_path || ''))}, ${Number(t.id)}, ${isValidado})'><i class="fa-regular fa-eye"></i></button>` : '-'}</td>
-        <td>${statusHtml}</td>
-        <td style="text-align:right">
-          ${btnValidar}
-          <button class="btn btn-danger btn-icon" onclick="eliminarPago(${Number(t.id)})"><i class="fa-solid fa-trash-can"></i></button>
-        </td>
-      </tr>
-    `;
-  }).join('');
-}
+          </td>
+          <td style="text-align:center">${t.comprobante_path ? `<button class="btn btn-ghost btn-icon" onclick='verComprobante(${JSON.stringify(String(t.comprobante_path || ''))}, ${Number(t.id)}, ${isValidado})'><i class="fa-regular fa-eye"></i></button>` : '-'}</td>
+          <td>${statusBadge(t, isValidado)}</td>
+          <td style="text-align:right">
+            ${btnValidar}
+            ${btnForzar}
+            <button class="btn btn-danger btn-icon" onclick="eliminarPago(${Number(t.id)})"><i class="fa-solid fa-trash-can"></i></button>
+          </td>
+        </tr>
+      `;
+    }).join('');
+  }
 
 // --- Funciones del Modal y Acciones ---
   function verComprobante(path, id, isValidado) {
@@ -463,7 +473,6 @@
 
   async function verificarPago(id) {
     if (verifyBusy) return;
-    // Si tienes SweetAlert2, úsalo aquí. Si no, native confirm:
     if(!confirm('¿Confirmar que el dinero ingresó a la cuenta?')) return;
 
     verifyBusy = true;
@@ -473,22 +482,54 @@
       btn.disabled = true;
       btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Validando...';
     }
-    
-    // Llamada al endpoint existente en server.js
-    const res = await api(`/api/transferencias/${id}/verificar?enviarAviso=1`, { method: 'POST' });
-    
-    if(res && res.ok) {
-      toast('Pago verificado y registrado');
-      loadPagos();
-      closeModal();
-    } else {
-      alert('Error al verificar pago');
-    }
 
-    verifyBusy = false;
-    if (btn) {
-      btn.disabled = false;
-      btn.innerHTML = prev;
+    try {
+      const resp = await authFetch(`/api/transferencias/${id}/verificar?enviarAviso=1`, { method: 'POST' });
+      const data = await resp.json().catch(() => ({}));
+
+      if (resp.ok && data?.ok) {
+        toast('Pago verificado y registrado');
+        loadPagos();
+        closeModal();
+      } else if (resp.status === 409 && data?.needsReview) {
+        alert(`⚠️ Este comprobante requiere revisión manual.\n\n${data.detail || 'Monto no coincide con pedido.'}`);
+        loadPagos();
+      } else {
+        alert(data?.error || 'Error al verificar pago');
+      }
+    } finally {
+      verifyBusy = false;
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = prev;
+      }
+    }
+  }
+
+  async function forzarVerificacion(id) {
+    const isSuper = String(currentUser?.role || '').toLowerCase() === 'super';
+    if (!isSuper) return alert('Solo un superadmin puede forzar aprobación.');
+
+    const reason = (prompt('Motivo de aprobación forzada (auditoría):', 'Revisión manual confirmada') || '').trim();
+    if (!reason) return alert('Se requiere motivo para auditar la acción.');
+    if (!confirm('⚠️ Vas a forzar aprobación de un comprobante en revisión. ¿Continuar?')) return;
+
+    try {
+      const resp = await authFetch(`/api/transferencias/${id}/verificar?enviarAviso=1&force=1`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason })
+      });
+      const data = await resp.json().catch(() => ({}));
+
+      if (resp.ok && data?.ok) {
+        toast('Aprobación forzada registrada');
+        loadPagos();
+      } else {
+        alert(data?.error || 'No se pudo forzar la aprobación');
+      }
+    } catch {
+      alert('Error de red forzando aprobación');
     }
   }
 
