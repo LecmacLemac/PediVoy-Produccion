@@ -113,6 +113,7 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
       const choferId = Number(req.query.chofer_id || 0) || null;
       const limitRaw = Number(req.query.limit || 0) || 0;
       const offsetRaw = Number(req.query.offset || 0) || 0;
+      const beforeId = Number(req.query.before_id || 0) || null;
       const limit = Math.min(Math.max(limitRaw, 0), 1000);
       const offset = Math.max(offsetRaw, 0);
 
@@ -156,6 +157,11 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
         filters: { esSuperUser, myEmpresa, empresa_id, fecha, choferId, estado, estadoRevision }
       }));
 
+      if (beforeId) {
+        sql += ` AND ct.id < $${idx++}`;
+        params.push(beforeId);
+      }
+
       sql += ` ORDER BY ct.fecha DESC, ct.id DESC`;
       if (limit > 0) {
         sql += ` LIMIT $${idx++}`;
@@ -171,6 +177,7 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
         res.setHeader('X-Page-Limit', String(limit));
         res.setHeader('X-Page-Offset', String(offset));
         res.setHeader('X-Page-Count', String(rows.length));
+        if (beforeId) res.setHeader('X-Page-Before-Id', String(beforeId));
       }
       res.json(rows);
     } catch (e) {

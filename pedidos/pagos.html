@@ -324,6 +324,7 @@
   const PAGE_LIMIT = 200;
   let currentOffset = 0;
   let hasMoreRows = false;
+  let currentBeforeId = null;
 
   // --- Inicialización ---
   (async () => {
@@ -365,12 +366,14 @@
 
     if (reset) {
       currentOffset = 0;
+      currentBeforeId = null;
       hasMoreRows = false;
       currentRows = [];
       $('#rows').innerHTML = '<tr><td colspan="9" style="padding:3rem; text-align:center; color: var(--text-muted);"><i class="fa-solid fa-circle-notch fa-spin"></i> Cargando datos...</td></tr>';
     }
 
-    let url = `/api/transferencias?fecha=${fecha}&limit=${PAGE_LIMIT}&offset=${currentOffset}`;
+    let url = `/api/transferencias?fecha=${fecha}&limit=${PAGE_LIMIT}`;
+    if (!reset && currentBeforeId) url += `&before_id=${currentBeforeId}`;
     if(chofer) url += `&chofer_id=${chofer}`;
     if(empresa) url += `&empresa_id=${empresa}`;
     if(estadoFiltro === 'verificado' || estadoFiltro === 'pendiente') url += `&estado=${estadoFiltro}`;
@@ -391,6 +394,10 @@
     currentRows = reset ? data : currentRows.concat(data);
     hasMoreRows = data.length === PAGE_LIMIT;
     currentOffset += data.length;
+    if (data.length > 0) {
+      const last = data[data.length - 1];
+      currentBeforeId = Number(last?.id || 0) || currentBeforeId;
+    }
     $('#btnVerMas').style.display = hasMoreRows ? 'inline-flex' : 'none';
 
     updateKPIs(currentRows);
