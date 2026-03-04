@@ -67,6 +67,9 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
       const myEmpresa = getEmpresaIdFromToken(req);
 
       const fecha = (req.query.fecha || '').toString().slice(0, 10);
+      const estado = (req.query.estado || '').toString().trim().toLowerCase();
+      const estadoRevision = (req.query.estado_revision || '').toString().trim().toLowerCase();
+      const choferId = Number(req.query.chofer_id || 0) || null;
 
       let sql = `
         SELECT
@@ -81,6 +84,7 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
           ct.estado_revision,
           ct.riesgo_score,
           ct.riesgo_flags,
+          ct.verified_reason,
           ct.banco_origen,
           ct.nro_operacion,
           z.nombre AS zona_nombre,
@@ -107,6 +111,23 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
       if (fecha) {
         sql += ` AND ct.fecha >= $${idx}::date AND ct.fecha < ($${idx}::date + INTERVAL '1 day')`;
         params.push(fecha);
+        idx += 1;
+      }
+
+      if (choferId) {
+        sql += ` AND ct.chofer_id = $${idx++}`;
+        params.push(choferId);
+      }
+
+      if (estado === 'verificado') {
+        sql += ` AND COALESCE(ct.validado, 0) = 1`;
+      } else if (estado === 'pendiente') {
+        sql += ` AND COALESCE(ct.validado, 0) <> 1`;
+      }
+
+      if (estadoRevision && ['pendiente', 'en_revision', 'aprobado', 'rechazado', 'duplicado'].includes(estadoRevision)) {
+        sql += ` AND COALESCE(ct.estado_revision, 'pendiente') = $${idx++}`;
+        params.push(estadoRevision);
       }
 
       sql += ` ORDER BY ct.fecha DESC, ct.id DESC`;

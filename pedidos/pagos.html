@@ -218,6 +218,7 @@
       <select id="fEstado">
         <option value="">Todo</option>
         <option value="pendiente">⏳ Pendientes</option>
+        <option value="en_revision">🛡️ En revisión</option>
         <option value="verificado">✅ Verificados</option>
         <option value="orphan">⚠️ Huérfanos (Sin Pedido)</option>
       </select>
@@ -349,6 +350,8 @@
     let url = `/api/transferencias?fecha=${fecha}`;
     if(chofer) url += `&chofer_id=${chofer}`;
     if(empresa) url += `&empresa_id=${empresa}`;
+    if(estadoFiltro === 'verificado' || estadoFiltro === 'pendiente') url += `&estado=${estadoFiltro}`;
+    if(estadoFiltro === 'en_revision') url += `&estado_revision=en_revision`;
 
     $('#rows').innerHTML = '<tr><td colspan="9" style="padding:3rem; text-align:center; color: var(--text-muted);"><i class="fa-solid fa-circle-notch fa-spin"></i> Cargando datos...</td></tr>';
 
@@ -358,10 +361,11 @@
     // Solo transferencias (sin efectivo)
     data = data.filter(t => !(t.metodo_pago || '').toLowerCase().includes('efec'));
 
-    // Filtros en cliente (compat con backend actual)
+    // Filtros residuales en cliente (compat/defensa)
     if(estadoFiltro === 'orphan') data = data.filter(t => !t.pedido_id);
     if(estadoFiltro === 'verificado') data = data.filter(t => Number(t.validado) === 1);
     if(estadoFiltro === 'pendiente') data = data.filter(t => Number(t.validado) !== 1);
+    if(estadoFiltro === 'en_revision') data = data.filter(t => String(t.estado_revision || '').toLowerCase() === 'en_revision');
 
     updateKPIs(data);
     renderTable(data);
@@ -435,6 +439,8 @@
             <div class="text-cell">
               <span class="text-main">${esc(t.banco_origen || (esEfectivo ? 'Cobro en mano' : 'Banco?'))}</span>
               <span class="text-sub">Ref: ${esc(t.nro_operacion || '-')}</span>
+              ${t.riesgo_flags ? `<span class="text-sub" style="color:#fbbf24">Riesgo: ${esc(t.riesgo_flags)}</span>` : ''}
+              ${t.verified_reason ? `<span class="text-sub">Nota: ${esc(t.verified_reason)}</span>` : ''}
             </div>
           </td>
           <td style="text-align:center">${t.comprobante_path ? `<button class="btn btn-ghost btn-icon" onclick='verComprobante(${JSON.stringify(String(t.comprobante_path || ''))}, ${Number(t.id)}, ${isValidado})'><i class="fa-regular fa-eye"></i></button>` : '-'}</td>
