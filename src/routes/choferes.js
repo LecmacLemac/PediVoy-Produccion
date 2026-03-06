@@ -22,7 +22,7 @@ export function createChoferesRouter(deps) {
       const empresaTarget = esSuperAdmin ? (Number(req.query?.empresa_id) || null) : getEmpresaIdFromToken(req);
       if (!empresaTarget && !esSuperAdmin) return res.status(400).json({ error: 'Empresa requerida' });
 
-      let sql = `SELECT id, nombre, telefono, email, tipo, sla_horas FROM choferes`;
+      let sql = `SELECT id, nombre, telefono, email, tipo, sla_horas, foto_url FROM choferes`;
       const params = [];
       if (empresaTarget) {
         sql += ` WHERE empresa_id=$1`;
@@ -39,15 +39,15 @@ export function createChoferesRouter(deps) {
 
   router.post('/choferes', withAuth, async (req, res) => {
     try {
-      const { nombre, telefono, email, tipo, sla_horas, empresa_id } = req.body || {};
+      const { nombre, telefono, email, tipo, sla_horas, foto_url, empresa_id } = req.body || {};
       const esSuperAdmin = isSuper(req);
       const finalEmpresaId = esSuperAdmin && empresa_id ? Number(empresa_id) : getEmpresaIdFromToken(req);
 
       const rows = await query(
-        `INSERT INTO choferes (empresa_id, nombre, telefono, email, tipo, sla_horas)
-         VALUES ($1, $2, $3, $4, $5, $6)
+        `INSERT INTO choferes (empresa_id, nombre, telefono, email, tipo, sla_horas, foto_url)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
          RETURNING id`,
-        [finalEmpresaId, nombre, telefono, email, tipo || 'propio', sla_horas]
+        [finalEmpresaId, nombre, telefono, email, tipo || 'propio', sla_horas, foto_url || null]
       );
 
       return res.json(rows[0]);
@@ -58,17 +58,17 @@ export function createChoferesRouter(deps) {
 
   router.put('/choferes/:id', withAuth, async (req, res) => {
     try {
-      const { nombre, telefono, email, tipo, sla_horas } = req.body || {};
+      const { nombre, telefono, email, tipo, sla_horas, foto_url } = req.body || {};
       const esSuperAdmin = isSuper(req);
       const myEmpresa = getEmpresaIdFromToken(req);
 
       const rows = await query(
         `UPDATE choferes
-            SET nombre=$1, telefono=$2, email=$3, tipo=$4, sla_horas=$5
-          WHERE id=$6
-            AND ($7::int IS NULL OR empresa_id=$7)
+            SET nombre=$1, telefono=$2, email=$3, tipo=$4, sla_horas=$5, foto_url=$6
+          WHERE id=$7
+            AND ($8::int IS NULL OR empresa_id=$8)
         RETURNING id`,
-        [nombre, telefono, email, tipo, sla_horas, req.params.id, esSuperAdmin ? null : Number(myEmpresa)]
+        [nombre, telefono, email, tipo, sla_horas, foto_url || null, req.params.id, esSuperAdmin ? null : Number(myEmpresa)]
       );
 
       if (!rows.length) return res.status(404).json({ error: 'Chofer no encontrado o sin permiso' });

@@ -204,6 +204,10 @@
   .badge-repartidor, .tag-promo { background: rgba(59,130,246,0.15); color: #60a5fa; }
   .badge-super, .tag-fletero, .st-inactive { background: rgba(245,158,11,0.15); color: #fbbf24; }
 
+  .driver-cell { display:flex; align-items:center; gap:0.6rem; }
+  .driver-photo { width:34px; height:34px; border-radius:50%; object-fit:cover; border:1px solid var(--border); background:#0b1220; }
+  .driver-photo-fallback { width:34px; height:34px; border-radius:50%; display:grid; place-items:center; font-size:0.75rem; color:var(--muted); border:1px solid var(--border); background:#0b1220; }
+
   .toast { position: fixed; right: 20px; bottom: 30px; background: #fff; color: #0f172a; padding: 10px 20px; border-radius: 99px; font-weight: 600; box-shadow: 0 10px 30px rgba(0,0,0,0.3); opacity: 0; pointer-events: none; transition: 0.3s; z-index: 2000; }
   .toast.show { opacity: 1; transform: translateY(-10px); }
 
@@ -396,6 +400,11 @@
             <label>Email (Opcional)</label>
             <input type="email" id="c_email" placeholder="email@ejemplo.com">
           </div>
+        </div>
+
+        <div>
+          <label>Foto del chofer (URL opcional)</label>
+          <input type="url" id="c_foto_url" placeholder="https://...">
         </div>
 
         <div class="form-row">
@@ -688,7 +697,12 @@
         return `
         <tr>
           <td style="color:var(--muted); font-family:monospace;">#${id}</td>
-          <td style="font-weight:600; color:#fff;">${esc(c.nombre)}</td>
+          <td>
+            <div class="driver-cell">
+              ${c.foto_url ? `<img class="driver-photo" src="${esc(c.foto_url)}" alt="Foto ${esc(c.nombre)}" onerror="this.style.display='none'; this.nextElementSibling.style.display='grid';"><div class="driver-photo-fallback" style="display:none;">👤</div>` : '<div class="driver-photo-fallback">👤</div>'}
+              <span style="font-weight:600; color:#fff;">${esc(c.nombre)}</span>
+            </div>
+          </td>
           <td>${c.telefono ? esc(c.telefono) : '<span style="color:var(--muted)">-</span>'}</td>
           <td><span class="status-badge ${tipoClass}">${tipoLabel}</span></td>
           <td>${c.sla_horas ? Number(c.sla_horas) + ' hs' : '-'}</td>
@@ -922,6 +936,7 @@
           $('#c_empresa_id').value = $('#empFilter').value || '';
       }
 
+      $('#c_foto_url').value = '';
       $('#c_nombre').focus();
     }
 
@@ -936,6 +951,7 @@
       $('#c_nombre').value = c.nombre;
       $('#c_telefono').value = c.telefono || '';
       $('#c_email').value = c.email || '';
+      $('#c_foto_url').value = c.foto_url || '';
       $('#c_tipo').value = c.tipo || 'propio';
       $('#c_sla').value = c.sla_horas || '';
       
@@ -951,6 +967,7 @@
         nombre: $('#c_nombre').value,
         telefono: $('#c_telefono').value,
         email: $('#c_email').value,
+        foto_url: ($('#c_foto_url').value || '').trim() || null,
         tipo: $('#c_tipo').value,
         sla_horas: $('#c_sla').value ? Number($('#c_sla').value) : null
       };

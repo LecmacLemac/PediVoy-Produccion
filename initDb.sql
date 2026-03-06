@@ -1152,6 +1152,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_pedido_pagos_one_pending_per_order
   WHERE estado = 'pendiente';
 
 
+-- Choferes: foto opcional para panel admin
+ALTER TABLE choferes
+  ADD COLUMN IF NOT EXISTS foto_url TEXT;
+
 -- =========================================================
 -- 13. DATOS SEMILLA (deshabilitado)
 -- =========================================================
