@@ -315,6 +315,12 @@
         <span>Última actualización: <strong id="trackingUpdated">-</strong></span>
         <span>En ruta: <strong id="trackingCount">0</strong></span>
         <span>Alertas: <strong id="trackingAlerts">0</strong></span>
+        <span>Altas: <strong id="trackingAlertsHigh">0</strong></span>
+        <span>Medias: <strong id="trackingAlertsMid">0</strong></span>
+        <label style="display:flex;align-items:center;gap:8px;margin:0;color:var(--muted);text-transform:none;letter-spacing:0;">
+          <input id="trackingSoundAlerts" type="checkbox" checked style="width:auto; margin:0;">
+          Sonido alertas
+        </label>
       </div>
 
       <div class="tracking-map-wrap">
@@ -478,6 +484,7 @@
     let trackingTrailLayer = null;
     const trackingTrails = new Map();
     let trackingLiveItems = [];
+    let lastAlertSignature = '';
 
     // --- API ---
     async function api(endpoint, opts = {}) {
@@ -538,11 +545,32 @@
     }
 
     function buildAlert(it) {
-      if (isStale(it.timestamp, 180)) return { text: 'Señal vencida', cls: 'badge-super' };
+      if (isStale(it.timestamp, 180)) return { text: 'Señal vencida', cls: 'badge-super', severity: 'high' };
       const eta = estimateEtaMin(it);
-      if (eta != null && eta > 60) return { text: 'ETA alto', cls: 'badge-super' };
-      if (eta != null && eta > 35) return { text: 'Demora', cls: 'badge-repartidor' };
-      return { text: 'Normal', cls: 'badge-admin' };
+      if (eta != null && eta > 60) return { text: 'ETA alto', cls: 'badge-super', severity: 'high' };
+      if (eta != null && eta > 35) return { text: 'Demora', cls: 'badge-repartidor', severity: 'mid' };
+      return { text: 'Normal', cls: 'badge-admin', severity: 'none' };
+    }
+
+    function playAlertSoundIfNeeded(items = []) {
+      const enabled = !!$('#trackingSoundAlerts')?.checked;
+      if (!enabled) return;
+
+      const critical = items
+        .map(it => ({ id: Number(it.pedido_id || 0), a: buildAlert(it) }))
+        .filter(x => x.a.severity === 'high')
+        .map(x => x.id)
+        .sort((a,b) => a-b);
+
+      const sign = critical.join(',');
+      if (!critical.length || sign === lastAlertSignature) return;
+      lastAlertSignature = sign;
+
+      try {
+        const audio = new Audio('/pedidos/sounds/error.mp3');
+        audio.volume = 0.45;
+        audio.play().catch(() => {});
+      } catch {}
     }
 
     function getTrackingFilteredItems(items = trackingLiveItems) {
@@ -616,13 +644,15 @@
     function renderTracking(items = []) {
       const tbody = $('#trackingBody');
       const staleCount = items.filter(it => isStale(it.timestamp)).length;
-      const alertsCount = items.filter(it => {
-        const a = buildAlert(it);
-        return a.text !== 'Normal';
-      }).length;
+      const alerts = items.map(it => buildAlert(it));
+      const alertsCount = alerts.filter(a => a.text !== 'Normal').length;
+      const alertsHigh = alerts.filter(a => a.severity === 'high').length;
+      const alertsMid = alerts.filter(a => a.severity === 'mid').length;
 
       $('#trackingCount').textContent = String(items.length);
       $('#trackingAlerts').textContent = String(alertsCount);
+      $('#trackingAlertsHigh').textContent = String(alertsHigh);
+      $('#trackingAlertsMid').textContent = String(alertsMid);
       $('#trackingUpdated').textContent = new Date().toLocaleTimeString();
       $('#trackingStatus').textContent = staleCount ? `live (señales viejas: ${staleCount})` : 'live';
       $('#trackingDot').classList.toggle('dot-stale', staleCount > 0);
@@ -676,6 +706,7 @@
           const filtered = getTrackingFilteredItems(trackingLiveItems);
           renderTracking(filtered);
           renderTrackingMap(filtered);
+          playAlertSoundIfNeeded(filtered);
         }
       } finally {
         trackingBusy = false;
@@ -995,6 +1026,13 @@
       trackingFocusAlerts.addEventListener('change', () => {
         const filtered = getTrackingFilteredItems(trackingLiveItems);
         renderTrackingMap(filtered);
+      });
+    }
+
+    const trackingSoundAlerts = document.getElementById('trackingSoundAlerts');
+    if (trackingSoundAlerts) {
+      trackingSoundAlerts.addEventListener('change', () => {
+        if (!trackingSoundAlerts.checked) lastAlertSignature = '';
       });
     }
 
