@@ -2,6 +2,9 @@
 // Choferes (CRUD) + costos + escalas + tramos (extraído desde server.js)
 
 import express from 'express';
+import fs from 'fs';
+import path from 'path';
+import multer from 'multer';
 
 export function createChoferesRouter(deps) {
   const { query, withAuth, isSuper, getEmpresaIdFromToken } = deps || {};
@@ -11,6 +14,25 @@ export function createChoferesRouter(deps) {
   if (typeof getEmpresaIdFromToken !== 'function') throw new Error('createChoferesRouter: falta getEmpresaIdFromToken(fn)');
 
   const router = express.Router();
+
+  const CHOFERES_IMG_DIR = path.resolve(process.cwd(), 'pedidos', 'img', 'choferes');
+  fs.mkdirSync(CHOFERES_IMG_DIR, { recursive: true });
+
+  const choferesPhotoUploader = multer({
+    storage: multer.diskStorage({
+      destination: (_req, _file, cb) => cb(null, CHOFERES_IMG_DIR),
+      filename: (_req, file, cb) => {
+        const ext = path.extname(file.originalname || '').toLowerCase() || '.jpg';
+        const safeExt = ['.jpg', '.jpeg', '.png', '.webp'].includes(ext) ? ext : '.jpg';
+        cb(null, `chofer_${Date.now()}_${Math.random().toString(36).slice(2, 8)}${safeExt}`);
+      }
+    }),
+    fileFilter: (_req, file, cb) => {
+      const ok = ['image/jpeg', 'image/png', 'image/webp'].includes(String(file.mimetype || '').toLowerCase());
+      cb(ok ? null : new Error('Formato no permitido'), ok);
+    },
+    limits: { fileSize: 2 * 1024 * 1024 }
+  });
 
   // --------------------------------------------------
   // CHOFERES (CRUD)
@@ -35,6 +57,21 @@ export function createChoferesRouter(deps) {
     } catch {
       return res.status(500).json({ error: 'Error obteniendo choferes' });
     }
+  });
+
+  router.post('/choferes/upload-foto', withAuth, (req, res) => {
+    choferesPhotoUploader.single('foto')(req, res, (err) => {
+      if (err) {
+        const msg = String(err?.message || 'Error subiendo foto');
+        if (msg.includes('File too large')) return res.status(400).json({ error: 'La imagen supera 2MB' });
+        if (msg.includes('Formato no permitido')) return res.status(400).json({ error: 'Formato inválido. Usá JPG/PNG/WEBP' });
+        return res.status(400).json({ error: 'No se pudo subir la foto' });
+      }
+
+      const filename = req.file?.filename;
+      if (!filename) return res.status(400).json({ error: 'Archivo requerido' });
+      return res.json({ ok: true, foto_url: `/pedidos/img/choferes/${filename}` });
+    });
   });
 
   router.post('/choferes', withAuth, async (req, res) => {

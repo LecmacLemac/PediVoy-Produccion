@@ -403,8 +403,13 @@
         </div>
 
         <div>
-          <label>Foto del chofer (URL opcional)</label>
-          <input type="url" id="c_foto_url" placeholder="https://...">
+          <label>Foto del chofer (opcional)</label>
+          <div style="display:grid; grid-template-columns: 1fr auto; gap:0.5rem;">
+            <input type="url" id="c_foto_url" placeholder="https://... o subí una imagen">
+            <button type="button" id="btnUploadFoto" class="btn">Subir foto</button>
+          </div>
+          <input type="file" id="c_foto_file" accept="image/png,image/jpeg,image/webp" style="display:none;">
+          <small id="fotoHint" style="color:var(--muted);">Opcional. Formatos: JPG/PNG/WEBP (máx 2MB).</small>
         </div>
 
         <div class="form-row">
@@ -523,6 +528,25 @@
         console.error(e);
         toast('Error de conexión');
         return { error: 'Error' };
+      }
+    }
+
+    async function uploadDriverPhoto(file) {
+      const fd = new FormData();
+      fd.append('foto', file);
+      const res = await fetch('/api/choferes/upload-foto', {
+        method: 'POST',
+        body: fd,
+        credentials: 'include'
+      });
+      if (res.status === 401) {
+        window.location.href = '../login.html';
+        return { error: 'Sesión vencida' };
+      }
+      try {
+        return await res.json();
+      } catch {
+        return { error: 'Error subiendo imagen' };
       }
     }
 
@@ -1045,6 +1069,34 @@
 
     const btnSaveChofer = document.getElementById('btnSaveChofer');
     if (btnSaveChofer) btnSaveChofer.addEventListener('click', save);
+
+    const btnUploadFoto = document.getElementById('btnUploadFoto');
+    const fotoFileInput = document.getElementById('c_foto_file');
+    if (btnUploadFoto && fotoFileInput) {
+      btnUploadFoto.addEventListener('click', () => fotoFileInput.click());
+      fotoFileInput.addEventListener('change', async () => {
+        const file = fotoFileInput.files && fotoFileInput.files[0];
+        if (!file) return;
+
+        const prevTxt = btnUploadFoto.textContent;
+        btnUploadFoto.disabled = true;
+        btnUploadFoto.textContent = 'Subiendo...';
+
+        try {
+          const up = await uploadDriverPhoto(file);
+          if (up?.foto_url) {
+            $('#c_foto_url').value = up.foto_url;
+            toast('✅ Foto subida');
+          } else {
+            toast('❌ ' + (up?.error || 'No se pudo subir la foto'));
+          }
+        } finally {
+          btnUploadFoto.disabled = false;
+          btnUploadFoto.textContent = prevTxt;
+          fotoFileInput.value = '';
+        }
+      });
+    }
 
     const formChofer = document.getElementById('formChofer');
     if (formChofer) {
