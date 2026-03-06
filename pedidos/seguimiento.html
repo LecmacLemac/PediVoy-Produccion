@@ -96,7 +96,7 @@
     <div class="title-row">
       <div>
         <h1 class="text-lg font-bold text-gray-900" id="lblCliente">Cargando...</h1>
-        <div class="order-id">Pedido #<span id="lblId">--</span></div>
+        <div class="order-id" id="orderMeta">Seguimiento en tiempo real</div>
       </div>
       <div class="status-badge" id="lblEstado">...</div>
     </div>
@@ -142,7 +142,7 @@
   const loadingEl    = document.getElementById('loading');
   const driverRow    = document.getElementById('driverRow');
   const lblCliente   = document.getElementById('lblCliente');
-  const lblId        = document.getElementById('lblId');
+  // ID de pedido oculto para vista cliente
   const lblDireccion = document.getElementById('lblDireccion');
   const lblEstado    = document.getElementById('lblEstado');
   const lblChofer    = document.getElementById('lblChofer');
@@ -228,7 +228,7 @@
       (pedido.direccion ? String(pedido.direccion).split(',')[0] : 'Cliente');
 
     lblCliente.textContent   = `Hola ${nombreCliente}`;
-    lblId.textContent        = pedido.id;
+    // pedido.id oculto en UI pública
     lblDireccion.textContent = pedido.direccion || '';
 
     // --- Estado ---
