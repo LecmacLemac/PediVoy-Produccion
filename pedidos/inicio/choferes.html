@@ -214,6 +214,15 @@
   .mini-btn { padding: 0.35rem 0.65rem; border-radius: 7px; font-size: 0.8rem; }
   .tracking-map-wrap { border:1px solid var(--border); border-radius:10px; overflow:hidden; background:#111827; }
   #trackingMap { width:100%; height:340px; }
+  .tracking-layout { display:grid; grid-template-columns: 1fr 320px; gap:1rem; align-items:stretch; }
+  .tracking-incidents { border:1px solid var(--border); border-radius:10px; background:var(--bg-2); padding:0.8rem; display:flex; flex-direction:column; gap:0.6rem; min-height:340px; }
+  .tracking-incidents h4 { margin:0; font-size:0.95rem; color:#fff; }
+  .incident-list { overflow:auto; display:flex; flex-direction:column; gap:0.5rem; }
+  .incident-item { border:1px solid var(--border); border-radius:8px; padding:0.55rem 0.65rem; background:rgba(255,255,255,0.02); cursor:pointer; }
+  .incident-item:hover { border-color:var(--brand); background:rgba(6,182,212,0.08); }
+  .incident-item .line1 { display:flex; justify-content:space-between; gap:0.5rem; font-size:0.84rem; }
+  .incident-item .line2 { color:var(--muted); font-size:0.77rem; margin-top:2px; }
+  @media (max-width: 980px) { .tracking-layout { grid-template-columns: 1fr; } .tracking-incidents { min-height:180px; } }
 
   /* Elementos específicos de zona.html */
   .sidebar-list { overflow-y: auto; display: flex; flex-direction: column; gap: 0.8rem; flex: 1; }
@@ -323,8 +332,16 @@
         </label>
       </div>
 
-      <div class="tracking-map-wrap">
-        <div id="trackingMap"></div>
+      <div class="tracking-layout">
+        <div class="tracking-map-wrap">
+          <div id="trackingMap"></div>
+        </div>
+        <div class="tracking-incidents">
+          <h4>🚨 Incidentes críticos</h4>
+          <div id="trackingIncidentList" class="incident-list">
+            <div class="line2">Sin incidentes críticos por ahora.</div>
+          </div>
+        </div>
       </div>
 
       <div class="table-responsive">
@@ -485,6 +502,7 @@
     const trackingTrails = new Map();
     let trackingLiveItems = [];
     let lastAlertSignature = '';
+    const trackingMarkerByPedido = new Map();
 
     // --- API ---
     async function api(endpoint, opts = {}) {
@@ -570,6 +588,47 @@
         const audio = new Audio('/pedidos/sounds/error.mp3');
         audio.volume = 0.45;
         audio.play().catch(() => {});
+      } catch {}
+    }
+
+    function renderIncidents(items = []) {
+      const box = $('#trackingIncidentList');
+      if (!box) return;
+
+      const critical = items
+        .map(it => ({ it, alert: buildAlert(it) }))
+        .filter(x => x.alert.severity === 'high')
+        .sort((a,b) => {
+          const ta = new Date(a.it.timestamp || 0).getTime() || 0;
+          const tb = new Date(b.it.timestamp || 0).getTime() || 0;
+          return ta - tb;
+        });
+
+      if (!critical.length) {
+        box.innerHTML = '<div class="line2">Sin incidentes críticos por ahora.</div>';
+        return;
+      }
+
+      box.innerHTML = critical.map(({ it, alert }) => {
+        const pedidoId = Number(it.pedido_id || 0);
+        return `
+          <div class="incident-item" data-pedido-id="${pedidoId}">
+            <div class="line1">
+              <strong>#${pedidoId} · ${esc(it.chofer_nombre || 'Sin chofer')}</strong>
+              <span class="status-badge ${alert.cls}">${esc(alert.text)}</span>
+            </div>
+            <div class="line2">${esc(it.cliente || '-')} · ${esc(fmtAgo(it.timestamp))}</div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function focusIncident(pedidoId) {
+      const m = trackingMarkerByPedido.get(String(pedidoId));
+      if (!m || !trackingMap) return;
+      try {
+        trackingMap.setView(m.getLatLng(), 16, { animate: true });
+        m.openPopup();
       } catch {}
     }
 
@@ -694,6 +753,7 @@
       if (STATE.isSuper && !$('#empFilter')?.value) {
         renderTracking([]);
         renderTrackingMap([]);
+        renderIncidents([]);
         return;
       }
 
@@ -706,6 +766,7 @@
           const filtered = getTrackingFilteredItems(trackingLiveItems);
           renderTracking(filtered);
           renderTrackingMap(filtered);
+          renderIncidents(filtered);
           playAlertSoundIfNeeded(filtered);
         }
       } finally {
@@ -777,6 +838,7 @@
       if (!trackingMap || !trackingMarkersLayer || !trackingTrailLayer) return;
       trackingMarkersLayer.clearLayers();
       trackingTrailLayer.clearLayers();
+      trackingMarkerByPedido.clear();
 
       const bounds = [];
       items.forEach((it) => {
@@ -804,6 +866,7 @@
           </div>
         `);
         trackingMarkersLayer.addLayer(marker);
+        trackingMarkerByPedido.set(String(pedidoId), marker);
 
         const trail = trackingTrails.get(String(pedidoId));
         if (Array.isArray(trail) && trail.length > 1) {
@@ -1018,6 +1081,7 @@
         const filtered = getTrackingFilteredItems(trackingLiveItems);
         renderTracking(filtered);
         renderTrackingMap(filtered);
+        renderIncidents(filtered);
       });
     }
 
@@ -1026,6 +1090,17 @@
       trackingFocusAlerts.addEventListener('change', () => {
         const filtered = getTrackingFilteredItems(trackingLiveItems);
         renderTrackingMap(filtered);
+      });
+    }
+
+    const trackingIncidentList = document.getElementById('trackingIncidentList');
+    if (trackingIncidentList) {
+      trackingIncidentList.addEventListener('click', (ev) => {
+        const card = ev.target.closest('.incident-item[data-pedido-id]');
+        if (!card) return;
+        const pedidoId = Number(card.getAttribute('data-pedido-id'));
+        if (!Number.isFinite(pedidoId) || pedidoId <= 0) return;
+        focusIncident(pedidoId);
       });
     }
 
