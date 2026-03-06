@@ -304,6 +304,7 @@
         <span><span id="trackingDot" class="dot-live"></span><span id="trackingStatus">live</span></span>
         <span>Última actualización: <strong id="trackingUpdated">-</strong></span>
         <span>En ruta: <strong id="trackingCount">0</strong></span>
+        <span>Alertas: <strong id="trackingAlerts">0</strong></span>
       </div>
 
       <div class="table-responsive">
@@ -314,13 +315,15 @@
               <th>Chofer</th>
               <th>Cliente</th>
               <th>Estado</th>
+              <th>ETA</th>
+              <th>Alerta</th>
               <th>Última señal</th>
               <th>Ubicación</th>
               <th style="text-align:right;">Histórico</th>
             </tr>
           </thead>
           <tbody id="trackingBody">
-            <tr><td colspan="7" style="text-align:center; padding:1.5rem; color:var(--muted);">Sin datos de tracking todavía.</td></tr>
+            <tr><td colspan="9" style="text-align:center; padding:1.5rem; color:var(--muted);">Sin datos de tracking todavía.</td></tr>
           </tbody>
         </table>
       </div>
@@ -491,6 +494,37 @@
       return (Date.now() - ts) > maxSec * 1000;
     }
 
+    function haversineKm(lat1, lon1, lat2, lon2) {
+      const a1 = Number(lat1), o1 = Number(lon1), a2 = Number(lat2), o2 = Number(lon2);
+      if (![a1,o1,a2,o2].every(Number.isFinite)) return null;
+      const R = 6371;
+      const toRad = (d) => d * Math.PI / 180;
+      const dLat = toRad(a2 - a1);
+      const dLon = toRad(o2 - o1);
+      const x = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(a1)) * Math.cos(toRad(a2)) * Math.sin(dLon / 2) ** 2;
+      const c = 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
+      return R * c;
+    }
+
+    function estimateEtaMin(it) {
+      const distKm = haversineKm(it.latitud, it.longitud, it.dest_lat, it.dest_lng);
+      if (!Number.isFinite(distKm)) return null;
+      if (distKm < 0.1) return 1;
+
+      const speedRaw = Number(it.speed);
+      const speedKmh = Number.isFinite(speedRaw) && speedRaw > 3 ? speedRaw : 22;
+      const eta = Math.ceil((distKm / speedKmh) * 60);
+      return Math.max(1, Math.min(180, eta));
+    }
+
+    function buildAlert(it) {
+      if (isStale(it.timestamp, 180)) return { text: 'Señal vencida', cls: 'badge-super' };
+      const eta = estimateEtaMin(it);
+      if (eta != null && eta > 60) return { text: 'ETA alto', cls: 'badge-super' };
+      if (eta != null && eta > 35) return { text: 'Demora', cls: 'badge-repartidor' };
+      return { text: 'Normal', cls: 'badge-admin' };
+    }
+
     // --- Logic ---
     async function load() {
       let url = '/api/choferes';
@@ -543,14 +577,19 @@
     function renderTracking(items = []) {
       const tbody = $('#trackingBody');
       const staleCount = items.filter(it => isStale(it.timestamp)).length;
+      const alertsCount = items.filter(it => {
+        const a = buildAlert(it);
+        return a.text !== 'Normal';
+      }).length;
 
       $('#trackingCount').textContent = String(items.length);
+      $('#trackingAlerts').textContent = String(alertsCount);
       $('#trackingUpdated').textContent = new Date().toLocaleTimeString();
       $('#trackingStatus').textContent = staleCount ? `live (señales viejas: ${staleCount})` : 'live';
       $('#trackingDot').classList.toggle('dot-stale', staleCount > 0);
 
       if (!items.length) {
-        tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:1.5rem; color:var(--muted);">Sin pedidos activos en tracking.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="9" style="text-align:center; padding:1.5rem; color:var(--muted);">Sin pedidos activos en tracking.</td></tr>`;
         return;
       }
 
@@ -559,12 +598,16 @@
         const est = esc(it.estado || '-');
         const chofer = esc(it.chofer_nombre || (it.chofer_id ? `#${it.chofer_id}` : 'Sin chofer'));
         const cliente = esc(it.cliente || '-');
+        const eta = estimateEtaMin(it);
+        const alert = buildAlert(it);
         return `
           <tr>
             <td>#${Number(it.pedido_id || 0)}</td>
             <td>${chofer}</td>
             <td>${cliente}</td>
             <td><span class="status-badge ${stale ? 'badge-super' : 'badge-admin'}">${est}</span></td>
+            <td>${eta == null ? '-' : `${eta} min`}</td>
+            <td><span class="status-badge ${alert.cls}">${esc(alert.text)}</span></td>
             <td>${fmtAgo(it.timestamp)}</td>
             <td>${fmtCoord(it.latitud)}, ${fmtCoord(it.longitud)}</td>
             <td style="text-align:right;">
