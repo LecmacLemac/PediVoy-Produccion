@@ -152,6 +152,7 @@
 
   let map, driverMarker, destMarker;
   let firstZoom = true;
+  let pollTimer = null;
 
   // 2. Inicializar Mapa
   function initMap() {
@@ -330,7 +331,20 @@
   } else {
     updateTracking();
     // Polling cada 8 segundos (balance entre tiempo real y consumo)
-    setInterval(updateTracking, 8000);
+    pollTimer = setInterval(updateTracking, 8000);
+
+    // Pausa/reanuda polling cuando la pestaña no está visible
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        if (pollTimer) {
+          clearInterval(pollTimer);
+          pollTimer = null;
+        }
+      } else if (!pollTimer) {
+        updateTracking();
+        pollTimer = setInterval(updateTracking, 8000);
+      }
+    });
   }
 </script>
 

@@ -77,7 +77,8 @@ trackingPublicRouter.get('/tracking/:token', rateLimitTracking, async (req, res)
         pe.provincia,
         pe.latitud  AS dest_lat,
         pe.longitud AS dest_lng,
-        c.nombre    AS chofer_nombre
+        c.nombre    AS chofer_nombre,
+        c.telefono  AS chofer_tel
       FROM pedidos p
       JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
       LEFT JOIN choferes c    ON c.id = p.chofer_id
@@ -136,7 +137,8 @@ trackingPublicRouter.get('/tracking/:token', rateLimitTracking, async (req, res)
       provincia: pedido.provincia,
       dest_lat: pedido.dest_lat,
       dest_lng: pedido.dest_lng,
-      chofer_nombre: pedido.chofer_nombre || null
+      chofer_nombre: pedido.chofer_nombre || null,
+      chofer_tel: pedido.chofer_tel || null
     };
 
     return res.json({ pedido: safePedido, driverLocation });
