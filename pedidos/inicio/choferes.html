@@ -206,6 +206,12 @@
   .toast { position: fixed; right: 20px; bottom: 30px; background: #fff; color: #0f172a; padding: 10px 20px; border-radius: 99px; font-weight: 600; box-shadow: 0 10px 30px rgba(0,0,0,0.3); opacity: 0; pointer-events: none; transition: 0.3s; z-index: 2000; }
   .toast.show { opacity: 1; transform: translateY(-10px); }
 
+  .tracking-grid { display: grid; grid-template-columns: 1fr; gap: 1rem; }
+  .tracking-meta { display:flex; flex-wrap:wrap; gap:0.6rem 1rem; color:var(--muted); font-size:0.85rem; }
+  .dot-live { width: 8px; height: 8px; border-radius:50%; background: var(--success); box-shadow: 0 0 10px var(--success); display:inline-block; margin-right:6px; }
+  .dot-stale { background: var(--warning); box-shadow: 0 0 10px var(--warning); }
+  .mini-btn { padding: 0.35rem 0.65rem; border-radius: 7px; font-size: 0.8rem; }
+
   /* Elementos específicos de zona.html */
   .sidebar-list { overflow-y: auto; display: flex; flex-direction: column; gap: 0.8rem; flex: 1; }
   .zona-item { background: var(--bg-2); border: 1px solid var(--border); padding: 1rem; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
@@ -279,6 +285,47 @@
       </div>
     </div>
 
+    <div class="card tracking-grid">
+      <div class="page-header" style="margin-bottom:0; align-items:center;">
+        <div>
+          <h1 style="font-size:1.25rem;">📡 Tracking Live de Entregas</h1>
+          <p class="subtitle">Monitoreo operativo en tiempo real por empresa/chofer.</p>
+        </div>
+        <div style="display:flex; gap:0.6rem; align-items:center;">
+          <button id="btnTrackingRefresh" type="button" class="btn mini-btn">Actualizar ahora</button>
+          <label style="display:flex;align-items:center;gap:8px;margin:0;color:var(--muted);text-transform:none;letter-spacing:0;">
+            <input id="trackingAuto" type="checkbox" checked style="width:auto; margin:0;">
+            Auto (15s)
+          </label>
+        </div>
+      </div>
+
+      <div class="tracking-meta">
+        <span><span id="trackingDot" class="dot-live"></span><span id="trackingStatus">live</span></span>
+        <span>Última actualización: <strong id="trackingUpdated">-</strong></span>
+        <span>En ruta: <strong id="trackingCount">0</strong></span>
+      </div>
+
+      <div class="table-responsive">
+        <table>
+          <thead>
+            <tr>
+              <th>Pedido</th>
+              <th>Chofer</th>
+              <th>Cliente</th>
+              <th>Estado</th>
+              <th>Última señal</th>
+              <th>Ubicación</th>
+              <th style="text-align:right;">Histórico</th>
+            </tr>
+          </thead>
+          <tbody id="trackingBody">
+            <tr><td colspan="7" style="text-align:center; padding:1.5rem; color:var(--muted);">Sin datos de tracking todavía.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
   </main>
 
   <div id="modal" class="modal-backdrop">
@@ -333,6 +380,41 @@
     </div>
   </div>
 
+  <div id="trackingHistoryModal" class="modal-backdrop">
+    <div class="modal" style="max-width:760px;">
+      <div class="modal-header">
+        <h3 id="trackingHistoryTitle">Historial de Tracking</h3>
+        <button id="btnCloseHistoryTop" type="button" class="btn-icon">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="tracking-meta">
+          <span>Puntos: <strong id="trackingHistoryCount">0</strong></span>
+          <span>Pedido: <strong id="trackingHistoryPedido">-</strong></span>
+        </div>
+        <div class="table-responsive">
+          <table>
+            <thead>
+              <tr>
+                <th>Fecha/Hora</th>
+                <th>Lat</th>
+                <th>Lng</th>
+                <th>Velocidad</th>
+                <th>Precisión</th>
+                <th>Fuente</th>
+              </tr>
+            </thead>
+            <tbody id="trackingHistoryBody">
+              <tr><td colspan="6" style="text-align:center; padding:1.5rem; color:var(--muted);">Sin puntos cargados.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="btnCloseHistoryBottom" type="button" class="btn">Cerrar</button>
+      </div>
+    </div>
+  </div>
+
   <div id="toast" class="toast"></div>
 
   <script>
@@ -371,6 +453,8 @@
     let choferes = [];
     let saveBusy = false;
     let deleteBusy = false;
+    let trackingBusy = false;
+    let trackingTimer = null;
 
     // --- API ---
     async function api(endpoint, opts = {}) {
@@ -383,6 +467,28 @@
         toast('Error de conexión');
         return { error: 'Error' };
       }
+    }
+
+    function fmtCoord(v) {
+      const n = Number(v);
+      return Number.isFinite(n) ? n.toFixed(5) : '-';
+    }
+
+    function fmtAgo(iso) {
+      if (!iso) return 'sin señal';
+      const ts = new Date(iso).getTime();
+      if (!Number.isFinite(ts)) return 'sin señal';
+      const d = Math.floor((Date.now() - ts) / 1000);
+      if (d < 60) return `hace ${d}s`;
+      if (d < 3600) return `hace ${Math.floor(d / 60)}m`;
+      return `hace ${Math.floor(d / 3600)}h`;
+    }
+
+    function isStale(iso, maxSec = 120) {
+      if (!iso) return true;
+      const ts = new Date(iso).getTime();
+      if (!Number.isFinite(ts)) return true;
+      return (Date.now() - ts) > maxSec * 1000;
     }
 
     // --- Logic ---
@@ -432,6 +538,98 @@
           </td>
         </tr>
       `}).join('');
+    }
+
+    function renderTracking(items = []) {
+      const tbody = $('#trackingBody');
+      const staleCount = items.filter(it => isStale(it.timestamp)).length;
+
+      $('#trackingCount').textContent = String(items.length);
+      $('#trackingUpdated').textContent = new Date().toLocaleTimeString();
+      $('#trackingStatus').textContent = staleCount ? `live (señales viejas: ${staleCount})` : 'live';
+      $('#trackingDot').classList.toggle('dot-stale', staleCount > 0);
+
+      if (!items.length) {
+        tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:1.5rem; color:var(--muted);">Sin pedidos activos en tracking.</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = items.map(it => {
+        const stale = isStale(it.timestamp);
+        const est = esc(it.estado || '-');
+        const chofer = esc(it.chofer_nombre || (it.chofer_id ? `#${it.chofer_id}` : 'Sin chofer'));
+        const cliente = esc(it.cliente || '-');
+        return `
+          <tr>
+            <td>#${Number(it.pedido_id || 0)}</td>
+            <td>${chofer}</td>
+            <td>${cliente}</td>
+            <td><span class="status-badge ${stale ? 'badge-super' : 'badge-admin'}">${est}</span></td>
+            <td>${fmtAgo(it.timestamp)}</td>
+            <td>${fmtCoord(it.latitud)}, ${fmtCoord(it.longitud)}</td>
+            <td style="text-align:right;">
+              <button class="btn mini-btn" data-action="history" data-pedido-id="${Number(it.pedido_id || 0)}">Ver</button>
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    async function loadTracking(force = false) {
+      if (trackingBusy) return;
+      if (!force && !$('#trackingAuto')?.checked) return;
+
+      if (STATE.isSuper && !$('#empFilter')?.value) {
+        renderTracking([]);
+        return;
+      }
+
+      trackingBusy = true;
+      try {
+        const res = await api('/api/track/live');
+        if (res?.ok && Array.isArray(res.items)) {
+          renderTracking(res.items);
+        }
+      } finally {
+        trackingBusy = false;
+      }
+    }
+
+    async function openTrackingHistory(pedidoId) {
+      if (!pedidoId) return;
+      const body = $('#trackingHistoryBody');
+      $('#trackingHistoryPedido').textContent = `#${pedidoId}`;
+      body.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:1.5rem; color:var(--muted);">Cargando historial...</td></tr>`;
+      $('#trackingHistoryModal').classList.add('open');
+
+      const res = await api(`/api/track/history/${pedidoId}?limit=200`);
+      const items = Array.isArray(res?.items) ? res.items : [];
+      $('#trackingHistoryCount').textContent = String(items.length);
+
+      if (!items.length) {
+        body.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:1.5rem; color:var(--muted);">Sin puntos registrados para este pedido.</td></tr>`;
+        return;
+      }
+
+      body.innerHTML = items.map(pt => `
+        <tr>
+          <td>${new Date(pt.timestamp).toLocaleString()}</td>
+          <td>${fmtCoord(pt.latitud)}</td>
+          <td>${fmtCoord(pt.longitud)}</td>
+          <td>${Number.isFinite(Number(pt.speed)) ? Number(pt.speed).toFixed(1) : '-'}</td>
+          <td>${Number.isFinite(Number(pt.precision)) ? Number(pt.precision).toFixed(1) : '-'}</td>
+          <td>${esc(pt.source || 'gps')}</td>
+        </tr>
+      `).join('');
+    }
+
+    function closeTrackingHistory() {
+      $('#trackingHistoryModal').classList.remove('open');
+    }
+
+    function setupTrackingAutoRefresh() {
+      if (trackingTimer) clearInterval(trackingTimer);
+      trackingTimer = setInterval(() => loadTracking(false), 15000);
     }
 
     // --- Actions ---
@@ -581,6 +779,35 @@
       });
     }
 
+    const trackingBody = document.getElementById('trackingBody');
+    if (trackingBody) {
+      trackingBody.addEventListener('click', (ev) => {
+        const btn = ev.target.closest('button[data-action="history"][data-pedido-id]');
+        if (!btn) return;
+        const pedidoId = Number(btn.getAttribute('data-pedido-id'));
+        if (!Number.isFinite(pedidoId) || pedidoId <= 0) return;
+        openTrackingHistory(pedidoId);
+      });
+    }
+
+    const btnTrackingRefresh = document.getElementById('btnTrackingRefresh');
+    if (btnTrackingRefresh) {
+      btnTrackingRefresh.addEventListener('click', () => loadTracking(true));
+    }
+
+    const trackingAuto = document.getElementById('trackingAuto');
+    if (trackingAuto) {
+      trackingAuto.addEventListener('change', () => {
+        if (trackingAuto.checked) loadTracking(true);
+      });
+    }
+
+    const btnCloseHistoryTop = document.getElementById('btnCloseHistoryTop');
+    if (btnCloseHistoryTop) btnCloseHistoryTop.addEventListener('click', closeTrackingHistory);
+
+    const btnCloseHistoryBottom = document.getElementById('btnCloseHistoryBottom');
+    if (btnCloseHistoryBottom) btnCloseHistoryBottom.addEventListener('click', closeTrackingHistory);
+
     // --- Init ---
     (async () => {
       try {
@@ -600,11 +827,17 @@
                           empresas.map(e => `<option value="${Number(e.id)}">${esc(e.nombre)}</option>`).join('');
              $('#empFilter').innerHTML = opts;
              $('#c_empresa_id').innerHTML = opts;
-             $('#empFilter').addEventListener('change', load);
+             $('#empFilter').addEventListener('change', () => {
+               load();
+               loadTracking(true);
+             });
           }
         } else {
           load();
+          loadTracking(true);
         }
+
+        setupTrackingAutoRefresh();
       } catch (e) { console.error('Init error', e); }
     })();
   </script>
