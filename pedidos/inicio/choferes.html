@@ -294,7 +294,14 @@
           <h1 style="font-size:1.25rem;">📡 Tracking Live de Entregas</h1>
           <p class="subtitle">Monitoreo operativo en tiempo real por empresa/chofer.</p>
         </div>
-        <div style="display:flex; gap:0.6rem; align-items:center;">
+        <div style="display:flex; gap:0.6rem; align-items:center; flex-wrap:wrap; justify-content:flex-end;">
+          <select id="trackingChoferFilter" style="min-width:180px; max-width:240px;">
+            <option value="">Todos los choferes</option>
+          </select>
+          <label style="display:flex;align-items:center;gap:8px;margin:0;color:var(--muted);text-transform:none;letter-spacing:0;">
+            <input id="trackingFocusAlerts" type="checkbox" style="width:auto; margin:0;">
+            Focus alertas
+          </label>
           <button id="btnTrackingRefresh" type="button" class="btn mini-btn">Actualizar ahora</button>
           <label style="display:flex;align-items:center;gap:8px;margin:0;color:var(--muted);text-transform:none;letter-spacing:0;">
             <input id="trackingAuto" type="checkbox" checked style="width:auto; margin:0;">
@@ -470,6 +477,7 @@
     let trackingMarkersLayer = null;
     let trackingTrailLayer = null;
     const trackingTrails = new Map();
+    let trackingLiveItems = [];
 
     // --- API ---
     async function api(endpoint, opts = {}) {
@@ -535,6 +543,25 @@
       if (eta != null && eta > 60) return { text: 'ETA alto', cls: 'badge-super' };
       if (eta != null && eta > 35) return { text: 'Demora', cls: 'badge-repartidor' };
       return { text: 'Normal', cls: 'badge-admin' };
+    }
+
+    function getTrackingFilteredItems(items = trackingLiveItems) {
+      const choferSel = $('#trackingChoferFilter')?.value || '';
+      if (!choferSel) return items;
+      return (items || []).filter(it => String(it.chofer_id || '') === choferSel);
+    }
+
+    function syncTrackingChoferFilter(items = []) {
+      const sel = $('#trackingChoferFilter');
+      if (!sel) return;
+      const prev = sel.value || '';
+      const list = Array.from(new Map(items
+        .filter(it => it.chofer_id)
+        .map(it => [String(it.chofer_id), { id: String(it.chofer_id), nombre: it.chofer_nombre || `#${it.chofer_id}` }])
+      ).values());
+      sel.innerHTML = '<option value="">Todos los choferes</option>' +
+        list.map(c => `<option value="${esc(c.id)}">${esc(c.nombre)}</option>`).join('');
+      if (prev && list.some(c => c.id === prev)) sel.value = prev;
     }
 
     // --- Logic ---
@@ -644,8 +671,11 @@
       try {
         const res = await api('/api/track/live');
         if (res?.ok && Array.isArray(res.items)) {
-          renderTracking(res.items);
-          renderTrackingMap(res.items);
+          trackingLiveItems = res.items;
+          syncTrackingChoferFilter(trackingLiveItems);
+          const filtered = getTrackingFilteredItems(trackingLiveItems);
+          renderTracking(filtered);
+          renderTrackingMap(filtered);
         }
       } finally {
         trackingBusy = false;
@@ -766,7 +796,17 @@
       });
 
       if (bounds.length) {
-        const b = L.latLngBounds(bounds);
+        const focusAlerts = !!$('#trackingFocusAlerts')?.checked;
+        let selected = bounds;
+        if (focusAlerts) {
+          const alertBounds = items
+            .filter(it => buildAlert(it).text !== 'Normal')
+            .map(it => [Number(it.latitud), Number(it.longitud)])
+            .filter(p => Number.isFinite(p[0]) && Number.isFinite(p[1]));
+          if (alertBounds.length) selected = alertBounds;
+        }
+
+        const b = L.latLngBounds(selected);
         trackingMap.fitBounds(b.pad(0.2), { maxZoom: 15 });
       }
     }
@@ -938,6 +978,23 @@
     if (trackingAuto) {
       trackingAuto.addEventListener('change', () => {
         if (trackingAuto.checked) loadTracking(true);
+      });
+    }
+
+    const trackingChoferFilter = document.getElementById('trackingChoferFilter');
+    if (trackingChoferFilter) {
+      trackingChoferFilter.addEventListener('change', () => {
+        const filtered = getTrackingFilteredItems(trackingLiveItems);
+        renderTracking(filtered);
+        renderTrackingMap(filtered);
+      });
+    }
+
+    const trackingFocusAlerts = document.getElementById('trackingFocusAlerts');
+    if (trackingFocusAlerts) {
+      trackingFocusAlerts.addEventListener('change', () => {
+        const filtered = getTrackingFilteredItems(trackingLiveItems);
+        renderTrackingMap(filtered);
       });
     }
 
