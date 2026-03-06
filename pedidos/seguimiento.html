@@ -94,9 +94,12 @@
 
   <div class="hud-card">
     <div class="title-row">
-      <div>
-        <h1 class="text-lg font-bold text-gray-900" id="lblCliente">Cargando...</h1>
-        <div class="order-id" id="orderMeta">Seguimiento en tiempo real</div>
+      <div style="display:flex; align-items:center; gap:10px;">
+        <img id="lblEmpresaLogo" alt="Logo empresa" style="display:none; width:38px; height:38px; border-radius:8px; object-fit:cover; border:1px solid #e5e7eb; background:#fff;">
+        <div>
+          <h1 class="text-lg font-bold text-gray-900" id="lblCliente">Cargando...</h1>
+          <div class="order-id" id="orderMeta">Seguimiento en tiempo real</div>
+        </div>
       </div>
       <div class="status-badge" id="lblEstado">...</div>
     </div>
@@ -145,6 +148,7 @@
   // ID de pedido oculto para vista cliente
   const lblDireccion = document.getElementById('lblDireccion');
   const lblEstado    = document.getElementById('lblEstado');
+  const lblEmpresaLogo = document.getElementById('lblEmpresaLogo');
   const lblChofer    = document.getElementById('lblChofer');
   const lblPlaca     = document.getElementById('lblPlaca');
   const btnWpp       = document.getElementById('btnWpp');
@@ -230,6 +234,14 @@
     lblCliente.textContent   = `Hola ${nombreCliente}`;
     // pedido.id oculto en UI pública
     lblDireccion.textContent = pedido.direccion || '';
+
+    if (pedido.empresa_logo_url) {
+      lblEmpresaLogo.src = pedido.empresa_logo_url;
+      lblEmpresaLogo.style.display = 'block';
+      lblEmpresaLogo.onerror = () => { lblEmpresaLogo.style.display = 'none'; };
+    } else {
+      lblEmpresaLogo.style.display = 'none';
+    }
 
     // --- Estado ---
     const st = (pedido.estado || '').toLowerCase();

@@ -1160,6 +1160,20 @@ ALTER TABLE choferes
 ALTER TABLE empresas
   ADD COLUMN IF NOT EXISTS logo_url TEXT;
 
+-- ACK de incidentes de tracking (operación / NOC)
+CREATE TABLE IF NOT EXISTS tracking_incident_acks (
+  id                SERIAL PRIMARY KEY,
+  empresa_id        INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+  pedido_id         INTEGER NOT NULL REFERENCES pedidos(id) ON DELETE CASCADE,
+  acked_by_user_id  INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
+  acked_by_username TEXT,
+  comment           TEXT,
+  acked_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_tracking_incident_acks_empresa_pedido_ack
+  ON tracking_incident_acks (empresa_id, pedido_id, acked_at DESC);
+
 -- =========================================================
 -- 13. DATOS SEMILLA (deshabilitado)
 -- =========================================================

@@ -78,10 +78,12 @@ trackingPublicRouter.get('/tracking/:token', rateLimitTracking, async (req, res)
         pe.latitud  AS dest_lat,
         pe.longitud AS dest_lng,
         c.nombre    AS chofer_nombre,
-        c.telefono  AS chofer_tel
+        c.telefono  AS chofer_tel,
+        e.logo_url  AS empresa_logo_url
       FROM pedidos p
       JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
       LEFT JOIN choferes c    ON c.id = p.chofer_id
+      LEFT JOIN empresas e    ON e.id = p.empresa_id
       WHERE p.tracking_token = $1
       LIMIT 1
     `, [token]);
@@ -138,7 +140,8 @@ trackingPublicRouter.get('/tracking/:token', rateLimitTracking, async (req, res)
       dest_lat: pedido.dest_lat,
       dest_lng: pedido.dest_lng,
       chofer_nombre: pedido.chofer_nombre || null,
-      chofer_tel: pedido.chofer_tel || null
+      chofer_tel: pedido.chofer_tel || null,
+      empresa_logo_url: pedido.empresa_logo_url || null
     };
 
     return res.json({ pedido: safePedido, driverLocation });

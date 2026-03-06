@@ -657,6 +657,12 @@
       } catch {}
     }
 
+    function isIncidentAcked(it) {
+      const signalTs = new Date(it.timestamp || 0).getTime() || 0;
+      const ackTs = new Date(it.acked_at || 0).getTime() || 0;
+      return ackTs > 0 && ackTs >= signalTs;
+    }
+
     function renderIncidents(items = []) {
       const box = $('#trackingIncidentList');
       if (!box) return;
@@ -664,6 +670,7 @@
       const critical = items
         .map(it => ({ it, alert: buildAlert(it) }))
         .filter(x => x.alert.severity === 'high')
+        .filter(x => !isIncidentAcked(x.it))
         .sort((a,b) => {
           const ta = new Date(a.it.timestamp || 0).getTime() || 0;
           const tb = new Date(b.it.timestamp || 0).getTime() || 0;
@@ -684,6 +691,9 @@
               <span class="status-badge ${alert.cls}">${esc(alert.text)}</span>
             </div>
             <div class="line2">${esc(it.cliente || '-')} · ${esc(fmtAgo(it.timestamp))}</div>
+            <div style="margin-top:6px; display:flex; justify-content:flex-end;">
+              <button class="btn mini-btn" data-action="ack-incident" data-pedido-id="${pedidoId}">ACK</button>
+            </div>
           </div>
         `;
       }).join('');
@@ -696,6 +706,22 @@
         trackingMap.setView(m.getLatLng(), 16, { animate: true });
         m.openPopup();
       } catch {}
+    }
+
+    async function ackIncident(pedidoId) {
+      if (!pedidoId) return;
+      const comment = (window.prompt('Comentario ACK (opcional):', '') || '').trim();
+      const res = await api(`/api/track/incidents/${pedidoId}/ack`, {
+        method: 'POST',
+        body: JSON.stringify({ comment })
+      });
+
+      if (res?.ok) {
+        toast('✅ Incidente reconocido');
+        await loadTracking(true);
+      } else {
+        toast('❌ ' + (res?.error || 'No se pudo registrar ACK'));
+      }
     }
 
     function getTrackingFilteredItems(items = trackingLiveItems) {
@@ -1198,6 +1224,15 @@
     const trackingIncidentList = document.getElementById('trackingIncidentList');
     if (trackingIncidentList) {
       trackingIncidentList.addEventListener('click', (ev) => {
+        const ackBtn = ev.target.closest('button[data-action="ack-incident"][data-pedido-id]');
+        if (ackBtn) {
+          const pedidoId = Number(ackBtn.getAttribute('data-pedido-id'));
+          if (!Number.isFinite(pedidoId) || pedidoId <= 0) return;
+          ev.stopPropagation();
+          ackIncident(pedidoId);
+          return;
+        }
+
         const card = ev.target.closest('.incident-item[data-pedido-id]');
         if (!card) return;
         const pedidoId = Number(card.getAttribute('data-pedido-id'));

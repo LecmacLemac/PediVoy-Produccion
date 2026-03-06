@@ -4,6 +4,7 @@ import { withAuth } from '../services.js';
 import { query } from '../db.js';
 
 const MAX_HISTORY_LIMIT = 500;
+const MAX_ACK_COMMENT = 500;
 
 function asNum(v) {
   const n = Number(v);
@@ -13,6 +14,12 @@ function asNum(v) {
 function canManageTracking(role) {
   const r = String(role || '').toLowerCase();
   return r === 'super' || r === 'admin';
+}
+
+function toIsoOrNull(v) {
+  if (!v) return null;
+  const d = new Date(v);
+  return Number.isFinite(d.getTime()) ? d.toISOString() : null;
 }
 
 async function resolveEmpresaId(req) {
@@ -169,11 +176,22 @@ export function createTrackingRouter() {
           u.speed,
           u.heading,
           u.precision,
-          u.source
+          u.source,
+          ack.acked_at,
+          ack.acked_by_username,
+          ack.comment AS ack_comment
         FROM pedidos p
         LEFT JOIN choferes c ON c.id = p.chofer_id
         LEFT JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
         LEFT JOIN ult u ON u.pedido_id = p.id
+        LEFT JOIN LATERAL (
+          SELECT tia.acked_at, tia.acked_by_username, tia.comment
+          FROM tracking_incident_acks tia
+          WHERE tia.empresa_id = p.empresa_id
+            AND tia.pedido_id = p.id
+          ORDER BY tia.acked_at DESC
+          LIMIT 1
+        ) ack ON TRUE
         WHERE ${where.join(' AND ')}
         ORDER BY p.id DESC
         LIMIT 500
@@ -190,6 +208,58 @@ export function createTrackingRouter() {
     } catch (e) {
       console.error('TRACK LIVE ERROR:', e);
       return res.status(500).json({ error: 'Error cargando tracking live' });
+    }
+  });
+
+  // POST /api/track/incidents/:pedidoId/ack
+  router.post('/incidents/:pedidoId/ack', withAuth, async (req, res) => {
+    try {
+      if (!canManageTracking(req.user?.role)) {
+        return res.status(403).json({ error: 'No autorizado' });
+      }
+
+      const empresaId = await resolveEmpresaId(req);
+      const pedidoId = asNum(req.params.pedidoId);
+      const comment = String(req.body?.comment || '').trim().slice(0, MAX_ACK_COMMENT) || null;
+
+      if (!empresaId || !Number.isFinite(pedidoId)) {
+        return res.status(400).json({ error: 'Parámetros inválidos' });
+      }
+
+      const pedRows = await query(
+        'SELECT id, empresa_id FROM pedidos WHERE id = $1 AND empresa_id = $2 LIMIT 1',
+        [pedidoId, empresaId]
+      );
+
+      if (!pedRows.length) {
+        return res.status(404).json({ error: 'Pedido no encontrado' });
+      }
+
+      const ackRows = await query(
+        `
+        INSERT INTO tracking_incident_acks (empresa_id, pedido_id, acked_by_user_id, acked_by_username, comment)
+        VALUES ($1, $2, $3, $4, $5)
+        RETURNING id, acked_at, acked_by_username, comment
+        `,
+        [empresaId, pedidoId, req.user?.id || null, req.user?.username || null, comment]
+      );
+
+      const ack = ackRows?.[0] || null;
+      return res.json({
+        ok: true,
+        pedido_id: pedidoId,
+        ack: ack
+          ? {
+              id: ack.id,
+              acked_at: toIsoOrNull(ack.acked_at),
+              acked_by_username: ack.acked_by_username || null,
+              comment: ack.comment || null
+            }
+          : null
+      });
+    } catch (e) {
+      console.error('TRACK ACK ERROR:', e);
+      return res.status(500).json({ error: 'Error registrando ACK' });
     }
   });
 
