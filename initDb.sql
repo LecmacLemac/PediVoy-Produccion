@@ -1156,6 +1156,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_pedido_pagos_one_pending_per_order
 ALTER TABLE choferes
   ADD COLUMN IF NOT EXISTS foto_url TEXT;
 
+-- Empresas: logo opcional para panel admin / branding
+ALTER TABLE empresas
+  ADD COLUMN IF NOT EXISTS logo_url TEXT;
+
 -- =========================================================
 -- 13. DATOS SEMILLA (deshabilitado)
 -- =========================================================

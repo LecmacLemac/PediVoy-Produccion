@@ -2,6 +2,9 @@
 // CRUD de empresas + cuentas bancarias (extraído desde server.js)
 
 import express from 'express';
+import fs from 'fs';
+import path from 'path';
+import multer from 'multer';
 
 export function createEmpresasRouter(deps) {
   const {
@@ -22,6 +25,25 @@ export function createEmpresasRouter(deps) {
   if (typeof getEmpresaById !== 'function') throw new Error('createEmpresasRouter: falta getEmpresaById(fn)');
 
   const router = express.Router();
+
+  const EMPRESAS_LOGO_DIR = path.resolve(process.cwd(), 'pedidos', 'img', 'empresas');
+  fs.mkdirSync(EMPRESAS_LOGO_DIR, { recursive: true });
+
+  const empresasLogoUploader = multer({
+    storage: multer.diskStorage({
+      destination: (_req, _file, cb) => cb(null, EMPRESAS_LOGO_DIR),
+      filename: (_req, file, cb) => {
+        const ext = path.extname(file.originalname || '').toLowerCase() || '.jpg';
+        const safeExt = ['.jpg', '.jpeg', '.png', '.webp'].includes(ext) ? ext : '.jpg';
+        cb(null, `empresa_logo_${Date.now()}_${Math.random().toString(36).slice(2, 8)}${safeExt}`);
+      }
+    }),
+    fileFilter: (_req, file, cb) => {
+      const ok = ['image/jpeg', 'image/png', 'image/webp'].includes(String(file.mimetype || '').toLowerCase());
+      cb(ok ? null : new Error('Formato no permitido'), ok);
+    },
+    limits: { fileSize: 2 * 1024 * 1024 }
+  });
 
   const quoteIdent = (v) => `"${String(v || '').replace(/"/g, '""')}"`;
 
@@ -57,6 +79,21 @@ export function createEmpresasRouter(deps) {
   function toObject(v) {
     return v && typeof v === 'object' && !Array.isArray(v) ? v : null;
   }
+
+  router.post('/upload-logo', withAuth, (req, res) => {
+    empresasLogoUploader.single('logo')(req, res, (err) => {
+      if (err) {
+        const msg = String(err?.message || 'Error subiendo logo');
+        if (msg.includes('File too large')) return res.status(400).json({ error: 'La imagen supera 2MB' });
+        if (msg.includes('Formato no permitido')) return res.status(400).json({ error: 'Formato inválido. Usá JPG/PNG/WEBP' });
+        return res.status(400).json({ error: 'No se pudo subir el logo' });
+      }
+
+      const filename = req.file?.filename;
+      if (!filename) return res.status(400).json({ error: 'Archivo requerido' });
+      return res.json({ ok: true, logo_url: `/pedidos/img/empresas/${filename}` });
+    });
+  });
 
   // GET /api/empresas
   router.get('/', withAuth, async (req, res) => {
@@ -110,6 +147,7 @@ export function createEmpresasRouter(deps) {
       plan_tipo,
       plan_vencimiento,
       plan_precio,
+      logo_url,
       cuentas_bancarias,
     } = req.body || {};
 
@@ -144,7 +182,8 @@ export function createEmpresasRouter(deps) {
           plan_estado,
           plan_tipo,
           plan_vencimiento,
-          plan_precio
+          plan_precio,
+          logo_url
         )
         VALUES (
           $1,  $2,  $3,
@@ -153,7 +192,8 @@ export function createEmpresasRouter(deps) {
           $13, $14,
           $15, $16,
           $17, $18, $19, $20, $21, $22,
-          $23, $24, $25, $26
+          $23, $24, $25, $26,
+          $27
         )
         RETURNING *
         `,
@@ -184,6 +224,7 @@ export function createEmpresasRouter(deps) {
           plan_tipo || null,
           plan_vencimiento || null,
           plan_precio || null,
+          logo_url || null,
         ]
       );
 
@@ -252,6 +293,7 @@ export function createEmpresasRouter(deps) {
       plan_tipo,
       plan_vencimiento,
       plan_precio,
+      logo_url,
     } = req.body || {};
 
     try {
@@ -290,8 +332,9 @@ export function createEmpresasRouter(deps) {
           plan_estado      = COALESCE($23, plan_estado),
           plan_tipo        = COALESCE($24, plan_tipo),
           plan_vencimiento = COALESCE($25, plan_vencimiento),
-          plan_precio      = COALESCE($26, plan_precio)
-        WHERE id = $27
+          plan_precio      = COALESCE($26, plan_precio),
+          logo_url         = COALESCE($27, logo_url)
+        WHERE id = $28
         RETURNING *
         `,
         [
@@ -321,6 +364,7 @@ export function createEmpresasRouter(deps) {
           plan_tipo || null,
           plan_vencimiento || null,
           plan_precio || null,
+          logo_url || null,
           id,
         ]
       );

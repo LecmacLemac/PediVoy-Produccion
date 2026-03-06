@@ -568,6 +568,16 @@
         </div>
 
         <div>
+          <label>Logotipo (opcional)</label>
+          <div style="display:grid; grid-template-columns: 1fr auto; gap:0.5rem;">
+            <input type="url" id="e_logo_url" placeholder="https://... o subí una imagen">
+            <button id="btnUploadLogo" type="button" class="btn">Subir logo</button>
+          </div>
+          <input type="file" id="e_logo_file" accept="image/png,image/jpeg,image/webp" style="display:none;">
+          <small style="color:var(--muted); display:block; margin-top:4px;">Opcional. Se recorta automático a cuadrado (JPG/PNG/WEBP, máx 2MB).</small>
+        </div>
+
+        <div>
           <label>Rubro Principal</label>
           <input type="text" id="e_rubro" placeholder="Ej: Gomería y Alineación">
         </div>
@@ -1196,6 +1206,60 @@
       }
     }
 
+    function loadImageFromFile(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const img = new Image();
+          img.onload = () => resolve(img);
+          img.onerror = () => reject(new Error('No se pudo leer la imagen'));
+          img.src = reader.result;
+        };
+        reader.onerror = () => reject(new Error('No se pudo leer archivo'));
+        reader.readAsDataURL(file);
+      });
+    }
+
+    async function cropLogoToSquareFile(file, outputSize = 512, quality = 0.9) {
+      const img = await loadImageFromFile(file);
+      const s = Math.min(img.width, img.height);
+      const sx = Math.floor((img.width - s) / 2);
+      const sy = Math.floor((img.height - s) / 2);
+
+      const canvas = document.createElement('canvas');
+      canvas.width = outputSize;
+      canvas.height = outputSize;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, sx, sy, s, s, 0, 0, outputSize, outputSize);
+
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', quality));
+      if (!blob) throw new Error('No se pudo procesar la imagen');
+      return new File([blob], `empresa_logo_${Date.now()}.jpg`, { type: 'image/jpeg' });
+    }
+
+    async function uploadCompanyLogo(file) {
+      const processed = await cropLogoToSquareFile(file, 512, 0.9);
+      const fd = new FormData();
+      fd.append('logo', processed);
+
+      const res = await fetch('/api/empresas/upload-logo', {
+        method: 'POST',
+        body: fd,
+        credentials: 'include'
+      });
+
+      if (res.status === 401) {
+        window.location.href = LOGIN_URL;
+        return { error: 'Sesión vencida' };
+      }
+
+      try {
+        return await res.json();
+      } catch {
+        return { error: 'Error subiendo logo' };
+      }
+    }
+
 const logoutLink = $('#logout');
 if (logoutLink) {
   logoutLink.addEventListener('click', async (e) => {
@@ -1236,6 +1300,34 @@ if (logoutLink) {
 
     const btnSaveEmpresa = document.getElementById('btnSaveEmpresa');
     if (btnSaveEmpresa) btnSaveEmpresa.addEventListener('click', save);
+
+    const btnUploadLogo = document.getElementById('btnUploadLogo');
+    const logoFileInput = document.getElementById('e_logo_file');
+    if (btnUploadLogo && logoFileInput) {
+      btnUploadLogo.addEventListener('click', () => logoFileInput.click());
+      logoFileInput.addEventListener('change', async () => {
+        const file = logoFileInput.files && logoFileInput.files[0];
+        if (!file) return;
+
+        const prevTxt = btnUploadLogo.textContent;
+        btnUploadLogo.disabled = true;
+        btnUploadLogo.textContent = 'Subiendo...';
+
+        try {
+          const up = await uploadCompanyLogo(file);
+          if (up?.logo_url) {
+            $('#e_logo_url').value = up.logo_url;
+            toast('✅ Logo subido');
+          } else {
+            toast('❌ ' + (up?.error || 'No se pudo subir logo'));
+          }
+        } finally {
+          btnUploadLogo.disabled = false;
+          btnUploadLogo.textContent = prevTxt;
+          logoFileInput.value = '';
+        }
+      });
+    }
 
     const formEmpresa = document.getElementById('formEmpresa');
     if (formEmpresa) {
@@ -1455,7 +1547,10 @@ if (logoutLink) {
             <td style="color:var(--muted); font-family:monospace;">#${esc(displayId)}</td>
             
             <td>
-              <div style="font-weight:700; color:#fff; font-size:1rem; margin-bottom:2px;">${esc(c.nombre)}</div>
+              <div style="display:flex; align-items:center; gap:8px;">
+                ${c.logo_url ? `<img src="${esc(c.logo_url)}" alt="Logo ${esc(c.nombre)}" style="width:28px;height:28px;border-radius:6px;object-fit:cover;border:1px solid var(--border);" onerror="this.style.display='none'">` : ''}
+                <div style="font-weight:700; color:#fff; font-size:1rem; margin-bottom:2px;">${esc(c.nombre)}</div>
+              </div>
               <div style="font-size:0.8rem; color:var(--muted);">
                 <i class="fa-solid fa-briefcase"></i> ${esc(c.razon_social || 'Sin Razón Social')}
               </div>
@@ -1578,6 +1673,8 @@ if (logoutLink) {
       $('#formEmpresa').reset();
       $('#e_id').value = '';
       $('#e_landing_file').value = ''; // Reset file input
+      $('#e_logo_file').value = '';
+      $('#e_logo_url').value = '';
       $('#e_nombre').focus();
 
       cuentasBancariasDraft = [];
@@ -1609,6 +1706,7 @@ if (logoutLink) {
       // 1. Datos básicos
       $('#e_id').value = c.id;
       $('#e_nombre').value = c.nombre || '';
+      $('#e_logo_url').value = c.logo_url || '';
       $('#e_telefono').value = c.telefono || '';
       $('#e_email').value = c.email || '';
 
@@ -1901,6 +1999,7 @@ if (logoutLink) {
 
       const body = {
         nombre: $('#e_nombre').value,
+        logo_url: ($('#e_logo_url').value || '').trim() || null,
         telefono: $('#e_telefono').value,
         email: $('#e_email').value,
         razon_social: $('#e_razon_social').value,
