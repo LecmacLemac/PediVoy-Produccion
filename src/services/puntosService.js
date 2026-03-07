@@ -28,7 +28,7 @@ export async function awardPointsForDeliveredOrder({ queryFn, empresaId, puntoEn
   const inserted = await queryFn(
     `INSERT INTO puntos_movimientos (empresa_id, punto_entrega_id, pedido_id, tipo, puntos, detalle)
      VALUES ($1, $2, $3, 'acumulacion_entrega', $4, $5)
-     ON CONFLICT (empresa_id, pedido_id, tipo)
+     ON CONFLICT (empresa_id, pedido_id, tipo) WHERE pedido_id IS NOT NULL
      DO NOTHING
      RETURNING id`,
     [emp, cliente, ped, points, `Puntos por pedido entregado #${ped}`]

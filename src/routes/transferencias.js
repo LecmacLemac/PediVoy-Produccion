@@ -181,6 +181,13 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
       }
       res.json(rows);
     } catch (e) {
+      console.error('Error listando transferencias:', e?.message || e, {
+        estado: req.query?.estado,
+        estado_revision: req.query?.estado_revision,
+        empresa_id: req.query?.empresa_id,
+        chofer_id: req.query?.chofer_id,
+        fecha: req.query?.fecha
+      });
       res.status(500).json({ error: 'Error listando transferencias' });
     }
   });
