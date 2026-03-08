@@ -30,7 +30,7 @@ export function createProductosRouter(deps) {
         `
         SELECT
           id, empresa_id,
-          nombre, descripcion, precio, imagen, activo,
+          nombre, descripcion, precio, imagen, imagen_2, imagen_3, activo,
           sku, external_id,
           stock_min, stock_max,
           retornable,
@@ -60,6 +60,8 @@ export function createProductosRouter(deps) {
         descripcion,
         precio,
         imagen,
+        imagen_2,
+        imagen_3,
         empresa_id,
         stock_min,
         stock_max,
@@ -105,7 +107,7 @@ export function createProductosRouter(deps) {
         `
         INSERT INTO productos (
           empresa_id,
-          nombre, descripcion, precio, imagen, activo,
+          nombre, descripcion, precio, imagen, imagen_2, imagen_3, activo,
           sku, external_id,
           stock_min, stock_max,
           retornable,
@@ -116,14 +118,14 @@ export function createProductosRouter(deps) {
         )
         VALUES (
           $1,
-          $2, $3, $4, $5, true,
-          $6, $7,
+          $2, $3, $4, $5, $6, $7, true,
           $8, $9,
-          $10,
-          $11, $12,
-          $13, $14, $15, $16,
-          $17, $18,
-          $19, $20, NOW()
+          $10, $11,
+          $12,
+          $13, $14,
+          $15, $16, $17, $18,
+          $19, $20,
+          $21, $22, NOW()
         )
         RETURNING id
         `,
@@ -133,6 +135,8 @@ export function createProductosRouter(deps) {
           descripcion ? String(descripcion) : null,
           precioNum,
           imagen ? String(imagen) : null,
+          imagen_2 ? String(imagen_2) : null,
+          imagen_3 ? String(imagen_3) : null,
           skuFinal,
           externalFinal,
           Number(stock_min || 0),
@@ -169,6 +173,8 @@ export function createProductosRouter(deps) {
         descripcion,
         precio,
         imagen,
+        imagen_2,
+        imagen_3,
         activo,
         stock_min,
         stock_max,
@@ -218,6 +224,14 @@ export function createProductosRouter(deps) {
       if (imagen !== undefined) {
         sets.push(`imagen=$${idx++}`);
         vals.push(imagen ? String(imagen) : null);
+      }
+      if (imagen_2 !== undefined) {
+        sets.push(`imagen_2=$${idx++}`);
+        vals.push(imagen_2 ? String(imagen_2) : null);
+      }
+      if (imagen_3 !== undefined) {
+        sets.push(`imagen_3=$${idx++}`);
+        vals.push(imagen_3 ? String(imagen_3) : null);
       }
       if (activo !== undefined) {
         sets.push(`activo=$${idx++}`);

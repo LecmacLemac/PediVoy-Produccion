@@ -223,6 +223,8 @@ CREATE TABLE IF NOT EXISTS productos (
   stock_max           INTEGER DEFAULT 0,
   activo              BOOLEAN DEFAULT TRUE,
   imagen              TEXT,
+  imagen_2            TEXT,
+  imagen_3            TEXT,
   categoria           TEXT,
   orden               INTEGER DEFAULT 0,
   etiqueta            TEXT, 
@@ -249,7 +251,9 @@ ALTER TABLE productos
     ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ,
     ADD COLUMN IF NOT EXISTS deleted_by INTEGER,
-    ADD COLUMN IF NOT EXISTS promo_config JSONB;
+    ADD COLUMN IF NOT EXISTS promo_config JSONB,
+    ADD COLUMN IF NOT EXISTS imagen_2 TEXT,
+    ADD COLUMN IF NOT EXISTS imagen_3 TEXT;
 
 CREATE UNIQUE INDEX IF NOT EXISTS productos_empresa_sku_uniq
   ON productos (empresa_id, lower(sku))

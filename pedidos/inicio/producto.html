@@ -423,8 +423,18 @@
             <input type="text" id="p_etiqueta" placeholder="Ej: Oferta, Popular">
           </div>
           <div>
-            <label>Imagen (URL)</label>
+            <label>Imagen principal (URL)</label>
             <input type="text" id="p_imagen" placeholder="https://...">
+          </div>
+        </div>
+        <div class="form-grid">
+          <div>
+            <label>Imagen 2 (URL)</label>
+            <input type="text" id="p_imagen_2" placeholder="https://... (opcional)">
+          </div>
+          <div>
+            <label>Imagen 3 (URL)</label>
+            <input type="text" id="p_imagen_3" placeholder="https://... (opcional)">
           </div>
         </div>
 
@@ -789,6 +799,8 @@
       $('#p_desc').value = p.descripcion || '';
       $('#p_precio').value = p.precio;
       $('#p_imagen').value = p.imagen || '';
+      $('#p_imagen_2').value = p.imagen_2 || '';
+      $('#p_imagen_3').value = p.imagen_3 || '';
       $('#p_activo').value = (p.activo === 1 || p.activo === true) ? '1' : '0';
       $('#p_stock_min').value = p.stock_min || 0;
       $('#p_categoria').value = p.categoria || '';
@@ -927,6 +939,8 @@
         descripcion: $('#p_desc').value.trim(),
         precio: Number($('#p_precio').value || 0),
         imagen: $('#p_imagen').value.trim(),
+        imagen_2: $('#p_imagen_2').value.trim(),
+        imagen_3: $('#p_imagen_3').value.trim(),
         activo: $('#p_activo').value === '1',
         stock_min: Number($('#p_stock_min').value || 0),
         categoria: $('#p_categoria').value.trim() || null,
