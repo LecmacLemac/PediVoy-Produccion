@@ -53,7 +53,7 @@ export function createRepartidorStatsRouter() {
         await query(
           `
           WITH entregas AS (
-            SELECT COALESCE(SUM(it.cantidad),0) AS q
+            SELECT COALESCE(SUM(CASE WHEN COALESCE(it.precio_unitario, 0) > 0 THEN it.cantidad ELSE 0 END),0) AS q
             FROM items_pedido it
             JOIN pedidos p          ON p.id = it.pedido_id
             JOIN puntos_entrega pe  ON pe.id = p.punto_entrega_id
