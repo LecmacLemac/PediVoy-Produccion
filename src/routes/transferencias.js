@@ -147,7 +147,7 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
         WHERE 1=1
       `;
 
-      const params = [];
+      let params = [];
       let idx = 1;
 
       ({ sql, params, idx } = applyTransferFilters({
