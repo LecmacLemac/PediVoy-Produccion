@@ -85,6 +85,136 @@ export function createStockRouter() {
     }
   });
 
+  // PUT /api/stock/depositos/:id
+  router.put('/depositos/:id', withAuth, async (req, res) => {
+    try {
+      await ensureDepositosSchemaPromise;
+      const esSuperUser = isSuper(req);
+      const empresaId = esSuperUser && req.body?.empresa_id
+        ? Number(req.body.empresa_id)
+        : getEmpresaIdFromToken(req);
+      const depositoId = Number(req.params.id || 0);
+      const nombre = req.body?.nombre != null ? String(req.body.nombre).trim() : null;
+      const direccion = req.body?.direccion != null ? String(req.body.direccion).trim() : null;
+      const activo = req.body?.activo;
+
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido' });
+      if (!depositoId) return res.status(400).json({ error: 'id inválido' });
+
+      const current = await query(
+        `SELECT id, empresa_id, nombre, direccion, activo FROM depositos WHERE id = $1 AND empresa_id = $2 LIMIT 1`,
+        [depositoId, empresaId]
+      );
+      if (!current.length) return res.status(404).json({ error: 'Depósito no encontrado' });
+
+      const targetNombre = nombre ?? current[0].nombre;
+      const targetDireccion = direccion ?? current[0].direccion;
+      const targetActivo = typeof activo === 'boolean' ? activo : current[0].activo;
+
+      if (!String(targetNombre || '').trim()) return res.status(400).json({ error: 'Nombre requerido' });
+
+      const rows = await query(
+        `UPDATE depositos
+            SET nombre = $1,
+                direccion = $2,
+                activo = $3,
+                updated_at = NOW()
+          WHERE id = $4
+            AND empresa_id = $5
+          RETURNING id, empresa_id, nombre, direccion, activo, created_at, updated_at`,
+        [targetNombre, targetDireccion, targetActivo, depositoId, empresaId]
+      );
+
+      return res.json(rows?.[0] || { ok: true });
+    } catch (e) {
+      console.error('ERROR PUT /api/stock/depositos/:id', e);
+      return res.status(500).json({ error: 'Error actualizando depósito' });
+    }
+  });
+
+  // DELETE /api/stock/depositos/:id (soft-delete por compat)
+  router.delete('/depositos/:id', withAuth, async (req, res) => {
+    try {
+      await ensureDepositosSchemaPromise;
+      const esSuperUser = isSuper(req);
+      const empresaId = esSuperUser && req.query?.empresa_id
+        ? Number(req.query.empresa_id)
+        : getEmpresaIdFromToken(req);
+      const depositoId = Number(req.params.id || 0);
+
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido' });
+      if (!depositoId) return res.status(400).json({ error: 'id inválido' });
+
+      const rows = await query(
+        `UPDATE depositos
+            SET activo = FALSE,
+                updated_at = NOW()
+          WHERE id = $1
+            AND empresa_id = $2
+          RETURNING id, empresa_id, nombre, direccion, activo, created_at, updated_at`,
+        [depositoId, empresaId]
+      );
+
+      if (!rows.length) return res.status(404).json({ error: 'Depósito no encontrado' });
+      return res.json({ ok: true, deposito: rows[0] });
+    } catch (e) {
+      console.error('ERROR DELETE /api/stock/depositos/:id', e);
+      return res.status(500).json({ error: 'Error desactivando depósito' });
+    }
+  });
+
+  // GET /api/stock/depositos/summary
+  router.get('/depositos/summary', withAuth, async (req, res) => {
+    try {
+      await ensureDepositosSchemaPromise;
+      const esSuperUser = isSuper(req);
+      const empresaId = esSuperUser && req.query?.empresa_id
+        ? Number(req.query.empresa_id)
+        : getEmpresaIdFromToken(req);
+      const from = String(req.query?.from || '').slice(0, 10);
+      const to = String(req.query?.to || '').slice(0, 10);
+
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido' });
+
+      const params = [empresaId];
+      let idx = 2;
+      const where = ['csm.empresa_id = $1'];
+
+      if (from) {
+        where.push(`(csm.fecha AT TIME ZONE 'UTC' AT TIME ZONE 'America/Argentina/Buenos_Aires')::date >= $${idx++}::date`);
+        params.push(from);
+      }
+      if (to) {
+        where.push(`(csm.fecha AT TIME ZONE 'UTC' AT TIME ZONE 'America/Argentina/Buenos_Aires')::date <= $${idx++}::date`);
+        params.push(to);
+      }
+
+      const rows = await query(
+        `SELECT
+           d.id AS deposito_id,
+           d.nombre AS deposito_nombre,
+           d.activo,
+           csm.producto_id,
+           p.nombre AS producto_nombre,
+           COALESCE(SUM(CASE WHEN csm.cantidad > 0 THEN csm.cantidad ELSE 0 END), 0) AS total_ingresado,
+           COALESCE(SUM(CASE WHEN csm.cantidad < 0 THEN ABS(csm.cantidad) ELSE 0 END), 0) AS total_egresado,
+           COALESCE(SUM(csm.cantidad), 0) AS neto
+         FROM chofer_stock_mov csm
+         JOIN depositos d ON d.id = csm.deposito_id
+         JOIN productos p ON p.id = csm.producto_id AND p.empresa_id = csm.empresa_id
+         WHERE ${where.join(' AND ')}
+         GROUP BY d.id, d.nombre, d.activo, csm.producto_id, p.nombre
+         ORDER BY d.nombre ASC, p.nombre ASC`,
+        params
+      );
+
+      return res.json(rows || []);
+    } catch (e) {
+      console.error('ERROR /api/stock/depositos/summary', e);
+      return res.status(500).json({ error: 'Error resumen de depósitos' });
+    }
+  });
+
   // GET /api/stock/summary
   router.get('/summary', withAuth, async (req, res) => {
     try {
