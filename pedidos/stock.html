@@ -309,6 +309,50 @@
       </div>
     </section>
 
+    <section class="card" id="depTransfersHistorySection">
+      <div class="flex-between" style="margin-bottom:0.75rem;">
+        <h3 style="margin:0;">Historial de transferencias</h3>
+      </div>
+
+      <div class="toolbar" style="margin-bottom:1rem;">
+        <div style="display:grid; grid-template-columns: 1fr 1fr 1.2fr auto; gap:0.7rem; width:100%;">
+          <div>
+            <label>Desde</label>
+            <input type="date" id="trFrom">
+          </div>
+          <div>
+            <label>Hasta</label>
+            <input type="date" id="trTo">
+          </div>
+          <div>
+            <label>Depósito (opcional)</label>
+            <select id="trDepFiltro"><option value="">Todos</option></select>
+          </div>
+          <div style="display:flex; align-items:flex-end;">
+            <button id="btnTrHist" class="btn btn-secondary">Actualizar historial</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="table-responsive" style="max-height:280px; overflow:auto; border:1px solid var(--border); border-radius:10px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Fecha</th>
+              <th>Producto</th>
+              <th>Origen</th>
+              <th>Destino</th>
+              <th class="text-right">Cantidad</th>
+              <th>Chofer</th>
+            </tr>
+          </thead>
+          <tbody id="trHistRows">
+            <tr><td colspan="6" style="text-align:center; color:var(--muted); padding:1rem;">Sin datos.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
     <section class="card" id="depSummarySection">
       <div class="flex-between" style="margin-bottom:0.75rem;">
         <h3 style="margin:0;">Resumen por depósito</h3>
@@ -490,11 +534,14 @@
         const today = ymdNow();
         $('#depFrom').value = today;
         $('#depTo').value = today;
+        $('#trFrom').value = today;
+        $('#trTo').value = today;
 
         await loadChoferes();
         await loadStock();
         await loadDepositos();
         await loadDepositosSummary();
+        await loadTransferenciasHistorial();
 
       } catch { location.href='login.html'; }
     }
@@ -510,6 +557,7 @@
           await loadStock();
           await loadDepositos();
           await loadDepositosSummary();
+          await loadTransferenciasHistorial();
         });
     }
 
@@ -591,8 +639,10 @@
       }
       const trOrigen = document.getElementById('trOrigen');
       const trDestino = document.getElementById('trDestino');
+      const trDepFiltro = document.getElementById('trDepFiltro');
       if (trOrigen) trOrigen.innerHTML = `<option value="">Origen</option>${opts}`;
       if (trDestino) trDestino.innerHTML = `<option value="">Destino</option>${opts}`;
+      if (trDepFiltro) trDepFiltro.innerHTML = `<option value="">Todos</option>${opts}`;
     }
 
     function renderDepositos() {
@@ -612,6 +662,34 @@
         `;
       }).join('');
       $('#depRows').innerHTML = html || '<tr><td colspan="4" style="text-align:center; color:var(--muted); padding:1rem;">Sin depósitos.</td></tr>';
+    }
+
+    async function loadTransferenciasHistorial() {
+      const from = $('#trFrom')?.value || '';
+      const to = $('#trTo')?.value || '';
+      const depositoFiltro = $('#trDepFiltro')?.value || '';
+      const params = new URLSearchParams();
+      if (from) params.set('from', from);
+      if (to) params.set('to', to);
+      if (depositoFiltro) params.set('deposito_id', depositoFiltro);
+      if (isSuper && $('#empFilter')?.value) params.set('empresa_id', $('#empFilter').value);
+
+      const r = await authFetch(`/api/stock/depositos/transferencias?${params.toString()}`);
+      const rows = await r.json();
+      const list = Array.isArray(rows) ? rows : [];
+
+      const html = list.map(it => `
+        <tr>
+          <td>${esc(dateStr(it.fecha))}</td>
+          <td>${esc(it.producto_nombre || '-')}</td>
+          <td>${esc(it.origen_deposito_nombre || '-')}</td>
+          <td>${esc(it.destino_deposito_nombre || '-')}</td>
+          <td class="text-right" style="font-weight:700">${fmtNum(it.cantidad)}</td>
+          <td>${esc(it.chofer_nombre || '-')}</td>
+        </tr>
+      `).join('');
+
+      $('#trHistRows').innerHTML = html || '<tr><td colspan="6" style="text-align:center; color:var(--muted); padding:1rem;">Sin transferencias en el período.</td></tr>';
     }
 
     async function loadDepositosSummary() {
@@ -798,6 +876,7 @@
 
       $('#trCantidad').value = '';
       await loadDepositosSummary();
+      await loadTransferenciasHistorial();
       alert('Transferencia registrada');
     }
     
@@ -891,12 +970,17 @@
       await loadStock();
       await loadDepositos();
       await loadDepositosSummary();
+      await loadTransferenciasHistorial();
     });
     $('#btnDepSave').addEventListener('click', saveDeposito);
     $('#btnDepSummary').addEventListener('click', loadDepositosSummary);
     $('#depFrom').addEventListener('change', loadDepositosSummary);
     $('#depTo').addEventListener('change', loadDepositosSummary);
     $('#btnTransferir').addEventListener('click', transferirDepositos);
+    $('#btnTrHist').addEventListener('click', loadTransferenciasHistorial);
+    $('#trFrom').addEventListener('change', loadTransferenciasHistorial);
+    $('#trTo').addEventListener('change', loadTransferenciasHistorial);
+    $('#trDepFiltro').addEventListener('change', loadTransferenciasHistorial);
     $('#logout').addEventListener('click', async (e) => {
       e.preventDefault();
       try { await authFetch('/api/logout', { method: 'POST' }); } catch {}

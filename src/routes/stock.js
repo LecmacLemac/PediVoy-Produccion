@@ -278,6 +278,81 @@ export function createStockRouter() {
     }
   });
 
+  // GET /api/stock/depositos/transferencias
+  router.get('/depositos/transferencias', withAuth, async (req, res) => {
+    try {
+      await ensureDepositosSchemaPromise;
+      const esSuperUser = isSuper(req);
+      const empresaId = esSuperUser && req.query?.empresa_id
+        ? Number(req.query.empresa_id)
+        : getEmpresaIdFromToken(req);
+
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido' });
+
+      const from = String(req.query?.from || '').slice(0, 10);
+      const to = String(req.query?.to || '').slice(0, 10);
+      const depositoId = Number(req.query?.deposito_id || 0) || null;
+      const limit = Math.min(Math.max(Number(req.query?.limit || 100), 1), 500);
+
+      const params = [empresaId];
+      let idx = 2;
+      const where = ["mout.empresa_id = $1"];
+
+      if (from) {
+        where.push(`(mout.fecha AT TIME ZONE 'UTC' AT TIME ZONE 'America/Argentina/Buenos_Aires')::date >= $${idx++}::date`);
+        params.push(from);
+      }
+      if (to) {
+        where.push(`(mout.fecha AT TIME ZONE 'UTC' AT TIME ZONE 'America/Argentina/Buenos_Aires')::date <= $${idx++}::date`);
+        params.push(to);
+      }
+      if (depositoId) {
+        where.push(`(mout.deposito_id = $${idx} OR min.deposito_id = $${idx})`);
+        params.push(depositoId);
+        idx += 1;
+      }
+
+      params.push(limit);
+      const limitPos = `$${idx}`;
+
+      const rows = await query(
+        `SELECT
+           mout.referencia,
+           mout.fecha,
+           mout.producto_id,
+           p.nombre AS producto_nombre,
+           ABS(mout.cantidad) AS cantidad,
+           mout.chofer_id,
+           c.nombre AS chofer_nombre,
+           mout.motivo,
+           mout.deposito_id AS origen_deposito_id,
+           d1.nombre AS origen_deposito_nombre,
+           min.deposito_id AS destino_deposito_id,
+           d2.nombre AS destino_deposito_nombre
+         FROM chofer_stock_mov mout
+         JOIN chofer_stock_mov min
+           ON min.referencia = mout.referencia
+          AND min.empresa_id = mout.empresa_id
+          AND min.producto_id = mout.producto_id
+          AND min.tipo = 'TRANSFER_IN'
+         LEFT JOIN productos p ON p.id = mout.producto_id AND p.empresa_id = mout.empresa_id
+         LEFT JOIN choferes c ON c.id = mout.chofer_id AND c.empresa_id = mout.empresa_id
+         LEFT JOIN depositos d1 ON d1.id = mout.deposito_id
+         LEFT JOIN depositos d2 ON d2.id = min.deposito_id
+         WHERE mout.tipo = 'TRANSFER_OUT'
+           AND ${where.join(' AND ')}
+         ORDER BY mout.fecha DESC, mout.id DESC
+         LIMIT ${limitPos}`,
+        params
+      );
+
+      return res.json(rows || []);
+    } catch (e) {
+      console.error('ERROR /api/stock/depositos/transferencias', e);
+      return res.status(500).json({ error: 'Error listando transferencias entre depósitos' });
+    }
+  });
+
   // GET /api/stock/summary
   router.get('/summary', withAuth, async (req, res) => {
     try {
