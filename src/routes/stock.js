@@ -353,6 +353,110 @@ export function createStockRouter() {
     }
   });
 
+  // POST /api/stock/depositos/transferencias/revertir
+  router.post('/depositos/transferencias/revertir', withAuth, async (req, res) => {
+    try {
+      await ensureDepositosSchemaPromise;
+      const esSuperUser = isSuper(req);
+      const empresaId = esSuperUser && req.body?.empresa_id
+        ? Number(req.body.empresa_id)
+        : getEmpresaIdFromToken(req);
+      const referencia = String(req.body?.referencia || '').trim();
+      const choferId = Number(req.body?.chofer_id || 0);
+      const motivoExtra = String(req.body?.motivo || '').trim();
+
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido' });
+      if (!referencia) return res.status(400).json({ error: 'referencia requerida' });
+      if (!choferId) return res.status(400).json({ error: 'chofer_id requerido' });
+
+      const baseRef = referencia.startsWith('REVERSA:') ? referencia.slice('REVERSA:'.length) : referencia;
+
+      const outRows = await query(
+        `SELECT id, producto_id, deposito_id, ABS(cantidad) AS cantidad
+           FROM chofer_stock_mov
+          WHERE empresa_id = $1
+            AND referencia = $2
+            AND tipo = 'TRANSFER_OUT'
+          LIMIT 1`,
+        [empresaId, baseRef]
+      );
+      const inRows = await query(
+        `SELECT id, producto_id, deposito_id, ABS(cantidad) AS cantidad
+           FROM chofer_stock_mov
+          WHERE empresa_id = $1
+            AND referencia = $2
+            AND tipo = 'TRANSFER_IN'
+          LIMIT 1`,
+        [empresaId, baseRef]
+      );
+
+      if (!outRows.length || !inRows.length) {
+        return res.status(404).json({ error: 'Transferencia no encontrada' });
+      }
+
+      const out = outRows[0];
+      const inn = inRows[0];
+      if (Number(out.producto_id) !== Number(inn.producto_id)) {
+        return res.status(400).json({ error: 'Transferencia inconsistente: producto distinto' });
+      }
+      if (Number(out.cantidad) !== Number(inn.cantidad)) {
+        return res.status(400).json({ error: 'Transferencia inconsistente: cantidades distintas' });
+      }
+
+      const already = await query(
+        `SELECT id
+           FROM chofer_stock_mov
+          WHERE empresa_id = $1
+            AND referencia = $2
+            AND tipo IN ('TRANSFER_REV_IN', 'TRANSFER_REV_OUT')
+          LIMIT 1`,
+        [empresaId, `REVERSA:${baseRef}`]
+      );
+      if (already.length) {
+        return res.status(409).json({ error: 'La transferencia ya fue revertida' });
+      }
+
+      // Debe existir saldo en el depósito destino original para poder devolver
+      const saldoDestinoRows = await query(
+        `SELECT COALESCE(SUM(cantidad),0) AS saldo
+           FROM chofer_stock_mov
+          WHERE empresa_id = $1
+            AND deposito_id = $2
+            AND producto_id = $3`,
+        [empresaId, inn.deposito_id, out.producto_id]
+      );
+      const saldoDestino = Number(saldoDestinoRows?.[0]?.saldo || 0);
+      if (saldoDestino < Number(out.cantidad)) {
+        return res.status(400).json({ error: `No se puede revertir: saldo insuficiente en depósito destino (disponible ${saldoDestino})` });
+      }
+
+      const refRev = `REVERSA:${baseRef}`;
+      const motivo = [
+        'Reversa transferencia',
+        motivoExtra ? `- ${motivoExtra}` : ''
+      ].filter(Boolean).join(' ');
+
+      // Vuelve del destino al origen
+      await query(
+        `INSERT INTO chofer_stock_mov
+          (empresa_id, chofer_id, producto_id, deposito_id, fecha, tipo, cantidad, motivo, referencia, created_at)
+         VALUES ($1, $2, $3, $4, NOW(), 'TRANSFER_REV_OUT', $5, $6, $7, NOW())`,
+        [empresaId, choferId, out.producto_id, inn.deposito_id, -Math.abs(Number(out.cantidad)), motivo, refRev]
+      );
+      await query(
+        `INSERT INTO chofer_stock_mov
+          (empresa_id, chofer_id, producto_id, deposito_id, fecha, tipo, cantidad, motivo, referencia, created_at)
+         VALUES ($1, $2, $3, $4, NOW(), 'TRANSFER_REV_IN', $5, $6, $7, NOW())`,
+        [empresaId, choferId, out.producto_id, out.deposito_id, Math.abs(Number(out.cantidad)), motivo, refRev]
+      );
+
+      return res.json({ ok: true, referencia: refRev });
+    } catch (e) {
+      console.error('ERROR /api/stock/depositos/transferencias/revertir', e);
+      return res.status(500).json({ error: 'Error revirtiendo transferencia' });
+    }
+  });
+
   // GET /api/stock/summary
   router.get('/summary', withAuth, async (req, res) => {
     try {

@@ -344,6 +344,7 @@
               <th>Destino</th>
               <th class="text-right">Cantidad</th>
               <th>Chofer</th>
+              <th class="text-right">Acción</th>
             </tr>
           </thead>
           <tbody id="trHistRows">
@@ -686,10 +687,11 @@
           <td>${esc(it.destino_deposito_nombre || '-')}</td>
           <td class="text-right" style="font-weight:700">${fmtNum(it.cantidad)}</td>
           <td>${esc(it.chofer_nombre || '-')}</td>
+          <td class="text-right"><button class="btn btn-secondary btn-sm" onclick="revertirTransferencia('${String(it.referencia || '').replace(/'/g, "\\'")}')">↩ Revertir</button></td>
         </tr>
       `).join('');
 
-      $('#trHistRows').innerHTML = html || '<tr><td colspan="6" style="text-align:center; color:var(--muted); padding:1rem;">Sin transferencias en el período.</td></tr>';
+      $('#trHistRows').innerHTML = html || '<tr><td colspan="7" style="text-align:center; color:var(--muted); padding:1rem;">Sin transferencias en el período.</td></tr>';
     }
 
     async function loadDepositosSummary() {
@@ -879,6 +881,34 @@
       await loadTransferenciasHistorial();
       alert('Transferencia registrada');
     }
+
+    window.revertirTransferencia = async (referencia) => {
+      if (!referencia) return;
+      if (!confirm('¿Revertir esta transferencia?')) return;
+
+      const chofer = Number($('#trChofer').value || $('#ajChofer').value || 0);
+      if (!chofer) return alert('Seleccioná chofer responsable para auditar la reversa');
+
+      const body = {
+        referencia,
+        chofer_id: chofer,
+        empresa_id: isSuper ? Number($('#empFilter').value || 0) || undefined : undefined,
+      };
+
+      const r = await authFetch('/api/stock/depositos/transferencias/revertir', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) {
+        const t = await r.text();
+        return alert(`No se pudo revertir: ${t || r.status}`);
+      }
+
+      await loadDepositosSummary();
+      await loadTransferenciasHistorial();
+      alert('Transferencia revertida');
+    };
     
     // Ajuste
     window.openAjuste = (id) => {
