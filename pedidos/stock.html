@@ -373,7 +373,13 @@
 
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; gap:8px; flex-wrap:wrap;">
         <small id="trPageInfo" style="color:var(--muted)">Página 1</small>
-        <div style="display:flex; gap:8px;">
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+          <label style="margin:0; color:var(--muted); font-size:.8rem;">Página</label>
+          <select id="trPageSize" style="width:auto; min-width:90px;">
+            <option value="25">25</option>
+            <option value="50" selected>50</option>
+            <option value="100">100</option>
+          </select>
           <button id="btnTrPrev" class="btn btn-secondary">← Anterior</button>
           <button id="btnTrNext" class="btn btn-secondary">Siguiente →</button>
         </div>
@@ -550,6 +556,7 @@
     let depositos = [];
     let editingDepositoId = null;
     let transferPage = { offset: 0, limit: 50, lastCount: 0 };
+    const TR_PAGE_SIZE_KEY = 'stock:transfer:page-size:v1';
     let adjustBusy = false;
 
     // ====== UTILS ======
@@ -561,6 +568,25 @@
       d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
       return d.toISOString().slice(0,10);
     };
+
+    function loadTransferPageSize() {
+      try {
+        const raw = localStorage.getItem(TR_PAGE_SIZE_KEY);
+        const n = Number(raw || transferPage.limit);
+        if ([25,50,100].includes(n)) transferPage.limit = n;
+      } catch {}
+      const sel = document.getElementById('trPageSize');
+      if (sel) sel.value = String(transferPage.limit);
+    }
+
+    function saveTransferPageSize(v) {
+      const n = Number(v || 0);
+      if (![25,50,100].includes(n)) return;
+      transferPage.limit = n;
+      try { localStorage.setItem(TR_PAGE_SIZE_KEY, String(n)); } catch {}
+    }
+
+    // noop
 
     // ====== LOGIC ======
     async function init() {
@@ -583,6 +609,7 @@
         $('#depTo').value = today;
         $('#trFrom').value = today;
         $('#trTo').value = today;
+        loadTransferPageSize();
 
         await loadChoferes();
         await loadStock();
@@ -1217,6 +1244,11 @@
     $('#permChofer').addEventListener('change', loadPermisosChofer);
     $('#btnTrHist').addEventListener('click', ()=>{ resetTransferPage(); loadTransferenciasHistorial(); });
     $('#btnTrExport').addEventListener('click', exportTransferenciasCsv);
+    $('#trPageSize').addEventListener('change', ()=>{
+      saveTransferPageSize($('#trPageSize').value);
+      resetTransferPage();
+      loadTransferenciasHistorial();
+    });
     $('#btnTrPrev').addEventListener('click', async ()=>{
       transferPage.offset = Math.max(0, transferPage.offset - transferPage.limit);
       await loadTransferenciasHistorial();
