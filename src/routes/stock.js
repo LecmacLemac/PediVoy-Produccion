@@ -41,6 +41,17 @@ export function createStockRouter() {
     }
   })();
 
+  async function isDepositoPermisosEstricto(empresaId) {
+    const rows = await query(
+      `SELECT COALESCE((config_operativa->>'deposito_permisos_estricto')::boolean, FALSE) AS estricto
+         FROM empresas
+        WHERE id = $1
+        LIMIT 1`,
+      [empresaId]
+    );
+    return !!rows?.[0]?.estricto;
+  }
+
   async function choferPuedeUsarDeposito({ empresaId, choferId, depositoId }) {
     if (!empresaId || !choferId || !depositoId) return false;
 
@@ -59,7 +70,10 @@ export function createStockRouter() {
       [empresaId, choferId]
     );
     const cfgCount = Number(cfgRows?.[0]?.c || 0);
-    if (cfgCount === 0) return true; // compat: si no hay configuración, permitir todos.
+    if (cfgCount === 0) {
+      const strict = await isDepositoPermisosEstricto(empresaId);
+      return !strict; // compat cuando estricto=false; bloquea cuando estricto=true
+    }
 
     const okRows = await query(
       `SELECT 1
@@ -110,6 +124,9 @@ export function createStockRouter() {
         const allowed = new Set((cfgRows || []).map(r => Number(r.deposito_id)).filter(Boolean));
         if (allowed.size > 0) {
           rows = (rows || []).filter(r => allowed.has(Number(r.id)));
+        } else {
+          const strict = await isDepositoPermisosEstricto(empresaId);
+          if (strict) rows = [];
         }
       }
       return res.json(rows || []);
@@ -620,6 +637,50 @@ export function createStockRouter() {
     } catch (e) {
       console.error('ERROR POST /api/stock/depositos/choferes', e);
       return res.status(500).json({ error: 'Error guardando permisos de depósito por chofer' });
+    }
+  });
+
+  // GET /api/stock/depositos/permisos-config
+  router.get('/depositos/permisos-config', withAuth, async (req, res) => {
+    try {
+      await ensureDepositosSchemaPromise;
+      const esSuperUser = isSuper(req);
+      const empresaId = esSuperUser && req.query?.empresa_id
+        ? Number(req.query.empresa_id)
+        : getEmpresaIdFromToken(req);
+
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido' });
+      const estricto = await isDepositoPermisosEstricto(empresaId);
+      return res.json({ deposito_permisos_estricto: estricto });
+    } catch (e) {
+      console.error('ERROR /api/stock/depositos/permisos-config', e);
+      return res.status(500).json({ error: 'Error obteniendo configuración de permisos' });
+    }
+  });
+
+  // PUT /api/stock/depositos/permisos-config
+  router.put('/depositos/permisos-config', withAuth, async (req, res) => {
+    try {
+      await ensureDepositosSchemaPromise;
+      const esSuperUser = isSuper(req);
+      const empresaId = esSuperUser && req.body?.empresa_id
+        ? Number(req.body.empresa_id)
+        : getEmpresaIdFromToken(req);
+      const estricto = !!req.body?.deposito_permisos_estricto;
+
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido' });
+
+      await query(
+        `UPDATE empresas
+            SET config_operativa = COALESCE(config_operativa, '{}'::jsonb) || jsonb_build_object('deposito_permisos_estricto', $2::boolean)
+          WHERE id = $1`,
+        [empresaId, estricto]
+      );
+
+      return res.json({ ok: true, deposito_permisos_estricto: estricto });
+    } catch (e) {
+      console.error('ERROR PUT /api/stock/depositos/permisos-config', e);
+      return res.status(500).json({ error: 'Error guardando configuración de permisos' });
     }
   });
 

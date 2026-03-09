@@ -277,6 +277,17 @@
       </div>
     </section>
 
+    <section class="card" id="depPermModeSection">
+      <div class="flex-between" style="margin-bottom:0.75rem;">
+        <h3 style="margin:0;">Modo de permisos de depósitos</h3>
+      </div>
+      <label style="display:flex; align-items:center; gap:8px; margin-bottom:0.7rem;">
+        <input type="checkbox" id="depPermStrict">
+        <span>Modo estricto (si un chofer no tiene depósitos asignados, no puede cargar/transferir)</span>
+      </label>
+      <button id="btnDepPermMode" class="btn btn-primary">Guardar modo</button>
+    </section>
+
     <section class="card" id="depPermSection">
       <div class="flex-between" style="margin-bottom:0.75rem;">
         <h3 style="margin:0;">Permisos de depósito por chofer</h3>
@@ -558,6 +569,7 @@
         await loadChoferes();
         await loadStock();
         await loadDepositos();
+        await loadPermisosMode();
         await loadPermisosChofer();
         await loadDepositosSummary();
         await loadTransferenciasHistorial();
@@ -575,6 +587,7 @@
           await loadChoferes();
           await loadStock();
           await loadDepositos();
+          await loadPermisosMode();
           await loadPermisosChofer();
           await loadDepositosSummary();
           await loadTransferenciasHistorial();
@@ -695,6 +708,33 @@
         </label>
       `).join('');
       $('#permDepositos').innerHTML = html || '<div style="color:var(--muted)">Sin depósitos activos.</div>';
+    }
+
+    async function loadPermisosMode() {
+      const params = new URLSearchParams();
+      if (isSuper && $('#empFilter')?.value) params.set('empresa_id', $('#empFilter').value);
+      const r = await authFetch(`/api/stock/depositos/permisos-config?${params.toString()}`);
+      const cfg = await r.json();
+      $('#depPermStrict').checked = !!cfg?.deposito_permisos_estricto;
+    }
+
+    async function savePermisosMode() {
+      const body = {
+        deposito_permisos_estricto: !!$('#depPermStrict').checked,
+        empresa_id: isSuper ? Number($('#empFilter').value || 0) || undefined : undefined,
+      };
+      const r = await authFetch('/api/stock/depositos/permisos-config', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) {
+        const t = await r.text();
+        return alert(`No se pudo guardar modo de permisos: ${t || r.status}`);
+      }
+      alert('Modo de permisos actualizado');
+      await loadDepositos();
+      await loadPermisosChofer();
     }
 
     async function loadPermisosChofer() {
@@ -1081,6 +1121,8 @@
     $('#btnRef').addEventListener('click', async () => {
       await loadStock();
       await loadDepositos();
+      await loadPermisosMode();
+      await loadPermisosChofer();
       await loadDepositosSummary();
       await loadTransferenciasHistorial();
     });
@@ -1091,6 +1133,7 @@
     $('#btnTransferir').addEventListener('click', transferirDepositos);
     $('#btnPermLoad').addEventListener('click', loadPermisosChofer);
     $('#btnPermSave').addEventListener('click', savePermisosChofer);
+    $('#btnDepPermMode').addEventListener('click', savePermisosMode);
     $('#permChofer').addEventListener('change', loadPermisosChofer);
     $('#btnTrHist').addEventListener('click', loadTransferenciasHistorial);
     $('#trFrom').addEventListener('change', loadTransferenciasHistorial);
