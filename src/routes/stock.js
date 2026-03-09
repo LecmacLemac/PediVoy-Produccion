@@ -328,7 +328,17 @@ export function createStockRouter() {
            mout.deposito_id AS origen_deposito_id,
            d1.nombre AS origen_deposito_nombre,
            min.deposito_id AS destino_deposito_id,
-           d2.nombre AS destino_deposito_nombre
+           d2.nombre AS destino_deposito_nombre,
+           CASE
+             WHEN EXISTS (
+               SELECT 1
+               FROM chofer_stock_mov rev
+               WHERE rev.empresa_id = mout.empresa_id
+                 AND rev.referencia = ('REVERSA:' || mout.referencia)
+                 AND rev.tipo IN ('TRANSFER_REV_IN', 'TRANSFER_REV_OUT')
+             ) THEN TRUE
+             ELSE FALSE
+           END AS revertida
          FROM chofer_stock_mov mout
          JOIN chofer_stock_mov min
            ON min.referencia = mout.referencia

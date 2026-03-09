@@ -344,6 +344,7 @@
               <th>Destino</th>
               <th class="text-right">Cantidad</th>
               <th>Chofer</th>
+              <th>Estado</th>
               <th class="text-right">Acción</th>
             </tr>
           </thead>
@@ -679,19 +680,30 @@
       const rows = await r.json();
       const list = Array.isArray(rows) ? rows : [];
 
-      const html = list.map(it => `
-        <tr>
-          <td>${esc(dateStr(it.fecha))}</td>
-          <td>${esc(it.producto_nombre || '-')}</td>
-          <td>${esc(it.origen_deposito_nombre || '-')}</td>
-          <td>${esc(it.destino_deposito_nombre || '-')}</td>
-          <td class="text-right" style="font-weight:700">${fmtNum(it.cantidad)}</td>
-          <td>${esc(it.chofer_nombre || '-')}</td>
-          <td class="text-right"><button class="btn btn-secondary btn-sm" onclick="revertirTransferencia('${String(it.referencia || '').replace(/'/g, "\\'")}')">↩ Revertir</button></td>
-        </tr>
-      `).join('');
+      const html = list.map(it => {
+        const refSafe = String(it.referencia || '').replace(/'/g, "\\'");
+        const revertida = !!it.revertida;
+        const badge = revertida
+          ? '<span class="badge bg-low">Revertida</span>'
+          : '<span class="badge bg-ok">Activa</span>';
+        const actionBtn = revertida
+          ? '<span style="color:var(--muted)">—</span>'
+          : `<button class="btn btn-secondary btn-sm" onclick="revertirTransferencia('${refSafe}')">↩ Revertir</button>`;
+        return `
+          <tr>
+            <td>${esc(dateStr(it.fecha))}</td>
+            <td>${esc(it.producto_nombre || '-')}</td>
+            <td>${esc(it.origen_deposito_nombre || '-')}</td>
+            <td>${esc(it.destino_deposito_nombre || '-')}</td>
+            <td class="text-right" style="font-weight:700">${fmtNum(it.cantidad)}</td>
+            <td>${esc(it.chofer_nombre || '-')}</td>
+            <td>${badge}</td>
+            <td class="text-right">${actionBtn}</td>
+          </tr>
+        `;
+      }).join('');
 
-      $('#trHistRows').innerHTML = html || '<tr><td colspan="7" style="text-align:center; color:var(--muted); padding:1rem;">Sin transferencias en el período.</td></tr>';
+      $('#trHistRows').innerHTML = html || '<tr><td colspan="8" style="text-align:center; color:var(--muted); padding:1rem;">Sin transferencias en el período.</td></tr>';
     }
 
     async function loadDepositosSummary() {
