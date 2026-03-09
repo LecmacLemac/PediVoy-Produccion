@@ -2033,6 +2033,46 @@ export function createSetupRouter(deps) {
     }
   });
 
+  // GET /api/setup/fase3/integridad-modulos
+  router.get('/fase3/integridad-modulos', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req);
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+
+      const [inc] = await query(
+        `SELECT COUNT(*)::int AS c, MAX(created_at) AS last_at FROM incidencias_operativas WHERE empresa_id=$1`,
+        [empresaId]
+      );
+      const [tes] = await query(
+        `SELECT COUNT(*)::int AS c, MAX(fecha) AS last_at FROM tesoreria_movimientos WHERE empresa_id=$1`,
+        [empresaId]
+      );
+      const [com] = await query(
+        `SELECT COUNT(*)::int AS c, MAX(created_at) AS last_at FROM compras_ordenes WHERE empresa_id=$1`,
+        [empresaId]
+      );
+      const [crm] = await query(
+        `SELECT COUNT(*)::int AS c, MAX(created_at) AS last_at FROM crm_oportunidades WHERE empresa_id=$1`,
+        [empresaId]
+      );
+
+      const modules = {
+        incidencias: { count: Number(inc?.c || 0), last_at: inc?.last_at || null },
+        tesoreria: { count: Number(tes?.c || 0), last_at: tes?.last_at || null },
+        compras: { count: Number(com?.c || 0), last_at: com?.last_at || null },
+        crm: { count: Number(crm?.c || 0), last_at: crm?.last_at || null },
+      };
+
+      const missing = Object.values(modules).filter((m) => Number(m.count || 0) === 0).length;
+      const score = Math.max(0, 100 - (missing * 25));
+
+      return res.json({ ok: missing === 0, empresa_id: empresaId, score, modules });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error obteniendo integridad de módulos fase3' });
+    }
+  });
+
   // GET /api/setup/fase3/dashboard
   router.get('/fase3/dashboard', withAuth, async (req, res) => {
     try {
