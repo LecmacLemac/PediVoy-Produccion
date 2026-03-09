@@ -215,6 +215,69 @@ export function createStockRouter() {
     }
   });
 
+  // POST /api/stock/depositos/transferir
+  router.post('/depositos/transferir', withAuth, async (req, res) => {
+    try {
+      await ensureDepositosSchemaPromise;
+      const esSuperUser = isSuper(req);
+      const empresaId = esSuperUser && req.body?.empresa_id
+        ? Number(req.body.empresa_id)
+        : getEmpresaIdFromToken(req);
+
+      const origenId = Number(req.body?.origen_deposito_id || 0);
+      const destinoId = Number(req.body?.destino_deposito_id || 0);
+      const productoId = Number(req.body?.producto_id || 0);
+      const choferId = Number(req.body?.chofer_id || 0);
+      const cantidad = Number(req.body?.cantidad || 0);
+      const motivo = String(req.body?.motivo || 'Transferencia entre depósitos').trim();
+
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido' });
+      if (!origenId || !destinoId || origenId === destinoId) return res.status(400).json({ error: 'Depósitos origen/destino inválidos' });
+      if (!productoId) return res.status(400).json({ error: 'producto_id requerido' });
+      if (!choferId) return res.status(400).json({ error: 'chofer_id requerido' });
+      if (!Number.isFinite(cantidad) || cantidad <= 0) return res.status(400).json({ error: 'cantidad inválida' });
+
+      const deps = await query(
+        `SELECT id, nombre FROM depositos WHERE empresa_id = $1 AND activo = TRUE AND id = ANY($2::int[])`,
+        [empresaId, [origenId, destinoId]]
+      );
+      if ((deps || []).length !== 2) return res.status(400).json({ error: 'Depósito origen o destino no válido para la empresa' });
+
+      const saldoRows = await query(
+        `SELECT COALESCE(SUM(cantidad),0) AS saldo
+           FROM chofer_stock_mov
+          WHERE empresa_id = $1
+            AND deposito_id = $2
+            AND producto_id = $3`,
+        [empresaId, origenId, productoId]
+      );
+      const saldoOrigen = Number(saldoRows?.[0]?.saldo || 0);
+      if (saldoOrigen < cantidad) {
+        return res.status(400).json({ error: `Saldo insuficiente en depósito origen (disponible: ${saldoOrigen})` });
+      }
+
+      const ref = `TRANSFER:${Date.now()}:${origenId}->${destinoId}`;
+
+      await query(
+        `INSERT INTO chofer_stock_mov
+          (empresa_id, chofer_id, producto_id, deposito_id, fecha, tipo, cantidad, motivo, referencia, created_at)
+         VALUES ($1, $2, $3, $4, NOW(), 'TRANSFER_OUT', $5, $6, $7, NOW())`,
+        [empresaId, choferId, productoId, origenId, -Math.abs(cantidad), motivo, ref]
+      );
+      await query(
+        `INSERT INTO chofer_stock_mov
+          (empresa_id, chofer_id, producto_id, deposito_id, fecha, tipo, cantidad, motivo, referencia, created_at)
+         VALUES ($1, $2, $3, $4, NOW(), 'TRANSFER_IN', $5, $6, $7, NOW())`,
+        [empresaId, choferId, productoId, destinoId, Math.abs(cantidad), motivo, ref]
+      );
+
+      return res.json({ ok: true, referencia: ref });
+    } catch (e) {
+      console.error('ERROR /api/stock/depositos/transferir', e);
+      return res.status(500).json({ error: 'Error transfiriendo stock entre depósitos' });
+    }
+  });
+
   // GET /api/stock/summary
   router.get('/summary', withAuth, async (req, res) => {
     try {
