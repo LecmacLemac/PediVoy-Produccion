@@ -88,10 +88,7 @@ export function registerWhatsAppWeb(app, deps) {
         ],
         executablePath: executablePath,
         ignoreHTTPSErrors: true,
-        timeout: 60000,  // Aumentar timeout para Render
-        ...(isRender && {
-          userDataDir: '/tmp/whatsapp-session'  // Usar /tmp para sesiones en Render
-        })
+        timeout: 60000  // Aumentar timeout para Render
       }
     });
   
