@@ -49,7 +49,7 @@ export function registerWhatsAppWeb(app, deps) {
     // Configuración especial para Render
     const isRender = process.env.RENDER === 'true';
     const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH || 
-                          (isRender ? '/usr/bin/chromium-browser' : null);
+                          (isRender ? '/usr/bin/chromium' : null);
   
     console.log(`[WPP SERVER] Usando ejecutable: ${executablePath || 'default'}`);
     console.log(`[WPP SERVER] En Render: ${isRender}`);
@@ -779,8 +779,8 @@ export function registerWhatsAppWeb(app, deps) {
   
     if (isRender) {
       console.log('[WPP RENDER] Usando Chromium del sistema...');
-      // Render ya tiene Chromium instalado en /usr/bin/chromium-browser
-      puppeteerConfig.executablePath = '/usr/bin/chromium-browser';
+      // Render Docker: usar Chromium del sistema o variable explícita
+      puppeteerConfig.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium';
       puppeteerConfig.args.push(
         '--disable-features=VizDisplayCompositor',
         '--window-size=1920,1080',
