@@ -76,6 +76,44 @@ export function createRepartidorApiRouter(deps) {
    }
 });
 
+// 1.a Zonas del repartidor actual (compat legacy /api/repartidor/mis-zonas)
+  router.get('/mis-zonas', withAuth, async (req, res) => {
+   try {
+     const { chofer_id } = req.user || {};
+     const empresaId = getEmpresaIdFromToken(req);
+
+     if (!chofer_id) return res.json([]);
+     if (!empresaId) return res.status(400).json({ error: 'Empresa no determinada' });
+
+     const rows = await query(
+       `SELECT z.id, z.nombre, z.poligono
+          FROM zona_chofer zc
+          JOIN zonas_geograficas z ON z.id = zc.zona_id
+         WHERE zc.chofer_id = $1
+           AND zc.empresa_id = $2
+           AND z.empresa_id = $2
+         ORDER BY z.nombre ASC`,
+       [chofer_id, empresaId]
+     );
+
+     const ret = (rows || []).map((r) => {
+       try {
+         return {
+           ...r,
+           poligono: typeof r.poligono === 'string' ? JSON.parse(r.poligono) : (r.poligono || []),
+         };
+       } catch {
+         return { ...r, poligono: [] };
+       }
+     });
+
+     return res.json(ret);
+   } catch (e) {
+     console.error('REPARTIDOR MIS-ZONAS ERROR:', e);
+     return res.status(500).json({ error: 'Error cargando zonas del repartidor' });
+   }
+});
+
 // 1.b Evidencias de entrega (auditoría rápida)
   router.get('/entregas-evidencias', withAuth, async (req, res) => {
    try {

@@ -39,19 +39,59 @@ function hitRateLimit(map, key, windowMs, max) {
 export function createAuthRouter() {
   const router = express.Router();
 
+  function getUserFromRequest(req) {
+    let token = null;
+    const h = req.headers.authorization || '';
+    if (h.startsWith('Bearer ')) token = h.slice(7);
+    if (!token && req.cookies?.token) token = req.cookies.token;
+    if (!token) return null;
+    try {
+      return jwt.verify(token, process.env.JWT_SECRET || 'dev');
+    } catch {
+      return null;
+    }
+  }
+
   // GET /api/me
   router.get('/me', (req, res) => {
-    try {
-      let token = null;
-      const h = req.headers.authorization || '';
-      if (h.startsWith('Bearer ')) token = h.slice(7);
-      if (!token && req.cookies?.token) token = req.cookies.token;
-      if (!token) return res.status(401).json({ error: 'No token' });
+    const user = getUserFromRequest(req);
+    if (!user) return res.status(401).json({ error: 'Token inválido' });
+    res.json({ user });
+  });
 
-      const user = jwt.verify(token, process.env.JWT_SECRET || 'dev');
-      res.json({ user });
-    } catch {
-      res.status(401).json({ error: 'Token inválido' });
+  // GET /api/empresa/config (compat para front legacy)
+  router.get('/empresa/config', async (req, res) => {
+    try {
+      const user = getUserFromRequest(req);
+      const empresaId = Number(user?.empresa_id || 0);
+      if (!empresaId) return res.status(401).json({ error: 'No autorizado' });
+
+      const rows = await query(
+        `SELECT config_integraciones
+           FROM empresas
+          WHERE id = $1
+          LIMIT 1`,
+        [empresaId]
+      );
+
+      const cfg = rows?.[0]?.config_integraciones || {};
+      const pagosCfg = cfg?.pagos || {};
+
+      const canales = {
+        efectivo: pagosCfg?.canales?.efectivo !== false,
+        transferencia: pagosCfg?.canales?.transferencia !== false,
+        qr_dinamico: !!pagosCfg?.canales?.qr_dinamico,
+      };
+
+      return res.json({
+        pagos: {
+          canales,
+          preferido: pagosCfg?.preferido || null,
+        }
+      });
+    } catch (e) {
+      console.error('EMPRESA CONFIG ERROR:', e);
+      return res.status(500).json({ error: 'Error obteniendo config empresa' });
     }
   });
 
