@@ -2002,6 +2002,37 @@ export function createSetupRouter(deps) {
   // FASE 3: TABLERO EJECUTIVO + REGLAS AUTOMÁTICAS (MVP)
   // =========================
 
+  // GET /api/setup/fase3/data-health
+  router.get('/fase3/data-health', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req);
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+
+      const [inc] = await query(`SELECT COUNT(*)::int AS c FROM incidencias_operativas WHERE empresa_id=$1`, [empresaId]);
+      const [tes] = await query(`SELECT COUNT(*)::int AS c FROM tesoreria_movimientos WHERE empresa_id=$1`, [empresaId]);
+      const [com] = await query(`SELECT COUNT(*)::int AS c FROM compras_ordenes WHERE empresa_id=$1`, [empresaId]);
+      const [crm] = await query(`SELECT COUNT(*)::int AS c FROM crm_oportunidades WHERE empresa_id=$1`, [empresaId]);
+
+      const metrics = {
+        incidencias: Number(inc?.c || 0),
+        tesoreria: Number(tes?.c || 0),
+        compras: Number(com?.c || 0),
+        crm: Number(crm?.c || 0),
+      };
+
+      const alerts = [];
+      if (metrics.incidencias === 0) alerts.push('Sin datos en incidencias_operativas (SLA/criticidad no verificables)');
+      if (metrics.tesoreria === 0) alerts.push('Sin datos en tesoreria_movimientos (caja/proyección ciega)');
+      if (metrics.compras === 0) alerts.push('Sin datos en compras_ordenes (vencimientos no verificables)');
+      if (metrics.crm === 0) alerts.push('Sin datos en crm_oportunidades (pipeline comercial vacío)');
+
+      return res.json({ ok: alerts.length === 0, metrics, alerts, empresa_id: empresaId });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error obteniendo data health fase3' });
+    }
+  });
+
   // GET /api/setup/fase3/dashboard
   router.get('/fase3/dashboard', withAuth, async (req, res) => {
     try {

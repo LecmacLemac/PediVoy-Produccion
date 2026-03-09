@@ -38,6 +38,7 @@
     <div id="status" style="color:var(--muted);margin-top:6px">Listo.</div>
   </div>
 
+  <div class="card"><h2 style="margin:0 0 8px;font-size:1rem">Salud de datos operativos</h2><div id="dataHealth"></div></div>
   <div class="card"><h2 style="margin:0 0 8px;font-size:1rem">KPI unificado</h2><div id="kpiGrid" class="grid"></div></div>
   <div class="card"><h2 style="margin:0 0 8px;font-size:1rem">Semáforo operativo</h2><div id="semaforo"></div></div>
   <div class="card"><h2 style="margin:0 0 8px;font-size:1rem">Recomendaciones automáticas</h2><div id="recos" style="display:grid;gap:8px"></div></div>
@@ -69,7 +70,7 @@
 <script>
 const authFetch=(url,opts={})=>fetch(url,{...opts,headers:{'Content-Type':'application/json',...(opts.headers||{})},credentials:'include'});
 const fmt=new Intl.NumberFormat('es-AR',{style:'currency',currency:'ARS',maximumFractionDigits:0});
-const st={isSuper:false,empresaId:null,dashboard:null,semaforo:null,recos:[],cierre:[],autos:[],incidencias:null};
+const st={isSuper:false,empresaId:null,dashboard:null,semaforo:null,recos:[],cierre:[],autos:[],incidencias:null,dataHealth:null};
 const setStatus=(t,e=false)=>{const el=document.getElementById('status');el.textContent=t;el.style.color=e?'var(--danger)':'var(--muted)';};
 const apiUrl=(p)=>st.isSuper&&st.empresaId?(p+(p.includes('?')?'&':'?')+'empresa_id='+encodeURIComponent(String(st.empresaId))):p;
 
@@ -82,6 +83,19 @@ async function loadMe(){
     sel.innerHTML='<option value="">Seleccionar empresa</option>'; list.forEach(e=>{const o=document.createElement('option');o.value=String(Number(e.id)||'');o.textContent=`${e.id} · ${e.nombre}`;sel.appendChild(o);});
     sel.addEventListener('change',()=>{st.empresaId=sel.value?Number(sel.value):null; refreshAll();});
   }
+}
+
+async function loadDataHealth(){
+  if(st.isSuper&&!st.empresaId) return;
+  const r=await authFetch(apiUrl('/api/setup/fase3/data-health')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error data health');
+  st.dataHealth=j;
+  const alerts=Array.isArray(j.alerts)?j.alerts:[];
+  const metrics=j.metrics||{};
+  if(!alerts.length){
+    document.getElementById('dataHealth').innerHTML=`<div style="border:1px solid var(--border);border-left:6px solid #22c55e;border-radius:10px;padding:10px;background:var(--bg2)"><div style="font-weight:700">Datos operativos completos</div><div style="font-size:.9rem;color:var(--muted);margin-top:4px">Incidencias: ${Number(metrics.incidencias||0)} · Tesorería: ${Number(metrics.tesoreria||0)} · Compras: ${Number(metrics.compras||0)} · CRM: ${Number(metrics.crm||0)}</div></div>`;
+    return;
+  }
+  document.getElementById('dataHealth').innerHTML=`<div style="border:1px solid var(--border);border-left:6px solid #f59e0b;border-radius:10px;padding:10px;background:var(--bg2)"><div style="font-weight:700">Atención: faltan datos operativos</div><ul style="margin:.4rem 0 0 1rem;color:var(--muted)">${alerts.map(a=>`<li>${a}</li>`).join('')}</ul></div>`;
 }
 
 async function loadDashboard(){
@@ -359,10 +373,10 @@ async function renderPlantillaCierreMulti(){
   out.value=buildPlantillaCierreMulti(snapshots);
 }
 
-async function refreshAll(){ if(st.isSuper&&!st.empresaId){ setStatus('Seleccioná empresa para ver el tablero ejecutivo.',true); ['kpiGrid','semaforo','recos','cierreChecklist','autoCenter','uatChecklist'].forEach(id=>{const el=document.getElementById(id); if(el) el.innerHTML='';}); const tx=document.getElementById('resumenText'); if(tx) tx.value=''; const ptx=document.getElementById('plantillaCierreText'); if(ptx) ptx.value=''; return; }
+async function refreshAll(){ if(st.isSuper&&!st.empresaId){ setStatus('Seleccioná empresa para ver el tablero ejecutivo.',true); ['dataHealth','kpiGrid','semaforo','recos','cierreChecklist','autoCenter','uatChecklist'].forEach(id=>{const el=document.getElementById(id); if(el) el.innerHTML='';}); const tx=document.getElementById('resumenText'); if(tx) tx.value=''; const ptx=document.getElementById('plantillaCierreText'); if(ptx) ptx.value=''; return; }
   setStatus('Actualizando…');
   try{
-    await Promise.all([loadDashboard(),loadSemaforo(),loadRecos(),loadAutomatizaciones(),loadResumen()]);
+    await Promise.all([loadDataHealth(),loadDashboard(),loadSemaforo(),loadRecos(),loadAutomatizaciones(),loadResumen()]);
     await loadIncidenciasResumen();
     await loadControlCierre();
     renderUat();
