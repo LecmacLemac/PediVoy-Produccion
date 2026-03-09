@@ -813,14 +813,16 @@ let preferidoPago = null;
 
 // --- API HELPER ---
 async function api(path, opts = {}) {
-  const { body } = opts;
+  const { body, headers: customHeaders = {}, ...fetchOpts } = opts;
   const isFD = body instanceof FormData;
 
   let r;
   try {
     r = await authFetch(path, {
+      ...fetchOpts,
       method: opts.method || 'GET',
       headers: {
+        ...customHeaders,
         ...(isFD ? {} : { 'Content-Type': 'application/json' })
       },
       body: isFD ? body : (body ? JSON.stringify(body) : undefined)
@@ -1172,9 +1174,9 @@ async function loadMisZonas(){
 
 async function loadPedidos(){
   try {
-    const list = await api('/api/repartidor/pedidos');
+    const list = await api('/api/repartidor/pedidos', { cache: 'no-store' });
     pedidos = Array.isArray(list) ? list : [];
-    const trs = await api('/api/transferencias?estado=verificado');
+    const trs = await api('/api/transferencias?estado=verificado', { cache: 'no-store' });
     verificadas = new Set((Array.isArray(trs)?trs:trs.rows||[]).map(t=>Number(t.pedido_id)));
     pedidosLastSyncAt = Date.now();
     updatePedidosSyncInfo();
@@ -2492,11 +2494,16 @@ function stopPedidosAutoRefresh() {
 }
 
 document.addEventListener('visibilitychange', () => {
-  schedulePedidosRefresh();
+  if (document.hidden) {
+    schedulePedidosRefresh();
+    return;
+  }
+  // Al volver al frente, refrescar casi inmediato para evitar datos viejos.
+  schedulePedidosRefresh(2_000);
 });
 
 window.addEventListener('online', () => {
-  schedulePedidosRefresh(5_000);
+  schedulePedidosRefresh(2_000);
 });
 
 window.addEventListener('offline', () => {
