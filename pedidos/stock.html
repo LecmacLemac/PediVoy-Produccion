@@ -277,6 +277,45 @@
       </div>
     </section>
 
+    <section class="card" id="depSummarySection">
+      <div class="flex-between" style="margin-bottom:0.75rem;">
+        <h3 style="margin:0;">Resumen por depósito</h3>
+      </div>
+
+      <div class="toolbar" style="margin-bottom:1rem;">
+        <div style="display:grid; grid-template-columns: 1fr 1fr auto; gap:0.7rem; width:100%;">
+          <div>
+            <label>Desde</label>
+            <input type="date" id="depFrom">
+          </div>
+          <div>
+            <label>Hasta</label>
+            <input type="date" id="depTo">
+          </div>
+          <div style="display:flex; align-items:flex-end;">
+            <button id="btnDepSummary" class="btn btn-secondary">Actualizar resumen</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="table-responsive" style="max-height:300px; overflow:auto; border:1px solid var(--border); border-radius:10px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Depósito</th>
+              <th>Producto</th>
+              <th class="text-right">Ingresado</th>
+              <th class="text-right">Egresado</th>
+              <th class="text-right">Neto</th>
+            </tr>
+          </thead>
+          <tbody id="depSummaryRows">
+            <tr><td colspan="5" style="text-align:center; color:var(--muted); padding:1rem;">Sin datos.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
     <section>
       <div class="card table-responsive" style="padding:0; overflow:hidden;">
         <table>
@@ -394,6 +433,11 @@
     const num = n => Number(n)||0;
     const fmtNum = n => num(n).toLocaleString('es-AR');
     const dateStr = s => new Date(s).toLocaleString('es-AR', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'});
+    const ymdNow = () => {
+      const d = new Date();
+      d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+      return d.toISOString().slice(0,10);
+    };
 
     // ====== LOGIC ======
     async function init() {
@@ -411,9 +455,14 @@
             await loadEmpresas();
         }
 
+        const today = ymdNow();
+        $('#depFrom').value = today;
+        $('#depTo').value = today;
+
         await loadChoferes();
         await loadStock();
         await loadDepositos();
+        await loadDepositosSummary();
 
       } catch { location.href='login.html'; }
     }
@@ -428,6 +477,7 @@
           await loadChoferes();
           await loadStock();
           await loadDepositos();
+          await loadDepositosSummary();
         });
     }
 
@@ -518,6 +568,34 @@
         `;
       }).join('');
       $('#depRows').innerHTML = html || '<tr><td colspan="4" style="text-align:center; color:var(--muted); padding:1rem;">Sin depósitos.</td></tr>';
+    }
+
+    async function loadDepositosSummary() {
+      const from = $('#depFrom')?.value || '';
+      const to = $('#depTo')?.value || '';
+      const params = new URLSearchParams();
+      if (from) params.set('from', from);
+      if (to) params.set('to', to);
+      if (isSuper && $('#empFilter')?.value) params.set('empresa_id', $('#empFilter').value);
+
+      const r = await authFetch(`/api/stock/depositos/summary?${params.toString()}`);
+      const rows = await r.json();
+      const list = Array.isArray(rows) ? rows : [];
+
+      const html = list.map(it => {
+        const neto = num(it.neto);
+        return `
+          <tr>
+            <td>${esc(it.deposito_nombre || '-')}</td>
+            <td>${esc(it.producto_nombre || '-')}</td>
+            <td class="text-right">${fmtNum(it.total_ingresado)}</td>
+            <td class="text-right">${fmtNum(it.total_egresado)}</td>
+            <td class="text-right" style="font-weight:700; color:${neto >= 0 ? 'var(--success)' : 'var(--danger)'}">${fmtNum(neto)}</td>
+          </tr>
+        `;
+      }).join('');
+
+      $('#depSummaryRows').innerHTML = html || '<tr><td colspan="5" style="text-align:center; color:var(--muted); padding:1rem;">Sin movimientos para el período.</td></tr>';
     }
 
     function render() {
@@ -732,8 +810,12 @@
     $('#btnRef').addEventListener('click', async () => {
       await loadStock();
       await loadDepositos();
+      await loadDepositosSummary();
     });
     $('#btnDepSave').addEventListener('click', saveDeposito);
+    $('#btnDepSummary').addEventListener('click', loadDepositosSummary);
+    $('#depFrom').addEventListener('change', loadDepositosSummary);
+    $('#depTo').addEventListener('change', loadDepositosSummary);
     $('#logout').addEventListener('click', async (e) => {
       e.preventDefault();
       try { await authFetch('/api/logout', { method: 'POST' }); } catch {}
