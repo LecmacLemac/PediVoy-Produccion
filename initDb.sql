@@ -351,6 +351,7 @@ CREATE TABLE IF NOT EXISTS chofer_stock_mov (
   empresa_id  INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
   chofer_id   INTEGER NOT NULL REFERENCES choferes(id) ON DELETE CASCADE,
   producto_id INTEGER NOT NULL REFERENCES productos(id) ON DELETE CASCADE,
+  deposito_id INTEGER,
   fecha       TIMESTAMPTZ DEFAULT NOW(),
   tipo        TEXT NOT NULL, 
   cantidad    NUMERIC(10,2) NOT NULL,
@@ -358,6 +359,30 @@ CREATE TABLE IF NOT EXISTS chofer_stock_mov (
   referencia  TEXT, 
   created_at  TIMESTAMPTZ DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS depositos (
+  id          SERIAL PRIMARY KEY,
+  empresa_id  INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+  nombre      TEXT NOT NULL,
+  direccion   TEXT,
+  activo      BOOLEAN DEFAULT TRUE,
+  created_at  TIMESTAMPTZ DEFAULT NOW(),
+  updated_at  TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE (empresa_id, nombre)
+);
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'fk_chofer_stock_mov_deposito'
+  ) THEN
+    ALTER TABLE chofer_stock_mov
+      ADD CONSTRAINT fk_chofer_stock_mov_deposito
+      FOREIGN KEY (deposito_id) REFERENCES depositos(id) ON DELETE SET NULL;
+  END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS chofer_costos (
   id             SERIAL PRIMARY KEY,

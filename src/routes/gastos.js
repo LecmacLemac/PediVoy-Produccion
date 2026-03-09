@@ -11,6 +11,14 @@ export function createGastosRouter({ GASTOS_DIR }) {
 
   const router = express.Router();
 
+  const ensureDepositoRefPromise = (async () => {
+    try {
+      await query(`ALTER TABLE chofer_stock_mov ADD COLUMN IF NOT EXISTS deposito_id INTEGER`);
+    } catch (e) {
+      console.warn('gastos/deposito schema warning:', e?.message || e);
+    }
+  })();
+
   const gastosUploader = multer({
     storage: multer.diskStorage({
       destination: (_, __, cb) => cb(null, GASTOS_DIR),
@@ -80,9 +88,10 @@ export function createGastosRouter({ GASTOS_DIR }) {
   // POST /api/gastos (multipart: comprobante)
   router.post('/', withAuth, gastosUploader.single('comprobante'), async (req, res) => {
     try {
+      await ensureDepositoRefPromise;
       const {
         fecha, tipo, descripcion, cantidad, producto_id, monto,
-        empresa_id, chofer_id
+        empresa_id, chofer_id, deposito_id
       } = req.body;
 
       const file = req.file;
@@ -101,6 +110,7 @@ export function createGastosRouter({ GASTOS_DIR }) {
 
       const cantidadNum = (cantidad === undefined || cantidad === null || cantidad === '') ? null : Number(cantidad);
       const productoIdNum = (producto_id === undefined || producto_id === null || producto_id === '') ? null : Number(producto_id);
+      const depositoId = (deposito_id === undefined || deposito_id === null || deposito_id === '') ? null : Number(deposito_id);
 
       if (esMovimientoRetornable) {
         if (!productoIdNum || !Number.isFinite(productoIdNum) || productoIdNum <= 0) {
@@ -123,6 +133,16 @@ export function createGastosRouter({ GASTOS_DIR }) {
 
         if (!pr.length) {
           return res.status(400).json({ error: 'El producto no es retornable o no pertenece a la empresa.' });
+        }
+      }
+
+      if (depositoId && (tipoOp === 'carga_llenos' || tipoOp === 'compra_mercaderia')) {
+        const depRows = await query(
+          `SELECT id FROM depositos WHERE id = $1 AND empresa_id = $2 AND activo = TRUE LIMIT 1`,
+          [depositoId, targetEmpresa]
+        );
+        if (!depRows.length) {
+          return res.status(400).json({ error: 'Depósito inválido para la empresa' });
         }
       }
 
@@ -154,13 +174,14 @@ export function createGastosRouter({ GASTOS_DIR }) {
         await query(
           `
           INSERT INTO chofer_stock_mov 
-            (empresa_id, chofer_id, producto_id, fecha, tipo, cantidad, referencia, created_at)
-          VALUES ($1, $2, $3, $4, 'INGRESO_GASTOS', $5, $6, NOW())
+            (empresa_id, chofer_id, producto_id, deposito_id, fecha, tipo, cantidad, referencia, created_at)
+          VALUES ($1, $2, $3, $4, $5, 'INGRESO_GASTOS', $6, $7, NOW())
           `,
           [
             targetEmpresa,
             targetChofer,
             productoIdNum,
+            depositoId,
             fecha || new Date().toISOString(),
             qtyNum,
             `Carga desde Gastos: ${descripcion || tipo}`

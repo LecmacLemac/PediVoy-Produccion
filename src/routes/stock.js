@@ -6,6 +6,85 @@ import { query } from '../db.js';
 export function createStockRouter() {
   const router = express.Router();
 
+  const ensureDepositosSchemaPromise = (async () => {
+    try {
+      await query(`
+        CREATE TABLE IF NOT EXISTS depositos (
+          id SERIAL PRIMARY KEY,
+          empresa_id INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+          nombre TEXT NOT NULL,
+          direccion TEXT,
+          activo BOOLEAN DEFAULT TRUE,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW(),
+          UNIQUE (empresa_id, nombre)
+        )
+      `);
+      await query(`CREATE INDEX IF NOT EXISTS idx_depositos_empresa_activo ON depositos (empresa_id, activo)`);
+      await query(`ALTER TABLE chofer_stock_mov ADD COLUMN IF NOT EXISTS deposito_id INTEGER REFERENCES depositos(id) ON DELETE SET NULL`);
+      await query(`CREATE INDEX IF NOT EXISTS idx_csm_deposito_id ON chofer_stock_mov (deposito_id)`);
+    } catch (e) {
+      console.error('stock/depositos schema error:', e?.message || e);
+    }
+  })();
+
+  // GET /api/stock/depositos
+  router.get('/depositos', withAuth, async (req, res) => {
+    try {
+      await ensureDepositosSchemaPromise;
+      const esSuperUser = isSuper(req);
+      const empresaId = esSuperUser && req.query.empresa_id
+        ? Number(req.query.empresa_id)
+        : getEmpresaIdFromToken(req);
+
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido' });
+
+      const includeInactivos = String(req.query?.include_inactivos || '') === '1';
+      const rows = await query(
+        `SELECT id, empresa_id, nombre, direccion, activo, created_at, updated_at
+           FROM depositos
+          WHERE empresa_id = $1
+            AND ($2::boolean = TRUE OR activo = TRUE)
+          ORDER BY activo DESC, nombre ASC`,
+        [empresaId, includeInactivos]
+      );
+      return res.json(rows || []);
+    } catch (e) {
+      console.error('ERROR /api/stock/depositos', e);
+      return res.status(500).json({ error: 'Error obteniendo depósitos' });
+    }
+  });
+
+  // POST /api/stock/depositos
+  router.post('/depositos', withAuth, async (req, res) => {
+    try {
+      await ensureDepositosSchemaPromise;
+      const esSuperUser = isSuper(req);
+      const empresaId = esSuperUser && req.body?.empresa_id
+        ? Number(req.body.empresa_id)
+        : getEmpresaIdFromToken(req);
+      const nombre = String(req.body?.nombre || '').trim();
+      const direccion = req.body?.direccion ? String(req.body.direccion).trim() : null;
+
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido' });
+      if (!nombre) return res.status(400).json({ error: 'Nombre requerido' });
+
+      const rows = await query(
+        `INSERT INTO depositos (empresa_id, nombre, direccion, activo)
+         VALUES ($1, $2, $3, TRUE)
+         ON CONFLICT (empresa_id, nombre)
+         DO UPDATE SET direccion = EXCLUDED.direccion, activo = TRUE, updated_at = NOW()
+         RETURNING id, empresa_id, nombre, direccion, activo, created_at, updated_at`,
+        [empresaId, nombre, direccion]
+      );
+
+      return res.json(rows?.[0] || { ok: true });
+    } catch (e) {
+      console.error('ERROR POST /api/stock/depositos', e);
+      return res.status(500).json({ error: 'Error guardando depósito' });
+    }
+  });
+
   // GET /api/stock/summary
   router.get('/summary', withAuth, async (req, res) => {
     try {
@@ -44,7 +123,8 @@ export function createStockRouter() {
   // POST /api/stock/ajuste
   router.post('/ajuste', withAuth, async (req, res) => {
     try {
-      const { producto_id, qty, tipo, motivo, chofer_id, empresa_id } = req.body;
+      await ensureDepositosSchemaPromise;
+      const { producto_id, qty, tipo, motivo, chofer_id, empresa_id, deposito_id } = req.body;
 
       const esSuperUser = isSuper(req);
       const targetEmpresa = (esSuperUser && empresa_id)
@@ -59,6 +139,15 @@ export function createStockRouter() {
         return res.status(400).json({ error: 'Se requiere chofer para asignar el stock' });
       }
 
+      const depositoId = Number(deposito_id || 0) || null;
+      if (depositoId) {
+        const depRows = await query(
+          `SELECT id FROM depositos WHERE id = $1 AND empresa_id = $2 AND activo = TRUE LIMIT 1`,
+          [depositoId, targetEmpresa]
+        );
+        if (!depRows.length) return res.status(400).json({ error: 'Depósito inválido para la empresa' });
+      }
+
       const cantidadNum = Number(qty);
       if (!Number.isFinite(cantidadNum) || cantidadNum <= 0) {
         return res.status(400).json({ error: 'Cantidad inválida' });
@@ -70,11 +159,11 @@ export function createStockRouter() {
       await query(
         `
         INSERT INTO chofer_stock_mov
-          (empresa_id, chofer_id, producto_id, fecha, tipo, cantidad, motivo, created_at)
+          (empresa_id, chofer_id, producto_id, deposito_id, fecha, tipo, cantidad, motivo, created_at)
         VALUES
-          ($1,        $2,        $3,          NOW(), 'ajuste', $4,      $5,    NOW())
+          ($1,        $2,        $3,          $4,         NOW(), 'ajuste', $5,      $6,    NOW())
         `,
-        [targetEmpresa, chofer_id, producto_id, cantidadReal, motivo || 'Ajuste manual']
+        [targetEmpresa, chofer_id, producto_id, depositoId, cantidadReal, motivo || 'Ajuste manual']
       );
 
       await query(
@@ -110,12 +199,13 @@ export function createStockRouter() {
 
       const rows = await query(
         `
-        SELECT *,
-               COALESCE(referencia, motivo) as notas
-        FROM chofer_stock_mov
-        WHERE producto_id = $1
-          AND empresa_id  = $2
-        ORDER BY created_at DESC
+        SELECT csm.*, d.nombre AS deposito_nombre,
+               COALESCE(csm.referencia, csm.motivo) as notas
+        FROM chofer_stock_mov csm
+        LEFT JOIN depositos d ON d.id = csm.deposito_id
+        WHERE csm.producto_id = $1
+          AND csm.empresa_id  = $2
+        ORDER BY csm.created_at DESC
         LIMIT 50
         `,
         [productoId, empresaId]

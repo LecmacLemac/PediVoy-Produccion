@@ -417,6 +417,13 @@
           </div>
         </div>
 
+        <div class="row" id="gDepRow" hidden style="margin-bottom:1rem">
+          <div style="width:100%">
+            <label>Depósito de carga</label>
+            <select id="gDeposito"><option value="">Seleccionar depósito</option></select>
+          </div>
+        </div>
+
         <div class="row" id="gCalcRow" hidden style="margin-bottom:1rem">
           <div style="flex:1">
             <label>Cantidad</label>
@@ -729,6 +736,7 @@ const formatFechaHoraAR = (iso) => {
 
 // ====== STATE ======
 let me = null, pedidos = [], zonas = [], misZonas = [], verificadas = new Set();
+let depositos = [];
 let map, mapMarkers, myCosts = {};
 let routePlan = { orderedIds: [], currentIndex: 0, updatedAt: null };
 let slaEtaThresholdMin = 30;
@@ -972,7 +980,8 @@ function showGpsHelp() {
       loadZonas(),
       loadMisZonas(),
       loadPedidos(),
-      gLoadProductos()
+      gLoadProductos(),
+      gLoadDepositos()
     ]);
 
     // Auto refresh suave de pedidos para operación en tiempo real
@@ -1080,11 +1089,13 @@ $('#gForm').addEventListener('submit', async (e) => {
             const qty = Number($('#gCant').value);
             const pu = Number($('#gPu').value || 0);
             const montoManual = Number($('#gMonto').value || 0);
+            const depositoId = $('#gDeposito')?.value || '';
 
             if (!pid) throw new Error('Selecciona un producto retornable.');
             if (!qty || qty <= 0) throw new Error('Ingresa cantidad.');
 
             const isCarga = type === 'carga_llenos';
+            if (isCarga && !depositoId) throw new Error('Seleccioná el depósito de carga.');
             const montoFinal = isCarga ? (qty * pu) : montoManual;
             const pref = isCarga ? 'Carga' : 'Descarga';
 
@@ -1095,7 +1106,8 @@ $('#gForm').addEventListener('submit', async (e) => {
                 monto: montoFinal,
                 cantidad: qty,
                 precio_unitario: pu,
-                producto_id: pid
+                producto_id: pid,
+                deposito_id: depositoId || null
             };
         }
         // Escenario B: Gasto Directo (Monto fijo)
@@ -1119,6 +1131,7 @@ $('#gForm').addEventListener('submit', async (e) => {
         // Agregar campos opcionales al FormData
         if(finalBody.cantidad) formData.append('cantidad', String(finalBody.cantidad));
         if(finalBody.producto_id) formData.append('producto_id', String(finalBody.producto_id));
+        if(finalBody.deposito_id) formData.append('deposito_id', String(finalBody.deposito_id));
         
         if(file) formData.append('comprobante', file);
         
@@ -2547,6 +2560,19 @@ async function gLoadProductos() {
   } catch {}
 }
 
+async function gLoadDepositos() {
+  try {
+    const ds = await api('/api/stock/depositos');
+    depositos = Array.isArray(ds) ? ds : [];
+    const sel = $('#gDeposito');
+    if (!sel) return;
+    const emptyLabel = depositos.length ? 'Seleccionar depósito' : 'Sin depósitos activos';
+    sel.innerHTML = `<option value="">${emptyLabel}</option>` + depositos.map(d => `<option value="${Number(d.id)}">${esc(d.nombre)}</option>`).join('');
+  } catch {
+    depositos = [];
+  }
+}
+
 function gInit(){ $('#gForm').reset(); $('#gFecha').value = getOyString(); gToggle(); loadGHist(); }
 
 function gToggle(){
@@ -2555,6 +2581,7 @@ function gToggle(){
   const isCarga = t === 'carga_llenos';
   $('#gProdRow').hidden = !isStock;
   $('#gCalcRow').hidden = !isStock;
+  $('#gDepRow').hidden = !isCarga;
   $('#gPuBox').hidden = !isCarga;
   $('#gMontoRow').hidden = isCarga;
 }
