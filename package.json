@@ -18,6 +18,7 @@
     "test:smoke:public": "node scripts/smoke-public.js",
     "test:smoke:postdeploy": "node scripts/smoke-postdeploy.js",
     "test:smoke:security": "node scripts/smoke-security-headers.js",
+    "ops:data-health": "node scripts/ops-data-health.js",
     "db:backup": "node backup.js",
     "postinstall": "echo \"Postinstall Puppeteer\" && if [ \"$RENDER\" = \"true\" ] || [ \"$CI\" = \"true\" ] || [ \"$PUPPETEER_SKIP_DOWNLOAD\" = \"true\" ]; then echo \"Skipping Puppeteer browser install\"; else PUPPETEER_CACHE_DIR=\"$PWD/.puppeteer\" npx puppeteer browsers install chrome; fi"
   },
