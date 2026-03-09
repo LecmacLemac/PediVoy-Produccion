@@ -356,8 +356,9 @@
             <label>Depósito (opcional)</label>
             <select id="trDepFiltro"><option value="">Todos</option></select>
           </div>
-          <div style="display:flex; align-items:flex-end;">
+          <div style="display:flex; align-items:flex-end; gap:8px;">
             <button id="btnTrHist" class="btn btn-secondary">Actualizar historial</button>
+            <button id="btnTrExport" class="btn btn-primary">Exportar CSV</button>
           </div>
         </div>
       </div>
@@ -799,7 +800,7 @@
       await loadChoferesSinPermisos();
     }
 
-    async function loadTransferenciasHistorial() {
+    function buildTransferHistParams() {
       const from = $('#trFrom')?.value || '';
       const to = $('#trTo')?.value || '';
       const depositoFiltro = $('#trDepFiltro')?.value || '';
@@ -808,7 +809,11 @@
       if (to) params.set('to', to);
       if (depositoFiltro) params.set('deposito_id', depositoFiltro);
       if (isSuper && $('#empFilter')?.value) params.set('empresa_id', $('#empFilter').value);
+      return params;
+    }
 
+    async function loadTransferenciasHistorial() {
+      const params = buildTransferHistParams();
       const r = await authFetch(`/api/stock/depositos/transferencias?${params.toString()}`);
       const rows = await r.json();
       const list = Array.isArray(rows) ? rows : [];
@@ -1027,6 +1032,12 @@
       alert('Transferencia registrada');
     }
 
+    function exportTransferenciasCsv() {
+      const params = buildTransferHistParams();
+      const url = `/api/stock/depositos/transferencias/export.csv?${params.toString()}`;
+      window.open(url, '_blank');
+    }
+
     window.revertirTransferencia = async (referencia) => {
       if (!referencia) return;
       if (!confirm('¿Revertir esta transferencia?')) return;
@@ -1159,6 +1170,7 @@
     $('#btnDepPermMode').addEventListener('click', savePermisosMode);
     $('#permChofer').addEventListener('change', loadPermisosChofer);
     $('#btnTrHist').addEventListener('click', loadTransferenciasHistorial);
+    $('#btnTrExport').addEventListener('click', exportTransferenciasCsv);
     $('#trFrom').addEventListener('change', loadTransferenciasHistorial);
     $('#trTo').addEventListener('change', loadTransferenciasHistorial);
     $('#trDepFiltro').addEventListener('change', loadTransferenciasHistorial);
