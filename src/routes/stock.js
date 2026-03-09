@@ -382,6 +382,7 @@ export function createStockRouter() {
       const productoId = Number(req.query?.producto_id || 0) || null;
       const choferId = Number(req.query?.chofer_id || 0) || null;
       const limit = Math.min(Math.max(Number(req.query?.limit || 100), 1), 500);
+      const offset = Math.max(Number(req.query?.offset || 0), 0);
 
       const params = [empresaId];
       let idx = 2;
@@ -410,7 +411,9 @@ export function createStockRouter() {
       }
 
       params.push(limit);
-      const limitPos = `$${idx}`;
+      const limitPos = `$${idx++}`;
+      params.push(offset);
+      const offsetPos = `$${idx}`;
 
       const rows = await query(
         `SELECT
@@ -449,10 +452,14 @@ export function createStockRouter() {
          WHERE mout.tipo = 'TRANSFER_OUT'
            AND ${where.join(' AND ')}
          ORDER BY mout.fecha DESC, mout.id DESC
-         LIMIT ${limitPos}`,
+         LIMIT ${limitPos}
+         OFFSET ${offsetPos}`,
         params
       );
 
+      res.setHeader('X-Page-Limit', String(limit));
+      res.setHeader('X-Page-Offset', String(offset));
+      res.setHeader('X-Page-Count', String((rows || []).length));
       return res.json(rows || []);
     } catch (e) {
       console.error('ERROR /api/stock/depositos/transferencias', e);

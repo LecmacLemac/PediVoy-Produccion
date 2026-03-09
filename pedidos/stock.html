@@ -371,6 +371,13 @@
         </div>
       </div>
 
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; gap:8px; flex-wrap:wrap;">
+        <small id="trPageInfo" style="color:var(--muted)">Página 1</small>
+        <div style="display:flex; gap:8px;">
+          <button id="btnTrPrev" class="btn btn-secondary">← Anterior</button>
+          <button id="btnTrNext" class="btn btn-secondary">Siguiente →</button>
+        </div>
+      </div>
       <div class="table-responsive" style="max-height:280px; overflow:auto; border:1px solid var(--border); border-radius:10px;">
         <table>
           <thead>
@@ -542,6 +549,7 @@
     let choferes = [];
     let depositos = [];
     let editingDepositoId = null;
+    let transferPage = { offset: 0, limit: 50, lastCount: 0 };
     let adjustBusy = false;
 
     // ====== UTILS ======
@@ -582,6 +590,7 @@
         await loadPermisosMode();
         await loadPermisosChofer();
         await loadDepositosSummary();
+        resetTransferPage();
         await loadTransferenciasHistorial();
 
       } catch { location.href='login.html'; }
@@ -600,6 +609,7 @@
           await loadPermisosMode();
           await loadPermisosChofer();
           await loadDepositosSummary();
+          resetTransferPage();
           await loadTransferenciasHistorial();
         });
     }
@@ -833,6 +843,8 @@
       if (productoFiltro) params.set('producto_id', productoFiltro);
       if (choferFiltro) params.set('chofer_id', choferFiltro);
       if (isSuper && $('#empFilter')?.value) params.set('empresa_id', $('#empFilter').value);
+      params.set('limit', String(transferPage.limit));
+      params.set('offset', String(transferPage.offset));
       return params;
     }
 
@@ -841,6 +853,10 @@
       const r = await authFetch(`/api/stock/depositos/transferencias?${params.toString()}`);
       const rows = await r.json();
       const list = Array.isArray(rows) ? rows : [];
+      transferPage.lastCount = list.length;
+      const pageNum = Math.floor(transferPage.offset / transferPage.limit) + 1;
+      const info = document.getElementById('trPageInfo');
+      if (info) info.textContent = `Página ${pageNum} · ${list.length} registro(s)`;
 
       const html = list.map(it => {
         const refSafe = String(it.referencia || '').replace(/'/g, "\\'");
@@ -1056,8 +1072,14 @@
       alert('Transferencia registrada');
     }
 
+    function resetTransferPage() {
+      transferPage.offset = 0;
+    }
+
     function exportTransferenciasCsv() {
       const params = buildTransferHistParams();
+      params.delete('limit');
+      params.delete('offset');
       const url = `/api/stock/depositos/transferencias/export.csv?${params.toString()}`;
       window.open(url, '_blank');
     }
@@ -1193,13 +1215,22 @@
     $('#btnPermSave').addEventListener('click', savePermisosChofer);
     $('#btnDepPermMode').addEventListener('click', savePermisosMode);
     $('#permChofer').addEventListener('change', loadPermisosChofer);
-    $('#btnTrHist').addEventListener('click', loadTransferenciasHistorial);
+    $('#btnTrHist').addEventListener('click', ()=>{ resetTransferPage(); loadTransferenciasHistorial(); });
     $('#btnTrExport').addEventListener('click', exportTransferenciasCsv);
-    $('#trFrom').addEventListener('change', loadTransferenciasHistorial);
-    $('#trTo').addEventListener('change', loadTransferenciasHistorial);
-    $('#trDepFiltro').addEventListener('change', loadTransferenciasHistorial);
-    $('#trProdFiltro').addEventListener('change', loadTransferenciasHistorial);
-    $('#trChoferFiltro').addEventListener('change', loadTransferenciasHistorial);
+    $('#btnTrPrev').addEventListener('click', async ()=>{
+      transferPage.offset = Math.max(0, transferPage.offset - transferPage.limit);
+      await loadTransferenciasHistorial();
+    });
+    $('#btnTrNext').addEventListener('click', async ()=>{
+      if (transferPage.lastCount < transferPage.limit) return;
+      transferPage.offset += transferPage.limit;
+      await loadTransferenciasHistorial();
+    });
+    $('#trFrom').addEventListener('change', ()=>{ resetTransferPage(); loadTransferenciasHistorial(); });
+    $('#trTo').addEventListener('change', ()=>{ resetTransferPage(); loadTransferenciasHistorial(); });
+    $('#trDepFiltro').addEventListener('change', ()=>{ resetTransferPage(); loadTransferenciasHistorial(); });
+    $('#trProdFiltro').addEventListener('change', ()=>{ resetTransferPage(); loadTransferenciasHistorial(); });
+    $('#trChoferFiltro').addEventListener('change', ()=>{ resetTransferPage(); loadTransferenciasHistorial(); });
     $('#logout').addEventListener('click', async (e) => {
       e.preventDefault();
       try { await authFetch('/api/logout', { method: 'POST' }); } catch {}
