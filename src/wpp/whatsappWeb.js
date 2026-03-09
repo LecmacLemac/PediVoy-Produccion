@@ -751,7 +751,8 @@ export function registerWhatsAppWeb(app, deps) {
   }
   
   // --- PROCESAMIENTO DE COLA (Cada 2.5 segundos cuando esté conectado) ---
-  if (ENABLE_WPP) {
+  // Evitar doble inicialización: si ya existe cliente WPP, no volver a crearlo.
+  if (ENABLE_WPP && !wppClient) {
     console.log('[WPP SERVER] WhatsApp habilitado. Inicializando cliente...');
   
     // DETECCIÓN DE ENTORNO
