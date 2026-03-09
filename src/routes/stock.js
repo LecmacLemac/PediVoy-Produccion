@@ -684,6 +684,42 @@ export function createStockRouter() {
     }
   });
 
+  // GET /api/stock/depositos/choferes-sin-permisos
+  router.get('/depositos/choferes-sin-permisos', withAuth, async (req, res) => {
+    try {
+      await ensureDepositosSchemaPromise;
+      const esSuperUser = isSuper(req);
+      const empresaId = esSuperUser && req.query?.empresa_id
+        ? Number(req.query.empresa_id)
+        : getEmpresaIdFromToken(req);
+
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido' });
+
+      const strict = await isDepositoPermisosEstricto(empresaId);
+      if (!strict) return res.json({ strict: false, items: [] });
+
+      const rows = await query(
+        `SELECT c.id AS chofer_id, c.nombre AS chofer_nombre
+           FROM choferes c
+          WHERE c.empresa_id = $1
+            AND NOT EXISTS (
+              SELECT 1
+              FROM deposito_chofer dc
+              WHERE dc.empresa_id = c.empresa_id
+                AND dc.chofer_id = c.id
+                AND dc.activo = TRUE
+            )
+          ORDER BY c.nombre ASC`,
+        [empresaId]
+      );
+
+      return res.json({ strict: true, items: rows || [] });
+    } catch (e) {
+      console.error('ERROR /api/stock/depositos/choferes-sin-permisos', e);
+      return res.status(500).json({ error: 'Error obteniendo choferes sin permisos de depósito' });
+    }
+  });
+
   // GET /api/stock/summary
   router.get('/summary', withAuth, async (req, res) => {
     try {

@@ -286,6 +286,7 @@
         <span>Modo estricto (si un chofer no tiene depósitos asignados, no puede cargar/transferir)</span>
       </label>
       <button id="btnDepPermMode" class="btn btn-primary">Guardar modo</button>
+      <div id="depPermWarn" style="margin-top:.7rem;color:var(--muted)"></div>
     </section>
 
     <section class="card" id="depPermSection">
@@ -716,6 +717,26 @@
       const r = await authFetch(`/api/stock/depositos/permisos-config?${params.toString()}`);
       const cfg = await r.json();
       $('#depPermStrict').checked = !!cfg?.deposito_permisos_estricto;
+      await loadChoferesSinPermisos();
+    }
+
+    async function loadChoferesSinPermisos() {
+      const params = new URLSearchParams();
+      if (isSuper && $('#empFilter')?.value) params.set('empresa_id', $('#empFilter').value);
+      const r = await authFetch(`/api/stock/depositos/choferes-sin-permisos?${params.toString()}`);
+      const j = await r.json();
+      const warn = document.getElementById('depPermWarn');
+      if (!warn) return;
+      if (!j?.strict) {
+        warn.innerHTML = '<span style="color:var(--muted)">Modo estricto desactivado.</span>';
+        return;
+      }
+      const items = Array.isArray(j?.items) ? j.items : [];
+      if (!items.length) {
+        warn.innerHTML = '<span style="color:#22c55e">Modo estricto activo: todos los choferes tienen al menos un depósito asignado ✅</span>';
+        return;
+      }
+      warn.innerHTML = `<span style="color:#f59e0b">Modo estricto activo: ${items.length} chofer(es) sin depósito asignado (${items.map(x=>esc(x.chofer_nombre)).join(', ')}).</span>`;
     }
 
     async function savePermisosMode() {
@@ -735,6 +756,7 @@
       alert('Modo de permisos actualizado');
       await loadDepositos();
       await loadPermisosChofer();
+      await loadChoferesSinPermisos();
     }
 
     async function loadPermisosChofer() {
@@ -774,6 +796,7 @@
       }
       alert('Permisos guardados');
       await loadPermisosChofer();
+      await loadChoferesSinPermisos();
     }
 
     async function loadTransferenciasHistorial() {
