@@ -371,6 +371,17 @@ CREATE TABLE IF NOT EXISTS depositos (
   UNIQUE (empresa_id, nombre)
 );
 
+CREATE TABLE IF NOT EXISTS deposito_chofer (
+  id          SERIAL PRIMARY KEY,
+  empresa_id  INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+  deposito_id INTEGER NOT NULL REFERENCES depositos(id) ON DELETE CASCADE,
+  chofer_id   INTEGER NOT NULL REFERENCES choferes(id) ON DELETE CASCADE,
+  activo      BOOLEAN DEFAULT TRUE,
+  created_at  TIMESTAMPTZ DEFAULT NOW(),
+  updated_at  TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE (empresa_id, deposito_id, chofer_id)
+);
+
 DO $$
 BEGIN
   IF NOT EXISTS (

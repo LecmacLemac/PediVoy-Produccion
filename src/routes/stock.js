@@ -23,10 +23,56 @@ export function createStockRouter() {
       await query(`CREATE INDEX IF NOT EXISTS idx_depositos_empresa_activo ON depositos (empresa_id, activo)`);
       await query(`ALTER TABLE chofer_stock_mov ADD COLUMN IF NOT EXISTS deposito_id INTEGER REFERENCES depositos(id) ON DELETE SET NULL`);
       await query(`CREATE INDEX IF NOT EXISTS idx_csm_deposito_id ON chofer_stock_mov (deposito_id)`);
+      await query(`
+        CREATE TABLE IF NOT EXISTS deposito_chofer (
+          id SERIAL PRIMARY KEY,
+          empresa_id INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+          deposito_id INTEGER NOT NULL REFERENCES depositos(id) ON DELETE CASCADE,
+          chofer_id INTEGER NOT NULL REFERENCES choferes(id) ON DELETE CASCADE,
+          activo BOOLEAN DEFAULT TRUE,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW(),
+          UNIQUE (empresa_id, deposito_id, chofer_id)
+        )
+      `);
+      await query(`CREATE INDEX IF NOT EXISTS idx_deposito_chofer_chofer ON deposito_chofer (empresa_id, chofer_id, activo)`);
     } catch (e) {
       console.error('stock/depositos schema error:', e?.message || e);
     }
   })();
+
+  async function choferPuedeUsarDeposito({ empresaId, choferId, depositoId }) {
+    if (!empresaId || !choferId || !depositoId) return false;
+
+    const depRows = await query(
+      `SELECT id FROM depositos WHERE id = $1 AND empresa_id = $2 AND activo = TRUE LIMIT 1`,
+      [depositoId, empresaId]
+    );
+    if (!depRows.length) return false;
+
+    const cfgRows = await query(
+      `SELECT COUNT(*)::int AS c
+         FROM deposito_chofer
+        WHERE empresa_id = $1
+          AND chofer_id = $2
+          AND activo = TRUE`,
+      [empresaId, choferId]
+    );
+    const cfgCount = Number(cfgRows?.[0]?.c || 0);
+    if (cfgCount === 0) return true; // compat: si no hay configuración, permitir todos.
+
+    const okRows = await query(
+      `SELECT 1
+         FROM deposito_chofer
+        WHERE empresa_id = $1
+          AND chofer_id = $2
+          AND deposito_id = $3
+          AND activo = TRUE
+        LIMIT 1`,
+      [empresaId, choferId, depositoId]
+    );
+    return okRows.length > 0;
+  }
 
   // GET /api/stock/depositos
   router.get('/depositos', withAuth, async (req, res) => {
@@ -40,7 +86,10 @@ export function createStockRouter() {
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido' });
 
       const includeInactivos = String(req.query?.include_inactivos || '') === '1';
-      const rows = await query(
+      const role = String(req.user?.role || '').toLowerCase();
+      const choferId = Number(req.user?.chofer_id || 0) || null;
+
+      let rows = await query(
         `SELECT id, empresa_id, nombre, direccion, activo, created_at, updated_at
            FROM depositos
           WHERE empresa_id = $1
@@ -48,6 +97,21 @@ export function createStockRouter() {
           ORDER BY activo DESC, nombre ASC`,
         [empresaId, includeInactivos]
       );
+
+      if (role === 'repartidor' && choferId) {
+        const cfgRows = await query(
+          `SELECT deposito_id
+             FROM deposito_chofer
+            WHERE empresa_id = $1
+              AND chofer_id = $2
+              AND activo = TRUE`,
+          [empresaId, choferId]
+        );
+        const allowed = new Set((cfgRows || []).map(r => Number(r.deposito_id)).filter(Boolean));
+        if (allowed.size > 0) {
+          rows = (rows || []).filter(r => allowed.has(Number(r.id)));
+        }
+      }
       return res.json(rows || []);
     } catch (e) {
       console.error('ERROR /api/stock/depositos', e);
@@ -242,6 +306,12 @@ export function createStockRouter() {
         [empresaId, [origenId, destinoId]]
       );
       if ((deps || []).length !== 2) return res.status(400).json({ error: 'Depósito origen o destino no válido para la empresa' });
+
+      const canOrigen = await choferPuedeUsarDeposito({ empresaId, choferId, depositoId: origenId });
+      const canDestino = await choferPuedeUsarDeposito({ empresaId, choferId, depositoId: destinoId });
+      if (!canOrigen || !canDestino) {
+        return res.status(403).json({ error: 'Chofer no habilitado para depósito origen/destino' });
+      }
 
       const saldoRows = await query(
         `SELECT COALESCE(SUM(cantidad),0) AS saldo
@@ -440,6 +510,12 @@ export function createStockRouter() {
         return res.status(400).json({ error: `No se puede revertir: saldo insuficiente en depósito destino (disponible ${saldoDestino})` });
       }
 
+      const canDestino = await choferPuedeUsarDeposito({ empresaId, choferId, depositoId: Number(inn.deposito_id) });
+      const canOrigen = await choferPuedeUsarDeposito({ empresaId, choferId, depositoId: Number(out.deposito_id) });
+      if (!canDestino || !canOrigen) {
+        return res.status(403).json({ error: 'Chofer no habilitado para depósitos de la reversa' });
+      }
+
       const refRev = `REVERSA:${baseRef}`;
       const motivo = [
         'Reversa transferencia',
@@ -464,6 +540,86 @@ export function createStockRouter() {
     } catch (e) {
       console.error('ERROR /api/stock/depositos/transferencias/revertir', e);
       return res.status(500).json({ error: 'Error revirtiendo transferencia' });
+    }
+  });
+
+  // GET /api/stock/depositos/choferes
+  router.get('/depositos/choferes', withAuth, async (req, res) => {
+    try {
+      await ensureDepositosSchemaPromise;
+      const esSuperUser = isSuper(req);
+      const empresaId = esSuperUser && req.query?.empresa_id
+        ? Number(req.query.empresa_id)
+        : getEmpresaIdFromToken(req);
+      const choferId = Number(req.query?.chofer_id || 0);
+
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido' });
+      if (!choferId) return res.status(400).json({ error: 'chofer_id requerido' });
+
+      const rows = await query(
+        `SELECT dc.deposito_id, d.nombre AS deposito_nombre, dc.activo
+           FROM deposito_chofer dc
+           JOIN depositos d ON d.id = dc.deposito_id
+          WHERE dc.empresa_id = $1
+            AND dc.chofer_id = $2`,
+        [empresaId, choferId]
+      );
+
+      return res.json(rows || []);
+    } catch (e) {
+      console.error('ERROR /api/stock/depositos/choferes', e);
+      return res.status(500).json({ error: 'Error obteniendo permisos de depósitos por chofer' });
+    }
+  });
+
+  // POST /api/stock/depositos/choferes (set reemplaza lista)
+  router.post('/depositos/choferes', withAuth, async (req, res) => {
+    try {
+      await ensureDepositosSchemaPromise;
+      const esSuperUser = isSuper(req);
+      const empresaId = esSuperUser && req.body?.empresa_id
+        ? Number(req.body.empresa_id)
+        : getEmpresaIdFromToken(req);
+      const choferId = Number(req.body?.chofer_id || 0);
+      const depositoIds = Array.isArray(req.body?.deposito_ids)
+        ? req.body.deposito_ids.map(Number).filter((n) => Number.isFinite(n) && n > 0)
+        : [];
+
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido' });
+      if (!choferId) return res.status(400).json({ error: 'chofer_id requerido' });
+
+      const validDeps = depositoIds.length
+        ? await query(
+          `SELECT id FROM depositos WHERE empresa_id = $1 AND activo = TRUE AND id = ANY($2::int[])`,
+          [empresaId, depositoIds]
+        )
+        : [];
+      const validSet = new Set((validDeps || []).map(r => Number(r.id)));
+      const finalIds = depositoIds.filter(id => validSet.has(Number(id)));
+
+      await query(
+        `UPDATE deposito_chofer
+            SET activo = FALSE,
+                updated_at = NOW()
+          WHERE empresa_id = $1
+            AND chofer_id = $2`,
+        [empresaId, choferId]
+      );
+
+      for (const depId of finalIds) {
+        await query(
+          `INSERT INTO deposito_chofer (empresa_id, deposito_id, chofer_id, activo)
+           VALUES ($1, $2, $3, TRUE)
+           ON CONFLICT (empresa_id, deposito_id, chofer_id)
+           DO UPDATE SET activo = TRUE, updated_at = NOW()`,
+          [empresaId, depId, choferId]
+        );
+      }
+
+      return res.json({ ok: true, chofer_id: choferId, deposito_ids: finalIds });
+    } catch (e) {
+      console.error('ERROR POST /api/stock/depositos/choferes', e);
+      return res.status(500).json({ error: 'Error guardando permisos de depósito por chofer' });
     }
   });
 
@@ -523,11 +679,12 @@ export function createStockRouter() {
 
       const depositoId = Number(deposito_id || 0) || null;
       if (depositoId) {
-        const depRows = await query(
-          `SELECT id FROM depositos WHERE id = $1 AND empresa_id = $2 AND activo = TRUE LIMIT 1`,
-          [depositoId, targetEmpresa]
-        );
-        if (!depRows.length) return res.status(400).json({ error: 'Depósito inválido para la empresa' });
+        const allowed = await choferPuedeUsarDeposito({
+          empresaId: targetEmpresa,
+          choferId: Number(chofer_id),
+          depositoId: depositoId,
+        });
+        if (!allowed) return res.status(403).json({ error: 'Chofer no habilitado para ese depósito' });
       }
 
       const cantidadNum = Number(qty);

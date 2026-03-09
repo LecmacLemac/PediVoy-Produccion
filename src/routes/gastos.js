@@ -14,6 +14,18 @@ export function createGastosRouter({ GASTOS_DIR }) {
   const ensureDepositoRefPromise = (async () => {
     try {
       await query(`ALTER TABLE chofer_stock_mov ADD COLUMN IF NOT EXISTS deposito_id INTEGER`);
+      await query(`
+        CREATE TABLE IF NOT EXISTS deposito_chofer (
+          id SERIAL PRIMARY KEY,
+          empresa_id INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+          deposito_id INTEGER NOT NULL REFERENCES depositos(id) ON DELETE CASCADE,
+          chofer_id INTEGER NOT NULL REFERENCES choferes(id) ON DELETE CASCADE,
+          activo BOOLEAN DEFAULT TRUE,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW(),
+          UNIQUE (empresa_id, deposito_id, chofer_id)
+        )
+      `);
     } catch (e) {
       console.warn('gastos/deposito schema warning:', e?.message || e);
     }
@@ -143,6 +155,31 @@ export function createGastosRouter({ GASTOS_DIR }) {
         );
         if (!depRows.length) {
           return res.status(400).json({ error: 'Depósito inválido para la empresa' });
+        }
+
+        const cfgRows = await query(
+          `SELECT COUNT(*)::int AS c
+             FROM deposito_chofer
+            WHERE empresa_id = $1
+              AND chofer_id = $2
+              AND activo = TRUE`,
+          [targetEmpresa, Number(targetChofer)]
+        );
+        const cfgCount = Number(cfgRows?.[0]?.c || 0);
+        if (cfgCount > 0) {
+          const okRows = await query(
+            `SELECT 1
+               FROM deposito_chofer
+              WHERE empresa_id = $1
+                AND chofer_id = $2
+                AND deposito_id = $3
+                AND activo = TRUE
+              LIMIT 1`,
+            [targetEmpresa, Number(targetChofer), depositoId]
+          );
+          if (!okRows.length) {
+            return res.status(403).json({ error: 'Chofer no habilitado para ese depósito' });
+          }
         }
       }
 
