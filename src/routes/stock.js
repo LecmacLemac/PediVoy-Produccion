@@ -379,6 +379,8 @@ export function createStockRouter() {
       const from = String(req.query?.from || '').slice(0, 10);
       const to = String(req.query?.to || '').slice(0, 10);
       const depositoId = Number(req.query?.deposito_id || 0) || null;
+      const productoId = Number(req.query?.producto_id || 0) || null;
+      const choferId = Number(req.query?.chofer_id || 0) || null;
       const limit = Math.min(Math.max(Number(req.query?.limit || 100), 1), 500);
 
       const params = [empresaId];
@@ -397,6 +399,14 @@ export function createStockRouter() {
         where.push(`(mout.deposito_id = $${idx} OR min.deposito_id = $${idx})`);
         params.push(depositoId);
         idx += 1;
+      }
+      if (productoId) {
+        where.push(`mout.producto_id = $${idx++}`);
+        params.push(productoId);
+      }
+      if (choferId) {
+        where.push(`mout.chofer_id = $${idx++}`);
+        params.push(choferId);
       }
 
       params.push(limit);
@@ -734,6 +744,8 @@ export function createStockRouter() {
       const from = String(req.query?.from || '').slice(0, 10);
       const to = String(req.query?.to || '').slice(0, 10);
       const depositoId = Number(req.query?.deposito_id || 0) || null;
+      const productoId = Number(req.query?.producto_id || 0) || null;
+      const choferId = Number(req.query?.chofer_id || 0) || null;
 
       const params = [empresaId];
       let idx = 2;
@@ -751,6 +763,14 @@ export function createStockRouter() {
         where.push(`(mout.deposito_id = $${idx} OR min.deposito_id = $${idx})`);
         params.push(depositoId);
         idx += 1;
+      }
+      if (productoId) {
+        where.push(`mout.producto_id = $${idx++}`);
+        params.push(productoId);
+      }
+      if (choferId) {
+        where.push(`mout.chofer_id = $${idx++}`);
+        params.push(choferId);
       }
 
       const rows = await query(

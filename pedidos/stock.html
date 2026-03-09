@@ -343,7 +343,7 @@
       </div>
 
       <div class="toolbar" style="margin-bottom:1rem;">
-        <div style="display:grid; grid-template-columns: 1fr 1fr 1.2fr auto; gap:0.7rem; width:100%;">
+        <div style="display:grid; grid-template-columns: 1fr 1fr 1fr 1fr 1fr auto; gap:0.7rem; width:100%;">
           <div>
             <label>Desde</label>
             <input type="date" id="trFrom">
@@ -355,6 +355,14 @@
           <div>
             <label>Depósito (opcional)</label>
             <select id="trDepFiltro"><option value="">Todos</option></select>
+          </div>
+          <div>
+            <label>Producto (opcional)</label>
+            <select id="trProdFiltro"><option value="">Todos</option></select>
+          </div>
+          <div>
+            <label>Chofer (opcional)</label>
+            <select id="trChoferFiltro"><option value="">Todos</option></select>
           </div>
           <div style="display:flex; align-items:flex-end; gap:8px;">
             <button id="btnTrHist" class="btn btn-secondary">Actualizar historial</button>
@@ -606,6 +614,12 @@
         $('#ajChofer').innerHTML = opts;
         $('#trChofer').innerHTML = opts;
         $('#permChofer').innerHTML = opts;
+        const trChoferFiltro = document.getElementById('trChoferFiltro');
+        if (trChoferFiltro) {
+          const cur = trChoferFiltro.value;
+          trChoferFiltro.innerHTML = `<option value="">Todos</option>${opts}`;
+          if (cur) trChoferFiltro.value = cur;
+        }
     }
     
     // Normaliza respuesta de /api/stock/por-tipo a un array de productos
@@ -650,10 +664,16 @@
     }
 
     function fillTransferProductSelect() {
-      const sel = document.getElementById('trProducto');
-      if (!sel) return;
       const opts = (products || []).map(p => `<option value="${Number(p.id)}">${esc(p.nombre || '')}</option>`).join('');
-      sel.innerHTML = `<option value="">Producto</option>${opts}`;
+      const sel = document.getElementById('trProducto');
+      if (sel) sel.innerHTML = `<option value="">Producto</option>${opts}`;
+
+      const trProdFiltro = document.getElementById('trProdFiltro');
+      if (trProdFiltro) {
+        const cur = trProdFiltro.value;
+        trProdFiltro.innerHTML = `<option value="">Todos</option>${opts}`;
+        if (cur) trProdFiltro.value = cur;
+      }
     }
 
     async function loadDepositos() {
@@ -804,10 +824,14 @@
       const from = $('#trFrom')?.value || '';
       const to = $('#trTo')?.value || '';
       const depositoFiltro = $('#trDepFiltro')?.value || '';
+      const productoFiltro = $('#trProdFiltro')?.value || '';
+      const choferFiltro = $('#trChoferFiltro')?.value || '';
       const params = new URLSearchParams();
       if (from) params.set('from', from);
       if (to) params.set('to', to);
       if (depositoFiltro) params.set('deposito_id', depositoFiltro);
+      if (productoFiltro) params.set('producto_id', productoFiltro);
+      if (choferFiltro) params.set('chofer_id', choferFiltro);
       if (isSuper && $('#empFilter')?.value) params.set('empresa_id', $('#empFilter').value);
       return params;
     }
@@ -1174,6 +1198,8 @@
     $('#trFrom').addEventListener('change', loadTransferenciasHistorial);
     $('#trTo').addEventListener('change', loadTransferenciasHistorial);
     $('#trDepFiltro').addEventListener('change', loadTransferenciasHistorial);
+    $('#trProdFiltro').addEventListener('change', loadTransferenciasHistorial);
+    $('#trChoferFiltro').addEventListener('change', loadTransferenciasHistorial);
     $('#logout').addEventListener('click', async (e) => {
       e.preventDefault();
       try { await authFetch('/api/logout', { method: 'POST' }); } catch {}
