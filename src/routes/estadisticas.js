@@ -46,7 +46,11 @@ export function createEstadisticasRouter() {
               COUNT(DISTINCT p.id) as pedidos,
               COALESCE(SUM(p.monto), 0) as ventas,
               COALESCE(
-                SUM((SELECT SUM(cantidad) FROM items_pedido it WHERE it.pedido_id = p.id)),
+                SUM((
+                  SELECT COALESCE(SUM(CASE WHEN COALESCE(it.precio_unitario, 0) > 0 THEN COALESCE(it.cantidad, 0) ELSE 0 END), 0)
+                  FROM items_pedido it
+                  WHERE it.pedido_id = p.id
+                )),
                 0
               ) as unidades
             FROM pedidos p
