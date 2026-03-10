@@ -2690,11 +2690,32 @@ function gCalc(){ const q = Number($('#gCant').value)||0; const p = Number($('#g
 async function loadGHist(){
   try {
     if (!me || !me.chofer_id) { $('#gList').innerHTML = ''; return; }
-    const gs = await api(`/api/gastos?chofer_id=${me.chofer_id}&limit=5`);
-    const arr = Array.isArray(gs) ? gs : (gs.rows || []);
-    
+    const gs = await api(`/api/gastos?chofer_id=${me.chofer_id}`);
+    const arr = (Array.isArray(gs) ? gs : (gs.rows || []))
+      .sort((a,b) => new Date(b.fecha) - new Date(a.fecha))
+      .slice(0, 30);
+
+    if (!arr.length) {
+      $('#gList').innerHTML = '<tr><td colspan="4" class="muted">Sin movimientos cargados</td></tr>';
+      return;
+    }
+
     // CORRECCIÓN HORA ARGENTINA: Mostrar DD/MM usando la zona horaria correcta
-    $('#gList').innerHTML = arr.map(g => `<tr><td>${formatFechaAR(g.fecha)}</td><td>${esc(g.tipo)}</td><td>${esc(g.descripcion)}</td><td>${money(g.monto)}</td></tr>`).join('');
+    $('#gList').innerHTML = arr.map(g => {
+      const tipo = String(g?.tipo || '').toLowerCase();
+      const isMercaderia = tipo === 'carga_llenos' || tipo === 'descarga_vacios';
+      const qty = Number(g?.cantidad || 0);
+      const productoTxt = g?.producto_id ? getProductoNombreById(g.producto_id) : '';
+      const detalleMerc = isMercaderia
+        ? `${tipo === 'carga_llenos' ? 'Carga' : 'Descarga'}${qty > 0 ? `: ${qty}u` : ''}${productoTxt ? ` · ${productoTxt}` : ''}`
+        : '';
+      const detalle = [detalleMerc, g?.descripcion].filter(Boolean).join(' · ');
+      const montoOCant = isMercaderia
+        ? `${qty > 0 ? `${qty}u` : '-'}${Number(g?.monto || 0) > 0 ? ` • ${money(g.monto)}` : ''}`
+        : money(g?.monto);
+
+      return `<tr><td>${formatFechaAR(g.fecha)}</td><td>${esc(g.tipo)}</td><td>${esc(detalle || '-')}</td><td>${montoOCant}</td></tr>`;
+    }).join('');
   } catch {}
 }
 
