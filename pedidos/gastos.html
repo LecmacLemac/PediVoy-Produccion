@@ -299,6 +299,10 @@
           <label>Hasta</label>
           <input type="date" id="to">
         </div>
+        <div>
+          <label>Buscar (detalle)</label>
+          <input type="text" id="qFilter" placeholder="Ej: ypf, peaje, carga, descarga...">
+        </div>
         <div style="display:flex; align-items:flex-end;">
           <button type="submit" class="btn-primary" style="width:100%">Aplicar filtros</button>
         </div>
@@ -502,6 +506,7 @@
     const tipoFilter    = $('#tipoFilter');
     const inputFrom     = $('#from');
     const inputTo       = $('#to');
+    const qFilter       = $('#qFilter');
     
     // Form Refs (alta)
     const tipoEl      = $('#tipo');
@@ -698,6 +703,7 @@
       const to   = inputTo.value;
       const chId = (isSuper || isUser) ? choferFilter.value : '';
       const tVal = tipoFilter ? tipoFilter.value : '';
+      const qVal = (qFilter ? qFilter.value : '').trim().toLowerCase();
       const baseParams = [];
 
       if (from) baseParams.push(`from=${encodeURIComponent(from)}`);
@@ -724,6 +730,15 @@
 
         if (tVal) {
           rows = rows.filter(r => String(r?.tipo || '').toLowerCase() === String(tVal).toLowerCase());
+        }
+
+        if (qVal) {
+          rows = rows.filter(r => {
+            const desc = String(r?.descripcion || '').toLowerCase();
+            const tipo = String(r?.tipo || '').toLowerCase();
+            const chofer = String(r?.chofer_nombre || '').toLowerCase();
+            return desc.includes(qVal) || tipo.includes(qVal) || chofer.includes(qVal);
+          });
         }
 
         window.__gastos = rows;
@@ -1117,6 +1132,7 @@
     
     choferFilter.addEventListener('change', loadGastos);
     if (tipoFilter) tipoFilter.addEventListener('change', loadGastos);
+    if (qFilter) qFilter.addEventListener('input', loadGastos);
     frmFiltro.addEventListener('submit', (e) => { e.preventDefault(); loadGastos(); });
 
     (async function boot(){
