@@ -280,7 +280,7 @@
     <div class="brand">
       <span class="dot"></span>
       <strong id="brandTitle">Dashboard</strong>
-      <button id="btnGpsHelp" class="iconbtn ghost" style="padding:4px 8px; font-size:0.8rem;" hidden>📍 GPS</button>
+      <button id="btnGpsHelp" class="iconbtn ghost" style="padding:4px 8px; font-size:0.8rem;">📍 GPS: OFF</button>
     </div>
     <button id="menuToggle" class="menu-btn">
       <svg width="24" height="24" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
@@ -745,6 +745,7 @@ let activosModalState = { pedidoId: null, data: null };
 let qrPagoState = { pedidoId: null, link: null };
 let pedidoEnProcesoId = null;
 let pedidosLastSyncAt = null;
+const gpsSyncState = {};
 
 const FILTROS_LS_KEY = 'repartidor:filtros:v1';
 
@@ -918,6 +919,80 @@ function showGpsHelp() {
   alert(msg);
 }
 
+const GPS_PREF_LS_KEY = 'repartidor:gps-enabled:v1';
+
+function updateGpsButtonUI() {
+  const gpsBtn = document.getElementById('btnGpsHelp');
+  if (!gpsBtn) return;
+
+  const on = !gpsSyncState.disabled && !gpsSyncState.denied;
+  gpsBtn.textContent = on ? '📍 GPS: ON' : '📍 GPS: OFF';
+  gpsBtn.style.color = on ? '#6ee7b7' : 'var(--muted)';
+  gpsBtn.style.borderColor = on ? 'rgba(16, 185, 129, 0.45)' : 'var(--border)';
+}
+
+function persistGpsPreference(enabled) {
+  try { safeStorage.local.set(GPS_PREF_LS_KEY, enabled ? '1' : '0'); } catch {}
+}
+
+function restoreGpsPreference() {
+  try {
+    const raw = safeStorage.local.get(GPS_PREF_LS_KEY);
+    if (raw === '1') gpsSyncState.disabled = false;
+  } catch {}
+}
+
+async function requestGpsActivation() {
+  if (!navigator.geolocation) {
+    toast('GPS no disponible');
+    return;
+  }
+
+  try {
+    const pos = await new Promise((resolve, reject) => {
+      navigator.geolocation.getCurrentPosition(resolve, reject, {
+        enableHighAccuracy: true,
+        timeout: 9000,
+        maximumAge: 30_000,
+      });
+    });
+
+    gpsSyncState.disabled = false;
+    gpsSyncState.denied = false;
+    gpsSyncState.lastOkAt = Date.now();
+    gpsSyncState.nextInMs = 60_000;
+    persistGpsPreference(true);
+    updateGpsButtonUI();
+
+    // Ping inicial si ya tiene pedido en ruta
+    const activePed = pedidos.find(p => p.estado === 'en_ruta');
+    if (activePed) {
+      api('/api/track/update', {
+        method: 'POST',
+        body: {
+          pedido_id: activePed.id,
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+        }
+      }).catch(() => {});
+    }
+
+    toast('📍 GPS activado');
+  } catch (e) {
+    const code = e?.code || e?.cause?.code;
+    if (code === 1) {
+      gpsSyncState.denied = true;
+      gpsSyncState.disabled = true;
+      persistGpsPreference(false);
+      updateGpsButtonUI();
+      showGpsHelp();
+      return;
+    }
+
+    toast('No se pudo activar GPS');
+  }
+}
+
 // --- INITIALIZATION ---
 (async function boot() {
   try {
@@ -928,10 +1003,22 @@ function showGpsHelp() {
     restoreRoutePlan();
     loadRouteSlaThreshold();
 
-    // Botón ayuda GPS
+    // Botón GPS visible + activación manual
+    restoreGpsPreference();
+    updateGpsButtonUI();
     const gpsBtn = document.getElementById('btnGpsHelp');
     if (gpsBtn) {
-      gpsBtn.onclick = (e) => { e.preventDefault(); showGpsHelp(); };
+      gpsBtn.onclick = async (e) => {
+        e.preventDefault();
+        if (!gpsSyncState.disabled && !gpsSyncState.denied) {
+          gpsSyncState.disabled = true;
+          persistGpsPreference(false);
+          updateGpsButtonUI();
+          toast('GPS pausado');
+          return;
+        }
+        await requestGpsActivation();
+      };
     }
 
     // 2. Config de pagos de la empresa (canales habilitados)
@@ -2387,11 +2474,24 @@ async function setStatus(id, st, el = null){
 
       if (st === 'en_ruta' && navigator.geolocation) {
         navigator.geolocation.getCurrentPosition(pos => {
+          gpsSyncState.disabled = false;
+          gpsSyncState.denied = false;
+          persistGpsPreference(true);
+          updateGpsButtonUI();
           api('/api/track/update', {
             method:'POST',
             body:{ pedido_id:id, lat:pos.coords.latitude, lng:pos.coords.longitude }
           });
-        }, err => console.warn('GPS Error', err));
+        }, err => {
+          console.warn('GPS Error', err);
+          const code = err?.code;
+          if (code === 1) {
+            gpsSyncState.denied = true;
+            gpsSyncState.disabled = true;
+            persistGpsPreference(false);
+            updateGpsButtonUI();
+          }
+        });
       }
 
       await loadPedidos();
@@ -2883,13 +2983,13 @@ async function togglePagoRepartidor(pedidoId, checkbox) {
 // --- GPS TRACKING LOOP (endurecido) ---
 // Objetivo: no spamear requests, manejar mala señal, y evitar concurrencia.
 
-const gpsSyncState = {
-  disabled: false,
+Object.assign(gpsSyncState, {
+  disabled: true,
   denied: false,
   nextInMs: 60_000,
   maxMs: 10 * 60_000,
   lastOkAt: null,
-};
+});
 
 function scheduleNextGpsTick(mult = 1) {
   gpsSyncState.nextInMs = Math.min(Math.max(15_000, Math.floor(gpsSyncState.nextInMs * mult)), gpsSyncState.maxMs);
@@ -2911,8 +3011,7 @@ async function gpsTick() {
   if (!navigator.geolocation || gpsSyncState.denied) {
     // Sin GPS o permiso denegado: frenamos y no molestamos
     gpsSyncState.disabled = true;
-    const gpsBtn = document.getElementById('btnGpsHelp');
-    if (gpsBtn) gpsBtn.hidden = false;
+    updateGpsButtonUI();
     return;
   }
 
@@ -2938,15 +3037,16 @@ async function gpsTick() {
 
     gpsSyncState.lastOkAt = Date.now();
     gpsSyncState.nextInMs = 60_000; // reset al ritmo normal
+    updateGpsButtonUI();
   } catch (e) {
     // Si es permiso denegado, deshabilitar definitivamente
     const code = e?.cause?.code; // geolocation error code
     if (code === 1) { // PERMISSION_DENIED
       gpsSyncState.denied = true;
       gpsSyncState.disabled = true;
+      persistGpsPreference(false);
+      updateGpsButtonUI();
       toast('📍 GPS desactivado: sin permiso.');
-      const gpsBtn = document.getElementById('btnGpsHelp');
-      if (gpsBtn) gpsBtn.hidden = false;
       return;
     }
 
