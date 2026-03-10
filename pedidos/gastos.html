@@ -337,6 +337,12 @@
             <label>Total Calculado</label>
             <input type="number" step="0.01" id="monto_calc" placeholder="0.00" readonly>
           </div>
+          <div id="boxDepositoCreate" hidden>
+            <label>Depósito</label>
+            <select id="depositoCreate">
+              <option value="">Seleccionar depósito</option>
+            </select>
+          </div>
         </div>
 
         <div id="boxMonto" class="grid-form" style="margin-bottom:1rem" hidden>
@@ -493,6 +499,8 @@
     const montoCalcEl = $('#monto_calc');
     const boxCalc     = $('#boxCalc');
     const boxMonto    = $('#boxMonto');
+    const boxDepositoCreate = $('#boxDepositoCreate');
+    const depositoCreateSel = $('#depositoCreate');
 
     // Refs modal edición
     const editModal       = $('#editModal');
@@ -517,6 +525,7 @@
     let saveBusy = false;
     let editBusy = false;
     let deleteBusy = false;
+    let depositosCreate = [];
 
     window.__gastos = [];
 
@@ -542,9 +551,58 @@
       return 'bg-load';
     }
 
+    function renderDepositosCreate() {
+      if (!depositoCreateSel) return;
+      const has = Array.isArray(depositosCreate) && depositosCreate.length > 0;
+      const emptyLabel = has ? 'Seleccionar depósito' : 'Sin depósitos habilitados';
+      depositoCreateSel.innerHTML = `<option value="">${emptyLabel}</option>` +
+        (has ? depositosCreate.map(d => `<option value="${Number(d.id)}">${esc(d.nombre)}</option>`).join('') : '');
+    }
+
+    async function loadDepositosCreate() {
+      try {
+        let empresaId = null;
+        let choferId = null;
+
+        if (isSuper) {
+          empresaId = Number($('#empresaCreate')?.value || 0) || null;
+          choferId = Number($('#choferCreate')?.value || 0) || null;
+        } else if (isUser) {
+          choferId = Number($('#choferCreate')?.value || 0) || null;
+        }
+
+        if ((isSuper || isUser) && choferId) {
+          const params = new URLSearchParams({ chofer_id: String(choferId) });
+          if (empresaId) params.set('empresa_id', String(empresaId));
+          const r = await authFetch(`/api/stock/depositos/choferes?${params.toString()}`);
+          const rows = await r.json();
+          depositosCreate = (Array.isArray(rows) ? rows : [])
+            .filter(x => x?.activo !== false)
+            .map(x => ({ id: Number(x.deposito_id), nombre: String(x.deposito_nombre || `Depósito #${Number(x.deposito_id)}`) }))
+            .filter(x => x.id > 0);
+        } else {
+          const params = new URLSearchParams();
+          if (isSuper && empresaId) params.set('empresa_id', String(empresaId));
+          const qs = params.toString();
+          const r = await authFetch(`/api/stock/depositos${qs ? `?${qs}` : ''}`);
+          const rows = await r.json();
+          depositosCreate = (Array.isArray(rows) ? rows : [])
+            .filter(x => x?.activo !== false)
+            .map(x => ({ id: Number(x.id), nombre: String(x.nombre || `Depósito #${Number(x.id)}`) }))
+            .filter(x => x.id > 0);
+        }
+      } catch {
+        depositosCreate = [];
+      }
+
+      renderDepositosCreate();
+    }
+
     // Toggle campos según tipo (alta)
     function toggleFields(){
       const t = tipoEl.value;
+      const isStockMov = t === 'carga_llenos' || t === 'descarga_vacios';
+
       if(t === 'varios'){
         boxCalc.hidden = true;
         boxMonto.hidden = false;
@@ -554,6 +612,9 @@
         boxMonto.hidden = true;
         calcMonto();
       }
+
+      if (boxDepositoCreate) boxDepositoCreate.hidden = !isStockMov;
+      if (isStockMov) loadDepositosCreate();
     }
 
     function calcMonto(){
@@ -842,6 +903,15 @@
         fd.append('precio_unitario', puEl.value);
       }
 
+      const depositoVal = depositoCreateSel ? String(depositoCreateSel.value || '') : '';
+      if ((tipo === 'carga_llenos' || tipo === 'descarga_vacios') && !depositoVal) {
+        alert('Seleccione depósito para carga/descarga');
+        return;
+      }
+      if (depositoVal) {
+        fd.append('deposito_id', depositoVal);
+      }
+
       if (isSuper) {
         if (!document.querySelector('#empresaCreate').value) {
           alert('Seleccione empresa');
@@ -1011,8 +1081,23 @@
         if(isSuper && val && val !== 'orphans') {
            $('#empresaCreate').value = val;
         }
+        await loadDepositosCreate();
         loadGastos();
     });
+
+    const empresaCreateSel = $('#empresaCreate');
+    const choferCreateSel = $('#choferCreate');
+    if (empresaCreateSel) {
+      empresaCreateSel.addEventListener('change', async () => {
+        if (isSuper) {
+          await loadChoferes(empresaCreateSel.value);
+        }
+        await loadDepositosCreate();
+      });
+    }
+    if (choferCreateSel) {
+      choferCreateSel.addEventListener('change', loadDepositosCreate);
+    }
     
     choferFilter.addEventListener('change', loadGastos);
     frmFiltro.addEventListener('submit', (e) => { e.preventDefault(); loadGastos(); });
