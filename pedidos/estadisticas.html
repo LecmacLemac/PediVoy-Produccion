@@ -411,6 +411,29 @@
       </div>
     </section>
 
+    <section class="grid-charts" style="margin-top:1.5rem">
+      <div class="card">
+        <h3>⏱️ SLA de Entrega</h3>
+        <ul class="list-stats" id="slaStats">
+          <li><span>% En SLA</span><span id="slaPct">—</span></li>
+          <li><span>Demora promedio</span><span id="slaAvg">—</span></li>
+          <li><span>Demora P90</span><span id="slaP90">—</span></li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>🚫 Cancelaciones por Motivo</h3>
+        <ul class="list-stats" id="cancelMotivos">
+          <li><span style="color:var(--muted)">Calculá para ver datos.</span></li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>📦 Productos por Margen</h3>
+        <ul class="list-stats" id="productosMargen">
+          <li><span style="color:var(--muted)">Calculá para ver datos.</span></li>
+        </ul>
+      </div>
+    </section>
+
     <section>
       <div class="flex-between" style="margin-top:2rem">
         <h3>Detalle por Repartidor</h3>
@@ -738,6 +761,11 @@ async function init() {
 
         // Extra stats (top clientes, ventas por día, pagados vs no)
         await loadEntregadosStats(from, to);
+
+        // SLA, cancelaciones y margen por producto
+        await loadSlaEntrega(from, to);
+        await loadCancelacionesMotivo(from, to);
+        await loadProductosMargen(from, to);
       } catch (e) {
         console.error(e);
         $('#tbBody').innerHTML = `<tr><td colspan="11" class="bad" style="text-align:center">Error: ${e.message}</td></tr>`;
@@ -1307,6 +1335,96 @@ async function init() {
         if (paidEl) paidEl.textContent = '—';
         if (pendEl) pendEl.textContent = '—';
         if (pctEl) pctEl.textContent = '—';
+      }
+    }
+
+    function fmtMinutes(min) {
+      const m = Math.max(0, Math.round(num(min)));
+      if (!m) return '0 min';
+      const h = Math.floor(m / 60);
+      const r = m % 60;
+      if (!h) return `${r} min`;
+      return `${h}h ${r}m`;
+    }
+
+    async function loadSlaEntrega(from, to) {
+      const pctEl = $('#slaPct');
+      const avgEl = $('#slaAvg');
+      const p90El = $('#slaP90');
+      try {
+        const base = '/api/reportes/sla-entrega' + qsEmpresa();
+        const sep = base.includes('?') ? '&' : '?';
+        const choferId = $('#fFilChofer')?.value;
+        const url = `${base}${sep}from=${from}&to=${to}` + (choferId ? `&chofer_id=${choferId}` : '');
+        const res = await api(url);
+
+        const pct = num(res?.pct_en_sla);
+        if (pctEl) {
+          pctEl.textContent = `${pct.toFixed(1).replace('.', ',')}% (${num(res?.en_sla)}/${num(res?.total)})`;
+          pctEl.className = pct >= 90 ? 'ok' : (pct >= 75 ? '' : 'bad');
+        }
+        if (avgEl) avgEl.textContent = fmtMinutes(res?.demora_prom_min);
+        if (p90El) p90El.textContent = fmtMinutes(res?.demora_p90_min);
+      } catch (e) {
+        if (pctEl) pctEl.textContent = '—';
+        if (avgEl) avgEl.textContent = '—';
+        if (p90El) p90El.textContent = '—';
+      }
+    }
+
+    async function loadCancelacionesMotivo(from, to) {
+      const el = $('#cancelMotivos');
+      if (!el) return;
+      try {
+        const base = '/api/reportes/cancelaciones-motivo' + qsEmpresa();
+        const sep = base.includes('?') ? '&' : '?';
+        const choferId = $('#fFilChofer')?.value;
+        const url = `${base}${sep}from=${from}&to=${to}` + (choferId ? `&chofer_id=${choferId}` : '');
+        const res = await api(url);
+        const total = num(res?.total);
+        const motivos = Array.isArray(res?.motivos) ? res.motivos : [];
+
+        if (!motivos.length) {
+          el.innerHTML = `<li><span style="color:var(--muted)">Sin cancelaciones en el período</span></li>`;
+          return;
+        }
+
+        el.innerHTML = motivos.slice(0, 6).map(m => {
+          const c = num(m.cantidad);
+          const pct = total ? (c / total * 100) : 0;
+          return `<li><span>${esc(m.motivo)}</span><span>${c} · ${pct.toFixed(1).replace('.', ',')}%</span></li>`;
+        }).join('');
+      } catch (e) {
+        el.innerHTML = `<li><span style="color:var(--muted)">No disponible</span></li>`;
+      }
+    }
+
+    async function loadProductosMargen(from, to) {
+      const el = $('#productosMargen');
+      if (!el) return;
+      try {
+        const base = '/api/reportes/productos-margen' + qsEmpresa();
+        const sep = base.includes('?') ? '&' : '?';
+        const choferId = $('#fFilChofer')?.value;
+        const url = `${base}${sep}from=${from}&to=${to}` + (choferId ? `&chofer_id=${choferId}` : '');
+        const res = await api(url);
+        const top = Array.isArray(res?.top) ? res.top : [];
+        const bottom = Array.isArray(res?.bottom) ? res.bottom : [];
+
+        if (!top.length && !bottom.length) {
+          el.innerHTML = `<li><span style="color:var(--muted)">Sin datos de margen</span></li>`;
+          return;
+        }
+
+        const best = top[0];
+        const worst = bottom[0];
+        const rows = [];
+        if (best) rows.push(`<li><span>⭐ ${esc(best.producto)}</span><span class="ok">${money(best.margen)} · ${pct(best.margen_pct)}</span></li>`);
+        if (worst) rows.push(`<li><span>⚠️ ${esc(worst.producto)}</span><span class="bad">${money(worst.margen)} · ${pct(worst.margen_pct)}</span></li>`);
+        top.slice(1, 4).forEach(p => rows.push(`<li><span>${esc(p.producto)}</span><span>${money(p.margen)}</span></li>`));
+        el.innerHTML = rows.join('');
+      } catch (e) {
+        el.innerHTML = `<li><span style="color:var(--muted)">No disponible</span></li>`;
       }
     }
 
