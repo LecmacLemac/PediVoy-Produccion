@@ -937,10 +937,16 @@ async function init() {
 
     // ====== COMPARACIÓN VS PERÍODO ANTERIOR ======
     // Backend devuelve `prev: { from, to, ventas, rent, ticket }`
+    function trendIcon(diff) {
+      if (diff > 0) return '▲';
+      if (diff < 0) return '▼';
+      return '•';
+    }
+
     function fmtDelta(cur, prev) {
       const d = cur - prev;
       const sign = d >= 0 ? '+' : '';
-      return sign + money(d);
+      return `${trendIcon(d)} ${sign}${money(d)}`;
     }
 
     function renderDeltas(cur, prev) {
@@ -957,18 +963,20 @@ async function init() {
       if (vEl) {
         const txt = `vs ${prev.from}→${prev.to}: ${fmtDelta(cur.ventas, prev.ventas)}`;
         vEl.textContent = txt;
-        vEl.style.color = (cur.ventas - prev.ventas) >= 0 ? 'var(--success)' : 'var(--danger)';
+        const dv = cur.ventas - prev.ventas;
+        vEl.style.color = dv === 0 ? 'var(--muted)' : (dv > 0 ? 'var(--success)' : 'var(--danger)');
       }
       if (rEl) {
         const txt = `vs ${prev.from}→${prev.to}: ${fmtDelta(cur.rent, prev.rent)}`;
         rEl.textContent = txt;
-        rEl.style.color = (cur.rent - prev.rent) >= 0 ? 'var(--success)' : 'var(--danger)';
+        const dr = cur.rent - prev.rent;
+        rEl.style.color = dr === 0 ? 'var(--muted)' : (dr > 0 ? 'var(--success)' : 'var(--danger)');
       }
       if (tEl) {
         const d = cur.ticket - prev.ticket;
         const sign = d >= 0 ? '+' : '';
-        tEl.textContent = `Ticket vs ant.: ${sign}${money(d)}`;
-        tEl.style.color = d >= 0 ? 'var(--success)' : 'var(--danger)';
+        tEl.textContent = `Ticket vs ant.: ${trendIcon(d)} ${sign}${money(d)}`;
+        tEl.style.color = d === 0 ? 'var(--muted)' : (d > 0 ? 'var(--success)' : 'var(--danger)');
       }
     }
 
@@ -1132,10 +1140,11 @@ async function init() {
           return;
         }
         const sign = diff >= 0 ? '+' : '';
+        const icon = trendIcon(diff);
         el.textContent = asMoney
-          ? `vs ant.: ${sign}${money(diff)}`
-          : `vs ant.: ${sign}${diff.toFixed(1).replace('.', ',')}${suffix}`;
-        el.style.color = diff >= 0 ? 'var(--success)' : 'var(--danger)';
+          ? `vs ant.: ${icon} ${sign}${money(diff)}`
+          : `vs ant.: ${icon} ${sign}${diff.toFixed(1).replace('.', ',')}${suffix}`;
+        el.style.color = diff === 0 ? 'var(--muted)' : (diff > 0 ? 'var(--success)' : 'var(--danger)');
       };
 
       setDelta('#kpiClientesDelta', cur.totalClientes - prev.totalClientes, false, '');
