@@ -302,6 +302,37 @@
       </div>
     </section>
 
+    <section class="grid-kpi" style="margin-top:1rem" id="kpisAdvanced">
+      <div class="kpi-card">
+        <div class="kpi-val">
+          <h3 id="kpiClientesUnicos">0</h3>
+          <p>Clientes Únicos</p>
+        </div>
+        <div class="kpi-sub" id="kpiClientesTop">Top cliente: —</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-val">
+          <h3 id="kpiRecompra">0,0%</h3>
+          <p>Tasa de Recompra</p>
+        </div>
+        <div class="kpi-sub" id="kpiRecompraDetalle">0 de 0 clientes repiten</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-val">
+          <h3 id="kpiCobranza">0,0%</h3>
+          <p>Cobranza Efectiva</p>
+        </div>
+        <div class="kpi-sub" id="kpiCobranzaPend">Pendiente: $ 0,00</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-val">
+          <h3 id="kpiDiasActivos">0</h3>
+          <p>Días con Ventas</p>
+        </div>
+        <div class="kpi-sub" id="kpiPromDia">Promedio diario: $ 0,00</div>
+      </div>
+    </section>
+
     <section class="grid-charts" style="margin-top:1.5rem">
       <div class="chart-box">
         <h3>Top Ventas por Chofer</h3>
@@ -716,6 +747,7 @@ async function init() {
     ['#choferEstrella', '#choferEficiente'].forEach(id => $(id).innerHTML = `<li class="muted">Sin datos</li>`);
 
     ['#chartVentas', '#chartRent', '#chartMargen', '#chartSerie'].forEach(id => $(id).innerHTML = '');
+    resetAdvancedKpis();
     return;
   }
 
@@ -1001,6 +1033,70 @@ async function init() {
       }
     }
 
+    function resetAdvancedKpis() {
+      if ($('#kpiClientesUnicos')) $('#kpiClientesUnicos').textContent = '0';
+      if ($('#kpiClientesTop')) $('#kpiClientesTop').textContent = 'Top cliente: —';
+      if ($('#kpiRecompra')) $('#kpiRecompra').textContent = '0,0%';
+      if ($('#kpiRecompraDetalle')) $('#kpiRecompraDetalle').textContent = '0 de 0 clientes repiten';
+      if ($('#kpiCobranza')) $('#kpiCobranza').textContent = '0,0%';
+      if ($('#kpiCobranzaPend')) $('#kpiCobranzaPend').textContent = `Pendiente: ${money(0)}`;
+      if ($('#kpiDiasActivos')) $('#kpiDiasActivos').textContent = '0';
+      if ($('#kpiPromDia')) $('#kpiPromDia').textContent = `Promedio diario: ${money(0)}`;
+    }
+
+    function renderAdvancedKpisFromEntregados(list) {
+      const arr = Array.isArray(list) ? list : [];
+      if (!arr.length) {
+        resetAdvancedKpis();
+        return;
+      }
+
+      const byClient = new Map();
+      const byDay = new Map();
+      let paidMonto = 0;
+      let totalMonto = 0;
+
+      for (const r of arr) {
+        const monto = num(r.monto);
+        const key = String(r.telefono || r.cliente || 'sin-id');
+        const prevCli = byClient.get(key) || { cliente: r.cliente || 'S/N', pedidos: 0, ventas: 0 };
+        prevCli.pedidos += 1;
+        prevCli.ventas += monto;
+        byClient.set(key, prevCli);
+
+        const day = String(r.fecha).slice(0, 10);
+        byDay.set(day, (byDay.get(day) || 0) + monto);
+
+        totalMonto += monto;
+        if (r.pagado) paidMonto += monto;
+      }
+
+      const clientes = Array.from(byClient.values());
+      const totalClientes = clientes.length;
+      const recompraCount = clientes.filter(c => c.pedidos >= 2).length;
+      const recompraPct = totalClientes ? (recompraCount / totalClientes * 100) : 0;
+
+      const topCliente = clientes.slice().sort((a, b) => b.ventas - a.ventas)[0] || null;
+      const cobranzaPct = totalMonto ? (paidMonto / totalMonto * 100) : 0;
+      const pendMonto = Math.max(totalMonto - paidMonto, 0);
+
+      const diasActivos = byDay.size;
+      const promDia = diasActivos ? (totalMonto / diasActivos) : 0;
+
+      if ($('#kpiClientesUnicos')) $('#kpiClientesUnicos').textContent = String(totalClientes);
+      if ($('#kpiClientesTop')) {
+        $('#kpiClientesTop').textContent = topCliente
+          ? `Top cliente: ${topCliente.cliente} · ${money(topCliente.ventas)}`
+          : 'Top cliente: —';
+      }
+      if ($('#kpiRecompra')) $('#kpiRecompra').textContent = `${recompraPct.toFixed(1).replace('.', ',')}%`;
+      if ($('#kpiRecompraDetalle')) $('#kpiRecompraDetalle').textContent = `${recompraCount} de ${totalClientes} clientes repiten`;
+      if ($('#kpiCobranza')) $('#kpiCobranza').textContent = `${cobranzaPct.toFixed(1).replace('.', ',')}%`;
+      if ($('#kpiCobranzaPend')) $('#kpiCobranzaPend').textContent = `Pendiente: ${money(pendMonto)}`;
+      if ($('#kpiDiasActivos')) $('#kpiDiasActivos').textContent = String(diasActivos);
+      if ($('#kpiPromDia')) $('#kpiPromDia').textContent = `Promedio diario: ${money(promDia)}`;
+    }
+
     async function loadEntregadosStats(from, to) {
       const topClientesEl = $('#topClientes');
       const rowsEl = $('#ventasDiaRows');
@@ -1012,6 +1108,8 @@ async function init() {
         const url = buildEntregadosUrl(from, to, null);
         const res = await api(url);
         const list = Array.isArray(res) ? res : (Array.isArray(res?.rows) ? res.rows : []);
+
+        renderAdvancedKpisFromEntregados(list);
 
         // Pagados vs pendientes (monto + count)
         let paidMonto = 0, pendMonto = 0, paidCount = 0, pendCount = 0;
@@ -1102,6 +1200,7 @@ async function init() {
 
       } catch (e) {
         console.error('Error loadEntregadosStats', e);
+        resetAdvancedKpis();
         if (topClientesEl) topClientesEl.innerHTML = `<li class="muted">Error</li>`;
         if (rowsEl) rowsEl.innerHTML = `<tr><td colspan="4" style="text-align:center; padding:1rem; color:var(--muted)">Error</td></tr>`;
         if (paidEl) paidEl.textContent = '—';
