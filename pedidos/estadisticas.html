@@ -309,6 +309,7 @@
           <p>Clientes Únicos</p>
         </div>
         <div class="kpi-sub" id="kpiClientesTop">Top cliente: —</div>
+        <div class="kpi-sub" id="kpiClientesDelta" style="border-top:none; padding-top:0; margin-top:0;">vs ant.: —</div>
       </div>
       <div class="kpi-card">
         <div class="kpi-val">
@@ -316,6 +317,7 @@
           <p>Tasa de Recompra</p>
         </div>
         <div class="kpi-sub" id="kpiRecompraDetalle">0 de 0 clientes repiten</div>
+        <div class="kpi-sub" id="kpiRecompraDelta" style="border-top:none; padding-top:0; margin-top:0;">vs ant.: —</div>
       </div>
       <div class="kpi-card">
         <div class="kpi-val">
@@ -323,6 +325,7 @@
           <p>Cobranza Efectiva</p>
         </div>
         <div class="kpi-sub" id="kpiCobranzaPend">Pendiente: $ 0,00</div>
+        <div class="kpi-sub" id="kpiCobranzaDelta" style="border-top:none; padding-top:0; margin-top:0;">vs ant.: —</div>
       </div>
       <div class="kpi-card">
         <div class="kpi-val">
@@ -330,6 +333,7 @@
           <p>Días con Ventas</p>
         </div>
         <div class="kpi-sub" id="kpiPromDia">Promedio diario: $ 0,00</div>
+        <div class="kpi-sub" id="kpiPromDiaDelta" style="border-top:none; padding-top:0; margin-top:0;">vs ant.: —</div>
       </div>
     </section>
 
@@ -1033,24 +1037,8 @@ async function init() {
       }
     }
 
-    function resetAdvancedKpis() {
-      if ($('#kpiClientesUnicos')) $('#kpiClientesUnicos').textContent = '0';
-      if ($('#kpiClientesTop')) $('#kpiClientesTop').textContent = 'Top cliente: —';
-      if ($('#kpiRecompra')) $('#kpiRecompra').textContent = '0,0%';
-      if ($('#kpiRecompraDetalle')) $('#kpiRecompraDetalle').textContent = '0 de 0 clientes repiten';
-      if ($('#kpiCobranza')) $('#kpiCobranza').textContent = '0,0%';
-      if ($('#kpiCobranzaPend')) $('#kpiCobranzaPend').textContent = `Pendiente: ${money(0)}`;
-      if ($('#kpiDiasActivos')) $('#kpiDiasActivos').textContent = '0';
-      if ($('#kpiPromDia')) $('#kpiPromDia').textContent = `Promedio diario: ${money(0)}`;
-    }
-
-    function renderAdvancedKpisFromEntregados(list) {
+    function calcAdvancedKpis(list) {
       const arr = Array.isArray(list) ? list : [];
-      if (!arr.length) {
-        resetAdvancedKpis();
-        return;
-      }
-
       const byClient = new Map();
       const byDay = new Map();
       let paidMonto = 0;
@@ -1075,26 +1063,85 @@ async function init() {
       const totalClientes = clientes.length;
       const recompraCount = clientes.filter(c => c.pedidos >= 2).length;
       const recompraPct = totalClientes ? (recompraCount / totalClientes * 100) : 0;
-
       const topCliente = clientes.slice().sort((a, b) => b.ventas - a.ventas)[0] || null;
       const cobranzaPct = totalMonto ? (paidMonto / totalMonto * 100) : 0;
       const pendMonto = Math.max(totalMonto - paidMonto, 0);
-
       const diasActivos = byDay.size;
       const promDia = diasActivos ? (totalMonto / diasActivos) : 0;
 
-      if ($('#kpiClientesUnicos')) $('#kpiClientesUnicos').textContent = String(totalClientes);
+      return { totalClientes, recompraCount, recompraPct, topCliente, cobranzaPct, pendMonto, diasActivos, promDia };
+    }
+
+    function resetAdvancedKpis() {
+      if ($('#kpiClientesUnicos')) $('#kpiClientesUnicos').textContent = '0';
+      if ($('#kpiClientesTop')) $('#kpiClientesTop').textContent = 'Top cliente: —';
+      if ($('#kpiRecompra')) $('#kpiRecompra').textContent = '0,0%';
+      if ($('#kpiRecompraDetalle')) $('#kpiRecompraDetalle').textContent = '0 de 0 clientes repiten';
+      if ($('#kpiCobranza')) $('#kpiCobranza').textContent = '0,0%';
+      if ($('#kpiCobranzaPend')) $('#kpiCobranzaPend').textContent = `Pendiente: ${money(0)}`;
+      if ($('#kpiDiasActivos')) $('#kpiDiasActivos').textContent = '0';
+      if ($('#kpiPromDia')) $('#kpiPromDia').textContent = `Promedio diario: ${money(0)}`;
+      ['#kpiClientesDelta', '#kpiRecompraDelta', '#kpiCobranzaDelta', '#kpiPromDiaDelta'].forEach(id => {
+        if ($(id)) {
+          $(id).textContent = 'vs ant.: —';
+          $(id).style.color = 'var(--muted)';
+        }
+      });
+    }
+
+    function previousRange(from, to) {
+      const start = new Date(`${from}T00:00:00`);
+      const end = new Date(`${to}T00:00:00`);
+      if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) return null;
+      const oneDayMs = 24 * 60 * 60 * 1000;
+      const spanDays = Math.floor((end - start) / oneDayMs) + 1;
+      const prevEnd = new Date(start.getTime() - oneDayMs);
+      const prevStart = new Date(prevEnd.getTime() - (spanDays - 1) * oneDayMs);
+      return { from: dateISO(prevStart), to: dateISO(prevEnd) };
+    }
+
+    function renderAdvancedKpisFromEntregados(list, prevList = null) {
+      const arr = Array.isArray(list) ? list : [];
+      if (!arr.length) {
+        resetAdvancedKpis();
+        return;
+      }
+
+      const cur = calcAdvancedKpis(arr);
+      const prev = Array.isArray(prevList) && prevList.length ? calcAdvancedKpis(prevList) : null;
+
+      if ($('#kpiClientesUnicos')) $('#kpiClientesUnicos').textContent = String(cur.totalClientes);
       if ($('#kpiClientesTop')) {
-        $('#kpiClientesTop').textContent = topCliente
-          ? `Top cliente: ${topCliente.cliente} · ${money(topCliente.ventas)}`
+        $('#kpiClientesTop').textContent = cur.topCliente
+          ? `Top cliente: ${cur.topCliente.cliente} · ${money(cur.topCliente.ventas)}`
           : 'Top cliente: —';
       }
-      if ($('#kpiRecompra')) $('#kpiRecompra').textContent = `${recompraPct.toFixed(1).replace('.', ',')}%`;
-      if ($('#kpiRecompraDetalle')) $('#kpiRecompraDetalle').textContent = `${recompraCount} de ${totalClientes} clientes repiten`;
-      if ($('#kpiCobranza')) $('#kpiCobranza').textContent = `${cobranzaPct.toFixed(1).replace('.', ',')}%`;
-      if ($('#kpiCobranzaPend')) $('#kpiCobranzaPend').textContent = `Pendiente: ${money(pendMonto)}`;
-      if ($('#kpiDiasActivos')) $('#kpiDiasActivos').textContent = String(diasActivos);
-      if ($('#kpiPromDia')) $('#kpiPromDia').textContent = `Promedio diario: ${money(promDia)}`;
+      if ($('#kpiRecompra')) $('#kpiRecompra').textContent = `${cur.recompraPct.toFixed(1).replace('.', ',')}%`;
+      if ($('#kpiRecompraDetalle')) $('#kpiRecompraDetalle').textContent = `${cur.recompraCount} de ${cur.totalClientes} clientes repiten`;
+      if ($('#kpiCobranza')) $('#kpiCobranza').textContent = `${cur.cobranzaPct.toFixed(1).replace('.', ',')}%`;
+      if ($('#kpiCobranzaPend')) $('#kpiCobranzaPend').textContent = `Pendiente: ${money(cur.pendMonto)}`;
+      if ($('#kpiDiasActivos')) $('#kpiDiasActivos').textContent = String(cur.diasActivos);
+      if ($('#kpiPromDia')) $('#kpiPromDia').textContent = `Promedio diario: ${money(cur.promDia)}`;
+
+      const setDelta = (id, diff, asMoney = false, suffix = '') => {
+        const el = $(id);
+        if (!el) return;
+        if (!prev) {
+          el.textContent = 'vs ant.: —';
+          el.style.color = 'var(--muted)';
+          return;
+        }
+        const sign = diff >= 0 ? '+' : '';
+        el.textContent = asMoney
+          ? `vs ant.: ${sign}${money(diff)}`
+          : `vs ant.: ${sign}${diff.toFixed(1).replace('.', ',')}${suffix}`;
+        el.style.color = diff >= 0 ? 'var(--success)' : 'var(--danger)';
+      };
+
+      setDelta('#kpiClientesDelta', cur.totalClientes - prev.totalClientes, false, '');
+      setDelta('#kpiRecompraDelta', cur.recompraPct - prev.recompraPct, false, ' pp');
+      setDelta('#kpiCobranzaDelta', cur.cobranzaPct - prev.cobranzaPct, false, ' pp');
+      setDelta('#kpiPromDiaDelta', cur.promDia - prev.promDia, true);
     }
 
     async function loadEntregadosStats(from, to) {
@@ -1109,7 +1156,19 @@ async function init() {
         const res = await api(url);
         const list = Array.isArray(res) ? res : (Array.isArray(res?.rows) ? res.rows : []);
 
-        renderAdvancedKpisFromEntregados(list);
+        let prevList = null;
+        const prevRange = previousRange(from, to);
+        if (prevRange) {
+          try {
+            const prevUrl = buildEntregadosUrl(prevRange.from, prevRange.to, null);
+            const prevRes = await api(prevUrl);
+            prevList = Array.isArray(prevRes) ? prevRes : (Array.isArray(prevRes?.rows) ? prevRes.rows : []);
+          } catch (e) {
+            prevList = null;
+          }
+        }
+
+        renderAdvancedKpisFromEntregados(list, prevList);
 
         // Pagados vs pendientes (monto + count)
         let paidMonto = 0, pendMonto = 0, paidCount = 0, pendCount = 0;
