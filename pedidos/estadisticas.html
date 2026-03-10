@@ -227,7 +227,14 @@
             </select>
           </div>
         </div>
-        <div style="display:flex; gap:0.5rem; align-items:end;">
+        <div style="display:flex; gap:0.5rem; align-items:end; flex-wrap:wrap;">
+          <div>
+            <label for="deltaMode">Deltas</label>
+            <select id="deltaMode">
+              <option value="abs">Monto</option>
+              <option value="pct">%</option>
+            </select>
+          </div>
           <button id="btnCalcular" class="btn btn-primary">Calcular Rentabilidad</button>
           <button id="btnExport" class="btn btn-secondary">Descargar CSV</button>
         </div>
@@ -520,6 +527,7 @@
     let choferes = [];
     let __productosByName = new Map();
     let __payAgg = {};
+    let deltaMode = 'abs';
     window.__transfers = [];
     window.__transfers_total = 0;
     window.__transfers_total_all = 0;
@@ -642,6 +650,15 @@ async function init() {
     $('#btnCalcular').onclick = calcular;
     $('#btnExport').onclick = exportCSV;
     $('#btnVerTransfer').onclick = openTransferModal;
+
+    const deltaModeEl = $('#deltaMode');
+    if (deltaModeEl) {
+      deltaMode = deltaModeEl.value || 'abs';
+      deltaModeEl.onchange = () => {
+        deltaMode = deltaModeEl.value || 'abs';
+        calcular();
+      };
+    }
 
     const hoySel = $('#fHoy');
     if (hoySel) {
@@ -946,6 +963,11 @@ async function init() {
     function fmtDelta(cur, prev) {
       const d = cur - prev;
       const sign = d >= 0 ? '+' : '';
+      if (deltaMode === 'pct') {
+        const base = num(prev);
+        const pctVal = base ? ((d / Math.abs(base)) * 100) : 0;
+        return `${trendIcon(d)} ${sign}${Math.abs(pctVal).toLocaleString('es-AR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
+      }
       return `${trendIcon(d)} ${sign}${money(d)}`;
     }
 
@@ -975,7 +997,12 @@ async function init() {
       if (tEl) {
         const d = cur.ticket - prev.ticket;
         const sign = d >= 0 ? '+' : '';
-        tEl.textContent = `Ticket vs ant.: ${trendIcon(d)} ${sign}${money(d)}`;
+        if (deltaMode === 'pct') {
+          const pctVal = prev.ticket ? ((d / Math.abs(prev.ticket)) * 100) : 0;
+          tEl.textContent = `Ticket vs ant.: ${trendIcon(d)} ${sign}${Math.abs(pctVal).toLocaleString('es-AR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
+        } else {
+          tEl.textContent = `Ticket vs ant.: ${trendIcon(d)} ${sign}${money(d)}`;
+        }
         tEl.style.color = d === 0 ? 'var(--muted)' : (d > 0 ? 'var(--success)' : 'var(--danger)');
       }
     }
@@ -1141,9 +1168,15 @@ async function init() {
         }
         const sign = diff >= 0 ? '+' : '';
         const icon = trendIcon(diff);
-        el.textContent = asMoney
-          ? `vs ant.: ${icon} ${sign}${money(diff)}`
-          : `vs ant.: ${icon} ${sign}${diff.toFixed(1).replace('.', ',')}${suffix}`;
+        if (asMoney && deltaMode === 'pct') {
+          const base = id === '#kpiPromDiaDelta' ? prev.promDia : 0;
+          const pctVal = base ? ((diff / Math.abs(base)) * 100) : 0;
+          el.textContent = `vs ant.: ${icon} ${sign}${Math.abs(pctVal).toLocaleString('es-AR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
+        } else {
+          el.textContent = asMoney
+            ? `vs ant.: ${icon} ${sign}${money(diff)}`
+            : `vs ant.: ${icon} ${sign}${diff.toFixed(1).replace('.', ',')}${suffix}`;
+        }
         el.style.color = diff === 0 ? 'var(--muted)' : (diff > 0 ? 'var(--success)' : 'var(--danger)');
       };
 
