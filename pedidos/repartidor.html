@@ -301,16 +301,6 @@
 <main class="container">
 
   <section id="sec-pedidos">
-    <div class="card" id="gpsQuickCard" style="border-color: rgba(245,158,11,.45); background: rgba(245,158,11,.08);" hidden>
-      <div class="row" style="justify-content:space-between; align-items:center; gap:.8rem;">
-        <div>
-          <h4 style="margin:0;">📍 Ubicación desactivada</h4>
-          <small class="muted" id="gpsQuickHint">Activá GPS para iniciar ruta y seguimiento en vivo.</small>
-        </div>
-        <button id="btnGpsQuick" class="iconbtn primary" type="button">Activar ubicación</button>
-      </div>
-    </div>
-
     <div class="card">
       <div class="flex-bt" style="margin-bottom:1rem; cursor:pointer" onclick="toggleFilters()">
         <h3>Filtros</h3>
@@ -933,24 +923,13 @@ const GPS_PREF_LS_KEY = 'repartidor:gps-enabled:v1';
 
 function updateGpsButtonUI() {
   const gpsBtn = document.getElementById('btnGpsHelp');
-  const quickCard = document.getElementById('gpsQuickCard');
-  const quickHint = document.getElementById('gpsQuickHint');
+  if (!gpsBtn) return;
 
   const on = !gpsSyncState.disabled && !gpsSyncState.denied;
-
-  if (gpsBtn) {
-    gpsBtn.hidden = on;
-    gpsBtn.textContent = '📍 Activar GPS';
-    gpsBtn.style.color = 'var(--muted)';
-    gpsBtn.style.borderColor = 'var(--border)';
-  }
-
-  if (quickCard) quickCard.hidden = on;
-  if (quickHint && gpsSyncState.denied) {
-    quickHint.textContent = 'Permiso denegado. Tocá “Activar ubicación” y aceptá el permiso del navegador.';
-  } else if (quickHint) {
-    quickHint.textContent = 'Activá GPS para iniciar ruta y seguimiento en vivo.';
-  }
+  gpsBtn.hidden = on;
+  gpsBtn.textContent = '📍 Activar GPS';
+  gpsBtn.style.color = 'var(--muted)';
+  gpsBtn.style.borderColor = 'var(--border)';
 }
 
 function persistGpsPreference(enabled) {
@@ -1028,16 +1007,13 @@ async function requestGpsActivation() {
     // Botón GPS visible + activación manual
     restoreGpsPreference();
     updateGpsButtonUI();
-    const bindGpsActivator = (el) => {
-      if (!el) return;
-      el.onclick = async (e) => {
+    const gpsBtn = document.getElementById('btnGpsHelp');
+    if (gpsBtn) {
+      gpsBtn.onclick = async (e) => {
         e.preventDefault();
         await requestGpsActivation();
       };
-    };
-
-    bindGpsActivator(document.getElementById('btnGpsHelp'));
-    bindGpsActivator(document.getElementById('btnGpsQuick'));
+    }
 
     // 2. Config de pagos de la empresa (canales habilitados)
     try {
