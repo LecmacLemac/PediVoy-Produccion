@@ -280,7 +280,7 @@
     <div class="brand">
       <span class="dot"></span>
       <strong id="brandTitle">Dashboard</strong>
-      <button id="btnGpsHelp" class="iconbtn ghost" style="padding:4px 8px; font-size:0.8rem;">📍 GPS: OFF</button>
+      <button id="btnGpsHelp" class="iconbtn ghost" style="padding:4px 8px; font-size:0.8rem;">📍 Activar GPS</button>
     </div>
     <button id="menuToggle" class="menu-btn">
       <svg width="24" height="24" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
@@ -926,9 +926,10 @@ function updateGpsButtonUI() {
   if (!gpsBtn) return;
 
   const on = !gpsSyncState.disabled && !gpsSyncState.denied;
-  gpsBtn.textContent = on ? '📍 GPS: ON' : '📍 GPS: OFF';
-  gpsBtn.style.color = on ? '#6ee7b7' : 'var(--muted)';
-  gpsBtn.style.borderColor = on ? 'rgba(16, 185, 129, 0.45)' : 'var(--border)';
+  gpsBtn.hidden = on;
+  gpsBtn.textContent = '📍 Activar GPS';
+  gpsBtn.style.color = 'var(--muted)';
+  gpsBtn.style.borderColor = 'var(--border)';
 }
 
 function persistGpsPreference(enabled) {
@@ -1010,13 +1011,6 @@ async function requestGpsActivation() {
     if (gpsBtn) {
       gpsBtn.onclick = async (e) => {
         e.preventDefault();
-        if (!gpsSyncState.disabled && !gpsSyncState.denied) {
-          gpsSyncState.disabled = true;
-          persistGpsPreference(false);
-          updateGpsButtonUI();
-          toast('GPS pausado');
-          return;
-        }
         await requestGpsActivation();
       };
     }
