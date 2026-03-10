@@ -282,6 +282,16 @@
           </select>
         </div>
         <div>
+          <label>Tipo</label>
+          <select id="tipoFilter">
+            <option value="">Todos</option>
+            <option value="combustible">⛽ Combustible</option>
+            <option value="carga_llenos">📦 Carga Llenos</option>
+            <option value="descarga_vacios">🔄 Descarga Vacíos</option>
+            <option value="varios">🧾 Otros / Varios</option>
+          </select>
+        </div>
+        <div>
           <label>Desde</label>
           <input type="date" id="from">
         </div>
@@ -489,6 +499,7 @@
     const frmFiltro     = $('#frmFiltro');
     const empresaFilter = $('#empresaFilter');
     const choferFilter  = $('#choferFilter');
+    const tipoFilter    = $('#tipoFilter');
     const inputFrom     = $('#from');
     const inputTo       = $('#to');
     
@@ -686,6 +697,7 @@
       const from = inputFrom.value;
       const to   = inputTo.value;
       const chId = (isSuper || isUser) ? choferFilter.value : '';
+      const tVal = tipoFilter ? tipoFilter.value : '';
       const baseParams = [];
 
       if (from) baseParams.push(`from=${encodeURIComponent(from)}`);
@@ -708,6 +720,10 @@
             } else if (empVal) {
                 rows = rows.filter(r => Number(r.empresa_id) === Number(empVal));
             }
+        }
+
+        if (tVal) {
+          rows = rows.filter(r => String(r?.tipo || '').toLowerCase() === String(tVal).toLowerCase());
         }
 
         window.__gastos = rows;
@@ -1100,6 +1116,7 @@
     }
     
     choferFilter.addEventListener('change', loadGastos);
+    if (tipoFilter) tipoFilter.addEventListener('change', loadGastos);
     frmFiltro.addEventListener('submit', (e) => { e.preventDefault(); loadGastos(); });
 
     (async function boot(){
