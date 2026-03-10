@@ -461,7 +461,14 @@
       </form>
     </div>
 
-    <h4 style="margin-left:10px">Historial Reciente</h4>
+    <div class="flex-bt" style="margin:0 10px 6px; align-items:center; gap:10px; flex-wrap:wrap;">
+      <h4 style="margin:0">Historial Reciente</h4>
+      <select id="gHistFilter" style="width:auto; min-width:170px;">
+        <option value="all">Todos</option>
+        <option value="gastos">Solo Gastos</option>
+        <option value="mercaderia">Solo Mercadería</option>
+      </select>
+    </div>
     <div class="table-wrap">
       <table>
         <thead><tr><th>Fecha</th><th>Tipo</th><th>Detalle</th><th>Monto/Cant</th></tr></thead>
@@ -1149,6 +1156,7 @@ $('#gTipo').addEventListener('change', gToggle);
 $('#gCant').addEventListener('input', gCalc);
 $('#gPu').addEventListener('input', gCalc);
 $('#gProducto').addEventListener('change', gAutoPrice);
+$('#gHistFilter')?.addEventListener('change', loadGHist);
 
 // --- GASTOS SUBMIT ---
 $('#gForm').addEventListener('submit', async (e) => {
@@ -2667,7 +2675,7 @@ async function gLoadDepositos() {
   }
 }
 
-function gInit(){ $('#gForm').reset(); $('#gFecha').value = getOyString(); gToggle(); loadGHist(); }
+function gInit(){ $('#gForm').reset(); $('#gFecha').value = getOyString(); if($('#gHistFilter')) $('#gHistFilter').value='all'; gToggle(); loadGHist(); }
 
 function gToggle(){
   const t = $('#gTipo').value;
@@ -2691,12 +2699,20 @@ async function loadGHist(){
   try {
     if (!me || !me.chofer_id) { $('#gList').innerHTML = ''; return; }
     const gs = await api(`/api/gastos?chofer_id=${me.chofer_id}`);
-    const arr = (Array.isArray(gs) ? gs : (gs.rows || []))
-      .sort((a,b) => new Date(b.fecha) - new Date(a.fecha))
-      .slice(0, 30);
+    const mode = $('#gHistFilter')?.value || 'all';
+    const allRows = (Array.isArray(gs) ? gs : (gs.rows || []))
+      .sort((a,b) => new Date(b.fecha) - new Date(a.fecha));
+
+    const arr = allRows.filter(g => {
+      const tipo = String(g?.tipo || '').toLowerCase();
+      const isMercaderia = tipo === 'carga_llenos' || tipo === 'descarga_vacios';
+      if (mode === 'mercaderia') return isMercaderia;
+      if (mode === 'gastos') return !isMercaderia;
+      return true;
+    }).slice(0, 30);
 
     if (!arr.length) {
-      $('#gList').innerHTML = '<tr><td colspan="4" class="muted">Sin movimientos cargados</td></tr>';
+      $('#gList').innerHTML = '<tr><td colspan="4" class="muted">Sin movimientos para el filtro seleccionado</td></tr>';
       return;
     }
 
