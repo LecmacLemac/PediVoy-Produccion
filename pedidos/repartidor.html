@@ -932,14 +932,12 @@ function notifyError(userMsg, err) {
 
 function showGpsHelp() {
   const msg = [
-    '📍 GPS desactivado o sin permiso.',
+    '📍 No se pudo acceder a tu ubicación.',
     '',
-    'Cómo habilitarlo:',
-    '1) Tocá el candado/ícono de ubicación en la barra del navegador.',
-    '2) Permitir Ubicación para este sitio.',
-    '3) Recargá la página.',
+    'Si bloqueaste el permiso, habilitalo para este sitio y recargá.',
+    'También revisá Android > Apps > Chrome > Permisos > Ubicación.',
     '',
-    'Tip: también revisá Ajustes > Privacidad > Ubicación (en el teléfono).'
+    'Si no está bloqueado, reintentá en 10-15 segundos (puede ser señal/timeout).'
   ].join('\n');
   alert(msg);
 }
@@ -993,18 +991,6 @@ async function requestGpsActivation() {
   }
 
   try {
-    if (navigator.permissions?.query) {
-      const st = await navigator.permissions.query({ name: 'geolocation' });
-      if (st.state === 'denied') {
-        gpsSyncState.denied = true;
-        gpsSyncState.disabled = true;
-        persistGpsPreference(false);
-        updateGpsButtonUI();
-        showGpsHelp();
-        return;
-      }
-    }
-
     const pos = await new Promise((resolve, reject) => {
       navigator.geolocation.getCurrentPosition(resolve, reject, GEO_OPTS_ACTIVATE);
     });
