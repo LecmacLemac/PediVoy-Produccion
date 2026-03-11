@@ -760,6 +760,18 @@ const gpsSyncState = {
   lastOkAt: null,
 };
 
+const GEO_OPTS_ACTIVATE = {
+  enableHighAccuracy: true,
+  timeout: 15_000,
+  maximumAge: 10_000,
+};
+
+const GEO_OPTS_TRACK = {
+  enableHighAccuracy: true,
+  timeout: 15_000,
+  maximumAge: 10_000,
+};
+
 const FILTROS_LS_KEY = 'repartidor:filtros:v1';
 
 function saveFiltrosUI() {
@@ -956,6 +968,18 @@ function restoreGpsPreference() {
   } catch {}
 }
 
+function getGeoErrorCode(err) {
+  return Number(err?.code || err?.cause?.code || 0);
+}
+
+function getGeoErrorMessage(err) {
+  const code = getGeoErrorCode(err);
+  if (code === 1) return 'Permiso de ubicación bloqueado.';
+  if (code === 2) return 'Ubicación temporalmente no disponible.';
+  if (code === 3) return 'GPS tardó demasiado (timeout).';
+  return 'No se pudo leer tu ubicación.';
+}
+
 async function requestGpsActivation() {
   if (!navigator.geolocation) {
     toast('GPS no disponible');
@@ -982,11 +1006,7 @@ async function requestGpsActivation() {
     }
 
     const pos = await new Promise((resolve, reject) => {
-      navigator.geolocation.getCurrentPosition(resolve, reject, {
-        enableHighAccuracy: true,
-        timeout: 9000,
-        maximumAge: 30_000,
-      });
+      navigator.geolocation.getCurrentPosition(resolve, reject, GEO_OPTS_ACTIVATE);
     });
 
     gpsSyncState.disabled = false;
@@ -1011,7 +1031,7 @@ async function requestGpsActivation() {
 
     toast('📍 GPS activado');
   } catch (e) {
-    const code = e?.code || e?.cause?.code;
+    const code = getGeoErrorCode(e);
     if (code === 1) {
       gpsSyncState.denied = true;
       gpsSyncState.disabled = true;
@@ -1021,7 +1041,7 @@ async function requestGpsActivation() {
       return;
     }
 
-    toast('No se pudo activar GPS');
+    toast(getGeoErrorMessage(e));
   }
 }
 
@@ -1428,7 +1448,7 @@ async function getCurrentPositionSafe() {
     navigator.geolocation.getCurrentPosition(
       (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
       () => resolve(null),
-      { enableHighAccuracy: false, timeout: 3500, maximumAge: 120000 }
+      { enableHighAccuracy: false, timeout: 8000, maximumAge: 120000 }
     );
   });
 }
@@ -1573,10 +1593,11 @@ async function optimizarRuta() {
       }
   }, (err) => {
       console.warn(err);
-      toast('Necesito permiso de ubicación');
+      toast(getGeoErrorMessage(err));
+      if (getGeoErrorCode(err) === 1) showGpsHelp();
       btn.disabled = false;
       btn.innerHTML = '⚡ Optimizar Ruta';
-  });
+  }, GEO_OPTS_ACTIVATE);
 }
 
 function renderCards() {
@@ -2510,14 +2531,16 @@ async function setStatus(id, st, el = null){
           });
         }, err => {
           console.warn('GPS Error', err);
-          const code = err?.code;
+          const code = getGeoErrorCode(err);
           if (code === 1) {
             gpsSyncState.denied = true;
             gpsSyncState.disabled = true;
             persistGpsPreference(false);
             updateGpsButtonUI();
+          } else {
+            toast(getGeoErrorMessage(err));
           }
-        });
+        }, GEO_OPTS_ACTIVATE);
       }
 
       await loadPedidos();
@@ -3065,11 +3088,7 @@ async function gpsTick() {
   try {
     await withLock('gps:track', async () => {
       const pos = await new Promise((resolve, reject) => {
-        navigator.geolocation.getCurrentPosition(resolve, reject, {
-          enableHighAccuracy: true,
-          timeout: 8000,
-          maximumAge: 30_000,
-        });
+        navigator.geolocation.getCurrentPosition(resolve, reject, GEO_OPTS_TRACK);
       });
 
       await api('/api/track/update', {
