@@ -1,12 +1,18 @@
 import express from 'express';
 import jwt from 'jsonwebtoken';
+import { createHash, timingSafeEqual } from 'node:crypto';
 
 const OTP_TTL_MS = Number(process.env.CLIENT_OTP_TTL_MS || 5 * 60 * 1000);
 const OTP_RATE_WINDOW_MS = Number(process.env.CLIENT_OTP_RATE_WINDOW_MS || 10 * 60 * 1000);
 const OTP_RATE_MAX = Number(process.env.CLIENT_OTP_RATE_MAX || 5);
+const OTP_MIN_RESEND_MS = Number(process.env.CLIENT_OTP_MIN_RESEND_MS || 45 * 1000);
+const OTP_VERIFY_RATE_WINDOW_MS = Number(process.env.CLIENT_OTP_VERIFY_RATE_WINDOW_MS || 10 * 60 * 1000);
+const OTP_VERIFY_RATE_MAX = Number(process.env.CLIENT_OTP_VERIFY_RATE_MAX || 15);
+const OTP_MAX_VERIFY_ATTEMPTS = Number(process.env.CLIENT_OTP_MAX_VERIFY_ATTEMPTS || 5);
 
 const otpStore = new Map();
 const otpRate = new Map();
+const otpVerifyRate = new Map();
 
 function digitsOnly(v) {
   return String(v || '').replace(/\D+/g, '');
@@ -37,6 +43,30 @@ function hitRate(map, key, windowMs, max) {
   cur.count += 1;
   map.set(key, cur);
   return cur.count > max;
+}
+
+function cleanupRateMap(map, now = Date.now()) {
+  for (const [key, value] of map.entries()) {
+    if (!value || now > value.resetAt) map.delete(key);
+  }
+}
+
+function cleanupOtpStore(now = Date.now()) {
+  for (const [key, value] of otpStore.entries()) {
+    if (!value || now > value.expiresAt) otpStore.delete(key);
+  }
+}
+
+function hashOtp({ key, code }) {
+  const secret = String(process.env.JWT_SECRET || 'dev');
+  return createHash('sha256').update(`${key}:${code}:${secret}`).digest('hex');
+}
+
+function secureEquals(a, b) {
+  const ba = Buffer.from(String(a || ''), 'utf8');
+  const bb = Buffer.from(String(b || ''), 'utf8');
+  if (ba.length !== bb.length) return false;
+  return timingSafeEqual(ba, bb);
 }
 
 function getClientFromRequest(req) {
@@ -71,25 +101,39 @@ export function createPublicClientAppRouter({ query }) {
 
   router.post('/auth/request-otp', async (req, res) => {
     try {
+      const now = Date.now();
+      cleanupOtpStore(now);
+      cleanupRateMap(otpRate, now);
+
       const empresaId = await resolveEmpresaId(query, req.body?.empresa_id, req.body?.slug);
       const telefonoNorm = normalizePhone(req.body?.telefono);
       if (!empresaId || !telefonoNorm) return res.status(400).json({ error: 'empresa_id/slug y telefono son requeridos' });
 
       const ip = getClientIp(req);
-      if (hitRate(otpRate, `otp:ip:${ip}`, OTP_RATE_WINDOW_MS, OTP_RATE_MAX)) {
+      if (
+        hitRate(otpRate, `otp:ip:${ip}`, OTP_RATE_WINDOW_MS, OTP_RATE_MAX) ||
+        hitRate(otpRate, `otp:emp:${empresaId}:tel:${telefonoNorm}`, OTP_RATE_WINDOW_MS, OTP_RATE_MAX)
+      ) {
         return res.status(429).json({ error: 'Demasiados intentos. Reintentá en unos minutos.' });
       }
 
-      const code = String(Math.floor(100000 + Math.random() * 900000));
       const key = `${empresaId}:${telefonoNorm}`;
-      otpStore.set(key, {
-        code,
-        expiresAt: Date.now() + OTP_TTL_MS,
-        tries: 0,
-      });
+      const existingOtp = otpStore.get(key);
+      if (existingOtp && now < (existingOtp.lastSentAt + OTP_MIN_RESEND_MS)) {
+        const waitSec = Math.ceil((existingOtp.lastSentAt + OTP_MIN_RESEND_MS - now) / 1000);
+        return res.status(429).json({ error: 'Esperá antes de pedir otro código', retry_after_sec: waitSec });
+      }
 
+      const code = String(Math.floor(100000 + Math.random() * 900000));
       const msg = `PediVoy: tu código de ingreso es ${code}. Vence en 5 minutos.`;
       const telefonoOutbox = digitsOnly(req.body?.telefono);
+
+      otpStore.set(key, {
+        codeHash: hashOtp({ key, code }),
+        expiresAt: now + OTP_TTL_MS,
+        lastSentAt: now,
+        tries: 0,
+      });
 
       if (telefonoOutbox) {
         await query(
@@ -110,6 +154,10 @@ export function createPublicClientAppRouter({ query }) {
 
   router.post('/auth/verify-otp', async (req, res) => {
     try {
+      const now = Date.now();
+      cleanupOtpStore(now);
+      cleanupRateMap(otpVerifyRate, now);
+
       const empresaId = await resolveEmpresaId(query, req.body?.empresa_id, req.body?.slug);
       const telefonoRaw = String(req.body?.telefono || '').trim();
       const telefonoNorm = normalizePhone(telefonoRaw);
@@ -119,19 +167,27 @@ export function createPublicClientAppRouter({ query }) {
         return res.status(400).json({ error: 'Datos inválidos' });
       }
 
+      const ip = getClientIp(req);
+      const verifyKeyRate = `verify:ip:${ip}:emp:${empresaId}:tel:${telefonoNorm}`;
+      if (hitRate(otpVerifyRate, verifyKeyRate, OTP_VERIFY_RATE_WINDOW_MS, OTP_VERIFY_RATE_MAX)) {
+        return res.status(429).json({ error: 'Demasiados intentos de validación. Reintentá en unos minutos.' });
+      }
+
       const key = `${empresaId}:${telefonoNorm}`;
       const otp = otpStore.get(key);
-      if (!otp || Date.now() > otp.expiresAt) {
+      if (!otp || now > otp.expiresAt) {
+        otpStore.delete(key);
         return res.status(401).json({ error: 'Código vencido o inválido' });
       }
 
       otp.tries += 1;
-      if (otp.tries > 5) {
+      if (otp.tries > OTP_MAX_VERIFY_ATTEMPTS) {
         otpStore.delete(key);
         return res.status(401).json({ error: 'Código inválido' });
       }
 
-      if (otp.code !== code) {
+      const inputHash = hashOtp({ key, code });
+      if (!secureEquals(otp.codeHash, inputHash)) {
         otpStore.set(key, otp);
         return res.status(401).json({ error: 'Código inválido' });
       }
