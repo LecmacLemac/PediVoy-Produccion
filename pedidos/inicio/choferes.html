@@ -243,6 +243,20 @@
   /* Leaflet Dark Override */
   .leaflet-bar { border: none !important; box-shadow: 0 4px 10px rgba(0,0,0,0.3) !important; }
   .leaflet-bar a { background-color: var(--bg-2) !important; color: #fff !important; border-bottom: 1px solid var(--border) !important; }
+
+  .map-pin {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    font-size: 16px;
+    border: 1px solid var(--border);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.35);
+    background: var(--bg-2);
+  }
+  .map-pin-truck { background: rgba(16,185,129,0.2); border-color: rgba(16,185,129,0.45); }
+  .map-pin-home { background: rgba(96,165,250,0.2); border-color: rgba(96,165,250,0.45); }
 </style>
 </head>
 <body>
@@ -1014,6 +1028,26 @@
       trackingTrails.set(k, arr);
     }
 
+    function iconTruck() {
+      return L.divIcon({
+        className: 'map-icon',
+        html: '<div class="map-pin map-pin-truck" title="Repartidor">🚚</div>',
+        iconSize: [28, 28],
+        iconAnchor: [14, 14],
+        popupAnchor: [0, -12]
+      });
+    }
+
+    function iconHome() {
+      return L.divIcon({
+        className: 'map-icon',
+        html: '<div class="map-pin map-pin-home" title="Domicilio">🏠</div>',
+        iconSize: [28, 28],
+        iconAnchor: [14, 14],
+        popupAnchor: [0, -12]
+      });
+    }
+
     function renderTrackingMap(items = [], presenceItems = []) {
       if (!trackingMap || !trackingMarkersLayer || !trackingTrailLayer) return;
       trackingMarkersLayer.clearLayers();
@@ -1029,14 +1063,7 @@
 
         const pedidoId = Number(it.pedido_id || 0);
         pushTrailPoint(pedidoId, lat, lng);
-        const alert = buildAlert(it);
-
-        const marker = L.circleMarker([lat, lng], {
-          radius: 7,
-          color: alert.text === 'Normal' ? '#10b981' : '#f59e0b',
-          weight: 2,
-          fillOpacity: 0.9
-        });
+        const marker = L.marker([lat, lng], { icon: iconTruck() });
 
         marker.bindPopup(`
           <div style="min-width:190px">
@@ -1060,12 +1087,7 @@
         const dLat = Number(it.dest_lat);
         const dLng = Number(it.dest_lng);
         if (Number.isFinite(dLat) && Number.isFinite(dLng)) {
-          const destMarker = L.circleMarker([dLat, dLng], {
-            radius: 4,
-            color: '#60a5fa',
-            weight: 1,
-            fillOpacity: 0.7
-          });
+          const destMarker = L.marker([dLat, dLng], { icon: iconHome() });
           trackingMarkersLayer.addLayer(destMarker);
         }
       });
