@@ -11,8 +11,12 @@ function asNum(v) {
   return Number.isFinite(n) ? n : null;
 }
 
+function getRole(role) {
+  return String(role || '').toLowerCase();
+}
+
 function canManageTracking(role) {
-  const r = String(role || '').toLowerCase();
+  const r = getRole(role);
   return r === 'super' || r === 'admin';
 }
 
@@ -34,6 +38,15 @@ async function resolveEmpresaId(req) {
   );
 
   return rows?.[0]?.empresa_id || null;
+}
+
+async function resolveTargetEmpresaId(req) {
+  const role = getRole(req.user?.role);
+  if (role === 'super') {
+    const empresaFromQuery = asNum(req.query?.empresa_id ?? req.query?.empresaId);
+    if (Number.isFinite(empresaFromQuery) && empresaFromQuery > 0) return empresaFromQuery;
+  }
+  return resolveEmpresaId(req);
 }
 
 export function createTrackingRouter() {
@@ -118,7 +131,7 @@ export function createTrackingRouter() {
         return res.status(403).json({ error: 'No autorizado' });
       }
 
-      const empresaId = await resolveEmpresaId(req);
+      const empresaId = await resolveTargetEmpresaId(req);
       if (!empresaId) {
         return res.status(400).json({ error: 'Empresa no determinada' });
       }
@@ -208,6 +221,71 @@ export function createTrackingRouter() {
     } catch (e) {
       console.error('TRACK LIVE ERROR:', e);
       return res.status(500).json({ error: 'Error cargando tracking live' });
+    }
+  });
+
+  // GET /api/track/drivers/live
+  // Última ubicación conocida por chofer (independiente del estado actual del pedido)
+  router.get('/drivers/live', withAuth, async (req, res) => {
+    try {
+      if (!canManageTracking(req.user?.role)) {
+        return res.status(403).json({ error: 'No autorizado' });
+      }
+
+      const empresaId = await resolveTargetEmpresaId(req);
+      if (!empresaId) {
+        return res.status(400).json({ error: 'Empresa no determinada' });
+      }
+
+      const rows = await query(
+        `
+        WITH ult_chofer AS (
+          SELECT DISTINCT ON (p.chofer_id)
+                 p.chofer_id,
+                 ptp.pedido_id,
+                 ptp.latitud,
+                 ptp.longitud,
+                 ptp.timestamp,
+                 ptp.speed,
+                 ptp.heading,
+                 ptp.precision,
+                 ptp.source
+          FROM pedidos p
+          JOIN pedido_track_points ptp ON ptp.pedido_id = p.id
+          WHERE p.empresa_id = $1
+            AND p.chofer_id IS NOT NULL
+          ORDER BY p.chofer_id, ptp.timestamp DESC
+        )
+        SELECT
+          c.id AS chofer_id,
+          c.nombre AS chofer_nombre,
+          c.tipo AS chofer_tipo,
+          c.telefono AS chofer_telefono,
+          u.pedido_id,
+          u.latitud,
+          u.longitud,
+          u.timestamp,
+          u.speed,
+          u.heading,
+          u.precision,
+          u.source
+        FROM choferes c
+        LEFT JOIN ult_chofer u ON u.chofer_id = c.id
+        WHERE c.empresa_id = $1
+        ORDER BY c.nombre ASC
+        `,
+        [empresaId]
+      );
+
+      return res.json({
+        ok: true,
+        empresa_id: empresaId,
+        items: rows,
+        total: rows.length
+      });
+    } catch (e) {
+      console.error('TRACK DRIVERS LIVE ERROR:', e);
+      return res.status(500).json({ error: 'Error cargando ubicación por chofer' });
     }
   });
 

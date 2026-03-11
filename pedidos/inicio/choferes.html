@@ -336,6 +336,23 @@
         </label>
       </div>
 
+      <div class="table-responsive">
+        <table>
+          <thead>
+            <tr>
+              <th>Chofer</th>
+              <th>Estado GPS</th>
+              <th>Última señal</th>
+              <th>Ubicación</th>
+              <th>Pedido asociado</th>
+            </tr>
+          </thead>
+          <tbody id="driverPresenceBody">
+            <tr><td colspan="5" style="text-align:center; padding:1.2rem; color:var(--muted);">Sin datos de ubicación por chofer.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
       <div class="tracking-layout">
         <div class="tracking-map-wrap">
           <div id="trackingMap"></div>
@@ -515,6 +532,7 @@
     let trackingTrailLayer = null;
     const trackingTrails = new Map();
     let trackingLiveItems = [];
+    let driverPresenceItems = [];
     let lastAlertSignature = '';
     const trackingMarkerByPedido = new Map();
 
@@ -743,6 +761,34 @@
       if (prev && list.some(c => c.id === prev)) sel.value = prev;
     }
 
+    function renderDriverPresence(items = []) {
+      const tbody = $('#driverPresenceBody');
+      if (!tbody) return;
+
+      if (!items.length) {
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:1.2rem; color:var(--muted);">Sin datos de ubicación por chofer.</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = items.map((it) => {
+        const hasSignal = Number.isFinite(Number(it.latitud)) && Number.isFinite(Number(it.longitud));
+        const stale = isStale(it.timestamp, 180);
+        const gpsText = hasSignal ? (stale ? 'Señal vieja' : 'Activo') : 'Sin señal';
+        const gpsCls = hasSignal ? (stale ? 'badge-super' : 'badge-admin') : 'badge-repartidor';
+        const pedidoTxt = Number.isFinite(Number(it.pedido_id)) ? `#${Number(it.pedido_id)}` : '-';
+
+        return `
+          <tr>
+            <td>${esc(it.chofer_nombre || (it.chofer_id ? `#${it.chofer_id}` : 'Chofer'))}</td>
+            <td><span class="status-badge ${gpsCls}">${gpsText}</span></td>
+            <td>${fmtAgo(it.timestamp)}</td>
+            <td>${hasSignal ? `${fmtCoord(it.latitud)}, ${fmtCoord(it.longitud)}` : '-'}</td>
+            <td>${esc(pedidoTxt)}</td>
+          </tr>
+        `;
+      }).join('');
+    }
+
     // --- Logic ---
     async function load() {
       let url = '/api/choferes';
@@ -843,6 +889,33 @@
       }).join('');
     }
 
+    function getTrackingEmpresaQuery() {
+      if (!STATE.isSuper) return '';
+      const empId = Number($('#empFilter')?.value || 0);
+      return Number.isFinite(empId) && empId > 0 ? `?empresa_id=${empId}` : '';
+    }
+
+    async function loadDriverPresence() {
+      if (STATE.isSuper && !$('#empFilter')?.value) {
+        driverPresenceItems = [];
+        renderDriverPresence([]);
+        return;
+      }
+
+      const res = await api(`/api/track/drivers/live${getTrackingEmpresaQuery()}`);
+      if (res?.ok && Array.isArray(res.items)) {
+        driverPresenceItems = res.items;
+      } else {
+        driverPresenceItems = [];
+      }
+
+      const choferSel = $('#trackingChoferFilter')?.value || '';
+      const items = choferSel
+        ? driverPresenceItems.filter(it => String(it.chofer_id || '') === choferSel)
+        : driverPresenceItems;
+      renderDriverPresence(items);
+    }
+
     async function loadTracking(force = false) {
       if (trackingBusy) return;
       if (!force && !$('#trackingAuto')?.checked) return;
@@ -851,12 +924,13 @@
         renderTracking([]);
         renderTrackingMap([]);
         renderIncidents([]);
+        renderDriverPresence([]);
         return;
       }
 
       trackingBusy = true;
       try {
-        const res = await api('/api/track/live');
+        const res = await api(`/api/track/live${getTrackingEmpresaQuery()}`);
         if (res?.ok && Array.isArray(res.items)) {
           trackingLiveItems = res.items;
           syncTrackingChoferFilter(trackingLiveItems);
@@ -866,6 +940,8 @@
           renderIncidents(filtered);
           playAlertSoundIfNeeded(filtered);
         }
+
+        await loadDriverPresence();
       } finally {
         trackingBusy = false;
       }
@@ -1210,6 +1286,12 @@
         renderTracking(filtered);
         renderTrackingMap(filtered);
         renderIncidents(filtered);
+
+        const choferSel = trackingChoferFilter.value || '';
+        const presenceFiltered = choferSel
+          ? driverPresenceItems.filter(it => String(it.chofer_id || '') === choferSel)
+          : driverPresenceItems;
+        renderDriverPresence(presenceFiltered);
       });
     }
 
