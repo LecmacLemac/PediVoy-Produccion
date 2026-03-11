@@ -1025,6 +1025,7 @@
         const lat = Number(it.latitud);
         const lng = Number(it.longitud);
         if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+        if (lat === 0 && lng === 0) return;
 
         const pedidoId = Number(it.pedido_id || 0);
         pushTrailPoint(pedidoId, lat, lng);
@@ -1071,7 +1072,7 @@
 
       const activeDriverBounds = (presenceItems || [])
         .map(it => [Number(it.latitud), Number(it.longitud), it.timestamp])
-        .filter(p => Number.isFinite(p[0]) && Number.isFinite(p[1]) && !isStale(p[2], 180))
+        .filter(p => Number.isFinite(p[0]) && Number.isFinite(p[1]) && !(p[0] === 0 && p[1] === 0) && !isStale(p[2], 180))
         .map(p => [p[0], p[1]]);
 
       let selected = activeDriverBounds.length ? activeDriverBounds : bounds;
