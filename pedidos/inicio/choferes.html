@@ -748,6 +748,12 @@
       return (items || []).filter(it => String(it.chofer_id || '') === choferSel);
     }
 
+    function getDriverPresenceFilteredItems(items = driverPresenceItems) {
+      const choferSel = $('#trackingChoferFilter')?.value || '';
+      if (!choferSel) return items;
+      return (items || []).filter(it => String(it.chofer_id || '') === choferSel);
+    }
+
     function syncTrackingChoferFilter(items = []) {
       const sel = $('#trackingChoferFilter');
       if (!sel) return;
@@ -909,11 +915,8 @@
         driverPresenceItems = [];
       }
 
-      const choferSel = $('#trackingChoferFilter')?.value || '';
-      const items = choferSel
-        ? driverPresenceItems.filter(it => String(it.chofer_id || '') === choferSel)
-        : driverPresenceItems;
-      renderDriverPresence(items);
+      const presenceFiltered = getDriverPresenceFilteredItems(driverPresenceItems);
+      renderDriverPresence(presenceFiltered);
     }
 
     async function loadTracking(force = false) {
@@ -935,13 +938,17 @@
           trackingLiveItems = res.items;
           syncTrackingChoferFilter(trackingLiveItems);
           const filtered = getTrackingFilteredItems(trackingLiveItems);
+          const presenceFiltered = getDriverPresenceFilteredItems(driverPresenceItems);
           renderTracking(filtered);
-          renderTrackingMap(filtered);
+          renderTrackingMap(filtered, presenceFiltered);
           renderIncidents(filtered);
           playAlertSoundIfNeeded(filtered);
         }
 
         await loadDriverPresence();
+        const filteredAfterPresence = getTrackingFilteredItems(trackingLiveItems);
+        const presenceFilteredAfterPresence = getDriverPresenceFilteredItems(driverPresenceItems);
+        renderTrackingMap(filteredAfterPresence, presenceFilteredAfterPresence);
       } finally {
         trackingBusy = false;
       }
@@ -1007,7 +1014,7 @@
       trackingTrails.set(k, arr);
     }
 
-    function renderTrackingMap(items = []) {
+    function renderTrackingMap(items = [], presenceItems = []) {
       if (!trackingMap || !trackingMarkersLayer || !trackingTrailLayer) return;
       trackingMarkersLayer.clearLayers();
       trackingTrailLayer.clearLayers();
@@ -1062,9 +1069,15 @@
         }
       });
 
-      if (bounds.length) {
+      const activeDriverBounds = (presenceItems || [])
+        .map(it => [Number(it.latitud), Number(it.longitud), it.timestamp])
+        .filter(p => Number.isFinite(p[0]) && Number.isFinite(p[1]) && !isStale(p[2], 180))
+        .map(p => [p[0], p[1]]);
+
+      let selected = activeDriverBounds.length ? activeDriverBounds : bounds;
+
+      if (selected.length) {
         const focusAlerts = !!$('#trackingFocusAlerts')?.checked;
-        let selected = bounds;
         if (focusAlerts) {
           const alertBounds = items
             .filter(it => buildAlert(it).text !== 'Normal')
@@ -1283,14 +1296,10 @@
     if (trackingChoferFilter) {
       trackingChoferFilter.addEventListener('change', () => {
         const filtered = getTrackingFilteredItems(trackingLiveItems);
+        const presenceFiltered = getDriverPresenceFilteredItems(driverPresenceItems);
         renderTracking(filtered);
-        renderTrackingMap(filtered);
+        renderTrackingMap(filtered, presenceFiltered);
         renderIncidents(filtered);
-
-        const choferSel = trackingChoferFilter.value || '';
-        const presenceFiltered = choferSel
-          ? driverPresenceItems.filter(it => String(it.chofer_id || '') === choferSel)
-          : driverPresenceItems;
         renderDriverPresence(presenceFiltered);
       });
     }
@@ -1299,7 +1308,8 @@
     if (trackingFocusAlerts) {
       trackingFocusAlerts.addEventListener('change', () => {
         const filtered = getTrackingFilteredItems(trackingLiveItems);
-        renderTrackingMap(filtered);
+        const presenceFiltered = getDriverPresenceFilteredItems(driverPresenceItems);
+        renderTrackingMap(filtered, presenceFiltered);
       });
     }
 
