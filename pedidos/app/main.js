@@ -53,6 +53,15 @@ function loadProfileToForm(profile = {}, session = {}) {
   telefono = tel;
 }
 
+function statusColor(estado = '') {
+  const e = String(estado || '').toLowerCase();
+  if (e.includes('entreg')) return '#0f9d58';
+  if (e.includes('ruta')) return '#1a73e8';
+  if (e.includes('cancel')) return '#d93025';
+  if (e.includes('pend')) return '#f9ab00';
+  return '#61657a';
+}
+
 function renderOrders(orders = []) {
   const root = $('#orders');
   if (!orders.length) {
@@ -68,11 +77,45 @@ function renderOrders(orders = []) {
     row.style.padding = '8px 0';
     row.style.borderBottom = '1px solid #eceef4';
     const fecha = o.fecha ? new Date(o.fecha).toLocaleString('es-AR') : '-';
+
+    const detBtnId = `btn-det-${o.id}`;
+    const detBoxId = `det-${o.id}`;
+
     row.innerHTML = `
       <div><strong>#${o.id}</strong> · ${fecha}</div>
-      <div>Estado: <strong>${o.estado || '-'}</strong> · Monto: <strong>${money(o.monto || 0)}</strong></div>
+      <div>
+        Estado: <strong style="color:${statusColor(o.estado)}">${o.estado || '-'}</strong>
+        · Monto: <strong>${money(o.monto || 0)}</strong>
+      </div>
       <div class="muted">${o.direccion || ''}</div>
+      <button id="${detBtnId}" style="margin-top:6px">Ver detalle</button>
+      <div id="${detBoxId}" class="muted" style="display:none;margin-top:6px"></div>
     `;
+
+    const btn = row.querySelector(`#${detBtnId}`);
+    const box = row.querySelector(`#${detBoxId}`);
+
+    btn.addEventListener('click', async () => {
+      try {
+        const open = box.style.display !== 'none';
+        if (open) {
+          box.style.display = 'none';
+          btn.textContent = 'Ver detalle';
+          return;
+        }
+
+        const out = await j(`/api/public/app/orders/${o.id}/items`);
+        const items = out.items || [];
+        box.innerHTML = items.length
+          ? items.map((it) => `• ${it.producto} x${it.cantidad} — ${money(Number(it.precio_unitario || 0) * Number(it.cantidad || 0))}`).join('<br>')
+          : 'Sin ítems';
+        box.style.display = 'block';
+        btn.textContent = 'Ocultar detalle';
+      } catch (e) {
+        alert(e.message);
+      }
+    });
+
     root.appendChild(row);
   });
 }
