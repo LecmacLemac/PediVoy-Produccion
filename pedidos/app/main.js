@@ -63,6 +63,18 @@ async function loadCatalog() {
   });
 }
 
+$('#btn-google').addEventListener('click', async () => {
+  try {
+    await loadEmpresa();
+    const slug = getSlug();
+    const q = new URLSearchParams({ empresa_id: String(empresaId) });
+    if (slug) q.set('slug', slug);
+    location.href = `/api/public/app/auth/google/start?${q.toString()}`;
+  } catch (e) {
+    alert(e.message);
+  }
+});
+
 $('#btn-otp').addEventListener('click', async () => {
   try {
     telefono = $('#telefono').value.trim();
