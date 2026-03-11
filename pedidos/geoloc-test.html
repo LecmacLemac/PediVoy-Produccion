@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Prueba rápida de geolocalización</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+  <style>
+    body { font-family: system-ui, Arial, sans-serif; margin: 0; background: #0f172a; color: #e2e8f0; }
+    .wrap { max-width: 860px; margin: 0 auto; padding: 16px; }
+    h1 { font-size: 1.1rem; margin: 0 0 12px; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+    button { border: 0; border-radius: 8px; padding: 10px 14px; cursor: pointer; font-weight: 600; }
+    .btn { background: #22c55e; color: #052e16; }
+    .btn2 { background: #334155; color: #e2e8f0; }
+    #status { padding: 8px 10px; border-radius: 8px; background: #1e293b; font-size: .95rem; }
+    #map { height: 65vh; min-height: 380px; border-radius: 10px; overflow: hidden; border: 1px solid #334155; }
+    .meta { margin-top: 10px; font-size: .92rem; color: #cbd5e1; }
+    code { color: #93c5fd; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Prueba simple de ubicación (GPS + mapa)</h1>
+    <div class="row">
+      <button class="btn" id="btnLocate">Obtener mi ubicación</button>
+      <button class="btn2" id="btnWatch">Iniciar seguimiento</button>
+      <button class="btn2" id="btnStop" disabled>Detener seguimiento</button>
+    </div>
+    <div id="status">Esperando acción…</div>
+    <div id="map"></div>
+    <div class="meta" id="meta"></div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script>
+    const statusEl = document.getElementById('status');
+    const metaEl = document.getElementById('meta');
+    const btnLocate = document.getElementById('btnLocate');
+    const btnWatch = document.getElementById('btnWatch');
+    const btnStop = document.getElementById('btnStop');
+
+    const map = L.map('map').setView([-24.79, -65.41], 12); // Salta por defecto
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(map);
+
+    let marker;
+    let circle;
+    let watchId = null;
+
+    function setStatus(text, isError = false) {
+      statusEl.textContent = text;
+      statusEl.style.background = isError ? '#7f1d1d' : '#1e293b';
+      statusEl.style.color = isError ? '#fecaca' : '#e2e8f0';
+    }
+
+    function renderPosition(pos, mode) {
+      const { latitude, longitude, accuracy } = pos.coords;
+      const when = new Date(pos.timestamp).toLocaleString();
+      const latlng = [latitude, longitude];
+
+      if (!marker) {
+        marker = L.marker(latlng).addTo(map);
+      } else {
+        marker.setLatLng(latlng);
+      }
+
+      if (!circle) {
+        circle = L.circle(latlng, { radius: accuracy, color: '#22c55e', fillOpacity: 0.12 }).addTo(map);
+      } else {
+        circle.setLatLng(latlng).setRadius(accuracy);
+      }
+
+      map.setView(latlng, 17);
+      setStatus(`${mode}: ubicación obtenida correctamente.`);
+      metaEl.innerHTML = `Lat: <code>${latitude.toFixed(6)}</code> | Lng: <code>${longitude.toFixed(6)}</code> | Precisión: <code>${Math.round(accuracy)} m</code> | Hora: <code>${when}</code>`;
+    }
+
+    function handleError(err) {
+      let msg = 'No se pudo obtener la ubicación.';
+      if (err.code === 1) msg = 'Permiso denegado para geolocalización.';
+      if (err.code === 2) msg = 'Ubicación no disponible.';
+      if (err.code === 3) msg = 'Tiempo de espera agotado al pedir ubicación.';
+      setStatus(msg, true);
+      metaEl.textContent = `Detalle: ${err.message || 'sin detalle'}`;
+    }
+
+    const opts = { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 };
+
+    btnLocate.addEventListener('click', () => {
+      if (!navigator.geolocation) {
+        setStatus('Este navegador no soporta geolocalización.', true);
+        return;
+      }
+      setStatus('Buscando ubicación…');
+      navigator.geolocation.getCurrentPosition(
+        (pos) => renderPosition(pos, 'Lectura única'),
+        handleError,
+        opts
+      );
+    });
+
+    btnWatch.addEventListener('click', () => {
+      if (!navigator.geolocation) {
+        setStatus('Este navegador no soporta geolocalización.', true);
+        return;
+      }
+      if (watchId !== null) return;
+      setStatus('Seguimiento activo… movete unos metros para probar.');
+      watchId = navigator.geolocation.watchPosition(
+        (pos) => renderPosition(pos, 'Seguimiento'),
+        handleError,
+        opts
+      );
+      btnWatch.disabled = true;
+      btnStop.disabled = false;
+    });
+
+    btnStop.addEventListener('click', () => {
+      if (watchId !== null) {
+        navigator.geolocation.clearWatch(watchId);
+        watchId = null;
+        setStatus('Seguimiento detenido.');
+      }
+      btnWatch.disabled = false;
+      btnStop.disabled = true;
+    });
+  </script>
+</body>
+</html>
