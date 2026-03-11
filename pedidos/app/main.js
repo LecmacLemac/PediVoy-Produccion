@@ -5,6 +5,7 @@ let empresaId = 1;
 let telefono = '';
 const cart = [];
 let ordersTimer = null;
+const lastOrderState = new Map();
 
 async function j(url, options = {}) {
   const r = await fetch(url, {
@@ -94,6 +95,32 @@ function statusProgress(estado = '') {
   return 10;
 }
 
+function showOrderAlert(text) {
+  const el = $('#order-alert');
+  if (!el) return;
+  el.textContent = text;
+  el.classList.remove('hidden');
+  setTimeout(() => el.classList.add('hidden'), 4500);
+}
+
+function detectOrderStateChanges(orders = []) {
+  let changed = null;
+  for (const o of orders) {
+    const id = Number(o.id || 0);
+    const next = String(o.estado || '').trim();
+    if (!id || !next) continue;
+    const prev = lastOrderState.get(id);
+    if (prev && prev !== next) {
+      changed = { id, prev, next };
+    }
+    lastOrderState.set(id, next);
+  }
+
+  if (changed) {
+    showOrderAlert(`Pedido #${changed.id}: ${changed.prev} → ${changed.next}`);
+  }
+}
+
 function renderOrders(orders = []) {
   const root = $('#orders');
   if (!orders.length) {
@@ -160,7 +187,9 @@ function renderOrders(orders = []) {
 
 async function loadOrders() {
   const out = await j('/api/public/app/orders');
-  renderOrders(out.orders || []);
+  const orders = out.orders || [];
+  detectOrderStateChanges(orders);
+  renderOrders(orders);
 }
 
 function renderCart() {
