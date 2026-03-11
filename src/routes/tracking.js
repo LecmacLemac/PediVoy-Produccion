@@ -170,6 +170,22 @@ export function createTrackingRouter() {
                  ptp.source
           FROM pedido_track_points ptp
           ORDER BY ptp.pedido_id, ptp.timestamp DESC
+        ),
+        ult_chofer AS (
+          SELECT DISTINCT ON (p2.chofer_id)
+                 p2.chofer_id,
+                 ptp.latitud,
+                 ptp.longitud,
+                 ptp.timestamp,
+                 ptp.speed,
+                 ptp.heading,
+                 ptp.precision,
+                 ptp.source
+          FROM pedidos p2
+          JOIN pedido_track_points ptp ON ptp.pedido_id = p2.id
+          WHERE p2.empresa_id = $1
+            AND p2.chofer_id IS NOT NULL
+          ORDER BY p2.chofer_id, ptp.timestamp DESC
         )
         SELECT
           p.id AS pedido_id,
@@ -183,13 +199,13 @@ export function createTrackingRouter() {
           pe.ciudad,
           pe.latitud AS dest_lat,
           pe.longitud AS dest_lng,
-          u.latitud,
-          u.longitud,
-          u.timestamp,
-          u.speed,
-          u.heading,
-          u.precision,
-          u.source,
+          COALESCE(u.latitud, uc.latitud) AS latitud,
+          COALESCE(u.longitud, uc.longitud) AS longitud,
+          COALESCE(u.timestamp, uc.timestamp) AS timestamp,
+          COALESCE(u.speed, uc.speed) AS speed,
+          COALESCE(u.heading, uc.heading) AS heading,
+          COALESCE(u.precision, uc.precision) AS precision,
+          COALESCE(u.source, uc.source) AS source,
           ack.acked_at,
           ack.acked_by_username,
           ack.comment AS ack_comment
@@ -197,6 +213,7 @@ export function createTrackingRouter() {
         LEFT JOIN choferes c ON c.id = p.chofer_id
         LEFT JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
         LEFT JOIN ult u ON u.pedido_id = p.id
+        LEFT JOIN ult_chofer uc ON uc.chofer_id = p.chofer_id
         LEFT JOIN LATERAL (
           SELECT tia.acked_at, tia.acked_by_username, tia.comment
           FROM tracking_incident_acks tia
