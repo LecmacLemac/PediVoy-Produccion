@@ -472,6 +472,119 @@ export function createPublicClientAppRouter({ query }) {
     }
   });
 
+  router.get('/orders', async (req, res) => {
+    try {
+      const session = getClientFromRequest(req, { strictRisk: true });
+      if (!session.payload) {
+        if (session.needsRevalidation) {
+          return res.status(401).json({ error: 'Revalidación requerida por cambio de dispositivo/red', revalidate_required: true });
+        }
+        return res.status(401).json({ error: 'No autenticado' });
+      }
+
+      const payload = session.payload;
+      const empresaId = Number(payload.empresa_id);
+      const telefonoNorm = normalizePhone(payload.telefono_norm || payload.telefono || '');
+      const email = String(payload.email || '').trim().toLowerCase();
+
+      if (!telefonoNorm && !email) return res.json({ ok: true, orders: [] });
+
+      let puntos = [];
+      if (telefonoNorm) {
+        puntos = await query(
+          `SELECT id FROM puntos_entrega
+           WHERE empresa_id = $1
+             AND telefono_normalizado LIKE '%' || $2
+           ORDER BY id DESC
+           LIMIT 20`,
+          [empresaId, telefonoNorm]
+        );
+      }
+
+      if (!puntos.length && email) {
+        puntos = await query(
+          `SELECT id FROM puntos_entrega
+           WHERE empresa_id = $1
+             AND LOWER(COALESCE(email,'')) = $2
+           ORDER BY id DESC
+           LIMIT 20`,
+          [empresaId, email]
+        );
+      }
+
+      if (!puntos.length) return res.json({ ok: true, orders: [] });
+
+      const ids = puntos.map((p) => Number(p.id)).filter(Boolean);
+      const orders = await query(
+        `SELECT p.id, p.fecha, p.estado, p.metodo_pago, p.monto,
+                pe.cliente, pe.direccion
+         FROM pedidos p
+         JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
+         WHERE p.empresa_id = $1
+           AND p.punto_entrega_id = ANY($2::int[])
+         ORDER BY p.fecha DESC, p.id DESC
+         LIMIT 30`,
+        [empresaId, ids]
+      );
+
+      return res.json({ ok: true, orders });
+    } catch (e) {
+      console.error('CLIENT APP /orders ERROR', e);
+      return res.status(500).json({ error: 'No se pudo obtener historial' });
+    }
+  });
+
+  router.get('/orders/:id/items', async (req, res) => {
+    try {
+      const session = getClientFromRequest(req, { strictRisk: true });
+      if (!session.payload) {
+        if (session.needsRevalidation) {
+          return res.status(401).json({ error: 'Revalidación requerida por cambio de dispositivo/red', revalidate_required: true });
+        }
+        return res.status(401).json({ error: 'No autenticado' });
+      }
+
+      const payload = session.payload;
+      const empresaId = Number(payload.empresa_id);
+      const pedidoId = Number(req.params.id || 0);
+      if (!pedidoId) return res.status(400).json({ error: 'id inválido' });
+
+      const owns = await query(
+        `SELECT p.id
+         FROM pedidos p
+         JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
+         WHERE p.id = $1
+           AND p.empresa_id = $2
+           AND (
+             pe.telefono_normalizado LIKE '%' || $3
+             OR LOWER(COALESCE(pe.email,'')) = $4
+           )
+         LIMIT 1`,
+        [
+          pedidoId,
+          empresaId,
+          normalizePhone(payload.telefono_norm || payload.telefono || ''),
+          String(payload.email || '').trim().toLowerCase(),
+        ]
+      );
+
+      if (!owns.length) return res.status(404).json({ error: 'Pedido no encontrado' });
+
+      const items = await query(
+        `SELECT producto, cantidad, precio_unitario
+         FROM items_pedido
+         WHERE pedido_id = $1
+         ORDER BY id ASC`,
+        [pedidoId]
+      );
+
+      return res.json({ ok: true, items });
+    } catch (e) {
+      console.error('CLIENT APP /orders/:id/items ERROR', e);
+      return res.status(500).json({ error: 'No se pudo obtener detalle del pedido' });
+    }
+  });
+
   router.post('/auth/logout', (_req, res) => {
     res.cookie('client_token', '', {
       httpOnly: true,

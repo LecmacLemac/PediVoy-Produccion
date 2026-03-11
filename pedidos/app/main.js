@@ -34,6 +34,7 @@ function showAuthOnly() {
   $('#step-profile').classList.add('hidden');
   $('#step-catalog').classList.add('hidden');
   $('#step-cart').classList.add('hidden');
+  $('#step-orders').classList.add('hidden');
 }
 
 function showApp() {
@@ -41,6 +42,7 @@ function showApp() {
   $('#step-profile').classList.remove('hidden');
   $('#step-catalog').classList.remove('hidden');
   $('#step-cart').classList.remove('hidden');
+  $('#step-orders').classList.remove('hidden');
 }
 
 function loadProfileToForm(profile = {}, session = {}) {
@@ -49,6 +51,35 @@ function loadProfileToForm(profile = {}, session = {}) {
   const tel = profile?.telefono || session?.telefono || '';
   $('#telefono-perfil').value = tel;
   telefono = tel;
+}
+
+function renderOrders(orders = []) {
+  const root = $('#orders');
+  if (!orders.length) {
+    root.className = 'muted';
+    root.textContent = 'Sin pedidos aún.';
+    return;
+  }
+
+  root.className = '';
+  root.innerHTML = '';
+  orders.forEach((o) => {
+    const row = document.createElement('div');
+    row.style.padding = '8px 0';
+    row.style.borderBottom = '1px solid #eceef4';
+    const fecha = o.fecha ? new Date(o.fecha).toLocaleString('es-AR') : '-';
+    row.innerHTML = `
+      <div><strong>#${o.id}</strong> · ${fecha}</div>
+      <div>Estado: <strong>${o.estado || '-'}</strong> · Monto: <strong>${money(o.monto || 0)}</strong></div>
+      <div class="muted">${o.direccion || ''}</div>
+    `;
+    root.appendChild(row);
+  });
+}
+
+async function loadOrders() {
+  const out = await j('/api/public/app/orders');
+  renderOrders(out.orders || []);
 }
 
 function renderCart() {
@@ -131,6 +162,8 @@ $('#btn-verify').addEventListener('click', async () => {
     showApp();
     loadProfileToForm(me.profile, me.session);
     await loadCatalog();
+    await loadOrders();
+    await loadOrders();
   } catch (e) {
     alert(e.message);
   }
@@ -150,6 +183,14 @@ $('#btn-save-profile').addEventListener('click', async () => {
     loadProfileToForm(out.profile || {}, {});
     $('#profile-msg').textContent = 'Perfil guardado ✅';
     setTimeout(() => { $('#profile-msg').textContent = ''; }, 1800);
+  } catch (e) {
+    alert(e.message);
+  }
+});
+
+$('#btn-refresh-orders').addEventListener('click', async () => {
+  try {
+    await loadOrders();
   } catch (e) {
     alert(e.message);
   }
@@ -182,6 +223,7 @@ $('#btn-send').addEventListener('click', async () => {
 
     cart.length = 0;
     renderCart();
+    await loadOrders();
     alert(`Pedido enviado #${out?.pedido?.id || ''}`);
   } catch (e) {
     alert(e.message);
