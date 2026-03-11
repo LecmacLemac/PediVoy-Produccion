@@ -752,7 +752,13 @@ let activosModalState = { pedidoId: null, data: null };
 let qrPagoState = { pedidoId: null, link: null };
 let pedidoEnProcesoId = null;
 let pedidosLastSyncAt = null;
-const gpsSyncState = {};
+const gpsSyncState = {
+  disabled: true,
+  denied: false,
+  nextInMs: 60_000,
+  maxMs: 10 * 60_000,
+  lastOkAt: null,
+};
 
 const FILTROS_LS_KEY = 'repartidor:filtros:v1';
 
@@ -956,7 +962,25 @@ async function requestGpsActivation() {
     return;
   }
 
+  if (!window.isSecureContext) {
+    toast('Abrí por HTTPS para usar GPS');
+    showGpsHelp();
+    return;
+  }
+
   try {
+    if (navigator.permissions?.query) {
+      const st = await navigator.permissions.query({ name: 'geolocation' });
+      if (st.state === 'denied') {
+        gpsSyncState.denied = true;
+        gpsSyncState.disabled = true;
+        persistGpsPreference(false);
+        updateGpsButtonUI();
+        showGpsHelp();
+        return;
+      }
+    }
+
     const pos = await new Promise((resolve, reject) => {
       navigator.geolocation.getCurrentPosition(resolve, reject, {
         enableHighAccuracy: true,
@@ -3013,14 +3037,6 @@ async function togglePagoRepartidor(pedidoId, checkbox) {
 
 // --- GPS TRACKING LOOP (endurecido) ---
 // Objetivo: no spamear requests, manejar mala señal, y evitar concurrencia.
-
-Object.assign(gpsSyncState, {
-  disabled: true,
-  denied: false,
-  nextInMs: 60_000,
-  maxMs: 10 * 60_000,
-  lastOkAt: null,
-});
 
 function scheduleNextGpsTick(mult = 1) {
   gpsSyncState.nextInMs = Math.min(Math.max(15_000, Math.floor(gpsSyncState.nextInMs * mult)), gpsSyncState.maxMs);
