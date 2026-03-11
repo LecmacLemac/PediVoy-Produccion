@@ -57,9 +57,20 @@ function statusColor(estado = '') {
   const e = String(estado || '').toLowerCase();
   if (e.includes('entreg')) return '#0f9d58';
   if (e.includes('ruta')) return '#1a73e8';
+  if (e.includes('prepar')) return '#7b61ff';
   if (e.includes('cancel')) return '#d93025';
   if (e.includes('pend')) return '#f9ab00';
   return '#61657a';
+}
+
+function statusProgress(estado = '') {
+  const e = String(estado || '').toLowerCase();
+  if (e.includes('cancel')) return 100;
+  if (e.includes('entreg')) return 100;
+  if (e.includes('ruta')) return 75;
+  if (e.includes('prepar')) return 45;
+  if (e.includes('pend')) return 20;
+  return 10;
 }
 
 function renderOrders(orders = []) {
@@ -81,12 +92,18 @@ function renderOrders(orders = []) {
     const detBtnId = `btn-det-${o.id}`;
     const detBoxId = `det-${o.id}`;
 
+    const prog = statusProgress(o.estado);
+    const color = statusColor(o.estado);
     row.innerHTML = `
       <div><strong>#${o.id}</strong> · ${fecha}</div>
       <div>
-        Estado: <strong style="color:${statusColor(o.estado)}">${o.estado || '-'}</strong>
+        Estado: <strong style="color:${color}">${o.estado || '-'}</strong>
         · Monto: <strong>${money(o.monto || 0)}</strong>
       </div>
+      <div style="margin-top:6px;background:#eceef4;border-radius:8px;overflow:hidden;height:8px">
+        <div style="width:${prog}%;height:8px;background:${color};transition:width .25s ease"></div>
+      </div>
+      <div class="muted" style="margin-top:4px">Progreso: ${prog}%</div>
       <div class="muted">${o.direccion || ''}</div>
       <button id="${detBtnId}" style="margin-top:6px">Ver detalle</button>
       <div id="${detBoxId}" class="muted" style="display:none;margin-top:6px"></div>
