@@ -117,7 +117,7 @@ export function createApp(deps) {
     res.set('X-Content-Type-Options', 'nosniff');
     res.set('X-Frame-Options', 'DENY');
     res.set('Referrer-Policy', 'no-referrer');
-    res.set('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+    res.set('Permissions-Policy', 'geolocation=(self), microphone=(), camera=()');
     next();
   });
 
