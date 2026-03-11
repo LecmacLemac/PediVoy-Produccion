@@ -103,6 +103,16 @@ function showOrderAlert(text) {
   setTimeout(() => el.classList.add('hidden'), 4500);
 }
 
+function maybeBrowserNotify(text) {
+  try {
+    if (!('Notification' in window)) return;
+    if (Notification.permission !== 'granted') return;
+    new Notification('PediVoy', { body: text });
+  } catch {
+    // noop
+  }
+}
+
 function detectOrderStateChanges(orders = []) {
   let changed = null;
   for (const o of orders) {
@@ -117,7 +127,9 @@ function detectOrderStateChanges(orders = []) {
   }
 
   if (changed) {
-    showOrderAlert(`Pedido #${changed.id}: ${changed.prev} → ${changed.next}`);
+    const txt = `Pedido #${changed.id}: ${changed.prev} → ${changed.next}`;
+    showOrderAlert(txt);
+    maybeBrowserNotify(txt);
   }
 }
 
@@ -293,6 +305,20 @@ $('#btn-save-profile').addEventListener('click', async () => {
     loadProfileToForm(out.profile || {}, {});
     $('#profile-msg').textContent = 'Perfil guardado ✅';
     setTimeout(() => { $('#profile-msg').textContent = ''; }, 1800);
+  } catch (e) {
+    alert(e.message);
+  }
+});
+
+$('#btn-enable-notif').addEventListener('click', async () => {
+  try {
+    if (!('Notification' in window)) throw new Error('Este navegador no soporta notificaciones');
+    const p = await Notification.requestPermission();
+    if (p === 'granted') {
+      showOrderAlert('Notificaciones activadas ✅');
+    } else {
+      showOrderAlert('Notificaciones no habilitadas');
+    }
   } catch (e) {
     alert(e.message);
   }
