@@ -12,12 +12,43 @@ async function j(url, options = {}) {
     ...options,
   });
   const body = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(body?.error || `HTTP ${r.status}`);
+  if (!r.ok) {
+    const err = new Error(body?.error || `HTTP ${r.status}`);
+    err.data = body;
+    err.status = r.status;
+    throw err;
+  }
   return body;
 }
 
 function getSlug() {
   return new URLSearchParams(location.search).get('slug') || '';
+}
+
+function onlyDigits(v) {
+  return String(v || '').replace(/\D+/g, '');
+}
+
+function showAuthOnly() {
+  $('#step-code').classList.remove('hidden');
+  $('#step-profile').classList.add('hidden');
+  $('#step-catalog').classList.add('hidden');
+  $('#step-cart').classList.add('hidden');
+}
+
+function showApp() {
+  $('#step-code').classList.remove('hidden');
+  $('#step-profile').classList.remove('hidden');
+  $('#step-catalog').classList.remove('hidden');
+  $('#step-cart').classList.remove('hidden');
+}
+
+function loadProfileToForm(profile = {}, session = {}) {
+  $('#cliente').value = profile?.cliente || '';
+  $('#direccion').value = profile?.direccion || '';
+  const tel = profile?.telefono || session?.telefono || '';
+  $('#telefono-perfil').value = tel;
+  telefono = tel;
 }
 
 function renderCart() {
@@ -97,15 +128,28 @@ $('#btn-verify').addEventListener('click', async () => {
     });
 
     const me = await j('/api/public/app/me');
-    if (me.profile) {
-      $('#cliente').value = me.profile.cliente || '';
-      $('#direccion').value = me.profile.direccion || '';
-    }
-
-    $('#step-profile').classList.remove('hidden');
-    $('#step-catalog').classList.remove('hidden');
-    $('#step-cart').classList.remove('hidden');
+    showApp();
+    loadProfileToForm(me.profile, me.session);
     await loadCatalog();
+  } catch (e) {
+    alert(e.message);
+  }
+});
+
+$('#btn-save-profile').addEventListener('click', async () => {
+  try {
+    const cliente = $('#cliente').value.trim();
+    const direccion = $('#direccion').value.trim();
+    const tel = $('#telefono-perfil').value.trim();
+
+    const out = await j('/api/public/app/profile', {
+      method: 'POST',
+      body: JSON.stringify({ cliente, direccion, telefono: tel }),
+    });
+
+    loadProfileToForm(out.profile || {}, {});
+    $('#profile-msg').textContent = 'Perfil guardado ✅';
+    setTimeout(() => { $('#profile-msg').textContent = ''; }, 1800);
   } catch (e) {
     alert(e.message);
   }
@@ -117,12 +161,15 @@ $('#btn-send').addEventListener('click', async () => {
 
     const cliente = $('#cliente').value.trim();
     const direccion = $('#direccion').value.trim();
+    const tel = $('#telefono-perfil').value.trim() || telefono;
+
     if (!cliente || !direccion) throw new Error('Completá nombre y dirección');
+    if (onlyDigits(tel).length < 8) throw new Error('Completá un teléfono válido');
 
     const payload = {
       empresa_id: empresaId,
       cliente,
-      telefono,
+      telefono: tel,
       direccion,
       metodo_pago: 'efectivo',
       items: cart.map((i) => ({ producto: i.nombre, cantidad: i.cantidad, precio_unitario: i.precio })),
@@ -145,19 +192,16 @@ $('#btn-send').addEventListener('click', async () => {
   try {
     await loadEmpresa();
     const me = await j('/api/public/app/me');
-    telefono = me?.session?.telefono || '';
     if (me?.ok) {
-      $('#step-code').classList.remove('hidden');
-      $('#step-profile').classList.remove('hidden');
-      $('#step-catalog').classList.remove('hidden');
-      $('#step-cart').classList.remove('hidden');
-      if (me.profile) {
-        $('#cliente').value = me.profile.cliente || '';
-        $('#direccion').value = me.profile.direccion || '';
-      }
+      showApp();
+      loadProfileToForm(me.profile, me.session);
       await loadCatalog();
     }
-  } catch {
+  } catch (e) {
+    if (e?.data?.revalidate_required) {
+      showAuthOnly();
+      $('#otp-debug').textContent = 'Tu sesión necesita revalidación por seguridad.';
+    }
     // sin sesión todavía
   }
 })();

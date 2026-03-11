@@ -395,6 +395,83 @@ export function createPublicClientAppRouter({ query }) {
     }
   });
 
+  router.post('/profile', async (req, res) => {
+    try {
+      const session = getClientFromRequest(req, { strictRisk: true });
+      if (!session.payload) {
+        if (session.needsRevalidation) {
+          return res.status(401).json({ error: 'Revalidación requerida por cambio de dispositivo/red', revalidate_required: true });
+        }
+        return res.status(401).json({ error: 'No autenticado' });
+      }
+
+      const payload = session.payload;
+      const empresaId = Number(payload.empresa_id);
+      const cliente = String(req.body?.cliente || '').trim();
+      const direccion = String(req.body?.direccion || '').trim();
+      const telefonoIn = String(req.body?.telefono || payload.telefono || '').trim();
+      const email = String(req.body?.email || payload.email || '').trim().toLowerCase() || null;
+
+      if (!cliente || !direccion) return res.status(400).json({ error: 'cliente y direccion son requeridos' });
+
+      const telefonoNorm = normalizePhone(telefonoIn);
+      if (!telefonoNorm) return res.status(400).json({ error: 'telefono inválido' });
+
+      let rows = await query(
+        `SELECT id FROM puntos_entrega
+         WHERE empresa_id = $1
+           AND telefono_normalizado LIKE '%' || $2
+         ORDER BY id DESC LIMIT 1`,
+        [empresaId, telefonoNorm]
+      );
+
+      if (!rows.length && email) {
+        rows = await query(
+          `SELECT id FROM puntos_entrega
+           WHERE empresa_id = $1
+             AND LOWER(COALESCE(email,'')) = $2
+           ORDER BY id DESC LIMIT 1`,
+          [empresaId, email]
+        );
+      }
+
+      let profile;
+      if (rows.length) {
+        const upd = await query(
+          `UPDATE puntos_entrega
+              SET cliente=$1, nombre=$2, direccion=$3, telefono=$4, telefono_normalizado=$5, email=COALESCE($6, email)
+            WHERE id=$7
+            RETURNING id, cliente, telefono, telefono_normalizado, direccion, ciudad, provincia, pais, email`,
+          [cliente, cliente, direccion, telefonoIn, telefonoNorm, email, rows[0].id]
+        );
+        profile = upd[0] || null;
+      } else {
+        const ins = await query(
+          `INSERT INTO puntos_entrega (empresa_id, cliente, nombre, direccion, telefono, telefono_normalizado, email)
+           VALUES ($1,$2,$3,$4,$5,$6,$7)
+           RETURNING id, cliente, telefono, telefono_normalizado, direccion, ciudad, provincia, pais, email`,
+          [empresaId, cliente, cliente, direccion, telefonoIn, telefonoNorm, email]
+        );
+        profile = ins[0] || null;
+      }
+
+      const newToken = signClientToken({
+        empresaId,
+        telefono: telefonoIn,
+        telefonoNorm,
+        email,
+        amr: payload.amr || 'otp',
+        riskFp: buildRiskFingerprint(req),
+      });
+      setClientCookie(res, newToken);
+
+      return res.json({ ok: true, profile });
+    } catch (e) {
+      console.error('CLIENT APP /profile ERROR', e);
+      return res.status(500).json({ error: 'No se pudo guardar perfil' });
+    }
+  });
+
   router.post('/auth/logout', (_req, res) => {
     res.cookie('client_token', '', {
       httpOnly: true,
