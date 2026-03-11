@@ -2,6 +2,7 @@ import { registerRoutes } from './index.js';
 import { createAuthGuestSignupRouter } from './authGuestSignup.js';
 import { createSetupRouter } from './setup.js';
 import { createPublicLandingRouter } from './publicLanding.js';
+import { createPublicClientAppRouter } from './publicClientApp.js';
 import { createEmpresasRouter } from './empresas.js';
 import { createEntregaConfigRouter } from './entregaConfig.js';
 import { createAiSiteBuilderRouter } from './aiSiteBuilder.js';
@@ -54,6 +55,7 @@ export function mountApiModules(app, deps) {
   app.use('/api/setup', createSetupRouter({ query, withAuth, getEmpresaIdFromToken }));
   app.use('/api/public', createPublicLandingRouter({ query }));
   app.use('/api/public', trackingPublicRouter);
+  app.use('/api/public/app', createPublicClientAppRouter({ query }));
 
   // Admin vertical modules: activos/alquileres/costos + pagos QR
   registerRoutes(app);
