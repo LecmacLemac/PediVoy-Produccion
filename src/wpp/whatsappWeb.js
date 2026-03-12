@@ -39,6 +39,8 @@ export function registerWhatsAppWeb(app, deps) {
   let isReadyWpp = false;     // 💡 Solo true cuando el cliente está realmente READY (outbox)
   let wppClient = null;
   let wppHandlersStarted = false;
+  // Mapeo en memoria para resolver envíos cuando WhatsApp usa @lid
+  const lidByPhone = new Map(); // key: últimos 10 dígitos, value: jid @lid
 
   // Candados para evitar dobles reset accidentales
   let isResetInProgress = false;
@@ -281,11 +283,16 @@ export function registerWhatsAppWeb(app, deps) {
               const contact = await msg.getContact();
               const contactDigits = String(contact?.number || contact?.id?.user || '').replace(/\D/g, '');
               if (contactDigits) telefonoLimpio = contactDigits;
+              const key10 = String(telefonoLimpio || '').replace(/\D/g, '').slice(-10);
+              if (key10 && String(msg.from || '').includes('@lid')) {
+                lidByPhone.set(key10, String(msg.from));
+              }
               console.log('[WPP MEDIA] Resolución @lid', {
                 from: msg.from,
                 rawFromDigits,
                 contactDigits: contactDigits || null,
-                usado: telefonoLimpio || null
+                usado: telefonoLimpio || null,
+                lidCacheKey: key10 || null
               });
             } catch (e) {
               console.warn('[WPP MEDIA] No se pudo resolver número para @lid:', e?.message || e);
@@ -621,7 +628,12 @@ export function registerWhatsAppWeb(app, deps) {
             phoneToUse = '549' + phoneToUse; // Argentina
           }
 
-          chatId = `${phoneToUse}@c.us`;
+          const key10 = phoneToUse.slice(-10);
+          const cachedLid = lidByPhone.get(key10);
+          chatId = cachedLid || `${phoneToUse}@c.us`;
+          if (cachedLid) {
+            console.log(`[WPP OUTBOX] Usando chat @lid cacheado para ${key10}: ${chatId}`);
+          }
 
           // -------------------------
           // 2) Validar si el chat existe (opcional)
@@ -1007,11 +1019,16 @@ export function registerWhatsAppWeb(app, deps) {
               const contact = await msg.getContact();
               const contactDigits = String(contact?.number || contact?.id?.user || '').replace(/\D/g, '');
               if (contactDigits) telefonoLimpio = contactDigits;
+              const key10 = String(telefonoLimpio || '').replace(/\D/g, '').slice(-10);
+              if (key10 && String(msg.from || '').includes('@lid')) {
+                lidByPhone.set(key10, String(msg.from));
+              }
               console.log('[WPP MEDIA] Resolución @lid', {
                 from: msg.from,
                 rawFromDigits,
                 contactDigits: contactDigits || null,
-                usado: telefonoLimpio || null
+                usado: telefonoLimpio || null,
+                lidCacheKey: key10 || null
               });
             } catch (e) {
               console.warn('[WPP MEDIA] No se pudo resolver número para @lid:', e?.message || e);
