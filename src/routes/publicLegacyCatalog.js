@@ -27,6 +27,31 @@ async function getLocationFromIp(req) {
   }
 }
 
+function parseMaybeJson(v) {
+  if (!v) return {};
+  if (typeof v === 'object') return v;
+  try {
+    return JSON.parse(v);
+  } catch {
+    return {};
+  }
+}
+
+async function resolveLocationForEmpresa(req, empresaRow) {
+  const opCfg = parseMaybeJson(empresaRow?.config_operativa);
+  const cfgPais = String(opCfg?.pais || '').trim();
+  const cfgProvincia = String(opCfg?.provincia || '').trim();
+
+  if (cfgPais || cfgProvincia) {
+    return {
+      pais: cfgPais || 'Argentina',
+      provincia: cfgProvincia || 'Córdoba',
+    };
+  }
+
+  return getLocationFromIp(req);
+}
+
 export function createPublicLegacyCatalogRouter({ query }) {
   if (typeof query !== 'function') throw new Error('createPublicLegacyCatalogRouter: falta query(fn)');
 
@@ -39,11 +64,11 @@ export function createPublicLegacyCatalogRouter({ query }) {
         const parsed = Number(rawId);
         if (Number.isFinite(parsed) && parsed > 0) {
           const rows = await query(
-            `SELECT id, nombre FROM empresas WHERE id = $1 LIMIT 1`,
+            `SELECT id, nombre, config_operativa FROM empresas WHERE id = $1 LIMIT 1`,
             [parsed]
           );
           if (rows.length) {
-            const loc = await getLocationFromIp(req);
+            const loc = await resolveLocationForEmpresa(req, rows[0]);
             const nombre_empresa = rows[0].nombre ? String(rows[0].nombre) : null;
             return res.json({
               empresa_id: Number(rows[0].id),
@@ -62,7 +87,7 @@ export function createPublicLegacyCatalogRouter({ query }) {
       let row = null;
       if (rawSlug) {
         const rows = await query(
-          `SELECT id, nombre FROM empresas WHERE LOWER(landing_slug) = $1 LIMIT 1`,
+          `SELECT id, nombre, config_operativa FROM empresas WHERE LOWER(landing_slug) = $1 LIMIT 1`,
           [rawSlug]
         );
         if (rows.length) row = rows[0];
@@ -70,20 +95,20 @@ export function createPublicLegacyCatalogRouter({ query }) {
 
       if (!row && host) {
         const rows = await query(
-          `SELECT id, nombre FROM empresas WHERE LOWER(landing_domain) = $1 LIMIT 1`,
+          `SELECT id, nombre, config_operativa FROM empresas WHERE LOWER(landing_domain) = $1 LIMIT 1`,
           [host]
         );
         if (rows.length) row = rows[0];
       }
 
       if (!row) {
-        const rows = await query(`SELECT id, nombre FROM empresas ORDER BY id ASC LIMIT 1`);
+        const rows = await query(`SELECT id, nombre, config_operativa FROM empresas ORDER BY id ASC LIMIT 1`);
         if (rows.length) row = rows[0];
       }
 
       if (!row) return res.status(404).json({ error: 'No hay empresas configuradas' });
 
-      const loc = await getLocationFromIp(req);
+      const loc = await resolveLocationForEmpresa(req, row);
       const nombre_empresa = row.nombre ? String(row.nombre) : null;
       return res.json({
         empresa_id: Number(row.id),
