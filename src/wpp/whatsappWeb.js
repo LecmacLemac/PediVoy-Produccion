@@ -273,7 +273,24 @@ export function registerWhatsAppWeb(app, deps) {
         });
 
         if (isMedia) {
-          const telefonoLimpio = msg.from.replace(/\D/g, '');
+          const rawFromDigits = String(msg.from || '').replace(/\D/g, '');
+          let telefonoLimpio = rawFromDigits;
+
+          if (String(msg.from || '').includes('@lid')) {
+            try {
+              const contact = await msg.getContact();
+              const contactDigits = String(contact?.number || contact?.id?.user || '').replace(/\D/g, '');
+              if (contactDigits) telefonoLimpio = contactDigits;
+              console.log('[WPP MEDIA] Resolución @lid', {
+                from: msg.from,
+                rawFromDigits,
+                contactDigits: contactDigits || null,
+                usado: telefonoLimpio || null
+              });
+            } catch (e) {
+              console.warn('[WPP MEDIA] No se pudo resolver número para @lid:', e?.message || e);
+            }
+          }
 
           const clienteQuery = await query(
             `SELECT id FROM puntos_entrega
@@ -982,7 +999,24 @@ export function registerWhatsAppWeb(app, deps) {
         });
 
         if (isMedia) {
-          const telefonoLimpio = msg.from.replace(/\D/g, '');
+          const rawFromDigits = String(msg.from || '').replace(/\D/g, '');
+          let telefonoLimpio = rawFromDigits;
+
+          if (String(msg.from || '').includes('@lid')) {
+            try {
+              const contact = await msg.getContact();
+              const contactDigits = String(contact?.number || contact?.id?.user || '').replace(/\D/g, '');
+              if (contactDigits) telefonoLimpio = contactDigits;
+              console.log('[WPP MEDIA] Resolución @lid', {
+                from: msg.from,
+                rawFromDigits,
+                contactDigits: contactDigits || null,
+                usado: telefonoLimpio || null
+              });
+            } catch (e) {
+              console.warn('[WPP MEDIA] No se pudo resolver número para @lid:', e?.message || e);
+            }
+          }
 
           const clienteQuery = await query(
             `SELECT id FROM puntos_entrega 
