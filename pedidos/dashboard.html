@@ -371,6 +371,7 @@
               <th>Cliente</th>
               <th>Teléfono</th>
               <th>Dirección</th>
+              <th>Chofer</th>
               <th>Estado</th>
               <th>Pago</th>
               <th>Monto</th>
@@ -378,7 +379,7 @@
             </tr>
           </thead>
           <tbody id="rows">
-            <tr><td colspan="9" style="text-align:center; padding:3rem; color:var(--muted)">Cargando datos...</td></tr>
+            <tr><td colspan="10" style="text-align:center; padding:3rem; color:var(--muted)">Cargando datos...</td></tr>
           </tbody>
         </table>
       </div>
@@ -903,7 +904,7 @@
             if (j?.error) errMsg = `${errMsg}: ${j.error}`;
           } catch {}
           pedidos = [];
-          rows.innerHTML = `<tr><td colspan="9" style="text-align:center; padding:2rem; color:var(--danger)">${esc(errMsg)}</td></tr>`;
+          rows.innerHTML = `<tr><td colspan="10" style="text-align:center; padding:2rem; color:var(--danger)">${esc(errMsg)}</td></tr>`;
           updateSyncInfo();
           return;
         }
@@ -913,7 +914,7 @@
         updateSyncInfo();
       } catch {
         pedidos = [];
-        rows.innerHTML = '<tr><td colspan="9" style="text-align:center; padding:2rem; color:var(--danger)">Error de conexión cargando pedidos.</td></tr>';
+        rows.innerHTML = '<tr><td colspan="10" style="text-align:center; padding:2rem; color:var(--danger)">Error de conexión cargando pedidos.</td></tr>';
         updateSyncInfo();
       }
     }
@@ -1004,7 +1005,7 @@
 
         // Búsqueda de texto
         if (s) {
-          const txt = `${p.cliente} ${p.telefono} ${p.direccion} #${p.id}`.toLowerCase();
+          const txt = `${p.cliente} ${p.telefono} ${p.direccion} ${p.chofer_nombre || ''} #${p.id}`.toLowerCase();
           if (!txt.includes(s)) return false;
         }
 
@@ -1029,7 +1030,7 @@
     function renderTable(list){
       if (!list.length) {
         rows.innerHTML =
-          '<tr><td colspan="9" style="text-align:center; padding:3rem; color:var(--muted)">No se encontraron pedidos.</td></tr>';
+          '<tr><td colspan="10" style="text-align:center; padding:3rem; color:var(--muted)">No se encontraron pedidos.</td></tr>';
         return;
       }
 
@@ -1044,6 +1045,7 @@
             <td style="font-weight:600; color:#fff;">${esc(p.cliente || '')}</td>
             <td>${esc(p.telefono || '')}</td>
             <td style="font-size:0.9rem">${esc(p.direccion || '')}</td>
+            <td style="font-size:0.85rem; color:var(--muted)">${esc(p.chofer_nombre || (p.chofer_id ? `#${p.chofer_id}` : 'Sin asignar'))}</td>
             <td><span class="status-badge ${stClass}">${esc(stLabel)}</span></td>
             <td style="font-size:0.85rem; color:var(--muted)">${esc(p.metodo_pago || '-')}</td>
             <td style="font-weight:bold; color:#fff; font-size:1rem;">${money(p.monto)}</td>
@@ -1257,7 +1259,7 @@
 
     function exportCSV(){
       if (!pedidos.length) return;
-      const data = [["ID","Fecha","Cliente","Telefono","Direccion","Estado","Monto"]];
+      const data = [["ID","Fecha","Cliente","Telefono","Direccion","Chofer","Estado","Monto"]];
       pedidos.forEach(p => {
         data.push([
           p.id,
@@ -1265,6 +1267,7 @@
           p.cliente,
           p.telefono,
           p.direccion,
+          p.chofer_nombre || (p.chofer_id ? `#${p.chofer_id}` : 'Sin asignar'),
           p.estado,
           p.monto
         ]);
