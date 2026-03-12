@@ -1,6 +1,8 @@
 // src/wpp/whatsappWeb.js
 // WhatsApp Web (integrado) - extraído mecánicamente desde server.js
 
+import { handleIncomingComprobanteFromBotPg } from '../transferenciasPipeline.js';
+
 export function registerWhatsAppWeb(app, deps) {
   const {
     ENABLE_WPP,
