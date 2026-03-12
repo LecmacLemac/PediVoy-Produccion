@@ -619,6 +619,8 @@
     const mobTotalEl = $('#mobTotal');
     const formEl = $('#form');
     const searchInp = $('#prodSearch');
+    const latInput = $('#lat');
+    const lngInput = $('#lng');
 
     let allProducts = [];
     let carrito = [];
@@ -645,6 +647,45 @@
         if (s.length === 12 && s.startsWith('54')) return '549' + s.substring(2);
         if (s.length === 13 && s.startsWith('549')) return s;
         return s; 
+    }
+
+    // --- Geolocalización ---
+    function setHiddenCoords(lat, lng) {
+      const latN = Number(lat);
+      const lngN = Number(lng);
+      if (!Number.isFinite(latN) || !Number.isFinite(lngN)) return false;
+      latInput.value = String(latN);
+      lngInput.value = String(lngN);
+      return true;
+    }
+
+    function getCurrentPositionAsync(options = {}) {
+      return new Promise((resolve, reject) => {
+        if (!('geolocation' in navigator)) {
+          reject(new Error('Geolocalización no disponible'));
+          return;
+        }
+        navigator.geolocation.getCurrentPosition(resolve, reject, options);
+      });
+    }
+
+    async function captureBrowserLocation({ timeout = 2500, silent = true } = {}) {
+      try {
+        const pos = await getCurrentPositionAsync({
+          enableHighAccuracy: false,
+          timeout,
+          maximumAge: 300000
+        });
+
+        const ok = setHiddenCoords(pos?.coords?.latitude, pos?.coords?.longitude);
+        if (ok && !silent) toast('📍 Ubicación detectada para mejorar la entrega');
+        return ok;
+      } catch (err) {
+        if (!silent) {
+          console.warn('No se pudo obtener ubicación', err?.message || err);
+        }
+        return false;
+      }
     }
 
     // --- Toast Mejorado ---
@@ -691,6 +732,9 @@
         if (d.provincia && formEl.elements.provincia) formEl.elements.provincia.value = d.provincia;
 
         await loadProducts();
+
+        // Intentamos capturar ubicación sin bloquear la UI
+        captureBrowserLocation({ timeout: 2500, silent: true });
 
         const addId = params.get('add');
         if (addId) setTimeout(() => checkAutoAdd(addId), 800);
@@ -958,6 +1002,13 @@
       if (!data.cliente || !data.direccion || !data.ciudad) {
         toast('⚠️ Faltan datos de entrega.');
         return;
+      }
+
+      // Si aún no hay coordenadas, intentamos una captura rápida al enviar
+      if (!data.latitud || !data.longitud) {
+        await captureBrowserLocation({ timeout: 1800, silent: true });
+        data.latitud = latInput.value || data.latitud;
+        data.longitud = lngInput.value || data.longitud;
       }
 
       const latNum = Number(data.latitud);
