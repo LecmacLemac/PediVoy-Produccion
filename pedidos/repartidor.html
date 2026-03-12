@@ -2736,16 +2736,23 @@ async function loadGHist(){
     const allRows = (Array.isArray(gs) ? gs : (gs.rows || []))
       .sort((a,b) => new Date(b.fecha) - new Date(a.fecha));
 
+    // Historial reciente: siempre últimos 7 días (incluye hoy)
+    const cutoff = new Date();
+    cutoff.setHours(0, 0, 0, 0);
+    cutoff.setDate(cutoff.getDate() - 6);
+
     const arr = allRows.filter(g => {
       const tipo = String(g?.tipo || '').toLowerCase();
       const isMercaderia = tipo === 'carga_llenos' || tipo === 'descarga_vacios';
+      const f = new Date(g?.fecha);
+      if (Number.isNaN(f.getTime()) || f < cutoff) return false;
       if (mode === 'mercaderia') return isMercaderia;
       if (mode === 'gastos') return !isMercaderia;
       return true;
     }).slice(0, 30);
 
     if (!arr.length) {
-      $('#gList').innerHTML = '<tr><td colspan="4" class="muted">Sin movimientos para el filtro seleccionado</td></tr>';
+      $('#gList').innerHTML = '<tr><td colspan="4" class="muted">Sin movimientos en los últimos 7 días para el filtro seleccionado</td></tr>';
       return;
     }
 
