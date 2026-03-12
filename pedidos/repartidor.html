@@ -116,6 +116,16 @@
     .iconbtn.primary { background: var(--brand); color: #000; border: none; }
     .iconbtn.success { background: rgba(16, 185, 129, 0.2); color: #6ee7b7; border-color: rgba(16, 185, 129, 0.4); }
     .iconbtn.ghost { background: transparent; border-color: transparent; color: var(--muted); }
+    .iconbtn.gps-alert {
+      border-color: rgba(239, 68, 68, 0.7) !important;
+      color: #fecaca !important;
+      animation: gpsBlink 1s ease-in-out infinite;
+      box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.5);
+    }
+    @keyframes gpsBlink {
+      0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.15); }
+      50% { opacity: 0.35; box-shadow: 0 0 0 6px rgba(239, 68, 68, 0.28); }
+    }
 
     /* PEDIDO CARD */
     .pedido-card {
@@ -953,6 +963,7 @@ function updateGpsButtonUI() {
   gpsBtn.textContent = '📍 Activar GPS';
   gpsBtn.style.color = 'var(--muted)';
   gpsBtn.style.borderColor = 'var(--border)';
+  gpsBtn.classList.toggle('gps-alert', !on);
 }
 
 function persistGpsPreference(enabled) {
