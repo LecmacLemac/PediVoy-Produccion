@@ -588,12 +588,14 @@ export function registerWhatsAppWeb(app, deps) {
   // --------------------------------------------------
 
   let isProcessing = false; // 🔒 Semáforo para evitar superposición
+  let processingStartedAt = 0;
 
   async function processOutbox() {
     // 👇 AHORA chequeamos isReadyWpp en lugar de solo isConnected
     if (!ENABLE_WPP || !isReadyWpp || isProcessing || !wppClient) return;
 
     isProcessing = true;
+    processingStartedAt = Date.now();
 
     try {
       // ========== LIMPIEZA AUTOMÁTICA: MENSAJES > 1 DÍA ==========
@@ -663,10 +665,11 @@ export function registerWhatsAppWeb(app, deps) {
           // 2) Validar si el chat existe (opcional)
           // -------------------------
           try {
-            const chat = await wppClient.getChatById(chatId).catch(() => null);
+            const chatPromise = wppClient.getChatById(chatId).catch(() => null);
+            const chatTimeout = new Promise((resolve) => setTimeout(() => resolve(null), 4000));
+            const chat = await Promise.race([chatPromise, chatTimeout]);
             if (!chat) {
-              console.warn(`[WPP OUTBOX] Chat no encontrado: ${chatId}, marcando como error`);
-              throw new Error('chat_no_encontrado');
+              console.warn(`[WPP OUTBOX] Chat no encontrado/timeout: ${chatId}, continuando con envío directo`);
             }
           } catch (chatErr) {
             // Continuamos igual, WhatsApp puede crear el chat al enviar
@@ -821,6 +824,7 @@ export function registerWhatsAppWeb(app, deps) {
       console.error('[WPP OUTBOX] Error general en processOutbox:', e);
     } finally {
       isProcessing = false; // Se libera siempre
+      processingStartedAt = 0;
     }
   }
 
@@ -1127,6 +1131,13 @@ export function registerWhatsAppWeb(app, deps) {
   if (ENABLE_WPP) {
     // Intervalo más inteligente: procesar solo si está conectado y no procesando
     setInterval(() => {
+      // Watchdog: evita lock eterno de procesamiento
+      if (isProcessing && processingStartedAt && (Date.now() - processingStartedAt > 45000)) {
+        console.warn('[WPP OUTBOX] Watchdog liberó lock de procesamiento (>45s).');
+        isProcessing = false;
+        processingStartedAt = 0;
+      }
+
       if (isReadyWpp && !isProcessing) {
         processOutbox();
       }
