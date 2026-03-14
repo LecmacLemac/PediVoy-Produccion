@@ -393,6 +393,18 @@ export function registerWhatsAppWeb(app, deps) {
       }
     }
 
+    const getSessionDir = () => path.join(process.cwd(), '.wwebjs_auth', 'session-server_session_hidro');
+
+    const limpiarLocksSesion = () => {
+      try {
+        const d = getSessionDir();
+        const lockFiles = ['SingletonLock', 'SingletonSocket', 'SingletonCookie'];
+        for (const lf of lockFiles) {
+          try { fs.rmSync(path.join(d, lf), { force: true }); } catch {}
+        }
+      } catch {}
+    };
+
     // Inicializar cliente WPP con mejor manejo de errores para Render
     const initWhatsApp = async () => {
       try {
@@ -401,6 +413,14 @@ export function registerWhatsAppWeb(app, deps) {
         console.log('[WPP SERVER] Cliente WhatsApp inicializado exitosamente.');
       } catch (err) {
         console.error('[WPP SERVER] Error inicializando cliente WhatsApp:', err);
+
+        const msg = String(err?.message || '').toLowerCase();
+        if (msg.includes('browser is already running')) {
+          console.warn('[WPP SERVER] Detectado lock de navegador en sesión WPP. Limpiando locks y reintentando...');
+          limpiarLocksSesion();
+          setTimeout(initWhatsApp, 8000);
+          return;
+        }
 
         // En Render, reintentar después de un tiempo
         if (isRender) {
@@ -490,7 +510,7 @@ export function registerWhatsAppWeb(app, deps) {
 
       // 2) Borrar carpeta de sesión de LocalAuth (coincide con clientId: 'server_session_hidro')
       try {
-        const sessionDir = path.join(__dirname, '.wwebjs_auth', 'server_session_hidro');
+        const sessionDir = path.join(process.cwd(), '.wwebjs_auth', 'session-server_session_hidro');
         fs.rmSync(sessionDir, { recursive: true, force: true });
         console.log('[WPP SERVER] Carpeta de sesión eliminada:', sessionDir);
       } catch (e) {
