@@ -261,7 +261,7 @@ export async function procesarArchivoTransferenciaPg(filePayload, telefono) {
     }
 
     if (CONFIG.DEBUG) console.timeEnd(logPrefix);
-    return { ok: esValido, data: datosIA, id: registroDB.id };
+    return { ok: esValido, data: datosIA, id: registroDB.id, pedido_id: registroDB?.pedido_id || null };
   } catch (error) {
     console.error(`${logPrefix} ERROR FATAL:`, error);
     await enqueueWppMessagePg({

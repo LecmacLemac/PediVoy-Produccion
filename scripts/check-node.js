@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // scripts/check-node.js
-// Enforce engines.node=20.x (project uses native addons like canvas)
+// Enforce engines.node=22.x
 
 const major = Number(process.versions.node.split('.')[0] || 0);
-const expectedMajor = 20;
+const expectedMajor = 22;
 
 if (Number.isNaN(major) || major <= 0) {
   console.error('[check-node] No pude detectar la versión de Node.');
@@ -19,8 +19,8 @@ if (major !== expectedMajor) {
   }
   console.error(msg);
   console.error('[check-node] Solución rápida con nvm:');
-  console.error('  nvm install 20');
-  console.error('  nvm use 20');
+  console.error('  nvm install 22');
+  console.error('  nvm use 22');
   process.exit(1);
 }
 

@@ -659,9 +659,22 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
 
       if (comp.archivo_path) {
         const fs = await import('node:fs');
-        const fullPath = path.join(TRANSF_DIR, comp.archivo_path);
-        if (fs.existsSync(fullPath)) {
-          try { fs.unlinkSync(fullPath); } catch (e) { console.error('Error borrando archivo físico:', e); }
+
+        // archivo_path puede venir como:
+        // - "tr-123.jpg"
+        // - "/Transferencia/tr-123.jpg"
+        // - "Transferencia/tr-123.jpg"
+        // Para borrar en disco local, siempre usamos basename dentro de TRANSF_DIR.
+        const rawPath = String(comp.archivo_path || '').trim();
+        const safeName = path.basename(rawPath);
+        const fullPath = path.join(TRANSF_DIR, safeName);
+
+        if (safeName && fs.existsSync(fullPath)) {
+          try {
+            fs.unlinkSync(fullPath);
+          } catch (e) {
+            console.error('Error borrando archivo físico:', e);
+          }
         }
       }
 

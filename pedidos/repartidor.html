@@ -473,15 +473,24 @@
 
     <div class="flex-bt" style="margin:0 10px 6px; align-items:center; gap:10px; flex-wrap:wrap;">
       <h4 style="margin:0">Historial Reciente</h4>
-      <select id="gHistFilter" style="width:auto; min-width:170px;">
-        <option value="all">Todos</option>
-        <option value="gastos">Solo Gastos</option>
-        <option value="mercaderia">Solo Mercadería</option>
-      </select>
+      <div class="row" style="gap:8px; margin:0;">
+        <input id="gHistSearch" type="search" placeholder="Buscar por tipo, detalle, producto, monto o fecha" style="min-width:260px; max-width:420px;" />
+        <select id="gHistRange" style="width:auto; min-width:150px;">
+          <option value="7">Últimos 7 días</option>
+          <option value="30" selected>Últimos 30 días</option>
+          <option value="90">Últimos 90 días</option>
+          <option value="all">Todo</option>
+        </select>
+        <select id="gHistFilter" style="width:auto; min-width:170px;">
+          <option value="all">Todos</option>
+          <option value="gastos">Solo Gastos</option>
+          <option value="mercaderia">Solo Mercadería</option>
+        </select>
+      </div>
     </div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Fecha</th><th>Tipo</th><th>Detalle</th><th>Monto/Cant</th></tr></thead>
+        <thead><tr><th>Fecha</th><th>Tipo</th><th>Detalle</th><th>Depósito</th><th>Monto/Cant</th><th>Acciones</th></tr></thead>
         <tbody id="gList"></tbody>
       </table>
     </div>
@@ -688,6 +697,68 @@
   </div>
 </div>
 
+<div id="modalEditarGasto" class="modal-overlay" hidden>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="megTitle" style="max-width:560px;">
+    <div class="row" style="justify-content:space-between; align-items:center; margin-bottom:.4rem;">
+      <h3 id="megTitle" style="margin:0">Editar movimiento</h3>
+      <button type="button" class="iconbtn ghost" onclick="cerrarModalEditarGasto()" aria-label="Cerrar">✕</button>
+    </div>
+    <small id="megMeta" class="muted">-</small>
+
+    <form id="megForm" style="margin-top:.8rem;">
+      <input type="hidden" id="megId" />
+
+      <div class="row" style="margin-bottom:.6rem;">
+        <div style="flex:1">
+          <label>Tipo</label>
+          <input id="megTipo" disabled>
+        </div>
+        <div style="flex:1">
+          <label>Fecha</label>
+          <input id="megFecha" disabled>
+        </div>
+      </div>
+
+      <div class="row" style="margin-bottom:.6rem;">
+        <div style="width:100%">
+          <label>Detalle</label>
+          <input id="megDesc" placeholder="Detalle / nota">
+        </div>
+      </div>
+
+      <div class="row" id="megRowCant" style="margin-bottom:.6rem;" hidden>
+        <div style="flex:1">
+          <label>Cantidad</label>
+          <input type="number" id="megCant" min="0" step="0.01" placeholder="0">
+        </div>
+        <div style="flex:1">
+          <label>Precio Unit.</label>
+          <input type="number" id="megPu" min="0" step="0.01" placeholder="0">
+        </div>
+      </div>
+
+      <div class="row" id="megRowMonto" style="margin-bottom:.6rem;">
+        <div style="width:100%">
+          <label>Monto Total</label>
+          <input type="number" id="megMonto" min="0" step="0.01" placeholder="0">
+        </div>
+      </div>
+
+      <div class="row" id="megRowDeposito" style="margin-bottom:.8rem;" hidden>
+        <div style="width:100%">
+          <label>Depósito</label>
+          <select id="megDeposito"><option value="">Sin depósito</option></select>
+        </div>
+      </div>
+
+      <div class="row" style="justify-content:flex-end; gap:.5rem;">
+        <button type="button" class="iconbtn ghost" onclick="cerrarModalEditarGasto()">Cancelar</button>
+        <button type="submit" class="iconbtn primary">Guardar cambios</button>
+      </div>
+    </form>
+  </div>
+</div>
+
 <div id="toast" class="toast">Notificación</div>
 
 <script src="/pedidos/info-tec/safe-storage.js"></script>
@@ -737,6 +808,17 @@ const isoToLocalYMD = (iso) => {
     return d.toISOString().slice(0,10);
 };
 
+// Fecha (DD/MM/YYYY) en AR
+const formatFechaAR = (iso) => {
+  if (!iso) return '';
+  return new Date(iso).toLocaleDateString('es-AR', {
+    timeZone: 'America/Argentina/Buenos_Aires',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric'
+  });
+};
+
 // Fecha + hora en AR (para movimientos de activos)
 const formatFechaHoraAR = (iso) => {
   if (!iso) return '';
@@ -754,6 +836,7 @@ const formatFechaHoraAR = (iso) => {
 // ====== STATE ======
 let me = null, pedidos = [], zonas = [], misZonas = [], verificadas = new Set();
 let depositos = [];
+let gastoEditRow = null;
 let map, mapMarkers, myCosts = {};
 let routePlan = { orderedIds: [], currentIndex: 0, updatedAt: null };
 let slaEtaThresholdMin = 30;
@@ -1198,6 +1281,8 @@ $('#gCant').addEventListener('input', gCalc);
 $('#gPu').addEventListener('input', gCalc);
 $('#gProducto').addEventListener('change', gAutoPrice);
 $('#gHistFilter')?.addEventListener('change', loadGHist);
+$('#gHistRange')?.addEventListener('change', loadGHist);
+$('#gHistSearch')?.addEventListener('input', debounce(loadGHist, 180));
 
 // --- GASTOS SUBMIT ---
 $('#gForm').addEventListener('submit', async (e) => {
@@ -1240,15 +1325,20 @@ $('#gForm').addEventListener('submit', async (e) => {
                 deposito_id: depositoId || null
             };
         }
-        // Escenario B: Gasto Directo (Monto fijo)
+        // Escenario B: Gastos comunes (cantidad + precio unitario)
         else {
-            const montoDirecto = Number($('#gMonto').value);
-            if (!montoDirecto || montoDirecto <= 0) throw new Error('Ingresa el monto.');
+            const qty = Number($('#gCant').value || 0);
+            const pu = Number($('#gPu').value || 0);
+            if (!qty || qty <= 0) throw new Error('Ingresa cantidad.');
+            if (!pu || pu <= 0) throw new Error('Ingresa precio unitario.');
+            const montoDirecto = qty * pu;
             finalBody = {
                 fecha: fecha,
                 tipo: type,
                 descripcion: descManual,
-                monto: montoDirecto
+                monto: montoDirecto,
+                cantidad: qty,
+                precio_unitario: pu
             };
         }
 
@@ -1262,6 +1352,7 @@ $('#gForm').addEventListener('submit', async (e) => {
         if(finalBody.cantidad) formData.append('cantidad', String(finalBody.cantidad));
         if(finalBody.producto_id) formData.append('producto_id', String(finalBody.producto_id));
         if(finalBody.deposito_id) formData.append('deposito_id', String(finalBody.deposito_id));
+        if (me?.chofer_id) formData.append('chofer_id', String(me.chofer_id));
         
         if(file) formData.append('comprobante', file);
         
@@ -2719,17 +2810,36 @@ async function gLoadDepositos() {
   }
 }
 
-function gInit(){ $('#gForm').reset(); $('#gFecha').value = getOyString(); if($('#gHistFilter')) $('#gHistFilter').value='all'; gToggle(); loadGHist(); }
+function gInit(){
+  $('#gForm').reset();
+  $('#gFecha').value = getOyString();
+  if($('#gHistFilter')) $('#gHistFilter').value='all';
+  if($('#gHistRange')) $('#gHistRange').value='30';
+  if($('#gHistSearch')) $('#gHistSearch').value='';
+  gToggle();
+  loadGHist();
+}
 
 function gToggle(){
   const t = $('#gTipo').value;
   const isStock = t === 'carga_llenos' || t === 'descarga_vacios';
   const isCarga = t === 'carga_llenos';
+  const isGastoComun = ['combustible', 'insumos', 'varios'].includes(t);
+
   $('#gProdRow').hidden = !isStock;
-  $('#gCalcRow').hidden = !isStock;
   $('#gDepRow').hidden = !isCarga;
-  $('#gPuBox').hidden = !isCarga;
-  $('#gMontoRow').hidden = isCarga;
+
+  // Cálculo por cantidad/precio para stock y gastos comunes
+  $('#gCalcRow').hidden = !(isStock || isGastoComun);
+  $('#gPuBox').hidden = false;
+
+  // Monto editable solo para descarga_vacios; en carga/gasto común lo calcula cantidad*PU
+  $('#gMontoRow').hidden = false;
+  const montoEl = $('#gMonto');
+  if (montoEl) {
+    montoEl.readOnly = (isCarga || isGastoComun);
+    if (isCarga || isGastoComun) gCalc();
+  }
 }
 
 function gAutoPrice() {
@@ -2737,33 +2847,76 @@ function gAutoPrice() {
   if (pid && myCosts[pid]) { $('#gPu').value = myCosts[pid]; gCalc(); toast(`Costo cargado: $${myCosts[pid]}`); }
 }
 
-function gCalc(){ const q = Number($('#gCant').value)||0; const p = Number($('#gPu').value)||0; $('#gTotalCalc').value = '$ ' + (q*p).toFixed(2); }
+function gCalc(){
+  const q = Number($('#gCant').value)||0;
+  const p = Number($('#gPu').value)||0;
+  const total = q * p;
+  $('#gTotalCalc').value = '$ ' + total.toFixed(2);
+
+  const t = $('#gTipo')?.value;
+  const isCarga = t === 'carga_llenos';
+  const isGastoComun = ['combustible', 'insumos', 'varios'].includes(t);
+  if (isCarga || isGastoComun) {
+    $('#gMonto').value = total ? total.toFixed(2) : '';
+  }
+}
 
 async function loadGHist(){
   try {
-    if (!me || !me.chofer_id) { $('#gList').innerHTML = ''; return; }
-    const gs = await api(`/api/gastos?chofer_id=${me.chofer_id}`);
+    const choferId = Number(me?.chofer_id || 0);
+    if (!choferId) {
+      $('#gList').innerHTML = '<tr><td colspan="6" class="muted">No se pudo identificar tu chofer (chofer_id).</td></tr>';
+      return;
+    }
+    const gs = await api('/api/gastos');
     const mode = $('#gHistFilter')?.value || 'all';
+    const search = String($('#gHistSearch')?.value || '').trim().toLowerCase();
     const allRows = (Array.isArray(gs) ? gs : (gs.rows || []))
       .sort((a,b) => new Date(b.fecha) - new Date(a.fecha));
 
-    // Historial reciente: siempre últimos 7 días (incluye hoy)
-    const cutoff = new Date();
-    cutoff.setHours(0, 0, 0, 0);
-    cutoff.setDate(cutoff.getDate() - 6);
+    // Rango configurable (7/30/90 días o todo)
+    const rangeVal = String($('#gHistRange')?.value || '30');
+    let cutoff = null;
+    if (rangeVal !== 'all') {
+      const days = Number(rangeVal);
+      if (Number.isFinite(days) && days > 0) {
+        cutoff = new Date();
+        cutoff.setHours(0, 0, 0, 0);
+        cutoff.setDate(cutoff.getDate() - (days - 1));
+      }
+    }
 
     const arr = allRows.filter(g => {
       const tipo = String(g?.tipo || '').toLowerCase();
       const isMercaderia = tipo === 'carga_llenos' || tipo === 'descarga_vacios';
       const f = new Date(g?.fecha);
-      if (Number.isNaN(f.getTime()) || f < cutoff) return false;
-      if (mode === 'mercaderia') return isMercaderia;
-      if (mode === 'gastos') return !isMercaderia;
+      if (Number.isNaN(f.getTime())) return false;
+      if (cutoff && f < cutoff) return false;
+      if (mode === 'mercaderia' && !isMercaderia) return false;
+      if (mode === 'gastos' && isMercaderia) return false;
+
+      if (search) {
+        const qty = Number(g?.cantidad || 0);
+        const monto = Number(g?.monto || 0);
+        const productoTxt = g?.producto_id ? getProductoNombreById(g.producto_id) : '';
+        const haystack = [
+          tipo,
+          g?.descripcion || '',
+          productoTxt,
+          formatFechaAR(g.fecha),
+          String(monto),
+          String(qty)
+        ].join(' ').toLowerCase();
+        if (!haystack.includes(search)) return false;
+      }
+
       return true;
     }).slice(0, 30);
 
+    window.__gHist = arr;
+
     if (!arr.length) {
-      $('#gList').innerHTML = '<tr><td colspan="4" class="muted">Sin movimientos en los últimos 7 días para el filtro seleccionado</td></tr>';
+      $('#gList').innerHTML = '<tr><td colspan="6" class="muted">Sin movimientos para el rango/filtro/búsqueda seleccionado</td></tr>';
       return;
     }
 
@@ -2781,10 +2934,156 @@ async function loadGHist(){
         ? `${qty > 0 ? `${qty}u` : '-'}${Number(g?.monto || 0) > 0 ? ` • ${money(g.monto)}` : ''}`
         : money(g?.monto);
 
-      return `<tr><td>${formatFechaAR(g.fecha)}</td><td>${esc(g.tipo)}</td><td>${esc(detalle || '-')}</td><td>${montoOCant}</td></tr>`;
+      const depositoTxt = g?.deposito_nombre || (g?.deposito_id ? `#${Number(g.deposito_id)}` : '-');
+      const acciones = `<div style="display:flex; gap:6px; justify-content:flex-end;">
+        <button class="iconbtn ghost" style="padding:4px 8px" onclick="gEdit(${Number(g.id)})">✏️</button>
+        <button class="iconbtn ghost" style="padding:4px 8px; color:var(--danger)" onclick="gDel(${Number(g.id)})">🗑️</button>
+      </div>`;
+      return `<tr><td>${formatFechaAR(g.fecha)}</td><td>${esc(g.tipo)}</td><td>${esc(detalle || '-')}</td><td>${esc(depositoTxt)}</td><td>${montoOCant}</td><td>${acciones}</td></tr>`;
     }).join('');
-  } catch {}
+  } catch (e) {
+    console.error('Error cargando historial de gastos del repartidor', e);
+    const msg = e?.status === 402
+      ? 'Tu licencia está vencida y no se puede consultar el historial.'
+      : (e?.message || 'No se pudo cargar el historial.');
+    $('#gList').innerHTML = `<tr><td colspan="6" class="muted">${esc(msg)}</td></tr>`;
+    notifyError(msg, e);
+  }
 }
+
+function calcMegTotal() {
+  const q = Number($('#megCant')?.value || 0);
+  const pu = Number($('#megPu')?.value || 0);
+  const total = q * pu;
+  if ($('#megMonto')) $('#megMonto').value = total ? total.toFixed(2) : '';
+}
+
+function abrirModalEditarGasto(row) {
+  gastoEditRow = row;
+  const tipo = String(row?.tipo || '').toLowerCase();
+  const isMerc = ['carga_llenos', 'descarga_vacios'].includes(tipo);
+  const isCarga = tipo === 'carga_llenos';
+  const isGastoComun = ['combustible', 'insumos', 'varios'].includes(tipo);
+
+  $('#megId').value = String(row.id || '');
+  $('#megTipo').value = row.tipo || '-';
+  $('#megFecha').value = formatFechaAR(row.fecha);
+  $('#megDesc').value = row.descripcion || '';
+  $('#megMeta').textContent = `#${Number(row.id)} · ${row.chofer_nombre || 'Chofer'}`;
+
+  $('#megRowCant').hidden = !(isMerc || isGastoComun);
+  $('#megRowMonto').hidden = false;
+  $('#megRowDeposito').hidden = !isCarga;
+
+  const cantidad = Number(row.cantidad || 0);
+  const monto = Number(row.monto || 0);
+  const pu = (cantidad > 0) ? (monto / cantidad) : 0;
+
+  $('#megCant').value = (isMerc || isGastoComun) ? (cantidad || '') : '';
+  $('#megPu').value = (isMerc || isGastoComun) ? (pu ? pu.toFixed(2) : '') : '';
+  $('#megMonto').value = monto || '';
+
+  // Para gastos comunes, el monto se calcula por cantidad*PU
+  if (isGastoComun) {
+    $('#megMonto').readOnly = true;
+    calcMegTotal();
+  } else {
+    $('#megMonto').readOnly = false;
+  }
+
+  const depSel = $('#megDeposito');
+  depSel.innerHTML = `<option value="">Sin depósito</option>` + (depositos || []).map(d => `<option value="${Number(d.id)}">${esc(d.nombre)}</option>`).join('');
+  depSel.value = row?.deposito_id ? String(Number(row.deposito_id)) : '';
+
+  $('#modalEditarGasto').hidden = false;
+}
+
+window.cerrarModalEditarGasto = function() {
+  gastoEditRow = null;
+  const form = $('#megForm');
+  if (form) form.reset();
+  $('#modalEditarGasto').hidden = true;
+};
+
+window.gEdit = async function(id) {
+  try {
+    const row = (window.__gHist || []).find(x => Number(x.id) === Number(id));
+    if (!row) return toast('No encontré el movimiento.');
+    abrirModalEditarGasto(row);
+  } catch (e) {
+    notifyError(e?.message || 'No se pudo abrir edición', e);
+  }
+};
+
+$('#megCant')?.addEventListener('input', () => {
+  const tipo = String(gastoEditRow?.tipo || '').toLowerCase();
+  if (['combustible', 'insumos', 'varios'].includes(tipo)) calcMegTotal();
+});
+$('#megPu')?.addEventListener('input', () => {
+  const tipo = String(gastoEditRow?.tipo || '').toLowerCase();
+  if (['combustible', 'insumos', 'varios'].includes(tipo)) calcMegTotal();
+});
+
+$('#megForm')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  try {
+    const row = gastoEditRow;
+    if (!row) return;
+
+    const id = Number($('#megId').value || row.id);
+    const tipo = String(row?.tipo || '').toLowerCase();
+    const isMerc = ['carga_llenos', 'descarga_vacios'].includes(tipo);
+    const isCarga = tipo === 'carga_llenos';
+    const isGastoComun = ['combustible', 'insumos', 'varios'].includes(tipo);
+
+    const fm = new FormData();
+    fm.append('descripcion', String($('#megDesc').value || '').trim());
+
+    if (isMerc || isGastoComun) {
+      const cant = Number($('#megCant').value || 0);
+      if (!cant || cant <= 0) return toast('Cantidad inválida.');
+      fm.append('cantidad', String(cant));
+
+      let monto = Number($('#megMonto').value || 0);
+      if (isGastoComun) {
+        const pu = Number($('#megPu').value || 0);
+        if (!pu || pu <= 0) return toast('Precio unitario inválido.');
+        monto = cant * pu;
+        fm.append('monto', String(monto));
+      } else {
+        if (!Number.isFinite(monto) || monto < 0) return toast('Monto inválido.');
+        fm.append('monto', String(monto));
+      }
+
+      if (isCarga) {
+        const dep = $('#megDeposito').value;
+        if (dep) fm.append('deposito_id', String(dep));
+      }
+    } else {
+      const monto = Number($('#megMonto').value || 0);
+      if (!Number.isFinite(monto) || monto <= 0) return toast('Monto inválido.');
+      fm.append('monto', String(monto));
+    }
+
+    await api(`/api/gastos/${id}`, { method: 'PUT', body: fm });
+    toast('✅ Movimiento actualizado');
+    cerrarModalEditarGasto();
+    await loadGHist();
+  } catch (e2) {
+    notifyError(e2?.message || 'No se pudo actualizar el movimiento', e2);
+  }
+});
+
+window.gDel = async function(id) {
+  try {
+    if (!confirm('¿Eliminar este movimiento?')) return;
+    await api(`/api/gastos/${Number(id)}`, { method: 'DELETE' });
+    toast('🗑️ Movimiento eliminado');
+    await loadGHist();
+  } catch (e) {
+    notifyError(e?.message || 'No se pudo eliminar el movimiento', e);
+  }
+};
 
 // --- STOCK REPARTIDOR (cargas vs entregas) ---
 function getProductoNombreById(id) {

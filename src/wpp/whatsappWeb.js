@@ -332,7 +332,9 @@ export function registerWhatsAppWeb(app, deps) {
 
           const result = await handleIncomingComprobanteFromBotPg({
             type: t,
-            telefono: msg.from,
+            // Importante: para @lid enviar teléfono normalizado real, no JID
+            telefono: telefonoLimpio,
+            telefono_jid: msg.from,
             buffer: buffer,
             base64: media.data,
             mimetype: media.mimetype,
@@ -344,8 +346,12 @@ export function registerWhatsAppWeb(app, deps) {
             ok: !!result?.ok,
             reason: result?.reason || null,
             error: result?.error || null,
-            id: result?.id || null
+            id: result?.id || null,
+            pedido_id: result?.pedido_id || null
           });
+
+          // Auditoría compacta: jid -> teléfono -> pedido -> comprobante
+          console.log(`[AUDIT COMPROBANTE] jid=${String(msg.from || '-')} tel=${String(telefonoLimpio || '-')} pedido=${String(result?.pedido_id ?? '-')} comp=${String(result?.id ?? '-')} ok=${result?.ok ? 1 : 0}`);
         }
       } catch (e) {
         console.error('[WPP SERVER] Error global mensaje:', e);
@@ -1068,7 +1074,9 @@ export function registerWhatsAppWeb(app, deps) {
 
           const result = await handleIncomingComprobanteFromBotPg({
             type: t,
-            telefono: msg.from,
+            // Importante: para @lid enviar teléfono normalizado real, no JID
+            telefono: telefonoLimpio,
+            telefono_jid: msg.from,
             buffer: buffer,
             base64: media.data,
             mimetype: media.mimetype,
@@ -1080,8 +1088,12 @@ export function registerWhatsAppWeb(app, deps) {
             ok: !!result?.ok,
             reason: result?.reason || null,
             error: result?.error || null,
-            id: result?.id || null
+            id: result?.id || null,
+            pedido_id: result?.pedido_id || null
           });
+
+          // Auditoría compacta: jid -> teléfono -> pedido -> comprobante
+          console.log(`[AUDIT COMPROBANTE] jid=${String(msg.from || '-')} tel=${String(telefonoLimpio || '-')} pedido=${String(result?.pedido_id ?? '-')} comp=${String(result?.id ?? '-')} ok=${result?.ok ? 1 : 0}`);
         }
       } catch (e) {
         console.error('[WPP SERVER] Error global mensaje:', e);

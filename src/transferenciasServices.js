@@ -85,7 +85,7 @@ export async function insertarComprobantePg({
     VALUES ($1, $2, $3, $4, 
             $5, $6, $7,
             NOW(), NOW(), 0, FALSE)
-    RETURNING id, empresa_id
+    RETURNING id, empresa_id, pedido_id
     `,
     [
       telClean,
@@ -98,7 +98,7 @@ export async function insertarComprobantePg({
     ]
   );
 
-  // rows[0] tiene forma: { id, empresa_id }
+  // rows[0] tiene forma: { id, empresa_id, pedido_id }
   return rows[0];
 }
 

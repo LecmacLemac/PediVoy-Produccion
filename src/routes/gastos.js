@@ -3,7 +3,7 @@ import express from 'express';
 import multer from 'multer';
 import path from 'path';
 
-import { withAuth, checkLicencia, isSuper, getEmpresaIdFromToken } from '../services.js';
+import { withAuth, checkLicencia, isSuper, isRepartidor, getEmpresaIdFromToken } from '../services.js';
 import { query } from '../db.js';
 
 export function createGastosRouter({ GASTOS_DIR }) {
@@ -14,6 +14,7 @@ export function createGastosRouter({ GASTOS_DIR }) {
   const ensureDepositoRefPromise = (async () => {
     try {
       await query(`ALTER TABLE chofer_stock_mov ADD COLUMN IF NOT EXISTS deposito_id INTEGER`);
+      await query(`ALTER TABLE gastos_repartidor ADD COLUMN IF NOT EXISTS deposito_id INTEGER`);
       await query(`
         CREATE TABLE IF NOT EXISTS deposito_chofer (
           id SERIAL PRIMARY KEY,
@@ -49,16 +50,35 @@ export function createGastosRouter({ GASTOS_DIR }) {
   // GET /api/gastos
   router.get('/', withAuth, checkLicencia, async (req, res) => {
     try {
+      await ensureDepositoRefPromise;
       const { from, to, chofer_id, empresa_id } = req.query || {};
       const esSuperUser = isSuper(req);
+      const esRepartidorUser = isRepartidor(req);
       const myEmpresa = getEmpresaIdFromToken(req);
 
       let sql = `
         SELECT 
           g.*,
-          c.nombre AS chofer_nombre
+          c.nombre AS chofer_nombre,
+          COALESCE(d.nombre, dmv.nombre) AS deposito_nombre
         FROM gastos_repartidor g
         LEFT JOIN choferes c ON g.chofer_id = c.id
+        LEFT JOIN depositos d ON d.id = g.deposito_id
+        LEFT JOIN LATERAL (
+          SELECT m.deposito_id
+          FROM chofer_stock_mov m
+          WHERE m.empresa_id = g.empresa_id
+            AND m.chofer_id = g.chofer_id
+            AND m.tipo = 'INGRESO_GASTOS'
+            AND m.fecha::date = g.fecha::date
+            AND COALESCE(m.producto_id, 0) = COALESCE(g.producto_id, 0)
+            AND COALESCE(m.cantidad, 0)::numeric = COALESCE(g.cantidad, 0)::numeric
+            AND m.referencia = ('Carga desde Gastos: ' || COALESCE(g.descripcion, ''))
+            AND m.deposito_id IS NOT NULL
+          ORDER BY m.id DESC
+          LIMIT 1
+        ) md ON TRUE
+        LEFT JOIN depositos dmv ON dmv.id = md.deposito_id
         WHERE 1=1
       `;
 
@@ -73,7 +93,15 @@ export function createGastosRouter({ GASTOS_DIR }) {
         params.push(Number(empresa_id));
       }
 
-      if (chofer_id) {
+      // Repartidor: siempre ve su propio historial (evita depender de chofer_id enviado por front)
+      if (esRepartidorUser) {
+        const myChoferId = Number(req.user?.chofer_id || 0);
+        if (!myChoferId) {
+          return res.status(400).json({ error: 'Usuario repartidor sin chofer_id asociado' });
+        }
+        sql += ` AND g.chofer_id = $${idx++}`;
+        params.push(myChoferId);
+      } else if (chofer_id) {
         sql += ` AND g.chofer_id = $${idx++}`;
         params.push(Number(chofer_id));
       }
@@ -98,7 +126,7 @@ export function createGastosRouter({ GASTOS_DIR }) {
   });
 
   // POST /api/gastos (multipart: comprobante)
-  router.post('/', withAuth, gastosUploader.single('comprobante'), async (req, res) => {
+  router.post('/', withAuth, checkLicencia, gastosUploader.single('comprobante'), async (req, res) => {
     try {
       await ensureDepositoRefPromise;
       const {
@@ -187,9 +215,9 @@ export function createGastosRouter({ GASTOS_DIR }) {
         `
         INSERT INTO gastos_repartidor (
             empresa_id, chofer_id, fecha, tipo, descripcion,
-            monto, comprobante_path, cantidad, producto_id
+            monto, comprobante_path, cantidad, producto_id, deposito_id
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         `,
         [
           targetEmpresa,
@@ -200,7 +228,8 @@ export function createGastosRouter({ GASTOS_DIR }) {
           monto || 0,
           file ? file.filename : null,
           cantidadNum,
-          productoIdNum
+          productoIdNum,
+          depositoId
         ]
       );
 
@@ -244,7 +273,7 @@ export function createGastosRouter({ GASTOS_DIR }) {
   });
 
   // PUT /api/gastos/:id (multipart: comprobante)
-  router.put('/:id', withAuth, gastosUploader.single('comprobante'), async (req, res) => {
+  router.put('/:id', withAuth, checkLicencia, gastosUploader.single('comprobante'), async (req, res) => {
     try {
       const id = Number(req.params.id);
       if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: 'ID inválido' });
@@ -252,12 +281,13 @@ export function createGastosRouter({ GASTOS_DIR }) {
       const role = (req.user?.role || '').toLowerCase();
       const esSuperUser = isSuper(req);
       const esUserRole = role === 'user';
+      const esRepartidorUser = role === 'repartidor';
 
-      if (!(esSuperUser || esUserRole)) return res.status(403).json({ error: 'No autorizado' });
+      if (!(esSuperUser || esUserRole || esRepartidorUser)) return res.status(403).json({ error: 'No autorizado' });
 
       const rows0 = await query(
         `
-        SELECT id, empresa_id, chofer_id, fecha, tipo, descripcion, monto, comprobante_path, cantidad, producto_id
+        SELECT id, empresa_id, chofer_id, fecha, tipo, descripcion, monto, comprobante_path, cantidad, producto_id, deposito_id
         FROM gastos_repartidor
         WHERE id = $1
         LIMIT 1
@@ -273,6 +303,12 @@ export function createGastosRouter({ GASTOS_DIR }) {
       if (!esSuperUser && Number(g0.empresa_id) !== Number(myEmpresa)) {
         return res.status(403).json({ error: 'No autorizado' });
       }
+      if (esRepartidorUser) {
+        const myChoferId = Number(req.user?.chofer_id || 0);
+        if (!myChoferId || Number(g0.chofer_id) !== myChoferId) {
+          return res.status(403).json({ error: 'Solo podés editar tus propios movimientos' });
+        }
+      }
 
       const {
         fecha,
@@ -282,11 +318,14 @@ export function createGastosRouter({ GASTOS_DIR }) {
         empresa_id,
         chofer_id,
         cantidad,
-        producto_id
+        producto_id,
+        deposito_id
       } = req.body || {};
 
       const targetEmpresa = (esSuperUser && empresa_id) ? Number(empresa_id) : Number(g0.empresa_id);
-      const targetChofer = (chofer_id ? Number(chofer_id) : Number(g0.chofer_id));
+      const targetChofer = esRepartidorUser
+        ? Number(req.user?.chofer_id || g0.chofer_id)
+        : (chofer_id ? Number(chofer_id) : Number(g0.chofer_id));
 
       const fechaDate = (fecha ? String(fecha).slice(0, 10) : String(g0.fecha).slice(0, 10));
 
@@ -305,6 +344,10 @@ export function createGastosRouter({ GASTOS_DIR }) {
         ? null
         : Number(producto_id);
 
+      const newDepositoId = (deposito_id === undefined || deposito_id === null || deposito_id === '')
+        ? g0.deposito_id
+        : Number(deposito_id);
+
       const newComprobantePath = req.file ? req.file.filename : g0.comprobante_path;
 
       await query(
@@ -318,8 +361,9 @@ export function createGastosRouter({ GASTOS_DIR }) {
             monto = $6,
             comprobante_path = $7,
             cantidad = $8,
-            producto_id = $9
-        WHERE id = $10
+            producto_id = $9,
+            deposito_id = $10
+        WHERE id = $11
         `,
         [
           targetEmpresa,
@@ -331,6 +375,7 @@ export function createGastosRouter({ GASTOS_DIR }) {
           newComprobantePath,
           newCantidad,
           newProductoId,
+          newDepositoId,
           id
         ]
       );
@@ -343,7 +388,7 @@ export function createGastosRouter({ GASTOS_DIR }) {
   });
 
   // DELETE /api/gastos/:id
-  router.delete('/:id', withAuth, async (req, res) => {
+  router.delete('/:id', withAuth, checkLicencia, async (req, res) => {
     try {
       const id = Number(req.params.id);
       if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: 'ID inválido' });
@@ -351,16 +396,24 @@ export function createGastosRouter({ GASTOS_DIR }) {
       const role = (req.user?.role || '').toLowerCase();
       const esSuperUser = isSuper(req);
       const esUserRole = role === 'user';
+      const esRepartidorUser = role === 'repartidor';
 
-      if (!(esSuperUser || esUserRole)) return res.status(403).json({ error: 'No autorizado' });
+      if (!(esSuperUser || esUserRole || esRepartidorUser)) return res.status(403).json({ error: 'No autorizado' });
 
       const myEmpresa = getEmpresaIdFromToken(req);
 
       const rows0 = await query(
-        `SELECT id, empresa_id FROM gastos_repartidor WHERE id=$1 AND ($2::int IS NULL OR empresa_id=$2) LIMIT 1`,
+        `SELECT id, empresa_id, chofer_id FROM gastos_repartidor WHERE id=$1 AND ($2::int IS NULL OR empresa_id=$2) LIMIT 1`,
         [id, esSuperUser ? null : Number(myEmpresa)]
       );
       if (!rows0.length) return res.status(404).json({ error: 'Gasto no encontrado' });
+
+      if (esRepartidorUser) {
+        const myChoferId = Number(req.user?.chofer_id || 0);
+        if (!myChoferId || Number(rows0[0].chofer_id) !== myChoferId) {
+          return res.status(403).json({ error: 'Solo podés borrar tus propios movimientos' });
+        }
+      }
 
       await query(
         `DELETE FROM gastos_repartidor WHERE id=$1 AND ($2::int IS NULL OR empresa_id=$2)`,

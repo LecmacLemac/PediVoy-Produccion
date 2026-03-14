@@ -5,8 +5,8 @@
 const cambiosHorario = new Map(); // key: numero (solo dígitos), value: { hora, estado, updatedAt }
 
 function normalizarNumero(numero) {
-  // Acepta: "54911....@c.us" o "11...." o con símbolos
-  return String(numero || '').replace('@c.us', '').replace(/\D/g, '');
+  // Acepta: "54911....@c.us", "...@lid" o "11...." o con símbolos
+  return String(numero || '').replace(/@(?:c\.us|lid)$/i, '').replace(/\D/g, '');
 }
 
 /**

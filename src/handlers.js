@@ -20,6 +20,10 @@ function digitsOnly(v) {
   return String(v || '').replace(/\D+/g, '');
 }
 
+function phoneFromWaId(v) {
+  return String(v || '').replace(/@(?:c\.us|lid)$/i, '').trim();
+}
+
 function _spark(arr) {
   if (!arr || !arr.length) return '(sin datos)';
   const nums = arr.map((v) => Number(v || 0));
@@ -342,7 +346,7 @@ ${contenidoSeguro}
 // ────────────────────────────────────────────────────────────────────────────────
 
 async function _resolverContextoDesdeTelefono(numero) {
-  const telRaw = String(numero || '').replace('@c.us', '');
+  const telRaw = phoneFromWaId(numero);
   const telDigits = digitsOnly(telRaw);
   const suffix10 = telDigits.slice(-10) || telDigits;
 
@@ -1493,7 +1497,7 @@ async function handleReposicionAutomatica(client, numero, ctx) {
   try {
     // 1. Identificar al cliente real en la base de datos
     // Usamos el teléfono normalizado para buscar el punto de entrega
-    const telDigits = digitsOnly(numero.replace('@c.us', ''));
+    const telDigits = digitsOnly(phoneFromWaId(numero));
     const suf10 = telDigits.slice(-10) || telDigits;
 
     // Buscamos el punto de entrega más reciente usado por este teléfono
@@ -1712,7 +1716,7 @@ function start(client) {
           );
         } else {
           // Cliente
-          const telDigits = digitsOnly(String(numero || '').replace('@c.us', ''));
+          const telDigits = digitsOnly(phoneFromWaId(numero));
           const suf10 = telDigits.slice(-10) || telDigits;
           pedidos = await query(
             `
@@ -1761,7 +1765,7 @@ function start(client) {
 
       if (contenidoLimpio === 'ver comprobantes') {
         try {
-          const tel = numero.replace('@c.us', '');
+          const tel = phoneFromWaId(numero);
           const comprobantes = await obtenerUltimosComprobantesPorTelefonoPg(tel);
           
           if (!comprobantes?.length) {
