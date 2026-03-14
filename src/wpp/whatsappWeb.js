@@ -76,7 +76,6 @@ export function registerWhatsAppWeb(app, deps) {
           '--disable-accelerated-2d-canvas',
           '--no-first-run',
           '--no-zygote',
-          '--single-process',
           '--disable-extensions',
           '--disable-background-timer-throttling',
           '--disable-backgrounding-occluded-windows',
@@ -85,7 +84,6 @@ export function registerWhatsAppWeb(app, deps) {
           '--window-size=1920,1080',
           '--disable-web-security',
           '--disable-features=IsolateOrigins,site-per-process',
-          '--use-gl=egl',
           '--disable-software-rasterizer',
           '--ignore-certificate-errors',
           '--ignore-certificate-errors-spki-list'
@@ -846,7 +844,6 @@ export function registerWhatsAppWeb(app, deps) {
         '--disable-accelerated-2d-canvas',
         '--no-first-run',
         '--no-zygote',
-        '--single-process',
         '--disable-extensions',
         '--disable-background-timer-throttling',
         '--disable-backgrounding-occluded-windows',
@@ -863,7 +860,6 @@ export function registerWhatsAppWeb(app, deps) {
         '--window-size=1920,1080',
         '--disable-web-security',
         '--disable-features=IsolateOrigins,site-per-process',
-        '--use-gl=egl',
         '--disable-software-rasterizer'
       );
     } else {
