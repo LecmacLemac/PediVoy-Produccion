@@ -1100,14 +1100,8 @@ export function registerWhatsAppWeb(app, deps) {
       }
     });
   
-    // Inicializar cliente WPP con catch para no tumbar el servidor si falla
-    wppClient.initialize()
-      .then(() => {
-        console.log('[WPP SERVER] Cliente WhatsApp inicializando...');
-      })
-      .catch(err => {
-        console.error('[WPP SERVER] Error inicializando cliente WhatsApp:', err);
-      });
+    // Nota: la inicialización se maneja arriba con `initWhatsApp` + retry controlado.
+    // Evitar doble initialize() para no romper LocalAuth/Puppeteer con userDataDir en uso.
 
   } else {
     console.log('[WPP SERVER] WhatsApp deshabilitado en este entorno (ENABLE_WPP=0)');
