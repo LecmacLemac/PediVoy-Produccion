@@ -3194,7 +3194,8 @@ async function calcResumen(){
       
       if (tipo.includes('carga_llenos') || tipo.includes('carga_vacios')) {
         artsC += Number(g.cantidad || 0);
-        detalleCarga += `• ${g.cantidad||0} u. ${g.descripcion||g.tipo} ($${m})\n`;
+        const dep = g?.deposito_nombre || (g?.deposito_id ? `Depósito #${Number(g.deposito_id)}` : 'Sin depósito');
+        detalleCarga += `• ${g.cantidad||0} u. ${g.descripcion||g.tipo} (${dep}) ($${m})\n`;
       } else { 
         detalleGastos += `• ${g.descripcion||g.tipo}: $${m}\n`; 
       }

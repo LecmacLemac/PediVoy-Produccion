@@ -408,7 +408,7 @@
               <th>Tipo</th>
               <th>Descripción</th>
               <th class="text-right">Monto</th>
-              <th id="thEmpresa" hidden>Empresa</th>
+              <th id="thEmpresa" hidden>Depósito</th>
               <th id="thChofer" hidden>Chofer</th>
               <th style="text-align:center">Comp.</th>
               <th style="text-align:right">Acciones</th>
@@ -767,7 +767,6 @@
     function renderRows(rows){
       rows.sort((a,b)=> new Date(b.fecha) - new Date(a.fecha));
       let total = 0;
-      let orphansCount = 0;
       
       const html = rows.map(g=>{
         // CORREGIDO: Se suma como positivo
@@ -779,13 +778,9 @@
           : '<span class="text-muted">-</span>';
         
         const fecha = formatDateDB(g.fecha);
-        
-        const isOrphan = !g.empresa_id;
-        if (isOrphan) orphansCount++;
+        const depositoTxt = g?.deposito_nombre || (g?.deposito_id ? `#${Number(g.deposito_id)}` : '-');
 
-        const empCol = isSuper 
-          ? `<td>${isOrphan ? '<span class="badge bg-orphan">Huérfano</span>' : `<span class="text-muted">#${Number(g.empresa_id)}</span>`}</td>`
-          : '';
+        const empCol = isSuper ? `<td>${esc(depositoTxt)}</td>` : '';
         const chCol  = (isSuper || isUser) ? `<td>${esc(g.chofer_nombre || ('#'+g.chofer_id))}</td>` : '';
         
         const actions = canEdit ? `
@@ -816,9 +811,6 @@
       $('#thChofer').hidden  = !(isSuper || isUser);
       
       let label = `Total: ${money(total)}`;
-      if (isSuper && orphansCount > 0) {
-        label += ` • Huérfanos: ${orphansCount}`;
-      }
       $('#totalLabel').textContent = label;
     }
 

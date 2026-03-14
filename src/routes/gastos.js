@@ -14,6 +14,7 @@ export function createGastosRouter({ GASTOS_DIR }) {
   const ensureDepositoRefPromise = (async () => {
     try {
       await query(`ALTER TABLE chofer_stock_mov ADD COLUMN IF NOT EXISTS deposito_id INTEGER`);
+      await query(`ALTER TABLE chofer_stock_mov ADD COLUMN IF NOT EXISTS gasto_id INTEGER`);
       await query(`ALTER TABLE gastos_repartidor ADD COLUMN IF NOT EXISTS deposito_id INTEGER`);
       await query(`
         CREATE TABLE IF NOT EXISTS deposito_chofer (
@@ -31,6 +32,64 @@ export function createGastosRouter({ GASTOS_DIR }) {
       console.warn('gastos/deposito schema warning:', e?.message || e);
     }
   })();
+
+  const isStockIngresoFromGasto = (row) => {
+    const tipo = String(row?.tipo || '').toLowerCase();
+    const qty = Number(row?.cantidad || 0);
+    const pid = Number(row?.producto_id || 0);
+    return (tipo === 'carga_llenos' || tipo === 'compra_mercaderia') && qty > 0 && pid > 0;
+  };
+
+  async function applyStockIngresoFromGasto({ empresaId, choferId, productoId, depositoId, fecha, cantidad, descripcion, gastoId }) {
+    const qtyNum = Number(cantidad || 0);
+    if (!qtyNum || qtyNum <= 0) return;
+
+    await query(
+      `
+      INSERT INTO chofer_stock_mov 
+        (empresa_id, chofer_id, producto_id, deposito_id, gasto_id, fecha, tipo, cantidad, referencia, created_at)
+      VALUES ($1, $2, $3, $4, $5, $6, 'INGRESO_GASTOS', $7, $8, NOW())
+      `,
+      [
+        Number(empresaId),
+        Number(choferId),
+        Number(productoId),
+        (depositoId === undefined || depositoId === null || depositoId === '') ? null : Number(depositoId),
+        Number(gastoId),
+        fecha || new Date().toISOString(),
+        qtyNum,
+        `Carga desde Gastos: ${descripcion || 'carga_llenos'}`
+      ]
+    );
+
+    await query(
+      `
+      INSERT INTO chofer_stock (empresa_id, chofer_id, producto_id, cantidad)
+      VALUES ($1, $2, $3, $4)
+      ON CONFLICT (empresa_id, chofer_id, producto_id)
+      DO UPDATE SET cantidad = chofer_stock.cantidad + EXCLUDED.cantidad
+      `,
+      [Number(empresaId), Number(choferId), Number(productoId), qtyNum]
+    );
+  }
+
+  async function revertStockIngresoFromGasto({ empresaId, choferId, productoId, cantidad, gastoId }) {
+    const qtyNum = Number(cantidad || 0);
+    if (!qtyNum || qtyNum <= 0) return;
+
+    await query(
+      `
+      UPDATE chofer_stock
+         SET cantidad = COALESCE(cantidad, 0) - $4
+       WHERE empresa_id = $1
+         AND chofer_id = $2
+         AND producto_id = $3
+      `,
+      [Number(empresaId), Number(choferId), Number(productoId), qtyNum]
+    );
+
+    await query(`DELETE FROM chofer_stock_mov WHERE gasto_id = $1`, [Number(gastoId)]);
+  }
 
   const gastosUploader = multer({
     storage: multer.diskStorage({
@@ -211,13 +270,14 @@ export function createGastosRouter({ GASTOS_DIR }) {
         }
       }
 
-      await query(
+      const inserted = await query(
         `
         INSERT INTO gastos_repartidor (
             empresa_id, chofer_id, fecha, tipo, descripcion,
             monto, comprobante_path, cantidad, producto_id, deposito_id
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        RETURNING id
         `,
         [
           targetEmpresa,
@@ -232,40 +292,23 @@ export function createGastosRouter({ GASTOS_DIR }) {
           depositoId
         ]
       );
+      const gastoId = Number(inserted?.[0]?.id || 0);
 
       // Si el chofer carga mercadería, impactamos stock físico.
-      if (productoIdNum && cantidadNum && (tipoOp === 'carga_llenos' || tipoOp === 'compra_mercaderia')) {
-        const qtyNum = Number(cantidadNum);
-
-        await query(
-          `
-          INSERT INTO chofer_stock_mov 
-            (empresa_id, chofer_id, producto_id, deposito_id, fecha, tipo, cantidad, referencia, created_at)
-          VALUES ($1, $2, $3, $4, $5, 'INGRESO_GASTOS', $6, $7, NOW())
-          `,
-          [
-            targetEmpresa,
-            targetChofer,
-            productoIdNum,
-            depositoId,
-            fecha || new Date().toISOString(),
-            qtyNum,
-            `Carga desde Gastos: ${descripcion || tipo}`
-          ]
-        );
-
-        await query(
-          `
-          INSERT INTO chofer_stock (empresa_id, chofer_id, producto_id, cantidad)
-          VALUES ($1, $2, $3, $4)
-          ON CONFLICT (empresa_id, chofer_id, producto_id)
-          DO UPDATE SET cantidad = chofer_stock.cantidad + EXCLUDED.cantidad
-          `,
-          [targetEmpresa, targetChofer, productoIdNum, qtyNum]
-        );
+      if (gastoId && productoIdNum && cantidadNum && (tipoOp === 'carga_llenos' || tipoOp === 'compra_mercaderia')) {
+        await applyStockIngresoFromGasto({
+          empresaId: targetEmpresa,
+          choferId: targetChofer,
+          productoId: productoIdNum,
+          depositoId,
+          fecha: fecha || new Date().toISOString(),
+          cantidad: cantidadNum,
+          descripcion: descripcion || tipo,
+          gastoId
+        });
       }
 
-      return res.json({ ok: true });
+      return res.json({ ok: true, id: gastoId });
     } catch (e) {
       console.error('ERROR POST GASTOS:', e);
       return res.status(500).json({ error: 'Error guardando gasto' });
@@ -275,6 +318,7 @@ export function createGastosRouter({ GASTOS_DIR }) {
   // PUT /api/gastos/:id (multipart: comprobante)
   router.put('/:id', withAuth, checkLicencia, gastosUploader.single('comprobante'), async (req, res) => {
     try {
+      await ensureDepositoRefPromise;
       const id = Number(req.params.id);
       if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: 'ID inválido' });
 
@@ -350,6 +394,75 @@ export function createGastosRouter({ GASTOS_DIR }) {
 
       const newComprobantePath = req.file ? req.file.filename : g0.comprobante_path;
 
+      const newTipoNorm = String(newTipo || '').toLowerCase();
+      const newEsRet = newTipoNorm === 'carga_llenos' || newTipoNorm === 'descarga_vacios';
+      if (newEsRet) {
+        if (!newProductoId || !Number.isFinite(newProductoId) || newProductoId <= 0) {
+          return res.status(400).json({ error: 'Producto requerido para movimientos de retornables.' });
+        }
+        if (!newCantidad || !Number.isFinite(newCantidad) || newCantidad <= 0) {
+          return res.status(400).json({ error: 'Cantidad requerida para movimientos de retornables.' });
+        }
+
+        const pr = await query(
+          `SELECT id
+             FROM productos
+            WHERE id = $1
+              AND empresa_id = $2
+              AND COALESCE(retornable, false) = true
+              AND deleted_at IS NULL
+            LIMIT 1`,
+          [newProductoId, targetEmpresa]
+        );
+        if (!pr.length) {
+          return res.status(400).json({ error: 'El producto no es retornable o no pertenece a la empresa.' });
+        }
+      }
+
+      if (newDepositoId && (newTipoNorm === 'carga_llenos' || newTipoNorm === 'compra_mercaderia')) {
+        const depRows = await query(
+          `SELECT id FROM depositos WHERE id = $1 AND empresa_id = $2 AND activo = TRUE LIMIT 1`,
+          [newDepositoId, targetEmpresa]
+        );
+        if (!depRows.length) return res.status(400).json({ error: 'Depósito inválido para la empresa' });
+
+        const cfgRows = await query(
+          `SELECT COUNT(*)::int AS c
+             FROM deposito_chofer
+            WHERE empresa_id = $1
+              AND chofer_id = $2
+              AND activo = TRUE`,
+          [targetEmpresa, Number(targetChofer)]
+        );
+        const cfgCount = Number(cfgRows?.[0]?.c || 0);
+        if (cfgCount > 0) {
+          const okRows = await query(
+            `SELECT 1
+               FROM deposito_chofer
+              WHERE empresa_id = $1
+                AND chofer_id = $2
+                AND deposito_id = $3
+                AND activo = TRUE
+              LIMIT 1`,
+            [targetEmpresa, Number(targetChofer), Number(newDepositoId)]
+          );
+          if (!okRows.length) return res.status(403).json({ error: 'Chofer no habilitado para ese depósito' });
+        }
+      }
+
+      const oldNeedsStock = isStockIngresoFromGasto(g0);
+      const newNeedsStock = isStockIngresoFromGasto({ tipo: newTipoNorm, cantidad: newCantidad, producto_id: newProductoId });
+
+      if (oldNeedsStock) {
+        await revertStockIngresoFromGasto({
+          empresaId: g0.empresa_id,
+          choferId: g0.chofer_id,
+          productoId: g0.producto_id,
+          cantidad: g0.cantidad,
+          gastoId: id
+        });
+      }
+
       await query(
         `
         UPDATE gastos_repartidor
@@ -380,6 +493,19 @@ export function createGastosRouter({ GASTOS_DIR }) {
         ]
       );
 
+      if (newNeedsStock) {
+        await applyStockIngresoFromGasto({
+          empresaId: targetEmpresa,
+          choferId: targetChofer,
+          productoId: newProductoId,
+          depositoId: newDepositoId,
+          fecha: fechaDate,
+          cantidad: newCantidad,
+          descripcion: newDesc || newTipo,
+          gastoId: id
+        });
+      }
+
       return res.json({ ok: true });
     } catch (e) {
       console.error('ERROR PUT GASTOS:', e);
@@ -390,6 +516,7 @@ export function createGastosRouter({ GASTOS_DIR }) {
   // DELETE /api/gastos/:id
   router.delete('/:id', withAuth, checkLicencia, async (req, res) => {
     try {
+      await ensureDepositoRefPromise;
       const id = Number(req.params.id);
       if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: 'ID inválido' });
 
@@ -403,7 +530,7 @@ export function createGastosRouter({ GASTOS_DIR }) {
       const myEmpresa = getEmpresaIdFromToken(req);
 
       const rows0 = await query(
-        `SELECT id, empresa_id, chofer_id FROM gastos_repartidor WHERE id=$1 AND ($2::int IS NULL OR empresa_id=$2) LIMIT 1`,
+        `SELECT id, empresa_id, chofer_id, tipo, cantidad, producto_id FROM gastos_repartidor WHERE id=$1 AND ($2::int IS NULL OR empresa_id=$2) LIMIT 1`,
         [id, esSuperUser ? null : Number(myEmpresa)]
       );
       if (!rows0.length) return res.status(404).json({ error: 'Gasto no encontrado' });
@@ -413,6 +540,17 @@ export function createGastosRouter({ GASTOS_DIR }) {
         if (!myChoferId || Number(rows0[0].chofer_id) !== myChoferId) {
           return res.status(403).json({ error: 'Solo podés borrar tus propios movimientos' });
         }
+      }
+
+      const g0 = rows0[0];
+      if (isStockIngresoFromGasto(g0)) {
+        await revertStockIngresoFromGasto({
+          empresaId: g0.empresa_id,
+          choferId: g0.chofer_id,
+          productoId: g0.producto_id,
+          cantidad: g0.cantidad,
+          gastoId: id
+        });
       }
 
       await query(
