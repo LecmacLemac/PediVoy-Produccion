@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import OpenAI from 'openai';
-import pdf2img from 'pdf-img-convert';
+import { convert as pdfToImgConvert } from 'pdf-img-convert';
 import {
   insertarComprobantePg,
   actualizarComprobanteDatosPg,
@@ -96,7 +96,7 @@ async function prepareImageForAI(fileData) {
   try {
     // Si es PDF, convertimos primera página a imagen
     if (fileData.mimetype === 'application/pdf' || fileData.ext === 'pdf') {
-      const pages = await pdf2img.convert(fileData.absolutePath, {
+      const pages = await pdfToImgConvert(fileData.absolutePath, {
         width: 1024,
         page_numbers: [1],
         base64: true
