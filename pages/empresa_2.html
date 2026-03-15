@@ -210,6 +210,44 @@
       font-size: 0.85rem;
     }
 
+    .market-tools {
+      margin-top: 10px;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .sort-select {
+      border: 1px solid #f3bbc0;
+      border-radius: 6px;
+      padding: 8px 10px;
+      background: #fff;
+      color: #333;
+      min-width: 210px;
+    }
+
+    .kpi-line {
+      font-size: 0.82rem;
+      color: #777;
+      background: #fff;
+      border: 1px solid #f3bbc0;
+      border-radius: 6px;
+      padding: 8px 10px;
+    }
+
+    .skeleton-block {
+      background: linear-gradient(90deg, #f6f6f6 25%, #ececec 37%, #f6f6f6 63%);
+      background-size: 400% 100%;
+      animation: skeleton-shimmer 1.2s ease infinite;
+      border-radius: 6px;
+    }
+
+    @keyframes skeleton-shimmer {
+      0% { background-position: 100% 0; }
+      100% { background-position: 0 0; }
+    }
+
     /* --- GRID DE TIENDAS --- */
     .stores-grid {
       display: flex;
@@ -379,6 +417,9 @@
       .banner-content {
         max-width: 100%;
       }
+      .subheader-inner {
+        flex-wrap: wrap;
+      }
       .products-row {
         grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 10px;
@@ -408,8 +449,9 @@
           class="search-input"
           placeholder="Buscar productos, marcas y más..."
           onkeyup="filterProducts()"
+          aria-label="Buscar productos"
         >
-        <button class="search-btn" type="button" onclick="filterProducts()">🔍</button>
+        <button class="search-btn" type="button" onclick="applyFiltersAndRender()">🔍</button>
       </div>
       
       <a href="/pedidos/login.html"
@@ -430,6 +472,12 @@
         <div style="font-size:0.8rem; color:#999;">
           Filtro opcional, podés explorar todo el mercado igual.
         </div>
+        <select id="sortSelect" class="sort-select" onchange="onSortChange(event)" aria-label="Ordenar productos">
+          <option value="relevancia">Ordenar: relevancia</option>
+          <option value="precio_asc">Precio: menor a mayor</option>
+          <option value="precio_desc">Precio: mayor a menor</option>
+          <option value="tienda_az">Tienda: A-Z</option>
+        </select>
       </div>
     </div>
   </header>
@@ -452,7 +500,10 @@
           </div>
           <div class="banner-picto">📦🚀</div>
         </div>
-        <div id="statusMsg" class="status-bar"></div>
+        <div id="statusMsg" class="status-bar" aria-live="polite"></div>
+        <div class="market-tools">
+          <div id="kpiLine" class="kpi-line" aria-live="polite">Cargando marketplace…</div>
+        </div>
       </section>
     </div>
 
@@ -478,8 +529,48 @@
       maximumFractionDigits: 0
     });
     
-    // Store global para filtrado rápido
+    // Este archivo se usa como shell de MARKETPLACE GLOBAL
+    // (aunque el nombre físico sea empresa_2.html).
     let allData = [];
+    let lastFetchMs = null;
+
+    const state = {
+      term: '',
+      sort: 'relevancia'
+    };
+
+    function debounce(fn, wait = 220) {
+      let timeout = null;
+      return (...args) => {
+        clearTimeout(timeout);
+        timeout = setTimeout(() => fn(...args), wait);
+      };
+    }
+
+    // renderMarketplace usa DOM API para evitar inyección vía innerHTML.
+
+    function sanitizeUrl(url, fallback = '#') {
+      if (!url) return fallback;
+      const raw = String(url).trim();
+      if (!raw) return fallback;
+
+      // Permitimos rutas relativas internas y URLs http/https.
+      if (raw.startsWith('/')) return raw;
+      if (/^https?:\/\//i.test(raw)) return raw;
+
+      return fallback;
+    }
+
+    function shouldShowPromo(empId, prodId) {
+      // Determinístico: evita "parpadeo" de promos en cada render.
+      const key = `${empId ?? ''}:${prodId ?? ''}`;
+      let hash = 0;
+      for (let i = 0; i < key.length; i += 1) {
+        hash = ((hash << 5) - hash) + key.charCodeAt(i);
+        hash |= 0;
+      }
+      return Math.abs(hash) % 4 === 0; // ~25%
+    }
 
     // --- LÓGICA DE URLS (Prioridad: Dominio > ID en /pages/empresa_<id>.html) ---
     function getStoreUrl(domain, slug, id) {
@@ -514,16 +605,129 @@
       return `/pedidos/index.html?empresa_id=${empId}&add=${prodId}`; 
     }
 
+    function getProductCount(empresas) {
+      return (empresas || []).reduce((acc, emp) => acc + ((emp.productos || []).length), 0);
+    }
+
+    function onSortChange(event) {
+      state.sort = event?.target?.value || 'relevancia';
+      applyFiltersAndRender();
+    }
+
+    function sortEmpresas(empresas, sortKey, term) {
+      const copy = (empresas || []).map(emp => ({
+        ...emp,
+        productos: [...(emp.productos || [])]
+      }));
+
+      if (sortKey === 'precio_asc' || sortKey === 'precio_desc') {
+        const dir = sortKey === 'precio_asc' ? 1 : -1;
+        copy.forEach(emp => {
+          emp.productos.sort((a, b) => (Number(a.precio) - Number(b.precio)) * dir);
+        });
+        copy.sort((a, b) => {
+          const aMin = Math.min(...a.productos.map(p => Number(p.precio) || 0), Number.MAX_SAFE_INTEGER);
+          const bMin = Math.min(...b.productos.map(p => Number(p.precio) || 0), Number.MAX_SAFE_INTEGER);
+          return (aMin - bMin) * dir;
+        });
+        return copy;
+      }
+
+      if (sortKey === 'tienda_az') {
+        copy.sort((a, b) => String(a.nombre || '').localeCompare(String(b.nombre || ''), 'es'));
+        return copy;
+      }
+
+      // Relevancia
+      const q = String(term || '').toLowerCase();
+      copy.sort((a, b) => {
+        const aName = String(a.nombre || '').toLowerCase();
+        const bName = String(b.nombre || '').toLowerCase();
+        const aScore = (q && aName.includes(q) ? 10 : 0) + (a.productos?.length || 0);
+        const bScore = (q && bName.includes(q) ? 10 : 0) + (b.productos?.length || 0);
+        return bScore - aScore;
+      });
+      return copy;
+    }
+
+    function updateKpi(empresas, renderMs = null) {
+      const kpi = document.getElementById('kpiLine');
+      if (!kpi) return;
+      const tiendas = (empresas || []).length;
+      const productos = getProductCount(empresas);
+      const fetchTxt = lastFetchMs === null ? '-' : `${Math.round(lastFetchMs)}ms`;
+      const renderTxt = renderMs === null ? '-' : `${Math.round(renderMs)}ms`;
+      kpi.textContent = `${tiendas} tiendas · ${productos} productos · fetch ${fetchTxt} · render ${renderTxt}`;
+    }
+
+    function renderSkeleton(stores = 3, cardsPerStore = 4) {
+      const container = document.getElementById('marketplace-container');
+      if (!container) return;
+      container.innerHTML = '';
+
+      const grid = document.createElement('div');
+      grid.className = 'stores-grid';
+
+      for (let s = 0; s < stores; s += 1) {
+        const block = document.createElement('div');
+        block.className = 'store-block';
+
+        const header = document.createElement('div');
+        header.className = 'store-header-bar';
+        const titleSk = document.createElement('div');
+        titleSk.className = 'skeleton-block';
+        titleSk.style.cssText = 'height:24px; width:220px;';
+        header.appendChild(titleSk);
+
+        const row = document.createElement('div');
+        row.className = 'products-row';
+
+        for (let c = 0; c < cardsPerStore; c += 1) {
+          const card = document.createElement('div');
+          card.className = 'prod-card';
+
+          const img = document.createElement('div');
+          img.className = 'skeleton-block';
+          img.style.cssText = 'height:180px; border-radius:0;';
+
+          const body = document.createElement('div');
+          body.className = 'prod-body';
+          const line1 = document.createElement('div');
+          line1.className = 'skeleton-block';
+          line1.style.cssText = 'height:20px; width:120px;';
+          const line2 = document.createElement('div');
+          line2.className = 'skeleton-block';
+          line2.style.cssText = 'height:14px; width:100%;';
+          const line3 = document.createElement('div');
+          line3.className = 'skeleton-block';
+          line3.style.cssText = 'height:32px; width:100%; margin-top:8px;';
+
+          body.append(line1, line2, line3);
+          card.append(img, body);
+          row.appendChild(card);
+        }
+
+        block.append(header, row);
+        grid.appendChild(block);
+      }
+
+      container.appendChild(grid);
+    }
+
     // --- Lógica Geo y Carga ---
     function resetFilter() {
       const msg = document.getElementById('statusMsg');
       const locText = document.getElementById('locText');
       const search = document.getElementById('searchInput');
+      const sortSelect = document.getElementById('sortSelect');
 
       if (msg) msg.style.display = 'none';
       if (locText) locText.textContent = 'Ingresar ubicación';
       if (search) search.value = '';
+      if (sortSelect) sortSelect.value = 'relevancia';
 
+      state.term = '';
+      state.sort = 'relevancia';
       loadMarketplace(); 
     }
 
@@ -560,54 +764,36 @@
       );
     }
 
-    function filterProducts() {
+    function applyFiltersAndRender() {
       const input = document.getElementById('searchInput');
-      if (!input) return;
-      
-      const term = input.value.trim().toLowerCase();
-      
-      // Si no hay término, mostramos todo lo que se bajó de la API
-      if (!term) {
-        renderMarketplace(allData);
-        return;
-      }
+      state.term = (input?.value || '').trim().toLowerCase();
 
-      // Filtramos empresas que tengan productos que coincidan O nombre de empresa
-      const filtered = allData.map(emp => {
-        const matchesEmpresa = (emp.nombre || '').toLowerCase().includes(term);
-        const matchedProds = (emp.productos || []).filter(p =>
-          (p.nombre || '').toLowerCase().includes(term)
-        );
-        
-        // Si coincide la empresa, mostramos todos sus productos. Si no, solo los que coinciden.
-        if (matchesEmpresa) return emp;
-        if (matchedProds.length > 0) {
-          return { ...emp, productos: matchedProds };
-        }
-        return null;
-      }).filter(Boolean);
+      const filtered = !state.term
+        ? allData.map(emp => ({ ...emp, productos: [...(emp.productos || [])] }))
+        : allData.map(emp => {
+            const matchesEmpresa = (emp.nombre || '').toLowerCase().includes(state.term);
+            const matchedProds = (emp.productos || []).filter(p =>
+              (p.nombre || '').toLowerCase().includes(state.term)
+            );
 
-      renderMarketplace(filtered);
+            if (matchesEmpresa) return { ...emp, productos: [...(emp.productos || [])] };
+            if (matchedProds.length > 0) return { ...emp, productos: matchedProds };
+            return null;
+          }).filter(Boolean);
+
+      const sorted = sortEmpresas(filtered, state.sort, state.term);
+      const t0 = performance.now();
+      renderMarketplace(sorted);
+      updateKpi(sorted, performance.now() - t0);
     }
+
+    const filterProducts = debounce(applyFiltersAndRender, 220);
 
     async function loadMarketplace(lat = null, lng = null) {
       const container = document.getElementById('marketplace-container');
       if (!container) return;
 
-      // Loader
-      container.innerHTML = `
-        <div style="padding: 40px; text-align: center;">
-          <div style="
-            width: 40px;
-            height: 40px;
-            border: 4px solid #ddd;
-            border-top-color: var(--accent);
-            border-radius: 50%;
-            margin: 0 auto;
-            animation: spin 1s infinite linear;
-          "></div>
-        </div>
-      `;
+      renderSkeleton(2, 6);
 
       try {
         let url = '/public/marketplace';
@@ -620,14 +806,17 @@
           url += '?' + params.join('&');
         }
 
+        const tFetch0 = performance.now();
         const res = await fetch(url);
         if (!res.ok) throw new Error('Error de red');
 
         const data = await res.json();
+        lastFetchMs = performance.now() - tFetch0;
         allData = Array.isArray(data) ? data : [];
-        renderMarketplace(allData);
+        applyFiltersAndRender();
       } catch (err) {
         console.error(err);
+        lastFetchMs = null;
         container.innerHTML = `
           <div style="text-align:center; padding:3rem; background:white; border-radius:8px;">
             <div style="font-size:3rem">⚠️</div>
@@ -647,69 +836,137 @@
       const container = document.getElementById('marketplace-container');
       if (!container) return;
 
+      container.innerHTML = '';
+
       if (!empresas || empresas.length === 0) {
-        container.innerHTML = `
-          <div style="text-align:center; padding:3rem; background:white; border-radius:8px;">
-            <div style="font-size:3rem">🔍</div>
-            <h3 style="margin-top:10px; color:#333;">No encontramos resultados.</h3>
-            <p style="color:#999;">Probá con otras palabras o cambiá tu ubicación.</p>
-            <button
-              onclick="resetFilter()"
-              style="margin-top:15px; padding:10px 18px; background:var(--accent); color:white; border-radius:4px; border:none; cursor:pointer; font-weight:600;">
-              Ver todo
-            </button>
-          </div>
-        `;
+        const empty = document.createElement('div');
+        empty.style.cssText = 'text-align:center; padding:3rem; background:white; border-radius:8px;';
+
+        const icon = document.createElement('div');
+        icon.style.fontSize = '3rem';
+        icon.textContent = '🔍';
+
+        const title = document.createElement('h3');
+        title.style.cssText = 'margin-top:10px; color:#333;';
+        title.textContent = 'No encontramos resultados.';
+
+        const text = document.createElement('p');
+        text.style.color = '#999';
+        text.textContent = 'Probá con otras palabras o cambiá tu ubicación.';
+
+        const btn = document.createElement('button');
+        btn.style.cssText = 'margin-top:15px; padding:10px 18px; background:var(--accent); color:white; border-radius:4px; border:none; cursor:pointer; font-weight:600;';
+        btn.textContent = 'Ver todo';
+        btn.addEventListener('click', resetFilter);
+
+        empty.append(icon, title, text, btn);
+        container.appendChild(empty);
         return;
       }
 
-      container.innerHTML = `<div class="stores-grid">
-        ${empresas.map(emp => {
-          const storeLink = getStoreUrl(emp.landing_domain, emp.landing_slug, emp.id);
-          const storeLinkHtml = storeLink
-            ? `<a href="${storeLink}" class="visit-link">Ver tienda ></a>`
-            : `<span class="visit-link" style="pointer-events:none; opacity:0.6; cursor:default;">Tienda próximamente</span>`;
-          
-          const productsHtml = (emp.productos || []).map(p => {
-            const buyLink = getBuyUrl(emp.id, p.id);
-            const img = p.imagen || "https://dummyimage.com/400x400/eeeeee/999999&text=Sin+Imagen";
-            
-            // Simulación de descuento al azar si no existe
-            const showDiscount = Math.random() > 0.7;
-            const discountHtml = showDiscount ? `<span class="prod-discount">5% OFF</span>` : '';
+      const storesGrid = document.createElement('div');
+      storesGrid.className = 'stores-grid';
 
-            return `
-              <div class="prod-card" onclick="window.location='${buyLink}'">
-                <div class="prod-img-container">
-                  <img src="${img}" class="prod-img" loading="lazy" alt="${p.nombre || ''}">
-                </div>
-                <div class="prod-body">
-                  <div class="prod-price-area">
-                    <span class="prod-price">${ARS.format(p.precio)}</span>
-                    ${discountHtml}
-                  </div>
-                  <div class="prod-title">${p.nombre || ''}</div>
-                  <div class="shipping-tag">Llega mañana</div>
-                  <a href="${buyLink}" class="btn-buy-overlay" onclick="event.stopPropagation();">Comprar ahora</a>
-                </div>
-              </div>
-            `;
-          }).join('');
+      empresas.forEach((emp) => {
+        const storeBlock = document.createElement('div');
+        storeBlock.className = 'store-block';
 
-          return `
-            <div class="store-block">
-              <div class="store-header-bar">
-                <span class="store-tag">OFICIAL</span>
-                <h3 class="store-title">${emp.nombre}</h3>
-                ${storeLinkHtml}
-              </div>
-              <div class="products-row">
-                ${productsHtml}
-              </div>
-            </div>
-          `;
-        }).join('')}
-      </div>`;
+        const headerBar = document.createElement('div');
+        headerBar.className = 'store-header-bar';
+
+        const tag = document.createElement('span');
+        tag.className = 'store-tag';
+        tag.textContent = 'OFICIAL';
+
+        const title = document.createElement('h3');
+        title.className = 'store-title';
+        title.textContent = String(emp.nombre || 'Tienda');
+
+        const storeLink = sanitizeUrl(getStoreUrl(emp.landing_domain, emp.landing_slug, emp.id), '#');
+        let visitNode;
+        if (storeLink !== '#') {
+          const link = document.createElement('a');
+          link.className = 'visit-link';
+          link.href = storeLink;
+          link.textContent = 'Ver tienda >';
+          visitNode = link;
+        } else {
+          const span = document.createElement('span');
+          span.className = 'visit-link';
+          span.style.cssText = 'pointer-events:none; opacity:0.6; cursor:default;';
+          span.textContent = 'Tienda próximamente';
+          visitNode = span;
+        }
+
+        headerBar.append(tag, title, visitNode);
+
+        const productsRow = document.createElement('div');
+        productsRow.className = 'products-row';
+
+        (emp.productos || []).forEach((p) => {
+          const buyLink = sanitizeUrl(getBuyUrl(emp.id, p.id), '#');
+          const imgUrl = sanitizeUrl(p.imagen, 'https://dummyimage.com/400x400/eeeeee/999999&text=Sin+Imagen');
+          const prodName = String(p.nombre || 'Producto');
+          const price = Number(p.precio) || 0;
+
+          const card = document.createElement('div');
+          card.className = 'prod-card';
+          card.addEventListener('click', () => {
+            if (buyLink !== '#') window.location = buyLink;
+          });
+
+          const imgContainer = document.createElement('div');
+          imgContainer.className = 'prod-img-container';
+
+          const img = document.createElement('img');
+          img.className = 'prod-img';
+          img.loading = 'lazy';
+          img.src = imgUrl;
+          img.alt = prodName;
+          imgContainer.appendChild(img);
+
+          const body = document.createElement('div');
+          body.className = 'prod-body';
+
+          const priceArea = document.createElement('div');
+          priceArea.className = 'prod-price-area';
+
+          const priceNode = document.createElement('span');
+          priceNode.className = 'prod-price';
+          priceNode.textContent = ARS.format(price);
+          priceArea.appendChild(priceNode);
+
+          if (shouldShowPromo(emp.id, p.id)) {
+            const discount = document.createElement('span');
+            discount.className = 'prod-discount';
+            discount.textContent = '5% OFF';
+            priceArea.appendChild(discount);
+          }
+
+          const titleNode = document.createElement('div');
+          titleNode.className = 'prod-title';
+          titleNode.textContent = prodName;
+
+          const shipping = document.createElement('div');
+          shipping.className = 'shipping-tag';
+          shipping.textContent = 'Llega mañana';
+
+          const buyBtn = document.createElement('a');
+          buyBtn.className = 'btn-buy-overlay';
+          buyBtn.href = buyLink;
+          buyBtn.textContent = 'Comprar ahora';
+          buyBtn.addEventListener('click', (event) => event.stopPropagation());
+
+          body.append(priceArea, titleNode, shipping, buyBtn);
+          card.append(imgContainer, body);
+          productsRow.appendChild(card);
+        });
+
+        storeBlock.append(headerBar, productsRow);
+        storesGrid.appendChild(storeBlock);
+      });
+
+      container.appendChild(storesGrid);
     }
 
     // Carga inicial
