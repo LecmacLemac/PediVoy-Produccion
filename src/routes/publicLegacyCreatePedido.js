@@ -61,6 +61,7 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
     normalizePhone,
     pointInAnyZone,
     enqueueWppMessage,
+    sendSmsViaIfttt,
     toNum,
     inRange,
     round,
@@ -674,6 +675,14 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
         }
 
         await enqueueWppMessage({ phone: telefono, message: mensaje, empresa_id: empId });
+
+        const smsEnabled = String(process.env.IFTTT_SMS_ENABLED || '0') === '1';
+        if (smsEnabled && typeof sendSmsViaIfttt === 'function') {
+          const smsResp = await sendSmsViaIfttt({ phone: telefono, message: mensaje });
+          if (!smsResp?.ok && !smsResp?.skipped) {
+            errlog('SMS.NOTIFY.ERROR', smsResp?.error || `status ${smsResp?.status || 'n/a'}`);
+          }
+        }
 
         if (repData?.telefono) {
           const promoItems = normItems.filter((it) => {

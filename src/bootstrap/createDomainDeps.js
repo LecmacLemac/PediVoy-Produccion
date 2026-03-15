@@ -9,6 +9,7 @@ import {
   normalizePhone,
   pointInAnyZone,
   enqueueWppMessage,
+  sendSmsViaIfttt,
 } from '../services.js';
 import { crearPreferenciaLicencia, obtenerPago } from '../mercadoPagoService.js';
 import { notificarEnRuta, notificarPedidoTransferencia } from '../services/notificacionesPedidos.js';
@@ -38,6 +39,7 @@ export function createDomainDeps({ projectDir }) {
     normalizePhone,
     pointInAnyZone,
     enqueueWppMessage,
+    sendSmsViaIfttt,
 
     // empresas helper
     getEmpresaById,

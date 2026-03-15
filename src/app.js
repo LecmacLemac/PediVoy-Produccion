@@ -284,6 +284,7 @@ export function createApp(deps) {
     normalizePhone: deps?.normalizePhone,
     pointInAnyZone: deps?.pointInAnyZone,
     enqueueWppMessage: deps?.enqueueWppMessage,
+    sendSmsViaIfttt: deps?.sendSmsViaIfttt,
     toNum,
     inRange,
     round,
