@@ -233,6 +233,35 @@
       font-weight: 500;
     }
 
+    .theme-toggle {
+      border: 1px solid transparent;
+      border-radius: 10px;
+      width: 40px;
+      height: 40px;
+      background: transparent;
+      color: #2c3440;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      line-height: 1;
+      transition: background .16s ease, border-color .16s ease, transform .16s ease;
+    }
+
+    .theme-toggle:hover {
+      background: rgba(243, 51, 64, 0.08);
+      border-color: #efc4c9;
+      transform: translateY(-1px);
+    }
+
+    .theme-toggle:focus-visible {
+      outline: none;
+      border-color: #d74b59;
+      box-shadow: 0 0 0 3px rgba(243, 51, 64, .16);
+    }
+
     .kpi-line {
       font-size: 0.82rem;
       color: #5c6572;
@@ -252,6 +281,22 @@
     @keyframes skeleton-shimmer {
       0% { background-position: 100% 0; }
       100% { background-position: 0 0; }
+    }
+
+    @keyframes fade-up-in {
+      0% {
+        opacity: 0;
+        transform: translateY(12px) scale(0.985);
+      }
+      100% {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+    }
+
+    .animate-in {
+      animation: fade-up-in 480ms cubic-bezier(.22,.61,.36,1) both;
+      will-change: transform, opacity;
     }
 
     /* --- GRID DE TIENDAS --- */
@@ -419,6 +464,201 @@
       100% { transform: rotate(360deg); }
     }
 
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --primary: #b91c2c;
+        --accent: #e63b4c;
+        --bg: #101216;
+        --card: #1a1f27;
+        --text: #eef2f8;
+        --muted: #aeb8c8;
+        --price: #ffffff;
+        --stroke-soft: #2d3340;
+        --shadow: 0 1px 2px 0 rgba(0,0,0,.45);
+        --shadow-soft: 0 18px 32px -18px rgba(0,0,0,.8);
+      }
+
+      .subheader {
+        background: #171b23;
+      }
+
+      .loc-trigger,
+      .search-box,
+      .sort-select,
+      .theme-toggle,
+      .kpi-line,
+      .badge-zone {
+        background: #1a1f27;
+        border-color: #323a4a;
+        color: #e5ebf6;
+      }
+
+      .search-input,
+      .sort-select,
+      .theme-toggle {
+        color: #e5ebf6;
+        background: #1a1f27;
+      }
+
+      .search-btn {
+        background: #1a1f27;
+        color: #e5ebf6;
+        border-left-color: #323a4a;
+      }
+
+      .banner {
+        background: linear-gradient(90deg, #231720 0%, #1b2029 48%, #1a1f27 100%);
+        border-color: #323a4a;
+      }
+
+      .banner-title { color: #ffd3d8; }
+      .banner-sub,
+      .prod-title,
+      .store-title,
+      .kpi-line,
+      .loc-text-sub,
+      .subheader-inner,
+      .visit-link,
+      .banner-cta span {
+        color: #d2dbea;
+      }
+
+      .store-tag,
+      .shipping-tag {
+        background: #242b36;
+        border-color: #374152;
+        color: #ff9aa5;
+      }
+
+      .prod-img-container {
+        background: #141922;
+      }
+
+      .prod-card {
+        border-color: #2f3746;
+        box-shadow: 0 2px 10px -6px rgba(0,0,0,.65);
+      }
+
+      .prod-card:hover {
+        border-color: #4a556d;
+        box-shadow: 0 16px 28px -20px rgba(0,0,0,.9);
+      }
+
+      .status-bar {
+        background: #2a1b21;
+        color: #ffb8c0;
+      }
+
+      .skeleton-block {
+        background: linear-gradient(90deg, #242a34 25%, #303847 37%, #242a34 63%);
+        background-size: 400% 100%;
+      }
+    }
+
+    body.theme-dark {
+      --primary: #b91c2c;
+      --accent: #e63b4c;
+      --bg: #101216;
+      --card: #1a1f27;
+      --text: #eef2f8;
+      --muted: #aeb8c8;
+      --price: #ffffff;
+      --stroke-soft: #2d3340;
+      --shadow: 0 1px 2px 0 rgba(0,0,0,.45);
+      --shadow-soft: 0 18px 32px -18px rgba(0,0,0,.8);
+    }
+
+    body.theme-dark .subheader {
+      background: #171b23;
+    }
+
+    body.theme-dark .loc-trigger,
+    body.theme-dark .search-box,
+    body.theme-dark .sort-select,
+    body.theme-dark .kpi-line,
+    body.theme-dark .badge-zone {
+      background: #1a1f27;
+      border-color: #323a4a;
+      color: #e5ebf6;
+    }
+
+    body.theme-dark .theme-toggle {
+      background: transparent;
+      border-color: transparent;
+      color: #e5ebf6;
+    }
+
+    body.theme-dark .theme-toggle:hover {
+      background: rgba(230, 59, 76, 0.14);
+      border-color: #3a4557;
+    }
+
+    body.theme-dark .theme-toggle:focus-visible {
+      border-color: #5d6f8e;
+      box-shadow: 0 0 0 3px rgba(96, 127, 179, 0.26);
+    }
+
+    body.theme-dark .search-input,
+    body.theme-dark .sort-select,
+    body.theme-dark .theme-toggle {
+      color: #e5ebf6;
+      background: #1a1f27;
+    }
+
+    body.theme-dark .search-btn {
+      background: #1a1f27;
+      color: #e5ebf6;
+      border-left-color: #323a4a;
+    }
+
+    body.theme-dark .banner {
+      background: linear-gradient(90deg, #231720 0%, #1b2029 48%, #1a1f27 100%);
+      border-color: #323a4a;
+    }
+
+    body.theme-dark .banner-title { color: #ffd3d8; }
+    body.theme-dark .banner-sub,
+    body.theme-dark .prod-title,
+    body.theme-dark .store-title,
+    body.theme-dark .kpi-line,
+    body.theme-dark .loc-text-sub,
+    body.theme-dark .subheader-inner,
+    body.theme-dark .visit-link,
+    body.theme-dark .banner-cta span {
+      color: #d2dbea;
+    }
+
+    body.theme-dark .store-tag,
+    body.theme-dark .shipping-tag {
+      background: #242b36;
+      border-color: #374152;
+      color: #ff9aa5;
+    }
+
+    body.theme-dark .prod-img-container {
+      background: #141922;
+    }
+
+    body.theme-dark .prod-card {
+      border-color: #2f3746;
+      box-shadow: 0 2px 10px -6px rgba(0,0,0,.65);
+    }
+
+    body.theme-dark .prod-card:hover {
+      border-color: #4a556d;
+      box-shadow: 0 16px 28px -20px rgba(0,0,0,.9);
+    }
+
+    body.theme-dark .status-bar {
+      background: #2a1b21;
+      color: #ffb8c0;
+    }
+
+    body.theme-dark .skeleton-block {
+      background: linear-gradient(90deg, #242a34 25%, #303847 37%, #242a34 63%);
+      background-size: 400% 100%;
+    }
+
     @media (max-width: 768px) {
       .header-main {
         flex-direction: column;
@@ -447,6 +687,16 @@
       }
       .prod-price {
         font-size: 1.2rem;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .animate-in,
+      .skeleton-block,
+      .prod-card,
+      .btn-buy-overlay {
+        animation: none !important;
+        transition: none !important;
       }
     }
   </style>
@@ -496,6 +746,9 @@
           <option value="precio_desc">Precio: mayor a menor</option>
           <option value="tienda_az">Tienda: A-Z</option>
         </select>
+        <button id="themeToggle" class="theme-toggle" type="button" onclick="toggleTheme()" aria-label="Cambiar tema" title="Tema automático">
+          🌙
+        </button>
       </div>
     </div>
   </header>
@@ -554,8 +807,34 @@
 
     const state = {
       term: '',
-      sort: 'relevancia'
+      sort: 'relevancia',
+      theme: 'auto'
     };
+
+    function applyTheme(mode = 'auto') {
+      const m = mode === 'dark' ? 'dark' : 'auto';
+      state.theme = m;
+      document.body.classList.toggle('theme-dark', m === 'dark');
+
+      const btn = document.getElementById('themeToggle');
+      if (btn) {
+        const isDark = m === 'dark';
+        btn.textContent = isDark ? '☀️' : '🌙';
+        btn.title = isDark ? 'Tema oscuro activo (click para auto)' : 'Tema automático';
+      }
+
+      try { localStorage.setItem('pv_theme_mode', m); } catch (_) {}
+    }
+
+    function toggleTheme() {
+      applyTheme(state.theme === 'dark' ? 'auto' : 'dark');
+    }
+
+    function initTheme() {
+      let saved = 'auto';
+      try { saved = localStorage.getItem('pv_theme_mode') || 'auto'; } catch (_) {}
+      applyTheme(saved);
+    }
 
     function debounce(fn, wait = 220) {
       let timeout = null;
@@ -885,9 +1164,10 @@
       const storesGrid = document.createElement('div');
       storesGrid.className = 'stores-grid';
 
-      empresas.forEach((emp) => {
+      empresas.forEach((emp, storeIndex) => {
         const storeBlock = document.createElement('div');
-        storeBlock.className = 'store-block';
+        storeBlock.className = 'store-block animate-in';
+        storeBlock.style.animationDelay = `${Math.min(storeIndex * 70, 280)}ms`;
 
         const headerBar = document.createElement('div');
         headerBar.className = 'store-header-bar';
@@ -921,14 +1201,15 @@
         const productsRow = document.createElement('div');
         productsRow.className = 'products-row';
 
-        (emp.productos || []).forEach((p) => {
+        (emp.productos || []).forEach((p, prodIndex) => {
           const buyLink = sanitizeUrl(getBuyUrl(emp.id, p.id), '#');
           const imgUrl = sanitizeUrl(p.imagen, 'https://dummyimage.com/400x400/eeeeee/999999&text=Sin+Imagen');
           const prodName = String(p.nombre || 'Producto');
           const price = Number(p.precio) || 0;
 
           const card = document.createElement('div');
-          card.className = 'prod-card';
+          card.className = 'prod-card animate-in';
+          card.style.animationDelay = `${Math.min((storeIndex * 70) + (prodIndex * 35), 520)}ms`;
           card.addEventListener('click', () => {
             if (buyLink !== '#') window.location = buyLink;
           });
@@ -988,6 +1269,7 @@
     }
 
     // Carga inicial
+    initTheme();
     loadMarketplace();
   </script>
 </body>
