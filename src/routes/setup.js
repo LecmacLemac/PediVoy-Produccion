@@ -2907,5 +2907,70 @@ export function createSetupRouter(deps) {
     }
   });
 
+  // GET /api/setup/marketing/telemetria
+  router.get('/marketing/telemetria', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req);
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+
+      const dias = Math.min(Math.max(Number(req.query?.dias || 7), 1), 90);
+
+      const resumen = await query(
+        `SELECT
+           canal,
+           estrategia,
+           COUNT(*)::int AS total,
+           COUNT(*) FILTER (WHERE estado IN ('sent','queued'))::int AS exitosos,
+           COUNT(*) FILTER (WHERE estado = 'failed')::int AS fallidos,
+           COUNT(*) FILTER (WHERE estado = 'skipped')::int AS omitidos,
+           COALESCE(SUM(costo_estimado),0)::numeric AS costo_total
+         FROM marketing_envios_telemetria
+         WHERE empresa_id = $1
+           AND created_at >= NOW() - ($2::text || ' days')::interval
+         GROUP BY canal, estrategia
+         ORDER BY total DESC, estrategia ASC`,
+        [empresaId, dias]
+      );
+
+      const totales = await query(
+        `SELECT
+           COUNT(*)::int AS total,
+           COUNT(*) FILTER (WHERE estado IN ('sent','queued'))::int AS exitosos,
+           COUNT(*) FILTER (WHERE estado = 'failed')::int AS fallidos,
+           COALESCE(SUM(costo_estimado),0)::numeric AS costo_total
+         FROM marketing_envios_telemetria
+         WHERE empresa_id = $1
+           AND created_at >= NOW() - ($2::text || ' days')::interval`,
+        [empresaId, dias]
+      );
+
+      return res.json({
+        ok: true,
+        periodo_dias: dias,
+        totales: {
+          total: Number(totales?.[0]?.total || 0),
+          exitosos: Number(totales?.[0]?.exitosos || 0),
+          fallidos: Number(totales?.[0]?.fallidos || 0),
+          costo_total: Number(totales?.[0]?.costo_total || 0),
+        },
+        items: (resumen || []).map((r) => ({
+          canal: r.canal,
+          estrategia: r.estrategia,
+          total: Number(r.total || 0),
+          exitosos: Number(r.exitosos || 0),
+          fallidos: Number(r.fallidos || 0),
+          omitidos: Number(r.omitidos || 0),
+          costo_total: Number(r.costo_total || 0),
+        })),
+      });
+    } catch (e) {
+      if (String(e?.message || '').toLowerCase().includes('marketing_envios_telemetria')) {
+        return res.json({ ok: true, periodo_dias: 0, totales: { total: 0, exitosos: 0, fallidos: 0, costo_total: 0 }, items: [] });
+      }
+      console.error(e);
+      return res.status(500).json({ error: 'Error obteniendo telemetría de marketing' });
+    }
+  });
+
   return router;
 }

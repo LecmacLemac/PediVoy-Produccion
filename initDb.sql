@@ -1234,3 +1234,27 @@ VALUES ('admin', '$2a$12$H/YwbDUg6CdKqS3KyK8CdeXE31rkSqGGSG3jL7GbOawPZReTMF9Em',
 SELECT setval('empresas_id_seq', (SELECT MAX(id) FROM empresas));
 SELECT setval('usuarios_id_seq', (SELECT MAX(id) FROM usuarios));
 
+-- =========================================================
+-- 14. TELEMETRÍA MARKETING POR CANAL
+-- =========================================================
+CREATE TABLE IF NOT EXISTS marketing_envios_telemetria (
+  id BIGSERIAL PRIMARY KEY,
+  empresa_id INT NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+  estrategia TEXT NOT NULL,
+  canal TEXT NOT NULL,
+  telefono TEXT,
+  mensaje_hash TEXT,
+  estado TEXT NOT NULL,
+  proveedor TEXT,
+  costo_estimado NUMERIC(12,2),
+  detalle_error TEXT,
+  meta JSONB DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_marketing_tel_empresa_fecha
+  ON marketing_envios_telemetria (empresa_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_marketing_tel_estrategia_canal_fecha
+  ON marketing_envios_telemetria (estrategia, canal, created_at DESC);
+

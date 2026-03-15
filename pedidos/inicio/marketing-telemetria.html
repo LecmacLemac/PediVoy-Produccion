@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Telemetría Marketing - PediVoy</title>
+  <link rel="stylesheet" href="theme-base.css" />
+  <style>
+    :root {
+      --bg: #0b1020;
+      --bg-2: #0f172a;
+      --ink: #f1f5f9;
+      --muted: #94a3b8;
+      --brand: #06b6d4;
+      --ok: #10b981;
+      --bad: #ef4444;
+      --warn: #f59e0b;
+      --surface: rgba(30, 41, 59, 0.75);
+      --border: rgba(148, 163, 184, 0.2);
+      --radius: 12px;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, sans-serif;
+      background: radial-gradient(circle at 20% 10%, rgba(6, 182, 212, 0.08), transparent 30%), var(--bg);
+      color: var(--ink);
+      min-height: 100vh;
+      padding-bottom: 40px;
+    }
+
+    .container { max-width: 1100px; margin: 24px auto; padding: 0 16px; }
+
+    header {
+      position: sticky; top: 0; z-index: 50;
+      background: rgba(15, 23, 42, 0.95);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      padding: 0.8rem 0;
+      margin-bottom: 1rem;
+    }
+    nav { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+    .brand { display:flex; gap:.7rem; align-items:center; font-weight:800; }
+    .brand-dot { width:10px; height:10px; border-radius:999px; background:var(--brand); box-shadow:0 0 10px var(--brand); }
+    .menu { list-style:none; display:flex; gap:1.2rem; margin:0; padding:0; }
+    .menu a { text-decoration:none; color:var(--muted); font-weight:600; }
+    .menu a:hover, .menu a.active { color:var(--ink); }
+
+    .topbar {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+    }
+
+    .title { font-size: 1.35rem; font-weight: 800; }
+    .muted { color: var(--muted); font-size: 0.9rem; }
+
+    .controls {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    select, input, button {
+      background: var(--bg-2);
+      color: var(--ink);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 10px;
+      font: inherit;
+    }
+
+    button {
+      cursor: pointer;
+      background: linear-gradient(180deg, #0ea5b7, #0891b2);
+      border-color: transparent;
+      color: #001018;
+      font-weight: 700;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(160px, 1fr));
+      gap: 10px;
+      margin: 12px 0 16px;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px;
+    }
+
+    .kpi-label { color: var(--muted); font-size: 0.85rem; margin-bottom: 4px; }
+    .kpi-value { font-size: 1.4rem; font-weight: 800; }
+
+    .ok { color: var(--ok); }
+    .bad { color: var(--bad); }
+    .warn { color: var(--warn); }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+
+    th, td {
+      padding: 10px;
+      border-bottom: 1px solid var(--border);
+      text-align: left;
+      font-size: 0.92rem;
+    }
+
+    th { color: var(--muted); font-weight: 700; }
+    tr:last-child td { border-bottom: none; }
+
+    .tag {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 0.78rem;
+      font-weight: 700;
+      border: 1px solid var(--border);
+      background: rgba(15,23,42,0.8);
+    }
+
+    .status {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      margin-right: 6px;
+      vertical-align: middle;
+    }
+
+    .small { font-size: 0.82rem; color: var(--muted); }
+
+    @media (max-width: 900px) {
+      .grid { grid-template-columns: repeat(2, minmax(150px, 1fr)); }
+      table { font-size: 0.86rem; }
+      nav { flex-direction: column; align-items: stretch; }
+      .menu { overflow-x: auto; white-space: nowrap; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <nav class="container">
+      <div class="brand">
+        <div class="brand-dot"></div>
+        MultiEmpresas
+      </div>
+      <ul class="menu">
+        <li><a href="/pedidos/inicio/inicial.html">🚀 Inicio</a></li>
+        <li><a href="/pedidos/dashboard.html">Dashboard</a></li>
+        <li><a href="/pedidos/inicio/marketing.html">Marketing</a></li>
+        <li><a href="/pedidos/inicio/marketing-telemetria.html" class="active">📡 Telemetría</a></li>
+        <li><a href="#" id="logout" style="color: var(--bad)">Salir</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <div class="container">
+    <div class="topbar">
+      <div>
+        <div class="title">📡 Telemetría de Marketing por Canal</div>
+        <div class="muted">Compará WhatsApp vs SMS por estrategia y período.</div>
+      </div>
+      <div class="controls">
+        <label class="small" for="dias">Días</label>
+        <select id="dias">
+          <option value="1">1</option>
+          <option value="7" selected>7</option>
+          <option value="15">15</option>
+          <option value="30">30</option>
+          <option value="60">60</option>
+          <option value="90">90</option>
+        </select>
+
+        <select id="empresa" style="display:none"></select>
+        <button id="btnRefresh">Actualizar</button>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <div class="kpi-label">Total envíos</div>
+        <div class="kpi-value" id="kpiTotal">0</div>
+      </div>
+      <div class="card">
+        <div class="kpi-label">Exitosos</div>
+        <div class="kpi-value ok" id="kpiOk">0</div>
+      </div>
+      <div class="card">
+        <div class="kpi-label">Fallidos</div>
+        <div class="kpi-value bad" id="kpiFail">0</div>
+      </div>
+      <div class="card">
+        <div class="kpi-label">Costo total (ARS)</div>
+        <div class="kpi-value warn" id="kpiCost">$0</div>
+      </div>
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Estrategia</th>
+          <th>Canal</th>
+          <th>Total</th>
+          <th>Exitosos</th>
+          <th>Fallidos</th>
+          <th>Omitidos</th>
+          <th>% éxito</th>
+          <th>Costo ARS</th>
+        </tr>
+      </thead>
+      <tbody id="tbody">
+        <tr><td colspan="8" class="small">Cargando...</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <script>
+    const $ = (s) => document.querySelector(s);
+    const money = (n) => Number(n || 0).toLocaleString('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 2 });
+    const intFmt = (n) => Number(n || 0).toLocaleString('es-AR');
+
+    const authFetch = (url, opts = {}) => {
+      const { headers = {}, ...rest } = opts;
+      return fetch(url, { ...rest, headers, credentials: 'include' });
+    };
+
+    let isSuper = false;
+
+    async function init() {
+      const logout = document.getElementById('logout');
+      if (logout) {
+        logout.addEventListener('click', async (e) => {
+          e.preventDefault();
+          try { await authFetch('/api/logout', { method: 'POST' }); } catch {}
+          window.location.href = '/pedidos/login.html';
+        });
+      }
+
+      const meRes = await authFetch('/api/me');
+      if (meRes.status === 401) return window.location.href = '/pedidos/login.html';
+      const me = await meRes.json();
+      isSuper = String(me?.user?.role || '').toLowerCase() === 'super';
+
+      if (isSuper) {
+        const empSel = $('#empresa');
+        empSel.style.display = 'inline-block';
+        const res = await authFetch('/api/empresas');
+        const empresas = res.ok ? await res.json() : [];
+        empSel.innerHTML = (Array.isArray(empresas) ? empresas : [])
+          .map(e => `<option value="${Number(e.id)}">Empresa #${Number(e.id)} - ${String(e.nombre || '')}</option>`)
+          .join('');
+      }
+
+      $('#btnRefresh').addEventListener('click', load);
+      $('#dias').addEventListener('change', load);
+      $('#empresa').addEventListener('change', load);
+      await load();
+    }
+
+    async function load() {
+      const dias = Number($('#dias').value || 7);
+      const empId = isSuper ? Number($('#empresa')?.value || 0) : 0;
+
+      const qs = new URLSearchParams();
+      qs.set('dias', String(dias));
+      if (isSuper && empId > 0) qs.set('empresa_id', String(empId));
+
+      const res = await authFetch(`/api/setup/marketing/telemetria?${qs.toString()}`);
+      const data = res.ok ? await res.json() : null;
+
+      if (!res.ok || !data?.ok) {
+        $('#tbody').innerHTML = '<tr><td colspan="8" class="small">No se pudo cargar telemetría.</td></tr>';
+        return;
+      }
+
+      const t = data.totales || {};
+      $('#kpiTotal').textContent = intFmt(t.total);
+      $('#kpiOk').textContent = intFmt(t.exitosos);
+      $('#kpiFail').textContent = intFmt(t.fallidos);
+      $('#kpiCost').textContent = money(t.costo_total);
+
+      const items = Array.isArray(data.items) ? data.items : [];
+      if (!items.length) {
+        $('#tbody').innerHTML = '<tr><td colspan="8" class="small">Sin datos en el período seleccionado.</td></tr>';
+        return;
+      }
+
+      $('#tbody').innerHTML = items.map(r => {
+        const total = Number(r.total || 0);
+        const ok = Number(r.exitosos || 0);
+        const ratio = total > 0 ? Math.round((ok / total) * 100) : 0;
+        const dot = ratio >= 70 ? '#10b981' : ratio >= 40 ? '#f59e0b' : '#ef4444';
+        return `
+          <tr>
+            <td>${String(r.estrategia || '-')}</td>
+            <td><span class="tag">${String(r.canal || '-')}</span></td>
+            <td>${intFmt(total)}</td>
+            <td class="ok">${intFmt(r.exitosos)}</td>
+            <td class="bad">${intFmt(r.fallidos)}</td>
+            <td class="warn">${intFmt(r.omitidos)}</td>
+            <td><span class="status" style="background:${dot}"></span>${ratio}%</td>
+            <td>${money(r.costo_total)}</td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    init().catch((e) => {
+      console.error(e);
+      $('#tbody').innerHTML = '<tr><td colspan="8" class="small">Error inicializando vista.</td></tr>';
+    });
+  </script>
+</body>
+</html>

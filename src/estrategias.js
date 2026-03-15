@@ -1,23 +1,163 @@
 // src/estrategias.js
 import { query } from './db.js';
+import { sendSmsViaIfttt } from './services/sms.js';
 
-// Helper interno para encolar mensajes
-async function encolarMensaje(empresaId, telefono, mensaje) {
-  if (!telefono || !mensaje) return;
+let telemetryReady = false;
+let telemetryEnsureTried = false;
+
+async function ensureTelemetryTable() {
+  if (telemetryReady || telemetryEnsureTried) return telemetryReady;
+  telemetryEnsureTried = true;
+  try {
+    await query(`
+      CREATE TABLE IF NOT EXISTS marketing_envios_telemetria (
+        id BIGSERIAL PRIMARY KEY,
+        empresa_id INTEGER NOT NULL,
+        estrategia TEXT NOT NULL,
+        canal TEXT NOT NULL,
+        telefono TEXT,
+        mensaje_hash TEXT,
+        estado TEXT NOT NULL,
+        proveedor TEXT,
+        costo_estimado NUMERIC(12,2),
+        detalle_error TEXT,
+        meta JSONB DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await query('CREATE INDEX IF NOT EXISTS idx_marketing_tel_empresa_fecha ON marketing_envios_telemetria (empresa_id, created_at DESC)');
+    await query('CREATE INDEX IF NOT EXISTS idx_marketing_tel_estrategia_canal_fecha ON marketing_envios_telemetria (estrategia, canal, created_at DESC)');
+    telemetryReady = true;
+  } catch (e) {
+    console.error('[ESTRATEGIAS] TELEMETRY_TABLE_ERROR', e?.message || e);
+    telemetryReady = false;
+  }
+  return telemetryReady;
+}
+
+function shortHash(input) {
+  const s = String(input || '');
+  let h = 0;
+  for (let i = 0; i < s.length; i += 1) h = ((h << 5) - h) + s.charCodeAt(i);
+  return Math.abs(h).toString(16);
+}
+
+async function logTelemetria({ empresaId, estrategia, canal, telefono, mensaje, estado, proveedor = null, costoEstimado = null, detalleError = null, meta = null }) {
+  try {
+    const ok = await ensureTelemetryTable();
+    if (!ok) return;
+    await query(
+      `INSERT INTO marketing_envios_telemetria
+        (empresa_id, estrategia, canal, telefono, mensaje_hash, estado, proveedor, costo_estimado, detalle_error, meta)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb)`,
+      [
+        Number(empresaId),
+        String(estrategia || 'desconocida'),
+        String(canal || 'desconocido'),
+        telefono ? String(telefono).replace(/\D+/g, '') : null,
+        shortHash(mensaje),
+        String(estado || 'unknown'),
+        proveedor ? String(proveedor) : null,
+        Number.isFinite(Number(costoEstimado)) ? Number(costoEstimado) : null,
+        detalleError ? String(detalleError).slice(0, 2000) : null,
+        JSON.stringify(meta || {}),
+      ]
+    );
+  } catch (e) {
+    console.error('[ESTRATEGIAS] TELEMETRY_LOG_ERROR', e?.message || e);
+  }
+}
+
+function normalizeCanal(canal) {
+  const c = String(canal || 'whatsapp').trim().toLowerCase();
+  if (c === 'sms' || c === 'ambos') return c;
+  return 'whatsapp';
+}
+
+function canalIncluyeWhatsApp(canal) {
+  const c = normalizeCanal(canal);
+  return c === 'whatsapp' || c === 'ambos';
+}
+
+function canalIncluyeSms(canal) {
+  const c = normalizeCanal(canal);
+  return c === 'sms' || c === 'ambos';
+}
+
+// Helper interno para encolar mensajes (WhatsApp)
+async function encolarMensajeWhatsapp(empresaId, telefono, mensaje) {
+  if (!telefono || !mensaje) return { queued: false, skipped: true, reason: 'missing_phone_or_message' };
   const tel = String(telefono).replace(/\D+/g, '');
-  
+
   // Anti-Spam: No enviar el mismo mensaje exacto en 24hs
   const duplicado = await query(`
-    SELECT id FROM wpp_outbox 
+    SELECT id FROM wpp_outbox
     WHERE telefono = $1 AND mensaje = $2 AND created_at > (NOW() - INTERVAL '24 hours')
   `, [tel, mensaje]);
-  
-  if (duplicado.length > 0) return;
+
+  if (duplicado.length > 0) return { queued: false, skipped: true, reason: 'duplicate_24h' };
 
   await query(`
     INSERT INTO wpp_outbox (empresa_id, telefono, mensaje, status, created_at)
     VALUES ($1, $2, $3, 'pending', NOW())
   `, [empresaId, tel, mensaje]);
+
+  return { queued: true };
+}
+
+async function enviarPorCanal({ empresaId, estrategia, telefono, mensaje, canal }) {
+  const canalNorm = normalizeCanal(canal);
+
+  if (canalIncluyeWhatsApp(canalNorm)) {
+    const wpp = await encolarMensajeWhatsapp(empresaId, telefono, mensaje);
+    await logTelemetria({
+      empresaId,
+      estrategia,
+      canal: 'whatsapp',
+      telefono,
+      mensaje,
+      estado: wpp?.queued ? 'queued' : (wpp?.skipped ? 'skipped' : 'error'),
+      proveedor: 'whatsapp-web.js',
+      meta: { reason: wpp?.reason || null },
+    });
+  }
+
+  if (canalIncluyeSms(canalNorm)) {
+    const smsEnabled = String(process.env.IFTTT_SMS_ENABLED || '0') === '1';
+    if (!smsEnabled) {
+      await logTelemetria({
+        empresaId,
+        estrategia,
+        canal: 'sms',
+        telefono,
+        mensaje,
+        estado: 'skipped',
+        proveedor: 'ifttt-webhook',
+        detalleError: 'IFTTT_SMS_ENABLED=0',
+      });
+      return;
+    }
+
+    const smsResp = await sendSmsViaIfttt({ phone: telefono, message: mensaje });
+    const ok = !!smsResp?.ok;
+    const skipped = !!smsResp?.skipped;
+    await logTelemetria({
+      empresaId,
+      estrategia,
+      canal: 'sms',
+      telefono,
+      mensaje,
+      estado: ok ? 'sent' : (skipped ? 'skipped' : 'failed'),
+      proveedor: 'ifttt-webhook',
+      costoEstimado: ok ? Number(process.env.SMS_COST_ARS || 0) : null,
+      detalleError: ok ? null : (smsResp?.error || smsResp?.reason || `status ${smsResp?.status || 'n/a'}`),
+      meta: { status: smsResp?.status || null },
+    });
+
+    if (!ok && !skipped) {
+      console.error('[ESTRATEGIAS] SMS.NOTIFY.ERROR', smsResp?.error || `status ${smsResp?.status || 'n/a'}`);
+    }
+  }
 }
 
 // Helper para obtener configuración
@@ -35,15 +175,15 @@ export async function ejecutarEstrategiaVecinos({ pedidoId, empresaId }) {
   if (!config.vecinos_activado) return;
 
   const pRows = await query(`
-    SELECT pe.latitud, pe.longitud 
-    FROM pedidos p 
-    JOIN puntos_entrega pe ON p.punto_entrega_id = pe.id 
+    SELECT pe.latitud, pe.longitud
+    FROM pedidos p
+    JOIN puntos_entrega pe ON p.punto_entrega_id = pe.id
     WHERE p.id = $1`, [pedidoId]);
-  
+
   const centro = pRows[0];
   if (!centro || !centro.latitud) return;
 
-  const radio = config.vecinos_radio || 200; 
+  const radio = config.vecinos_radio || 200;
   const diasSinCompra = config.vecinos_dias || 7;
 
   const vecinos = await query(`
@@ -57,17 +197,23 @@ export async function ejecutarEstrategiaVecinos({ pedidoId, empresaId }) {
         $4
       )
       AND NOT EXISTS (
-        SELECT 1 FROM pedidos p 
-        WHERE p.punto_entrega_id = pe.id 
+        SELECT 1 FROM pedidos p
+        WHERE p.punto_entrega_id = pe.id
           AND p.fecha > NOW() - INTERVAL '${diasSinCompra} days'
       )
     LIMIT 5
   `, [empresaId, centro.longitud, centro.latitud, radio]);
 
   for (const v of vecinos) {
-    let msg = config.vecinos_mensaje || "Hola {cliente} 👋, el camión está en tu cuadra. Avisame si te dejo algo!";
+    let msg = config.vecinos_mensaje || 'Hola {cliente} 👋, el camión está en tu cuadra. Avisame si te dejo algo!';
     msg = msg.replace('{cliente}', v.cliente);
-    await encolarMensaje(empresaId, v.telefono, msg);
+    await enviarPorCanal({
+      empresaId,
+      estrategia: 'vecinos',
+      telefono: v.telefono,
+      mensaje: msg,
+      canal: config.vecinos_canal || 'whatsapp',
+    });
   }
 }
 
@@ -78,7 +224,7 @@ export async function ejecutarEstrategiaVecinos({ pedidoId, empresaId }) {
 export async function ejecutarReposicionPredictiva() {
   // Iteramos todas las empresas que tengan esto activo
   const empresas = await query(`
-    SELECT id, config_estrategias FROM empresas 
+    SELECT id, config_estrategias FROM empresas
     WHERE config_estrategias->>'predictivo_activado' = 'true'
   `);
 
@@ -89,13 +235,13 @@ export async function ejecutarReposicionPredictiva() {
     // Lógica SQL: Clientes cuyo (Ultima Fecha + Promedio Consumo) es aprox MAÑANA
     const clientes = await query(`
       WITH consumo AS (
-        SELECT 
+        SELECT
           punto_entrega_id,
           AVG(EXTRACT(DAY FROM (fecha - lag_fecha))) as dias_promedio
         FROM (
-          SELECT punto_entrega_id, fecha, 
+          SELECT punto_entrega_id, fecha,
                  LAG(fecha) OVER (PARTITION BY punto_entrega_id ORDER BY fecha) as lag_fecha
-          FROM pedidos 
+          FROM pedidos
           WHERE estado = 'entregado' AND empresa_id = $1
         ) sub
         GROUP BY 1 HAVING COUNT(*) >= 3
@@ -111,9 +257,15 @@ export async function ejecutarReposicionPredictiva() {
     `, [empresaId]);
 
     for (const c of clientes) {
-      let msg = config.predictivo_mensaje || "Hola {cliente}, parece que te queda poca agua. ¿Te llevo mañana?";
+      let msg = config.predictivo_mensaje || 'Hola {cliente}, parece que te queda poca agua. ¿Te llevo mañana?';
       msg = msg.replace('{cliente}', c.cliente);
-      await encolarMensaje(empresaId, c.telefono, msg);
+      await enviarPorCanal({
+        empresaId,
+        estrategia: 'predictivo',
+        telefono: c.telefono,
+        mensaje: msg,
+        canal: config.predictivo_canal || 'whatsapp',
+      });
     }
   }
 }
@@ -199,7 +351,13 @@ export async function ejecutarCampaniaClima() {
 
     for (const c of clientes) {
       const msg = String(mensajeBase).replace('{cliente}', c.cliente || 'Cliente');
-      await encolarMensaje(empresaId, c.telefono, msg);
+      await enviarPorCanal({
+        empresaId,
+        estrategia: 'clima',
+        telefono: c.telefono,
+        mensaje: msg,
+        canal: config.clima_canal || 'whatsapp',
+      });
     }
   }
 }
@@ -212,16 +370,16 @@ export async function ejecutarCampaniaClima() {
 export async function ejecutarEstrategiaReferidos({ pedidoId, empresaId }) {
   // 1. Obtener configuración de la empresa
   const config = await getConfig(empresaId);
-  
+
   // Si la estrategia no está activada, salimos sin hacer nada
   if (!config.referidos_activado) return;
 
   // 2. Obtener datos del pedido, cliente y dominio de la empresa
   const rows = await query(`
-    SELECT 
-        pe.cliente, 
-        pe.telefono, 
-        e.landing_slug, 
+    SELECT
+        pe.cliente,
+        pe.telefono,
+        e.landing_slug,
         e.landing_domain
     FROM pedidos p
     JOIN puntos_entrega pe ON p.punto_entrega_id = pe.id
@@ -235,29 +393,32 @@ export async function ejecutarEstrategiaReferidos({ pedidoId, empresaId }) {
 
   // 3. Construir la URL del link (Host)
   // Prioridad: Dominio propio > Fallback genérico
-  let host = data.landing_domain || 'https://pedivoy.com'; // Ajustá el dominio fallback al tuyo
-  
+  let host = data.landing_domain || 'https://pedivoy.com';
+
   // Aseguramos que empiece con https
-  if (!host.startsWith('http')) host = 'https://' + host;
+  if (!host.startsWith('http')) host = `https://${host}`;
 
   // 4. Generar el Link Único
-  // El código de referido será "VECINO-" seguido del ID de este pedido.
   const link = `${host}/?ref=VECINO-${pedidoId}`;
 
   // 5. Preparar el mensaje
-  // Usamos el mensaje configurado en el panel o uno por defecto
-  let msg = config.referidos_mensaje || 
-    "¡Gracias por tu compra {cliente}! 🌟 Si compartís este link con un vecino, ambos ganan descuento en la próxima: {link}";
-  
-  // Reemplazamos las variables
-  msg = msg.replace('{cliente}', data.cliente || 'Vecino')
-           .replace('{link}', link);
+  let msg = config.referidos_mensaje
+    || '¡Gracias por tu compra {cliente}! 🌟 Si compartís este link con un vecino, ambos ganan descuento en la próxima: {link}';
 
-  // 6. Encolar el mensaje para envío (usa el helper interno de estrategias.js)
-  await encolarMensaje(empresaId, data.telefono, msg);
-  
+  msg = msg.replace('{cliente}', data.cliente || 'Vecino')
+    .replace('{link}', link);
+
+  // 6. Envío por canal configurado
+  await enviarPorCanal({
+    empresaId,
+    estrategia: 'referidos',
+    telefono: data.telefono,
+    mensaje: msg,
+    canal: config.referidos_canal || 'whatsapp',
+  });
+
   if (process.env.DEBUG_ORDERS === '1') {
-      console.log(`[MARKETING] Link de referidos enviado a pedido #${pedidoId}`);
+    console.log(`[MARKETING] Link de referidos enviado a pedido #${pedidoId}`);
   }
 }
 
@@ -282,12 +443,12 @@ export async function ejecutarRecompensaReferido({ pedidoId, empresaId }) {
     if (!rows.length) return;
     const { referido_por_id, nombre_vecino } = rows[0];
 
-    if (!referido_por_id) return; // No es un pedido referido, no hacemos nada.
+    if (!referido_por_id) return;
 
     // 2. Obtener datos del Padrino (quien refirió)
     const padrinoRows = await query(`
-      SELECT id, cliente, telefono 
-      FROM puntos_entrega 
+      SELECT id, cliente, telefono
+      FROM puntos_entrega
       WHERE id = $1 AND empresa_id = $2
     `, [referido_por_id, empresaId]);
 
@@ -295,30 +456,33 @@ export async function ejecutarRecompensaReferido({ pedidoId, empresaId }) {
     const padrino = padrinoRows[0];
 
     // 3. Otorgar Recompensa (Insertar en cliente_recompensas)
-    // El ID del producto de regalo debe estar en la config (ej: un bidón gratis o un descuento)
-    // Si no está configurado, solo avisamos (o no hacemos nada, según prefieras).
-    const idPremio = config.referidos_producto_id ? parseInt(config.referidos_producto_id) : null;
+    const idPremio = config.referidos_producto_id ? parseInt(config.referidos_producto_id, 10) : null;
 
     if (idPremio) {
       await query(`
         INSERT INTO cliente_recompensas (cliente_id, producto_id, cantidad, reclamado, fecha_generado)
         VALUES ($1, $2, 1, FALSE, NOW())
       `, [padrino.id, idPremio]);
-      
+
       if (process.env.DEBUG_ORDERS === '1') {
         console.log(`[MARKETING] Premio otorgado al padrino ${padrino.id} por pedido #${pedidoId}`);
       }
     }
 
-    // 4. Avisar al Padrino por WhatsApp
-    let msg = config.referidos_mensaje_padrino || 
-      "¡Buenas noticias {padrino}! 🥳 Tu vecino {vecino} recibió su primer pedido. Te ganaste un regalo para tu próxima compra por haberlo invitado. ¡Gracias!";
-    
+    // 4. Avisar al Padrino por canal configurado
+    let msg = config.referidos_mensaje_padrino
+      || '¡Buenas noticias {padrino}! 🥳 Tu vecino {vecino} recibió su primer pedido. Te ganaste un regalo para tu próxima compra por haberlo invitado. ¡Gracias!';
+
     msg = msg.replace('{padrino}', padrino.cliente || 'Cliente')
-             .replace('{vecino}', nombre_vecino || 'tu vecino');
+      .replace('{vecino}', nombre_vecino || 'tu vecino');
 
-    await encolarMensaje(empresaId, padrino.telefono, msg);
-
+    await enviarPorCanal({
+      empresaId,
+      estrategia: 'referidos_recompensa',
+      telefono: padrino.telefono,
+      mensaje: msg,
+      canal: config.referidos_canal || 'whatsapp',
+    });
   } catch (e) {
     console.error('[ESTRATEGIAS] Error en ejecutarRecompensaReferido:', e);
   }

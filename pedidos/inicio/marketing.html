@@ -184,6 +184,7 @@
       <ul class="menu">
         <li><a href="inicial.html">🚀 Inicio</a></li>
         <li><a href="/pedidos/dashboard.html">Dashboard</a></li>
+        <li><a href="/pedidos/inicio/marketing-telemetria.html">📡 Telemetría</a></li>
         <li><a href="#" id="logout" style="color: var(--danger)">Salir</a></li>
       </ul>
     </nav>
@@ -214,6 +215,12 @@
                 </label>
             </div>
             <p class="desc">Cuando un pedido sale "En Ruta", avisa a los vecinos cercanos (200m) que no compran hace tiempo.</p>
+            <label>Canal de comunicación:</label>
+            <select id="vecinos_canal">
+                <option value="whatsapp">WhatsApp</option>
+                <option value="sms">SMS</option>
+                <option value="ambos">Ambos</option>
+            </select>
             <details class="help-box">
                 <summary>Cómo funciona esta estrategia</summary>
                 <div class="help-content">
@@ -251,6 +258,12 @@
                 </label>
             </div>
             <p class="desc">Analiza el consumo histórico y envía un mensaje proactivo el día exacto de reposición.</p>
+            <label>Canal de comunicación:</label>
+            <select id="predictivo_canal">
+                <option value="whatsapp">WhatsApp</option>
+                <option value="sms">SMS</option>
+                <option value="ambos">Ambos</option>
+            </select>
             <details class="help-box">
                 <summary>Cómo funciona esta estrategia</summary>
                 <div class="help-content">
@@ -277,6 +290,12 @@
                 </label>
             </div>
             <p class="desc">Cuando entregás un pedido, envía un link único. Si un vecino compra, <b>premiamos al cliente</b>.</p>
+            <label>Canal de comunicación:</label>
+            <select id="referidos_canal">
+                <option value="whatsapp">WhatsApp</option>
+                <option value="sms">SMS</option>
+                <option value="ambos">Ambos</option>
+            </select>
             <details class="help-box">
                 <summary>Cómo funciona esta estrategia</summary>
                 <div class="help-content">
@@ -321,6 +340,12 @@
                 </label>
             </div>
             <p class="desc">Detecta clientes sin compra reciente y dispara una campaña automática para recuperarlos.</p>
+            <label>Canal de comunicación:</label>
+            <select id="reactivacion_canal">
+                <option value="whatsapp">WhatsApp</option>
+                <option value="sms">SMS</option>
+                <option value="ambos">Ambos</option>
+            </select>
             <details class="help-box">
                 <summary>Cómo funciona esta estrategia</summary>
                 <div class="help-content">
@@ -358,6 +383,12 @@
                 </label>
             </div>
             <p class="desc">Después de entregar, hace seguimiento y propone compra complementaria.</p>
+            <label>Canal de comunicación:</label>
+            <select id="postentrega_canal">
+                <option value="whatsapp">WhatsApp</option>
+                <option value="sms">SMS</option>
+                <option value="ambos">Ambos</option>
+            </select>
             <details class="help-box">
                 <summary>Cómo funciona esta estrategia</summary>
                 <div class="help-content">
@@ -395,6 +426,12 @@
                 </label>
             </div>
             <p class="desc">Activa mensajes especiales en días de calor/frío para anticipar demanda.</p>
+            <label>Canal de comunicación:</label>
+            <select id="clima_canal">
+                <option value="whatsapp">WhatsApp</option>
+                <option value="sms">SMS</option>
+                <option value="ambos">Ambos</option>
+            </select>
             <details class="help-box">
                 <summary>Cómo funciona esta estrategia</summary>
                 <div class="help-content">
@@ -435,6 +472,12 @@
                 </label>
             </div>
             <p class="desc">Premia la frecuencia de compra para mejorar retención y recompra.</p>
+            <label>Canal de comunicación:</label>
+            <select id="vip_canal">
+                <option value="whatsapp">WhatsApp</option>
+                <option value="sms">SMS</option>
+                <option value="ambos">Ambos</option>
+            </select>
             <details class="help-box">
                 <summary>Cómo funciona esta estrategia</summary>
                 <div class="help-content">
@@ -573,76 +616,96 @@
               if (el) el.value = (val ?? def ?? '');
             };
             const setCheck = (id, val) => { const el = document.getElementById(id); if(el) el.checked = !!val; };
+            const setCanal = (id, val) => {
+              const el = document.getElementById(id);
+              if (!el) return;
+              const canal = String(val || 'whatsapp').toLowerCase();
+              el.value = (canal === 'sms' || canal === 'ambos' || canal === 'whatsapp') ? canal : 'whatsapp';
+            };
 
             if(res.ok) {
                 const data = await res.json();
 
                 // Populate Form
                 setCheck('vecinos_activado', data.vecinos_activado);
+                setCanal('vecinos_canal', data.vecinos_canal);
                 setVal('vecinos_mensaje', data.vecinos_mensaje, 'Hola {cliente} 👋, el camión está en tu cuadra.');
                 setVal('vecinos_radio', data.vecinos_radio, 200);
                 setVal('vecinos_dias', data.vecinos_dias, 7);
 
                 setCheck('predictivo_activado', data.predictivo_activado);
+                setCanal('predictivo_canal', data.predictivo_canal);
                 setVal('predictivo_mensaje', data.predictivo_mensaje, 'Hola {cliente}, te queda poca agua?');
 
                 setCheck('referidos_activado', data.referidos_activado);
+                setCanal('referidos_canal', data.referidos_canal);
                 setVal('referidos_producto_id', data.referidos_producto_id); // Asigna producto guardado
                 setVal('referidos_cantidad', data.referidos_cantidad, 1);
                 setVal('referidos_mensaje', data.referidos_mensaje, 'Gracias {cliente}! Link: {link}');
                 setVal('referidos_exito_mensaje', data.referidos_exito_mensaje, '¡Ganaste un {producto} gratis!');
 
                 setCheck('reactivacion_activado', data.reactivacion_activado);
+                setCanal('reactivacion_canal', data.reactivacion_canal);
                 setVal('reactivacion_dias', data.reactivacion_dias, 21);
                 setVal('reactivacion_intentos_max', data.reactivacion_intentos_max, 3);
                 setVal('reactivacion_mensaje', data.reactivacion_mensaje, 'Hola {cliente}, hace rato no te pedimos 😊 ¿Te llevo agua hoy?');
 
                 setCheck('postentrega_activado', data.postentrega_activado);
+                setCanal('postentrega_canal', data.postentrega_canal);
                 setVal('postentrega_horas', data.postentrega_horas, 4);
                 setVal('postentrega_producto', data.postentrega_producto, '');
                 setVal('postentrega_mensaje', data.postentrega_mensaje, 'Hola {cliente}, ¿todo bien con la entrega? Si querés te sumo {producto} para mañana.');
 
                 setCheck('clima_activado', data.clima_activado);
+                setCanal('clima_canal', data.clima_canal);
                 setVal('clima_temp_alta', data.clima_temp_alta, 30);
                 setVal('clima_temp_baja', data.clima_temp_baja, 8);
                 setVal('clima_mensaje_calor', data.clima_mensaje_calor, 'Se viene calor hoy 🔥 ¿Te llevo agua antes de que te quedes sin stock?');
                 setVal('clima_mensaje_frio', data.clima_mensaje_frio, 'Hoy está feo para salir 🌧️ Si querés te lo llevo a domicilio.');
 
                 setCheck('vip_activado', data.vip_activado);
+                setCanal('vip_canal', data.vip_canal);
                 setVal('vip_pedidos_min', data.vip_pedidos_min, 10);
                 setVal('vip_beneficio', data.vip_beneficio, '');
                 setVal('vip_mensaje', data.vip_mensaje, '¡{cliente}, ya sos VIP! 🎉 Desde ahora tenés: {beneficio}.');
             } else {
                 // Defaults seguros si no hay config guardada
                 setCheck('vecinos_activado', false);
+                setCanal('vecinos_canal', 'whatsapp');
                 setVal('vecinos_mensaje', null, 'Hola {cliente} 👋, el camión está en tu cuadra.');
                 setVal('vecinos_radio', null, 200);
                 setVal('vecinos_dias', null, 7);
                 setCheck('predictivo_activado', false);
+                setCanal('predictivo_canal', 'whatsapp');
                 setVal('predictivo_mensaje', null, 'Hola {cliente}, te queda poca agua?');
                 setCheck('referidos_activado', false);
+                setCanal('referidos_canal', 'whatsapp');
                 setVal('referidos_producto_id', null, '');
                 setVal('referidos_cantidad', null, 1);
                 setVal('referidos_mensaje', null, 'Gracias {cliente}! Link: {link}');
                 setVal('referidos_exito_mensaje', null, '¡Ganaste un {producto} gratis!');
 
                 setCheck('reactivacion_activado', false);
+                setCanal('reactivacion_canal', 'whatsapp');
                 setVal('reactivacion_dias', null, 21);
                 setVal('reactivacion_intentos_max', null, 3);
                 setVal('reactivacion_mensaje', null, 'Hola {cliente}, hace rato no te pedimos 😊 ¿Te llevo agua hoy?');
 
                 setCheck('postentrega_activado', false);
+                setCanal('postentrega_canal', 'whatsapp');
                 setVal('postentrega_horas', null, 4);
                 setVal('postentrega_producto', null, '');
                 setVal('postentrega_mensaje', null, 'Hola {cliente}, ¿todo bien con la entrega? Si querés te sumo {producto} para mañana.');
 
                 setCheck('clima_activado', false);
+                setCanal('clima_canal', 'whatsapp');
                 setVal('clima_temp_alta', null, 30);
                 setVal('clima_temp_baja', null, 8);
                 setVal('clima_mensaje_calor', null, 'Se viene calor hoy 🔥 ¿Te llevo agua antes de que te quedes sin stock?');
                 setVal('clima_mensaje_frio', null, 'Hoy está feo para salir 🌧️ Si querés te lo llevo a domicilio.');
 
                 setCheck('vip_activado', false);
+                setCanal('vip_canal', 'whatsapp');
                 setVal('vip_pedidos_min', null, 10);
                 setVal('vip_beneficio', null, '');
                 setVal('vip_mensaje', null, '¡{cliente}, ya sos VIP! 🎉 Desde ahora tenés: {beneficio}.');
@@ -672,36 +735,43 @@
               empresa_id: selectedEmpId ? Number(selectedEmpId) : undefined,
 
               vecinos_activado: document.getElementById('vecinos_activado').checked,
+              vecinos_canal: document.getElementById('vecinos_canal').value,
               vecinos_mensaje: document.getElementById('vecinos_mensaje').value.trim(),
               vecinos_radio: toPosInt(document.getElementById('vecinos_radio').value, 200),
               vecinos_dias: toPosInt(document.getElementById('vecinos_dias').value, 7),
               
               predictivo_activado: document.getElementById('predictivo_activado').checked,
+              predictivo_canal: document.getElementById('predictivo_canal').value,
               predictivo_mensaje: document.getElementById('predictivo_mensaje').value.trim(),
               
               referidos_activado: document.getElementById('referidos_activado').checked,
+              referidos_canal: document.getElementById('referidos_canal').value,
               referidos_producto_id: Number.isFinite(referidosProdId) ? referidosProdId : null,
               referidos_cantidad: toPosInt(document.getElementById('referidos_cantidad').value, 1),
               referidos_mensaje: document.getElementById('referidos_mensaje').value.trim(),
               referidos_exito_mensaje: document.getElementById('referidos_exito_mensaje').value.trim(),
 
               reactivacion_activado: document.getElementById('reactivacion_activado').checked,
+              reactivacion_canal: document.getElementById('reactivacion_canal').value,
               reactivacion_dias: toPosInt(document.getElementById('reactivacion_dias').value, 21),
               reactivacion_intentos_max: toPosInt(document.getElementById('reactivacion_intentos_max').value, 3),
               reactivacion_mensaje: document.getElementById('reactivacion_mensaje').value.trim(),
 
               postentrega_activado: document.getElementById('postentrega_activado').checked,
+              postentrega_canal: document.getElementById('postentrega_canal').value,
               postentrega_horas: toPosInt(document.getElementById('postentrega_horas').value, 4),
               postentrega_producto: document.getElementById('postentrega_producto').value.trim(),
               postentrega_mensaje: document.getElementById('postentrega_mensaje').value.trim(),
 
               clima_activado: document.getElementById('clima_activado').checked,
+              clima_canal: document.getElementById('clima_canal').value,
               clima_temp_alta: Number(document.getElementById('clima_temp_alta').value || 30),
               clima_temp_baja: Number(document.getElementById('clima_temp_baja').value || 8),
               clima_mensaje_calor: document.getElementById('clima_mensaje_calor').value.trim(),
               clima_mensaje_frio: document.getElementById('clima_mensaje_frio').value.trim(),
 
               vip_activado: document.getElementById('vip_activado').checked,
+              vip_canal: document.getElementById('vip_canal').value,
               vip_pedidos_min: toPosInt(document.getElementById('vip_pedidos_min').value, 10),
               vip_beneficio: document.getElementById('vip_beneficio').value.trim(),
               vip_mensaje: document.getElementById('vip_mensaje').value.trim()
