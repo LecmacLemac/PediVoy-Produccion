@@ -13,10 +13,12 @@
       --accent: #D82536;    /* Rojo más oscuro para botones/enlaces */
       --bg: #FFF5F6;        /* Fondo suave rosado */
       --card: #ffffff;
-      --text: #2c2c2c;
-      --muted: #777777;
-      --price: #2c2c2c;
-      --shadow: 0 1px 2px 0 rgba(0,0,0,.12);
+      --text: #1f2328;
+      --muted: #5f6773;
+      --price: #1d2128;
+      --stroke-soft: #f1c9cd;
+      --shadow: 0 1px 2px 0 rgba(0,0,0,.10);
+      --shadow-soft: 0 10px 26px -18px rgba(0,0,0,.35);
       --container: 1200px;
     }
     
@@ -150,14 +152,15 @@
     }
 
     .banner {
-      background: linear-gradient(90deg, #ffe5e7, #ffffff);
-      border-radius: 8px;
-      padding: 20px 24px;
+      background: linear-gradient(90deg, #ffd9dd 0%, #fff4f5 42%, #ffffff 100%);
+      border-radius: 12px;
+      padding: 22px 26px;
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 14px;
-      box-shadow: var(--shadow);
+      border: 1px solid var(--stroke-soft);
+      box-shadow: var(--shadow-soft);
     }
 
     .banner-content {
@@ -168,15 +171,16 @@
     }
 
     .banner-title {
-      font-size: 1.8rem;
-      font-weight: 500;
-      color: #ffffff;
-      text-shadow: 0 1px 2px rgba(0,0,0,0.2);
+      font-size: 1.9rem;
+      font-weight: 700;
+      line-height: 1.1;
+      color: #9f1024;
+      letter-spacing: -0.02em;
     }
 
     .banner-sub {
-      font-size: 0.95rem;
-      color: #2c2c2c;
+      font-size: 1rem;
+      color: #2d3440;
     }
 
     .banner-cta {
@@ -188,12 +192,13 @@
     }
 
     .badge-zone {
-      font-size: 0.75rem;
-      background: #ffe5e7;
-      padding: 4px 8px;
+      font-size: 0.76rem;
+      background: #fff;
+      padding: 5px 9px;
       border-radius: 999px;
-      border: 1px solid rgba(0,0,0,.05);
-      color: #b11f32;
+      border: 1px solid #f1c7cb;
+      color: #9b2030;
+      font-weight: 500;
     }
 
     .banner-picto {
@@ -219,20 +224,21 @@
     }
 
     .sort-select {
-      border: 1px solid #f3bbc0;
-      border-radius: 6px;
+      border: 1px solid #efc4c9;
+      border-radius: 8px;
       padding: 8px 10px;
       background: #fff;
-      color: #333;
+      color: #2c3440;
       min-width: 210px;
+      font-weight: 500;
     }
 
     .kpi-line {
       font-size: 0.82rem;
-      color: #777;
+      color: #5c6572;
       background: #fff;
-      border: 1px solid #f3bbc0;
-      border-radius: 6px;
+      border: 1px solid #efc4c9;
+      border-radius: 8px;
       padding: 8px 10px;
     }
 
@@ -268,19 +274,22 @@
     }
 
     .store-title {
-      font-size: 1.5rem;
-      font-weight: 300;
-      color: #333;
+      font-size: 1.45rem;
+      font-weight: 500;
+      letter-spacing: -0.01em;
+      color: #232833;
     }
 
     .store-tag { 
-      background: var(--primary);
-      color: #fff;
-      font-size: 0.7rem;
-      padding: 2px 6px; 
-      border-radius: 3px;
+      background: #fff;
+      color: #b11f32;
+      font-size: 0.68rem;
+      padding: 3px 7px; 
+      border-radius: 999px;
+      border: 1px solid #f1c7cb;
       font-weight: 700;
       text-transform: uppercase;
+      letter-spacing: .03em;
     }
 
     .visit-link {
@@ -293,6 +302,8 @@
     }
     .visit-link:hover {
       color: #b11f32;
+      text-decoration: underline;
+      text-underline-offset: 2px;
     }
 
     /* --- PRODUCTOS --- */
@@ -304,18 +315,20 @@
 
     .prod-card {
       background: var(--card);
-      border-radius: 4px;
+      border-radius: 10px;
+      border: 1px solid #f4d7da;
       box-shadow: var(--shadow);
       overflow: hidden;
       cursor: pointer;
       display: flex;
       flex-direction: column;
-      transition: transform 0.1s ease, box-shadow 0.1s ease;
+      transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease;
     }
 
     .prod-card:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 4px 12px rgba(0,0,0,.12);
+      transform: translateY(-3px);
+      border-color: #efb5bc;
+      box-shadow: 0 10px 24px -14px rgba(0,0,0,.45);
     }
 
     .prod-img-container {
@@ -334,10 +347,10 @@
     }
 
     .prod-body {
-      padding: 10px 12px 12px;
+      padding: 12px 13px 13px;
       display: flex;
       flex-direction: column;
-      gap: 4px;
+      gap: 6px;
     }
 
     .prod-price-area {
@@ -347,9 +360,10 @@
     }
 
     .prod-price {
-      font-size: 1.4rem;
-      font-weight: 500;
+      font-size: 1.42rem;
+      font-weight: 700;
       color: var(--price);
+      letter-spacing: -0.01em;
     }
 
     .prod-discount {
@@ -362,39 +376,43 @@
     }
 
     .prod-title {
-      font-size: 0.9rem;
-      color: #333;
-      min-height: 2.4em;
+      font-size: 0.93rem;
+      color: #2f3642;
+      line-height: 1.35;
+      min-height: 2.6em;
     }
 
     .shipping-tag {
-      font-size: 0.8rem;
-      color: var(--primary);
-      background: #ffe5e7;
-      margin-top: 4px;
-      padding: 2px 4px;
-      border-radius: 3px;
+      font-size: 0.79rem;
+      color: #b11f32;
+      background: #fff2f4;
+      margin-top: 2px;
+      padding: 3px 6px;
+      border-radius: 999px;
+      border: 1px solid #f2c8cd;
       display: inline-block;
+      width: fit-content;
     }
 
     .btn-buy-overlay {
       margin-top: 8px;
       display: block;
       width: 100%;
-      border-radius: 4px;
-      padding: 6px 0;
-      background: var(--accent);
+      border-radius: 7px;
+      padding: 8px 0;
+      background: linear-gradient(180deg, #e23041 0%, #c91f34 100%);
       color: #fff;
       border: none;
       text-align: center;
       text-decoration: none;
-      font-size: 0.85rem;
-      font-weight: 500;
-      transition: background 0.2s;
+      font-size: 0.86rem;
+      font-weight: 600;
+      transition: transform 0.16s ease, filter 0.16s ease;
     }
 
     .btn-buy-overlay:hover {
-      background: #b11f32;
+      transform: translateY(-1px);
+      filter: brightness(1.04);
     }
 
     @keyframes spin {
