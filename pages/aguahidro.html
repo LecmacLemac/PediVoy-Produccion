@@ -10,6 +10,9 @@
   <meta property="og:title" content="AguaHidro – Tu agua, sin vueltas">
   <meta property="og:description" content="Pedí agua a domicilio con un toque. Entregas por zona, pagos simples y seguimiento del pedido.">
   <meta property="og:type" content="website">
+  <meta property="og:url" content="https://www.aguahidro.com.ar/pages/aguahidro.html">
+  <meta property="og:image" content="https://www.aguahidro.com.ar/pedidos/img/PV.jpg">
+  <meta property="og:image:alt" content="AguaHidro">
   
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' x2='1'%3E%3Cstop stop-color='%2306b6d4'/%3E%3Cstop offset='.6' stop-color='%2315aabf'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpath fill='url(%23g)' d='M32 4C22 18 10 26 10 38a22 22 0 1 0 44 0c0-12-12-20-22-34z'/%3E%3C/svg%3E">
   
@@ -319,6 +322,19 @@
       setTimeout(() => el.classList.remove('show'), 3000);
     }
 
+    function sanitizeText(value) {
+      return String(value ?? '');
+    }
+
+    function sanitizeUrl(url, fallback = '') {
+      const raw = String(url || '').trim();
+      if (!raw) return fallback;
+      if (raw.startsWith('/')) return raw;
+      if (/^https?:\/\//i.test(raw)) return raw;
+      if (/^data:image\//i.test(raw)) return raw;
+      return fallback;
+    }
+
     // --- 1. INICIALIZACIÓN (IDENTIDAD DE EMPRESA) ---
     async function initIdentity() {
       document.getElementById('year').textContent = new Date().getFullYear();
@@ -354,51 +370,75 @@
         // Importante: Asegurate de tener productos con "mostrar_en_landing = true" en la base de datos
         const res = await fetch(`/public/productos?empresa_id=${EMPRESA_ID}&scope=landing`);
         if (!res.ok) throw new Error('Error API');
-        
+
         const productos = await res.json();
         const container = document.getElementById('comboGrid');
+        container.innerHTML = '';
 
         if (!productos || !productos.length) {
-          container.innerHTML = `
-            <div style="text-align:center; color:var(--muted); grid-column:1/-1; padding: 2rem;">
-              <p>Por el momento no hay promociones destacadas.</p>
-              <a href="/pedidos/" class="btn btn-ghost">Ver Catálogo Completo</a>
-            </div>`;
+          const wrap = document.createElement('div');
+          wrap.style.cssText = 'text-align:center; color:var(--muted); grid-column:1/-1; padding: 2rem;';
+          const p = document.createElement('p');
+          p.textContent = 'Por el momento no hay promociones destacadas.';
+          const a = document.createElement('a');
+          a.href = '/pedidos/';
+          a.className = 'btn btn-ghost';
+          a.textContent = 'Ver Catálogo Completo';
+          wrap.append(p, a);
+          container.appendChild(wrap);
           return;
         }
 
-        container.innerHTML = productos.map(p => {
-          const isPopular = p.etiqueta ? 'popular' : '';
-          const badge = p.etiqueta ? `<div class="badge-pop">${p.etiqueta}</div>` : '';
-          
-          // Imagen con fallback SVG para que no se rompa
-          const fallbackSvg = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 120'%3E%3Crect width='100%25' height='100%25' fill='%230f1733'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' fill='%231e293b' font-size='40'%3E💧%3C/text%3E%3C/svg%3E";
-          const imgUrl = p.imagen_promo || p.imagen || fallbackSvg;
+        const fallbackSvg = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 120'%3E%3Crect width='100%25' height='100%25' fill='%230f1733'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' fill='%231e293b' font-size='40'%3E💧%3C/text%3E%3C/svg%3E";
 
-          // Features desde la descripción (separada por saltos de línea)
-          const features = (p.descripcion || '').split('\n')
-            .map(l => l.trim())
-            .filter(l => l.length > 0)
-            .map(l => `<li>${l}</li>`)
-            .join('');
+        productos.forEach((p) => {
+          const card = document.createElement('div');
+          card.className = `price-card ${p.etiqueta ? 'popular' : ''}`.trim();
 
-          const defaultFeatures = '<li>Calidad Garantizada</li><li>Envío a Domicilio</li>';
+          if (p.etiqueta) {
+            const badge = document.createElement('div');
+            badge.className = 'badge-pop';
+            badge.textContent = sanitizeText(p.etiqueta);
+            card.appendChild(badge);
+          }
 
-          return `
-            <div class="price-card ${isPopular}">
-              ${badge}
-              <img src="${imgUrl}" alt="${p.nombre}" class="promo-img" loading="lazy">
-              <h3>${p.nombre}</h3>
-              <div class="price">${ARS.format(p.precio)}</div>
-              <ul class="features-list">
-                ${features || defaultFeatures}
-              </ul>
-              <a href="/pedidos/index.html?add=${p.id}" class="btn ${p.etiqueta ? 'btn-primary' : 'btn-ghost'}" style="width:100%">
-                Pedir Ahora
-              </a>
-            </div>
-          `;
-        }).join('');
+          const img = document.createElement('img');
+          img.className = 'promo-img';
+          img.loading = 'lazy';
+          img.src = sanitizeUrl(p.imagen_promo || p.imagen, fallbackSvg);
+          img.alt = sanitizeText(p.nombre || 'Promoción');
+          card.appendChild(img);
+
+          const h3 = document.createElement('h3');
+          h3.textContent = sanitizeText(p.nombre || 'Combo');
+          card.appendChild(h3);
+
+          const price = document.createElement('div');
+          price.className = 'price';
+          price.textContent = ARS.format(Number(p.precio) || 0);
+          card.appendChild(price);
+
+          const ul = document.createElement('ul');
+          ul.className = 'features-list';
+
+          const lines = String(p.descripcion || '').split('\n').map(l => l.trim()).filter(Boolean);
+          const features = lines.length ? lines : ['Calidad Garantizada', 'Envío a Domicilio'];
+          features.forEach((line) => {
+            const li = document.createElement('li');
+            li.textContent = sanitizeText(line);
+            ul.appendChild(li);
+          });
+          card.appendChild(ul);
+
+          const buy = document.createElement('a');
+          buy.href = `/pedidos/index.html?empresa_id=${encodeURIComponent(EMPRESA_ID)}&add=${encodeURIComponent(p.id)}`;
+          buy.className = `btn ${p.etiqueta ? 'btn-primary' : 'btn-ghost'}`;
+          buy.style.width = '100%';
+          buy.textContent = 'Pedir Ahora';
+          card.appendChild(buy);
+
+          container.appendChild(card);
+        });
 
       } catch (e) {
         console.error("Error cargando combos:", e);
