@@ -606,7 +606,7 @@
     // Cargar Configuración
     async function loadConfig(empresaId) {
         try {
-            const url = empresaId ? `/api/marketing/config?empresa_id=${empresaId}` : '/api/marketing/config';
+            const url = empresaId ? `/api/setup/marketing/config?empresa_id=${empresaId}` : '/api/setup/marketing/config';
 
             const res = await authFetch(url);
             
@@ -777,7 +777,7 @@
               vip_mensaje: document.getElementById('vip_mensaje').value.trim()
           };
 
-          const res = await authFetch('/api/marketing/config', {
+          const res = await authFetch('/api/setup/marketing/config', {
               method: 'PUT',
               headers: {
                   'Content-Type': 'application/json'

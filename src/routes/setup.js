@@ -156,7 +156,9 @@ export function createSetupRouter(deps) {
       const raw = fromBody ? req?.body?.empresa_id : req?.query?.empresa_id;
       const eid = Number(raw);
       if (Number.isFinite(eid) && eid > 0) return eid;
-      return null;
+      // Fallback seguro: si no envían empresa_id, usar la empresa del token
+      // (evita que acciones simples del panel fallen silenciosamente para super admin).
+      return Number.isFinite(ownEmpresaId) && ownEmpresaId > 0 ? ownEmpresaId : null;
     }
 
     return Number.isFinite(ownEmpresaId) && ownEmpresaId > 0 ? ownEmpresaId : null;
@@ -2904,6 +2906,115 @@ export function createSetupRouter(deps) {
     } catch (e) {
       console.error(e);
       return res.status(500).json({ error: 'Error obteniendo alertas de incidencias' });
+    }
+  });
+
+  // GET /api/setup/marketing/config
+  router.get('/marketing/config', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req);
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+
+      const rows = await query(
+        `SELECT COALESCE(config_estrategias, '{}'::jsonb) AS config
+         FROM empresas
+         WHERE id=$1
+         LIMIT 1`,
+        [empresaId]
+      );
+
+      return res.json(rows?.[0]?.config || {});
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error obteniendo configuración de marketing' });
+    }
+  });
+
+  // PUT /api/setup/marketing/config
+  router.put('/marketing/config', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+
+      const b = req.body || {};
+      const str = (v, d = '') => {
+        const s = String(v ?? d).trim();
+        return s;
+      };
+      const bool = (v) => !!v;
+      const posInt = (v, d) => {
+        const n = Number.parseInt(v, 10);
+        return Number.isFinite(n) && n > 0 ? n : d;
+      };
+      const num = (v, d) => {
+        const n = Number(v);
+        return Number.isFinite(n) ? n : d;
+      };
+      const canal = (v) => {
+        const c = str(v, 'whatsapp').toLowerCase();
+        return (c === 'whatsapp' || c === 'sms' || c === 'ambos') ? c : 'whatsapp';
+      };
+
+      const referidosProductoRaw = b.referidos_producto_id;
+      const referidosProductoId = (referidosProductoRaw === null || referidosProductoRaw === undefined || referidosProductoRaw === '')
+        ? null
+        : Number.parseInt(referidosProductoRaw, 10);
+
+      const config = {
+        vecinos_activado: bool(b.vecinos_activado),
+        vecinos_canal: canal(b.vecinos_canal),
+        vecinos_mensaje: str(b.vecinos_mensaje, 'Hola {cliente} 👋, el camión está en tu cuadra. Avisame si te dejo algo!'),
+        vecinos_radio: posInt(b.vecinos_radio, 200),
+        vecinos_dias: posInt(b.vecinos_dias, 7),
+
+        predictivo_activado: bool(b.predictivo_activado),
+        predictivo_canal: canal(b.predictivo_canal),
+        predictivo_mensaje: str(b.predictivo_mensaje, 'Hola {cliente}, calculo que te queda poca agua. ¿Te llevo mañana?'),
+
+        referidos_activado: bool(b.referidos_activado),
+        referidos_canal: canal(b.referidos_canal),
+        referidos_producto_id: Number.isFinite(referidosProductoId) && referidosProductoId > 0 ? referidosProductoId : null,
+        referidos_cantidad: posInt(b.referidos_cantidad, 1),
+        referidos_mensaje: str(b.referidos_mensaje, 'Gracias {cliente}! Link: {link}'),
+        referidos_exito_mensaje: str(b.referidos_exito_mensaje, '¡Ganaste un {producto} gratis! Se agrega a tu próximo pedido.'),
+
+        reactivacion_activado: bool(b.reactivacion_activado),
+        reactivacion_canal: canal(b.reactivacion_canal),
+        reactivacion_dias: posInt(b.reactivacion_dias, 21),
+        reactivacion_intentos_max: posInt(b.reactivacion_intentos_max, 3),
+        reactivacion_mensaje: str(b.reactivacion_mensaje, 'Hola {cliente}, hace rato no te pedimos 😊 ¿Te llevo agua hoy?'),
+
+        postentrega_activado: bool(b.postentrega_activado),
+        postentrega_canal: canal(b.postentrega_canal),
+        postentrega_horas: posInt(b.postentrega_horas, 4),
+        postentrega_producto: str(b.postentrega_producto, ''),
+        postentrega_mensaje: str(b.postentrega_mensaje, 'Hola {cliente}, ¿todo bien con la entrega? Si querés te sumo {producto} para mañana.'),
+
+        clima_activado: bool(b.clima_activado),
+        clima_canal: canal(b.clima_canal),
+        clima_temp_alta: num(b.clima_temp_alta, 30),
+        clima_temp_baja: num(b.clima_temp_baja, 8),
+        clima_mensaje_calor: str(b.clima_mensaje_calor, 'Se viene calor hoy 🔥 ¿Te llevo agua antes de que te quedes sin stock?'),
+        clima_mensaje_frio: str(b.clima_mensaje_frio, 'Hoy está feo para salir 🌧️ Si querés te lo llevo a domicilio.'),
+
+        vip_activado: bool(b.vip_activado),
+        vip_canal: canal(b.vip_canal),
+        vip_pedidos_min: posInt(b.vip_pedidos_min, 10),
+        vip_beneficio: str(b.vip_beneficio, ''),
+        vip_mensaje: str(b.vip_mensaje, '¡{cliente}, ya sos VIP! 🎉 Desde ahora tenés: {beneficio}.'),
+      };
+
+      await query(
+        `UPDATE empresas
+         SET config_estrategias = $1
+         WHERE id = $2`,
+        [JSON.stringify(config), empresaId]
+      );
+
+      return res.json({ ok: true, config });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error guardando configuración de marketing' });
     }
   });
 
