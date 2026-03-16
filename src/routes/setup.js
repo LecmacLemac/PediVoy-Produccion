@@ -3018,6 +3018,105 @@ export function createSetupRouter(deps) {
     }
   });
 
+  // GET /api/setup/marketing/detalle
+  router.get('/marketing/detalle', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req);
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+
+      const dias = Math.min(Math.max(Number(req.query?.dias || 7), 1), 90);
+      const limit = Math.min(Math.max(Number(req.query?.limit || 150), 1), 1000);
+      const ventanaHoras = Math.min(Math.max(Number(req.query?.ventana_horas || 72), 1), 24 * 14);
+
+      const rows = await query(
+        `SELECT
+           t.id,
+           t.created_at,
+           t.estrategia,
+           t.canal,
+           t.estado,
+           t.telefono,
+           t.proveedor,
+           t.costo_estimado,
+           t.detalle_error,
+           t.meta,
+           COALESCE(pe.id, NULLIF(t.meta->>'cliente_id','')::int) AS cliente_id,
+           COALESCE(pe.cliente, NULLIF(t.meta->>'cliente','')) AS cliente,
+           COALESCE(pe.direccion, NULLIF(t.meta->>'direccion','')) AS direccion,
+           pe.ciudad,
+           COALESCE(pe.latitud, NULLIF(t.meta->>'latitud','')::numeric) AS cliente_lat,
+           COALESCE(pe.longitud, NULLIF(t.meta->>'longitud','')::numeric) AS cliente_lng,
+           conv.pedido_id AS conversion_pedido_id,
+           conv.fecha AS conversion_fecha,
+           CASE WHEN conv.pedido_id IS NULL THEN FALSE ELSE TRUE END AS convirtio
+         FROM marketing_envios_telemetria t
+         LEFT JOIN LATERAL (
+           SELECT p.id, p.cliente, p.direccion, p.ciudad, p.latitud, p.longitud
+           FROM puntos_entrega p
+           WHERE p.empresa_id = t.empresa_id
+             AND (
+               (NULLIF(t.meta->>'cliente_id','') IS NOT NULL AND p.id = NULLIF(t.meta->>'cliente_id','')::int)
+               OR regexp_replace(COALESCE(p.telefono, ''), '\\D', '', 'g') = regexp_replace(COALESCE(t.telefono, ''), '\\D', '', 'g')
+               OR right(regexp_replace(COALESCE(p.telefono, ''), '\\D', '', 'g'), 8) = right(regexp_replace(COALESCE(t.telefono, ''), '\\D', '', 'g'), 8)
+             )
+           ORDER BY
+             CASE WHEN NULLIF(t.meta->>'cliente_id','') IS NOT NULL AND p.id = NULLIF(t.meta->>'cliente_id','')::int THEN 0 ELSE 1 END,
+             p.id DESC
+           LIMIT 1
+         ) pe ON TRUE
+         LEFT JOIN LATERAL (
+           SELECT p2.id AS pedido_id, p2.fecha
+           FROM pedidos p2
+           WHERE p2.empresa_id = t.empresa_id
+             AND pe.id IS NOT NULL
+             AND p2.punto_entrega_id = pe.id
+             AND p2.fecha >= t.created_at
+             AND p2.fecha <= t.created_at + ($3::text || ' hours')::interval
+           ORDER BY p2.fecha ASC
+           LIMIT 1
+         ) conv ON TRUE
+         WHERE t.empresa_id = $1
+           AND t.created_at >= NOW() - ($2::text || ' days')::interval
+         ORDER BY t.created_at DESC
+         LIMIT $4`,
+        [empresaId, dias, ventanaHoras, limit]
+      );
+
+      return res.json({
+        ok: true,
+        periodo_dias: dias,
+        total: Number(rows?.length || 0),
+        items: (rows || []).map((r) => ({
+          id: Number(r.id),
+          created_at: r.created_at,
+          estrategia: r.estrategia,
+          canal: r.canal,
+          estado: r.estado,
+          telefono: r.telefono,
+          proveedor: r.proveedor,
+          costo_estimado: Number(r.costo_estimado || 0),
+          detalle_error: r.detalle_error,
+          meta: r.meta || {},
+          cliente_id: r.cliente_id ? Number(r.cliente_id) : null,
+          cliente: r.cliente || null,
+          direccion: r.direccion || null,
+          ciudad: r.ciudad || null,
+          cliente_lat: r.cliente_lat == null ? null : Number(r.cliente_lat),
+          cliente_lng: r.cliente_lng == null ? null : Number(r.cliente_lng),
+          convirtio: !!r.convirtio,
+          conversion_pedido_id: r.conversion_pedido_id ? Number(r.conversion_pedido_id) : null,
+          conversion_fecha: r.conversion_fecha || null,
+        })),
+      });
+    } catch (e) {
+      if (String(e?.message || '').toLowerCase().includes('marketing_envios_telemetria')) {
+        return res.json({ ok: true, periodo_dias: 0, total: 0, items: [] });
+      }
+      console.error(e);
+      return res.status(500).json({ error: 'Error obteniendo detalle de marketing' });
+    }
+  });
+
   // GET /api/setup/marketing/telemetria
   router.get('/marketing/telemetria', withAuth, async (req, res) => {
     try {

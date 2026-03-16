@@ -105,7 +105,7 @@ async function encolarMensajeWhatsapp(empresaId, telefono, mensaje) {
   return { queued: true };
 }
 
-async function enviarPorCanal({ empresaId, estrategia, telefono, mensaje, canal }) {
+async function enviarPorCanal({ empresaId, estrategia, telefono, mensaje, canal, meta = null }) {
   const canalNorm = normalizeCanal(canal);
 
   if (canalIncluyeWhatsApp(canalNorm)) {
@@ -118,7 +118,7 @@ async function enviarPorCanal({ empresaId, estrategia, telefono, mensaje, canal 
       mensaje,
       estado: wpp?.queued ? 'queued' : (wpp?.skipped ? 'skipped' : 'error'),
       proveedor: 'whatsapp-web.js',
-      meta: { reason: wpp?.reason || null },
+      meta: { ...(meta || {}), reason: wpp?.reason || null },
     });
   }
 
@@ -134,6 +134,7 @@ async function enviarPorCanal({ empresaId, estrategia, telefono, mensaje, canal 
         estado: 'skipped',
         proveedor: 'ifttt-webhook',
         detalleError: 'IFTTT_SMS_ENABLED=0',
+        meta: meta || {},
       });
       return;
     }
@@ -151,7 +152,7 @@ async function enviarPorCanal({ empresaId, estrategia, telefono, mensaje, canal 
       proveedor: 'ifttt-webhook',
       costoEstimado: ok ? Number(process.env.SMS_COST_ARS || 0) : null,
       detalleError: ok ? null : (smsResp?.error || smsResp?.reason || `status ${smsResp?.status || 'n/a'}`),
-      meta: { status: smsResp?.status || null },
+      meta: { ...(meta || {}), status: smsResp?.status || null },
     });
 
     if (!ok && !skipped) {
@@ -187,7 +188,7 @@ export async function ejecutarEstrategiaVecinos({ pedidoId, empresaId }) {
   const diasSinCompra = config.vecinos_dias || 7;
 
   const vecinos = await query(`
-    SELECT pe.id, pe.cliente, pe.telefono
+    SELECT pe.id, pe.cliente, pe.telefono, pe.direccion, pe.latitud, pe.longitud
     FROM puntos_entrega pe
     WHERE pe.empresa_id = $1
       AND pe.latitud IS NOT NULL
@@ -213,6 +214,13 @@ export async function ejecutarEstrategiaVecinos({ pedidoId, empresaId }) {
       telefono: v.telefono,
       mensaje: msg,
       canal: config.vecinos_canal || 'whatsapp',
+      meta: {
+        cliente_id: v.id || null,
+        cliente: v.cliente || null,
+        direccion: v.direccion || null,
+        latitud: v.latitud == null ? null : Number(v.latitud),
+        longitud: v.longitud == null ? null : Number(v.longitud),
+      },
     });
   }
 }
@@ -246,7 +254,7 @@ export async function ejecutarReposicionPredictiva() {
         ) sub
         GROUP BY 1 HAVING COUNT(*) >= 3
       )
-      SELECT pe.cliente, pe.telefono
+      SELECT pe.id, pe.cliente, pe.telefono, pe.direccion, pe.latitud, pe.longitud
       FROM puntos_entrega pe
       JOIN pedidos p ON p.punto_entrega_id = pe.id
       JOIN consumo c ON c.punto_entrega_id = pe.id
@@ -265,6 +273,13 @@ export async function ejecutarReposicionPredictiva() {
         telefono: c.telefono,
         mensaje: msg,
         canal: config.predictivo_canal || 'whatsapp',
+        meta: {
+          cliente_id: c.id || null,
+          cliente: c.cliente || null,
+          direccion: c.direccion || null,
+          latitud: c.latitud == null ? null : Number(c.latitud),
+          longitud: c.longitud == null ? null : Number(c.longitud),
+        },
       });
     }
   }
@@ -329,7 +344,7 @@ export async function ejecutarCampaniaClima() {
     const limite = Number(config.clima_max_envios ?? 25);
 
     const clientes = await query(`
-      SELECT pe.cliente, pe.telefono
+      SELECT pe.id, pe.cliente, pe.telefono, pe.direccion, pe.latitud, pe.longitud
       FROM puntos_entrega pe
       WHERE pe.empresa_id = $1
         AND pe.telefono IS NOT NULL
@@ -357,6 +372,13 @@ export async function ejecutarCampaniaClima() {
         telefono: c.telefono,
         mensaje: msg,
         canal: config.clima_canal || 'whatsapp',
+        meta: {
+          cliente_id: c.id || null,
+          cliente: c.cliente || null,
+          direccion: c.direccion || null,
+          latitud: c.latitud == null ? null : Number(c.latitud),
+          longitud: c.longitud == null ? null : Number(c.longitud),
+        },
       });
     }
   }
@@ -377,8 +399,12 @@ export async function ejecutarEstrategiaReferidos({ pedidoId, empresaId }) {
   // 2. Obtener datos del pedido, cliente y dominio de la empresa
   const rows = await query(`
     SELECT
+        pe.id,
         pe.cliente,
         pe.telefono,
+        pe.direccion,
+        pe.latitud,
+        pe.longitud,
         e.landing_slug,
         e.landing_domain
     FROM pedidos p
@@ -415,6 +441,13 @@ export async function ejecutarEstrategiaReferidos({ pedidoId, empresaId }) {
     telefono: data.telefono,
     mensaje: msg,
     canal: config.referidos_canal || 'whatsapp',
+    meta: {
+      cliente_id: data.id || null,
+      cliente: data.cliente || null,
+      direccion: data.direccion || null,
+      latitud: data.latitud == null ? null : Number(data.latitud),
+      longitud: data.longitud == null ? null : Number(data.longitud),
+    },
   });
 
   if (process.env.DEBUG_ORDERS === '1') {
@@ -482,6 +515,10 @@ export async function ejecutarRecompensaReferido({ pedidoId, empresaId }) {
       telefono: padrino.telefono,
       mensaje: msg,
       canal: config.referidos_canal || 'whatsapp',
+      meta: {
+        cliente_id: padrino.id || null,
+        cliente: padrino.cliente || null,
+      },
     });
   } catch (e) {
     console.error('[ESTRATEGIAS] Error en ejecutarRecompensaReferido:', e);

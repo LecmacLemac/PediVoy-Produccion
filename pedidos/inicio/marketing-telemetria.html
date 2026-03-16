@@ -5,6 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Telemetría Marketing - PediVoy</title>
   <link rel="stylesheet" href="theme-base.css" />
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+    crossorigin=""
+  />
   <style>
     :root {
       --bg: #0b1020;
@@ -144,6 +150,26 @@
 
     .small { font-size: 0.82rem; color: var(--muted); }
 
+    .map-wrap {
+      margin-top: 16px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+
+    #map {
+      height: 360px;
+      width: 100%;
+      background: #0a0f1d;
+    }
+
+    .section-title {
+      margin: 18px 0 10px;
+      font-size: 1.02rem;
+      font-weight: 800;
+    }
+
     @media (max-width: 900px) {
       .grid { grid-template-columns: repeat(2, minmax(150px, 1fr)); }
       table { font-size: 0.86rem; }
@@ -184,6 +210,14 @@
           <option value="30">30</option>
           <option value="60">60</option>
           <option value="90">90</option>
+        </select>
+
+        <label class="small" for="ventanaHoras">Conversión</label>
+        <select id="ventanaHoras">
+          <option value="24">24h</option>
+          <option value="48">48h</option>
+          <option value="72" selected>72h</option>
+          <option value="168">7 días</option>
         </select>
 
         <select id="empresa" style="display:none"></select>
@@ -227,12 +261,46 @@
         <tr><td colspan="8" class="small">Cargando...</td></tr>
       </tbody>
     </table>
+
+    <div class="section-title">🗺️ Mapa operativo: repartidores + clientes alcanzados</div>
+    <div class="small" style="margin-bottom:8px">Clientes: <span style="color:#22c55e">● verde = convirtió (hizo pedido)</span> · <span style="color:#ef4444">● rojo = no convirtió</span></div>
+    <div class="map-wrap">
+      <div id="map"></div>
+    </div>
+
+    <div class="section-title">📋 Detalle de envíos (últimos eventos)</div>
+    <div class="small" style="margin-bottom:8px">Tip: hacé click en una fila con cliente geolocalizado para centrar el mapa y ver el chofer más cercano.</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Fecha</th>
+          <th>Estrategia</th>
+          <th>Canal</th>
+          <th>Estado</th>
+          <th>Cliente</th>
+          <th>Teléfono</th>
+          <th>Dirección</th>
+          <th>Convirtió</th>
+          <th>Costo</th>
+        </tr>
+      </thead>
+      <tbody id="tbodyDetalle">
+        <tr><td colspan="9" class="small">Cargando detalle...</td></tr>
+      </tbody>
+    </table>
   </div>
 
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
   <script>
     const $ = (s) => document.querySelector(s);
     const money = (n) => Number(n || 0).toLocaleString('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 2 });
     const intFmt = (n) => Number(n || 0).toLocaleString('es-AR');
+    const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const fmtDate = (v) => {
+      const d = new Date(v);
+      if (!Number.isFinite(d.getTime())) return '-';
+      return d.toLocaleString('es-AR');
+    };
 
     const authFetch = (url, opts = {}) => {
       const { headers = {}, ...rest } = opts;
@@ -240,6 +308,145 @@
     };
 
     let isSuper = false;
+    let map;
+    let layerClientes;
+    let layerChoferes;
+    let layerHighlights;
+    let currentDetalleItems = [];
+    let currentTrackItems = [];
+    const clientMarkersByKey = new Map();
+    const driverMarkersByKey = new Map();
+    let refreshTimer = null;
+    let loading = false;
+
+    function ensureMap() {
+      if (map) return;
+      map = L.map('map', { zoomControl: true }).setView([-24.79, -65.41], 12);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '&copy; OpenStreetMap contributors'
+      }).addTo(map);
+      layerClientes = L.layerGroup().addTo(map);
+      layerChoferes = L.layerGroup().addTo(map);
+      layerHighlights = L.layerGroup().addTo(map);
+    }
+
+    function haversineKm(lat1, lng1, lat2, lng2) {
+      const R = 6371;
+      const dLat = (lat2 - lat1) * Math.PI / 180;
+      const dLng = (lng2 - lng1) * Math.PI / 180;
+      const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      return R * c;
+    }
+
+    function buildClientKey(it) {
+      return `${it.cliente_id || ''}|${it.telefono || ''}|${it.cliente_lat}|${it.cliente_lng}`;
+    }
+
+    function buildDriverKey(it) {
+      return String(it.chofer_id || it.pedido_id || 'x');
+    }
+
+    function renderMap(detalleItems = [], trackItems = []) {
+      ensureMap();
+      layerClientes.clearLayers();
+      layerChoferes.clearLayers();
+      layerHighlights.clearLayers();
+      clientMarkersByKey.clear();
+      driverMarkersByKey.clear();
+
+      const bounds = [];
+      const clientsAgg = new Map();
+      for (const it of detalleItems) {
+        if (it.cliente_lat == null || it.cliente_lng == null) continue;
+        const key = buildClientKey(it);
+        const prev = clientsAgg.get(key);
+        if (!prev) clientsAgg.set(key, { ...it, convirtio: !!it.convirtio });
+        else prev.convirtio = !!prev.convirtio || !!it.convirtio;
+      }
+
+      for (const it of clientsAgg.values()) {
+        const ll = [Number(it.cliente_lat), Number(it.cliente_lng)];
+        bounds.push(ll);
+        const okConv = !!it.convirtio;
+        const m = L.circleMarker(ll, {
+          radius: 7,
+          color: okConv ? '#16a34a' : '#dc2626',
+          weight: 2,
+          fillColor: okConv ? '#22c55e' : '#ef4444',
+          fillOpacity: 0.75,
+        }).bindPopup(`<b>Cliente:</b> ${esc(it.cliente || 'N/D')}<br/><b>Dirección:</b> ${esc(it.direccion || 'N/D')}<br/><b>Tel:</b> ${esc(it.telefono || '-')}<br/><b>Conversión:</b> ${okConv ? '✅ Sí' : '❌ No'}`);
+        m.addTo(layerClientes);
+        clientMarkersByKey.set(buildClientKey(it), m);
+      }
+
+      const seenChoferes = new Set();
+      for (const it of trackItems) {
+        if (it.latitud == null || it.longitud == null) continue;
+        const key = buildDriverKey(it);
+        if (seenChoferes.has(key)) continue;
+        seenChoferes.add(key);
+
+        const ll = [Number(it.latitud), Number(it.longitud)];
+        bounds.push(ll);
+        const m = L.marker(ll).bindPopup(`<b>Repartidor:</b> ${esc(it.chofer_nombre || 'Sin nombre')}<br/><b>Pedido:</b> #${esc(it.pedido_id)}<br/><b>Estado:</b> ${esc(it.estado || '-')}`);
+        m.addTo(layerChoferes);
+        driverMarkersByKey.set(key, m);
+      }
+
+      if (bounds.length) map.fitBounds(bounds, { padding: [30, 30] });
+    }
+
+    function focusDetalleItem(rowEl, item) {
+      if (!item || item.cliente_lat == null || item.cliente_lng == null) return;
+      ensureMap();
+      layerHighlights.clearLayers();
+
+      document.querySelectorAll('#tbodyDetalle tr').forEach((tr) => tr.style.outline = 'none');
+      if (rowEl) rowEl.style.outline = '2px solid rgba(6,182,212,0.6)';
+
+      const cLat = Number(item.cliente_lat);
+      const cLng = Number(item.cliente_lng);
+      const cKey = buildClientKey(item);
+      const cMarker = clientMarkersByKey.get(cKey);
+      if (cMarker) cMarker.openPopup();
+
+      let nearest = null;
+      for (const d of currentTrackItems) {
+        if (d.latitud == null || d.longitud == null) continue;
+        const distKm = haversineKm(cLat, cLng, Number(d.latitud), Number(d.longitud));
+        if (!nearest || distKm < nearest.distKm) nearest = { d, distKm };
+      }
+
+      const points = [[cLat, cLng]];
+      L.circleMarker([cLat, cLng], {
+        radius: 10,
+        color: '#22d3ee',
+        weight: 3,
+        fillColor: '#67e8f9',
+        fillOpacity: 0.35,
+      }).addTo(layerHighlights);
+
+      if (nearest) {
+        const dLat = Number(nearest.d.latitud);
+        const dLng = Number(nearest.d.longitud);
+        points.push([dLat, dLng]);
+
+        const dKey = buildDriverKey(nearest.d);
+        const dMarker = driverMarkersByKey.get(dKey);
+        if (dMarker) dMarker.openPopup();
+
+        L.polyline([[cLat, cLng], [dLat, dLng]], {
+          color: '#f59e0b',
+          weight: 3,
+          opacity: 0.9,
+          dashArray: '6,8',
+        }).bindTooltip(`Chofer más cercano: ${esc(nearest.d.chofer_nombre || 'N/D')} · ${nearest.distKm.toFixed(2)} km`, { sticky: true }).addTo(layerHighlights);
+      }
+
+      map.fitBounds(points, { padding: [60, 60], maxZoom: 16 });
+    }
 
     async function init() {
       const logout = document.getElementById('logout');
@@ -268,56 +475,110 @@
 
       $('#btnRefresh').addEventListener('click', load);
       $('#dias').addEventListener('change', load);
+      $('#ventanaHoras').addEventListener('change', load);
       $('#empresa').addEventListener('change', load);
       await load();
+
+      if (refreshTimer) clearInterval(refreshTimer);
+      refreshTimer = setInterval(() => {
+        if (document.hidden) return;
+        load();
+      }, 15000);
     }
 
     async function load() {
+      if (loading) return;
+      loading = true;
       const dias = Number($('#dias').value || 7);
+      const ventanaHoras = Number($('#ventanaHoras')?.value || 72);
       const empId = isSuper ? Number($('#empresa')?.value || 0) : 0;
 
       const qs = new URLSearchParams();
       qs.set('dias', String(dias));
+      qs.set('ventana_horas', String(ventanaHoras));
       if (isSuper && empId > 0) qs.set('empresa_id', String(empId));
 
-      const res = await authFetch(`/api/setup/marketing/telemetria?${qs.toString()}`);
-      const data = res.ok ? await res.json() : null;
+      try {
+      const [resTel, resDet, resTrack] = await Promise.all([
+        authFetch(`/api/setup/marketing/telemetria?${qs.toString()}`),
+        authFetch(`/api/setup/marketing/detalle?${qs.toString()}&limit=250`),
+        authFetch(`/api/track/live?${qs.toString()}`),
+      ]);
 
-      if (!res.ok || !data?.ok) {
+      const data = resTel.ok ? await resTel.json() : null;
+      const detalleData = resDet.ok ? await resDet.json() : null;
+      const trackData = resTrack.ok ? await resTrack.json() : null;
+
+      if (!resTel.ok || !data?.ok) {
         $('#tbody').innerHTML = '<tr><td colspan="8" class="small">No se pudo cargar telemetría.</td></tr>';
-        return;
+      } else {
+        const t = data.totales || {};
+        $('#kpiTotal').textContent = intFmt(t.total);
+        $('#kpiOk').textContent = intFmt(t.exitosos);
+        $('#kpiFail').textContent = intFmt(t.fallidos);
+        $('#kpiCost').textContent = money(t.costo_total);
+
+        const items = Array.isArray(data.items) ? data.items : [];
+        if (!items.length) {
+          $('#tbody').innerHTML = '<tr><td colspan="8" class="small">Sin datos en el período seleccionado.</td></tr>';
+        } else {
+          $('#tbody').innerHTML = items.map(r => {
+            const total = Number(r.total || 0);
+            const ok = Number(r.exitosos || 0);
+            const ratio = total > 0 ? Math.round((ok / total) * 100) : 0;
+            const dot = ratio >= 70 ? '#10b981' : ratio >= 40 ? '#f59e0b' : '#ef4444';
+            return `
+              <tr>
+                <td>${esc(r.estrategia || '-')}</td>
+                <td><span class="tag">${esc(r.canal || '-')}</span></td>
+                <td>${intFmt(total)}</td>
+                <td class="ok">${intFmt(r.exitosos)}</td>
+                <td class="bad">${intFmt(r.fallidos)}</td>
+                <td class="warn">${intFmt(r.omitidos)}</td>
+                <td><span class="status" style="background:${dot}"></span>${ratio}%</td>
+                <td>${money(r.costo_total)}</td>
+              </tr>
+            `;
+          }).join('');
+        }
       }
 
-      const t = data.totales || {};
-      $('#kpiTotal').textContent = intFmt(t.total);
-      $('#kpiOk').textContent = intFmt(t.exitosos);
-      $('#kpiFail').textContent = intFmt(t.fallidos);
-      $('#kpiCost').textContent = money(t.costo_total);
-
-      const items = Array.isArray(data.items) ? data.items : [];
-      if (!items.length) {
-        $('#tbody').innerHTML = '<tr><td colspan="8" class="small">Sin datos en el período seleccionado.</td></tr>';
-        return;
-      }
-
-      $('#tbody').innerHTML = items.map(r => {
-        const total = Number(r.total || 0);
-        const ok = Number(r.exitosos || 0);
-        const ratio = total > 0 ? Math.round((ok / total) * 100) : 0;
-        const dot = ratio >= 70 ? '#10b981' : ratio >= 40 ? '#f59e0b' : '#ef4444';
-        return `
-          <tr>
-            <td>${String(r.estrategia || '-')}</td>
-            <td><span class="tag">${String(r.canal || '-')}</span></td>
-            <td>${intFmt(total)}</td>
-            <td class="ok">${intFmt(r.exitosos)}</td>
-            <td class="bad">${intFmt(r.fallidos)}</td>
-            <td class="warn">${intFmt(r.omitidos)}</td>
-            <td><span class="status" style="background:${dot}"></span>${ratio}%</td>
-            <td>${money(r.costo_total)}</td>
+      const detalleItems = Array.isArray(detalleData?.items) ? detalleData.items : [];
+      currentDetalleItems = detalleItems.slice(0, 250);
+      if (!currentDetalleItems.length) {
+        $('#tbodyDetalle').innerHTML = '<tr><td colspan="9" class="small">Sin detalle de envíos en el período.</td></tr>';
+      } else {
+        $('#tbodyDetalle').innerHTML = currentDetalleItems.map((r, idx) => `
+          <tr data-idx="${idx}" style="cursor:${(r.cliente_lat != null && r.cliente_lng != null) ? 'pointer' : 'default'}">
+            <td>${fmtDate(r.created_at)}</td>
+            <td>${esc(r.estrategia || '-')}</td>
+            <td><span class="tag">${esc(r.canal || '-')}</span></td>
+            <td>${esc(r.estado || '-')}</td>
+            <td>${esc(r.cliente || 'No identificado')}</td>
+            <td>${esc(r.telefono || '-')}</td>
+            <td>${esc(r.direccion || '-')}</td>
+            <td>${r.convirtio ? '✅ Sí' : '❌ No'}</td>
+            <td>${money(r.costo_estimado)}</td>
           </tr>
-        `;
-      }).join('');
+        `).join('');
+
+        document.querySelectorAll('#tbodyDetalle tr[data-idx]').forEach((tr) => {
+          tr.addEventListener('click', () => {
+            const idx = Number(tr.getAttribute('data-idx'));
+            if (!Number.isFinite(idx) || idx < 0 || idx >= currentDetalleItems.length) return;
+            focusDetalleItem(tr, currentDetalleItems[idx]);
+          });
+        });
+      }
+
+      const trackItems = Array.isArray(trackData?.items) ? trackData.items : [];
+      currentTrackItems = trackItems;
+      renderMap(currentDetalleItems, currentTrackItems);
+      } catch (e) {
+        console.error('Error actualizando telemetría:', e);
+      } finally {
+        loading = false;
+      }
     }
 
     init().catch((e) => {
