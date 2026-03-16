@@ -4,6 +4,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import OpenAI from 'openai';
 import { convert as pdfToImgConvert } from 'pdf-img-convert';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import {
   insertarComprobantePg,
   actualizarComprobanteDatosPg,
@@ -23,6 +25,7 @@ const CONFIG = {
 
 const __filename = fileURLToPath(import.meta.url);
 const STORAGE_DIR = path.resolve(process.cwd(), CONFIG.DIR_NAME);
+const execFileAsync = promisify(execFile);
 
 if (!fs.existsSync(STORAGE_DIR)) fs.mkdirSync(STORAGE_DIR, { recursive: true });
 
@@ -92,16 +95,44 @@ async function saveFileToDisk({ buffer, base64, originalName, mimetype }, telefo
   return { absolutePath, relativePath, filename, mimetype, ext, size: data.length };
 }
 
+async function convertPdfFirstPageWithPdftoppm(filePath) {
+  const tmpPrefix = path.join(STORAGE_DIR, `pdf-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  const outPng = `${tmpPrefix}-1.png`;
+
+  try {
+    await execFileAsync('pdftoppm', [
+      '-f', '1',
+      '-singlefile',
+      '-png',
+      '-r', '150',
+      filePath,
+      tmpPrefix
+    ]);
+
+    const raw = await fs.promises.readFile(outPng);
+    return raw.toString('base64');
+  } finally {
+    try { await fs.promises.unlink(outPng); } catch {}
+  }
+}
+
 async function prepareImageForAI(fileData) {
   try {
     // Si es PDF, convertimos primera página a imagen
     if (fileData.mimetype === 'application/pdf' || fileData.ext === 'pdf') {
-      const pages = await pdfToImgConvert(fileData.absolutePath, {
-        width: 1024,
-        page_numbers: [1],
-        base64: true
-      });
-      return pages.length > 0 ? pages[0] : null;
+      try {
+        const pages = await pdfToImgConvert(fileData.absolutePath, {
+          width: 1024,
+          page_numbers: [1],
+          base64: true
+        });
+        if (pages.length > 0) return pages[0];
+      } catch (e) {
+        console.warn('⚠️ pdf-img-convert falló, uso fallback pdftoppm:', e?.message || e);
+      }
+
+      // Fallback robusto por CLI (evita errores de canvas/pdfjs en runtime)
+      return await convertPdfFirstPageWithPdftoppm(fileData.absolutePath);
     }
 
     // Si ya es imagen, la leemos en base64
