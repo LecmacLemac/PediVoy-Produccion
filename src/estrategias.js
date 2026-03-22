@@ -60,7 +60,7 @@ async function logTelemetria({ empresaId, estrategia, canal, telefono, mensaje, 
         proveedor ? String(proveedor) : null,
         Number.isFinite(Number(costoEstimado)) ? Number(costoEstimado) : null,
         detalleError ? String(detalleError).slice(0, 2000) : null,
-        JSON.stringify(meta || {}),
+        JSON.stringify({ ...(meta || {}), mensaje: String(mensaje || '') }),
       ]
     );
   } catch (e) {
