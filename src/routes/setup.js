@@ -3092,6 +3092,15 @@ export function createSetupRouter(deps) {
         import_consent_status: ['granted', 'denied', 'unknown'].includes(String(b.import_consent_status || '').toLowerCase()) ? String(b.import_consent_status).toLowerCase() : 'unknown',
         import_consent_at: str(b.import_consent_at, ''),
         import_descripcion: str(b.import_descripcion, ''),
+
+        launch_canal: canal(b.launch_canal || b.import_canal_objetivo),
+        launch_max_envios: posInt(b.launch_max_envios, 100),
+        launch_frecuencia_horas: posInt(b.launch_frecuencia_horas, 24),
+        launch_mensaje: str(b.launch_mensaje, ''),
+        auto_launch_activado: bool(b.auto_launch_activado),
+        auto_launch_franjas: str(b.auto_launch_franjas, '09:00-12:00,16:00-20:00'),
+        auto_launch_dias: str(b.auto_launch_dias, '1,2,3,4,5,6'),
+        auto_launch_intervalo_min: posInt(b.auto_launch_intervalo_min, 15),
       };
 
       await query(

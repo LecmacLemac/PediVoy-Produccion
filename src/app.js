@@ -47,6 +47,7 @@ export function createApp(deps) {
     ejecutarEstrategiaVecinos,
     ejecutarReposicionPredictiva,
     ejecutarCampaniaClima,
+    ejecutarCampaniaBaseImportadaAuto,
     registrarMovimientosActivosDesdePedido,
 
     // wpp
@@ -312,6 +313,7 @@ export function createApp(deps) {
 
     ejecutarReposicionPredictiva,
     ejecutarCampaniaClima,
+    ejecutarCampaniaBaseImportadaAuto,
 
     withAuth,
     isSuper,

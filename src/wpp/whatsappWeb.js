@@ -21,6 +21,7 @@ export function registerWhatsAppWeb(app, deps) {
     // estrategias (cron)
     ejecutarReposicionPredictiva,
     ejecutarCampaniaClima,
+    ejecutarCampaniaBaseImportadaAuto,
 
     // auth helpers (usados en endpoints /api/whatsapp/*)
     withAuth,
@@ -1253,6 +1254,12 @@ export function registerWhatsAppWeb(app, deps) {
     console.log('[CRON] Ejecutando Campaña por Clima...');
     ejecutarCampaniaClima().catch(err => console.error('[CRON ERROR CLIMA]', err));
   });
+
+  // Campaña base importada automática por franjas (poll liviano)
+  setInterval(() => {
+    if (typeof ejecutarCampaniaBaseImportadaAuto !== 'function') return;
+    ejecutarCampaniaBaseImportadaAuto().catch((err) => console.error('[CRON ERROR BASE_AUTO]', err));
+  }, 15 * 60 * 1000);
 
   const requireCronSecret = (req, res) => {
     const cronSecret = String(process.env.CRON_SECRET || '').trim();

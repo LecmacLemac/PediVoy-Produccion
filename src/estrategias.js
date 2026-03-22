@@ -524,3 +524,143 @@ export async function ejecutarRecompensaReferido({ pedidoId, empresaId }) {
     console.error('[ESTRATEGIAS] Error en ejecutarRecompensaReferido:', e);
   }
 }
+
+function getArgentinaNowParts() {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'America/Argentina/Buenos_Aires',
+    hour12: false,
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).formatToParts(new Date());
+  const map = Object.fromEntries(parts.filter(p => p.type !== 'literal').map(p => [p.type, p.value]));
+  const weekMap = { Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6, Sun: 7 };
+  return {
+    dow: weekMap[map.weekday] || 1,
+    minutes: (Number(map.hour) * 60) + Number(map.minute),
+  };
+}
+
+function parseDiasCsv(raw) {
+  const vals = String(raw || '1,2,3,4,5,6').split(',').map(v => Number(String(v).trim())).filter(v => Number.isFinite(v) && v >= 1 && v <= 7);
+  return vals.length ? new Set(vals) : new Set([1, 2, 3, 4, 5, 6]);
+}
+
+function parseFranjas(raw) {
+  return String(raw || '')
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean)
+    .map((chunk) => {
+      const m = chunk.match(/^(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})$/);
+      if (!m) return null;
+      const from = (Number(m[1]) * 60) + Number(m[2]);
+      const to = (Number(m[3]) * 60) + Number(m[4]);
+      if (from < 0 || from > 1439 || to < 0 || to > 1439 || from === to) return null;
+      return { from, to };
+    })
+    .filter(Boolean);
+}
+
+function estaEnFranja(minutos, franjas) {
+  for (const f of franjas) {
+    if (f.from < f.to && minutos >= f.from && minutos <= f.to) return true;
+    if (f.from > f.to && (minutos >= f.from || minutos <= f.to)) return true; // cruza medianoche
+  }
+  return false;
+}
+
+export async function ejecutarCampaniaBaseImportadaAuto() {
+  try {
+    const empresas = await query(`
+      SELECT id, config_estrategias
+      FROM empresas
+      WHERE config_estrategias->>'auto_launch_activado' = 'true'
+    `);
+
+    const nowAr = getArgentinaNowParts();
+
+    for (const emp of empresas) {
+      const empresaId = Number(emp.id);
+      const cfg = emp.config_estrategias || {};
+      const franjas = parseFranjas(cfg.auto_launch_franjas || '');
+      if (!franjas.length || !estaEnFranja(nowAr.minutes, franjas)) continue;
+
+      const dias = parseDiasCsv(cfg.auto_launch_dias || '1,2,3,4,5,6');
+      if (!dias.has(nowAr.dow)) continue;
+
+      const mensajeTpl = String(cfg.launch_mensaje || '').trim();
+      if (!mensajeTpl) continue;
+
+      const intervaloMin = Math.min(Math.max(Number(cfg.auto_launch_intervalo_min || 15), 5), 240);
+      const reciente = await query(
+        `SELECT 1
+         FROM marketing_envios_telemetria
+         WHERE empresa_id = $1
+           AND estrategia = 'base_importada_auto'
+           AND created_at > NOW() - ($2::text || ' minutes')::interval
+         LIMIT 1`,
+        [empresaId, intervaloMin]
+      );
+      if (reciente.length) continue;
+
+      const canal = normalizeCanal(cfg.launch_canal || cfg.import_canal_objetivo || 'whatsapp');
+      const maxEnvios = Math.min(Math.max(Number(cfg.launch_max_envios || 100), 1), 1000);
+      const frecuenciaHoras = Math.min(Math.max(Number(cfg.launch_frecuencia_horas || 24), 1), 24 * 30);
+
+      const listaNombre = String(cfg.import_lista_nombre || '').trim();
+      const rubro = String(cfg.import_rubro || '').trim();
+      const zona = String(cfg.import_zona || '').trim();
+
+      const filtros = ['empresa_id = $1', "estado IN ('ready','replied')", "COALESCE(consent_status,'unknown')='granted'", 'optout_at IS NULL'];
+      const params = [empresaId];
+      let idx = 2;
+      if (listaNombre) { filtros.push(`lista_nombre = $${idx++}`); params.push(listaNombre); }
+      if (rubro) { filtros.push(`rubro = $${idx++}`); params.push(rubro); }
+      if (zona) { filtros.push(`zona = $${idx++}`); params.push(zona); }
+      params.push(frecuenciaHoras);
+      const freqIdx = idx++;
+      params.push(maxEnvios);
+      const limitIdx = idx++;
+
+      const rows = await query(
+        `SELECT id, telefono, rubro, zona, lista_nombre
+         FROM marketing_contactos
+         WHERE ${filtros.join(' AND ')}
+           AND NOT EXISTS (
+             SELECT 1
+             FROM marketing_envios_telemetria t
+             WHERE t.empresa_id = marketing_contactos.empresa_id
+               AND t.estrategia = 'base_importada_auto'
+               AND t.telefono = marketing_contactos.telefono_normalizado
+               AND t.created_at > NOW() - ($${freqIdx}::text || ' hours')::interval
+           )
+         ORDER BY updated_at DESC
+         LIMIT $${limitIdx}`,
+        params
+      );
+
+      for (const c of rows) {
+        const msg = renderTemplateMsg(mensajeTpl, { cliente: '', rubro: c.rubro, zona: c.zona });
+        await enviarPorCanal({
+          empresaId,
+          estrategia: 'base_importada_auto',
+          telefono: c.telefono,
+          mensaje: msg,
+          canal,
+          meta: {
+            contacto_id: c.id,
+            lista_nombre: c.lista_nombre,
+            rubro: c.rubro,
+            zona: c.zona,
+            auto: true,
+          },
+        });
+
+        await query(`UPDATE marketing_contactos SET estado='contacted', updated_at=NOW() WHERE id=$1 AND empresa_id=$2`, [c.id, empresaId]);
+      }
+    }
+  } catch (e) {
+    console.error('[ESTRATEGIAS] Error en ejecutarCampaniaBaseImportadaAuto:', e?.message || e);
+  }
+}

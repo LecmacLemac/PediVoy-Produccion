@@ -617,6 +617,29 @@
                 <button type="button" id="btn_preview_campana" class="btn-save" style="margin:0; width:auto; background:#0ea5e9;">Preview audiencia</button>
                 <span id="launch_result" style="font-size:0.9rem; color:#334155; align-self:center;"></span>
               </div>
+
+              <div style="margin-top:12px; border-top:1px dashed rgba(15,23,42,0.2); padding-top:10px;">
+                <label style="margin-top:0; font-weight:700; color:#0f172a; text-transform:none;">
+                  <input type="checkbox" id="auto_launch_activado"> ⏱️ Lanzamiento automático por franjas
+                </label>
+                <div style="display:grid; grid-template-columns: 1.2fr 1fr 1fr; gap:10px; margin-top:6px;">
+                  <div>
+                    <label>Franjas horarias (HH:mm-HH:mm, separadas por coma):</label>
+                    <input type="text" id="auto_launch_franjas" placeholder="Ej: 09:00-12:30,16:00-20:00">
+                  </div>
+                  <div>
+                    <label>Días (1=Lun ... 7=Dom):</label>
+                    <input type="text" id="auto_launch_dias" placeholder="1,2,3,4,5,6">
+                  </div>
+                  <div>
+                    <label>Intervalo de control (min):</label>
+                    <input type="number" id="auto_launch_intervalo_min" value="15" min="5" max="240">
+                  </div>
+                </div>
+                <div class="small" style="margin-top:6px; color:#334155;">
+                  Usa los mismos parámetros de campaña de arriba (canal, lote, frecuencia y mensaje) para ejecutar automáticamente dentro de las franjas.
+                </div>
+              </div>
             </div>
         </div>
 
@@ -993,6 +1016,14 @@
                 setCheck('import_consent_granted', (data.import_consent_status || 'granted') === 'granted');
                 setVal('import_consent_at', data.import_consent_at, '');
                 setVal('import_descripcion', data.import_descripcion, '');
+                setVal('launch_canal', data.launch_canal, 'whatsapp');
+                setVal('launch_max_envios', data.launch_max_envios, 100);
+                setVal('launch_frecuencia_horas', data.launch_frecuencia_horas, 24);
+                setVal('launch_mensaje', data.launch_mensaje, '');
+                setCheck('auto_launch_activado', !!data.auto_launch_activado);
+                setVal('auto_launch_franjas', data.auto_launch_franjas, '09:00-12:00,16:00-20:00');
+                setVal('auto_launch_dias', data.auto_launch_dias, '1,2,3,4,5,6');
+                setVal('auto_launch_intervalo_min', data.auto_launch_intervalo_min, 15);
             } else {
                 // Defaults seguros si no hay config guardada
                 setCheck('vecinos_activado', false);
@@ -1045,6 +1076,14 @@
                 setCheck('import_consent_granted', true);
                 setVal('import_consent_at', null, '');
                 setVal('import_descripcion', null, '');
+                setVal('launch_canal', null, 'whatsapp');
+                setVal('launch_max_envios', null, 100);
+                setVal('launch_frecuencia_horas', null, 24);
+                setVal('launch_mensaje', null, '');
+                setCheck('auto_launch_activado', false);
+                setVal('auto_launch_franjas', null, '09:00-12:00,16:00-20:00');
+                setVal('auto_launch_dias', null, '1,2,3,4,5,6');
+                setVal('auto_launch_intervalo_min', null, 15);
             }
         } catch(e) { console.error('Error loading config:', e); }
     }
@@ -1122,13 +1161,33 @@
               import_context_tag: document.getElementById('import_context_tag').value.trim(),
               import_consent_status: document.getElementById('import_consent_granted').checked ? 'granted' : 'unknown',
               import_consent_at: document.getElementById('import_consent_at').value || null,
-              import_descripcion: document.getElementById('import_descripcion').value.trim()
+              import_descripcion: document.getElementById('import_descripcion').value.trim(),
+
+              launch_canal: document.getElementById('launch_canal').value,
+              launch_max_envios: toPosInt(document.getElementById('launch_max_envios').value, 100),
+              launch_frecuencia_horas: toPosInt(document.getElementById('launch_frecuencia_horas').value, 24),
+              launch_mensaje: document.getElementById('launch_mensaje').value.trim(),
+              auto_launch_activado: document.getElementById('auto_launch_activado').checked,
+              auto_launch_franjas: document.getElementById('auto_launch_franjas').value.trim(),
+              auto_launch_dias: document.getElementById('auto_launch_dias').value.trim(),
+              auto_launch_intervalo_min: toPosInt(document.getElementById('auto_launch_intervalo_min').value, 15)
           };
 
           const selectedFile = document.getElementById('import_archivo')?.files?.[0];
           if (selectedFile && (!config.import_lista_nombre || !config.import_rubro)) {
             alert('Completá al menos "Nombre de lista" y "Rubro/segmento" antes de cargar una base.');
             return;
+          }
+
+          if (config.auto_launch_activado) {
+            if (!config.launch_mensaje) {
+              alert('Para lanzamiento automático, completá el mensaje de campaña.');
+              return;
+            }
+            if (!config.auto_launch_franjas) {
+              alert('Para lanzamiento automático, definí al menos una franja horaria.');
+              return;
+            }
           }
 
           const res = await authFetch('/api/setup/marketing/config', {
