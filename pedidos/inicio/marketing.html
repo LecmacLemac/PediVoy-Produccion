@@ -619,24 +619,50 @@
               </div>
 
               <div style="margin-top:12px; border-top:1px dashed rgba(15,23,42,0.2); padding-top:10px;">
-                <label style="margin-top:0; font-weight:700; color:#0f172a; text-transform:none;">
+                <label style="margin-top:0; font-weight:800; color:#0f172a; text-transform:none; display:flex; align-items:center; gap:8px;">
                   <input type="checkbox" id="auto_launch_activado"> ⏱️ Lanzamiento automático por franjas
                 </label>
-                <div style="display:grid; grid-template-columns: 1.2fr 1fr 1fr; gap:10px; margin-top:6px;">
-                  <div>
-                    <label>Franjas horarias (HH:mm-HH:mm, separadas por coma):</label>
-                    <input type="text" id="auto_launch_franjas" placeholder="Ej: 09:00-12:30,16:00-20:00">
+
+                <div style="margin-top:8px; background:rgba(255,255,255,0.86); border:1px solid rgba(15,23,42,0.18); border-radius:10px; padding:12px;">
+                  <label style="margin-top:0; color:#0f172a;">Franjas horarias</label>
+                  <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px;">
+                    <button type="button" class="auto-franja-preset" data-range="09:00-12:00" style="background:#0ea5e9;color:#fff;border:none;border-radius:999px;padding:6px 10px;cursor:pointer;">Mañana</button>
+                    <button type="button" class="auto-franja-preset" data-range="16:00-20:00" style="background:#8b5cf6;color:#fff;border:none;border-radius:999px;padding:6px 10px;cursor:pointer;">Tarde</button>
+                    <button type="button" class="auto-franja-preset" data-range="20:00-23:00" style="background:#f59e0b;color:#fff;border:none;border-radius:999px;padding:6px 10px;cursor:pointer;">Noche</button>
                   </div>
-                  <div>
-                    <label>Días (1=Lun ... 7=Dom):</label>
-                    <input type="text" id="auto_launch_dias" placeholder="1,2,3,4,5,6">
+                  <div style="display:grid; grid-template-columns: 1fr 1fr auto; gap:8px; align-items:end;">
+                    <div>
+                      <label style="margin-top:0;">Desde</label>
+                      <input type="time" id="auto_franja_desde" value="09:00">
+                    </div>
+                    <div>
+                      <label style="margin-top:0;">Hasta</label>
+                      <input type="time" id="auto_franja_hasta" value="12:00">
+                    </div>
+                    <button type="button" id="btn_add_franja" class="btn-save" style="margin:0; width:auto;">+ Agregar</button>
                   </div>
-                  <div>
-                    <label>Intervalo de control (min):</label>
-                    <input type="number" id="auto_launch_intervalo_min" value="15" min="5" max="240">
+                  <div id="auto_franjas_badges" style="display:flex; flex-wrap:wrap; gap:6px; margin-top:8px;"></div>
+                  <input type="text" id="auto_launch_franjas" style="display:none" placeholder="Ej: 09:00-12:30,16:00-20:00">
+                </div>
+
+                <div style="margin-top:10px; background:rgba(255,255,255,0.86); border:1px solid rgba(15,23,42,0.18); border-radius:10px; padding:12px;">
+                  <label style="margin-top:0; color:#0f172a;">Días de ejecución</label>
+                  <div id="auto_dias_wrap" style="display:grid; grid-template-columns: repeat(7, minmax(42px,1fr)); gap:8px; margin-top:6px;"></div>
+                  <input type="text" id="auto_launch_dias" style="display:none" placeholder="1,2,3,4,5,6">
+                </div>
+
+                <div style="margin-top:10px; background:rgba(255,255,255,0.86); border:1px solid rgba(15,23,42,0.18); border-radius:10px; padding:12px;">
+                  <label style="margin-top:0; color:#0f172a;">Intervalo de control (min)</label>
+                  <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                    <button type="button" class="auto-int-btn" data-min="5" style="background:#334155;color:#fff;border:none;border-radius:8px;padding:6px 10px;cursor:pointer;">5</button>
+                    <button type="button" class="auto-int-btn" data-min="15" style="background:#334155;color:#fff;border:none;border-radius:8px;padding:6px 10px;cursor:pointer;">15</button>
+                    <button type="button" class="auto-int-btn" data-min="30" style="background:#334155;color:#fff;border:none;border-radius:8px;padding:6px 10px;cursor:pointer;">30</button>
+                    <button type="button" class="auto-int-btn" data-min="60" style="background:#334155;color:#fff;border:none;border-radius:8px;padding:6px 10px;cursor:pointer;">60</button>
+                    <input type="number" id="auto_launch_intervalo_min" value="15" min="5" max="240" style="max-width:110px;">
                   </div>
                 </div>
-                <div class="small" style="margin-top:6px; color:#334155;">
+
+                <div class="small" style="margin-top:8px; color:#334155; font-weight:600;">
                   Usa los mismos parámetros de campaña de arriba (canal, lote, frecuencia y mensaje) para ejecutar automáticamente dentro de las franjas.
                 </div>
               </div>
@@ -663,6 +689,133 @@
     };
     const normalizePhone = (raw) => String(raw || '').replace(/[^\d+]/g, '').trim();
     const isValidPhone = (p) => /^\+?\d{8,15}$/.test(p);
+
+    const autoLaunchUi = {
+      franjas: [],
+      dias: new Set([1,2,3,4,5,6]),
+    };
+
+    const dayNames = [
+      { n: 1, l: 'Lun' },
+      { n: 2, l: 'Mar' },
+      { n: 3, l: 'Mié' },
+      { n: 4, l: 'Jue' },
+      { n: 5, l: 'Vie' },
+      { n: 6, l: 'Sáb' },
+      { n: 7, l: 'Dom' },
+    ];
+
+    const normHora = (h) => {
+      const m = String(h || '').match(/^(\d{1,2}):(\d{2})$/);
+      if (!m) return null;
+      const hh = Number(m[1]);
+      const mm = Number(m[2]);
+      if (hh < 0 || hh > 23 || mm < 0 || mm > 59) return null;
+      return `${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}`;
+    };
+
+    function syncAutoInputs() {
+      const franjasInput = document.getElementById('auto_launch_franjas');
+      const diasInput = document.getElementById('auto_launch_dias');
+      if (franjasInput) franjasInput.value = autoLaunchUi.franjas.join(',');
+      if (diasInput) diasInput.value = [...autoLaunchUi.dias].sort((a,b) => a-b).join(',');
+    }
+
+    function renderAutoFranjas() {
+      const wrap = document.getElementById('auto_franjas_badges');
+      if (!wrap) return;
+      if (!autoLaunchUi.franjas.length) {
+        wrap.innerHTML = '<span style="font-size:12px;color:#64748b;">Sin franjas definidas</span>';
+      } else {
+        wrap.innerHTML = autoLaunchUi.franjas.map((f, i) => `
+          <span style="background:#0f172a;color:#fff;border-radius:999px;padding:5px 10px;font-size:12px;display:inline-flex;align-items:center;gap:6px;">
+            ${esc(f)}
+            <button type="button" data-idx="${i}" class="auto-del-franja" style="background:transparent;border:none;color:#fda4af;cursor:pointer;font-weight:700;">×</button>
+          </span>
+        `).join('');
+      }
+      wrap.querySelectorAll('.auto-del-franja').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const idx = Number(btn.dataset.idx);
+          if (!Number.isFinite(idx) || idx < 0 || idx >= autoLaunchUi.franjas.length) return;
+          autoLaunchUi.franjas.splice(idx, 1);
+          syncAutoInputs();
+          renderAutoFranjas();
+        });
+      });
+    }
+
+    function renderAutoDias() {
+      const wrap = document.getElementById('auto_dias_wrap');
+      if (!wrap) return;
+      wrap.innerHTML = dayNames.map((d) => {
+        const on = autoLaunchUi.dias.has(d.n);
+        return `<button type="button" class="auto-dia-btn" data-day="${d.n}" style="padding:8px 6px;border-radius:8px;border:1px solid ${on ? '#0ea5e9' : '#cbd5e1'};background:${on ? '#e0f2fe' : '#fff'};color:${on ? '#0369a1' : '#334155'};font-weight:700;cursor:pointer;">${d.l}</button>`;
+      }).join('');
+
+      wrap.querySelectorAll('.auto-dia-btn').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const day = Number(btn.dataset.day);
+          if (!Number.isFinite(day)) return;
+          if (autoLaunchUi.dias.has(day)) autoLaunchUi.dias.delete(day);
+          else autoLaunchUi.dias.add(day);
+          if (!autoLaunchUi.dias.size) autoLaunchUi.dias = new Set([1,2,3,4,5,6]);
+          syncAutoInputs();
+          renderAutoDias();
+        });
+      });
+    }
+
+    function setupAutoLaunchUi() {
+      const franjasIn = document.getElementById('auto_launch_franjas');
+      const diasIn = document.getElementById('auto_launch_dias');
+      if (franjasIn) {
+        autoLaunchUi.franjas = String(franjasIn.value || '').split(',').map(s => s.trim()).filter(Boolean);
+      }
+      if (diasIn) {
+        const parsed = String(diasIn.value || '').split(',').map(v => Number(v.trim())).filter(v => Number.isFinite(v) && v >= 1 && v <= 7);
+        autoLaunchUi.dias = new Set(parsed.length ? parsed : [1,2,3,4,5,6]);
+      }
+
+      renderAutoFranjas();
+      renderAutoDias();
+      syncAutoInputs();
+
+      const btnAdd = document.getElementById('btn_add_franja');
+      if (btnAdd && !btnAdd.dataset.bound) {
+        btnAdd.dataset.bound = '1';
+        btnAdd.addEventListener('click', () => {
+          const d = normHora(document.getElementById('auto_franja_desde')?.value || '');
+          const h = normHora(document.getElementById('auto_franja_hasta')?.value || '');
+          if (!d || !h || d === h) return alert('Franja inválida. Usá formato HH:mm y que desde/hasta sean distintos.');
+          const chunk = `${d}-${h}`;
+          if (!autoLaunchUi.franjas.includes(chunk)) autoLaunchUi.franjas.push(chunk);
+          syncAutoInputs();
+          renderAutoFranjas();
+        });
+      }
+
+      document.querySelectorAll('.auto-franja-preset').forEach((btn) => {
+        if (btn.dataset.bound) return;
+        btn.dataset.bound = '1';
+        btn.addEventListener('click', () => {
+          const r = String(btn.dataset.range || '').trim();
+          if (!r) return;
+          if (!autoLaunchUi.franjas.includes(r)) autoLaunchUi.franjas.push(r);
+          syncAutoInputs();
+          renderAutoFranjas();
+        });
+      });
+
+      const intervaloInput = document.getElementById('auto_launch_intervalo_min');
+      document.querySelectorAll('.auto-int-btn').forEach((btn) => {
+        if (btn.dataset.bound) return;
+        btn.dataset.bound = '1';
+        btn.addEventListener('click', () => {
+          if (intervaloInput) intervaloInput.value = String(btn.dataset.min || '15');
+        });
+      });
+    }
     
     // Modo seguro: auth por cookie httpOnly
     const authFetch = (url, opts = {}) => {
@@ -1085,6 +1238,8 @@
                 setVal('auto_launch_dias', null, '1,2,3,4,5,6');
                 setVal('auto_launch_intervalo_min', null, 15);
             }
+
+            setupAutoLaunchUi();
         } catch(e) { console.error('Error loading config:', e); }
     }
 
