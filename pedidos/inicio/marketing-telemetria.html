@@ -270,6 +270,45 @@
 
     <div class="section-title">📋 Detalle de envíos (últimos eventos)</div>
     <div class="small" style="margin-bottom:8px">Tip: hacé click en una fila con cliente geolocalizado para centrar el mapa y ver el chofer más cercano.</div>
+
+    <div class="controls" style="margin-bottom:10px; align-items:flex-end;">
+      <div>
+        <label class="small" for="fDesde">Desde</label>
+        <input id="fDesde" type="date">
+      </div>
+      <div>
+        <label class="small" for="fHasta">Hasta</label>
+        <input id="fHasta" type="date">
+      </div>
+      <div>
+        <label class="small" for="fEstado">Estado</label>
+        <select id="fEstado">
+          <option value="">Todos</option>
+          <option value="queued">queued</option>
+          <option value="sent">sent</option>
+          <option value="delivered">delivered</option>
+          <option value="error">error</option>
+        </select>
+      </div>
+      <div>
+        <label class="small" for="fCliente">Cliente</label>
+        <input id="fCliente" type="text" placeholder="Nombre cliente">
+      </div>
+      <div>
+        <label class="small" for="fTelefono">Teléfono</label>
+        <input id="fTelefono" type="text" placeholder="549...">
+      </div>
+      <div>
+        <label class="small" for="fConv">Conversión</label>
+        <select id="fConv">
+          <option value="">Todas</option>
+          <option value="si">Convirtió</option>
+          <option value="no">No convirtió</option>
+        </select>
+      </div>
+      <button type="button" id="btnLimpiarFiltros">Limpiar filtros</button>
+    </div>
+
     <table>
       <thead>
         <tr>
@@ -281,7 +320,7 @@
           <th>Teléfono</th>
           <th>Dirección</th>
           <th>Convirtió</th>
-          <th>Costo</th>
+          <th>Mensaje enviado</th>
         </tr>
       </thead>
       <tbody id="tbodyDetalle">
@@ -318,6 +357,67 @@
     const driverMarkersByKey = new Map();
     let refreshTimer = null;
     let loading = false;
+
+    function normalizeDigits(v) {
+      return String(v || '').replace(/\D+/g, '');
+    }
+
+    function getFilteredDetalleItems() {
+      const desde = $('#fDesde')?.value || '';
+      const hasta = $('#fHasta')?.value || '';
+      const estado = ($('#fEstado')?.value || '').toLowerCase();
+      const cliente = ($('#fCliente')?.value || '').trim().toLowerCase();
+      const telefono = normalizeDigits($('#fTelefono')?.value || '');
+      const conv = ($('#fConv')?.value || '').toLowerCase();
+
+      return currentDetalleItems.filter((r) => {
+        const d = new Date(r.created_at);
+        if (desde) {
+          const dDesde = new Date(`${desde}T00:00:00`);
+          if (!(d >= dDesde)) return false;
+        }
+        if (hasta) {
+          const dHasta = new Date(`${hasta}T23:59:59`);
+          if (!(d <= dHasta)) return false;
+        }
+        if (estado && String(r.estado || '').toLowerCase() !== estado) return false;
+        if (cliente && !String(r.cliente || '').toLowerCase().includes(cliente)) return false;
+        if (telefono && !normalizeDigits(r.telefono).includes(telefono)) return false;
+        if (conv === 'si' && !r.convirtio) return false;
+        if (conv === 'no' && !!r.convirtio) return false;
+        return true;
+      });
+    }
+
+    function renderDetalleTable() {
+      const rows = getFilteredDetalleItems();
+      if (!rows.length) {
+        $('#tbodyDetalle').innerHTML = '<tr><td colspan="9" class="small">Sin envíos para los filtros seleccionados.</td></tr>';
+        return;
+      }
+
+      $('#tbodyDetalle').innerHTML = rows.map((r, idx) => `
+        <tr data-idx="${idx}" style="cursor:${(r.cliente_lat != null && r.cliente_lng != null) ? 'pointer' : 'default'}">
+          <td>${fmtDate(r.created_at)}</td>
+          <td>${esc(r.estrategia || '-')}</td>
+          <td><span class="tag">${esc(r.canal || '-')}</span></td>
+          <td>${esc(r.estado || '-')}</td>
+          <td>${esc(r.cliente || 'No identificado')}</td>
+          <td>${esc(r.telefono || '-')}</td>
+          <td>${esc(r.direccion || '-')}</td>
+          <td>${r.convirtio ? '✅ Sí' : '❌ No'}</td>
+          <td title="${esc(r.mensaje || r.meta?.mensaje || '-')}" style="max-width:280px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${esc(r.mensaje || r.meta?.mensaje || '-')}</td>
+        </tr>
+      `).join('');
+
+      document.querySelectorAll('#tbodyDetalle tr[data-idx]').forEach((tr) => {
+        tr.addEventListener('click', () => {
+          const idx = Number(tr.getAttribute('data-idx'));
+          if (!Number.isFinite(idx) || idx < 0 || idx >= rows.length) return;
+          focusDetalleItem(tr, rows[idx]);
+        });
+      });
+    }
 
     function ensureMap() {
       if (map) return;
@@ -477,6 +577,27 @@
       $('#dias').addEventListener('change', load);
       $('#ventanaHoras').addEventListener('change', load);
       $('#empresa').addEventListener('change', load);
+
+      ['#fDesde', '#fHasta', '#fEstado', '#fCliente', '#fTelefono', '#fConv'].forEach((sel) => {
+        const el = $(sel);
+        if (!el) return;
+        const ev = (sel === '#fCliente' || sel === '#fTelefono') ? 'input' : 'change';
+        el.addEventListener(ev, renderDetalleTable);
+      });
+
+      const btnLimpiar = $('#btnLimpiarFiltros');
+      if (btnLimpiar) {
+        btnLimpiar.addEventListener('click', () => {
+          ['#fDesde', '#fHasta', '#fEstado', '#fCliente', '#fTelefono', '#fConv'].forEach((sel) => {
+            const el = $(sel);
+            if (!el) return;
+            if (el.tagName === 'SELECT') el.value = '';
+            else el.value = '';
+          });
+          renderDetalleTable();
+        });
+      }
+
       await load();
 
       if (refreshTimer) clearInterval(refreshTimer);
@@ -548,27 +669,7 @@
       if (!currentDetalleItems.length) {
         $('#tbodyDetalle').innerHTML = '<tr><td colspan="9" class="small">Sin detalle de envíos en el período.</td></tr>';
       } else {
-        $('#tbodyDetalle').innerHTML = currentDetalleItems.map((r, idx) => `
-          <tr data-idx="${idx}" style="cursor:${(r.cliente_lat != null && r.cliente_lng != null) ? 'pointer' : 'default'}">
-            <td>${fmtDate(r.created_at)}</td>
-            <td>${esc(r.estrategia || '-')}</td>
-            <td><span class="tag">${esc(r.canal || '-')}</span></td>
-            <td>${esc(r.estado || '-')}</td>
-            <td>${esc(r.cliente || 'No identificado')}</td>
-            <td>${esc(r.telefono || '-')}</td>
-            <td>${esc(r.direccion || '-')}</td>
-            <td>${r.convirtio ? '✅ Sí' : '❌ No'}</td>
-            <td>${money(r.costo_estimado)}</td>
-          </tr>
-        `).join('');
-
-        document.querySelectorAll('#tbodyDetalle tr[data-idx]').forEach((tr) => {
-          tr.addEventListener('click', () => {
-            const idx = Number(tr.getAttribute('data-idx'));
-            if (!Number.isFinite(idx) || idx < 0 || idx >= currentDetalleItems.length) return;
-            focusDetalleItem(tr, currentDetalleItems[idx]);
-          });
-        });
+        renderDetalleTable();
       }
 
       const trackItems = Array.isArray(trackData?.items) ? trackData.items : [];

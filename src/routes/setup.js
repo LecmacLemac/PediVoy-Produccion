@@ -3481,7 +3481,7 @@ export function createSetupRouter(deps) {
             envioOk ? 'queued' : 'error',
             canalIncluyeSms(canal) ? 'ifttt_sms/wpp' : 'whatsapp-web.js',
             detalleError,
-            JSON.stringify({ contacto_id: c.id, lista_nombre: c.lista_nombre, rubro: c.rubro, zona: c.zona })
+            JSON.stringify({ contacto_id: c.id, lista_nombre: c.lista_nombre, rubro: c.rubro, zona: c.zona, mensaje: msg })
           ]
         );
 
@@ -3580,6 +3580,7 @@ export function createSetupRouter(deps) {
           costo_estimado: Number(r.costo_estimado || 0),
           detalle_error: r.detalle_error,
           meta: r.meta || {},
+          mensaje: (r.meta && (r.meta.mensaje || r.meta.message)) ? String(r.meta.mensaje || r.meta.message) : null,
           cliente_id: r.cliente_id ? Number(r.cliente_id) : null,
           cliente: r.cliente || null,
           direccion: r.direccion || null,
