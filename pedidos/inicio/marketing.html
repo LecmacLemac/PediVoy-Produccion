@@ -102,6 +102,7 @@
   .box-postentrega { background: #ede9fe; border-color: #ddd6fe; }
   .box-clima { background: #e0f2fe; border-color: #bae6fd; }
   .box-vip { background: #fae8ff; border-color: #f5d0fe; }
+  .box-importacion { background: #ecfccb; border-color: #bef264; }
 
   .switch-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
   .switch-label { font-size: 1.1rem; font-weight: 700; display: flex; align-items: center; gap: 8px; }
@@ -505,6 +506,60 @@
             <textarea id="vip_mensaje" rows="2">¡{cliente}, ya sos VIP! 🎉 Desde ahora tenés: {beneficio}.</textarea>
         </div>
 
+        <!-- IMPORTACIÓN DE BASES (TXT/CSV) -->
+        <div class="strategy-box box-importacion">
+            <div class="switch-row">
+                <div class="switch-label">📥 Importación Pro de Bases</div>
+            </div>
+            <p class="desc">Antes de subir teléfonos, clasificá la base para mantener campañas ordenadas y medibles.</p>
+
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+                <div>
+                    <label>Nombre de lista:</label>
+                    <input type="text" id="import_lista_nombre" placeholder="Ej: Prospectos Barrio Centro - Marzo">
+                </div>
+                <div>
+                    <label>Rubro / segmento:</label>
+                    <input type="text" id="import_rubro" placeholder="Ej: abogados, contadores, gimnasio">
+                </div>
+            </div>
+
+            <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:10px; margin-top:10px;">
+                <div>
+                    <label>Zona:</label>
+                    <input type="text" id="import_zona" placeholder="Ej: Zona Norte">
+                </div>
+                <div>
+                    <label>Origen:</label>
+                    <select id="import_origen">
+                        <option value="callejero">Callejero</option>
+                        <option value="referido">Referido</option>
+                        <option value="web">Web</option>
+                        <option value="campana">Campaña previa</option>
+                        <option value="otro">Otro</option>
+                    </select>
+                </div>
+                <div>
+                    <label>Canal objetivo:</label>
+                    <select id="import_canal_objetivo">
+                        <option value="whatsapp">WhatsApp</option>
+                        <option value="sms">SMS</option>
+                        <option value="ambos">Ambos</option>
+                    </select>
+                </div>
+            </div>
+
+            <label style="margin-top:10px;">Descripción comercial (uso recomendado):</label>
+            <textarea id="import_descripcion" rows="2" placeholder="Ej: Prospectos de alto potencial para campaña de nuevos clientes."></textarea>
+
+            <label>Archivo de teléfonos (.txt/.csv):</label>
+            <input type="file" id="import_archivo" accept=".txt,.csv,text/plain,text/csv">
+
+            <div id="import_stats" style="margin-top:10px; background:rgba(255,255,255,0.75); border:1px dashed rgba(15,23,42,0.25); border-radius:8px; padding:10px; font-size:0.9rem; color:#334155;">
+                Cargá un archivo para ver resumen: total líneas, teléfonos válidos y duplicados.
+            </div>
+        </div>
+
         <button type="submit" class="btn-save">Guardar Configuración</button>
     </form>
   </div>
@@ -523,6 +578,8 @@
       const n = Number.parseInt(v, 10);
       return Number.isFinite(n) && n > 0 ? n : fallback;
     };
+    const normalizePhone = (raw) => String(raw || '').replace(/[^\d+]/g, '').trim();
+    const isValidPhone = (p) => /^\+?\d{8,15}$/.test(p);
     
     // Modo seguro: auth por cookie httpOnly
     const authFetch = (url, opts = {}) => {
@@ -580,6 +637,37 @@
 
         } catch(e) { console.error(e); }
     })();
+
+    // Analizador rápido de archivo de teléfonos (TXT/CSV)
+    const importFileInput = document.getElementById('import_archivo');
+    if (importFileInput) {
+      importFileInput.addEventListener('change', async (e) => {
+        const file = e.target.files?.[0];
+        const statsBox = document.getElementById('import_stats');
+        if (!file || !statsBox) return;
+
+        try {
+          const txt = await file.text();
+          const rows = txt.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+          const normalized = rows.map(normalizePhone).filter(Boolean);
+          const valid = normalized.filter(isValidPhone);
+          const unique = new Set(valid);
+          const duplicates = valid.length - unique.size;
+          const invalid = rows.length - valid.length;
+
+          statsBox.innerHTML = `
+            <b>Archivo:</b> ${esc(file.name)}<br>
+            <b>Total líneas:</b> ${rows.length}<br>
+            <b>Teléfonos válidos:</b> ${valid.length}<br>
+            <b>Duplicados:</b> ${duplicates}<br>
+            <b>No válidos:</b> ${invalid}
+          `;
+        } catch (err) {
+          console.error(err);
+          statsBox.textContent = 'No se pudo leer el archivo.';
+        }
+      });
+    }
 
     // Orquestador de cambio de empresa
     async function changeEmpresa(empId) {
@@ -668,6 +756,14 @@
                 setVal('vip_pedidos_min', data.vip_pedidos_min, 10);
                 setVal('vip_beneficio', data.vip_beneficio, '');
                 setVal('vip_mensaje', data.vip_mensaje, '¡{cliente}, ya sos VIP! 🎉 Desde ahora tenés: {beneficio}.');
+
+                // Base de importación de leads
+                setVal('import_lista_nombre', data.import_lista_nombre, '');
+                setVal('import_rubro', data.import_rubro, '');
+                setVal('import_zona', data.import_zona, '');
+                setVal('import_origen', data.import_origen, 'callejero');
+                setVal('import_canal_objetivo', data.import_canal_objetivo, 'whatsapp');
+                setVal('import_descripcion', data.import_descripcion, '');
             } else {
                 // Defaults seguros si no hay config guardada
                 setCheck('vecinos_activado', false);
@@ -709,6 +805,13 @@
                 setVal('vip_pedidos_min', null, 10);
                 setVal('vip_beneficio', null, '');
                 setVal('vip_mensaje', null, '¡{cliente}, ya sos VIP! 🎉 Desde ahora tenés: {beneficio}.');
+
+                setVal('import_lista_nombre', null, '');
+                setVal('import_rubro', null, '');
+                setVal('import_zona', null, '');
+                setVal('import_origen', null, 'callejero');
+                setVal('import_canal_objetivo', null, 'whatsapp');
+                setVal('import_descripcion', null, '');
             }
         } catch(e) { console.error('Error loading config:', e); }
     }
@@ -774,8 +877,22 @@
               vip_canal: document.getElementById('vip_canal').value,
               vip_pedidos_min: toPosInt(document.getElementById('vip_pedidos_min').value, 10),
               vip_beneficio: document.getElementById('vip_beneficio').value.trim(),
-              vip_mensaje: document.getElementById('vip_mensaje').value.trim()
+              vip_mensaje: document.getElementById('vip_mensaje').value.trim(),
+
+              // Metadata de base a importar (teléfonos en bruto)
+              import_lista_nombre: document.getElementById('import_lista_nombre').value.trim(),
+              import_rubro: document.getElementById('import_rubro').value.trim(),
+              import_zona: document.getElementById('import_zona').value.trim(),
+              import_origen: document.getElementById('import_origen').value,
+              import_canal_objetivo: document.getElementById('import_canal_objetivo').value,
+              import_descripcion: document.getElementById('import_descripcion').value.trim()
           };
+
+          const selectedFile = document.getElementById('import_archivo')?.files?.[0];
+          if (selectedFile && (!config.import_lista_nombre || !config.import_rubro)) {
+            alert('Completá al menos "Nombre de lista" y "Rubro/segmento" antes de cargar una base.');
+            return;
+          }
 
           const res = await authFetch('/api/setup/marketing/config', {
               method: 'PUT',
