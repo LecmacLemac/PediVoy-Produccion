@@ -1258,3 +1258,28 @@ CREATE INDEX IF NOT EXISTS idx_marketing_tel_empresa_fecha
 CREATE INDEX IF NOT EXISTS idx_marketing_tel_estrategia_canal_fecha
   ON marketing_envios_telemetria (estrategia, canal, created_at DESC);
 
+-- =========================================================
+-- 15. BASE DE CONTACTOS MARKETING (IMPORTACIÓN DE LISTAS)
+-- =========================================================
+CREATE TABLE IF NOT EXISTS marketing_contactos (
+  id BIGSERIAL PRIMARY KEY,
+  empresa_id INT NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+  telefono TEXT NOT NULL,
+  telefono_normalizado TEXT NOT NULL,
+  lista_nombre TEXT,
+  rubro TEXT,
+  zona TEXT,
+  origen TEXT,
+  canal_objetivo TEXT NOT NULL DEFAULT 'whatsapp',
+  descripcion TEXT,
+  estado TEXT NOT NULL DEFAULT 'nuevo',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_marketing_contactos_unique
+  ON marketing_contactos (empresa_id, telefono_normalizado);
+
+CREATE INDEX IF NOT EXISTS idx_marketing_contactos_filtros
+  ON marketing_contactos (empresa_id, rubro, zona, estado, created_at DESC);
+

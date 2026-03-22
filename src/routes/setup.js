@@ -2909,6 +2909,38 @@ export function createSetupRouter(deps) {
     }
   });
 
+  const normalizePhoneDigits = (v) => String(v || '').replace(/\D+/g, '');
+
+  const ensureMarketingContactosTable = async () => {
+    await query(`
+      CREATE TABLE IF NOT EXISTS marketing_contactos (
+        id BIGSERIAL PRIMARY KEY,
+        empresa_id INT NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+        telefono TEXT NOT NULL,
+        telefono_normalizado TEXT NOT NULL,
+        lista_nombre TEXT,
+        rubro TEXT,
+        zona TEXT,
+        origen TEXT,
+        canal_objetivo TEXT NOT NULL DEFAULT 'whatsapp',
+        descripcion TEXT,
+        estado TEXT NOT NULL DEFAULT 'nuevo',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+
+    await query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_marketing_contactos_unique
+      ON marketing_contactos (empresa_id, telefono_normalizado)
+    `);
+
+    await query(`
+      CREATE INDEX IF NOT EXISTS idx_marketing_contactos_filtros
+      ON marketing_contactos (empresa_id, rubro, zona, estado, created_at DESC)
+    `);
+  };
+
   // GET /api/setup/marketing/config
   router.get('/marketing/config', withAuth, async (req, res) => {
     try {
@@ -3015,6 +3047,117 @@ export function createSetupRouter(deps) {
     } catch (e) {
       console.error(e);
       return res.status(500).json({ error: 'Error guardando configuración de marketing' });
+    }
+  });
+
+  // POST /api/setup/marketing/base/import
+  router.post('/marketing/base/import', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+
+      await ensureMarketingContactosTable();
+
+      const b = req.body || {};
+      const listaNombre = String(b.lista_nombre || '').trim();
+      const rubro = String(b.rubro || '').trim();
+      const zona = String(b.zona || '').trim();
+      const origen = String(b.origen || 'callejero').trim();
+      const descripcion = String(b.descripcion || '').trim();
+      const canalRaw = String(b.canal_objetivo || 'whatsapp').toLowerCase();
+      const canalObjetivo = (canalRaw === 'sms' || canalRaw === 'ambos' || canalRaw === 'whatsapp') ? canalRaw : 'whatsapp';
+
+      if (!listaNombre) return res.status(400).json({ error: 'lista_nombre requerido' });
+      if (!rubro) return res.status(400).json({ error: 'rubro requerido' });
+
+      const telefonosIn = Array.isArray(b.telefonos) ? b.telefonos : [];
+      if (!telefonosIn.length) return res.status(400).json({ error: 'No se recibieron teléfonos para importar' });
+
+      let validos = 0;
+      let invalidos = 0;
+      let duplicadosArchivo = 0;
+      let insertados = 0;
+      let existentes = 0;
+
+      const seen = new Set();
+      const cleaned = [];
+      for (const raw of telefonosIn) {
+        const d = normalizePhoneDigits(raw);
+        if (d.length < 8 || d.length > 15) {
+          invalidos += 1;
+          continue;
+        }
+        validos += 1;
+        if (seen.has(d)) {
+          duplicadosArchivo += 1;
+          continue;
+        }
+        seen.add(d);
+        cleaned.push(d);
+      }
+
+      for (const tel of cleaned) {
+        const rows = await query(
+          `INSERT INTO marketing_contactos
+             (empresa_id, telefono, telefono_normalizado, lista_nombre, rubro, zona, origen, canal_objetivo, descripcion)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+           ON CONFLICT (empresa_id, telefono_normalizado)
+           DO NOTHING
+           RETURNING id`,
+          [empresaId, tel, tel, listaNombre, rubro, zona || null, origen || null, canalObjetivo, descripcion || null]
+        );
+
+        if (rows.length) insertados += 1;
+        else existentes += 1;
+      }
+
+      return res.json({
+        ok: true,
+        resumen: {
+          recibidos: telefonosIn.length,
+          validos,
+          invalidos,
+          duplicados_archivo: duplicadosArchivo,
+          unicos_archivo: cleaned.length,
+          insertados,
+          existentes
+        }
+      });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error importando base de contactos' });
+    }
+  });
+
+  // GET /api/setup/marketing/base/list
+  router.get('/marketing/base/list', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req);
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+
+      await ensureMarketingContactosTable();
+
+      const rows = await query(
+        `SELECT
+           lista_nombre,
+           rubro,
+           COALESCE(zona, '') AS zona,
+           COALESCE(origen, '') AS origen,
+           canal_objetivo,
+           COUNT(*)::int AS total,
+           MAX(created_at) AS ultima_carga
+         FROM marketing_contactos
+         WHERE empresa_id = $1
+         GROUP BY lista_nombre, rubro, zona, origen, canal_objetivo
+         ORDER BY ultima_carga DESC
+         LIMIT 200`,
+        [empresaId]
+      );
+
+      return res.json({ ok: true, items: rows || [] });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error listando bases de contactos' });
     }
   });
 
