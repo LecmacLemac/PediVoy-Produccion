@@ -549,6 +549,32 @@
                 </div>
             </div>
 
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-top:10px;">
+                <div>
+                    <label>Objetivo de campaña:</label>
+                    <select id="import_objetivo_campana">
+                        <option value="nuevos_clientes">Nuevos clientes</option>
+                        <option value="reactivacion">Reactivación</option>
+                        <option value="recordatorio">Recordatorio</option>
+                        <option value="oferta_puntual">Oferta puntual</option>
+                    </select>
+                </div>
+                <div>
+                    <label>Contexto de contacto:</label>
+                    <input type="text" id="import_context_tag" placeholder="Ej: dejó datos en stand barrial">
+                </div>
+            </div>
+
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-top:10px;">
+                <div>
+                    <label><input type="checkbox" id="import_consent_granted" checked> Consentimiento para contacto</label>
+                </div>
+                <div>
+                    <label>Fecha consentimiento:</label>
+                    <input type="date" id="import_consent_at">
+                </div>
+            </div>
+
             <label style="margin-top:10px;">Descripción comercial (uso recomendado):</label>
             <textarea id="import_descripcion" rows="2" placeholder="Ej: Prospectos de alto potencial para campaña de nuevos clientes."></textarea>
 
@@ -692,6 +718,7 @@
         const empSelect = document.getElementById('empFilter');
         const selectedEmpId = (empSelect && empSelect.offsetParent !== null) ? empSelect.value : null;
 
+        const consentGranted = !!document.getElementById('import_consent_granted')?.checked;
         const payload = {
           empresa_id: selectedEmpId ? Number(selectedEmpId) : undefined,
           lista_nombre: document.getElementById('import_lista_nombre')?.value?.trim() || '',
@@ -699,12 +726,17 @@
           zona: document.getElementById('import_zona')?.value?.trim() || '',
           origen: document.getElementById('import_origen')?.value || 'callejero',
           canal_objetivo: document.getElementById('import_canal_objetivo')?.value || 'whatsapp',
+          objetivo_campana: document.getElementById('import_objetivo_campana')?.value || 'nuevos_clientes',
+          context_tag: document.getElementById('import_context_tag')?.value?.trim() || '',
+          consent_status: consentGranted ? 'granted' : 'unknown',
+          consent_source: document.getElementById('import_origen')?.value || 'callejero',
+          consent_at: document.getElementById('import_consent_at')?.value || null,
           descripcion: document.getElementById('import_descripcion')?.value?.trim() || '',
           telefonos: importState.phones
         };
 
-        if (!payload.lista_nombre || !payload.rubro) {
-          alert('Completá Nombre de lista y Rubro/segmento antes de importar.');
+        if (!payload.lista_nombre || !payload.rubro || !payload.context_tag) {
+          alert('Completá Nombre de lista, Rubro/segmento y Contexto de contacto antes de importar.');
           return;
         }
         if (!Array.isArray(payload.telefonos) || payload.telefonos.length === 0) {
@@ -718,6 +750,16 @@
         if (resultEl) resultEl.textContent = '';
 
         try {
+          const previewRes = await authFetch('/api/setup/marketing/base/preview', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ telefonos: payload.telefonos })
+          });
+          const previewData = await previewRes.json().catch(() => ({}));
+          if (!previewRes.ok) {
+            throw new Error(previewData?.error || 'No se pudo previsualizar la base');
+          }
+
           const res = await authFetch('/api/setup/marketing/base/import', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -730,7 +772,7 @@
 
           const r = data?.resumen || {};
           if (resultEl) {
-            resultEl.textContent = `✅ Importado: ${r.insertados || 0} | Existentes: ${r.existentes || 0} | Inválidos: ${r.invalidos || 0}`;
+            resultEl.textContent = `✅ Importado: ${r.insertados || 0} | Existentes: ${r.existentes || 0} | Inválidos: ${r.invalidos || 0} | Preview únicos: ${previewData?.resumen?.unicos_archivo || 0}`;
           }
         } catch (err) {
           console.error(err);
@@ -836,6 +878,10 @@
                 setVal('import_zona', data.import_zona, '');
                 setVal('import_origen', data.import_origen, 'callejero');
                 setVal('import_canal_objetivo', data.import_canal_objetivo, 'whatsapp');
+                setVal('import_objetivo_campana', data.import_objetivo_campana, 'nuevos_clientes');
+                setVal('import_context_tag', data.import_context_tag, '');
+                setCheck('import_consent_granted', (data.import_consent_status || 'granted') === 'granted');
+                setVal('import_consent_at', data.import_consent_at, '');
                 setVal('import_descripcion', data.import_descripcion, '');
             } else {
                 // Defaults seguros si no hay config guardada
@@ -884,6 +930,10 @@
                 setVal('import_zona', null, '');
                 setVal('import_origen', null, 'callejero');
                 setVal('import_canal_objetivo', null, 'whatsapp');
+                setVal('import_objetivo_campana', null, 'nuevos_clientes');
+                setVal('import_context_tag', null, '');
+                setCheck('import_consent_granted', true);
+                setVal('import_consent_at', null, '');
                 setVal('import_descripcion', null, '');
             }
         } catch(e) { console.error('Error loading config:', e); }
@@ -958,6 +1008,10 @@
               import_zona: document.getElementById('import_zona').value.trim(),
               import_origen: document.getElementById('import_origen').value,
               import_canal_objetivo: document.getElementById('import_canal_objetivo').value,
+              import_objetivo_campana: document.getElementById('import_objetivo_campana').value,
+              import_context_tag: document.getElementById('import_context_tag').value.trim(),
+              import_consent_status: document.getElementById('import_consent_granted').checked ? 'granted' : 'unknown',
+              import_consent_at: document.getElementById('import_consent_at').value || null,
               import_descripcion: document.getElementById('import_descripcion').value.trim()
           };
 

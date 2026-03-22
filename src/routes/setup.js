@@ -2924,11 +2924,24 @@ export function createSetupRouter(deps) {
         origen TEXT,
         canal_objetivo TEXT NOT NULL DEFAULT 'whatsapp',
         descripcion TEXT,
+        objetivo_campana TEXT,
+        context_tag TEXT,
+        consent_status TEXT NOT NULL DEFAULT 'unknown',
+        consent_source TEXT,
+        consent_at TIMESTAMPTZ,
+        optout_at TIMESTAMPTZ,
         estado TEXT NOT NULL DEFAULT 'nuevo',
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `);
+
+    await query(`ALTER TABLE marketing_contactos ADD COLUMN IF NOT EXISTS objetivo_campana TEXT`);
+    await query(`ALTER TABLE marketing_contactos ADD COLUMN IF NOT EXISTS context_tag TEXT`);
+    await query(`ALTER TABLE marketing_contactos ADD COLUMN IF NOT EXISTS consent_status TEXT NOT NULL DEFAULT 'unknown'`);
+    await query(`ALTER TABLE marketing_contactos ADD COLUMN IF NOT EXISTS consent_source TEXT`);
+    await query(`ALTER TABLE marketing_contactos ADD COLUMN IF NOT EXISTS consent_at TIMESTAMPTZ`);
+    await query(`ALTER TABLE marketing_contactos ADD COLUMN IF NOT EXISTS optout_at TIMESTAMPTZ`);
 
     await query(`
       CREATE UNIQUE INDEX IF NOT EXISTS idx_marketing_contactos_unique
@@ -3034,6 +3047,17 @@ export function createSetupRouter(deps) {
         vip_pedidos_min: posInt(b.vip_pedidos_min, 10),
         vip_beneficio: str(b.vip_beneficio, ''),
         vip_mensaje: str(b.vip_mensaje, '¡{cliente}, ya sos VIP! 🎉 Desde ahora tenés: {beneficio}.'),
+
+        import_lista_nombre: str(b.import_lista_nombre, ''),
+        import_rubro: str(b.import_rubro, ''),
+        import_zona: str(b.import_zona, ''),
+        import_origen: str(b.import_origen, 'callejero'),
+        import_canal_objetivo: canal(b.import_canal_objetivo),
+        import_objetivo_campana: str(b.import_objetivo_campana, 'nuevos_clientes'),
+        import_context_tag: str(b.import_context_tag, ''),
+        import_consent_status: ['granted', 'denied', 'unknown'].includes(String(b.import_consent_status || '').toLowerCase()) ? String(b.import_consent_status).toLowerCase() : 'unknown',
+        import_consent_at: str(b.import_consent_at, ''),
+        import_descripcion: str(b.import_descripcion, ''),
       };
 
       await query(
@@ -3047,6 +3071,44 @@ export function createSetupRouter(deps) {
     } catch (e) {
       console.error(e);
       return res.status(500).json({ error: 'Error guardando configuración de marketing' });
+    }
+  });
+
+  // POST /api/setup/marketing/base/preview
+  router.post('/marketing/base/preview', withAuth, async (req, res) => {
+    try {
+      const telefonosIn = Array.isArray(req.body?.telefonos) ? req.body.telefonos : [];
+      if (!telefonosIn.length) return res.status(400).json({ error: 'No se recibieron teléfonos para previsualizar' });
+
+      let validos = 0;
+      let invalidos = 0;
+      let duplicadosArchivo = 0;
+      const seen = new Set();
+
+      for (const raw of telefonosIn) {
+        const d = normalizePhoneDigits(raw);
+        if (d.length < 8 || d.length > 15) {
+          invalidos += 1;
+          continue;
+        }
+        validos += 1;
+        if (seen.has(d)) duplicadosArchivo += 1;
+        else seen.add(d);
+      }
+
+      return res.json({
+        ok: true,
+        resumen: {
+          recibidos: telefonosIn.length,
+          validos,
+          invalidos,
+          duplicados_archivo: duplicadosArchivo,
+          unicos_archivo: seen.size
+        }
+      });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error calculando preview de base' });
     }
   });
 
@@ -3064,11 +3126,19 @@ export function createSetupRouter(deps) {
       const zona = String(b.zona || '').trim();
       const origen = String(b.origen || 'callejero').trim();
       const descripcion = String(b.descripcion || '').trim();
+      const objetivoCampana = String(b.objetivo_campana || '').trim();
+      const contextTag = String(b.context_tag || '').trim();
+      const consentStatusIn = String(b.consent_status || '').toLowerCase();
+      const consentStatus = ['granted', 'denied', 'unknown'].includes(consentStatusIn) ? consentStatusIn : 'unknown';
+      const consentSource = String(b.consent_source || '').trim();
+      const consentAtRaw = b.consent_at ? new Date(b.consent_at) : null;
+      const consentAt = consentAtRaw instanceof Date && !Number.isNaN(consentAtRaw.getTime()) ? consentAtRaw.toISOString() : null;
       const canalRaw = String(b.canal_objetivo || 'whatsapp').toLowerCase();
       const canalObjetivo = (canalRaw === 'sms' || canalRaw === 'ambos' || canalRaw === 'whatsapp') ? canalRaw : 'whatsapp';
 
       if (!listaNombre) return res.status(400).json({ error: 'lista_nombre requerido' });
       if (!rubro) return res.status(400).json({ error: 'rubro requerido' });
+      if (!contextTag) return res.status(400).json({ error: 'context_tag requerido' });
 
       const telefonosIn = Array.isArray(b.telefonos) ? b.telefonos : [];
       if (!telefonosIn.length) return res.status(400).json({ error: 'No se recibieron teléfonos para importar' });
@@ -3097,17 +3167,50 @@ export function createSetupRouter(deps) {
       }
 
       for (const tel of cleaned) {
+        const estadoInicial = consentStatus === 'granted' ? 'ready' : 'validated';
         const rows = await query(
           `INSERT INTO marketing_contactos
-             (empresa_id, telefono, telefono_normalizado, lista_nombre, rubro, zona, origen, canal_objetivo, descripcion)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+             (empresa_id, telefono, telefono_normalizado, lista_nombre, rubro, zona, origen, canal_objetivo, descripcion, objetivo_campana, context_tag, consent_status, consent_source, consent_at, estado, updated_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,NOW())
            ON CONFLICT (empresa_id, telefono_normalizado)
-           DO NOTHING
-           RETURNING id`,
-          [empresaId, tel, tel, listaNombre, rubro, zona || null, origen || null, canalObjetivo, descripcion || null]
+           DO UPDATE SET
+             lista_nombre = EXCLUDED.lista_nombre,
+             rubro = EXCLUDED.rubro,
+             zona = EXCLUDED.zona,
+             origen = EXCLUDED.origen,
+             canal_objetivo = EXCLUDED.canal_objetivo,
+             descripcion = EXCLUDED.descripcion,
+             objetivo_campana = EXCLUDED.objetivo_campana,
+             context_tag = EXCLUDED.context_tag,
+             consent_status = EXCLUDED.consent_status,
+             consent_source = EXCLUDED.consent_source,
+             consent_at = EXCLUDED.consent_at,
+             estado = CASE
+               WHEN marketing_contactos.estado = 'opted_out' THEN marketing_contactos.estado
+               ELSE EXCLUDED.estado
+             END,
+             updated_at = NOW()
+           RETURNING (xmax = 0) AS inserted`,
+          [
+            empresaId,
+            tel,
+            tel,
+            listaNombre,
+            rubro,
+            zona || null,
+            origen || null,
+            canalObjetivo,
+            descripcion || null,
+            objetivoCampana || null,
+            contextTag,
+            consentStatus,
+            consentSource || null,
+            consentAt,
+            estadoInicial
+          ]
         );
 
-        if (rows.length) insertados += 1;
+        if (rows[0]?.inserted) insertados += 1;
         else existentes += 1;
       }
 
@@ -3158,6 +3261,94 @@ export function createSetupRouter(deps) {
     } catch (e) {
       console.error(e);
       return res.status(500).json({ error: 'Error listando bases de contactos' });
+    }
+  });
+
+  // GET /api/setup/marketing/base/quality-summary
+  router.get('/marketing/base/quality-summary', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req);
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+
+      await ensureMarketingContactosTable();
+
+      const [row] = await query(
+        `SELECT
+           COUNT(*)::int AS total,
+           COUNT(*) FILTER (WHERE estado='ready')::int AS ready,
+           COUNT(*) FILTER (WHERE estado='opted_out')::int AS opted_out,
+           COUNT(*) FILTER (WHERE consent_status='granted')::int AS consentidos,
+           COUNT(*) FILTER (WHERE consent_status<>'granted')::int AS sin_consentimiento,
+           COUNT(*) FILTER (WHERE telefono_normalizado !~ '^\\d{8,15}$')::int AS invalidos
+         FROM marketing_contactos
+         WHERE empresa_id = $1`,
+        [empresaId]
+      );
+
+      return res.json({ ok: true, resumen: row || {} });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error obteniendo resumen de calidad' });
+    }
+  });
+
+  // PATCH /api/setup/marketing/base/contact/:id/status
+  router.patch('/marketing/base/contact/:id/status', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+
+      await ensureMarketingContactosTable();
+
+      const id = Number(req.params.id);
+      if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: 'id inválido' });
+
+      const estadoIn = String(req.body?.estado || '').toLowerCase();
+      const allowed = new Set(['new', 'validated', 'ready', 'contacted', 'replied', 'opted_out', 'invalid']);
+      if (!allowed.has(estadoIn)) return res.status(400).json({ error: 'estado inválido' });
+
+      const rows = await query(
+        `UPDATE marketing_contactos
+         SET estado = $1,
+             optout_at = CASE WHEN $1='opted_out' THEN NOW() ELSE optout_at END,
+             updated_at = NOW()
+         WHERE id = $2 AND empresa_id = $3
+         RETURNING id, estado, updated_at`,
+        [estadoIn, id, empresaId]
+      );
+
+      if (!rows.length) return res.status(404).json({ error: 'Contacto no encontrado' });
+      return res.json({ ok: true, item: rows[0] });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error actualizando estado de contacto' });
+    }
+  });
+
+  // POST /api/setup/marketing/base/contact/:id/optout
+  router.post('/marketing/base/contact/:id/optout', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+
+      await ensureMarketingContactosTable();
+
+      const id = Number(req.params.id);
+      if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: 'id inválido' });
+
+      const rows = await query(
+        `UPDATE marketing_contactos
+         SET estado='opted_out', consent_status='denied', optout_at=NOW(), updated_at=NOW()
+         WHERE id = $1 AND empresa_id = $2
+         RETURNING id, estado, consent_status, optout_at`,
+        [id, empresaId]
+      );
+
+      if (!rows.length) return res.status(404).json({ error: 'Contacto no encontrado' });
+      return res.json({ ok: true, item: rows[0] });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error aplicando opt-out' });
     }
   });
 

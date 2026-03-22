@@ -1272,6 +1272,12 @@ CREATE TABLE IF NOT EXISTS marketing_contactos (
   origen TEXT,
   canal_objetivo TEXT NOT NULL DEFAULT 'whatsapp',
   descripcion TEXT,
+  objetivo_campana TEXT,
+  context_tag TEXT,
+  consent_status TEXT NOT NULL DEFAULT 'unknown',
+  consent_source TEXT,
+  consent_at TIMESTAMPTZ,
+  optout_at TIMESTAMPTZ,
   estado TEXT NOT NULL DEFAULT 'nuevo',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
