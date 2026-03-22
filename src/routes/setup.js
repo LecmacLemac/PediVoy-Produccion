@@ -4,6 +4,8 @@
 import express from 'express';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { enqueueWppMessage } from '../services/messaging.js';
+import { sendSmsViaIfttt } from '../services/sms.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -2910,6 +2912,38 @@ export function createSetupRouter(deps) {
   });
 
   const normalizePhoneDigits = (v) => String(v || '').replace(/\D+/g, '');
+  const normalizeCanalMarketing = (v) => {
+    const c = String(v || 'whatsapp').trim().toLowerCase();
+    return (c === 'sms' || c === 'ambos') ? c : 'whatsapp';
+  };
+  const canalIncluyeWhatsApp = (c) => ['whatsapp', 'ambos'].includes(normalizeCanalMarketing(c));
+  const canalIncluyeSms = (c) => ['sms', 'ambos'].includes(normalizeCanalMarketing(c));
+
+  const renderTemplateMsg = (tpl, ctx = {}) => String(tpl || '')
+    .replaceAll('{cliente}', String(ctx.cliente || ''))
+    .replaceAll('{rubro}', String(ctx.rubro || ''))
+    .replaceAll('{zona}', String(ctx.zona || ''));
+
+  const ensureMarketingTelemetryTable = async () => {
+    await query(`
+      CREATE TABLE IF NOT EXISTS marketing_envios_telemetria (
+        id BIGSERIAL PRIMARY KEY,
+        empresa_id INT NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+        estrategia TEXT NOT NULL,
+        canal TEXT NOT NULL,
+        telefono TEXT,
+        mensaje_hash TEXT,
+        estado TEXT NOT NULL,
+        proveedor TEXT,
+        costo_estimado NUMERIC(12,2),
+        detalle_error TEXT,
+        meta JSONB DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await query(`CREATE INDEX IF NOT EXISTS idx_marketing_tel_empresa_fecha ON marketing_envios_telemetria (empresa_id, created_at DESC)`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_marketing_tel_estrategia_canal_fecha ON marketing_envios_telemetria (estrategia, canal, created_at DESC)`);
+  };
 
   const ensureMarketingContactosTable = async () => {
     await query(`
@@ -3349,6 +3383,121 @@ export function createSetupRouter(deps) {
     } catch (e) {
       console.error(e);
       return res.status(500).json({ error: 'Error aplicando opt-out' });
+    }
+  });
+
+  // POST /api/setup/marketing/base/launch
+  router.post('/marketing/base/launch', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
+      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
+
+      await ensureMarketingContactosTable();
+      await ensureMarketingTelemetryTable();
+
+      const b = req.body || {};
+      const listaNombre = String(b.lista_nombre || '').trim();
+      const rubro = String(b.rubro || '').trim();
+      const zona = String(b.zona || '').trim();
+      const canal = normalizeCanalMarketing(b.canal || 'whatsapp');
+      const estrategia = 'base_importada';
+      const mensajeTpl = String(b.mensaje || '').trim();
+      const maxEnvios = Math.min(Math.max(Number(b.max_envios || 100), 1), 1000);
+      const frecuenciaHoras = Math.min(Math.max(Number(b.frecuencia_horas || 24), 1), 24 * 30);
+      const dryRun = !!b.dry_run;
+
+      if (!mensajeTpl) return res.status(400).json({ error: 'mensaje requerido' });
+      if (mensajeTpl.length > 280) return res.status(400).json({ error: 'mensaje supera 280 caracteres' });
+
+      const filtros = ['empresa_id = $1', "estado IN ('ready','replied')", "COALESCE(consent_status,'unknown')='granted'", 'optout_at IS NULL'];
+      const params = [empresaId];
+      let idx = 2;
+
+      if (listaNombre) { filtros.push(`lista_nombre = $${idx++}`); params.push(listaNombre); }
+      if (rubro) { filtros.push(`rubro = $${idx++}`); params.push(rubro); }
+      if (zona) { filtros.push(`zona = $${idx++}`); params.push(zona); }
+
+      params.push(frecuenciaHoras);
+      const freqIdx = idx++;
+
+      params.push(maxEnvios);
+      const limitIdx = idx++;
+
+      const rows = await query(
+        `SELECT mc.id, mc.telefono, mc.rubro, mc.zona, mc.lista_nombre
+         FROM marketing_contactos mc
+         WHERE ${filtros.join(' AND ')}
+           AND NOT EXISTS (
+             SELECT 1
+             FROM marketing_envios_telemetria t
+             WHERE t.empresa_id = mc.empresa_id
+               AND t.estrategia = '${estrategia}'
+               AND t.telefono = mc.telefono_normalizado
+               AND t.created_at > NOW() - ($${freqIdx}::text || ' hours')::interval
+           )
+         ORDER BY mc.updated_at DESC
+         LIMIT $${limitIdx}`,
+        params
+      );
+
+      if (dryRun) {
+        return res.json({ ok: true, dry_run: true, candidatos: rows.length });
+      }
+
+      let enviados = 0;
+      let omitidos = 0;
+      let errores = 0;
+
+      for (const c of rows) {
+        const tel = normalizePhoneDigits(c.telefono);
+        const msg = renderTemplateMsg(mensajeTpl, { cliente: '', rubro: c.rubro, zona: c.zona });
+        let envioOk = false;
+        let detalleError = null;
+
+        try {
+          if (canalIncluyeWhatsApp(canal)) {
+            await enqueueWppMessage({ phone: tel, message: msg, empresa_id: empresaId });
+            envioOk = true;
+          }
+          if (canalIncluyeSms(canal)) {
+            const sms = await sendSmsViaIfttt({ phone: tel, message: msg });
+            if (sms?.ok) envioOk = true;
+            else detalleError = sms?.reason || sms?.error || 'sms_error';
+          }
+        } catch (e) {
+          detalleError = e?.message || 'send_error';
+        }
+
+        await query(
+          `INSERT INTO marketing_envios_telemetria
+            (empresa_id, estrategia, canal, telefono, mensaje_hash, estado, proveedor, detalle_error, meta)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb)`,
+          [
+            empresaId,
+            estrategia,
+            canal,
+            tel,
+            `manual_${Date.now()}`,
+            envioOk ? 'queued' : 'error',
+            canalIncluyeSms(canal) ? 'ifttt_sms/wpp' : 'whatsapp-web.js',
+            detalleError,
+            JSON.stringify({ contacto_id: c.id, lista_nombre: c.lista_nombre, rubro: c.rubro, zona: c.zona })
+          ]
+        );
+
+        if (envioOk) {
+          enviados += 1;
+          await query(`UPDATE marketing_contactos SET estado='contacted', updated_at=NOW() WHERE id=$1 AND empresa_id=$2`, [c.id, empresaId]);
+        } else {
+          errores += 1;
+        }
+      }
+
+      omitidos = Math.max(0, maxEnvios - rows.length);
+      return res.json({ ok: true, total_candidatos: rows.length, enviados, errores, omitidos });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Error lanzando campaña de base importada' });
     }
   });
 
