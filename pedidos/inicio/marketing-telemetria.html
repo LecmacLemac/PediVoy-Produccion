@@ -291,6 +291,19 @@
         </select>
       </div>
       <div>
+        <label class="small" for="fEstrategia">Estrategia</label>
+        <input id="fEstrategia" type="text" placeholder="base_importada...">
+      </div>
+      <div>
+        <label class="small" for="fCanal">Canal</label>
+        <select id="fCanal">
+          <option value="">Todos</option>
+          <option value="whatsapp">WhatsApp</option>
+          <option value="sms">SMS</option>
+          <option value="ambos">Ambos</option>
+        </select>
+      </div>
+      <div>
         <label class="small" for="fCliente">Cliente</label>
         <input id="fCliente" type="text" placeholder="Nombre cliente">
       </div>
@@ -366,6 +379,8 @@
       const desde = $('#fDesde')?.value || '';
       const hasta = $('#fHasta')?.value || '';
       const estado = ($('#fEstado')?.value || '').toLowerCase();
+      const estrategia = ($('#fEstrategia')?.value || '').trim().toLowerCase();
+      const canal = ($('#fCanal')?.value || '').toLowerCase();
       const cliente = ($('#fCliente')?.value || '').trim().toLowerCase();
       const telefono = normalizeDigits($('#fTelefono')?.value || '');
       const conv = ($('#fConv')?.value || '').toLowerCase();
@@ -381,6 +396,8 @@
           if (!(d <= dHasta)) return false;
         }
         if (estado && String(r.estado || '').toLowerCase() !== estado) return false;
+        if (estrategia && !String(r.estrategia || '').toLowerCase().includes(estrategia)) return false;
+        if (canal && String(r.canal || '').toLowerCase() !== canal) return false;
         if (cliente && !String(r.cliente || '').toLowerCase().includes(cliente)) return false;
         if (telefono && !normalizeDigits(r.telefono).includes(telefono)) return false;
         if (conv === 'si' && !r.convirtio) return false;
@@ -578,17 +595,17 @@
       $('#ventanaHoras').addEventListener('change', load);
       $('#empresa').addEventListener('change', load);
 
-      ['#fDesde', '#fHasta', '#fEstado', '#fCliente', '#fTelefono', '#fConv'].forEach((sel) => {
+      ['#fDesde', '#fHasta', '#fEstado', '#fEstrategia', '#fCanal', '#fCliente', '#fTelefono', '#fConv'].forEach((sel) => {
         const el = $(sel);
         if (!el) return;
-        const ev = (sel === '#fCliente' || sel === '#fTelefono') ? 'input' : 'change';
+        const ev = (sel === '#fCliente' || sel === '#fTelefono' || sel === '#fEstrategia') ? 'input' : 'change';
         el.addEventListener(ev, renderDetalleTable);
       });
 
       const btnLimpiar = $('#btnLimpiarFiltros');
       if (btnLimpiar) {
         btnLimpiar.addEventListener('click', () => {
-          ['#fDesde', '#fHasta', '#fEstado', '#fCliente', '#fTelefono', '#fConv'].forEach((sel) => {
+          ['#fDesde', '#fHasta', '#fEstado', '#fEstrategia', '#fCanal', '#fCliente', '#fTelefono', '#fConv'].forEach((sel) => {
             const el = $(sel);
             if (!el) return;
             if (el.tagName === 'SELECT') el.value = '';
