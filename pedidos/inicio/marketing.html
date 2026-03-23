@@ -591,7 +591,23 @@
             </div>
 
             <div style="margin-top:14px; background:rgba(255,255,255,0.78); border:1px solid rgba(15,23,42,0.2); border-radius:8px; padding:12px;">
-              <label style="margin-top:0; font-weight:700; color:#0f172a;">🚀 Lanzar campaña a contactos READY</label>
+              <label style="margin-top:0; font-weight:800; color:#0f172a;">🚀 Lanzar campaña a contactos READY</label>
+
+              <div style="display:grid; grid-template-columns: repeat(3,minmax(120px,1fr)); gap:8px; margin:8px 0 10px;">
+                <div style="background:#ecfeff;border:1px solid #a5f3fc;border-radius:8px;padding:8px;">
+                  <div style="font-size:11px;color:#0e7490;font-weight:700;">READY ahora</div>
+                  <div id="launch_kpi_ready" style="font-size:18px;font-weight:800;color:#164e63;">-</div>
+                </div>
+                <div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;padding:8px;">
+                  <div style="font-size:11px;color:#0369a1;font-weight:700;">Tandas estimadas</div>
+                  <div id="launch_kpi_tandas" style="font-size:18px;font-weight:800;color:#0c4a6e;">-</div>
+                </div>
+                <div style="background:#f8fafc;border:1px solid #cbd5e1;border-radius:8px;padding:8px;">
+                  <div style="font-size:11px;color:#334155;font-weight:700;">Tiempo estimado</div>
+                  <div id="launch_kpi_tiempo" style="font-size:18px;font-weight:800;color:#0f172a;">-</div>
+                </div>
+              </div>
+
               <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:10px;">
                 <div>
                   <label>Canal de envío:</label>
@@ -600,18 +616,41 @@
                     <option value="sms">SMS</option>
                     <option value="ambos">Ambos</option>
                   </select>
+                  <div id="launch_canal_hint" style="margin-top:4px;font-size:12px;color:#475569;">Canal recomendado para alcance rápido.</div>
                 </div>
                 <div>
                   <label>Máx. envíos por lote:</label>
                   <input type="number" id="launch_max_envios" value="100" min="1" max="1000">
+                  <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;">
+                    <button type="button" class="launch-lote-preset" data-lote="50" style="border:1px solid #cbd5e1;background:#fff;border-radius:999px;padding:3px 8px;cursor:pointer;">50</button>
+                    <button type="button" class="launch-lote-preset" data-lote="100" style="border:1px solid #cbd5e1;background:#fff;border-radius:999px;padding:3px 8px;cursor:pointer;">100</button>
+                    <button type="button" class="launch-lote-preset" data-lote="200" style="border:1px solid #cbd5e1;background:#fff;border-radius:999px;padding:3px 8px;cursor:pointer;">200</button>
+                  </div>
                 </div>
                 <div>
                   <label>Frecuencia (horas):</label>
                   <input type="number" id="launch_frecuencia_horas" value="24" min="1" max="720">
+                  <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;">
+                    <button type="button" class="launch-freq-preset" data-freq="6" style="border:1px solid #cbd5e1;background:#fff;border-radius:999px;padding:3px 8px;cursor:pointer;">6h</button>
+                    <button type="button" class="launch-freq-preset" data-freq="12" style="border:1px solid #cbd5e1;background:#fff;border-radius:999px;padding:3px 8px;cursor:pointer;">12h</button>
+                    <button type="button" class="launch-freq-preset" data-freq="24" style="border:1px solid #cbd5e1;background:#fff;border-radius:999px;padding:3px 8px;cursor:pointer;">24h</button>
+                    <button type="button" class="launch-freq-preset" data-freq="48" style="border:1px solid #cbd5e1;background:#fff;border-radius:999px;padding:3px 8px;cursor:pointer;">48h</button>
+                  </div>
                 </div>
               </div>
+
               <label>Mensaje (1 CTA):</label>
               <textarea id="launch_mensaje" rows="2" placeholder="Hola, te escribimos porque dejaste tus datos para agua a domicilio. ¿Querés que te pasemos promo de bienvenida?" maxlength="280"></textarea>
+              <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-top:4px;">
+                <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                  <button type="button" class="launch-var-btn" data-var="{cliente}" style="border:1px dashed #94a3b8;background:#f8fafc;border-radius:8px;padding:2px 7px;cursor:pointer;">+ {cliente}</button>
+                  <button type="button" class="launch-var-btn" data-var="{rubro}" style="border:1px dashed #94a3b8;background:#f8fafc;border-radius:8px;padding:2px 7px;cursor:pointer;">+ {rubro}</button>
+                  <button type="button" class="launch-var-btn" data-var="{zona}" style="border:1px dashed #94a3b8;background:#f8fafc;border-radius:8px;padding:2px 7px;cursor:pointer;">+ {zona}</button>
+                </div>
+                <div id="launch_msg_counter" style="font-size:12px;color:#475569;">0/280</div>
+              </div>
+              <div id="launch_msg_hint" style="font-size:12px;color:#92400e;margin-top:4px;">Tip: cerrá el mensaje con una pregunta/CTA.</div>
+
               <div style="display:flex; gap:10px; margin-top:8px; flex-wrap:wrap;">
                 <button type="button" id="btn_lanzar_campana" class="btn-save" style="margin:0; width:auto;">Lanzar campaña</button>
                 <button type="button" id="btn_preview_campana" class="btn-save" style="margin:0; width:auto; background:#0ea5e9;">Preview audiencia</button>
@@ -816,6 +855,97 @@
         });
       });
     }
+
+    function updateLaunchMessageUx() {
+      const msgEl = document.getElementById('launch_mensaje');
+      const counter = document.getElementById('launch_msg_counter');
+      const hint = document.getElementById('launch_msg_hint');
+      if (!msgEl) return;
+      const txt = String(msgEl.value || '').trim();
+      const len = txt.length;
+      if (counter) counter.textContent = `${len}/280`;
+      if (counter) counter.style.color = len > 260 ? '#b91c1c' : '#475569';
+      const hasCta = /(\?|\brespond[eé]\b|\bconfirm[aá]\b|\bte llevo\b|\bquer[eé]s\b|\bagendar\b)/i.test(txt);
+      if (hint) {
+        hint.textContent = hasCta ? '✅ Mensaje con CTA detectado.' : 'Tip: cerrá el mensaje con una pregunta/CTA.';
+        hint.style.color = hasCta ? '#166534' : '#92400e';
+      }
+    }
+
+    function updateLaunchDerivedStats(candidatos = null) {
+      const lote = Math.max(1, Number(document.getElementById('launch_max_envios')?.value || 100));
+      const freq = Math.max(1, Number(document.getElementById('launch_frecuencia_horas')?.value || 24));
+      const ready = Number.isFinite(Number(candidatos)) ? Number(candidatos) : null;
+      const tandas = ready == null ? null : Math.max(1, Math.ceil(ready / lote));
+
+      const kReady = document.getElementById('launch_kpi_ready');
+      const kTandas = document.getElementById('launch_kpi_tandas');
+      const kTiempo = document.getElementById('launch_kpi_tiempo');
+      if (kReady) kReady.textContent = ready == null ? '-' : String(ready);
+      if (kTandas) kTandas.textContent = tandas == null ? '-' : String(tandas);
+      if (kTiempo) kTiempo.textContent = tandas == null ? '-' : `${tandas * freq}h`;
+
+      const canal = document.getElementById('launch_canal')?.value || 'whatsapp';
+      const canalHint = document.getElementById('launch_canal_hint');
+      if (canalHint) {
+        canalHint.textContent = canal === 'ambos'
+          ? 'Cobertura máxima (WhatsApp + SMS).'
+          : canal === 'sms'
+            ? 'Canal directo. Revisá costo por volumen.'
+            : 'Canal recomendado para conversiones rápidas.';
+      }
+    }
+
+    function setupLaunchProUi() {
+      const msgEl = document.getElementById('launch_mensaje');
+      if (msgEl && !msgEl.dataset.bound) {
+        msgEl.dataset.bound = '1';
+        msgEl.addEventListener('input', updateLaunchMessageUx);
+      }
+
+      ['launch_max_envios', 'launch_frecuencia_horas', 'launch_canal'].forEach((id) => {
+        const el = document.getElementById(id);
+        if (!el || el.dataset.bound) return;
+        el.dataset.bound = '1';
+        el.addEventListener('input', () => updateLaunchDerivedStats(null));
+        el.addEventListener('change', () => updateLaunchDerivedStats(null));
+      });
+
+      document.querySelectorAll('.launch-lote-preset').forEach((btn) => {
+        if (btn.dataset.bound) return;
+        btn.dataset.bound = '1';
+        btn.addEventListener('click', () => {
+          const input = document.getElementById('launch_max_envios');
+          if (input) input.value = String(btn.dataset.lote || '100');
+          updateLaunchDerivedStats(null);
+        });
+      });
+
+      document.querySelectorAll('.launch-freq-preset').forEach((btn) => {
+        if (btn.dataset.bound) return;
+        btn.dataset.bound = '1';
+        btn.addEventListener('click', () => {
+          const input = document.getElementById('launch_frecuencia_horas');
+          if (input) input.value = String(btn.dataset.freq || '24');
+          updateLaunchDerivedStats(null);
+        });
+      });
+
+      document.querySelectorAll('.launch-var-btn').forEach((btn) => {
+        if (btn.dataset.bound) return;
+        btn.dataset.bound = '1';
+        btn.addEventListener('click', () => {
+          const msg = document.getElementById('launch_mensaje');
+          if (!msg) return;
+          const v = String(btn.dataset.var || '').trim();
+          msg.value = `${msg.value || ''}${msg.value ? ' ' : ''}${v}`.trim();
+          updateLaunchMessageUx();
+        });
+      });
+
+      updateLaunchMessageUx();
+      updateLaunchDerivedStats(null);
+    }
     
     // Modo seguro: auth por cookie httpOnly
     const authFetch = (url, opts = {}) => {
@@ -1017,7 +1147,12 @@
           });
           const data = await res.json().catch(() => ({}));
           if (!res.ok) throw new Error(data?.error || 'No se pudo calcular audiencia');
-          if (resultEl) resultEl.textContent = `👀 Preview: ${data?.candidatos || 0} contactos listos para envío.`;
+          const candidatos = Number(data?.candidatos || 0);
+          updateLaunchDerivedStats(candidatos);
+          const lote = Math.max(1, Number(body.max_envios || 100));
+          const freq = Math.max(1, Number(body.frecuencia_horas || 24));
+          const tandas = Math.max(1, Math.ceil(candidatos / lote));
+          if (resultEl) resultEl.textContent = `👀 READY: ${candidatos} | Tandas: ${tandas} | Estimado total: ${tandas * freq}h`;
         } catch (err) {
           console.error(err);
           alert(`❌ ${err.message || 'Error en preview de campaña'}`);
@@ -1059,6 +1194,7 @@
           });
           const data = await res.json().catch(() => ({}));
           if (!res.ok) throw new Error(data?.error || 'No se pudo lanzar campaña');
+          updateLaunchDerivedStats(Number(data?.total_candidatos || 0));
           if (resultEl) resultEl.textContent = `✅ Enviados: ${data?.enviados || 0} | Errores: ${data?.errores || 0} | Candidatos: ${data?.total_candidatos || 0}`;
         } catch (err) {
           console.error(err);
@@ -1240,6 +1376,7 @@
             }
 
             setupAutoLaunchUi();
+            setupLaunchProUi();
         } catch(e) { console.error('Error loading config:', e); }
     }
 
