@@ -3415,39 +3415,99 @@ export function createSetupRouter(deps) {
       const frecuenciaHoras = Math.min(Math.max(Number(b.frecuencia_horas || 24), 1), 24 * 30);
       const dryRun = !!b.dry_run;
 
+      const selectBaseImportadaCandidates = async () => {
+        const filtrosBase = [
+          'mc.empresa_id = $1',
+          "COALESCE(mc.consent_status,'unknown')='granted'",
+          'mc.optout_at IS NULL',
+          "COALESCE(mc.estado, 'new') NOT IN ('opted_out','invalid')"
+        ];
+        const paramsBase = [empresaId];
+        let idxBase = 2;
+
+        if (listaNombre) { filtrosBase.push(`mc.lista_nombre = $${idxBase++}`); paramsBase.push(listaNombre); }
+        if (rubro) { filtrosBase.push(`mc.rubro = $${idxBase++}`); paramsBase.push(rubro); }
+        if (zona) { filtrosBase.push(`mc.zona = $${idxBase++}`); paramsBase.push(zona); }
+
+        paramsBase.push(frecuenciaHoras);
+        const freqIdxBase = idxBase++;
+
+        const recentClause = `NOT EXISTS (
+          SELECT 1
+          FROM marketing_envios_telemetria t
+          WHERE t.empresa_id = mc.empresa_id
+            AND t.estrategia = '${estrategia}'
+            AND t.telefono = mc.telefono_normalizado
+            AND t.created_at > NOW() - ($${freqIdxBase}::text || ' hours')::interval
+        )`;
+
+        const readyCountRows = await query(
+          `SELECT COUNT(*)::int AS total
+           FROM marketing_contactos mc
+           WHERE ${filtrosBase.join(' AND ')}
+             AND mc.estado IN ('ready','replied')
+             AND ${recentClause}`,
+          paramsBase
+        );
+
+        const readyDisponibles = Number(readyCountRows?.[0]?.total || 0);
+        const faltan = Math.max(0, maxEnvios - readyDisponibles);
+
+        if (faltan > 0) {
+          const refillParams = [...paramsBase, faltan];
+          const refillLimitIdx = idxBase;
+          const refillRows = await query(
+            `SELECT mc.id
+             FROM marketing_contactos mc
+             WHERE ${filtrosBase.join(' AND ')}
+               AND COALESCE(mc.estado, 'new') NOT IN ('ready','replied','opted_out','invalid')
+               AND ${recentClause}
+             ORDER BY
+               CASE
+                 WHEN mc.estado = 'validated' THEN 0
+                 WHEN mc.estado IN ('new','nuevo') THEN 1
+                 WHEN mc.estado = 'contacted' THEN 2
+                 ELSE 9
+               END,
+               mc.updated_at ASC,
+               mc.id ASC
+             LIMIT $${refillLimitIdx}`,
+            refillParams
+          );
+
+          if (refillRows.length) {
+            await query(
+              `UPDATE marketing_contactos
+               SET estado = 'ready', updated_at = NOW()
+               WHERE empresa_id = $1
+                 AND id = ANY($2::bigint[])`,
+              [empresaId, refillRows.map((r) => Number(r.id)).filter(Boolean)]
+            );
+          }
+        }
+
+        const finalParams = [...paramsBase, maxEnvios];
+        const limitIdxBase = idxBase;
+
+        return query(
+          `SELECT mc.id, mc.telefono, mc.rubro, mc.zona, mc.lista_nombre
+           FROM marketing_contactos mc
+           WHERE ${filtrosBase.join(' AND ')}
+             AND mc.estado IN ('ready','replied')
+             AND ${recentClause}
+           ORDER BY
+             CASE WHEN mc.estado = 'replied' THEN 0 ELSE 1 END,
+             mc.updated_at DESC,
+             mc.id DESC
+           LIMIT $${limitIdxBase}`,
+          finalParams
+        );
+      };
+
       if (!mensajeTpl) return res.status(400).json({ error: 'mensaje requerido' });
       if (mensajeTpl.length > 280) return res.status(400).json({ error: 'mensaje supera 280 caracteres' });
 
-      const filtros = ['empresa_id = $1', "estado IN ('ready','replied')", "COALESCE(consent_status,'unknown')='granted'", 'optout_at IS NULL'];
-      const params = [empresaId];
-      let idx = 2;
-
-      if (listaNombre) { filtros.push(`lista_nombre = $${idx++}`); params.push(listaNombre); }
-      if (rubro) { filtros.push(`rubro = $${idx++}`); params.push(rubro); }
-      if (zona) { filtros.push(`zona = $${idx++}`); params.push(zona); }
-
-      params.push(frecuenciaHoras);
-      const freqIdx = idx++;
-
-      params.push(maxEnvios);
-      const limitIdx = idx++;
-
-      const rows = await query(
-        `SELECT mc.id, mc.telefono, mc.rubro, mc.zona, mc.lista_nombre
-         FROM marketing_contactos mc
-         WHERE ${filtros.join(' AND ')}
-           AND NOT EXISTS (
-             SELECT 1
-             FROM marketing_envios_telemetria t
-             WHERE t.empresa_id = mc.empresa_id
-               AND t.estrategia = '${estrategia}'
-               AND t.telefono = mc.telefono_normalizado
-               AND t.created_at > NOW() - ($${freqIdx}::text || ' hours')::interval
-           )
-         ORDER BY mc.updated_at DESC
-         LIMIT $${limitIdx}`,
-        params
-      );
+      const rows = await selectBaseImportadaCandidates();
 
       if (dryRun) {
         return res.json({ ok: true, dry_run: true, candidatos: rows.length });
