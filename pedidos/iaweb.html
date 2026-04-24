@@ -311,9 +311,15 @@
       <div>
         <h2><i class="fa-solid fa-wand-magic-sparkles"></i> Describe tu Negocio</h2>
         <p class="hint">
-          Cuéntale a la IA qué vendes, colores preferidos y estilo (ej: "Verdulería rústica, fondo papel kraft, botones verdes").
+          La IA ya toma la base cargada en <strong>Inicio / Empresa</strong>. Aquí solo completa diferenciales, estilo y mensaje comercial para la web.
         </p>
-        <textarea id="promptInput" placeholder="Ej: Soy una tienda de ropa llamada 'Urbana'. Quiero un estilo minimalista, colores pastel y fotos grandes. Destaca que tenemos envío gratis."></textarea>
+        <div id="contextStatus" class="info-box" style="margin-bottom:12px;">
+          <i class="fa-solid fa-spinner fa-spin"></i> Preparando contexto comercial...
+        </div>
+        <button class="btn" id="btnAutofill" type="button" onclick="autofillPrompt()" style="margin-bottom:12px;">
+          <i class="fa-solid fa-wand-magic-sparkles"></i> Autocompletar con datos de mi empresa
+        </button>
+        <textarea id="promptInput" placeholder="Ej: Quiero una web que transmita confianza, destaque entregas rápidas, pagos simples y muestre promos para hogares y oficinas."></textarea>
         <label for="visualStyle" style="display:block; margin-top:10px; font-size:0.85rem; color:var(--muted);">Estilo visual base</label>
         <select id="visualStyle">
           <option value="Moderno y limpio">Moderno y limpio</option>
@@ -362,6 +368,7 @@
     let generatedHtml = '';
     let currentEmpresaId = null;
     let companiesList = []; 
+    let currentEmpresa = null;
 
     // Modo seguro: auth por cookie httpOnly
     const authFetch = (url, opts = {}) => {
@@ -402,6 +409,100 @@
       iframe.className = mode;
       document.querySelectorAll('.toolbar button').forEach(b => b.classList.remove('active'));
       if (btnEl) btnEl.classList.add('active');
+    }
+
+    function firstFilled(obj, keys = []) {
+      if (!obj || typeof obj !== 'object') return '';
+      for (const key of keys) {
+        const value = obj[key];
+        if (value === null || value === undefined) continue;
+        const text = String(value).trim();
+        if (text) return text;
+      }
+      return '';
+    }
+
+    function buildEmpresaContext(empresa) {
+      const nombre = firstFilled(empresa, ['nombre_comercial', 'nombre', 'razon_social']) || `Empresa #${Number(empresa?.id || 0)}`;
+      const rubro = firstFilled(empresa, ['rubro', 'categoria', 'tipo_negocio', 'vertical', 'onboarding_rubro']);
+      const slogan = firstFilled(empresa, ['slogan', 'tagline', 'frase', 'propuesta_valor']);
+      const descripcion = firstFilled(empresa, ['descripcion', 'descripcion_web', 'bio', 'acerca_de']);
+      const whatsapp = firstFilled(empresa, ['whatsapp', 'telefono_whatsapp', 'telefono', 'celular']);
+      const zona = firstFilled(empresa, ['zona', 'ciudad', 'localidad', 'direccion', 'area_cobertura']);
+      const pagos = firstFilled(empresa, ['medios_pago', 'formas_pago', 'payment_methods']);
+      const horario = firstFilled(empresa, ['horario', 'horarios', 'horario_atencion']);
+      const estilo = firstFilled(empresa, ['estilo_visual', 'brand_style', 'tema']);
+      const color = firstFilled(empresa, ['color_primario', 'brand_color', 'accent_color']);
+      const diferenciadores = firstFilled(empresa, ['diferenciales', 'beneficios', 'propuesta_principal']);
+
+      const missing = [];
+      if (!rubro) missing.push('rubro');
+      if (!whatsapp) missing.push('WhatsApp o teléfono');
+      if (!zona) missing.push('zona o ciudad');
+      if (!pagos) missing.push('medios de pago');
+
+      return {
+        nombre,
+        rubro,
+        slogan,
+        descripcion,
+        whatsapp,
+        zona,
+        pagos,
+        horario,
+        estilo,
+        color,
+        diferenciadores,
+        missing
+      };
+    }
+
+    function renderContextStatus(ctx) {
+      const el = document.getElementById('contextStatus');
+      if (!el) return;
+      const okItems = [
+        ctx.rubro ? `Rubro: ${escapeHtml(ctx.rubro)}` : '',
+        ctx.zona ? `Zona: ${escapeHtml(ctx.zona)}` : '',
+        ctx.whatsapp ? `Contacto: ${escapeHtml(ctx.whatsapp)}` : '',
+        ctx.pagos ? `Pagos: ${escapeHtml(ctx.pagos)}` : ''
+      ].filter(Boolean);
+
+      el.innerHTML = `
+        <div style="margin-bottom:6px;"><strong>Base detectada:</strong> ${okItems.length ? okItems.join(' · ') : 'muy básica todavía'}</div>
+        <div style="font-size:0.8rem; color:var(--muted);">
+          ${ctx.missing.length ? `Falta completar: ${escapeHtml(ctx.missing.join(', '))}. Igual puedes generar una versión inicial.` : 'La empresa ya tiene contexto suficiente para generar una web más consistente.'}
+        </div>
+      `;
+    }
+
+    function buildSuggestedPrompt(ctx, visualStyle) {
+      const lines = [
+        `Negocio: ${ctx.nombre}.`,
+        ctx.rubro ? `Rubro: ${ctx.rubro}.` : '',
+        ctx.zona ? `Zona o cobertura: ${ctx.zona}.` : '',
+        ctx.whatsapp ? `Contacto principal: ${ctx.whatsapp}.` : '',
+        ctx.pagos ? `Medios de pago: ${ctx.pagos}.` : '',
+        ctx.horario ? `Horario: ${ctx.horario}.` : '',
+        ctx.slogan ? `Mensaje actual: ${ctx.slogan}.` : '',
+        ctx.descripcion ? `Contexto del negocio: ${ctx.descripcion}.` : '',
+        ctx.diferenciadores ? `Diferenciales: ${ctx.diferenciadores}.` : '',
+        ctx.color ? `Color o acento de marca: ${ctx.color}.` : '',
+        ctx.estilo ? `Estilo ya definido: ${ctx.estilo}.` : '',
+        `Estilo deseado para esta versión: ${visualStyle}.`,
+        'Quiero una landing comercial premium, clara y replicable para PediVoy.',
+        'Debe priorizar: propuesta de valor arriba, confianza, cobertura, medios de pago, promociones y CTA de pedido/WhatsApp.',
+        'Si faltan datos, usa copy genérico prudente sin inventar información sensible.'
+      ].filter(Boolean);
+      return lines.join('\n');
+    }
+
+    function autofillPrompt(force = true) {
+      if (!currentEmpresa) return toast('⚠️ No hay empresa seleccionada.');
+      const visualStyle = document.getElementById('visualStyle')?.value || 'Moderno y limpio';
+      const textarea = document.getElementById('promptInput');
+      const suggested = buildSuggestedPrompt(buildEmpresaContext(currentEmpresa), visualStyle);
+      if (force || !textarea.value.trim()) textarea.value = suggested;
+      toast('✨ Contexto comercial cargado desde tu empresa');
     }
 
     // --- AUTH & LOGOUT ---
@@ -463,6 +564,7 @@
           // Usuario Normal: Forzar su ID
           if (companiesList.length > 0) {
             currentEmpresaId = companiesList[0].id;
+            currentEmpresa = companiesList[0];
             updateUIInfo(companiesList[0]);
           } else {
             document.getElementById('configInfo').textContent = 'No tienes una empresa asignada.';
@@ -483,6 +585,7 @@
       
       if (empresa) {
         currentEmpresaId = empresa.id;
+        currentEmpresa = empresa;
         generatedHtml = '';
         document.getElementById('btnSave').disabled = true;
         document.getElementById('previewFrame').srcdoc = '';
@@ -492,7 +595,9 @@
 
     // --- ACTUALIZAR VISUALIZACIÓN DE SLUG/URL ---
     function updateUIInfo(empresa) {
+      currentEmpresa = empresa;
       const infoBox = document.getElementById('configInfo');
+      const ctx = buildEmpresaContext(empresa);
       
       // Slug y URL real publicada (archivo por ID: empresa_<id>.html)
       const slug = empresa.landing_slug || '(sin slug)';
@@ -502,19 +607,27 @@
 
       const safePreview = safeHttpUrl(urlPreview) || '#';
       infoBox.innerHTML = `
-        <div style="margin-bottom:6px;"><strong>Empresa:</strong> ${escapeHtml(empresa.nombre)} (#${Number(empresa.id)})</div>
+        <div style="margin-bottom:6px;"><strong>Empresa:</strong> ${escapeHtml(ctx.nombre)} (#${Number(empresa.id)})</div>
         <div style="margin-bottom:6px;"><strong>Slug:</strong> <span style="font-family:monospace; background:rgba(255,255,255,0.1); padding:2px 4px; border-radius:4px;">${escapeHtml(slug)}</span></div>
+        <div style="margin-bottom:6px;"><strong>Rubro:</strong> ${ctx.rubro ? escapeHtml(ctx.rubro) : '<span style="color:var(--warning)">Falta definir</span>'}</div>
+        <div style="margin-bottom:6px;"><strong>Contacto:</strong> ${ctx.whatsapp ? escapeHtml(ctx.whatsapp) : '<span style="color:var(--warning)">Falta definir</span>'}</div>
         <div style="margin-bottom:4px;"><strong>URL Pública:</strong></div>
         <a href="${safePreview}" target="_blank" rel="noopener" style="word-break:break-all; font-size:0.8rem;">${escapeHtml(urlText)}</a>
       `;
+
+      renderContextStatus(ctx);
+      const textarea = document.getElementById('promptInput');
+      if (textarea && !textarea.value.trim()) {
+        textarea.value = buildSuggestedPrompt(ctx, document.getElementById('visualStyle')?.value || 'Moderno y limpio');
+      }
     }
 
     // --- GENERAR SITIO (LLAMADA A LA IA) ---
     async function generateSite() {
       // 1. Validaciones básicas
       const userDescription = document.getElementById('promptInput').value.trim();
-      
       const visualStyle = document.getElementById('visualStyle')?.value || 'Moderno y limpio';
+      const ctx = buildEmpresaContext(currentEmpresa);
 
       if (!userDescription) return toast('⚠️ Por favor, describe tu negocio.');
       if (userDescription.length < 20) return toast('⚠️ Agregá más detalle (mínimo 20 caracteres).');
@@ -532,9 +645,25 @@
       const promptContextualizado = `
       [SISTEMA_DATA]
       EMPRESA_ID_OBLIGATORIO: ${currentEmpresaId}
+      NOMBRE_EMPRESA: ${ctx.nombre}
+      RUBRO: ${ctx.rubro || 'No definido'}
+      ZONA_COBERTURA: ${ctx.zona || 'No definida'}
+      CONTACTO: ${ctx.whatsapp || 'No definido'}
+      MEDIOS_DE_PAGO: ${ctx.pagos || 'No definidos'}
+      HORARIO: ${ctx.horario || 'No definido'}
+      
+      [CONTEXTO_COMERCIAL_BASE]
+      SLOGAN: ${ctx.slogan || 'No definido'}
+      DESCRIPCION: ${ctx.descripcion || 'No definida'}
+      DIFERENCIALES: ${ctx.diferenciadores || 'No definidos'}
       
       [PREFERENCIAS_VISUALES]
       Estilo: ${visualStyle}
+      Estilo previo detectado: ${ctx.estilo || 'No definido'}
+      Color detectado: ${ctx.color || 'No definido'}
+      
+      [OBJETIVO_DEL_GENERADOR]
+      Crear una landing comercial premium, clara y reutilizable para PediVoy, priorizando conversión y confianza.
       
       [DESCRIPCIÓN_DEL_USUARIO]
       "${userDescription}"
