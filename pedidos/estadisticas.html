@@ -507,23 +507,11 @@
   <div id="toast" class="toast"></div>
 
   <script>    
-    // ====== CONFIG ======
-    const API_BASE = '';
-
-    // ====== AUTH & UTILS (modo seguro: cookie httpOnly) ======
-    const authFetch = (url, opts = {}) => {
-      const { headers = {}, ...rest } = opts;
-      return fetch(url, { ...rest, headers, credentials: 'include' });
-    };
-
-    // token legacy (antes venía de localStorage). En modo seguro no se usa.
-    const token = null;
-
     const $ = s => document.querySelector(s);
     const num = n => Number(n) || 0;
     const money = n => '$ ' + num(n).toLocaleString('es-AR', { minimumFractionDigits: 2 });
     const pct = n => num(n).toLocaleString('es-AR', { minimumFractionDigits: 2 }) + '%';
-    const esc = s => String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":"&#39;"}[c]));
+    const esc = s => String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
     function dateISO(date) {
       const d = date instanceof Date ? date : new Date(date);
@@ -543,208 +531,7 @@
     // SVG WhatsApp icon
     const waIcon = `<svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91C2.13 13.66 2.59 15.36 3.45 16.86L2.05 22L7.3 20.62C8.75 21.41 10.38 21.83 12.04 21.83C17.5 21.83 21.95 17.38 21.95 11.92C21.95 9.27 20.92 6.78 19.05 4.91C17.18 3.03 14.69 2 12.04 2ZM12.05 3.66C14.25 3.66 16.31 4.51 17.87 6.07C19.42 7.63 20.28 9.7 20.28 11.92C20.28 16.46 16.58 20.17 12.04 20.17C10.59 20.17 9.17 19.78 7.92 19.04L7.62 18.86L4.5 19.68L5.33 16.64L5.14 16.33C4.35 15.06 3.93 13.59 3.93 12.08C3.93 12.03 3.93 11.97 3.93 11.91C3.93 7.45 7.57 3.8 12.05 3.66Z"/></svg>`;
 
-    // ====== STATE ======
-    let isSuper = false;
-    let empresaId = null;
-    let empresaLabelText = '';
-    let choferes = [];
-    let __productosByName = new Map();
-    let __payAgg = {};
     let deltaMode = 'abs';
-    let authRedirectInProgress = false;
-    window.__transfers = [];
-    window.__transfers_total = 0;
-    window.__transfers_total_all = 0;
-    window.__transfers_pend = 0;
-    window.__onlyPendTransfers = false;
-
-    function redirectToLogin() {
-      if (authRedirectInProgress) return;
-      authRedirectInProgress = true;
-      location.href = 'login.html';
-    }
-
-    function isAuthRedirectError(err) {
-      return !!(err && (err.code === 'AUTH_REDIRECT' || err.redirectedToLogin));
-    }
-
-    // ====== API HELPER ======
-    async function api(path, opts = {}) {
-      const { headers = {}, body, ...rest } = opts;
-      const fullUrl = path.startsWith('http') ? path : (API_BASE + path);
-
-      try {
-        const r = await authFetch(fullUrl, {
-          ...rest,
-          headers: {
-            'Content-Type': 'application/json',
-            ...headers
-          },
-          body: body ? JSON.stringify(body) : undefined
-        });
-
-        if (r.status === 401) {
-          const e = new Error('AUTH_REDIRECT');
-          e.code = 'AUTH_REDIRECT';
-          e.status = 401;
-          e.redirectedToLogin = true;
-          redirectToLogin();
-          throw e;
-        }
-
-        const text = await r.text();
-        try {
-          return JSON.parse(text);
-        } catch (jsonErr) {
-          console.error(`ERROR DE API: Respuesta no JSON en ${fullUrl}`, text);
-          throw new Error(`Error ${r.status}: respuesta inválida del servidor`);
-        }
-      } catch (e) {
-        if (isAuthRedirectError(e)) throw e;
-        console.error("Fetch falló completamente:", e);
-        throw e;
-      }
-    }
-
-    // ====== EMPRESA / ROL ======
-// MODIFICADO: Esta función ahora prioriza siempre el ID seleccionado en el combo
-function qsEmpresa() {
-  // Seguridad front: solo SUPER puede cambiar el contexto por selector
-  const selectedId = isSuper ? $('#empSel')?.value : null;
-  const idAUsar = selectedId || empresaId;
-  return idAUsar ? `?empresa_id=${idAUsar}` : '';
-}
-
-async function init() {
-  try {
-    // (modo seguro) no dependemos de token local
-
-    // 1) Obtener mis datos básicos
-    const meResp = await api('/api/me');
-    const u = meResp?.user || meResp;
-    if (!u || !u.empresa_id) throw new Error('Sesión inválida');
-
-    isSuper = String(u.role || '').toUpperCase() === 'SUPER';
-    empresaId = Number(u.empresa_id);
-
-    // 2) Cargar lista de Empresas
-    let empresas = [];
-    try {
-      const empresasResp = await api('/api/empresas');
-      empresas = Array.isArray(empresasResp) ? empresasResp : [];
-    } catch (e) { console.warn("Error empresas", e); }
-
-    // 3) Configurar el Selector de Empresa ID
-    const sel = $('#empSel');
-    if (sel) {
-      if (empresas.length > 0) {
-        sel.innerHTML = empresas.map(e => `
-          <option value="${e.id}" ${Number(e.id) === Number(empresaId) ? 'selected' : ''}>
-            ID: ${e.id} - ${e.nombre}
-          </option>
-        `).join('');
-      } else {
-        sel.innerHTML = '<option value="">Sin acceso a empresas</option>';
-      }
-
-      // EVENTO CLAVE: Cuando cambias el ID, refrescamos todo el contexto
-      sel.onchange = async () => {
-        if (!isSuper) return;
-        showToast("Cambiando contexto de Empresa...");
-
-        // Actualizamos labels
-        const nombreEmp = sel.options[sel.selectedIndex]?.text || `ID ${sel.value}`;
-        $('#rolePill').textContent = `${u.role} · ${nombreEmp}`;
-
-        // Recargamos datos dependientes de la empresa
-        await loadChoferes();
-        await loadProductosMap();
-
-        // Limpiamos tabla para evitar confusión de datos entre empresas
-        $('#tbBody').innerHTML = `<tr><td colspan="11" style="text-align:center; padding:2rem; color:var(--muted)">Empresa cambiada. Presione "Calcular" para actualizar.</td></tr>`;
-      };
-    }
-
-    // Mostrar selector solo para SUPER
-    $('#empWrap').hidden = !isSuper;
-
-    // Badge de contexto inicial
-    const selectedTxt = $('#empSel')?.options?.[$('#empSel')?.selectedIndex || 0]?.text || `ID ${empresaId}`;
-    $('#rolePill').textContent = `${u.role || 'USER'} · ${selectedTxt}`;
-
-    // 4) Carga inicial de datos de apoyo
-    await loadChoferes();
-    await loadProductosMap();
-
-    // 5) Configurar fechas por defecto
-    const today = new Date();
-    $('#fTo').value = dateISO(today);
-    const fromDate = new Date(today);
-    fromDate.setDate(fromDate.getDate() - 30);
-    $('#fFrom').value = dateISO(fromDate);
-
-    // Listeners de filtros/botones
-    $('#btnCalcular').onclick = calcular;
-    $('#btnExport').onclick = exportCSV;
-    $('#btnVerTransfer').onclick = openTransferModal;
-
-    const deltaModeEl = $('#deltaMode');
-    if (deltaModeEl) {
-      deltaMode = deltaModeEl.value || 'abs';
-      deltaModeEl.onchange = () => {
-        deltaMode = deltaModeEl.value || 'abs';
-        calcular();
-      };
-    }
-
-    if (window.initEstadisticasTransferencias) {
-      window.initEstadisticasTransferencias();
-    }
-
-    const hoySel = $('#fHoy');
-    if (hoySel) {
-      hoySel.onchange = () => {
-        if (hoySel.value === '1') setHoyRange();
-      };
-    }
-
-    const fromEl = $('#fFrom');
-    const toEl = $('#fTo');
-    const clearHoy = () => {
-      if (hoySel && hoySel.value === '1') hoySel.value = '0';
-    };
-    if (fromEl) fromEl.addEventListener('change', clearHoy);
-    if (toEl) toEl.addEventListener('change', clearHoy);
-
-  } catch (e) {
-    if (isAuthRedirectError(e)) return;
-    console.error("Error init:", e);
-  }
-}
-    async function loadChoferes() {
-      try {
-        const list = await api('/api/choferes' + qsEmpresa());
-        choferes = Array.isArray(list) ? list : [];
-        const sel = $('#fFilChofer');
-        if (!sel) return;
-        sel.innerHTML = '<option value="">Todos</option>' +
-          choferes.map(c => `<option value="${c.id}">${c.nombre}</option>`).join('');
-      } catch (e) {
-        console.warn("Error cargando choferes", e);
-      }
-    }
-
-    async function loadProductosMap() {
-      try {
-        const rows = await api('/api/productos' + qsEmpresa());
-        __productosByName = new Map();
-        (Array.isArray(rows) ? rows : []).forEach(p => {
-          if (p.nombre) __productosByName.set(p.nombre.toLowerCase().trim(), p.id);
-        });
-      } catch (e) {
-        console.warn("Error cargando productos", e);
-      }
-    }
 
     // ====== ESTADÍSTICAS ======
     async function calcular() {
@@ -1097,10 +884,11 @@ async function init() {
     }
 
   </script>
+  <script src="/pedidos/estadisticas-core.js"></script>
   <script src="/pedidos/estadisticas-transferencias.js"></script>
   <script src="/pedidos/estadisticas-reportes.js"></script>
   <script>
-    init();
+    initEstadisticasCore();
   </script>
 </body>
 </html>
