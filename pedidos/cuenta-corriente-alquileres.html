@@ -1324,9 +1324,12 @@
         ? toLocalDate(period.ultimoPagoFecha) + (period.ultimoPagoMonto ? ' · ' + currencyFmt.format(period.ultimoPagoMonto) : '')
         : '–';
       const canMarkPaid = period.estado !== 'cobrado' && Number(period.alquilerId) > 0;
+      const canUndoPaid = period.estado === 'cobrado' && Number(period.alquilerId) > 0;
       const payAction = canMarkPaid
         ? '<button class="btn btn-sm" type="button" data-action="marcar-cobrado-periodo" data-alquiler-id="' + Number(period.alquilerId) + '">✅ Marcar cobrado</button>'
-        : '<span class="text-subtle">—</span>';
+        : (canUndoPaid
+            ? '<button class="btn btn-sm" type="button" data-action="desmarcar-cobrado-periodo" data-alquiler-id="' + Number(period.alquilerId) + '">↩ Deshacer cobro</button>'
+            : '<span class="text-subtle">—</span>');
 
       return `
         <tr data-period-key="${escapeHtml(period.periodKey)}">
@@ -1378,6 +1381,43 @@
     } catch (e) {
       console.error('Error marcar periodo cobrado', e);
       showToast(e.message || 'Error marcando período como cobrado', 'error');
+    }
+  }
+
+  async function desmarcarPeriodoCobrado(alquilerId, accountKey, periodKey) {
+    const id = Number(alquilerId);
+    if (!Number.isInteger(id) || id <= 0) {
+      showToast('No se encontró el alquiler a revertir', 'error');
+      return;
+    }
+
+    if (!confirm('¿Deshacer cobro y volver este período a FACTURADO?')) return;
+
+    try {
+      const body = { id };
+      if (esSuperAdmin && targetEmpresaId) {
+        body.empresa_id = targetEmpresaId;
+      }
+
+      const res = await authFetch(API_BASE + '/desmarcar-cobrado', {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify(body)
+      });
+
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(j.error || ('No se pudo deshacer cobro ' + periodHuman(periodKey)));
+      }
+
+      showToast('Cobro deshecho. Volvió a facturado', 'success');
+      const detalleModal = document.getElementById('detalleModal');
+      if (detalleModal?.open) detalleModal.close();
+      await reloadAccounts();
+      renderDetail(accountKey);
+    } catch (e) {
+      console.error('Error desmarcar periodo cobrado', e);
+      showToast(e.message || 'Error deshaciendo el cobro', 'error');
     }
   }
 
@@ -1501,13 +1541,18 @@
 
     const detalleModal = document.getElementById('detalleModal');
     document.getElementById('detalleTableBody')?.addEventListener('click', ev => {
-      const btn = ev.target.closest('button[data-action="marcar-cobrado-periodo"]');
+      const btn = ev.target.closest('button[data-action]');
       if (!btn) return;
       const alquilerId = btn.getAttribute('data-alquiler-id');
       if (!detailSelected) return;
       const row = btn.closest('tr');
       const periodKey = row?.getAttribute('data-period-key') || '';
-      marcarPeriodoCobrado(alquilerId, detailSelected.key, periodKey);
+      const action = btn.getAttribute('data-action');
+      if (action === 'marcar-cobrado-periodo') {
+        marcarPeriodoCobrado(alquilerId, detailSelected.key, periodKey);
+      } else if (action === 'desmarcar-cobrado-periodo') {
+        desmarcarPeriodoCobrado(alquilerId, detailSelected.key, periodKey);
+      }
     });
     document.getElementById('btnCloseDetalle')?.addEventListener('click', () => detalleModal.close());
     document.getElementById('btnCloseDetalleFooter')?.addEventListener('click', () => detalleModal.close());

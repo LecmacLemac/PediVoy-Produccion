@@ -6,6 +6,7 @@ import {
   resumenAlquileres,
   generarLinkMercadoPago,
   marcarAlquilerCobrado,
+  desmarcarAlquilerCobrado,
   generarCargosPeriodo
 } from './alquileresController.js';
 
@@ -33,6 +34,9 @@ router.post('/mp-link', generarLinkMercadoPago);
 
 // Marcar alquiler como cobrado (cruce manual con pagos)
 router.post('/marcar-cobrado', marcarAlquilerCobrado);
+
+// Deshacer cobro manual y volver a facturado
+router.post('/desmarcar-cobrado', desmarcarAlquilerCobrado);
 
 // Generar cargos masivos para el mes (Botón "Generar Período")
 router.post('/generar', generarCargosPeriodo);

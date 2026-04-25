@@ -380,6 +380,45 @@ export async function marcarAlquilerCobrado(req, res) {
   }
 }
 
+export async function desmarcarAlquilerCobrado(req, res) {
+  try {
+    const empresaId = resolveEmpresaId(req);
+    if (!empresaId) {
+      return res.status(400).json({ error: 'Falta empresa.' });
+    }
+
+    const { id } = req.body || {};
+    const alquilerId = Number(id);
+    if (!Number.isInteger(alquilerId) || alquilerId <= 0) {
+      return res.status(400).json({ error: 'ID de alquiler inválido.' });
+    }
+
+    const rows = await query(
+      `
+      UPDATE empresa_activos_alquileres
+         SET estado = 'facturado',
+             ultimo_pago_fecha = NULL,
+             ultimo_pago_monto = NULL,
+             updated_at = NOW()
+       WHERE id = $1
+         AND empresa_id = $2
+       RETURNING *
+      `,
+      [alquilerId, empresaId]
+    );
+
+    const row = rows[0];
+    if (!row) {
+      return res.status(404).json({ error: 'Alquiler no encontrado.' });
+    }
+
+    return res.json({ ok: true, data: row });
+  } catch (e) {
+    console.error('Error desmarcarAlquilerCobrado:', e);
+    return res.status(500).json({ error: e.message || 'Error deshaciendo cobro de alquiler' });
+  }
+}
+
 // ==================================================================
 // 5. GENERAR CARGOS DEL PERÍODO 
 // ==================================================================

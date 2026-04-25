@@ -1248,9 +1248,13 @@
                 <button type="button" class="btn-icon btn-sm" data-action="mp-link" title="Generar link de pago">
                   💳
                 </button>
-                <button type="button" class="btn-icon btn-sm" data-action="marcar-cobrado" title="Marcar como cobrado">
+                ${estado === 'cobrado'
+                  ? `<button type="button" class="btn-icon btn-sm" data-action="desmarcar-cobrado" title="Deshacer cobro">
+                  ↩
+                </button>`
+                  : `<button type="button" class="btn-icon btn-sm" data-action="marcar-cobrado" title="Marcar como cobrado">
                   ✅
-                </button>
+                </button>`}
               </div>
             </td>
           </tr>
@@ -1364,6 +1368,41 @@
       } catch (e) {
         console.error('Error marcar-cobrado', e);
         showToast(e.message || 'Error marcando como cobrado', 'error');
+      }
+    }
+
+    async function desmarcarCobrado(rowEl) {
+      const alquilerId = rowEl.getAttribute('data-id');
+      if (!alquilerId) {
+        showToast('No se encontró el ID del alquiler', 'error');
+        return;
+      }
+
+      if (!confirm('¿Deshacer cobro y volver este alquiler a FACTURADO?')) return;
+
+      try {
+        const body = { id: Number(alquilerId) };
+        if (esSuperAdmin && targetEmpresaId) {
+          body.empresa_id = targetEmpresaId;
+        }
+
+        const res = await authFetch(API_BASE + '/desmarcar-cobrado', {
+          method: 'POST',
+          headers: getAuthHeaders(),
+          body: JSON.stringify(body)
+        });
+
+        if (!res.ok) {
+          const j = await res.json().catch(() => ({}));
+          throw new Error(j.error || 'No se pudo deshacer el cobro');
+        }
+
+        showToast('Cobro deshecho. Volvió a facturado', 'success');
+        loadResumenAlquileres();
+        loadAlquileres();
+      } catch (e) {
+        console.error('Error desmarcar-cobrado', e);
+        showToast(e.message || 'Error deshaciendo el cobro', 'error');
       }
     }
 
@@ -1563,6 +1602,8 @@
                 generarLinkPago(row);
               } else if (action === 'marcar-cobrado') {
                 marcarCobrado(row);
+              } else if (action === 'desmarcar-cobrado') {
+                desmarcarCobrado(row);
               } else if (action === 'ver-activos') {
                 mostrarDetalleActivos(row);
               }
