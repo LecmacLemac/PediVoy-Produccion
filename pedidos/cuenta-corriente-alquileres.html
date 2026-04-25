@@ -1099,6 +1099,24 @@
     return data;
   }
 
+  function resolveClienteNombre(row) {
+    const candidates = [
+      row?.cliente_nombre,
+      row?.cliente,
+      row?.nombre,
+      row?.cliente_nombre_completo,
+      row?.cliente_razon_social,
+      row?.razon_social,
+      row?.titular
+    ].map(v => String(v || '').trim()).filter(Boolean);
+
+    return candidates[0] || ('Cliente ' + (row?.cliente_id || row?.client_id || 's/d'));
+  }
+
+  function isFallbackClienteNombre(value) {
+    return /^Cliente\s+/i.test(String(value || '').trim());
+  }
+
   function aggregateByClient(periodResults) {
     const map = new Map();
 
@@ -1107,13 +1125,13 @@
         const clientKey = String(
           row.cliente_id ||
           row.client_id ||
-          [row.cliente_nombre || 'sin-nombre', row.cliente_telefono || row.telefono || 'sin-telefono'].join('::')
+          [resolveClienteNombre(row), row.cliente_telefono || row.telefono || 'sin-telefono'].join('::')
         );
         if (!map.has(clientKey)) {
           map.set(clientKey, {
             key: clientKey,
-            cliente_id: row.cliente_id || null,
-            cliente_nombre: row.cliente_nombre || ('Cliente ' + (row.cliente_id || 's/d')),
+            cliente_id: row.cliente_id || row.client_id || null,
+            cliente_nombre: resolveClienteNombre(row),
             empresa_nombre: row.empresa_nombre || row.empresa || currentUser?.empresa_nombre || currentUser?.empresa || '–',
             telefono: row.cliente_telefono || row.telefono || '',
             direccion: row.cliente_direccion || row.cliente_direccion_completa || '',
@@ -1130,6 +1148,19 @@
         }
 
         const account = map.get(clientKey);
+        const betterNombre = resolveClienteNombre(row);
+        if ((!account.cliente_nombre || isFallbackClienteNombre(account.cliente_nombre)) && betterNombre) {
+          account.cliente_nombre = betterNombre;
+        }
+        if (!account.telefono && (row.cliente_telefono || row.telefono)) {
+          account.telefono = row.cliente_telefono || row.telefono || '';
+        }
+        if (!account.direccion && (row.cliente_direccion || row.cliente_direccion_completa)) {
+          account.direccion = row.cliente_direccion || row.cliente_direccion_completa || '';
+        }
+        if ((!account.empresa_nombre || account.empresa_nombre === '–') && (row.empresa_nombre || row.empresa)) {
+          account.empresa_nombre = row.empresa_nombre || row.empresa || account.empresa_nombre;
+        }
         const estado = String(row.estado || 'pendiente').toLowerCase();
         const monto = Number(row.monto_total || row.monto || 0);
         const periodRecord = {
