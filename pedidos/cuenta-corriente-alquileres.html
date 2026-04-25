@@ -765,6 +765,7 @@
             <th>Activos</th>
             <th>Último pago</th>
             <th>Link MP</th>
+            <th>Acción</th>
           </tr>
         </thead>
         <tbody id="detalleTableBody">
@@ -1291,20 +1292,62 @@
       const payment = period.ultimoPagoFecha
         ? toLocalDate(period.ultimoPagoFecha) + (period.ultimoPagoMonto ? ' · ' + currencyFmt.format(period.ultimoPagoMonto) : '')
         : '–';
+      const canMarkPaid = period.estado !== 'cobrado' && Number(period.alquilerId) > 0;
+      const payAction = canMarkPaid
+        ? '<button class="btn btn-sm" type="button" data-action="marcar-cobrado-periodo" data-alquiler-id="' + Number(period.alquilerId) + '">✅ Marcar cobrado</button>'
+        : '<span class="text-subtle">—</span>';
 
       return `
-        <tr>
+        <tr data-period-key="${escapeHtml(period.periodKey)}">
           <td>${escapeHtml(periodHuman(period.periodKey))}</td>
           <td><span class="status-badge ${status.cls}">${escapeHtml(status.label)}</span></td>
           <td>${currencyFmt.format(period.monto)}</td>
           <td>${period.activos}</td>
           <td>${escapeHtml(payment)}</td>
           <td>${safeLink ? '<a class="btn btn-sm" href="' + safeLink + '" target="_blank" rel="noopener">Abrir link</a>' : '<span class="text-subtle">Sin link</span>'}</td>
+          <td>${payAction}</td>
         </tr>
       `;
     }).join('');
 
     document.getElementById('detalleModal').showModal();
+  }
+
+  async function marcarPeriodoCobrado(alquilerId, accountKey, periodKey) {
+    const id = Number(alquilerId);
+    if (!Number.isInteger(id) || id <= 0) {
+      showToast('No se encontró el alquiler a marcar', 'error');
+      return;
+    }
+
+    if (!confirm('¿Marcar este período como COBRADO?')) return;
+
+    try {
+      const body = { id };
+      if (esSuperAdmin && targetEmpresaId) {
+        body.empresa_id = targetEmpresaId;
+      }
+
+      const res = await authFetch(API_BASE + '/marcar-cobrado', {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify(body)
+      });
+
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(j.error || ('No se pudo marcar como cobrado ' + periodHuman(periodKey)));
+      }
+
+      showToast('Período marcado como cobrado', 'success');
+      const detalleModal = document.getElementById('detalleModal');
+      if (detalleModal?.open) detalleModal.close();
+      await reloadAccounts();
+      renderDetail(accountKey);
+    } catch (e) {
+      console.error('Error marcar periodo cobrado', e);
+      showToast(e.message || 'Error marcando período como cobrado', 'error');
+    }
   }
 
   function exportVisibleCsv() {
@@ -1426,6 +1469,15 @@
     });
 
     const detalleModal = document.getElementById('detalleModal');
+    document.getElementById('detalleTableBody')?.addEventListener('click', ev => {
+      const btn = ev.target.closest('button[data-action="marcar-cobrado-periodo"]');
+      if (!btn) return;
+      const alquilerId = btn.getAttribute('data-alquiler-id');
+      if (!detailSelected) return;
+      const row = btn.closest('tr');
+      const periodKey = row?.getAttribute('data-period-key') || '';
+      marcarPeriodoCobrado(alquilerId, detailSelected.key, periodKey);
+    });
     document.getElementById('btnCloseDetalle')?.addEventListener('click', () => detalleModal.close());
     document.getElementById('btnCloseDetalleFooter')?.addEventListener('click', () => detalleModal.close());
     document.getElementById('btnGoToAlquileres')?.addEventListener('click', () => {
