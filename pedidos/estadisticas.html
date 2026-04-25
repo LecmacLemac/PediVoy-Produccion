@@ -479,7 +479,7 @@
   <dialog id="transferModal">
     <div class="modal-header">
       <strong style="font-size:1.1rem">Control de Transferencias</strong>
-      <button onclick="document.getElementById('transferModal').close()" style="background:none; border:none; color:#fff; cursor:pointer">✕</button>
+      <button id="btnCloseTransferModal" type="button" style="background:none; border:none; color:#fff; cursor:pointer">✕</button>
     </div>
     <div class="modal-body">
       <div class="flex-between">
@@ -551,11 +551,22 @@
     let __productosByName = new Map();
     let __payAgg = {};
     let deltaMode = 'abs';
+    let authRedirectInProgress = false;
     window.__transfers = [];
     window.__transfers_total = 0;
     window.__transfers_total_all = 0;
     window.__transfers_pend = 0;
     window.__onlyPendTransfers = false;
+
+    function redirectToLogin() {
+      if (authRedirectInProgress) return;
+      authRedirectInProgress = true;
+      location.href = 'login.html';
+    }
+
+    function isAuthRedirectError(err) {
+      return !!(err && (err.code === 'AUTH_REDIRECT' || err.redirectedToLogin));
+    }
 
     // ====== API HELPER ======
     async function api(path, opts = {}) {
@@ -573,9 +584,12 @@
         });
 
         if (r.status === 401) {
-          console.error("Token no autorizado o expirado.");
-          location.href = 'login.html';
-          return null;
+          const e = new Error('AUTH_REDIRECT');
+          e.code = 'AUTH_REDIRECT';
+          e.status = 401;
+          e.redirectedToLogin = true;
+          redirectToLogin();
+          throw e;
         }
 
         const text = await r.text();
@@ -586,6 +600,7 @@
           throw new Error(`Error ${r.status}: respuesta inválida del servidor`);
         }
       } catch (e) {
+        if (isAuthRedirectError(e)) throw e;
         console.error("Fetch falló completamente:", e);
         throw e;
       }
@@ -606,8 +621,7 @@ async function init() {
 
     // 1) Obtener mis datos básicos
     const meResp = await api('/api/me');
-    if (!meResp) return;
-    const u = meResp.user || meResp;
+    const u = meResp?.user || meResp;
     if (!u || !u.empresa_id) throw new Error('Sesión inválida');
 
     isSuper = String(u.role || '').toUpperCase() === 'SUPER';
@@ -683,6 +697,11 @@ async function init() {
       };
     }
 
+    const closeTransferBtn = $('#btnCloseTransferModal');
+    if (closeTransferBtn) {
+      closeTransferBtn.onclick = closeTransferModal;
+    }
+
     const hoySel = $('#fHoy');
     if (hoySel) {
       hoySel.onchange = () => {
@@ -699,6 +718,7 @@ async function init() {
     if (toEl) toEl.addEventListener('change', clearHoy);
 
   } catch (e) {
+    if (isAuthRedirectError(e)) return;
     console.error("Error init:", e);
   }
 }
@@ -767,6 +787,7 @@ async function init() {
         await loadCancelacionesMotivo(from, to);
         await loadProductosMargen(from, to);
       } catch (e) {
+        if (isAuthRedirectError(e)) return;
         console.error(e);
         $('#tbBody').innerHTML = `<tr><td colspan="11" class="bad" style="text-align:center">Error: ${e.message}</td></tr>`;
       } finally {
@@ -1432,6 +1453,13 @@ async function init() {
       const list = window.__transfers || [];
       return window.__onlyPendTransfers ? list.filter(t => !t.pagado) : list;
     }
+
+    function closeTransferModal() {
+  const modal = document.getElementById('transferModal');
+  if (!modal) return;
+  if (typeof modal.close === 'function') modal.close();
+  else modal.removeAttribute('open');
+}
 
     function openTransferModal() {
   const list = getTransfersForModal();
