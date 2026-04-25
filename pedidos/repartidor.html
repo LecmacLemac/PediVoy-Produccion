@@ -764,8 +764,10 @@
 <script src="/pedidos/info-tec/safe-storage.js"></script>
 <script src="/pedidos/repartidor-core.js"></script>
 <script src="/pedidos/repartidor-pedidos.js"></script>
+<script src="/pedidos/repartidor-mapa-gps.js"></script>
 <script>
 initRepartidorPedidosUI();
+initRepartidorMapaGpsUI();
 bootRepartidorPanel();
 
 // --- EVENT LISTENERS (GLOBAL) ---
@@ -802,11 +804,6 @@ $$('.nav-link').forEach(l => l.onclick = async (e) => {
   if(sec === 'transf') loadTransf();
   if(sec === 'evidencias') loadEvidenciasEntrega();
 });
-
-// Map Filters
-$('#mapFiltroEstado').addEventListener('change', renderMap);
-$('#mapSoloHoy').addEventListener('change', renderMap);
-$('#mapRefBtn').onclick = () => { loadPedidos().then(renderMap); };
 
 const evDateFrom = document.getElementById('evDateFrom');
 const evDateTo = document.getElementById('evDateTo');
@@ -1822,27 +1819,6 @@ window.addEventListener('beforeunload', () => {
 
 setInterval(updatePedidosSyncInfo, 15_000);
 
-// --- MAPA ---
-function renderMap(){
-  if(!map) { map = L.map('map').setView([-31.4, -64.18], 12); L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map); mapMarkers = L.layerGroup().addTo(map); }
-  map.invalidateSize(); mapMarkers.clearLayers();
-
-  const fSt = $('#mapFiltroEstado').value, fHoy = $('#mapSoloHoy').checked, today = getOyString();
-  const bounds = [];
-  pedidos.forEach(p => {
-    if(!p.latitud || !p.longitud) return;
-    if(fHoy) { const fDb = p.fecha_entrega || p.fecha; if(isoToLocalYMD(fDb) !== today) return; }
-    if(fSt && p.estado !== fSt) return;
-    const lat = Number(p.latitud), lng = Number(p.longitud);
-    const color = p.estado==='entregado'?'#10b981' : p.estado==='en_ruta'?'#06b6d4':'#f59e0b';
-    const icon = L.divIcon({ className: '', html: `<div class="m-label" style="border-left:4px solid ${color}">${esc(p.cliente.split(' ')[0])}</div>` });
-    L.marker([lat, lng], {icon}).addTo(mapMarkers).bindPopup(`<b>${esc(p.cliente)}</b><br>${esc(p.direccion)}<br>${esc(p.estado || '')}`);
-    bounds.push([lat, lng]);
-  });
-  if(bounds.length) map.fitBounds(bounds, {padding:[50,50], maxZoom:16});
-  $('#mapHint').textContent = `${bounds.length} puntos visibles`;
-}
-
 // --- GASTOS LOGIC ---
 async function gLoadProductos() {
   try {
@@ -2417,80 +2393,6 @@ async function togglePagoRepartidor(pedidoId, checkbox) {
     checkbox.disabled = false;
   }
 }
-
-// --- GPS TRACKING LOOP (endurecido) ---
-// Objetivo: no spamear requests, manejar mala señal, y evitar concurrencia.
-
-function scheduleNextGpsTick(mult = 1) {
-  gpsSyncState.nextInMs = Math.min(Math.max(15_000, Math.floor(gpsSyncState.nextInMs * mult)), gpsSyncState.maxMs);
-}
-
-async function gpsTick() {
-  if (gpsSyncState.disabled) return;
-
-  // Solo si hay pedidos en ruta
-  const activePed = pedidos.find(p => p.estado === 'en_ruta');
-  if (!activePed) return;
-
-  // Si el navegador dice offline, no insistimos
-  if (typeof navigator.onLine === 'boolean' && !navigator.onLine) {
-    scheduleNextGpsTick(1.8);
-    return;
-  }
-
-  if (!navigator.geolocation || gpsSyncState.denied) {
-    // Sin GPS o permiso denegado: frenamos y no molestamos
-    gpsSyncState.disabled = true;
-    updateGpsButtonUI();
-    return;
-  }
-
-  try {
-    await withLock('gps:track', async () => {
-      const pos = await new Promise((resolve, reject) => {
-        navigator.geolocation.getCurrentPosition(resolve, reject, GEO_OPTS_TRACK);
-      });
-
-      await api('/api/track/update', {
-        method: 'POST',
-        body: {
-          pedido_id: activePed.id,
-          lat: pos.coords.latitude,
-          lng: pos.coords.longitude,
-        }
-      });
-    });
-
-    gpsSyncState.lastOkAt = Date.now();
-    gpsSyncState.nextInMs = 60_000; // reset al ritmo normal
-    updateGpsButtonUI();
-  } catch (e) {
-    // Si es permiso denegado, deshabilitar definitivamente
-    const code = e?.cause?.code; // geolocation error code
-    if (code === 1) { // PERMISSION_DENIED
-      gpsSyncState.denied = true;
-      gpsSyncState.disabled = true;
-      persistGpsPreference(false);
-      updateGpsButtonUI();
-      toast('📍 GPS desactivado: sin permiso.');
-      return;
-    }
-
-    // Backoff progresivo ante fallos (red/timeout/etc)
-    scheduleNextGpsTick(1.6);
-    // Evitar spam de toasts; solo avisar si hace rato no sincroniza
-    if (!gpsSyncState.lastOkAt || (Date.now() - gpsSyncState.lastOkAt) > 5 * 60_000) {
-      console.warn('GPS sync failed', e);
-    }
-  }
-}
-
-(async function gpsLoop(){
-  while (true) {
-    await gpsTick();
-    await new Promise(r => setTimeout(r, gpsSyncState.nextInMs));
-  }
-})();
 
 </script>
 </body>
