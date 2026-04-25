@@ -140,7 +140,7 @@ export async function listarAlquileres(req, res) {
       a.id,
       a.empresa_id,
       a.cliente_id,
-      p.nombre            AS cliente_nombre,
+      COALESCE(NULLIF(TRIM(p.cliente), ''), NULLIF(TRIM(p.nombre), '')) AS cliente_nombre,
       COALESCE(p.direccion_completa, p.direccion) AS cliente_direccion,
       p.telefono         AS cliente_telefono,
       a.periodo,
@@ -247,7 +247,7 @@ export async function generarLinkMercadoPago(req, res) {
         a.estado,
         a.mp_link,
         a.mp_preference_id,
-        p.nombre              AS cliente_nombre,
+        COALESCE(NULLIF(TRIM(p.cliente), ''), NULLIF(TRIM(p.nombre), '')) AS cliente_nombre,
         COALESCE(p.email, p.email_facturacion) AS cliente_email
       FROM empresa_activos_alquileres a
       LEFT JOIN puntos_entrega p
