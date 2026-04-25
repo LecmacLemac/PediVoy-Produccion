@@ -939,6 +939,10 @@ let preferidoPago = null;
 
 
 // --- API HELPER ---
+function isAuthRedirectError(err) {
+  return !!(err && (err.redirectedToLogin || err.code === 'AUTH_REDIRECT' || err.status === 401));
+}
+
 async function api(path, opts = {}) {
   const { body, headers: customHeaders = {}, ...fetchOpts } = opts;
   const isFD = body instanceof FormData;
@@ -964,8 +968,13 @@ async function api(path, opts = {}) {
   }
 
   if (r.status === 401) {
+    const e = new Error('Sesión vencida');
+    e.status = 401;
+    e.url = path;
+    e.code = 'AUTH_REDIRECT';
+    e.redirectedToLogin = true;
     location.href = 'login.html';
-    return;
+    throw e;
   }
 
   if (r.status === 204) return null;
@@ -1018,6 +1027,7 @@ async function api(path, opts = {}) {
 }
 
 function notifyError(userMsg, err) {
+  if (isAuthRedirectError(err)) return;
   // Mensaje corto para el repartidor + log técnico en consola
   if (err) console.warn(userMsg, err);
   try { toast('❌ ' + userMsg); } catch {}
@@ -1130,6 +1140,11 @@ async function requestGpsActivation() {
   try {
     // 1. Cargar Usuario
     const j = await api('/api/me');
+    if (!j || !j.user) {
+      location.href = 'login.html';
+      return;
+    }
+
     me = j.user;
     $('#brandTitle').textContent = `Hola, ${me.username}`;
     restoreRoutePlan();
@@ -1200,7 +1215,9 @@ async function requestGpsActivation() {
     startPedidosAutoRefresh();
 
   } catch (e) {
-    console.error(e);
+    if (isAuthRedirectError(e)) return;
+    console.error('Boot repartidor falló', e);
+    notifyError('No se pudo iniciar el panel', e);
   }
 })();
 
@@ -1419,6 +1436,7 @@ async function loadPedidos(){
     renderRoutePlanCard();
     return list;
   } catch(e){
+    if (isAuthRedirectError(e)) return [];
     toast('Error cargando pedidos');
     updatePedidosSyncInfo();
   }
