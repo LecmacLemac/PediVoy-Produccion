@@ -18,16 +18,18 @@
   
   <style>
     :root {
-      --bg: #0b1020;
+      --bg: #07111f;
       --bg-2: #0f172a;
-      --ink: #f1f5f9;
+      --ink: #f8fbff;
       --muted: #94a3b8;
-      --brand: #06b6d4;
-      --brand-hover: #22d3ee;
-      --surface: rgba(30, 41, 59, 0.7);
+      --brand: #40d8ff;
+      --brand-hover: #79e5ff;
+      --brand-deep: #0ea5e9;
+      --surface: rgba(19, 33, 57, 0.72);
+      --surface-soft: rgba(255,255,255,0.05);
       --border: rgba(148, 163, 184, 0.15);
-      --glass: rgba(15, 23, 42, 0.85);
-      --radius: 12px;
+      --glass: rgba(7, 17, 31, 0.82);
+      --radius: 16px;
     }
 
     * { box-sizing: border-box; }
@@ -116,15 +118,112 @@
     .popover button { width: 100%; justify-content: center; }
 
     /* Hero */
-    .hero { padding: 100px 0 80px; text-align: center; }
+    .hero { padding: 96px 0 72px; }
+    .hero-grid {
+      display: grid;
+      grid-template-columns: 1.05fr 0.95fr;
+      gap: 2.5rem;
+      align-items: center;
+    }
+    .hero-copy { text-align: left; }
+    .eyebrow {
+      display:inline-flex; align-items:center; gap:0.5rem;
+      padding:6px 14px; background:rgba(64,216,255,0.1); color:var(--brand);
+      border-radius:99px; font-size:0.85rem; font-weight:700; margin-bottom:1rem;
+      border:1px solid rgba(64,216,255,0.2);
+    }
     .hero h1 {
-      font-size: clamp(2.5rem, 5vw, 4rem);
-      line-height: 1.1; margin: 0 0 1rem;
-      background: linear-gradient(to right, #fff, #94a3b8);
+      font-size: clamp(2.7rem, 5vw, 4.6rem);
+      line-height: 1.03; margin: 0 0 1rem;
+      background: linear-gradient(135deg, #ffffff 0%, #d8f6ff 42%, #9adfff 100%);
       -webkit-background-clip: text; -webkit-text-fill-color: transparent;
     }
-    .hero p { font-size: 1.2rem; color: var(--muted); margin: 0 auto 2rem; max-width: 600px; }
-    .hero-btns { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; }
+    .hero p { font-size: 1.1rem; color: var(--muted); margin: 0 0 1.5rem; max-width: 620px; }
+    .hero-btns { display: flex; gap: 1rem; flex-wrap: wrap; }
+    .hero-metrics {
+      display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:0.75rem; margin-top:1.75rem;
+    }
+    .metric {
+      background: var(--surface-soft); border:1px solid var(--border); border-radius:14px; padding:0.9rem 1rem;
+    }
+    .metric strong { display:block; color:#fff; font-size:1rem; }
+    .metric span { color:var(--muted); font-size:0.83rem; }
+    .hero-visual {
+      position: relative;
+      min-height: 470px;
+      border-radius: 28px;
+      border: 1px solid rgba(121,229,255,0.18);
+      background:
+        radial-gradient(circle at top right, rgba(64,216,255,0.28), transparent 28%),
+        linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0.03)),
+        rgba(7,17,31,0.92);
+      box-shadow: 0 30px 80px rgba(0,0,0,0.45);
+      overflow: hidden;
+      padding: 1.25rem;
+    }
+    .hero-visual::before {
+      content: '';
+      position: absolute;
+      inset: 14px;
+      border-radius: 24px;
+      border: 1px solid rgba(255,255,255,0.06);
+      pointer-events: none;
+    }
+    .water-drop {
+      position:absolute; right:-20px; top:24px; width:190px; height:190px;
+      border-radius:50%; background:radial-gradient(circle at 35% 30%, rgba(255,255,255,0.95), rgba(64,216,255,0.25) 35%, rgba(64,216,255,0.02) 72%);
+      filter: blur(2px); opacity:0.9;
+    }
+    .hero-bottle {
+      position:absolute; left:36px; bottom:24px; width:180px; height:300px;
+      border-radius: 80px 80px 50px 50px;
+      background: linear-gradient(180deg, rgba(255,255,255,0.62), rgba(132,220,255,0.26) 45%, rgba(255,255,255,0.12));
+      border:1px solid rgba(255,255,255,0.35);
+      box-shadow: inset 0 0 28px rgba(255,255,255,0.18), 0 24px 50px rgba(2,132,199,0.24);
+    }
+    .hero-bottle::before {
+      content:'';
+      position:absolute; top:-22px; left:62px; width:54px; height:36px; border-radius:16px 16px 8px 8px;
+      background:linear-gradient(180deg, #baf2ff, #38bdf8);
+      border:1px solid rgba(255,255,255,0.35);
+    }
+    .hero-bottle::after {
+      content:'AGUA HIDRO';
+      position:absolute; left:30px; right:30px; top:104px;
+      text-align:center; letter-spacing:0.18em; font-size:0.9rem; font-weight:800; color:rgba(255,255,255,0.88);
+    }
+    .phone-card {
+      position:absolute; right:36px; bottom:26px; width:220px; border-radius:28px; padding:14px;
+      background: rgba(255,255,255,0.09); border:1px solid rgba(255,255,255,0.16); backdrop-filter: blur(12px);
+      box-shadow: 0 20px 40px rgba(0,0,0,0.35);
+    }
+    .phone-screen {
+      background: linear-gradient(180deg, #f8fcff, #dff6ff);
+      color:#0f172a; border-radius:20px; padding:14px; min-height:330px;
+    }
+    .mini-pill { display:inline-block; padding:5px 10px; border-radius:99px; background:#d7f7ff; color:#0369a1; font-size:0.72rem; font-weight:700; }
+    .order-box, .map-box {
+      margin-top:12px; border-radius:18px; padding:12px; background:#fff; box-shadow:0 12px 30px rgba(14,165,233,0.12);
+    }
+    .map-box {
+      background: linear-gradient(180deg, #effcff, #dff6ff);
+      min-height:100px;
+      position:relative;
+      overflow:hidden;
+    }
+    .map-box::before, .map-box::after {
+      content:''; position:absolute; inset:auto; background:rgba(14,165,233,0.22); border-radius:999px;
+    }
+    .map-box::before { width:140px; height:2px; left:16px; top:44px; transform:rotate(-8deg); }
+    .map-box::after { width:2px; height:70px; right:48px; top:14px; }
+    .map-pin { width:18px; height:18px; border-radius:50%; background:#0ea5e9; position:absolute; box-shadow:0 0 0 6px rgba(14,165,233,0.18); }
+    .pin-a { left:28px; top:28px; }
+    .pin-b { right:34px; bottom:18px; }
+    .trust-strip { padding: 0 0 4rem; }
+    .trust-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:1rem; }
+    .trust-card { background:var(--surface-soft); border:1px solid var(--border); border-radius:16px; padding:1rem 1.1rem; }
+    .trust-card strong { display:block; color:#fff; margin-bottom:0.3rem; }
+    .trust-card span { color:var(--muted); font-size:0.92rem; }
 
     /* Features Grid */
     .features { padding: 4rem 0; }
@@ -170,6 +269,27 @@
     /* Footer */
     footer { padding: 3rem 0; border-top: 1px solid var(--border); text-align: center; color: var(--muted); font-size: 0.9rem; }
     
+    @media (max-width: 960px) {
+      .hero-grid { grid-template-columns: 1fr; }
+      .hero-copy { text-align:center; }
+      .hero-btns { justify-content:center; }
+      .hero-metrics, .trust-grid { grid-template-columns:1fr; }
+      .hero-visual { min-height: 420px; }
+      .hero-bottle { left:18px; width:140px; height:250px; }
+      .hero-bottle::before { left:42px; }
+      .phone-card { right:18px; width:190px; }
+    }
+
+    @media (max-width: 640px) {
+      .hero { padding-top: 80px; }
+      .hero-visual { min-height: 360px; padding: 1rem; }
+      .hero-bottle { left:12px; bottom:18px; width:110px; height:200px; }
+      .hero-bottle::before { left:29px; width:44px; }
+      .hero-bottle::after { font-size:0.68rem; left:16px; right:16px; top:72px; }
+      .phone-card { width:160px; right:12px; bottom:18px; padding:10px; }
+      .phone-screen { min-height:270px; padding:10px; }
+    }
+
     /* Toast Notification */
     .toast {
       position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
@@ -211,42 +331,104 @@
   </header>
 
   <section class="hero">
-    <div class="wrap">
-      <div style="display:inline-block; padding:4px 12px; background:rgba(6,182,212,0.1); color:var(--brand); border-radius:99px; font-size:0.85rem; font-weight:600; margin-bottom:1rem; border:1px solid rgba(6,182,212,0.2);">
-        ⚡ Entrega rápida 
+    <div class="wrap hero-grid">
+      <div class="hero-copy">
+        <div class="eyebrow">💧 Agua premium + entrega inteligente</div>
+        <h1 id="heroTitle">Tu agua, <br>sin vueltas.</h1>
+        <p>Pedí online en menos de un minuto, coordiná la entrega y seguí tu pedido en tiempo real. Una experiencia simple, limpia y confiable para hogares, oficinas y negocios.</p>
+        
+        <div class="hero-btns">
+          <a href="/pedidos/" class="btn btn-primary" style="padding: 0.95rem 2rem; font-size: 1.05rem;">Pedir ahora</a>
+          <a href="#combos" class="btn btn-ghost" style="padding: 0.95rem 1.6rem; font-size: 1.05rem;">Ver promociones</a>
+        </div>
+
+        <div class="hero-metrics">
+          <div class="metric">
+            <strong>Pedido online</strong>
+            <span>Sin registros complicados</span>
+          </div>
+          <div class="metric">
+            <strong>Seguimiento GPS</strong>
+            <span>Sabés dónde viene tu entrega</span>
+          </div>
+          <div class="metric">
+            <strong>Pago simple</strong>
+            <span>Efectivo o transferencia</span>
+          </div>
+        </div>
       </div>
-      <h1 id="heroTitle">Agua pura,<br>sin complicaciones.</h1>
-      <p>Hacé tu pedido online en segundos. Coordinamos la entrega y seguís el estado en tiempo real.</p>
-      
-      <div class="hero-btns">
-        <a href="/pedidos/" class="btn btn-primary" style="padding: 0.9rem 2rem; font-size: 1.1rem;">Hacer Pedido Ahora</a>
-       
+
+      <div class="hero-visual" aria-hidden="true">
+        <div class="water-drop"></div>
+        <div class="hero-bottle"></div>
+        <div class="phone-card">
+          <div class="phone-screen">
+            <span class="mini-pill">Pedido online activo</span>
+            <div style="margin-top:14px; font-weight:800; font-size:1.2rem; color:#082f49;">AguaHidro</div>
+            <div style="font-size:0.86rem; color:#475569; margin-top:4px;">Agua pura, rápido y simple.</div>
+            <div class="order-box">
+              <div style="font-size:0.78rem; color:#64748b; margin-bottom:6px;">Pedido confirmado</div>
+              <div style="font-weight:700; color:#0f172a;">2 bidones + entrega hoy</div>
+              <div style="margin-top:4px; color:#0ea5e9; font-size:0.82rem; font-weight:700;">Seguimiento en tiempo real</div>
+            </div>
+            <div class="map-box">
+              <div class="map-pin pin-a"></div>
+              <div class="map-pin pin-b"></div>
+              <div style="position:absolute; left:16px; bottom:12px; font-size:0.78rem; color:#0369a1; font-weight:700;">Tu repartidor viene en camino</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="trust-strip">
+    <div class="wrap trust-grid">
+      <div class="trust-card">
+        <strong>Experiencia premium</strong>
+        <span>Diseño claro, rápido y pensado para convertir.</span>
+      </div>
+      <div class="trust-card">
+        <strong>Entrega coordinada</strong>
+        <span>Tu pedido se valida por zona antes de salir.</span>
+      </div>
+      <div class="trust-card">
+        <strong>Seguimiento simple</strong>
+        <span>Consultás el estado y ves dónde viene.</span>
+      </div>
+      <div class="trust-card">
+        <strong>Listo para replicar</strong>
+        <span>Base premium para otros clientes de PediVoy.</span>
       </div>
     </div>
   </section>
 
   <section id="como-funciona" class="features">
     <div class="wrap">
+      <div style="text-align:center; max-width:740px; margin:0 auto 2.5rem;">
+        <h2 style="font-size:2rem; margin:0 0 0.75rem; color:#fff;">Una experiencia premium, de punta a punta</h2>
+        <p style="margin:0; color:var(--muted);">Esta estructura no solo vende AguaHidro mejor: también sirve como template premium para otras empresas que usan PediVoy.</p>
+      </div>
       <div class="grid">
         <div class="card">
           <span class="icon">🛒</span>
-          <h3>1. Pedí Online</h3>
-          <p>Elegí tus productos e ingresá tu dirección. Sin registros complicados.</p>
+          <h3>1. Pedí online</h3>
+          <p>Elegí tus productos e ingresá tu dirección en un flujo corto y claro.</p>
         </div>
         <div class="card">
-          <span class="icon">🤖</span>
-          <h3>2. Confirmación</h3>
-          <p>Nuestro sistema valida tu zona y te confirma el horario estimado.</p>
+          <span class="icon">✅</span>
+          <h3>2. Validamos tu zona</h3>
+          <p>Confirmamos cobertura y te mostramos una entrega posible sin fricción.</p>
         </div>
         <div class="card">
           <span class="icon">🚚</span>
-          <h3>3. Entrega</h3>
-          <p>Recibí tu agua y pagá como quieras (Efectivo o Transferencia).</p>
+          <h3>3. Recibí y pagá simple</h3>
+          <p>Coordinás la entrega y elegís efectivo o transferencia según prefieras.</p>
         </div>
         <div class="card">
           <span class="icon">📍</span>
-          <h3>4. Seguimiento</h3>
-          <p>Mirá en el mapa dónde viene el repartidor en tiempo real.</p>
+          <h3>4. Seguimiento en tiempo real</h3>
+          <p>Consultás tu pedido y ves en el mapa dónde viene el repartidor.</p>
         </div>
       </div>
     </div>
@@ -254,7 +436,8 @@
 
   <section id="combos" class="pricing">
     <div class="wrap">
-      <h2 style="text-align:center; font-size:2rem; margin-bottom:3rem; color:#fff;">Nuestros Combos</h2>
+      <h2 style="text-align:center; font-size:2rem; margin-bottom:0.75rem; color:#fff;">Promociones listas para vender</h2>
+      <p style="text-align:center; color:var(--muted); max-width:640px; margin:0 auto 3rem;">Combinamos presentación premium con un CTA directo para empujar la conversión desde la primera visita.</p>
       
       <div id="comboGrid" class="grid" style="grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));">
         <div style="text-align:center; color:var(--muted); grid-column:1/-1;">
@@ -268,7 +451,10 @@
 
   <section id="faq" style="padding: 4rem 0;">
     <div class="wrap" style="max-width: 800px;">
-      <h2 style="margin-bottom: 2rem; text-align:center; color:#fff;">Preguntas Frecuentes</h2>
+      <div style="text-align:center; max-width:680px; margin:0 auto 2rem;">
+        <h2 style="margin-bottom: 0.75rem; text-align:center; color:#fff;">Confianza antes de comprar</h2>
+        <p style="margin:0; color:var(--muted);">Respondemos las dudas que más frenan una compra: pagos, cobertura y envases.</p>
+      </div>
       
       <details style="background:var(--surface); border-radius:12px; padding:1rem; margin-bottom:1rem; border:1px solid var(--border);">
         <summary style="font-weight:600; cursor:pointer; color:#fff;">¿Qué medios de pago aceptan?</summary>
@@ -284,6 +470,17 @@
         <summary style="font-weight:600; cursor:pointer; color:#fff;">¿Tengo que devolver los envases?</summary>
         <p style="margin-top:1rem; color:var(--muted)">Sí, nuestros bidones son retornables. Si no tenés envases vacíos para entregar, se cobrará un depósito por única vez.</p>
       </details>
+    </div>
+  </section>
+
+  <section style="padding: 0 0 4rem;">
+    <div class="wrap">
+      <div style="background:linear-gradient(135deg, rgba(64,216,255,0.14), rgba(14,165,233,0.08)); border:1px solid rgba(121,229,255,0.18); border-radius:24px; padding:2rem; text-align:center; box-shadow:0 18px 50px rgba(0,0,0,0.25);">
+        <div class="eyebrow" style="margin-bottom:0.9rem;">Entrá a AguaHidro.com.ar</div>
+        <h2 style="margin:0 0 0.75rem; color:#fff; font-size:2rem;">Pedí tu agua online y seguí la entrega en tiempo real</h2>
+        <p style="margin:0 auto 1.5rem; color:var(--muted); max-width:680px;">Este cierre empuja compra y además deja una estructura premium reutilizable para futuras webs de clientes dentro de PediVoy.</p>
+        <a href="/pedidos/" class="btn btn-primary" style="padding: 0.95rem 2rem; font-size: 1.05rem;">Entrá a AguaHidro.com.ar</a>
+      </div>
     </div>
   </section>
 
