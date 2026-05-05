@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="pedivoy_primary">#0F766E</color>
+    <color name="pedivoy_primary_dark">#115E59</color>
+    <color name="pedivoy_primary_soft">#14B8A6</color>
+    <color name="pedivoy_accent">#F59E0B</color>
+    <color name="pedivoy_accent_soft">#FCD34D</color>
+    <color name="pedivoy_surface">#F8FAFC</color>
+    <color name="pedivoy_surface_elevated">#ECFEFF</color>
+    <color name="pedivoy_surface_border">#BEE3F8</color>
+    <color name="pedivoy_text_primary">#0F172A</color>
+    <color name="pedivoy_text_secondary">#475569</color>
+    <color name="pedivoy_white">#FFFFFFFF</color>
+</resources>

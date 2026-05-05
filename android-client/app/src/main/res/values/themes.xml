@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <style name="Theme.PediVoyClientes" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/pedivoy_primary</item>
+        <item name="colorPrimaryContainer">@color/pedivoy_primary_dark</item>
+        <item name="colorSecondary">@color/pedivoy_accent</item>
+        <item name="colorSurface">@color/pedivoy_surface</item>
+        <item name="android:statusBarColor">@color/pedivoy_primary_dark</item>
+        <item name="android:navigationBarColor">@color/pedivoy_surface</item>
+        <item name="android:windowBackground">@color/pedivoy_surface</item>
+        <item name="android:windowLightStatusBar" tools:targetApi="m">false</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="o_mr1">true</item>
+    </style>
+
+    <style name="Theme.PediVoyClientes.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/pedivoy_primary_dark</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_splash_brand</item>
+        <item name="windowSplashScreenIconBackgroundColor">@color/pedivoy_primary</item>
+        <item name="postSplashScreenTheme">@style/Theme.PediVoyClientes</item>
+    </style>
+</resources>
