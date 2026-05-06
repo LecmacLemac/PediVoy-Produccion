@@ -48,6 +48,10 @@ Transferencia/
 logs/
 pedidos/css/
 
+# Manual duplicate exports/backups
+* (Copiar).html
+* - copia.html
+
 # Nested app/tooling artifacts
 **/build/
 **/.gradle/
