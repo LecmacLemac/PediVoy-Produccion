@@ -179,6 +179,9 @@
     padding: 1rem; font-size: 0.8rem; text-transform: uppercase; 
     border-bottom: 1px solid var(--border);
   }
+  th.sortable { cursor: pointer; user-select: none; }
+  th.sortable:hover { color: #fff; }
+  .sort-indicator { margin-left: 6px; color: var(--brand); font-size: 0.75rem; }
   td { padding: 1rem; border-bottom: 1px solid var(--border); color: var(--ink); font-size: 0.9rem; vertical-align: middle; }
   tr:last-child td { border-bottom: none; }
   tr:hover td { background: rgba(255,255,255,0.02); }
@@ -189,6 +192,15 @@
   .st-en_ruta, .st-en_camino { background: rgba(59, 130, 246, 0.15); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.2); }
   .st-entregado { background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.2); }
   .st-cancelado { background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.2); }
+  .flag-list { display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
+  .flag-badge {
+    display:inline-flex; align-items:center; gap:5px;
+    padding: 3px 8px; border-radius: 99px; font-size: 0.7rem; font-weight: 700;
+    border: 1px solid transparent;
+  }
+  .flag-warn { background: rgba(249,115,22,0.12); color: #fdba74; border-color: rgba(249,115,22,0.25); }
+  .flag-danger { background: rgba(239,68,68,0.12); color: #fca5a5; border-color: rgba(239,68,68,0.25); }
+  .flag-info { background: rgba(59,130,246,0.12); color: #93c5fd; border-color: rgba(59,130,246,0.25); }
 
   /* --- DIALOG / MODAL --- */
   dialog {
@@ -217,6 +229,10 @@
 
   .toast { position: fixed; right: 20px; bottom: 30px; background: #fff; color: #0f172a; padding: 10px 20px; border-radius: 99px; font-weight: 600; box-shadow: 0 10px 30px rgba(0,0,0,0.3); opacity: 0; pointer-events: none; transition: 0.3s; z-index: 2000; }
   .toast.show { opacity: 1; transform: translateY(-10px); }
+  .is-loading { opacity: 0.7; pointer-events: none; }
+  .loading-row { text-align:center; padding:2rem; color:var(--muted); }
+  .row-invalid input { border-color: var(--danger) !important; box-shadow: 0 0 0 2px rgba(239,68,68,0.15); }
+  .hint-error { color: #fca5a5; font-size: 0.8rem; margin-top: 0.75rem; }
   @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 </style>
 </head>
@@ -281,6 +297,33 @@
         </div>
         <div class="kpi-icon" style="color: #fff; background: rgba(255,255,255,0.1);">
           <i class="fa-solid fa-sack-dollar"></i>
+        </div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-val">
+          <h3 id="kpiCancel" style="color:var(--danger)">0</h3>
+          <p>Cancelados</p>
+        </div>
+        <div class="kpi-icon" style="color: var(--danger); background: rgba(239,68,68,0.1);">
+          <i class="fa-regular fa-circle-xmark"></i>
+        </div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-val">
+          <h3 id="kpiTicket">$ 0</h3>
+          <p>Ticket Promedio</p>
+        </div>
+        <div class="kpi-icon" style="color: #c084fc; background: rgba(192,132,252,0.12);">
+          <i class="fa-solid fa-receipt"></i>
+        </div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-val">
+          <h3 id="kpiSinChofer">0</h3>
+          <p>Sin Chofer</p>
+        </div>
+        <div class="kpi-icon" style="color: #f97316; background: rgba(249,115,22,0.12);">
+          <i class="fa-solid fa-triangle-exclamation"></i>
         </div>
       </div>
     </section>
@@ -356,25 +399,32 @@
     <section>
       <div style="display:flex; justify-content:space-between; margin-bottom:0.5rem; align-items:center; gap:8px; flex-wrap:wrap;">
         <h3 style="margin:0; color:#fff;">Listado de Pedidos</h3>
-        <div style="display:flex; align-items:center; gap:8px;">
+        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:flex-end;">
+          <label for="pageSize" style="font-size:0.72rem; margin:0;">Filas</label>
+          <select id="pageSize" style="width:auto; min-width:84px; padding:0.45rem 0.6rem;">
+            <option value="15">15</option>
+            <option value="30" selected>30</option>
+            <option value="50">50</option>
+            <option value="100">100</option>
+          </select>
           <small id="syncInfo" style="color:var(--muted); font-size:0.8rem;">Sin sincronizar</small>
           <span class="role-badge"><span id="totalCount">0</span> registros</span>
         </div>
       </div>
       
       <div class="table-responsive" id="tableCard">
-        <table>
-          <thead>
-            <tr>
-              <th>ID</th>
-              <th>Fecha</th>
-              <th>Cliente</th>
+         <table>
+           <thead>
+             <tr>
+              <th class="sortable" data-sort="id">ID</th>
+              <th class="sortable" data-sort="fecha">Fecha</th>
+              <th class="sortable" data-sort="cliente">Cliente</th>
               <th>Teléfono</th>
               <th>Dirección</th>
-              <th>Chofer</th>
-              <th>Estado</th>
-              <th>Pago</th>
-              <th>Monto</th>
+              <th class="sortable" data-sort="chofer">Chofer</th>
+              <th class="sortable" data-sort="estado">Estado</th>
+              <th class="sortable" data-sort="pago">Pago</th>
+              <th class="sortable" data-sort="monto">Monto</th>
               <th>Acción</th>
             </tr>
           </thead>
@@ -382,6 +432,14 @@
             <tr><td colspan="10" style="text-align:center; padding:3rem; color:var(--muted)">Cargando datos...</td></tr>
           </tbody>
         </table>
+      </div>
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin-top:0.75rem;">
+        <small id="pageInfo" style="color:var(--muted)">Mostrando 0-0 de 0</small>
+        <div style="display:flex; gap:0.5rem; align-items:center;">
+          <button id="btnPrevPage" class="btn btn-sm">← Anterior</button>
+          <span id="pageLabel" class="role-badge">Página 1</span>
+          <button id="btnNextPage" class="btn btn-sm">Siguiente →</button>
+        </div>
       </div>
     </section>
 
@@ -460,6 +518,7 @@
       </form>
 
       <div class="modal-footer">
+        <div id="dlgError" class="hint-error" style="display:none; margin-right:auto;"></div>
         <button id="btnCloseDlg" class="btn">Cancelar</button>
         <button id="btnSaveAll" class="btn btn-primary">Guardar Cambios</button>
       </div>
@@ -494,9 +553,17 @@
     const kpiRuta  = $('#kpiRuta');
     const kpiEnt   = $('#kpiEnt');
     const kpiMonto = $('#kpiMonto');
+    const kpiCancel = $('#kpiCancel');
+    const kpiTicket = $('#kpiTicket');
+    const kpiSinChofer = $('#kpiSinChofer');
     const totalCount = $('#totalCount');
     const kpiDetailMain = $('#kpiDetailMain');
     const kpiDetailSub  = $('#kpiDetailSub');
+    const pageSizeSel = $('#pageSize');
+    const pageInfo = $('#pageInfo');
+    const pageLabel = $('#pageLabel');
+    const btnPrevPage = $('#btnPrevPage');
+    const btnNextPage = $('#btnNextPage');
 
     // Dialog Refs
     const dlg          = $('#dlgPedido');
@@ -505,16 +572,21 @@
     const btnCloseDlg  = $('#btnCloseDlg');
     const btnCloseX    = $('#btnCloseX');
     const btnAddItem   = $('#dlg_addItem');
+    const dlgError     = $('#dlgError');
 
     // ====== State ======
     let isSuper      = false;
     let currentUser  = null;
     let pedidos      = [];
+    let pedidosFiltrados = [];
+    let pedidosOrdenados = [];
     let productosEmpresa = [];
     let zonasEmpresa = [];
     let editingId    = null;
     let saveBusy      = false;
     let deleteBusy    = false;
+    let pedidosReqSeq = 0;
+    let lastAppliedPedidosReq = 0;
 
     // Persistencia + auto-refresh
     const FILTERS_LS_KEY = 'dashboard:filters:v1';
@@ -522,7 +594,15 @@
     let refreshInFlight = false;
     let lastSyncAt = null;
     const itemsByPedidoCache = new Map();
+    const resumenArticulosCache = new Map();
     let detalleArticulosToken = 0;
+    let sortState = { key: 'fecha', dir: 'desc' };
+    let currentPage = 1;
+    let dashboardMeta = { total_count: 0, total_pages: 1, page: 1, pageSize: 30 };
+    let dashboardKpis = null;
+    let dashboardResumen = null;
+    let searchDebounce = null;
+    let dashboardLoading = false;
 
     // ====== Utils ======
     const ARS = new Intl.NumberFormat('es-AR', {
@@ -568,6 +648,15 @@
       setTimeout(() => toastEl.classList.remove('show'), 2000);
     }
 
+    async function parseErrorResponse(r, fallbackMsg){
+      let msg = fallbackMsg;
+      try {
+        const data = await r.json();
+        if (data?.error) msg = data.error;
+      } catch {}
+      return msg;
+    }
+
     function saveFiltersState(){
       try {
         const payload = {
@@ -576,7 +665,10 @@
           estado: estadoFilter?.value || '',
           from: fromFilter?.value || '',
           to: toFilter?.value || '',
-          q: q?.value || ''
+          q: q?.value || '',
+          sortKey: sortState.key,
+          sortDir: sortState.dir,
+          pageSize: pageSizeSel?.value || '30'
         };
         safeStorage.local.set(FILTERS_LS_KEY, JSON.stringify(payload));
       } catch {}
@@ -592,6 +684,9 @@
         if (typeof f.from === 'string') fromFilter.value = f.from;
         if (typeof f.to === 'string') toFilter.value = f.to;
         if (typeof f.q === 'string') q.value = f.q;
+        if (typeof f.sortKey === 'string') sortState.key = f.sortKey;
+        if (f.sortDir === 'asc' || f.sortDir === 'desc') sortState.dir = f.sortDir;
+        if (typeof f.pageSize === 'string' && pageSizeSel) pageSizeSel.value = f.pageSize;
 
         // emp/chofer se aplican luego de cargar opciones
         if (typeof f.emp === 'string') empFilter.dataset.pendingValue = f.emp;
@@ -609,6 +704,66 @@
       if (typeof pChofer === 'string') {
         choferFilter.value = pChofer;
         delete choferFilter.dataset.pendingValue;
+      }
+    }
+
+    function getPageSize(){
+      return Math.max(1, Number(pageSizeSel?.value) || 30);
+    }
+
+    function compareValues(a, b, dir = 'asc') {
+      const factor = dir === 'desc' ? -1 : 1;
+      if (a == null && b == null) return 0;
+      if (a == null) return 1 * factor;
+      if (b == null) return -1 * factor;
+      if (typeof a === 'number' && typeof b === 'number') return (a - b) * factor;
+      return String(a).localeCompare(String(b), 'es', { numeric: true, sensitivity: 'base' }) * factor;
+    }
+
+    function getSortableValue(p, key) {
+      switch (key) {
+        case 'id': return Number(p.id) || 0;
+        case 'fecha': return new Date(p.fecha || 0).getTime() || 0;
+        case 'cliente': return p.cliente || '';
+        case 'chofer': return p.chofer_nombre || (p.chofer_id ? `#${p.chofer_id}` : '');
+        case 'estado': return p.estado || '';
+        case 'pago': return p.metodo_pago || '';
+        case 'monto': return Number(p.monto) || 0;
+        default: return '';
+      }
+    }
+
+    function sortPedidos(list) {
+      const arr = [...list];
+      arr.sort((a, b) => compareValues(getSortableValue(a, sortState.key), getSortableValue(b, sortState.key), sortState.dir));
+      return arr;
+    }
+
+    function updateSortHeaders(){
+      document.querySelectorAll('th.sortable').forEach((th) => {
+        const key = th.dataset.sort;
+        const arrow = key === sortState.key ? (sortState.dir === 'asc' ? '▲' : '▼') : '';
+        const base = th.textContent.replace(/[▲▼]/g, '').trim();
+        th.innerHTML = `${esc(base)}<span class="sort-indicator">${arrow}</span>`;
+      });
+    }
+
+    function clampPage(totalItems){
+      const totalPages = Math.max(1, Math.ceil(totalItems / getPageSize()));
+      currentPage = Math.min(Math.max(1, currentPage), totalPages);
+      return totalPages;
+    }
+
+    function setDashboardLoading(isLoading, message = 'Cargando pedidos...') {
+      dashboardLoading = !!isLoading;
+      tableCard.classList.toggle('is-loading', dashboardLoading);
+      btnPrevPage.disabled = dashboardLoading || currentPage <= 1;
+      btnNextPage.disabled = dashboardLoading || currentPage >= (dashboardMeta.total_pages || 1);
+      if (pageSizeSel) pageSizeSel.disabled = dashboardLoading;
+      const btnRef = $('#btnRef');
+      if (btnRef) btnRef.disabled = dashboardLoading;
+      if (dashboardLoading) {
+        rows.innerHTML = `<tr><td colspan="10" class="loading-row"><i class="fa-solid fa-spinner fa-spin"></i> ${esc(message)}</td></tr>`;
       }
     }
 
@@ -635,7 +790,7 @@
     }
 
     async function runAutoRefresh(){
-      if (refreshInFlight) return scheduleAutoRefresh();
+      if (refreshInFlight || dashboardLoading || dlg.open || saveBusy || deleteBusy) return scheduleAutoRefresh();
       refreshInFlight = true;
       try {
         await loadPedidos();
@@ -651,7 +806,13 @@
       try { await authFetch('/api/logout', { method: 'POST' }); } catch {}
       location.href = 'login.html';
     };
-    $('#btnRef').onclick   = () => { q.value=''; saveFiltersState(); initLoad(); scheduleAutoRefresh(); };
+    $('#btnRef').onclick   = async () => {
+      if (dashboardLoading) return;
+      await initLoad();
+      saveFiltersState();
+      showToast('Datos recargados');
+      scheduleAutoRefresh();
+    };
 
     $('#btnToday').onclick = async () => {
       const today = getLocalISO();
@@ -663,24 +824,44 @@
       scheduleAutoRefresh();
     };
 
-    $('#btnClear').onclick = () => {
+    $('#btnClear').onclick = async () => {
+      if (dashboardLoading) return;
       estadoFilter.value = '';
       fromFilter.value   = '';
       toFilter.value     = '';
       choferFilter.value = '';
       q.value            = '';
+      if (isSuper) empFilter.value = '';
 
-      // Antes: applyFilters();
       saveFiltersState();
-      initLoad(); // recarga pedidos desde el backend con filtros limpios
+      await loadChoferes();
+      await initLoad();
       scheduleAutoRefresh();
     };
 
     $('#btnExport').onclick = () => exportCSV();
 
-    const closeDialog = () => dlg.close();
+    function setDialogError(msg = '') {
+      dlgError.textContent = msg;
+      dlgError.style.display = msg ? 'block' : 'none';
+    }
+
+    function setModalBusy(isBusy) {
+      saveBusy = !!isBusy;
+      btnSaveAll.disabled = saveBusy;
+      btnCloseDlg.disabled = saveBusy;
+      btnCloseX.disabled = saveBusy;
+      btnAddItem.disabled = saveBusy;
+      dlg.querySelectorAll('input, select, button').forEach((el) => {
+        if (el === btnSaveAll || el === btnCloseDlg || el === btnCloseX || el === btnAddItem) return;
+        el.disabled = saveBusy;
+      });
+    }
+
+    const closeDialog = () => { if (!saveBusy) { setDialogError(''); dlg.close(); } };
     btnCloseDlg.onclick = closeDialog;
     btnCloseX.onclick   = closeDialog;
+    dlg.addEventListener('cancel', (ev) => { if (saveBusy) ev.preventDefault(); else setDialogError(''); });
 
     // ====== Boot principal (una sola vez) ======
     (async function boot(){
@@ -721,12 +902,45 @@
           scheduleAutoRefresh();
         });
 
-        // 🆕 Estado sigue siendo front-only, fechas recargan del backend
-        estadoFilter.onchange = () => { saveFiltersState(); applyFilters(); };
-        fromFilter.onchange   = async () => { saveFiltersState(); await initLoad(); scheduleAutoRefresh(); };
-        toFilter.onchange     = async () => { saveFiltersState(); await initLoad(); scheduleAutoRefresh(); };
+        estadoFilter.onchange = async () => { currentPage = 1; saveFiltersState(); await initLoad(); scheduleAutoRefresh(); };
+        fromFilter.onchange   = async () => { currentPage = 1; saveFiltersState(); await initLoad(); scheduleAutoRefresh(); };
+        toFilter.onchange     = async () => { currentPage = 1; saveFiltersState(); await initLoad(); scheduleAutoRefresh(); };
 
-        q.oninput = () => { saveFiltersState(); applyFilters(); };
+        q.oninput = () => {
+          currentPage = 1;
+          saveFiltersState();
+          clearTimeout(searchDebounce);
+          searchDebounce = setTimeout(async () => {
+            await initLoad();
+            scheduleAutoRefresh();
+          }, 300);
+        };
+        pageSizeSel.onchange = async () => {
+          currentPage = 1;
+          saveFiltersState();
+          await initLoad();
+        };
+        btnPrevPage.onclick = async () => {
+          if (dashboardLoading) return;
+          currentPage = Math.max(1, currentPage - 1);
+          await initLoad();
+        };
+        btnNextPage.onclick = async () => {
+          if (dashboardLoading) return;
+          currentPage = Math.min(dashboardMeta.total_pages || 1, currentPage + 1);
+          await initLoad();
+        };
+        document.querySelectorAll('th.sortable').forEach((th) => {
+          th.addEventListener('click', () => {
+            const key = th.dataset.sort;
+            if (!key) return;
+            if (sortState.key === key) sortState.dir = sortState.dir === 'asc' ? 'desc' : 'asc';
+            else sortState = { key, dir: key === 'fecha' || key === 'id' || key === 'monto' ? 'desc' : 'asc' };
+            currentPage = 1;
+            saveFiltersState();
+            initLoad();
+          });
+        });
 
         document.addEventListener('visibilitychange', () => scheduleAutoRefresh());
         window.addEventListener('online', () => scheduleAutoRefresh(5000));
@@ -836,10 +1050,14 @@
     }
 
     async function initLoad(){
-      tableCard.style.opacity = '0.5';
-      await Promise.all([loadProductos(), loadPedidos()]);
-      applyFilters();
-      tableCard.style.opacity = '1';
+      setDashboardLoading(true);
+      try {
+        await Promise.all([loadProductos(), loadPedidos()]);
+        applyFilters();
+      } finally {
+        tableCard.style.opacity = '1';
+        setDashboardLoading(false);
+      }
     }
 
     function getEmpresaID() {
@@ -870,50 +1088,55 @@
     }
 
     async function loadPedidos() {
-      const params     = new URLSearchParams();
-      const valEmpresa = empFilter.value;
-
-      // Empresa
-      if (isSuper && valEmpresa && valEmpresa !== 'null') {
-        params.set('empresa_id', valEmpresa);
-      } else if (isSuper && valEmpresa === 'null') {
-        params.set('orphan_empresa', '1');
-      } else if (!isSuper && currentUser?.empresa_id) {
-        params.set('empresa_id', currentUser.empresa_id);
-      }
-
-      // Fechas
-      if (fromFilter.value) params.set('from', fromFilter.value);
-      if (toFilter.value)   params.set('to',   toFilter.value);
-
-      // Asignación / Chofer
-      const choferVal = choferFilter.value;
-      if (choferVal === '__SIN_CHOFER__') {
-        params.set('orphan_chofer', '1');
-      } else if (choferVal) {
-        // Solo mandamos chofer_id si es un ID real
-        params.set('chofer_id', choferVal);
-      }
+      const reqSeq = ++pedidosReqSeq;
+      const params = buildDashboardQueryParams();
+      params.set('page', String(currentPage));
+      params.set('pageSize', String(getPageSize()));
 
       try {
-        const r = await authFetch('/api/pedidos?' + params.toString());
+        const r = await authFetch('/api/pedidos/dashboard-data?' + params.toString());
         if (!r.ok) {
-          let errMsg = `Error ${r.status} cargando pedidos`;
-          try {
-            const j = await r.json();
-            if (j?.error) errMsg = `${errMsg}: ${j.error}`;
-          } catch {}
+          const errMsg = await parseErrorResponse(r, `Error ${r.status} cargando pedidos`);
+          if (reqSeq < lastAppliedPedidosReq) return;
+          lastAppliedPedidosReq = reqSeq;
           pedidos = [];
+          pedidosFiltrados = [];
+          pedidosOrdenados = [];
+          dashboardMeta = { total_count: 0, total_pages: 1, page: currentPage, pageSize: getPageSize() };
+          dashboardKpis = null;
+          dashboardResumen = null;
           rows.innerHTML = `<tr><td colspan="10" style="text-align:center; padding:2rem; color:var(--danger)">${esc(errMsg)}</td></tr>`;
           updateSyncInfo();
           return;
         }
-        pedidos = await r.json();
+        const data = await r.json();
+        if (reqSeq < lastAppliedPedidosReq) return;
+        lastAppliedPedidosReq = reqSeq;
+        pedidos = Array.isArray(data?.rows) ? data.rows : [];
+        pedidosFiltrados = pedidos;
+        pedidosOrdenados = pedidos;
+        dashboardMeta = {
+          total_count: Number(data?.total_count) || 0,
+          total_pages: Number(data?.total_pages) || 1,
+          page: Number(data?.page) || currentPage,
+          pageSize: Number(data?.pageSize) || getPageSize()
+        };
+        dashboardKpis = data?.kpis || null;
+        dashboardResumen = data?.resumen_articulos || null;
+        currentPage = dashboardMeta.page;
         itemsByPedidoCache.clear();
+        resumenArticulosCache.clear();
         lastSyncAt = Date.now();
         updateSyncInfo();
       } catch {
+        if (reqSeq < lastAppliedPedidosReq) return;
+        lastAppliedPedidosReq = reqSeq;
         pedidos = [];
+        pedidosFiltrados = [];
+        pedidosOrdenados = [];
+        dashboardMeta = { total_count: 0, total_pages: 1, page: currentPage, pageSize: getPageSize() };
+        dashboardKpis = null;
+        dashboardResumen = null;
         rows.innerHTML = '<tr><td colspan="10" style="text-align:center; padding:2rem; color:var(--danger)">Error de conexión cargando pedidos.</td></tr>';
         updateSyncInfo();
       }
@@ -939,95 +1162,49 @@
     async function renderArticulosDetalle(list) {
       const token = ++detalleArticulosToken;
       if (!list.length) {
-        kpiDetailMain.textContent = 'Artículos entregados del filtro: —';
         kpiDetailSub.textContent = 'No hay pedidos con los filtros actuales.';
         return;
       }
 
-      const soloEntregados = list.filter(p => String(p?.estado || '') === 'entregado');
-      if (!soloEntregados.length) {
-        kpiDetailMain.textContent = 'Artículos entregados del filtro: —';
-        kpiDetailSub.textContent = 'No hay pedidos entregados con los filtros actuales.';
+      const resumen = dashboardResumen;
+      if (!resumen || !Array.isArray(resumen.top_productos)) {
+        kpiDetailSub.textContent = 'No se pudo cargar el detalle de artículos entregados.';
         return;
       }
-
-      const pedidosLimitados = soloEntregados.slice(0, 80);
-      const allItems = await Promise.all(
-        pedidosLimitados.map(p => getPedidoItemsCached(Number(p.id)))
-      );
 
       if (token !== detalleArticulosToken) return;
 
-      const agg = new Map();
-      for (const items of allItems) {
-        for (const it of items) {
-          const nombre = String(it?.producto || 'Sin nombre').trim() || 'Sin nombre';
-          const cantidad = Number(it?.cantidad) || 0;
-          if (cantidad <= 0) continue;
-          agg.set(nombre, (agg.get(nombre) || 0) + cantidad);
-        }
-      }
-
-      const top = Array.from(agg.entries())
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 12);
-
-      const totalUnidades = Array.from(agg.values()).reduce((a, b) => a + b, 0);
-      kpiDetailMain.textContent = `Artículos entregados: ${totalUnidades} unidades en ${agg.size || 0} producto(s)`;
-
-      if (!top.length) {
-        kpiDetailSub.textContent = 'No hay ítems cargados para los pedidos entregados filtrados.';
+      if (!resumen.top_productos.length) {
+        kpiDetailSub.textContent = 'No hay pedidos entregados con ítems en los filtros actuales.';
         return;
       }
 
-      const detalle = top.map(([nombre, qty]) => `${nombre} x${qty}`).join(' · ');
-      const masTxt = soloEntregados.length > 80 ? ' · (mostrando detalle de los primeros 80 pedidos entregados)' : '';
-      kpiDetailSub.textContent = detalle + masTxt;
+      const detalle = resumen.top_productos
+        .map((it) => `${it.producto} x${Number(it.cantidad) || 0}`)
+        .join(' · ');
+
+      kpiDetailSub.textContent = `Artículos entregados: ${Number(resumen.total_unidades) || 0} unidades en ${Number(resumen.productos_count) || 0} producto(s) · ${detalle}`;
     }
 
     function applyFilters() {
-      const e      = estadoFilter.value;
-      const s      = q.value.toLowerCase().trim();
-      const cId    = choferFilter.value;
-      const empVal = empFilter.value;
-
-      const filtered = pedidos.filter(p => {
-        // Empresa en front (huérfanos / sin empresa)
-        if (isSuper) {
-          if (empVal === 'null') {
-            const isOrphanEmpresa = !!p.orphan_empresa || p.empresa_id == null || Number(p.empresa_id) === 0;
-            if (!isOrphanEmpresa) return false;
-          }
-        }
-
-        // Estado
-        if (e && String(p.estado || '') !== e) return false;
-
-        // Búsqueda de texto
-        if (s) {
-          const txt = `${p.cliente} ${p.telefono} ${p.direccion} ${p.chofer_nombre || ''} #${p.id}`.toLowerCase();
-          if (!txt.includes(s)) return false;
-        }
-
-        // Asignación / Chofer
-        if (cId === '__SIN_CHOFER__') {
-          // Pedidos huérfanos de chofer (sin chofer o FK inválida/cruzada)
-          const isOrphanChofer = !!p.orphan_chofer || p.chofer_id == null || Number(p.chofer_id) === 0;
-          if (!isOrphanChofer) return false;
-        } else if (cId) {
-          // Chofer específico
-          if (String(p.chofer_id) !== cId) return false;
-        }
-
-        return true;
-      });
-
-      renderKPIs(filtered);
-      renderTable(filtered);
-      renderArticulosDetalle(filtered);
+      pedidosFiltrados = Array.isArray(pedidos) ? pedidos : [];
+      pedidosOrdenados = pedidosFiltrados;
+      updateSortHeaders();
+      renderKPIs(pedidosFiltrados);
+      renderTable(pedidosOrdenados);
+      renderArticulosDetalle(pedidosFiltrados);
     }
 
     function renderTable(list){
+      const total = Number(dashboardMeta.total_count) || 0;
+      const totalPages = Number(dashboardMeta.total_pages) || 1;
+      const start = total ? ((currentPage - 1) * getPageSize()) : 0;
+
+      pageLabel.textContent = `Página ${currentPage}/${totalPages}`;
+      pageInfo.textContent = total ? `Mostrando ${start + 1}-${Math.min(start + list.length, total)} de ${total}` : 'Mostrando 0-0 de 0';
+      btnPrevPage.disabled = dashboardLoading || currentPage <= 1;
+      btnNextPage.disabled = dashboardLoading || currentPage >= totalPages;
+
       if (!list.length) {
         rows.innerHTML =
           '<tr><td colspan="10" style="text-align:center; padding:3rem; color:var(--muted)">No se encontraron pedidos.</td></tr>';
@@ -1037,6 +1214,12 @@
       rows.innerHTML = list.map(p => {
         const stClass = 'st-' + (p.estado || '').toLowerCase().replace(' ', '_');
         const stLabel = (p.estado || '').replace('_', ' ').toUpperCase();
+        const flags = [];
+        const isOrphanChofer = !!p.orphan_chofer || p.chofer_id == null || Number(p.chofer_id) === 0;
+        const isOrphanEmpresa = !!p.orphan_empresa || p.empresa_id == null || Number(p.empresa_id) === 0;
+        if (isOrphanChofer) flags.push('<span class="flag-badge flag-warn"><i class="fa-solid fa-triangle-exclamation"></i> Sin chofer</span>');
+        if (isOrphanEmpresa) flags.push('<span class="flag-badge flag-danger"><i class="fa-solid fa-building-circle-exclamation"></i> Sin empresa</span>');
+        if (!p.metodo_pago) flags.push('<span class="flag-badge flag-info"><i class="fa-regular fa-credit-card"></i> Pago sin definir</span>');
         
         return `
           <tr>
@@ -1045,7 +1228,7 @@
             <td style="font-weight:600; color:#fff;">${esc(p.cliente || '')}</td>
             <td>${esc(p.telefono || '')}</td>
             <td style="font-size:0.9rem">${esc(p.direccion || '')}</td>
-            <td style="font-size:0.85rem; color:var(--muted)">${esc(p.chofer_nombre || (p.chofer_id ? `#${p.chofer_id}` : 'Sin asignar'))}</td>
+            <td style="font-size:0.85rem; color:var(--muted)">${esc(p.chofer_nombre || (p.chofer_id ? `#${p.chofer_id}` : 'Sin asignar'))}${flags.length ? `<div class="flag-list">${flags.join('')}</div>` : ''}</td>
             <td><span class="status-badge ${stClass}">${esc(stLabel)}</span></td>
             <td style="font-size:0.85rem; color:var(--muted)">${esc(p.metodo_pago || '-')}</td>
             <td style="font-weight:bold; color:#fff; font-size:1rem;">${money(p.monto)}</td>
@@ -1058,19 +1241,27 @@
     }
 
     function renderKPIs(list){
-      totalCount.textContent = list.length;
+      const total = Number(dashboardMeta.total_count) || 0;
+      const k = dashboardKpis || {};
+      const pendientes = Number(k.pendientes) || 0;
+      const enRuta = Number(k.en_ruta) || 0;
+      const entregados = Number(k.entregados) || 0;
+      const cancelados = Number(k.cancelados) || 0;
+      const sinChofer = Number(k.sin_chofer) || 0;
+      const totalMonto = Number(k.total_monto) || 0;
+      const ticketPromedio = Number(k.ticket_promedio) || 0;
 
-      const pendientes = list.filter(p => p.estado === 'pendiente').length;
-      const enRuta = list.filter(p => p.estado === 'en_ruta').length;
-      const entregados = list.filter(p => p.estado === 'entregado').length;
-      const total = list.reduce((acc, p) => acc + (Number(p.monto) || 0), 0);
-
+      totalCount.textContent = total;
       kpiPend.textContent = pendientes;
       kpiRuta.textContent = enRuta;
       kpiEnt.textContent  = entregados;
-      kpiMonto.textContent = money(total);
+      kpiMonto.textContent = money(totalMonto);
+      if (kpiCancel) kpiCancel.textContent = cancelados;
+      if (kpiTicket) kpiTicket.textContent = money(ticketPromedio);
+      if (kpiSinChofer) kpiSinChofer.textContent = sinChofer;
 
-      // El detalle por artículos se renderiza en renderArticulosDetalle().
+      const entregaPct = total ? Math.round((entregados / total) * 100) : 0;
+      kpiDetailMain.textContent = `Efectividad del filtro: ${entregados}/${total} entregados (${entregaPct}%) · ${sinChofer} sin chofer · ${cancelados} cancelados`;
     }
 
     // ====== Acciones de Pedido ======
@@ -1084,23 +1275,28 @@
       $('#dlg_empresa_id').value = p.empresa_id != null ? p.empresa_id : '';
       $('#dlg_chofer_id').value  = p.chofer_id  != null ? p.chofer_id  : '';
       $('#dlg_zona_id').value    = p.zona_id    != null ? p.zona_id    : '';
+      setDialogError('');
+      setModalBusy(false);
 
       dlg_itemsBody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:1rem; color:var(--muted);">Cargando ítems...</td></tr>';
       dlg.showModal();
 
       try {
         const r = await authFetch(`/api/pedidos/${id}/items`);
+        if (!r.ok) throw new Error(await parseErrorResponse(r, 'No se pudieron cargar los ítems del pedido.'));
         const items = await r.json();
-        const list  = items.length ? items : [{producto:'', cantidad:1, precio_unitario:0}];
+        const list  = Array.isArray(items) && items.length ? items : [{producto:'', cantidad:1, precio_unitario:0}];
         dlg_itemsBody.innerHTML = list.map(renderItemRow).join('');
         recalcTotal();
-      } catch {
-        alert('Error cargando ítems');
+      } catch (err) {
+        setDialogError(err?.message || 'Error cargando ítems');
+        dlg_itemsBody.innerHTML = renderItemRow({ producto:'', cantidad:1, precio_unitario:0 });
+        recalcTotal();
       }
     };
 
     window.deletePedido = async (id) => {
-      if (deleteBusy) return;
+      if (deleteBusy || dashboardLoading) return;
       if (!confirm(`¿Estás seguro de ELIMINAR el pedido #${id}?\nEsta acción no se puede deshacer.`)) return;
 
       deleteBusy = true;
@@ -1109,17 +1305,18 @@
           method: 'DELETE'
         });
 
-        if (r.ok) {
-          showToast('🗑️ Pedido eliminado');
-          pedidos = pedidos.filter(p => p.id !== id);
-          applyFilters();
-        } else {
-          const err = await r.json();
-          alert('Error: ' + (err.error || 'No se pudo eliminar'));
+        if (!r.ok) {
+          throw new Error(await parseErrorResponse(r, 'No se pudo eliminar el pedido.'));
         }
+
+        if ((Number(dashboardMeta.total_count) || 0) > 1 && pedidos.length === 1 && currentPage > 1) {
+          currentPage = Math.max(1, currentPage - 1);
+        }
+        showToast('🗑️ Pedido eliminado');
+        await initLoad();
       } catch (e) {
         console.error(e);
-        alert('Error de conexión al eliminar');
+        alert(e?.message || 'Error de conexión al eliminar');
       } finally {
         deleteBusy = false;
       }
@@ -1132,12 +1329,12 @@
       return `
         <tr>
           <td><input type="text" value="${esc(it.producto || '')}" list="prodList" oninput="autoPrice(this)" placeholder="Producto..."></td>
-          <td><input type="number" value="${q}" oninput="recalcTotal()"></td>
-          <td><input type="number" value="${pu}" oninput="recalcTotal()"></td>
+          <td><input type="number" min="1" step="1" value="${q}" oninput="recalcTotal()"></td>
+          <td><input type="number" min="0" step="1" value="${pu}" oninput="recalcTotal()"></td>
           <td class="sub text-right" style="padding-top:10px; font-family:monospace;">${money(q * pu)}</td>
           <td class="text-center">
-            <button class="btn-icon" style="color:var(--danger); border:none;"
-              onclick="this.closest('tr').remove(); recalcTotal()">
+            <button class="btn-icon" type="button" style="color:var(--danger); border:none;"
+              onclick="removeItemRow(this)">
               ✕
             </button>
           </td>
@@ -1158,6 +1355,7 @@
     window.recalcTotal = function(){
       let tot = 0;
       dlg_itemsBody.querySelectorAll('tr').forEach(tr => {
+        tr.classList.remove('row-invalid');
         const inps = tr.querySelectorAll('input');
         const q    = Number(inps[1].value) || 0;
         const p    = Number(inps[2].value) || 0;
@@ -1168,23 +1366,38 @@
       $('#dlg_total').textContent = money(tot);
     };
 
+    window.removeItemRow = function(btn){
+      if (saveBusy) return;
+      const tr = btn.closest('tr');
+      tr?.remove();
+      if (!dlg_itemsBody.querySelector('tr')) {
+        dlg_itemsBody.innerHTML = renderItemRow({ producto:'', cantidad:1, precio_unitario:0 });
+      }
+      recalcTotal();
+    };
+
     btnAddItem.onclick = () => {
-      dlg_itemsBody.insertAdjacentHTML('beforeend', renderItemRow());
+      if (saveBusy) return;
+      dlg_itemsBody.insertAdjacentHTML('beforeend', renderItemRow({ cantidad:1, precio_unitario:0 }));
+      recalcTotal();
     };
 
     btnSaveAll.onclick = async () => {
       if (saveBusy) return;
+      setDialogError('');
 
-      const items = Array.from(dlg_itemsBody.querySelectorAll('tr'))
-        .map(tr => {
-          const i = tr.querySelectorAll('input');
-          return {
-            producto:        String(i[0].value || '').trim(),
-            cantidad:        Number(i[1].value),
-            precio_unitario: Number(i[2].value)
-          };
-        })
-        .filter(i => i.producto);
+      const rowData = Array.from(dlg_itemsBody.querySelectorAll('tr')).map(tr => {
+        tr.classList.remove('row-invalid');
+        const i = tr.querySelectorAll('input');
+        return {
+          tr,
+          producto: String(i[0].value || '').trim(),
+          cantidad: Number(i[1].value),
+          precio_unitario: Number(i[2].value)
+        };
+      });
+
+      const items = rowData.filter(i => i.producto).map(({ tr, ...it }) => it);
 
       const empresaId = Number($('#dlg_empresa_id').value) || null;
       const choferId  = Number($('#dlg_chofer_id').value)  || null;
@@ -1192,37 +1405,38 @@
 
       // Validaciones fuertes
       if (!items.length) {
-        alert('Agregá al menos un ítem válido.');
+        setDialogError('Agregá al menos un ítem válido.');
         return;
       }
 
-      const hasInvalid = items.some(it => !it.producto || !Number.isFinite(it.cantidad) || it.cantidad <= 0 || !Number.isFinite(it.precio_unitario) || it.precio_unitario < 0);
-      if (hasInvalid) {
-        alert('Revisá los ítems: cantidad debe ser > 0 y precio >= 0.');
+      const invalidRows = rowData.filter(it => it.producto && (!Number.isFinite(it.cantidad) || it.cantidad <= 0 || !Number.isFinite(it.precio_unitario) || it.precio_unitario < 0));
+      invalidRows.forEach(it => it.tr.classList.add('row-invalid'));
+      if (invalidRows.length) {
+        setDialogError('Revisá los ítems marcados: cantidad debe ser mayor a 0 y precio mayor o igual a 0.');
+        invalidRows[0]?.tr.querySelector('input')?.focus();
         return;
       }
 
       const estadoVal = String($('#dlg_estado').value || '').trim();
       const estadosPermitidos = ['pendiente', 'en_ruta', 'entregado', 'cancelado'];
       if (!estadosPermitidos.includes(estadoVal)) {
-        alert('Estado inválido.');
+        setDialogError('Estado inválido.');
         return;
       }
 
       const metodoVal = String($('#dlg_metodo').value || '').toLowerCase();
       const metodosPermitidos = ['', 'efectivo', 'transferencia'];
       if (!metodosPermitidos.includes(metodoVal)) {
-        alert('Método de pago inválido.');
+        setDialogError('Método de pago inválido.');
         return;
       }
 
       const prevTxt = btnSaveAll.textContent;
-      saveBusy = true;
-      btnSaveAll.disabled = true;
+      setModalBusy(true);
       btnSaveAll.textContent = 'Guardando...';
 
       try {
-        await authFetch(`/api/pedidos/${editingId}`, {
+        const pedidoResp = await authFetch(`/api/pedidos/${editingId}`, {
           method: 'PUT',
           headers:{
             'Content-Type':'application/json'
@@ -1236,7 +1450,11 @@
           })
         });
 
-        await authFetch(`/api/pedidos/${editingId}/items`, {
+        if (!pedidoResp.ok) {
+          throw new Error(await parseErrorResponse(pedidoResp, 'No se pudo actualizar el pedido.'));
+        }
+
+        const itemsResp = await authFetch(`/api/pedidos/${editingId}/items`, {
           method: 'PUT',
           headers:{
             'Content-Type':'application/json'
@@ -1244,40 +1462,78 @@
           body: JSON.stringify({ items })
         });
 
+        if (!itemsResp.ok) {
+          throw new Error(await parseErrorResponse(itemsResp, 'No se pudieron actualizar los ítems del pedido.'));
+        }
+
         showToast('Guardado correctamente');
         dlg.close();
         await loadPedidos();
         applyFilters();
-      } catch {
-        alert('Error al guardar');
+      } catch (err) {
+        setDialogError(err?.message || 'Error al guardar');
       } finally {
-        saveBusy = false;
-        btnSaveAll.disabled = false;
+        setModalBusy(false);
         btnSaveAll.textContent = prevTxt;
       }
     };
 
-    function exportCSV(){
-      if (!pedidos.length) return;
-      const data = [["ID","Fecha","Cliente","Telefono","Direccion","Chofer","Estado","Monto"]];
-      pedidos.forEach(p => {
-        data.push([
-          p.id,
-          fmtDate(p.fecha),
-          p.cliente,
-          p.telefono,
-          p.direccion,
-          p.chofer_nombre || (p.chofer_id ? `#${p.chofer_id}` : 'Sin asignar'),
-          p.estado,
-          p.monto
-        ]);
-      });
-      const csv  = data.map(r => r.map(c => `"${c}"`).join(',')).join('\n');
-      const blob = new Blob([csv], { type:'text/csv' });
-      const a    = document.createElement('a');
-      a.href     = URL.createObjectURL(blob);
-      a.download = 'pedidos.csv';
-      a.click();
+    function buildDashboardQueryParams(){
+      const params = new URLSearchParams();
+      const valEmpresa = empFilter.value;
+
+      if (isSuper && valEmpresa && valEmpresa !== 'null') {
+        params.set('empresa_id', valEmpresa);
+      } else if (isSuper && valEmpresa === 'null') {
+        params.set('orphan_empresa', '1');
+      } else if (!isSuper && currentUser?.empresa_id) {
+        params.set('empresa_id', currentUser.empresa_id);
+      }
+
+      if (fromFilter.value) params.set('from', fromFilter.value);
+      if (toFilter.value)   params.set('to', toFilter.value);
+      if (estadoFilter.value) params.set('estado', estadoFilter.value);
+      if (q.value.trim()) params.set('q', q.value.trim());
+      params.set('sortKey', sortState.key);
+      params.set('sortDir', sortState.dir);
+
+      const choferVal = choferFilter.value;
+      if (choferVal === '__SIN_CHOFER__') params.set('orphan_chofer', '1');
+      else if (choferVal) params.set('chofer_id', choferVal);
+
+      return params;
+    }
+
+    async function exportCSV(){
+      const total = Number(dashboardMeta.total_count) || 0;
+      if (!total) {
+        alert('No hay pedidos para exportar con los filtros actuales.');
+        return;
+      }
+
+      const btn = $('#btnExport');
+      const prev = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Exportando...';
+
+      try {
+        const params = buildDashboardQueryParams();
+        const r = await authFetch('/api/pedidos/export.csv?' + params.toString());
+        if (!r.ok) throw new Error(await parseErrorResponse(r, 'No se pudo exportar el CSV.'));
+
+        const blob = await r.blob();
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `pedidos-${getLocalISO()}.csv`;
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+        showToast(`CSV exportado (${total} registros)`);
+      } catch (err) {
+        alert(err?.message || 'Error exportando CSV');
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = prev;
+      }
     }
   </script>
 </body>

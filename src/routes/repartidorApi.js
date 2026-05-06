@@ -23,51 +23,53 @@ export function createRepartidorApiRouter(deps) {
        return res.status(403).json({ error: 'Usuario repartidor sin chofer vinculado.' });
      }
 
-     // MEJORA: Filtramos los entregados para no traer historial de hace meses
      // Traemos:
-     // 1. Todo lo que NO esté entregado/cancelado (pendiente, en_ruta, en_camino)
-     // 2. O lo que esté entregado/cancelado PERO haya sido modificado recientemente (ej. últimos 2 días)
-     //    Usamos p.fecha como fallback si fecha_entrega es null
-     
+     // 1. Pedidos activos completos para la operación diaria
+     // 2. Pedidos finalizados de los últimos 30 días para que el resumen histórico funcione
      const rows = await query(
        `SELECT 
           p.id, p.estado, p.fecha, p.fecha_entrega,
           p.cantidad, p.monto, p.metodo_pago, p.chofer_id,
           pe.cliente, pe.direccion, pe.ciudad, pe.telefono,
           pe.latitud, pe.longitud, pe.notas AS notas,
-          pe.zona_id, z.nombre AS zona_nombre
+          pe.zona_id, z.nombre AS zona_nombre,
+          COALESCE(
+            json_agg(
+              json_build_object(
+                'producto', ip.producto,
+                'cantidad', ip.cantidad,
+                'precio_unitario', ip.precio_unitario,
+                'producto_id', ip.producto_id
+              )
+            ) FILTER (WHERE ip.id IS NOT NULL),
+            '[]'::json
+          ) AS items
         FROM pedidos p
         JOIN puntos_entrega pe ON p.punto_entrega_id = pe.id
         LEFT JOIN zonas_geograficas z ON pe.zona_id = z.id
+        LEFT JOIN items_pedido ip ON ip.pedido_id = p.id
         WHERE pe.empresa_id = $2
           AND (p.chofer_id = $1 OR p.chofer_id IS NULL)
           AND (
-            -- CASO A: Pedidos activos (traer todos)
             p.estado IN ('pendiente', 'en_ruta', 'en_camino')
-            OR 
-            -- CASO B: Pedidos finalizados recientes (ej: últimos 2 días para permitir ver resumen de ayer)
-            (
+            OR (
               p.estado IN ('entregado', 'cancelado') 
               AND (
-                 (p.fecha_entrega IS NOT NULL AND p.fecha_entrega >= NOW() - INTERVAL '2 days')
+                 (p.fecha_entrega IS NOT NULL AND p.fecha_entrega >= NOW() - INTERVAL '30 days')
                  OR 
-                 (p.fecha >= NOW() - INTERVAL '2 days')
+                 (p.fecha >= NOW() - INTERVAL '30 days')
               )
             )
           )
+        GROUP BY
+          p.id, p.estado, p.fecha, p.fecha_entrega,
+          p.cantidad, p.monto, p.metodo_pago, p.chofer_id,
+          pe.cliente, pe.direccion, pe.ciudad, pe.telefono,
+          pe.latitud, pe.longitud, pe.notas,
+          pe.zona_id, z.nombre
         ORDER BY p.id ASC`,
        [chofer_id, empresaId]
      );
-
-     // Inyectar ítems...
-     for (let pedido of rows) {
-       // ⬇️ AQUÍ ESTÁ EL CAMBIO: Agregamos precio_unitario a la consulta
-       const items = await query(
-         `SELECT producto, cantidad, precio_unitario FROM items_pedido WHERE pedido_id=$1`,
-         [pedido.id]
-       );
-       pedido.items = items;
-     }
 
      res.json(rows);
    } catch (e) {

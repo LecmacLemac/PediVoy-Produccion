@@ -6,6 +6,58 @@ import { query, pool } from '../db.js';
 export function createPedidosItemsRouter() {
   const router = express.Router();
 
+  // GET /api/pedidos/resumen-articulos?ids=1,2,3
+  router.get('/resumen-articulos', withAuth, async (req, res) => {
+    try {
+      const rawIds = String(req.query?.ids || '');
+      const ids = Array.from(new Set(
+        rawIds
+          .split(',')
+          .map((v) => Number(String(v).trim()))
+          .filter((n) => Number.isInteger(n) && n > 0)
+      ));
+
+      if (!ids.length) {
+        return res.json({ ok: true, total_unidades: 0, productos_count: 0, top_productos: [] });
+      }
+      if (ids.length > 500) {
+        return res.status(400).json({ error: 'Demasiados pedidos para resumir' });
+      }
+
+      const esSuperUser = isSuper(req);
+      const myEmpresa = getEmpresaIdFromToken(req);
+      const empresaFilter = esSuperUser ? null : Number(myEmpresa);
+
+      const rows = await query(
+        `SELECT
+           COALESCE(NULLIF(BTRIM(ip.producto), ''), 'Sin nombre') AS producto,
+           SUM(COALESCE(ip.cantidad, 0))::int AS cantidad
+         FROM items_pedido ip
+         JOIN pedidos p ON p.id = ip.pedido_id
+         WHERE ip.pedido_id = ANY($1::int[])
+           AND ($2::int IS NULL OR p.empresa_id = $2)
+         GROUP BY 1
+         HAVING SUM(COALESCE(ip.cantidad, 0)) > 0
+         ORDER BY cantidad DESC, producto ASC`,
+        [ids, empresaFilter]
+      );
+
+      const totalUnidades = rows.reduce((acc, row) => acc + (Number(row?.cantidad) || 0), 0);
+      return res.json({
+        ok: true,
+        total_unidades: totalUnidades,
+        productos_count: rows.length,
+        top_productos: rows.slice(0, 12).map((row) => ({
+          producto: row.producto,
+          cantidad: Number(row.cantidad) || 0,
+        })),
+      });
+    } catch (e) {
+      console.error('ERROR GET RESUMEN ARTICULOS PEDIDOS:', e);
+      return res.status(500).json({ error: 'Error cargando resumen de artículos' });
+    }
+  });
+
   // PUT /api/pedidos/:id/items
   router.put('/:id/items', withAuth, async (req, res) => {
     const pedidoId = req.params.id;

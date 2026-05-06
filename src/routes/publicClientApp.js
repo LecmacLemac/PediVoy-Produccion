@@ -146,7 +146,7 @@ function setClientCookie(res, token) {
 
 async function getLastProfileByPhone(query, empresaId, telefonoNorm) {
   const contactoRows = await query(
-    `SELECT id, cliente, telefono, direccion, ciudad, provincia, pais, email
+    `SELECT id, cliente, telefono, direccion, ciudad, provincia, pais, notas, email
      FROM puntos_entrega
      WHERE empresa_id = $1
        AND telefono_normalizado LIKE '%' || $2
@@ -157,10 +157,55 @@ async function getLastProfileByPhone(query, empresaId, telefonoNorm) {
   return contactoRows[0] || null;
 }
 
+async function getClientCompaniesByPhone(query, telefonoNorm) {
+  if (!telefonoNorm) return [];
+  const rows = await query(
+    `SELECT DISTINCT e.id, e.nombre, e.landing_slug, e.landing_domain
+     FROM puntos_entrega pe
+     JOIN empresas e ON e.id = pe.empresa_id
+     WHERE pe.telefono_normalizado LIKE '%' || $1
+     ORDER BY e.nombre ASC, e.id ASC
+     LIMIT 50`,
+    [telefonoNorm]
+  );
+  return rows.map((row) => ({
+    id: Number(row.id),
+    nombre: String(row.nombre || `Empresa #${row.id}`),
+    landing_slug: row.landing_slug ? String(row.landing_slug) : null,
+    landing_domain: row.landing_domain ? String(row.landing_domain) : null,
+  }));
+}
+
 export function createPublicClientAppRouter({ query }) {
   if (typeof query !== 'function') throw new Error('createPublicClientAppRouter: falta query(fn)');
 
   const router = express.Router();
+
+  router.get('/auth/providers', (_req, res) => {
+    return res.json({
+      ok: true,
+      google: Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_REDIRECT_URI),
+    });
+  });
+
+  router.post('/auth/companies', async (req, res) => {
+    try {
+      const telefonoNorm = normalizePhone(req.body?.telefono);
+      if (!telefonoNorm) return res.status(400).json({ error: 'telefono inválido' });
+
+      const companies = await getClientCompaniesByPhone(query, telefonoNorm);
+      const preferredEmpresaId = await resolveEmpresaId(query, req.body?.empresa_id, req.body?.slug);
+
+      return res.json({
+        ok: true,
+        companies,
+        preferred_empresa_id: preferredEmpresaId || null,
+      });
+    } catch (e) {
+      console.error('CLIENT COMPANIES LOOKUP ERROR', e);
+      return res.status(500).json({ error: 'No se pudieron obtener las empresas del cliente' });
+    }
+  });
 
   router.post('/auth/request-otp', async (req, res) => {
     try {
@@ -355,7 +400,7 @@ export function createPublicClientAppRouter({ query }) {
       let profile = null;
 
       const byEmail = await query(
-        `SELECT id, cliente, telefono, telefono_normalizado, direccion, ciudad, provincia, pais, email
+        `SELECT id, cliente, telefono, telefono_normalizado, direccion, ciudad, provincia, pais, notas, email
          FROM puntos_entrega
          WHERE empresa_id = $1 AND LOWER(COALESCE(email,'')) = $2
          ORDER BY id DESC LIMIT 1`,
@@ -368,7 +413,7 @@ export function createPublicClientAppRouter({ query }) {
         const ins = await query(
           `INSERT INTO puntos_entrega (empresa_id, cliente, nombre, email)
            VALUES ($1, $2, $3, $4)
-           RETURNING id, cliente, telefono, telefono_normalizado, direccion, ciudad, provincia, pais, email`,
+           RETURNING id, cliente, telefono, telefono_normalizado, direccion, ciudad, provincia, pais, notas, email`,
           [empresaId, nombre || email.split('@')[0], nombre || null, email]
         );
         profile = ins[0] || null;
@@ -409,6 +454,8 @@ export function createPublicClientAppRouter({ query }) {
       const empresaId = Number(payload.empresa_id);
       const cliente = String(req.body?.cliente || '').trim();
       const direccion = String(req.body?.direccion || '').trim();
+      const ciudad = String(req.body?.ciudad || '').trim() || null;
+      const notas = String(req.body?.notas || '').trim() || null;
       const telefonoIn = String(req.body?.telefono || payload.telefono || '').trim();
       const email = String(req.body?.email || payload.email || '').trim().toLowerCase() || null;
 
@@ -439,18 +486,18 @@ export function createPublicClientAppRouter({ query }) {
       if (rows.length) {
         const upd = await query(
           `UPDATE puntos_entrega
-              SET cliente=$1, nombre=$2, direccion=$3, telefono=$4, telefono_normalizado=$5, email=COALESCE($6, email)
-            WHERE id=$7
-            RETURNING id, cliente, telefono, telefono_normalizado, direccion, ciudad, provincia, pais, email`,
-          [cliente, cliente, direccion, telefonoIn, telefonoNorm, email, rows[0].id]
+              SET cliente=$1, nombre=$2, direccion=$3, ciudad=$4, notas=$5, telefono=$6, telefono_normalizado=$7, email=COALESCE($8, email)
+            WHERE id=$9
+            RETURNING id, cliente, telefono, telefono_normalizado, direccion, ciudad, provincia, pais, notas, email`,
+          [cliente, cliente, direccion, ciudad, notas, telefonoIn, telefonoNorm, email, rows[0].id]
         );
         profile = upd[0] || null;
       } else {
         const ins = await query(
-          `INSERT INTO puntos_entrega (empresa_id, cliente, nombre, direccion, telefono, telefono_normalizado, email)
-           VALUES ($1,$2,$3,$4,$5,$6,$7)
-           RETURNING id, cliente, telefono, telefono_normalizado, direccion, ciudad, provincia, pais, email`,
-          [empresaId, cliente, cliente, direccion, telefonoIn, telefonoNorm, email]
+          `INSERT INTO puntos_entrega (empresa_id, cliente, nombre, direccion, ciudad, telefono, telefono_normalizado, notas, email)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+           RETURNING id, cliente, telefono, telefono_normalizado, direccion, ciudad, provincia, pais, notas, email`,
+          [empresaId, cliente, cliente, direccion, ciudad, telefonoIn, telefonoNorm, notas, email]
         );
         profile = ins[0] || null;
       }
@@ -614,7 +661,7 @@ export function createPublicClientAppRouter({ query }) {
 
       if (!profile && payload?.email) {
         const byEmail = await query(
-          `SELECT id, cliente, telefono, telefono_normalizado, direccion, ciudad, provincia, pais, email
+          `SELECT id, cliente, telefono, telefono_normalizado, direccion, ciudad, provincia, pais, notas, email
            FROM puntos_entrega
            WHERE empresa_id = $1 AND LOWER(COALESCE(email,'')) = $2
            ORDER BY id DESC LIMIT 1`,
