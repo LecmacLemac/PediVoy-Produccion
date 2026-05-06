@@ -32,12 +32,21 @@ credentials.json
 
 # Local build/runtime artifacts
 node_modules/
+**/node_modules/
 .puppeteer/
 .wwebjs_auth/
 Gastos/
 Transferencia/
 logs/
 pedidos/css/
+
+# Nested app/tooling artifacts
+**/build/
+**/.gradle/
+**/.idea/
+**/local.properties
+**/.env
+**/.env.*
 
 # OpenClaw workspace meta (no mezclar con el proyecto)
 AGENTS.md
