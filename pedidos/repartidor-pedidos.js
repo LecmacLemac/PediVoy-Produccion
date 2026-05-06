@@ -512,4 +512,3 @@ function renderCards() {
   $('#emptyMsg').hidden = list.length > 0;
 }
 
-

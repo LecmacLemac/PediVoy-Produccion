@@ -35,12 +35,17 @@ const getOyString = () => {
     return d.toISOString().slice(0,10);
 };
 
-// Convierte fecha UTC de DB a Local YYYY-MM-DD para comparar
+// Convierte fecha de DB a YYYY-MM-DD en zona Argentina para comparar sin desfases
 const isoToLocalYMD = (iso) => {
     if(!iso) return '';
     const d = new Date(iso);
-    d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
-    return d.toISOString().slice(0,10);
+    if (Number.isNaN(d.getTime())) return '';
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Argentina/Buenos_Aires',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).format(d);
 };
 
 // Fecha (DD/MM/YYYY) en AR
@@ -325,7 +330,13 @@ async function bootRepartidorPanel() {
 
     // 4. Inicializar Fechas
     const today = getOyString();
+    const last30 = new Date();
+    last30.setDate(last30.getDate() - 29);
+    const last30Ymd = last30.toISOString().slice(0, 10);
+
     $('#resDate').value = today;
+    $('#resDate').max = today;
+    $('#resDate').min = last30Ymd;
     $('#stDate').value = today;
     $('#gFecha').value = today;
     $('#tfDate').value = today;
@@ -353,4 +364,3 @@ async function bootRepartidorPanel() {
     notifyError('No se pudo iniciar el panel', e);
   }
 }
-

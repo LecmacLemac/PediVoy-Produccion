@@ -458,8 +458,27 @@ async function loadStockRepartidor(){
 
 // --- RESUMEN ---
 async function calcResumen(){
-  const d = $('#resDate').value;
+  const resDateEl = $('#resDate');
+  const d = resDateEl?.value;
   if (!d) return;
+
+  const today = getOyString();
+  const last30 = new Date();
+  last30.setDate(last30.getDate() - 29);
+  const last30Ymd = last30.toISOString().slice(0, 10);
+
+  if (resDateEl) {
+    resDateEl.max = today;
+    resDateEl.min = last30Ymd;
+  }
+
+  if (d < last30Ymd || d > today) {
+    toast('Podés consultar solo tus últimos 30 días');
+    if (resDateEl) {
+      resDateEl.value = d > today ? today : last30Ymd;
+    }
+    return calcResumen();
+  }
 
   const list = pedidos.filter(p => { const fDb = p.fecha_entrega || p.fecha; return isoToLocalYMD(fDb) === d && p.estado === 'entregado'; });
 
