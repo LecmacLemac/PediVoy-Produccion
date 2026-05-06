@@ -28,6 +28,8 @@ import { createLicenciasMpRouter, createMercadoPagoWebhookRouter } from './licen
 import { createPromptsGlobalesRouter } from './promptsGlobales.js';
 import { createPromocionesRouter } from './promociones.js';
 import { createAnalyticsRouter } from './analytics.js';
+import { createCallCampaignsRouter } from './callCampaigns.js';
+import { createCallsRouter } from './calls.js';
 import { trackingPublicRouter } from '../trackingPublic.js';
 
 export function mountApiModules(app, deps) {
@@ -70,6 +72,8 @@ export function mountApiModules(app, deps) {
   app.use('/api/pedidos', createPedidosPagoRouter());
   app.use('/api/estadisticas', createEstadisticasRouter());
   app.use('/api/analytics', createAnalyticsRouter({ query, withAuth, isSuper, getEmpresaIdFromToken }));
+  app.use('/api/call-campaigns', createCallCampaignsRouter({ withAuth, resolveEmpresaId }));
+  app.use('/api', createCallsRouter({ withAuth, resolveEmpresaId }));
   app.use('/api/stock', createStockRouter());
   app.use('/api/reportes', createReportesRouter());
   app.use('/api/repartidor', createRepartidorStatsRouter());

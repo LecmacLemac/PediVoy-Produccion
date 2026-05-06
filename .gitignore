@@ -7,10 +7,18 @@
 !*.js
 !*.css
 !*.json
+!*.kt
+!*.kts
 !*.sql
+!*.xml
 !*.md
+!*.pro
+!*.properties
 !*.yml
 !*.yaml
+!gradlew
+!gradlew.bat
+!**/gradle/wrapper/gradle-wrapper.jar
 
 # Allow key project files
 !package.json

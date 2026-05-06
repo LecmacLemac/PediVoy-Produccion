@@ -118,6 +118,9 @@ initDb.sql: Schema de base de datos.
 
 - Changelog técnico de mejoras recientes: `docs/CHANGELOG_TECH_2026-02-14.md`
 - Checklist de seguridad para deploy: `docs/DEPLOY_SECURITY_CHECKLIST.md`
+- Setup operativo de telefonía: `docs/ASTERISK_PEDIVOY_SETUP.md`
+- Setup MVP Android USB/ADB: `docs/ANDROID_BRIDGE_SETUP.md`
+- Android helper app para llamadas automáticas: `docs/ANDROID_HELPER_APP.md`
 - Runbook de staging/producción/rollback: `docs/DEPLOY_RUNBOOK.md`
 
 ### Smoke post-deploy (rápido)

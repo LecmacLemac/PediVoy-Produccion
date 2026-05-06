@@ -1289,3 +1289,99 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_marketing_contactos_unique
 CREATE INDEX IF NOT EXISTS idx_marketing_contactos_filtros
   ON marketing_contactos (empresa_id, rubro, zona, estado, created_at DESC);
 
+-- =========================================================
+-- 16. CAMPAÑAS DE LLAMADAS / VOICE AI
+-- =========================================================
+CREATE TABLE IF NOT EXISTS call_campaigns (
+  id BIGSERIAL PRIMARY KEY,
+  empresa_id INT NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  purpose TEXT,
+  status TEXT NOT NULL DEFAULT 'draft',
+  prompt_version TEXT,
+  max_attempts INT NOT NULL DEFAULT 2,
+  allowed_start_time TIME,
+  allowed_end_time TIME,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_by INT REFERENCES usuarios(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_call_campaigns_empresa_status
+  ON call_campaigns (empresa_id, status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS call_campaign_contacts (
+  id BIGSERIAL PRIMARY KEY,
+  campaign_id BIGINT NOT NULL REFERENCES call_campaigns(id) ON DELETE CASCADE,
+  empresa_id INT NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+  customer_id INT,
+  name TEXT,
+  phone TEXT NOT NULL,
+  phone_normalized TEXT NOT NULL,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  status TEXT NOT NULL DEFAULT 'pending',
+  attempts INT NOT NULL DEFAULT 0,
+  last_call_at TIMESTAMPTZ,
+  next_retry_at TIMESTAMPTZ,
+  final_disposition TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (campaign_id, phone_normalized)
+);
+
+CREATE INDEX IF NOT EXISTS idx_call_campaign_contacts_dispatch
+  ON call_campaign_contacts (empresa_id, campaign_id, status, next_retry_at);
+
+CREATE TABLE IF NOT EXISTS call_sessions (
+  id BIGSERIAL PRIMARY KEY,
+  campaign_contact_id BIGINT NOT NULL REFERENCES call_campaign_contacts(id) ON DELETE CASCADE,
+  empresa_id INT NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+  campaign_id BIGINT NOT NULL REFERENCES call_campaigns(id) ON DELETE CASCADE,
+  asterisk_channel_id TEXT,
+  asterisk_linkedid TEXT,
+  started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  answered_at TIMESTAMPTZ,
+  ended_at TIMESTAMPTZ,
+  duration_seconds INT,
+  status TEXT NOT NULL DEFAULT 'initiated',
+  hangup_cause TEXT,
+  transcript_text TEXT,
+  ai_summary TEXT,
+  ai_disposition TEXT,
+  ai_confidence NUMERIC(5,2),
+  transferred_to_human BOOLEAN NOT NULL DEFAULT FALSE,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  recording_path TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_call_sessions_empresa_status
+  ON call_sessions (empresa_id, status, started_at DESC);
+
+CREATE TABLE IF NOT EXISTS call_events (
+  id BIGSERIAL PRIMARY KEY,
+  call_session_id BIGINT NOT NULL REFERENCES call_sessions(id) ON DELETE CASCADE,
+  event_type TEXT NOT NULL,
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_call_events_session_created
+  ON call_events (call_session_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS call_tasks (
+  id BIGSERIAL PRIMARY KEY,
+  call_session_id BIGINT NOT NULL REFERENCES call_sessions(id) ON DELETE CASCADE,
+  task_type TEXT NOT NULL,
+  assigned_user_id INT REFERENCES usuarios(id) ON DELETE SET NULL,
+  due_at TIMESTAMPTZ,
+  status TEXT NOT NULL DEFAULT 'pending',
+  notes TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_call_tasks_due
+  ON call_tasks (status, due_at);
+
