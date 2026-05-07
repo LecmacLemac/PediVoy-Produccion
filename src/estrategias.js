@@ -84,6 +84,13 @@ function canalIncluyeSms(canal) {
   return c === 'sms' || c === 'ambos';
 }
 
+function renderTemplateMsg(tpl, ctx = {}) {
+  return String(tpl || '')
+    .replaceAll('{cliente}', String(ctx.cliente || ''))
+    .replaceAll('{rubro}', String(ctx.rubro || ''))
+    .replaceAll('{zona}', String(ctx.zona || ''));
+}
+
 // Helper interno para encolar mensajes (WhatsApp)
 async function encolarMensajeWhatsapp(empresaId, telefono, mensaje) {
   if (!telefono || !mensaje) return { queued: false, skipped: true, reason: 'missing_phone_or_message' };
