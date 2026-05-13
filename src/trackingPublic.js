@@ -1,8 +1,11 @@
 import express from 'express';
+import fs from 'node:fs';
+import path from 'node:path';
 // MEJORA DE CONTROL: Importamos directo de db.js para máxima estabilidad
-import { query } from './db.js'; 
+import { query } from './db.js';
 
-export const trackingPublicRouter = express.Router();
+export function createTrackingPublicRouter({ queryFn = query } = {}) {
+  const router = express.Router();
 
 // --------------------------------------------------
 // Rate limit simple (in-memory) por IP para tracking público
@@ -43,6 +46,19 @@ function rateLimitTracking(req, res, next) {
   }
 }
 
+function publicAssetUrlOrNull(url) {
+  const raw = String(url || '').trim();
+  if (!raw) return null;
+  if (/^https?:\/\//i.test(raw)) return raw;
+  if (!raw.startsWith('/')) return raw;
+
+  const root = process.cwd();
+  const filePath = path.resolve(root, raw.replace(/^\/+/, ''));
+  if (!filePath.startsWith(root + path.sep)) return null;
+
+  return fs.existsSync(filePath) ? raw : null;
+}
+
 
 /**
  * GET /api/public/tracking/:token
@@ -52,7 +68,7 @@ function rateLimitTracking(req, res, next) {
  * driverLocation: { latitud, longitud, timestamp } | null
  * }
  */
-trackingPublicRouter.get('/tracking/:token', rateLimitTracking, async (req, res) => {
+router.get('/tracking/:token', rateLimitTracking, async (req, res) => {
   const { token } = req.params;
 
   try {
@@ -64,7 +80,7 @@ trackingPublicRouter.get('/tracking/:token', rateLimitTracking, async (req, res)
 
     // 2. Buscar pedido por tracking_token
     // Usamos JOIN para traer datos útiles del punto de entrega y chofer
-    const pedRows = await query(`
+    const pedRows = await queryFn(`
       SELECT 
         p.id,
         p.estado,
@@ -95,11 +111,19 @@ trackingPublicRouter.get('/tracking/:token', rateLimitTracking, async (req, res)
 
     const pedido = pedRows[0];
 
-    // 3) TTL del tracking: por privacidad, el token expira
-    // Usamos fecha_entrega si existe; si no, usamos fecha del pedido.
+    const estadoPedido = String(pedido.estado || '').toLowerCase();
+    const estadosConSeguimiento = new Set(['en_ruta', 'en_camino', 'entregado']);
+    if (!estadosConSeguimiento.has(estadoPedido)) {
+      return res.status(404).json({ error: 'Pedido no encontrado' });
+    }
+
+    // 3) TTL del tracking: por privacidad, el token expira después del cierre.
+    // No debe cortar pedidos activos, porque el cliente perdería el seguimiento
+    // aunque el repartidor siga enviando ubicación.
     const ttlHours = Number(process.env.TRACK_TTL_HOURS || 3);
+    const estadosActivos = new Set(['en_ruta', 'en_camino']);
     const baseDate = pedido.fecha_entrega || pedido.fecha;
-    if (Number.isFinite(ttlHours) && ttlHours > 0 && baseDate) {
+    if (!estadosActivos.has(estadoPedido) && Number.isFinite(ttlHours) && ttlHours > 0 && baseDate) {
       const ageMs = Date.now() - new Date(baseDate).getTime();
       if (Number.isFinite(ageMs) && ageMs > ttlHours * 60 * 60 * 1000) {
         return res.status(404).json({ error: 'Pedido no encontrado' });
@@ -110,8 +134,8 @@ trackingPublicRouter.get('/tracking/:token', rateLimitTracking, async (req, res)
     // Solo buscamos si el pedido está en progreso o recién entregado.
     let driverLocation = null;
 
-    if (['en_ruta', 'en_camino', 'entregado'].includes(pedido.estado)) {
-      const locRows = await query(`
+    if (['en_ruta', 'en_camino', 'entregado'].includes(estadoPedido)) {
+      const locRows = await queryFn(`
         SELECT 
           latitud,
           longitud,
@@ -141,7 +165,7 @@ trackingPublicRouter.get('/tracking/:token', rateLimitTracking, async (req, res)
       dest_lng: pedido.dest_lng,
       chofer_nombre: pedido.chofer_nombre || null,
       chofer_tel: pedido.chofer_tel || null,
-      empresa_logo_url: pedido.empresa_logo_url || null
+      empresa_logo_url: publicAssetUrlOrNull(pedido.empresa_logo_url)
     };
 
     return res.json({ pedido: safePedido, driverLocation });
@@ -152,3 +176,8 @@ trackingPublicRouter.get('/tracking/:token', rateLimitTracking, async (req, res)
     return res.status(500).json({ error: 'Error interno del servidor' });
   }
 });
+
+  return router;
+}
+
+export const trackingPublicRouter = createTrackingPublicRouter();

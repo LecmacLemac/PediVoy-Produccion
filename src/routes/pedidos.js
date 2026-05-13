@@ -553,7 +553,7 @@ export function createPedidosRouter() {
           return res.status(404).json({ error: 'Pedido no encontrado o sin permiso' });
         }
 
-        if (estado === 'en_ruta') {
+        if (estado === 'en_ruta' || estado === 'en_camino') {
           const emp = Number(r[0].empresa_id);
           notificarEnRuta(req.params.id, emp).catch((err) =>
             console.error('Error en notificación background:', err)
