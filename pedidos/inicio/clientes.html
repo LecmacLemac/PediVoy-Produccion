@@ -25,6 +25,7 @@
     --success: #10b981;
     --warning: #f59e0b;
     --danger: #ef4444;
+    --info: #38bdf8;
   }
 
   * { box-sizing: border-box; outline: none; -webkit-tap-highlight-color: transparent; }
@@ -91,11 +92,13 @@
   .page-header {
     display: flex; justify-content: space-between; align-items: flex-end; flex-wrap: wrap; gap: 1rem;
   }
+  .page-actions { display:flex; gap:10px; flex-wrap:wrap; justify-content:flex-end; }
   h1 { font-size: 1.8rem; margin: 0; color: #fff; display: flex; align-items: center; gap: 10px; line-height: 1.2; }
   p.subtitle { color: var(--muted); margin: 0.5rem 0 0 0; font-size: 0.95rem; }
 
   @media (max-width: 600px) {
     .page-header { flex-direction: column; align-items: stretch; }
+    .page-actions { flex-direction: column; }
     .page-header .btn { width: 100%; justify-content: center; }
   }
 
@@ -110,7 +113,7 @@
   /* Layout Split (Zona/Asignar) */
   .layout-split { display: grid; grid-template-columns: 1fr 380px; gap: 20px; height: calc(100vh - 140px); min-height: 600px; }
   .map-wrapper { position: relative; width: 100%; height: 100%; border-radius: var(--radius); border: 1px solid var(--border); overflow: hidden; }
-  #map { width: 100%; height: 100%; z-index: 1; background: #1e293b; }
+  #map { width: 100%; height: 100%; z-index: 1; background: #e5edf6; }
 
   @media(max-width: 900px) { 
     .layout-split { grid-template-columns: 1fr; height: auto; display: flex; flex-direction: column-reverse; } 
@@ -121,10 +124,25 @@
   .toolbar { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.5rem; }
   .toolbar > * { flex: 1; }
   .toolbar select, .toolbar input { margin-bottom: 0; min-width: 150px; }
+  .search-box { position: relative; min-width: 260px; }
+  .search-box input { padding-left: 2.35rem; }
+  .search-icon { position: absolute; left: 0.8rem; top: 50%; transform: translateY(-50%); color: var(--muted); pointer-events: none; }
+  .filter-select { max-width: 210px; }
+  .table-meta {
+    display:flex; justify-content:space-between; align-items:center; gap:1rem; flex-wrap:wrap;
+    margin-bottom:0.9rem; color:var(--muted); font-size:0.88rem;
+  }
+  .summary-pills { display:flex; gap:0.5rem; flex-wrap:wrap; }
+  .summary-pill {
+    display:inline-flex; align-items:center; gap:0.35rem; padding:0.35rem 0.65rem;
+    border:1px solid var(--border); border-radius:999px; background:rgba(15,23,42,0.75);
+    color:var(--muted); white-space:nowrap;
+  }
+  .summary-pill strong { color:#fff; }
   
   @media (max-width: 600px) {
     .toolbar { flex-direction: column; align-items: stretch; gap: 0.8rem; }
-    .search-box { width: 100%; }
+    .search-box, .filter-select { width: 100%; max-width:none; }
   }
 
   /* --- INPUTS & BUTTONS --- */
@@ -151,6 +169,7 @@
   .btn-danger { color: var(--danger); border-color: rgba(239,68,68,0.3); background: rgba(239,68,68,0.1); }
   .btn-icon { padding: 0.5rem; border-radius: 6px; color: var(--muted); background: transparent; border: 1px solid var(--border); cursor: pointer; }
   .btn-icon:hover { color: #fff; background: rgba(255,255,255,0.1); border-color: var(--brand); }
+  .btn:disabled, .btn-icon:disabled { opacity:0.55; cursor:not-allowed; }
 
   /* --- TABLES --- */
   .table-responsive { overflow-x: auto; border-radius: var(--radius); border: 1px solid var(--border); background: var(--bg-2); }
@@ -163,6 +182,17 @@
   td { padding: 1rem; border-bottom: 1px solid var(--border); color: var(--ink); font-size: 0.9rem; vertical-align: middle; white-space: nowrap; }
   tr:last-child td { border-bottom: none; }
   tr:hover td { background: rgba(255,255,255,0.02); }
+  .client-main { display:flex; flex-direction:column; gap:0.25rem; }
+  .client-name { font-weight:700; color:#fff; }
+  .client-note { color:var(--muted); font-size:0.78rem; }
+  .tag-zona {
+    display:inline-flex; align-items:center; border-radius:999px; padding:0.25rem 0.55rem;
+    background:rgba(56,189,248,0.12); color:#7dd3fc; border:1px solid rgba(56,189,248,0.22);
+    font-size:0.78rem; font-weight:700;
+  }
+  .tag-zona.empty { color:var(--muted); background:rgba(148,163,184,0.08); border-color:var(--border); }
+  .geo-state { display:inline-flex; align-items:center; gap:0.35rem; color:var(--muted); }
+  .geo-state.ok { color:#86efac; }
 
   /* --- MODAL --- */
   .modal-backdrop {
@@ -174,7 +204,7 @@
   
   .modal {
     background: #1e293b; color: #fff; border: 1px solid var(--border); border-radius: var(--radius);
-    width: 100%; max-width: 550px; box-shadow: 0 20px 50px rgba(0,0,0,0.6);
+    width: 100%; max-width: 620px; box-shadow: 0 20px 50px rgba(0,0,0,0.6);
     display: flex; flex-direction: column; max-height: 90vh; /* Límite altura móvil */
   }
   
@@ -190,6 +220,7 @@
     padding: 1.2rem; border-top: 1px solid var(--border); 
     display: flex; justify-content: flex-end; gap: 1rem; background: rgba(0,0,0,0.2); 
   }
+  .modal-actions { display:flex; gap:10px; margin-left:auto; flex-wrap:wrap; justify-content:flex-end; }
 
   /* Grid en formularios */
   .form-row, .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
@@ -204,6 +235,37 @@
   .badge-admin, .badge-user, .tag-propio, .st-active { background: rgba(16,185,129,0.15); color: #34d399; }
   .badge-repartidor, .tag-promo { background: rgba(59,130,246,0.15); color: #60a5fa; }
   .badge-super, .tag-fletero, .st-inactive { background: rgba(245,158,11,0.15); color: #fbbf24; }
+  .driver-info {
+    margin-top:0.5rem; padding:0.45rem 0.6rem; border-radius:8px;
+    background:rgba(16,185,129,0.12); border:1px solid rgba(16,185,129,0.22);
+    color:#86efac; font-size:0.82rem; font-weight:700;
+  }
+  .driver-info.empty {
+    color:var(--muted); background:rgba(148,163,184,0.08); border-color:var(--border); font-weight:600;
+  }
+  .map-container {
+    height: 280px; min-height: 280px; margin-bottom: 1rem;
+    border:1px solid rgba(148,163,184,0.28); border-radius:12px; overflow:hidden; background:#e5edf6;
+  }
+  .map-tools { display:flex; gap:8px; margin-top:8px; flex-wrap:wrap; align-items:center; }
+  .map-tools .btn { flex:0 0 auto; }
+  #geoStatus { font-size:0.85rem; color:var(--muted); align-self:center; }
+
+  .import-grid { display:grid; grid-template-columns:repeat(4, 1fr); gap:0.75rem; }
+  .import-stat { background:var(--bg-2); border:1px solid var(--border); border-radius:10px; padding:0.8rem; }
+  .import-stat span { display:block; color:var(--muted); font-size:0.75rem; text-transform:uppercase; font-weight:700; }
+  .import-stat strong { display:block; color:#fff; font-size:1.45rem; margin-top:0.2rem; }
+  .import-warnings {
+    display:none; margin-top:0.9rem; padding:0.85rem; border-radius:10px;
+    background:rgba(245,158,11,0.12); border:1px solid rgba(245,158,11,0.25); color:#fde68a;
+    font-size:0.9rem;
+  }
+  .import-warnings.open { display:block; }
+  @media (max-width: 700px) {
+    .import-grid { grid-template-columns:1fr 1fr; }
+    .modal-actions { flex-direction:column; width:100%; }
+    .modal-actions .btn { width:100%; }
+  }
 
   .toast { position: fixed; right: 20px; bottom: 30px; background: #fff; color: #0f172a; padding: 10px 20px; border-radius: 99px; font-weight: 600; box-shadow: 0 10px 30px rgba(0,0,0,0.3); opacity: 0; pointer-events: none; transition: 0.3s; z-index: 2000; }
   .toast.show { opacity: 1; transform: translateY(-10px); }
@@ -227,9 +289,9 @@
 .val-new { color: #4ade80; font-weight: bold; }
 .val-same { color: var(--muted); opacity: 0.5; }
 
-  /* Leaflet Dark Override */
+  /* Leaflet Controls */
   .leaflet-bar { border: none !important; box-shadow: 0 4px 10px rgba(0,0,0,0.3) !important; }
-  .leaflet-bar a { background-color: var(--bg-2) !important; color: #fff !important; border-bottom: 1px solid var(--border) !important; }
+  .leaflet-bar a { background-color: #fff !important; color: #0f172a !important; border-bottom: 1px solid #cbd5e1 !important; }
 </style>
 </head>
 <body>
@@ -252,17 +314,18 @@
 
   <main class="container">
     
-  <div>
-    <h1>👥 Directorio de Clientes</h1>
-    <p class="subtitle">Gestiona tu base de datos de clientes, ubicaciones y zonas.</p>
-  </div>
-  <div style="display:flex; gap:10px;">
-    <input type="file" id="importFile" accept=".txt,.csv" style="display:none">
-    
-    <button id="btnImportTxt" type="button" class="btn">📥 Importar .TXT</button>
-    <button id="btnExportTxt" type="button" class="btn">📄 Exportar .TXT</button>
-    <button id="btnNuevoCliente" type="button" class="btn btn-primary">＋ Nuevo Cliente</button>
-  </div>
+    <div class="page-header">
+      <div>
+        <h1>Directorio de Clientes</h1>
+        <p class="subtitle">Base operativa para zonas, reparto, ubicación y contacto comercial.</p>
+      </div>
+      <div class="page-actions">
+        <input type="file" id="importFile" accept=".txt,.csv" style="display:none">
+        <button id="btnImportTxt" type="button" class="btn">Importar TXT/CSV</button>
+        <button id="btnExportTxt" type="button" class="btn">Exportar TXT</button>
+        <button id="btnNuevoCliente" type="button" class="btn btn-primary">Nuevo Cliente</button>
+      </div>
+    </div>
 
     <div class="card">
       <div class="toolbar">
@@ -277,6 +340,26 @@
           <span class="search-icon">🔍</span>
           <input type="text" id="q" placeholder="Buscar por nombre, teléfono, dirección...">
         </div>
+
+        <select id="zoneFilter" class="filter-select">
+          <option value="">Todas las zonas</option>
+        </select>
+
+        <select id="statusFilter" class="filter-select">
+          <option value="">Todos los estados</option>
+          <option value="sin_zona">Sin zona</option>
+          <option value="sin_ubicacion">Sin ubicación</option>
+          <option value="sin_telefono">Sin teléfono</option>
+        </select>
+      </div>
+
+      <div class="table-meta">
+        <span id="tableInfo">Cargando clientes...</span>
+        <div class="summary-pills">
+          <span class="summary-pill">Total <strong id="statTotal">0</strong></span>
+          <span class="summary-pill">Sin zona <strong id="statSinZona">0</strong></span>
+          <span class="summary-pill">Sin ubicación <strong id="statSinUbicacion">0</strong></span>
+        </div>
       </div>
 
       <div class="table-responsive">
@@ -287,11 +370,12 @@
               <th>Teléfono</th>
               <th>Dirección</th>
               <th>Zona</th>
+              <th>Ubicación</th>
               <th style="text-align:right;">Acciones</th>
             </tr>
           </thead>
           <tbody id="tbBody">
-            <tr><td colspan="5" style="text-align:center; padding:3rem; color:var(--muted);">Cargando directorio...</td></tr>
+            <tr><td colspan="6" style="text-align:center; padding:3rem; color:var(--muted);">Cargando directorio...</td></tr>
           </tbody>
         </table>
       </div>
@@ -362,10 +446,11 @@
                 <input type="number" step="any" id="c_longitud" placeholder="-64...">
             </div>
           </div>
-          <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;">
-            <button type="button" id="btnUseMyLocation" class="btn">📍 Usar mi ubicación</button>
-            <button type="button" id="btnApplyLatLng" class="btn">🔄 Actualizar pin</button>
-            <span id="geoStatus" style="font-size:0.85rem; color:var(--muted); align-self:center;">Sin ubicación seleccionada</span>
+          <div class="map-tools">
+            <button type="button" id="btnUseMyLocation" class="btn">Usar mi ubicación</button>
+            <button type="button" id="btnGeocodeAddress" class="btn">Ubicar por dirección</button>
+            <button type="button" id="btnApplyLatLng" class="btn">Actualizar pin</button>
+            <span id="geoStatus">Sin ubicación seleccionada</span>
           </div>
         </div>
 
@@ -377,16 +462,12 @@
       </form>
       <div class="modal-footer">
         <button class="btn btn-danger" type="button" id="btnDelete" style="display:none;">Eliminar</button>
-        <div style="display:flex; gap:10px; margin-left:auto;">
+        <div class="modal-actions">
           <button id="btnCancelModal" class="btn" type="button">Cancelar</button>
           <button id="btnSaveCliente" class="btn btn-primary" type="button">Guardar</button>
         </div>
       </div>
     </div>
-  </div>
-
-  <div class="page-header">
-
   </div>
 
   <div id="modalConflict" class="modal-backdrop">
@@ -416,6 +497,29 @@
         <button id="btnConflictSkip" type="button" class="btn">Ignorar (Mantener Actual)</button>
         <button id="btnConflictCreate" type="button" class="btn">Crear como Copia</button>
         <button id="btnConflictOverwrite" type="button" class="btn btn-primary">🔄 Sobrescribir</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="modalImportSummary" class="modal-backdrop">
+    <div class="modal" style="max-width: 760px;">
+      <div class="modal-header">
+        <h3>Revisión de importación</h3>
+        <button id="btnCloseImportSummary" type="button" class="btn-icon">✕</button>
+      </div>
+      <div class="modal-body">
+        <p style="margin:0; color:var(--muted);">Antes de guardar, revisa el impacto del archivo sobre el directorio actual.</p>
+        <div class="import-grid">
+          <div class="import-stat"><span>Nuevos</span><strong id="impNew">0</strong></div>
+          <div class="import-stat"><span>Duplicados</span><strong id="impDup">0</strong></div>
+          <div class="import-stat"><span>Zonas no encontradas</span><strong id="impMissingZones">0</strong></div>
+          <div class="import-stat"><span>Líneas omitidas</span><strong id="impInvalid">0</strong></div>
+        </div>
+        <div id="importWarnings" class="import-warnings"></div>
+      </div>
+      <div class="modal-footer">
+        <button id="btnCancelImport" type="button" class="btn">Cancelar importación</button>
+        <button id="btnConfirmImport" type="button" class="btn btn-primary">Continuar</button>
       </div>
     </div>
   </div>
@@ -472,6 +576,8 @@
     let map, marker;
     let saveBusy = false;
     let deleteBusy = false;
+    let geocodeBusy = false;
+    let importPreviewReady = false;
 
     // --- Logic ---
     async function load() {
@@ -487,7 +593,9 @@
              urlZones += q;
           } else {
              clients = []; zones = [];
-             $('#tbBody').innerHTML = `<tr><td colspan="5" style="text-align:center; padding:3rem; color:var(--muted);">Selecciona una empresa para ver clientes.</td></tr>`;
+             $('#tbBody').innerHTML = `<tr><td colspan="6" style="text-align:center; padding:3rem; color:var(--muted);">Selecciona una empresa para ver clientes.</td></tr>`;
+             renderStats([]);
+             renderZoneFilter([]);
              return;
           }
       }
@@ -502,35 +610,72 @@
       
       renderList();
       renderZoneSelect(zones);
+      renderZoneFilter(zones);
     }
 
     function renderList() {
       const q = $('#q').value.toLowerCase();
-      const filtered = clients.filter(c => 
-        (c.cliente||'').toLowerCase().includes(q) || 
-        (c.telefono||'').includes(q) || 
-        (c.direccion||'').toLowerCase().includes(q)
-      );
+      const zoneFilter = $('#zoneFilter')?.value || '';
+      const statusFilter = $('#statusFilter')?.value || '';
+      const filtered = clients.filter(c => {
+        const matchesSearch = !q ||
+          (c.cliente||'').toLowerCase().includes(q) ||
+          (c.telefono||'').includes(q) ||
+          (c.direccion||'').toLowerCase().includes(q) ||
+          (c.ciudad||'').toLowerCase().includes(q);
+        const matchesZone = !zoneFilter || String(c.zona_id || '') === zoneFilter;
+        const matchesStatus =
+          !statusFilter ||
+          (statusFilter === 'sin_zona' && !c.zona_id) ||
+          (statusFilter === 'sin_ubicacion' && (!c.latitud || !c.longitud)) ||
+          (statusFilter === 'sin_telefono' && !String(c.telefono || '').trim());
+        return matchesSearch && matchesZone && matchesStatus;
+      });
 
       const tbody = $('#tbBody');
       if (!filtered.length) {
-        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; padding:3rem; color:var(--muted);">No se encontraron clientes.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:3rem; color:var(--muted);">No se encontraron clientes con esos filtros.</td></tr>`;
+        renderStats(filtered);
         return;
       }
 
       tbody.innerHTML = filtered.map(c => {
-        const zoneName = zones.find(z => z.id === c.zona_id)?.nombre || '<span style="color:var(--muted)">—</span>';
+        const zone = zones.find(z => Number(z.id) === Number(c.zona_id));
+        const zoneName = zone?.nombre || 'Sin zona';
+        const hasGeo = Boolean(c.latitud && c.longitud);
+        const locationLabel = hasGeo ? 'Con pin' : 'Sin pin';
+        const cityLine = [c.ciudad, c.provincia].filter(Boolean).join(', ');
         return `
         <tr>
-          <td style="font-weight:600; color:#fff;">${esc(c.cliente)}</td>
+          <td>
+            <div class="client-main">
+              <span class="client-name">${esc(c.cliente)}</span>
+              ${cityLine ? `<span class="client-note">${esc(cityLine)}</span>` : ''}
+            </div>
+          </td>
           <td>${c.telefono ? esc(c.telefono) : '<span style="color:var(--muted)">-</span>'}</td>
           <td style="color:var(--muted); font-size:0.9rem;">${esc(c.direccion || '-')}</td>
-          <td><span class="tag-zona">${typeof zoneName === 'string' && zoneName.includes('<span') ? zoneName : esc(zoneName)}</span></td>
+          <td><span class="tag-zona ${zone ? '' : 'empty'}">${esc(zoneName)}</span></td>
+          <td><span class="geo-state ${hasGeo ? 'ok' : ''}">${hasGeo ? '●' : '○'} ${locationLabel}</span></td>
           <td style="text-align:right;">
             <button class="btn-icon" data-action="edit" data-id="${Number(c.id)}" title="Editar">✏️</button>
           </td>
         </tr>
       `}).join('');
+
+      renderStats(filtered);
+    }
+
+    function renderStats(filtered) {
+      const total = clients.length;
+      const sinZona = clients.filter(c => !c.zona_id).length;
+      const sinUbicacion = clients.filter(c => !c.latitud || !c.longitud).length;
+      const visible = Array.isArray(filtered) ? filtered.length : total;
+      const info = $('#tableInfo');
+      if (info) info.textContent = total ? `${visible} de ${total} clientes visibles` : 'Sin clientes cargados';
+      if ($('#statTotal')) $('#statTotal').textContent = total;
+      if ($('#statSinZona')) $('#statSinZona').textContent = sinZona;
+      if ($('#statSinUbicacion')) $('#statSinUbicacion').textContent = sinUbicacion;
     }
 
     function renderZoneSelect(list) {
@@ -538,6 +683,16 @@
       if(!list) list = [];
       sel.innerHTML = '<option value="">-- Sin Zona --</option>' + 
         list.map(z => `<option value="${Number(z.id)}">${esc(z.nombre)}</option>`).join('');
+    }
+
+    function renderZoneFilter(list) {
+      const sel = $('#zoneFilter');
+      if (!sel) return;
+      const current = sel.value;
+      const opts = '<option value="">Todas las zonas</option>' +
+        (list || []).map(z => `<option value="${Number(z.id)}">${esc(z.nombre)}</option>`).join('');
+      sel.innerHTML = opts;
+      if ([...sel.options].some(o => o.value === current)) sel.value = current;
     }
 
     // --- CARGA DE CONTEXTO MODAL ---
@@ -568,9 +723,9 @@
             assignments.forEach(assign => {
                 if (assign.choferes && assign.choferes.length > 0) {
                     const choferId = assign.choferes[0].id; 
-                    const chData = choferes.find(c => c.id === choferId);
+                    const chData = choferes.find(c => Number(c.id) === Number(choferId));
                     if (chData) {
-                        zoneDriverMap[assign.zona_id] = chData.nombre;
+                        zoneDriverMap[assign.zona_id || assign.id] = chData.nombre;
                     }
                 }
             });
@@ -607,14 +762,15 @@
       
       if (!map) {
         map = L.map('map').setView([targetLat, targetLng], 13);
-        // Capa oscura
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        // Capa clara para mejor lectura de calles y referencias.
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
             attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
             subdomains: 'abcd',
             maxZoom: 20
         }).addTo(map);
         
         map.on('click', function(e) { updateMarker(e.latlng.lat, e.latlng.lng); });
+        setTimeout(() => map.invalidateSize(), 200);
       } else {
         map.setView([targetLat, targetLng], lat ? 15 : 13);
         setTimeout(() => map.invalidateSize(), 200);
@@ -629,6 +785,7 @@
         $('#c_latitud').value = lat.toFixed(6);
         $('#c_longitud').value = lng.toFixed(6);
       }
+      if (!map) return;
       if (marker) marker.setLatLng([lat, lng]);
       else {
         marker = L.marker([lat, lng], { draggable: true }).addTo(map);
@@ -680,6 +837,70 @@
       );
     }
 
+    async function geocodeAddress() {
+      if (geocodeBusy) return;
+
+      const direccion = $('#c_direccion').value.trim();
+      const ciudad = $('#c_ciudad').value.trim();
+      const provincia = $('#c_provincia').value.trim();
+      if (!direccion && !ciudad && !provincia) {
+        toast('Cargá calle, ciudad o provincia para buscar ubicación');
+        return;
+      }
+
+      const btn = document.getElementById('btnGeocodeAddress');
+      const prevTxt = btn ? btn.textContent : '';
+      const gs = document.getElementById('geoStatus');
+      geocodeBusy = true;
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Buscando...';
+      }
+      if (gs) gs.textContent = 'Buscando ubicación por dirección...';
+
+      const body = { direccion, ciudad, provincia, pais: 'Argentina' };
+      if (STATE.isSuper) body.empresa_id = $('#c_empresa_id').value || $('#empFilter').value || null;
+
+      try {
+        const res = await api('/api/clientes/geocode', {
+          method: 'POST',
+          body: JSON.stringify(body)
+        });
+
+        if (res.error) {
+          if (gs) gs.textContent = 'No se pudo ubicar la dirección';
+          toast(res.error);
+          return;
+        }
+
+        const lat = Number(res.latitud);
+        const lng = Number(res.longitud);
+        if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+          if (gs) gs.textContent = 'No se pudo ubicar la dirección';
+          toast('No se pudo ubicar la dirección');
+          return;
+        }
+
+        if (!map) initMap(lat, lng);
+        updateMarker(lat, lng, true);
+        if (map) map.setView([lat, lng], 16);
+
+        if (res.zona_id && zones.some(z => Number(z.id) === Number(res.zona_id))) {
+          $('#c_zona').value = String(res.zona_id);
+          updateDriverInfo();
+          toast('Ubicación encontrada y zona actualizada');
+        } else {
+          toast('Ubicación encontrada');
+        }
+      } finally {
+        geocodeBusy = false;
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = prevTxt;
+        }
+      }
+    }
+
     // --- Modal Actions ---
     function openModal() {
       if (STATE.isSuper && !$('#empFilter').value) {
@@ -691,7 +912,8 @@
       $('#formClient').reset();
       $('#c_id').value = '';
       $('#btnDelete').style.display = 'none';
-      $('#zoneDriverInfo').innerHTML = '';
+      $('#zoneDriverInfo').textContent = 'Sin zona seleccionada';
+      $('#zoneDriverInfo').className = 'driver-info empty';
       const gs = document.getElementById('geoStatus');
       if (gs) gs.textContent = 'Sin ubicación seleccionada';
       
@@ -791,6 +1013,7 @@
       if (deleteBusy) return;
       const id = $('#c_id').value;
       if (!confirm('¿Eliminar cliente? Borrará todo su historial.')) return;
+      if (!confirm('Confirmá la eliminación definitiva del cliente. Esta acción no se puede deshacer desde esta pantalla.')) return;
 
       const delBtn = document.getElementById('btnDelete');
       const prevTxt = delBtn ? delBtn.textContent : '';
@@ -818,6 +1041,8 @@
     let importPendingCreate = []; // Lista de clientes nuevos seguros para crear
     let importPendingUpdate = []; // Lista de clientes para actualizar
     let currentConflict = null;   // Conflicto actual en pantalla
+    let importInvalidRows = [];
+    let importMissingZones = [];
 
     // 1. Procesar el archivo seleccionado
     async function processImportFile(input) {
@@ -833,6 +1058,9 @@
         importQueue = [];
         importPendingCreate = [];
         importPendingUpdate = [];
+        importInvalidRows = [];
+        importMissingZones = [];
+        importPreviewReady = false;
 
         // Mapeo rápido de Zonas (Nombre -> ID)
         // zones es la variable global que ya tienes cargada en load()
@@ -847,13 +1075,19 @@
           // Detectar cabecera simple
           if (i === 0 && line.toUpperCase().includes('RAZON SOCIAL')) continue;
 
-          const cols = line.split(';');
-          if (cols.length < 2) continue; // Línea inválida
+          const cols = parseDelimitedLine(line);
+          if (cols.length < 2 || !cleanCell(cols[0])) {
+            importInvalidRows.push(i + 1);
+            continue;
+          }
 
           // Mapear columnas a objeto (Asegúrate que coincida con tu orden de exportación)
           // Orden Export: NOMBRE;TELEFONO;ZONA;REPARTIDOR;DIRECCION;CIUDAD;PROVINCIA;LAT;LNG;NOTAS
           const rawZone = (cols[2] || '').trim().toUpperCase();
           const zoneId = zoneMap[rawZone] || null; // Convertir Nombre a ID
+          if (rawZone && !zoneId && rawZone !== 'SIN ZONA') {
+            importMissingZones.push({ line: i + 1, zone: cleanCell(cols[2]) });
+          }
 
           const newItem = {
             cliente: cleanCell(cols[0]),
@@ -877,7 +1111,7 @@
 
           // BUSCAR DUPLICADO (Por Nombre Exacto)
           // clients es la variable global de tu script actual
-          const existing = clients.find(c => c.cliente.toLowerCase().trim() === newItem.cliente.toLowerCase().trim());
+          const existing = clients.find(c => (c.cliente || '').toLowerCase().trim() === newItem.cliente.toLowerCase().trim());
 
           if (existing) {
             // ¡Conflicto! Lo agregamos a la cola para preguntar al usuario
@@ -891,18 +1125,85 @@
         // Limpiar input para poder seleccionar el mismo archivo de nuevo si se quiere
         input.value = '';
 
-        // INICIAR PROCESO
-        if (importQueue.length > 0) {
-          showNextConflict();
-        } else {
-          finishImport();
-        }
+        showImportSummary();
       };
       reader.readAsText(file);
     }
 
     function cleanCell(txt) {
       return (txt || '').trim();
+    }
+
+    function parseDelimitedLine(line) {
+      const out = [];
+      let cur = '';
+      let quoted = false;
+      for (let i = 0; i < line.length; i++) {
+        const ch = line[i];
+        const next = line[i + 1];
+        if (ch === '"' && quoted && next === '"') {
+          cur += '"';
+          i++;
+        } else if (ch === '"') {
+          quoted = !quoted;
+        } else if (ch === ';' && !quoted) {
+          out.push(cur);
+          cur = '';
+        } else {
+          cur += ch;
+        }
+      }
+      out.push(cur);
+      return out;
+    }
+
+    function showImportSummary() {
+      importPreviewReady = true;
+      $('#impNew').textContent = importPendingCreate.length;
+      $('#impDup').textContent = importQueue.length;
+      $('#impMissingZones').textContent = importMissingZones.length;
+      $('#impInvalid').textContent = importInvalidRows.length;
+
+      const warnings = [];
+      if (importMissingZones.length) {
+        const sample = importMissingZones.slice(0, 5).map(x => `línea ${Number(x.line)}: ${esc(x.zone)}`).join('<br>');
+        warnings.push(`<strong>Zonas no encontradas:</strong><br>${sample}${importMissingZones.length > 5 ? '<br>...' : ''}`);
+      }
+      if (importInvalidRows.length) {
+        warnings.push(`<strong>Líneas omitidas por formato:</strong> ${importInvalidRows.slice(0, 8).join(', ')}${importInvalidRows.length > 8 ? ', ...' : ''}`);
+      }
+
+      const box = $('#importWarnings');
+      if (warnings.length) {
+        box.innerHTML = warnings.join('<br><br>');
+        box.classList.add('open');
+      } else {
+        box.innerHTML = '';
+        box.classList.remove('open');
+      }
+
+      $('#modalImportSummary').classList.add('open');
+    }
+
+    function cancelImport() {
+      importQueue = [];
+      importPendingCreate = [];
+      importPendingUpdate = [];
+      importInvalidRows = [];
+      importMissingZones = [];
+      importPreviewReady = false;
+      $('#modalImportSummary').classList.remove('open');
+      toast('Importación cancelada');
+    }
+
+    function confirmImportPreview() {
+      if (!importPreviewReady) return;
+      $('#modalImportSummary').classList.remove('open');
+      if (importQueue.length > 0) {
+        showNextConflict();
+      } else {
+        finishImport();
+      }
     }
 
     // 2. Mostrar el siguiente conflicto en el Modal
@@ -997,7 +1298,7 @@
 
       const btn = document.getElementById('btnImportTxt');
       const originalText = btn.textContent;
-      btn.textContent = '⏳ Guardando...';
+      btn.textContent = 'Guardando...';
       btn.disabled = true;
 
       try {
@@ -1023,9 +1324,9 @@
         }
 
         if (errors > 0) {
-          toast(`⚠️ Proceso terminado con ${errors} errores.`);
+          toast(`Proceso terminado con ${errors} errores.`);
         } else {
-          toast(`✅ Importación exitosa: ${totalCreate} creados, ${totalUpdate} actualizados.`);
+          toast(`Importación exitosa: ${totalCreate} creados, ${totalUpdate} actualizados.`);
         }
 
         // Recargar tabla
@@ -1033,7 +1334,7 @@
 
       } catch (e) {
         console.error(e);
-        toast('❌ Error crítico en importación');
+        toast('Error crítico en importación');
       } finally {
         btn.textContent = originalText;
         btn.disabled = false;
@@ -1048,7 +1349,7 @@
 
       const btn = document.getElementById('btnExportTxt');
       const originalText = btn.textContent;
-      btn.textContent = '⏳ Generando...';
+      btn.textContent = 'Generando...';
       btn.disabled = true;
 
       try {
@@ -1083,25 +1384,29 @@
         let content = "NOMBRE / RAZON SOCIAL;TELEFONO;ZONA DE REPARTO;REPARTIDOR ASIGNADO;DIRECCION;CIUDAD;PROVINCIA;LATITUD;LONGITUD;NOTAS INTERNAS\n";
         
         // Helper para limpiar texto (quitar ; y saltos de línea)
-        const clean = (txt) => String(txt || '').replace(/;/g, ',').replace(/(\r\n|\n|\r)/g, ' ').trim();
+        const clean = (txt) => String(txt || '').replace(/(\r\n|\n|\r)/g, ' ').trim();
+        const csvCell = (txt) => {
+          const val = clean(txt);
+          return /[;"]/.test(val) ? `"${val.replace(/"/g, '""')}"` : val;
+        };
 
         clients.forEach(c => {
-          const zoneName = zones.find(z => z.id === c.zona_id)?.nombre || 'Sin Zona';
+          const zoneName = zones.find(z => Number(z.id) === Number(c.zona_id))?.nombre || 'Sin Zona';
           const driverName = c.zona_id && zonaToChoferName[c.zona_id] 
                              ? zonaToChoferName[c.zona_id] 
                              : 'Sin Asignar';
 
           const line = [
-            clean(c.cliente),
-            clean(c.telefono),
-            clean(zoneName),
-            clean(driverName),
-            clean(c.direccion),
-            clean(c.ciudad),
-            clean(c.provincia),
+            csvCell(c.cliente),
+            csvCell(c.telefono),
+            csvCell(zoneName),
+            csvCell(driverName),
+            csvCell(c.direccion),
+            csvCell(c.ciudad),
+            csvCell(c.provincia),
             c.latitud || '',
             c.longitud || '',
-            clean(c.notas)
+            csvCell(c.notas)
           ].join(';');
 
           content += line + "\n";
@@ -1118,11 +1423,11 @@
         document.body.removeChild(a);
         window.URL.revokeObjectURL(url);
         
-        toast('✅ Archivo descargado');
+        toast('Archivo descargado');
 
       } catch (e) {
         console.error(e);
-        toast('❌ Error al exportar');
+        toast('Error al exportar');
       } finally {
         btn.textContent = originalText;
         btn.disabled = false;
@@ -1132,7 +1437,13 @@
     const importFileInput = document.getElementById('importFile');
     const btnImportTxt = document.getElementById('btnImportTxt');
     if (btnImportTxt && importFileInput) {
-      btnImportTxt.addEventListener('click', () => importFileInput.click());
+      btnImportTxt.addEventListener('click', () => {
+        if (STATE.isSuper && !$('#empFilter').value) {
+          toast('Selecciona una empresa antes de importar');
+          return;
+        }
+        importFileInput.click();
+      });
       importFileInput.addEventListener('change', (ev) => processImportFile(ev.target));
     }
 
@@ -1147,6 +1458,9 @@
 
     const btnUseMyLocation = document.getElementById('btnUseMyLocation');
     if (btnUseMyLocation) btnUseMyLocation.addEventListener('click', useMyLocation);
+
+    const btnGeocodeAddress = document.getElementById('btnGeocodeAddress');
+    if (btnGeocodeAddress) btnGeocodeAddress.addEventListener('click', geocodeAddress);
 
     const btnApplyLatLng = document.getElementById('btnApplyLatLng');
     if (btnApplyLatLng) btnApplyLatLng.addEventListener('click', applyLatLngInputs);
@@ -1182,6 +1496,15 @@
 
     const btnConflictOverwrite = document.getElementById('btnConflictOverwrite');
     if (btnConflictOverwrite) btnConflictOverwrite.addEventListener('click', () => resolveConflict('overwrite'));
+
+    const btnCloseImportSummary = document.getElementById('btnCloseImportSummary');
+    if (btnCloseImportSummary) btnCloseImportSummary.addEventListener('click', cancelImport);
+
+    const btnCancelImport = document.getElementById('btnCancelImport');
+    if (btnCancelImport) btnCancelImport.addEventListener('click', cancelImport);
+
+    const btnConfirmImport = document.getElementById('btnConfirmImport');
+    if (btnConfirmImport) btnConfirmImport.addEventListener('click', confirmImportPreview);
 
     const tbBody = document.getElementById('tbBody');
     if (tbBody) {
@@ -1226,6 +1549,12 @@
           clearTimeout(debounceTimer);
           debounceTimer = setTimeout(() => { renderList(); }, 300);
         });
+
+        const zoneFilter = document.getElementById('zoneFilter');
+        if (zoneFilter) zoneFilter.addEventListener('change', renderList);
+
+        const statusFilter = document.getElementById('statusFilter');
+        if (statusFilter) statusFilter.addEventListener('change', renderList);
 
         const latEl = document.getElementById('c_latitud');
         const lngEl = document.getElementById('c_longitud');

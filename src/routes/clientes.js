@@ -1,6 +1,6 @@
 // src/routes/clientes.js
 import express from 'express';
-import { withAuth, checkLicencia, isSuper, getEmpresaIdFromToken, normalizePhone } from '../services.js';
+import { withAuth, checkLicencia, isSuper, getEmpresaIdFromToken, normalizePhone, geocodeIfNeeded, pointInAnyZone } from '../services.js';
 import { query } from '../db.js';
 
 export function createClientesRouter() {
@@ -69,7 +69,42 @@ export function createClientesRouter() {
     }
   });
 
-  // 3) Crear cliente
+  // 3) Geocodificar dirección del cliente sin guardar cambios
+  router.post('/geocode', withAuth, checkLicencia, async (req, res) => {
+    try {
+      const { direccion, ciudad, provincia, pais, empresa_id } = req.body || {};
+      const esSuperUser = isSuper(req);
+      const targetEmpresa = esSuperUser && empresa_id
+        ? Number(empresa_id)
+        : getEmpresaIdFromToken(req);
+
+      const hasAddress = [direccion, ciudad, provincia].some(v => String(v || '').trim());
+      if (!hasAddress) {
+        return res.status(400).json({ error: 'Cargá calle, ciudad o provincia para buscar ubicación' });
+      }
+
+      const loc = await geocodeIfNeeded({
+        direccion,
+        ciudad,
+        provincia,
+        pais: pais || 'Argentina'
+      });
+
+      const lat = Number(loc?.lat);
+      const lng = Number(loc?.lng);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+        return res.status(404).json({ error: 'No se pudo ubicar esa dirección' });
+      }
+
+      const zonaId = await pointInAnyZone({ empresa_id: targetEmpresa, lat, lng });
+      return res.json({ ok: true, latitud: lat, longitud: lng, zona_id: zonaId || null });
+    } catch (e) {
+      console.error('Error geocodificando cliente:', e);
+      return res.status(500).json({ error: 'Error buscando ubicación' });
+    }
+  });
+
+  // 4) Crear cliente
   router.post('/', withAuth, async (req, res) => {
     try {
       const {
@@ -115,7 +150,7 @@ export function createClientesRouter() {
     }
   });
 
-  // 4) Actualizar cliente
+  // 5) Actualizar cliente
   router.put('/:id', withAuth, async (req, res) => {
     try {
       const { id } = req.params;
@@ -188,7 +223,7 @@ export function createClientesRouter() {
     }
   });
 
-  // 5) Eliminar cliente
+  // 6) Eliminar cliente
   router.delete('/:id', withAuth, async (req, res) => {
     try {
       const { id } = req.params;
