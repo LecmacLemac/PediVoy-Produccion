@@ -1,0 +1,728 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Renata Alvarez transforma fotografia en objetos de decoracion, escritura, regalo y proyectos visuales para espacios.">
+  <title>Renata Alvarez | Fotografia aplicada a objetos y espacios</title>
+  <style>
+    :root {
+      --ink: #1f2522;
+      --muted: #68716b;
+      --line: #d9ded8;
+      --paper: #f7f5ef;
+      --soft: #ece8dc;
+      --sage: #6f806f;
+      --clay: #a55d44;
+      --blue: #2e5b68;
+      --white: #fffdf8;
+      --shadow: 0 18px 42px rgba(31, 37, 34, .12);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--ink);
+      background: var(--paper);
+      line-height: 1.5;
+    }
+
+    a {
+      color: inherit;
+      text-decoration: none;
+    }
+
+    img {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .shell {
+      width: min(1120px, calc(100% - 32px));
+      margin: 0 auto;
+    }
+
+    .topbar {
+      position: fixed;
+      inset: 0 0 auto;
+      z-index: 20;
+      border-bottom: 1px solid rgba(255, 253, 248, .22);
+      color: var(--white);
+      backdrop-filter: blur(14px);
+      background: rgba(31, 37, 34, .28);
+    }
+
+    .nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      min-height: 66px;
+    }
+
+    .brand {
+      display: grid;
+      gap: 0;
+      font-weight: 700;
+      letter-spacing: 0;
+    }
+
+    .brand span {
+      color: rgba(255, 253, 248, .72);
+      font-size: 12px;
+      font-weight: 500;
+      text-transform: uppercase;
+    }
+
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      color: rgba(255, 253, 248, .84);
+      font-size: 14px;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 44px;
+      padding: 0 18px;
+      border: 1px solid transparent;
+      border-radius: 6px;
+      font-weight: 700;
+      font-size: 14px;
+      cursor: pointer;
+    }
+
+    .btn.primary {
+      background: var(--clay);
+      color: var(--white);
+      box-shadow: 0 12px 28px rgba(165, 93, 68, .28);
+    }
+
+    .btn.secondary {
+      border-color: rgba(255, 253, 248, .54);
+      color: var(--white);
+      background: rgba(255, 253, 248, .08);
+    }
+
+    .hero {
+      min-height: 92vh;
+      display: grid;
+      align-items: end;
+      padding: 140px 0 64px;
+      color: var(--white);
+      background:
+        linear-gradient(90deg, rgba(16, 22, 20, .86) 0%, rgba(16, 22, 20, .56) 44%, rgba(16, 22, 20, .24) 100%),
+        url("https://images.unsplash.com/photo-1513519245088-0e12902e35ca?auto=format&fit=crop&w=2200&q=82") center / cover;
+    }
+
+    .hero-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 650px) minmax(280px, 390px);
+      align-items: end;
+      justify-content: space-between;
+      gap: 42px;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      margin: 0 0 18px;
+      color: rgba(255, 253, 248, .82);
+      font-size: 13px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+
+    .eyebrow::before {
+      content: "";
+      width: 34px;
+      height: 1px;
+      background: currentColor;
+    }
+
+    h1 {
+      max-width: 680px;
+      margin: 0;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: clamp(46px, 8vw, 96px);
+      font-weight: 500;
+      line-height: .96;
+      letter-spacing: 0;
+    }
+
+    .hero-copy {
+      max-width: 580px;
+      margin: 24px 0 0;
+      color: rgba(255, 253, 248, .82);
+      font-size: 19px;
+    }
+
+    .hero-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 30px;
+    }
+
+    .hero-panel {
+      border: 1px solid rgba(255, 253, 248, .24);
+      border-radius: 8px;
+      padding: 22px;
+      background: rgba(255, 253, 248, .1);
+      backdrop-filter: blur(18px);
+    }
+
+    .hero-panel h2 {
+      margin: 0 0 14px;
+      font-size: 15px;
+      text-transform: uppercase;
+      color: rgba(255, 253, 248, .72);
+    }
+
+    .hero-panel ul {
+      display: grid;
+      gap: 12px;
+      padding: 0;
+      margin: 0;
+      list-style: none;
+    }
+
+    .hero-panel li {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      border-top: 1px solid rgba(255, 253, 248, .18);
+      padding-top: 12px;
+      font-size: 14px;
+    }
+
+    .hero-panel strong {
+      font-size: 15px;
+    }
+
+    section {
+      padding: 86px 0;
+    }
+
+    .section-head {
+      display: grid;
+      grid-template-columns: minmax(0, 460px) minmax(280px, 520px);
+      justify-content: space-between;
+      gap: 36px;
+      margin-bottom: 34px;
+    }
+
+    .kicker {
+      margin: 0 0 10px;
+      color: var(--clay);
+      font-size: 13px;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+
+    h2 {
+      margin: 0;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: clamp(32px, 5vw, 56px);
+      font-weight: 500;
+      line-height: 1;
+      letter-spacing: 0;
+    }
+
+    .lead {
+      margin: 0;
+      color: var(--muted);
+      font-size: 17px;
+    }
+
+    .product-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .product {
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--white);
+      box-shadow: 0 10px 26px rgba(31, 37, 34, .07);
+    }
+
+    .product-media {
+      height: 230px;
+      background: var(--soft);
+    }
+
+    .product-body {
+      min-height: 178px;
+      padding: 18px;
+    }
+
+    .product h3 {
+      margin: 0 0 8px;
+      font-size: 19px;
+    }
+
+    .product p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .price {
+      margin-top: 16px;
+      color: var(--blue);
+      font-weight: 800;
+    }
+
+    .band {
+      background: var(--ink);
+      color: var(--white);
+    }
+
+    .band .lead,
+    .band .kicker {
+      color: rgba(255, 253, 248, .72);
+    }
+
+    .split {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(280px, 470px);
+      gap: 42px;
+      align-items: center;
+    }
+
+    .image-stack {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+
+    .image-stack figure {
+      overflow: hidden;
+      min-height: 250px;
+      margin: 0;
+      border-radius: 8px;
+    }
+
+    .image-stack figure:first-child {
+      grid-row: span 2;
+      min-height: 520px;
+    }
+
+    .steps {
+      display: grid;
+      gap: 14px;
+      margin-top: 28px;
+    }
+
+    .step {
+      display: grid;
+      grid-template-columns: 44px 1fr;
+      gap: 16px;
+      padding: 16px 0;
+      border-top: 1px solid rgba(255, 253, 248, .18);
+    }
+
+    .step span {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 36px;
+      height: 36px;
+      border: 1px solid rgba(255, 253, 248, .28);
+      border-radius: 50%;
+      color: rgba(255, 253, 248, .8);
+      font-weight: 800;
+      font-size: 13px;
+    }
+
+    .step h3 {
+      margin: 0 0 4px;
+      font-size: 18px;
+    }
+
+    .step p {
+      margin: 0;
+      color: rgba(255, 253, 248, .7);
+      font-size: 14px;
+    }
+
+    .offers {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .offer {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 24px;
+      background: var(--white);
+      box-shadow: 0 10px 26px rgba(31, 37, 34, .07);
+    }
+
+    .offer h3 {
+      margin: 0 0 10px;
+      font-size: 21px;
+    }
+
+    .offer p {
+      min-height: 66px;
+      margin: 0 0 20px;
+      color: var(--muted);
+    }
+
+    .offer strong {
+      color: var(--clay);
+      font-size: 22px;
+    }
+
+    .contact {
+      display: grid;
+      grid-template-columns: minmax(0, 540px) minmax(280px, 420px);
+      justify-content: space-between;
+      gap: 40px;
+      align-items: start;
+    }
+
+    .contact-box {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 24px;
+      background: var(--white);
+      box-shadow: var(--shadow);
+    }
+
+    .contact-box label {
+      display: block;
+      margin-bottom: 8px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+
+    .contact-box input,
+    .contact-box textarea,
+    .contact-box select {
+      width: 100%;
+      min-height: 44px;
+      margin-bottom: 14px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 11px 12px;
+      background: #fff;
+      color: var(--ink);
+      font: inherit;
+    }
+
+    .contact-box textarea {
+      min-height: 108px;
+      resize: vertical;
+    }
+
+    .note {
+      margin-top: 18px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    footer {
+      padding: 34px 0;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .footer-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 18px;
+      flex-wrap: wrap;
+    }
+
+    @media (max-width: 920px) {
+      .nav-links {
+        display: none;
+      }
+
+      .hero {
+        min-height: auto;
+        padding: 116px 0 44px;
+      }
+
+      .hero-grid,
+      .section-head,
+      .split,
+      .contact {
+        grid-template-columns: 1fr;
+      }
+
+      .product-grid,
+      .offers {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 620px) {
+      .shell {
+        width: min(100% - 24px, 1120px);
+      }
+
+      .brand {
+        font-size: 15px;
+      }
+
+      h1 {
+        font-size: 48px;
+      }
+
+      .hero-copy {
+        font-size: 17px;
+      }
+
+      section {
+        padding: 62px 0;
+      }
+
+      .product-grid,
+      .offers,
+      .image-stack {
+        grid-template-columns: 1fr;
+      }
+
+      .image-stack figure,
+      .image-stack figure:first-child {
+        min-height: 260px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="shell nav">
+      <a class="brand" href="#inicio" aria-label="Ir al inicio">
+        Renata Alvarez
+        <span>fotografia aplicada</span>
+      </a>
+      <nav class="nav-links" aria-label="Navegacion principal">
+        <a href="#productos">Productos</a>
+        <a href="#proceso">Proceso</a>
+        <a href="#packs">Packs</a>
+        <a href="#contacto">Contacto</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="inicio">
+    <section class="hero" aria-label="Presentacion">
+      <div class="shell hero-grid">
+        <div>
+          <p class="eyebrow">Showroom creativo</p>
+          <h1>Fotografia para decorar, escribir y habitar.</h1>
+          <p class="hero-copy">Piezas visuales de autor convertidas en cuadros, posters, journals, regalos personalizados y propuestas para espacios comerciales.</p>
+          <div class="hero-actions">
+            <a class="btn primary" href="#contacto">Solicitar catalogo</a>
+            <a class="btn secondary" href="#productos">Ver productos</a>
+          </div>
+        </div>
+        <aside class="hero-panel" aria-label="Oferta inicial">
+          <h2>Oferta inicial</h2>
+          <ul>
+            <li><strong>Prints</strong><span>desde $22.000</span></li>
+            <li><strong>Journals</strong><span>desde $38.000</span></li>
+            <li><strong>Mascotas</strong><span>desde $95.000</span></li>
+            <li><strong>Espacios</strong><span>desde $250.000</span></li>
+          </ul>
+        </aside>
+      </div>
+    </section>
+
+    <section id="productos">
+      <div class="shell">
+        <div class="section-head">
+          <div>
+            <p class="kicker">Catalogo inicial</p>
+            <h2>Cuatro caminos para validar la marca.</h2>
+          </div>
+          <p class="lead">La primera etapa se concentra en productos con buen margen, produccion controlable y valor visual claro. El objetivo es vender, medir y ajustar antes de ampliar la linea.</p>
+        </div>
+
+        <div class="product-grid">
+          <article class="product">
+            <div class="product-media">
+              <img src="https://images.unsplash.com/photo-1524758631624-e2822e304c36?auto=format&fit=crop&w=900&q=82" alt="Cuadro fotografico decorando un interior luminoso">
+            </div>
+            <div class="product-body">
+              <h3>Print de Autor</h3>
+              <p>Posters fotograficos 30x45 para decorar, regalar o iniciar una coleccion visual.</p>
+              <div class="price">Desde $22.000</div>
+            </div>
+          </article>
+
+          <article class="product">
+            <div class="product-media">
+              <img src="https://images.unsplash.com/photo-1517842645767-c639042777db?auto=format&fit=crop&w=900&q=82" alt="Cuaderno abierto sobre escritorio con lapiz y luz natural">
+            </div>
+            <div class="product-body">
+              <h3>Journal Visual</h3>
+              <p>Diario de escritura con fotografias, frases y espacio para ordenar ideas.</p>
+              <div class="price">Desde $38.000</div>
+            </div>
+          </article>
+
+          <article class="product">
+            <div class="product-media">
+              <img src="https://images.unsplash.com/photo-1517423440428-a5a00ad493e8?auto=format&fit=crop&w=900&q=82" alt="Retrato de perro mirando hacia la camara">
+            </div>
+            <div class="product-body">
+              <h3>Mascota en Cuadro</h3>
+              <p>Mini sesion, seleccion de imagen y pieza final para conservar o regalar.</p>
+              <div class="price">Desde $95.000</div>
+            </div>
+          </article>
+
+          <article class="product">
+            <div class="product-media">
+              <img src="https://images.unsplash.com/photo-1505693416388-ac5ce068fe85?auto=format&fit=crop&w=900&q=82" alt="Habitacion de hotel con decoracion cuidada">
+            </div>
+            <div class="product-body">
+              <h3>Espacio con Identidad</h3>
+              <p>Fotografia y seleccion visual para hoteles, cafes, consultorios y estudios.</p>
+              <div class="price">Desde $250.000</div>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="proceso" class="band">
+      <div class="shell split">
+        <div class="image-stack" aria-label="Referencias visuales">
+          <figure>
+            <img src="https://images.unsplash.com/photo-1499951360447-b19be8fe80f5?auto=format&fit=crop&w=1000&q=82" alt="Mesa de trabajo creativa con laminas y cuaderno">
+          </figure>
+          <figure>
+            <img src="https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&fit=crop&w=800&q=82" alt="Interior con luz natural y decoracion calida">
+          </figure>
+          <figure>
+            <img src="https://images.unsplash.com/photo-1516972810927-80185027ca84?auto=format&fit=crop&w=800&q=82" alt="Detalle de impresion fotografica en papel">
+          </figure>
+        </div>
+
+        <div>
+          <p class="kicker">Proceso</p>
+          <h2>Una compra cuidada, no una impresion suelta.</h2>
+          <p class="lead">Cada pedido se piensa desde la imagen, el uso y el destino final. La presentacion tiene que sostener precio, emocion y calidad percibida.</p>
+
+          <div class="steps">
+            <div class="step">
+              <span>01</span>
+              <div>
+                <h3>Seleccion visual</h3>
+                <p>Se define estilo, formato y objetivo de la pieza.</p>
+              </div>
+            </div>
+            <div class="step">
+              <span>02</span>
+              <div>
+                <h3>Produccion controlada</h3>
+                <p>Impresion, armado y revision antes de entregar.</p>
+              </div>
+            </div>
+            <div class="step">
+              <span>03</span>
+              <div>
+                <h3>Entrega con criterio</h3>
+                <p>Packaging simple, presentacion prolija y opcion de retiro o envio.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="packs">
+      <div class="shell">
+        <div class="section-head">
+          <div>
+            <p class="kicker">Preventa</p>
+            <h2>Packs simples para empezar.</h2>
+          </div>
+          <p class="lead">La preventa permite producir con menor riesgo, medir demanda real y detectar que producto merece convertirse en linea estable.</p>
+        </div>
+
+        <div class="offers">
+          <article class="offer">
+            <h3>Print de Autor</h3>
+            <p>Poster fotografico 30x45, opcion de marco y packaging simple.</p>
+            <strong>$22.000</strong>
+          </article>
+          <article class="offer">
+            <h3>Escritura & Foto</h3>
+            <p>Journal visual con fotografias, frases y mini print de regalo.</p>
+            <strong>$38.000</strong>
+          </article>
+          <article class="offer">
+            <h3>Mascota en Cuadro</h3>
+            <p>Mini sesion, edicion y pieza final en poster o cuadro.</p>
+            <strong>$95.000</strong>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="contacto">
+      <div class="shell contact">
+        <div>
+          <p class="kicker">Contacto</p>
+          <h2>Catalogo, encargos y propuestas para espacios.</h2>
+          <p class="lead">Esta pagina funciona como showroom inicial. El siguiente paso comercial es responder consultas, tomar senas y validar los productos ganadores.</p>
+          <p class="note">Pendiente: agregar WhatsApp, Instagram, zona de trabajo y condiciones de entrega cuando Renata confirme esos datos.</p>
+        </div>
+
+        <form class="contact-box" action="mailto:renata@example.com" method="post" enctype="text/plain">
+          <label for="nombre">Nombre</label>
+          <input id="nombre" name="nombre" type="text" autocomplete="name" placeholder="Tu nombre">
+
+          <label for="interes">Interes</label>
+          <select id="interes" name="interes">
+            <option>Print de Autor</option>
+            <option>Journal Visual</option>
+            <option>Mascota en Cuadro</option>
+            <option>Espacio con Identidad</option>
+          </select>
+
+          <label for="mensaje">Mensaje</label>
+          <textarea id="mensaje" name="mensaje" placeholder="Contame que queres cotizar"></textarea>
+
+          <button class="btn primary" type="submit">Enviar consulta</button>
+        </form>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="shell footer-row">
+      <span>Renata Alvarez - Fotografia aplicada</span>
+      <span>Alojado en PediVoy</span>
+    </div>
+  </footer>
+</body>
+</html>

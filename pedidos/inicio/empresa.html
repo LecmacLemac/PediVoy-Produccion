@@ -492,6 +492,73 @@
       color: var(--brand);
       border-color: var(--brand);
     }
+
+    .company-summary {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 0.8rem;
+      margin-bottom: 1.1rem;
+    }
+
+    .metric-card {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: rgba(15, 23, 42, 0.7);
+      padding: 0.85rem 0.95rem;
+      min-height: 76px;
+    }
+
+    .metric-card span {
+      display: block;
+      color: var(--muted);
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .metric-card strong {
+      display: block;
+      color: #fff;
+      font-size: 1.45rem;
+      line-height: 1.2;
+      margin-top: 0.25rem;
+    }
+
+    .filters-bar {
+      display: grid;
+      grid-template-columns: minmax(220px, 1.5fr) minmax(150px, 0.8fr) minmax(170px, 1fr) minmax(150px, 0.8fr) auto;
+      gap: 0.8rem;
+      align-items: end;
+      margin-bottom: 1.1rem;
+    }
+
+    .filters-bar input,
+    .filters-bar select {
+      margin-bottom: 0;
+    }
+
+    .muted-line {
+      color: var(--muted);
+      font-size: 0.76rem;
+      margin-top: 2px;
+    }
+
+    .risk-line {
+      color: var(--warning);
+      font-size: 0.76rem;
+      margin-top: 2px;
+    }
+
+    @media (max-width: 760px) {
+      .company-summary {
+        grid-template-columns: 1fr 1fr;
+      }
+
+      .filters-bar {
+        grid-template-columns: 1fr;
+      }
+    }
   </style>
 </head>
 <body>
@@ -525,6 +592,60 @@
     </div>
 
     <div class="card">
+      <div class="company-summary" aria-label="Resumen de empresas">
+        <div class="metric-card">
+          <span>Total</span>
+          <strong id="sumCompanies">0</strong>
+        </div>
+        <div class="metric-card">
+          <span>Activas</span>
+          <strong id="sumActive">0</strong>
+        </div>
+        <div class="metric-card">
+          <span>Vencidas</span>
+          <strong id="sumExpired">0</strong>
+        </div>
+        <div class="metric-card">
+          <span>Sin slug</span>
+          <strong id="sumNoSlug">0</strong>
+        </div>
+      </div>
+
+      <div class="filters-bar">
+        <div>
+          <label>Buscar</label>
+          <input id="companySearch" type="search" placeholder="Nombre, CUIT, slug, teléfono">
+        </div>
+        <div>
+          <label>Licencia</label>
+          <select id="licenseFilter">
+            <option value="">Todas</option>
+            <option value="active">Activas</option>
+            <option value="expired">Vencidas</option>
+            <option value="missing_date">Sin vencimiento</option>
+          </select>
+        </div>
+        <div>
+          <label>Configuración</label>
+          <select id="configFilter">
+            <option value="">Todas</option>
+            <option value="missing_slug">Sin slug</option>
+            <option value="missing_contact">Sin contacto</option>
+            <option value="missing_payment">Sin cobro digital</option>
+          </select>
+        </div>
+        <div>
+          <label>Ordenar</label>
+          <select id="companySort">
+            <option value="id_desc">ID desc</option>
+            <option value="name">Nombre A-Z</option>
+            <option value="expiry_asc">Vence primero</option>
+            <option value="status">Estado</option>
+          </select>
+        </div>
+        <button id="btnClearCompanyFilters" type="button" class="btn">Limpiar</button>
+      </div>
+
       <div class="table-responsive">
         <table>
   <thead>
@@ -626,6 +747,77 @@
         <div>
           <label>Dirección Fiscal/Comercial</label>
           <input type="text" id="e_direccion" placeholder="Av. Colón 1234">
+        </div>
+
+        <div class="section-label">Facturación AFIP/ARCA</div>
+
+        <div class="form-row">
+          <div>
+            <label>CUIT emisor</label>
+            <input type="text" id="e_afip_cuit" placeholder="20-12345678-9">
+          </div>
+          <div>
+            <label>Punto de venta</label>
+            <input type="number" id="e_afip_punto_venta" min="1" placeholder="1">
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div>
+            <label>Razón social emisora</label>
+            <input type="text" id="e_afip_razon_social" placeholder="Razón Social SRL">
+          </div>
+          <div>
+            <label>Condición IVA emisora</label>
+            <select id="e_afip_condicion_iva">
+              <option value="">-- Seleccionar --</option>
+              <option value="Responsable Inscripto">Responsable Inscripto</option>
+              <option value="Monotributo">Monotributo</option>
+              <option value="Exento">Exento</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div>
+            <label>Modo AFIP/ARCA</label>
+            <select id="e_afip_modo">
+              <option value="homologacion">Homologación</option>
+              <option value="produccion">Producción</option>
+            </select>
+            <small style="color:var(--muted); font-size:0.8rem;">
+              Producción queda bloqueada en backend hasta validación operativa.
+            </small>
+          </div>
+          <div>
+            <label>Estado credenciales</label>
+            <input type="text" id="e_afip_estado_credenciales" readonly value="Sin cargar">
+          </div>
+        </div>
+
+        <div style="background:rgba(255,255,255,0.03); padding:10px; border-radius:8px; border:1px solid var(--border); margin-bottom:1rem;">
+          <label style="color:var(--brand);">Credenciales de homologación / producción</label>
+          <div class="form-row" style="margin-top:8px;">
+            <div>
+              <label>Certificado PEM</label>
+              <input type="file" id="e_afip_certificado" accept=".pem,.crt,.cer">
+            </div>
+            <div>
+              <label>Clave privada PEM</label>
+              <input type="file" id="e_afip_clave" accept=".pem,.key">
+            </div>
+          </div>
+          <div style="display:flex; gap:10px; flex-wrap:wrap;">
+            <button id="btnUploadAfipCredenciales" type="button" class="btn">
+              <i class="fa fa-lock"></i> Cargar credenciales
+            </button>
+            <button id="btnProbarAfip" type="button" class="btn">
+              <i class="fa fa-plug"></i> Probar conexión
+            </button>
+          </div>
+          <small style="color:var(--muted); margin-top:6px; display:block;">
+            Los archivos se guardan fuera de la carpeta pública. La clave privada no se muestra ni vuelve al navegador.
+          </small>
         </div>
 
         <div class="section-label">Configuración Web</div>
@@ -1277,9 +1469,55 @@ if (logoutLink) {
     let saveBusy = false;
     let deleteBusy = false;
     let cuentasBancariasDraft = [];
+    let companyFilters = { q: '', license: '', config: '', sort: 'id_desc' };
+    let currentFacturacionConfig = null;
 
     const btnNuevaEmpresa = document.getElementById('btnNuevaEmpresa');
     if (btnNuevaEmpresa) btnNuevaEmpresa.addEventListener('click', openModal);
+
+    const companySearch = document.getElementById('companySearch');
+    if (companySearch) {
+      companySearch.addEventListener('input', () => {
+        companyFilters.q = companySearch.value || '';
+        render();
+      });
+    }
+
+    const licenseFilter = document.getElementById('licenseFilter');
+    if (licenseFilter) {
+      licenseFilter.addEventListener('change', () => {
+        companyFilters.license = licenseFilter.value || '';
+        render();
+      });
+    }
+
+    const configFilter = document.getElementById('configFilter');
+    if (configFilter) {
+      configFilter.addEventListener('change', () => {
+        companyFilters.config = configFilter.value || '';
+        render();
+      });
+    }
+
+    const companySort = document.getElementById('companySort');
+    if (companySort) {
+      companySort.addEventListener('change', () => {
+        companyFilters.sort = companySort.value || 'id_desc';
+        render();
+      });
+    }
+
+    const btnClearCompanyFilters = document.getElementById('btnClearCompanyFilters');
+    if (btnClearCompanyFilters) {
+      btnClearCompanyFilters.addEventListener('click', () => {
+        companyFilters = { q: '', license: '', config: '', sort: 'id_desc' };
+        if (companySearch) companySearch.value = '';
+        if (licenseFilter) licenseFilter.value = '';
+        if (configFilter) configFilter.value = '';
+        if (companySort) companySort.value = 'id_desc';
+        render();
+      });
+    }
 
     const btnCloseModalTop = document.getElementById('btnCloseModalTop');
     if (btnCloseModalTop) btnCloseModalTop.addEventListener('click', closeModal);
@@ -1300,6 +1538,12 @@ if (logoutLink) {
 
     const btnSaveEmpresa = document.getElementById('btnSaveEmpresa');
     if (btnSaveEmpresa) btnSaveEmpresa.addEventListener('click', save);
+
+    const btnUploadAfipCredenciales = document.getElementById('btnUploadAfipCredenciales');
+    if (btnUploadAfipCredenciales) btnUploadAfipCredenciales.addEventListener('click', uploadAfipCredenciales);
+
+    const btnProbarAfip = document.getElementById('btnProbarAfip');
+    if (btnProbarAfip) btnProbarAfip.addEventListener('click', probarConexionAfip);
 
     const btnUploadLogo = document.getElementById('btnUploadLogo');
     const logoFileInput = document.getElementById('e_logo_file');
@@ -1424,8 +1668,84 @@ if (logoutLink) {
       }
     }
 
+    function parseDateValue(v) {
+      if (!v) return null;
+      const d = new Date(v);
+      return Number.isFinite(d.getTime()) ? d : null;
+    }
+
+    function isExpiredCompany(c) {
+      const estado = String(c.plan_estado || '').toLowerCase();
+      const venc = parseDateValue(c.plan_vencimiento);
+      return estado === 'expired' || (venc && venc < new Date());
+    }
+
+    function hasDigitalPayment(c) {
+      const cfg = parseMaybeJson(c.config_integraciones);
+      const pagos = cfg.pagos || {};
+      return !!(pagos.proveedor || pagos.access_token || pagos.canales?.qr_dinamico);
+    }
+
+    function setCompanySummary(list = companies) {
+      const total = list.length;
+      const expired = list.filter(isExpiredCompany).length;
+      const active = total - expired;
+      const noSlug = list.filter(c => !c.landing_slug).length;
+
+      $('#sumCompanies').textContent = String(total);
+      $('#sumActive').textContent = String(active);
+      $('#sumExpired').textContent = String(expired);
+      $('#sumNoSlug').textContent = String(noSlug);
+    }
+
+    function getFilteredCompanies() {
+      const q = (companyFilters.q || '').trim().toLowerCase();
+      const license = companyFilters.license || '';
+      const config = companyFilters.config || '';
+      const sort = companyFilters.sort || 'id_desc';
+
+      const filtered = companies.filter(c => {
+        const expired = isExpiredCompany(c);
+        if (license === 'active' && expired) return false;
+        if (license === 'expired' && !expired) return false;
+        if (license === 'missing_date' && c.plan_vencimiento) return false;
+
+        if (config === 'missing_slug' && c.landing_slug) return false;
+        if (config === 'missing_contact' && (c.telefono || c.email)) return false;
+        if (config === 'missing_payment' && hasDigitalPayment(c)) return false;
+
+        if (!q) return true;
+        const haystack = [
+          c.id,
+          c.nombre,
+          c.razon_social,
+          c.cuit,
+          c.telefono,
+          c.email,
+          c.landing_slug,
+          c.landing_domain,
+          c.rubro,
+          c.plan_estado,
+          c.plan_tipo
+        ].map(v => String(v == null ? '' : v).toLowerCase()).join(' ');
+        return haystack.includes(q);
+      });
+
+      return filtered.sort((a, b) => {
+        if (sort === 'name') return String(a.nombre || '').localeCompare(String(b.nombre || ''));
+        if (sort === 'expiry_asc') {
+          const da = parseDateValue(a.plan_vencimiento)?.getTime() ?? Number.POSITIVE_INFINITY;
+          const db = parseDateValue(b.plan_vencimiento)?.getTime() ?? Number.POSITIVE_INFINITY;
+          return da - db;
+        }
+        if (sort === 'status') return String(a.plan_estado || '').localeCompare(String(b.plan_estado || '')) || Number(b.id || 0) - Number(a.id || 0);
+        return Number(b.id || 0) - Number(a.id || 0);
+      });
+    }
+
     function render() {
       const tbody = $('#tbBody');
+      setCompanySummary(companies);
       
       // 1. Si no hay empresas, mostrar mensaje vacío
       if (!companies.length) {
@@ -1434,8 +1754,14 @@ if (logoutLink) {
       }
 
       const base = location.origin;
+      const visibleCompanies = getFilteredCompanies();
 
-      tbody.innerHTML = companies.map((c) => {
+      if (!visibleCompanies.length) {
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:3rem; color:var(--muted);">No hay empresas que coincidan con los filtros.</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = visibleCompanies.map((c) => {
         const rawId = c?.id;
         const numericId = Number(rawId);
         const hasNumericId = Number.isFinite(numericId) && numericId > 0;
@@ -1459,7 +1785,8 @@ if (logoutLink) {
       console.warn('Error parseando config_operativa para TZ', e);
     }
  
-    const estado = c.plan_estado === 'active' ? '🟢 Activo' : '🔴 Vencido';
+    const vencida = isExpiredCompany(c);
+    const estado = !vencida ? '🟢 Activo' : '🔴 Vencido';
     
     // Usamos el timezone detectado para formatear la fecha visualmente
     const vencimiento = c.plan_vencimiento 
@@ -1541,6 +1868,16 @@ if (logoutLink) {
           ? '<div style="font-size:0.75rem; color:var(--muted); margin-top:2px;">Base: ' + esc(baseLogistica) + '</div>'
           : '';
 
+        const warningHtml = [
+          !slug ? 'Sin slug' : '',
+          !(c.telefono || c.email) ? 'Sin contacto' : '',
+          !hasDigitalPayment(c) ? 'Sin cobro digital' : ''
+        ].filter(Boolean);
+
+        const warningLine = warningHtml.length
+          ? `<div class="risk-line">${warningHtml.map(esc).join(' · ')}</div>`
+          : '';
+
         // Retornamos la fila HTML
         return `
           <tr>
@@ -1554,6 +1891,7 @@ if (logoutLink) {
               <div style="font-size:0.8rem; color:var(--muted);">
                 <i class="fa-solid fa-briefcase"></i> ${esc(c.razon_social || 'Sin Razón Social')}
               </div>
+              ${warningLine}
             </td>
 
             <td>
@@ -1680,6 +2018,7 @@ if (logoutLink) {
       cuentasBancariasDraft = [];
       limpiarFormularioCuentaDraft();
       renderCuentasDraft();
+      setFacturacionConfigInForm(null, {});
 
       // Default: Lun a Sáb
       document.querySelectorAll('#e_dias_entrega input[type="checkbox"]').forEach((chk) => {
@@ -1831,6 +2170,7 @@ if (logoutLink) {
 
       // Rellenar bloque "Cobros y Pagos"
       setPagosConfigInForm(intCfg, c.id);
+      loadFacturacionConfig(c.id, c);
 
       // 6. Licencia (solo super admin)
       if (typeof esSuperAdmin !== 'undefined' && esSuperAdmin) {
@@ -1990,6 +2330,135 @@ if (logoutLink) {
       if (webhookInput) {
         webhookInput.value = webhookSugerida;
       }
+    }
+
+    function setFacturacionConfigInForm(config, empresa = {}) {
+      currentFacturacionConfig = config || null;
+
+      document.getElementById('e_afip_cuit').value = config?.cuit || empresa.cuit || '';
+      document.getElementById('e_afip_razon_social').value = config?.razon_social || empresa.razon_social || '';
+      document.getElementById('e_afip_condicion_iva').value = config?.condicion_iva || empresa.condicion_iva || '';
+      document.getElementById('e_afip_punto_venta').value = config?.punto_venta || '';
+      document.getElementById('e_afip_modo').value = config?.modo_afip || 'homologacion';
+      document.getElementById('e_afip_certificado').value = '';
+      document.getElementById('e_afip_clave').value = '';
+
+      const cert = !!config?.certificado_cargado;
+      const clave = !!config?.clave_cargada;
+      const estado = cert && clave
+        ? 'Certificado y clave cargados'
+        : cert
+          ? 'Falta clave privada'
+          : clave
+            ? 'Falta certificado'
+            : 'Sin cargar';
+      document.getElementById('e_afip_estado_credenciales').value = estado;
+    }
+
+    async function loadFacturacionConfig(empresaId, empresa = {}) {
+      if (!empresaId) {
+        setFacturacionConfigInForm(null, empresa);
+        return;
+      }
+
+      const res = await api(`/api/facturacion/config?empresa_id=${encodeURIComponent(empresaId)}`);
+      if (res?.ok) {
+        setFacturacionConfigInForm(res.config, empresa);
+      } else {
+        setFacturacionConfigInForm(null, empresa);
+      }
+    }
+
+    function getFacturacionConfigFromForm() {
+      const cuit = ($('#e_afip_cuit').value || $('#e_cuit').value || '').trim();
+      const puntoVenta = $('#e_afip_punto_venta').value ? Number($('#e_afip_punto_venta').value) : null;
+      const hasAny = cuit || puntoVenta || $('#e_afip_razon_social').value || $('#e_afip_condicion_iva').value;
+      if (!hasAny) return null;
+
+      return {
+        cuit,
+        razon_social: ($('#e_afip_razon_social').value || $('#e_razon_social').value || '').trim() || null,
+        condicion_iva: ($('#e_afip_condicion_iva').value || $('#e_condicion_iva').value || '').trim() || null,
+        punto_venta: puntoVenta,
+        modo_afip: $('#e_afip_modo').value || 'homologacion',
+        activo: true,
+      };
+    }
+
+    async function saveFacturacionConfig(empresaId) {
+      const cfg = getFacturacionConfigFromForm();
+      if (!cfg) return true;
+      if (!cfg.cuit || !cfg.punto_venta) {
+        toast('AFIP/ARCA requiere CUIT emisor y punto de venta');
+        return false;
+      }
+
+      const res = await api(`/api/facturacion/config?empresa_id=${encodeURIComponent(empresaId)}`, {
+        method: 'PUT',
+        body: JSON.stringify(cfg),
+      });
+      if (res?.error) {
+        toast('❌ AFIP/ARCA: ' + res.error);
+        return false;
+      }
+      if (res?.ok) setFacturacionConfigInForm(res.config, cfg);
+      return true;
+    }
+
+    async function uploadAfipCredenciales() {
+      const empresaId = $('#e_id').value;
+      if (!empresaId) {
+        toast('Primero guarda la empresa para cargar credenciales AFIP/ARCA');
+        return;
+      }
+
+      const certificado = document.getElementById('e_afip_certificado').files?.[0];
+      const clave = document.getElementById('e_afip_clave').files?.[0];
+      if (!certificado && !clave) {
+        toast('Seleccioná certificado y/o clave privada');
+        return;
+      }
+
+      const saved = await saveFacturacionConfig(empresaId);
+      if (!saved) return;
+
+      const form = new FormData();
+      if (certificado) form.append('certificado', certificado);
+      if (clave) form.append('clave', clave);
+
+      const res = await authFetch(`/api/facturacion/config/credenciales?empresa_id=${encodeURIComponent(empresaId)}`, {
+        method: 'POST',
+        body: form,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.error) {
+        toast('❌ ' + (data.error || 'No se pudieron cargar credenciales'));
+        return;
+      }
+
+      setFacturacionConfigInForm(data.config, getFacturacionConfigFromForm() || {});
+      toast('✅ Credenciales AFIP/ARCA cargadas');
+    }
+
+    async function probarConexionAfip() {
+      const empresaId = $('#e_id').value;
+      if (!empresaId) {
+        toast('Primero guarda la empresa');
+        return;
+      }
+
+      const saved = await saveFacturacionConfig(empresaId);
+      if (!saved) return;
+
+      const res = await api(`/api/facturacion/config/probar-conexion?empresa_id=${encodeURIComponent(empresaId)}`, {
+        method: 'POST',
+        body: JSON.stringify({ service: 'wsfe' }),
+      });
+      if (res?.error) {
+        toast('❌ ' + res.error);
+        return;
+      }
+      toast('✅ Conexión AFIP/ARCA OK');
     }
 
     async function save() {
@@ -2186,6 +2655,12 @@ if (logoutLink) {
         if (res && res.error) {
           toast('❌ ' + res.error);
         } else {
+          const savedEmpresaId = id || res.id;
+          if (savedEmpresaId) {
+            const facturacionOk = await saveFacturacionConfig(savedEmpresaId);
+            if (!facturacionOk) return;
+          }
+
           toast(id ? '✅ Actualizado' : '✅ Creado');
 
           if (!id && res.id) {

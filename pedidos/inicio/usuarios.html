@@ -209,6 +209,37 @@
   /* Elementos específicos de zona.html */
   .sidebar-list { overflow-y: auto; display: flex; flex-direction: column; gap: 0.8rem; flex: 1; }
   .zona-item { background: var(--bg-2); border: 1px solid var(--border); padding: 1rem; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
+  .user-summary {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.8rem;
+    margin-bottom: 1.1rem;
+  }
+  .metric-card {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: rgba(15, 23, 42, 0.7);
+    padding: 0.85rem 0.95rem;
+    min-height: 76px;
+  }
+  .metric-card span {
+    display: block;
+    color: var(--muted);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .metric-card strong {
+    display: block;
+    color: #fff;
+    font-size: 1.45rem;
+    line-height: 1.2;
+    margin-top: 0.25rem;
+  }
+  .toolbar .filter-action { flex: 0 0 auto; }
+  .muted-line { color: var(--muted); font-size: 0.78rem; margin-top: 2px; }
+  .risk-text { color: var(--warning); font-size: 0.78rem; margin-top: 2px; }
   
   /* Elementos específicos de inicial.html */
   .step-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.5rem; display: flex; gap: 1rem; margin-bottom: 1rem; align-items: flex-start; }
@@ -221,6 +252,10 @@
   /* Leaflet Dark Override */
   .leaflet-bar { border: none !important; box-shadow: 0 4px 10px rgba(0,0,0,0.3) !important; }
   .leaflet-bar a { background-color: var(--bg-2) !important; color: #fff !important; border-bottom: 1px solid var(--border) !important; }
+  @media (max-width: 760px) {
+    .user-summary { grid-template-columns: 1fr 1fr; }
+    .toolbar .filter-action { width: 100%; }
+  }
 </style>
 </head>
 <body>
@@ -252,12 +287,43 @@
     </div>
 
     <div class="card">
+      <div class="user-summary" aria-label="Resumen de usuarios">
+        <div class="metric-card">
+          <span>Total</span>
+          <strong id="sumUsers">0</strong>
+        </div>
+        <div class="metric-card">
+          <span>Admins</span>
+          <strong id="sumAdmins">0</strong>
+        </div>
+        <div class="metric-card">
+          <span>Repartidores</span>
+          <strong id="sumDrivers">0</strong>
+        </div>
+        <div class="metric-card">
+          <span>Sin chofer</span>
+          <strong id="sumNoDriver">0</strong>
+        </div>
+      </div>
+
       <div class="toolbar">
         <div id="empFilterWrap" style="display:none; flex:1; max-width: 300px;">
            <select id="empFilter">
              <option value="">-- Seleccionar Empresa --</option>
            </select>
         </div>
+        <div>
+          <input id="userSearch" type="search" placeholder="Buscar usuario, rol o chofer">
+        </div>
+        <div>
+          <select id="roleFilter">
+            <option value="">Todos los roles</option>
+            <option value="user">Admins</option>
+            <option value="repartidor">Repartidores</option>
+            <option value="super">Super Admin</option>
+          </select>
+        </div>
+        <button id="btnClearFilters" type="button" class="btn filter-action">Limpiar</button>
       </div>
 
       <div class="table-responsive">
@@ -366,6 +432,7 @@
     let STATE = { isSuper: false, user: null };
     let users = [];
     let drivers = [];
+    let filters = { q: '', role: '' };
     let saveBusy = false;
     let deleteBusy = false;
 
@@ -395,7 +462,7 @@
             urlDrivers += q;
          } else if (!empId) {
             $('#tbBody').innerHTML = `<tr><td colspan="5" style="text-align:center; padding:3rem; color:var(--muted);">Selecciona una empresa para ver usuarios.</td></tr>`;
-            users = []; drivers = []; return;
+            users = []; drivers = []; setSummary([]); return;
          }
       }
 
@@ -412,16 +479,62 @@
       renderTable();
     }
 
+    function getDriverName(choferId) {
+      if (!choferId) return '';
+      return drivers.find(d => d.id === choferId)?.nombre || `ID: ${choferId}`;
+    }
+
+    function setSummary(list = users) {
+      const total = list.length;
+      const admins = list.filter(u => ['user', 'admin', 'super'].includes(String(u.role || '').toLowerCase())).length;
+      const repartidores = list.filter(u => String(u.role || '').toLowerCase() === 'repartidor').length;
+      const noDriver = list.filter(u => String(u.role || '').toLowerCase() === 'repartidor' && !u.chofer_id).length;
+
+      $('#sumUsers').textContent = String(total);
+      $('#sumAdmins').textContent = String(admins);
+      $('#sumDrivers').textContent = String(repartidores);
+      $('#sumNoDriver').textContent = String(noDriver);
+    }
+
+    function getFilteredUsers() {
+      const q = (filters.q || '').trim().toLowerCase();
+      const role = filters.role || '';
+
+      return users.filter(u => {
+        const roleRaw = String(u.role || '').toLowerCase();
+        if (role && roleRaw !== role) return false;
+        if (!q) return true;
+
+        const haystack = [
+          u.username,
+          u.role,
+          u.empresa_id,
+          u.chofer_id,
+          getDriverName(u.chofer_id)
+        ].map(v => String(v == null ? '' : v).toLowerCase()).join(' ');
+
+        return haystack.includes(q);
+      });
+    }
+
     function renderTable() {
       const tbody = $('#tbBody');
+      setSummary(users);
+
       if (!users.length) {
         tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; padding:3rem; color:var(--muted);">No hay usuarios creados.</td></tr>`;
         return;
       }
+
+      const rows = getFilteredUsers();
+      if (!rows.length) {
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; padding:3rem; color:var(--muted);">No hay usuarios que coincidan con los filtros.</td></tr>`;
+        return;
+      }
       
-      tbody.innerHTML = users.map(u => {
+      tbody.innerHTML = rows.map(u => {
         const driverName = u.chofer_id 
-          ? esc(drivers.find(d => d.id === u.chofer_id)?.nombre || `ID: ${u.chofer_id}`)
+          ? esc(getDriverName(u.chofer_id))
           : '<span style="color:var(--muted)">—</span>';
         
         const roleRaw = String(u.role || '').toLowerCase();
@@ -430,10 +543,16 @@
         
         return `
         <tr>
-          <td style="font-weight:600; color:#fff;">${esc(u.username)}</td>
+          <td>
+            <div style="font-weight:600; color:#fff;">${esc(u.username)}</div>
+            <div class="muted-line">ID #${Number(u.id)}</div>
+          </td>
           <td><span class="badge badge-${roleClass}">${esc(roleLabel)}</span></td>
           <td style="color:var(--muted); font-family:monospace;">${u.empresa_id ? Number(u.empresa_id) : (roleRaw==='super'?'GLOBAL':'-')}</td>
-          <td>${driverName}</td>
+          <td>
+            ${driverName}
+            ${roleRaw === 'repartidor' && !u.chofer_id ? '<div class="risk-text">Repartidor sin chofer vinculado</div>' : ''}
+          </td>
           <td style="text-align:right;">
             <button class="btn-icon" data-action="edit" data-id="${Number(u.id)}" title="Editar">✏️</button>
             <button class="btn-icon" data-action="delete" data-id="${Number(u.id)}" title="Eliminar" style="color:var(--danger); border-color:rgba(239,68,68,0.3);">🗑️</button>
@@ -624,6 +743,32 @@
 
     const btnNuevoUsuario = document.getElementById('btnNuevoUsuario');
     if (btnNuevoUsuario) btnNuevoUsuario.addEventListener('click', openModal);
+
+    const userSearch = document.getElementById('userSearch');
+    if (userSearch) {
+      userSearch.addEventListener('input', () => {
+        filters.q = userSearch.value || '';
+        renderTable();
+      });
+    }
+
+    const roleFilter = document.getElementById('roleFilter');
+    if (roleFilter) {
+      roleFilter.addEventListener('change', () => {
+        filters.role = roleFilter.value || '';
+        renderTable();
+      });
+    }
+
+    const btnClearFilters = document.getElementById('btnClearFilters');
+    if (btnClearFilters) {
+      btnClearFilters.addEventListener('click', () => {
+        filters = { q: '', role: '' };
+        if (userSearch) userSearch.value = '';
+        if (roleFilter) roleFilter.value = '';
+        renderTable();
+      });
+    }
 
     const btnCloseModalTop = document.getElementById('btnCloseModalTop');
     if (btnCloseModalTop) btnCloseModalTop.addEventListener('click', closeModal);

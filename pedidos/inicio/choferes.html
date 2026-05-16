@@ -92,10 +92,36 @@
   }
   h1 { font-size: 1.8rem; margin: 0; color: #fff; display: flex; align-items: center; gap: 10px; line-height: 1.2; }
   p.subtitle { color: var(--muted); margin: 0.5rem 0 0 0; font-size: 0.95rem; }
+  .view-tabs {
+    display: inline-flex;
+    gap: 0.35rem;
+    padding: 0.3rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: rgba(15, 23, 42, 0.72);
+    align-self: flex-start;
+  }
+  .tab-btn {
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    font-weight: 700;
+    padding: 0.6rem 0.95rem;
+    min-width: 112px;
+  }
+  .tab-btn.active {
+    background: var(--brand);
+    color: #001018;
+  }
+  .view-panel[hidden] { display: none !important; }
 
   @media (max-width: 600px) {
     .page-header { flex-direction: column; align-items: stretch; }
     .page-header .btn { width: 100%; justify-content: center; }
+    .view-tabs { width: 100%; }
+    .tab-btn { flex: 1; min-width: 0; }
   }
 
   /* --- CARDS & LAYOUTS --- */
@@ -120,10 +146,42 @@
   .toolbar { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.5rem; }
   .toolbar > * { flex: 1; }
   .toolbar select, .toolbar input { margin-bottom: 0; min-width: 150px; }
+  .toolbar .filter-action { flex: 0 0 auto; }
+  .muted-line { color: var(--muted); font-size: 0.78rem; margin-top: 2px; }
+  .fleet-summary {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.8rem;
+    margin-bottom: 1.1rem;
+  }
+  .metric-card {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: rgba(15, 23, 42, 0.7);
+    padding: 0.85rem 0.95rem;
+    min-height: 78px;
+  }
+  .metric-card span {
+    display: block;
+    color: var(--muted);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .metric-card strong {
+    display: block;
+    color: #fff;
+    font-size: 1.45rem;
+    line-height: 1.2;
+    margin-top: 0.25rem;
+  }
   
   @media (max-width: 600px) {
     .toolbar { flex-direction: column; align-items: stretch; gap: 0.8rem; }
     .search-box { width: 100%; }
+    .toolbar .filter-action { width: 100%; }
+    .fleet-summary { grid-template-columns: 1fr 1fr; }
   }
 
   /* --- INPUTS & BUTTONS --- */
@@ -287,13 +345,49 @@
       <button id="btnNuevoChofer" type="button" class="btn btn-primary">＋ Nuevo Chofer</button>
     </div>
 
+    <div class="view-tabs" role="tablist" aria-label="Vistas de choferes">
+      <button id="tabFleet" type="button" class="tab-btn active" data-view="fleet" role="tab" aria-selected="true">Flota</button>
+      <button id="tabTracking" type="button" class="tab-btn" data-view="tracking" role="tab" aria-selected="false">Tracking</button>
+    </div>
+
+    <section id="fleetView" class="view-panel" data-view-panel="fleet">
     <div class="card">
+      <div class="fleet-summary" aria-label="Resumen de flota">
+        <div class="metric-card">
+          <span>Total</span>
+          <strong id="fleetTotal">0</strong>
+        </div>
+        <div class="metric-card">
+          <span>Propios</span>
+          <strong id="fleetOwn">0</strong>
+        </div>
+        <div class="metric-card">
+          <span>Fleteros</span>
+          <strong id="fleetExternal">0</strong>
+        </div>
+        <div class="metric-card">
+          <span>SLA prom.</span>
+          <strong id="fleetAvgSla">-</strong>
+        </div>
+      </div>
+
       <div class="toolbar">
         <div id="empFilterWrap" style="display:none; min-width: 250px;">
           <select id="empFilter">
             <option value="">-- Seleccionar Empresa --</option>
           </select>
         </div>
+        <div>
+          <input id="driverSearch" type="search" placeholder="Buscar por nombre, teléfono o email">
+        </div>
+        <div>
+          <select id="driverTypeFilter">
+            <option value="">Todos los tipos</option>
+            <option value="propio">Propios</option>
+            <option value="fletero">Fleteros</option>
+          </select>
+        </div>
+        <button id="btnClearDriverFilters" type="button" class="btn filter-action">Limpiar</button>
         </div>
 
       <div class="table-responsive">
@@ -314,7 +408,9 @@
         </table>
       </div>
     </div>
+    </section>
 
+    <section id="trackingView" class="view-panel" data-view-panel="tracking" hidden>
     <div class="card tracking-grid">
       <div class="page-header" style="margin-bottom:0; align-items:center;">
         <div>
@@ -400,6 +496,7 @@
         </table>
       </div>
     </div>
+    </section>
 
   </main>
 
@@ -537,10 +634,12 @@
     // --- State ---
     let STATE = { isSuper: false, user: null };
     let choferes = [];
+    let driverFilters = { q: '', tipo: '' };
     let saveBusy = false;
     let deleteBusy = false;
     let trackingBusy = false;
     let trackingTimer = null;
+    let activeView = 'fleet';
     let trackingMap = null;
     let trackingMarkersLayer = null;
     let trackingTrailLayer = null;
@@ -768,6 +867,29 @@
       return (items || []).filter(it => String(it.chofer_id || '') === choferSel);
     }
 
+    function setActiveView(view) {
+      activeView = view === 'tracking' ? 'tracking' : 'fleet';
+
+      document.querySelectorAll('.tab-btn[data-view]').forEach(btn => {
+        const isActive = btn.dataset.view === activeView;
+        btn.classList.toggle('active', isActive);
+        btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
+      });
+
+      document.querySelectorAll('.view-panel[data-view-panel]').forEach(panel => {
+        panel.hidden = panel.dataset.viewPanel !== activeView;
+      });
+
+      const newDriverBtn = $('#btnNuevoChofer');
+      if (newDriverBtn) newDriverBtn.style.display = activeView === 'fleet' ? '' : 'none';
+
+      if (activeView === 'tracking') {
+        initTrackingMap();
+        setTimeout(() => trackingMap && trackingMap.invalidateSize(), 120);
+        loadTracking(true);
+      }
+    }
+
     function syncTrackingChoferFilter(items = []) {
       const sel = $('#trackingChoferFilter');
       if (!sel) return;
@@ -809,6 +931,43 @@
       }).join('');
     }
 
+    function setFleetSummary(items = []) {
+      const total = items.length;
+      const propios = items.filter(c => (c.tipo || 'propio') !== 'fletero').length;
+      const fleteros = items.filter(c => c.tipo === 'fletero').length;
+      const slaValues = items
+        .map(c => Number(c.sla_horas))
+        .filter(Number.isFinite);
+      const avgSla = slaValues.length
+        ? `${Math.round(slaValues.reduce((a, b) => a + b, 0) / slaValues.length)} hs`
+        : '-';
+
+      $('#fleetTotal').textContent = String(total);
+      $('#fleetOwn').textContent = String(propios);
+      $('#fleetExternal').textContent = String(fleteros);
+      $('#fleetAvgSla').textContent = avgSla;
+    }
+
+    function getFilteredChoferes() {
+      const q = (driverFilters.q || '').trim().toLowerCase();
+      const tipo = driverFilters.tipo || '';
+
+      return choferes.filter(c => {
+        if (tipo && c.tipo !== tipo) return false;
+        if (!q) return true;
+
+        const haystack = [
+          c.nombre,
+          c.telefono,
+          c.email,
+          c.tipo,
+          c.id
+        ].map(v => String(v == null ? '' : v).toLowerCase()).join(' ');
+
+        return haystack.includes(q);
+      });
+    }
+
     // --- Logic ---
     async function load() {
       let url = '/api/choferes';
@@ -819,6 +978,7 @@
         else {
            $('#tbBody').innerHTML = `<tr><td colspan="6" style="text-align:center; padding:3rem; color:var(--muted);">Selecciona una empresa para ver sus choferes.</td></tr>`;
            choferes = [];
+           setFleetSummary([]);
            return;
         }
       }
@@ -828,21 +988,33 @@
         choferes = data;
         render();
       } else {
+        setFleetSummary([]);
         $('#tbBody').innerHTML = `<tr><td colspan="6" style="text-align:center; color:var(--danger);">Error cargando datos</td></tr>`;
       }
     }
 
     function render() {
       const tbody = $('#tbBody');
+      setFleetSummary(choferes);
+
       if (!choferes.length) {
         tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:3rem; color:var(--muted);">No hay choferes registrados.</td></tr>`;
         return;
       }
-      tbody.innerHTML = choferes.map(c => {
+
+      const rows = getFilteredChoferes();
+      if (!rows.length) {
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:3rem; color:var(--muted);">No hay choferes que coincidan con el filtro.</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = rows.map(c => {
         const tipoClass = c.tipo === 'fletero' ? 'tag-fletero' : 'tag-propio';
         const tipoLabel = c.tipo === 'fletero' ? 'Fletero' : 'Propio';
         
         const id = Number(c.id);
+        const telefono = c.telefono ? esc(c.telefono) : '<span style="color:var(--muted)">Sin teléfono</span>';
+        const email = c.email ? esc(c.email) : '<span style="color:var(--muted)">Sin email</span>';
         return `
         <tr>
           <td style="color:var(--muted); font-family:monospace;">#${id}</td>
@@ -852,7 +1024,10 @@
               <span style="font-weight:600; color:#fff;">${esc(c.nombre)}</span>
             </div>
           </td>
-          <td>${c.telefono ? esc(c.telefono) : '<span style="color:var(--muted)">-</span>'}</td>
+          <td>
+            <div>${telefono}</div>
+            <div class="muted-line">${email}</div>
+          </td>
           <td><span class="status-badge ${tipoClass}">${tipoLabel}</span></td>
           <td>${c.sla_horas ? Number(c.sla_horas) + ' hs' : '-'}</td>
           <td style="text-align:right;">
@@ -935,6 +1110,7 @@
 
     async function loadTracking(force = false) {
       if (trackingBusy) return;
+      if (activeView !== 'tracking') return;
       if (!force && !$('#trackingAuto')?.checked) return;
 
       if (STATE.isSuper && !$('#empFilter')?.value) {
@@ -1232,6 +1408,36 @@
     const btnNuevoChofer = document.getElementById('btnNuevoChofer');
     if (btnNuevoChofer) btnNuevoChofer.addEventListener('click', openModal);
 
+    document.querySelectorAll('.tab-btn[data-view]').forEach(btn => {
+      btn.addEventListener('click', () => setActiveView(btn.dataset.view));
+    });
+
+    const driverSearch = document.getElementById('driverSearch');
+    if (driverSearch) {
+      driverSearch.addEventListener('input', () => {
+        driverFilters.q = driverSearch.value || '';
+        render();
+      });
+    }
+
+    const driverTypeFilter = document.getElementById('driverTypeFilter');
+    if (driverTypeFilter) {
+      driverTypeFilter.addEventListener('change', () => {
+        driverFilters.tipo = driverTypeFilter.value || '';
+        render();
+      });
+    }
+
+    const btnClearDriverFilters = document.getElementById('btnClearDriverFilters');
+    if (btnClearDriverFilters) {
+      btnClearDriverFilters.addEventListener('click', () => {
+        driverFilters = { q: '', tipo: '' };
+        if (driverSearch) driverSearch.value = '';
+        if (driverTypeFilter) driverTypeFilter.value = '';
+        render();
+      });
+    }
+
     const btnCloseModalTop = document.getElementById('btnCloseModalTop');
     if (btnCloseModalTop) btnCloseModalTop.addEventListener('click', closeModal);
 
@@ -1395,11 +1601,8 @@
           }
         } else {
           load();
-          loadTracking(true);
         }
 
-        initTrackingMap();
-        setTimeout(() => trackingMap && trackingMap.invalidateSize(), 120);
         setupTrackingAutoRefresh();
       } catch (e) { console.error('Init error', e); }
     })();

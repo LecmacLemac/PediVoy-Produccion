@@ -482,6 +482,82 @@
     .pill i {
       font-size: 0.7rem;
     }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 0.75rem;
+    }
+
+    .metric-card {
+      background: rgba(15, 23, 42, 0.78);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1rem;
+      min-height: 96px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 0.5rem;
+    }
+
+    .metric-card .label {
+      font-size: 0.72rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      font-weight: 700;
+    }
+
+    .metric-card .value {
+      font-size: 1.45rem;
+      font-weight: 800;
+      color: #fff;
+      line-height: 1.1;
+      overflow-wrap: anywhere;
+    }
+
+    .metric-card .hint {
+      font-size: 0.78rem;
+      color: var(--muted);
+      line-height: 1.35;
+    }
+
+    .insight-panel {
+      background: rgba(6, 182, 212, 0.08);
+      border: 1px solid rgba(6, 182, 212, 0.22);
+      border-radius: 10px;
+      padding: 0.9rem 1rem;
+      color: #c6f6ff;
+      font-size: 0.88rem;
+      line-height: 1.45;
+    }
+
+    .row-note {
+      margin-top: 0.25rem;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.25rem;
+    }
+
+    @media (max-width: 900px) {
+      .summary-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 560px) {
+      .summary-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .toolbar-right,
+      .toolbar-right .input-inline,
+      .toolbar-right .btn {
+        width: 100%;
+        max-width: none;
+      }
+    }
   </style>
 </head>
 <body>
@@ -526,6 +602,33 @@
             </select>
           </div>
         </div>
+      </div>
+
+      <section class="summary-grid" aria-label="Resumen de costos">
+        <div class="metric-card">
+          <div class="label">Fijos mensuales</div>
+          <div class="value" id="metricFijosMensuales">$ 0</div>
+          <div class="hint" id="metricFijosDetalle">0 costos cargados</div>
+        </div>
+        <div class="metric-card">
+          <div class="label">Variables</div>
+          <div class="value" id="metricVariables">0</div>
+          <div class="hint" id="metricVariablesDetalle">0 activas</div>
+        </div>
+        <div class="metric-card">
+          <div class="label">Productos</div>
+          <div class="value" id="metricProductos">0</div>
+          <div class="hint" id="metricProductosDetalle">0 visibles</div>
+        </div>
+        <div class="metric-card">
+          <div class="label">Control</div>
+          <div class="value" id="metricControl">Sin datos</div>
+          <div class="hint" id="metricControlDetalle">Esperando carga</div>
+        </div>
+      </section>
+
+      <div class="insight-panel" id="costosInsight">
+        Cargando lectura de costos...
       </div>
 
       <section class="card">
@@ -618,6 +721,23 @@
               class="input-inline"
               placeholder="Buscar producto..."
             />
+            <select id="filtroVisibilidadProducto" class="input-inline" aria-label="Filtrar visibilidad">
+              <option value="todos">Todas las visibilidades</option>
+              <option value="app">App</option>
+              <option value="web">Web</option>
+              <option value="ocultos">Ocultos</option>
+              <option value="sin-precio">Sin precio</option>
+            </select>
+            <select id="ordenProductos" class="input-inline" aria-label="Ordenar productos">
+              <option value="nombre">Nombre A-Z</option>
+              <option value="precio-desc">Mayor precio</option>
+              <option value="precio-asc">Menor precio</option>
+              <option value="categoria">Categoría</option>
+            </select>
+            <button class="btn" type="button" id="btnLimpiarProductos">
+              <i class="fa-solid fa-rotate-left"></i>
+              Limpiar
+            </button>
           </div>
         </div>
 
@@ -641,6 +761,7 @@
         </div>
 
         <div class="small-text">
+          <span id="productosCount">0 productos visibles.</span>
           Al editar un producto, podrás ver sus costos específicos y las variables aplicadas por herencia (empresa/categoría).
         </div>
       </section>
@@ -923,6 +1044,11 @@
     let currentProducto = null;
     let massVarId = null; // ID variable para modal masivo
     let massVarTipo = null;
+    const PRODUCT_FILTERS = {
+      query: '',
+      visibility: 'todos',
+      order: 'nombre',
+    };
 
     // --- INIT ---
     async function init() {
@@ -948,6 +1074,49 @@
          cargarVariablesDef(),
          cargarProductos()
        ]);
+       renderResumenCostos();
+    }
+
+    function renderResumenCostos() {
+      const totalFijos = Number(STATE.totalFijosMensual || 0);
+      const fijosCount = STATE.fijos.length;
+      const variablesActivas = STATE.definiciones.filter(d => d.activo !== false).length;
+      const productosCount = STATE.productos.length;
+      const productosVisibles = STATE.productos.filter(p => p.mostrar_en_catalogo || p.mostrar_en_landing).length;
+      const sinPrecio = STATE.productos.filter(p => Number(p.precio || 0) <= 0).length;
+      const categorias = new Set(STATE.productos.map(p => String(p.categoria || '').trim()).filter(Boolean)).size;
+
+      $('#metricFijosMensuales').textContent = fmtMoney.format(totalFijos);
+      $('#metricFijosDetalle').textContent = `${fijosCount} ${fijosCount === 1 ? 'costo cargado' : 'costos cargados'}`;
+      $('#metricVariables').textContent = String(STATE.definiciones.length);
+      $('#metricVariablesDetalle').textContent = `${variablesActivas} activas`;
+      $('#metricProductos').textContent = String(productosCount);
+      $('#metricProductosDetalle').textContent = `${productosVisibles} visibles · ${categorias} categorías`;
+
+      if (!productosCount && !fijosCount && !STATE.definiciones.length) {
+        $('#metricControl').textContent = 'Sin datos';
+        $('#metricControlDetalle').textContent = 'Esperando carga';
+        $('#costosInsight').textContent = 'Todavía no hay información suficiente para analizar costos. Empezá por cargar costos fijos, variables y productos.';
+        return;
+      }
+
+      if (sinPrecio > 0) {
+        $('#metricControl').textContent = `${sinPrecio} revisar`;
+        $('#metricControlDetalle').textContent = 'Productos sin precio';
+        $('#costosInsight').textContent = `Hay ${sinPrecio} producto${sinPrecio === 1 ? '' : 's'} sin precio de venta. Conviene revisarlo antes de analizar márgenes o aplicar reglas masivas.`;
+        return;
+      }
+
+      if (!variablesActivas) {
+        $('#metricControl').textContent = 'Sin variables';
+        $('#metricControlDetalle').textContent = 'Reglas no configuradas';
+        $('#costosInsight').textContent = 'No hay variables activas. Los costos por producto pueden quedar incompletos si faltan comisiones, impuestos o cargos operativos.';
+        return;
+      }
+
+      $('#metricControl').textContent = 'Operativo';
+      $('#metricControlDetalle').textContent = 'Base lista para revisar';
+      $('#costosInsight').textContent = `La base tiene ${fijosCount} costo${fijosCount === 1 ? '' : 's'} fijo${fijosCount === 1 ? '' : 's'}, ${variablesActivas} variable${variablesActivas === 1 ? '' : 's'} activa${variablesActivas === 1 ? '' : 's'} y ${productosVisibles} producto${productosVisibles === 1 ? '' : 's'} visible${productosVisibles === 1 ? '' : 's'}.`;
     }
 
     // --- COSTOS FIJOS ---
@@ -955,7 +1124,10 @@
       let url = '/api/admin/costos/fijos';
       if (STATE.isSuper && STATE.empresaId) url += `?empresa_id=${STATE.empresaId}`;
       else if (STATE.isSuper && !STATE.empresaId) {
-         STATE.fijos = []; renderCostosFijos(); return;
+         STATE.fijos = [];
+         STATE.totalFijosMensual = 0;
+         renderCostosFijos();
+         return;
       }
 
       const data = await api(url);
@@ -966,6 +1138,7 @@
         STATE.fijos = [];
       }
       renderCostosFijos();
+      renderResumenCostos();
     }
 
     function renderCostosFijos() {
@@ -1011,6 +1184,7 @@
           STATE.definiciones = [];
        }
        renderDefiniciones();
+       renderResumenCostos();
     }
 
     function renderDefiniciones() {
@@ -1172,31 +1346,70 @@
       const data = await api(url);
       STATE.productos = Array.isArray(data) ? data : [];
       renderProductos();
+      renderResumenCostos();
     }
 
     function renderProductos() {
-      const q = $('#buscarProducto').value.toLowerCase();
+      PRODUCT_FILTERS.query = $('#buscarProducto').value.trim().toLowerCase();
+      PRODUCT_FILTERS.visibility = $('#filtroVisibilidadProducto').value;
+      PRODUCT_FILTERS.order = $('#ordenProductos').value;
+
+      const q = PRODUCT_FILTERS.query;
       const tbody = $('#tbodyVars');
-      const filtered = STATE.productos.filter(p => (p.nombre||'').toLowerCase().includes(q));
+      const filtered = STATE.productos
+        .filter(p => {
+          const hayBusqueda = [
+            p.nombre,
+            p.categoria,
+            p.descripcion,
+            p.id
+          ].some(v => String(v || '').toLowerCase().includes(q));
+          if (!hayBusqueda) return false;
+
+          const precio = Number(p.precio || 0);
+          const enApp = Boolean(p.mostrar_en_catalogo);
+          const enWeb = Boolean(p.mostrar_en_landing);
+          if (PRODUCT_FILTERS.visibility === 'app') return enApp;
+          if (PRODUCT_FILTERS.visibility === 'web') return enWeb;
+          if (PRODUCT_FILTERS.visibility === 'ocultos') return !enApp && !enWeb;
+          if (PRODUCT_FILTERS.visibility === 'sin-precio') return precio <= 0;
+          return true;
+        })
+        .sort((a, b) => {
+          if (PRODUCT_FILTERS.order === 'precio-desc') return Number(b.precio || 0) - Number(a.precio || 0);
+          if (PRODUCT_FILTERS.order === 'precio-asc') return Number(a.precio || 0) - Number(b.precio || 0);
+          if (PRODUCT_FILTERS.order === 'categoria') {
+            const cat = String(a.categoria || '').localeCompare(String(b.categoria || ''), 'es');
+            if (cat !== 0) return cat;
+          }
+          return String(a.nombre || '').localeCompare(String(b.nombre || ''), 'es');
+        });
 
       if(!filtered.length) {
          tbody.innerHTML = `<tr><td class="empty-row" colspan="5">Sin productos</td></tr>`;
+         $('#productosCount').textContent = '0 productos visibles con los filtros actuales.';
          return;
       }
       tbody.innerHTML = filtered.map(p => `
          <tr>
             <td>
-              <div style="font-weight:600;">${escapeHtml(p.nombre)}</div>
+              <div style="font-weight:600;">${escapeHtml(p.nombre || 'Sin nombre')}</div>
               <div class="small-text">ID: ${Number(p.id)}</div>
+              ${Number(p.precio || 0) <= 0 ? '<div class="row-note"><span class="pill" style="color:var(--warning); border-color:rgba(245,158,11,0.35);">Sin precio</span></div>' : ''}
             </td>
             <td>${escapeHtml(p.categoria || '-')}</td>
             <td>${fmtMoney.format(Number(p.precio || 0))}</td>
-            <td>${p.mostrar_en_catalogo ? 'App' : ''} ${p.mostrar_en_landing ? 'Web' : ''}</td>
+            <td>
+              ${p.mostrar_en_catalogo ? '<span class="pill">App</span>' : ''}
+              ${p.mostrar_en_landing ? '<span class="pill">Web</span>' : ''}
+              ${!p.mostrar_en_catalogo && !p.mostrar_en_landing ? '<span class="pill">Oculto</span>' : ''}
+            </td>
             <td class="text-right">
                <button class="btn-icon" data-action="editar-var" data-id="${Number(p.id)}"><i class="fa-solid fa-coins"></i></button>
             </td>
          </tr>
       `).join('');
+      $('#productosCount').textContent = `${filtered.length} de ${STATE.productos.length} productos visibles con los filtros actuales.`;
     }
 
     // Modal Edición Producto
@@ -1319,6 +1532,14 @@
     $('#btnGuardarDef').addEventListener('click', guardarDef);
     $('#btnGuardarMass').addEventListener('click', guardarMassRule);
     $('#buscarProducto').addEventListener('input', renderProductos);
+    $('#filtroVisibilidadProducto').addEventListener('change', renderProductos);
+    $('#ordenProductos').addEventListener('change', renderProductos);
+    $('#btnLimpiarProductos').addEventListener('click', () => {
+      $('#buscarProducto').value = '';
+      $('#filtroVisibilidadProducto').value = 'todos';
+      $('#ordenProductos').value = 'nombre';
+      renderProductos();
+    });
     $('#btnGuardarVar').addEventListener('click', guardarVar);
 
     // Delegación de eventos para acciones de filas (evita onclick inline)

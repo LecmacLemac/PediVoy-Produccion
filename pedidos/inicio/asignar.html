@@ -209,6 +209,125 @@
   /* Elementos específicos de zona.html */
   .sidebar-list { overflow-y: auto; display: flex; flex-direction: column; gap: 0.8rem; flex: 1; }
   .zona-item { background: var(--bg-2); border: 1px solid var(--border); padding: 1rem; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
+  .control-panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.5rem;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+  }
+  .form-inline {
+    display: grid;
+    grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) auto;
+    gap: 1rem;
+    align-items: end;
+  }
+  .assignment-summary {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.8rem;
+    margin-top: 1rem;
+  }
+  .metric-card {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: rgba(15, 23, 42, 0.7);
+    padding: 0.85rem 0.95rem;
+    min-height: 76px;
+  }
+  .metric-card span {
+    display: block;
+    color: var(--muted);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .metric-card strong {
+    display: block;
+    color: #fff;
+    font-size: 1.45rem;
+    line-height: 1.2;
+    margin-top: 0.25rem;
+  }
+  .filters-panel {
+    display: grid;
+    grid-template-columns: minmax(220px, 1.4fr) minmax(170px, 0.8fr) auto;
+    gap: 0.8rem;
+    align-items: end;
+  }
+  .zones-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 1rem;
+  }
+  .zone-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    min-height: 180px;
+  }
+  .zone-card.uncovered { border-color: rgba(245,158,11,0.45); }
+  .zone-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 1rem;
+    border-bottom: 1px solid var(--border);
+    background: rgba(15, 23, 42, 0.55);
+  }
+  .zone-header h3 { margin: 0; font-size: 1rem; }
+  .zone-meta { color: var(--muted); font-size: 0.76rem; margin-top: 0.25rem; }
+  .zone-body { display: flex; flex-direction: column; gap: 0.55rem; padding: 1rem; }
+  .driver-chip {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-2);
+    padding: 0.6rem 0.7rem;
+  }
+  .driver-info { display:flex; align-items:center; gap:0.5rem; min-width:0; }
+  .driver-info span:last-child { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .driver-load { color: var(--muted); font-size: 0.72rem; }
+  .driver-icon { flex-shrink: 0; }
+  .btn-remove {
+    border: 1px solid rgba(239,68,68,0.25);
+    color: var(--danger);
+    background: rgba(239,68,68,0.08);
+    border-radius: 6px;
+    width: 30px;
+    height: 30px;
+    display: grid;
+    place-items: center;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .btn-remove:hover { background: rgba(239,68,68,0.18); }
+  .badge-count {
+    min-width: 30px;
+    height: 26px;
+    border-radius: 99px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(6,182,212,0.12);
+    color: var(--brand);
+    border: 1px solid rgba(6,182,212,0.28);
+    font-weight: 800;
+  }
+  .empty-msg {
+    color: var(--warning);
+    border: 1px dashed rgba(245,158,11,0.35);
+    border-radius: 8px;
+    padding: 0.8rem;
+    text-align: center;
+    background: rgba(245,158,11,0.06);
+  }
   
   /* Elementos específicos de inicial.html */
   .step-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.5rem; display: flex; gap: 1rem; margin-bottom: 1rem; align-items: flex-start; }
@@ -221,6 +340,11 @@
   /* Leaflet Dark Override */
   .leaflet-bar { border: none !important; box-shadow: 0 4px 10px rgba(0,0,0,0.3) !important; }
   .leaflet-bar a { background-color: var(--bg-2) !important; color: #fff !important; border-bottom: 1px solid var(--border) !important; }
+  @media (max-width: 760px) {
+    .form-inline,
+    .filters-panel { grid-template-columns: 1fr; }
+    .assignment-summary { grid-template-columns: 1fr 1fr; }
+  }
 </style>
 </head>
 <body>
@@ -272,11 +396,48 @@
           <span>+ Vincular</span>
         </button>
       </div>
+
+      <div class="assignment-summary" aria-label="Resumen de asignación">
+        <div class="metric-card">
+          <span>Zonas</span>
+          <strong id="sumZones">0</strong>
+        </div>
+        <div class="metric-card">
+          <span>Cubiertas</span>
+          <strong id="sumCovered">0</strong>
+        </div>
+        <div class="metric-card">
+          <span>Sin cobertura</span>
+          <strong id="sumUncovered">0</strong>
+        </div>
+        <div class="metric-card">
+          <span>Choferes</span>
+          <strong id="sumDrivers">0</strong>
+        </div>
+      </div>
     </div>
 
     <h3 style="color:#fff; margin-bottom:1rem; display:flex; align-items:center; gap:10px;">
       Cobertura Actual <span style="font-size:0.8rem; color:var(--muted); font-weight:400;">(Choferes por zona)</span>
     </h3>
+
+    <div class="control-panel" style="padding:1rem;">
+      <div class="filters-panel">
+        <div>
+          <label for="zoneSearch">Buscar zona o chofer</label>
+          <input id="zoneSearch" type="search" placeholder="Ej: Centro, Juan, fletero">
+        </div>
+        <div>
+          <label for="coverageFilter">Cobertura</label>
+          <select id="coverageFilter">
+            <option value="">Todas</option>
+            <option value="covered">Con choferes</option>
+            <option value="uncovered">Sin cobertura</option>
+          </select>
+        </div>
+        <button id="btnClearFilters" type="button" class="btn">Limpiar</button>
+      </div>
+    </div>
     
     <div id="gridZonas" class="zones-grid">
       <div style="grid-column:1/-1; text-align:center; padding:3rem; color:var(--muted); border:1px dashed var(--border); border-radius:12px;">
@@ -327,6 +488,7 @@
     let assignments = {};
     let assignBusy = false;
     let unassignBusy = false;
+    let filters = { q: '', coverage: '' };
 
     // --- API ---
     async function api(endpoint, opts = {}) {
@@ -380,6 +542,48 @@
       renderGrid();
     }
 
+    function getDriverLoadMap() {
+      const loads = {};
+      Object.values(assignments).forEach(ids => {
+        (ids || []).forEach(id => {
+          const k = Number(id);
+          loads[k] = (loads[k] || 0) + 1;
+        });
+      });
+      return loads;
+    }
+
+    function setSummary() {
+      const covered = zones.filter(z => (assignments[z.id] || []).length > 0).length;
+      $('#sumZones').textContent = String(zones.length);
+      $('#sumCovered').textContent = String(covered);
+      $('#sumUncovered').textContent = String(Math.max(0, zones.length - covered));
+      $('#sumDrivers').textContent = String(drivers.length);
+    }
+
+    function getFilteredZones() {
+      const q = (filters.q || '').trim().toLowerCase();
+      const coverage = filters.coverage || '';
+
+      return zones.filter(z => {
+        const driverIds = assignments[z.id] || [];
+        const assignedDrivers = driverIds.map(id => drivers.find(d => d.id === id)).filter(Boolean);
+        const hasCoverage = assignedDrivers.length > 0;
+
+        if (coverage === 'covered' && !hasCoverage) return false;
+        if (coverage === 'uncovered' && hasCoverage) return false;
+        if (!q) return true;
+
+        const haystack = [
+          z.nombre,
+          z.id,
+          ...assignedDrivers.flatMap(d => [d.nombre, d.telefono, d.email, d.tipo])
+        ].map(v => String(v == null ? '' : v).toLowerCase()).join(' ');
+
+        return haystack.includes(q);
+      });
+    }
+
     function renderForm() {
       const selChofer = $('#selChofer');
       const selZona = $('#selZona');
@@ -393,12 +597,22 @@
 
     function renderGrid() {
       const grid = $('#gridZonas');
+      setSummary();
+
       if (!zones.length) {
         grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; padding:3rem; color:var(--muted);">No hay zonas configuradas.</div>';
         return;
       }
 
-      grid.innerHTML = zones.map(z => {
+      const driverLoads = getDriverLoadMap();
+      const visibleZones = getFilteredZones();
+
+      if (!visibleZones.length) {
+        grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; padding:3rem; color:var(--muted); border:1px dashed var(--border); border-radius:12px;">No hay zonas que coincidan con los filtros.</div>';
+        return;
+      }
+
+      grid.innerHTML = visibleZones.map(z => {
         const driverIds = assignments[z.id] || [];
         const assignedDrivers = driverIds.map(id => drivers.find(d => d.id === id)).filter(Boolean);
 
@@ -407,7 +621,10 @@
               <div class="driver-chip">
                 <div class="driver-info">
                   <span class="driver-icon">${d.tipo === 'fletero' ? '🚛' : '🛵'}</span>
-                  <span>${esc(d.nombre)}</span>
+                  <div style="min-width:0;">
+                    <span>${esc(d.nombre)}</span>
+                    <div class="driver-load">${driverLoads[Number(d.id)] || 0} zona(s) asignada(s)</div>
+                  </div>
                 </div>
                 <button class="btn-remove" data-action="unassign" data-zona-id="${Number(z.id)}" data-chofer-id="${Number(d.id)}" title="Desvincular">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
@@ -417,9 +634,12 @@
           : '<div class="empty-msg">Sin choferes asignados</div>';
 
         return `
-          <div class="zone-card">
+          <div class="zone-card ${assignedDrivers.length ? '' : 'uncovered'}">
             <div class="zone-header">
-              <h3>${esc(z.nombre)}</h3>
+              <div>
+                <h3>${esc(z.nombre)}</h3>
+                <div class="zone-meta">Zona #${Number(z.id)}</div>
+              </div>
               <span class="badge-count">${assignedDrivers.length}</span>
             </div>
             <div class="zone-body">
@@ -498,6 +718,32 @@
 
     const btnAssign = document.getElementById('btnAssign');
     if (btnAssign) btnAssign.addEventListener('click', assign);
+
+    const zoneSearch = document.getElementById('zoneSearch');
+    if (zoneSearch) {
+      zoneSearch.addEventListener('input', () => {
+        filters.q = zoneSearch.value || '';
+        renderGrid();
+      });
+    }
+
+    const coverageFilter = document.getElementById('coverageFilter');
+    if (coverageFilter) {
+      coverageFilter.addEventListener('change', () => {
+        filters.coverage = coverageFilter.value || '';
+        renderGrid();
+      });
+    }
+
+    const btnClearFilters = document.getElementById('btnClearFilters');
+    if (btnClearFilters) {
+      btnClearFilters.addEventListener('click', () => {
+        filters = { q: '', coverage: '' };
+        if (zoneSearch) zoneSearch.value = '';
+        if (coverageFilter) coverageFilter.value = '';
+        renderGrid();
+      });
+    }
 
     const gridZonas = document.getElementById('gridZonas');
     if (gridZonas) {

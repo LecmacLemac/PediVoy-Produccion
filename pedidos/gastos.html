@@ -79,6 +79,53 @@
     .muted { color: var(--muted); font-size: 0.85rem; }
 
     .flex-between { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 0.85rem;
+    }
+    .metric-card {
+      background: rgba(15,23,42,0.76);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0.9rem 1rem;
+      min-height: 82px;
+    }
+    .metric-card span {
+      display: block;
+      color: var(--muted);
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+    .metric-card strong {
+      display: block;
+      color: #fff;
+      font-size: 1.35rem;
+      line-height: 1.2;
+      margin-top: 0.28rem;
+    }
+    .metric-card small {
+      display: block;
+      color: var(--muted);
+      margin-top: 0.25rem;
+      font-size: 0.78rem;
+    }
+    .insight-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.55rem;
+      margin-top: 0.9rem;
+    }
+    .insight-pill {
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: rgba(15,23,42,0.74);
+      color: var(--muted);
+      padding: 0.35rem 0.7rem;
+      font-size: 0.8rem;
+    }
 
     /* FORM GRID */
     .grid-form {
@@ -172,11 +219,13 @@
       .menu { overflow-x: auto; white-space: nowrap; flex-wrap: nowrap; width: 100%; padding-bottom: 4px; }
       .flex-between { flex-direction: column; align-items: stretch; }
       .table-responsive th, .table-responsive td { padding: 0.7rem 0.75rem; font-size: 0.82rem; }
+      .summary-grid { grid-template-columns: 1fr 1fr; }
     }
     @media (max-width: 640px) {
       .grid-form { grid-template-columns: minmax(0,1fr); }
       .btn-group { flex-direction: column; }
       .btn-group > * { width: 100%; }
+      .summary-grid { grid-template-columns: 1fr; }
     }
 
     /* MODAL EDICIÓN */
@@ -256,6 +305,38 @@
   </header>
 
   <main class="container">
+    <section class="card">
+      <div class="flex-between">
+        <div>
+          <h3>📊 Resumen de gastos</h3>
+          <p class="muted">Lectura rápida según los filtros activos</p>
+        </div>
+        <button type="button" id="btnClearFilters" class="btn-secondary" style="padding:0.45rem 0.9rem; font-size:0.82rem;">Limpiar filtros</button>
+      </div>
+      <div class="summary-grid" style="margin-top:1rem;">
+        <div class="metric-card">
+          <span>Total período</span>
+          <strong id="sumTotal">$ 0</strong>
+          <small id="sumRange">-</small>
+        </div>
+        <div class="metric-card">
+          <span>Registros</span>
+          <strong id="sumCount">0</strong>
+          <small id="sumLimit">-</small>
+        </div>
+        <div class="metric-card">
+          <span>Promedio</span>
+          <strong id="sumAvg">$ 0</strong>
+          <small>por gasto listado</small>
+        </div>
+        <div class="metric-card">
+          <span>Mayor tipo</span>
+          <strong id="sumTopType">-</strong>
+          <small id="sumTopTypeAmount">-</small>
+        </div>
+      </div>
+      <div id="summaryInsights" class="insight-row"></div>
+    </section>
     
     <!-- FILTROS -->
     <section class="card">
@@ -571,6 +652,14 @@
 
     function money(n){ return Number(n||0).toLocaleString('es-AR',{style:'currency', currency:'ARS'}); }
 
+    function tipoLabel(type) {
+      if (type === 'combustible') return 'Combustible';
+      if (type === 'carga_llenos') return 'Carga llenos';
+      if (type === 'descarga_vacios') return 'Descarga vacíos';
+      if (type === 'varios') return 'Otros';
+      return type || '-';
+    }
+
     function getBadgeClass(type) {
       if(type === 'combustible') return 'bg-fuel';
       if(type === 'varios') return 'bg-misc';
@@ -812,6 +901,46 @@
       
       let label = `Total: ${money(total)}`;
       $('#totalLabel').textContent = label;
+      renderSummary(rows, total);
+    }
+
+    function renderSummary(rows = [], total = 0) {
+      const count = rows.length;
+      const avg = count ? total / count : 0;
+      const byType = new Map();
+      const byDriver = new Map();
+
+      rows.forEach(g => {
+        const amount = Number(g.monto || 0);
+        const typeKey = String(g.tipo || 'varios');
+        byType.set(typeKey, (byType.get(typeKey) || 0) + amount);
+
+        const driver = g.chofer_nombre || (g.chofer_id ? `#${g.chofer_id}` : 'Sin chofer');
+        byDriver.set(driver, (byDriver.get(driver) || 0) + amount);
+      });
+
+      const topType = Array.from(byType.entries()).sort((a, b) => b[1] - a[1])[0];
+      const topDriver = Array.from(byDriver.entries()).sort((a, b) => b[1] - a[1])[0];
+      const range = inputFrom.value && inputTo.value
+        ? `${inputFrom.value} → ${inputTo.value}`
+        : 'Rango sin completar';
+
+      $('#sumTotal').textContent = money(total);
+      $('#sumRange').textContent = range;
+      $('#sumCount').textContent = String(count);
+      $('#sumLimit').textContent = `mostrando hasta ${Number(limitFilter?.value || 50)}`;
+      $('#sumAvg').textContent = money(avg);
+      $('#sumTopType').textContent = topType ? tipoLabel(topType[0]) : '-';
+      $('#sumTopTypeAmount').textContent = topType ? money(topType[1]) : '-';
+
+      const insights = [];
+      if (topDriver && (isSuper || isUser)) insights.push(`Chofer con más gasto: ${topDriver[0]} (${money(topDriver[1])})`);
+      if (tipoFilter?.value) insights.push(`Tipo filtrado: ${tipoLabel(tipoFilter.value)}`);
+      if (qFilter?.value?.trim()) insights.push(`Búsqueda: "${qFilter.value.trim()}"`);
+      if (isSuper && empresaFilter?.value === 'orphans') insights.push('Mostrando gastos huérfanos');
+      if (!rows.length) insights.push('Sin gastos para los filtros actuales');
+
+      $('#summaryInsights').innerHTML = insights.map(txt => `<span class="insight-pill">${esc(txt)}</span>`).join('');
     }
 
     // ====== CRUD ======
@@ -1113,6 +1242,23 @@
       inputTo.value   = dateOnlyStr(new Date()); 
       loadGastos(); 
     };
+
+    const btnClearFilters = $('#btnClearFilters');
+    if (btnClearFilters) {
+      btnClearFilters.addEventListener('click', async () => {
+        const now = new Date();
+        inputTo.value = dateOnlyStr(now);
+        inputFrom.value = dateOnlyStr(new Date(now.getTime() - 30*24*60*60*1000));
+        if (empresaFilter) empresaFilter.value = '';
+        if (choferFilter) choferFilter.value = '';
+        if (tipoFilter) tipoFilter.value = '';
+        if (qFilter) qFilter.value = '';
+        if (limitFilter) limitFilter.value = '50';
+        if (isSuper) await loadChoferes('');
+        await loadDepositosCreate();
+        loadGastos();
+      });
+    }
     
     empresaFilter.addEventListener('change', async () => {
         await loadChoferes(empresaFilter.value);

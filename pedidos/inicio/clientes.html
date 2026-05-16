@@ -235,6 +235,14 @@
   .badge-admin, .badge-user, .tag-propio, .st-active { background: rgba(16,185,129,0.15); color: #34d399; }
   .badge-repartidor, .tag-promo { background: rgba(59,130,246,0.15); color: #60a5fa; }
   .badge-super, .tag-fletero, .st-inactive { background: rgba(245,158,11,0.15); color: #fbbf24; }
+  .check-card {
+    display:flex; align-items:flex-start; gap:0.75rem; padding:0.85rem;
+    border:1px solid rgba(245,158,11,0.28); border-radius:10px;
+    background:rgba(245,158,11,0.08);
+  }
+  .check-card input { width:auto; margin-top:0.2rem; }
+  .check-card strong { display:block; color:#fff; font-size:0.92rem; }
+  .check-card small { display:block; color:var(--muted); margin-top:0.2rem; line-height:1.35; }
   .driver-info {
     margin-top:0.5rem; padding:0.45rem 0.6rem; border-radius:8px;
     background:rgba(16,185,129,0.12); border:1px solid rgba(16,185,129,0.22);
@@ -350,6 +358,8 @@
           <option value="sin_zona">Sin zona</option>
           <option value="sin_ubicacion">Sin ubicación</option>
           <option value="sin_telefono">Sin teléfono</option>
+          <option value="cta_cte">Con cuenta corriente</option>
+          <option value="requiere_factura">Requiere factura</option>
         </select>
       </div>
 
@@ -370,12 +380,14 @@
               <th>Teléfono</th>
               <th>Dirección</th>
               <th>Zona</th>
+              <th>Cta. Cte.</th>
+              <th>Facturación</th>
               <th>Ubicación</th>
               <th style="text-align:right;">Acciones</th>
             </tr>
           </thead>
           <tbody id="tbBody">
-            <tr><td colspan="6" style="text-align:center; padding:3rem; color:var(--muted);">Cargando directorio...</td></tr>
+            <tr><td colspan="8" style="text-align:center; padding:3rem; color:var(--muted);">Cargando directorio...</td></tr>
           </tbody>
         </table>
       </div>
@@ -451,6 +463,54 @@
             <button type="button" id="btnGeocodeAddress" class="btn">Ubicar por dirección</button>
             <button type="button" id="btnApplyLatLng" class="btn">Actualizar pin</button>
             <span id="geoStatus">Sin ubicación seleccionada</span>
+          </div>
+        </div>
+
+        <div>
+          <label>Condición de cobro</label>
+          <label class="check-card" for="c_cuenta_corriente">
+            <input type="checkbox" id="c_cuenta_corriente">
+            <span>
+              <strong>Habilitar cuenta corriente</strong>
+              <small>Si está activo, el repartidor podrá marcar pedidos de este cliente como Cta. Cte. No cuenta como efectivo a rendir.</small>
+            </span>
+          </label>
+        </div>
+
+        <div>
+          <label>Facturación</label>
+          <label class="check-card" for="c_requiere_factura">
+            <input type="checkbox" id="c_requiere_factura">
+            <span>
+              <strong>Requiere factura</strong>
+              <small>Si está activo, los pedidos de este cliente aparecen en el panel de facturación.</small>
+            </span>
+          </label>
+        </div>
+
+        <div class="form-grid" id="fiscalFields">
+          <div>
+            <label>Razón social fiscal</label>
+            <input type="text" id="c_razon_social" placeholder="Nombre fiscal para factura">
+          </div>
+          <div>
+            <label>CUIT</label>
+            <input type="text" id="c_cuit" placeholder="20-00000000-0">
+          </div>
+          <div>
+            <label>Condición IVA</label>
+            <select id="c_condicion_iva">
+              <option value="">Sin definir</option>
+              <option value="Consumidor Final">Consumidor Final</option>
+              <option value="Responsable Inscripto">Responsable Inscripto</option>
+              <option value="Responsable Monotributo">Responsable Monotributo</option>
+              <option value="IVA Sujeto Exento">IVA Sujeto Exento</option>
+              <option value="IVA No Alcanzado">IVA No Alcanzado</option>
+            </select>
+          </div>
+          <div>
+            <label>Email facturación</label>
+            <input type="email" id="c_email_facturacion" placeholder="facturacion@cliente.com">
           </div>
         </div>
 
@@ -543,10 +603,16 @@
       setTimeout(() => t.classList.remove('show'), 3000);
     }
 
+    const isCtaCteEnabled = (value) => {
+      if (value === true || value === 1) return true;
+      return ['true', '1', 'si', 'sí', 's', 'yes'].includes(String(value || '').trim().toLowerCase());
+    };
+    const isTruthy = isCtaCteEnabled;
+
     // Modo seguro: auth por cookie httpOnly
     const authFetch = (url, opts = {}) => {
       const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
-      return fetch(url, { ...opts, headers, credentials: 'include' });
+      return fetch(url, { cache: 'no-store', ...opts, headers, credentials: 'include' });
     };
 
     // --- Logout ---
@@ -593,7 +659,7 @@
              urlZones += q;
           } else {
              clients = []; zones = [];
-             $('#tbBody').innerHTML = `<tr><td colspan="6" style="text-align:center; padding:3rem; color:var(--muted);">Selecciona una empresa para ver clientes.</td></tr>`;
+             $('#tbBody').innerHTML = `<tr><td colspan="8" style="text-align:center; padding:3rem; color:var(--muted);">Selecciona una empresa para ver clientes.</td></tr>`;
              renderStats([]);
              renderZoneFilter([]);
              return;
@@ -622,19 +688,23 @@
           (c.cliente||'').toLowerCase().includes(q) ||
           (c.telefono||'').includes(q) ||
           (c.direccion||'').toLowerCase().includes(q) ||
-          (c.ciudad||'').toLowerCase().includes(q);
+          (c.ciudad||'').toLowerCase().includes(q) ||
+          (c.razon_social||'').toLowerCase().includes(q) ||
+          (c.cuit||'').toLowerCase().includes(q);
         const matchesZone = !zoneFilter || String(c.zona_id || '') === zoneFilter;
         const matchesStatus =
           !statusFilter ||
           (statusFilter === 'sin_zona' && !c.zona_id) ||
           (statusFilter === 'sin_ubicacion' && (!c.latitud || !c.longitud)) ||
-          (statusFilter === 'sin_telefono' && !String(c.telefono || '').trim());
+          (statusFilter === 'sin_telefono' && !String(c.telefono || '').trim()) ||
+          (statusFilter === 'cta_cte' && isCtaCteEnabled(c.cuenta_corriente_habilitada)) ||
+          (statusFilter === 'requiere_factura' && isTruthy(c.requiere_factura));
         return matchesSearch && matchesZone && matchesStatus;
       });
 
       const tbody = $('#tbBody');
       if (!filtered.length) {
-        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:3rem; color:var(--muted);">No se encontraron clientes con esos filtros.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding:3rem; color:var(--muted);">No se encontraron clientes con esos filtros.</td></tr>`;
         renderStats(filtered);
         return;
       }
@@ -645,6 +715,8 @@
         const hasGeo = Boolean(c.latitud && c.longitud);
         const locationLabel = hasGeo ? 'Con pin' : 'Sin pin';
         const cityLine = [c.ciudad, c.provincia].filter(Boolean).join(', ');
+        const ctaCte = isCtaCteEnabled(c.cuenta_corriente_habilitada);
+        const requiereFactura = isTruthy(c.requiere_factura);
         return `
         <tr>
           <td>
@@ -656,6 +728,8 @@
           <td>${c.telefono ? esc(c.telefono) : '<span style="color:var(--muted)">-</span>'}</td>
           <td style="color:var(--muted); font-size:0.9rem;">${esc(c.direccion || '-')}</td>
           <td><span class="tag-zona ${zone ? '' : 'empty'}">${esc(zoneName)}</span></td>
+          <td>${ctaCte ? '<span class="badge badge-super">Cta. Cte.</span>' : '<span style="color:var(--muted)">-</span>'}</td>
+          <td>${requiereFactura ? '<span class="badge badge-admin">Factura</span>' : '<span style="color:var(--muted)">-</span>'}</td>
           <td><span class="geo-state ${hasGeo ? 'ok' : ''}">${hasGeo ? '●' : '○'} ${locationLabel}</span></td>
           <td style="text-align:right;">
             <button class="btn-icon" data-action="edit" data-id="${Number(c.id)}" title="Editar">✏️</button>
@@ -670,9 +744,11 @@
       const total = clients.length;
       const sinZona = clients.filter(c => !c.zona_id).length;
       const sinUbicacion = clients.filter(c => !c.latitud || !c.longitud).length;
+      const conCtaCte = clients.filter(c => isCtaCteEnabled(c.cuenta_corriente_habilitada)).length;
+      const conFactura = clients.filter(c => isTruthy(c.requiere_factura)).length;
       const visible = Array.isArray(filtered) ? filtered.length : total;
       const info = $('#tableInfo');
-      if (info) info.textContent = total ? `${visible} de ${total} clientes visibles` : 'Sin clientes cargados';
+      if (info) info.textContent = total ? `${visible} de ${total} clientes visibles · ${conCtaCte} con Cta. Cte. · ${conFactura} requieren factura` : 'Sin clientes cargados';
       if ($('#statTotal')) $('#statTotal').textContent = total;
       if ($('#statSinZona')) $('#statSinZona').textContent = sinZona;
       if ($('#statSinUbicacion')) $('#statSinUbicacion').textContent = sinUbicacion;
@@ -912,6 +988,7 @@
       $('#formClient').reset();
       $('#c_id').value = '';
       $('#btnDelete').style.display = 'none';
+      $('#c_condicion_iva').value = '';
       $('#zoneDriverInfo').textContent = 'Sin zona seleccionada';
       $('#zoneDriverInfo').className = 'driver-info empty';
       const gs = document.getElementById('geoStatus');
@@ -943,6 +1020,12 @@
       $('#c_latitud').value = c.latitud || '';
       $('#c_longitud').value = c.longitud || '';
       $('#c_notas').value = c.notas || '';
+      $('#c_cuenta_corriente').checked = isCtaCteEnabled(c.cuenta_corriente_habilitada);
+      $('#c_requiere_factura').checked = isTruthy(c.requiere_factura);
+      $('#c_razon_social').value = c.razon_social || '';
+      $('#c_cuit').value = c.cuit || '';
+      $('#c_condicion_iva').value = c.condicion_iva || '';
+      $('#c_email_facturacion').value = c.email_facturacion || '';
       
       if (STATE.isSuper) {
           $('#c_empresa_id').value = c.empresa_id;
@@ -969,7 +1052,13 @@
         latitud: $('#c_latitud').value,
         longitud: $('#c_longitud').value,
         notas: $('#c_notas').value,
-        zona_id: $('#c_zona').value
+        zona_id: $('#c_zona').value,
+        cuenta_corriente_habilitada: $('#c_cuenta_corriente').checked,
+        requiere_factura: $('#c_requiere_factura').checked,
+        razon_social: $('#c_razon_social').value,
+        cuit: $('#c_cuit').value,
+        condicion_iva: $('#c_condicion_iva').value,
+        email_facturacion: $('#c_email_facturacion').value
       };
 
       if (!body.cliente) return toast('Nombre requerido');
@@ -997,8 +1086,12 @@
         if (res.error) toast('❌ ' + res.error);
         else {
           toast(id ? '✅ Actualizado' : '✅ Creado');
+          if (res.cliente?.id) {
+            clients = clients.map(c => Number(c.id) === Number(res.cliente.id) ? { ...c, ...res.cliente } : c);
+            renderList();
+          }
           closeModal();
-          load();
+          await load();
         }
       } finally {
         saveBusy = false;
@@ -1082,7 +1175,7 @@
           }
 
           // Mapear columnas a objeto (Asegúrate que coincida con tu orden de exportación)
-          // Orden Export: NOMBRE;TELEFONO;ZONA;REPARTIDOR;DIRECCION;CIUDAD;PROVINCIA;LAT;LNG;NOTAS
+          // Orden Export: NOMBRE;TELEFONO;ZONA;REPARTIDOR;DIRECCION;CIUDAD;PROVINCIA;LAT;LNG;CTA_CTE;NOTAS
           const rawZone = (cols[2] || '').trim().toUpperCase();
           const zoneId = zoneMap[rawZone] || null; // Convertir Nombre a ID
           if (rawZone && !zoneId && rawZone !== 'SIN ZONA') {
@@ -1099,7 +1192,8 @@
             provincia: cleanCell(cols[6]),
             latitud: parseFloat(cols[7]) || null,
             longitud: parseFloat(cols[8]) || null,
-            notas: cleanCell(cols[9])
+            cuenta_corriente_habilitada: parseBool(cols[9]),
+            notas: cleanCell(cols[10] != null ? cols[10] : cols[9])
           };
           
           if (STATE.isSuper) {
@@ -1155,6 +1249,11 @@
       }
       out.push(cur);
       return out;
+    }
+
+    function parseBool(value) {
+      const v = String(value || '').trim().toLowerCase();
+      return ['1', 'true', 'si', 'sí', 's', 'yes', 'cta', 'cta cte', 'cuenta corriente'].includes(v);
     }
 
     function showImportSummary() {
@@ -1381,7 +1480,7 @@
         }
 
         // 3. Generar contenido
-        let content = "NOMBRE / RAZON SOCIAL;TELEFONO;ZONA DE REPARTO;REPARTIDOR ASIGNADO;DIRECCION;CIUDAD;PROVINCIA;LATITUD;LONGITUD;NOTAS INTERNAS\n";
+        let content = "NOMBRE / RAZON SOCIAL;TELEFONO;ZONA DE REPARTO;REPARTIDOR ASIGNADO;DIRECCION;CIUDAD;PROVINCIA;LATITUD;LONGITUD;CTA_CTE;NOTAS INTERNAS\n";
         
         // Helper para limpiar texto (quitar ; y saltos de línea)
         const clean = (txt) => String(txt || '').replace(/(\r\n|\n|\r)/g, ' ').trim();
@@ -1406,6 +1505,7 @@
             csvCell(c.provincia),
             c.latitud || '',
             c.longitud || '',
+            isCtaCteEnabled(c.cuenta_corriente_habilitada) ? 'SI' : 'NO',
             csvCell(c.notas)
           ].join(';');
 

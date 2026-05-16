@@ -66,6 +66,7 @@
               <option value="">Todos</option>
               <option value="efectivo">Efectivo</option>
               <option value="transferencia">Transferencia</option>
+              <option value="cuenta_corriente">Cta. Cte.</option>
             </select>
           </label>
           <label>Desde
@@ -167,12 +168,14 @@
       if (!m) return '-';
       if (m.startsWith('trans')) return 'Transferencia';
       if (m.startsWith('efect')) return 'Efectivo';
+      if (m === 'cuenta_corriente' || m.startsWith('cta')) return 'Cta. Cte.';
       return m.charAt(0).toUpperCase() + m.slice(1);
     };
     const normalizePago = (mp) => {
       const m = String(mp||'').toLowerCase();
       if (m.startsWith('trans')) return 'transferencia';
       if (m.startsWith('efect')) return 'efectivo';
+      if (m === 'cuenta_corriente' || m.startsWith('cta')) return 'cuenta_corriente';
       return m || '';
     };
 

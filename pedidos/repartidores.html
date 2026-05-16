@@ -141,6 +141,43 @@
     
     /* Global Panel Styles */
     .global-panel { background: rgba(15, 23, 42, 0.4); border: 1px dashed var(--border); padding: 1rem; border-radius: 8px; margin-bottom: 1rem; }
+    .ops-summary {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 0.8rem;
+      margin-top: 1rem;
+    }
+    .metric-card {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: rgba(15, 23, 42, 0.65);
+      padding: 0.85rem 0.95rem;
+      min-height: 76px;
+    }
+    .metric-card span {
+      display: block;
+      color: var(--muted);
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .metric-card strong {
+      display: block;
+      color: #fff;
+      font-size: 1.45rem;
+      line-height: 1.2;
+      margin-top: 0.25rem;
+    }
+    .filters-bar {
+      display: grid;
+      grid-template-columns: minmax(220px, 1.5fr) minmax(150px, 0.8fr) minmax(170px, 1fr) auto;
+      gap: 0.8rem;
+      align-items: end;
+      margin-top: 1.1rem;
+    }
+    .filters-bar .btn { min-height: 39px; }
+    .muted-line { color: var(--muted); font-size: 0.78rem; margin-top: 2px; }
     
     /* Custom Scrollbar for details */
     details summary { cursor: pointer; color: var(--brand); font-weight: 600; outline: none; list-style: none; }
@@ -158,6 +195,8 @@
       #rowFiltroEmp select, #rowFiltroEmp button { width: 100%; }
       .modal-footer { flex-direction: column-reverse; }
       .modal-footer .btn { width: 100%; }
+      .ops-summary { grid-template-columns: 1fr 1fr; }
+      .filters-bar { grid-template-columns: 1fr; }
     }
 
   </style>
@@ -199,6 +238,57 @@
             <button id="btnRef" class="btn btn-secondary btn-sm" title="Refrescar">↻</button>
           </div>
         </div>
+      </div>
+
+      <div class="ops-summary" aria-label="Resumen operativo de repartidores">
+        <div class="metric-card">
+          <span>Total</span>
+          <strong id="sumTotal">0</strong>
+        </div>
+        <div class="metric-card">
+          <span>Propios</span>
+          <strong id="sumPropios">0</strong>
+        </div>
+        <div class="metric-card">
+          <span>Fleteros</span>
+          <strong id="sumFleteros">0</strong>
+        </div>
+        <div class="metric-card">
+          <span>Sin zonas</span>
+          <strong id="sumSinZonas">0</strong>
+        </div>
+      </div>
+
+      <div class="filters-bar">
+        <div>
+          <label>Buscar</label>
+          <input id="searchRepartidor" type="search" placeholder="Nombre, teléfono o email">
+        </div>
+        <div>
+          <label>Tipo</label>
+          <select id="typeFilter">
+            <option value="">Todos</option>
+            <option value="propio">Propios</option>
+            <option value="fletero">Fleteros</option>
+          </select>
+        </div>
+        <div>
+          <label>Zona</label>
+          <select id="zoneFilter">
+            <option value="">Todas las zonas</option>
+            <option value="__none">Sin zonas</option>
+          </select>
+        </div>
+        <div>
+          <label>Ordenar</label>
+          <select id="sortFilter">
+            <option value="name">Nombre A-Z</option>
+            <option value="zones_desc">Más zonas</option>
+            <option value="zones_asc">Menos zonas</option>
+            <option value="type">Tipo</option>
+          </select>
+        </div>
+        <button id="btnClearFilters" type="button" class="btn btn-secondary">Limpiar</button>
       </div>
     </section>
 
@@ -454,6 +544,7 @@
     let costosState = { chofer_id: 0, costos: [] };
     let escalasState = { chofer_id: 0, list: [] };
     let createBusy = false;
+    let repartidorFilters = { q: '', tipo: '', zona: '', sort: 'name' };
     const updateBusy = new Set();
     const deleteBusy = new Set();
 
@@ -545,8 +636,70 @@
       `).join('');
     }
 
+    function setSummary(list = choferesCache) {
+      const total = list.length;
+      const propios = list.filter(c => (c.tipo || 'propio') !== 'fletero').length;
+      const fleteros = list.filter(c => c.tipo === 'fletero').length;
+      const sinZonas = list.filter(c => !(mapaChoferZonas[Number(c.id)] || []).length).length;
+
+      $('#sumTotal').textContent = String(total);
+      $('#sumPropios').textContent = String(propios);
+      $('#sumFleteros').textContent = String(fleteros);
+      $('#sumSinZonas').textContent = String(sinZonas);
+    }
+
+    function syncZoneFilter() {
+      const sel = $('#zoneFilter');
+      if (!sel) return;
+      const prev = sel.value || '';
+      const opts = zonasCache.map(z => `<option value="${Number(z.id)}">${esc(z.nombre)}</option>`).join('');
+      sel.innerHTML = '<option value="">Todas las zonas</option><option value="__none">Sin zonas</option>' + opts;
+      if (prev && (prev === '__none' || zonasCache.some(z => String(z.id) === prev))) sel.value = prev;
+    }
+
+    function getFilteredRepartidores(list = choferesCache) {
+      const q = (repartidorFilters.q || '').trim().toLowerCase();
+      const tipo = repartidorFilters.tipo || '';
+      const zona = repartidorFilters.zona || '';
+      const sort = repartidorFilters.sort || 'name';
+
+      const filtered = (list || []).filter(c => {
+        const id = Number(c.id);
+        if (tipo && c.tipo !== tipo) return false;
+
+        const zonas = mapaChoferZonas[id] || [];
+        if (zona === '__none' && zonas.length) return false;
+        if (zona && zona !== '__none' && !zonas.some(z => String(z.id) === zona)) return false;
+
+        if (!q) return true;
+        const haystack = [
+          c.id,
+          c.nombre,
+          c.telefono,
+          c.email,
+          c.tipo,
+          ...zonas.map(z => z.nombre)
+        ].map(v => String(v == null ? '' : v).toLowerCase()).join(' ');
+
+        return haystack.includes(q);
+      });
+
+      return filtered.sort((a, b) => {
+        const za = (mapaChoferZonas[Number(a.id)] || []).length;
+        const zb = (mapaChoferZonas[Number(b.id)] || []).length;
+        if (sort === 'zones_desc') return zb - za || String(a.nombre || '').localeCompare(String(b.nombre || ''));
+        if (sort === 'zones_asc') return za - zb || String(a.nombre || '').localeCompare(String(b.nombre || ''));
+        if (sort === 'type') return String(a.tipo || '').localeCompare(String(b.tipo || '')) || String(a.nombre || '').localeCompare(String(b.nombre || ''));
+        return String(a.nombre || '').localeCompare(String(b.nombre || ''));
+      });
+    }
+
     function render(list) {
-      const rows = (list || []).map(c => `
+      setSummary(choferesCache);
+      syncZoneFilter();
+
+      const filtered = getFilteredRepartidores(list);
+      const rows = filtered.map(c => `
         <tr>
           <td class="text-muted">#${Number(c.id)}</td>
           <td>
@@ -554,11 +707,13 @@
           </td>
           <td>
             <input id="t_${Number(c.id)}" type="tel" value="${esc(c.telefono || '')}" placeholder="Teléfono"/>
+            <div class="muted-line">${c.email ? esc(c.email) : 'Sin email'}</div>
           </td>
           <td>
             <div class="chips" id="chips_${Number(c.id)}">
               ${renderChips(Number(c.id))}
             </div>
+            <div class="muted-line">${(mapaChoferZonas[Number(c.id)] || []).length} zona(s)</div>
           </td>
           <td>
             <div style="display:flex; gap:0.5rem">
@@ -586,7 +741,10 @@
         </tr>
       `).join('');
       
-      $('#rows').innerHTML = rows.length ? rows : '<tr><td colspan="7" style="text-align:center; padding:2rem; color:var(--muted)">No hay choferes registrados.</td></tr>';
+      const emptyMsg = choferesCache.length
+        ? 'No hay repartidores que coincidan con los filtros.'
+        : 'No hay choferes registrados.';
+      $('#rows').innerHTML = rows.length ? rows : `<tr><td colspan="7" style="text-align:center; padding:2rem; color:var(--muted)">${emptyMsg}</td></tr>`;
     }
 
     // ====== ACTIONS ======
@@ -687,7 +845,7 @@
                  mapaChoferZonas[chofer_id].push({ id: z.id, nombre: z.nombre });
              }
         }
-        $(`#chips_${chofer_id}`).innerHTML = renderChips(chofer_id);
+        render(choferesCache);
       } catch (e) { alert(e.message); }
     }
 
@@ -695,7 +853,7 @@
       try {
         await api('/api/desasignarChofer' + currentEmpresaQS(), { method: 'DELETE', body: { chofer_id, zona_id } });
         mapaChoferZonas[chofer_id] = (mapaChoferZonas[chofer_id]||[]).filter(z => z.id !== zona_id);
-        $(`#chips_${chofer_id}`).innerHTML = renderChips(chofer_id);
+        render(choferesCache);
       } catch (e) { alert(e.message); }
     }
 
@@ -966,6 +1124,30 @@
     };
     $('#uCreate').onchange = (e) => $('#uWrap').hidden = !e.target.checked;
     $('#fNuevo').addEventListener('submit', onCreate);
+    $('#searchRepartidor').addEventListener('input', (e) => {
+      repartidorFilters.q = e.target.value || '';
+      render(choferesCache);
+    });
+    $('#typeFilter').addEventListener('change', (e) => {
+      repartidorFilters.tipo = e.target.value || '';
+      render(choferesCache);
+    });
+    $('#zoneFilter').addEventListener('change', (e) => {
+      repartidorFilters.zona = e.target.value || '';
+      render(choferesCache);
+    });
+    $('#sortFilter').addEventListener('change', (e) => {
+      repartidorFilters.sort = e.target.value || 'name';
+      render(choferesCache);
+    });
+    $('#btnClearFilters').addEventListener('click', () => {
+      repartidorFilters = { q: '', tipo: '', zona: '', sort: 'name' };
+      $('#searchRepartidor').value = '';
+      $('#typeFilter').value = '';
+      $('#zoneFilter').value = '';
+      $('#sortFilter').value = 'name';
+      render(choferesCache);
+    });
 
     (async () => {
       try {

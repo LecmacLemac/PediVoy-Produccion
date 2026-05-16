@@ -482,13 +482,17 @@ async function calcResumen(){
 
   const list = pedidos.filter(p => { const fDb = p.fecha_entrega || p.fecha; return isoToLocalYMD(fDb) === d && p.estado === 'entregado'; });
 
-  let cash = 0, transf = 0, artsV = 0;
-  let cntCash = 0, cntTransf = 0;
+  let cash = 0, transf = 0, ctaCte = 0, artsV = 0;
+  let cntCash = 0, cntTransf = 0, cntCtaCte = 0;
 
   list.forEach(p => { 
-    if ((p.metodo_pago || '').toLowerCase().includes('trans')) {
+    const metodo = (p.metodo_pago || '').toLowerCase();
+    if (metodo.includes('trans')) {
         transf += Number(p.monto);
         cntTransf++;
+    } else if (metodo === 'cuenta_corriente' || metodo.startsWith('cta')) {
+        ctaCte += Number(p.monto);
+        cntCtaCte++;
     } else {
         cash += Number(p.monto); 
         cntCash++;
@@ -543,6 +547,7 @@ async function calcResumen(){
   $('#rEnt').textContent = list.length; 
   $('#rCash').textContent = money(cash);
   $('#rTrans').textContent = money(transf); 
+  $('#rCtaCte').textContent = money(ctaCte);
   $('#rGastos').textContent = money(gas);
   $('#rRendir').textContent = money(aRendir);
 
@@ -553,8 +558,9 @@ async function calcResumen(){
 • Entregados: ${list.length}
 • Efectivo: ${cntCash} ped. (${money(cash)})
 • Transf.:  ${cntTransf} ped. (${money(transf)})
+• Cta. Cte.: ${cntCtaCte} ped. (${money(ctaCte)})
 ----------------
-📈 *Venta Total:* ${money(cash + transf)}
+📈 *Venta Total:* ${money(cash + transf + ctaCte)}
 
 🧾 *MERCADERÍA*
 🔢 Tot. Artículos: ${artsV} u.
@@ -562,6 +568,7 @@ ${detalleArt}
 
 💸 *MOVIMIENTOS DE CAJA*
 + Ingreso Efvo: ${money(cash)}
+- Cta. Cte. no rendida: ${money(ctaCte)}
 - Gastos/Compras: ${money(gas)}
 - Retiro/Comisión: ${money(pagoChofer)}
 ================
@@ -694,4 +701,3 @@ async function togglePagoRepartidor(pedidoId, checkbox) {
     checkbox.disabled = false;
   }
 }
-

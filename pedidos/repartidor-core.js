@@ -173,6 +173,7 @@ async function withLock(key, fn) {
 let pagosCanales = {
   efectivo: true,
   transferencia: true,
+  cuenta_corriente: true,
   qr_dinamico: false,
 };
 let preferidoPago = null;
@@ -308,6 +309,7 @@ async function bootRepartidorPanel() {
       pagosCanales = {
         efectivo: canales.efectivo !== false,
         transferencia: canales.transferencia !== false,
+        cuenta_corriente: canales.cuenta_corriente !== false,
         qr_dinamico: !!canales.qr_dinamico,
       };
       preferidoPago = pagos.preferido || null;

@@ -137,6 +137,37 @@
     }
     .stat-label { color: var(--muted); font-size: 0.75rem; text-transform: uppercase; margin-bottom: 8px; font-weight: 600; }
     .stat-val { font-size: 1.4rem; font-weight: bold; color: #fff; }
+    .license-banner {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: rgba(15, 23, 42, 0.72);
+      padding: 1rem;
+      margin-top: 1.2rem;
+      display: grid;
+      gap: 0.7rem;
+    }
+    .license-banner.success { border-color: rgba(16,185,129,0.35); background: rgba(16,185,129,0.08); }
+    .license-banner.warning { border-color: rgba(245,158,11,0.4); background: rgba(245,158,11,0.08); }
+    .license-banner.danger { border-color: rgba(239,68,68,0.4); background: rgba(239,68,68,0.08); }
+    .license-banner-title { display:flex; justify-content:space-between; align-items:center; gap:1rem; flex-wrap:wrap; }
+    .license-banner-title strong { color:#fff; font-size:1rem; }
+    .license-banner-title span { color:var(--muted); font-size:0.86rem; }
+    .license-meter {
+      height: 9px;
+      border-radius: 99px;
+      overflow: hidden;
+      background: rgba(255,255,255,0.08);
+      border: 1px solid var(--border);
+    }
+    .license-meter-fill {
+      height: 100%;
+      width: 0;
+      background: var(--success);
+      transition: width 0.2s ease;
+    }
+    .license-banner.warning .license-meter-fill { background: var(--warning); }
+    .license-banner.danger .license-meter-fill { background: var(--danger); }
+    .hint-line { color: var(--muted); font-size: 0.86rem; line-height: 1.45; }
     
     /* Badges */
     .badge { padding: 4px 10px; border-radius: 6px; font-size: 0.85rem; font-weight: 700; display: inline-block; }
@@ -149,6 +180,7 @@
       margin-top: 1rem; padding-top: 1.5rem; 
       display: flex; gap: 10px; flex-wrap: wrap;
     }
+    .selection-grid { display:grid; grid-template-columns: 1fr 1fr; gap:1rem; align-items:end; }
 
     /* Payment Zone (For User) */
     .payment-zone {
@@ -179,6 +211,9 @@
     .success-modal.show .success-card { transform: scale(1); }
     
     .check-icon { font-size: 4rem; color: var(--success); margin-bottom: 1rem; display: block; }
+    @media (max-width: 760px) {
+      .selection-grid { grid-template-columns: 1fr; }
+    }
   </style>
 </head>
 <body>
@@ -209,16 +244,35 @@
     </div>
 
     <div id="selectionCard" class="card hidden">
-      <label for="empresaSelect">🔍 Auditar Empresa (Super Admin)</label>
-      <select id="empresaSelect">
-        <option value="">-- Cargando lista... --</option>
-      </select>
+      <div class="selection-grid">
+        <div>
+          <label for="empresaSearch">Buscar empresa</label>
+          <input id="empresaSearch" type="search" placeholder="Nombre o ID">
+        </div>
+        <div>
+          <label for="empresaSelect">🔍 Auditar Empresa (Super Admin)</label>
+          <select id="empresaSelect">
+            <option value="">-- Cargando lista... --</option>
+          </select>
+        </div>
+      </div>
     </div>
 
     <div id="licensePanel" class="card hidden">
       <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
         <h2 style="margin:0; font-size:1.4rem; color:#fff;" id="empNombre">Cargando...</h2>
         <span id="empId" style="background:var(--bg-2); padding:4px 10px; border-radius:6px; color:var(--muted); font-size:0.85rem; border:1px solid var(--border);">ID: -</span>
+      </div>
+
+      <div id="licenseBanner" class="license-banner">
+        <div class="license-banner-title">
+          <strong id="licenseHeadline">Estado de licencia</strong>
+          <span id="licenseHint">Cargando...</span>
+        </div>
+        <div class="license-meter" aria-label="Vigencia de licencia">
+          <div id="licenseMeterFill" class="license-meter-fill"></div>
+        </div>
+        <div id="licenseRecommendation" class="hint-line"></div>
       </div>
 
       <div class="stats-grid">
@@ -342,6 +396,7 @@
     let empresaDataGlobal = null; // 🔍 NUEVO: Para guardar datos para el update optimista
     let priceBusy = false;
     let licenseBusy = false;
+    let empresaSearchTerm = '';
 
     const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
       '&': '&amp;',
@@ -515,15 +570,31 @@
         empresasList = await res.json();
         empresasList.sort((a,b) => b.id - a.id);
 
-        select.innerHTML = '<option value="">-- Selecciona una empresa --</option>';
-        empresasList.forEach(emp => {
-          const opt = document.createElement('option');
-          opt.value = emp.id;
-          opt.textContent = `ID ${emp.id} | ${emp.nombre}`;
-          select.appendChild(opt);
-        });
+        renderEmpresaOptions();
       } catch (e) {
         select.innerHTML = '<option>Error al cargar datos</option>';
+      }
+    }
+
+    function renderEmpresaOptions() {
+      const select = document.getElementById('empresaSelect');
+      const q = empresaSearchTerm.trim().toLowerCase();
+      const selected = select.value;
+      const list = empresasList.filter(emp => {
+        if (!q) return true;
+        return `${emp.id} ${emp.nombre || ''}`.toLowerCase().includes(q);
+      });
+
+      select.innerHTML = '<option value="">-- Selecciona una empresa --</option>';
+      list.forEach(emp => {
+        const opt = document.createElement('option');
+        opt.value = emp.id;
+        opt.textContent = `ID ${emp.id} | ${emp.nombre}`;
+        select.appendChild(opt);
+      });
+
+      if (selected && list.some(emp => String(emp.id) === String(selected))) {
+        select.value = selected;
       }
     }
 
@@ -626,6 +697,8 @@
         diasEl.textContent = '';
       }
 
+      renderLicenseBanner(empresa, fechaVencObj);
+
       // 5. Visibilidad ZONAS (Admin vs User)
       const actionsBar = document.getElementById('actionsBar');
       const userPaymentSection = document.getElementById('userPaymentSection');
@@ -649,6 +722,56 @@
         }
         nextDate.setDate(nextDate.getDate() + 30);
         document.getElementById('payNextDate').textContent = nextDate.toLocaleDateString();
+      }
+    }
+
+    function renderLicenseBanner(empresa, fechaVencObj) {
+      const banner = document.getElementById('licenseBanner');
+      const headline = document.getElementById('licenseHeadline');
+      const hint = document.getElementById('licenseHint');
+      const rec = document.getElementById('licenseRecommendation');
+      const meter = document.getElementById('licenseMeterFill');
+      const estado = String(empresa.plan_estado || 'inactive').toLowerCase();
+
+      banner.classList.remove('success', 'warning', 'danger');
+
+      if (!fechaVencObj) {
+        banner.classList.add(estado === 'active' ? 'success' : 'warning');
+        headline.textContent = estado === 'active' ? 'Licencia activa sin vencimiento definido' : 'Licencia sin vencimiento definido';
+        hint.textContent = 'Revisar configuración';
+        rec.textContent = isSuper
+          ? 'Conviene definir una fecha de vencimiento para mantener control administrativo.'
+          : 'Consultá con soporte para confirmar la vigencia de tu plan.';
+        meter.style.width = estado === 'active' ? '100%' : '20%';
+        return;
+      }
+
+      const now = new Date();
+      const diffDays = Math.ceil((fechaVencObj - now) / (1000 * 60 * 60 * 24));
+      const pct = Math.max(0, Math.min(100, Math.round((diffDays / 30) * 100)));
+      meter.style.width = `${pct}%`;
+
+      if (estado === 'expired' || diffDays < 0) {
+        banner.classList.add('danger');
+        headline.textContent = 'Licencia vencida';
+        hint.textContent = diffDays < 0 ? `Venció hace ${Math.abs(diffDays)} día(s)` : 'Servicio suspendido';
+        rec.textContent = isSuper
+          ? 'Acción sugerida: cobrar, extender 30 días o activar manualmente si corresponde.'
+          : 'Renová la suscripción para recuperar o mantener el servicio operativo.';
+      } else if (diffDays <= 7) {
+        banner.classList.add('warning');
+        headline.textContent = diffDays === 0 ? 'Licencia vence hoy' : 'Licencia próxima a vencer';
+        hint.textContent = diffDays === 0 ? 'Vence hoy' : `${diffDays} día(s) restantes`;
+        rec.textContent = isSuper
+          ? 'Acción sugerida: contactar al cliente y dejar el precio pactado actualizado.'
+          : 'Recomendación: renovar ahora para evitar interrupciones.';
+      } else {
+        banner.classList.add('success');
+        headline.textContent = 'Licencia activa';
+        hint.textContent = `${diffDays} día(s) restantes`;
+        rec.textContent = isSuper
+          ? 'La cuenta está operativa. Revisá precio pactado y próximo vencimiento.'
+          : 'Tu servicio está activo. Podés renovar anticipadamente cuando quieras.';
       }
     }
 
@@ -813,6 +936,14 @@
 
     const empresaSelect = document.getElementById('empresaSelect');
     if (empresaSelect) empresaSelect.addEventListener('change', onEmpresaChange);
+
+    const empresaSearch = document.getElementById('empresaSearch');
+    if (empresaSearch) {
+      empresaSearch.addEventListener('input', () => {
+        empresaSearchTerm = empresaSearch.value || '';
+        renderEmpresaOptions();
+      });
+    }
 
     const btnPagar = document.getElementById('btnPagar');
     if (btnPagar) btnPagar.addEventListener('click', pagarLicencia);

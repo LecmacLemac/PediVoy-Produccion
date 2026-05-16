@@ -169,6 +169,7 @@
     }
     .pay-opt.active.efectivo { background: rgba(16,185,129,0.2); border-color: var(--success); color: #6ee7b7; }
     .pay-opt.active.transferencia { background: rgba(6,182,212,0.2); border-color: var(--brand); color: #67e8f9; }
+    .pay-opt.active.cuenta-corriente { background: rgba(245,158,11,0.18); border-color: var(--warning); color: #fcd34d; }
     .verified-badge { background: rgba(16,185,129,0.1); color: var(--success); border: 1px solid var(--success); padding: 2px 8px; border-radius: 12px; font-size: 0.7rem; display: inline-flex; align-items: center; gap: 4px;}
 
     .pc-actions { display: flex; gap: 0.5rem; margin-top: 1rem; border-top: 1px solid var(--border); padding-top: 0.8rem; flex-wrap: wrap; }
@@ -558,13 +559,17 @@
           <div class="num" id="rTrans">$0</div>
         </div>
         <div class="tile">
+          <small class="muted">CTA. CTE.</small>
+          <div class="num" id="rCtaCte" style="color:var(--warning)">$0</div>
+        </div>
+        <div class="tile">
           <small class="muted">GASTOS</small>
           <div class="num" id="rGastos" style="color:var(--danger)">$0</div>
         </div>
       </div>
 
       <div class="tile" style="margin-top:1rem; border-color:var(--brand); background:rgba(6,182,212,0.1)">
-        <small style="color:var(--brand); font-weight:bold; letter-spacing:1px">A RENDIR (Efectivo - Gastos)</small>
+        <small style="color:var(--brand); font-weight:bold; letter-spacing:1px">A RENDIR (Efectivo - Gastos - Retiro)</small>
         <div class="num" id="rRendir" style="font-size:2rem">$ 0</div>
       </div>
 

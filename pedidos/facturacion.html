@@ -1,0 +1,630 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Facturacion - PediVoy</title>
+  <link rel="stylesheet" href="theme-base.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <style>
+    :root {
+      --bg:#0b1020; --bg-2:#0f172a; --ink:#f1f5f9; --muted:#94a3b8;
+      --brand:#06b6d4; --brand-hover:#22d3ee; --surface:rgba(30,41,59,.7);
+      --border:rgba(148,163,184,.15); --glass:rgba(15,23,42,.95);
+      --success:#10b981; --warning:#f59e0b; --danger:#ef4444; --info:#3b82f6;
+      --radius:12px;
+    }
+    * { box-sizing:border-box; outline:none; -webkit-tap-highlight-color:transparent; }
+    body {
+      margin:0; font-family:system-ui,-apple-system,sans-serif; color:var(--ink);
+      background:radial-gradient(circle at 15% 50%, rgba(6,182,212,.05), transparent 25%),
+        radial-gradient(circle at 85% 30%, rgba(59,130,246,.05), transparent 25%), var(--bg);
+      min-height:100vh; font-size:14px; padding-bottom:80px;
+    }
+    .container { max-width:1400px; margin:0 auto; padding:0 20px; }
+    header { position:sticky; top:0; z-index:50; background:var(--glass); backdrop-filter:blur(12px); border-bottom:1px solid var(--border); padding:.8rem 0; }
+    nav { display:flex; justify-content:space-between; align-items:center; gap:1rem; }
+    .brand { display:flex; gap:.8rem; align-items:center; font-size:1.1rem; font-weight:700; color:#fff; text-decoration:none; white-space:nowrap; }
+    .brand-dot { width:10px; height:10px; background:var(--brand); border-radius:50%; box-shadow:0 0 10px var(--brand); }
+    .role-badge { background:rgba(6,182,212,.1); border:1px solid rgba(6,182,212,.3); color:var(--brand); padding:2px 8px; border-radius:99px; font-size:.75rem; }
+    .menu { list-style:none; display:flex; gap:1.2rem; margin:0; padding:0; }
+    .menu a { text-decoration:none; color:var(--muted); font-weight:500; transition:.2s; white-space:nowrap; }
+    .menu a:hover, .menu a.active { color:#fff; }
+    .menu a.active { border-bottom:2px solid var(--brand); padding-bottom:4px; }
+    main { padding-top:2rem; display:flex; flex-direction:column; gap:1.5rem; }
+    .page-header { display:flex; justify-content:space-between; align-items:flex-end; gap:1rem; flex-wrap:wrap; }
+    h1 { margin:0; color:#fff; font-size:1.85rem; line-height:1.2; }
+    .subtitle { margin:.45rem 0 0; color:var(--muted); }
+    .grid-kpi { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:1rem; }
+    .kpi-card, .toolbar, .panel {
+      background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
+      box-shadow:0 4px 20px rgba(0,0,0,.15);
+    }
+    .kpi-card { padding:1.25rem; display:flex; justify-content:space-between; align-items:center; gap:1rem; }
+    .kpi-card h3 { margin:0; color:#fff; font-size:1.65rem; }
+    .kpi-card p { margin:.15rem 0 0; color:var(--muted); text-transform:uppercase; font-size:.75rem; font-weight:700; }
+    .kpi-icon { width:48px; height:48px; border-radius:12px; display:flex; align-items:center; justify-content:center; background:rgba(255,255,255,.06); font-size:1.45rem; }
+    .toolbar { padding:1.25rem; display:flex; flex-direction:column; gap:1rem; }
+    .filters-row { display:flex; gap:1rem; flex-wrap:wrap; align-items:end; }
+    .field { display:flex; flex-direction:column; gap:.4rem; flex:1; min-width:150px; }
+    label { font-size:.75rem; color:var(--muted); font-weight:700; text-transform:uppercase; letter-spacing:.4px; }
+    input, select, textarea {
+      background:var(--bg-2); border:1px solid var(--border); color:#fff; padding:.7rem .8rem;
+      border-radius:8px; font-size:.92rem; width:100%; transition:.2s;
+    }
+    textarea { min-height:78px; resize:vertical; }
+    input:focus, select:focus, textarea:focus { border-color:var(--brand); box-shadow:0 0 0 2px rgba(6,182,212,.2); }
+    .btn {
+      padding:.7rem 1rem; border-radius:8px; font-weight:700; cursor:pointer; border:1px solid var(--border);
+      transition:.2s; display:inline-flex; align-items:center; justify-content:center; gap:.5rem;
+      font-size:.88rem; background:rgba(255,255,255,.05); color:var(--ink); text-decoration:none; min-height:38px;
+    }
+    .btn:hover { background:rgba(255,255,255,.1); border-color:var(--brand); color:#fff; }
+    .btn-primary { background:var(--brand); color:#001018; border-color:transparent; }
+    .btn-primary:hover { background:var(--brand-hover); color:#001018; }
+    .btn-danger { border-color:rgba(239,68,68,.35); color:#fca5a5; }
+    .btn-sm { padding:.45rem .65rem; font-size:.78rem; min-height:32px; }
+    .btn:disabled { opacity:.55; cursor:not-allowed; }
+    .panel { overflow:hidden; }
+    .panel-head { padding:1rem 1.25rem; display:flex; justify-content:space-between; align-items:center; gap:1rem; border-bottom:1px solid var(--border); flex-wrap:wrap; }
+    .panel-head h2 { margin:0; color:#fff; font-size:1rem; }
+    .table-responsive { overflow-x:auto; }
+    table { width:100%; border-collapse:collapse; text-align:left; white-space:nowrap; }
+    th { background:rgba(15,23,42,.9); color:var(--muted); font-weight:700; padding:.9rem 1rem; font-size:.75rem; text-transform:uppercase; border-bottom:1px solid var(--border); }
+    td { padding:.9rem 1rem; border-bottom:1px solid var(--border); color:var(--ink); vertical-align:middle; }
+    tr:last-child td { border-bottom:none; }
+    tr:hover td { background:rgba(255,255,255,.02); }
+    .muted { color:var(--muted); }
+    .strong { color:#fff; font-weight:750; }
+    .badge { display:inline-flex; align-items:center; gap:.35rem; padding:4px 9px; border-radius:99px; font-size:.72rem; font-weight:800; text-transform:uppercase; border:1px solid transparent; }
+    .b-none { background:rgba(148,163,184,.12); color:#cbd5e1; border-color:rgba(148,163,184,.22); }
+    .b-pending { background:rgba(245,158,11,.14); color:#fbbf24; border-color:rgba(245,158,11,.25); }
+    .b-ok { background:rgba(16,185,129,.14); color:#34d399; border-color:rgba(16,185,129,.25); }
+    .b-bad { background:rgba(239,68,68,.14); color:#f87171; border-color:rgba(239,68,68,.25); }
+    .b-info { background:rgba(59,130,246,.14); color:#93c5fd; border-color:rgba(59,130,246,.25); }
+    .actions { display:flex; gap:.45rem; flex-wrap:wrap; }
+    dialog { background:#1e293b; color:#fff; border:1px solid var(--border); border-radius:12px; max-width:760px; width:95%; padding:0; box-shadow:0 24px 60px rgba(0,0,0,.5); }
+    dialog::backdrop { background:rgba(0,0,0,.76); backdrop-filter:blur(4px); }
+    .modal-header, .modal-footer { padding:1rem 1.2rem; background:rgba(0,0,0,.18); display:flex; align-items:center; justify-content:space-between; gap:1rem; }
+    .modal-header { border-bottom:1px solid var(--border); }
+    .modal-footer { border-top:1px solid var(--border); justify-content:flex-end; flex-wrap:wrap; }
+    .modal-body { padding:1.2rem; display:grid; gap:1rem; }
+    .form-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:1rem; }
+    .invoice-preview { border:1px solid var(--border); border-radius:10px; background:rgba(15,23,42,.72); overflow:hidden; }
+    .invoice-preview[hidden] { display:none; }
+    .invoice-preview-head { padding:1rem; display:flex; justify-content:space-between; align-items:flex-start; gap:1rem; border-bottom:1px solid var(--border); }
+    .invoice-preview h3 { margin:0; font-size:1rem; color:#fff; }
+    .invoice-preview-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:1px; background:var(--border); }
+    .invoice-preview-cell { background:rgba(15,23,42,.92); padding:.9rem; min-width:0; }
+    .invoice-preview-cell span { display:block; color:var(--muted); font-size:.72rem; font-weight:800; text-transform:uppercase; margin-bottom:.25rem; }
+    .invoice-items { padding:1rem; overflow-x:auto; }
+    .invoice-items table { white-space:normal; }
+    .toast { position:fixed; right:20px; bottom:30px; background:#fff; color:#0f172a; padding:10px 18px; border-radius:99px; font-weight:700; box-shadow:0 10px 30px rgba(0,0,0,.3); opacity:0; pointer-events:none; transition:.25s; z-index:2000; }
+    .toast.show { opacity:1; transform:translateY(-8px); }
+    @media (max-width:768px) {
+      nav { flex-direction:column; align-items:stretch; }
+      .menu { overflow-x:auto; padding-bottom:5px; gap:18px; }
+      .menu::-webkit-scrollbar { display:none; }
+      .form-grid { grid-template-columns:1fr; }
+      .filters-row .field { min-width:100%; }
+      .panel-head { align-items:stretch; }
+      .actions { flex-direction:column; }
+      .actions .btn { width:100%; }
+      .invoice-preview-grid { grid-template-columns:1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <nav class="container">
+      <a class="brand" href="/pedidos/dashboard.html">
+        <span class="brand-dot"></span>
+        MultiEmpresas
+        <span id="roleBadge" class="role-badge"></span>
+      </a>
+      <ul class="menu">
+        <li><a href="inicio/inicial.html">Inicio</a></li>
+        <li><a href="dashboard.html">Dashboard</a></li>
+        <li><a href="facturacion.html" class="active">Facturacion</a></li>
+        <li><a href="pagos.html">Pagos</a></li>
+        <li><a href="gastos.html">Gastos</a></li>
+        <li><a href="stock.html">Stock</a></li>
+        <li><a href="#" id="logout" style="color:var(--danger)">Salir</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <main class="container">
+    <section class="page-header">
+      <div>
+        <h1>Panel de facturacion</h1>
+        <p class="subtitle">Pedidos facturables, comprobantes generados y emision electronica por empresa.</p>
+      </div>
+      <div class="actions">
+        <a class="btn" href="/pedidos/inicio/empresa.html"><i class="fa-solid fa-building"></i> Configuracion fiscal</a>
+        <button class="btn btn-primary" id="btnRefresh"><i class="fa-solid fa-rotate-right"></i> Actualizar</button>
+      </div>
+    </section>
+
+    <section class="grid-kpi">
+      <div class="kpi-card"><div><h3 id="kpiTotal">0</h3><p>Pedidos</p></div><div class="kpi-icon" style="color:var(--info)"><i class="fa-solid fa-list-check"></i></div></div>
+      <div class="kpi-card"><div><h3 id="kpiPendientes">0</h3><p>Sin factura</p></div><div class="kpi-icon" style="color:var(--warning)"><i class="fa-regular fa-clock"></i></div></div>
+      <div class="kpi-card"><div><h3 id="kpiEmitidas">0</h3><p>Emitidas</p></div><div class="kpi-icon" style="color:var(--success)"><i class="fa-solid fa-circle-check"></i></div></div>
+      <div class="kpi-card"><div><h3 id="kpiMonto">$ 0</h3><p>Monto filtrado</p></div><div class="kpi-icon" style="color:#fff"><i class="fa-solid fa-sack-dollar"></i></div></div>
+    </section>
+
+    <section class="toolbar">
+      <div class="filters-row">
+        <div class="field" id="empresaField" hidden>
+          <label for="empresaSel">Empresa</label>
+          <select id="empresaSel"></select>
+        </div>
+        <div class="field">
+          <label for="estadoFactura">Estado factura</label>
+          <select id="estadoFactura">
+            <option value="">Todos</option>
+            <option value="sin_factura">Sin factura</option>
+            <option value="pendiente_confirmacion">Pendiente</option>
+            <option value="emitida">Emitida</option>
+            <option value="rechazada">Rechazada</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="fromFilter">Desde</label>
+          <input id="fromFilter" type="date">
+        </div>
+        <div class="field">
+          <label for="toFilter">Hasta</label>
+          <input id="toFilter" type="date">
+        </div>
+        <div class="field" style="min-width:240px">
+          <label for="q">Buscar</label>
+          <input id="q" type="search" placeholder="Cliente, razon social, CUIT o direccion">
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Pedidos para facturar</h2>
+        <span class="role-badge"><span id="totalCount">0</span> registros</span>
+      </div>
+      <div class="table-responsive">
+        <table>
+          <thead>
+            <tr>
+              <th>Pedido</th>
+              <th>Fecha</th>
+              <th>Cliente</th>
+              <th>Datos fiscales</th>
+              <th>Monto</th>
+              <th>Factura</th>
+              <th>Accion</th>
+            </tr>
+          </thead>
+          <tbody id="rows">
+            <tr><td colspan="7" style="text-align:center; padding:3rem; color:var(--muted)">Cargando...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="dlgFactura">
+    <div class="modal-header">
+      <strong>Preparar factura - Pedido #<span id="dlgPedidoId"></span></strong>
+      <button class="btn btn-sm" id="btnCloseX" type="button">Cerrar</button>
+    </div>
+    <form id="fFactura" class="modal-body">
+      <div class="form-grid">
+        <div class="field">
+          <label for="tipoDocumento">Tipo documento</label>
+          <select id="tipoDocumento">
+            <option value="DNI">DNI</option>
+            <option value="CUIT">CUIT</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="numeroDocumento">Numero</label>
+          <input id="numeroDocumento" required>
+        </div>
+        <div class="field">
+          <label for="razonSocial">Razon social / cliente</label>
+          <input id="razonSocial" required>
+        </div>
+        <div class="field">
+          <label for="condicionIva">Condicion IVA</label>
+          <select id="condicionIva">
+            <option value="Consumidor Final">Consumidor Final</option>
+            <option value="Responsable Inscripto">Responsable Inscripto</option>
+            <option value="Responsable Monotributo">Responsable Monotributo</option>
+            <option value="IVA Sujeto Exento">IVA Sujeto Exento</option>
+            <option value="IVA No Alcanzado">IVA No Alcanzado</option>
+          </select>
+        </div>
+        <div class="field" style="grid-column:1/-1">
+          <label for="domicilioFiscal">Domicilio fiscal</label>
+          <input id="domicilioFiscal">
+        </div>
+        <div class="field" style="grid-column:1/-1">
+          <label for="emailFacturacion">Email facturacion</label>
+          <input id="emailFacturacion" type="email">
+        </div>
+      </div>
+      <p class="muted" id="dlgHint" style="margin:0"></p>
+    </form>
+    <section id="facturaPreparada" class="invoice-preview" hidden></section>
+    <div class="modal-footer">
+      <button class="btn" id="btnCloseDlg" type="button">Cancelar</button>
+      <button class="btn btn-primary" id="btnCrearFactura" type="button">Crear factura</button>
+      <button class="btn btn-primary" id="btnCrearYEmitir" type="button">Crear y emitir</button>
+      <button class="btn btn-primary" id="btnEmitirPreparada" type="button" hidden>Emitir factura preparada</button>
+    </div>
+  </dialog>
+
+  <div id="toast" class="toast"></div>
+  <script src="/pedidos/info-tec/safe-storage.js"></script>
+  <script type="module">
+    const authFetch = (url, opts = {}) => fetch(url, { ...opts, headers: opts.headers || {}, credentials: 'include' });
+    const $ = (s) => document.querySelector(s);
+    const ARS = new Intl.NumberFormat('es-AR', { style:'currency', currency:'ARS', maximumFractionDigits:0 });
+
+    let currentUser = null;
+    let isSuper = false;
+    let pedidos = [];
+    let selectedPedido = null;
+    let selectedFactura = null;
+    let busy = false;
+
+    function money(value) { return ARS.format(Number(value) || 0); }
+    function fmtDate(value) {
+      if (!value) return '-';
+      return new Date(value).toLocaleString('es-AR', { dateStyle:'short', timeStyle:'short' });
+    }
+    function onlyDigits(value) { return String(value || '').replace(/\D+/g, ''); }
+    function toast(message) {
+      const el = $('#toast');
+      el.textContent = message;
+      el.classList.add('show');
+      setTimeout(() => el.classList.remove('show'), 2600);
+    }
+    function badge(row) {
+      if (!row.factura_id) return '<span class="badge b-none">Sin factura</span>';
+      if (row.factura_estado === 'emitida') return '<span class="badge b-ok">Emitida</span>';
+      if (row.factura_estado === 'rechazada') return '<span class="badge b-bad">Rechazada</span>';
+      if (row.factura_estado === 'anulada') return '<span class="badge b-none">Anulada</span>';
+      return '<span class="badge b-pending">Pendiente</span>';
+    }
+    function facturaBadge(factura) {
+      const estado = String(factura?.estado || '').toLowerCase();
+      if (estado === 'emitida') return '<span class="badge b-ok">Emitida</span>';
+      if (estado === 'rechazada') return '<span class="badge b-bad">Rechazada</span>';
+      if (estado === 'anulada') return '<span class="badge b-none">Anulada</span>';
+      return '<span class="badge b-pending">Pendiente</span>';
+    }
+    function facturaInfo(row) {
+      if (!row.factura_id) return '<span class="muted">Pendiente de generar</span>';
+      const parts = [badge(row)];
+      if (row.numero_comprobante) parts.push(`<div class="muted">C ${row.punto_venta || '-'}-${row.numero_comprobante}</div>`);
+      if (row.cae) parts.push(`<div class="muted">CAE ${row.cae}</div>`);
+      if (row.error_mensaje) parts.push(`<div class="muted" style="color:#fca5a5; max-width:280px; white-space:normal;">${escapeHtml(row.error_mensaje)}</div>`);
+      return parts.join('');
+    }
+    function fiscalInfo(row) {
+      const doc = row.cuit ? `CUIT ${row.cuit}` : 'Consumidor final';
+      const razon = row.razon_social || row.cliente || '-';
+      const iva = row.condicion_iva || 'Consumidor Final';
+      return `<div class="strong">${escapeHtml(razon)}</div><div class="muted">${escapeHtml(doc)} · ${escapeHtml(iva)}</div>`;
+    }
+    function escapeHtml(value) {
+      return String(value ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+    function formatFacturaNumber(factura) {
+      if (!factura?.numero_comprobante) return 'Sin numero fiscal';
+      return `${factura.tipo_comprobante || 'F'} ${factura.punto_venta || '-'}-${factura.numero_comprobante}`;
+    }
+    function renderFacturaPreparada(factura) {
+      selectedFactura = factura || null;
+      const box = $('#facturaPreparada');
+      if (!selectedFactura) {
+        box.hidden = true;
+        box.innerHTML = '';
+        $('#btnEmitirPreparada').hidden = true;
+        return;
+      }
+
+      const items = Array.isArray(selectedFactura.items) ? selectedFactura.items : [];
+      const itemsHtml = items.length
+        ? items.map((item) => `
+          <tr>
+            <td>${escapeHtml(item.descripcion || 'Item')}</td>
+            <td>${Number(item.cantidad || 0)}</td>
+            <td>${money(item.precio_unitario)}</td>
+            <td class="strong">${money(item.importe_total)}</td>
+          </tr>
+        `).join('')
+        : '<tr><td colspan="4" class="muted">Sin items detallados</td></tr>';
+
+      box.innerHTML = `
+        <div class="invoice-preview-head">
+          <div>
+            <h3>Factura preparada</h3>
+            <div class="muted">Pedido #${selectedFactura.pedido_id || selectedPedido?.pedido_id || '-'}</div>
+          </div>
+          ${facturaBadge(selectedFactura)}
+        </div>
+        <div class="invoice-preview-grid">
+          <div class="invoice-preview-cell"><span>Comprobante</span><div class="strong">${escapeHtml(formatFacturaNumber(selectedFactura))}</div></div>
+          <div class="invoice-preview-cell"><span>Cliente</span><div class="strong">${escapeHtml(selectedFactura.receptor_razon_social || '-')}</div><div class="muted">${escapeHtml(selectedFactura.receptor_documento || '')}</div></div>
+          <div class="invoice-preview-cell"><span>Total</span><div class="strong">${money(selectedFactura.importe_total)}</div></div>
+          <div class="invoice-preview-cell"><span>IVA</span><div>${escapeHtml(selectedFactura.receptor_condicion_iva || '-')}</div></div>
+          <div class="invoice-preview-cell"><span>CAE</span><div>${escapeHtml(selectedFactura.cae || 'Pendiente de emision')}</div></div>
+          <div class="invoice-preview-cell"><span>Vencimiento</span><div>${escapeHtml(selectedFactura.cae_vencimiento || '-')}</div></div>
+        </div>
+        <div class="invoice-items">
+          <table>
+            <thead><tr><th>Detalle</th><th>Cant.</th><th>Unitario</th><th>Total</th></tr></thead>
+            <tbody>${itemsHtml}</tbody>
+          </table>
+        </div>
+      `;
+      box.hidden = false;
+      $('#btnEmitirPreparada').hidden = selectedFactura.estado === 'emitida' || selectedFactura.estado === 'anulada';
+    }
+
+    async function apiJson(url, opts = {}) {
+      const res = await authFetch(url, opts);
+      if (res.status === 401) {
+        location.href = '/pedidos/login.html';
+        return null;
+      }
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Error de operacion');
+      return data;
+    }
+
+    function qsEmpresa() {
+      if (isSuper && $('#empresaSel').value) return 'empresa_id=' + encodeURIComponent($('#empresaSel').value);
+      return '';
+    }
+
+    async function loadMe() {
+      const res = await apiJson('/api/me');
+      if (!res) return;
+      currentUser = res.user || res;
+      isSuper = currentUser?.role === 'super';
+      $('#roleBadge').textContent = isSuper ? 'Super' : 'Admin';
+      if (isSuper) {
+        $('#empresaField').hidden = false;
+        const empresas = await apiJson('/api/empresas');
+        const rows = Array.isArray(empresas) ? empresas : [];
+        $('#empresaSel').innerHTML = '<option value="">Todas</option>' + rows.map((e) => `<option value="${e.id}">${escapeHtml(e.nombre || 'Empresa ' + e.id)}</option>`).join('');
+      }
+    }
+
+    async function loadPedidos() {
+      const params = new URLSearchParams();
+      const empresa = qsEmpresa();
+      if (empresa) params.set('empresa_id', $('#empresaSel').value);
+      if ($('#estadoFactura').value) params.set('estado_factura', $('#estadoFactura').value);
+      if ($('#fromFilter').value) params.set('from', $('#fromFilter').value);
+      if ($('#toFilter').value) params.set('to', $('#toFilter').value);
+      if ($('#q').value.trim()) params.set('q', $('#q').value.trim());
+      params.set('limit', '200');
+
+      $('#rows').innerHTML = '<tr><td colspan="7" style="text-align:center; padding:3rem; color:var(--muted)">Cargando...</td></tr>';
+      const data = await apiJson('/api/facturacion/pedidos?' + params.toString());
+      pedidos = data?.pedidos || [];
+      render();
+    }
+
+    function render() {
+      const total = pedidos.length;
+      const sinFactura = pedidos.filter((p) => !p.factura_id).length;
+      const emitidas = pedidos.filter((p) => p.factura_estado === 'emitida').length;
+      const monto = pedidos.reduce((acc, p) => acc + Number(p.monto || 0), 0);
+      $('#kpiTotal').textContent = total;
+      $('#kpiPendientes').textContent = sinFactura;
+      $('#kpiEmitidas').textContent = emitidas;
+      $('#kpiMonto').textContent = money(monto);
+      $('#totalCount').textContent = total;
+
+      if (!pedidos.length) {
+        $('#rows').innerHTML = '<tr><td colspan="7" style="text-align:center; padding:3rem; color:var(--muted)">No hay pedidos para los filtros aplicados.</td></tr>';
+        return;
+      }
+
+      $('#rows').innerHTML = pedidos.map((row) => {
+        const canEmit = row.factura_id && row.factura_estado !== 'emitida';
+        const canCreate = !row.factura_id || row.factura_estado === 'rechazada';
+        const canManagePending = row.factura_id && !['emitida', 'anulada'].includes(String(row.factura_estado || ''));
+        return `
+          <tr>
+            <td><div class="strong">#${row.pedido_id}</div><div class="muted">${escapeHtml(row.pedido_estado || '')}</div></td>
+            <td>${fmtDate(row.fecha)}</td>
+            <td><div class="strong">${escapeHtml(row.cliente || '-')}</div><div class="muted">${escapeHtml(row.direccion || '')}</div></td>
+            <td>${fiscalInfo(row)}</td>
+            <td class="strong">${money(row.monto)}</td>
+            <td>${facturaInfo(row)}</td>
+            <td>
+              <div class="actions">
+                ${canCreate ? `<button class="btn btn-sm" data-action="prepare" data-id="${row.pedido_id}"><i class="fa-solid fa-file-circle-plus"></i> Preparar</button>` : ''}
+                ${row.factura_id ? `<button class="btn btn-sm" data-action="view" data-id="${row.factura_id}"><i class="fa-regular fa-eye"></i> Ver</button>` : ''}
+                ${canEmit ? `<button class="btn btn-sm btn-primary" data-action="emit" data-id="${row.factura_id}"><i class="fa-solid fa-paper-plane"></i> Emitir</button>` : ''}
+                ${canManagePending ? `<button class="btn btn-sm" data-action="cancel" data-id="${row.factura_id}"><i class="fa-solid fa-ban"></i> Cancelar</button>` : ''}
+                ${canManagePending ? `<button class="btn btn-sm btn-danger" data-action="delete" data-id="${row.factura_id}"><i class="fa-regular fa-trash-can"></i> Eliminar</button>` : ''}
+                ${row.factura_estado === 'emitida' ? '<span class="badge b-ok">Lista</span>' : ''}
+              </div>
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    function openDialog(row) {
+      selectedPedido = row;
+      $('#fFactura').hidden = false;
+      $('#btnCrearFactura').hidden = false;
+      $('#btnCrearYEmitir').hidden = false;
+      renderFacturaPreparada(null);
+      $('#dlgPedidoId').textContent = row.pedido_id;
+      const cuit = onlyDigits(row.cuit);
+      $('#tipoDocumento').value = cuit ? 'CUIT' : 'DNI';
+      $('#numeroDocumento').value = cuit || '12345678';
+      $('#razonSocial').value = row.razon_social || row.cliente || 'Consumidor Final';
+      $('#condicionIva').value = row.condicion_iva || 'Consumidor Final';
+      $('#domicilioFiscal').value = row.direccion_completa || row.direccion || '';
+      $('#emailFacturacion').value = row.email_facturacion || '';
+      $('#dlgHint').textContent = `Importe estimado: ${money(row.monto)}. Si no hay CUIT, se prepara como consumidor final.`;
+      $('#dlgFactura').showModal();
+    }
+
+    function fiscalPayload() {
+      return {
+        tipo_documento: $('#tipoDocumento').value,
+        numero_documento: $('#numeroDocumento').value,
+        razon_social: $('#razonSocial').value,
+        condicion_iva: $('#condicionIva').value,
+        domicilio_fiscal: $('#domicilioFiscal').value,
+        email_facturacion: $('#emailFacturacion').value || null,
+      };
+    }
+
+    async function crearFactura({ emitir = false } = {}) {
+      if (!selectedPedido || busy) return;
+      busy = true;
+      $('#btnCrearFactura').disabled = true;
+      $('#btnCrearYEmitir').disabled = true;
+      try {
+        const params = qsEmpresa() ? '?' + qsEmpresa() : '';
+        const created = await apiJson(`/api/pedidos/${selectedPedido.pedido_id}/factura/solicitar${params}`, {
+          method:'POST',
+          headers:{ 'content-type':'application/json' },
+          body:JSON.stringify({ datos_fiscales: fiscalPayload() }),
+        });
+        if (emitir) {
+          const facturaId = created.factura?.id;
+          const paramsEmitir = qsEmpresa() ? '?' + qsEmpresa() : '';
+          const emitted = await apiJson(`/api/facturas/${facturaId}/emitir${paramsEmitir}`, { method:'POST' });
+          renderFacturaPreparada(emitted.factura || created.factura);
+          toast('Factura emitida');
+        } else {
+          renderFacturaPreparada(created.factura);
+          toast('Factura preparada');
+        }
+        await loadPedidos();
+      } catch (e) {
+        toast(e.message || 'No se pudo preparar la factura');
+      } finally {
+        busy = false;
+        $('#btnCrearFactura').disabled = false;
+        $('#btnCrearYEmitir').disabled = false;
+      }
+    }
+
+    async function emitirFactura(facturaId, { quiet = false } = {}) {
+      if (!facturaId || busy) return;
+      busy = true;
+      try {
+        const params = qsEmpresa() ? '?' + qsEmpresa() : '';
+        const data = await apiJson(`/api/facturas/${facturaId}/emitir${params}`, { method:'POST' });
+        if (data?.factura && selectedFactura?.id && String(selectedFactura.id) === String(facturaId)) {
+          renderFacturaPreparada(data.factura);
+        }
+        if (!quiet) {
+          toast('Factura emitida');
+          await loadPedidos();
+        }
+      } catch (e) {
+        toast(e.message || 'No se pudo emitir');
+      } finally {
+        busy = false;
+      }
+    }
+
+    async function verFactura(facturaId) {
+      if (!facturaId || busy) return;
+      const params = qsEmpresa() ? '?' + qsEmpresa() : '';
+      const data = await apiJson(`/api/facturas/${facturaId}${params}`);
+      const row = pedidos.find((p) => String(p.factura_id) === String(facturaId));
+      selectedPedido = row || null;
+      $('#dlgPedidoId').textContent = row?.pedido_id || data.factura?.pedido_id || '-';
+      $('#fFactura').hidden = true;
+      $('#btnCrearFactura').hidden = true;
+      $('#btnCrearYEmitir').hidden = true;
+      renderFacturaPreparada(data.factura);
+      $('#dlgFactura').showModal();
+    }
+
+    async function cancelarFactura(facturaId) {
+      if (!facturaId || busy) return;
+      if (!confirm('Confirmá cancelar esta factura pendiente. El pedido volverá a quedar disponible para preparar otra factura.')) return;
+      busy = true;
+      try {
+        const params = qsEmpresa() ? '?' + qsEmpresa() : '';
+        await apiJson(`/api/facturas/${facturaId}/cancelar${params}`, { method:'POST' });
+        toast('Factura cancelada');
+        await loadPedidos();
+      } catch (e) {
+        toast(e.message || 'No se pudo cancelar');
+      } finally {
+        busy = false;
+      }
+    }
+
+    async function eliminarFactura(facturaId) {
+      if (!facturaId || busy) return;
+      if (!confirm('Confirmá eliminar esta factura pendiente. Esta accion no se puede deshacer desde el panel.')) return;
+      busy = true;
+      try {
+        const params = qsEmpresa() ? '?' + qsEmpresa() : '';
+        await apiJson(`/api/facturas/${facturaId}${params}`, { method:'DELETE' });
+        toast('Factura eliminada');
+        await loadPedidos();
+      } catch (e) {
+        toast(e.message || 'No se pudo eliminar');
+      } finally {
+        busy = false;
+      }
+    }
+
+    $('#rows').addEventListener('click', (ev) => {
+      const btn = ev.target.closest('button[data-action]');
+      if (!btn) return;
+      const action = btn.dataset.action;
+      if (action === 'prepare') {
+        const row = pedidos.find((p) => String(p.pedido_id) === String(btn.dataset.id));
+        if (row) openDialog(row);
+      }
+      if (action === 'view') verFactura(btn.dataset.id);
+      if (action === 'emit') emitirFactura(btn.dataset.id);
+      if (action === 'cancel') cancelarFactura(btn.dataset.id);
+      if (action === 'delete') eliminarFactura(btn.dataset.id);
+    });
+
+    $('#btnCrearFactura').onclick = () => crearFactura();
+    $('#btnCrearYEmitir').onclick = () => crearFactura({ emitir:true });
+    $('#btnEmitirPreparada').onclick = () => selectedFactura?.id && emitirFactura(selectedFactura.id);
+    $('#btnCloseDlg').onclick = () => $('#dlgFactura').close();
+    $('#btnCloseX').onclick = () => $('#dlgFactura').close();
+    $('#btnRefresh').onclick = loadPedidos;
+    $('#logout').onclick = async (ev) => {
+      ev.preventDefault();
+      try { await authFetch('/api/logout', { method:'POST' }); } catch {}
+      location.href = '/pedidos/login.html';
+    };
+    ['empresaSel','estadoFactura','fromFilter','toFilter'].forEach((id) => {
+      const el = $('#' + id);
+      if (el) el.addEventListener('change', loadPedidos);
+    });
+    let searchTimer = null;
+    $('#q').addEventListener('input', () => {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(loadPedidos, 350);
+    });
+
+    await loadMe();
+    await loadPedidos();
+  </script>
+</body>
+</html>

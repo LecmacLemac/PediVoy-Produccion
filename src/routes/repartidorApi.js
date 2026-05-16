@@ -12,10 +12,23 @@ export function createRepartidorApiRouter(deps) {
   // pool + helpers opcionales: usados por algunas rutas
 
   const router = express.Router();
+  let schemaReady = false;
+
+  async function ensureRepartidorSchema() {
+    if (schemaReady) return;
+    await query(`ALTER TABLE puntos_entrega ADD COLUMN IF NOT EXISTS cuenta_corriente_habilitada BOOLEAN DEFAULT FALSE`);
+    schemaReady = true;
+  }
+
+  function isCuentaCorrienteMethod(metodo) {
+    const m = String(metodo || '').toLowerCase();
+    return m === 'cuenta_corriente' || m.startsWith('cta');
+  }
 
 // 1. Obtener Pedidos
   router.get('/pedidos', withAuth, async (req, res) => {
    try {
+     await ensureRepartidorSchema();
      const { chofer_id } = req.user;
      const empresaId = getEmpresaIdFromToken(req); // mismo criterio que el dashboard
 
@@ -31,6 +44,7 @@ export function createRepartidorApiRouter(deps) {
           p.id, p.estado, p.fecha, p.fecha_entrega,
           p.cantidad, p.monto, p.metodo_pago, p.chofer_id,
           pe.cliente, pe.direccion, pe.ciudad, pe.telefono,
+          COALESCE(pe.cuenta_corriente_habilitada, FALSE) AS cuenta_corriente_habilitada,
           pe.latitud, pe.longitud, pe.notas AS notas,
           pe.zona_id, z.nombre AS zona_nombre,
           COALESCE(
@@ -65,6 +79,7 @@ export function createRepartidorApiRouter(deps) {
           p.id, p.estado, p.fecha, p.fecha_entrega,
           p.cantidad, p.monto, p.metodo_pago, p.chofer_id,
           pe.cliente, pe.direccion, pe.ciudad, pe.telefono,
+          pe.cuenta_corriente_habilitada,
           pe.latitud, pe.longitud, pe.notas,
           pe.zona_id, z.nombre
         ORDER BY p.id ASC`,
@@ -269,6 +284,7 @@ export function createRepartidorApiRouter(deps) {
 // 2. Actualizar Estado o Pago (PUT) - Para los botones del repartidor
   router.put('/pedidos/:id', withAuth, async (req, res) => {
    try {
+     await ensureRepartidorSchema();
      // 1. Usuario autenticado
      const { chofer_id, empresa_id } = req.user;
      const pedidoId = req.params.id;
@@ -289,9 +305,11 @@ export function createRepartidorApiRouter(deps) {
 
      // 2. Verificar el pedido (SUMÁ empresa_id para multi-tenant)
      const rows = await query(
-       `SELECT chofer_id, metodo_pago, estado, zona_id, punto_entrega_id
-          FROM pedidos
-         WHERE id = $1 AND empresa_id = $2`,
+       `SELECT p.chofer_id, p.metodo_pago, p.estado, p.zona_id, p.punto_entrega_id,
+               COALESCE(pe.cuenta_corriente_habilitada, FALSE) AS cuenta_corriente_habilitada
+          FROM pedidos p
+          LEFT JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
+         WHERE p.id = $1 AND p.empresa_id = $2`,
        [pedidoId, empresa_id]
      );
 
@@ -305,6 +323,10 @@ export function createRepartidorApiRouter(deps) {
      const estadoAnterior     = (pedido.estado || '').toLowerCase();
      const teniaZonaAntes     = pedido.zona_id != null;
      const puntoEntregaId     = pedido.punto_entrega_id;
+
+     if (isCuentaCorrienteMethod(metodo_pago) && !pedido.cuenta_corriente_habilitada) {
+       return res.status(400).json({ error: 'Este cliente no está habilitado para cuenta corriente' });
+     }
 
      // 3. Si ya está asignado a OTRO chofer, bloquear
      if (actualChofer && actualChofer !== chofer_id) {
@@ -455,15 +477,16 @@ export function createRepartidorApiRouter(deps) {
    const { chofer_id, empresa_id, username } = req.user || {};
    const pedidoId = Number(req.params.id);
    // 'movimientos' viene del Modal de Activos del Frontend
-   const { movimientos = [], zona_id = null, metodo_pago = null, checklist = null, evidencia = null } = req.body || {};
+	 const { movimientos = [], zona_id = null, metodo_pago = null, checklist = null, evidencia = null } = req.body || {};
 
    if (!chofer_id) return res.status(403).json({ error: 'No autorizado: Falta chofer_id' });
    if (!Number.isFinite(pedidoId)) return res.status(400).json({ error: 'ID de pedido inválido' });
 
    const client = await pool.connect();
    
-   try {
-     // -----------------------------------------------------
+	   try {
+	     await ensureRepartidorSchema();
+	     // -----------------------------------------------------
      // INICIO TRANSACCIÓN (Todo o Nada)
      // -----------------------------------------------------
      await client.query('BEGIN');
@@ -471,9 +494,11 @@ export function createRepartidorApiRouter(deps) {
      // 2. Lock del Pedido (Evita doble entrega concurrente)
      const pedQ = await client.query(
        `
-       SELECT id, empresa_id, chofer_id, estado, metodo_pago, zona_id, punto_entrega_id, monto
-       FROM pedidos
-       WHERE id = $1 AND empresa_id = $2
+       SELECT p.id, p.empresa_id, p.chofer_id, p.estado, p.metodo_pago, p.zona_id, p.punto_entrega_id, p.monto,
+              COALESCE(pe.cuenta_corriente_habilitada, FALSE) AS cuenta_corriente_habilitada
+       FROM pedidos p
+       LEFT JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
+       WHERE p.id = $1 AND p.empresa_id = $2
        FOR UPDATE
        `,
        [pedidoId, empresa_id]
@@ -486,7 +511,12 @@ export function createRepartidorApiRouter(deps) {
 
      const pedido = pedQ.rows[0];
      const estadoAnterior = String(pedido.estado || '').toLowerCase();
-     const metodoPagoAnterior = String(pedido.metodo_pago || '').toLowerCase();
+	     const metodoPagoAnterior = String(pedido.metodo_pago || '').toLowerCase();
+
+	     if (isCuentaCorrienteMethod(metodo_pago) && !pedido.cuenta_corriente_habilitada) {
+	       await client.query('ROLLBACK');
+	       return res.status(400).json({ error: 'Este cliente no está habilitado para cuenta corriente' });
+	     }
 
      // 3. Validar Asignación de Chofer
      // Si el pedido ya tiene chofer y NO soy yo, error.

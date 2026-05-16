@@ -26,6 +26,7 @@
     --success: #10b981;
     --warning: #f59e0b;
     --danger: #ef4444;
+    --info: #38bdf8;
   }
 
   * { box-sizing: border-box; outline: none; -webkit-tap-highlight-color: transparent; }
@@ -109,9 +110,9 @@
   }
 
   /* Layout Split (Zona/Asignar) */
-  .layout-split { display: grid; grid-template-columns: 1fr 380px; gap: 20px; height: calc(100vh - 140px); min-height: 600px; }
+  .layout-split { display: grid; grid-template-columns: minmax(0, 1fr) 400px; gap: 20px; height: calc(100vh - 140px); min-height: 650px; }
   .map-wrapper { position: relative; width: 100%; height: 100%; border-radius: var(--radius); border: 1px solid var(--border); overflow: hidden; }
-  #map { width: 100%; height: 100%; z-index: 1; background: #1e293b; }
+  #map { width: 100%; height: 100%; z-index: 1; background: #e5edf6; }
 
   @media(max-width: 900px) { 
     .layout-split { grid-template-columns: 1fr; height: auto; display: flex; flex-direction: column-reverse; } 
@@ -122,6 +123,9 @@
   .toolbar { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.5rem; }
   .toolbar > * { flex: 1; }
   .toolbar select, .toolbar input { margin-bottom: 0; min-width: 150px; }
+  .search-box { position: relative; }
+  .search-box input { padding-left: 2.25rem; }
+  .search-icon { position:absolute; left:0.75rem; top:50%; transform:translateY(-50%); color:var(--muted); pointer-events:none; }
   
   @media (max-width: 600px) {
     .toolbar { flex-direction: column; align-items: stretch; gap: 0.8rem; }
@@ -152,6 +156,7 @@
   .btn-danger { color: var(--danger); border-color: rgba(239,68,68,0.3); background: rgba(239,68,68,0.1); }
   .btn-icon { padding: 0.5rem; border-radius: 6px; color: var(--muted); background: transparent; border: 1px solid var(--border); cursor: pointer; }
   .btn-icon:hover { color: #fff; background: rgba(255,255,255,0.1); border-color: var(--brand); }
+  .btn:disabled, .btn-icon:disabled { opacity:0.55; cursor:not-allowed; }
 
   /* --- TABLES --- */
   .table-responsive { overflow-x: auto; border-radius: var(--radius); border: 1px solid var(--border); background: var(--bg-2); }
@@ -211,7 +216,65 @@
 
   /* Elementos específicos de zona.html */
   .sidebar-list { overflow-y: auto; display: flex; flex-direction: column; gap: 0.8rem; flex: 1; }
-  .zona-item { background: var(--bg-2); border: 1px solid var(--border); padding: 1rem; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
+  .zones-panel { min-height:0; }
+  .panel-head { display:flex; justify-content:space-between; align-items:flex-start; gap:0.75rem; margin-bottom:1rem; }
+  .panel-head h2 { margin:0; font-size:1.2rem; color:#fff; }
+  .panel-subtitle { margin:0.25rem 0 0; color:var(--muted); font-size:0.82rem; }
+  .panel-actions { display:flex; gap:0.5rem; flex-wrap:wrap; justify-content:flex-end; }
+  .zone-summary { display:grid; grid-template-columns:repeat(3, 1fr); gap:0.6rem; margin-bottom:1rem; }
+  .zone-stat { background:var(--bg-2); border:1px solid var(--border); border-radius:10px; padding:0.75rem; }
+  .zone-stat span { display:block; color:var(--muted); font-size:0.7rem; text-transform:uppercase; font-weight:700; }
+  .zone-stat strong { display:block; color:#fff; font-size:1.35rem; margin-top:0.15rem; }
+  .zone-tools { display:flex; gap:0.6rem; margin-bottom:1rem; }
+  .zona-item {
+    background: var(--bg-2); border: 1px solid var(--border); padding: 1rem; border-radius: 8px;
+    display: flex; justify-content: space-between; align-items: flex-start; gap:0.75rem; cursor: pointer;
+    transition: border-color .2s, background .2s, transform .2s;
+  }
+  .zona-item:hover { border-color:rgba(6,182,212,0.45); background:rgba(15,23,42,0.95); }
+  .zona-item.active { border-color:var(--brand); background:rgba(6,182,212,0.1); }
+  .zona-info { min-width:0; }
+  .zona-info h3 { margin:0; color:#fff; font-size:1rem; overflow:hidden; text-overflow:ellipsis; }
+  .zona-meta { display:flex; gap:0.4rem; flex-wrap:wrap; margin-top:0.55rem; }
+  .zone-tag {
+    display:inline-flex; align-items:center; gap:0.25rem; border-radius:999px; padding:0.25rem 0.5rem;
+    border:1px solid var(--border); background:rgba(148,163,184,0.08); color:var(--muted);
+    font-size:0.72rem; font-weight:700; white-space:nowrap;
+  }
+  .zone-tag.ok { color:#86efac; border-color:rgba(16,185,129,0.28); background:rgba(16,185,129,0.12); }
+  .zone-tag.warn { color:#fde68a; border-color:rgba(245,158,11,0.28); background:rgba(245,158,11,0.12); }
+  .zone-tag.driver { color:#7dd3fc; border-color:rgba(56,189,248,0.28); background:rgba(56,189,248,0.12); }
+  .zone-actions { display:flex; gap:0.45rem; flex-shrink:0; }
+  .empty-state { text-align:center; padding:2rem; color:var(--muted); border:1px dashed var(--border); border-radius:10px; background:rgba(15,23,42,0.55); }
+  .help-box {
+    position:absolute; left:18px; bottom:18px; z-index:500; max-width:340px;
+    background:rgba(15,23,42,0.9); border:1px solid var(--border); border-radius:12px;
+    padding:0.9rem 1rem; box-shadow:0 12px 30px rgba(0,0,0,0.28); backdrop-filter:blur(10px);
+  }
+  .help-box ul { margin:0.55rem 0 0; padding-left:1.1rem; color:var(--muted); font-size:0.84rem; line-height:1.45; }
+  .map-chip {
+    position:absolute; right:18px; top:18px; z-index:500; display:flex; gap:0.5rem; flex-wrap:wrap; justify-content:flex-end;
+  }
+  .map-chip span {
+    background:rgba(255,255,255,0.95); color:#0f172a; border:1px solid #cbd5e1; border-radius:999px;
+    padding:0.35rem 0.65rem; font-size:0.78rem; font-weight:700; box-shadow:0 6px 18px rgba(15,23,42,0.16);
+  }
+  .zona-label {
+    background:rgba(255,255,255,0.92); border:1px solid rgba(15,23,42,0.18); color:#0f172a;
+    border-radius:999px; box-shadow:none; font-weight:700; padding:2px 8px;
+  }
+  @media(max-width: 900px) {
+    .zone-summary { grid-template-columns:repeat(3, minmax(0, 1fr)); }
+    .help-box { position:static; max-width:none; border-radius:0; border-left:none; border-right:none; border-bottom:none; }
+    .map-chip { left:12px; right:12px; top:12px; justify-content:flex-start; }
+  }
+  @media(max-width: 600px) {
+    .panel-head { flex-direction:column; }
+    .panel-actions, .zone-tools { width:100%; flex-direction:column; }
+    .zone-summary { grid-template-columns:1fr; }
+    .zona-item { flex-direction:column; }
+    .zone-actions { width:100%; justify-content:flex-end; }
+  }
   
   /* Elementos específicos de inicial.html */
   .step-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.5rem; display: flex; gap: 1rem; margin-bottom: 1rem; align-items: flex-start; }
@@ -221,9 +284,9 @@
     .check-icon { position: static; transform: none; opacity: 1; } 
   }
 
-  /* Leaflet Dark Override */
+  /* Leaflet Controls */
   .leaflet-bar { border: none !important; box-shadow: 0 4px 10px rgba(0,0,0,0.3) !important; }
-  .leaflet-bar a { background-color: var(--bg-2) !important; color: #fff !important; border-bottom: 1px solid var(--border) !important; }
+  .leaflet-bar a { background-color: #fff !important; color: #0f172a !important; border-bottom: 1px solid #cbd5e1 !important; }
 </style>
 </head>
 <body>
@@ -249,31 +312,54 @@
       
       <div class="map-wrapper">
         <div id="map"></div>
+        <div class="map-chip">
+          <span id="mapZoneCount">0 zonas</span>
+          <span id="mapModeText">Mapa operativo</span>
+        </div>
         
         <div class="help-box">
           <strong style="color:var(--brand)">Gestión de Mapa</strong>
           <ul>
-            <li><strong>Crear:</strong> Usa el pentágono (⬠) arriba a la izq.</li>
-            <li><strong>Editar:</strong> Usa el lápiz (✎) para mover puntos.</li>
-            <li><strong>Borrar:</strong> Usa el tacho (🗑) o el botón de la lista.</li>
+            <li><strong>Dibujar:</strong> tocá “Dibujar zona” o el pentágono del mapa.</li>
+            <li><strong>Editar:</strong> usá el pin de cada zona para mover puntos.</li>
+            <li><strong>Revisar:</strong> clic en una zona para centrarla y resaltarla.</li>
           </ul>
         </div>
       </div>
 
-      <div class="card">
+      <div class="card zones-panel">
         
         <div id="empWrap" style="display:none; margin-bottom:1rem; border-bottom:1px solid var(--border); padding-bottom:1rem;">
             <label for="empSel">Empresa (Admin)</label>
             <select id="empSel"><option value="">-- Seleccionar --</option></select>
         </div>
 
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
-          <h2 style="margin:0; font-size:1.2rem; color:#fff;">Mis Zonas</h2>
-          <button id="btnStartNewZone" type="button" class="btn">+ Dibujar</button>
+        <div class="panel-head">
+          <div>
+            <h2>Zonas de reparto</h2>
+            <p class="panel-subtitle">Territorios activos para asignación y despacho.</p>
+          </div>
+          <div class="panel-actions">
+            <button id="btnFitAllZones" type="button" class="btn">Centrar todo</button>
+            <button id="btnStartNewZone" type="button" class="btn btn-primary">Dibujar zona</button>
+          </div>
+        </div>
+
+        <div class="zone-summary">
+          <div class="zone-stat"><span>Total</span><strong id="statTotalZones">0</strong></div>
+          <div class="zone-stat"><span>Con dibujo</span><strong id="statDrawnZones">0</strong></div>
+          <div class="zone-stat"><span>Sin dibujo</span><strong id="statEmptyZones">0</strong></div>
+        </div>
+
+        <div class="zone-tools">
+          <div class="search-box">
+            <span class="search-icon">🔍</span>
+            <input type="text" id="zoneSearch" placeholder="Buscar zona...">
+          </div>
         </div>
 
         <div id="editModeBar" style="display:none; margin-bottom:1rem; padding:0.7rem; border:1px dashed var(--warning); border-radius:8px; background:rgba(245,158,11,0.1);">
-          <div style="font-size:0.85rem; color:#fbbf24; margin-bottom:0.5rem;">Modo edición de puntos activo</div>
+          <div id="editModeText" style="font-size:0.85rem; color:#fbbf24; margin-bottom:0.5rem;">Modo edición de puntos activo</div>
           <div style="display:flex; gap:0.5rem;">
             <button id="btnSavePolygonEdit" type="button" class="btn btn-primary">Guardar puntos</button>
             <button id="btnCancelPolygonEdit" type="button" class="btn">Cancelar</button>
@@ -349,6 +435,9 @@
     let map, drawnItems, drawControl;
     let zonas = [];
     let layersByZoneId = {};
+    let zoneDriverMap = {};
+    let activeZoneId = null;
+    let zoneSearchQuery = '';
     let currentNewPolygon = null;
     let currentLayer = null;
     let polygonEditState = { zoneId: null, layer: null, originalCoords: null };
@@ -373,8 +462,8 @@
       // Coords default Argentina centro aprox
       map = L.map('map').setView([-32.4113, -63.2374], 13);
       
-      // Capa base oscura (CartoDB DarkMatter) para coincidir con el tema
-      L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+      // Capa clara para leer calles y referencias mientras se dibujan zonas.
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
         subdomains: 'abcd',
         maxZoom: 20
@@ -392,6 +481,7 @@
         }
       });
       map.addControl(drawControl);
+      setTimeout(() => map.invalidateSize(), 200);
 
       // Crear
       map.on(L.Draw.Event.CREATED, function (e) {
@@ -405,6 +495,7 @@
         }
 
         drawnItems.addLayer(layer);
+        layer.setStyle({ color: '#06b6d4', weight: 3, fillOpacity: 0.22 });
         const latLngs = layer.getLatLngs()[0] || [];
         currentNewPolygon = latLngs.map(p => [p.lng, p.lat]); // [lng, lat] para backend
         
@@ -443,37 +534,68 @@
         if (STATE.isSuper) {
             if (empId) url += `?empresa_id=${empId}`;
             else {
-                zonas = []; renderList(); drawnItems.clearLayers();
+                zonas = []; zoneDriverMap = {}; renderList(); updateStats(); drawnItems.clearLayers();
                 return;
             }
         }
 
-        const data = await api(url);
+        const qs = STATE.isSuper && empId ? `?empresa_id=${empId}` : '';
+        const [data, assignments, choferes] = await Promise.all([
+            api(url),
+            api(`/api/zonas/choferes${qs}`),
+            api(`/api/choferes${qs}`)
+        ]);
+
         if (Array.isArray(data)) {
             zonas = data;
+            buildDriverMap(assignments, choferes);
             renderList();
             renderMapShapes();
+            updateStats();
         } else {
             console.error(data);
             toast('Error: ' + (data.error || ''));
         }
     }
 
+    function buildDriverMap(assignments, choferes) {
+      zoneDriverMap = {};
+      if (!Array.isArray(assignments) || !Array.isArray(choferes)) return;
+
+      assignments.forEach(assign => {
+        const zoneId = assign.zona_id || assign.id;
+        const firstDriverId = assign.choferes?.[0]?.id;
+        const driver = choferes.find(c => Number(c.id) === Number(firstDriverId));
+        if (zoneId && driver) zoneDriverMap[zoneId] = driver.nombre;
+      });
+    }
+
     function renderList() {
       const list = $('#zonasList');
-      if (!zonas.length) {
-        list.innerHTML = `<div style="text-align:center; padding:2rem; color:var(--muted);">No hay zonas creadas.</div>`;
+      const q = zoneSearchQuery.trim().toLowerCase();
+      const visibleZones = zonas.filter(z => !q || String(z.nombre || '').toLowerCase().includes(q));
+
+      if (!visibleZones.length) {
+        const msg = zonas.length ? 'No hay zonas que coincidan con la búsqueda.' : 'No hay zonas creadas.';
+        list.innerHTML = `<div class="empty-state">${msg}</div>`;
         return;
       }
-      list.innerHTML = zonas.map(z => {
+      list.innerHTML = visibleZones.map(z => {
         const id = Number(z.id);
+        const pointCount = getZonePointCount(z);
+        const hasPolygon = pointCount >= 3;
+        const driverName = zoneDriverMap[id];
         return `
-        <div class="zona-item" data-zone-id="${id}">
+        <div class="zona-item ${Number(activeZoneId) === id ? 'active' : ''}" data-zone-id="${id}">
           <div class="zona-info">
             <h3>${esc(z.nombre)}</h3>
-            <p>ID: ${id}</p>
+            <div class="zona-meta">
+              <span class="zone-tag">ID ${id}</span>
+              <span class="zone-tag ${hasPolygon ? 'ok' : 'warn'}">${hasPolygon ? `${pointCount} puntos` : 'Sin dibujo'}</span>
+              <span class="zone-tag ${driverName ? 'driver' : 'warn'}">${driverName ? `Repartidor: ${esc(driverName)}` : 'Sin repartidor'}</span>
+            </div>
           </div>
-          <div style="display:flex; gap:0.5rem;">
+          <div class="zone-actions">
             <button class="btn-icon" data-action="edit-points" data-id="${id}" title="Editar puntos">📍</button>
             <button class="btn-icon" data-action="edit-name" data-id="${id}" title="Editar nombre">✏️</button>
             <button class="btn-icon" data-action="delete" data-id="${id}" title="Eliminar" style="color:var(--danger); border-color:rgba(239,68,68,0.3);">🗑️</button>
@@ -481,6 +603,28 @@
         </div>
       `;
       }).join('');
+    }
+
+    function getZonePointCount(z) {
+      const pts = Array.isArray(z?.poligono) ? z.poligono : [];
+      if (pts.length > 3) {
+        const first = pts[0];
+        const last = pts[pts.length - 1];
+        if (Array.isArray(first) && Array.isArray(last) && first[0] === last[0] && first[1] === last[1]) {
+          return pts.length - 1;
+        }
+      }
+      return pts.length;
+    }
+
+    function updateStats() {
+      const total = zonas.length;
+      const drawn = zonas.filter(z => getZonePointCount(z) >= 3).length;
+      const empty = total - drawn;
+      if ($('#statTotalZones')) $('#statTotalZones').textContent = total;
+      if ($('#statDrawnZones')) $('#statDrawnZones').textContent = drawn;
+      if ($('#statEmptyZones')) $('#statEmptyZones').textContent = empty;
+      if ($('#mapZoneCount')) $('#mapZoneCount').textContent = `${total} ${total === 1 ? 'zona' : 'zonas'}`;
     }
 
     function renderMapShapes() {
@@ -498,6 +642,7 @@
         const poly = L.polygon(latLngs, { color: '#06b6d4', weight: 2, fillOpacity: 0.2 });
         poly.zonaId = z.id;
         poly.bindTooltip(esc(z.nombre), { permanent: true, direction:"center", className: "zona-label" });
+        poly.on('click', () => focusZone(Number(z.id)));
         
         drawnItems.addLayer(poly);
         layersByZoneId[z.id] = poly; 
@@ -511,18 +656,36 @@
     // --- Actions ---
     function startNewZone() {
       if (STATE.isSuper && !$('#empSel').value) return toast('⚠️ Selecciona una empresa primero');
-      toast('Usa el botón del pentágono (⬠) en el mapa para dibujar.');
+      if (L.Draw && L.Draw.Polygon) {
+        new L.Draw.Polygon(map, drawControl.options.draw.polygon).enable();
+        toast('Dibujá el polígono en el mapa.');
+      } else {
+        toast('Usa el botón del pentágono (⬠) en el mapa para dibujar.');
+      }
     }
 
     function focusZone(id) {
       const layer = layersByZoneId[id];
       if (layer) {
+          activeZoneId = id;
+          renderList();
           map.fitBounds(layer.getBounds());
           layer.setStyle({ weight: 4, color: '#facc15', fillOpacity: 0.5 });
           setTimeout(() => layer.setStyle({ weight: 2, color: '#06b6d4', fillOpacity: 0.2 }), 1500);
+          const z = zonas.find(x => Number(x.id) === Number(id));
+          if ($('#mapModeText')) $('#mapModeText').textContent = z?.nombre ? `Zona: ${z.nombre}` : 'Zona seleccionada';
       } else {
           toast('Zona sin dibujo en mapa');
       }
+    }
+
+    function fitAllZones() {
+      const layers = drawnItems.getLayers();
+      if (!layers.length) return toast('No hay zonas dibujadas para centrar');
+      activeZoneId = null;
+      renderList();
+      map.fitBounds(drawnItems.getBounds(), { padding: [30, 30] });
+      if ($('#mapModeText')) $('#mapModeText').textContent = 'Todas las zonas';
     }
 
     function editName(id) {
@@ -548,6 +711,9 @@
 
       layer.editing.enable();
       $('#editModeBar').style.display = 'block';
+      const z = zonas.find(x => Number(x.id) === Number(id));
+      if ($('#editModeText')) $('#editModeText').textContent = `Editando puntos: ${z?.nombre || `Zona ${id}`}`;
+      if ($('#mapModeText')) $('#mapModeText').textContent = 'Editando puntos';
       focusZone(id);
       toast('Modo edición: mové los puntos del polígono y luego guardá.');
     }
@@ -570,6 +736,7 @@
       layer.editing.disable();
       polygonEditState = { zoneId: null, layer: null, originalCoords: null };
       $('#editModeBar').style.display = 'none';
+      if ($('#mapModeText')) $('#mapModeText').textContent = 'Mapa operativo';
       await load();
     }
 
@@ -586,6 +753,7 @@
 
       polygonEditState = { zoneId: null, layer: null, originalCoords: null };
       $('#editModeBar').style.display = 'none';
+      if ($('#mapModeText')) $('#mapModeText').textContent = 'Mapa operativo';
       if (showToast) toast('Edición cancelada');
     }
 
@@ -628,6 +796,7 @@
         } else {
           toast(id ? '✅ Actualizado' : '✅ Zona creada');
           closeModal();
+          activeZoneId = null;
           currentNewPolygon = null;
           currentLayer = null; 
           load();
@@ -692,6 +861,17 @@
 
     const btnStartNewZone = document.getElementById('btnStartNewZone');
     if (btnStartNewZone) btnStartNewZone.addEventListener('click', startNewZone);
+
+    const btnFitAllZones = document.getElementById('btnFitAllZones');
+    if (btnFitAllZones) btnFitAllZones.addEventListener('click', fitAllZones);
+
+    const zoneSearch = document.getElementById('zoneSearch');
+    if (zoneSearch) {
+      zoneSearch.addEventListener('input', () => {
+        zoneSearchQuery = zoneSearch.value || '';
+        renderList();
+      });
+    }
 
     const btnSavePolygonEdit = document.getElementById('btnSavePolygonEdit');
     if (btnSavePolygonEdit) btnSavePolygonEdit.addEventListener('click', savePolygonEdit);
@@ -758,7 +938,13 @@
                     sel.innerHTML = '<option value="">-- Seleccionar Empresa --</option>' + 
                     list.map(e => `<option value="${Number(e.id)}">${esc(e.nombre)}</option>`).join('');
                     
-                    sel.addEventListener('change', () => { drawnItems.clearLayers(); load(); });
+                    sel.addEventListener('change', () => {
+                      activeZoneId = null;
+                      zoneSearchQuery = '';
+                      if ($('#zoneSearch')) $('#zoneSearch').value = '';
+                      drawnItems.clearLayers();
+                      load();
+                    });
                 }
             } else {
                 load();

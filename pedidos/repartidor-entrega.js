@@ -783,10 +783,16 @@ async function setStatus(id, st, el = null){
 async function setPay(id, met, el = null) {
   // Normalizar y validar método
   const metodo = String(met || '').toLowerCase();
-  const permitidos = ['efectivo', 'transferencia'];
+  const permitidos = ['efectivo', 'transferencia', 'cuenta_corriente'];
 
   if (!permitidos.includes(metodo)) {
     toast('Método de pago inválido');
+    return;
+  }
+
+  const pedido = pedidos.find(p => Number(p.id) === Number(id));
+  if (metodo === 'cuenta_corriente' && pedido?.cuenta_corriente_habilitada !== true) {
+    toast('Este cliente no está habilitado para Cta. Cte.');
     return;
   }
 
@@ -817,4 +823,3 @@ async function setPay(id, met, el = null) {
 }
 
 function toast(m){ const t = $('#toast'); t.textContent = m; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'), 2000); }
-

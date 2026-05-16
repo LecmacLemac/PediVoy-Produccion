@@ -221,9 +221,9 @@
           <div class="kpi-sub" id="kpiTicket">Ticket prom: $ 0,00</div>
         </div>
         <div class="kpi">
-          <div class="kpi-label">Efectivo vs Digital</div>
+          <div class="kpi-label">Cobros</div>
           <div class="kpi-value" id="kpiEfec">$ 0,00</div>
-          <div class="kpi-sub" id="kpiTransf">Digital: $ 0,00</div>
+          <div class="kpi-sub" id="kpiTransf">Transf.: $ 0,00 · Cta. Cte.: $ 0,00</div>
         </div>
         <div class="kpi">
           <div class="kpi-label">Top Cliente</div>
@@ -245,13 +245,14 @@
               <th class="numeric">Total ($)</th>
               <th class="numeric">Promedio</th>
               <th class="numeric">Efec.</th>
-              <th class="numeric">Digi.</th>
+              <th class="numeric">Transf.</th>
+              <th class="numeric">Cta. Cte.</th>
               <th>Fechas</th>
               <th>Acciones</th>
             </tr>
           </thead>
           <tbody id="tbBody">
-            <tr><td colspan="11" class="muted" style="text-align:center; padding:30px;">Cargando sistema...</td></tr>
+            <tr><td colspan="12" class="muted" style="text-align:center; padding:30px;">Cargando sistema...</td></tr>
           </tbody>
           <tfoot id="tbFoot" style="background:#111827; font-weight:700; border-top:2px solid var(--border)"></tfoot>
         </table>
@@ -459,7 +460,7 @@
                 latitud: c.latitud, longitud: c.longitud, notas: c.notas,
                 empresa_id: c.empresa_id,
                 
-                pedidos: 0, total: 0, efectivo: 0, digital: 0,
+                pedidos: 0, total: 0, efectivo: 0, digital: 0, cuentaCorriente: 0,
                 fechas: [], movimientos: []
             });
         });
@@ -495,7 +496,8 @@
 
         const metodo = String(r.metodo_pago || '').toLowerCase();
         if (metodo.includes('efect')) group.efectivo += monto;
-        else group.digital += monto; 
+        else if (metodo === 'cuenta_corriente' || metodo.startsWith('cta')) group.cuentaCorriente += monto;
+        else group.digital += monto;
 
         group.fechas.push(r.fecha);
         group.movimientos.push({
@@ -591,6 +593,7 @@
             <td class="numeric muted">${FMT.money.format(c.ticket)}</td>
             <td class="numeric">${FMT.money.format(c.efectivo)}</td>
             <td class="numeric">${FMT.money.format(c.digital)}</td>
+            <td class="numeric">${FMT.money.format(c.cuentaCorriente)}</td>
             <td style="font-size:0.8rem">
               ${c.ultima ? `<div>${FMT.date(c.ultima)}</div>` : '<span class="muted">—</span>'}
             </td>
@@ -602,7 +605,7 @@
             </td>
           </tr>
           <tr>
-            <td style="padding:0; border:0;" colspan="11">
+            <td style="padding:0; border:0;" colspan="12">
               <details>
                 <summary style="padding:4px 12px; background:#161e2e;">Ver detalle</summary>
                 <table style="width:100%; margin-bottom:10px;">${detailsHtml}</table>
@@ -619,8 +622,9 @@
         pedidos: acc.pedidos + c.pedidos,
         total: acc.total + c.total,
         efectivo: acc.efectivo + c.efectivo,
-        digital: acc.digital + c.digital
-      }), { pedidos: 0, total: 0, efectivo: 0, digital: 0 });
+        digital: acc.digital + c.digital,
+        cuentaCorriente: acc.cuentaCorriente + c.cuentaCorriente
+      }), { pedidos: 0, total: 0, efectivo: 0, digital: 0, cuentaCorriente: 0 });
 
       tfoot.innerHTML = `
         <tr>
@@ -630,6 +634,7 @@
           <td class="numeric">—</td>
           <td class="numeric">${FMT.money.format(sum.efectivo)}</td>
           <td class="numeric">${FMT.money.format(sum.digital)}</td>
+          <td class="numeric">${FMT.money.format(sum.cuentaCorriente)}</td>
           <td colspan="2"></td>
         </tr>
       `;
@@ -644,7 +649,7 @@
       UI.$('#kpiVentas').textContent = FMT.money.format(sum?.total || 0);
       UI.$('#kpiTicket').textContent = 'Promedio: ' + FMT.money.format(sum?.pedidos ? sum.total/sum.pedidos : 0);
       UI.$('#kpiEfec').textContent = FMT.money.format(sum?.efectivo || 0);
-      UI.$('#kpiTransf').textContent = 'Digital: ' + FMT.money.format(sum?.digital || 0);
+      UI.$('#kpiTransf').textContent = 'Transf.: ' + FMT.money.format(sum?.digital || 0) + ' · Cta. Cte.: ' + FMT.money.format(sum?.cuentaCorriente || 0);
       if (top && top.total > 0) {
         UI.$('#kpiTop').textContent = top.cliente;
         UI.$('#kpiTopMonto').textContent = FMT.money.format(top.total);

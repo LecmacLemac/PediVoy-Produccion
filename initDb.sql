@@ -187,6 +187,7 @@ CREATE TABLE IF NOT EXISTS puntos_entrega (
   telefono_normalizado TEXT,
   email                TEXT,
   email_facturacion    TEXT,
+  requiere_factura     BOOLEAN DEFAULT FALSE,
   zona_id              INTEGER REFERENCES zonas_geograficas(id) ON DELETE SET NULL,
   latitud              NUMERIC,
   longitud             NUMERIC,
@@ -207,7 +208,8 @@ ALTER TABLE puntos_entrega
   ADD COLUMN IF NOT EXISTS crm_motivo TEXT,
   ADD COLUMN IF NOT EXISTS crm_ticket_objetivo NUMERIC(12,2),
   ADD COLUMN IF NOT EXISTS crm_proxima_accion TIMESTAMPTZ,
-  ADD COLUMN IF NOT EXISTS crm_ultima_accion TIMESTAMPTZ;
+  ADD COLUMN IF NOT EXISTS crm_ultima_accion TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS cuenta_corriente_habilitada BOOLEAN DEFAULT FALSE;
 
 -- =========================================================
 -- 7. PRODUCTOS Y STOCK (La Base Fundamental)
@@ -1384,4 +1386,122 @@ CREATE TABLE IF NOT EXISTS call_tasks (
 
 CREATE INDEX IF NOT EXISTS idx_call_tasks_due
   ON call_tasks (status, due_at);
+
+-- =========================================================
+-- 17. FACTURACION ELECTRONICA AFIP/ARCA
+-- =========================================================
+CREATE TABLE IF NOT EXISTS empresa_facturacion_config (
+  id BIGSERIAL PRIMARY KEY,
+  empresa_id INT NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+  cuit TEXT NOT NULL,
+  razon_social TEXT,
+  condicion_iva TEXT,
+  punto_venta INT NOT NULL,
+  modo_afip TEXT NOT NULL DEFAULT 'homologacion',
+  certificado_ref TEXT,
+  clave_ref TEXT,
+  wsaa_token_encrypted TEXT,
+  wsaa_sign_encrypted TEXT,
+  wsaa_expires_at TIMESTAMPTZ,
+  activo BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT uq_empresa_facturacion_config_empresa UNIQUE (empresa_id),
+  CONSTRAINT chk_empresa_facturacion_config_modo
+    CHECK (modo_afip IN ('homologacion', 'produccion'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_empresa_facturacion_config_empresa
+  ON empresa_facturacion_config (empresa_id, activo);
+
+CREATE TABLE IF NOT EXISTS cliente_datos_fiscales (
+  id BIGSERIAL PRIMARY KEY,
+  empresa_id INT NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+  punto_entrega_id INT REFERENCES puntos_entrega(id) ON DELETE SET NULL,
+  tipo_documento TEXT NOT NULL DEFAULT 'CUIT',
+  numero_documento TEXT NOT NULL,
+  razon_social TEXT NOT NULL,
+  condicion_iva TEXT,
+  domicilio_fiscal TEXT,
+  email_facturacion TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT uq_cliente_datos_fiscales_cliente UNIQUE (empresa_id, punto_entrega_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_cliente_datos_fiscales_empresa_doc
+  ON cliente_datos_fiscales (empresa_id, numero_documento);
+
+CREATE TABLE IF NOT EXISTS facturas (
+  id BIGSERIAL PRIMARY KEY,
+  empresa_id INT NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+  pedido_id INT REFERENCES pedidos(id) ON DELETE SET NULL,
+  punto_entrega_id INT REFERENCES puntos_entrega(id) ON DELETE SET NULL,
+  cliente_datos_fiscales_id BIGINT REFERENCES cliente_datos_fiscales(id) ON DELETE SET NULL,
+  estado TEXT NOT NULL DEFAULT 'pendiente_confirmacion',
+  modo_afip TEXT NOT NULL DEFAULT 'homologacion',
+  tipo_comprobante TEXT,
+  codigo_comprobante_afip INT,
+  punto_venta INT,
+  numero_comprobante BIGINT,
+  concepto TEXT NOT NULL DEFAULT 'productos',
+  fecha_comprobante DATE,
+  importe_neto NUMERIC(12,2) NOT NULL DEFAULT 0,
+  importe_iva NUMERIC(12,2) NOT NULL DEFAULT 0,
+  importe_total NUMERIC(12,2) NOT NULL DEFAULT 0,
+  cae TEXT,
+  cae_vencimiento DATE,
+  pdf_url TEXT,
+  error_codigo TEXT,
+  error_mensaje TEXT,
+  created_by INT REFERENCES usuarios(id) ON DELETE SET NULL,
+  emitted_by INT REFERENCES usuarios(id) ON DELETE SET NULL,
+  emitted_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT chk_facturas_estado
+    CHECK (estado IN ('borrador', 'pendiente_confirmacion', 'emitiendo', 'emitida', 'rechazada', 'anulada')),
+  CONSTRAINT chk_facturas_modo
+    CHECK (modo_afip IN ('homologacion', 'produccion'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_facturas_pedido_unica
+  ON facturas (empresa_id, pedido_id)
+  WHERE pedido_id IS NOT NULL AND estado <> 'anulada';
+
+CREATE INDEX IF NOT EXISTS idx_facturas_empresa_estado
+  ON facturas (empresa_id, estado, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS factura_items (
+  id BIGSERIAL PRIMARY KEY,
+  factura_id BIGINT NOT NULL REFERENCES facturas(id) ON DELETE CASCADE,
+  producto_id INT REFERENCES productos(id) ON DELETE SET NULL,
+  descripcion TEXT NOT NULL,
+  cantidad NUMERIC(12,3) NOT NULL DEFAULT 1,
+  precio_unitario NUMERIC(12,2) NOT NULL DEFAULT 0,
+  alicuota_iva NUMERIC(5,2) NOT NULL DEFAULT 0,
+  importe_neto NUMERIC(12,2) NOT NULL DEFAULT 0,
+  importe_iva NUMERIC(12,2) NOT NULL DEFAULT 0,
+  importe_total NUMERIC(12,2) NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_factura_items_factura
+  ON factura_items (factura_id);
+
+CREATE TABLE IF NOT EXISTS factura_afip_auditoria (
+  id BIGSERIAL PRIMARY KEY,
+  empresa_id INT NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+  factura_id BIGINT REFERENCES facturas(id) ON DELETE SET NULL,
+  servicio TEXT NOT NULL,
+  operacion TEXT NOT NULL,
+  request_xml TEXT,
+  response_xml TEXT,
+  resultado TEXT,
+  error_codigo TEXT,
+  error_mensaje TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_factura_afip_auditoria_factura
+  ON factura_afip_auditoria (factura_id, created_at DESC);
 

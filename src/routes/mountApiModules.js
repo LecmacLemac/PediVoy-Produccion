@@ -17,6 +17,7 @@ import { createGastosRouter } from './gastos.js';
 import { createAuthRouter } from './auth.js';
 import { createClientesRouter } from './clientes.js';
 import { createTrackingRouter } from './tracking.js';
+import { createFacturacionRouter } from './facturacion.js';
 import { createPedidosRouter } from './pedidos.js';
 import { createPedidosItemsRouter } from './pedidosItems.js';
 import { createPedidosPagoRouter } from './pedidosPago.js';
@@ -66,6 +67,7 @@ export function mountApiModules(app, deps) {
   app.use('/api', createAuthRouter());
   app.use('/api/clientes', createClientesRouter());
   app.use('/api/track', createTrackingRouter());
+  app.use('/api', createFacturacionRouter());
   app.use('/api/gastos', createGastosRouter({ GASTOS_DIR }));
   app.use('/api/pedidos', createPedidosRouter());
   app.use('/api/pedidos', createPedidosItemsRouter());

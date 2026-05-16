@@ -454,6 +454,8 @@ function renderCards() {
     // --- D. BOTONES DE PAGO SEGÚN CANALES HABILITADOS ---
     const showEfec = !pagosCanales || pagosCanales.efectivo !== false;
     const showTrans = !pagosCanales || pagosCanales.transferencia !== false;
+    const ctaCteHabilitada = p.cuenta_corriente_habilitada === true;
+    const showCtaCte = ctaCteHabilitada && (!pagosCanales || pagosCanales.cuenta_corriente !== false);
 
     let payButtons = '';
     if (showEfec) {
@@ -473,6 +475,16 @@ function renderCards() {
           onclick="setPay(${p.id}, 'transferencia', this)"
         >
           📱 Transf.
+        </div>`;
+    }
+
+    if (showCtaCte) {
+      payButtons += `
+        <div
+          class="pay-opt ${met === 'cuenta_corriente' ? 'active cuenta-corriente' : ''}"
+          onclick="setPay(${p.id}, 'cuenta_corriente', this)"
+        >
+          🧾 Cta. Cte.
         </div>`;
     }
 
@@ -511,4 +523,3 @@ function renderCards() {
   $('#cardsContainer').innerHTML = html;
   $('#emptyMsg').hidden = list.length > 0;
 }
-
