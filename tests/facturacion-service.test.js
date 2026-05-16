@@ -5,11 +5,14 @@ import {
   calculateInvoiceTotals,
   cancelFactura,
   deleteFactura,
+  hasProductionEmissionConfirmation,
   isPedidoEstadoFacturable,
+  isProductionEmissionEnabled,
   isValidCuit,
   normalizeAfipMode,
   resolveTipoComprobante,
 } from '../src/services/facturacionService.js';
+import { buildAfipQrPayload } from '../src/services/facturaPdfService.js';
 
 test('isValidCuit valida digito verificador', () => {
   assert.equal(isValidCuit('20-12345678-6'), true);
@@ -57,6 +60,14 @@ test('isPedidoEstadoFacturable excluye pedidos cancelados', () => {
   assert.equal(isPedidoEstadoFacturable('cancelada'), false);
 });
 
+test('produccion exige habilitacion y confirmacion explicita', () => {
+  assert.equal(isProductionEmissionEnabled({ modo_afip: 'homologacion' }), true);
+  assert.equal(isProductionEmissionEnabled({ modo_afip: 'produccion', produccion_habilitada: false }), false);
+  assert.equal(isProductionEmissionEnabled({ modo_afip: 'produccion', produccion_habilitada: true }), true);
+  assert.equal(hasProductionEmissionConfirmation('EMITIR_FACTURA_REAL'), true);
+  assert.equal(hasProductionEmissionConfirmation('emitir'), false);
+});
+
 test('cancelFactura marca como anulada sin tocar facturas emitidas', async () => {
   const calls = [];
   const query = async (sql, params) => {
@@ -84,4 +95,24 @@ test('deleteFactura elimina solo facturas no emitidas ni anuladas', async () => 
   assert.match(calls[0].sql, /DELETE FROM facturas/);
   assert.match(calls[0].sql, /estado NOT IN \('emitida', 'anulada'\)/);
   assert.deepEqual(calls[0].params, [15, 4]);
+});
+
+test('buildAfipQrPayload arma URL oficial con CAE', () => {
+  const qr = buildAfipQrPayload({
+    config: { cuit: '20-24617736-9' },
+    factura: {
+      fecha_comprobante: '2026-05-16',
+      punto_venta: 1,
+      codigo_comprobante_afip: 11,
+      numero_comprobante: 1,
+      importe_total: 100,
+      receptor_documento: '12345678',
+      cae: '86200173459046',
+    },
+  });
+
+  assert.match(qr.url, /^https:\/\/www\.afip\.gob\.ar\/fe\/qr\/\?p=/);
+  assert.equal(qr.payload.cuit, 20246177369);
+  assert.equal(qr.payload.tipoCmp, 11);
+  assert.equal(qr.payload.codAut, 86200173459046);
 });

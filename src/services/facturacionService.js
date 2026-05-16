@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 const VALID_AFIP_MODES = new Set(['homologacion', 'produccion']);
 const VALID_ESTADOS = new Set(['borrador', 'pendiente_confirmacion', 'emitiendo', 'emitida', 'rechazada', 'anulada']);
 const PEDIDOS_NO_FACTURABLES = new Set(['cancelado', 'cancelada', 'cancelled', 'canceled']);
+export const PRODUCTION_EMISSION_CONFIRMATION = 'EMITIR_FACTURA_REAL';
 
 export function digitsOnly(value) {
   return String(value || '').replace(/\D+/g, '');
@@ -31,6 +32,15 @@ export function normalizeAfipMode(value) {
 export function normalizeEstado(value) {
   const estado = String(value || '').trim().toLowerCase();
   return VALID_ESTADOS.has(estado) ? estado : null;
+}
+
+export function isProductionEmissionEnabled(config) {
+  if (config?.modo_afip !== 'produccion') return true;
+  return config?.produccion_habilitada === true || config?.produccion_habilitada === 't';
+}
+
+export function hasProductionEmissionConfirmation(value) {
+  return String(value || '').trim().toUpperCase() === PRODUCTION_EMISSION_CONFIRMATION;
 }
 
 export function isPedidoEstadoFacturable(value) {
@@ -103,6 +113,10 @@ export async function ensureFacturacionSchema(query) {
       wsaa_token_encrypted TEXT,
       wsaa_sign_encrypted TEXT,
       wsaa_expires_at TIMESTAMPTZ,
+      produccion_habilitada BOOLEAN NOT NULL DEFAULT FALSE,
+      produccion_habilitada_at TIMESTAMPTZ,
+      produccion_habilitada_by INT REFERENCES usuarios(id) ON DELETE SET NULL,
+      produccion_observaciones TEXT,
       activo BOOLEAN NOT NULL DEFAULT TRUE,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -110,6 +124,14 @@ export async function ensureFacturacionSchema(query) {
       CONSTRAINT chk_empresa_facturacion_config_modo
         CHECK (modo_afip IN ('homologacion', 'produccion'))
     )
+  `);
+
+  await query(`
+    ALTER TABLE empresa_facturacion_config
+      ADD COLUMN IF NOT EXISTS produccion_habilitada BOOLEAN NOT NULL DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS produccion_habilitada_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS produccion_habilitada_by INT REFERENCES usuarios(id) ON DELETE SET NULL,
+      ADD COLUMN IF NOT EXISTS produccion_observaciones TEXT
   `);
 
   await query(`
@@ -181,6 +203,20 @@ export async function ensureFacturacionSchema(query) {
   `);
 
   await query(`
+    CREATE TABLE IF NOT EXISTS factura_pedidos (
+      factura_id BIGINT NOT NULL REFERENCES facturas(id) ON DELETE CASCADE,
+      pedido_id INT NOT NULL REFERENCES pedidos(id) ON DELETE CASCADE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (factura_id, pedido_id)
+    )
+  `);
+
+  await query(`
+    CREATE INDEX IF NOT EXISTS idx_factura_pedidos_pedido
+      ON factura_pedidos (pedido_id)
+  `);
+
+  await query(`
     CREATE TABLE IF NOT EXISTS factura_items (
       id BIGSERIAL PRIMARY KEY,
       factura_id BIGINT NOT NULL REFERENCES facturas(id) ON DELETE CASCADE,
@@ -234,9 +270,10 @@ export async function upsertFacturacionConfig(query, empresaId, payload = {}) {
     `
     INSERT INTO empresa_facturacion_config (
       empresa_id, cuit, razon_social, condicion_iva, punto_venta, modo_afip,
-      certificado_ref, clave_ref, activo, updated_at
+      certificado_ref, clave_ref, produccion_habilitada, produccion_habilitada_at,
+      produccion_habilitada_by, produccion_observaciones, activo, updated_at
     )
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,COALESCE($9,FALSE),CASE WHEN COALESCE($9,FALSE) THEN NOW() ELSE NULL END,$10,$11,$12,NOW())
     ON CONFLICT (empresa_id)
     DO UPDATE SET
       cuit = EXCLUDED.cuit,
@@ -246,9 +283,53 @@ export async function upsertFacturacionConfig(query, empresaId, payload = {}) {
       modo_afip = EXCLUDED.modo_afip,
       certificado_ref = COALESCE(EXCLUDED.certificado_ref, empresa_facturacion_config.certificado_ref),
       clave_ref = COALESCE(EXCLUDED.clave_ref, empresa_facturacion_config.clave_ref),
+      wsaa_token_encrypted = CASE
+        WHEN empresa_facturacion_config.modo_afip IS DISTINCT FROM EXCLUDED.modo_afip
+          OR EXCLUDED.certificado_ref IS NOT NULL
+          OR EXCLUDED.clave_ref IS NOT NULL
+        THEN NULL
+        ELSE empresa_facturacion_config.wsaa_token_encrypted
+      END,
+      wsaa_sign_encrypted = CASE
+        WHEN empresa_facturacion_config.modo_afip IS DISTINCT FROM EXCLUDED.modo_afip
+          OR EXCLUDED.certificado_ref IS NOT NULL
+          OR EXCLUDED.clave_ref IS NOT NULL
+        THEN NULL
+        ELSE empresa_facturacion_config.wsaa_sign_encrypted
+      END,
+      wsaa_expires_at = CASE
+        WHEN empresa_facturacion_config.modo_afip IS DISTINCT FROM EXCLUDED.modo_afip
+          OR EXCLUDED.certificado_ref IS NOT NULL
+          OR EXCLUDED.clave_ref IS NOT NULL
+        THEN NULL
+        ELSE empresa_facturacion_config.wsaa_expires_at
+      END,
+      produccion_habilitada = COALESCE($9, empresa_facturacion_config.produccion_habilitada),
+      produccion_habilitada_at = CASE
+        WHEN $9 = TRUE
+         AND empresa_facturacion_config.produccion_habilitada IS DISTINCT FROM TRUE
+        THEN NOW()
+        WHEN $9 = FALSE
+        THEN NULL
+        ELSE empresa_facturacion_config.produccion_habilitada_at
+      END,
+      produccion_habilitada_by = CASE
+        WHEN $9 = TRUE
+        THEN EXCLUDED.produccion_habilitada_by
+        WHEN $9 = FALSE
+        THEN NULL
+        ELSE empresa_facturacion_config.produccion_habilitada_by
+      END,
+      produccion_observaciones = CASE
+        WHEN $9 IS NOT NULL
+        THEN EXCLUDED.produccion_observaciones
+        ELSE empresa_facturacion_config.produccion_observaciones
+      END,
       activo = EXCLUDED.activo,
       updated_at = NOW()
-    RETURNING id, empresa_id, cuit, razon_social, condicion_iva, punto_venta, modo_afip, certificado_ref, clave_ref, activo, created_at, updated_at
+    RETURNING id, empresa_id, cuit, razon_social, condicion_iva, punto_venta, modo_afip,
+              certificado_ref, clave_ref, produccion_habilitada, produccion_habilitada_at,
+              produccion_habilitada_by, produccion_observaciones, activo, created_at, updated_at
     `,
     [
       empresaId,
@@ -259,6 +340,9 @@ export async function upsertFacturacionConfig(query, empresaId, payload = {}) {
       normalizeAfipMode(payload.modo_afip ?? payload.modoAfip),
       payload.certificado_ref || null,
       payload.clave_ref || null,
+      payload.produccion_habilitada === undefined ? null : payload.produccion_habilitada === true,
+      payload.produccion_habilitada_by || null,
+      payload.produccion_observaciones || null,
       payload.activo !== false,
     ]
   );
@@ -269,7 +353,8 @@ export async function getFacturacionConfig(query, empresaId) {
   const rows = await query(
     `
     SELECT id, empresa_id, cuit, razon_social, condicion_iva, punto_venta, modo_afip,
-           certificado_ref, clave_ref, activo, created_at, updated_at
+           certificado_ref, clave_ref, produccion_habilitada, produccion_habilitada_at,
+           produccion_habilitada_by, produccion_observaciones, activo, created_at, updated_at
     FROM empresa_facturacion_config
     WHERE empresa_id = $1
     LIMIT 1
@@ -284,7 +369,8 @@ export async function getFacturacionConfigForArca(query, empresaId) {
     `
     SELECT id, empresa_id, cuit, razon_social, condicion_iva, punto_venta, modo_afip,
            certificado_ref, clave_ref, wsaa_token_encrypted, wsaa_sign_encrypted, wsaa_expires_at,
-           activo, created_at, updated_at
+           produccion_habilitada, produccion_habilitada_at, produccion_habilitada_by,
+           produccion_observaciones, activo, created_at, updated_at
     FROM empresa_facturacion_config
     WHERE empresa_id = $1
     LIMIT 1
@@ -557,13 +643,204 @@ export async function requestFacturaForPedido(query, { pedidoId, empresaId, user
   return getFacturaById(query, { facturaId: factura.id, empresaId });
 }
 
+export async function requestFacturaForPedidos(query, { pedidoIds = [], empresaId, userId, datosFiscales = {} }) {
+  const normalizedPedidoIds = [...new Set(
+    (Array.isArray(pedidoIds) ? pedidoIds : [])
+      .map((id) => Number(id))
+      .filter((id) => Number.isInteger(id) && id > 0)
+  )];
+  if (normalizedPedidoIds.length < 2) {
+    throw Object.assign(new Error('Selecciona dos o mas pedidos para consolidar'), { statusCode: 400 });
+  }
+  if (normalizedPedidoIds.length > 50) {
+    throw Object.assign(new Error('No se pueden consolidar mas de 50 pedidos por factura'), { statusCode: 400 });
+  }
+
+  const config = await getFacturacionConfig(query, empresaId);
+  if (!config) throw Object.assign(new Error('La empresa no tiene configuracion fiscal'), { statusCode: 409 });
+
+  const pedidoRows = await query(
+    `
+    SELECT p.id, p.empresa_id, p.punto_entrega_id, p.monto, p.estado,
+           pe.cliente, pe.razon_social, pe.cuit, pe.condicion_iva, pe.requiere_factura,
+           pe.direccion, pe.direccion_completa, pe.email_facturacion
+    FROM pedidos p
+    LEFT JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
+    WHERE p.empresa_id = $1 AND p.id = ANY($2::int[])
+    ORDER BY p.fecha ASC, p.id ASC
+    `,
+    [empresaId, normalizedPedidoIds]
+  );
+  if (pedidoRows.length !== normalizedPedidoIds.length) {
+    throw Object.assign(new Error('Uno o mas pedidos no existen para la empresa'), { statusCode: 404 });
+  }
+
+  const activeFacturaRows = await query(
+    `
+    SELECT DISTINCT COALESCE(f.pedido_id, fp.pedido_id) AS pedido_id, f.id AS factura_id, f.estado
+    FROM facturas f
+    LEFT JOIN factura_pedidos fp ON fp.factura_id = f.id
+    WHERE f.empresa_id = $1
+      AND f.estado <> 'anulada'
+      AND (f.pedido_id = ANY($2::int[]) OR fp.pedido_id = ANY($2::int[]))
+    `,
+    [empresaId, normalizedPedidoIds]
+  );
+  if (activeFacturaRows.length) {
+    const ids = activeFacturaRows.map((row) => row.pedido_id).filter(Boolean).join(', ');
+    throw Object.assign(new Error(`Los pedidos ${ids} ya tienen factura activa`), { statusCode: 409 });
+  }
+
+  for (const pedido of pedidoRows) {
+    if (!isPedidoEstadoFacturable(pedido.estado)) {
+      throw Object.assign(new Error(`El pedido #${pedido.id} no se puede facturar por su estado`), { statusCode: 400 });
+    }
+    if (pedido.requiere_factura !== true) {
+      throw Object.assign(new Error(`El pedido #${pedido.id} no esta habilitado para facturacion`), { statusCode: 400 });
+    }
+  }
+
+  const basePedido = pedidoRows[0];
+  const numeroDocumento = normalizeFiscalDoc(datosFiscales.numero_documento || datosFiscales.cuit || basePedido.cuit);
+  const razonSocial = String(datosFiscales.razon_social || basePedido.razon_social || basePedido.cliente || '').trim();
+  if (!numeroDocumento || !razonSocial) {
+    throw Object.assign(new Error('Faltan datos fiscales del cliente'), { statusCode: 400 });
+  }
+  if (String(datosFiscales.tipo_documento || 'CUIT').toUpperCase() === 'CUIT' && !isValidCuit(numeroDocumento)) {
+    throw Object.assign(new Error('CUIT del cliente invalido'), { statusCode: 400 });
+  }
+
+  const selectedDocs = new Set(pedidoRows.map((pedido) => normalizeFiscalDoc(pedido.cuit)).filter(Boolean));
+  if (selectedDocs.size > 1 || (selectedDocs.size === 1 && !selectedDocs.has(numeroDocumento))) {
+    throw Object.assign(new Error('Todos los pedidos seleccionados deben pertenecer al mismo CUIT'), { statusCode: 400 });
+  }
+
+  const clienteFiscalRows = await query(
+    `
+    INSERT INTO cliente_datos_fiscales (
+      empresa_id, punto_entrega_id, tipo_documento, numero_documento, razon_social,
+      condicion_iva, domicilio_fiscal, email_facturacion, updated_at
+    )
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW())
+    ON CONFLICT (empresa_id, punto_entrega_id)
+    DO UPDATE SET
+      tipo_documento = EXCLUDED.tipo_documento,
+      numero_documento = EXCLUDED.numero_documento,
+      razon_social = EXCLUDED.razon_social,
+      condicion_iva = EXCLUDED.condicion_iva,
+      domicilio_fiscal = EXCLUDED.domicilio_fiscal,
+      email_facturacion = EXCLUDED.email_facturacion,
+      updated_at = NOW()
+    RETURNING *
+    `,
+    [
+      empresaId,
+      basePedido.punto_entrega_id || null,
+      String(datosFiscales.tipo_documento || 'CUIT').toUpperCase(),
+      numeroDocumento,
+      razonSocial,
+      datosFiscales.condicion_iva || basePedido.condicion_iva || null,
+      datosFiscales.domicilio_fiscal || basePedido.direccion_completa || basePedido.direccion || null,
+      datosFiscales.email_facturacion || basePedido.email_facturacion || null,
+    ]
+  );
+
+  const allItems = [];
+  for (const pedido of pedidoRows) {
+    const itemRows = await query(
+      `
+      SELECT producto_id, producto AS descripcion, cantidad, precio_unitario
+      FROM items_pedido
+      WHERE pedido_id = $1
+      ORDER BY id ASC
+      `,
+      [pedido.id]
+    );
+    const sourceItems = itemRows.length
+      ? itemRows
+      : [{ descripcion: `Pedido #${pedido.id}`, cantidad: 1, precio_unitario: Number(pedido.monto) || 0 }];
+    for (const item of sourceItems) {
+      allItems.push({
+        ...item,
+        descripcion: `Pedido #${pedido.id} - ${item.descripcion || 'Item'}`,
+      });
+    }
+  }
+
+  const tipo = resolveTipoComprobante({
+    emisorCondicionIva: config.condicion_iva,
+    receptorCondicionIva: clienteFiscalRows[0].condicion_iva,
+  });
+  const totals = calculateInvoiceTotals(allItems);
+
+  const facturaRows = await query(
+    `
+    INSERT INTO facturas (
+      empresa_id, pedido_id, punto_entrega_id, cliente_datos_fiscales_id, estado,
+      modo_afip, tipo_comprobante, codigo_comprobante_afip, punto_venta, concepto,
+      importe_neto, importe_iva, importe_total, created_by, updated_at
+    )
+    VALUES ($1,NULL,$2,$3,'pendiente_confirmacion',$4,$5,$6,$7,'productos',$8,$9,$10,$11,NOW())
+    RETURNING *
+    `,
+    [
+      empresaId,
+      basePedido.punto_entrega_id || null,
+      clienteFiscalRows[0].id,
+      config.modo_afip,
+      tipo.tipo,
+      tipo.codigo,
+      config.punto_venta,
+      totals.importe_neto,
+      totals.importe_iva,
+      totals.importe_total,
+      userId || null,
+    ]
+  );
+
+  const factura = facturaRows[0];
+  for (const pedidoId of normalizedPedidoIds) {
+    await query(
+      'INSERT INTO factura_pedidos (factura_id, pedido_id) VALUES ($1,$2)',
+      [factura.id, pedidoId]
+    );
+  }
+  for (const item of totals.items) {
+    await query(
+      `
+      INSERT INTO factura_items (
+        factura_id, producto_id, descripcion, cantidad, precio_unitario,
+        alicuota_iva, importe_neto, importe_iva, importe_total
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+      `,
+      [
+        factura.id,
+        item.producto_id,
+        item.descripcion,
+        item.cantidad,
+        item.precio_unitario,
+        item.alicuota_iva,
+        item.importe_neto,
+        item.importe_iva,
+        item.importe_total,
+      ]
+    );
+  }
+
+  return getFacturaById(query, { facturaId: factura.id, empresaId });
+}
+
 export async function getFacturaByPedido(query, { pedidoId, empresaId }) {
   const rows = await query(
     `
-    SELECT id
-    FROM facturas
-    WHERE pedido_id = $1 AND empresa_id = $2 AND estado <> 'anulada'
-    ORDER BY id DESC
+    SELECT f.id
+    FROM facturas f
+    LEFT JOIN factura_pedidos fp ON fp.factura_id = f.id
+    WHERE f.empresa_id = $2
+      AND f.estado <> 'anulada'
+      AND (f.pedido_id = $1 OR fp.pedido_id = $1)
+    ORDER BY f.id DESC
     LIMIT 1
     `,
     [pedidoId, empresaId]
@@ -576,9 +853,11 @@ export async function getFacturaById(query, { facturaId, empresaId }) {
   const rows = await query(
     `
     SELECT f.*, cdf.razon_social AS receptor_razon_social, cdf.numero_documento AS receptor_documento,
-           cdf.condicion_iva AS receptor_condicion_iva, cdf.email_facturacion AS receptor_email_facturacion
+           cdf.condicion_iva AS receptor_condicion_iva, cdf.email_facturacion AS receptor_email_facturacion,
+           pe.telefono AS receptor_telefono
     FROM facturas f
     LEFT JOIN cliente_datos_fiscales cdf ON cdf.id = f.cliente_datos_fiscales_id
+    LEFT JOIN puntos_entrega pe ON pe.id = f.punto_entrega_id
     WHERE f.id = $1 AND f.empresa_id = $2
     LIMIT 1
     `,
@@ -596,7 +875,17 @@ export async function getFacturaById(query, { facturaId, empresaId }) {
     `,
     [facturaId]
   );
-  return { ...rows[0], items };
+  const pedidos = await query(
+    `
+    SELECT p.id AS pedido_id, p.fecha, p.monto, p.estado
+    FROM factura_pedidos fp
+    JOIN pedidos p ON p.id = fp.pedido_id
+    WHERE fp.factura_id = $1
+    ORDER BY p.fecha ASC, p.id ASC
+    `,
+    [facturaId]
+  );
+  return { ...rows[0], items, pedidos };
 }
 
 export async function markFacturaEmitida(query, {
@@ -624,6 +913,20 @@ export async function markFacturaEmitida(query, {
     RETURNING *
     `,
     [facturaId, empresaId, numeroComprobante, cae, caeDate, userId || null]
+  );
+  return rows[0] || null;
+}
+
+export async function setFacturaPdfUrl(query, { facturaId, empresaId, pdfUrl }) {
+  const rows = await query(
+    `
+    UPDATE facturas
+    SET pdf_url = $3,
+        updated_at = NOW()
+    WHERE id = $1 AND empresa_id = $2
+    RETURNING *
+    `,
+    [facturaId, empresaId, pdfUrl || null]
   );
   return rows[0] || null;
 }
@@ -695,7 +998,7 @@ export async function listFacturas(query, { empresaId, estado, limit = 50 }) {
   return query(
     `
     SELECT f.id, f.pedido_id, f.estado, f.tipo_comprobante, f.punto_venta,
-           f.numero_comprobante, f.importe_total, f.cae, f.created_at, f.updated_at,
+           f.numero_comprobante, f.importe_total, f.cae, f.pdf_url, f.created_at, f.updated_at,
            cdf.razon_social AS receptor_razon_social,
            cdf.numero_documento AS receptor_documento
     FROM facturas f
@@ -782,6 +1085,7 @@ export async function listPedidosFacturables(query, {
       f.numero_comprobante,
       f.cae,
       f.cae_vencimiento,
+      f.pdf_url,
       f.error_codigo,
       f.error_mensaje,
       f.created_at AS factura_created_at,
@@ -789,10 +1093,16 @@ export async function listPedidosFacturables(query, {
       COUNT(*) OVER ()::int AS total_count
     FROM pedidos p
     LEFT JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
-    LEFT JOIN facturas f
-      ON f.empresa_id = p.empresa_id
-     AND f.pedido_id = p.id
-     AND f.estado <> 'anulada'
+    LEFT JOIN LATERAL (
+      SELECT f2.*
+      FROM facturas f2
+      LEFT JOIN factura_pedidos fp ON fp.factura_id = f2.id
+      WHERE f2.empresa_id = p.empresa_id
+        AND f2.estado <> 'anulada'
+        AND (f2.pedido_id = p.id OR fp.pedido_id = p.id)
+      ORDER BY f2.created_at DESC
+      LIMIT 1
+    ) f ON TRUE
     ${where}
     ORDER BY p.fecha DESC, p.id DESC
     LIMIT $${params.length}

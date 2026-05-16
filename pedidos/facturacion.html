@@ -35,7 +35,7 @@
     .page-header { display:flex; justify-content:space-between; align-items:flex-end; gap:1rem; flex-wrap:wrap; }
     h1 { margin:0; color:#fff; font-size:1.85rem; line-height:1.2; }
     .subtitle { margin:.45rem 0 0; color:var(--muted); }
-    .grid-kpi { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:1rem; }
+    .grid-kpi, .control-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:1rem; }
     .kpi-card, .toolbar, .panel {
       background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
       box-shadow:0 4px 20px rgba(0,0,0,.15);
@@ -101,6 +101,22 @@
     .invoice-items table { white-space:normal; }
     .toast { position:fixed; right:20px; bottom:30px; background:#fff; color:#0f172a; padding:10px 18px; border-radius:99px; font-weight:700; box-shadow:0 10px 30px rgba(0,0,0,.3); opacity:0; pointer-events:none; transition:.25s; z-index:2000; }
     .toast.show { opacity:1; transform:translateY(-8px); }
+    .mode-banner { display:flex; justify-content:space-between; align-items:center; gap:1rem; padding:1rem 1.25rem; border:1px solid var(--border); border-radius:var(--radius); background:rgba(59,130,246,.12); }
+    .mode-banner strong { color:#fff; }
+    .mode-banner.prod { background:rgba(239,68,68,.14); border-color:rgba(239,68,68,.35); }
+    .mode-banner.blocked { background:rgba(245,158,11,.14); border-color:rgba(245,158,11,.35); }
+    .control-card { background:rgba(15,23,42,.82); border:1px solid var(--border); border-radius:var(--radius); padding:1rem; display:grid; gap:.7rem; }
+    .control-card h3 { margin:0; color:#fff; font-size:.92rem; display:flex; align-items:center; gap:.55rem; }
+    .control-value { font-size:1.55rem; font-weight:800; color:#fff; line-height:1; }
+    .control-card p { margin:0; color:var(--muted); line-height:1.35; }
+    .status-line { display:flex; gap:.5rem; flex-wrap:wrap; margin-top:.35rem; }
+    .row-alert { margin-top:.45rem; color:#fbbf24; font-size:.78rem; white-space:normal; max-width:340px; }
+    .row-alert.bad { color:#fca5a5; }
+    .btn-icon { width:38px; padding:.55rem; }
+    .group-row td { background:rgba(6,182,212,.08); border-top:1px solid rgba(6,182,212,.2); }
+    .group-head { display:flex; justify-content:space-between; align-items:center; gap:1rem; flex-wrap:wrap; }
+    .selection-box { display:flex; align-items:center; justify-content:center; }
+    .selection-box input { width:18px; height:18px; accent-color:var(--brand); }
     @media (max-width:768px) {
       nav { flex-direction:column; align-items:stretch; }
       .menu { overflow-x:auto; padding-bottom:5px; gap:18px; }
@@ -146,6 +162,31 @@
       </div>
     </section>
 
+    <section id="modeBanner" class="mode-banner" hidden></section>
+
+    <section class="control-grid" id="controlGrid">
+      <article class="control-card">
+        <h3><i class="fa-solid fa-bolt"></i> Listas para emitir</h3>
+        <div class="control-value" id="ctlReady">0</div>
+        <p>Facturas preparadas sin bloqueos visibles.</p>
+      </article>
+      <article class="control-card">
+        <h3><i class="fa-solid fa-triangle-exclamation"></i> Requieren revision</h3>
+        <div class="control-value" id="ctlReview">0</div>
+        <p>Pedidos con datos fiscales incompletos o rechazos previos.</p>
+      </article>
+      <article class="control-card">
+        <h3><i class="fa-solid fa-shield-halved"></i> Preparacion ARCA</h3>
+        <div class="control-value" id="ctlArca">-</div>
+        <p id="ctlArcaText">Verificando configuracion fiscal.</p>
+      </article>
+      <article class="control-card">
+        <h3><i class="fa-solid fa-file-invoice-dollar"></i> Proxima accion</h3>
+        <div class="control-value" id="ctlNext">-</div>
+        <p id="ctlNextText">Cargando bandeja de facturacion.</p>
+      </article>
+    </section>
+
     <section class="grid-kpi">
       <div class="kpi-card"><div><h3 id="kpiTotal">0</h3><p>Pedidos</p></div><div class="kpi-icon" style="color:var(--info)"><i class="fa-solid fa-list-check"></i></div></div>
       <div class="kpi-card"><div><h3 id="kpiPendientes">0</h3><p>Sin factura</p></div><div class="kpi-icon" style="color:var(--warning)"><i class="fa-regular fa-clock"></i></div></div>
@@ -167,6 +208,7 @@
             <option value="pendiente_confirmacion">Pendiente</option>
             <option value="emitida">Emitida</option>
             <option value="rechazada">Rechazada</option>
+            <option value="requiere_revision">Requiere revision</option>
           </select>
         </div>
         <div class="field">
@@ -181,6 +223,7 @@
           <label for="q">Buscar</label>
           <input id="q" type="search" placeholder="Cliente, razon social, CUIT o direccion">
         </div>
+        <button class="btn btn-primary" id="btnPrepareSelected" type="button" disabled><i class="fa-solid fa-layer-group"></i> Facturar seleccion</button>
       </div>
     </section>
 
@@ -193,6 +236,7 @@
         <table>
           <thead>
             <tr>
+              <th></th>
               <th>Pedido</th>
               <th>Fecha</th>
               <th>Cliente</th>
@@ -203,7 +247,7 @@
             </tr>
           </thead>
           <tbody id="rows">
-            <tr><td colspan="7" style="text-align:center; padding:3rem; color:var(--muted)">Cargando...</td></tr>
+            <tr><td colspan="8" style="text-align:center; padding:3rem; color:var(--muted)">Cargando...</td></tr>
           </tbody>
         </table>
       </div>
@@ -212,7 +256,7 @@
 
   <dialog id="dlgFactura">
     <div class="modal-header">
-      <strong>Preparar factura - Pedido #<span id="dlgPedidoId"></span></strong>
+      <strong>Preparar factura - <span id="dlgPedidoId"></span></strong>
       <button class="btn btn-sm" id="btnCloseX" type="button">Cerrar</button>
     </div>
     <form id="fFactura" class="modal-body">
@@ -272,7 +316,10 @@
     let currentUser = null;
     let isSuper = false;
     let pedidos = [];
+    let facturacionConfig = null;
     let selectedPedido = null;
+    let selectedPedidos = [];
+    let selectedPedidoIds = new Set();
     let selectedFactura = null;
     let busy = false;
 
@@ -282,6 +329,49 @@
       return new Date(value).toLocaleString('es-AR', { dateStyle:'short', timeStyle:'short' });
     }
     function onlyDigits(value) { return String(value || '').replace(/\D+/g, ''); }
+    function isValidCuit(value) {
+      const cuit = onlyDigits(value);
+      if (!/^\d{11}$/.test(cuit)) return false;
+      const weights = [5,4,3,2,7,6,5,4,3,2];
+      const sum = weights.reduce((acc, weight, idx) => acc + Number(cuit[idx]) * weight, 0);
+      const mod = 11 - (sum % 11);
+      const checkDigit = mod === 11 ? 0 : mod === 10 ? 9 : mod;
+      return checkDigit === Number(cuit[10]);
+    }
+    function fiscalIssues(row) {
+      const issues = [];
+      const doc = onlyDigits(row.cuit);
+      const razon = String(row.razon_social || row.cliente || '').trim();
+      if (!razon) issues.push('falta razon social');
+      if (doc && doc.length === 11 && !isValidCuit(doc)) issues.push('CUIT invalido');
+      if (!doc && Number(row.monto || 0) >= 100000) issues.push('monto alto sin documento fiscal');
+      if (row.factura_estado === 'rechazada') issues.push('factura rechazada');
+      if (row.error_mensaje) issues.push('revisar error ARCA');
+      return issues;
+    }
+    function canEmitPrepared(row) {
+      return row.factura_id && !['emitida','anulada','rechazada'].includes(String(row.factura_estado || '')) && !fiscalIssues(row).length;
+    }
+    function fiscalGroupKey(row) {
+      const cuit = onlyDigits(row.cuit);
+      return cuit || 'sin-cuit:' + (row.punto_entrega_id || row.cliente || row.pedido_id);
+    }
+    function canSelectForGroup(row) {
+      return Boolean(onlyDigits(row.cuit)) && !row.factura_id && !fiscalIssues(row).length;
+    }
+    function selectedRows() {
+      return pedidos.filter((p) => selectedPedidoIds.has(String(p.pedido_id)));
+    }
+    function updateSelectionAction() {
+      const rows = selectedRows();
+      const cuitSet = new Set(rows.map((p) => fiscalGroupKey(p)));
+      const total = rows.reduce((acc, p) => acc + Number(p.monto || 0), 0);
+      const btn = $('#btnPrepareSelected');
+      btn.disabled = busy || rows.length < 1 || cuitSet.size !== 1;
+      btn.innerHTML = rows.length
+        ? '<i class="fa-solid fa-layer-group"></i> Facturar ' + rows.length + ' pedido' + (rows.length === 1 ? '' : 's') + ' · ' + money(total)
+        : '<i class="fa-solid fa-layer-group"></i> Facturar seleccion';
+    }
     function toast(message) {
       const el = $('#toast');
       el.textContent = message;
@@ -307,6 +397,7 @@
       const parts = [badge(row)];
       if (row.numero_comprobante) parts.push(`<div class="muted">C ${row.punto_venta || '-'}-${row.numero_comprobante}</div>`);
       if (row.cae) parts.push(`<div class="muted">CAE ${row.cae}</div>`);
+      if (row.pdf_url) parts.push('<div class="muted">PDF generado</div>');
       if (row.error_mensaje) parts.push(`<div class="muted" style="color:#fca5a5; max-width:280px; white-space:normal;">${escapeHtml(row.error_mensaje)}</div>`);
       return parts.join('');
     }
@@ -314,7 +405,11 @@
       const doc = row.cuit ? `CUIT ${row.cuit}` : 'Consumidor final';
       const razon = row.razon_social || row.cliente || '-';
       const iva = row.condicion_iva || 'Consumidor Final';
-      return `<div class="strong">${escapeHtml(razon)}</div><div class="muted">${escapeHtml(doc)} · ${escapeHtml(iva)}</div>`;
+      const issues = fiscalIssues(row);
+      const alert = issues.length
+        ? `<div class="row-alert ${row.factura_estado === 'rechazada' ? 'bad' : ''}"><i class="fa-solid fa-circle-exclamation"></i> ${escapeHtml(issues.join(' · '))}</div>`
+        : '<div class="status-line"><span class="badge b-ok">Control OK</span></div>';
+      return `<div class="strong">${escapeHtml(razon)}</div><div class="muted">${escapeHtml(doc)} · ${escapeHtml(iva)}</div>${alert}`;
     }
     function escapeHtml(value) {
       return String(value ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -349,7 +444,7 @@
         <div class="invoice-preview-head">
           <div>
             <h3>Factura preparada</h3>
-            <div class="muted">Pedido #${selectedFactura.pedido_id || selectedPedido?.pedido_id || '-'}</div>
+            <div class="muted">${selectedFactura.pedido_id ? 'Pedido #' + selectedFactura.pedido_id : (selectedFactura.pedidos?.length || selectedPedidos.length || 0) + ' pedidos consolidados'}</div>
           </div>
           ${facturaBadge(selectedFactura)}
         </div>
@@ -367,6 +462,13 @@
             <tbody>${itemsHtml}</tbody>
           </table>
         </div>
+        ${selectedFactura.estado === 'emitida' ? `
+          <div class="actions" style="margin-top:1rem">
+            <button class="btn btn-sm" data-dialog-action="pdf" type="button"><i class="fa-solid fa-file-pdf"></i> Descargar PDF fiscal</button>
+            <button class="btn btn-sm" data-dialog-action="whatsapp" type="button"><i class="fa-brands fa-whatsapp"></i> Enviar WhatsApp</button>
+            <button class="btn btn-sm" data-dialog-action="email" type="button"><i class="fa-regular fa-envelope"></i> Enviar email</button>
+          </div>
+        ` : ''}
       `;
       box.hidden = false;
       $('#btnEmitirPreparada').hidden = selectedFactura.estado === 'emitida' || selectedFactura.estado === 'anulada';
@@ -388,6 +490,84 @@
       return '';
     }
 
+    function productionConfirmPayload() {
+      if (facturacionConfig?.modo_afip !== 'produccion') return {};
+      const ok = confirm('Vas a emitir una factura REAL en ARCA produccion. Esta accion genera CAE fiscal. Confirmas continuar?');
+      if (!ok) throw new Error('Emision real cancelada');
+      return { confirmacion: 'EMITIR_FACTURA_REAL' };
+    }
+
+    function renderModeBanner() {
+      const banner = $('#modeBanner');
+      if (!facturacionConfig) {
+        banner.hidden = false;
+        banner.className = 'mode-banner blocked';
+        banner.innerHTML = '<div><strong>Facturacion sin configurar</strong><div class="muted">Carga CUIT, punto de venta y credenciales ARCA en Configuracion fiscal.</div></div>';
+        return;
+      }
+      const mode = facturacionConfig.modo_afip || 'homologacion';
+      const enabled = facturacionConfig.produccion_habilitada === true;
+      banner.hidden = false;
+      banner.className = 'mode-banner' + (mode === 'produccion' ? (enabled ? ' prod' : ' blocked') : '');
+      if (mode === 'produccion') {
+        banner.innerHTML = enabled
+          ? '<div><strong>Modo produccion activo</strong><div class="muted">Las emisiones generan facturas reales. El sistema pedira confirmacion antes de cada CAE.</div></div><span class="badge b-bad">REAL</span>'
+          : '<div><strong>Produccion configurada pero bloqueada</strong><div class="muted">Falta habilitacion operativa para emitir comprobantes reales.</div></div><span class="badge b-pending">Bloqueado</span>';
+        return;
+      }
+      banner.innerHTML = '<div><strong>Modo homologacion</strong><div class="muted">Las emisiones son de prueba y no afectan facturacion real.</div></div><span class="badge b-info">Prueba</span>';
+    }
+
+    function renderControlBoard() {
+      const ready = pedidos.filter(canEmitPrepared).length;
+      const review = pedidos.filter((p) => fiscalIssues(p).length).length;
+      const pending = pedidos.filter((p) => !p.factura_id).length;
+      const rejected = pedidos.filter((p) => p.factura_estado === 'rechazada').length;
+      $('#ctlReady').textContent = ready;
+      $('#ctlReview').textContent = review;
+
+      if (!facturacionConfig) {
+        $('#ctlArca').textContent = 'Falta';
+        $('#ctlArcaText').textContent = 'Cargar configuracion fiscal antes de preparar comprobantes.';
+      } else if (facturacionConfig.modo_afip === 'produccion' && facturacionConfig.produccion_habilitada !== true) {
+        $('#ctlArca').textContent = 'Bloqueada';
+        $('#ctlArcaText').textContent = 'Produccion configurada, pendiente de habilitacion operativa.';
+      } else {
+        $('#ctlArca').textContent = facturacionConfig.modo_afip === 'produccion' ? 'Real' : 'Test';
+        $('#ctlArcaText').textContent = facturacionConfig.modo_afip === 'produccion'
+          ? 'Emision real activa con confirmacion obligatoria.'
+          : 'Homologacion lista para pruebas y entrenamiento interno.';
+      }
+
+      if (rejected) {
+        $('#ctlNext').textContent = rejected;
+        $('#ctlNextText').textContent = 'Corregir rechazos antes de reintentar emision.';
+      } else if (review) {
+        $('#ctlNext').textContent = review;
+        $('#ctlNextText').textContent = 'Completar o corregir datos fiscales de clientes.';
+      } else if (ready) {
+        $('#ctlNext').textContent = ready;
+        $('#ctlNextText').textContent = 'Emitir las facturas ya preparadas.';
+      } else if (pending) {
+        $('#ctlNext').textContent = pending;
+        $('#ctlNextText').textContent = 'Preparar facturas para pedidos pendientes.';
+      } else {
+        $('#ctlNext').textContent = 'OK';
+        $('#ctlNextText').textContent = 'No hay acciones pendientes con los filtros actuales.';
+      }
+    }
+
+    async function loadFacturacionConfig() {
+      const params = qsEmpresa();
+      try {
+        const data = await apiJson('/api/facturacion/config' + (params ? '?' + params : ''));
+        facturacionConfig = data?.config || null;
+      } catch {
+        facturacionConfig = null;
+      }
+      renderModeBanner();
+    }
+
     async function loadMe() {
       const res = await apiJson('/api/me');
       if (!res) return;
@@ -403,6 +583,7 @@
     }
 
     async function loadPedidos() {
+      await loadFacturacionConfig();
       const params = new URLSearchParams();
       const empresa = qsEmpresa();
       if (empresa) params.set('empresa_id', $('#empresaSel').value);
@@ -412,9 +593,13 @@
       if ($('#q').value.trim()) params.set('q', $('#q').value.trim());
       params.set('limit', '200');
 
-      $('#rows').innerHTML = '<tr><td colspan="7" style="text-align:center; padding:3rem; color:var(--muted)">Cargando...</td></tr>';
+      $('#rows').innerHTML = '<tr><td colspan="8" style="text-align:center; padding:3rem; color:var(--muted)">Cargando...</td></tr>';
       const data = await apiJson('/api/facturacion/pedidos?' + params.toString());
       pedidos = data?.pedidos || [];
+      if ($('#estadoFactura').value === 'requiere_revision') {
+        pedidos = pedidos.filter((p) => fiscalIssues(p).length);
+      }
+      selectedPedidoIds = new Set([...selectedPedidoIds].filter((id) => pedidos.some((p) => String(p.pedido_id) === id)));
       render();
     }
 
@@ -428,18 +613,55 @@
       $('#kpiEmitidas').textContent = emitidas;
       $('#kpiMonto').textContent = money(monto);
       $('#totalCount').textContent = total;
+      renderControlBoard();
+      updateSelectionAction();
 
       if (!pedidos.length) {
-        $('#rows').innerHTML = '<tr><td colspan="7" style="text-align:center; padding:3rem; color:var(--muted)">No hay pedidos para los filtros aplicados.</td></tr>';
+        $('#rows').innerHTML = '<tr><td colspan="8" style="text-align:center; padding:3rem; color:var(--muted)">No hay pedidos para los filtros aplicados.</td></tr>';
         return;
       }
 
-      $('#rows').innerHTML = pedidos.map((row) => {
-        const canEmit = row.factura_id && row.factura_estado !== 'emitida';
+      const groups = new Map();
+      for (const row of pedidos) {
+        const key = fiscalGroupKey(row);
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(row);
+      }
+
+      $('#rows').innerHTML = [...groups.entries()].map(([key, group]) => {
+        const selectable = group.filter(canSelectForGroup);
+        const selectedInGroup = selectable.filter((row) => selectedPedidoIds.has(String(row.pedido_id))).length;
+        const groupTotal = group.reduce((acc, row) => acc + Number(row.monto || 0), 0);
+        const first = group[0] || {};
+        const groupTitle = onlyDigits(first.cuit)
+          ? (first.razon_social || first.cliente || 'Cliente') + ' · CUIT ' + first.cuit
+          : (first.razon_social || first.cliente || 'Sin CUIT');
+        const groupRow = `
+          <tr class="group-row">
+            <td colspan="8">
+              <div class="group-head">
+                <div>
+                  <div class="strong">${escapeHtml(groupTitle)}</div>
+                  <div class="muted">${group.length} pedidos · ${money(groupTotal)} · ${selectable.length} disponibles para consolidar</div>
+                </div>
+                <div class="actions">
+                  ${selectable.length ? `<button class="btn btn-sm" data-action="select-group" data-key="${escapeHtml(key)}"><i class="fa-solid fa-check-double"></i> ${selectedInGroup === selectable.length ? 'Quitar grupo' : 'Seleccionar CUIT'}</button>` : ''}
+                  ${selectable.length ? `<button class="btn btn-sm btn-primary" data-action="prepare-group" data-key="${escapeHtml(key)}"><i class="fa-solid fa-layer-group"></i> Facturar CUIT</button>` : ''}
+                </div>
+              </div>
+            </td>
+          </tr>
+        `;
+        const rows = group.map((row) => {
+        const issues = fiscalIssues(row);
+        const canEmit = row.factura_id && row.factura_estado !== 'emitida' && !issues.length;
         const canCreate = !row.factura_id || row.factura_estado === 'rechazada';
         const canManagePending = row.factura_id && !['emitida', 'anulada'].includes(String(row.factura_estado || ''));
+        const canSelect = canSelectForGroup(row);
+        const checked = selectedPedidoIds.has(String(row.pedido_id)) ? 'checked' : '';
         return `
           <tr>
+            <td><label class="selection-box"><input type="checkbox" data-action="select-row" data-id="${row.pedido_id}" ${checked} ${canSelect ? '' : 'disabled'}></label></td>
             <td><div class="strong">#${row.pedido_id}</div><div class="muted">${escapeHtml(row.pedido_estado || '')}</div></td>
             <td>${fmtDate(row.fecha)}</td>
             <td><div class="strong">${escapeHtml(row.cliente || '-')}</div><div class="muted">${escapeHtml(row.direccion || '')}</div></td>
@@ -451,32 +673,60 @@
                 ${canCreate ? `<button class="btn btn-sm" data-action="prepare" data-id="${row.pedido_id}"><i class="fa-solid fa-file-circle-plus"></i> Preparar</button>` : ''}
                 ${row.factura_id ? `<button class="btn btn-sm" data-action="view" data-id="${row.factura_id}"><i class="fa-regular fa-eye"></i> Ver</button>` : ''}
                 ${canEmit ? `<button class="btn btn-sm btn-primary" data-action="emit" data-id="${row.factura_id}"><i class="fa-solid fa-paper-plane"></i> Emitir</button>` : ''}
+                ${row.factura_id && row.factura_estado !== 'emitida' && issues.length ? '<span class="badge b-pending">Revisar</span>' : ''}
                 ${canManagePending ? `<button class="btn btn-sm" data-action="cancel" data-id="${row.factura_id}"><i class="fa-solid fa-ban"></i> Cancelar</button>` : ''}
                 ${canManagePending ? `<button class="btn btn-sm btn-danger" data-action="delete" data-id="${row.factura_id}"><i class="fa-regular fa-trash-can"></i> Eliminar</button>` : ''}
-                ${row.factura_estado === 'emitida' ? '<span class="badge b-ok">Lista</span>' : ''}
+                ${row.factura_estado === 'emitida' ? `<button class="btn btn-sm" data-action="pdf" data-id="${row.factura_id}"><i class="fa-solid fa-file-pdf"></i> PDF</button>` : ''}
+                ${row.factura_estado === 'emitida' ? `<button class="btn btn-sm" data-action="send" data-id="${row.factura_id}"><i class="fa-solid fa-share-nodes"></i> Enviar</button>` : ''}
               </div>
             </td>
           </tr>
         `;
+        }).join('');
+        return groupRow + rows;
       }).join('');
     }
 
-    function openDialog(row) {
-      selectedPedido = row;
+    function openDialog(rowOrRows) {
+      const rows = Array.isArray(rowOrRows) ? rowOrRows : [rowOrRows];
+      if (!rows.length) return;
+      selectedPedidos = rows;
+      selectedPedido = rows[0];
       $('#fFactura').hidden = false;
       $('#btnCrearFactura').hidden = false;
       $('#btnCrearYEmitir').hidden = false;
       renderFacturaPreparada(null);
-      $('#dlgPedidoId').textContent = row.pedido_id;
-      const cuit = onlyDigits(row.cuit);
+      const total = rows.reduce((acc, row) => acc + Number(row.monto || 0), 0);
+      $('#dlgPedidoId').textContent = rows.length === 1 ? 'Pedido #' + selectedPedido.pedido_id : rows.length + ' pedidos del mismo CUIT';
+      const cuit = onlyDigits(selectedPedido.cuit);
       $('#tipoDocumento').value = cuit ? 'CUIT' : 'DNI';
       $('#numeroDocumento').value = cuit || '12345678';
-      $('#razonSocial').value = row.razon_social || row.cliente || 'Consumidor Final';
-      $('#condicionIva').value = row.condicion_iva || 'Consumidor Final';
-      $('#domicilioFiscal').value = row.direccion_completa || row.direccion || '';
-      $('#emailFacturacion').value = row.email_facturacion || '';
-      $('#dlgHint').textContent = `Importe estimado: ${money(row.monto)}. Si no hay CUIT, se prepara como consumidor final.`;
+      $('#razonSocial').value = selectedPedido.razon_social || selectedPedido.cliente || 'Consumidor Final';
+      $('#condicionIva').value = selectedPedido.condicion_iva || 'Consumidor Final';
+      $('#domicilioFiscal').value = selectedPedido.direccion_completa || selectedPedido.direccion || '';
+      $('#emailFacturacion').value = selectedPedido.email_facturacion || '';
+      $('#dlgHint').textContent = `Importe estimado: ${money(total)}. ${rows.length > 1 ? 'Factura consolidada por CUIT.' : 'Si no hay CUIT, se prepara como consumidor final.'}`;
+      validateDialogFiscal();
       $('#dlgFactura').showModal();
+    }
+
+    function validateDialogFiscal() {
+      const tipo = $('#tipoDocumento').value;
+      const numero = onlyDigits($('#numeroDocumento').value);
+      const razon = $('#razonSocial').value.trim();
+      const issues = [];
+      if (!razon) issues.push('falta razon social');
+      if (tipo === 'CUIT' && !isValidCuit(numero)) issues.push('CUIT invalido');
+      if (tipo === 'DNI' && numero.length < 7) issues.push('DNI incompleto');
+      const blocked = issues.length > 0;
+      $('#btnCrearFactura').disabled = blocked || busy;
+      $('#btnCrearYEmitir').disabled = blocked || busy;
+      if (blocked) {
+        $('#dlgHint').textContent = issues.join('. ');
+      } else if (selectedPedido) {
+        const total = (selectedPedidos.length ? selectedPedidos : [selectedPedido]).reduce((acc, row) => acc + Number(row.monto || 0), 0);
+        $('#dlgHint').textContent = `Importe estimado: ${money(total)}. Control fiscal basico OK.`;
+      }
     }
 
     function fiscalPayload() {
@@ -491,34 +741,45 @@
     }
 
     async function crearFactura({ emitir = false } = {}) {
-      if (!selectedPedido || busy) return;
+      const rows = selectedPedidos.length ? selectedPedidos : (selectedPedido ? [selectedPedido] : []);
+      if (!rows.length || busy) return;
       busy = true;
       $('#btnCrearFactura').disabled = true;
       $('#btnCrearYEmitir').disabled = true;
       try {
         const params = qsEmpresa() ? '?' + qsEmpresa() : '';
-        const created = await apiJson(`/api/pedidos/${selectedPedido.pedido_id}/factura/solicitar${params}`, {
+        const url = rows.length > 1
+          ? `/api/facturacion/facturas/consolidada${params}`
+          : `/api/pedidos/${selectedPedido.pedido_id}/factura/solicitar${params}`;
+        const payload = rows.length > 1
+          ? { pedido_ids: rows.map((row) => row.pedido_id), datos_fiscales: fiscalPayload() }
+          : { datos_fiscales: fiscalPayload() };
+        const created = await apiJson(url, {
           method:'POST',
           headers:{ 'content-type':'application/json' },
-          body:JSON.stringify({ datos_fiscales: fiscalPayload() }),
+          body:JSON.stringify(payload),
         });
         if (emitir) {
           const facturaId = created.factura?.id;
           const paramsEmitir = qsEmpresa() ? '?' + qsEmpresa() : '';
-          const emitted = await apiJson(`/api/facturas/${facturaId}/emitir${paramsEmitir}`, { method:'POST' });
+          const emitted = await apiJson(`/api/facturas/${facturaId}/emitir${paramsEmitir}`, {
+            method:'POST',
+            headers:{ 'content-type':'application/json' },
+            body:JSON.stringify(productionConfirmPayload()),
+          });
           renderFacturaPreparada(emitted.factura || created.factura);
           toast('Factura emitida');
         } else {
           renderFacturaPreparada(created.factura);
-          toast('Factura preparada');
+          toast(rows.length > 1 ? 'Factura consolidada preparada' : 'Factura preparada');
         }
+        selectedPedidoIds.clear();
         await loadPedidos();
       } catch (e) {
         toast(e.message || 'No se pudo preparar la factura');
       } finally {
         busy = false;
-        $('#btnCrearFactura').disabled = false;
-        $('#btnCrearYEmitir').disabled = false;
+        validateDialogFiscal();
       }
     }
 
@@ -527,7 +788,11 @@
       busy = true;
       try {
         const params = qsEmpresa() ? '?' + qsEmpresa() : '';
-        const data = await apiJson(`/api/facturas/${facturaId}/emitir${params}`, { method:'POST' });
+        const data = await apiJson(`/api/facturas/${facturaId}/emitir${params}`, {
+          method:'POST',
+          headers:{ 'content-type':'application/json' },
+          body:JSON.stringify(productionConfirmPayload()),
+        });
         if (data?.factura && selectedFactura?.id && String(selectedFactura.id) === String(facturaId)) {
           renderFacturaPreparada(data.factura);
         }
@@ -548,7 +813,10 @@
       const data = await apiJson(`/api/facturas/${facturaId}${params}`);
       const row = pedidos.find((p) => String(p.factura_id) === String(facturaId));
       selectedPedido = row || null;
-      $('#dlgPedidoId').textContent = row?.pedido_id || data.factura?.pedido_id || '-';
+      selectedPedidos = [];
+      $('#dlgPedidoId').textContent = data.factura?.pedido_id
+        ? 'Pedido #' + data.factura.pedido_id
+        : ((data.factura?.pedidos?.length || 0) + ' pedidos consolidados');
       $('#fFactura').hidden = true;
       $('#btnCrearFactura').hidden = true;
       $('#btnCrearYEmitir').hidden = true;
@@ -588,6 +856,50 @@
       }
     }
 
+    function facturaUrl(facturaId, suffix = '') {
+      const params = qsEmpresa() ? '?' + qsEmpresa() : '';
+      return `/api/facturas/${facturaId}${suffix}${params}`;
+    }
+
+    function descargarPdf(facturaId) {
+      if (!facturaId) return;
+      window.open(facturaUrl(facturaId, '/pdf'), '_blank', 'noopener');
+    }
+
+    async function enviarFactura(facturaId, canal = null) {
+      if (!facturaId || busy) return;
+      const canales = canal ? [canal] : [];
+      if (!canales.length) {
+        if (confirm('Enviar por WhatsApp?')) canales.push('whatsapp');
+        if (confirm('Enviar por email?')) canales.push('email');
+      }
+      if (!canales.length) return;
+      const payload = { canales };
+      if (canales.includes('whatsapp')) {
+        const tel = prompt('Telefono WhatsApp del cliente (con codigo de area)', selectedFactura?.receptor_telefono || selectedPedido?.telefono || '');
+        if (!tel) return;
+        payload.telefono = tel;
+      }
+      if (canales.includes('email')) {
+        const email = prompt('Email del cliente', selectedFactura?.receptor_email_facturacion || '');
+        if (!email) return;
+        payload.email = email;
+      }
+      busy = true;
+      try {
+        const data = await apiJson(facturaUrl(facturaId, '/enviar'), {
+          method:'POST',
+          headers:{ 'content-type':'application/json' },
+          body:JSON.stringify(payload),
+        });
+        toast(data.whatsapp ? 'Factura encolada para WhatsApp' : 'Factura enviada');
+      } catch (e) {
+        toast(e.message || 'No se pudo enviar la factura');
+      } finally {
+        busy = false;
+      }
+    }
+
     $('#rows').addEventListener('click', (ev) => {
       const btn = ev.target.closest('button[data-action]');
       if (!btn) return;
@@ -596,14 +908,61 @@
         const row = pedidos.find((p) => String(p.pedido_id) === String(btn.dataset.id));
         if (row) openDialog(row);
       }
+      if (action === 'select-group') {
+        const group = pedidos.filter((p) => fiscalGroupKey(p) === btn.dataset.key && canSelectForGroup(p));
+        const allSelected = group.length && group.every((p) => selectedPedidoIds.has(String(p.pedido_id)));
+        if (!allSelected) selectedPedidoIds.clear();
+        group.forEach((p) => {
+          if (allSelected) selectedPedidoIds.delete(String(p.pedido_id));
+          else selectedPedidoIds.add(String(p.pedido_id));
+        });
+        render();
+      }
+      if (action === 'prepare-group') {
+        const group = pedidos.filter((p) => fiscalGroupKey(p) === btn.dataset.key && canSelectForGroup(p));
+        if (group.length) openDialog(group);
+      }
       if (action === 'view') verFactura(btn.dataset.id);
       if (action === 'emit') emitirFactura(btn.dataset.id);
       if (action === 'cancel') cancelarFactura(btn.dataset.id);
       if (action === 'delete') eliminarFactura(btn.dataset.id);
+      if (action === 'pdf') descargarPdf(btn.dataset.id);
+      if (action === 'send') enviarFactura(btn.dataset.id);
+    });
+
+    $('#rows').addEventListener('change', (ev) => {
+      const input = ev.target.closest('input[data-action="select-row"]');
+      if (!input) return;
+      const row = pedidos.find((p) => String(p.pedido_id) === String(input.dataset.id));
+      if (!row || !canSelectForGroup(row)) return;
+      if (input.checked) {
+        const key = fiscalGroupKey(row);
+        selectedPedidoIds = new Set([...selectedPedidoIds].filter((id) => {
+          const selected = pedidos.find((p) => String(p.pedido_id) === id);
+          return selected && fiscalGroupKey(selected) === key;
+        }));
+        selectedPedidoIds.add(String(row.pedido_id));
+      } else {
+        selectedPedidoIds.delete(String(row.pedido_id));
+      }
+      render();
+    });
+
+    $('#facturaPreparada').addEventListener('click', (ev) => {
+      const btn = ev.target.closest('button[data-dialog-action]');
+      if (!btn || !selectedFactura?.id) return;
+      const action = btn.dataset.dialogAction;
+      if (action === 'pdf') descargarPdf(selectedFactura.id);
+      if (action === 'whatsapp') enviarFactura(selectedFactura.id, 'whatsapp');
+      if (action === 'email') enviarFactura(selectedFactura.id, 'email');
     });
 
     $('#btnCrearFactura').onclick = () => crearFactura();
     $('#btnCrearYEmitir').onclick = () => crearFactura({ emitir:true });
+    $('#btnPrepareSelected').onclick = () => {
+      const rows = selectedRows();
+      if (rows.length) openDialog(rows);
+    };
     $('#btnEmitirPreparada').onclick = () => selectedFactura?.id && emitirFactura(selectedFactura.id);
     $('#btnCloseDlg').onclick = () => $('#dlgFactura').close();
     $('#btnCloseX').onclick = () => $('#dlgFactura').close();
@@ -616,6 +975,10 @@
     ['empresaSel','estadoFactura','fromFilter','toFilter'].forEach((id) => {
       const el = $('#' + id);
       if (el) el.addEventListener('change', loadPedidos);
+    });
+    ['tipoDocumento','numeroDocumento','razonSocial'].forEach((id) => {
+      $('#' + id).addEventListener('input', validateDialogFiscal);
+      $('#' + id).addEventListener('change', validateDialogFiscal);
     });
     let searchTimer = null;
     $('#q').addEventListener('input', () => {

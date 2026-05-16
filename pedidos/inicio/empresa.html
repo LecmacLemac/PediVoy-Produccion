@@ -786,7 +786,7 @@
               <option value="produccion">Producción</option>
             </select>
             <small style="color:var(--muted); font-size:0.8rem;">
-              Producción queda bloqueada en backend hasta validación operativa.
+              Producción requiere habilitación operativa explícita.
             </small>
           </div>
           <div>
@@ -818,6 +818,17 @@
           <small style="color:var(--muted); margin-top:6px; display:block;">
             Los archivos se guardan fuera de la carpeta pública. La clave privada no se muestra ni vuelve al navegador.
           </small>
+        </div>
+
+        <div style="background:rgba(245,158,11,0.08); padding:10px; border-radius:8px; border:1px solid rgba(245,158,11,0.28); margin-bottom:1rem;">
+          <label style="display:flex; align-items:center; gap:8px; color:#fbbf24;">
+            <input type="checkbox" id="e_afip_produccion_habilitada" style="width:auto;">
+            Habilitar emisión real en producción
+          </label>
+          <small style="color:var(--muted); display:block; margin-top:6px;">
+            Solo usar cuando CUIT, punto de venta, certificado de producción y circuito contable estén validados.
+          </small>
+          <textarea id="e_afip_produccion_observaciones" rows="2" placeholder="Observación operativa: certificado producción cargado, PV validado, contabilidad OK" style="margin-top:8px;"></textarea>
         </div>
 
         <div class="section-label">Configuración Web</div>
@@ -2342,6 +2353,11 @@ if (logoutLink) {
       document.getElementById('e_afip_modo').value = config?.modo_afip || 'homologacion';
       document.getElementById('e_afip_certificado').value = '';
       document.getElementById('e_afip_clave').value = '';
+      const prodEnabled = config?.produccion_habilitada === true;
+      document.getElementById('e_afip_produccion_habilitada').checked = prodEnabled;
+      document.getElementById('e_afip_produccion_habilitada').disabled = !esSuperAdmin;
+      document.getElementById('e_afip_produccion_observaciones').value = config?.produccion_observaciones || '';
+      document.getElementById('e_afip_produccion_observaciones').disabled = !esSuperAdmin;
 
       const cert = !!config?.certificado_cargado;
       const clave = !!config?.clave_cargada;
@@ -2375,7 +2391,7 @@ if (logoutLink) {
       const hasAny = cuit || puntoVenta || $('#e_afip_razon_social').value || $('#e_afip_condicion_iva').value;
       if (!hasAny) return null;
 
-      return {
+      const cfg = {
         cuit,
         razon_social: ($('#e_afip_razon_social').value || $('#e_razon_social').value || '').trim() || null,
         condicion_iva: ($('#e_afip_condicion_iva').value || $('#e_condicion_iva').value || '').trim() || null,
@@ -2383,6 +2399,11 @@ if (logoutLink) {
         modo_afip: $('#e_afip_modo').value || 'homologacion',
         activo: true,
       };
+      if (esSuperAdmin) {
+        cfg.produccion_habilitada = $('#e_afip_produccion_habilitada').checked;
+        cfg.produccion_observaciones = ($('#e_afip_produccion_observaciones').value || '').trim() || null;
+      }
+      return cfg;
     }
 
     async function saveFacturacionConfig(empresaId) {
