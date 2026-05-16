@@ -1,0 +1,465 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Movimientos de Stock – MultiEmpresas</title>
+  <link rel="stylesheet" href="theme-base.css" />
+  
+  <style>
+    :root {
+      /* Palette */
+      --bg: #0b1020;
+      --ink: #f1f5f9;
+      --muted: #94a3b8;
+      --brand: #06b6d4;
+      --brand-hover: #22d3ee;
+      --surface: rgba(30, 41, 59, 0.7);
+      --border: rgba(148, 163, 184, 0.15);
+      --glass: rgba(15, 23, 42, 0.85);
+      --radius: 12px;
+      
+      --success: #10b981;
+      --danger: #ef4444;
+      --warning: #f59e0b;
+    }
+
+    * { box-sizing: border-box; outline: none; }
+    
+    body {
+      margin: 0; 
+      font-family: system-ui, -apple-system, sans-serif;
+      color: var(--ink);
+      background: 
+        radial-gradient(circle at 15% 50%, rgba(6, 182, 212, 0.05), transparent 25%),
+        radial-gradient(circle at 85% 30%, rgba(59, 130, 246, 0.05), transparent 25%),
+        var(--bg);
+      min-height: 100vh;
+      font-size: 14px;
+    }
+
+    .container { max-width: 1200px; margin: 0 auto; padding: 0 20px; }
+
+    /* HEADER */
+    header {
+      position: sticky; top: 0; z-index: 50;
+      background: var(--glass); backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border); padding: 0.8rem 0;
+    }
+    nav { display: flex; justify-content: space-between; align-items: center; }
+    .brand { font-size: 1.1rem; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 0.5rem; }
+    .role-badge { background: rgba(6,182,212,0.1); color: var(--brand); padding: 2px 8px; border-radius: 99px; font-size: 0.75rem; border: 1px solid rgba(6,182,212,0.3); }
+    
+    .menu { list-style: none; display: flex; gap: 1.5rem; margin: 0; padding: 0; }
+    .menu a { text-decoration: none; color: var(--muted); font-weight: 500; transition: 0.2s; }
+    .menu a:hover, .menu a.active { color: #fff; }
+    .menu a.active { border-bottom: 2px solid var(--brand); padding-bottom: 4px; }
+
+    /* LAYOUT */
+    main { padding: 2rem 0 4rem; display: grid; gap: 1.5rem; }
+    
+    .card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 1.5rem;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+    }
+
+    /* KPIs */
+    .grid-kpi { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; }
+    .kpi-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 1.2rem;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .kpi-val h3 { font-size: 1.8rem; margin: 0; color: #fff; font-weight: 700; }
+    .kpi-val p { margin: 0; color: var(--muted); font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.5px; }
+    .kpi-icon { font-size: 2rem; opacity: 0.8; }
+
+    /* TOOLBAR & INPUTS */
+    .toolbar { display: flex; flex-wrap: wrap; gap: 1rem; align-items: end; justify-content: space-between; }
+    
+    label { display: block; font-size: 0.8rem; color: var(--muted); font-weight: 600; margin-bottom: 0.4rem; }
+    
+    input, select {
+      width: 100%; background: #0f172a; border: 1px solid var(--border); color: #fff;
+      padding: 0.7rem; border-radius: 8px; font-size: 0.9rem; transition: 0.2s;
+    }
+    input:focus, select:focus { border-color: var(--brand); box-shadow: 0 0 0 2px rgba(6,182,212,0.2); }
+
+    .search-box { flex: 1; min-width: 220px; position: relative; }
+    .search-box input { padding-left: 2.2rem; }
+    .search-icon { position: absolute; left: 0.8rem; top: 50%; transform: translateY(-50%); color: var(--muted); }
+
+    /* BUTTONS */
+    .btn {
+      padding: 0.7rem 1.2rem; border-radius: 8px; font-weight: 600; cursor: pointer;
+      border: none; font-size: 0.9rem; transition: 0.2s;
+      display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem;
+    }
+    .btn-primary { background: var(--brand); color: #000; box-shadow: 0 4px 15px rgba(6,182,212,0.2); }
+    .btn-primary:hover { background: var(--brand-hover); transform: translateY(-1px); }
+    
+    .btn-secondary { background: rgba(255,255,255,0.05); color: var(--ink); border: 1px solid var(--border); }
+    .btn-secondary:hover { background: rgba(255,255,255,0.1); color: #fff; }
+
+    .btn-sm { padding: 0.4rem 0.8rem; font-size: 0.8rem; }
+
+    /* TABLE */
+    .table-responsive { overflow-x: auto; border-radius: var(--radius); border: 1px solid var(--border); }
+    table { width: 100%; border-collapse: collapse; text-align: left; }
+    th { 
+      background: rgba(15, 23, 42, 0.5); color: var(--muted); font-weight: 600; 
+      padding: 1rem; font-size: 0.8rem; text-transform: uppercase; border-bottom: 1px solid var(--border); white-space: nowrap;
+    }
+    td { padding: 1rem; border-bottom: 1px solid var(--border); color: var(--ink); font-size: 0.9rem; vertical-align: middle; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: rgba(255,255,255,0.02); }
+
+    .text-right { text-align: right; }
+    [hidden] { display: none !important; }
+
+    @media (max-width: 768px) {
+      .container { padding: 0 12px; }
+      nav { flex-direction: column; align-items: stretch; gap: 0.8rem; }
+      .menu { overflow-x: auto; white-space: nowrap; padding-bottom: 4px; }
+      .toolbar { flex-direction: column; align-items: stretch; }
+      .toolbar > div:first-child,
+      .toolbar > div:last-child { width: 100%; }
+      .search-box { min-width: 100%; }
+      .toolbar .btn { width: 100%; }
+      th, td { padding: 0.75rem 0.8rem; font-size: 0.82rem; }
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <nav class="container">
+      <div class="brand">
+        MultiEmpresas <span id="rolePill" class="role-badge"></span>
+      </div>
+      <ul class="menu" id="mainMenu">
+        <li><a href="inicio/inicial.html">🚀 Inicio</a></li>
+        <li><a href="dashboard.html">Dashboard</a></li>
+        <li><a href="gastos.html">Gastos</a></li>
+        <li><a href="stock.html">Stock</a></li>
+        <li><a href="stock_movimientos.html" class="active">Movimientos</a></li>
+        <li><a href="repartidores.html">Repartidor</a></li>
+        <li><a href="estadisticas.html">Estadisticas</a></li>
+        <li><a href="iaweb.html">IAweb</a></li>
+        <li><a href="qr.html">QR</a></li>
+        <li><a href="#" id="logout" style="color: var(--danger)">Salir</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <main class="container">
+    
+    <!-- KPIs del periodo -->
+    <section class="grid-kpi">
+      <div class="kpi-card">
+        <div class="kpi-val">
+          <h3 id="kpiCargado">0</h3>
+          <p>Total Cargado</p>
+        </div>
+        <div class="kpi-icon">⬆️</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-val">
+          <h3 id="kpiEntregado">0</h3>
+          <p>Total Entregado</p>
+        </div>
+        <div class="kpi-icon">⬇️</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-val">
+          <h3 id="kpiNeto">0</h3>
+          <p>Neto periodo</p>
+        </div>
+        <div class="kpi-icon">📊</div>
+      </div>
+    </section>
+
+    <!-- Filtros -->
+    <section class="card">
+      <div class="toolbar">
+        <div style="display:flex; gap:1rem; flex-wrap:wrap;">
+          <div id="rowEmp" hidden>
+            <label>Empresa</label>
+            <select id="empFilter"><option>Cargando...</option></select>
+          </div>
+
+          <div>
+            <label>Desde</label>
+            <input type="date" id="fromDate">
+          </div>
+          <div>
+            <label>Hasta</label>
+            <input type="date" id="toDate">
+          </div>
+
+          <div>
+            <label>Tipo Chofer</label>
+            <select id="tipoFilter">
+              <option value="">Todos</option>
+              <option value="propio">Propios</option>
+              <option value="fletero">Fleteros</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="search-box">
+          <span class="search-icon">🔍</span>
+          <input type="search" id="q" placeholder="Buscar producto..." autocomplete="off">
+        </div>
+
+        <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+          <button id="btnHoy" class="btn btn-secondary btn-sm">Hoy</button>
+          <button id="btn7d" class="btn btn-secondary btn-sm">Últimos 7 días</button>
+          <button id="btnRef" class="btn btn-primary">Aplicar filtros</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tabla de movimientos por producto + tipo_chofer -->
+    <section>
+      <div class="card table-responsive" style="padding:0; overflow:hidden;">
+        <table>
+          <thead>
+            <tr>
+              <th>Producto</th>
+              <th>Tipo Chofer</th>
+              <th class="text-right">Cargado</th>
+              <th class="text-right">Entregado</th>
+              <th class="text-right">Neto</th>
+              <th class="text-right">Mín</th>
+              <th class="text-right">Máx</th>
+            </tr>
+          </thead>
+          <tbody id="rows">
+            <tr>
+              <td colspan="7" style="text-align:center; padding:2rem; color:var(--muted)">
+                Cargando movimientos...
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+  </main>
+
+  <script>
+    // ====== AUTH (modo seguro: cookie httpOnly) ======
+    const authFetch = (url, opts = {}) => {
+      const { headers = {}, ...rest } = opts;
+      return fetch(url, { ...rest, headers, credentials: 'include' });
+    };
+
+    const $ = s => document.querySelector(s);
+    const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;'
+    }[c]));
+    let role = '';
+    let isSuper = false;
+    let movimientos = [];
+
+    // ====== UTILS ======
+    const num = n => Number(n) || 0;
+    const fmtNum = n => num(n).toLocaleString('es-AR', { maximumFractionDigits: 2 });
+
+    function setRangoHoy() {
+      const today = new Date();
+      const d = today.toISOString().slice(0, 10);
+      $('#fromDate').value = d;
+      $('#toDate').value = d;
+    }
+
+    function setRango7d() {
+      const today = new Date();
+      const to = today.toISOString().slice(0, 10);
+      const from = new Date(today);
+      from.setDate(from.getDate() - 7);
+      const fromStr = from.toISOString().slice(0, 10);
+      $('#fromDate').value = fromStr;
+      $('#toDate').value = to;
+    }
+
+    // ====== INIT ======
+    async function init() {
+      try {
+        const r = await authFetch('/api/me');
+        if (!r.ok) throw new Error();
+        const me = (await r.json()).user;
+        role = (me.role || '').toLowerCase();
+        isSuper = role === 'super';
+
+        $('#rolePill').textContent = role.toUpperCase();
+        if (isSuper) {
+          $('#rolePill').style.borderColor = 'var(--warning)';
+          $('#rowEmp').hidden = false;
+          await loadEmpresas();
+        }
+
+        // rango por defecto: últimos 7 días
+        setRango7d();
+        await loadMovimientos();
+      } catch (e) {
+        console.error(e);
+        location.href = 'login.html';
+      }
+    }
+
+    async function loadEmpresas() {
+      const r = await authFetch('/api/empresas');
+      const list = await r.json();
+      const sel = $('#empFilter');
+      sel.innerHTML = list.map(e => `<option value="${Number(e.id)}">ID ${Number(e.id)} | ${esc(e.nombre)}</option>`).join('');
+      sel.addEventListener('change', () => loadMovimientos());
+    }
+
+    // ====== DATA LOAD ======
+    async function loadMovimientos() {
+      try {
+        const params = new URLSearchParams();
+
+        if (isSuper && $('#empFilter').value) {
+          params.set('empresa_id', $('#empFilter').value);
+        }
+
+        const from = $('#fromDate').value;
+        const to = $('#toDate').value;
+        const tipo = $('#tipoFilter').value;
+
+        if (from) params.set('from', from);
+        if (to) params.set('to', to);
+        if (tipo) params.set('tipo', tipo);
+
+        const qs = params.toString() ? '?' + params.toString() : '';
+
+        $('#rows').innerHTML = `
+          <tr>
+            <td colspan="7" style="text-align:center; padding:2rem; color:var(--muted)">
+              Cargando movimientos...
+            </td>
+          </tr>
+        `;
+
+        const r = await authFetch('/api/stock/movimientos-por-tipo' + qs);
+
+        if (!r.ok) {
+          console.error('Error HTTP', r.status);
+          $('#rows').innerHTML = `
+            <tr>
+              <td colspan="7" style="text-align:center; padding:2rem; color:var(--muted)">
+                Error al cargar movimientos.
+              </td>
+            </tr>
+          `;
+          return;
+        }
+
+        movimientos = await r.json();
+        render();
+      } catch (e) {
+        console.error('ERROR loadMovimientos', e);
+        $('#rows').innerHTML = `
+          <tr>
+            <td colspan="7" style="text-align:center; padding:2rem; color:var(--muted)">
+              Error al cargar movimientos.
+            </td>
+          </tr>
+        `;
+      }
+    }
+
+    // ====== RENDER ======
+    function render() {
+      const term = ($('#q').value || '').toLowerCase();
+      const tipoFilter = $('#tipoFilter').value;
+
+      const filtered = (movimientos || []).filter(row => {
+        const nombre = (row.nombre || '').toLowerCase();
+        const tipo = (row.tipo_chofer || '').toLowerCase();
+        const matchTxt = !term || nombre.includes(term);
+        const matchTipo = !tipoFilter || tipo === tipoFilter;
+        return matchTxt && matchTipo;
+      });
+
+      // KPIs
+      let totalCargado = 0;
+      let totalEntregado = 0;
+      let totalNeto = 0;
+      for (const m of filtered) {
+        totalCargado += num(m.cargado);
+        totalEntregado += num(m.entregado);
+        totalNeto += num(m.neto);
+      }
+
+      $('#kpiCargado').textContent = fmtNum(totalCargado);
+      $('#kpiEntregado').textContent = fmtNum(totalEntregado);
+      const netElem = $('#kpiNeto');
+      netElem.textContent = fmtNum(totalNeto);
+      netElem.style.color = totalNeto >= 0 ? 'var(--success)' : 'var(--danger)';
+
+      // Tabla
+      const html = filtered.map(row => {
+        const cargado = num(row.cargado);
+        const entregado = num(row.entregado);
+        const neto = num(row.neto);
+        const tipo = (row.tipo_chofer || '').toLowerCase();
+        const tipoLabel = tipo === 'propio' ? 'Propio' : (tipo === 'fletero' ? 'Fletero' : '-');
+
+        return `
+          <tr>
+            <td style="font-weight:600; color:#fff">${esc(row.nombre || '')}</td>
+            <td>${esc(tipoLabel)}</td>
+            <td class="text-right">${fmtNum(cargado)}</td>
+            <td class="text-right">${fmtNum(entregado)}</td>
+            <td class="text-right" style="font-weight:600; color:${neto >= 0 ? 'var(--success)' : 'var(--danger)'}">
+              ${fmtNum(neto)}
+            </td>
+            <td class="text-right">${fmtNum(row.stock_min || 0)}</td>
+            <td class="text-right">${fmtNum(row.stock_max || 0)}</td>
+          </tr>
+        `;
+      }).join('');
+
+      $('#rows').innerHTML = html || `
+        <tr>
+          <td colspan="7" style="text-align:center; padding:2rem; color:var(--muted)">
+            Sin movimientos en el periodo.
+          </td>
+        </tr>
+      `;
+    }
+
+    // ====== EVENTS ======
+    $('#q').addEventListener('input', render);
+    $('#tipoFilter').addEventListener('change', () => loadMovimientos());
+    $('#btnRef').addEventListener('click', () => loadMovimientos());
+    $('#btnHoy').addEventListener('click', (e) => {
+      e.preventDefault();
+      setRangoHoy();
+      loadMovimientos();
+    });
+    $('#btn7d').addEventListener('click', (e) => {
+      e.preventDefault();
+      setRango7d();
+      loadMovimientos();
+    });
+
+    $('#logout').addEventListener('click', async (e) => {
+      e.preventDefault();
+      try { await authFetch('/api/logout', { method: 'POST' }); } catch {}
+      location.href = 'login.html';
+    });
+
+    init();
+  </script>
+</body>
+</html>

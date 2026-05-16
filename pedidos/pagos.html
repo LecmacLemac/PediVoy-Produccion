@@ -1,0 +1,716 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+  <title>Control de Tesorería | Admin</title>
+  <link rel="stylesheet" href="theme-base.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <style>
+    :root {
+      --bg: #0b1020;
+      --bg-2: #0f172a;
+      --surface: rgba(30, 41, 59, 0.7);
+      --surface-hover: rgba(51, 65, 85, 0.75);
+      --border: rgba(148, 163, 184, 0.15);
+      --glass: rgba(15, 23, 42, 0.95);
+      --text: #f1f5f9;
+      --text-muted: #94a3b8;
+      --primary: #06b6d4;
+      --primary-hover: #22d3ee;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --info: #3b82f6;
+      --radius: 12px;
+    }
+
+    * { box-sizing: border-box; outline: none; -webkit-tap-highlight-color: transparent; }
+    body {
+      margin: 0; font-family: system-ui, -apple-system, sans-serif;
+      background:
+        radial-gradient(circle at 15% 50%, rgba(6, 182, 212, 0.05), transparent 25%),
+        radial-gradient(circle at 85% 30%, rgba(59, 130, 246, 0.05), transparent 25%),
+        var(--bg);
+      color: var(--text); font-size: 14px; min-height: 100vh; padding-bottom: 80px;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .container { max-width: 1400px; margin: 0 auto; padding: 0 20px; }
+
+    header {
+      position: sticky; top: 0; z-index: 50;
+      background: var(--glass); backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border); padding: 0.8rem 0;
+    }
+    nav { display:flex; justify-content:space-between; align-items:center; }
+    .brand {
+      display:flex; gap:0.8rem; align-items:center;
+      font-size:1.1rem; font-weight:700; color:#fff; text-decoration:none; white-space:nowrap;
+    }
+    .brand-dot { width:10px; height:10px; background: var(--primary); border-radius:50%; box-shadow: 0 0 10px var(--primary); }
+    .role-badge {
+      background: rgba(6, 182, 212, 0.1); border: 1px solid rgba(6, 182, 212, 0.3);
+      color: var(--primary); padding: 2px 8px; border-radius: 99px; font-size: 0.75rem;
+    }
+    .menu { list-style:none; display:flex; gap:1.5rem; margin:0; padding:0; }
+    .menu a { text-decoration:none; color: var(--text-muted); font-weight:500; transition:0.2s; white-space:nowrap; }
+    .menu a:hover, .menu a.active { color:#fff; }
+    .menu a.active { border-bottom:2px solid var(--primary); padding-bottom:4px; }
+
+    main.container { padding-top: 2rem; padding-bottom: 4rem; }
+
+    /* KPI CARDS */
+    .kpi-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 1.5rem;
+    }
+    .kpi-card {
+      background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 1.2rem; display: flex; flex-direction: column; gap: 5px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+    }
+    .kpi-title { color: var(--text-muted); font-size: 0.85rem; font-weight: 600; text-transform: uppercase; }
+    .kpi-value { font-size: 1.5rem; font-weight: 700; color: #fff; }
+    .kpi-icon { float: right; opacity: 0.2; font-size: 2rem; margin-top: -30px; }
+
+    /* FILTERS BAR */
+    .filters-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 1.2rem; margin-bottom: 1.5rem;
+      display: flex; gap: 1rem; flex-wrap: wrap; align-items: flex-end;
+    }
+    
+    .field { display: flex; flex-direction: column; gap: 6px; }
+    label { font-size: 0.75rem; color: var(--text-muted); font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
+    
+    select, input {
+      background: var(--bg-2); border: 1px solid var(--border); color: #fff;
+      padding: 0.7rem 1rem; border-radius: 8px; font-size: 0.9rem; min-width: 160px;
+      transition: 0.2s;
+    }
+    select:focus, input:focus { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(6, 182, 212, 0.2); }
+
+    /* BUTTONS */
+    .btn {
+      padding: 0.7rem 1.2rem; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 0.9rem;
+      border: 1px solid transparent; display: inline-flex; align-items: center; gap: 8px;
+      transition: all 0.2s;
+    }
+    .btn-primary { background: var(--primary); color: #000; }
+    .btn-primary:hover { background: var(--primary-hover); transform: translateY(-1px); box-shadow: 0 4px 12px rgba(6,182,212,0.3); }
+    
+    .btn-icon { padding: 8px; aspect-ratio: 1; justify-content: center; }
+    .btn-ghost { background: transparent; color: var(--text-muted); border: 1px solid var(--border); }
+    .btn-ghost:hover { background: var(--surface-hover); color: #fff; border-color: var(--text-muted); }
+
+    .btn-danger { background: rgba(239, 68, 68, 0.1); color: var(--danger); border: 1px solid rgba(239, 68, 68, 0.3); }
+    .btn-danger:hover { background: var(--danger); color: #fff; }
+    .btn-warning { background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.35); }
+    .btn-warning:hover { background: rgba(245, 158, 11, 0.3); color: #fff; }
+
+    /* TABLE */
+    .table-container {
+      background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+      overflow: hidden; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+    }
+    .table-responsive { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; text-align: left; white-space: nowrap; }
+    
+    th { 
+      background: rgba(15, 23, 42, 0.9); padding: 1rem 1.5rem; color: var(--text-muted); 
+      font-weight: 600; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.5px;
+    }
+    td { padding: 1rem 1.5rem; border-top: 1px solid var(--border); vertical-align: middle; }
+    tr:hover td { background: var(--surface-hover); }
+
+    /* STATUS & BADGES */
+    .badge { 
+      padding: 4px 10px; border-radius: 99px; font-size: 0.75rem; font-weight: 700; 
+      text-transform: uppercase; display: inline-flex; align-items: center; gap: 6px; 
+    }
+    .badge-success { background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.2); }
+    .badge-warning { background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.2); }
+    .badge-info    { background: rgba(59, 130, 246, 0.15); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.2); }
+    .badge-danger  { background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.2); }
+    
+    .text-cell { display: flex; flex-direction: column; }
+    .text-main { font-weight: 600; color: #fff; }
+    .text-sub { font-size: 0.8rem; color: var(--text-muted); margin-top: 2px; }
+
+    /* MODAL */
+    .modal-overlay {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.85); backdrop-filter: blur(4px);
+      z-index: 100; display: none; justify-content: center; align-items: center; padding: 20px;
+      animation: fadeIn 0.2s ease-out;
+    }
+    .modal-content {
+      background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+      width: 100%; max-width: 650px; display: flex; flex-direction: column; overflow: hidden;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+      animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .modal-header { padding: 1rem 1.5rem; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.2); }
+    .modal-body { padding: 0; background: #000; display: flex; justify-content: center; align-items: center; min-height: 400px; max-height: 70vh; }
+    .modal-body img { max-width: 100%; max-height: 70vh; object-fit: contain; }
+    
+    /* TOAST */
+    .toast { 
+      position: fixed; bottom: 30px; right: 30px; background: #fff; color: #0f172a; 
+      padding: 12px 24px; border-radius: 12px; font-weight: 600; 
+      box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+      transform: translateY(150%); transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1); z-index: 200; 
+      display: flex; align-items: center; gap: 10px;
+    }
+    .toast.show { transform: translateY(0); }
+
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+      nav { flex-direction: column; gap: 1rem; align-items: stretch; }
+      .brand { justify-content: space-between; }
+      .menu { overflow-x: auto; padding-bottom: 5px; gap: 20px; }
+      .menu::-webkit-scrollbar { display: none; }
+      main.container { padding: 14px 12px 24px; }
+      .filters-card { flex-direction: column; align-items: stretch; }
+      .field { width: 100%; }
+      select, input { min-width: 100%; width: 100%; }
+      .kpi-grid { grid-template-columns: 1fr; }
+      th, td { padding: 0.7rem 0.8rem; font-size: 0.82rem; }
+      .toast { left: 12px; right: 12px; bottom: 16px; width: auto; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <nav class="container">
+    <div class="brand">
+      <div class="brand-dot"></div>
+      MultiEmpresas
+      <span id="roleBadge" class="role-badge"></span>
+    </div>
+    <ul class="menu" id="mainMenu">
+      <li><a href="inicio/inicial.html">🚀 Inicio</a></li>
+      <li><a href="dashboard.html">Dashboard</a></li>
+      <li><a href="pagos.html" class="active">Pagos</a></li>
+      <li><a href="gastos.html">Gastos</a></li>
+      <li><a href="stock.html">Stock</a></li>
+      <li><a href="repartidores.html">Repartidor</a></li>
+      <li><a href="estadisticas.html">Estadisticas</a></li>
+      <li><a href="iaweb.html">IAweb</a></li>
+      <li><a href="qr.html">QR</a></li>
+      <li><a href="#" id="logout" style="color: var(--danger)">Salir</a></li>
+    </ul>
+  </nav>
+</header>
+
+<main class="container">
+  
+  <div class="kpi-grid">
+    <div class="kpi-card">
+      <span class="kpi-title">Monto Total</span>
+      <span class="kpi-value" id="kpiTotal">$ 0</span>
+      <i class="fa-solid fa-sack-dollar kpi-icon"></i>
+    </div>
+    <div class="kpi-card">
+      <span class="kpi-title">Verificados</span>
+      <span class="kpi-value" id="kpiVerificados" style="color: var(--success)">0</span>
+      <i class="fa-solid fa-check-circle kpi-icon"></i>
+    </div>
+    <div class="kpi-card">
+      <span class="kpi-title">Pendientes</span>
+      <span class="kpi-value" id="kpiPendientes" style="color: var(--warning)">0</span>
+      <i class="fa-solid fa-clock kpi-icon"></i>
+    </div>
+  </div>
+
+  <div class="filters-card">
+    <div class="field" id="wrapEmpresa" style="display:none;">
+      <label><i class="fa-solid fa-building"></i> Empresa (Super)</label>
+      <select id="fEmpresa" onchange="loadPagos()">
+        <option value="">Todas</option>
+      </select>
+    </div>
+
+    <div class="field">
+      <label><i class="fa-solid fa-calendar"></i> Fecha</label>
+      <input type="date" id="fFecha">
+    </div>
+
+    <div class="field">
+      <label><i class="fa-solid fa-filter"></i> Estado / Tipo</label>
+      <select id="fEstado">
+        <option value="">Todo</option>
+        <option value="pendiente">⏳ Pendientes</option>
+        <option value="en_revision">🛡️ En revisión</option>
+        <option value="verificado">✅ Verificados</option>
+        <option value="orphan">⚠️ Huérfanos (Sin Pedido)</option>
+      </select>
+    </div>
+
+    <div class="field">
+      <label><i class="fa-solid fa-truck"></i> Chofer</label>
+      <select id="fChofer"><option value="">Todos</option></select>
+    </div>
+
+    <button class="btn btn-primary" onclick="loadPagos()">
+      <i class="fa-solid fa-magnifying-glass"></i> Filtrar
+    </button>
+    <button class="btn btn-ghost" onclick="aplicarHoy()">
+      <i class="fa-regular fa-calendar"></i> Hoy
+    </button>
+    <button class="btn btn-ghost" onclick="limpiarFiltros()">
+      <i class="fa-solid fa-broom"></i> Limpiar
+    </button>
+    <button class="btn btn-ghost" onclick="exportarCSV()">
+      <i class="fa-solid fa-file-csv"></i> Exportar CSV
+    </button>
+    <button class="btn btn-ghost" id="btnVerMas" onclick="cargarMas()" style="display:none;">
+      <i class="fa-solid fa-angles-down"></i> Ver más
+    </button>
+  </div>
+
+  <div class="table-container">
+    <div class="table-responsive">
+      <table>
+        <thead>
+          <tr>
+            <th>Hora</th>
+            <th>Origen / Cliente</th>
+            <th>Pedido</th>
+            <th>Método</th>
+            <th>Monto</th>
+            <th>Referencia</th>
+            <th>Archivo</th>
+            <th>Estado</th>
+            <th style="text-align:right">Acciones</th>
+          </tr>
+        </thead>
+        <tbody id="rows">
+          <tr><td colspan="9" style="padding:3rem; text-align:center; color: var(--text-muted);">
+            <i class="fa-solid fa-circle-notch fa-spin"></i> Cargando datos...
+          </td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</main>
+
+<div id="modalVisor" class="modal-overlay" onclick="if(event.target===this) closeModal()">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h3 style="margin:0; font-size:1.1rem"><i class="fa-solid fa-receipt"></i> Comprobante</h3>
+      <button class="btn btn-ghost btn-icon" onclick="closeModal()"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="modal-body" id="visorContainer"></div>
+    <div style="padding:15px; display:flex; justify-content:center; gap:10px; background:var(--surface);">
+      <button class="btn btn-ghost" onclick="closeModal()">Cerrar</button>
+      <button class="btn btn-primary" id="btnVerificarModal" onclick="verificarDesdeModal()">
+        <i class="fa-solid fa-check-double"></i> Validar Pago
+      </button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast"><i class="fa-solid fa-circle-check"></i> <span>Acción realizada</span></div>
+
+<script>
+  // --- Configuración y Auth (modo seguro: cookie httpOnly) ---
+  const authFetch = (url, opts = {}) => {
+    const { headers = {}, ...rest } = opts;
+    return fetch(url, { ...rest, headers, credentials: 'include' });
+  };
+
+  const $ = s => document.querySelector(s);
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  }[c]));
+  const money = n => '$ ' + Number(n).toLocaleString('es-AR', {minimumFractionDigits: 0});
+  const fmtDateTime = (iso) => {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return '';
+    return d.toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' });
+  };
+  
+  const api = async (url, opts={}) => {
+    try {
+      const res = await authFetch(url, opts);
+      if(res.status === 401) window.location.href = 'login.html';
+      return res.json();
+    } catch(e) { console.error(e); return null; }
+  };
+
+  let currentTransferenciaId = null;
+  let currentUser = null;
+  let verifyBusy = false;
+  let deleteBusy = false;
+  let currentRows = [];
+  const PAGE_LIMIT = 200;
+  let currentOffset = 0;
+  let hasMoreRows = false;
+  let currentBeforeId = null;
+
+  // --- Inicialización ---
+  $('#logout').onclick = async (ev) => {
+    ev.preventDefault();
+    try { await authFetch('/api/logout', { method: 'POST' }); } catch {}
+    location.href = 'login.html';
+  };
+
+  (async () => {
+    const me = await api('/api/me');
+    if(me && me.user) {
+      currentUser = me.user;
+      const role = String(currentUser.role || '').toLowerCase();
+      $('#roleBadge').textContent = role === 'super' ? 'SUPER ADMIN' : role.toUpperCase();
+      
+      if(currentUser.role === 'super') {
+        $('#wrapEmpresa').style.display = 'flex';
+        const empresas = await api('/api/empresas');
+        if(Array.isArray(empresas)) {
+          $('#fEmpresa').innerHTML = '<option value="">🏢 Todas las Empresas</option>' + 
+            empresas.map(e => `<option value="${Number(e.id)}">ID ${Number(e.id)} | ${esc(e.nombre)}</option>`).join('');
+        }
+      }
+    }
+
+    // 2. Cargar Choferes
+    const choferes = await api('/api/choferes');
+    if(Array.isArray(choferes)) {
+      $('#fChofer').innerHTML = '<option value="">🚛 Todos</option>' + 
+        choferes.map(c => `<option value="${Number(c.id)}">${esc(c.nombre)}</option>`).join('');
+    }
+    
+    // 3. Sin fecha por defecto: mostrar últimos comprobantes disponibles
+    $('#fFecha').value = '';
+    
+    loadPagos(true);
+  })();
+
+  // --- Cargar Pagos corregido ---
+  async function loadPagos(reset = true) {
+    const fecha = $('#fFecha').value;
+    const estadoFiltro = $('#fEstado').value;
+    const chofer = $('#fChofer').value;
+    const empresa = $('#fEmpresa').value;
+
+    if (reset) {
+      currentOffset = 0;
+      currentBeforeId = null;
+      hasMoreRows = false;
+      currentRows = [];
+      $('#rows').innerHTML = '<tr><td colspan="9" style="padding:3rem; text-align:center; color: var(--text-muted);"><i class="fa-solid fa-circle-notch fa-spin"></i> Cargando datos...</td></tr>';
+    }
+
+    let url = `/api/transferencias?limit=${PAGE_LIMIT}`;
+    if(fecha) url += `&fecha=${fecha}`;
+    if (!reset && currentBeforeId) url += `&before_id=${currentBeforeId}`;
+    if(chofer) url += `&chofer_id=${chofer}`;
+    if(empresa) url += `&empresa_id=${empresa}`;
+    if(estadoFiltro === 'verificado' || estadoFiltro === 'pendiente') url += `&estado=${estadoFiltro}`;
+    if(estadoFiltro === 'en_revision') url += `&estado_revision=en_revision`;
+
+    let data = await api(url);
+    if(!Array.isArray(data)) data = [];
+
+    // Solo transferencias (sin efectivo)
+    data = data.filter(t => !(t.metodo_pago || '').toLowerCase().includes('efec'));
+
+    // Filtros residuales en cliente (compat/defensa)
+    if(estadoFiltro === 'orphan') data = data.filter(t => !t.pedido_id);
+    if(estadoFiltro === 'verificado') data = data.filter(t => Number(t.validado) === 1);
+    if(estadoFiltro === 'pendiente') data = data.filter(t => Number(t.validado) !== 1);
+    if(estadoFiltro === 'en_revision') data = data.filter(t => String(t.estado_revision || '').toLowerCase() === 'en_revision');
+
+    currentRows = reset ? data : currentRows.concat(data);
+    hasMoreRows = data.length === PAGE_LIMIT;
+    currentOffset += data.length;
+    if (data.length > 0) {
+      const last = data[data.length - 1];
+      currentBeforeId = Number(last?.id || 0) || currentBeforeId;
+    }
+    $('#btnVerMas').style.display = hasMoreRows ? 'inline-flex' : 'none';
+
+    let resumen = null;
+    if (reset) {
+      let resumenUrl = `/api/transferencias/resumen?x=1`;
+      if(fecha) resumenUrl += `&fecha=${fecha}`;
+      if(chofer) resumenUrl += `&chofer_id=${chofer}`;
+      if(empresa) resumenUrl += `&empresa_id=${empresa}`;
+      if(estadoFiltro === 'verificado' || estadoFiltro === 'pendiente') resumenUrl += `&estado=${estadoFiltro}`;
+      if(estadoFiltro === 'en_revision') resumenUrl += `&estado_revision=en_revision`;
+      resumen = await api(resumenUrl);
+    }
+
+    updateKPIs(currentRows, resumen);
+    renderTable(currentRows);
+  }
+
+  function aplicarHoy() {
+    $('#fFecha').value = new Date().toISOString().split('T')[0];
+    loadPagos(true);
+    toast('Filtro aplicado: hoy');
+  }
+
+  function limpiarFiltros() {
+    $('#fFecha').value = '';
+    $('#fEstado').value = '';
+    $('#fChofer').value = '';
+    if ($('#fEmpresa')) $('#fEmpresa').value = '';
+    loadPagos(true);
+    toast('Filtros limpiados');
+  }
+
+  function cargarMas() {
+    if (!hasMoreRows) return;
+    loadPagos(false);
+  }
+    
+  function updateKPIs(list, resumen = null) {
+    if (resumen && typeof resumen === 'object') {
+      $('#kpiTotal').textContent = money(Number(resumen.total_amount || 0));
+      $('#kpiVerificados').textContent = Number(resumen.verified_count || 0);
+      $('#kpiPendientes').textContent = Number(resumen.pending_count || 0);
+      return;
+    }
+
+    const transferenciasOnly = list.filter(i => (i.metodo_pago || '').toLowerCase().includes('trans'));
+    const total = transferenciasOnly.reduce((sum, item) => sum + Number(item.monto||0), 0);
+    const verificados = transferenciasOnly.filter(i => Number(i.validado) === 1).length;
+    const pendientes = transferenciasOnly.length - verificados;
+
+    $('#kpiTotal').textContent = money(total);
+    $('#kpiVerificados').textContent = verificados;
+    $('#kpiPendientes').textContent = pendientes;
+  }
+
+  function statusBadge(t, isValidado) {
+    const estado = String(t.estado_revision || '').toLowerCase();
+    const riesgo = Number(t.riesgo_score || 0);
+
+    if (estado === 'en_revision') {
+      return `<span class="badge badge-danger"><i class="fa-solid fa-triangle-exclamation"></i> En revisión</span>`;
+    }
+    if (isValidado || estado === 'aprobado') {
+      return `<span class="badge badge-success"><i class="fa-solid fa-check"></i> Verificado</span>`;
+    }
+    return `<span class="badge badge-warning"><i class="fa-solid fa-hourglass"></i> Pendiente</span>` +
+      (riesgo > 0 ? ` <span class="badge badge-danger" title="Score de riesgo"><i class="fa-solid fa-shield-halved"></i> Riesgo ${riesgo}</span>` : '');
+  }
+
+  // --- Renderizar Tabla ---
+  function renderTable(list) {
+    if(list.length === 0) {
+      $('#rows').innerHTML = `<tr><td colspan="9" style="text-align:center; opacity:0.6;">Sin datos.</td></tr>`;
+      return;
+    }
+
+    $('#rows').innerHTML = list.map(t => {
+      const metodo = (t.metodo_pago || '').toLowerCase();
+      const esEfectivo = metodo.includes('efec');
+      const isValidado = Number(t.validado) === 1 || esEfectivo;
+      const estado = String(t.estado_revision || '').toLowerCase();
+      const requiereForzar = estado === 'en_revision' && !isValidado;
+      const isSuper = String(currentUser?.role || '').toLowerCase() === 'super';
+
+      const metodoBadge = esEfectivo
+        ? `<span class="badge badge-info"><i class="fa-solid fa-money-bill"></i> Efec</span>`
+        : `<span class="badge badge-info"><i class="fa-solid fa-mobile-screen"></i> Transf</span>`;
+
+      const btnValidar = (!esEfectivo && !isValidado && !requiereForzar)
+        ? `<button class="btn btn-primary btn-icon" onclick="verificarPago(${t.id})" title="Validar"><i class="fa-solid fa-check"></i></button>`
+        : `<span style="width:32px; display:inline-block"></span>`;
+
+      const btnForzar = (!esEfectivo && !isValidado && requiereForzar && isSuper)
+        ? `<button class="btn btn-warning btn-icon" onclick="forzarVerificacion(${t.id})" title="Forzar aprobación (Super)"><i class="fa-solid fa-shield"></i></button>`
+        : '';
+
+      return `
+        <tr>
+          <td style="color:var(--text-muted)">${esc(t.fecha ? t.fecha.slice(11,16) : '--:--')}</td>
+          <td>
+              <div class="text-cell">
+                <span class="text-main">${esc(t.cliente || 'S/D')}</span>
+                <span class="text-sub">${esc(t.zona_nombre || '')}</span>
+              </div>
+          </td>
+          <td>#${t.pedido_id ? Number(t.pedido_id) : '-'}</td>
+          <td>${metodoBadge}</td>
+          <td style="font-weight:700; font-size:1rem; color:${esEfectivo ? '#34d399' : '#fff'}">${money(t.monto)}</td>
+          <td>
+            <div class="text-cell">
+              <span class="text-main">${esc(t.banco_origen || (esEfectivo ? 'Cobro en mano' : 'Banco?'))}</span>
+              <span class="text-sub">Ref: ${esc(t.nro_operacion || '-')}</span>
+              ${t.riesgo_flags ? `<span class="text-sub" style="color:#fbbf24">Riesgo: ${esc(t.riesgo_flags)}</span>` : ''}
+              ${t.verified_reason ? `<span class="text-sub">Nota: ${esc(t.verified_reason)}</span>` : ''}
+              ${t.verified_at ? `<span class="text-sub">Audit: ${esc(t.verified_by_username || `uid:${t.verified_by || '-'}`)} · ${esc(fmtDateTime(t.verified_at))}</span>` : ''}
+            </div>
+          </td>
+          <td style="text-align:center">${t.comprobante_path ? `<button class="btn btn-ghost btn-icon" onclick='verComprobante(${JSON.stringify(String(t.comprobante_path || ''))}, ${Number(t.id)}, ${isValidado})'><i class="fa-regular fa-eye"></i></button>` : '-'}</td>
+          <td>${statusBadge(t, isValidado)}</td>
+          <td style="text-align:right">
+            ${btnValidar}
+            ${btnForzar}
+            <button class="btn btn-danger btn-icon" onclick="eliminarPago(${Number(t.id)})"><i class="fa-solid fa-trash-can"></i></button>
+          </td>
+        </tr>
+      `;
+    }).join('');
+  }
+
+// --- Funciones del Modal y Acciones ---
+  function verComprobante(path, id, isValidado) {
+    const container = $('#visorContainer');
+    const ext = path.split('.').pop().toLowerCase();
+    
+    if(ext === 'pdf') {
+      container.innerHTML = `<iframe src="${path}" style="width:100%; height:100%; border:none;"></iframe>`;
+    } else {
+      container.innerHTML = `<img src="${path}" alt="Comprobante" />`;
+    }
+
+    currentTransferenciaId = id;
+    $('#btnVerificarModal').style.display = isValidado ? 'none' : 'inline-flex';
+    $('#modalVisor').style.display = 'flex';
+  }
+
+  function closeModal() {
+    $('#modalVisor').style.display = 'none';
+    $('#visorContainer').innerHTML = '';
+    currentTransferenciaId = null;
+  }
+
+  async function verificarPago(id) {
+    if (verifyBusy) return;
+    if(!confirm('¿Confirmar que el dinero ingresó a la cuenta?')) return;
+
+    verifyBusy = true;
+    const btn = document.getElementById('btnVerificarModal');
+    const prev = btn ? btn.innerHTML : '';
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Validando...';
+    }
+
+    try {
+      const resp = await authFetch(`/api/transferencias/${id}/verificar?enviarAviso=1`, { method: 'POST' });
+      const data = await resp.json().catch(() => ({}));
+
+      if (resp.ok && data?.ok) {
+        toast('Pago verificado y registrado');
+        loadPagos();
+        closeModal();
+      } else if (resp.status === 409 && data?.needsReview) {
+        alert(`⚠️ Este comprobante requiere revisión manual.\n\n${data.detail || 'Monto no coincide con pedido.'}`);
+        loadPagos();
+      } else {
+        alert(data?.error || 'Error al verificar pago');
+      }
+    } finally {
+      verifyBusy = false;
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = prev;
+      }
+    }
+  }
+
+  async function forzarVerificacion(id) {
+    const isSuper = String(currentUser?.role || '').toLowerCase() === 'super';
+    if (!isSuper) return alert('Solo un superadmin puede forzar aprobación.');
+
+    const reason = (prompt('Motivo de aprobación forzada (auditoría):', 'Revisión manual confirmada') || '').trim();
+    if (!reason) return alert('Se requiere motivo para auditar la acción.');
+    if (!confirm('⚠️ Vas a forzar aprobación de un comprobante en revisión. ¿Continuar?')) return;
+
+    try {
+      const resp = await authFetch(`/api/transferencias/${id}/verificar?enviarAviso=1&force=1`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason })
+      });
+      const data = await resp.json().catch(() => ({}));
+
+      if (resp.ok && data?.ok) {
+        toast('Aprobación forzada registrada');
+        loadPagos();
+      } else {
+        alert(data?.error || 'No se pudo forzar la aprobación');
+      }
+    } catch {
+      alert('Error de red forzando aprobación');
+    }
+  }
+
+  async function eliminarPago(id) {
+    if (deleteBusy) return;
+    if(!confirm('⚠️ ¿Estás seguro de ELIMINAR este comprobante?\nEsta acción no se puede deshacer.')) return;
+
+    deleteBusy = true;
+
+    // NOTA: Asumimos que existe un endpoint DELETE para transferencias o comprobantes.
+    // Si tu server.js no lo tiene explícito, deberías agregarlo. 
+    // Por lo general, se usa DELETE /api/transferencias/:id o similar.
+    // Aquí intentaremos llamar a la ruta genérica de eliminación (si no existe, fallará).
+    // Si falla, es porque falta agregar `app.delete('/api/transferencias/:id', ...)` en el backend.
+    try {
+      const res = await authFetch(`/api/transferencias/${id}`, { 
+          method: 'DELETE'
+      });
+      
+      if(res.ok) {
+          toast('🗑️ Comprobante eliminado');
+          loadPagos();
+      } else {
+          alert('No se pudo eliminar. Verifica que tengas permisos o que el endpoint exista.');
+      }
+    } finally {
+      deleteBusy = false;
+    }
+  }
+
+  function verificarDesdeModal() {
+    if(currentTransferenciaId) verificarPago(currentTransferenciaId);
+  }
+
+  function csvCell(v) {
+    const s = String(v == null ? '' : v).replace(/"/g, '""');
+    return `"${s}"`;
+  }
+
+  function exportarCSV() {
+    const fecha = $('#fFecha')?.value || '';
+    const estadoFiltro = $('#fEstado')?.value || '';
+    const chofer = $('#fChofer')?.value || '';
+    const empresa = $('#fEmpresa')?.value || '';
+
+    const q = new URLSearchParams();
+    if (fecha) q.set('fecha', fecha);
+    if (chofer) q.set('chofer_id', chofer);
+    if (empresa) q.set('empresa_id', empresa);
+    if (estadoFiltro === 'verificado' || estadoFiltro === 'pendiente') q.set('estado', estadoFiltro);
+    if (estadoFiltro === 'en_revision') q.set('estado_revision', 'en_revision');
+
+    const url = `/api/transferencias/export.csv?${q.toString()}`;
+    window.open(url, '_blank');
+    toast('Generando CSV...');
+  }
+
+  function toast(msg) {
+    const t = $('#toast');
+    t.querySelector('span').textContent = msg;
+    t.classList.add('show');
+    setTimeout(() => t.classList.remove('show'), 3000);
+  }
+</script>
+
+</body>
+</html>

@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Análisis y Documentación Técnica – Agua HIDRO</title>
+  <link rel="stylesheet" href="theme-base.css" />
+  <meta name="color-scheme" content="light only">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  <style>
+    :root {
+      --brand:#0284c7;
+      --muted:#475569;
+    }
+    body{max-width:980px;margin:auto}
+    header .brand{display:flex;gap:.6rem;align-items:center}
+    .brand .dot{width:.9rem;height:.9rem;border-radius:2px;background:var(--brand)}
+    .pill{background:#eef6ff;border:1px solid #cfe8ff;color:#095aba;padding:.15rem .5rem;border-radius:999px;font-size:.8rem}
+    .card{border:1px solid #eaeaea;padding:1rem;border-radius:14px}
+    .grid3{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:1rem}
+    small.muted{color:var(--muted)}
+    .files{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:.8rem}
+    .file{border:1px solid #eaeaea;border-radius:12px;padding:.8rem}
+    .file h4{margin:.2rem 0 .35rem 0;font-size:1.05rem}
+    .file a{display:inline-block;margin-top:.35rem}
+    .kbd{background:#f1f5f9;border:1px solid #cbd5e1;border-bottom-width:2px;padding:.08rem .45rem;border-radius:6px;font-size:.85rem}
+    footer{margin:2rem 0 3rem 0}
+    .hidden{display:none}
+  
+
+    @media (max-width: 768px) {
+      .container { padding: 0 12px; }
+      nav { flex-direction: column; align-items: stretch; gap: 0.6rem; }
+      .menu { overflow-x: auto; white-space: nowrap; padding-bottom: 4px; }
+      .row { align-items: stretch; }
+      .row > * { min-width: 0 !important; }
+      input, select, textarea, button { width: 100%; }
+    }
+</style>
+</head>
+<body>
+  <header class="container">
+    <nav>
+      <ul>
+        <li class="brand">
+          <span class="dot"></span>
+          <strong>Agua HIDRO</strong>
+          <span class="pill">Información técnica y regulatoria</span>
+        </li>
+      </ul>
+      <ul>
+        <li><a href="/pedidos/index.html" class="secondary">Volver</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <main class="container">
+    <article class="card">
+      <header>
+        <h2>Ficha rápida</h2>
+        <small class="muted">Última actualización: 2025-11-16</small>
+      </header>
+      <div class="grid3">
+        <div>
+          <h3>Producto</h3>
+          <ul>
+            <li><strong>Denominación:</strong> Agua potable envasada</li>
+            <li><strong>Marca:</strong> HIDRO</li>
+          </ul>
+        </div>
+        <div>
+          <h3>Registros</h3>
+          <ul>
+            <li><strong>RNPA:</strong> 04086264 <small class="muted"></small></li>
+            <li><strong>RNE:</strong> 04005954 <small class="muted"></small></li>
+          </ul>
+        </div>
+        <div>
+          <h3>Establecimiento</h3>
+          <ul>
+            <li><strong>Localidad:</strong> Arroyo Cabral, Córdoba</li>
+            <li><strong>Establecimiento:</strong> La Humidad</li>
+          </ul>
+        </div>
+      </div>
+    </article>
+
+    <section class="grid">
+      <div class="card">
+        <h3>Análisis físico–químico (septiembre 2025)</h3>
+        <p>Resultados destacados del informe de ensayos (Contrato 378070):</p>
+        <ul>
+          <li>Turbiedad: &lt; 0,05 NTU</li>
+          <li>Residuo fijo / Sólidos totales: 108 mg/l</li>
+          <li>Cloruros: 7,87 mg/l</li>
+          <li>Amonio: &lt; 0,10 mg/l</li>
+          <li>Arsénico: &lt; 0,01 mg/l</li>
+        </ul>
+        <p>Los análisis presentados se encuentran dentro de los parámetros del art. 982 del CAA.</p>
+
+        <button id="togglePreview" class="secondary">Mostrar vista previa rápida de documentos</button>
+        <div id="docPreview" class="hidden" style="margin-top:1rem">
+          <p class="muted">Vista previa rápida de documentos (opcional)</p>
+          <article class="card">
+            <h4>Certificado RNPA</h4>
+            <object data="./info-tec/Certificado_Inscripci%C3%B3nRNPA_125433.pdf" type="application/pdf" width="100%" height="480">
+              <a href="./info-tec/Certificado_Inscripci%C3%B3nRNPA_125433.pdf" target="_blank" rel="noopener">Descargar PDF</a>
+            </object>
+          </article>
+          <article class="card">
+            <h4>Informe de Ensayos</h4>
+            <object data="./info-tec/AnalisisFisicoQuimico-2025_09_04_16_49_132961_1758213984617.pdf" type="application/pdf" width="100%" height="480">
+              <a href="./info-tec/AnalisisFisicoQuimico-2025_09_04_16_49_132961_1758213984617.pdf" target="_blank" rel="noopener">Descargar PDF</a>
+            </object>
+          </article>
+        </div>
+
+        <div class="files">
+          <div class="file">
+            <h4>Informe de Ensayos</h4>
+            <small class="muted">PDF</small>
+            <a href="./info-tec/AnalisisFisicoQuimico-2025_09_04_16_49_132961_1758213984617.pdf" target="_blank" rel="noopener">Abrir / Descargar</a>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Regulación aplicable</h3>
+        <p>El producto cumple con el <strong>Código Alimentario Argentino – Cap. XII</strong>, Art. 982 (Agua potable) en lo referido a características físicas y químicas.</p>
+        <a href="./info-tec/CAA%20capitulo%20agua%20potable.pdf" target="_blank" rel="noopener">Ver capítulo del CAA</a>
+      </div>
+    </section>
+
+    <section class="card">
+      <h3>Registros y rótulo</h3>
+      <div class="files">
+        <div class="file">
+          <h4>Certificado RNPA</h4>
+          <p class="muted">Agua potable envasada – Marca HIDRO – RNPA 04086264</p>
+          <a href="./info-tec/Certificado_Inscripci%C3%B3nRNPA_125433.pdf" target="_blank" rel="noopener">Abrir / Descargar</a>
+        </div>
+        <div class="file">
+          <h4>Proyecto de rótulo</h4>
+          <p class="muted">Incluye RNE 04005954 y RNPA 04086264</p>
+          <a href="./info-tec/Rotulo_Inscripci%C3%B3nRNPA_125433_Acondicionadoalaventaalp%C3%BAblico.pdf" target="_blank" rel="noopener">Abrir / Descargar</a>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="container">
+    <small class="muted">© 2025 Agua HIDRO – Documentación regulatoria para clientes y autoridades.</small>
+  </footer>
+
+  <script>
+    (function() { 
+      const btn = document.getElementById('togglePreview');
+      const box = document.getElementById('docPreview');
+      if (btn && box) {
+        btn.addEventListener('click', () => {
+          const open = !box.classList.contains('hidden');
+          box.classList.toggle('hidden');
+          btn.textContent = open ? 'Mostrar vista previa rápida de documentos' : 'Ocultar vista previa rápida de documentos';
+        });
+      }
+    })();
+  </script>
+</body>
+</html>

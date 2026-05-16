@@ -1,0 +1,789 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Asignar Zonas – MultiEmpresas</title>
+  <link rel="stylesheet" href="theme-base.css" />
+  
+<style>
+  :root {
+    /* Palette Dark Theme */
+    --bg: #0b1020;
+    --bg-2: #0f172a;
+    --ink: #f1f5f9;
+    --muted: #94a3b8;
+    --brand: #06b6d4;       /* Cyan */
+    --brand-hover: #22d3ee;
+    --surface: rgba(30, 41, 59, 0.7);
+    --border: rgba(148, 163, 184, 0.15);
+    --glass: rgba(15, 23, 42, 0.95); /* Más opaco para móvil */
+    --radius: 12px;
+    
+    --success: #10b981;
+    --warning: #f59e0b;
+    --danger: #ef4444;
+  }
+
+  * { box-sizing: border-box; outline: none; -webkit-tap-highlight-color: transparent; }
+  
+  body {
+    margin: 0; 
+    font-family: system-ui, -apple-system, sans-serif;
+    color: var(--ink);
+    background: 
+      radial-gradient(circle at 15% 50%, rgba(6, 182, 212, 0.05), transparent 25%),
+      radial-gradient(circle at 85% 30%, rgba(59, 130, 246, 0.05), transparent 25%),
+      var(--bg);
+    min-height: 100vh;
+    font-size: 14px;
+    padding-bottom: 80px; /* Espacio para scroll en móvil */
+  }
+
+  .container { max-width: 1200px; margin: 0 auto; padding: 0 20px; }
+
+  /* --- HEADER & NAV RESPONSIVE --- */
+  header {
+    position: sticky; top: 0; z-index: 50;
+    background: var(--glass);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+    padding: 0.8rem 0;
+  }
+  
+  nav { display: flex; justify-content: space-between; align-items: center; }
+  
+  .brand { 
+    display: flex; gap: 0.8rem; align-items: center; 
+    font-size: 1.1rem; font-weight: 700; color: #fff; text-decoration: none; 
+    white-space: nowrap;
+  }
+  .brand-dot { width: 10px; height: 10px; background: var(--brand); border-radius: 50%; box-shadow: 0 0 10px var(--brand); }
+  
+  .role-badge { 
+    background: rgba(6, 182, 212, 0.1); border: 1px solid rgba(6, 182, 212, 0.3);
+    color: var(--brand); padding: 2px 8px; border-radius: 99px; font-size: 0.75rem; 
+  }
+
+  .menu { list-style: none; display: flex; gap: 1.5rem; margin: 0; padding: 0; }
+  .menu a { text-decoration: none; color: var(--muted); font-weight: 500; transition: 0.2s; white-space: nowrap; }
+  .menu a:hover, .menu a.active { color: #fff; }
+  .menu a.active { border-bottom: 2px solid var(--brand); padding-bottom: 4px; }
+
+  /* Adaptación Móvil del Menú */
+  @media (max-width: 768px) {
+    nav { flex-direction: column; gap: 1rem; align-items: stretch; }
+    .brand { justify-content: space-between; }
+    .menu { 
+      overflow-x: auto; 
+      padding-bottom: 5px; 
+      gap: 20px;
+      -webkit-overflow-scrolling: touch; /* Scroll suave en iOS */
+    }
+    .menu::-webkit-scrollbar { display: none; } /* Ocultar barra scroll */
+  }
+
+  main { padding-top: 2rem; padding-bottom: 4rem; display: flex; flex-direction: column; gap: 1.5rem; }
+
+  /* --- PAGE HEADER --- */
+  .page-header {
+    display: flex; justify-content: space-between; align-items: flex-end; flex-wrap: wrap; gap: 1rem;
+  }
+  h1 { font-size: 1.8rem; margin: 0; color: #fff; display: flex; align-items: center; gap: 10px; line-height: 1.2; }
+  p.subtitle { color: var(--muted); margin: 0.5rem 0 0 0; font-size: 0.95rem; }
+
+  @media (max-width: 600px) {
+    .page-header { flex-direction: column; align-items: stretch; }
+    .page-header .btn { width: 100%; justify-content: center; }
+  }
+
+  /* --- CARDS & LAYOUTS --- */
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 1.5rem;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+    display: flex; flex-direction: column;
+  }
+
+  /* Layout Split (Zona/Asignar) */
+  .layout-split { display: grid; grid-template-columns: 1fr 380px; gap: 20px; height: calc(100vh - 140px); min-height: 600px; }
+  .map-wrapper { position: relative; width: 100%; height: 100%; border-radius: var(--radius); border: 1px solid var(--border); overflow: hidden; }
+  #map { width: 100%; height: 100%; z-index: 1; background: #1e293b; }
+
+  @media(max-width: 900px) { 
+    .layout-split { grid-template-columns: 1fr; height: auto; display: flex; flex-direction: column-reverse; } 
+    .map-wrapper { height: 400px; } /* Altura fija mapa móvil */
+  }
+
+  /* --- TOOLBARS & FILTERS --- */
+  .toolbar { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.5rem; }
+  .toolbar > * { flex: 1; }
+  .toolbar select, .toolbar input { margin-bottom: 0; min-width: 150px; }
+  
+  @media (max-width: 600px) {
+    .toolbar { flex-direction: column; align-items: stretch; gap: 0.8rem; }
+    .search-box { width: 100%; }
+  }
+
+  /* --- INPUTS & BUTTONS --- */
+  label { font-size: 0.8rem; color: var(--muted); font-weight: 600; display: block; margin-bottom: 0.4rem; text-transform: uppercase; letter-spacing: 0.5px;}
+  
+  input, select, textarea {
+    background: var(--bg-2); border: 1px solid var(--border); color: #fff;
+    padding: 0.7rem 0.8rem; border-radius: 8px; font-size: 0.95rem; /* Texto más grande para móvil */
+    width: 100%; transition: 0.2s;
+  }
+  input:focus, select:focus, textarea:focus { border-color: var(--brand); box-shadow: 0 0 0 2px rgba(6,182,212,0.2); }
+
+  .btn {
+    padding: 0.7rem 1.2rem; border-radius: 8px; font-weight: 600; cursor: pointer;
+    border: 1px solid transparent; transition: 0.2s; display: inline-flex; align-items: center; gap: 0.5rem;
+    font-size: 0.9rem; background: rgba(255,255,255,0.05); color: var(--ink); border-color: var(--border);
+    text-decoration: none; white-space: nowrap; justify-content: center;
+  }
+  .btn:hover { background: rgba(255,255,255,0.1); color: #fff; border-color: var(--brand); }
+  
+  .btn-primary { background: var(--brand); color: #000; border: none; }
+  .btn-primary:hover { background: var(--brand-hover); box-shadow: 0 4px 12px rgba(6,182,212,0.3); }
+  
+  .btn-danger { color: var(--danger); border-color: rgba(239,68,68,0.3); background: rgba(239,68,68,0.1); }
+  .btn-icon { padding: 0.5rem; border-radius: 6px; color: var(--muted); background: transparent; border: 1px solid var(--border); cursor: pointer; }
+  .btn-icon:hover { color: #fff; background: rgba(255,255,255,0.1); border-color: var(--brand); }
+
+  /* --- TABLES --- */
+  .table-responsive { overflow-x: auto; border-radius: var(--radius); border: 1px solid var(--border); background: var(--bg-2); }
+  table { width: 100%; border-collapse: collapse; text-align: left; }
+  th { 
+    background: rgba(15, 23, 42, 0.9); color: var(--muted); font-weight: 600; 
+    padding: 1rem; font-size: 0.8rem; text-transform: uppercase; 
+    border-bottom: 1px solid var(--border); white-space: nowrap;
+  }
+  td { padding: 1rem; border-bottom: 1px solid var(--border); color: var(--ink); font-size: 0.9rem; vertical-align: middle; white-space: nowrap; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: rgba(255,255,255,0.02); }
+
+  /* --- MODAL --- */
+  .modal-backdrop {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(4px);
+    display: flex; align-items: center; justify-content: center; z-index: 1000;
+    opacity: 0; pointer-events: none; transition: opacity 0.2s; padding: 10px;
+  }
+  .modal-backdrop.open { opacity: 1; pointer-events: all; }
+  
+  .modal {
+    background: #1e293b; color: #fff; border: 1px solid var(--border); border-radius: var(--radius);
+    width: 100%; max-width: 550px; box-shadow: 0 20px 50px rgba(0,0,0,0.6);
+    display: flex; flex-direction: column; max-height: 90vh; /* Límite altura móvil */
+  }
+  
+  .modal-header { 
+    padding: 1.2rem; border-bottom: 1px solid var(--border); 
+    display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.2); 
+  }
+  .modal-header h3 { margin: 0; font-size: 1.2rem; }
+  
+  .modal-body { padding: 1.5rem; overflow-y: auto; display: flex; flex-direction: column; gap: 1.2rem; }
+  
+  .modal-footer { 
+    padding: 1.2rem; border-top: 1px solid var(--border); 
+    display: flex; justify-content: flex-end; gap: 1rem; background: rgba(0,0,0,0.2); 
+  }
+
+  /* Grid en formularios */
+  .form-row, .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  @media (max-width: 600px) {
+    .form-row, .form-grid { grid-template-columns: 1fr; } /* Columna única en móvil */
+    .modal-footer { flex-direction: column-reverse; } /* Botones apilados */
+    .modal-footer .btn { width: 100%; }
+  }
+
+  /* --- EXTRAS (Badges, Lists, Toasts) --- */
+  .badge, .status-badge { padding: 2px 8px; border-radius: 99px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; white-space: nowrap; }
+  .badge-admin, .badge-user, .tag-propio, .st-active { background: rgba(16,185,129,0.15); color: #34d399; }
+  .badge-repartidor, .tag-promo { background: rgba(59,130,246,0.15); color: #60a5fa; }
+  .badge-super, .tag-fletero, .st-inactive { background: rgba(245,158,11,0.15); color: #fbbf24; }
+
+  .toast { position: fixed; right: 20px; bottom: 30px; background: #fff; color: #0f172a; padding: 10px 20px; border-radius: 99px; font-weight: 600; box-shadow: 0 10px 30px rgba(0,0,0,0.3); opacity: 0; pointer-events: none; transition: 0.3s; z-index: 2000; }
+  .toast.show { opacity: 1; transform: translateY(-10px); }
+
+  /* Elementos específicos de zona.html */
+  .sidebar-list { overflow-y: auto; display: flex; flex-direction: column; gap: 0.8rem; flex: 1; }
+  .zona-item { background: var(--bg-2); border: 1px solid var(--border); padding: 1rem; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
+  .control-panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.5rem;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+  }
+  .form-inline {
+    display: grid;
+    grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) auto;
+    gap: 1rem;
+    align-items: end;
+  }
+  .assignment-summary {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.8rem;
+    margin-top: 1rem;
+  }
+  .metric-card {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: rgba(15, 23, 42, 0.7);
+    padding: 0.85rem 0.95rem;
+    min-height: 76px;
+  }
+  .metric-card span {
+    display: block;
+    color: var(--muted);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .metric-card strong {
+    display: block;
+    color: #fff;
+    font-size: 1.45rem;
+    line-height: 1.2;
+    margin-top: 0.25rem;
+  }
+  .filters-panel {
+    display: grid;
+    grid-template-columns: minmax(220px, 1.4fr) minmax(170px, 0.8fr) auto;
+    gap: 0.8rem;
+    align-items: end;
+  }
+  .zones-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 1rem;
+  }
+  .zone-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    min-height: 180px;
+  }
+  .zone-card.uncovered { border-color: rgba(245,158,11,0.45); }
+  .zone-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 1rem;
+    border-bottom: 1px solid var(--border);
+    background: rgba(15, 23, 42, 0.55);
+  }
+  .zone-header h3 { margin: 0; font-size: 1rem; }
+  .zone-meta { color: var(--muted); font-size: 0.76rem; margin-top: 0.25rem; }
+  .zone-body { display: flex; flex-direction: column; gap: 0.55rem; padding: 1rem; }
+  .driver-chip {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-2);
+    padding: 0.6rem 0.7rem;
+  }
+  .driver-info { display:flex; align-items:center; gap:0.5rem; min-width:0; }
+  .driver-info span:last-child { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .driver-load { color: var(--muted); font-size: 0.72rem; }
+  .driver-icon { flex-shrink: 0; }
+  .btn-remove {
+    border: 1px solid rgba(239,68,68,0.25);
+    color: var(--danger);
+    background: rgba(239,68,68,0.08);
+    border-radius: 6px;
+    width: 30px;
+    height: 30px;
+    display: grid;
+    place-items: center;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .btn-remove:hover { background: rgba(239,68,68,0.18); }
+  .badge-count {
+    min-width: 30px;
+    height: 26px;
+    border-radius: 99px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(6,182,212,0.12);
+    color: var(--brand);
+    border: 1px solid rgba(6,182,212,0.28);
+    font-weight: 800;
+  }
+  .empty-msg {
+    color: var(--warning);
+    border: 1px dashed rgba(245,158,11,0.35);
+    border-radius: 8px;
+    padding: 0.8rem;
+    text-align: center;
+    background: rgba(245,158,11,0.06);
+  }
+  
+  /* Elementos específicos de inicial.html */
+  .step-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.5rem; display: flex; gap: 1rem; margin-bottom: 1rem; align-items: flex-start; }
+  .step-num { flex-shrink: 0; width: 40px; height: 40px; background: var(--bg-2); border: 1px solid var(--border); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; }
+  @media(max-width: 600px) { 
+    .step-card { flex-direction: column; } 
+    .check-icon { position: static; transform: none; opacity: 1; } 
+  }
+
+  /* Leaflet Dark Override */
+  .leaflet-bar { border: none !important; box-shadow: 0 4px 10px rgba(0,0,0,0.3) !important; }
+  .leaflet-bar a { background-color: var(--bg-2) !important; color: #fff !important; border-bottom: 1px solid var(--border) !important; }
+  @media (max-width: 760px) {
+    .form-inline,
+    .filters-panel { grid-template-columns: 1fr; }
+    .assignment-summary { grid-template-columns: 1fr 1fr; }
+  }
+</style>
+</head>
+<body>
+
+  <header>
+    <nav class="container">
+      <div class="brand">
+        <div class="brand-dot"></div>
+        MultiEmpresas
+        <span id="roleBadge" class="role-badge">Admin</span>
+      </div>
+      <ul class="menu" id="mainMenu">
+        <li><a href="inicial.html">🚀 Inicio</a></li>
+        <li><a href="/pedidos/dashboard.html">Dashboard</a></li>
+        <li><a href="asignar.html" class="active">Asignar</a></li>
+        <li><a href="#" id="logout" style="color: var(--danger)">Salir</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <main class="container">
+    
+    <div class="page-header">
+      <div>
+        <h1>🔗 Asignación de Zonas</h1>
+        <p class="subtitle">Vincula tus choferes a las zonas geográficas de reparto.</p>
+      </div>
+    </div>
+
+    <div class="control-panel">
+      
+      <div id="empWrap" style="display:none; margin-bottom: 1.5rem; padding-bottom: 1.5rem; border-bottom: 1px solid var(--border);">
+        <div class="field" style="max-width: 300px;">
+          <label for="empSel">Empresa (Admin)</label>
+          <select id="empSel"><option value="">-- Seleccionar --</option></select>
+        </div>
+      </div>
+
+      <div class="form-inline">
+        <div class="field">
+          <label for="selChofer">Seleccionar Chofer</label>
+          <select id="selChofer"><option value="">Cargando...</option></select>
+        </div>
+        <div class="field">
+          <label for="selZona">Seleccionar Zona</label>
+          <select id="selZona"><option value="">Cargando...</option></select>
+        </div>
+        <button id="btnAssign" type="button" class="btn">
+          <span>+ Vincular</span>
+        </button>
+      </div>
+
+      <div class="assignment-summary" aria-label="Resumen de asignación">
+        <div class="metric-card">
+          <span>Zonas</span>
+          <strong id="sumZones">0</strong>
+        </div>
+        <div class="metric-card">
+          <span>Cubiertas</span>
+          <strong id="sumCovered">0</strong>
+        </div>
+        <div class="metric-card">
+          <span>Sin cobertura</span>
+          <strong id="sumUncovered">0</strong>
+        </div>
+        <div class="metric-card">
+          <span>Choferes</span>
+          <strong id="sumDrivers">0</strong>
+        </div>
+      </div>
+    </div>
+
+    <h3 style="color:#fff; margin-bottom:1rem; display:flex; align-items:center; gap:10px;">
+      Cobertura Actual <span style="font-size:0.8rem; color:var(--muted); font-weight:400;">(Choferes por zona)</span>
+    </h3>
+
+    <div class="control-panel" style="padding:1rem;">
+      <div class="filters-panel">
+        <div>
+          <label for="zoneSearch">Buscar zona o chofer</label>
+          <input id="zoneSearch" type="search" placeholder="Ej: Centro, Juan, fletero">
+        </div>
+        <div>
+          <label for="coverageFilter">Cobertura</label>
+          <select id="coverageFilter">
+            <option value="">Todas</option>
+            <option value="covered">Con choferes</option>
+            <option value="uncovered">Sin cobertura</option>
+          </select>
+        </div>
+        <button id="btnClearFilters" type="button" class="btn">Limpiar</button>
+      </div>
+    </div>
+    
+    <div id="gridZonas" class="zones-grid">
+      <div style="grid-column:1/-1; text-align:center; padding:3rem; color:var(--muted); border:1px dashed var(--border); border-radius:12px;">
+        Cargando datos...
+      </div>
+    </div>
+
+  </main>
+
+  <div id="toast" class="toast"></div>
+
+  <script>
+    // --- Utils ---
+    const $ = s => document.querySelector(s);
+    const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;'
+    }[c]));
+    
+    function toast(msg) {
+      const t = $('#toast'); t.textContent = msg; t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 3000);
+    }
+
+    // --- Auth helpers (modo seguro: cookie httpOnly) ---
+    const authFetch = (url, opts = {}) => {
+      const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
+      return fetch(url, { ...opts, headers, credentials: 'include' });
+    };
+
+    // --- Logout ---
+    const logoutLink = $('#logout');
+    if (logoutLink) {
+      logoutLink.addEventListener('click', async (e) => {
+        e.preventDefault();
+        try { await authFetch('/api/logout', { method: 'POST' }); } catch {}
+        location.href = '../login.html';
+      });
+    }
+
+    // --- State ---
+    let STATE = { isSuper: false, user: null };
+    let zones = [];
+    let drivers = [];
+    let assignments = {};
+    let assignBusy = false;
+    let unassignBusy = false;
+    let filters = { q: '', coverage: '' };
+
+    // --- API ---
+    async function api(endpoint, opts = {}) {
+      try {
+        const res = await authFetch(endpoint, opts);
+        if (res.status === 401) return window.location.href = '../login.html';
+        return res.json();
+      } catch (e) {
+        console.error(e);
+        toast('Error de conexión');
+        return { error: 'Error' };
+      }
+    }
+
+    // --- Logic ---
+    async function load() {
+      // Params
+      let urlZonas = '/api/zonas';
+      let urlChoferes = '/api/choferes';
+      let urlAsig = '/api/zonas/choferes';
+
+      const empId = $('#empSel').value;
+      if (STATE.isSuper) {
+          if (empId) {
+            const q = `?empresa_id=${empId}`;
+            urlZonas += q; urlChoferes += q; urlAsig += q;
+          } else {
+             zones = []; drivers = []; assignments = {};
+             renderForm(); renderGrid();
+             $('#gridZonas').innerHTML = '<div style="grid-column:1/-1; text-align:center; padding:3rem; color:var(--muted);">Selecciona una empresa para ver datos.</div>';
+             return;
+          }
+      }
+
+      // Fetch Parallel
+      const [resZonas, resChoferes, resAsignaciones] = await Promise.all([
+        api(urlZonas), api(urlChoferes), api(urlAsig)
+      ]);
+
+      if (Array.isArray(resZonas)) zones = resZonas;
+      if (Array.isArray(resChoferes)) drivers = resChoferes;
+      
+      assignments = {};
+      if (Array.isArray(resAsignaciones)) {
+        resAsignaciones.forEach(item => {
+          assignments[item.id] = (item.choferes || []).map(c => c.id);
+        });
+      }
+
+      renderForm();
+      renderGrid();
+    }
+
+    function getDriverLoadMap() {
+      const loads = {};
+      Object.values(assignments).forEach(ids => {
+        (ids || []).forEach(id => {
+          const k = Number(id);
+          loads[k] = (loads[k] || 0) + 1;
+        });
+      });
+      return loads;
+    }
+
+    function setSummary() {
+      const covered = zones.filter(z => (assignments[z.id] || []).length > 0).length;
+      $('#sumZones').textContent = String(zones.length);
+      $('#sumCovered').textContent = String(covered);
+      $('#sumUncovered').textContent = String(Math.max(0, zones.length - covered));
+      $('#sumDrivers').textContent = String(drivers.length);
+    }
+
+    function getFilteredZones() {
+      const q = (filters.q || '').trim().toLowerCase();
+      const coverage = filters.coverage || '';
+
+      return zones.filter(z => {
+        const driverIds = assignments[z.id] || [];
+        const assignedDrivers = driverIds.map(id => drivers.find(d => d.id === id)).filter(Boolean);
+        const hasCoverage = assignedDrivers.length > 0;
+
+        if (coverage === 'covered' && !hasCoverage) return false;
+        if (coverage === 'uncovered' && hasCoverage) return false;
+        if (!q) return true;
+
+        const haystack = [
+          z.nombre,
+          z.id,
+          ...assignedDrivers.flatMap(d => [d.nombre, d.telefono, d.email, d.tipo])
+        ].map(v => String(v == null ? '' : v).toLowerCase()).join(' ');
+
+        return haystack.includes(q);
+      });
+    }
+
+    function renderForm() {
+      const selChofer = $('#selChofer');
+      const selZona = $('#selZona');
+
+      if (!drivers.length) selChofer.innerHTML = '<option value="">No hay choferes disponibles</option>';
+      else selChofer.innerHTML = drivers.map(d => `<option value="${Number(d.id)}">${esc(d.nombre)}</option>`).join('');
+
+      if (!zones.length) selZona.innerHTML = '<option value="">No hay zonas disponibles</option>';
+      else selZona.innerHTML = zones.map(z => `<option value="${Number(z.id)}">${esc(z.nombre)}</option>`).join('');
+    }
+
+    function renderGrid() {
+      const grid = $('#gridZonas');
+      setSummary();
+
+      if (!zones.length) {
+        grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; padding:3rem; color:var(--muted);">No hay zonas configuradas.</div>';
+        return;
+      }
+
+      const driverLoads = getDriverLoadMap();
+      const visibleZones = getFilteredZones();
+
+      if (!visibleZones.length) {
+        grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; padding:3rem; color:var(--muted); border:1px dashed var(--border); border-radius:12px;">No hay zonas que coincidan con los filtros.</div>';
+        return;
+      }
+
+      grid.innerHTML = visibleZones.map(z => {
+        const driverIds = assignments[z.id] || [];
+        const assignedDrivers = driverIds.map(id => drivers.find(d => d.id === id)).filter(Boolean);
+
+        const listHtml = assignedDrivers.length > 0 
+          ? assignedDrivers.map(d => `
+              <div class="driver-chip">
+                <div class="driver-info">
+                  <span class="driver-icon">${d.tipo === 'fletero' ? '🚛' : '🛵'}</span>
+                  <div style="min-width:0;">
+                    <span>${esc(d.nombre)}</span>
+                    <div class="driver-load">${driverLoads[Number(d.id)] || 0} zona(s) asignada(s)</div>
+                  </div>
+                </div>
+                <button class="btn-remove" data-action="unassign" data-zona-id="${Number(z.id)}" data-chofer-id="${Number(d.id)}" title="Desvincular">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                </button>
+              </div>
+            `).join('')
+          : '<div class="empty-msg">Sin choferes asignados</div>';
+
+        return `
+          <div class="zone-card ${assignedDrivers.length ? '' : 'uncovered'}">
+            <div class="zone-header">
+              <div>
+                <h3>${esc(z.nombre)}</h3>
+                <div class="zone-meta">Zona #${Number(z.id)}</div>
+              </div>
+              <span class="badge-count">${assignedDrivers.length}</span>
+            </div>
+            <div class="zone-body">
+              ${listHtml}
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    // --- Actions ---
+    async function assign() {
+      if (assignBusy) return;
+      if (STATE.isSuper && !$('#empSel').value) return toast('⚠️ Selecciona una empresa primero');
+
+      const chofer_id = $('#selChofer').value;
+      const zona_id = $('#selZona').value;
+
+      if (!chofer_id || !zona_id) return toast('⚠️ Selecciona chofer y zona');
+
+      const current = assignments[zona_id] || [];
+      if (current.includes(Number(chofer_id))) return toast('ℹ️ Ya está asignado');
+
+      const btn = document.querySelector('.form-inline .btn');
+      const prevTxt = btn ? btn.textContent : '';
+      assignBusy = true;
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Vinculando...';
+      }
+
+      try {
+        const res = await api('/api/asignarChofer', {
+          method: 'POST',
+          body: JSON.stringify({ chofer_id, zona_id })
+        });
+
+        if (res.error) toast('❌ ' + res.error);
+        else { toast('✅ Asignado correctamente'); load(); }
+      } finally {
+        assignBusy = false;
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = prevTxt;
+        }
+      }
+    }
+
+    async function unassign(zona_id, chofer_id, btnEl = null) {
+      if (unassignBusy) return;
+      if (!confirm('¿Desvincular chofer de esta zona?')) return;
+
+      unassignBusy = true;
+      const prev = btnEl ? btnEl.innerHTML : '';
+      if (btnEl) {
+        btnEl.disabled = true;
+        btnEl.textContent = '…';
+      }
+
+      try {
+        const res = await api('/api/desasignarChofer', {
+          method: 'DELETE',
+          body: JSON.stringify({ zona_id, chofer_id })
+        });
+
+        if (res.error) toast('❌ ' + res.error);
+        else { toast('🗑️ Desvinculado'); load(); }
+      } finally {
+        unassignBusy = false;
+        if (btnEl) {
+          btnEl.disabled = false;
+          btnEl.innerHTML = prev;
+        }
+      }
+    }
+
+    const btnAssign = document.getElementById('btnAssign');
+    if (btnAssign) btnAssign.addEventListener('click', assign);
+
+    const zoneSearch = document.getElementById('zoneSearch');
+    if (zoneSearch) {
+      zoneSearch.addEventListener('input', () => {
+        filters.q = zoneSearch.value || '';
+        renderGrid();
+      });
+    }
+
+    const coverageFilter = document.getElementById('coverageFilter');
+    if (coverageFilter) {
+      coverageFilter.addEventListener('change', () => {
+        filters.coverage = coverageFilter.value || '';
+        renderGrid();
+      });
+    }
+
+    const btnClearFilters = document.getElementById('btnClearFilters');
+    if (btnClearFilters) {
+      btnClearFilters.addEventListener('click', () => {
+        filters = { q: '', coverage: '' };
+        if (zoneSearch) zoneSearch.value = '';
+        if (coverageFilter) coverageFilter.value = '';
+        renderGrid();
+      });
+    }
+
+    const gridZonas = document.getElementById('gridZonas');
+    if (gridZonas) {
+      gridZonas.addEventListener('click', (ev) => {
+        const btn = ev.target.closest('button[data-action="unassign"]');
+        if (!btn) return;
+
+        const zonaId = Number(btn.getAttribute('data-zona-id'));
+        const choferId = Number(btn.getAttribute('data-chofer-id'));
+        if (!Number.isFinite(zonaId) || zonaId <= 0) return;
+        if (!Number.isFinite(choferId) || choferId <= 0) return;
+
+        unassign(zonaId, choferId, btn);
+      });
+    }
+
+    // --- Init ---
+    (async () => {
+        try {
+            const me = await api('/api/me');
+            STATE.user = me?.user || {};
+            STATE.isSuper = (STATE.user.role || '').toLowerCase() === 'super';
+            
+            $('#roleBadge').textContent = STATE.isSuper ? 'SUPER ADMIN' : 'Admin';
+
+            if (STATE.isSuper) {
+                $('#empWrap').style.display = 'block';
+                const list = await api('/api/empresas');
+                const sel = $('#empSel');
+                if (Array.isArray(list)) {
+                    sel.innerHTML = '<option value="">-- Seleccionar Empresa --</option>' + 
+                    list.map(e => `<option value="${Number(e.id)}">${esc(e.nombre)}</option>`).join('');
+                    sel.addEventListener('change', load);
+                }
+            } else {
+                load();
+            }
+        } catch(e) { console.error(e); }
+    })();
+  </script>
+
+</body>
+</html>

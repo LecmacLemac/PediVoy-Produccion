@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="120dp"
+    android:height="120dp"
+    android:viewportWidth="120"
+    android:viewportHeight="120">
+    <path
+        android:fillColor="@color/pedivoy_white"
+        android:pathData="M60,12C38,12 20,30 20,52c0,31 40,56 40,56s40,-25 40,-56C100,30 82,12 60,12z" />
+    <path
+        android:fillColor="@color/pedivoy_accent"
+        android:pathData="M60,33a16,16 0 1,0 0,32a16,16 0 1,0 0,-32z" />
+</vector>

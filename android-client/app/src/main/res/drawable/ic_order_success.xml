@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+    <path android:fillColor="@color/pedivoy_surface_elevated" android:pathData="M24,4C12.95,4 4,12.95 4,24s8.95,20 20,20 20,-8.95 20,-20S35.05,4 24,4z"/>
+    <path android:fillColor="@color/pedivoy_primary" android:pathData="M20.5,30.5L13.5,23.5 16.33,20.67 20.5,24.83 31.67,13.67 34.5,16.5z"/>
+    <path android:fillColor="@color/pedivoy_accent" android:pathData="M34,11a3,3 0 1,0 0,6a3,3 0 1,0 0,-6z"/>
+</vector>

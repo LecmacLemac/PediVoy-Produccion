@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CRM Comercial · PediVoy</title>
+  <link rel="stylesheet" href="theme-base.css" />
+  <style>
+    :root{--bg:#0b1020;--bg2:#0f172a;--ink:#f1f5f9;--muted:#94a3b8;--brand:#06b6d4;--border:rgba(148,163,184,.2);--ok:#22c55e;--warn:#f59e0b}
+    *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,sans-serif}
+    .container{max-width:1200px;margin:0 auto;padding:0 16px}
+    header{position:sticky;top:0;background:rgba(15,23,42,.95);border-bottom:1px solid var(--border);z-index:10}
+    nav{display:flex;justify-content:space-between;align-items:center;padding:12px 0}
+    .card{background:rgba(30,41,59,.75);border:1px solid var(--border);border-radius:12px;padding:14px;margin:14px 0}
+    .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}
+    .kpi{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:10px}
+    .k{font-size:.78rem;color:var(--muted);text-transform:uppercase}.v{font-size:1.25rem;font-weight:800}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    .list{display:grid;gap:8px}
+    .item{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:10px}
+    .muted{color:var(--muted)}
+    .pill{padding:2px 8px;border-radius:999px;font-size:.75rem;border:1px solid var(--border)}
+    .btn{height:36px;padding:0 12px;border-radius:8px;border:1px solid var(--border);background:#1e293b;color:#fff;cursor:pointer}
+    .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+    input,select{height:36px;border-radius:8px;border:1px solid var(--border);background:var(--bg2);color:var(--ink);padding:0 10px}
+    @media(max-width:900px){.grid{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+<header>
+  <nav class="container">
+    <div><b>📈 CRM Comercial</b> <span id="role" class="muted"></span></div>
+    <div class="row">
+      <a href="/pedidos/inicio/comando.html"><button class="btn" type="button">← Comando</button></a>
+      <button class="btn" id="btnRefresh" type="button">Actualizar</button>
+      <button class="btn" id="logout" type="button">Salir</button>
+    </div>
+  </nav>
+</header>
+
+<main class="container">
+  <section class="card">
+    <div class="row" style="justify-content:space-between">
+      <div>
+        <h1 style="margin:0;font-size:1.2rem">Resumen comercial</h1>
+        <p class="muted" style="margin:.3rem 0 0">Pipeline, oportunidades y clientes CRM.</p>
+      </div>
+      <div class="row">
+        <label class="muted">Empresa (superadmin)</label>
+        <select id="empresaSelect" style="display:none"></select>
+      </div>
+    </div>
+    <div class="kpis" id="kpis" style="margin-top:10px"></div>
+  </section>
+
+  <section class="card">
+    <h2 style="margin:0 0 10px;font-size:1rem">Nueva oportunidad</h2>
+    <div class="row">
+      <input id="o_nombre" placeholder="Nombre oportunidad" />
+      <input id="o_monto" type="number" placeholder="Monto estimado" />
+      <input id="o_prob" type="number" min="0" max="100" placeholder="Probabilidad %" />
+      <input id="o_rubro" placeholder="Rubro" />
+      <button class="btn" id="btnCrear" type="button">Crear</button>
+    </div>
+    <small class="muted">Se guarda como abierta y etapa prospecto por defecto.</small>
+  </section>
+
+  <section class="grid">
+    <article class="card">
+      <h2 style="margin:0 0 8px;font-size:1rem">Pipeline abierto</h2>
+      <div id="pipelineList" class="list"><div class="muted">Cargando…</div></div>
+    </article>
+    <article class="card">
+      <h2 style="margin:0 0 8px;font-size:1rem">Clientes CRM</h2>
+      <div id="clientesList" class="list"><div class="muted">Cargando…</div></div>
+    </article>
+  </section>
+</main>
+
+<script>
+const $ = (s)=>document.querySelector(s);
+const authFetch=(url,opts={})=>fetch(url,{...opts,credentials:'include',headers:{'Content-Type':'application/json',...(opts.headers||{})}});
+const fmt = new Intl.NumberFormat('es-AR',{style:'currency',currency:'ARS',maximumFractionDigits:0});
+const st={me:null,isSuper:false,empresaId:null};
+
+function apiUrl(base){
+  if(st.isSuper && st.empresaId){
+    return base + (base.includes('?')?'&':'?') + 'empresa_id=' + encodeURIComponent(String(st.empresaId));
+  }
+  return base;
+}
+
+async function api(url, opts={}){
+  const r = await authFetch(url, opts);
+  if(r.status===401){ location.href='/pedidos/login.html'; return null; }
+  const j = await r.json().catch(()=>({}));
+  if(!r.ok) throw new Error(j.error||'Error API');
+  return j;
+}
+
+async function loadMe(){
+  const me = await api('/api/me');
+  st.me = me?.user || null;
+  st.isSuper = String(st.me?.role||'').toLowerCase()==='super';
+  $('#role').textContent = st.me?.role ? `(${String(st.me.role).toUpperCase()})` : '';
+
+  if(st.isSuper){
+    const sel = $('#empresaSelect');
+    sel.style.display='inline-block';
+    const empresas = await api('/api/empresas');
+    sel.innerHTML = '<option value="">Seleccionar empresa…</option>' + (empresas||[]).map(e=>`<option value="${Number(e.id)}">${e.id} · ${e.nombre}</option>`).join('');
+    sel.addEventListener('change', ()=>{ st.empresaId = sel.value ? Number(sel.value) : null; refresh(); });
+  }
+}
+
+function renderKpis(rows){
+  const total = rows.reduce((a,b)=>a+Number(b.monto||0),0);
+  const pond = rows.reduce((a,b)=>a+(Number(b.monto||0)*(Number(b.probabilidad||0)/100)),0);
+  const abiertas = rows.filter(r=>String(r.estado||'abierta')==='abierta').length;
+  const k = [
+    ['Oportunidades abiertas', abiertas],
+    ['Pipeline total', fmt.format(total)],
+    ['Pipeline ponderado', fmt.format(pond)],
+    ['Ticket prom. oportunidad', abiertas?fmt.format(total/abiertas):fmt.format(0)],
+  ];
+  $('#kpis').innerHTML = k.map(([a,b])=>`<div class="kpi"><div class="k">${a}</div><div class="v">${b}</div></div>`).join('');
+}
+
+function renderPipeline(rows){
+  const list = $('#pipelineList');
+  if(!rows.length){ list.innerHTML='<div class="muted">Sin oportunidades.</div>'; return; }
+  list.innerHTML = rows.map(o=>`<div class="item">
+    <div class="row" style="justify-content:space-between">
+      <b>${o.nombre||'Sin nombre'}</b>
+      <span class="pill">${o.probabilidad||0}%</span>
+    </div>
+    <div class="muted">${o.etapa||'-'} · ${o.estado||'-'}</div>
+    <div style="margin-top:4px">${fmt.format(Number(o.monto||0))}</div>
+    <div class="row" style="margin-top:8px">
+      <select data-oportunidad-etapa="${Number(o.id)||0}">
+        <option value="prospecto" ${String(o.etapa)==='prospecto'?'selected':''}>Prospecto</option>
+        <option value="calificado" ${String(o.etapa)==='calificado'?'selected':''}>Calificado</option>
+        <option value="propuesta" ${String(o.etapa)==='propuesta'?'selected':''}>Propuesta</option>
+        <option value="negociacion" ${String(o.etapa)==='negociacion'?'selected':''}>Negociación</option>
+        <option value="cerrado_ganado" ${String(o.etapa)==='cerrado_ganado'?'selected':''}>Cerrado ganado</option>
+        <option value="cerrado_perdido" ${String(o.etapa)==='cerrado_perdido'?'selected':''}>Cerrado perdido</option>
+      </select>
+      <input data-oportunidad-prob="${Number(o.id)||0}" type="number" min="0" max="100" value="${Number(o.probabilidad||0)}" style="width:90px" />
+      <button class="btn" type="button" data-oportunidad-save="${Number(o.id)||0}">Guardar</button>
+    </div>
+  </div>`).join('');
+
+  list.querySelectorAll('[data-oportunidad-save]').forEach((btn)=>{
+    btn.addEventListener('click', async ()=>{
+      const id = Number(btn.getAttribute('data-oportunidad-save')||0);
+      if(!id) return;
+      const etapa = list.querySelector(`[data-oportunidad-etapa="${id}"]`)?.value || 'prospecto';
+      const prob = Number(list.querySelector(`[data-oportunidad-prob="${id}"]`)?.value || 0);
+      try{
+        await api(apiUrl(`/api/setup/fase1/pipeline/${id}`), { method:'PUT', body: JSON.stringify({ etapa, probabilidad: Math.max(0, Math.min(100, prob)) }) });
+        await refresh();
+      }catch(e){
+        alert('No se pudo actualizar oportunidad: ' + e.message);
+      }
+    });
+  });
+}
+
+function renderClientes(rows){
+  const list = $('#clientesList');
+  if(!rows.length){ list.innerHTML='<div class="muted">Sin clientes CRM cargados.</div>'; return; }
+  list.innerHTML = rows.slice(0,20).map(c=>`<div class="item"><div class="row" style="justify-content:space-between"><b>${c.cliente||'Cliente'}</b><span class="pill">${c.crm_estado||'activo'}</span></div><div class="muted">Riesgo: ${c.crm_riesgo||'bajo'} · Segmento: ${c.crm_segmento||'-'}</div></div>`).join('');
+}
+
+async function refresh(){
+  if(st.isSuper && !st.empresaId){
+    $('#pipelineList').innerHTML = '<div class="muted">Seleccioná empresa para cargar CRM.</div>';
+    $('#clientesList').innerHTML = '<div class="muted">Seleccioná empresa para cargar CRM.</div>';
+    $('#kpis').innerHTML = '';
+    return;
+  }
+  try{
+    const [pipeline, clientes] = await Promise.all([
+      api(apiUrl('/api/setup/fase1/pipeline')),
+      api(apiUrl('/api/setup/fase1/clientes-crm')),
+    ]);
+    const pRows = Array.isArray(pipeline?.items) ? pipeline.items : (Array.isArray(pipeline) ? pipeline : []);
+    const cRows = Array.isArray(clientes?.items) ? clientes.items : (Array.isArray(clientes) ? clientes : []);
+    renderKpis(pRows);
+    renderPipeline(pRows);
+    renderClientes(cRows);
+  }catch(e){
+    console.error(e);
+    $('#pipelineList').innerHTML = `<div class="muted">Error: ${e.message}</div>`;
+    $('#clientesList').innerHTML = '<div class="muted">No se pudo cargar clientes CRM.</div>';
+  }
+}
+
+$('#btnCrear').addEventListener('click', async ()=>{
+  const body = {
+    nombre: $('#o_nombre').value.trim(),
+    monto_estimado: Number($('#o_monto').value || 0),
+    probabilidad: Number($('#o_prob').value || 20),
+    rubro: $('#o_rubro').value.trim() || null,
+    etapa: 'prospecto',
+    estado: 'abierta',
+  };
+  if(!body.nombre){ alert('Ingresá nombre de oportunidad'); return; }
+  try{
+    await api(apiUrl('/api/setup/fase1/pipeline'), { method:'POST', body: JSON.stringify(body) });
+    $('#o_nombre').value=''; $('#o_monto').value=''; $('#o_prob').value=''; $('#o_rubro').value='';
+    await refresh();
+  }catch(e){ alert('No se pudo crear oportunidad: ' + e.message); }
+});
+
+$('#btnRefresh').addEventListener('click', refresh);
+$('#logout').addEventListener('click', async ()=>{ try{ await authFetch('/api/logout',{method:'POST'});}catch{} location.href='/pedidos/login.html'; });
+
+(async()=>{ await loadMe(); await refresh(); })();
+</script>
+</body>
+</html>

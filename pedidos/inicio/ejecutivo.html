@@ -1,0 +1,414 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Tablero Ejecutivo – MultiEmpresas</title>
+  <link rel="stylesheet" href="theme-base.css" />
+  <style>
+    :root{--bg:#0b1020;--bg2:#0f172a;--ink:#f1f5f9;--muted:#94a3b8;--brand:#06b6d4;--border:rgba(148,163,184,.18);--danger:#ef4444}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,sans-serif}
+    .container{max-width:1240px;margin:0 auto;padding:0 20px}header{position:sticky;top:0;background:rgba(15,23,42,.95);border-bottom:1px solid var(--border);padding:.8rem 0}
+    nav{display:flex;justify-content:space-between;align-items:center}.menu{display:flex;gap:1rem;list-style:none;margin:0;padding:0}.menu a{color:var(--muted);text-decoration:none}.menu a.active,.menu a:hover{color:#fff}
+    main{padding:1rem 0 3rem}.card{background:rgba(30,41,59,.7);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:12px}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:.8rem}.kpi{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px}.kpi .l{font-size:.75rem;color:var(--muted);text-transform:uppercase}.kpi .v{font-size:1.2rem;font-weight:700}
+
+    @media (max-width: 768px){
+      .container{padding:0 12px}
+      nav{flex-direction:column;align-items:flex-start;gap:.6rem}
+      .menu{overflow-x:auto;white-space:nowrap;padding-bottom:4px}
+      h1{font-size:1.05rem}
+      button,select,textarea{width:100%}
+    }
+  </style>
+</head>
+<body>
+<header>
+  <nav class="container">
+    <div><strong>MultiEmpresas</strong> <span id="roleBadge" style="font-size:.75rem;color:var(--brand)">Admin</span></div>
+    <ul class="menu"><li><a href="inicial.html">🚀 Inicio</a></li><li><a href="comercial.html">Comercial</a></li><li><a href="compras.html">Compras</a></li><li><a href="tesoreria.html">Tesorería</a></li><li><a href="ejecutivo.html" class="active">Ejecutivo</a></li><li><a href="agentes.html">Agentes</a></li><li><a href="#" id="logout" style="color:var(--danger)">Salir</a></li></ul>
+  </nav>
+</header>
+<main class="container">
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:center">
+      <h1 style="margin:0;font-size:1.2rem">Fase 3 · Tablero ejecutivo</h1>
+      <div style="display:flex;gap:8px;align-items:center"><div id="empresaWrap" style="display:none"><select id="empresaSelect"><option value="">Seleccionar empresa…</option></select></div><button id="btnRefresh" type="button">Actualizar</button></div>
+    </div>
+    <div id="status" style="color:var(--muted);margin-top:6px">Listo.</div>
+  </div>
+
+  <div class="card"><h2 style="margin:0 0 8px;font-size:1rem">Salud de datos operativos</h2><div id="dataHealth"></div></div>
+  <div class="card"><h2 style="margin:0 0 8px;font-size:1rem">Integridad por módulo</h2><div id="moduleHealth"></div></div>
+  <div class="card"><h2 style="margin:0 0 8px;font-size:1rem">KPI unificado</h2><div id="kpiGrid" class="grid"></div></div>
+  <div class="card"><h2 style="margin:0 0 8px;font-size:1rem">Semáforo operativo</h2><div id="semaforo"></div></div>
+  <div class="card"><h2 style="margin:0 0 8px;font-size:1rem">Recomendaciones automáticas</h2><div id="recos" style="display:grid;gap:8px"></div></div>
+  <div class="card"><h2 style="margin:0 0 8px;font-size:1rem">Control de cierre diario</h2><div id="cierreChecklist" style="display:grid;gap:8px"></div></div>
+  <div class="card"><h2 style="margin:0 0 8px;font-size:1rem">Centro de automatizaciones</h2><div id="autoCenter" style="display:grid;gap:8px"></div></div>
+  <div class="card">
+    <h2 style="margin:0 0 8px;font-size:1rem">Checklist UAT · Fase 3</h2>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px"><button id="btnUatRefresh" type="button">Recalcular checklist</button><button id="btnUatCopy" type="button">Copiar checklist</button></div>
+    <div id="uatChecklist" style="display:grid;gap:8px"></div>
+  </div>
+  <div class="card">
+    <h2 style="margin:0 0 8px;font-size:1rem">Resumen diario ejecutivo</h2>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px"><button id="btnResumen" type="button">Actualizar resumen</button><button id="btnCopyResumen" type="button">Copiar resumen</button></div>
+    <textarea id="resumenText" rows="12" style="width:100%;background:var(--bg2);border:1px solid var(--border);border-radius:10px;color:var(--ink);padding:10px"></textarea>
+  </div>
+
+  <div class="card">
+    <h2 style="margin:0 0 8px;font-size:1rem">Plantilla de cierre operativo (diario)</h2>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+      <button id="btnPlantillaCierre" type="button">Generar plantilla</button>
+      <button id="btnCopyPlantillaCierre" type="button">Copiar plantilla</button>
+      <button id="btnPlantillaCierreMulti" type="button">Generar multi-empresa</button>
+      <button id="btnCopyPlantillaCierreMulti" type="button">Copiar multi-empresa</button>
+    </div>
+    <textarea id="plantillaCierreText" rows="14" style="width:100%;background:var(--bg2);border:1px solid var(--border);border-radius:10px;color:var(--ink);padding:10px"></textarea>
+    <textarea id="plantillaCierreMultiText" rows="16" style="margin-top:8px;width:100%;background:var(--bg2);border:1px solid var(--border);border-radius:10px;color:var(--ink);padding:10px" placeholder="Resumen multi-empresa (solo superadmin)"></textarea>
+  </div>
+</main>
+<script>
+const authFetch=(url,opts={})=>fetch(url,{...opts,headers:{'Content-Type':'application/json',...(opts.headers||{})},credentials:'include'});
+const fmt=new Intl.NumberFormat('es-AR',{style:'currency',currency:'ARS',maximumFractionDigits:0});
+const st={isSuper:false,empresaId:null,dashboard:null,semaforo:null,recos:[],cierre:[],autos:[],incidencias:null,dataHealth:null,moduleHealth:null};
+const setStatus=(t,e=false)=>{const el=document.getElementById('status');el.textContent=t;el.style.color=e?'var(--danger)':'var(--muted)';};
+const apiUrl=(p)=>st.isSuper&&st.empresaId?(p+(p.includes('?')?'&':'?')+'empresa_id='+encodeURIComponent(String(st.empresaId))):p;
+
+async function loadMe(){
+  const r=await authFetch('/api/me'); if(r.status===401) return location.href='/pedidos/login.html';
+  const me=await r.json(); st.isSuper=String(me?.user?.role||'').toLowerCase()==='super'; st.empresaId=me?.user?.empresa_id||null;
+  document.getElementById('roleBadge').textContent=st.isSuper?'SUPER ADMIN':'Admin';
+  if(st.isSuper){ st.empresaId=null; const wrap=document.getElementById('empresaWrap'); wrap.style.display='block'; const sel=document.getElementById('empresaSelect');
+    let list=[]; const r1=await authFetch('/api/admin/empresas-list'); if(r1.ok){const j=await r1.json().catch(()=>[]); list=Array.isArray(j)?j:(Array.isArray(j.data)?j.data:[]);} if(!list.length){const r2=await authFetch('/api/empresas'); if(r2.ok){const j2=await r2.json().catch(()=>[]); list=Array.isArray(j2)?j2:(Array.isArray(j2.data)?j2.data:[]);} }
+    sel.innerHTML='<option value="">Seleccionar empresa</option>'; list.forEach(e=>{const o=document.createElement('option');o.value=String(Number(e.id)||'');o.textContent=`${e.id} · ${e.nombre}`;sel.appendChild(o);});
+    sel.addEventListener('change',()=>{st.empresaId=sel.value?Number(sel.value):null; refreshAll();});
+  }
+}
+
+async function loadDataHealth(){
+  if(st.isSuper&&!st.empresaId) return;
+  const r=await authFetch(apiUrl('/api/setup/fase3/data-health')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error data health');
+  st.dataHealth=j;
+  const alerts=Array.isArray(j.alerts)?j.alerts:[];
+  const metrics=j.metrics||{};
+  if(!alerts.length){
+    document.getElementById('dataHealth').innerHTML=`<div style="border:1px solid var(--border);border-left:6px solid #22c55e;border-radius:10px;padding:10px;background:var(--bg2)"><div style="font-weight:700">Datos operativos completos</div><div style="font-size:.9rem;color:var(--muted);margin-top:4px">Incidencias: ${Number(metrics.incidencias||0)} · Tesorería: ${Number(metrics.tesoreria||0)} · Compras: ${Number(metrics.compras||0)} · CRM: ${Number(metrics.crm||0)}</div></div>`;
+    return;
+  }
+  document.getElementById('dataHealth').innerHTML=`<div style="border:1px solid var(--border);border-left:6px solid #f59e0b;border-radius:10px;padding:10px;background:var(--bg2)"><div style="font-weight:700">Atención: faltan datos operativos</div><ul style="margin:.4rem 0 0 1rem;color:var(--muted)">${alerts.map(a=>`<li>${a}</li>`).join('')}</ul></div>`;
+}
+
+async function loadModuleHealth(){
+  if(st.isSuper&&!st.empresaId) return;
+  const r=await authFetch(apiUrl('/api/setup/fase3/integridad-modulos')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error integridad módulos');
+  st.moduleHealth=j;
+  const m=j.modules||{};
+  const score=Number(j.score||0);
+  const scoreColor=score>=80?'#22c55e':(score>=50?'#f59e0b':'#ef4444');
+  const fmtLast=(v)=>v?new Date(v).toLocaleString('es-AR'):'sin datos';
+  const row=(k,l)=>`<div class="kpi"><div class="l">${l}</div><div class="v">${Number(m[k]?.count||0)}</div><div style="font-size:.8rem;color:var(--muted)">Último: ${fmtLast(m[k]?.last_at)}</div></div>`;
+  document.getElementById('moduleHealth').innerHTML=`<div style="margin-bottom:8px;font-weight:700;color:${scoreColor}">Score integridad: ${score}/100</div><div class="grid">${row('incidencias','Incidencias')}${row('tesoreria','Tesorería')}${row('compras','Compras')}${row('crm','CRM')}</div>`;
+}
+
+async function loadDashboard(){
+  if(st.isSuper&&!st.empresaId) return;
+  const r=await authFetch(apiUrl('/api/setup/fase3/dashboard')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error dashboard ejecutivo');
+  const k=j.kpis||{};
+  st.dashboard=k;
+  const items=[['Oportunidades abiertas',k.oportunidades_abiertas||0],['Pipeline total',fmt.format(k.pipeline_total||0)],['Pipeline ponderado',fmt.format(k.pipeline_ponderado||0)],['Ingresos 30d',fmt.format(k.ingresos_30d||0)],['Egresos 30d',fmt.format(k.egresos_30d||0)],['Pend. conciliación',k.pendientes_conciliacion||0],['Compras abiertas',k.compras_abiertas||0],['Comprometido compras',fmt.format(k.compras_comprometidas||0)]];
+  document.getElementById('kpiGrid').innerHTML=items.map(([l,v])=>`<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div></div>`).join('');
+}
+
+async function loadSemaforo(){
+  if(st.isSuper&&!st.empresaId) return;
+  const r=await authFetch(apiUrl('/api/setup/fase3/semaforo-operativo')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error semáforo operativo');
+  st.semaforo=j;
+  const color=j.nivel==='verde'?'#22c55e':(j.nivel==='amarillo'?'#f59e0b':'#ef4444');
+  const f=j.factores||{};
+  document.getElementById('semaforo').innerHTML=`<div style="border:1px solid var(--border);border-left:6px solid ${color};border-radius:10px;padding:10px;background:var(--bg2)"><div style="font-weight:700">Nivel ${String(j.nivel||'-').toUpperCase()} · Score ${Number(j.score||0)}/100</div><div style="font-size:.9rem;color:var(--muted);margin-top:4px">Ingresos 30d: ${fmt.format(Number(f.ingresos_30d||0))} · Egresos 30d: ${fmt.format(Number(f.egresos_30d||0))} · Pend. conciliación: ${Number(f.pendientes_conciliacion||0)} · Compras vencidas: ${Number(f.compras_vencidas||0)}</div></div>`;
+}
+
+async function loadIncidenciasResumen(){
+  if(st.isSuper&&!st.empresaId) return;
+  const r=await authFetch(apiUrl('/api/setup/fase3/incidencias/dashboard')); const j=await r.json();
+  if(!r.ok) throw new Error(j.error||'Error dashboard incidencias');
+  st.incidencias=j.kpis||{};
+}
+
+async function loadRecos(){
+  if(st.isSuper&&!st.empresaId) return;
+  const r=await authFetch(apiUrl('/api/setup/fase3/recomendaciones')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error recomendaciones');
+  const items=Array.isArray(j.items)?j.items:[];
+  st.recos=items;
+  const color=(p)=>p==='alta'?'#ef4444':(p==='media'?'#f59e0b':'#22c55e');
+  document.getElementById('recos').innerHTML=items.length?items.map(x=>`<div style="border:1px solid var(--border);border-left:4px solid ${color(x.prioridad)};border-radius:10px;padding:10px;background:var(--bg2)"><div style="font-weight:700">${x.titulo}</div><div style="font-size:.9rem;color:var(--muted)">${x.detalle||''}</div><div style="font-size:.85rem;margin-top:4px">➡️ ${x.accion||''}</div></div>`).join(''):'<div style="color:var(--muted)">Sin recomendaciones.</div>';
+}
+
+async function loadControlCierre(){
+  if(st.isSuper&&!st.empresaId) return;
+  const r=await authFetch(apiUrl('/api/setup/fase3/control-cierre')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error control cierre');
+  const items=Array.isArray(j.checklist)?j.checklist:[];
+
+  // Reflejar estado de incidencias críticas/SLA vencida en control de cierre
+  const inc = st.incidencias || {};
+  const crit = Number(inc.criticas_activas || 0);
+  const sla = Number(inc.sla_vencidas || 0);
+  const incStatus = (crit === 0 && sla === 0) ? 'ok' : ((crit + sla) <= 3 ? 'atencion' : 'critico');
+  const incDetalle = (crit === 0 && sla === 0)
+    ? 'Sin incidencias críticas activas ni SLA vencido.'
+    : `Críticas activas: ${crit} · SLA vencidas: ${sla}. Priorizar resolución inmediata.`;
+
+  const merged = [
+    { titulo: 'Incidencias críticas y SLA', status: incStatus, detalle: incDetalle },
+    ...items,
+  ];
+
+  st.cierre=merged;
+  const icon=(s)=>s==='ok'?'✅':(s==='atencion'?'🟡':'🔴');
+  document.getElementById('cierreChecklist').innerHTML=merged.length?merged.map(x=>`<div style="border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--bg2)"><div style="font-weight:700">${icon(x.status)} ${x.titulo}</div><div style="font-size:.9rem;color:var(--muted)">${x.detalle||''}</div></div>`).join(''):'<div style="color:var(--muted)">Sin items de cierre.</div>';
+}
+
+async function loadAutomatizaciones(){
+  if(st.isSuper&&!st.empresaId) return;
+  const r=await authFetch(apiUrl('/api/setup/fase3/automatizaciones')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error automatizaciones');
+  const items=Array.isArray(j.items)?j.items:[];
+  st.autos=items;
+  const box=document.getElementById('autoCenter');
+  box.innerHTML=items.length?items.map(x=>`<div style="border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--bg2)"><div style="font-weight:700">${x.nombre}</div><div style="font-size:.9rem;color:var(--muted)">ID: ${x.id}</div><div style="font-size:.9rem;color:var(--muted)">Cron: ${x.cron} · ${x.tz}</div><div style="font-size:.9rem;margin-top:4px">🎯 ${x.objetivo||''}</div></div>`).join(''):'<div style="color:var(--muted)">Sin automatizaciones configuradas.</div>';
+}
+
+async function loadResumen(){
+  if(st.isSuper&&!st.empresaId) return;
+  const r=await authFetch(apiUrl('/api/setup/fase3/resumen-diario')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error resumen diario');
+  document.getElementById('resumenText').value=j.resumen||'';
+}
+
+function buildUatItems(){
+  const sem=String(st.semaforo?.nivel||'').toLowerCase();
+  const abiertas=Number(st.dashboard?.oportunidades_abiertas||0);
+  const pendientesConc=Number(st.dashboard?.pendientes_conciliacion||0);
+  const recosAlta=Array.isArray(st.recos)?st.recos.filter(r=>String(r.prioridad)==='alta').length:0;
+  const cierreCrit=Array.isArray(st.cierre)?st.cierre.filter(c=>String(c.status)==='critico').length:0;
+  const autos=Array.isArray(st.autos)?st.autos.length:0;
+  return [
+    {ok:sem!=='rojo', titulo:'Semáforo operativo no crítico', detalle:`Nivel actual: ${sem||'-'}`},
+    {ok:pendientesConc===0, titulo:'Conciliación sin pendientes', detalle:`Pendientes actuales: ${pendientesConc}`},
+    {ok:recosAlta===0, titulo:'Sin recomendaciones de prioridad alta', detalle:`Alertas altas: ${recosAlta}`},
+    {ok:cierreCrit===0, titulo:'Control de cierre sin críticos', detalle:`Items críticos: ${cierreCrit}`},
+    {ok:autos>=3, titulo:'Automatizaciones base configuradas', detalle:`Automatizaciones activas detectadas: ${autos}`},
+    {ok:abiertas>=0, titulo:'Tablero comercial responde y carga KPIs', detalle:`Oportunidades abiertas: ${abiertas}`},
+  ];
+}
+
+function renderUat(){
+  const items=buildUatItems();
+  const okCount=items.filter(i=>i.ok).length;
+  const total=items.length;
+  const box=document.getElementById('uatChecklist');
+  box.innerHTML=`<div style="font-size:.9rem;color:var(--muted)">Resultado: ${okCount}/${total} checks OK</div>`+
+    items.map(i=>`<div style="border:1px solid var(--border);border-left:4px solid ${i.ok?'#22c55e':'#ef4444'};border-radius:10px;padding:10px;background:var(--bg2)"><div style="font-weight:700">${i.ok?'✅':'❌'} ${i.titulo}</div><div style="font-size:.9rem;color:var(--muted)">${i.detalle}</div></div>`).join('');
+}
+
+function copyUat(){
+  const items=buildUatItems();
+  const lines=['Checklist UAT Fase 3'];
+  items.forEach(i=>lines.push(`${i.ok?'[OK]':'[PEND]'} ${i.titulo} — ${i.detalle}`));
+  return navigator.clipboard.writeText(lines.join('\n'));
+}
+
+function buildPlantillaCierre(){
+  const sem=String(st.semaforo?.nivel||'-').toUpperCase();
+  const score=Number(st.semaforo?.score||0);
+  const k=st.dashboard||{};
+  const inc=st.incidencias||{};
+  const cierreCrit=Array.isArray(st.cierre)?st.cierre.filter(c=>String(c.status)==='critico').length:0;
+  const recosAlta=Array.isArray(st.recos)?st.recos.filter(r=>String(r.prioridad)==='alta').length:0;
+  const now=new Date().toLocaleString('es-AR');
+
+  const lines=[
+    `Cierre operativo diario — ${now}`,
+    '',
+    `1) Estado global`,
+    `- Semáforo: ${sem} (score ${score}/100)`,
+    `- Control de cierre: críticos ${cierreCrit}`,
+    `- Recomendaciones altas pendientes: ${recosAlta}`,
+    '',
+    `2) Incidencias (control de cierre)`,
+    `- Críticas activas: ${Number(inc.criticas_activas||0)}`,
+    `- SLA vencidas: ${Number(inc.sla_vencidas||0)}`,
+    `- Abiertas totales: ${Number(inc.abiertas||0)}`,
+    `- En progreso: ${Number(inc.en_progreso||0)}`,
+    '',
+    `3) Comercial / Caja`,
+    `- Oportunidades abiertas: ${Number(k.oportunidades_abiertas||0)}`,
+    `- Pipeline total: ${fmt.format(Number(k.pipeline_total||0))}`,
+    `- Ingresos 30d: ${fmt.format(Number(k.ingresos_30d||0))}`,
+    `- Egresos 30d: ${fmt.format(Number(k.egresos_30d||0))}`,
+    '',
+    `4) Compras / Conciliación`,
+    `- Pendientes conciliación: ${Number(k.pendientes_conciliacion||0)}`,
+    `- Compras abiertas: ${Number(k.compras_abiertas||0)}`,
+    `- Comprometido compras: ${fmt.format(Number(k.compras_comprometidas||0))}`,
+    '',
+    `5) Acciones para próxima ventana (30-60 min)`,
+    `- [ ] Resolver incidencias críticas y SLA vencidas`,
+    `- [ ] Confirmar conciliación y movimiento de caja`,
+    `- [ ] Re-ejecutar monitoreo y validar semáforo`,
+    `- [ ] Actualizar tablero ejecutivo con estado final`,
+  ];
+
+  return lines.join('\n');
+}
+
+function renderPlantillaCierre(){
+  const el=document.getElementById('plantillaCierreText');
+  if(!el) return;
+  el.value=buildPlantillaCierre();
+}
+
+async function fetchEmpresaSnapshot(empresaId){
+  const id=Number(empresaId);
+  const q=(p)=>`${p}${p.includes('?')?'&':'?'}empresa_id=${encodeURIComponent(String(id))}`;
+
+  const [dR,sR,iR,rR,cR]=await Promise.all([
+    authFetch(q('/api/setup/fase3/dashboard')),
+    authFetch(q('/api/setup/fase3/semaforo-operativo')),
+    authFetch(q('/api/setup/fase3/incidencias/dashboard')),
+    authFetch(q('/api/setup/fase3/recomendaciones')),
+    authFetch(q('/api/setup/fase3/control-cierre')),
+  ]);
+
+  const d=await dR.json().catch(()=>({}));
+  const s=await sR.json().catch(()=>({}));
+  const i=await iR.json().catch(()=>({}));
+  const r=await rR.json().catch(()=>({}));
+  const c=await cR.json().catch(()=>({}));
+
+  if(!dR.ok||!sR.ok||!iR.ok||!rR.ok||!cR.ok){
+    throw new Error(d.error||s.error||i.error||r.error||c.error||`Error snapshot empresa ${id}`);
+  }
+
+  const cierreCrit=Array.isArray(c.checklist)?c.checklist.filter(x=>String(x.status)==='critico').length:0;
+  const recosAlta=Array.isArray(r.items)?r.items.filter(x=>String(x.prioridad)==='alta').length:0;
+
+  return {
+    empresa_id:id,
+    kpis:d.kpis||{},
+    semaforo:s||{},
+    incidencias:i.kpis||{},
+    cierre_criticos:cierreCrit,
+    recos_altas:recosAlta,
+  };
+}
+
+function buildPlantillaCierreMulti(items){
+  const now=new Date().toLocaleString('es-AR');
+  const lines=[`Cierre operativo multi-empresa — ${now}`,'Ordenado por riesgo: Rojo → Amarillo → Verde.',''];
+
+  (items||[]).forEach((it)=>{
+    const sem=String(it.semaforo?.nivel||'-').toUpperCase();
+    const score=Number(it.semaforo?.score||0);
+    const k=it.kpis||{};
+    const inc=it.incidencias||{};
+    const nombre=String(it.empresa_nombre||`Empresa ${it.empresa_id}`);
+    lines.push(`Empresa #${it.empresa_id} · ${nombre}`);
+    lines.push(`- Semáforo: ${sem} (${score}/100) · Cierre críticos: ${Number(it.cierre_criticos||0)} · Recos altas: ${Number(it.recos_altas||0)}`);
+    lines.push(`- Incidencias: críticas ${Number(inc.criticas_activas||0)} · SLA vencidas ${Number(inc.sla_vencidas||0)} · abiertas ${Number(inc.abiertas||0)}`);
+    lines.push(`- Caja/Compras: ingresos30 ${fmt.format(Number(k.ingresos_30d||0))} · egresos30 ${fmt.format(Number(k.egresos_30d||0))} · conciliar ${Number(k.pendientes_conciliacion||0)} · compras abiertas ${Number(k.compras_abiertas||0)}`);
+    if(it._error) lines.push(`- Nota: ${String(it._error)}`);
+    lines.push('');
+  });
+
+  lines.push('Próximos pasos (global):');
+  lines.push('- [ ] Resolver críticas/SLA vencidas por prioridad.');
+  lines.push('- [ ] Re-correr monitoreo en 30-60 min.');
+  lines.push('- [ ] Confirmar cierre en tablero ejecutivo.');
+
+  return lines.join('\n');
+}
+
+async function renderPlantillaCierreMulti(){
+  const out=document.getElementById('plantillaCierreMultiText');
+  if(!out) return;
+  if(!st.isSuper){
+    out.value='Disponible solo para superadmin.';
+    return;
+  }
+
+  const listR=await authFetch('/api/empresas');
+  const listJ=await listR.json().catch(()=>[]);
+  const empresas=Array.isArray(listJ)?listJ:[];
+  const rows=empresas
+    .map(e=>({id:Number(e.id), nombre:String(e.nombre||'').trim()}))
+    .filter(e=>Number.isFinite(e.id)&&e.id>0);
+  if(!rows.length){
+    out.value='No hay empresas para consolidar.';
+    return;
+  }
+
+  const snapshots=[];
+  for(const row of rows){
+    try{
+      const s=await fetchEmpresaSnapshot(row.id);
+      snapshots.push({...s, empresa_nombre: row.nombre || `Empresa ${row.id}`});
+    } catch(err){
+      snapshots.push({
+        empresa_id:row.id,
+        empresa_nombre:row.nombre || `Empresa ${row.id}`,
+        semaforo:{nivel:'error',score:0},
+        incidencias:{},
+        kpis:{},
+        cierre_criticos:0,
+        recos_altas:0,
+        _error:err?.message||'Error'
+      });
+    }
+  }
+
+  const riskWeight=(x)=>{
+    const lvl=String(x?.semaforo?.nivel||'').toLowerCase();
+    if(lvl==='rojo') return 0;
+    if(lvl==='amarillo') return 1;
+    if(lvl==='verde') return 2;
+    return 3;
+  };
+
+  snapshots.sort((a,b)=>{
+    const rw=riskWeight(a)-riskWeight(b);
+    if(rw!==0) return rw;
+    const sa=Number(a?.semaforo?.score||0);
+    const sb=Number(b?.semaforo?.score||0);
+    if(sa!==sb) return sa-sb;
+    return String(a?.empresa_nombre||'').localeCompare(String(b?.empresa_nombre||''), 'es');
+  });
+
+  out.value=buildPlantillaCierreMulti(snapshots);
+}
+
+async function refreshAll(){ if(st.isSuper&&!st.empresaId){ setStatus('Seleccioná empresa para ver el tablero ejecutivo.',true); ['dataHealth','moduleHealth','kpiGrid','semaforo','recos','cierreChecklist','autoCenter','uatChecklist'].forEach(id=>{const el=document.getElementById(id); if(el) el.innerHTML='';}); const tx=document.getElementById('resumenText'); if(tx) tx.value=''; const ptx=document.getElementById('plantillaCierreText'); if(ptx) ptx.value=''; return; }
+  setStatus('Actualizando…');
+  try{
+    await Promise.all([loadDataHealth(),loadModuleHealth(),loadDashboard(),loadSemaforo(),loadRecos(),loadAutomatizaciones(),loadResumen()]);
+    await loadIncidenciasResumen();
+    await loadControlCierre();
+    renderUat();
+    renderPlantillaCierre();
+    setStatus('Actualizado.');
+  } catch(e){ setStatus(e.message||'Error',true); }
+}
+
+document.getElementById('btnRefresh').addEventListener('click',refreshAll);
+document.getElementById('btnUatRefresh').addEventListener('click', ()=>{ renderUat(); setStatus('Checklist UAT recalculado.'); });
+document.getElementById('btnUatCopy').addEventListener('click', async ()=>{ try{ await copyUat(); setStatus('Checklist UAT copiado.'); } catch{ setStatus('No se pudo copiar el checklist UAT.',true); } });
+document.getElementById('btnResumen').addEventListener('click', async ()=>{ try{ await loadResumen(); setStatus('Resumen actualizado.'); } catch(e){ setStatus(e.message||'Error resumen',true);} });
+document.getElementById('btnCopyResumen').addEventListener('click', async ()=>{ try{ const t=document.getElementById('resumenText').value||''; await navigator.clipboard.writeText(t); setStatus('Resumen copiado.'); } catch{ setStatus('No se pudo copiar el resumen.',true); } });
+document.getElementById('btnPlantillaCierre').addEventListener('click', ()=>{ renderPlantillaCierre(); setStatus('Plantilla de cierre generada.'); });
+document.getElementById('btnCopyPlantillaCierre').addEventListener('click', async ()=>{ try{ const t=document.getElementById('plantillaCierreText').value||''; await navigator.clipboard.writeText(t); setStatus('Plantilla de cierre copiada.'); } catch{ setStatus('No se pudo copiar la plantilla de cierre.',true); } });
+document.getElementById('btnPlantillaCierreMulti').addEventListener('click', async ()=>{ try{ setStatus('Generando consolidado multi-empresa…'); await renderPlantillaCierreMulti(); setStatus('Plantilla multi-empresa generada.'); } catch(e){ setStatus(e.message||'No se pudo generar plantilla multi-empresa.',true); } });
+document.getElementById('btnCopyPlantillaCierreMulti').addEventListener('click', async ()=>{ try{ const t=document.getElementById('plantillaCierreMultiText').value||''; await navigator.clipboard.writeText(t); setStatus('Plantilla multi-empresa copiada.'); } catch{ setStatus('No se pudo copiar la plantilla multi-empresa.',true); } });
+document.getElementById('logout').addEventListener('click',async (e)=>{e.preventDefault(); try{await authFetch('/api/logout',{method:'POST'});}catch{} location.href='/pedidos/login.html';});
+(async()=>{ await loadMe(); await refreshAll(); })();
+</script>
+</body>
+</html>

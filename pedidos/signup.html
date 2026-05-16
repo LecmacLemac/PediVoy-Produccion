@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Crear Cuenta – MultiEmpresas</title>
+  <link rel="stylesheet" href="theme-base.css" />
+  
+  <style>
+    :root {
+      --bg: #0b1020; --ink: #f1f5f9; --muted: #94a3b8;
+      --brand: #06b6d4; --brand-hover: #22d3ee;
+      --surface: rgba(30, 41, 59, 0.6); --border: rgba(148, 163, 184, 0.15);
+      --glass: rgba(15, 23, 42, 0.75); --radius: 16px;
+      --danger: #ef4444; --success: #10b981;
+    }
+    * { box-sizing: border-box; outline: none; }
+    body {
+      margin: 0; font-family: system-ui, -apple-system, sans-serif; color: var(--ink);
+      background: radial-gradient(circle at 20% 30%, rgba(6, 182, 212, 0.15), transparent 40%), var(--bg);
+      min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px;
+    }
+    .login-card {
+      width: 100%; max-width: 480px; background: var(--surface); backdrop-filter: blur(20px);
+      border: 1px solid var(--border); border-radius: var(--radius); padding: 2rem;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+    }
+    h2 { margin: 0 0 0.5rem; font-size: 1.8rem; color: #fff; text-align: center; }
+    p.sub { text-align: center; color: var(--muted); margin-bottom: 2rem; font-size: 0.9rem; }
+    
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    .form-group { margin-bottom: 1rem; }
+    label { font-size: 0.8rem; color: var(--muted); font-weight: 600; margin-bottom: 0.4rem; display: block; text-transform: uppercase; }
+    input, select {
+      width: 100%; background: rgba(15, 23, 42, 0.6); border: 1px solid var(--border); color: #fff;
+      padding: 0.8rem; border-radius: 10px; font-size: 0.95rem; transition: 0.2s;
+    }
+    input:focus, select:focus { border-color: var(--brand); background: rgba(15, 23, 42, 0.9); }
+    
+    button {
+      width: 100%; background: var(--brand); color: #0f172a; border: none; padding: 1rem;
+      border-radius: 10px; font-size: 1rem; font-weight: 700; cursor: pointer; transition: 0.2s; margin-top: 1rem;
+    }
+    button:hover { background: var(--brand-hover); transform: translateY(-1px); }
+    button:disabled { opacity: 0.7; cursor: wait; }
+
+    .err-msg { background: rgba(239,68,68,0.1); color: #fca5a5; padding: 10px; border-radius: 8px; font-size: 0.9rem; text-align: center; margin-bottom: 1rem; display: none; }
+    .footer { text-align: center; margin-top: 1.5rem; font-size: 0.9rem; color: var(--muted); }
+    .footer a { color: var(--brand); text-decoration: none; font-weight: 600; }
+    
+    .trial-badge {
+      background: linear-gradient(45deg, #f59e0b, #d97706); color: #fff;
+      padding: 5px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: bold;
+      position: absolute; top: -10px; right: -10px; box-shadow: 0 5px 15px rgba(245, 158, 11, 0.4);
+      transform: rotate(10deg);
+    }
+  
+
+    @media (max-width: 768px) {
+      .container { padding: 0 12px; }
+      nav { flex-direction: column; align-items: stretch; gap: 0.6rem; }
+      .menu { overflow-x: auto; white-space: nowrap; padding-bottom: 4px; }
+      .row { align-items: stretch; }
+      .row > * { min-width: 0 !important; }
+      input, select, textarea, button { width: 100%; }
+    }
+</style>
+</head>
+<body>
+
+  <div class="login-card" style="position:relative">
+    <div class="trial-badge">30 DÍAS GRATIS</div>
+    <h2>Crear tu Empresa</h2>
+    <p class="sub">Comienza tu prueba gratuita hoy mismo</p>
+
+    <div id="err" class="err-msg"></div>
+
+    <form id="fSignup">
+      <label style="color:var(--brand); margin-top:10px; border-bottom:1px solid var(--border); padding-bottom:5px;">Datos del Negocio</label>
+      
+      <div class="form-group" style="margin-top:10px">
+        <label>Nombre de tu Empresa / Marca</label>
+        <input type="text" name="empresa_nombre" placeholder="Ej: Pizzería Don Mario" required>
+      </div>
+      
+      <div class="grid-2">
+        <div class="form-group">
+            <label>Rubro</label>
+            <select name="rubro">
+                <option value="gastronomia">Gastronomía</option>
+                <option value="bebidas">Bebidas / Agua</option>
+                <option value="retail">Retail / Tienda</option>
+                <option value="servicios">Servicios</option>
+                <option value="otro">Otro</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label>Teléfono (WhatsApp)</label>
+            <input type="tel" name="telefono" placeholder="Ej: 11..." required>
+        </div>
+      </div>
+
+      <label style="color:var(--brand); margin-top:10px; border-bottom:1px solid var(--border); padding-bottom:5px;">Datos de Acceso</label>
+      
+      <div class="grid-2" style="margin-top:10px">
+        <div class="form-group">
+            <label>Usuario</label>
+            <input type="text" name="username" placeholder="admin_pizzas" required>
+        </div>
+        <div class="form-group">
+            <label>Email</label>
+            <input type="email" name="email" placeholder="hola@tucorreo.com">
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>Contraseña</label>
+        <input type="password" name="password" placeholder="••••••••" minlength="8" required>
+      </div>
+
+      <button type="submit" id="btnSub">🚀 COMENZAR PRUEBA</button>
+    </form>
+
+    <div class="footer">
+      ¿Ya tienes cuenta? <a href="login.html">Iniciar Sesión</a>
+    </div>
+  </div>
+
+  <script>
+    const f = document.getElementById('fSignup');
+    const err = document.getElementById('err');
+    const btn = document.getElementById('btnSub');
+
+    const USERNAME_RE = /^[a-zA-Z0-9_\.\-]{3,30}$/;
+    const PHONE_RE = /^[0-9+\-\s()]{8,20}$/;
+
+    function showError(message) {
+      err.textContent = '⚠️ ' + message;
+      err.style.display = 'block';
+    }
+
+    function clearError() {
+      err.textContent = '';
+      err.style.display = 'none';
+    }
+
+    function resetButton() {
+      btn.disabled = false;
+      btn.textContent = '🚀 COMENZAR PRUEBA';
+    }
+
+    function validateData(data) {
+      const empresa = String(data.empresa_nombre || '').trim();
+      const telefono = String(data.telefono || '').trim();
+      const username = String(data.username || '').trim();
+      const password = String(data.password || '');
+      const email = String(data.email || '').trim();
+
+      if (!empresa || empresa.length < 2) {
+        return 'Ingresá un nombre de empresa válido.';
+      }
+      if (!PHONE_RE.test(telefono)) {
+        return 'Ingresá un teléfono válido (8 a 20 caracteres).';
+      }
+      if (!USERNAME_RE.test(username)) {
+        return 'Usuario inválido. Usá 3-30 caracteres: letras, números, _, . o -';
+      }
+      if (password.length < 8) {
+        return 'La contraseña debe tener al menos 8 caracteres.';
+      }
+      if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        return 'Ingresá un email válido o dejalo vacío.';
+      }
+
+      data.empresa_nombre = empresa;
+      data.telefono = telefono;
+      data.username = username;
+      data.email = email;
+      return null;
+    }
+
+    async function parseResponseSafe(res) {
+      try {
+        const ct = res.headers.get('content-type') || '';
+        if (ct.includes('application/json')) return await res.json();
+        const text = await res.text();
+        return { error: text || 'Respuesta inválida del servidor' };
+      } catch {
+        return {};
+      }
+    }
+
+    f.onsubmit = async (e) => {
+      e.preventDefault();
+      btn.disabled = true;
+      btn.textContent = 'Creando entorno...';
+      clearError();
+
+      const formData = new FormData(f);
+      const data = Object.fromEntries(formData.entries());
+
+      const validationError = validateData(data);
+      if (validationError) {
+        showError(validationError);
+        resetButton();
+        return;
+      }
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15000);
+
+      try {
+        const res = await fetch('/api/auth/signup-full', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data),
+          signal: controller.signal
+        });
+
+        const json = await parseResponseSafe(res);
+        if (!res.ok) throw new Error(json.error || 'Error al crear cuenta');
+
+        btn.style.background = 'var(--success)';
+        btn.textContent = '¡CUENTA CREADA!';
+
+        setTimeout(() => {
+          location.href = 'dashboard.html?welcome=1';
+        }, 1000);
+      } catch (e) {
+        if (e.name === 'AbortError') {
+          showError('La solicitud tardó demasiado. Reintentá en unos segundos.');
+        } else {
+          showError(e.message || 'Error inesperado al crear cuenta');
+        }
+        resetButton();
+      } finally {
+        clearTimeout(timeout);
+      }
+    };
+  </script>
+</body>
+</html>

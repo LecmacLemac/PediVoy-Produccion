@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Observabilidad · PediVoy</title>
+  <link rel="stylesheet" href="theme-base.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  <style>
+    body { max-width: 1200px; margin: auto; }
+    .ok { color: #15803d; font-weight: 600; }
+    .warn { color: #b45309; font-weight: 600; }
+    .high { color: #b91c1c; font-weight: 700; }
+    .grid { display:grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    @media (max-width:900px){ .grid { grid-template-columns: 1fr; } }
+    table td, table th { white-space: nowrap; }
+  </style>
+</head>
+<body>
+  <header class="container">
+    <nav>
+      <ul><li><strong>PediVoy · Observabilidad</strong></li></ul>
+      <ul>
+        <li><a href="dashboard.html">Dashboard</a></li>
+        <li><a href="admin.html">Admin</a></li>
+        <li><a href="reportes.html">Reportes</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <main class="container">
+    <article>
+      <header>
+        <h3>Métricas HTTP (últimas muestras)</h3>
+      </header>
+      <div class="grid">
+        <div>
+          <p><strong>Estado alertas:</strong> <span id="state" class="ok">OK</span></p>
+          <p><small id="thresholds">—</small></p>
+        </div>
+        <div style="display:flex; gap:.5rem; justify-content:flex-end; align-items:center;">
+          <button id="btnRefresh">Actualizar</button>
+          <label style="margin:0;">Auto
+            <input id="auto" type="checkbox" checked>
+          </label>
+        </div>
+      </div>
+
+      <h4>Alertas</h4>
+      <div class="overflow-auto">
+        <table>
+          <thead><tr><th>Ruta</th><th>ErrorRate</th><th>P95 (ms)</th><th>Nivel</th></tr></thead>
+          <tbody id="alertsRows"></tbody>
+        </table>
+      </div>
+
+      <h4>Métricas por endpoint</h4>
+      <div class="overflow-auto">
+        <table>
+          <thead><tr><th>Ruta</th><th>Requests</th><th>Errores</th><th>ErrorRate</th><th>P95 (ms)</th></tr></thead>
+          <tbody id="metricsRows"></tbody>
+        </table>
+      </div>
+    </article>
+  </main>
+
+  <script>
+    const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const authFetch = (url, opts={}) => fetch(url, { credentials:'include', ...opts });
+
+    async function api(path){
+      const r = await authFetch(path);
+      const t = await r.text();
+      if (!r.ok) throw new Error(t || `${r.status} ${r.statusText}`);
+      return t ? JSON.parse(t) : {};
+    }
+
+    async function ensureSuper(){
+      const me = await api('/api/me');
+      if ((me?.user?.role || '').toLowerCase() !== 'super') {
+        alert('Esta vista requiere rol super.');
+        location.href = 'dashboard.html';
+      }
+    }
+
+    function renderAlerts(alerts){
+      const rows = document.getElementById('alertsRows');
+      if (!alerts.length) {
+        rows.innerHTML = '<tr><td colspan="4">Sin alertas</td></tr>';
+        return;
+      }
+      rows.innerHTML = alerts.map(a => {
+        const cls = a.level === 'high' ? 'high' : 'warn';
+        return `<tr>
+          <td>${esc(a.route)}</td>
+          <td>${esc(a.errorRate)}</td>
+          <td>${esc(a.p95Ms)}</td>
+          <td class="${cls}">${esc(a.level)}</td>
+        </tr>`;
+      }).join('');
+    }
+
+    function renderMetrics(metrics){
+      const rows = document.getElementById('metricsRows');
+      const entries = Object.entries(metrics || {}).sort((a,b)=> (b[1].count||0) - (a[1].count||0));
+      if (!entries.length) {
+        rows.innerHTML = '<tr><td colspan="5">Sin datos todavía</td></tr>';
+        return;
+      }
+      rows.innerHTML = entries.map(([route, m]) => `
+        <tr>
+          <td>${esc(route)}</td>
+          <td>${esc(m.count)}</td>
+          <td>${esc(m.errors)}</td>
+          <td>${esc(m.errorRate)}</td>
+          <td>${esc(m.p95Ms)}</td>
+        </tr>
+      `).join('');
+    }
+
+    async function refresh(){
+      try {
+        const [alerts, metrics] = await Promise.all([
+          api('/api/metrics/alerts'),
+          api('/api/metrics/http')
+        ]);
+
+        document.getElementById('thresholds').textContent =
+          `Umbrales: errorRate >= ${alerts.thresholds?.errorRate ?? '-'} | p95Ms >= ${alerts.thresholds?.p95Ms ?? '-'}`;
+
+        const hasAlerts = (alerts.alerts || []).length > 0;
+        const state = document.getElementById('state');
+        state.textContent = hasAlerts ? 'ATENCIÓN' : 'OK';
+        state.className = hasAlerts ? 'warn' : 'ok';
+
+        renderAlerts(alerts.alerts || []);
+        renderMetrics(metrics.metrics || {});
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    document.getElementById('btnRefresh').addEventListener('click', refresh);
+    setInterval(() => {
+      if (document.getElementById('auto').checked) refresh();
+    }, 15000);
+
+    (async () => {
+      await ensureSuper();
+      await refresh();
+    })();
+  </script>
+</body>
+</html>

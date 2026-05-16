@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AguaHidro – Tu agua, sin vueltas</title>
+  <link rel="stylesheet" href="theme-base.css" />
+  <meta name="description" content="Pedí agua a domicilio con un toque. Entregas por zona, pagos simples y seguimiento del pedido.">
+  <meta name="theme-color" content="#06b6d4">
+  <meta property="og:title" content="AguaHidro – Tu agua, sin vueltas">
+  <meta property="og:description" content="Pedí agua a domicilio con un toque. Entregas por zona, pagos simples y seguimiento del pedido.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://aguahidro.wordpress.com/">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' x2='1'%3E%3Cstop stop-color='%2306b6d4'/%3E%3Cstop offset='.6' stop-color='%2315aabf'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpath fill='url(%23g)' d='M32 4C22 18 10 26 10 38a22 22 0 1 0 44 0c0-12-12-20-22-34z'/%3E%3C/svg%3E">
+  <style>
+    :root{
+      --bg: #0b1020;
+      --bg-2: #0f172a;
+      --ink: #e8f2ff;
+      --muted: #a9bbd4;
+      --brand: #06b6d4;
+      --brand-2: #22d3ee;
+      --glass: rgba(255,255,255,.05);
+      --line: rgba(255,255,255,.12);
+      --ring: rgba(34,211,238,.45);
+    }
+    *{box-sizing:border-box}
+    html,body{margin:0;padding:0}
+    body{
+      font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
+      color: var(--ink);
+      background:
+        radial-gradient(1200px 800px at 80% -200px, #0e223d 0%, transparent 60%),
+        radial-gradient(800px 600px at -100px 50%, #051225 0%, transparent 60%),
+        linear-gradient(180deg, var(--bg) 0%, var(--bg-2) 100%);
+      min-height:100vh;
+      overflow-x: hidden;
+    }
+    a{color:inherit;text-decoration:none}
+    .wrap{width:min(1100px,92vw);margin:0 auto}
+    .pill{display:inline-flex;align-items:center;gap:.5rem;padding:.35rem .7rem;border:1px solid var(--line);background:var(--glass);border-radius:999px;font-size:.9rem;color:#bfefff;backdrop-filter: blur(6px)}
+    .pill .dot{width:.75rem;height:.75rem;border-radius:50%;background: linear-gradient(135deg,var(--brand),var(--brand-2))}
+    .btn{display:inline-flex;align-items:center;justify-content:center;padding:.8rem 1.05rem;border-radius:14px;border:1px solid var(--line);background: #0c1427;box-shadow:0 10px 30px rgba(0,0,0,.35);font-weight:700;transition:.15s transform,.2s filter}
+    .btn:hover{filter:brightness(1.05)}
+    .btn:active{transform:translateY(1px)}
+    .btn-primary{background: linear-gradient(135deg,var(--brand),var(--brand-2));color:#02101a;border-color: transparent;text-shadow: 0 1px 0 rgba(255,255,255,.4)}
+    .btn-ghost{background: rgba(255,255,255,.05);}
+    .nav{display:flex;align-items:center;gap:.6rem;flex-wrap:wrap}
+    .nav a{padding:.5rem .7rem;border-radius:10px}
+    .nav a:hover{background: rgba(255,255,255,.06)}
+
+    header{position:sticky;top:0;z-index:50;background: rgba(4,10,20,.6);backdrop-filter: blur(10px);border-bottom:1px solid var(--line)}
+    .header-in{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.7rem 0}
+    .brand{display:flex;align-items:center;gap:.6rem;font-weight:900;letter-spacing:.2px}
+    .drop{width:16px;height:22px;border-radius:6px;background: linear-gradient(135deg,var(--brand),var(--brand-2));transform: rotate(10deg)}
+    .header-cta{display:flex;gap:.5rem;flex-wrap:wrap}
+
+    .hero{position:relative;padding:86px 0 60px}
+    .hero h1{font-size: clamp(34px, 6vw, 64px);line-height:1.02;margin:.4rem 0}
+    .lead{color:var(--muted);font-size: clamp(16px, 1.6vw, 18px)}
+    .hero-cta{display:flex;gap:.7rem;flex-wrap:wrap;margin: 14px 0 4px}
+    .trust{display:flex;gap:1rem 1.4rem;flex-wrap:wrap;color:var(--muted);padding:0;margin:14px 0 0;list-style:none}
+
+    .wave{position:relative;height:60px;overflow:hidden}
+    .wave svg{position:absolute;left:0;right:0;top:-1px;width:100%;height:100%}
+
+    section{scroll-margin-top:80px}
+    .cards{padding: 40px 0 14px}
+    .grid{display:grid;gap:1rem;grid-template-columns:repeat(auto-fit,minmax(240px,1fr))}
+    .card{border:1px solid var(--line);background:linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,.03));border-radius:16px;padding:1rem;box-shadow: inset 0 1px 0 rgba(255,255,255,.06), 0 20px 50px rgba(5,20,40,.25)}
+    .card .ico{font-size:28px;margin-bottom:.4rem}
+    .card h3{margin:.2rem 0 .3rem}
+
+    .pricing{padding:30px 0}
+    .price-grid{display:grid;gap:1rem;grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}
+    .tier{border:1px solid var(--line);background: radial-gradient(500px 280px at 30% -20%, rgba(25,120,150,.25), transparent 60%),linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,.03)); border-radius:18px;padding:1.1rem}
+    .tier h4{margin:.2rem 0 .2rem}
+    .amount{font-size:28px;font-weight:900;background: linear-gradient(135deg, var(--brand), var(--brand-2)); -webkit-background-clip: text; background-clip: text; color: transparent}
+    .bullet{margin:.5rem 0 1rem 1rem;color:var(--muted)}
+
+    .faq{padding: 30px 0 50px}
+    details{border:1px solid var(--line);background: rgba(255,255,255,.03);border-radius:12px;padding:.8rem 1rem}
+    details + details{margin-top:.6rem}
+    summary{cursor:pointer;font-weight:700}
+    summary::-webkit-details-marker{display:none}
+
+    .contact{padding: 28px 0 50px}
+    .contact-grid{display:grid;gap:1rem;grid-template-columns: 1.1fr .9fr;align-items:center}
+    @media (max-width: 860px){ .contact-grid{grid-template-columns:1fr} }
+
+    footer{border-top:1px solid var(--line);color:var(--muted);padding:20px 0}
+    .footrow{display:flex;align-items:center;justify-content:space-between;gap:.8rem;flex-wrap:wrap}
+
+    :focus-visible{outline: 3px solid var(--ring); outline-offset: 3px; border-radius: 10px}
+  </style>
+</head>
+<body>
+  <a href="#contenido" class="sr-only">Saltar al contenido</a>
+
+  <header>
+    <div class="wrap header-in">
+      <a class="brand" href="#"><span class="drop" aria-hidden="true"></span><span>AguaHidro</span></a>
+      <nav class="nav" aria-label="Primaria">
+        <a href="#como-funciona">Cómo funciona</a>
+        <a href="#combos">Combos</a>
+        <a href="#faq">Preguntas</a>
+        <a href="#contacto">Contacto</a>
+      </nav>
+      <div class="header-cta">
+        <a class="btn btn-ghost" href="https://aguahidro.ngrok.app/Pedidos/pedido.html" rel="noopener">Ver estado</a>
+        <a class="btn btn-primary" href="https://aguahidro.ngrok.app/Pedidos/index.html" rel="noopener">Hacer Pedido</a>
+      </div>
+    </div>
+  </header>
+
+  <main id="contenido">
+    <section class="hero" id="inicio">
+      <div class="wrap">
+        <span class="pill"><span class="dot"></span>Entrega por zonas • Hoy</span>
+        <h1>Tu agua, sin vueltas</h1>
+        <p class="lead">Pedí online en menos de un minuto. Coordinamos por WhatsApp y entregamos según tu zona.</p>
+        <div class="hero-cta">
+          <a class="btn btn-primary" href="https://aguahidro.ngrok.app/Pedidos/index.html" rel="noopener">Hacer Pedido</a>
+          <a class="btn" href="https://wa.me/549XXXXXXXXXX?text=Hola%20AguaHidro%2C%20quiero%20hacer%20un%20pedido" rel="noopener">WhatsApp</a>
+        </div>
+        <ul class="trust">
+          <li>⚡ Entrega en el día (según zona)</li>
+          <li>💳 Efectivo o transferencia</li>
+          <li>🔔 Notificaciones de estado</li>
+          <li>🧾 Comprobante por WhatsApp</li>
+        </ul>
+      </div>
+    </section>
+
+    <div class="wave" aria-hidden="true">
+      <svg viewBox="0 0 1440 120" preserveAspectRatio="none"><path d="M0,40 C240,100 480,0 720,40 C960,80 1200,20 1440,60 L1440,0 L0,0 Z" fill="rgba(255,255,255,.06)"></path></svg>
+    </div>
+
+    <section class="cards" id="como-funciona">
+      <div class="wrap">
+        <h2>¿Cómo funciona?</h2>
+        <div class="grid">
+          <article class="card">
+            <div class="ico" aria-hidden="true">🛒</div>
+            <h3>1. Pedí online</h3>
+            <p>Ingresás dirección y cantidad. No hace falta registro.</p>
+          </article>
+          <article class="card">
+            <div class="ico" aria-hidden="true">🗺️</div>
+            <h3>2. Te asignamos zona</h3>
+            <p>Verificamos tu zona y te confirmamos el horario.</p>
+          </article>
+          <article class="card">
+            <div class="ico" aria-hidden="true">🚚</div>
+            <h3>3. Entrega</h3>
+            <p>Entregamos en tu franja. Pagás en efectivo o transferencia.</p>
+          </article>
+          <article class="card">
+            <div class="ico" aria-hidden="true">📱</div>
+            <h3>4. Seguimiento</h3>
+            <p>Ves el estado del pedido y recibís notificaciones.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="pricing" id="combos">
+      <div class="wrap">
+        <h2>Combos populares</h2>
+        <div class="price-grid">
+          <div class="tier">
+            <h4>Pack Básico</h4>
+            <div class="amount">2 bidones</div>
+            <ul class="bullet">
+              <li>Ideal para depto</li>
+              <li>Entrega en 24h</li>
+            </ul>
+            <a class="btn btn-primary" href="https://aguahidro.ngrok.app/Pedidos/index.html?combo=basico" rel="noopener">Pedir</a>
+          </div>
+          <div class="tier">
+            <h4>Pack Hogar</h4>
+            <div class="amount">4 bidones</div>
+            <ul class="bullet">
+              <li>Familias o semana completa</li>
+              <li>Recordatorio de reposición</li>
+            </ul>
+            <a class="btn btn-primary" href="https://aguahidro.ngrok.app/Pedidos/index.html?combo=hogar" rel="noopener">Pedir</a>
+          </div>
+          <div class="tier">
+            <h4>Pack Oficina</h4>
+            <div class="amount">6+ bidones</div>
+            <ul class="bullet">
+              <li>Programa de entregas</li>
+              <li>Factura a pedido</li>
+            </ul>
+            <a class="btn btn-primary" href="https://aguahidro.ngrok.app/Pedidos/index.html?combo=oficina" rel="noopener">Pedir</a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="faq" id="faq">
+      <div class="wrap">
+        <h2>Preguntas frecuentes</h2>
+        <details>
+          <summary>¿Qué medios de pago aceptan?</summary>
+          <div>Podés abonar en efectivo al recibir o por transferencia bancaria. Si transferís, enviá el comprobante por WhatsApp.</div>
+        </details>
+        <details>
+          <summary>¿Entregan en mi zona?</summary>
+          <div>Probablemente sí. Escribinos por WhatsApp con tu dirección y te confirmamos: <a class="btn btn-ghost" href="https://wa.me/549XXXXXXXXXX?text=Hola%20AguaHidro%2C%20mi%20direcci%C3%B3n%20es..." rel="noopener">Consultar mi zona</a></div>
+        </details>
+        <details>
+          <summary>¿Cómo reviso el estado del pedido?</summary>
+          <div>Entrá a <a class="btn btn-ghost" href="https://aguahidro.ngrok.app/Pedidos/pedido.html" rel="noopener">Ver estado</a> y seguí el número de tu pedido.</div>
+        </details>
+      </div>
+    </section>
+
+    <section class="contact" id="contacto">
+      <div class="wrap contact-grid">
+        <div>
+          <h2>Contacto</h2>
+          <p><strong>WhatsApp:</strong> <a href="https://wa.me/549XXXXXXXXXX" rel="noopener">+54 9 XX XXXX-XXXX</a></p>
+          <p><strong>Horario:</strong> L–S 9 a 18</p>
+          <p><strong>Dirección:</strong> Completar aquí</p>
+        </div>
+        <div>
+          <div class="nav">
+            <a class="btn btn-ghost" href="https://aguahidro.ngrok.app/Pedidos/pedido.html" rel="noopener">Ver estado</a>
+            <a class="btn btn-primary" href="https://aguahidro.ngrok.app/Pedidos/index.html" rel="noopener">Hacer Pedido</a>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap footrow">
+      <span>© <span id="y"></span> AguaHidro</span>
+      <span>Hecho con 💧</span>
+    </div>
+  </footer>
+
+  <script>
+    (function(){var s=document.getElementById('y'); if(s) s.textContent=new Date().getFullYear();})();
+  </script>
+
+  <!-- Schema.org LocalBusiness -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "LocalBusiness",
+    "name": "AguaHidro",
+    "url": "https://aguahidro.wordpress.com/",
+    "telephone": "+549XXXXXXXXXX",
+    "areaServed": "Local",
+    "openingHours": "Mo-Sa 09:00-18:00",
+    "sameAs": ["https://wa.me/549XXXXXXXXXX"],
+    "potentialAction": {
+      "@type": "OrderAction",
+      "target": "https://aguahidro.ngrok.app/Pedidos/index.html",
+      "name": "Hacer Pedido"
+    }
+  }
+  </script>
+  
+</body>
+</html>

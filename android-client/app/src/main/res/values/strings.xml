@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">PediVoy</string>
+    <string name="app_subtitle">Clientes</string>
+    <string name="app_tagline">Tu delivery resuelto</string>
+    <string name="loading_message">Cargando PediVoy…</string>
+    <string name="offline_message">Sin conexión. Verificá internet y deslizá para reintentar.</string>
+    <string name="ready_message">Listo para pedir.</string>
+    <string name="status_secure">Conexión protegida</string>
+    <string name="order_sent_title">Pedido enviado con éxito</string>
+    <string name="order_sent_message">Tu pedido ya quedó registrado. Desde acá podés seguirlo o contactar al comercio.</string>
+    <string name="order_number_label">Pedido #%1$s</string>
+    <string name="order_phone_label">Teléfono: %1$s</string>
+    <string name="order_view_button">Ver pedido</string>
+    <string name="order_whatsapp_button">WhatsApp</string>
+    <string name="order_new_button">Hacer otro pedido</string>
+    <string name="status_order_sent">Pedido confirmado</string>
+    <string name="open_in_browser">Abrir en navegador</string>
+    <string name="reload">Recargar</string>
+</resources>

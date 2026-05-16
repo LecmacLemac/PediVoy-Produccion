@@ -1,0 +1,931 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Movimiento y Gestión de Clientes</title>
+  <link rel="stylesheet" href="theme-base.css" />
+  
+  <!-- Leaflet CSS (Mapa) -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+  
+  <style>
+    :root {
+      --primary: #2563eb; --primary-hover: #1d4ed8;
+      --bg: #0b0f19; --card-bg: #111827;
+      --border: #1f2937; --text-main: #f3f4f6; --text-muted: #9ca3af;
+      --ok: #10b981; --warn: #f59e0b; --danger: #ef4444; --danger-hover: #dc2626;
+      --radius: 12px;
+    }
+    
+    *, *::before, *::after { box-sizing: border-box; }
+    
+    body {
+      margin: 0; padding: 0;
+      background: var(--bg); color: var(--text-main);
+      font-family: system-ui, -apple-system, sans-serif;
+      font-size: 14px; line-height: 1.5;
+    }
+
+    /* --- Layout & Typography --- */
+    header {
+      position: sticky; top: 0; z-index: 50;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 20px;
+      background: rgba(11, 15, 25, 0.95);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+    }
+    h1 { font-size: 1.25rem; margin: 0; font-weight: 700; letter-spacing: -0.025em; }
+    .badge { padding: 2px 8px; border-radius: 99px; background: var(--border); color: var(--text-muted); font-size: 0.75rem; font-weight: 600; margin-left: 8px; vertical-align: middle; }
+    
+    main { padding: 20px; max-width: 1600px; margin: 0 auto; }
+
+    /* --- Components --- */
+    .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); }
+    
+    /* Toolbar */
+    .toolbar { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-end; margin-bottom: 24px; }
+    .field { display: flex; flex-direction: column; gap: 6px; }
+    .field.grow { flex: 1; min-width: 280px; }
+    
+    label { font-size: 0.75rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+    
+    input, select, button, textarea {
+      background: var(--bg); color: inherit;
+      border: 1px solid var(--border); border-radius: 8px;
+      padding: 10px 14px; font-size: 0.9rem;
+      transition: all 0.2s;
+    }
+    input:focus, select:focus, textarea:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2); }
+    textarea { resize: vertical; min-height: 80px; }
+    
+    /* Checkbox styling */
+    input[type="checkbox"] { width: 1.2em; height: 1.2em; vertical-align: middle; margin-right: 6px; accent-color: var(--primary); cursor: pointer; }
+    .field-checkbox { flex-direction: row; align-items: center; padding-bottom: 10px; cursor: pointer; }
+    .field-checkbox label { cursor: pointer; text-transform: none; font-size: 0.9rem; color: var(--text-main); }
+
+    button { cursor: pointer; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+    button.primary { background: var(--primary); border-color: transparent; color: white; }
+    button.primary:hover:not(:disabled) { background: var(--primary-hover); }
+    button.ghost { background: transparent; color: var(--text-muted); }
+    button.danger { background: var(--danger); border-color: transparent; color: white; }
+    button.danger:hover { background: var(--danger-hover); }
+    
+    button.icon-btn { padding: 6px; border-radius: 6px; border: 1px solid var(--border); background: #1f2937; color: #e5e7eb; }
+    button.icon-btn:hover { background: #374151; border-color: #4b5563; }
+    button:disabled { opacity: 0.6; cursor: not-allowed; }
+
+    /* KPI Grid */
+    .grid-kpi {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 16px; margin-bottom: 24px;
+    }
+    .kpi { background: rgba(255,255,255,0.03); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; }
+    .kpi-label { color: var(--text-muted); font-size: 0.8rem; margin-bottom: 4px; }
+    .kpi-value { font-size: 1.5rem; font-weight: 800; color: white; }
+    .kpi-sub { font-size: 0.85rem; color: var(--text-muted); margin-top: 4px; }
+
+    /* Table */
+    .table-container { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius); }
+    table { width: 100%; border-collapse: collapse; min-width: 1100px; text-align: left; }
+    th { background: #1f2937; color: var(--text-muted); font-weight: 600; padding: 12px 16px; font-size: 0.85rem; border-bottom: 1px solid var(--border); white-space: nowrap; }
+    td { padding: 12px 16px; border-bottom: 1px solid #1f2937; color: #e5e7eb; vertical-align: middle; }
+    tr:last-child td { border-bottom: none; }
+    tbody tr:hover { background: rgba(255,255,255,0.02); }
+
+    .numeric { text-align: right; font-feature-settings: "tnum"; font-variant-numeric: tabular-nums; }
+    .muted { color: var(--text-muted); }
+    
+    /* Tags & Links */
+    .tag { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 6px; font-size: 0.75rem; background: #374151; color: #d1d5db; border: 1px solid rgba(255,255,255,0.1); }
+    .wa-btn {
+      text-decoration: none; display: inline-flex; align-items: center; gap: 6px;
+      color: #10b981; font-weight: 500; font-size: 0.85rem;
+      padding: 4px 10px; border-radius: 99px; background: rgba(16, 185, 129, 0.1);
+      transition: background 0.2s;
+    }
+    .wa-btn:hover { background: rgba(16, 185, 129, 0.2); }
+    .action-group { display: flex; gap: 8px; align-items: center; }
+
+    /* Utilities */
+    details summary { cursor: pointer; color: var(--primary); font-size: 0.85rem; list-style: none; user-select: none; }
+    details summary::-webkit-details-marker { display: none; }
+    details[open] summary { margin-bottom: 10px; color: var(--text-muted); }
+    
+    .spinner { width: 18px; height: 18px; border: 2px solid rgba(255,255,255,0.3); border-top-color: white; border-radius: 50%; animation: spin 0.8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Toast Notification */
+    .toast {
+      position: fixed; bottom: 20px; right: 20px; z-index: 100;
+      background: #1f2937; border: 1px solid #374151; color: white;
+      padding: 12px 20px; border-radius: 8px; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.5);
+      transform: translateY(100px); opacity: 0; transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .toast.show { transform: translateY(0); opacity: 1; }
+
+    /* Modal Edit */
+    .modal-backdrop {
+      position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+      background: rgba(0,0,0,0.7); backdrop-filter: blur(4px);
+      z-index: 200; display: none; justify-content: center; align-items: center; padding: 20px;
+    }
+    .modal-backdrop.open { display: flex; }
+    .modal {
+      background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--radius);
+      width: 100%; max-width: 900px; max-height: 90vh; overflow-y: auto;
+      box-shadow: 0 20px 25px -5px rgba(0,0,0,0.5);
+      animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+    .modal-header { padding: 16px 20px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.2); position: sticky; top:0; z-index: 10; backdrop-filter: blur(10px); }
+    .modal-body { padding: 20px; display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+    .modal-footer { padding: 16px 20px; border-top: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.2); position: sticky; bottom: 0; }
+    .full-width { grid-column: 1 / -1; }
+    
+    /* Map Container in Modal */
+    #map { height: 350px; width: 100%; border-radius: 8px; border: 1px solid var(--border); z-index: 1; }
+  
+
+    @media (max-width: 768px) {
+      .container { padding: 0 12px; }
+      nav { flex-direction: column; align-items: stretch; gap: 0.6rem; }
+      .menu { overflow-x: auto; white-space: nowrap; padding-bottom: 4px; }
+      .row { align-items: stretch; }
+      .row > * { min-width: 0 !important; }
+      input, select, textarea, button { width: 100%; }
+    }
+</style>
+</head>
+<body>
+
+  <header>
+    <div style="display:flex; align-items:center;">
+      <h1>Movimiento y Gestión de Clientes <span class="badge">Analytics</span></h1>
+    </div>
+    <div id="userBrand" class="muted" style="font-size:0.9rem"></div>
+  </header>
+
+  <main>
+    <section class="card">
+      <!-- Toolbar -->
+      <div class="toolbar">
+        <div id="empWrap" class="field" style="display:none;">
+          <label for="empSel">Empresa</label>
+          <select id="empSel"><option value="">Cargando...</option></select>
+        </div>
+        
+        <div class="field">
+          <label for="fFrom">Desde</label>
+          <input id="fFrom" type="date">
+        </div>
+        
+        <div class="field">
+          <label for="fTo">Hasta</label>
+          <input id="fTo" type="date">
+        </div>
+        
+        <div class="field grow">
+          <label for="q">Filtrar (Nombre / Tel / Dirección)</label>
+          <input id="q" type="search" placeholder="Ej: Juan, 115555..., San Martín" autocomplete="off">
+        </div>
+
+        <div class="field field-checkbox">
+          <label title="Muestra también los clientes registrados que NO compraron en este periodo">
+            <input type="checkbox" id="fAll"> Incluir clientes sin movimientos
+          </label>
+        </div>
+        
+        <div class="field" style="flex-direction:row; align-items:flex-end;">
+          <button id="btnBuscar" class="primary">
+            <span class="icon-search">🔍</span> Buscar
+          </button>
+          <button id="btnExport" class="ghost">
+            📥 CSV
+          </button>
+        </div>
+      </div>
+
+      <!-- KPIs -->
+      <div class="grid-kpi">
+        <div class="kpi">
+          <div class="kpi-label">Clientes en Lista</div>
+          <div class="kpi-value" id="kpiClientes">0</div>
+          <div class="kpi-sub" id="kpiPedidos">0 pedidos analizados</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-label">Facturación Periodo</div>
+          <div class="kpi-value" id="kpiVentas">$ 0,00</div>
+          <div class="kpi-sub" id="kpiTicket">Ticket prom: $ 0,00</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-label">Cobros</div>
+          <div class="kpi-value" id="kpiEfec">$ 0,00</div>
+          <div class="kpi-sub" id="kpiTransf">Transf.: $ 0,00 · Cta. Cte.: $ 0,00</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-label">Top Cliente</div>
+          <div class="kpi-value" id="kpiTop" style="font-size:1.1rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">—</div>
+          <div class="kpi-sub" id="kpiTopMonto">$ 0,00</div>
+        </div>
+      </div>
+
+      <!-- Table -->
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:40px">#</th>
+              <th>Cliente</th>
+              <th>Contacto / Dirección</th>
+              <th>Zona</th>
+              <th class="numeric">Pedidos</th>
+              <th class="numeric">Total ($)</th>
+              <th class="numeric">Promedio</th>
+              <th class="numeric">Efec.</th>
+              <th class="numeric">Transf.</th>
+              <th class="numeric">Cta. Cte.</th>
+              <th>Fechas</th>
+              <th>Acciones</th>
+            </tr>
+          </thead>
+          <tbody id="tbBody">
+            <tr><td colspan="12" class="muted" style="text-align:center; padding:30px;">Cargando sistema...</td></tr>
+          </tbody>
+          <tfoot id="tbFoot" style="background:#111827; font-weight:700; border-top:2px solid var(--border)"></tfoot>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <!-- MODAL EDICION CLIENTE -->
+  <div id="editModal" class="modal-backdrop">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>Editar Cliente</h3>
+        <button class="ghost" style="padding:4px;" onclick="closeEdit()">✕</button>
+      </div>
+      <form id="editForm" class="modal-body" onsubmit="event.preventDefault(); saveClient();">
+        <input type="hidden" id="e_id">
+        
+        <div class="field">
+          <label>Nombre / Razón Social</label>
+          <input type="text" id="e_cliente" required>
+        </div>
+
+        <div class="field">
+          <label>Teléfono</label>
+          <input type="text" id="e_telefono">
+        </div>
+        <div class="field">
+          <label>Zona de Reparto</label>
+          <select id="e_zona">
+            <option value="">-- Sin Zona --</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>Dirección Completa</label>
+          <input type="text" id="e_direccion">
+        </div>
+
+        <div class="field">
+          <label>Ciudad</label>
+          <input type="text" id="e_ciudad">
+        </div>
+        <div class="field">
+          <label>Provincia</label>
+          <input type="text" id="e_provincia">
+        </div>
+
+        <!-- Mapa -->
+        <div class="field full-width">
+          <label>Ubicación Geográfica (Seleccionar en el mapa)</label>
+          <div id="map"></div>
+          <div style="display:flex; gap:10px; margin-top:10px;">
+            <div style="flex:1">
+              <label style="font-size:0.7rem">Latitud</label>
+              <input type="number" step="any" id="e_latitud" placeholder="-32...">
+            </div>
+            <div style="flex:1">
+              <label style="font-size:0.7rem">Longitud</label>
+              <input type="number" step="any" id="e_longitud" placeholder="-63...">
+            </div>
+          </div>
+        </div>
+
+        <div class="field full-width">
+          <label>Notas Internas</label>
+          <textarea id="e_notas" placeholder="Instrucciones de entrega, horarios, etc."></textarea>
+        </div>
+
+        <!-- Solo visible para admins -->
+        <div class="field" id="e_empresa_wrap" style="display:none">
+          <label>Empresa ID (SuperAdmin)</label>
+          <input type="number" id="e_empresa_id">
+        </div>
+
+      </form>
+      <div class="modal-footer">
+        <button class="danger" type="button" onclick="deleteClient()">🗑️ Eliminar Cliente</button>
+        <div style="display:flex; gap:10px;">
+          <button class="ghost" type="button" onclick="closeEdit()">Cancelar</button>
+          <button class="primary" type="button" onclick="saveClient()">Guardar Cambios</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+  <script>
+    /**
+     * CONFIG & UTILS
+     */
+    const UI = {
+      $: (s) => document.querySelector(s),
+      toast: (msg, type = 'info') => {
+        const el = document.getElementById('toast');
+        el.textContent = msg;
+        el.style.borderColor = type === 'error' ? 'var(--danger)' : 'var(--border)';
+        el.classList.add('show');
+        setTimeout(() => el.classList.remove('show'), 3000);
+      },
+      setBusy: (isBusy) => {
+        const btn = document.getElementById('btnBuscar');
+        if (isBusy) {
+          btn.disabled = true;
+          btn.innerHTML = `<div class="spinner"></div> Buscando...`;
+        } else {
+          btn.disabled = false;
+          btn.innerHTML = `🔍 Buscar`;
+        }
+      }
+    };
+
+    const FMT = {
+      money: new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' }),
+      date: (iso) => {
+        if (!iso) return '—';
+        const d = new Date(iso);
+        return isNaN(d) ? iso : d.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit' });
+      },
+      fullDate: (iso) => {
+        if (!iso) return '';
+        const d = new Date(iso);
+        return isNaN(d) ? '' : d.toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute:'2-digit' });
+      },
+      today: () => {
+        const d = new Date();
+        const offset = d.getTimezoneOffset() * 60000;
+        return new Date(d - offset).toISOString().slice(0, 10);
+      }
+    };
+
+    // Global State
+    let STATE = {
+      rows: [],
+      master: [],
+      zonas: [],
+      user: null,
+      isSuper: false,
+      mapData: new Map()
+    };
+
+    // Map vars
+    let mapInstance = null;
+    let markerInstance = null;
+
+    /**
+     * API CLIENT
+     */
+    // Modo seguro: auth por cookie httpOnly
+    const authFetch = (url, opts = {}) => {
+      const { headers = {}, ...rest } = opts;
+      return fetch(url, { ...rest, headers, credentials: 'include' });
+    };
+
+    async function api(endpoint, opts = {}) {
+      const headers = { ...(opts.headers || {}) };
+      if (!opts.body || !(opts.body instanceof FormData)) {
+        headers['Content-Type'] = 'application/json';
+      }
+      try {
+        const res = await authFetch(endpoint, { ...opts, headers });
+        if (res.status === 401) {
+          window.location.href = `login.html?next=${encodeURIComponent(window.location.pathname)}`;
+          throw new Error('Sesión expirada');
+        }
+        const text = await res.text();
+        return text ? JSON.parse(text) : {};
+      } catch (err) {
+        throw err;
+      }
+    }
+
+    /**
+     * LOGIC
+     */
+    function getClientKey(tel, name) {
+        const telClean = String(tel || '').replace(/\D/g, '');
+        const nameClean = String(name || '').trim().toLowerCase();
+        return telClean || nameClean || 'sin-id';
+    }
+
+    function processData(rawRows, masterRows, query, includeAll) {
+      const q = query.toLowerCase().trim();
+      const map = new Map();
+
+      // 1. Cargar Master
+      if (Array.isArray(masterRows)) {
+        masterRows.forEach(c => {
+            const key = getClientKey(c.telefono, c.cliente);
+            const txt = [c.cliente, c.telefono, c.direccion].filter(Boolean).join(' ').toLowerCase();
+            
+            if (q && !txt.includes(q)) return;
+
+            map.set(key, {
+                key,
+                id: c.id, 
+                cliente: c.cliente,
+                telefono: c.telefono,
+                direccion: c.direccion,
+                zona: c.zona_id,
+                ciudad: c.ciudad, provincia: c.provincia, pais: c.pais,
+                latitud: c.latitud, longitud: c.longitud, notas: c.notas,
+                empresa_id: c.empresa_id,
+                
+                pedidos: 0, total: 0, efectivo: 0, digital: 0, cuentaCorriente: 0,
+                fechas: [], movimientos: []
+            });
+        });
+      }
+
+      // 2. Procesar Movimientos
+      rawRows.forEach(r => {
+        const txt = [r.cliente, r.telefono, r.direccion].filter(Boolean).join(' ').toLowerCase();
+        if (q && !txt.includes(q)) return;
+
+        const key = getClientKey(r.telefono, r.cliente);
+
+        if (!map.has(key)) {
+          map.set(key, {
+            key,
+            id: null,
+            cliente: (r.cliente || 'Consumidor Final'),
+            telefono: r.telefono,
+            direccion: r.direccion,
+            zona: r.zona_id,
+            pedidos: 0, total: 0, efectivo: 0, digital: 0,
+            fechas: [], movimientos: []
+          });
+        }
+
+        const group = map.get(key);
+        if (!group.telefono && r.telefono) group.telefono = r.telefono;
+        if (group.zona == null && r.zona_id != null) group.zona = r.zona_id;
+
+        const monto = Number(r.monto) || 0;
+        group.pedidos++;
+        group.total += monto;
+
+        const metodo = String(r.metodo_pago || '').toLowerCase();
+        if (metodo.includes('efect')) group.efectivo += monto;
+        else if (metodo === 'cuenta_corriente' || metodo.startsWith('cta')) group.cuentaCorriente += monto;
+        else group.digital += monto;
+
+        group.fechas.push(r.fecha);
+        group.movimientos.push({
+          id: r.id,
+          fecha: r.fecha,
+          monto: monto,
+          metodo: r.metodo_pago
+        });
+      });
+
+      // 3. Finalizar
+      const result = Array.from(map.values()).map(c => {
+        if (c.fechas.length > 0) {
+            c.fechas.sort();
+            c.primera = c.fechas[0];
+            c.ultima = c.fechas[c.fechas.length - 1];
+        } else {
+            c.primera = null; c.ultima = null;
+        }
+        c.ticket = c.pedidos ? (c.total / c.pedidos) : 0;
+        c.movimientos.sort((a,b) => new Date(b.fecha) - new Date(a.fecha));
+        return c;
+      });
+
+      STATE.mapData = map;
+      const finalFilter = includeAll ? result : result.filter(r => r.pedidos > 0);
+
+      return finalFilter.sort((a, b) => {
+          if (b.total !== a.total) return b.total - a.total;
+          return String(a.cliente).localeCompare(String(b.cliente));
+      });
+    }
+
+    function createWhatsAppLink(phone, name) {
+      if (!phone) return null;
+      let digits = String(phone).replace(/\D/g, '');
+      if (digits.length === 10) digits = '549' + digits; 
+      else if (digits.length === 11 && digits.startsWith('0')) digits = '549' + digits.substring(1); 
+      else if (digits.length === 12 && digits.startsWith('54') && !digits.startsWith('549')) digits = '549' + digits.substring(2); 
+      else if (!digits.startsWith('54')) digits = '549' + digits; 
+
+      const msg = encodeURIComponent(`Hola ${name || ''}, te escribimos de la distribuidora.`);
+      return `https://wa.me/${digits}?text=${msg}`;
+    }
+
+    /**
+     * UI RENDERING
+     */
+    function render(clients) {
+      const tbody = UI.$('#tbBody');
+      const tfoot = UI.$('#tbFoot');
+      
+      if (clients.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="11" class="muted" style="text-align:center; padding:30px;">No se encontraron resultados.</td></tr>`;
+        tfoot.innerHTML = '';
+        updateKPIs(clients);
+        return;
+      }
+
+      const html = clients.map((c, i) => {
+        const waLink = createWhatsAppLink(c.telefono, c.cliente);
+        const waBtn = waLink ? `<a href="${waLink}" target="_blank" class="wa-btn" title="WhatsApp">📲</a>` : '';
+        const editBtn = c.id 
+            ? `<button class="icon-btn" onclick="openEdit('${c.key}')" title="Editar Cliente">✏️</button>` 
+            : `<button class="icon-btn" disabled title="Solo histórico">🚫</button>`;
+
+        const hasMoves = c.movimientos.length > 0;
+        let detailsHtml = hasMoves
+             ? c.movimientos.map(m => `
+                <tr style="background:rgba(0,0,0,0.2); font-size:0.85rem; color:#9ca3af;">
+                  <td></td>
+                  <td colspan="3">📅 ${FMT.fullDate(m.fecha)}</td>
+                  <td>Pedido #${m.id}</td>
+                  <td class="numeric">${FMT.money.format(m.monto)}</td>
+                  <td colspan="5">${m.metodo || '—'}</td>
+                </tr>`).join('')
+             : `<tr style="background:rgba(0,0,0,0.2); font-size:0.85rem; color:#9ca3af;"><td colspan="11" style="text-align:center;">Sin movimientos en este periodo.</td></tr>`;
+
+        const rowStyle = hasMoves ? '' : 'style="opacity:0.8; background:rgba(30,40,60,0.3)"';
+        const contactInfo = `
+            <div style="font-size:0.85rem">${c.telefono || ''}</div>
+            <div style="font-size:0.75rem; color:#6b7280; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:200px;">${c.direccion || ''}</div>
+        `;
+
+        return `
+          <tr ${rowStyle}>
+            <td class="muted">${i + 1}</td>
+            <td style="font-weight:600; color:white;">${c.cliente}</td>
+            <td>${contactInfo}</td>
+            <td>${c.zona ? `<span class="tag">Z${c.zona}</span>` : '—'}</td>
+            <td class="numeric"><b>${c.pedidos}</b></td>
+            <td class="numeric" style="color:var(--ok)">${FMT.money.format(c.total)}</td>
+            <td class="numeric muted">${FMT.money.format(c.ticket)}</td>
+            <td class="numeric">${FMT.money.format(c.efectivo)}</td>
+            <td class="numeric">${FMT.money.format(c.digital)}</td>
+            <td class="numeric">${FMT.money.format(c.cuentaCorriente)}</td>
+            <td style="font-size:0.8rem">
+              ${c.ultima ? `<div>${FMT.date(c.ultima)}</div>` : '<span class="muted">—</span>'}
+            </td>
+            <td>
+              <div class="action-group">
+                ${waBtn}
+                ${editBtn}
+              </div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:0; border:0;" colspan="12">
+              <details>
+                <summary style="padding:4px 12px; background:#161e2e;">Ver detalle</summary>
+                <table style="width:100%; margin-bottom:10px;">${detailsHtml}</table>
+              </details>
+            </td>
+          </tr>
+        `;
+      }).join('');
+
+      tbody.innerHTML = html;
+
+      // Totales
+      const sum = clients.reduce((acc, c) => ({
+        pedidos: acc.pedidos + c.pedidos,
+        total: acc.total + c.total,
+        efectivo: acc.efectivo + c.efectivo,
+        digital: acc.digital + c.digital,
+        cuentaCorriente: acc.cuentaCorriente + c.cuentaCorriente
+      }), { pedidos: 0, total: 0, efectivo: 0, digital: 0, cuentaCorriente: 0 });
+
+      tfoot.innerHTML = `
+        <tr>
+          <td colspan="4" style="text-align:right">TOTALES</td>
+          <td class="numeric">${sum.pedidos}</td>
+          <td class="numeric" style="color:var(--primary)">${FMT.money.format(sum.total)}</td>
+          <td class="numeric">—</td>
+          <td class="numeric">${FMT.money.format(sum.efectivo)}</td>
+          <td class="numeric">${FMT.money.format(sum.digital)}</td>
+          <td class="numeric">${FMT.money.format(sum.cuentaCorriente)}</td>
+          <td colspan="2"></td>
+        </tr>
+      `;
+
+      updateKPIs(clients, sum);
+    }
+
+    function updateKPIs(clients, sum) {
+      const top = clients.length > 0 ? clients[0] : null;
+      UI.$('#kpiClientes').textContent = clients.length;
+      UI.$('#kpiPedidos').textContent = (sum?.pedidos || 0) + ' pedidos';
+      UI.$('#kpiVentas').textContent = FMT.money.format(sum?.total || 0);
+      UI.$('#kpiTicket').textContent = 'Promedio: ' + FMT.money.format(sum?.pedidos ? sum.total/sum.pedidos : 0);
+      UI.$('#kpiEfec').textContent = FMT.money.format(sum?.efectivo || 0);
+      UI.$('#kpiTransf').textContent = 'Transf.: ' + FMT.money.format(sum?.digital || 0) + ' · Cta. Cte.: ' + FMT.money.format(sum?.cuentaCorriente || 0);
+      if (top && top.total > 0) {
+        UI.$('#kpiTop').textContent = top.cliente;
+        UI.$('#kpiTopMonto').textContent = FMT.money.format(top.total);
+      } else {
+        UI.$('#kpiTop').textContent = '—';
+        UI.$('#kpiTopMonto').textContent = '$ 0,00';
+      }
+    }
+
+    /**
+     * MAP FUNCTIONS (Leaflet)
+     */
+    function initMapModal(lat, lng) {
+        const defaultLat = -32.4113; 
+        const defaultLng = -63.2374;
+        const targetLat = lat || defaultLat;
+        const targetLng = lng || defaultLng;
+        const zoomLevel = lat ? 15 : 12;
+
+        if (!mapInstance) {
+            mapInstance = L.map('map').setView([targetLat, targetLng], zoomLevel);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; OpenStreetMap contributors'
+            }).addTo(mapInstance);
+
+            mapInstance.on('click', function(e) {
+                updateMarker(e.latlng.lat, e.latlng.lng);
+            });
+        } else {
+            mapInstance.setView([targetLat, targetLng], zoomLevel);
+            setTimeout(() => { mapInstance.invalidateSize(); }, 200); 
+        }
+
+        if (lat && lng) {
+            updateMarker(lat, lng, false);
+        } else {
+            if (markerInstance) {
+                mapInstance.removeLayer(markerInstance);
+                markerInstance = null;
+            }
+        }
+    }
+
+    function updateMarker(lat, lng, updateInputs = true) {
+        if (updateInputs) {
+            UI.$('#e_latitud').value = lat.toFixed(6);
+            UI.$('#e_longitud').value = lng.toFixed(6);
+        }
+        if (markerInstance) {
+            markerInstance.setLatLng([lat, lng]);
+        } else {
+            markerInstance = L.marker([lat, lng], {draggable: true}).addTo(mapInstance);
+            markerInstance.on('dragend', function(e) {
+                const pos = e.target.getLatLng();
+                UI.$('#e_latitud').value = pos.lat.toFixed(6);
+                UI.$('#e_longitud').value = pos.lng.toFixed(6);
+            });
+        }
+    }
+
+    function onManualCoordsChange() {
+        const lat = parseFloat(UI.$('#e_latitud').value);
+        const lng = parseFloat(UI.$('#e_longitud').value);
+        if (!isNaN(lat) && !isNaN(lng)) {
+            updateMarker(lat, lng, false);
+            if (mapInstance) mapInstance.panTo([lat, lng]);
+        }
+    }
+
+    UI.$('#e_latitud').addEventListener('change', onManualCoordsChange);
+    UI.$('#e_longitud').addEventListener('change', onManualCoordsChange);
+
+
+    /**
+     * MODAL LOGIC
+     */
+    function openEdit(key) {
+        const client = STATE.mapData.get(key);
+        if (!client || !client.id) {
+            UI.toast('Error: No se puede editar este cliente', 'error');
+            return;
+        }
+
+        UI.$('#e_id').value = client.id;
+        UI.$('#e_cliente').value = client.cliente || '';
+        UI.$('#e_telefono').value = client.telefono || '';
+        UI.$('#e_direccion').value = client.direccion || '';
+        UI.$('#e_ciudad').value = client.ciudad || '';
+        UI.$('#e_provincia').value = client.provincia || '';
+        UI.$('#e_latitud').value = client.latitud || '';
+        UI.$('#e_longitud').value = client.longitud || '';
+        UI.$('#e_notas').value = client.notas || '';
+        
+        const zoneSel = UI.$('#e_zona');
+        zoneSel.innerHTML = '<option value="">-- Sin Zona --</option>' + 
+            STATE.zonas.map(z => `<option value="${z.id}" ${client.zona == z.id ? 'selected' : ''}>${z.nombre}</option>`).join('');
+
+        if(STATE.isSuper) {
+            UI.$('#e_empresa_wrap').style.display = 'flex';
+            UI.$('#e_empresa_id').value = client.empresa_id || '';
+        }
+
+        UI.$('#editModal').classList.add('open');
+
+        setTimeout(() => {
+            const lat = client.latitud ? parseFloat(client.latitud) : null;
+            const lng = client.longitud ? parseFloat(client.longitud) : null;
+            initMapModal(lat, lng);
+        }, 100);
+    }
+
+    function closeEdit() {
+        UI.$('#editModal').classList.remove('open');
+    }
+
+    async function saveClient() {
+        const id = UI.$('#e_id').value;
+        const body = {
+            cliente: UI.$('#e_cliente').value,
+            telefono: UI.$('#e_telefono').value,
+            direccion: UI.$('#e_direccion').value,
+            ciudad: UI.$('#e_ciudad').value,
+            provincia: UI.$('#e_provincia').value,
+            latitud: UI.$('#e_latitud').value || null,
+            longitud: UI.$('#e_longitud').value || null,
+            notas: UI.$('#e_notas').value,
+            zona_id: UI.$('#e_zona').value || null
+        };
+        
+        if(STATE.isSuper) {
+            body.empresa_id = UI.$('#e_empresa_id').value;
+        }
+
+        try {
+            const res = await api(`/api/clientes/${id}`, {
+                method: 'PUT',
+                body: JSON.stringify(body)
+            });
+            if (res.ok) {
+                UI.toast('✅ Cliente actualizado');
+                closeEdit();
+                doSearch(); 
+            } else {
+                UI.toast('❌ Error: ' + (res.error || 'Desconocido'), 'error');
+            }
+        } catch(e) {
+            UI.toast('❌ Error de conexión', 'error');
+            console.error(e);
+        }
+    }
+
+    async function deleteClient() {
+      const id = UI.$('#e_id').value;
+      const name = UI.$('#e_cliente').value;
+      
+      const confirmMsg = `⚠️ ¡ATENCIÓN! ⚠️\n\nEstás a punto de eliminar a "${name}".\n\nEsto borrará PERMANENTEMENTE:\n- La ficha del cliente.\n- Todos sus pedidos históricos.\n- Seguimiento de entregas.\n\n¿Estás realmente seguro?`;
+      
+      if (!confirm(confirmMsg)) return;
+      // Doble confirmación por seguridad
+      if (!confirm("Última advertencia: Esta acción NO se puede deshacer.\n\n¿Proceder con la eliminación?")) return;
+
+      try {
+        const res = await api(`/api/clientes/${id}`, { method: 'DELETE' });
+        if (res.ok) {
+          UI.toast('🗑️ Cliente eliminado correctamente');
+          closeEdit();
+          doSearch();
+        } else {
+          UI.toast('❌ Error al eliminar: ' + (res.error || 'Desconocido'), 'error');
+        }
+      } catch (e) {
+        UI.toast('❌ Error de conexión', 'error');
+        console.error(e);
+      }
+    }
+
+    /**
+     * CONTROLLER
+     */
+    async function doSearch() {
+      const from = UI.$('#fFrom').value;
+      const to = UI.$('#fTo').value;
+      const includeAll = UI.$('#fAll').checked;
+      
+      if (!from || !to) { UI.toast('Seleccioná ambas fechas', 'error'); return; }
+      if (from > to) { UI.toast('Fechas inválidas', 'error'); return; }
+
+      UI.setBusy(true);
+      try {
+        const urlReport = new URL('/api/reportes/entregados', window.location.origin);
+        urlReport.searchParams.set('from', from);
+        urlReport.searchParams.set('to', to);
+        
+        const empId = UI.$('#empSel')?.value;
+        if (empId) urlReport.searchParams.set('empresa_id', empId);
+
+        const pReport = api(urlReport.href);
+        const pMaster = api((() => {
+             const u = new URL('/api/clientes/master', window.location.origin);
+             if (empId) u.searchParams.set('empresa_id', empId);
+             return u.href;
+        })());
+        
+        const pZonas = STATE.zonas.length ? Promise.resolve(STATE.zonas) : api('/api/zonas');
+
+        const [resReport, resMaster, resZonas] = await Promise.all([pReport, pMaster, pZonas]);
+        
+        STATE.rows = Array.isArray(resReport) ? resReport : (resReport?.rows || []);
+        STATE.master = Array.isArray(resMaster) ? resMaster : (resMaster?.rows || []);
+        if(Array.isArray(resZonas)) STATE.zonas = resZonas;
+
+        const processed = processData(STATE.rows, STATE.master, UI.$('#q').value, includeAll);
+        render(processed);
+        
+        UI.toast(`Mostrando ${processed.length} clientes`);
+
+      } catch (e) {
+        UI.toast('Error: ' + e.message, 'error');
+        console.error(e);
+      } finally {
+        UI.setBusy(false);
+      }
+    }
+
+    function exportCSV() {
+      const processed = processData(STATE.rows, STATE.master, UI.$('#q').value, UI.$('#fAll').checked);
+      if (!processed.length) { UI.toast('Sin datos para exportar', 'error'); return; }
+      
+      const headers = ['Cliente', 'Telefono', 'Direccion', 'Zona', 'Pedidos', 'Total', 'Ultima Compra'];
+      const csv = processed.map(r => [
+        `"${r.cliente}"`, `"${r.telefono}"`, `"${r.direccion||''}"`, r.zona, r.pedidos, r.total, r.ultima ? r.ultima.slice(0,10) : ''
+      ].join(',')).join('\n');
+
+      const blob = new Blob([headers.join(',') + '\n' + csv], { type: 'text/csv;charset=utf-8;' });
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = `clientes_${UI.$('#fFrom').value}.csv`;
+      link.click();
+    }
+
+    // Init
+    (async () => {
+      try {
+        const me = await api('/api/me');
+        STATE.user = me?.user || {};
+        STATE.isSuper = (STATE.user.role || '').toLowerCase() === 'super';
+        UI.$('#userBrand').textContent = STATE.user.empresa_nombre || STATE.user.username;
+
+        if (STATE.isSuper) {
+          UI.$('#empWrap').style.display = 'flex';
+          const list = await api('/api/empresas');
+          const sel = UI.$('#empSel');
+          sel.innerHTML = list.map(e => `<option value="${e.id}">${e.nombre}</option>`).join('');
+          sel.addEventListener('change', doSearch);
+        }
+
+        const today = FMT.today();
+        UI.$('#fFrom').value = today;
+        UI.$('#fTo').value = today;
+
+        UI.$('#btnBuscar').addEventListener('click', doSearch);
+        UI.$('#btnExport').addEventListener('click', exportCSV);
+        UI.$('#fAll').addEventListener('change', doSearch);
+        
+        let to;
+        UI.$('#q').addEventListener('input', () => {
+          clearTimeout(to);
+          to = setTimeout(() => {
+             render(processData(STATE.rows, STATE.master, UI.$('#q').value, UI.$('#fAll').checked));
+          }, 300);
+        });
+
+        doSearch();
+
+      } catch (e) { console.error("Init", e); }
+    })();
+  </script>
+</body>
+</html>

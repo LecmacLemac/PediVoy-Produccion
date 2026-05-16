@@ -1,0 +1,969 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Mi Suscripción – MultiEmpresas</title>
+  <link rel="stylesheet" href="theme-base.css" />
+  
+  <style>
+    :root {
+      /* Palette Dark Theme */
+      --bg: #0b1020;
+      --bg-2: #0f172a;
+      --ink: #f1f5f9;
+      --muted: #94a3b8;
+      --brand: #06b6d4;       /* Cyan */
+      --brand-hover: #22d3ee;
+      --surface: rgba(30, 41, 59, 0.7);
+      --border: rgba(148, 163, 184, 0.15);
+      --glass: rgba(15, 23, 42, 0.95); 
+      --radius: 12px;
+      
+      --success: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+    }
+
+    * { box-sizing: border-box; outline: none; -webkit-tap-highlight-color: transparent; }
+    
+    body {
+      margin: 0; 
+      font-family: system-ui, -apple-system, sans-serif;
+      color: var(--ink);
+      background: 
+        radial-gradient(circle at 15% 50%, rgba(6, 182, 212, 0.05), transparent 25%),
+        radial-gradient(circle at 85% 30%, rgba(59, 130, 246, 0.05), transparent 25%),
+        var(--bg);
+      min-height: 100vh;
+      font-size: 14px;
+      padding-bottom: 80px;
+    }
+
+    .container { max-width: 1200px; margin: 0 auto; padding: 0 20px; }
+    .hidden { display: none !important; }
+
+    /* --- HEADER --- */
+    header {
+      position: sticky; top: 0; z-index: 50;
+      background: var(--glass);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      padding: 0.8rem 0;
+    }
+    
+    nav { display: flex; justify-content: space-between; align-items: center; }
+    
+    .brand { 
+      display: flex; gap: 0.8rem; align-items: center; 
+      font-size: 1.1rem; font-weight: 700; color: #fff; text-decoration: none; 
+      white-space: nowrap;
+    }
+    .brand-dot { width: 10px; height: 10px; background: var(--brand); border-radius: 50%; box-shadow: 0 0 10px var(--brand); }
+    
+    .role-badge { 
+      background: rgba(6, 182, 212, 0.1); border: 1px solid rgba(6, 182, 212, 0.3);
+      color: var(--brand); padding: 2px 8px; border-radius: 99px; font-size: 0.75rem; 
+      text-transform: uppercase; letter-spacing: 0.5px;
+    }
+
+    .menu { list-style: none; display: flex; gap: 1.5rem; margin: 0; padding: 0; }
+    .menu a { text-decoration: none; color: var(--muted); font-weight: 500; transition: 0.2s; white-space: nowrap; }
+    .menu a:hover, .menu a.active { color: #fff; }
+    .menu a.active { border-bottom: 2px solid var(--brand); padding-bottom: 4px; }
+
+    @media (max-width: 768px) {
+      nav { flex-direction: column; gap: 1rem; align-items: stretch; }
+      .brand { justify-content: space-between; }
+      .menu { overflow-x: auto; padding-bottom: 5px; gap: 20px; }
+    }
+
+    main { padding-top: 2rem; padding-bottom: 4rem; display: flex; flex-direction: column; gap: 1.5rem; }
+
+    /* --- PAGE HEADER --- */
+    .page-header { display: flex; justify-content: space-between; align-items: flex-end; flex-wrap: wrap; gap: 1rem; }
+    h1 { font-size: 1.8rem; margin: 0; color: #fff; display: flex; align-items: center; gap: 10px; line-height: 1.2; }
+    p.subtitle { color: var(--muted); margin: 0.5rem 0 0 0; font-size: 0.95rem; }
+
+    /* --- CARDS --- */
+    .card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 1.5rem;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+      display: flex; flex-direction: column;
+    }
+
+    /* --- INPUTS & BUTTONS --- */
+    label { font-size: 0.8rem; color: var(--muted); font-weight: 600; display: block; margin-bottom: 0.4rem; text-transform: uppercase; letter-spacing: 0.5px;}
+    
+    select, input {
+      background: var(--bg-2); border: 1px solid var(--border); color: #fff;
+      padding: 0.7rem 0.8rem; border-radius: 8px; font-size: 0.95rem;
+      width: 100%; transition: 0.2s;
+    }
+    select:focus, input:focus { border-color: var(--brand); box-shadow: 0 0 0 2px rgba(6,182,212,0.2); }
+
+    .btn {
+      padding: 0.7rem 1.2rem; border-radius: 8px; font-weight: 600; cursor: pointer;
+      border: 1px solid transparent; transition: 0.2s; display: inline-flex; align-items: center; gap: 0.5rem;
+      font-size: 0.9rem; background: rgba(255,255,255,0.05); color: var(--ink); border-color: var(--border);
+      text-decoration: none; white-space: nowrap; justify-content: center;
+    }
+    .btn:hover { background: rgba(255,255,255,0.1); color: #fff; border-color: var(--brand); }
+    
+    .btn-primary { background: var(--brand); color: #000; border: none; }
+    .btn-primary:hover { background: var(--brand-hover); box-shadow: 0 4px 12px rgba(6,182,212,0.3); }
+
+    .btn-success { background: rgba(16, 185, 129, 0.1); color: var(--success); border-color: rgba(16, 185, 129, 0.3); }
+    .btn-success:hover { background: var(--success); color: #000; }
+
+    .btn-danger { background: rgba(239, 68, 68, 0.1); color: var(--danger); border-color: rgba(239, 68, 68, 0.3); }
+    .btn-danger:hover { background: var(--danger); color: #fff; }
+
+    /* --- STATS GRID --- */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 1.5rem;
+      margin-top: 1.5rem;
+    }
+
+    .stat-item {
+      background: var(--bg-2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1rem;
+      display: flex; flex-direction: column; justify-content: center;
+    }
+    .stat-label { color: var(--muted); font-size: 0.75rem; text-transform: uppercase; margin-bottom: 8px; font-weight: 600; }
+    .stat-val { font-size: 1.4rem; font-weight: bold; color: #fff; }
+    .license-banner {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: rgba(15, 23, 42, 0.72);
+      padding: 1rem;
+      margin-top: 1.2rem;
+      display: grid;
+      gap: 0.7rem;
+    }
+    .license-banner.success { border-color: rgba(16,185,129,0.35); background: rgba(16,185,129,0.08); }
+    .license-banner.warning { border-color: rgba(245,158,11,0.4); background: rgba(245,158,11,0.08); }
+    .license-banner.danger { border-color: rgba(239,68,68,0.4); background: rgba(239,68,68,0.08); }
+    .license-banner-title { display:flex; justify-content:space-between; align-items:center; gap:1rem; flex-wrap:wrap; }
+    .license-banner-title strong { color:#fff; font-size:1rem; }
+    .license-banner-title span { color:var(--muted); font-size:0.86rem; }
+    .license-meter {
+      height: 9px;
+      border-radius: 99px;
+      overflow: hidden;
+      background: rgba(255,255,255,0.08);
+      border: 1px solid var(--border);
+    }
+    .license-meter-fill {
+      height: 100%;
+      width: 0;
+      background: var(--success);
+      transition: width 0.2s ease;
+    }
+    .license-banner.warning .license-meter-fill { background: var(--warning); }
+    .license-banner.danger .license-meter-fill { background: var(--danger); }
+    .hint-line { color: var(--muted); font-size: 0.86rem; line-height: 1.45; }
+    
+    /* Badges */
+    .badge { padding: 4px 10px; border-radius: 6px; font-size: 0.85rem; font-weight: 700; display: inline-block; }
+    .badge-active { background: rgba(16, 185, 129, 0.2); color: var(--success); border: 1px solid rgba(16, 185, 129, 0.2); }
+    .badge-expired { background: rgba(239, 68, 68, 0.2); color: var(--danger); border: 1px solid rgba(239, 68, 68, 0.2); }
+    .badge-trial { background: rgba(59, 130, 246, 0.2); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.2); }
+    
+    /* Admin Actions */
+    .actions-bar {
+      margin-top: 1rem; padding-top: 1.5rem; 
+      display: flex; gap: 10px; flex-wrap: wrap;
+    }
+    .selection-grid { display:grid; grid-template-columns: 1fr 1fr; gap:1rem; align-items:end; }
+
+    /* Payment Zone (For User) */
+    .payment-zone {
+      margin-top: 2rem;
+      border-top: 1px solid var(--border);
+      padding-top: 2rem;
+      text-align: center;
+    }
+    .payment-info { color: var(--muted); margin-bottom: 1.5rem; font-size: 1rem; line-height: 1.6; }
+    .payment-highlight { color: #fff; font-weight: bold; }
+
+    /* --- MODAL DE ÉXITO (NUEVO) --- */
+    .success-modal {
+      position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+      background: rgba(0,0,0,0.8); backdrop-filter: blur(5px);
+      z-index: 100; display: flex; justify-content: center; align-items: center;
+      opacity: 0; pointer-events: none; transition: 0.3s;
+    }
+    .success-modal.show { opacity: 1; pointer-events: auto; }
+    
+    .success-card {
+      background: #0f172a; border: 2px solid var(--success);
+      padding: 2.5rem; border-radius: 20px; text-align: center;
+      max-width: 400px; width: 90%;
+      box-shadow: 0 0 30px rgba(16, 185, 129, 0.3);
+      transform: scale(0.9); transition: 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    }
+    .success-modal.show .success-card { transform: scale(1); }
+    
+    .check-icon { font-size: 4rem; color: var(--success); margin-bottom: 1rem; display: block; }
+    @media (max-width: 760px) {
+      .selection-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <nav class="container">
+      <a href="inicial.html" class="brand">
+        <div class="brand-dot"></div>
+        MultiEmpresas
+        <span id="roleBadge" class="role-badge">...</span>
+      </a>
+      <ul class="menu">
+         <li><a href="inicial.html">🚀 Inicio</a></li>
+        <li><a href="/pedidos/dashboard.html">Dashboard</a></li>
+        <li><a href="licencia.html" class="active">🔑 Licencia</a></li>
+        <li><a href="#" id="logout" style="color: var(--danger)">Salir</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <main class="container">
+    
+    <div class="page-header">
+      <div>
+        <h1>Gestión de Licencia</h1>
+        <p class="subtitle">Información sobre el plan y vigencia del servicio.</p>
+      </div>
+    </div>
+
+    <div id="selectionCard" class="card hidden">
+      <div class="selection-grid">
+        <div>
+          <label for="empresaSearch">Buscar empresa</label>
+          <input id="empresaSearch" type="search" placeholder="Nombre o ID">
+        </div>
+        <div>
+          <label for="empresaSelect">🔍 Auditar Empresa (Super Admin)</label>
+          <select id="empresaSelect">
+            <option value="">-- Cargando lista... --</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div id="licensePanel" class="card hidden">
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+        <h2 style="margin:0; font-size:1.4rem; color:#fff;" id="empNombre">Cargando...</h2>
+        <span id="empId" style="background:var(--bg-2); padding:4px 10px; border-radius:6px; color:var(--muted); font-size:0.85rem; border:1px solid var(--border);">ID: -</span>
+      </div>
+
+      <div id="licenseBanner" class="license-banner">
+        <div class="license-banner-title">
+          <strong id="licenseHeadline">Estado de licencia</strong>
+          <span id="licenseHint">Cargando...</span>
+        </div>
+        <div class="license-meter" aria-label="Vigencia de licencia">
+          <div id="licenseMeterFill" class="license-meter-fill"></div>
+        </div>
+        <div id="licenseRecommendation" class="hint-line"></div>
+      </div>
+
+      <div class="stats-grid">
+        
+        <div class="stat-item">
+          <div class="stat-label">Estado de Cuenta</div>
+          <div class="stat-val" id="planEstado">...</div>
+        </div>
+
+        <div class="stat-item">
+          <div class="stat-label">Nivel de Plan</div>
+          <div class="stat-val" id="planTipo" style="text-transform: capitalize;">-</div>
+        </div>
+
+        <div class="stat-item">
+          <div class="stat-label">Precio Mensual</div>
+          <div class="stat-val" id="planPrecioDisplay" style="color: var(--brand);">$ 0</div>
+        </div>
+
+        <div class="stat-item">
+          <div class="stat-label">Vencimiento</div>
+          <div class="stat-val" id="planVencimiento">-</div>
+          <div id="diasRestantes" style="font-size:0.9rem; margin-top:5px; font-weight:500;"></div>
+        </div>
+      </div>
+
+      <div id="userPaymentSection" class="payment-zone hidden">
+        <div id="historialSection" class="card hidden" style="margin-top: 2rem;">
+        <h3 style="color:#fff; margin-bottom:1rem; font-size:1.1rem">📜 Historial de Pagos</h3>
+        <div style="overflow-x:auto;">
+          <table style="width:100%; border-collapse:collapse; min-width:400px;">
+            <thead>
+              <tr style="border-bottom:1px solid var(--border); color:var(--muted); text-align:left;">
+                <th style="padding:10px;">Fecha</th>
+                <th style="padding:10px;">Referencia</th>
+                <th style="padding:10px;">Método</th>
+                <th style="padding:10px; text-align:right;">Monto</th>
+              </tr>
+            </thead>
+            <tbody id="tablaPagosBody">
+              </tbody>
+          </table>
+          <p id="noPagosMsg" style="text-align:center; color:var(--muted); margin-top:1rem; display:none">
+            Aún no hay pagos registrados.
+          </p>
+        </div>
+      </div>
+
+        <h3 style="color: #fff; margin-bottom: 1rem;">💳 Renovar Suscripción</h3>
+        <p class="payment-info">
+          Para mantener el servicio activo hasta el <span id="payNextDate" class="payment-highlight">...</span>,<br>
+          realiza el pago de <span id="payAmount" class="payment-highlight">...</span>.
+        </p>
+        
+        <button id="btnPagar" class="btn btn-primary" style="padding: 1rem 2rem; font-size: 1.1rem;">
+          💸 Pagar con Mercado Pago
+        </button>
+        
+        <p id="payFeedback" style="font-size: 0.9rem; margin-top: 15px; display: none;"></p>
+        <p style="font-size: 0.8rem; color: var(--muted); margin-top: 1rem;">
+          ℹ️ Te enviaremos el link de pago directamente a tu WhatsApp.
+        </p>
+      </div>
+
+      <div id="actionsBar" class="hidden" style="margin-top:2rem; padding-top:1.5rem; border-top:1px solid var(--border);">
+        
+        <div style="margin-bottom: 20px; background: rgba(255,255,255,0.03); padding: 15px; border-radius: 8px; display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap;">
+            <div style="flex:1; min-width: 200px;">
+                <label for="inputPrecio" style="margin-bottom:5px; display:block;">Establecer Precio Pactado ($)</label>
+                <input type="number" id="inputPrecio" placeholder="Ej: 50000" style="background:var(--bg-2); border:1px solid var(--border); padding:8px; width:100%; color:white; border-radius:6px;">
+            </div>
+            <button id="btnGuardarPrecio" class="btn btn-primary">💾 Guardar Precio</button>
+        </div>
+
+        <h4 style="margin: 0 0 10px 0; color: var(--muted); font-weight: 500; font-size: 0.9rem;">Acciones Rápidas</h4>
+        <div class="actions-bar" style="border-top:none; padding-top:0; margin-top:0;">
+          <button id="btnExtendLic" class="btn btn-primary">📅 +30 Días</button>
+          <button id="btnActivateLic" class="btn btn-success">✅ Activar</button>
+          <button id="btnExpireLic" class="btn btn-danger">🚫 Suspender</button>
+        </div>
+      </div>
+
+    </div>
+
+    <div id="statusMsg" style="text-align:center; margin-top:40px; color:var(--muted);" class="hidden">
+      Cargando información...
+    </div>
+
+  </main>
+
+  <div id="successModal" class="success-modal">
+    <div class="success-card">
+      <span class="check-icon">✅</span>
+      <h2 style="color:white; margin:0 0 10px 0;">¡Pago Exitoso!</h2>
+      <p style="color:var(--muted); margin-bottom: 20px;">
+        Tu pago fue procesado correctamente.<br>
+        Hemos renovado tu licencia por 30 días.
+      </p>
+      
+      <div style="background:rgba(255,255,255,0.05); border-radius:10px; padding:15px; margin-bottom:20px;">
+        <div style="font-size:0.8rem; color:var(--muted); text-transform:uppercase;">Nuevo Vencimiento</div>
+        <div id="modalNewDate" style="font-size:1.5rem; font-weight:bold; color:var(--success);">...</div>
+      </div>
+
+      <button id="btnCerrarModal" class="btn btn-primary" style="width:100%">Entendido</button>
+    </div>
+  </div>
+
+  <script>
+    // --- CONFIGURACIÓN ---
+    const API_URL = '/api';
+
+    // Modo seguro: auth por cookie httpOnly
+    const authFetch = (url, opts = {}) => {
+      const { headers = {}, ...rest } = opts;
+      return fetch(url, { ...rest, headers, credentials: 'include' });
+    };
+    let empresasList = [];
+    let currentEmpresaId = null;
+    let isSuper = false; 
+    let empresaDataGlobal = null; // 🔍 NUEVO: Para guardar datos para el update optimista
+    let priceBusy = false;
+    let licenseBusy = false;
+    let empresaSearchTerm = '';
+
+    const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;'
+    }[c]));
+
+    // Helper simple para notificaciones
+    const toast = (msg) => alert(msg);
+
+// --- 1. INICIALIZACIÓN Y AUTH ---
+    async function init() {
+      // cookie session
+      const token = null;
+
+      // Chequear si viene de Mercado Pago
+      const params = new URLSearchParams(window.location.search);
+      const status = params.get('status');
+
+      try {
+        const resMe = await authFetch(`${API_URL}/me`);
+
+        if (!resMe.ok) throw new Error('Falló autenticación');
+        
+        const dataMe = await resMe.json();
+        const user = dataMe.user || {};
+        const role = user.role || '';
+        const myEmpresaId = user.empresa_id; 
+
+        isSuper = (role === 'super');
+        document.getElementById('roleBadge').textContent = isSuper ? 'SUPER ADMIN' : 'Admin';
+
+        if (isSuper) {
+          // >> MODO SUPER ADMIN
+          document.getElementById('selectionCard').classList.remove('hidden'); 
+          await cargarListaEmpresas();
+
+          // 🛡️ SEGURIDAD & LIMPIEZA:
+          // Cargamos las funciones de admin (modificarLicencia) dinámicamente.
+          // Solo el navegador del Super Admin descargará este archivo.
+          const script = document.createElement('script');
+          script.src = '/js/admin-functions.js'; // Asegúrate de que esta ruta sea correcta
+          document.body.appendChild(script);
+
+        } else {
+          // >> MODO USUARIO (CLIENTE)
+          document.getElementById('selectionCard').classList.add('hidden'); 
+          
+          if (myEmpresaId) {
+              currentEmpresaId = myEmpresaId;
+              await cargarMiEmpresa(myEmpresaId);
+              await cargarHistorialPagos(currentEmpresaId);
+          } else {
+              document.getElementById('statusMsg').textContent = 'Error: Tu usuario no tiene una empresa asignada.';
+              document.getElementById('statusMsg').classList.remove('hidden');
+          }
+        }
+
+        // LÓGICA DE RETORNO DE PAGO
+        if (status === 'approved') {
+            // Limpiamos la URL
+            window.history.replaceState({}, document.title, window.location.pathname);
+            document.getElementById('successModal').classList.add('show');
+            
+            // 🔥 UPDATE OPTIMISTA: Si la DB tarda, lo mostramos actualizado YA
+            if (empresaDataGlobal) {
+                aplicarActualizacionVisualPago(empresaDataGlobal);
+            }
+        } else if (status === 'failure') {
+            alert('El pago no se pudo procesar.');
+        }
+
+      } catch (e) {
+        console.error(e);
+        logout();
+      }
+    }
+    // --- NUEVO: FUNCIÓN PARA ACTUALIZAR FECHA SIN RECARGAR ---
+    function aplicarActualizacionVisualPago(empresa) {
+        // Lógica: "Si venció, suma 30 a HOY. Si no, suma 30 a Vencimiento"
+        let baseDate = new Date(); 
+        if (empresa.plan_vencimiento) {
+            const currentVenc = new Date(empresa.plan_vencimiento);
+            if (currentVenc > baseDate) baseDate = currentVenc; 
+        }
+        baseDate.setDate(baseDate.getDate() + 30);
+        
+        const nuevaFechaStr = baseDate.toLocaleDateString();
+
+        // 1. Actualizar texto de vencimiento
+        document.getElementById('planVencimiento').textContent = nuevaFechaStr;
+        // 2. Actualizar badge de estado
+        const pe = document.getElementById('planEstado');
+        pe.innerHTML = '<span class="badge badge-active">ACTIVO</span>';
+        // 3. Actualizar Modal
+        document.getElementById('modalNewDate').textContent = nuevaFechaStr;
+        // 4. Actualizar días restantes
+        const hoy = new Date();
+        const diff = Math.ceil((baseDate - hoy) / (1000 * 60 * 60 * 24));
+        const diasEl = document.getElementById('diasRestantes');
+        diasEl.textContent = `${diff} días restantes`; 
+        diasEl.style.color = 'var(--success)';
+        
+        // 5. Actualizar texto de "próximo pago"
+        const proximoPagoDate = new Date(baseDate);
+        proximoPagoDate.setDate(proximoPagoDate.getDate() + 30);
+        document.getElementById('payNextDate').textContent = proximoPagoDate.toLocaleDateString();
+    }
+
+    async function cargarHistorialPagos(id) {
+        try {
+            const res = await authFetch(`${API_URL}/empresas/${id}/pagos`);
+            
+            if (!res.ok) return;
+            const pagos = await res.json();
+            
+            const section = document.getElementById('historialSection');
+            const tbody = document.getElementById('tablaPagosBody');
+            const noMsg = document.getElementById('noPagosMsg');
+
+            section.classList.remove('hidden');
+            tbody.innerHTML = '';
+
+            if (pagos.length === 0) {
+                noMsg.style.display = 'block';
+                return;
+            } else {
+                noMsg.style.display = 'none';
+            }
+
+            const fmt = new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' });
+
+            pagos.forEach(p => {
+                const fecha = new Date(p.fecha).toLocaleDateString() + ' ' + new Date(p.fecha).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                const tr = document.createElement('tr');
+                tr.style.borderBottom = '1px solid rgba(255,255,255,0.05)';
+                tr.innerHTML = `
+                    <td style="padding:12px 10px; color:var(--ink)">${esc(fecha)}</td>
+                    <td style="padding:12px 10px; color:var(--muted); font-size:0.85rem">#${esc(p.referencia || '-')}</td>
+                    <td style="padding:12px 10px; text-transform:capitalize">${esc(p.metodo || '-')}</td>
+                    <td style="padding:12px 10px; text-align:right; color:var(--success); font-weight:bold">${esc(fmt.format(p.monto || 0))}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+
+        } catch (e) {
+            console.error('Error cargando historial', e);
+        }
+    }
+
+    async function logout() {
+      try { await authFetch('/api/logout', { method: 'POST' }); } catch {}
+      window.location.href = '/pedidos/login.html';
+    }
+
+    function cerrarModal() {
+        document.getElementById('successModal').classList.remove('show');
+    }
+
+    // --- 2. CARGA DE DATOS ---
+
+    async function cargarListaEmpresas() {
+      const select = document.getElementById('empresaSelect');
+      try {
+        const res = await authFetch(`${API_URL}/empresas`);
+        
+        if (!res.ok) throw new Error('Error de conexión');
+        
+        empresasList = await res.json();
+        empresasList.sort((a,b) => b.id - a.id);
+
+        renderEmpresaOptions();
+      } catch (e) {
+        select.innerHTML = '<option>Error al cargar datos</option>';
+      }
+    }
+
+    function renderEmpresaOptions() {
+      const select = document.getElementById('empresaSelect');
+      const q = empresaSearchTerm.trim().toLowerCase();
+      const selected = select.value;
+      const list = empresasList.filter(emp => {
+        if (!q) return true;
+        return `${emp.id} ${emp.nombre || ''}`.toLowerCase().includes(q);
+      });
+
+      select.innerHTML = '<option value="">-- Selecciona una empresa --</option>';
+      list.forEach(emp => {
+        const opt = document.createElement('option');
+        opt.value = emp.id;
+        opt.textContent = `ID ${emp.id} | ${emp.nombre}`;
+        select.appendChild(opt);
+      });
+
+      if (selected && list.some(emp => String(emp.id) === String(selected))) {
+        select.value = selected;
+      }
+    }
+
+    async function cargarMiEmpresa(id) {
+      try {
+        const res = await authFetch(`${API_URL}/empresas/${id}`);
+
+        if (!res.ok) throw new Error('Error server');
+        
+        const empresa = await res.json();
+        
+        // Guardamos para usar en el update optimista
+        empresaDataGlobal = empresa;
+        
+        renderPanel(empresa);
+
+      } catch (e) {
+        document.getElementById('statusMsg').textContent = 'No pudimos cargar los detalles de tu licencia.';
+        document.getElementById('statusMsg').classList.remove('hidden');
+        document.getElementById('licensePanel').classList.add('hidden');
+      }
+    }
+
+    // --- 3. RENDERIZADO (UI) ---
+    
+    function onEmpresaChange() {
+      const select = document.getElementById('empresaSelect');
+      currentEmpresaId = select.value;
+      const panel = document.getElementById('licensePanel');
+
+      if (!currentEmpresaId) {
+        panel.classList.add('hidden');
+        return;
+      }
+      
+      const empresa = empresasList.find(e => e.id == currentEmpresaId);
+      if (empresa) {
+          empresaDataGlobal = empresa;
+          renderPanel(empresa);
+      }
+    }
+
+    function renderPanel(empresa) {
+      const panel = document.getElementById('licensePanel');
+      panel.classList.remove('hidden');
+
+      // 1. Datos Básicos
+      document.getElementById('empNombre').textContent = empresa.nombre;
+      document.getElementById('empId').textContent = `ID: ${empresa.id}`;
+      document.getElementById('planTipo').textContent = empresa.plan_tipo || 'Básico';
+
+      // 2. Precio
+      const precio = Number(empresa.plan_precio || 0);
+      const precioFmt = new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' }).format(precio);
+      document.getElementById('planPrecioDisplay').textContent = precioFmt;
+
+      // Pre-llenar input si es super
+      if(isSuper) document.getElementById('inputPrecio').value = precio;
+
+      // 3. Badge de Estado
+      const estadoEl = document.getElementById('planEstado');
+      const estado = String(empresa.plan_estado || 'inactive').toLowerCase();
+      
+      let badgeHtml = '';
+      if (estado === 'active') badgeHtml = '<span class="badge badge-active">ACTIVO</span>';
+      else if (estado === 'expired') badgeHtml = '<span class="badge badge-expired">VENCIDO</span>';
+      else badgeHtml = `<span class="badge badge-trial">${esc(estado.toUpperCase())}</span>`;
+
+      estadoEl.innerHTML = badgeHtml;
+
+      // 4. Fechas
+      const vencEl = document.getElementById('planVencimiento');
+      const diasEl = document.getElementById('diasRestantes');
+      let fechaVencObj = null;
+
+      if (empresa.plan_vencimiento) {
+        fechaVencObj = new Date(empresa.plan_vencimiento);
+        const dateStr = fechaVencObj.toLocaleDateString();
+        vencEl.textContent = dateStr; 
+        
+        // Cargar fecha en el modal de éxito también
+        document.getElementById('modalNewDate').textContent = dateStr;
+
+        const hoy = new Date();
+        const diffTime = fechaVencObj - hoy;
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+        if (diffDays > 0) {
+          diasEl.textContent = `${diffDays} días restantes`;
+          diasEl.style.color = 'var(--success)';
+        } else if (diffDays === 0) {
+          diasEl.textContent = `Vence hoy`;
+          diasEl.style.color = 'var(--warning)';
+        } else {
+          diasEl.textContent = `Venció hace ${Math.abs(diffDays)} días`;
+          diasEl.style.color = 'var(--danger)';
+        }
+      } else {
+        vencEl.textContent = 'Indefinido';
+        diasEl.textContent = '';
+      }
+
+      renderLicenseBanner(empresa, fechaVencObj);
+
+      // 5. Visibilidad ZONAS (Admin vs User)
+      const actionsBar = document.getElementById('actionsBar');
+      const userPaymentSection = document.getElementById('userPaymentSection');
+
+      if (isSuper) {
+        // ADMIN: Ve controles manuales, NO ve botón de pago
+        actionsBar.classList.remove('hidden'); 
+        userPaymentSection.classList.add('hidden');
+      } else {
+        // USER: Ve botón de pago, NO ve controles manuales
+        actionsBar.classList.add('hidden');    
+        userPaymentSection.classList.remove('hidden');
+        
+        // Actualizar textos de la zona de pago
+        document.getElementById('payAmount').textContent = precioFmt;
+        
+        // Calcular próxima fecha (Vencimiento Actual + 30 días) para el texto informativo
+        let nextDate = new Date();
+        if (fechaVencObj && fechaVencObj > nextDate) {
+            nextDate = new Date(fechaVencObj);
+        }
+        nextDate.setDate(nextDate.getDate() + 30);
+        document.getElementById('payNextDate').textContent = nextDate.toLocaleDateString();
+      }
+    }
+
+    function renderLicenseBanner(empresa, fechaVencObj) {
+      const banner = document.getElementById('licenseBanner');
+      const headline = document.getElementById('licenseHeadline');
+      const hint = document.getElementById('licenseHint');
+      const rec = document.getElementById('licenseRecommendation');
+      const meter = document.getElementById('licenseMeterFill');
+      const estado = String(empresa.plan_estado || 'inactive').toLowerCase();
+
+      banner.classList.remove('success', 'warning', 'danger');
+
+      if (!fechaVencObj) {
+        banner.classList.add(estado === 'active' ? 'success' : 'warning');
+        headline.textContent = estado === 'active' ? 'Licencia activa sin vencimiento definido' : 'Licencia sin vencimiento definido';
+        hint.textContent = 'Revisar configuración';
+        rec.textContent = isSuper
+          ? 'Conviene definir una fecha de vencimiento para mantener control administrativo.'
+          : 'Consultá con soporte para confirmar la vigencia de tu plan.';
+        meter.style.width = estado === 'active' ? '100%' : '20%';
+        return;
+      }
+
+      const now = new Date();
+      const diffDays = Math.ceil((fechaVencObj - now) / (1000 * 60 * 60 * 24));
+      const pct = Math.max(0, Math.min(100, Math.round((diffDays / 30) * 100)));
+      meter.style.width = `${pct}%`;
+
+      if (estado === 'expired' || diffDays < 0) {
+        banner.classList.add('danger');
+        headline.textContent = 'Licencia vencida';
+        hint.textContent = diffDays < 0 ? `Venció hace ${Math.abs(diffDays)} día(s)` : 'Servicio suspendido';
+        rec.textContent = isSuper
+          ? 'Acción sugerida: cobrar, extender 30 días o activar manualmente si corresponde.'
+          : 'Renová la suscripción para recuperar o mantener el servicio operativo.';
+      } else if (diffDays <= 7) {
+        banner.classList.add('warning');
+        headline.textContent = diffDays === 0 ? 'Licencia vence hoy' : 'Licencia próxima a vencer';
+        hint.textContent = diffDays === 0 ? 'Vence hoy' : `${diffDays} día(s) restantes`;
+        rec.textContent = isSuper
+          ? 'Acción sugerida: contactar al cliente y dejar el precio pactado actualizado.'
+          : 'Recomendación: renovar ahora para evitar interrupciones.';
+      } else {
+        banner.classList.add('success');
+        headline.textContent = 'Licencia activa';
+        hint.textContent = `${diffDays} día(s) restantes`;
+        rec.textContent = isSuper
+          ? 'La cuenta está operativa. Revisá precio pactado y próximo vencimiento.'
+          : 'Tu servicio está activo. Podés renovar anticipadamente cuando quieras.';
+      }
+    }
+
+    // --- 4. ACCIONES (GUARDAR PRECIO Y ESTADO) ---
+    async function guardarPrecio() {
+        if (!isSuper || !currentEmpresaId || priceBusy) return;
+
+        const nuevoPrecio = document.getElementById('inputPrecio').value;
+        if (nuevoPrecio === '') return alert('Ingresa un valor válido');
+
+        const btn = document.getElementById('btnGuardarPrecio');
+        const prev = btn ? btn.textContent : '';
+        priceBusy = true;
+        if (btn) {
+          btn.disabled = true;
+          btn.textContent = 'Guardando...';
+        }
+
+        try {
+            const res = await authFetch(`${API_URL}/empresas/${currentEmpresaId}`, {
+                method: 'PUT',
+                headers: { 
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ plan_precio: nuevoPrecio })
+            });
+
+            if (res.ok) {
+                const updated = await res.json();
+                const idx = empresasList.findIndex(e => e.id == currentEmpresaId);
+                if (idx !== -1) empresasList[idx] = updated;
+                
+                renderPanel(updated);
+                toast('✅ Precio actualizado');
+            } else {
+                toast('❌ Error al guardar');
+            }
+        } catch (e) {
+            console.error(e);
+            toast('❌ Error de conexión');
+        } finally {
+            priceBusy = false;
+            if (btn) {
+              btn.disabled = false;
+              btn.textContent = prev;
+            }
+        }
+    }
+
+    async function modificarLicencia(accion) {
+      if (!isSuper || licenseBusy) return; 
+      if (!currentEmpresaId) return;
+
+      let empresaObj = empresasList.find(e => e.id == currentEmpresaId);
+      if (!empresaObj && !isSuper) return;
+
+      let payload = {};
+      let msgConfirm = '';
+
+      if (accion === 'extend') {
+        msgConfirm = '¿Extender la vigencia por 30 días?';
+        let baseDate = new Date();
+        if (empresaObj && empresaObj.plan_vencimiento) {
+          const currentVenc = new Date(empresaObj.plan_vencimiento);
+          if (currentVenc > baseDate) baseDate = currentVenc; 
+        }
+        baseDate.setDate(baseDate.getDate() + 30);
+        
+        payload = { 
+          plan_vencimiento: baseDate.toISOString(), 
+          plan_estado: 'active' 
+        };
+      } 
+      else if (accion === 'activate') {
+        msgConfirm = '¿Reactivar servicio?';
+        payload = { plan_estado: 'active' };
+      }
+      else if (accion === 'expire') {
+        msgConfirm = '¿Suspender servicio ahora?';
+        payload = { plan_estado: 'expired' };
+      }
+
+      if (!confirm(msgConfirm)) return;
+
+      const actionBtns = Array.from(document.querySelectorAll('#actionsBar .actions-bar button'));
+      licenseBusy = true;
+      actionBtns.forEach(b => b.disabled = true);
+
+      try {
+        const res = await authFetch(`${API_URL}/empresas/${currentEmpresaId}`, {
+          method: 'PUT',
+          headers: { 
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(payload)
+        });
+
+        if (res.ok) {
+          const updatedEmpresa = await res.json();
+          const idx = empresasList.findIndex(e => e.id == currentEmpresaId);
+          if (idx !== -1) empresasList[idx] = updatedEmpresa;
+
+          renderPanel(updatedEmpresa);
+          toast('✅ Licencia actualizada');
+        } else {
+          toast('❌ Error al actualizar');
+        }
+      } catch (e) {
+        console.error(e);
+        toast('❌ Error de conexión');
+      } finally {
+        licenseBusy = false;
+        actionBtns.forEach(b => b.disabled = false);
+      }
+    }
+
+    // --- 5. PAGAR LICENCIA (USER) ---
+    async function pagarLicencia() {
+        const btn = document.getElementById('btnPagar');
+        const feedback = document.getElementById('payFeedback');
+        const originalText = btn.innerHTML;
+
+        btn.disabled = true;
+        btn.innerHTML = '⏳ Generando Link...';
+        feedback.style.display = 'none';
+
+        try {
+            const res = await authFetch(`${API_URL}/admin/licencia/generar-pago`, {
+                method: 'POST',
+                headers: { 
+                    'Content-Type': 'application/json'
+                }
+            });
+            const data = await res.json();
+
+            if (res.ok && data.link) {
+                // REDIRECCIONAMOS A MERCADO PAGO
+                window.location.href = data.link;
+            } else {
+                btn.innerHTML = '❌ Error';
+                feedback.textContent = data.error || 'No se pudo generar el pago.';
+                feedback.style.color = 'var(--danger)';
+                feedback.style.display = 'block';
+                setTimeout(() => { btn.disabled = false; btn.innerHTML = originalText; }, 3000);
+            }
+        } catch (e) {
+            console.error(e);
+            btn.innerHTML = '❌ Error Red';
+            toast('Error de conexión');
+            setTimeout(() => { btn.disabled = false; btn.innerHTML = originalText; }, 3000);
+        }
+    }
+
+    // Arrancar script
+    const logoutLink = document.getElementById('logout');
+    if (logoutLink) {
+      logoutLink.addEventListener('click', async (ev) => {
+        ev.preventDefault();
+        await logout();
+      });
+    }
+
+    const empresaSelect = document.getElementById('empresaSelect');
+    if (empresaSelect) empresaSelect.addEventListener('change', onEmpresaChange);
+
+    const empresaSearch = document.getElementById('empresaSearch');
+    if (empresaSearch) {
+      empresaSearch.addEventListener('input', () => {
+        empresaSearchTerm = empresaSearch.value || '';
+        renderEmpresaOptions();
+      });
+    }
+
+    const btnPagar = document.getElementById('btnPagar');
+    if (btnPagar) btnPagar.addEventListener('click', pagarLicencia);
+
+    const btnGuardarPrecio = document.getElementById('btnGuardarPrecio');
+    if (btnGuardarPrecio) btnGuardarPrecio.addEventListener('click', guardarPrecio);
+
+    const btnExtendLic = document.getElementById('btnExtendLic');
+    if (btnExtendLic) btnExtendLic.addEventListener('click', () => modificarLicencia('extend'));
+
+    const btnActivateLic = document.getElementById('btnActivateLic');
+    if (btnActivateLic) btnActivateLic.addEventListener('click', () => modificarLicencia('activate'));
+
+    const btnExpireLic = document.getElementById('btnExpireLic');
+    if (btnExpireLic) btnExpireLic.addEventListener('click', () => modificarLicencia('expire'));
+
+    const btnCerrarModal = document.getElementById('btnCerrarModal');
+    if (btnCerrarModal) btnCerrarModal.addEventListener('click', cerrarModal);
+
+    init();
+  </script>
+</body>
+</html>

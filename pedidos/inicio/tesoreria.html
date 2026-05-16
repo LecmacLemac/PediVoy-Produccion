@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Tesorería & Conciliación – MultiEmpresas</title>
+  <link rel="stylesheet" href="theme-base.css" />
+  <style>
+    :root{--bg:#0b1020;--bg2:#0f172a;--ink:#f1f5f9;--muted:#94a3b8;--brand:#06b6d4;--border:rgba(148,163,184,.18);--danger:#ef4444}
+    *{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--ink)}
+    .container{max-width:1240px;margin:0 auto;padding:0 20px}header{position:sticky;top:0;background:rgba(15,23,42,.95);border-bottom:1px solid var(--border);padding:.8rem 0}
+    nav{display:flex;justify-content:space-between;align-items:center}.menu{display:flex;gap:1rem;list-style:none;margin:0;padding:0}.menu a{color:var(--muted);text-decoration:none}.menu a.active,.menu a:hover{color:#fff}
+    .brand{font-weight:700}.role{font-size:.75rem;color:var(--brand);border:1px solid rgba(6,182,212,.35);padding:2px 8px;border-radius:99px;margin-left:8px}
+    main{padding:1rem 0 3rem}.card{background:rgba(30,41,59,.7);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:12px}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:.8rem}.kpi{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px}.kpi .l{font-size:.75rem;color:var(--muted);text-transform:uppercase}.kpi .v{font-size:1.2rem;font-weight:700}
+    .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}input,select,button{background:var(--bg2);border:1px solid var(--border);color:#fff;border-radius:8px;padding:8px 10px}button{cursor:pointer}.primary{background:var(--brand);color:#001018;border:none;font-weight:700}
+    table{width:100%;border-collapse:collapse}th,td{padding:8px;border-bottom:1px solid var(--border);font-size:.9rem}th{color:var(--muted);text-align:left}
+    @media (max-width: 768px){
+      .container{padding:0 12px}
+      nav{flex-direction:column;align-items:stretch;gap:.6rem}
+      .menu{overflow-x:auto;white-space:nowrap;padding-bottom:4px}
+      .row{align-items:stretch}
+      .row > *{min-width:0 !important}
+      input,select,button{width:100%}
+      h1{font-size:1.05rem}
+    }
+  </style>
+</head>
+<body>
+<header>
+  <nav class="container">
+    <div class="brand">MultiEmpresas <span id="roleBadge" class="role">Admin</span></div>
+    <ul class="menu"><li><a href="inicial.html">🚀 Inicio</a></li><li><a href="compras.html">Compras</a></li><li><a href="tesoreria.html" class="active">Tesorería</a></li><li><a href="#" id="logout" style="color:var(--danger)">Salir</a></li></ul>
+  </nav>
+</header>
+<main class="container">
+  <div class="card">
+    <div class="row" style="justify-content:space-between"><h1 style="margin:0;font-size:1.2rem">Fase 2 · Tesorería y conciliación</h1><div class="row"><div id="empresaWrap" style="display:none"><select id="empresaSelect"><option value="">Seleccionar empresa…</option></select></div><button id="btnRefresh">Actualizar</button></div></div>
+    <div id="status" style="margin-top:6px;color:var(--muted)">Listo.</div>
+  </div>
+
+  <div class="card"><h2 style="margin:0 0 8px;font-size:1rem">KPIs Tesorería</h2><div id="kpiGrid" class="grid"></div></div>
+
+  <div class="card">
+    <h2 style="margin:0 0 8px;font-size:1rem">Proyección de caja (7/15/30 días)</h2>
+    <div class="row" style="margin-bottom:8px">
+      <input id="saldoInicial" type="number" placeholder="Saldo inicial" style="width:180px" />
+      <button id="btnProj" type="button">Actualizar proyección</button>
+    </div>
+    <div id="projBase" style="color:var(--muted);margin-bottom:8px"></div>
+    <div id="projGrid" class="grid"></div>
+  </div>
+
+  <div class="card">
+    <h2 style="margin:0 0 8px;font-size:1rem">Alertas inteligentes</h2>
+    <div id="alertas" style="display:grid;gap:8px"></div>
+  </div>
+
+  <div class="card">
+    <h2 style="margin:0 0 8px;font-size:1rem">Acciones sugeridas</h2>
+    <div id="acciones" style="display:grid;gap:8px"></div>
+  </div>
+
+  <div class="card">
+    <h2 style="margin:0 0 8px;font-size:1rem">Vencimientos proveedores</h2>
+    <div style="overflow:auto"><table><thead><tr><th>OC</th><th>Proveedor</th><th>Entrega estimada</th><th>Días</th><th>Total</th><th>Nivel</th></tr></thead><tbody id="vencBody"></tbody></table></div>
+  </div>
+
+  <div class="card">
+    <h2 style="margin:0 0 8px;font-size:1rem">Nuevo movimiento</h2>
+    <div class="row">
+      <select id="movTipo"><option value="egreso">Egreso</option><option value="ingreso">Ingreso</option></select>
+      <input id="movCategoria" placeholder="Categoría" value="pago_proveedor" />
+      <select id="movProveedor" style="min-width:220px"></select>
+      <input id="movMonto" type="number" placeholder="Monto" style="width:140px" />
+      <input id="movRef" placeholder="Referencia" />
+      <button id="btnAddMov" class="primary">Registrar</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2 style="margin:0 0 8px;font-size:1rem">Presupuesto mensual vs ejecutado</h2>
+    <div class="row" style="margin-bottom:8px">
+      <input id="presCategoria" placeholder="Categoría" value="pago_proveedor" />
+      <select id="presProveedor" style="min-width:220px"></select>
+      <input id="presMonto" type="number" placeholder="Monto presupuestado" style="width:180px" />
+      <button id="btnAddPres" class="primary">Guardar presupuesto</button>
+    </div>
+    <div id="presSummary" style="color:var(--muted);margin-bottom:8px"></div>
+    <div style="overflow:auto"><table><thead><tr><th>Categoría</th><th>Proveedor</th><th>Presupuestado</th><th>Ejecutado</th><th>Desvío</th><th>Semáforo</th></tr></thead><tbody id="presBody"></tbody></table></div>
+  </div>
+
+  <div class="card">
+    <h2 style="margin:0 0 8px;font-size:1rem">Reporte mensual ejecutivo</h2>
+    <div class="row" style="margin-bottom:8px"><button id="btnReporte" type="button">Actualizar reporte</button><button id="btnReporteCsv" type="button">Exportar CSV</button></div>
+    <div id="reporteResumen" style="color:var(--muted)"></div>
+  </div>
+
+  <div class="card">
+    <h2 style="margin:0 0 8px;font-size:1rem">Movimientos (últimos 500)</h2>
+    <div style="overflow:auto"><table><thead><tr><th>Fecha</th><th>Tipo</th><th>Proveedor</th><th>Categoría</th><th>Monto</th><th>Estado</th><th></th></tr></thead><tbody id="movBody"></tbody></table></div>
+  </div>
+</main>
+<script>
+  const authFetch=(url,opts={})=>fetch(url,{...opts,headers:{'Content-Type':'application/json',...(opts.headers||{})},credentials:'include'});
+  const fmt=new Intl.NumberFormat('es-AR',{style:'currency',currency:'ARS',maximumFractionDigits:0});
+  const st={isSuper:false,empresaId:null,proveedores:[],movs:[]};
+  const setStatus=(t,e=false)=>{const el=document.getElementById('status');el.textContent=t;el.style.color=e?'var(--danger)':'var(--muted)';};
+  const apiUrl=(p)=>st.isSuper&&st.empresaId?(p+(p.includes('?')?'&':'?')+'empresa_id='+encodeURIComponent(String(st.empresaId))):p;
+
+  async function loadMe(){
+    const r=await authFetch('/api/me'); if(r.status===401) return location.href='/pedidos/login.html';
+    const me=await r.json(); st.isSuper=String(me?.user?.role||'').toLowerCase()==='super'; st.empresaId=me?.user?.empresa_id||null;
+    document.getElementById('roleBadge').textContent=st.isSuper?'SUPER ADMIN':'Admin';
+    if(st.isSuper){ st.empresaId=null; const wrap=document.getElementById('empresaWrap'); wrap.style.display='block'; const sel=document.getElementById('empresaSelect');
+      let list=[]; const r1=await authFetch('/api/admin/empresas-list'); if(r1.ok){const j=await r1.json().catch(()=>[]); list=Array.isArray(j)?j:(Array.isArray(j.data)?j.data:[]);} if(!list.length){const r2=await authFetch('/api/empresas'); if(r2.ok){const j2=await r2.json().catch(()=>[]); list=Array.isArray(j2)?j2:(Array.isArray(j2.data)?j2.data:[]);} }
+      sel.innerHTML='<option value="">Seleccionar empresa</option>'; list.forEach(e=>{const o=document.createElement('option');o.value=String(Number(e.id)||'');o.textContent=`${e.id} · ${e.nombre}`;sel.appendChild(o);});
+      sel.addEventListener('change',()=>{st.empresaId=sel.value?Number(sel.value):null; refreshAll();});
+    }
+  }
+
+  async function loadProveedores(){ if(st.isSuper&&!st.empresaId) return; const r=await authFetch(apiUrl('/api/setup/fase2/proveedores')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error proveedores'); st.proveedores=Array.isArray(j.items)?j.items:[];
+    const options='<option value="">Sin proveedor</option>'+st.proveedores.map(p=>`<option value="${Number(p.id)}">${p.nombre}</option>`).join('');
+    const sel=document.getElementById('movProveedor'); sel.innerHTML=options;
+    const sel2=document.getElementById('presProveedor'); sel2.innerHTML=options;
+  }
+
+  async function loadDashboard(){ if(st.isSuper&&!st.empresaId) return; const r=await authFetch(apiUrl('/api/setup/fase2/tesoreria/dashboard')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error dashboard tesorería');
+    const k=j.kpis||{}; document.getElementById('kpiGrid').innerHTML=[['Egresos 30d',fmt.format(k.egresos_30d||0)],['Ingresos 30d',fmt.format(k.ingresos_30d||0)],['Pend. conciliación',k.pendientes_conciliacion||0],['Monto pend. conciliar',fmt.format(k.monto_pendiente_conciliar||0)]].map(([l,v])=>`<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div></div>`).join('');
+  }
+
+  async function loadMovs(){ if(st.isSuper&&!st.empresaId) return; const r=await authFetch(apiUrl('/api/setup/fase2/tesoreria')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error movimientos'); st.movs=Array.isArray(j.items)?j.items:[];
+    const body=document.getElementById('movBody'); body.innerHTML=st.movs.length?st.movs.map(m=>`<tr><td>${m.fecha?new Date(m.fecha).toLocaleDateString('es-AR'):'-'}</td><td>${m.tipo}</td><td>${m.proveedor_nombre||'-'}</td><td>${m.categoria||'-'}</td><td>${fmt.format(Number(m.monto||0))}</td><td>${m.conciliado?'Conciliado':'Pendiente'}</td><td>${m.conciliado?'':`<button type="button" data-action="conciliar" data-id="${Number(m.id)}">Conciliar</button>`}</td></tr>`).join(''):'<tr><td colspan="7" style="color:var(--muted)">Sin movimientos.</td></tr>';
+  }
+
+  async function loadAlerts(){
+    if(st.isSuper&&!st.empresaId) return;
+    const r=await authFetch(apiUrl('/api/setup/fase2/alertas')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error alertas');
+    const items=Array.isArray(j.items)?j.items:[];
+    const box=document.getElementById('alertas');
+    if(!items.length){ box.innerHTML='<div style="color:var(--muted)">Sin alertas relevantes por ahora.</div>'; return; }
+    const color=(n)=>n==='alta'?'#ef4444':(n==='media'?'#f59e0b':'#22c55e');
+    box.innerHTML=items.map(a=>`<div style="border:1px solid var(--border);border-left:4px solid ${color(a.nivel)};border-radius:10px;padding:10px;background:var(--bg2)"><div style="font-weight:700">${a.titulo}</div><div style="font-size:.9rem;color:var(--muted)">${a.detalle||''}</div></div>`).join('');
+  }
+
+  async function loadProyeccionCaja(){
+    if(st.isSuper&&!st.empresaId) return;
+    const saldoInicial=Number(document.getElementById('saldoInicial').value||0);
+    const r=await authFetch(apiUrl(`/api/setup/fase2/tesoreria/proyeccion-caja?saldo_inicial=${encodeURIComponent(String(saldoInicial))}`));
+    const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error proyección de caja');
+    const b=j.base||{};
+    document.getElementById('projBase').textContent=`Base: neto diario estimado ${fmt.format(Number(b.neto_diario_estimado||0))} (ingresos ${fmt.format(Number(b.ingresos_diarios_estimados||0))} / egresos ${fmt.format(Number(b.egresos_diarios_estimados||0))})`;
+    const items=Array.isArray(j.items)?j.items:[];
+    const riskColor=(r)=>r==='alto'?'#ef4444':(r==='medio'?'#f59e0b':'#22c55e');
+    document.getElementById('projGrid').innerHTML=items.map(x=>`<div class="kpi" style="border-left:4px solid ${riskColor(x.riesgo)}"><div class="l">${x.dias} días · riesgo ${x.riesgo}</div><div class="v">${fmt.format(Number(x.saldo_proyectado||0))}</div><div style="font-size:.85rem;color:var(--muted)">Flujo: ${fmt.format(Number(x.flujo_estimado||0))}</div></div>`).join('');
+  }
+
+  async function loadAccionesSugeridas(){
+    if(st.isSuper&&!st.empresaId) return;
+    const r=await authFetch(apiUrl('/api/setup/fase2/acciones-sugeridas')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error acciones sugeridas');
+    const items=Array.isArray(j.items)?j.items:[];
+    const box=document.getElementById('acciones');
+    if(!items.length){ box.innerHTML='<div style="color:var(--muted)">Sin acciones sugeridas por ahora.</div>'; return; }
+    const color=(p)=>p==='alta'?'#ef4444':(p==='media'?'#f59e0b':'#22c55e');
+    box.innerHTML=items.map(a=>`<div style="border:1px solid var(--border);border-left:4px solid ${color(a.prioridad)};border-radius:10px;padding:10px;background:var(--bg2)"><div style="font-weight:700">${a.titulo}</div><div style="font-size:.9rem;color:var(--muted)">${a.detalle||''}</div></div>`).join('');
+  }
+
+  async function loadVencimientos(){
+    if(st.isSuper&&!st.empresaId) return;
+    const r=await authFetch(apiUrl('/api/setup/fase2/vencimientos-proveedores')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error vencimientos');
+    const items=Array.isArray(j.items)?j.items:[];
+    const body=document.getElementById('vencBody');
+    const sem=(n)=>n==='alta'?'🔴':(n==='media'?'🟡':'🟢');
+    body.innerHTML=items.length?items.map(x=>`<tr><td>#${x.id}</td><td>${x.proveedor_nombre||'-'}</td><td>${x.fecha_entrega_estimada?new Date(x.fecha_entrega_estimada).toLocaleDateString('es-AR'):'-'}</td><td>${Number(x.dias_restantes||0)}</td><td>${fmt.format(Number(x.total||0))}</td><td>${sem(x.nivel)}</td></tr>`).join(''):'<tr><td colspan="6" style="color:var(--muted)">Sin vencimientos.</td></tr>';
+  }
+
+  async function loadReporteMensual(){
+    if(st.isSuper&&!st.empresaId) return null;
+    const r=await authFetch(apiUrl('/api/setup/fase2/reporte-mensual')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error reporte mensual');
+    const c=j.compras||{}; const t=j.tesoreria||{}; const p=j.presupuesto||{};
+    document.getElementById('reporteResumen').textContent=`Compras: ${c.ordenes||0} órdenes (${fmt.format(Number(c.total||0))}) · Ingresos: ${fmt.format(Number(t.ingresos||0))} · Egresos: ${fmt.format(Number(t.egresos||0))} · Pendientes conciliación: ${t.pendientes_conciliacion||0} · Presupuesto: ${fmt.format(Number(p.presupuestado||0))} · Desvío: ${fmt.format(Number(p.desvio||0))}`;
+    return j;
+  }
+
+  async function loadPresupuestoVsEjecutado(){
+    if(st.isSuper&&!st.empresaId) return;
+    const r=await authFetch(apiUrl('/api/setup/fase2/presupuesto-vs-ejecutado')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error presupuesto');
+    const s=j.summary||{};
+    document.getElementById('presSummary').textContent=`Presupuestado: ${fmt.format(Number(s.presupuestado||0))} · Ejecutado: ${fmt.format(Number(s.ejecutado||0))} · Desvío: ${fmt.format(Number(s.desvio||0))}`;
+    const items=Array.isArray(j.items)?j.items:[];
+    const sem=(d,p)=>{ if(p<=0) return d>0?'⚠️':'✅'; const r=d/p; if(r>0.2) return '🔴'; if(r>0.05) return '🟡'; return '🟢'; };
+    const body=document.getElementById('presBody');
+    body.innerHTML=items.length?items.map(x=>`<tr><td>${x.categoria||'-'}</td><td>${x.proveedor_nombre||'-'}</td><td>${fmt.format(Number(x.presupuestado||0))}</td><td>${fmt.format(Number(x.ejecutado||0))}</td><td>${fmt.format(Number(x.desvio||0))}</td><td>${sem(Number(x.desvio||0), Number(x.presupuestado||0))}</td></tr>`).join(''):'<tr><td colspan="6" style="color:var(--muted)">Sin datos del período.</td></tr>';
+  }
+
+  async function refreshAll(){ if(st.isSuper&&!st.empresaId){ setStatus('Seleccioná empresa para ver tesorería.',true); ['kpiGrid','movBody','alertas','acciones','vencBody','presBody','presSummary','projBase','projGrid','reporteResumen'].forEach(id=>{const el=document.getElementById(id); if(el) el.innerHTML='';}); return; }
+    setStatus('Actualizando…'); try{ await Promise.all([loadProveedores(),loadDashboard(),loadMovs(),loadAlerts(),loadAccionesSugeridas(),loadVencimientos(),loadProyeccionCaja(),loadPresupuestoVsEjecutado(),loadReporteMensual()]); setStatus('Actualizado.'); } catch(e){ setStatus(e.message||'Error',true); }
+  }
+
+  document.getElementById('btnAddMov').addEventListener('click', async ()=>{
+    if(st.isSuper&&!st.empresaId) return setStatus('Seleccioná empresa primero',true);
+    const monto=Number(document.getElementById('movMonto').value||0); if(!(monto>0)) return setStatus('Monto inválido',true);
+    const body={ tipo:document.getElementById('movTipo').value, categoria:document.getElementById('movCategoria').value.trim()||'general', proveedor_id:Number(document.getElementById('movProveedor').value||0)||null, monto, referencia:document.getElementById('movRef').value.trim()||null };
+    if(st.isSuper) body.empresa_id=st.empresaId;
+    const r=await authFetch('/api/setup/fase2/tesoreria',{method:'POST',body:JSON.stringify(body)}); const j=await r.json(); if(!r.ok) return setStatus(j.error||'No se pudo registrar',true);
+    document.getElementById('movMonto').value=''; document.getElementById('movRef').value=''; refreshAll();
+  });
+
+  document.getElementById('btnProj').addEventListener('click', async ()=>{
+    try { await loadProyeccionCaja(); setStatus('Proyección actualizada.'); }
+    catch(e){ setStatus(e.message||'Error en proyección',true); }
+  });
+
+  document.getElementById('btnReporte').addEventListener('click', async ()=>{
+    try { await loadReporteMensual(); setStatus('Reporte mensual actualizado.'); }
+    catch(e){ setStatus(e.message||'Error reporte mensual',true); }
+  });
+
+  document.getElementById('btnReporteCsv').addEventListener('click', async ()=>{
+    try {
+      const r = await loadReporteMensual();
+      if (!r) return;
+      const rows = [
+        ['periodo', `${r.periodo?.anio||''}-${String(r.periodo?.mes||'').padStart(2,'0')}`],
+        ['compras_ordenes', String(r.compras?.ordenes||0)],
+        ['compras_total', String(r.compras?.total||0)],
+        ['ingresos', String(r.tesoreria?.ingresos||0)],
+        ['egresos', String(r.tesoreria?.egresos||0)],
+        ['pendientes_conciliacion', String(r.tesoreria?.pendientes_conciliacion||0)],
+        ['presupuestado', String(r.presupuesto?.presupuestado||0)],
+        ['ejecutado', String(r.presupuesto?.ejecutado||0)],
+        ['desvio', String(r.presupuesto?.desvio||0)],
+      ];
+      const csv = rows.map(([k,v])=>`${k},${String(v).replaceAll(',', '.')}`).join('\n');
+      const blob = new Blob([csv], { type:'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'reporte_fase2_mensual.csv';
+      document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+      setStatus('CSV exportado.');
+    } catch(e){ setStatus(e.message||'Error exportando CSV',true); }
+  });
+
+  document.getElementById('btnAddPres').addEventListener('click', async ()=>{
+    if(st.isSuper&&!st.empresaId) return setStatus('Seleccioná empresa primero',true);
+    const categoria=document.getElementById('presCategoria').value.trim();
+    const monto=Number(document.getElementById('presMonto').value||0);
+    const proveedor_id=Number(document.getElementById('presProveedor').value||0)||null;
+    if(!categoria) return setStatus('Categoría requerida',true);
+    if(!(monto>0)) return setStatus('Monto presupuestado inválido',true);
+    const body={ categoria, monto_presupuestado:monto, proveedor_id };
+    if(st.isSuper) body.empresa_id=st.empresaId;
+    const r=await authFetch('/api/setup/fase2/presupuesto',{method:'POST',body:JSON.stringify(body)}); const j=await r.json(); if(!r.ok) return setStatus(j.error||'No se pudo guardar presupuesto',true);
+    document.getElementById('presMonto').value='';
+    refreshAll();
+  });
+
+  document.getElementById('movBody').addEventListener('click', async (ev)=>{
+    const btn=ev.target.closest('button[data-action="conciliar"][data-id]'); if(!btn) return;
+    const id=Number(btn.getAttribute('data-id')); if(!Number.isFinite(id)||id<=0) return;
+    const body={}; if(st.isSuper) body.empresa_id=st.empresaId;
+    const r=await authFetch(`/api/setup/fase2/tesoreria/${id}/conciliar`,{method:'PUT',body:JSON.stringify(body)}); const j=await r.json(); if(!r.ok) return setStatus(j.error||'No se pudo conciliar',true);
+    refreshAll();
+  });
+
+  document.getElementById('btnRefresh').addEventListener('click',refreshAll);
+  document.getElementById('logout').addEventListener('click',async (e)=>{e.preventDefault(); try{await authFetch('/api/logout',{method:'POST'});}catch{} location.href='/pedidos/login.html';});
+  (async()=>{ await loadMe(); await refreshAll(); })();
+</script>
+</body>
+</html>

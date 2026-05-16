@@ -1,0 +1,72 @@
+﻿*
+!*/
+!.gitignore
+
+# Allow source/assets
+!*.html
+!*.js
+!*.css
+!*.json
+!*.kt
+!*.kts
+!*.sql
+!*.xml
+!*.md
+!*.pro
+!*.properties
+!*.yml
+!*.yaml
+!gradlew
+!gradlew.bat
+!**/gradle/wrapper/gradle-wrapper.jar
+
+# Allow key project files
+!package.json
+!package-lock.json
+!README.md
+!render.yaml
+!docker-compose.yml
+!Dockerfile
+!.dockerignore
+!.env.example
+
+# Keep placeholders
+!.gitkeep
+
+# Explicitly ignore secrets even if patterns above allow them
+.env
+.env.*
+credentials.json
+
+# Local build/runtime artifacts
+node_modules/
+**/node_modules/
+.puppeteer/
+.wwebjs_auth/
+Gastos/
+Transferencia/
+logs/
+pedidos/css/
+
+# Manual duplicate exports/backups
+* (Copiar).html
+* - copia.html
+
+# Nested app/tooling artifacts
+**/build/
+**/.gradle/
+**/.idea/
+**/local.properties
+**/.env
+**/.env.*
+
+# OpenClaw workspace meta (no mezclar con el proyecto)
+AGENTS.md
+BOOTSTRAP.md
+HEARTBEAT.md
+IDENTITY.md
+SOUL.md
+TOOLS.md
+USER.md
+MEMORY.md
+memory/

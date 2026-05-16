@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>Prueba – Entregados por Cliente y Producto</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 0;
+      padding: 1rem;
+      background: #f5f5f5;
+    }
+    h1 {
+      margin-top: 0;
+      font-size: 1.4rem;
+    }
+    .card {
+      background: #fff;
+      border-radius: 8px;
+      padding: 1rem;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+      margin-bottom: 1rem;
+    }
+    .filters {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 0.75rem;
+      align-items: end;
+    }
+    label {
+      font-size: 0.85rem;
+      font-weight: 600;
+      display: block;
+      margin-bottom: 0.25rem;
+    }
+    select, input[type="date"], input[type="number"] {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 0.4rem 0.5rem;
+      border-radius: 4px;
+      border: 1px solid #ccc;
+      font-size: 0.9rem;
+    }
+    button {
+      padding: 0.45rem 0.8rem;
+      border-radius: 4px;
+      border: none;
+      font-size: 0.9rem;
+      cursor: pointer;
+    }
+    button.primary {
+      background: #1976d2;
+      color: #fff;
+    }
+    button.primary:disabled {
+      opacity: 0.6;
+      cursor: default;
+    }
+    .results {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 1rem;
+    }
+    .stat {
+      font-size: 0.95rem;
+    }
+    .stat-number {
+      font-size: 1.6rem;
+      font-weight: 700;
+      margin-top: 0.25rem;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9rem;
+    }
+    th, td {
+      padding: 0.35rem 0.4rem;
+      border-bottom: 1px solid #eee;
+      text-align: left;
+    }
+    th {
+      font-weight: 600;
+      background: #fafafa;
+    }
+    .error {
+      color: #c62828;
+      font-size: 0.85rem;
+      margin-top: 0.5rem;
+    }
+    .small {
+      font-size: 0.8rem;
+      color: #666;
+    }
+  </style>
+</head>
+<body>
+  <h1>Prueba – Pedidos ENTREGADOS (Fecha Argentina)</h1>
+
+  <div class="card">
+    <div class="filters">
+      <div id="empresa-wrapper">
+        <label for="empresa-select">Empresa</label>
+        <select id="empresa-select">
+          <option value="">Cargando...</option>
+        </select>
+      </div>
+
+      <div>
+        <label for="chofer-select">Chofer</label>
+        <select id="chofer-select">
+          <option value="">Todos</option>
+        </select>
+      </div>
+
+      <div>
+        <label for="from-date">Desde (fecha AR)</label>
+        <input type="date" id="from-date" />
+      </div>
+
+      <div>
+        <label for="to-date">Hasta (fecha AR)</label>
+        <input type="date" id="to-date" />
+      </div>
+
+      <div>
+        <button id="btn-consultar" class="primary">Consultar</button>
+        <div id="status" class="small"></div>
+      </div>
+    </div>
+    <div id="error" class="error"></div>
+    <div class="small" style="margin-top:0.5rem;">
+      Esta prueba usa solo <strong>pedidos ENTREGADOS</strong> y toma la
+      <strong>fecha de entrega en UTC</strong> convertida a <strong>hora Argentina (UTC-3)</strong>
+      para aplicar el rango de fechas.
+    </div>
+  </div>
+
+  <div class="results">
+    <div class="card">
+      <div class="stat">
+        Clientes con al menos una entrega en el rango:
+        <div id="clientes-count" class="stat-number">–</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="stat">
+        Total de pedidos entregados en el rango:
+        <div id="pedidos-count" class="stat-number">–</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:1rem;">
+    <h2 style="font-size:1rem;margin-top:0;">Detalle de productos (items entregados)</h2>
+    <div class="small" style="margin-bottom:0.5rem;">
+      Suma de cantidades por producto, considerando solo pedidos entregados en el rango.
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Producto</th>
+          <th>Cantidad total</th>
+        </tr>
+      </thead>
+      <tbody id="productos-tbody">
+        <tr><td colspan="2" class="small">Sin datos</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <script>
+    const empresaSelect = document.getElementById('empresa-select');
+    const choferSelect  = document.getElementById('chofer-select');
+    const fromInput     = document.getElementById('from-date');
+    const toInput       = document.getElementById('to-date');
+    const btnConsultar  = document.getElementById('btn-consultar');
+    const statusEl      = document.getElementById('status');
+    const errorEl       = document.getElementById('error');
+
+    const clientesCountEl = document.getElementById('clientes-count');
+    const pedidosCountEl  = document.getElementById('pedidos-count');
+    const productosTbody  = document.getElementById('productos-tbody');
+
+    const empresaWrapper  = document.getElementById('empresa-wrapper');
+
+    // NUEVO: variables globales como en estadisticas.html
+    let isSuper = false;
+    let empresaId = null; // empresa del token
+
+    function setStatus(msg) {
+      statusEl.textContent = msg || '';
+    }
+
+    function setError(msg) {
+      errorEl.textContent = msg || '';
+    }
+
+    function setLoading(loading) {
+      btnConsultar.disabled = loading;
+      setStatus(loading ? 'Cargando…' : '');
+    }
+
+    // Fecha hoy y hace 6 días, en formato YYYY-MM-DD
+    function initDates() {
+      const now = new Date();
+      const toStr = now.toISOString().slice(0, 10);
+      const weekAgo = new Date(now.getTime() - 6 * 24 * 60 * 60 * 1000);
+      const fromStr = weekAgo.toISOString().slice(0, 10);
+      fromInput.value = fromStr;
+      toInput.value   = toStr;
+    }
+
+    // Convierte una fecha ISO UTC a fecha (YYYY-MM-DD) en hora Argentina (UTC-3)
+    function toArgentinaDateString(isoString) {
+      if (!isoString) return null;
+      const d = new Date(isoString);
+      if (isNaN(d.getTime())) return null;
+
+      const utcMs = d.getTime() + d.getTimezoneOffset() * 60000;
+      // Argentina: UTC-3 sin DST
+      const argMs = utcMs - 3 * 60 * 60 * 1000;
+      const arg = new Date(argMs);
+      return arg.toISOString().slice(0, 10);
+    }
+
+    async function fetchJSON(url) {
+      const res = await fetch(url, {
+        headers: {
+          'Accept': 'application/json'
+        }
+      });
+      if (!res.ok) {
+        throw new Error('Error HTTP ' + res.status + ' en ' + url);
+      }
+      return res.json();
+    }
+
+    async function loadMeAndEmpresas() {
+      try {
+        const meResp = await fetchJSON('/api/me');
+        const u = meResp.user || meResp;
+
+        isSuper   = (u.role || '').toUpperCase() === 'SUPER';
+        empresaId = u.empresa_id || null;
+
+        if (!isSuper) {
+          // NO SUPER: ocultamos selector y usamos empresa del token
+          empresaWrapper.style.display = 'none';
+          // Igual cargamos choferes de esa empresa si la tenemos
+          if (empresaId) {
+            await loadChoferes(empresaId);
+          } else {
+            setError('No se detectó empresa en el token.');
+          }
+        } else {
+          // SUPER: cargar empresas y mostrar selector
+          const empresas = await fetchJSON('/api/empresas');
+          empresaSelect.innerHTML = '<option value="">Seleccione empresa…</option>';
+          (empresas || []).forEach(e => {
+            const opt = document.createElement('option');
+            opt.value = e.id;
+            opt.textContent = e.nombre || ('Empresa ' + e.id);
+            empresaSelect.appendChild(opt);
+          });
+
+          empresaWrapper.style.display = '';
+
+          empresaSelect.addEventListener('change', async () => {
+            const empresaIdSel = empresaSelect.value;
+            if (!empresaIdSel) {
+              choferSelect.innerHTML = '<option value="">Todos</option>';
+              return;
+            }
+            await loadChoferes(empresaIdSel);
+          });
+
+          // Si el SUPER también tiene empresa_id por defecto, preseleccionamos
+          if (empresaId) {
+            empresaSelect.value = String(empresaId);
+            await loadChoferes(empresaId);
+          }
+        }
+      } catch (err) {
+        console.error(err);
+        setError('Error cargando usuario/empresas: ' + err.message);
+      }
+    }
+
+    async function loadChoferes(empresaIdParam) {
+      if (!empresaIdParam) return;
+      try {
+        const choferes = await fetchJSON('/api/choferes?empresa_id=' + encodeURIComponent(empresaIdParam));
+        choferSelect.innerHTML = '<option value="">Todos</option>';
+        (choferes || []).forEach(c => {
+          const opt = document.createElement('option');
+          opt.value = c.id;
+          opt.textContent = c.nombre || ('Chofer ' + c.id);
+          choferSelect.appendChild(opt);
+        });
+      } catch (err) {
+        console.error(err);
+        setError('Error cargando choferes: ' + err.message);
+      }
+    }
+
+    function renderResultados({ pedidosEntregados, clientesUnicos, productos }) {
+      clientesCountEl.textContent = clientesUnicos;
+      pedidosCountEl.textContent  = pedidosEntregados;
+
+      productosTbody.innerHTML = '';
+      if (!productos.length) {
+        const tr = document.createElement('tr');
+        const td = document.createElement('td');
+        td.colSpan = 2;
+        td.textContent = 'Sin datos';
+        td.className = 'small';
+        tr.appendChild(td);
+        productosTbody.appendChild(tr);
+        return;
+      }
+
+      productos.forEach(p => {
+        const tr = document.createElement('tr');
+        const tdNombre = document.createElement('td');
+        const tdCant   = document.createElement('td');
+        tdNombre.textContent = p.producto;
+        tdCant.textContent   = p.cantidad;
+        tr.appendChild(tdNombre);
+        tr.appendChild(tdCant);
+        productosTbody.appendChild(tr);
+      });
+    }
+
+    function procesarDatos(rawData, { choferId, from, to }) {
+      // Filtrar por chofer, estado ENTREGADO y rango de fecha en hora AR
+      const fromStr = from;
+      const toStr   = to;
+
+      const filtrados = (rawData || []).filter(row => {
+        // Solo entregados
+        if (row.estado && row.estado !== 'entregado') return false;
+
+        // Chofer opcional
+        if (choferId && String(row.chofer_id) !== String(choferId)) return false;
+
+        // Fecha de referencia = fecha_entrega (UTC), si no fecha (UTC)
+        const iso = row.fecha_entrega || row.fecha;
+        const fechaArg = toArgentinaDateString(iso);
+        if (!fechaArg) return false;
+
+        // Rango [from, to] en fecha AR
+        if (fromStr && fechaArg < fromStr) return false;
+        if (toStr && fechaArg > toStr) return false;
+
+        return true;
+      });
+
+      // Clientes únicos: ajustar el campo según tu backend
+      const clientesSet = new Set();
+      filtrados.forEach(row => {
+        // CAMBIAR AQUÍ si tu identificador de cliente es otro
+        const key =
+          row.cliente_id ||
+          row.punto_entrega_id ||
+          row.contacto_id ||
+          row.telefono ||
+          null;
+        if (key != null) {
+          clientesSet.add(String(key));
+        }
+      });
+
+      // Productos: asumimos que viene un array items en cada pedido
+      const productosMap = new Map();
+      filtrados.forEach(row => {
+        if (!Array.isArray(row.items)) return;
+        row.items.forEach(it => {
+          // CAMBIAR AQUÍ si tu nombre de producto es otro
+          const nombre =
+            it.producto ||
+            it.nombre ||
+            (it.producto_id ? ('ID ' + it.producto_id) : 'Producto sin nombre');
+          const cantidad = Number(it.cantidad) || 0;
+          const prev = productosMap.get(nombre) || 0;
+          productosMap.set(nombre, prev + cantidad);
+        });
+      });
+
+      const productos = Array.from(productosMap.entries())
+        .map(([producto, cantidad]) => ({ producto, cantidad }))
+        .sort((a, b) => b.cantidad - a.cantidad);
+
+      return {
+        pedidosEntregados: filtrados.length,
+        clientesUnicos: clientesSet.size,
+        productos
+      };
+    }
+
+    async function onConsultar() {
+      setError('');
+      const choferId  = choferSelect.value;
+      const from = fromInput.value;
+      const to   = toInput.value;
+
+      if (!from || !to) {
+        setError('Complete el rango de fechas.');
+        return;
+      }
+
+      // Resolver empresa_id a enviar:
+      // - SUPER: la del combo (obligatoria)
+      // - NO SUPER: la del token (empresaId); si no la tenemos, no mandamos param y
+      //   el backend debería resolver por token igualmente.
+      let empresaIdToUse = null;
+      if (isSuper) {
+        empresaIdToUse = empresaSelect.value || null;
+        if (!empresaIdToUse) {
+          setError('Seleccione una empresa.');
+          return;
+        }
+      } else {
+        empresaIdToUse = empresaId || null;
+      }
+
+      setLoading(true);
+      try {
+        const params = new URLSearchParams();
+        if (empresaIdToUse) {
+          params.set('empresa_id', empresaIdToUse);
+        }
+        params.set('from', from);
+        params.set('to', to);
+
+        const url = '/api/reportes/entregados?' + params.toString();
+        const data = await fetchJSON(url);
+
+        const resultados = procesarDatos(data, { choferId, from, to });
+        renderResultados(resultados);
+      } catch (err) {
+        console.error(err);
+        setError('Error obteniendo datos: ' + err.message);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      initDates();
+      loadMeAndEmpresas();
+      btnConsultar.addEventListener('click', onConsultar);
+    });
+  </script>
+</body>
+</html>

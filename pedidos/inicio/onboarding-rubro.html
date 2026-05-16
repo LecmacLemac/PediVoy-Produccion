@@ -1,0 +1,374 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Onboarding por Rubro</title>
+  <link rel="stylesheet" href="theme-base.css" />
+  <style>
+    :root {
+      --bg:#0b1020; --ink:#f1f5f9; --muted:#94a3b8; --brand:#06b6d4; --surface:rgba(30,41,59,.7);
+      --border:rgba(148,163,184,.18); --radius:12px; --success:#10b981; --danger:#ef4444;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--ink)}
+    .wrap{max-width:980px;margin:0 auto;padding:24px}
+    .container { max-width: 1200px; margin: 0 auto; padding: 0 20px; }
+
+    header {
+      position: sticky; top: 0; z-index: 50;
+      background: rgba(15,23,42,.95);
+      border-bottom: 1px solid var(--border);
+      backdrop-filter: blur(12px);
+      padding: .8rem 0;
+    }
+    nav { display:flex; justify-content:space-between; align-items:center; }
+    .brand { display:flex; gap:.8rem; align-items:center; font-size:1.1rem; font-weight:700; color:#fff; text-decoration:none; white-space:nowrap; }
+    .brand-dot { width:10px; height:10px; border-radius:50%; background:var(--brand); box-shadow:0 0 10px var(--brand); }
+    .role-badge {
+      background: rgba(6, 182, 212, 0.1); border: 1px solid rgba(6, 182, 212, 0.3);
+      color: var(--brand); padding: 2px 8px; border-radius: 99px; font-size: .75rem;
+    }
+    .menu { list-style:none; display:flex; gap:1.5rem; margin:0; padding:0; }
+    .menu a { text-decoration:none; color:var(--muted); font-weight:500; transition:.2s; white-space:nowrap; }
+    .menu a:hover, .menu a.active { color:#fff; }
+    .menu a.active { border-bottom:2px solid var(--brand); padding-bottom:4px; }
+
+    @media (max-width: 768px) {
+      nav { flex-direction: column; gap: 1rem; align-items: stretch; }
+      .brand { justify-content: space-between; }
+      .menu {
+        overflow-x: auto;
+        padding-bottom: 5px;
+        gap: 20px;
+        -webkit-overflow-scrolling: touch;
+      }
+      .menu::-webkit-scrollbar { display: none; }
+    }
+    .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:16px}
+    h1{margin:0 0 8px}
+    p{color:var(--muted)}
+    select,button{padding:10px 12px;border-radius:10px;border:1px solid var(--border);background:#0f172a;color:#fff}
+    button{background:var(--brand);color:#001018;border:none;font-weight:700;cursor:pointer}
+    button:disabled{opacity:.7;cursor:wait}
+    .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
+    .tpl{border:1px solid var(--border);border-radius:10px;padding:12px;background:#0f172a}
+    .muted{color:var(--muted);font-size:.92rem}
+    .ok{color:var(--success)}
+    .err{color:var(--danger)}
+    a{color:var(--brand)}
+  </style>
+</head>
+<body>
+  <header>
+    <nav class="container">
+      <div class="brand">
+        <div class="brand-dot"></div>
+        MultiEmpresas
+        <span id="roleBadge" class="role-badge">Admin</span>
+      </div>
+      <ul class="menu">
+        <li><a href="inicial.html" class="active">🚀 Inicio</a></li>
+        <li><a href="/pedidos/dashboard.html">Dashboard</a></li>
+        <li><a href="#" id="logout" style="color: var(--danger)">Salir</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <main class="wrap">
+    <div class="card">
+      <h1>Onboarding por Rubro</h1>
+      <p>Elegí un vertical preconfigurado para acelerar la puesta en marcha de tu empresa.</p>
+      <div class="row">
+        <div id="empresaFilterWrapper" style="display:none;">
+          <select id="empresaSelect" title="Seleccionar empresa">
+            <option value="">Seleccionar empresa…</option>
+          </select>
+        </div>
+        <select id="verticalSelect">
+          <option value="">Cargando verticales...</option>
+        </select>
+        <label class="muted" style="display:flex;gap:6px;align-items:center;">
+          <input id="overwriteCatalog" type="checkbox" />
+          Sobrescribir catálogo existente
+        </label>
+        <button id="btnApply" type="button">Aplicar vertical + catálogo base</button>
+        <a href="inicial.html">← Volver a Configuración Inicial</a>
+      </div>
+      <div id="status" class="muted" style="margin-top:10px;">Listo para seleccionar.</div>
+    </div>
+
+    <div class="card">
+      <div class="row" style="justify-content:space-between;">
+        <h2 style="margin:0; font-size:1.1rem;">Activación (últimos 7 días)</h2>
+        <button id="btnRefreshKpis" type="button">Refrescar KPIs</button>
+      </div>
+      <div id="kpiGrid" class="grid" style="margin-top:10px;"></div>
+    </div>
+
+    <div class="card">
+      <h2 style="margin:0 0 10px; font-size:1.1rem;">Sugerencias accionables</h2>
+      <div id="suggestionsBox" class="muted">Sin datos aún.</div>
+    </div>
+
+    <section id="templates" class="grid"></section>
+  </main>
+
+  <script>
+    const authFetch = (url, opts = {}) => {
+      const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
+      return fetch(url, { ...opts, headers, credentials: 'include' });
+    };
+
+    const state = {
+      items: [],
+      user: null,
+      esSuperAdmin: false,
+      targetEmpresaId: null,
+      empresas: []
+    };
+    const moneyFmt = new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 });
+
+    function escapeHtml(v){
+      return String(v ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+    }
+
+    function safeInternalPath(value) {
+      const s = String(value || '');
+      if (!s.startsWith('/')) return null;
+      if (s.startsWith('//')) return null;
+      if (/^https?:/i.test(s)) return null;
+      return s;
+    }
+
+    function setStatus(msg, kind='muted') {
+      const el = document.getElementById('status');
+      el.className = kind;
+      el.textContent = msg;
+    }
+
+    function withEmpresaQuery(urlBase) {
+      if (state.esSuperAdmin && state.targetEmpresaId) {
+        const sep = urlBase.includes('?') ? '&' : '?';
+        return urlBase + sep + 'empresa_id=' + encodeURIComponent(String(state.targetEmpresaId));
+      }
+      return urlBase;
+    }
+
+    function ensureSuperEmpresaSelected() {
+      if (!state.esSuperAdmin) return true;
+      if (state.targetEmpresaId) return true;
+      setStatus('Seleccioná una empresa para continuar.', 'err');
+      return false;
+    }
+
+    function renderTemplates() {
+      const box = document.getElementById('templates');
+      box.innerHTML = state.items.map(it => `
+        <article class="tpl">
+          <h3 style="margin:0 0 6px;">${escapeHtml(it.title)}</h3>
+          <div class="muted" style="margin-bottom:8px;">${escapeHtml(it.summary || '')}</div>
+          <div class="muted"><strong>Rubro:</strong> ${escapeHtml(it.rubro)}</div>
+          <ul>
+            ${(it.checklist || []).map(c => `<li>${escapeHtml(c)}</li>`).join('')}
+          </ul>
+        </article>
+      `).join('');
+    }
+
+    async function loadKpis() {
+      const box = document.getElementById('kpiGrid');
+      const sug = document.getElementById('suggestionsBox');
+
+      if (state.esSuperAdmin && !state.targetEmpresaId) {
+        box.innerHTML = '<div class="muted">Seleccioná una empresa para ver KPIs.</div>';
+        sug.textContent = 'Seleccioná una empresa para ver sugerencias.';
+        return;
+      }
+
+      box.innerHTML = '<div class="muted">Cargando KPIs...</div>';
+      sug.textContent = 'Cargando sugerencias...';
+
+      const res = await authFetch(withEmpresaQuery('/api/setup/activation-kpis'));
+      if (res.status === 401) return window.location.href = '/pedidos/login.html';
+      const json = await res.json();
+      const k = json?.kpis || {};
+      const suggestions = Array.isArray(json?.suggestions) ? json.suggestions : [];
+
+      box.innerHTML = `
+        <div class="tpl"><div class="muted">Setup completado</div><div style="font-size:1.4rem;font-weight:700;">${Number(k.setup_completion || 0)}%</div></div>
+        <div class="tpl"><div class="muted">Productos activos</div><div style="font-size:1.4rem;font-weight:700;">${Number(k.productos_activos || 0)}</div></div>
+        <div class="tpl"><div class="muted">Clientes</div><div style="font-size:1.4rem;font-weight:700;">${Number(k.clientes || 0)}</div></div>
+        <div class="tpl"><div class="muted">Choferes activos</div><div style="font-size:1.4rem;font-weight:700;">${Number(k.choferes_activos || 0)}</div></div>
+        <div class="tpl"><div class="muted">Pedidos (7d)</div><div style="font-size:1.4rem;font-weight:700;">${Number(k.pedidos_7d || 0)}</div></div>
+        <div class="tpl"><div class="muted">Facturación (7d)</div><div style="font-size:1.4rem;font-weight:700;">${moneyFmt.format(Number(k.facturacion_7d || 0))}</div></div>
+      `;
+
+      if (!suggestions.length) {
+        sug.innerHTML = '<span class="ok">✅ Excelente: no hay alertas prioritarias. Seguí optimizando conversión y recompra.</span>';
+      } else {
+        sug.innerHTML = suggestions.map(s => {
+          const dot = s.level === 'high' ? '🔴' : '🟡';
+          const actionPath = safeInternalPath(s.actionPath);
+          const actionLabel = escapeHtml(s.actionLabel || 'Abrir');
+          const action = actionPath
+            ? ` <a href="${actionPath}" style="margin-left:8px;">${actionLabel} →</a>`
+            : '';
+          return `<div style="margin-bottom:8px;">${dot} ${escapeHtml(s.text || s.code || 'Sugerencia')}${action}</div>`;
+        }).join('');
+      }
+    }
+
+    async function loadTemplates() {
+      if (state.esSuperAdmin && !state.targetEmpresaId) {
+        state.items = [];
+        const select = document.getElementById('verticalSelect');
+        if (select) {
+          select.innerHTML = '<option value="">Seleccionar empresa primero</option>';
+        }
+        renderTemplates();
+        return;
+      }
+
+      const res = await authFetch(withEmpresaQuery('/api/setup/vertical-templates'));
+      if (res.status === 401) return window.location.href = '/pedidos/login.html';
+      const json = await res.json();
+      state.items = Array.isArray(json.items) ? json.items : [];
+
+      const select = document.getElementById('verticalSelect');
+      select.innerHTML = '<option value="">Seleccionar vertical</option>';
+      state.items.forEach(it => {
+        const opt = document.createElement('option');
+        opt.value = it.id;
+        opt.textContent = `${it.title} (${it.rubro})`;
+        select.appendChild(opt);
+      });
+
+      renderTemplates();
+      setStatus('Verticales cargadas.', 'ok');
+    }
+
+    async function applyVertical() {
+      if (!ensureSuperEmpresaSelected()) return;
+
+      const sel = document.getElementById('verticalSelect');
+      const v = sel.value;
+      if (!v) return setStatus('Seleccioná un vertical primero.', 'err');
+
+      const overwrite = !!document.getElementById('overwriteCatalog')?.checked;
+      const btn = document.getElementById('btnApply');
+      btn.disabled = true;
+      setStatus('Aplicando vertical y catálogo base...', 'muted');
+      try {
+        const body = { vertical: v, overwrite };
+        if (state.esSuperAdmin && state.targetEmpresaId) {
+          body.empresa_id = state.targetEmpresaId;
+        }
+
+        const res = await authFetch('/api/setup/apply-vertical-full', {
+          method: 'POST',
+          body: JSON.stringify(body),
+        });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error || 'No se pudo aplicar vertical');
+        const c = json.catalog || {};
+        setStatus(`Listo: ${json.applied?.title || v}. Catálogo -> +${c.inserted || 0} / ~${c.updated || 0} / omitidos ${c.skipped || 0}.`, 'ok');
+        await loadKpis();
+      } catch (e) {
+        setStatus(e.message || 'Error aplicando vertical', 'err');
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function setupEmpresaSelector() {
+      const wrapper = document.getElementById('empresaFilterWrapper');
+      const select = document.getElementById('empresaSelect');
+      if (!wrapper || !select) return;
+
+      wrapper.style.display = 'block';
+      select.innerHTML = '<option value="">Cargando empresas…</option>';
+
+      const res = await authFetch('/api/admin/empresas-list', { method: 'GET' });
+      if (!res.ok) {
+        wrapper.style.display = 'none';
+        return;
+      }
+
+      const json = await res.json();
+      const empresas = Array.isArray(json) ? json : (Array.isArray(json.data) ? json.data : []);
+      state.empresas = empresas;
+
+      if (!empresas.length) {
+        select.innerHTML = '<option value="">(Sin empresas)</option>';
+        state.targetEmpresaId = null;
+        return;
+      }
+
+      select.innerHTML = '<option value="">Seleccionar empresa</option>';
+      empresas.forEach(e => {
+        const opt = document.createElement('option');
+        opt.value = String(Number(e.id) || '');
+        opt.textContent = `${e.id} · ${e.nombre}`;
+        select.appendChild(opt);
+      });
+
+      if (state.targetEmpresaId) {
+        select.value = String(state.targetEmpresaId);
+      }
+
+      select.addEventListener('change', async () => {
+        const v = select.value;
+        state.targetEmpresaId = v ? Number(v) : null;
+
+        await loadTemplates().catch((e) => setStatus(e.message || 'Error cargando verticales', 'err'));
+        await loadKpis().catch((e) => setStatus(e.message || 'Error cargando KPIs', 'err'));
+      });
+    }
+
+    async function loadUserInfo() {
+      const res = await authFetch('/api/me', { method: 'GET' });
+      if (res.status === 401) return window.location.href = '/pedidos/login.html';
+      const json = await res.json();
+      const user = json?.user || null;
+      state.user = user;
+      state.esSuperAdmin = String(user?.role || '').toLowerCase() === 'super';
+      state.targetEmpresaId = user?.empresa_id || null;
+
+      const badge = document.getElementById('roleBadge');
+      if (badge) {
+        badge.textContent = state.esSuperAdmin ? 'SUPER ADMIN' : 'Admin';
+      }
+
+      if (state.esSuperAdmin) {
+        await setupEmpresaSelector();
+      }
+    }
+
+    async function init() {
+      await loadUserInfo();
+      await loadTemplates().catch((e) => setStatus(e.message || 'Error cargando verticales', 'err'));
+      await loadKpis().catch((e) => setStatus(e.message || 'Error cargando KPIs', 'err'));
+    }
+
+    document.getElementById('btnApply').addEventListener('click', applyVertical);
+    document.getElementById('btnRefreshKpis').addEventListener('click', () => {
+      loadKpis().catch((e) => setStatus(e.message || 'Error cargando KPIs', 'err'));
+    });
+
+    const logout = document.getElementById('logout');
+    if (logout) {
+      logout.addEventListener('click', async (ev) => {
+        ev.preventDefault();
+        try {
+          await authFetch('/api/logout', { method: 'POST' });
+        } catch (_) {}
+        window.location.href = '/pedidos/login.html';
+      });
+    }
+
+    init().catch((e) => setStatus(e.message || 'Error inicializando onboarding', 'err'));
+  </script>
+</body>
+</html>

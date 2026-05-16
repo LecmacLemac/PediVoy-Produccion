@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Seguimiento de Pedido</title>
+  <link rel="stylesheet" href="theme-base.css" />
+  
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link href="https://cdn.jsdelivr.net/npm/remixicon@3.5.0/fonts/remixicon.css" rel="stylesheet">
+
+  <style>
+    :root { --primary: #2563eb; --accent: #10b981; --bg-card: rgba(255, 255, 255, 0.95); }
+    body { margin: 0; font-family: system-ui, -apple-system, sans-serif; overflow: hidden; background: #f3f4f6; }
+    
+    #map { height: 100vh; width: 100%; z-index: 0; }
+
+    /* Tarjeta Flotante Inferior */
+    .hud-card {
+      position: absolute; bottom: 0; left: 0; right: 0;
+      background: var(--bg-card);
+      border-radius: 24px 24px 0 0;
+      box-shadow: 0 -4px 24px rgba(0,0,0,0.1);
+      z-index: 1000;
+      padding: 24px;
+      transition: transform 0.3s ease;
+      backdrop-filter: blur(8px);
+    }
+
+    /* Títulos y textos */
+    .title-row { display: flex; justify-content: space-between; align-items: start; margin-bottom: 16px; }
+    .order-id { font-size: 0.85rem; color: #6b7280; font-weight: 500; }
+    .status-badge {
+      background: #dbeafe; color: #1e40af;
+      padding: 4px 12px; border-radius: 99px;
+      font-size: 0.75rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .status-badge.live { background: #d1fae5; color: #065f46; animation: pulse 2s infinite; }
+
+    /* Info Repartidor */
+    .driver-row { display: flex; align-items: center; gap: 12px; padding-top: 16px; border-top: 1px solid #e5e7eb; }
+    .driver-avatar {
+      width: 48px; height: 48px; background: #eff6ff; color: var(--primary);
+      border-radius: 50%; display: grid; place-items: center; font-size: 1.5rem;
+    }
+    .driver-info h3 { margin: 0; font-size: 1rem; color: #1f2937; }
+    .driver-info p { margin: 0; font-size: 0.85rem; color: #6b7280; }
+    
+    /* Botones de Acción */
+    .actions { display: flex; gap: 10px; margin-left: auto; }
+    .btn-icon {
+      width: 42px; height: 42px; border-radius: 50%; border: none; cursor: pointer;
+      display: grid; place-items: center; font-size: 1.2rem;
+      transition: transform 0.2s; box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    }
+    .btn-icon:active { transform: scale(0.95); }
+    .btn-wpp { background: #25D366; color: white; }
+    .btn-call { background: var(--primary); color: white; }
+
+    /* Marcadores Personalizados */
+    .custom-pin {
+      width: 44px; height: 44px; background: white; border-radius: 50%;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+      display: grid; place-items: center; font-size: 22px;
+      border: 3px solid white;
+    }
+    .pin-driver { border-color: var(--primary); transition: all 0.5s linear; /* Suavizado */ }
+    .pin-dest { border-color: var(--accent); }
+
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); }
+      70% { box-shadow: 0 0 0 10px rgba(16, 185, 129, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+    }
+    
+    /* Loading overlay */
+    #loading {
+      position: fixed; inset: 0; background: white; z-index: 2000;
+      display: grid; place-items: center; transition: opacity 0.5s;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="loading">
+    <div style="text-align: center; color: #6b7280;">
+      <i class="ri-loader-4-line" style="font-size: 3rem; animation: spin 1s linear infinite; display: block;"></i>
+      <p style="margin-top: 10px;">Buscando pedido...</p>
+    </div>
+  </div>
+
+  <div id="map"></div>
+
+  <div class="hud-card">
+    <div class="title-row">
+      <div style="display:flex; align-items:center; gap:10px;">
+        <img id="lblEmpresaLogo" alt="Logo empresa" style="display:none; width:38px; height:38px; border-radius:8px; object-fit:cover; border:1px solid #e5e7eb; background:#fff;">
+        <div>
+          <h1 class="text-lg font-bold text-gray-900" id="lblCliente">Cargando...</h1>
+          <div class="order-id" id="orderMeta">Seguimiento en tiempo real</div>
+        </div>
+      </div>
+      <div class="status-badge" id="lblEstado">...</div>
+    </div>
+
+    <div style="margin-bottom: 16px;">
+      <div style="display: flex; gap: 8px; align-items: center; color: #4b5563; font-size: 0.9rem;">
+        <i class="ri-map-pin-fill" style="color: var(--accent);"></i>
+        <span id="lblDireccion">...</span>
+      </div>
+    </div>
+
+    <div class="driver-row" id="driverRow" style="display: none;">
+      <div class="driver-avatar"><i class="ri-user-smile-line"></i></div>
+      <div class="driver-info">
+        <h3 id="lblChofer">Buscando repartidor...</h3>
+        <p id="lblPlaca">En camino</p>
+      </div>
+      <div class="actions">
+        <a href="#" id="btnWpp" class="btn-icon btn-wpp" target="_blank"><i class="ri-whatsapp-line"></i></a>
+        <a href="#" id="btnCall" class="btn-icon btn-call"><i class="ri-phone-fill"></i></a>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style> @keyframes spin { 100% { transform: rotate(360deg); } } 
+
+    @media (max-width: 768px) {
+      .container { padding: 0 12px; }
+      nav { flex-direction: column; align-items: stretch; gap: 0.6rem; }
+      .menu { overflow-x: auto; white-space: nowrap; padding-bottom: 4px; }
+      .row { align-items: stretch; }
+      .row > * { min-width: 0 !important; }
+      input, select, textarea, button { width: 100%; }
+    }
+</style>
+
+<script>
+  // 1. Configuración y Estado
+  const urlParams = new URLSearchParams(window.location.search);
+  const TOKEN = urlParams.get('t') || urlParams.get('token');
+
+  const loadingEl    = document.getElementById('loading');
+  const driverRow    = document.getElementById('driverRow');
+  const lblCliente   = document.getElementById('lblCliente');
+  // ID de pedido oculto para vista cliente
+  const lblDireccion = document.getElementById('lblDireccion');
+  const lblEstado    = document.getElementById('lblEstado');
+  const lblEmpresaLogo = document.getElementById('lblEmpresaLogo');
+  const lblChofer    = document.getElementById('lblChofer');
+  const lblPlaca     = document.getElementById('lblPlaca');
+  const btnWpp       = document.getElementById('btnWpp');
+  const btnCall      = document.getElementById('btnCall');
+
+  let map, driverMarker, destMarker;
+  let firstZoom = true;
+  let pollTimer = null;
+
+  // 2. Inicializar Mapa
+  function initMap() {
+    map = L.map('map', { zoomControl: false }).setView([-34.6, -58.4], 13);
+
+    L.tileLayer(
+      'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+      {
+        maxZoom: 19,
+        attribution: '&copy; OpenStreetMap &copy; CartoDB'
+      }
+    ).addTo(map);
+
+    L.control.zoom({ position: 'topright' }).addTo(map);
+  }
+
+  // 3. Iconos personalizados
+  function createIcon(kind) {
+    const div = document.createElement('div');
+    div.className = 'custom-pin ' + (kind === 'driver' ? 'pin-driver' : 'pin-dest');
+    div.innerHTML =
+      kind === 'driver'
+        ? '<i class="ri-motorbike-fill"></i>'
+        : '<i class="ri-map-pin-2-fill"></i>';
+
+    return L.divIcon({
+      html: div,
+      iconSize: [44, 44],
+      className: '' // importante: vaciar className para que Leaflet no meta estilos extra
+    });
+  }
+
+  // 4. Llamada al backend
+  async function updateTracking() {
+    if (!TOKEN) return;
+
+    try {
+      const res = await fetch(`/api/public/tracking/${TOKEN}`);
+
+      if (!res.ok) {
+      if (res.status === 404) {
+        loadingEl.innerHTML = '<p>Pedido no encontrado ❌</p>';
+      } else {
+        loadingEl.innerHTML = '<p>No se pudo cargar el seguimiento.</p>';
+      }
+
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+  return;
+}
+
+      const data = await res.json();
+
+      // Ocultamos pantalla de "Buscando pedido..."
+      loadingEl.style.opacity = '0';
+      setTimeout(() => {
+        loadingEl.style.display = 'none';
+      }, 500);
+
+      renderData(data);
+    } catch (err) {
+      console.error('TRACKING ERROR', err);
+    }
+  }
+
+  // 5. Render de datos en tarjeta + mapa
+  function renderData({ pedido, driverLocation }) {
+    // --- Textos básicos ---
+    const nombreCliente =
+      (pedido.cliente && String(pedido.cliente).trim()) ||
+      (pedido.direccion ? String(pedido.direccion).split(',')[0] : 'Cliente');
+
+    lblCliente.textContent   = `Hola ${nombreCliente}`;
+    // pedido.id oculto en UI pública
+    lblDireccion.textContent = pedido.direccion || '';
+
+    if (pedido.empresa_logo_url) {
+      lblEmpresaLogo.src = pedido.empresa_logo_url;
+      lblEmpresaLogo.style.display = 'block';
+      lblEmpresaLogo.onerror = () => { lblEmpresaLogo.style.display = 'none'; };
+    } else {
+      lblEmpresaLogo.style.display = 'none';
+    }
+
+    // --- Estado ---
+    const st = (pedido.estado || '').toLowerCase();
+
+    lblEstado.textContent = st.replace('_', ' ').toUpperCase();
+    lblEstado.classList.remove('live');
+    lblEstado.style.background = '';
+    lblEstado.style.color = '';
+
+    if (['en_ruta', 'en_camino'].includes(st)) {
+      lblEstado.classList.add('live');
+      lblEstado.textContent = 'EN CAMINO 🛵';
+    } else if (st === 'entregado') {
+      lblEstado.textContent = 'ENTREGADO ✅';
+      lblEstado.style.background = '#d1fae5';
+      lblEstado.style.color = '#065f46';
+    }
+
+    // --- Info de chofer + botones ---
+    if (pedido.chofer_nombre) {
+      driverRow.style.display = 'flex';
+      lblChofer.textContent   = pedido.chofer_nombre;
+
+      if (pedido.chofer_tel) {
+        // Llamada
+        btnCall.href = `tel:${pedido.chofer_tel}`;
+
+        // WhatsApp (formato AR +549...)
+        let wppNum = String(pedido.chofer_tel).replace(/\D+/g, '');
+        if (wppNum.startsWith('0')) wppNum = wppNum.slice(1);
+        if (wppNum.length === 10 && !wppNum.startsWith('54')) {
+          wppNum = '549' + wppNum;
+        }
+        btnWpp.href = `https://wa.me/${wppNum}?text=Hola, soy el cliente del pedido #${pedido.id}`;
+      }
+
+      // Hora local (Argentina) de última actualización
+      if (driverLocation && driverLocation.timestamp) {
+        const dt = new Date(driverLocation.timestamp); // viene en UTC desde PostgreSQL
+        const horaAR = dt.toLocaleTimeString('es-AR', {
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: false,
+          timeZone: 'America/Argentina/Buenos_Aires'
+        });
+        lblPlaca.textContent = `Última actualización ${horaAR} hs`;
+      } else if (['en_ruta', 'en_camino'].includes(st)) {
+        lblPlaca.textContent = 'Esperando ubicación del repartidor...';
+      } else if (st === 'pendiente') {
+        lblPlaca.textContent = 'Repartidor asignado';
+      } else {
+        lblPlaca.textContent = 'En camino';
+      }
+    }
+
+    // --- Marcador de destino ---
+    if (pedido.dest_lat != null && pedido.dest_lng != null) {
+      const destLat = Number(pedido.dest_lat);
+      const destLng = Number(pedido.dest_lng);
+
+      if (!destMarker) {
+        destMarker = L.marker([destLat, destLng], { icon: createIcon('dest') }).addTo(map);
+      } else {
+        destMarker.setLatLng([destLat, destLng]);
+      }
+
+      if (firstZoom && !driverLocation) {
+        map.setView([destLat, destLng], 15);
+        firstZoom = false;
+      }
+    }
+
+    // --- Marcador del chofer ---
+    if (driverLocation && driverLocation.latitud != null && driverLocation.longitud != null) {
+      const lat = Number(driverLocation.latitud);
+      const lng = Number(driverLocation.longitud);
+
+      if (!driverMarker) {
+        driverMarker = L.marker([lat, lng], { icon: createIcon('driver') }).addTo(map);
+      } else {
+        driverMarker.setLatLng([lat, lng]);
+      }
+
+      // En el primer zoom, que se vean chofer + destino juntos
+      if (destMarker && firstZoom) {
+        const group = new L.featureGroup([driverMarker, destMarker]);
+        map.fitBounds(group.getBounds(), { padding: [80, 80] });
+        firstZoom = false;
+      } else if (!destMarker && firstZoom) {
+        map.setView([lat, lng], 15);
+        firstZoom = false;
+      }
+    }
+  }
+
+  // 6. Init
+  initMap();
+
+  if (!TOKEN) {
+    alert('Token de seguimiento inválido.');
+    loadingEl.innerHTML = '<p>Enlace roto ❌</p>';
+  } else {
+    updateTracking();
+    // Polling cada 8 segundos (balance entre tiempo real y consumo)
+    pollTimer = setInterval(updateTracking, 8000);
+
+    // Pausa/reanuda polling cuando la pestaña no está visible
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        if (pollTimer) {
+          clearInterval(pollTimer);
+          pollTimer = null;
+        }
+      } else if (!pollTimer) {
+        updateTracking();
+        pollTimer = setInterval(updateTracking, 8000);
+      }
+    });
+  }
+</script>
+
+</body>
+</html>

@@ -1,0 +1,1541 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Dashboard – MultiEmpresas</title>
+  <link rel="stylesheet" href="theme-base.css" />
+  
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+<style>
+  :root {
+    /* Palette Dark Theme */
+    --bg: #0b1020;
+    --bg-2: #0f172a;
+    --ink: #f1f5f9;
+    --muted: #94a3b8;
+    --brand: #06b6d4;       /* Cyan */
+    --brand-hover: #22d3ee;
+    --surface: rgba(30, 41, 59, 0.7);
+    --border: rgba(148, 163, 184, 0.15);
+    --glass: rgba(15, 23, 42, 0.95);
+    --radius: 12px;
+    
+    --success: #10b981;
+    --warning: #f59e0b;
+    --danger: #ef4444;
+    --info: #3b82f6;
+  }
+
+  * { box-sizing: border-box; outline: none; -webkit-tap-highlight-color: transparent; }
+  
+  body {
+    margin: 0; 
+    font-family: system-ui, -apple-system, sans-serif;
+    color: var(--ink);
+    background: 
+      radial-gradient(circle at 15% 50%, rgba(6, 182, 212, 0.05), transparent 25%),
+      radial-gradient(circle at 85% 30%, rgba(59, 130, 246, 0.05), transparent 25%),
+      var(--bg);
+    min-height: 100vh;
+    font-size: 14px;
+    padding-bottom: 80px;
+  }
+
+  .container { max-width: 1400px; margin: 0 auto; padding: 0 20px; }
+
+  /* --- HEADER --- */
+  header {
+    position: sticky; top: 0; z-index: 50;
+    background: var(--glass);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+    padding: 0.8rem 0;
+  }
+  
+  nav { display: flex; justify-content: space-between; align-items: center; }
+  
+  .brand { 
+    display: flex; gap: 0.8rem; align-items: center; 
+    font-size: 1.1rem; font-weight: 700; color: #fff; text-decoration: none; 
+    white-space: nowrap;
+  }
+  .brand-dot { width: 10px; height: 10px; background: var(--brand); border-radius: 50%; box-shadow: 0 0 10px var(--brand); }
+  
+  .role-badge { 
+    background: rgba(6, 182, 212, 0.1); border: 1px solid rgba(6, 182, 212, 0.3);
+    color: var(--brand); padding: 2px 8px; border-radius: 99px; font-size: 0.75rem; 
+  }
+
+  .menu { list-style: none; display: flex; gap: 1.5rem; margin: 0; padding: 0; }
+  .menu a { text-decoration: none; color: var(--muted); font-weight: 500; transition: 0.2s; white-space: nowrap; }
+  .menu a:hover, .menu a.active { color: #fff; }
+  .menu a.active { border-bottom: 2px solid var(--brand); padding-bottom: 4px; }
+
+  @media (max-width: 768px) {
+    nav { flex-direction: column; gap: 1rem; align-items: stretch; }
+    .brand { justify-content: space-between; }
+    .menu { overflow-x: auto; padding-bottom: 5px; gap: 20px; }
+    .menu::-webkit-scrollbar { display: none; }
+  }
+
+  main { padding-top: 2rem; padding-bottom: 4rem; display: flex; flex-direction: column; gap: 1.5rem; }
+
+  /* --- KPI CARDS (Dashboard Specific) --- */
+  .grid-kpi {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem;
+  }
+  .kpi-card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 1.5rem; display: flex; align-items: center; justify-content: space-between;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.1); transition: transform 0.2s;
+  }
+  .kpi-card:hover { transform: translateY(-2px); border-color: var(--brand); }
+  
+  .kpi-val h3 { font-size: 1.8rem; font-weight: 700; margin: 0; color: #fff; }
+  .kpi-val p { margin: 0; font-size: 0.85rem; color: var(--muted); text-transform: uppercase; font-weight: 600; }
+  
+  .kpi-icon { 
+    font-size: 2rem; opacity: 0.8; width: 50px; height: 50px; 
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 12px; background: rgba(255,255,255,0.05);
+  }
+
+  .summary-box {
+    background: rgba(6, 182, 212, 0.08);
+    border: 1px solid rgba(6, 182, 212, 0.25);
+    border-radius: var(--radius);
+    padding: 1rem 1.2rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+  .summary-main {
+    font-size: 1rem;
+    font-weight: 700;
+    color: #fff;
+  }
+  .summary-sub {
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
+
+  /* --- TOOLBAR & FILTERS --- */
+  .toolbar {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 1.5rem; display: flex; flex-direction: column; gap: 1.5rem;
+  }
+
+  .filters-row { display: flex; gap: 1rem; flex-wrap: wrap; }
+  .actions-row { display: flex; justify-content: space-between; align-items: flex-end; flex-wrap: wrap; gap: 1rem; border-top: 1px solid var(--border); padding-top: 1.5rem; }
+
+  .field { display: flex; flex-direction: column; gap: 0.4rem; flex: 1; min-width: 140px; }
+  
+  label { font-size: 0.75rem; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;}
+  
+  input, select {
+    background: var(--bg-2); border: 1px solid var(--border); color: #fff;
+    padding: 0.7rem 0.8rem; border-radius: 8px; font-size: 0.9rem;
+    width: 100%; transition: 0.2s;
+  }
+  input:focus, select:focus { border-color: var(--brand); box-shadow: 0 0 0 2px rgba(6,182,212,0.2); }
+
+  .search-box { position: relative; flex: 1; min-width: 250px; }
+  .search-box input { padding-left: 2.5rem; width: 100%; }
+  .search-icon { position: absolute; left: 0.8rem; top: 50%; transform: translateY(-50%); color: var(--muted); }
+
+  /* --- BUTTONS --- */
+  .btn {
+    padding: 0.7rem 1.2rem; border-radius: 8px; font-weight: 600; cursor: pointer;
+    border: 1px solid transparent; transition: 0.2s; display: inline-flex; align-items: center; gap: 0.5rem;
+    font-size: 0.9rem; background: rgba(255,255,255,0.05); color: var(--ink); border-color: var(--border);
+    text-decoration: none; justify-content: center;
+  }
+  .btn:hover { background: rgba(255,255,255,0.1); color: #fff; border-color: var(--brand); }
+  .btn-primary { background: var(--brand); color: #000; border: none; }
+  .btn-primary:hover { background: var(--brand-hover); box-shadow: 0 4px 12px rgba(6,182,212,0.3); }
+  .btn-sm { padding: 0.4rem 0.8rem; font-size: 0.8rem; }
+
+  .btn-icon {
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.3rem 0.5rem;
+    cursor: pointer;
+    font-size: 0.9rem;
+  }
+  .btn-icon:hover {
+    border-color: var(--brand);
+    background: rgba(255,255,255,0.05);
+  }
+
+
+  /* --- TABLE --- */
+  .table-responsive { overflow-x: auto; border-radius: var(--radius); border: 1px solid var(--border); background: var(--bg-2); }
+  table { width: 100%; border-collapse: collapse; text-align: left; white-space: nowrap; }
+  th { 
+    background: rgba(15, 23, 42, 0.9); color: var(--muted); font-weight: 600; 
+    padding: 1rem; font-size: 0.8rem; text-transform: uppercase; 
+    border-bottom: 1px solid var(--border);
+  }
+  th.sortable { cursor: pointer; user-select: none; }
+  th.sortable:hover { color: #fff; }
+  .sort-indicator { margin-left: 6px; color: var(--brand); font-size: 0.75rem; }
+  td { padding: 1rem; border-bottom: 1px solid var(--border); color: var(--ink); font-size: 0.9rem; vertical-align: middle; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: rgba(255,255,255,0.02); }
+
+  /* Status Badges */
+  .status-badge { padding: 4px 10px; border-radius: 99px; font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
+  .st-pendiente { background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.2); }
+  .st-en_ruta, .st-en_camino { background: rgba(59, 130, 246, 0.15); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.2); }
+  .st-entregado { background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.2); }
+  .st-cancelado { background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.2); }
+  .flag-list { display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
+  .flag-badge {
+    display:inline-flex; align-items:center; gap:5px;
+    padding: 3px 8px; border-radius: 99px; font-size: 0.7rem; font-weight: 700;
+    border: 1px solid transparent;
+  }
+  .flag-warn { background: rgba(249,115,22,0.12); color: #fdba74; border-color: rgba(249,115,22,0.25); }
+  .flag-danger { background: rgba(239,68,68,0.12); color: #fca5a5; border-color: rgba(239,68,68,0.25); }
+  .flag-info { background: rgba(59,130,246,0.12); color: #93c5fd; border-color: rgba(59,130,246,0.25); }
+
+  /* --- DIALOG / MODAL --- */
+  dialog {
+    background: #1e293b; color: #fff; border: 1px solid var(--border); border-radius: 12px;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+    max-width: 900px; width: 95%; padding: 0;
+    animation: fadeIn 0.2s ease-out;
+  }
+  dialog::backdrop { background: rgba(0,0,0,0.8); backdrop-filter: blur(4px); }
+  
+  .modal-header { padding: 1.2rem; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.2); }
+  .modal-body { padding: 1.5rem; overflow-y: auto; max-height: 70vh; }
+  .modal-footer { padding: 1.2rem; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 1rem; background: rgba(0,0,0,0.2); }
+
+  fieldset { border: 1px solid var(--border); border-radius: 8px; padding: 1rem; margin-bottom: 1rem; }
+  legend { padding: 0 10px; color: var(--brand); font-weight: 600; text-transform: uppercase; font-size: 0.8rem; }
+
+  /* Media Queries */
+  @media (max-width: 600px) {
+    .actions-row { flex-direction: column; align-items: stretch; }
+    .search-box { width: 100%; }
+    .filters-row .field { min-width: 100%; }
+    .modal-footer { flex-direction: column-reverse; }
+    .modal-footer .btn { width: 100%; }
+  }
+
+  .toast { position: fixed; right: 20px; bottom: 30px; background: #fff; color: #0f172a; padding: 10px 20px; border-radius: 99px; font-weight: 600; box-shadow: 0 10px 30px rgba(0,0,0,0.3); opacity: 0; pointer-events: none; transition: 0.3s; z-index: 2000; }
+  .toast.show { opacity: 1; transform: translateY(-10px); }
+  .is-loading { opacity: 0.7; pointer-events: none; }
+  .loading-row { text-align:center; padding:2rem; color:var(--muted); }
+  .row-invalid input { border-color: var(--danger) !important; box-shadow: 0 0 0 2px rgba(239,68,68,0.15); }
+  .hint-error { color: #fca5a5; font-size: 0.8rem; margin-top: 0.75rem; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+</style>
+</head>
+<body>
+
+  <header>
+    <nav class="container">
+      <div class="brand">
+        <div class="brand-dot"></div>
+        MultiEmpresas
+        <span id="roleBadge" class="role-badge"></span>
+      </div>
+    <ul class="menu" id="mainMenu">
+        <li><a href="inicio/inicial.html">🚀 Inicio</a></li>
+        <li><a href="dashboard.html" class="active">Dashboard</a></li>
+        <li><a href="facturacion.html">Facturacion</a></li>
+        <li><a href="pagos.html">Pagos</a></li>
+        <li><a href="gastos.html">Gastos</a></li>
+        <li><a href="stock.html">Stock</a></li>
+        <li><a href="repartidores.html">Repartidor</a></li>
+        <li><a href="estadisticas.html">Estadisticas</a></li>
+        <li><a href="iaweb.html">IAweb</a></li>
+        <li><a href="qr.html">QR</a></li>
+        <li><a href="#" id="logout" style="color: var(--danger)">Salir</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <main class="container">
+    
+    <section class="grid-kpi">
+      <div class="kpi-card">
+        <div class="kpi-val">
+          <h3 id="kpiPend">0</h3>
+          <p>Pendientes</p>
+        </div>
+        <div class="kpi-icon" style="color: var(--warning); background: rgba(245,158,11,0.1);">
+          <i class="fa-regular fa-clock"></i>
+        </div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-val">
+          <h3 id="kpiRuta">0</h3>
+          <p>En Ruta</p>
+        </div>
+        <div class="kpi-icon" style="color: var(--info); background: rgba(59,130,246,0.1);">
+          <i class="fa-solid fa-truck-fast"></i>
+        </div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-val">
+          <h3 id="kpiEnt" style="color:var(--success)">0</h3>
+          <p>Entregados</p>
+        </div>
+        <div class="kpi-icon" style="color: var(--success); background: rgba(16,185,129,0.1);">
+          <i class="fa-regular fa-circle-check"></i>
+        </div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-val">
+          <h3 id="kpiMonto">$ 0</h3>
+          <p>Monto Total</p>
+        </div>
+        <div class="kpi-icon" style="color: #fff; background: rgba(255,255,255,0.1);">
+          <i class="fa-solid fa-sack-dollar"></i>
+        </div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-val">
+          <h3 id="kpiCancel" style="color:var(--danger)">0</h3>
+          <p>Cancelados</p>
+        </div>
+        <div class="kpi-icon" style="color: var(--danger); background: rgba(239,68,68,0.1);">
+          <i class="fa-regular fa-circle-xmark"></i>
+        </div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-val">
+          <h3 id="kpiTicket">$ 0</h3>
+          <p>Ticket Promedio</p>
+        </div>
+        <div class="kpi-icon" style="color: #c084fc; background: rgba(192,132,252,0.12);">
+          <i class="fa-solid fa-receipt"></i>
+        </div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-val">
+          <h3 id="kpiSinChofer">0</h3>
+          <p>Sin Chofer</p>
+        </div>
+        <div class="kpi-icon" style="color: #f97316; background: rgba(249,115,22,0.12);">
+          <i class="fa-solid fa-triangle-exclamation"></i>
+        </div>
+      </div>
+    </section>
+
+    <section class="summary-box" id="kpiDetailBox" aria-live="polite">
+      <div class="summary-main" id="kpiDetailMain">Artículos entregados del filtro: —</div>
+      <div class="summary-sub" id="kpiDetailSub">Aplicá filtros para ver el detalle por producto entregado.</div>
+    </section>
+
+    <section class="toolbar">
+      <div class="filters-row">
+        
+        <div class="field" id="rowEmp" hidden>
+          <label for="empSel">Empresa</label>
+          <select id="empSel">
+            <option value="">Cargando...</option>
+          </select>
+        </div>
+        
+        <div class="field">
+          <label>Asignación</label>
+          <select id="choferFilter">
+            <option value="">Todos</option>
+            <!-- Las demás opciones (incluida "⚠️ Sin chofer (Huérfanos)")
+                se generan desde JS en loadChoferes() -->
+          </select>
+        </div>
+
+        <div class="field">
+          <label>Estado</label>
+          <select id="estadoFilter">
+            <option value="">Todos</option>
+            <option value="pendiente">Pendiente</option>
+            <option value="en_ruta">En Ruta</option>
+            <option value="entregado">Entregado</option>
+            <option value="cancelado">Cancelado</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>Desde</label>
+          <input type="date" id="fromFilter" />
+        </div>
+
+        <div class="field">
+          <label>Hasta</label>
+          <input type="date" id="toFilter" />
+        </div>
+      </div>
+
+      <div class="actions-row">
+        <div class="search-box">
+          <span class="search-icon">
+            <i class="fa-solid fa-magnifying-glass"></i>
+          </span>
+          <input id="q" type="search" placeholder="Buscar cliente, dirección..." autocomplete="off" />
+        </div>
+
+        <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+          <button id="btnRef" class="btn" title="Recargar">
+            <i class="fa-solid fa-rotate-right"></i>
+          </button>
+          <button id="btnToday" class="btn">Hoy</button>
+          <button id="btnClear" class="btn">Limpiar</button>
+          <button id="btnExport" class="btn btn-primary">
+            <i class="fa-solid fa-file-csv"></i> Exportar
+          </button>
+        </div>
+      </div>
+    </section>
+
+
+    <section>
+      <div style="display:flex; justify-content:space-between; margin-bottom:0.5rem; align-items:center; gap:8px; flex-wrap:wrap;">
+        <h3 style="margin:0; color:#fff;">Listado de Pedidos</h3>
+        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:flex-end;">
+          <label for="pageSize" style="font-size:0.72rem; margin:0;">Filas</label>
+          <select id="pageSize" style="width:auto; min-width:84px; padding:0.45rem 0.6rem;">
+            <option value="15">15</option>
+            <option value="30" selected>30</option>
+            <option value="50">50</option>
+            <option value="100">100</option>
+          </select>
+          <small id="syncInfo" style="color:var(--muted); font-size:0.8rem;">Sin sincronizar</small>
+          <span class="role-badge"><span id="totalCount">0</span> registros</span>
+        </div>
+      </div>
+      
+      <div class="table-responsive" id="tableCard">
+         <table>
+           <thead>
+             <tr>
+              <th class="sortable" data-sort="id">ID</th>
+              <th class="sortable" data-sort="fecha">Fecha</th>
+              <th class="sortable" data-sort="cliente">Cliente</th>
+              <th>Teléfono</th>
+              <th>Dirección</th>
+              <th class="sortable" data-sort="chofer">Chofer</th>
+              <th class="sortable" data-sort="estado">Estado</th>
+              <th class="sortable" data-sort="pago">Pago</th>
+              <th class="sortable" data-sort="monto">Monto</th>
+              <th>Acción</th>
+            </tr>
+          </thead>
+          <tbody id="rows">
+            <tr><td colspan="10" style="text-align:center; padding:3rem; color:var(--muted)">Cargando datos...</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin-top:0.75rem;">
+        <small id="pageInfo" style="color:var(--muted)">Mostrando 0-0 de 0</small>
+        <div style="display:flex; gap:0.5rem; align-items:center;">
+          <button id="btnPrevPage" class="btn btn-sm">← Anterior</button>
+          <span id="pageLabel" class="role-badge">Página 1</span>
+          <button id="btnNextPage" class="btn btn-sm">Siguiente →</button>
+        </div>
+      </div>
+    </section>
+
+    <dialog id="dlgPedido">
+      <div class="modal-header">
+        <strong style="font-size:1.1rem; color:#fff;">Editar Pedido #<span id="dlg_pid"></span></strong>
+        <button id="btnCloseX" class="btn btn-sm" style="background:transparent; border:none; color:var(--muted); font-size:1.2rem;">✕</button>
+      </div>
+      
+      <form id="fPedido" class="modal-body">
+        <fieldset>
+          <legend>Estado General</legend>
+          <div style="display:flex; gap:1rem; flex-wrap:wrap;">
+            <div class="field" style="flex:1">
+              <label>Estado</label>
+              <select id="dlg_estado">
+                <option value="pendiente">Pendiente</option>
+                <option value="en_ruta">En Ruta</option>
+                <option value="entregado">Entregado</option>
+                <option value="cancelado">Cancelado</option>
+              </select>
+            </div>
+            <div class="field" style="flex:1">
+              <label>Método de Pago</label>
+              <select id="dlg_metodo">
+                <option value="">(Sin definir)</option>
+                <option value="efectivo">Efectivo</option>
+                <option value="transferencia">Transferencia</option>
+              </select>
+            </div>
+          </div>
+
+          <div style="display:flex; gap:1rem; flex-wrap:wrap; margin-top:1rem;">
+            <div class="field" style="flex:1">
+              <label>Empresa ID</label>
+              <input type="number" id="dlg_empresa_id" min="1">
+            </div>
+            <div class="field" style="flex:1">
+              <label>Chofer ID</label>
+              <input type="number" id="dlg_chofer_id" min="0">
+            </div>
+            <div class="field" style="flex:1">
+              <label>Zona ID</label>
+              <input type="number" id="dlg_zona_id" min="0">
+            </div>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Ítems del Pedido</legend>
+          <div class="table-responsive" style="border:none; box-shadow:none;">
+            <table>
+              <thead>
+                <tr>
+                  <th>Producto</th>
+                  <th style="width:80px">Cant.</th>
+                  <th style="width:100px">Precio</th>
+                  <th style="text-align:right">Subtotal</th>
+                  <th style="width:40px"></th>
+                </tr>
+              </thead>
+              <tbody id="dlg_itemsBody"></tbody>
+              <tfoot>
+                <tr style="background:rgba(255,255,255,0.05)">
+                  <td colspan="3" style="text-align:right; font-weight:bold; padding-right:1rem;">TOTAL:</td>
+                  <td id="dlg_total" style="text-align:right; font-weight:bold; color:var(--brand); font-size:1.1rem;">$ 0</td>
+                  <td></td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+          <button id="dlg_addItem" type="button" class="btn btn-sm" style="margin-top:10px; width:100%;">
+            <i class="fa-solid fa-plus"></i> Agregar Ítem
+          </button>
+        </fieldset>
+      </form>
+
+      <div class="modal-footer">
+        <div id="dlgError" class="hint-error" style="display:none; margin-right:auto;"></div>
+        <button id="btnCloseDlg" class="btn">Cancelar</button>
+        <button id="btnSaveAll" class="btn btn-primary">Guardar Cambios</button>
+      </div>
+    </dialog>
+
+    <datalist id="prodList"></datalist>
+  </main>
+
+  <div id="toast" class="toast"></div>
+
+  <script src="/pedidos/info-tec/safe-storage.js"></script>
+  <script type="module">
+    // ====== Auth (modo seguro: cookie httpOnly) ======
+    const authFetch = (url, opts = {}) => {
+      const headers = opts.headers || {};
+      return fetch(url, { ...opts, headers, credentials: 'include' });
+    };
+
+    const $ = s => document.querySelector(s);
+    const rows = $('#rows');
+    const tableCard = $('#tableCard');
+    const toastEl = $('#toast');
+    const empFilter = $('#empSel');        // Select de empresa
+    const choferFilter = $('#choferFilter');
+    const estadoFilter = $('#estadoFilter');
+    const fromFilter = $('#fromFilter');
+    const toFilter = $('#toFilter');
+    const q = $('#q');
+
+    // KPIs
+    const kpiPend  = $('#kpiPend');
+    const kpiRuta  = $('#kpiRuta');
+    const kpiEnt   = $('#kpiEnt');
+    const kpiMonto = $('#kpiMonto');
+    const kpiCancel = $('#kpiCancel');
+    const kpiTicket = $('#kpiTicket');
+    const kpiSinChofer = $('#kpiSinChofer');
+    const totalCount = $('#totalCount');
+    const kpiDetailMain = $('#kpiDetailMain');
+    const kpiDetailSub  = $('#kpiDetailSub');
+    const pageSizeSel = $('#pageSize');
+    const pageInfo = $('#pageInfo');
+    const pageLabel = $('#pageLabel');
+    const btnPrevPage = $('#btnPrevPage');
+    const btnNextPage = $('#btnNextPage');
+
+    // Dialog Refs
+    const dlg          = $('#dlgPedido');
+    const dlg_itemsBody = $('#dlg_itemsBody');
+    const btnSaveAll   = $('#btnSaveAll');
+    const btnCloseDlg  = $('#btnCloseDlg');
+    const btnCloseX    = $('#btnCloseX');
+    const btnAddItem   = $('#dlg_addItem');
+    const dlgError     = $('#dlgError');
+
+    // ====== State ======
+    let isSuper      = false;
+    let currentUser  = null;
+    let pedidos      = [];
+    let pedidosFiltrados = [];
+    let pedidosOrdenados = [];
+    let productosEmpresa = [];
+    let zonasEmpresa = [];
+    let editingId    = null;
+    let saveBusy      = false;
+    let deleteBusy    = false;
+    let pedidosReqSeq = 0;
+    let lastAppliedPedidosReq = 0;
+
+    // Persistencia + auto-refresh
+    const FILTERS_LS_KEY = 'dashboard:filters:v1';
+    let refreshTimer = null;
+    let refreshInFlight = false;
+    let lastSyncAt = null;
+    const itemsByPedidoCache = new Map();
+    const resumenArticulosCache = new Map();
+    let detalleArticulosToken = 0;
+    let sortState = { key: 'fecha', dir: 'desc' };
+    let currentPage = 1;
+    let dashboardMeta = { total_count: 0, total_pages: 1, page: 1, pageSize: 30 };
+    let dashboardKpis = null;
+    let dashboardResumen = null;
+    let searchDebounce = null;
+    let dashboardLoading = false;
+
+    // ====== Utils ======
+    const ARS = new Intl.NumberFormat('es-AR', {
+      style: 'currency',
+      currency: 'ARS',
+      maximumFractionDigits: 0
+    });
+    function money(n){ return ARS.format(Number(n) || 0); }
+
+    function getLocalISO(dateObj = new Date()) {
+      const parts = dateObj
+        .toLocaleDateString('es-AR', {
+          timeZone: 'America/Argentina/Buenos_Aires'
+        })
+        .split('/'); // dd/mm/aaaa
+      const [dd, mm, yyyy] = parts;
+      return `${yyyy}-${mm.padStart(2,'0')}-${dd.padStart(2,'0')}`;
+    }
+
+    // Convierte un ISO UTC a fecha local Argentina (dd/mm/aaaa)
+    function fmtDate(iso){
+      try {
+        if (!iso) return '';
+        const d = new Date(iso);
+        return d.toLocaleDateString('es-AR', {
+          timeZone: 'America/Argentina/Buenos_Aires',
+          day: '2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'
+        });
+      } catch {
+        return '';
+      }
+    }
+
+    function esc(s){
+      return String(s ?? '').replace(/[&<>"']/g, c => ({
+        '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+      }[c]));
+    }
+
+    function showToast(msg){
+      toastEl.innerHTML = `<i class="fa-solid fa-circle-check"></i> ${esc(msg)}`;
+      toastEl.classList.add('show');
+      setTimeout(() => toastEl.classList.remove('show'), 2000);
+    }
+
+    async function parseErrorResponse(r, fallbackMsg){
+      let msg = fallbackMsg;
+      try {
+        const data = await r.json();
+        if (data?.error) msg = data.error;
+      } catch {}
+      return msg;
+    }
+
+    function saveFiltersState(){
+      try {
+        const payload = {
+          emp: empFilter?.value || '',
+          chofer: choferFilter?.value || '',
+          estado: estadoFilter?.value || '',
+          from: fromFilter?.value || '',
+          to: toFilter?.value || '',
+          q: q?.value || '',
+          sortKey: sortState.key,
+          sortDir: sortState.dir,
+          pageSize: pageSizeSel?.value || '30'
+        };
+        safeStorage.local.set(FILTERS_LS_KEY, JSON.stringify(payload));
+      } catch {}
+    }
+
+    function restoreFiltersState(){
+      try {
+        const raw = safeStorage.local.get(FILTERS_LS_KEY);
+        if (!raw) return;
+        const f = JSON.parse(raw);
+
+        if (typeof f.estado === 'string') estadoFilter.value = f.estado;
+        if (typeof f.from === 'string') fromFilter.value = f.from;
+        if (typeof f.to === 'string') toFilter.value = f.to;
+        if (typeof f.q === 'string') q.value = f.q;
+        if (typeof f.sortKey === 'string') sortState.key = f.sortKey;
+        if (f.sortDir === 'asc' || f.sortDir === 'desc') sortState.dir = f.sortDir;
+        if (typeof f.pageSize === 'string' && pageSizeSel) pageSizeSel.value = f.pageSize;
+
+        // emp/chofer se aplican luego de cargar opciones
+        if (typeof f.emp === 'string') empFilter.dataset.pendingValue = f.emp;
+        if (typeof f.chofer === 'string') choferFilter.dataset.pendingValue = f.chofer;
+      } catch {}
+    }
+
+    function applyPendingFilterValues(){
+      const pEmp = empFilter.dataset.pendingValue;
+      if (typeof pEmp === 'string') {
+        empFilter.value = pEmp;
+        delete empFilter.dataset.pendingValue;
+      }
+      const pChofer = choferFilter.dataset.pendingValue;
+      if (typeof pChofer === 'string') {
+        choferFilter.value = pChofer;
+        delete choferFilter.dataset.pendingValue;
+      }
+    }
+
+    function getPageSize(){
+      return Math.max(1, Number(pageSizeSel?.value) || 30);
+    }
+
+    function compareValues(a, b, dir = 'asc') {
+      const factor = dir === 'desc' ? -1 : 1;
+      if (a == null && b == null) return 0;
+      if (a == null) return 1 * factor;
+      if (b == null) return -1 * factor;
+      if (typeof a === 'number' && typeof b === 'number') return (a - b) * factor;
+      return String(a).localeCompare(String(b), 'es', { numeric: true, sensitivity: 'base' }) * factor;
+    }
+
+    function getSortableValue(p, key) {
+      switch (key) {
+        case 'id': return Number(p.id) || 0;
+        case 'fecha': return new Date(p.fecha || 0).getTime() || 0;
+        case 'cliente': return p.cliente || '';
+        case 'chofer': return p.chofer_nombre || (p.chofer_id ? `#${p.chofer_id}` : '');
+        case 'estado': return p.estado || '';
+        case 'pago': return p.metodo_pago || '';
+        case 'monto': return Number(p.monto) || 0;
+        default: return '';
+      }
+    }
+
+    function sortPedidos(list) {
+      const arr = [...list];
+      arr.sort((a, b) => compareValues(getSortableValue(a, sortState.key), getSortableValue(b, sortState.key), sortState.dir));
+      return arr;
+    }
+
+    function updateSortHeaders(){
+      document.querySelectorAll('th.sortable').forEach((th) => {
+        const key = th.dataset.sort;
+        const arrow = key === sortState.key ? (sortState.dir === 'asc' ? '▲' : '▼') : '';
+        const base = th.textContent.replace(/[▲▼]/g, '').trim();
+        th.innerHTML = `${esc(base)}<span class="sort-indicator">${arrow}</span>`;
+      });
+    }
+
+    function clampPage(totalItems){
+      const totalPages = Math.max(1, Math.ceil(totalItems / getPageSize()));
+      currentPage = Math.min(Math.max(1, currentPage), totalPages);
+      return totalPages;
+    }
+
+    function setDashboardLoading(isLoading, message = 'Cargando pedidos...') {
+      dashboardLoading = !!isLoading;
+      tableCard.classList.toggle('is-loading', dashboardLoading);
+      btnPrevPage.disabled = dashboardLoading || currentPage <= 1;
+      btnNextPage.disabled = dashboardLoading || currentPage >= (dashboardMeta.total_pages || 1);
+      if (pageSizeSel) pageSizeSel.disabled = dashboardLoading;
+      const btnRef = $('#btnRef');
+      if (btnRef) btnRef.disabled = dashboardLoading;
+      if (dashboardLoading) {
+        rows.innerHTML = `<tr><td colspan="10" class="loading-row"><i class="fa-solid fa-spinner fa-spin"></i> ${esc(message)}</td></tr>`;
+      }
+    }
+
+    function updateSyncInfo(){
+      const el = document.getElementById('syncInfo');
+      if (!el) return;
+
+      if (!lastSyncAt) {
+        el.textContent = 'Sin sincronizar';
+        return;
+      }
+
+      const sec = Math.max(0, Math.floor((Date.now() - lastSyncAt) / 1000));
+      if (sec < 5) el.textContent = 'Actualizado recién';
+      else if (sec < 60) el.textContent = `Actualizado hace ${sec}s`;
+      else el.textContent = `Actualizado hace ${Math.floor(sec / 60)}m`;
+    }
+
+    function scheduleAutoRefresh(delayMs = null){
+      if (refreshTimer) clearTimeout(refreshTimer);
+      const base = document.hidden ? 120000 : (navigator.onLine ? 45000 : 180000);
+      const wait = delayMs ?? base;
+      refreshTimer = setTimeout(runAutoRefresh, wait);
+    }
+
+    async function runAutoRefresh(){
+      if (refreshInFlight || dashboardLoading || dlg.open || saveBusy || deleteBusy) return scheduleAutoRefresh();
+      refreshInFlight = true;
+      try {
+        await loadPedidos();
+        applyFilters();
+      } finally {
+        refreshInFlight = false;
+        scheduleAutoRefresh();
+      }
+    }
+
+    // ====== Initialization ======
+    $('#logout').onclick = async () => {
+      try { await authFetch('/api/logout', { method: 'POST' }); } catch {}
+      location.href = 'login.html';
+    };
+    $('#btnRef').onclick   = async () => {
+      if (dashboardLoading) return;
+      await initLoad();
+      saveFiltersState();
+      showToast('Datos recargados');
+      scheduleAutoRefresh();
+    };
+
+    $('#btnToday').onclick = async () => {
+      const today = getLocalISO();
+      fromFilter.value = today;
+      toFilter.value = today;
+      saveFiltersState();
+      await initLoad();
+      showToast('Filtro aplicado: hoy');
+      scheduleAutoRefresh();
+    };
+
+    $('#btnClear').onclick = async () => {
+      if (dashboardLoading) return;
+      estadoFilter.value = '';
+      fromFilter.value   = '';
+      toFilter.value     = '';
+      choferFilter.value = '';
+      q.value            = '';
+      if (isSuper) empFilter.value = '';
+
+      saveFiltersState();
+      await loadChoferes();
+      await initLoad();
+      scheduleAutoRefresh();
+    };
+
+    $('#btnExport').onclick = () => exportCSV();
+
+    function setDialogError(msg = '') {
+      dlgError.textContent = msg;
+      dlgError.style.display = msg ? 'block' : 'none';
+    }
+
+    function setModalBusy(isBusy) {
+      saveBusy = !!isBusy;
+      btnSaveAll.disabled = saveBusy;
+      btnCloseDlg.disabled = saveBusy;
+      btnCloseX.disabled = saveBusy;
+      btnAddItem.disabled = saveBusy;
+      dlg.querySelectorAll('input, select, button').forEach((el) => {
+        if (el === btnSaveAll || el === btnCloseDlg || el === btnCloseX || el === btnAddItem) return;
+        el.disabled = saveBusy;
+      });
+    }
+
+    const closeDialog = () => { if (!saveBusy) { setDialogError(''); dlg.close(); } };
+    btnCloseDlg.onclick = closeDialog;
+    btnCloseX.onclick   = closeDialog;
+    dlg.addEventListener('cancel', (ev) => { if (saveBusy) ev.preventDefault(); else setDialogError(''); });
+
+    // ====== Boot principal (una sola vez) ======
+    (async function boot(){
+      try {
+        restoreFiltersState();
+
+        // Fechas default (30 días) según hora local Argentina
+        if (!fromFilter.value) {
+          const now = new Date();
+          const d0  = new Date(now);
+          d0.setDate(d0.getDate() - 30);
+
+          fromFilter.value = getLocalISO(d0);
+          toFilter.value   = getLocalISO(now);
+        }
+
+        const me = await whoAmI(); // también setea currentUser
+
+        if (isSuper) {
+          await setupEmpresas(me); // setupEmpresas llama a initLoad + loadChoferes()
+        } else {
+          // 🆕 Usuario normal: también cargamos choferes al inicio
+          await loadChoferes();
+          await initLoad();        // carga pedidos + productos
+        }
+
+        // Listeners
+        empFilter.addEventListener('change', async () => {
+          saveFiltersState();
+          await loadChoferes(); // Recargar choferes de la nueva empresa
+          await initLoad();     // Recargar pedidos y productos
+          scheduleAutoRefresh();
+        });
+
+        choferFilter.addEventListener('change', async () => {
+          saveFiltersState();
+          await initLoad();
+          scheduleAutoRefresh();
+        });
+
+        estadoFilter.onchange = async () => { currentPage = 1; saveFiltersState(); await initLoad(); scheduleAutoRefresh(); };
+        fromFilter.onchange   = async () => { currentPage = 1; saveFiltersState(); await initLoad(); scheduleAutoRefresh(); };
+        toFilter.onchange     = async () => { currentPage = 1; saveFiltersState(); await initLoad(); scheduleAutoRefresh(); };
+
+        q.oninput = () => {
+          currentPage = 1;
+          saveFiltersState();
+          clearTimeout(searchDebounce);
+          searchDebounce = setTimeout(async () => {
+            await initLoad();
+            scheduleAutoRefresh();
+          }, 300);
+        };
+        pageSizeSel.onchange = async () => {
+          currentPage = 1;
+          saveFiltersState();
+          await initLoad();
+        };
+        btnPrevPage.onclick = async () => {
+          if (dashboardLoading) return;
+          currentPage = Math.max(1, currentPage - 1);
+          await initLoad();
+        };
+        btnNextPage.onclick = async () => {
+          if (dashboardLoading) return;
+          currentPage = Math.min(dashboardMeta.total_pages || 1, currentPage + 1);
+          await initLoad();
+        };
+        document.querySelectorAll('th.sortable').forEach((th) => {
+          th.addEventListener('click', () => {
+            const key = th.dataset.sort;
+            if (!key) return;
+            if (sortState.key === key) sortState.dir = sortState.dir === 'asc' ? 'desc' : 'asc';
+            else sortState = { key, dir: key === 'fecha' || key === 'id' || key === 'monto' ? 'desc' : 'asc' };
+            currentPage = 1;
+            saveFiltersState();
+            initLoad();
+          });
+        });
+
+        document.addEventListener('visibilitychange', () => scheduleAutoRefresh());
+        window.addEventListener('online', () => scheduleAutoRefresh(5000));
+        window.addEventListener('offline', () => scheduleAutoRefresh());
+
+        scheduleAutoRefresh();
+        updateSyncInfo();
+        setInterval(updateSyncInfo, 15000);
+
+      } catch (e) {
+        console.error(e);
+        alert('Error de inicio');
+      }
+    })();
+
+    // ====== API helpers ======
+
+    async function whoAmI(){
+      const r = await authFetch('/api/me');
+      if (r.status === 401) {
+        location.href = 'login.html';
+        return;
+      }
+
+      const j    = await r.json();
+      const user = j?.user || null;
+      currentUser = user;
+
+      const role = String(user?.role || '').toLowerCase();
+      isSuper = role === 'super';
+      $('#roleBadge').textContent = isSuper ? 'SUPER ADMIN' : role.toUpperCase();
+
+      return user;
+    }
+
+    async function setupEmpresas(me){
+      let loadedEmpresas = false;
+      try {
+        const r = await authFetch('/api/empresas');
+        const list = await r.json();
+
+        if (r.ok && Array.isArray(list) && list.length > 0) {
+          $('#rowEmp').hidden = false;
+
+          const optionTodas  = `<option value="">⭐ Ver Todas</option>`;
+          const optionSinEmp = `<option value="null">⚠️ Huérfanos (empresa)</option>`;
+          const optionsEmpresas = list
+            .map(e => `<option value="${Number(e.id)}">ID ${Number(e.id)} | ${esc(e.nombre)}</option>`)
+            .join('');
+
+          empFilter.innerHTML = optionTodas + optionSinEmp + optionsEmpresas;
+          applyPendingFilterValues();
+
+          // En SUPER ADMIN no fijamos empresa, aunque tenga empresa_id en su usuario
+          if (!isSuper && me && me.empresa_id) {
+            empFilter.value   = String(me.empresa_id);
+            empFilter.disabled = true;
+          } else {
+            empFilter.value = ''; // Por defecto "Todas"
+            empFilter.disabled = false;
+          }
+
+          loadedEmpresas = true;
+        }
+      } catch (e) {
+        console.error('Error cargando empresas', e);
+      }
+
+      if (!loadedEmpresas) {
+        // Fallback: no bloquear tablero si falla /api/empresas.
+        $('#rowEmp').hidden = false;
+        empFilter.innerHTML = '<option value="">⭐ Ver Todas</option><option value="null">⚠️ Huérfanos (empresa)</option>';
+        applyPendingFilterValues();
+        empFilter.disabled = false;
+      }
+
+      await loadChoferes();
+      await initLoad();
+    }
+
+    async function loadChoferes() {
+      let qs = '';
+      if (isSuper && empFilter.value && empFilter.value !== 'null') {
+        qs = `?empresa_id=${empFilter.value}`;
+      }
+
+      try {
+        const r = await authFetch('/api/choferes' + qs);
+        const list = await r.json();
+
+        const baseOptions = `
+          <option value="">Todos</option>
+          <option value="__SIN_CHOFER__">⚠️ Huérfanos de chofer</option>
+        `;
+
+        const choferOptions = Array.isArray(list)
+          ? list.map(c => `<option value="${Number(c.id)}">${esc(c.nombre)}</option>`).join('')
+          : '';
+
+        choferFilter.innerHTML = baseOptions + choferOptions;
+        applyPendingFilterValues();
+      } catch {
+        choferFilter.innerHTML = `
+          <option value="">Error al cargar</option>
+        `;
+      }
+    }
+
+    async function initLoad(){
+      setDashboardLoading(true);
+      try {
+        await Promise.all([loadProductos(), loadPedidos()]);
+        applyFilters();
+      } finally {
+        tableCard.style.opacity = '1';
+        setDashboardLoading(false);
+      }
+    }
+
+    function getEmpresaID() {
+      return (isSuper && empFilter.value && empFilter.value !== 'null')
+        ? empFilter.value
+        : null;
+    }
+
+    async function loadProductos(){
+      const eid = getEmpresaID();
+      const qs  = eid ? `?empresa_id=${eid}` : '';
+
+      try {
+        const r = await authFetch('/api/productos'+qs);
+        if (!r.ok) { productosEmpresa = []; return; }
+
+        productosEmpresa = await r.json();
+
+        const dl = document.getElementById('prodList');
+        if (dl && Array.isArray(productosEmpresa)) {
+          dl.innerHTML = productosEmpresa
+            .map(p => `<option value="${esc(p.nombre)}"></option>`)
+            .join('');
+        }
+      } catch {
+        productosEmpresa = [];
+      }
+    }
+
+    async function loadPedidos() {
+      const reqSeq = ++pedidosReqSeq;
+      const params = buildDashboardQueryParams();
+      params.set('page', String(currentPage));
+      params.set('pageSize', String(getPageSize()));
+
+      try {
+        const r = await authFetch('/api/pedidos/dashboard-data?' + params.toString());
+        if (!r.ok) {
+          const errMsg = await parseErrorResponse(r, `Error ${r.status} cargando pedidos`);
+          if (reqSeq < lastAppliedPedidosReq) return;
+          lastAppliedPedidosReq = reqSeq;
+          pedidos = [];
+          pedidosFiltrados = [];
+          pedidosOrdenados = [];
+          dashboardMeta = { total_count: 0, total_pages: 1, page: currentPage, pageSize: getPageSize() };
+          dashboardKpis = null;
+          dashboardResumen = null;
+          rows.innerHTML = `<tr><td colspan="10" style="text-align:center; padding:2rem; color:var(--danger)">${esc(errMsg)}</td></tr>`;
+          updateSyncInfo();
+          return;
+        }
+        const data = await r.json();
+        if (reqSeq < lastAppliedPedidosReq) return;
+        lastAppliedPedidosReq = reqSeq;
+        pedidos = Array.isArray(data?.rows) ? data.rows : [];
+        pedidosFiltrados = pedidos;
+        pedidosOrdenados = pedidos;
+        dashboardMeta = {
+          total_count: Number(data?.total_count) || 0,
+          total_pages: Number(data?.total_pages) || 1,
+          page: Number(data?.page) || currentPage,
+          pageSize: Number(data?.pageSize) || getPageSize()
+        };
+        dashboardKpis = data?.kpis || null;
+        dashboardResumen = data?.resumen_articulos || null;
+        currentPage = dashboardMeta.page;
+        itemsByPedidoCache.clear();
+        resumenArticulosCache.clear();
+        lastSyncAt = Date.now();
+        updateSyncInfo();
+      } catch {
+        if (reqSeq < lastAppliedPedidosReq) return;
+        lastAppliedPedidosReq = reqSeq;
+        pedidos = [];
+        pedidosFiltrados = [];
+        pedidosOrdenados = [];
+        dashboardMeta = { total_count: 0, total_pages: 1, page: currentPage, pageSize: getPageSize() };
+        dashboardKpis = null;
+        dashboardResumen = null;
+        rows.innerHTML = '<tr><td colspan="10" style="text-align:center; padding:2rem; color:var(--danger)">Error de conexión cargando pedidos.</td></tr>';
+        updateSyncInfo();
+      }
+    }
+
+    // ====== Filtros / Render ======
+    async function getPedidoItemsCached(pedidoId) {
+      if (itemsByPedidoCache.has(pedidoId)) {
+        return itemsByPedidoCache.get(pedidoId);
+      }
+      try {
+        const r = await authFetch(`/api/pedidos/${pedidoId}/items`);
+        if (!r.ok) return [];
+        const items = await r.json();
+        const safeItems = Array.isArray(items) ? items : [];
+        itemsByPedidoCache.set(pedidoId, safeItems);
+        return safeItems;
+      } catch {
+        return [];
+      }
+    }
+
+    async function renderArticulosDetalle(list) {
+      const token = ++detalleArticulosToken;
+      if (!list.length) {
+        kpiDetailSub.textContent = 'No hay pedidos con los filtros actuales.';
+        return;
+      }
+
+      const resumen = dashboardResumen;
+      if (!resumen || !Array.isArray(resumen.top_productos)) {
+        kpiDetailSub.textContent = 'No se pudo cargar el detalle de artículos entregados.';
+        return;
+      }
+
+      if (token !== detalleArticulosToken) return;
+
+      if (!resumen.top_productos.length) {
+        kpiDetailSub.textContent = 'No hay pedidos entregados con ítems en los filtros actuales.';
+        return;
+      }
+
+      const detalle = resumen.top_productos
+        .map((it) => `${it.producto} x${Number(it.cantidad) || 0}`)
+        .join(' · ');
+
+      kpiDetailSub.textContent = `Artículos entregados: ${Number(resumen.total_unidades) || 0} unidades en ${Number(resumen.productos_count) || 0} producto(s) · ${detalle}`;
+    }
+
+    function applyFilters() {
+      pedidosFiltrados = Array.isArray(pedidos) ? pedidos : [];
+      pedidosOrdenados = pedidosFiltrados;
+      updateSortHeaders();
+      renderKPIs(pedidosFiltrados);
+      renderTable(pedidosOrdenados);
+      renderArticulosDetalle(pedidosFiltrados);
+    }
+
+    function renderTable(list){
+      const total = Number(dashboardMeta.total_count) || 0;
+      const totalPages = Number(dashboardMeta.total_pages) || 1;
+      const start = total ? ((currentPage - 1) * getPageSize()) : 0;
+
+      pageLabel.textContent = `Página ${currentPage}/${totalPages}`;
+      pageInfo.textContent = total ? `Mostrando ${start + 1}-${Math.min(start + list.length, total)} de ${total}` : 'Mostrando 0-0 de 0';
+      btnPrevPage.disabled = dashboardLoading || currentPage <= 1;
+      btnNextPage.disabled = dashboardLoading || currentPage >= totalPages;
+
+      if (!list.length) {
+        rows.innerHTML =
+          '<tr><td colspan="10" style="text-align:center; padding:3rem; color:var(--muted)">No se encontraron pedidos.</td></tr>';
+        return;
+      }
+
+      rows.innerHTML = list.map(p => {
+        const stClass = 'st-' + (p.estado || '').toLowerCase().replace(' ', '_');
+        const stLabel = (p.estado || '').replace('_', ' ').toUpperCase();
+        const flags = [];
+        const isOrphanChofer = !!p.orphan_chofer || p.chofer_id == null || Number(p.chofer_id) === 0;
+        const isOrphanEmpresa = !!p.orphan_empresa || p.empresa_id == null || Number(p.empresa_id) === 0;
+        if (isOrphanChofer) flags.push('<span class="flag-badge flag-warn"><i class="fa-solid fa-triangle-exclamation"></i> Sin chofer</span>');
+        if (isOrphanEmpresa) flags.push('<span class="flag-badge flag-danger"><i class="fa-solid fa-building-circle-exclamation"></i> Sin empresa</span>');
+        if (!p.metodo_pago) flags.push('<span class="flag-badge flag-info"><i class="fa-regular fa-credit-card"></i> Pago sin definir</span>');
+        
+        return `
+          <tr>
+            <td style="color:var(--muted); font-family:monospace;">#${p.id}</td>
+            <td>${fmtDate(p.fecha)}</td>
+            <td style="font-weight:600; color:#fff;">${esc(p.cliente || '')}</td>
+            <td>${esc(p.telefono || '')}</td>
+            <td style="font-size:0.9rem">${esc(p.direccion || '')}</td>
+            <td style="font-size:0.85rem; color:var(--muted)">${esc(p.chofer_nombre || (p.chofer_id ? `#${p.chofer_id}` : 'Sin asignar'))}${flags.length ? `<div class="flag-list">${flags.join('')}</div>` : ''}</td>
+            <td><span class="status-badge ${stClass}">${esc(stLabel)}</span></td>
+            <td style="font-size:0.85rem; color:var(--muted)">${esc(p.metodo_pago || '-')}</td>
+            <td style="font-weight:bold; color:#fff; font-size:1rem;">${money(p.monto)}</td>
+            <td style="white-space:nowrap; text-align:right;">
+              <button class="btn-icon" onclick="openPedido(${Number(p.id)})" title="Editar">✏️</button>
+              <button class="btn-icon" style="color:var(--danger); border-color:rgba(239,68,68,0.3);" onclick="deletePedido(${Number(p.id)})" title="Eliminar"><i class="fa-solid fa-trash"></i></button>
+            </td>
+          </tr>`;
+      }).join('');
+    }
+
+    function renderKPIs(list){
+      const total = Number(dashboardMeta.total_count) || 0;
+      const k = dashboardKpis || {};
+      const pendientes = Number(k.pendientes) || 0;
+      const enRuta = Number(k.en_ruta) || 0;
+      const entregados = Number(k.entregados) || 0;
+      const cancelados = Number(k.cancelados) || 0;
+      const sinChofer = Number(k.sin_chofer) || 0;
+      const totalMonto = Number(k.total_monto) || 0;
+      const ticketPromedio = Number(k.ticket_promedio) || 0;
+
+      totalCount.textContent = total;
+      kpiPend.textContent = pendientes;
+      kpiRuta.textContent = enRuta;
+      kpiEnt.textContent  = entregados;
+      kpiMonto.textContent = money(totalMonto);
+      if (kpiCancel) kpiCancel.textContent = cancelados;
+      if (kpiTicket) kpiTicket.textContent = money(ticketPromedio);
+      if (kpiSinChofer) kpiSinChofer.textContent = sinChofer;
+
+      const entregaPct = total ? Math.round((entregados / total) * 100) : 0;
+      kpiDetailMain.textContent = `Efectividad del filtro: ${entregados}/${total} entregados (${entregaPct}%) · ${sinChofer} sin chofer · ${cancelados} cancelados`;
+    }
+
+    // ====== Acciones de Pedido ======
+    window.openPedido = async (id) => {
+      editingId = id;
+      $('#dlg_pid').textContent = id;
+      const p = pedidos.find(x => x.id == id) || {};
+
+      $('#dlg_estado').value     = p.estado || 'pendiente';
+      $('#dlg_metodo').value     = (p.metodo_pago || '').toLowerCase();
+      $('#dlg_empresa_id').value = p.empresa_id != null ? p.empresa_id : '';
+      $('#dlg_chofer_id').value  = p.chofer_id  != null ? p.chofer_id  : '';
+      $('#dlg_zona_id').value    = p.zona_id    != null ? p.zona_id    : '';
+      setDialogError('');
+      setModalBusy(false);
+
+      dlg_itemsBody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:1rem; color:var(--muted);">Cargando ítems...</td></tr>';
+      dlg.showModal();
+
+      try {
+        const r = await authFetch(`/api/pedidos/${id}/items`);
+        if (!r.ok) throw new Error(await parseErrorResponse(r, 'No se pudieron cargar los ítems del pedido.'));
+        const items = await r.json();
+        const list  = Array.isArray(items) && items.length ? items : [{producto:'', cantidad:1, precio_unitario:0}];
+        dlg_itemsBody.innerHTML = list.map(renderItemRow).join('');
+        recalcTotal();
+      } catch (err) {
+        setDialogError(err?.message || 'Error cargando ítems');
+        dlg_itemsBody.innerHTML = renderItemRow({ producto:'', cantidad:1, precio_unitario:0 });
+        recalcTotal();
+      }
+    };
+
+    window.deletePedido = async (id) => {
+      if (deleteBusy || dashboardLoading) return;
+      if (!confirm(`¿Estás seguro de ELIMINAR el pedido #${id}?\nEsta acción no se puede deshacer.`)) return;
+
+      deleteBusy = true;
+      try {
+        const r = await authFetch(`/api/pedidos/${id}`, {
+          method: 'DELETE'
+        });
+
+        if (!r.ok) {
+          throw new Error(await parseErrorResponse(r, 'No se pudo eliminar el pedido.'));
+        }
+
+        if ((Number(dashboardMeta.total_count) || 0) > 1 && pedidos.length === 1 && currentPage > 1) {
+          currentPage = Math.max(1, currentPage - 1);
+        }
+        showToast('🗑️ Pedido eliminado');
+        await initLoad();
+      } catch (e) {
+        console.error(e);
+        alert(e?.message || 'Error de conexión al eliminar');
+      } finally {
+        deleteBusy = false;
+      }
+    };
+
+    // ====== Ítems Modal ======
+    function renderItemRow(it = {}){
+      const q  = Number(it.cantidad) || 0;
+      const pu = Number(it.precio_unitario) || 0;
+      return `
+        <tr>
+          <td><input type="text" value="${esc(it.producto || '')}" list="prodList" oninput="autoPrice(this)" placeholder="Producto..."></td>
+          <td><input type="number" min="1" step="1" value="${q}" oninput="recalcTotal()"></td>
+          <td><input type="number" min="0" step="1" value="${pu}" oninput="recalcTotal()"></td>
+          <td class="sub text-right" style="padding-top:10px; font-family:monospace;">${money(q * pu)}</td>
+          <td class="text-center">
+            <button class="btn-icon" type="button" style="color:var(--danger); border:none;"
+              onclick="removeItemRow(this)">
+              ✕
+            </button>
+          </td>
+        </tr>`;
+    }
+
+    window.autoPrice = function(el){
+      const val   = el.value.toLowerCase();
+      const match = productosEmpresa.find(p => p.nombre.toLowerCase() === val);
+      if (match) {
+        const row   = el.closest('tr');
+        const inputs = row.querySelectorAll('input');
+        if (Number(inputs[2].value) === 0) inputs[2].value = match.precio;
+      }
+      recalcTotal();
+    };
+
+    window.recalcTotal = function(){
+      let tot = 0;
+      dlg_itemsBody.querySelectorAll('tr').forEach(tr => {
+        tr.classList.remove('row-invalid');
+        const inps = tr.querySelectorAll('input');
+        const q    = Number(inps[1].value) || 0;
+        const p    = Number(inps[2].value) || 0;
+        const sub  = q * p;
+        tot += sub;
+        tr.querySelector('.sub').textContent = money(sub);
+      });
+      $('#dlg_total').textContent = money(tot);
+    };
+
+    window.removeItemRow = function(btn){
+      if (saveBusy) return;
+      const tr = btn.closest('tr');
+      tr?.remove();
+      if (!dlg_itemsBody.querySelector('tr')) {
+        dlg_itemsBody.innerHTML = renderItemRow({ producto:'', cantidad:1, precio_unitario:0 });
+      }
+      recalcTotal();
+    };
+
+    btnAddItem.onclick = () => {
+      if (saveBusy) return;
+      dlg_itemsBody.insertAdjacentHTML('beforeend', renderItemRow({ cantidad:1, precio_unitario:0 }));
+      recalcTotal();
+    };
+
+    btnSaveAll.onclick = async () => {
+      if (saveBusy) return;
+      setDialogError('');
+
+      const rowData = Array.from(dlg_itemsBody.querySelectorAll('tr')).map(tr => {
+        tr.classList.remove('row-invalid');
+        const i = tr.querySelectorAll('input');
+        return {
+          tr,
+          producto: String(i[0].value || '').trim(),
+          cantidad: Number(i[1].value),
+          precio_unitario: Number(i[2].value)
+        };
+      });
+
+      const items = rowData.filter(i => i.producto).map(({ tr, ...it }) => it);
+
+      const empresaId = Number($('#dlg_empresa_id').value) || null;
+      const choferId  = Number($('#dlg_chofer_id').value)  || null;
+      const zonaId    = Number($('#dlg_zona_id').value)    || null;
+
+      // Validaciones fuertes
+      if (!items.length) {
+        setDialogError('Agregá al menos un ítem válido.');
+        return;
+      }
+
+      const invalidRows = rowData.filter(it => it.producto && (!Number.isFinite(it.cantidad) || it.cantidad <= 0 || !Number.isFinite(it.precio_unitario) || it.precio_unitario < 0));
+      invalidRows.forEach(it => it.tr.classList.add('row-invalid'));
+      if (invalidRows.length) {
+        setDialogError('Revisá los ítems marcados: cantidad debe ser mayor a 0 y precio mayor o igual a 0.');
+        invalidRows[0]?.tr.querySelector('input')?.focus();
+        return;
+      }
+
+      const estadoVal = String($('#dlg_estado').value || '').trim();
+      const estadosPermitidos = ['pendiente', 'en_ruta', 'entregado', 'cancelado'];
+      if (!estadosPermitidos.includes(estadoVal)) {
+        setDialogError('Estado inválido.');
+        return;
+      }
+
+      const metodoVal = String($('#dlg_metodo').value || '').toLowerCase();
+      const metodosPermitidos = ['', 'efectivo', 'transferencia'];
+      if (!metodosPermitidos.includes(metodoVal)) {
+        setDialogError('Método de pago inválido.');
+        return;
+      }
+
+      const prevTxt = btnSaveAll.textContent;
+      setModalBusy(true);
+      btnSaveAll.textContent = 'Guardando...';
+
+      try {
+        const pedidoResp = await authFetch(`/api/pedidos/${editingId}`, {
+          method: 'PUT',
+          headers:{
+            'Content-Type':'application/json'
+          },
+          body: JSON.stringify({
+            estado:      estadoVal,
+            metodo_pago: metodoVal,
+            empresa_id:  empresaId,
+            chofer_id:   choferId,
+            zona_id:     zonaId
+          })
+        });
+
+        if (!pedidoResp.ok) {
+          throw new Error(await parseErrorResponse(pedidoResp, 'No se pudo actualizar el pedido.'));
+        }
+
+        const itemsResp = await authFetch(`/api/pedidos/${editingId}/items`, {
+          method: 'PUT',
+          headers:{
+            'Content-Type':'application/json'
+          },
+          body: JSON.stringify({ items })
+        });
+
+        if (!itemsResp.ok) {
+          throw new Error(await parseErrorResponse(itemsResp, 'No se pudieron actualizar los ítems del pedido.'));
+        }
+
+        showToast('Guardado correctamente');
+        dlg.close();
+        await loadPedidos();
+        applyFilters();
+      } catch (err) {
+        setDialogError(err?.message || 'Error al guardar');
+      } finally {
+        setModalBusy(false);
+        btnSaveAll.textContent = prevTxt;
+      }
+    };
+
+    function buildDashboardQueryParams(){
+      const params = new URLSearchParams();
+      const valEmpresa = empFilter.value;
+
+      if (isSuper && valEmpresa && valEmpresa !== 'null') {
+        params.set('empresa_id', valEmpresa);
+      } else if (isSuper && valEmpresa === 'null') {
+        params.set('orphan_empresa', '1');
+      } else if (!isSuper && currentUser?.empresa_id) {
+        params.set('empresa_id', currentUser.empresa_id);
+      }
+
+      if (fromFilter.value) params.set('from', fromFilter.value);
+      if (toFilter.value)   params.set('to', toFilter.value);
+      if (estadoFilter.value) params.set('estado', estadoFilter.value);
+      if (q.value.trim()) params.set('q', q.value.trim());
+      params.set('sortKey', sortState.key);
+      params.set('sortDir', sortState.dir);
+
+      const choferVal = choferFilter.value;
+      if (choferVal === '__SIN_CHOFER__') params.set('orphan_chofer', '1');
+      else if (choferVal) params.set('chofer_id', choferVal);
+
+      return params;
+    }
+
+    async function exportCSV(){
+      const total = Number(dashboardMeta.total_count) || 0;
+      if (!total) {
+        alert('No hay pedidos para exportar con los filtros actuales.');
+        return;
+      }
+
+      const btn = $('#btnExport');
+      const prev = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Exportando...';
+
+      try {
+        const params = buildDashboardQueryParams();
+        const r = await authFetch('/api/pedidos/export.csv?' + params.toString());
+        if (!r.ok) throw new Error(await parseErrorResponse(r, 'No se pudo exportar el CSV.'));
+
+        const blob = await r.blob();
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `pedidos-${getLocalISO()}.csv`;
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+        showToast(`CSV exportado (${total} registros)`);
+      } catch (err) {
+        alert(err?.message || 'Error exportando CSV');
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = prev;
+      }
+    }
+  </script>
+</body>
+</html>

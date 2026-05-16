@@ -1,0 +1,956 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Zonas de Reparto – MultiEmpresas</title>
+  <link rel="stylesheet" href="theme-base.css" />
+  
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css"/>
+
+<style>
+  :root {
+    /* Palette Dark Theme */
+    --bg: #0b1020;
+    --bg-2: #0f172a;
+    --ink: #f1f5f9;
+    --muted: #94a3b8;
+    --brand: #06b6d4;       /* Cyan */
+    --brand-hover: #22d3ee;
+    --surface: rgba(30, 41, 59, 0.7);
+    --border: rgba(148, 163, 184, 0.15);
+    --glass: rgba(15, 23, 42, 0.95); /* Más opaco para móvil */
+    --radius: 12px;
+    
+    --success: #10b981;
+    --warning: #f59e0b;
+    --danger: #ef4444;
+    --info: #38bdf8;
+  }
+
+  * { box-sizing: border-box; outline: none; -webkit-tap-highlight-color: transparent; }
+  
+  body {
+    margin: 0; 
+    font-family: system-ui, -apple-system, sans-serif;
+    color: var(--ink);
+    background: 
+      radial-gradient(circle at 15% 50%, rgba(6, 182, 212, 0.05), transparent 25%),
+      radial-gradient(circle at 85% 30%, rgba(59, 130, 246, 0.05), transparent 25%),
+      var(--bg);
+    min-height: 100vh;
+    font-size: 14px;
+    padding-bottom: 80px; /* Espacio para scroll en móvil */
+  }
+
+  .container { max-width: 1200px; margin: 0 auto; padding: 0 20px; }
+
+  /* --- HEADER & NAV RESPONSIVE --- */
+  header {
+    position: sticky; top: 0; z-index: 50;
+    background: var(--glass);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+    padding: 0.8rem 0;
+  }
+  
+  nav { display: flex; justify-content: space-between; align-items: center; }
+  
+  .brand { 
+    display: flex; gap: 0.8rem; align-items: center; 
+    font-size: 1.1rem; font-weight: 700; color: #fff; text-decoration: none; 
+    white-space: nowrap;
+  }
+  .brand-dot { width: 10px; height: 10px; background: var(--brand); border-radius: 50%; box-shadow: 0 0 10px var(--brand); }
+  
+  .role-badge { 
+    background: rgba(6, 182, 212, 0.1); border: 1px solid rgba(6, 182, 212, 0.3);
+    color: var(--brand); padding: 2px 8px; border-radius: 99px; font-size: 0.75rem; 
+  }
+
+  .menu { list-style: none; display: flex; gap: 1.5rem; margin: 0; padding: 0; }
+  .menu a { text-decoration: none; color: var(--muted); font-weight: 500; transition: 0.2s; white-space: nowrap; }
+  .menu a:hover, .menu a.active { color: #fff; }
+  .menu a.active { border-bottom: 2px solid var(--brand); padding-bottom: 4px; }
+
+  /* Adaptación Móvil del Menú */
+  @media (max-width: 768px) {
+    nav { flex-direction: column; gap: 1rem; align-items: stretch; }
+    .brand { justify-content: space-between; }
+    .menu { 
+      overflow-x: auto; 
+      padding-bottom: 5px; 
+      gap: 20px;
+      -webkit-overflow-scrolling: touch; /* Scroll suave en iOS */
+    }
+    .menu::-webkit-scrollbar { display: none; } /* Ocultar barra scroll */
+  }
+
+  main { padding-top: 2rem; padding-bottom: 4rem; display: flex; flex-direction: column; gap: 1.5rem; }
+
+  /* --- PAGE HEADER --- */
+  .page-header {
+    display: flex; justify-content: space-between; align-items: flex-end; flex-wrap: wrap; gap: 1rem;
+  }
+  h1 { font-size: 1.8rem; margin: 0; color: #fff; display: flex; align-items: center; gap: 10px; line-height: 1.2; }
+  p.subtitle { color: var(--muted); margin: 0.5rem 0 0 0; font-size: 0.95rem; }
+
+  @media (max-width: 600px) {
+    .page-header { flex-direction: column; align-items: stretch; }
+    .page-header .btn { width: 100%; justify-content: center; }
+  }
+
+  /* --- CARDS & LAYOUTS --- */
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 1.5rem;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+    display: flex; flex-direction: column;
+  }
+
+  /* Layout Split (Zona/Asignar) */
+  .layout-split { display: grid; grid-template-columns: minmax(0, 1fr) 400px; gap: 20px; height: calc(100vh - 140px); min-height: 650px; }
+  .map-wrapper { position: relative; width: 100%; height: 100%; border-radius: var(--radius); border: 1px solid var(--border); overflow: hidden; }
+  #map { width: 100%; height: 100%; z-index: 1; background: #e5edf6; }
+
+  @media(max-width: 900px) { 
+    .layout-split { grid-template-columns: 1fr; height: auto; display: flex; flex-direction: column-reverse; } 
+    .map-wrapper { height: 400px; } /* Altura fija mapa móvil */
+  }
+
+  /* --- TOOLBARS & FILTERS --- */
+  .toolbar { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.5rem; }
+  .toolbar > * { flex: 1; }
+  .toolbar select, .toolbar input { margin-bottom: 0; min-width: 150px; }
+  .search-box { position: relative; }
+  .search-box input { padding-left: 2.25rem; }
+  .search-icon { position:absolute; left:0.75rem; top:50%; transform:translateY(-50%); color:var(--muted); pointer-events:none; }
+  
+  @media (max-width: 600px) {
+    .toolbar { flex-direction: column; align-items: stretch; gap: 0.8rem; }
+    .search-box { width: 100%; }
+  }
+
+  /* --- INPUTS & BUTTONS --- */
+  label { font-size: 0.8rem; color: var(--muted); font-weight: 600; display: block; margin-bottom: 0.4rem; text-transform: uppercase; letter-spacing: 0.5px;}
+  
+  input, select, textarea {
+    background: var(--bg-2); border: 1px solid var(--border); color: #fff;
+    padding: 0.7rem 0.8rem; border-radius: 8px; font-size: 0.95rem; /* Texto más grande para móvil */
+    width: 100%; transition: 0.2s;
+  }
+  input:focus, select:focus, textarea:focus { border-color: var(--brand); box-shadow: 0 0 0 2px rgba(6,182,212,0.2); }
+
+  .btn {
+    padding: 0.7rem 1.2rem; border-radius: 8px; font-weight: 600; cursor: pointer;
+    border: 1px solid transparent; transition: 0.2s; display: inline-flex; align-items: center; gap: 0.5rem;
+    font-size: 0.9rem; background: rgba(255,255,255,0.05); color: var(--ink); border-color: var(--border);
+    text-decoration: none; white-space: nowrap; justify-content: center;
+  }
+  .btn:hover { background: rgba(255,255,255,0.1); color: #fff; border-color: var(--brand); }
+  
+  .btn-primary { background: var(--brand); color: #000; border: none; }
+  .btn-primary:hover { background: var(--brand-hover); box-shadow: 0 4px 12px rgba(6,182,212,0.3); }
+  
+  .btn-danger { color: var(--danger); border-color: rgba(239,68,68,0.3); background: rgba(239,68,68,0.1); }
+  .btn-icon { padding: 0.5rem; border-radius: 6px; color: var(--muted); background: transparent; border: 1px solid var(--border); cursor: pointer; }
+  .btn-icon:hover { color: #fff; background: rgba(255,255,255,0.1); border-color: var(--brand); }
+  .btn:disabled, .btn-icon:disabled { opacity:0.55; cursor:not-allowed; }
+
+  /* --- TABLES --- */
+  .table-responsive { overflow-x: auto; border-radius: var(--radius); border: 1px solid var(--border); background: var(--bg-2); }
+  table { width: 100%; border-collapse: collapse; text-align: left; }
+  th { 
+    background: rgba(15, 23, 42, 0.9); color: var(--muted); font-weight: 600; 
+    padding: 1rem; font-size: 0.8rem; text-transform: uppercase; 
+    border-bottom: 1px solid var(--border); white-space: nowrap;
+  }
+  td { padding: 1rem; border-bottom: 1px solid var(--border); color: var(--ink); font-size: 0.9rem; vertical-align: middle; white-space: nowrap; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: rgba(255,255,255,0.02); }
+
+  /* --- MODAL --- */
+  .modal-backdrop {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(4px);
+    display: flex; align-items: center; justify-content: center; z-index: 1000;
+    opacity: 0; pointer-events: none; transition: opacity 0.2s; padding: 10px;
+  }
+  .modal-backdrop.open { opacity: 1; pointer-events: all; }
+  
+  .modal {
+    background: #1e293b; color: #fff; border: 1px solid var(--border); border-radius: var(--radius);
+    width: 100%; max-width: 550px; box-shadow: 0 20px 50px rgba(0,0,0,0.6);
+    display: flex; flex-direction: column; max-height: 90vh; /* Límite altura móvil */
+  }
+  
+  .modal-header { 
+    padding: 1.2rem; border-bottom: 1px solid var(--border); 
+    display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.2); 
+  }
+  .modal-header h3 { margin: 0; font-size: 1.2rem; }
+  
+  .modal-body { padding: 1.5rem; overflow-y: auto; display: flex; flex-direction: column; gap: 1.2rem; }
+  
+  .modal-footer { 
+    padding: 1.2rem; border-top: 1px solid var(--border); 
+    display: flex; justify-content: flex-end; gap: 1rem; background: rgba(0,0,0,0.2); 
+  }
+
+  /* Grid en formularios */
+  .form-row, .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  @media (max-width: 600px) {
+    .form-row, .form-grid { grid-template-columns: 1fr; } /* Columna única en móvil */
+    .modal-footer { flex-direction: column-reverse; } /* Botones apilados */
+    .modal-footer .btn { width: 100%; }
+  }
+
+  /* --- EXTRAS (Badges, Lists, Toasts) --- */
+  .badge, .status-badge { padding: 2px 8px; border-radius: 99px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; white-space: nowrap; }
+  .badge-admin, .badge-user, .tag-propio, .st-active { background: rgba(16,185,129,0.15); color: #34d399; }
+  .badge-repartidor, .tag-promo { background: rgba(59,130,246,0.15); color: #60a5fa; }
+  .badge-super, .tag-fletero, .st-inactive { background: rgba(245,158,11,0.15); color: #fbbf24; }
+
+  .toast { position: fixed; right: 20px; bottom: 30px; background: #fff; color: #0f172a; padding: 10px 20px; border-radius: 99px; font-weight: 600; box-shadow: 0 10px 30px rgba(0,0,0,0.3); opacity: 0; pointer-events: none; transition: 0.3s; z-index: 2000; }
+  .toast.show { opacity: 1; transform: translateY(-10px); }
+
+  /* Elementos específicos de zona.html */
+  .sidebar-list { overflow-y: auto; display: flex; flex-direction: column; gap: 0.8rem; flex: 1; }
+  .zones-panel { min-height:0; }
+  .panel-head { display:flex; justify-content:space-between; align-items:flex-start; gap:0.75rem; margin-bottom:1rem; }
+  .panel-head h2 { margin:0; font-size:1.2rem; color:#fff; }
+  .panel-subtitle { margin:0.25rem 0 0; color:var(--muted); font-size:0.82rem; }
+  .panel-actions { display:flex; gap:0.5rem; flex-wrap:wrap; justify-content:flex-end; }
+  .zone-summary { display:grid; grid-template-columns:repeat(3, 1fr); gap:0.6rem; margin-bottom:1rem; }
+  .zone-stat { background:var(--bg-2); border:1px solid var(--border); border-radius:10px; padding:0.75rem; }
+  .zone-stat span { display:block; color:var(--muted); font-size:0.7rem; text-transform:uppercase; font-weight:700; }
+  .zone-stat strong { display:block; color:#fff; font-size:1.35rem; margin-top:0.15rem; }
+  .zone-tools { display:flex; gap:0.6rem; margin-bottom:1rem; }
+  .zona-item {
+    background: var(--bg-2); border: 1px solid var(--border); padding: 1rem; border-radius: 8px;
+    display: flex; justify-content: space-between; align-items: flex-start; gap:0.75rem; cursor: pointer;
+    transition: border-color .2s, background .2s, transform .2s;
+  }
+  .zona-item:hover { border-color:rgba(6,182,212,0.45); background:rgba(15,23,42,0.95); }
+  .zona-item.active { border-color:var(--brand); background:rgba(6,182,212,0.1); }
+  .zona-info { min-width:0; }
+  .zona-info h3 { margin:0; color:#fff; font-size:1rem; overflow:hidden; text-overflow:ellipsis; }
+  .zona-meta { display:flex; gap:0.4rem; flex-wrap:wrap; margin-top:0.55rem; }
+  .zone-tag {
+    display:inline-flex; align-items:center; gap:0.25rem; border-radius:999px; padding:0.25rem 0.5rem;
+    border:1px solid var(--border); background:rgba(148,163,184,0.08); color:var(--muted);
+    font-size:0.72rem; font-weight:700; white-space:nowrap;
+  }
+  .zone-tag.ok { color:#86efac; border-color:rgba(16,185,129,0.28); background:rgba(16,185,129,0.12); }
+  .zone-tag.warn { color:#fde68a; border-color:rgba(245,158,11,0.28); background:rgba(245,158,11,0.12); }
+  .zone-tag.driver { color:#7dd3fc; border-color:rgba(56,189,248,0.28); background:rgba(56,189,248,0.12); }
+  .zone-actions { display:flex; gap:0.45rem; flex-shrink:0; }
+  .empty-state { text-align:center; padding:2rem; color:var(--muted); border:1px dashed var(--border); border-radius:10px; background:rgba(15,23,42,0.55); }
+  .help-box {
+    position:absolute; left:18px; bottom:18px; z-index:500; max-width:340px;
+    background:rgba(15,23,42,0.9); border:1px solid var(--border); border-radius:12px;
+    padding:0.9rem 1rem; box-shadow:0 12px 30px rgba(0,0,0,0.28); backdrop-filter:blur(10px);
+  }
+  .help-box ul { margin:0.55rem 0 0; padding-left:1.1rem; color:var(--muted); font-size:0.84rem; line-height:1.45; }
+  .map-chip {
+    position:absolute; right:18px; top:18px; z-index:500; display:flex; gap:0.5rem; flex-wrap:wrap; justify-content:flex-end;
+  }
+  .map-chip span {
+    background:rgba(255,255,255,0.95); color:#0f172a; border:1px solid #cbd5e1; border-radius:999px;
+    padding:0.35rem 0.65rem; font-size:0.78rem; font-weight:700; box-shadow:0 6px 18px rgba(15,23,42,0.16);
+  }
+  .zona-label {
+    background:rgba(255,255,255,0.92); border:1px solid rgba(15,23,42,0.18); color:#0f172a;
+    border-radius:999px; box-shadow:none; font-weight:700; padding:2px 8px;
+  }
+  @media(max-width: 900px) {
+    .zone-summary { grid-template-columns:repeat(3, minmax(0, 1fr)); }
+    .help-box { position:static; max-width:none; border-radius:0; border-left:none; border-right:none; border-bottom:none; }
+    .map-chip { left:12px; right:12px; top:12px; justify-content:flex-start; }
+  }
+  @media(max-width: 600px) {
+    .panel-head { flex-direction:column; }
+    .panel-actions, .zone-tools { width:100%; flex-direction:column; }
+    .zone-summary { grid-template-columns:1fr; }
+    .zona-item { flex-direction:column; }
+    .zone-actions { width:100%; justify-content:flex-end; }
+  }
+  
+  /* Elementos específicos de inicial.html */
+  .step-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.5rem; display: flex; gap: 1rem; margin-bottom: 1rem; align-items: flex-start; }
+  .step-num { flex-shrink: 0; width: 40px; height: 40px; background: var(--bg-2); border: 1px solid var(--border); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; }
+  @media(max-width: 600px) { 
+    .step-card { flex-direction: column; } 
+    .check-icon { position: static; transform: none; opacity: 1; } 
+  }
+
+  /* Leaflet Controls */
+  .leaflet-bar { border: none !important; box-shadow: 0 4px 10px rgba(0,0,0,0.3) !important; }
+  .leaflet-bar a { background-color: #fff !important; color: #0f172a !important; border-bottom: 1px solid #cbd5e1 !important; }
+</style>
+</head>
+<body>
+
+  <header>
+    <nav class="container">
+      <div class="brand">
+        <div class="brand-dot"></div>
+        MultiEmpresas
+        <span id="roleBadge" class="role-badge">Admin</span>
+      </div>
+      <ul class="menu" id="mainMenu">
+        <li><a href="inicial.html">🚀 Inicio</a></li>
+        <li><a href="/pedidos/dashboard.html">Dashboard</a></li>
+        <li><a href="zona.html" class="active">Zonas</a></li>
+        <li><a href="#" id="logout" style="color: var(--danger)">Salir</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <main class="container">
+    <div class="layout-split">
+      
+      <div class="map-wrapper">
+        <div id="map"></div>
+        <div class="map-chip">
+          <span id="mapZoneCount">0 zonas</span>
+          <span id="mapModeText">Mapa operativo</span>
+        </div>
+        
+        <div class="help-box">
+          <strong style="color:var(--brand)">Gestión de Mapa</strong>
+          <ul>
+            <li><strong>Dibujar:</strong> tocá “Dibujar zona” o el pentágono del mapa.</li>
+            <li><strong>Editar:</strong> usá el pin de cada zona para mover puntos.</li>
+            <li><strong>Revisar:</strong> clic en una zona para centrarla y resaltarla.</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="card zones-panel">
+        
+        <div id="empWrap" style="display:none; margin-bottom:1rem; border-bottom:1px solid var(--border); padding-bottom:1rem;">
+            <label for="empSel">Empresa (Admin)</label>
+            <select id="empSel"><option value="">-- Seleccionar --</option></select>
+        </div>
+
+        <div class="panel-head">
+          <div>
+            <h2>Zonas de reparto</h2>
+            <p class="panel-subtitle">Territorios activos para asignación y despacho.</p>
+          </div>
+          <div class="panel-actions">
+            <button id="btnFitAllZones" type="button" class="btn">Centrar todo</button>
+            <button id="btnStartNewZone" type="button" class="btn btn-primary">Dibujar zona</button>
+          </div>
+        </div>
+
+        <div class="zone-summary">
+          <div class="zone-stat"><span>Total</span><strong id="statTotalZones">0</strong></div>
+          <div class="zone-stat"><span>Con dibujo</span><strong id="statDrawnZones">0</strong></div>
+          <div class="zone-stat"><span>Sin dibujo</span><strong id="statEmptyZones">0</strong></div>
+        </div>
+
+        <div class="zone-tools">
+          <div class="search-box">
+            <span class="search-icon">🔍</span>
+            <input type="text" id="zoneSearch" placeholder="Buscar zona...">
+          </div>
+        </div>
+
+        <div id="editModeBar" style="display:none; margin-bottom:1rem; padding:0.7rem; border:1px dashed var(--warning); border-radius:8px; background:rgba(245,158,11,0.1);">
+          <div id="editModeText" style="font-size:0.85rem; color:#fbbf24; margin-bottom:0.5rem;">Modo edición de puntos activo</div>
+          <div style="display:flex; gap:0.5rem;">
+            <button id="btnSavePolygonEdit" type="button" class="btn btn-primary">Guardar puntos</button>
+            <button id="btnCancelPolygonEdit" type="button" class="btn">Cancelar</button>
+          </div>
+        </div>
+        
+        <div id="zonasList" class="sidebar-list">
+          <div style="text-align:center; padding:2rem; color:var(--muted);">Cargando...</div>
+        </div>
+      </div>
+
+    </div>
+  </main>
+
+  <div id="modal" class="modal-backdrop">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 style="margin:0;">Guardar Zona</h3>
+        <button id="btnCloseModalTop" type="button" class="btn-icon">✕</button>
+      </div>
+      <form id="formZona" class="modal-body">
+        <input type="hidden" id="z_id">
+        <div>
+          <label>Nombre de la Zona</label>
+          <input type="text" id="z_nombre" required placeholder="Ej: Zona Norte, Centro" style="margin-bottom:0;">
+        </div>
+      </form>
+      <div class="modal-footer">
+        <button id="btnCancelModal" type="button" class="btn">Cancelar</button>
+        <button id="btnSaveZona" type="button" class="btn btn-primary">Guardar</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+
+  <script>
+    // --- Utils ---
+    const $ = s => document.querySelector(s);
+    const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;'
+    }[c]));
+    function toast(msg) {
+      const t = $('#toast'); t.textContent = msg; t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 3000);
+    }
+
+    // Modo seguro: auth por cookie httpOnly
+    const authFetch = (url, opts = {}) => {
+      const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
+      return fetch(url, { ...opts, headers, credentials: 'include' });
+    };
+
+    // --- Logout ---
+    const logoutLink = $('#logout');
+    if (logoutLink) {
+      logoutLink.addEventListener('click', async (e) => {
+        e.preventDefault();
+        try { await authFetch('/api/logout', { method: 'POST' }); } catch {}
+        location.href = '../login.html';
+      });
+    }
+
+    // --- State ---
+    let STATE = { isSuper: false, user: null };
+    let map, drawnItems, drawControl;
+    let zonas = [];
+    let layersByZoneId = {};
+    let zoneDriverMap = {};
+    let activeZoneId = null;
+    let zoneSearchQuery = '';
+    let currentNewPolygon = null;
+    let currentLayer = null;
+    let polygonEditState = { zoneId: null, layer: null, originalCoords: null };
+    let saveBusy = false;
+    let deleteBusy = false;
+
+    // --- API ---
+    async function api(endpoint, opts = {}) {
+      try {
+        const res = await authFetch(endpoint, opts);
+        if (res.status === 401) return window.location.href = '../login.html';
+        return res.json();
+      } catch (e) {
+        console.error(e);
+        toast('Error de conexión');
+        return { error: 'Error' };
+      }
+    }
+
+    // --- Map Logic ---
+    function initMap() {
+      // Coords default Argentina centro aprox
+      map = L.map('map').setView([-32.4113, -63.2374], 13);
+      
+      // Capa clara para leer calles y referencias mientras se dibujan zonas.
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+        subdomains: 'abcd',
+        maxZoom: 20
+      }).addTo(map);
+
+      drawnItems = new L.FeatureGroup();
+      map.addLayer(drawnItems);
+
+      drawControl = new L.Control.Draw({
+        edit: { featureGroup: drawnItems, remove: true },
+        draw: {
+          polygon: { allowIntersection: false, showArea: true, shapeOptions: { color: '#06b6d4' } },
+          rectangle: { showArea: true, shapeOptions: { color: '#06b6d4' } },
+          circle: false, circlemarker: false, marker: false, polyline: false
+        }
+      });
+      map.addControl(drawControl);
+      setTimeout(() => map.invalidateSize(), 200);
+
+      // Crear
+      map.on(L.Draw.Event.CREATED, function (e) {
+        const layer = e.layer;
+        currentLayer = layer; 
+
+        if (STATE.isSuper && !$('#empSel').value) {
+            toast('⚠️ Selecciona una empresa antes de dibujar.');
+            drawnItems.removeLayer(layer);
+            return; 
+        }
+
+        drawnItems.addLayer(layer);
+        layer.setStyle({ color: '#06b6d4', weight: 3, fillOpacity: 0.22 });
+        const latLngs = layer.getLatLngs()[0] || [];
+        currentNewPolygon = latLngs.map(p => [p.lng, p.lat]); // [lng, lat] para backend
+        
+        $('#z_id').value = ''; 
+        $('#z_nombre').value = '';
+        openModal();
+      });
+
+      // Editar
+      map.on(L.Draw.Event.EDITED, function (e) {
+        e.layers.eachLayer(function (layer) {
+          const id = layer.zonaId; 
+          const latLngs = layer.getLatLngs()[0] || [];
+          const newCoords = latLngs.map(p => [p.lng, p.lat]);
+          
+          if (id) {
+            const z = zonas.find(x => x.id === id);
+            if (z) updateZoneDirect(id, z.nombre, newCoords);
+          }
+        });
+      });
+      
+      // Borrar
+      map.on(L.Draw.Event.DELETED, function(e) {
+         e.layers.eachLayer(function(layer) {
+            if (layer.zonaId) del(layer.zonaId);
+         });
+      });
+    }
+
+    // --- App Logic ---
+    async function load() {
+        let url = '/api/zonas';
+        const empId = $('#empSel').value;
+        
+        if (STATE.isSuper) {
+            if (empId) url += `?empresa_id=${empId}`;
+            else {
+                zonas = []; zoneDriverMap = {}; renderList(); updateStats(); drawnItems.clearLayers();
+                return;
+            }
+        }
+
+        const qs = STATE.isSuper && empId ? `?empresa_id=${empId}` : '';
+        const [data, assignments, choferes] = await Promise.all([
+            api(url),
+            api(`/api/zonas/choferes${qs}`),
+            api(`/api/choferes${qs}`)
+        ]);
+
+        if (Array.isArray(data)) {
+            zonas = data;
+            buildDriverMap(assignments, choferes);
+            renderList();
+            renderMapShapes();
+            updateStats();
+        } else {
+            console.error(data);
+            toast('Error: ' + (data.error || ''));
+        }
+    }
+
+    function buildDriverMap(assignments, choferes) {
+      zoneDriverMap = {};
+      if (!Array.isArray(assignments) || !Array.isArray(choferes)) return;
+
+      assignments.forEach(assign => {
+        const zoneId = assign.zona_id || assign.id;
+        const firstDriverId = assign.choferes?.[0]?.id;
+        const driver = choferes.find(c => Number(c.id) === Number(firstDriverId));
+        if (zoneId && driver) zoneDriverMap[zoneId] = driver.nombre;
+      });
+    }
+
+    function renderList() {
+      const list = $('#zonasList');
+      const q = zoneSearchQuery.trim().toLowerCase();
+      const visibleZones = zonas.filter(z => !q || String(z.nombre || '').toLowerCase().includes(q));
+
+      if (!visibleZones.length) {
+        const msg = zonas.length ? 'No hay zonas que coincidan con la búsqueda.' : 'No hay zonas creadas.';
+        list.innerHTML = `<div class="empty-state">${msg}</div>`;
+        return;
+      }
+      list.innerHTML = visibleZones.map(z => {
+        const id = Number(z.id);
+        const pointCount = getZonePointCount(z);
+        const hasPolygon = pointCount >= 3;
+        const driverName = zoneDriverMap[id];
+        return `
+        <div class="zona-item ${Number(activeZoneId) === id ? 'active' : ''}" data-zone-id="${id}">
+          <div class="zona-info">
+            <h3>${esc(z.nombre)}</h3>
+            <div class="zona-meta">
+              <span class="zone-tag">ID ${id}</span>
+              <span class="zone-tag ${hasPolygon ? 'ok' : 'warn'}">${hasPolygon ? `${pointCount} puntos` : 'Sin dibujo'}</span>
+              <span class="zone-tag ${driverName ? 'driver' : 'warn'}">${driverName ? `Repartidor: ${esc(driverName)}` : 'Sin repartidor'}</span>
+            </div>
+          </div>
+          <div class="zone-actions">
+            <button class="btn-icon" data-action="edit-points" data-id="${id}" title="Editar puntos">📍</button>
+            <button class="btn-icon" data-action="edit-name" data-id="${id}" title="Editar nombre">✏️</button>
+            <button class="btn-icon" data-action="delete" data-id="${id}" title="Eliminar" style="color:var(--danger); border-color:rgba(239,68,68,0.3);">🗑️</button>
+          </div>
+        </div>
+      `;
+      }).join('');
+    }
+
+    function getZonePointCount(z) {
+      const pts = Array.isArray(z?.poligono) ? z.poligono : [];
+      if (pts.length > 3) {
+        const first = pts[0];
+        const last = pts[pts.length - 1];
+        if (Array.isArray(first) && Array.isArray(last) && first[0] === last[0] && first[1] === last[1]) {
+          return pts.length - 1;
+        }
+      }
+      return pts.length;
+    }
+
+    function updateStats() {
+      const total = zonas.length;
+      const drawn = zonas.filter(z => getZonePointCount(z) >= 3).length;
+      const empty = total - drawn;
+      if ($('#statTotalZones')) $('#statTotalZones').textContent = total;
+      if ($('#statDrawnZones')) $('#statDrawnZones').textContent = drawn;
+      if ($('#statEmptyZones')) $('#statEmptyZones').textContent = empty;
+      if ($('#mapZoneCount')) $('#mapZoneCount').textContent = `${total} ${total === 1 ? 'zona' : 'zonas'}`;
+    }
+
+    function renderMapShapes() {
+      cancelPolygonEdit(false);
+      drawnItems.clearLayers();
+      layersByZoneId = {}; 
+
+      zonas.forEach(z => {
+        if (!z.poligono || !Array.isArray(z.poligono) || z.poligono.length < 3) return;
+        
+        const latLngs = z.poligono
+          .filter(p => Array.isArray(p) && p.length >= 2)
+          .map(([lng, lat]) => [lat, lng]); // [lat, lng] para Leaflet
+        
+        const poly = L.polygon(latLngs, { color: '#06b6d4', weight: 2, fillOpacity: 0.2 });
+        poly.zonaId = z.id;
+        poly.bindTooltip(esc(z.nombre), { permanent: true, direction:"center", className: "zona-label" });
+        poly.on('click', () => focusZone(Number(z.id)));
+        
+        drawnItems.addLayer(poly);
+        layersByZoneId[z.id] = poly; 
+      });
+      
+      if (zonas.length > 0 && drawnItems.getLayers().length > 0) {
+          map.fitBounds(drawnItems.getBounds());
+      }
+    }
+
+    // --- Actions ---
+    function startNewZone() {
+      if (STATE.isSuper && !$('#empSel').value) return toast('⚠️ Selecciona una empresa primero');
+      if (L.Draw && L.Draw.Polygon) {
+        new L.Draw.Polygon(map, drawControl.options.draw.polygon).enable();
+        toast('Dibujá el polígono en el mapa.');
+      } else {
+        toast('Usa el botón del pentágono (⬠) en el mapa para dibujar.');
+      }
+    }
+
+    function focusZone(id) {
+      const layer = layersByZoneId[id];
+      if (layer) {
+          activeZoneId = id;
+          renderList();
+          map.fitBounds(layer.getBounds());
+          layer.setStyle({ weight: 4, color: '#facc15', fillOpacity: 0.5 });
+          setTimeout(() => layer.setStyle({ weight: 2, color: '#06b6d4', fillOpacity: 0.2 }), 1500);
+          const z = zonas.find(x => Number(x.id) === Number(id));
+          if ($('#mapModeText')) $('#mapModeText').textContent = z?.nombre ? `Zona: ${z.nombre}` : 'Zona seleccionada';
+      } else {
+          toast('Zona sin dibujo en mapa');
+      }
+    }
+
+    function fitAllZones() {
+      const layers = drawnItems.getLayers();
+      if (!layers.length) return toast('No hay zonas dibujadas para centrar');
+      activeZoneId = null;
+      renderList();
+      map.fitBounds(drawnItems.getBounds(), { padding: [30, 30] });
+      if ($('#mapModeText')) $('#mapModeText').textContent = 'Todas las zonas';
+    }
+
+    function editName(id) {
+      const z = zonas.find(x => x.id === id);
+      if (!z) return;
+      $('#z_id').value = z.id;
+      $('#z_nombre').value = z.nombre;
+      currentNewPolygon = null; 
+      openModal();
+      focusZone(id);
+    }
+
+    function startEditPoints(id) {
+      const layer = layersByZoneId[id];
+      if (!layer) return toast('No se encontró la geometría de la zona');
+
+      // Cerrar edición previa si existe
+      cancelPolygonEdit(false);
+
+      polygonEditState.zoneId = id;
+      polygonEditState.layer = layer;
+      polygonEditState.originalCoords = (layer.getLatLngs()[0] || []).map(p => [p.lng, p.lat]);
+
+      layer.editing.enable();
+      $('#editModeBar').style.display = 'block';
+      const z = zonas.find(x => Number(x.id) === Number(id));
+      if ($('#editModeText')) $('#editModeText').textContent = `Editando puntos: ${z?.nombre || `Zona ${id}`}`;
+      if ($('#mapModeText')) $('#mapModeText').textContent = 'Editando puntos';
+      focusZone(id);
+      toast('Modo edición: mové los puntos del polígono y luego guardá.');
+    }
+
+    async function savePolygonEdit() {
+      const { zoneId, layer } = polygonEditState;
+      if (!zoneId || !layer) return;
+
+      const latLngs = layer.getLatLngs()[0] || [];
+      const coords = latLngs.map(p => [p.lng, p.lat]);
+      if (coords.length < 3) {
+        toast('El polígono debe tener al menos 3 puntos');
+        return;
+      }
+
+      const z = zonas.find(x => x.id === zoneId);
+      const nombre = z?.nombre || `Zona ${zoneId}`;
+      await updateZoneDirect(zoneId, nombre, coords);
+
+      layer.editing.disable();
+      polygonEditState = { zoneId: null, layer: null, originalCoords: null };
+      $('#editModeBar').style.display = 'none';
+      if ($('#mapModeText')) $('#mapModeText').textContent = 'Mapa operativo';
+      await load();
+    }
+
+    function cancelPolygonEdit(showToast = true) {
+      const { layer, originalCoords } = polygonEditState;
+      if (layer && layer.editing) {
+        layer.editing.disable();
+      }
+
+      if (layer && Array.isArray(originalCoords) && originalCoords.length >= 3) {
+        const latLngs = originalCoords.map(([lng, lat]) => [lat, lng]);
+        layer.setLatLngs(latLngs);
+      }
+
+      polygonEditState = { zoneId: null, layer: null, originalCoords: null };
+      $('#editModeBar').style.display = 'none';
+      if ($('#mapModeText')) $('#mapModeText').textContent = 'Mapa operativo';
+      if (showToast) toast('Edición cancelada');
+    }
+
+    async function saveForm() {
+      if (saveBusy) return;
+
+      const id = $('#z_id').value;
+      const nombre = $('#z_nombre').value;
+      const empId = $('#empSel').value;
+
+      if (!nombre) return toast('El nombre es obligatorio');
+
+      const body = { nombre };
+
+      if (!id) {
+          if (!currentNewPolygon) return toast('Error: No hay dibujo en el mapa');
+          body.poligono = currentNewPolygon;
+          if (STATE.isSuper) {
+              if (!empId) return toast('Error: Admin debe seleccionar empresa');
+              body.empresa_id = empId;
+          }
+      }
+
+      const method = id ? 'PUT' : 'POST';
+      const url = id ? `/api/zonas/${id}` : '/api/zonas';
+
+      const saveBtn = document.getElementById('btnSaveZona');
+      const prevText = saveBtn ? saveBtn.textContent : '';
+      saveBusy = true;
+      if (saveBtn) {
+        saveBtn.disabled = true;
+        saveBtn.textContent = 'Guardando...';
+      }
+
+      try {
+        const res = await api(url, { method, body: JSON.stringify(body) });
+
+        if (res.error) {
+          toast('❌ ' + res.error);
+        } else {
+          toast(id ? '✅ Actualizado' : '✅ Zona creada');
+          closeModal();
+          activeZoneId = null;
+          currentNewPolygon = null;
+          currentLayer = null; 
+          load();
+        }
+      } finally {
+        saveBusy = false;
+        if (saveBtn) {
+          saveBtn.disabled = false;
+          saveBtn.textContent = prevText;
+        }
+      }
+    }
+
+    async function updateZoneDirect(id, nombre, coords) {
+        const body = { nombre, poligono: coords };
+        const res = await api(`/api/zonas/${id}`, { method: 'PUT', body: JSON.stringify(body) });
+        if (res.error) toast('❌ Error: ' + res.error);
+        else toast('✅ Mapa actualizado');
+        
+        const z = zonas.find(x => x.id === id);
+        if (z) z.poligono = coords; 
+    }
+
+    async function del(id, btnEl = null) {
+      if (deleteBusy) return;
+
+      if (!confirm('¿Eliminar esta zona? Esta acción no se puede deshacer.')) return;
+      const check = prompt('Para confirmar, escribí ELIMINAR');
+      if (check !== 'ELIMINAR') {
+        toast('Eliminación cancelada');
+        return;
+      }
+
+      deleteBusy = true;
+      const prevText = btnEl ? btnEl.textContent : '';
+      if (btnEl) {
+        btnEl.disabled = true;
+        btnEl.textContent = '…';
+      }
+
+      try {
+        const res = await api(`/api/zonas/${id}`, { method: 'DELETE' });
+        if (res.error) toast('❌ ' + res.error);
+        else { toast('🗑️ Zona eliminada'); load(); }
+      } finally {
+        deleteBusy = false;
+        if (btnEl) {
+          btnEl.disabled = false;
+          btnEl.textContent = prevText;
+        }
+      }
+    }
+
+    function openModal() { $('#modal').classList.add('open'); $('#z_nombre').focus(); }
+    function closeModal() { 
+        $('#modal').classList.remove('open'); 
+        if (!$('#z_id').value && currentLayer) {
+            drawnItems.removeLayer(currentLayer);
+            currentLayer = null; currentNewPolygon = null;
+        }
+    }
+
+    const btnStartNewZone = document.getElementById('btnStartNewZone');
+    if (btnStartNewZone) btnStartNewZone.addEventListener('click', startNewZone);
+
+    const btnFitAllZones = document.getElementById('btnFitAllZones');
+    if (btnFitAllZones) btnFitAllZones.addEventListener('click', fitAllZones);
+
+    const zoneSearch = document.getElementById('zoneSearch');
+    if (zoneSearch) {
+      zoneSearch.addEventListener('input', () => {
+        zoneSearchQuery = zoneSearch.value || '';
+        renderList();
+      });
+    }
+
+    const btnSavePolygonEdit = document.getElementById('btnSavePolygonEdit');
+    if (btnSavePolygonEdit) btnSavePolygonEdit.addEventListener('click', savePolygonEdit);
+
+    const btnCancelPolygonEdit = document.getElementById('btnCancelPolygonEdit');
+    if (btnCancelPolygonEdit) btnCancelPolygonEdit.addEventListener('click', () => cancelPolygonEdit());
+
+    const btnCloseModalTop = document.getElementById('btnCloseModalTop');
+    if (btnCloseModalTop) btnCloseModalTop.addEventListener('click', closeModal);
+
+    const btnCancelModal = document.getElementById('btnCancelModal');
+    if (btnCancelModal) btnCancelModal.addEventListener('click', closeModal);
+
+    const btnSaveZona = document.getElementById('btnSaveZona');
+    if (btnSaveZona) btnSaveZona.addEventListener('click', saveForm);
+
+    const formZona = document.getElementById('formZona');
+    if (formZona) {
+      formZona.addEventListener('submit', (ev) => {
+        ev.preventDefault();
+        saveForm();
+      });
+    }
+
+    const zonasList = document.getElementById('zonasList');
+    if (zonasList) {
+      zonasList.addEventListener('click', (ev) => {
+        const btn = ev.target.closest('button[data-action][data-id]');
+        if (btn) {
+          ev.stopPropagation();
+          const action = btn.getAttribute('data-action');
+          const id = Number(btn.getAttribute('data-id'));
+          if (!Number.isFinite(id) || id <= 0) return;
+
+          if (action === 'edit-points') startEditPoints(id);
+          else if (action === 'edit-name') editName(id);
+          else if (action === 'delete') del(id, btn);
+          return;
+        }
+
+        const item = ev.target.closest('.zona-item[data-zone-id]');
+        if (!item) return;
+        const zoneId = Number(item.getAttribute('data-zone-id'));
+        if (!Number.isFinite(zoneId) || zoneId <= 0) return;
+        focusZone(zoneId);
+      });
+    }
+
+    // --- Init ---
+    (async () => {
+        initMap();
+        try {
+            const me = await api('/api/me');
+            STATE.user = me?.user || {};
+            STATE.isSuper = (STATE.user.role || '').toLowerCase() === 'super';
+            
+            $('#roleBadge').textContent = STATE.isSuper ? 'SUPER ADMIN' : 'Admin';
+
+            if (STATE.isSuper) {
+                $('#empWrap').style.display = 'block';
+                const list = await api('/api/empresas');
+                const sel = $('#empSel');
+                if (Array.isArray(list)) {
+                    sel.innerHTML = '<option value="">-- Seleccionar Empresa --</option>' + 
+                    list.map(e => `<option value="${Number(e.id)}">${esc(e.nombre)}</option>`).join('');
+                    
+                    sel.addEventListener('change', () => {
+                      activeZoneId = null;
+                      zoneSearchQuery = '';
+                      if ($('#zoneSearch')) $('#zoneSearch').value = '';
+                      drawnItems.clearLayers();
+                      load();
+                    });
+                }
+            } else {
+                load();
+            }
+        } catch (e) { console.error("Boot Error", e); }
+    })();
+  </script>
+</body>
+</html>

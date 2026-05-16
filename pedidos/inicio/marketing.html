@@ -1,0 +1,1555 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Marketing Automático – MultiEmpresas</title>
+  <link rel="stylesheet" href="theme-base.css" />
+  
+<style>
+  :root {
+    /* Palette Dark Theme */
+    --bg: #0b1020;
+    --bg-2: #0f172a;
+    --ink: #f1f5f9;
+    --muted: #94a3b8;
+    --brand: #06b6d4;
+    --brand-hover: #22d3ee;
+    --surface: rgba(30, 41, 59, 0.7);
+    --border: rgba(148, 163, 184, 0.15);
+    --glass: rgba(15, 23, 42, 0.95);
+    --radius: 12px;
+    --success: #10b981;
+    --warning: #f59e0b;
+    --danger: #ef4444;
+  }
+
+  * { box-sizing: border-box; outline: none; }
+  
+  body {
+    margin: 0; 
+    font-family: system-ui, -apple-system, sans-serif;
+    color: var(--ink);
+    background: radial-gradient(circle at 15% 50%, rgba(6, 182, 212, 0.05), transparent 25%), var(--bg);
+    min-height: 100vh;
+    font-size: 14px;
+    padding-bottom: 80px;
+  }
+
+  .container { max-width: 800px; margin: 0 auto; padding: 0 20px; }
+
+  /* HEADER & NAV */
+  header {
+    position: sticky; top: 0; z-index: 50;
+    background: var(--glass);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+    padding: 0.8rem 0;
+    margin-bottom: 2rem;
+  }
+  
+  nav { display: flex; justify-content: space-between; align-items: center; max-width: 1200px; margin: 0 auto; padding: 0 20px; }
+  
+  .brand { display: flex; gap: 0.8rem; align-items: center; font-size: 1.1rem; font-weight: 700; color: #fff; text-decoration: none; white-space: nowrap; }
+  .brand-dot { width: 10px; height: 10px; background: var(--brand); border-radius: 50%; box-shadow: 0 0 10px var(--brand); }
+  .role-badge {
+    background: rgba(6, 182, 212, 0.1);
+    border: 1px solid rgba(6, 182, 212, 0.3);
+    color: var(--brand);
+    padding: 2px 8px;
+    border-radius: 99px;
+    font-size: 0.75rem;
+  }
+  
+  .menu { list-style: none; display: flex; gap: 1.5rem; margin: 0; padding: 0; }
+  .menu a { text-decoration: none; color: var(--muted); font-weight: 500; transition: 0.2s; white-space: nowrap; }
+  .menu a:hover, .menu a.active { color: #fff; }
+  .menu a.active { border-bottom: 2px solid var(--brand); padding-bottom: 4px; }
+
+  /* FILTER BAR (SUPER ADMIN) */
+  .filter-bar {
+    background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px;
+    padding: 10px; margin-bottom: 20px; display: none; /* Oculto por defecto */
+    align-items: center; gap: 10px;
+  }
+  .filter-bar select {
+    background: var(--bg); color: #fff; border: 1px solid var(--border);
+    padding: 8px; border-radius: 6px; flex: 1;
+  }
+
+  /* ESTRATEGIA STYLES */
+  .page-header { text-align: center; margin-bottom: 2rem; }
+  h1 { font-size: 1.8rem; margin: 0; color: #fff; }
+  p.subtitle { color: var(--muted); margin: 0.5rem 0 0 0; font-size: 0.95rem; }
+
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 2rem;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+  }
+
+  .strategy-box { 
+    border-radius: 12px; padding: 20px; margin-bottom: 20px; 
+    border: 1px solid transparent; 
+    color: #0f172a; 
+  }
+  
+  /* Colores distintivos */
+  .box-vecinos { background: #e0f2fe; border-color: #bae6fd; }
+  .box-predictivo { background: #dcfce7; border-color: #bbf7d0; }
+  .box-referidos { background: #fef9c3; border-color: #fde047; }
+  .box-reactivacion { background: #fee2e2; border-color: #fecaca; }
+  .box-postentrega { background: #ede9fe; border-color: #ddd6fe; }
+  .box-clima { background: #e0f2fe; border-color: #bae6fd; }
+  .box-vip { background: #fae8ff; border-color: #f5d0fe; }
+  .box-importacion { background: #ecfccb; border-color: #bef264; }
+
+  .switch-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .switch-label { font-size: 1.1rem; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+  
+  .desc { font-size: 0.9rem; color: #334155; margin-bottom: 15px; line-height: 1.4; }
+
+  .help-box {
+    margin-bottom: 12px;
+    border: 1px dashed rgba(15,23,42,0.25);
+    border-radius: 8px;
+    background: rgba(255,255,255,0.7);
+  }
+  .help-box summary {
+    cursor: pointer;
+    list-style: none;
+    padding: 10px 12px;
+    font-size: 0.88rem;
+    font-weight: 700;
+    color: #0f172a;
+    user-select: none;
+  }
+  .help-box summary::-webkit-details-marker { display: none; }
+  .help-box summary::before { content: 'ℹ️ '; }
+  .help-content {
+    padding: 0 12px 12px 12px;
+    font-size: 0.86rem;
+    color: #334155;
+    line-height: 1.45;
+  }
+  .help-content ul { margin: 8px 0 0 18px; padding: 0; }
+
+  label { display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 5px; color: #475569; margin-top: 12px; text-transform: uppercase; }
+  
+  input[type="text"], input[type="number"], textarea, select {
+      width: 100%; padding: 10px; border: 1px solid #cbd5e1; border-radius: 8px;
+      font-family: inherit; box-sizing: border-box; background: rgba(255,255,255,0.9);
+      color: #0f172a;
+  }
+  input:focus, textarea:focus, select:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 3px rgba(6,182,212,0.2); }
+
+  .btn-save {
+      background: var(--brand); color: #000; border: none; padding: 14px; 
+      border-radius: 10px; width: 100%; font-size: 1rem; font-weight: 700; cursor: pointer;
+      box-shadow: 0 4px 15px rgba(6,182,212,0.3); transition: transform 0.2s;
+      margin-top: 1rem;
+  }
+  .btn-save:hover { background: var(--brand-hover); transform: translateY(-2px); }
+
+  /* Toggle Switch */
+  .toggle { position: relative; display: inline-block; width: 50px; height: 26px; margin: 0; }
+  .toggle input { opacity: 0; width: 0; height: 0; }
+  .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #94a3b8; transition: .4s; border-radius: 34px; }
+  .slider:before { position: absolute; content: ""; height: 20px; width: 20px; left: 3px; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%; }
+  input:checked + .slider { background-color: var(--success); } 
+  input:checked + .slider:before { transform: translateX(24px); }
+
+  @media (max-width: 768px) {
+      .container { padding: 0 15px; }
+      nav { flex-direction: column; gap: 1rem; align-items: stretch; }
+      .brand { justify-content: space-between; }
+      .menu {
+        overflow-x: auto;
+        padding-bottom: 5px;
+        gap: 20px;
+        -webkit-overflow-scrolling: touch;
+      }
+      .menu::-webkit-scrollbar { display: none; }
+  }
+</style>
+</head>
+<body>
+
+  <header>
+    <nav>
+      <a href="inicial.html" class="brand">
+        <div class="brand-dot"></div>
+        MultiEmpresas
+        <span id="roleBadge" class="role-badge">Admin</span>
+      </a>
+      <ul class="menu">
+        <li><a href="inicial.html">🚀 Inicio</a></li>
+        <li><a href="/pedidos/dashboard.html">Dashboard</a></li>
+        <li><a href="/pedidos/inicio/marketing-telemetria.html">📡 Telemetría</a></li>
+        <li><a href="#" id="logout" style="color: var(--danger)">Salir</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <div class="container">
+    <div class="page-header">
+        <h1>🚀 Piloto Automático</h1>
+        <p class="subtitle">Configurá las estrategias de IA para vender más sin esfuerzo.</p>
+    </div>
+
+    <div id="empFilterWrap" class="filter-bar">
+        <label style="color:#fff; margin:0; min-width:80px;">Empresa:</label>
+        <select id="empFilter">
+            <option value="">-- Cargar Empresas --</option>
+        </select>
+    </div>
+
+    <form id="marketingForm" class="card">
+        
+        <!-- ESTRATEGIA 1: VECINOS -->
+        <div class="strategy-box box-vecinos">
+            <div class="switch-row">
+                <div class="switch-label">🏠 Radar de Vecinos</div>
+                <label class="toggle">
+                    <input type="checkbox" id="vecinos_activado">
+                    <span class="slider"></span>
+                </label>
+            </div>
+            <p class="desc">Cuando un pedido sale "En Ruta", avisa a los vecinos cercanos (200m) que no compran hace tiempo.</p>
+            <label>Canal de comunicación:</label>
+            <select id="vecinos_canal">
+                <option value="whatsapp">WhatsApp</option>
+                <option value="sms">SMS</option>
+                <option value="ambos">Ambos</option>
+            </select>
+            <details class="help-box">
+                <summary>Cómo funciona esta estrategia</summary>
+                <div class="help-content">
+                    Se activa cuando un pedido pasa a <b>En Ruta</b>. El sistema busca clientes cercanos que cumplan los días sin compra y les envía este mensaje.
+                    <ul>
+                        <li><b>Radio:</b> distancia máxima desde el punto de entrega.</li>
+                        <li><b>Días sin compra:</b> evita enviar a clientes muy recientes.</li>
+                        <li>Podés usar <code>{cliente}</code> para personalizar el texto.</li>
+                    </ul>
+                </div>
+            </details>
+            
+            <label>Mensaje (usa {cliente} para el nombre):</label>
+            <textarea id="vecinos_mensaje" rows="2">Hola {cliente} 👋, el camión está en tu cuadra. Avisame si te dejo algo!</textarea>
+            
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+                <div>
+                    <label>Radio (metros):</label>
+                    <input type="number" id="vecinos_radio" value="200">
+                </div>
+                <div>
+                    <label>Días sin compra:</label>
+                    <input type="number" id="vecinos_dias" value="7">
+                </div>
+            </div>
+        </div>
+
+        <!-- ESTRATEGIA 2: PREDICTIVO -->
+        <div class="strategy-box box-predictivo">
+            <div class="switch-row">
+                <div class="switch-label">🧠 Mayordomo IA (Predictivo)</div>
+                <label class="toggle">
+                    <input type="checkbox" id="predictivo_activado">
+                    <span class="slider"></span>
+                </label>
+            </div>
+            <p class="desc">Analiza el consumo histórico y envía un mensaje proactivo el día exacto de reposición.</p>
+            <label>Canal de comunicación:</label>
+            <select id="predictivo_canal">
+                <option value="whatsapp">WhatsApp</option>
+                <option value="sms">SMS</option>
+                <option value="ambos">Ambos</option>
+            </select>
+            <details class="help-box">
+                <summary>Cómo funciona esta estrategia</summary>
+                <div class="help-content">
+                    Estima la próxima fecha de recompra según historial del cliente y dispara un mensaje antes de que se quede sin stock.
+                    <ul>
+                        <li>Ideal para clientes frecuentes con patrón estable.</li>
+                        <li>Usá mensajes cortos y con propuesta concreta.</li>
+                        <li>Podés usar <code>{cliente}</code> para personalizar.</li>
+                    </ul>
+                </div>
+            </details>
+            
+            <label>Mensaje:</label>
+            <textarea id="predictivo_mensaje" rows="2">Hola {cliente}, calculo que te queda poca agua. ¿Te llevo mañana?</textarea>
+        </div>
+
+        <!-- ESTRATEGIA 3: REFERIDOS CON PREMIO -->
+        <div class="strategy-box box-referidos">
+            <div class="switch-row">
+                <div class="switch-label">🎁 Dominación de Zona (Viral)</div>
+                <label class="toggle">
+                    <input type="checkbox" id="referidos_activado">
+                    <span class="slider"></span>
+                </label>
+            </div>
+            <p class="desc">Cuando entregás un pedido, envía un link único. Si un vecino compra, <b>premiamos al cliente</b>.</p>
+            <label>Canal de comunicación:</label>
+            <select id="referidos_canal">
+                <option value="whatsapp">WhatsApp</option>
+                <option value="sms">SMS</option>
+                <option value="ambos">Ambos</option>
+            </select>
+            <details class="help-box">
+                <summary>Cómo funciona esta estrategia</summary>
+                <div class="help-content">
+                    Cada cliente recibe un link/referencia. Si trae una venta válida, se genera una recompensa automática.
+                    <ul>
+                        <li><b>Producto y cantidad:</b> definen el premio.</li>
+                        <li><b>Mensaje invitación:</b> texto que recibe para compartir.</li>
+                        <li><b>Mensaje éxito:</b> confirmación cuando gana el premio.</li>
+                    </ul>
+                </div>
+            </details>
+            
+            <!-- PANEL DE RECOMPENSA AGREGADO -->
+            <div style="background:rgba(255,255,255,0.9); padding:15px; border-radius:8px; border:1px dashed #ca8a04; margin-bottom:15px;">
+                <label style="color:#854d0e; margin-top:0; font-weight:800;">🏆 Premio para el cliente que refiere:</label>
+                <div style="display:flex; gap:10px; margin-top:5px;">
+                    <div style="flex:3">
+                        <select id="referidos_producto_id">
+                            <option value="">Cargando productos...</option>
+                        </select>
+                    </div>
+                    <div style="flex:1">
+                        <input type="number" id="referidos_cantidad" placeholder="Cant." value="1" min="1">
+                    </div>
+                </div>
+            </div>
+
+            <label>Mensaje de Invitación (para el vecino):</label>
+            <textarea id="referidos_mensaje" rows="2" placeholder="Gracias {cliente}! Link: {link}"></textarea>
+            
+            <label>Mensaje de Éxito (cuando gana el premio):</label>
+            <textarea id="referidos_exito_mensaje" rows="2" placeholder="¡Ganaste un {producto} gratis! Se agrega a tu próximo pedido."></textarea>
+        </div>
+
+        <!-- ESTRATEGIA 4: REACTIVACIÓN -->
+        <div class="strategy-box box-reactivacion">
+            <div class="switch-row">
+                <div class="switch-label">🔁 Reactivación Inteligente</div>
+                <label class="toggle">
+                    <input type="checkbox" id="reactivacion_activado">
+                    <span class="slider"></span>
+                </label>
+            </div>
+            <p class="desc">Detecta clientes sin compra reciente y dispara una campaña automática para recuperarlos.</p>
+            <label>Canal de comunicación:</label>
+            <select id="reactivacion_canal">
+                <option value="whatsapp">WhatsApp</option>
+                <option value="sms">SMS</option>
+                <option value="ambos">Ambos</option>
+            </select>
+            <details class="help-box">
+                <summary>Cómo funciona esta estrategia</summary>
+                <div class="help-content">
+                    Revisa clientes inactivos y los contacta de forma gradual para recuperar ventas.
+                    <ul>
+                        <li><b>Días sin compra:</b> define cuándo entra en campaña.</li>
+                        <li><b>Máx. intentos:</b> limita insistencia por cliente.</li>
+                        <li>Recomendación: empezar con mensajes amigables, no agresivos.</li>
+                    </ul>
+                </div>
+            </details>
+
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+                <div>
+                    <label>Días sin compra (trigger):</label>
+                    <input type="number" id="reactivacion_dias" value="21" min="1">
+                </div>
+                <div>
+                    <label>Máx. intentos por cliente:</label>
+                    <input type="number" id="reactivacion_intentos_max" value="3" min="1">
+                </div>
+            </div>
+
+            <label>Mensaje:</label>
+            <textarea id="reactivacion_mensaje" rows="2">Hola {cliente}, hace rato no te pedimos 😊 ¿Te llevo agua hoy?</textarea>
+        </div>
+
+        <!-- ESTRATEGIA 5: POST-ENTREGA + UPSELL -->
+        <div class="strategy-box box-postentrega">
+            <div class="switch-row">
+                <div class="switch-label">📦 Post-Entrega + Upsell</div>
+                <label class="toggle">
+                    <input type="checkbox" id="postentrega_activado">
+                    <span class="slider"></span>
+                </label>
+            </div>
+            <p class="desc">Después de entregar, hace seguimiento y propone compra complementaria.</p>
+            <label>Canal de comunicación:</label>
+            <select id="postentrega_canal">
+                <option value="whatsapp">WhatsApp</option>
+                <option value="sms">SMS</option>
+                <option value="ambos">Ambos</option>
+            </select>
+            <details class="help-box">
+                <summary>Cómo funciona esta estrategia</summary>
+                <div class="help-content">
+                    Envía un mensaje automáticamente unas horas después de la entrega para confirmar satisfacción y abrir upsell.
+                    <ul>
+                        <li><b>Horas post-entrega:</b> espera antes del contacto.</li>
+                        <li><b>Producto sugerido:</b> opcional para completar el mensaje.</li>
+                        <li>Funciona mejor con tono consultivo: “¿te agrego…?”.</li>
+                    </ul>
+                </div>
+            </details>
+
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+                <div>
+                    <label>Horas post-entrega:</label>
+                    <input type="number" id="postentrega_horas" value="4" min="1">
+                </div>
+                <div>
+                    <label>Producto sugerido (opcional):</label>
+                    <input type="text" id="postentrega_producto" placeholder="Ej: Bidón 20L / Dispenser">
+                </div>
+            </div>
+
+            <label>Mensaje:</label>
+            <textarea id="postentrega_mensaje" rows="2">Hola {cliente}, ¿todo bien con la entrega? Si querés te sumo {producto} para mañana.</textarea>
+        </div>
+
+        <!-- ESTRATEGIA 6: CLIMA -->
+        <div class="strategy-box box-clima">
+            <div class="switch-row">
+                <div class="switch-label">🌤️ Campaña por Clima</div>
+                <label class="toggle">
+                    <input type="checkbox" id="clima_activado">
+                    <span class="slider"></span>
+                </label>
+            </div>
+            <p class="desc">Activa mensajes especiales en días de calor/frío para anticipar demanda.</p>
+            <label>Canal de comunicación:</label>
+            <select id="clima_canal">
+                <option value="whatsapp">WhatsApp</option>
+                <option value="sms">SMS</option>
+                <option value="ambos">Ambos</option>
+            </select>
+            <details class="help-box">
+                <summary>Cómo funciona esta estrategia</summary>
+                <div class="help-content">
+                    Evalúa la temperatura del día y dispara mensajes distintos según calor o frío/lluvia.
+                    <ul>
+                        <li><b>Umbral calor:</b> desde qué temperatura usa campaña de calor.</li>
+                        <li><b>Umbral frío:</b> desde qué temperatura usa campaña de frío.</li>
+                        <li>Definí mensajes cortos y con CTA claro.</li>
+                    </ul>
+                </div>
+            </details>
+
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+                <div>
+                    <label>Umbral calor (°C):</label>
+                    <input type="number" id="clima_temp_alta" value="30">
+                </div>
+                <div>
+                    <label>Umbral frío (°C):</label>
+                    <input type="number" id="clima_temp_baja" value="8">
+                </div>
+            </div>
+
+            <label>Mensaje calor:</label>
+            <textarea id="clima_mensaje_calor" rows="2">Se viene calor hoy 🔥 ¿Te llevo agua antes de que te quedes sin stock?</textarea>
+
+            <label>Mensaje frío/lluvia:</label>
+            <textarea id="clima_mensaje_frio" rows="2">Hoy está feo para salir 🌧️ Si querés te lo llevo a domicilio.</textarea>
+        </div>
+
+        <!-- ESTRATEGIA 7: VIP / LEALTAD -->
+        <div class="strategy-box box-vip">
+            <div class="switch-row">
+                <div class="switch-label">👑 Programa VIP</div>
+                <label class="toggle">
+                    <input type="checkbox" id="vip_activado">
+                    <span class="slider"></span>
+                </label>
+            </div>
+            <p class="desc">Premia la frecuencia de compra para mejorar retención y recompra.</p>
+            <label>Canal de comunicación:</label>
+            <select id="vip_canal">
+                <option value="whatsapp">WhatsApp</option>
+                <option value="sms">SMS</option>
+                <option value="ambos">Ambos</option>
+            </select>
+            <details class="help-box">
+                <summary>Cómo funciona esta estrategia</summary>
+                <div class="help-content">
+                    Al alcanzar cierta cantidad de pedidos, el cliente entra en nivel VIP y recibe un beneficio definido.
+                    <ul>
+                        <li><b>Pedidos mín.:</b> condición para activar beneficio.</li>
+                        <li><b>Beneficio:</b> texto libre (ej. bidón bonificado).</li>
+                        <li>Se recomienda mantener beneficio simple y medible.</li>
+                    </ul>
+                </div>
+            </details>
+
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+                <div>
+                    <label>Pedidos para nivel VIP:</label>
+                    <input type="number" id="vip_pedidos_min" value="10" min="1">
+                </div>
+                <div>
+                    <label>Beneficio:</label>
+                    <input type="text" id="vip_beneficio" placeholder="Ej: 1 bidón bonificado">
+                </div>
+            </div>
+
+            <label>Mensaje VIP:</label>
+            <textarea id="vip_mensaje" rows="2">¡{cliente}, ya sos VIP! 🎉 Desde ahora tenés: {beneficio}.</textarea>
+        </div>
+
+        <!-- IMPORTACIÓN DE BASES (TXT/CSV) -->
+        <div class="strategy-box box-importacion">
+            <div class="switch-row">
+                <div class="switch-label">📥 Importación Pro de Bases</div>
+            </div>
+            <p class="desc">Antes de subir teléfonos, clasificá la base para mantener campañas ordenadas y medibles.</p>
+
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+                <div>
+                    <label>Nombre de lista:</label>
+                    <input type="text" id="import_lista_nombre" placeholder="Ej: Prospectos Barrio Centro - Marzo">
+                </div>
+                <div>
+                    <label>Rubro / segmento:</label>
+                    <input type="text" id="import_rubro" placeholder="Ej: abogados, contadores, gimnasio">
+                </div>
+            </div>
+
+            <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:10px; margin-top:10px;">
+                <div>
+                    <label>Zona:</label>
+                    <input type="text" id="import_zona" placeholder="Ej: Zona Norte">
+                </div>
+                <div>
+                    <label>Origen:</label>
+                    <select id="import_origen">
+                        <option value="callejero">Callejero</option>
+                        <option value="referido">Referido</option>
+                        <option value="web">Web</option>
+                        <option value="campana">Campaña previa</option>
+                        <option value="otro">Otro</option>
+                    </select>
+                </div>
+                <div>
+                    <label>Canal objetivo:</label>
+                    <select id="import_canal_objetivo">
+                        <option value="whatsapp">WhatsApp</option>
+                        <option value="sms">SMS</option>
+                        <option value="ambos">Ambos</option>
+                    </select>
+                </div>
+            </div>
+
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-top:10px;">
+                <div>
+                    <label>Objetivo de campaña:</label>
+                    <select id="import_objetivo_campana">
+                        <option value="nuevos_clientes">Nuevos clientes</option>
+                        <option value="reactivacion">Reactivación</option>
+                        <option value="recordatorio">Recordatorio</option>
+                        <option value="oferta_puntual">Oferta puntual</option>
+                    </select>
+                </div>
+                <div>
+                    <label>Contexto de contacto:</label>
+                    <input type="text" id="import_context_tag" placeholder="Ej: dejó datos en stand barrial">
+                </div>
+            </div>
+
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-top:10px;">
+                <div>
+                    <label><input type="checkbox" id="import_consent_granted" checked> Consentimiento para contacto</label>
+                </div>
+                <div>
+                    <label>Fecha consentimiento:</label>
+                    <input type="date" id="import_consent_at">
+                </div>
+            </div>
+
+            <label style="margin-top:10px;">Descripción comercial (uso recomendado):</label>
+            <textarea id="import_descripcion" rows="2" placeholder="Ej: Prospectos de alto potencial para campaña de nuevos clientes."></textarea>
+
+            <label>Archivo de teléfonos (.txt/.csv):</label>
+            <input type="file" id="import_archivo" accept=".txt,.csv,text/plain,text/csv">
+
+            <div style="display:flex; gap:10px; margin-top:10px; flex-wrap:wrap;">
+              <button type="button" id="btn_importar_base" class="btn-save" style="margin:0; width:auto;">Importar base ahora</button>
+              <span id="import_result" style="font-size:0.9rem; color:#334155; align-self:center;"></span>
+            </div>
+
+            <div id="import_stats" style="margin-top:10px; background:rgba(255,255,255,0.75); border:1px dashed rgba(15,23,42,0.25); border-radius:8px; padding:10px; font-size:0.9rem; color:#334155;">
+                Cargá un archivo para ver resumen: total líneas, teléfonos válidos y duplicados.
+            </div>
+
+            <div style="margin-top:14px; background:rgba(255,255,255,0.78); border:1px solid rgba(15,23,42,0.2); border-radius:8px; padding:12px;">
+              <label style="margin-top:0; font-weight:800; color:#0f172a;">🚀 Lanzar campaña a contactos READY</label>
+
+              <div style="display:grid; grid-template-columns: repeat(3,minmax(120px,1fr)); gap:8px; margin:8px 0 10px;">
+                <div style="background:#ecfeff;border:1px solid #a5f3fc;border-radius:8px;padding:8px;">
+                  <div style="font-size:11px;color:#0e7490;font-weight:700;">READY ahora</div>
+                  <div id="launch_kpi_ready" style="font-size:18px;font-weight:800;color:#164e63;">-</div>
+                </div>
+                <div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;padding:8px;">
+                  <div style="font-size:11px;color:#0369a1;font-weight:700;">Tandas estimadas</div>
+                  <div id="launch_kpi_tandas" style="font-size:18px;font-weight:800;color:#0c4a6e;">-</div>
+                </div>
+                <div style="background:#f8fafc;border:1px solid #cbd5e1;border-radius:8px;padding:8px;">
+                  <div style="font-size:11px;color:#334155;font-weight:700;">Tiempo estimado</div>
+                  <div id="launch_kpi_tiempo" style="font-size:18px;font-weight:800;color:#0f172a;">-</div>
+                </div>
+              </div>
+
+              <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:10px;">
+                <div>
+                  <label>Canal de envío:</label>
+                  <select id="launch_canal">
+                    <option value="whatsapp">WhatsApp</option>
+                    <option value="sms">SMS</option>
+                    <option value="ambos">Ambos</option>
+                  </select>
+                  <div id="launch_canal_hint" style="margin-top:4px;font-size:12px;color:#475569;">Canal recomendado para alcance rápido.</div>
+                </div>
+                <div>
+                  <label>Máx. envíos por lote:</label>
+                  <input type="number" id="launch_max_envios" value="100" min="1" max="1000">
+                  <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;">
+                    <button type="button" class="launch-lote-preset" data-lote="50" style="border:1px solid #cbd5e1;background:#fff;border-radius:999px;padding:3px 8px;cursor:pointer;">50</button>
+                    <button type="button" class="launch-lote-preset" data-lote="100" style="border:1px solid #cbd5e1;background:#fff;border-radius:999px;padding:3px 8px;cursor:pointer;">100</button>
+                    <button type="button" class="launch-lote-preset" data-lote="200" style="border:1px solid #cbd5e1;background:#fff;border-radius:999px;padding:3px 8px;cursor:pointer;">200</button>
+                  </div>
+                </div>
+                <div>
+                  <label>Frecuencia (horas):</label>
+                  <input type="number" id="launch_frecuencia_horas" value="24" min="1" max="720">
+                  <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;">
+                    <button type="button" class="launch-freq-preset" data-freq="6" style="border:1px solid #cbd5e1;background:#fff;border-radius:999px;padding:3px 8px;cursor:pointer;">6h</button>
+                    <button type="button" class="launch-freq-preset" data-freq="12" style="border:1px solid #cbd5e1;background:#fff;border-radius:999px;padding:3px 8px;cursor:pointer;">12h</button>
+                    <button type="button" class="launch-freq-preset" data-freq="24" style="border:1px solid #cbd5e1;background:#fff;border-radius:999px;padding:3px 8px;cursor:pointer;">24h</button>
+                    <button type="button" class="launch-freq-preset" data-freq="48" style="border:1px solid #cbd5e1;background:#fff;border-radius:999px;padding:3px 8px;cursor:pointer;">48h</button>
+                  </div>
+                </div>
+              </div>
+
+              <label>Mensaje (1 CTA):</label>
+              <textarea id="launch_mensaje" rows="2" placeholder="Hola, te escribimos porque dejaste tus datos para agua a domicilio. ¿Querés que te pasemos promo de bienvenida?" maxlength="280"></textarea>
+              <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-top:4px;">
+                <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                  <button type="button" class="launch-var-btn" data-var="{cliente}" style="border:1px dashed #94a3b8;background:#f8fafc;border-radius:8px;padding:2px 7px;cursor:pointer;">+ {cliente}</button>
+                  <button type="button" class="launch-var-btn" data-var="{rubro}" style="border:1px dashed #94a3b8;background:#f8fafc;border-radius:8px;padding:2px 7px;cursor:pointer;">+ {rubro}</button>
+                  <button type="button" class="launch-var-btn" data-var="{zona}" style="border:1px dashed #94a3b8;background:#f8fafc;border-radius:8px;padding:2px 7px;cursor:pointer;">+ {zona}</button>
+                </div>
+                <div id="launch_msg_counter" style="font-size:12px;color:#475569;">0/280</div>
+              </div>
+              <div id="launch_msg_hint" style="font-size:12px;color:#92400e;margin-top:4px;">Tip: cerrá el mensaje con una pregunta/CTA.</div>
+
+              <div style="display:flex; gap:10px; margin-top:8px; flex-wrap:wrap;">
+                <button type="button" id="btn_lanzar_campana" class="btn-save" style="margin:0; width:auto;">Lanzar campaña</button>
+                <button type="button" id="btn_preview_campana" class="btn-save" style="margin:0; width:auto; background:#0ea5e9;">Preview audiencia</button>
+                <span id="launch_result" style="font-size:0.9rem; color:#334155; align-self:center;"></span>
+              </div>
+
+              <div style="margin-top:12px; border-top:1px dashed rgba(15,23,42,0.2); padding-top:10px;">
+                <label style="margin-top:0; font-weight:800; color:#0f172a; text-transform:none; display:flex; align-items:center; gap:8px;">
+                  <input type="checkbox" id="auto_launch_activado"> ⏱️ Lanzamiento automático por franjas
+                </label>
+                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px;">
+                  <span id="auto_launch_estado_badge" style="font-size:12px;font-weight:800;padding:4px 9px;border-radius:999px;background:#dcfce7;color:#166534;border:1px solid #86efac;">ACTIVA</span>
+                  <button type="button" id="btn_toggle_auto_launch" style="background:#0f172a;color:#fff;border:none;border-radius:8px;padding:6px 10px;cursor:pointer;font-weight:700;">Pausar campaña automática</button>
+                </div>
+
+                <div style="margin-top:8px; background:rgba(255,255,255,0.86); border:1px solid rgba(15,23,42,0.18); border-radius:10px; padding:12px;">
+                  <label style="margin-top:0; color:#0f172a;">Franjas horarias</label>
+                  <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px;">
+                    <button type="button" class="auto-franja-preset" data-range="09:00-12:00" style="background:#0ea5e9;color:#fff;border:none;border-radius:999px;padding:6px 10px;cursor:pointer;">Mañana</button>
+                    <button type="button" class="auto-franja-preset" data-range="16:00-20:00" style="background:#8b5cf6;color:#fff;border:none;border-radius:999px;padding:6px 10px;cursor:pointer;">Tarde</button>
+                    <button type="button" class="auto-franja-preset" data-range="20:00-23:00" style="background:#f59e0b;color:#fff;border:none;border-radius:999px;padding:6px 10px;cursor:pointer;">Noche</button>
+                  </div>
+                  <div style="display:grid; grid-template-columns: 1fr 1fr auto; gap:8px; align-items:end;">
+                    <div>
+                      <label style="margin-top:0;">Desde</label>
+                      <input type="time" id="auto_franja_desde" value="09:00">
+                    </div>
+                    <div>
+                      <label style="margin-top:0;">Hasta</label>
+                      <input type="time" id="auto_franja_hasta" value="12:00">
+                    </div>
+                    <button type="button" id="btn_add_franja" class="btn-save" style="margin:0; width:auto;">+ Agregar</button>
+                  </div>
+                  <div id="auto_franjas_badges" style="display:flex; flex-wrap:wrap; gap:6px; margin-top:8px;"></div>
+                  <input type="text" id="auto_launch_franjas" style="display:none" placeholder="Ej: 09:00-12:30,16:00-20:00">
+                </div>
+
+                <div style="margin-top:10px; background:rgba(255,255,255,0.86); border:1px solid rgba(15,23,42,0.18); border-radius:10px; padding:12px;">
+                  <label style="margin-top:0; color:#0f172a;">Días de ejecución</label>
+                  <div id="auto_dias_wrap" style="display:grid; grid-template-columns: repeat(7, minmax(42px,1fr)); gap:8px; margin-top:6px;"></div>
+                  <input type="text" id="auto_launch_dias" style="display:none" placeholder="1,2,3,4,5,6">
+                </div>
+
+                <div style="margin-top:10px; background:rgba(255,255,255,0.86); border:1px solid rgba(15,23,42,0.18); border-radius:10px; padding:12px;">
+                  <label style="margin-top:0; color:#0f172a;">Intervalo de control (min)</label>
+                  <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                    <button type="button" class="auto-int-btn" data-min="5" style="background:#334155;color:#fff;border:none;border-radius:8px;padding:6px 10px;cursor:pointer;">5</button>
+                    <button type="button" class="auto-int-btn" data-min="15" style="background:#334155;color:#fff;border:none;border-radius:8px;padding:6px 10px;cursor:pointer;">15</button>
+                    <button type="button" class="auto-int-btn" data-min="30" style="background:#334155;color:#fff;border:none;border-radius:8px;padding:6px 10px;cursor:pointer;">30</button>
+                    <button type="button" class="auto-int-btn" data-min="60" style="background:#334155;color:#fff;border:none;border-radius:8px;padding:6px 10px;cursor:pointer;">60</button>
+                    <input type="number" id="auto_launch_intervalo_min" value="15" min="5" max="240" style="max-width:110px;">
+                  </div>
+                </div>
+
+                <div class="small" style="margin-top:8px; color:#334155; font-weight:600;">
+                  Usa los mismos parámetros de campaña de arriba (canal, lote, frecuencia y mensaje) para ejecutar automáticamente dentro de las franjas.
+                </div>
+              </div>
+            </div>
+        </div>
+
+        <button type="submit" class="btn-save">Guardar Configuración</button>
+    </form>
+  </div>
+
+<script>
+    // Utils
+    const $ = s => document.querySelector(s);
+    const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;'
+    }[c]));
+    const toPosInt = (v, fallback) => {
+      const n = Number.parseInt(v, 10);
+      return Number.isFinite(n) && n > 0 ? n : fallback;
+    };
+    const normalizePhone = (raw) => String(raw || '').replace(/[^\d+]/g, '').trim();
+    const isValidPhone = (p) => /^\+?\d{8,15}$/.test(p);
+
+    const autoLaunchUi = {
+      franjas: [],
+      dias: new Set([1,2,3,4,5,6]),
+    };
+
+    const dayNames = [
+      { n: 1, l: 'Lun' },
+      { n: 2, l: 'Mar' },
+      { n: 3, l: 'Mié' },
+      { n: 4, l: 'Jue' },
+      { n: 5, l: 'Vie' },
+      { n: 6, l: 'Sáb' },
+      { n: 7, l: 'Dom' },
+    ];
+
+    const normHora = (h) => {
+      const m = String(h || '').match(/^(\d{1,2}):(\d{2})$/);
+      if (!m) return null;
+      const hh = Number(m[1]);
+      const mm = Number(m[2]);
+      if (hh < 0 || hh > 23 || mm < 0 || mm > 59) return null;
+      return `${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}`;
+    };
+
+    function syncAutoInputs() {
+      const franjasInput = document.getElementById('auto_launch_franjas');
+      const diasInput = document.getElementById('auto_launch_dias');
+      if (franjasInput) franjasInput.value = autoLaunchUi.franjas.join(',');
+      if (diasInput) diasInput.value = [...autoLaunchUi.dias].sort((a,b) => a-b).join(',');
+    }
+
+    function renderAutoFranjas() {
+      const wrap = document.getElementById('auto_franjas_badges');
+      if (!wrap) return;
+      if (!autoLaunchUi.franjas.length) {
+        wrap.innerHTML = '<span style="font-size:12px;color:#64748b;">Sin franjas definidas</span>';
+      } else {
+        wrap.innerHTML = autoLaunchUi.franjas.map((f, i) => `
+          <span style="background:#0f172a;color:#fff;border-radius:999px;padding:5px 10px;font-size:12px;display:inline-flex;align-items:center;gap:6px;">
+            ${esc(f)}
+            <button type="button" data-idx="${i}" class="auto-del-franja" style="background:transparent;border:none;color:#fda4af;cursor:pointer;font-weight:700;">×</button>
+          </span>
+        `).join('');
+      }
+      wrap.querySelectorAll('.auto-del-franja').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const idx = Number(btn.dataset.idx);
+          if (!Number.isFinite(idx) || idx < 0 || idx >= autoLaunchUi.franjas.length) return;
+          autoLaunchUi.franjas.splice(idx, 1);
+          syncAutoInputs();
+          renderAutoFranjas();
+        });
+      });
+    }
+
+    function renderAutoDias() {
+      const wrap = document.getElementById('auto_dias_wrap');
+      if (!wrap) return;
+      wrap.innerHTML = dayNames.map((d) => {
+        const on = autoLaunchUi.dias.has(d.n);
+        return `<button type="button" class="auto-dia-btn" data-day="${d.n}" style="padding:8px 6px;border-radius:8px;border:1px solid ${on ? '#0ea5e9' : '#cbd5e1'};background:${on ? '#e0f2fe' : '#fff'};color:${on ? '#0369a1' : '#334155'};font-weight:700;cursor:pointer;">${d.l}</button>`;
+      }).join('');
+
+      wrap.querySelectorAll('.auto-dia-btn').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const day = Number(btn.dataset.day);
+          if (!Number.isFinite(day)) return;
+          if (autoLaunchUi.dias.has(day)) autoLaunchUi.dias.delete(day);
+          else autoLaunchUi.dias.add(day);
+          if (!autoLaunchUi.dias.size) autoLaunchUi.dias = new Set([1,2,3,4,5,6]);
+          syncAutoInputs();
+          renderAutoDias();
+        });
+      });
+    }
+
+    function setupAutoLaunchUi() {
+      const franjasIn = document.getElementById('auto_launch_franjas');
+      const diasIn = document.getElementById('auto_launch_dias');
+      if (franjasIn) {
+        autoLaunchUi.franjas = String(franjasIn.value || '').split(',').map(s => s.trim()).filter(Boolean);
+      }
+      if (diasIn) {
+        const parsed = String(diasIn.value || '').split(',').map(v => Number(v.trim())).filter(v => Number.isFinite(v) && v >= 1 && v <= 7);
+        autoLaunchUi.dias = new Set(parsed.length ? parsed : [1,2,3,4,5,6]);
+      }
+
+      renderAutoFranjas();
+      renderAutoDias();
+      syncAutoInputs();
+
+      const btnAdd = document.getElementById('btn_add_franja');
+      if (btnAdd && !btnAdd.dataset.bound) {
+        btnAdd.dataset.bound = '1';
+        btnAdd.addEventListener('click', () => {
+          const d = normHora(document.getElementById('auto_franja_desde')?.value || '');
+          const h = normHora(document.getElementById('auto_franja_hasta')?.value || '');
+          if (!d || !h || d === h) return alert('Franja inválida. Usá formato HH:mm y que desde/hasta sean distintos.');
+          const chunk = `${d}-${h}`;
+          if (!autoLaunchUi.franjas.includes(chunk)) autoLaunchUi.franjas.push(chunk);
+          syncAutoInputs();
+          renderAutoFranjas();
+        });
+      }
+
+      document.querySelectorAll('.auto-franja-preset').forEach((btn) => {
+        if (btn.dataset.bound) return;
+        btn.dataset.bound = '1';
+        btn.addEventListener('click', () => {
+          const r = String(btn.dataset.range || '').trim();
+          if (!r) return;
+          if (!autoLaunchUi.franjas.includes(r)) autoLaunchUi.franjas.push(r);
+          syncAutoInputs();
+          renderAutoFranjas();
+        });
+      });
+
+      const intervaloInput = document.getElementById('auto_launch_intervalo_min');
+      document.querySelectorAll('.auto-int-btn').forEach((btn) => {
+        if (btn.dataset.bound) return;
+        btn.dataset.bound = '1';
+        btn.addEventListener('click', () => {
+          if (intervaloInput) intervaloInput.value = String(btn.dataset.min || '15');
+        });
+      });
+    }
+
+    function updateLaunchMessageUx() {
+      const msgEl = document.getElementById('launch_mensaje');
+      const counter = document.getElementById('launch_msg_counter');
+      const hint = document.getElementById('launch_msg_hint');
+      if (!msgEl) return;
+      const txt = String(msgEl.value || '').trim();
+      const len = txt.length;
+      if (counter) counter.textContent = `${len}/280`;
+      if (counter) counter.style.color = len > 260 ? '#b91c1c' : '#475569';
+      const hasCta = /(\?|\brespond[eé]\b|\bconfirm[aá]\b|\bte llevo\b|\bquer[eé]s\b|\bagendar\b)/i.test(txt);
+      if (hint) {
+        hint.textContent = hasCta ? '✅ Mensaje con CTA detectado.' : 'Tip: cerrá el mensaje con una pregunta/CTA.';
+        hint.style.color = hasCta ? '#166534' : '#92400e';
+      }
+    }
+
+    function updateLaunchDerivedStats(candidatos = null) {
+      const lote = Math.max(1, Number(document.getElementById('launch_max_envios')?.value || 100));
+      const freq = Math.max(1, Number(document.getElementById('launch_frecuencia_horas')?.value || 24));
+      const ready = Number.isFinite(Number(candidatos)) ? Number(candidatos) : null;
+      const tandas = ready == null ? null : Math.max(1, Math.ceil(ready / lote));
+
+      const kReady = document.getElementById('launch_kpi_ready');
+      const kTandas = document.getElementById('launch_kpi_tandas');
+      const kTiempo = document.getElementById('launch_kpi_tiempo');
+      if (kReady) kReady.textContent = ready == null ? '-' : String(ready);
+      if (kTandas) kTandas.textContent = tandas == null ? '-' : String(tandas);
+      if (kTiempo) kTiempo.textContent = tandas == null ? '-' : `${tandas * freq}h`;
+
+      const canal = document.getElementById('launch_canal')?.value || 'whatsapp';
+      const canalHint = document.getElementById('launch_canal_hint');
+      if (canalHint) {
+        canalHint.textContent = canal === 'ambos'
+          ? 'Cobertura máxima (WhatsApp + SMS).'
+          : canal === 'sms'
+            ? 'Canal directo. Revisá costo por volumen.'
+            : 'Canal recomendado para conversiones rápidas.';
+      }
+    }
+
+    function refreshAutoLaunchEstadoUi() {
+      const chk = document.getElementById('auto_launch_activado');
+      const badge = document.getElementById('auto_launch_estado_badge');
+      const btn = document.getElementById('btn_toggle_auto_launch');
+      const activo = !!chk?.checked;
+      if (badge) {
+        badge.textContent = activo ? 'ACTIVA' : 'PAUSADA';
+        badge.style.background = activo ? '#dcfce7' : '#fee2e2';
+        badge.style.color = activo ? '#166534' : '#991b1b';
+        badge.style.borderColor = activo ? '#86efac' : '#fca5a5';
+      }
+      if (btn) btn.textContent = activo ? 'Pausar campaña automática' : 'Reanudar campaña automática';
+    }
+
+    function setupAutoLaunchPauseUi() {
+      const chk = document.getElementById('auto_launch_activado');
+      const btn = document.getElementById('btn_toggle_auto_launch');
+      if (chk && !chk.dataset.pauseBound) {
+        chk.dataset.pauseBound = '1';
+        chk.addEventListener('change', refreshAutoLaunchEstadoUi);
+      }
+      if (btn && !btn.dataset.pauseBound) {
+        btn.dataset.pauseBound = '1';
+        btn.addEventListener('click', () => {
+          if (!chk) return;
+          chk.checked = !chk.checked;
+          refreshAutoLaunchEstadoUi();
+          const form = document.getElementById('marketingForm');
+          if (form && typeof form.requestSubmit === 'function') form.requestSubmit();
+        });
+      }
+      refreshAutoLaunchEstadoUi();
+    }
+
+    function setupLaunchProUi() {
+      const msgEl = document.getElementById('launch_mensaje');
+      if (msgEl && !msgEl.dataset.bound) {
+        msgEl.dataset.bound = '1';
+        msgEl.addEventListener('input', updateLaunchMessageUx);
+      }
+
+      ['launch_max_envios', 'launch_frecuencia_horas', 'launch_canal'].forEach((id) => {
+        const el = document.getElementById(id);
+        if (!el || el.dataset.bound) return;
+        el.dataset.bound = '1';
+        el.addEventListener('input', () => updateLaunchDerivedStats(null));
+        el.addEventListener('change', () => updateLaunchDerivedStats(null));
+      });
+
+      document.querySelectorAll('.launch-lote-preset').forEach((btn) => {
+        if (btn.dataset.bound) return;
+        btn.dataset.bound = '1';
+        btn.addEventListener('click', () => {
+          const input = document.getElementById('launch_max_envios');
+          if (input) input.value = String(btn.dataset.lote || '100');
+          updateLaunchDerivedStats(null);
+        });
+      });
+
+      document.querySelectorAll('.launch-freq-preset').forEach((btn) => {
+        if (btn.dataset.bound) return;
+        btn.dataset.bound = '1';
+        btn.addEventListener('click', () => {
+          const input = document.getElementById('launch_frecuencia_horas');
+          if (input) input.value = String(btn.dataset.freq || '24');
+          updateLaunchDerivedStats(null);
+        });
+      });
+
+      document.querySelectorAll('.launch-var-btn').forEach((btn) => {
+        if (btn.dataset.bound) return;
+        btn.dataset.bound = '1';
+        btn.addEventListener('click', () => {
+          const msg = document.getElementById('launch_mensaje');
+          if (!msg) return;
+          const v = String(btn.dataset.var || '').trim();
+          msg.value = `${msg.value || ''}${msg.value ? ' ' : ''}${v}`.trim();
+          updateLaunchMessageUx();
+        });
+      });
+
+      updateLaunchMessageUx();
+      updateLaunchDerivedStats(null);
+    }
+    
+    // Modo seguro: auth por cookie httpOnly
+    const authFetch = (url, opts = {}) => {
+      const { headers = {}, ...rest } = opts;
+      return fetch(url, { ...rest, headers, credentials: 'include' });
+    };
+
+    // Logout
+    document.getElementById('logout').onclick = async (e) => {
+      e.preventDefault();
+      try { await authFetch('/api/logout', { method: 'POST' }); } catch {}
+      window.location.href = '/pedidos/login.html';
+    };
+
+    // --- Init ---
+    (async () => {
+        try {
+            // 1. Verificar Rol (Super Admin)
+            const meRes = await authFetch('/api/me');
+            if (meRes.status === 401) return window.location.href = '/pedidos/login.html';
+
+            const meData = await meRes.json();
+            const isSuper = (meData.user?.role || '').toLowerCase() === 'super';
+            const roleBadge = document.getElementById('roleBadge');
+            if (roleBadge) roleBadge.textContent = isSuper ? 'SUPER ADMIN' : 'Admin';
+
+            if (isSuper) {
+                // Mostrar Selector
+                $('#empFilterWrap').style.display = 'flex';
+                
+                // Cargar Lista de Empresas
+                const empRes = await authFetch('/api/empresas');
+                if (!empRes.ok) throw new Error('No se pudo cargar empresas');
+                const empresas = await empRes.json();
+                
+                if(Array.isArray(empresas)) {
+                    const opts = empresas.map(e => `<option value="${Number(e.id)}">${esc(e.nombre)}</option>`).join('');
+                    $('#empFilter').innerHTML = opts || '<option value="">Sin empresas</option>';
+                    
+                    // Si ya tengo una seleccionada, la uso
+                    if (empresas.length > 0) {
+                        changeEmpresa(Number(empresas[0].id));
+                    }
+                    
+                    // Evento Change
+                    $('#empFilter').addEventListener('change', (e) => {
+                        const v = e.target.value;
+                        changeEmpresa(v ? Number(v) : null);
+                    });
+                }
+            } else {
+                // Usuario Normal: Carga su propia config
+                changeEmpresa(null);
+            }
+
+        } catch(e) { console.error(e); }
+    })();
+
+    // Analizador rápido de archivo de teléfonos (TXT/CSV)
+    const importState = {
+      phones: [],
+      fileName: ''
+    };
+
+    const importFileInput = document.getElementById('import_archivo');
+    if (importFileInput) {
+      importFileInput.addEventListener('change', async (e) => {
+        const file = e.target.files?.[0];
+        const statsBox = document.getElementById('import_stats');
+        if (!file || !statsBox) return;
+
+        try {
+          const txt = await file.text();
+          const rows = txt.split(/\r?\n|,|;|\t/).map(s => s.trim()).filter(Boolean);
+          const normalized = rows.map(normalizePhone).filter(Boolean);
+          const valid = normalized.filter(isValidPhone);
+          const unique = [...new Set(valid)];
+          const duplicates = valid.length - unique.length;
+          const invalid = rows.length - valid.length;
+
+          importState.phones = unique;
+          importState.fileName = file.name;
+
+          statsBox.innerHTML = `
+            <b>Archivo:</b> ${esc(file.name)}<br>
+            <b>Total valores:</b> ${rows.length}<br>
+            <b>Teléfonos válidos:</b> ${valid.length}<br>
+            <b>Únicos a importar:</b> ${unique.length}<br>
+            <b>Duplicados:</b> ${duplicates}<br>
+            <b>No válidos:</b> ${invalid}
+          `;
+        } catch (err) {
+          console.error(err);
+          importState.phones = [];
+          importState.fileName = '';
+          statsBox.textContent = 'No se pudo leer el archivo.';
+        }
+      });
+    }
+
+    const getImportPayload = () => {
+      const empSelect = document.getElementById('empFilter');
+      const selectedEmpId = (empSelect && empSelect.offsetParent !== null) ? empSelect.value : null;
+      const consentGranted = !!document.getElementById('import_consent_granted')?.checked;
+      return {
+        empresa_id: selectedEmpId ? Number(selectedEmpId) : undefined,
+        lista_nombre: document.getElementById('import_lista_nombre')?.value?.trim() || '',
+        rubro: document.getElementById('import_rubro')?.value?.trim() || '',
+        zona: document.getElementById('import_zona')?.value?.trim() || '',
+        origen: document.getElementById('import_origen')?.value || 'callejero',
+        canal_objetivo: document.getElementById('import_canal_objetivo')?.value || 'whatsapp',
+        objetivo_campana: document.getElementById('import_objetivo_campana')?.value || 'nuevos_clientes',
+        context_tag: document.getElementById('import_context_tag')?.value?.trim() || '',
+        consent_status: consentGranted ? 'granted' : 'unknown',
+        consent_source: document.getElementById('import_origen')?.value || 'callejero',
+        consent_at: document.getElementById('import_consent_at')?.value || null,
+        descripcion: document.getElementById('import_descripcion')?.value?.trim() || '',
+        telefonos: importState.phones
+      };
+    };
+
+    const btnImportarBase = document.getElementById('btn_importar_base');
+    if (btnImportarBase) {
+      btnImportarBase.addEventListener('click', async () => {
+        const resultEl = document.getElementById('import_result');
+        const payload = getImportPayload();
+
+        if (!payload.lista_nombre || !payload.rubro || !payload.context_tag) {
+          alert('Completá Nombre de lista, Rubro/segmento y Contexto de contacto antes de importar.');
+          return;
+        }
+        if (!Array.isArray(payload.telefonos) || payload.telefonos.length === 0) {
+          alert('Seleccioná un archivo válido con teléfonos antes de importar.');
+          return;
+        }
+
+        btnImportarBase.disabled = true;
+        const oldTxt = btnImportarBase.textContent;
+        btnImportarBase.textContent = 'Importando...';
+        if (resultEl) resultEl.textContent = '';
+
+        try {
+          const previewRes = await authFetch('/api/setup/marketing/base/preview', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ telefonos: payload.telefonos })
+          });
+          const previewData = await previewRes.json().catch(() => ({}));
+          if (!previewRes.ok) {
+            throw new Error(previewData?.error || 'No se pudo previsualizar la base');
+          }
+
+          const res = await authFetch('/api/setup/marketing/base/import', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            throw new Error(data?.error || 'No se pudo importar la base');
+          }
+
+          const r = data?.resumen || {};
+          if (resultEl) {
+            resultEl.textContent = `✅ Importado: ${r.insertados || 0} | Existentes: ${r.existentes || 0} | Inválidos: ${r.invalidos || 0} | Preview únicos: ${previewData?.resumen?.unicos_archivo || 0}`;
+          }
+        } catch (err) {
+          console.error(err);
+          alert(`❌ ${err.message || 'Error importando base'}`);
+        } finally {
+          btnImportarBase.disabled = false;
+          btnImportarBase.textContent = oldTxt;
+        }
+      });
+    }
+
+    const btnPreviewCampana = document.getElementById('btn_preview_campana');
+    if (btnPreviewCampana) {
+      btnPreviewCampana.addEventListener('click', async () => {
+        const resultEl = document.getElementById('launch_result');
+        const payload = getImportPayload();
+        const body = {
+          empresa_id: payload.empresa_id,
+          lista_nombre: payload.lista_nombre,
+          rubro: payload.rubro,
+          zona: payload.zona,
+          canal: document.getElementById('launch_canal')?.value || payload.canal_objetivo || 'whatsapp',
+          mensaje: document.getElementById('launch_mensaje')?.value?.trim() || '',
+          max_envios: Number(document.getElementById('launch_max_envios')?.value || 100),
+          frecuencia_horas: Number(document.getElementById('launch_frecuencia_horas')?.value || 24),
+          dry_run: true
+        };
+
+        try {
+          const res = await authFetch('/api/setup/marketing/base/launch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data?.error || 'No se pudo calcular audiencia');
+          const candidatos = Number(data?.candidatos || 0);
+          updateLaunchDerivedStats(candidatos);
+          const lote = Math.max(1, Number(body.max_envios || 100));
+          const freq = Math.max(1, Number(body.frecuencia_horas || 24));
+          const tandas = Math.max(1, Math.ceil(candidatos / lote));
+          if (resultEl) resultEl.textContent = `👀 READY: ${candidatos} | Tandas: ${tandas} | Estimado total: ${tandas * freq}h`;
+        } catch (err) {
+          console.error(err);
+          alert(`❌ ${err.message || 'Error en preview de campaña'}`);
+        }
+      });
+    }
+
+    const btnLanzarCampana = document.getElementById('btn_lanzar_campana');
+    if (btnLanzarCampana) {
+      btnLanzarCampana.addEventListener('click', async () => {
+        const resultEl = document.getElementById('launch_result');
+        const payload = getImportPayload();
+        const body = {
+          empresa_id: payload.empresa_id,
+          lista_nombre: payload.lista_nombre,
+          rubro: payload.rubro,
+          zona: payload.zona,
+          canal: document.getElementById('launch_canal')?.value || payload.canal_objetivo || 'whatsapp',
+          mensaje: document.getElementById('launch_mensaje')?.value?.trim() || '',
+          max_envios: Number(document.getElementById('launch_max_envios')?.value || 100),
+          frecuencia_horas: Number(document.getElementById('launch_frecuencia_horas')?.value || 24),
+          dry_run: false
+        };
+
+        if (!body.mensaje) {
+          alert('Completá el mensaje de campaña antes de lanzar.');
+          return;
+        }
+
+        const oldTxt = btnLanzarCampana.textContent;
+        btnLanzarCampana.disabled = true;
+        btnLanzarCampana.textContent = 'Lanzando...';
+
+        try {
+          const res = await authFetch('/api/setup/marketing/base/launch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data?.error || 'No se pudo lanzar campaña');
+          updateLaunchDerivedStats(Number(data?.total_candidatos || 0));
+          if (resultEl) resultEl.textContent = `✅ Enviados: ${data?.enviados || 0} | Errores: ${data?.errores || 0} | Candidatos: ${data?.total_candidatos || 0}`;
+        } catch (err) {
+          console.error(err);
+          alert(`❌ ${err.message || 'Error lanzando campaña'}`);
+        } finally {
+          btnLanzarCampana.disabled = false;
+          btnLanzarCampana.textContent = oldTxt;
+        }
+      });
+    }
+
+    // Orquestador de cambio de empresa
+    async function changeEmpresa(empId) {
+        await loadProducts(empId); // Cargar productos de esa empresa para el combo
+        await loadConfig(empId);   // Cargar la configuración
+    }
+
+    // Cargar Productos para el Dropdown
+    async function loadProducts(empId) {
+        try {
+            const url = empId ? `/api/productos?empresa_id=${empId}` : '/api/productos';
+            
+            const res = await authFetch(url);
+            if (!res.ok) throw new Error('No se pudieron cargar productos');
+            const prods = await res.json();
+            
+            const opts = '<option value="">-- Seleccionar Producto --</option>' + 
+                         (Array.isArray(prods) ? prods.map(p => `<option value="${Number(p.id)}">${esc(p.nombre)}</option>`).join('') : '');
+            
+            $('#referidos_producto_id').innerHTML = opts;
+        } catch (e) { console.error('Error loading products', e); }
+    }
+
+    // Cargar Configuración
+    async function loadConfig(empresaId) {
+        try {
+            const url = empresaId ? `/api/setup/marketing/config?empresa_id=${empresaId}` : '/api/setup/marketing/config';
+
+            const res = await authFetch(url);
+            
+            // Helpers
+            const setVal = (id, val, def) => {
+              const el = document.getElementById(id);
+              if (el) el.value = (val ?? def ?? '');
+            };
+            const setCheck = (id, val) => { const el = document.getElementById(id); if(el) el.checked = !!val; };
+            const setCanal = (id, val) => {
+              const el = document.getElementById(id);
+              if (!el) return;
+              const canal = String(val || 'whatsapp').toLowerCase();
+              el.value = (canal === 'sms' || canal === 'ambos' || canal === 'whatsapp') ? canal : 'whatsapp';
+            };
+
+            if(res.ok) {
+                const data = await res.json();
+
+                // Populate Form
+                setCheck('vecinos_activado', data.vecinos_activado);
+                setCanal('vecinos_canal', data.vecinos_canal);
+                setVal('vecinos_mensaje', data.vecinos_mensaje, 'Hola {cliente} 👋, el camión está en tu cuadra.');
+                setVal('vecinos_radio', data.vecinos_radio, 200);
+                setVal('vecinos_dias', data.vecinos_dias, 7);
+
+                setCheck('predictivo_activado', data.predictivo_activado);
+                setCanal('predictivo_canal', data.predictivo_canal);
+                setVal('predictivo_mensaje', data.predictivo_mensaje, 'Hola {cliente}, te queda poca agua?');
+
+                setCheck('referidos_activado', data.referidos_activado);
+                setCanal('referidos_canal', data.referidos_canal);
+                setVal('referidos_producto_id', data.referidos_producto_id); // Asigna producto guardado
+                setVal('referidos_cantidad', data.referidos_cantidad, 1);
+                setVal('referidos_mensaje', data.referidos_mensaje, 'Gracias {cliente}! Link: {link}');
+                setVal('referidos_exito_mensaje', data.referidos_exito_mensaje, '¡Ganaste un {producto} gratis!');
+
+                setCheck('reactivacion_activado', data.reactivacion_activado);
+                setCanal('reactivacion_canal', data.reactivacion_canal);
+                setVal('reactivacion_dias', data.reactivacion_dias, 21);
+                setVal('reactivacion_intentos_max', data.reactivacion_intentos_max, 3);
+                setVal('reactivacion_mensaje', data.reactivacion_mensaje, 'Hola {cliente}, hace rato no te pedimos 😊 ¿Te llevo agua hoy?');
+
+                setCheck('postentrega_activado', data.postentrega_activado);
+                setCanal('postentrega_canal', data.postentrega_canal);
+                setVal('postentrega_horas', data.postentrega_horas, 4);
+                setVal('postentrega_producto', data.postentrega_producto, '');
+                setVal('postentrega_mensaje', data.postentrega_mensaje, 'Hola {cliente}, ¿todo bien con la entrega? Si querés te sumo {producto} para mañana.');
+
+                setCheck('clima_activado', data.clima_activado);
+                setCanal('clima_canal', data.clima_canal);
+                setVal('clima_temp_alta', data.clima_temp_alta, 30);
+                setVal('clima_temp_baja', data.clima_temp_baja, 8);
+                setVal('clima_mensaje_calor', data.clima_mensaje_calor, 'Se viene calor hoy 🔥 ¿Te llevo agua antes de que te quedes sin stock?');
+                setVal('clima_mensaje_frio', data.clima_mensaje_frio, 'Hoy está feo para salir 🌧️ Si querés te lo llevo a domicilio.');
+
+                setCheck('vip_activado', data.vip_activado);
+                setCanal('vip_canal', data.vip_canal);
+                setVal('vip_pedidos_min', data.vip_pedidos_min, 10);
+                setVal('vip_beneficio', data.vip_beneficio, '');
+                setVal('vip_mensaje', data.vip_mensaje, '¡{cliente}, ya sos VIP! 🎉 Desde ahora tenés: {beneficio}.');
+
+                // Base de importación de leads
+                setVal('import_lista_nombre', data.import_lista_nombre, '');
+                setVal('import_rubro', data.import_rubro, '');
+                setVal('import_zona', data.import_zona, '');
+                setVal('import_origen', data.import_origen, 'callejero');
+                setVal('import_canal_objetivo', data.import_canal_objetivo, 'whatsapp');
+                setVal('import_objetivo_campana', data.import_objetivo_campana, 'nuevos_clientes');
+                setVal('import_context_tag', data.import_context_tag, '');
+                setCheck('import_consent_granted', (data.import_consent_status || 'granted') === 'granted');
+                setVal('import_consent_at', data.import_consent_at, '');
+                setVal('import_descripcion', data.import_descripcion, '');
+                setVal('launch_canal', data.launch_canal, 'whatsapp');
+                setVal('launch_max_envios', data.launch_max_envios, 100);
+                setVal('launch_frecuencia_horas', data.launch_frecuencia_horas, 24);
+                setVal('launch_mensaje', data.launch_mensaje, '');
+                setCheck('auto_launch_activado', !!data.auto_launch_activado);
+                setVal('auto_launch_franjas', data.auto_launch_franjas, '09:00-12:00,16:00-20:00');
+                setVal('auto_launch_dias', data.auto_launch_dias, '1,2,3,4,5,6');
+                setVal('auto_launch_intervalo_min', data.auto_launch_intervalo_min, 15);
+            } else {
+                // Defaults seguros si no hay config guardada
+                setCheck('vecinos_activado', false);
+                setCanal('vecinos_canal', 'whatsapp');
+                setVal('vecinos_mensaje', null, 'Hola {cliente} 👋, el camión está en tu cuadra.');
+                setVal('vecinos_radio', null, 200);
+                setVal('vecinos_dias', null, 7);
+                setCheck('predictivo_activado', false);
+                setCanal('predictivo_canal', 'whatsapp');
+                setVal('predictivo_mensaje', null, 'Hola {cliente}, te queda poca agua?');
+                setCheck('referidos_activado', false);
+                setCanal('referidos_canal', 'whatsapp');
+                setVal('referidos_producto_id', null, '');
+                setVal('referidos_cantidad', null, 1);
+                setVal('referidos_mensaje', null, 'Gracias {cliente}! Link: {link}');
+                setVal('referidos_exito_mensaje', null, '¡Ganaste un {producto} gratis!');
+
+                setCheck('reactivacion_activado', false);
+                setCanal('reactivacion_canal', 'whatsapp');
+                setVal('reactivacion_dias', null, 21);
+                setVal('reactivacion_intentos_max', null, 3);
+                setVal('reactivacion_mensaje', null, 'Hola {cliente}, hace rato no te pedimos 😊 ¿Te llevo agua hoy?');
+
+                setCheck('postentrega_activado', false);
+                setCanal('postentrega_canal', 'whatsapp');
+                setVal('postentrega_horas', null, 4);
+                setVal('postentrega_producto', null, '');
+                setVal('postentrega_mensaje', null, 'Hola {cliente}, ¿todo bien con la entrega? Si querés te sumo {producto} para mañana.');
+
+                setCheck('clima_activado', false);
+                setCanal('clima_canal', 'whatsapp');
+                setVal('clima_temp_alta', null, 30);
+                setVal('clima_temp_baja', null, 8);
+                setVal('clima_mensaje_calor', null, 'Se viene calor hoy 🔥 ¿Te llevo agua antes de que te quedes sin stock?');
+                setVal('clima_mensaje_frio', null, 'Hoy está feo para salir 🌧️ Si querés te lo llevo a domicilio.');
+
+                setCheck('vip_activado', false);
+                setCanal('vip_canal', 'whatsapp');
+                setVal('vip_pedidos_min', null, 10);
+                setVal('vip_beneficio', null, '');
+                setVal('vip_mensaje', null, '¡{cliente}, ya sos VIP! 🎉 Desde ahora tenés: {beneficio}.');
+
+                setVal('import_lista_nombre', null, '');
+                setVal('import_rubro', null, '');
+                setVal('import_zona', null, '');
+                setVal('import_origen', null, 'callejero');
+                setVal('import_canal_objetivo', null, 'whatsapp');
+                setVal('import_objetivo_campana', null, 'nuevos_clientes');
+                setVal('import_context_tag', null, '');
+                setCheck('import_consent_granted', true);
+                setVal('import_consent_at', null, '');
+                setVal('import_descripcion', null, '');
+                setVal('launch_canal', null, 'whatsapp');
+                setVal('launch_max_envios', null, 100);
+                setVal('launch_frecuencia_horas', null, 24);
+                setVal('launch_mensaje', null, '');
+                setCheck('auto_launch_activado', false);
+                setVal('auto_launch_franjas', null, '09:00-12:00,16:00-20:00');
+                setVal('auto_launch_dias', null, '1,2,3,4,5,6');
+                setVal('auto_launch_intervalo_min', null, 15);
+            }
+
+            setupAutoLaunchUi();
+            setupAutoLaunchPauseUi();
+            setupLaunchProUi();
+        } catch(e) { console.error('Error loading config:', e); }
+    }
+
+    // Guardar config
+    document.getElementById('marketingForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+
+        const submitBtn = e.target.querySelector('button[type="submit"]');
+        const oldTxt = submitBtn ? submitBtn.textContent : '';
+        if (submitBtn) {
+          submitBtn.disabled = true;
+          submitBtn.textContent = 'Guardando...';
+        }
+
+        try {
+          const empSelect = document.getElementById('empFilter');
+          const selectedEmpId = (empSelect && empSelect.offsetParent !== null) ? empSelect.value : null;
+
+          const referidosProdRaw = document.getElementById('referidos_producto_id').value;
+          const referidosProdId = referidosProdRaw ? Number(referidosProdRaw) : null;
+
+          const config = {
+              empresa_id: selectedEmpId ? Number(selectedEmpId) : undefined,
+
+              vecinos_activado: document.getElementById('vecinos_activado').checked,
+              vecinos_canal: document.getElementById('vecinos_canal').value,
+              vecinos_mensaje: document.getElementById('vecinos_mensaje').value.trim(),
+              vecinos_radio: toPosInt(document.getElementById('vecinos_radio').value, 200),
+              vecinos_dias: toPosInt(document.getElementById('vecinos_dias').value, 7),
+              
+              predictivo_activado: document.getElementById('predictivo_activado').checked,
+              predictivo_canal: document.getElementById('predictivo_canal').value,
+              predictivo_mensaje: document.getElementById('predictivo_mensaje').value.trim(),
+              
+              referidos_activado: document.getElementById('referidos_activado').checked,
+              referidos_canal: document.getElementById('referidos_canal').value,
+              referidos_producto_id: Number.isFinite(referidosProdId) ? referidosProdId : null,
+              referidos_cantidad: toPosInt(document.getElementById('referidos_cantidad').value, 1),
+              referidos_mensaje: document.getElementById('referidos_mensaje').value.trim(),
+              referidos_exito_mensaje: document.getElementById('referidos_exito_mensaje').value.trim(),
+
+              reactivacion_activado: document.getElementById('reactivacion_activado').checked,
+              reactivacion_canal: document.getElementById('reactivacion_canal').value,
+              reactivacion_dias: toPosInt(document.getElementById('reactivacion_dias').value, 21),
+              reactivacion_intentos_max: toPosInt(document.getElementById('reactivacion_intentos_max').value, 3),
+              reactivacion_mensaje: document.getElementById('reactivacion_mensaje').value.trim(),
+
+              postentrega_activado: document.getElementById('postentrega_activado').checked,
+              postentrega_canal: document.getElementById('postentrega_canal').value,
+              postentrega_horas: toPosInt(document.getElementById('postentrega_horas').value, 4),
+              postentrega_producto: document.getElementById('postentrega_producto').value.trim(),
+              postentrega_mensaje: document.getElementById('postentrega_mensaje').value.trim(),
+
+              clima_activado: document.getElementById('clima_activado').checked,
+              clima_canal: document.getElementById('clima_canal').value,
+              clima_temp_alta: Number(document.getElementById('clima_temp_alta').value || 30),
+              clima_temp_baja: Number(document.getElementById('clima_temp_baja').value || 8),
+              clima_mensaje_calor: document.getElementById('clima_mensaje_calor').value.trim(),
+              clima_mensaje_frio: document.getElementById('clima_mensaje_frio').value.trim(),
+
+              vip_activado: document.getElementById('vip_activado').checked,
+              vip_canal: document.getElementById('vip_canal').value,
+              vip_pedidos_min: toPosInt(document.getElementById('vip_pedidos_min').value, 10),
+              vip_beneficio: document.getElementById('vip_beneficio').value.trim(),
+              vip_mensaje: document.getElementById('vip_mensaje').value.trim(),
+
+              // Metadata de base a importar (teléfonos en bruto)
+              import_lista_nombre: document.getElementById('import_lista_nombre').value.trim(),
+              import_rubro: document.getElementById('import_rubro').value.trim(),
+              import_zona: document.getElementById('import_zona').value.trim(),
+              import_origen: document.getElementById('import_origen').value,
+              import_canal_objetivo: document.getElementById('import_canal_objetivo').value,
+              import_objetivo_campana: document.getElementById('import_objetivo_campana').value,
+              import_context_tag: document.getElementById('import_context_tag').value.trim(),
+              import_consent_status: document.getElementById('import_consent_granted').checked ? 'granted' : 'unknown',
+              import_consent_at: document.getElementById('import_consent_at').value || null,
+              import_descripcion: document.getElementById('import_descripcion').value.trim(),
+
+              launch_canal: document.getElementById('launch_canal').value,
+              launch_max_envios: toPosInt(document.getElementById('launch_max_envios').value, 100),
+              launch_frecuencia_horas: toPosInt(document.getElementById('launch_frecuencia_horas').value, 24),
+              launch_mensaje: document.getElementById('launch_mensaje').value.trim(),
+              auto_launch_activado: document.getElementById('auto_launch_activado').checked,
+              auto_launch_franjas: document.getElementById('auto_launch_franjas').value.trim(),
+              auto_launch_dias: document.getElementById('auto_launch_dias').value.trim(),
+              auto_launch_intervalo_min: toPosInt(document.getElementById('auto_launch_intervalo_min').value, 15)
+          };
+
+          const selectedFile = document.getElementById('import_archivo')?.files?.[0];
+          if (selectedFile && (!config.import_lista_nombre || !config.import_rubro)) {
+            alert('Completá al menos "Nombre de lista" y "Rubro/segmento" antes de cargar una base.');
+            return;
+          }
+
+          if (config.auto_launch_activado) {
+            if (!config.launch_mensaje) {
+              alert('Para lanzamiento automático, completá el mensaje de campaña.');
+              return;
+            }
+            if (!config.auto_launch_franjas) {
+              alert('Para lanzamiento automático, definí al menos una franja horaria.');
+              return;
+            }
+          }
+
+          const res = await authFetch('/api/setup/marketing/config', {
+              method: 'PUT',
+              headers: {
+                  'Content-Type': 'application/json'
+              },
+              body: JSON.stringify(config)
+          });
+
+          if(res.ok) {
+            alert('✅ Estrategias actualizadas correctamente');
+          } else {
+            let msg = '❌ Hubo un error al guardar';
+            try {
+              const data = await res.json();
+              if (data?.error) msg = `❌ ${data.error}`;
+            } catch {}
+            alert(msg);
+          }
+        } catch (err) {
+          console.error(err);
+          alert('❌ Error de red al guardar configuración');
+        } finally {
+          if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.textContent = oldTxt;
+          }
+        }
+    });
+</script>
+
+</body>
+</html>

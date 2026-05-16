@@ -1,0 +1,1372 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>Activos | Plataforma ERP / FSM</title>
+  <link rel="stylesheet" href="theme-base.css" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <style>
+    :root {
+      /* Palette Dark Theme */
+      --bg: #0b1020;
+      --bg-2: #0f172a;
+      --ink: #f1f5f9;
+      --muted: #94a3b8;
+      --brand: #06b6d4;       /* Cyan */
+      --brand-hover: #22d3ee;
+      --surface: rgba(30, 41, 59, 0.7);
+      --border: rgba(148, 163, 184, 0.15);
+      --glass: rgba(15, 23, 42, 0.95);
+      --radius: 12px;
+      
+      --success: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --info: #3b82f6;
+    }
+
+    * { box-sizing: border-box; outline: none; -webkit-tap-highlight-color: transparent; }
+    
+    body {
+      margin: 0; 
+      font-family: system-ui, -apple-system, sans-serif;
+      color: var(--ink);
+      background: 
+        radial-gradient(circle at 15% 50%, rgba(6, 182, 212, 0.05), transparent 25%),
+        radial-gradient(circle at 85% 30%, rgba(59, 130, 246, 0.05), transparent 25%),
+        var(--bg);
+      min-height: 100vh;
+      font-size: 14px;
+      padding-bottom: 80px;
+    }
+
+    .container { max-width: 1400px; margin: 0 auto; padding: 0 20px; }
+
+    /* --- HEADER --- */
+    header {
+      position: sticky; top: 0; z-index: 50;
+      background: var(--glass);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      padding: 0.8rem 0;
+    }
+    
+    nav { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
+    
+    .brand { 
+      display: flex; gap: 0.8rem; align-items: center; 
+      font-size: 1.1rem; font-weight: 700; color: #fff; text-decoration: none; 
+      white-space: nowrap;
+    }
+    .brand-dot { width: 10px; height: 10px; background: var(--brand); border-radius: 50%; box-shadow: 0 0 10px var(--brand); }
+    
+    .role-badge { 
+      background: rgba(6, 182, 212, 0.1); border: 1px solid rgba(6, 182, 212, 0.3);
+      color: var(--brand); padding: 2px 8px; border-radius: 99px; font-size: 0.75rem; 
+    }
+
+    .menu { list-style: none; display: flex; gap: 1.5rem; margin: 0; padding: 0; }
+    .menu a { text-decoration: none; color: var(--muted); font-weight: 500; transition: 0.2s; white-space: nowrap; }
+    .menu a:hover, .menu a.active { color: #fff; }
+    .menu a.active { border-bottom: 2px solid var(--brand); padding-bottom: 4px; }
+
+    .user-chip {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      padding: 0.3rem 0.7rem;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: rgba(15,23,42,0.7);
+    }
+    .user-meta {
+      display: flex;
+      flex-direction: column;
+      gap: 0.1rem;
+      max-width: 220px;
+    }
+    .user-name {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: #e5e7eb;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      overflow: hidden;
+    }
+    .user-empresa {
+      font-size: 0.75rem;
+      color: var(--muted);
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      overflow: hidden;
+    }
+
+    @media (max-width: 768px) {
+      nav { flex-direction: column; gap: 0.8rem; align-items: stretch; }
+      .brand { justify-content: space-between; }
+      .menu { overflow-x: auto; padding-bottom: 5px; gap: 20px; }
+      .menu::-webkit-scrollbar { display: none; }
+      .user-chip { align-self: flex-start; }
+    }
+
+    main { padding-top: 1.8rem; padding-bottom: 4rem; display: flex; flex-direction: column; gap: 1.5rem; }
+
+    /* --- KPI CARDS --- */
+    .grid-kpi {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem;
+    }
+    .kpi-card {
+      background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 1.5rem; display: flex; align-items: center; justify-content: space-between;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.1); transition: transform 0.2s, border-color 0.2s, box-shadow 0.2s;
+    }
+    .kpi-card:hover { transform: translateY(-2px); border-color: var(--brand); box-shadow: 0 12px 30px rgba(6,182,212,0.12); }
+    
+    .kpi-val h3 { font-size: 1.8rem; font-weight: 700; margin: 0; color: #fff; }
+    .kpi-val p { margin: 0; font-size: 0.78rem; color: var(--muted); text-transform: uppercase; font-weight: 600; letter-spacing: 0.05em; }
+    
+    .kpi-icon { 
+      font-size: 1.6rem; opacity: 0.85; width: 50px; height: 50px; 
+      display: flex; align-items: center; justify-content: center;
+      border-radius: 12px; background: rgba(255,255,255,0.03);
+    }
+
+    /* --- TOOLBAR & FILTERS --- */
+    .toolbar {
+      background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 1.4rem; display: flex; flex-direction: column; gap: 1.5rem;
+    }
+
+    .toolbar-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+
+    .toolbar-title {
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+    .toolbar-title h1 {
+      font-size: 1.4rem;
+      margin: 0;
+    }
+    .toolbar-title p {
+      margin: 0;
+      font-size: 0.85rem;
+      color: var(--muted);
+      max-width: 600px;
+    }
+
+    .filters-row { display: flex; gap: 1rem; flex-wrap: wrap; }
+    .actions-row { display: flex; justify-content: space-between; align-items: flex-end; flex-wrap: wrap; gap: 1rem; border-top: 1px solid var(--border); padding-top: 1.1rem; }
+
+    .field { display: flex; flex-direction: column; gap: 0.35rem; flex: 1; min-width: 140px; }
+    
+    label { font-size: 0.75rem; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;}
+    
+    input, select {
+      background: var(--bg-2); border: 1px solid var(--border); color: #fff;
+      padding: 0.7rem 0.8rem; border-radius: 8px; font-size: 0.9rem;
+      width: 100%; transition: 0.2s;
+    }
+    input:focus, select:focus { border-color: var(--brand); box-shadow: 0 0 0 2px rgba(6,182,212,0.2); }
+
+    .search-box { position: relative; flex: 1.4; min-width: 250px; }
+    .search-box input { padding-left: 2.5rem; width: 100%; }
+    .search-icon { position: absolute; left: 0.8rem; top: 50%; transform: translateY(-50%); color: var(--muted); font-size: 0.9rem; }
+
+    /* --- BUTTONS --- */
+    .btn {
+      padding: 0.7rem 1.2rem; border-radius: 8px; font-weight: 600; cursor: pointer;
+      border: 1px solid transparent; transition: 0.2s; display: inline-flex; align-items: center; gap: 0.5rem;
+      font-size: 0.9rem; background: rgba(255,255,255,0.05); color: var(--ink); border-color: var(--border);
+      text-decoration: none; justify-content: center;
+    }
+    .btn:hover { background: rgba(255,255,255,0.1); color: #fff; border-color: var(--brand); }
+    .btn-primary { background: var(--brand); color: #000; border: none; }
+    .btn-primary:hover { background: var(--brand-hover); box-shadow: 0 4px 12px rgba(6,182,212,0.3); }
+    .btn-sm { padding: 0.4rem 0.8rem; font-size: 0.8rem; }
+
+    .btn-icon {
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.3rem 0.5rem;
+      cursor: pointer;
+      font-size: 0.9rem;
+      color: var(--muted);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.25rem;
+    }
+    .btn-icon:hover {
+      border-color: var(--brand);
+      background: rgba(255,255,255,0.05);
+      color: #fff;
+    }
+
+    /* --- TABLE --- */
+    .table-wrapper {
+      display: flex;
+      flex-direction: column;
+      gap: 0.6rem;
+    }
+
+    .table-meta {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 1rem;
+      flex-wrap: wrap;
+      font-size: 0.8rem;
+      color: var(--muted);
+    }
+
+    .table-responsive { overflow-x: auto; border-radius: var(--radius); border: 1px solid var(--border); background: var(--bg-2); }
+    table { width: 100%; border-collapse: collapse; text-align: left; white-space: nowrap; }
+    th { 
+      background: rgba(15, 23, 42, 0.9); color: var(--muted); font-weight: 600; 
+      padding: 0.8rem 1rem; font-size: 0.75rem; text-transform: uppercase; 
+      border-bottom: 1px solid var(--border); letter-spacing: 0.06em;
+    }
+    td { padding: 0.7rem 1rem; border-bottom: 1px solid var(--border); color: var(--ink); font-size: 0.86rem; vertical-align: middle; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: rgba(255,255,255,0.02); }
+
+    .col-actions {
+      display: flex;
+      gap: 0.3rem;
+      align-items: center;
+    }
+
+    .text-subtle {
+      color: var(--muted);
+      font-size: 0.8rem;
+    }
+
+    /* Status Badges */
+    .status-badge { padding: 4px 10px; border-radius: 99px; font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
+    .st-activo-disponible { background: rgba(16,185,129,0.12); color: #6ee7b7; border: 1px solid rgba(16,185,129,0.2); }
+    .st-activo-prestado { background: rgba(59,130,246,0.12); color: #93c5fd; border: 1px solid rgba(59,130,246,0.25); }
+    .st-activo-reparacion { background: rgba(245,158,11,0.12); color: #fbbf24; border: 1px solid rgba(245,158,11,0.25); }
+    .st-activo-baja { background: rgba(148,163,184,0.2); color: #e5e7eb; border: 1px solid rgba(148,163,184,0.4); }
+
+    /* Badges mantenimiento */
+    .mant-badge {
+      padding: 3px 9px;
+      border-radius: 999px;
+      font-size: 0.72rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    .mant-ok {
+      background: rgba(16,185,129,0.15);
+      border: 1px solid rgba(16,185,129,0.25);
+      color: #6ee7b7;
+    }
+    .mant-pronto {
+      background: rgba(245,158,11,0.18);
+      border: 1px solid rgba(245,158,11,0.28);
+      color: #fbbf24;
+    }
+    .mant-vencido {
+      background: rgba(239,68,68,0.18);
+      border: 1px solid rgba(239,68,68,0.28);
+      color: #fecaca;
+    }
+    .mant-sin-plan {
+      background: rgba(148,163,184,0.18);
+      border: 1px solid rgba(148,163,184,0.28);
+      color: #e5e7eb;
+    }
+
+    .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      display: inline-block;
+      margin-right: 4px;
+    }
+    .dot-ok { background: #10b981; }
+    .dot-pronto { background: #f59e0b; }
+    .dot-vencido { background: #ef4444; }
+
+    /* --- DIALOG / MODAL --- */
+    dialog {
+      background: #1e293b; color: #fff; border: 1px solid var(--border); border-radius: 12px;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+      max-width: 900px; width: 95%; padding: 0;
+      animation: fadeIn 0.2s ease-out;
+    }
+    dialog::backdrop { background: rgba(0,0,0,0.8); backdrop-filter: blur(4px); }
+    
+    .modal-header { padding: 1.1rem 1.3rem; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.2); }
+    .modal-title { font-size: 1rem; font-weight: 600; }
+    .modal-subtitle { font-size: 0.8rem; color: var(--muted); margin-top: 0.15rem; }
+    .modal-body { padding: 1.4rem; overflow-y: auto; max-height: 70vh; display: flex; flex-direction: column; gap: 1rem; }
+    .modal-footer { padding: 1.1rem 1.3rem; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 0.8rem; background: rgba(0,0,0,0.2); }
+
+    fieldset { border: 1px solid var(--border); border-radius: 8px; padding: 0.8rem 1rem 1rem; margin: 0; }
+    legend { padding: 0 10px; color: var(--brand); font-weight: 600; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 0.05em; }
+
+    .hist-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+    .hist-table th, .hist-table td { padding: 0.5rem 0.4rem; border-bottom: 1px solid rgba(148,163,184,0.2); text-align: left; white-space: nowrap; }
+    .hist-table th { text-transform: uppercase; font-size: 0.72rem; color: var(--muted); letter-spacing: 0.06em; }
+    .hist-table tr:last-child td { border-bottom: none; }
+
+    /* Dialog para Crear (más pequeño) */
+    #nuevoActivoModal { max-width: 500px; }
+
+    .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+
+    /* Media Queries */
+    @media (max-width: 600px) {
+      .actions-row { flex-direction: column; align-items: stretch; }
+      .search-box { width: 100%; }
+      .filters-row .field { min-width: 100%; }
+      .modal-footer { flex-direction: column-reverse; }
+      .modal-footer .btn { width: 100%; }
+      .form-row { grid-template-columns: 1fr; }
+    }
+
+    .toast { position: fixed; right: 20px; bottom: 30px; background: #fff; color: #0f172a; padding: 10px 20px; border-radius: 99px; font-weight: 600; box-shadow: 0 10px 30px rgba(0,0,0,0.3); opacity: 0; pointer-events: none; transition: 0.3s; z-index: 2000; }
+    .toast.show { opacity: 1; transform: translateY(-10px); }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+    .pill { padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+    .pill-light { background: rgba(15,23,42,0.8); }
+    .loading-row td { text-align: center; padding: 1.8rem 1rem; color: var(--muted); font-size: 0.85rem; }
+    .tag { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); font-size: 0.72rem; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="container">
+      <nav>
+        <a href="/pedidos/dashboard.html" class="brand">
+          <span class="brand-dot"></span>
+          <span>ERP / FSM</span>
+        </a>
+
+        <ul class="menu">
+        <li><a href="/pedidos/inicio/inicial.html">🚀 Inicio</a></li>
+        <li><a href="/pedidos/dashboard.html">Dashboard</a></li>
+        <li><a href="/pedidos/costos.html">Costos</a></li>
+        <li><a href="/pedidos/activos.html" class="active">Activos</a></li>
+        <li><a href="/pedidos/alquileres.html">Alquileres</a></li>
+        <li><a href="/pedidos/cuenta-corriente-alquileres.html">Cuenta corriente</a></li>
+        <li><a href="/pedidos/inicio/empresa.html">Empresas</a></li>
+        </ul>
+
+        <div class="user-chip">
+          <div class="user-meta">
+            <div class="user-name" id="userName">Usuario</div>
+            <div class="user-empresa" id="userEmpresa">Empresa</div>
+          </div>
+          <span class="role-badge" id="userRoleBadge">Admin</span>
+        </div>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="toolbar">
+      <div class="toolbar-header">
+        <div class="toolbar-title">
+          <h1>Gestión de Activos &amp; Comodatos</h1>
+          <p>
+            Inventario de equipos instalados.
+          </p>
+        </div>
+        <div>
+          <span class="pill pill-light" id="lastUpdatedBadge">Actualizado…</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="grid-kpi" id="kpiSection">
+      <div class="kpi-card">
+        <div class="kpi-val">
+          <h3 id="kpiTotal">–</h3>
+          <p>Total de activos</p>
+        </div>
+        <div class="kpi-icon">📦</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-val">
+          <h3 id="kpiDisponibles">–</h3>
+          <p>Disponibles</p>
+        </div>
+        <div class="kpi-icon">✅</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-val">
+          <h3 id="kpiPrestados">–</h3>
+          <p>En comodato</p>
+        </div>
+        <div class="kpi-icon">📍</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-val">
+          <h3 id="kpiReparacion">–</h3>
+          <p>En reparación</p>
+        </div>
+        <div class="kpi-icon">🛠️</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-val">
+          <h3 id="kpiMantVencidos">–</h3>
+          <p>Mantenimiento vencido</p>
+        </div>
+        <div class="kpi-icon">⏱️</div>
+      </div>
+    </section>
+
+    <section class="toolbar">
+      <div class="filters-row">
+        <div class="search-box">
+          <label for="searchInput">Buscar</label>
+          <span class="search-icon">🔍</span>
+          <input id="searchInput" type="search" placeholder="Código, tipo, marca, modelo o cliente…" autocomplete="off" />
+        </div>
+
+        <div class="field">
+          <label for="estadoSelect">Estado del activo</label>
+          <select id="estadoSelect">
+            <option value="todos">Todos</option>
+            <option value="disponible">Disponible</option>
+            <option value="prestado">Prestado</option>
+            <option value="reparacion">En reparación</option>
+            <option value="baja">Baja</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="tipoSelect">Tipo de equipo</label>
+          <select id="tipoSelect">
+            <option value="todos">Todos los tipos</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="mantSelect">Mantenimiento</label>
+          <select id="mantSelect">
+            <option value="todos">Todos</option>
+            <option value="ok">Al día</option>
+            <option value="pronto">Próximo (&lt;= 30 días)</option>
+            <option value="vencido">Vencido</option>
+            <option value="sin-plan">Sin plan</option>
+          </select>
+        </div>
+
+        <div class="field" id="empresaFilterWrapper" style="display:none;">
+          <label for="empresaSelect">Empresa (Super Admin)</label>
+          <select id="empresaSelect">
+            <option value="">(Seleccionar empresa)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="actions-row">
+        <div class="text-subtle" id="summaryLine">
+          Cargando activos…
+        </div>
+        <div style="display:flex; gap:0.6rem; flex-wrap:wrap; align-items:flex-end;">
+          <button class="btn btn-icon btn-sm" id="btnReload" type="button" title="Recargar">
+            🔄 <span>Recargar</span>
+          </button>
+          <button class="btn btn-icon btn-sm" id="btnVerMantPendiente" type="button" title="Ver próximos mantenimientos">
+            ⏳ <span>Pendientes</span>
+          </button>
+          <button class="btn btn-primary btn-sm" id="btnNuevoActivo" type="button">
+            + Nuevo Activo
+          </button>
+          <button class="btn btn-sm" id="btnExportCsv" type="button">
+            ⬇️ CSV
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <section class="table-wrapper">
+      <div class="table-responsive">
+        <table>
+          <thead>
+            <tr>
+              <th>Código</th>
+              <th>Tipo</th>
+              <th>Marca / Modelo</th>
+              <th>Alquiler</th> <th>Inicio</th>   <th>Estado</th>
+              <th>Cliente</th>
+              <th>Mantenimiento</th>
+              <th>Últ. sanitización</th>
+              <th>Próxima</th>
+              <th>Días</th>
+              <th>Acciones</th>
+            </tr>
+          </thead>
+          <tbody id="activosTableBody">
+            <tr class="loading-row">
+              <td colspan="12">Cargando activos…</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="table-meta">
+        <div id="tableInfo">–</div>
+        <div>
+          <span class="tag">
+            <span class="dot dot-ok"></span> OK
+          </span>
+          <span class="tag">
+            <span class="dot dot-pronto"></span> Próx. 30 días
+          </span>
+          <span class="tag">
+            <span class="dot dot-vencido"></span> Vencido
+          </span>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="nuevoActivoModal">
+      <div class="modal-header">
+        <div class="modal-title" id="modalTitle">Nuevo Activo</div>
+        <button class="btn-icon btn-sm" type="button" id="btnCloseNuevo">✕</button>
+      </div>
+      
+      <div class="modal-body">
+        <p class="text-subtle" style="margin-top:-5px; margin-bottom:10px;">
+          Ingresá los datos del equipo. Si está alquilado, completá los datos de facturación al final.
+        </p>
+        
+        <div class="field">
+          <label for="newCodigo">Código Interno (obligatorio)</label>
+          <input id="newCodigo" type="text" placeholder="Ej: DISP-2024-001" />
+        </div>
+
+        <div class="field">
+          <label for="newTipo">Tipo de Equipo</label>
+          <input id="newTipo" type="text" placeholder="Elegí un producto activo de la lista…" list="tiposSugeridos" />
+          <datalist id="tiposSugeridos">
+            </datalist>
+        </div>
+
+        <div class="form-row">
+          <div class="field">
+            <label for="newMarca">Marca</label>
+            <input id="newMarca" type="text" placeholder="Ej: IBBL" />
+          </div>
+          <div class="field">
+            <label for="newModelo">Modelo</label>
+            <input id="newModelo" type="text" />
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="field">
+            <label for="newValor">Valor Compra ($)</label>
+            <input id="newValor" type="number" step="0.01" min="0" placeholder="0.00" />
+          </div>
+          <div class="field">
+            <label for="newFrecuencia">Mantenimiento (meses)</label>
+            <input id="newFrecuencia" type="number" step="1" min="0" value="6" />
+          </div>
+        </div>
+
+        <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border);">
+          <p class="text-subtle" style="font-size: 0.8rem; margin-bottom: 0.8rem; font-weight: 600;">
+            Datos de Facturación (Opcional)
+          </p>
+          <div class="form-row">
+            <div class="field">
+              <label for="newAlquiler">💰 Alquiler Mensual ($)</label>
+              <input id="newAlquiler" type="number" step="0.01" min="0" placeholder="0.00" />
+            </div>
+            <div class="field">
+              <label for="newFechaInicio">📅 Inicio Alquiler</label>
+              <input id="newFechaInicio" type="date" />
+            </div>
+          </div>
+        </div>
+
+      </div>
+      
+      <div class="modal-footer">
+        <button class="btn btn-sm" type="button" id="btnCancelNuevo">Cancelar</button>
+        <button class="btn btn-primary btn-sm" type="button" id="btnSaveNuevo">Guardar Activo</button>
+      </div>
+  </dialog>
+
+  <dialog id="historialModal">
+    <div class="modal-header">
+      <div>
+        <div class="modal-title" id="histModalTitle">Historial de activo</div>
+        <div class="modal-subtitle" id="histModalSubtitle">–</div>
+      </div>
+      <button class="btn-icon btn-sm" type="button" id="btnCloseHistorial">✕</button>
+    </div>
+    <div class="modal-body">
+      <fieldset>
+        <legend>Detalle del activo</legend>
+        <div style="display:grid; grid-template-columns: repeat(auto-fit,minmax(160px,1fr)); gap:0.5rem; font-size:0.83rem;">
+          <div><strong>Código:</strong> <span id="histCodigo">–</span></div>
+          <div><strong>Tipo:</strong> <span id="histTipo">–</span></div>
+          <div><strong>Marca / Modelo:</strong> <span id="histMarcaModelo">–</span></div>
+          <div><strong>Estado actual:</strong> <span id="histEstado">–</span></div>
+          <div><strong>Cliente actual:</strong> <span id="histCliente">–</span></div>
+          <div><strong>Últ. sanitización:</strong> <span id="histUltSanit">–</span></div>
+          <div><strong>Próxima:</strong> <span id="histProxSanit">–</span></div>
+          <div><strong>Frecuencia:</strong> <span id="histFrecuencia">–</span></div>
+        </div>
+        <div style="margin-top:1rem; text-align:right;">
+           <a href="#" id="btnVerFichaCompleta" class="btn btn-sm" style="display:inline-block;">Editar Ficha Completa</a>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Historial de movimientos</legend>
+        <div style="max-height: 280px; overflow-y:auto;">
+          <table class="hist-table">
+            <thead>
+              <tr>
+                <th>Fecha</th>
+                <th>Acción</th>
+                <th>Usuario</th>
+                <th>Cliente</th>
+                <th>Detalle</th>
+              </tr>
+            </thead>
+            <tbody id="historialTableBody">
+              <tr>
+                <td colspan="5" style="text-align:center; padding:0.9rem 0; color:var(--muted);">
+                  Cargando historial…
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </fieldset>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-sm" type="button" id="btnCloseHistorial2">Cerrar</button>
+    </div>
+  </dialog>
+
+  <div class="toast" id="toast"></div>
+
+<script>
+    // === Helpers generales ===
+    const AR_TZ = 'America/Argentina/Buenos_Aires';
+
+    // Modo seguro: auth por cookie httpOnly
+    function getAuthHeaders() {
+      // ya no enviamos Authorization: Bearer desde el browser
+      return { 'Content-Type': 'application/json' };
+    }
+
+    const authFetch = (url, opts = {}) => {
+      const headers = opts.headers || {};
+      return fetch(url, { ...opts, headers, credentials: 'include' });
+    };
+
+    function showToast(message, type = 'info') {
+      const toast = document.getElementById('toast');
+      if (!toast) return;
+      toast.textContent = message;
+      toast.style.background = '#fff';
+      toast.style.color = '#0f172a';
+
+      if (type === 'success') {
+        toast.style.borderLeft = '4px solid var(--success)';
+      } else if (type === 'error') {
+        toast.style.borderLeft = '4px solid var(--danger)';
+      } else if (type === 'warning') {
+        toast.style.borderLeft = '4px solid var(--warning)';
+      } else {
+        toast.style.borderLeft = '4px solid var(--info)';
+      }
+
+      toast.classList.add('show');
+      setTimeout(() => toast.classList.remove('show'), 3000);
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function toLocalDateTime(isoString) {
+      if (!isoString) return '–';
+      const d = new Date(isoString);
+      if (Number.isNaN(d.getTime())) return '–';
+      return d.toLocaleString('es-AR', {
+        timeZone: AR_TZ,
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit'
+      });
+    }
+
+    function toLocalDate(isoString) {
+      if (!isoString) return '–';
+      const d = new Date(isoString);
+      if (Number.isNaN(d.getTime())) return '–';
+      return d.toLocaleDateString('es-AR', {
+        timeZone: AR_TZ,
+        year: 'numeric', month: '2-digit', day: '2-digit'
+      });
+    }
+
+    function addMonths(date, months) {
+      const d = new Date(date.getTime());
+      const day = d.getDate();
+      d.setMonth(d.getMonth() + months);
+      if (d.getDate() < day) d.setDate(0);
+      return d;
+    }
+
+    function diffDays(from, to) {
+      const ms = to.getTime() - from.getTime();
+      return Math.round(ms / (1000 * 60 * 60 * 24));
+    }
+
+    function getMantenimientoStatus(activo) {
+      const freq = Number(activo.frecuencia_mantenimiento || 0);
+      const ultima = activo.ultima_sanitizacion ? new Date(activo.ultima_sanitizacion) : null;
+
+      if (!freq || !ultima || Number.isNaN(ultima.getTime())) {
+        return { key: 'sin-plan', label: 'Sin plan', dias: null, proxima: null };
+      }
+
+      const proxima = addMonths(ultima, freq);
+      const now = new Date();
+      const dias = diffDays(now, proxima);
+
+      if (dias < 0) {
+        return { key: 'vencido', label: 'Vencido', dias, proxima };
+      } else if (dias <= 30) {
+        return { key: 'pronto', label: 'Próx. ' + dias + ' días', dias, proxima };
+      } else {
+        return { key: 'ok', label: 'Al día', dias, proxima };
+      }
+    }
+
+    function mantenimientoBadgeHtml(status) {
+      const cls = status.key === 'ok' ? 'mant-ok' :
+                  status.key === 'pronto' ? 'mant-pronto' :
+                  status.key === 'vencido' ? 'mant-vencido' : 'mant-sin-plan';
+      let label = status.label;
+      if (status.key === 'sin-plan') label = 'Sin plan';
+      return '<span class="mant-badge ' + cls + '">' + label + '</span>';
+    }
+
+    function formatoEstadoActivo(estado) {
+      const e = (estado || '').toLowerCase();
+      const safeKey = ['disponible', 'prestado', 'reparacion', 'baja'].includes(e) ? e : 'desconocido';
+      const cls = 'status-badge st-activo-' + safeKey;
+      let label = e;
+      if (e === 'disponible') label = 'Disponible';
+      else if (e === 'prestado') label = 'Prestado';
+      else if (e === 'reparacion') label = 'En reparación';
+      else if (e === 'baja') label = 'Baja';
+      else label = estado || '–';
+      return '<span class="' + cls + '">' + escapeHtml(label) + '</span>';
+    }
+
+    function debounce(fn, delay) {
+      let t;
+      return (...args) => {
+        clearTimeout(t);
+        t = setTimeout(() => fn(...args), delay);
+      };
+    }
+
+    // === Estado de la página ===
+    let activosRaw = [];
+    let filtros = {
+      texto: '',
+      estado: 'todos',
+      tipo: 'todos',
+      mant: 'todos',
+      modoMantPendiente: false
+    };
+
+    let tiposSet = new Set();
+    let currentUser = null;
+    let esSuperAdmin = false;
+    let targetEmpresaId = null; 
+    let empresasCache = [];
+    let productosActivos = []; 
+    
+    // VARIABLE IMPORTANTE PARA EDICIÓN
+    let currentEditingId = null;
+
+    // === Carga de usuario / empresa ===
+    async function loadUserInfo() {
+      try {
+        const res = await authFetch('/api/me', {
+          method: 'GET',
+          headers: getAuthHeaders()
+        });
+
+        if (res.status === 401) {
+          window.location.href = 'login.html';
+          return;
+        }
+
+        const data = await res.json();
+        if (!data || !data.user) return;
+
+        const { user } = data;
+        currentUser = user;
+        esSuperAdmin = (user.role === 'super');
+        targetEmpresaId = user.empresa_id || null;
+
+        const userName = document.getElementById('userName');
+        const userEmpresa = document.getElementById('userEmpresa');
+        const userRoleBadge = document.getElementById('userRoleBadge');
+
+        if (userName) userName.textContent = user.username || 'Usuario';
+        if (userEmpresa) userEmpresa.textContent = user.empresa_nombre || 'Empresa';
+
+        let roleLabel = 'Operador';
+        if (user.role === 'super') roleLabel = 'Super Admin';
+        else if (user.role === 'repartidor') roleLabel = 'Repartidor';
+        else if (user.role === 'admin') roleLabel = 'Admin';
+        if (userRoleBadge) userRoleBadge.textContent = roleLabel;
+
+        if (esSuperAdmin) {
+          await setupEmpresaSelector();
+        } else {
+          await loadProductosActivos();
+          await loadResumenActivos();
+          await loadActivos();
+        }
+      } catch (e) {
+        console.error('Error cargando /api/me', e);
+      }
+    }
+
+    async function setupEmpresaSelector() {
+      const wrapper = document.getElementById('empresaFilterWrapper');
+      const select = document.getElementById('empresaSelect');
+      if (!wrapper || !select) return;
+
+      wrapper.style.display = 'block';
+      select.innerHTML = '<option value="">Cargando empresas…</option>';
+
+      try {
+        const res = await authFetch('/api/admin/empresas-list', {
+          method: 'GET', headers: getAuthHeaders()
+        });
+
+        if (!res.ok) {
+          wrapper.style.display = 'none';
+          return;
+        }
+
+        const json = await res.json();
+        const empresas = Array.isArray(json) ? json : (Array.isArray(json.data) ? json.data : []);
+        empresasCache = empresas;
+
+        if (!empresas.length) {
+          select.innerHTML = '<option value="">(Sin empresas)</option>';
+          return;
+        }
+
+        select.innerHTML = '';
+        empresas.forEach(e => {
+          const opt = document.createElement('option');
+          opt.value = e.id;
+          opt.textContent = `${e.id} · ${e.nombre}`;
+          select.appendChild(opt);
+        });
+
+        if (targetEmpresaId) select.value = String(targetEmpresaId);
+        else if (empresas[0]) {
+          targetEmpresaId = empresas[0].id;
+          select.value = String(targetEmpresaId);
+        }
+
+        select.addEventListener('change', () => {
+          const val = select.value;
+          targetEmpresaId = val ? Number(val) : null;
+          filtros.modoMantPendiente = false;
+          loadResumenActivos();
+          loadActivos();
+          loadProductosActivos();
+        });
+
+        await loadProductosActivos();
+        await loadResumenActivos();
+        await loadActivos();
+      } catch (e) {
+        console.error('Error setupEmpresaSelector', e);
+        wrapper.style.display = 'none';
+      }
+    }
+
+    // === Carga de KPIs ===
+    async function loadResumenActivos() {
+      try {
+        let url = '/api/admin/activos/resumen/general';
+        if (esSuperAdmin && targetEmpresaId) {
+          url += '?empresa_id=' + encodeURIComponent(targetEmpresaId);
+        }
+
+        const res = await fetch(url, { method: 'GET', headers: getAuthHeaders() });
+        if (!res.ok) return;
+
+        const { data } = await res.json();
+        if (!data || !data.totales) return;
+
+        const { totales, mantenimiento } = data;
+        document.getElementById('kpiTotal').textContent = totales.total ?? '0';
+        document.getElementById('kpiDisponibles').textContent = totales.disponible ?? '0';
+        document.getElementById('kpiPrestados').textContent = totales.prestado ?? '0';
+        document.getElementById('kpiReparacion').textContent = totales.reparacion ?? '0';
+        document.getElementById('kpiMantVencidos').textContent = mantenimiento?.vencidos ?? '0';
+      } catch (e) {
+        console.error('Error loadResumenActivos', e);
+      }
+    }
+
+    function updateLastUpdatedBadge() {
+      const badge = document.getElementById('lastUpdatedBadge');
+      if (!badge) return;
+      badge.textContent = 'Actualizado ' + new Date().toLocaleTimeString('es-AR', {
+        timeZone: AR_TZ, hour: '2-digit', minute: '2-digit'
+      });
+    }
+
+    // === Carga de activos (inventario) ===
+    async function loadActivos() {
+      const tbody = document.getElementById('activosTableBody');
+      if (tbody) tbody.innerHTML = `<tr class="loading-row"><td colspan="12">Cargando activos…</td></tr>`;
+
+      try {
+        const params = new URLSearchParams();
+        if (filtros.texto) params.append('busqueda', filtros.texto.trim());
+        if (filtros.estado && filtros.estado !== 'todos') params.append('estado', filtros.estado);
+        if (esSuperAdmin && targetEmpresaId) params.append('empresa_id', String(targetEmpresaId));
+
+        const url = '/api/admin/activos' + (params.toString() ? ('?' + params.toString()) : '');
+        const res = await fetch(url, { method: 'GET', headers: getAuthHeaders() });
+
+        if (!res.ok) {
+          tbody.innerHTML = `<tr class="loading-row"><td colspan="12">Error cargando activos (${res.status})</td></tr>`;
+          return;
+        }
+
+        const data = await res.json();
+        activosRaw = Array.isArray(data) ? data : Array.isArray(data.data) ? data.data : [];
+
+        refreshTipoOptions();
+        renderActivosTable();
+        updateLastUpdatedBadge();
+      } catch (e) {
+        console.error('Error loadActivos', e);
+        const tbody = document.getElementById('activosTableBody');
+        if (tbody) tbody.innerHTML = `<tr class="loading-row"><td colspan="12">Error de red</td></tr>`;
+      }
+    }
+
+    async function loadProductosActivos() {
+      try {
+        if (esSuperAdmin && !targetEmpresaId) return;
+        let url = '/api/productos';
+        if (esSuperAdmin && targetEmpresaId) url += '?empresa_id=' + String(targetEmpresaId);
+
+        const res = await fetch(url, { method: 'GET', headers: getAuthHeaders() });
+        if (!res.ok) return;
+
+        const data = await res.json();
+        const rows = Array.isArray(data) ? data : Array.isArray(data.data) ? data.data : [];
+
+        productosActivos = rows.filter(p => {
+          const cfg = p.config_activo || {};
+          return !!cfg.es_activo || !!cfg.usa_alquiler;
+        });
+
+        const datalist = document.getElementById('tiposSugeridos');
+        if (!datalist) return;
+        datalist.innerHTML = '';
+
+        if (!productosActivos.length) {
+          ['dispenser_frio_calor','dispenser_frio_solo','volquete','cafe_express','soda_sifon']
+            .forEach(t => {
+              const opt = document.createElement('option');
+              opt.value = t; datalist.appendChild(opt);
+            });
+          return;
+        }
+
+        productosActivos.forEach(p => {
+          const opt = document.createElement('option');
+          opt.value = p.nombre || '';
+          opt.label = (p.sku ? (p.sku + ' · ') : '') + (p.nombre || '');
+          datalist.appendChild(opt);
+        });
+
+      } catch (e) {
+        console.error('Error loadProductosActivos', e);
+      }
+    }
+
+    function refreshTipoOptions() {
+      tiposSet = new Set();
+      activosRaw.forEach(a => { if (a.tipo) tiposSet.add(a.tipo); });
+      const select = document.getElementById('tipoSelect');
+      if (!select) return;
+
+      const current = select.value;
+      select.innerHTML = '<option value="todos">Todos los tipos</option>';
+      Array.from(tiposSet).sort().forEach(t => {
+        const opt = document.createElement('option');
+        opt.value = t; opt.textContent = t;
+        select.appendChild(opt);
+      });
+      if (current && Array.from(tiposSet).includes(current)) select.value = current;
+    }
+
+    // === Render Tabla ===
+    function renderActivosTable() {
+      const tbody = document.getElementById('activosTableBody');
+      if (!tbody) return;
+
+      if (!activosRaw.length) {
+        tbody.innerHTML = `<tr class="loading-row"><td colspan="12">No se encontraron activos.</td></tr>`;
+        document.getElementById('summaryLine').textContent = 'Sin resultados.';
+        document.getElementById('tableInfo').textContent = '0 activos.';
+        return;
+      }
+
+      let filtrados = activosRaw.filter(a => {
+        if (filtros.tipo !== 'todos' && (!a.tipo || a.tipo !== filtros.tipo)) return false;
+        const mantStatus = getMantenimientoStatus(a);
+        if (filtros.mant !== 'todos' && mantStatus.key !== filtros.mant) return false;
+        return true;
+      });
+
+      filtrados.sort((a, b) => (a.cliente_nombre || '').localeCompare(b.cliente_nombre || '') || (a.codigo || '').localeCompare(b.codigo || ''));
+
+      if (filtrados.length === 0) {
+        tbody.innerHTML = `<tr class="loading-row"><td colspan="12">No coinciden filtros.</td></tr>`;
+      } else {
+        const rowsHtml = filtrados.map(a => {
+          const mantStatus = getMantenimientoStatus(a);
+          const proxima = mantStatus.proxima ? toLocalDate(mantStatus.proxima) : '–';
+          const rowId = Number(a.id);
+          const rowIdAttr = Number.isFinite(rowId) && rowId > 0 ? String(rowId) : '';
+          
+          // Formato colores para días
+          let diasHtml = mantStatus.dias != null ? mantStatus.dias : '–';
+          if (typeof mantStatus.dias === 'number') {
+            if (mantStatus.dias < 0) diasHtml = `<span style="color:#fecaca;font-weight:600;">${mantStatus.dias}</span>`;
+            else if (mantStatus.dias <= 30) diasHtml = `<span style="color:#fbbf24;font-weight:600;">${mantStatus.dias}</span>`;
+            else diasHtml = `<span style="color:#6ee7b7;font-weight:600;">${mantStatus.dias}</span>`;
+          }
+
+          const marcaModelo = (a.marca || a.modelo) ? ((a.marca || '') + (a.marca && a.modelo ? ' · ' : '') + (a.modelo || '')) : '–';
+          
+          // Formato Fechas y Precio
+          const fechaInicio = a.fecha_inicio_alquiler ? toLocalDate(a.fecha_inicio_alquiler) : '-';
+          const alquilerVal = a.alquiler_mensual ? `$${Number(a.alquiler_mensual).toLocaleString('es-AR')}` : '-';
+
+          return `
+            <tr data-id="${rowIdAttr}">
+              <td>${escapeHtml(a.codigo || '–')}</td>
+              <td>${escapeHtml(a.tipo || '–')}</td>
+              <td>${escapeHtml(marcaModelo)}</td>
+              <td>${escapeHtml(alquilerVal)}</td> <td>${escapeHtml(fechaInicio)}</td> <td>${formatoEstadoActivo(a.estado)}</td>
+              <td>${escapeHtml(a.cliente_nombre || '–')}</td>
+              <td>${mantenimientoBadgeHtml(mantStatus)}</td>
+              <td>${escapeHtml(toLocalDate(a.ultima_sanitizacion))}</td>
+              <td>${escapeHtml(proxima)}</td>
+              <td>${diasHtml}</td>
+              <td>
+                <div class="col-actions">
+                  <button class="btn-icon btn-sm" data-action="editar" data-id="${rowIdAttr}" title="Editar Precio/Fecha">
+                    ✏️
+                  </button>
+                  <button class="btn-icon btn-sm" data-action="ver-historial" data-id="${rowIdAttr}" title="Ver Ficha">
+                    📜
+                  </button>
+                </div>
+              </td>
+            </tr>
+          `;
+        }).join('');
+        tbody.innerHTML = rowsHtml;
+      }
+
+      document.getElementById('summaryLine').textContent = `Mostrando ${filtrados.length} de ${activosRaw.length} activos.`;
+      document.getElementById('tableInfo').textContent = `${filtrados.length} activos listados.`;
+    }
+
+    // === Lógica Modales (Crear / Editar) ===
+    
+    // MODO CREAR
+    function openNuevoActivo() {
+      currentEditingId = null; // MODO CREAR
+      const title = document.getElementById('modalTitle');
+      if(title) title.textContent = 'Nuevo Activo';
+
+      // Reset inputs
+      document.getElementById('newCodigo').value = '';
+      document.getElementById('newTipo').value = '';
+      document.getElementById('newMarca').value = '';
+      document.getElementById('newModelo').value = '';
+      document.getElementById('newValor').value = '';
+      document.getElementById('newFrecuencia').value = '6';
+      document.getElementById('newAlquiler').value = '';
+      document.getElementById('newFechaInicio').value = '';
+
+      loadProductosActivos();
+      document.getElementById('nuevoActivoModal').showModal();
+    }
+
+    // MODO EDITAR
+    function abrirEdicion(activo) {
+      currentEditingId = activo.id; // MODO EDITAR
+      const title = document.getElementById('modalTitle');
+      if(title) title.textContent = 'Editar Activo';
+
+      // Cargar datos
+      document.getElementById('newCodigo').value = activo.codigo || '';
+      document.getElementById('newTipo').value = activo.tipo || '';
+      document.getElementById('newMarca').value = activo.marca || '';
+      document.getElementById('newModelo').value = activo.modelo || '';
+      document.getElementById('newValor').value = activo.valor_compra || '';
+      document.getElementById('newFrecuencia').value = activo.frecuencia_mantenimiento || 6;
+      document.getElementById('newAlquiler').value = activo.alquiler_mensual || '';
+
+      if (activo.fecha_inicio_alquiler) {
+        const raw = String(activo.fecha_inicio_alquiler);
+        const isoDate = /^\d{4}-\d{2}-\d{2}/.test(raw) ? raw.slice(0, 10) : '';
+        document.getElementById('newFechaInicio').value = isoDate;
+      } else {
+        document.getElementById('newFechaInicio').value = '';
+      }
+
+      loadProductosActivos();
+      document.getElementById('nuevoActivoModal').showModal();
+    }
+    
+    function closeNuevoActivo() {
+       document.getElementById('nuevoActivoModal').close();
+    }
+
+    // GUARDAR (Sirve para Create y Update)
+    async function guardarNuevoActivo() {
+       const codigo = document.getElementById('newCodigo').value.trim();
+       const tipo = document.getElementById('newTipo').value.trim();
+       
+       if(!codigo || !tipo) {
+         showToast('Código y Tipo son obligatorios', 'warning');
+         return;
+       }
+
+       const body = {
+         codigo,
+         tipo,
+         marca: document.getElementById('newMarca').value.trim(),
+         modelo: document.getElementById('newModelo').value.trim(),
+         valor: parseFloat(document.getElementById('newValor').value) || 0,
+         frecuencia_mantenimiento: parseInt(document.getElementById('newFrecuencia').value) || 0,
+         alquiler_mensual: parseFloat(document.getElementById('newAlquiler').value) || 0,
+         fecha_inicio_alquiler: document.getElementById('newFechaInicio').value || null
+       };
+       
+       if(esSuperAdmin && targetEmpresaId) {
+         body.empresa_id = targetEmpresaId;
+       }
+
+       // Determinar URL y Método según si estamos editando
+       const method = currentEditingId ? 'PUT' : 'POST';
+       const url = currentEditingId 
+         ? `/api/admin/activos/${currentEditingId}` 
+         : '/api/admin/activos';
+
+       try {
+          const res = await fetch(url, {
+             method: method,
+             headers: getAuthHeaders(),
+             body: JSON.stringify(body)
+          });
+          
+          if(!res.ok) {
+             const json = await res.json();
+             throw new Error(json.error || 'Error al guardar');
+          }
+
+          showToast('Guardado correctamente', 'success');
+          closeNuevoActivo();
+          loadActivos();
+          loadResumenActivos();
+          currentEditingId = null; // Reset
+       } catch(e) {
+          showToast(e.message, 'error');
+       }
+    }
+
+    // === Modal: Historial ===
+    function openHistorialModal(activoId) {
+      const activo = activosRaw.find(a => Number(a.id) === Number(activoId));
+      if (!activo) return;
+
+      const modal = document.getElementById('historialModal');
+      document.getElementById('histModalTitle').textContent = 'Historial del activo ' + (activo.codigo || '');
+      document.getElementById('histModalSubtitle').textContent = (activo.tipo || '–');
+
+      document.getElementById('histCodigo').textContent = activo.codigo || '–';
+      document.getElementById('histTipo').textContent = activo.tipo || '–';
+      document.getElementById('histMarcaModelo').textContent = (activo.marca || '') + (activo.modelo ? (' ' + activo.modelo) : '');
+      document.getElementById('histEstado').innerHTML = formatoEstadoActivo(activo.estado);
+      document.getElementById('histCliente').textContent = activo.cliente_nombre || '–';
+
+      document.getElementById('histUltSanit').textContent = toLocalDate(activo.ultima_sanitizacion);
+      document.getElementById('histFrecuencia').textContent = activo.frecuencia_mantenimiento ? (activo.frecuencia_mantenimiento + ' meses') : 'Sin plan';
+      
+      const btnLink = document.getElementById('btnVerFichaCompleta');
+      let linkUrl = `activo-detalle.html?id=${activoId}`;
+      if(esSuperAdmin && targetEmpresaId) linkUrl += `&empresa_id=${targetEmpresaId}`;
+      btnLink.href = linkUrl;
+
+      // Cargar historial
+      const tbody = document.getElementById('historialTableBody');
+      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;">Cargando...</td></tr>';
+
+      let url = '/api/admin/activos/' + activoId + '/historial';
+      if (esSuperAdmin && targetEmpresaId) url += '?empresa_id=' + encodeURIComponent(targetEmpresaId);
+
+      fetch(url, { method: 'GET', headers: getAuthHeaders() })
+        .then(async res => {
+          if (!res.ok) throw new Error('Error ' + res.status);
+          return res.json();
+        })
+        .then(json => {
+          const rows = Array.isArray(json.data) ? json.data : [];
+          if (!rows.length) {
+            tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;">Sin movimientos.</td></tr>';
+            return;
+          }
+          tbody.innerHTML = rows.map(h => `
+            <tr>
+              <td>${escapeHtml(toLocalDateTime(h.fecha))}</td>
+              <td>${escapeHtml((h.accion || '').toUpperCase())}</td>
+              <td>${escapeHtml(h.usuario || '–')}</td>
+              <td>${escapeHtml(h.cliente_nombre || '–')}</td>
+              <td>${escapeHtml(h.observacion || '–')}</td>
+            </tr>
+          `).join('');
+        })
+        .catch(() => {
+          tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;">Error cargando historial.</td></tr>';
+        });
+
+      modal.showModal();
+    }
+
+    function closeHistorialModal() { document.getElementById('historialModal').close(); }
+
+    function exportActivosCsv() {
+      if (!activosRaw.length) {
+        showToast('No hay datos para exportar', 'warning');
+        return;
+      }
+      const headers = ['id','codigo','tipo','marca','modelo','estado','cliente','alquiler_mensual','fecha_inicio_alquiler'];
+      const rows = activosRaw.map(a => [
+        a.id || '', a.codigo || '', a.tipo || '', a.marca || '', a.modelo || '', a.estado || '',
+        a.cliente_nombre || '', a.alquiler_mensual || '', a.fecha_inicio_alquiler || ''
+      ]);
+      let csv = headers.join(',') + '\n' + rows.map(cols => cols.map(v => {
+        const s = String(v ?? '');
+        return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+      }).join(',')).join('\n');
+
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'activos.csv';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+
+    // === Listeners ===
+    function setupEventListeners() {
+      const searchInput = document.getElementById('searchInput');
+      if (searchInput) searchInput.addEventListener('input', debounce(() => { filtros.texto = searchInput.value || ''; loadActivos(); }, 300));
+
+      const estadoSelect = document.getElementById('estadoSelect');
+      if (estadoSelect) estadoSelect.addEventListener('change', () => { filtros.estado = estadoSelect.value; loadActivos(); });
+
+      const tipoSelect = document.getElementById('tipoSelect');
+      if (tipoSelect) tipoSelect.addEventListener('change', () => { filtros.tipo = tipoSelect.value; renderActivosTable(); });
+
+      const mantSelect = document.getElementById('mantSelect');
+      if (mantSelect) mantSelect.addEventListener('change', () => { filtros.mant = mantSelect.value; renderActivosTable(); });
+
+      document.getElementById('btnReload').addEventListener('click', () => { filtros.modoMantPendiente = false; loadActivos(); loadResumenActivos(); });
+      document.getElementById('btnExportCsv').addEventListener('click', exportActivosCsv);
+      document.getElementById('btnVerMantPendiente').addEventListener('click', () => {
+        filtros.mant = 'pronto';
+        const mantSelect = document.getElementById('mantSelect');
+        if (mantSelect) mantSelect.value = 'pronto';
+        renderActivosTable();
+      });
+      
+      // Botón Nuevo Activo
+      document.getElementById('btnNuevoActivo').addEventListener('click', openNuevoActivo);
+      document.getElementById('btnCloseNuevo').addEventListener('click', closeNuevoActivo);
+      document.getElementById('btnCancelNuevo').addEventListener('click', closeNuevoActivo);
+      document.getElementById('btnSaveNuevo').addEventListener('click', guardarNuevoActivo);
+
+      // DELEGACIÓN DE EVENTOS EN LA TABLA (Editar e Historial)
+      const tbody = document.getElementById('activosTableBody');
+      if (tbody) {
+        tbody.addEventListener('click', e => {
+          const btn = e.target.closest('button[data-action]');
+          if (!btn) return;
+          
+          const action = btn.getAttribute('data-action');
+          const idRaw = btn.getAttribute('data-id');
+          const id = Number(idRaw);
+          if (!Number.isFinite(id) || id <= 0) return;
+
+          if (action === 'ver-historial') {
+            openHistorialModal(id);
+          } else if (action === 'editar') {
+             // Buscar el objeto completo
+             const activo = activosRaw.find(a => Number(a.id) === id);
+             if (activo) abrirEdicion(activo);
+          }
+        });
+      }
+
+      document.getElementById('btnCloseHistorial').addEventListener('click', closeHistorialModal);
+      document.getElementById('btnCloseHistorial2').addEventListener('click', closeHistorialModal);
+    }
+
+    // === Init ===
+    document.addEventListener('DOMContentLoaded', () => {
+      setupEventListeners();
+      loadUserInfo();
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,1178 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Repartidores – MultiEmpresas</title>
+  <link rel="stylesheet" href="theme-base.css" />
+  
+  <style>
+    :root {
+      /* Palette */
+      --bg: #0b1020;
+      --ink: #f1f5f9;
+      --muted: #94a3b8;
+      --brand: #06b6d4;
+      --brand-hover: #22d3ee;
+      --surface: rgba(30, 41, 59, 0.7);
+      --border: rgba(148, 163, 184, 0.15);
+      --glass: rgba(15, 23, 42, 0.85);
+      --radius: 12px;
+      
+      --success: #10b981;
+      --danger: #ef4444;
+      --warning: #f59e0b;
+    }
+
+    * { box-sizing: border-box; outline: none; }
+    
+    body {
+      margin: 0; 
+      font-family: system-ui, -apple-system, sans-serif;
+      color: var(--ink);
+      background: 
+        radial-gradient(circle at 15% 50%, rgba(6, 182, 212, 0.05), transparent 25%),
+        radial-gradient(circle at 85% 30%, rgba(59, 130, 246, 0.05), transparent 25%),
+        var(--bg);
+      min-height: 100vh;
+      font-size: 14px;
+    }
+
+    .container { max-width: 1300px; margin: 0 auto; padding: 0 20px; }
+
+    /* HEADER */
+    header {
+      position: sticky; top: 0; z-index: 50;
+      background: var(--glass); backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border); padding: 0.8rem 0;
+    }
+    nav { display: flex; justify-content: space-between; align-items: center; }
+    .brand { font-size: 1.1rem; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 0.5rem; }
+    .role-badge { background: rgba(6,182,212,0.1); color: var(--brand); padding: 2px 8px; border-radius: 99px; font-size: 0.75rem; border: 1px solid rgba(6,182,212,0.3); }
+    
+    .menu { list-style: none; display: flex; gap: 1.5rem; margin: 0; padding: 0; }
+    .menu a { text-decoration: none; color: var(--muted); font-weight: 500; transition: 0.2s; }
+    .menu a:hover, .menu a.active { color: #fff; }
+    .menu a.active { border-bottom: 2px solid var(--brand); padding-bottom: 4px; }
+
+    /* LAYOUT */
+    main { padding: 2rem 0 4rem; display: grid; gap: 1.5rem; }
+    
+    .card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 1.5rem;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+    }
+
+    h3, h4, h5 { margin: 0 0 1rem; color: #fff; font-weight: 700; }
+    
+    /* INPUTS & FORMS */
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    @media (max-width: 768px){ .grid-2 { grid-template-columns: 1fr; } }
+
+    label { display: block; font-size: 0.8rem; color: var(--muted); font-weight: 600; margin-bottom: 0.4rem; }
+    
+    input, select {
+      width: 100%; background: #0f172a; border: 1px solid var(--border); color: #fff;
+      padding: 0.6rem 0.8rem; border-radius: 8px; font-size: 0.9rem; transition: 0.2s;
+    }
+    input:focus, select:focus { border-color: var(--brand); box-shadow: 0 0 0 2px rgba(6,182,212,0.2); }
+    
+    /* BUTTONS */
+    .btn {
+      padding: 0.5rem 1rem; border-radius: 8px; font-weight: 600; cursor: pointer;
+      border: none; font-size: 0.9rem; transition: 0.2s;
+      display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem; text-decoration: none;
+    }
+    .btn-sm { padding: 0.3rem 0.6rem; font-size: 0.8rem; }
+    
+    .btn-primary { background: var(--brand); color: #000; box-shadow: 0 4px 15px rgba(6,182,212,0.2); }
+    .btn-primary:hover { background: var(--brand-hover); transform: translateY(-1px); }
+    
+    .btn-secondary { background: rgba(255,255,255,0.05); color: var(--ink); border: 1px solid var(--border); }
+    .btn-secondary:hover { background: rgba(255,255,255,0.1); color: #fff; }
+    
+    .btn-danger { background: rgba(239,68,68,0.1); color: var(--danger); border: 1px solid rgba(239,68,68,0.2); }
+    .btn-danger:hover { background: rgba(239,68,68,0.2); }
+
+    /* TABLE */
+    .table-responsive { overflow-x: auto; border-radius: var(--radius); border: 1px solid var(--border); }
+    table { width: 100%; border-collapse: collapse; text-align: left; }
+    th { 
+      background: rgba(15, 23, 42, 0.5); color: var(--muted); font-weight: 600; 
+      padding: 1rem; font-size: 0.8rem; text-transform: uppercase; border-bottom: 1px solid var(--border); white-space: nowrap;
+    }
+    td { padding: 0.8rem 1rem; border-bottom: 1px solid var(--border); color: var(--ink); font-size: 0.9rem; vertical-align: middle; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: rgba(255,255,255,0.02); }
+
+    /* Inline inputs in table */
+    td input, td select {
+        padding: 0.4rem; font-size: 0.85rem; border: 1px solid transparent; background: transparent;
+    }
+    td input:hover, td select:hover { border-color: var(--border); background: rgba(0,0,0,0.2); }
+    td input:focus, td select:focus { border-color: var(--brand); background: #0f172a; }
+
+    /* CHIPS */
+    .chips { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+    .chip { 
+        background: rgba(255,255,255,0.05); border: 1px solid var(--border); 
+        border-radius: 99px; padding: 2px 10px; font-size: 0.8rem; 
+        display: inline-flex; align-items: center; gap: 6px; 
+    }
+    .chip button { border: none; background: none; color: var(--muted); cursor: pointer; font-size: 12px; padding: 0; }
+    .chip button:hover { color: var(--danger); }
+
+    /* MODAL */
+    dialog {
+      background: #1e293b; color: #fff; border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 0; width: 95%; max-width: 800px; box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+    }
+    dialog::backdrop { background: rgba(0,0,0,0.7); backdrop-filter: blur(4px); }
+    
+    .modal-header { padding: 1.2rem; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.2); }
+    .modal-body { padding: 1.5rem; max-height: 70vh; overflow-y: auto; }
+    .modal-footer { padding: 1.2rem; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 1rem; background: rgba(0,0,0,0.2); }
+
+    /* UTILS */
+    [hidden] { display: none !important; }
+    .flex-between { display: flex; justify-content: space-between; align-items: center; }
+    .text-muted { color: var(--muted); font-size: 0.85rem; }
+    
+    /* Global Panel Styles */
+    .global-panel { background: rgba(15, 23, 42, 0.4); border: 1px dashed var(--border); padding: 1rem; border-radius: 8px; margin-bottom: 1rem; }
+    .ops-summary {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 0.8rem;
+      margin-top: 1rem;
+    }
+    .metric-card {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: rgba(15, 23, 42, 0.65);
+      padding: 0.85rem 0.95rem;
+      min-height: 76px;
+    }
+    .metric-card span {
+      display: block;
+      color: var(--muted);
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .metric-card strong {
+      display: block;
+      color: #fff;
+      font-size: 1.45rem;
+      line-height: 1.2;
+      margin-top: 0.25rem;
+    }
+    .filters-bar {
+      display: grid;
+      grid-template-columns: minmax(220px, 1.5fr) minmax(150px, 0.8fr) minmax(170px, 1fr) auto;
+      gap: 0.8rem;
+      align-items: end;
+      margin-top: 1.1rem;
+    }
+    .filters-bar .btn { min-height: 39px; }
+    .muted-line { color: var(--muted); font-size: 0.78rem; margin-top: 2px; }
+    
+    /* Custom Scrollbar for details */
+    details summary { cursor: pointer; color: var(--brand); font-weight: 600; outline: none; list-style: none; }
+    details summary::-webkit-details-marker { display: none; }
+    details[open] summary { margin-bottom: 1rem; }
+
+    @media (max-width: 768px) {
+      .container { padding: 0 12px; }
+      nav { flex-direction: column; align-items: stretch; gap: 0.8rem; }
+      .menu { overflow-x: auto; white-space: nowrap; padding-bottom: 4px; }
+      .flex-between { flex-direction: column; align-items: stretch; gap: 0.8rem; }
+      .flex-between > div:last-child { width: 100%; flex-wrap: wrap; }
+      .flex-between > div:last-child .btn { flex: 1; min-width: 180px; }
+      #rowFiltroEmp { width: 100%; flex-wrap: wrap; }
+      #rowFiltroEmp select, #rowFiltroEmp button { width: 100%; }
+      .modal-footer { flex-direction: column-reverse; }
+      .modal-footer .btn { width: 100%; }
+      .ops-summary { grid-template-columns: 1fr 1fr; }
+      .filters-bar { grid-template-columns: 1fr; }
+    }
+
+  </style>
+</head>
+<body>
+
+  <header>
+    <nav class="container">
+      <div class="brand">
+        MultiEmpresas <span id="rolePill" class="role-badge"></span>
+      </div>
+      <ul class="menu" id="mainMenu">
+        <li><a href="inicio/inicial.html">🚀 Inicio</a></li>
+        <li><a href="dashboard.html">Dashboard</a></li>
+        <li><a href="gastos.html">Gastos</a></li>
+        <li><a href="stock.html">Stock</a></li>
+        <li><a href="repartidor.html" class="active">Repartidor</a></li>
+        <li><a href="estadisticas.html">Estadisticas</a></li>
+        <li><a href="iaweb.html">IAweb</a></li>
+        <li><a href="qr.html">QR</a></li>  
+        <li><a href="#" id="logout" style="color: var(--danger)">Salir</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <main class="container">
+    
+    <section class="card">
+      <div class="flex-between" style="flex-wrap: wrap; gap:1rem;">
+        <div>
+          <h3 style="margin:0">Repartidores / Choferes</h3>
+          <p class="text-muted" style="margin:0">Gestión de flota, asignación de zonas y configuración de pagos.</p>
+        </div>
+        <div style="display: flex; gap: 1rem; align-items: center;">
+          <button onclick="openGlobales()" class="btn btn-secondary">⚙️ Políticas Globales</button>
+          
+          <div id="rowFiltroEmp" style="display:flex; gap:0.5rem; align-items:center;" hidden>
+            <select id="empFilter" style="min-width:150px; padding: 0.4rem;"></select>
+            <button id="btnRef" class="btn btn-secondary btn-sm" title="Refrescar">↻</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="ops-summary" aria-label="Resumen operativo de repartidores">
+        <div class="metric-card">
+          <span>Total</span>
+          <strong id="sumTotal">0</strong>
+        </div>
+        <div class="metric-card">
+          <span>Propios</span>
+          <strong id="sumPropios">0</strong>
+        </div>
+        <div class="metric-card">
+          <span>Fleteros</span>
+          <strong id="sumFleteros">0</strong>
+        </div>
+        <div class="metric-card">
+          <span>Sin zonas</span>
+          <strong id="sumSinZonas">0</strong>
+        </div>
+      </div>
+
+      <div class="filters-bar">
+        <div>
+          <label>Buscar</label>
+          <input id="searchRepartidor" type="search" placeholder="Nombre, teléfono o email">
+        </div>
+        <div>
+          <label>Tipo</label>
+          <select id="typeFilter">
+            <option value="">Todos</option>
+            <option value="propio">Propios</option>
+            <option value="fletero">Fleteros</option>
+          </select>
+        </div>
+        <div>
+          <label>Zona</label>
+          <select id="zoneFilter">
+            <option value="">Todas las zonas</option>
+            <option value="__none">Sin zonas</option>
+          </select>
+        </div>
+        <div>
+          <label>Ordenar</label>
+          <select id="sortFilter">
+            <option value="name">Nombre A-Z</option>
+            <option value="zones_desc">Más zonas</option>
+            <option value="zones_asc">Menos zonas</option>
+            <option value="type">Tipo</option>
+          </select>
+        </div>
+        <button id="btnClearFilters" type="button" class="btn btn-secondary">Limpiar</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <details>
+        <summary>➕ Crear nuevo chofer</summary>
+        <form id="fNuevo">
+          <div class="grid-2">
+            <div id="rowEmp" hidden>
+              <label>Empresa</label>
+              <select id="empSel"></select>
+            </div>
+            <div></div>
+          </div>
+
+          <div class="grid-2">
+            <div>
+              <label>Nombre</label>
+              <input id="cNombre" placeholder="Nombre y apellido" required />
+            </div>
+            <div>
+              <label>Teléfono</label>
+              <input id="cTel" type="tel" placeholder="Ej: +54 351 ..." />
+            </div>
+          </div>
+
+          <div class="grid-2" style="margin-top:1rem">
+            <div>
+              <label>Email</label>
+              <input id="cMail" type="email" placeholder="correo@dominio.com" />
+            </div>
+            <div class="grid-2" style="gap:1rem">
+                <div>
+                    <label>Tipo</label>
+                    <select id="cTipo">
+                        <option value="propio" selected>Propio (Nómina)</option>
+                        <option value="fletero">Fletero / Tercero</option>
+                    </select>
+                </div>
+                <div>
+                    <label>SLA (horas)</label>
+                    <input id="cSla" type="number" min="1" step="1" placeholder="Ej: 24" />
+                </div>
+            </div>
+          </div>
+
+          <div style="margin-top:1.5rem; background:rgba(255,255,255,0.03); padding:1rem; border-radius:8px;">
+            <label style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.5rem; cursor:pointer">
+              <input type="checkbox" id="uCreate" style="width:auto; margin:0;" />
+              <span style="color:#fff">Crear usuario de acceso (rol Repartidor)</span>
+            </label>
+            
+            <div class="grid-2" id="uWrap" hidden>
+              <div>
+                <label>Usuario</label>
+                <input id="uUser" placeholder="repartidor01" autocomplete="off" />
+              </div>
+              <div>
+                <label>Contraseña</label>
+                <input id="uPass" type="password" autocomplete="new-password" />
+              </div>
+            </div>
+          </div>
+
+          <div style="margin-top:1.5rem; text-align:right;">
+            <button class="btn btn-primary">Crear Chofer</button>
+          </div>
+        </form>
+      </details>
+    </section>
+
+    <section class="card table-responsive" style="padding:0; overflow:hidden;">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:50px">ID</th>
+            <th>Nombre</th>
+            <th>Contacto</th>
+            <th>Zonas asignadas</th>
+            <th style="width:180px">Asignar zona</th>
+            <th>Configuración</th>
+            <th style="text-align:right">Acciones</th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </section>
+
+  </main>
+
+  <dialog id="dlgGlobales">
+    <div class="modal-header">
+      <strong>⚙️ Políticas de Pago Globales</strong>
+      <button onclick="dlgGlobales.close()" style="background:none; border:none; color:#fff; cursor:pointer">✕</button>
+    </div>
+    <div class="modal-body">
+      
+      <div class="global-panel">
+        <h5 style="color:var(--brand)">💰 Costos de Referencia (Fleteros)</h5>
+        <p class="text-muted">Define un costo base por producto y aplícalo a todos los fleteros de una vez.</p>
+        
+        <div class="grid-2" style="margin-top:1rem; align-items:end;">
+          <div>
+            <label>Producto</label>
+            <select id="gProdSel"></select>
+          </div>
+          <div>
+            <label>Costo Base ($)</label>
+            <input type="number" id="gCostoVal" placeholder="0.00">
+          </div>
+        </div>
+        
+        <div class="flex-between" style="margin-top:1rem;">
+            <label style="display:flex; gap:0.5rem; align-items:center; font-size:0.9rem; cursor:pointer;">
+                <input type="checkbox" id="gSoloVacios" checked style="width:auto">
+                Solo aplicar si NO tiene precio definido
+            </label>
+            <button onclick="aplicarCostoGlobal()" class="btn btn-primary btn-sm">Aplicar masivamente</button>
+        </div>
+        <small id="gResult" style="color:var(--success); display:block; margin-top:0.5rem; text-align:right"></small>
+      </div>
+
+      <div class="global-panel" style="margin-top:1.5rem">
+        <h5 style="color:var(--warning)">📊 Escalas por Defecto</h5>
+        <p class="text-muted">Escalas marcadas como "Default" que se usarán si un chofer no tiene escala propia.</p>
+        <div id="gEscalasList" style="margin-top:1rem;">
+            <em class="text-muted">Cargando análisis de escalas...</em>
+        </div>
+      </div>
+
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="dlgGlobales.close()">Cerrar</button>
+    </div>
+  </dialog>
+
+  <dialog id="dlgCostos">
+    <div class="modal-header">
+      <strong id="dlgTitle">Costos del fletero</strong>
+      <button onclick="dlgCostos.close()" style="background:none; border:none; color:#fff; cursor:pointer">✕</button>
+    </div>
+    <div class="modal-body">
+      <p class="text-muted">Definí el <b>costo unitario</b> que paga este fletero por cada producto.</p>
+      
+      <form id="fCostos" style="background:rgba(255,255,255,0.03); padding:1rem; border-radius:8px; margin-bottom:1rem;">
+        <div class="grid-2" style="align-items:end;">
+          <div>
+            <label>Producto</label>
+            <select id="costoProducto"></select>
+          </div>
+          <div>
+            <label>Costo unitario ($)</label>
+            <input id="costoValor" type="number" min="0" step="0.01" placeholder="Ej: 2.50" required />
+          </div>
+        </div>
+        <div style="text-align:right; margin-top:1rem;">
+            <button class="btn btn-primary btn-sm">Agregar costo</button>
+        </div>
+      </form>
+
+      <h4>Costos actuales</h4>
+      <div class="table-responsive" style="border:1px solid var(--border)">
+        <table>
+          <thead>
+            <tr>
+              <th>Producto</th>
+              <th>Costo unitario ($)</th>
+              <th style="text-align:right">Acciones</th>
+            </tr>
+          </thead>
+          <tbody id="costosRows"></tbody>
+        </table>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="dlgEscalas">
+    <div class="modal-header">
+      <strong id="dlgEscTitle">Escalas de pago</strong>
+      <button onclick="dlgEscalas.close()" style="background:none; border:none; color:#fff; cursor:pointer">✕</button>
+    </div>
+    <div class="modal-body">
+      <details style="margin-bottom:1.5rem; background:rgba(255,255,255,0.03); padding:1rem; border-radius:8px;">
+        <summary>➕ Nueva escala</summary>
+        <form id="fNuevaEscala" class="grid-2" style="margin-top:1rem">
+          <div>
+            <label>Nombre</label>
+            <input id="escNombre" type="text" placeholder="Ej: Tabla 2025" />
+          </div>
+          <div>
+            <label>Desde</label>
+            <input id="escDesde" type="date" required />
+          </div>
+          <div>
+            <label>Hasta</label>
+            <input id="escHasta" type="date" />
+          </div>
+          <div style="display:flex; align-items:center;">
+             <label style="display:flex; gap:0.5rem; align-items:center; cursor:pointer; width:100%">
+                <input id="escEsDefault" type="checkbox" style="width:auto; margin:0"/>
+                Escala por defecto
+             </label>
+          </div>
+          <div style="grid-column: span 2;">
+            <label>Notas</label>
+            <input id="escNotas" type="text" placeholder="" />
+          </div>
+          <div style="grid-column: span 2; text-align:right">
+            <button class="btn btn-primary btn-sm">Crear escala</button>
+          </div>
+        </form>
+      </details>
+      
+      <div id="escList" style="display:flex; flex-direction:column; gap:1rem;"></div>
+    </div>
+  </dialog>
+
+  <dialog id="dlgPagoDiario">
+    <div class="modal-header">
+      <strong id="dlgPagoTitle">Pago Diario</strong>
+      <button onclick="dlgPagoDiario.close()" style="background:none; border:none; color:#fff; cursor:pointer">✕</button>
+    </div>
+    <div class="modal-body">
+      <form id="fPagoDiario" style="display:flex; gap:1rem; align-items:end; margin-bottom:1.5rem;">
+        <div style="flex:1">
+            <label>Fecha de Cálculo</label>
+            <input id="pagoFecha" type="date" required />
+        </div>
+        <button class="btn btn-primary">Calcular</button>
+      </form>
+      <div id="pagoResultado"></div>
+    </div>
+  </dialog>
+
+  <script>
+    const $ = (s, r = document) => r.querySelector(s);
+    const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
+
+    // Modo seguro: auth por cookie httpOnly
+    const authFetch = (url, opts = {}) => {
+      const { headers = {}, ...rest } = opts;
+      return fetch(url, { ...rest, headers, credentials: 'include' });
+    };
+
+    // State
+    let isSuper = false;
+    let me = null;
+    let choferesCache = []; 
+    let zonasCache = [];
+    let mapaChoferZonas = {};
+    let empresasCache = [];
+    let productosCache = [];
+    let costosState = { chofer_id: 0, costos: [] };
+    let escalasState = { chofer_id: 0, list: [] };
+    let createBusy = false;
+    let repartidorFilters = { q: '', tipo: '', zona: '', sort: 'name' };
+    const updateBusy = new Set();
+    const deleteBusy = new Set();
+
+    function esc(s) {
+      return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+
+    // API
+    async function api(path, opts = {}) {
+      const { headers = {}, body, ...rest } = opts;
+      const isFD = (typeof FormData !== 'undefined') && body instanceof FormData;
+
+      try {
+        const r = await authFetch(path, {
+          method: 'GET',
+          ...rest,
+          headers: { ...(isFD ? {} : { 'Content-Type': 'application/json' }), ...headers },
+          body: isFD ? body : (body && typeof body !== 'string' ? JSON.stringify(body) : body)
+        });
+        if (r.status === 401) {
+          location.href = 'login.html';
+          return;
+        }
+        const t = await r.text();
+        if (!r.ok) throw new Error(t || r.statusText);
+        try { return JSON.parse(t); } catch { return t; }
+      } catch (e) {
+        console.error(e);
+        throw e;
+      }
+    }
+
+    // Init Logic
+    async function whoAmI() {
+      const j = await api('/api/me');
+      me = j?.user || {};
+      isSuper = String(me.role || '').toLowerCase() === 'super';
+      
+      const pill = $('#rolePill');
+      pill.textContent = isSuper ? 'SUPER ADMIN' : me.role.toUpperCase();
+      if(isSuper) pill.style.borderColor = 'var(--warning)';
+      return me;
+    }
+
+    function currentEmpresaQS() {
+      return isSuper && $('#empFilter').value ? `?empresa_id=${encodeURIComponent($('#empFilter').value)}` : '';
+    }
+
+    async function loadEmpresas() {
+      const list = await api('/api/empresas');
+      empresasCache = list || [];
+      const opts = empresasCache.map(e => `<option value="${Number(e.id)}">ID ${Number(e.id)} | ${esc(e.nombre)}</option>`).join('');
+      $('#empSel').innerHTML = opts;
+      $('#empFilter').innerHTML = opts;
+    }
+
+    async function loadProductos() {
+      const list = await api('/api/productos' + currentEmpresaQS());
+      productosCache = Array.isArray(list) ? list : [];
+      const opts = productosCache.map(p => `<option value="${Number(p.id)}">${esc(p.nombre)}</option>`).join('');
+      
+      $('#costoProducto').innerHTML = opts;
+      $('#gProdSel').innerHTML = opts;
+    }
+
+    async function load() {
+      const choferes = await api('/api/choferes' + currentEmpresaQS());
+      choferesCache = Array.isArray(choferes) ? choferes : [];
+      
+      zonasCache = await api('/api/zonas' + currentEmpresaQS());
+      const zonasConChoferes = await api('/api/zonas/choferes' + currentEmpresaQS());
+      mapaChoferZonas = {};
+      for (const z of (zonasConChoferes || [])) {
+        for (const c of (z.choferes || [])) {
+          (mapaChoferZonas[c.id] ||= []).push({ id: z.id, nombre: z.nombre });
+        }
+      }
+      render(choferesCache);
+    }
+
+    function renderChips(chofer_id) {
+      const arr = mapaChoferZonas[chofer_id] || [];
+      if (!arr.length) return '<span class="text-muted" style="font-size:0.8rem">Sin zonas</span>';
+      return arr.map(z => `
+        <span class="chip">
+          ${esc(z.nombre)}
+          <button title="Quitar" onclick="quitarZona(${chofer_id}, ${z.id})">✕</button>
+        </span>
+      `).join('');
+    }
+
+    function setSummary(list = choferesCache) {
+      const total = list.length;
+      const propios = list.filter(c => (c.tipo || 'propio') !== 'fletero').length;
+      const fleteros = list.filter(c => c.tipo === 'fletero').length;
+      const sinZonas = list.filter(c => !(mapaChoferZonas[Number(c.id)] || []).length).length;
+
+      $('#sumTotal').textContent = String(total);
+      $('#sumPropios').textContent = String(propios);
+      $('#sumFleteros').textContent = String(fleteros);
+      $('#sumSinZonas').textContent = String(sinZonas);
+    }
+
+    function syncZoneFilter() {
+      const sel = $('#zoneFilter');
+      if (!sel) return;
+      const prev = sel.value || '';
+      const opts = zonasCache.map(z => `<option value="${Number(z.id)}">${esc(z.nombre)}</option>`).join('');
+      sel.innerHTML = '<option value="">Todas las zonas</option><option value="__none">Sin zonas</option>' + opts;
+      if (prev && (prev === '__none' || zonasCache.some(z => String(z.id) === prev))) sel.value = prev;
+    }
+
+    function getFilteredRepartidores(list = choferesCache) {
+      const q = (repartidorFilters.q || '').trim().toLowerCase();
+      const tipo = repartidorFilters.tipo || '';
+      const zona = repartidorFilters.zona || '';
+      const sort = repartidorFilters.sort || 'name';
+
+      const filtered = (list || []).filter(c => {
+        const id = Number(c.id);
+        if (tipo && c.tipo !== tipo) return false;
+
+        const zonas = mapaChoferZonas[id] || [];
+        if (zona === '__none' && zonas.length) return false;
+        if (zona && zona !== '__none' && !zonas.some(z => String(z.id) === zona)) return false;
+
+        if (!q) return true;
+        const haystack = [
+          c.id,
+          c.nombre,
+          c.telefono,
+          c.email,
+          c.tipo,
+          ...zonas.map(z => z.nombre)
+        ].map(v => String(v == null ? '' : v).toLowerCase()).join(' ');
+
+        return haystack.includes(q);
+      });
+
+      return filtered.sort((a, b) => {
+        const za = (mapaChoferZonas[Number(a.id)] || []).length;
+        const zb = (mapaChoferZonas[Number(b.id)] || []).length;
+        if (sort === 'zones_desc') return zb - za || String(a.nombre || '').localeCompare(String(b.nombre || ''));
+        if (sort === 'zones_asc') return za - zb || String(a.nombre || '').localeCompare(String(b.nombre || ''));
+        if (sort === 'type') return String(a.tipo || '').localeCompare(String(b.tipo || '')) || String(a.nombre || '').localeCompare(String(b.nombre || ''));
+        return String(a.nombre || '').localeCompare(String(b.nombre || ''));
+      });
+    }
+
+    function render(list) {
+      setSummary(choferesCache);
+      syncZoneFilter();
+
+      const filtered = getFilteredRepartidores(list);
+      const rows = filtered.map(c => `
+        <tr>
+          <td class="text-muted">#${Number(c.id)}</td>
+          <td>
+            <input id="n_${Number(c.id)}" value="${esc(c.nombre || '')}" style="font-weight:600; color:#fff"/>
+          </td>
+          <td>
+            <input id="t_${Number(c.id)}" type="tel" value="${esc(c.telefono || '')}" placeholder="Teléfono"/>
+            <div class="muted-line">${c.email ? esc(c.email) : 'Sin email'}</div>
+          </td>
+          <td>
+            <div class="chips" id="chips_${Number(c.id)}">
+              ${renderChips(Number(c.id))}
+            </div>
+            <div class="muted-line">${(mapaChoferZonas[Number(c.id)] || []).length} zona(s)</div>
+          </td>
+          <td>
+            <div style="display:flex; gap:0.5rem">
+              <select id="zsel_${Number(c.id)}">
+                ${zonasCache.map(z => `<option value="${Number(z.id)}">${esc(z.nombre)}</option>`).join('')}
+              </select>
+              <button class="btn btn-secondary btn-sm" onclick="asignar(${Number(c.id)})">+</button>
+            </div>
+          </td>
+          <td>
+            <div class="grid-2" style="gap:0.5rem">
+                <select id="tipo_${Number(c.id)}">
+                  <option value="propio" ${c.tipo === 'propio' ? 'selected' : ''}>Propio</option>
+                  <option value="fletero" ${c.tipo === 'fletero' ? 'selected' : ''}>Fletero</option>
+                </select>
+                <button class="btn btn-secondary btn-sm" onclick="openCostos(${Number(c.id)}, '${esc(c.nombre || '')}')">Costos</button>
+            </div>
+          </td>
+          <td style="text-align:right;">
+            <button class="btn btn-primary btn-sm" onclick="upd(${Number(c.id)})" title="Guardar">💾</button>
+            <button class="btn btn-secondary btn-sm" onclick="openPagoDiario(${Number(c.id)}, '${esc(c.nombre || '')}')" title="Pagos">💲</button>
+            <button class="btn btn-secondary btn-sm" onclick="openEscalas(${Number(c.id)}, '${esc(c.nombre || '')}')" title="Escalas">📈</button>
+            <button class="btn btn-danger btn-sm" onclick="delCh(${Number(c.id)})" title="Eliminar">🗑️</button>
+          </td>
+        </tr>
+      `).join('');
+      
+      const emptyMsg = choferesCache.length
+        ? 'No hay repartidores que coincidan con los filtros.'
+        : 'No hay choferes registrados.';
+      $('#rows').innerHTML = rows.length ? rows : `<tr><td colspan="7" style="text-align:center; padding:2rem; color:var(--muted)">${emptyMsg}</td></tr>`;
+    }
+
+    // ====== ACTIONS ======
+
+    async function onCreate(ev) {
+      ev.preventDefault();
+      if (createBusy) return;
+      const btn = ev.submitter || ev.target.querySelector('button');
+      
+      const nombre = $('#cNombre').value.trim();
+      if (!nombre) return alert('Ingresá un nombre');
+
+      const body = { 
+        nombre, 
+        telefono: $('#cTel').value.trim(), 
+        email: $('#cMail').value.trim(), 
+        tipo: $('#cTipo').value, 
+        sla_horas: $('#cSla').value ? Number($('#cSla').value) : null 
+      };
+      
+      if (isSuper && $('#empSel').value) body.empresa_id = Number($('#empSel').value);
+
+      const prevTxt = btn ? btn.textContent : '';
+      createBusy = true;
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Creando...';
+      }
+      try {
+        const ch = await api('/api/choferes' + currentEmpresaQS(), { method: 'POST', body });
+        if (!ch?.id) throw new Error('Error al crear');
+
+        if ($('#uCreate').checked) {
+          const username = $('#uUser').value.trim();
+          const password = $('#uPass').value;
+          const empresa_id = isSuper ? Number($('#empSel').value) : Number(me?.empresa_id);
+          
+          if (username && password) {
+            await api('/api/admin/usuarios', {
+              method: 'POST',
+              body: { empresa_id, username, password, role: 'repartidor', chofer_id: Number(ch.id) }
+            });
+          }
+        }
+        ev.target.reset();
+        $('#uWrap').hidden = true;
+        await load();
+      } catch (e) { alert(e.message); } 
+      finally {
+        createBusy = false;
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = prevTxt;
+        }
+      }
+    }
+
+    window.upd = async function(id) {
+      if (updateBusy.has(id)) return;
+      const body = {
+        nombre: ($('#n_' + id).value || '').trim(),
+        telefono: ($('#t_' + id).value || '').trim(),
+        tipo: ($('#tipo_' + id).value || 'propio').toLowerCase()
+      };
+      if (!body.nombre) return alert('Nombre requerido');
+      updateBusy.add(id);
+      try {
+        await api('/api/choferes/' + id + currentEmpresaQS(), { method: 'PUT', body });
+        // Feedback visual simple
+        const el = $('#n_' + id);
+        el.style.borderColor = 'var(--success)';
+        setTimeout(()=> el.style.borderColor = 'var(--border)', 1000);
+      } catch (e) { alert(e.message); }
+      finally { updateBusy.delete(id); }
+    }
+
+    window.delCh = async function(id) {
+      if (deleteBusy.has(id)) return;
+      if (!confirm('¿Eliminar chofer y sus asignaciones?')) return;
+      deleteBusy.add(id);
+      try {
+        await api('/api/choferes/' + id + currentEmpresaQS(), { method: 'DELETE' });
+        load();
+      } catch (e) { alert(e.message); }
+      finally { deleteBusy.delete(id); }
+    }
+
+    // Zonas
+    window.asignar = async function(chofer_id) {
+      const zona_id = Number(document.getElementById('zsel_' + chofer_id).value);
+      if (!zona_id) return;
+      try {
+        await api('/api/asignarChofer' + currentEmpresaQS(), { method: 'POST', body: { chofer_id, zona_id } });
+        const z = zonasCache.find(x => x.id === zona_id);
+        if (z) {
+             (mapaChoferZonas[chofer_id] ||= []);
+             if(!mapaChoferZonas[chofer_id].find(x => x.id === z.id)) {
+                 mapaChoferZonas[chofer_id].push({ id: z.id, nombre: z.nombre });
+             }
+        }
+        render(choferesCache);
+      } catch (e) { alert(e.message); }
+    }
+
+    window.quitarZona = async function(chofer_id, zona_id) {
+      try {
+        await api('/api/desasignarChofer' + currentEmpresaQS(), { method: 'DELETE', body: { chofer_id, zona_id } });
+        mapaChoferZonas[chofer_id] = (mapaChoferZonas[chofer_id]||[]).filter(z => z.id !== zona_id);
+        render(choferesCache);
+      } catch (e) { alert(e.message); }
+    }
+
+    // === COSTOS ===
+    async function loadCostos(chofer_id) {
+      const res = await api('/api/choferes/' + chofer_id + '/costos' + currentEmpresaQS());
+      const arr = Array.isArray(res) ? res : (res?.costos || []);
+      costosState = { chofer_id, costos: arr };
+      
+      const rows = arr.map(c => `
+        <tr>
+          <td>${esc(c.producto_nombre)}</td>
+          <td style="color:var(--warning)">${c.costo_unitario}</td>
+          <td style="text-align:right">
+            <button class="btn btn-secondary btn-sm" onclick="editCosto(${chofer_id}, ${c.producto_id}, ${c.costo_unitario})">✏️</button>
+            <button class="btn btn-danger btn-sm" onclick="deleteCosto(${chofer_id}, ${c.producto_id})">🗑️</button>
+          </td>
+        </tr>
+      `).join('');
+      
+      $('#costosRows').innerHTML = rows || '<tr><td colspan="3" class="text-muted" style="text-align:center">Sin costos definidos</td></tr>';
+    }
+
+    window.openCostos = async function(cid, nombre) {
+      await loadProductos();
+      await loadCostos(cid);
+      $('#dlgTitle').textContent = `Costos: ${nombre}`;
+      $('#fCostos').reset();
+      $('#dlgCostos').showModal();
+    }
+
+    $('#fCostos').onsubmit = async (e) => {
+      e.preventDefault();
+      const pid = Number($('#costoProducto').value);
+      const val = Number($('#costoValor').value);
+      if (!pid || val < 0) return alert('Datos inválidos');
+      try {
+        await api('/api/choferes/' + costosState.chofer_id + '/costos' + currentEmpresaQS(), {
+          method: 'POST', body: { producto_id: pid, costo_unitario: val }
+        });
+        loadCostos(costosState.chofer_id);
+        $('#fCostos').reset();
+      } catch (e) { alert(e.message); }
+    };
+
+    window.deleteCosto = async (cid, pid) => {
+      if(!confirm('¿Borrar?')) return;
+      await api(`/api/choferes/${cid}/costos/${pid}${currentEmpresaQS()}`, { method:'DELETE' });
+      loadCostos(cid);
+    };
+    
+    window.editCosto = async (cid, pid, old) => {
+        const val = prompt('Nuevo costo:', old);
+        if(val===null) return;
+        await api(`/api/choferes/${cid}/costos/${pid}${currentEmpresaQS()}`, { method:'PUT', body:{costo_unitario: Number(val)} });
+        loadCostos(cid);
+    };
+
+    // === ESCALAS ===
+    async function loadEscalas(cid) {
+      const list = await api('/api/choferes/' + cid + '/escalas' + currentEmpresaQS());
+      escalasState = { chofer_id: cid, list: Array.isArray(list) ? list : [] };
+      renderEscalas();
+    }
+
+    function renderEscalas() {
+      const list = escalasState.list;
+      if (!list.length) {
+        $('#escList').innerHTML = '<p class="text-muted text-center">Sin escalas asignadas.</p>';
+        return;
+      }
+      
+      $('#escList').innerHTML = list.map(e => {
+        const tramos = (e.tramos || []).map(t => `
+          <tr>
+            <td>${esc(t.rango_min)}</td>
+            <td>${esc(t.rango_max ?? '∞')}</td>
+            <td>$ ${Number(t.monto).toFixed(2)}</td>
+            <td style="text-align:right">
+              <button class="btn btn-secondary btn-sm" onclick="delTramo(${Number(t.id)}, ${Number(e.id)})">✕</button>
+            </td>
+          </tr>
+        `).join('');
+
+        return `
+          <div class="card" style="padding:1rem; border:1px solid ${e.es_default ? 'var(--brand)' : 'var(--border)'}">
+            <div class="flex-between">
+              <div>
+                <strong style="color:white">${esc(e.nombre)}</strong>
+                ${e.es_default ? '<span class="role-badge" style="margin-left:5px">Default</span>' : ''}
+                <br><small class="text-muted">${esc(e.vigente_desde)} → ${esc(e.vigente_hasta || '∞')}</small>
+              </div>
+              <div style="display:flex; gap:0.5rem">
+                <button class="btn btn-secondary btn-sm" onclick="editEscala(${Number(e.id)})">✏️</button>
+                <button class="btn btn-danger btn-sm" onclick="delEscala(${Number(e.id)})">🗑️</button>
+              </div>
+            </div>
+            
+            <div class="table-responsive" style="margin:0.5rem 0; border:1px solid var(--border)">
+              <table>
+                <thead><tr><th>Min</th><th>Max</th><th>$ Día</th><th></th></tr></thead>
+                <tbody>${tramos || '<tr><td colspan="4" class="text-muted text-center">-</td></tr>'}</tbody>
+              </table>
+            </div>
+
+            <form onsubmit="return addTramo(event, ${Number(e.id)})" style="display:flex; gap:0.5rem">
+               <input id="min_${Number(e.id)}" type="number" placeholder="Min" required style="width:60px">
+               <input id="max_${Number(e.id)}" type="number" placeholder="Max" style="width:60px">
+               <input id="monto_${Number(e.id)}" type="number" placeholder="$" required style="width:80px">
+               <button class="btn btn-secondary btn-sm">+</button>
+            </form>
+          </div>
+        `;
+      }).join('');
+    }
+
+    window.openEscalas = async (cid, nombre) => {
+      $('#dlgEscTitle').textContent = `Escalas: ${nombre}`;
+      $('#fNuevaEscala').reset();
+      $('#dlgEscalas').showModal();
+      await loadEscalas(cid);
+    };
+
+    $('#fNuevaEscala').onsubmit = async (e) => {
+      e.preventDefault();
+      const body = {
+        nombre: $('#escNombre').value,
+        vigente_desde: $('#escDesde').value,
+        vigente_hasta: $('#escHasta').value || null,
+        notas: $('#escNotas').value,
+        es_default: $('#escEsDefault').checked
+      };
+      await api(`/api/choferes/${escalasState.chofer_id}/escalas${currentEmpresaQS()}`, { method:'POST', body });
+      loadEscalas(escalasState.chofer_id);
+      e.target.reset();
+    };
+    
+    window.delEscala = async (id) => {
+        if(confirm('¿Borrar escala?')) {
+            await api(`/api/escalas/${id}${currentEmpresaQS()}`, {method:'DELETE'});
+            loadEscalas(escalasState.chofer_id);
+        }
+    }
+    
+    window.editEscala = async (id) => {
+        const n = prompt('Nuevo nombre:');
+        if(n) {
+             await api(`/api/escalas/${id}${currentEmpresaQS()}`, {method:'PUT', body:{nombre:n}});
+             loadEscalas(escalasState.chofer_id);
+        }
+    }
+
+    window.addTramo = async (ev, eid) => {
+      ev.preventDefault();
+      const min = Number($(`#min_${eid}`).value);
+      const maxV = $(`#max_${eid}`).value;
+      const max = maxV === '' ? null : Number(maxV);
+      const monto = Number($(`#monto_${eid}`).value);
+      
+      await api(`/api/escalas/${eid}/tramos${currentEmpresaQS()}`, {
+        method:'POST', body: { rango_min: min, rango_max: max, monto }
+      });
+      loadEscalas(escalasState.chofer_id);
+    };
+    
+    window.delTramo = async (tid, eid) => {
+        await api(`/api/tramos/${tid}${currentEmpresaQS()}`, {method:'DELETE'});
+        loadEscalas(escalasState.chofer_id);
+    }
+
+    // === GLOBAL POLICIES ===
+    window.openGlobales = async () => {
+      $('#dlgGlobales').showModal();
+      $('#gResult').textContent = '';
+      $('#gEscalasList').innerHTML = '<em class="text-muted">Cargando...</em>';
+      await loadProductos();
+      
+      // Find defaults by sampling
+      let defaults = [];
+      const sample = choferesCache.slice(0, 15);
+      for(const c of sample) {
+         try {
+             const escs = await api(`/api/choferes/${c.id}/escalas${currentEmpresaQS()}`);
+             if(Array.isArray(escs)) {
+                 escs.filter(e=>e.es_default).forEach(e => defaults.push({...e, chName: c.nombre}));
+             }
+         } catch{}
+      }
+      
+      if(!defaults.length) $('#gEscalasList').innerHTML = '<p class="text-muted">No se encontraron escalas marcadas como Default.</p>';
+      else $('#gEscalasList').innerHTML = defaults.map(d => `
+        <div style="background:rgba(255,255,255,0.05); padding:0.5rem; border-radius:6px; margin-bottom:0.5rem; border-left:3px solid var(--warning)">
+            <strong>${esc(d.nombre)}</strong> <small class="text-muted">(${esc(d.chName)})</small>
+            <br><small>${esc(d.vigente_desde)} -> ${esc(d.vigente_hasta||'∞')}</small>
+        </div>
+      `).join('');
+    };
+
+    window.aplicarCostoGlobal = async () => {
+       const pid = $('#gProdSel').value;
+       const val = Number($('#gCostoVal').value);
+       const onlyEmpty = $('#gSoloVacios').checked;
+       if(!pid || val < 0) return alert('Datos inválidos');
+       
+       if(!confirm('¿Aplicar masivamente?')) return;
+       
+       const fleteros = choferesCache.filter(c => c.tipo === 'fletero');
+       let count = 0;
+       
+       for(const f of fleteros) {
+           try {
+               let go = true;
+               if(onlyEmpty) {
+                   const susCostos = await api(`/api/choferes/${f.id}/costos${currentEmpresaQS()}`);
+                   if(Array.isArray(susCostos) && susCostos.find(x=> x.producto_id == pid)) go = false;
+               }
+               if(go) {
+                   await api(`/api/choferes/${f.id}/costos${currentEmpresaQS()}`, {
+                       method:'POST', body:{ producto_id: pid, costo_unitario: val }
+                   });
+                   count++;
+               }
+           } catch{}
+       }
+       $('#gResult').textContent = `✅ Actualizados: ${count} fleteros`;
+    };
+    
+    // === PAGO DIARIO ===
+    window.openPagoDiario = (cid, name) => {
+        costosState.chofer_id = cid;
+        $('#dlgPagoTitle').textContent = `Pago: ${name}`;
+        $('#pagoResultado').innerHTML = '';
+        $('#pagoFecha').value = new Date().toISOString().slice(0,10);
+        $('#dlgPagoDiario').showModal();
+    };
+    
+    $('#fPagoDiario').onsubmit = async (e) => {
+        e.preventDefault();
+        const d = $('#pagoFecha').value;
+        const cid = costosState.chofer_id;
+        $('#pagoResultado').innerHTML = '<em class="text-muted">Calculando...</em>';
+        
+        try {
+            const url = `/api/estadisticas/dashboard${currentEmpresaQS()}${currentEmpresaQS()?'&':'?'}from=${d}&to=${d}&chofer_id=${cid}`;
+            const res = await api(url);
+            if(res && res.report && res.report.length) {
+                const r = res.report[0];
+                $('#pagoResultado').innerHTML = `
+                  <div style="background:rgba(6,182,212,0.1); border:1px solid var(--brand); padding:1rem; border-radius:8px; margin-top:1rem;">
+                     <h4 style="margin-bottom:0.5rem; color:#fff">Resumen del ${d}</h4>
+                     <p>Pedidos: <b style="color:#fff">${r.pedidos}</b> &nbsp;|&nbsp; Unidades: <b style="color:#fff">${r.unidades}</b></p>
+                     <div style="font-size:1.2rem; color:var(--brand); font-weight:bold; margin-top:0.5rem;">
+                        Pago Total: $ ${Number(r.cv).toFixed(2)}
+                     </div>
+                  </div>
+                `;
+            } else {
+                $('#pagoResultado').innerHTML = '<p class="text-muted" style="margin-top:1rem">Sin actividad registrada en esta fecha.</p>';
+            }
+        } catch(err) { $('#pagoResultado').innerHTML = `<p style="color:var(--danger)">Error: ${err.message}</p>`; }
+    };
+
+
+    // Boot
+    $('#logout').onclick = async () => {
+      try { await authFetch('/api/logout', { method: 'POST' }); } catch {}
+      location.href='login.html';
+    };
+    $('#uCreate').onchange = (e) => $('#uWrap').hidden = !e.target.checked;
+    $('#fNuevo').addEventListener('submit', onCreate);
+    $('#searchRepartidor').addEventListener('input', (e) => {
+      repartidorFilters.q = e.target.value || '';
+      render(choferesCache);
+    });
+    $('#typeFilter').addEventListener('change', (e) => {
+      repartidorFilters.tipo = e.target.value || '';
+      render(choferesCache);
+    });
+    $('#zoneFilter').addEventListener('change', (e) => {
+      repartidorFilters.zona = e.target.value || '';
+      render(choferesCache);
+    });
+    $('#sortFilter').addEventListener('change', (e) => {
+      repartidorFilters.sort = e.target.value || 'name';
+      render(choferesCache);
+    });
+    $('#btnClearFilters').addEventListener('click', () => {
+      repartidorFilters = { q: '', tipo: '', zona: '', sort: 'name' };
+      $('#searchRepartidor').value = '';
+      $('#typeFilter').value = '';
+      $('#zoneFilter').value = '';
+      $('#sortFilter').value = 'name';
+      render(choferesCache);
+    });
+
+    (async () => {
+      try {
+        await whoAmI();
+        if(isSuper) {
+           $('#rowFiltroEmp').hidden = false;
+           $('#rowEmp').hidden = false;
+           await loadEmpresas();
+           
+           // Sync filters
+           const sel = $('#empFilter');
+           const createSel = $('#empSel');
+           if(empresasCache.length) {
+               createSel.innerHTML = empresasCache.map(e=>`<option value="${Number(e.id)}">ID ${Number(e.id)} | ${esc(e.nombre)}</option>`).join('');
+               sel.innerHTML = createSel.innerHTML;
+               createSel.value = String(empresasCache[0].id);
+               sel.value = String(empresasCache[0].id);
+           }
+           sel.onchange = () => { createSel.value = sel.value; load(); };
+        }
+        await load();
+        $('#btnRef').onclick = load;
+        
+      } catch(e) { console.error(e); }
+    })();
+  </script>
+</body>
+</html>

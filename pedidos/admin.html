@@ -1,0 +1,409 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Admin de Usuarios – MultiEmpresas</title>
+  <link rel="stylesheet" href="theme-base.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  <style>
+    :root { --brand:#0ea5e9; }
+    body{max-width:1200px;margin:auto}
+    header .brand{display:flex;gap:.6rem;align-items:center}
+    .grid2{display:grid;gap:1rem;grid-template-columns:1fr 1fr}
+    @media (max-width: 980px){ .grid2{grid-template-columns:1fr} }
+    .card{border:1px solid #eaeaea;padding:1rem;border-radius:12px}
+    table td, table th{white-space:nowrap}
+    td.wrap{white-space:normal;max-width:260px}
+    small.muted{opacity:.6}
+    .row{display:flex;gap:.5rem;align-items:center}
+    .right{display:flex;justify-content:flex-end}
+    .brand .dot{width:.9rem;height:.9rem;border-radius:2px;background:var(--brand)}
+    .pill{background:#eef6ff;border:1px solid #cfe8ff;color:#095aba;padding:.15rem .5rem;border-radius:999px;font-size:.8rem}
+    [hidden]{display:none!important}
+  </style>
+</head>
+<body>
+  <header class="container">
+    <nav>
+      <ul>
+        <li class="brand">
+          <span class="dot"></span>
+          <strong>MultiEmpresas</strong>
+          <span class="pill">Admin</span>
+        </li>
+      </ul>
+      <ul>
+        <li><a href="dashboard.html">Dashboard</a></li>
+        <li><a href="productos.html">Productos</a></li>
+        <li><a href="repartidores.html">Repartidores</a></li>
+        <li><a href="zonas.html">Zonas</a></li>
+        <li><a href="gastos.html">Gastos</a></li>
+        <li><a href="stock.html">Stock</a></li>
+        <li><a href="reportes.html">Reportes</a></li>
+        <li><a href="observabilidad.html">Observabilidad</a></li>
+        <li><a href="estadisticas.html" aria-current="page">Estadísticas</a></li>
+        <li><a href="admin.html">Admin</a></li>
+        <li><a href="login.html" id="logout">Salir</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <main class="container">
+    <!-- Crear usuario -->
+    <section class="card" id="crearCard">
+      <hgroup>
+        <h3>Crear usuario</h3>
+        <p class="muted">Podés crear usuarios <em>user</em>, <em>repartidor</em> o <em>super</em> (solo super).</p>
+      </hgroup>
+      <form id="fNuevo">
+        <div class="grid2">
+          <label>Empresa
+            <select id="empNew"></select>
+          </label>
+          <span></span>
+        </div>
+        <div class="grid2">
+          <label>Usuario
+            <input id="userNew" autocomplete="off" placeholder="usuario01" required />
+          </label>
+          <label>Contraseña
+            <input id="passNew" type="password" autocomplete="new-password" required />
+          </label>
+        </div>
+        <div class="grid2" id="roleNewWrap">
+          <label>Rol
+            <select id="roleNew">
+              <option value="user">user</option>
+              <option value="repartidor">repartidor</option>
+              <option value="super">super</option>
+            </select>
+          </label>
+          <span></span>
+        </div>
+
+        <div class="grid2">
+          <label>Vincular a chofer (opcional)
+            <select id="choferNew">
+              <option value="">— sin vínculo —</option>
+            </select>
+          </label>
+          <div></div>
+        </div>
+
+        <div class="right">
+          <button type="submit">Crear</button>
+        </div>
+      </form>
+    </section>
+
+    <!-- Listado de usuarios -->
+    <section class="card">
+      <hgroup class="row" style="justify-content:space-between">
+        <div>
+          <h3>Usuarios</h3>
+          <small class="muted">Editar rol, contraseña, vínculo con chofer o eliminar.</small>
+        </div>
+        <div class="row">
+          <label style="margin:0">
+            <small>Empresa</small>
+            <select id="empFilter"></select>
+          </label>
+          <button id="btnRef" class="secondary">Refrescar</button>
+        </div>
+      </hgroup>
+
+      <div class="overflow-auto">
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Empresa</th>
+              <th>Usuario</th>
+              <th>Rol</th>
+              <th>Chofer</th>
+              <th>Nueva contraseña</th>
+              <th>Acciones</th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Empresas (CRUD solo super) -->
+    <section id="empresasCard" class="card" hidden>
+      <hgroup class="row" style="justify-content:space-between">
+        <div>
+          <h3>Empresas</h3>
+          <small class="muted">Crear y renombrar (solo super).</small>
+        </div>
+        <div class="row">
+          <button id="btnEmpRef" class="secondary">Refrescar</button>
+        </div>
+      </hgroup>
+      <div class="grid2">
+        <form id="fEmpresa">
+          <label>Nombre nueva empresa
+            <input id="empNombre" placeholder="Mi Empresa SRL" />
+          </label>
+          <div class="right"><button type="submit">Crear empresa</button></div>
+        </form>
+        <div>
+          <table>
+            <thead><tr><th>ID</th><th>Nombre</th><th>Acciones</th></tr></thead>
+            <tbody id="rowsEmp"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const $ = sel => document.querySelector(sel);
+    const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    // Modo seguro: auth por cookie httpOnly
+    const authFetch = (url, opts = {}) => {
+      const { headers = {}, ...rest } = opts;
+      return fetch(url, { ...rest, headers, credentials: 'include' });
+    };
+
+    // Estado
+    let isSuper = false;
+    let me = null;
+    let empresasCache = [];
+    let choferesCache = [];
+
+    // Helpers
+async function api(path, opts={}) {
+  const { headers={}, body, ...rest } = opts;
+  const isFD = (typeof FormData !== 'undefined') && body instanceof FormData;
+  const r = await authFetch(path, {
+    method: 'GET',
+    ...rest,
+    headers: { ...(isFD?{}:{'Content-Type':'application/json'}), ...headers },
+    body: isFD ? body : (body && typeof body!=='string' ? JSON.stringify(body) : body)
+  });
+  const t = await r.text();
+  if (!r.ok) {
+    if (r.status === 401) { location.href = 'login.html'; return; }
+    throw new Error(t || (r.status+' '+r.statusText));
+  }
+  try { return JSON.parse(t); } catch { return t; }
+}
+
+
+    async function whoAmI(){
+      const j = await api('/api/me');
+      me = j.user || {};
+      isSuper = String(me.role||'') === 'super';
+      return me;
+    }
+
+    async function loadEmpresas(){
+      const list = await api('/api/empresas');
+      empresasCache = list || [];
+      const opts = empresasCache.map(e => '<option value="'+e.id+'">'+e.id+' — '+esc(e.nombre||'')+'</option>').join('');
+      const empNew = $('#empNew'), empFilter = $('#empFilter');
+      if (empNew) empNew.innerHTML = opts;
+      if (empFilter) empFilter.innerHTML = opts;
+      return empresasCache;
+    }
+
+    async function loadChoferes(empresa_id){
+      const list = await api('/api/choferes?empresa_id='+empresa_id);
+      choferesCache = list || [];
+      const sel = $('#choferNew');
+      if (sel) {
+        sel.innerHTML = ['<option value="">— sin vínculo —</option>']
+          .concat(choferesCache.map(c => '<option value="'+c.id+'">'+c.id+' — '+esc(c.nombre||'')+'</option>'))
+          .join('');
+      }
+      return choferesCache;
+    }
+
+    // Usuarios
+    async function load(){
+      const empresa_id = Number($('#empFilter').value);
+      await loadChoferes(empresa_id);
+      const list = await api('/api/admin/usuarios?empresa_id='+empresa_id);
+      render(list || []);
+    }
+
+    function render(list){
+      const rows = [];
+      for (const u of list){
+        const roleSel = isSuper
+          ? ('<select id="role_'+u.id+'">'+['user','repartidor','super'].map(r =>
+              '<option value="'+r+'" '+(String(u.role||'user')===r?'selected':'')+'>'+r+'</option>').join('')+'</select> '+
+             '<button class="secondary" onclick="updRole('+u.id+')">Guardar</button>')
+          : ('<span class="pill">'+esc(u.role||'user')+'</span>');
+
+        const choferCell = (choferesCache||[]).length
+          ? ('<div class="row"><select id="ch_'+u.id+'" style="min-width:12rem">'+
+              '<option value="">— sin vínculo —</option>'+
+              choferesCache.map(c => '<option value="'+c.id+'" '+(Number(u.chofer_id)===Number(c.id)?'selected':'')+'>'+
+                c.id+' — '+esc(c.nombre||'')+'</option>').join('')+
+             '</select> <button class="secondary" onclick="updChofer('+u.id+')">Guardar</button></div>')
+          : '<small class="muted">No hay choferes</small>';
+
+        rows.push('<tr>'+
+          '<td>'+u.id+'</td>'+
+          '<td>'+u.empresa_id+'</td>'+
+          '<td class="wrap">'+esc(u.username)+'</td>'+
+          '<td>'+roleSel+'</td>'+
+          '<td>'+choferCell+'</td>'+
+          '<td><input id="pwd_'+u.id+'" type="password" placeholder="Nueva contraseña" /> '+
+              '<button class="secondary" onclick="updPwd('+u.id+')">Actualizar</button></td>'+
+          '<td><button class="contrast" onclick="delUser('+u.id+')">Eliminar</button></td>'+
+        '</tr>');
+      }
+      $('#rows').innerHTML = rows.join('');
+    }
+
+    // Actions
+    async function updRole(id){
+      const v = $('#role_'+id).value;
+      if (!confirm('Cambiar rol a "'+v+'"?')) return;
+      await api('/api/admin/usuarios/'+id, { method:'PUT', body: JSON.stringify({ role: v }) });
+      await load();
+    }
+    async function updPwd(id){
+      const v = $('#pwd_'+id).value;
+      if (!v) { alert('Ingresá la nueva contraseña'); return; }
+      await api('/api/admin/usuarios/'+id, { method:'PUT', body: JSON.stringify({ password: v }) });
+      alert('✅ Contraseña actualizada');
+      $('#pwd_'+id).value = '';
+    }
+    async function delUser(id){
+      if (!confirm('¿Eliminar usuario '+id+'?')) return;
+      await api('/api/admin/usuarios/'+id, { method:'DELETE' });
+      await load();
+    }
+    window.updRole = updRole;
+    window.updPwd = updPwd;
+    window.delUser = delUser;
+
+    window.updChofer = async (id) => {
+      const v = document.getElementById('ch_'+id).value;
+      const chofer_id = v ? Number(v) : null;
+      await api('/api/admin/usuarios/'+id, { method:'PUT', body: JSON.stringify({ chofer_id }) });
+      alert('✅ Vínculo chofer actualizado');
+    };
+
+    // Crear nuevo usuario
+    $('#fNuevo').addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const empresa_id = Number($('#empNew').value);
+      const username = $('#userNew').value.trim();
+      const password = $('#passNew').value;
+      const role = isSuper ? String($('#roleNew').value || 'user') : 'user';
+      const chVal = ($('#choferNew')?.value || '');
+      const chofer_id = chVal ? Number(chVal) : null;
+
+      if (!username || !password) { alert('Usuario y contraseña requeridos'); return; }
+      const body = { empresa_id, username, password };
+      if (isSuper) body.role = role;
+      if (chofer_id) body.chofer_id = chofer_id;
+
+      try{
+        await api('/api/admin/usuarios', { method:'POST', body: JSON.stringify(body) });
+        alert('✅ Usuario creado');
+        $('#userNew').value=''; $('#passNew').value='';
+        await load();
+      }catch(e){
+        alert('No se pudo crear: '+(e.message||e));
+      }
+    });
+
+    // Empresas CRUD (solo super)
+    async function loadEmpresasRows(){
+      const list = await api('/api/empresas');
+      const rows = (list||[]).map(e => '<tr>'+
+        '<td>'+e.id+'</td>'+
+        '<td><input id="empName_'+e.id+'" value="'+esc(e.nombre||'')+'" /></td>'+
+        '<td class="row"><button class="secondary" onclick="renEmp('+e.id+')">Renombrar</button> '+
+        '<button class="contrast" onclick="delEmp('+e.id+')">Eliminar</button></td>'+
+      '</tr>').join('');
+      $('#rowsEmp').innerHTML = rows;
+    }
+    window.renEmp = async (id) => {
+      const nombre = document.getElementById('empName_'+id).value;
+      await api('/api/empresas/'+id, { method:'PUT', body: JSON.stringify({ nombre }) });
+      await loadEmpresasRows();
+    };
+    window.delEmp = async (id) => {
+      if (!confirm('¿Eliminar empresa '+id+'? Esto puede fallar si hay datos vinculados.')) return;
+      try{
+        await api('/api/empresas/'+id, { method:'DELETE' });
+        await loadEmpresas();
+        await loadEmpresasRows();
+      }catch(e){ alert('No se pudo eliminar: '+(e.message||e)); }
+    };
+    $('#fEmpresa').addEventListener('submit', async (ev)=>{
+      ev.preventDefault();
+      const nombre = $('#empNombre').value.trim();
+      if (!nombre) return;
+      await api('/api/empresas', { method:'POST', body: JSON.stringify({ nombre }) });
+      $('#empNombre').value='';
+      await loadEmpresas();
+      await loadEmpresasRows();
+    });
+    $('#btnEmpRef').onclick = () => { loadEmpresasRows(); };
+
+    // Boot
+    // logout (modo seguro)
+    document.getElementById('logout').addEventListener('click', async (e)=>{
+      e.preventDefault();
+      try { await authFetch('/api/logout', { method: 'POST' }); } catch {}
+    });
+    (async function init(){
+      try{
+        await whoAmI();
+        // Mostrar/ocultar controles por rol
+        if (!isSuper){
+          // ocultar selector de rol en creación
+          document.getElementById('roleNewWrap').hidden = true;
+          // ocultar CRUD de empresas
+          document.getElementById('empresasCard').hidden = true;
+        }
+        // cargar empresas, setear selects
+        const emps = await loadEmpresas();
+        const empNew = document.getElementById('empNew');
+        const empFilter = document.getElementById('empFilter');
+        if (isSuper){
+          // usar primera empresa por defecto si hay
+          if (emps.length){
+            empNew.value = String(emps[0].id);
+            empFilter.value = String(emps[0].id);
+          }
+        } else {
+          if (me && me.empresa_id != null){
+            empNew.value = String(me.empresa_id);
+            empNew.disabled = true;
+            empFilter.value = String(me.empresa_id);
+            empFilter.disabled = true;
+          }
+        }
+        // cargar choferes de la empresa seleccionada
+        await loadChoferes(Number(empNew.value));
+        // eventos
+        empNew.onchange = async () => { await loadChoferes(Number(empNew.value)); };
+        document.getElementById('btnRef').onclick = () => load();
+        document.getElementById('empFilter').onchange = () => load();
+
+        // Empresas rows (solo super)
+        if (isSuper){
+          await loadEmpresasRows();
+          document.getElementById('empresasCard').hidden = false;
+        }
+
+        await load();
+      }catch(e){
+        alert('Error inicializando admin: '+(e.message||e));
+        location.href = 'login.html';
+      }
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,1275 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Control de Stock – MultiEmpresas</title>
+  <link rel="stylesheet" href="theme-base.css" />
+  
+  <style>
+    :root {
+      /* Palette */
+      --bg: #0b1020;
+      --ink: #f1f5f9;
+      --muted: #94a3b8;
+      --brand: #06b6d4;
+      --brand-hover: #22d3ee;
+      --surface: rgba(30, 41, 59, 0.7);
+      --border: rgba(148, 163, 184, 0.15);
+      --glass: rgba(15, 23, 42, 0.85);
+      --radius: 12px;
+      
+      --success: #10b981;
+      --danger: #ef4444;
+      --warning: #f59e0b;
+    }
+
+    * { box-sizing: border-box; outline: none; }
+    
+    body {
+      margin: 0; 
+      font-family: system-ui, -apple-system, sans-serif;
+      color: var(--ink);
+      background: 
+        radial-gradient(circle at 15% 50%, rgba(6, 182, 212, 0.05), transparent 25%),
+        radial-gradient(circle at 85% 30%, rgba(59, 130, 246, 0.05), transparent 25%),
+        var(--bg);
+      min-height: 100vh;
+      font-size: 14px;
+    }
+
+    .container { max-width: 1200px; margin: 0 auto; padding: 0 20px; }
+
+    /* HEADER */
+    header {
+      position: sticky; top: 0; z-index: 50;
+      background: var(--glass); backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border); padding: 0.8rem 0;
+    }
+    nav { display: flex; justify-content: space-between; align-items: center; }
+    .brand { font-size: 1.1rem; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 0.5rem; }
+    .role-badge { background: rgba(6,182,212,0.1); color: var(--brand); padding: 2px 8px; border-radius: 99px; font-size: 0.75rem; border: 1px solid rgba(6,182,212,0.3); }
+    
+    .menu { list-style: none; display: flex; gap: 1.5rem; margin: 0; padding: 0; }
+    .menu a { text-decoration: none; color: var(--muted); font-weight: 500; transition: 0.2s; }
+    .menu a:hover, .menu a.active { color: #fff; }
+    .menu a.active { border-bottom: 2px solid var(--brand); padding-bottom: 4px; }
+
+    /* LAYOUT */
+    main { padding: 2rem 0 4rem; display: grid; gap: 1.5rem; }
+    
+    .card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 1.5rem;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+    }
+
+    /* KPIs */
+    .grid-kpi { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; }
+    .kpi-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 1.2rem;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .kpi-val h3 { font-size: 1.8rem; margin: 0; color: #fff; font-weight: 700; }
+    .kpi-val p { margin: 0; color: var(--muted); font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.5px; }
+    .kpi-icon { font-size: 2rem; opacity: 0.8; }
+
+    /* TOOLBAR & INPUTS */
+    .toolbar { display: flex; flex-wrap: wrap; gap: 1rem; align-items: end; justify-content: space-between; }
+    
+    label { display: block; font-size: 0.8rem; color: var(--muted); font-weight: 600; margin-bottom: 0.4rem; }
+    
+    input, select {
+      width: 100%; background: #0f172a; border: 1px solid var(--border); color: #fff;
+      padding: 0.7rem; border-radius: 8px; font-size: 0.9rem; transition: 0.2s;
+    }
+    input:focus, select:focus { border-color: var(--brand); box-shadow: 0 0 0 2px rgba(6,182,212,0.2); }
+
+    .search-box { flex: 1; min-width: 250px; position: relative; }
+    .search-box input { padding-left: 2.2rem; }
+    .search-icon { position: absolute; left: 0.8rem; top: 50%; transform: translateY(-50%); color: var(--muted); }
+
+    /* BUTTONS */
+    .btn {
+      padding: 0.7rem 1.2rem; border-radius: 8px; font-weight: 600; cursor: pointer;
+      border: none; font-size: 0.9rem; transition: 0.2s;
+      display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem;
+    }
+    .btn-primary { background: var(--brand); color: #000; box-shadow: 0 4px 15px rgba(6,182,212,0.2); }
+    .btn-primary:hover { background: var(--brand-hover); transform: translateY(-1px); }
+    
+    .btn-secondary { background: rgba(255,255,255,0.05); color: var(--ink); border: 1px solid var(--border); }
+    .btn-secondary:hover { background: rgba(255,255,255,0.1); color: #fff; }
+
+    .btn-sm { padding: 0.4rem 0.8rem; font-size: 0.8rem; }
+
+    /* TABLE */
+    .table-responsive { overflow-x: auto; border-radius: var(--radius); border: 1px solid var(--border); }
+    table { width: 100%; border-collapse: collapse; text-align: left; }
+    th { 
+      background: rgba(15, 23, 42, 0.5); color: var(--muted); font-weight: 600; 
+      padding: 1rem; font-size: 0.8rem; text-transform: uppercase; border-bottom: 1px solid var(--border); white-space: nowrap;
+    }
+    td { padding: 1rem; border-bottom: 1px solid var(--border); color: var(--ink); font-size: 0.9rem; vertical-align: middle; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: rgba(255,255,255,0.02); }
+
+    /* Badges */
+    .badge { padding: 4px 10px; border-radius: 99px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; }
+    .bg-ok { background: rgba(16, 185, 129, 0.15); color: #34d399; }
+    .bg-low { background: rgba(245, 158, 11, 0.15); color: #fbbf24; }
+    .bg-neg { background: rgba(239, 68, 68, 0.15); color: #f87171; }
+
+    /* MODAL */
+    dialog {
+      background: #1e293b; color: #fff; border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 0; width: 95%; max-width: 500px; box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+    }
+    dialog::backdrop { background: rgba(0,0,0,0.7); backdrop-filter: blur(4px); }
+    
+    .modal-header { padding: 1.2rem; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.2); }
+    .modal-body { padding: 1.5rem; max-height: 70vh; overflow-y: auto; }
+    .modal-footer { padding: 1.2rem; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 1rem; background: rgba(0,0,0,0.2); }
+
+    /* KARDEX DRAWER */
+    .drawer { 
+      position: fixed; top: 0; right: -100%; width: 100%; max-width: 500px; height: 100%; 
+      background: #1e293b; border-left: 1px solid var(--border); z-index: 100;
+      transition: right 0.3s cubic-bezier(0.16, 1, 0.3, 1); box-shadow: -10px 0 50px rgba(0,0,0,0.5);
+      display: flex; flex-direction: column;
+    }
+    .drawer.open { right: 0; }
+    .drawer-backdrop {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.5); backdrop-filter: blur(2px); 
+      z-index: 90; opacity: 0; visibility: hidden; transition: 0.3s;
+    }
+    .drawer-backdrop.show { opacity: 1; visibility: visible; }
+
+    [hidden] { display: none !important; }
+    .flex-between { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
+    .text-right { text-align: right; }
+
+    @media (max-width: 768px) {
+      .container { padding: 0 12px; }
+      nav { flex-direction: column; align-items: stretch; gap: 0.8rem; }
+      .menu { overflow-x: auto; white-space: nowrap; padding-bottom: 4px; }
+      .toolbar { flex-direction: column; align-items: stretch; }
+      .search-box { min-width: 100%; }
+      .btn { width: 100%; }
+      .modal-footer { flex-direction: column-reverse; }
+      .modal-footer .btn { width: 100%; }
+      .drawer { max-width: 100%; }
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <nav class="container">
+      <div class="brand">
+        MultiEmpresas <span id="rolePill" class="role-badge"></span>
+      </div>
+     <ul class="menu" id="mainMenu">
+        <li><a href="inicio/inicial.html">🚀 Inicio</a></li>
+        <li><a href="dashboard.html">Dashboard</a></li>
+        <li><a href="gastos.html">Gastos</a></li>
+        <li><a href="stock.html" class="active"> Stock</a></li>
+        <li><a href="stock_movimientos.html">Movimientos</a></li>
+        <li><a href="repartidores.html">Repartidor</a></li>
+        <li><a href="estadisticas.html">Estadisticas</a></li>
+        <li><a href="iaweb.html">IAweb</a></li>
+        <li><a href="qr.html">QR</a></li>
+        <li><a href="#" id="logout" style="color: var(--danger)">Salir</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <main class="container">
+    
+    <section class="grid-kpi">
+      <div class="kpi-card">
+        <div class="kpi-val">
+          <h3 id="kpiTotal">0</h3>
+          <p>Total Productos</p>
+        </div>
+        <div class="kpi-icon">📦</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-val">
+          <h3 id="kpiLow" style="color:var(--warning)">0</h3>
+          <p>Stock Bajo</p>
+        </div>
+        <div class="kpi-icon">⚠️</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-val">
+          <h3 id="kpiNeg" style="color:var(--danger)">0</h3>
+          <p>En Negativo</p>
+        </div>
+        <div class="kpi-icon">📉</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="toolbar">
+        <div style="display:flex; gap:1rem; flex-wrap:wrap;">
+          <div id="rowEmp" hidden>
+            <label>Empresa</label>
+            <select id="empFilter"><option>Cargando...</option></select>
+          </div>
+          <div>
+            <label>Estado Stock</label>
+            <select id="statusFilter">
+              <option value="">Todos</option>
+              <option value="ok">Normal</option>
+              <option value="bajo">Bajo Mínimo</option>
+              <option value="negativo">Negativo</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="search-box">
+          <span class="search-icon">🔍</span>
+          <input type="search" id="q" placeholder="Buscar producto..." autocomplete="off">
+        </div>
+
+        <button id="btnRef" class="btn btn-secondary">↻ Recargar</button>
+      </div>
+    </section>
+
+    <section class="card" id="depSection">
+      <div class="flex-between" style="margin-bottom:0.75rem;">
+        <h3 style="margin:0;">Depósitos</h3>
+        <small style="color:var(--muted)">Multi-depósito por empresa</small>
+      </div>
+
+      <div class="toolbar" style="margin-bottom:1rem;">
+        <div style="display:grid; grid-template-columns: 1.2fr 1.6fr auto; gap:0.7rem; width:100%;">
+          <div>
+            <label>Nombre depósito</label>
+            <input id="depNombre" placeholder="Ej: Depósito Norte">
+          </div>
+          <div>
+            <label>Dirección (opcional)</label>
+            <input id="depDireccion" placeholder="Ej: Av. Siempreviva 123">
+          </div>
+          <div style="display:flex; align-items:flex-end;">
+            <button id="btnDepSave" class="btn btn-primary">Guardar depósito</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="table-responsive" style="max-height:260px; overflow:auto; border:1px solid var(--border); border-radius:10px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Depósito</th>
+              <th>Dirección</th>
+              <th>Estado</th>
+              <th class="text-right">Acciones</th>
+            </tr>
+          </thead>
+          <tbody id="depRows">
+            <tr><td colspan="4" style="text-align:center; color:var(--muted); padding:1rem;">Cargando depósitos...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card" id="depPermModeSection">
+      <div class="flex-between" style="margin-bottom:0.75rem;">
+        <h3 style="margin:0;">Modo de permisos de depósitos</h3>
+      </div>
+      <label style="display:flex; align-items:center; gap:8px; margin-bottom:0.7rem;">
+        <input type="checkbox" id="depPermStrict">
+        <span>Modo estricto (si un chofer no tiene depósitos asignados, no puede cargar/transferir)</span>
+      </label>
+      <button id="btnDepPermMode" class="btn btn-primary">Guardar modo</button>
+      <div id="depPermWarn" style="margin-top:.7rem;color:var(--muted)"></div>
+    </section>
+
+    <section class="card" id="depPermSection">
+      <div class="flex-between" style="margin-bottom:0.75rem;">
+        <h3 style="margin:0;">Permisos de depósito por chofer</h3>
+      </div>
+      <div style="display:grid; grid-template-columns: 1fr auto; gap:0.7rem; align-items:end; margin-bottom:1rem;">
+        <div>
+          <label>Chofer</label>
+          <select id="permChofer"></select>
+        </div>
+        <button id="btnPermLoad" class="btn btn-secondary">Cargar permisos</button>
+      </div>
+      <div id="permDepositos" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:0.5rem; margin-bottom:1rem;"></div>
+      <button id="btnPermSave" class="btn btn-primary">Guardar permisos</button>
+      <small style="display:block; margin-top:0.5rem; color:var(--muted)">Si no se selecciona ninguno, el chofer podrá usar todos los depósitos activos (modo compatibilidad).</small>
+    </section>
+
+    <section class="card" id="depTransferSection">
+      <div class="flex-between" style="margin-bottom:0.75rem;">
+        <h3 style="margin:0;">Transferencia entre depósitos</h3>
+      </div>
+
+      <div style="display:grid; grid-template-columns: repeat(6, minmax(140px, 1fr)); gap:0.7rem; align-items:end;">
+        <div>
+          <label>Origen</label>
+          <select id="trOrigen"></select>
+        </div>
+        <div>
+          <label>Destino</label>
+          <select id="trDestino"></select>
+        </div>
+        <div>
+          <label>Producto</label>
+          <select id="trProducto"></select>
+        </div>
+        <div>
+          <label>Cantidad</label>
+          <input type="number" id="trCantidad" min="0.01" step="0.01" placeholder="0">
+        </div>
+        <div>
+          <label>Chofer responsable</label>
+          <select id="trChofer"></select>
+        </div>
+        <div>
+          <button id="btnTransferir" class="btn btn-primary">Transferir</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" id="depTransfersHistorySection">
+      <div class="flex-between" style="margin-bottom:0.75rem;">
+        <h3 style="margin:0;">Historial de transferencias</h3>
+      </div>
+
+      <div class="toolbar" style="margin-bottom:1rem;">
+        <div style="display:grid; grid-template-columns: 1fr 1fr 1fr 1fr 1fr auto; gap:0.7rem; width:100%;">
+          <div>
+            <label>Desde</label>
+            <input type="date" id="trFrom">
+          </div>
+          <div>
+            <label>Hasta</label>
+            <input type="date" id="trTo">
+          </div>
+          <div>
+            <label>Depósito (opcional)</label>
+            <select id="trDepFiltro"><option value="">Todos</option></select>
+          </div>
+          <div>
+            <label>Producto (opcional)</label>
+            <select id="trProdFiltro"><option value="">Todos</option></select>
+          </div>
+          <div>
+            <label>Chofer (opcional)</label>
+            <select id="trChoferFiltro"><option value="">Todos</option></select>
+          </div>
+          <div style="display:flex; align-items:flex-end; gap:8px;">
+            <button id="btnTrHist" class="btn btn-secondary">Actualizar historial</button>
+            <button id="btnTrExport" class="btn btn-primary">Exportar CSV</button>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; gap:8px; flex-wrap:wrap;">
+        <small id="trPageInfo" style="color:var(--muted)">Página 1</small>
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+          <label style="margin:0; color:var(--muted); font-size:.8rem;">Página</label>
+          <select id="trPageSize" style="width:auto; min-width:90px;">
+            <option value="25">25</option>
+            <option value="50" selected>50</option>
+            <option value="100">100</option>
+          </select>
+          <button id="btnTrPrev" class="btn btn-secondary">← Anterior</button>
+          <button id="btnTrNext" class="btn btn-secondary">Siguiente →</button>
+        </div>
+      </div>
+      <div class="table-responsive" style="max-height:280px; overflow:auto; border:1px solid var(--border); border-radius:10px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Fecha</th>
+              <th>Producto</th>
+              <th>Origen</th>
+              <th>Destino</th>
+              <th class="text-right">Cantidad</th>
+              <th>Chofer</th>
+              <th>Estado</th>
+              <th class="text-right">Acción</th>
+            </tr>
+          </thead>
+          <tbody id="trHistRows">
+            <tr><td colspan="6" style="text-align:center; color:var(--muted); padding:1rem;">Sin datos.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card" id="depSummarySection">
+      <div class="flex-between" style="margin-bottom:0.75rem;">
+        <h3 style="margin:0;">Resumen por depósito</h3>
+      </div>
+
+      <div class="toolbar" style="margin-bottom:1rem;">
+        <div style="display:grid; grid-template-columns: 1fr 1fr auto; gap:0.7rem; width:100%;">
+          <div>
+            <label>Desde</label>
+            <input type="date" id="depFrom">
+          </div>
+          <div>
+            <label>Hasta</label>
+            <input type="date" id="depTo">
+          </div>
+          <div style="display:flex; align-items:flex-end;">
+            <button id="btnDepSummary" class="btn btn-secondary">Actualizar resumen</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="table-responsive" style="max-height:300px; overflow:auto; border:1px solid var(--border); border-radius:10px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Depósito</th>
+              <th>Producto</th>
+              <th class="text-right">Ingresado</th>
+              <th class="text-right">Egresado</th>
+              <th class="text-right">Neto</th>
+            </tr>
+          </thead>
+          <tbody id="depSummaryRows">
+            <tr><td colspan="5" style="text-align:center; color:var(--muted); padding:1rem;">Sin datos.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section>
+      <div class="card table-responsive" style="padding:0; overflow:hidden;">
+        <table>
+          <thead>
+            <tr>
+              <th>Producto</th>
+              <th class="text-right">Propios</th>
+              <th class="text-right">Fleteros</th>
+              <th class="text-right">Total</th>
+              <th class="text-right">Mín</th>
+              <th class="text-right">Máx</th>
+              <th style="text-align:center">Estado</th>
+              <th class="text-right">Acciones</th>
+            </tr>
+          </thead>
+          <tbody id="rows">
+            <tr><td colspan="8" style="text-align:center; padding:2rem; color:var(--muted)">Cargando inventario...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+  </main>
+
+  <dialog id="dlgAjuste">
+    <div class="modal-header">
+      <strong style="font-size:1.1rem">Ajustar Stock</strong>
+      <button onclick="dlgAjuste.close()" style="background:none; border:none; color:#fff; cursor:pointer">✕</button>
+    </div>
+    <form id="frmAjuste" class="modal-body">
+      <input type="hidden" id="ajId">
+      <h3 id="ajProdName" style="margin-top:0; color:var(--brand)">Producto</h3>
+      
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:1rem; margin-bottom:1rem;">
+        <div>
+          <label>Tipo Movimiento</label>
+          <select id="ajTipo">
+            <option value="ADJUST+">➕ Entrada</option>
+            <option value="ADJUST-">➖ Salida</option>
+          </select>
+        </div>
+        <div>
+          <label>Cantidad</label>
+          <input type="number" id="ajQty" min="0.01" step="0.01" required>
+        </div>
+      </div>
+
+      <div style="margin-bottom:1rem;">
+        <label>Chofer Responsable</label>
+        <select id="ajChofer"></select>
+      </div>
+
+      <div style="margin-bottom:1rem;">
+        <label>Depósito (opcional)</label>
+        <select id="ajDeposito"><option value="">Sin depósito</option></select>
+      </div>
+
+      <div>
+        <label>Motivo / Nota</label>
+        <input type="text" id="ajNota" placeholder="Ej: Rotura, Conteo mensual...">
+      </div>
+    </form>
+    <div class="modal-footer">
+      <button onclick="dlgAjuste.close()" class="btn btn-secondary">Cancelar</button>
+      <button id="btnSaveAj" class="btn btn-primary">Confirmar Ajuste</button>
+    </div>
+  </dialog>
+
+  <div class="drawer-backdrop" id="backdrop" onclick="closeKardex()"></div>
+  <aside class="drawer" id="kardexDrawer">
+    <div class="modal-header">
+      <strong>Movimientos (Kardex)</strong>
+      <button onclick="closeKardex()" style="background:none; border:none; color:#fff; cursor:pointer">✕</button>
+    </div>
+    <div class="modal-body" style="flex:1; overflow:auto;">
+      <h4 id="kxProdName" style="color:var(--brand)"></h4>
+      <table style="font-size:0.85rem;">
+        <thead>
+          <tr>
+            <th>Fecha</th>
+            <th>Tipo</th>
+            <th>Depósito</th>
+            <th class="text-right">Cant.</th>
+            <th>Nota</th>
+          </tr>
+        </thead>
+        <tbody id="kxRows"></tbody>
+      </table>
+    </div>
+  </aside>
+
+  <script>
+    // ====== AUTH (modo seguro: cookie httpOnly) ======
+    const authFetch = (url, opts = {}) => {
+      const headers = opts.headers || {};
+      return fetch(url, { ...opts, headers, credentials: 'include' });
+    };
+
+    const $ = s => document.querySelector(s);
+    const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;'
+    }[c]));
+    let role='', isSuper=false;
+    let products = [];
+    let choferes = [];
+    let depositos = [];
+    let editingDepositoId = null;
+    let transferPage = { offset: 0, limit: 50, lastCount: 0 };
+    const TR_PAGE_SIZE_KEY = 'stock:transfer:page-size:v1';
+    let adjustBusy = false;
+
+    // ====== UTILS ======
+    const num = n => Number(n)||0;
+    const fmtNum = n => num(n).toLocaleString('es-AR');
+    const dateStr = s => new Date(s).toLocaleString('es-AR', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'});
+    const ymdNow = () => {
+      const d = new Date();
+      d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+      return d.toISOString().slice(0,10);
+    };
+
+    function loadTransferPageSize() {
+      try {
+        const raw = localStorage.getItem(TR_PAGE_SIZE_KEY);
+        const n = Number(raw || transferPage.limit);
+        if ([25,50,100].includes(n)) transferPage.limit = n;
+      } catch {}
+      const sel = document.getElementById('trPageSize');
+      if (sel) sel.value = String(transferPage.limit);
+    }
+
+    function saveTransferPageSize(v) {
+      const n = Number(v || 0);
+      if (![25,50,100].includes(n)) return;
+      transferPage.limit = n;
+      try { localStorage.setItem(TR_PAGE_SIZE_KEY, String(n)); } catch {}
+    }
+
+    // noop
+
+    // ====== LOGIC ======
+    async function init() {
+      try {
+        const r = await authFetch('/api/me');
+        if(!r.ok) throw new Error();
+        const me = (await r.json()).user;
+        role = (me.role||'').toLowerCase();
+        isSuper = role === 'super';
+        
+        $('#rolePill').textContent = role.toUpperCase();
+        if(isSuper) {
+            $('#rolePill').style.borderColor = 'var(--warning)';
+            $('#rowEmp').hidden = false;
+            await loadEmpresas();
+        }
+
+        const today = ymdNow();
+        $('#depFrom').value = today;
+        $('#depTo').value = today;
+        $('#trFrom').value = today;
+        $('#trTo').value = today;
+        loadTransferPageSize();
+
+        await loadChoferes();
+        await loadStock();
+        await loadDepositos();
+        await loadPermisosMode();
+        await loadPermisosChofer();
+        await loadDepositosSummary();
+        resetTransferPage();
+        await loadTransferenciasHistorial();
+
+      } catch { location.href='login.html'; }
+    }
+
+    async function loadEmpresas() {
+        const r = await authFetch('/api/empresas');
+        const list = await r.json();
+        const sel = $('#empFilter');
+        sel.innerHTML = list.map(e => `<option value="${Number(e.id)}">ID ${Number(e.id)} | ${esc(e.nombre)}</option>`).join('');
+        // cuando cambia empresa, recargo choferes y stock
+        sel.addEventListener('change', async () => {
+          await loadChoferes();
+          await loadStock();
+          await loadDepositos();
+          await loadPermisosMode();
+          await loadPermisosChofer();
+          await loadDepositosSummary();
+          resetTransferPage();
+          await loadTransferenciasHistorial();
+        });
+    }
+
+    async function loadChoferes() {
+        const qs = isSuper && $('#empFilter').value ? `?empresa_id=${$('#empFilter').value}` : '';
+        const r = await authFetch('/api/choferes'+qs);
+        choferes = await r.json();
+        const opts = choferes.map(c => 
+            `<option value="${Number(c.id)}">${esc(c.nombre)} (${esc((c.tipo || '').toUpperCase())})</option>`
+        ).join('');
+        $('#ajChofer').innerHTML = opts;
+        $('#trChofer').innerHTML = opts;
+        $('#permChofer').innerHTML = opts;
+        const trChoferFiltro = document.getElementById('trChoferFiltro');
+        if (trChoferFiltro) {
+          const cur = trChoferFiltro.value;
+          trChoferFiltro.innerHTML = `<option value="">Todos</option>${opts}`;
+          if (cur) trChoferFiltro.value = cur;
+        }
+    }
+    
+    // Normaliza respuesta de /api/stock/por-tipo a un array de productos
+    function normalizeStockPorTipo(rows) {
+      const map = new Map();
+      for (const row of rows || []) {
+        const id = row.producto_id || row.id || row.product_id;
+        if (id == null) continue;
+        const key = String(id);
+        if (!map.has(key)) {
+          map.set(key, {
+            id: id,
+            nombre: row.nombre || '',
+            stock_min: num(row.stock_min),
+            stock_max: num(row.stock_max),
+            stock_propios: 0,
+            stock_fleteros: 0,
+            stock_fisico: 0
+          });
+        }
+        const p = map.get(key);
+        const tipo = (row.tipo_chofer || row.tipo || '').toLowerCase();
+        if (tipo === 'propio') {
+          p.stock_propios = num(row.stock);
+        } else if (tipo === 'fletero') {
+          p.stock_fleteros = num(row.stock);
+        }
+      }
+      for (const p of map.values()) {
+        p.stock_fisico = num(p.stock_propios) + num(p.stock_fleteros);
+      }
+      return Array.from(map.values());
+    }
+
+    async function loadStock() {
+      const qs = isSuper && $('#empFilter').value ? `?empresa_id=${$('#empFilter').value}` : '';
+      const r = await authFetch('/api/stock/por-tipo'+qs);
+      const rows = await r.json();
+      products = normalizeStockPorTipo(rows);
+      render();
+      fillTransferProductSelect();
+    }
+
+    function fillTransferProductSelect() {
+      const opts = (products || []).map(p => `<option value="${Number(p.id)}">${esc(p.nombre || '')}</option>`).join('');
+      const sel = document.getElementById('trProducto');
+      if (sel) sel.innerHTML = `<option value="">Producto</option>${opts}`;
+
+      const trProdFiltro = document.getElementById('trProdFiltro');
+      if (trProdFiltro) {
+        const cur = trProdFiltro.value;
+        trProdFiltro.innerHTML = `<option value="">Todos</option>${opts}`;
+        if (cur) trProdFiltro.value = cur;
+      }
+    }
+
+    async function loadDepositos() {
+      const qsBase = isSuper && $('#empFilter').value ? `empresa_id=${$('#empFilter').value}&` : '';
+      const r = await authFetch(`/api/stock/depositos?${qsBase}include_inactivos=1`);
+      const rows = await r.json();
+      depositos = Array.isArray(rows) ? rows : [];
+      renderDepositos();
+    }
+
+    function fillDepositoSelects() {
+      const activos = (depositos || []).filter(d => !!d.activo);
+      const opts = activos.map(d => `<option value="${Number(d.id)}">${esc(d.nombre || '')}</option>`).join('');
+      const ajSel = document.getElementById('ajDeposito');
+      if (ajSel) {
+        const cur = ajSel.value;
+        ajSel.innerHTML = `<option value="">Sin depósito</option>${opts}`;
+        if (cur) ajSel.value = cur;
+      }
+      const trOrigen = document.getElementById('trOrigen');
+      const trDestino = document.getElementById('trDestino');
+      const trDepFiltro = document.getElementById('trDepFiltro');
+      if (trOrigen) trOrigen.innerHTML = `<option value="">Origen</option>${opts}`;
+      if (trDestino) trDestino.innerHTML = `<option value="">Destino</option>${opts}`;
+      if (trDepFiltro) trDepFiltro.innerHTML = `<option value="">Todos</option>${opts}`;
+    }
+
+    function renderDepositos() {
+      fillDepositoSelects();
+      const html = (depositos || []).map(d => {
+        const estado = d.activo ? '<span class="badge bg-ok">Activo</span>' : '<span class="badge bg-low">Inactivo</span>';
+        return `
+          <tr>
+            <td style="font-weight:600">${esc(d.nombre || '')}</td>
+            <td>${esc(d.direccion || '-')}</td>
+            <td>${estado}</td>
+            <td class="text-right">
+              <button class="btn btn-secondary btn-sm" onclick="editDeposito(${Number(d.id)})">✏️ Editar</button>
+              ${d.activo ? `<button class="btn btn-secondary btn-sm" onclick="disableDeposito(${Number(d.id)})">🛑 Desactivar</button>` : `<button class="btn btn-primary btn-sm" onclick="reactivateDeposito(${Number(d.id)})">✅ Reactivar</button>`}
+            </td>
+          </tr>
+        `;
+      }).join('');
+      $('#depRows').innerHTML = html || '<tr><td colspan="4" style="text-align:center; color:var(--muted); padding:1rem;">Sin depósitos.</td></tr>';
+    }
+
+    function renderPermDepositos(selectedIds = []) {
+      const set = new Set((selectedIds || []).map(Number));
+      const activos = (depositos || []).filter(d => !!d.activo);
+      const html = activos.map(d => `
+        <label style="display:flex; gap:8px; align-items:center; padding:8px; border:1px solid var(--border); border-radius:8px;">
+          <input type="checkbox" class="permDepChk" value="${Number(d.id)}" ${set.has(Number(d.id)) ? 'checked' : ''}>
+          <span>${esc(d.nombre || '')}</span>
+        </label>
+      `).join('');
+      $('#permDepositos').innerHTML = html || '<div style="color:var(--muted)">Sin depósitos activos.</div>';
+    }
+
+    async function loadPermisosMode() {
+      const params = new URLSearchParams();
+      if (isSuper && $('#empFilter')?.value) params.set('empresa_id', $('#empFilter').value);
+      const r = await authFetch(`/api/stock/depositos/permisos-config?${params.toString()}`);
+      const cfg = await r.json();
+      $('#depPermStrict').checked = !!cfg?.deposito_permisos_estricto;
+      await loadChoferesSinPermisos();
+    }
+
+    async function loadChoferesSinPermisos() {
+      const params = new URLSearchParams();
+      if (isSuper && $('#empFilter')?.value) params.set('empresa_id', $('#empFilter').value);
+      const r = await authFetch(`/api/stock/depositos/choferes-sin-permisos?${params.toString()}`);
+      const j = await r.json();
+      const warn = document.getElementById('depPermWarn');
+      if (!warn) return;
+      if (!j?.strict) {
+        warn.innerHTML = '<span style="color:var(--muted)">Modo estricto desactivado.</span>';
+        return;
+      }
+      const items = Array.isArray(j?.items) ? j.items : [];
+      if (!items.length) {
+        warn.innerHTML = '<span style="color:#22c55e">Modo estricto activo: todos los choferes tienen al menos un depósito asignado ✅</span>';
+        return;
+      }
+      warn.innerHTML = `<span style="color:#f59e0b">Modo estricto activo: ${items.length} chofer(es) sin depósito asignado (${items.map(x=>esc(x.chofer_nombre)).join(', ')}).</span>`;
+    }
+
+    async function savePermisosMode() {
+      const body = {
+        deposito_permisos_estricto: !!$('#depPermStrict').checked,
+        empresa_id: isSuper ? Number($('#empFilter').value || 0) || undefined : undefined,
+      };
+      const r = await authFetch('/api/stock/depositos/permisos-config', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) {
+        const t = await r.text();
+        return alert(`No se pudo guardar modo de permisos: ${t || r.status}`);
+      }
+      alert('Modo de permisos actualizado');
+      await loadDepositos();
+      await loadPermisosChofer();
+      await loadChoferesSinPermisos();
+    }
+
+    async function loadPermisosChofer() {
+      const choferId = Number($('#permChofer')?.value || 0);
+      if (!choferId) return renderPermDepositos([]);
+
+      const params = new URLSearchParams();
+      params.set('chofer_id', String(choferId));
+      if (isSuper && $('#empFilter')?.value) params.set('empresa_id', $('#empFilter').value);
+
+      const r = await authFetch(`/api/stock/depositos/choferes?${params.toString()}`);
+      const rows = await r.json();
+      const list = Array.isArray(rows) ? rows : [];
+      const selected = list.filter(x => x.activo !== false).map(x => Number(x.deposito_id));
+      renderPermDepositos(selected);
+    }
+
+    async function savePermisosChofer() {
+      const choferId = Number($('#permChofer')?.value || 0);
+      if (!choferId) return alert('Seleccioná chofer');
+
+      const depositoIds = Array.from(document.querySelectorAll('.permDepChk:checked')).map(el => Number(el.value)).filter(Boolean);
+      const body = {
+        chofer_id: choferId,
+        deposito_ids: depositoIds,
+        empresa_id: isSuper ? Number($('#empFilter').value || 0) || undefined : undefined,
+      };
+
+      const r = await authFetch('/api/stock/depositos/choferes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) {
+        const t = await r.text();
+        return alert(`No se pudieron guardar permisos: ${t || r.status}`);
+      }
+      alert('Permisos guardados');
+      await loadPermisosChofer();
+      await loadChoferesSinPermisos();
+    }
+
+    function buildTransferHistParams() {
+      const from = $('#trFrom')?.value || '';
+      const to = $('#trTo')?.value || '';
+      const depositoFiltro = $('#trDepFiltro')?.value || '';
+      const productoFiltro = $('#trProdFiltro')?.value || '';
+      const choferFiltro = $('#trChoferFiltro')?.value || '';
+      const params = new URLSearchParams();
+      if (from) params.set('from', from);
+      if (to) params.set('to', to);
+      if (depositoFiltro) params.set('deposito_id', depositoFiltro);
+      if (productoFiltro) params.set('producto_id', productoFiltro);
+      if (choferFiltro) params.set('chofer_id', choferFiltro);
+      if (isSuper && $('#empFilter')?.value) params.set('empresa_id', $('#empFilter').value);
+      params.set('limit', String(transferPage.limit));
+      params.set('offset', String(transferPage.offset));
+      return params;
+    }
+
+    async function loadTransferenciasHistorial() {
+      const params = buildTransferHistParams();
+      const r = await authFetch(`/api/stock/depositos/transferencias?${params.toString()}`);
+      const rows = await r.json();
+      const list = Array.isArray(rows) ? rows : [];
+      transferPage.lastCount = list.length;
+      const pageNum = Math.floor(transferPage.offset / transferPage.limit) + 1;
+      const info = document.getElementById('trPageInfo');
+      if (info) info.textContent = `Página ${pageNum} · ${list.length} registro(s)`;
+
+      const html = list.map(it => {
+        const refSafe = String(it.referencia || '').replace(/'/g, "\\'");
+        const revertida = !!it.revertida;
+        const badge = revertida
+          ? '<span class="badge bg-low">Revertida</span>'
+          : '<span class="badge bg-ok">Activa</span>';
+        const actionBtn = revertida
+          ? '<span style="color:var(--muted)">—</span>'
+          : `<button class="btn btn-secondary btn-sm" onclick="revertirTransferencia('${refSafe}')">↩ Revertir</button>`;
+        return `
+          <tr>
+            <td>${esc(dateStr(it.fecha))}</td>
+            <td>${esc(it.producto_nombre || '-')}</td>
+            <td>${esc(it.origen_deposito_nombre || '-')}</td>
+            <td>${esc(it.destino_deposito_nombre || '-')}</td>
+            <td class="text-right" style="font-weight:700">${fmtNum(it.cantidad)}</td>
+            <td>${esc(it.chofer_nombre || '-')}</td>
+            <td>${badge}</td>
+            <td class="text-right">${actionBtn}</td>
+          </tr>
+        `;
+      }).join('');
+
+      $('#trHistRows').innerHTML = html || '<tr><td colspan="8" style="text-align:center; color:var(--muted); padding:1rem;">Sin transferencias en el período.</td></tr>';
+    }
+
+    async function loadDepositosSummary() {
+      const from = $('#depFrom')?.value || '';
+      const to = $('#depTo')?.value || '';
+      const params = new URLSearchParams();
+      if (from) params.set('from', from);
+      if (to) params.set('to', to);
+      if (isSuper && $('#empFilter')?.value) params.set('empresa_id', $('#empFilter').value);
+
+      const r = await authFetch(`/api/stock/depositos/summary?${params.toString()}`);
+      const rows = await r.json();
+      const list = Array.isArray(rows) ? rows : [];
+
+      const html = list.map(it => {
+        const neto = num(it.neto);
+        return `
+          <tr>
+            <td>${esc(it.deposito_nombre || '-')}</td>
+            <td>${esc(it.producto_nombre || '-')}</td>
+            <td class="text-right">${fmtNum(it.total_ingresado)}</td>
+            <td class="text-right">${fmtNum(it.total_egresado)}</td>
+            <td class="text-right" style="font-weight:700; color:${neto >= 0 ? 'var(--success)' : 'var(--danger)'}">${fmtNum(neto)}</td>
+          </tr>
+        `;
+      }).join('');
+
+      $('#depSummaryRows').innerHTML = html || '<tr><td colspan="5" style="text-align:center; color:var(--muted); padding:1rem;">Sin movimientos para el período.</td></tr>';
+    }
+
+    function render() {
+      const term = $('#q').value.toLowerCase();
+      const status = $('#statusFilter').value; // ok, bajo, negativo
+
+      const filtered = products.filter(p => {
+        const matchTxt = p.nombre.toLowerCase().includes(term);
+        let matchSt = true;
+        
+        const stock = num(p.stock_fisico);
+        const min = num(p.stock_min);
+
+        if(status === 'bajo') matchSt = stock <= min && stock >= 0;
+        if(status === 'negativo') matchSt = stock < 0;
+        if(status === 'ok') matchSt = stock > min;
+
+        return matchTxt && matchSt;
+      });
+
+      // KPIs
+      $('#kpiTotal').textContent = filtered.length;
+      $('#kpiLow').textContent = filtered.filter(p => num(p.stock_fisico) <= num(p.stock_min) && num(p.stock_fisico) >= 0).length;
+      $('#kpiNeg').textContent = filtered.filter(p => num(p.stock_fisico) < 0).length;
+
+      // Table
+      const html = filtered.map(p => {
+        const sProp = num(p.stock_propios);
+        const sFlet = num(p.stock_fleteros);
+        const s = num(p.stock_fisico);
+        const min = num(p.stock_min);
+        let badge = '<span class="badge bg-ok">OK</span>';
+        if(s < 0) badge = '<span class="badge bg-neg">NEGATIVO</span>';
+        else if(s <= min) badge = '<span class="badge bg-low">BAJO</span>';
+
+        return `
+          <tr>
+            <td style="font-weight:600; color:#fff">${esc(p.nombre)}</td>
+            <td class="text-right">${fmtNum(sProp)}</td>
+            <td class="text-right">${fmtNum(sFlet)}</td>
+            <td class="text-right">${fmtNum(s)}</td>
+            <td class="text-right text-muted">${min}</td>
+            <td class="text-right text-muted">${fmtNum(p.stock_max)}</td>
+            <td style="text-align:center">${badge}</td>
+            <td class="text-right">
+              <button class="btn btn-secondary btn-sm" onclick="openKardex(${Number(p.id)})">📜 Hist</button>
+              <button class="btn btn-primary btn-sm" onclick="openAjuste(${Number(p.id)})">🛠 Ajuste</button>
+            </td>
+          </tr>
+        `;
+      }).join('');
+
+      $('#rows').innerHTML = html || '<tr><td colspan="8" style="text-align:center; padding:2rem">Sin resultados.</td></tr>';
+    }
+
+    // ====== ACTIONS ======
+
+    async function saveDeposito() {
+      const nombre = String($('#depNombre').value || '').trim();
+      const direccion = String($('#depDireccion').value || '').trim();
+      if (!nombre) return alert('Ingresá nombre del depósito');
+
+      const payload = {
+        nombre,
+        direccion: direccion || null,
+        empresa_id: isSuper ? Number($('#empFilter').value || 0) || undefined : undefined,
+      };
+
+      const url = editingDepositoId ? `/api/stock/depositos/${editingDepositoId}` : '/api/stock/depositos';
+      const method = editingDepositoId ? 'PUT' : 'POST';
+
+      const r = await authFetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      if (!r.ok) {
+        const t = await r.text();
+        return alert(`No se pudo guardar depósito: ${t || r.status}`);
+      }
+
+      editingDepositoId = null;
+      $('#depNombre').value = '';
+      $('#depDireccion').value = '';
+      $('#btnDepSave').textContent = 'Guardar depósito';
+      await loadDepositos();
+    }
+
+    window.editDeposito = (id) => {
+      const d = (depositos || []).find(x => Number(x.id) === Number(id));
+      if (!d) return;
+      editingDepositoId = Number(id);
+      $('#depNombre').value = d.nombre || '';
+      $('#depDireccion').value = d.direccion || '';
+      $('#btnDepSave').textContent = 'Actualizar depósito';
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    };
+
+    window.disableDeposito = async (id) => {
+      if (!confirm('¿Desactivar este depósito?')) return;
+      const qs = isSuper && $('#empFilter').value ? `?empresa_id=${$('#empFilter').value}` : '';
+      const r = await authFetch(`/api/stock/depositos/${id}${qs}`, { method: 'DELETE' });
+      if (!r.ok) return alert('No se pudo desactivar el depósito');
+      await loadDepositos();
+    };
+
+    window.reactivateDeposito = async (id) => {
+      const d = (depositos || []).find(x => Number(x.id) === Number(id));
+      if (!d) return;
+      const payload = {
+        nombre: d.nombre,
+        direccion: d.direccion || null,
+        activo: true,
+        empresa_id: isSuper ? Number($('#empFilter').value || 0) || undefined : undefined,
+      };
+      const r = await authFetch(`/api/stock/depositos/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!r.ok) return alert('No se pudo reactivar el depósito');
+      await loadDepositos();
+    };
+
+    async function transferirDepositos() {
+      const origen = Number($('#trOrigen').value || 0);
+      const destino = Number($('#trDestino').value || 0);
+      const producto = Number($('#trProducto').value || 0);
+      const cantidad = Number($('#trCantidad').value || 0);
+      const chofer = Number($('#trChofer').value || 0);
+
+      if (!origen || !destino || origen === destino) return alert('Seleccioná origen y destino distintos');
+      if (!producto) return alert('Seleccioná producto');
+      if (!chofer) return alert('Seleccioná chofer responsable');
+      if (!Number.isFinite(cantidad) || cantidad <= 0) return alert('Cantidad inválida');
+
+      const body = {
+        origen_deposito_id: origen,
+        destino_deposito_id: destino,
+        producto_id: producto,
+        cantidad,
+        chofer_id: chofer,
+        empresa_id: isSuper ? Number($('#empFilter').value || 0) || undefined : undefined,
+      };
+
+      const r = await authFetch('/api/stock/depositos/transferir', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) {
+        const t = await r.text();
+        return alert(`No se pudo transferir: ${t || r.status}`);
+      }
+
+      $('#trCantidad').value = '';
+      await loadDepositosSummary();
+      await loadTransferenciasHistorial();
+      alert('Transferencia registrada');
+    }
+
+    function resetTransferPage() {
+      transferPage.offset = 0;
+    }
+
+    function exportTransferenciasCsv() {
+      const params = buildTransferHistParams();
+      params.delete('limit');
+      params.delete('offset');
+      const url = `/api/stock/depositos/transferencias/export.csv?${params.toString()}`;
+      window.open(url, '_blank');
+    }
+
+    window.revertirTransferencia = async (referencia) => {
+      if (!referencia) return;
+      if (!confirm('¿Revertir esta transferencia?')) return;
+
+      const chofer = Number($('#trChofer').value || $('#ajChofer').value || 0);
+      if (!chofer) return alert('Seleccioná chofer responsable para auditar la reversa');
+
+      const body = {
+        referencia,
+        chofer_id: chofer,
+        empresa_id: isSuper ? Number($('#empFilter').value || 0) || undefined : undefined,
+      };
+
+      const r = await authFetch('/api/stock/depositos/transferencias/revertir', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) {
+        const t = await r.text();
+        return alert(`No se pudo revertir: ${t || r.status}`);
+      }
+
+      await loadDepositosSummary();
+      await loadTransferenciasHistorial();
+      alert('Transferencia revertida');
+    };
+    
+    // Ajuste
+    window.openAjuste = (id) => {
+        const p = products.find(x => x.id === id);
+        $('#ajId').value = id;
+        $('#ajProdName').textContent = p ? p.nombre : '';
+        $('#ajQty').value = '';
+        $('#ajNota').value = '';
+        $('#dlgAjuste').showModal();
+    };
+
+    $('#btnSaveAj').onclick = async () => {
+        if (adjustBusy) return;
+
+        const body = {
+            producto_id: Number($('#ajId').value),
+            qty: Number($('#ajQty').value),
+            tipo: String($('#ajTipo').value || ''),
+            chofer_id: Number($('#ajChofer').value),
+            deposito_id: Number($('#ajDeposito').value || 0) || undefined,
+            motivo: String($('#ajNota').value || '').trim(),
+            empresa_id: isSuper ? Number($('#empFilter').value || 0) || undefined : undefined
+        };
+
+        if(!Number.isFinite(body.qty) || body.qty <= 0) return alert('Cantidad inválida');
+        if(!['ADJUST+','ADJUST-'].includes(body.tipo)) return alert('Tipo de ajuste inválido');
+
+        const btn = document.getElementById('btnSaveAj');
+        const prev = btn ? btn.textContent : '';
+        adjustBusy = true;
+        if (btn) {
+          btn.disabled = true;
+          btn.textContent = 'Guardando...';
+        }
+
+        const r = await authFetch('/api/stock/ajuste', {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify(body)
+        });
+
+        if(r.ok) {
+            alert('Ajuste realizado');
+            $('#dlgAjuste').close();
+            loadStock();
+        } else {
+            alert('Error al ajustar');
+        }
+
+        adjustBusy = false;
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = prev;
+        }
+    };
+
+    // Kardex
+    window.openKardex = async (id) => {
+        const p = products.find(x => x.id === id);
+        $('#kxProdName').textContent = p ? p.nombre : '';
+        $('#kxRows').innerHTML = '<tr><td colspan="5">Cargando...</td></tr>';
+        
+        $('#backdrop').classList.add('show');
+        $('#kardexDrawer').classList.add('open');
+
+        const r = await authFetch(`/api/stock/kardex/${id}`);
+        const moves = await r.json();
+
+        $('#kxRows').innerHTML = moves.map(m => `
+            <tr>
+                <td>${esc(dateStr(m.fecha))}</td>
+                <td>${esc(m.tipo)}</td>
+                <td>${esc(m.deposito_nombre || '-')}</td>
+                <td class="text-right" style="font-weight:bold; color:${m.cantidad>0?'var(--success)':'var(--danger)'}">${esc(m.cantidad)}</td>
+                <td style="color:var(--muted)">${esc(m.notas || '-')}</td>
+            </tr>
+        `).join('');
+    };
+
+    window.closeKardex = () => {
+        $('#backdrop').classList.remove('show');
+        $('#kardexDrawer').classList.remove('open');
+    };
+
+    // Events
+    $('#q').addEventListener('input', render);
+    $('#statusFilter').addEventListener('change', render);
+    $('#btnRef').addEventListener('click', async () => {
+      await loadStock();
+      await loadDepositos();
+      await loadPermisosMode();
+      await loadPermisosChofer();
+      await loadDepositosSummary();
+      await loadTransferenciasHistorial();
+    });
+    $('#btnDepSave').addEventListener('click', saveDeposito);
+    $('#btnDepSummary').addEventListener('click', loadDepositosSummary);
+    $('#depFrom').addEventListener('change', loadDepositosSummary);
+    $('#depTo').addEventListener('change', loadDepositosSummary);
+    $('#btnTransferir').addEventListener('click', transferirDepositos);
+    $('#btnPermLoad').addEventListener('click', loadPermisosChofer);
+    $('#btnPermSave').addEventListener('click', savePermisosChofer);
+    $('#btnDepPermMode').addEventListener('click', savePermisosMode);
+    $('#permChofer').addEventListener('change', loadPermisosChofer);
+    $('#btnTrHist').addEventListener('click', ()=>{ resetTransferPage(); loadTransferenciasHistorial(); });
+    $('#btnTrExport').addEventListener('click', exportTransferenciasCsv);
+    $('#trPageSize').addEventListener('change', ()=>{
+      saveTransferPageSize($('#trPageSize').value);
+      resetTransferPage();
+      loadTransferenciasHistorial();
+    });
+    $('#btnTrPrev').addEventListener('click', async ()=>{
+      transferPage.offset = Math.max(0, transferPage.offset - transferPage.limit);
+      await loadTransferenciasHistorial();
+    });
+    $('#btnTrNext').addEventListener('click', async ()=>{
+      if (transferPage.lastCount < transferPage.limit) return;
+      transferPage.offset += transferPage.limit;
+      await loadTransferenciasHistorial();
+    });
+    $('#trFrom').addEventListener('change', ()=>{ resetTransferPage(); loadTransferenciasHistorial(); });
+    $('#trTo').addEventListener('change', ()=>{ resetTransferPage(); loadTransferenciasHistorial(); });
+    $('#trDepFiltro').addEventListener('change', ()=>{ resetTransferPage(); loadTransferenciasHistorial(); });
+    $('#trProdFiltro').addEventListener('change', ()=>{ resetTransferPage(); loadTransferenciasHistorial(); });
+    $('#trChoferFiltro').addEventListener('change', ()=>{ resetTransferPage(); loadTransferenciasHistorial(); });
+    $('#logout').addEventListener('click', async (e) => {
+      e.preventDefault();
+      try { await authFetch('/api/logout', { method: 'POST' }); } catch {}
+      location.href='login.html';
+    });
+
+    init();
+  </script>
+</body>
+</html>

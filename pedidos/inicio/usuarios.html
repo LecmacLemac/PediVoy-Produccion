@@ -1,0 +1,836 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Usuarios – MultiEmpresas</title>
+  <link rel="stylesheet" href="theme-base.css" />
+  
+<style>
+  :root {
+    /* Palette Dark Theme */
+    --bg: #0b1020;
+    --bg-2: #0f172a;
+    --ink: #f1f5f9;
+    --muted: #94a3b8;
+    --brand: #06b6d4;       /* Cyan */
+    --brand-hover: #22d3ee;
+    --surface: rgba(30, 41, 59, 0.7);
+    --border: rgba(148, 163, 184, 0.15);
+    --glass: rgba(15, 23, 42, 0.95); /* Más opaco para móvil */
+    --radius: 12px;
+    
+    --success: #10b981;
+    --warning: #f59e0b;
+    --danger: #ef4444;
+  }
+
+  * { box-sizing: border-box; outline: none; -webkit-tap-highlight-color: transparent; }
+  
+  body {
+    margin: 0; 
+    font-family: system-ui, -apple-system, sans-serif;
+    color: var(--ink);
+    background: 
+      radial-gradient(circle at 15% 50%, rgba(6, 182, 212, 0.05), transparent 25%),
+      radial-gradient(circle at 85% 30%, rgba(59, 130, 246, 0.05), transparent 25%),
+      var(--bg);
+    min-height: 100vh;
+    font-size: 14px;
+    padding-bottom: 80px; /* Espacio para scroll en móvil */
+  }
+
+  .container { max-width: 1200px; margin: 0 auto; padding: 0 20px; }
+
+  /* --- HEADER & NAV RESPONSIVE --- */
+  header {
+    position: sticky; top: 0; z-index: 50;
+    background: var(--glass);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+    padding: 0.8rem 0;
+  }
+  
+  nav { display: flex; justify-content: space-between; align-items: center; }
+  
+  .brand { 
+    display: flex; gap: 0.8rem; align-items: center; 
+    font-size: 1.1rem; font-weight: 700; color: #fff; text-decoration: none; 
+    white-space: nowrap;
+  }
+  .brand-dot { width: 10px; height: 10px; background: var(--brand); border-radius: 50%; box-shadow: 0 0 10px var(--brand); }
+  
+  .role-badge { 
+    background: rgba(6, 182, 212, 0.1); border: 1px solid rgba(6, 182, 212, 0.3);
+    color: var(--brand); padding: 2px 8px; border-radius: 99px; font-size: 0.75rem; 
+  }
+
+  .menu { list-style: none; display: flex; gap: 1.5rem; margin: 0; padding: 0; }
+  .menu a { text-decoration: none; color: var(--muted); font-weight: 500; transition: 0.2s; white-space: nowrap; }
+  .menu a:hover, .menu a.active { color: #fff; }
+  .menu a.active { border-bottom: 2px solid var(--brand); padding-bottom: 4px; }
+
+  /* Adaptación Móvil del Menú */
+  @media (max-width: 768px) {
+    nav { flex-direction: column; gap: 1rem; align-items: stretch; }
+    .brand { justify-content: space-between; }
+    .menu { 
+      overflow-x: auto; 
+      padding-bottom: 5px; 
+      gap: 20px;
+      -webkit-overflow-scrolling: touch; /* Scroll suave en iOS */
+    }
+    .menu::-webkit-scrollbar { display: none; } /* Ocultar barra scroll */
+  }
+
+  main { padding-top: 2rem; padding-bottom: 4rem; display: flex; flex-direction: column; gap: 1.5rem; }
+
+  /* --- PAGE HEADER --- */
+  .page-header {
+    display: flex; justify-content: space-between; align-items: flex-end; flex-wrap: wrap; gap: 1rem;
+  }
+  h1 { font-size: 1.8rem; margin: 0; color: #fff; display: flex; align-items: center; gap: 10px; line-height: 1.2; }
+  p.subtitle { color: var(--muted); margin: 0.5rem 0 0 0; font-size: 0.95rem; }
+
+  @media (max-width: 600px) {
+    .page-header { flex-direction: column; align-items: stretch; }
+    .page-header .btn { width: 100%; justify-content: center; }
+  }
+
+  /* --- CARDS & LAYOUTS --- */
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 1.5rem;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+    display: flex; flex-direction: column;
+  }
+
+  /* Layout Split (Zona/Asignar) */
+  .layout-split { display: grid; grid-template-columns: 1fr 380px; gap: 20px; height: calc(100vh - 140px); min-height: 600px; }
+  .map-wrapper { position: relative; width: 100%; height: 100%; border-radius: var(--radius); border: 1px solid var(--border); overflow: hidden; }
+  #map { width: 100%; height: 100%; z-index: 1; background: #1e293b; }
+
+  @media(max-width: 900px) { 
+    .layout-split { grid-template-columns: 1fr; height: auto; display: flex; flex-direction: column-reverse; } 
+    .map-wrapper { height: 400px; } /* Altura fija mapa móvil */
+  }
+
+  /* --- TOOLBARS & FILTERS --- */
+  .toolbar { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.5rem; }
+  .toolbar > * { flex: 1; }
+  .toolbar select, .toolbar input { margin-bottom: 0; min-width: 150px; }
+  
+  @media (max-width: 600px) {
+    .toolbar { flex-direction: column; align-items: stretch; gap: 0.8rem; }
+    .search-box { width: 100%; }
+  }
+
+  /* --- INPUTS & BUTTONS --- */
+  label { font-size: 0.8rem; color: var(--muted); font-weight: 600; display: block; margin-bottom: 0.4rem; text-transform: uppercase; letter-spacing: 0.5px;}
+  
+  input, select, textarea {
+    background: var(--bg-2); border: 1px solid var(--border); color: #fff;
+    padding: 0.7rem 0.8rem; border-radius: 8px; font-size: 0.95rem; /* Texto más grande para móvil */
+    width: 100%; transition: 0.2s;
+  }
+  input:focus, select:focus, textarea:focus { border-color: var(--brand); box-shadow: 0 0 0 2px rgba(6,182,212,0.2); }
+
+  .btn {
+    padding: 0.7rem 1.2rem; border-radius: 8px; font-weight: 600; cursor: pointer;
+    border: 1px solid transparent; transition: 0.2s; display: inline-flex; align-items: center; gap: 0.5rem;
+    font-size: 0.9rem; background: rgba(255,255,255,0.05); color: var(--ink); border-color: var(--border);
+    text-decoration: none; white-space: nowrap; justify-content: center;
+  }
+  .btn:hover { background: rgba(255,255,255,0.1); color: #fff; border-color: var(--brand); }
+  
+  .btn-primary { background: var(--brand); color: #000; border: none; }
+  .btn-primary:hover { background: var(--brand-hover); box-shadow: 0 4px 12px rgba(6,182,212,0.3); }
+  
+  .btn-danger { color: var(--danger); border-color: rgba(239,68,68,0.3); background: rgba(239,68,68,0.1); }
+  .btn-icon { padding: 0.5rem; border-radius: 6px; color: var(--muted); background: transparent; border: 1px solid var(--border); cursor: pointer; }
+  .btn-icon:hover { color: #fff; background: rgba(255,255,255,0.1); border-color: var(--brand); }
+
+  /* --- TABLES --- */
+  .table-responsive { overflow-x: auto; border-radius: var(--radius); border: 1px solid var(--border); background: var(--bg-2); }
+  table { width: 100%; border-collapse: collapse; text-align: left; }
+  th { 
+    background: rgba(15, 23, 42, 0.9); color: var(--muted); font-weight: 600; 
+    padding: 1rem; font-size: 0.8rem; text-transform: uppercase; 
+    border-bottom: 1px solid var(--border); white-space: nowrap;
+  }
+  td { padding: 1rem; border-bottom: 1px solid var(--border); color: var(--ink); font-size: 0.9rem; vertical-align: middle; white-space: nowrap; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: rgba(255,255,255,0.02); }
+
+  /* --- MODAL --- */
+  .modal-backdrop {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(4px);
+    display: flex; align-items: center; justify-content: center; z-index: 1000;
+    opacity: 0; pointer-events: none; transition: opacity 0.2s; padding: 10px;
+  }
+  .modal-backdrop.open { opacity: 1; pointer-events: all; }
+  
+  .modal {
+    background: #1e293b; color: #fff; border: 1px solid var(--border); border-radius: var(--radius);
+    width: 100%; max-width: 550px; box-shadow: 0 20px 50px rgba(0,0,0,0.6);
+    display: flex; flex-direction: column; max-height: 90vh; /* Límite altura móvil */
+  }
+  
+  .modal-header { 
+    padding: 1.2rem; border-bottom: 1px solid var(--border); 
+    display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.2); 
+  }
+  .modal-header h3 { margin: 0; font-size: 1.2rem; }
+  
+  .modal-body { padding: 1.5rem; overflow-y: auto; display: flex; flex-direction: column; gap: 1.2rem; }
+  
+  .modal-footer { 
+    padding: 1.2rem; border-top: 1px solid var(--border); 
+    display: flex; justify-content: flex-end; gap: 1rem; background: rgba(0,0,0,0.2); 
+  }
+
+  /* Grid en formularios */
+  .form-row, .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  @media (max-width: 600px) {
+    .form-row, .form-grid { grid-template-columns: 1fr; } /* Columna única en móvil */
+    .modal-footer { flex-direction: column-reverse; } /* Botones apilados */
+    .modal-footer .btn { width: 100%; }
+  }
+
+  /* --- EXTRAS (Badges, Lists, Toasts) --- */
+  .badge, .status-badge { padding: 2px 8px; border-radius: 99px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; white-space: nowrap; }
+  .badge-admin, .badge-user, .tag-propio, .st-active { background: rgba(16,185,129,0.15); color: #34d399; }
+  .badge-repartidor, .tag-promo { background: rgba(59,130,246,0.15); color: #60a5fa; }
+  .badge-super, .tag-fletero, .st-inactive { background: rgba(245,158,11,0.15); color: #fbbf24; }
+
+  .toast { position: fixed; right: 20px; bottom: 30px; background: #fff; color: #0f172a; padding: 10px 20px; border-radius: 99px; font-weight: 600; box-shadow: 0 10px 30px rgba(0,0,0,0.3); opacity: 0; pointer-events: none; transition: 0.3s; z-index: 2000; }
+  .toast.show { opacity: 1; transform: translateY(-10px); }
+
+  /* Elementos específicos de zona.html */
+  .sidebar-list { overflow-y: auto; display: flex; flex-direction: column; gap: 0.8rem; flex: 1; }
+  .zona-item { background: var(--bg-2); border: 1px solid var(--border); padding: 1rem; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
+  .user-summary {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.8rem;
+    margin-bottom: 1.1rem;
+  }
+  .metric-card {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: rgba(15, 23, 42, 0.7);
+    padding: 0.85rem 0.95rem;
+    min-height: 76px;
+  }
+  .metric-card span {
+    display: block;
+    color: var(--muted);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .metric-card strong {
+    display: block;
+    color: #fff;
+    font-size: 1.45rem;
+    line-height: 1.2;
+    margin-top: 0.25rem;
+  }
+  .toolbar .filter-action { flex: 0 0 auto; }
+  .muted-line { color: var(--muted); font-size: 0.78rem; margin-top: 2px; }
+  .risk-text { color: var(--warning); font-size: 0.78rem; margin-top: 2px; }
+  
+  /* Elementos específicos de inicial.html */
+  .step-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.5rem; display: flex; gap: 1rem; margin-bottom: 1rem; align-items: flex-start; }
+  .step-num { flex-shrink: 0; width: 40px; height: 40px; background: var(--bg-2); border: 1px solid var(--border); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; }
+  @media(max-width: 600px) { 
+    .step-card { flex-direction: column; } 
+    .check-icon { position: static; transform: none; opacity: 1; } 
+  }
+
+  /* Leaflet Dark Override */
+  .leaflet-bar { border: none !important; box-shadow: 0 4px 10px rgba(0,0,0,0.3) !important; }
+  .leaflet-bar a { background-color: var(--bg-2) !important; color: #fff !important; border-bottom: 1px solid var(--border) !important; }
+  @media (max-width: 760px) {
+    .user-summary { grid-template-columns: 1fr 1fr; }
+    .toolbar .filter-action { width: 100%; }
+  }
+</style>
+</head>
+<body>
+
+  <header>
+    <nav class="container">
+      <div class="brand">
+        <div class="brand-dot"></div>
+        MultiEmpresas
+        <span id="roleBadge" class="role-badge">Admin</span>
+      </div>
+      <ul class="menu" id="mainMenu">
+        <li><a href="inicial.html">🚀 Inicio</a></li>
+        <li><a href="/pedidos/dashboard.html">Dashboard</a></li>
+        <li><a href="usuarios.html" class="active">Usuarios</a></li>
+        <li><a href="#" id="logout" style="color: var(--danger)">Salir</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <main class="container">
+    
+    <div class="page-header">
+      <div>
+        <h1>👤 Gestión de Usuarios</h1>
+        <p class="subtitle">Controla el acceso al panel y a la aplicación móvil.</p>
+      </div>
+      <button id="btnNuevoUsuario" type="button" class="btn btn-primary">＋ Nuevo Usuario</button>
+    </div>
+
+    <div class="card">
+      <div class="user-summary" aria-label="Resumen de usuarios">
+        <div class="metric-card">
+          <span>Total</span>
+          <strong id="sumUsers">0</strong>
+        </div>
+        <div class="metric-card">
+          <span>Admins</span>
+          <strong id="sumAdmins">0</strong>
+        </div>
+        <div class="metric-card">
+          <span>Repartidores</span>
+          <strong id="sumDrivers">0</strong>
+        </div>
+        <div class="metric-card">
+          <span>Sin chofer</span>
+          <strong id="sumNoDriver">0</strong>
+        </div>
+      </div>
+
+      <div class="toolbar">
+        <div id="empFilterWrap" style="display:none; flex:1; max-width: 300px;">
+           <select id="empFilter">
+             <option value="">-- Seleccionar Empresa --</option>
+           </select>
+        </div>
+        <div>
+          <input id="userSearch" type="search" placeholder="Buscar usuario, rol o chofer">
+        </div>
+        <div>
+          <select id="roleFilter">
+            <option value="">Todos los roles</option>
+            <option value="user">Admins</option>
+            <option value="repartidor">Repartidores</option>
+            <option value="super">Super Admin</option>
+          </select>
+        </div>
+        <button id="btnClearFilters" type="button" class="btn filter-action">Limpiar</button>
+      </div>
+
+      <div class="table-responsive">
+        <table>
+          <thead>
+            <tr>
+              <th>Usuario</th>
+              <th>Rol</th>
+              <th>Empresa</th>
+              <th>Chofer Vinculado</th>
+              <th style="text-align:right;">Acciones</th>
+            </tr>
+          </thead>
+          <tbody id="tbBody">
+            <tr><td colspan="5" style="text-align:center; padding:3rem; color:var(--muted);">Cargando usuarios...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </main>
+
+  <div id="modal" class="modal-backdrop">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 id="modalTitle">Nuevo Usuario</h3>
+        <button id="btnCloseModalTop" type="button" class="btn-icon">✕</button>
+      </div>
+      <form id="formUser" class="modal-body">
+        <input type="hidden" id="u_id">
+
+        <div id="modalEmpWrap" style="display:none;">
+            <label>Asignar a Empresa *</label>
+            <select id="u_empresa_id"></select>
+        </div>
+
+        <div>
+          <label>Nombre de Usuario *</label>
+          <input type="text" id="u_username" required placeholder="Ej: juan.reparto" autocomplete="off">
+        </div>
+
+        <div>
+          <label>Contraseña</label>
+          <input type="password" id="u_password" placeholder="Mínimo 6 caracteres" minlength="6" autocomplete="new-password">
+          <div class="hint">Si editas, deja vacío para no cambiarla.</div>
+        </div>
+
+        <div>
+          <label>Rol de Acceso</label>
+          <select id="u_role">
+            <option value="repartidor">📱 Repartidor (App Móvil)</option>
+            <option value="user">💻 Administrador (Panel Web)</option>
+          </select>
+        </div>
+
+        <div id="fieldChofer">
+          <label>Vincular a Chofer</label>
+          <select id="u_chofer">
+            <option value="">-- Seleccionar Chofer --</option>
+          </select>
+          <div class="hint">Necesario para asignar pedidos al usuario.</div>
+        </div>
+
+      </form>
+      <div class="modal-footer">
+        <button id="btnCancelModal" type="button" class="btn">Cancelar</button>
+        <button id="btnSaveUsuario" type="button" class="btn btn-primary">Guardar</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script>
+    // --- Utils ---
+    const $ = s => document.querySelector(s);
+    const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;'
+    }[c]));
+    function toast(msg) {
+      const t = $('#toast'); t.textContent = msg; t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 3000);
+    }
+
+    // Modo seguro: auth por cookie httpOnly
+    const authFetch = (url, opts = {}) => {
+      const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
+      return fetch(url, { ...opts, headers, credentials: 'include' });
+    };
+
+    // --- Logout ---
+    const logoutLink = $('#logout');
+    if (logoutLink) {
+      logoutLink.addEventListener('click', async (e) => {
+        e.preventDefault();
+        try { await authFetch('/api/logout', { method: 'POST' }); } catch {}
+        location.href = '../login.html';
+      });
+    }
+
+    // --- State ---
+    let STATE = { isSuper: false, user: null };
+    let users = [];
+    let drivers = [];
+    let filters = { q: '', role: '' };
+    let saveBusy = false;
+    let deleteBusy = false;
+
+    // --- API ---
+    async function api(endpoint, opts = {}) {
+      try {
+        const res = await authFetch(endpoint, opts);
+        if (res.status === 401) return window.location.href = '../login.html';
+        return res.json();
+      } catch (e) {
+        console.error(e);
+        toast('Error de conexión');
+        return { error: 'Error' };
+      }
+    }
+
+    // --- Logic ---
+    async function load() {
+      let urlUsers = '/api/admin/usuarios';
+      let urlDrivers = '/api/choferes';
+
+      const empId = $('#empFilter').value;
+      if (STATE.isSuper) {
+         if (empId) {
+            const q = `?empresa_id=${empId}`;
+            urlUsers += q;
+            urlDrivers += q;
+         } else if (!empId) {
+            $('#tbBody').innerHTML = `<tr><td colspan="5" style="text-align:center; padding:3rem; color:var(--muted);">Selecciona una empresa para ver usuarios.</td></tr>`;
+            users = []; drivers = []; setSummary([]); return;
+         }
+      }
+
+      const [resUsers, resDrivers] = await Promise.all([api(urlUsers), api(urlDrivers)]);
+
+      if (Array.isArray(resUsers)) users = resUsers;
+      else $('#tbBody').innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--danger);">Error: ${esc(resUsers?.error || '')}</td></tr>`;
+
+      if (Array.isArray(resDrivers)) {
+        drivers = resDrivers;
+        if (!STATE.isSuper) renderDriverSelect(drivers);
+      }
+      
+      renderTable();
+    }
+
+    function getDriverName(choferId) {
+      if (!choferId) return '';
+      return drivers.find(d => d.id === choferId)?.nombre || `ID: ${choferId}`;
+    }
+
+    function setSummary(list = users) {
+      const total = list.length;
+      const admins = list.filter(u => ['user', 'admin', 'super'].includes(String(u.role || '').toLowerCase())).length;
+      const repartidores = list.filter(u => String(u.role || '').toLowerCase() === 'repartidor').length;
+      const noDriver = list.filter(u => String(u.role || '').toLowerCase() === 'repartidor' && !u.chofer_id).length;
+
+      $('#sumUsers').textContent = String(total);
+      $('#sumAdmins').textContent = String(admins);
+      $('#sumDrivers').textContent = String(repartidores);
+      $('#sumNoDriver').textContent = String(noDriver);
+    }
+
+    function getFilteredUsers() {
+      const q = (filters.q || '').trim().toLowerCase();
+      const role = filters.role || '';
+
+      return users.filter(u => {
+        const roleRaw = String(u.role || '').toLowerCase();
+        if (role && roleRaw !== role) return false;
+        if (!q) return true;
+
+        const haystack = [
+          u.username,
+          u.role,
+          u.empresa_id,
+          u.chofer_id,
+          getDriverName(u.chofer_id)
+        ].map(v => String(v == null ? '' : v).toLowerCase()).join(' ');
+
+        return haystack.includes(q);
+      });
+    }
+
+    function renderTable() {
+      const tbody = $('#tbBody');
+      setSummary(users);
+
+      if (!users.length) {
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; padding:3rem; color:var(--muted);">No hay usuarios creados.</td></tr>`;
+        return;
+      }
+
+      const rows = getFilteredUsers();
+      if (!rows.length) {
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; padding:3rem; color:var(--muted);">No hay usuarios que coincidan con los filtros.</td></tr>`;
+        return;
+      }
+      
+      tbody.innerHTML = rows.map(u => {
+        const driverName = u.chofer_id 
+          ? esc(getDriverName(u.chofer_id))
+          : '<span style="color:var(--muted)">—</span>';
+        
+        const roleRaw = String(u.role || '').toLowerCase();
+        const roleClass = ['admin','user','repartidor','super'].includes(roleRaw) ? roleRaw : 'user';
+        const roleLabel = roleRaw === 'user' ? 'Admin' : (roleRaw === 'super' ? 'Super Admin' : roleRaw);
+        
+        return `
+        <tr>
+          <td>
+            <div style="font-weight:600; color:#fff;">${esc(u.username)}</div>
+            <div class="muted-line">ID #${Number(u.id)}</div>
+          </td>
+          <td><span class="badge badge-${roleClass}">${esc(roleLabel)}</span></td>
+          <td style="color:var(--muted); font-family:monospace;">${u.empresa_id ? Number(u.empresa_id) : (roleRaw==='super'?'GLOBAL':'-')}</td>
+          <td>
+            ${driverName}
+            ${roleRaw === 'repartidor' && !u.chofer_id ? '<div class="risk-text">Repartidor sin chofer vinculado</div>' : ''}
+          </td>
+          <td style="text-align:right;">
+            <button class="btn-icon" data-action="edit" data-id="${Number(u.id)}" title="Editar">✏️</button>
+            <button class="btn-icon" data-action="delete" data-id="${Number(u.id)}" title="Eliminar" style="color:var(--danger); border-color:rgba(239,68,68,0.3);">🗑️</button>
+          </td>
+        </tr>
+      `}).join('');
+    }
+
+    function renderDriverSelect(list) {
+      const sel = $('#u_chofer');
+      if (!list || !list.length) {
+        sel.innerHTML = '<option value="">No hay choferes disponibles</option>';
+        return;
+      }
+      sel.innerHTML = '<option value="">-- Seleccionar Chofer --</option>' + 
+        list.map(d => `<option value="${Number(d.id)}">${esc(d.nombre)}</option>`).join('');
+    }
+
+    function toggleChoferField() {
+      const role = $('#u_role').value;
+      const field = $('#fieldChofer');
+      
+      if (role === 'repartidor') {
+          field.style.display = 'block';
+      } else {
+          field.style.display = 'none';
+          $('#u_chofer').value = ''; 
+      }
+      
+      if (role === 'super' && STATE.isSuper) {
+          $('#modalEmpWrap').style.display = 'none'; 
+      } else if (STATE.isSuper) {
+          $('#modalEmpWrap').style.display = 'block';
+      }
+    }
+
+    async function loadDriversForModal() {
+        if (!STATE.isSuper) return;
+        const empId = $('#u_empresa_id').value;
+        if (!empId) { renderDriverSelect([]); return; }
+        const res = await api(`/api/choferes?empresa_id=${empId}`);
+        if(Array.isArray(res)) renderDriverSelect(res);
+    }
+
+    // --- Actions ---
+    function openModal() {
+      $('#modal').classList.add('open');
+      $('#modalTitle').textContent = 'Nuevo Usuario';
+      $('#formUser').reset();
+      $('#u_id').value = '';
+      $('#u_password').required = true; 
+      $('#u_role').value = 'repartidor';
+      
+      const roleSelect = $('#u_role');
+      roleSelect.innerHTML = `
+        <option value="repartidor">📱 Repartidor (App Móvil)</option>
+        <option value="user">💻 Administrador (Panel Web)</option>
+      `;
+      
+      if (STATE.isSuper) {
+          const optSuper = document.createElement('option');
+          optSuper.value = 'super';
+          optSuper.textContent = '⚡ SUPER USUARIO (Acceso Total)';
+          optSuper.style.color = '#fbbf24';
+          roleSelect.appendChild(optSuper);
+
+          const currentFilter = $('#empFilter').value;
+          if(currentFilter) {
+              $('#u_empresa_id').value = currentFilter;
+              loadDriversForModal();
+          }
+      } else {
+          renderDriverSelect(drivers);
+      }
+
+      toggleChoferField();
+      $('#u_username').focus();
+    }
+
+    function closeModal() { $('#modal').classList.remove('open'); }
+
+    async function edit(id) {
+      const u = users.find(x => x.id === id);
+      if(!u) return;
+      
+      openModal();
+      $('#modalTitle').textContent = 'Editar Usuario';
+      $('#u_id').value = u.id;
+      $('#u_username').value = u.username;
+      $('#u_password').value = '';
+      $('#u_password').required = false;
+      $('#u_role').value = u.role;
+
+      if(STATE.isSuper) {
+        if (u.role === 'super') {
+             $('#modalEmpWrap').style.display = 'none';
+        } else {
+             $('#modalEmpWrap').style.display = 'block';
+             $('#u_empresa_id').value = u.empresa_id;
+             await loadDriversForModal();
+        }
+      } else {
+          renderDriverSelect(drivers);
+      }
+      
+      $('#u_chofer').value = u.chofer_id || '';
+      toggleChoferField();
+    }
+
+    async function save() {
+      if (saveBusy) return;
+      const id = $('#u_id').value;
+      const username = $('#u_username').value;
+      const password = $('#u_password').value;
+      const role = $('#u_role').value;
+      const chofer_id = $('#u_chofer').value;
+
+      if (!username) return toast('Falta usuario');
+      if (!id && !password) return toast('Falta contraseña'); 
+      if (password && password.length < 6) return toast('Contraseña muy corta (min 6)');
+      if (role === 'repartidor' && !chofer_id) return toast('Selecciona un chofer para el repartidor');
+
+      const body = { username, role, chofer_id: chofer_id ? Number(chofer_id) : null };
+      if(password) body.password = password;
+
+      if (STATE.isSuper) {
+          if (role === 'super') {
+              body.empresa_id = null; 
+          } else {
+              const empId = $('#u_empresa_id').value;
+              if (!empId) return toast('⚠️ Asigna una empresa');
+              body.empresa_id = empId;
+          }
+      }
+
+      const method = id ? 'PUT' : 'POST';
+      const url = id ? `/api/admin/usuarios/${id}` : '/api/admin/usuarios';
+
+      const saveBtn = document.getElementById('btnSaveUsuario');
+      const prevTxt = saveBtn ? saveBtn.textContent : '';
+      saveBusy = true;
+      if (saveBtn) {
+        saveBtn.disabled = true;
+        saveBtn.textContent = 'Guardando...';
+      }
+
+      try {
+        const res = await api(url, { method, body: JSON.stringify(body) });
+        
+        if (res.error) toast('❌ ' + res.error);
+        else {
+          toast(id ? '✅ Actualizado' : '✅ Creado');
+          closeModal();
+          load();
+        }
+      } finally {
+        saveBusy = false;
+        if (saveBtn) {
+          saveBtn.disabled = false;
+          saveBtn.textContent = prevTxt;
+        }
+      }
+    }
+
+    async function del(id, btnEl = null) {
+      if (deleteBusy) return;
+      if (!confirm('¿Eliminar este usuario?')) return;
+
+      deleteBusy = true;
+      const prevTxt = btnEl ? btnEl.textContent : '';
+      if (btnEl) {
+        btnEl.disabled = true;
+        btnEl.textContent = '…';
+      }
+
+      try {
+        const res = await api(`/api/admin/usuarios/${id}`, { method: 'DELETE' });
+        if (res.error) toast('❌ ' + res.error);
+        else { toast('🗑️ Eliminado'); load(); }
+      } finally {
+        deleteBusy = false;
+        if (btnEl) {
+          btnEl.disabled = false;
+          btnEl.textContent = prevTxt;
+        }
+      }
+    }
+
+    const btnNuevoUsuario = document.getElementById('btnNuevoUsuario');
+    if (btnNuevoUsuario) btnNuevoUsuario.addEventListener('click', openModal);
+
+    const userSearch = document.getElementById('userSearch');
+    if (userSearch) {
+      userSearch.addEventListener('input', () => {
+        filters.q = userSearch.value || '';
+        renderTable();
+      });
+    }
+
+    const roleFilter = document.getElementById('roleFilter');
+    if (roleFilter) {
+      roleFilter.addEventListener('change', () => {
+        filters.role = roleFilter.value || '';
+        renderTable();
+      });
+    }
+
+    const btnClearFilters = document.getElementById('btnClearFilters');
+    if (btnClearFilters) {
+      btnClearFilters.addEventListener('click', () => {
+        filters = { q: '', role: '' };
+        if (userSearch) userSearch.value = '';
+        if (roleFilter) roleFilter.value = '';
+        renderTable();
+      });
+    }
+
+    const btnCloseModalTop = document.getElementById('btnCloseModalTop');
+    if (btnCloseModalTop) btnCloseModalTop.addEventListener('click', closeModal);
+
+    const btnCancelModal = document.getElementById('btnCancelModal');
+    if (btnCancelModal) btnCancelModal.addEventListener('click', closeModal);
+
+    const btnSaveUsuario = document.getElementById('btnSaveUsuario');
+    if (btnSaveUsuario) btnSaveUsuario.addEventListener('click', save);
+
+    const formUser = document.getElementById('formUser');
+    if (formUser) {
+      formUser.addEventListener('submit', (ev) => {
+        ev.preventDefault();
+        save();
+      });
+    }
+
+    const uEmpresaId = document.getElementById('u_empresa_id');
+    if (uEmpresaId) uEmpresaId.addEventListener('change', loadDriversForModal);
+
+    const uRole = document.getElementById('u_role');
+    if (uRole) uRole.addEventListener('change', toggleChoferField);
+
+    const tbBody = document.getElementById('tbBody');
+    if (tbBody) {
+      tbBody.addEventListener('click', (ev) => {
+        const btn = ev.target.closest('button[data-action][data-id]');
+        if (!btn) return;
+
+        const action = btn.getAttribute('data-action');
+        const id = Number(btn.getAttribute('data-id'));
+        if (!Number.isFinite(id) || id <= 0) return;
+
+        if (action === 'edit') edit(id);
+        else if (action === 'delete') del(id, btn);
+      });
+    }
+
+    // --- Init ---
+    (async () => {
+        try {
+            const me = await api('/api/me');
+            STATE.user = me?.user || {};
+            STATE.isSuper = (STATE.user.role || '').toLowerCase() === 'super';
+            
+            $('#roleBadge').textContent = STATE.isSuper ? 'SUPER ADMIN' : 'Admin';
+
+            if (STATE.isSuper) {
+                $('#empFilterWrap').style.display = 'block';
+                $('#modalEmpWrap').style.display = 'block';
+                const list = await api('/api/empresas');
+                if (Array.isArray(list)) {
+                    const opts = '<option value="">-- Seleccionar Empresa --</option>' + 
+                                 list.map(e => `<option value="${Number(e.id)}">${esc(e.nombre)}</option>`).join('');
+                    $('#empFilter').innerHTML = opts;
+                    $('#u_empresa_id').innerHTML = opts;
+                    $('#empFilter').addEventListener('change', load);
+                }
+            } else load();
+        } catch(e) { console.error(e); }
+    })();
+  </script>
+</body>
+</html>
