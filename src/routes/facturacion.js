@@ -14,20 +14,32 @@ import { withAuth, checkLicencia, isSuper, getEmpresaIdFromToken } from '../serv
 import { query } from '../db.js';
 import {
   cacheWsaaCredentials,
+  cancelFactura,
+  deleteFactura,
   ensureFacturacionSchema,
   getCachedWsaaCredentials,
   getFacturaById,
   getFacturaByPedido,
   getFacturacionConfig,
   getFacturacionConfigForArca,
+  hasProductionEmissionConfirmation,
+  isProductionEmissionEnabled,
   logAfipAudit,
   markFacturaEmitida,
   markFacturaRechazada,
   listFacturas,
   listPedidosFacturables,
   requestFacturaForPedido,
+  requestFacturaForPedidos,
+  setFacturaPdfUrl,
   upsertFacturacionConfig,
 } from '../services/facturacionService.js';
+import { generateFacturaPdf, resolveFacturasDir } from '../services/facturaPdfService.js';
+import {
+  buildFacturaPublicUrl,
+  queueFacturaWhatsapp,
+  sendFacturaEmail,
+} from '../services/facturaDeliveryService.js';
 
 export function createFacturacionRouter() {
   const router = express.Router();
@@ -76,6 +88,36 @@ export function createFacturacionRouter() {
     if (type === 'clave' && !/-----BEGIN (RSA |EC |)PRIVATE KEY-----[\s\S]+-----END (RSA |EC |)PRIVATE KEY-----/.test(text)) {
       throw Object.assign(new Error('La clave privada debe estar en formato PEM'), { statusCode: 400 });
     }
+  }
+
+  async function ensureFacturaPdf({ facturaId, empresaId }) {
+    let factura = await getFacturaById(query, { facturaId, empresaId });
+    if (!factura) throw Object.assign(new Error('Factura no encontrada'), { statusCode: 404 });
+    if (factura.estado !== 'emitida' || !factura.cae) {
+      throw Object.assign(new Error('Solo se puede generar PDF de facturas emitidas con CAE'), { statusCode: 409 });
+    }
+    if (factura.pdf_url) {
+      const existingPath = path.resolve(process.cwd(), factura.pdf_url.replace(/^\//, ''));
+      if (existingPath.startsWith(path.resolve(process.cwd(), 'Facturas'))) {
+        try {
+          await fs.promises.access(existingPath);
+          return { factura, filePath: existingPath, pdfUrl: factura.pdf_url };
+        } catch {
+          // regenerar si la DB tiene URL pero el archivo no existe
+        }
+      }
+    }
+
+    const config = await getFacturacionConfig(query, empresaId);
+    if (!config) throw Object.assign(new Error('La empresa no tiene configuracion fiscal'), { statusCode: 409 });
+    const generated = await generateFacturaPdf({
+      factura,
+      config,
+      outputDir: resolveFacturasDir(process.cwd()),
+    });
+    await setFacturaPdfUrl(query, { facturaId, empresaId, pdfUrl: generated.publicPath });
+    factura = await getFacturaById(query, { facturaId, empresaId });
+    return { factura, filePath: generated.filePath, pdfUrl: generated.publicPath };
   }
 
   async function saveCredentialFile({ empresaId, file, type }) {
@@ -131,7 +173,15 @@ export function createFacturacionRouter() {
     try {
       await ensureSchema();
       const empresaId = resolveEmpresa(req);
-      const config = await upsertFacturacionConfig(query, empresaId, req.body || {});
+      const payload = { ...(req.body || {}) };
+      if (isSuper(req)) {
+        payload.produccion_habilitada_by = payload.produccion_habilitada === true ? req.user?.id || null : null;
+      } else {
+        delete payload.produccion_habilitada;
+        delete payload.produccion_observaciones;
+        delete payload.produccion_habilitada_by;
+      }
+      const config = await upsertFacturacionConfig(query, empresaId, payload);
       return res.json({ ok: true, config: publicConfig(config) });
     } catch (e) {
       return sendError(res, e);
@@ -265,6 +315,23 @@ export function createFacturacionRouter() {
     }
   });
 
+  router.post('/facturacion/facturas/consolidada', withAuth, checkLicencia, async (req, res) => {
+    try {
+      await ensureSchema();
+      const pedidoIds = req.body?.pedido_ids || req.body?.pedidos || [];
+      const empresaId = resolveEmpresa(req);
+      const factura = await requestFacturaForPedidos(query, {
+        pedidoIds,
+        empresaId,
+        userId: req.user?.id || null,
+        datosFiscales: req.body?.datos_fiscales || {},
+      });
+      return res.status(201).json({ ok: true, factura });
+    } catch (e) {
+      return sendError(res, e);
+    }
+  });
+
   router.get('/pedidos/:pedidoId/factura', withAuth, checkLicencia, async (req, res) => {
     try {
       await ensureSchema();
@@ -338,6 +405,62 @@ export function createFacturacionRouter() {
     }
   });
 
+  router.get('/facturas/:id/pdf', withAuth, checkLicencia, async (req, res) => {
+    try {
+      await ensureSchema();
+      const facturaId = Number(req.params.id);
+      if (!Number.isInteger(facturaId) || facturaId <= 0) {
+        return res.status(400).json({ error: 'Factura invalida' });
+      }
+      const empresaId = resolveEmpresa(req);
+      const { factura, filePath } = await ensureFacturaPdf({ facturaId, empresaId });
+      const filename = `factura-${factura.punto_venta}-${factura.numero_comprobante}.pdf`;
+      return res.download(filePath, filename);
+    } catch (e) {
+      return sendError(res, e);
+    }
+  });
+
+  router.post('/facturas/:id/enviar', withAuth, checkLicencia, async (req, res) => {
+    try {
+      await ensureSchema();
+      const facturaId = Number(req.params.id);
+      if (!Number.isInteger(facturaId) || facturaId <= 0) {
+        return res.status(400).json({ error: 'Factura invalida' });
+      }
+      const empresaId = resolveEmpresa(req);
+      const { factura, filePath, pdfUrl } = await ensureFacturaPdf({ facturaId, empresaId });
+      const canales = Array.isArray(req.body?.canales) && req.body.canales.length
+        ? req.body.canales
+        : [req.body?.canal || 'whatsapp'];
+      const publicUrl = buildFacturaPublicUrl(req, pdfUrl);
+      const result = { ok: true, pdf_url: pdfUrl, public_url: publicUrl, whatsapp: null, email: null };
+
+      if (canales.includes('whatsapp')) {
+        const telefono = req.body?.telefono || factura.receptor_telefono || req.body?.whatsapp;
+        result.whatsapp = await queueFacturaWhatsapp(query, {
+          empresaId,
+          telefono,
+          factura,
+          publicUrl,
+        });
+      }
+
+      if (canales.includes('email')) {
+        result.email = await sendFacturaEmail({
+          to: req.body?.email || factura.receptor_email_facturacion,
+          factura,
+          filePath,
+          publicUrl,
+        });
+      }
+
+      return res.json(result);
+    } catch (e) {
+      return sendError(res, e);
+    }
+  });
+
   router.post('/facturas/:id/emitir', withAuth, checkLicencia, async (req, res) => {
     try {
       await ensureSchema();
@@ -349,9 +472,17 @@ export function createFacturacionRouter() {
       const empresaId = resolveEmpresa(req);
       const config = await getFacturacionConfigForArca(query, empresaId);
       if (!config) return res.status(409).json({ error: 'La empresa no tiene configuracion fiscal' });
-      if (config.modo_afip !== 'homologacion') {
+      if (!isProductionEmissionEnabled(config)) {
         return res.status(409).json({
-          error: 'Emision en produccion bloqueada hasta validacion contable/operativa',
+          error: 'Emision en produccion bloqueada: falta habilitacion operativa',
+          requires_production_enablement: true,
+        });
+      }
+      if (config.modo_afip === 'produccion' && !hasProductionEmissionConfirmation(req.body?.confirmacion)) {
+        return res.status(409).json({
+          error: 'Para emitir una factura real confirma con EMITIR_FACTURA_REAL',
+          requires_production_confirmation: true,
+          confirmation_text: 'EMITIR_FACTURA_REAL',
         });
       }
 
@@ -438,6 +569,44 @@ export function createFacturacionRouter() {
       } catch {
         // no bloquear la respuesta por un fallo secundario de auditoria
       }
+      return sendError(res, e);
+    }
+  });
+
+  router.post('/facturas/:id/cancelar', withAuth, checkLicencia, async (req, res) => {
+    try {
+      await ensureSchema();
+      const facturaId = Number(req.params.id);
+      if (!Number.isInteger(facturaId) || facturaId <= 0) {
+        return res.status(400).json({ error: 'Factura invalida' });
+      }
+
+      const empresaId = resolveEmpresa(req);
+      const factura = await cancelFactura(query, { facturaId, empresaId });
+      if (!factura) {
+        return res.status(409).json({ error: 'Solo se pueden cancelar facturas pendientes o rechazadas' });
+      }
+      return res.json({ ok: true, factura });
+    } catch (e) {
+      return sendError(res, e);
+    }
+  });
+
+  router.delete('/facturas/:id', withAuth, checkLicencia, async (req, res) => {
+    try {
+      await ensureSchema();
+      const facturaId = Number(req.params.id);
+      if (!Number.isInteger(facturaId) || facturaId <= 0) {
+        return res.status(400).json({ error: 'Factura invalida' });
+      }
+
+      const empresaId = resolveEmpresa(req);
+      const factura = await deleteFactura(query, { facturaId, empresaId });
+      if (!factura) {
+        return res.status(409).json({ error: 'Solo se pueden eliminar facturas pendientes o rechazadas' });
+      }
+      return res.json({ ok: true, deleted: true, factura });
+    } catch (e) {
       return sendError(res, e);
     }
   });

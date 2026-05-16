@@ -255,6 +255,10 @@ export function createApp(deps) {
   if (!fs.existsSync(GASTOS_DIR)) fs.mkdirSync(GASTOS_DIR, { recursive: true });
   app.use('/Gastos', express.static(GASTOS_DIR));
 
+  const FACTURAS_DIR = path.join(projectDir, 'Facturas');
+  if (!fs.existsSync(FACTURAS_DIR)) fs.mkdirSync(FACTURAS_DIR, { recursive: true });
+  app.use('/Facturas', express.static(FACTURAS_DIR));
+
   mountApiModules(app, {
     query,
     pool,

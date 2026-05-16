@@ -153,8 +153,8 @@ export function registerLandingRoutes(app, deps) {
   app.get('/', serveDetectedPage);
   app.get(['/index', '/index.html', '/index.htm'], serveDetectedPage);
 
-  // EXCLUYENDO: /api, /public, /pedidos, /Transferencia, /Gastos
-  app.get(/^\/(?!api\/|public\/|pedidos\/|Transferencia\/|Gastos\/).*/, serveDetectedPage);
+  // EXCLUYENDO: /api, /public, /pedidos, /Transferencia, /Gastos, /Facturas
+  app.get(/^\/(?!api\/|public\/|pedidos\/|Transferencia\/|Gastos\/|Facturas\/).*/, serveDetectedPage);
 
   // ------------------------------
   // API: subir/borrar landing HTML
