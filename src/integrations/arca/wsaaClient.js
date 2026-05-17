@@ -69,19 +69,23 @@ export function parseLoginCmsResponse(xml) {
   };
 }
 
-export async function signLoginTicketRequest({ traXml, certPath, keyPath }) {
+export async function signLoginTicketRequest({ traXml, certPath, keyPath, certPem, keyPem }) {
   const tmpDir = await mkdtemp(path.join(os.tmpdir(), 'pedivoy-wsaa-'));
   const traPath = path.join(tmpDir, 'login-ticket-request.xml');
   const cmsPath = path.join(tmpDir, 'login-ticket-request.cms');
+  const resolvedCertPath = certPath || path.join(tmpDir, 'certificado.pem');
+  const resolvedKeyPath = keyPath || path.join(tmpDir, 'clave.pem');
 
   try {
     await writeFile(traPath, traXml, 'utf8');
+    if (!certPath) await writeFile(resolvedCertPath, certPem, { encoding: 'utf8', mode: 0o600 });
+    if (!keyPath) await writeFile(resolvedKeyPath, keyPem, { encoding: 'utf8', mode: 0o600 });
     await execFileAsync('openssl', [
       'cms',
       '-sign',
       '-in', traPath,
-      '-signer', certPath,
-      '-inkey', keyPath,
+      '-signer', resolvedCertPath,
+      '-inkey', resolvedKeyPath,
       '-nodetach',
       '-outform', 'DER',
       '-out', cmsPath,
@@ -99,15 +103,17 @@ export async function loginCms({
   service = 'wsfe',
   certPath,
   keyPath,
+  certPem,
+  keyPem,
   fetchImpl = globalThis.fetch,
   now = new Date(),
 } = {}) {
-  if (!certPath) throw new Error('Falta certificado_ref para WSAA');
-  if (!keyPath) throw new Error('Falta clave_ref para WSAA');
+  if (!certPath && !certPem) throw new Error('Falta certificado para WSAA');
+  if (!keyPath && !keyPem) throw new Error('Falta clave para WSAA');
   if (typeof fetchImpl !== 'function') throw new Error('fetch no disponible para WSAA');
 
   const traXml = buildLoginTicketRequest({ service, uniqueId: now.getTime(), now });
-  const cmsBase64 = await signLoginTicketRequest({ traXml, certPath, keyPath });
+  const cmsBase64 = await signLoginTicketRequest({ traXml, certPath, keyPath, certPem, keyPem });
   const envelope = buildLoginCmsEnvelope(cmsBase64);
   const endpoint = getWsaaEndpoint(mode);
 

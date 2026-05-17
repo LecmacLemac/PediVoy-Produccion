@@ -1,5 +1,4 @@
 import express from 'express';
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import multer from 'multer';
@@ -18,6 +17,8 @@ import {
   canAccessFacturacion,
   deleteFactura,
   ensureFacturacionSchema,
+  decryptSecret,
+  encryptSecret,
   getCachedWsaaCredentials,
   getFacturaById,
   getFacturaByPedido,
@@ -49,7 +50,6 @@ import {
 export function createFacturacionRouter() {
   const router = express.Router();
   let schemaReady = false;
-  const ARCA_CREDENTIALS_DIR = path.resolve(process.cwd(), 'storage', 'arca-credentials');
   const credentialsUploader = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: 128 * 1024, files: 2 },
@@ -82,11 +82,17 @@ export function createFacturacionRouter() {
 
   function publicConfig(config) {
     if (!config) return null;
-    const { certificado_ref: _certificadoRef, clave_ref: _claveRef, ...safe } = config;
+    const {
+      certificado_ref: _certificadoRef,
+      clave_ref: _claveRef,
+      certificado_pem_encrypted: _certificadoPemEncrypted,
+      clave_pem_encrypted: _clavePemEncrypted,
+      ...safe
+    } = config;
     return {
       ...safe,
-      certificado_cargado: Boolean(config.certificado_ref),
-      clave_cargada: Boolean(config.clave_ref),
+      certificado_cargado: Boolean(config.certificado_pem_encrypted || config.certificado_ref),
+      clave_cargada: Boolean(config.clave_pem_encrypted || config.clave_ref),
     };
   }
 
@@ -130,20 +136,13 @@ export function createFacturacionRouter() {
     return { factura, filePath: generated.filePath, pdfUrl: generated.publicPath };
   }
 
-  async function saveCredentialFile({ empresaId, file, type }) {
+  function buildCredentialSecret({ file, type }) {
     if (!file?.buffer?.length) return null;
     assertPem(file.buffer, type);
-
-    const dir = path.join(ARCA_CREDENTIALS_DIR, String(empresaId));
-    await fs.promises.mkdir(dir, { recursive: true, mode: 0o700 });
-
-    const suffix = crypto.randomBytes(8).toString('hex');
-    const filename = type === 'certificado'
-      ? `certificado_${suffix}.pem`
-      : `clave_${suffix}.pem`;
-    const target = path.join(dir, filename);
-    await fs.promises.writeFile(target, file.buffer, { mode: 0o600 });
-    return target;
+    return {
+      encrypted: encryptSecret(file.buffer.toString('utf8')),
+      filename: file.originalname || null,
+    };
   }
 
   async function resolveWsaaCredentials(empresaId, config) {
@@ -153,8 +152,10 @@ export function createFacturacionRouter() {
     const login = await loginCms({
       mode: config.modo_afip,
       service: 'wsfe',
-      certPath: config.certificado_ref,
-      keyPath: config.clave_ref,
+      certPath: config.certificado_pem_encrypted ? null : config.certificado_ref,
+      keyPath: config.clave_pem_encrypted ? null : config.clave_ref,
+      certPem: config.certificado_pem_encrypted ? decryptSecret(config.certificado_pem_encrypted) : null,
+      keyPem: config.clave_pem_encrypted ? decryptSecret(config.clave_pem_encrypted) : null,
     });
     await cacheWsaaCredentials(query, empresaId, login);
     await logAfipAudit(query, {
@@ -217,25 +218,25 @@ export function createFacturacionRouter() {
           return res.status(409).json({ error: 'Primero guarda la configuracion fiscal de la empresa' });
         }
 
-        const certificadoRef = await saveCredentialFile({
-          empresaId,
+        const certificadoSecret = buildCredentialSecret({
           file: req.files?.certificado?.[0],
           type: 'certificado',
         });
-        const claveRef = await saveCredentialFile({
-          empresaId,
+        const claveSecret = buildCredentialSecret({
           file: req.files?.clave?.[0],
           type: 'clave',
         });
 
-        if (!certificadoRef && !claveRef) {
+        if (!certificadoSecret && !claveSecret) {
           return res.status(400).json({ error: 'Archivo requerido' });
         }
 
         const config = await upsertFacturacionConfig(query, empresaId, {
           ...current,
-          certificado_ref: certificadoRef,
-          clave_ref: claveRef,
+          certificado_pem_encrypted: certificadoSecret?.encrypted,
+          clave_pem_encrypted: claveSecret?.encrypted,
+          certificado_nombre: certificadoSecret?.filename,
+          clave_nombre: claveSecret?.filename,
         });
 
         return res.json({ ok: true, config: publicConfig(config) });
@@ -266,8 +267,10 @@ export function createFacturacionRouter() {
       const login = await loginCms({
         mode: config.modo_afip,
         service: req.body?.service || 'wsfe',
-        certPath: config.certificado_ref,
-        keyPath: config.clave_ref,
+        certPath: config.certificado_pem_encrypted ? null : config.certificado_ref,
+        keyPath: config.clave_pem_encrypted ? null : config.clave_ref,
+        certPem: config.certificado_pem_encrypted ? decryptSecret(config.certificado_pem_encrypted) : null,
+        keyPem: config.clave_pem_encrypted ? decryptSecret(config.clave_pem_encrypted) : null,
       });
 
       await cacheWsaaCredentials(query, empresaId, login);

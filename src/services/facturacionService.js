@@ -119,6 +119,11 @@ export async function ensureFacturacionSchema(query) {
       modo_afip TEXT NOT NULL DEFAULT 'homologacion',
       certificado_ref TEXT,
       clave_ref TEXT,
+      certificado_pem_encrypted TEXT,
+      clave_pem_encrypted TEXT,
+      certificado_nombre TEXT,
+      clave_nombre TEXT,
+      credenciales_updated_at TIMESTAMPTZ,
       wsaa_token_encrypted TEXT,
       wsaa_sign_encrypted TEXT,
       wsaa_expires_at TIMESTAMPTZ,
@@ -140,7 +145,12 @@ export async function ensureFacturacionSchema(query) {
       ADD COLUMN IF NOT EXISTS produccion_habilitada BOOLEAN NOT NULL DEFAULT FALSE,
       ADD COLUMN IF NOT EXISTS produccion_habilitada_at TIMESTAMPTZ,
       ADD COLUMN IF NOT EXISTS produccion_habilitada_by INT REFERENCES usuarios(id) ON DELETE SET NULL,
-      ADD COLUMN IF NOT EXISTS produccion_observaciones TEXT
+      ADD COLUMN IF NOT EXISTS produccion_observaciones TEXT,
+      ADD COLUMN IF NOT EXISTS certificado_pem_encrypted TEXT,
+      ADD COLUMN IF NOT EXISTS clave_pem_encrypted TEXT,
+      ADD COLUMN IF NOT EXISTS certificado_nombre TEXT,
+      ADD COLUMN IF NOT EXISTS clave_nombre TEXT,
+      ADD COLUMN IF NOT EXISTS credenciales_updated_at TIMESTAMPTZ
   `);
 
   await query(`
@@ -302,10 +312,12 @@ export async function upsertFacturacionConfig(query, empresaId, payload = {}) {
     `
     INSERT INTO empresa_facturacion_config (
       empresa_id, cuit, razon_social, condicion_iva, punto_venta, modo_afip,
-      certificado_ref, clave_ref, produccion_habilitada, produccion_habilitada_at,
+      certificado_ref, clave_ref, certificado_pem_encrypted, clave_pem_encrypted,
+      certificado_nombre, clave_nombre, credenciales_updated_at,
+      produccion_habilitada, produccion_habilitada_at,
       produccion_habilitada_by, produccion_observaciones, activo, updated_at
     )
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,COALESCE($9,FALSE),CASE WHEN COALESCE($9,FALSE) THEN NOW() ELSE NULL END,$10,$11,$12,NOW())
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,CASE WHEN $9 IS NOT NULL OR $10 IS NOT NULL THEN NOW() ELSE NULL END,COALESCE($12,FALSE),CASE WHEN COALESCE($12,FALSE) THEN NOW() ELSE NULL END,$13,$14,$15,NOW())
     ON CONFLICT (empresa_id)
     DO UPDATE SET
       cuit = EXCLUDED.cuit,
@@ -315,10 +327,21 @@ export async function upsertFacturacionConfig(query, empresaId, payload = {}) {
       modo_afip = EXCLUDED.modo_afip,
       certificado_ref = COALESCE(EXCLUDED.certificado_ref, empresa_facturacion_config.certificado_ref),
       clave_ref = COALESCE(EXCLUDED.clave_ref, empresa_facturacion_config.clave_ref),
+      certificado_pem_encrypted = COALESCE(EXCLUDED.certificado_pem_encrypted, empresa_facturacion_config.certificado_pem_encrypted),
+      clave_pem_encrypted = COALESCE(EXCLUDED.clave_pem_encrypted, empresa_facturacion_config.clave_pem_encrypted),
+      certificado_nombre = COALESCE(EXCLUDED.certificado_nombre, empresa_facturacion_config.certificado_nombre),
+      clave_nombre = COALESCE(EXCLUDED.clave_nombre, empresa_facturacion_config.clave_nombre),
+      credenciales_updated_at = CASE
+        WHEN EXCLUDED.certificado_pem_encrypted IS NOT NULL OR EXCLUDED.clave_pem_encrypted IS NOT NULL
+        THEN NOW()
+        ELSE empresa_facturacion_config.credenciales_updated_at
+      END,
       wsaa_token_encrypted = CASE
         WHEN empresa_facturacion_config.modo_afip IS DISTINCT FROM EXCLUDED.modo_afip
           OR EXCLUDED.certificado_ref IS NOT NULL
           OR EXCLUDED.clave_ref IS NOT NULL
+          OR EXCLUDED.certificado_pem_encrypted IS NOT NULL
+          OR EXCLUDED.clave_pem_encrypted IS NOT NULL
         THEN NULL
         ELSE empresa_facturacion_config.wsaa_token_encrypted
       END,
@@ -326,6 +349,8 @@ export async function upsertFacturacionConfig(query, empresaId, payload = {}) {
         WHEN empresa_facturacion_config.modo_afip IS DISTINCT FROM EXCLUDED.modo_afip
           OR EXCLUDED.certificado_ref IS NOT NULL
           OR EXCLUDED.clave_ref IS NOT NULL
+          OR EXCLUDED.certificado_pem_encrypted IS NOT NULL
+          OR EXCLUDED.clave_pem_encrypted IS NOT NULL
         THEN NULL
         ELSE empresa_facturacion_config.wsaa_sign_encrypted
       END,
@@ -333,34 +358,38 @@ export async function upsertFacturacionConfig(query, empresaId, payload = {}) {
         WHEN empresa_facturacion_config.modo_afip IS DISTINCT FROM EXCLUDED.modo_afip
           OR EXCLUDED.certificado_ref IS NOT NULL
           OR EXCLUDED.clave_ref IS NOT NULL
+          OR EXCLUDED.certificado_pem_encrypted IS NOT NULL
+          OR EXCLUDED.clave_pem_encrypted IS NOT NULL
         THEN NULL
         ELSE empresa_facturacion_config.wsaa_expires_at
       END,
-      produccion_habilitada = COALESCE($9, empresa_facturacion_config.produccion_habilitada),
+      produccion_habilitada = COALESCE($12, empresa_facturacion_config.produccion_habilitada),
       produccion_habilitada_at = CASE
-        WHEN $9 = TRUE
+        WHEN $12 = TRUE
          AND empresa_facturacion_config.produccion_habilitada IS DISTINCT FROM TRUE
         THEN NOW()
-        WHEN $9 = FALSE
+        WHEN $12 = FALSE
         THEN NULL
         ELSE empresa_facturacion_config.produccion_habilitada_at
       END,
       produccion_habilitada_by = CASE
-        WHEN $9 = TRUE
+        WHEN $12 = TRUE
         THEN EXCLUDED.produccion_habilitada_by
-        WHEN $9 = FALSE
+        WHEN $12 = FALSE
         THEN NULL
         ELSE empresa_facturacion_config.produccion_habilitada_by
       END,
       produccion_observaciones = CASE
-        WHEN $9 IS NOT NULL
+        WHEN $12 IS NOT NULL
         THEN EXCLUDED.produccion_observaciones
         ELSE empresa_facturacion_config.produccion_observaciones
       END,
       activo = EXCLUDED.activo,
       updated_at = NOW()
     RETURNING id, empresa_id, cuit, razon_social, condicion_iva, punto_venta, modo_afip,
-              certificado_ref, clave_ref, produccion_habilitada, produccion_habilitada_at,
+              certificado_ref, clave_ref, certificado_pem_encrypted, clave_pem_encrypted,
+              certificado_nombre, clave_nombre, credenciales_updated_at,
+              produccion_habilitada, produccion_habilitada_at,
               produccion_habilitada_by, produccion_observaciones, activo, created_at, updated_at
     `,
     [
@@ -372,6 +401,10 @@ export async function upsertFacturacionConfig(query, empresaId, payload = {}) {
       normalizeAfipMode(payload.modo_afip ?? payload.modoAfip),
       payload.certificado_ref || null,
       payload.clave_ref || null,
+      payload.certificado_pem_encrypted || null,
+      payload.clave_pem_encrypted || null,
+      payload.certificado_nombre || null,
+      payload.clave_nombre || null,
       payload.produccion_habilitada === undefined ? null : payload.produccion_habilitada === true,
       payload.produccion_habilitada_by || null,
       payload.produccion_observaciones || null,
@@ -385,7 +418,9 @@ export async function getFacturacionConfig(query, empresaId) {
   const rows = await query(
     `
     SELECT id, empresa_id, cuit, razon_social, condicion_iva, punto_venta, modo_afip,
-           certificado_ref, clave_ref, produccion_habilitada, produccion_habilitada_at,
+           certificado_ref, clave_ref, certificado_pem_encrypted, clave_pem_encrypted,
+           certificado_nombre, clave_nombre, credenciales_updated_at,
+           produccion_habilitada, produccion_habilitada_at,
            produccion_habilitada_by, produccion_observaciones, activo, created_at, updated_at
     FROM empresa_facturacion_config
     WHERE empresa_id = $1
@@ -400,7 +435,9 @@ export async function getFacturacionConfigForArca(query, empresaId) {
   const rows = await query(
     `
     SELECT id, empresa_id, cuit, razon_social, condicion_iva, punto_venta, modo_afip,
-           certificado_ref, clave_ref, wsaa_token_encrypted, wsaa_sign_encrypted, wsaa_expires_at,
+           certificado_ref, clave_ref, certificado_pem_encrypted, clave_pem_encrypted,
+           certificado_nombre, clave_nombre, credenciales_updated_at,
+           wsaa_token_encrypted, wsaa_sign_encrypted, wsaa_expires_at,
            produccion_habilitada, produccion_habilitada_at, produccion_habilitada_by,
            produccion_observaciones, activo, created_at, updated_at
     FROM empresa_facturacion_config

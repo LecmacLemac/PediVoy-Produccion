@@ -267,6 +267,7 @@ Estado tecnico actual:
 - WSAA homologacion probado correctamente el 2026-05-15: AFIP/ARCA devolvio `token/sign` para `wsfe`. No se registra el valor del token ni del sign en este documento.
 - Empresa detectada para la prueba inicial: `empresa_id = 1`, `AguaHidro.com`, razon social `Mauricio N. Datta`, CUIT `20-24617736-9`, condicion `Monotributo`.
 - Se agrego `npm run arca:check-credentials -- --cert <cert.pem> --key <clave.pem>` para validar que la clave privada corresponde al certificado antes de intentar WSAA.
+- En Render/produccion, las credenciales ARCA deben persistirse cifradas en PostgreSQL (`certificado_pem_encrypted` y `clave_pem_encrypted`). WSAA las descifra en memoria, escribe PEM temporales en `/tmp` para `openssl cms -sign` y los elimina al terminar, evitando depender de rutas locales como `/home/lemac/...`.
 
 Pendiente de Fase 2:
 
