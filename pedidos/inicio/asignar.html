@@ -328,6 +328,74 @@
     text-align: center;
     background: rgba(245,158,11,0.06);
   }
+
+  .control-tower {
+    display: grid;
+    gap: 1rem;
+  }
+  .tower-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+  .tower-head h2 { margin: 0; color: #fff; font-size: 1.15rem; }
+  .tower-head p { margin: 0.3rem 0 0; color: var(--muted); line-height: 1.4; }
+  .tower-actions { display: flex; gap: 0.7rem; flex-wrap: wrap; align-items: center; }
+  .tower-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.8rem;
+  }
+  .tower-table td { vertical-align: top; white-space: normal; }
+  .order-main { display: grid; gap: 0.25rem; min-width: 180px; }
+  .order-main strong { color: #fff; }
+  .order-meta { color: var(--muted); font-size: 0.78rem; line-height: 1.35; }
+  .sla-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 84px;
+    padding: 0.28rem 0.55rem;
+    border-radius: 999px;
+    font-size: 0.76rem;
+    font-weight: 800;
+    border: 1px solid var(--border);
+  }
+  .sla-ok { color: #34d399; background: rgba(16,185,129,0.12); border-color: rgba(16,185,129,0.25); }
+  .sla-warn { color: #fbbf24; background: rgba(245,158,11,0.12); border-color: rgba(245,158,11,0.28); }
+  .sla-bad { color: #fca5a5; background: rgba(239,68,68,0.12); border-color: rgba(239,68,68,0.28); }
+  .driver-suggest {
+    display: grid;
+    gap: 0.25rem;
+    min-width: 180px;
+  }
+  .driver-suggest strong { color: #fff; }
+  .gps-line { color: var(--muted); font-size: 0.78rem; }
+  .action-box {
+    display: grid;
+    gap: 0.45rem;
+    min-width: 190px;
+  }
+  .action-text { color: var(--muted); font-size: 0.8rem; line-height: 1.35; }
+  .btn-assign-order {
+    width: 100%;
+    justify-content: center;
+  }
+  .mini-select {
+    min-width: 180px;
+    padding: 0.52rem 0.65rem;
+    font-size: 0.85rem;
+  }
+  @media (max-width: 980px) {
+    .tower-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+  @media (max-width: 620px) {
+    .tower-grid { grid-template-columns: 1fr; }
+    .tower-actions { width: 100%; }
+    .tower-actions .btn { flex: 1; }
+  }
   
   /* Elementos específicos de inicial.html */
   .step-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.5rem; display: flex; gap: 1rem; margin-bottom: 1rem; align-items: flex-start; }
@@ -369,10 +437,58 @@
     
     <div class="page-header">
       <div>
-        <h1>🔗 Asignación de Zonas</h1>
-        <p class="subtitle">Vincula tus choferes a las zonas geográficas de reparto.</p>
+        <h1>🔗 Asignación y Reparto</h1>
+        <p class="subtitle">Torre de control para pedidos sin chofer, GPS, demora y acción sugerida.</p>
       </div>
     </div>
+
+    <section class="control-panel control-tower" aria-label="Torre de control reparto">
+      <div class="tower-head">
+        <div>
+          <h2>Torre de control reparto</h2>
+          <p>Prioriza pedidos sin chofer y propone el mejor repartidor según zona, carga activa y señal GPS.</p>
+        </div>
+        <div class="tower-actions">
+          <button id="btnRefreshTower" type="button" class="btn btn-primary">Actualizar reparto</button>
+          <a class="btn" href="/pedidos/inicio/choferes.html">Ver GPS completo</a>
+        </div>
+      </div>
+
+      <div class="tower-grid" aria-label="Resumen operativo de reparto">
+        <div class="metric-card">
+          <span>Sin chofer</span>
+          <strong id="twSinChofer">0</strong>
+        </div>
+        <div class="metric-card">
+          <span>Demora crítica</span>
+          <strong id="twCriticos">0</strong>
+        </div>
+        <div class="metric-card">
+          <span>GPS activo</span>
+          <strong id="twGpsActivo">0</strong>
+        </div>
+        <div class="metric-card">
+          <span>Acción sugerida</span>
+          <strong id="twAccion">-</strong>
+        </div>
+      </div>
+
+      <div class="table-responsive">
+        <table class="tower-table">
+          <thead>
+            <tr>
+              <th>Pedido</th>
+              <th>Demora</th>
+              <th>GPS / chofer sugerido</th>
+              <th>Acción</th>
+            </tr>
+          </thead>
+          <tbody id="towerRows">
+            <tr><td colspan="4" style="text-align:center; padding:1.5rem; color:var(--muted);">Cargando torre de control...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
 
     <div class="control-panel">
       
@@ -486,6 +602,9 @@
     let zones = [];
     let drivers = [];
     let assignments = {};
+    let towerOrders = [];
+    let driverLive = [];
+    let activeOrders = [];
     let assignBusy = false;
     let unassignBusy = false;
     let filters = { q: '', coverage: '' };
@@ -518,6 +637,7 @@
           } else {
              zones = []; drivers = []; assignments = {};
              renderForm(); renderGrid();
+             renderTower([]);
              $('#gridZonas').innerHTML = '<div style="grid-column:1/-1; text-align:center; padding:3rem; color:var(--muted);">Selecciona una empresa para ver datos.</div>';
              return;
           }
@@ -540,6 +660,214 @@
 
       renderForm();
       renderGrid();
+      loadTower();
+    }
+
+    function empresaQS() {
+      const empId = $('#empSel')?.value;
+      return STATE.isSuper && empId ? '?empresa_id=' + encodeURIComponent(empId) : '';
+    }
+
+    function appendEmpresaParam(url) {
+      const qs = empresaQS();
+      if (!qs) return url;
+      return url + (url.includes('?') ? '&' + qs.slice(1) : qs);
+    }
+
+    function parseDate(value) {
+      if (!value) return null;
+      const date = new Date(value);
+      return Number.isFinite(date.getTime()) ? date : null;
+    }
+
+    function delayInfo(order) {
+      const created = parseDate(order.fecha);
+      if (!created) return { minutes: 0, hours: 0, text: 'Sin fecha', cls: 'sla-warn', critical: false };
+      const minutes = Math.max(0, Math.round((Date.now() - created.getTime()) / 60000));
+      const hours = minutes / 60;
+      const text = minutes < 60 ? minutes + ' min' : hours.toFixed(hours >= 10 ? 0 : 1) + ' h';
+      const cls = hours >= 4 ? 'sla-bad' : hours >= 2 ? 'sla-warn' : 'sla-ok';
+      return { minutes, hours, text, cls, critical: hours >= 4 };
+    }
+
+    function activeLoadMap() {
+      const loads = {};
+      (activeOrders || []).forEach(p => {
+        const id = Number(p.chofer_id || 0);
+        if (!id) return;
+        loads[id] = (loads[id] || 0) + 1;
+      });
+      return loads;
+    }
+
+    function driverGpsMap() {
+      const map = {};
+      (driverLive || []).forEach(row => {
+        const id = Number(row.chofer_id || 0);
+        if (!id) return;
+        map[id] = row;
+      });
+      return map;
+    }
+
+    function gpsStatus(live) {
+      if (!live?.timestamp) return { label: 'Sin señal', active: false, stale: true, ageMin: null };
+      const ts = parseDate(live.timestamp);
+      if (!ts) return { label: 'Sin señal', active: false, stale: true, ageMin: null };
+      const ageMin = Math.max(0, Math.round((Date.now() - ts.getTime()) / 60000));
+      if (ageMin <= 15) return { label: 'GPS activo', active: true, stale: false, ageMin };
+      if (ageMin <= 60) return { label: 'Señal vieja', active: false, stale: true, ageMin };
+      return { label: 'GPS vencido', active: false, stale: true, ageMin };
+    }
+
+    function assignedDriverIdsForZone(zoneId) {
+      const id = Number(zoneId || 0);
+      if (!id) return [];
+      return (assignments[id] || []).map(Number).filter(Boolean);
+    }
+
+    function suggestDriver(order) {
+      const loads = activeLoadMap();
+      const gps = driverGpsMap();
+      const zoneDrivers = assignedDriverIdsForZone(order.zona_id);
+      let candidates = zoneDrivers.length
+        ? drivers.filter(d => zoneDrivers.includes(Number(d.id)))
+        : drivers.slice();
+
+      candidates = candidates.filter(Boolean);
+      if (!candidates.length) return { driver: null, reason: 'No hay chofer disponible para sugerir.' };
+
+      const scored = candidates.map(driver => {
+        const id = Number(driver.id);
+        const status = gpsStatus(gps[id]);
+        const load = loads[id] || 0;
+        const zoneBonus = zoneDrivers.includes(id) ? 0 : 3;
+        const gpsPenalty = status.active ? 0 : status.ageMin == null ? 2 : 1;
+        return { driver, status, load, score: load + zoneBonus + gpsPenalty };
+      }).sort((a, b) => a.score - b.score || a.load - b.load || String(a.driver.nombre || '').localeCompare(String(b.driver.nombre || '')));
+
+      const best = scored[0];
+      const reason = zoneDrivers.length
+        ? 'Zona cubierta, menor carga activa.'
+        : 'Sin zona cubierta: menor carga disponible.';
+      return { ...best, reason };
+    }
+
+    function orderActionText(order, suggestion, delay) {
+      if (!suggestion?.driver) return 'Revisar zonas o crear chofer antes de asignar.';
+      if (delay.critical) return 'Asignar ahora y priorizar salida.';
+      if (!assignedDriverIdsForZone(order.zona_id).length) return 'Asignar y revisar cobertura de zona.';
+      if (!suggestion.status?.active) return 'Asignar y pedir activación GPS.';
+      return 'Asignar al chofer sugerido.';
+    }
+
+    async function loadTower() {
+      if (STATE.isSuper && !$('#empSel')?.value) {
+        renderTower([], [], []);
+        return;
+      }
+
+      const rowsEl = $('#towerRows');
+      if (rowsEl) rowsEl.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:1.5rem; color:var(--muted);">Cargando torre de control...</td></tr>';
+
+      const [sinChofer, activos, gps] = await Promise.all([
+        api(appendEmpresaParam('/api/pedidos?orphan_chofer=1')),
+        api(appendEmpresaParam('/api/pedidos')),
+        api(appendEmpresaParam('/api/track/drivers/live')),
+      ]);
+
+      towerOrders = Array.isArray(sinChofer)
+        ? sinChofer.filter(p => ['pendiente', 'en_ruta', 'en_camino'].includes(String(p.estado || '').toLowerCase()))
+        : [];
+      activeOrders = Array.isArray(activos)
+        ? activos.filter(p => ['pendiente', 'en_ruta', 'en_camino'].includes(String(p.estado || '').toLowerCase()))
+        : [];
+      driverLive = Array.isArray(gps?.items) ? gps.items : [];
+
+      renderTower(towerOrders, activeOrders, driverLive);
+    }
+
+    function renderTower(orders = []) {
+      const rowsEl = $('#towerRows');
+      if (!rowsEl) return;
+
+      const gpsActive = driverLive.filter(row => gpsStatus(row).active).length;
+      const critical = orders.filter(row => delayInfo(row).critical).length;
+      $('#twSinChofer').textContent = String(orders.length);
+      $('#twCriticos').textContent = String(critical);
+      $('#twGpsActivo').textContent = String(gpsActive);
+      $('#twAccion').textContent = orders.length ? (critical ? 'Priorizar' : 'Asignar') : 'OK';
+
+      if (STATE.isSuper && !$('#empSel')?.value) {
+        rowsEl.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:1.5rem; color:var(--muted);">Selecciona una empresa para ver la torre de reparto.</td></tr>';
+        return;
+      }
+
+      if (!orders.length) {
+        rowsEl.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:1.5rem; color:var(--muted);">No hay pedidos activos sin chofer.</td></tr>';
+        return;
+      }
+
+      const sorted = orders
+        .slice()
+        .sort((a, b) => delayInfo(b).minutes - delayInfo(a).minutes || Number(b.id || 0) - Number(a.id || 0))
+        .slice(0, 40);
+
+      rowsEl.innerHTML = sorted.map(order => {
+        const delay = delayInfo(order);
+        const suggestion = suggestDriver(order);
+        const driver = suggestion.driver;
+        const live = driver ? driverGpsMap()[Number(driver.id)] : null;
+        const status = suggestion.status || gpsStatus(live);
+        const zone = zones.find(z => Number(z.id) === Number(order.zona_id));
+        const selected = driver ? Number(driver.id) : '';
+        const driverOptions = drivers.map(d => '<option value="' + Number(d.id) + '"' + (Number(d.id) === selected ? ' selected' : '') + '>' + esc(d.nombre) + '</option>').join('');
+        const canAssign = drivers.length > 0;
+        const action = orderActionText(order, suggestion, delay);
+        const gpsAge = status.ageMin == null ? '' : ' · hace ' + status.ageMin + ' min';
+
+        return '<tr>' +
+          '<td><div class="order-main"><strong>#' + Number(order.id) + ' · ' + esc(order.cliente || 'Cliente') + '</strong>' +
+          '<span class="order-meta">' + esc(order.direccion || 'Sin dirección') + '</span>' +
+          '<span class="order-meta">' + esc(zone?.nombre || (order.zona_id ? 'Zona #' + order.zona_id : 'Sin zona')) + ' · ' + esc(order.metodo_pago || '-') + ' · $' + Number(order.monto || 0).toLocaleString('es-AR') + '</span></div></td>' +
+          '<td><span class="sla-pill ' + delay.cls + '">' + esc(delay.text) + '</span><div class="order-meta">' + esc(order.estado || 'pendiente') + '</div></td>' +
+          '<td><div class="driver-suggest"><strong>' + esc(driver?.nombre || 'Sin sugerencia') + '</strong><span class="gps-line">' + esc(status.label + gpsAge) + '</span><span class="gps-line">' + esc(suggestion.reason || '') + '</span></div></td>' +
+          '<td><div class="action-box"><select class="mini-select" data-order-driver="' + Number(order.id) + '"' + (!canAssign ? ' disabled' : '') + '>' + (canAssign ? driverOptions : '<option value="">Sin choferes</option>') + '</select><button class="btn btn-primary btn-assign-order" data-action="assign-order" data-pedido-id="' + Number(order.id) + '"' + (!canAssign ? ' disabled' : '') + '>Asignar</button><span class="action-text">' + esc(action) + '</span></div></td>' +
+        '</tr>';
+      }).join('');
+    }
+
+    async function assignOrder(pedidoId, btnEl) {
+      const select = document.querySelector('[data-order-driver="' + Number(pedidoId) + '"]');
+      const choferId = Number(select?.value || 0);
+      if (!choferId) return toast('Selecciona un chofer');
+      const currentOrder = towerOrders.find(p => Number(p.id) === Number(pedidoId));
+
+      const prev = btnEl?.textContent || '';
+      if (btnEl) {
+        btnEl.disabled = true;
+        btnEl.textContent = 'Asignando...';
+      }
+
+      try {
+        const body = { chofer_id: choferId };
+        if (STATE.isSuper && $('#empSel')?.value) body.empresa_id = Number($('#empSel').value);
+        if (currentOrder?.zona_id != null) body.zona_id = Number(currentOrder.zona_id);
+
+        const res = await api('/api/pedidos/' + Number(pedidoId), {
+          method: 'PUT',
+          body: JSON.stringify(body)
+        });
+
+        if (res?.error) return toast('❌ ' + res.error);
+        toast('✅ Pedido asignado');
+        await loadTower();
+      } finally {
+        if (btnEl) {
+          btnEl.disabled = false;
+          btnEl.textContent = prev;
+        }
+      }
     }
 
     function getDriverLoadMap() {
@@ -719,6 +1047,9 @@
     const btnAssign = document.getElementById('btnAssign');
     if (btnAssign) btnAssign.addEventListener('click', assign);
 
+    const btnRefreshTower = document.getElementById('btnRefreshTower');
+    if (btnRefreshTower) btnRefreshTower.addEventListener('click', loadTower);
+
     const zoneSearch = document.getElementById('zoneSearch');
     if (zoneSearch) {
       zoneSearch.addEventListener('input', () => {
@@ -760,6 +1091,17 @@
       });
     }
 
+    const towerRows = document.getElementById('towerRows');
+    if (towerRows) {
+      towerRows.addEventListener('click', (ev) => {
+        const btn = ev.target.closest('button[data-action="assign-order"]');
+        if (!btn) return;
+        const pedidoId = Number(btn.getAttribute('data-pedido-id'));
+        if (!Number.isFinite(pedidoId) || pedidoId <= 0) return;
+        assignOrder(pedidoId, btn);
+      });
+    }
+
     // --- Init ---
     (async () => {
         try {
@@ -778,6 +1120,7 @@
                     list.map(e => `<option value="${Number(e.id)}">${esc(e.nombre)}</option>`).join('');
                     sel.addEventListener('change', load);
                 }
+                renderTower([]);
             } else {
                 load();
             }

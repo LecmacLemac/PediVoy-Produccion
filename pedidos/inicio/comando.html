@@ -73,6 +73,14 @@
     .links a { color:#dbeafe; text-decoration:none; font-size:.93rem; }
     .links a:hover { text-decoration:underline; }
 
+    .focus-grid { display:grid; grid-template-columns: repeat(auto-fit,minmax(230px,1fr)); gap:10px; }
+    .focus-item { background: var(--bg-2); border:1px solid var(--border); border-radius:10px; padding:12px; display:grid; gap:8px; }
+    .focus-head { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+    .focus-title { font-weight:800; color:#fff; }
+    .focus-text { color:var(--muted); line-height:1.35; margin:0; }
+    .focus-link { color:#93c5fd; text-decoration:none; font-weight:700; font-size:.88rem; }
+    .focus-link:hover { text-decoration:underline; }
+
     .kpis { display:grid; grid-template-columns: repeat(auto-fit,minmax(180px,1fr)); gap:10px; }
     .kpi { background: var(--bg-2); border:1px solid var(--border); border-radius:10px; padding:10px; }
     .badge { display:inline-block; padding:2px 8px; border-radius:999px; font-size:.78rem; font-weight:700; }
@@ -122,8 +130,9 @@
       <ul class="menu">
         <li><a href="inicial.html">🚀 Inicio</a></li>
         <li><a href="/pedidos/dashboard.html">Dashboard</a></li>
+        <li><a href="/pedidos/facturacion.html">Facturacion</a></li>
+        <li><a href="/pedidos/pagos.html">Pagos</a></li>
         <li><a href="producto.html">Productos</a></li>
-        <li><a href="promociones.html">Promociones</a></li>
         <li><a href="comando.html" class="active">Comando</a></li>
         <li><a href="#" id="logout" style="color:var(--bad)">Salir</a></li>
       </ul>
@@ -169,15 +178,45 @@
       <div id="alerts" class="alerts"><div class="muted">Cargando alertas…</div></div>
     </section>
 
+    <section class="card">
+      <h2 class="title">🎯 Focos ejecutivos</h2>
+      <p class="muted" style="margin-top:0">Orden recomendado para profesionalizar PediVoy sin dispersar al equipo.</p>
+      <div class="focus-grid">
+        <article class="focus-item">
+          <div class="focus-head"><span class="focus-title">Logistica diaria</span><span class="badge bad">Alta</span></div>
+          <p class="focus-text">Controlar pedidos, asignacion, GPS y demoras desde una sola rutina operativa.</p>
+          <a class="focus-link" href="/pedidos/dashboard.html">Abrir pedidos</a>
+        </article>
+        <article class="focus-item">
+          <div class="focus-head"><span class="focus-title">Facturacion ARCA</span><span class="badge bad">Alta</span></div>
+          <p class="focus-text">Validar configuracion fiscal, pendientes de emision y rechazos antes de facturar real.</p>
+          <a class="focus-link" href="/pedidos/facturacion.html">Abrir facturacion</a>
+        </article>
+        <article class="focus-item">
+          <div class="focus-head"><span class="focus-title">Caja y pagos</span><span class="badge warn">Media</span></div>
+          <p class="focus-text">Revisar transferencias, conciliacion, gastos y caja para evitar desorden financiero.</p>
+          <a class="focus-link" href="/pedidos/pagos.html">Abrir pagos</a>
+        </article>
+        <article class="focus-item">
+          <div class="focus-head"><span class="focus-title">Configuracion base</span><span class="badge warn">Media</span></div>
+          <p class="focus-text">Mantener empresa, zonas, choferes, productos y usuarios consistentes por empresa.</p>
+          <a class="focus-link" href="/pedidos/inicio/empresa.html">Abrir empresa</a>
+        </article>
+      </div>
+    </section>
+
     <section class="grid g4">
       <article class="module"><h3>📦 Operación</h3><div class="links">
-        <a href="/pedidos/dashboard.html">Dashboard pedidos</a><a href="/pedidos/repartidor.html">Repartidor</a><a href="/pedidos/inicio/incidencias.html">Incidencias</a><a href="/pedidos/inicio/ejecutivo.html">Tablero ejecutivo</a><a href="/pedidos/inicio/tesoreria.html">Tesorería</a>
+        <a href="/pedidos/dashboard.html">Dashboard pedidos</a><a href="/pedidos/repartidor.html">Repartidor</a><a href="/pedidos/inicio/asignar.html">Asignacion</a><a href="/pedidos/inicio/incidencias.html">Incidencias</a><a href="/pedidos/inicio/ejecutivo.html">Tablero ejecutivo</a><a href="/pedidos/inicio/tesoreria.html">Tesorería</a>
       </div></article>
       <article class="module"><h3>💰 Comercial</h3><div class="links">
         <a href="/pedidos/inicio/crm.html">CRM</a><a href="/pedidos/inicio/producto.html">Catálogo de productos</a><a href="/pedidos/inicio/promociones.html">Promociones y puntos</a><a href="/pedidos/estadisticas.html">Estadísticas</a>
       </div></article>
+      <article class="module"><h3>🧾 Finanzas</h3><div class="links">
+        <a href="/pedidos/facturacion.html">Facturacion ARCA</a><a href="/pedidos/pagos.html">Pagos y transferencias</a><a href="/pedidos/gastos.html">Gastos</a><a href="/pedidos/inicio/tesoreria.html">Tesoreria</a>
+      </div></article>
       <article class="module"><h3>⚙️ Configuración</h3><div class="links">
-        <a href="/pedidos/inicio/empresa.html">Empresa</a><a href="/pedidos/inicio/zonas.html">Zonas</a><a href="/pedidos/inicio/choferes.html">Choferes</a><a href="/pedidos/inicio/usuarios.html">Usuarios</a>
+        <a href="/pedidos/inicio/empresa.html">Empresa</a><a href="/pedidos/inicio/zona.html">Zonas</a><a href="/pedidos/inicio/choferes.html">Choferes</a><a href="/pedidos/inicio/usuarios.html">Usuarios</a>
       </div></article>
       <article class="module"><h3>🛠️ Administración técnica</h3><div class="links">
         <a href="/health" target="_blank">Health endpoint</a><a href="/api/me" target="_blank">API /me</a><a href="/pedidos/observabilidad.html">Observabilidad</a>
@@ -198,6 +237,10 @@
     let autoTimer = null;
     const COMMANDS = [
       { label:'Dashboard pedidos', href:'/pedidos/dashboard.html', group:'Operación' },
+      { label:'Facturacion ARCA', href:'/pedidos/facturacion.html', group:'Finanzas' },
+      { label:'Pagos y transferencias', href:'/pedidos/pagos.html', group:'Finanzas' },
+      { label:'Gastos', href:'/pedidos/gastos.html', group:'Finanzas' },
+      { label:'Asignacion de pedidos', href:'/pedidos/inicio/asignar.html', group:'Operación' },
       { label:'Incidencias', href:'/pedidos/inicio/incidencias.html', group:'Operación' },
       { label:'Ejecutivo', href:'/pedidos/inicio/ejecutivo.html', group:'Operación' },
       { label:'Tesorería', href:'/pedidos/inicio/tesoreria.html', group:'Operación' },
@@ -205,9 +248,9 @@
       { label:'Productos', href:'/pedidos/inicio/producto.html', group:'Comercial' },
       { label:'CRM', href:'/pedidos/inicio/crm.html', group:'Comercial' },
       { label:'Empresa', href:'/pedidos/inicio/empresa.html', group:'Configuración' },
-      { label:'Zonas', href:'/pedidos/inicio/zonas.html', group:'Configuración' },
+      { label:'Zonas', href:'/pedidos/inicio/zona.html', group:'Configuración' },
       { label:'Choferes', href:'/pedidos/inicio/choferes.html', group:'Configuración' },
-      { label:'Observabilidad', href:'/pedidos/inicio/observabilidad.html', group:'Técnico' },
+      { label:'Observabilidad', href:'/pedidos/observabilidad.html', group:'Técnico' },
       { label:'Health', href:'/health', group:'Técnico' }
     ];
 

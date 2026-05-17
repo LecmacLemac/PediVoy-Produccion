@@ -121,6 +121,72 @@
     color: var(--muted);
   }
 
+  .ops-rail {
+    background: linear-gradient(135deg, rgba(6, 182, 212, 0.12), rgba(15, 23, 42, 0.82));
+    border: 1px solid rgba(6, 182, 212, 0.24);
+    border-radius: var(--radius);
+    padding: 1rem;
+    display: grid;
+    grid-template-columns: minmax(220px, 1.1fr) repeat(4, minmax(140px, 1fr));
+    gap: 0.75rem;
+    align-items: stretch;
+  }
+
+  .ops-rail-main {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    justify-content: center;
+  }
+
+  .ops-rail-title {
+    margin: 0;
+    font-size: 1rem;
+    color: #fff;
+  }
+
+  .ops-rail-sub {
+    margin: 0;
+    color: var(--muted);
+    font-size: 0.86rem;
+    line-height: 1.35;
+  }
+
+  .ops-link {
+    min-height: 72px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: rgba(15, 23, 42, 0.72);
+    color: var(--ink);
+    text-decoration: none;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 0.28rem;
+    padding: 0.8rem;
+  }
+
+  .ops-link:hover {
+    border-color: var(--brand);
+    background: rgba(15, 23, 42, 0.95);
+  }
+
+  .ops-link strong {
+    color: #fff;
+    font-size: 0.92rem;
+  }
+
+  .ops-link span {
+    color: var(--muted);
+    font-size: 0.78rem;
+    line-height: 1.25;
+  }
+
+  @media (max-width: 920px) {
+    .ops-rail { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .ops-rail-main { grid-column: 1 / -1; }
+  }
+
   /* --- TOOLBAR & FILTERS --- */
   .toolbar {
     background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
@@ -247,14 +313,13 @@
       </div>
     <ul class="menu" id="mainMenu">
         <li><a href="inicio/inicial.html">🚀 Inicio</a></li>
+        <li><a href="inicio/comando.html">Comando</a></li>
         <li><a href="dashboard.html" class="active">Dashboard</a></li>
         <li><a href="facturacion.html">Facturacion</a></li>
         <li><a href="pagos.html">Pagos</a></li>
-        <li><a href="gastos.html">Gastos</a></li>
         <li><a href="stock.html">Stock</a></li>
         <li><a href="repartidores.html">Repartidor</a></li>
         <li><a href="estadisticas.html">Estadisticas</a></li>
-        <li><a href="iaweb.html">IAweb</a></li>
         <li><a href="qr.html">QR</a></li>
         <li><a href="#" id="logout" style="color: var(--danger)">Salir</a></li>
       </ul>
@@ -262,6 +327,17 @@
   </header>
 
   <main class="container">
+
+    <section class="ops-rail" aria-label="Acciones operativas principales">
+      <div class="ops-rail-main">
+        <h2 class="ops-rail-title">Centro operativo</h2>
+        <p class="ops-rail-sub">Atajos para resolver lo que mueve la empresa hoy: pedidos, asignacion, cobros y facturacion.</p>
+      </div>
+      <a class="ops-link" href="inicio/asignar.html"><strong><i class="fa-solid fa-route"></i> Asignar</strong><span>Ordenar reparto y choferes</span></a>
+      <a class="ops-link" href="facturacion.html"><strong><i class="fa-solid fa-file-invoice"></i> Facturar</strong><span>Pendientes ARCA y CAE</span></a>
+      <a class="ops-link" href="pagos.html"><strong><i class="fa-solid fa-money-check-dollar"></i> Cobros</strong><span>Transferencias y revision</span></a>
+      <a class="ops-link" href="inicio/comando.html"><strong><i class="fa-solid fa-gauge-high"></i> Comando</strong><span>Semaforo ejecutivo</span></a>
+    </section>
     
     <section class="grid-kpi">
       <div class="kpi-card">
