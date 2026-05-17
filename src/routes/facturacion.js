@@ -93,6 +93,7 @@ export function createFacturacionRouter() {
       ...safe,
       certificado_cargado: Boolean(config.certificado_pem_encrypted || config.certificado_ref),
       clave_cargada: Boolean(config.clave_pem_encrypted || config.clave_ref),
+      credenciales_persistentes: Boolean(config.certificado_pem_encrypted && config.clave_pem_encrypted),
     };
   }
 
@@ -229,6 +230,14 @@ export function createFacturacionRouter() {
 
         if (!certificadoSecret && !claveSecret) {
           return res.status(400).json({ error: 'Archivo requerido' });
+        }
+
+        const hasPersistentCert = Boolean(certificadoSecret || current.certificado_pem_encrypted);
+        const hasPersistentKey = Boolean(claveSecret || current.clave_pem_encrypted);
+        if (!hasPersistentCert || !hasPersistentKey) {
+          return res.status(400).json({
+            error: 'Para produccion en Render tenes que cargar certificado y clave privada juntos al menos una vez',
+          });
         }
 
         const config = await upsertFacturacionConfig(query, empresaId, {
