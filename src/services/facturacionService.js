@@ -317,7 +317,7 @@ export async function upsertFacturacionConfig(query, empresaId, payload = {}) {
       produccion_habilitada, produccion_habilitada_at,
       produccion_habilitada_by, produccion_observaciones, activo, updated_at
     )
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,CASE WHEN $9 IS NOT NULL OR $10 IS NOT NULL THEN NOW() ELSE NULL END,COALESCE($13,FALSE),CASE WHEN COALESCE($13,FALSE) THEN NOW() ELSE NULL END,$14,$15,$16,NOW())
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::TEXT,$10::TEXT,$11::TEXT,$12::TEXT,CASE WHEN $9::TEXT IS NOT NULL OR $10::TEXT IS NOT NULL THEN NOW() ELSE NULL END,COALESCE($13::BOOLEAN,FALSE),CASE WHEN COALESCE($13::BOOLEAN,FALSE) THEN NOW() ELSE NULL END,$14,$15,$16,NOW())
     ON CONFLICT (empresa_id)
     DO UPDATE SET
       cuit = EXCLUDED.cuit,
@@ -363,24 +363,24 @@ export async function upsertFacturacionConfig(query, empresaId, payload = {}) {
         THEN NULL
         ELSE empresa_facturacion_config.wsaa_expires_at
       END,
-      produccion_habilitada = COALESCE($13, empresa_facturacion_config.produccion_habilitada),
+      produccion_habilitada = COALESCE($13::BOOLEAN, empresa_facturacion_config.produccion_habilitada),
       produccion_habilitada_at = CASE
-        WHEN $13 = TRUE
+        WHEN $13::BOOLEAN = TRUE
          AND empresa_facturacion_config.produccion_habilitada IS DISTINCT FROM TRUE
         THEN NOW()
-        WHEN $13 = FALSE
+        WHEN $13::BOOLEAN = FALSE
         THEN NULL
         ELSE empresa_facturacion_config.produccion_habilitada_at
       END,
       produccion_habilitada_by = CASE
-        WHEN $13 = TRUE
+        WHEN $13::BOOLEAN = TRUE
         THEN EXCLUDED.produccion_habilitada_by
-        WHEN $13 = FALSE
+        WHEN $13::BOOLEAN = FALSE
         THEN NULL
         ELSE empresa_facturacion_config.produccion_habilitada_by
       END,
       produccion_observaciones = CASE
-        WHEN $13 IS NOT NULL
+        WHEN $13::BOOLEAN IS NOT NULL
         THEN EXCLUDED.produccion_observaciones
         ELSE empresa_facturacion_config.produccion_observaciones
       END,
