@@ -99,6 +99,12 @@
     .invoice-preview-cell span { display:block; color:var(--muted); font-size:.72rem; font-weight:800; text-transform:uppercase; margin-bottom:.25rem; }
     .invoice-items { padding:1rem; overflow-x:auto; }
     .invoice-items table { white-space:normal; }
+    .event-list { margin-top:1rem; border:1px solid var(--border); border-radius:10px; overflow:hidden; background:rgba(15,23,42,.72); }
+    .event-list h3 { margin:0; padding:1rem; border-bottom:1px solid var(--border); font-size:.95rem; color:#fff; }
+    .event-item { display:grid; grid-template-columns:140px 1fr; gap:1rem; padding:.85rem 1rem; border-bottom:1px solid var(--border); }
+    .event-item:last-child { border-bottom:none; }
+    .event-action { color:#fff; font-weight:800; }
+    .event-detail { color:var(--muted); white-space:normal; }
     .toast { position:fixed; right:20px; bottom:30px; background:#fff; color:#0f172a; padding:10px 18px; border-radius:99px; font-weight:700; box-shadow:0 10px 30px rgba(0,0,0,.3); opacity:0; pointer-events:none; transition:.25s; z-index:2000; }
     .toast.show { opacity:1; transform:translateY(-8px); }
     .mode-banner { display:flex; justify-content:space-between; align-items:center; gap:1rem; padding:1rem 1.25rem; border:1px solid var(--border); border-radius:var(--radius); background:rgba(59,130,246,.12); }
@@ -109,6 +115,18 @@
     .control-card h3 { margin:0; color:#fff; font-size:.92rem; display:flex; align-items:center; gap:.55rem; }
     .control-value { font-size:1.55rem; font-weight:800; color:#fff; line-height:1; }
     .control-card p { margin:0; color:var(--muted); line-height:1.35; }
+    .fiscal-summary { display:grid; grid-template-columns:1.2fr .8fr; gap:1rem; }
+    .summary-card { background:rgba(15,23,42,.82); border:1px solid var(--border); border-radius:var(--radius); padding:1rem; }
+    .summary-card h2 { margin:0 0 .85rem; color:#fff; font-size:1rem; display:flex; align-items:center; gap:.55rem; }
+    .summary-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:.75rem; }
+    .summary-metric { background:rgba(255,255,255,.04); border:1px solid var(--border); border-radius:10px; padding:.85rem; min-width:0; }
+    .summary-metric span { display:block; color:var(--muted); font-size:.72rem; font-weight:800; text-transform:uppercase; margin-bottom:.35rem; }
+    .summary-metric strong { display:block; color:#fff; font-size:1.25rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .summary-bars { display:grid; gap:.65rem; }
+    .summary-bar { display:grid; gap:.35rem; }
+    .summary-bar-head { display:flex; justify-content:space-between; gap:.75rem; color:#fff; font-weight:750; }
+    .bar-track { height:8px; background:rgba(255,255,255,.08); border-radius:99px; overflow:hidden; }
+    .bar-fill { height:100%; background:var(--brand); border-radius:99px; }
     .status-line { display:flex; gap:.5rem; flex-wrap:wrap; margin-top:.35rem; }
     .row-alert { margin-top:.45rem; color:#fbbf24; font-size:.78rem; white-space:normal; max-width:340px; }
     .row-alert.bad { color:#fca5a5; }
@@ -127,6 +145,9 @@
       .actions { flex-direction:column; }
       .actions .btn { width:100%; }
       .invoice-preview-grid { grid-template-columns:1fr; }
+      .event-item { grid-template-columns:1fr; gap:.35rem; }
+      .fiscal-summary { grid-template-columns:1fr; }
+      .summary-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
     }
   </style>
 </head>
@@ -158,6 +179,7 @@
       </div>
       <div class="actions">
         <a class="btn" href="/pedidos/inicio/empresa.html"><i class="fa-solid fa-building"></i> Configuracion fiscal</a>
+        <button class="btn" id="btnExportCsv" type="button"><i class="fa-solid fa-file-csv"></i> Exportar CSV</button>
         <button class="btn btn-primary" id="btnRefresh"><i class="fa-solid fa-rotate-right"></i> Actualizar</button>
       </div>
     </section>
@@ -192,6 +214,24 @@
       <div class="kpi-card"><div><h3 id="kpiPendientes">0</h3><p>Sin factura</p></div><div class="kpi-icon" style="color:var(--warning)"><i class="fa-regular fa-clock"></i></div></div>
       <div class="kpi-card"><div><h3 id="kpiEmitidas">0</h3><p>Emitidas</p></div><div class="kpi-icon" style="color:var(--success)"><i class="fa-solid fa-circle-check"></i></div></div>
       <div class="kpi-card"><div><h3 id="kpiMonto">$ 0</h3><p>Monto filtrado</p></div><div class="kpi-icon" style="color:#fff"><i class="fa-solid fa-sack-dollar"></i></div></div>
+    </section>
+
+    <section class="fiscal-summary" id="fiscalSummary">
+      <article class="summary-card">
+        <h2><i class="fa-solid fa-chart-simple"></i> Resumen fiscal filtrado</h2>
+        <div class="summary-grid">
+          <div class="summary-metric"><span>Facturas</span><strong id="sumCantidad">0</strong></div>
+          <div class="summary-metric"><span>Neto</span><strong id="sumNeto">$ 0</strong></div>
+          <div class="summary-metric"><span>IVA</span><strong id="sumIva">$ 0</strong></div>
+          <div class="summary-metric"><span>Total</span><strong id="sumTotal">$ 0</strong></div>
+        </div>
+      </article>
+      <article class="summary-card">
+        <h2><i class="fa-solid fa-scale-balanced"></i> Estados</h2>
+        <div class="summary-bars" id="summaryBars">
+          <div class="muted">Cargando resumen fiscal.</div>
+        </div>
+      </article>
     </section>
 
     <section class="toolbar">
@@ -298,6 +338,7 @@
       <p class="muted" id="dlgHint" style="margin:0"></p>
     </form>
     <section id="facturaPreparada" class="invoice-preview" hidden></section>
+    <section id="facturaEventos" class="event-list" hidden></section>
     <div class="modal-footer">
       <button class="btn" id="btnCloseDlg" type="button">Cancelar</button>
       <button class="btn btn-primary" id="btnCrearFactura" type="button">Crear factura</button>
@@ -321,6 +362,7 @@
     let selectedPedidos = [];
     let selectedPedidoIds = new Set();
     let selectedFactura = null;
+    let selectedFacturaEvents = [];
     let busy = false;
 
     function money(value) { return ARS.format(Number(value) || 0); }
@@ -358,6 +400,9 @@
     }
     function canSelectForGroup(row) {
       return Boolean(onlyDigits(row.cuit)) && !row.factura_id && !fiscalIssues(row).length;
+    }
+    function canUseFacturacionRole(role) {
+      return ['super', 'admin', 'user', 'facturacion', 'contable'].includes(String(role || '').toLowerCase());
     }
     function selectedRows() {
       return pedidos.filter((p) => selectedPedidoIds.has(String(p.pedido_id)));
@@ -418,12 +463,45 @@
       if (!factura?.numero_comprobante) return 'Sin numero fiscal';
       return `${factura.tipo_comprobante || 'F'} ${factura.punto_venta || '-'}-${factura.numero_comprobante}`;
     }
+    function eventLabel(action) {
+      const labels = {
+        preparada: 'Preparada',
+        consolidada_preparada: 'Consolidada',
+        emitida: 'Emitida',
+        rechazada_arca: 'Rechazada ARCA',
+        pdf_descargado: 'PDF',
+        enviada: 'Enviada',
+        cancelada: 'Cancelada',
+        eliminada: 'Eliminada',
+      };
+      return labels[action] || String(action || 'Evento');
+    }
+    function renderFacturaEventos() {
+      const box = $('#facturaEventos');
+      if (!selectedFactura?.id || !selectedFacturaEvents.length) {
+        box.hidden = true;
+        box.innerHTML = '';
+        return;
+      }
+      box.innerHTML = '<h3><i class="fa-solid fa-timeline"></i> Historial operativo</h3>' + selectedFacturaEvents.map((ev) => {
+        const user = ev.usuario_nombre || ev.usuario_email || (ev.usuario_id ? 'Usuario #' + ev.usuario_id : 'Sistema');
+        return `
+          <div class="event-item">
+            <div><div class="event-action">${escapeHtml(eventLabel(ev.accion))}</div><div class="muted">${fmtDate(ev.created_at)}</div></div>
+            <div><div class="event-detail">${escapeHtml(ev.detalle || 'Sin detalle')}</div><div class="muted">${escapeHtml(user)}</div></div>
+          </div>
+        `;
+      }).join('');
+      box.hidden = false;
+    }
     function renderFacturaPreparada(factura) {
       selectedFactura = factura || null;
       const box = $('#facturaPreparada');
       if (!selectedFactura) {
         box.hidden = true;
         box.innerHTML = '';
+        selectedFacturaEvents = [];
+        renderFacturaEventos();
         $('#btnEmitirPreparada').hidden = true;
         return;
       }
@@ -472,6 +550,21 @@
       `;
       box.hidden = false;
       $('#btnEmitirPreparada').hidden = selectedFactura.estado === 'emitida' || selectedFactura.estado === 'anulada';
+      renderFacturaEventos();
+    }
+
+    async function loadFacturaEventos(facturaId) {
+      selectedFacturaEvents = [];
+      renderFacturaEventos();
+      if (!facturaId) return;
+      try {
+        const params = qsEmpresa() ? '?' + qsEmpresa() : '';
+        const data = await apiJson(`/api/facturas/${facturaId}/eventos${params}`);
+        selectedFacturaEvents = data?.eventos || [];
+      } catch {
+        selectedFacturaEvents = [];
+      }
+      renderFacturaEventos();
     }
 
     async function apiJson(url, opts = {}) {
@@ -488,6 +581,19 @@
     function qsEmpresa() {
       if (isSuper && $('#empresaSel').value) return 'empresa_id=' + encodeURIComponent($('#empresaSel').value);
       return '';
+    }
+
+    function facturasFilterParams({ forExport = false } = {}) {
+      const params = new URLSearchParams();
+      const empresa = qsEmpresa();
+      if (empresa) params.set('empresa_id', $('#empresaSel').value);
+      const estado = $('#estadoFactura').value;
+      if (estado && estado !== 'sin_factura' && estado !== 'requiere_revision') params.set('estado', estado);
+      if ($('#fromFilter').value) params.set('from', $('#fromFilter').value);
+      if ($('#toFilter').value) params.set('to', $('#toFilter').value);
+      if ($('#q').value.trim()) params.set('q', $('#q').value.trim());
+      params.set('limit', forExport ? '100' : '100');
+      return params;
     }
 
     function productionConfirmPayload() {
@@ -557,6 +663,46 @@
       }
     }
 
+    function estadoLabel(value) {
+      const labels = {
+        borrador: 'Borrador',
+        pendiente_confirmacion: 'Pendiente',
+        emitiendo: 'Emitiendo',
+        emitida: 'Emitida',
+        rechazada: 'Rechazada',
+        anulada: 'Anulada',
+        sin_estado: 'Sin estado',
+      };
+      return labels[value] || String(value || 'Sin estado');
+    }
+
+    function renderFiscalSummary(resumen) {
+      const data = resumen || {};
+      $('#sumCantidad').textContent = Number(data.cantidad || 0);
+      $('#sumNeto').textContent = money(data.neto);
+      $('#sumIva').textContent = money(data.iva);
+      $('#sumTotal').textContent = money(data.total);
+      const estados = Array.isArray(data.por_estado) ? data.por_estado : [];
+      const max = Math.max(1, ...estados.map((row) => Number(row.total || 0)));
+      $('#summaryBars').innerHTML = estados.length ? estados.map((row) => {
+        const pct = Math.max(4, Math.round((Number(row.total || 0) / max) * 100));
+        return '<div class="summary-bar">' +
+          '<div class="summary-bar-head"><span>' + escapeHtml(estadoLabel(row.estado)) + '</span><span>' + row.cantidad + ' · ' + money(row.total) + '</span></div>' +
+          '<div class="bar-track"><div class="bar-fill" style="width:' + pct + '%"></div></div>' +
+          '</div>';
+      }).join('') : '<div class="muted">Sin facturas para los filtros actuales.</div>';
+    }
+
+    async function loadFiscalSummary() {
+      try {
+        const params = facturasFilterParams();
+        const data = await apiJson('/api/facturas/resumen?' + params.toString());
+        renderFiscalSummary(data?.resumen || null);
+      } catch {
+        renderFiscalSummary(null);
+      }
+    }
+
     async function loadFacturacionConfig() {
       const params = qsEmpresa();
       try {
@@ -574,12 +720,22 @@
       currentUser = res.user || res;
       isSuper = currentUser?.role === 'super';
       $('#roleBadge').textContent = isSuper ? 'Super' : 'Admin';
+      if (!canUseFacturacionRole(currentUser?.role)) {
+        $('#modeBanner').hidden = false;
+        $('#modeBanner').className = 'mode-banner blocked';
+        $('#modeBanner').innerHTML = '<div><strong>Acceso restringido</strong><div class="muted">El panel de facturacion esta reservado para usuarios de backoffice.</div></div><span class="badge b-pending">403</span>';
+        $('#rows').innerHTML = '<tr><td colspan="8" style="text-align:center; padding:3rem; color:var(--muted)">Tu usuario no tiene permisos para operar facturacion.</td></tr>';
+        $('#btnRefresh').disabled = true;
+        $('#btnPrepareSelected').disabled = true;
+        return false;
+      }
       if (isSuper) {
         $('#empresaField').hidden = false;
         const empresas = await apiJson('/api/empresas');
         const rows = Array.isArray(empresas) ? empresas : [];
         $('#empresaSel').innerHTML = '<option value="">Todas</option>' + rows.map((e) => `<option value="${e.id}">${escapeHtml(e.nombre || 'Empresa ' + e.id)}</option>`).join('');
       }
+      return true;
     }
 
     async function loadPedidos() {
@@ -601,6 +757,7 @@
       }
       selectedPedidoIds = new Set([...selectedPedidoIds].filter((id) => pedidos.some((p) => String(p.pedido_id) === id)));
       render();
+      await loadFiscalSummary();
     }
 
     function render() {
@@ -768,9 +925,11 @@
             body:JSON.stringify(productionConfirmPayload()),
           });
           renderFacturaPreparada(emitted.factura || created.factura);
+          await loadFacturaEventos((emitted.factura || created.factura)?.id);
           toast('Factura emitida');
         } else {
           renderFacturaPreparada(created.factura);
+          await loadFacturaEventos(created.factura?.id);
           toast(rows.length > 1 ? 'Factura consolidada preparada' : 'Factura preparada');
         }
         selectedPedidoIds.clear();
@@ -795,6 +954,7 @@
         });
         if (data?.factura && selectedFactura?.id && String(selectedFactura.id) === String(facturaId)) {
           renderFacturaPreparada(data.factura);
+          await loadFacturaEventos(facturaId);
         }
         if (!quiet) {
           toast('Factura emitida');
@@ -821,6 +981,7 @@
       $('#btnCrearFactura').hidden = true;
       $('#btnCrearYEmitir').hidden = true;
       renderFacturaPreparada(data.factura);
+      await loadFacturaEventos(facturaId);
       $('#dlgFactura').showModal();
     }
 
@@ -859,6 +1020,15 @@
     function facturaUrl(facturaId, suffix = '') {
       const params = qsEmpresa() ? '?' + qsEmpresa() : '';
       return `/api/facturas/${facturaId}${suffix}${params}`;
+    }
+
+    function facturasExportUrl() {
+      const params = facturasFilterParams({ forExport: true });
+      return '/api/facturas/export.csv?' + params.toString();
+    }
+
+    function exportarCsv() {
+      window.open(facturasExportUrl(), '_blank', 'noopener');
     }
 
     function descargarPdf(facturaId) {
@@ -966,6 +1136,7 @@
     $('#btnEmitirPreparada').onclick = () => selectedFactura?.id && emitirFactura(selectedFactura.id);
     $('#btnCloseDlg').onclick = () => $('#dlgFactura').close();
     $('#btnCloseX').onclick = () => $('#dlgFactura').close();
+    $('#btnExportCsv').onclick = exportarCsv;
     $('#btnRefresh').onclick = loadPedidos;
     $('#logout').onclick = async (ev) => {
       ev.preventDefault();
@@ -986,8 +1157,17 @@
       searchTimer = setTimeout(loadPedidos, 350);
     });
 
-    await loadMe();
-    await loadPedidos();
+    async function init() {
+      try {
+        const allowed = await loadMe();
+        if (allowed === false) return;
+        await loadPedidos();
+      } catch (e) {
+        toast(e.message || 'No se pudo cargar facturacion');
+      }
+    }
+
+    await init();
   </script>
 </body>
 </html>

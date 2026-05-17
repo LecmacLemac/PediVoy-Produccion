@@ -3,7 +3,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import OpenAI from 'openai';
-import { convert as pdfToImgConvert } from 'pdf-img-convert';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import {
@@ -120,18 +119,7 @@ async function prepareImageForAI(fileData) {
   try {
     // Si es PDF, convertimos primera página a imagen
     if (fileData.mimetype === 'application/pdf' || fileData.ext === 'pdf') {
-      try {
-        const pages = await pdfToImgConvert(fileData.absolutePath, {
-          width: 1024,
-          page_numbers: [1],
-          base64: true
-        });
-        if (pages.length > 0) return pages[0];
-      } catch (e) {
-        console.warn('⚠️ pdf-img-convert falló, uso fallback pdftoppm:', e?.message || e);
-      }
-
-      // Fallback robusto por CLI (evita errores de canvas/pdfjs en runtime)
+      // Poppler evita la cadena pdf-img-convert/canvas/tar y reduce superficie de riesgo.
       return await convertPdfFirstPageWithPdftoppm(fileData.absolutePath);
     }
 

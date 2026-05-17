@@ -42,10 +42,13 @@ Infraestructura: Soporte para WebPush, Multer (archivos), JWT (Auth).
 
 Requisitos previos
 
-- Node.js **20.x** (requerido; ver `package.json` → `engines.node`).
-  - Si usás nvm: `nvm install 20 && nvm use 20` (hay `.nvmrc`).
+- Node.js **22.x** (requerido; ver `package.json` → `engines.node`).
+  - Si usás nvm: `nvm install 22 && nvm use 22` (hay `.nvmrc` si el entorno la define).
   - Más detalle: `docs/NODE.md`.
 - (Override) `ALLOW_NODE_MISMATCH=1` para arrancar igual, no recomendado.
+- Poppler / `pdftoppm` para convertir comprobantes PDF de transferencias a imagen.
+  - Debian/Ubuntu: `sudo apt-get install poppler-utils`.
+  - Render: queda declarado en `Aptfile`.
 
 PostgreSQL con extensión PostGIS instalada.
 

@@ -2,15 +2,20 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  buildFacturasCsv,
   calculateInvoiceTotals,
+  canAccessFacturacion,
   cancelFactura,
   deleteFactura,
   hasProductionEmissionConfirmation,
   isPedidoEstadoFacturable,
   isProductionEmissionEnabled,
   isValidCuit,
+  listFacturaEvents,
+  logFacturaEvent,
   normalizeAfipMode,
   resolveTipoComprobante,
+  summarizeFacturas,
 } from '../src/services/facturacionService.js';
 import { buildAfipQrPayload } from '../src/services/facturaPdfService.js';
 
@@ -68,6 +73,17 @@ test('produccion exige habilitacion y confirmacion explicita', () => {
   assert.equal(hasProductionEmissionConfirmation('emitir'), false);
 });
 
+test('canAccessFacturacion limita acceso a roles de backoffice', () => {
+  assert.equal(canAccessFacturacion('super'), true);
+  assert.equal(canAccessFacturacion('admin'), true);
+  assert.equal(canAccessFacturacion('user'), true);
+  assert.equal(canAccessFacturacion('facturacion'), true);
+  assert.equal(canAccessFacturacion('contable'), true);
+  assert.equal(canAccessFacturacion('repartidor'), false);
+  assert.equal(canAccessFacturacion('cliente'), false);
+  assert.equal(canAccessFacturacion(''), false);
+});
+
 test('cancelFactura marca como anulada sin tocar facturas emitidas', async () => {
   const calls = [];
   const query = async (sql, params) => {
@@ -115,4 +131,75 @@ test('buildAfipQrPayload arma URL oficial con CAE', () => {
   assert.equal(qr.payload.cuit, 20246177369);
   assert.equal(qr.payload.tipoCmp, 11);
   assert.equal(qr.payload.codAut, 86200173459046);
+});
+
+test('buildFacturasCsv exporta filas contables con separador punto y coma', () => {
+  const csv = buildFacturasCsv([{
+    id: 1,
+    fecha_comprobante: '2026-05-16',
+    estado: 'emitida',
+    tipo_comprobante: 'C',
+    punto_venta: 1,
+    numero_comprobante: 7,
+    receptor_razon_social: 'Cliente, SA',
+    receptor_documento: '20123456786',
+    importe_neto: 100,
+    importe_iva: 0,
+    importe_total: 100,
+    cae: '86200173459046',
+    cae_vencimiento: '2026-05-26',
+    pdf_url: '/Facturas/factura-1.pdf',
+  }]);
+
+  assert.match(csv, /^id;fecha;estado;tipo;/);
+  assert.match(csv, /1;2026-05-16;emitida;C;1;7;"Cliente, SA";20123456786;100;0;100;86200173459046;2026-05-26;\/Facturas\/factura-1\.pdf/);
+});
+
+test('summarizeFacturas consolida totales por estado y tipo', () => {
+  const resumen = summarizeFacturas([
+    { estado: 'emitida', tipo_comprobante: 'C', importe_neto: 100, importe_iva: 0, importe_total: 100 },
+    { estado: 'emitida', tipo_comprobante: 'C', importe_neto: 50, importe_iva: 10.5, importe_total: 60.5 },
+    { estado: 'rechazada', tipo_comprobante: 'B', importe_neto: 25, importe_iva: 5.25, importe_total: 30.25 },
+  ]);
+
+  assert.equal(resumen.cantidad, 3);
+  assert.equal(resumen.neto, 175);
+  assert.equal(resumen.iva, 15.75);
+  assert.equal(resumen.total, 190.75);
+  assert.deepEqual(resumen.por_estado[0], { estado: 'emitida', cantidad: 2, total: 160.5 });
+  assert.deepEqual(resumen.por_tipo.find((row) => row.tipo === 'B'), { tipo: 'B', cantidad: 1, total: 30.25 });
+});
+
+test('logFacturaEvent registra trazabilidad operativa con metadata JSON', async () => {
+  const calls = [];
+  const query = async (sql, params) => {
+    calls.push({ sql, params });
+    return [{ id: 22, empresa_id: params[0], factura_id: params[1], accion: params[3] }];
+  };
+
+  const event = await logFacturaEvent(query, {
+    empresaId: 3,
+    facturaId: 12,
+    userId: 7,
+    accion: 'emitida',
+    detalle: 'CAE autorizado',
+    metadata: { cae: '123' },
+  });
+
+  assert.equal(event.id, 22);
+  assert.match(calls[0].sql, /INSERT INTO factura_eventos/);
+  assert.deepEqual(calls[0].params, [3, 12, 7, 'emitida', 'CAE autorizado', '{"cae":"123"}']);
+});
+
+test('listFacturaEvents limita y filtra por empresa y factura', async () => {
+  const calls = [];
+  const query = async (sql, params) => {
+    calls.push({ sql, params });
+    return [];
+  };
+
+  await listFacturaEvents(query, { empresaId: 4, facturaId: 15, limit: 500 });
+
+  assert.match(calls[0].sql, /FROM factura_eventos/);
+  assert.deepEqual(calls[0].params, [4, 15, 100]);
 });

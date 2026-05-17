@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 const VALID_AFIP_MODES = new Set(['homologacion', 'produccion']);
 const VALID_ESTADOS = new Set(['borrador', 'pendiente_confirmacion', 'emitiendo', 'emitida', 'rechazada', 'anulada']);
 const PEDIDOS_NO_FACTURABLES = new Set(['cancelado', 'cancelada', 'cancelled', 'canceled']);
+const FACTURACION_BACKOFFICE_ROLES = new Set(['super', 'admin', 'user', 'facturacion', 'contable']);
 export const PRODUCTION_EMISSION_CONFIRMATION = 'EMITIR_FACTURA_REAL';
 
 export function digitsOnly(value) {
@@ -46,6 +47,14 @@ export function hasProductionEmissionConfirmation(value) {
 export function isPedidoEstadoFacturable(value) {
   const estado = String(value || '').trim().toLowerCase();
   return !PEDIDOS_NO_FACTURABLES.has(estado);
+}
+
+export function normalizeUserRole(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+export function canAccessFacturacion(role) {
+  return FACTURACION_BACKOFFICE_ROLES.has(normalizeUserRole(role));
 }
 
 export function resolveTipoComprobante({ emisorCondicionIva, receptorCondicionIva }) {
@@ -256,6 +265,29 @@ export async function ensureFacturacionSchema(query) {
     CREATE INDEX IF NOT EXISTS idx_factura_afip_auditoria_factura
       ON factura_afip_auditoria (factura_id, created_at DESC)
   `);
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS factura_eventos (
+      id BIGSERIAL PRIMARY KEY,
+      empresa_id INT NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+      factura_id BIGINT REFERENCES facturas(id) ON DELETE SET NULL,
+      usuario_id INT REFERENCES usuarios(id) ON DELETE SET NULL,
+      accion TEXT NOT NULL,
+      detalle TEXT,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await query(`
+    CREATE INDEX IF NOT EXISTS idx_factura_eventos_factura
+      ON factura_eventos (factura_id, created_at DESC)
+  `);
+
+  await query(`
+    CREATE INDEX IF NOT EXISTS idx_factura_eventos_empresa
+      ON factura_eventos (empresa_id, created_at DESC)
+  `);
 }
 
 export async function upsertFacturacionConfig(query, empresaId, payload = {}) {
@@ -441,6 +473,52 @@ export async function logAfipAudit(query, {
       errorCodigo,
       errorMensaje,
     ]
+  );
+}
+
+export async function logFacturaEvent(query, {
+  empresaId,
+  facturaId = null,
+  userId = null,
+  accion,
+  detalle = null,
+  metadata = {},
+}) {
+  if (!empresaId || !accion) return null;
+  const safeMetadata = metadata && typeof metadata === 'object' ? metadata : {};
+  const rows = await query(
+    `
+    INSERT INTO factura_eventos (
+      empresa_id, factura_id, usuario_id, accion, detalle, metadata
+    )
+    VALUES ($1,$2,$3,$4,$5,$6::jsonb)
+    RETURNING id, empresa_id, factura_id, usuario_id, accion, detalle, metadata, created_at
+    `,
+    [
+      empresaId,
+      facturaId || null,
+      userId || null,
+      String(accion).slice(0, 80),
+      detalle ? String(detalle).slice(0, 500) : null,
+      JSON.stringify(safeMetadata),
+    ]
+  );
+  return rows[0] || null;
+}
+
+export async function listFacturaEvents(query, { empresaId, facturaId, limit = 50 }) {
+  const safeLimit = Math.min(100, Math.max(1, Number(limit) || 50));
+  return query(
+    `
+    SELECT fe.id, fe.factura_id, fe.usuario_id, fe.accion, fe.detalle, fe.metadata,
+           fe.created_at, u.nombre AS usuario_nombre, u.email AS usuario_email
+    FROM factura_eventos fe
+    LEFT JOIN usuarios u ON u.id = fe.usuario_id
+    WHERE fe.empresa_id = $1 AND fe.factura_id = $2
+    ORDER BY fe.created_at DESC
+    LIMIT $3
+    `,
+    [empresaId, facturaId, safeLimit]
   );
 }
 
@@ -985,7 +1063,84 @@ export function parseAfipDate(value) {
   return `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}`;
 }
 
-export async function listFacturas(query, { empresaId, estado, limit = 50 }) {
+export function buildFacturasCsv(rows = []) {
+  const headers = [
+    'id',
+    'fecha',
+    'estado',
+    'tipo',
+    'punto_venta',
+    'numero',
+    'cliente',
+    'documento',
+    'neto',
+    'iva',
+    'total',
+    'cae',
+    'vencimiento_cae',
+    'pdf_url',
+  ];
+  const escapeCsv = (value) => {
+    const text = String(value ?? '');
+    return /[",\n\r;]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+  };
+  const lines = rows.map((row) => [
+    row.id,
+    row.fecha_comprobante || row.emitted_at || row.created_at,
+    row.estado,
+    row.tipo_comprobante,
+    row.punto_venta,
+    row.numero_comprobante,
+    row.receptor_razon_social,
+    row.receptor_documento,
+    row.importe_neto,
+    row.importe_iva,
+    row.importe_total,
+    row.cae,
+    row.cae_vencimiento,
+    row.pdf_url,
+  ].map(escapeCsv).join(';'));
+  return [headers.join(';'), ...lines].join('\n') + '\n';
+}
+
+export function summarizeFacturas(rows = []) {
+  const base = {
+    cantidad: 0,
+    neto: 0,
+    iva: 0,
+    total: 0,
+  };
+  const byEstado = {};
+  const byTipo = {};
+  for (const row of rows) {
+    const estado = row.estado || 'sin_estado';
+    const tipo = row.tipo_comprobante || 'sin_tipo';
+    const total = Number(row.importe_total || 0);
+    const neto = Number(row.importe_neto || 0);
+    const iva = Number(row.importe_iva || 0);
+
+    base.cantidad += 1;
+    base.neto = roundMoney(base.neto + neto);
+    base.iva = roundMoney(base.iva + iva);
+    base.total = roundMoney(base.total + total);
+
+    byEstado[estado] ||= { estado, cantidad: 0, total: 0 };
+    byEstado[estado].cantidad += 1;
+    byEstado[estado].total = roundMoney(byEstado[estado].total + total);
+
+    byTipo[tipo] ||= { tipo, cantidad: 0, total: 0 };
+    byTipo[tipo].cantidad += 1;
+    byTipo[tipo].total = roundMoney(byTipo[tipo].total + total);
+  }
+
+  return {
+    ...base,
+    por_estado: Object.values(byEstado).sort((a, b) => b.total - a.total),
+    por_tipo: Object.values(byTipo).sort((a, b) => String(a.tipo).localeCompare(String(b.tipo))),
+  };
+}
+
+export async function listFacturas(query, { empresaId, estado, from = null, to = null, q = null, limit = 50 } = {}) {
   const params = [empresaId];
   let where = 'WHERE f.empresa_id = $1';
   const normalizedEstado = normalizeEstado(estado);
@@ -993,12 +1148,34 @@ export async function listFacturas(query, { empresaId, estado, limit = 50 }) {
     params.push(normalizedEstado);
     where += ` AND f.estado = $${params.length}`;
   }
+  if (from) {
+    params.push(String(from).slice(0, 10));
+    where += ` AND COALESCE(f.fecha_comprobante, f.emitted_at::date, f.created_at::date) >= $${params.length}::date`;
+  }
+  if (to) {
+    params.push(String(to).slice(0, 10));
+    where += ` AND COALESCE(f.fecha_comprobante, f.emitted_at::date, f.created_at::date) < ($${params.length}::date + INTERVAL '1 day')`;
+  }
+  const queryText = String(q || '').trim();
+  if (queryText) {
+    params.push('%' + queryText.toLowerCase() + '%');
+    where += `
+      AND (
+        LOWER(COALESCE(cdf.razon_social, '')) LIKE $${params.length}
+        OR LOWER(COALESCE(cdf.numero_documento, '')) LIKE $${params.length}
+        OR LOWER(COALESCE(f.cae, '')) LIKE $${params.length}
+        OR CAST(f.numero_comprobante AS TEXT) LIKE $${params.length}
+      )
+    `;
+  }
   params.push(Math.min(100, Math.max(1, Number(limit) || 50)));
 
   return query(
     `
     SELECT f.id, f.pedido_id, f.estado, f.tipo_comprobante, f.punto_venta,
-           f.numero_comprobante, f.importe_total, f.cae, f.pdf_url, f.created_at, f.updated_at,
+           f.numero_comprobante, f.importe_neto, f.importe_iva, f.importe_total,
+           f.fecha_comprobante, f.cae, f.cae_vencimiento, f.pdf_url,
+           f.created_at, f.updated_at, f.emitted_at,
            cdf.razon_social AS receptor_razon_social,
            cdf.numero_documento AS receptor_documento
     FROM facturas f

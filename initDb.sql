@@ -1505,3 +1505,20 @@ CREATE TABLE IF NOT EXISTS factura_afip_auditoria (
 CREATE INDEX IF NOT EXISTS idx_factura_afip_auditoria_factura
   ON factura_afip_auditoria (factura_id, created_at DESC);
 
+CREATE TABLE IF NOT EXISTS factura_eventos (
+  id BIGSERIAL PRIMARY KEY,
+  empresa_id INT NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+  factura_id BIGINT REFERENCES facturas(id) ON DELETE SET NULL,
+  usuario_id INT REFERENCES usuarios(id) ON DELETE SET NULL,
+  accion TEXT NOT NULL,
+  detalle TEXT,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_factura_eventos_factura
+  ON factura_eventos (factura_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_factura_eventos_empresa
+  ON factura_eventos (empresa_id, created_at DESC);
+

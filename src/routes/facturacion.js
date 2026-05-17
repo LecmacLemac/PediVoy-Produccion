@@ -15,6 +15,7 @@ import { query } from '../db.js';
 import {
   cacheWsaaCredentials,
   cancelFactura,
+  canAccessFacturacion,
   deleteFactura,
   ensureFacturacionSchema,
   getCachedWsaaCredentials,
@@ -24,14 +25,18 @@ import {
   getFacturacionConfigForArca,
   hasProductionEmissionConfirmation,
   isProductionEmissionEnabled,
+  listFacturaEvents,
   logAfipAudit,
+  logFacturaEvent,
   markFacturaEmitida,
   markFacturaRechazada,
+  buildFacturasCsv,
   listFacturas,
   listPedidosFacturables,
   requestFacturaForPedido,
   requestFacturaForPedidos,
   setFacturaPdfUrl,
+  summarizeFacturas,
   upsertFacturacionConfig,
 } from '../services/facturacionService.js';
 import { generateFacturaPdf, resolveFacturasDir } from '../services/facturaPdfService.js';
@@ -68,6 +73,11 @@ export function createFacturacionRouter() {
     const status = Number(error?.statusCode) || 500;
     if (status >= 500) console.error('FACTURACION.ERROR', error);
     return res.status(status).json({ error: error?.message || 'Error de facturacion' });
+  }
+
+  function requireFacturacionAccess(req, res, next) {
+    if (canAccessFacturacion(req.user?.role)) return next();
+    return res.status(403).json({ error: 'Acceso de facturacion restringido a usuarios de backoffice' });
   }
 
   function publicConfig(config) {
@@ -158,7 +168,7 @@ export function createFacturacionRouter() {
     return { token: login.token, sign: login.sign, expirationTime: login.expirationTime };
   }
 
-  router.get('/facturacion/config', withAuth, checkLicencia, async (req, res) => {
+  router.get('/facturacion/config', withAuth, checkLicencia, requireFacturacionAccess, async (req, res) => {
     try {
       await ensureSchema();
       const empresaId = resolveEmpresa(req);
@@ -169,7 +179,7 @@ export function createFacturacionRouter() {
     }
   });
 
-  router.put('/facturacion/config', withAuth, checkLicencia, async (req, res) => {
+  router.put('/facturacion/config', withAuth, checkLicencia, requireFacturacionAccess, async (req, res) => {
     try {
       await ensureSchema();
       const empresaId = resolveEmpresa(req);
@@ -188,7 +198,7 @@ export function createFacturacionRouter() {
     }
   });
 
-  router.post('/facturacion/config/credenciales', withAuth, checkLicencia, (req, res) => {
+  router.post('/facturacion/config/credenciales', withAuth, checkLicencia, requireFacturacionAccess, (req, res) => {
     credentialsUploader.fields([
       { name: 'certificado', maxCount: 1 },
       { name: 'clave', maxCount: 1 },
@@ -235,7 +245,7 @@ export function createFacturacionRouter() {
     });
   });
 
-  router.post('/facturacion/config/probar-conexion', withAuth, checkLicencia, async (req, res) => {
+  router.post('/facturacion/config/probar-conexion', withAuth, checkLicencia, requireFacturacionAccess, async (req, res) => {
     try {
       await ensureSchema();
       const empresaId = resolveEmpresa(req);
@@ -294,7 +304,7 @@ export function createFacturacionRouter() {
     }
   });
 
-  router.post('/pedidos/:pedidoId/factura/solicitar', withAuth, checkLicencia, async (req, res) => {
+  router.post('/pedidos/:pedidoId/factura/solicitar', withAuth, checkLicencia, requireFacturacionAccess, async (req, res) => {
     try {
       await ensureSchema();
       const pedidoId = Number(req.params.pedidoId);
@@ -309,13 +319,21 @@ export function createFacturacionRouter() {
         userId: req.user?.id || null,
         datosFiscales: req.body?.datos_fiscales || req.body || {},
       });
+      await logFacturaEvent(query, {
+        empresaId,
+        facturaId: factura.id,
+        userId: req.user?.id || null,
+        accion: 'preparada',
+        detalle: `Factura preparada desde pedido #${pedidoId}`,
+        metadata: { pedido_id: pedidoId, importe_total: factura.importe_total },
+      });
       return res.status(201).json({ ok: true, factura });
     } catch (e) {
       return sendError(res, e);
     }
   });
 
-  router.post('/facturacion/facturas/consolidada', withAuth, checkLicencia, async (req, res) => {
+  router.post('/facturacion/facturas/consolidada', withAuth, checkLicencia, requireFacturacionAccess, async (req, res) => {
     try {
       await ensureSchema();
       const pedidoIds = req.body?.pedido_ids || req.body?.pedidos || [];
@@ -326,13 +344,21 @@ export function createFacturacionRouter() {
         userId: req.user?.id || null,
         datosFiscales: req.body?.datos_fiscales || {},
       });
+      await logFacturaEvent(query, {
+        empresaId,
+        facturaId: factura.id,
+        userId: req.user?.id || null,
+        accion: 'consolidada_preparada',
+        detalle: `Factura consolidada preparada con ${factura.pedidos?.length || pedidoIds.length} pedidos`,
+        metadata: { pedido_ids: pedidoIds, importe_total: factura.importe_total },
+      });
       return res.status(201).json({ ok: true, factura });
     } catch (e) {
       return sendError(res, e);
     }
   });
 
-  router.get('/pedidos/:pedidoId/factura', withAuth, checkLicencia, async (req, res) => {
+  router.get('/pedidos/:pedidoId/factura', withAuth, checkLicencia, requireFacturacionAccess, async (req, res) => {
     try {
       await ensureSchema();
       const pedidoId = Number(req.params.pedidoId);
@@ -349,13 +375,16 @@ export function createFacturacionRouter() {
     }
   });
 
-  router.get('/facturas', withAuth, checkLicencia, async (req, res) => {
+  router.get('/facturas', withAuth, checkLicencia, requireFacturacionAccess, async (req, res) => {
     try {
       await ensureSchema();
       const empresaId = resolveEmpresa(req);
       const rows = await listFacturas(query, {
         empresaId,
         estado: req.query?.estado,
+        from: req.query?.from,
+        to: req.query?.to,
+        q: req.query?.q,
         limit: req.query?.limit,
       });
       return res.json({ ok: true, facturas: rows });
@@ -364,7 +393,54 @@ export function createFacturacionRouter() {
     }
   });
 
-  router.get('/facturacion/pedidos', withAuth, checkLicencia, async (req, res) => {
+  router.get('/facturas/export.csv', withAuth, checkLicencia, requireFacturacionAccess, async (req, res) => {
+    try {
+      await ensureSchema();
+      const empresaId = resolveEmpresa(req);
+      const rows = await listFacturas(query, {
+        empresaId,
+        estado: req.query?.estado,
+        from: req.query?.from,
+        to: req.query?.to,
+        q: req.query?.q,
+        limit: req.query?.limit || 100,
+      });
+      const csv = buildFacturasCsv(rows);
+      const stamp = new Date().toISOString().slice(0, 10);
+      res.setHeader('content-type', 'text/csv; charset=utf-8');
+      res.setHeader('content-disposition', `attachment; filename="facturas-${empresaId}-${stamp}.csv"`);
+      return res.send(csv);
+    } catch (e) {
+      return sendError(res, e);
+    }
+  });
+
+  router.get('/facturas/resumen', withAuth, checkLicencia, requireFacturacionAccess, async (req, res) => {
+    try {
+      await ensureSchema();
+      const empresaId = resolveEmpresa(req);
+      const rows = await listFacturas(query, {
+        empresaId,
+        estado: req.query?.estado,
+        from: req.query?.from,
+        to: req.query?.to,
+        q: req.query?.q,
+        limit: req.query?.limit || 100,
+      });
+      return res.json({
+        ok: true,
+        periodo: {
+          from: req.query?.from || null,
+          to: req.query?.to || null,
+        },
+        resumen: summarizeFacturas(rows),
+      });
+    } catch (e) {
+      return sendError(res, e);
+    }
+  });
+
+  router.get('/facturacion/pedidos', withAuth, checkLicencia, requireFacturacionAccess, async (req, res) => {
     try {
       await ensureSchema();
       const empresaId = resolveEmpresa(req);
@@ -388,7 +464,7 @@ export function createFacturacionRouter() {
     }
   });
 
-  router.get('/facturas/:id', withAuth, checkLicencia, async (req, res) => {
+  router.get('/facturas/:id', withAuth, checkLicencia, requireFacturacionAccess, async (req, res) => {
     try {
       await ensureSchema();
       const facturaId = Number(req.params.id);
@@ -405,7 +481,29 @@ export function createFacturacionRouter() {
     }
   });
 
-  router.get('/facturas/:id/pdf', withAuth, checkLicencia, async (req, res) => {
+  router.get('/facturas/:id/eventos', withAuth, checkLicencia, requireFacturacionAccess, async (req, res) => {
+    try {
+      await ensureSchema();
+      const facturaId = Number(req.params.id);
+      if (!Number.isInteger(facturaId) || facturaId <= 0) {
+        return res.status(400).json({ error: 'Factura invalida' });
+      }
+
+      const empresaId = resolveEmpresa(req);
+      const factura = await getFacturaById(query, { facturaId, empresaId });
+      if (!factura) return res.status(404).json({ error: 'Factura no encontrada' });
+      const eventos = await listFacturaEvents(query, {
+        empresaId,
+        facturaId,
+        limit: req.query?.limit,
+      });
+      return res.json({ ok: true, eventos });
+    } catch (e) {
+      return sendError(res, e);
+    }
+  });
+
+  router.get('/facturas/:id/pdf', withAuth, checkLicencia, requireFacturacionAccess, async (req, res) => {
     try {
       await ensureSchema();
       const facturaId = Number(req.params.id);
@@ -414,6 +512,14 @@ export function createFacturacionRouter() {
       }
       const empresaId = resolveEmpresa(req);
       const { factura, filePath } = await ensureFacturaPdf({ facturaId, empresaId });
+      await logFacturaEvent(query, {
+        empresaId,
+        facturaId,
+        userId: req.user?.id || null,
+        accion: 'pdf_descargado',
+        detalle: 'PDF fiscal generado o descargado',
+        metadata: { pdf_url: factura.pdf_url || null },
+      });
       const filename = `factura-${factura.punto_venta}-${factura.numero_comprobante}.pdf`;
       return res.download(filePath, filename);
     } catch (e) {
@@ -421,7 +527,7 @@ export function createFacturacionRouter() {
     }
   });
 
-  router.post('/facturas/:id/enviar', withAuth, checkLicencia, async (req, res) => {
+  router.post('/facturas/:id/enviar', withAuth, checkLicencia, requireFacturacionAccess, async (req, res) => {
     try {
       await ensureSchema();
       const facturaId = Number(req.params.id);
@@ -455,13 +561,22 @@ export function createFacturacionRouter() {
         });
       }
 
+      await logFacturaEvent(query, {
+        empresaId,
+        facturaId,
+        userId: req.user?.id || null,
+        accion: 'enviada',
+        detalle: `Factura enviada por ${canales.join(', ')}`,
+        metadata: { canales, whatsapp: Boolean(result.whatsapp), email: Boolean(result.email) },
+      });
+
       return res.json(result);
     } catch (e) {
       return sendError(res, e);
     }
   });
 
-  router.post('/facturas/:id/emitir', withAuth, checkLicencia, async (req, res) => {
+  router.post('/facturas/:id/emitir', withAuth, checkLicencia, requireFacturacionAccess, async (req, res) => {
     try {
       await ensureSchema();
       const facturaId = Number(req.params.id);
@@ -542,6 +657,14 @@ export function createFacturacionRouter() {
           errorCodigo: cae.errors?.[0]?.code || cae.observations?.[0]?.code || null,
           errorMensaje: cae.errors?.[0]?.msg || cae.observations?.[0]?.msg || 'AFIP/ARCA no aprobo el comprobante',
         });
+        await logFacturaEvent(query, {
+          empresaId,
+          facturaId,
+          userId: req.user?.id || null,
+          accion: 'rechazada_arca',
+          detalle: cae.errors?.[0]?.msg || cae.observations?.[0]?.msg || 'ARCA no aprobo el comprobante',
+          metadata: { resultado: cae.resultado, errors: cae.errors, observations: cae.observations },
+        });
         return res.status(409).json({ ok: false, resultado: cae.resultado, errors: cae.errors, observations: cae.observations });
       }
 
@@ -554,6 +677,14 @@ export function createFacturacionRouter() {
         caeVencimiento: cae.caeFchVto,
       });
       const emitted = await getFacturaById(query, { facturaId, empresaId });
+      await logFacturaEvent(query, {
+        empresaId,
+        facturaId,
+        userId: req.user?.id || null,
+        accion: 'emitida',
+        detalle: `CAE ${emitted?.cae || cae.cae} autorizado`,
+        metadata: { numero_comprobante: emitted?.numero_comprobante, cae: emitted?.cae, cae_vencimiento: emitted?.cae_vencimiento },
+      });
       return res.json({ ok: true, factura: emitted, wsfe: { resultado: cae.resultado, observations: cae.observations } });
     } catch (e) {
       try {
@@ -573,7 +704,7 @@ export function createFacturacionRouter() {
     }
   });
 
-  router.post('/facturas/:id/cancelar', withAuth, checkLicencia, async (req, res) => {
+  router.post('/facturas/:id/cancelar', withAuth, checkLicencia, requireFacturacionAccess, async (req, res) => {
     try {
       await ensureSchema();
       const facturaId = Number(req.params.id);
@@ -586,13 +717,20 @@ export function createFacturacionRouter() {
       if (!factura) {
         return res.status(409).json({ error: 'Solo se pueden cancelar facturas pendientes o rechazadas' });
       }
+      await logFacturaEvent(query, {
+        empresaId,
+        facturaId,
+        userId: req.user?.id || null,
+        accion: 'cancelada',
+        detalle: 'Factura pendiente cancelada desde panel',
+      });
       return res.json({ ok: true, factura });
     } catch (e) {
       return sendError(res, e);
     }
   });
 
-  router.delete('/facturas/:id', withAuth, checkLicencia, async (req, res) => {
+  router.delete('/facturas/:id', withAuth, checkLicencia, requireFacturacionAccess, async (req, res) => {
     try {
       await ensureSchema();
       const facturaId = Number(req.params.id);
@@ -605,6 +743,14 @@ export function createFacturacionRouter() {
       if (!factura) {
         return res.status(409).json({ error: 'Solo se pueden eliminar facturas pendientes o rechazadas' });
       }
+      await logFacturaEvent(query, {
+        empresaId,
+        facturaId: null,
+        userId: req.user?.id || null,
+        accion: 'eliminada',
+        detalle: `Factura pendiente #${facturaId} eliminada desde panel`,
+        metadata: { factura_id: facturaId, estado: factura.estado },
+      });
       return res.json({ ok: true, deleted: true, factura });
     } catch (e) {
       return sendError(res, e);
