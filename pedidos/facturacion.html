@@ -619,6 +619,10 @@
       banner.hidden = false;
       banner.className = 'mode-banner' + (mode === 'produccion' ? (enabled ? ' prod' : ' blocked') : '');
       if (mode === 'produccion') {
+        if (!facturacionConfig.credenciales_persistentes) {
+          banner.innerHTML = '<div><strong>Produccion requiere credenciales persistentes</strong><div class="muted">Recarga certificado y clave desde Configuracion fiscal para guardar PEM cifrados en PostgreSQL. Render no debe depender de rutas locales.</div></div><span class="badge b-pending">Credenciales</span>';
+          return;
+        }
         banner.innerHTML = enabled
           ? '<div><strong>Modo produccion activo</strong><div class="muted">Las emisiones generan facturas reales. El sistema pedira confirmacion antes de cada CAE.</div></div><span class="badge b-bad">REAL</span>'
           : '<div><strong>Produccion configurada pero bloqueada</strong><div class="muted">Falta habilitacion operativa para emitir comprobantes reales.</div></div><span class="badge b-pending">Bloqueado</span>';
@@ -638,6 +642,9 @@
       if (!facturacionConfig) {
         $('#ctlArca').textContent = 'Falta';
         $('#ctlArcaText').textContent = 'Cargar configuracion fiscal antes de preparar comprobantes.';
+      } else if (!facturacionConfig.credenciales_persistentes) {
+        $('#ctlArca').textContent = 'Credenciales';
+        $('#ctlArcaText').textContent = 'Recargar certificado y clave para persistencia segura en Render.';
       } else if (facturacionConfig.modo_afip === 'produccion' && facturacionConfig.produccion_habilitada !== true) {
         $('#ctlArca').textContent = 'Bloqueada';
         $('#ctlArcaText').textContent = 'Produccion configurada, pendiente de habilitacion operativa.';

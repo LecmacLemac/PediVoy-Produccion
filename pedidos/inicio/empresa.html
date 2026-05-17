@@ -797,6 +797,9 @@
 
         <div style="background:rgba(255,255,255,0.03); padding:10px; border-radius:8px; border:1px solid var(--border); margin-bottom:1rem;">
           <label style="color:var(--brand);">Credenciales de homologación / producción</label>
+          <small id="e_afip_estado_persistencia" style="color:var(--muted); margin-top:4px; display:block;">
+            En producción Render deben quedar cifradas y persistidas en PostgreSQL.
+          </small>
           <div class="form-row" style="margin-top:8px;">
             <div>
               <label>Certificado PEM</label>
@@ -816,7 +819,7 @@
             </button>
           </div>
           <small style="color:var(--muted); margin-top:6px; display:block;">
-            Los archivos se guardan fuera de la carpeta pública. La clave privada no se muestra ni vuelve al navegador.
+            Los archivos se cifran en la base y solo se escriben temporalmente en /tmp durante la firma WSAA. La clave privada no se muestra ni vuelve al navegador.
           </small>
         </div>
 
@@ -2361,14 +2364,22 @@ if (logoutLink) {
 
       const cert = !!config?.certificado_cargado;
       const clave = !!config?.clave_cargada;
+      const persistentes = !!config?.credenciales_persistentes;
       const estado = cert && clave
-        ? 'Certificado y clave cargados'
+        ? (persistentes ? 'Persistentes en PostgreSQL' : 'Cargados por ruta local')
         : cert
           ? 'Falta clave privada'
           : clave
             ? 'Falta certificado'
             : 'Sin cargar';
       document.getElementById('e_afip_estado_credenciales').value = estado;
+      const persistencia = document.getElementById('e_afip_estado_persistencia');
+      if (persistencia) {
+        persistencia.textContent = persistentes
+          ? 'OK Render: certificado y clave cifrados en PostgreSQL. No depende de rutas locales.'
+          : 'Pendiente Render: cargá certificado y clave juntos para persistirlos cifrados en PostgreSQL.';
+        persistencia.style.color = persistentes ? '#34d399' : 'var(--muted)';
+      }
     }
 
     async function loadFacturacionConfig(empresaId, empresa = {}) {
@@ -2436,7 +2447,11 @@ if (logoutLink) {
       const certificado = document.getElementById('e_afip_certificado').files?.[0];
       const clave = document.getElementById('e_afip_clave').files?.[0];
       if (!certificado && !clave) {
-        toast('Seleccioná certificado y/o clave privada');
+        toast('Seleccioná certificado y clave privada');
+        return;
+      }
+      if (!certificado || !clave) {
+        toast('Para Render cargá certificado y clave juntos al menos una vez');
         return;
       }
 
