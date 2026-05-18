@@ -40,6 +40,7 @@ async function resolverZonaParaPedido(pedidoId){
 
 async function abrirActivosPaso(pedidoId) {
   activosModalState.pedidoId = pedidoId;
+  let etapa = 'activos';
 
   try {
     const data = await api(`/api/repartidor/pedidos/${pedidoId}/activos-resumen`);
@@ -51,6 +52,7 @@ async function abrirActivosPaso(pedidoId) {
     if (itemsActivos.length === 0) {
       const zonaId = await resolverZonaParaPedido(pedidoId);
 
+      etapa = 'entrega';
       await withLock(`entregar:${pedidoId}`, async () => {
         await api(`/api/repartidor/pedidos/${pedidoId}/entregar`, {
           method: 'POST',
@@ -285,7 +287,11 @@ async function abrirActivosPaso(pedidoId) {
 
   } catch (e) {
     console.error(e);
-    alert('No se pudieron cargar los activos de este pedido.');
+    if (etapa === 'entrega') {
+      alert(e?.message || 'No se pudo entregar el pedido.');
+    } else {
+      alert('No se pudieron cargar los activos de este pedido.');
+    }
     activosModalState.pedidoId = null;
     activosModalState.data = null;
   }

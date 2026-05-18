@@ -499,7 +499,7 @@ export function createRepartidorApiRouter(deps) {
        FROM pedidos p
        LEFT JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
        WHERE p.id = $1 AND p.empresa_id = $2
-       FOR UPDATE
+       FOR UPDATE OF p
        `,
        [pedidoId, empresa_id]
      );
@@ -845,6 +845,21 @@ export function createRepartidorApiRouter(deps) {
          cantidad: Number(r.cantidad) || 0,
          precio_unitario: Number(r.precio_unitario) || 0
        }));
+
+     if (items_activos.length === 0) {
+       return res.json({
+         pedido: {
+           id: pedido.id,
+           cliente: pedido.cliente,
+           direccion: pedido.direccion,
+           monto: Number(pedido.monto) || 0
+         },
+         items_activos,
+         activos_cliente: [],
+         activos_disponibles: [],
+         movimientos_existentes: []
+       });
+     }
 
      // Activos actualmente vinculados a ese cliente (punto_entrega_id)
      const activosClienteRows = await query(
