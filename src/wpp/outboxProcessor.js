@@ -54,7 +54,7 @@ export function createOutboxProcessor({ ENABLE_WPP, query, lidByPhone, safeError
           if (!numeroBase) throw new Error('telefono_invalido');
 
           let phoneToUse = numeroBase;
-          if (phoneToUse.startsWith('9') && phoneToUse.length === 10) {
+          if (phoneToUse.length === 10) {
             phoneToUse = `549${phoneToUse}`;
           }
 

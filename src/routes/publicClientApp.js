@@ -26,6 +26,13 @@ function normalizePhone(v) {
   return d.slice(-10);
 }
 
+function normalizeWhatsappOutboxPhone(v) {
+  const d = digitsOnly(v);
+  if (!d) return '';
+  if (d.length === 10) return `549${d}`;
+  return d;
+}
+
 function getClientIp(req) {
   return String(
     req.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
@@ -234,7 +241,7 @@ export function createPublicClientAppRouter({ query }) {
 
       const code = String(Math.floor(100000 + Math.random() * 900000));
       const msg = `PediVoy: tu código de ingreso es ${code}. Vence en 5 minutos.`;
-      const telefonoOutbox = digitsOnly(req.body?.telefono);
+      const telefonoOutbox = normalizeWhatsappOutboxPhone(req.body?.telefono);
 
       otpStore.set(key, {
         codeHash: hashOtp({ key, code }),
