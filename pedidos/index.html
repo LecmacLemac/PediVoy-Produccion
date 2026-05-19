@@ -65,6 +65,25 @@
       letter-spacing: -0.03em;
     }
 
+    header .brand.has-company-link:hover {
+      color: var(--brand);
+    }
+
+    .brand-logo {
+      width: 44px;
+      height: auto;
+      max-height: 44px;
+      object-fit: contain;
+      filter: drop-shadow(0 2px 4px rgba(245,47,65,0.28));
+    }
+
+    .brand-logo.company-logo {
+      width: auto;
+      max-width: 132px;
+      max-height: 48px;
+      filter: none;
+    }
+
     /* --- Layout --- */
     .grid-layout {
       display: grid;
@@ -475,8 +494,15 @@
 
   <header>
     <div class="container" style="display: flex; justify-content: space-between; align-items: center;">
-      <a href="#" class="brand">
-        <img src="/pedidos/img/brand/pedivoy-symbol-red.png" alt="" width="44" height="39" style="width:44px;height:auto;filter: drop-shadow(0 2px 4px rgba(245,47,65,0.28));">
+      <a href="#" class="brand" id="brandLink">
+        <img
+          src="/pedidos/img/brand/pedivoy-symbol-red.png"
+          alt=""
+          width="44"
+          height="39"
+          class="brand-logo"
+          id="brandLogo"
+        >
         <span id="brandName" style="background: linear-gradient(90deg, var(--ink), var(--brand)); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">PediVoy</span>
       </a>
 
@@ -619,6 +645,7 @@
     const searchInp = $('#prodSearch');
     const latInput = $('#lat');
     const lngInput = $('#lng');
+    const DEFAULT_BRAND_LOGO = '/pedidos/img/brand/pedivoy-symbol-red.png';
 
     let allProducts = [];
     let carrito = [];
@@ -645,6 +672,69 @@
         if (s.length === 12 && s.startsWith('54')) return '549' + s.substring(2);
         if (s.length === 13 && s.startsWith('549')) return s;
         return s; 
+    }
+
+    function buildCompanyWebsiteUrl(domain) {
+      const raw = String(domain || '').trim();
+      if (!raw) return null;
+
+      const candidate = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+      try {
+        const url = new URL(candidate);
+        if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+        return url.href;
+      } catch {
+        return null;
+      }
+    }
+
+    function applyCompanyBranding(config) {
+      const brandLink = document.getElementById('brandLink');
+      const brandLogo = document.getElementById('brandLogo');
+      const brandNameEl = document.getElementById('brandName');
+      const nombreEmpresa = config?.nombre_empresa || config?.nombre || null;
+      const companyUrl = buildCompanyWebsiteUrl(config?.landing_domain);
+      const logoUrl = String(config?.logo_url || '').trim();
+
+      if (nombreEmpresa && brandNameEl) {
+        document.title = nombreEmpresa;
+        brandNameEl.textContent = nombreEmpresa;
+      }
+
+      if (brandLink) {
+        if (companyUrl) {
+          brandLink.href = companyUrl;
+          brandLink.target = '_blank';
+          brandLink.rel = 'noopener noreferrer';
+          brandLink.title = `Ir a la página de ${nombreEmpresa || 'la empresa'}`;
+          brandLink.classList.add('has-company-link');
+        } else {
+          brandLink.href = '#';
+          brandLink.removeAttribute('target');
+          brandLink.removeAttribute('rel');
+          brandLink.removeAttribute('title');
+          brandLink.classList.remove('has-company-link');
+        }
+      }
+
+      if (logoUrl && brandLogo) {
+        brandLogo.onerror = () => {
+          brandLogo.onerror = null;
+          brandLogo.src = DEFAULT_BRAND_LOGO;
+          brandLogo.alt = '';
+          brandLogo.classList.remove('company-logo');
+        };
+        brandLogo.src = logoUrl;
+        brandLogo.alt = nombreEmpresa ? `Logo de ${nombreEmpresa}` : 'Logo de la empresa';
+        brandLogo.removeAttribute('width');
+        brandLogo.removeAttribute('height');
+        brandLogo.classList.add('company-logo');
+      } else if (brandLogo) {
+        brandLogo.onerror = null;
+        brandLogo.src = DEFAULT_BRAND_LOGO;
+        brandLogo.alt = '';
+        brandLogo.classList.remove('company-logo');
+      }
     }
 
     // --- Geolocalización ---
@@ -717,13 +807,7 @@
           }
         }
 
-        const brandNameEl = document.getElementById('brandName');
-        const nombreEmpresa = d.nombre_empresa || d.nombre || null;
-
-        if (nombreEmpresa && brandNameEl) {
-          document.title = nombreEmpresa;
-          brandNameEl.textContent = nombreEmpresa;
-        }
+        applyCompanyBranding(d);
 
         $('#empresa_id').value = empresa_id;
         if (d.pais && formEl.elements.pais) formEl.elements.pais.value = d.pais;

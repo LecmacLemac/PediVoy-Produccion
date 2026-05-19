@@ -64,7 +64,10 @@ export function createPublicLegacyCatalogRouter({ query }) {
         const parsed = Number(rawId);
         if (Number.isFinite(parsed) && parsed > 0) {
           const rows = await query(
-            `SELECT id, nombre, config_operativa FROM empresas WHERE id = $1 LIMIT 1`,
+            `SELECT id, nombre, config_operativa, landing_domain, landing_slug, logo_url
+             FROM empresas
+             WHERE id = $1
+             LIMIT 1`,
             [parsed]
           );
           if (rows.length) {
@@ -74,6 +77,9 @@ export function createPublicLegacyCatalogRouter({ query }) {
               empresa_id: Number(rows[0].id),
               nombre_empresa,
               nombre: nombre_empresa,
+              landing_domain: rows[0].landing_domain || null,
+              landing_slug: rows[0].landing_slug || null,
+              logo_url: rows[0].logo_url || null,
               ...loc,
             });
           }
@@ -87,7 +93,10 @@ export function createPublicLegacyCatalogRouter({ query }) {
       let row = null;
       if (rawSlug) {
         const rows = await query(
-          `SELECT id, nombre, config_operativa FROM empresas WHERE LOWER(landing_slug) = $1 LIMIT 1`,
+          `SELECT id, nombre, config_operativa, landing_domain, landing_slug, logo_url
+           FROM empresas
+           WHERE LOWER(landing_slug) = $1
+           LIMIT 1`,
           [rawSlug]
         );
         if (rows.length) row = rows[0];
@@ -95,14 +104,22 @@ export function createPublicLegacyCatalogRouter({ query }) {
 
       if (!row && host) {
         const rows = await query(
-          `SELECT id, nombre, config_operativa FROM empresas WHERE LOWER(landing_domain) = $1 LIMIT 1`,
+          `SELECT id, nombre, config_operativa, landing_domain, landing_slug, logo_url
+           FROM empresas
+           WHERE LOWER(landing_domain) = $1
+           LIMIT 1`,
           [host]
         );
         if (rows.length) row = rows[0];
       }
 
       if (!row) {
-        const rows = await query(`SELECT id, nombre, config_operativa FROM empresas ORDER BY id ASC LIMIT 1`);
+        const rows = await query(`
+          SELECT id, nombre, config_operativa, landing_domain, landing_slug, logo_url
+          FROM empresas
+          ORDER BY id ASC
+          LIMIT 1
+        `);
         if (rows.length) row = rows[0];
       }
 
@@ -114,6 +131,9 @@ export function createPublicLegacyCatalogRouter({ query }) {
         empresa_id: Number(row.id),
         nombre_empresa,
         nombre: nombre_empresa,
+        landing_domain: row.landing_domain || null,
+        landing_slug: row.landing_slug || null,
+        logo_url: row.logo_url || null,
         ...loc,
       });
     } catch (e) {
