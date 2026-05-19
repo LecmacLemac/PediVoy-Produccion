@@ -3,8 +3,8 @@
   --bg-2: #0f172a;
   --ink: #f1f5f9;
   --muted: #94a3b8;
-  --brand: #06b6d4;
-  --brand-hover: #22d3ee;
+  --brand: #f52f41;
+  --brand-hover: #ff5262;
   --surface: rgba(30, 41, 59, 0.7);
   --border: rgba(148, 163, 184, 0.15);
   --glass: rgba(15, 23, 42, 0.95);
@@ -67,11 +67,25 @@ nav {
 }
 
 .brand-dot {
-  width: 10px;
-  height: 10px;
-  background: var(--brand);
-  border-radius: 50%;
-  box-shadow: 0 0 10px var(--brand);
+  width: 34px !important;
+  height: 30px !important;
+  flex: 0 0 34px;
+  background: url("/pedidos/img/brand/pedivoy-symbol-red.png") center / contain no-repeat !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+.brand-logo {
+  display: block;
+  width: 150px;
+  max-width: 42vw;
+  height: auto;
+}
+
+.brand-logo-mark {
+  display: block;
+  width: 44px;
+  height: auto;
 }
 
 .role-badge {

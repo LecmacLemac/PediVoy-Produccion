@@ -13,8 +13,8 @@
       --ink: #f8fafc;
       --muted: #9ca3af;
       --muted-strong: #cbd5e1;
-      --brand: #06b6d4;
-      --brand-hover: #22d3ee;
+      --brand: #f52f41;
+      --brand-hover: #ff5262;
       --accent: #10b981;
       --warning: #f59e0b;
       --danger: #ef4444;
@@ -78,20 +78,11 @@
     }
 
     .mark-icon {
-      width: 42px;
-      height: 42px;
-      display: grid;
-      place-items: center;
-      color: #062c35;
-      background: linear-gradient(135deg, var(--brand), var(--accent));
-      border-radius: 12px;
-      box-shadow: 0 14px 36px rgba(6, 182, 212, 0.28);
-    }
-
-    .mark-icon svg {
-      width: 24px;
-      height: 24px;
-      fill: currentColor;
+      width: 46px;
+      height: 40px;
+      display: block;
+      background: url("/pedidos/img/brand/pedivoy-symbol-red.png") center / contain no-repeat;
+      filter: drop-shadow(0 12px 28px rgba(245, 47, 65, 0.28));
     }
 
     .access-copy h1 {
@@ -467,10 +458,8 @@
   <main class="login-shell" aria-labelledby="loginTitle">
     <section class="access-panel" aria-label="Resumen operativo">
       <div class="product-mark" aria-label="PediVoy">
-        <span class="mark-icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24"><path d="M12 2C8 2 6 6 6 9c0 4 6 13 6 13s6-9 6-13c0-3-2-7-6-7Zm0 9a3 3 0 1 1 0-6 3 3 0 0 1 0 6Z"/></svg>
-        </span>
-        PediVoy
+        <span class="mark-icon" aria-hidden="true"></span>
+        <img class="brand-logo" src="/pedidos/img/brand/pedivoy-logo-horizontal-white.png" alt="PediVoy" width="982" height="312">
       </div>
 
       <div class="access-copy">
