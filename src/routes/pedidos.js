@@ -5,6 +5,7 @@ import { withAuth, checkLicencia, isSuper, getEmpresaIdFromToken } from '../serv
 import { query } from '../db.js';
 import { notificarEnRuta } from '../services/notificacionesPedidos.js';
 import { awardPointsForDeliveredOrder } from '../services/puntosService.js';
+import { generateComisionesForDeliveredOrder } from '../services/referentesService.js';
 
 export function createPedidosRouter() {
   const router = express.Router();
@@ -577,6 +578,11 @@ export function createPedidosRouter() {
             pedidoId: row.id,
             monto: row.monto,
           }).catch((err) => console.error('POINTS.AWARD.ERROR', err?.message || err));
+          generateComisionesForDeliveredOrder({
+            queryFn: query,
+            empresaId: row.empresa_id,
+            pedidoId: row.id,
+          }).catch((err) => console.error('REFERENTES.COMISION.ERROR', err?.message || err));
         }
       }
 

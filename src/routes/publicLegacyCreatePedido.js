@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { armarMensajeConfirmado } from '../utils.js';
 import { ejecutarEstrategiaVecinos } from '../estrategias.js';
+import { associateClienteWithReferente, normalizeReferenteCode } from '../services/referentesService.js';
 
 const RATE_LIMIT_WINDOW_MS = Number(process.env.PUBLIC_PEDIDOS_RATE_LIMIT_WINDOW_MS || 60_000);
 const RATE_LIMIT_MAX = Number(process.env.PUBLIC_PEDIDOS_RATE_LIMIT_MAX || 20);
@@ -46,8 +47,11 @@ const createPedidoSchema = z.object({
   metodo_pago: z.string().optional(),
   submission_id: z.union([z.string(), z.number()]).optional(),
   referral_code: z.string().optional(),
+  codigo_referente: z.string().optional(),
+  codigo_descuento: z.string().optional(),
   items: z.array(z.object({
     producto: z.string().trim().min(1),
+    producto_id: z.coerce.number().int().positive().optional(),
     cantidad: z.coerce.number().positive(),
     precio_unitario: z.coerce.number().nonnegative(),
   })).min(1, 'items es requerido y no puede estar vacío'),
@@ -150,6 +154,8 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
         submission_id,
         items,
         referral_code,
+        codigo_referente,
+        codigo_descuento,
       } = parse.data;
 
       log('REQ IN', {
@@ -584,6 +590,28 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
         }
       }
 
+      let referenteAsociado = null;
+      const referenteCode = normalizeReferenteCode(codigo_referente || (!String(referral_code || '').startsWith('VECINO-') ? referral_code : ''));
+      if (referenteCode) {
+        try {
+          referenteAsociado = await associateClienteWithReferente({
+            queryFn: txQuery,
+            empresaId: empId,
+            puntoEntregaId: punto_entrega_id,
+            codigo: referenteCode,
+          });
+          if (referenteAsociado) {
+            log('REFERENTE.ASOC', referenteAsociado);
+          }
+        } catch (e) {
+          errlog('REFERENTE.ASOC.ERROR', e?.message || e);
+        }
+      }
+
+      if (codigo_descuento) {
+        log('DESCUENTO.CODE.RECEIVED', { codigo_descuento: String(codigo_descuento).trim() });
+      }
+
       const pedRows = await txQuery(
         `INSERT INTO pedidos (
           empresa_id, punto_entrega_id, fecha, estado,
@@ -727,6 +755,7 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
         zona_id,
         coords: (lat != null && lng != null) ? { lat, lng } : null,
         resumen: resumenTxt,
+        referente: referenteAsociado,
         reqId
       });
     } catch (err) {

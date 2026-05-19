@@ -3,6 +3,7 @@
 
 import express from 'express';
 import { awardPointsForDeliveredOrder } from '../services/puntosService.js';
+import { generateComisionesForDeliveredOrder } from '../services/referentesService.js';
 
 export function createRepartidorApiRouter(deps) {
   const { query, pool, withAuth, getEmpresaIdFromToken, notifyEstadoPedidoPush, notificarEnRuta, notificarPedidoTransferencia, ejecutarEstrategiaVecinos, registrarMovimientosActivosDesdePedido } = deps || {};
@@ -690,6 +691,12 @@ export function createRepartidorApiRouter(deps) {
        pedidoId,
        monto: pedido.monto,
      }).catch((err) => console.error('POINTS.AWARD.ERROR', err?.message || err));
+
+     generateComisionesForDeliveredOrder({
+       queryFn: query,
+       empresaId: empresa_id,
+       pedidoId,
+     }).catch((err) => console.error('REFERENTES.COMISION.ERROR', err?.message || err));
 
      // Notificar cambio a Transferencia si aplica
      if (metodo_pago && String(metodo_pago).toLowerCase().includes('trans') && !metodoPagoAnterior.includes('trans')) {

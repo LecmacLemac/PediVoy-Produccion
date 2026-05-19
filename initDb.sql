@@ -448,6 +448,89 @@ CREATE TABLE IF NOT EXISTS items_pedido (
   precio_unitario NUMERIC(10,2) DEFAULT 0
 );
 
+-- =========================================================
+-- 9.b REFERENTES Y COMISIONES
+-- =========================================================
+CREATE TABLE IF NOT EXISTS referentes (
+  id                    SERIAL PRIMARY KEY,
+  empresa_id             INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+  nombre                 TEXT NOT NULL,
+  telefono               TEXT,
+  email                  TEXT,
+  codigo                 TEXT NOT NULL,
+  porcentaje_comision    NUMERIC(5,2) NOT NULL DEFAULT 0,
+  vigente_desde          DATE,
+  vigente_hasta          DATE,
+  activo                 BOOLEAN NOT NULL DEFAULT TRUE,
+  notas                  TEXT,
+  created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  deleted_at             TIMESTAMPTZ
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS referentes_empresa_codigo_uniq
+  ON referentes (empresa_id, LOWER(codigo))
+  WHERE deleted_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS referentes_empresa_activo_idx
+  ON referentes (empresa_id, activo, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS referente_productos (
+  id                    SERIAL PRIMARY KEY,
+  empresa_id             INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+  referente_id           INTEGER NOT NULL REFERENCES referentes(id) ON DELETE CASCADE,
+  producto_id            INTEGER NOT NULL REFERENCES productos(id) ON DELETE CASCADE,
+  porcentaje_comision    NUMERIC(5,2),
+  vigente_desde          DATE,
+  vigente_hasta          DATE,
+  activo                 BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(referente_id, producto_id)
+);
+
+CREATE INDEX IF NOT EXISTS referente_productos_empresa_idx
+  ON referente_productos (empresa_id, referente_id, activo);
+
+CREATE TABLE IF NOT EXISTS cliente_referentes (
+  id                    SERIAL PRIMARY KEY,
+  empresa_id             INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+  punto_entrega_id       INTEGER NOT NULL REFERENCES puntos_entrega(id) ON DELETE CASCADE,
+  referente_id           INTEGER NOT NULL REFERENCES referentes(id) ON DELETE CASCADE,
+  codigo_referente       TEXT,
+  estado                 TEXT NOT NULL DEFAULT 'activo',
+  asociado_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  desvinculado_at        TIMESTAMPTZ,
+  desvinculado_por       INTEGER REFERENCES usuarios(id) ON DELETE SET NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS cliente_referentes_un_activo_uniq
+  ON cliente_referentes (empresa_id, punto_entrega_id)
+  WHERE estado = 'activo';
+
+CREATE INDEX IF NOT EXISTS cliente_referentes_referente_idx
+  ON cliente_referentes (empresa_id, referente_id, estado);
+
+CREATE TABLE IF NOT EXISTS referente_comisiones (
+  id                    SERIAL PRIMARY KEY,
+  empresa_id             INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+  referente_id           INTEGER NOT NULL REFERENCES referentes(id) ON DELETE CASCADE,
+  punto_entrega_id       INTEGER REFERENCES puntos_entrega(id) ON DELETE SET NULL,
+  pedido_id              INTEGER NOT NULL REFERENCES pedidos(id) ON DELETE CASCADE,
+  item_pedido_id         INTEGER NOT NULL REFERENCES items_pedido(id) ON DELETE CASCADE,
+  producto_id            INTEGER REFERENCES productos(id) ON DELETE SET NULL,
+  base_monto             NUMERIC(12,2) NOT NULL DEFAULT 0,
+  porcentaje             NUMERIC(5,2) NOT NULL DEFAULT 0,
+  monto_comision         NUMERIC(12,2) NOT NULL DEFAULT 0,
+  estado                 TEXT NOT NULL DEFAULT 'validada',
+  validada_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  liquidada_at           TIMESTAMPTZ,
+  created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(pedido_id, item_pedido_id, referente_id)
+);
+
+CREATE INDEX IF NOT EXISTS referente_comisiones_empresa_estado_idx
+  ON referente_comisiones (empresa_id, estado, validada_at DESC);
+
 CREATE TABLE IF NOT EXISTS pedido_track_points (
   id         SERIAL PRIMARY KEY,
   pedido_id  INTEGER REFERENCES pedidos(id) ON DELETE CASCADE,
