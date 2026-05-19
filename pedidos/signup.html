@@ -3,150 +3,644 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Crear Cuenta – MultiEmpresas</title>
+  <title>Crear empresa | PediVoy</title>
   <link rel="stylesheet" href="theme-base.css" />
-  
+
   <style>
     :root {
-      --bg: #0b1020; --ink: #f1f5f9; --muted: #94a3b8;
-      --brand: #06b6d4; --brand-hover: #22d3ee;
-      --surface: rgba(30, 41, 59, 0.6); --border: rgba(148, 163, 184, 0.15);
-      --glass: rgba(15, 23, 42, 0.75); --radius: 16px;
-      --danger: #ef4444; --success: #10b981;
+      --bg: #0b1020;
+      --ink: #f8fafc;
+      --muted: #9ca3af;
+      --muted-strong: #cbd5e1;
+      --brand: #06b6d4;
+      --brand-hover: #22d3ee;
+      --accent: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --surface: rgba(15, 23, 42, 0.84);
+      --border: rgba(148, 163, 184, 0.18);
+      --radius: 14px;
     }
-    * { box-sizing: border-box; outline: none; }
+
+    * {
+      box-sizing: border-box;
+      outline: none;
+    }
+
     body {
-      margin: 0; font-family: system-ui, -apple-system, sans-serif; color: var(--ink);
-      background: radial-gradient(circle at 20% 30%, rgba(6, 182, 212, 0.15), transparent 40%), var(--bg);
-      min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px;
+      min-height: 100vh;
+      margin: 0;
+      padding: 24px;
+      color: var(--ink);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background:
+        linear-gradient(135deg, rgba(245, 158, 11, 0.1), transparent 30%),
+        radial-gradient(circle at 12% 20%, rgba(6, 182, 212, 0.18), transparent 34%),
+        radial-gradient(circle at 88% 76%, rgba(16, 185, 129, 0.12), transparent 32%),
+        var(--bg);
+      display: grid;
+      place-items: center;
     }
-    .login-card {
-      width: 100%; max-width: 480px; background: var(--surface); backdrop-filter: blur(20px);
-      border: 1px solid var(--border); border-radius: var(--radius); padding: 2rem;
-      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
-    }
-    h2 { margin: 0 0 0.5rem; font-size: 1.8rem; color: #fff; text-align: center; }
-    p.sub { text-align: center; color: var(--muted); margin-bottom: 2rem; font-size: 0.9rem; }
-    
-    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
-    .form-group { margin-bottom: 1rem; }
-    label { font-size: 0.8rem; color: var(--muted); font-weight: 600; margin-bottom: 0.4rem; display: block; text-transform: uppercase; }
-    input, select {
-      width: 100%; background: rgba(15, 23, 42, 0.6); border: 1px solid var(--border); color: #fff;
-      padding: 0.8rem; border-radius: 10px; font-size: 0.95rem; transition: 0.2s;
-    }
-    input:focus, select:focus { border-color: var(--brand); background: rgba(15, 23, 42, 0.9); }
-    
-    button {
-      width: 100%; background: var(--brand); color: #0f172a; border: none; padding: 1rem;
-      border-radius: 10px; font-size: 1rem; font-weight: 700; cursor: pointer; transition: 0.2s; margin-top: 1rem;
-    }
-    button:hover { background: var(--brand-hover); transform: translateY(-1px); }
-    button:disabled { opacity: 0.7; cursor: wait; }
 
-    .err-msg { background: rgba(239,68,68,0.1); color: #fca5a5; padding: 10px; border-radius: 8px; font-size: 0.9rem; text-align: center; margin-bottom: 1rem; display: none; }
-    .footer { text-align: center; margin-top: 1.5rem; font-size: 0.9rem; color: var(--muted); }
-    .footer a { color: var(--brand); text-decoration: none; font-weight: 600; }
-    
+    .signup-shell {
+      width: min(100%, 1080px);
+      display: grid;
+      grid-template-columns: minmax(0, 0.9fr) minmax(480px, 1.1fr);
+      overflow: hidden;
+      background: rgba(15, 23, 42, 0.74);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      box-shadow: 0 32px 80px rgba(0, 0, 0, 0.42);
+      backdrop-filter: blur(18px);
+    }
+
+    .intro-panel {
+      padding: 34px;
+      background:
+        linear-gradient(160deg, rgba(6, 182, 212, 0.15), rgba(16, 185, 129, 0.08)),
+        rgba(15, 23, 42, 0.35);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 24px;
+    }
+
+    .product-mark {
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      color: #fff;
+      font-size: 1.05rem;
+      font-weight: 800;
+    }
+
+    .mark-icon {
+      width: 42px;
+      height: 42px;
+      display: grid;
+      place-items: center;
+      color: #062c35;
+      background: linear-gradient(135deg, var(--brand), var(--accent));
+      border-radius: 12px;
+      box-shadow: 0 14px 36px rgba(6, 182, 212, 0.28);
+    }
+
+    .mark-icon svg {
+      width: 24px;
+      height: 24px;
+      fill: currentColor;
+    }
+
+    .intro-copy h1 {
+      max-width: 420px;
+      margin: 0 0 14px;
+      color: #fff;
+      font-size: clamp(2rem, 3.4vw, 3rem);
+      line-height: 1.03;
+      letter-spacing: 0;
+    }
+
+    .intro-copy p {
+      max-width: 430px;
+      margin: 0;
+      color: var(--muted-strong);
+      font-size: 1rem;
+      line-height: 1.7;
+    }
+
+    .trial-box {
+      display: grid;
+      gap: 12px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .trial-box li {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--muted-strong);
+      font-size: 0.92rem;
+    }
+
+    .status-dot {
+      width: 9px;
+      height: 9px;
+      flex: 0 0 auto;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 0 5px rgba(16, 185, 129, 0.11);
+    }
+
+    .signup-card {
+      position: relative;
+      padding: 34px;
+      background: var(--surface);
+    }
+
     .trial-badge {
-      background: linear-gradient(45deg, #f59e0b, #d97706); color: #fff;
-      padding: 5px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: bold;
-      position: absolute; top: -10px; right: -10px; box-shadow: 0 5px 15px rgba(245, 158, 11, 0.4);
-      transform: rotate(10deg);
+      position: absolute;
+      top: 22px;
+      right: 22px;
+      padding: 7px 11px;
+      color: #1f1300;
+      background: linear-gradient(135deg, #fbbf24, var(--warning));
+      border-radius: 999px;
+      box-shadow: 0 12px 26px rgba(245, 158, 11, 0.25);
+      font-size: 0.74rem;
+      font-weight: 900;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
     }
-  
 
-    @media (max-width: 768px) {
-      .container { padding: 0 12px; }
-      nav { flex-direction: column; align-items: stretch; gap: 0.6rem; }
-      .menu { overflow-x: auto; white-space: nowrap; padding-bottom: 4px; }
-      .row { align-items: stretch; }
-      .row > * { min-width: 0 !important; }
-      input, select, textarea, button { width: 100%; }
+    .signup-brand {
+      margin: 0 116px 20px 0;
     }
-</style>
+
+    .signup-brand .eyebrow {
+      margin: 0 0 10px;
+      color: var(--brand);
+      font-size: 0.78rem;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .signup-brand h2 {
+      margin: 0;
+      color: #fff;
+      font-size: 1.9rem;
+      line-height: 1.15;
+      letter-spacing: 0;
+    }
+
+    .signup-brand p {
+      margin: 8px 0 0;
+      color: var(--muted);
+      font-size: 0.95rem;
+      line-height: 1.5;
+    }
+
+    form {
+      display: grid;
+      gap: 16px;
+    }
+
+    .form-section {
+      display: grid;
+      gap: 11px;
+    }
+
+    .section-title {
+      margin: 0;
+      padding-bottom: 9px;
+      color: var(--brand);
+      border-bottom: 1px solid var(--border);
+      font-size: 0.78rem;
+      font-weight: 900;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+    }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .form-group {
+      min-width: 0;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 8px;
+      color: var(--muted-strong);
+      font-size: 0.84rem;
+      font-weight: 750;
+    }
+
+    input,
+    select {
+      width: 100%;
+      min-height: 44px;
+      padding: 0 14px;
+      color: #fff;
+      background: rgba(2, 6, 23, 0.5);
+      border: 1px solid rgba(148, 163, 184, 0.22);
+      border-radius: 10px;
+      font-size: 0.98rem;
+      transition: border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+    }
+
+    select {
+      color-scheme: dark;
+      cursor: pointer;
+    }
+
+    input::placeholder {
+      color: rgba(203, 213, 225, 0.48);
+    }
+
+    input:focus,
+    select:focus {
+      border-color: var(--brand);
+      background: rgba(2, 6, 23, 0.72);
+      box-shadow: 0 0 0 4px rgba(6, 182, 212, 0.16);
+    }
+
+    input:disabled,
+    select:disabled {
+      cursor: wait;
+      opacity: 0.78;
+    }
+
+    .field-help {
+      margin: 7px 0 0;
+      color: rgba(203, 213, 225, 0.62);
+      font-size: 0.78rem;
+      line-height: 1.35;
+    }
+
+    .password-row {
+      position: relative;
+    }
+
+    .password-row input {
+      padding-right: 88px;
+    }
+
+    .toggle-pwd {
+      position: absolute;
+      top: 50%;
+      right: 8px;
+      transform: translateY(-50%);
+      min-width: 68px;
+      height: 34px;
+      padding: 0 10px;
+      color: var(--muted-strong);
+      background: rgba(148, 163, 184, 0.08);
+      border: 1px solid transparent;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 0.8rem;
+      font-weight: 800;
+      transition: color 0.18s ease, background 0.18s ease, border-color 0.18s ease;
+    }
+
+    .toggle-pwd:hover,
+    .toggle-pwd:focus-visible {
+      color: #fff;
+      background: rgba(6, 182, 212, 0.12);
+      border-color: rgba(6, 182, 212, 0.35);
+    }
+
+    .err-msg,
+    .ok-msg {
+      display: none;
+      padding: 12px 14px;
+      border-radius: 10px;
+      font-size: 0.9rem;
+      line-height: 1.45;
+    }
+
+    .err-msg {
+      color: #fecaca;
+      background: rgba(239, 68, 68, 0.12);
+      border: 1px solid rgba(239, 68, 68, 0.36);
+    }
+
+    .ok-msg {
+      color: #bbf7d0;
+      background: rgba(16, 185, 129, 0.12);
+      border: 1px solid rgba(16, 185, 129, 0.36);
+    }
+
+    .err-msg.is-visible,
+    .ok-msg.is-visible {
+      display: block;
+      animation: nudge 0.24s ease-in-out;
+    }
+
+    .submit-btn {
+      min-height: 48px;
+      padding: 0 18px;
+      color: #04252c;
+      background: linear-gradient(135deg, var(--brand), var(--brand-hover));
+      border: 0;
+      border-radius: 10px;
+      box-shadow: 0 16px 32px rgba(6, 182, 212, 0.22);
+      cursor: pointer;
+      font-size: 1rem;
+      font-weight: 850;
+      transition: transform 0.18s ease, box-shadow 0.18s ease, filter 0.18s ease, background 0.18s ease;
+    }
+
+    .submit-btn:hover {
+      transform: translateY(-1px);
+      filter: brightness(1.04);
+      box-shadow: 0 18px 36px rgba(6, 182, 212, 0.3);
+    }
+
+    .submit-btn:disabled {
+      cursor: wait;
+      opacity: 0.74;
+      transform: none;
+      box-shadow: none;
+    }
+
+    .submit-btn.is-success {
+      background: linear-gradient(135deg, var(--accent), #34d399);
+      color: #052e1a;
+    }
+
+    .spinner {
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      margin-right: 8px;
+      border: 2px solid rgba(4, 37, 44, 0.25);
+      border-top-color: #04252c;
+      border-radius: 50%;
+      vertical-align: -2px;
+      animation: spin 0.7s linear infinite;
+    }
+
+    .footer {
+      margin-top: 16px;
+      color: var(--muted);
+      font-size: 0.9rem;
+      text-align: center;
+    }
+
+    .footer a {
+      color: var(--brand);
+      text-decoration: none;
+      font-weight: 800;
+    }
+
+    .footer a:hover,
+    .footer a:focus-visible {
+      color: var(--brand-hover);
+      text-decoration: underline;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    @keyframes nudge {
+      0%, 100% { transform: translateX(0); }
+      35% { transform: translateX(-4px); }
+      70% { transform: translateX(4px); }
+    }
+
+    @media (max-width: 920px) {
+      body {
+        padding: 16px;
+        align-items: start;
+      }
+
+      .signup-shell {
+        grid-template-columns: 1fr;
+        border-radius: 16px;
+      }
+
+      .intro-panel {
+        padding: 26px;
+        border-right: 0;
+        border-bottom: 1px solid var(--border);
+        gap: 22px;
+      }
+
+      .intro-copy h1 {
+        font-size: 2.15rem;
+      }
+
+      .signup-card {
+        padding: 26px;
+      }
+    }
+
+    @media (max-width: 620px) {
+      body {
+        padding: 0;
+      }
+
+      .signup-shell {
+        min-height: 100vh;
+        border: 0;
+        border-radius: 0;
+      }
+
+      .intro-panel {
+        padding: 22px 18px;
+      }
+
+      .intro-copy h1 {
+        font-size: 1.85rem;
+      }
+
+      .intro-copy p,
+      .trial-box {
+        display: none;
+      }
+
+      .signup-card {
+        padding: 24px 18px 28px;
+      }
+
+      .signup-brand {
+        margin-right: 0;
+        padding-right: 104px;
+      }
+
+      .signup-brand h2 {
+        font-size: 1.65rem;
+      }
+
+      .trial-badge {
+        top: 24px;
+        right: 18px;
+        max-width: 92px;
+        text-align: center;
+        line-height: 1.1;
+      }
+
+      .grid-2 {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 380px) {
+      .signup-brand {
+        padding-right: 0;
+      }
+
+      .trial-badge {
+        position: static;
+        display: inline-block;
+        margin-bottom: 14px;
+      }
+    }
+  </style>
 </head>
 <body>
-
-  <div class="login-card" style="position:relative">
-    <div class="trial-badge">30 DÍAS GRATIS</div>
-    <h2>Crear tu Empresa</h2>
-    <p class="sub">Comienza tu prueba gratuita hoy mismo</p>
-
-    <div id="err" class="err-msg"></div>
-
-    <form id="fSignup">
-      <label style="color:var(--brand); margin-top:10px; border-bottom:1px solid var(--border); padding-bottom:5px;">Datos del Negocio</label>
-      
-      <div class="form-group" style="margin-top:10px">
-        <label>Nombre de tu Empresa / Marca</label>
-        <input type="text" name="empresa_nombre" placeholder="Ej: Pizzería Don Mario" required>
+  <main class="signup-shell" aria-labelledby="signupTitle">
+    <section class="intro-panel" aria-label="Resumen de alta">
+      <div class="product-mark" aria-label="PediVoy">
+        <span class="mark-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M12 2C8 2 6 6 6 9c0 4 6 13 6 13s6-9 6-13c0-3-2-7-6-7Zm0 9a3 3 0 1 1 0-6 3 3 0 0 1 0 6Z"/></svg>
+        </span>
+        PediVoy
       </div>
-      
-      <div class="grid-2">
-        <div class="form-group">
-            <label>Rubro</label>
-            <select name="rubro">
+
+      <div class="intro-copy">
+        <h1>Creá tu operación en minutos.</h1>
+        <p>Registrá la empresa, generá el usuario administrador y entrá directo al panel para empezar a configurar ventas y reparto.</p>
+      </div>
+
+      <ul class="trial-box">
+        <li><span class="status-dot"></span>Prueba activa por 30 días</li>
+        <li><span class="status-dot"></span>Empresa y usuario creados en un solo paso</li>
+        <li><span class="status-dot"></span>Sesión iniciada automáticamente al finalizar</li>
+      </ul>
+    </section>
+
+    <section class="signup-card" aria-label="Formulario de creación de empresa">
+      <div class="trial-badge">30 días gratis</div>
+
+      <div class="signup-brand">
+        <p class="eyebrow">Alta de empresa</p>
+        <h2 id="signupTitle">Crear cuenta</h2>
+        <p>Completá los datos principales para abrir el entorno.</p>
+      </div>
+
+      <div id="err" class="err-msg" role="alert" aria-live="polite"></div>
+      <div id="ok" class="ok-msg" role="status" aria-live="polite"></div>
+
+      <form id="fSignup" novalidate>
+        <section class="form-section" aria-labelledby="businessTitle">
+          <h3 id="businessTitle" class="section-title">Datos del negocio</h3>
+
+          <div class="form-group">
+            <label for="empresaNombre">Nombre de empresa o marca</label>
+            <input id="empresaNombre" type="text" name="empresa_nombre" placeholder="Ej: Pizzería Don Mario" autocomplete="organization" required />
+          </div>
+
+          <div class="grid-2">
+            <div class="form-group">
+              <label for="rubro">Rubro</label>
+              <select id="rubro" name="rubro">
                 <option value="gastronomia">Gastronomía</option>
                 <option value="bebidas">Bebidas / Agua</option>
                 <option value="retail">Retail / Tienda</option>
                 <option value="servicios">Servicios</option>
                 <option value="otro">Otro</option>
-            </select>
-        </div>
-        <div class="form-group">
-            <label>Teléfono (WhatsApp)</label>
-            <input type="tel" name="telefono" placeholder="Ej: 11..." required>
-        </div>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label for="telefono">WhatsApp</label>
+              <input id="telefono" type="tel" name="telefono" placeholder="Ej: 3534123456" autocomplete="tel" inputmode="tel" required />
+            </div>
+          </div>
+        </section>
+
+        <section class="form-section" aria-labelledby="accessTitle">
+          <h3 id="accessTitle" class="section-title">Datos de acceso</h3>
+
+          <div class="grid-2">
+            <div class="form-group">
+              <label for="username">Usuario</label>
+              <input id="username" type="text" name="username" placeholder="admin_pizzas" autocomplete="username" required />
+              <p class="field-help">3 a 30 caracteres. Letras, números, guion, punto o guion bajo.</p>
+            </div>
+
+            <div class="form-group">
+              <label for="email">Email</label>
+              <input id="email" type="email" name="email" placeholder="hola@tucorreo.com" autocomplete="email" />
+              <p class="field-help">Opcional, útil para contacto administrativo.</p>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="password">Contraseña</label>
+            <div class="password-row">
+              <input id="password" type="password" name="password" placeholder="Mínimo 8 caracteres" minlength="8" autocomplete="new-password" required />
+              <button type="button" id="togglePwd" class="toggle-pwd" aria-label="Mostrar contraseña" aria-pressed="false">Mostrar</button>
+            </div>
+          </div>
+        </section>
+
+        <button type="submit" id="btnSub" class="submit-btn">Comenzar prueba</button>
+      </form>
+
+      <div class="footer">
+        ¿Ya tenés cuenta? <a href="login.html">Iniciar sesión</a>
       </div>
-
-      <label style="color:var(--brand); margin-top:10px; border-bottom:1px solid var(--border); padding-bottom:5px;">Datos de Acceso</label>
-      
-      <div class="grid-2" style="margin-top:10px">
-        <div class="form-group">
-            <label>Usuario</label>
-            <input type="text" name="username" placeholder="admin_pizzas" required>
-        </div>
-        <div class="form-group">
-            <label>Email</label>
-            <input type="email" name="email" placeholder="hola@tucorreo.com">
-        </div>
-      </div>
-
-      <div class="form-group">
-        <label>Contraseña</label>
-        <input type="password" name="password" placeholder="••••••••" minlength="8" required>
-      </div>
-
-      <button type="submit" id="btnSub">🚀 COMENZAR PRUEBA</button>
-    </form>
-
-    <div class="footer">
-      ¿Ya tienes cuenta? <a href="login.html">Iniciar Sesión</a>
-    </div>
-  </div>
+    </section>
+  </main>
 
   <script>
     const f = document.getElementById('fSignup');
     const err = document.getElementById('err');
+    const ok = document.getElementById('ok');
     const btn = document.getElementById('btnSub');
+    const togglePwd = document.getElementById('togglePwd');
+    const passwordInput = document.getElementById('password');
+    const fields = Array.from(f.querySelectorAll('input, select'));
 
-    const USERNAME_RE = /^[a-zA-Z0-9_\.\-]{3,30}$/;
+    const USERNAME_RE = /^[a-zA-Z0-9_.-]{3,30}$/;
     const PHONE_RE = /^[0-9+\-\s()]{8,20}$/;
 
+    fields.forEach(field => field.addEventListener('input', clearMessages));
+
+    togglePwd.addEventListener('click', () => {
+      const isPass = passwordInput.type === 'password';
+      passwordInput.type = isPass ? 'text' : 'password';
+      togglePwd.textContent = isPass ? 'Ocultar' : 'Mostrar';
+      togglePwd.setAttribute('aria-label', isPass ? 'Ocultar contraseña' : 'Mostrar contraseña');
+      togglePwd.setAttribute('aria-pressed', String(isPass));
+      passwordInput.focus();
+    });
+
     function showError(message) {
-      err.textContent = '⚠️ ' + message;
-      err.style.display = 'block';
+      ok.classList.remove('is-visible');
+      ok.textContent = '';
+      err.textContent = message;
+      err.classList.remove('is-visible');
+      void err.offsetWidth;
+      err.classList.add('is-visible');
     }
 
-    function clearError() {
+    function showSuccess(message) {
+      err.classList.remove('is-visible');
       err.textContent = '';
-      err.style.display = 'none';
+      ok.textContent = message;
+      ok.classList.add('is-visible');
     }
 
-    function resetButton() {
-      btn.disabled = false;
-      btn.textContent = '🚀 COMENZAR PRUEBA';
+    function clearMessages() {
+      err.textContent = '';
+      ok.textContent = '';
+      err.classList.remove('is-visible');
+      ok.classList.remove('is-visible');
+    }
+
+    function setLoading(isLoading) {
+      btn.disabled = isLoading;
+      btn.innerHTML = isLoading ? '<span class="spinner" aria-hidden="true"></span>Creando entorno...' : 'Comenzar prueba';
+      fields.forEach(field => { field.disabled = isLoading; });
+      togglePwd.disabled = isLoading;
+    }
+
+    function setSuccessState() {
+      btn.disabled = true;
+      btn.classList.add('is-success');
+      btn.textContent = 'Cuenta creada';
     }
 
     function validateData(data) {
@@ -157,19 +651,24 @@
       const email = String(data.email || '').trim();
 
       if (!empresa || empresa.length < 2) {
+        document.getElementById('empresaNombre').focus();
         return 'Ingresá un nombre de empresa válido.';
       }
       if (!PHONE_RE.test(telefono)) {
-        return 'Ingresá un teléfono válido (8 a 20 caracteres).';
+        document.getElementById('telefono').focus();
+        return 'Ingresá un WhatsApp válido, entre 8 y 20 caracteres.';
       }
       if (!USERNAME_RE.test(username)) {
+        document.getElementById('username').focus();
         return 'Usuario inválido. Usá 3-30 caracteres: letras, números, _, . o -';
       }
-      if (password.length < 8) {
-        return 'La contraseña debe tener al menos 8 caracteres.';
-      }
       if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        document.getElementById('email').focus();
         return 'Ingresá un email válido o dejalo vacío.';
+      }
+      if (password.length < 8) {
+        passwordInput.focus();
+        return 'La contraseña debe tener al menos 8 caracteres.';
       }
 
       data.empresa_nombre = empresa;
@@ -192,9 +691,7 @@
 
     f.onsubmit = async (e) => {
       e.preventDefault();
-      btn.disabled = true;
-      btn.textContent = 'Creando entorno...';
-      clearError();
+      clearMessages();
 
       const formData = new FormData(f);
       const data = Object.fromEntries(formData.entries());
@@ -202,9 +699,10 @@
       const validationError = validateData(data);
       if (validationError) {
         showError(validationError);
-        resetButton();
         return;
       }
+
+      setLoading(true);
 
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 15000);
@@ -213,6 +711,7 @@
         const res = await fetch('/api/auth/signup-full', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
           body: JSON.stringify(data),
           signal: controller.signal
         });
@@ -220,19 +719,20 @@
         const json = await parseResponseSafe(res);
         if (!res.ok) throw new Error(json.error || 'Error al crear cuenta');
 
-        btn.style.background = 'var(--success)';
-        btn.textContent = '¡CUENTA CREADA!';
+        setSuccessState();
+        showSuccess('Empresa creada. Redirigiendo al panel...');
 
         setTimeout(() => {
           location.href = 'dashboard.html?welcome=1';
-        }, 1000);
+        }, 900);
       } catch (e) {
         if (e.name === 'AbortError') {
           showError('La solicitud tardó demasiado. Reintentá en unos segundos.');
         } else {
-          showError(e.message || 'Error inesperado al crear cuenta');
+          showError(e.message || 'Error inesperado al crear cuenta.');
         }
-        resetButton();
+        btn.classList.remove('is-success');
+        setLoading(false);
       } finally {
         clearTimeout(timeout);
       }
