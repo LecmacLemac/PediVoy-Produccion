@@ -1,0 +1,570 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Referentes - MultiEmpresas</title>
+  <link rel="stylesheet" href="theme-base.css" />
+  <style>
+    :root {
+      --bg:#0b1020;
+      --bg-2:#0f172a;
+      --ink:#f1f5f9;
+      --muted:#94a3b8;
+      --brand:#06b6d4;
+      --brand-hover:#22d3ee;
+      --surface:rgba(30,41,59,.72);
+      --border:rgba(148,163,184,.16);
+      --glass:rgba(15,23,42,.88);
+      --success:#10b981;
+      --warning:#f59e0b;
+      --danger:#ef4444;
+      --radius:12px;
+    }
+    *{box-sizing:border-box;outline:none}
+    body{margin:0;font-family:system-ui,-apple-system,sans-serif;color:var(--ink);background:radial-gradient(circle at 12% 48%,rgba(6,182,212,.06),transparent 24%),radial-gradient(circle at 88% 22%,rgba(16,185,129,.05),transparent 24%),var(--bg);min-height:100vh;font-size:14px}
+    .container{max-width:1300px;margin:0 auto;padding:0 20px}
+    header{position:sticky;top:0;z-index:50;background:var(--glass);backdrop-filter:blur(12px);border-bottom:1px solid var(--border);padding:.8rem 0}
+    nav{display:flex;justify-content:space-between;align-items:center;gap:1rem}
+    .brand{font-size:1.1rem;font-weight:700;color:#fff;display:flex;align-items:center;gap:.55rem}
+    .brand-dot{width:10px;height:10px;border-radius:50%;background:var(--brand);box-shadow:0 0 12px var(--brand)}
+    .role-badge{background:rgba(6,182,212,.1);color:var(--brand);padding:2px 8px;border-radius:99px;font-size:.75rem;border:1px solid rgba(6,182,212,.3)}
+    .menu{list-style:none;display:flex;gap:1.35rem;margin:0;padding:0}
+    .menu a{text-decoration:none;color:var(--muted);font-weight:500;transition:.2s;white-space:nowrap}
+    .menu a:hover,.menu a.active{color:#fff}
+    .menu a.active{border-bottom:2px solid var(--brand);padding-bottom:4px}
+    main{padding:2rem 0 4rem;display:grid;gap:1.5rem}
+    .page-head{display:flex;justify-content:space-between;align-items:flex-end;gap:1rem;flex-wrap:wrap}
+    h1{margin:0;color:#fff;font-size:1.85rem;line-height:1.15}
+    h3{margin:0 0 .5rem;color:#fff}
+    .subtitle,.muted{color:var(--muted)}
+    .subtitle{margin:.45rem 0 0;font-size:.95rem}
+    .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1.35rem;box-shadow:0 4px 20px rgba(0,0,0,.22)}
+    .summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.85rem}
+    .metric{border:1px solid var(--border);border-radius:8px;background:rgba(15,23,42,.62);padding:.9rem 1rem;min-height:78px}
+    .metric span{display:block;color:var(--muted);font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em}
+    .metric strong{display:block;font-size:1.45rem;margin-top:.25rem;color:#fff}
+    .toolbar{display:grid;grid-template-columns:minmax(240px,1fr) minmax(180px,.55fr) auto;gap:.8rem;align-items:end;margin-bottom:1.1rem}
+    label{display:block;font-size:.78rem;color:var(--muted);font-weight:700;margin-bottom:.4rem;text-transform:uppercase;letter-spacing:.04em}
+    input,select,textarea{width:100%;background:var(--bg-2);border:1px solid var(--border);color:#fff;padding:.62rem .78rem;border-radius:8px;font-size:.9rem;transition:.2s}
+    textarea{resize:vertical}
+    input:focus,select:focus,textarea:focus{border-color:var(--brand);box-shadow:0 0 0 2px rgba(6,182,212,.2)}
+    .btn{padding:.58rem .95rem;border-radius:8px;font-weight:700;cursor:pointer;border:1px solid var(--border);font-size:.9rem;transition:.2s;display:inline-flex;align-items:center;justify-content:center;gap:.45rem;text-decoration:none;background:rgba(255,255,255,.05);color:var(--ink);min-height:39px}
+    .btn:hover{background:rgba(255,255,255,.1);border-color:var(--brand)}
+    .btn-primary{background:var(--brand);border-color:transparent;color:#001018}
+    .btn-primary:hover{background:var(--brand-hover)}
+    .btn-danger{background:rgba(239,68,68,.1);border-color:rgba(239,68,68,.25);color:#fca5a5}
+    .btn-sm{padding:.34rem .62rem;font-size:.8rem;min-height:30px}
+    .table-responsive{overflow-x:auto;border-radius:var(--radius);border:1px solid var(--border)}
+    table{width:100%;border-collapse:collapse;text-align:left}
+    th{background:rgba(15,23,42,.62);color:var(--muted);font-weight:700;padding:.95rem;font-size:.78rem;text-transform:uppercase;border-bottom:1px solid var(--border);white-space:nowrap}
+    td{padding:.85rem .95rem;border-bottom:1px solid var(--border);font-size:.9rem;vertical-align:middle}
+    tr:last-child td{border-bottom:none}
+    tr:hover td{background:rgba(255,255,255,.025)}
+    .code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-weight:800;color:#a5f3fc;background:rgba(6,182,212,.1);border:1px solid rgba(6,182,212,.2);border-radius:6px;padding:2px 7px;display:inline-block}
+    .badge{padding:2px 8px;border-radius:99px;font-size:.75rem;font-weight:800;text-transform:uppercase}
+    .ok{background:rgba(16,185,129,.14);color:#6ee7b7}
+    .off{background:rgba(239,68,68,.14);color:#fca5a5}
+    .warn{background:rgba(245,158,11,.14);color:#fcd34d}
+    .actions{display:flex;justify-content:flex-end;gap:.45rem;flex-wrap:wrap}
+    dialog{background:#1e293b;color:#fff;border:1px solid var(--border);border-radius:var(--radius);padding:0;width:95%;max-width:860px;box-shadow:0 20px 50px rgba(0,0,0,.5)}
+    dialog::backdrop{background:rgba(0,0,0,.72);backdrop-filter:blur(4px)}
+    .modal-header{padding:1.15rem 1.3rem;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;background:rgba(0,0,0,.18)}
+    .modal-body{padding:1.3rem;max-height:72vh;overflow-y:auto;display:grid;gap:1rem}
+    .modal-footer{padding:1.1rem 1.3rem;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:.8rem;background:rgba(0,0,0,.18)}
+    .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:1rem}
+    .grid-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:1rem}
+    .product-picker{border:1px solid var(--border);border-radius:8px;overflow:hidden}
+    .product-row{display:grid;grid-template-columns:auto 1fr 120px;gap:.75rem;align-items:center;padding:.72rem .85rem;border-bottom:1px solid var(--border);background:rgba(15,23,42,.35)}
+    .product-row:last-child{border-bottom:none}
+    .product-row input[type="checkbox"]{width:auto;transform:scale(1.1)}
+    .product-row input[type="number"]{padding:.45rem .55rem}
+    .toast{position:fixed;right:20px;bottom:26px;background:#fff;color:#0f172a;padding:10px 18px;border-radius:99px;font-weight:800;box-shadow:0 10px 30px rgba(0,0,0,.3);opacity:0;pointer-events:none;transition:.25s;z-index:200}
+    .toast.show{opacity:1;transform:translateY(-8px)}
+    [hidden]{display:none!important}
+    @media(max-width:780px){
+      .container{padding:0 12px}
+      nav{flex-direction:column;align-items:stretch}
+      .menu{overflow-x:auto;white-space:nowrap;padding-bottom:4px}
+      .summary{grid-template-columns:1fr 1fr}
+      .toolbar,.grid-2,.grid-3{grid-template-columns:1fr}
+      .product-row{grid-template-columns:auto 1fr}
+      .product-row input[type="number"]{grid-column:1 / -1}
+      .modal-footer{flex-direction:column-reverse}
+      .modal-footer .btn{width:100%}
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <nav class="container">
+      <div class="brand"><span class="brand-dot"></span>MultiEmpresas <span id="rolePill" class="role-badge"></span></div>
+      <ul class="menu">
+        <li><a href="inicio/inicial.html">Inicio</a></li>
+        <li><a href="dashboard.html">Dashboard</a></li>
+        <li><a href="productos.html">Productos</a></li>
+        <li><a href="referentes.html" class="active">Referentes</a></li>
+        <li><a href="estadisticas.html">Estadisticas</a></li>
+        <li><a href="#" id="logout" style="color:var(--danger)">Salir</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <main class="container">
+    <section class="page-head">
+      <div>
+        <h1>Referentes comerciales</h1>
+        <p class="subtitle">Codigos de vendedor, productos comisionables y comisiones validadas por pedidos entregados.</p>
+      </div>
+      <button id="btnNuevo" class="btn btn-primary">Nuevo referente</button>
+    </section>
+
+    <section class="summary">
+      <div class="metric"><span>Referentes activos</span><strong id="mActivos">0</strong></div>
+      <div class="metric"><span>Clientes asociados</span><strong id="mClientes">0</strong></div>
+      <div class="metric"><span>Productos asociados</span><strong id="mProductos">0</strong></div>
+      <div class="metric"><span>Comisiones validadas</span><strong id="mComisiones">$0</strong></div>
+    </section>
+
+    <section class="card">
+      <div class="toolbar">
+        <div>
+          <label for="q">Buscar</label>
+          <input id="q" placeholder="Nombre, codigo, email o telefono" />
+        </div>
+        <div id="empWrap" hidden>
+          <label for="empSel">Empresa</label>
+          <select id="empSel"></select>
+        </div>
+        <button id="btnRefresh" class="btn">Actualizar</button>
+      </div>
+
+      <div class="table-responsive">
+        <table>
+          <thead>
+            <tr>
+              <th>Referente</th>
+              <th>Codigo</th>
+              <th>Comision</th>
+              <th>Vigencia</th>
+              <th>Clientes</th>
+              <th>Productos</th>
+              <th>Total</th>
+              <th>Estado</th>
+              <th style="text-align:right">Acciones</th>
+            </tr>
+          </thead>
+          <tbody id="tbReferentes">
+            <tr><td colspan="9" style="text-align:center;padding:2.5rem;color:var(--muted)">Cargando referentes...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="page-head" style="margin-bottom:1rem">
+        <div>
+          <h3>Comisiones recientes</h3>
+          <div class="muted">Se validan cuando el pedido queda en estado entregado.</div>
+        </div>
+      </div>
+      <div class="table-responsive">
+        <table>
+          <thead>
+            <tr>
+              <th>Fecha</th>
+              <th>Referente</th>
+              <th>Cliente</th>
+              <th>Producto</th>
+              <th>Pedido</th>
+              <th>Base</th>
+              <th>%</th>
+              <th>Comision</th>
+              <th>Estado</th>
+            </tr>
+          </thead>
+          <tbody id="tbComisiones">
+            <tr><td colspan="9" style="text-align:center;padding:2rem;color:var(--muted)">Sin datos cargados.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="dlgReferente">
+    <form id="formReferente" method="dialog">
+      <div class="modal-header">
+        <h3 id="dlgTitle">Nuevo referente</h3>
+        <button type="button" class="btn btn-sm" id="btnClose">Cerrar</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="refId" />
+        <div class="grid-2">
+          <div>
+            <label for="nombre">Nombre</label>
+            <input id="nombre" required placeholder="Ej: Juan Perez" />
+          </div>
+          <div>
+            <label for="codigo">Codigo referente</label>
+            <input id="codigo" required placeholder="Ej: JUAN10" />
+          </div>
+        </div>
+        <div class="grid-3">
+          <div>
+            <label for="porcentaje">Comision general %</label>
+            <input id="porcentaje" type="number" min="0" max="100" step="0.01" required />
+          </div>
+          <div>
+            <label for="desde">Vigente desde</label>
+            <input id="desde" type="date" />
+          </div>
+          <div>
+            <label for="hasta">Vigente hasta</label>
+            <input id="hasta" type="date" />
+          </div>
+        </div>
+        <div class="grid-2">
+          <div>
+            <label for="telefono">Telefono</label>
+            <input id="telefono" />
+          </div>
+          <div>
+            <label for="email">Email</label>
+            <input id="email" type="email" />
+          </div>
+        </div>
+        <div>
+          <label for="notas">Notas internas</label>
+          <textarea id="notas" rows="2"></textarea>
+        </div>
+        <div>
+          <label>
+            <input id="activo" type="checkbox" style="width:auto" checked />
+            Referente activo
+          </label>
+        </div>
+        <div>
+          <label>Productos asociados</label>
+          <div id="productosPicker" class="product-picker">
+            <div style="padding:1rem;color:var(--muted)">Cargando productos...</div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn" id="btnCancel">Cancelar</button>
+        <button type="submit" class="btn btn-primary">Guardar referente</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast"></div>
+
+  <script>
+    const $ = (s) => document.querySelector(s);
+    const money = new Intl.NumberFormat('es-AR', { style:'currency', currency:'ARS', maximumFractionDigits:0 });
+    const dateFmt = new Intl.DateTimeFormat('es-AR', { day:'2-digit', month:'2-digit', year:'2-digit' });
+    const state = { user:null, isSuper:false, referentes:[], productos:[], productosAsignados:new Map(), comisiones:[] };
+
+    function toast(msg) {
+      const t = $('#toast');
+      t.textContent = msg;
+      t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 2600);
+    }
+
+    function esc(v) {
+      return String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+    }
+
+    function authFetch(url, opts = {}) {
+      const headers = { 'Content-Type':'application/json', ...(opts.headers || {}) };
+      return fetch(url, { ...opts, headers, credentials:'include' });
+    }
+
+    function empresaQS() {
+      const id = $('#empSel')?.value;
+      return state.isSuper && id ? `?empresa_id=${encodeURIComponent(id)}` : '';
+    }
+
+    async function api(url, opts = {}) {
+      const res = await authFetch(url, opts);
+      if (res.status === 401) {
+        location.href = 'login.html';
+        return null;
+      }
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || 'Error de API');
+      return data;
+    }
+
+    function normalizeCode(value) {
+      return String(value || '').trim().toUpperCase().replace(/\s+/g, '-');
+    }
+
+    function validUntilLabel(r) {
+      const desde = r.vigente_desde ? dateFmt.format(new Date(r.vigente_desde)) : 'sin inicio';
+      const hasta = r.vigente_hasta ? dateFmt.format(new Date(r.vigente_hasta)) : 'sin cierre';
+      return `${desde} / ${hasta}`;
+    }
+
+    function renderSummary() {
+      const activos = state.referentes.filter((r) => r.activo).length;
+      const clientes = state.referentes.reduce((a, r) => a + Number(r.clientes_count || 0), 0);
+      const productos = state.referentes.reduce((a, r) => a + Number(r.productos_count || 0), 0);
+      const comisiones = state.referentes.reduce((a, r) => a + Number(r.comisiones_total || 0), 0);
+      $('#mActivos').textContent = activos;
+      $('#mClientes').textContent = clientes;
+      $('#mProductos').textContent = productos;
+      $('#mComisiones').textContent = money.format(comisiones);
+    }
+
+    function renderReferentes() {
+      renderSummary();
+      const q = $('#q').value.trim().toLowerCase();
+      const rows = state.referentes.filter((r) => {
+        if (!q) return true;
+        return [r.nombre, r.codigo, r.email, r.telefono].some((v) => String(v || '').toLowerCase().includes(q));
+      });
+      const tb = $('#tbReferentes');
+      if (!rows.length) {
+        tb.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:2.5rem;color:var(--muted)">No hay referentes para mostrar.</td></tr>';
+        return;
+      }
+      tb.innerHTML = rows.map((r) => `
+        <tr style="opacity:${r.activo ? 1 : .55}">
+          <td>
+            <strong>${esc(r.nombre)}</strong>
+            <div class="muted">${esc(r.email || r.telefono || 'Sin contacto')}</div>
+          </td>
+          <td><span class="code">${esc(r.codigo)}</span></td>
+          <td><strong>${Number(r.porcentaje_comision || 0).toFixed(2)}%</strong></td>
+          <td>${esc(validUntilLabel(r))}</td>
+          <td>${Number(r.clientes_count || 0)}</td>
+          <td>${Number(r.productos_count || 0)}</td>
+          <td>${money.format(Number(r.comisiones_total || 0))}</td>
+          <td><span class="badge ${r.activo ? 'ok' : 'off'}">${r.activo ? 'Activo' : 'Inactivo'}</span></td>
+          <td>
+            <div class="actions">
+              <button class="btn btn-sm" onclick="openEdit(${Number(r.id)})">Editar</button>
+              <button class="btn btn-sm btn-danger" onclick="removeReferente(${Number(r.id)})">Eliminar</button>
+            </div>
+          </td>
+        </tr>
+      `).join('');
+    }
+
+    function renderComisiones() {
+      const tb = $('#tbComisiones');
+      if (!state.comisiones.length) {
+        tb.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:2rem;color:var(--muted)">No hay comisiones validadas todavia.</td></tr>';
+        return;
+      }
+      tb.innerHTML = state.comisiones.slice(0, 80).map((c) => `
+        <tr>
+          <td>${c.validada_at ? esc(dateFmt.format(new Date(c.validada_at))) : '-'}</td>
+          <td>${esc(c.referente_nombre)} <div class="code">${esc(c.referente_codigo)}</div></td>
+          <td>${esc(c.cliente || '-')}</td>
+          <td>${esc(c.producto_nombre || '-')}</td>
+          <td>#${Number(c.pedido_id || 0)}</td>
+          <td>${money.format(Number(c.base_monto || 0))}</td>
+          <td>${Number(c.porcentaje || 0).toFixed(2)}%</td>
+          <td><strong>${money.format(Number(c.monto_comision || 0))}</strong></td>
+          <td><span class="badge ${c.estado === 'liquidada' ? 'ok' : 'warn'}">${esc(c.estado || 'validada')}</span></td>
+        </tr>
+      `).join('');
+    }
+
+    function renderProductosPicker(asignados = []) {
+      const assigned = new Map(asignados.map((p) => [Number(p.producto_id), p]));
+      state.productosAsignados = assigned;
+      const wrap = $('#productosPicker');
+      if (!state.productos.length) {
+        wrap.innerHTML = '<div style="padding:1rem;color:var(--muted)">No hay productos cargados para esta empresa.</div>';
+        return;
+      }
+      wrap.innerHTML = state.productos.map((p) => {
+        const rel = assigned.get(Number(p.id));
+        return `
+          <div class="product-row">
+            <input type="checkbox" data-prod-check="${Number(p.id)}" ${rel ? 'checked' : ''} />
+            <div>
+              <strong>${esc(p.nombre)}</strong>
+              <div class="muted">${money.format(Number(p.precio || 0))}</div>
+            </div>
+            <input type="number" min="0" max="100" step="0.01" data-prod-pct="${Number(p.id)}" placeholder="% propio" value="${rel?.porcentaje_comision ?? ''}" />
+          </div>
+        `;
+      }).join('');
+    }
+
+    async function loadProductos() {
+      if (state.isSuper && !$('#empSel').value) {
+        state.productos = [];
+        return;
+      }
+      state.productos = await api('/api/productos' + empresaQS()) || [];
+    }
+
+    async function loadReferentes() {
+      if (state.isSuper && !$('#empSel').value) {
+        state.referentes = [];
+        state.comisiones = [];
+        renderReferentes();
+        renderComisiones();
+        return;
+      }
+      const [refs, coms] = await Promise.all([
+        api('/api/referentes' + empresaQS()),
+        api('/api/referentes/comisiones' + empresaQS()),
+      ]);
+      state.referentes = Array.isArray(refs) ? refs : [];
+      state.comisiones = Array.isArray(coms) ? coms : [];
+      renderReferentes();
+      renderComisiones();
+    }
+
+    async function refreshAll() {
+      try {
+        await loadProductos();
+        await loadReferentes();
+      } catch (e) {
+        console.error(e);
+        toast(e.message || 'No se pudo cargar referentes');
+      }
+    }
+
+    function resetForm() {
+      $('#formReferente').reset();
+      $('#refId').value = '';
+      $('#activo').checked = true;
+      $('#porcentaje').value = '0';
+      $('#codigo').disabled = false;
+      renderProductosPicker([]);
+    }
+
+    async function openNew() {
+      if (state.isSuper && !$('#empSel').value) return toast('Selecciona una empresa primero.');
+      resetForm();
+      $('#dlgTitle').textContent = 'Nuevo referente';
+      $('#dlgReferente').showModal();
+      $('#nombre').focus();
+    }
+
+    async function openEdit(id) {
+      const r = state.referentes.find((x) => Number(x.id) === Number(id));
+      if (!r) return;
+      resetForm();
+      $('#dlgTitle').textContent = 'Editar referente';
+      $('#refId').value = r.id;
+      $('#nombre').value = r.nombre || '';
+      $('#codigo').value = r.codigo || '';
+      $('#codigo').disabled = true;
+      $('#porcentaje').value = Number(r.porcentaje_comision || 0);
+      $('#telefono').value = r.telefono || '';
+      $('#email').value = r.email || '';
+      $('#desde').value = r.vigente_desde ? String(r.vigente_desde).slice(0, 10) : '';
+      $('#hasta').value = r.vigente_hasta ? String(r.vigente_hasta).slice(0, 10) : '';
+      $('#notas').value = r.notas || '';
+      $('#activo').checked = !!r.activo;
+      try {
+        const asignados = await api(`/api/referentes/${id}/productos` + empresaQS());
+        renderProductosPicker(Array.isArray(asignados) ? asignados : []);
+      } catch (e) {
+        toast(e.message || 'No se pudieron cargar productos asignados');
+      }
+      $('#dlgReferente').showModal();
+    }
+
+    function collectProductos() {
+      return state.productos
+        .filter((p) => document.querySelector(`[data-prod-check="${Number(p.id)}"]`)?.checked)
+        .map((p) => {
+          const pctValue = document.querySelector(`[data-prod-pct="${Number(p.id)}"]`)?.value;
+          return {
+            producto_id: Number(p.id),
+            porcentaje_comision: pctValue === '' ? null : Number(pctValue),
+            activo: true,
+          };
+        });
+    }
+
+    async function saveReferente() {
+      const id = $('#refId').value;
+      const body = {
+        nombre: $('#nombre').value.trim(),
+        codigo: normalizeCode($('#codigo').value),
+        porcentaje_comision: Number($('#porcentaje').value || 0),
+        telefono: $('#telefono').value.trim() || null,
+        email: $('#email').value.trim() || null,
+        vigente_desde: $('#desde').value || null,
+        vigente_hasta: $('#hasta').value || null,
+        notas: $('#notas').value.trim() || null,
+        activo: $('#activo').checked,
+      };
+      if (state.isSuper) body.empresa_id = Number($('#empSel').value);
+      if (!body.nombre || !body.codigo) return toast('Nombre y codigo son obligatorios.');
+
+      const saved = await api(id ? `/api/referentes/${id}` : '/api/referentes', {
+        method: id ? 'PUT' : 'POST',
+        body: JSON.stringify(body),
+      });
+      const refId = Number(id || saved?.id);
+      await api(`/api/referentes/${refId}/productos`, {
+        method:'POST',
+        body: JSON.stringify({ empresa_id: state.isSuper ? Number($('#empSel').value) : undefined, productos: collectProductos() }),
+      });
+      $('#dlgReferente').close();
+      toast('Referente guardado');
+      await refreshAll();
+    }
+
+    async function removeReferente(id) {
+      if (!confirm('Eliminar este referente? Sus asociaciones historicas quedan preservadas para auditoria.')) return;
+      try {
+        await api(`/api/referentes/${id}` + empresaQS(), { method:'DELETE' });
+        toast('Referente eliminado');
+        await refreshAll();
+      } catch (e) {
+        toast(e.message || 'No se pudo eliminar');
+      }
+    }
+
+    async function init() {
+      $('#logout').onclick = async (e) => {
+        e.preventDefault();
+        try { await authFetch('/api/logout', { method:'POST' }); } catch {}
+        location.href = 'login.html';
+      };
+      $('#btnNuevo').onclick = openNew;
+      $('#btnRefresh').onclick = refreshAll;
+      $('#q').addEventListener('input', renderReferentes);
+      $('#btnClose').onclick = () => $('#dlgReferente').close();
+      $('#btnCancel').onclick = () => $('#dlgReferente').close();
+      $('#codigo').addEventListener('blur', () => { $('#codigo').value = normalizeCode($('#codigo').value); });
+      $('#formReferente').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        try { await saveReferente(); } catch (err) { console.error(err); toast(err.message || 'No se pudo guardar'); }
+      });
+
+      const me = await api('/api/me');
+      state.user = me?.user || {};
+      state.isSuper = String(state.user.role || '').toLowerCase() === 'super';
+      $('#rolePill').textContent = state.isSuper ? 'SUPER ADMIN' : String(state.user.role || 'admin').toUpperCase();
+
+      if (state.isSuper) {
+        $('#empWrap').hidden = false;
+        const empresas = await api('/api/empresas');
+        $('#empSel').innerHTML = '<option value="">Seleccionar empresa</option>' + (Array.isArray(empresas) ? empresas.map((e) => `<option value="${Number(e.id)}">${esc(e.nombre)}</option>`).join('') : '');
+        $('#empSel').addEventListener('change', refreshAll);
+      }
+
+      await refreshAll();
+    }
+
+    init().catch((e) => {
+      console.error(e);
+      toast(e.message || 'Error inicializando referentes');
+    });
+  </script>
+</body>
+</html>

@@ -52,10 +52,10 @@ Alcance inicial:
 - Asociacion automatica de cliente a referente si el codigo existe y esta vigente.
 - Generacion de comisiones cuando un pedido pasa a `entregado`.
 - Endpoints admin basicos para gestionar referentes.
+- Pantalla inicial de administracion en `/pedidos/referentes.html`.
 
 Fuera de esta primera etapa:
 
-- Pantalla visual completa de administracion.
 - Motor completo de codigos de descuento.
 - Liquidacion/pago contable de comisiones.
 - Reporte avanzado por periodos.
@@ -65,6 +65,8 @@ Fuera de esta primera etapa:
 - `GET /api/referentes`
 - `POST /api/referentes`
 - `PUT /api/referentes/:id`
+- `DELETE /api/referentes/:id`
+- `GET /api/referentes/:id/productos`
 - `POST /api/referentes/:id/productos`
 - `GET /api/referentes/comisiones`
 - `POST /api/referentes/clientes/:clienteId/desvincular`
@@ -80,4 +82,3 @@ La empresa debe poder auditar:
 - que producto comisiono,
 - que porcentaje se aplico,
 - en que fecha quedo validada la comision.
-

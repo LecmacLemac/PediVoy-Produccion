@@ -190,6 +190,63 @@ export function createReferentesRouter(deps) {
     }
   });
 
+  router.get('/:id/productos', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresa(req);
+      const referenteId = Number(req.params.id);
+      if (!empresaId || !referenteId) return res.status(400).json({ error: 'Datos invalidos.' });
+
+      const rows = await query(
+        `SELECT rp.id,
+                rp.referente_id,
+                rp.producto_id,
+                rp.porcentaje_comision,
+                rp.vigente_desde,
+                rp.vigente_hasta,
+                rp.activo,
+                p.nombre AS producto_nombre,
+                p.precio AS producto_precio
+           FROM referente_productos rp
+           JOIN productos p ON p.id = rp.producto_id AND p.empresa_id = rp.empresa_id
+          WHERE rp.empresa_id = $1
+            AND rp.referente_id = $2
+          ORDER BY p.nombre ASC`,
+        [empresaId, referenteId]
+      );
+
+      return res.json(rows);
+    } catch (e) {
+      console.error('REFERENTES.PRODUCTOS.LIST.ERROR', e);
+      return res.status(500).json({ error: 'Error listando productos del referente' });
+    }
+  });
+
+  router.delete('/:id', withAuth, async (req, res) => {
+    try {
+      const empresaId = resolveEmpresa(req, req.query || {});
+      const referenteId = Number(req.params.id);
+      if (!empresaId || !referenteId) return res.status(400).json({ error: 'Datos invalidos.' });
+
+      const rows = await query(
+        `UPDATE referentes
+            SET activo = FALSE,
+                deleted_at = NOW(),
+                updated_at = NOW()
+          WHERE id = $1
+            AND empresa_id = $2
+            AND deleted_at IS NULL
+          RETURNING id`,
+        [referenteId, empresaId]
+      );
+
+      if (!rows.length) return res.status(404).json({ error: 'Referente no encontrado.' });
+      return res.json({ ok: true });
+    } catch (e) {
+      console.error('REFERENTES.DELETE.ERROR', e);
+      return res.status(500).json({ error: 'Error eliminando referente' });
+    }
+  });
+
   router.get('/comisiones', withAuth, async (req, res) => {
     try {
       const empresaId = resolveEmpresa(req);
@@ -243,4 +300,3 @@ export function createReferentesRouter(deps) {
 
   return router;
 }
-
