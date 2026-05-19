@@ -6,8 +6,21 @@ let selectedEmpresaId = null;
 let telefono = '';
 let lastCompaniesLookup = '';
 const cart = [];
+let catalogProducts = [];
+let activeCatalogFilter = 'all';
+let paymentMethod = 'efectivo';
 let ordersTimer = null;
 const lastOrderState = new Map();
+
+function esc(v) {
+  return String(v ?? '').replace(/[&<>"']/g, (ch) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  }[ch]));
+}
 
 async function j(url, options = {}) {
   const r = await fetch(url, {
@@ -60,6 +73,72 @@ function updateAppStats({ companyName = null, cartCount = null, orderCount = nul
   if (companyEl && companyName !== null) companyEl.textContent = companyName || 'Sin seleccionar';
   if (cartEl && cartCount !== null) cartEl.textContent = `${cartCount} item${cartCount === 1 ? '' : 's'}`;
   if (ordersEl && orderCount !== null) ordersEl.textContent = `${orderCount} activo${orderCount === 1 ? '' : 's'}`;
+}
+
+function setActiveTab(targetId) {
+  document.querySelectorAll('.tab-btn').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.target === targetId);
+  });
+}
+
+function goToSection(targetId) {
+  const target = document.getElementById(targetId);
+  if (!target || target.classList.contains('hidden')) return;
+  setActiveTab(targetId);
+  target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function productCategory(p) {
+  return String(p?.categoria || p?.rubro || p?.tipo || 'Productos').trim() || 'Productos';
+}
+
+function cartCount() {
+  return cart.reduce((a, b) => a + Number(b.cantidad || 0), 0);
+}
+
+function updateQuickCustomerPanel() {
+  const cliente = $('#cliente')?.value?.trim() || 'Sin datos';
+  const direccion = $('#direccion')?.value?.trim() || 'Sin dirección';
+  const ciudad = $('#ciudad')?.value?.trim();
+  const quickCustomer = $('#quick-customer');
+  const quickAddress = $('#quick-address');
+  if (quickCustomer) quickCustomer.textContent = cliente;
+  if (quickAddress) quickAddress.textContent = ciudad && direccion !== 'Sin dirección' ? `${direccion}, ${ciudad}` : direccion;
+}
+
+function syncCheckoutFromProfile({ force = false } = {}) {
+  const fields = [
+    ['#checkout-cliente', '#cliente'],
+    ['#checkout-direccion', '#direccion'],
+    ['#checkout-ciudad', '#ciudad'],
+    ['#checkout-telefono', '#telefono-perfil'],
+  ];
+  fields.forEach(([checkoutSel, profileSel]) => {
+    const checkout = $(checkoutSel);
+    const profile = $(profileSel);
+    if (!checkout || !profile) return;
+    if (force || !checkout.value.trim()) checkout.value = profile.value || '';
+  });
+  updateQuickCustomerPanel();
+}
+
+function updateCheckoutState() {
+  const btn = $('#btn-send');
+  const msg = $('#checkout-msg');
+  if (!btn) return;
+  const cliente = $('#checkout-cliente')?.value?.trim() || '';
+  const direccion = $('#checkout-direccion')?.value?.trim() || '';
+  const tel = $('#checkout-telefono')?.value?.trim() || telefono || '';
+  const ready = cart.length > 0 && cliente && direccion && onlyDigits(tel).length >= 8;
+  btn.disabled = !ready;
+  btn.style.opacity = ready ? '1' : '.55';
+  btn.style.cursor = ready ? 'pointer' : 'not-allowed';
+  if (msg) {
+    if (!cart.length) msg.textContent = 'Agregá productos para enviar el pedido.';
+    else if (!cliente || !direccion) msg.textContent = 'Confirmá nombre y dirección de entrega.';
+    else if (onlyDigits(tel).length < 8) msg.textContent = 'Confirmá un teléfono válido.';
+    else msg.textContent = 'Pedido listo para enviar.';
+  }
 }
 
 function renderEmpresaOptions(companies = [], preferredEmpresaId = null) {
@@ -166,6 +245,7 @@ function startOrdersAutoRefresh() {
 function showAuthOnly() {
   stopOrdersAutoRefresh();
   $('#hero-shell')?.classList.remove('hidden');
+  $('#app-tabs')?.classList.add('hidden');
   $('#step-login').classList.remove('hidden');
   $('#step-code').classList.remove('hidden');
   $('#step-profile').classList.add('hidden');
@@ -176,6 +256,7 @@ function showAuthOnly() {
 
 function showApp() {
   $('#hero-shell')?.classList.add('hidden');
+  $('#app-tabs')?.classList.remove('hidden');
   $('#step-login').classList.add('hidden');
   $('#step-code').classList.add('hidden');
   $('#step-profile').classList.remove('hidden');
@@ -193,6 +274,8 @@ function loadProfileToForm(profile = {}, session = {}) {
   const tel = profile?.telefono || session?.telefono || '';
   $('#telefono-perfil').value = tel;
   telefono = tel;
+  syncCheckoutFromProfile({ force: true });
+  updateCheckoutState();
 }
 
 function statusColor(estado = '') {
@@ -276,6 +359,12 @@ async function repeatOrder(orderId) {
 
 function renderOrders(orders = []) {
   const root = $('#orders');
+  const last = orders[0] || null;
+  const summaryLastOrder = $('#summary-last-order');
+  const summaryLastStatus = $('#summary-last-status');
+  if (summaryLastOrder) summaryLastOrder.textContent = last ? `#${last.id}` : '-';
+  if (summaryLastStatus) summaryLastStatus.textContent = last?.estado || '-';
+
   if (!orders.length) {
     root.className = '';
     root.innerHTML = '<div class="empty-state">Todavía no tenés pedidos cargados.</div>';
@@ -292,24 +381,25 @@ function renderOrders(orders = []) {
     const detBtnId = `btn-det-${o.id}`;
     const repBtnId = `btn-rep-${o.id}`;
     const detBoxId = `det-${o.id}`;
+    const trackUrl = `/pedidos/pedido.html?id=${encodeURIComponent(o.id)}`;
 
     const prog = statusProgress(o.estado);
     const color = statusColor(o.estado);
     row.innerHTML = `
       <div class="order-top">
         <div>
-          <div class="order-id">Pedido #${o.id}</div>
+          <div class="order-id">Pedido #${esc(o.id)}</div>
           <div class="order-meta">${fecha}</div>
         </div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
           ${index === 0 ? '<span class="status-badge" style="background:#cffafe;color:#0f766e">Último pedido</span>' : ''}
-          <span class="status-badge" style="background:${color}18;color:${color}">${o.estado || '-'}</span>
+          <span class="status-badge" style="background:${color}18;color:${color}">${esc(o.estado || '-')}</span>
         </div>
       </div>
       <div style="margin-top:10px;display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap">
         <div>
           <div class="muted small">Entrega</div>
-          <strong>${o.direccion || 'Dirección pendiente'}</strong>
+          <strong>${esc(o.direccion || 'Dirección pendiente')}</strong>
         </div>
         <div style="text-align:right">
           <div class="muted small">Monto</div>
@@ -323,6 +413,7 @@ function renderOrders(orders = []) {
       <div class="row" style="margin-top:10px">
         <button class="btn btn-secondary" id="${detBtnId}">Ver detalle</button>
         <button class="btn btn-primary" id="${repBtnId}">Repetir pedido</button>
+        <a class="btn btn-ghost" href="${trackUrl}" style="text-align:center;text-decoration:none">Seguimiento</a>
       </div>
       <div id="${detBoxId}" class="muted small" style="display:none;margin-top:8px"></div>
     `;
@@ -343,7 +434,7 @@ function renderOrders(orders = []) {
         const out = await j(`/api/public/app/orders/${o.id}/items`);
         const items = out.items || [];
         box.innerHTML = items.length
-          ? items.map((it) => `• ${it.producto} x${it.cantidad} — ${money(Number(it.precio_unitario || 0) * Number(it.cantidad || 0))}`).join('<br>')
+          ? items.map((it) => `• ${esc(it.producto)} x${esc(it.cantidad)} — ${money(Number(it.precio_unitario || 0) * Number(it.cantidad || 0))}`).join('<br>')
           : 'Sin ítems';
         box.style.display = 'block';
         btn.textContent = 'Ocultar detalle';
@@ -377,7 +468,7 @@ function renderCart() {
     row.className = 'cart-item';
     row.innerHTML = `
       <div class="cart-item-meta">
-        <strong>${it.nombre}</strong>
+        <strong>${esc(it.nombre)}</strong>
         <div class="muted small">${money(it.precio)} por unidad</div>
         <button class="remove-btn" type="button">Quitar</button>
       </div>
@@ -396,8 +487,9 @@ function renderCart() {
     root.appendChild(row);
   }
   const total = cart.reduce((a, b) => a + b.precio * b.cantidad, 0);
-  updateAppStats({ cartCount: cart.reduce((a, b) => a + b.cantidad, 0) });
+  updateAppStats({ cartCount: cartCount() });
   $('#total').textContent = money(total);
+  updateCheckoutState();
 }
 
 function addToCart(p) {
@@ -405,6 +497,8 @@ function addToCart(p) {
   if (i >= 0) cart[i].cantidad += 1;
   else cart.push({ id: p.id, nombre: p.nombre, precio: Number(p.precio || 0), cantidad: 1 });
   renderCart();
+  const quick = $('#quick-last-action');
+  if (quick) quick.textContent = `${p.nombre} agregado`;
 }
 
 function changeCartQty(id, delta) {
@@ -448,20 +542,62 @@ async function loadEmpresa() {
 
 async function loadCatalog() {
   const rows = await j(`/public/productos?empresa_id=${empresaId}&scope=catalog`);
+  catalogProducts = Array.isArray(rows) ? rows : [];
+  renderCatalogFilters();
+  renderCatalog();
+}
+
+function renderCatalogFilters() {
+  const root = $('#catalog-filters');
+  if (!root) return;
+  const cats = Array.from(new Set(catalogProducts.map(productCategory))).sort((a, b) => a.localeCompare(b, 'es'));
+  const current = cats.includes(activeCatalogFilter) ? activeCatalogFilter : 'all';
+  activeCatalogFilter = current;
+  root.innerHTML = '';
+  [{ key: 'all', label: 'Todo' }, ...cats.map((c) => ({ key: c, label: c }))].forEach((f) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = `filter-chip${activeCatalogFilter === f.key ? ' active' : ''}`;
+    btn.textContent = f.label;
+    btn.addEventListener('click', () => {
+      activeCatalogFilter = f.key;
+      renderCatalogFilters();
+      renderCatalog();
+    });
+    root.appendChild(btn);
+  });
+}
+
+function renderCatalog() {
+  const rows = catalogProducts;
   const root = $('#productos');
+  const q = String($('#catalog-search')?.value || '').trim().toLowerCase();
+  const filtered = rows.filter((p) => {
+    const matchesCategory = activeCatalogFilter === 'all' || productCategory(p) === activeCatalogFilter;
+    const haystack = `${p.nombre || ''} ${p.descripcion || ''} ${productCategory(p)}`.toLowerCase();
+    const matchesSearch = !q || haystack.includes(q);
+    return matchesCategory && matchesSearch;
+  });
+  const count = $('#catalog-count');
+  if (count) count.textContent = `${filtered.length} producto${filtered.length === 1 ? '' : 's'} disponible${filtered.length === 1 ? '' : 's'}`;
+
   root.innerHTML = '';
   if (!rows.length) {
     root.innerHTML = '<div class="empty-state" style="grid-column:1/-1">No hay productos disponibles por ahora.</div>';
     return;
   }
-  rows.forEach((p) => {
+  if (!filtered.length) {
+    root.innerHTML = '<div class="empty-state" style="grid-column:1/-1">No encontramos productos con ese filtro.</div>';
+    return;
+  }
+  filtered.forEach((p) => {
     const el = document.createElement('div');
     el.className = 'prod';
     const imageUrl = resolveImageUrl(p.imagen_promo || p.imagen || '');
     el.innerHTML = `
-      ${imageUrl ? `<div class="prod-media"><img src="${imageUrl}" alt="${p.nombre}" loading="lazy" onerror="this.parentElement.style.display='none'" /></div>` : ''}
-      <div class="prod-title">${p.nombre}</div>
-      <div class="prod-desc">${p.descripcion || 'Disponible para pedido inmediato.'}</div>
+      ${imageUrl ? `<div class="prod-media"><img src="${esc(imageUrl)}" alt="${esc(p.nombre)}" loading="lazy" onerror="this.parentElement.style.display='none'" /></div>` : ''}
+      <div class="prod-title">${esc(p.nombre)}</div>
+      <div class="prod-desc">${esc(p.descripcion || 'Disponible para pedido inmediato.')}</div>
       <div class="prod-foot">
         <span class="price">${money(p.precio)}</span>
         <button class="btn btn-primary" data-id="${p.id}" style="padding:10px 14px;border-radius:14px">Agregar</button>
@@ -471,6 +607,37 @@ async function loadCatalog() {
     root.appendChild(el);
   });
 }
+
+document.querySelectorAll('.tab-btn').forEach((btn) => {
+  btn.addEventListener('click', () => goToSection(btn.dataset.target));
+});
+
+$('#btn-profile-catalog')?.addEventListener('click', () => goToSection('step-catalog'));
+$('#btn-go-orders')?.addEventListener('click', () => goToSection('step-orders'));
+$('#btn-go-cart')?.addEventListener('click', () => goToSection('step-cart'));
+$('#catalog-search')?.addEventListener('input', renderCatalog);
+$('#btn-clear-search')?.addEventListener('click', () => {
+  $('#catalog-search').value = '';
+  renderCatalog();
+});
+
+document.querySelectorAll('#payment-methods .method-btn').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    paymentMethod = btn.dataset.method || 'efectivo';
+    document.querySelectorAll('#payment-methods .method-btn').forEach((b) => b.classList.toggle('active', b === btn));
+  });
+});
+
+['#cliente', '#direccion', '#ciudad', '#telefono-perfil'].forEach((sel) => {
+  $(sel)?.addEventListener('input', () => {
+    syncCheckoutFromProfile();
+    updateCheckoutState();
+  });
+});
+
+['#checkout-cliente', '#checkout-direccion', '#checkout-ciudad', '#checkout-telefono'].forEach((sel) => {
+  $(sel)?.addEventListener('input', updateCheckoutState);
+});
 
 $('#telefono').addEventListener('input', () => {
   const digits = normalizePhoneForInput($('#telefono').value.trim());
@@ -537,7 +704,6 @@ $('#btn-verify').addEventListener('click', async () => {
     loadProfileToForm(me.profile, me.session);
     await loadCatalog();
     await loadOrders();
-    await loadOrders();
   } catch (e) {
     alert(e.message);
   }
@@ -589,11 +755,11 @@ $('#btn-send').addEventListener('click', async () => {
   try {
     if (!cart.length) throw new Error('Carrito vacío');
 
-    const cliente = $('#cliente').value.trim();
-    const direccion = $('#direccion').value.trim();
-    const ciudad = $('#ciudad').value.trim();
+    const cliente = $('#checkout-cliente').value.trim() || $('#cliente').value.trim();
+    const direccion = $('#checkout-direccion').value.trim() || $('#direccion').value.trim();
+    const ciudad = $('#checkout-ciudad').value.trim() || $('#ciudad').value.trim();
     const notas = $('#notas-pedido').value.trim();
-    const tel = $('#telefono-perfil').value.trim() || telefono;
+    const tel = $('#checkout-telefono').value.trim() || $('#telefono-perfil').value.trim() || telefono;
 
     if (!cliente || !direccion) throw new Error('Completá nombre y dirección');
     if (onlyDigits(tel).length < 8) throw new Error('Completá un teléfono válido');
@@ -605,7 +771,7 @@ $('#btn-send').addEventListener('click', async () => {
       direccion,
       ciudad,
       notas,
-      metodo_pago: 'efectivo',
+      metodo_pago: paymentMethod,
       items: cart.map((i) => ({ producto: i.nombre, cantidad: i.cantidad, precio_unitario: i.precio })),
     };
 
@@ -617,7 +783,9 @@ $('#btn-send').addEventListener('click', async () => {
     cart.length = 0;
     renderCart();
     await loadOrders();
-    alert(`Pedido enviado #${out?.pedido?.id || ''}`);
+    $('#quick-last-action').textContent = `Pedido #${out?.pedido?.id || ''} enviado`;
+    showOrderAlert(`Pedido enviado #${out?.pedido?.id || ''}`);
+    goToSection('step-orders');
   } catch (e) {
     alert(e.message);
   }
@@ -637,6 +805,7 @@ document.addEventListener('visibilitychange', () => {
       showApp();
       loadProfileToForm(me.profile, me.session);
       await loadCatalog();
+      await loadOrders();
     }
   } catch (e) {
     if (e?.data?.revalidate_required) {

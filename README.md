@@ -78,6 +78,7 @@ PORT=3000
 DATABASE_URL=postgres://usuario:pass@localhost:5432/hidro_db
 JWT_SECRET=tu_secreto_super_seguro
 OPENAI_API_KEY=tu-api-key-openai
+ARCA_TOKEN_ENCRYPTION_KEY=secreto-largo-para-cifrar-credenciales-arca
 # Opcional para WebPush
 VAPID_PUBLIC_KEY=...
 VAPID_PRIVATE_KEY=...

@@ -96,6 +96,32 @@
     }
   }
 
+  function setText(selector, value) {
+    const el = document.querySelector(selector);
+    if (el) el.textContent = value;
+  }
+
+  function getSelectedEmpresaLabel() {
+    const sel = document.querySelector('#empSel');
+    if (!sel || sel.hidden || !sel.value) return empresaId ? `ID ${empresaId}` : 'Sin empresa';
+    return sel.options[sel.selectedIndex]?.textContent?.trim() || `ID ${sel.value}`;
+  }
+
+  function getSelectedChoferLabel() {
+    const sel = document.querySelector('#fFilChofer');
+    if (!sel || !sel.value) return 'Todos';
+    return sel.options[sel.selectedIndex]?.textContent?.trim() || `ID ${sel.value}`;
+  }
+
+  function updateSummaryStatus(state = 'Listo para calcular') {
+    const from = document.querySelector('#fFrom')?.value || 'sin fecha';
+    const to = document.querySelector('#fTo')?.value || 'sin fecha';
+    setText('#summaryEmpresa', getSelectedEmpresaLabel());
+    setText('#summaryPeriodo', `${from} a ${to}`);
+    setText('#summaryChofer', getSelectedChoferLabel());
+    setText('#summaryEstado', state);
+  }
+
   async function initEstadisticasCore() {
     try {
       const meResp = await api('/api/me');
@@ -134,6 +160,7 @@
           if (rolePill) rolePill.textContent = `${u.role} · ${nombreEmp}`;
           await loadChoferes();
           await loadProductosMap();
+          updateSummaryStatus('Empresa cambiada');
           const tbBody = document.querySelector('#tbBody');
           if (tbBody) tbBody.innerHTML = '<tr><td colspan="11" style="text-align:center; padding:2rem; color:var(--muted)">Empresa cambiada. Presione "Calcular" para actualizar.</td></tr>';
         };
@@ -145,6 +172,7 @@
       const selectedTxt = document.querySelector('#empSel')?.options?.[document.querySelector('#empSel')?.selectedIndex || 0]?.text || `ID ${empresaId}`;
       const rolePill = document.querySelector('#rolePill');
       if (rolePill) rolePill.textContent = `${u.role || 'USER'} · ${selectedTxt}`;
+      updateSummaryStatus('Cargando datos base');
 
       await loadChoferes();
       await loadProductosMap();
@@ -158,6 +186,7 @@
         fromDate.setDate(fromDate.getDate() - 30);
         fromEl.value = dateISO(fromDate);
       }
+      updateSummaryStatus('Listo para calcular');
 
       document.querySelector('#btnCalcular').onclick = calcular;
       document.querySelector('#btnExport').onclick = exportCSV;
@@ -169,6 +198,7 @@
         deltaMode = deltaModeEl.value || 'abs';
         deltaModeEl.onchange = () => {
           deltaMode = deltaModeEl.value || 'abs';
+          updateSummaryStatus('Actualizando deltas');
           calcular();
         };
       }
@@ -181,14 +211,18 @@
       if (hoySel) {
         hoySel.onchange = () => {
           if (hoySel.value === '1') setHoyRange();
+          updateSummaryStatus('Filtro actualizado');
         };
       }
 
       const clearHoy = () => {
         if (hoySel && hoySel.value === '1') hoySel.value = '0';
+        updateSummaryStatus('Filtro actualizado');
       };
       if (fromEl) fromEl.addEventListener('change', clearHoy);
       if (toEl) toEl.addEventListener('change', clearHoy);
+      const choferSel = document.querySelector('#fFilChofer');
+      if (choferSel) choferSel.addEventListener('change', () => updateSummaryStatus('Filtro actualizado'));
 
       const logoutEl = document.getElementById('logout');
       if (logoutEl) {
@@ -211,6 +245,7 @@
   window.redirectToLogin = redirectToLogin;
   window.loadChoferes = loadChoferes;
   window.loadProductosMap = loadProductosMap;
+  window.updateSummaryStatus = updateSummaryStatus;
   window.initEstadisticasCore = initEstadisticasCore;
   window.__estadisticasCore = {
     get isSuper() { return isSuper; },

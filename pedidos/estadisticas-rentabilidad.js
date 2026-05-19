@@ -4,6 +4,7 @@
     const to = $('#fTo').value;
     if (!from || !to) return alert('Fechas requeridas');
 
+    if (typeof updateSummaryStatus === 'function') updateSummaryStatus('Calculando...');
     $('#btnCalcular').disabled = true;
     $('#btnCalcular').textContent = 'Calculando...';
     $('#tbBody').innerHTML = `<tr><td colspan="11" style="text-align:center; padding:2rem">Procesando datos...</td></tr>`;
@@ -29,10 +30,12 @@
       await loadSlaEntrega(from, to);
       await loadCancelacionesMotivo(from, to);
       await loadProductosMargen(from, to);
+      if (typeof updateSummaryStatus === 'function') updateSummaryStatus('Actualizado');
     } catch (e) {
       if (isAuthRedirectError(e)) return;
       console.error(e);
       $('#tbBody').innerHTML = `<tr><td colspan="11" class="bad" style="text-align:center">Error: ${e.message}</td></tr>`;
+      if (typeof updateSummaryStatus === 'function') updateSummaryStatus('Error al calcular');
     } finally {
       $('#btnCalcular').disabled = false;
       $('#btnCalcular').textContent = 'Calcular Rentabilidad';
@@ -86,8 +89,8 @@
     rows = rows.slice().sort((a, b) => b.rent - a.rent);
     $('#tbBody').innerHTML = rows.map(r => `
       <tr>
-        <td style="font-weight:600; color:#fff">${r.chofer}</td>
-        <td><span class="role-badge">${r.tipo}</span></td>
+        <td style="font-weight:600; color:#fff">${esc(r.chofer)}</td>
+        <td><span class="role-badge">${esc(r.tipo)}</span></td>
         <td class="numeric">${r.pedidos}</td>
         <td class="numeric">${r.unidades}</td>
         <td class="numeric" style="color:var(--warning)">${money(r.cv)}</td>
@@ -110,12 +113,12 @@
 
     const estrella = rows[0];
     $('#choferEstrella').innerHTML = estrella
-      ? `<li><span>${estrella.chofer}</span><span class="ok">${money(estrella.rent)}</span></li>`
+      ? `<li><span>${esc(estrella.chofer)}</span><span class="ok">${money(estrella.rent)}</span></li>`
       : `<li class="muted">Sin datos</li>`;
 
     const eficiente = rows.slice().sort((a, b) => b.margen - a.margen)[0];
     $('#choferEficiente').innerHTML = eficiente
-      ? `<li><span>${eficiente.chofer}</span><span class="ok">${pct(eficiente.margen)}</span></li>`
+      ? `<li><span>${esc(eficiente.chofer)}</span><span class="ok">${pct(eficiente.margen)}</span></li>`
       : `<li class="muted">Sin datos</li>`;
 
     const topProd = (products || []).slice().sort((a, b) => b.cantidad - a.cantidad).slice(0, 5);
@@ -124,7 +127,7 @@
     } else {
       $('#topProductos').innerHTML = topProd.map(p => `
         <li>
-          <span>${p.producto}</span>
+          <span>${esc(p.producto)}</span>
           <span>${p.cantidad} u · ${money(p.ventas)}</span>
         </li>
       `).join('');

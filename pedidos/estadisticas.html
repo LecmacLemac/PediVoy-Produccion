@@ -12,9 +12,11 @@
       --bg: #0b1020;
       --ink: #f1f5f9;
       --muted: #94a3b8;
+      --muted-strong: #cbd5e1;
       --brand: #06b6d4;
       --brand-hover: #22d3ee;
       --surface: rgba(30, 41, 59, 0.7);
+      --surface-strong: rgba(15, 23, 42, 0.92);
       --border: rgba(148, 163, 184, 0.15);
       --glass: rgba(15, 23, 42, 0.85);
       --radius: 12px;
@@ -39,6 +41,16 @@
     }
 
     .container { max-width: 1400px; margin: 0 auto; padding: 0 20px; }
+    .section-gap { margin-top: 1.5rem; }
+    .section-gap-sm { margin-top: 1rem; }
+    .muted { color: var(--muted); }
+    .strong { color: #fff; font-weight: 700; }
+    .danger-link { color: var(--danger) !important; }
+    .numeric-main { color: #fff; font-weight: 700; }
+    .warning-text { color: var(--warning); }
+    .danger-text { color: var(--danger); }
+    .muted-text { color: var(--muted); }
+    .success-text { color: var(--success); }
 
     /* HEADER */
     header {
@@ -97,6 +109,97 @@
     .btn-primary:hover { background: var(--brand-hover); transform: translateY(-1px); }
     .btn-secondary { background: rgba(255,255,255,0.05); color: var(--ink); border: 1px solid var(--border); }
     .btn-secondary:hover { background: rgba(255,255,255,0.1); color: #fff; }
+    .btn-compact { width: 100%; padding: 0.35rem 0.55rem; font-size: 0.75rem; }
+
+    /* EXECUTIVE SUMMARY */
+    .summary-panel {
+      background:
+        linear-gradient(135deg, rgba(6, 182, 212, 0.15), rgba(15, 23, 42, 0) 42%),
+        var(--surface-strong);
+      border: 1px solid rgba(6, 182, 212, 0.2);
+      border-radius: 16px;
+      padding: 1.35rem;
+      display: grid;
+      grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.65fr);
+      gap: 1rem;
+      align-items: stretch;
+      box-shadow: 0 18px 60px rgba(0,0,0,0.24);
+    }
+    .summary-copy h1 {
+      margin: 0.15rem 0 0.4rem;
+      font-size: 1.8rem;
+      line-height: 1.15;
+      color: #fff;
+    }
+    .summary-copy p {
+      margin: 0;
+      color: var(--muted-strong);
+      max-width: 720px;
+      line-height: 1.5;
+    }
+    .eyebrow {
+      margin: 0;
+      color: var(--brand-hover);
+      font-size: 0.75rem;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .summary-status {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.75rem;
+    }
+    .status-item {
+      min-width: 0;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0.8rem;
+      background: rgba(255,255,255,0.035);
+    }
+    .status-item span {
+      display: block;
+      color: var(--muted);
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 0.35rem;
+    }
+    .status-item strong {
+      display: block;
+      color: #fff;
+      font-size: 0.92rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .toolbar-card { padding: 1rem; }
+    .toolbar-actions { display:flex; gap:0.5rem; align-items:end; flex-wrap:wrap; }
+    .payment-lines { display: grid; gap: 0.3rem; }
+    .payment-line { font-size:0.85rem; color:var(--muted); display:flex; justify-content:space-between; gap: 1rem; }
+    .payment-title { font-size:1.1rem; margin:0 0 0.5rem; }
+    .chart-wide { grid-column: 1 / -1; }
+    .scroll-panel-sm { max-height:260px; }
+    .scroll-panel-md { border:1px solid var(--border); max-height:400px; margin-top:1rem; }
+    .transfer-col-sm { width:40px; }
+    .transfer-col-md { width:60px; }
+    .table-empty { text-align:center; padding:1rem; color:var(--muted); }
+    .table-empty-lg { text-align:center; padding:2rem; color:var(--muted); }
+    .table-total-row { background:rgba(255,255,255,0.05); font-weight:bold; }
+    .modal-title { font-size:1.1rem; }
+    .modal-close {
+      background:none;
+      border:none;
+      color:#fff;
+      cursor:pointer;
+      width: 34px;
+      height: 34px;
+      border-radius: 8px;
+      font-size: 1rem;
+    }
+    .modal-close:hover { background: rgba(255,255,255,0.1); }
 
     /* TABLE */
     .table-responsive { overflow-x: auto; border-radius: var(--radius); border: 1px solid var(--border); }
@@ -119,7 +222,8 @@
     
     .chart-box { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem; }
     .chart-box h3 { margin: 0 0 1rem; color: var(--muted); font-size: 0.9rem; text-transform: uppercase; }
-    .svgwrap { width: 100%; height: 260px; }
+    .svgwrap { width: 100%; height: 260px; overflow: hidden; }
+    .svgwrap svg { display: block; width: 100%; height: 100%; max-width: 100%; }
 
     /* MODAL */
     dialog {
@@ -160,6 +264,9 @@
       .menu li { flex: 0 0 auto; }
 
       .card, .toolbar, .filters, .grid-kpi, .grid-charts, .table-responsive { width: 100%; max-width: 100%; min-width: 0; }
+      .summary-panel { grid-template-columns: 1fr; padding: 1rem; }
+      .summary-status { grid-template-columns: 1fr 1fr; }
+      .summary-copy h1 { font-size: 1.45rem; }
       .grid-kpi { grid-template-columns: 1fr; }
       .toolbar { flex-direction: column; align-items: stretch; }
       .filters { width: 100%; }
@@ -169,6 +276,10 @@
       .toolbar > div:last-child .btn { width: 100%; }
       .flex-between { flex-direction: column; align-items: stretch; gap: 0.8rem; }
       .modal-body { padding: 1rem; }
+    }
+
+    @media (max-width: 520px) {
+      .summary-status { grid-template-columns: 1fr; }
     }
 
   </style>
@@ -190,14 +301,40 @@
         <li><a href="repartidores.html">Repartidor</a></li>
         <li><a href="estadisticas.html" class="active">Estadisticas</a></li>
         <li><a href="qr.html">QR</a></li>
-        <li><a href="#" id="logout" style="color: var(--danger)">Salir</a></li>
+        <li><a href="#" id="logout" class="danger-link">Salir</a></li>
       </ul>
     </nav>
   </header>
 
   <main class="container">
-    
-    <section class="card">
+
+    <section class="summary-panel" aria-label="Resumen ejecutivo de estadísticas">
+      <div class="summary-copy">
+        <p class="eyebrow">Rentabilidad operativa</p>
+        <h1>Estadísticas de pedidos</h1>
+        <p>Control rápido de ventas, margen, cobranza, productos y desempeño por repartidor para decidir con datos del período seleccionado.</p>
+      </div>
+      <div class="summary-status" aria-label="Estado de consulta">
+        <div class="status-item">
+          <span>Empresa</span>
+          <strong id="summaryEmpresa">Cargando...</strong>
+        </div>
+        <div class="status-item">
+          <span>Período</span>
+          <strong id="summaryPeriodo">Últimos 30 días</strong>
+        </div>
+        <div class="status-item">
+          <span>Chofer</span>
+          <strong id="summaryChofer">Todos</strong>
+        </div>
+        <div class="status-item">
+          <span>Estado</span>
+          <strong id="summaryEstado">Listo para calcular</strong>
+        </div>
+      </div>
+    </section>
+
+    <section class="card toolbar-card">
       <div class="toolbar">
         <div class="filters">
           <div id="empWrap">
@@ -228,7 +365,7 @@
             </select>
           </div>
         </div>
-        <div style="display:flex; gap:0.5rem; align-items:end; flex-wrap:wrap;">
+        <div class="toolbar-actions">
           <div>
             <label for="deltaMode">Deltas</label>
             <select id="deltaMode">
@@ -275,42 +412,44 @@
       </div>
     </section>
 
-    <section class="grid-kpi" style="margin-top:1.5rem">
+    <section class="grid-kpi section-gap">
       <div class="kpi-card">
         <div class="kpi-val">
-          <h3 id="kpiCV" style="color:var(--warning)">$ 0,00</h3>
+          <h3 id="kpiCV" class="warning-text">$ 0,00</h3>
           <p>Comisiones Repartidores (CV)</p>
         </div>
       </div>
       <div class="kpi-card">
         <div class="kpi-val">
-          <h3 id="kpiCF" style="color:var(--danger)">$ 0,00</h3>
+          <h3 id="kpiCF" class="danger-text">$ 0,00</h3>
           <p>Gastos Operativos (Combustible, etc)</p>
         </div>
       </div>
       <div class="kpi-card">
         <div class="kpi-val">
-          <h3 id="kpiCP" style="color:var(--muted)">$ 0,00</h3>
+          <h3 id="kpiCP" class="muted-text">$ 0,00</h3>
           <p>Costo Mercadería Vendida (CMV)</p>
         </div>
       </div>
       <div class="kpi-card">
         <div class="kpi-val">
-          <h3 style="font-size:1.1rem; margin-bottom:0.5rem">Medios de Pago</h3>
-          <div style="font-size:0.85rem; color:var(--muted); display:flex; justify-content:space-between;">
-            <span>Efectivo:</span> <span id="kpiEfectivo" style="color:#fff">$ 0,00</span>
+          <h3 class="payment-title">Medios de Pago</h3>
+          <div class="payment-lines">
+          <div class="payment-line">
+            <span>Efectivo:</span> <span id="kpiEfectivo" class="numeric-main">$ 0,00</span>
           </div>
-          <div style="font-size:0.85rem; color:var(--muted); display:flex; justify-content:space-between; margin-top:4px;">
-            <span>Transfer:</span> <span id="kpiTransferencia" style="color:#fff">$ 0,00</span>
+          <div class="payment-line">
+            <span>Transfer:</span> <span id="kpiTransferencia" class="numeric-main">$ 0,00</span>
+          </div>
           </div>
         </div>
         <div class="kpi-sub">
-            <button id="btnVerTransfer" class="btn btn-secondary" style="width:100%; padding:4px; font-size:0.75rem;">Ver Transferencias</button>
+            <button id="btnVerTransfer" class="btn btn-secondary btn-compact">Ver Transferencias</button>
         </div>
       </div>
     </section>
 
-    <section class="grid-kpi" style="margin-top:1rem" id="kpisAdvanced">
+    <section class="grid-kpi section-gap-sm" id="kpisAdvanced">
       <div class="kpi-card">
         <div class="kpi-val">
           <h3 id="kpiClientesUnicos">0</h3>
@@ -345,7 +484,7 @@
       </div>
     </section>
 
-    <section class="grid-charts" style="margin-top:1.5rem">
+    <section class="grid-charts section-gap">
       <div class="chart-box">
         <h3>Top Ventas por Chofer</h3>
         <div class="svgwrap" id="chartVentas"></div>
@@ -358,13 +497,13 @@
         <h3>Margen %</h3>
         <div class="svgwrap" id="chartMargen"></div>
       </div>
-      <div class="chart-box" style="grid-column: span 3;">
+      <div class="chart-box chart-wide">
         <h3>Evolución Diaria: Ventas vs Rentabilidad</h3>
         <div class="svgwrap" id="chartSerie"></div>
       </div>
     </section>
 
-    <section class="grid-charts" style="margin-top:1.5rem">
+    <section class="grid-charts section-gap">
       <div class="card">
         <h3>🏆 Top Productos (Unidades)</h3>
         <ul class="list-stats" id="topProductos"></ul>
@@ -379,7 +518,7 @@
       </div>
     </section>
 
-    <section class="grid-charts" style="margin-top:1.5rem">
+    <section class="grid-charts section-gap">
       <div class="card">
         <h3>💳 Estado de Pagos (Entregados)</h3>
         <ul class="list-stats" id="payStatus">
@@ -394,7 +533,7 @@
       </div>
       <div class="card">
         <h3>📅 Ventas por Día</h3>
-        <div class="table-responsive" style="max-height:260px;">
+        <div class="table-responsive scroll-panel-sm">
           <table>
             <thead>
               <tr>
@@ -405,14 +544,14 @@
               </tr>
             </thead>
             <tbody id="ventasDiaRows">
-              <tr><td colspan="4" style="text-align:center; padding:1rem; color:var(--muted)">Calculá para ver datos.</td></tr>
+              <tr><td colspan="4" class="table-empty">Calculá para ver datos.</td></tr>
             </tbody>
           </table>
         </div>
       </div>
     </section>
 
-    <section class="grid-charts" style="margin-top:1.5rem">
+    <section class="grid-charts section-gap">
       <div class="card">
         <h3>⏱️ SLA de Entrega</h3>
         <ul class="list-stats" id="slaStats">
@@ -424,19 +563,19 @@
       <div class="card">
         <h3>🚫 Cancelaciones por Motivo</h3>
         <ul class="list-stats" id="cancelMotivos">
-          <li><span style="color:var(--muted)">Calculá para ver datos.</span></li>
+          <li><span class="muted">Calculá para ver datos.</span></li>
         </ul>
       </div>
       <div class="card">
         <h3>📦 Productos por Margen</h3>
         <ul class="list-stats" id="productosMargen">
-          <li><span style="color:var(--muted)">Calculá para ver datos.</span></li>
+          <li><span class="muted">Calculá para ver datos.</span></li>
         </ul>
       </div>
     </section>
 
     <section>
-      <div class="flex-between" style="margin-top:2rem">
+      <div class="flex-between section-gap">
         <h3>Detalle por Repartidor</h3>
       </div>
       <div class="card table-responsive" style="padding:0; overflow:hidden;">
@@ -457,10 +596,10 @@
             </tr>
           </thead>
           <tbody id="tbBody">
-            <tr><td colspan="11" style="text-align:center; padding:2rem; color:var(--muted)">Selecciona un rango y calcula.</td></tr>
+            <tr><td colspan="11" class="table-empty-lg">Selecciona un rango y calcula.</td></tr>
           </tbody>
           <tfoot>
-            <tr style="background:rgba(255,255,255,0.05); font-weight:bold;">
+            <tr class="table-total-row">
               <td colspan="4" class="numeric">TOTALES</td>
               <td class="numeric" id="tfCV">$ 0</td>
               <td class="numeric" id="tfVentas">$ 0</td>
@@ -479,21 +618,21 @@
 
   <dialog id="transferModal">
     <div class="modal-header">
-      <strong style="font-size:1.1rem">Control de Transferencias</strong>
-      <button id="btnCloseTransferModal" type="button" style="background:none; border:none; color:#fff; cursor:pointer">✕</button>
+      <strong class="modal-title">Control de Transferencias</strong>
+      <button id="btnCloseTransferModal" type="button" class="modal-close" aria-label="Cerrar">✕</button>
     </div>
     <div class="modal-body">
       <div class="flex-between">
         <span class="role-badge" id="transferResumen">Cargando...</span>
         <button id="btnOnlyPend" class="btn btn-secondary btn-sm">Mostrar solo pendientes</button>
       </div>
-      <div class="table-responsive" style="border:1px solid var(--border); max-height:400px; margin-top:1rem;">
+      <div class="table-responsive scroll-panel-md">
         <table>
           <thead>
             <tr>
-              <th style="width:40px">#</th>
-              <th style="width:40px">OK</th>
-              <th style="width:60px">WA</th>
+              <th class="transfer-col-sm">#</th>
+              <th class="transfer-col-sm">OK</th>
+              <th class="transfer-col-md">WA</th>
               <th>Pedido</th>
               <th>Cliente</th>
               <th class="numeric">Monto</th>

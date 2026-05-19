@@ -29,6 +29,8 @@ services:
         value: "true"
       - key: CRON_SECRET
         generateValue: true
+      - key: ARCA_TOKEN_ENCRYPTION_KEY
+        sync: false
       - key: CORS_ALLOWED_ORIGINS
         value: https://pedivoy-web-staging.onrender.com
       - key: VAPID_PUBLIC_KEY
