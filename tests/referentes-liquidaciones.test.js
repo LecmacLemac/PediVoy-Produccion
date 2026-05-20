@@ -100,3 +100,58 @@ test('liquidacion exige al menos una comision seleccionada', async () => {
   assert.equal(result.status, 400);
   assert.equal(result.json.error, 'Seleccioná al menos una comisión pendiente.');
 });
+
+test('administracion puede listar clientes vinculados activos', async () => {
+  const result = await requestWithRouter({
+    user: { uid: 12, role: 'admin', empresa_id: 2 },
+    path: '/clientes',
+    method: 'GET',
+    async query(sql, params = []) {
+      if (sql.includes('ALTER TABLE cliente_referentes')) return [];
+      assert.deepEqual(params, [2]);
+      assert.match(sql, /FROM cliente_referentes cr/);
+      assert.match(sql, /cr\.estado = 'activo'/);
+      assert.match(sql, /referente_nombre/);
+      return [{
+        id: 30,
+        cliente_id: 50,
+        referente_id: 4,
+        codigo_referente: 'REF4',
+        estado: 'activo',
+        referente_nombre: 'Vendedor',
+        referente_codigo: 'REF4',
+        cliente: 'Cliente demo',
+        pedidos_count: 2,
+        comisiones_total: '150',
+      }];
+    },
+  });
+
+  assert.equal(result.status, 200);
+  assert.equal(result.json.length, 1);
+  assert.equal(result.json[0].cliente_id, 50);
+  assert.equal(result.json[0].referente_codigo, 'REF4');
+});
+
+test('administracion desvincula cliente preservando historial del vinculo', async () => {
+  const result = await requestWithRouter({
+    user: { uid: 12, role: 'admin', empresa_id: 2 },
+    path: '/clientes/50/desvincular',
+    method: 'POST',
+    body: { motivo: 'Cambio comercial' },
+    async query(sql, params = []) {
+      if (sql.includes('ALTER TABLE cliente_referentes')) return [];
+      assert.deepEqual(params, [2, 50, 12, 'Cambio comercial']);
+      assert.match(sql, /estado = 'desvinculado'/);
+      assert.match(sql, /desvinculado_at = NOW\(\)/);
+      assert.match(sql, /desvinculado_motivo = \$4/);
+      assert.match(sql, /RETURNING id, punto_entrega_id, referente_id, desvinculado_at/);
+      return [{ id: 30, punto_entrega_id: 50, referente_id: 4, desvinculado_at: '2026-05-20T21:35:00.000Z' }];
+    },
+  });
+
+  assert.equal(result.status, 200);
+  assert.equal(result.json.ok, true);
+  assert.equal(result.json.desvinculados, 1);
+  assert.equal(result.json.vinculo.referente_id, 4);
+});

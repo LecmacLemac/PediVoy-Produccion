@@ -196,6 +196,33 @@
     <section class="card">
       <div class="page-head" style="margin-bottom:1rem">
         <div>
+          <h3>Clientes vinculados</h3>
+          <div class="muted">Clientes activos asociados a referentes. Al desvincular, el historial queda preservado.</div>
+        </div>
+      </div>
+      <div class="table-responsive">
+        <table class="mobile-cards">
+          <thead>
+            <tr>
+              <th>Desde</th>
+              <th>Referente</th>
+              <th>Cliente</th>
+              <th>Teléfono</th>
+              <th>Pedidos</th>
+              <th>Comisiones</th>
+              <th style="text-align:right">Acción</th>
+            </tr>
+          </thead>
+          <tbody id="tbClientesVinculados">
+            <tr><td colspan="7" style="text-align:center;padding:2rem;color:var(--muted)">Sin clientes vinculados.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="page-head" style="margin-bottom:1rem">
+        <div>
           <h3>Clientes propuestos</h3>
           <div class="muted">El referente puede cargar prospectos; administración decide cuándo se crean como clientes y se vinculan.</div>
         </div>
@@ -391,7 +418,7 @@
     const $ = (s) => document.querySelector(s);
     const money = new Intl.NumberFormat('es-AR', { style:'currency', currency:'ARS', maximumFractionDigits:0 });
     const dateFmt = new Intl.DateTimeFormat('es-AR', { day:'2-digit', month:'2-digit', year:'2-digit' });
-    const state = { user:null, isSuper:false, referentes:[], productos:[], productosAsignados:new Map(), comisiones:[], clientesPropuestos:[], comisionesSeleccionadas:new Set() };
+    const state = { user:null, isSuper:false, referentes:[], productos:[], productosAsignados:new Map(), comisiones:[], clientesPropuestos:[], clientesVinculados:[], comisionesSeleccionadas:new Set() };
 
     function toast(msg) {
       const t = $('#toast');
@@ -550,6 +577,30 @@
       `).join('');
     }
 
+    function renderClientesVinculados() {
+      const tb = $('#tbClientesVinculados');
+      if (!state.clientesVinculados.length) {
+        tb.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:2rem;color:var(--muted)">Sin clientes vinculados.</td></tr>';
+        return;
+      }
+      tb.innerHTML = state.clientesVinculados.map((c) => `
+        <tr>
+          <td data-label="Desde">${c.asociado_at ? esc(dateFmt.format(new Date(c.asociado_at))) : '-'}</td>
+          <td data-label="Referente">${esc(c.referente_nombre || '-')} <div class="code">${esc(c.referente_codigo || c.codigo_referente || '')}</div></td>
+          <td data-label="Cliente">
+            <strong>${esc(c.cliente || '-')}</strong>
+            <div class="muted">${esc([c.direccion, c.ciudad].filter(Boolean).join(', ') || 'Sin dirección')}</div>
+          </td>
+          <td data-label="Telefono">${esc(c.telefono || '-')}</td>
+          <td data-label="Pedidos">${Number(c.pedidos_count || 0)}</td>
+          <td data-label="Comisiones">${money.format(Number(c.comisiones_total || 0))}</td>
+          <td data-label="Accion" style="text-align:right">
+            <button class="btn btn-sm btn-danger" onclick="desvincularCliente(${Number(c.cliente_id)})">Desvincular</button>
+          </td>
+        </tr>
+      `).join('');
+    }
+
     function renderProductosPicker(asignados = []) {
       const assigned = new Map(asignados.map((p) => [Number(p.producto_id), p]));
       state.productosAsignados = assigned;
@@ -586,23 +637,28 @@
         state.referentes = [];
         state.comisiones = [];
         state.clientesPropuestos = [];
+        state.clientesVinculados = [];
         renderReferentes();
         renderComisiones();
         renderClientesPropuestos();
+        renderClientesVinculados();
         return;
       }
-      const [refs, coms, clientesPropuestos] = await Promise.all([
+      const [refs, coms, clientesPropuestos, clientesVinculados] = await Promise.all([
         api('/api/referentes' + empresaQS()),
         api('/api/referentes/comisiones' + empresaQS()),
         api('/api/referentes/clientes-propuestos' + empresaQS()),
+        api('/api/referentes/clientes' + empresaQS()),
       ]);
       state.referentes = Array.isArray(refs) ? refs : [];
       state.comisiones = Array.isArray(coms) ? coms : [];
       state.clientesPropuestos = Array.isArray(clientesPropuestos) ? clientesPropuestos : [];
+      state.clientesVinculados = Array.isArray(clientesVinculados) ? clientesVinculados : [];
       state.comisionesSeleccionadas = new Set([...state.comisionesSeleccionadas].filter((id) => state.comisiones.some((c) => Number(c.id) === id && c.estado === 'validada')));
       renderReferentes();
       renderComisiones();
       renderClientesPropuestos();
+      renderClientesVinculados();
     }
 
     function getComisionesPendientes(ids) {
@@ -832,6 +888,23 @@
         await refreshAll();
       } catch (e) {
         toast(e.message || 'No se pudo rechazar');
+      }
+    }
+
+    async function desvincularCliente(clienteId) {
+      const motivo = prompt('Motivo de desvinculación opcional') || '';
+      if (!confirm('Desvincular este cliente del referente? Los pedidos anteriores quedan preservados.')) return;
+      const body = { motivo: motivo.trim() || null };
+      if (state.isSuper) body.empresa_id = Number($('#empSel').value);
+      try {
+        await api(`/api/referentes/clientes/${Number(clienteId)}/desvincular`, {
+          method:'POST',
+          body: JSON.stringify(body),
+        });
+        toast('Cliente desvinculado');
+        await refreshAll();
+      } catch (e) {
+        toast(e.message || 'No se pudo desvincular');
       }
     }
 

@@ -184,6 +184,8 @@ test('referente puede ver resumen operativo de pedidos vinculados', async () => 
       assert.match(sql, /FROM pedidos p/);
       assert.match(sql, /JOIN cliente_referentes cr/);
       assert.match(sql, /cr\.asociado_at/);
+      assert.match(sql, /cr\.estado IN \('activo','desvinculado'\)/);
+      assert.match(sql, /cr\.desvinculado_at IS NULL/);
       return [{
         clientes_activos: 3,
         productos_activos: 2,
@@ -217,6 +219,8 @@ test('referente puede listar pedidos vinculados a sus clientes', async () => {
       assert.equal(params[1], 9);
       assert.match(sql, /JOIN cliente_referentes cr/);
       assert.match(sql, /cr\.asociado_at/);
+      assert.match(sql, /cr\.estado IN \('activo','desvinculado'\)/);
+      assert.match(sql, /cr\.desvinculado_at IS NULL/);
       assert.match(sql, /LEFT JOIN \(/);
       return [{
         id: 101,

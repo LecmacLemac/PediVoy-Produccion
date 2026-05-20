@@ -12,6 +12,7 @@ Permitir que cada empresa de PediVoy tenga referentes, vendedores o aliados come
 - El referente tiene un codigo propio, distinto de cualquier codigo de descuento.
 - Cuando un cliente usa el codigo de referente, queda asociado a ese referente.
 - La asociacion cliente-referente se mantiene hasta que administracion la desvincule o elimine/desactive al referente.
+- Si administracion desvincula un cliente, se guarda fecha y motivo opcional: los pedidos anteriores conservan su historial, y los pedidos posteriores no comisionan ni se muestran al referente.
 - La comision se valida solamente cuando el pedido cambia a estado `entregado`.
 - La comision se calcula sobre porcentaje de venta de productos asociados al referente.
 - La empresa define el porcentaje y la vigencia del referente.
@@ -72,6 +73,7 @@ Fuera de esta primera etapa:
 - `GET /api/referentes/:id/productos`
 - `POST /api/referentes/:id/productos`
 - `GET /api/referentes/comisiones`
+- `GET /api/referentes/clientes`
 - `POST /api/referentes/clientes/:clienteId/desvincular`
 
 ## Endpoints del portal del referente

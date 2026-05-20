@@ -213,8 +213,12 @@ export function createReferentePortalRouter(deps) {
                AND cr.punto_entrega_id = p.punto_entrega_id
              WHERE p.empresa_id = $1
                AND cr.referente_id = $2
-               AND cr.estado = 'activo'
-               AND COALESCE(p.fecha, p.fecha_entrega, NOW()) >= COALESCE(cr.asociado_at, '-infinity'::timestamptz)) AS pedidos_total,
+               AND cr.estado IN ('activo','desvinculado')
+               AND COALESCE(p.fecha, p.fecha_entrega, NOW()) >= COALESCE(cr.asociado_at, '-infinity'::timestamptz)
+               AND (
+                 cr.desvinculado_at IS NULL
+                 OR COALESCE(p.fecha, p.fecha_entrega, NOW()) < cr.desvinculado_at
+               )) AS pedidos_total,
            (SELECT COUNT(DISTINCT p.id)::int
               FROM pedidos p
               JOIN cliente_referentes cr
@@ -222,8 +226,12 @@ export function createReferentePortalRouter(deps) {
                AND cr.punto_entrega_id = p.punto_entrega_id
              WHERE p.empresa_id = $1
                AND cr.referente_id = $2
-               AND cr.estado = 'activo'
+               AND cr.estado IN ('activo','desvinculado')
                AND COALESCE(p.fecha, p.fecha_entrega, NOW()) >= COALESCE(cr.asociado_at, '-infinity'::timestamptz)
+               AND (
+                 cr.desvinculado_at IS NULL
+                 OR COALESCE(p.fecha, p.fecha_entrega, NOW()) < cr.desvinculado_at
+               )
                AND COALESCE(p.fecha_entrega, p.fecha) >= NOW() - INTERVAL '30 days') AS pedidos_30d,
            (SELECT COUNT(DISTINCT p.id)::int
               FROM pedidos p
@@ -232,8 +240,12 @@ export function createReferentePortalRouter(deps) {
                AND cr.punto_entrega_id = p.punto_entrega_id
              WHERE p.empresa_id = $1
                AND cr.referente_id = $2
-               AND cr.estado = 'activo'
+               AND cr.estado IN ('activo','desvinculado')
                AND COALESCE(p.fecha, p.fecha_entrega, NOW()) >= COALESCE(cr.asociado_at, '-infinity'::timestamptz)
+               AND (
+                 cr.desvinculado_at IS NULL
+                 OR COALESCE(p.fecha, p.fecha_entrega, NOW()) < cr.desvinculado_at
+               )
                AND p.estado = 'entregado') AS pedidos_entregados,
            (SELECT COUNT(DISTINCT p.id)::int
               FROM pedidos p
@@ -242,8 +254,12 @@ export function createReferentePortalRouter(deps) {
                AND cr.punto_entrega_id = p.punto_entrega_id
              WHERE p.empresa_id = $1
                AND cr.referente_id = $2
-               AND cr.estado = 'activo'
+               AND cr.estado IN ('activo','desvinculado')
                AND COALESCE(p.fecha, p.fecha_entrega, NOW()) >= COALESCE(cr.asociado_at, '-infinity'::timestamptz)
+               AND (
+                 cr.desvinculado_at IS NULL
+                 OR COALESCE(p.fecha, p.fecha_entrega, NOW()) < cr.desvinculado_at
+               )
                AND p.estado IN ('pendiente','en_ruta','en_camino')) AS pedidos_activos,
            (SELECT COALESCE(SUM(COALESCE(p.monto,0)),0)::numeric
               FROM pedidos p
@@ -252,8 +268,12 @@ export function createReferentePortalRouter(deps) {
                AND cr.punto_entrega_id = p.punto_entrega_id
              WHERE p.empresa_id = $1
                AND cr.referente_id = $2
-               AND cr.estado = 'activo'
+               AND cr.estado IN ('activo','desvinculado')
                AND COALESCE(p.fecha, p.fecha_entrega, NOW()) >= COALESCE(cr.asociado_at, '-infinity'::timestamptz)
+               AND (
+                 cr.desvinculado_at IS NULL
+                 OR COALESCE(p.fecha, p.fecha_entrega, NOW()) < cr.desvinculado_at
+               )
                AND p.estado = 'entregado') AS ventas_entregadas,
            (SELECT COUNT(*)::int
               FROM referente_comisiones
@@ -286,7 +306,7 @@ export function createReferentePortalRouter(deps) {
            JOIN cliente_referentes cr
              ON cr.empresa_id = p.empresa_id
             AND cr.punto_entrega_id = p.punto_entrega_id
-            AND cr.estado = 'activo'
+            AND cr.estado IN ('activo','desvinculado')
            JOIN puntos_entrega pe
              ON pe.id = p.punto_entrega_id
             AND pe.empresa_id = p.empresa_id
@@ -303,6 +323,10 @@ export function createReferentePortalRouter(deps) {
           WHERE p.empresa_id = $1
             AND cr.referente_id = $2
             AND COALESCE(p.fecha, p.fecha_entrega, NOW()) >= COALESCE(cr.asociado_at, '-infinity'::timestamptz)
+            AND (
+              cr.desvinculado_at IS NULL
+              OR COALESCE(p.fecha, p.fecha_entrega, NOW()) < cr.desvinculado_at
+            )
           ORDER BY COALESCE(p.fecha_entrega, p.fecha) DESC, p.id DESC
           LIMIT 300`,
         [req.user.empresa_id, req.user.referente_id]

@@ -8,6 +8,7 @@ let referentesAccessSchemaReady = false;
 let referentesLiquidacionesSchemaReady = false;
 let referentesProfileSchemaReady = false;
 let referentesClientesPropuestosSchemaReady = false;
+let referentesClienteVinculosSchemaReady = false;
 
 function cleanText(value, max = 280) {
   const text = String(value ?? '').trim();
@@ -87,6 +88,15 @@ export function createReferentesRouter(deps) {
         ON referente_clientes_propuestos (empresa_id, referente_id, estado)
     `);
     referentesClientesPropuestosSchemaReady = true;
+  }
+
+  async function ensureReferenteClienteVinculosSchema() {
+    if (referentesClienteVinculosSchemaReady) return;
+    await query(`
+      ALTER TABLE cliente_referentes
+        ADD COLUMN IF NOT EXISTS desvinculado_motivo TEXT
+    `);
+    referentesClienteVinculosSchemaReady = true;
   }
 
   function isReferenteUser(req) {
@@ -454,6 +464,75 @@ export function createReferentesRouter(deps) {
     }
   });
 
+  router.get('/clientes', withAuth, async (req, res) => {
+    try {
+      if (!requireBackoffice(req, res)) return;
+      await ensureReferenteClienteVinculosSchema();
+      const empresaId = resolveEmpresa(req);
+      if (!empresaId) return res.status(400).json({ error: 'Falta empresa.' });
+
+      const rows = await query(
+        `SELECT cr.id,
+                cr.punto_entrega_id AS cliente_id,
+                cr.referente_id,
+                cr.codigo_referente,
+                cr.estado,
+                cr.asociado_at,
+                cr.desvinculado_at,
+                cr.desvinculado_motivo,
+                r.nombre AS referente_nombre,
+                r.codigo AS referente_codigo,
+                pe.cliente,
+                pe.telefono,
+                pe.direccion,
+                pe.ciudad,
+                pe.provincia,
+                COALESCE(pstats.pedidos_count, 0)::int AS pedidos_count,
+                COALESCE(pstats.ventas_entregadas, 0)::numeric AS ventas_entregadas,
+                COALESCE(cstats.comisiones_total, 0)::numeric AS comisiones_total
+           FROM cliente_referentes cr
+           JOIN referentes r
+             ON r.id = cr.referente_id
+            AND r.empresa_id = cr.empresa_id
+           JOIN puntos_entrega pe
+             ON pe.id = cr.punto_entrega_id
+            AND pe.empresa_id = cr.empresa_id
+           LEFT JOIN (
+             SELECT empresa_id,
+                    punto_entrega_id,
+                    COUNT(*)::int AS pedidos_count,
+                    SUM(CASE WHEN estado = 'entregado' THEN COALESCE(monto, 0) ELSE 0 END) AS ventas_entregadas
+               FROM pedidos
+              WHERE empresa_id = $1
+              GROUP BY empresa_id, punto_entrega_id
+           ) pstats
+             ON pstats.empresa_id = cr.empresa_id
+            AND pstats.punto_entrega_id = cr.punto_entrega_id
+           LEFT JOIN (
+             SELECT empresa_id,
+                    punto_entrega_id,
+                    referente_id,
+                    SUM(COALESCE(monto_comision, 0)) AS comisiones_total
+               FROM referente_comisiones
+              WHERE empresa_id = $1
+              GROUP BY empresa_id, punto_entrega_id, referente_id
+           ) cstats
+             ON cstats.empresa_id = cr.empresa_id
+            AND cstats.punto_entrega_id = cr.punto_entrega_id
+            AND cstats.referente_id = cr.referente_id
+          WHERE cr.empresa_id = $1
+            AND cr.estado = 'activo'
+          ORDER BY cr.asociado_at DESC, cr.id DESC
+          LIMIT 500`,
+        [empresaId]
+      );
+      return res.json(rows);
+    } catch (e) {
+      console.error('REFERENTES.CLIENTES.ERROR', e);
+      return res.status(500).json({ error: 'Error listando clientes vinculados' });
+    }
+  });
+
   router.post('/clientes-propuestos/:id/aprobar', withAuth, async (req, res) => {
     try {
       if (!requireBackoffice(req, res)) return;
@@ -698,22 +777,26 @@ export function createReferentesRouter(deps) {
   router.post('/clientes/:clienteId/desvincular', withAuth, async (req, res) => {
     try {
       if (!requireBackoffice(req, res)) return;
+      await ensureReferenteClienteVinculosSchema();
       const empresaId = resolveEmpresa(req, req.body || {});
       const clienteId = Number(req.params.clienteId);
       if (!empresaId || !clienteId) return res.status(400).json({ error: 'Datos invalidos.' });
 
-      await query(
+      const rows = await query(
         `UPDATE cliente_referentes
             SET estado = 'desvinculado',
                 desvinculado_at = NOW(),
-                desvinculado_por = $3
+                desvinculado_por = $3,
+                desvinculado_motivo = $4
           WHERE empresa_id = $1
             AND punto_entrega_id = $2
-            AND estado = 'activo'`,
-        [empresaId, clienteId, req.user?.uid || null]
+            AND estado = 'activo'
+          RETURNING id, punto_entrega_id, referente_id, desvinculado_at`,
+        [empresaId, clienteId, req.user?.uid || null, cleanText(req.body?.motivo, 500)]
       );
 
-      return res.json({ ok: true });
+      if (!rows.length) return res.status(404).json({ error: 'Cliente vinculado activo no encontrado.' });
+      return res.json({ ok: true, desvinculados: rows.length, vinculo: rows[0] });
     } catch (e) {
       console.error('REFERENTES.DESVINCULAR.ERROR', e);
       return res.status(500).json({ error: 'Error desvinculando cliente' });

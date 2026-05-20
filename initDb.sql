@@ -504,7 +504,8 @@ CREATE TABLE IF NOT EXISTS cliente_referentes (
   estado                 TEXT NOT NULL DEFAULT 'activo',
   asociado_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   desvinculado_at        TIMESTAMPTZ,
-  desvinculado_por       INTEGER REFERENCES usuarios(id) ON DELETE SET NULL
+  desvinculado_por       INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
+  desvinculado_motivo    TEXT
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS cliente_referentes_un_activo_uniq

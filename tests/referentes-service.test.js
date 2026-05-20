@@ -110,6 +110,8 @@ test('createPedidoEstadoNotifications avisa a referentes vinculados al pedido', 
       assert.equal(params[1], 9001);
       assert.equal(params[2], 'entregado');
       assert.match(sql, /JOIN cliente_referentes cr/);
+      assert.match(sql, /cr\.estado IN \('activo','desvinculado'\)/);
+      assert.match(sql, /cr\.desvinculado_at IS NULL/);
       return [{ id: 70, referente_id: 9 }];
     }
     throw new Error(`SQL inesperado: ${sql.slice(0, 80)}`);
