@@ -99,13 +99,16 @@ test('referente recibe slug de empresa para armar link de invitacion', async () 
     path: '/perfil',
     method: 'GET',
     async query(sql, params = []) {
+      if (sql.includes('ALTER TABLE referentes')) return [];
       assert.equal(params[0], 9);
       assert.equal(params[1], 2);
       assert.match(sql, /e\.landing_slug AS empresa_slug/);
+      assert.match(sql, /r\.direccion/);
       return [{
         id: 9,
         empresa_id: 2,
         nombre: 'Referente Demo',
+        direccion: 'Av. Demo 123',
         codigo: 'REF9',
         empresa_nombre: 'Empresa Demo',
         empresa_slug: 'empresa-demo',
@@ -116,6 +119,55 @@ test('referente recibe slug de empresa para armar link de invitacion', async () 
   assert.equal(result.status, 200);
   assert.equal(result.json.codigo, 'REF9');
   assert.equal(result.json.empresa_slug, 'empresa-demo');
+});
+
+test('referente puede editar datos de contacto sin tocar campos administrativos', async () => {
+  const result = await requestWithRouter({
+    user: { uid: 7, role: 'referente', empresa_id: 2, referente_id: 9 },
+    path: '/perfil',
+    method: 'PUT',
+    body: {
+      nombre: 'Referente Demo',
+      telefono: '3515555555',
+      email: 'ref@example.com',
+      direccion: 'Av. Demo 123',
+      notas: 'Contacto por la tarde',
+      codigo: 'NO-DEBE-CAMBIAR',
+      porcentaje_comision: 99,
+    },
+    async query(sql, params = []) {
+      if (sql.includes('ALTER TABLE referentes')) return [];
+      assert.match(sql, /UPDATE referentes/);
+      assert.match(sql, /direccion = \$6/);
+      assert.doesNotMatch(sql, /codigo =/);
+      assert.doesNotMatch(sql, /porcentaje_comision =/);
+      assert.deepEqual(params, [
+        9,
+        2,
+        'Referente Demo',
+        '3515555555',
+        'ref@example.com',
+        'Av. Demo 123',
+        'Contacto por la tarde',
+      ]);
+      return [{
+        id: 9,
+        empresa_id: 2,
+        nombre: 'Referente Demo',
+        telefono: '3515555555',
+        email: 'ref@example.com',
+        direccion: 'Av. Demo 123',
+        codigo: 'REF9',
+        porcentaje_comision: '10',
+        activo: true,
+        notas: 'Contacto por la tarde',
+      }];
+    },
+  });
+
+  assert.equal(result.status, 200);
+  assert.equal(result.json.direccion, 'Av. Demo 123');
+  assert.equal(result.json.codigo, 'REF9');
 });
 
 test('referente puede ver resumen operativo de pedidos vinculados', async () => {

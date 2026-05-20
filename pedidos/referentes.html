@@ -40,7 +40,7 @@
     .subtitle,.muted{color:var(--muted)}
     .subtitle{margin:.45rem 0 0;font-size:.95rem}
     .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1.35rem;box-shadow:0 4px 20px rgba(0,0,0,.22)}
-    .summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.85rem}
+    .summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:.85rem}
     .metric{border:1px solid var(--border);border-radius:8px;background:rgba(15,23,42,.62);padding:.9rem 1rem;min-height:78px}
     .metric span{display:block;color:var(--muted);font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em}
     .metric strong{display:block;font-size:1.45rem;margin-top:.25rem;color:#fff}
@@ -114,7 +114,7 @@
     <section class="page-head">
       <div>
         <h1>Referentes comerciales</h1>
-        <p class="subtitle">Codigos de vendedor, productos comisionables y comisiones validadas por pedidos entregados.</p>
+        <p class="subtitle">Codigos de vendedor, productos comisionables, comisiones y liquidaciones.</p>
       </div>
       <button id="btnNuevo" class="btn btn-primary">Nuevo referente</button>
     </section>
@@ -123,7 +123,8 @@
       <div class="metric"><span>Referentes activos</span><strong id="mActivos">0</strong></div>
       <div class="metric"><span>Clientes asociados</span><strong id="mClientes">0</strong></div>
       <div class="metric"><span>Productos asociados</span><strong id="mProductos">0</strong></div>
-      <div class="metric"><span>Comisiones validadas</span><strong id="mComisiones">$0</strong></div>
+      <div class="metric"><span>Pendiente a liquidar</span><strong id="mPendientes">$0</strong></div>
+      <div class="metric"><span>Liquidado</span><strong id="mLiquidadas">$0</strong></div>
     </section>
 
     <section class="card">
@@ -149,7 +150,7 @@
               <th>Vigencia</th>
               <th>Clientes</th>
               <th>Productos</th>
-              <th>Total</th>
+              <th>Pendiente</th>
               <th>Acceso</th>
               <th>Estado</th>
               <th style="text-align:right">Acciones</th>
@@ -166,13 +167,15 @@
       <div class="page-head" style="margin-bottom:1rem">
         <div>
           <h3>Comisiones recientes</h3>
-          <div class="muted">Se validan cuando el pedido queda en estado entregado.</div>
+          <div class="muted">Se validan cuando el pedido queda entregado. Administración puede marcarlas como liquidadas.</div>
         </div>
+        <button id="btnLiquidarSeleccion" class="btn btn-primary">Liquidar seleccionadas</button>
       </div>
       <div class="table-responsive">
         <table>
           <thead>
             <tr>
+              <th><input id="chkAllComisiones" type="checkbox" style="width:auto" /></th>
               <th>Fecha</th>
               <th>Referente</th>
               <th>Cliente</th>
@@ -182,10 +185,11 @@
               <th>%</th>
               <th>Comision</th>
               <th>Estado</th>
+              <th style="text-align:right">Acción</th>
             </tr>
           </thead>
           <tbody id="tbComisiones">
-            <tr><td colspan="9" style="text-align:center;padding:2rem;color:var(--muted)">Sin datos cargados.</td></tr>
+            <tr><td colspan="11" style="text-align:center;padding:2rem;color:var(--muted)">Sin datos cargados.</td></tr>
           </tbody>
         </table>
       </div>
@@ -233,6 +237,10 @@
             <label for="email">Email</label>
             <input id="email" type="email" />
           </div>
+        </div>
+        <div>
+          <label for="direccion">Direccion de contacto</label>
+          <input id="direccion" placeholder="Domicilio, zona o referencia comercial" />
         </div>
         <div>
           <label for="notas">Notas internas</label>
@@ -292,13 +300,41 @@
     </form>
   </dialog>
 
+  <dialog id="dlgLiquidacion">
+    <form id="formLiquidacion" method="dialog">
+      <div class="modal-header">
+        <h3>Liquidar comisiones</h3>
+        <button type="button" class="btn btn-sm" id="btnLiqClose">Cerrar</button>
+      </div>
+      <div class="modal-body">
+        <div class="metric">
+          <span>Comisiones seleccionadas</span>
+          <strong id="liqResumen">0 - $0</strong>
+        </div>
+        <div>
+          <label for="liqReferencia">Referencia de pago</label>
+          <input id="liqReferencia" placeholder="Ej: Transferencia, recibo, caja diaria" />
+        </div>
+        <div>
+          <label for="liqNota">Nota interna</label>
+          <textarea id="liqNota" rows="3" placeholder="Detalle opcional para auditoria"></textarea>
+        </div>
+        <div class="muted">Solo se liquidan comisiones en estado pendiente/validada. Las ya liquidadas no se modifican.</div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn" id="btnLiqCancel">Cancelar</button>
+        <button type="submit" class="btn btn-primary">Confirmar liquidación</button>
+      </div>
+    </form>
+  </dialog>
+
   <div id="toast" class="toast"></div>
 
   <script>
     const $ = (s) => document.querySelector(s);
     const money = new Intl.NumberFormat('es-AR', { style:'currency', currency:'ARS', maximumFractionDigits:0 });
     const dateFmt = new Intl.DateTimeFormat('es-AR', { day:'2-digit', month:'2-digit', year:'2-digit' });
-    const state = { user:null, isSuper:false, referentes:[], productos:[], productosAsignados:new Map(), comisiones:[] };
+    const state = { user:null, isSuper:false, referentes:[], productos:[], productosAsignados:new Map(), comisiones:[], comisionesSeleccionadas:new Set() };
 
     function toast(msg) {
       const t = $('#toast');
@@ -346,11 +382,13 @@
       const activos = state.referentes.filter((r) => r.activo).length;
       const clientes = state.referentes.reduce((a, r) => a + Number(r.clientes_count || 0), 0);
       const productos = state.referentes.reduce((a, r) => a + Number(r.productos_count || 0), 0);
-      const comisiones = state.referentes.reduce((a, r) => a + Number(r.comisiones_total || 0), 0);
+      const pendientes = state.referentes.reduce((a, r) => a + Number(r.comisiones_pendientes || 0), 0);
+      const liquidadas = state.referentes.reduce((a, r) => a + Number(r.comisiones_liquidadas || 0), 0);
       $('#mActivos').textContent = activos;
       $('#mClientes').textContent = clientes;
       $('#mProductos').textContent = productos;
-      $('#mComisiones').textContent = money.format(comisiones);
+      $('#mPendientes').textContent = money.format(pendientes);
+      $('#mLiquidadas').textContent = money.format(liquidadas);
     }
 
     function renderReferentes() {
@@ -376,7 +414,7 @@
           <td>${esc(validUntilLabel(r))}</td>
           <td>${Number(r.clientes_count || 0)}</td>
           <td>${Number(r.productos_count || 0)}</td>
-          <td>${money.format(Number(r.comisiones_total || 0))}</td>
+          <td>${money.format(Number(r.comisiones_pendientes || 0))}</td>
           <td>
             ${r.usuario_id ? `<span class="badge ${r.usuario_activo ? 'ok' : 'off'}">${r.usuario_activo ? 'Habilitado' : 'Bloqueado'}</span><div class="muted">${esc(r.usuario_username || '')}</div>` : '<span class="badge warn">Sin usuario</span>'}
           </td>
@@ -395,11 +433,14 @@
     function renderComisiones() {
       const tb = $('#tbComisiones');
       if (!state.comisiones.length) {
-        tb.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:2rem;color:var(--muted)">No hay comisiones validadas todavia.</td></tr>';
+        tb.innerHTML = '<tr><td colspan="11" style="text-align:center;padding:2rem;color:var(--muted)">No hay comisiones validadas todavia.</td></tr>';
         return;
       }
       tb.innerHTML = state.comisiones.slice(0, 80).map((c) => `
         <tr>
+          <td>
+            <input type="checkbox" style="width:auto" data-comision-check="${Number(c.id)}" ${c.estado === 'validada' ? '' : 'disabled'} ${state.comisionesSeleccionadas.has(Number(c.id)) ? 'checked' : ''} />
+          </td>
           <td>${c.validada_at ? esc(dateFmt.format(new Date(c.validada_at))) : '-'}</td>
           <td>${esc(c.referente_nombre)} <div class="code">${esc(c.referente_codigo)}</div></td>
           <td>${esc(c.cliente || '-')}</td>
@@ -409,8 +450,20 @@
           <td>${Number(c.porcentaje || 0).toFixed(2)}%</td>
           <td><strong>${money.format(Number(c.monto_comision || 0))}</strong></td>
           <td><span class="badge ${c.estado === 'liquidada' ? 'ok' : 'warn'}">${esc(c.estado || 'validada')}</span></td>
+          <td style="text-align:right">
+            ${c.estado === 'validada'
+              ? `<button class="btn btn-sm" onclick="openLiquidacion([${Number(c.id)}])">Liquidar</button>`
+              : `<span class="muted">${c.liquidada_at ? esc(dateFmt.format(new Date(c.liquidada_at))) : 'liquidada'}</span>`}
+          </td>
         </tr>
       `).join('');
+      document.querySelectorAll('[data-comision-check]').forEach((input) => {
+        input.addEventListener('change', () => {
+          const id = Number(input.dataset.comisionCheck);
+          if (input.checked) state.comisionesSeleccionadas.add(id);
+          else state.comisionesSeleccionadas.delete(id);
+        });
+      });
     }
 
     function renderProductosPicker(asignados = []) {
@@ -458,8 +511,47 @@
       ]);
       state.referentes = Array.isArray(refs) ? refs : [];
       state.comisiones = Array.isArray(coms) ? coms : [];
+      state.comisionesSeleccionadas = new Set([...state.comisionesSeleccionadas].filter((id) => state.comisiones.some((c) => Number(c.id) === id && c.estado === 'validada')));
       renderReferentes();
       renderComisiones();
+    }
+
+    function getComisionesPendientes(ids) {
+      const wanted = new Set(ids.map(Number));
+      return state.comisiones.filter((c) => wanted.has(Number(c.id)) && c.estado === 'validada');
+    }
+
+    function openLiquidacion(ids = []) {
+      const selectedIds = ids.length ? ids.map(Number) : [...state.comisionesSeleccionadas];
+      const rows = getComisionesPendientes(selectedIds);
+      if (!rows.length) return toast('No hay comisiones pendientes seleccionadas.');
+      state.comisionesSeleccionadas = new Set(rows.map((c) => Number(c.id)));
+      const total = rows.reduce((acc, c) => acc + Number(c.monto_comision || 0), 0);
+      $('#liqResumen').textContent = `${rows.length} - ${money.format(total)}`;
+      $('#liqReferencia').value = '';
+      $('#liqNota').value = '';
+      $('#dlgLiquidacion').showModal();
+      $('#liqReferencia').focus();
+    }
+
+    async function liquidarSeleccionadas() {
+      const ids = [...state.comisionesSeleccionadas];
+      const rows = getComisionesPendientes(ids);
+      if (!rows.length) return toast('Seleccioná comisiones pendientes.');
+      const body = {
+        comision_ids: rows.map((c) => Number(c.id)),
+        referencia: $('#liqReferencia').value.trim() || null,
+        nota: $('#liqNota').value.trim() || null,
+      };
+      if (state.isSuper) body.empresa_id = Number($('#empSel').value);
+      const result = await api('/api/referentes/comisiones/liquidar', {
+        method:'POST',
+        body: JSON.stringify(body),
+      });
+      $('#dlgLiquidacion').close();
+      state.comisionesSeleccionadas.clear();
+      toast(`Liquidación registrada: ${result?.liquidadas || 0} comisión/es`);
+      await refreshAll();
     }
 
     async function refreshAll() {
@@ -501,6 +593,7 @@
       $('#porcentaje').value = Number(r.porcentaje_comision || 0);
       $('#telefono').value = r.telefono || '';
       $('#email').value = r.email || '';
+      $('#direccion').value = r.direccion || '';
       $('#desde').value = r.vigente_desde ? String(r.vigente_desde).slice(0, 10) : '';
       $('#hasta').value = r.vigente_hasta ? String(r.vigente_hasta).slice(0, 10) : '';
       $('#notas').value = r.notas || '';
@@ -587,6 +680,7 @@
         porcentaje_comision: Number($('#porcentaje').value || 0),
         telefono: $('#telefono').value.trim() || null,
         email: $('#email').value.trim() || null,
+        direccion: $('#direccion').value.trim() || null,
         vigente_desde: $('#desde').value || null,
         vigente_hasta: $('#hasta').value || null,
         notas: $('#notas').value.trim() || null,
@@ -628,11 +722,22 @@
       };
       $('#btnNuevo').onclick = openNew;
       $('#btnRefresh').onclick = refreshAll;
+      $('#btnLiquidarSeleccion').onclick = () => openLiquidacion();
+      $('#chkAllComisiones').addEventListener('change', (e) => {
+        const checked = e.target.checked;
+        state.comisiones.filter((c) => c.estado === 'validada').forEach((c) => {
+          if (checked) state.comisionesSeleccionadas.add(Number(c.id));
+          else state.comisionesSeleccionadas.delete(Number(c.id));
+        });
+        renderComisiones();
+      });
       $('#q').addEventListener('input', renderReferentes);
       $('#btnClose').onclick = () => $('#dlgReferente').close();
       $('#btnCancel').onclick = () => $('#dlgReferente').close();
       $('#btnAccesoClose').onclick = () => $('#dlgAcceso').close();
       $('#btnAccesoCancel').onclick = () => $('#dlgAcceso').close();
+      $('#btnLiqClose').onclick = () => $('#dlgLiquidacion').close();
+      $('#btnLiqCancel').onclick = () => $('#dlgLiquidacion').close();
       $('#btnGenPass').onclick = () => {
         $('#accesoPassword').value = generatePassword();
         $('#accesoPassword').focus();
@@ -645,6 +750,10 @@
       $('#formAcceso').addEventListener('submit', async (e) => {
         e.preventDefault();
         try { await saveAcceso(); } catch (err) { console.error(err); toast(err.message || 'No se pudo guardar acceso'); }
+      });
+      $('#formLiquidacion').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        try { await liquidarSeleccionadas(); } catch (err) { console.error(err); toast(err.message || 'No se pudo liquidar'); }
       });
 
       const me = await api('/api/me');

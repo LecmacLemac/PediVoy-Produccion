@@ -4,6 +4,13 @@ import bcrypt from 'bcryptjs';
 import { normalizeReferenteCode } from '../services/referentesService.js';
 
 let referentesAccessSchemaReady = false;
+let referentesLiquidacionesSchemaReady = false;
+let referentesProfileSchemaReady = false;
+
+function cleanText(value, max = 280) {
+  const text = String(value ?? '').trim();
+  return text ? text.slice(0, max) : null;
+}
 
 export function createReferentesRouter(deps) {
   const { query, withAuth, isSuper, getEmpresaIdFromToken } = deps || {};
@@ -23,6 +30,26 @@ export function createReferentesRouter(deps) {
         ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ
     `);
     referentesAccessSchemaReady = true;
+  }
+
+  async function ensureReferenteProfileSchema() {
+    if (referentesProfileSchemaReady) return;
+    await query(`
+      ALTER TABLE referentes
+        ADD COLUMN IF NOT EXISTS direccion TEXT
+    `);
+    referentesProfileSchemaReady = true;
+  }
+
+  async function ensureReferenteLiquidacionesSchema() {
+    if (referentesLiquidacionesSchemaReady) return;
+    await query(`
+      ALTER TABLE referente_comisiones
+        ADD COLUMN IF NOT EXISTS liquidacion_referencia TEXT,
+        ADD COLUMN IF NOT EXISTS liquidacion_nota TEXT,
+        ADD COLUMN IF NOT EXISTS liquidada_por INTEGER REFERENCES usuarios(id) ON DELETE SET NULL
+    `);
+    referentesLiquidacionesSchemaReady = true;
   }
 
   function isReferenteUser(req) {
@@ -54,6 +81,7 @@ export function createReferentesRouter(deps) {
     try {
       if (!requireBackoffice(req, res)) return;
       await ensureReferenteAccessSchema();
+      await ensureReferenteProfileSchema();
       const empresaId = resolveEmpresa(req);
       if (!empresaId) return res.status(400).json({ error: 'Falta empresa.' });
 
@@ -65,7 +93,9 @@ export function createReferentesRouter(deps) {
                 u.last_login_at AS usuario_last_login_at,
                 COALESCE(cp.productos_count, 0)::int AS productos_count,
                 COALESCE(cc.clientes_count, 0)::int AS clientes_count,
-                COALESCE(cm.comisiones_total, 0)::numeric AS comisiones_total
+                COALESCE(cm.comisiones_total, 0)::numeric AS comisiones_total,
+                COALESCE(cm.comisiones_pendientes, 0)::numeric AS comisiones_pendientes,
+                COALESCE(cm.comisiones_liquidadas, 0)::numeric AS comisiones_liquidadas
            FROM referentes r
            LEFT JOIN usuarios u
              ON u.referente_id = r.id
@@ -85,6 +115,8 @@ export function createReferentesRouter(deps) {
            ) cc ON cc.referente_id = r.id
            LEFT JOIN (
              SELECT referente_id, SUM(monto_comision) AS comisiones_total
+                    ,SUM(CASE WHEN estado = 'validada' THEN monto_comision ELSE 0 END) AS comisiones_pendientes
+                    ,SUM(CASE WHEN estado = 'liquidada' THEN monto_comision ELSE 0 END) AS comisiones_liquidadas
                FROM referente_comisiones
               WHERE empresa_id = $1 AND estado IN ('validada','liquidada')
               GROUP BY referente_id
@@ -105,6 +137,7 @@ export function createReferentesRouter(deps) {
   router.post('/', withAuth, async (req, res) => {
     try {
       if (!requireBackoffice(req, res)) return;
+      await ensureReferenteProfileSchema();
       const empresaId = resolveEmpresa(req, req.body || {});
       if (!empresaId) return res.status(400).json({ error: 'Falta empresa.' });
 
@@ -117,15 +150,16 @@ export function createReferentesRouter(deps) {
 
       const rows = await query(
         `INSERT INTO referentes (
-           empresa_id, nombre, telefono, email, codigo, porcentaje_comision,
+           empresa_id, nombre, telefono, email, direccion, codigo, porcentaje_comision,
            vigente_desde, vigente_hasta, notas, activo
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,COALESCE($10, TRUE))
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,COALESCE($11, TRUE))
          RETURNING *`,
         [
           empresaId,
           nombre,
           req.body?.telefono ? String(req.body.telefono).trim() : null,
           req.body?.email ? String(req.body.email).trim() : null,
+          req.body?.direccion ? String(req.body.direccion).trim() : null,
           codigo,
           porcentaje,
           req.body?.vigente_desde || null,
@@ -148,6 +182,7 @@ export function createReferentesRouter(deps) {
   router.put('/:id', withAuth, async (req, res) => {
     try {
       if (!requireBackoffice(req, res)) return;
+      await ensureReferenteProfileSchema();
       const empresaId = resolveEmpresa(req, req.body || {});
       const id = Number(req.params.id);
       if (!empresaId || !id) return res.status(400).json({ error: 'Datos invalidos.' });
@@ -162,11 +197,12 @@ export function createReferentesRouter(deps) {
             SET nombre = COALESCE($3, nombre),
                 telefono = COALESCE($4, telefono),
                 email = COALESCE($5, email),
-                porcentaje_comision = COALESCE($6, porcentaje_comision),
-                vigente_desde = COALESCE($7, vigente_desde),
-                vigente_hasta = COALESCE($8, vigente_hasta),
-                notas = COALESCE($9, notas),
-                activo = COALESCE($10, activo),
+                direccion = COALESCE($6, direccion),
+                porcentaje_comision = COALESCE($7, porcentaje_comision),
+                vigente_desde = COALESCE($8, vigente_desde),
+                vigente_hasta = COALESCE($9, vigente_hasta),
+                notas = COALESCE($10, notas),
+                activo = COALESCE($11, activo),
                 updated_at = NOW()
           WHERE id = $1
             AND empresa_id = $2
@@ -178,6 +214,7 @@ export function createReferentesRouter(deps) {
           req.body?.nombre ? String(req.body.nombre).trim() : null,
           req.body?.telefono ? String(req.body.telefono).trim() : null,
           req.body?.email ? String(req.body.email).trim() : null,
+          req.body?.direccion ? String(req.body.direccion).trim() : null,
           porcentaje,
           req.body?.vigente_desde || null,
           req.body?.vigente_hasta || null,
@@ -397,9 +434,46 @@ export function createReferentesRouter(deps) {
     }
   });
 
+  router.post('/comisiones/liquidar', withAuth, async (req, res) => {
+    try {
+      if (!requireBackoffice(req, res)) return;
+      await ensureReferenteLiquidacionesSchema();
+      const empresaId = resolveEmpresa(req, req.body || {});
+      if (!empresaId) return res.status(400).json({ error: 'Falta empresa.' });
+
+      const ids = Array.isArray(req.body?.comision_ids)
+        ? [...new Set(req.body.comision_ids.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0))]
+        : [];
+      if (!ids.length) return res.status(400).json({ error: 'Seleccioná al menos una comisión pendiente.' });
+
+      const referencia = cleanText(req.body?.referencia, 120);
+      const nota = cleanText(req.body?.nota, 500);
+      const rows = await query(
+        `UPDATE referente_comisiones
+            SET estado = 'liquidada',
+                liquidada_at = NOW(),
+                liquidacion_referencia = $3,
+                liquidacion_nota = $4,
+                liquidada_por = $5
+          WHERE empresa_id = $1
+            AND id = ANY($2::int[])
+            AND estado = 'validada'
+          RETURNING id, referente_id, monto_comision`,
+        [empresaId, ids, referencia, nota, req.user?.uid || null]
+      );
+
+      const total = rows.reduce((acc, row) => acc + Number(row.monto_comision || 0), 0);
+      return res.json({ ok: true, liquidadas: rows.length, total });
+    } catch (e) {
+      console.error('REFERENTES.COMISIONES.LIQUIDAR.ERROR', e);
+      return res.status(500).json({ error: 'Error liquidando comisiones' });
+    }
+  });
+
   router.get('/comisiones', withAuth, async (req, res) => {
     try {
       if (!requireBackoffice(req, res)) return;
+      await ensureReferenteLiquidacionesSchema();
       const empresaId = resolveEmpresa(req);
       if (!empresaId) return res.status(400).json({ error: 'Falta empresa.' });
 
@@ -408,13 +482,17 @@ export function createReferentesRouter(deps) {
                 r.nombre AS referente_nombre,
                 r.codigo AS referente_codigo,
                 pe.cliente,
-                pr.nombre AS producto_nombre
+                pr.nombre AS producto_nombre,
+                u.username AS liquidada_por_username
            FROM referente_comisiones rc
            JOIN referentes r ON r.id = rc.referente_id
            LEFT JOIN puntos_entrega pe ON pe.id = rc.punto_entrega_id
            LEFT JOIN productos pr ON pr.id = rc.producto_id
+           LEFT JOIN usuarios u ON u.id = rc.liquidada_por
           WHERE rc.empresa_id = $1
-          ORDER BY rc.validada_at DESC, rc.id DESC
+          ORDER BY CASE WHEN rc.estado = 'validada' THEN 0 ELSE 1 END,
+                   COALESCE(rc.liquidada_at, rc.validada_at) DESC,
+                   rc.id DESC
           LIMIT 500`,
         [empresaId]
       );

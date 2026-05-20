@@ -460,6 +460,7 @@ CREATE TABLE IF NOT EXISTS referentes (
   nombre                 TEXT NOT NULL,
   telefono               TEXT,
   email                  TEXT,
+  direccion              TEXT,
   codigo                 TEXT NOT NULL,
   porcentaje_comision    NUMERIC(5,2) NOT NULL DEFAULT 0,
   vigente_desde          DATE,
@@ -527,6 +528,9 @@ CREATE TABLE IF NOT EXISTS referente_comisiones (
   estado                 TEXT NOT NULL DEFAULT 'validada',
   validada_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   liquidada_at           TIMESTAMPTZ,
+  liquidacion_referencia TEXT,
+  liquidacion_nota       TEXT,
+  liquidada_por          INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
   created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE(pedido_id, item_pedido_id, referente_id)
 );

@@ -1,6 +1,8 @@
 import express from 'express';
 import bcrypt from 'bcryptjs';
 
+let referenteProfileSchemaReady = false;
+
 function cleanText(value, max = 280) {
   const text = String(value ?? '').trim();
   return text ? text.slice(0, max) : null;
@@ -12,6 +14,15 @@ export function createReferentePortalRouter(deps) {
   if (typeof withAuth !== 'function') throw new Error('createReferentePortalRouter: falta withAuth(fn)');
 
   const router = express.Router();
+
+  async function ensureReferenteProfileSchema() {
+    if (referenteProfileSchemaReady) return;
+    await query(`
+      ALTER TABLE referentes
+        ADD COLUMN IF NOT EXISTS direccion TEXT
+    `);
+    referenteProfileSchemaReady = true;
+  }
 
   function requireReferente(req, res, next) {
     const role = String(req.user?.role || '').toLowerCase();
@@ -27,8 +38,9 @@ export function createReferentePortalRouter(deps) {
 
   router.get('/perfil', async (req, res) => {
     try {
+      await ensureReferenteProfileSchema();
       const rows = await query(
-        `SELECT r.id, r.empresa_id, r.nombre, r.telefono, r.email, r.codigo,
+        `SELECT r.id, r.empresa_id, r.nombre, r.telefono, r.email, r.direccion, r.codigo,
                 r.porcentaje_comision, r.vigente_desde, r.vigente_hasta,
                 r.activo, r.notas, r.created_at, r.updated_at,
                 e.nombre AS empresa_nombre,
@@ -51,17 +63,19 @@ export function createReferentePortalRouter(deps) {
 
   router.put('/perfil', async (req, res) => {
     try {
+      await ensureReferenteProfileSchema();
       const rows = await query(
         `UPDATE referentes
             SET nombre = COALESCE($3, nombre),
                 telefono = $4,
                 email = $5,
-                notas = $6,
+                direccion = $6,
+                notas = $7,
                 updated_at = NOW()
           WHERE id = $1
             AND empresa_id = $2
             AND deleted_at IS NULL
-          RETURNING id, empresa_id, nombre, telefono, email, codigo,
+          RETURNING id, empresa_id, nombre, telefono, email, direccion, codigo,
                     porcentaje_comision, vigente_desde, vigente_hasta,
                     activo, notas, updated_at`,
         [
@@ -70,6 +84,7 @@ export function createReferentePortalRouter(deps) {
           cleanText(req.body?.nombre, 120),
           cleanText(req.body?.telefono, 60),
           cleanText(req.body?.email, 180),
+          cleanText(req.body?.direccion, 220),
           cleanText(req.body?.notas, 500),
         ]
       );

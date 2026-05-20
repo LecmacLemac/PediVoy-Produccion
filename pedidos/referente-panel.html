@@ -92,6 +92,8 @@
           <input id="telefono" />
           <label for="email">Email</label>
           <input id="email" type="email" />
+          <label for="direccion">Dirección</label>
+          <input id="direccion" />
           <label for="notas">Notas</label>
           <textarea id="notas" rows="4"></textarea>
           <div style="display:flex;justify-content:flex-end;margin-top:14px">
@@ -213,6 +215,7 @@
       $('#nombre').value = p?.nombre || '';
       $('#telefono').value = p?.telefono || '';
       $('#email').value = p?.email || '';
+      $('#direccion').value = p?.direccion || '';
       $('#notas').value = p?.notas || '';
       renderInviteLink(p);
     }
@@ -325,6 +328,7 @@
             nombre: $('#nombre').value.trim(),
             telefono: $('#telefono').value.trim() || null,
             email: $('#email').value.trim() || null,
+            direccion: $('#direccion').value.trim() || null,
             notas: $('#notas').value.trim() || null,
           }),
         });
