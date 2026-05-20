@@ -1,6 +1,8 @@
 import express from 'express';
 import bcrypt from 'bcryptjs';
 
+import { ensureReferenteNotificationsSchema } from '../services/referenteNotifications.js';
+
 let referenteProfileSchemaReady = false;
 
 function cleanText(value, max = 280) {
@@ -321,6 +323,68 @@ export function createReferentePortalRouter(deps) {
     } catch (e) {
       console.error('REFERENTE.PORTAL.PRODUCTOS.ERROR', e);
       return res.status(500).json({ error: 'Error obteniendo productos' });
+    }
+  });
+
+  router.get('/notificaciones', async (req, res) => {
+    try {
+      await ensureReferenteNotificationsSchema(query);
+      const limit = Math.min(Math.max(Number(req.query?.limit || 50), 1), 100);
+      const rows = await query(
+        `SELECT id, tipo, titulo, mensaje, pedido_id, comision_id, leida_at, created_at
+           FROM referente_notificaciones
+          WHERE empresa_id = $1
+            AND referente_id = $2
+          ORDER BY created_at DESC, id DESC
+          LIMIT $3`,
+        [req.user.empresa_id, req.user.referente_id, limit]
+      );
+      return res.json(rows);
+    } catch (e) {
+      console.error('REFERENTE.PORTAL.NOTIFICACIONES.ERROR', e);
+      return res.status(500).json({ error: 'Error obteniendo notificaciones' });
+    }
+  });
+
+  router.post('/notificaciones/marcar-leidas', async (req, res) => {
+    try {
+      await ensureReferenteNotificationsSchema(query);
+      const rows = await query(
+        `UPDATE referente_notificaciones
+            SET leida_at = COALESCE(leida_at, NOW())
+          WHERE empresa_id = $1
+            AND referente_id = $2
+            AND leida_at IS NULL
+          RETURNING id`,
+        [req.user.empresa_id, req.user.referente_id]
+      );
+      return res.json({ ok: true, actualizadas: rows.length });
+    } catch (e) {
+      console.error('REFERENTE.PORTAL.NOTIFICACIONES.READALL.ERROR', e);
+      return res.status(500).json({ error: 'Error marcando notificaciones' });
+    }
+  });
+
+  router.post('/notificaciones/:id/leida', async (req, res) => {
+    try {
+      await ensureReferenteNotificationsSchema(query);
+      const id = Number(req.params.id);
+      if (!id) return res.status(400).json({ error: 'Notificación inválida.' });
+
+      const rows = await query(
+        `UPDATE referente_notificaciones
+            SET leida_at = COALESCE(leida_at, NOW())
+          WHERE id = $1
+            AND empresa_id = $2
+            AND referente_id = $3
+          RETURNING id, leida_at`,
+        [id, req.user.empresa_id, req.user.referente_id]
+      );
+      if (!rows.length) return res.status(404).json({ error: 'Notificación no encontrada.' });
+      return res.json(rows[0]);
+    } catch (e) {
+      console.error('REFERENTE.PORTAL.NOTIFICACION.READ.ERROR', e);
+      return res.status(500).json({ error: 'Error marcando notificación' });
     }
   });
 

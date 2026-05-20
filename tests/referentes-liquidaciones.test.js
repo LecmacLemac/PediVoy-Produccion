@@ -56,6 +56,8 @@ test('administracion puede liquidar comisiones pendientes seleccionadas', async 
     async query(sql, params = []) {
       calls.push({ sql, params });
       if (sql.includes('ALTER TABLE referente_comisiones')) return [];
+      if (sql.includes('CREATE TABLE IF NOT EXISTS referente_notificaciones')) return [];
+      if (sql.includes('CREATE INDEX IF NOT EXISTS referente_notificaciones_ref_idx')) return [];
       if (sql.includes('UPDATE referente_comisiones')) {
         assert.equal(params[0], 2);
         assert.deepEqual(params[1], [10, 11]);
@@ -68,13 +70,19 @@ test('administracion puede liquidar comisiones pendientes seleccionadas', async 
           { id: 11, referente_id: 4, monto_comision: '450.50' },
         ];
       }
+      if (sql.includes('INSERT INTO referente_notificaciones')) {
+        assert.equal(params[0], 2);
+        assert.deepEqual(params[1], [10, 11]);
+        assert.match(sql, /comision_liquidada/);
+        return [{ id: 90, referente_id: 4 }, { id: 91, referente_id: 4 }];
+      }
       throw new Error(`SQL inesperado: ${sql.slice(0, 80)}`);
     },
   });
 
   assert.equal(result.status, 200);
   assert.deepEqual(result.json, { ok: true, liquidadas: 2, total: 750.5 });
-  assert.equal(calls.length, 2);
+  assert.equal(calls.length, 5);
 });
 
 test('liquidacion exige al menos una comision seleccionada', async () => {

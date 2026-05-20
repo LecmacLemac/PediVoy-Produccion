@@ -6,6 +6,7 @@ import { query } from '../db.js';
 import { notificarEnRuta } from '../services/notificacionesPedidos.js';
 import { awardPointsForDeliveredOrder } from '../services/puntosService.js';
 import { generateComisionesForDeliveredOrder } from '../services/referentesService.js';
+import { createPedidoEstadoNotifications } from '../services/referenteNotifications.js';
 
 export function createPedidosRouter() {
   const router = express.Router();
@@ -552,6 +553,16 @@ export function createPedidosRouter() {
 
         if (!r.length) {
           return res.status(404).json({ error: 'Pedido no encontrado o sin permiso' });
+        }
+
+        if (estado) {
+          const row = r[0];
+          createPedidoEstadoNotifications({
+            queryFn: query,
+            empresaId: row.empresa_id,
+            pedidoId: row.id,
+            estado,
+          }).catch((err) => console.error('REFERENTES.NOTIFICACION.PEDIDO.ERROR', err?.message || err));
         }
 
         if (estado === 'en_ruta' || estado === 'en_camino') {

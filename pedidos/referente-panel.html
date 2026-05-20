@@ -44,6 +44,13 @@
     .badge{border-radius:99px;padding:3px 8px;font-size:.74rem;font-weight:850;text-transform:uppercase}
     .badge.ok{background:rgba(16,185,129,.14);color:#86efac}
     .badge.warn{background:rgba(245,158,11,.14);color:#fde68a}
+    .section-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}
+    .section-head h2{margin:0}
+    .notice-list{display:grid;gap:9px}
+    .notice{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:start;border:1px solid var(--border);border-radius:8px;background:rgba(15,23,42,.66);padding:11px 12px}
+    .notice.unread{border-color:rgba(6,182,212,.45);background:rgba(6,182,212,.08)}
+    .notice strong{display:block;color:#fff}
+    .notice p{margin:.25rem 0 0;color:#cbd5e1}
     .share-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center}
     .share-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
     .toast{position:fixed;right:18px;bottom:20px;background:#fff;color:#0f172a;border-radius:99px;padding:10px 15px;font-weight:850;box-shadow:0 12px 30px rgba(0,0,0,.32);opacity:0;transform:translateY(8px);transition:.2s;pointer-events:none}
@@ -130,6 +137,14 @@
 
       <div class="stack">
         <section class="card">
+          <div class="section-head">
+            <h2>Notificaciones</h2>
+            <button id="btnReadAll" class="btn" type="button">Marcar leídas</button>
+          </div>
+          <div id="notificacionesList" class="notice-list"></div>
+        </section>
+
+        <section class="card">
           <h2>Pedidos vinculados</h2>
           <div class="table-wrap">
             <table>
@@ -179,7 +194,7 @@
     const money = new Intl.NumberFormat('es-AR', { style:'currency', currency:'ARS', maximumFractionDigits:0 });
     const dateFmt = new Intl.DateTimeFormat('es-AR', { day:'2-digit', month:'2-digit', year:'2-digit' });
     const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
-    const state = { perfil:null };
+    const state = { perfil:null, notificaciones:[] };
 
     function toast(msg) {
       const t = $('#toast');
@@ -280,6 +295,44 @@
       `).join('') : emptyRow(8, 'Sin comisiones todavía.');
     }
 
+    function renderNotificaciones(rows) {
+      state.notificaciones = Array.isArray(rows) ? rows : [];
+      const box = $('#notificacionesList');
+      if (!state.notificaciones.length) {
+        box.innerHTML = '<div class="muted">Sin notificaciones por ahora.</div>';
+        return;
+      }
+      box.innerHTML = state.notificaciones.slice(0, 8).map((n) => {
+        const unread = !n.leida_at;
+        const fecha = n.created_at ? dateFmt.format(new Date(n.created_at)) : '';
+        return `
+          <article class="notice ${unread ? 'unread' : ''}">
+            <div>
+              <strong>${esc(n.titulo || 'Notificación')}</strong>
+              <p>${esc(n.mensaje || '')}</p>
+              <div class="muted">${esc(fecha)}</div>
+            </div>
+            ${unread ? `<button class="btn" type="button" data-read-notice="${Number(n.id)}">Leída</button>` : '<span class="badge ok">Leída</span>'}
+          </article>
+        `;
+      }).join('');
+      document.querySelectorAll('[data-read-notice]').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          try {
+            await api(`/api/referente/notificaciones/${Number(btn.dataset.readNotice)}/leida`, { method:'POST' });
+            await loadNotificaciones();
+          } catch (err) {
+            toast(err.message || 'No se pudo marcar la notificación');
+          }
+        });
+      });
+    }
+
+    async function loadNotificaciones() {
+      const rows = await api('/api/referente/notificaciones');
+      renderNotificaciones(rows);
+    }
+
     function renderClientes(rows) {
       $('#tbClientes').innerHTML = rows?.length ? rows.map((c) => `
         <tr>
@@ -303,13 +356,14 @@
     }
 
     async function loadAll() {
-      const [perfil, resumen, pedidos, comisiones, clientes, productos] = await Promise.all([
+      const [perfil, resumen, pedidos, comisiones, clientes, productos, notificaciones] = await Promise.all([
         api('/api/referente/perfil'),
         api('/api/referente/resumen'),
         api('/api/referente/pedidos'),
         api('/api/referente/comisiones'),
         api('/api/referente/clientes'),
         api('/api/referente/productos'),
+        api('/api/referente/notificaciones'),
       ]);
       renderPerfil(perfil);
       renderResumen(resumen);
@@ -317,6 +371,7 @@
       renderComisiones(Array.isArray(comisiones) ? comisiones : []);
       renderClientes(Array.isArray(clientes) ? clientes : []);
       renderProductos(Array.isArray(productos) ? productos : []);
+      renderNotificaciones(Array.isArray(notificaciones) ? notificaciones : []);
     }
 
     $('#perfilForm').addEventListener('submit', async (e) => {
@@ -396,6 +451,16 @@
         $('#inviteLink').select();
         document.execCommand('copy');
         toast('Link copiado');
+      }
+    });
+
+    $('#btnReadAll').addEventListener('click', async () => {
+      try {
+        const result = await api('/api/referente/notificaciones/marcar-leidas', { method:'POST' });
+        toast(`Notificaciones marcadas: ${result?.actualizadas || 0}`);
+        await loadNotificaciones();
+      } catch (err) {
+        toast(err.message || 'No se pudieron marcar');
       }
     });
 

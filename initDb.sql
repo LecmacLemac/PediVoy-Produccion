@@ -538,6 +538,22 @@ CREATE TABLE IF NOT EXISTS referente_comisiones (
 CREATE INDEX IF NOT EXISTS referente_comisiones_empresa_estado_idx
   ON referente_comisiones (empresa_id, estado, validada_at DESC);
 
+CREATE TABLE IF NOT EXISTS referente_notificaciones (
+  id             SERIAL PRIMARY KEY,
+  empresa_id     INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+  referente_id   INTEGER NOT NULL REFERENCES referentes(id) ON DELETE CASCADE,
+  tipo           TEXT NOT NULL,
+  titulo         TEXT NOT NULL,
+  mensaje        TEXT NOT NULL,
+  pedido_id      INTEGER REFERENCES pedidos(id) ON DELETE SET NULL,
+  comision_id    INTEGER REFERENCES referente_comisiones(id) ON DELETE SET NULL,
+  leida_at       TIMESTAMPTZ,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS referente_notificaciones_ref_idx
+  ON referente_notificaciones (empresa_id, referente_id, leida_at, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS pedido_track_points (
   id         SERIAL PRIMARY KEY,
   pedido_id  INTEGER REFERENCES pedidos(id) ON DELETE CASCADE,

@@ -2,6 +2,7 @@ import express from 'express';
 import bcrypt from 'bcryptjs';
 
 import { normalizeReferenteCode } from '../services/referentesService.js';
+import { createComisionLiquidadaNotifications } from '../services/referenteNotifications.js';
 
 let referentesAccessSchemaReady = false;
 let referentesLiquidacionesSchemaReady = false;
@@ -463,6 +464,7 @@ export function createReferentesRouter(deps) {
       );
 
       const total = rows.reduce((acc, row) => acc + Number(row.monto_comision || 0), 0);
+      await createComisionLiquidadaNotifications({ queryFn: query, empresaId, comisiones: rows });
       return res.json({ ok: true, liquidadas: rows.length, total });
     } catch (e) {
       console.error('REFERENTES.COMISIONES.LIQUIDAR.ERROR', e);

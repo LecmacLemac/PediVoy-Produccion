@@ -6,6 +6,7 @@ import {
   generateComisionesForDeliveredOrder,
   normalizeReferenteCode,
 } from '../src/services/referentesService.js';
+import { createPedidoEstadoNotifications } from '../src/services/referenteNotifications.js';
 
 test('normalizeReferenteCode normaliza codigo de referente', () => {
   assert.equal(normalizeReferenteCode(' ref-123 '), 'REF-123');
@@ -67,3 +68,29 @@ test('generateComisionesForDeliveredOrder genera comision idempotente por item',
   assert.equal(inserts[1][7], 8);
 });
 
+test('createPedidoEstadoNotifications avisa a referentes vinculados al pedido', async () => {
+  const calls = [];
+  const queryFn = async (sql, params = []) => {
+    calls.push({ sql, params });
+    if (sql.includes('CREATE TABLE IF NOT EXISTS referente_notificaciones')) return [];
+    if (sql.includes('CREATE INDEX IF NOT EXISTS referente_notificaciones_ref_idx')) return [];
+    if (sql.includes('INSERT INTO referente_notificaciones')) {
+      assert.equal(params[0], 1);
+      assert.equal(params[1], 9001);
+      assert.equal(params[2], 'entregado');
+      assert.match(sql, /JOIN cliente_referentes cr/);
+      return [{ id: 70, referente_id: 9 }];
+    }
+    throw new Error(`SQL inesperado: ${sql.slice(0, 80)}`);
+  };
+
+  const result = await createPedidoEstadoNotifications({
+    queryFn,
+    empresaId: 1,
+    pedidoId: 9001,
+    estado: 'entregado',
+  });
+
+  assert.deepEqual(result, [{ id: 70, referente_id: 9 }]);
+  assert.equal(calls.length, 3);
+});

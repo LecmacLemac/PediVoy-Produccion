@@ -236,3 +236,52 @@ test('referente puede listar pedidos vinculados a sus clientes', async () => {
   assert.equal(result.json[0].id, 101);
   assert.equal(result.json[0].cliente, 'Cliente Demo');
 });
+
+test('referente puede listar notificaciones internas', async () => {
+  const result = await requestWithRouter({
+    user: { uid: 7, role: 'referente', empresa_id: 2, referente_id: 9 },
+    path: '/notificaciones',
+    method: 'GET',
+    async query(sql, params = []) {
+      if (sql.includes('CREATE TABLE IF NOT EXISTS referente_notificaciones')) return [];
+      if (sql.includes('CREATE INDEX IF NOT EXISTS referente_notificaciones_ref_idx')) return [];
+      assert.equal(params[0], 2);
+      assert.equal(params[1], 9);
+      assert.equal(params[2], 50);
+      assert.match(sql, /FROM referente_notificaciones/);
+      return [{
+        id: 88,
+        tipo: 'pedido_estado',
+        titulo: 'Pedido #101 entregado',
+        mensaje: 'El pedido cambió de estado.',
+        pedido_id: 101,
+        leida_at: null,
+        created_at: '2026-05-20T12:00:00.000Z',
+      }];
+    },
+  });
+
+  assert.equal(result.status, 200);
+  assert.equal(result.json.length, 1);
+  assert.equal(result.json[0].id, 88);
+  assert.equal(result.json[0].leida_at, null);
+});
+
+test('referente marca una notificacion como leida', async () => {
+  const result = await requestWithRouter({
+    user: { uid: 7, role: 'referente', empresa_id: 2, referente_id: 9 },
+    path: '/notificaciones/88/leida',
+    method: 'POST',
+    async query(sql, params = []) {
+      if (sql.includes('CREATE TABLE IF NOT EXISTS referente_notificaciones')) return [];
+      if (sql.includes('CREATE INDEX IF NOT EXISTS referente_notificaciones_ref_idx')) return [];
+      assert.deepEqual(params, [88, 2, 9]);
+      assert.match(sql, /UPDATE referente_notificaciones/);
+      assert.match(sql, /referente_id = \$3/);
+      return [{ id: 88, leida_at: '2026-05-20T13:00:00.000Z' }];
+    },
+  });
+
+  assert.equal(result.status, 200);
+  assert.equal(result.json.id, 88);
+});
