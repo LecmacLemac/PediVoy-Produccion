@@ -10,6 +10,23 @@ function cleanText(value, max = 280) {
   return text ? text.slice(0, max) : null;
 }
 
+function parseConfig(value) {
+  if (!value) return {};
+  if (typeof value === 'object') return value;
+  try {
+    const parsed = JSON.parse(String(value));
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function asArray(value) {
+  if (Array.isArray(value)) return value.map((item) => String(item || '').trim()).filter(Boolean);
+  const text = String(value || '').trim();
+  return text ? [text] : [];
+}
+
 export function createReferentePortalRouter(deps) {
   const { query, withAuth } = deps || {};
   if (typeof query !== 'function') throw new Error('createReferentePortalRouter: falta query(fn)');
@@ -323,6 +340,51 @@ export function createReferentePortalRouter(deps) {
     } catch (e) {
       console.error('REFERENTE.PORTAL.PRODUCTOS.ERROR', e);
       return res.status(500).json({ error: 'Error obteniendo productos' });
+    }
+  });
+
+  router.get('/reglas', async (req, res) => {
+    try {
+      const rows = await query(
+        `SELECT r.codigo, r.porcentaje_comision, r.vigente_desde, r.vigente_hasta,
+                e.nombre AS empresa_nombre,
+                e.config_operativa->'referentes' AS reglas_config
+           FROM referentes r
+           JOIN empresas e ON e.id = r.empresa_id
+          WHERE r.id = $1
+            AND r.empresa_id = $2
+            AND r.deleted_at IS NULL
+          LIMIT 1`,
+        [req.user.referente_id, req.user.empresa_id]
+      );
+      if (!rows.length) return res.status(404).json({ error: 'Referente no encontrado.' });
+
+      const row = rows[0];
+      const cfg = parseConfig(row.reglas_config);
+      const porcentaje = Number(row.porcentaje_comision || 0);
+      const condiciones = asArray(cfg.condiciones).length ? asArray(cfg.condiciones) : [
+        'Las comisiones se generan sobre pedidos entregados y productos asignados al referente.',
+        'Los pedidos cancelados, rechazados o no entregados no generan comisión.',
+        'Administración valida y liquida las comisiones desde el panel interno.',
+      ];
+      const liquidacion = cleanText(cfg.liquidacion, 300) || 'Las comisiones validadas quedan pendientes hasta que administración las marque como liquidadas.';
+      const formaPago = cleanText(cfg.forma_pago || cfg.formaPago, 220) || 'La forma de pago se informa por administración al momento de la liquidación.';
+      const contacto = cleanText(cfg.contacto, 220) || 'Ante diferencias o correcciones, contactar a administración.';
+
+      return res.json({
+        empresa_nombre: row.empresa_nombre,
+        codigo: row.codigo,
+        porcentaje_comision: porcentaje,
+        vigente_desde: row.vigente_desde,
+        vigente_hasta: row.vigente_hasta,
+        liquidacion,
+        forma_pago: formaPago,
+        contacto,
+        condiciones,
+      });
+    } catch (e) {
+      console.error('REFERENTE.PORTAL.REGLAS.ERROR', e);
+      return res.status(500).json({ error: 'Error obteniendo reglas comerciales' });
     }
   });
 

@@ -55,6 +55,7 @@ Alcance inicial:
 - Generacion de comisiones cuando un pedido pasa a `entregado`.
 - Endpoints admin basicos para gestionar referentes.
 - Pantalla inicial de administracion en `/pedidos/referentes.html`.
+- Panel propio del referente en `/pedidos/referente-panel.html` con metricas, historial, liquidaciones, notificaciones, link de invitacion y reglas comerciales.
 
 Fuera de esta primera etapa:
 
@@ -72,6 +73,34 @@ Fuera de esta primera etapa:
 - `POST /api/referentes/:id/productos`
 - `GET /api/referentes/comisiones`
 - `POST /api/referentes/clientes/:clienteId/desvincular`
+
+## Endpoints del portal del referente
+
+- `GET /api/referente/perfil`
+- `PUT /api/referente/perfil`
+- `PUT /api/referente/password`
+- `GET /api/referente/resumen`
+- `GET /api/referente/pedidos`
+- `GET /api/referente/comisiones`
+- `GET /api/referente/clientes`
+- `GET /api/referente/productos`
+- `GET /api/referente/notificaciones`
+- `POST /api/referente/notificaciones/marcar-leidas`
+- `POST /api/referente/notificaciones/:id/leida`
+- `GET /api/referente/reglas`
+
+## Reglas comerciales visibles
+
+El portal muestra al referente una seccion de reglas comerciales con:
+
+- porcentaje general de comision,
+- vigencia del referente,
+- forma de pago,
+- condiciones de generacion de comisiones,
+- criterio de liquidacion,
+- contacto para diferencias o correcciones.
+
+Por defecto usa reglas operativas conservadoras: solo comisionan pedidos entregados y productos asignados, no comisionan pedidos cancelados o no entregados, y administracion valida/liquida desde el panel interno. Si la empresa define `config_operativa.referentes`, el portal usa esos textos.
 
 ## Criterio de control
 

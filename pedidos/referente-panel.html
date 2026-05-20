@@ -51,6 +51,12 @@
     .notice.unread{border-color:rgba(6,182,212,.45);background:rgba(6,182,212,.08)}
     .notice strong{display:block;color:#fff}
     .notice p{margin:.25rem 0 0;color:#cbd5e1}
+    .rules-list{display:grid;gap:9px;margin:12px 0 0;padding:0;list-style:none}
+    .rules-list li{border:1px solid var(--border);border-radius:8px;background:rgba(15,23,42,.66);padding:10px 12px;color:#dbeafe}
+    .rules-meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-top:10px}
+    .rules-meta div{border:1px solid var(--border);border-radius:8px;background:rgba(15,23,42,.66);padding:10px}
+    .rules-meta span{display:block;color:var(--muted);font-size:.72rem;text-transform:uppercase;font-weight:850}
+    .rules-meta strong{display:block;margin-top:4px;color:#fff}
     .share-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center}
     .share-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
     .toast{position:fixed;right:18px;bottom:20px;background:#fff;color:#0f172a;border-radius:99px;padding:10px 15px;font-weight:850;box-shadow:0 12px 30px rgba(0,0,0,.32);opacity:0;transform:translateY(8px);transition:.2s;pointer-events:none}
@@ -142,6 +148,18 @@
             <button id="btnReadAll" class="btn" type="button">Marcar leídas</button>
           </div>
           <div id="notificacionesList" class="notice-list"></div>
+        </section>
+
+        <section class="card">
+          <h2>Reglas comerciales</h2>
+          <div class="rules-meta">
+            <div><span>Comisión general</span><strong id="rPorcentaje">0%</strong></div>
+            <div><span>Vigencia</span><strong id="rVigencia">Sin cierre</strong></div>
+            <div><span>Forma de pago</span><strong id="rPago">Administración</strong></div>
+          </div>
+          <ul id="reglasList" class="rules-list"></ul>
+          <p id="rLiquidacion" class="muted"></p>
+          <p id="rContacto" class="muted"></p>
         </section>
 
         <section class="card">
@@ -328,6 +346,21 @@
       });
     }
 
+    function renderReglas(reglas) {
+      const pct = Number(reglas?.porcentaje_comision || 0);
+      const desde = reglas?.vigente_desde ? dateFmt.format(new Date(reglas.vigente_desde)) : 'sin inicio';
+      const hasta = reglas?.vigente_hasta ? dateFmt.format(new Date(reglas.vigente_hasta)) : 'sin cierre';
+      const condiciones = Array.isArray(reglas?.condiciones) ? reglas.condiciones : [];
+      $('#rPorcentaje').textContent = `${pct.toFixed(2)}%`;
+      $('#rVigencia').textContent = `${desde} / ${hasta}`;
+      $('#rPago').textContent = reglas?.forma_pago || 'Administración';
+      $('#reglasList').innerHTML = condiciones.length
+        ? condiciones.map((item) => `<li>${esc(item)}</li>`).join('')
+        : '<li>Sin reglas comerciales cargadas.</li>';
+      $('#rLiquidacion').textContent = reglas?.liquidacion || '';
+      $('#rContacto').textContent = reglas?.contacto || '';
+    }
+
     async function loadNotificaciones() {
       const rows = await api('/api/referente/notificaciones');
       renderNotificaciones(rows);
@@ -356,7 +389,7 @@
     }
 
     async function loadAll() {
-      const [perfil, resumen, pedidos, comisiones, clientes, productos, notificaciones] = await Promise.all([
+      const [perfil, resumen, pedidos, comisiones, clientes, productos, notificaciones, reglas] = await Promise.all([
         api('/api/referente/perfil'),
         api('/api/referente/resumen'),
         api('/api/referente/pedidos'),
@@ -364,6 +397,7 @@
         api('/api/referente/clientes'),
         api('/api/referente/productos'),
         api('/api/referente/notificaciones'),
+        api('/api/referente/reglas'),
       ]);
       renderPerfil(perfil);
       renderResumen(resumen);
@@ -372,6 +406,7 @@
       renderClientes(Array.isArray(clientes) ? clientes : []);
       renderProductos(Array.isArray(productos) ? productos : []);
       renderNotificaciones(Array.isArray(notificaciones) ? notificaciones : []);
+      renderReglas(reglas || {});
     }
 
     $('#perfilForm').addEventListener('submit', async (e) => {

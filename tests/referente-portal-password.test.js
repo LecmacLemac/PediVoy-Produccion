@@ -285,3 +285,34 @@ test('referente marca una notificacion como leida', async () => {
   assert.equal(result.status, 200);
   assert.equal(result.json.id, 88);
 });
+
+test('referente puede ver reglas comerciales del programa', async () => {
+  const result = await requestWithRouter({
+    user: { uid: 7, role: 'referente', empresa_id: 2, referente_id: 9 },
+    path: '/reglas',
+    method: 'GET',
+    async query(sql, params = []) {
+      assert.deepEqual(params, [9, 2]);
+      assert.match(sql, /config_operativa->'referentes' AS reglas_config/);
+      return [{
+        codigo: 'REF9',
+        porcentaje_comision: '12.5',
+        vigente_desde: '2026-05-01',
+        vigente_hasta: null,
+        empresa_nombre: 'Empresa Demo',
+        reglas_config: {
+          condiciones: ['Comisiona sobre pedidos entregados.', 'No aplica a pedidos cancelados.'],
+          liquidacion: 'Liquidación semanal.',
+          forma_pago: 'Transferencia bancaria',
+          contacto: 'Administración comercial',
+        },
+      }];
+    },
+  });
+
+  assert.equal(result.status, 200);
+  assert.equal(result.json.codigo, 'REF9');
+  assert.equal(result.json.porcentaje_comision, 12.5);
+  assert.equal(result.json.forma_pago, 'Transferencia bancaria');
+  assert.deepEqual(result.json.condiciones, ['Comisiona sobre pedidos entregados.', 'No aplica a pedidos cancelados.']);
+});
