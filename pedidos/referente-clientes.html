@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Clientes del Referente | PediVoy</title>
+  <link rel="stylesheet" href="theme-base.css" />
+  <link rel="stylesheet" href="referente-portal.css" />
+</head>
+<body data-page="clientes">
+  <header>
+    <nav class="wrap">
+      <div class="brand"><span class="brand-dot"></span>PediVoy <span class="pill">Referente</span></div>
+      <div class="top-actions">
+        <span id="empresaPill" class="pill">Empresa</span>
+        <button id="logout" class="btn">Salir</button>
+      </div>
+    </nav>
+  </header>
+
+  <main class="wrap shell">
+    <aside class="side-nav">
+      <a href="referente-panel.html">Dashboard</a>
+      <a class="active" href="referente-clientes.html">Clientes</a>
+      <a href="referente-pedidos.html">Pedidos</a>
+      <a href="referente-comisiones.html">Comisiones</a>
+      <a href="referente-perfil.html">Perfil</a>
+    </aside>
+
+    <div class="content">
+      <section class="hero">
+        <div>
+          <h1 id="nombreTitulo">Clientes referidos</h1>
+          <p class="muted">Clientes vinculados y prospectos enviados a validación.</p>
+        </div>
+        <div class="code" id="codigoRef">CODIGO</div>
+      </section>
+
+      <section class="card">
+        <h2>Link de invitación</h2>
+        <p class="muted">Compartí este enlace para que el cliente entre con tu código cargado.</p>
+        <label for="inviteLink">Enlace</label>
+        <div class="share-row">
+          <input id="inviteLink" readonly />
+          <button id="btnCopyInvite" class="btn" type="button">Copiar</button>
+        </div>
+        <div class="share-actions">
+          <a id="btnWhatsAppInvite" class="btn primary" href="#" target="_blank" rel="noopener">WhatsApp</a>
+        </div>
+      </section>
+
+      <section class="dashboard-grid">
+        <form id="clientePropuestoForm" class="card">
+          <h2>Proponer cliente</h2>
+          <div class="form-grid">
+            <div>
+              <label for="propCliente">Cliente</label>
+              <input id="propCliente" required />
+            </div>
+            <div>
+              <label for="propTelefono">Teléfono</label>
+              <input id="propTelefono" />
+            </div>
+            <div>
+              <label for="propDireccion">Dirección</label>
+              <input id="propDireccion" />
+            </div>
+            <div>
+              <label for="propCiudad">Ciudad</label>
+              <input id="propCiudad" />
+            </div>
+          </div>
+          <label for="propNotas">Notas</label>
+          <textarea id="propNotas" rows="3"></textarea>
+          <div style="display:flex;justify-content:flex-end;margin-top:14px">
+            <button id="btnClientePropuesto" class="btn primary" type="submit">Enviar a validación</button>
+          </div>
+        </form>
+
+        <section class="card">
+          <h2>Criterio de comisión</h2>
+          <p class="muted">El referente comisiona desde la fecha de vinculación del cliente. Los pedidos anteriores quedan fuera del cálculo y no forman parte de su vista operativa.</p>
+        </section>
+      </section>
+
+      <section class="card">
+        <h2>Clientes vinculados</h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Cliente</th><th>Teléfono</th><th>Dirección</th><th>Desde</th></tr></thead>
+            <tbody id="tbClientes"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Clientes propuestos</h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Cliente</th><th>Teléfono</th><th>Dirección</th><th>Estado</th><th>Fecha</th></tr></thead>
+            <tbody id="tbClientesPropuestos"></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <div id="toast" class="toast"></div>
+  <script src="referente-portal.js"></script>
+</body>
+</html>

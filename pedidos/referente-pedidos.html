@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Pedidos del Referente | PediVoy</title>
+  <link rel="stylesheet" href="theme-base.css" />
+  <link rel="stylesheet" href="referente-portal.css" />
+</head>
+<body data-page="pedidos">
+  <header>
+    <nav class="wrap">
+      <div class="brand"><span class="brand-dot"></span>PediVoy <span class="pill">Referente</span></div>
+      <div class="top-actions">
+        <span id="empresaPill" class="pill">Empresa</span>
+        <button id="logout" class="btn">Salir</button>
+      </div>
+    </nav>
+  </header>
+
+  <main class="wrap shell">
+    <aside class="side-nav">
+      <a href="referente-panel.html">Dashboard</a>
+      <a href="referente-clientes.html">Clientes</a>
+      <a class="active" href="referente-pedidos.html">Pedidos</a>
+      <a href="referente-comisiones.html">Comisiones</a>
+      <a href="referente-perfil.html">Perfil</a>
+    </aside>
+
+    <div class="content">
+      <section class="hero">
+        <div>
+          <h1 id="nombreTitulo">Pedidos comisionables</h1>
+          <p class="muted">Pedidos vinculados a clientes referidos desde su fecha de alta.</p>
+        </div>
+        <div class="code" id="codigoRef">CODIGO</div>
+      </section>
+
+      <section class="grid">
+        <div class="card metric"><span>Pedidos vinculados</span><strong id="mPedidos">0</strong></div>
+        <div class="card metric"><span>Pedidos últimos 30 días</span><strong id="mPedidos30">0</strong></div>
+        <div class="card metric"><span>Ventas entregadas</span><strong id="mVentas">$0</strong></div>
+        <div class="card metric"><span>Comisiones pendientes</span><strong id="mPendientes">$0</strong></div>
+      </section>
+
+      <section class="card">
+        <h2>Pedidos vinculados</h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Fecha</th><th>Cliente</th><th>Pedido</th><th>Estado</th><th>Pago</th><th>Monto</th><th>Comisión</th></tr></thead>
+            <tbody id="tbPedidos"></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <div id="toast" class="toast"></div>
+  <script src="referente-portal.js"></script>
+</body>
+</html>

@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Comisiones del Referente | PediVoy</title>
+  <link rel="stylesheet" href="theme-base.css" />
+  <link rel="stylesheet" href="referente-portal.css" />
+</head>
+<body data-page="comisiones">
+  <header>
+    <nav class="wrap">
+      <div class="brand"><span class="brand-dot"></span>PediVoy <span class="pill">Referente</span></div>
+      <div class="top-actions">
+        <span id="empresaPill" class="pill">Empresa</span>
+        <button id="logout" class="btn">Salir</button>
+      </div>
+    </nav>
+  </header>
+
+  <main class="wrap shell">
+    <aside class="side-nav">
+      <a href="referente-panel.html">Dashboard</a>
+      <a href="referente-clientes.html">Clientes</a>
+      <a href="referente-pedidos.html">Pedidos</a>
+      <a class="active" href="referente-comisiones.html">Comisiones</a>
+      <a href="referente-perfil.html">Perfil</a>
+    </aside>
+
+    <div class="content">
+      <section class="hero">
+        <div>
+          <h1 id="nombreTitulo">Comisiones</h1>
+          <p class="muted">Seguimiento de comisiones validadas, pendientes y liquidadas.</p>
+        </div>
+        <div class="code" id="codigoRef">CODIGO</div>
+      </section>
+
+      <section class="grid">
+        <div class="card metric"><span>Comisiones pendientes</span><strong id="mPendientes">$0</strong></div>
+        <div class="card metric"><span>Total liquidado</span><strong id="mLiquidadas">$0</strong></div>
+        <div class="card metric"><span>Total validado</span><strong id="mTotal">$0</strong></div>
+        <div class="card metric"><span>Ventas entregadas</span><strong id="mVentas">$0</strong></div>
+      </section>
+
+      <section class="dashboard-grid">
+        <section class="card">
+          <h2>Comisiones recientes</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Fecha</th><th>Cliente</th><th>Producto</th><th>Pedido</th><th>Base</th><th>%</th><th>Comisión</th><th>Estado</th></tr></thead>
+              <tbody id="tbComisiones"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2>Reglas comerciales</h2>
+          <div class="rules-meta">
+            <div><span>Comisión general</span><strong id="rPorcentaje">0%</strong></div>
+            <div><span>Vigencia</span><strong id="rVigencia">Sin cierre</strong></div>
+            <div><span>Forma de pago</span><strong id="rPago">Administración</strong></div>
+          </div>
+          <ul id="reglasList" class="rules-list"></ul>
+          <p id="rLiquidacion" class="muted"></p>
+          <p id="rContacto" class="muted"></p>
+        </section>
+      </section>
+    </div>
+  </main>
+
+  <div id="toast" class="toast"></div>
+  <script src="referente-portal.js"></script>
+</body>
+</html>

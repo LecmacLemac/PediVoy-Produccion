@@ -3,69 +3,11 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Panel del Referente | PediVoy</title>
+  <title>Dashboard del Referente | PediVoy</title>
   <link rel="stylesheet" href="theme-base.css" />
-  <style>
-    :root{--bg:#0b1020;--panel:#111827;--panel-2:#172033;--ink:#f8fafc;--muted:#94a3b8;--brand:#06b6d4;--ok:#10b981;--warn:#f59e0b;--danger:#ef4444;--border:rgba(148,163,184,.18)}
-    *{box-sizing:border-box;outline:none}
-    body{margin:0;min-height:100vh;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:14px}
-    header{position:sticky;top:0;z-index:20;background:rgba(11,16,32,.92);border-bottom:1px solid var(--border);backdrop-filter:blur(14px)}
-    .wrap{width:min(1180px,100%);margin:0 auto;padding:0 18px}
-    nav{min-height:64px;display:flex;align-items:center;justify-content:space-between;gap:16px}
-    .brand{display:flex;align-items:center;gap:10px;font-weight:850;color:#fff}
-    .brand-dot{width:10px;height:10px;border-radius:50%;background:var(--brand);box-shadow:0 0 18px rgba(6,182,212,.7)}
-    .top-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-    .pill{border:1px solid rgba(6,182,212,.32);background:rgba(6,182,212,.09);color:#a5f3fc;border-radius:99px;padding:6px 10px;font-size:.78rem;font-weight:800}
-    .btn{min-height:38px;border-radius:8px;border:1px solid var(--border);background:rgba(255,255,255,.05);color:var(--ink);padding:0 13px;font-weight:800;cursor:pointer}
-    .btn:hover{border-color:rgba(6,182,212,.55);background:rgba(6,182,212,.1)}
-    main{padding:26px 0 48px;display:grid;gap:18px}
-    .hero{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:18px;align-items:end}
-    h1{font-size:1.9rem;line-height:1.15;margin:0;color:#fff;letter-spacing:0}
-    .muted{color:var(--muted)}
-    .code{display:inline-flex;border:1px solid rgba(6,182,212,.25);background:rgba(6,182,212,.1);color:#a5f3fc;border-radius:7px;padding:3px 8px;font:800 .85rem ui-monospace,SFMono-Regular,Menlo,monospace}
-    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:12px}
-    .card{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:16px}
-    .metric span{display:block;color:var(--muted);font-size:.74rem;text-transform:uppercase;font-weight:800;letter-spacing:.04em}
-    .metric strong{display:block;margin-top:7px;font-size:1.45rem;color:#fff}
-    .layout{display:grid;grid-template-columns:370px minmax(0,1fr);gap:16px}
-    h2{margin:0 0 12px;font-size:1.08rem;color:#fff}
-    label{display:block;margin:.85rem 0 .35rem;color:#cbd5e1;font-size:.78rem;font-weight:800;text-transform:uppercase}
-    input,textarea{width:100%;border:1px solid var(--border);border-radius:8px;background:#0f172a;color:#fff;padding:10px 12px;font:inherit}
-    input:focus,textarea:focus{border-color:var(--brand);box-shadow:0 0 0 3px rgba(6,182,212,.14)}
-    input[aria-invalid="true"]{border-color:var(--danger);box-shadow:0 0 0 3px rgba(239,68,68,.14)}
-    textarea{resize:vertical}
-    .stack{display:grid;gap:14px}
-    .side-stack{display:grid;gap:14px;align-content:start}
-    .table-wrap{overflow:auto;border:1px solid var(--border);border-radius:8px}
-    table{width:100%;border-collapse:collapse;min-width:680px}
-    th,td{padding:11px 12px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top}
-    th{background:var(--panel-2);color:var(--muted);font-size:.76rem;text-transform:uppercase;letter-spacing:.04em}
-    tr:last-child td{border-bottom:0}
-    .badge{border-radius:99px;padding:3px 8px;font-size:.74rem;font-weight:850;text-transform:uppercase}
-    .badge.ok{background:rgba(16,185,129,.14);color:#86efac}
-    .badge.warn{background:rgba(245,158,11,.14);color:#fde68a}
-    .section-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}
-    .section-head h2{margin:0}
-    .notice-list{display:grid;gap:9px}
-    .notice{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:start;border:1px solid var(--border);border-radius:8px;background:rgba(15,23,42,.66);padding:11px 12px}
-    .notice.unread{border-color:rgba(6,182,212,.45);background:rgba(6,182,212,.08)}
-    .notice strong{display:block;color:#fff}
-    .notice p{margin:.25rem 0 0;color:#cbd5e1}
-    .rules-list{display:grid;gap:9px;margin:12px 0 0;padding:0;list-style:none}
-    .rules-list li{border:1px solid var(--border);border-radius:8px;background:rgba(15,23,42,.66);padding:10px 12px;color:#dbeafe}
-    .rules-meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-top:10px}
-    .rules-meta div{border:1px solid var(--border);border-radius:8px;background:rgba(15,23,42,.66);padding:10px}
-    .rules-meta span{display:block;color:var(--muted);font-size:.72rem;text-transform:uppercase;font-weight:850}
-    .rules-meta strong{display:block;margin-top:4px;color:#fff}
-    .share-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center}
-    .share-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
-    .toast{position:fixed;right:18px;bottom:20px;background:#fff;color:#0f172a;border-radius:99px;padding:10px 15px;font-weight:850;box-shadow:0 12px 30px rgba(0,0,0,.32);opacity:0;transform:translateY(8px);transition:.2s;pointer-events:none}
-    .toast.show{opacity:1;transform:translateY(0)}
-    @media(max-width:860px){.hero,.layout{grid-template-columns:1fr}nav{align-items:flex-start;flex-direction:column;padding:14px 0}.top-actions{width:100%;justify-content:space-between}}
-    @media(max-width:520px){.grid{grid-template-columns:1fr}.wrap{padding:0 12px}h1{font-size:1.55rem}}
-  </style>
+  <link rel="stylesheet" href="referente-portal.css" />
 </head>
-<body>
+<body data-page="dashboard">
   <header>
     <nav class="wrap">
       <div class="brand"><span class="brand-dot"></span>PediVoy <span class="pill">Referente</span></div>
@@ -76,512 +18,109 @@
     </nav>
   </header>
 
-  <main class="wrap">
-    <section class="hero">
-      <div>
-        <h1 id="nombreTitulo">Panel del referente</h1>
-        <p class="muted">Control de datos propios, clientes vinculados, productos y comisiones.</p>
-      </div>
-      <div class="code" id="codigoRef">CODIGO</div>
-    </section>
+  <main class="wrap shell">
+    <aside class="side-nav">
+      <a class="active" href="referente-panel.html">Dashboard</a>
+      <a href="referente-clientes.html">Clientes</a>
+      <a href="referente-pedidos.html">Pedidos</a>
+      <a href="referente-comisiones.html">Comisiones</a>
+      <a href="referente-perfil.html">Perfil</a>
+    </aside>
 
-    <section class="grid">
-      <div class="card metric"><span>Clientes activos</span><strong id="mClientes">0</strong></div>
-      <div class="card metric"><span>Productos activos</span><strong id="mProductos">0</strong></div>
-      <div class="card metric"><span>Pedidos vinculados</span><strong id="mPedidos">0</strong></div>
-      <div class="card metric"><span>Pedidos últimos 30 días</span><strong id="mPedidos30">0</strong></div>
-      <div class="card metric"><span>Ventas entregadas</span><strong id="mVentas">$0</strong></div>
-      <div class="card metric"><span>Comisiones pendientes</span><strong id="mPendientes">$0</strong></div>
-      <div class="card metric"><span>Total validado</span><strong id="mTotal">$0</strong></div>
-    </section>
+    <div class="content">
+      <section class="hero">
+        <div>
+          <h1 id="nombreTitulo">Panel del referente</h1>
+          <p class="muted">Resumen operativo, alertas y accesos rápidos.</p>
+        </div>
+        <div class="code" id="codigoRef">CODIGO</div>
+      </section>
 
-    <section class="layout">
-      <div class="side-stack">
-        <form id="perfilForm" class="card">
-          <h2>Mi información</h2>
-          <label for="nombre">Nombre</label>
-          <input id="nombre" required />
-          <label for="telefono">Teléfono</label>
-          <input id="telefono" />
-          <label for="email">Email</label>
-          <input id="email" type="email" />
-          <label for="direccion">Dirección</label>
-          <input id="direccion" />
-          <label for="notas">Notas</label>
-          <textarea id="notas" rows="4"></textarea>
-          <div style="display:flex;justify-content:flex-end;margin-top:14px">
-            <button class="btn" type="submit">Guardar cambios</button>
-          </div>
-        </form>
+      <section class="grid">
+        <div class="card metric"><span>Clientes activos</span><strong id="mClientes">0</strong></div>
+        <div class="card metric"><span>Productos activos</span><strong id="mProductos">0</strong></div>
+        <div class="card metric"><span>Pedidos vinculados</span><strong id="mPedidos">0</strong></div>
+        <div class="card metric"><span>Pedidos últimos 30 días</span><strong id="mPedidos30">0</strong></div>
+        <div class="card metric"><span>Ventas entregadas</span><strong id="mVentas">$0</strong></div>
+        <div class="card metric"><span>Comisiones pendientes</span><strong id="mPendientes">$0</strong></div>
+        <div class="card metric"><span>Total validado</span><strong id="mTotal">$0</strong></div>
+      </section>
 
-        <section class="card">
-          <h2>Link de invitación</h2>
-          <p class="muted">Compartí este enlace para que el cliente entre con tu código cargado.</p>
-          <label for="inviteLink">Enlace</label>
-          <div class="share-row">
-            <input id="inviteLink" readonly />
-            <button id="btnCopyInvite" class="btn" type="button">Copiar</button>
-          </div>
-          <div class="share-actions">
-            <a id="btnWhatsAppInvite" class="btn" href="#" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;text-decoration:none">WhatsApp</a>
-          </div>
-        </section>
+      <section class="card">
+        <h2>Accesos rápidos</h2>
+        <div class="quick-actions">
+          <a class="quick-link" href="referente-clientes.html"><span>Gestión</span><strong>Clientes referidos</strong></a>
+          <a class="quick-link" href="referente-pedidos.html"><span>Operación</span><strong>Pedidos comisionables</strong></a>
+          <a class="quick-link" href="referente-comisiones.html"><span>Administración</span><strong>Comisiones</strong></a>
+          <a class="quick-link" href="referente-perfil.html"><span>Cuenta</span><strong>Perfil y acceso</strong></a>
+        </div>
+      </section>
 
-        <form id="clientePropuestoForm" class="card">
-          <h2>Proponer cliente</h2>
-          <label for="propCliente">Cliente</label>
-          <input id="propCliente" required />
-          <label for="propTelefono">Teléfono</label>
-          <input id="propTelefono" />
-          <label for="propDireccion">Dirección</label>
-          <input id="propDireccion" />
-          <label for="propCiudad">Ciudad</label>
-          <input id="propCiudad" />
-          <label for="propNotas">Notas</label>
-          <textarea id="propNotas" rows="3"></textarea>
-          <div style="display:flex;justify-content:flex-end;margin-top:14px">
-            <button id="btnClientePropuesto" class="btn" type="submit">Enviar a validación</button>
-          </div>
-        </form>
+      <section class="dashboard-grid">
+        <div class="stack">
+          <section class="card">
+            <div class="section-head">
+              <h2>Pedidos recientes</h2>
+              <a class="btn" href="referente-pedidos.html">Ver todos</a>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Fecha</th><th>Cliente</th><th>Pedido</th><th>Estado</th><th>Pago</th><th>Monto</th><th>Comisión</th></tr></thead>
+                <tbody id="tbPedidos"></tbody>
+              </table>
+            </div>
+          </section>
 
-        <form id="passwordForm" class="card">
-          <h2>Cambiar clave</h2>
-          <label for="currentPassword">Clave actual</label>
-          <input id="currentPassword" type="password" autocomplete="current-password" required />
-          <label for="newPassword">Nueva clave</label>
-          <input id="newPassword" type="password" autocomplete="new-password" minlength="8" required />
-          <label for="confirmPassword">Repetir nueva clave</label>
-          <input id="confirmPassword" type="password" autocomplete="new-password" minlength="8" required />
-          <div style="display:flex;justify-content:flex-end;margin-top:14px">
-            <button id="btnPassword" class="btn" type="submit">Actualizar clave</button>
-          </div>
-        </form>
-      </div>
+          <section class="card">
+            <div class="section-head">
+              <h2>Comisiones recientes</h2>
+              <a class="btn" href="referente-comisiones.html">Ver todas</a>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Fecha</th><th>Cliente</th><th>Producto</th><th>Pedido</th><th>Base</th><th>%</th><th>Comisión</th><th>Estado</th></tr></thead>
+                <tbody id="tbComisiones"></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
 
-      <div class="stack">
-        <section class="card">
-          <div class="section-head">
-            <h2>Notificaciones</h2>
-            <button id="btnReadAll" class="btn" type="button">Marcar leídas</button>
-          </div>
-          <div id="notificacionesList" class="notice-list"></div>
-        </section>
+        <div class="stack">
+          <section class="card">
+            <div class="section-head">
+              <h2>Notificaciones</h2>
+              <button id="btnReadAll" class="btn" type="button">Marcar leídas</button>
+            </div>
+            <div id="notificacionesList" class="notice-list"></div>
+          </section>
 
-        <section class="card">
-          <h2>Reglas comerciales</h2>
-          <div class="rules-meta">
-            <div><span>Comisión general</span><strong id="rPorcentaje">0%</strong></div>
-            <div><span>Vigencia</span><strong id="rVigencia">Sin cierre</strong></div>
-            <div><span>Forma de pago</span><strong id="rPago">Administración</strong></div>
-          </div>
-          <ul id="reglasList" class="rules-list"></ul>
-          <p id="rLiquidacion" class="muted"></p>
-          <p id="rContacto" class="muted"></p>
-        </section>
+          <section class="card">
+            <h2>Reglas comerciales</h2>
+            <div class="rules-meta">
+              <div><span>Comisión general</span><strong id="rPorcentaje">0%</strong></div>
+              <div><span>Vigencia</span><strong id="rVigencia">Sin cierre</strong></div>
+              <div><span>Forma de pago</span><strong id="rPago">Administración</strong></div>
+            </div>
+            <ul id="reglasList" class="rules-list"></ul>
+            <p id="rLiquidacion" class="muted"></p>
+            <p id="rContacto" class="muted"></p>
+          </section>
 
-        <section class="card">
-          <h2>Pedidos vinculados</h2>
-          <div class="table-wrap">
-            <table>
-              <thead><tr><th>Fecha</th><th>Cliente</th><th>Pedido</th><th>Estado</th><th>Pago</th><th>Monto</th><th>Comisión</th></tr></thead>
-              <tbody id="tbPedidos"></tbody>
-            </table>
-          </div>
-        </section>
-
-        <section class="card">
-          <h2>Comisiones recientes</h2>
-          <div class="table-wrap">
-            <table>
-              <thead><tr><th>Fecha</th><th>Cliente</th><th>Producto</th><th>Pedido</th><th>Base</th><th>%</th><th>Comisión</th><th>Estado</th></tr></thead>
-              <tbody id="tbComisiones"></tbody>
-            </table>
-          </div>
-        </section>
-
-        <section class="card">
-          <h2>Clientes vinculados</h2>
-          <div class="table-wrap">
-            <table>
-              <thead><tr><th>Cliente</th><th>Teléfono</th><th>Dirección</th><th>Desde</th></tr></thead>
-              <tbody id="tbClientes"></tbody>
-            </table>
-          </div>
-        </section>
-
-        <section class="card">
-          <h2>Clientes propuestos</h2>
-          <div class="table-wrap">
-            <table>
-              <thead><tr><th>Cliente</th><th>Teléfono</th><th>Dirección</th><th>Estado</th><th>Fecha</th></tr></thead>
-              <tbody id="tbClientesPropuestos"></tbody>
-            </table>
-          </div>
-        </section>
-
-        <section class="card">
-          <h2>Productos asignados</h2>
-          <div class="table-wrap">
-            <table>
-              <thead><tr><th>Producto</th><th>Precio</th><th>Comisión</th><th>Vigencia</th></tr></thead>
-              <tbody id="tbProductos"></tbody>
-            </table>
-          </div>
-        </section>
-      </div>
-    </section>
+          <section class="card">
+            <h2>Productos asignados</h2>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Producto</th><th>Precio</th><th>Comisión</th><th>Vigencia</th></tr></thead>
+                <tbody id="tbProductos"></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </section>
+    </div>
   </main>
 
   <div id="toast" class="toast"></div>
-
-  <script>
-    const $ = (s) => document.querySelector(s);
-    const money = new Intl.NumberFormat('es-AR', { style:'currency', currency:'ARS', maximumFractionDigits:0 });
-    const dateFmt = new Intl.DateTimeFormat('es-AR', { day:'2-digit', month:'2-digit', year:'2-digit' });
-    const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
-    const state = { perfil:null, notificaciones:[] };
-
-    function toast(msg) {
-      const t = $('#toast');
-      t.textContent = msg;
-      t.classList.add('show');
-      setTimeout(() => t.classList.remove('show'), 2600);
-    }
-
-    async function api(url, opts = {}) {
-      const res = await fetch(url, {
-        ...opts,
-        credentials:'include',
-        headers:{ 'Content-Type':'application/json', ...(opts.headers || {}) },
-      });
-      if (res.status === 401 || res.status === 403) {
-        location.href = 'login.html?next=/pedidos/referente-panel.html';
-        return null;
-      }
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.error || 'Error de API');
-      return data;
-    }
-
-    function emptyRow(cols, text) {
-      return `<tr><td colspan="${cols}" style="text-align:center;color:var(--muted);padding:24px">${esc(text)}</td></tr>`;
-    }
-
-    function renderPerfil(p) {
-      state.perfil = p;
-      $('#nombreTitulo').textContent = p?.nombre || 'Panel del referente';
-      $('#codigoRef').textContent = p?.codigo || 'SIN CODIGO';
-      $('#empresaPill').textContent = p?.empresa_nombre || 'Empresa';
-      $('#nombre').value = p?.nombre || '';
-      $('#telefono').value = p?.telefono || '';
-      $('#email').value = p?.email || '';
-      $('#direccion').value = p?.direccion || '';
-      $('#notas').value = p?.notas || '';
-      renderInviteLink(p);
-    }
-
-    function buildInviteLink(p) {
-      const url = new URL('/pedidos/app/', location.origin);
-      const slug = String(p?.empresa_slug || '').trim();
-      const codigo = String(p?.codigo || '').trim().toUpperCase();
-      if (slug) url.searchParams.set('slug', slug);
-      if (codigo) url.searchParams.set('referente', codigo);
-      return url.toString();
-    }
-
-    function renderInviteLink(p) {
-      const link = buildInviteLink(p);
-      $('#inviteLink').value = link;
-      const text = `Hola, te comparto mi link de PediVoy para hacer tu pedido: ${link}`;
-      $('#btnWhatsAppInvite').href = `https://wa.me/?text=${encodeURIComponent(text)}`;
-    }
-
-    function renderResumen(r) {
-      $('#mClientes').textContent = Number(r?.clientes_activos || 0);
-      $('#mProductos').textContent = Number(r?.productos_activos || 0);
-      $('#mPedidos').textContent = Number(r?.pedidos_total || 0);
-      $('#mPedidos30').textContent = Number(r?.pedidos_30d || 0);
-      $('#mVentas').textContent = money.format(Number(r?.ventas_entregadas || 0));
-      $('#mPendientes').textContent = money.format(Number(r?.comisiones_pendientes || 0));
-      $('#mTotal').textContent = money.format(Number(r?.comisiones_total || 0));
-    }
-
-    function renderPedidos(rows) {
-      $('#tbPedidos').innerHTML = rows?.length ? rows.map((p) => {
-        const fecha = p.fecha_entrega || p.fecha;
-        const estado = String(p.estado || 'pendiente').toLowerCase();
-        const badgeClass = estado === 'entregado' ? 'ok' : 'warn';
-        return `
-          <tr>
-            <td>${fecha ? esc(dateFmt.format(new Date(fecha))) : '-'}</td>
-            <td><strong>${esc(p.cliente || '-')}</strong><br><span class="muted">${esc(p.direccion || '')}</span></td>
-            <td>#${Number(p.id || 0)}</td>
-            <td><span class="badge ${badgeClass}">${esc(p.estado || 'pendiente')}</span></td>
-            <td>${esc(p.metodo_pago || '-')}</td>
-            <td>${money.format(Number(p.monto || 0))}</td>
-            <td>${money.format(Number(p.comision_total || 0))}</td>
-          </tr>
-        `;
-      }).join('') : emptyRow(7, 'Sin pedidos vinculados todavía.');
-    }
-
-    function renderComisiones(rows) {
-      $('#tbComisiones').innerHTML = rows?.length ? rows.map((c) => `
-        <tr>
-          <td>${c.validada_at ? esc(dateFmt.format(new Date(c.validada_at))) : '-'}</td>
-          <td>${esc(c.cliente || '-')}</td>
-          <td>${esc(c.producto_nombre || '-')}</td>
-          <td>#${Number(c.pedido_id || 0)}</td>
-          <td>${money.format(Number(c.base_monto || 0))}</td>
-          <td>${Number(c.porcentaje || 0).toFixed(2)}%</td>
-          <td><strong>${money.format(Number(c.monto_comision || 0))}</strong></td>
-          <td><span class="badge ${c.estado === 'liquidada' ? 'ok' : 'warn'}">${esc(c.estado || 'validada')}</span></td>
-        </tr>
-      `).join('') : emptyRow(8, 'Sin comisiones todavía.');
-    }
-
-    function renderNotificaciones(rows) {
-      state.notificaciones = Array.isArray(rows) ? rows : [];
-      const box = $('#notificacionesList');
-      if (!state.notificaciones.length) {
-        box.innerHTML = '<div class="muted">Sin notificaciones por ahora.</div>';
-        return;
-      }
-      box.innerHTML = state.notificaciones.slice(0, 8).map((n) => {
-        const unread = !n.leida_at;
-        const fecha = n.created_at ? dateFmt.format(new Date(n.created_at)) : '';
-        return `
-          <article class="notice ${unread ? 'unread' : ''}">
-            <div>
-              <strong>${esc(n.titulo || 'Notificación')}</strong>
-              <p>${esc(n.mensaje || '')}</p>
-              <div class="muted">${esc(fecha)}</div>
-            </div>
-            ${unread ? `<button class="btn" type="button" data-read-notice="${Number(n.id)}">Leída</button>` : '<span class="badge ok">Leída</span>'}
-          </article>
-        `;
-      }).join('');
-      document.querySelectorAll('[data-read-notice]').forEach((btn) => {
-        btn.addEventListener('click', async () => {
-          try {
-            await api(`/api/referente/notificaciones/${Number(btn.dataset.readNotice)}/leida`, { method:'POST' });
-            await loadNotificaciones();
-          } catch (err) {
-            toast(err.message || 'No se pudo marcar la notificación');
-          }
-        });
-      });
-    }
-
-    function renderReglas(reglas) {
-      const pct = Number(reglas?.porcentaje_comision || 0);
-      const desde = reglas?.vigente_desde ? dateFmt.format(new Date(reglas.vigente_desde)) : 'sin inicio';
-      const hasta = reglas?.vigente_hasta ? dateFmt.format(new Date(reglas.vigente_hasta)) : 'sin cierre';
-      const condiciones = Array.isArray(reglas?.condiciones) ? reglas.condiciones : [];
-      $('#rPorcentaje').textContent = `${pct.toFixed(2)}%`;
-      $('#rVigencia').textContent = `${desde} / ${hasta}`;
-      $('#rPago').textContent = reglas?.forma_pago || 'Administración';
-      $('#reglasList').innerHTML = condiciones.length
-        ? condiciones.map((item) => `<li>${esc(item)}</li>`).join('')
-        : '<li>Sin reglas comerciales cargadas.</li>';
-      $('#rLiquidacion').textContent = reglas?.liquidacion || '';
-      $('#rContacto').textContent = reglas?.contacto || '';
-    }
-
-    async function loadNotificaciones() {
-      const rows = await api('/api/referente/notificaciones');
-      renderNotificaciones(rows);
-    }
-
-    function renderClientes(rows) {
-      $('#tbClientes').innerHTML = rows?.length ? rows.map((c) => `
-        <tr>
-          <td><strong>${esc(c.cliente || '-')}</strong></td>
-          <td>${esc(c.telefono || '-')}</td>
-          <td>${esc(c.direccion || '-')}</td>
-          <td>${c.asociado_at ? esc(dateFmt.format(new Date(c.asociado_at))) : '-'}</td>
-        </tr>
-      `).join('') : emptyRow(4, 'Sin clientes vinculados.');
-    }
-
-    function renderClientesPropuestos(rows) {
-      $('#tbClientesPropuestos').innerHTML = rows?.length ? rows.map((c) => {
-        const estado = String(c.estado || 'pendiente').toLowerCase();
-        const badgeClass = estado === 'aprobado' ? 'ok' : (estado === 'rechazado' ? 'warn' : 'warn');
-        return `
-          <tr>
-            <td><strong>${esc(c.cliente || '-')}</strong>${c.rechazo_motivo ? `<br><span class="muted">${esc(c.rechazo_motivo)}</span>` : ''}</td>
-            <td>${esc(c.telefono || '-')}</td>
-            <td>${esc(c.direccion || '-')}</td>
-            <td><span class="badge ${badgeClass}">${esc(c.estado || 'pendiente')}</span></td>
-            <td>${c.created_at ? esc(dateFmt.format(new Date(c.created_at))) : '-'}</td>
-          </tr>
-        `;
-      }).join('') : emptyRow(5, 'Sin clientes propuestos.');
-    }
-
-    function renderProductos(rows) {
-      $('#tbProductos').innerHTML = rows?.length ? rows.map((p) => `
-        <tr>
-          <td><strong>${esc(p.producto_nombre || '-')}</strong></td>
-          <td>${money.format(Number(p.producto_precio || 0))}</td>
-          <td>${p.porcentaje_comision == null ? 'General' : `${Number(p.porcentaje_comision || 0).toFixed(2)}%`}</td>
-          <td>${p.vigente_desde ? esc(dateFmt.format(new Date(p.vigente_desde))) : 'sin inicio'} / ${p.vigente_hasta ? esc(dateFmt.format(new Date(p.vigente_hasta))) : 'sin cierre'}</td>
-        </tr>
-      `).join('') : emptyRow(4, 'Sin productos asignados.');
-    }
-
-    async function loadAll() {
-      const [perfil, resumen, pedidos, comisiones, clientes, clientesPropuestos, productos, notificaciones, reglas] = await Promise.all([
-        api('/api/referente/perfil'),
-        api('/api/referente/resumen'),
-        api('/api/referente/pedidos'),
-        api('/api/referente/comisiones'),
-        api('/api/referente/clientes'),
-        api('/api/referente/clientes-propuestos'),
-        api('/api/referente/productos'),
-        api('/api/referente/notificaciones'),
-        api('/api/referente/reglas'),
-      ]);
-      renderPerfil(perfil);
-      renderResumen(resumen);
-      renderPedidos(Array.isArray(pedidos) ? pedidos : []);
-      renderComisiones(Array.isArray(comisiones) ? comisiones : []);
-      renderClientes(Array.isArray(clientes) ? clientes : []);
-      renderClientesPropuestos(Array.isArray(clientesPropuestos) ? clientesPropuestos : []);
-      renderProductos(Array.isArray(productos) ? productos : []);
-      renderNotificaciones(Array.isArray(notificaciones) ? notificaciones : []);
-      renderReglas(reglas || {});
-    }
-
-    $('#perfilForm').addEventListener('submit', async (e) => {
-      e.preventDefault();
-      try {
-        const saved = await api('/api/referente/perfil', {
-          method:'PUT',
-          body: JSON.stringify({
-            nombre: $('#nombre').value.trim(),
-            telefono: $('#telefono').value.trim() || null,
-            email: $('#email').value.trim() || null,
-            direccion: $('#direccion').value.trim() || null,
-            notas: $('#notas').value.trim() || null,
-          }),
-        });
-        renderPerfil({ ...state.perfil, ...saved });
-        toast('Información actualizada');
-      } catch (err) {
-        toast(err.message || 'No se pudo guardar');
-      }
-    });
-
-    $('#clientePropuestoForm').addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const btn = $('#btnClientePropuesto');
-      const prevText = btn.textContent;
-      btn.disabled = true;
-      btn.textContent = 'Enviando...';
-      try {
-        await api('/api/referente/clientes-propuestos', {
-          method:'POST',
-          body: JSON.stringify({
-            cliente: $('#propCliente').value.trim(),
-            telefono: $('#propTelefono').value.trim() || null,
-            direccion: $('#propDireccion').value.trim() || null,
-            ciudad: $('#propCiudad').value.trim() || null,
-            notas: $('#propNotas').value.trim() || null,
-          }),
-        });
-        e.target.reset();
-        toast('Cliente enviado a validación');
-        const rows = await api('/api/referente/clientes-propuestos');
-        renderClientesPropuestos(Array.isArray(rows) ? rows : []);
-      } catch (err) {
-        toast(err.message || 'No se pudo enviar el cliente');
-      } finally {
-        btn.disabled = false;
-        btn.textContent = prevText;
-      }
-    });
-
-    $('#passwordForm').addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const currentPassword = $('#currentPassword');
-      const newPassword = $('#newPassword');
-      const confirmPassword = $('#confirmPassword');
-      const btn = $('#btnPassword');
-
-      [currentPassword, newPassword, confirmPassword].forEach((input) => input.setAttribute('aria-invalid', 'false'));
-
-      if (newPassword.value.length < 8) {
-        newPassword.setAttribute('aria-invalid', 'true');
-        toast('La nueva clave debe tener al menos 8 caracteres');
-        return;
-      }
-      if (newPassword.value !== confirmPassword.value) {
-        confirmPassword.setAttribute('aria-invalid', 'true');
-        toast('La confirmación no coincide');
-        return;
-      }
-      if (currentPassword.value === newPassword.value) {
-        newPassword.setAttribute('aria-invalid', 'true');
-        toast('La nueva clave debe ser diferente');
-        return;
-      }
-
-      const prevText = btn.textContent;
-      btn.disabled = true;
-      btn.textContent = 'Actualizando...';
-      try {
-        await api('/api/referente/password', {
-          method:'PUT',
-          body: JSON.stringify({
-            current_password: currentPassword.value,
-            new_password: newPassword.value,
-            confirm_password: confirmPassword.value,
-          }),
-        });
-        e.target.reset();
-        toast('Clave actualizada');
-      } catch (err) {
-        currentPassword.setAttribute('aria-invalid', 'true');
-        toast(err.message || 'No se pudo actualizar la clave');
-      } finally {
-        btn.disabled = false;
-        btn.textContent = prevText;
-      }
-    });
-
-    $('#btnCopyInvite').addEventListener('click', async () => {
-      const link = $('#inviteLink').value;
-      try {
-        await navigator.clipboard.writeText(link);
-        toast('Link copiado');
-      } catch {
-        $('#inviteLink').select();
-        document.execCommand('copy');
-        toast('Link copiado');
-      }
-    });
-
-    $('#btnReadAll').addEventListener('click', async () => {
-      try {
-        const result = await api('/api/referente/notificaciones/marcar-leidas', { method:'POST' });
-        toast(`Notificaciones marcadas: ${result?.actualizadas || 0}`);
-        await loadNotificaciones();
-      } catch (err) {
-        toast(err.message || 'No se pudieron marcar');
-      }
-    });
-
-    $('#logout').addEventListener('click', async () => {
-      try { await fetch('/api/logout', { method:'POST', credentials:'include' }); } catch {}
-      location.href = 'login.html';
-    });
-
-    loadAll().catch((e) => {
-      console.error(e);
-      toast(e.message || 'No se pudo cargar el panel');
-    });
-  </script>
+  <script src="referente-portal.js"></script>
 </body>
 </html>

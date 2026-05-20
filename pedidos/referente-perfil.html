@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Perfil del Referente | PediVoy</title>
+  <link rel="stylesheet" href="theme-base.css" />
+  <link rel="stylesheet" href="referente-portal.css" />
+</head>
+<body data-page="perfil">
+  <header>
+    <nav class="wrap">
+      <div class="brand"><span class="brand-dot"></span>PediVoy <span class="pill">Referente</span></div>
+      <div class="top-actions">
+        <span id="empresaPill" class="pill">Empresa</span>
+        <button id="logout" class="btn">Salir</button>
+      </div>
+    </nav>
+  </header>
+
+  <main class="wrap shell">
+    <aside class="side-nav">
+      <a href="referente-panel.html">Dashboard</a>
+      <a href="referente-clientes.html">Clientes</a>
+      <a href="referente-pedidos.html">Pedidos</a>
+      <a href="referente-comisiones.html">Comisiones</a>
+      <a class="active" href="referente-perfil.html">Perfil</a>
+    </aside>
+
+    <div class="content">
+      <section class="hero">
+        <div>
+          <h1 id="nombreTitulo">Perfil del referente</h1>
+          <p class="muted">Datos propios, link comercial, notificaciones y clave de acceso.</p>
+        </div>
+        <div class="code" id="codigoRef">CODIGO</div>
+      </section>
+
+      <section class="dashboard-grid">
+        <div class="stack">
+          <form id="perfilForm" class="card">
+            <h2>Mi información</h2>
+            <div class="form-grid">
+              <div>
+                <label for="nombre">Nombre</label>
+                <input id="nombre" required />
+              </div>
+              <div>
+                <label for="telefono">Teléfono</label>
+                <input id="telefono" />
+              </div>
+              <div>
+                <label for="email">Email</label>
+                <input id="email" type="email" />
+              </div>
+              <div>
+                <label for="direccion">Dirección</label>
+                <input id="direccion" />
+              </div>
+            </div>
+            <label for="notas">Notas</label>
+            <textarea id="notas" rows="4"></textarea>
+            <div style="display:flex;justify-content:flex-end;margin-top:14px">
+              <button class="btn primary" type="submit">Guardar cambios</button>
+            </div>
+          </form>
+
+          <form id="passwordForm" class="card">
+            <h2>Cambiar clave</h2>
+            <label for="currentPassword">Clave actual</label>
+            <input id="currentPassword" type="password" autocomplete="current-password" required />
+            <label for="newPassword">Nueva clave</label>
+            <input id="newPassword" type="password" autocomplete="new-password" minlength="8" required />
+            <label for="confirmPassword">Repetir nueva clave</label>
+            <input id="confirmPassword" type="password" autocomplete="new-password" minlength="8" required />
+            <div style="display:flex;justify-content:flex-end;margin-top:14px">
+              <button id="btnPassword" class="btn primary" type="submit">Actualizar clave</button>
+            </div>
+          </form>
+        </div>
+
+        <div class="stack">
+          <section class="card">
+            <h2>Link de invitación</h2>
+            <p class="muted">Compartí este enlace para que el cliente entre con tu código cargado.</p>
+            <label for="inviteLink">Enlace</label>
+            <div class="share-row">
+              <input id="inviteLink" readonly />
+              <button id="btnCopyInvite" class="btn" type="button">Copiar</button>
+            </div>
+            <div class="share-actions">
+              <a id="btnWhatsAppInvite" class="btn primary" href="#" target="_blank" rel="noopener">WhatsApp</a>
+            </div>
+          </section>
+
+          <section class="card">
+            <div class="section-head">
+              <h2>Notificaciones</h2>
+              <button id="btnReadAll" class="btn" type="button">Marcar leídas</button>
+            </div>
+            <div id="notificacionesList" class="notice-list"></div>
+          </section>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <div id="toast" class="toast"></div>
+  <script src="referente-portal.js"></script>
+</body>
+</html>
