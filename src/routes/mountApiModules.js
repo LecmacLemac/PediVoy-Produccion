@@ -29,6 +29,7 @@ import { createLicenciasMpRouter, createMercadoPagoWebhookRouter } from './licen
 import { createPromptsGlobalesRouter } from './promptsGlobales.js';
 import { createPromocionesRouter } from './promociones.js';
 import { createReferentesRouter } from './referentes.js';
+import { createReferentePortalRouter } from './referentePortal.js';
 import { createAnalyticsRouter } from './analytics.js';
 import { createCallCampaignsRouter } from './callCampaigns.js';
 import { createCallsRouter } from './calls.js';
@@ -107,6 +108,7 @@ export function mountApiModules(app, deps) {
   app.use('/api/productos', createProductosRouter({ query, withAuth, isSuper, getEmpresaIdFromToken }));
   app.use('/api/promociones', createPromocionesRouter({ query, withAuth, isSuper, getEmpresaIdFromToken }));
   app.use('/api/referentes', createReferentesRouter({ query, withAuth, isSuper, getEmpresaIdFromToken }));
+  app.use('/api/referente', createReferentePortalRouter({ query, withAuth }));
   app.use('/api/admin', createAdminUsuariosRouter({ query, withAuth, isSuper, getEmpresaIdFromToken }));
 
   app.use(

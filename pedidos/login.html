@@ -469,7 +469,7 @@
 
       <ul class="status-list">
         <li><span class="status-dot"></span>Sesión protegida con cookie segura</li>
-        <li><span class="status-dot"></span>Acceso por rol: administración o reparto</li>
+        <li><span class="status-dot"></span>Acceso por rol: administración, reparto o referente</li>
         <li><span class="status-dot"></span>Redirección automática si ya tenés sesión activa</li>
       </ul>
     </section>
@@ -655,6 +655,7 @@
     function redirectByRole(role) {
       role = String(role||'').toLowerCase();
       if(role === 'repartidor') location.href = 'repartidor.html';
+      else if(role === 'referente') location.href = 'referente-panel.html';
       else location.href = 'dashboard.html';
     }
 

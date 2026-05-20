@@ -1,6 +1,9 @@
 import express from 'express';
+import bcrypt from 'bcryptjs';
 
 import { normalizeReferenteCode } from '../services/referentesService.js';
+
+let referentesAccessSchemaReady = false;
 
 export function createReferentesRouter(deps) {
   const { query, withAuth, isSuper, getEmpresaIdFromToken } = deps || {};
@@ -10,6 +13,29 @@ export function createReferentesRouter(deps) {
   if (typeof getEmpresaIdFromToken !== 'function') throw new Error('createReferentesRouter: falta getEmpresaIdFromToken(fn)');
 
   const router = express.Router();
+
+  async function ensureReferenteAccessSchema() {
+    if (referentesAccessSchemaReady) return;
+    await query(`
+      ALTER TABLE usuarios
+        ADD COLUMN IF NOT EXISTS referente_id INTEGER REFERENCES referentes(id) ON DELETE SET NULL,
+        ADD COLUMN IF NOT EXISTS activo BOOLEAN NOT NULL DEFAULT TRUE,
+        ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ
+    `);
+    referentesAccessSchemaReady = true;
+  }
+
+  function isReferenteUser(req) {
+    return String(req.user?.role || '').toLowerCase() === 'referente';
+  }
+
+  function requireBackoffice(req, res) {
+    if (isReferenteUser(req)) {
+      res.status(403).json({ error: 'No autorizado para administrar referentes.' });
+      return false;
+    }
+    return true;
+  }
 
   function resolveEmpresa(req, source = req.query || {}) {
     const superAdmin = isSuper(req);
@@ -26,15 +52,25 @@ export function createReferentesRouter(deps) {
 
   router.get('/', withAuth, async (req, res) => {
     try {
+      if (!requireBackoffice(req, res)) return;
+      await ensureReferenteAccessSchema();
       const empresaId = resolveEmpresa(req);
       if (!empresaId) return res.status(400).json({ error: 'Falta empresa.' });
 
       const rows = await query(
         `SELECT r.*,
+                u.id AS usuario_id,
+                u.username AS usuario_username,
+                COALESCE(u.activo, TRUE) AS usuario_activo,
+                u.last_login_at AS usuario_last_login_at,
                 COALESCE(cp.productos_count, 0)::int AS productos_count,
                 COALESCE(cc.clientes_count, 0)::int AS clientes_count,
                 COALESCE(cm.comisiones_total, 0)::numeric AS comisiones_total
            FROM referentes r
+           LEFT JOIN usuarios u
+             ON u.referente_id = r.id
+            AND u.empresa_id = r.empresa_id
+            AND LOWER(u.role) = 'referente'
            LEFT JOIN (
              SELECT referente_id, COUNT(*)::int AS productos_count
                FROM referente_productos
@@ -68,6 +104,7 @@ export function createReferentesRouter(deps) {
 
   router.post('/', withAuth, async (req, res) => {
     try {
+      if (!requireBackoffice(req, res)) return;
       const empresaId = resolveEmpresa(req, req.body || {});
       if (!empresaId) return res.status(400).json({ error: 'Falta empresa.' });
 
@@ -110,6 +147,7 @@ export function createReferentesRouter(deps) {
 
   router.put('/:id', withAuth, async (req, res) => {
     try {
+      if (!requireBackoffice(req, res)) return;
       const empresaId = resolveEmpresa(req, req.body || {});
       const id = Number(req.params.id);
       if (!empresaId || !id) return res.status(400).json({ error: 'Datos invalidos.' });
@@ -156,8 +194,118 @@ export function createReferentesRouter(deps) {
     }
   });
 
+  router.get('/:id/acceso', withAuth, async (req, res) => {
+    try {
+      if (!requireBackoffice(req, res)) return;
+      await ensureReferenteAccessSchema();
+      const empresaId = resolveEmpresa(req);
+      const referenteId = Number(req.params.id);
+      if (!empresaId || !referenteId) return res.status(400).json({ error: 'Datos invalidos.' });
+
+      const rows = await query(
+        `SELECT u.id, u.username, u.role, u.empresa_id, u.referente_id,
+                COALESCE(u.activo, TRUE) AS activo,
+                u.last_login_at,
+                r.nombre AS referente_nombre,
+                r.codigo AS referente_codigo
+           FROM referentes r
+           LEFT JOIN usuarios u
+             ON u.referente_id = r.id
+            AND u.empresa_id = r.empresa_id
+            AND LOWER(u.role) = 'referente'
+          WHERE r.id = $1
+            AND r.empresa_id = $2
+            AND r.deleted_at IS NULL
+          LIMIT 1`,
+        [referenteId, empresaId]
+      );
+
+      if (!rows.length) return res.status(404).json({ error: 'Referente no encontrado.' });
+      return res.json(rows[0]);
+    } catch (e) {
+      console.error('REFERENTES.ACCESO.GET.ERROR', e);
+      return res.status(500).json({ error: 'Error obteniendo acceso del referente' });
+    }
+  });
+
+  router.post('/:id/acceso', withAuth, async (req, res) => {
+    try {
+      if (!requireBackoffice(req, res)) return;
+      await ensureReferenteAccessSchema();
+      const empresaId = resolveEmpresa(req, req.body || {});
+      const referenteId = Number(req.params.id);
+      const username = String(req.body?.username || '').trim();
+      const password = String(req.body?.password || '');
+      const activo = typeof req.body?.activo === 'boolean' ? req.body.activo : true;
+
+      if (!empresaId || !referenteId) return res.status(400).json({ error: 'Datos invalidos.' });
+      if (!/^[a-zA-Z0-9_.-]{3,30}$/.test(username)) {
+        return res.status(400).json({ error: 'Usuario invalido. Usá 3-30 caracteres: letras, números, _, . o -' });
+      }
+      if (password && password.length < 8) return res.status(400).json({ error: 'Clave minima 8 caracteres.' });
+
+      const refRows = await query(
+        `SELECT id FROM referentes
+          WHERE id = $1 AND empresa_id = $2 AND deleted_at IS NULL
+          LIMIT 1`,
+        [referenteId, empresaId]
+      );
+      if (!refRows.length) return res.status(404).json({ error: 'Referente no encontrado.' });
+
+      const existing = await query(
+        `SELECT id FROM usuarios
+          WHERE empresa_id = $1
+            AND referente_id = $2
+            AND LOWER(role) = 'referente'
+          LIMIT 1`,
+        [empresaId, referenteId]
+      );
+
+      const passwordHash = password
+        ? await bcrypt.hash(password, await bcrypt.genSalt(10))
+        : null;
+
+      if (existing.length) {
+        const sets = ['username = $1', 'activo = $2'];
+        const params = [username, activo];
+        let idx = 3;
+        if (passwordHash) {
+          sets.push(`password = $${idx++}`);
+          params.push(passwordHash);
+        }
+        params.push(existing[0].id);
+        const rows = await query(
+          `UPDATE usuarios
+              SET ${sets.join(', ')}
+            WHERE id = $${idx}
+            RETURNING id, username, role, empresa_id, referente_id, activo, last_login_at`,
+          params
+        );
+        return res.json(rows[0]);
+      }
+
+      if (!passwordHash) return res.status(400).json({ error: 'Falta clave inicial.' });
+
+      const rows = await query(
+        `INSERT INTO usuarios (username, password, role, empresa_id, referente_id, activo)
+         VALUES ($1,$2,'referente',$3,$4,$5)
+         RETURNING id, username, role, empresa_id, referente_id, activo, last_login_at`,
+        [username, passwordHash, empresaId, referenteId, activo]
+      );
+
+      return res.status(201).json(rows[0]);
+    } catch (e) {
+      if (String(e?.message || '').includes('unique')) {
+        return res.status(409).json({ error: 'Usuario ya existe.' });
+      }
+      console.error('REFERENTES.ACCESO.SAVE.ERROR', e);
+      return res.status(500).json({ error: 'Error guardando acceso del referente' });
+    }
+  });
+
   router.post('/:id/productos', withAuth, async (req, res) => {
     try {
+      if (!requireBackoffice(req, res)) return;
       const empresaId = resolveEmpresa(req, req.body || {});
       const referenteId = Number(req.params.id);
       const productos = Array.isArray(req.body?.productos) ? req.body.productos : [];
@@ -192,6 +340,7 @@ export function createReferentesRouter(deps) {
 
   router.get('/:id/productos', withAuth, async (req, res) => {
     try {
+      if (!requireBackoffice(req, res)) return;
       const empresaId = resolveEmpresa(req);
       const referenteId = Number(req.params.id);
       if (!empresaId || !referenteId) return res.status(400).json({ error: 'Datos invalidos.' });
@@ -223,6 +372,7 @@ export function createReferentesRouter(deps) {
 
   router.delete('/:id', withAuth, async (req, res) => {
     try {
+      if (!requireBackoffice(req, res)) return;
       const empresaId = resolveEmpresa(req, req.query || {});
       const referenteId = Number(req.params.id);
       if (!empresaId || !referenteId) return res.status(400).json({ error: 'Datos invalidos.' });
@@ -249,6 +399,7 @@ export function createReferentesRouter(deps) {
 
   router.get('/comisiones', withAuth, async (req, res) => {
     try {
+      if (!requireBackoffice(req, res)) return;
       const empresaId = resolveEmpresa(req);
       if (!empresaId) return res.status(400).json({ error: 'Falta empresa.' });
 
@@ -276,6 +427,7 @@ export function createReferentesRouter(deps) {
 
   router.post('/clientes/:clienteId/desvincular', withAuth, async (req, res) => {
     try {
+      if (!requireBackoffice(req, res)) return;
       const empresaId = resolveEmpresa(req, req.body || {});
       const clienteId = Number(req.params.clienteId);
       if (!empresaId || !clienteId) return res.status(400).json({ error: 'Datos invalidos.' });

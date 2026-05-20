@@ -150,12 +150,13 @@
               <th>Clientes</th>
               <th>Productos</th>
               <th>Total</th>
+              <th>Acceso</th>
               <th>Estado</th>
               <th style="text-align:right">Acciones</th>
             </tr>
           </thead>
           <tbody id="tbReferentes">
-            <tr><td colspan="9" style="text-align:center;padding:2.5rem;color:var(--muted)">Cargando referentes...</td></tr>
+            <tr><td colspan="10" style="text-align:center;padding:2.5rem;color:var(--muted)">Cargando referentes...</td></tr>
           </tbody>
         </table>
       </div>
@@ -257,6 +258,40 @@
     </form>
   </dialog>
 
+  <dialog id="dlgAcceso">
+    <form id="formAcceso" method="dialog">
+      <div class="modal-header">
+        <h3 id="accesoTitle">Acceso del referente</h3>
+        <button type="button" class="btn btn-sm" id="btnAccesoClose">Cerrar</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="accesoRefId" />
+        <div class="grid-2">
+          <div>
+            <label for="accesoUsername">Usuario</label>
+            <input id="accesoUsername" required placeholder="Ej: referente.juan" autocomplete="off" />
+          </div>
+          <div>
+            <label for="accesoPassword">Clave</label>
+            <input id="accesoPassword" type="text" placeholder="Dejar vacio para no cambiar" autocomplete="new-password" />
+          </div>
+        </div>
+        <div>
+          <label>
+            <input id="accesoActivo" type="checkbox" style="width:auto" checked />
+            Acceso habilitado
+          </label>
+        </div>
+        <div class="muted">La clave debe tener al menos 8 caracteres. El referente entra por el login normal y se redirige a su panel propio.</div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn" id="btnAccesoCancel">Cancelar</button>
+        <button type="button" class="btn" id="btnGenPass">Generar clave</button>
+        <button type="submit" class="btn btn-primary">Guardar acceso</button>
+      </div>
+    </form>
+  </dialog>
+
   <div id="toast" class="toast"></div>
 
   <script>
@@ -327,7 +362,7 @@
       });
       const tb = $('#tbReferentes');
       if (!rows.length) {
-        tb.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:2.5rem;color:var(--muted)">No hay referentes para mostrar.</td></tr>';
+        tb.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:2.5rem;color:var(--muted)">No hay referentes para mostrar.</td></tr>';
         return;
       }
       tb.innerHTML = rows.map((r) => `
@@ -342,9 +377,13 @@
           <td>${Number(r.clientes_count || 0)}</td>
           <td>${Number(r.productos_count || 0)}</td>
           <td>${money.format(Number(r.comisiones_total || 0))}</td>
+          <td>
+            ${r.usuario_id ? `<span class="badge ${r.usuario_activo ? 'ok' : 'off'}">${r.usuario_activo ? 'Habilitado' : 'Bloqueado'}</span><div class="muted">${esc(r.usuario_username || '')}</div>` : '<span class="badge warn">Sin usuario</span>'}
+          </td>
           <td><span class="badge ${r.activo ? 'ok' : 'off'}">${r.activo ? 'Activo' : 'Inactivo'}</span></td>
           <td>
             <div class="actions">
+              <button class="btn btn-sm" onclick="openAcceso(${Number(r.id)})">Acceso</button>
               <button class="btn btn-sm" onclick="openEdit(${Number(r.id)})">Editar</button>
               <button class="btn btn-sm btn-danger" onclick="removeReferente(${Number(r.id)})">Eliminar</button>
             </div>
@@ -475,6 +514,58 @@
       $('#dlgReferente').showModal();
     }
 
+    function generatePassword() {
+      const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+      let out = 'Ref-';
+      const cryptoObj = window.crypto || window.msCrypto;
+      const bytes = new Uint8Array(10);
+      cryptoObj.getRandomValues(bytes);
+      for (const b of bytes) out += chars[b % chars.length];
+      return out;
+    }
+
+    async function openAcceso(id) {
+      const r = state.referentes.find((x) => Number(x.id) === Number(id));
+      if (!r) return;
+      $('#formAcceso').reset();
+      $('#accesoRefId').value = id;
+      $('#accesoTitle').textContent = `Acceso de ${r.nombre || 'referente'}`;
+      $('#accesoUsername').value = r.usuario_username || normalizeCode(r.codigo || r.nombre || `ref-${id}`).toLowerCase();
+      $('#accesoPassword').value = r.usuario_id ? '' : generatePassword();
+      $('#accesoPassword').placeholder = r.usuario_id ? 'Dejar vacio para no cambiar' : 'Clave inicial obligatoria';
+      $('#accesoActivo').checked = r.usuario_id ? r.usuario_activo !== false : true;
+
+      try {
+        const data = await api(`/api/referentes/${id}/acceso` + empresaQS());
+        if (data?.username) $('#accesoUsername').value = data.username;
+        if (data?.id) $('#accesoActivo').checked = data.activo !== false;
+      } catch (e) {
+        toast(e.message || 'No se pudo cargar el acceso');
+      }
+
+      $('#dlgAcceso').showModal();
+      $('#accesoUsername').focus();
+    }
+
+    async function saveAcceso() {
+      const id = Number($('#accesoRefId').value);
+      const body = {
+        username: $('#accesoUsername').value.trim(),
+        password: $('#accesoPassword').value,
+        activo: $('#accesoActivo').checked,
+      };
+      if (state.isSuper) body.empresa_id = Number($('#empSel').value);
+      if (!body.password) delete body.password;
+
+      await api(`/api/referentes/${id}/acceso`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      });
+      $('#dlgAcceso').close();
+      toast('Acceso actualizado');
+      await refreshAll();
+    }
+
     function collectProductos() {
       return state.productos
         .filter((p) => document.querySelector(`[data-prod-check="${Number(p.id)}"]`)?.checked)
@@ -540,10 +631,20 @@
       $('#q').addEventListener('input', renderReferentes);
       $('#btnClose').onclick = () => $('#dlgReferente').close();
       $('#btnCancel').onclick = () => $('#dlgReferente').close();
+      $('#btnAccesoClose').onclick = () => $('#dlgAcceso').close();
+      $('#btnAccesoCancel').onclick = () => $('#dlgAcceso').close();
+      $('#btnGenPass').onclick = () => {
+        $('#accesoPassword').value = generatePassword();
+        $('#accesoPassword').focus();
+      };
       $('#codigo').addEventListener('blur', () => { $('#codigo').value = normalizeCode($('#codigo').value); });
       $('#formReferente').addEventListener('submit', async (e) => {
         e.preventDefault();
         try { await saveReferente(); } catch (err) { console.error(err); toast(err.message || 'No se pudo guardar'); }
+      });
+      $('#formAcceso').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        try { await saveAcceso(); } catch (err) { console.error(err); toast(err.message || 'No se pudo guardar acceso'); }
       });
 
       const me = await api('/api/me');

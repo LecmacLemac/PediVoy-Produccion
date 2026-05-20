@@ -17,7 +17,7 @@ export function createAdminUsuariosRouter(deps) {
   router.post('/usuarios', withAuth, async (req, res) => {
     try {
       const esSuperAdmin = isSuper(req);
-      const { username, password, role, empresa_id, chofer_id } = req.body || {};
+      const { username, password, role, empresa_id, chofer_id, referente_id, activo } = req.body || {};
       const cleanUser = String(username || '').trim();
       if (!cleanUser) return res.status(400).json({ error: 'Falta username' });
       if (!password || String(password).length < 6) return res.status(400).json({ error: 'Clave min 6 chars' });
@@ -35,10 +35,10 @@ export function createAdminUsuariosRouter(deps) {
       const hash = await bcrypt.hash(String(password), salt);
 
       const rows = await query(
-        `INSERT INTO usuarios (username, password, role, empresa_id, chofer_id)
-         VALUES ($1, $2, $3, $4, $5)
+        `INSERT INTO usuarios (username, password, role, empresa_id, chofer_id, referente_id, activo)
+         VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, TRUE))
          RETURNING id, username`,
-        [cleanUser, hash, role || 'user', targetEmpresa, chofer_id || null]
+        [cleanUser, hash, role || 'user', targetEmpresa, chofer_id || null, referente_id || null, typeof activo === 'boolean' ? activo : null]
       );
 
       return res.json(rows[0]);
@@ -54,7 +54,7 @@ export function createAdminUsuariosRouter(deps) {
       const esSuperAdmin = isSuper(req);
       const empresaId = esSuperAdmin ? Number(req.query?.empresa_id) || null : getEmpresaIdFromToken(req);
 
-      let sql = `SELECT id, username, role, empresa_id, chofer_id FROM usuarios`;
+      let sql = `SELECT id, username, role, empresa_id, chofer_id, referente_id, COALESCE(activo, TRUE) AS activo, last_login_at FROM usuarios`;
       const params = [];
       if (empresaId) {
         sql += ` WHERE empresa_id=$1`;
@@ -74,7 +74,7 @@ export function createAdminUsuariosRouter(deps) {
     if (!isSuper(req)) return res.status(403).json({ error: 'Solo superadmin' });
 
     try {
-      const { username, password, role, empresa_id, chofer_id } = req.body || {};
+      const { username, password, role, empresa_id, chofer_id, referente_id, activo } = req.body || {};
       const sets = [];
       const vals = [];
       let idx = 1;
@@ -100,6 +100,14 @@ export function createAdminUsuariosRouter(deps) {
       if (chofer_id !== undefined) {
         sets.push(`chofer_id=$${idx++}`);
         vals.push(Number(chofer_id) || null);
+      }
+      if (referente_id !== undefined) {
+        sets.push(`referente_id=$${idx++}`);
+        vals.push(Number(referente_id) || null);
+      }
+      if (activo !== undefined) {
+        sets.push(`activo=$${idx++}`);
+        vals.push(Boolean(activo));
       }
 
       if (!sets.length) return res.json({ ok: true });

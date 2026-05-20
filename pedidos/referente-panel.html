@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Panel del Referente | PediVoy</title>
+  <link rel="stylesheet" href="theme-base.css" />
+  <style>
+    :root{--bg:#0b1020;--panel:#111827;--panel-2:#172033;--ink:#f8fafc;--muted:#94a3b8;--brand:#06b6d4;--ok:#10b981;--warn:#f59e0b;--danger:#ef4444;--border:rgba(148,163,184,.18)}
+    *{box-sizing:border-box;outline:none}
+    body{margin:0;min-height:100vh;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:14px}
+    header{position:sticky;top:0;z-index:20;background:rgba(11,16,32,.92);border-bottom:1px solid var(--border);backdrop-filter:blur(14px)}
+    .wrap{width:min(1180px,100%);margin:0 auto;padding:0 18px}
+    nav{min-height:64px;display:flex;align-items:center;justify-content:space-between;gap:16px}
+    .brand{display:flex;align-items:center;gap:10px;font-weight:850;color:#fff}
+    .brand-dot{width:10px;height:10px;border-radius:50%;background:var(--brand);box-shadow:0 0 18px rgba(6,182,212,.7)}
+    .top-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+    .pill{border:1px solid rgba(6,182,212,.32);background:rgba(6,182,212,.09);color:#a5f3fc;border-radius:99px;padding:6px 10px;font-size:.78rem;font-weight:800}
+    .btn{min-height:38px;border-radius:8px;border:1px solid var(--border);background:rgba(255,255,255,.05);color:var(--ink);padding:0 13px;font-weight:800;cursor:pointer}
+    .btn:hover{border-color:rgba(6,182,212,.55);background:rgba(6,182,212,.1)}
+    main{padding:26px 0 48px;display:grid;gap:18px}
+    .hero{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:18px;align-items:end}
+    h1{font-size:1.9rem;line-height:1.15;margin:0;color:#fff;letter-spacing:0}
+    .muted{color:var(--muted)}
+    .code{display:inline-flex;border:1px solid rgba(6,182,212,.25);background:rgba(6,182,212,.1);color:#a5f3fc;border-radius:7px;padding:3px 8px;font:800 .85rem ui-monospace,SFMono-Regular,Menlo,monospace}
+    .grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+    .card{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:16px}
+    .metric span{display:block;color:var(--muted);font-size:.74rem;text-transform:uppercase;font-weight:800;letter-spacing:.04em}
+    .metric strong{display:block;margin-top:7px;font-size:1.45rem;color:#fff}
+    .layout{display:grid;grid-template-columns:370px minmax(0,1fr);gap:16px}
+    h2{margin:0 0 12px;font-size:1.08rem;color:#fff}
+    label{display:block;margin:.85rem 0 .35rem;color:#cbd5e1;font-size:.78rem;font-weight:800;text-transform:uppercase}
+    input,textarea{width:100%;border:1px solid var(--border);border-radius:8px;background:#0f172a;color:#fff;padding:10px 12px;font:inherit}
+    input:focus,textarea:focus{border-color:var(--brand);box-shadow:0 0 0 3px rgba(6,182,212,.14)}
+    input[aria-invalid="true"]{border-color:var(--danger);box-shadow:0 0 0 3px rgba(239,68,68,.14)}
+    textarea{resize:vertical}
+    .stack{display:grid;gap:14px}
+    .side-stack{display:grid;gap:14px;align-content:start}
+    .table-wrap{overflow:auto;border:1px solid var(--border);border-radius:8px}
+    table{width:100%;border-collapse:collapse;min-width:680px}
+    th,td{padding:11px 12px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top}
+    th{background:var(--panel-2);color:var(--muted);font-size:.76rem;text-transform:uppercase;letter-spacing:.04em}
+    tr:last-child td{border-bottom:0}
+    .badge{border-radius:99px;padding:3px 8px;font-size:.74rem;font-weight:850;text-transform:uppercase}
+    .badge.ok{background:rgba(16,185,129,.14);color:#86efac}
+    .badge.warn{background:rgba(245,158,11,.14);color:#fde68a}
+    .toast{position:fixed;right:18px;bottom:20px;background:#fff;color:#0f172a;border-radius:99px;padding:10px 15px;font-weight:850;box-shadow:0 12px 30px rgba(0,0,0,.32);opacity:0;transform:translateY(8px);transition:.2s;pointer-events:none}
+    .toast.show{opacity:1;transform:translateY(0)}
+    @media(max-width:860px){.hero,.layout{grid-template-columns:1fr}.grid{grid-template-columns:1fr 1fr}nav{align-items:flex-start;flex-direction:column;padding:14px 0}.top-actions{width:100%;justify-content:space-between}}
+    @media(max-width:520px){.grid{grid-template-columns:1fr}.wrap{padding:0 12px}h1{font-size:1.55rem}}
+  </style>
+</head>
+<body>
+  <header>
+    <nav class="wrap">
+      <div class="brand"><span class="brand-dot"></span>PediVoy <span class="pill">Referente</span></div>
+      <div class="top-actions">
+        <span id="empresaPill" class="pill">Empresa</span>
+        <button id="logout" class="btn">Salir</button>
+      </div>
+    </nav>
+  </header>
+
+  <main class="wrap">
+    <section class="hero">
+      <div>
+        <h1 id="nombreTitulo">Panel del referente</h1>
+        <p class="muted">Control de datos propios, clientes vinculados, productos y comisiones.</p>
+      </div>
+      <div class="code" id="codigoRef">CODIGO</div>
+    </section>
+
+    <section class="grid">
+      <div class="card metric"><span>Clientes activos</span><strong id="mClientes">0</strong></div>
+      <div class="card metric"><span>Productos activos</span><strong id="mProductos">0</strong></div>
+      <div class="card metric"><span>Comisiones pendientes</span><strong id="mPendientes">$0</strong></div>
+      <div class="card metric"><span>Total validado</span><strong id="mTotal">$0</strong></div>
+    </section>
+
+    <section class="layout">
+      <div class="side-stack">
+        <form id="perfilForm" class="card">
+          <h2>Mi información</h2>
+          <label for="nombre">Nombre</label>
+          <input id="nombre" required />
+          <label for="telefono">Teléfono</label>
+          <input id="telefono" />
+          <label for="email">Email</label>
+          <input id="email" type="email" />
+          <label for="notas">Notas</label>
+          <textarea id="notas" rows="4"></textarea>
+          <div style="display:flex;justify-content:flex-end;margin-top:14px">
+            <button class="btn" type="submit">Guardar cambios</button>
+          </div>
+        </form>
+
+        <form id="passwordForm" class="card">
+          <h2>Cambiar clave</h2>
+          <label for="currentPassword">Clave actual</label>
+          <input id="currentPassword" type="password" autocomplete="current-password" required />
+          <label for="newPassword">Nueva clave</label>
+          <input id="newPassword" type="password" autocomplete="new-password" minlength="8" required />
+          <label for="confirmPassword">Repetir nueva clave</label>
+          <input id="confirmPassword" type="password" autocomplete="new-password" minlength="8" required />
+          <div style="display:flex;justify-content:flex-end;margin-top:14px">
+            <button id="btnPassword" class="btn" type="submit">Actualizar clave</button>
+          </div>
+        </form>
+      </div>
+
+      <div class="stack">
+        <section class="card">
+          <h2>Comisiones recientes</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Fecha</th><th>Cliente</th><th>Producto</th><th>Pedido</th><th>Base</th><th>%</th><th>Comisión</th><th>Estado</th></tr></thead>
+              <tbody id="tbComisiones"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2>Clientes vinculados</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Cliente</th><th>Teléfono</th><th>Dirección</th><th>Desde</th></tr></thead>
+              <tbody id="tbClientes"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2>Productos asignados</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Producto</th><th>Precio</th><th>Comisión</th><th>Vigencia</th></tr></thead>
+              <tbody id="tbProductos"></tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast"></div>
+
+  <script>
+    const $ = (s) => document.querySelector(s);
+    const money = new Intl.NumberFormat('es-AR', { style:'currency', currency:'ARS', maximumFractionDigits:0 });
+    const dateFmt = new Intl.DateTimeFormat('es-AR', { day:'2-digit', month:'2-digit', year:'2-digit' });
+    const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+    const state = { perfil:null };
+
+    function toast(msg) {
+      const t = $('#toast');
+      t.textContent = msg;
+      t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 2600);
+    }
+
+    async function api(url, opts = {}) {
+      const res = await fetch(url, {
+        ...opts,
+        credentials:'include',
+        headers:{ 'Content-Type':'application/json', ...(opts.headers || {}) },
+      });
+      if (res.status === 401 || res.status === 403) {
+        location.href = 'login.html?next=/pedidos/referente-panel.html';
+        return null;
+      }
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || 'Error de API');
+      return data;
+    }
+
+    function emptyRow(cols, text) {
+      return `<tr><td colspan="${cols}" style="text-align:center;color:var(--muted);padding:24px">${esc(text)}</td></tr>`;
+    }
+
+    function renderPerfil(p) {
+      state.perfil = p;
+      $('#nombreTitulo').textContent = p?.nombre || 'Panel del referente';
+      $('#codigoRef').textContent = p?.codigo || 'SIN CODIGO';
+      $('#empresaPill').textContent = p?.empresa_nombre || 'Empresa';
+      $('#nombre').value = p?.nombre || '';
+      $('#telefono').value = p?.telefono || '';
+      $('#email').value = p?.email || '';
+      $('#notas').value = p?.notas || '';
+    }
+
+    function renderResumen(r) {
+      $('#mClientes').textContent = Number(r?.clientes_activos || 0);
+      $('#mProductos').textContent = Number(r?.productos_activos || 0);
+      $('#mPendientes').textContent = money.format(Number(r?.comisiones_pendientes || 0));
+      $('#mTotal').textContent = money.format(Number(r?.comisiones_total || 0));
+    }
+
+    function renderComisiones(rows) {
+      $('#tbComisiones').innerHTML = rows?.length ? rows.map((c) => `
+        <tr>
+          <td>${c.validada_at ? esc(dateFmt.format(new Date(c.validada_at))) : '-'}</td>
+          <td>${esc(c.cliente || '-')}</td>
+          <td>${esc(c.producto_nombre || '-')}</td>
+          <td>#${Number(c.pedido_id || 0)}</td>
+          <td>${money.format(Number(c.base_monto || 0))}</td>
+          <td>${Number(c.porcentaje || 0).toFixed(2)}%</td>
+          <td><strong>${money.format(Number(c.monto_comision || 0))}</strong></td>
+          <td><span class="badge ${c.estado === 'liquidada' ? 'ok' : 'warn'}">${esc(c.estado || 'validada')}</span></td>
+        </tr>
+      `).join('') : emptyRow(8, 'Sin comisiones todavía.');
+    }
+
+    function renderClientes(rows) {
+      $('#tbClientes').innerHTML = rows?.length ? rows.map((c) => `
+        <tr>
+          <td><strong>${esc(c.cliente || '-')}</strong></td>
+          <td>${esc(c.telefono || '-')}</td>
+          <td>${esc(c.direccion || '-')}</td>
+          <td>${c.asociado_at ? esc(dateFmt.format(new Date(c.asociado_at))) : '-'}</td>
+        </tr>
+      `).join('') : emptyRow(4, 'Sin clientes vinculados.');
+    }
+
+    function renderProductos(rows) {
+      $('#tbProductos').innerHTML = rows?.length ? rows.map((p) => `
+        <tr>
+          <td><strong>${esc(p.producto_nombre || '-')}</strong></td>
+          <td>${money.format(Number(p.producto_precio || 0))}</td>
+          <td>${p.porcentaje_comision == null ? 'General' : `${Number(p.porcentaje_comision || 0).toFixed(2)}%`}</td>
+          <td>${p.vigente_desde ? esc(dateFmt.format(new Date(p.vigente_desde))) : 'sin inicio'} / ${p.vigente_hasta ? esc(dateFmt.format(new Date(p.vigente_hasta))) : 'sin cierre'}</td>
+        </tr>
+      `).join('') : emptyRow(4, 'Sin productos asignados.');
+    }
+
+    async function loadAll() {
+      const [perfil, resumen, comisiones, clientes, productos] = await Promise.all([
+        api('/api/referente/perfil'),
+        api('/api/referente/resumen'),
+        api('/api/referente/comisiones'),
+        api('/api/referente/clientes'),
+        api('/api/referente/productos'),
+      ]);
+      renderPerfil(perfil);
+      renderResumen(resumen);
+      renderComisiones(Array.isArray(comisiones) ? comisiones : []);
+      renderClientes(Array.isArray(clientes) ? clientes : []);
+      renderProductos(Array.isArray(productos) ? productos : []);
+    }
+
+    $('#perfilForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try {
+        const saved = await api('/api/referente/perfil', {
+          method:'PUT',
+          body: JSON.stringify({
+            nombre: $('#nombre').value.trim(),
+            telefono: $('#telefono').value.trim() || null,
+            email: $('#email').value.trim() || null,
+            notas: $('#notas').value.trim() || null,
+          }),
+        });
+        renderPerfil({ ...state.perfil, ...saved });
+        toast('Información actualizada');
+      } catch (err) {
+        toast(err.message || 'No se pudo guardar');
+      }
+    });
+
+    $('#passwordForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const currentPassword = $('#currentPassword');
+      const newPassword = $('#newPassword');
+      const confirmPassword = $('#confirmPassword');
+      const btn = $('#btnPassword');
+
+      [currentPassword, newPassword, confirmPassword].forEach((input) => input.setAttribute('aria-invalid', 'false'));
+
+      if (newPassword.value.length < 8) {
+        newPassword.setAttribute('aria-invalid', 'true');
+        toast('La nueva clave debe tener al menos 8 caracteres');
+        return;
+      }
+      if (newPassword.value !== confirmPassword.value) {
+        confirmPassword.setAttribute('aria-invalid', 'true');
+        toast('La confirmación no coincide');
+        return;
+      }
+      if (currentPassword.value === newPassword.value) {
+        newPassword.setAttribute('aria-invalid', 'true');
+        toast('La nueva clave debe ser diferente');
+        return;
+      }
+
+      const prevText = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = 'Actualizando...';
+      try {
+        await api('/api/referente/password', {
+          method:'PUT',
+          body: JSON.stringify({
+            current_password: currentPassword.value,
+            new_password: newPassword.value,
+            confirm_password: confirmPassword.value,
+          }),
+        });
+        e.target.reset();
+        toast('Clave actualizada');
+      } catch (err) {
+        currentPassword.setAttribute('aria-invalid', 'true');
+        toast(err.message || 'No se pudo actualizar la clave');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = prevText;
+      }
+    });
+
+    $('#logout').addEventListener('click', async () => {
+      try { await fetch('/api/logout', { method:'POST', credentials:'include' }); } catch {}
+      location.href = 'login.html';
+    });
+
+    loadAll().catch((e) => {
+      console.error(e);
+      toast(e.message || 'No se pudo cargar el panel');
+    });
+  </script>
+</body>
+</html>

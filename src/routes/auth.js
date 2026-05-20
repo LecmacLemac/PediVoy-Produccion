@@ -7,6 +7,7 @@ import { query } from '../db.js';
 const LOGIN_WINDOW_MS = Number(process.env.LOGIN_RATE_WINDOW_MS || 10 * 60 * 1000);
 const LOGIN_MAX_ATTEMPTS = Number(process.env.LOGIN_RATE_MAX || 10);
 const loginAttempts = new Map();
+let authSchemaReady = false;
 
 function getClientIp(req) {
   return String(
@@ -38,6 +39,17 @@ function hitRateLimit(map, key, windowMs, max) {
 
 export function createAuthRouter() {
   const router = express.Router();
+
+  async function ensureAuthSchema() {
+    if (authSchemaReady) return;
+    await query(`
+      ALTER TABLE usuarios
+        ADD COLUMN IF NOT EXISTS referente_id INTEGER REFERENCES referentes(id) ON DELETE SET NULL,
+        ADD COLUMN IF NOT EXISTS activo BOOLEAN NOT NULL DEFAULT TRUE,
+        ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ
+    `);
+    authSchemaReady = true;
+  }
 
   function getUserFromRequest(req) {
     let token = null;
@@ -111,8 +123,11 @@ export function createAuthRouter() {
         return res.status(429).json({ error: 'Demasiados intentos. Reintentá en unos minutos.' });
       }
 
+      await ensureAuthSchema();
+
       const rows = await query(
         `SELECT u.id, u.username, u.password, u.role, u.empresa_id, u.chofer_id,
+                u.referente_id, COALESCE(u.activo, TRUE) AS activo,
                 e.plan_estado, e.plan_vencimiento
          FROM usuarios u
          LEFT JOIN empresas e ON u.empresa_id = e.id
@@ -122,6 +137,10 @@ export function createAuthRouter() {
 
       if (!rows.length) return res.status(401).json({ error: 'Credenciales inválidas' });
       const user = rows[0];
+
+      if (user.activo === false) {
+        return res.status(403).json({ error: 'Usuario desactivado. Contactá a administración.' });
+      }
 
       if (user.role !== 'super' && user.plan_estado === 'expired') {
         return res.status(402).json({
@@ -142,11 +161,14 @@ export function createAuthRouter() {
           username: user.username,
           empresa_id: user.empresa_id,
           role: user.role,
-          chofer_id: user.chofer_id ?? null
+          chofer_id: user.chofer_id ?? null,
+          referente_id: user.referente_id ?? null
         },
         process.env.JWT_SECRET || 'dev',
         { expiresIn: '8h' }
       );
+
+      await query('UPDATE usuarios SET last_login_at = NOW() WHERE id = $1', [user.id]);
 
       res.cookie('token', token, {
         httpOnly: true,
@@ -160,7 +182,7 @@ export function createAuthRouter() {
       const includeToken = String(req.query?.includeToken || req.headers['x-include-token'] || '') === '1';
 
       if (includeToken) return res.json({ token });
-      return res.json({ ok: true, user: { uid: user.id, username: user.username, empresa_id: user.empresa_id, role: user.role, chofer_id: user.chofer_id ?? null } });
+      return res.json({ ok: true, user: { uid: user.id, username: user.username, empresa_id: user.empresa_id, role: user.role, chofer_id: user.chofer_id ?? null, referente_id: user.referente_id ?? null } });
     } catch (e) {
       console.error('LOGIN ERROR:', e);
       res.status(500).json({ error: 'Error interno' });

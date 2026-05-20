@@ -1,7 +1,7 @@
 // src/services.js
 // Compat layer: mantiene imports existentes mientras modularizamos el core.
 
-export { withAuth, isSuper, isRepartidor, isUser } from './core/auth.js';
+export { withAuth, isSuper, isRepartidor, isReferente, isUser } from './core/auth.js';
 export { getEmpresaIdFromToken, resolveEmpresaId } from './core/tenant.js';
 export { checkLicencia } from './core/licencias.js';
 export { geocodeIfNeeded, pointInAnyZone } from './core/geo.js';

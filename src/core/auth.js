@@ -30,6 +30,10 @@ export function isRepartidor(req) {
   return (req.user?.role || '').toLowerCase() === 'repartidor';
 }
 
+export function isReferente(req) {
+  return (req.user?.role || '').toLowerCase() === 'referente';
+}
+
 export function isUser(req) {
   return !!req.user;
 }
