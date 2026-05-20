@@ -44,6 +44,7 @@ test('generateComisionesForDeliveredOrder genera comision idempotente por item',
       return [{ id: 9001, empresa_id: 1, punto_entrega_id: 101, estado: 'entregado', fecha_entrega: '2026-05-19T20:00:00Z' }];
     }
     if (sql.includes('FROM cliente_referentes')) {
+      assert.match(sql, /cr\.asociado_at/);
       return [{ referente_id: 9, porcentaje_comision: 8 }];
     }
     if (sql.includes('FROM items_pedido')) {
@@ -66,6 +67,36 @@ test('generateComisionesForDeliveredOrder genera comision idempotente por item',
   assert.equal(inserts[0][7], 10);
   assert.equal(inserts[1][6], 500);
   assert.equal(inserts[1][7], 8);
+});
+
+test('generateComisionesForDeliveredOrder no comisiona pedidos anteriores al codigo', async () => {
+  let itemsConsultados = false;
+  const queryFn = async (sql) => {
+    if (sql.includes('FROM pedidos')) {
+      return [{
+        id: 9002,
+        empresa_id: 1,
+        punto_entrega_id: 101,
+        estado: 'entregado',
+        fecha: '2026-05-01T10:00:00Z',
+        fecha_entrega: '2026-05-01T12:00:00Z',
+      }];
+    }
+    if (sql.includes('FROM cliente_referentes')) {
+      assert.match(sql, /COALESCE\(\$3::timestamptz, NOW\(\)\) >= COALESCE\(cr\.asociado_at/);
+      return [];
+    }
+    if (sql.includes('FROM items_pedido')) {
+      itemsConsultados = true;
+      return [];
+    }
+    throw new Error(`SQL inesperado: ${sql.slice(0, 80)}`);
+  };
+
+  const result = await generateComisionesForDeliveredOrder({ queryFn, empresaId: 1, pedidoId: 9002 });
+
+  assert.deepEqual(result, { inserted: 0 });
+  assert.equal(itemsConsultados, false);
 });
 
 test('createPedidoEstadoNotifications avisa a referentes vinculados al pedido', async () => {

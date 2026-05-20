@@ -98,6 +98,7 @@ export async function generateComisionesForDeliveredOrder({ queryFn, empresaId, 
       WHERE cr.empresa_id = $1
         AND cr.punto_entrega_id = $2
         AND cr.estado = 'activo'
+        AND COALESCE($3::timestamptz, NOW()) >= COALESCE(cr.asociado_at, '-infinity'::timestamptz)
         AND r.activo = TRUE
         AND r.deleted_at IS NULL
         AND (r.vigente_desde IS NULL OR r.vigente_desde <= COALESCE($3::date, CURRENT_DATE))

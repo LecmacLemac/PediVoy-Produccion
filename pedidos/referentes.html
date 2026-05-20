@@ -88,10 +88,39 @@
       .menu{overflow-x:auto;white-space:nowrap;padding-bottom:4px}
       .summary{grid-template-columns:1fr 1fr}
       .toolbar,.grid-2,.grid-3{grid-template-columns:1fr}
+      .card{padding:1rem}
       .product-row{grid-template-columns:auto 1fr}
       .product-row input[type="number"]{grid-column:1 / -1}
+      dialog{width:calc(100% - 18px);max-height:92vh}
+      .modal-header,.modal-body,.modal-footer{padding:1rem}
       .modal-footer{flex-direction:column-reverse}
       .modal-footer .btn{width:100%}
+    }
+    @media(max-width:640px){
+      main{padding-top:1.1rem}
+      h1{font-size:1.45rem}
+      .subtitle{font-size:.86rem}
+      .summary{grid-template-columns:1fr}
+      .metric{min-height:auto}
+      .metric strong{font-size:1.25rem}
+      .toolbar{gap:.65rem}
+      .page-head{align-items:stretch}
+      .page-head .btn{width:100%}
+      .table-responsive{overflow:visible;border:none;border-radius:0}
+      .mobile-cards{display:block}
+      .mobile-cards thead{display:none}
+      .mobile-cards tbody,.mobile-cards tr,.mobile-cards td{display:block;width:100%}
+      .mobile-cards tr{border:1px solid var(--border);border-radius:10px;background:rgba(15,23,42,.5);padding:.75rem;margin-bottom:.8rem}
+      .mobile-cards tr:hover td{background:transparent}
+      .mobile-cards td{border-bottom:1px solid var(--border);padding:.55rem 0;min-width:0}
+      .mobile-cards td:last-child{border-bottom:none}
+      .mobile-cards td[data-label]{display:grid;grid-template-columns:minmax(86px,34%) minmax(0,1fr);gap:.65rem;align-items:start}
+      .mobile-cards td[data-label]::before{content:attr(data-label);color:var(--muted);font-size:.72rem;font-weight:800;text-transform:uppercase;letter-spacing:.04em}
+      .mobile-cards td[data-label] > *{min-width:0}
+      .mobile-cards .actions{justify-content:stretch}
+      .mobile-cards .actions .btn{flex:1 1 100%;width:100%}
+      .mobile-cards .code{max-width:100%;overflow-wrap:anywhere}
+      .mobile-cards input[type="checkbox"]{margin:0}
     }
   </style>
 </head>
@@ -142,7 +171,7 @@
       </div>
 
       <div class="table-responsive">
-        <table>
+        <table class="mobile-cards">
           <thead>
             <tr>
               <th>Referente</th>
@@ -172,7 +201,7 @@
         </div>
       </div>
       <div class="table-responsive">
-        <table>
+        <table class="mobile-cards">
           <thead>
             <tr>
               <th>Fecha</th>
@@ -200,7 +229,7 @@
         <button id="btnLiquidarSeleccion" class="btn btn-primary">Liquidar seleccionadas</button>
       </div>
       <div class="table-responsive">
-        <table>
+        <table class="mobile-cards">
           <thead>
             <tr>
               <th><input id="chkAllComisiones" type="checkbox" style="width:auto" /></th>
@@ -435,21 +464,21 @@
       }
       tb.innerHTML = rows.map((r) => `
         <tr style="opacity:${r.activo ? 1 : .55}">
-          <td>
+          <td data-label="Referente">
             <strong>${esc(r.nombre)}</strong>
             <div class="muted">${esc(r.email || r.telefono || 'Sin contacto')}</div>
           </td>
-          <td><span class="code">${esc(r.codigo)}</span></td>
-          <td><strong>${Number(r.porcentaje_comision || 0).toFixed(2)}%</strong></td>
-          <td>${esc(validUntilLabel(r))}</td>
-          <td>${Number(r.clientes_count || 0)}</td>
-          <td>${Number(r.productos_count || 0)}</td>
-          <td>${money.format(Number(r.comisiones_pendientes || 0))}</td>
-          <td>
+          <td data-label="Codigo"><span class="code">${esc(r.codigo)}</span></td>
+          <td data-label="Comision"><strong>${Number(r.porcentaje_comision || 0).toFixed(2)}%</strong></td>
+          <td data-label="Vigencia">${esc(validUntilLabel(r))}</td>
+          <td data-label="Clientes">${Number(r.clientes_count || 0)}</td>
+          <td data-label="Productos">${Number(r.productos_count || 0)}</td>
+          <td data-label="Pendiente">${money.format(Number(r.comisiones_pendientes || 0))}</td>
+          <td data-label="Acceso">
             ${r.usuario_id ? `<span class="badge ${r.usuario_activo ? 'ok' : 'off'}">${r.usuario_activo ? 'Habilitado' : 'Bloqueado'}</span><div class="muted">${esc(r.usuario_username || '')}</div>` : '<span class="badge warn">Sin usuario</span>'}
           </td>
-          <td><span class="badge ${r.activo ? 'ok' : 'off'}">${r.activo ? 'Activo' : 'Inactivo'}</span></td>
-          <td>
+          <td data-label="Estado"><span class="badge ${r.activo ? 'ok' : 'off'}">${r.activo ? 'Activo' : 'Inactivo'}</span></td>
+          <td data-label="Acciones">
             <div class="actions">
               <button class="btn btn-sm" onclick="openAcceso(${Number(r.id)})">Acceso</button>
               <button class="btn btn-sm" onclick="openEdit(${Number(r.id)})">Editar</button>
@@ -471,16 +500,16 @@
           <td>
             <input type="checkbox" style="width:auto" data-comision-check="${Number(c.id)}" ${c.estado === 'validada' ? '' : 'disabled'} ${state.comisionesSeleccionadas.has(Number(c.id)) ? 'checked' : ''} />
           </td>
-          <td>${c.validada_at ? esc(dateFmt.format(new Date(c.validada_at))) : '-'}</td>
-          <td>${esc(c.referente_nombre)} <div class="code">${esc(c.referente_codigo)}</div></td>
-          <td>${esc(c.cliente || '-')}</td>
-          <td>${esc(c.producto_nombre || '-')}</td>
-          <td>#${Number(c.pedido_id || 0)}</td>
-          <td>${money.format(Number(c.base_monto || 0))}</td>
-          <td>${Number(c.porcentaje || 0).toFixed(2)}%</td>
-          <td><strong>${money.format(Number(c.monto_comision || 0))}</strong></td>
-          <td><span class="badge ${c.estado === 'liquidada' ? 'ok' : 'warn'}">${esc(c.estado || 'validada')}</span></td>
-          <td style="text-align:right">
+          <td data-label="Fecha">${c.validada_at ? esc(dateFmt.format(new Date(c.validada_at))) : '-'}</td>
+          <td data-label="Referente">${esc(c.referente_nombre)} <div class="code">${esc(c.referente_codigo)}</div></td>
+          <td data-label="Cliente">${esc(c.cliente || '-')}</td>
+          <td data-label="Producto">${esc(c.producto_nombre || '-')}</td>
+          <td data-label="Pedido">#${Number(c.pedido_id || 0)}</td>
+          <td data-label="Base">${money.format(Number(c.base_monto || 0))}</td>
+          <td data-label="%">${Number(c.porcentaje || 0).toFixed(2)}%</td>
+          <td data-label="Comision"><strong>${money.format(Number(c.monto_comision || 0))}</strong></td>
+          <td data-label="Estado"><span class="badge ${c.estado === 'liquidada' ? 'ok' : 'warn'}">${esc(c.estado || 'validada')}</span></td>
+          <td data-label="Accion" style="text-align:right">
             ${c.estado === 'validada'
               ? `<button class="btn btn-sm" onclick="openLiquidacion([${Number(c.id)}])">Liquidar</button>`
               : `<span class="muted">${c.liquidada_at ? esc(dateFmt.format(new Date(c.liquidada_at))) : 'liquidada'}</span>`}
@@ -505,13 +534,13 @@
       }
       tb.innerHTML = state.clientesPropuestos.map((c) => `
         <tr>
-          <td>${c.created_at ? esc(dateFmt.format(new Date(c.created_at))) : '-'}</td>
-          <td>${esc(c.referente_nombre || '-')} <div class="code">${esc(c.referente_codigo || '')}</div></td>
-          <td><strong>${esc(c.cliente || '-')}</strong></td>
-          <td>${esc(c.telefono || '-')}</td>
-          <td>${esc([c.direccion, c.ciudad].filter(Boolean).join(', ') || '-')}</td>
-          <td>${esc(c.notas || '-')}</td>
-          <td style="text-align:right">
+          <td data-label="Fecha">${c.created_at ? esc(dateFmt.format(new Date(c.created_at))) : '-'}</td>
+          <td data-label="Referente">${esc(c.referente_nombre || '-')} <div class="code">${esc(c.referente_codigo || '')}</div></td>
+          <td data-label="Cliente"><strong>${esc(c.cliente || '-')}</strong></td>
+          <td data-label="Telefono">${esc(c.telefono || '-')}</td>
+          <td data-label="Direccion">${esc([c.direccion, c.ciudad].filter(Boolean).join(', ') || '-')}</td>
+          <td data-label="Notas">${esc(c.notas || '-')}</td>
+          <td data-label="Accion" style="text-align:right">
             <div class="actions">
               <button class="btn btn-sm" onclick="aprobarClientePropuesto(${Number(c.id)})">Aprobar</button>
               <button class="btn btn-sm btn-danger" onclick="rechazarClientePropuesto(${Number(c.id)})">Rechazar</button>

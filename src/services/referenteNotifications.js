@@ -52,13 +52,14 @@ export async function createPedidoEstadoNotifications({ queryFn, empresaId, pedi
        FROM pedidos p
        JOIN cliente_referentes cr
          ON cr.empresa_id = p.empresa_id
-        AND cr.punto_entrega_id = p.punto_entrega_id
+       AND cr.punto_entrega_id = p.punto_entrega_id
         AND cr.estado = 'activo'
        LEFT JOIN puntos_entrega pe
          ON pe.id = p.punto_entrega_id
         AND pe.empresa_id = p.empresa_id
       WHERE p.empresa_id = $1
         AND p.id = $2
+        AND COALESCE(p.fecha, p.fecha_entrega, NOW()) >= COALESCE(cr.asociado_at, '-infinity'::timestamptz)
      RETURNING id, referente_id`,
     [empresaId, pedidoId, label]
   );

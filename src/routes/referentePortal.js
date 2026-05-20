@@ -213,7 +213,8 @@ export function createReferentePortalRouter(deps) {
                AND cr.punto_entrega_id = p.punto_entrega_id
              WHERE p.empresa_id = $1
                AND cr.referente_id = $2
-               AND cr.estado = 'activo') AS pedidos_total,
+               AND cr.estado = 'activo'
+               AND COALESCE(p.fecha, p.fecha_entrega, NOW()) >= COALESCE(cr.asociado_at, '-infinity'::timestamptz)) AS pedidos_total,
            (SELECT COUNT(DISTINCT p.id)::int
               FROM pedidos p
               JOIN cliente_referentes cr
@@ -222,6 +223,7 @@ export function createReferentePortalRouter(deps) {
              WHERE p.empresa_id = $1
                AND cr.referente_id = $2
                AND cr.estado = 'activo'
+               AND COALESCE(p.fecha, p.fecha_entrega, NOW()) >= COALESCE(cr.asociado_at, '-infinity'::timestamptz)
                AND COALESCE(p.fecha_entrega, p.fecha) >= NOW() - INTERVAL '30 days') AS pedidos_30d,
            (SELECT COUNT(DISTINCT p.id)::int
               FROM pedidos p
@@ -231,6 +233,7 @@ export function createReferentePortalRouter(deps) {
              WHERE p.empresa_id = $1
                AND cr.referente_id = $2
                AND cr.estado = 'activo'
+               AND COALESCE(p.fecha, p.fecha_entrega, NOW()) >= COALESCE(cr.asociado_at, '-infinity'::timestamptz)
                AND p.estado = 'entregado') AS pedidos_entregados,
            (SELECT COUNT(DISTINCT p.id)::int
               FROM pedidos p
@@ -240,6 +243,7 @@ export function createReferentePortalRouter(deps) {
              WHERE p.empresa_id = $1
                AND cr.referente_id = $2
                AND cr.estado = 'activo'
+               AND COALESCE(p.fecha, p.fecha_entrega, NOW()) >= COALESCE(cr.asociado_at, '-infinity'::timestamptz)
                AND p.estado IN ('pendiente','en_ruta','en_camino')) AS pedidos_activos,
            (SELECT COALESCE(SUM(COALESCE(p.monto,0)),0)::numeric
               FROM pedidos p
@@ -249,6 +253,7 @@ export function createReferentePortalRouter(deps) {
              WHERE p.empresa_id = $1
                AND cr.referente_id = $2
                AND cr.estado = 'activo'
+               AND COALESCE(p.fecha, p.fecha_entrega, NOW()) >= COALESCE(cr.asociado_at, '-infinity'::timestamptz)
                AND p.estado = 'entregado') AS ventas_entregadas,
            (SELECT COUNT(*)::int
               FROM referente_comisiones
@@ -297,6 +302,7 @@ export function createReferentePortalRouter(deps) {
             AND rc.pedido_id = p.id
           WHERE p.empresa_id = $1
             AND cr.referente_id = $2
+            AND COALESCE(p.fecha, p.fecha_entrega, NOW()) >= COALESCE(cr.asociado_at, '-infinity'::timestamptz)
           ORDER BY COALESCE(p.fecha_entrega, p.fecha) DESC, p.id DESC
           LIMIT 300`,
         [req.user.empresa_id, req.user.referente_id]
@@ -456,6 +462,7 @@ export function createReferentePortalRouter(deps) {
       const porcentaje = Number(row.porcentaje_comision || 0);
       const condiciones = asArray(cfg.condiciones).length ? asArray(cfg.condiciones) : [
         'Las comisiones se generan sobre pedidos entregados y productos asignados al referente.',
+        'Si un cliente ya tenía compras, el referente comisiona solo los pedidos realizados desde que se cargó su código.',
         'Los pedidos cancelados, rechazados o no entregados no generan comisión.',
         'Administración valida y liquida las comisiones desde el panel interno.',
       ];
