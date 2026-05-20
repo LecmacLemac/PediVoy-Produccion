@@ -625,7 +625,7 @@ export function createPublicClientAppRouter({ query }) {
       if (!owns.length) return res.status(404).json({ error: 'Pedido no encontrado' });
 
       const items = await query(
-        `SELECT producto, cantidad, precio_unitario
+        `SELECT producto, producto_id, cantidad, precio_unitario
          FROM items_pedido
          WHERE pedido_id = $1
          ORDER BY id ASC`,

@@ -120,6 +120,7 @@
     .method-btn span{display:block;font-size:11px;color:var(--muted);font-weight:700;margin-top:3px}
     .method-btn.active{border-color:#0f766e;background:#ecfdf5;color:#064e3b}
     .method-btn.active span{color:#047857}
+    .referral-help{display:block;margin-top:6px;color:var(--muted);font-size:12px}
     .empty-state{padding:18px;border:1px dashed #cbd5e1;border-radius:18px;background:#fff;color:var(--muted);text-align:center}
     .orders-summary{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}
     .summary-tile{border:1px solid var(--line);border-radius:15px;background:#f8fafc;padding:12px}
@@ -335,6 +336,8 @@
               <button class="method-btn" type="button" data-method="transferencia">Transferencia<span>Se coordina con la empresa</span></button>
             </div>
           </div>
+          <input class="input" id="codigo-referente" placeholder="Código de referente (opcional)" style="margin-top:12px;text-transform:uppercase" />
+          <small class="referral-help">Si un vendedor te compartió un código, cargalo acá.</small>
           <input class="input" id="notas-pedido" placeholder="Notas para este pedido (opcional)" style="margin-top:12px" />
           <button class="btn btn-primary btn-block" id="btn-send" style="margin-top:12px">Enviar pedido</button>
           <small class="muted small" id="checkout-msg" style="display:block;margin-top:8px"></small>

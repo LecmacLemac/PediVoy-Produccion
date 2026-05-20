@@ -49,6 +49,8 @@ Alcance inicial:
 
 - Modelo de datos para referentes, productos asociados, clientes asociados y comisiones.
 - Captura de `codigo_referente` o `referral_code` en `POST /public/pedidos`.
+- Campo visible de `codigo_referente` en la app cliente y en el pedido publico clasico.
+- Soporte de links con `?ref=CODIGO`, `?referente=CODIGO` o `?codigo_referente=CODIGO` en la app cliente.
 - Asociacion automatica de cliente a referente si el codigo existe y esta vigente.
 - Generacion de comisiones cuando un pedido pasa a `entregado`.
 - Endpoints admin basicos para gestionar referentes.

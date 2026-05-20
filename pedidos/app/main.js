@@ -12,6 +12,16 @@ let paymentMethod = 'efectivo';
 let ordersTimer = null;
 const lastOrderState = new Map();
 
+function getInitialReferenteCode() {
+  const params = new URLSearchParams(location.search);
+  return String(
+    params.get('codigo_referente')
+    || params.get('referente')
+    || params.get('ref')
+    || ''
+  ).trim().toUpperCase();
+}
+
 function esc(v) {
   return String(v ?? '').replace(/[&<>"']/g, (ch) => ({
     '&': '&amp;',
@@ -345,6 +355,7 @@ async function repeatOrder(orderId) {
       cart.push({
         id: `repeat-${orderId}-${idx}`,
         nombre: it.producto,
+        producto_id: Number(it.producto_id || 0) || null,
         precio: Number(it.precio_unitario || 0),
         cantidad: Number(it.cantidad || 1),
       });
@@ -495,7 +506,7 @@ function renderCart() {
 function addToCart(p) {
   const i = cart.findIndex((x) => String(x.id) === String(p.id));
   if (i >= 0) cart[i].cantidad += 1;
-  else cart.push({ id: p.id, nombre: p.nombre, precio: Number(p.precio || 0), cantidad: 1 });
+  else cart.push({ id: p.id, producto_id: Number(p.id || 0) || null, nombre: p.nombre, precio: Number(p.precio || 0), cantidad: 1 });
   renderCart();
   const quick = $('#quick-last-action');
   if (quick) quick.textContent = `${p.nombre} agregado`;
@@ -639,6 +650,10 @@ document.querySelectorAll('#payment-methods .method-btn').forEach((btn) => {
   $(sel)?.addEventListener('input', updateCheckoutState);
 });
 
+$('#codigo-referente')?.addEventListener('input', () => {
+  $('#codigo-referente').value = $('#codigo-referente').value.trim().toUpperCase();
+});
+
 $('#telefono').addEventListener('input', () => {
   const digits = normalizePhoneForInput($('#telefono').value.trim());
   if (digits === lastCompaniesLookup) return;
@@ -760,6 +775,7 @@ $('#btn-send').addEventListener('click', async () => {
     const ciudad = $('#checkout-ciudad').value.trim() || $('#ciudad').value.trim();
     const notas = $('#notas-pedido').value.trim();
     const tel = $('#checkout-telefono').value.trim() || $('#telefono-perfil').value.trim() || telefono;
+    const codigoReferente = $('#codigo-referente')?.value?.trim().toUpperCase() || '';
 
     if (!cliente || !direccion) throw new Error('Completá nombre y dirección');
     if (onlyDigits(tel).length < 8) throw new Error('Completá un teléfono válido');
@@ -772,7 +788,13 @@ $('#btn-send').addEventListener('click', async () => {
       ciudad,
       notas,
       metodo_pago: paymentMethod,
-      items: cart.map((i) => ({ producto: i.nombre, cantidad: i.cantidad, precio_unitario: i.precio })),
+      codigo_referente: codigoReferente || undefined,
+      items: cart.map((i) => ({
+        producto: i.nombre,
+        producto_id: Number(i.producto_id || i.id || 0) || undefined,
+        cantidad: i.cantidad,
+        precio_unitario: i.precio,
+      })),
     };
 
     const out = await j('/public/pedidos', {
@@ -782,6 +804,9 @@ $('#btn-send').addEventListener('click', async () => {
 
     cart.length = 0;
     renderCart();
+    if (out?.referente?.codigo) {
+      $('#codigo-referente').value = out.referente.codigo;
+    }
     await loadOrders();
     $('#quick-last-action').textContent = `Pedido #${out?.pedido?.id || ''} enviado`;
     showOrderAlert(`Pedido enviado #${out?.pedido?.id || ''}`);
@@ -798,6 +823,8 @@ document.addEventListener('visibilitychange', () => {
 
 (async function init() {
   await loadAuthProviders();
+  const initialReferenteCode = getInitialReferenteCode();
+  if (initialReferenteCode && $('#codigo-referente')) $('#codigo-referente').value = initialReferenteCode;
   try {
     await loadEmpresa();
     const me = await j('/api/public/app/me');

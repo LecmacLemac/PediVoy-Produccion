@@ -602,6 +602,11 @@
             <textarea name="notas" rows="2" placeholder="Portón negro, timbre roto, dejar en guardia..."></textarea>
           </label>
 
+          <label>
+            Código de referente (Opcional)
+            <input name="codigo_referente" id="codigo_referente" placeholder="Si un vendedor te compartió un código">
+          </label>
+
           <button type="submit" style="width:100%; margin-top:1.5rem;">
             Confirmar Pedido ➔
           </button>
@@ -960,6 +965,7 @@
       } else {
         carrito.push({
           producto: p.nombre,
+          producto_id: Number(p.id) || null,
           cantidad: 1,
           precio_unitario: Number(p.precio)
         });
@@ -1073,6 +1079,7 @@
 
       const fd = new FormData(formEl);
       const data = Object.fromEntries(fd.entries());
+      if (data.codigo_referente) data.codigo_referente = String(data.codigo_referente).trim().toUpperCase();
 
       const digits = normalizePhone(data.telefono || '');
       if (digits.length !== 10) {
