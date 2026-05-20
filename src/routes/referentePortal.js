@@ -135,6 +135,50 @@ export function createReferentePortalRouter(deps) {
            (SELECT COUNT(*)::int
               FROM referente_productos
              WHERE empresa_id = $1 AND referente_id = $2 AND activo = TRUE) AS productos_activos,
+           (SELECT COUNT(DISTINCT p.id)::int
+              FROM pedidos p
+              JOIN cliente_referentes cr
+                ON cr.empresa_id = p.empresa_id
+               AND cr.punto_entrega_id = p.punto_entrega_id
+             WHERE p.empresa_id = $1
+               AND cr.referente_id = $2
+               AND cr.estado = 'activo') AS pedidos_total,
+           (SELECT COUNT(DISTINCT p.id)::int
+              FROM pedidos p
+              JOIN cliente_referentes cr
+                ON cr.empresa_id = p.empresa_id
+               AND cr.punto_entrega_id = p.punto_entrega_id
+             WHERE p.empresa_id = $1
+               AND cr.referente_id = $2
+               AND cr.estado = 'activo'
+               AND COALESCE(p.fecha_entrega, p.fecha) >= NOW() - INTERVAL '30 days') AS pedidos_30d,
+           (SELECT COUNT(DISTINCT p.id)::int
+              FROM pedidos p
+              JOIN cliente_referentes cr
+                ON cr.empresa_id = p.empresa_id
+               AND cr.punto_entrega_id = p.punto_entrega_id
+             WHERE p.empresa_id = $1
+               AND cr.referente_id = $2
+               AND cr.estado = 'activo'
+               AND p.estado = 'entregado') AS pedidos_entregados,
+           (SELECT COUNT(DISTINCT p.id)::int
+              FROM pedidos p
+              JOIN cliente_referentes cr
+                ON cr.empresa_id = p.empresa_id
+               AND cr.punto_entrega_id = p.punto_entrega_id
+             WHERE p.empresa_id = $1
+               AND cr.referente_id = $2
+               AND cr.estado = 'activo'
+               AND p.estado IN ('pendiente','en_ruta','en_camino')) AS pedidos_activos,
+           (SELECT COALESCE(SUM(COALESCE(p.monto,0)),0)::numeric
+              FROM pedidos p
+              JOIN cliente_referentes cr
+                ON cr.empresa_id = p.empresa_id
+               AND cr.punto_entrega_id = p.punto_entrega_id
+             WHERE p.empresa_id = $1
+               AND cr.referente_id = $2
+               AND cr.estado = 'activo'
+               AND p.estado = 'entregado') AS ventas_entregadas,
            (SELECT COUNT(*)::int
               FROM referente_comisiones
              WHERE empresa_id = $1 AND referente_id = $2) AS comisiones_count,
@@ -153,6 +197,43 @@ export function createReferentePortalRouter(deps) {
     } catch (e) {
       console.error('REFERENTE.PORTAL.RESUMEN.ERROR', e);
       return res.status(500).json({ error: 'Error obteniendo resumen' });
+    }
+  });
+
+  router.get('/pedidos', async (req, res) => {
+    try {
+      const rows = await query(
+        `SELECT p.id, p.fecha, p.fecha_entrega, p.estado, p.monto, p.metodo_pago,
+                pe.cliente, pe.telefono, pe.direccion,
+                COALESCE(rc.comision_total, 0)::numeric AS comision_total
+           FROM pedidos p
+           JOIN cliente_referentes cr
+             ON cr.empresa_id = p.empresa_id
+            AND cr.punto_entrega_id = p.punto_entrega_id
+            AND cr.estado = 'activo'
+           JOIN puntos_entrega pe
+             ON pe.id = p.punto_entrega_id
+            AND pe.empresa_id = p.empresa_id
+           LEFT JOIN (
+             SELECT empresa_id, referente_id, pedido_id, SUM(monto_comision) AS comision_total
+               FROM referente_comisiones
+              WHERE empresa_id = $1
+                AND referente_id = $2
+              GROUP BY empresa_id, referente_id, pedido_id
+           ) rc
+             ON rc.empresa_id = p.empresa_id
+            AND rc.referente_id = cr.referente_id
+            AND rc.pedido_id = p.id
+          WHERE p.empresa_id = $1
+            AND cr.referente_id = $2
+          ORDER BY COALESCE(p.fecha_entrega, p.fecha) DESC, p.id DESC
+          LIMIT 300`,
+        [req.user.empresa_id, req.user.referente_id]
+      );
+      return res.json(rows);
+    } catch (e) {
+      console.error('REFERENTE.PORTAL.PEDIDOS.ERROR', e);
+      return res.status(500).json({ error: 'Error obteniendo pedidos' });
     }
   });
 

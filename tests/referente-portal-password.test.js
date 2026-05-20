@@ -7,7 +7,7 @@ import express from 'express';
 
 import { createReferentePortalRouter } from '../src/routes/referentePortal.js';
 
-async function requestWithRouter({ user, query, body }) {
+async function requestWithRouter({ user, query, path = '/password', method = 'PUT', body }) {
   const app = express();
   app.use(express.json());
   app.use('/api/referente', createReferentePortalRouter({
@@ -23,11 +23,12 @@ async function requestWithRouter({ user, query, body }) {
   const { port } = server.address();
 
   try {
-    const res = await fetch(`http://127.0.0.1:${port}/api/referente/password`, {
-      method: 'PUT',
+    const options = {
+      method,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
+    };
+    if (body !== undefined) options.body = JSON.stringify(body);
+    const res = await fetch(`http://127.0.0.1:${port}/api/referente${path}`, options);
     const json = await res.json();
     return { status: res.status, json };
   } finally {
@@ -90,4 +91,71 @@ test('referente no puede cambiar clave si la actual es incorrecta', async () => 
   assert.equal(result.status, 400);
   assert.equal(result.json.error, 'La clave actual no es correcta.');
   assert.equal(updated, false);
+});
+
+test('referente puede ver resumen operativo de pedidos vinculados', async () => {
+  const sqlCalls = [];
+
+  const result = await requestWithRouter({
+    user: { uid: 7, role: 'referente', empresa_id: 2, referente_id: 9 },
+    path: '/resumen',
+    method: 'GET',
+    async query(sql, params = []) {
+      sqlCalls.push({ sql, params });
+      assert.equal(params[0], 2);
+      assert.equal(params[1], 9);
+      assert.match(sql, /FROM pedidos p/);
+      assert.match(sql, /JOIN cliente_referentes cr/);
+      return [{
+        clientes_activos: 3,
+        productos_activos: 2,
+        pedidos_total: 11,
+        pedidos_30d: 4,
+        pedidos_entregados: 8,
+        pedidos_activos: 2,
+        ventas_entregadas: '15000',
+        comisiones_count: 5,
+        comisiones_total: '1200',
+        comisiones_liquidadas: '800',
+        comisiones_pendientes: '400',
+      }];
+    },
+  });
+
+  assert.equal(result.status, 200);
+  assert.equal(result.json.pedidos_total, 11);
+  assert.equal(result.json.pedidos_30d, 4);
+  assert.equal(result.json.ventas_entregadas, '15000');
+  assert.equal(sqlCalls.length, 1);
+});
+
+test('referente puede listar pedidos vinculados a sus clientes', async () => {
+  const result = await requestWithRouter({
+    user: { uid: 7, role: 'referente', empresa_id: 2, referente_id: 9 },
+    path: '/pedidos',
+    method: 'GET',
+    async query(sql, params = []) {
+      assert.equal(params[0], 2);
+      assert.equal(params[1], 9);
+      assert.match(sql, /JOIN cliente_referentes cr/);
+      assert.match(sql, /LEFT JOIN \(/);
+      return [{
+        id: 101,
+        fecha: '2026-05-20T12:00:00.000Z',
+        fecha_entrega: null,
+        estado: 'pendiente',
+        monto: '7000',
+        metodo_pago: 'efectivo',
+        cliente: 'Cliente Demo',
+        telefono: '351555555',
+        direccion: 'Av. Demo 123',
+        comision_total: '0',
+      }];
+    },
+  });
+
+  assert.equal(result.status, 200);
+  assert.equal(result.json.length, 1);
+  assert.equal(result.json[0].id, 101);
+  assert.equal(result.json[0].cliente, 'Cliente Demo');
 });

@@ -23,7 +23,7 @@
     h1{font-size:1.9rem;line-height:1.15;margin:0;color:#fff;letter-spacing:0}
     .muted{color:var(--muted)}
     .code{display:inline-flex;border:1px solid rgba(6,182,212,.25);background:rgba(6,182,212,.1);color:#a5f3fc;border-radius:7px;padding:3px 8px;font:800 .85rem ui-monospace,SFMono-Regular,Menlo,monospace}
-    .grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:12px}
     .card{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:16px}
     .metric span{display:block;color:var(--muted);font-size:.74rem;text-transform:uppercase;font-weight:800;letter-spacing:.04em}
     .metric strong{display:block;margin-top:7px;font-size:1.45rem;color:#fff}
@@ -46,7 +46,7 @@
     .badge.warn{background:rgba(245,158,11,.14);color:#fde68a}
     .toast{position:fixed;right:18px;bottom:20px;background:#fff;color:#0f172a;border-radius:99px;padding:10px 15px;font-weight:850;box-shadow:0 12px 30px rgba(0,0,0,.32);opacity:0;transform:translateY(8px);transition:.2s;pointer-events:none}
     .toast.show{opacity:1;transform:translateY(0)}
-    @media(max-width:860px){.hero,.layout{grid-template-columns:1fr}.grid{grid-template-columns:1fr 1fr}nav{align-items:flex-start;flex-direction:column;padding:14px 0}.top-actions{width:100%;justify-content:space-between}}
+    @media(max-width:860px){.hero,.layout{grid-template-columns:1fr}nav{align-items:flex-start;flex-direction:column;padding:14px 0}.top-actions{width:100%;justify-content:space-between}}
     @media(max-width:520px){.grid{grid-template-columns:1fr}.wrap{padding:0 12px}h1{font-size:1.55rem}}
   </style>
 </head>
@@ -73,6 +73,9 @@
     <section class="grid">
       <div class="card metric"><span>Clientes activos</span><strong id="mClientes">0</strong></div>
       <div class="card metric"><span>Productos activos</span><strong id="mProductos">0</strong></div>
+      <div class="card metric"><span>Pedidos vinculados</span><strong id="mPedidos">0</strong></div>
+      <div class="card metric"><span>Pedidos últimos 30 días</span><strong id="mPedidos30">0</strong></div>
+      <div class="card metric"><span>Ventas entregadas</span><strong id="mVentas">$0</strong></div>
       <div class="card metric"><span>Comisiones pendientes</span><strong id="mPendientes">$0</strong></div>
       <div class="card metric"><span>Total validado</span><strong id="mTotal">$0</strong></div>
     </section>
@@ -109,6 +112,16 @@
       </div>
 
       <div class="stack">
+        <section class="card">
+          <h2>Pedidos vinculados</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Fecha</th><th>Cliente</th><th>Pedido</th><th>Estado</th><th>Pago</th><th>Monto</th><th>Comisión</th></tr></thead>
+              <tbody id="tbPedidos"></tbody>
+            </table>
+          </div>
+        </section>
+
         <section class="card">
           <h2>Comisiones recientes</h2>
           <div class="table-wrap">
@@ -191,8 +204,30 @@
     function renderResumen(r) {
       $('#mClientes').textContent = Number(r?.clientes_activos || 0);
       $('#mProductos').textContent = Number(r?.productos_activos || 0);
+      $('#mPedidos').textContent = Number(r?.pedidos_total || 0);
+      $('#mPedidos30').textContent = Number(r?.pedidos_30d || 0);
+      $('#mVentas').textContent = money.format(Number(r?.ventas_entregadas || 0));
       $('#mPendientes').textContent = money.format(Number(r?.comisiones_pendientes || 0));
       $('#mTotal').textContent = money.format(Number(r?.comisiones_total || 0));
+    }
+
+    function renderPedidos(rows) {
+      $('#tbPedidos').innerHTML = rows?.length ? rows.map((p) => {
+        const fecha = p.fecha_entrega || p.fecha;
+        const estado = String(p.estado || 'pendiente').toLowerCase();
+        const badgeClass = estado === 'entregado' ? 'ok' : 'warn';
+        return `
+          <tr>
+            <td>${fecha ? esc(dateFmt.format(new Date(fecha))) : '-'}</td>
+            <td><strong>${esc(p.cliente || '-')}</strong><br><span class="muted">${esc(p.direccion || '')}</span></td>
+            <td>#${Number(p.id || 0)}</td>
+            <td><span class="badge ${badgeClass}">${esc(p.estado || 'pendiente')}</span></td>
+            <td>${esc(p.metodo_pago || '-')}</td>
+            <td>${money.format(Number(p.monto || 0))}</td>
+            <td>${money.format(Number(p.comision_total || 0))}</td>
+          </tr>
+        `;
+      }).join('') : emptyRow(7, 'Sin pedidos vinculados todavía.');
     }
 
     function renderComisiones(rows) {
@@ -233,15 +268,17 @@
     }
 
     async function loadAll() {
-      const [perfil, resumen, comisiones, clientes, productos] = await Promise.all([
+      const [perfil, resumen, pedidos, comisiones, clientes, productos] = await Promise.all([
         api('/api/referente/perfil'),
         api('/api/referente/resumen'),
+        api('/api/referente/pedidos'),
         api('/api/referente/comisiones'),
         api('/api/referente/clientes'),
         api('/api/referente/productos'),
       ]);
       renderPerfil(perfil);
       renderResumen(resumen);
+      renderPedidos(Array.isArray(pedidos) ? pedidos : []);
       renderComisiones(Array.isArray(comisiones) ? comisiones : []);
       renderClientes(Array.isArray(clientes) ? clientes : []);
       renderProductos(Array.isArray(productos) ? productos : []);
