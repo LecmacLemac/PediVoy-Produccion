@@ -514,6 +514,33 @@ CREATE UNIQUE INDEX IF NOT EXISTS cliente_referentes_un_activo_uniq
 CREATE INDEX IF NOT EXISTS cliente_referentes_referente_idx
   ON cliente_referentes (empresa_id, referente_id, estado);
 
+CREATE TABLE IF NOT EXISTS referente_clientes_propuestos (
+  id                    SERIAL PRIMARY KEY,
+  empresa_id             INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+  referente_id           INTEGER NOT NULL REFERENCES referentes(id) ON DELETE CASCADE,
+  cliente                TEXT NOT NULL,
+  telefono               TEXT,
+  direccion              TEXT,
+  ciudad                 TEXT,
+  provincia              TEXT,
+  pais                   TEXT,
+  email                  TEXT,
+  notas                  TEXT,
+  estado                 TEXT NOT NULL DEFAULT 'pendiente',
+  punto_entrega_id       INTEGER REFERENCES puntos_entrega(id) ON DELETE SET NULL,
+  reviewed_at            TIMESTAMPTZ,
+  reviewed_by            INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
+  rechazo_motivo         TEXT,
+  created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at             TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS referente_clientes_propuestos_empresa_estado_idx
+  ON referente_clientes_propuestos (empresa_id, estado, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS referente_clientes_propuestos_referente_idx
+  ON referente_clientes_propuestos (empresa_id, referente_id, estado);
+
 CREATE TABLE IF NOT EXISTS referente_comisiones (
   id                    SERIAL PRIMARY KEY,
   empresa_id             INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,

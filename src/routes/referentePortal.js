@@ -4,6 +4,7 @@ import bcrypt from 'bcryptjs';
 import { ensureReferenteNotificationsSchema } from '../services/referenteNotifications.js';
 
 let referenteProfileSchemaReady = false;
+let referenteClientesPropuestosSchemaReady = false;
 
 function cleanText(value, max = 280) {
   const text = String(value ?? '').trim();
@@ -41,6 +42,41 @@ export function createReferentePortalRouter(deps) {
         ADD COLUMN IF NOT EXISTS direccion TEXT
     `);
     referenteProfileSchemaReady = true;
+  }
+
+  async function ensureReferenteClientesPropuestosSchema() {
+    if (referenteClientesPropuestosSchemaReady) return;
+    await query(`
+      CREATE TABLE IF NOT EXISTS referente_clientes_propuestos (
+        id                    SERIAL PRIMARY KEY,
+        empresa_id             INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+        referente_id           INTEGER NOT NULL REFERENCES referentes(id) ON DELETE CASCADE,
+        cliente                TEXT NOT NULL,
+        telefono               TEXT,
+        direccion              TEXT,
+        ciudad                 TEXT,
+        provincia              TEXT,
+        pais                   TEXT,
+        email                  TEXT,
+        notas                  TEXT,
+        estado                 TEXT NOT NULL DEFAULT 'pendiente',
+        punto_entrega_id       INTEGER REFERENCES puntos_entrega(id) ON DELETE SET NULL,
+        reviewed_at            TIMESTAMPTZ,
+        reviewed_by            INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
+        rechazo_motivo         TEXT,
+        created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at             TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await query(`
+      CREATE INDEX IF NOT EXISTS referente_clientes_propuestos_empresa_estado_idx
+        ON referente_clientes_propuestos (empresa_id, estado, created_at DESC)
+    `);
+    await query(`
+      CREATE INDEX IF NOT EXISTS referente_clientes_propuestos_referente_idx
+        ON referente_clientes_propuestos (empresa_id, referente_id, estado)
+    `);
+    referenteClientesPropuestosSchemaReady = true;
   }
 
   function requireReferente(req, res, next) {
@@ -318,6 +354,62 @@ export function createReferentePortalRouter(deps) {
     } catch (e) {
       console.error('REFERENTE.PORTAL.CLIENTES.ERROR', e);
       return res.status(500).json({ error: 'Error obteniendo clientes' });
+    }
+  });
+
+  router.get('/clientes-propuestos', async (req, res) => {
+    try {
+      await ensureReferenteClientesPropuestosSchema();
+      const rows = await query(
+        `SELECT id, cliente, telefono, direccion, ciudad, provincia, pais, email,
+                notas, estado, punto_entrega_id, rechazo_motivo,
+                reviewed_at, created_at, updated_at
+           FROM referente_clientes_propuestos
+          WHERE empresa_id = $1
+            AND referente_id = $2
+          ORDER BY CASE estado WHEN 'pendiente' THEN 0 WHEN 'aprobado' THEN 1 ELSE 2 END,
+                   created_at DESC,
+                   id DESC
+          LIMIT 300`,
+        [req.user.empresa_id, req.user.referente_id]
+      );
+      return res.json(rows);
+    } catch (e) {
+      console.error('REFERENTE.PORTAL.CLIENTES_PROPUESTOS.ERROR', e);
+      return res.status(500).json({ error: 'Error obteniendo clientes propuestos' });
+    }
+  });
+
+  router.post('/clientes-propuestos', async (req, res) => {
+    try {
+      await ensureReferenteClientesPropuestosSchema();
+      const cliente = cleanText(req.body?.cliente, 160);
+      if (!cliente) return res.status(400).json({ error: 'Falta nombre del cliente.' });
+
+      const rows = await query(
+        `INSERT INTO referente_clientes_propuestos (
+           empresa_id, referente_id, cliente, telefono, direccion, ciudad,
+           provincia, pais, email, notas, estado
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'pendiente')
+         RETURNING id, cliente, telefono, direccion, ciudad, provincia, pais, email,
+                   notas, estado, created_at`,
+        [
+          req.user.empresa_id,
+          req.user.referente_id,
+          cliente,
+          cleanText(req.body?.telefono, 80),
+          cleanText(req.body?.direccion, 220),
+          cleanText(req.body?.ciudad, 120),
+          cleanText(req.body?.provincia, 120),
+          cleanText(req.body?.pais, 80) || 'Argentina',
+          cleanText(req.body?.email, 180),
+          cleanText(req.body?.notas, 600),
+        ]
+      );
+      return res.status(201).json(rows[0]);
+    } catch (e) {
+      console.error('REFERENTE.PORTAL.CLIENTES_PROPUESTOS.CREATE.ERROR', e);
+      return res.status(500).json({ error: 'Error enviando cliente a validación' });
     }
   });
 

@@ -127,6 +127,23 @@
           </div>
         </section>
 
+        <form id="clientePropuestoForm" class="card">
+          <h2>Proponer cliente</h2>
+          <label for="propCliente">Cliente</label>
+          <input id="propCliente" required />
+          <label for="propTelefono">Teléfono</label>
+          <input id="propTelefono" />
+          <label for="propDireccion">Dirección</label>
+          <input id="propDireccion" />
+          <label for="propCiudad">Ciudad</label>
+          <input id="propCiudad" />
+          <label for="propNotas">Notas</label>
+          <textarea id="propNotas" rows="3"></textarea>
+          <div style="display:flex;justify-content:flex-end;margin-top:14px">
+            <button id="btnClientePropuesto" class="btn" type="submit">Enviar a validación</button>
+          </div>
+        </form>
+
         <form id="passwordForm" class="card">
           <h2>Cambiar clave</h2>
           <label for="currentPassword">Clave actual</label>
@@ -188,6 +205,16 @@
             <table>
               <thead><tr><th>Cliente</th><th>Teléfono</th><th>Dirección</th><th>Desde</th></tr></thead>
               <tbody id="tbClientes"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2>Clientes propuestos</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Cliente</th><th>Teléfono</th><th>Dirección</th><th>Estado</th><th>Fecha</th></tr></thead>
+              <tbody id="tbClientesPropuestos"></tbody>
             </table>
           </div>
         </section>
@@ -377,6 +404,22 @@
       `).join('') : emptyRow(4, 'Sin clientes vinculados.');
     }
 
+    function renderClientesPropuestos(rows) {
+      $('#tbClientesPropuestos').innerHTML = rows?.length ? rows.map((c) => {
+        const estado = String(c.estado || 'pendiente').toLowerCase();
+        const badgeClass = estado === 'aprobado' ? 'ok' : (estado === 'rechazado' ? 'warn' : 'warn');
+        return `
+          <tr>
+            <td><strong>${esc(c.cliente || '-')}</strong>${c.rechazo_motivo ? `<br><span class="muted">${esc(c.rechazo_motivo)}</span>` : ''}</td>
+            <td>${esc(c.telefono || '-')}</td>
+            <td>${esc(c.direccion || '-')}</td>
+            <td><span class="badge ${badgeClass}">${esc(c.estado || 'pendiente')}</span></td>
+            <td>${c.created_at ? esc(dateFmt.format(new Date(c.created_at))) : '-'}</td>
+          </tr>
+        `;
+      }).join('') : emptyRow(5, 'Sin clientes propuestos.');
+    }
+
     function renderProductos(rows) {
       $('#tbProductos').innerHTML = rows?.length ? rows.map((p) => `
         <tr>
@@ -389,12 +432,13 @@
     }
 
     async function loadAll() {
-      const [perfil, resumen, pedidos, comisiones, clientes, productos, notificaciones, reglas] = await Promise.all([
+      const [perfil, resumen, pedidos, comisiones, clientes, clientesPropuestos, productos, notificaciones, reglas] = await Promise.all([
         api('/api/referente/perfil'),
         api('/api/referente/resumen'),
         api('/api/referente/pedidos'),
         api('/api/referente/comisiones'),
         api('/api/referente/clientes'),
+        api('/api/referente/clientes-propuestos'),
         api('/api/referente/productos'),
         api('/api/referente/notificaciones'),
         api('/api/referente/reglas'),
@@ -404,6 +448,7 @@
       renderPedidos(Array.isArray(pedidos) ? pedidos : []);
       renderComisiones(Array.isArray(comisiones) ? comisiones : []);
       renderClientes(Array.isArray(clientes) ? clientes : []);
+      renderClientesPropuestos(Array.isArray(clientesPropuestos) ? clientesPropuestos : []);
       renderProductos(Array.isArray(productos) ? productos : []);
       renderNotificaciones(Array.isArray(notificaciones) ? notificaciones : []);
       renderReglas(reglas || {});
@@ -426,6 +471,35 @@
         toast('Información actualizada');
       } catch (err) {
         toast(err.message || 'No se pudo guardar');
+      }
+    });
+
+    $('#clientePropuestoForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const btn = $('#btnClientePropuesto');
+      const prevText = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = 'Enviando...';
+      try {
+        await api('/api/referente/clientes-propuestos', {
+          method:'POST',
+          body: JSON.stringify({
+            cliente: $('#propCliente').value.trim(),
+            telefono: $('#propTelefono').value.trim() || null,
+            direccion: $('#propDireccion').value.trim() || null,
+            ciudad: $('#propCiudad').value.trim() || null,
+            notas: $('#propNotas').value.trim() || null,
+          }),
+        });
+        e.target.reset();
+        toast('Cliente enviado a validación');
+        const rows = await api('/api/referente/clientes-propuestos');
+        renderClientesPropuestos(Array.isArray(rows) ? rows : []);
+      } catch (err) {
+        toast(err.message || 'No se pudo enviar el cliente');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = prevText;
       }
     });
 

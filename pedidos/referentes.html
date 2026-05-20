@@ -123,6 +123,7 @@
       <div class="metric"><span>Referentes activos</span><strong id="mActivos">0</strong></div>
       <div class="metric"><span>Clientes asociados</span><strong id="mClientes">0</strong></div>
       <div class="metric"><span>Productos asociados</span><strong id="mProductos">0</strong></div>
+      <div class="metric"><span>Clientes a validar</span><strong id="mPropuestos">0</strong></div>
       <div class="metric"><span>Pendiente a liquidar</span><strong id="mPendientes">$0</strong></div>
       <div class="metric"><span>Liquidado</span><strong id="mLiquidadas">$0</strong></div>
     </section>
@@ -158,6 +159,33 @@
           </thead>
           <tbody id="tbReferentes">
             <tr><td colspan="10" style="text-align:center;padding:2.5rem;color:var(--muted)">Cargando referentes...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="page-head" style="margin-bottom:1rem">
+        <div>
+          <h3>Clientes propuestos</h3>
+          <div class="muted">El referente puede cargar prospectos; administración decide cuándo se crean como clientes y se vinculan.</div>
+        </div>
+      </div>
+      <div class="table-responsive">
+        <table>
+          <thead>
+            <tr>
+              <th>Fecha</th>
+              <th>Referente</th>
+              <th>Cliente</th>
+              <th>Teléfono</th>
+              <th>Dirección</th>
+              <th>Notas</th>
+              <th style="text-align:right">Acción</th>
+            </tr>
+          </thead>
+          <tbody id="tbClientesPropuestos">
+            <tr><td colspan="7" style="text-align:center;padding:2rem;color:var(--muted)">Sin clientes pendientes.</td></tr>
           </tbody>
         </table>
       </div>
@@ -334,7 +362,7 @@
     const $ = (s) => document.querySelector(s);
     const money = new Intl.NumberFormat('es-AR', { style:'currency', currency:'ARS', maximumFractionDigits:0 });
     const dateFmt = new Intl.DateTimeFormat('es-AR', { day:'2-digit', month:'2-digit', year:'2-digit' });
-    const state = { user:null, isSuper:false, referentes:[], productos:[], productosAsignados:new Map(), comisiones:[], comisionesSeleccionadas:new Set() };
+    const state = { user:null, isSuper:false, referentes:[], productos:[], productosAsignados:new Map(), comisiones:[], clientesPropuestos:[], comisionesSeleccionadas:new Set() };
 
     function toast(msg) {
       const t = $('#toast');
@@ -382,11 +410,13 @@
       const activos = state.referentes.filter((r) => r.activo).length;
       const clientes = state.referentes.reduce((a, r) => a + Number(r.clientes_count || 0), 0);
       const productos = state.referentes.reduce((a, r) => a + Number(r.productos_count || 0), 0);
+      const propuestos = state.clientesPropuestos.filter((c) => c.estado === 'pendiente').length;
       const pendientes = state.referentes.reduce((a, r) => a + Number(r.comisiones_pendientes || 0), 0);
       const liquidadas = state.referentes.reduce((a, r) => a + Number(r.comisiones_liquidadas || 0), 0);
       $('#mActivos').textContent = activos;
       $('#mClientes').textContent = clientes;
       $('#mProductos').textContent = productos;
+      $('#mPropuestos').textContent = propuestos;
       $('#mPendientes').textContent = money.format(pendientes);
       $('#mLiquidadas').textContent = money.format(liquidadas);
     }
@@ -466,6 +496,31 @@
       });
     }
 
+    function renderClientesPropuestos() {
+      renderSummary();
+      const tb = $('#tbClientesPropuestos');
+      if (!state.clientesPropuestos.length) {
+        tb.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:2rem;color:var(--muted)">Sin clientes pendientes.</td></tr>';
+        return;
+      }
+      tb.innerHTML = state.clientesPropuestos.map((c) => `
+        <tr>
+          <td>${c.created_at ? esc(dateFmt.format(new Date(c.created_at))) : '-'}</td>
+          <td>${esc(c.referente_nombre || '-')} <div class="code">${esc(c.referente_codigo || '')}</div></td>
+          <td><strong>${esc(c.cliente || '-')}</strong></td>
+          <td>${esc(c.telefono || '-')}</td>
+          <td>${esc([c.direccion, c.ciudad].filter(Boolean).join(', ') || '-')}</td>
+          <td>${esc(c.notas || '-')}</td>
+          <td style="text-align:right">
+            <div class="actions">
+              <button class="btn btn-sm" onclick="aprobarClientePropuesto(${Number(c.id)})">Aprobar</button>
+              <button class="btn btn-sm btn-danger" onclick="rechazarClientePropuesto(${Number(c.id)})">Rechazar</button>
+            </div>
+          </td>
+        </tr>
+      `).join('');
+    }
+
     function renderProductosPicker(asignados = []) {
       const assigned = new Map(asignados.map((p) => [Number(p.producto_id), p]));
       state.productosAsignados = assigned;
@@ -501,19 +556,24 @@
       if (state.isSuper && !$('#empSel').value) {
         state.referentes = [];
         state.comisiones = [];
+        state.clientesPropuestos = [];
         renderReferentes();
         renderComisiones();
+        renderClientesPropuestos();
         return;
       }
-      const [refs, coms] = await Promise.all([
+      const [refs, coms, clientesPropuestos] = await Promise.all([
         api('/api/referentes' + empresaQS()),
         api('/api/referentes/comisiones' + empresaQS()),
+        api('/api/referentes/clientes-propuestos' + empresaQS()),
       ]);
       state.referentes = Array.isArray(refs) ? refs : [];
       state.comisiones = Array.isArray(coms) ? coms : [];
+      state.clientesPropuestos = Array.isArray(clientesPropuestos) ? clientesPropuestos : [];
       state.comisionesSeleccionadas = new Set([...state.comisionesSeleccionadas].filter((id) => state.comisiones.some((c) => Number(c.id) === id && c.estado === 'validada')));
       renderReferentes();
       renderComisiones();
+      renderClientesPropuestos();
     }
 
     function getComisionesPendientes(ids) {
@@ -711,6 +771,38 @@
         await refreshAll();
       } catch (e) {
         toast(e.message || 'No se pudo eliminar');
+      }
+    }
+
+    async function aprobarClientePropuesto(id) {
+      if (!confirm('Aprobar este cliente y vincularlo al referente?')) return;
+      const body = {};
+      if (state.isSuper) body.empresa_id = Number($('#empSel').value);
+      try {
+        await api(`/api/referentes/clientes-propuestos/${id}/aprobar`, {
+          method:'POST',
+          body: JSON.stringify(body),
+        });
+        toast('Cliente aprobado y vinculado');
+        await refreshAll();
+      } catch (e) {
+        toast(e.message || 'No se pudo aprobar');
+      }
+    }
+
+    async function rechazarClientePropuesto(id) {
+      const motivo = prompt('Motivo del rechazo opcional') || '';
+      const body = { motivo: motivo.trim() || null };
+      if (state.isSuper) body.empresa_id = Number($('#empSel').value);
+      try {
+        await api(`/api/referentes/clientes-propuestos/${id}/rechazar`, {
+          method:'POST',
+          body: JSON.stringify(body),
+        });
+        toast('Cliente propuesto rechazado');
+        await refreshAll();
+      } catch (e) {
+        toast(e.message || 'No se pudo rechazar');
       }
     }
 

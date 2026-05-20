@@ -7,6 +7,7 @@ import { createComisionLiquidadaNotifications } from '../services/referenteNotif
 let referentesAccessSchemaReady = false;
 let referentesLiquidacionesSchemaReady = false;
 let referentesProfileSchemaReady = false;
+let referentesClientesPropuestosSchemaReady = false;
 
 function cleanText(value, max = 280) {
   const text = String(value ?? '').trim();
@@ -51,6 +52,41 @@ export function createReferentesRouter(deps) {
         ADD COLUMN IF NOT EXISTS liquidada_por INTEGER REFERENCES usuarios(id) ON DELETE SET NULL
     `);
     referentesLiquidacionesSchemaReady = true;
+  }
+
+  async function ensureReferenteClientesPropuestosSchema() {
+    if (referentesClientesPropuestosSchemaReady) return;
+    await query(`
+      CREATE TABLE IF NOT EXISTS referente_clientes_propuestos (
+        id                    SERIAL PRIMARY KEY,
+        empresa_id             INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+        referente_id           INTEGER NOT NULL REFERENCES referentes(id) ON DELETE CASCADE,
+        cliente                TEXT NOT NULL,
+        telefono               TEXT,
+        direccion              TEXT,
+        ciudad                 TEXT,
+        provincia              TEXT,
+        pais                   TEXT,
+        email                  TEXT,
+        notas                  TEXT,
+        estado                 TEXT NOT NULL DEFAULT 'pendiente',
+        punto_entrega_id       INTEGER REFERENCES puntos_entrega(id) ON DELETE SET NULL,
+        reviewed_at            TIMESTAMPTZ,
+        reviewed_by            INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
+        rechazo_motivo         TEXT,
+        created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at             TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await query(`
+      CREATE INDEX IF NOT EXISTS referente_clientes_propuestos_empresa_estado_idx
+        ON referente_clientes_propuestos (empresa_id, estado, created_at DESC)
+    `);
+    await query(`
+      CREATE INDEX IF NOT EXISTS referente_clientes_propuestos_referente_idx
+        ON referente_clientes_propuestos (empresa_id, referente_id, estado)
+    `);
+    referentesClientesPropuestosSchemaReady = true;
   }
 
   function isReferenteUser(req) {
@@ -373,6 +409,160 @@ export function createReferentesRouter(deps) {
     } catch (e) {
       console.error('REFERENTES.PRODUCTOS.ERROR', e);
       return res.status(500).json({ error: 'Error guardando productos del referente' });
+    }
+  });
+
+  router.get('/clientes-propuestos', withAuth, async (req, res) => {
+    try {
+      if (!requireBackoffice(req, res)) return;
+      await ensureReferenteClientesPropuestosSchema();
+      const empresaId = resolveEmpresa(req);
+      if (!empresaId) return res.status(400).json({ error: 'Falta empresa.' });
+      const estado = String(req.query?.estado || 'pendiente').trim().toLowerCase();
+      const estadosValidos = ['pendiente', 'aprobado', 'rechazado', 'todos'];
+      const filtroEstado = estadosValidos.includes(estado) ? estado : 'pendiente';
+
+      const params = [empresaId];
+      let estadoWhere = "AND rcp.estado = 'pendiente'";
+      if (filtroEstado !== 'pendiente') {
+        estadoWhere = filtroEstado === 'todos' ? '' : 'AND rcp.estado = $2';
+        if (filtroEstado !== 'todos') params.push(filtroEstado);
+      }
+
+      const rows = await query(
+        `SELECT rcp.*,
+                r.nombre AS referente_nombre,
+                r.codigo AS referente_codigo,
+                pe.cliente AS cliente_aprobado_nombre,
+                u.username AS reviewed_by_username
+           FROM referente_clientes_propuestos rcp
+           JOIN referentes r ON r.id = rcp.referente_id
+           LEFT JOIN puntos_entrega pe ON pe.id = rcp.punto_entrega_id
+           LEFT JOIN usuarios u ON u.id = rcp.reviewed_by
+          WHERE rcp.empresa_id = $1
+            ${estadoWhere}
+          ORDER BY CASE rcp.estado WHEN 'pendiente' THEN 0 WHEN 'aprobado' THEN 1 ELSE 2 END,
+                   rcp.created_at DESC,
+                   rcp.id DESC
+          LIMIT 300`,
+        params
+      );
+      return res.json(rows);
+    } catch (e) {
+      console.error('REFERENTES.CLIENTES_PROPUESTOS.ERROR', e);
+      return res.status(500).json({ error: 'Error listando clientes propuestos' });
+    }
+  });
+
+  router.post('/clientes-propuestos/:id/aprobar', withAuth, async (req, res) => {
+    try {
+      if (!requireBackoffice(req, res)) return;
+      await ensureReferenteClientesPropuestosSchema();
+      const empresaId = resolveEmpresa(req, req.body || {});
+      const id = Number(req.params.id);
+      if (!empresaId || !id) return res.status(400).json({ error: 'Datos invalidos.' });
+
+      const rows = await query(
+        `WITH propuesta AS (
+           SELECT *
+             FROM referente_clientes_propuestos
+            WHERE id = $1
+              AND empresa_id = $2
+              AND estado = 'pendiente'
+         ),
+         cliente_creado AS (
+           INSERT INTO puntos_entrega (
+             empresa_id, cliente, telefono, direccion, ciudad, provincia, pais,
+             email, notas
+           )
+           SELECT empresa_id,
+                  COALESCE($4, cliente),
+                  COALESCE($5, telefono),
+                  COALESCE($6, direccion),
+                  COALESCE($7, ciudad),
+                  COALESCE($8, provincia),
+                  COALESCE($9, pais, 'Argentina'),
+                  COALESCE($10, email),
+                  COALESCE($11, notas)
+             FROM propuesta
+           RETURNING id
+         ),
+         vinculo AS (
+           INSERT INTO cliente_referentes (
+             empresa_id, punto_entrega_id, referente_id, codigo_referente, estado, asociado_at
+           )
+           SELECT p.empresa_id, cc.id, p.referente_id, r.codigo, 'activo', NOW()
+             FROM propuesta p
+             JOIN cliente_creado cc ON TRUE
+             JOIN referentes r ON r.id = p.referente_id
+           ON CONFLICT DO NOTHING
+           RETURNING id
+         ),
+         actualizada AS (
+           UPDATE referente_clientes_propuestos rcp
+              SET estado = 'aprobado',
+                  punto_entrega_id = (SELECT id FROM cliente_creado),
+                  reviewed_at = NOW(),
+                  reviewed_by = $3,
+                  updated_at = NOW()
+            WHERE rcp.id = $1
+              AND rcp.empresa_id = $2
+              AND rcp.estado = 'pendiente'
+            RETURNING rcp.*
+         )
+         SELECT actualizada.*,
+                (SELECT id FROM cliente_creado) AS cliente_id,
+                (SELECT id FROM vinculo) AS vinculo_id
+           FROM actualizada`,
+        [
+          id,
+          empresaId,
+          req.user?.uid || null,
+          cleanText(req.body?.cliente, 160),
+          cleanText(req.body?.telefono, 80),
+          cleanText(req.body?.direccion, 220),
+          cleanText(req.body?.ciudad, 120),
+          cleanText(req.body?.provincia, 120),
+          cleanText(req.body?.pais, 80),
+          cleanText(req.body?.email, 180),
+          cleanText(req.body?.notas, 600),
+        ]
+      );
+
+      if (!rows.length) return res.status(404).json({ error: 'Cliente propuesto pendiente no encontrado.' });
+      return res.json(rows[0]);
+    } catch (e) {
+      console.error('REFERENTES.CLIENTES_PROPUESTOS.APROBAR.ERROR', e);
+      return res.status(500).json({ error: 'Error aprobando cliente propuesto' });
+    }
+  });
+
+  router.post('/clientes-propuestos/:id/rechazar', withAuth, async (req, res) => {
+    try {
+      if (!requireBackoffice(req, res)) return;
+      await ensureReferenteClientesPropuestosSchema();
+      const empresaId = resolveEmpresa(req, req.body || {});
+      const id = Number(req.params.id);
+      if (!empresaId || !id) return res.status(400).json({ error: 'Datos invalidos.' });
+
+      const rows = await query(
+        `UPDATE referente_clientes_propuestos
+            SET estado = 'rechazado',
+                rechazo_motivo = $4,
+                reviewed_at = NOW(),
+                reviewed_by = $3,
+                updated_at = NOW()
+          WHERE id = $1
+            AND empresa_id = $2
+            AND estado = 'pendiente'
+          RETURNING *`,
+        [id, empresaId, req.user?.uid || null, cleanText(req.body?.motivo, 500)]
+      );
+      if (!rows.length) return res.status(404).json({ error: 'Cliente propuesto pendiente no encontrado.' });
+      return res.json(rows[0]);
+    } catch (e) {
+      console.error('REFERENTES.CLIENTES_PROPUESTOS.RECHAZAR.ERROR', e);
+      return res.status(500).json({ error: 'Error rechazando cliente propuesto' });
     }
   });
 
