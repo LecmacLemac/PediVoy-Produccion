@@ -93,6 +93,31 @@ test('referente no puede cambiar clave si la actual es incorrecta', async () => 
   assert.equal(updated, false);
 });
 
+test('referente recibe slug de empresa para armar link de invitacion', async () => {
+  const result = await requestWithRouter({
+    user: { uid: 7, role: 'referente', empresa_id: 2, referente_id: 9 },
+    path: '/perfil',
+    method: 'GET',
+    async query(sql, params = []) {
+      assert.equal(params[0], 9);
+      assert.equal(params[1], 2);
+      assert.match(sql, /e\.landing_slug AS empresa_slug/);
+      return [{
+        id: 9,
+        empresa_id: 2,
+        nombre: 'Referente Demo',
+        codigo: 'REF9',
+        empresa_nombre: 'Empresa Demo',
+        empresa_slug: 'empresa-demo',
+      }];
+    },
+  });
+
+  assert.equal(result.status, 200);
+  assert.equal(result.json.codigo, 'REF9');
+  assert.equal(result.json.empresa_slug, 'empresa-demo');
+});
+
 test('referente puede ver resumen operativo de pedidos vinculados', async () => {
   const sqlCalls = [];
 

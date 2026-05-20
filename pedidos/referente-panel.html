@@ -44,6 +44,8 @@
     .badge{border-radius:99px;padding:3px 8px;font-size:.74rem;font-weight:850;text-transform:uppercase}
     .badge.ok{background:rgba(16,185,129,.14);color:#86efac}
     .badge.warn{background:rgba(245,158,11,.14);color:#fde68a}
+    .share-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center}
+    .share-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
     .toast{position:fixed;right:18px;bottom:20px;background:#fff;color:#0f172a;border-radius:99px;padding:10px 15px;font-weight:850;box-shadow:0 12px 30px rgba(0,0,0,.32);opacity:0;transform:translateY(8px);transition:.2s;pointer-events:none}
     .toast.show{opacity:1;transform:translateY(0)}
     @media(max-width:860px){.hero,.layout{grid-template-columns:1fr}nav{align-items:flex-start;flex-direction:column;padding:14px 0}.top-actions{width:100%;justify-content:space-between}}
@@ -96,6 +98,19 @@
             <button class="btn" type="submit">Guardar cambios</button>
           </div>
         </form>
+
+        <section class="card">
+          <h2>Link de invitación</h2>
+          <p class="muted">Compartí este enlace para que el cliente entre con tu código cargado.</p>
+          <label for="inviteLink">Enlace</label>
+          <div class="share-row">
+            <input id="inviteLink" readonly />
+            <button id="btnCopyInvite" class="btn" type="button">Copiar</button>
+          </div>
+          <div class="share-actions">
+            <a id="btnWhatsAppInvite" class="btn" href="#" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;text-decoration:none">WhatsApp</a>
+          </div>
+        </section>
 
         <form id="passwordForm" class="card">
           <h2>Cambiar clave</h2>
@@ -199,6 +214,23 @@
       $('#telefono').value = p?.telefono || '';
       $('#email').value = p?.email || '';
       $('#notas').value = p?.notas || '';
+      renderInviteLink(p);
+    }
+
+    function buildInviteLink(p) {
+      const url = new URL('/pedidos/app/', location.origin);
+      const slug = String(p?.empresa_slug || '').trim();
+      const codigo = String(p?.codigo || '').trim().toUpperCase();
+      if (slug) url.searchParams.set('slug', slug);
+      if (codigo) url.searchParams.set('referente', codigo);
+      return url.toString();
+    }
+
+    function renderInviteLink(p) {
+      const link = buildInviteLink(p);
+      $('#inviteLink').value = link;
+      const text = `Hola, te comparto mi link de PediVoy para hacer tu pedido: ${link}`;
+      $('#btnWhatsAppInvite').href = `https://wa.me/?text=${encodeURIComponent(text)}`;
     }
 
     function renderResumen(r) {
@@ -348,6 +380,18 @@
       } finally {
         btn.disabled = false;
         btn.textContent = prevText;
+      }
+    });
+
+    $('#btnCopyInvite').addEventListener('click', async () => {
+      const link = $('#inviteLink').value;
+      try {
+        await navigator.clipboard.writeText(link);
+        toast('Link copiado');
+      } catch {
+        $('#inviteLink').select();
+        document.execCommand('copy');
+        toast('Link copiado');
       }
     });
 

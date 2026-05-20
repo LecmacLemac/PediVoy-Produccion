@@ -31,7 +31,8 @@ export function createReferentePortalRouter(deps) {
         `SELECT r.id, r.empresa_id, r.nombre, r.telefono, r.email, r.codigo,
                 r.porcentaje_comision, r.vigente_desde, r.vigente_hasta,
                 r.activo, r.notas, r.created_at, r.updated_at,
-                e.nombre AS empresa_nombre
+                e.nombre AS empresa_nombre,
+                e.landing_slug AS empresa_slug
            FROM referentes r
            JOIN empresas e ON e.id = r.empresa_id
           WHERE r.id = $1
