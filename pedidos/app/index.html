@@ -48,8 +48,9 @@
     .stat-card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:12px 12px 13px;box-shadow:0 10px 24px rgba(15,23,42,.05)}
     .stat-label{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:800;margin-bottom:6px}
     .stat-value{display:block;font-size:15px;font-weight:800;color:var(--text)}
-    .layout{display:grid;grid-template-columns:1fr;gap:16px;align-items:start}
-    .stack{display:grid;gap:16px}
+    .layout{display:block}
+    .stack{display:block}
+    .stack>.card{margin-bottom:16px}
     .app-tabs{position:sticky;top:8px;z-index:5;display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin:0 0 14px;padding:6px;border:1px solid var(--line);border-radius:18px;background:rgba(255,255,255,.96);box-shadow:0 12px 30px rgba(15,23,42,.08)}
     .tab-btn{border:none;background:transparent;color:var(--muted);font-size:12px;font-weight:800;padding:10px 6px;border-radius:13px;cursor:pointer}
     .tab-btn.active{background:#0f172a;color:#fff}
@@ -80,6 +81,11 @@
     .icon-btn{width:42px;min-width:42px;height:42px;border-radius:14px;border:1px solid var(--line);background:#fff;color:var(--text);font-size:18px;font-weight:900;cursor:pointer}
     .muted{color:var(--muted)}
     .hidden{display:none !important}
+    .app-view{animation:viewIn .16s ease-out}
+    @keyframes viewIn{
+      from{opacity:.2;transform:translateY(6px)}
+      to{opacity:1;transform:translateY(0)}
+    }
     .customer-strip{display:grid;grid-template-columns:1fr;gap:10px;margin-bottom:12px}
     .customer-card{padding:13px;border:1px solid var(--line);border-radius:16px;background:#f8fafc}
     .customer-card strong{display:block;margin-bottom:4px}
@@ -137,7 +143,6 @@
     .app-note{font-size:12px;color:rgba(255,255,255,.82);margin-top:10px}
     @media (min-width: 760px){
       .wrap{max-width:980px;margin-top:12px}
-      .layout{grid-template-columns:minmax(0,1.1fr) minmax(320px,.9fr)}
       .grid{grid-template-columns:repeat(2,minmax(0,1fr))}
       .customer-strip{grid-template-columns:repeat(3,1fr)}
       .app-tabs{position:static}
@@ -235,7 +240,7 @@
           </div>
         </section>
 
-        <section class="card hidden" id="step-profile">
+        <section class="card hidden app-view" id="step-profile">
           <div class="section-head">
             <div class="section-title">
               <span class="step">3</span>
@@ -261,7 +266,7 @@
           <small class="muted small" id="profile-msg" style="display:block;margin-top:8px"></small>
         </section>
 
-        <section class="card hidden" id="step-catalog">
+        <section class="card hidden app-view" id="step-catalog">
           <div class="section-head">
             <div class="section-title">
               <span class="step">4</span>
@@ -303,7 +308,7 @@
       </div>
 
       <div class="stack">
-        <section class="card hidden" id="step-cart">
+        <section class="card hidden app-view" id="step-cart">
           <div class="section-head">
             <div class="section-title">
               <span class="step">5</span>
@@ -343,7 +348,7 @@
           <small class="muted small" id="checkout-msg" style="display:block;margin-top:8px"></small>
         </section>
 
-        <section class="card hidden" id="step-orders">
+        <section class="card hidden app-view" id="step-orders">
           <div class="section-head">
             <div class="section-title">
               <span class="step">6</span>
