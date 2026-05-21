@@ -94,6 +94,11 @@
     .dash-link b{margin-top:auto;color:#a5f3fc;font-size:.82rem}
     .filter-row{display:grid;grid-template-columns:minmax(220px,1fr) minmax(170px,.45fr) minmax(170px,.45fr);gap:.8rem;align-items:end;margin-bottom:1rem}
     .admin-company-picker{min-width:220px}
+    .company-context{border:1px solid rgba(6,182,212,.25);background:rgba(6,182,212,.08);color:#a5f3fc;border-radius:8px;padding:.72rem .9rem;font-weight:800;display:flex;align-items:center;gap:.55rem}
+    .company-context.warn{border-color:rgba(245,158,11,.35);background:rgba(245,158,11,.12);color:#fcd34d}
+    .company-context::before{content:"";width:8px;height:8px;border-radius:50%;background:currentColor;box-shadow:0 0 12px currentColor;flex:0 0 auto}
+    button:disabled,.btn:disabled{opacity:.5;cursor:not-allowed;filter:saturate(.65)}
+    button:disabled:hover,.btn:disabled:hover{background:rgba(255,255,255,.05);border-color:var(--border)}
     body[data-admin-page="dashboard"] .section-admin:not(.dashboard-section),
     body[data-admin-page="listado"] .section-admin:not(.listado-section),
     body[data-admin-page="clientes"] .section-admin:not(.clientes-section),
@@ -115,6 +120,7 @@
       .modal-footer .btn{width:100%}
       .filter-row{grid-template-columns:1fr}
       .admin-company-picker{min-width:0}
+      .company-context{align-items:flex-start}
       .admin-tabs{padding-bottom:.35rem}
       .dash-link{min-height:auto}
     }
@@ -174,6 +180,9 @@
       </div>
       <button id="btnNuevo" class="btn btn-primary">Nuevo referente</button>
     </section>
+    <div id="companyContext" class="company-context" role="status" aria-live="polite" hidden>
+      <span id="companyContextText">Selecciona una empresa para operar referentes.</span>
+    </div>
 
     <nav class="admin-tabs" aria-label="Secciones de referentes">
       <a data-tab="dashboard" href="referentes.html">Dashboard</a>
@@ -548,6 +557,39 @@
       return state.isSuper && id ? `?empresa_id=${encodeURIComponent(id)}` : '';
     }
 
+    function superSinEmpresa() {
+      return state.isSuper && !$('#empSel')?.value;
+    }
+
+    function empresaSeleccionadaNombre() {
+      const sel = $('#empSel');
+      return sel?.selectedOptions?.[0]?.textContent?.trim() || '';
+    }
+
+    function emptyRow(colspan, msg, detail = '') {
+      const extra = detail ? `<div class="muted" style="margin-top:.35rem">${esc(detail)}</div>` : '';
+      return `<tr><td colspan="${Number(colspan)}" style="text-align:center;padding:2rem;color:var(--muted)"><strong style="color:#fff">${esc(msg)}</strong>${extra}</td></tr>`;
+    }
+
+    function renderCompanyContext() {
+      const ctx = $('#companyContext');
+      if (!ctx) return;
+      const needsEmpresa = superSinEmpresa();
+      if (!state.isSuper) {
+        ctx.hidden = true;
+        $('#btnNuevo').disabled = false;
+        $('#btnLiquidarSeleccion').disabled = false;
+        return;
+      }
+      ctx.hidden = false;
+      ctx.classList.toggle('warn', needsEmpresa);
+      $('#companyContextText').textContent = needsEmpresa
+        ? 'Selecciona una empresa para cargar datos, crear referentes, validar clientes y liquidar comisiones.'
+        : `Operando sobre ${empresaSeleccionadaNombre()}. Los listados, clientes y comisiones quedan filtrados por empresa.`;
+      $('#btnNuevo').disabled = needsEmpresa;
+      $('#btnLiquidarSeleccion').disabled = needsEmpresa;
+    }
+
     async function api(url, opts = {}) {
       const res = await authFetch(url, opts);
       if (res.status === 401) {
@@ -570,6 +612,7 @@
     }
 
     function renderSummary() {
+      renderCompanyContext();
       const activos = state.referentes.filter((r) => r.activo).length;
       const clientes = state.referentes.reduce((a, r) => a + Number(r.clientes_count || 0), 0);
       const productos = state.referentes.reduce((a, r) => a + Number(r.productos_count || 0), 0);
@@ -599,8 +642,12 @@
         return [r.nombre, r.codigo, r.email, r.telefono].some((v) => String(v || '').toLowerCase().includes(q));
       });
       const tb = $('#tbReferentes');
+      if (superSinEmpresa()) {
+        tb.innerHTML = emptyRow(10, 'Selecciona una empresa', 'El super admin debe elegir empresa para ver o crear referentes.');
+        return;
+      }
       if (!rows.length) {
-        tb.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:2.5rem;color:var(--muted)">No hay referentes para mostrar.</td></tr>';
+        tb.innerHTML = emptyRow(10, 'No hay referentes para mostrar.');
         return;
       }
       tb.innerHTML = rows.map((r) => `
@@ -642,8 +689,12 @@
         return [c.referente_nombre, c.referente_codigo, c.cliente, c.producto_nombre, c.pedido_id]
           .some((v) => String(v || '').toLowerCase().includes(q));
       });
+      if (superSinEmpresa()) {
+        tb.innerHTML = emptyRow(11, 'Selecciona una empresa', 'Las comisiones se cargan por empresa para evitar mezclar liquidaciones.');
+        return;
+      }
       if (!rows.length) {
-        tb.innerHTML = '<tr><td colspan="11" style="text-align:center;padding:2rem;color:var(--muted)">No hay comisiones para esos filtros.</td></tr>';
+        tb.innerHTML = emptyRow(11, 'No hay comisiones para esos filtros.');
         return;
       }
       tb.innerHTML = rows.slice(0, 120).map((c) => `
@@ -689,8 +740,12 @@
         return [c.cliente, c.telefono, c.direccion, c.ciudad, c.referente_nombre, c.referente_codigo]
           .some((v) => String(v || '').toLowerCase().includes(q));
       });
+      if (superSinEmpresa()) {
+        tb.innerHTML = emptyRow(7, 'Selecciona una empresa', 'Los clientes pendientes se validan dentro de una empresa concreta.');
+        return;
+      }
       if (!rows.length) {
-        tb.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:2rem;color:var(--muted)">Sin clientes pendientes para esos filtros.</td></tr>';
+        tb.innerHTML = emptyRow(7, 'Sin clientes pendientes para esos filtros.');
         return;
       }
       tb.innerHTML = rows.map((c) => `
@@ -723,8 +778,12 @@
         return [c.cliente, c.telefono, c.direccion, c.ciudad, c.referente_nombre, c.referente_codigo]
           .some((v) => String(v || '').toLowerCase().includes(q));
       });
+      if (superSinEmpresa()) {
+        tb.innerHTML = emptyRow(7, 'Selecciona una empresa', 'Los clientes vinculados se consultan por empresa.');
+        return;
+      }
       if (!rows.length) {
-        tb.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:2rem;color:var(--muted)">Sin clientes vinculados para esos filtros.</td></tr>';
+        tb.innerHTML = emptyRow(7, 'Sin clientes vinculados para esos filtros.');
         return;
       }
       tb.innerHTML = rows.map((c) => `
@@ -769,7 +828,7 @@
     }
 
     async function loadProductos() {
-      if (state.isSuper && !$('#empSel').value) {
+      if (superSinEmpresa()) {
         state.productos = [];
         return;
       }
@@ -777,12 +836,15 @@
     }
 
     async function loadReferentes() {
-      if (state.isSuper && !$('#empSel').value) {
+      renderCompanyContext();
+      if (superSinEmpresa()) {
         state.referentes = [];
         state.comisiones = [];
         state.clientesPropuestos = [];
         state.clientesVinculados = [];
+        state.comisionesSeleccionadas.clear();
         renderReferentes();
+        hydrateFilterOptions();
         renderComisiones();
         renderClientesPropuestos();
         renderClientesVinculados();
@@ -871,6 +933,7 @@
 
     async function refreshAll() {
       try {
+        renderCompanyContext();
         await loadProductos();
         await loadReferentes();
       } catch (e) {
@@ -1140,7 +1203,10 @@
         $('#empWrap').hidden = false;
         const empresas = await api('/api/empresas');
         $('#empSel').innerHTML = '<option value="">Seleccionar empresa</option>' + (Array.isArray(empresas) ? empresas.map((e) => `<option value="${Number(e.id)}">${esc(e.nombre)}</option>`).join('') : '');
-        $('#empSel').addEventListener('change', refreshAll);
+        $('#empSel').addEventListener('change', () => {
+          state.comisionesSeleccionadas.clear();
+          refreshAll();
+        });
       }
 
       await refreshAll();
