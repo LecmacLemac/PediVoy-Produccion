@@ -51,7 +51,7 @@
     .layout{display:block}
     .stack{display:block}
     .stack>.card{margin-bottom:16px}
-    .app-tabs{position:sticky;top:8px;z-index:5;display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin:0 0 14px;padding:6px;border:1px solid var(--line);border-radius:18px;background:rgba(255,255,255,.96);box-shadow:0 12px 30px rgba(15,23,42,.08)}
+    .app-tabs{position:sticky;top:8px;z-index:5;display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:0 0 14px;padding:6px;border:1px solid var(--line);border-radius:18px;background:rgba(255,255,255,.96);box-shadow:0 12px 30px rgba(15,23,42,.08)}
     .tab-btn{border:none;background:transparent;color:var(--muted);font-size:12px;font-weight:800;padding:10px 6px;border-radius:13px;cursor:pointer}
     .tab-btn.active{background:#0f172a;color:#fff}
     .card{background:var(--surface);border:1px solid rgba(226,232,240,.95);border-radius:20px;padding:16px;box-shadow:var(--shadow)}
@@ -91,6 +91,9 @@
     .customer-card strong{display:block;margin-bottom:4px}
     .quick-actions{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}
     .quick-actions .btn{padding:12px 10px;font-size:13px}
+    .purchase-layout{display:grid;grid-template-columns:1fr;gap:14px;align-items:start}
+    .catalog-pane{min-width:0}
+    .cart-panel{background:#fff;border:1px solid rgba(226,232,240,.95);border-radius:20px;padding:16px;box-shadow:var(--shadow)}
     .catalog-toolbar{display:grid;gap:10px;margin-bottom:12px}
     .search-wrap{display:grid;grid-template-columns:1fr auto;gap:8px}
     .chip-row{display:flex;gap:8px;overflow-x:auto;padding-bottom:2px}
@@ -126,6 +129,12 @@
     .method-btn span{display:block;font-size:11px;color:var(--muted);font-weight:700;margin-top:3px}
     .method-btn.active{border-color:#0f766e;background:#ecfdf5;color:#064e3b}
     .method-btn.active span{color:#047857}
+    .code-summary{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:12px;padding:12px;border:1px solid var(--line);border-radius:16px;background:#fff}
+    .code-summary strong{display:block;font-size:14px}
+    .code-summary span{display:block;margin-top:3px;color:var(--muted);font-size:12px}
+    .code-panel{margin-top:10px;padding:12px;border:1px solid var(--line);border-radius:16px;background:#f8fafc}
+    .code-actions{display:grid;grid-template-columns:1fr auto;gap:8px;margin-top:8px}
+    .code-status{display:block;margin-top:8px;color:var(--muted);font-size:12px}
     .referral-help{display:block;margin-top:6px;color:var(--muted);font-size:12px}
     .empty-state{padding:18px;border:1px dashed #cbd5e1;border-radius:18px;background:#fff;color:var(--muted);text-align:center}
     .orders-summary{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}
@@ -145,6 +154,8 @@
       .wrap{max-width:980px;margin-top:12px}
       .grid{grid-template-columns:repeat(2,minmax(0,1fr))}
       .customer-strip{grid-template-columns:repeat(3,1fr)}
+      .purchase-layout{grid-template-columns:minmax(0,1.35fr) minmax(310px,.65fr)}
+      .cart-panel{position:sticky;top:14px}
       .app-tabs{position:static}
     }
     @media (max-width: 430px){
@@ -192,7 +203,6 @@
 
     <nav class="app-tabs hidden" id="app-tabs" aria-label="Navegación de cliente">
       <button class="tab-btn active" type="button" data-target="step-catalog">Comprar</button>
-      <button class="tab-btn" type="button" data-target="step-cart">Carrito</button>
       <button class="tab-btn" type="button" data-target="step-orders">Pedidos</button>
       <button class="tab-btn" type="button" data-target="step-profile">Perfil</button>
     </nav>
@@ -293,61 +303,78 @@
           </div>
           <div class="quick-actions">
             <button class="btn btn-secondary" type="button" id="btn-go-orders">Ver mis pedidos</button>
-            <button class="btn btn-ghost" type="button" id="btn-go-cart">Revisar carrito</button>
+            <button class="btn btn-ghost" type="button" id="btn-go-cart">Ver resumen</button>
           </div>
-          <div class="catalog-toolbar">
-            <div class="search-wrap">
-              <input class="input" id="catalog-search" placeholder="Buscar producto" />
-              <button class="icon-btn" type="button" id="btn-clear-search" title="Limpiar búsqueda">×</button>
+          <div class="purchase-layout">
+            <div class="catalog-pane">
+              <div class="catalog-toolbar">
+                <div class="search-wrap">
+                  <input class="input" id="catalog-search" placeholder="Buscar producto" />
+                  <button class="icon-btn" type="button" id="btn-clear-search" title="Limpiar búsqueda">×</button>
+                </div>
+                <div class="chip-row" id="catalog-filters"></div>
+                <small class="muted small" id="catalog-count"></small>
+              </div>
+              <div class="grid" id="productos"></div>
             </div>
-            <div class="chip-row" id="catalog-filters"></div>
-            <small class="muted small" id="catalog-count"></small>
-          </div>
-          <div class="grid" id="productos"></div>
+            <aside class="cart-panel" id="step-cart">
+              <div class="section-head">
+                <div class="section-title">
+                  <span class="step">5</span>
+                  <div>
+                    <h2>Tu carrito</h2>
+                    <p class="sub">Revisá el pedido antes de enviarlo.</p>
+                  </div>
+                </div>
+                <span class="pill">Resumen</span>
+              </div>
+              <div id="cart" class="cart-list"></div>
+              <div class="cart-total">
+                <span>Total estimado</span>
+                <strong id="total">$0</strong>
+              </div>
+              <div class="cart-summary-note">Podés ajustar cantidades antes de enviar el pedido.</div>
+              <div class="checkout-box">
+                <p class="checkout-title">Confirmación de entrega</p>
+                <div class="row">
+                  <input class="input" id="checkout-cliente" placeholder="Nombre para recibir" />
+                  <input class="input" id="checkout-direccion" placeholder="Dirección de entrega" />
+                </div>
+                <div class="row" style="margin-top:10px">
+                  <input class="input" id="checkout-ciudad" placeholder="Ciudad" />
+                  <input class="input" id="checkout-telefono" placeholder="Teléfono" />
+                </div>
+                <p class="checkout-title" style="margin-top:12px">Forma de pago</p>
+                <div class="method-grid" id="payment-methods">
+                  <button class="method-btn active" type="button" data-method="efectivo">Efectivo<span>Pago al recibir</span></button>
+                  <button class="method-btn" type="button" data-method="transferencia">Transferencia<span>Se coordina con la empresa</span></button>
+                </div>
+              </div>
+              <div class="code-summary">
+                <div>
+                  <strong>Código de descuento</strong>
+                  <span id="code-summary-text">Sin código aplicado</span>
+                </div>
+                <button class="btn btn-secondary" type="button" id="btn-toggle-code" style="padding:10px 12px;border-radius:14px">Agregar</button>
+              </div>
+              <div class="code-panel hidden" id="code-panel">
+                <p class="checkout-title">Código de descuento o referente</p>
+                <div class="code-actions">
+                  <input class="input" id="codigo-referente" placeholder="Ej: VENDEDOR10" style="text-transform:uppercase" />
+                  <button class="btn btn-ghost" type="button" id="btn-apply-code" style="padding:12px 14px;border-radius:14px">Aplicar</button>
+                </div>
+                <small class="referral-help">Si un vendedor te compartió un código, cargalo acá. El pedido puede enviarse igual si no aplica.</small>
+                <small class="code-status" id="code-status"></small>
+              </div>
+              <input class="input" id="notas-pedido" placeholder="Notas para este pedido (opcional)" style="margin-top:12px" />
+              <button class="btn btn-primary btn-block" id="btn-send" style="margin-top:12px">Enviar pedido</button>
+              <small class="muted small" id="checkout-msg" style="display:block;margin-top:8px"></small>
+            </aside>
+            </div>
         </section>
       </div>
 
       <div class="stack">
-        <section class="card hidden app-view" id="step-cart">
-          <div class="section-head">
-            <div class="section-title">
-              <span class="step">5</span>
-              <div>
-                <h2>Tu carrito</h2>
-                <p class="sub">Revisá el pedido antes de enviarlo.</p>
-              </div>
-            </div>
-            <span class="pill">Resumen</span>
-          </div>
-          <div id="cart" class="cart-list"></div>
-          <div class="cart-total">
-            <span>Total estimado</span>
-            <strong id="total">$0</strong>
-          </div>
-          <div class="cart-summary-note">Podés ajustar cantidades antes de enviar el pedido.</div>
-          <div class="checkout-box">
-            <p class="checkout-title">Confirmación de entrega</p>
-            <div class="row">
-              <input class="input" id="checkout-cliente" placeholder="Nombre para recibir" />
-              <input class="input" id="checkout-direccion" placeholder="Dirección de entrega" />
-            </div>
-            <div class="row" style="margin-top:10px">
-              <input class="input" id="checkout-ciudad" placeholder="Ciudad" />
-              <input class="input" id="checkout-telefono" placeholder="Teléfono" />
-            </div>
-            <p class="checkout-title" style="margin-top:12px">Forma de pago</p>
-            <div class="method-grid" id="payment-methods">
-              <button class="method-btn active" type="button" data-method="efectivo">Efectivo<span>Pago al recibir</span></button>
-              <button class="method-btn" type="button" data-method="transferencia">Transferencia<span>Se coordina con la empresa</span></button>
-            </div>
-          </div>
-          <input class="input" id="codigo-referente" placeholder="Código de referente (opcional)" style="margin-top:12px;text-transform:uppercase" />
-          <small class="referral-help">Si un vendedor te compartió un código, cargalo acá.</small>
-          <input class="input" id="notas-pedido" placeholder="Notas para este pedido (opcional)" style="margin-top:12px" />
-          <button class="btn btn-primary btn-block" id="btn-send" style="margin-top:12px">Enviar pedido</button>
-          <small class="muted small" id="checkout-msg" style="display:block;margin-top:8px"></small>
-        </section>
-
         <section class="card hidden app-view" id="step-orders">
           <div class="section-head">
             <div class="section-title">

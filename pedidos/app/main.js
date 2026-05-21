@@ -115,6 +115,11 @@ function showAppView(targetId, { scroll = true } = {}) {
 function goToSection(targetId) {
   const target = document.getElementById(targetId);
   if (!target) return;
+  if (targetId === 'step-cart' && isAppVisible()) {
+    showAppView('step-catalog', { scroll: false });
+    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return;
+  }
   if (isAppVisible() && target.classList.contains('app-view')) {
     showAppView(targetId);
     return;
@@ -174,6 +179,32 @@ function updateCheckoutState() {
     else if (onlyDigits(tel).length < 8) msg.textContent = 'Confirmá un teléfono válido.';
     else msg.textContent = 'Pedido listo para enviar.';
   }
+}
+
+function normalizeReferralCode() {
+  const input = $('#codigo-referente');
+  const value = input?.value?.trim().toUpperCase() || '';
+  if (input) input.value = value;
+  return value;
+}
+
+function setReferralPanel(open) {
+  const panel = $('#code-panel');
+  const btn = $('#btn-toggle-code');
+  if (!panel || !btn) return;
+  panel.classList.toggle('hidden', !open);
+  btn.textContent = open ? 'Cerrar' : ($('#codigo-referente')?.value?.trim() ? 'Editar' : 'Agregar');
+  if (open) $('#codigo-referente')?.focus();
+}
+
+function updateReferralSummary(message = '') {
+  const code = normalizeReferralCode();
+  const text = $('#code-summary-text');
+  const status = $('#code-status');
+  const btn = $('#btn-toggle-code');
+  if (text) text.textContent = code ? `Código cargado: ${code}` : 'Sin código aplicado';
+  if (status) status.textContent = message || (code ? 'Código guardado para enviar con el pedido.' : '');
+  if (btn && $('#code-panel')?.classList.contains('hidden')) btn.textContent = code ? 'Editar' : 'Agregar';
 }
 
 function renderEmpresaOptions(companies = [], preferredEmpresaId = null) {
@@ -285,7 +316,6 @@ function showAuthOnly() {
   $('#step-code').classList.add('hidden');
   $('#step-profile').classList.add('hidden');
   $('#step-catalog').classList.add('hidden');
-  $('#step-cart').classList.add('hidden');
   $('#step-orders').classList.add('hidden');
 }
 
@@ -295,6 +325,7 @@ function showApp() {
   $('#step-login').classList.add('hidden');
   $('#step-code').classList.add('hidden');
   showAppView('step-catalog', { scroll: false });
+  renderCart();
 }
 
 function loadProfileToForm(profile = {}, session = {}) {
@@ -519,7 +550,10 @@ function renderCart() {
     root.appendChild(row);
   }
   const total = cart.reduce((a, b) => a + b.precio * b.cantidad, 0);
-  updateAppStats({ cartCount: cartCount() });
+  const count = cartCount();
+  updateAppStats({ cartCount: count });
+  const cartBtn = $('#btn-go-cart');
+  if (cartBtn) cartBtn.textContent = count ? `Ver resumen (${count})` : 'Ver resumen';
   $('#total').textContent = money(total);
   updateCheckoutState();
 }
@@ -671,9 +705,18 @@ document.querySelectorAll('#payment-methods .method-btn').forEach((btn) => {
   $(sel)?.addEventListener('input', updateCheckoutState);
 });
 
-$('#codigo-referente')?.addEventListener('input', () => {
-  $('#codigo-referente').value = $('#codigo-referente').value.trim().toUpperCase();
+$('#btn-toggle-code')?.addEventListener('click', () => {
+  const panel = $('#code-panel');
+  setReferralPanel(panel?.classList.contains('hidden'));
 });
+
+$('#btn-apply-code')?.addEventListener('click', () => {
+  const code = normalizeReferralCode();
+  updateReferralSummary(code ? 'Código agregado al pedido.' : 'No cargaste ningún código.');
+  if (code) setReferralPanel(false);
+});
+
+$('#codigo-referente')?.addEventListener('input', updateReferralSummary);
 
 $('#telefono').addEventListener('input', () => {
   const digits = normalizePhoneForInput($('#telefono').value.trim());
@@ -796,7 +839,7 @@ $('#btn-send').addEventListener('click', async () => {
     const ciudad = $('#checkout-ciudad').value.trim() || $('#ciudad').value.trim();
     const notas = $('#notas-pedido').value.trim();
     const tel = $('#checkout-telefono').value.trim() || $('#telefono-perfil').value.trim() || telefono;
-    const codigoReferente = $('#codigo-referente')?.value?.trim().toUpperCase() || '';
+    const codigoReferente = normalizeReferralCode();
 
     if (!cliente || !direccion) throw new Error('Completá nombre y dirección');
     if (onlyDigits(tel).length < 8) throw new Error('Completá un teléfono válido');
@@ -827,6 +870,9 @@ $('#btn-send').addEventListener('click', async () => {
     renderCart();
     if (out?.referente?.codigo) {
       $('#codigo-referente').value = out.referente.codigo;
+      updateReferralSummary('Código aplicado al pedido enviado.');
+    } else {
+      updateReferralSummary();
     }
     await loadOrders();
     $('#quick-last-action').textContent = `Pedido #${out?.pedido?.id || ''} enviado`;
@@ -845,7 +891,12 @@ document.addEventListener('visibilitychange', () => {
 (async function init() {
   await loadAuthProviders();
   const initialReferenteCode = getInitialReferenteCode();
-  if (initialReferenteCode && $('#codigo-referente')) $('#codigo-referente').value = initialReferenteCode;
+  if (initialReferenteCode && $('#codigo-referente')) {
+    $('#codigo-referente').value = initialReferenteCode;
+    updateReferralSummary('Código recibido desde el enlace.');
+  } else {
+    updateReferralSummary();
+  }
   try {
     await loadEmpresa();
     const me = await j('/api/public/app/me');
