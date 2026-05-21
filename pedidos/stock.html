@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Control de Stock – MultiEmpresas</title>
   <link rel="stylesheet" href="theme-base.css" />
-  
+
   <style>
     :root {
       /* Palette */
@@ -18,19 +18,19 @@
       --border: rgba(148, 163, 184, 0.15);
       --glass: rgba(15, 23, 42, 0.85);
       --radius: 12px;
-      
+
       --success: #10b981;
       --danger: #ef4444;
       --warning: #f59e0b;
     }
 
     * { box-sizing: border-box; outline: none; }
-    
+
     body {
-      margin: 0; 
+      margin: 0;
       font-family: system-ui, -apple-system, sans-serif;
       color: var(--ink);
-      background: 
+      background:
         radial-gradient(circle at 15% 50%, rgba(6, 182, 212, 0.05), transparent 25%),
         radial-gradient(circle at 85% 30%, rgba(59, 130, 246, 0.05), transparent 25%),
         var(--bg);
@@ -49,7 +49,7 @@
     nav { display: flex; justify-content: space-between; align-items: center; }
     .brand { font-size: 1.1rem; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 0.5rem; }
     .role-badge { background: rgba(6,182,212,0.1); color: var(--brand); padding: 2px 8px; border-radius: 99px; font-size: 0.75rem; border: 1px solid rgba(6,182,212,0.3); }
-    
+
     .menu { list-style: none; display: flex; gap: 1.5rem; margin: 0; padding: 0; }
     .menu a { text-decoration: none; color: var(--muted); font-weight: 500; transition: 0.2s; }
     .menu a:hover, .menu a.active { color: #fff; }
@@ -57,7 +57,7 @@
 
     /* LAYOUT */
     main { padding: 2rem 0 4rem; display: grid; gap: 1.5rem; }
-    
+
     .card {
       background: var(--surface); border: 1px solid var(--border);
       border-radius: var(--radius); padding: 1.5rem;
@@ -77,9 +77,9 @@
 
     /* TOOLBAR & INPUTS */
     .toolbar { display: flex; flex-wrap: wrap; gap: 1rem; align-items: end; justify-content: space-between; }
-    
+
     label { display: block; font-size: 0.8rem; color: var(--muted); font-weight: 600; margin-bottom: 0.4rem; }
-    
+
     input, select {
       width: 100%; background: #0f172a; border: 1px solid var(--border); color: #fff;
       padding: 0.7rem; border-radius: 8px; font-size: 0.9rem; transition: 0.2s;
@@ -98,7 +98,7 @@
     }
     .btn-primary { background: var(--brand); color: #000; box-shadow: 0 4px 15px rgba(6,182,212,0.2); }
     .btn-primary:hover { background: var(--brand-hover); transform: translateY(-1px); }
-    
+
     .btn-secondary { background: rgba(255,255,255,0.05); color: var(--ink); border: 1px solid var(--border); }
     .btn-secondary:hover { background: rgba(255,255,255,0.1); color: #fff; }
 
@@ -107,8 +107,8 @@
     /* TABLE */
     .table-responsive { overflow-x: auto; border-radius: var(--radius); border: 1px solid var(--border); }
     table { width: 100%; border-collapse: collapse; text-align: left; }
-    th { 
-      background: rgba(15, 23, 42, 0.5); color: var(--muted); font-weight: 600; 
+    th {
+      background: rgba(15, 23, 42, 0.5); color: var(--muted); font-weight: 600;
       padding: 1rem; font-size: 0.8rem; text-transform: uppercase; border-bottom: 1px solid var(--border); white-space: nowrap;
     }
     td { padding: 1rem; border-bottom: 1px solid var(--border); color: var(--ink); font-size: 0.9rem; vertical-align: middle; }
@@ -127,21 +127,21 @@
       padding: 0; width: 95%; max-width: 500px; box-shadow: 0 20px 50px rgba(0,0,0,0.5);
     }
     dialog::backdrop { background: rgba(0,0,0,0.7); backdrop-filter: blur(4px); }
-    
+
     .modal-header { padding: 1.2rem; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.2); }
     .modal-body { padding: 1.5rem; max-height: 70vh; overflow-y: auto; }
     .modal-footer { padding: 1.2rem; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 1rem; background: rgba(0,0,0,0.2); }
 
     /* KARDEX DRAWER */
-    .drawer { 
-      position: fixed; top: 0; right: -100%; width: 100%; max-width: 500px; height: 100%; 
+    .drawer {
+      position: fixed; top: 0; right: -100%; width: 100%; max-width: 500px; height: 100%;
       background: #1e293b; border-left: 1px solid var(--border); z-index: 100;
       transition: right 0.3s cubic-bezier(0.16, 1, 0.3, 1); box-shadow: -10px 0 50px rgba(0,0,0,0.5);
       display: flex; flex-direction: column;
     }
     .drawer.open { right: 0; }
     .drawer-backdrop {
-      position: fixed; inset: 0; background: rgba(0,0,0,0.5); backdrop-filter: blur(2px); 
+      position: fixed; inset: 0; background: rgba(0,0,0,0.5); backdrop-filter: blur(2px);
       z-index: 90; opacity: 0; visibility: hidden; transition: 0.3s;
     }
     .drawer-backdrop.show { opacity: 1; visibility: visible; }
@@ -161,13 +161,14 @@
       .modal-footer .btn { width: 100%; }
       .drawer { max-width: 100%; }
     }
-  </style>
+    .pedivoy-brand-logo{display:inline-block;width:auto;height:32px;max-width:150px;object-fit:contain;vertical-align:middle;flex:0 0 auto}.brand .pedivoy-brand-logo{height:32px}.pedivoy-brand-badge{position:fixed;top:12px;left:12px;z-index:1000;display:inline-flex;align-items:center;padding:7px 10px;border-radius:10px;background:rgba(15,23,42,.82);border:1px solid rgba(148,163,184,.22);box-shadow:0 10px 30px rgba(2,8,23,.25);backdrop-filter:blur(10px)}.pedivoy-brand-badge img{height:28px;width:auto;display:block}
+</style>
 </head>
 <body>
 
   <header>
     <nav class="container">
-      <div class="brand">
+      <div class="brand"><img class="pedivoy-brand-logo" src="img/brand/pedivoy-logo-horizontal-white.png" alt="PediVoy">
         MultiEmpresas <span id="rolePill" class="role-badge"></span>
       </div>
      <ul class="menu" id="mainMenu">
@@ -187,7 +188,7 @@
   </header>
 
   <main class="container">
-    
+
     <section class="grid-kpi">
       <div class="kpi-card">
         <div class="kpi-val">
@@ -477,7 +478,7 @@
     <form id="frmAjuste" class="modal-body">
       <input type="hidden" id="ajId">
       <h3 id="ajProdName" style="margin-top:0; color:var(--brand)">Producto</h3>
-      
+
       <div style="display:grid; grid-template-columns: 1fr 1fr; gap:1rem; margin-bottom:1rem;">
         <div>
           <label>Tipo Movimiento</label>
@@ -597,7 +598,7 @@
         const me = (await r.json()).user;
         role = (me.role||'').toLowerCase();
         isSuper = role === 'super';
-        
+
         $('#rolePill').textContent = role.toUpperCase();
         if(isSuper) {
             $('#rolePill').style.borderColor = 'var(--warning)';
@@ -646,7 +647,7 @@
         const qs = isSuper && $('#empFilter').value ? `?empresa_id=${$('#empFilter').value}` : '';
         const r = await authFetch('/api/choferes'+qs);
         choferes = await r.json();
-        const opts = choferes.map(c => 
+        const opts = choferes.map(c =>
             `<option value="${Number(c.id)}">${esc(c.nombre)} (${esc((c.tipo || '').toUpperCase())})</option>`
         ).join('');
         $('#ajChofer').innerHTML = opts;
@@ -659,7 +660,7 @@
           if (cur) trChoferFiltro.value = cur;
         }
     }
-    
+
     // Normaliza respuesta de /api/stock/por-tipo a un array de productos
     function normalizeStockPorTipo(rows) {
       const map = new Map();
@@ -947,7 +948,7 @@
       const filtered = products.filter(p => {
         const matchTxt = p.nombre.toLowerCase().includes(term);
         let matchSt = true;
-        
+
         const stock = num(p.stock_fisico);
         const min = num(p.stock_min);
 
@@ -1139,7 +1140,7 @@
       await loadTransferenciasHistorial();
       alert('Transferencia revertida');
     };
-    
+
     // Ajuste
     window.openAjuste = (id) => {
         const p = products.find(x => x.id === id);
@@ -1200,7 +1201,7 @@
         const p = products.find(x => x.id === id);
         $('#kxProdName').textContent = p ? p.nombre : '';
         $('#kxRows').innerHTML = '<tr><td colspan="5">Cargando...</td></tr>';
-        
+
         $('#backdrop').classList.add('show');
         $('#kardexDrawer').classList.add('open');
 
