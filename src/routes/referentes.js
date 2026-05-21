@@ -748,6 +748,24 @@ export function createReferentesRouter(deps) {
       const empresaId = resolveEmpresa(req);
       if (!empresaId) return res.status(400).json({ error: 'Falta empresa.' });
 
+      const from = String(req.query?.from || '').trim();
+      const to = String(req.query?.to || '').trim();
+      const isDate = (value) => /^\d{4}-\d{2}-\d{2}$/.test(value);
+      const filters = ['rc.empresa_id = $1'];
+      const params = [empresaId];
+      let idx = 2;
+
+      if (from) {
+        if (!isDate(from)) return res.status(400).json({ error: 'Fecha desde inválida.' });
+        filters.push(`rc.validada_at >= $${idx++}::date`);
+        params.push(from);
+      }
+      if (to) {
+        if (!isDate(to)) return res.status(400).json({ error: 'Fecha hasta inválida.' });
+        filters.push(`rc.validada_at < ($${idx++}::date + INTERVAL '1 day')`);
+        params.push(to);
+      }
+
       const rows = await query(
         `SELECT rc.*,
                 r.nombre AS referente_nombre,
@@ -760,12 +778,12 @@ export function createReferentesRouter(deps) {
            LEFT JOIN puntos_entrega pe ON pe.id = rc.punto_entrega_id
            LEFT JOIN productos pr ON pr.id = rc.producto_id
            LEFT JOIN usuarios u ON u.id = rc.liquidada_por
-          WHERE rc.empresa_id = $1
+          WHERE ${filters.join(' AND ')}
           ORDER BY CASE WHEN rc.estado = 'validada' THEN 0 ELSE 1 END,
                    COALESCE(rc.liquidada_at, rc.validada_at) DESC,
                    rc.id DESC
           LIMIT 500`,
-        [empresaId]
+        params
       );
       return res.json(rows);
     } catch (e) {

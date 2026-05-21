@@ -93,6 +93,7 @@
     .dash-link small{color:var(--muted);line-height:1.35}
     .dash-link b{margin-top:auto;color:#a5f3fc;font-size:.82rem}
     .filter-row{display:grid;grid-template-columns:minmax(220px,1fr) minmax(170px,.45fr) minmax(170px,.45fr);gap:.8rem;align-items:end;margin-bottom:1rem}
+    .filter-row.comisiones-filters{grid-template-columns:minmax(220px,1fr) repeat(4,minmax(145px,.45fr)) auto}
     .admin-company-picker{min-width:220px}
     .company-context{border:1px solid rgba(6,182,212,.25);background:rgba(6,182,212,.08);color:#a5f3fc;border-radius:8px;padding:.72rem .9rem;font-weight:800;display:flex;align-items:center;gap:.55rem}
     .company-context.warn{border-color:rgba(245,158,11,.35);background:rgba(245,158,11,.12);color:#fcd34d}
@@ -337,7 +338,7 @@
         </div>
         <button id="btnLiquidarSeleccion" class="btn btn-primary">Liquidar seleccionadas</button>
       </div>
-      <div class="filter-row">
+      <div class="filter-row comisiones-filters">
         <div>
           <label for="qComisiones">Buscar comision</label>
           <input id="qComisiones" placeholder="Referente, cliente, producto o pedido" />
@@ -354,6 +355,15 @@
             <option value="liquidada">Liquidadas</option>
           </select>
         </div>
+        <div>
+          <label for="fComisionDesde">Desde</label>
+          <input id="fComisionDesde" type="date" />
+        </div>
+        <div>
+          <label for="fComisionHasta">Hasta</label>
+          <input id="fComisionHasta" type="date" />
+        </div>
+        <button id="btnExportComisiones" class="btn" type="button">Exportar CSV</button>
       </div>
       <div class="table-responsive">
         <table class="mobile-cards">
@@ -557,6 +567,18 @@
       return state.isSuper && id ? `?empresa_id=${encodeURIComponent(id)}` : '';
     }
 
+    function comisionesQS() {
+      const params = new URLSearchParams();
+      const empresaId = $('#empSel')?.value;
+      const desde = $('#fComisionDesde')?.value;
+      const hasta = $('#fComisionHasta')?.value;
+      if (state.isSuper && empresaId) params.set('empresa_id', empresaId);
+      if (desde) params.set('from', desde);
+      if (hasta) params.set('to', hasta);
+      const qs = params.toString();
+      return qs ? `?${qs}` : '';
+    }
+
     function superSinEmpresa() {
       return state.isSuper && !$('#empSel')?.value;
     }
@@ -677,18 +699,67 @@
       `).join('');
     }
 
-    function renderComisiones() {
-      const tb = $('#tbComisiones');
+    function getComisionesFiltradas() {
       const q = ($('#qComisiones')?.value || '').trim().toLowerCase();
       const ref = $('#fComisionRef')?.value || 'todos';
       const estado = $('#fComisionEstado')?.value || 'todos';
-      const rows = state.comisiones.filter((c) => {
+      const desde = $('#fComisionDesde')?.value || '';
+      const hasta = $('#fComisionHasta')?.value || '';
+      return state.comisiones.filter((c) => {
+        const fecha = String(c.validada_at || c.liquidada_at || '').slice(0, 10);
+        if (desde && fecha && fecha < desde) return false;
+        if (hasta && fecha && fecha > hasta) return false;
         if (estado !== 'todos' && String(c.estado || 'validada') !== estado) return false;
         if (ref !== 'todos' && String(c.referente_id) !== ref) return false;
         if (!q) return true;
         return [c.referente_nombre, c.referente_codigo, c.cliente, c.producto_nombre, c.pedido_id]
           .some((v) => String(v || '').toLowerCase().includes(q));
       });
+    }
+
+    function csvCell(value) {
+      return '"' + String(value ?? '').replace(/"/g, '""') + '"';
+    }
+
+    function exportComisionesCSV() {
+      if (superSinEmpresa()) return toast('Selecciona una empresa primero.');
+      const rows = getComisionesFiltradas();
+      if (!rows.length) return toast('No hay comisiones para exportar.');
+      const headers = ['Fecha','Referente','Codigo','Cliente','Producto','Pedido','Base','Porcentaje','Comision','Estado','Liquidada','Referencia','Liquidada por'];
+      const lines = [headers.map(csvCell).join(',')];
+      rows.forEach((c) => {
+        lines.push([
+          c.validada_at ? dateFmt.format(new Date(c.validada_at)) : '',
+          c.referente_nombre || '',
+          c.referente_codigo || '',
+          c.cliente || '',
+          c.producto_nombre || '',
+          c.pedido_id ? '#' + c.pedido_id : '',
+          Number(c.base_monto || 0).toFixed(2),
+          Number(c.porcentaje || 0).toFixed(2),
+          Number(c.monto_comision || 0).toFixed(2),
+          c.estado || 'validada',
+          c.liquidada_at ? dateFmt.format(new Date(c.liquidada_at)) : '',
+          c.liquidacion_referencia || '',
+          c.liquidada_por_username || '',
+        ].map(csvCell).join(','));
+      });
+      const blob = new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const empresa = empresaSeleccionadaNombre().replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase() || 'empresa';
+      a.href = url;
+      a.download = 'referentes-comisiones-' + empresa + '-' + new Date().toISOString().slice(0,10) + '.csv';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast('Exportadas ' + rows.length + ' comisión/es.');
+    }
+
+    function renderComisiones() {
+      const tb = $('#tbComisiones');
+      const rows = getComisionesFiltradas();
       if (superSinEmpresa()) {
         tb.innerHTML = emptyRow(11, 'Selecciona una empresa', 'Las comisiones se cargan por empresa para evitar mezclar liquidaciones.');
         return;
@@ -852,7 +923,7 @@
       }
       const [refs, coms, clientesPropuestos, clientesVinculados] = await Promise.all([
         api('/api/referentes' + empresaQS()),
-        api('/api/referentes/comisiones' + empresaQS()),
+        api('/api/referentes/comisiones' + comisionesQS()),
         api('/api/referentes/clientes-propuestos' + empresaQS()),
         api('/api/referentes/clientes' + empresaQS()),
       ]);
@@ -1153,7 +1224,7 @@
       $('#btnLiquidarSeleccion').onclick = () => openLiquidacion();
       $('#chkAllComisiones').addEventListener('change', (e) => {
         const checked = e.target.checked;
-        state.comisiones.filter((c) => c.estado === 'validada').forEach((c) => {
+        getComisionesFiltradas().filter((c) => c.estado === 'validada').forEach((c) => {
           if (checked) state.comisionesSeleccionadas.add(Number(c.id));
           else state.comisionesSeleccionadas.delete(Number(c.id));
         });
@@ -1170,6 +1241,10 @@
       ['#qComisiones', '#fComisionRef', '#fComisionEstado'].forEach((sel) => {
         $(sel)?.addEventListener(sel === '#qComisiones' ? 'input' : 'change', renderComisiones);
       });
+      ['#fComisionDesde', '#fComisionHasta'].forEach((sel) => {
+        $(sel)?.addEventListener('change', refreshAll);
+      });
+      $('#btnExportComisiones')?.addEventListener('click', exportComisionesCSV);
       $('#btnClose').onclick = () => $('#dlgReferente').close();
       $('#btnCancel').onclick = () => $('#dlgReferente').close();
       $('#btnAccesoClose').onclick = () => $('#dlgAcceso').close();

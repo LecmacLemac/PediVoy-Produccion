@@ -101,6 +101,24 @@ test('liquidacion exige al menos una comision seleccionada', async () => {
   assert.equal(result.json.error, 'Seleccioná al menos una comisión pendiente.');
 });
 
+test('administracion puede filtrar comisiones por rango de fechas', async () => {
+  const result = await requestWithRouter({
+    user: { uid: 12, role: 'admin', empresa_id: 2 },
+    path: '/comisiones?from=2026-05-01&to=2026-05-31',
+    method: 'GET',
+    async query(sql, params = []) {
+      if (sql.includes('ALTER TABLE referente_comisiones')) return [];
+      assert.deepEqual(params, [2, '2026-05-01', '2026-05-31']);
+      assert.match(sql, /rc\.validada_at >= \$2::date/);
+      assert.match(sql, /rc\.validada_at < \(\$3::date \+ INTERVAL '1 day'\)/);
+      return [{ id: 20, referente_nombre: 'Aliado', monto_comision: '1200' }];
+    },
+  });
+
+  assert.equal(result.status, 200);
+  assert.equal(result.json.length, 1);
+});
+
 test('administracion puede listar clientes vinculados activos', async () => {
   const result = await requestWithRouter({
     user: { uid: 12, role: 'admin', empresa_id: 2 },
