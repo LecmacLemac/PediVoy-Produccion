@@ -93,6 +93,7 @@
     .dash-link small{color:var(--muted);line-height:1.35}
     .dash-link b{margin-top:auto;color:#a5f3fc;font-size:.82rem}
     .filter-row{display:grid;grid-template-columns:minmax(220px,1fr) minmax(170px,.45fr) minmax(170px,.45fr);gap:.8rem;align-items:end;margin-bottom:1rem}
+    .admin-company-picker{min-width:220px}
     body[data-admin-page="dashboard"] .section-admin:not(.dashboard-section),
     body[data-admin-page="listado"] .section-admin:not(.listado-section),
     body[data-admin-page="clientes"] .section-admin:not(.clientes-section),
@@ -113,6 +114,7 @@
       .modal-footer{flex-direction:column-reverse}
       .modal-footer .btn{width:100%}
       .filter-row{grid-template-columns:1fr}
+      .admin-company-picker{min-width:0}
       .admin-tabs{padding-bottom:.35rem}
       .dash-link{min-height:auto}
     }
@@ -166,6 +168,10 @@
         <h1 id="pageTitle">Configuracion de referentes</h1>
         <p id="pageSubtitle" class="subtitle">Reglas comerciales y criterios operativos del programa.</p>
       </div>
+      <div id="empWrap" class="admin-company-picker" hidden>
+        <label for="empSel">Empresa</label>
+        <select id="empSel"></select>
+      </div>
       <button id="btnNuevo" class="btn btn-primary">Nuevo referente</button>
     </section>
 
@@ -206,10 +212,6 @@
         <div>
           <label for="q">Buscar</label>
           <input id="q" placeholder="Nombre, codigo, email o telefono" />
-        </div>
-        <div id="empWrap" hidden>
-          <label for="empSel">Empresa</label>
-          <select id="empSel"></select>
         </div>
         <div>
           <label for="estadoRef">Estado</label>
