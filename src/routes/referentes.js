@@ -47,10 +47,27 @@ export function createReferentesRouter(deps) {
   async function ensureReferenteLiquidacionesSchema() {
     if (referentesLiquidacionesSchemaReady) return;
     await query(`
+      CREATE TABLE IF NOT EXISTS referente_liquidaciones (
+        id                    SERIAL PRIMARY KEY,
+        empresa_id             INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+        referencia             TEXT,
+        nota                   TEXT,
+        comisiones_count       INTEGER NOT NULL DEFAULT 0,
+        total                  NUMERIC(12,2) NOT NULL DEFAULT 0,
+        liquidada_por          INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
+        created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await query(`
+      CREATE INDEX IF NOT EXISTS referente_liquidaciones_empresa_created_idx
+        ON referente_liquidaciones (empresa_id, created_at DESC)
+    `);
+    await query(`
       ALTER TABLE referente_comisiones
         ADD COLUMN IF NOT EXISTS liquidacion_referencia TEXT,
         ADD COLUMN IF NOT EXISTS liquidacion_nota TEXT,
-        ADD COLUMN IF NOT EXISTS liquidada_por INTEGER REFERENCES usuarios(id) ON DELETE SET NULL
+        ADD COLUMN IF NOT EXISTS liquidada_por INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
+        ADD COLUMN IF NOT EXISTS liquidacion_lote_id INTEGER REFERENCES referente_liquidaciones(id) ON DELETE SET NULL
     `);
     referentesLiquidacionesSchemaReady = true;
   }
@@ -123,6 +140,150 @@ export function createReferentesRouter(deps) {
     const n = Number(value);
     return Number.isFinite(n) && n >= 0 && n <= 100 ? n : null;
   }
+
+  router.get('/resumen', withAuth, async (req, res) => {
+    try {
+      if (!requireBackoffice(req, res)) return;
+      await ensureReferenteLiquidacionesSchema();
+      await ensureReferenteClientesPropuestosSchema();
+      await ensureReferenteClienteVinculosSchema();
+      const empresaId = resolveEmpresa(req);
+      if (!empresaId) return res.status(400).json({ error: 'Falta empresa.' });
+
+      const [summary] = await query(
+        `SELECT
+           COALESCE((SELECT COUNT(*)::int
+                       FROM referentes
+                      WHERE empresa_id = $1
+                        AND deleted_at IS NULL
+                        AND activo = TRUE), 0) AS referentes_activos,
+           COALESCE((SELECT COUNT(*)::int
+                       FROM referentes
+                      WHERE empresa_id = $1
+                        AND deleted_at IS NULL
+                        AND activo = FALSE), 0) AS referentes_inactivos,
+           COALESCE((SELECT COUNT(*)::int
+                       FROM referentes r
+                      WHERE r.empresa_id = $1
+                        AND r.deleted_at IS NULL
+                        AND r.activo = TRUE
+                        AND NOT EXISTS (
+                          SELECT 1
+                            FROM usuarios u
+                           WHERE u.empresa_id = r.empresa_id
+                             AND u.referente_id = r.id
+                             AND LOWER(u.role) = 'referente'
+                             AND COALESCE(u.activo, TRUE) = TRUE
+                        )), 0) AS referentes_sin_acceso,
+           COALESCE((SELECT COUNT(*)::int
+                       FROM cliente_referentes
+                      WHERE empresa_id = $1
+                        AND estado = 'activo'), 0) AS clientes_vinculados,
+           COALESCE((SELECT COUNT(*)::int
+                       FROM referente_clientes_propuestos
+                      WHERE empresa_id = $1
+                        AND estado = 'pendiente'), 0) AS clientes_pendientes,
+           COALESCE((SELECT COUNT(*)::int
+                       FROM referente_comisiones
+                      WHERE empresa_id = $1
+                        AND estado = 'validada'), 0) AS comisiones_pendientes_count,
+           COALESCE((SELECT SUM(monto_comision)
+                       FROM referente_comisiones
+                      WHERE empresa_id = $1
+                        AND estado = 'validada'), 0)::numeric AS comisiones_pendientes_total,
+           COALESCE((SELECT COUNT(*)::int
+                       FROM referente_comisiones
+                      WHERE empresa_id = $1
+                        AND estado = 'liquidada'
+                        AND liquidada_at >= date_trunc('month', NOW())), 0) AS comisiones_liquidadas_mes_count,
+           COALESCE((SELECT SUM(monto_comision)
+                       FROM referente_comisiones
+                      WHERE empresa_id = $1
+                        AND estado = 'liquidada'
+                        AND liquidada_at >= date_trunc('month', NOW())), 0)::numeric AS comisiones_liquidadas_mes_total`,
+        [empresaId]
+      );
+
+      const liquidaciones = await query(
+        `SELECT rl.id,
+                rl.created_at AS liquidada_at,
+                rl.comisiones_count,
+                rl.total,
+                rl.referencia AS liquidacion_referencia,
+                rl.nota AS liquidacion_nota,
+                u.username AS liquidada_por_username
+           FROM referente_liquidaciones rl
+           LEFT JOIN usuarios u ON u.id = rl.liquidada_por
+          WHERE rl.empresa_id = $1
+          ORDER BY rl.created_at DESC, rl.id DESC
+          LIMIT 8`,
+        [empresaId]
+      );
+
+      return res.json({ resumen: summary || {}, liquidaciones });
+    } catch (e) {
+      console.error('REFERENTES.RESUMEN.ERROR', e);
+      return res.status(500).json({ error: 'Error obteniendo resumen de referentes' });
+    }
+  });
+
+  router.get('/liquidaciones/:id', withAuth, async (req, res) => {
+    try {
+      if (!requireBackoffice(req, res)) return;
+      await ensureReferenteLiquidacionesSchema();
+      const empresaId = resolveEmpresa(req);
+      const loteId = Number(req.params.id);
+      if (!empresaId || !Number.isInteger(loteId) || loteId <= 0) {
+        return res.status(400).json({ error: 'Datos invalidos.' });
+      }
+
+      const lotes = await query(
+        `SELECT rl.id,
+                rl.created_at AS liquidada_at,
+                rl.comisiones_count,
+                rl.total,
+                rl.referencia AS liquidacion_referencia,
+                rl.nota AS liquidacion_nota,
+                u.username AS liquidada_por_username
+           FROM referente_liquidaciones rl
+           LEFT JOIN usuarios u ON u.id = rl.liquidada_por
+          WHERE rl.empresa_id = $1
+            AND rl.id = $2
+          LIMIT 1`,
+        [empresaId, loteId]
+      );
+      if (!lotes.length) return res.status(404).json({ error: 'Liquidacion no encontrada.' });
+
+      const comisiones = await query(
+        `SELECT rc.id,
+                rc.validada_at,
+                rc.liquidada_at,
+                rc.pedido_id,
+                rc.base_monto,
+                rc.porcentaje,
+                rc.monto_comision,
+                r.nombre AS referente_nombre,
+                r.codigo AS referente_codigo,
+                pe.cliente,
+                pr.nombre AS producto_nombre
+           FROM referente_comisiones rc
+           JOIN referentes r ON r.id = rc.referente_id
+           LEFT JOIN puntos_entrega pe ON pe.id = rc.punto_entrega_id
+           LEFT JOIN productos pr ON pr.id = rc.producto_id
+          WHERE rc.empresa_id = $1
+            AND rc.liquidacion_lote_id = $2
+          ORDER BY r.nombre ASC,
+                   rc.liquidada_at DESC,
+                   rc.id DESC`,
+        [empresaId, loteId]
+      );
+
+      return res.json({ liquidacion: lotes[0], comisiones });
+    } catch (e) {
+      console.error('REFERENTES.LIQUIDACION.DETALLE.ERROR', e);
+      return res.status(500).json({ error: 'Error obteniendo detalle de liquidacion' });
+    }
+  });
 
   router.get('/', withAuth, async (req, res) => {
     try {
@@ -719,22 +880,67 @@ export function createReferentesRouter(deps) {
       const referencia = cleanText(req.body?.referencia, 120);
       const nota = cleanText(req.body?.nota, 500);
       const rows = await query(
-        `UPDATE referente_comisiones
-            SET estado = 'liquidada',
-                liquidada_at = NOW(),
-                liquidacion_referencia = $3,
-                liquidacion_nota = $4,
-                liquidada_por = $5
-          WHERE empresa_id = $1
-            AND id = ANY($2::int[])
-            AND estado = 'validada'
-          RETURNING id, referente_id, monto_comision`,
+        `WITH candidates AS (
+           SELECT id, referente_id, monto_comision
+             FROM referente_comisiones
+            WHERE empresa_id = $1
+              AND id = ANY($2::int[])
+              AND estado = 'validada'
+         ),
+         totals AS (
+           SELECT COUNT(*)::int AS comisiones_count,
+                  COALESCE(SUM(monto_comision), 0)::numeric AS total
+             FROM candidates
+         ),
+         lote AS (
+           INSERT INTO referente_liquidaciones (
+             empresa_id, referencia, nota, comisiones_count, total, liquidada_por
+           )
+           SELECT $1, $3, $4, comisiones_count, total, $5
+             FROM totals
+           WHERE comisiones_count > 0
+           RETURNING id, created_at, comisiones_count, total, referencia, nota
+         ),
+         updated AS (
+           UPDATE referente_comisiones rc
+              SET estado = 'liquidada',
+                  liquidada_at = NOW(),
+                  liquidacion_referencia = $3,
+                  liquidacion_nota = $4,
+                  liquidada_por = $5,
+                  liquidacion_lote_id = lote.id
+             FROM lote
+            WHERE rc.empresa_id = $1
+              AND rc.id = ANY($2::int[])
+              AND rc.estado = 'validada'
+           RETURNING rc.id, rc.referente_id, rc.monto_comision, lote.id AS lote_id
+         )
+         SELECT updated.*, lote.created_at AS lote_created_at,
+                lote.comisiones_count AS lote_comisiones_count,
+                lote.total AS lote_total,
+                lote.referencia AS lote_referencia,
+                lote.nota AS lote_nota
+           FROM updated
+           JOIN lote ON lote.id = updated.lote_id`,
         [empresaId, ids, referencia, nota, req.user?.uid || null]
       );
 
       const total = rows.reduce((acc, row) => acc + Number(row.monto_comision || 0), 0);
       await createComisionLiquidadaNotifications({ queryFn: query, empresaId, comisiones: rows });
-      return res.json({ ok: true, liquidadas: rows.length, total });
+      const first = rows[0] || {};
+      return res.json({
+        ok: true,
+        liquidadas: rows.length,
+        total,
+        lote: rows.length ? {
+          id: first.lote_id,
+          created_at: first.lote_created_at,
+          comisiones_count: first.lote_comisiones_count,
+          total: Number(first.lote_total || total),
+          referencia: first.lote_referencia,
+          nota: first.lote_nota,
+        } : null,
+      });
     } catch (e) {
       console.error('REFERENTES.COMISIONES.LIQUIDAR.ERROR', e);
       return res.status(500).json({ error: 'Error liquidando comisiones' });
@@ -772,6 +978,7 @@ export function createReferentesRouter(deps) {
                 r.codigo AS referente_codigo,
                 pe.cliente,
                 pr.nombre AS producto_nombre,
+                rc.liquidacion_lote_id,
                 u.username AS liquidada_por_username
            FROM referente_comisiones rc
            JOIN referentes r ON r.id = rc.referente_id

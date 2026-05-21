@@ -55,6 +55,8 @@ test('administracion puede liquidar comisiones pendientes seleccionadas', async 
     },
     async query(sql, params = []) {
       calls.push({ sql, params });
+      if (sql.includes('CREATE TABLE IF NOT EXISTS referente_liquidaciones')) return [];
+      if (sql.includes('CREATE INDEX IF NOT EXISTS referente_liquidaciones_empresa_created_idx')) return [];
       if (sql.includes('ALTER TABLE referente_comisiones')) return [];
       if (sql.includes('CREATE TABLE IF NOT EXISTS referente_notificaciones')) return [];
       if (sql.includes('CREATE INDEX IF NOT EXISTS referente_notificaciones_ref_idx')) return [];
@@ -65,9 +67,31 @@ test('administracion puede liquidar comisiones pendientes seleccionadas', async 
         assert.equal(params[3], 'Pago semanal');
         assert.equal(params[4], 12);
         assert.match(sql, /estado = 'validada'/);
+        assert.match(sql, /INSERT INTO referente_liquidaciones/);
+        assert.match(sql, /liquidacion_lote_id = lote\.id/);
         return [
-          { id: 10, referente_id: 4, monto_comision: '300' },
-          { id: 11, referente_id: 4, monto_comision: '450.50' },
+          {
+            id: 10,
+            referente_id: 4,
+            monto_comision: '300',
+            lote_id: 77,
+            lote_created_at: '2026-05-21T18:00:00.000Z',
+            lote_comisiones_count: 2,
+            lote_total: '750.50',
+            lote_referencia: 'Transferencia 123',
+            lote_nota: 'Pago semanal',
+          },
+          {
+            id: 11,
+            referente_id: 4,
+            monto_comision: '450.50',
+            lote_id: 77,
+            lote_created_at: '2026-05-21T18:00:00.000Z',
+            lote_comisiones_count: 2,
+            lote_total: '750.50',
+            lote_referencia: 'Transferencia 123',
+            lote_nota: 'Pago semanal',
+          },
         ];
       }
       if (sql.includes('INSERT INTO referente_notificaciones')) {
@@ -81,8 +105,12 @@ test('administracion puede liquidar comisiones pendientes seleccionadas', async 
   });
 
   assert.equal(result.status, 200);
-  assert.deepEqual(result.json, { ok: true, liquidadas: 2, total: 750.5 });
-  assert.equal(calls.length, 5);
+  assert.equal(result.json.ok, true);
+  assert.equal(result.json.liquidadas, 2);
+  assert.equal(result.json.total, 750.5);
+  assert.equal(result.json.lote.id, 77);
+  assert.equal(result.json.lote.referencia, 'Transferencia 123');
+  assert.equal(calls.length, 7);
 });
 
 test('liquidacion exige al menos una comision seleccionada', async () => {
@@ -117,6 +145,109 @@ test('administracion puede filtrar comisiones por rango de fechas', async () => 
 
   assert.equal(result.status, 200);
   assert.equal(result.json.length, 1);
+});
+
+test('administracion puede consultar resumen operativo de referentes', async () => {
+  let summaryCalled = false;
+  let liquidacionesCalled = false;
+
+  const result = await requestWithRouter({
+    user: { uid: 12, role: 'admin', empresa_id: 2 },
+    path: '/resumen',
+    method: 'GET',
+    async query(sql, params = []) {
+      if (sql.includes('CREATE TABLE IF NOT EXISTS referente_liquidaciones')) return [];
+      if (sql.includes('CREATE INDEX IF NOT EXISTS referente_liquidaciones_empresa_created_idx')) return [];
+      if (sql.includes('ALTER TABLE referente_comisiones')) return [];
+      if (sql.includes('CREATE TABLE IF NOT EXISTS referente_clientes_propuestos')) return [];
+      if (sql.includes('CREATE INDEX IF NOT EXISTS referente_clientes_propuestos')) return [];
+      if (sql.includes('ALTER TABLE cliente_referentes')) return [];
+      assert.deepEqual(params, [2]);
+      if (sql.includes('referentes_sin_acceso')) {
+        summaryCalled = true;
+        assert.match(sql, /estado = 'validada'/);
+        assert.match(sql, /date_trunc\('month', NOW\(\)\)/);
+        return [{
+          referentes_activos: 3,
+          referentes_inactivos: 1,
+          referentes_sin_acceso: 1,
+          clientes_vinculados: 8,
+          clientes_pendientes: 2,
+          comisiones_pendientes_count: 4,
+          comisiones_pendientes_total: '1500',
+          comisiones_liquidadas_mes_count: 5,
+          comisiones_liquidadas_mes_total: '2200',
+        }];
+      }
+      if (sql.includes('FROM referente_liquidaciones rl')) {
+        liquidacionesCalled = true;
+        return [{
+          id: 77,
+          liquidada_at: '2026-05-21T18:00:00.000Z',
+          comisiones_count: 2,
+          total: '750.50',
+          liquidacion_referencia: 'Transferencia 123',
+          liquidada_por_username: 'admin',
+        }];
+      }
+      throw new Error(`SQL inesperado: ${sql.slice(0, 120)}`);
+    },
+  });
+
+  assert.equal(result.status, 200);
+  assert.equal(summaryCalled, true);
+  assert.equal(liquidacionesCalled, true);
+  assert.equal(result.json.resumen.referentes_activos, 3);
+  assert.equal(result.json.liquidaciones.length, 1);
+});
+
+test('administracion puede consultar detalle de lote de liquidacion', async () => {
+  let loteCalled = false;
+  let comisionesCalled = false;
+
+  const result = await requestWithRouter({
+    user: { uid: 12, role: 'admin', empresa_id: 2 },
+    path: '/liquidaciones/77',
+    method: 'GET',
+    async query(sql, params = []) {
+      if (sql.includes('CREATE TABLE IF NOT EXISTS referente_liquidaciones')) return [];
+      if (sql.includes('CREATE INDEX IF NOT EXISTS referente_liquidaciones_empresa_created_idx')) return [];
+      if (sql.includes('ALTER TABLE referente_comisiones')) return [];
+      assert.deepEqual(params, [2, 77]);
+      if (sql.includes('FROM referente_liquidaciones rl')) {
+        loteCalled = true;
+        return [{
+          id: 77,
+          liquidada_at: '2026-05-21T18:00:00.000Z',
+          comisiones_count: 2,
+          total: '750.50',
+          liquidacion_referencia: 'Transferencia 123',
+          liquidacion_nota: 'Pago semanal',
+          liquidada_por_username: 'admin',
+        }];
+      }
+      if (sql.includes('FROM referente_comisiones rc')) {
+        comisionesCalled = true;
+        assert.match(sql, /rc\.liquidacion_lote_id = \$2/);
+        return [{
+          id: 10,
+          pedido_id: 88,
+          monto_comision: '300',
+          referente_nombre: 'Aliado',
+          referente_codigo: 'REF4',
+          cliente: 'Cliente demo',
+          producto_nombre: 'Bidon 20L',
+        }];
+      }
+      throw new Error(`SQL inesperado: ${sql.slice(0, 120)}`);
+    },
+  });
+
+  assert.equal(result.status, 200);
+  assert.equal(loteCalled, true);
+  assert.equal(comisionesCalled, true);
+  assert.equal(result.json.liquidacion.id, 77);
+  assert.equal(result.json.comisiones.length, 1);
 });
 
 test('administracion puede listar clientes vinculados activos', async () => {

@@ -92,6 +92,24 @@
     .dash-link strong{font-size:1.05rem;color:#fff}
     .dash-link small{color:var(--muted);line-height:1.35}
     .dash-link b{margin-top:auto;color:#a5f3fc;font-size:.82rem}
+    .control-grid{display:grid;grid-template-columns:minmax(240px,.8fr) minmax(320px,1.2fr);gap:1rem;margin-top:1rem}
+    .control-panel{border:1px solid var(--border);border-radius:10px;background:rgba(15,23,42,.55);padding:1rem}
+    .control-panel h4{margin:0 0 .75rem;font-size:1rem}
+    .alert-list{display:grid;gap:.55rem}
+    .alert-item{display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;border:1px solid rgba(148,163,184,.16);border-radius:8px;padding:.72rem;background:rgba(2,6,23,.28)}
+    .alert-item strong{display:block;color:#fff}
+    .alert-item span{color:var(--muted);font-size:.84rem;line-height:1.35}
+    .audit-list{display:grid;gap:.6rem}
+    .audit-item{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:.7rem;align-items:start;border-bottom:1px solid var(--border);padding-bottom:.65rem}
+    .audit-item:last-child{border-bottom:none;padding-bottom:0}
+    .audit-item strong{color:#fff}
+    .audit-item small{display:block;color:var(--muted);margin-top:.18rem;line-height:1.35}
+    .audit-action{width:100%;border:0;background:transparent;color:inherit;text-align:left;cursor:pointer;padding:0}
+    .audit-action:hover strong{text-decoration:underline}
+    .detail-list{display:grid;gap:.55rem;margin-top:.8rem}
+    .detail-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:.8rem;align-items:start;border:1px solid rgba(148,163,184,.16);border-radius:8px;padding:.75rem;background:rgba(2,6,23,.22)}
+    .detail-row strong{color:#fff}
+    .detail-row small{display:block;color:var(--muted);margin-top:.2rem;line-height:1.35}
     .filter-row{display:grid;grid-template-columns:minmax(220px,1fr) minmax(170px,.45fr) minmax(170px,.45fr);gap:.8rem;align-items:end;margin-bottom:1rem}
     .filter-row.comisiones-filters{grid-template-columns:minmax(220px,1fr) repeat(4,minmax(145px,.45fr)) auto}
     .admin-company-picker{min-width:220px}
@@ -120,6 +138,7 @@
       .modal-footer{flex-direction:column-reverse}
       .modal-footer .btn{width:100%}
       .filter-row{grid-template-columns:1fr}
+      .control-grid{grid-template-columns:1fr}
       .admin-company-picker{min-width:0}
       .company-context{align-items:flex-start}
       .admin-tabs{padding-bottom:.35rem}
@@ -214,6 +233,16 @@
         <a class="dash-link" href="referentes-clientes.html"><span>Vinculos</span><strong>Clientes</strong><small>Clientes vinculados, pendientes de aprobacion y desvinculaciones.</small><b id="dClientes">0 vinculados</b></a>
         <a class="dash-link" href="referentes-comisiones.html"><span>Liquidacion</span><strong>Comisiones</strong><small>Comisiones validadas, pendientes, liquidadas y control por referente.</small><b id="dPendientes">$0 pendiente</b></a>
         <a class="dash-link" href="referentes-configuracion.html"><span>Reglas</span><strong>Configuracion</strong><small>Reglas operativas, criterios de comision y ajustes comerciales.</small><b>Control interno</b></a>
+      </div>
+      <div class="control-grid">
+        <div class="control-panel">
+          <h4>Salud operativa</h4>
+          <div id="referentesAlertas" class="alert-list"></div>
+        </div>
+        <div class="control-panel">
+          <h4>Últimas liquidaciones</h4>
+          <div id="referentesAuditoria" class="audit-list"></div>
+        </div>
       </div>
     </section>
 
@@ -538,13 +567,28 @@
     </form>
   </dialog>
 
+  <dialog id="dlgLoteDetalle">
+    <div class="modal-header">
+      <h3 id="loteDetalleTitle">Detalle de liquidación</h3>
+      <button type="button" class="btn btn-sm" id="btnLoteClose">Cerrar</button>
+    </div>
+    <div class="modal-body">
+      <div class="metric">
+        <span>Resumen del lote</span>
+        <strong id="loteDetalleResumen">$0</strong>
+      </div>
+      <div id="loteDetalleMeta" class="muted"></div>
+      <div id="loteDetalleRows" class="detail-list"></div>
+    </div>
+  </dialog>
+
   <div id="toast" class="toast"></div>
 
   <script>
     const $ = (s) => document.querySelector(s);
     const money = new Intl.NumberFormat('es-AR', { style:'currency', currency:'ARS', maximumFractionDigits:0 });
     const dateFmt = new Intl.DateTimeFormat('es-AR', { day:'2-digit', month:'2-digit', year:'2-digit' });
-    const state = { user:null, isSuper:false, referentes:[], productos:[], productosAsignados:new Map(), comisiones:[], clientesPropuestos:[], clientesVinculados:[], comisionesSeleccionadas:new Set() };
+    const state = { user:null, isSuper:false, referentes:[], productos:[], productosAsignados:new Map(), comisiones:[], clientesPropuestos:[], clientesVinculados:[], resumen:null, liquidaciones:[], comisionesSeleccionadas:new Set() };
 
     function toast(msg) {
       const t = $('#toast');
@@ -650,6 +694,93 @@
       if ($('#dRefs')) $('#dRefs').textContent = `${activos} activos`;
       if ($('#dClientes')) $('#dClientes').textContent = `${clientes} vinculados`;
       if ($('#dPendientes')) $('#dPendientes').textContent = `${money.format(pendientes)} pendiente`;
+      renderControlOperativo();
+    }
+
+    function renderControlOperativo() {
+      const alertas = $('#referentesAlertas');
+      const auditoria = $('#referentesAuditoria');
+      if (!alertas || !auditoria) return;
+      if (superSinEmpresa()) {
+        alertas.innerHTML = '<div class="muted">Selecciona una empresa para ver alertas operativas.</div>';
+        auditoria.innerHTML = '<div class="muted">Sin empresa seleccionada.</div>';
+        return;
+      }
+      const r = state.resumen || {};
+      const items = [
+        {
+          label: 'Comisiones pendientes',
+          value: money.format(Number(r.comisiones_pendientes_total || 0)),
+          detail: `${Number(r.comisiones_pendientes_count || 0)} comisión/es esperando liquidación`,
+          tone: Number(r.comisiones_pendientes_count || 0) ? 'warn' : 'ok',
+        },
+        {
+          label: 'Clientes a validar',
+          value: Number(r.clientes_pendientes || 0),
+          detail: 'prospectos cargados por referentes',
+          tone: Number(r.clientes_pendientes || 0) ? 'warn' : 'ok',
+        },
+        {
+          label: 'Referentes sin acceso',
+          value: Number(r.referentes_sin_acceso || 0),
+          detail: 'activos sin usuario habilitado',
+          tone: Number(r.referentes_sin_acceso || 0) ? 'warn' : 'ok',
+        },
+        {
+          label: 'Liquidado este mes',
+          value: money.format(Number(r.comisiones_liquidadas_mes_total || 0)),
+          detail: `${Number(r.comisiones_liquidadas_mes_count || 0)} comisión/es liquidadas`,
+          tone: 'ok',
+        },
+      ];
+      alertas.innerHTML = items.map((item) => `
+        <div class="alert-item">
+          <div><strong>${esc(item.label)}</strong><span>${esc(item.detail)}</span></div>
+          <span class="badge ${item.tone}">${esc(item.value)}</span>
+        </div>
+      `).join('');
+      if (!state.liquidaciones.length) {
+        auditoria.innerHTML = '<div class="muted">Todavía no hay liquidaciones registradas.</div>';
+        return;
+      }
+      auditoria.innerHTML = state.liquidaciones.map((l) => `
+        <button class="audit-action" type="button" onclick="openLoteDetalle(${Number(l.id)})">
+        <div class="audit-item">
+          <div>
+            <strong>Lote #${Number(l.id)} · ${money.format(Number(l.total || 0))}</strong>
+            <small>${Number(l.comisiones_count || 0)} comisión/es · ${esc(l.liquidacion_referencia || 'sin referencia')}</small>
+            <small>${esc(l.liquidacion_nota || '')}</small>
+          </div>
+          <small>${l.liquidada_at ? esc(dateFmt.format(new Date(l.liquidada_at))) : '-'}<br>${esc(l.liquidada_por_username || 'sin usuario')}</small>
+        </div>
+        </button>
+      `).join('');
+    }
+
+    async function openLoteDetalle(id) {
+      if (!id) return;
+      const data = await api(`/api/referentes/liquidaciones/${Number(id)}${empresaQS()}`);
+      const lote = data?.liquidacion || {};
+      const rows = Array.isArray(data?.comisiones) ? data.comisiones : [];
+      $('#loteDetalleTitle').textContent = `Liquidación #${Number(lote.id || id)}`;
+      $('#loteDetalleResumen').textContent = `${money.format(Number(lote.total || 0))} · ${Number(lote.comisiones_count || rows.length)} comisión/es`;
+      $('#loteDetalleMeta').textContent = [
+        lote.liquidada_at ? dateFmt.format(new Date(lote.liquidada_at)) : '',
+        lote.liquidada_por_username ? `usuario ${lote.liquidada_por_username}` : '',
+        lote.liquidacion_referencia || 'sin referencia',
+        lote.liquidacion_nota || '',
+      ].filter(Boolean).join(' · ');
+      $('#loteDetalleRows').innerHTML = rows.length ? rows.map((c) => `
+        <div class="detail-row">
+          <div>
+            <strong>${esc(c.referente_nombre || '-')} <span class="code">${esc(c.referente_codigo || '')}</span></strong>
+            <small>${esc(c.cliente || '-')} · ${esc(c.producto_nombre || '-')} · Pedido #${Number(c.pedido_id || 0)}</small>
+            <small>Base ${money.format(Number(c.base_monto || 0))} · ${Number(c.porcentaje || 0).toFixed(2)}%</small>
+          </div>
+          <strong>${money.format(Number(c.monto_comision || 0))}</strong>
+        </div>
+      `).join('') : '<div class="muted">El lote no tiene comisiones asociadas.</div>';
+      $('#dlgLoteDetalle').showModal();
     }
 
     function renderReferentes() {
@@ -725,7 +856,7 @@
       if (superSinEmpresa()) return toast('Selecciona una empresa primero.');
       const rows = getComisionesFiltradas();
       if (!rows.length) return toast('No hay comisiones para exportar.');
-      const headers = ['Fecha','Referente','Codigo','Cliente','Producto','Pedido','Base','Porcentaje','Comision','Estado','Liquidada','Referencia','Liquidada por'];
+      const headers = ['Fecha','Referente','Codigo','Cliente','Producto','Pedido','Base','Porcentaje','Comision','Estado','Lote','Liquidada','Referencia','Liquidada por'];
       const lines = [headers.map(csvCell).join(',')];
       rows.forEach((c) => {
         lines.push([
@@ -739,6 +870,7 @@
           Number(c.porcentaje || 0).toFixed(2),
           Number(c.monto_comision || 0).toFixed(2),
           c.estado || 'validada',
+          c.liquidacion_lote_id ? '#' + c.liquidacion_lote_id : '',
           c.liquidada_at ? dateFmt.format(new Date(c.liquidada_at)) : '',
           c.liquidacion_referencia || '',
           c.liquidada_por_username || '',
@@ -785,7 +917,7 @@
           <td data-label="Accion" style="text-align:right">
             ${c.estado === 'validada'
               ? `<button class="btn btn-sm" onclick="openLiquidacion([${Number(c.id)}])">Liquidar</button>`
-              : `<span class="muted">${c.liquidada_at ? esc(dateFmt.format(new Date(c.liquidada_at))) : 'liquidada'}</span>`}
+              : `<span class="muted">${c.liquidacion_lote_id ? `Lote #${Number(c.liquidacion_lote_id)}` : 'liquidada'}<br>${c.liquidada_at ? esc(dateFmt.format(new Date(c.liquidada_at))) : ''}</span>`}
           </td>
         </tr>
       `).join('');
@@ -913,6 +1045,8 @@
         state.comisiones = [];
         state.clientesPropuestos = [];
         state.clientesVinculados = [];
+        state.resumen = null;
+        state.liquidaciones = [];
         state.comisionesSeleccionadas.clear();
         renderReferentes();
         hydrateFilterOptions();
@@ -921,16 +1055,19 @@
         renderClientesVinculados();
         return;
       }
-      const [refs, coms, clientesPropuestos, clientesVinculados] = await Promise.all([
+      const [refs, coms, clientesPropuestos, clientesVinculados, resumen] = await Promise.all([
         api('/api/referentes' + empresaQS()),
         api('/api/referentes/comisiones' + comisionesQS()),
         api('/api/referentes/clientes-propuestos' + empresaQS()),
         api('/api/referentes/clientes' + empresaQS()),
+        api('/api/referentes/resumen' + empresaQS()),
       ]);
       state.referentes = Array.isArray(refs) ? refs : [];
       state.comisiones = Array.isArray(coms) ? coms : [];
       state.clientesPropuestos = Array.isArray(clientesPropuestos) ? clientesPropuestos : [];
       state.clientesVinculados = Array.isArray(clientesVinculados) ? clientesVinculados : [];
+      state.resumen = resumen?.resumen || null;
+      state.liquidaciones = Array.isArray(resumen?.liquidaciones) ? resumen.liquidaciones : [];
       state.comisionesSeleccionadas = new Set([...state.comisionesSeleccionadas].filter((id) => state.comisiones.some((c) => Number(c.id) === id && c.estado === 'validada')));
       renderReferentes();
       hydrateFilterOptions();
@@ -998,7 +1135,8 @@
       });
       $('#dlgLiquidacion').close();
       state.comisionesSeleccionadas.clear();
-      toast(`Liquidación registrada: ${result?.liquidadas || 0} comisión/es`);
+      const lote = result?.lote?.id ? ` · lote #${result.lote.id}` : '';
+      toast(`Liquidación registrada: ${result?.liquidadas || 0} comisión/es${lote}`);
       await refreshAll();
     }
 
@@ -1251,6 +1389,7 @@
       $('#btnAccesoCancel').onclick = () => $('#dlgAcceso').close();
       $('#btnLiqClose').onclick = () => $('#dlgLiquidacion').close();
       $('#btnLiqCancel').onclick = () => $('#dlgLiquidacion').close();
+      $('#btnLoteClose').onclick = () => $('#dlgLoteDetalle').close();
       $('#btnGenPass').onclick = () => {
         $('#accesoPassword').value = generatePassword();
         $('#accesoPassword').focus();
