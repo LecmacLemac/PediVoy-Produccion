@@ -1486,9 +1486,17 @@ if (logoutLink) {
     let cuentasBancariasDraft = [];
     let companyFilters = { q: '', license: '', config: '', sort: 'id_desc' };
     let currentFacturacionConfig = null;
+    let currentPagosEmpresaId = null;
 
     const btnNuevaEmpresa = document.getElementById('btnNuevaEmpresa');
     if (btnNuevaEmpresa) btnNuevaEmpresa.addEventListener('click', openModal);
+
+    const pagosProveedorSelect = document.getElementById('e_pagos_proveedor');
+    if (pagosProveedorSelect) {
+      pagosProveedorSelect.addEventListener('change', () => {
+        refreshPagosWebhookUrl(currentPagosEmpresaId);
+      });
+    }
 
     const companySearch = document.getElementById('companySearch');
     if (companySearch) {
@@ -2260,6 +2268,21 @@ if (logoutLink) {
     }
 
     let pagosTokenActual = null;
+
+    function refreshPagosWebhookUrl(empresaId) {
+      const proveedor = document.getElementById('e_pagos_proveedor').value || '';
+      const webhookInput = document.getElementById('e_pagos_webhook');
+      if (!webhookInput) return;
+
+      if (!proveedor) {
+        webhookInput.value = '';
+        return;
+      }
+
+      const baseUrl = window.location.origin;
+      const params = empresaId ? `?empresa_id=${encodeURIComponent(empresaId)}` : '';
+      webhookInput.value = `${baseUrl}/api/webhooks/pagos/${proveedor}${params}`;
+    }
         
     function getPagosConfigFromForm() {
       const proveedor = document.getElementById('e_pagos_proveedor').value || null;
@@ -2299,6 +2322,7 @@ if (logoutLink) {
     }
 
     function setPagosConfigInForm(configIntegraciones, empresaId) {
+      currentPagosEmpresaId = empresaId || null;
       const cfg = configIntegraciones || {};
       const pagos = cfg.pagos || {};
       const canales = pagos.canales || {};
@@ -2337,14 +2361,7 @@ if (logoutLink) {
         autoFalse.checked = true;
       }
 
-      // Webhook sugerida (solo informativa en el panel)
-      // Usa el endpoint genérico: /api/webhooks/pagos/:proveedor
-      const baseUrl = window.location.origin;
-      const webhookSugerida = `${baseUrl}/api/webhooks/pagos/${proveedor}`;
-      const webhookInput = document.getElementById('e_pagos_webhook');
-      if (webhookInput) {
-        webhookInput.value = webhookSugerida;
-      }
+      refreshPagosWebhookUrl(empresaId);
     }
 
     function setFacturacionConfigInForm(config, empresa = {}) {

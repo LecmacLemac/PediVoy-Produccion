@@ -1,8 +1,13 @@
 // src/qr/pagosWebhookRouter.js
 import { Router } from 'express';
 import crypto from 'node:crypto';
+import { MercadoPagoConfig, Payment } from 'mercadopago';
 import { query } from '../db.js';
-import { actualizarEstadoPagoScoped } from './pagosService.js';
+import {
+  actualizarEstadoPagoPedido,
+  actualizarEstadoPagoScoped,
+  getConfigPagosEmpresa
+} from './pagosService.js';
 import { normalizePagoEstado } from './pagosEstado.js';
 
 const router = Router();
@@ -38,10 +43,125 @@ function sanitizeWebhookPayload({ body, providerStatus, canonicalEstado, ip }) {
   };
 }
 
+function getMercadoPagoPaymentId(req) {
+  const { query: q, body } = req;
+  return (
+    q.id ||
+    q['data.id'] ||
+    body?.data?.id ||
+    body?.id ||
+    null
+  );
+}
+
+function getMercadoPagoTopic(req) {
+  const { query: q, body } = req;
+  return q.topic || q.type || body?.type || body?.topic || null;
+}
+
+function parsePedidoExternalReference(externalReference) {
+  const parts = String(externalReference || '').split('|');
+  if (parts[0] !== 'PEDIDO') return null;
+
+  const empresaId = Number(parts.find((p) => p.startsWith('emp:'))?.split(':')[1]);
+  const pedidoId = Number(parts.find((p) => p.startsWith('ped:'))?.split(':')[1]);
+
+  if (!Number.isInteger(empresaId) || empresaId <= 0) return null;
+  if (!Number.isInteger(pedidoId) || pedidoId <= 0) return null;
+
+  return { empresaId, pedidoId };
+}
+
+async function getMercadoPagoPayment({ accessToken, paymentId }) {
+  const client = new MercadoPagoConfig({
+    accessToken,
+    options: { timeout: 5000 }
+  });
+  const payment = new Payment(client);
+  return payment.get({ id: paymentId });
+}
+
+function sanitizeMercadoPagoPayment({ payment, canonicalEstado, ip }) {
+  return {
+    webhook: {
+      received_at: new Date().toISOString(),
+      ip: ip || null
+    },
+    provider: {
+      id: payment?.id ? String(payment.id) : null,
+      status: payment?.status ? String(payment.status) : null,
+      status_detail: payment?.status_detail ? String(payment.status_detail) : null,
+      canonical_estado: String(canonicalEstado),
+      preference_id: payment?.preference_id ? String(payment.preference_id) : null,
+      external_reference: payment?.external_reference ? String(payment.external_reference) : null
+    }
+  };
+}
+
+async function handleMercadoPagoWebhook(req, res) {
+  const topic = getMercadoPagoTopic(req);
+  const paymentId = getMercadoPagoPaymentId(req);
+
+  if (topic && topic !== 'payment') {
+    return res.status(200).json({ ok: true, ignored: true });
+  }
+
+  if (!paymentId) {
+    return res.status(400).json({ error: 'Falta id de pago de Mercado Pago' });
+  }
+
+  const empresaIdFromUrl = Number(req.query.empresa_id || req.body?.empresa_id || 0);
+  if (!Number.isInteger(empresaIdFromUrl) || empresaIdFromUrl <= 0) {
+    return res.status(400).json({ error: 'Falta empresa_id en webhook de Mercado Pago' });
+  }
+
+  const configPagos = await getConfigPagosEmpresa(empresaIdFromUrl);
+  if (!configPagos?.accessToken) {
+    return res.status(403).json({ error: 'Mercado Pago no configurado para la empresa' });
+  }
+
+  const payment = await getMercadoPagoPayment({
+    accessToken: configPagos.accessToken,
+    paymentId
+  });
+
+  const ref = parsePedidoExternalReference(payment?.external_reference);
+  if (!ref || ref.empresaId !== empresaIdFromUrl) {
+    return res.status(200).json({ ok: true, ignored: true });
+  }
+
+  const canonicalEstado = normalizePagoEstado({
+    proveedor: 'mercado_pago',
+    providerStatus: payment?.status,
+    nuevoEstado: payment?.status
+  });
+
+  if (!canonicalEstado) {
+    return res.status(400).json({ error: 'Estado de Mercado Pago no soportado' });
+  }
+
+  const ip = (req.headers['x-forwarded-for'] || req.ip || '').toString().split(',')[0].trim();
+  const aplicarEstado = canonicalEstado !== 'pagado' || configPagos.autoConfirmar === true;
+  const updated = await actualizarEstadoPagoPedido({
+    empresaId: ref.empresaId,
+    pedidoId: ref.pedidoId,
+    proveedor: 'mercado_pago',
+    providerPaymentId: String(payment.id),
+    providerOrderId: payment?.preference_id ? String(payment.preference_id) : null,
+    nuevoEstado: canonicalEstado,
+    providerStatus: payment?.status ? String(payment.status) : null,
+    providerPayload: sanitizeMercadoPagoPayment({ payment, canonicalEstado, ip }),
+    aplicarEstado
+  });
+
+  return res.status(200).json({ ok: true, updated: !!updated, auto_confirmado: aplicarEstado });
+}
+
 /**
  * Webhook genérico para pedido_pagos.
  *
  * POST /api/webhooks/pagos
+ * POST /api/webhooks/pagos/:proveedor
  * Headers:
  *  - x-pagos-signature: hex(hmac_sha256(webhook_secret, `${proveedor}|${providerPaymentId}|${nuevoEstado}`))
  * Body:
@@ -50,9 +170,19 @@ function sanitizeWebhookPayload({ body, providerStatus, canonicalEstado, ip }) {
  *  - nuevoEstado: 'pendiente'|'pagado'|'rechazado'|'expired'|...
  *  - providerStatus?: string
  */
-router.post('/pagos', async (req, res) => {
+router.post(['/pagos', '/pagos/:proveedor'], async (req, res) => {
   try {
-    const { proveedor, providerPaymentId, nuevoEstado, providerStatus = null } = req.body || {};
+    const proveedorRuta = req.params?.proveedor ? String(req.params.proveedor) : null;
+    if (proveedorRuta === 'mercado_pago' || proveedorRuta === 'mercadopago' || proveedorRuta === 'mp') {
+      return handleMercadoPagoWebhook(req, res);
+    }
+
+    const {
+      proveedor = proveedorRuta,
+      providerPaymentId,
+      nuevoEstado,
+      providerStatus = null
+    } = req.body || {};
 
     if (!proveedor || !providerPaymentId || !nuevoEstado) {
       return res.status(400).json({ error: 'Payload inválido' });
@@ -95,7 +225,9 @@ router.post('/pagos', async (req, res) => {
     );
 
     const cfg = cfgRows[0]?.config_integraciones || {};
-    const secret = cfg?.pagos?.webhook_secret || null;
+    const pagosCfg = cfg?.pagos || {};
+    const secret = pagosCfg.webhook_secret || null;
+    const autoConfirmar = pagosCfg.auto_confirmar === true;
 
     if (!secret) {
       return res.status(403).json({ error: 'Webhook no habilitado' });
@@ -118,17 +250,18 @@ router.post('/pagos', async (req, res) => {
       canonicalEstado,
       ip
     });
+    const aplicarEstado = canonicalEstado !== 'pagado' || autoConfirmar;
 
     const updated = await actualizarEstadoPagoScoped({
       proveedor: String(proveedor),
       providerPaymentId: String(providerPaymentId),
-      nuevoEstado: String(canonicalEstado),
+      nuevoEstado: aplicarEstado ? String(canonicalEstado) : 'pendiente',
       providerStatus: providerStatus ? String(providerStatus) : null,
       providerPayload
     });
 
     // Idempotente: si ya estaba, updated puede ser null; igual devolvemos ok
-    return res.status(200).json({ ok: true, updated: !!updated });
+    return res.status(200).json({ ok: true, updated: !!updated, auto_confirmado: aplicarEstado });
 
   } catch (e) {
     console.error('WEBHOOK pagos error:', e);

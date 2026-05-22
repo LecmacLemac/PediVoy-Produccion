@@ -11,11 +11,12 @@ import { crearPagoProveedor } from './pagosProvider.js';
  *   "pagos": {
  *     "proveedor": "fake" | "mercado_pago" | "banco_x",
  *     "access_token": "xxx",
- *     "webhook_secret": "yyy"
+ *     "webhook_secret": "yyy",
+ *     "auto_confirmar": true
  *   }
  * }
  */
-async function getConfigPagosEmpresa(empresaId) {
+export async function getConfigPagosEmpresa(empresaId) {
   const rows = await query(
     `SELECT config_integraciones
        FROM empresas
@@ -36,7 +37,8 @@ async function getConfigPagosEmpresa(empresaId) {
   return {
     proveedor,
     accessToken: pagosCfg.access_token || null,
-    webhookSecret: pagosCfg.webhook_secret || null
+    webhookSecret: pagosCfg.webhook_secret || null,
+    autoConfirmar: pagosCfg.auto_confirmar === true
   };
 }
 
@@ -183,6 +185,7 @@ export async function crearPagoParaPedido({ pedidoId, empresaId }, options = {})
         descripcion,
         proveedor,
         provider_payment_id,
+        provider_order_id,
         estado,
         monto,
         moneda,
@@ -195,9 +198,9 @@ export async function crearPagoParaPedido({ pedidoId, empresaId }, options = {})
       VALUES (
         $1, $2, $3, $4,
         $5, $6, $7,
-        $8, $9,
+        $8, $9, $10,
         'pendiente',
-        $10, $11, $12, $13, $14,
+        $11, $12, $13, $14, $15,
         NOW(), NOW()
       )
       RETURNING *
@@ -212,6 +215,7 @@ export async function crearPagoParaPedido({ pedidoId, empresaId }, options = {})
         proveedorResp.descripcion,
         proveedor,
         proveedorResp.providerPaymentId,
+        proveedorResp.providerOrderId || proveedorResp.providerPaymentId,
         monto,
         proveedorResp.moneda || 'ARS',
         proveedorResp.checkoutUrl,
@@ -325,3 +329,65 @@ export async function actualizarEstadoPagoScoped({ proveedor, providerPaymentId,
   return rows[0] || null;
 }
 
+/**
+ * Actualiza un pago de pedido confirmado por proveedor. Permite registrar el
+ * evento sin mover el estado a "pagado" cuando la empresa no habilitó
+ * auto_confirmar.
+ */
+export async function actualizarEstadoPagoPedido({
+  empresaId,
+  pedidoId,
+  proveedor,
+  providerPaymentId,
+  providerOrderId = null,
+  nuevoEstado,
+  providerStatus = null,
+  providerPayload = null,
+  aplicarEstado = true
+}) {
+  const rows = await query(
+    `
+    UPDATE pedido_pagos
+       SET provider_payment_id = COALESCE($4, provider_payment_id),
+           provider_order_id = COALESCE($5, provider_order_id),
+           estado = CASE
+             WHEN $9::boolean THEN $6
+             ELSE estado
+           END,
+           settlement_at = CASE
+             WHEN $9::boolean AND $6 = 'pagado' AND settlement_at IS NULL THEN NOW()
+             ELSE settlement_at
+           END,
+           provider_status = COALESCE($7, provider_status),
+           provider_payload = CASE
+             WHEN $8::jsonb IS NULL THEN provider_payload
+             ELSE COALESCE(provider_payload, '{}'::jsonb) || $8::jsonb
+           END,
+           metadata = COALESCE(metadata, '{}'::jsonb)
+             || jsonb_build_object(
+                  'last_webhook_at', NOW(),
+                  'webhook_count', COALESCE((metadata->>'webhook_count')::int, 0) + 1,
+                  'last_canonical_estado', $6,
+                  'auto_confirm_applied', $9::boolean
+                ),
+           updated_at = NOW()
+     WHERE empresa_id = $1
+       AND pedido_id = $2
+       AND proveedor = $3
+     RETURNING *
+    `,
+    [
+      empresaId,
+      pedidoId,
+      proveedor,
+      providerPaymentId,
+      providerOrderId,
+      nuevoEstado,
+      providerStatus,
+      providerPayload,
+      aplicarEstado
+    ]
+  );
+
+  return rows[0] || null;
+}
