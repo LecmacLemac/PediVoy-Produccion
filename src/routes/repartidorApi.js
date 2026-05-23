@@ -4,9 +4,10 @@
 import express from 'express';
 import { awardPointsForDeliveredOrder } from '../services/puntosService.js';
 import { generateComisionesForDeliveredOrder } from '../services/referentesService.js';
+import { crearPagoParaPedido as crearPagoParaPedidoDefault } from '../qr/pagosService.js';
 
 export function createRepartidorApiRouter(deps) {
-  const { query, pool, withAuth, getEmpresaIdFromToken, notifyEstadoPedidoPush, notificarEnRuta, notificarPedidoTransferencia, ejecutarEstrategiaVecinos, registrarMovimientosActivosDesdePedido } = deps || {};
+  const { query, pool, withAuth, getEmpresaIdFromToken, notifyEstadoPedidoPush, notificarEnRuta, notificarPedidoTransferencia, ejecutarEstrategiaVecinos, registrarMovimientosActivosDesdePedido, crearPagoParaPedido = crearPagoParaPedidoDefault } = deps || {};
   if (typeof query !== 'function') throw new Error('createRepartidorApiRouter: falta query(fn)');
   if (typeof withAuth !== 'function') throw new Error('createRepartidorApiRouter: falta withAuth(fn)');
   if (typeof getEmpresaIdFromToken !== 'function') throw new Error('createRepartidorApiRouter: falta getEmpresaIdFromToken(fn)');
@@ -24,6 +25,30 @@ export function createRepartidorApiRouter(deps) {
   function isCuentaCorrienteMethod(metodo) {
     const m = String(metodo || '').toLowerCase();
     return m === 'cuenta_corriente' || m.startsWith('cta');
+  }
+
+  async function getPedidoOperablePorRepartidor({ pedidoId, empresaId, choferId, role }) {
+    const vals = [pedidoId, empresaId];
+    let choferClause = '';
+
+    if (String(role || '').toLowerCase() === 'repartidor') {
+      vals.push(choferId);
+      choferClause = 'AND (p.chofer_id = $3 OR p.chofer_id IS NULL)';
+    }
+
+    const rows = await query(
+      `
+      SELECT p.id, p.empresa_id, p.chofer_id, p.estado, p.metodo_pago
+        FROM pedidos p
+       WHERE p.id = $1
+         AND p.empresa_id = $2
+         ${choferClause}
+       LIMIT 1
+      `,
+      vals
+    );
+
+    return rows[0] || null;
   }
 
 // 1. Obtener Pedidos
@@ -91,6 +116,55 @@ export function createRepartidorApiRouter(deps) {
    } catch (e) {
      console.error('REPARTIDOR PEDIDOS ERROR:', e);
      res.status(500).json({ error: 'Error cargando pedidos' });
+   }
+});
+
+// 1.d Generar link/QR de pago desde la app del repartidor
+  router.post('/pedidos/:id/pago-qr', withAuth, async (req, res) => {
+   try {
+     const pedidoId = Number(req.params.id);
+     const { chofer_id, role } = req.user || {};
+     const empresaId = Number(getEmpresaIdFromToken(req));
+
+     if (!Number.isInteger(pedidoId) || pedidoId <= 0) {
+       return res.status(400).json({ error: 'ID inválido' });
+     }
+     if (!empresaId) return res.status(400).json({ error: 'Empresa no determinada' });
+     if (role === 'repartidor' && !chofer_id) {
+       return res.status(403).json({ error: 'Usuario repartidor sin chofer vinculado.' });
+     }
+
+     const pedido = await getPedidoOperablePorRepartidor({
+       pedidoId,
+       empresaId,
+       choferId: chofer_id,
+       role,
+     });
+
+     if (!pedido) return res.status(404).json({ error: 'Pedido no encontrado' });
+
+     const pago = await crearPagoParaPedido(
+       { pedidoId, empresaId },
+       {
+         canal: 'repartidor',
+         metodoPago: 'qr_dinamico',
+       }
+     );
+
+     return res.json({
+       id: pago.id,
+       estado: pago.estado,
+       monto: pago.monto,
+       moneda: pago.moneda,
+       checkout_url: pago.checkout_url,
+       qr_payload: pago.qr_payload,
+       vence_at: pago.vence_at,
+       proveedor: pago.proveedor,
+     });
+   } catch (e) {
+     console.error('REPARTIDOR PAGO QR ERROR:', e);
+     const status = e.statusCode || 500;
+     return res.status(status).json({ error: e.message || 'Error generando pago QR' });
    }
 });
 

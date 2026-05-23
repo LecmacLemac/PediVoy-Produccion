@@ -635,7 +635,7 @@ async function abrirModalPagoQR(pedidoId) {
   modal.style.display = 'flex';
 
   try {
-    const pago = await api(`/api/admin/qr/pedidos/${pedidoId}/link`, {
+    const pago = await api(`/api/repartidor/pedidos/${pedidoId}/pago-qr`, {
       method: 'POST',
       body: {
         canal: 'repartidor',      // desde el chofer

@@ -8,7 +8,7 @@ function buildTestApp({ query }) {
   return buildTestAppWithDeps({ query });
 }
 
-function buildTestAppWithDeps({ query, pool = {} }) {
+function buildTestAppWithDeps({ query, pool = {}, ...overrides }) {
   const app = express();
   app.use(express.json());
   app.use('/api/repartidor', createRepartidorApiRouter({
@@ -29,6 +29,7 @@ function buildTestAppWithDeps({ query, pool = {} }) {
     notificarPedidoTransferencia: async () => {},
     ejecutarEstrategiaVecinos: async () => {},
     registrarMovimientosActivosDesdePedido: async () => {},
+    ...overrides,
   }));
   return app;
 }
@@ -42,6 +43,65 @@ async function withServer(app, fn) {
     await new Promise((resolve) => server.close(resolve));
   }
 }
+
+test('repartidor de empresa 1 genera QR desde ruta propia sin usar endpoint admin', async () => {
+  const calls = [];
+  const app = buildTestAppWithDeps({
+    query: async (sql, params) => {
+      calls.push({ sql, params });
+
+      if (sql.includes('FROM pedidos p') && sql.includes('p.empresa_id = $2')) {
+        return [{
+          id: 42,
+          empresa_id: 1,
+          chofer_id: 7,
+          estado: 'pendiente',
+          metodo_pago: 'transferencia',
+        }];
+      }
+
+      throw new Error(`Consulta inesperada: ${sql}`);
+    },
+    crearPagoParaPedido: async (params, options) => {
+      assert.deepEqual(params, { pedidoId: 42, empresaId: 1 });
+      assert.equal(options.canal, 'repartidor');
+      assert.equal(options.metodoPago, 'qr_dinamico');
+
+      return {
+        id: 99,
+        estado: 'pendiente',
+        monto: 1200,
+        moneda: 'ARS',
+        checkout_url: 'https://mp.test/checkout',
+        qr_payload: 'https://mp.test/checkout',
+        vence_at: '2026-05-22T23:00:00.000Z',
+        proveedor: 'mercado_pago',
+      };
+    },
+    withAuth: (req, res, next) => {
+      req.user = {
+        chofer_id: 7,
+        empresa_id: 1,
+        username: 'chofer-test',
+        role: 'repartidor',
+      };
+      next();
+    },
+    getEmpresaIdFromToken: () => 1,
+  });
+
+  await withServer(app, async (baseUrl) => {
+    const resp = await fetch(`${baseUrl}/api/repartidor/pedidos/42/pago-qr`, { method: 'POST' });
+    assert.equal(resp.status, 200);
+
+    const body = await resp.json();
+    assert.equal(body.qr_payload, 'https://mp.test/checkout');
+    assert.equal(body.proveedor, 'mercado_pago');
+  });
+
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].params, [42, 1, 7]);
+});
 
 test('activos-resumen no consulta inventario cuando el pedido no tiene productos activos', async () => {
   const sqlCalls = [];
