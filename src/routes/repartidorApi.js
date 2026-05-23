@@ -27,6 +27,11 @@ export function createRepartidorApiRouter(deps) {
     return m === 'cuenta_corriente' || m.startsWith('cta');
   }
 
+  function isPedidoEnRutaOperable(pedido) {
+    const estado = String(pedido?.estado || '').toLowerCase();
+    return estado === 'en_ruta' || estado === 'en_camino';
+  }
+
   async function getPedidoOperablePorRepartidor({ pedidoId, empresaId, choferId, role }) {
     const vals = [pedidoId, empresaId];
     let choferClause = '';
@@ -142,6 +147,9 @@ export function createRepartidorApiRouter(deps) {
      });
 
      if (!pedido) return res.status(404).json({ error: 'Pedido no encontrado' });
+     if (!isPedidoEnRutaOperable(pedido)) {
+       return res.status(409).json({ error: 'El pedido debe estar en ruta para generar QR de cobro' });
+     }
 
      const pago = await crearPagoParaPedido(
        { pedidoId, empresaId },
@@ -191,6 +199,9 @@ export function createRepartidorApiRouter(deps) {
      });
 
      if (!pedido) return res.status(404).json({ error: 'Pedido no encontrado' });
+     if (!isPedidoEnRutaOperable(pedido)) {
+       return res.status(409).json({ error: 'El pedido debe estar en ruta para consultar el pago QR' });
+     }
 
      const pagos = await listarPagosPorPedido({ pedidoId, empresaId });
      const pago = (pagos || []).find((p) => String(p.metodo_pago || '').toLowerCase() === 'qr_dinamico') || (pagos || [])[0] || null;
@@ -233,6 +244,9 @@ export function createRepartidorApiRouter(deps) {
      });
 
      if (!pedido) return res.status(404).json({ error: 'Pedido no encontrado' });
+     if (!isPedidoEnRutaOperable(pedido)) {
+       return res.status(409).json({ error: 'El pedido debe estar en ruta para pedir comprobante de transferencia' });
+     }
 
      await notificarPedidoTransferencia(pedidoId, empresaId);
      return res.json({ ok: true });
@@ -468,8 +482,6 @@ export function createRepartidorApiRouter(deps) {
 
      const pedido             = rows[0];
      const actualChofer       = pedido.chofer_id;
-     const metodoPagoAnterior = (pedido.metodo_pago || '').toLowerCase();
-     const estadoAnterior     = (pedido.estado || '').toLowerCase();
      const teniaZonaAntes     = pedido.zona_id != null;
      const puntoEntregaId     = pedido.punto_entrega_id;
 
@@ -602,16 +614,6 @@ export function createRepartidorApiRouter(deps) {
          }).catch(err => console.error('Error estrategia vecinos:', err));
        }
 
-       // CASO C: CAMBIO A TRANSFERENCIA
-       if (
-         metodo_pago &&
-         metodo_pago.toLowerCase().includes('trans') &&
-         !metodoPagoAnterior.includes('trans')
-       ) {
-         notificarPedidoTransferencia(pedidoId, empresa_id).catch(err =>
-           console.error('Error en notificación transferencia pedido:', err)
-         );
-       }
      }
 
      res.json({ ok: true });

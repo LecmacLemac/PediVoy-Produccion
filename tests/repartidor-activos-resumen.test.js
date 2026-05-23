@@ -55,7 +55,7 @@ test('repartidor de empresa 1 genera QR desde ruta propia sin usar endpoint admi
           id: 42,
           empresa_id: 1,
           chofer_id: 7,
-          estado: 'pendiente',
+          estado: 'en_ruta',
           metodo_pago: 'transferencia',
         }];
       }
@@ -101,6 +101,46 @@ test('repartidor de empresa 1 genera QR desde ruta propia sin usar endpoint admi
 
   assert.equal(calls.length, 1);
   assert.deepEqual(calls[0].params, [42, 1, 7]);
+});
+
+test('repartidor no genera QR si el pedido todavia no esta en ruta', async () => {
+  let crearPagoLlamado = false;
+  const app = buildTestAppWithDeps({
+    query: async (sql, params) => {
+      if (sql.includes('FROM pedidos p') && sql.includes('p.empresa_id = $2')) {
+        return [{
+          id: 42,
+          empresa_id: 1,
+          chofer_id: 7,
+          estado: 'pendiente',
+          metodo_pago: 'transferencia',
+        }];
+      }
+
+      throw new Error(`Consulta inesperada: ${sql}`);
+    },
+    crearPagoParaPedido: async () => {
+      crearPagoLlamado = true;
+      throw new Error('No debe generar pago');
+    },
+    withAuth: (req, res, next) => {
+      req.user = {
+        chofer_id: 7,
+        empresa_id: 1,
+        username: 'chofer-test',
+        role: 'repartidor',
+      };
+      next();
+    },
+    getEmpresaIdFromToken: () => 1,
+  });
+
+  await withServer(app, async (baseUrl) => {
+    const resp = await fetch(`${baseUrl}/api/repartidor/pedidos/42/pago-qr`, { method: 'POST' });
+    assert.equal(resp.status, 409);
+  });
+
+  assert.equal(crearPagoLlamado, false);
 });
 
 test('repartidor consulta estado QR aprobado antes de continuar entrega', async () => {
@@ -201,6 +241,47 @@ test('repartidor puede disparar WhatsApp de transferencia desde modal QR', async
   assert.equal(calls.length, 1);
   assert.deepEqual(calls[0].params, [42, 1, 7]);
   assert.deepEqual(notificaciones, [{ pedidoId: 42, empresaId: 1 }]);
+});
+
+test('cambiar pedido a transferencia no envia WhatsApp antes del modal QR', async () => {
+  const notificaciones = [];
+  const app = buildTestAppWithDeps({
+    query: async (sql, params) => {
+      if (sql.startsWith('ALTER TABLE puntos_entrega')) return [];
+
+      if (sql.includes('FROM pedidos p') && sql.includes('p.id = $1 AND p.empresa_id = $2')) {
+        return [{
+          chofer_id: 7,
+          metodo_pago: 'efectivo',
+          estado: 'pendiente',
+          zona_id: 5,
+          punto_entrega_id: 9,
+          cuenta_corriente_habilitada: false,
+        }];
+      }
+
+      if (sql.includes('UPDATE pedidos SET metodo_pago')) {
+        assert.deepEqual(params, ['transferencia', '42', 3]);
+        return [];
+      }
+
+      throw new Error(`Consulta inesperada: ${sql}`);
+    },
+    notificarPedidoTransferencia: async (pedidoId, empresaId) => {
+      notificaciones.push({ pedidoId, empresaId });
+    },
+  });
+
+  await withServer(app, async (baseUrl) => {
+    const resp = await fetch(`${baseUrl}/api/repartidor/pedidos/42`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ metodo_pago: 'transferencia' }),
+    });
+    assert.equal(resp.status, 200);
+  });
+
+  assert.deepEqual(notificaciones, []);
 });
 
 test('activos-resumen no consulta inventario cuando el pedido no tiene productos activos', async () => {
