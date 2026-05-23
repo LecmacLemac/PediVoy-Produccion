@@ -672,12 +672,43 @@ function cerrarModalPagoQR() {
   qrPagoState = { pedidoId: null, link: null };
 }
 
+async function usarTransferenciaManualQR(el = null) {
+  const id = qrPagoState.pedidoId;
+  if (!id) {
+    toast('Pedido no encontrado');
+    return;
+  }
+
+  const restoreBtn = setActionBusy(el, true);
+
+  try {
+    await api(`/api/repartidor/pedidos/${id}/transferencia/notificar`, { method: 'POST' });
+    toast('WhatsApp de transferencia enviado');
+    cerrarModalPagoQR();
+    await abrirActivosPaso(id);
+  } catch (e) {
+    notifyError(e?.message || 'No se pudo enviar el WhatsApp de transferencia', e);
+  } finally {
+    restoreBtn();
+  }
+}
+
 async function confirmarPagoQR() {
   const id = qrPagoState.pedidoId;
-  cerrarModalPagoQR();
   if (!id) return;
-  // Después del QR, seguimos con el flujo normal de entrega (activos)
-  await abrirActivosPaso(id);
+
+  try {
+    const estado = await api(`/api/repartidor/pedidos/${id}/pago-qr/estado`, { cache: 'no-store' });
+    if (!estado?.pagado) {
+      toast('El pago QR todavía no figura aprobado.');
+      return;
+    }
+
+    cerrarModalPagoQR();
+    await abrirActivosPaso(id);
+  } catch (e) {
+    notifyError(e?.message || 'No se pudo validar el pago QR', e);
+  }
 }
 
 function setActionBusy(el, busy = true) {

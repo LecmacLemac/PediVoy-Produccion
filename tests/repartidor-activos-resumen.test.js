@@ -103,6 +103,106 @@ test('repartidor de empresa 1 genera QR desde ruta propia sin usar endpoint admi
   assert.deepEqual(calls[0].params, [42, 1, 7]);
 });
 
+test('repartidor consulta estado QR aprobado antes de continuar entrega', async () => {
+  const calls = [];
+  const app = buildTestAppWithDeps({
+    query: async (sql, params) => {
+      calls.push({ sql, params });
+
+      if (sql.includes('FROM pedidos p') && sql.includes('p.empresa_id = $2')) {
+        return [{
+          id: 42,
+          empresa_id: 1,
+          chofer_id: 7,
+          estado: 'en_ruta',
+          metodo_pago: 'transferencia',
+        }];
+      }
+
+      throw new Error(`Consulta inesperada: ${sql}`);
+    },
+    listarPagosPorPedido: async (params) => {
+      assert.deepEqual(params, { pedidoId: 42, empresaId: 1 });
+      return [{
+        id: 88,
+        metodo_pago: 'qr_dinamico',
+        estado: 'pagado',
+        updated_at: '2026-05-23T03:00:00.000Z',
+      }];
+    },
+    withAuth: (req, res, next) => {
+      req.user = {
+        chofer_id: 7,
+        empresa_id: 1,
+        username: 'chofer-test',
+        role: 'repartidor',
+      };
+      next();
+    },
+    getEmpresaIdFromToken: () => 1,
+  });
+
+  await withServer(app, async (baseUrl) => {
+    const resp = await fetch(`${baseUrl}/api/repartidor/pedidos/42/pago-qr/estado`);
+    assert.equal(resp.status, 200);
+
+    const body = await resp.json();
+    assert.equal(body.pagado, true);
+    assert.equal(body.estado, 'pagado');
+    assert.equal(body.pago_id, 88);
+  });
+
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].params, [42, 1, 7]);
+});
+
+test('repartidor puede disparar WhatsApp de transferencia desde modal QR', async () => {
+  const calls = [];
+  const notificaciones = [];
+  const app = buildTestAppWithDeps({
+    query: async (sql, params) => {
+      calls.push({ sql, params });
+
+      if (sql.includes('FROM pedidos p') && sql.includes('p.empresa_id = $2')) {
+        return [{
+          id: 42,
+          empresa_id: 1,
+          chofer_id: 7,
+          estado: 'en_ruta',
+          metodo_pago: 'transferencia',
+        }];
+      }
+
+      throw new Error(`Consulta inesperada: ${sql}`);
+    },
+    notificarPedidoTransferencia: async (pedidoId, empresaId) => {
+      notificaciones.push({ pedidoId, empresaId });
+    },
+    withAuth: (req, res, next) => {
+      req.user = {
+        chofer_id: 7,
+        empresa_id: 1,
+        username: 'chofer-test',
+        role: 'repartidor',
+      };
+      next();
+    },
+    getEmpresaIdFromToken: () => 1,
+  });
+
+  await withServer(app, async (baseUrl) => {
+    const resp = await fetch(`${baseUrl}/api/repartidor/pedidos/42/transferencia/notificar`, { method: 'POST' });
+    assert.equal(resp.status, 200);
+
+    const body = await resp.json();
+    assert.equal(body.ok, true);
+  });
+
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].params, [42, 1, 7]);
+  assert.deepEqual(notificaciones, [{ pedidoId: 42, empresaId: 1 }]);
+});
+
 test('activos-resumen no consulta inventario cuando el pedido no tiene productos activos', async () => {
   const sqlCalls = [];
   const app = buildTestApp({

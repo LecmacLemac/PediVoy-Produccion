@@ -4,10 +4,10 @@
 import express from 'express';
 import { awardPointsForDeliveredOrder } from '../services/puntosService.js';
 import { generateComisionesForDeliveredOrder } from '../services/referentesService.js';
-import { crearPagoParaPedido as crearPagoParaPedidoDefault } from '../qr/pagosService.js';
+import { crearPagoParaPedido as crearPagoParaPedidoDefault, listarPagosPorPedido as listarPagosPorPedidoDefault } from '../qr/pagosService.js';
 
 export function createRepartidorApiRouter(deps) {
-  const { query, pool, withAuth, getEmpresaIdFromToken, notifyEstadoPedidoPush, notificarEnRuta, notificarPedidoTransferencia, ejecutarEstrategiaVecinos, registrarMovimientosActivosDesdePedido, crearPagoParaPedido = crearPagoParaPedidoDefault } = deps || {};
+  const { query, pool, withAuth, getEmpresaIdFromToken, notifyEstadoPedidoPush, notificarEnRuta, notificarPedidoTransferencia, ejecutarEstrategiaVecinos, registrarMovimientosActivosDesdePedido, crearPagoParaPedido = crearPagoParaPedidoDefault, listarPagosPorPedido = listarPagosPorPedidoDefault } = deps || {};
   if (typeof query !== 'function') throw new Error('createRepartidorApiRouter: falta query(fn)');
   if (typeof withAuth !== 'function') throw new Error('createRepartidorApiRouter: falta withAuth(fn)');
   if (typeof getEmpresaIdFromToken !== 'function') throw new Error('createRepartidorApiRouter: falta getEmpresaIdFromToken(fn)');
@@ -165,6 +165,80 @@ export function createRepartidorApiRouter(deps) {
      console.error('REPARTIDOR PAGO QR ERROR:', e);
      const status = e.statusCode || 500;
      return res.status(status).json({ error: e.message || 'Error generando pago QR' });
+   }
+});
+
+// 1.e Consultar estado del pago QR desde la app del repartidor
+  router.get('/pedidos/:id/pago-qr/estado', withAuth, async (req, res) => {
+   try {
+     const pedidoId = Number(req.params.id);
+     const { chofer_id, role } = req.user || {};
+     const empresaId = Number(getEmpresaIdFromToken(req));
+
+     if (!Number.isInteger(pedidoId) || pedidoId <= 0) {
+       return res.status(400).json({ error: 'ID inválido' });
+     }
+     if (!empresaId) return res.status(400).json({ error: 'Empresa no determinada' });
+     if (role === 'repartidor' && !chofer_id) {
+       return res.status(403).json({ error: 'Usuario repartidor sin chofer vinculado.' });
+     }
+
+     const pedido = await getPedidoOperablePorRepartidor({
+       pedidoId,
+       empresaId,
+       choferId: chofer_id,
+       role,
+     });
+
+     if (!pedido) return res.status(404).json({ error: 'Pedido no encontrado' });
+
+     const pagos = await listarPagosPorPedido({ pedidoId, empresaId });
+     const pago = (pagos || []).find((p) => String(p.metodo_pago || '').toLowerCase() === 'qr_dinamico') || (pagos || [])[0] || null;
+     const estado = String(pago?.estado || '').toLowerCase();
+     const pagado = ['pagado', 'aprobado', 'acreditado', 'approved'].includes(estado);
+
+     return res.json({
+       ok: true,
+       pagado,
+       estado: pago?.estado || null,
+       pago_id: pago?.id || null,
+       updated_at: pago?.updated_at || null,
+     });
+   } catch (e) {
+     console.error('REPARTIDOR ESTADO PAGO QR ERROR:', e);
+     return res.status(500).json({ error: 'Error consultando estado del pago QR' });
+   }
+});
+
+// 1.f Forzar mensaje de transferencia manual desde la app del repartidor
+  router.post('/pedidos/:id/transferencia/notificar', withAuth, async (req, res) => {
+   try {
+     const pedidoId = Number(req.params.id);
+     const { chofer_id, role } = req.user || {};
+     const empresaId = Number(getEmpresaIdFromToken(req));
+
+     if (!Number.isInteger(pedidoId) || pedidoId <= 0) {
+       return res.status(400).json({ error: 'ID inválido' });
+     }
+     if (!empresaId) return res.status(400).json({ error: 'Empresa no determinada' });
+     if (role === 'repartidor' && !chofer_id) {
+       return res.status(403).json({ error: 'Usuario repartidor sin chofer vinculado.' });
+     }
+
+     const pedido = await getPedidoOperablePorRepartidor({
+       pedidoId,
+       empresaId,
+       choferId: chofer_id,
+       role,
+     });
+
+     if (!pedido) return res.status(404).json({ error: 'Pedido no encontrado' });
+
+     await notificarPedidoTransferencia(pedidoId, empresaId);
+     return res.json({ ok: true });
+   } catch (e) {
+     console.error('REPARTIDOR NOTIFICAR TRANSFERENCIA ERROR:', e);
+     return res.status(500).json({ error: 'Error enviando WhatsApp de transferencia' });
    }
 });
 
