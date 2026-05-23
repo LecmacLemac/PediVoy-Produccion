@@ -1,4 +1,5 @@
 // src/qr/pagosService.js
+import crypto from 'node:crypto';
 import { query } from '../db.js';
 import { crearPagoProveedor } from './pagosProvider.js';
 
@@ -54,6 +55,7 @@ async function getPedidoConEmpresa(pedidoId, empresaId) {
       p.empresa_id,
       p.punto_entrega_id,
       p.chofer_id,
+      p.tracking_token,
       p.monto         AS total,
       e.nombre        AS empresa_nombre,
       pe.cliente      AS cliente_nombre
@@ -69,6 +71,24 @@ async function getPedidoConEmpresa(pedidoId, empresaId) {
   );
 
   return rows[0] || null;
+}
+
+async function ensurePedidoTrackingToken(pedido) {
+  if (pedido.tracking_token) return pedido.tracking_token;
+
+  const token = crypto.randomBytes(16).toString('hex');
+  const rows = await query(
+    `
+    UPDATE pedidos
+       SET tracking_token = COALESCE(tracking_token, $1)
+     WHERE id = $2
+       AND empresa_id = $3
+     RETURNING tracking_token
+    `,
+    [token, pedido.id, pedido.empresa_id]
+  );
+
+  return rows[0]?.tracking_token || token;
 }
 
 /**
@@ -109,18 +129,36 @@ async function getPagoPendientePorPedido({ pedidoId, empresaId }) {
   return pago;
 }
 
+async function getPagoPorPedidoProveedor({ pedidoId, empresaId, proveedor }) {
+  const rows = await query(
+    `
+    SELECT *
+      FROM pedido_pagos
+     WHERE pedido_id = $1
+       AND empresa_id = $2
+       AND proveedor = $3
+     ORDER BY id DESC
+     LIMIT 1
+    `,
+    [pedidoId, empresaId, proveedor]
+  );
+
+  return rows[0] || null;
+}
+
 /**
  * Crea (o reutiliza) un pago vinculado a un pedido y devuelve los datos
  * para mostrar el QR y el link.
  *
  * @param {{ pedidoId: number, empresaId: number }} params
- * @param {{ venceEnHoras?: number, canal?: string, metodoPago?: string }} options
+ * @param {{ venceEnHoras?: number, canal?: string, metodoPago?: string, forceRefresh?: boolean }} options
  */
 export async function crearPagoParaPedido({ pedidoId, empresaId }, options = {}) {
   const {
     venceEnHoras = 12,
     canal = 'admin_panel',
-    metodoPago = 'qr_dinamico'
+    metodoPago = 'qr_dinamico',
+    forceRefresh = false
   } = options;
 
   const pedido = await getPedidoConEmpresa(pedidoId, empresaId);
@@ -137,13 +175,19 @@ export async function crearPagoParaPedido({ pedidoId, empresaId }, options = {})
     throw err;
   }
 
+  const proveedor = configPagos.proveedor;
+  const trackingToken = await ensurePedidoTrackingToken(pedido);
+  pedido.tracking_token = trackingToken;
+
   // Si ya existe un pago pendiente para este pedido, lo reutilizamos
   const existente = await getPagoPendientePorPedido({ pedidoId, empresaId });
-  if (existente) {
+  if (existente && !forceRefresh) {
     return existente;
   }
 
-  const proveedor = configPagos.proveedor;
+  const pagoProveedorExistente = forceRefresh
+    ? await getPagoPorPedidoProveedor({ pedidoId, empresaId, proveedor })
+    : null;
   const monto = Number(pedido.total || 0);
   if (!monto || Number.isNaN(monto) || monto <= 0) {
     const err = new Error('El pedido no tiene un monto válido');
@@ -164,13 +208,58 @@ export async function crearPagoParaPedido({ pedidoId, empresaId }, options = {})
     pedido: {
       id: pedido.id,
       total: monto,
-      clienteNombre: pedido.cliente_nombre || ''
+      clienteNombre: pedido.cliente_nombre || '',
+      trackingToken
     },
     empresa: {
       id: pedido.empresa_id,
       nombre: pedido.empresa_nombre
     }
   });
+
+  if (pagoProveedorExistente) {
+    const rows = await query(
+      `
+      UPDATE pedido_pagos
+         SET cliente_id = $3,
+             chofer_id = $4,
+             metodo_pago = $5,
+             canal = $6,
+             descripcion = $7,
+             provider_payment_id = $8,
+             provider_order_id = $9,
+             provider_status = NULL,
+             estado = 'pendiente',
+             monto = $10,
+             moneda = $11,
+             checkout_url = $12,
+             qr_payload = $13,
+             vence_at = $14,
+             updated_at = NOW()
+       WHERE id = $1
+         AND empresa_id = $2
+       RETURNING *
+      `,
+      [
+        pagoProveedorExistente.id,
+        pedido.empresa_id,
+        pedido.punto_entrega_id,
+        pedido.chofer_id,
+        metodoPago,
+        canal,
+        proveedorResp.descripcion,
+        proveedorResp.providerPaymentId,
+        proveedorResp.providerOrderId || proveedorResp.providerPaymentId,
+        monto,
+        proveedorResp.moneda || 'ARS',
+        proveedorResp.checkoutUrl,
+        proveedorResp.qrPayload,
+        venceAt
+      ]
+    );
+
+    return rows[0];
+  }
 
   try {
     const rows = await query(

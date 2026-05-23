@@ -29,6 +29,19 @@ function getPedidoWebhookUrl({ proveedor, empresaId }) {
   return `${baseUrl}/api/webhooks/pagos/${proveedor}?${params.toString()}`;
 }
 
+export function buildPedidoSeguimientoBackUrls({ baseUrl, pedido }) {
+  const cleanBase = String(baseUrl || '').replace(/\/+$/, '');
+  const token = String(pedido?.trackingToken || pedido?.tracking_token || '').trim();
+  if (!cleanBase || !token) return null;
+
+  const trackingUrl = `${cleanBase}/pedidos/seguimiento.html?t=${encodeURIComponent(token)}`;
+  return {
+    success: `${trackingUrl}&pago=approved`,
+    failure: `${trackingUrl}&pago=failure`,
+    pending: `${trackingUrl}&pago=pending`
+  };
+}
+
 function getFakePago({ pedido }) {
   const descripcion = `Pedido #${pedido.id} - ${pedido.clienteNombre || ''}`.trim();
   const fakePaymentId = `fake_${pedido.id}_${Date.now()}`;
@@ -94,11 +107,8 @@ async function crearPagoMercadoPago({ credenciales, pedido, empresa }) {
 
   const baseUrl = getBaseUrl();
   if (baseUrl) {
-    body.back_urls = {
-      success: `${baseUrl}/pedidos/seguimiento.html?pedido_id=${pedido.id}&pago=approved`,
-      failure: `${baseUrl}/pedidos/seguimiento.html?pedido_id=${pedido.id}&pago=failure`,
-      pending: `${baseUrl}/pedidos/seguimiento.html?pedido_id=${pedido.id}&pago=pending`
-    };
+    const backUrls = buildPedidoSeguimientoBackUrls({ baseUrl, pedido });
+    if (backUrls) body.back_urls = backUrls;
   }
 
   const result = await preference.create({ body });
