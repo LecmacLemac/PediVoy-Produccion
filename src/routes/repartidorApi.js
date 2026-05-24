@@ -4,10 +4,14 @@
 import express from 'express';
 import { awardPointsForDeliveredOrder } from '../services/puntosService.js';
 import { generateComisionesForDeliveredOrder } from '../services/referentesService.js';
-import { crearPagoParaPedido as crearPagoParaPedidoDefault, listarPagosPorPedido as listarPagosPorPedidoDefault } from '../qr/pagosService.js';
+import {
+  crearPagoParaPedido as crearPagoParaPedidoDefault,
+  listarPagosPorPedido as listarPagosPorPedidoDefault,
+  refrescarEstadoPagoPedido as refrescarEstadoPagoPedidoDefault
+} from '../qr/pagosService.js';
 
 export function createRepartidorApiRouter(deps) {
-  const { query, pool, withAuth, getEmpresaIdFromToken, notifyEstadoPedidoPush, notificarEnRuta, notificarPedidoTransferencia, ejecutarEstrategiaVecinos, registrarMovimientosActivosDesdePedido, crearPagoParaPedido = crearPagoParaPedidoDefault, listarPagosPorPedido = listarPagosPorPedidoDefault } = deps || {};
+  const { query, pool, withAuth, getEmpresaIdFromToken, notifyEstadoPedidoPush, notificarEnRuta, notificarPedidoTransferencia, ejecutarEstrategiaVecinos, registrarMovimientosActivosDesdePedido, crearPagoParaPedido = crearPagoParaPedidoDefault, listarPagosPorPedido = listarPagosPorPedidoDefault, refrescarEstadoPagoPedido = refrescarEstadoPagoPedidoDefault } = deps || {};
   if (typeof query !== 'function') throw new Error('createRepartidorApiRouter: falta query(fn)');
   if (typeof withAuth !== 'function') throw new Error('createRepartidorApiRouter: falta withAuth(fn)');
   if (typeof getEmpresaIdFromToken !== 'function') throw new Error('createRepartidorApiRouter: falta getEmpresaIdFromToken(fn)');
@@ -205,7 +209,8 @@ export function createRepartidorApiRouter(deps) {
      }
 
      const pagos = await listarPagosPorPedido({ pedidoId, empresaId });
-     const pago = (pagos || []).find((p) => String(p.metodo_pago || '').toLowerCase() === 'qr_dinamico') || (pagos || [])[0] || null;
+     const pagoLocal = (pagos || []).find((p) => String(p.metodo_pago || '').toLowerCase() === 'qr_dinamico') || (pagos || [])[0] || null;
+     const pago = await refrescarEstadoPagoPedido({ pedidoId, empresaId, pago: pagoLocal });
      const estado = String(pago?.estado || '').toLowerCase();
      const pagado = ['pagado', 'aprobado', 'acreditado', 'approved'].includes(estado);
 

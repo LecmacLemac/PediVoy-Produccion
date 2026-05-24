@@ -196,6 +196,68 @@ test('repartidor consulta estado QR aprobado antes de continuar entrega', async 
   assert.deepEqual(calls[0].params, [42, 1, 7]);
 });
 
+test('repartidor refresca estado QR contra proveedor si sigue pendiente localmente', async () => {
+  const refreshCalls = [];
+  const app = buildTestAppWithDeps({
+    query: async (sql, params) => {
+      if (sql.includes('FROM pedidos p') && sql.includes('p.empresa_id = $2')) {
+        return [{
+          id: 42,
+          empresa_id: 1,
+          chofer_id: 7,
+          estado: 'en_ruta',
+          metodo_pago: 'qr_dinamico',
+        }];
+      }
+
+      throw new Error(`Consulta inesperada: ${sql}`);
+    },
+    listarPagosPorPedido: async (params) => {
+      assert.deepEqual(params, { pedidoId: 42, empresaId: 1 });
+      return [{
+        id: 88,
+        metodo_pago: 'qr_dinamico',
+        proveedor: 'mercado_pago',
+        estado: 'pendiente',
+        updated_at: '2026-05-23T03:00:00.000Z',
+      }];
+    },
+    refrescarEstadoPagoPedido: async (args) => {
+      refreshCalls.push(args);
+      assert.equal(args.pedidoId, 42);
+      assert.equal(args.empresaId, 1);
+      assert.equal(args.pago.id, 88);
+      return {
+        ...args.pago,
+        estado: 'pagado',
+        updated_at: '2026-05-24T16:20:00.000Z',
+      };
+    },
+    withAuth: (req, res, next) => {
+      req.user = {
+        chofer_id: 7,
+        empresa_id: 1,
+        username: 'chofer-test',
+        role: 'repartidor',
+      };
+      next();
+    },
+    getEmpresaIdFromToken: () => 1,
+  });
+
+  await withServer(app, async (baseUrl) => {
+    const resp = await fetch(`${baseUrl}/api/repartidor/pedidos/42/pago-qr/estado`);
+    assert.equal(resp.status, 200);
+
+    const body = await resp.json();
+    assert.equal(body.pagado, true);
+    assert.equal(body.estado, 'pagado');
+    assert.equal(body.pago_id, 88);
+  });
+
+  assert.equal(refreshCalls.length, 1);
+});
+
 test('repartidor puede disparar WhatsApp de transferencia desde modal QR', async () => {
   const calls = [];
   const notificaciones = [];

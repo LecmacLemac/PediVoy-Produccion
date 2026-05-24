@@ -247,6 +247,8 @@
         <option value="pendiente">⏳ Pendientes</option>
         <option value="en_revision">🛡️ En revisión</option>
         <option value="verificado">✅ Verificados</option>
+        <option value="qr">📱 QR Mercado Pago</option>
+        <option value="transferencia">🏦 Transferencias</option>
         <option value="orphan">⚠️ Huérfanos (Sin Pedido)</option>
       </select>
     </div>
@@ -358,6 +360,7 @@
   let currentOffset = 0;
   let hasMoreRows = false;
   let currentBeforeId = null;
+  let currentBeforeQrId = null;
 
   // --- Inicialización ---
   $('#logout').onclick = async (ev) => {
@@ -406,53 +409,99 @@
     if (reset) {
       currentOffset = 0;
       currentBeforeId = null;
+      currentBeforeQrId = null;
       hasMoreRows = false;
       currentRows = [];
       $('#rows').innerHTML = '<tr><td colspan="9" style="padding:3rem; text-align:center; color: var(--text-muted);"><i class="fa-solid fa-circle-notch fa-spin"></i> Cargando datos...</td></tr>';
     }
 
-    let url = `/api/transferencias?limit=${PAGE_LIMIT}`;
-    if(fecha) url += `&fecha=${fecha}`;
-    if (!reset && currentBeforeId) url += `&before_id=${currentBeforeId}`;
-    if(chofer) url += `&chofer_id=${chofer}`;
-    if(empresa) url += `&empresa_id=${empresa}`;
-    if(estadoFiltro === 'verificado' || estadoFiltro === 'pendiente') url += `&estado=${estadoFiltro}`;
-    if(estadoFiltro === 'en_revision') url += `&estado_revision=en_revision`;
+    const wantsTransfers = estadoFiltro !== 'qr';
+    const wantsQr = !['en_revision', 'orphan', 'transferencia'].includes(estadoFiltro);
+    const requests = [];
 
-    let data = await api(url);
-    if(!Array.isArray(data)) data = [];
+    if (wantsTransfers) {
+      let url = `/api/transferencias?limit=${PAGE_LIMIT}`;
+      if(fecha) url += `&fecha=${fecha}`;
+      if (!reset && currentBeforeId) url += `&before_id=${currentBeforeId}`;
+      if(chofer) url += `&chofer_id=${chofer}`;
+      if(empresa) url += `&empresa_id=${empresa}`;
+      if(estadoFiltro === 'verificado' || estadoFiltro === 'pendiente') url += `&estado=${estadoFiltro}`;
+      if(estadoFiltro === 'en_revision') url += `&estado_revision=en_revision`;
+      requests.push(api(url).then(rows => normalizeTransferRows(Array.isArray(rows) ? rows : [])));
+    } else {
+      requests.push(Promise.resolve([]));
+    }
 
-    // Solo transferencias (sin efectivo)
-    data = data.filter(t => !(t.metodo_pago || '').toLowerCase().includes('efec'));
+    if (wantsQr) {
+      let qrUrl = `/api/admin/qr/pagos?limit=${PAGE_LIMIT}`;
+      if(fecha) qrUrl += `&fecha=${fecha}`;
+      if (!reset && currentBeforeQrId) qrUrl += `&before_id=${currentBeforeQrId}`;
+      if(chofer) qrUrl += `&chofer_id=${chofer}`;
+      if(empresa) qrUrl += `&empresa_id=${empresa}`;
+      if(estadoFiltro === 'verificado' || estadoFiltro === 'pendiente') qrUrl += `&estado=${estadoFiltro}`;
+      requests.push(api(qrUrl).then(rows => normalizeQrRows(Array.isArray(rows) ? rows : [])));
+    } else {
+      requests.push(Promise.resolve([]));
+    }
 
-    // Filtros residuales en cliente (compat/defensa)
-    if(estadoFiltro === 'orphan') data = data.filter(t => !t.pedido_id);
-    if(estadoFiltro === 'verificado') data = data.filter(t => Number(t.validado) === 1);
-    if(estadoFiltro === 'pendiente') data = data.filter(t => Number(t.validado) !== 1);
-    if(estadoFiltro === 'en_revision') data = data.filter(t => String(t.estado_revision || '').toLowerCase() === 'en_revision');
+    const [transferRows, qrRows] = await Promise.all(requests);
+    let data = transferRows.concat(qrRows);
+
+    data.sort((a, b) => new Date(b.fecha || 0).getTime() - new Date(a.fecha || 0).getTime());
 
     currentRows = reset ? data : currentRows.concat(data);
-    hasMoreRows = data.length === PAGE_LIMIT;
+    hasMoreRows = transferRows.length === PAGE_LIMIT || qrRows.length === PAGE_LIMIT;
     currentOffset += data.length;
-    if (data.length > 0) {
-      const last = data[data.length - 1];
-      currentBeforeId = Number(last?.id || 0) || currentBeforeId;
+    if (transferRows.length > 0) {
+      const lastTransfer = transferRows[transferRows.length - 1];
+      currentBeforeId = Number(lastTransfer?.raw_id || 0) || currentBeforeId;
+    }
+    if (qrRows.length > 0) {
+      const lastQr = qrRows[qrRows.length - 1];
+      currentBeforeQrId = Number(lastQr?.raw_id || 0) || currentBeforeQrId;
     }
     $('#btnVerMas').style.display = hasMoreRows ? 'inline-flex' : 'none';
 
-    let resumen = null;
-    if (reset) {
-      let resumenUrl = `/api/transferencias/resumen?x=1`;
-      if(fecha) resumenUrl += `&fecha=${fecha}`;
-      if(chofer) resumenUrl += `&chofer_id=${chofer}`;
-      if(empresa) resumenUrl += `&empresa_id=${empresa}`;
-      if(estadoFiltro === 'verificado' || estadoFiltro === 'pendiente') resumenUrl += `&estado=${estadoFiltro}`;
-      if(estadoFiltro === 'en_revision') resumenUrl += `&estado_revision=en_revision`;
-      resumen = await api(resumenUrl);
-    }
-
-    updateKPIs(currentRows, resumen);
+    updateKPIs(currentRows);
     renderTable(currentRows);
+  }
+
+  function normalizeTransferRows(rows) {
+    return rows
+      .filter(t => !(t.metodo_pago || '').toLowerCase().includes('efec'))
+      .map(t => ({
+        ...t,
+        source: 'transferencia',
+        raw_id: Number(t.id),
+        row_id: `tr-${Number(t.id)}`,
+        fecha: t.fecha,
+        display_metodo: 'Transferencia',
+        display_referencia: t.nro_operacion || '-',
+        display_origen: t.banco_origen || 'Banco?',
+        is_validado: Number(t.validado) === 1,
+      }));
+  }
+
+  function normalizeQrRows(rows) {
+    return rows.map(p => {
+      const estado = String(p.estado || '').toLowerCase();
+      const isPaid = ['pagado', 'aprobado', 'acreditado', 'approved'].includes(estado);
+      return {
+        ...p,
+        source: 'qr',
+        raw_id: Number(p.id),
+        row_id: `qr-${Number(p.id)}`,
+        fecha: p.settlement_at || p.updated_at || p.created_at,
+        metodo_pago: p.metodo_pago || 'qr_dinamico',
+        display_metodo: p.proveedor === 'mercado_pago' ? 'QR Mercado Pago' : `QR ${p.proveedor || ''}`.trim(),
+        display_referencia: p.provider_payment_id || p.provider_order_id || '-',
+        display_origen: p.provider_status || p.proveedor || 'QR',
+        comprobante_path: null,
+        validado: isPaid ? 1 : 0,
+        is_validado: isPaid,
+        estado_revision: isPaid ? 'aprobado' : 'pendiente',
+      };
+    });
   }
 
   function aplicarHoy() {
@@ -483,10 +532,9 @@
       return;
     }
 
-    const transferenciasOnly = list.filter(i => (i.metodo_pago || '').toLowerCase().includes('trans'));
-    const total = transferenciasOnly.reduce((sum, item) => sum + Number(item.monto||0), 0);
-    const verificados = transferenciasOnly.filter(i => Number(i.validado) === 1).length;
-    const pendientes = transferenciasOnly.length - verificados;
+    const total = list.reduce((sum, item) => sum + Number(item.monto||0), 0);
+    const verificados = list.filter(i => Number(i.validado) === 1 || i.is_validado).length;
+    const pendientes = list.length - verificados;
 
     $('#kpiTotal').textContent = money(total);
     $('#kpiVerificados').textContent = verificados;
@@ -516,23 +564,30 @@
 
     $('#rows').innerHTML = list.map(t => {
       const metodo = (t.metodo_pago || '').toLowerCase();
+      const esQr = t.source === 'qr';
       const esEfectivo = metodo.includes('efec');
-      const isValidado = Number(t.validado) === 1 || esEfectivo;
+      const isValidado = Number(t.validado) === 1 || esEfectivo || t.is_validado;
       const estado = String(t.estado_revision || '').toLowerCase();
       const requiereForzar = estado === 'en_revision' && !isValidado;
       const isSuper = String(currentUser?.role || '').toLowerCase() === 'super';
 
-      const metodoBadge = esEfectivo
+      const metodoBadge = esQr
+        ? `<span class="badge badge-info"><i class="fa-solid fa-qrcode"></i> QR MP</span>`
+        : esEfectivo
         ? `<span class="badge badge-info"><i class="fa-solid fa-money-bill"></i> Efec</span>`
         : `<span class="badge badge-info"><i class="fa-solid fa-mobile-screen"></i> Transf</span>`;
 
-      const btnValidar = (!esEfectivo && !isValidado && !requiereForzar)
+      const btnValidar = (!esQr && !esEfectivo && !isValidado && !requiereForzar)
         ? `<button class="btn btn-primary btn-icon" onclick="verificarPago(${t.id})" title="Validar"><i class="fa-solid fa-check"></i></button>`
         : `<span style="width:32px; display:inline-block"></span>`;
 
-      const btnForzar = (!esEfectivo && !isValidado && requiereForzar && isSuper)
+      const btnForzar = (!esQr && !esEfectivo && !isValidado && requiereForzar && isSuper)
         ? `<button class="btn btn-warning btn-icon" onclick="forzarVerificacion(${t.id})" title="Forzar aprobación (Super)"><i class="fa-solid fa-shield"></i></button>`
         : '';
+
+      const btnEliminar = !esQr
+        ? `<button class="btn btn-danger btn-icon" onclick="eliminarPago(${Number(t.raw_id || t.id)})"><i class="fa-solid fa-trash-can"></i></button>`
+        : `<span style="width:32px; display:inline-block"></span>`;
 
       return `
         <tr>
@@ -548,11 +603,12 @@
           <td style="font-weight:700; font-size:1rem; color:${esEfectivo ? '#34d399' : '#fff'}">${money(t.monto)}</td>
           <td>
             <div class="text-cell">
-              <span class="text-main">${esc(t.banco_origen || (esEfectivo ? 'Cobro en mano' : 'Banco?'))}</span>
-              <span class="text-sub">Ref: ${esc(t.nro_operacion || '-')}</span>
+              <span class="text-main">${esc(t.display_origen || t.banco_origen || (esEfectivo ? 'Cobro en mano' : 'Banco?'))}</span>
+              <span class="text-sub">Ref: ${esc(t.display_referencia || t.nro_operacion || '-')}</span>
               ${t.riesgo_flags ? `<span class="text-sub" style="color:#fbbf24">Riesgo: ${esc(t.riesgo_flags)}</span>` : ''}
               ${t.verified_reason ? `<span class="text-sub">Nota: ${esc(t.verified_reason)}</span>` : ''}
               ${t.verified_at ? `<span class="text-sub">Audit: ${esc(t.verified_by_username || `uid:${t.verified_by || '-'}`)} · ${esc(fmtDateTime(t.verified_at))}</span>` : ''}
+              ${esQr ? `<span class="text-sub">Creado: ${esc(fmtDateTime(t.created_at))}</span>` : ''}
             </div>
           </td>
           <td style="text-align:center">${t.comprobante_path ? `<button class="btn btn-ghost btn-icon" onclick='verComprobante(${JSON.stringify(String(t.comprobante_path || ''))}, ${Number(t.id)}, ${isValidado})'><i class="fa-regular fa-eye"></i></button>` : '-'}</td>
@@ -560,7 +616,7 @@
           <td style="text-align:right">
             ${btnValidar}
             ${btnForzar}
-            <button class="btn btn-danger btn-icon" onclick="eliminarPago(${Number(t.id)})"><i class="fa-solid fa-trash-can"></i></button>
+            ${btnEliminar}
           </td>
         </tr>
       `;
@@ -700,9 +756,31 @@
     if (estadoFiltro === 'verificado' || estadoFiltro === 'pendiente') q.set('estado', estadoFiltro);
     if (estadoFiltro === 'en_revision') q.set('estado_revision', 'en_revision');
 
-    const url = `/api/transferencias/export.csv?${q.toString()}`;
-    window.open(url, '_blank');
-    toast('Generando CSV...');
+    const headers = ['tipo','fecha','pedido_id','cliente','telefono','monto','metodo_pago','estado','referencia'];
+    const csv = [headers.map(csvCell).join(',')]
+      .concat(currentRows.map((r) => headers.map((h) => {
+        const values = {
+          tipo: r.source || '',
+          fecha: r.fecha || '',
+          pedido_id: r.pedido_id || '',
+          cliente: r.cliente || '',
+          telefono: r.telefono || '',
+          monto: r.monto || '',
+          metodo_pago: r.display_metodo || r.metodo_pago || '',
+          estado: r.estado || r.estado_revision || '',
+          referencia: r.display_referencia || r.nro_operacion || ''
+        };
+        return csvCell(values[h]);
+      }).join(',')))
+      .join('\n');
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `pagos-${fecha || new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    toast('CSV generado');
   }
 
   function toast(msg) {

@@ -1,7 +1,9 @@
 // src/qr/pagosService.js
 import crypto from 'node:crypto';
+import { MercadoPagoConfig, Payment } from 'mercadopago';
 import { query } from '../db.js';
 import { crearPagoProveedor } from './pagosProvider.js';
+import { normalizePagoEstado } from './pagosEstado.js';
 
 /**
  * Lee la config de pagos desde empresas.config_integraciones (JSONB).
@@ -381,6 +383,103 @@ export async function listarPagosPorPedido({ pedidoId, empresaId }) {
   );
 
   return rows;
+}
+
+function isMercadoPagoProveedor(proveedor) {
+  const prov = String(proveedor || '').trim().toLowerCase();
+  return prov === 'mercado_pago' || prov === 'mercadopago' || prov === 'mp';
+}
+
+function pickMercadoPagoPayment({ searchResult, pago, externalReference }) {
+  const results = Array.isArray(searchResult?.results) ? searchResult.results : [];
+  const expectedPreferenceId = String(pago?.provider_order_id || pago?.provider_payment_id || '');
+
+  return results.find((payment) => {
+    const sameExternalReference = !externalReference || String(payment?.external_reference || '') === externalReference;
+    const samePreference = !expectedPreferenceId || String(payment?.preference_id || '') === expectedPreferenceId;
+    return sameExternalReference && samePreference;
+  }) || results.find((payment) => String(payment?.external_reference || '') === externalReference) || null;
+}
+
+async function buscarPagoMercadoPagoPorPedido({ accessToken, pago, empresaId, pedidoId }) {
+  const client = new MercadoPagoConfig({
+    accessToken,
+    options: { timeout: 5000 }
+  });
+  const payment = new Payment(client);
+  const externalReference = `PEDIDO|emp:${empresaId}|ped:${pedidoId}`;
+
+  const searchResult = await payment.search({
+    options: {
+      external_reference: externalReference,
+      sort: 'date_created',
+      criteria: 'desc'
+    }
+  });
+
+  return pickMercadoPagoPayment({ searchResult, pago, externalReference });
+}
+
+/**
+ * Refresca un pago QR contra Mercado Pago cuando el webhook no llegó todavía.
+ * Esto evita bloquear al repartidor si Mercado Pago cobró pero PediVoy sigue
+ * viendo el estado local en pendiente.
+ */
+export async function refrescarEstadoPagoPedido({ pedidoId, empresaId, pago }) {
+  if (!pago || !isMercadoPagoProveedor(pago.proveedor)) return pago || null;
+
+  const estadoActual = String(pago.estado || '').toLowerCase();
+  if (['pagado', 'rechazado', 'expired', 'anulado'].includes(estadoActual)) {
+    return pago;
+  }
+
+  const configPagos = await getConfigPagosEmpresa(empresaId);
+  if (!configPagos?.accessToken) return pago;
+
+  const payment = await buscarPagoMercadoPagoPorPedido({
+    accessToken: configPagos.accessToken,
+    pago,
+    empresaId,
+    pedidoId
+  });
+
+  if (!payment?.status) return pago;
+
+  const canonicalEstado = normalizePagoEstado({
+    proveedor: 'mercado_pago',
+    providerStatus: payment.status,
+    nuevoEstado: payment.status
+  });
+
+  if (!canonicalEstado) return pago;
+
+  const aplicarEstado = canonicalEstado !== 'pagado' || configPagos.autoConfirmar === true;
+  const updated = await actualizarEstadoPagoPedido({
+    empresaId,
+    pedidoId,
+    proveedor: 'mercado_pago',
+    providerPaymentId: String(payment.id || pago.provider_payment_id || ''),
+    providerOrderId: payment?.preference_id ? String(payment.preference_id) : null,
+    nuevoEstado: canonicalEstado,
+    providerStatus: payment.status ? String(payment.status) : null,
+    providerPayload: {
+      provider: {
+        id: payment?.id ? String(payment.id) : null,
+        status: payment?.status ? String(payment.status) : null,
+        status_detail: payment?.status_detail ? String(payment.status_detail) : null,
+        canonical_estado: canonicalEstado,
+        preference_id: payment?.preference_id ? String(payment.preference_id) : null,
+        external_reference: payment?.external_reference ? String(payment.external_reference) : null
+      },
+      refresh: {
+        source: 'repartidor_estado',
+        checked_at: new Date().toISOString()
+      }
+    },
+    aplicarEstado
+  });
+
+  return updated || pago;
 }
 
 /**
