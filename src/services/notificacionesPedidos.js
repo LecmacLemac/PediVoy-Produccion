@@ -3,17 +3,43 @@ import crypto from 'node:crypto';
 import { query } from '../db.js';
 import { enqueueWppMessage } from '../services.js';
 
+let pedidosNotificationSchemaReady = false;
+
+async function ensurePedidosNotificationSchema(queryFn) {
+  if (pedidosNotificationSchemaReady) return;
+  await queryFn(
+    `ALTER TABLE pedidos
+       ADD COLUMN IF NOT EXISTS en_ruta_notificado_at TIMESTAMPTZ`
+  );
+  pedidosNotificationSchemaReady = true;
+}
+
+function buildTrackingUrl({ landingDomain, token }) {
+  let host = String(landingDomain || 'https://www.pedivoy.com').trim();
+  if (!host.startsWith('http')) host = 'https://' + host;
+  host = host.replace(/\/+$/, '');
+  return `${host}/pedidos/seguimiento.html?t=${encodeURIComponent(token)}`;
+}
+
 /**
  * Genera token (si no existe) y envía WPP de 'En Ruta' solo la primera vez.
  */
-export async function notificarEnRuta(pedidoId, empresaId) {
-  try {
-    const rows = await query(
-      `
+export function createNotificarEnRuta({
+  queryFn = query,
+  enqueueWppMessageFn = enqueueWppMessage,
+  randomBytes = crypto.randomBytes,
+} = {}) {
+  return async function notificarEnRutaHandler(pedidoId, empresaId) {
+    try {
+      await ensurePedidosNotificationSchema(queryFn);
+
+      const rows = await queryFn(
+        `
       SELECT 
         p.id,
         p.monto,
         p.tracking_token,
+        p.en_ruta_notificado_at,
         pe.cliente,
         pe.telefono,
         pe.direccion,
@@ -24,47 +50,57 @@ export async function notificarEnRuta(pedidoId, empresaId) {
       JOIN empresas e        ON e.id = pe.empresa_id
       WHERE p.id = $1 AND pe.empresa_id = $2
       `,
-      [pedidoId, empresaId]
-    );
-
-    if (!rows.length) return;
-    const datos = rows[0];
-
-    let token = datos.tracking_token;
-    const yaTeniaToken = !!token;
-
-    if (!token) {
-      token = crypto.randomBytes(16).toString('hex');
-      await query(
-        `UPDATE pedidos SET tracking_token = $1 WHERE id = $2 AND empresa_id = $3`,
-        [token, pedidoId, empresaId]
+        [pedidoId, empresaId]
       );
+
+      if (!rows.length) return;
+      const datos = rows[0];
+      if (datos.en_ruta_notificado_at) return;
+      if (!datos.telefono) return;
+
+      let token = datos.tracking_token;
+
+      if (!token) {
+        token = randomBytes(16).toString('hex');
+        const tokenRows = await queryFn(
+          `UPDATE pedidos
+            SET tracking_token = COALESCE(tracking_token, $1)
+          WHERE id = $2 AND empresa_id = $3
+          RETURNING tracking_token`,
+          [token, pedidoId, empresaId]
+        );
+        token = tokenRows[0]?.tracking_token || token;
+      }
+
+      const trackingUrl = buildTrackingUrl({ landingDomain: datos.landing_domain, token });
+
+      const mensaje = (
+        `🚚 *¡Tu pedido está en camino!*\n\n` +
+        `Hola ${datos.cliente}, tu pedido ya salió hacia ${datos.direccion}.\n\n` +
+        `🗺️ *Seguí al repartidor en vivo aquí:*\n${trackingUrl}\n\n` +
+        `¡Nos vemos pronto! 👋`
+      );
+
+      await enqueueWppMessageFn({
+        phone: datos.telefono,
+        message: mensaje,
+        empresa_id: empresaId
+      });
+
+      await queryFn(
+        `UPDATE pedidos
+          SET en_ruta_notificado_at = COALESCE(en_ruta_notificado_at, NOW())
+        WHERE id = $1 AND empresa_id = $2`,
+        [pedidoId, empresaId]
+      );
+
+    } catch (e) {
+      console.error('Error enviando notificación en ruta:', e);
     }
-
-    let host = datos.landing_domain || 'https://aguahidro.com.ar';
-    if (!host.startsWith('http')) host = 'https://' + host;
-
-    const trackingUrl = `${host}/pedidos/seguimiento.html?t=${token}`;
-
-    if (yaTeniaToken) return;
-
-    const mensaje = (
-      `🚚 *¡Tu pedido está en camino!*\n\n` +
-      `Hola ${datos.cliente}, tu pedido ya salió hacia ${datos.direccion}.\n\n` +
-      `🗺️ *Seguí al repartidor en vivo aquí:*\n${trackingUrl}\n\n` +
-      `¡Nos vemos pronto! 👋`
-    );
-
-    await enqueueWppMessage({
-      phone: datos.telefono,
-      message: mensaje,
-      empresa_id: empresaId
-    });
-
-  } catch (e) {
-    console.error('Error enviando notificación en ruta:', e);
-  }
+  };
 }
+
+export const notificarEnRuta = createNotificarEnRuta();
 
 /**
  * Notifica al cliente que su pedido se pagará por transferencia

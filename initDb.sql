@@ -438,6 +438,9 @@ CREATE TABLE IF NOT EXISTS pedidos (
   created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+ALTER TABLE pedidos
+  ADD COLUMN IF NOT EXISTS en_ruta_notificado_at TIMESTAMPTZ;
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_pedidos_empresa_submission_id_uniq
   ON pedidos (empresa_id, submission_id)
   WHERE submission_id IS NOT NULL;
