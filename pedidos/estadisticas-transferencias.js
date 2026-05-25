@@ -65,6 +65,62 @@
     }
   }
 
+  function buildMediosPagoUrl(from, to) {
+    const base = '/api/reportes/medios-pago';
+    const params = new URLSearchParams();
+    if (from) params.set('from', from);
+    if (to) params.set('to', to);
+    const choferId = document.querySelector('#fFilChofer')?.value;
+    if (choferId) params.set('chofer_id', choferId);
+
+    const emp = qsEmpresa();
+    let url = base;
+    if (emp) {
+      url += emp;
+      const qs = params.toString();
+      if (qs) url += '&' + qs;
+    } else {
+      const qs = params.toString();
+      if (qs) url += '?' + qs;
+    }
+    return url;
+  }
+
+  function resetQrMediosPago() {
+    if ($('#kpiQrMp')) $('#kpiQrMp').textContent = money(0);
+    if ($('#kpiQrMpDetalle')) $('#kpiQrMpDetalle').textContent = 'QR: 0 aprobados / 0 pendientes';
+    if ($('#qrPayApproved')) $('#qrPayApproved').textContent = '—';
+    if ($('#qrPayPending')) $('#qrPayPending').textContent = '—';
+    if ($('#qrPayRate')) $('#qrPayRate').textContent = '—';
+  }
+
+  async function loadMediosPagoData(from, to) {
+    try {
+      const res = await api(buildMediosPagoUrl(from, to));
+      const qr = res?.qr || {};
+      const aprobado = num(qr.aprobado);
+      const pendiente = num(qr.pendiente);
+      const total = num(qr.total);
+      const aprobados = num(qr.aprobados);
+      const pendientes = num(qr.pendientes);
+      const cantidad = num(qr.cantidad);
+      const tasa = cantidad ? (aprobados / cantidad) * 100 : 0;
+
+      if ($('#kpiQrMp')) $('#kpiQrMp').textContent = money(aprobado);
+      if ($('#kpiQrMpDetalle')) $('#kpiQrMpDetalle').textContent = `QR: ${aprobados} aprobados / ${pendientes} pendientes`;
+      if ($('#qrPayApproved')) $('#qrPayApproved').textContent = `${aprobados} · ${money(aprobado)}`;
+      if ($('#qrPayPending')) $('#qrPayPending').textContent = `${pendientes} · ${money(pendiente)}`;
+      if ($('#qrPayRate')) {
+        $('#qrPayRate').textContent = cantidad ? `${tasa.toFixed(1).replace('.', ',')}% · ${money(total)}` : 'Sin pagos QR';
+        $('#qrPayRate').className = tasa >= 90 ? 'ok' : (tasa >= 70 ? 'warning-text' : (cantidad ? 'bad' : ''));
+      }
+    } catch (e) {
+      if (typeof isAuthRedirectError === 'function' && isAuthRedirectError(e)) throw e;
+      console.error(e);
+      resetQrMediosPago();
+    }
+  }
+
   function getTransfersForModal() {
     const list = window.__transfers || [];
     return window.__onlyPendTransfers ? list.filter(t => !t.pagado) : list;
@@ -197,8 +253,11 @@
   }
 
   window.buildEntregadosUrl = buildEntregadosUrl;
+  window.buildMediosPagoUrl = buildMediosPagoUrl;
   window.loadTransferenciasData = loadTransferenciasData;
   window.loadEfectivoData = loadEfectivoData;
+  window.loadMediosPagoData = loadMediosPagoData;
+  window.resetQrMediosPago = resetQrMediosPago;
   window.openTransferModal = renderTransferModal;
   window.closeTransferModal = closeTransferModal;
   window.togglePagoPedido = togglePagoPedido;

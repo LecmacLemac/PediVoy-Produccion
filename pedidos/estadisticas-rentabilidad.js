@@ -26,6 +26,7 @@
       renderReport(rows, products, evolution, prev);
       await loadTransferenciasData(from, to);
       await loadEfectivoData(from, to);
+      await loadMediosPagoData(from, to);
       await loadEntregadosStats(from, to);
       await loadSlaEntrega(from, to);
       await loadCancelacionesMotivo(from, to);
@@ -51,6 +52,7 @@
       $('#kpiMargen').textContent = 'Margen: 0,00%';
       $('#kpiUnidades').textContent = '0';
       $('#kpiUpp').textContent = 'Promedio: 0 un/ped';
+      if (typeof resetQrMediosPago === 'function') resetQrMediosPago();
       if ($('#kpiVentasDelta')) $('#kpiVentasDelta').textContent = '';
       if ($('#kpiRentDelta')) $('#kpiRentDelta').textContent = '';
       if ($('#kpiTicketDelta')) $('#kpiTicketDelta').textContent = '';

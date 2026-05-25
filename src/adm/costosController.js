@@ -1,5 +1,5 @@
 // src/adm/costosController.js
-import { query } from '../db.js';
+import { pool, query } from '../db.js';
 import { resolveEmpresaId } from '../services.js';
 
 // Configuración de tipos / niveles para variables de costo
@@ -102,28 +102,43 @@ export async function simularPrecio(req, res) {
     // E. Variables extra de costo (empresa / categoría / etiqueta / producto)
     const variablesRows = await query(
       `
-      SELECT v.id,
-             v.nombre,
-             v.codigo,
-             v.tipo_calculo,
-             a.nivel,
-             a.valor,
-             a.producto_id,
-             a.categoria,
-             a.etiqueta
-      FROM empresa_costos_variables_aplicacion a
-      JOIN empresa_costos_variables_def v
-        ON v.id = a.variable_id AND v.empresa_id = a.empresa_id
-      WHERE a.empresa_id = $1
-        AND a.activo = TRUE
-        AND v.activo = TRUE
-        AND (
-          (a.nivel = 'empresa')
-          OR (a.nivel = 'producto'  AND a.producto_id = $2)
-          OR (a.nivel = 'categoria' AND a.categoria IS NOT NULL AND a.categoria = $3)
-          OR (a.nivel = 'etiqueta'  AND a.etiqueta  IS NOT NULL AND a.etiqueta  = $4)
-        )
-      ORDER BY v.orden ASC, v.id ASC
+      SELECT id, nombre, codigo, tipo_calculo, nivel, valor, producto_id, categoria, etiqueta
+      FROM (
+        SELECT DISTINCT ON (v.id)
+               v.id,
+               v.nombre,
+               v.codigo,
+               v.tipo_calculo,
+               v.orden,
+               a.id AS aplicacion_id,
+               a.nivel,
+               a.valor,
+               a.producto_id,
+               a.categoria,
+               a.etiqueta
+        FROM empresa_costos_variables_aplicacion a
+        JOIN empresa_costos_variables_def v
+          ON v.id = a.variable_id AND v.empresa_id = a.empresa_id
+        WHERE a.empresa_id = $1
+          AND a.activo = TRUE
+          AND v.activo = TRUE
+          AND (
+            (a.nivel = 'empresa')
+            OR (a.nivel = 'producto'  AND a.producto_id = $2)
+            OR (a.nivel = 'categoria' AND a.categoria IS NOT NULL AND a.categoria = $3)
+            OR (a.nivel = 'etiqueta'  AND a.etiqueta  IS NOT NULL AND a.etiqueta  = $4)
+          )
+        ORDER BY v.id,
+                 CASE a.nivel
+                   WHEN 'producto' THEN 4
+                   WHEN 'etiqueta' THEN 3
+                   WHEN 'categoria' THEN 2
+                   WHEN 'empresa' THEN 1
+                   ELSE 0
+                 END DESC,
+                 a.id DESC
+      ) efectivas
+      ORDER BY orden ASC, id ASC
       `,
       [empresaId, productoId, categoria, etiqueta]
     );
@@ -205,6 +220,8 @@ export async function simularPrecio(req, res) {
 // 2. ACTUALIZAR COSTO (Guardar y Auditar)
 // ==================================================================
 export async function actualizarCosto(req, res) {
+  let client;
+  let transactionStarted = false;
   try {
     const empresa_id = resolveEmpresaId(req);
     const {
@@ -218,12 +235,41 @@ export async function actualizarCosto(req, res) {
       variables_extra 
     } = req.body;
 
+    const productoId = Number(producto_id);
+    const costoBase = Number(costo_base);
+    const costoPackaging = Number(costo_packaging);
+    if (!Number.isFinite(productoId) || productoId <= 0) {
+      return res.status(400).json({ error: 'producto_id inválido' });
+    }
+    if (!Number.isFinite(costoBase) || costoBase < 0 || !Number.isFinite(costoPackaging) || costoPackaging < 0) {
+      return res.status(400).json({ error: 'costos inválidos' });
+    }
+    const debeActualizarPrecio = precio_venta !== undefined && precio_venta !== null && precio_venta !== '';
+    const precioSolicitado = debeActualizarPrecio ? Number(precio_venta) : null;
+    if (debeActualizarPrecio && (!Number.isFinite(precioSolicitado) || precioSolicitado < 0)) {
+      return res.status(400).json({ error: 'precio_venta inválido' });
+    }
+
     const usuario = req.user?.username || 'desconocido';
 
-    await query('BEGIN');
+    client = await pool.connect();
+    const txQuery = async (sql, params = []) => (await client.query(sql, params)).rows;
+    await client.query('BEGIN');
+    transactionStarted = true;
+
+    const productoRows = await txQuery(
+      `SELECT precio FROM productos WHERE id = $1 AND empresa_id = $2 FOR UPDATE`,
+      [productoId, empresa_id]
+    );
+    if (!productoRows.length) {
+      const err = new Error('Producto no encontrado');
+      err.statusCode = 404;
+      throw err;
+    }
+    const precioVenta = debeActualizarPrecio ? precioSolicitado : Number(productoRows[0].precio || 0);
 
     // 1) Upsert costos del producto (base + packaging) por empresa/producto
-    await query(
+    await txQuery(
       `
       INSERT INTO empresa_productos_costos (empresa_id, producto_id, costo_base, costo_packaging)
       VALUES ($1, $2, $3, $4)
@@ -232,66 +278,75 @@ export async function actualizarCosto(req, res) {
         costo_base = EXCLUDED.costo_base,
         costo_packaging = EXCLUDED.costo_packaging
       `,
-      [empresa_id, producto_id, costo_base, costo_packaging]
+      [empresa_id, productoId, costoBase, costoPackaging]
     );
 
-    // 2) Actualizar precio si vino
-    if (precio_venta !== undefined && precio_venta !== null) {
-      await query(
+    // 2) Actualizar precio solo si la llamada lo indicó; el contrato legacy lo omitía al resetear.
+    if (debeActualizarPrecio) {
+      await txQuery(
         `UPDATE productos SET precio = $1 WHERE id = $2 AND empresa_id = $3`,
-        [precio_venta, producto_id, empresa_id]
+        [precioVenta, productoId, empresa_id]
       );
     }
 
-     // 3) Upsert de variables de costo EXTRA a nivel producto (si vienen)
+    // 3) Upsert o eliminación de overrides a nivel producto.
     const varsExtra = Array.isArray(variables_extra) ? variables_extra : [];
     for (const item of varsExtra) {
       const variableId = Number(item.variable_id || item.id);
+      if (!Number.isFinite(variableId) || variableId <= 0) continue;
+
+      if (item.eliminar_override === true) {
+        await txQuery(
+          `
+          DELETE FROM empresa_costos_variables_aplicacion
+          WHERE empresa_id = $1 AND variable_id = $2 AND nivel = 'producto' AND producto_id = $3
+          `,
+          [empresa_id, variableId, productoId]
+        );
+        continue;
+      }
+
       const valor = Number(item.valor);
-
-      if (!Number.isFinite(variableId) || !Number.isFinite(valor) || valor < 0) continue;
-
-      const nivel = 'producto';
-      const productoIdNum = Number(producto_id);
+      if (!Number.isFinite(valor) || valor < 0) continue;
 
       // Buscamos si ya existe una fila para este (empresa, variable, nivel, producto)
-      const existing = await query(
+      const existing = await txQuery(
         `
         SELECT id
         FROM empresa_costos_variables_aplicacion
         WHERE empresa_id = $1
           AND variable_id = $2
-          AND nivel = $3
-          AND COALESCE(producto_id, 0) = COALESCE($4, 0)
+          AND nivel = 'producto'
+          AND producto_id = $3
         LIMIT 1
         `,
-        [empresa_id, variableId, nivel, productoIdNum]
+        [empresa_id, variableId, productoId]
       );
 
       if (existing.length) {
-        await query(
+        await txQuery(
           `
           UPDATE empresa_costos_variables_aplicacion
-             SET valor = $4,
+             SET valor = $1,
                  activo = TRUE
-           WHERE id = $5
+           WHERE id = $2
           `,
-          [empresa_id, variableId, nivel, valor, existing[0].id]
+          [valor, existing[0].id]
         );
       } else {
-        await query(
+        await txQuery(
           `
           INSERT INTO empresa_costos_variables_aplicacion
             (empresa_id, variable_id, nivel, producto_id, valor, activo)
-          VALUES ($1,$2,$3,$4,$5,TRUE)
+          VALUES ($1,$2,'producto',$3,$4,TRUE)
           `,
-          [empresa_id, variableId, nivel, productoIdNum, valor]
+          [empresa_id, variableId, productoId, valor]
         );
       }
     }
 
     // 4) Calcular costo fijo mensual total equivalente (mismo criterio que simulación)
-    const fijosRows = await query(
+    const fijosRows = await txQuery(
       `SELECT COALESCE(SUM(
         CASE
           WHEN lower(frecuencia) = 'anual' THEN monto / 12.0
@@ -307,7 +362,7 @@ export async function actualizarCosto(req, res) {
     const totalFijos = Number(fijosRows?.[0]?.total) || 0;
 
     // 5) Ventas del último mes (para prorrateo unitario)
-    const ventasReales = await query(
+    const ventasReales = await txQuery(
       `
       SELECT COALESCE(COUNT(*), 1) AS total
       FROM pedidos
@@ -319,7 +374,7 @@ export async function actualizarCosto(req, res) {
     const costoFijoUnitarioReal = totalFijos / ventasMes;
 
     // 6) Registrar historia/auditoría (CORREGIDO: usa historial_costos_precios)
-    await query(
+    await txQuery(
       `
       INSERT INTO historial_costos_precios
         (empresa_id, producto_id, costo_base, costo_packaging, costo_fijo_asignado,
@@ -329,11 +384,11 @@ export async function actualizarCosto(req, res) {
       `,
       [
         empresa_id,
-        producto_id,
-        costo_base,
-        costo_packaging,
+        productoId,
+        costoBase,
+        costoPackaging,
         Number(costoFijoUnitarioReal.toFixed(2)),
-        precio_venta,
+        precioVenta,
         stock_actual,     // Mapeado a stock_al_momento
         cotizacion_usd,   // Mapeado a cotizacion_dolar
         motivo,
@@ -341,13 +396,20 @@ export async function actualizarCosto(req, res) {
       ]
     );
 
-    await query('COMMIT');
+    await client.query('COMMIT');
+    transactionStarted = false;
     res.json({ ok: true, message: 'Costos actualizados y auditados correctamente.' });
 
   } catch (e) {
-    await query('ROLLBACK');
+    if (client && transactionStarted) {
+      try { await client.query('ROLLBACK'); } catch {}
+    }
     console.error('Error actualizarCosto:', e);
-    res.status(500).json({ error: 'Error actualizando costos. Se revirtieron los cambios.' });
+    res.status(e.statusCode || 500).json({
+      error: e.statusCode === 404 ? 'Producto no encontrado' : 'Error actualizando costos. Se revirtieron los cambios.'
+    });
+  } finally {
+    if (client) client.release();
   }
 }
 
@@ -408,7 +470,13 @@ export async function listarCostosFijos(req, res) {
     const empresaId = resolveEmpresaId(req);
 
     const items = await query(
-      `SELECT id, nombre, monto, frecuencia, created_at
+      `SELECT id, nombre, monto, frecuencia, created_at,
+              CASE
+                WHEN lower(frecuencia) = 'anual' THEN monto / 12.0
+                WHEN lower(frecuencia) = 'mensual' THEN monto
+                WHEN lower(frecuencia) = 'semanal' THEN monto * 4.345
+                ELSE 0
+              END AS monto_mensual_equivalente
        FROM empresa_costos_fijos
        WHERE empresa_id = $1
        ORDER BY created_at DESC, id DESC`,

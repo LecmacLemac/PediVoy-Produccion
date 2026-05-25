@@ -442,8 +442,12 @@
           <div class="payment-line">
             <span>Transfer:</span> <span id="kpiTransferencia" class="numeric-main">$ 0,00</span>
           </div>
+          <div class="payment-line">
+            <span>QR MP:</span> <span id="kpiQrMp" class="numeric-main">$ 0,00</span>
+          </div>
           </div>
         </div>
+        <div class="kpi-sub" id="kpiQrMpDetalle">QR: 0 aprobados / 0 pendientes</div>
         <div class="kpi-sub">
             <button id="btnVerTransfer" class="btn btn-secondary btn-compact">Ver Transferencias</button>
         </div>
@@ -529,9 +533,20 @@
         </ul>
       </div>
       <div class="card">
+        <h3>QR Mercado Pago</h3>
+        <ul class="list-stats" id="qrPayStatus">
+          <li><span>Aprobado</span><span class="ok" id="qrPayApproved">—</span></li>
+          <li><span>Pendiente</span><span class="warning-text" id="qrPayPending">—</span></li>
+          <li><span>Tasa aprobación</span><span id="qrPayRate">—</span></li>
+        </ul>
+      </div>
+      <div class="card">
         <h3>🧾 Top Clientes (por Ventas)</h3>
         <ul class="list-stats" id="topClientes"></ul>
       </div>
+    </section>
+
+    <section class="grid-charts section-gap">
       <div class="card">
         <h3>📅 Ventas por Día</h3>
         <div class="table-responsive scroll-panel-sm">

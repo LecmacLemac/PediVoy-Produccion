@@ -11,12 +11,14 @@
     :root {
       --primary: #F33340;   /* Rojo PediVoy */
       --accent: #D82536;    /* Rojo más oscuro para botones/enlaces */
-      --bg: #FFF5F6;        /* Fondo suave rosado */
+      --bg: #f7f8fa;
       --card: #ffffff;
       --text: #2c2c2c;
       --muted: #777777;
       --price: #2c2c2c;
-      --shadow: 0 1px 2px 0 rgba(0,0,0,.12);
+      --line: #eceff3;
+      --soft-red: #fff0f1;
+      --shadow: 0 10px 24px rgba(15,23,42,.08);
       --container: 1200px;
     }
     
@@ -35,21 +37,22 @@
     
     /* --- HEADER --- */
     header {
-      background: var(--primary);
-      border-bottom: 1px solid rgba(0,0,0,0.06);
+      background: linear-gradient(135deg, #f33340 0%, #c9152a 100%);
+      border-bottom: 1px solid rgba(255,255,255,0.16);
       position: sticky;
       top: 0;
       z-index: 50;
-      padding-top: 8px;
+      padding-top: 10px;
+      box-shadow: 0 8px 20px rgba(198, 21, 42, .18);
     }
 
     .header-main {
       max-width: var(--container);
       margin: 0 auto;
       display: flex;
-      gap: 20px;
+      gap: 18px;
       align-items: center;
-      padding: 0 1rem 8px;
+      padding: 0 1rem 10px;
     }
 
     .logo {
@@ -64,24 +67,24 @@
     }
 
     .logo img {
-      height: 32px;
+      height: 42px;
       width: auto;
       display: block;
-      border-radius: 4px;
     }
 
     .search-box {
       flex-grow: 1;
       display: flex;
-      box-shadow: var(--shadow);
-      border-radius: 4px;
+      box-shadow: 0 12px 22px rgba(0,0,0,.12);
+      border-radius: 999px;
       background: #fff;
       overflow: hidden;
+      min-height: 44px;
     }
     .search-input {
       width: 100%;
       border: none;
-      padding: 10px 15px;
+      padding: 11px 18px;
       font-size: 1rem;
       outline: none;
       color: #333;
@@ -89,21 +92,38 @@
     .search-btn {
       background: #fff;
       border: none;
-      padding: 0 15px;
-      border-left: 1px solid #ddd;
+      padding: 0 18px;
+      border-left: 1px solid var(--line);
       cursor: pointer;
       font-size: 1rem;
     }
 
+    .driver-link {
+      color:#fff;
+      text-decoration:none;
+      font-size:0.9rem;
+      min-width:max-content;
+      border: 1px solid rgba(255,255,255,.34);
+      border-radius: 999px;
+      padding: 9px 13px;
+      background: rgba(255,255,255,.12);
+      transition: background .18s ease, border-color .18s ease;
+    }
+
+    .driver-link:hover {
+      background: rgba(255,255,255,.2);
+      border-color: rgba(255,255,255,.54);
+    }
+
     .subheader {
-      background: #ffe5e7;
-      border-top: 1px solid rgba(0,0,0,0.04);
+      background: rgba(255,255,255,.94);
+      border-top: 1px solid rgba(255,255,255,0.22);
     }
 
     .subheader-inner {
       max-width: var(--container);
       margin: 0 auto;
-      padding: 8px 1rem 10px;
+      padding: 9px 1rem 10px;
       display: flex;
       gap: 12px;
       align-items: center;
@@ -117,9 +137,10 @@
       gap: 6px;
       padding: 6px 10px;
       border-radius: 18px;
-      border: 1px solid #f3bbc0;
+      border: 1px solid #ffd2d6;
       cursor: pointer;
-      background: #fff;
+      background: var(--soft-red);
+      color: #861827;
     }
     .loc-icon {
       font-size: 1rem;
@@ -141,7 +162,7 @@
     }
 
     main {
-      margin-top: 1.5rem;
+      margin-top: 1.4rem;
     }
 
     /* --- HERO / BANNER --- */
@@ -150,71 +171,92 @@
     }
 
     .banner {
-      background: linear-gradient(90deg, #ffe5e7, #ffffff);
+      background:
+        radial-gradient(circle at 92% 18%, rgba(255,255,255,.28), transparent 28%),
+        linear-gradient(135deg, #f33340 0%, #9f1427 100%);
       border-radius: 8px;
-      padding: 20px 24px;
+      padding: 26px 28px;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 14px;
+      gap: 20px;
       box-shadow: var(--shadow);
+      color: #fff;
+      overflow: hidden;
     }
 
     .banner-content {
-      max-width: 65%;
+      max-width: 720px;
       display: flex;
       flex-direction: column;
-      gap: 4px;
+      gap: 8px;
     }
 
     .banner-title {
-      font-size: 1.8rem;
-      font-weight: 500;
+      font-size: clamp(1.45rem, 3vw, 2.25rem);
+      line-height: 1.08;
+      font-weight: 700;
       color: #ffffff;
-      text-shadow: 0 1px 2px rgba(0,0,0,0.2);
     }
 
     .banner-sub {
-      font-size: 0.95rem;
-      color: #2c2c2c;
+      font-size: 1rem;
+      color: rgba(255,255,255,.9);
+      max-width: 620px;
     }
 
     .banner-cta {
       display: flex;
       gap: 10px;
-      margin-top: 6px;
+      margin-top: 8px;
       align-items: center;
       flex-wrap: wrap;
     }
 
     .badge-zone {
-      font-size: 0.75rem;
-      background: #ffe5e7;
-      padding: 4px 8px;
+      font-size: 0.78rem;
+      background: rgba(255,255,255,.14);
+      padding: 6px 10px;
       border-radius: 999px;
-      border: 1px solid rgba(0,0,0,.05);
-      color: #b11f32;
+      border: 1px solid rgba(255,255,255,.22);
+      color: #fff;
+      font-weight: 500;
     }
 
     .banner-picto {
-      font-size: 3rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 152px;
+      min-width: 152px;
+      height: 96px;
+      border-radius: 8px;
+      background: rgba(255,255,255,.13);
+      border: 1px solid rgba(255,255,255,.2);
+    }
+
+    .banner-picto img {
+      width: 118px;
+      height: auto;
+      display: block;
     }
 
     .status-bar {
       display: none;
       padding: 8px 12px;
       border-radius: 6px;
-      background: #ffe5e7;
+      background: #fff;
       color: #b11f32;
       margin-top: 10px;
       font-size: 0.85rem;
+      box-shadow: 0 6px 16px rgba(15,23,42,.06);
     }
 
     /* --- GRID DE TIENDAS --- */
     .stores-grid {
       display: flex;
       flex-direction: column;
-      gap: 30px;
+      gap: 28px;
       margin-top: 1.5rem;
     }
 
@@ -224,14 +266,16 @@
 
     .store-header-bar {
       display: flex;
-      align-items: baseline;
+      align-items: center;
       gap: 10px;
-      margin-bottom: 15px;
+      margin-bottom: 14px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--line);
     }
 
     .store-title {
-      font-size: 1.5rem;
-      font-weight: 300;
+      font-size: 1.28rem;
+      font-weight: 700;
       color: #333;
     }
 
@@ -243,6 +287,7 @@
       border-radius: 3px;
       font-weight: 700;
       text-transform: uppercase;
+      letter-spacing: .02em;
     }
 
     .visit-link {
@@ -260,24 +305,26 @@
     /* --- PRODUCTOS --- */
     .products-row {
       display: grid; 
-      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); 
-      gap: 12px;
+      grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+      gap: 14px;
     }
 
     .prod-card {
       background: var(--card);
-      border-radius: 4px;
-      box-shadow: var(--shadow);
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      box-shadow: 0 6px 18px rgba(15,23,42,.06);
       overflow: hidden;
       cursor: pointer;
       display: flex;
       flex-direction: column;
-      transition: transform 0.1s ease, box-shadow 0.1s ease;
+      transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease;
     }
 
     .prod-card:hover {
       transform: translateY(-2px);
-      box-shadow: 0 4px 12px rgba(0,0,0,.12);
+      border-color: #ffd2d6;
+      box-shadow: 0 12px 26px rgba(15,23,42,.1);
     }
 
     .prod-img-container {
@@ -286,7 +333,7 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      background: #fbeef0;
+      background: linear-gradient(180deg, #fff7f8 0%, #f5f6f8 100%);
     }
 
     .prod-img {
@@ -299,7 +346,8 @@
       padding: 10px 12px 12px;
       display: flex;
       flex-direction: column;
-      gap: 4px;
+      gap: 6px;
+      min-height: 132px;
     }
 
     .prod-price-area {
@@ -310,7 +358,7 @@
 
     .prod-price {
       font-size: 1.4rem;
-      font-weight: 500;
+      font-weight: 700;
       color: var(--price);
     }
 
@@ -327,24 +375,26 @@
       font-size: 0.9rem;
       color: #333;
       min-height: 2.4em;
+      line-height: 1.25;
     }
 
     .shipping-tag {
       font-size: 0.8rem;
       color: var(--primary);
-      background: #ffe5e7;
+      background: var(--soft-red);
       margin-top: 4px;
-      padding: 2px 4px;
-      border-radius: 3px;
+      padding: 4px 7px;
+      border-radius: 999px;
       display: inline-block;
+      width: fit-content;
     }
 
     .btn-buy-overlay {
-      margin-top: 8px;
+      margin-top: auto;
       display: block;
       width: 100%;
-      border-radius: 4px;
-      padding: 6px 0;
+      border-radius: 7px;
+      padding: 8px 0;
       background: var(--accent);
       color: #fff;
       border: none;
@@ -365,19 +415,38 @@
 
     @media (max-width: 768px) {
       .header-main {
-        flex-direction: column;
-        align-items: stretch;
+        flex-wrap: wrap;
         gap: 10px;
+      }
+      .logo {
+        flex: 1 1 auto;
+      }
+      .logo img {
+        height: 38px;
       }
       .search-box {
         width: 100%;
+        order: 3;
+        flex-basis: 100%;
+      }
+      .driver-link {
+        padding: 8px 10px;
+        font-size: .82rem;
       }
       .banner {
         flex-direction: column;
         align-items: flex-start;
+        padding: 22px;
       }
       .banner-content {
         max-width: 100%;
+      }
+      .banner-picto {
+        width: 100%;
+        min-width: 0;
+        height: 78px;
+        justify-content: flex-start;
+        padding-left: 14px;
       }
       .products-row {
         grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -389,18 +458,37 @@
       .prod-price {
         font-size: 1.2rem;
       }
+      .store-header-bar {
+        align-items: flex-start;
+        flex-wrap: wrap;
+      }
+      .visit-link {
+        width: 100%;
+        margin-left: 0;
+      }
     }
-    .pedivoy-brand-logo{display:inline-block;width:auto;height:32px;max-width:150px;object-fit:contain;vertical-align:middle;flex:0 0 auto}.brand .pedivoy-brand-logo{height:32px}.pedivoy-brand-badge{position:fixed;top:12px;left:12px;z-index:1000;display:inline-flex;align-items:center;padding:7px 10px;border-radius:10px;background:rgba(15,23,42,.82);border:1px solid rgba(148,163,184,.22);box-shadow:0 10px 30px rgba(2,8,23,.25);backdrop-filter:blur(10px)}.pedivoy-brand-badge img{height:28px;width:auto;display:block}
-</style>
+
+    @media (max-width: 420px) {
+      .products-row {
+        grid-template-columns: 1fr;
+      }
+      .prod-img-container {
+        height: 190px;
+      }
+    }
+  </style>
 </head>
 <body>
-  <a class="pedivoy-brand-badge" href="/pedidos/dashboard.html" aria-label="PediVoy"><img src="../pedidos/img/brand/pedivoy-logo-horizontal-white.png" alt="PediVoy"></a>
 
   <header>
     <div class="header-main">
       <div class="logo" onclick="resetFilter()">
-        <img src="/pedidos/img/PV.jpg" alt="PediVoy logo">
-        
+        <img
+          src="/pedidos/img/brand/pedivoy-logo-horizontal-white.png"
+          alt="PediVoy"
+          width="982"
+          height="312"
+        >
       </div>
       
       <div class="search-box">
@@ -414,8 +502,7 @@
         <button class="search-btn" type="button" onclick="filterProducts()">🔍</button>
       </div>
       
-      <a href="/pedidos/login.html"
-         style="color:#fff; text-decoration:none; font-size:0.9rem; min-width:max-content;">
+      <a href="/pedidos/login.html" class="driver-link">
         Soy Repartidor
       </a>
     </div>
@@ -441,18 +528,19 @@
       <section class="hero">
         <div class="banner">
           <div class="banner-content">
-            <div class="banner-title">Lo mejor de tu zona</div>
+            <div class="banner-title">Playmarket PediVoy</div>
             <div class="banner-sub">
-              Pedí directo a proveedores mayoristas y minoristas en un solo lugar.
+              Empresas con ID pueden publicar sus productos y vender directo en el mercado central de PediVoy.
             </div>
             <div class="banner-cta">
-              <span class="badge-zone">📦 Envíos en el día según tu zona</span>
-              <span style="font-size:0.8rem; color:#999;">
-                Sin comisiones ocultas, pagás directo a cada proveedor.
-              </span>
+              <span class="badge-zone">Empresas verificadas</span>
+              <span class="badge-zone">Productos por zona</span>
+              <span class="badge-zone">Compra directa</span>
             </div>
           </div>
-          <div class="banner-picto">📦🚀</div>
+          <div class="banner-picto" aria-hidden="true">
+            <img src="/pedidos/img/brand/pedivoy-symbol-white.png" alt="">
+          </div>
         </div>
         <div id="statusMsg" class="status-bar"></div>
       </section>
@@ -672,9 +760,9 @@
             const buyLink = getBuyUrl(emp.id, p.id);
             const img = p.imagen || "https://dummyimage.com/400x400/eeeeee/999999&text=Sin+Imagen";
             
-            // Simulación de descuento al azar si no existe
-            const showDiscount = Math.random() > 0.7;
-            const discountHtml = showDiscount ? `<span class="prod-discount">5% OFF</span>` : '';
+            const discountHtml = p.descuento
+              ? `<span class="prod-discount">${p.descuento}% OFF</span>`
+              : '';
 
             return `
               <div class="prod-card" onclick="window.location='${buyLink}'">
@@ -687,7 +775,7 @@
                     ${discountHtml}
                   </div>
                   <div class="prod-title">${p.nombre || ''}</div>
-                  <div class="shipping-tag">Llega mañana</div>
+                  <div class="shipping-tag">Disponible en PediVoy</div>
                   <a href="${buyLink}" class="btn-buy-overlay" onclick="event.stopPropagation();">Comprar ahora</a>
                 </div>
               </div>

@@ -763,7 +763,7 @@
 
         <div class="small-text">
           <span id="productosCount">0 productos visibles.</span>
-          Al editar un producto, podrás ver sus costos específicos y las variables aplicadas por herencia (empresa/categoría).
+          Al editar un producto, podrás ver sus costos específicos y las variables aplicadas por herencia (empresa/categoría/etiqueta).
         </div>
       </section>
     </main>
@@ -925,7 +925,7 @@
         <div id="varVariablesExtraWrap" style="margin-top: 1rem;">
           <div class="section-label">Variables aplicadas</div>
           <div class="small-text" style="margin-bottom: 0.5rem;">
-            Ajustá el valor específico para este producto. Si dejás en blanco, hereda de categoría/empresa. Poné 0 para anular.
+            Ajustá el valor específico para este producto. Si dejás en blanco, hereda de etiqueta/categoría/empresa. Poné 0 para anular.
           </div>
           <div class="table-responsive">
             <table>
@@ -1055,11 +1055,11 @@
     async function init() {
       try {
         const me = await api('/api/me');
-        if (me && me.user) {
-          STATE.user = me.user;
-          STATE.isSuper = String(me.user.role || '').toLowerCase() === 'super';
-          $('#roleBadge').textContent = STATE.isSuper ? 'SUPER ADMIN' : 'Admin';
-        }
+        if (!me?.user) return;
+
+        STATE.user = me.user;
+        STATE.isSuper = String(me.user.role || '').toLowerCase() === 'super';
+        $('#roleBadge').textContent = STATE.isSuper ? 'SUPER ADMIN' : 'Admin';
 
         if (STATE.isSuper) {
           await cargarEmpresasParaSuper();
@@ -1152,7 +1152,7 @@
       tbody.innerHTML = STATE.fijos.map(c => {
         const freq = String(c.frecuencia || '').toLowerCase();
         const monto = Number(c.monto || 0);
-        const mensualEq = Number(c.monto_mensual_equivalente ?? (freq === 'semanal' ? monto * 4 : freq === 'anual' ? monto / 12 : freq === 'mensual' ? monto : 0));
+        const mensualEq = Number(c.monto_mensual_equivalente ?? (freq === 'semanal' ? monto * 4.345 : freq === 'anual' ? monto / 12 : freq === 'mensual' ? monto : 0));
         return `
         <tr>
           <td>${escapeHtml(c.nombre)}</td>
@@ -1451,10 +1451,11 @@
           tbody.innerHTML = `<tr><td colspan="4" class="empty-row small-text">No hay variables aplicadas</td></tr>`;
           return;
        }
-       // Creamos inputs para poder hacer override
        tbody.innerHTML = vars.map(v => {
           const isInherited = v.nivel !== 'producto';
           const badgeColor = isInherited ? 'background: #3b82f6; color:#fff;' : 'background: #10b981; color:#fff;';
+          const inputValue = isInherited ? '' : Number(v.valor || 0);
+          const inputPlaceholder = isInherited ? `Heredado: ${Number(v.valor || 0)}` : 'Vacío = heredar';
           
           return `
             <tr>
@@ -1465,7 +1466,7 @@
               <td><span class="pill" style="${badgeColor}">${escapeHtml(v.nivel)}</span></td>
               <td style="width:140px;">
                  <input type="number" step="0.01" class="input-inline var-extra-input" 
-                        data-var-id="${Number(v.id)}" value="${Number(v.valor || 0)}" placeholder="Heredado" />
+                        data-var-id="${Number(v.id)}" data-is-override="${!isInherited}" value="${inputValue}" placeholder="${inputPlaceholder}" />
               </td>
               <td>${fmtMoney.format(Number(v.monto_unitario || 0))}</td>
             </tr>
@@ -1490,10 +1491,15 @@
        document.querySelectorAll('.var-extra-input').forEach(inp => {
           const val = parseFloat(inp.value);
           const varId = inp.getAttribute('data-var-id');
-          if(!isNaN(val)) { // Si tiene número, lo mandamos como override a nivel producto
+          if(!isNaN(val)) {
              body.variables_extra.push({
                 variable_id: varId,
                 valor: val
+             });
+          } else if (inp.getAttribute('data-is-override') === 'true') {
+             body.variables_extra.push({
+                variable_id: varId,
+                eliminar_override: true
              });
           }
        });
@@ -1518,12 +1524,18 @@
           producto_id: currentProducto.id,
           costo_base: 0,
           costo_packaging: 0,
+          precio_venta: Number(currentProducto.precio || 0),
           motivo: 'Reset manual'
        };
        if(STATE.isSuper && STATE.empresaId) body.empresa_id = STATE.empresaId;
-       await api('/api/admin/costos/actualizar', { method: 'POST', body: JSON.stringify(body)});
-       toast('Costos reseteados');
-       cerrarModalVar();
+       const res = await api('/api/admin/costos/actualizar', { method: 'POST', body: JSON.stringify(body)});
+       if(res && !res.error) {
+          toast('Costos reseteados');
+          cerrarModalVar();
+          cargarProductos();
+       } else {
+          toast(res?.error || 'Error reseteando costos');
+       }
     });
 
     // --- Helpers de UI ---

@@ -1,6 +1,6 @@
 // src/adm/costosRouter.js
 import { Router } from 'express';
-import { withAuth, isRepartidor } from '../services.js';
+import { withAuth } from '../services.js';
 import {
   simularPrecio,
   actualizarCosto,
@@ -21,7 +21,8 @@ const router = Router();
 
 router.use(withAuth);
 router.use((req, res, next) => {
-  if (isRepartidor(req)) {
+  const role = String(req.user?.role || '').toLowerCase();
+  if (!['admin', 'user', 'super'].includes(role)) {
     return res.status(403).json({ error: 'No autorizado.' });
   }
   next();

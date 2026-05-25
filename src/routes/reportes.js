@@ -104,6 +104,164 @@ export function createReportesRouter() {
     }
   });
 
+  // GET /api/reportes/medios-pago
+  router.get('/medios-pago', withAuth, async (req, res) => {
+    try {
+      const { from, to, chofer_id } = req.query || {};
+      const targetEmpresa = getTargetEmpresa(req);
+      if (!targetEmpresa) return res.status(400).json({ error: 'Empresa no determinada' });
+      const hasPedidoPagos = await tableExists('pedido_pagos');
+      const pagoDigitalConfirmadoSql = hasPedidoPagos
+        ? `
+            OR EXISTS (
+              SELECT 1
+              FROM pedido_pagos pp_pago
+              WHERE pp_pago.pedido_id = p.id
+                AND pp_pago.empresa_id = p.empresa_id
+                AND lower(pp_pago.estado) IN ('pagado', 'aprobado', 'acreditado', 'approved')
+            )`
+        : '';
+
+      let pedidosSql = `
+        SELECT
+          COALESCE(NULLIF(TRIM(p.metodo_pago), ''), 'sin_definir') AS metodo_pago,
+          COUNT(*)::int AS cantidad,
+          COALESCE(SUM(p.monto), 0)::numeric AS total,
+          COALESCE(SUM(CASE
+            WHEN EXISTS (
+              SELECT 1
+              FROM transferencias t_pago
+              WHERE t_pago.pedido_id = p.id
+                AND t_pago.empresa_id = p.empresa_id
+            )${pagoDigitalConfirmadoSql}
+            THEN p.monto ELSE 0
+          END), 0)::numeric AS pagado_pedido,
+          COALESCE(SUM(CASE WHEN EXISTS (
+            SELECT 1
+            FROM transferencias t_pago
+            WHERE t_pago.pedido_id = p.id
+              AND t_pago.empresa_id = p.empresa_id
+          ) THEN p.monto ELSE 0 END), 0)::numeric AS pagado_transferencia
+        FROM pedidos p
+        JOIN puntos_entrega pe ON p.punto_entrega_id = pe.id
+        WHERE p.estado = 'entregado'
+          AND pe.empresa_id = $1
+      `;
+      const params = [targetEmpresa];
+      let idx = 2;
+
+      if (from) {
+        pedidosSql += ` AND COALESCE(p.fecha_entrega, p.fecha) >= $${idx++}::date`;
+        params.push(from.toString().slice(0, 10));
+      }
+      if (to) {
+        pedidosSql += ` AND COALESCE(p.fecha_entrega, p.fecha) < ($${idx++}::date + INTERVAL '1 day')`;
+        params.push(to.toString().slice(0, 10));
+      }
+      if (chofer_id) {
+        pedidosSql += ` AND p.chofer_id = $${idx++}`;
+        params.push(Number(chofer_id));
+      }
+
+      pedidosSql += ` GROUP BY 1 ORDER BY 1`;
+      const pedidosRows = await query(pedidosSql, params);
+
+      let qr = {
+        cantidad: 0,
+        aprobados: 0,
+        pendientes: 0,
+        rechazados: 0,
+        total: 0,
+        aprobado: 0,
+        pendiente: 0,
+        rechazado: 0,
+        proveedores: [],
+        estados: [],
+      };
+
+      if (hasPedidoPagos) {
+        let qrSql = `
+          SELECT
+            COALESCE(NULLIF(TRIM(proveedor), ''), 'sin_proveedor') AS proveedor,
+            COALESCE(NULLIF(TRIM(estado), ''), 'sin_estado') AS estado,
+            COUNT(*)::int AS cantidad,
+            COALESCE(SUM(monto), 0)::numeric AS total
+          FROM pedido_pagos
+          WHERE empresa_id = $1
+        `;
+        const qrParams = [targetEmpresa];
+        let qrIdx = 2;
+
+        if (from) {
+          qrSql += ` AND COALESCE(settlement_at, updated_at, created_at) >= $${qrIdx++}::date`;
+          qrParams.push(from.toString().slice(0, 10));
+        }
+        if (to) {
+          qrSql += ` AND COALESCE(settlement_at, updated_at, created_at) < ($${qrIdx++}::date + INTERVAL '1 day')`;
+          qrParams.push(to.toString().slice(0, 10));
+        }
+        if (chofer_id) {
+          qrSql += ` AND chofer_id = $${qrIdx++}`;
+          qrParams.push(Number(chofer_id));
+        }
+
+        qrSql += ` GROUP BY 1, 2 ORDER BY 1, 2`;
+        const qrRows = await query(qrSql, qrParams);
+        const approvedStates = new Set(['pagado', 'aprobado', 'acreditado', 'approved']);
+        const rejectedStates = new Set([
+          'rechazado',
+          'rejected',
+          'cancelado',
+          'cancelled',
+          'cancelled_by_user',
+          'fallido',
+          'failed',
+          'error',
+          'expired',
+          'vencido',
+          'anulado',
+        ]);
+        const byProvider = new Map();
+
+        for (const row of qrRows || []) {
+          const proveedor = row.proveedor || 'sin_proveedor';
+          const estado = String(row.estado || 'sin_estado').toLowerCase();
+          const cantidad = Number(row.cantidad) || 0;
+          const total = Number(row.total) || 0;
+          const bucket = approvedStates.has(estado) ? 'aprobado' : (rejectedStates.has(estado) ? 'rechazado' : 'pendiente');
+
+          qr.cantidad += cantidad;
+          qr.total += total;
+          qr[`${bucket}s`] = Number(qr[`${bucket}s`] || 0) + cantidad;
+          qr[bucket] = Number(qr[bucket] || 0) + total;
+          qr.estados.push({ proveedor, estado, cantidad, total, bucket });
+
+          const providerRow = byProvider.get(proveedor) || { proveedor, cantidad: 0, total: 0, aprobado: 0, pendiente: 0, rechazado: 0 };
+          providerRow.cantidad += cantidad;
+          providerRow.total += total;
+          providerRow[bucket] += total;
+          byProvider.set(proveedor, providerRow);
+        }
+
+        qr.proveedores = Array.from(byProvider.values()).sort((a, b) => b.total - a.total);
+      }
+
+      return res.json({
+        pedidos: (pedidosRows || []).map(r => ({
+          metodo_pago: r.metodo_pago,
+          cantidad: Number(r.cantidad) || 0,
+          total: Number(r.total) || 0,
+          pagado_pedido: Number(r.pagado_pedido) || 0,
+          pagado_transferencia: Number(r.pagado_transferencia) || 0,
+        })),
+        qr,
+      });
+    } catch (e) {
+      console.error('ERROR /api/reportes/medios-pago', e);
+      return res.status(500).json({ error: 'Error generando reporte de medios de pago' });
+    }
+  });
+
   // GET /api/reportes/sla-entrega
   router.get('/sla-entrega', withAuth, async (req, res) => {
     try {
