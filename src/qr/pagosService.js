@@ -2,6 +2,7 @@
 import crypto from 'node:crypto';
 import { MercadoPagoConfig, Payment } from 'mercadopago';
 import { query } from '../db.js';
+import { decryptSecret, encryptSecret } from '../services/facturacionService.js';
 import { crearPagoProveedor } from './pagosProvider.js';
 import { normalizePagoEstado } from './pagosEstado.js';
 
@@ -34,13 +35,53 @@ export async function getConfigPagosEmpresa(empresaId) {
   const cfg = rows[0].config_integraciones || {};
   const pagosCfg = cfg.pagos || {};
 
+  if (
+    (pagosCfg.access_token && !pagosCfg.access_token_encrypted)
+    || (pagosCfg.webhook_secret && !pagosCfg.webhook_secret_encrypted)
+  ) {
+    try {
+      const migrated = { ...pagosCfg };
+      if (pagosCfg.access_token && !pagosCfg.access_token_encrypted) {
+        migrated.access_token_encrypted = encryptSecret(pagosCfg.access_token);
+        delete migrated.access_token;
+      }
+      if (pagosCfg.webhook_secret && !pagosCfg.webhook_secret_encrypted) {
+        migrated.webhook_secret_encrypted = encryptSecret(pagosCfg.webhook_secret);
+        delete migrated.webhook_secret;
+      }
+      await query(
+        `UPDATE empresas
+            SET config_integraciones = jsonb_set(
+              COALESCE(config_integraciones, '{}'::jsonb),
+              '{pagos}',
+              $2::jsonb,
+              true
+            )
+          WHERE id = $1`,
+        [empresaId, JSON.stringify(migrated)]
+      );
+    } catch (error) {
+      console.warn('[Pagos QR] No se pudo migrar credenciales legacy a cifrado:', error?.message || error);
+      if (process.env.NODE_ENV === 'production') {
+        throw Object.assign(
+          new Error('Pagos QR bloqueados: falta clave para cifrar credenciales del proveedor'),
+          { statusCode: 503 }
+        );
+      }
+    }
+  }
+
   // Permitimos proveedor "fake" por defecto para desarrollo
   const proveedor = pagosCfg.proveedor || 'fake';
 
   return {
     proveedor,
-    accessToken: pagosCfg.access_token || null,
-    webhookSecret: pagosCfg.webhook_secret || null,
+    accessToken: pagosCfg.access_token_encrypted
+      ? decryptSecret(pagosCfg.access_token_encrypted)
+      : pagosCfg.access_token || null,
+    webhookSecret: pagosCfg.webhook_secret_encrypted
+      ? decryptSecret(pagosCfg.webhook_secret_encrypted)
+      : pagosCfg.webhook_secret || null,
     autoConfirmar: pagosCfg.auto_confirmar === true
   };
 }
@@ -131,7 +172,7 @@ async function getPagoPendientePorPedido({ pedidoId, empresaId }) {
   return pago;
 }
 
-async function getPagoPorPedidoProveedor({ pedidoId, empresaId, proveedor }) {
+export async function getPagoPorPedidoProveedor({ pedidoId, empresaId, proveedor }) {
   const rows = await query(
     `
     SELECT *
@@ -157,11 +198,14 @@ async function getPagoPorPedidoProveedor({ pedidoId, empresaId, proveedor }) {
  */
 export async function crearPagoParaPedido({ pedidoId, empresaId }, options = {}) {
   const {
-    venceEnHoras = 12,
+    venceEnHoras: venceEnHorasOption = 12,
     canal = 'admin_panel',
     metodoPago = 'qr_dinamico',
     forceRefresh = false
   } = options;
+  const venceEnHoras = Number.isFinite(Number(venceEnHorasOption))
+    ? Math.min(72, Math.max(1, Number(venceEnHorasOption)))
+    : 12;
 
   const pedido = await getPedidoConEmpresa(pedidoId, empresaId);
   if (!pedido) {
@@ -177,7 +221,9 @@ export async function crearPagoParaPedido({ pedidoId, empresaId }, options = {})
     throw err;
   }
 
-  const proveedor = configPagos.proveedor;
+  const proveedor = isMercadoPagoProveedor(configPagos.proveedor)
+    ? 'mercado_pago'
+    : configPagos.proveedor;
   const trackingToken = await ensurePedidoTrackingToken(pedido);
   pedido.tracking_token = trackingToken;
 
@@ -211,7 +257,8 @@ export async function crearPagoParaPedido({ pedidoId, empresaId }, options = {})
       id: pedido.id,
       total: monto,
       clienteNombre: pedido.cliente_nombre || '',
-      trackingToken
+      trackingToken,
+      venceAt
     },
     empresa: {
       id: pedido.empresa_id,
@@ -390,6 +437,46 @@ function isMercadoPagoProveedor(proveedor) {
   return prov === 'mercado_pago' || prov === 'mercadopago' || prov === 'mp';
 }
 
+function amountInCents(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return null;
+  return Math.round(parsed * 100);
+}
+
+/**
+ * Vincula una operación consultada en Mercado Pago con la preferencia QR
+ * almacenada localmente. Nunca alcanza con el external_reference: también
+ * deben coincidir preferencia, importe, moneda y vigencia.
+ */
+export function validarPagoMercadoPagoContraRegistro({ payment, pago, empresaId, pedidoId, now = new Date() }) {
+  if (!payment || !pago) return { ok: false, reason: 'pago_no_registrado' };
+
+  const expectedReference = `PEDIDO|emp:${empresaId}|ped:${pedidoId}`;
+  if (String(payment.external_reference || '') !== expectedReference) {
+    return { ok: false, reason: 'referencia_invalida' };
+  }
+
+  const expectedPreferenceId = String(pago.provider_order_id || '').trim();
+  if (!expectedPreferenceId || String(payment.preference_id || '') !== expectedPreferenceId) {
+    return { ok: false, reason: 'preferencia_invalida' };
+  }
+
+  if (amountInCents(payment.transaction_amount) !== amountInCents(pago.monto)) {
+    return { ok: false, reason: 'monto_invalido' };
+  }
+
+  const expectedCurrency = String(pago.moneda || 'ARS').toUpperCase();
+  if (String(payment.currency_id || '').toUpperCase() !== expectedCurrency) {
+    return { ok: false, reason: 'moneda_invalida' };
+  }
+
+  if (pago.vence_at && new Date(pago.vence_at).getTime() <= now.getTime()) {
+    return { ok: false, reason: 'pago_vencido' };
+  }
+
+  return { ok: true, reason: null };
+}
+
 function pickMercadoPagoPayment({ searchResult, pago, externalReference }) {
   const results = Array.isArray(searchResult?.results) ? searchResult.results : [];
   const expectedPreferenceId = String(pago?.provider_order_id || pago?.provider_payment_id || '');
@@ -398,7 +485,7 @@ function pickMercadoPagoPayment({ searchResult, pago, externalReference }) {
     const sameExternalReference = !externalReference || String(payment?.external_reference || '') === externalReference;
     const samePreference = !expectedPreferenceId || String(payment?.preference_id || '') === expectedPreferenceId;
     return sameExternalReference && samePreference;
-  }) || results.find((payment) => String(payment?.external_reference || '') === externalReference) || null;
+  }) || null;
 }
 
 async function buscarPagoMercadoPagoPorPedido({ accessToken, pago, empresaId, pedidoId }) {
@@ -444,6 +531,14 @@ export async function refrescarEstadoPagoPedido({ pedidoId, empresaId, pago }) {
   });
 
   if (!payment?.status) return pago;
+
+  const validation = validarPagoMercadoPagoContraRegistro({
+    payment,
+    pago,
+    empresaId,
+    pedidoId
+  });
+  if (!validation.ok) return pago;
 
   const canonicalEstado = normalizePagoEstado({
     proveedor: 'mercado_pago',

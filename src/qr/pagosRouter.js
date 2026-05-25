@@ -1,6 +1,7 @@
 // src/adm/pagosRouter.js
 import { Router } from 'express';
 import { withAuth, isSuper, checkLicencia, resolveEmpresaId } from '../services.js';
+import { query } from '../db.js';
 import { crearPagoParaPedido, listarPagosPorPedido } from '../qr/pagosService.js';
 
 const router = Router();
@@ -165,6 +166,11 @@ router.get('/pedidos/:pedidoId/pagos', async (req, res) => {
  */
 router.post('/pedidos/:pedidoId/link', async (req, res) => {
   try {
+    const role = String(req.user?.role || '').toLowerCase();
+    if (!isSuper(req) && role !== 'admin') {
+      return res.status(403).json({ error: 'No autorizado.' });
+    }
+
     const pedidoId = Number(req.params.pedidoId);
     if (!Number.isInteger(pedidoId) || pedidoId <= 0) {
       return res.status(400).json({ error: 'pedidoId inválido' });
@@ -178,14 +184,17 @@ router.post('/pedidos/:pedidoId/link', async (req, res) => {
       return res.status(400).json({ error: 'empresa_id inválido' });
     }
 
-    const { venceEnHoras, canal, metodoPago } = req.body || {};
+    const venceRaw = Number(req.body?.venceEnHoras);
+    const venceEnHoras = Number.isFinite(venceRaw)
+      ? Math.min(72, Math.max(1, venceRaw))
+      : undefined;
 
     const pago = await crearPagoParaPedido(
       { pedidoId, empresaId },
       {
         venceEnHoras,
-        canal: canal || 'admin_panel',
-        metodoPago: metodoPago || 'qr_dinamico'
+        canal: 'admin_panel',
+        metodoPago: 'qr_dinamico'
       }
     );
 

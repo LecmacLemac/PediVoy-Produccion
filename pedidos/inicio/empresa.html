@@ -962,7 +962,7 @@
           <label>Access Token / API Key del proveedor</label>
           <input type="password" id="e_pagos_token" placeholder="Token o credencial secreta">
           <small style="color:var(--muted); font-size:0.8rem;">
-            Se guarda en <code>config_integraciones.pagos.access_token</code> (no se muestra completo al volver a editar).
+            Se guarda cifrado y no vuelve a exponerse al navegador.
           </small>
         </div>
 
@@ -1706,7 +1706,7 @@ if (logoutLink) {
     function hasDigitalPayment(c) {
       const cfg = parseMaybeJson(c.config_integraciones);
       const pagos = cfg.pagos || {};
-      return !!(pagos.proveedor || pagos.access_token || pagos.canales?.qr_dinamico);
+      return !!(pagos.proveedor || pagos.access_token_configured || pagos.canales?.qr_dinamico);
     }
 
     function setCompanySummary(list = companies) {
@@ -2267,7 +2267,7 @@ if (logoutLink) {
       }
     }
 
-    let pagosTokenActual = null;
+    let pagosTokenConfigured = false;
 
     function refreshPagosWebhookUrl(empresaId) {
       const proveedor = document.getElementById('e_pagos_proveedor').value || '';
@@ -2291,11 +2291,11 @@ if (logoutLink) {
       let token = null;
 
       if (!tokenInput) {
-        // Si está vacío, no cambias nada: usás el que tenías antes (si había)
-        token = pagosTokenActual || null;
+        // Si está vacío, no se modifica el secreto persistido.
+        token = pagosTokenConfigured ? '********' : null;
       } else if (tokenInput === '********') {
-        // El usuario no tocó el campo → mantener el token actual
-        token = pagosTokenActual || null;
+        // El usuario no tocó el campo: el backend conserva el valor cifrado.
+        token = '********';
       } else {
         // El usuario pegó un token nuevo
         token = tokenInput.trim();
@@ -2327,8 +2327,7 @@ if (logoutLink) {
       const pagos = cfg.pagos || {};
       const canales = pagos.canales || {};
 
-      // Guardamos el token real en memoria para poder manejar el placeholder
-      pagosTokenActual = pagos.access_token || null;
+      pagosTokenConfigured = !!(pagos.access_token_configured || pagos.access_token);
 
       // Canales de cobro habilitados
       document.getElementById('e_cobro_efectivo').checked =
@@ -2347,7 +2346,7 @@ if (logoutLink) {
       document.getElementById('e_pagos_proveedor').value = proveedor;
 
       // Token: si hay uno en DB, mostramos ****, si no, vacío
-      document.getElementById('e_pagos_token').value = pagos.access_token ? '********' : '';
+      document.getElementById('e_pagos_token').value = pagosTokenConfigured ? '********' : '';
 
       // Auto-confirmar pagos acreditados (radio true/false)
       const autoTrue = document.querySelector('input[name="e_pagos_auto_conf"][value="true"]');

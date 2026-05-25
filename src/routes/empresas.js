@@ -5,6 +5,81 @@ import express from 'express';
 import fs from 'fs';
 import path from 'path';
 import multer from 'multer';
+import { encryptSecret } from '../services/facturacionService.js';
+
+function objectOrEmpty(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+}
+
+export function redactEmpresaPaymentSecrets(empresa) {
+  if (!empresa) return empresa;
+  const integraciones = objectOrEmpty(empresa.config_integraciones);
+  const pagos = objectOrEmpty(integraciones.pagos);
+  if (!Object.keys(pagos).length) return empresa;
+
+  const {
+    access_token: _accessToken,
+    access_token_encrypted: _accessTokenEncrypted,
+    webhook_secret: _webhookSecret,
+    webhook_secret_encrypted: _webhookSecretEncrypted,
+    ...safePagos
+  } = pagos;
+
+  return {
+    ...empresa,
+    config_integraciones: {
+      ...integraciones,
+      pagos: {
+        ...safePagos,
+        access_token_configured: Boolean(_accessToken || _accessTokenEncrypted),
+        webhook_secret_configured: Boolean(_webhookSecret || _webhookSecretEncrypted),
+      },
+    },
+  };
+}
+
+export function securePaymentIntegraciones(configIntegraciones, existingIntegraciones = {}) {
+  const incoming = objectOrEmpty(configIntegraciones);
+  const existing = objectOrEmpty(existingIntegraciones);
+  const incomingPagos = objectOrEmpty(incoming.pagos);
+  const existingPagos = objectOrEmpty(existing.pagos);
+  if (!Object.keys(incomingPagos).length) return incoming;
+
+  const secureValue = (newValue, oldEncrypted, oldPlaintext) => {
+    const candidate = String(newValue || '').trim();
+    if (candidate && candidate !== '********') return encryptSecret(candidate);
+    if (oldEncrypted) return oldEncrypted;
+    if (oldPlaintext) return encryptSecret(oldPlaintext);
+    return null;
+  };
+
+  const accessTokenEncrypted = secureValue(
+    incomingPagos.access_token,
+    existingPagos.access_token_encrypted,
+    existingPagos.access_token
+  );
+  const webhookSecretEncrypted = secureValue(
+    incomingPagos.webhook_secret,
+    existingPagos.webhook_secret_encrypted,
+    existingPagos.webhook_secret
+  );
+  const {
+    access_token: _accessToken,
+    webhook_secret: _webhookSecret,
+    access_token_configured: _accessConfigured,
+    webhook_secret_configured: _webhookConfigured,
+    ...safePagos
+  } = incomingPagos;
+
+  return {
+    ...incoming,
+    pagos: {
+      ...safePagos,
+      access_token_encrypted: accessTokenEncrypted,
+      webhook_secret_encrypted: webhookSecretEncrypted,
+    },
+  };
+}
 
 export function createEmpresasRouter(deps) {
   const {
@@ -109,7 +184,7 @@ export function createEmpresasRouter(deps) {
         rows = await query(`SELECT * FROM empresas WHERE id=$1 ORDER BY id`, [getEmpresaIdFromToken(req)]);
       }
 
-      return res.json(rows || []);
+      return res.json((rows || []).map(redactEmpresaPaymentSecrets));
     } catch (e) {
       console.error('EMPRESAS ERROR:', e);
       return res.status(500).json({ error: 'Error interno' });
@@ -154,6 +229,9 @@ export function createEmpresasRouter(deps) {
     if (!nombre) return res.status(400).json({ error: 'Nombre requerido' });
 
     try {
+      const securedIntegraciones = config_integraciones
+        ? securePaymentIntegraciones(config_integraciones)
+        : {};
       const rows = await query(
         `
         INSERT INTO empresas (
@@ -219,7 +297,7 @@ export function createEmpresasRouter(deps) {
           config_operativa ? JSON.stringify(config_operativa) : JSON.stringify({}),
           config_logistica ? JSON.stringify(config_logistica) : JSON.stringify({}),
           config_activos ? JSON.stringify(config_activos) : JSON.stringify({}),
-          config_integraciones ? JSON.stringify(config_integraciones) : JSON.stringify({}),
+          JSON.stringify(securedIntegraciones),
           plan_estado || null,
           plan_tipo || null,
           plan_vencimiento || null,
@@ -250,7 +328,7 @@ export function createEmpresasRouter(deps) {
         }
       }
 
-      return res.json(nuevaEmpresa);
+      return res.json(redactEmpresaPaymentSecrets(nuevaEmpresa));
     } catch (e) {
       console.error('❌ [ERROR POST EMPRESA]:', e);
       if (e.code === '23505') {
@@ -297,6 +375,17 @@ export function createEmpresasRouter(deps) {
     } = req.body || {};
 
     try {
+      let securedIntegraciones = null;
+      if (config_integraciones) {
+        const existingRows = await query(
+          'SELECT config_integraciones FROM empresas WHERE id = $1 LIMIT 1',
+          [id]
+        );
+        securedIntegraciones = securePaymentIntegraciones(
+          config_integraciones,
+          existingRows[0]?.config_integraciones
+        );
+      }
       const rows = await query(
         `
         UPDATE empresas
@@ -359,7 +448,7 @@ export function createEmpresasRouter(deps) {
           config_operativa ? JSON.stringify(config_operativa) : null,
           config_logistica ? JSON.stringify(config_logistica) : null,
           config_activos ? JSON.stringify(config_activos) : null,
-          config_integraciones ? JSON.stringify(config_integraciones) : null,
+          securedIntegraciones ? JSON.stringify(securedIntegraciones) : null,
           plan_estado || null,
           plan_tipo || null,
           plan_vencimiento || null,
@@ -370,7 +459,7 @@ export function createEmpresasRouter(deps) {
       );
 
       if (!rows.length) return res.status(404).json({ error: 'Empresa no encontrada' });
-      return res.json(rows[0]);
+      return res.json(redactEmpresaPaymentSecrets(rows[0]));
     } catch (e) {
       console.error('❌ [ERROR PUT EMPRESA]:', e);
       if (e.code === '23505') {
@@ -392,7 +481,20 @@ export function createEmpresasRouter(deps) {
   });
 
   // GET /api/empresas/:id
-  router.get('/:id', withAuth, getEmpresaById);
+  router.get('/:id', withAuth, async (req, res) => {
+    try {
+      const empresaId = Number(req.params.id);
+      if (!isSuper(req) && empresaId !== Number(getEmpresaIdFromToken(req))) {
+        return res.status(403).json({ error: 'No autorizado' });
+      }
+      const rows = await query('SELECT * FROM empresas WHERE id = $1 LIMIT 1', [empresaId]);
+      if (!rows.length) return res.status(404).json({ error: 'Empresa no encontrada' });
+      return res.json(redactEmpresaPaymentSecrets(rows[0]));
+    } catch (e) {
+      console.error('Error getEmpresaById:', e);
+      return res.status(500).json({ error: 'Error interno' });
+    }
+  });
 
   // --------------------------------------------------
   // CUENTAS BANCARIAS DE EMPRESA (Multi-cuentas)

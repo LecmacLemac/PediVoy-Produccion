@@ -160,7 +160,6 @@ export function createRepartidorApiRouter(deps) {
        {
          canal: 'repartidor',
          metodoPago: 'qr_dinamico',
-         forceRefresh: true,
        }
      );
 

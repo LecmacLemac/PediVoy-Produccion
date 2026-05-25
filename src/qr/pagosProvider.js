@@ -101,6 +101,12 @@ async function crearPagoMercadoPago({ credenciales, pedido, empresa }) {
     }
   };
 
+  if (pedido.venceAt instanceof Date && !Number.isNaN(pedido.venceAt.getTime())) {
+    body.expires = true;
+    body.expiration_date_from = new Date().toISOString();
+    body.expiration_date_to = pedido.venceAt.toISOString();
+  }
+
   if (notificationUrl) {
     body.notification_url = notificationUrl;
   }

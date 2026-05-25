@@ -6,7 +6,9 @@ import { query } from '../db.js';
 import {
   actualizarEstadoPagoPedido,
   actualizarEstadoPagoScoped,
-  getConfigPagosEmpresa
+  getConfigPagosEmpresa,
+  getPagoPorPedidoProveedor,
+  validarPagoMercadoPagoContraRegistro
 } from './pagosService.js';
 import { normalizePagoEstado } from './pagosEstado.js';
 
@@ -130,6 +132,22 @@ async function handleMercadoPagoWebhook(req, res) {
     return res.status(200).json({ ok: true, ignored: true });
   }
 
+  const pago = await getPagoPorPedidoProveedor({
+    empresaId: ref.empresaId,
+    pedidoId: ref.pedidoId,
+    proveedor: 'mercado_pago'
+  });
+  const validation = validarPagoMercadoPagoContraRegistro({
+    payment,
+    pago,
+    empresaId: ref.empresaId,
+    pedidoId: ref.pedidoId
+  });
+  if (!validation.ok) {
+    console.warn('[MercadoPago webhook] Pago ignorado por validacion local:', validation.reason);
+    return res.status(200).json({ ok: true, ignored: true });
+  }
+
   const canonicalEstado = normalizePagoEstado({
     proveedor: 'mercado_pago',
     providerStatus: payment?.status,
@@ -215,19 +233,10 @@ router.post(['/pagos', '/pagos/:proveedor'], async (req, res) => {
 
     const empresaId = Number(pagoRows[0].empresa_id);
 
-    // 2) Leer webhook_secret por empresa
-    const cfgRows = await query(
-      `SELECT config_integraciones
-         FROM empresas
-        WHERE id = $1
-        LIMIT 1`,
-      [empresaId]
-    );
-
-    const cfg = cfgRows[0]?.config_integraciones || {};
-    const pagosCfg = cfg?.pagos || {};
-    const secret = pagosCfg.webhook_secret || null;
-    const autoConfirmar = pagosCfg.auto_confirmar === true;
+    // 2) Leer secretos por empresa (incluye soporte para credenciales cifradas)
+    const pagosCfg = await getConfigPagosEmpresa(empresaId);
+    const secret = pagosCfg?.webhookSecret || null;
+    const autoConfirmar = pagosCfg?.autoConfirmar === true;
 
     if (!secret) {
       return res.status(403).json({ error: 'Webhook no habilitado' });
