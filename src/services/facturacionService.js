@@ -40,6 +40,10 @@ export function isProductionEmissionEnabled(config) {
   return config?.produccion_habilitada === true || config?.produccion_habilitada === 't';
 }
 
+export function hasPersistentArcaCredentials(config) {
+  return Boolean(config?.certificado_pem_encrypted && config?.clave_pem_encrypted);
+}
+
 export function hasProductionEmissionConfirmation(value) {
   return String(value || '').trim().toUpperCase() === PRODUCTION_EMISSION_CONFIRMATION;
 }
@@ -277,6 +281,22 @@ export async function ensureFacturacionSchema(query) {
   `);
 
   await query(`
+    UPDATE factura_afip_auditoria
+    SET request_xml = CASE
+          WHEN request_xml ~* '<([[:alnum:]_]+:)?(token|sign)([[:space:]>])'
+          THEN '[REDACTED: contenia credencial ARCA]'
+          ELSE request_xml
+        END,
+        response_xml = CASE
+          WHEN response_xml ~* '<([[:alnum:]_]+:)?(token|sign)([[:space:]>])'
+          THEN '[REDACTED: contenia credencial ARCA]'
+          ELSE response_xml
+        END
+    WHERE request_xml ~* '<([[:alnum:]_]+:)?(token|sign)([[:space:]>])'
+       OR response_xml ~* '<([[:alnum:]_]+:)?(token|sign)([[:space:]>])'
+  `);
+
+  await query(`
     CREATE TABLE IF NOT EXISTS factura_eventos (
       id BIGSERIAL PRIMARY KEY,
       empresa_id INT NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
@@ -491,6 +511,8 @@ export async function logAfipAudit(query, {
   errorCodigo = null,
   errorMensaje = null,
 }) {
+  const safeRequestXml = redactAfipAuditXml(requestXml);
+  const safeResponseXml = redactAfipAuditXml(responseXml);
   await query(
     `
     INSERT INTO factura_afip_auditoria (
@@ -504,12 +526,20 @@ export async function logAfipAudit(query, {
       facturaId,
       servicio,
       operacion,
-      requestXml,
-      responseXml,
+      safeRequestXml,
+      safeResponseXml,
       resultado,
       errorCodigo,
       errorMensaje,
     ]
+  );
+}
+
+export function redactAfipAuditXml(xml) {
+  if (xml == null) return xml;
+  return String(xml).replace(
+    /(<(?:\w+:)?(?:token|sign)\b[^>]*>)[\s\S]*?(<\/(?:\w+:)?(?:token|sign)>)/gi,
+    '$1[REDACTED]$2'
   );
 }
 

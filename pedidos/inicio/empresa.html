@@ -2512,7 +2512,7 @@ if (logoutLink) {
         toast('❌ ' + res.error);
         return;
       }
-      toast('✅ Conexión AFIP/ARCA OK');
+      toast(`✅ ARCA OK · WSFE/PV ${res.punto_venta} verificado`);
     }
 
     async function save() {

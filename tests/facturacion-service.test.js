@@ -7,13 +7,16 @@ import {
   canAccessFacturacion,
   cancelFactura,
   deleteFactura,
+  hasPersistentArcaCredentials,
   hasProductionEmissionConfirmation,
   isPedidoEstadoFacturable,
   isProductionEmissionEnabled,
   isValidCuit,
   listFacturaEvents,
   logFacturaEvent,
+  logAfipAudit,
   normalizeAfipMode,
+  redactAfipAuditXml,
   resolveTipoComprobante,
   summarizeFacturas,
 } from '../src/services/facturacionService.js';
@@ -71,6 +74,12 @@ test('produccion exige habilitacion y confirmacion explicita', () => {
   assert.equal(isProductionEmissionEnabled({ modo_afip: 'produccion', produccion_habilitada: true }), true);
   assert.equal(hasProductionEmissionConfirmation('EMITIR_FACTURA_REAL'), true);
   assert.equal(hasProductionEmissionConfirmation('emitir'), false);
+});
+
+test('produccion en Render exige certificado y clave persistidos', () => {
+  assert.equal(hasPersistentArcaCredentials({}), false);
+  assert.equal(hasPersistentArcaCredentials({ certificado_pem_encrypted: 'cert' }), false);
+  assert.equal(hasPersistentArcaCredentials({ certificado_pem_encrypted: 'cert', clave_pem_encrypted: 'key' }), true);
 });
 
 test('canAccessFacturacion limita acceso a roles de backoffice', () => {
@@ -202,4 +211,25 @@ test('listFacturaEvents limita y filtra por empresa y factura', async () => {
 
   assert.match(calls[0].sql, /FROM factura_eventos/);
   assert.deepEqual(calls[0].params, [4, 15, 100]);
+});
+
+test('logAfipAudit redacta token y sign antes de persistir XML', async () => {
+  const calls = [];
+  const query = async (sql, params) => {
+    calls.push({ sql, params });
+    return [];
+  };
+
+  await logAfipAudit(query, {
+    empresaId: 1,
+    servicio: 'WSFEv1',
+    operacion: 'FECAESolicitar',
+    requestXml: '<ar:Auth><ar:Token>tok-secreto</ar:Token><ar:Sign>sig-secreto</ar:Sign></ar:Auth>',
+    responseXml: '<credentials><token>tok-respuesta</token><sign>sig-respuesta</sign></credentials>',
+  });
+
+  assert.doesNotMatch(calls[0].params[4], /tok-secreto|sig-secreto/);
+  assert.doesNotMatch(calls[0].params[5], /tok-respuesta|sig-respuesta/);
+  assert.match(calls[0].params[4], /\[REDACTED\]/);
+  assert.match(redactAfipAuditXml('sin secreto'), /sin secreto/);
 });

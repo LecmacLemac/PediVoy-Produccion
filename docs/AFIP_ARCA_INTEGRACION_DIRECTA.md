@@ -254,13 +254,13 @@ Resultado esperado: factura electronica aprobada en homologacion.
 Estado tecnico actual:
 
 - WSAA queda implementado como cliente base en `src/integrations/arca/wsaaClient.js`.
-- `POST /api/facturacion/config/probar-conexion` reutiliza token/sign cacheado si sigue vigente; si no existe, intenta `loginCms` contra homologacion o produccion segun `modo_afip`.
+- `POST /api/facturacion/config/probar-conexion` reutiliza token/sign cacheado si sigue vigente; si no existe, intenta `loginCms` contra homologacion o produccion segun `modo_afip`, y luego consulta `FECompUltimoAutorizado` para verificar WSFE y punto de venta sin emitir.
 - La firma CMS se realiza con `openssl cms -sign` usando `certificado_ref` y `clave_ref` configurados por empresa.
 - El token/sign se guarda cifrado con AES-256-GCM. Requiere `ARCA_TOKEN_ENCRYPTION_KEY` o `FACTURACION_SECRET_KEY` en el entorno.
-- La respuesta de auditoria registra resultado WSAA sin guardar el CMS firmado completo.
+- La auditoria redacta `token/sign` tanto de requests como de responses antes de persistir XML, y sanea registros historicos que los contengan.
 - WSFEv1 queda implementado como cliente base en `src/integrations/arca/wsfeClient.js`.
 - `POST /api/facturas/:id/emitir` consulta `FECompUltimoAutorizado`, prepara `FECAESolicitar`, guarda CAE y marca la factura como `emitida` si AFIP/ARCA aprueba.
-- La emision real queda bloqueada si `modo_afip = produccion`; por ahora solo se habilita homologacion.
+- La emision real requiere habilitacion operativa explicita, confirmacion por emision y credenciales PEM cifradas persistidas en PostgreSQL para operar en Render.
 - Certificado de homologacion recibido para CUIT 20246177369, alias `aguahidro`, servicio `ws://wsfe`, serial `157338509BC44299`. Quedo guardado localmente fuera del versionado en `storage/arca-credentials/20246177369/certificado_homologacion_157338509bc44299.pem`.
 - Clave privada recibida en formato OpenSSH, convertida a PEM y validada contra CSR/certificado. Quedo guardada localmente fuera del versionado en `storage/arca-credentials/20246177369/clave_privada_homologacion_157338509bc44299.pem`.
 - CSR recibido y validado. Quedo guardado localmente fuera del versionado en `storage/arca-credentials/20246177369/pedido_csr_homologacion_157338509bc44299.pem`.
@@ -269,15 +269,14 @@ Estado tecnico actual:
 - Se agrego `npm run arca:check-credentials -- --cert <cert.pem> --key <clave.pem>` para validar que la clave privada corresponde al certificado antes de intentar WSAA.
 - En Render/produccion, las credenciales ARCA deben persistirse cifradas en PostgreSQL (`certificado_pem_encrypted` y `clave_pem_encrypted`). WSAA las descifra en memoria, escribe PEM temporales en `/tmp` para `openssl cms -sign` y los elimina al terminar, evitando depender de rutas locales como `/home/lemac/...`.
 
-Pendiente de Fase 2:
+Pendiente operativo para cierre en Render:
 
-- Confirmar punto de venta electronico de homologacion para `wsfe`.
-- Configurar `ARCA_TOKEN_ENCRYPTION_KEY` o `FACTURACION_SECRET_KEY` en el entorno antes de guardar token/sign.
-- Actualizar `empresa_facturacion_config.certificado_ref` y `empresa_facturacion_config.clave_ref` cuando haya conexion a la base.
-- Probar `FECompUltimoAutorizado` con el punto de venta de homologacion confirmado.
+- Configurar `ARCA_TOKEN_ENCRYPTION_KEY` o `FACTURACION_SECRET_KEY` en Render antes de cargar credenciales.
+- Cargar certificado y clave desde Configuracion fiscal para que queden cifrados en PostgreSQL; las rutas locales quedan solo como legado de desarrollo.
+- Ejecutar `Probar conexion` con el punto de venta configurado y confirmar respuesta WSFE correcta.
+- Emitir una factura de homologacion y validar PDF, QR CAE y entrega al cliente antes de habilitar produccion.
 - Ajustar reglas de IVA/alicuotas por tipo de empresa y producto.
 - Validar tipos de comprobante y documentos con contable.
-- Generar PDF fiscal con CAE y QR.
 
 ### Fase 3 - Produccion controlada
 

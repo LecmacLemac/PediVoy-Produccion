@@ -2,7 +2,7 @@ import express from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
 import multer from 'multer';
-import { loginCms } from '../integrations/arca/wsaaClient.js';
+import { loginCms, signLoginTicketRequest } from '../integrations/arca/wsaaClient.js';
 import {
   buildComprobanteFromFactura,
   fecaeSolicitar,
@@ -24,6 +24,7 @@ import {
   getFacturaByPedido,
   getFacturacionConfig,
   getFacturacionConfigForArca,
+  hasPersistentArcaCredentials,
   hasProductionEmissionConfirmation,
   isProductionEmissionEnabled,
   listFacturaEvents,
@@ -36,6 +37,7 @@ import {
   listPedidosFacturables,
   requestFacturaForPedido,
   requestFacturaForPedidos,
+  resolveTipoComprobante,
   setFacturaPdfUrl,
   summarizeFacturas,
   upsertFacturacionConfig,
@@ -240,6 +242,24 @@ export function createFacturacionRouter() {
           });
         }
 
+        const certificatePem = certificadoSecret
+          ? req.files.certificado[0].buffer.toString('utf8')
+          : decryptSecret(current.certificado_pem_encrypted);
+        const privateKeyPem = claveSecret
+          ? req.files.clave[0].buffer.toString('utf8')
+          : decryptSecret(current.clave_pem_encrypted);
+        try {
+          await signLoginTicketRequest({
+            traXml: '<credentialPairValidation/>',
+            certPem: certificatePem,
+            keyPem: privateKeyPem,
+          });
+        } catch {
+          return res.status(400).json({
+            error: 'El certificado y la clave privada no corresponden al mismo par',
+          });
+        }
+
         const config = await upsertFacturacionConfig(query, empresaId, {
           ...current,
           certificado_pem_encrypted: certificadoSecret?.encrypted,
@@ -261,51 +281,81 @@ export function createFacturacionRouter() {
       const empresaId = resolveEmpresa(req);
       const config = await getFacturacionConfigForArca(query, empresaId);
       if (!config) return res.status(409).json({ error: 'La empresa no tiene configuracion fiscal' });
-
-      const cached = getCachedWsaaCredentials(config);
-      if (cached) {
-        return res.json({
-          ok: true,
-          modo_afip: config.modo_afip,
-          service: req.body?.service || 'wsfe',
-          cached: true,
-          expiration_time: cached.expirationTime,
+      if (config.modo_afip === 'produccion' && !hasPersistentArcaCredentials(config)) {
+        return res.status(409).json({
+          error: 'Prueba en produccion bloqueada: carga certificado y clave cifrados para Render',
+          requires_persistent_credentials: true,
         });
       }
 
-      const login = await loginCms({
-        mode: config.modo_afip,
-        service: req.body?.service || 'wsfe',
-        certPath: config.certificado_pem_encrypted ? null : config.certificado_ref,
-        keyPath: config.clave_pem_encrypted ? null : config.clave_ref,
-        certPem: config.certificado_pem_encrypted ? decryptSecret(config.certificado_pem_encrypted) : null,
-        keyPem: config.clave_pem_encrypted ? decryptSecret(config.clave_pem_encrypted) : null,
-      });
+      const cached = getCachedWsaaCredentials(config);
+      let auth = cached;
+      let login = null;
+      if (!auth) {
+        login = await loginCms({
+          mode: config.modo_afip,
+          service: 'wsfe',
+          certPath: config.certificado_pem_encrypted ? null : config.certificado_ref,
+          keyPath: config.clave_pem_encrypted ? null : config.clave_ref,
+          certPem: config.certificado_pem_encrypted ? decryptSecret(config.certificado_pem_encrypted) : null,
+          keyPem: config.clave_pem_encrypted ? decryptSecret(config.clave_pem_encrypted) : null,
+        });
 
-      await cacheWsaaCredentials(query, empresaId, login);
+        await cacheWsaaCredentials(query, empresaId, login);
+        await logAfipAudit(query, {
+          empresaId,
+          servicio: 'WSAA',
+          operacion: 'loginCms',
+          requestXml: '[WSAA loginCms CMS firmado omitido por seguridad]',
+          responseXml: login.rawLoginTicketResponse,
+          resultado: 'ok',
+        });
+        auth = { token: login.token, sign: login.sign, expirationTime: login.expirationTime };
+      }
+
+      const requestedType = Number(req.body?.tipo_comprobante);
+      const tipoComprobante = [1, 6, 11].includes(requestedType)
+        ? requestedType
+        : resolveTipoComprobante({
+          emisorCondicionIva: config.condicion_iva,
+          receptorCondicionIva: 'consumidor_final',
+        }).codigo;
+      const ultimo = await feCompUltimoAutorizado({
+        mode: config.modo_afip,
+        token: auth.token,
+        sign: auth.sign,
+        cuit: config.cuit,
+        puntoVenta: config.punto_venta,
+        tipoComprobante,
+      });
       await logAfipAudit(query, {
         empresaId,
-        servicio: 'WSAA',
-        operacion: 'loginCms',
-        requestXml: '[WSAA loginCms CMS firmado omitido por seguridad]',
-        responseXml: login.rawLoginTicketResponse,
+        servicio: 'WSFEv1',
+        operacion: 'FECompUltimoAutorizado:probar_conexion',
+        requestXml: ultimo.requestXml,
+        responseXml: ultimo.responseXml,
         resultado: 'ok',
       });
 
       return res.json({
         ok: true,
         modo_afip: config.modo_afip,
-        endpoint: login.endpoint,
-        generation_time: login.generationTime,
-        expiration_time: login.expirationTime,
+        service: 'wsfe',
+        cached: Boolean(cached),
+        endpoint: ultimo.endpoint,
+        expiration_time: auth.expirationTime,
+        wsfe_verified: true,
+        punto_venta: config.punto_venta,
+        tipo_comprobante: tipoComprobante,
+        ultimo_numero: ultimo.cbteNro,
       });
     } catch (e) {
       try {
         const empresaId = resolveEmpresa(req);
         await logAfipAudit(query, {
           empresaId,
-          servicio: 'WSAA',
-          operacion: 'loginCms',
+          servicio: 'ARCA',
+          operacion: 'probar_conexion',
           resultado: 'error',
           errorMensaje: e?.message || String(e),
         });
@@ -599,6 +649,12 @@ export function createFacturacionRouter() {
       const empresaId = resolveEmpresa(req);
       const config = await getFacturacionConfigForArca(query, empresaId);
       if (!config) return res.status(409).json({ error: 'La empresa no tiene configuracion fiscal' });
+      if (config.modo_afip === 'produccion' && !hasPersistentArcaCredentials(config)) {
+        return res.status(409).json({
+          error: 'Emision en produccion bloqueada: carga certificado y clave cifrados para Render',
+          requires_persistent_credentials: true,
+        });
+      }
       if (!isProductionEmissionEnabled(config)) {
         return res.status(409).json({
           error: 'Emision en produccion bloqueada: falta habilitacion operativa',
