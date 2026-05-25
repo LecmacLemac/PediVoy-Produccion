@@ -6,7 +6,6 @@ export function registerWppRoutes(app, deps) {
     qrcode,
     fs,
     path,
-    query,
     withAuth,
     isSuper,
     getState,
@@ -51,18 +50,7 @@ export function registerWppRoutes(app, deps) {
 
     try {
       console.log('[WPP SERVER] Reset de sesión solicitado por', req.user?.id || 'unknown');
-
-      try {
-        await query(`
-          UPDATE wpp_outbox
-          SET status = 'skipped',
-              error  = 'Descartado por reset de sesión de WhatsApp'
-          WHERE status = 'pending'
-        `);
-        console.log('[WPP SERVER] Cola wpp_outbox limpiada (pending -> skipped).');
-      } catch (e) {
-        console.warn('[WPP SERVER] No se pudo limpiar wpp_outbox en reset:', e.message);
-      }
+      console.log('[WPP SERVER] Los mensajes pendientes se preservan para reintento tras reconexión.');
 
       try {
         const client = getClient();

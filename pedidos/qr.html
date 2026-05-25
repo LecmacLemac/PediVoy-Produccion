@@ -351,6 +351,10 @@
     let currentTipo = '';
     // Guardamos localmente los prompts cargados para no usar hardcodeo al editar
     let loadedPrompts = [];
+    let promptsLoadedOk = false;
+    let qrRefreshTimer = null;
+    let isQrLoading = false;
+    const QR_REFRESH_MS = 4000;
 
     // ====== Init ======
 
@@ -390,12 +394,29 @@
     })();
 
     // ====== QR Logic ======
-    async function loadQR() {
+    function stopQrRefresh() {
+        if (qrRefreshTimer) {
+            clearTimeout(qrRefreshTimer);
+            qrRefreshTimer = null;
+        }
+    }
+
+    function scheduleQrRefresh() {
+        stopQrRefresh();
+        qrRefreshTimer = setTimeout(() => loadQR({ showLoading: false }), QR_REFRESH_MS);
+    }
+
+    async function loadQR({ showLoading = true } = {}) {
         const container = document.getElementById('qr-container');
+        if (!container || isQrLoading) return;
+        isQrLoading = true;
+        stopQrRefresh();
         const timestamp = new Date().getTime();
 
         try {
-            container.innerHTML = `<span style="color:var(--muted)">Cargando QR...</span>`;
+            if (showLoading && !container.querySelector('img')) {
+                container.innerHTML = `<span style="color:var(--muted)">Cargando QR...</span>`;
+            }
             const res = await authFetch(`/api/whatsapp/qr?t=${timestamp}`);
 
             if (!res.ok) {
@@ -405,12 +426,16 @@
 
             const html = await res.text();
             container.innerHTML = html;
+            if (!/Conectado/i.test(html)) scheduleQrRefresh();
         } catch (e) {
             console.error(e);
             container.innerHTML = `<span style="color:var(--danger)">Error de red cargando el QR.</span>`;
+            scheduleQrRefresh();
+        } finally {
+            isQrLoading = false;
         }
     }
-    function reloadQR() { loadQR(); }
+    function reloadQR() { stopQrRefresh(); loadQR(); }
 
     // NUEVA FUNCIÓN: resetear sesión de WhatsApp
     let isResetSubmitting = false;
@@ -425,6 +450,7 @@
             return;
         }
 
+        stopQrRefresh();
         const resetBtn = document.querySelector('button[onclick="resetWppSession()"]');
         const originalResetBtnHtml = resetBtn ? resetBtn.innerHTML : '';
 
@@ -479,6 +505,8 @@
 
     // ====== Global Config Logic ======
     async function loadGlobalPrompts() {
+        promptsLoadedOk = false;
+        $('#promptsList').innerHTML = `<div style="padding:2rem; text-align:center; color:var(--muted); grid-column: 1 / -1;">Cargando configuración...</div>`;
         try {
             const r = await authFetch('/api/admin/prompts/global');
             
@@ -487,15 +515,20 @@
             
             // Guardamos en variable global para usar en editPrompt
             loadedPrompts = data || [];
+            promptsLoadedOk = true;
             
             renderPrompts(loadedPrompts);
         } catch (e) {
-            console.warn('Usando datos mock para visualización (Error de conexión)');
-            renderPrompts([
-                { tipo: 'vendedor', contenido: 'Eres un vendedor experto en ventas consultivas. Tu objetivo es...' },
-                { tipo: 'soporte', contenido: 'Eres un asistente de soporte técnico nivel 1. Responde con amabilidad...' },
-                { tipo: 'general', contenido: 'Eres un asistente virtual general para la empresa...' }
-            ]);
+            console.warn('No se pudo cargar la configuración global', e);
+            loadedPrompts = [];
+            $('#promptsList').innerHTML = `
+                <div style="padding:1rem; border:1px solid rgba(239,68,68,.35); border-radius:8px; grid-column: 1 / -1; color:var(--muted);">
+                    No se pudo cargar la configuración global. No se habilita la edición hasta recuperar los datos reales.
+                    <div style="margin-top:1rem;">
+                        <button class="btn btn-ghost btn-sm" onclick="loadGlobalPrompts()">Reintentar</button>
+                    </div>
+                </div>
+            `;
         }
     }
 
@@ -521,6 +554,10 @@
 
     // Modal Actions
     async function editPrompt(tipo) {
+        if (!promptsLoadedOk) {
+            toast('Primero recargá la configuración global.');
+            return;
+        }
         currentTipo = tipo;
         $('#lblTipo').textContent = tipo.toUpperCase();
         $('#txtContent').value = 'Cargando...';
