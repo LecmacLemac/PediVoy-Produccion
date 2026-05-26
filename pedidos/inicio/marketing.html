@@ -1005,11 +1005,18 @@
             // 1. Verificar Rol (Super Admin)
             const meRes = await authFetch('/api/me');
             if (meRes.status === 401) return window.location.href = '/pedidos/login.html';
+            if (!meRes.ok) throw new Error('No se pudo validar la sesión.');
 
             const meData = await meRes.json();
             const isSuper = (meData.user?.role || '').toLowerCase() === 'super';
             const roleBadge = document.getElementById('roleBadge');
             if (roleBadge) roleBadge.textContent = isSuper ? 'SUPER ADMIN' : 'Admin';
+
+            if (!isSuper) {
+                alert('Esta sección es exclusiva para super admin.');
+                window.location.href = '/pedidos/dashboard.html';
+                return;
+            }
 
             if (isSuper) {
                 // Mostrar Selector
@@ -1035,9 +1042,6 @@
                         changeEmpresa(v ? Number(v) : null);
                     });
                 }
-            } else {
-                // Usuario Normal: Carga su propia config
-                changeEmpresa(null);
             }
 
         } catch(e) { console.error(e); }
@@ -1178,6 +1182,9 @@
           dry_run: true
         };
 
+        const oldTxt = btnPreviewCampana.textContent;
+        btnPreviewCampana.disabled = true;
+        btnPreviewCampana.textContent = 'Calculando...';
         try {
           const res = await authFetch('/api/setup/marketing/base/launch', {
             method: 'POST',
@@ -1195,6 +1202,9 @@
         } catch (err) {
           console.error(err);
           alert(`❌ ${err.message || 'Error en preview de campaña'}`);
+        } finally {
+          btnPreviewCampana.disabled = false;
+          btnPreviewCampana.textContent = oldTxt;
         }
       });
     }
@@ -1220,6 +1230,11 @@
           alert('Completá el mensaje de campaña antes de lanzar.');
           return;
         }
+        const canalLabel = body.canal === 'ambos' ? 'WhatsApp y SMS' : (body.canal === 'sms' ? 'SMS' : 'WhatsApp');
+        const confirmed = window.confirm(
+          `Vas a enviar una campaña real por ${canalLabel} a hasta ${body.max_envios} contactos. ¿Confirmás el envío?`
+        );
+        if (!confirmed) return;
 
         const oldTxt = btnLanzarCampana.textContent;
         btnLanzarCampana.disabled = true;

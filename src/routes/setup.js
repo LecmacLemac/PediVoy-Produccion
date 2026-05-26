@@ -166,6 +166,13 @@ export function createSetupRouter(deps) {
     return Number.isFinite(ownEmpresaId) && ownEmpresaId > 0 ? ownEmpresaId : null;
   };
 
+  const requireSuperMarketing = (req, res, next) => {
+    if (String(req?.user?.role || '').toLowerCase() !== 'super') {
+      return res.status(403).json({ error: 'Acceso exclusivo para super admin' });
+    }
+    return next();
+  };
+
   const validateIncidenciaForeignKeys = async ({ empresaId, payload }) => {
     const b = payload || {};
 
@@ -2989,7 +2996,7 @@ export function createSetupRouter(deps) {
   };
 
   // GET /api/setup/marketing/config
-  router.get('/marketing/config', withAuth, async (req, res) => {
+  router.get('/marketing/config', withAuth, requireSuperMarketing, async (req, res) => {
     try {
       const empresaId = resolveEmpresaIdForSetup(req);
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
@@ -3010,7 +3017,7 @@ export function createSetupRouter(deps) {
   });
 
   // PUT /api/setup/marketing/config
-  router.put('/marketing/config', withAuth, async (req, res) => {
+  router.put('/marketing/config', withAuth, requireSuperMarketing, async (req, res) => {
     try {
       const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
@@ -3118,7 +3125,7 @@ export function createSetupRouter(deps) {
   });
 
   // POST /api/setup/marketing/base/preview
-  router.post('/marketing/base/preview', withAuth, async (req, res) => {
+  router.post('/marketing/base/preview', withAuth, requireSuperMarketing, async (req, res) => {
     try {
       const telefonosIn = Array.isArray(req.body?.telefonos) ? req.body.telefonos : [];
       if (!telefonosIn.length) return res.status(400).json({ error: 'No se recibieron teléfonos para previsualizar' });
@@ -3156,7 +3163,7 @@ export function createSetupRouter(deps) {
   });
 
   // POST /api/setup/marketing/base/import
-  router.post('/marketing/base/import', withAuth, async (req, res) => {
+  router.post('/marketing/base/import', withAuth, requireSuperMarketing, async (req, res) => {
     try {
       const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
@@ -3276,7 +3283,7 @@ export function createSetupRouter(deps) {
   });
 
   // GET /api/setup/marketing/base/list
-  router.get('/marketing/base/list', withAuth, async (req, res) => {
+  router.get('/marketing/base/list', withAuth, requireSuperMarketing, async (req, res) => {
     try {
       const empresaId = resolveEmpresaIdForSetup(req);
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
@@ -3308,7 +3315,7 @@ export function createSetupRouter(deps) {
   });
 
   // GET /api/setup/marketing/base/quality-summary
-  router.get('/marketing/base/quality-summary', withAuth, async (req, res) => {
+  router.get('/marketing/base/quality-summary', withAuth, requireSuperMarketing, async (req, res) => {
     try {
       const empresaId = resolveEmpresaIdForSetup(req);
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
@@ -3336,7 +3343,7 @@ export function createSetupRouter(deps) {
   });
 
   // PATCH /api/setup/marketing/base/contact/:id/status
-  router.patch('/marketing/base/contact/:id/status', withAuth, async (req, res) => {
+  router.patch('/marketing/base/contact/:id/status', withAuth, requireSuperMarketing, async (req, res) => {
     try {
       const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
@@ -3369,7 +3376,7 @@ export function createSetupRouter(deps) {
   });
 
   // POST /api/setup/marketing/base/contact/:id/optout
-  router.post('/marketing/base/contact/:id/optout', withAuth, async (req, res) => {
+  router.post('/marketing/base/contact/:id/optout', withAuth, requireSuperMarketing, async (req, res) => {
     try {
       const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
@@ -3396,7 +3403,7 @@ export function createSetupRouter(deps) {
   });
 
   // POST /api/setup/marketing/base/launch
-  router.post('/marketing/base/launch', withAuth, async (req, res) => {
+  router.post('/marketing/base/launch', withAuth, requireSuperMarketing, async (req, res) => {
     try {
       const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
@@ -3415,7 +3422,7 @@ export function createSetupRouter(deps) {
       const frecuenciaHoras = Math.min(Math.max(Number(b.frecuencia_horas || 24), 1), 24 * 30);
       const dryRun = !!b.dry_run;
 
-      const selectBaseImportadaCandidates = async () => {
+      const selectBaseImportadaCandidates = async ({ promoteToReady = true } = {}) => {
         const filtrosBase = [
           'mc.empresa_id = $1',
           "COALESCE(mc.consent_status,'unknown')='granted'",
@@ -3440,6 +3447,29 @@ export function createSetupRouter(deps) {
             AND t.telefono = mc.telefono_normalizado
             AND t.created_at > NOW() - ($${freqIdxBase}::text || ' hours')::interval
         )`;
+
+        if (!promoteToReady) {
+          const previewParams = [...paramsBase, maxEnvios];
+          const previewLimitIdx = idxBase;
+          return query(
+            `SELECT mc.id, mc.telefono, mc.rubro, mc.zona, mc.lista_nombre
+             FROM marketing_contactos mc
+             WHERE ${filtrosBase.join(' AND ')}
+               AND ${recentClause}
+             ORDER BY
+               CASE
+                 WHEN mc.estado IN ('ready','replied') THEN 0
+                 WHEN mc.estado = 'validated' THEN 1
+                 WHEN mc.estado IN ('new','nuevo') THEN 2
+                 WHEN mc.estado = 'contacted' THEN 3
+                 ELSE 9
+               END,
+               mc.updated_at ASC,
+               mc.id ASC
+             LIMIT $${previewLimitIdx}`,
+            previewParams
+          );
+        }
 
         const readyCountRows = await query(
           `SELECT COUNT(*)::int AS total
@@ -3504,10 +3534,10 @@ export function createSetupRouter(deps) {
         );
       };
 
-      if (!mensajeTpl) return res.status(400).json({ error: 'mensaje requerido' });
+      if (!dryRun && !mensajeTpl) return res.status(400).json({ error: 'mensaje requerido' });
       if (mensajeTpl.length > 280) return res.status(400).json({ error: 'mensaje supera 280 caracteres' });
 
-      const rows = await selectBaseImportadaCandidates();
+      const rows = await selectBaseImportadaCandidates({ promoteToReady: !dryRun });
 
       if (dryRun) {
         return res.json({ ok: true, dry_run: true, candidatos: rows.length });
@@ -3571,7 +3601,7 @@ export function createSetupRouter(deps) {
   });
 
   // GET /api/setup/marketing/detalle
-  router.get('/marketing/detalle', withAuth, async (req, res) => {
+  router.get('/marketing/detalle', withAuth, requireSuperMarketing, async (req, res) => {
     try {
       const empresaId = resolveEmpresaIdForSetup(req);
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
@@ -3671,7 +3701,7 @@ export function createSetupRouter(deps) {
   });
 
   // GET /api/setup/marketing/telemetria
-  router.get('/marketing/telemetria', withAuth, async (req, res) => {
+  router.get('/marketing/telemetria', withAuth, requireSuperMarketing, async (req, res) => {
     try {
       const empresaId = resolveEmpresaIdForSetup(req);
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
@@ -3684,7 +3714,7 @@ export function createSetupRouter(deps) {
            estrategia,
            COUNT(*)::int AS total,
            COUNT(*) FILTER (WHERE estado IN ('sent','queued'))::int AS exitosos,
-           COUNT(*) FILTER (WHERE estado = 'failed')::int AS fallidos,
+           COUNT(*) FILTER (WHERE estado IN ('failed','error'))::int AS fallidos,
            COUNT(*) FILTER (WHERE estado = 'skipped')::int AS omitidos,
            COALESCE(SUM(costo_estimado),0)::numeric AS costo_total
          FROM marketing_envios_telemetria
@@ -3699,7 +3729,7 @@ export function createSetupRouter(deps) {
         `SELECT
            COUNT(*)::int AS total,
            COUNT(*) FILTER (WHERE estado IN ('sent','queued'))::int AS exitosos,
-           COUNT(*) FILTER (WHERE estado = 'failed')::int AS fallidos,
+           COUNT(*) FILTER (WHERE estado IN ('failed','error'))::int AS fallidos,
            COALESCE(SUM(costo_estimado),0)::numeric AS costo_total
          FROM marketing_envios_telemetria
          WHERE empresa_id = $1
