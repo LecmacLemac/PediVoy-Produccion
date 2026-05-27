@@ -213,6 +213,30 @@
       flex-wrap: wrap;
     }
 
+    .banner-signup {
+      display: inline-flex;
+      align-items: center;
+      min-height: 40px;
+      padding: 10px 18px;
+      border-radius: 999px;
+      color: #b11f32;
+      background: #fff;
+      font-size: .92rem;
+      font-weight: 700;
+      text-decoration: none;
+      transition: transform .18s ease, box-shadow .18s ease;
+    }
+
+    .banner-signup:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 10px 18px rgba(83, 6, 18, .2);
+    }
+
+    .banner-signup:focus-visible {
+      outline: 3px solid rgba(255,255,255,.54);
+      outline-offset: 2px;
+    }
+
     .badge-zone {
       font-size: 0.78rem;
       background: rgba(255,255,255,.14);
@@ -528,14 +552,14 @@
       <section class="hero">
         <div class="banner">
           <div class="banner-content">
-            <div class="banner-title">Playmarket PediVoy</div>
+            <div class="banner-title">Vendé en Playmarket PediVoy</div>
             <div class="banner-sub">
-              Empresas con ID pueden publicar sus productos y vender directo en el mercado central de PediVoy.
+              Creá tu empresa, publicá tus productos y recibí pedidos directos desde el mercado central. Empezá con 30 días gratis.
             </div>
             <div class="banner-cta">
-              <span class="badge-zone">Empresas verificadas</span>
-              <span class="badge-zone">Productos por zona</span>
-              <span class="badge-zone">Compra directa</span>
+              <a href="/pedidos/signup.html" class="banner-signup">Registrar mi empresa gratis</a>
+              <span class="badge-zone">Alta rápida</span>
+              <span class="badge-zone">Venta directa</span>
             </div>
           </div>
           <div class="banner-picto" aria-hidden="true">
