@@ -249,6 +249,7 @@
         <option value="verificado">✅ Verificados</option>
         <option value="qr">📱 QR Mercado Pago</option>
         <option value="transferencia">🏦 Transferencias</option>
+        <option value="sin_comprobante">📎 Sin comprobante</option>
         <option value="orphan">⚠️ Huérfanos (Sin Pedido)</option>
       </select>
     </div>
@@ -361,6 +362,7 @@
   let hasMoreRows = false;
   let currentBeforeId = null;
   let currentBeforeQrId = null;
+  let currentBeforeMissingId = null;
 
   // --- Inicialización ---
   $('#logout').onclick = async (ev) => {
@@ -410,13 +412,15 @@
       currentOffset = 0;
       currentBeforeId = null;
       currentBeforeQrId = null;
+      currentBeforeMissingId = null;
       hasMoreRows = false;
       currentRows = [];
       $('#rows').innerHTML = '<tr><td colspan="9" style="padding:3rem; text-align:center; color: var(--text-muted);"><i class="fa-solid fa-circle-notch fa-spin"></i> Cargando datos...</td></tr>';
     }
 
-    const wantsTransfers = estadoFiltro !== 'qr';
-    const wantsQr = !['en_revision', 'orphan', 'transferencia'].includes(estadoFiltro);
+    const wantsTransfers = !['qr', 'sin_comprobante'].includes(estadoFiltro);
+    const wantsQr = !['en_revision', 'orphan', 'transferencia', 'sin_comprobante'].includes(estadoFiltro);
+    const wantsMissingProof = ['', 'pendiente', 'transferencia', 'sin_comprobante'].includes(estadoFiltro);
     const requests = [];
 
     if (wantsTransfers) {
@@ -444,13 +448,24 @@
       requests.push(Promise.resolve([]));
     }
 
-    const [transferRows, qrRows] = await Promise.all(requests);
-    let data = transferRows.concat(qrRows);
+    if (wantsMissingProof) {
+      let missingUrl = `/api/transferencias/sin-comprobante?limit=${PAGE_LIMIT}`;
+      if(fecha) missingUrl += `&fecha=${fecha}`;
+      if (!reset && currentBeforeMissingId) missingUrl += `&before_id=${currentBeforeMissingId}`;
+      if(chofer) missingUrl += `&chofer_id=${chofer}`;
+      if(empresa) missingUrl += `&empresa_id=${empresa}`;
+      requests.push(api(missingUrl).then(rows => normalizeMissingProofRows(Array.isArray(rows) ? rows : [])));
+    } else {
+      requests.push(Promise.resolve([]));
+    }
+
+    const [transferRows, qrRows, missingProofRows] = await Promise.all(requests);
+    let data = transferRows.concat(qrRows, missingProofRows);
 
     data.sort((a, b) => new Date(b.fecha || 0).getTime() - new Date(a.fecha || 0).getTime());
 
     currentRows = reset ? data : currentRows.concat(data);
-    hasMoreRows = transferRows.length === PAGE_LIMIT || qrRows.length === PAGE_LIMIT;
+    hasMoreRows = transferRows.length === PAGE_LIMIT || qrRows.length === PAGE_LIMIT || missingProofRows.length === PAGE_LIMIT;
     currentOffset += data.length;
     if (transferRows.length > 0) {
       const lastTransfer = transferRows[transferRows.length - 1];
@@ -459,6 +474,10 @@
     if (qrRows.length > 0) {
       const lastQr = qrRows[qrRows.length - 1];
       currentBeforeQrId = Number(lastQr?.raw_id || 0) || currentBeforeQrId;
+    }
+    if (missingProofRows.length > 0) {
+      const lastMissing = missingProofRows[missingProofRows.length - 1];
+      currentBeforeMissingId = Number(lastMissing?.raw_id || 0) || currentBeforeMissingId;
     }
     $('#btnVerMas').style.display = hasMoreRows ? 'inline-flex' : 'none';
 
@@ -504,6 +523,27 @@
     });
   }
 
+  function normalizeMissingProofRows(rows) {
+    return rows.map(p => ({
+      ...p,
+      source: 'sin_comprobante',
+      raw_id: Number(p.id),
+      row_id: `miss-${Number(p.id)}`,
+      id: Number(p.id),
+      pedido_id: Number(p.pedido_id || p.id),
+      fecha: p.fecha,
+      monto: Number(p.monto || 0),
+      metodo_pago: p.metodo_pago || 'transferencia',
+      display_metodo: 'Transferencia',
+      display_referencia: p.telefono ? `WhatsApp ${p.telefono}` : 'Sin teléfono',
+      display_origen: 'Comprobante pendiente',
+      comprobante_path: null,
+      validado: 0,
+      is_validado: false,
+      estado_revision: 'sin_comprobante',
+    }));
+  }
+
   function aplicarHoy() {
     $('#fFecha').value = new Date().toISOString().split('T')[0];
     loadPagos(true);
@@ -545,6 +585,9 @@
     const estado = String(t.estado_revision || '').toLowerCase();
     const riesgo = Number(t.riesgo_score || 0);
 
+    if (t.source === 'sin_comprobante' || estado === 'sin_comprobante') {
+      return `<span class="badge badge-warning"><i class="fa-solid fa-paperclip"></i> Falta comprobante</span>`;
+    }
     if (estado === 'en_revision') {
       return `<span class="badge badge-danger"><i class="fa-solid fa-triangle-exclamation"></i> En revisión</span>`;
     }
@@ -565,27 +608,34 @@
     $('#rows').innerHTML = list.map(t => {
       const metodo = (t.metodo_pago || '').toLowerCase();
       const esQr = t.source === 'qr';
+      const esSinComprobante = t.source === 'sin_comprobante';
       const esEfectivo = metodo.includes('efec');
-      const isValidado = Number(t.validado) === 1 || esEfectivo || t.is_validado;
+      const isValidado = !esSinComprobante && (Number(t.validado) === 1 || esEfectivo || t.is_validado);
       const estado = String(t.estado_revision || '').toLowerCase();
       const requiereForzar = estado === 'en_revision' && !isValidado;
       const isSuper = String(currentUser?.role || '').toLowerCase() === 'super';
 
       const metodoBadge = esQr
         ? `<span class="badge badge-info"><i class="fa-solid fa-qrcode"></i> QR MP</span>`
+        : esSinComprobante
+        ? `<span class="badge badge-warning"><i class="fa-solid fa-paperclip"></i> Transf</span>`
         : esEfectivo
         ? `<span class="badge badge-info"><i class="fa-solid fa-money-bill"></i> Efec</span>`
         : `<span class="badge badge-info"><i class="fa-solid fa-mobile-screen"></i> Transf</span>`;
 
-      const btnValidar = (!esQr && !esEfectivo && !isValidado && !requiereForzar)
+      const btnValidar = (!esQr && !esSinComprobante && !esEfectivo && !isValidado && !requiereForzar)
         ? `<button class="btn btn-primary btn-icon" onclick="verificarPago(${t.id})" title="Validar"><i class="fa-solid fa-check"></i></button>`
         : `<span style="width:32px; display:inline-block"></span>`;
 
-      const btnForzar = (!esQr && !esEfectivo && !isValidado && requiereForzar && isSuper)
+      const btnForzar = (!esQr && !esSinComprobante && !esEfectivo && !isValidado && requiereForzar && isSuper)
         ? `<button class="btn btn-warning btn-icon" onclick="forzarVerificacion(${t.id})" title="Forzar aprobación (Super)"><i class="fa-solid fa-shield"></i></button>`
         : '';
 
-      const btnEliminar = !esQr
+      const btnSolicitar = esSinComprobante && String(t.telefono || '').replace(/\D+/g, '')
+        ? `<button class="btn btn-primary btn-icon" onclick="solicitarComprobante(${Number(t.pedido_id)})" title="Solicitar comprobante por WhatsApp"><i class="fa-brands fa-whatsapp"></i></button>`
+        : '';
+
+      const btnEliminar = !esQr && !esSinComprobante
         ? `<button class="btn btn-danger btn-icon" onclick="eliminarPago(${Number(t.raw_id || t.id)})"><i class="fa-solid fa-trash-can"></i></button>`
         : `<span style="width:32px; display:inline-block"></span>`;
 
@@ -611,9 +661,10 @@
               ${esQr ? `<span class="text-sub">Creado: ${esc(fmtDateTime(t.created_at))}</span>` : ''}
             </div>
           </td>
-          <td style="text-align:center">${t.comprobante_path ? `<button class="btn btn-ghost btn-icon" onclick='verComprobante(${JSON.stringify(String(t.comprobante_path || ''))}, ${Number(t.id)}, ${isValidado})'><i class="fa-regular fa-eye"></i></button>` : '-'}</td>
+          <td style="text-align:center">${t.comprobante_path ? `<button class="btn btn-ghost btn-icon" onclick='verComprobante(${JSON.stringify(String(t.comprobante_path || ''))}, ${Number(t.id)}, ${isValidado})'><i class="fa-regular fa-eye"></i></button>` : (esSinComprobante ? '<span class="text-sub">Sin adjuntar</span>' : '-')}</td>
           <td>${statusBadge(t, isValidado)}</td>
           <td style="text-align:right">
+            ${btnSolicitar}
             ${btnValidar}
             ${btnForzar}
             ${btnEliminar}
@@ -648,6 +699,7 @@
   async function verificarPago(id) {
     if (verifyBusy) return;
     if(!confirm('¿Confirmar que el dinero ingresó a la cuenta?')) return;
+    const enviarAviso = confirm('¿Querés enviarle el aviso de pago registrado al cliente por WhatsApp?');
 
     verifyBusy = true;
     const btn = document.getElementById('btnVerificarModal');
@@ -658,11 +710,12 @@
     }
 
     try {
-      const resp = await authFetch(`/api/transferencias/${id}/verificar?enviarAviso=1`, { method: 'POST' });
+      const params = new URLSearchParams({ enviarAviso: enviarAviso ? '1' : '0' });
+      const resp = await authFetch(`/api/transferencias/${id}/verificar?${params.toString()}`, { method: 'POST' });
       const data = await resp.json().catch(() => ({}));
 
       if (resp.ok && data?.ok) {
-        toast('Pago verificado y registrado');
+        toast(enviarAviso ? 'Pago verificado y aviso enviado' : 'Pago verificado sin aviso al cliente');
         loadPagos();
         closeModal();
       } else if (resp.status === 409 && data?.needsReview) {
@@ -687,9 +740,14 @@
     const reason = (prompt('Motivo de aprobación forzada (auditoría):', 'Revisión manual confirmada') || '').trim();
     if (!reason) return alert('Se requiere motivo para auditar la acción.');
     if (!confirm('⚠️ Vas a forzar aprobación de un comprobante en revisión. ¿Continuar?')) return;
+    const enviarAviso = confirm('¿Querés enviarle el aviso de pago registrado al cliente por WhatsApp?');
 
     try {
-      const resp = await authFetch(`/api/transferencias/${id}/verificar?enviarAviso=1&force=1`, {
+      const params = new URLSearchParams({
+        enviarAviso: enviarAviso ? '1' : '0',
+        force: '1'
+      });
+      const resp = await authFetch(`/api/transferencias/${id}/verificar?${params.toString()}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reason })
@@ -697,13 +755,33 @@
       const data = await resp.json().catch(() => ({}));
 
       if (resp.ok && data?.ok) {
-        toast('Aprobación forzada registrada');
+        toast(enviarAviso ? 'Aprobación forzada registrada y aviso enviado' : 'Aprobación forzada registrada sin aviso');
         loadPagos();
       } else {
         alert(data?.error || 'No se pudo forzar la aprobación');
       }
     } catch {
       alert('Error de red forzando aprobación');
+    }
+  }
+
+  async function solicitarComprobante(pedidoId) {
+    if (!pedidoId) return;
+    if (!confirm(`¿Enviar WhatsApp solicitando el comprobante del pedido #${pedidoId}?`)) return;
+
+    try {
+      const resp = await authFetch(`/api/transferencias/pedidos/${pedidoId}/solicitar-comprobante`, {
+        method: 'POST'
+      });
+      const data = await resp.json().catch(() => ({}));
+
+      if (resp.ok && data?.ok) {
+        toast('Solicitud de comprobante enviada');
+      } else {
+        alert(data?.error || 'No se pudo enviar la solicitud de comprobante');
+      }
+    } catch {
+      alert('Error de red enviando solicitud de comprobante');
     }
   }
 

@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto';
 import { readFile, unlink } from 'node:fs/promises';
 import { withAuth, isSuper, getEmpresaIdFromToken, enqueueWppMessage } from '../services.js';
 import { query } from '../db.js';
+import { notificarPedidoTransferencia } from '../services/notificacionesPedidos.js';
 
 function csvCell(v) {
   const s = String(v == null ? '' : v).replace(/"/g, '""');
@@ -189,6 +190,128 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
         fecha: req.query?.fecha
       });
       res.status(500).json({ error: 'Error listando transferencias' });
+    }
+  });
+
+  // PEDIDOS CON PAGO POR TRANSFERENCIA SIN COMPROBANTE ADJUNTO
+  router.get('/sin-comprobante', withAuth, async (req, res) => {
+    try {
+      const { empresa_id } = req.query || {};
+      const esSuperUser = isSuper(req);
+      const myEmpresa = getEmpresaIdFromToken(req);
+
+      const fecha = (req.query.fecha || '').toString().slice(0, 10);
+      const choferId = Number(req.query.chofer_id || 0) || null;
+      const limitRaw = Number(req.query.limit || 0) || 0;
+      const beforeId = Number(req.query.before_id || 0) || null;
+      const limit = Math.min(Math.max(limitRaw, 0), 1000);
+
+      let sql = `
+        SELECT
+          p.id,
+          p.id AS pedido_id,
+          p.fecha,
+          p.estado,
+          p.monto,
+          p.metodo_pago,
+          p.empresa_id,
+          p.chofer_id,
+          pe.cliente,
+          pe.telefono,
+          pe.direccion,
+          z.nombre AS zona_nombre,
+          c.nombre AS chofer_nombre
+        FROM pedidos p
+        LEFT JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
+        LEFT JOIN zonas_geograficas z ON z.id = p.zona_id
+        LEFT JOIN choferes c ON c.id = p.chofer_id
+        WHERE LOWER(COALESCE(p.metodo_pago, '')) LIKE 'transfer%'
+          AND COALESCE(p.estado, '') <> 'cancelado'
+          AND NOT EXISTS (
+            SELECT 1
+            FROM comprobantes_transferencia ct
+            WHERE ct.pedido_id = p.id
+              AND ct.empresa_id = p.empresa_id
+              AND NULLIF(TRIM(COALESCE(ct.comprobante_path, '')), '') IS NOT NULL
+          )
+      `;
+
+      const params = [];
+      let idx = 1;
+
+      if (!esSuperUser) {
+        sql += ` AND p.empresa_id = $${idx++}`;
+        params.push(myEmpresa);
+      } else if (empresa_id) {
+        sql += ` AND p.empresa_id = $${idx++}`;
+        params.push(Number(empresa_id));
+      }
+
+      if (fecha) {
+        sql += ` AND p.fecha >= $${idx}::date AND p.fecha < ($${idx}::date + INTERVAL '1 day')`;
+        params.push(fecha);
+        idx += 1;
+      }
+
+      if (choferId) {
+        sql += ` AND p.chofer_id = $${idx++}`;
+        params.push(choferId);
+      }
+
+      if (beforeId) {
+        sql += ` AND p.id < $${idx++}`;
+        params.push(beforeId);
+      }
+
+      sql += ` ORDER BY p.fecha DESC, p.id DESC`;
+      if (limit > 0) {
+        sql += ` LIMIT $${idx++}`;
+        params.push(limit);
+      }
+
+      const rows = await query(sql, params);
+      res.json(rows);
+    } catch (e) {
+      console.error('Error listando transferencias sin comprobante:', e?.message || e);
+      res.status(500).json({ error: 'Error listando transferencias sin comprobante' });
+    }
+  });
+
+  router.post('/pedidos/:id/solicitar-comprobante', withAuth, async (req, res) => {
+    try {
+      const pedidoId = Number(req.params.id);
+      if (!Number.isInteger(pedidoId) || pedidoId <= 0) {
+        return res.status(400).json({ error: 'ID inválido' });
+      }
+
+      const esSuperUser = isSuper(req);
+      const myEmpresa = getEmpresaIdFromToken(req);
+
+      const rows = await query(
+        `SELECT p.id, p.empresa_id, p.metodo_pago, pe.telefono
+         FROM pedidos p
+         LEFT JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
+         WHERE p.id = $1
+           AND ($2::int IS NULL OR p.empresa_id = $2)
+         LIMIT 1`,
+        [pedidoId, esSuperUser ? null : Number(myEmpresa)]
+      );
+
+      if (!rows.length) return res.status(404).json({ error: 'Pedido no encontrado' });
+
+      const pedido = rows[0];
+      if (!String(pedido.metodo_pago || '').toLowerCase().startsWith('transfer')) {
+        return res.status(409).json({ error: 'El pedido no está marcado como transferencia' });
+      }
+      if (!String(pedido.telefono || '').replace(/\D+/g, '')) {
+        return res.status(409).json({ error: 'El cliente no tiene WhatsApp cargado' });
+      }
+
+      await notificarPedidoTransferencia(pedidoId, Number(pedido.empresa_id));
+      return res.json({ ok: true });
+    } catch (e) {
+      console.error('Error solicitando comprobante de transferencia:', e);
+      return res.status(500).json({ error: 'Error enviando solicitud de comprobante' });
     }
   });
 
