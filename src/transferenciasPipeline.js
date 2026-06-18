@@ -96,11 +96,12 @@ async function saveFileToDisk({ buffer, base64, originalName, mimetype }, telefo
 
 async function convertPdfFirstPageWithPdftoppm(filePath) {
   const tmpPrefix = path.join(STORAGE_DIR, `pdf-${Date.now()}-${Math.random().toString(36).slice(2)}`);
-  const outPng = `${tmpPrefix}-1.png`;
+  const outPng = `${tmpPrefix}.png`;
 
   try {
     await execFileAsync('pdftoppm', [
       '-f', '1',
+      '-l', '1',
       '-singlefile',
       '-png',
       '-r', '150',
@@ -120,20 +121,26 @@ async function prepareImageForAI(fileData) {
     // Si es PDF, convertimos primera página a imagen
     if (fileData.mimetype === 'application/pdf' || fileData.ext === 'pdf') {
       // Poppler evita la cadena pdf-img-convert/canvas/tar y reduce superficie de riesgo.
-      return await convertPdfFirstPageWithPdftoppm(fileData.absolutePath);
+      return {
+        base64: await convertPdfFirstPageWithPdftoppm(fileData.absolutePath),
+        mimeType: 'image/png'
+      };
     }
 
     // Si ya es imagen, la leemos en base64
     const raw = await fs.promises.readFile(fileData.absolutePath);
-    return raw.toString('base64');
+    return {
+      base64: raw.toString('base64'),
+      mimeType: fileData.mimetype?.startsWith('image/') ? fileData.mimetype : 'image/jpeg'
+    };
   } catch (error) {
     console.error('❌ Error preparando imagen:', error);
     return null;
   }
 }
 
-async function analyzeReceiptWithAI(base64Image) {
-  if (!base64Image) return null;
+async function analyzeReceiptWithAI(imagePayload) {
+  if (!imagePayload?.base64) return null;
   try {
     const client = getAIClient();
     const response = await client.chat.completions.create({
@@ -150,7 +157,7 @@ async function analyzeReceiptWithAI(base64Image) {
             {
               type: 'image_url',
               image_url: {
-                url: `data:image/jpeg;base64,${base64Image}`,
+                url: `data:${imagePayload.mimeType || 'image/jpeg'};base64,${imagePayload.base64}`,
                 detail: CONFIG.IMG_QUALITY
               }
             }
@@ -199,12 +206,27 @@ export async function procesarArchivoTransferenciaPg(filePayload, telefono) {
       empresaId
     }).catch(() => {});
 
-    // 4. Preparar imagen
-    const imageBase64 = await prepareImageForAI(savedFile);
-    if (!imageBase64) throw new Error('No se pudo procesar la imagen.');
-
-    // 5. Consultar a la IA
-    const datosIA = await analyzeReceiptWithAI(imageBase64);
+    // 4. Preparar imagen y consultar a la IA. Si falla esta parte, el archivo
+    // ya quedó guardado y registrado para revisión manual.
+    const imagePayload = await prepareImageForAI(savedFile);
+    const datosIA = await analyzeReceiptWithAI(imagePayload);
+    if (!datosIA) {
+      console.warn(`${logPrefix} Comprobante guardado, pero no se pudo leer automáticamente.`);
+      await enqueueWppMessagePg({
+        phone: telefono,
+        message:
+          '📄 Comprobante guardado. No pude leer los datos automáticamente, así que queda para revisión manual.',
+        empresaId
+      });
+      if (CONFIG.DEBUG) console.timeEnd(logPrefix);
+      return {
+        ok: false,
+        saved: true,
+        reason: 'unreadable_saved',
+        id: registroDB.id,
+        pedido_id: registroDB?.pedido_id || null
+      };
+    }
 
     // --- 6. VALIDACIÓN DE DUPLICADOS ---
     const nroOp = datosIA?.nro_operacion;
@@ -323,6 +345,10 @@ export async function handleIncomingComprobanteFromBotPg(botData) {
     telefono
   );
 }
+
+export const __testables = {
+  convertPdfFirstPageWithPdftoppm
+};
 
 export default {
   procesarArchivoTransferenciaPg,
