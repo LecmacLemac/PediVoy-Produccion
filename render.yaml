@@ -4,7 +4,7 @@ services:
     runtime: node
     plan: starter
     rootDir: .
-    buildCommand: npm ci --omit=dev
+    buildCommand: which pdftoppm && npm ci --omit=dev
     startCommand: npm start
     autoDeploy: true
     healthCheckPath: /health

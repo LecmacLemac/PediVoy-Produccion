@@ -1,6 +1,6 @@
 FROM node:22-bookworm-slim
 
-# Dependencias mínimas para Chromium/puppeteer en producción
+# Dependencias mínimas para Chromium/puppeteer y lectura de PDFs en producción
 RUN apt-get update && apt-get install -y --no-install-recommends \
     chromium \
     ca-certificates \
@@ -36,6 +36,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxrender1 \
     libxss1 \
     libxtst6 \
+    poppler-utils \
     xdg-utils \
   && rm -rf /var/lib/apt/lists/*
 
