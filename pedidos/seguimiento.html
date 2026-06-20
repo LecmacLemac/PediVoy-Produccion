@@ -46,6 +46,38 @@
     }
     .driver-info h3 { margin: 0; font-size: 1rem; color: #1f2937; }
     .driver-info p { margin: 0; font-size: 0.85rem; color: #6b7280; }
+    .status-detail { margin: 4px 0 0; font-size: 0.86rem; color: #4b5563; line-height: 1.35; }
+    .summary-box {
+      display: grid;
+      gap: 8px;
+      margin: 14px 0 16px;
+      padding: 12px;
+      border: 1px solid #e5e7eb;
+      border-radius: 14px;
+      background: rgba(249, 250, 251, 0.9);
+      color: #374151;
+      font-size: 0.88rem;
+    }
+    .summary-line { display: flex; justify-content: space-between; gap: 12px; }
+    .summary-line strong { color: #111827; }
+    .items-list { display: grid; gap: 4px; margin-top: 2px; color: #4b5563; }
+    .empty-map-note {
+      position: absolute;
+      top: 76px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 800;
+      max-width: min(92vw, 520px);
+      padding: 10px 14px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.92);
+      border: 1px solid #e5e7eb;
+      color: #374151;
+      box-shadow: 0 8px 24px rgba(15,23,42,0.12);
+      font-size: 0.86rem;
+      text-align: center;
+      pointer-events: none;
+    }
     
     /* Botones de Acción */
     .actions { display: flex; gap: 10px; margin-left: auto; }
@@ -93,6 +125,7 @@
   </div>
 
   <div id="map"></div>
+  <div id="mapNote" class="empty-map-note" style="display:none;">El mapa en vivo se activa cuando el repartidor sale a ruta.</div>
 
   <div class="hud-card">
     <div class="title-row">
@@ -101,6 +134,7 @@
         <div>
           <h1 class="text-lg font-bold text-gray-900" id="lblCliente">Cargando...</h1>
           <div class="order-id" id="orderMeta">Seguimiento en tiempo real</div>
+          <p class="status-detail" id="lblEstadoDetalle">Buscando el estado del pedido...</p>
         </div>
       </div>
       <div class="status-badge" id="lblEstado">...</div>
@@ -112,6 +146,8 @@
         <span id="lblDireccion">...</span>
       </div>
     </div>
+
+    <div class="summary-box" id="orderSummary" style="display:none;"></div>
 
     <div class="driver-row" id="driverRow" style="display: none;">
       <div class="driver-avatar"><i class="ri-user-smile-line"></i></div>
@@ -150,15 +186,110 @@
   // ID de pedido oculto para vista cliente
   const lblDireccion = document.getElementById('lblDireccion');
   const lblEstado    = document.getElementById('lblEstado');
+  const lblEstadoDetalle = document.getElementById('lblEstadoDetalle');
   const lblEmpresaLogo = document.getElementById('lblEmpresaLogo');
   const lblChofer    = document.getElementById('lblChofer');
   const lblPlaca     = document.getElementById('lblPlaca');
   const btnWpp       = document.getElementById('btnWpp');
   const btnCall      = document.getElementById('btnCall');
+  const orderMeta    = document.getElementById('orderMeta');
+  const orderSummary = document.getElementById('orderSummary');
+  const mapNote      = document.getElementById('mapNote');
 
   let map, driverMarker, destMarker;
   let firstZoom = true;
   let pollTimer = null;
+
+  function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, (ch) => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;'
+    }[ch]));
+  }
+
+  function money(value) {
+    const n = Number(value || 0);
+    if (!Number.isFinite(n) || n <= 0) return null;
+    return new Intl.NumberFormat('es-AR', {
+      style: 'currency',
+      currency: 'ARS',
+      maximumFractionDigits: 0
+    }).format(n);
+  }
+
+  function estadoUi(estado) {
+    const st = String(estado || '').toLowerCase();
+    if (['en_ruta', 'en_camino'].includes(st)) {
+      return {
+        badge: 'EN CAMINO',
+        detail: 'Tu pedido ya salió. Si el repartidor comparte ubicación, vas a verlo moverse en el mapa.',
+        live: true,
+        bg: '',
+        color: ''
+      };
+    }
+    if (st === 'entregado') {
+      return {
+        badge: 'ENTREGADO',
+        detail: 'El pedido fue entregado correctamente.',
+        bg: '#d1fae5',
+        color: '#065f46'
+      };
+    }
+    if (st === 'cancelado') {
+      return {
+        badge: 'CANCELADO',
+        detail: 'Este pedido fue cancelado.',
+        bg: '#fee2e2',
+        color: '#991b1b'
+      };
+    }
+    if (st === 'pendiente') {
+      return {
+        badge: 'RECIBIDO',
+        detail: 'Recibimos tu pedido. Te avisamos por WhatsApp cuando salga a reparto.',
+        bg: '#fef3c7',
+        color: '#92400e'
+      };
+    }
+    return {
+      badge: st ? st.replace('_', ' ').toUpperCase() : 'EN PROCESO',
+      detail: 'Estamos actualizando el estado de tu pedido.',
+      bg: '#dbeafe',
+      color: '#1e40af'
+    };
+  }
+
+  function renderSummary(pedido) {
+    const lines = [];
+    const items = Array.isArray(pedido.items) ? pedido.items : [];
+    const total = money(pedido.monto);
+    const metodo = pedido.metodo_pago ? String(pedido.metodo_pago).replace('_', ' ') : '';
+
+    if (items.length) {
+      const itemLines = items.slice(0, 6).map((it) => {
+        const qty = Number(it.cantidad || 0);
+        const name = escapeHtml(it.producto || 'Producto');
+        return `<div>${qty ? qty + ' x ' : ''}${name}</div>`;
+      }).join('');
+      lines.push(`<div><strong>Pedido</strong><div class="items-list">${itemLines}</div></div>`);
+    }
+
+    if (total) lines.push(`<div class="summary-line"><span>Total</span><strong>${total}</strong></div>`);
+    if (metodo) lines.push(`<div class="summary-line"><span>Pago</span><strong>${metodo}</strong></div>`);
+
+    if (!lines.length) {
+      orderSummary.style.display = 'none';
+      orderSummary.innerHTML = '';
+      return;
+    }
+
+    orderSummary.innerHTML = lines.join('');
+    orderSummary.style.display = 'grid';
+  }
 
   // 2. Inicializar Mapa
   function initMap() {
@@ -247,19 +378,28 @@
 
     // --- Estado ---
     const st = (pedido.estado || '').toLowerCase();
+    const ui = estadoUi(st);
 
-    lblEstado.textContent = st.replace('_', ' ').toUpperCase();
+    orderMeta.textContent = pedido.empresa_nombre || 'Seguimiento del pedido';
+    lblEstadoDetalle.textContent = ui.detail;
+    renderSummary(pedido);
+
+    lblEstado.textContent = ui.badge;
     lblEstado.classList.remove('live');
-    lblEstado.style.background = '';
-    lblEstado.style.color = '';
-
+    lblEstado.style.background = ui.bg || '';
+    lblEstado.style.color = ui.color || '';
     if (['en_ruta', 'en_camino'].includes(st)) {
-      lblEstado.classList.add('live');
-      lblEstado.textContent = 'EN CAMINO 🛵';
+      mapNote.style.display = 'none';
     } else if (st === 'entregado') {
-      lblEstado.textContent = 'ENTREGADO ✅';
-      lblEstado.style.background = '#d1fae5';
-      lblEstado.style.color = '#065f46';
+      mapNote.textContent = 'Tu pedido ya fue entregado.';
+      mapNote.style.display = 'block';
+    } else {
+      mapNote.textContent = 'El mapa en vivo se activa cuando el repartidor sale a ruta.';
+      mapNote.style.display = 'block';
+    }
+
+    if (ui.live) {
+      lblEstado.classList.add('live');
     }
 
     // --- Info de chofer + botones ---
@@ -297,6 +437,8 @@
       } else {
         lblPlaca.textContent = 'En camino';
       }
+    } else {
+      driverRow.style.display = 'none';
     }
 
     // --- Marcador de destino ---

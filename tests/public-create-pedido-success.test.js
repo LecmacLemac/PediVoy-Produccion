@@ -48,7 +48,7 @@ test('POST /public/pedidos crea pedido válido', async () => {
     if (sql.includes('FROM cliente_recompensas')) return [];
     if (sql.includes('SELECT pg_advisory_xact_lock')) return [{ pg_advisory_xact_lock: null }];
     if (sql.includes('FROM pedidos WHERE empresa_id=$1 AND submission_id=$2')) return [];
-    if (sql.includes('INSERT INTO pedidos')) return [{ id: 9001, estado: 'pendiente', monto: 7000 }];
+    if (sql.includes('INSERT INTO pedidos')) return [{ id: 9001, estado: 'pendiente', monto: 7000, tracking_token: 'tok_9001' }];
     if (sql.includes('INSERT INTO items_pedido')) return [];
     if (sql.includes('SELECT config_entrega FROM empresas')) return [{ config_entrega: {} }];
     if (sql.includes('SELECT nombre, telefono FROM choferes')) return [{ nombre: 'Juan', telefono: '3871234567' }];
@@ -89,6 +89,8 @@ test('POST /public/pedidos crea pedido válido', async () => {
     assert.equal(body.pedido.id, 9001);
     assert.equal(body.pedido.estado, 'pendiente');
     assert.equal(body.pedido.monto, 7000);
+    assert.equal(body.pedido.tracking_token, 'tok_9001');
+    assert.equal(body.pedido.tracking_url, '/pedidos/seguimiento.html?t=tok_9001');
     assert.equal(wppCalls, 1);
     assert.ok(calls.some((s) => s.includes('INSERT INTO pedidos')));
   });

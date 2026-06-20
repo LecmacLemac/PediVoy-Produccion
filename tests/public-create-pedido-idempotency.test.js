@@ -32,7 +32,7 @@ test('POST /public/pedidos con mismo submission_id no duplica pedido', async () 
     }
 
     if (sql.includes('INSERT INTO pedidos')) {
-      const row = { id: 4321, estado: 'pendiente', monto: 1200 };
+      const row = { id: 4321, estado: 'pendiente', monto: 1200, tracking_token: 'tok_4321' };
       const key = `${params[0]}:${params[5]}`;
       seen.set(key, row);
       return [row];
@@ -84,5 +84,7 @@ test('POST /public/pedidos con mismo submission_id no duplica pedido', async () 
     assert.equal(j2.created, false);
     assert.equal(j1.pedido.id, 4321);
     assert.equal(j2.pedido.id, 4321);
+    assert.equal(j1.pedido.tracking_url, '/pedidos/seguimiento.html?t=tok_4321');
+    assert.equal(j2.pedido.tracking_url, '/pedidos/seguimiento.html?t=tok_4321');
   });
 });

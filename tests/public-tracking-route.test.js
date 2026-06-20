@@ -34,15 +34,21 @@ function pedido(overrides = {}) {
     dest_lng: '-63.2',
     chofer_nombre: 'Chofer Test',
     chofer_tel: '+5493530000000',
+    monto: 7000,
+    metodo_pago: 'efectivo',
+    empresa_nombre: 'Empresa Test',
     empresa_logo_url: null,
     ...overrides,
   };
 }
 
-test('GET /api/public/tracking/:token oculta pedidos pendientes aunque tengan token', async () => {
+test('GET /api/public/tracking/:token muestra pedidos pendientes con token', async () => {
   let calls = 0;
-  const app = buildApp(async () => {
+  const app = buildApp(async (sql) => {
     calls += 1;
+    if (sql.includes('FROM items_pedido')) {
+      return [{ producto: 'Bidón 20L', cantidad: 2, precio_unitario: 3500 }];
+    }
     return [pedido({ estado: 'pendiente' })];
   });
 
@@ -50,9 +56,10 @@ test('GET /api/public/tracking/:token oculta pedidos pendientes aunque tengan to
     const resp = await fetch(`${baseUrl}/api/public/tracking/token-pendiente`);
     const body = await resp.json();
 
-    assert.equal(resp.status, 404);
-    assert.equal(body.error, 'Pedido no encontrado');
-    assert.equal(calls, 1);
+    assert.equal(resp.status, 200);
+    assert.equal(body.pedido.estado, 'pendiente');
+    assert.equal(body.pedido.items[0].producto, 'Bidón 20L');
+    assert.equal(calls, 2);
   });
 });
 
@@ -61,6 +68,7 @@ test('GET /api/public/tracking/:token permite pedidos en camino y devuelve ubica
     if (sql.includes('FROM pedido_track_points')) {
       return [{ latitud: '-32.41', longitud: '-63.21', timestamp: '2026-05-12T19:00:00.000Z' }];
     }
+    if (sql.includes('FROM items_pedido')) return [];
     return [pedido({ estado: 'en_camino' })];
   });
 
@@ -80,6 +88,7 @@ test('GET /api/public/tracking/:token no vence pedidos activos por antiguedad', 
 
   const app = buildApp(async (sql) => {
     if (sql.includes('FROM pedido_track_points')) return [];
+    if (sql.includes('FROM items_pedido')) return [];
     return [pedido({ estado: 'en_ruta' })];
   });
 
@@ -96,4 +105,3 @@ test('GET /api/public/tracking/:token no vence pedidos activos por antiguedad', 
     else process.env.TRACK_TTL_HOURS = prevTtl;
   }
 });
-

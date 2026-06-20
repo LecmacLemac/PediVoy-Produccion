@@ -87,6 +87,8 @@ router.get('/tracking/:token', rateLimitTracking, async (req, res) => {
         p.fecha,
         p.fecha_entrega,
         p.chofer_id,
+        p.monto,
+        p.metodo_pago,
         pe.cliente,
         pe.direccion,
         pe.ciudad,
@@ -95,6 +97,7 @@ router.get('/tracking/:token', rateLimitTracking, async (req, res) => {
         pe.longitud AS dest_lng,
         c.nombre    AS chofer_nombre,
         c.telefono  AS chofer_tel,
+        e.nombre    AS empresa_nombre,
         e.logo_url  AS empresa_logo_url
       FROM pedidos p
       JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
@@ -112,18 +115,15 @@ router.get('/tracking/:token', rateLimitTracking, async (req, res) => {
     const pedido = pedRows[0];
 
     const estadoPedido = String(pedido.estado || '').toLowerCase();
-    const estadosConSeguimiento = new Set(['en_ruta', 'en_camino', 'entregado']);
-    if (!estadosConSeguimiento.has(estadoPedido)) {
-      return res.status(404).json({ error: 'Pedido no encontrado' });
-    }
 
     // 3) TTL del tracking: por privacidad, el token expira después del cierre.
     // No debe cortar pedidos activos, porque el cliente perdería el seguimiento
     // aunque el repartidor siga enviando ubicación.
     const ttlHours = Number(process.env.TRACK_TTL_HOURS || 3);
     const estadosActivos = new Set(['en_ruta', 'en_camino']);
+    const estadosFinales = new Set(['entregado', 'cancelado']);
     const baseDate = pedido.fecha_entrega || pedido.fecha;
-    if (!estadosActivos.has(estadoPedido) && Number.isFinite(ttlHours) && ttlHours > 0 && baseDate) {
+    if (estadosFinales.has(estadoPedido) && !estadosActivos.has(estadoPedido) && Number.isFinite(ttlHours) && ttlHours > 0 && baseDate) {
       const ageMs = Date.now() - new Date(baseDate).getTime();
       if (Number.isFinite(ageMs) && ageMs > ttlHours * 60 * 60 * 1000) {
         return res.status(404).json({ error: 'Pedido no encontrado' });
@@ -151,12 +151,32 @@ router.get('/tracking/:token', rateLimitTracking, async (req, res) => {
       }
     }
 
+    const items = await queryFn(`
+      SELECT producto, cantidad, precio_unitario
+      FROM items_pedido
+      WHERE pedido_id = $1
+      ORDER BY id ASC
+    `, [pedido.id]);
+
+    const itemsSafe = (items || []).slice(0, 50).map((item) => ({
+      producto: String(item.producto || ''),
+      cantidad: Number(item.cantidad || 0),
+      precio_unitario: Number(item.precio_unitario || 0),
+    }));
+
+    const totalItems = itemsSafe.reduce(
+      (acc, item) => acc + Number(item.cantidad || 0) * Number(item.precio_unitario || 0),
+      0
+    );
+
     // 5) Respuesta saneada: no exponer campos internos innecesarios
     const safePedido = {
       id: pedido.id,
       estado: pedido.estado,
       fecha: pedido.fecha,
       fecha_entrega: pedido.fecha_entrega,
+      monto: Number(pedido.monto || 0) || Math.round(totalItems * 100) / 100,
+      metodo_pago: pedido.metodo_pago || null,
       cliente: pedido.cliente,
       direccion: pedido.direccion,
       ciudad: pedido.ciudad,
@@ -165,7 +185,9 @@ router.get('/tracking/:token', rateLimitTracking, async (req, res) => {
       dest_lng: pedido.dest_lng,
       chofer_nombre: pedido.chofer_nombre || null,
       chofer_tel: pedido.chofer_tel || null,
-      empresa_logo_url: publicAssetUrlOrNull(pedido.empresa_logo_url)
+      empresa_nombre: pedido.empresa_nombre || null,
+      empresa_logo_url: publicAssetUrlOrNull(pedido.empresa_logo_url),
+      items: itemsSafe,
     };
 
     return res.json({ pedido: safePedido, driverLocation });

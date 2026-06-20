@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { z } from 'zod';
 import { armarMensajeConfirmado } from '../utils.js';
 import { ejecutarEstrategiaVecinos } from '../estrategias.js';
@@ -7,6 +8,14 @@ const RATE_LIMIT_WINDOW_MS = Number(process.env.PUBLIC_PEDIDOS_RATE_LIMIT_WINDOW
 const RATE_LIMIT_MAX = Number(process.env.PUBLIC_PEDIDOS_RATE_LIMIT_MAX || 20);
 const PUBLIC_PEDIDOS_MAX_BODY_BYTES = Number(process.env.PUBLIC_PEDIDOS_MAX_BODY_BYTES || 256 * 1024);
 const rateLimitState = new Map();
+
+function createTrackingToken() {
+  return crypto.randomBytes(16).toString('hex');
+}
+
+function buildTrackingPath(token) {
+  return token ? `/pedidos/seguimiento.html?t=${encodeURIComponent(token)}` : null;
+}
 
 function clientIp(req) {
   const xff = req.headers['x-forwarded-for'];
@@ -550,19 +559,42 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
 
       const pedExist = submission_id
         ? await txQuery(
-            `SELECT id, estado, monto FROM pedidos WHERE empresa_id=$1 AND submission_id=$2 LIMIT 1`,
+            `SELECT id, estado, monto, tracking_token FROM pedidos WHERE empresa_id=$1 AND submission_id=$2 LIMIT 1`,
             [empId, submission_id]
           )
         : [];
 
       if (submission_id && pedExist.length) {
         const existing = pedExist[0];
-        await rollbackIfNeeded();
+        let trackingToken = existing.tracking_token;
+        if (!trackingToken) {
+          const candidate = createTrackingToken();
+          const tokenRows = await txQuery(
+            `UPDATE pedidos
+                SET tracking_token = COALESCE(tracking_token, $1)
+              WHERE id = $2 AND empresa_id = $3
+              RETURNING tracking_token`,
+            [candidate, existing.id, empId]
+          );
+          trackingToken = tokenRows[0]?.tracking_token || candidate;
+        }
+
+        if (txClient && !txFinished) {
+          await txClient.query('COMMIT');
+          txFinished = true;
+        }
         tEnd(`[public/pedidos] ${reqId} TOTAL`);
         return res.json({
           ok: true,
           created: false,
-          pedido: { id: existing.id, submission_id, estado: existing.estado, monto: existing.monto },
+          pedido: {
+            id: existing.id,
+            submission_id,
+            estado: existing.estado,
+            monto: existing.monto,
+            tracking_token: trackingToken,
+            tracking_url: buildTrackingPath(trackingToken),
+          },
           zona_id,
           coords: (lat != null && lng != null) ? { lat, lng } : null,
           resumen: resumenTxt,
@@ -618,10 +650,10 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
           cantidad, cantidad_entregada, monto,
           metodo_pago, aviso_recibido, sats,
           submission_id, chofer_id, zona_id,
-          referido_por_id
-        ) VALUES ($1,$2,NOW(),'pendiente',$3,0,$4,$5,0,0,$6,$7,$8,$9)
-        RETURNING id, estado, monto`,
-        [empId, punto_entrega_id, totalCantidad, totalMonto, metodo_pago, submission_id, chofer_id, zona_id, padrinoId]
+          referido_por_id, tracking_token
+        ) VALUES ($1,$2,NOW(),'pendiente',$3,0,$4,$5,0,0,$6,$7,$8,$9,$10)
+        RETURNING id, estado, monto, tracking_token`,
+        [empId, punto_entrega_id, totalCantidad, totalMonto, metodo_pago, submission_id, chofer_id, zona_id, padrinoId, createTrackingToken()]
       );
 
       const pedido = pedRows[0];
@@ -751,7 +783,14 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
       return res.json({
         ok: true,
         created: true,
-        pedido: { id: pedido.id, submission_id, estado: pedido.estado, monto: pedido.monto },
+        pedido: {
+          id: pedido.id,
+          submission_id,
+          estado: pedido.estado,
+          monto: pedido.monto,
+          tracking_token: pedido.tracking_token,
+          tracking_url: buildTrackingPath(pedido.tracking_token),
+        },
         zona_id,
         coords: (lat != null && lng != null) ? { lat, lng } : null,
         resumen: resumenTxt,

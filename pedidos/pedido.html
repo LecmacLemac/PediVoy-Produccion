@@ -696,6 +696,12 @@
         const data = await fetchEstado(id);
         if (!data) return;
 
+        if (!qs('legacy') && (data.tracking_url || data.tracking_token)) {
+          const nextUrl = data.tracking_url || `seguimiento.html?t=${encodeURIComponent(data.tracking_token)}`;
+          window.location.replace(nextUrl);
+          return;
+        }
+
         const ui = mapBackendState(data.estado);
         renderState(ui.k, ui.t, ui.d, data);
 

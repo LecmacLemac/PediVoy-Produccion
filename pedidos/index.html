@@ -1146,9 +1146,15 @@
           safeStorage.local.set('last_phone', telDB); 
 
           setTimeout(() => {
-            window.location.href =
-              'pedido.html?id=' + encodeURIComponent(res.pedido.id) +
-              '&telefono=' + encodeURIComponent(telDB);
+            if (res.pedido.tracking_url) {
+              window.location.href = res.pedido.tracking_url;
+              return;
+            }
+            if (res.pedido.tracking_token) {
+              window.location.href = 'seguimiento.html?t=' + encodeURIComponent(res.pedido.tracking_token);
+              return;
+            }
+            window.location.href = 'pedido.html?id=' + encodeURIComponent(res.pedido.id);
           }, 700);
         }
 
