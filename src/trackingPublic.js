@@ -59,6 +59,19 @@ function publicAssetUrlOrNull(url) {
   return fs.existsSync(filePath) ? raw : null;
 }
 
+function buildEmpresaPublicLink(pedido) {
+  const domain = String(pedido?.empresa_landing_domain || '').trim();
+  if (domain) {
+    return /^https?:\/\//i.test(domain) ? domain : `https://${domain}`;
+  }
+
+  const slug = String(pedido?.empresa_landing_slug || '').trim();
+  if (slug) return `/pedidos/?slug=${encodeURIComponent(slug)}`;
+
+  const id = Number(pedido?.empresa_id || 0);
+  return id > 0 ? `/pedidos/?empresa_id=${encodeURIComponent(id)}` : '/pedidos/';
+}
+
 
 /**
  * GET /api/public/tracking/:token
@@ -83,6 +96,7 @@ router.get('/tracking/:token', rateLimitTracking, async (req, res) => {
     const pedRows = await queryFn(`
       SELECT 
         p.id,
+        p.empresa_id,
         p.estado,
         p.fecha,
         p.fecha_entrega,
@@ -98,7 +112,9 @@ router.get('/tracking/:token', rateLimitTracking, async (req, res) => {
         c.nombre    AS chofer_nombre,
         c.telefono  AS chofer_tel,
         e.nombre    AS empresa_nombre,
-        e.logo_url  AS empresa_logo_url
+        e.logo_url  AS empresa_logo_url,
+        e.landing_domain AS empresa_landing_domain,
+        e.landing_slug   AS empresa_landing_slug
       FROM pedidos p
       JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
       LEFT JOIN choferes c    ON c.id = p.chofer_id
@@ -187,6 +203,7 @@ router.get('/tracking/:token', rateLimitTracking, async (req, res) => {
       chofer_tel: pedido.chofer_tel || null,
       empresa_nombre: pedido.empresa_nombre || null,
       empresa_logo_url: publicAssetUrlOrNull(pedido.empresa_logo_url),
+      empresa_link: buildEmpresaPublicLink(pedido),
       items: itemsSafe,
     };
 

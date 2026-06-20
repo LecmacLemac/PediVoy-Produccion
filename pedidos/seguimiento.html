@@ -111,11 +111,14 @@
       position: fixed; inset: 0; background: white; z-index: 2000;
       display: grid; place-items: center; transition: opacity 0.5s;
     }
-    .pedivoy-brand-logo{display:inline-block;width:auto;height:32px;max-width:150px;object-fit:contain;vertical-align:middle;flex:0 0 auto}.brand .pedivoy-brand-logo{height:32px}.pedivoy-brand-badge{position:fixed;top:12px;left:12px;z-index:1000;display:inline-flex;align-items:center;padding:7px 10px;border-radius:10px;background:rgba(15,23,42,.82);border:1px solid rgba(148,163,184,.22);box-shadow:0 10px 30px rgba(2,8,23,.25);backdrop-filter:blur(10px)}.pedivoy-brand-badge img{height:28px;width:auto;display:block}
+    .pedivoy-brand-logo{display:inline-block;width:auto;height:32px;max-width:150px;object-fit:contain;vertical-align:middle;flex:0 0 auto}.brand .pedivoy-brand-logo{height:32px}.pedivoy-brand-badge{position:fixed;top:12px;left:12px;z-index:1000;display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:7px 10px;border-radius:10px;background:rgba(15,23,42,.82);border:1px solid rgba(148,163,184,.22);box-shadow:0 10px 30px rgba(2,8,23,.25);backdrop-filter:blur(10px);color:#fff;text-decoration:none;font-size:.9rem;font-weight:700}.pedivoy-brand-badge img{height:28px;width:auto;max-width:150px;display:block;object-fit:contain}.pedivoy-brand-badge span{display:none;max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 </style>
 </head>
 <body>
-  <a class="pedivoy-brand-badge" href="/pedidos/dashboard.html" aria-label="PediVoy"><img src="img/brand/pedivoy-logo-horizontal-white.png" alt="PediVoy"></a>
+  <a class="pedivoy-brand-badge" id="topBrandLink" href="/pedidos/" aria-label="Volver a la tienda">
+    <img id="topBrandLogo" src="img/brand/pedivoy-logo-horizontal-white.png" alt="PediVoy">
+    <span id="topBrandName">Tienda</span>
+  </a>
 
   <div id="loading">
     <div style="text-align: center; color: #6b7280;">
@@ -195,6 +198,9 @@
   const orderMeta    = document.getElementById('orderMeta');
   const orderSummary = document.getElementById('orderSummary');
   const mapNote      = document.getElementById('mapNote');
+  const topBrandLink = document.getElementById('topBrandLink');
+  const topBrandLogo = document.getElementById('topBrandLogo');
+  const topBrandName = document.getElementById('topBrandName');
 
   let map, driverMarker, destMarker;
   let firstZoom = true;
@@ -291,6 +297,27 @@
     orderSummary.style.display = 'grid';
   }
 
+  function renderTopBrand(pedido) {
+    const name = pedido.empresa_nombre || 'Tienda';
+    topBrandLink.href = pedido.empresa_link || '/pedidos/';
+    topBrandLink.setAttribute('aria-label', `Volver a ${name}`);
+    topBrandLogo.alt = name;
+    topBrandName.textContent = name;
+
+    if (pedido.empresa_logo_url) {
+      topBrandLogo.src = pedido.empresa_logo_url;
+      topBrandLogo.style.display = 'block';
+      topBrandName.style.display = 'none';
+      topBrandLogo.onerror = () => {
+        topBrandLogo.style.display = 'none';
+        topBrandName.style.display = 'inline-block';
+      };
+    } else {
+      topBrandLogo.style.display = 'none';
+      topBrandName.style.display = 'inline-block';
+    }
+  }
+
   // 2. Inicializar Mapa
   function initMap() {
     map = L.map('map', { zoomControl: false }).setView([-34.6, -58.4], 13);
@@ -367,6 +394,7 @@
     lblCliente.textContent   = `Hola ${nombreCliente}`;
     // pedido.id oculto en UI pública
     lblDireccion.textContent = pedido.direccion || '';
+    renderTopBrand(pedido);
 
     if (pedido.empresa_logo_url) {
       lblEmpresaLogo.src = pedido.empresa_logo_url;
