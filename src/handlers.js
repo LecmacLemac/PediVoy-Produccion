@@ -1,6 +1,6 @@
 // src/handlers.js — ESM + PostgreSQL
 
-import OpenAI from 'openai';
+import https from 'node:https';
 import { query } from './db.js';
 import { buildIaMessages } from './iaPromptBuilder.js';
 
@@ -123,6 +123,102 @@ function sanitizarInputIA(texto) {
   limpio = limpio.replace(patronesPeligrosos, "");
 
   return limpio.trim();
+}
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function isTransientOpenAIError(error) {
+  const status = Number(error?.status || error?.code || 0);
+  const msg = String(error?.message || error || '').toLowerCase();
+  return (
+    status === 408 ||
+    status === 409 ||
+    status === 429 ||
+    status >= 500 ||
+    msg.includes('premature close') ||
+    msg.includes('timeout') ||
+    msg.includes('timed out') ||
+    msg.includes('econnreset') ||
+    msg.includes('socket') ||
+    msg.includes('network') ||
+    msg.includes('fetch failed')
+  );
+}
+
+async function createChatCompletionViaHttps({ apiKey, payload }) {
+  const body = JSON.stringify(payload);
+
+  return await new Promise((resolve, reject) => {
+    const req = https.request(
+      {
+        hostname: 'api.openai.com',
+        path: '/v1/chat/completions',
+        method: 'POST',
+        timeout: 45000,
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body)
+        }
+      },
+      (res) => {
+        let raw = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk) => { raw += chunk; });
+        res.on('end', () => {
+          let parsed = null;
+          try {
+            parsed = raw ? JSON.parse(raw) : null;
+          } catch (error) {
+            error.status = res.statusCode;
+            error.message = `OpenAI JSON invalido: ${error.message}`;
+            reject(error);
+            return;
+          }
+
+          if (res.statusCode < 200 || res.statusCode >= 300) {
+            const message = parsed?.error?.message || `OpenAI HTTP ${res.statusCode}`;
+            const error = new Error(message);
+            error.status = res.statusCode;
+            error.type = parsed?.error?.type || null;
+            reject(error);
+            return;
+          }
+
+          resolve(parsed);
+        });
+      }
+    );
+
+    req.on('timeout', () => {
+      req.destroy(new Error('OpenAI request timeout'));
+    });
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
+}
+
+async function crearRespuestaIaWhatsApp({ apiKey, messages }) {
+  const payload = {
+    model: 'gpt-4o-mini',
+    messages,
+    temperature: 0.5,
+    max_tokens: 300,
+  };
+
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      return await createChatCompletionViaHttps({ apiKey, payload });
+    } catch (error) {
+      const canRetry = isTransientOpenAIError(error) && attempt < 3;
+      console.error(`IA WhatsApp error intento ${attempt}/3:`, error.message);
+      if (!canRetry) throw error;
+      await wait(750 * attempt);
+    }
+  }
+
+  return null;
 }
 
 // LÓGICA DE CONTROL DE COMPORTAMIENTO (ROUTER DE INTENCIONES)
@@ -284,14 +380,7 @@ ${contenidoSeguro}
       contextoExtra,
     });
 
-    const openai = new OpenAI({ apiKey });
-    
-    const resp = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages: mensajes,
-      temperature: 0.5,
-      max_tokens: 300,
-    });
+    const resp = await crearRespuestaIaWhatsApp({ apiKey, messages: mensajes });
 
     const texto = resp.choices?.[0]?.message?.content?.trim()
       || '¿En qué te puedo ayudar?';
@@ -319,7 +408,7 @@ ${contenidoSeguro}
     try {
       await client.sendMessage(
         numero,
-        'Estoy con demora. ¿Podés repetir con: "pedido | cantidad | forma | dirección"?'
+        'Hola, estoy con una demora para responder automático. Decime qué necesitás pedir o consultar y te ayudo.'
       );
     } catch (err2) {
       const msg2 = String(err2 && err2.message ? err2.message : err2);
