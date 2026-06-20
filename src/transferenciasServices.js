@@ -127,6 +127,10 @@ export async function marcarComprobanteComoProcesadoPg(id) {
     `UPDATE comprobantes_transferencia 
      SET procesado = TRUE, 
          fecha_procesado = NOW(),
+         validado = 1,
+         estado_revision = 'aprobado',
+         verified_reason = COALESCE(verified_reason, 'Validacion automatica por IA desde WhatsApp'),
+         verified_at = COALESCE(verified_at, NOW()),
          updated_at = NOW() 
      WHERE id = $1`,
     [id]

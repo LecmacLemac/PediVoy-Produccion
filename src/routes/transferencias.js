@@ -72,9 +72,9 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
     }
 
     if (estado === 'verificado') {
-      sql += ` AND COALESCE(ct.validado, 0) = 1`;
+      sql += ` AND (COALESCE(ct.validado, 0) = 1 OR COALESCE(ct.procesado, FALSE) = TRUE)`;
     } else if (estado === 'pendiente') {
-      sql += ` AND COALESCE(ct.validado, 0) <> 1`;
+      sql += ` AND COALESCE(ct.validado, 0) <> 1 AND COALESCE(ct.procesado, FALSE) <> TRUE`;
     }
 
     if (estadoRevision && ['pendiente', 'en_revision', 'aprobado', 'rechazado', 'duplicado'].includes(estadoRevision)) {
@@ -128,6 +128,7 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
           ct.comprobante_path,
           ct.pedido_id,
           ct.validado,
+          ct.procesado,
           ct.estado_revision,
           ct.riesgo_score,
           ct.riesgo_flags,

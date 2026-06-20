@@ -497,7 +497,7 @@
         display_metodo: 'Transferencia',
         display_referencia: t.nro_operacion || '-',
         display_origen: t.banco_origen || 'Banco?',
-        is_validado: Number(t.validado) === 1,
+        is_validado: Number(t.validado) === 1 || t.procesado === true || t.procesado === 't' || t.procesado === 1,
       }));
   }
 
