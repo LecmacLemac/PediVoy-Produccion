@@ -1,8 +1,8 @@
 // src/transferenciasPipeline.js — Versión Profesional & Modular
 import fs from 'node:fs';
+import https from 'node:https';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import OpenAI from 'openai';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import {
@@ -29,9 +29,9 @@ const execFileAsync = promisify(execFile);
 
 if (!fs.existsSync(STORAGE_DIR)) fs.mkdirSync(STORAGE_DIR, { recursive: true });
 
-const getAIClient = () => {
+const getOpenAIApiKey = () => {
   if (!process.env.OPENAI_API_KEY) throw new Error('Falta OPENAI_API_KEY');
-  return new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  return process.env.OPENAI_API_KEY;
 };
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -52,6 +52,90 @@ function isTransientOpenAIError(error) {
     msg.includes('network') ||
     msg.includes('fetch failed')
   );
+}
+
+function buildReceiptAnalysisPayload(imagePayload) {
+  return {
+    model: CONFIG.MODEL,
+    messages: [
+      { role: 'system', content: SYSTEM_PROMPT },
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: `Fecha actual: ${new Date().toISOString().split('T')[0]}`
+          },
+          {
+            type: 'image_url',
+            image_url: {
+              url: `data:${imagePayload.mimeType || 'image/jpeg'};base64,${imagePayload.base64}`,
+              detail: CONFIG.IMG_QUALITY
+            }
+          }
+        ]
+      }
+    ],
+    response_format: { type: 'json_object' },
+    temperature: 0.0,
+    max_tokens: CONFIG.MAX_TOKENS
+  };
+}
+
+async function createChatCompletionViaHttps(payload) {
+  // Render estaba cortando algunas respuestas con fetch/undici; este flujo evita ese transporte.
+  const body = JSON.stringify(payload);
+  const apiKey = getOpenAIApiKey();
+
+  return await new Promise((resolve, reject) => {
+    const req = https.request(
+      {
+        hostname: 'api.openai.com',
+        path: '/v1/chat/completions',
+        method: 'POST',
+        timeout: 45000,
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body)
+        }
+      },
+      (res) => {
+        let raw = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk) => { raw += chunk; });
+        res.on('end', () => {
+          let parsed = null;
+          try {
+            parsed = raw ? JSON.parse(raw) : null;
+          } catch (error) {
+            error.status = res.statusCode;
+            error.message = `OpenAI JSON inválido: ${error.message}`;
+            reject(error);
+            return;
+          }
+
+          if (res.statusCode < 200 || res.statusCode >= 300) {
+            const message = parsed?.error?.message || `OpenAI HTTP ${res.statusCode}`;
+            const error = new Error(message);
+            error.status = res.statusCode;
+            error.type = parsed?.error?.type || null;
+            reject(error);
+            return;
+          }
+
+          resolve(parsed);
+        });
+      }
+    );
+
+    req.on('timeout', () => {
+      req.destroy(new Error('OpenAI request timeout'));
+    });
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
 }
 
 // --- PROMPT DE SISTEMA ---
@@ -162,35 +246,11 @@ async function prepareImageForAI(fileData) {
 
 async function analyzeReceiptWithAI(imagePayload) {
   if (!imagePayload?.base64) return null;
-  const client = getAIClient();
+  const payload = buildReceiptAnalysisPayload(imagePayload);
 
   for (let attempt = 1; attempt <= CONFIG.AI_MAX_ATTEMPTS; attempt += 1) {
     try {
-      const response = await client.chat.completions.create({
-        model: CONFIG.MODEL,
-        messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
-          {
-            role: 'user',
-            content: [
-              {
-                type: 'text',
-                text: `Fecha actual: ${new Date().toISOString().split('T')[0]}`
-              },
-              {
-                type: 'image_url',
-                image_url: {
-                  url: `data:${imagePayload.mimeType || 'image/jpeg'};base64,${imagePayload.base64}`,
-                  detail: CONFIG.IMG_QUALITY
-                }
-              }
-            ]
-          }
-        ],
-        response_format: { type: 'json_object' },
-        temperature: 0.0,
-        max_tokens: CONFIG.MAX_TOKENS
-      });
+      const response = await createChatCompletionViaHttps(payload);
       return JSON.parse(response.choices[0]?.message?.content);
     } catch (error) {
       const transient = isTransientOpenAIError(error);
@@ -380,7 +440,8 @@ export async function handleIncomingComprobanteFromBotPg(botData) {
 
 export const __testables = {
   convertPdfFirstPageWithPdftoppm,
-  isTransientOpenAIError
+  isTransientOpenAIError,
+  buildReceiptAnalysisPayload
 };
 
 export default {
