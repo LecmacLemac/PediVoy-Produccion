@@ -31,3 +31,10 @@ fs.writeFileSync(outPrefix + '.png', Buffer.from('pdf-page-ok'));
     await fs.rm(tmpDir, { recursive: true, force: true });
   }
 });
+
+test('clasifica Premature close de OpenAI como error transitorio', () => {
+  assert.equal(
+    __testables.isTransientOpenAIError(new Error('Invalid response body: Premature close')),
+    true
+  );
+});

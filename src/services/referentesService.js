@@ -146,7 +146,7 @@ export async function generateComisionesForDeliveredOrder({ queryFn, empresaId, 
          empresa_id, referente_id, punto_entrega_id, pedido_id, item_pedido_id,
          producto_id, base_monto, porcentaje, monto_comision, estado, validada_at
        ) VALUES (
-         $1,$2,$3,$4,$5,$6,$7,$8,ROUND(($7 * $8 / 100)::numeric, 2),'validada',COALESCE($9::timestamptz,NOW())
+         $1,$2,$3,$4,$5,$6,$7,$8,ROUND((($7::numeric * $8::numeric) / 100)::numeric, 2),'validada',COALESCE($9::timestamptz,NOW())
        )
        ON CONFLICT (pedido_id, item_pedido_id, referente_id) DO NOTHING
        RETURNING id`,

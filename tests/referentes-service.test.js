@@ -54,6 +54,7 @@ test('generateComisionesForDeliveredOrder genera comision idempotente por item',
       ];
     }
     if (sql.includes('INSERT INTO referente_comisiones')) {
+      assert.match(sql, /\$7::numeric \* \$8::numeric/);
       inserts.push(params);
       return [{ id: inserts.length }];
     }

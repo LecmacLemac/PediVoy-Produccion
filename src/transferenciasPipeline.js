@@ -19,6 +19,7 @@ const CONFIG = {
   MODEL: 'gpt-4o',
   MAX_TOKENS: 300,
   IMG_QUALITY: 'high',
+  AI_MAX_ATTEMPTS: 3,
   DEBUG: process.env.NODE_ENV !== 'production'
 };
 
@@ -32,6 +33,26 @@ const getAIClient = () => {
   if (!process.env.OPENAI_API_KEY) throw new Error('Falta OPENAI_API_KEY');
   return new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 };
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function isTransientOpenAIError(error) {
+  const status = Number(error?.status || error?.code || 0);
+  const msg = String(error?.message || error || '').toLowerCase();
+  return (
+    status === 408 ||
+    status === 409 ||
+    status === 429 ||
+    status >= 500 ||
+    msg.includes('premature close') ||
+    msg.includes('timeout') ||
+    msg.includes('timed out') ||
+    msg.includes('econnreset') ||
+    msg.includes('socket') ||
+    msg.includes('network') ||
+    msg.includes('fetch failed')
+  );
+}
 
 // --- PROMPT DE SISTEMA ---
 const SYSTEM_PROMPT = `
@@ -141,38 +162,49 @@ async function prepareImageForAI(fileData) {
 
 async function analyzeReceiptWithAI(imagePayload) {
   if (!imagePayload?.base64) return null;
-  try {
-    const client = getAIClient();
-    const response = await client.chat.completions.create({
-      model: CONFIG.MODEL,
-      messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'text',
-              text: `Fecha actual: ${new Date().toISOString().split('T')[0]}`
-            },
-            {
-              type: 'image_url',
-              image_url: {
-                url: `data:${imagePayload.mimeType || 'image/jpeg'};base64,${imagePayload.base64}`,
-                detail: CONFIG.IMG_QUALITY
+  const client = getAIClient();
+
+  for (let attempt = 1; attempt <= CONFIG.AI_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      const response = await client.chat.completions.create({
+        model: CONFIG.MODEL,
+        messages: [
+          { role: 'system', content: SYSTEM_PROMPT },
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text: `Fecha actual: ${new Date().toISOString().split('T')[0]}`
+              },
+              {
+                type: 'image_url',
+                image_url: {
+                  url: `data:${imagePayload.mimeType || 'image/jpeg'};base64,${imagePayload.base64}`,
+                  detail: CONFIG.IMG_QUALITY
+                }
               }
-            }
-          ]
-        }
-      ],
-      response_format: { type: 'json_object' },
-      temperature: 0.0,
-      max_tokens: CONFIG.MAX_TOKENS
-    });
-    return JSON.parse(response.choices[0]?.message?.content);
-  } catch (error) {
-    console.error('❌ Error OpenAI:', error.message);
-    return null;
+            ]
+          }
+        ],
+        response_format: { type: 'json_object' },
+        temperature: 0.0,
+        max_tokens: CONFIG.MAX_TOKENS
+      });
+      return JSON.parse(response.choices[0]?.message?.content);
+    } catch (error) {
+      const transient = isTransientOpenAIError(error);
+      const canRetry = transient && attempt < CONFIG.AI_MAX_ATTEMPTS;
+      console.error(
+        `❌ Error OpenAI intento ${attempt}/${CONFIG.AI_MAX_ATTEMPTS}:`,
+        error.message
+      );
+      if (!canRetry) return null;
+      await wait(750 * attempt);
+    }
   }
+
+  return null;
 }
 
 // --- PIPELINE PRINCIPAL ---
@@ -347,7 +379,8 @@ export async function handleIncomingComprobanteFromBotPg(botData) {
 }
 
 export const __testables = {
-  convertPdfFirstPageWithPdftoppm
+  convertPdfFirstPageWithPdftoppm,
+  isTransientOpenAIError
 };
 
 export default {
