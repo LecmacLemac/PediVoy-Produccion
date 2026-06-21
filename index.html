@@ -297,7 +297,8 @@
   <script>
     // --- CONFIGURACIÓN ---
     document.getElementById('year').textContent = new Date().getFullYear();
-    const EMPRESA_ID = 20; // Ajusta este ID según tu base de datos
+    const LANDING_SLUG = 'aguahidro';
+    let EMPRESA_ID = 1;
     const ARS = new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 });
 
     // --- UTILS ---
@@ -329,6 +330,28 @@
       el.textContent = msg;
       el.classList.add('show');
       setTimeout(() => el.classList.remove('show'), 3000);
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? '').replace(/[&<>"']/g, ch => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+      }[ch]));
+    }
+
+    async function ensureLandingConfig() {
+      try {
+        const res = await fetch(`/public/config?slug=${encodeURIComponent(LANDING_SLUG)}`);
+        if (!res.ok) throw new Error('No se pudo resolver empresa');
+        const cfg = await res.json();
+        EMPRESA_ID = Number(cfg.empresa_id) || EMPRESA_ID;
+      } catch (err) {
+        console.warn('Usando empresa por defecto para landing:', err?.message || err);
+      }
+      return EMPRESA_ID;
     }
 
     // --- 1. MENÚ "MIS PEDIDOS" ---
@@ -363,6 +386,7 @@
       searchBtn.textContent = 'Buscando...';
 
       try {
+        await ensureLandingConfig();
         // Convertimos al formato 549... que usa la DB
         const telDB = buildTelefonoDB(rawPhone);
         
@@ -373,9 +397,10 @@
         if (!res.ok) throw new Error('No encontrado');
         const data = await res.json();
 
-        if (data && data.id) {
+        const pedidoId = data?.pedido?.id || data?.id;
+        if (pedidoId) {
           // Redirigir al estado del pedido
-          window.location.href = `/pedidos/pedido.html?id=${data.id}`;
+          window.location.href = `/pedidos/pedido.html?id=${encodeURIComponent(pedidoId)}`;
         } else {
           throw new Error('Sin pedidos');
         }
@@ -391,6 +416,7 @@
     // --- 2. CARGAR COMBOS DINÁMICOS ---
     async function loadCombos() {
       try {
+        await ensureLandingConfig();
         // Fetch con scope=landing para traer solo productos marcados para la home
         const res = await fetch(`/public/productos?empresa_id=${EMPRESA_ID}&scope=landing`);
         if (!res.ok) throw new Error('Error API');
@@ -406,29 +432,29 @@
         container.innerHTML = productos.map(p => {
           // Etiqueta "Popular" o "Oferta"
           const isPopular = p.etiqueta ? 'popular' : '';
-          const badge = p.etiqueta ? `<div class="badge-pop">${p.etiqueta}</div>` : '';
+          const badge = p.etiqueta ? `<div class="badge-pop">${escapeHtml(p.etiqueta)}</div>` : '';
           
           // Imagen: Usa imagen_promo (prioridad) o imagen normal
           const imgUrl = p.imagen_promo || p.imagen;
-          const imgTag = imgUrl ? `<img src="${imgUrl}" alt="${p.nombre}" class="promo-img" loading="lazy">` : '';
+          const imgTag = imgUrl ? `<img src="${escapeHtml(imgUrl)}" alt="${escapeHtml(p.nombre)}" class="promo-img" loading="lazy">` : '';
 
           // Lista de características desde la descripción
           const features = (p.descripcion || '').split('\n')
             .map(l => l.trim())
             .filter(l => l)
-            .map(l => `<li>${l}</li>`)
+            .map(l => `<li>${escapeHtml(l)}</li>`)
             .join('');
 
           return `
             <div class="price-card ${isPopular}">
               ${badge}
               ${imgTag}
-              <h3>${p.nombre}</h3>
+              <h3>${escapeHtml(p.nombre)}</h3>
               <div class="price">${ARS.format(p.precio)}</div>
               <ul class="features-list">
                 ${features || '<li>Calidad Garantizada</li><li>Envío a Domicilio</li>'}
               </ul>
-              <a href="/pedidos/index.html?add=${p.id}" class="btn ${p.etiqueta ? 'btn-primary' : 'btn-ghost'}" style="width:100%">
+              <a href="/pedidos/index.html?slug=${encodeURIComponent(LANDING_SLUG)}&add=${encodeURIComponent(p.id)}" class="btn ${p.etiqueta ? 'btn-primary' : 'btn-ghost'}" style="width:100%">
                 Pedir Ahora
               </a>
             </div>
