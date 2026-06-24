@@ -108,6 +108,25 @@ async function requestGpsActivation() {
 }
 
 // --- MAPA ---
+function getGoogleMapsDirectionsUrl(latValue, lngValue) {
+  if (latValue === null || latValue === undefined || String(latValue).trim() === '') return null;
+  if (lngValue === null || lngValue === undefined || String(lngValue).trim() === '') return null;
+
+  const lat = Number(latValue);
+  const lng = Number(lngValue);
+  const valid = Number.isFinite(lat)
+    && Number.isFinite(lng)
+    && lat >= -90
+    && lat <= 90
+    && lng >= -180
+    && lng <= 180;
+
+  if (!valid) return null;
+
+  const destination = encodeURIComponent(`${lat},${lng}`);
+  return `https://www.google.com/maps/dir/?api=1&destination=${destination}&travelmode=driving`;
+}
+
 function renderMap(){
   if(!map) { map = L.map('map').setView([-31.4, -64.18], 12); L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map); mapMarkers = L.layerGroup().addTo(map); }
   map.invalidateSize(); mapMarkers.clearLayers();
@@ -115,13 +134,26 @@ function renderMap(){
   const fSt = $('#mapFiltroEstado').value, fHoy = $('#mapSoloHoy').checked, today = getOyString();
   const bounds = [];
   pedidos.forEach(p => {
-    if(!p.latitud || !p.longitud) return;
+    const directionsUrl = getGoogleMapsDirectionsUrl(p.latitud, p.longitud);
+    if(!directionsUrl) return;
     if(fHoy) { const fDb = p.fecha_entrega || p.fecha; if(isoToLocalYMD(fDb) !== today) return; }
     if(fSt && p.estado !== fSt) return;
     const lat = Number(p.latitud), lng = Number(p.longitud);
     const color = p.estado==='entregado'?'#10b981' : p.estado==='en_ruta'?'#06b6d4':'#f59e0b';
     const icon = L.divIcon({ className: '', html: `<div class="m-label" style="border-left:4px solid ${color}">${esc(p.cliente.split(' ')[0])}</div>` });
-    L.marker([lat, lng], {icon}).addTo(mapMarkers).bindPopup(`<b>${esc(p.cliente)}</b><br>${esc(p.direccion)}<br>${esc(p.estado || '')}`);
+    const popup = `
+      <b>${esc(p.cliente)}</b><br>
+      ${esc(p.direccion)}<br>
+      ${esc(p.estado || '')}<br>
+      <a
+        class="iconbtn primary"
+        style="display:inline-block; margin-top:8px; text-decoration:none;"
+        href="${directionsUrl}"
+        target="_blank"
+        rel="noopener noreferrer"
+      >🧭 Cómo llegar</a>
+    `;
+    L.marker([lat, lng], {icon}).addTo(mapMarkers).bindPopup(popup);
     bounds.push([lat, lng]);
   });
   if(bounds.length) map.fitBounds(bounds, {padding:[50,50], maxZoom:16});
@@ -201,4 +233,3 @@ async function gpsTick() {
     await new Promise(r => setTimeout(r, gpsSyncState.nextInMs));
   }
 })();
-
