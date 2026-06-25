@@ -444,3 +444,249 @@ test('entregar bloquea solo la fila de pedidos cuando usa LEFT JOIN', async () =
   const lockSql = sqlCalls.find((sql) => sql.includes('FROM pedidos p') && sql.includes('FOR UPDATE'));
   assert.match(lockSql, /FOR UPDATE OF p/);
 });
+
+function buildEntregaClient({
+  metodoPago = 'transferencia',
+  estado = 'en_ruta',
+  comprobantes = [],
+} = {}) {
+  const sqlCalls = [];
+  const client = {
+    query: async (sql, params) => {
+      sqlCalls.push({ sql, params });
+
+      if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
+        return { rows: [] };
+      }
+
+      if (sql.includes('FROM pedidos p') && sql.includes('FOR UPDATE')) {
+        return {
+          rows: [{
+            id: 42,
+            empresa_id: 3,
+            chofer_id: 7,
+            estado,
+            metodo_pago: metodoPago,
+            zona_id: 5,
+            punto_entrega_id: 9,
+            monto: 1200,
+            cuenta_corriente_habilitada: false,
+          }],
+        };
+      }
+
+      if (sql.includes('UPDATE pedidos') && sql.includes("estado = 'entregado'")) {
+        return { rows: [] };
+      }
+
+      if (sql.includes('FROM items_pedido ip') && sql.includes('JOIN productos p')) {
+        return { rows: [] };
+      }
+
+      if (sql.includes('FROM comprobantes_transferencia')) {
+        assert.deepEqual(params, [42, 3]);
+        return { rows: comprobantes };
+      }
+
+      throw new Error(`Consulta inesperada: ${sql}`);
+    },
+    release: () => {},
+  };
+
+  return { client, sqlCalls };
+}
+
+test('entregar solicita comprobante cuando transferencia ya estaba guardada y no hay adjunto', async () => {
+  const notificaciones = [];
+  const { client, sqlCalls } = buildEntregaClient();
+  const app = buildTestAppWithDeps({
+    query: async () => [],
+    pool: { connect: async () => client },
+    notificarPedidoTransferencia: async (pedidoId, empresaId) => {
+      notificaciones.push({ pedidoId, empresaId });
+    },
+  });
+
+  await withServer(app, async (baseUrl) => {
+    const resp = await fetch(`${baseUrl}/api/repartidor/pedidos/42/entregar`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ movimientos: [] }),
+    });
+    assert.equal(resp.status, 200);
+    assert.deepEqual(await resp.json(), { ok: true });
+  });
+
+  assert.deepEqual(notificaciones, [{ pedidoId: 42, empresaId: 3 }]);
+  const comprobantesCall = sqlCalls.find(({ sql }) => sql.includes('FROM comprobantes_transferencia'));
+  assert.ok(comprobantesCall);
+  assert.ok(sqlCalls.findIndex(({ sql }) => sql === 'COMMIT') >= 0);
+});
+
+test('reintentar una entrega ya confirmada no duplica la solicitud de comprobante', async () => {
+  const notificaciones = [];
+  const { client, sqlCalls } = buildEntregaClient({
+    metodoPago: 'transferencia',
+    estado: 'entregado',
+  });
+  const app = buildTestAppWithDeps({
+    query: async () => [],
+    pool: { connect: async () => client },
+    notificarPedidoTransferencia: async () => {
+      notificaciones.push(true);
+    },
+  });
+
+  await withServer(app, async (baseUrl) => {
+    const resp = await fetch(`${baseUrl}/api/repartidor/pedidos/42/entregar`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ movimientos: [] }),
+    });
+    assert.equal(resp.status, 200);
+    assert.deepEqual(await resp.json(), { ok: true, already: true });
+  });
+
+  assert.deepEqual(notificaciones, []);
+  assert.equal(sqlCalls.some(({ sql }) => sql.includes('FROM comprobantes_transferencia')), false);
+});
+
+test('entregar no solicita comprobante si hay adjunto pendiente o aprobado', async (t) => {
+  const casos = [
+    {
+      nombre: 'pendiente',
+      comprobantes: [{
+        archivo_path: 'pendiente.jpg',
+        comprobante_path: '/Transferencia/pendiente.jpg',
+        validado: 0,
+        procesado: false,
+        estado_revision: 'pendiente',
+      }],
+    },
+    {
+      nombre: 'aprobado',
+      comprobantes: [{
+        archivo_path: 'aprobado.jpg',
+        comprobante_path: '/Transferencia/aprobado.jpg',
+        validado: 1,
+        procesado: true,
+        estado_revision: 'aprobado',
+      }],
+    },
+  ];
+
+  for (const caso of casos) {
+    await t.test(caso.nombre, async () => {
+      const notificaciones = [];
+      const { client } = buildEntregaClient({ comprobantes: caso.comprobantes });
+      const app = buildTestAppWithDeps({
+        query: async () => [],
+        pool: { connect: async () => client },
+        notificarPedidoTransferencia: async () => {
+          notificaciones.push(true);
+        },
+      });
+
+      await withServer(app, async (baseUrl) => {
+        const resp = await fetch(`${baseUrl}/api/repartidor/pedidos/42/entregar`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ movimientos: [] }),
+        });
+        assert.equal(resp.status, 200);
+      });
+
+      assert.deepEqual(notificaciones, []);
+    });
+  }
+});
+
+test('entregar vuelve a solicitar si solo hay comprobantes rechazados o duplicados', async () => {
+  const notificaciones = [];
+  const { client } = buildEntregaClient({
+    comprobantes: [
+      {
+        archivo_path: 'rechazado.jpg',
+        comprobante_path: '/Transferencia/rechazado.jpg',
+        validado: 0,
+        procesado: true,
+        estado_revision: 'rechazado',
+      },
+      {
+        archivo_path: 'duplicado.jpg',
+        comprobante_path: '/Transferencia/duplicado.jpg',
+        validado: 0,
+        procesado: false,
+        estado_revision: 'duplicado',
+      },
+    ],
+  });
+  const app = buildTestAppWithDeps({
+    query: async () => [],
+    pool: { connect: async () => client },
+    notificarPedidoTransferencia: async () => {
+      notificaciones.push(true);
+    },
+  });
+
+  await withServer(app, async (baseUrl) => {
+    const resp = await fetch(`${baseUrl}/api/repartidor/pedidos/42/entregar`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ movimientos: [] }),
+    });
+    assert.equal(resp.status, 200);
+  });
+
+  assert.deepEqual(notificaciones, [true]);
+});
+
+test('entregar no notifica otros metodos y un fallo de WhatsApp no revierte la entrega', async (t) => {
+  await t.test('efectivo', async () => {
+    const notificaciones = [];
+    const { client, sqlCalls } = buildEntregaClient({ metodoPago: 'efectivo' });
+    const app = buildTestAppWithDeps({
+      query: async () => [],
+      pool: { connect: async () => client },
+      notificarPedidoTransferencia: async () => {
+        notificaciones.push(true);
+      },
+    });
+
+    await withServer(app, async (baseUrl) => {
+      const resp = await fetch(`${baseUrl}/api/repartidor/pedidos/42/entregar`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ movimientos: [] }),
+      });
+      assert.equal(resp.status, 200);
+    });
+
+    assert.deepEqual(notificaciones, []);
+    assert.equal(sqlCalls.some(({ sql }) => sql.includes('FROM comprobantes_transferencia')), false);
+  });
+
+  await t.test('fallo WhatsApp posterior al commit', async () => {
+    const { client, sqlCalls } = buildEntregaClient();
+    const app = buildTestAppWithDeps({
+      query: async () => [],
+      pool: { connect: async () => client },
+      notificarPedidoTransferencia: async () => {
+        throw new Error('WhatsApp no disponible');
+      },
+    });
+
+    await withServer(app, async (baseUrl) => {
+      const resp = await fetch(`${baseUrl}/api/repartidor/pedidos/42/entregar`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ movimientos: [] }),
+      });
+      assert.equal(resp.status, 200);
+      assert.deepEqual(await resp.json(), { ok: true });
+    });
+
+    assert.equal(sqlCalls.filter(({ sql }) => sql === 'COMMIT').length, 1);
+    assert.equal(sqlCalls.filter(({ sql }) => sql === 'ROLLBACK').length, 0);
+  });
+});

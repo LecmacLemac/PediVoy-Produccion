@@ -31,6 +31,25 @@ export function createRepartidorApiRouter(deps) {
     return m === 'cuenta_corriente' || m.startsWith('cta');
   }
 
+  function isTransferenciaMethod(metodo) {
+    return String(metodo || '').trim().toLowerCase().includes('trans');
+  }
+
+  function comprobanteBloqueaSolicitud(row) {
+    const tieneArchivo = Boolean(
+      String(row?.archivo_path || '').trim()
+      || String(row?.comprobante_path || '').trim()
+    );
+    if (!tieneArchivo) return false;
+
+    const estado = String(row?.estado_revision || 'pendiente').trim().toLowerCase();
+    if (estado === 'rechazado' || estado === 'duplicado') return false;
+
+    // Cualquier archivo no rechazado ya fue adjuntado: puede estar pendiente,
+    // en revisión o aprobado, pero no corresponde pedirlo nuevamente.
+    return true;
+  }
+
   function isPedidoEnRutaOperable(pedido) {
     const estado = String(pedido?.estado || '').toLowerCase();
     return estado === 'en_ruta' || estado === 'en_camino';
@@ -667,12 +686,12 @@ export function createRepartidorApiRouter(deps) {
 
      const pedido = pedQ.rows[0];
      const estadoAnterior = String(pedido.estado || '').toLowerCase();
-	     const metodoPagoAnterior = String(pedido.metodo_pago || '').toLowerCase();
+     const metodoPagoFinal = metodo_pago ?? pedido.metodo_pago;
 
-	     if (isCuentaCorrienteMethod(metodo_pago) && !pedido.cuenta_corriente_habilitada) {
-	       await client.query('ROLLBACK');
-	       return res.status(400).json({ error: 'Este cliente no está habilitado para cuenta corriente' });
-	     }
+     if (isCuentaCorrienteMethod(metodo_pago) && !pedido.cuenta_corriente_habilitada) {
+       await client.query('ROLLBACK');
+       return res.status(400).json({ error: 'Este cliente no está habilitado para cuenta corriente' });
+     }
 
      // 3. Validar Asignación de Chofer
      // Si el pedido ya tiene chofer y NO soy yo, error.
@@ -820,6 +839,18 @@ export function createRepartidorApiRouter(deps) {
        );
      }
 
+     let solicitarComprobanteTransferencia = false;
+     if (isTransferenciaMethod(metodoPagoFinal)) {
+       const comprobantesQ = await client.query(
+         `SELECT archivo_path, comprobante_path, validado, procesado, estado_revision
+            FROM comprobantes_transferencia
+           WHERE pedido_id = $1
+             AND empresa_id = $2`,
+         [pedidoId, empresa_id]
+       );
+       solicitarComprobanteTransferencia = !comprobantesQ.rows.some(comprobanteBloqueaSolicitud);
+     }
+
      // -----------------------------------------------------
      // FIN TRANSACCIÓN
      // -----------------------------------------------------
@@ -853,9 +884,14 @@ export function createRepartidorApiRouter(deps) {
        pedidoId,
      }).catch((err) => console.error('REFERENTES.COMISION.ERROR', err?.message || err));
 
-     // Notificar cambio a Transferencia si aplica
-     if (metodo_pago && String(metodo_pago).toLowerCase().includes('trans') && !metodoPagoAnterior.includes('trans')) {
-        // Opcional: notificarPedidoTransferencia(pedidoId, empresa_id).catch(() => {});
+     // Solicitar comprobante solo después de confirmar la entrega. Un fallo de
+     // WhatsApp no puede revertir la transacción ya confirmada.
+     if (solicitarComprobanteTransferencia && typeof notificarPedidoTransferencia === 'function') {
+       try {
+         await notificarPedidoTransferencia(pedidoId, empresa_id);
+       } catch (wppError) {
+         console.error('ENTREGA.TRANSFERENCIA.NOTIFICACION.ERROR', wppError?.message || wppError);
+       }
      }
 
      res.json({ ok: true });
