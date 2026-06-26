@@ -324,7 +324,7 @@
   const retryButton = document.getElementById('retryButton');
   const progressList = document.getElementById('progressList');
 
-  let map, driverMarker, destMarker;
+  let map, driverMarker, destMarker, trajectoryLine;
   let firstZoom = true;
   let pollTimer = null;
   let consecutiveErrors = 0;
@@ -723,6 +723,29 @@
     mapNote.style.display = 'block';
   }
 
+  function renderTrajectoryLine({ hasDestination, hasDriverLocation, driverLat, driverLng, destLat, destLng }) {
+    if (!hasDestination || !hasDriverLocation) {
+      if (trajectoryLine) {
+        map.removeLayer(trajectoryLine);
+        trajectoryLine = null;
+      }
+      return;
+    }
+
+    const points = [[driverLat, driverLng], [destLat, destLng]];
+    if (!trajectoryLine) {
+      trajectoryLine = L.polyline(points, {
+        color: '#2563eb',
+        weight: 4,
+        opacity: 0.72,
+        dashArray: '8 10',
+        lineCap: 'round'
+      }).addTo(map);
+    } else {
+      trajectoryLine.setLatLngs(points);
+    }
+  }
+
   // 4. Llamada al backend
   async function updateTracking() {
     if (!TOKEN || pollingStopped || document.hidden) return;
@@ -860,9 +883,11 @@
 
     // --- Marcador de destino ---
     const hasDestination = hasUsableCoordinates(pedido.dest_lat, pedido.dest_lng);
+    let destLat = null;
+    let destLng = null;
     if (hasDestination) {
-      const destLat = Number(pedido.dest_lat);
-      const destLng = Number(pedido.dest_lng);
+      destLat = Number(pedido.dest_lat);
+      destLng = Number(pedido.dest_lng);
 
       if (!destMarker) {
         destMarker = L.marker([destLat, destLng], { icon: createIcon('dest') }).addTo(map);
@@ -881,30 +906,36 @@
 
     // --- Marcador del chofer ---
     const locationIsUsable = shouldUseDriverLocation(driverLocation);
+    let driverLat = null;
+    let driverLng = null;
 
     if (locationIsUsable) {
-      const lat = Number(driverLocation.latitud);
-      const lng = Number(driverLocation.longitud);
+      driverLat = Number(driverLocation.latitud);
+      driverLng = Number(driverLocation.longitud);
 
       if (!driverMarker) {
-        driverMarker = L.marker([lat, lng], { icon: createIcon('driver') }).addTo(map);
+        driverMarker = L.marker([driverLat, driverLng], { icon: createIcon('driver') }).addTo(map);
       } else {
-        driverMarker.setLatLng([lat, lng]);
+        driverMarker.setLatLng([driverLat, driverLng]);
       }
 
-      // En el primer zoom, que se vean chofer + destino juntos
-      if (destMarker && firstZoom) {
-        const group = new L.featureGroup([driverMarker, destMarker]);
-        map.fitBounds(group.getBounds(), { padding: [80, 80] });
-        firstZoom = false;
-      } else if (!destMarker && firstZoom) {
-        map.setView([lat, lng], 15);
+      if (firstZoom) {
+        map.setView([driverLat, driverLng], destMarker ? 16 : 15);
         firstZoom = false;
       }
     } else if (driverMarker) {
       map.removeLayer(driverMarker);
       driverMarker = null;
     }
+
+    renderTrajectoryLine({
+      hasDestination,
+      hasDriverLocation: locationIsUsable,
+      driverLat,
+      driverLng,
+      destLat,
+      destLng
+    });
 
     renderMapNote(st, pedido, driverLocation, hasDestination, locationIsUsable);
   }
