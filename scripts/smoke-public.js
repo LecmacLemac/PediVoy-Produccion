@@ -42,7 +42,7 @@ async function run() {
 
   results.push(await check('GET /public/pedido-estado?id=999999999', async () => {
     const r = await fetch(`${BASE_URL}/public/pedido-estado?id=999999999`);
-    await expectJson(r, [404]);
+    await expectJson(r, [410]);
   }));
 
   results.push(await check('POST /public/pedidos (payload inválido)', async () => {

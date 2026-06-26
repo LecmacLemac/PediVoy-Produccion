@@ -49,6 +49,7 @@ test('GET /api/public/tracking/:token muestra pedidos pendientes con token', asy
     if (sql.includes('FROM items_pedido')) {
       return [{ producto: 'Bidón 20L', cantidad: 2, precio_unitario: 3500 }];
     }
+    if (sql.includes('FROM pedido_pagos')) return [];
     return [pedido({ estado: 'pendiente' })];
   });
 
@@ -59,7 +60,8 @@ test('GET /api/public/tracking/:token muestra pedidos pendientes con token', asy
     assert.equal(resp.status, 200);
     assert.equal(body.pedido.estado, 'pendiente');
     assert.equal(body.pedido.items[0].producto, 'Bidón 20L');
-    assert.equal(calls, 2);
+    assert.equal(body.pedido.pago_estado, 'no_aplica');
+    assert.equal(calls, 3);
   });
 });
 
@@ -69,6 +71,7 @@ test('GET /api/public/tracking/:token permite pedidos en camino y devuelve ubica
       return [{ latitud: '-32.41', longitud: '-63.21', timestamp: '2026-05-12T19:00:00.000Z' }];
     }
     if (sql.includes('FROM items_pedido')) return [];
+    if (sql.includes('FROM pedido_pagos')) return [];
     return [pedido({ estado: 'en_camino' })];
   });
 
@@ -79,6 +82,8 @@ test('GET /api/public/tracking/:token permite pedidos en camino y devuelve ubica
     assert.equal(resp.status, 200);
     assert.equal(body.pedido.estado, 'en_camino');
     assert.equal(body.driverLocation.latitud, '-32.41');
+    assert.equal(typeof body.driverLocation.location_age_seconds, 'number');
+    assert.equal(body.driverLocation.location_status, 'desactualizada');
   });
 });
 
@@ -89,6 +94,7 @@ test('GET /api/public/tracking/:token no vence pedidos activos por antiguedad', 
   const app = buildApp(async (sql) => {
     if (sql.includes('FROM pedido_track_points')) return [];
     if (sql.includes('FROM items_pedido')) return [];
+    if (sql.includes('FROM pedido_pagos')) return [];
     return [pedido({ estado: 'en_ruta' })];
   });
 
@@ -104,4 +110,43 @@ test('GET /api/public/tracking/:token no vence pedidos activos por antiguedad', 
     if (prevTtl == null) delete process.env.TRACK_TTL_HOURS;
     else process.env.TRACK_TTL_HOURS = prevTtl;
   }
+});
+
+test('GET /api/public/tracking/:token expone pago público acreditado sin datos internos', async () => {
+  const app = buildApp(async (sql) => {
+    if (sql.includes('FROM pedido_track_points')) return [];
+    if (sql.includes('FROM items_pedido')) return [];
+    if (sql.includes('FROM pedido_pagos')) {
+      return [{ estado: 'pagado', provider_payment_id: 'secret-provider-id', checkout_url: 'https://pay.test' }];
+    }
+    return [pedido({ metodo_pago: 'qr_dinamico' })];
+  });
+
+  await withServer(app, async (baseUrl) => {
+    const resp = await fetch(`${baseUrl}/api/public/tracking/token-pagado`);
+    const body = await resp.json();
+
+    assert.equal(resp.status, 200);
+    assert.equal(body.pedido.pago_estado, 'acreditado');
+    assert.equal(body.pedido.provider_payment_id, undefined);
+    assert.equal(body.pedido.checkout_url, undefined);
+  });
+});
+
+test('GET /api/public/tracking/:token marca pago digital sin registro como sin_pago', async () => {
+  const app = buildApp(async (sql) => {
+    if (sql.includes('FROM pedido_track_points')) return [];
+    if (sql.includes('FROM items_pedido')) return [];
+    if (sql.includes('FROM pedido_pagos')) return [];
+    return [pedido({ metodo_pago: 'qr_dinamico' })];
+  });
+
+  await withServer(app, async (baseUrl) => {
+    const resp = await fetch(`${baseUrl}/api/public/tracking/token-sin-pago`);
+    const body = await resp.json();
+
+    assert.equal(resp.status, 200);
+    assert.equal(body.pedido.pago_estado, 'sin_pago');
+    assert.equal(body.driverLocation.location_status, 'sin_ubicacion');
+  });
 });

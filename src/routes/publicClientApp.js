@@ -570,7 +570,7 @@ export function createPublicClientAppRouter({ query }) {
 
       const ids = puntos.map((p) => Number(p.id)).filter(Boolean);
       const orders = await query(
-        `SELECT p.id, p.fecha, p.estado, p.metodo_pago, p.monto,
+        `SELECT p.id, p.fecha, p.estado, p.metodo_pago, p.monto, p.tracking_token,
                 pe.cliente, pe.direccion
          FROM pedidos p
          JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id

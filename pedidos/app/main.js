@@ -444,7 +444,9 @@ function renderOrders(orders = []) {
     const detBtnId = `btn-det-${o.id}`;
     const repBtnId = `btn-rep-${o.id}`;
     const detBoxId = `det-${o.id}`;
-    const trackUrl = `/pedidos/pedido.html?id=${encodeURIComponent(o.id)}`;
+    const trackUrl = o.tracking_token
+      ? `/pedidos/seguimiento.html?t=${encodeURIComponent(o.tracking_token)}`
+      : `/pedidos/pedido.html?id=${encodeURIComponent(o.id)}`;
 
     const prog = statusProgress(o.estado);
     const color = statusColor(o.estado);

@@ -1,4 +1,5 @@
 import webpush from 'web-push';
+import crypto from 'node:crypto';
 import { query, pointInAnyZone as corePointInAnyZone } from './src/services.js';
 
 // -------------------------------------------------------------------
@@ -46,6 +47,17 @@ function buildPushForEstado(pedido_id, estado) {
 export async function notifyEstadoPedidoPush(pedido_id, estado) {
   const payload = buildPushForEstado(pedido_id, estado);
   if (!payload) return;
+  const tokenRows = await query(
+    `UPDATE pedidos
+        SET tracking_token = COALESCE(tracking_token, $1)
+      WHERE id = $2
+      RETURNING tracking_token`,
+    [crypto.randomBytes(16).toString('hex'), pedido_id]
+  );
+  const token = tokenRows[0]?.tracking_token;
+  if (token) {
+    payload.url = `/pedidos/seguimiento.html?t=${encodeURIComponent(token)}`;
+  }
   await notifyByPedido(pedido_id, payload);
 }
 

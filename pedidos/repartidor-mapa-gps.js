@@ -127,6 +127,77 @@ function getGoogleMapsDirectionsUrl(latValue, lngValue) {
   return `https://www.google.com/maps/dir/?api=1&destination=${destination}&travelmode=driving`;
 }
 
+function normalizeRepartidorWhatsAppPhone(rawPhone) {
+  let digits = String(rawPhone || '').replace(/\D/g, '');
+  if (!digits) return null;
+
+  if (digits.startsWith('00')) digits = digits.slice(2);
+  if (digits.startsWith('0')) digits = digits.slice(1);
+
+  if (digits.startsWith('549')) {
+    // Ya está en formato móvil argentino para WhatsApp.
+  } else if (digits.startsWith('54')) {
+    digits = `549${digits.slice(2)}`;
+  } else if (digits.startsWith('9')) {
+    digits = `54${digits}`;
+  } else {
+    digits = `549${digits}`;
+  }
+
+  return digits.length >= 11 && digits.length <= 15 ? digits : null;
+}
+
+function getRepartidorWhatsAppUrl(rawPhone) {
+  const phone = normalizeRepartidorWhatsAppPhone(rawPhone);
+  return phone ? `https://wa.me/${encodeURIComponent(phone)}` : null;
+}
+
+function canStartRouteFromMap(pedido) {
+  return String(pedido?.estado || 'pendiente').toLowerCase() === 'pendiente';
+}
+
+function buildRepartidorMapPopup(pedido, directionsUrl) {
+  const pedidoId = Number(pedido?.id);
+  const whatsappUrl = getRepartidorWhatsAppUrl(pedido?.telefono);
+  const startRouteButton = canStartRouteFromMap(pedido) && Number.isFinite(pedidoId)
+    ? `<button
+        type="button"
+        class="iconbtn primary"
+        onclick="setStatus(${pedidoId}, 'en_ruta', this)"
+      >🚚 Iniciar ruta</button>`
+    : '';
+  const chatButton = whatsappUrl
+    ? `<a
+        class="iconbtn ghost"
+        href="${whatsappUrl}"
+        target="_blank"
+        rel="noopener noreferrer"
+      >💬 Chat</a>`
+    : `<button
+        type="button"
+        class="iconbtn ghost"
+        disabled
+        aria-disabled="true"
+        title="Cliente sin teléfono válido para WhatsApp"
+      >💬 Sin teléfono</button>`;
+
+  return `
+    <b>${esc(pedido?.cliente)}</b><br>
+    ${esc(pedido?.direccion)}<br>
+    ${esc(pedido?.estado || '')}<br>
+    <div style="display:flex; flex-wrap:wrap; gap:6px; margin-top:8px;">
+      <a
+        class="iconbtn primary"
+        href="${directionsUrl}"
+        target="_blank"
+        rel="noopener noreferrer"
+      >🧭 Cómo llegar</a>
+      ${startRouteButton}
+      ${chatButton}
+    </div>
+  `;
+}
+
 function renderMap(){
   if(!map) { map = L.map('map').setView([-31.4, -64.18], 12); L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map); mapMarkers = L.layerGroup().addTo(map); }
   map.invalidateSize(); mapMarkers.clearLayers();
@@ -141,18 +212,7 @@ function renderMap(){
     const lat = Number(p.latitud), lng = Number(p.longitud);
     const color = p.estado==='entregado'?'#10b981' : p.estado==='en_ruta'?'#06b6d4':'#f59e0b';
     const icon = L.divIcon({ className: '', html: `<div class="m-label" style="border-left:4px solid ${color}">${esc(p.cliente.split(' ')[0])}</div>` });
-    const popup = `
-      <b>${esc(p.cliente)}</b><br>
-      ${esc(p.direccion)}<br>
-      ${esc(p.estado || '')}<br>
-      <a
-        class="iconbtn primary"
-        style="display:inline-block; margin-top:8px; text-decoration:none;"
-        href="${directionsUrl}"
-        target="_blank"
-        rel="noopener noreferrer"
-      >🧭 Cómo llegar</a>
-    `;
+    const popup = buildRepartidorMapPopup(p, directionsUrl);
     L.marker([lat, lng], {icon}).addTo(mapMarkers).bindPopup(popup);
     bounds.push([lat, lng]);
   });

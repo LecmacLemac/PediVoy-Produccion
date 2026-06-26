@@ -1,5 +1,4 @@
 import express from 'express';
-import crypto from 'node:crypto';
 import { z } from 'zod';
 
 function onlyDigits(v) {
@@ -69,10 +68,6 @@ function toWhatsAppE164AR(tel) {
   return '549' + d;
 }
 
-function createTrackingToken() {
-  return crypto.randomBytes(16).toString('hex');
-}
-
 export function createPublicLegacyPedidosRouter({ query }) {
   if (typeof query !== 'function') throw new Error('createPublicLegacyPedidosRouter: falta query(fn)');
 
@@ -81,14 +76,21 @@ export function createPublicLegacyPedidosRouter({ query }) {
   router.get('/pedido-chofer-wpp', async (req, res) => {
     try {
       const pedido_id = Number(req.query.pedido_id || req.query.id);
+      const token = String(req.query.token || req.query.t || '').trim();
       if (!Number.isFinite(pedido_id)) return res.status(400).json({ error: 'pedido_id inválido' });
+      if (!token) {
+        return res.status(410).json({
+          error: 'Endpoint legacy protegido',
+          tracking_required: true,
+        });
+      }
 
       let rows = await query(
         `SELECT c.id AS chofer_id, c.nombre, c.telefono
          FROM pedidos p
          JOIN choferes c ON c.id = p.chofer_id
-         WHERE p.id=$1`,
-        [pedido_id]
+         WHERE p.id=$1 AND p.tracking_token=$2`,
+        [pedido_id, token]
       );
 
       if (!rows.length) {
@@ -98,10 +100,10 @@ export function createPublicLegacyPedidosRouter({ query }) {
            JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
            JOIN zona_chofer zc ON zc.zona_id = pe.zona_id
            JOIN choferes c ON c.id = zc.chofer_id
-           WHERE p.id=$1
+           WHERE p.id=$1 AND p.tracking_token=$2
            ORDER BY zc.chofer_id ASC
            LIMIT 1`,
-          [pedido_id]
+          [pedido_id, token]
         );
       }
 
@@ -125,15 +127,22 @@ export function createPublicLegacyPedidosRouter({ query }) {
   router.get('/pedido-estado', async (req, res) => {
     try {
       const id = Number(req.query.id);
+      const token = String(req.query.token || req.query.t || '').trim();
       if (!id) return res.status(400).json({ error: 'id requerido' });
+      if (!token) {
+        return res.status(410).json({
+          error: 'Endpoint legacy protegido',
+          tracking_required: true,
+        });
+      }
 
       const base = await query(
         `SELECT p.id, p.estado, p.fecha, p.empresa_id, p.tracking_token,
                 pe.cliente, pe.direccion, pe.latitud, pe.longitud, p.monto
          FROM pedidos p
          JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
-         WHERE p.id=$1`,
-        [id]
+         WHERE p.id=$1 AND p.tracking_token=$2`,
+        [id, token]
       );
 
       if (!base.length) return res.status(404).json({ error: 'pedido no encontrado' });
@@ -151,17 +160,7 @@ export function createPublicLegacyPedidosRouter({ query }) {
       );
 
       const row = base[0];
-      let trackingToken = row.tracking_token;
-      if (!trackingToken) {
-        const tokenRows = await query(
-          `UPDATE pedidos
-              SET tracking_token = COALESCE(tracking_token, $1)
-            WHERE id = $2 AND empresa_id = $3
-            RETURNING tracking_token`,
-          [createTrackingToken(), id, row.empresa_id]
-        );
-        trackingToken = tokenRows[0]?.tracking_token || null;
-      }
+      const trackingToken = row.tracking_token;
       const monto = Number(row.monto || 0) || Math.round(totalCalc * 100) / 100;
       return res.json({
         id: row.id,

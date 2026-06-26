@@ -4,6 +4,43 @@ import path from 'node:path';
 // MEJORA DE CONTROL: Importamos directo de db.js para máxima estabilidad
 import { query } from './db.js';
 
+export const LOCATION_LIVE_MAX_SECONDS = 90;
+export const LOCATION_STALE_AFTER_SECONDS = 5 * 60;
+
+export function mapPublicPaymentStatus({ metodoPago, paymentState } = {}) {
+  const state = String(paymentState || '').trim().toLowerCase();
+  if (state === 'pagado') return 'acreditado';
+  if (state === 'pendiente') return 'pendiente';
+  if (['rechazado', 'expired', 'anulado', 'cancelado', 'error'].includes(state)) return 'rechazado';
+
+  const method = String(metodoPago || '').trim().toLowerCase();
+  if (!method) return 'sin_pago';
+  if (['efectivo', 'contra_entrega', 'cuenta_corriente', 'cta_cte'].includes(method)) return 'no_aplica';
+  return 'sin_pago';
+}
+
+export function buildPublicLocationFreshness(timestamp, nowMs = Date.now()) {
+  if (!timestamp) {
+    return { location_updated_at: null, location_age_seconds: null, location_status: 'sin_ubicacion' };
+  }
+
+  const updatedMs = new Date(timestamp).getTime();
+  if (!Number.isFinite(updatedMs)) {
+    return { location_updated_at: null, location_age_seconds: null, location_status: 'sin_ubicacion' };
+  }
+
+  const ageSeconds = Math.max(0, Math.floor((nowMs - updatedMs) / 1000));
+  let locationStatus = 'desactualizada';
+  if (ageSeconds <= LOCATION_LIVE_MAX_SECONDS) locationStatus = 'en_vivo';
+  else if (ageSeconds <= LOCATION_STALE_AFTER_SECONDS) locationStatus = 'reciente';
+
+  return {
+    location_updated_at: new Date(updatedMs).toISOString(),
+    location_age_seconds: ageSeconds,
+    location_status: locationStatus,
+  };
+}
+
 export function createTrackingPublicRouter({ queryFn = query } = {}) {
   const router = express.Router();
 
@@ -174,6 +211,22 @@ router.get('/tracking/:token', rateLimitTracking, async (req, res) => {
       ORDER BY id ASC
     `, [pedido.id]);
 
+    const paymentRows = await queryFn(`
+      SELECT estado, updated_at
+      FROM pedido_pagos
+      WHERE pedido_id = $1
+        AND empresa_id = $2
+      ORDER BY
+        CASE estado
+          WHEN 'pagado' THEN 0
+          WHEN 'pendiente' THEN 1
+          ELSE 2
+        END,
+        updated_at DESC,
+        id DESC
+      LIMIT 1
+    `, [pedido.id, pedido.empresa_id]);
+
     const itemsSafe = (items || []).slice(0, 50).map((item) => ({
       producto: String(item.producto || ''),
       cantidad: Number(item.cantidad || 0),
@@ -193,6 +246,10 @@ router.get('/tracking/:token', rateLimitTracking, async (req, res) => {
       fecha_entrega: pedido.fecha_entrega,
       monto: Number(pedido.monto || 0) || Math.round(totalItems * 100) / 100,
       metodo_pago: pedido.metodo_pago || null,
+      pago_estado: mapPublicPaymentStatus({
+        metodoPago: pedido.metodo_pago,
+        paymentState: paymentRows[0]?.estado,
+      }),
       cliente: pedido.cliente,
       direccion: pedido.direccion,
       ciudad: pedido.ciudad,
@@ -207,7 +264,17 @@ router.get('/tracking/:token', rateLimitTracking, async (req, res) => {
       items: itemsSafe,
     };
 
-    return res.json({ pedido: safePedido, driverLocation });
+    const locationFreshness = buildPublicLocationFreshness(driverLocation?.timestamp);
+    const safeDriverLocation = driverLocation
+      ? {
+          latitud: driverLocation.latitud,
+          longitud: driverLocation.longitud,
+          timestamp: locationFreshness.location_updated_at,
+          ...locationFreshness,
+        }
+      : { ...locationFreshness };
+
+    return res.json({ pedido: safePedido, driverLocation: safeDriverLocation });
 
   } catch (err) {
     console.error(`[TRACKING ERROR] Token: ${token}`, err);

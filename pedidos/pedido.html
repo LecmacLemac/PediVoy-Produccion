@@ -456,6 +456,12 @@
         sessionData = JSON.parse(rawOrder || '{}');
       } catch {}
 
+      const trackingToken = qs('t') || qs('token') || sessionData.tracking_token || '';
+      if (trackingToken) {
+        window.location.replace(`seguimiento.html?t=${encodeURIComponent(trackingToken)}`);
+        return;
+      }
+
       let pedidoId = Number(qs('id') || sessionData.id);
       const telefonoQuery = qs('telefono');
 
@@ -468,6 +474,11 @@
           );
           if (res.ok) {
             const data = await res.json();
+            if (data?.pedido?.tracking_url || data?.pedido?.tracking_token) {
+              const nextUrl = data.pedido.tracking_url || `seguimiento.html?t=${encodeURIComponent(data.pedido.tracking_token)}`;
+              window.location.replace(nextUrl);
+              return;
+            }
             if (data && data.pedido && data.pedido.id) {
               pedidoId = Number(data.pedido.id);
               const newUrl = new URL(window.location.href);
@@ -523,7 +534,7 @@
 
     async function loadChoferData(pedidoId) {
       try {
-        const res = await fetch(`/public/pedido-chofer-wpp?pedido_id=${pedidoId}`);
+        const res = await fetch(`/public/pedido-chofer-wpp?pedido_id=${pedidoId}&token=${encodeURIComponent(qs('t') || qs('token') || '')}`);
         if (!res.ok) return;
         const data = await res.json();
         if (data.ok && (data.chofer?.wa || data.chofer?.telefono)) {
@@ -536,7 +547,7 @@
 
     async function fetchEstado(id) {
       try {
-        const res = await fetch(`/public/pedido-estado?id=${id}`, { cache: 'no-store' });
+        const res = await fetch(`/public/pedido-estado?id=${id}&token=${encodeURIComponent(qs('t') || qs('token') || '')}`, { cache: 'no-store' });
         if (!res.ok) return null;
         return await res.json();
       } catch {
@@ -694,7 +705,18 @@
     function startPolling(id) {
       const run = async () => {
         const data = await fetchEstado(id);
-        if (!data) return;
+        if (!data) {
+          renderState(
+            'error',
+            'Seguimiento migrado',
+            'Este enlace antiguo ya no muestra datos por seguridad. Buscá el enlace de seguimiento recibido por WhatsApp o consultá con la tienda.'
+          );
+          if (pollInterval) {
+            clearInterval(pollInterval);
+            pollInterval = null;
+          }
+          return;
+        }
 
         if (!qs('legacy') && (data.tracking_url || data.tracking_token)) {
           const nextUrl = data.tracking_url || `seguimiento.html?t=${encodeURIComponent(data.tracking_token)}`;

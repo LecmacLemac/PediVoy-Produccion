@@ -1,4 +1,5 @@
 import express from 'express';
+import crypto from 'node:crypto';
 import { normalizePhone } from '../services.js';
 
 function getClientIp(req) {
@@ -267,8 +268,8 @@ export function createPublicLegacyCatalogRouter({ query }) {
 
       if (!punto_entrega_id) return res.status(404).json({ error: 'contacto no encontrado' });
 
-      const pedRows = await query(
-        `SELECT id, estado, fecha
+      let pedRows = await query(
+        `SELECT id, estado, fecha, tracking_token
          FROM pedidos
          WHERE punto_entrega_id = $1
          ORDER BY fecha DESC, id DESC
@@ -277,6 +278,19 @@ export function createPublicLegacyCatalogRouter({ query }) {
       );
 
       if (!pedRows.length) return res.status(404).json({ error: 'no hay pedidos para este contacto' });
+      if (!pedRows[0].tracking_token) {
+        const tokenRows = await query(
+          `UPDATE pedidos
+              SET tracking_token = COALESCE(tracking_token, $1)
+            WHERE id = $2
+            RETURNING tracking_token`,
+          [crypto.randomBytes(16).toString('hex'), pedRows[0].id]
+        );
+        pedRows = [{ ...pedRows[0], tracking_token: tokenRows[0]?.tracking_token || null }];
+      }
+      pedRows[0].tracking_url = pedRows[0].tracking_token
+        ? `/pedidos/seguimiento.html?t=${encodeURIComponent(pedRows[0].tracking_token)}`
+        : null;
       return res.json({ ok: true, pedido: pedRows[0] });
     } catch (e) {
       console.error('ERROR /public/ultimo-pedido', e);

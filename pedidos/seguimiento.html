@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Seguimiento de Pedido</title>
   <link rel="stylesheet" href="theme-base.css" />
   
@@ -22,7 +22,10 @@
       border-radius: 24px 24px 0 0;
       box-shadow: 0 -4px 24px rgba(0,0,0,0.1);
       z-index: 1000;
-      padding: 24px;
+      padding: 24px 24px calc(24px + env(safe-area-inset-bottom));
+      max-height: min(62vh, 560px);
+      overflow-y: auto;
+      overscroll-behavior: contain;
       transition: transform 0.3s ease;
       backdrop-filter: blur(8px);
     }
@@ -60,7 +63,82 @@
     }
     .summary-line { display: flex; justify-content: space-between; gap: 12px; }
     .summary-line strong { color: #111827; }
-    .items-list { display: grid; gap: 4px; margin-top: 2px; color: #4b5563; }
+    .progress-list {
+      list-style: none;
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 8px;
+      margin: 0 0 14px;
+      padding: 0;
+      color: #6b7280;
+    }
+    .progress-list.cancelled { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .progress-step {
+      position: relative;
+      display: grid;
+      gap: 5px;
+      justify-items: center;
+      text-align: center;
+      font-size: 0.7rem;
+      line-height: 1.15;
+    }
+    .progress-step::before {
+      content: "";
+      position: absolute;
+      top: 11px;
+      left: calc(-50% - 4px);
+      width: calc(100% + 8px);
+      height: 2px;
+      background: #d1d5db;
+      z-index: 0;
+    }
+    .progress-step:first-child::before { display: none; }
+    .progress-dot {
+      width: 24px;
+      height: 24px;
+      border-radius: 999px;
+      display: grid;
+      place-items: center;
+      border: 2px solid #d1d5db;
+      background: #fff;
+      color: #6b7280;
+      font-size: 0.8rem;
+      font-weight: 800;
+      position: relative;
+      z-index: 1;
+    }
+    .progress-step.done,
+    .progress-step.current { color: #111827; font-weight: 700; }
+    .progress-step.done::before,
+    .progress-step.current::before { background: var(--accent); }
+    .progress-step.done .progress-dot,
+    .progress-step.current .progress-dot {
+      border-color: var(--accent);
+      background: var(--accent);
+      color: #fff;
+    }
+    .progress-step.current .progress-dot { box-shadow: 0 0 0 5px rgba(16, 185, 129, 0.14); }
+    .progress-list.cancelled .progress-step.current::before,
+    .progress-list.cancelled .progress-step.current .progress-dot {
+      background: #ef4444;
+      border-color: #ef4444;
+    }
+    .items-list { display: grid; gap: 4px; margin-top: 6px; color: #4b5563; }
+    .items-more { color: #6b7280; font-weight: 650; }
+    .items-toggle {
+      justify-self: start;
+      width: auto;
+      margin-top: 6px;
+      padding: 6px 10px;
+      border: 1px solid #cbd5e1;
+      border-radius: 999px;
+      background: #fff;
+      color: #1f2937;
+      font: inherit;
+      font-size: 0.8rem;
+      font-weight: 700;
+      cursor: pointer;
+    }
     .empty-map-note {
       position: absolute;
       top: 76px;
@@ -78,6 +156,18 @@
       text-align: center;
       pointer-events: none;
     }
+    .payment-banner {
+      display: none;
+      margin: 0 0 12px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      font-size: 0.9rem;
+      font-weight: 650;
+    }
+    .payment-banner.ok { display: block; background: #d1fae5; color: #065f46; }
+    .payment-banner.pending { display: block; background: #fef3c7; color: #92400e; }
+    .payment-banner.error { display: block; background: #fee2e2; color: #991b1b; }
+    .payment-banner.info { display: block; background: #e0f2fe; color: #075985; }
     
     /* Botones de Acción */
     .actions { display: flex; gap: 10px; margin-left: auto; }
@@ -87,6 +177,13 @@
       transition: transform 0.2s; box-shadow: 0 4px 12px rgba(0,0,0,0.1);
     }
     .btn-icon:active { transform: scale(0.95); }
+    .btn-icon:focus-visible,
+    .retry-button:focus-visible,
+    .items-toggle:focus-visible,
+    .pedivoy-brand-badge:focus-visible {
+      outline: 3px solid rgba(37, 99, 235, 0.55);
+      outline-offset: 3px;
+    }
     .btn-wpp { background: #25D366; color: white; }
     .btn-call { background: var(--primary); color: white; }
 
@@ -111,6 +208,12 @@
       position: fixed; inset: 0; background: white; z-index: 2000;
       display: grid; place-items: center; transition: opacity 0.5s;
     }
+    .loading-panel { max-width: 420px; padding: 24px; text-align: center; color: #4b5563; }
+    .retry-button {
+      display: none; width: auto; margin: 16px auto 0; padding: 10px 18px;
+      border: 0; border-radius: 999px; background: var(--primary); color: #fff;
+      font: inherit; font-weight: 700; cursor: pointer;
+    }
     .pedivoy-brand-logo{display:inline-block;width:auto;height:32px;max-width:150px;object-fit:contain;vertical-align:middle;flex:0 0 auto}.brand .pedivoy-brand-logo{height:32px}.pedivoy-brand-badge{position:fixed;top:12px;left:12px;z-index:1000;display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:7px 10px;border-radius:10px;background:rgba(15,23,42,.82);border:1px solid rgba(148,163,184,.22);box-shadow:0 10px 30px rgba(2,8,23,.25);backdrop-filter:blur(10px);color:#fff;text-decoration:none;font-size:.9rem;font-weight:700}.pedivoy-brand-badge img{height:28px;width:auto;max-width:150px;display:block;object-fit:contain}.pedivoy-brand-badge span{display:none;max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 </style>
 </head>
@@ -120,17 +223,18 @@
     <span id="topBrandName">Tienda</span>
   </a>
 
-  <div id="loading">
-    <div style="text-align: center; color: #6b7280;">
-      <i class="ri-loader-4-line" style="font-size: 3rem; animation: spin 1s linear infinite; display: block;"></i>
-      <p style="margin-top: 10px;">Buscando pedido...</p>
+  <div id="loading" role="status" aria-live="polite">
+    <div class="loading-panel">
+      <i id="loadingIcon" class="ri-loader-4-line" style="font-size: 3rem; animation: spin 1s linear infinite; display: block;"></i>
+      <p id="loadingMessage" style="margin-top: 10px;">Buscando pedido...</p>
+      <button id="retryButton" class="retry-button" type="button" aria-label="Reintentar cargar el seguimiento">Reintentar</button>
     </div>
   </div>
 
-  <div id="map"></div>
+  <div id="map" aria-label="Mapa del seguimiento del pedido"></div>
   <div id="mapNote" class="empty-map-note" style="display:none;">El mapa en vivo se activa cuando el repartidor sale a ruta.</div>
 
-  <div class="hud-card">
+  <div class="hud-card" aria-live="polite">
     <div class="title-row">
       <div style="display:flex; align-items:center; gap:10px;">
         <img id="lblEmpresaLogo" alt="Logo empresa" style="display:none; width:38px; height:38px; border-radius:8px; object-fit:cover; border:1px solid #e5e7eb; background:#fff;">
@@ -150,7 +254,9 @@
       </div>
     </div>
 
+    <ol id="progressList" class="progress-list" aria-label="Progreso del pedido"></ol>
     <div class="summary-box" id="orderSummary" style="display:none;"></div>
+    <div id="paymentBanner" class="payment-banner" role="status"></div>
 
     <div class="driver-row" id="driverRow" style="display: none;">
       <div class="driver-avatar"><i class="ri-user-smile-line"></i></div>
@@ -159,8 +265,8 @@
         <p id="lblPlaca">En camino</p>
       </div>
       <div class="actions">
-        <a href="#" id="btnWpp" class="btn-icon btn-wpp" target="_blank"><i class="ri-whatsapp-line"></i></a>
-        <a href="#" id="btnCall" class="btn-icon btn-call"><i class="ri-phone-fill"></i></a>
+        <a href="#" id="btnWpp" class="btn-icon btn-wpp" target="_blank" rel="noopener" aria-label="Contactar al repartidor por WhatsApp"><i class="ri-whatsapp-line"></i></a>
+        <a href="#" id="btnCall" class="btn-icon btn-call" aria-label="Llamar al repartidor"><i class="ri-phone-fill"></i></a>
       </div>
     </div>
   </div>
@@ -175,6 +281,16 @@
       .row { align-items: stretch; }
       .row > * { min-width: 0 !important; }
       input, select, textarea, button { width: 100%; }
+      .hud-card { padding: 18px 16px calc(18px + env(safe-area-inset-bottom)); max-height: 68vh; }
+      .title-row { gap: 10px; }
+      .progress-list { grid-template-columns: repeat(3, minmax(0, 1fr)); row-gap: 12px; }
+      .progress-step::before { display: none; }
+      .empty-map-note { top: 66px; border-radius: 14px; }
+    }
+
+    @media (max-height: 620px) {
+      .hud-card { max-height: 76vh; padding-top: 16px; }
+      .progress-list { margin-bottom: 10px; }
     }
 </style>
 
@@ -182,6 +298,7 @@
   // 1. Configuración y Estado
   const urlParams = new URLSearchParams(window.location.search);
   const TOKEN = urlParams.get('t') || urlParams.get('token');
+  const PAYMENT_NOTICE = urlParams.get('pago');
 
   const loadingEl    = document.getElementById('loading');
   const driverRow    = document.getElementById('driverRow');
@@ -201,10 +318,33 @@
   const topBrandLink = document.getElementById('topBrandLink');
   const topBrandLogo = document.getElementById('topBrandLogo');
   const topBrandName = document.getElementById('topBrandName');
+  const paymentBanner = document.getElementById('paymentBanner');
+  const loadingMessage = document.getElementById('loadingMessage');
+  const loadingIcon = document.getElementById('loadingIcon');
+  const retryButton = document.getElementById('retryButton');
+  const progressList = document.getElementById('progressList');
 
   let map, driverMarker, destMarker;
   let firstZoom = true;
   let pollTimer = null;
+  let consecutiveErrors = 0;
+  let pollingStopped = false;
+  let showingAllItems = false;
+  const POLL_MS = 8000;
+  // A partir de 5 minutos una ubicación deja de representarse en el mapa.
+  const DRIVER_STALE_AFTER_SECONDS = 5 * 60;
+  const TRACKING_STEPS = [
+    { key: 'recibido', label: 'Recibido' },
+    { key: 'confirmado', label: 'Confirmado' },
+    { key: 'preparando', label: 'Preparando' },
+    { key: 'asignado', label: 'Asignado' },
+    { key: 'en_camino', label: 'En camino' },
+    { key: 'entregado', label: 'Entregado' }
+  ];
+  const CANCELLED_STEPS = [
+    { key: 'recibido', label: 'Recibido' },
+    { key: 'cancelado', label: 'Cancelado' }
+  ];
 
   function escapeHtml(value) {
     return String(value ?? '').replace(/[&<>"']/g, (ch) => ({
@@ -226,12 +366,25 @@
     }).format(n);
   }
 
+  // BEGIN seguimiento public helpers
+  function normalizeOrderState(estado) {
+    const st = String(estado || '').trim().toLowerCase();
+    if (['pendiente', 'recibido', 'nuevo', 'creado'].includes(st)) return 'recibido';
+    if (['confirmado', 'aceptado'].includes(st)) return 'confirmado';
+    if (['preparando', 'en_preparacion', 'preparacion'].includes(st)) return 'preparando';
+    if (['asignado', 'listo', 'listo_para_entregar', 'despachado'].includes(st)) return 'asignado';
+    if (['en_ruta', 'en_camino'].includes(st)) return 'en_camino';
+    if (st === 'entregado') return 'entregado';
+    if (st === 'cancelado') return 'cancelado';
+    return 'recibido';
+  }
+
   function estadoUi(estado) {
-    const st = String(estado || '').toLowerCase();
-    if (['en_ruta', 'en_camino'].includes(st)) {
+    const st = normalizeOrderState(estado);
+    if (st === 'en_camino') {
       return {
         badge: 'EN CAMINO',
-        detail: 'Tu pedido ya salió. Si el repartidor comparte ubicación, vas a verlo moverse en el mapa.',
+        detail: 'Tu pedido ya está en camino. Si el repartidor comparte ubicación, vas a verlo en el mapa.',
         live: true,
         bg: '',
         color: ''
@@ -240,7 +393,7 @@
     if (st === 'entregado') {
       return {
         badge: 'ENTREGADO',
-        detail: 'El pedido fue entregado correctamente.',
+        detail: 'Pedido entregado. Gracias por elegirnos.',
         bg: '#d1fae5',
         color: '#065f46'
       };
@@ -248,12 +401,12 @@
     if (st === 'cancelado') {
       return {
         badge: 'CANCELADO',
-        detail: 'Este pedido fue cancelado.',
+        detail: 'Pedido cancelado. Si tenés dudas, contactá a la tienda.',
         bg: '#fee2e2',
         color: '#991b1b'
       };
     }
-    if (st === 'pendiente') {
+    if (st === 'recibido') {
       return {
         badge: 'RECIBIDO',
         detail: 'Recibimos tu pedido. Te avisamos por WhatsApp cuando salga a reparto.',
@@ -261,31 +414,179 @@
         color: '#92400e'
       };
     }
+    if (st === 'confirmado') {
+      return {
+        badge: 'CONFIRMADO',
+        detail: 'Tu pedido está confirmado. En breve empezamos a prepararlo.',
+        bg: '#e0f2fe',
+        color: '#075985'
+      };
+    }
+    if (st === 'preparando') {
+      return {
+        badge: 'PREPARANDO',
+        detail: 'Estamos preparando tu pedido.',
+        bg: '#ede9fe',
+        color: '#5b21b6'
+      };
+    }
+    if (st === 'asignado') {
+      return {
+        badge: 'ASIGNADO',
+        detail: 'Tu pedido ya tiene repartidor asignado y está próximo a salir.',
+        bg: '#fef3c7',
+        color: '#92400e'
+      };
+    }
     return {
-      badge: st ? st.replace('_', ' ').toUpperCase() : 'EN PROCESO',
+      badge: 'EN PROCESO',
       detail: 'Estamos actualizando el estado de tu pedido.',
       bg: '#dbeafe',
       color: '#1e40af'
     };
   }
 
-  function renderSummary(pedido) {
-    const lines = [];
-    const items = Array.isArray(pedido.items) ? pedido.items : [];
-    const total = money(pedido.monto);
-    const metodo = pedido.metodo_pago ? String(pedido.metodo_pago).replace('_', ' ') : '';
+  function progressStateFor(estado) {
+    const state = normalizeOrderState(estado);
+    const steps = state === 'cancelado' ? CANCELLED_STEPS : TRACKING_STEPS;
+    const currentIndex = Math.max(0, steps.findIndex((step) => step.key === state));
+    return { state, steps, currentIndex };
+  }
 
-    if (items.length) {
-      const itemLines = items.slice(0, 6).map((it) => {
-        const qty = Number(it.cantidad || 0);
-        const name = escapeHtml(it.producto || 'Producto');
-        return `<div>${qty ? qty + ' x ' : ''}${name}</div>`;
-      }).join('');
-      lines.push(`<div><strong>Pedido</strong><div class="items-list">${itemLines}</div></div>`);
+  function paymentMethodLabel(method) {
+    const raw = String(method || '').trim().toLowerCase();
+    if (!raw) return '';
+    if (['efectivo', 'cash'].includes(raw)) return 'Efectivo';
+    if (raw.includes('transfer')) return 'Transferencia';
+    if (raw.includes('mercado') || raw.includes('mp') || raw.includes('qr')) return 'QR / Mercado Pago';
+    if (raw.includes('cuenta') || raw.includes('corriente') || raw === 'cc') return 'Cuenta corriente';
+    if (raw.includes('debito') || raw.includes('débito')) return 'Tarjeta de débito';
+    if (raw.includes('credito') || raw.includes('crédito')) return 'Tarjeta de crédito';
+    return raw.replace(/[_-]+/g, ' ').replace(/\b\w/g, (ch) => ch.toUpperCase());
+  }
+
+  function paymentStatusText(status, hasPaymentNotice = false) {
+    const normalized = String(status || 'sin_pago').toLowerCase();
+    if (normalized === 'acreditado') {
+      return { text: 'Pago validado y acreditado.', tone: 'ok' };
     }
+    if (normalized === 'pendiente') {
+      return { text: 'Pago informado: estamos esperando la acreditación.', tone: 'pending' };
+    }
+    if (normalized === 'rechazado') {
+      return { text: 'El pago no pudo validarse. Revisá el medio de pago.', tone: 'error' };
+    }
+    if (hasPaymentNotice && normalized !== 'no_aplica') {
+      return {
+        text: 'Recibimos el aviso del medio de pago. La validación del servidor todavía no está confirmada.',
+        tone: 'info'
+      };
+    }
+    return { text: '', tone: '' };
+  }
+
+  function locationText(location) {
+    const status = location?.location_status || 'sin_ubicacion';
+    const age = Number(location?.location_age_seconds);
+    if (status === 'en_vivo') return 'Ubicación en vivo';
+    if (status === 'reciente' && Number.isFinite(age)) {
+      return `Ubicación actualizada hace ${Math.max(1, Math.ceil(age / 60))} min`;
+    }
+    if (status === 'desactualizada') return 'Ubicación desactualizada';
+    return 'Sin ubicación disponible';
+  }
+
+  function hasUsableCoordinates(lat, lng) {
+    if (lat == null || lng == null || String(lat).trim() === '' || String(lng).trim() === '') return false;
+    const nLat = Number(lat);
+    const nLng = Number(lng);
+    return Number.isFinite(nLat)
+      && Number.isFinite(nLng)
+      && Math.abs(nLat) <= 90
+      && Math.abs(nLng) <= 180;
+  }
+
+  function shouldUseDriverLocation(location, staleAfterSeconds = DRIVER_STALE_AFTER_SECONDS) {
+    const age = Number(location?.location_age_seconds);
+    return !!location
+      && hasUsableCoordinates(location.latitud, location.longitud)
+      && Number.isFinite(age)
+      && age <= staleAfterSeconds;
+  }
+
+  function visibleItemSummary(items, showAll = false, limit = 6) {
+    const safeItems = Array.isArray(items) ? items : [];
+    const visibleItems = showAll ? safeItems : safeItems.slice(0, limit);
+    return {
+      visibleItems,
+      hiddenCount: Math.max(0, safeItems.length - visibleItems.length),
+      totalCount: safeItems.length
+    };
+  }
+  // END seguimiento public helpers
+
+  function renderPayment(pedido) {
+    const result = paymentStatusText(pedido.pago_estado, !!PAYMENT_NOTICE);
+    paymentBanner.className = 'payment-banner';
+    paymentBanner.textContent = result.text;
+    if (result.tone) paymentBanner.classList.add(result.tone);
+  }
+
+  function isValidPhone(value) {
+    const digits = String(value || '').replace(/\D/g, '');
+    return digits.length >= 10 && digits.length <= 15;
+  }
+
+  function renderProgress(estado) {
+    const progress = progressStateFor(estado);
+    progressList.classList.toggle('cancelled', progress.state === 'cancelado');
+    progressList.innerHTML = progress.steps.map((step, index) => {
+      const done = index < progress.currentIndex;
+      const current = index === progress.currentIndex;
+      const cls = current ? 'current' : (done ? 'done' : 'pending');
+      const marker = done ? '✓' : (current ? '•' : '');
+      return `
+        <li class="progress-step ${cls}" aria-current="${current ? 'step' : 'false'}">
+          <span class="progress-dot" aria-hidden="true">${marker}</span>
+          <span>${escapeHtml(step.label)}</span>
+        </li>
+      `;
+    }).join('');
+  }
+
+  function renderItems(pedido) {
+    const items = Array.isArray(pedido.items) ? pedido.items : [];
+    const summary = visibleItemSummary(items, showingAllItems, 6);
+    if (!summary.totalCount) return '';
+
+    const itemLines = summary.visibleItems.map((it) => {
+      const qty = Number(it.cantidad || 0);
+      const name = escapeHtml(it.producto || 'Producto');
+      return `<div>${qty ? qty + ' x ' : ''}${name}</div>`;
+    }).join('');
+    const moreLine = summary.hiddenCount
+      ? `<div class="items-more">y ${summary.hiddenCount} más</div>`
+      : '';
+    const toggle = summary.totalCount > 6
+      ? `<button class="items-toggle" type="button" data-action="toggle-items" aria-expanded="${showingAllItems ? 'true' : 'false'}">${showingAllItems ? 'Ver menos' : 'Ver todos'}</button>`
+      : '';
+
+    return `<div><strong>Productos</strong><div class="items-list">${itemLines}${moreLine}${toggle}</div></div>`;
+  }
+
+  function renderSummary(pedido) {
+    orderSummary.__lastPedido = pedido;
+    const lines = [];
+    const total = money(pedido.monto);
+    const metodo = paymentMethodLabel(pedido.metodo_pago);
+    const paymentState = paymentStatusText(pedido.pago_estado, false).text;
+    const itemsHtml = renderItems(pedido);
+
+    if (itemsHtml) lines.push(itemsHtml);
 
     if (total) lines.push(`<div class="summary-line"><span>Total</span><strong>${total}</strong></div>`);
-    if (metodo) lines.push(`<div class="summary-line"><span>Pago</span><strong>${metodo}</strong></div>`);
+    if (metodo) lines.push(`<div class="summary-line"><span>Método de pago</span><strong>${metodo}</strong></div>`);
+    if (paymentState) lines.push(`<div class="summary-line"><span>Estado del pago</span><strong>${paymentState}</strong></div>`);
 
     if (!lines.length) {
       orderSummary.style.display = 'none';
@@ -320,7 +621,7 @@
 
   // 2. Inicializar Mapa
   function initMap() {
-    map = L.map('map', { zoomControl: false }).setView([-34.6, -58.4], 13);
+    map = L.map('map', { zoomControl: false }).setView([-38.4161, -63.6167], 4);
 
     L.tileLayer(
       'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
@@ -349,38 +650,140 @@
     });
   }
 
+  function clearPollTimer() {
+    if (pollTimer) {
+      clearTimeout(pollTimer);
+      pollTimer = null;
+    }
+  }
+
+  function schedulePoll(delayMs = POLL_MS) {
+    clearPollTimer();
+    if (!pollingStopped && !document.hidden) {
+      pollTimer = setTimeout(updateTracking, delayMs);
+    }
+  }
+
+  function showLoadingMessage(message, { retry = false, spinning = false } = {}) {
+    loadingEl.style.display = 'grid';
+    loadingEl.style.opacity = '1';
+    loadingMessage.textContent = message;
+    retryButton.style.display = retry ? 'inline-block' : 'none';
+    loadingIcon.className = spinning ? 'ri-loader-4-line' : 'ri-error-warning-line';
+    loadingIcon.style.animation = spinning ? 'spin 1s linear infinite' : 'none';
+    if (driverMarker) {
+      map.removeLayer(driverMarker);
+      driverMarker = null;
+    }
+  }
+
+  function hideLoading() {
+    loadingEl.style.opacity = '0';
+    setTimeout(() => {
+      if (loadingEl.style.opacity === '0') loadingEl.style.display = 'none';
+    }, 300);
+  }
+
+  function retryDelayFromResponse(res) {
+    const retryAfter = res.headers.get('Retry-After');
+    const seconds = Number(retryAfter);
+    if (Number.isFinite(seconds) && seconds > 0) return Math.min(seconds * 1000, 5 * 60 * 1000);
+    return Math.min(POLL_MS * (2 ** Math.min(consecutiveErrors, 4)), 2 * 60 * 1000);
+  }
+
+  function renderMapNote(state, pedido, driverLocation, hasDestination, hasDriverLocation) {
+    if (state === 'entregado') {
+      mapNote.textContent = 'Pedido entregado.';
+      mapNote.style.display = 'block';
+      return;
+    }
+    if (state === 'cancelado') {
+      mapNote.textContent = 'Pedido cancelado.';
+      mapNote.style.display = 'block';
+      return;
+    }
+    if (state === 'en_camino') {
+      if (hasDriverLocation && hasDestination) {
+        mapNote.style.display = 'none';
+      } else if (hasDriverLocation) {
+        mapNote.textContent = 'Vemos la ubicación reciente del repartidor. Falta la ubicación exacta de destino para encuadrar la ruta.';
+        mapNote.style.display = 'block';
+      } else {
+        mapNote.textContent = `${locationText(driverLocation)}. Te mostramos solo datos recientes para no confundir.`;
+        mapNote.style.display = 'block';
+      }
+      return;
+    }
+    if (!hasDestination) {
+      mapNote.textContent = 'Todavía no tenemos una ubicación exacta de entrega para mostrar en el mapa.';
+      mapNote.style.display = 'block';
+      return;
+    }
+    mapNote.textContent = 'El mapa en vivo se activa cuando el repartidor sale a ruta.';
+    mapNote.style.display = 'block';
+  }
+
   // 4. Llamada al backend
   async function updateTracking() {
-    if (!TOKEN) return;
+    if (!TOKEN || pollingStopped || document.hidden) return;
+    clearPollTimer();
+
+    if (!navigator.onLine) {
+      consecutiveErrors += 1;
+      showLoadingMessage('Estás sin conexión. Cuando vuelva internet reintentaremos automáticamente.', { retry: true });
+      schedulePoll(retryDelayFromResponse({ headers: new Headers() }));
+      return;
+    }
 
     try {
-      const res = await fetch(`/api/public/tracking/${TOKEN}`);
+      const res = await fetch(`/api/public/tracking/${encodeURIComponent(TOKEN)}`, { cache: 'no-store' });
 
       if (!res.ok) {
-      if (res.status === 404) {
-        loadingEl.innerHTML = '<p>Pedido no encontrado ❌</p>';
-      } else {
-        loadingEl.innerHTML = '<p>No se pudo cargar el seguimiento.</p>';
+        consecutiveErrors += 1;
+        if (res.status === 404) {
+          pollingStopped = true;
+          showLoadingMessage('Este enlace no existe o el seguimiento ya expiró.', { retry: true });
+          return;
+        }
+        if (res.status === 429) {
+          const delay = retryDelayFromResponse(res);
+          showLoadingMessage(`Hay demasiadas consultas. Reintentaremos en ${Math.ceil(delay / 1000)} segundos.`, { retry: true });
+          schedulePoll(delay);
+          return;
+        }
+        const delay = retryDelayFromResponse(res);
+        showLoadingMessage(
+          res.status >= 500
+            ? 'El servicio de seguimiento tiene un problema temporal.'
+            : 'No pudimos actualizar el seguimiento.',
+          { retry: true }
+        );
+        schedulePoll(delay);
+        return;
       }
 
-  if (pollTimer) {
-    clearInterval(pollTimer);
-    pollTimer = null;
-  }
-  return;
-}
-
       const data = await res.json();
-
-      // Ocultamos pantalla de "Buscando pedido..."
-      loadingEl.style.opacity = '0';
-      setTimeout(() => {
-        loadingEl.style.display = 'none';
-      }, 500);
-
+      consecutiveErrors = 0;
       renderData(data);
+      hideLoading();
+
+      const state = String(data?.pedido?.estado || '').toLowerCase();
+      if (['entregado', 'cancelado'].includes(state)) {
+        pollingStopped = true;
+        clearPollTimer();
+      } else {
+        schedulePoll(POLL_MS);
+      }
     } catch (err) {
       console.error('TRACKING ERROR', err);
+      consecutiveErrors += 1;
+      showLoadingMessage(
+        navigator.onLine
+          ? 'No pudimos conectarnos para actualizar el seguimiento.'
+          : 'Estás sin conexión. Cuando vuelva internet reintentaremos automáticamente.',
+        { retry: true }
+      );
+      schedulePoll(retryDelayFromResponse({ headers: new Headers() }));
     }
   }
 
@@ -405,26 +808,19 @@
     }
 
     // --- Estado ---
-    const st = (pedido.estado || '').toLowerCase();
+    const st = normalizeOrderState(pedido.estado);
     const ui = estadoUi(st);
 
     orderMeta.textContent = pedido.empresa_nombre || 'Seguimiento del pedido';
     lblEstadoDetalle.textContent = ui.detail;
+    renderProgress(st);
     renderSummary(pedido);
+    renderPayment(pedido);
 
     lblEstado.textContent = ui.badge;
     lblEstado.classList.remove('live');
     lblEstado.style.background = ui.bg || '';
     lblEstado.style.color = ui.color || '';
-    if (['en_ruta', 'en_camino'].includes(st)) {
-      mapNote.style.display = 'none';
-    } else if (st === 'entregado') {
-      mapNote.textContent = 'Tu pedido ya fue entregado.';
-      mapNote.style.display = 'block';
-    } else {
-      mapNote.textContent = 'El mapa en vivo se activa cuando el repartidor sale a ruta.';
-      mapNote.style.display = 'block';
-    }
 
     if (ui.live) {
       lblEstado.classList.add('live');
@@ -435,7 +831,10 @@
       driverRow.style.display = 'flex';
       lblChofer.textContent   = pedido.chofer_nombre;
 
-      if (pedido.chofer_tel) {
+      const validPhone = isValidPhone(pedido.chofer_tel);
+      btnCall.style.display = validPhone ? 'grid' : 'none';
+      btnWpp.style.display = validPhone ? 'grid' : 'none';
+      if (validPhone) {
         // Llamada
         btnCall.href = `tel:${pedido.chofer_tel}`;
 
@@ -445,32 +844,23 @@
         if (wppNum.length === 10 && !wppNum.startsWith('54')) {
           wppNum = '549' + wppNum;
         }
-        btnWpp.href = `https://wa.me/${wppNum}?text=Hola, soy el cliente del pedido #${pedido.id}`;
+        btnWpp.href = `https://wa.me/${wppNum}?text=${encodeURIComponent('Hola, consulto por mi pedido.')}`;
       }
 
-      // Hora local (Argentina) de última actualización
-      if (driverLocation && driverLocation.timestamp) {
-        const dt = new Date(driverLocation.timestamp); // viene en UTC desde PostgreSQL
-        const horaAR = dt.toLocaleTimeString('es-AR', {
-          hour: '2-digit',
-          minute: '2-digit',
-          hour12: false,
-          timeZone: 'America/Argentina/Buenos_Aires'
-        });
-        lblPlaca.textContent = `Última actualización ${horaAR} hs`;
-      } else if (['en_ruta', 'en_camino'].includes(st)) {
-        lblPlaca.textContent = 'Esperando ubicación del repartidor...';
-      } else if (st === 'pendiente') {
+      if (st === 'en_camino') {
+        lblPlaca.textContent = locationText(driverLocation);
+      } else if (st === 'recibido') {
         lblPlaca.textContent = 'Repartidor asignado';
       } else {
-        lblPlaca.textContent = 'En camino';
+        lblPlaca.textContent = 'Asignado al pedido';
       }
     } else {
       driverRow.style.display = 'none';
     }
 
     // --- Marcador de destino ---
-    if (pedido.dest_lat != null && pedido.dest_lng != null) {
+    const hasDestination = hasUsableCoordinates(pedido.dest_lat, pedido.dest_lng);
+    if (hasDestination) {
       const destLat = Number(pedido.dest_lat);
       const destLng = Number(pedido.dest_lng);
 
@@ -480,14 +870,19 @@
         destMarker.setLatLng([destLat, destLng]);
       }
 
-      if (firstZoom && !driverLocation) {
+      if (firstZoom && !shouldUseDriverLocation(driverLocation)) {
         map.setView([destLat, destLng], 15);
         firstZoom = false;
       }
+    } else if (destMarker) {
+      map.removeLayer(destMarker);
+      destMarker = null;
     }
 
     // --- Marcador del chofer ---
-    if (driverLocation && driverLocation.latitud != null && driverLocation.longitud != null) {
+    const locationIsUsable = shouldUseDriverLocation(driverLocation);
+
+    if (locationIsUsable) {
       const lat = Number(driverLocation.latitud);
       const lng = Number(driverLocation.longitud);
 
@@ -506,31 +901,61 @@
         map.setView([lat, lng], 15);
         firstZoom = false;
       }
+    } else if (driverMarker) {
+      map.removeLayer(driverMarker);
+      driverMarker = null;
     }
+
+    renderMapNote(st, pedido, driverLocation, hasDestination, locationIsUsable);
   }
+
+  window.__seguimientoPublicUiHelpers = {
+    normalizeOrderState,
+    estadoUi,
+    progressStateFor,
+    paymentMethodLabel,
+    paymentStatusText,
+    locationText,
+    hasUsableCoordinates,
+    shouldUseDriverLocation,
+    visibleItemSummary
+  };
 
   // 6. Init
   initMap();
+  orderSummary.addEventListener('click', (ev) => {
+    const toggle = ev.target.closest('[data-action="toggle-items"]');
+    if (!toggle) return;
+    showingAllItems = !showingAllItems;
+    const lastData = orderSummary.__lastPedido;
+    if (lastData) renderSummary(lastData);
+  });
 
   if (!TOKEN) {
-    alert('Token de seguimiento inválido.');
-    loadingEl.innerHTML = '<p>Enlace roto ❌</p>';
+    pollingStopped = true;
+    showLoadingMessage('El enlace de seguimiento no tiene un token válido.', { retry: false });
   } else {
+    retryButton.addEventListener('click', () => {
+      pollingStopped = false;
+      consecutiveErrors = 0;
+      showLoadingMessage('Buscando pedido...', { spinning: true });
+      updateTracking();
+    });
     updateTracking();
-    // Polling cada 8 segundos (balance entre tiempo real y consumo)
-    pollTimer = setInterval(updateTracking, 8000);
 
     // Pausa/reanuda polling cuando la pestaña no está visible
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) {
-        if (pollTimer) {
-          clearInterval(pollTimer);
-          pollTimer = null;
-        }
-      } else if (!pollTimer) {
+        clearPollTimer();
+      } else if (!pollingStopped) {
         updateTracking();
-        pollTimer = setInterval(updateTracking, 8000);
       }
+    });
+    window.addEventListener('online', () => {
+      if (!pollingStopped) updateTracking();
+    });
+    window.addEventListener('offline', () => {
+      showLoadingMessage('Estás sin conexión. Cuando vuelva internet reintentaremos automáticamente.', { retry: true });
     });
   }
 </script>

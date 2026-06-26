@@ -397,12 +397,16 @@
         if (!res.ok) throw new Error('No encontrado');
         const data = await res.json();
 
-        const pedidoId = data?.pedido?.id || data?.id;
-        if (pedidoId) {
+        if (data?.pedido?.tracking_url || data?.pedido?.tracking_token) {
+          window.location.href = data.pedido.tracking_url || `/pedidos/seguimiento.html?t=${encodeURIComponent(data.pedido.tracking_token)}`;
+        } else {
+          const pedidoId = data?.pedido?.id || data?.id;
+          if (pedidoId) {
           // Redirigir al estado del pedido
           window.location.href = `/pedidos/pedido.html?id=${encodeURIComponent(pedidoId)}`;
-        } else {
-          throw new Error('Sin pedidos');
+          } else {
+            throw new Error('Sin pedidos');
+          }
         }
       } catch (err) {
         console.error(err);
