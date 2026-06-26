@@ -346,6 +346,48 @@ test('cambiar pedido a transferencia no envia WhatsApp antes del modal QR', asyn
   assert.deepEqual(notificaciones, []);
 });
 
+test('repartidor notifica al cliente cuando inicia ruta', async () => {
+  const notificaciones = [];
+  const app = buildTestAppWithDeps({
+    query: async (sql, params) => {
+      if (sql.startsWith('ALTER TABLE puntos_entrega')) return [];
+
+      if (sql.includes('FROM pedidos p') && sql.includes('p.id = $1 AND p.empresa_id = $2')) {
+        assert.deepEqual(params, ['42', 3]);
+        return [{
+          chofer_id: 7,
+          metodo_pago: 'efectivo',
+          estado: 'pendiente',
+          zona_id: 5,
+          punto_entrega_id: 9,
+          cuenta_corriente_habilitada: false,
+        }];
+      }
+
+      if (sql.includes('UPDATE pedidos SET estado')) {
+        assert.deepEqual(params, ['en_ruta', '42', 3]);
+        return [];
+      }
+
+      throw new Error(`Consulta inesperada: ${sql}`);
+    },
+    notificarEnRuta: async (pedidoId, empresaId) => {
+      notificaciones.push({ pedidoId, empresaId });
+    },
+  });
+
+  await withServer(app, async (baseUrl) => {
+    const resp = await fetch(`${baseUrl}/api/repartidor/pedidos/42`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ estado: 'en_ruta' }),
+    });
+    assert.equal(resp.status, 200);
+  });
+
+  assert.deepEqual(notificaciones, [{ pedidoId: '42', empresaId: 3 }]);
+});
+
 test('activos-resumen no consulta inventario cuando el pedido no tiene productos activos', async () => {
   const sqlCalls = [];
   const app = buildTestApp({
@@ -571,6 +613,26 @@ test('entregar no solicita comprobante si hay adjunto pendiente o aprobado', asy
         validado: 1,
         procesado: true,
         estado_revision: 'aprobado',
+      }],
+    },
+    {
+      nombre: 'validado sin path',
+      comprobantes: [{
+        archivo_path: '',
+        comprobante_path: '',
+        validado: 1,
+        procesado: false,
+        estado_revision: 'pendiente',
+      }],
+    },
+    {
+      nombre: 'verificado sin path',
+      comprobantes: [{
+        archivo_path: '',
+        comprobante_path: '',
+        validado: 0,
+        procesado: false,
+        estado_revision: 'verificado',
       }],
     },
   ];

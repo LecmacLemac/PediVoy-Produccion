@@ -36,14 +36,22 @@ export function createRepartidorApiRouter(deps) {
   }
 
   function comprobanteBloqueaSolicitud(row) {
+    const estado = String(row?.estado_revision || 'pendiente').trim().toLowerCase();
+    if (estado === 'rechazado' || estado === 'duplicado') return false;
+
+    if (
+      Number(row?.validado || 0) === 1
+      || row?.procesado === true
+      || ['aprobado', 'verificado', 'acreditado'].includes(estado)
+    ) {
+      return true;
+    }
+
     const tieneArchivo = Boolean(
       String(row?.archivo_path || '').trim()
       || String(row?.comprobante_path || '').trim()
     );
     if (!tieneArchivo) return false;
-
-    const estado = String(row?.estado_revision || 'pendiente').trim().toLowerCase();
-    if (estado === 'rechazado' || estado === 'duplicado') return false;
 
     // Cualquier archivo no rechazado ya fue adjuntado: puede estar pendiente,
     // en revisión o aprobado, pero no corresponde pedirlo nuevamente.
