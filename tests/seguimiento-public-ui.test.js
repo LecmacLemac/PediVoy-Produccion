@@ -43,6 +43,9 @@ test('seguimiento público permite zoom del navegador y tiene recuperación visi
   assert.match(html, /id="retryButton"/);
   assert.match(html, /aria-live="polite"/);
   assert.match(html, /Retry-After/);
+  assert.match(html, /id="toggleDetails"/);
+  assert.match(html, /aria-expanded="true"/);
+  assert.match(html, /seguimiento:pedido:compact:v1/);
 });
 
 test('seguimiento público muestra pago desde backend y oculta GPS desactualizado', () => {
