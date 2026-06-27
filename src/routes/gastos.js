@@ -3,20 +3,37 @@ import express from 'express';
 import multer from 'multer';
 import path from 'path';
 
-import { withAuth, checkLicencia, isSuper, isRepartidor, getEmpresaIdFromToken } from '../services.js';
+import {
+  withAuth as defaultWithAuth,
+  checkLicencia as defaultCheckLicencia,
+  isSuper as defaultIsSuper,
+  isRepartidor as defaultIsRepartidor,
+  getEmpresaIdFromToken as defaultGetEmpresaIdFromToken
+} from '../services.js';
 import { query } from '../db.js';
 
-export function createGastosRouter({ GASTOS_DIR }) {
+export function createGastosRouter({
+  GASTOS_DIR,
+  query: queryFn = query,
+  withAuth: withAuthFn = defaultWithAuth,
+  checkLicencia: checkLicenciaFn = defaultCheckLicencia,
+  isSuper: isSuperFn = defaultIsSuper,
+  isRepartidor: isRepartidorFn = defaultIsRepartidor,
+  getEmpresaIdFromToken: getEmpresaIdFromTokenFn = defaultGetEmpresaIdFromToken
+} = {}) {
   if (!GASTOS_DIR) throw new Error('createGastosRouter requiere { GASTOS_DIR }');
 
   const router = express.Router();
+  const dbQuery = queryFn;
+  const authMiddleware = withAuthFn;
+  const licenciaMiddleware = checkLicenciaFn;
 
   const ensureDepositoRefPromise = (async () => {
     try {
-      await query(`ALTER TABLE chofer_stock_mov ADD COLUMN IF NOT EXISTS deposito_id INTEGER`);
-      await query(`ALTER TABLE chofer_stock_mov ADD COLUMN IF NOT EXISTS gasto_id INTEGER`);
-      await query(`ALTER TABLE gastos_repartidor ADD COLUMN IF NOT EXISTS deposito_id INTEGER`);
-      await query(`
+      await dbQuery(`ALTER TABLE chofer_stock_mov ADD COLUMN IF NOT EXISTS deposito_id INTEGER`);
+      await dbQuery(`ALTER TABLE chofer_stock_mov ADD COLUMN IF NOT EXISTS gasto_id INTEGER`);
+      await dbQuery(`ALTER TABLE gastos_repartidor ADD COLUMN IF NOT EXISTS deposito_id INTEGER`);
+      await dbQuery(`
         CREATE TABLE IF NOT EXISTS deposito_chofer (
           id SERIAL PRIMARY KEY,
           empresa_id INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
@@ -40,11 +57,74 @@ export function createGastosRouter({ GASTOS_DIR }) {
     return (tipo === 'carga_llenos' || tipo === 'compra_mercaderia') && qty > 0 && pid > 0;
   };
 
+  async function validateChoferEmpresa({ empresaId, choferId }) {
+    const empId = Number(empresaId);
+    const chId = Number(choferId);
+    if (!Number.isFinite(empId) || empId <= 0 || !Number.isFinite(chId) || chId <= 0) {
+      return false;
+    }
+
+    const rows = await dbQuery(
+      `SELECT id FROM choferes WHERE id = $1 AND empresa_id = $2 LIMIT 1`,
+      [chId, empId]
+    );
+    return rows.length > 0;
+  }
+
+  async function isDepositoPermisosEstricto(empresaId) {
+    const rows = await dbQuery(
+      `SELECT COALESCE((config_operativa->>'deposito_permisos_estricto')::boolean, FALSE) AS estricto
+         FROM empresas
+        WHERE id = $1
+        LIMIT 1`,
+      [Number(empresaId)]
+    );
+    return !!rows?.[0]?.estricto;
+  }
+
+  async function choferPuedeUsarDeposito({ empresaId, choferId, depositoId }) {
+    const empId = Number(empresaId);
+    const chId = Number(choferId);
+    const depId = Number(depositoId);
+    if (!empId || !chId || !depId) return false;
+
+    const depRows = await dbQuery(
+      `SELECT id FROM depositos WHERE id = $1 AND empresa_id = $2 AND activo = TRUE LIMIT 1`,
+      [depId, empId]
+    );
+    if (!depRows.length) return false;
+
+    const cfgRows = await dbQuery(
+      `SELECT COUNT(*)::int AS c
+         FROM deposito_chofer
+        WHERE empresa_id = $1
+          AND chofer_id = $2
+          AND activo = TRUE`,
+      [empId, chId]
+    );
+    const cfgCount = Number(cfgRows?.[0]?.c || 0);
+    if (cfgCount === 0) {
+      return !(await isDepositoPermisosEstricto(empId));
+    }
+
+    const okRows = await dbQuery(
+      `SELECT 1
+         FROM deposito_chofer
+        WHERE empresa_id = $1
+          AND chofer_id = $2
+          AND deposito_id = $3
+          AND activo = TRUE
+        LIMIT 1`,
+      [empId, chId, depId]
+    );
+    return okRows.length > 0;
+  }
+
   async function applyStockIngresoFromGasto({ empresaId, choferId, productoId, depositoId, fecha, cantidad, descripcion, gastoId }) {
     const qtyNum = Number(cantidad || 0);
     if (!qtyNum || qtyNum <= 0) return;
 
-    await query(
+    await dbQuery(
       `
       INSERT INTO chofer_stock_mov 
         (empresa_id, chofer_id, producto_id, deposito_id, gasto_id, fecha, tipo, cantidad, referencia, created_at)
@@ -62,7 +142,7 @@ export function createGastosRouter({ GASTOS_DIR }) {
       ]
     );
 
-    await query(
+    await dbQuery(
       `
       INSERT INTO chofer_stock (empresa_id, chofer_id, producto_id, cantidad)
       VALUES ($1, $2, $3, $4)
@@ -77,7 +157,7 @@ export function createGastosRouter({ GASTOS_DIR }) {
     const qtyNum = Number(cantidad || 0);
     if (!qtyNum || qtyNum <= 0) return;
 
-    await query(
+    await dbQuery(
       `
       UPDATE chofer_stock
          SET cantidad = COALESCE(cantidad, 0) - $4
@@ -88,7 +168,7 @@ export function createGastosRouter({ GASTOS_DIR }) {
       [Number(empresaId), Number(choferId), Number(productoId), qtyNum]
     );
 
-    await query(`DELETE FROM chofer_stock_mov WHERE gasto_id = $1`, [Number(gastoId)]);
+    await dbQuery(`DELETE FROM chofer_stock_mov WHERE gasto_id = $1`, [Number(gastoId)]);
   }
 
   const gastosUploader = multer({
@@ -107,13 +187,13 @@ export function createGastosRouter({ GASTOS_DIR }) {
   });
 
   // GET /api/gastos
-  router.get('/', withAuth, checkLicencia, async (req, res) => {
+  router.get('/', authMiddleware, licenciaMiddleware, async (req, res) => {
     try {
       await ensureDepositoRefPromise;
       const { from, to, chofer_id, empresa_id } = req.query || {};
-      const esSuperUser = isSuper(req);
-      const esRepartidorUser = isRepartidor(req);
-      const myEmpresa = getEmpresaIdFromToken(req);
+      const esSuperUser = isSuperFn(req);
+      const esRepartidorUser = isRepartidorFn(req);
+      const myEmpresa = getEmpresaIdFromTokenFn(req);
 
       let sql = `
         SELECT 
@@ -176,7 +256,7 @@ export function createGastosRouter({ GASTOS_DIR }) {
 
       sql += ` ORDER BY g.fecha DESC, g.id DESC LIMIT 200`;
 
-      const rows = await query(sql, params);
+      const rows = await dbQuery(sql, params);
       return res.json(rows);
     } catch (e) {
       console.error('Error cargando gastos:', e);
@@ -185,7 +265,7 @@ export function createGastosRouter({ GASTOS_DIR }) {
   });
 
   // POST /api/gastos (multipart: comprobante)
-  router.post('/', withAuth, checkLicencia, gastosUploader.single('comprobante'), async (req, res) => {
+  router.post('/', authMiddleware, licenciaMiddleware, gastosUploader.single('comprobante'), async (req, res) => {
     try {
       await ensureDepositoRefPromise;
       const {
@@ -194,14 +274,18 @@ export function createGastosRouter({ GASTOS_DIR }) {
       } = req.body;
 
       const file = req.file;
-      const esSuperUser = isSuper(req);
+      const esSuperUser = isSuperFn(req);
 
-      const targetEmpresa = (esSuperUser && empresa_id) ? empresa_id : getEmpresaIdFromToken(req);
+      const targetEmpresa = (esSuperUser && empresa_id) ? empresa_id : getEmpresaIdFromTokenFn(req);
       let targetChofer = chofer_id;
       if (!targetChofer && req.user.chofer_id) targetChofer = req.user.chofer_id;
 
       if (!targetEmpresa || !targetChofer) {
         return res.status(400).json({ error: 'Faltan datos de empresa o chofer' });
+      }
+
+      if (!(await validateChoferEmpresa({ empresaId: targetEmpresa, choferId: targetChofer }))) {
+        return res.status(400).json({ error: 'Chofer inválido para la empresa' });
       }
 
       const tipoOp = String(tipo || '').trim();
@@ -219,7 +303,7 @@ export function createGastosRouter({ GASTOS_DIR }) {
           return res.status(400).json({ error: 'Cantidad requerida para movimientos de retornables.' });
         }
 
-        const pr = await query(
+        const pr = await dbQuery(
           `SELECT id
              FROM productos
             WHERE id = $1
@@ -235,42 +319,18 @@ export function createGastosRouter({ GASTOS_DIR }) {
         }
       }
 
-      if (depositoId && (tipoOp === 'carga_llenos' || tipoOp === 'compra_mercaderia')) {
-        const depRows = await query(
-          `SELECT id FROM depositos WHERE id = $1 AND empresa_id = $2 AND activo = TRUE LIMIT 1`,
-          [depositoId, targetEmpresa]
-        );
-        if (!depRows.length) {
-          return res.status(400).json({ error: 'Depósito inválido para la empresa' });
-        }
-
-        const cfgRows = await query(
-          `SELECT COUNT(*)::int AS c
-             FROM deposito_chofer
-            WHERE empresa_id = $1
-              AND chofer_id = $2
-              AND activo = TRUE`,
-          [targetEmpresa, Number(targetChofer)]
-        );
-        const cfgCount = Number(cfgRows?.[0]?.c || 0);
-        if (cfgCount > 0) {
-          const okRows = await query(
-            `SELECT 1
-               FROM deposito_chofer
-              WHERE empresa_id = $1
-                AND chofer_id = $2
-                AND deposito_id = $3
-                AND activo = TRUE
-              LIMIT 1`,
-            [targetEmpresa, Number(targetChofer), depositoId]
-          );
-          if (!okRows.length) {
-            return res.status(403).json({ error: 'Chofer no habilitado para ese depósito' });
-          }
+      if (depositoId && (tipoOp === 'carga_llenos' || tipoOp === 'descarga_vacios' || tipoOp === 'compra_mercaderia')) {
+        const permitido = await choferPuedeUsarDeposito({
+          empresaId: targetEmpresa,
+          choferId: targetChofer,
+          depositoId
+        });
+        if (!permitido) {
+          return res.status(403).json({ error: 'Chofer no habilitado para ese depósito' });
         }
       }
 
-      const inserted = await query(
+      const inserted = await dbQuery(
         `
         INSERT INTO gastos_repartidor (
             empresa_id, chofer_id, fecha, tipo, descripcion,
@@ -316,20 +376,20 @@ export function createGastosRouter({ GASTOS_DIR }) {
   });
 
   // PUT /api/gastos/:id (multipart: comprobante)
-  router.put('/:id', withAuth, checkLicencia, gastosUploader.single('comprobante'), async (req, res) => {
+  router.put('/:id', authMiddleware, licenciaMiddleware, gastosUploader.single('comprobante'), async (req, res) => {
     try {
       await ensureDepositoRefPromise;
       const id = Number(req.params.id);
       if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: 'ID inválido' });
 
       const role = (req.user?.role || '').toLowerCase();
-      const esSuperUser = isSuper(req);
+      const esSuperUser = isSuperFn(req);
       const esUserRole = role === 'user';
       const esRepartidorUser = role === 'repartidor';
 
       if (!(esSuperUser || esUserRole || esRepartidorUser)) return res.status(403).json({ error: 'No autorizado' });
 
-      const rows0 = await query(
+      const rows0 = await dbQuery(
         `
         SELECT id, empresa_id, chofer_id, fecha, tipo, descripcion, monto, comprobante_path, cantidad, producto_id, deposito_id
         FROM gastos_repartidor
@@ -343,7 +403,7 @@ export function createGastosRouter({ GASTOS_DIR }) {
 
       const g0 = rows0[0];
 
-      const myEmpresa = getEmpresaIdFromToken(req);
+      const myEmpresa = getEmpresaIdFromTokenFn(req);
       if (!esSuperUser && Number(g0.empresa_id) !== Number(myEmpresa)) {
         return res.status(403).json({ error: 'No autorizado' });
       }
@@ -371,6 +431,10 @@ export function createGastosRouter({ GASTOS_DIR }) {
         ? Number(req.user?.chofer_id || g0.chofer_id)
         : (chofer_id ? Number(chofer_id) : Number(g0.chofer_id));
 
+      if (!(await validateChoferEmpresa({ empresaId: targetEmpresa, choferId: targetChofer }))) {
+        return res.status(400).json({ error: 'Chofer inválido para la empresa' });
+      }
+
       const fechaDate = (fecha ? String(fecha).slice(0, 10) : String(g0.fecha).slice(0, 10));
 
       const newTipo = tipo || g0.tipo;
@@ -381,11 +445,11 @@ export function createGastosRouter({ GASTOS_DIR }) {
         : Number(g0.monto || 0);
 
       const newCantidad = (cantidad === undefined || cantidad === null || cantidad === '')
-        ? null
+        ? g0.cantidad
         : Number(cantidad);
 
       const newProductoId = (producto_id === undefined || producto_id === null || producto_id === '')
-        ? null
+        ? g0.producto_id
         : Number(producto_id);
 
       const newDepositoId = (deposito_id === undefined || deposito_id === null || deposito_id === '')
@@ -404,7 +468,7 @@ export function createGastosRouter({ GASTOS_DIR }) {
           return res.status(400).json({ error: 'Cantidad requerida para movimientos de retornables.' });
         }
 
-        const pr = await query(
+        const pr = await dbQuery(
           `SELECT id
              FROM productos
             WHERE id = $1
@@ -419,35 +483,13 @@ export function createGastosRouter({ GASTOS_DIR }) {
         }
       }
 
-      if (newDepositoId && (newTipoNorm === 'carga_llenos' || newTipoNorm === 'compra_mercaderia')) {
-        const depRows = await query(
-          `SELECT id FROM depositos WHERE id = $1 AND empresa_id = $2 AND activo = TRUE LIMIT 1`,
-          [newDepositoId, targetEmpresa]
-        );
-        if (!depRows.length) return res.status(400).json({ error: 'Depósito inválido para la empresa' });
-
-        const cfgRows = await query(
-          `SELECT COUNT(*)::int AS c
-             FROM deposito_chofer
-            WHERE empresa_id = $1
-              AND chofer_id = $2
-              AND activo = TRUE`,
-          [targetEmpresa, Number(targetChofer)]
-        );
-        const cfgCount = Number(cfgRows?.[0]?.c || 0);
-        if (cfgCount > 0) {
-          const okRows = await query(
-            `SELECT 1
-               FROM deposito_chofer
-              WHERE empresa_id = $1
-                AND chofer_id = $2
-                AND deposito_id = $3
-                AND activo = TRUE
-              LIMIT 1`,
-            [targetEmpresa, Number(targetChofer), Number(newDepositoId)]
-          );
-          if (!okRows.length) return res.status(403).json({ error: 'Chofer no habilitado para ese depósito' });
-        }
+      if (newDepositoId && (newTipoNorm === 'carga_llenos' || newTipoNorm === 'descarga_vacios' || newTipoNorm === 'compra_mercaderia')) {
+        const permitido = await choferPuedeUsarDeposito({
+          empresaId: targetEmpresa,
+          choferId: targetChofer,
+          depositoId: newDepositoId
+        });
+        if (!permitido) return res.status(403).json({ error: 'Chofer no habilitado para ese depósito' });
       }
 
       const oldNeedsStock = isStockIngresoFromGasto(g0);
@@ -463,7 +505,7 @@ export function createGastosRouter({ GASTOS_DIR }) {
         });
       }
 
-      await query(
+      await dbQuery(
         `
         UPDATE gastos_repartidor
         SET empresa_id = $1,
@@ -514,22 +556,22 @@ export function createGastosRouter({ GASTOS_DIR }) {
   });
 
   // DELETE /api/gastos/:id
-  router.delete('/:id', withAuth, checkLicencia, async (req, res) => {
+  router.delete('/:id', authMiddleware, licenciaMiddleware, async (req, res) => {
     try {
       await ensureDepositoRefPromise;
       const id = Number(req.params.id);
       if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: 'ID inválido' });
 
       const role = (req.user?.role || '').toLowerCase();
-      const esSuperUser = isSuper(req);
+      const esSuperUser = isSuperFn(req);
       const esUserRole = role === 'user';
       const esRepartidorUser = role === 'repartidor';
 
       if (!(esSuperUser || esUserRole || esRepartidorUser)) return res.status(403).json({ error: 'No autorizado' });
 
-      const myEmpresa = getEmpresaIdFromToken(req);
+      const myEmpresa = getEmpresaIdFromTokenFn(req);
 
-      const rows0 = await query(
+      const rows0 = await dbQuery(
         `SELECT id, empresa_id, chofer_id, tipo, cantidad, producto_id FROM gastos_repartidor WHERE id=$1 AND ($2::int IS NULL OR empresa_id=$2) LIMIT 1`,
         [id, esSuperUser ? null : Number(myEmpresa)]
       );
@@ -553,7 +595,7 @@ export function createGastosRouter({ GASTOS_DIR }) {
         });
       }
 
-      await query(
+      await dbQuery(
         `DELETE FROM gastos_repartidor WHERE id=$1 AND ($2::int IS NULL OR empresa_id=$2)`,
         [id, esSuperUser ? null : Number(myEmpresa)]
       );

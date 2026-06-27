@@ -423,6 +423,12 @@
         </div>
 
         <div id="boxCalc" class="grid-form" style="margin-bottom:1rem">
+          <div id="boxProductoCreate" hidden>
+            <label>Producto retornable</label>
+            <select id="productoCreate">
+              <option value="">Seleccionar producto</option>
+            </select>
+          </div>
           <div>
             <label>Cantidad</label>
             <input type="number" step="0.001" id="cantidad" placeholder="0">
@@ -537,6 +543,12 @@
           </div>
 
           <div id="boxCalcEdit" class="grid-form" style="margin-bottom:1rem">
+            <div id="boxProductoEdit" hidden>
+              <label>Producto retornable</label>
+              <select id="productoEdit">
+                <option value="">Seleccionar producto</option>
+              </select>
+            </div>
             <div>
               <label>Cantidad</label>
               <input type="number" step="0.001" id="cantidadEdit" placeholder="0">
@@ -548,6 +560,12 @@
             <div>
               <label>Total Calculado</label>
               <input type="number" step="0.01" id="monto_calcEdit" placeholder="0.00" readonly>
+            </div>
+            <div id="boxDepositoEdit" hidden>
+              <label>Depósito</label>
+              <select id="depositoEdit">
+                <option value="">Seleccionar depósito</option>
+              </select>
             </div>
           </div>
 
@@ -609,6 +627,8 @@
     const montoCalcEl = $('#monto_calc');
     const boxCalc     = $('#boxCalc');
     const boxMonto    = $('#boxMonto');
+    const boxProductoCreate = $('#boxProductoCreate');
+    const productoCreateSel = $('#productoCreate');
     const boxDepositoCreate = $('#boxDepositoCreate');
     const depositoCreateSel = $('#depositoCreate');
 
@@ -623,6 +643,10 @@
     const boxCalcEdit     = $('#boxCalcEdit');
     const boxMontoEdit    = $('#boxMontoEdit');
     const montoEditInput  = $('#montoEdit');
+    const boxProductoEdit = $('#boxProductoEdit');
+    const productoEditSel = $('#productoEdit');
+    const boxDepositoEdit = $('#boxDepositoEdit');
+    const depositoEditSel = $('#depositoEdit');
     const empresaEditSel  = $('#empresaEdit');
     const choferEditSel   = $('#choferEdit');
     const descripcionEdit = $('#descripcionEdit');
@@ -636,6 +660,9 @@
     let editBusy = false;
     let deleteBusy = false;
     let depositosCreate = [];
+    let depositosEdit = [];
+    let productosCreate = [];
+    let productosEdit = [];
 
     window.__gastos = [];
 
@@ -669,51 +696,97 @@
       return 'bg-load';
     }
 
-    function renderDepositosCreate() {
-      if (!depositoCreateSel) return;
-      const has = Array.isArray(depositosCreate) && depositosCreate.length > 0;
+    function renderDepositos(selectEl, depositos) {
+      if (!selectEl) return;
+      const has = Array.isArray(depositos) && depositos.length > 0;
       const emptyLabel = has ? 'Seleccionar depósito' : 'Sin depósitos habilitados';
-      depositoCreateSel.innerHTML = `<option value="">${emptyLabel}</option>` +
-        (has ? depositosCreate.map(d => `<option value="${Number(d.id)}">${esc(d.nombre)}</option>`).join('') : '');
+      selectEl.innerHTML = `<option value="">${emptyLabel}</option>` +
+        (has ? depositos.map(d => `<option value="${Number(d.id)}">${esc(d.nombre)}</option>`).join('') : '');
     }
 
-    async function loadDepositosCreate() {
+    function renderProductos(selectEl, productos) {
+      if (!selectEl) return;
+      const has = Array.isArray(productos) && productos.length > 0;
+      const emptyLabel = has ? 'Seleccionar producto' : 'Sin retornables configurados';
+      selectEl.innerHTML = `<option value="">${emptyLabel}</option>` +
+        (has ? productos.map(p => `<option value="${Number(p.id)}">#${Number(p.id)} · ${esc(p.nombre)}</option>`).join('') : '');
+    }
+
+    async function fetchDepositosFor({ empresaId = null, choferId = null } = {}) {
       try {
-        let empresaId = null;
-        let choferId = null;
-
-        if (isSuper) {
-          empresaId = Number($('#empresaCreate')?.value || 0) || null;
-          choferId = Number($('#choferCreate')?.value || 0) || null;
-        } else if (isUser) {
-          choferId = Number($('#choferCreate')?.value || 0) || null;
-        }
-
         if ((isSuper || isUser) && choferId) {
           const params = new URLSearchParams({ chofer_id: String(choferId) });
           if (empresaId) params.set('empresa_id', String(empresaId));
           const r = await authFetch(`/api/stock/depositos/choferes?${params.toString()}`);
           const rows = await r.json();
-          depositosCreate = (Array.isArray(rows) ? rows : [])
+          const permitidos = (Array.isArray(rows) ? rows : [])
             .filter(x => x?.activo !== false)
             .map(x => ({ id: Number(x.deposito_id), nombre: String(x.deposito_nombre || `Depósito #${Number(x.deposito_id)}`) }))
             .filter(x => x.id > 0);
+          if (permitidos.length) return permitidos;
+          const cfgParams = new URLSearchParams();
+          if (isSuper && empresaId) cfgParams.set('empresa_id', String(empresaId));
+          const cfgQs = cfgParams.toString();
+          const cfg = await authFetch(`/api/stock/depositos/permisos-config${cfgQs ? `?${cfgQs}` : ''}`)
+            .then(r => r.ok ? r.json() : null)
+            .catch(() => null);
+          if (cfg?.deposito_permisos_estricto) return [];
+          // Compatibilidad: si el chofer no tiene permisos explícitos, el backend puede permitir todos.
         } else {
-          const params = new URLSearchParams();
-          if (isSuper && empresaId) params.set('empresa_id', String(empresaId));
-          const qs = params.toString();
-          const r = await authFetch(`/api/stock/depositos${qs ? `?${qs}` : ''}`);
-          const rows = await r.json();
-          depositosCreate = (Array.isArray(rows) ? rows : [])
-            .filter(x => x?.activo !== false)
-            .map(x => ({ id: Number(x.id), nombre: String(x.nombre || `Depósito #${Number(x.id)}`) }))
-            .filter(x => x.id > 0);
+          // Sigue abajo al listado general.
         }
-      } catch {
-        depositosCreate = [];
-      }
 
-      renderDepositosCreate();
+        const params = new URLSearchParams();
+        if (isSuper && empresaId) params.set('empresa_id', String(empresaId));
+        const qs = params.toString();
+        const r = await authFetch(`/api/stock/depositos${qs ? `?${qs}` : ''}`);
+        const rows = await r.json();
+        return (Array.isArray(rows) ? rows : [])
+          .filter(x => x?.activo !== false)
+          .map(x => ({ id: Number(x.id), nombre: String(x.nombre || `Depósito #${Number(x.id)}`) }))
+          .filter(x => x.id > 0);
+      } catch {
+        return [];
+      }
+    }
+
+    async function fetchProductosFor({ empresaId = null } = {}) {
+      try {
+        const params = new URLSearchParams();
+        if (isSuper && empresaId) params.set('empresa_id', String(empresaId));
+        const qs = params.toString();
+        const r = await authFetch(`/api/productos${qs ? `?${qs}` : ''}`);
+        const rows = await r.json();
+        return (Array.isArray(rows) ? rows : [])
+          .filter(p => !!p?.retornable && p?.activo !== false)
+          .map(p => ({ id: Number(p.id), nombre: String(p.nombre || `Producto #${Number(p.id)}`) }))
+          .filter(p => p.id > 0);
+      } catch {
+        return [];
+      }
+    }
+
+    async function loadDepositosCreate() {
+      let empresaId = null;
+      let choferId = null;
+      if (isSuper) {
+        empresaId = Number($('#empresaCreate')?.value || 0) || null;
+        choferId = Number($('#choferCreate')?.value || 0) || null;
+      } else if (isUser) {
+        choferId = Number($('#choferCreate')?.value || 0) || null;
+      }
+      depositosCreate = await fetchDepositosFor({ empresaId, choferId });
+      renderDepositos(depositoCreateSel, depositosCreate);
+    }
+
+    async function loadProductosCreate() {
+      const empresaId = isSuper ? (Number($('#empresaCreate')?.value || 0) || null) : null;
+      if (isSuper && !empresaId) {
+        productosCreate = [];
+      } else {
+        productosCreate = await fetchProductosFor({ empresaId });
+      }
+      renderProductos(productoCreateSel, productosCreate);
     }
 
     // Toggle campos según tipo (alta)
@@ -731,8 +804,12 @@
         calcMonto();
       }
 
+      if (boxProductoCreate) boxProductoCreate.hidden = !isStockMov;
       if (boxDepositoCreate) boxDepositoCreate.hidden = !isStockMov;
-      if (isStockMov) loadDepositosCreate();
+      if (isStockMov) {
+        loadProductosCreate();
+        loadDepositosCreate();
+      }
     }
 
     function calcMonto(){
@@ -947,7 +1024,7 @@
     }
 
     // ====== CRUD ======
-    window.editG = (id) => {
+    window.editG = async (id) => {
       const g = (window.__gastos || []).find(x => Number(x.id) === Number(id));
       if (!g) return;
 
@@ -994,6 +1071,8 @@
       if (g.tipo === 'varios') {
         if (boxCalcEdit)  boxCalcEdit.hidden  = true;
         if (boxMontoEdit) boxMontoEdit.hidden = false;
+        if (boxProductoEdit) boxProductoEdit.hidden = true;
+        if (boxDepositoEdit) boxDepositoEdit.hidden = true;
         if (montoEditInput) {
           montoEditInput.readOnly = false;
           // Mostramos valor absoluto por si venía negativo de antes
@@ -1002,6 +1081,25 @@
       } else {
         if (boxCalcEdit)  boxCalcEdit.hidden  = false;
         if (boxMontoEdit) boxMontoEdit.hidden = false;
+
+        const isStockMov = g.tipo === 'carga_llenos' || g.tipo === 'descarga_vacios';
+        if (boxProductoEdit) boxProductoEdit.hidden = !isStockMov;
+        if (boxDepositoEdit) boxDepositoEdit.hidden = !isStockMov;
+
+        if (isStockMov) {
+          const empId = isSuper
+            ? Number(g.empresa_id || empresaEditSel?.value || 0) || null
+            : null;
+          const chId = Number(g.chofer_id || choferEditSel?.value || 0) || null;
+
+          productosEdit = await fetchProductosFor({ empresaId: empId });
+          renderProductos(productoEditSel, productosEdit);
+          if (productoEditSel) productoEditSel.value = String(g.producto_id || '');
+
+          depositosEdit = await fetchDepositosFor({ empresaId: empId, choferId: chId });
+          renderDepositos(depositoEditSel, depositosEdit);
+          if (depositoEditSel) depositoEditSel.value = String(g.deposito_id || '');
+        }
         
         const q  = Number(g.cantidad || 0);
         // Calculamos PU en positivo
@@ -1074,8 +1172,18 @@
         fd.append('precio_unitario', puEl.value);
       }
 
+      const isStockMov = tipo === 'carga_llenos' || tipo === 'descarga_vacios';
+      const productoVal = productoCreateSel ? String(productoCreateSel.value || '') : '';
+      if (isStockMov && !productoVal) {
+        alert('Seleccione producto retornable para carga/descarga');
+        return;
+      }
+      if (productoVal) {
+        fd.append('producto_id', productoVal);
+      }
+
       const depositoVal = depositoCreateSel ? String(depositoCreateSel.value || '') : '';
-      if ((tipo === 'carga_llenos' || tipo === 'descarga_vacios') && !depositoVal) {
+      if (isStockMov && !depositoVal) {
         alert('Seleccione depósito para carga/descarga');
         return;
       }
@@ -1180,6 +1288,22 @@
         fd.append('precio_unitario', puEditEl.value || '');
       }
 
+      const isStockMov = tipo === 'carga_llenos' || tipo === 'descarga_vacios';
+      if (isStockMov) {
+        const prodVal = (productoEditSel && productoEditSel.value) || g.producto_id || '';
+        const depVal = (depositoEditSel && depositoEditSel.value) || g.deposito_id || '';
+        if (!prodVal) {
+          alert('Seleccione producto retornable');
+          return;
+        }
+        if (!depVal) {
+          alert('Seleccione depósito');
+          return;
+        }
+        fd.append('producto_id', String(prodVal));
+        fd.append('deposito_id', String(depVal));
+      }
+
       if (isSuper) {
         const empVal = (empresaEditSel && empresaEditSel.value) || g.empresa_id;
         fd.append('empresa_id', empVal);
@@ -1270,6 +1394,7 @@
            $('#empresaCreate').value = val;
         }
         await loadDepositosCreate();
+        await loadProductosCreate();
         loadGastos();
     });
 
@@ -1281,10 +1406,33 @@
           await loadChoferes(empresaCreateSel.value);
         }
         await loadDepositosCreate();
+        await loadProductosCreate();
       });
     }
     if (choferCreateSel) {
       choferCreateSel.addEventListener('change', loadDepositosCreate);
+    }
+
+    if (empresaEditSel) {
+      empresaEditSel.addEventListener('change', async () => {
+        if (!editingId) return;
+        const empId = Number(empresaEditSel.value || 0) || null;
+        const chId = Number(choferEditSel?.value || 0) || null;
+        productosEdit = await fetchProductosFor({ empresaId: empId });
+        renderProductos(productoEditSel, productosEdit);
+        depositosEdit = await fetchDepositosFor({ empresaId: empId, choferId: chId });
+        renderDepositos(depositoEditSel, depositosEdit);
+      });
+    }
+
+    if (choferEditSel) {
+      choferEditSel.addEventListener('change', async () => {
+        if (!editingId) return;
+        const empId = Number(empresaEditSel?.value || 0) || null;
+        const chId = Number(choferEditSel.value || 0) || null;
+        depositosEdit = await fetchDepositosFor({ empresaId: empId, choferId: chId });
+        renderDepositos(depositoEditSel, depositosEdit);
+      });
     }
     
     choferFilter.addEventListener('change', loadGastos);
@@ -1333,6 +1481,7 @@
             await loadChoferes(null);
         }
 
+        await loadProductosCreate();
         toggleFields();
         loadGastos();
 

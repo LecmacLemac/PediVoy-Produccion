@@ -1,14 +1,29 @@
 // src/routes/stock.js
 import express from 'express';
-import { withAuth, checkLicencia, isSuper, getEmpresaIdFromToken } from '../services.js';
-import { query } from '../db.js';
+import {
+  withAuth as defaultWithAuth,
+  checkLicencia as defaultCheckLicencia,
+  isSuper as defaultIsSuper,
+  getEmpresaIdFromToken as defaultGetEmpresaIdFromToken
+} from '../services.js';
+import { query, pool as defaultPool } from '../db.js';
 
-export function createStockRouter() {
+export function createStockRouter({
+  query: queryFn = query,
+  pool: dbPool = defaultPool,
+  withAuth: withAuthFn = defaultWithAuth,
+  checkLicencia: checkLicenciaFn = defaultCheckLicencia,
+  isSuper: isSuperFn = defaultIsSuper,
+  getEmpresaIdFromToken: getEmpresaIdFromTokenFn = defaultGetEmpresaIdFromToken
+} = {}) {
   const router = express.Router();
+  const dbQuery = queryFn;
+  const authMiddleware = withAuthFn;
+  const licenciaMiddleware = checkLicenciaFn;
 
   const ensureDepositosSchemaPromise = (async () => {
     try {
-      await query(`
+      await dbQuery(`
         CREATE TABLE IF NOT EXISTS depositos (
           id SERIAL PRIMARY KEY,
           empresa_id INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
@@ -20,10 +35,10 @@ export function createStockRouter() {
           UNIQUE (empresa_id, nombre)
         )
       `);
-      await query(`CREATE INDEX IF NOT EXISTS idx_depositos_empresa_activo ON depositos (empresa_id, activo)`);
-      await query(`ALTER TABLE chofer_stock_mov ADD COLUMN IF NOT EXISTS deposito_id INTEGER REFERENCES depositos(id) ON DELETE SET NULL`);
-      await query(`CREATE INDEX IF NOT EXISTS idx_csm_deposito_id ON chofer_stock_mov (deposito_id)`);
-      await query(`
+      await dbQuery(`CREATE INDEX IF NOT EXISTS idx_depositos_empresa_activo ON depositos (empresa_id, activo)`);
+      await dbQuery(`ALTER TABLE chofer_stock_mov ADD COLUMN IF NOT EXISTS deposito_id INTEGER REFERENCES depositos(id) ON DELETE SET NULL`);
+      await dbQuery(`CREATE INDEX IF NOT EXISTS idx_csm_deposito_id ON chofer_stock_mov (deposito_id)`);
+      await dbQuery(`
         CREATE TABLE IF NOT EXISTS deposito_chofer (
           id SERIAL PRIMARY KEY,
           empresa_id INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
@@ -35,14 +50,14 @@ export function createStockRouter() {
           UNIQUE (empresa_id, deposito_id, chofer_id)
         )
       `);
-      await query(`CREATE INDEX IF NOT EXISTS idx_deposito_chofer_chofer ON deposito_chofer (empresa_id, chofer_id, activo)`);
+      await dbQuery(`CREATE INDEX IF NOT EXISTS idx_deposito_chofer_chofer ON deposito_chofer (empresa_id, chofer_id, activo)`);
     } catch (e) {
       console.error('stock/depositos schema error:', e?.message || e);
     }
   })();
 
   async function isDepositoPermisosEstricto(empresaId) {
-    const rows = await query(
+    const rows = await dbQuery(
       `SELECT COALESCE((config_operativa->>'deposito_permisos_estricto')::boolean, FALSE) AS estricto
          FROM empresas
         WHERE id = $1
@@ -55,13 +70,13 @@ export function createStockRouter() {
   async function choferPuedeUsarDeposito({ empresaId, choferId, depositoId }) {
     if (!empresaId || !choferId || !depositoId) return false;
 
-    const depRows = await query(
+    const depRows = await dbQuery(
       `SELECT id FROM depositos WHERE id = $1 AND empresa_id = $2 AND activo = TRUE LIMIT 1`,
       [depositoId, empresaId]
     );
     if (!depRows.length) return false;
 
-    const cfgRows = await query(
+    const cfgRows = await dbQuery(
       `SELECT COUNT(*)::int AS c
          FROM deposito_chofer
         WHERE empresa_id = $1
@@ -75,7 +90,7 @@ export function createStockRouter() {
       return !strict; // compat cuando estricto=false; bloquea cuando estricto=true
     }
 
-    const okRows = await query(
+    const okRows = await dbQuery(
       `SELECT 1
          FROM deposito_chofer
         WHERE empresa_id = $1
@@ -88,14 +103,61 @@ export function createStockRouter() {
     return okRows.length > 0;
   }
 
+  async function validateChoferEmpresa({ empresaId, choferId }) {
+    const empId = Number(empresaId);
+    const chId = Number(choferId);
+    if (!Number.isFinite(empId) || empId <= 0 || !Number.isFinite(chId) || chId <= 0) {
+      return false;
+    }
+
+    const rows = await dbQuery(
+      `SELECT id FROM choferes WHERE id = $1 AND empresa_id = $2 LIMIT 1`,
+      [chId, empId]
+    );
+    return rows.length > 0;
+  }
+
+  async function validateProductoEmpresa({ empresaId, productoId }) {
+    const empId = Number(empresaId);
+    const prodId = Number(productoId);
+    if (!Number.isFinite(empId) || empId <= 0 || !Number.isFinite(prodId) || prodId <= 0) {
+      return false;
+    }
+
+    const rows = await dbQuery(
+      `SELECT id FROM productos WHERE id = $1 AND empresa_id = $2 AND deleted_at IS NULL LIMIT 1`,
+      [prodId, empId]
+    );
+    return rows.length > 0;
+  }
+
+  async function withTransaction(fn) {
+    const client = await dbPool.connect();
+    try {
+      await client.query('BEGIN');
+      const txQuery = async (sql, params = []) => {
+        const result = await client.query(sql, params);
+        return result.rows;
+      };
+      const result = await fn(txQuery);
+      await client.query('COMMIT');
+      return result;
+    } catch (e) {
+      try { await client.query('ROLLBACK'); } catch {}
+      throw e;
+    } finally {
+      client.release();
+    }
+  }
+
   // GET /api/stock/depositos
-  router.get('/depositos', withAuth, async (req, res) => {
+  router.get('/depositos', authMiddleware, async (req, res) => {
     try {
       await ensureDepositosSchemaPromise;
-      const esSuperUser = isSuper(req);
+      const esSuperUser = isSuperFn(req);
       const empresaId = esSuperUser && req.query.empresa_id
         ? Number(req.query.empresa_id)
-        : getEmpresaIdFromToken(req);
+        : getEmpresaIdFromTokenFn(req);
 
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido' });
 
@@ -103,7 +165,7 @@ export function createStockRouter() {
       const role = String(req.user?.role || '').toLowerCase();
       const choferId = Number(req.user?.chofer_id || 0) || null;
 
-      let rows = await query(
+      let rows = await dbQuery(
         `SELECT id, empresa_id, nombre, direccion, activo, created_at, updated_at
            FROM depositos
           WHERE empresa_id = $1
@@ -113,7 +175,7 @@ export function createStockRouter() {
       );
 
       if (role === 'repartidor' && choferId) {
-        const cfgRows = await query(
+        const cfgRows = await dbQuery(
           `SELECT deposito_id
              FROM deposito_chofer
             WHERE empresa_id = $1
@@ -137,20 +199,20 @@ export function createStockRouter() {
   });
 
   // POST /api/stock/depositos
-  router.post('/depositos', withAuth, async (req, res) => {
+  router.post('/depositos', authMiddleware, async (req, res) => {
     try {
       await ensureDepositosSchemaPromise;
-      const esSuperUser = isSuper(req);
+      const esSuperUser = isSuperFn(req);
       const empresaId = esSuperUser && req.body?.empresa_id
         ? Number(req.body.empresa_id)
-        : getEmpresaIdFromToken(req);
+        : getEmpresaIdFromTokenFn(req);
       const nombre = String(req.body?.nombre || '').trim();
       const direccion = req.body?.direccion ? String(req.body.direccion).trim() : null;
 
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido' });
       if (!nombre) return res.status(400).json({ error: 'Nombre requerido' });
 
-      const rows = await query(
+      const rows = await dbQuery(
         `INSERT INTO depositos (empresa_id, nombre, direccion, activo)
          VALUES ($1, $2, $3, TRUE)
          ON CONFLICT (empresa_id, nombre)
@@ -167,13 +229,13 @@ export function createStockRouter() {
   });
 
   // PUT /api/stock/depositos/:id
-  router.put('/depositos/:id', withAuth, async (req, res) => {
+  router.put('/depositos/:id', authMiddleware, async (req, res) => {
     try {
       await ensureDepositosSchemaPromise;
-      const esSuperUser = isSuper(req);
+      const esSuperUser = isSuperFn(req);
       const empresaId = esSuperUser && req.body?.empresa_id
         ? Number(req.body.empresa_id)
-        : getEmpresaIdFromToken(req);
+        : getEmpresaIdFromTokenFn(req);
       const depositoId = Number(req.params.id || 0);
       const nombre = req.body?.nombre != null ? String(req.body.nombre).trim() : null;
       const direccion = req.body?.direccion != null ? String(req.body.direccion).trim() : null;
@@ -182,7 +244,7 @@ export function createStockRouter() {
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido' });
       if (!depositoId) return res.status(400).json({ error: 'id inválido' });
 
-      const current = await query(
+      const current = await dbQuery(
         `SELECT id, empresa_id, nombre, direccion, activo FROM depositos WHERE id = $1 AND empresa_id = $2 LIMIT 1`,
         [depositoId, empresaId]
       );
@@ -194,7 +256,7 @@ export function createStockRouter() {
 
       if (!String(targetNombre || '').trim()) return res.status(400).json({ error: 'Nombre requerido' });
 
-      const rows = await query(
+      const rows = await dbQuery(
         `UPDATE depositos
             SET nombre = $1,
                 direccion = $2,
@@ -214,19 +276,19 @@ export function createStockRouter() {
   });
 
   // DELETE /api/stock/depositos/:id (soft-delete por compat)
-  router.delete('/depositos/:id', withAuth, async (req, res) => {
+  router.delete('/depositos/:id', authMiddleware, async (req, res) => {
     try {
       await ensureDepositosSchemaPromise;
-      const esSuperUser = isSuper(req);
+      const esSuperUser = isSuperFn(req);
       const empresaId = esSuperUser && req.query?.empresa_id
         ? Number(req.query.empresa_id)
-        : getEmpresaIdFromToken(req);
+        : getEmpresaIdFromTokenFn(req);
       const depositoId = Number(req.params.id || 0);
 
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido' });
       if (!depositoId) return res.status(400).json({ error: 'id inválido' });
 
-      const rows = await query(
+      const rows = await dbQuery(
         `UPDATE depositos
             SET activo = FALSE,
                 updated_at = NOW()
@@ -245,13 +307,13 @@ export function createStockRouter() {
   });
 
   // GET /api/stock/depositos/summary
-  router.get('/depositos/summary', withAuth, async (req, res) => {
+  router.get('/depositos/summary', authMiddleware, async (req, res) => {
     try {
       await ensureDepositosSchemaPromise;
-      const esSuperUser = isSuper(req);
+      const esSuperUser = isSuperFn(req);
       const empresaId = esSuperUser && req.query?.empresa_id
         ? Number(req.query.empresa_id)
-        : getEmpresaIdFromToken(req);
+        : getEmpresaIdFromTokenFn(req);
       const from = String(req.query?.from || '').slice(0, 10);
       const to = String(req.query?.to || '').slice(0, 10);
 
@@ -270,7 +332,7 @@ export function createStockRouter() {
         params.push(to);
       }
 
-      const rows = await query(
+      const rows = await dbQuery(
         `SELECT
            d.id AS deposito_id,
            d.nombre AS deposito_nombre,
@@ -297,13 +359,13 @@ export function createStockRouter() {
   });
 
   // POST /api/stock/depositos/transferir
-  router.post('/depositos/transferir', withAuth, async (req, res) => {
+  router.post('/depositos/transferir', authMiddleware, async (req, res) => {
     try {
       await ensureDepositosSchemaPromise;
-      const esSuperUser = isSuper(req);
+      const esSuperUser = isSuperFn(req);
       const empresaId = esSuperUser && req.body?.empresa_id
         ? Number(req.body.empresa_id)
-        : getEmpresaIdFromToken(req);
+        : getEmpresaIdFromTokenFn(req);
 
       const origenId = Number(req.body?.origen_deposito_id || 0);
       const destinoId = Number(req.body?.destino_deposito_id || 0);
@@ -318,7 +380,14 @@ export function createStockRouter() {
       if (!choferId) return res.status(400).json({ error: 'chofer_id requerido' });
       if (!Number.isFinite(cantidad) || cantidad <= 0) return res.status(400).json({ error: 'cantidad inválida' });
 
-      const deps = await query(
+      if (!(await validateChoferEmpresa({ empresaId, choferId }))) {
+        return res.status(400).json({ error: 'Chofer inválido para la empresa' });
+      }
+      if (!(await validateProductoEmpresa({ empresaId, productoId }))) {
+        return res.status(400).json({ error: 'Producto inválido para la empresa' });
+      }
+
+      const deps = await dbQuery(
         `SELECT id, nombre FROM depositos WHERE empresa_id = $1 AND activo = TRUE AND id = ANY($2::int[])`,
         [empresaId, [origenId, destinoId]]
       );
@@ -330,49 +399,53 @@ export function createStockRouter() {
         return res.status(403).json({ error: 'Chofer no habilitado para depósito origen/destino' });
       }
 
-      const saldoRows = await query(
-        `SELECT COALESCE(SUM(cantidad),0) AS saldo
-           FROM chofer_stock_mov
-          WHERE empresa_id = $1
-            AND deposito_id = $2
-            AND producto_id = $3`,
-        [empresaId, origenId, productoId]
-      );
-      const saldoOrigen = Number(saldoRows?.[0]?.saldo || 0);
-      if (saldoOrigen < cantidad) {
-        return res.status(400).json({ error: `Saldo insuficiente en depósito origen (disponible: ${saldoOrigen})` });
-      }
-
       const ref = `TRANSFER:${Date.now()}:${origenId}->${destinoId}`;
 
-      await query(
-        `INSERT INTO chofer_stock_mov
-          (empresa_id, chofer_id, producto_id, deposito_id, fecha, tipo, cantidad, motivo, referencia, created_at)
-         VALUES ($1, $2, $3, $4, NOW(), 'TRANSFER_OUT', $5, $6, $7, NOW())`,
-        [empresaId, choferId, productoId, origenId, -Math.abs(cantidad), motivo, ref]
-      );
-      await query(
-        `INSERT INTO chofer_stock_mov
-          (empresa_id, chofer_id, producto_id, deposito_id, fecha, tipo, cantidad, motivo, referencia, created_at)
-         VALUES ($1, $2, $3, $4, NOW(), 'TRANSFER_IN', $5, $6, $7, NOW())`,
-        [empresaId, choferId, productoId, destinoId, Math.abs(cantidad), motivo, ref]
-      );
+      await withTransaction(async (txQuery) => {
+        const saldoRows = await txQuery(
+          `SELECT COALESCE(SUM(cantidad),0) AS saldo
+             FROM chofer_stock_mov
+            WHERE empresa_id = $1
+              AND deposito_id = $2
+              AND producto_id = $3`,
+          [empresaId, origenId, productoId]
+        );
+        const saldoOrigen = Number(saldoRows?.[0]?.saldo || 0);
+        if (saldoOrigen < cantidad) {
+          const err = new Error(`Saldo insuficiente en depósito origen (disponible: ${saldoOrigen})`);
+          err.statusCode = 400;
+          throw err;
+        }
+
+        await txQuery(
+          `INSERT INTO chofer_stock_mov
+            (empresa_id, chofer_id, producto_id, deposito_id, fecha, tipo, cantidad, motivo, referencia, created_at)
+           VALUES ($1, $2, $3, $4, NOW(), 'TRANSFER_OUT', $5, $6, $7, NOW())`,
+          [empresaId, choferId, productoId, origenId, -Math.abs(cantidad), motivo, ref]
+        );
+        await txQuery(
+          `INSERT INTO chofer_stock_mov
+            (empresa_id, chofer_id, producto_id, deposito_id, fecha, tipo, cantidad, motivo, referencia, created_at)
+           VALUES ($1, $2, $3, $4, NOW(), 'TRANSFER_IN', $5, $6, $7, NOW())`,
+          [empresaId, choferId, productoId, destinoId, Math.abs(cantidad), motivo, ref]
+        );
+      });
 
       return res.json({ ok: true, referencia: ref });
     } catch (e) {
       console.error('ERROR /api/stock/depositos/transferir', e);
-      return res.status(500).json({ error: 'Error transfiriendo stock entre depósitos' });
+      return res.status(e.statusCode || 500).json({ error: e.statusCode ? e.message : 'Error transfiriendo stock entre depósitos' });
     }
   });
 
   // GET /api/stock/depositos/transferencias
-  router.get('/depositos/transferencias', withAuth, async (req, res) => {
+  router.get('/depositos/transferencias', authMiddleware, async (req, res) => {
     try {
       await ensureDepositosSchemaPromise;
-      const esSuperUser = isSuper(req);
+      const esSuperUser = isSuperFn(req);
       const empresaId = esSuperUser && req.query?.empresa_id
         ? Number(req.query.empresa_id)
-        : getEmpresaIdFromToken(req);
+        : getEmpresaIdFromTokenFn(req);
 
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido' });
 
@@ -415,7 +488,7 @@ export function createStockRouter() {
       params.push(offset);
       const offsetPos = `$${idx}`;
 
-      const rows = await query(
+      const rows = await dbQuery(
         `SELECT
            mout.referencia,
            mout.fecha,
@@ -468,13 +541,13 @@ export function createStockRouter() {
   });
 
   // POST /api/stock/depositos/transferencias/revertir
-  router.post('/depositos/transferencias/revertir', withAuth, async (req, res) => {
+  router.post('/depositos/transferencias/revertir', authMiddleware, async (req, res) => {
     try {
       await ensureDepositosSchemaPromise;
-      const esSuperUser = isSuper(req);
+      const esSuperUser = isSuperFn(req);
       const empresaId = esSuperUser && req.body?.empresa_id
         ? Number(req.body.empresa_id)
-        : getEmpresaIdFromToken(req);
+        : getEmpresaIdFromTokenFn(req);
       const referencia = String(req.body?.referencia || '').trim();
       const choferId = Number(req.body?.chofer_id || 0);
       const motivoExtra = String(req.body?.motivo || '').trim();
@@ -482,115 +555,135 @@ export function createStockRouter() {
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido' });
       if (!referencia) return res.status(400).json({ error: 'referencia requerida' });
       if (!choferId) return res.status(400).json({ error: 'chofer_id requerido' });
+      if (!(await validateChoferEmpresa({ empresaId, choferId }))) {
+        return res.status(400).json({ error: 'Chofer inválido para la empresa' });
+      }
 
       const baseRef = referencia.startsWith('REVERSA:') ? referencia.slice('REVERSA:'.length) : referencia;
 
-      const outRows = await query(
-        `SELECT id, producto_id, deposito_id, ABS(cantidad) AS cantidad
-           FROM chofer_stock_mov
-          WHERE empresa_id = $1
-            AND referencia = $2
-            AND tipo = 'TRANSFER_OUT'
-          LIMIT 1`,
-        [empresaId, baseRef]
-      );
-      const inRows = await query(
-        `SELECT id, producto_id, deposito_id, ABS(cantidad) AS cantidad
-           FROM chofer_stock_mov
-          WHERE empresa_id = $1
-            AND referencia = $2
-            AND tipo = 'TRANSFER_IN'
-          LIMIT 1`,
-        [empresaId, baseRef]
-      );
-
-      if (!outRows.length || !inRows.length) {
-        return res.status(404).json({ error: 'Transferencia no encontrada' });
-      }
-
-      const out = outRows[0];
-      const inn = inRows[0];
-      if (Number(out.producto_id) !== Number(inn.producto_id)) {
-        return res.status(400).json({ error: 'Transferencia inconsistente: producto distinto' });
-      }
-      if (Number(out.cantidad) !== Number(inn.cantidad)) {
-        return res.status(400).json({ error: 'Transferencia inconsistente: cantidades distintas' });
-      }
-
-      const already = await query(
-        `SELECT id
-           FROM chofer_stock_mov
-          WHERE empresa_id = $1
-            AND referencia = $2
-            AND tipo IN ('TRANSFER_REV_IN', 'TRANSFER_REV_OUT')
-          LIMIT 1`,
-        [empresaId, `REVERSA:${baseRef}`]
-      );
-      if (already.length) {
-        return res.status(409).json({ error: 'La transferencia ya fue revertida' });
-      }
-
-      // Debe existir saldo en el depósito destino original para poder devolver
-      const saldoDestinoRows = await query(
-        `SELECT COALESCE(SUM(cantidad),0) AS saldo
-           FROM chofer_stock_mov
-          WHERE empresa_id = $1
-            AND deposito_id = $2
-            AND producto_id = $3`,
-        [empresaId, inn.deposito_id, out.producto_id]
-      );
-      const saldoDestino = Number(saldoDestinoRows?.[0]?.saldo || 0);
-      if (saldoDestino < Number(out.cantidad)) {
-        return res.status(400).json({ error: `No se puede revertir: saldo insuficiente en depósito destino (disponible ${saldoDestino})` });
-      }
-
-      const canDestino = await choferPuedeUsarDeposito({ empresaId, choferId, depositoId: Number(inn.deposito_id) });
-      const canOrigen = await choferPuedeUsarDeposito({ empresaId, choferId, depositoId: Number(out.deposito_id) });
-      if (!canDestino || !canOrigen) {
-        return res.status(403).json({ error: 'Chofer no habilitado para depósitos de la reversa' });
-      }
-
       const refRev = `REVERSA:${baseRef}`;
-      const motivo = [
-        'Reversa transferencia',
-        motivoExtra ? `- ${motivoExtra}` : ''
-      ].filter(Boolean).join(' ');
+      await withTransaction(async (txQuery) => {
+        const outRows = await txQuery(
+          `SELECT id, producto_id, deposito_id, ABS(cantidad) AS cantidad
+             FROM chofer_stock_mov
+            WHERE empresa_id = $1
+              AND referencia = $2
+              AND tipo = 'TRANSFER_OUT'
+            LIMIT 1`,
+          [empresaId, baseRef]
+        );
+        const inRows = await txQuery(
+          `SELECT id, producto_id, deposito_id, ABS(cantidad) AS cantidad
+             FROM chofer_stock_mov
+            WHERE empresa_id = $1
+              AND referencia = $2
+              AND tipo = 'TRANSFER_IN'
+            LIMIT 1`,
+          [empresaId, baseRef]
+        );
 
-      // Vuelve del destino al origen
-      await query(
-        `INSERT INTO chofer_stock_mov
-          (empresa_id, chofer_id, producto_id, deposito_id, fecha, tipo, cantidad, motivo, referencia, created_at)
-         VALUES ($1, $2, $3, $4, NOW(), 'TRANSFER_REV_OUT', $5, $6, $7, NOW())`,
-        [empresaId, choferId, out.producto_id, inn.deposito_id, -Math.abs(Number(out.cantidad)), motivo, refRev]
-      );
-      await query(
-        `INSERT INTO chofer_stock_mov
-          (empresa_id, chofer_id, producto_id, deposito_id, fecha, tipo, cantidad, motivo, referencia, created_at)
-         VALUES ($1, $2, $3, $4, NOW(), 'TRANSFER_REV_IN', $5, $6, $7, NOW())`,
-        [empresaId, choferId, out.producto_id, out.deposito_id, Math.abs(Number(out.cantidad)), motivo, refRev]
-      );
+        if (!outRows.length || !inRows.length) {
+          const err = new Error('Transferencia no encontrada');
+          err.statusCode = 404;
+          throw err;
+        }
+
+        const out = outRows[0];
+        const inn = inRows[0];
+        if (Number(out.producto_id) !== Number(inn.producto_id)) {
+          const err = new Error('Transferencia inconsistente: producto distinto');
+          err.statusCode = 400;
+          throw err;
+        }
+        if (Number(out.cantidad) !== Number(inn.cantidad)) {
+          const err = new Error('Transferencia inconsistente: cantidades distintas');
+          err.statusCode = 400;
+          throw err;
+        }
+
+        const already = await txQuery(
+          `SELECT id
+             FROM chofer_stock_mov
+            WHERE empresa_id = $1
+              AND referencia = $2
+              AND tipo IN ('TRANSFER_REV_IN', 'TRANSFER_REV_OUT')
+            LIMIT 1`,
+          [empresaId, refRev]
+        );
+        if (already.length) {
+          const err = new Error('La transferencia ya fue revertida');
+          err.statusCode = 409;
+          throw err;
+        }
+
+        // Debe existir saldo en el depósito destino original para poder devolver.
+        const saldoDestinoRows = await txQuery(
+          `SELECT COALESCE(SUM(cantidad),0) AS saldo
+             FROM chofer_stock_mov
+            WHERE empresa_id = $1
+              AND deposito_id = $2
+              AND producto_id = $3`,
+          [empresaId, inn.deposito_id, out.producto_id]
+        );
+        const saldoDestino = Number(saldoDestinoRows?.[0]?.saldo || 0);
+        if (saldoDestino < Number(out.cantidad)) {
+          const err = new Error(`No se puede revertir: saldo insuficiente en depósito destino (disponible ${saldoDestino})`);
+          err.statusCode = 400;
+          throw err;
+        }
+
+        const canDestino = await choferPuedeUsarDeposito({ empresaId, choferId, depositoId: Number(inn.deposito_id) });
+        const canOrigen = await choferPuedeUsarDeposito({ empresaId, choferId, depositoId: Number(out.deposito_id) });
+        if (!canDestino || !canOrigen) {
+          const err = new Error('Chofer no habilitado para depósitos de la reversa');
+          err.statusCode = 403;
+          throw err;
+        }
+
+        const motivo = [
+          'Reversa transferencia',
+          motivoExtra ? `- ${motivoExtra}` : ''
+        ].filter(Boolean).join(' ');
+
+        // Vuelve del destino al origen.
+        await txQuery(
+          `INSERT INTO chofer_stock_mov
+            (empresa_id, chofer_id, producto_id, deposito_id, fecha, tipo, cantidad, motivo, referencia, created_at)
+           VALUES ($1, $2, $3, $4, NOW(), 'TRANSFER_REV_OUT', $5, $6, $7, NOW())`,
+          [empresaId, choferId, out.producto_id, inn.deposito_id, -Math.abs(Number(out.cantidad)), motivo, refRev]
+        );
+        await txQuery(
+          `INSERT INTO chofer_stock_mov
+            (empresa_id, chofer_id, producto_id, deposito_id, fecha, tipo, cantidad, motivo, referencia, created_at)
+           VALUES ($1, $2, $3, $4, NOW(), 'TRANSFER_REV_IN', $5, $6, $7, NOW())`,
+          [empresaId, choferId, out.producto_id, out.deposito_id, Math.abs(Number(out.cantidad)), motivo, refRev]
+        );
+      });
 
       return res.json({ ok: true, referencia: refRev });
     } catch (e) {
       console.error('ERROR /api/stock/depositos/transferencias/revertir', e);
-      return res.status(500).json({ error: 'Error revirtiendo transferencia' });
+      return res.status(e.statusCode || 500).json({ error: e.statusCode ? e.message : 'Error revirtiendo transferencia' });
     }
   });
 
   // GET /api/stock/depositos/choferes
-  router.get('/depositos/choferes', withAuth, async (req, res) => {
+  router.get('/depositos/choferes', authMiddleware, async (req, res) => {
     try {
       await ensureDepositosSchemaPromise;
-      const esSuperUser = isSuper(req);
+      const esSuperUser = isSuperFn(req);
       const empresaId = esSuperUser && req.query?.empresa_id
         ? Number(req.query.empresa_id)
-        : getEmpresaIdFromToken(req);
+        : getEmpresaIdFromTokenFn(req);
       const choferId = Number(req.query?.chofer_id || 0);
 
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido' });
       if (!choferId) return res.status(400).json({ error: 'chofer_id requerido' });
+      if (!(await validateChoferEmpresa({ empresaId, choferId }))) {
+        return res.status(400).json({ error: 'Chofer inválido para la empresa' });
+      }
 
-      const rows = await query(
+      const rows = await dbQuery(
         `SELECT dc.deposito_id, d.nombre AS deposito_nombre, dc.activo
            FROM deposito_chofer dc
            JOIN depositos d ON d.id = dc.deposito_id
@@ -607,13 +700,13 @@ export function createStockRouter() {
   });
 
   // POST /api/stock/depositos/choferes (set reemplaza lista)
-  router.post('/depositos/choferes', withAuth, async (req, res) => {
+  router.post('/depositos/choferes', authMiddleware, async (req, res) => {
     try {
       await ensureDepositosSchemaPromise;
-      const esSuperUser = isSuper(req);
+      const esSuperUser = isSuperFn(req);
       const empresaId = esSuperUser && req.body?.empresa_id
         ? Number(req.body.empresa_id)
-        : getEmpresaIdFromToken(req);
+        : getEmpresaIdFromTokenFn(req);
       const choferId = Number(req.body?.chofer_id || 0);
       const depositoIds = Array.isArray(req.body?.deposito_ids)
         ? req.body.deposito_ids.map(Number).filter((n) => Number.isFinite(n) && n > 0)
@@ -621,9 +714,12 @@ export function createStockRouter() {
 
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido' });
       if (!choferId) return res.status(400).json({ error: 'chofer_id requerido' });
+      if (!(await validateChoferEmpresa({ empresaId, choferId }))) {
+        return res.status(400).json({ error: 'Chofer inválido para la empresa' });
+      }
 
       const validDeps = depositoIds.length
-        ? await query(
+        ? await dbQuery(
           `SELECT id FROM depositos WHERE empresa_id = $1 AND activo = TRUE AND id = ANY($2::int[])`,
           [empresaId, depositoIds]
         )
@@ -631,7 +727,7 @@ export function createStockRouter() {
       const validSet = new Set((validDeps || []).map(r => Number(r.id)));
       const finalIds = depositoIds.filter(id => validSet.has(Number(id)));
 
-      await query(
+      await dbQuery(
         `UPDATE deposito_chofer
             SET activo = FALSE,
                 updated_at = NOW()
@@ -641,7 +737,7 @@ export function createStockRouter() {
       );
 
       for (const depId of finalIds) {
-        await query(
+        await dbQuery(
           `INSERT INTO deposito_chofer (empresa_id, deposito_id, chofer_id, activo)
            VALUES ($1, $2, $3, TRUE)
            ON CONFLICT (empresa_id, deposito_id, chofer_id)
@@ -658,13 +754,13 @@ export function createStockRouter() {
   });
 
   // GET /api/stock/depositos/permisos-config
-  router.get('/depositos/permisos-config', withAuth, async (req, res) => {
+  router.get('/depositos/permisos-config', authMiddleware, async (req, res) => {
     try {
       await ensureDepositosSchemaPromise;
-      const esSuperUser = isSuper(req);
+      const esSuperUser = isSuperFn(req);
       const empresaId = esSuperUser && req.query?.empresa_id
         ? Number(req.query.empresa_id)
-        : getEmpresaIdFromToken(req);
+        : getEmpresaIdFromTokenFn(req);
 
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido' });
       const estricto = await isDepositoPermisosEstricto(empresaId);
@@ -676,18 +772,18 @@ export function createStockRouter() {
   });
 
   // PUT /api/stock/depositos/permisos-config
-  router.put('/depositos/permisos-config', withAuth, async (req, res) => {
+  router.put('/depositos/permisos-config', authMiddleware, async (req, res) => {
     try {
       await ensureDepositosSchemaPromise;
-      const esSuperUser = isSuper(req);
+      const esSuperUser = isSuperFn(req);
       const empresaId = esSuperUser && req.body?.empresa_id
         ? Number(req.body.empresa_id)
-        : getEmpresaIdFromToken(req);
+        : getEmpresaIdFromTokenFn(req);
       const estricto = !!req.body?.deposito_permisos_estricto;
 
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido' });
 
-      await query(
+      await dbQuery(
         `UPDATE empresas
             SET config_operativa = COALESCE(config_operativa, '{}'::jsonb) || jsonb_build_object('deposito_permisos_estricto', $2::boolean)
           WHERE id = $1`,
@@ -702,20 +798,20 @@ export function createStockRouter() {
   });
 
   // GET /api/stock/depositos/choferes-sin-permisos
-  router.get('/depositos/choferes-sin-permisos', withAuth, async (req, res) => {
+  router.get('/depositos/choferes-sin-permisos', authMiddleware, async (req, res) => {
     try {
       await ensureDepositosSchemaPromise;
-      const esSuperUser = isSuper(req);
+      const esSuperUser = isSuperFn(req);
       const empresaId = esSuperUser && req.query?.empresa_id
         ? Number(req.query.empresa_id)
-        : getEmpresaIdFromToken(req);
+        : getEmpresaIdFromTokenFn(req);
 
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido' });
 
       const strict = await isDepositoPermisosEstricto(empresaId);
       if (!strict) return res.json({ strict: false, items: [] });
 
-      const rows = await query(
+      const rows = await dbQuery(
         `SELECT c.id AS chofer_id, c.nombre AS chofer_nombre
            FROM choferes c
           WHERE c.empresa_id = $1
@@ -738,13 +834,13 @@ export function createStockRouter() {
   });
 
   // GET /api/stock/depositos/transferencias/export.csv
-  router.get('/depositos/transferencias/export.csv', withAuth, async (req, res) => {
+  router.get('/depositos/transferencias/export.csv', authMiddleware, async (req, res) => {
     try {
       await ensureDepositosSchemaPromise;
-      const esSuperUser = isSuper(req);
+      const esSuperUser = isSuperFn(req);
       const empresaId = esSuperUser && req.query?.empresa_id
         ? Number(req.query.empresa_id)
-        : getEmpresaIdFromToken(req);
+        : getEmpresaIdFromTokenFn(req);
 
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido' });
 
@@ -780,7 +876,7 @@ export function createStockRouter() {
         params.push(choferId);
       }
 
-      const rows = await query(
+      const rows = await dbQuery(
         `SELECT
            mout.referencia,
            mout.fecha,
@@ -843,11 +939,11 @@ export function createStockRouter() {
   });
 
   // GET /api/stock/summary
-  router.get('/summary', withAuth, async (req, res) => {
+  router.get('/summary', authMiddleware, async (req, res) => {
     try {
-      const empresaId = isSuper(req) && req.query.empresa_id
+      const empresaId = isSuperFn(req) && req.query.empresa_id
         ? Number(req.query.empresa_id)
-        : getEmpresaIdFromToken(req);
+        : getEmpresaIdFromTokenFn(req);
 
       if (!empresaId) {
         return res.status(400).json({ error: 'empresa_id requerido' });
@@ -869,7 +965,7 @@ export function createStockRouter() {
         ORDER BY p.nombre
       `;
 
-      const rows = await query(sql, [empresaId]);
+      const rows = await dbQuery(sql, [empresaId]);
       return res.json(rows);
     } catch (e) {
       console.error('ERROR /api/stock/summary', e);
@@ -878,15 +974,15 @@ export function createStockRouter() {
   });
 
   // POST /api/stock/ajuste
-  router.post('/ajuste', withAuth, async (req, res) => {
+  router.post('/ajuste', authMiddleware, async (req, res) => {
     try {
       await ensureDepositosSchemaPromise;
       const { producto_id, qty, tipo, motivo, chofer_id, empresa_id, deposito_id } = req.body;
 
-      const esSuperUser = isSuper(req);
+      const esSuperUser = isSuperFn(req);
       const targetEmpresa = (esSuperUser && empresa_id)
         ? Number(empresa_id)
-        : getEmpresaIdFromToken(req);
+        : getEmpresaIdFromTokenFn(req);
 
       if (!targetEmpresa) {
         return res.status(400).json({ error: 'empresa_id requerido' });
@@ -895,8 +991,17 @@ export function createStockRouter() {
       if (!chofer_id) {
         return res.status(400).json({ error: 'Se requiere chofer para asignar el stock' });
       }
+      if (!(await validateChoferEmpresa({ empresaId: targetEmpresa, choferId: chofer_id }))) {
+        return res.status(400).json({ error: 'Chofer inválido para la empresa' });
+      }
+      if (!(await validateProductoEmpresa({ empresaId: targetEmpresa, productoId: producto_id }))) {
+        return res.status(400).json({ error: 'Producto inválido para la empresa' });
+      }
 
       const depositoId = Number(deposito_id || 0) || null;
+      if (!depositoId && await isDepositoPermisosEstricto(targetEmpresa)) {
+        return res.status(400).json({ error: 'Depósito requerido por modo estricto' });
+      }
       if (depositoId) {
         const allowed = await choferPuedeUsarDeposito({
           empresaId: targetEmpresa,
@@ -914,40 +1019,42 @@ export function createStockRouter() {
       const signo = tipo === 'ADJUST-' ? -1 : 1;
       const cantidadReal = Math.abs(cantidadNum) * signo;
 
-      await query(
-        `
-        INSERT INTO chofer_stock_mov
-          (empresa_id, chofer_id, producto_id, deposito_id, fecha, tipo, cantidad, motivo, created_at)
-        VALUES
-          ($1,        $2,        $3,          $4,         NOW(), 'ajuste', $5,      $6,    NOW())
-        `,
-        [targetEmpresa, chofer_id, producto_id, depositoId, cantidadReal, motivo || 'Ajuste manual']
-      );
+      await withTransaction(async (txQuery) => {
+        await txQuery(
+          `
+          INSERT INTO chofer_stock_mov
+            (empresa_id, chofer_id, producto_id, deposito_id, fecha, tipo, cantidad, motivo, created_at)
+          VALUES
+            ($1,        $2,        $3,          $4,         NOW(), 'ajuste', $5,      $6,    NOW())
+          `,
+          [targetEmpresa, chofer_id, producto_id, depositoId, cantidadReal, motivo || 'Ajuste manual']
+        );
 
-      await query(
-        `
-        INSERT INTO chofer_stock (empresa_id, chofer_id, producto_id, cantidad)
-        VALUES ($1, $2, $3, $4)
-        ON CONFLICT (empresa_id, chofer_id, producto_id)
-        DO UPDATE SET cantidad = chofer_stock.cantidad + EXCLUDED.cantidad
-        `,
-        [targetEmpresa, chofer_id, producto_id, cantidadReal]
-      );
+        await txQuery(
+          `
+          INSERT INTO chofer_stock (empresa_id, chofer_id, producto_id, cantidad)
+          VALUES ($1, $2, $3, $4)
+          ON CONFLICT (empresa_id, chofer_id, producto_id)
+          DO UPDATE SET cantidad = chofer_stock.cantidad + EXCLUDED.cantidad
+          `,
+          [targetEmpresa, chofer_id, producto_id, cantidadReal]
+        );
+      });
 
       return res.json({ ok: true });
     } catch (e) {
       console.error('ERROR /api/stock/ajuste', e);
-      return res.status(500).json({ error: 'Error ajuste stock' });
+      return res.status(e.statusCode || 500).json({ error: e.statusCode ? e.message : 'Error ajuste stock' });
     }
   });
 
   // GET /api/stock/kardex/:id
-  router.get('/kardex/:id', withAuth, async (req, res) => {
+  router.get('/kardex/:id', authMiddleware, async (req, res) => {
     try {
-      const esSuperUser = isSuper(req);
+      const esSuperUser = isSuperFn(req);
       const empresaId = esSuperUser && req.query.empresa_id
         ? Number(req.query.empresa_id)
-        : getEmpresaIdFromToken(req);
+        : getEmpresaIdFromTokenFn(req);
 
       if (!empresaId) {
         return res.status(400).json({ error: 'empresa_id requerido' });
@@ -955,7 +1062,7 @@ export function createStockRouter() {
 
       const productoId = Number(req.params.id);
 
-      const rows = await query(
+      const rows = await dbQuery(
         `
         SELECT csm.*, d.nombre AS deposito_nombre,
                COALESCE(csm.referencia, csm.motivo) as notas
@@ -977,12 +1084,12 @@ export function createStockRouter() {
   });
 
   // GET /api/stock/por-tipo
-  router.get('/por-tipo', withAuth, async (req, res) => {
+  router.get('/por-tipo', authMiddleware, async (req, res) => {
     try {
-      const esSuperUser = isSuper(req);
+      const esSuperUser = isSuperFn(req);
       const empresaId = esSuperUser && req.query.empresa_id
         ? Number(req.query.empresa_id)
-        : getEmpresaIdFromToken(req);
+        : getEmpresaIdFromTokenFn(req);
 
       const productoId = req.query.producto_id ? Number(req.query.producto_id) : null;
       const tipo = (req.query.tipo || '').toLowerCase();
@@ -1028,7 +1135,7 @@ export function createStockRouter() {
           p.nombre, ch.tipo
       `;
 
-      const rows = await query(sql, params);
+      const rows = await dbQuery(sql, params);
       return res.json(rows);
     } catch (e) {
       console.error('ERROR /api/stock/por-tipo', e);
@@ -1037,12 +1144,12 @@ export function createStockRouter() {
   });
 
   // GET /api/stock/movimientos-por-tipo
-  router.get('/movimientos-por-tipo', withAuth, checkLicencia, async (req, res) => {
+  router.get('/movimientos-por-tipo', authMiddleware, licenciaMiddleware, async (req, res) => {
     try {
-      const esSuperUser = isSuper(req);
+      const esSuperUser = isSuperFn(req);
       const empresaId = esSuperUser && req.query.empresa_id
         ? Number(req.query.empresa_id)
-        : getEmpresaIdFromToken(req);
+        : getEmpresaIdFromTokenFn(req);
 
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido' });
 
@@ -1118,7 +1225,7 @@ export function createStockRouter() {
         ORDER BY p.nombre, ch.tipo
       `;
 
-      const rows = await query(sql, params);
+      const rows = await dbQuery(sql, params);
       return res.json(rows);
 
     } catch (e) {

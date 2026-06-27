@@ -560,6 +560,7 @@
     let transferPage = { offset: 0, limit: 50, lastCount: 0 };
     const TR_PAGE_SIZE_KEY = 'stock:transfer:page-size:v1';
     let adjustBusy = false;
+    let depositoPermStrict = false;
 
     // ====== UTILS ======
     const num = n => Number(n)||0;
@@ -776,7 +777,8 @@
       if (isSuper && $('#empFilter')?.value) params.set('empresa_id', $('#empFilter').value);
       const r = await authFetch(`/api/stock/depositos/permisos-config?${params.toString()}`);
       const cfg = await r.json();
-      $('#depPermStrict').checked = !!cfg?.deposito_permisos_estricto;
+      depositoPermStrict = !!cfg?.deposito_permisos_estricto;
+      $('#depPermStrict').checked = depositoPermStrict;
       await loadChoferesSinPermisos();
     }
 
@@ -1166,6 +1168,7 @@
 
         if(!Number.isFinite(body.qty) || body.qty <= 0) return alert('Cantidad inválida');
         if(!['ADJUST+','ADJUST-'].includes(body.tipo)) return alert('Tipo de ajuste inválido');
+        if(depositoPermStrict && !body.deposito_id) return alert('Seleccioná depósito: el modo estricto está activo');
 
         const btn = document.getElementById('btnSaveAj');
         const prev = btn ? btn.textContent : '';
@@ -1184,9 +1187,13 @@
         if(r.ok) {
             alert('Ajuste realizado');
             $('#dlgAjuste').close();
-            loadStock();
+            await loadStock();
+            await loadDepositosSummary();
+            resetTransferPage();
+            await loadTransferenciasHistorial();
         } else {
-            alert('Error al ajustar');
+            const t = await r.text();
+            alert(`Error al ajustar: ${t || r.status}`);
         }
 
         adjustBusy = false;
