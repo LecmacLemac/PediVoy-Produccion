@@ -76,7 +76,10 @@
       choferes = Array.isArray(list) ? list : [];
       const sel = document.querySelector('#fFilChofer');
       if (!sel) return;
-      sel.innerHTML = '<option value="">Todos</option>' + choferes.map(c => `<option value="${c.id}">${c.nombre}</option>`).join('');
+      replaceSelectOptions(sel, [
+        { value: '', label: 'Todos' },
+        ...choferes.map(c => ({ value: c.id, label: c.nombre }))
+      ]);
     } catch (e) {
       if (isAuthRedirectError(e)) throw e;
       console.warn('Error cargando choferes', e);
@@ -99,6 +102,17 @@
   function setText(selector, value) {
     const el = document.querySelector(selector);
     if (el) el.textContent = value;
+  }
+
+  function replaceSelectOptions(select, options) {
+    if (!select) return;
+    select.replaceChildren(...options.map(opt => {
+      const option = document.createElement('option');
+      option.value = String(opt.value ?? '');
+      option.textContent = String(opt.label ?? '');
+      if (opt.selected) option.selected = true;
+      return option;
+    }));
   }
 
   function getSelectedEmpresaLabel() {
@@ -143,13 +157,13 @@
       const sel = document.querySelector('#empSel');
       if (sel) {
         if (empresas.length > 0) {
-          sel.innerHTML = empresas.map(e => `
-            <option value="${e.id}" ${Number(e.id) === Number(empresaId) ? 'selected' : ''}>
-              ID: ${e.id} - ${e.nombre}
-            </option>
-          `).join('');
+          replaceSelectOptions(sel, empresas.map(e => ({
+            value: e.id,
+            label: `ID: ${e.id} - ${e.nombre}`,
+            selected: Number(e.id) === Number(empresaId)
+          })));
         } else {
-          sel.innerHTML = '<option value="">Sin acceso a empresas</option>';
+          replaceSelectOptions(sel, [{ value: '', label: 'Sin acceso a empresas' }]);
         }
 
         sel.onchange = async () => {

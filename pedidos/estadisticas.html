@@ -251,6 +251,32 @@
     }
     .wa-btn.ok { color: var(--success); border-color: var(--success); background: rgba(16,185,129,0.1); }
     .wa-btn:hover { background: rgba(255,255,255,0.1); color: #fff; }
+    .ai-check {
+      display: inline-flex;
+      min-width: 38px;
+      height: 24px;
+      align-items: center;
+      justify-content: center;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      font-size: 0.72rem;
+      font-weight: 800;
+      line-height: 1;
+    }
+    .ai-check.ok {
+      color: var(--success);
+      background: rgba(16,185,129,0.1);
+      border-color: rgba(16,185,129,0.45);
+    }
+    .ai-check.warn {
+      color: var(--warning);
+      background: rgba(245,158,11,0.1);
+      border-color: rgba(245,158,11,0.45);
+    }
+    .ai-check.muted {
+      color: var(--muted);
+      background: rgba(148,163,184,0.06);
+    }
 
     @media (max-width: 768px) {
       html, body { max-width: 100%; overflow-x: hidden; }
@@ -648,6 +674,7 @@
             <tr>
               <th class="transfer-col-sm">#</th>
               <th class="transfer-col-sm">OK</th>
+              <th class="transfer-col-sm">IA</th>
               <th class="transfer-col-md">WA</th>
               <th>Pedido</th>
               <th>Cliente</th>

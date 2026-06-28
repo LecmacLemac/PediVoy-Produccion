@@ -1,10 +1,23 @@
 // src/routes/reportes.js
 import express from 'express';
-import { withAuth, isSuper, getEmpresaIdFromToken } from '../services.js';
-import { query } from '../db.js';
+import {
+  withAuth as defaultWithAuth,
+  isSuper as defaultIsSuper,
+  getEmpresaIdFromToken as defaultGetEmpresaIdFromToken
+} from '../services.js';
+import { query as defaultQuery } from '../db.js';
 
-export function createReportesRouter() {
+export function createReportesRouter({
+  query: queryFn = defaultQuery,
+  withAuth: withAuthFn = defaultWithAuth,
+  isSuper: isSuperFn = defaultIsSuper,
+  getEmpresaIdFromToken: getEmpresaIdFromTokenFn = defaultGetEmpresaIdFromToken
+} = {}) {
   const router = express.Router();
+  const query = queryFn;
+  const withAuth = withAuthFn;
+  const isSuper = isSuperFn;
+  const getEmpresaIdFromToken = getEmpresaIdFromTokenFn;
 
   async function tableExists(tableName) {
     const rows = await query(
@@ -58,11 +71,37 @@ export function createReportesRouter() {
           p.chofer_id,
           c.nombre AS chofer_nombre,
           pe.zona_id,
-          (CASE WHEN t.id IS NOT NULL THEN true ELSE false END) as pagado 
+          (CASE WHEN t.id IS NOT NULL THEN true ELSE false END) AS pagado,
+          ct.id AS comprobante_transferencia_id,
+          ct.validado AS transferencia_validado,
+          ct.procesado AS transferencia_procesado,
+          ct.estado_revision AS transferencia_estado_revision,
+          ct.verified_reason AS transferencia_verified_reason,
+          ct.verified_at AS transferencia_verified_at,
+          (
+            COALESCE(ct.procesado, FALSE) = TRUE
+            OR lower(COALESCE(ct.verified_reason, '')) LIKE '%automat%'
+            OR lower(COALESCE(ct.verified_reason, '')) LIKE '% por ia%'
+            OR lower(COALESCE(ct.verified_reason, '')) LIKE '%desde whatsapp%'
+          ) AS transferencia_ai_verificada
         FROM pedidos p
         JOIN puntos_entrega pe ON p.punto_entrega_id = pe.id
         LEFT JOIN choferes c   ON p.chofer_id = c.id
         LEFT JOIN transferencias t ON t.pedido_id = p.id AND t.empresa_id = p.empresa_id
+        LEFT JOIN LATERAL (
+          SELECT
+            cti.id,
+            cti.validado,
+            cti.procesado,
+            cti.estado_revision,
+            cti.verified_reason,
+            cti.verified_at
+          FROM comprobantes_transferencia cti
+          WHERE cti.pedido_id = p.id
+            AND cti.empresa_id = p.empresa_id
+          ORDER BY cti.fecha DESC NULLS LAST, cti.id DESC
+          LIMIT 1
+        ) ct ON TRUE
         WHERE p.estado = 'entregado'
           AND pe.empresa_id = $1
       `;

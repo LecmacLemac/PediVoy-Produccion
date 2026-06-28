@@ -24,14 +24,27 @@
       const prev = res.prev || null;
 
       renderReport(rows, products, evolution, prev);
-      await loadTransferenciasData(from, to);
-      await loadEfectivoData(from, to);
-      await loadMediosPagoData(from, to);
-      await loadEntregadosStats(from, to);
-      await loadSlaEntrega(from, to);
-      await loadCancelacionesMotivo(from, to);
-      await loadProductosMargen(from, to);
-      if (typeof updateSummaryStatus === 'function') updateSummaryStatus('Actualizado');
+      const auxResults = await Promise.allSettled([
+        loadTransferenciasData(from, to),
+        loadEfectivoData(from, to),
+        loadMediosPagoData(from, to),
+        loadEntregadosStats(from, to),
+        loadSlaEntrega(from, to),
+        loadCancelacionesMotivo(from, to),
+        loadProductosMargen(from, to)
+      ]);
+
+      const authFailure = auxResults.find(r => r.status === 'rejected' && isAuthRedirectError(r.reason));
+      if (authFailure) throw authFailure.reason;
+
+      const failedAux = auxResults.filter(r => r.status === 'rejected');
+      if (failedAux.length) {
+        console.warn('Reportes auxiliares incompletos:', failedAux.map(r => r.reason?.message || r.reason));
+        if (typeof showToast === 'function') showToast('Dashboard actualizado con algunos reportes auxiliares no disponibles.');
+        if (typeof updateSummaryStatus === 'function') updateSummaryStatus('Actualizado con alertas');
+      } else if (typeof updateSummaryStatus === 'function') {
+        updateSummaryStatus('Actualizado');
+      }
     } catch (e) {
       if (isAuthRedirectError(e)) return;
       console.error(e);

@@ -29,6 +29,7 @@
       const totalAll = list.reduce((a, t) => a + num(t.monto), 0);
       const totalPaid = list.reduce((a, t) => a + (t.pagado ? num(t.monto) : 0), 0);
       const pend = list.filter(t => !t.pagado).length;
+      const aiVerified = list.filter(isTransferAiVerified).length;
 
       window.__transfers = list;
       window.__transfers_total = totalPaid;
@@ -36,9 +37,7 @@
       window.__transfers_pend = pend;
 
       $('#kpiTransferencia').textContent = money(totalPaid);
-      $('#transferResumen').textContent = list.length
-        ? `${list.length} transferencias (${pend} pendientes)`
-        : 'Sin transferencias en el rango';
+      updateTransferResumen(list.length, pend, aiVerified);
     } catch (e) {
       if (typeof isAuthRedirectError === 'function' && isAuthRedirectError(e)) throw e;
       console.error(e);
@@ -49,6 +48,54 @@
       $('#kpiTransferencia').textContent = money(0);
       $('#transferResumen').textContent = 'Error cargando transferencias';
     }
+  }
+
+  function isTruthyDb(value) {
+    return value === true || value === 1 || value === '1' || value === 't' || value === 'true';
+  }
+
+  function isTransferAiVerified(t) {
+    const reason = String(t?.transferencia_verified_reason || t?.verified_reason || '').toLowerCase();
+    return isTruthyDb(t?.transferencia_ai_verificada)
+      || isTruthyDb(t?.transferencia_procesado)
+      || reason.includes('automat')
+      || reason.includes(' por ia')
+      || reason.includes('desde whatsapp');
+  }
+
+  function transferAiLabel(t) {
+    if (isTransferAiVerified(t)) return { text: 'IA', className: 'ai-check ok', title: 'Comprobante verificado automaticamente por IA' };
+    if (t?.comprobante_transferencia_id) return { text: 'Rev.', className: 'ai-check warn', title: 'Comprobante cargado sin verificacion automatica de IA' };
+    return { text: '—', className: 'ai-check muted', title: 'Sin comprobante asociado' };
+  }
+
+  function updateTransferResumen(total, pendientes, iaVerificadas) {
+    $('#transferResumen').textContent = total
+      ? `${total} transferencias (${pendientes} pendientes · ${iaVerificadas} IA)`
+      : 'Sin transferencias en el rango';
+  }
+
+  function renderTransferRow(t, index) {
+    const ai = transferAiLabel(t);
+    return `
+      <tr data-id="${t.id}">
+        <td class="numeric">${index + 1}</td>
+        <td class="numeric">
+          <input type="checkbox" data-action="toggle-transfer" data-pedido-id="${t.id}" ${t.pagado ? 'checked' : ''}>
+        </td>
+        <td class="numeric">
+          <span class="${ai.className}" title="${esc(ai.title)}">${esc(ai.text)}</span>
+        </td>
+        <td class="numeric">
+          <a href="${waLink(t.telefono)}" target="_blank" rel="noopener" class="wa-btn" title="WhatsApp">
+            ${waIcon}
+          </a>
+        </td>
+        <td>#${t.id}</td>
+        <td>${esc(t.cliente || '')}</td>
+        <td class="numeric" style="color:#fff">${money(t.monto)}</td>
+      </tr>
+    `;
   }
 
   async function loadEfectivoData(from, to) {
@@ -153,24 +200,9 @@
     }
 
     if (!list.length) {
-      tb.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:1rem">No hay transferencias para mostrar.</td></tr>';
+      tb.innerHTML = '<tr><td colspan="7" style="text-align:center; padding:1rem">No hay transferencias para mostrar.</td></tr>';
     } else {
-      tb.innerHTML = list.map((t, i) => `
-        <tr data-id="${t.id}">
-          <td class="numeric">${i + 1}</td>
-          <td class="numeric">
-            <input type="checkbox" data-action="toggle-transfer" data-pedido-id="${t.id}" ${t.pagado ? 'checked' : ''}>
-          </td>
-          <td class="numeric">
-            <a href="${waLink(t.telefono)}" target="_blank" class="wa-btn" title="WhatsApp">
-              ${waIcon}
-            </a>
-          </td>
-          <td>#${t.id}</td>
-          <td>${esc(t.cliente || '')}</td>
-          <td class="numeric" style="color:#fff">${money(t.monto)}</td>
-        </tr>
-      `).join('');
+      tb.innerHTML = list.map(renderTransferRow).join('');
     }
 
     if (typeof modal.showModal === 'function' && !modal.open) {
@@ -204,15 +236,14 @@
       const totalAll = list.reduce((a, t) => a + num(t.monto), 0);
       const totalPaid = list.reduce((a, t) => a + (t.pagado ? num(t.monto) : 0), 0);
       const pend = list.filter(t => !t.pagado).length;
+      const aiVerified = list.filter(isTransferAiVerified).length;
 
       window.__transfers_total = totalPaid;
       window.__transfers_total_all = totalAll;
       window.__transfers_pend = pend;
 
       $('#kpiTransferencia').textContent = money(totalPaid);
-      $('#transferResumen').textContent = list.length
-        ? `${list.length} transferencias (${pend} pendientes)`
-        : 'Sin transferencias en el rango';
+      updateTransferResumen(list.length, pend, aiVerified);
 
       if (window.__onlyPendTransfers) renderTransferModal();
     } catch (e) {
