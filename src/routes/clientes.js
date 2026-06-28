@@ -1,10 +1,28 @@
 // src/routes/clientes.js
 import express from 'express';
-import { withAuth, checkLicencia, isSuper, getEmpresaIdFromToken, normalizePhone, geocodeIfNeeded, pointInAnyZone } from '../services.js';
-import { query } from '../db.js';
+import {
+  withAuth as defaultWithAuth,
+  checkLicencia as defaultCheckLicencia,
+  isSuper as defaultIsSuper,
+  getEmpresaIdFromToken as defaultGetEmpresaIdFromToken,
+  normalizePhone as defaultNormalizePhone,
+  geocodeIfNeeded as defaultGeocodeIfNeeded,
+  pointInAnyZone as defaultPointInAnyZone
+} from '../services.js';
+import { query as defaultQuery } from '../db.js';
 
-export function createClientesRouter() {
+export function createClientesRouter({
+  query: queryFn = defaultQuery,
+  withAuth: withAuthFn = defaultWithAuth,
+  checkLicencia: checkLicenciaFn = defaultCheckLicencia,
+  isSuper: isSuperFn = defaultIsSuper,
+  getEmpresaIdFromToken: getEmpresaIdFromTokenFn = defaultGetEmpresaIdFromToken,
+  normalizePhone: normalizePhoneFn = defaultNormalizePhone,
+  geocodeIfNeeded: geocodeIfNeededFn = defaultGeocodeIfNeeded,
+  pointInAnyZone: pointInAnyZoneFn = defaultPointInAnyZone
+} = {}) {
   const router = express.Router();
+  const dbQuery = queryFn;
   let schemaReady = false;
 
   const parseBooleanFlag = (value) => {
@@ -15,25 +33,98 @@ export function createClientesRouter() {
 
   async function ensureClientesSchema() {
     if (schemaReady) return;
-    await query(`ALTER TABLE puntos_entrega ADD COLUMN IF NOT EXISTS cuenta_corriente_habilitada BOOLEAN DEFAULT FALSE`);
-    await query(`ALTER TABLE puntos_entrega ADD COLUMN IF NOT EXISTS requiere_factura BOOLEAN DEFAULT FALSE`);
-    await query(`ALTER TABLE puntos_entrega ADD COLUMN IF NOT EXISTS email_facturacion TEXT`);
-    await query(`ALTER TABLE puntos_entrega ADD COLUMN IF NOT EXISTS razon_social TEXT`);
-    await query(`ALTER TABLE puntos_entrega ADD COLUMN IF NOT EXISTS cuit TEXT`);
-    await query(`ALTER TABLE puntos_entrega ADD COLUMN IF NOT EXISTS condicion_iva TEXT`);
+    await dbQuery(`ALTER TABLE puntos_entrega ADD COLUMN IF NOT EXISTS cuenta_corriente_habilitada BOOLEAN DEFAULT FALSE`);
+    await dbQuery(`ALTER TABLE puntos_entrega ADD COLUMN IF NOT EXISTS requiere_factura BOOLEAN DEFAULT FALSE`);
+    await dbQuery(`ALTER TABLE puntos_entrega ADD COLUMN IF NOT EXISTS email_facturacion TEXT`);
+    await dbQuery(`ALTER TABLE puntos_entrega ADD COLUMN IF NOT EXISTS razon_social TEXT`);
+    await dbQuery(`ALTER TABLE puntos_entrega ADD COLUMN IF NOT EXISTS cuit TEXT`);
+    await dbQuery(`ALTER TABLE puntos_entrega ADD COLUMN IF NOT EXISTS condicion_iva TEXT`);
     schemaReady = true;
   }
 
+  function parseCoordinate(value, fieldName) {
+    if (value === undefined) return undefined;
+    if (value === '' || value === null) return null;
+    const n = Number(value);
+    if (!Number.isFinite(n)) {
+      const err = new Error(`${fieldName} inválida`);
+      err.statusCode = 400;
+      throw err;
+    }
+    return n;
+  }
+
+  function isNullIsland(lat, lng) {
+    return Number(lat) === 0 && Number(lng) === 0;
+  }
+
+  function objectOrEmpty(value) {
+    if (!value) return {};
+    if (typeof value === 'object' && !Array.isArray(value)) return value;
+    if (typeof value === 'string') {
+      try {
+        const parsed = JSON.parse(value);
+        return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+      } catch {
+        return {};
+      }
+    }
+    return {};
+  }
+
+  async function getEmpresaGeoContext(empresaId) {
+    if (!empresaId || !Number.isFinite(Number(empresaId))) return {};
+    const rows = await dbQuery(
+      `SELECT ciudad, provincia, pais, config_operativa
+         FROM empresas
+        WHERE id = $1
+        LIMIT 1`,
+      [Number(empresaId)]
+    );
+    const empresa = rows[0] || {};
+    const config = objectOrEmpty(empresa.config_operativa);
+    return {
+      ciudad: empresa.ciudad || config.ciudad || null,
+      provincia: empresa.provincia || config.provincia || null,
+      pais: empresa.pais || config.pais || null
+    };
+  }
+
+  function assertNotNullIsland(lat, lng) {
+    if (isNullIsland(lat, lng)) {
+      const err = new Error('No se pudo ubicar esa dirección');
+      err.statusCode = 404;
+      throw err;
+    }
+  }
+
+  async function validateZonaForEmpresa(zonaId, empresaId) {
+    if (!zonaId) return null;
+    const id = Number(zonaId);
+    if (!Number.isFinite(id) || id <= 0) {
+      const err = new Error('Zona inválida');
+      err.statusCode = 400;
+      throw err;
+    }
+    const rows = await dbQuery('SELECT id FROM zonas_geograficas WHERE id=$1 AND empresa_id=$2 LIMIT 1', [id, empresaId]);
+    if (!rows.length) {
+      const err = new Error('Zona no pertenece a la empresa');
+      err.statusCode = 400;
+      throw err;
+    }
+    return id;
+  }
+
   // 1) Obtener listado completo
-  router.get('/master', withAuth, checkLicencia, async (req, res) => {
+  router.get('/master', withAuthFn, checkLicenciaFn, async (req, res) => {
     try {
       await ensureClientesSchema();
-      const esSuperUser = isSuper(req);
+      const esSuperUser = isSuperFn(req);
       const empresaId = esSuperUser && req.query.empresa_id
         ? Number(req.query.empresa_id)
-        : getEmpresaIdFromToken(req);
+        : getEmpresaIdFromTokenFn(req);
 
-      const rows = await query(`
+      const rows = await dbQuery(`
         SELECT *
         FROM puntos_entrega
         WHERE empresa_id = $1
@@ -47,12 +138,12 @@ export function createClientesRouter() {
   });
 
   // 2) Buscar clientes
-  router.get('/buscar', withAuth, checkLicencia, async (req, res) => {
+  router.get('/buscar', withAuthFn, checkLicenciaFn, async (req, res) => {
     try {
-      const esSuperUser = isSuper(req);
+      const esSuperUser = isSuperFn(req);
       const empresaId = esSuperUser && req.query.empresa_id
         ? Number(req.query.empresa_id)
-        : getEmpresaIdFromToken(req);
+        : getEmpresaIdFromTokenFn(req);
 
       const termino = req.query.q || '';
       if (String(termino).length < 2) return res.json([]);
@@ -79,7 +170,7 @@ export function createClientesRouter() {
         LIMIT 20
       `;
 
-      const rows = await query(sql, [empresaId, `%${termino}%`]);
+      const rows = await dbQuery(sql, [empresaId, `%${termino}%`]);
       res.json(rows);
 
     } catch (e) {
@@ -89,24 +180,25 @@ export function createClientesRouter() {
   });
 
   // 3) Geocodificar dirección del cliente sin guardar cambios
-  router.post('/geocode', withAuth, checkLicencia, async (req, res) => {
+  router.post('/geocode', withAuthFn, checkLicenciaFn, async (req, res) => {
     try {
       const { direccion, ciudad, provincia, pais, empresa_id } = req.body || {};
-      const esSuperUser = isSuper(req);
+      const esSuperUser = isSuperFn(req);
       const targetEmpresa = esSuperUser && empresa_id
         ? Number(empresa_id)
-        : getEmpresaIdFromToken(req);
+        : getEmpresaIdFromTokenFn(req);
+      const empresaGeo = await getEmpresaGeoContext(targetEmpresa);
 
       const hasAddress = [direccion, ciudad, provincia].some(v => String(v || '').trim());
       if (!hasAddress) {
         return res.status(400).json({ error: 'Cargá calle, ciudad o provincia para buscar ubicación' });
       }
 
-      const loc = await geocodeIfNeeded({
+      const loc = await geocodeIfNeededFn({
         direccion,
-        ciudad,
-        provincia,
-        pais: pais || 'Argentina'
+        ciudad: ciudad || empresaGeo.ciudad,
+        provincia: provincia || empresaGeo.provincia,
+        pais: empresaGeo.pais || pais || 'Argentina'
       });
 
       const lat = Number(loc?.lat);
@@ -114,17 +206,18 @@ export function createClientesRouter() {
       if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
         return res.status(404).json({ error: 'No se pudo ubicar esa dirección' });
       }
+      assertNotNullIsland(lat, lng);
 
-      const zonaId = await pointInAnyZone({ empresa_id: targetEmpresa, lat, lng });
+      const zonaId = await pointInAnyZoneFn({ empresa_id: targetEmpresa, lat, lng });
       return res.json({ ok: true, latitud: lat, longitud: lng, zona_id: zonaId || null });
     } catch (e) {
-      console.error('Error geocodificando cliente:', e);
-      return res.status(500).json({ error: 'Error buscando ubicación' });
+      if (!e.statusCode) console.error('Error geocodificando cliente:', e);
+      return res.status(e.statusCode || 500).json({ error: e.statusCode ? e.message : 'Error buscando ubicación' });
     }
   });
 
   // 4) Crear cliente
-  router.post('/', withAuth, async (req, res) => {
+  router.post('/', withAuthFn, async (req, res) => {
     try {
       await ensureClientesSchema();
       const {
@@ -135,15 +228,19 @@ export function createClientesRouter() {
         cuenta_corriente_habilitada, requiere_factura
       } = req.body;
 
-      const esSuperUser = isSuper(req);
-      const targetEmpresa = (esSuperUser && empresa_id) ? Number(empresa_id) : getEmpresaIdFromToken(req);
+      const esSuperUser = isSuperFn(req);
+      const targetEmpresa = (esSuperUser && empresa_id) ? Number(empresa_id) : getEmpresaIdFromTokenFn(req);
 
-      if (!targetEmpresa) return res.status(400).json({ error: 'Empresa requerida' });
+      if (!targetEmpresa || !Number.isFinite(Number(targetEmpresa))) return res.status(400).json({ error: 'Empresa requerida' });
       if (!cliente) return res.status(400).json({ error: 'Nombre del cliente requerido' });
 
-      const telNorm = telefono ? normalizePhone(telefono) : null;
+      const telNorm = telefono ? normalizePhoneFn(telefono) : null;
+      const latValue = parseCoordinate(latitud, 'Latitud');
+      const lngValue = parseCoordinate(longitud, 'Longitud');
+      if (latValue != null && lngValue != null) assertNotNullIsland(latValue, lngValue);
+      const zonaValue = await validateZonaForEmpresa(zona_id, targetEmpresa);
 
-      const rows = await query(`
+      const rows = await dbQuery(`
         INSERT INTO puntos_entrega (
           cliente, telefono, telefono_normalizado, direccion,
           ciudad, provincia, pais, latitud, longitud, notas,
@@ -157,8 +254,8 @@ export function createClientesRouter() {
       `, [
         cliente, telefono || null, telNorm, direccion || null,
         ciudad || null, provincia || null, pais || 'Argentina',
-        latitud ? Number(latitud) : null, longitud ? Number(longitud) : null, notas || null,
-        targetEmpresa, zona_id ? Number(zona_id) : null,
+        latValue ?? null, lngValue ?? null, notas || null,
+        targetEmpresa, zonaValue,
         razon_social || null, cuit || null, condicion_iva || null, email_facturacion || null,
         crm_estado || 'activo', crm_riesgo || 'bajo', crm_segmento || null, crm_motivo || null,
         crm_ticket_objetivo != null ? Number(crm_ticket_objetivo) : null,
@@ -169,13 +266,13 @@ export function createClientesRouter() {
 
       res.json({ ok: true, id: rows[0].id });
     } catch (e) {
-      console.error('Error creando cliente:', e);
-      res.status(500).json({ error: 'Error al crear cliente' });
+      if (!e.statusCode) console.error('Error creando cliente:', e);
+      res.status(e.statusCode || 500).json({ error: e.statusCode ? e.message : 'Error al crear cliente' });
     }
   });
 
   // 5) Actualizar cliente
-  router.put('/:id', withAuth, async (req, res) => {
+  router.put('/:id', withAuthFn, async (req, res) => {
     try {
       await ensureClientesSchema();
       const { id } = req.params;
@@ -187,12 +284,19 @@ export function createClientesRouter() {
         cuenta_corriente_habilitada, requiere_factura
       } = req.body;
 
-      const esSuperUser = isSuper(req);
-      const myEmpresa = getEmpresaIdFromToken(req);
+      const esSuperUser = isSuperFn(req);
+      const myEmpresa = getEmpresaIdFromTokenFn(req);
 
       if (!esSuperUser) {
-        const check = await query('SELECT id FROM puntos_entrega WHERE id=$1 AND empresa_id=$2', [id, myEmpresa]);
+        const check = await dbQuery('SELECT id FROM puntos_entrega WHERE id=$1 AND empresa_id=$2', [id, myEmpresa]);
         if (check.length === 0) return res.status(403).json({ error: 'No autorizado' });
+      }
+
+      let targetEmpresa = esSuperUser && empresa_id !== undefined ? Number(empresa_id) : myEmpresa;
+      if (esSuperUser && empresa_id === undefined) {
+        const ownerRows = await dbQuery('SELECT empresa_id FROM puntos_entrega WHERE id=$1 LIMIT 1', [id]);
+        if (!ownerRows.length) return res.status(404).json({ error: 'Cliente no encontrado' });
+        targetEmpresa = Number(ownerRows[0].empresa_id);
       }
 
       const sets = [];
@@ -204,17 +308,22 @@ export function createClientesRouter() {
       if (cliente !== undefined) add('cliente', cliente);
       if (telefono !== undefined) {
         add('telefono', telefono);
-        add('telefono_normalizado', telefono ? normalizePhone(telefono) : null);
+        add('telefono_normalizado', telefono ? normalizePhoneFn(telefono) : null);
       }
       if (direccion !== undefined) add('direccion', direccion);
       if (ciudad !== undefined) add('ciudad', ciudad);
       if (provincia !== undefined) add('provincia', provincia);
       if (pais !== undefined) add('pais', pais);
-      if (latitud !== undefined) add('latitud', latitud ? Number(latitud) : null);
-      if (longitud !== undefined) add('longitud', longitud ? Number(longitud) : null);
+      const latValue = parseCoordinate(latitud, 'Latitud');
+      const lngValue = parseCoordinate(longitud, 'Longitud');
+      if (latValue !== undefined && lngValue !== undefined && latValue != null && lngValue != null) {
+        assertNotNullIsland(latValue, lngValue);
+      }
+      if (latitud !== undefined) add('latitud', latValue);
+      if (longitud !== undefined) add('longitud', lngValue);
       if (notas !== undefined) add('notas', notas);
       if (esSuperUser && empresa_id !== undefined) add('empresa_id', Number(empresa_id));
-      if (zona_id !== undefined) add('zona_id', zona_id ? Number(zona_id) : null);
+      if (zona_id !== undefined) add('zona_id', await validateZonaForEmpresa(zona_id, targetEmpresa));
 
       if (razon_social !== undefined) add('razon_social', razon_social);
       if (cuit !== undefined) add('cuit', cuit);
@@ -239,11 +348,11 @@ export function createClientesRouter() {
       const tenantParam = esSuperUser ? null : Number(myEmpresa);
       vals.push(tenantParam);
 
-      const updated = await query(
+      const updated = await dbQuery(
         `UPDATE puntos_entrega
          SET ${sets.join(', ')}
          WHERE id=$${idx} AND ($${idx + 1}::int IS NULL OR empresa_id=$${idx + 1})
-         RETURNING id, cuenta_corriente_habilitada, requiere_factura, razon_social, cuit, condicion_iva, email_facturacion`,
+         RETURNING id, latitud, longitud, zona_id, cuenta_corriente_habilitada, requiere_factura, razon_social, cuit, condicion_iva, email_facturacion`,
         vals
       );
 
@@ -252,29 +361,29 @@ export function createClientesRouter() {
       res.json({ ok: true, cliente: updated[0] });
 
     } catch (e) {
-      console.error('Error actualizando cliente:', e);
-      res.status(500).json({ error: 'Error al actualizar cliente' });
+      if (!e.statusCode) console.error('Error actualizando cliente:', e);
+      res.status(e.statusCode || 500).json({ error: e.statusCode ? e.message : 'Error al actualizar cliente' });
     }
   });
 
   // 6) Eliminar cliente
-  router.delete('/:id', withAuth, async (req, res) => {
+  router.delete('/:id', withAuthFn, async (req, res) => {
     try {
       const { id } = req.params;
-      const esSuperUser = isSuper(req);
-      const myEmpresa = getEmpresaIdFromToken(req);
+      const esSuperUser = isSuperFn(req);
+      const myEmpresa = getEmpresaIdFromTokenFn(req);
 
       const checkSql = esSuperUser
         ? 'SELECT id, empresa_id FROM puntos_entrega WHERE id=$1'
         : 'SELECT id, empresa_id FROM puntos_entrega WHERE id=$1 AND empresa_id=$2';
 
-      const check = await query(checkSql, esSuperUser ? [id] : [id, myEmpresa]);
+      const check = await dbQuery(checkSql, esSuperUser ? [id] : [id, myEmpresa]);
       if (!check.length) return res.status(404).json({ error: 'Cliente no encontrado' });
 
       const targetEmpresa = Number(check[0].empresa_id);
 
-      await query('DELETE FROM pedidos WHERE punto_entrega_id=$1 AND empresa_id=$2', [id, targetEmpresa]);
-      await query('DELETE FROM puntos_entrega WHERE id=$1 AND empresa_id=$2', [id, targetEmpresa]);
+      await dbQuery('DELETE FROM pedidos WHERE punto_entrega_id=$1 AND empresa_id=$2', [id, targetEmpresa]);
+      await dbQuery('DELETE FROM puntos_entrega WHERE id=$1 AND empresa_id=$2', [id, targetEmpresa]);
 
       res.json({ ok: true });
     } catch (e) {

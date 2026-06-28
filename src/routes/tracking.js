@@ -26,13 +26,13 @@ function toIsoOrNull(v) {
   return Number.isFinite(d.getTime()) ? d.toISOString() : null;
 }
 
-async function resolveEmpresaId(req) {
+async function resolveEmpresaId(req, queryFn = query) {
   if (req.user?.empresa_id) return req.user.empresa_id;
 
   const userId = req.user?.id;
   if (!userId) return null;
 
-  const rows = await query(
+  const rows = await queryFn(
     'SELECT empresa_id FROM usuarios WHERE id = $1 LIMIT 1',
     [userId]
   );
@@ -40,16 +40,16 @@ async function resolveEmpresaId(req) {
   return rows?.[0]?.empresa_id || null;
 }
 
-async function resolveTargetEmpresaId(req) {
+async function resolveTargetEmpresaId(req, queryFn = query) {
   const role = getRole(req.user?.role);
   if (role === 'super') {
     const empresaFromQuery = asNum(req.query?.empresa_id ?? req.query?.empresaId);
     if (Number.isFinite(empresaFromQuery) && empresaFromQuery > 0) return empresaFromQuery;
   }
-  return resolveEmpresaId(req);
+  return resolveEmpresaId(req, queryFn);
 }
 
-export function createTrackingRouter() {
+export function createTrackingRouter({ queryFn = query, withAuthFn = withAuth } = {}) {
   const router = express.Router();
 
   // POST /api/track/update (compat)
@@ -58,7 +58,7 @@ export function createTrackingRouter() {
     try {
       const body = req.body || {};
       const choferId = req.user?.chofer_id;
-      const empresaId = await resolveEmpresaId(req);
+      const empresaId = await resolveEmpresaId(req, queryFn);
 
       if (!choferId || !empresaId) {
         return res.status(403).json({ error: 'No autorizado' });
@@ -80,7 +80,11 @@ export function createTrackingRouter() {
         return res.status(400).json({ error: 'Coordenadas fuera de rango' });
       }
 
-      const pedRows = await query(
+      if (lat === 0 && lng === 0) {
+        return res.status(400).json({ error: 'Coordenadas inválidas' });
+      }
+
+      const pedRows = await queryFn(
         `
         SELECT id, empresa_id, chofer_id, estado
         FROM pedidos
@@ -100,7 +104,7 @@ export function createTrackingRouter() {
         return res.status(403).json({ error: 'No puedes actualizar este pedido' });
       }
 
-      await query(
+      await queryFn(
         `
         INSERT INTO pedido_track_points (pedido_id, latitud, longitud, timestamp, source, precision, speed, heading)
         VALUES ($1, $2, $3, NOW(), $4, $5, $6, $7)
@@ -120,18 +124,18 @@ export function createTrackingRouter() {
     }
   };
 
-  router.post('/update', withAuth, saveLocationHandler);
-  router.post('/location', withAuth, saveLocationHandler);
+  router.post('/update', withAuthFn, saveLocationHandler);
+  router.post('/location', withAuthFn, saveLocationHandler);
 
   // GET /api/track/live
   // Vista live para admins/super por empresa (multi-tenant)
-  router.get('/live', withAuth, async (req, res) => {
+  router.get('/live', withAuthFn, async (req, res) => {
     try {
       if (!canManageTracking(req.user?.role)) {
         return res.status(403).json({ error: 'No autorizado' });
       }
 
-      const empresaId = await resolveTargetEmpresaId(req);
+      const empresaId = await resolveTargetEmpresaId(req, queryFn);
       if (!empresaId) {
         return res.status(400).json({ error: 'Empresa no determinada' });
       }
@@ -156,7 +160,7 @@ export function createTrackingRouter() {
         vals.push(choferId);
       }
 
-      const rows = await query(
+      const rows = await queryFn(
         `
         WITH ult AS (
           SELECT DISTINCT ON (ptp.pedido_id)
@@ -243,18 +247,18 @@ export function createTrackingRouter() {
 
   // GET /api/track/drivers/live
   // Última ubicación conocida por chofer (independiente del estado actual del pedido)
-  router.get('/drivers/live', withAuth, async (req, res) => {
+  router.get('/drivers/live', withAuthFn, async (req, res) => {
     try {
       if (!canManageTracking(req.user?.role)) {
         return res.status(403).json({ error: 'No autorizado' });
       }
 
-      const empresaId = await resolveTargetEmpresaId(req);
+      const empresaId = await resolveTargetEmpresaId(req, queryFn);
       if (!empresaId) {
         return res.status(400).json({ error: 'Empresa no determinada' });
       }
 
-      const rows = await query(
+      const rows = await queryFn(
         `
         WITH ult_chofer AS (
           SELECT DISTINCT ON (p.chofer_id)
@@ -307,13 +311,13 @@ export function createTrackingRouter() {
   });
 
   // POST /api/track/incidents/:pedidoId/ack
-  router.post('/incidents/:pedidoId/ack', withAuth, async (req, res) => {
+  router.post('/incidents/:pedidoId/ack', withAuthFn, async (req, res) => {
     try {
       if (!canManageTracking(req.user?.role)) {
         return res.status(403).json({ error: 'No autorizado' });
       }
 
-      const empresaId = await resolveEmpresaId(req);
+      const empresaId = await resolveEmpresaId(req, queryFn);
       const pedidoId = asNum(req.params.pedidoId);
       const comment = String(req.body?.comment || '').trim().slice(0, MAX_ACK_COMMENT) || null;
 
@@ -321,7 +325,7 @@ export function createTrackingRouter() {
         return res.status(400).json({ error: 'Parámetros inválidos' });
       }
 
-      const pedRows = await query(
+      const pedRows = await queryFn(
         'SELECT id, empresa_id FROM pedidos WHERE id = $1 AND empresa_id = $2 LIMIT 1',
         [pedidoId, empresaId]
       );
@@ -330,7 +334,7 @@ export function createTrackingRouter() {
         return res.status(404).json({ error: 'Pedido no encontrado' });
       }
 
-      const ackRows = await query(
+      const ackRows = await queryFn(
         `
         INSERT INTO tracking_incident_acks (empresa_id, pedido_id, acked_by_user_id, acked_by_username, comment)
         VALUES ($1, $2, $3, $4, $5)
@@ -359,13 +363,13 @@ export function createTrackingRouter() {
   });
 
   // GET /api/track/history/:pedidoId?limit=200
-  router.get('/history/:pedidoId', withAuth, async (req, res) => {
+  router.get('/history/:pedidoId', withAuthFn, async (req, res) => {
     try {
       if (!canManageTracking(req.user?.role)) {
         return res.status(403).json({ error: 'No autorizado' });
       }
 
-      const empresaId = await resolveEmpresaId(req);
+      const empresaId = await resolveEmpresaId(req, queryFn);
       const pedidoId = asNum(req.params.pedidoId);
       const limitRaw = asNum(req.query?.limit);
       const limit = Number.isFinite(limitRaw)
@@ -376,7 +380,7 @@ export function createTrackingRouter() {
         return res.status(400).json({ error: 'Parámetros inválidos' });
       }
 
-      const pedRows = await query(
+      const pedRows = await queryFn(
         'SELECT id, empresa_id FROM pedidos WHERE id = $1 AND empresa_id = $2 LIMIT 1',
         [pedidoId, empresaId]
       );
@@ -385,7 +389,7 @@ export function createTrackingRouter() {
         return res.status(404).json({ error: 'Pedido no encontrado' });
       }
 
-      const points = await query(
+      const points = await queryFn(
         `
         SELECT id, pedido_id, latitud, longitud, timestamp, source, precision, speed, heading
         FROM pedido_track_points

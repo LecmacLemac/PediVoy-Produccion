@@ -879,6 +879,48 @@
       if (gs) gs.textContent = `Ubicación: ${Number(lat).toFixed(6)}, ${Number(lng).toFixed(6)}`;
     }
 
+    async function persistCurrentLocation(lat, lng, zonaId = '') {
+      const id = $('#c_id').value;
+      if (!id) return false;
+
+      const body = {
+        latitud: Number(lat).toFixed(6),
+        longitud: Number(lng).toFixed(6),
+        zona_id: zonaId || $('#c_zona').value || ''
+      };
+
+      if (STATE.isSuper) {
+        const empId = $('#c_empresa_id').value || $('#empFilter').value;
+        if (!empId) {
+          toast('Selecciona una empresa para guardar el pin');
+          return false;
+        }
+        body.empresa_id = empId;
+      }
+
+      const res = await api(`/api/clientes/${encodeURIComponent(id)}`, {
+        method: 'PUT',
+        body: JSON.stringify(body)
+      });
+
+      if (res.error) {
+        toast('No se pudo guardar el pin: ' + res.error);
+        return false;
+      }
+
+      clients = clients.map(c => Number(c.id) === Number(id)
+        ? {
+            ...c,
+            latitud: res.cliente?.latitud ?? body.latitud,
+            longitud: res.cliente?.longitud ?? body.longitud,
+            zona_id: res.cliente?.zona_id ?? (body.zona_id || null)
+          }
+        : c
+      );
+      renderList();
+      return true;
+    }
+
     function applyLatLngInputs() {
       const lat = Number($('#c_latitud').value);
       const lng = Number($('#c_longitud').value);
@@ -965,9 +1007,15 @@
         if (res.zona_id && zones.some(z => Number(z.id) === Number(res.zona_id))) {
           $('#c_zona').value = String(res.zona_id);
           updateDriverInfo();
-          toast('Ubicación encontrada y zona actualizada');
         } else {
-          toast('Ubicación encontrada');
+          updateDriverInfo();
+        }
+
+        if ($('#c_id').value) {
+          const saved = await persistCurrentLocation(lat, lng, res.zona_id || $('#c_zona').value || '');
+          if (saved) toast(res.zona_id ? 'Ubicación encontrada, zona actualizada y pin guardado' : 'Ubicación encontrada y pin guardado');
+        } else {
+          toast(res.zona_id ? 'Ubicación encontrada y zona actualizada. Guardá el cliente para conservar el pin.' : 'Ubicación encontrada. Guardá el cliente para conservar el pin.');
         }
       } finally {
         geocodeBusy = false;

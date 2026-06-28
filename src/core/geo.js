@@ -1,26 +1,52 @@
 import { cfg } from '../config.js';
 import { query } from '../db.js';
 
+function buildAddressQuery({ direccion, ciudad, provincia, pais }) {
+  return [direccion, ciudad, provincia, pais]
+    .map((part) => String(part || '').trim())
+    .filter(Boolean)
+    .join(', ');
+}
+
+function parseLocation(loc) {
+  const lat = Number(loc?.lat);
+  const lng = Number(loc?.lng ?? loc?.lon);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  return { lat, lng };
+}
+
+async function geocodeWithGoogle(q) {
+  if (!cfg.mapsKey) return null;
+
+  const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(q)}&key=${cfg.mapsKey}`;
+  const r = await fetch(url);
+  if (!r.ok) return null;
+
+  const j = await r.json();
+  return parseLocation(j?.results?.[0]?.geometry?.location);
+}
+
+async function geocodeWithNominatim(q) {
+  const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&addressdetails=0&q=${encodeURIComponent(q)}`;
+  const r = await fetch(url, {
+    headers: {
+      'User-Agent': 'PediVoy/1.1 geocoding fallback',
+      'Accept': 'application/json',
+    },
+  });
+  if (!r.ok) return null;
+
+  const j = await r.json();
+  return parseLocation(Array.isArray(j) ? j[0] : null);
+}
+
 export async function geocodeIfNeeded({ direccion, ciudad, provincia, pais }) {
   try {
-    if (!cfg.mapsKey) return { lat: null, lng: null };
-
-    const q = encodeURIComponent([direccion, ciudad, provincia, pais].filter(Boolean).join(', '));
+    const q = buildAddressQuery({ direccion, ciudad, provincia, pais });
     if (!q) return { lat: null, lng: null };
 
-    const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${q}&key=${cfg.mapsKey}`;
-
-    const r = await fetch(url);
-    if (!r.ok) return { lat: null, lng: null };
-
-    const j = await r.json();
-    const loc = j?.results?.[0]?.geometry?.location;
-
-    if (!loc || typeof loc.lat !== 'number' || typeof loc.lng !== 'number') {
-      return { lat: null, lng: null };
-    }
-
-    return { lat: loc.lat, lng: loc.lng };
+    const loc = (await geocodeWithGoogle(q)) || (await geocodeWithNominatim(q));
+    return loc || { lat: null, lng: null };
   } catch (err) {
     console.error('geocodeIfNeeded ERROR', err);
     return { lat: null, lng: null };
