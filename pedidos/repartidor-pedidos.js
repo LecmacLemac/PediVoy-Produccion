@@ -185,6 +185,55 @@ function etaBadgeHtml(min, km) {
   return `<span style="display:inline-block; padding:2px 8px; border-radius:999px; background:${bg}; color:${color}; font-weight:700;">ETA ${min} min · ${km.toFixed(1)} km · llega ${arrival}${slaTxt}</span>`;
 }
 
+function isPedidoActivoCarga(pedido) {
+  return ['pendiente', 'en_ruta', 'en_camino'].includes(String(pedido?.estado || '').toLowerCase());
+}
+
+function getItemProductKey(item) {
+  const id = Number(item?.producto_id || item?.id_producto || 0);
+  if (Number.isFinite(id) && id > 0) return `id:${id}`;
+  return `name:${String(item?.producto || item?.nombre || 'Producto').trim().toLowerCase()}`;
+}
+
+function renderCargaPendiente(list) {
+  const totalEl = document.getElementById('cargaPendienteTotal');
+  const listEl = document.getElementById('cargaPendienteList');
+  if (!totalEl || !listEl) return;
+
+  const byProduct = new Map();
+  let totalUnits = 0;
+  let activeOrders = 0;
+
+  (Array.isArray(list) ? list : []).filter(isPedidoActivoCarga).forEach((pedido) => {
+    activeOrders += 1;
+    (Array.isArray(pedido.items) ? pedido.items : []).forEach((item) => {
+      const qty = Number(item?.cantidad || 0);
+      if (!Number.isFinite(qty) || qty <= 0) return;
+
+      const key = getItemProductKey(item);
+      const name = item?.producto || item?.nombre || 'Producto';
+      const current = byProduct.get(key) || { name, qty: 0 };
+      current.qty += qty;
+      byProduct.set(key, current);
+      totalUnits += qty;
+    });
+  });
+
+  totalEl.textContent = `${totalUnits} ${totalUnits === 1 ? 'unidad' : 'unidades'} · ${activeOrders} ${activeOrders === 1 ? 'pedido activo' : 'pedidos activos'}`;
+
+  if (!totalUnits || !byProduct.size) {
+    listEl.className = 'load-empty';
+    listEl.textContent = activeOrders ? 'Pedidos activos sin detalle de productos.' : 'Sin carga pendiente.';
+    return;
+  }
+
+  listEl.className = 'load-chips';
+  listEl.innerHTML = Array.from(byProduct.values())
+    .sort((a, b) => b.qty - a.qty || String(a.name).localeCompare(String(b.name), 'es'))
+    .map((item) => `<span class="load-chip"><strong>${Number(item.qty).toLocaleString('es-AR')}x</strong> ${esc(item.name)}</span>`)
+    .join('');
+}
+
 async function getCurrentPositionSafe() {
   if (!navigator.geolocation) return null;
   return new Promise((resolve) => {
@@ -382,6 +431,8 @@ function renderCards() {
     }
     return true;
   });
+
+  renderCargaPendiente(list);
 
   // 2. GENERACIÓN DE HTML
   const html = list.map(p => {
