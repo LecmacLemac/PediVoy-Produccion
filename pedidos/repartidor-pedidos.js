@@ -189,10 +189,63 @@ function isPedidoActivoCarga(pedido) {
   return ['pendiente', 'en_ruta', 'en_camino'].includes(String(pedido?.estado || '').toLowerCase());
 }
 
+function getPedidoItemsForCarga(pedido) {
+  const candidates = [
+    pedido?.items,
+    pedido?.productos,
+    pedido?.detalle,
+    pedido?.items_activos,
+    pedido?.productos_pendientes
+  ];
+
+  for (const candidate of candidates) {
+    if (Array.isArray(candidate)) return candidate;
+    if (typeof candidate === 'string' && candidate.trim()) {
+      try {
+        const parsed = JSON.parse(candidate);
+        if (Array.isArray(parsed)) return parsed;
+      } catch {}
+    }
+  }
+
+  const pedidoQty = Number(pedido?.cantidad || pedido?.unidades || 0);
+  if (Number.isFinite(pedidoQty) && pedidoQty > 0) {
+    return [{
+      producto: pedido?.producto || pedido?.producto_nombre || pedido?.nombre || `Pedido #${pedido?.id || ''}`.trim(),
+      producto_id: pedido?.producto_id,
+      cantidad: pedidoQty
+    }];
+  }
+
+  return [];
+}
+
 function getItemProductKey(item) {
   const id = Number(item?.producto_id || item?.id_producto || 0);
   if (Number.isFinite(id) && id > 0) return `id:${id}`;
-  return `name:${String(item?.producto || item?.nombre || 'Producto').trim().toLowerCase()}`;
+  return `name:${String(item?.producto || item?.nombre || item?.producto_nombre || item?.descripcion || 'Producto').trim().toLowerCase()}`;
+}
+
+function getItemQtyForCarga(item) {
+  const qty = Number(
+    item?.cantidad ??
+    item?.qty ??
+    item?.unidades ??
+    item?.cantidad_pedida ??
+    item?.cantidad_total ??
+    item?.cantidad_pendiente ??
+    item?.cantidad_entregar ??
+    0
+  );
+  return Number.isFinite(qty) && qty > 0 ? qty : 0;
+}
+
+function getItemNameForCarga(item) {
+  const name = item?.producto || item?.nombre || item?.producto_nombre || item?.descripcion;
+  if (name) return name;
+
+  const id = Number(item?.producto_id || item?.id_producto || 0);
+  return Number.isFinite(id) && id > 0 ? `Producto ID ${id}` : 'Producto';
 }
 
 function renderCargaPendiente(list) {
@@ -206,12 +259,12 @@ function renderCargaPendiente(list) {
 
   (Array.isArray(list) ? list : []).filter(isPedidoActivoCarga).forEach((pedido) => {
     activeOrders += 1;
-    (Array.isArray(pedido.items) ? pedido.items : []).forEach((item) => {
-      const qty = Number(item?.cantidad || 0);
-      if (!Number.isFinite(qty) || qty <= 0) return;
+    getPedidoItemsForCarga(pedido).forEach((item) => {
+      const qty = getItemQtyForCarga(item);
+      if (!qty) return;
 
       const key = getItemProductKey(item);
-      const name = item?.producto || item?.nombre || 'Producto';
+      const name = getItemNameForCarga(item);
       const current = byProduct.get(key) || { name, qty: 0 };
       current.qty += qty;
       byProduct.set(key, current);
@@ -401,7 +454,7 @@ function renderCards() {
 
   // 1. FILTRADO
   let list = pedidos.filter(p => {
-    const isActive = ['pendiente', 'en_ruta', 'en_camino'].includes(p.estado);
+    const isActive = isPedidoActivoCarga(p);
 
     // Filtro de "Solo Hoy" (aplica solo si no está activo/pendiente)
     if (fHoy && !isActive) {
@@ -426,7 +479,7 @@ function renderCards() {
     
     if (fEst === 'activos') {
       if (!isActive) return false;
-    } else if (fEst && p.estado !== fEst) {
+    } else if (fEst && String(p.estado || '').toLowerCase() !== fEst) {
       return false;
     }
     return true;
