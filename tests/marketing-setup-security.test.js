@@ -96,6 +96,45 @@ test('lanzamiento real sigue exigiendo un mensaje', async () => {
   assert.equal(result.json.error, 'mensaje requerido');
 });
 
+test('lanzamiento SMS respeta interruptor IFTTT_SMS_ENABLED', async () => {
+  const oldEnabled = process.env.IFTTT_SMS_ENABLED;
+  process.env.IFTTT_SMS_ENABLED = '0';
+
+  const telemetryParams = [];
+  try {
+    const result = await requestWithSetup({
+      path: '/marketing/base/launch',
+      method: 'POST',
+      body: {
+        empresa_id: 2,
+        canal: 'sms',
+        mensaje: 'Hola {rubro}',
+        max_envios: 1,
+        frecuencia_horas: 24,
+        dry_run: false,
+      },
+      query: async (sql, params) => {
+        if (sql.includes('SELECT mc.id, mc.telefono')) {
+          return [{ id: 22, telefono: '3515551111', rubro: 'hogar', zona: 'centro', lista_nombre: 'Base' }];
+        }
+        if (sql.includes('INSERT INTO marketing_envios_telemetria')) {
+          telemetryParams.push(params);
+        }
+        return [];
+      },
+    });
+
+    assert.equal(result.status, 200);
+    assert.equal(result.json.enviados, 0);
+    assert.equal(result.json.errores, 1);
+    assert.equal(telemetryParams.length, 1);
+    assert.equal(telemetryParams[0][7], 'IFTTT_SMS_ENABLED=0');
+  } finally {
+    if (oldEnabled === undefined) delete process.env.IFTTT_SMS_ENABLED;
+    else process.env.IFTTT_SMS_ENABLED = oldEnabled;
+  }
+});
+
 test('telemetría contabiliza errores generados por lanzamientos manuales', async () => {
   const sqlCalls = [];
   const result = await requestWithSetup({

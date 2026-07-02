@@ -2925,6 +2925,7 @@ export function createSetupRouter(deps) {
   };
   const canalIncluyeWhatsApp = (c) => ['whatsapp', 'ambos'].includes(normalizeCanalMarketing(c));
   const canalIncluyeSms = (c) => ['sms', 'ambos'].includes(normalizeCanalMarketing(c));
+  const smsIftttEnabled = () => String(process.env.IFTTT_SMS_ENABLED || '0') === '1';
 
   const renderTemplateMsg = (tpl, ctx = {}) => String(tpl || '')
     .replaceAll('{cliente}', String(ctx.cliente || ''))
@@ -3559,9 +3560,13 @@ export function createSetupRouter(deps) {
             envioOk = true;
           }
           if (canalIncluyeSms(canal)) {
-            const sms = await sendSmsViaIfttt({ phone: tel, message: msg });
-            if (sms?.ok) envioOk = true;
-            else detalleError = sms?.reason || sms?.error || 'sms_error';
+            if (!smsIftttEnabled()) {
+              detalleError = 'IFTTT_SMS_ENABLED=0';
+            } else {
+              const sms = await sendSmsViaIfttt({ phone: tel, message: msg });
+              if (sms?.ok) envioOk = true;
+              else detalleError = sms?.reason || sms?.error || 'sms_error';
+            }
           }
         } catch (e) {
           detalleError = e?.message || 'send_error';
