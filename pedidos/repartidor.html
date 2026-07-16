@@ -703,26 +703,29 @@
     <div id="amContenido" class="modal-list" style="margin-top:0.6rem;">
       </div>
 
-    <label style="margin-top:0.5rem;">Checklist de entrega</label>
-    <div class="modal-list" style="margin-top:0.4rem;">
-      <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" id="amChkCliente" checked> Cliente presente/confirmado</label>
-      <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" id="amChkProducto" checked> Producto entregado completo</label>
-      <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" id="amChkCobro"> Cobro confirmado (si aplica)</label>
+    <div style="margin-top:0.75rem; border:1px solid rgba(148,163,184,0.18); border-radius:12px; padding:0.65rem; background:rgba(15,23,42,0.35);">
+      <div style="font-weight:700; margin-bottom:0.45rem;">Checklist rápido</div>
+      <div class="row" style="gap:0.75rem; margin:0;">
+        <label style="display:flex;gap:8px;align-items:center; margin:0;"><input type="checkbox" id="amChkCliente" checked> Cliente confirmó</label>
+        <label style="display:flex;gap:8px;align-items:center; margin:0;"><input type="checkbox" id="amChkProducto" checked> Producto completo</label>
+        <label style="display:flex;gap:8px;align-items:center; margin:0;"><input type="checkbox" id="amChkCobro"> Cobro confirmado</label>
+      </div>
     </div>
 
-    <label style="margin-top:0.5rem;">Evidencia opcional</label>
-    <div class="modal-list" style="margin-top:0.4rem;">
-      <label>Foto de entrega</label>
-      <input id="amFoto" type="file" accept="image/*" capture="environment" style="width:100%;" />
-      <label style="margin-top:0.5rem;">Firma cliente (opcional)</label>
-      <canvas id="amFirma" width="320" height="120" style="width:100%;max-width:420px;border:1px solid var(--border);border-radius:8px;background:#fff;"></canvas>
-      <div><button type="button" class="iconbtn ghost" onclick="limpiarFirmaEntrega()">Limpiar firma</button></div>
-      <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" id="amGeo" checked> Adjuntar geolocalización</label>
-    </div>
-
-    <label style="margin-top:0.5rem;">Observaciones</label>
-    <textarea id="amObs" rows="2" placeholder="Notas opcionales..."
-      style="width:100%; resize:vertical; background:var(--bg-input); border-radius:8px; border:1px solid var(--border); color:#fff; padding:0.5rem;"></textarea>
+    <details style="margin-top:0.75rem; border:1px solid rgba(148,163,184,0.18); border-radius:12px; padding:0.65rem; background:rgba(15,23,42,0.35);">
+      <summary style="cursor:pointer; font-weight:700;">Agregar evidencia / observaciones</summary>
+      <div class="modal-list" style="margin-top:0.75rem;">
+        <label>Foto de entrega</label>
+        <input id="amFoto" type="file" accept="image/*" capture="environment" style="width:100%;" />
+        <label style="margin-top:0.5rem;">Firma cliente (opcional)</label>
+        <canvas id="amFirma" width="320" height="120" style="width:100%;max-width:420px;border:1px solid var(--border);border-radius:8px;background:#fff;"></canvas>
+        <div><button type="button" class="iconbtn ghost" onclick="limpiarFirmaEntrega()">Limpiar firma</button></div>
+        <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" id="amGeo" checked> Adjuntar geolocalización</label>
+        <label style="margin-top:0.5rem;">Observaciones</label>
+        <textarea id="amObs" rows="2" placeholder="Notas opcionales..."
+          style="width:100%; resize:vertical; background:var(--bg-input); border-radius:8px; border:1px solid var(--border); color:#fff; padding:0.5rem;"></textarea>
+      </div>
+    </details>
 
     <div class="row" style="margin-top:1rem; justify-content:flex-end;">
       <button type="button" class="iconbtn ghost" onclick="cerrarActivosModal()">Cancelar</button>

@@ -102,47 +102,38 @@ async function abrirActivosPaso(pedidoId) {
       </option>
     `).join('');
 
-    // 1) Productos activos del pedido
-    if (itemsActivos.length) {
-      html += `
-        <div>
-          <small class="muted">Productos de este pedido marcados como activo</small>
-          <ul style="list-style:none; padding:0; margin:0.4rem 0;">
-            ${itemsActivos.map(it => `
-              <li style="padding:3px 0;">
-                <strong>${it.cantidad}x</strong> ${esc(it.producto || '')}
-              </li>
-            `).join('')}
-          </ul>
-        </div>
-      `;
-    }
-
+    // 1) Bloque principal: retornables/envases primero, compacto para trabajo en calle
     if (retItems.length) {
       html += `
-        <div style="background:rgba(6,182,212,0.08); border:1px solid rgba(6,182,212,0.28); border-radius:12px; padding:0.75rem; margin-top:0.6rem;">
+        <div style="background:rgba(6,182,212,0.10); border:1px solid rgba(6,182,212,0.34); border-radius:14px; padding:0.85rem; margin-top:0.2rem;">
           <div style="display:flex; justify-content:space-between; gap:10px; align-items:flex-start;">
             <div>
-              <strong>🔁 Retornables / envases</strong>
-              <div class="muted" style="font-size:0.82rem; margin-top:3px;">Registrá cuántos vacíos entrega el cliente. Si no devuelve, queda deuda de envases.</div>
+              <strong style="font-size:1rem;">🔁 Envases a recibir</strong>
+              <div class="muted" style="font-size:0.82rem; margin-top:3px;">Confirmá los vacíos que entrega el cliente.</div>
             </div>
           </div>
-          <div style="margin-top:0.65rem; display:grid; gap:0.55rem;">
+          <div style="margin-top:0.75rem; display:grid; gap:0.65rem;">
             ${retItems.map(r => {
               const pid = Number(r.producto_id);
               const entregados = Number(r.cantidad_entregada || 0);
               const saldoPrevio = Number(r.saldo_actual || 0);
               const sugerido = Math.max(0, Number(r.sugerido_devolver ?? Math.min(entregados, saldoPrevio + entregados)));
               return `
-                <div style="display:grid; grid-template-columns:1fr 120px; gap:10px; align-items:center; background:rgba(15,23,42,0.58); border:1px solid rgba(148,163,184,0.22); border-radius:10px; padding:0.55rem;">
-                  <div>
-                    <div><strong>${esc(r.producto || ('Producto #' + pid))}</strong></div>
-                    <div class="muted" style="font-size:0.8rem;">Entrega: ${entregados} lleno(s) · Saldo previo cliente: ${saldoPrevio}</div>
+                <div style="background:rgba(15,23,42,0.62); border:1px solid rgba(148,163,184,0.22); border-radius:12px; padding:0.7rem;">
+                  <div style="display:flex; justify-content:space-between; gap:10px; align-items:flex-start; flex-wrap:wrap;">
+                    <div style="min-width:170px; flex:1;">
+                      <div><strong>${esc(r.producto || ('Producto #' + pid))}</strong></div>
+                      <div class="muted" style="font-size:0.82rem; margin-top:2px;">Entrega: <b>${entregados}</b> lleno(s) · Deuda previa: <b>${saldoPrevio}</b></div>
+                    </div>
+                    <label style="margin:0; min-width:145px; flex:0 0 145px;">
+                      <span style="font-size:0.72rem; color:#67e8f9; text-transform:uppercase; font-weight:700;">Vacíos recibidos</span>
+                      <input type="number" min="0" step="1" value="${sugerido}" data-retornable-devuelto="1" data-producto-id="${pid}" data-entregados="${entregados}" style="margin-top:4px; font-size:1.25rem; font-weight:800; text-align:center;">
+                    </label>
                   </div>
-                  <label style="margin:0;">
-                    <span style="font-size:0.68rem; color:var(--muted); text-transform:uppercase;">Vacíos recibidos</span>
-                    <input type="number" min="0" step="1" value="${sugerido}" data-retornable-devuelto="1" data-producto-id="${pid}" data-entregados="${entregados}" style="margin-top:3px;">
-                  </label>
+                  <div style="display:flex; gap:0.5rem; margin-top:0.55rem; flex-wrap:wrap;">
+                    <button type="button" class="iconbtn ghost" data-ret-btn="0" data-producto-id="${pid}" style="padding:0.45rem 0.75rem;">Recibió 0</button>
+                    <button type="button" class="iconbtn success" data-ret-btn="correcto" data-producto-id="${pid}" data-value="${sugerido}" style="padding:0.45rem 0.75rem;">Correcto: ${sugerido}</button>
+                  </div>
                 </div>
               `;
             }).join('')}
@@ -151,11 +142,11 @@ async function abrirActivosPaso(pedidoId) {
       `;
     }
 
+    // 2) Activos a entregar: solo queda abierto cuando realmente requiere acción del repartidor
     if (itemsActivos.length) {
-      html += `<hr style="border-color:rgba(148,163,184,0.3); margin:0.6rem 0;">`;
+      html += `<div style="margin-top:0.75rem;">`;
+      html += `<div style="font-weight:700; margin-bottom:0.45rem;">📦 Activos/equipos a entregar</div>`;
 
-      // 2) NUEVO: Seleccionar activos a ENTREGAR (aunque el cliente no tenga activos)
-      //    (1 select por unidad según cantidad)
       if (!actosDisp.length) {
         html += `
           <div style="background: rgba(245,158,11,0.10); padding:0.8rem; border-radius:10px; border:1px solid rgba(245,158,11,0.35);">
@@ -166,10 +157,9 @@ async function abrirActivosPaso(pedidoId) {
           </div>
         `;
       } else {
-        html += `<small class="muted">Seleccionar activos disponibles para entregar</small>`;
         html += `<div class="modal-list" style="margin-top:0.4rem;">`;
 
-        itemsActivos.forEach((it, idx) => {
+        itemsActivos.forEach((it) => {
           const qty = Number(it.cantidad) || 1;
           const itemId = it.item_pedido_id ?? it.id ?? null;
           const productoId = it.producto_id ?? null;
@@ -177,12 +167,12 @@ async function abrirActivosPaso(pedidoId) {
           for (let q = 0; q < qty; q++) {
             html += `
               <div style="padding:6px 0; border-bottom:1px dashed rgba(148,163,184,0.25);">
-                <div style="display:flex; justify-content:space-between; gap:10px; align-items:center;">
+                <div style="display:flex; justify-content:space-between; gap:10px; align-items:center; flex-wrap:wrap;">
                   <div>
                     <div><strong>${esc(it.producto || 'Activo')}</strong> <span class="muted" style="font-size:0.85rem;">(${q + 1}/${qty})</span></div>
                     <div class="muted" style="font-size:0.8rem;">Seleccioná el equipo a entregar</div>
                   </div>
-                  <div style="min-width:240px;">
+                  <div style="min-width:240px; flex:1;">
                     <select
                       data-am-entrega="1"
                       data-am-item-id="${itemId != null ? String(itemId) : ''}"
@@ -200,51 +190,64 @@ async function abrirActivosPaso(pedidoId) {
 
         html += `</div>`;
       }
+      html += `</div>`;
     }
 
-    html += `<hr style="border-color:rgba(148,163,184,0.3); margin:0.6rem 0;">`;
+    // 3) Información secundaria cerrada por defecto
+    const movimientos = Array.isArray(data.movimientos_existentes) ? data.movimientos_existentes : [];
+    const detalleItems = [];
 
-    // 3) Activos vinculados al cliente (retiro/mantenimiento/cambio)
+    if (itemsActivos.length) {
+      detalleItems.push(`
+        <div>
+          <small class="muted">Productos marcados como activo</small>
+          <ul style="list-style:none; padding:0; margin:0.4rem 0;">
+            ${itemsActivos.map(it => `
+              <li style="padding:3px 0;"><strong>${it.cantidad}x</strong> ${esc(it.producto || '')}</li>
+            `).join('')}
+          </ul>
+        </div>
+      `);
+    }
+
     if (actosCliente.length) {
-      html += `<small class="muted">Activos actualmente vinculados a este cliente</small>`;
-      html += `<div class="modal-list" style="margin-top:0.4rem;">`;
+      detalleItems.push(`
+        <div>
+          <small class="muted">Activos actualmente vinculados al cliente</small>
+          <div class="modal-list" style="margin-top:0.4rem;">
+            ${actosCliente.map(a => `
+              <div style="padding:6px 0; border-bottom:1px dashed rgba(148,163,184,0.25);">
+                <div style="display:flex; justify-content:space-between; gap:8px; align-items:center; flex-wrap:wrap;">
+                  <div>
+                    <div><strong>${esc(a.codigo || a.tipo || '')}</strong></div>
+                    <div style="font-size:0.8rem; color:var(--muted);">
+                      ${esc(a.tipo || '')} · Estado: ${esc(a.estado || '')}
+                      ${a.numero_serie ? ' · N° Serie: ' + esc(a.numero_serie) : ''}
+                      ${a.alquiler_mensual != null ? ' · Alquiler: ' + money(a.alquiler_mensual) : ''}
+                    </div>
+                  </div>
 
-      html += actosCliente.map(a => `
-        <div style="padding:6px 0; border-bottom:1px dashed rgba(148,163,184,0.25);">
-          <div style="display:flex; justify-content:space-between; gap:8px; align-items:center;">
-            <div>
-              <div><strong>${esc(a.codigo || a.tipo || '')}</strong></div>
-              <div style="font-size:0.8rem; color:var(--muted);">
-                ${esc(a.tipo || '')} · Estado: ${esc(a.estado || '')}
-                ${a.numero_serie ? ' · N° Serie: ' + esc(a.numero_serie) : ''}
-                ${a.alquiler_mensual != null ? ' · Alquiler: ' + money(a.alquiler_mensual) : ''}
+                  <div style="min-width:170px; flex:1;">
+                    <select data-am-accion="${a.id}" style="width:100%; margin-bottom:4px;">
+                      <option value="">(Sin cambios)</option>
+                      <option value="retiro">Retirar</option>
+                      <option value="mantenimiento">Retirar a mant.</option>
+                      <option value="cambio"${actosDisp.length ? '' : ' disabled'}>Cambiar por...</option>
+                    </select>
+
+                    <select data-am-nuevo="${a.id}" style="width:100%;" ${actosDisp.length ? 'disabled' : 'disabled'}>
+                      <option value="">Elegir activo nuevo...</option>
+                      ${opcionesDisp}
+                    </select>
+                  </div>
+                </div>
               </div>
-            </div>
-
-            <div style="min-width:170px;">
-              <select data-am-accion="${a.id}" style="width:100%; margin-bottom:4px;">
-                <option value="">(Sin cambios)</option>
-                <option value="retiro">Retirar</option>
-                <option value="mantenimiento">Retirar a mant.</option>
-                <option value="cambio"${actosDisp.length ? '' : ' disabled'}>Cambiar por...</option>
-              </select>
-
-              <select data-am-nuevo="${a.id}" style="width:100%;" ${actosDisp.length ? 'disabled' : 'disabled'}>
-                <option value="">Elegir activo nuevo...</option>
-                ${opcionesDisp}
-              </select>
-            </div>
+            `).join('')}
           </div>
         </div>
-      `).join('');
-
-      html += `</div>`;
-    } else {
-      html += `<p class="muted" style="margin:0.4rem 0;">No hay activos registrados para este cliente.</p>`;
+      `);
     }
 
-    // 4) Historial de movimientos ya registrados
-    const movimientos = Array.isArray(data.movimientos_existentes) ? data.movimientos_existentes : [];
     if (movimientos.length) {
       const idxActivos = {};
       [...actosCliente, ...actosDisp].forEach(a => {
@@ -261,43 +264,60 @@ async function abrirActivosPaso(pedidoId) {
         return label;
       };
 
-      html += `<hr style="border-color:rgba(148,163,184,0.3); margin:0.6rem 0;">`;
-      html += `<small class="muted">Historial de movimientos en este pedido</small>`;
-      html += `<div class="modal-list" style="margin-top:0.4rem; max-height:160px; overflow-y:auto;">`;
-
-      html += movimientos.map(m => {
-        const tipoTxt   = (m.tipo_operacion || '').toUpperCase();
-        const estadoTxt = m.estado || '';
-        const obsTxt    = m.observacion || '';
-        const fechaTxt  = m.accion_at_utc ? formatFechaHoraAR(m.accion_at_utc) : '';
-
-        const principal   = describeActivo(m.activo_id);
-        const relacionado = describeActivo(m.activo_relacionado_id);
-
-        let activosHtml = esc(principal);
-        if (m.tipo_operacion === 'cambio' && m.activo_relacionado_id) {
-          activosHtml += ' → ' + esc(relacionado);
-        }
-
-        const metaLine = [fechaTxt, tipoTxt, estadoTxt].filter(Boolean).join(' · ');
-
-        return `
-          <div style="padding:4px 0; border-bottom:1px dashed rgba(148,163,184,0.25);">
-            <div style="font-size:0.78rem; text-transform:uppercase; letter-spacing:0.04em; color:var(--muted);">
-              ${esc(metaLine)}
-            </div>
-            <div style="font-size:0.9rem;">
-              ${activosHtml}
-            </div>
-            ${obsTxt ? `<div style="font-size:0.8rem; color:var(--muted); margin-top:2px;">Nota: ${esc(obsTxt)}</div>` : ''}
+      detalleItems.push(`
+        <div>
+          <small class="muted">Historial de movimientos en este pedido</small>
+          <div class="modal-list" style="margin-top:0.4rem; max-height:160px; overflow-y:auto;">
+            ${movimientos.map(m => {
+              const tipoTxt   = (m.tipo_operacion || '').toUpperCase();
+              const estadoTxt = m.estado || '';
+              const obsTxt    = m.observacion || '';
+              const fechaTxt  = m.accion_at_utc ? formatFechaHoraAR(m.accion_at_utc) : '';
+              const principal   = describeActivo(m.activo_id);
+              const relacionado = describeActivo(m.activo_relacionado_id);
+              let activosHtml = esc(principal);
+              if (m.tipo_operacion === 'cambio' && m.activo_relacionado_id) activosHtml += ' → ' + esc(relacionado);
+              const metaLine = [fechaTxt, tipoTxt, estadoTxt].filter(Boolean).join(' · ');
+              return `
+                <div style="padding:4px 0; border-bottom:1px dashed rgba(148,163,184,0.25);">
+                  <div style="font-size:0.78rem; text-transform:uppercase; letter-spacing:0.04em; color:var(--muted);">${esc(metaLine)}</div>
+                  <div style="font-size:0.9rem;">${activosHtml}</div>
+                  ${obsTxt ? `<div style="font-size:0.8rem; color:var(--muted); margin-top:2px;">Nota: ${esc(obsTxt)}</div>` : ''}
+                </div>
+              `;
+            }).join('')}
           </div>
-        `;
-      }).join('');
+        </div>
+      `);
+    }
 
-      html += `</div>`;
+    if (detalleItems.length) {
+      html += `
+        <details style="margin-top:0.75rem; border:1px solid rgba(148,163,184,0.18); border-radius:12px; padding:0.65rem; background:rgba(15,23,42,0.35);">
+          <summary style="cursor:pointer; font-weight:700;">Ver detalles del pedido</summary>
+          <div style="display:grid; gap:0.8rem; margin-top:0.75rem;">
+            ${detalleItems.join('')}
+          </div>
+        </details>
+      `;
     }
 
     c.innerHTML = html;
+
+    $$('#activosModal button[data-ret-btn]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const productoId = btn.getAttribute('data-producto-id');
+        const inp = $(`#activosModal input[data-retornable-devuelto="1"][data-producto-id="${productoId}"]`);
+        if (!inp) return;
+        if (btn.getAttribute('data-ret-btn') === '0') {
+          inp.value = '0';
+        } else {
+          inp.value = btn.getAttribute('data-value') || inp.getAttribute('data-entregados') || '0';
+        }
+        inp.focus();
+      });
+    });
+
     $('#amObs').value = '';
     $('#amChkCliente').checked = true;
     $('#amChkProducto').checked = true;
