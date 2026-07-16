@@ -11,6 +11,7 @@ import {
   getEmpresaIdFromToken as defaultGetEmpresaIdFromToken
 } from '../services.js';
 import { query } from '../db.js';
+import { ensureRetornablesLedgerSchema, registrarRetornableMovimiento } from '../services/retornablesLedger.js';
 
 export function createGastosRouter({
   GASTOS_DIR,
@@ -33,6 +34,7 @@ export function createGastosRouter({
       await dbQuery(`ALTER TABLE chofer_stock_mov ADD COLUMN IF NOT EXISTS deposito_id INTEGER`);
       await dbQuery(`ALTER TABLE chofer_stock_mov ADD COLUMN IF NOT EXISTS gasto_id INTEGER`);
       await dbQuery(`ALTER TABLE gastos_repartidor ADD COLUMN IF NOT EXISTS deposito_id INTEGER`);
+      await ensureRetornablesLedgerSchema(dbQuery);
       await dbQuery(`
         CREATE TABLE IF NOT EXISTS deposito_chofer (
           id SERIAL PRIMARY KEY,
@@ -151,6 +153,38 @@ export function createGastosRouter({
       `,
       [Number(empresaId), Number(choferId), Number(productoId), qtyNum]
     );
+  }
+
+  async function registrarLedgerRetornableDesdeGasto({ empresaId, choferId, productoId, depositoId, fecha, cantidad, tipo, descripcion, gastoId, createdBy }) {
+    const qtyNum = Number(cantidad || 0);
+    const productoIdNum = Number(productoId || 0);
+    const choferIdNum = Number(choferId || 0);
+    if (!qtyNum || qtyNum <= 0 || !productoIdNum || !choferIdNum) return null;
+
+    const tipoNorm = String(tipo || '').trim().toLowerCase();
+    if (tipoNorm !== 'carga_llenos' && tipoNorm !== 'descarga_vacios') return null;
+
+    const delta = tipoNorm === 'carga_llenos' ? qtyNum : -qtyNum;
+    return registrarRetornableMovimiento(dbQuery, {
+      empresaId,
+      sujetoTipo: 'chofer',
+      sujetoId: choferIdNum,
+      productoId: productoIdNum,
+      contraparteTipo: depositoId ? 'deposito' : null,
+      contraparteId: depositoId || null,
+      choferId: choferIdNum,
+      depositoId: depositoId || null,
+      gastoId,
+      fecha: fecha || new Date().toISOString(),
+      tipo: tipoNorm === 'carga_llenos' ? 'carga_chofer' : 'descarga_vacios_chofer',
+      origen: 'gastos',
+      cantidadLlenos: tipoNorm === 'carga_llenos' ? qtyNum : 0,
+      cantidadVacios: tipoNorm === 'descarga_vacios' ? qtyNum : 0,
+      deltaSaldo: delta,
+      referencia: gastoId ? `Gasto #${gastoId}` : null,
+      observacion: descripcion || tipoNorm,
+      createdBy,
+    });
   }
 
   async function revertStockIngresoFromGasto({ empresaId, choferId, productoId, cantidad, gastoId }) {
@@ -368,6 +402,21 @@ export function createGastosRouter({
         });
       }
 
+      if (gastoId && esMovimientoRetornable) {
+        await registrarLedgerRetornableDesdeGasto({
+          empresaId: targetEmpresa,
+          choferId: targetChofer,
+          productoId: productoIdNum,
+          depositoId,
+          fecha: fecha || new Date().toISOString(),
+          cantidad: cantidadNum,
+          tipo: tipoOp,
+          descripcion: descripcion || tipo,
+          gastoId,
+          createdBy: req.user?.username || req.user?.id || null,
+        });
+      }
+
       return res.json({ ok: true, id: gastoId });
     } catch (e) {
       console.error('ERROR POST GASTOS:', e);
@@ -458,6 +507,8 @@ export function createGastosRouter({
 
       const newComprobantePath = req.file ? req.file.filename : g0.comprobante_path;
 
+      const oldTipoNorm = String(g0.tipo || '').toLowerCase();
+      const oldEsRet = oldTipoNorm === 'carga_llenos' || oldTipoNorm === 'descarga_vacios';
       const newTipoNorm = String(newTipo || '').toLowerCase();
       const newEsRet = newTipoNorm === 'carga_llenos' || newTipoNorm === 'descarga_vacios';
       if (newEsRet) {
@@ -548,6 +599,36 @@ export function createGastosRouter({
         });
       }
 
+      if (oldEsRet && g0.producto_id && Number(g0.cantidad || 0) > 0) {
+        await registrarLedgerRetornableDesdeGasto({
+          empresaId: targetEmpresa,
+          choferId: g0.chofer_id,
+          productoId: g0.producto_id,
+          depositoId: g0.deposito_id,
+          fecha: fechaDate,
+          cantidad: Number(g0.cantidad || 0),
+          tipo: g0.tipo === 'carga_llenos' ? 'descarga_vacios' : 'carga_llenos',
+          descripcion: `Reversión por edición de gasto #${id}`,
+          gastoId: id,
+          createdBy: req.user?.username || req.user?.id || null,
+        });
+      }
+
+      if (newEsRet && newProductoId && Number(newCantidad || 0) > 0) {
+        await registrarLedgerRetornableDesdeGasto({
+          empresaId: targetEmpresa,
+          choferId: targetChofer,
+          productoId: newProductoId,
+          depositoId: newDepositoId,
+          fecha: fechaDate,
+          cantidad: newCantidad,
+          tipo: newTipoNorm,
+          descripcion: newDesc || newTipo,
+          gastoId: id,
+          createdBy: req.user?.username || req.user?.id || null,
+        });
+      }
+
       return res.json({ ok: true });
     } catch (e) {
       console.error('ERROR PUT GASTOS:', e);
@@ -592,6 +673,20 @@ export function createGastosRouter({
           productoId: g0.producto_id,
           cantidad: g0.cantidad,
           gastoId: id
+        });
+      }
+
+      const oldTipoNorm = String(g0.tipo || '').trim().toLowerCase();
+      if ((oldTipoNorm === 'carga_llenos' || oldTipoNorm === 'descarga_vacios') && g0.producto_id && Number(g0.cantidad || 0) > 0) {
+        await registrarLedgerRetornableDesdeGasto({
+          empresaId: g0.empresa_id,
+          choferId: g0.chofer_id,
+          productoId: g0.producto_id,
+          cantidad: Number(g0.cantidad || 0),
+          tipo: oldTipoNorm === 'carga_llenos' ? 'descarga_vacios' : 'carga_llenos',
+          descripcion: `Reversión por borrado de gasto #${id}`,
+          gastoId: id,
+          createdBy: req.user?.username || req.user?.id || null,
         });
       }
 

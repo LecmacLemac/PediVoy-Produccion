@@ -23,6 +23,7 @@ import { createPedidosItemsRouter } from './pedidosItems.js';
 import { createPedidosPagoRouter } from './pedidosPago.js';
 import { createEstadisticasRouter } from './estadisticas.js';
 import { createStockRouter } from './stock.js';
+import { createRetornablesRouter } from './retornables.js';
 import { createReportesRouter } from './reportes.js';
 import { createRepartidorStatsRouter } from './repartidorStats.js';
 import { createLicenciasMpRouter, createMercadoPagoWebhookRouter } from './licenciasMp.js';
@@ -79,6 +80,7 @@ export function mountApiModules(app, deps) {
   app.use('/api/call-campaigns', createCallCampaignsRouter({ withAuth, resolveEmpresaId }));
   app.use('/api', createCallsRouter({ withAuth, resolveEmpresaId }));
   app.use('/api/stock', createStockRouter());
+  app.use('/api/retornables', createRetornablesRouter({ query, pool, withAuth, isSuper, getEmpresaIdFromToken }));
   app.use('/api/reportes', createReportesRouter());
   app.use('/api/repartidor', createRepartidorStatsRouter());
   app.use('/api/transferencias', createTransferenciasRouter({ TRANSF_DIR }));

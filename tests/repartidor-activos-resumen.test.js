@@ -810,6 +810,25 @@ test('entregar registra saldo de retornables por cliente descontando vacios reci
         return { rows: [] };
       }
 
+      if (sql.includes('INSERT INTO retornables_saldos')) {
+        assert.deepEqual(params, [3, 'cliente', 9, 55, 1]);
+        return { rows: [{ saldo: '4' }] };
+      }
+
+      if (sql.includes('INSERT INTO retornables_movimientos')) {
+        assert.equal(params[0], 3);
+        assert.equal(params[2], 55);
+        assert.equal(params[3], 'cliente');
+        assert.equal(params[4], 9);
+        assert.equal(params[7], 42);
+        assert.equal(params[9], 7);
+        assert.equal(params[12], 'entrega_cliente');
+        assert.equal(params[13], 3);
+        assert.equal(params[14], 2);
+        assert.equal(params[15], 1);
+        return { rows: [{ id: 91, saldo_resultante: '4' }] };
+      }
+
       throw new Error(`Consulta inesperada: ${sql}`);
     },
     release: () => {},

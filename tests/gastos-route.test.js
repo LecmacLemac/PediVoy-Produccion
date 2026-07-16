@@ -44,7 +44,7 @@ async function buildGastosApp({ query, user = { role: 'user', empresa_id: 3 } })
 }
 
 function isSchemaQuery(sql) {
-  return /ALTER TABLE|CREATE TABLE/i.test(sql);
+  return /ALTER TABLE|CREATE TABLE|CREATE INDEX/i.test(sql);
 }
 
 test('POST /api/gastos rechaza chofer que no pertenece a la empresa del usuario', async () => {
@@ -145,6 +145,9 @@ test('PUT /api/gastos conserva producto y depósito existentes si el panel no lo
       }
       if (sql.includes('INSERT INTO chofer_stock_mov')) return [];
       if (sql.includes('INSERT INTO chofer_stock')) return [];
+      if (sql.includes('SELECT saldo FROM retornables_saldos')) return [{ saldo: '2' }];
+      if (sql.includes('INSERT INTO retornables_saldos')) return [{ saldo: '5' }];
+      if (sql.includes('INSERT INTO retornables_movimientos')) return [{ id: 88, saldo_resultante: '5' }];
       throw new Error(`Consulta inesperada: ${sql}`);
     },
   });

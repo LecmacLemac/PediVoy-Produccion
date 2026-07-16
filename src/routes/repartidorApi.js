@@ -9,6 +9,7 @@ import {
   listarPagosPorPedido as listarPagosPorPedidoDefault,
   refrescarEstadoPagoPedido as refrescarEstadoPagoPedidoDefault
 } from '../qr/pagosService.js';
+import { ensureRetornablesLedgerSchema, registrarRetornableMovimiento } from '../services/retornablesLedger.js';
 
 export function createRepartidorApiRouter(deps) {
   const { query, pool, withAuth, getEmpresaIdFromToken, notifyEstadoPedidoPush, notificarEnRuta, notificarPedidoTransferencia, ejecutarEstrategiaVecinos, registrarMovimientosActivosDesdePedido, crearPagoParaPedido = crearPagoParaPedidoDefault, listarPagosPorPedido = listarPagosPorPedidoDefault, refrescarEstadoPagoPedido = refrescarEstadoPagoPedidoDefault } = deps || {};
@@ -59,6 +60,7 @@ export function createRepartidorApiRouter(deps) {
     `);
     await query(`CREATE INDEX IF NOT EXISTS idx_cliente_retornables_mov_cliente ON cliente_retornables_movimientos (empresa_id, punto_entrega_id, producto_id, fecha DESC)`);
     await query(`CREATE INDEX IF NOT EXISTS idx_cliente_retornables_mov_pedido ON cliente_retornables_movimientos (pedido_id)`);
+    await ensureRetornablesLedgerSchema(query);
     schemaReady = true;
   }
 
@@ -946,6 +948,28 @@ export function createRepartidorApiRouter(deps) {
            fechaEntregaIso,
          ]
        );
+
+       const txQuery = async (sql, params = []) => {
+         const result = await client.query(sql, params);
+         return result.rows;
+       };
+       await registrarRetornableMovimiento(txQuery, {
+         empresaId: empresa_id,
+         sujetoTipo: 'cliente',
+         sujetoId: pedido.punto_entrega_id,
+         productoId,
+         deltaSaldo: delta,
+         cantidadLlenos: entregados,
+         cantidadVacios: devueltos,
+         pedidoId,
+         choferId: chofer_id,
+         tipo: 'entrega_cliente',
+         origen: 'pedido',
+         referencia: `Pedido #${pedidoId}`,
+         observacion: `Entrega Pedido #${pedidoId}: +${entregados} llenos / -${devueltos} vacíos`,
+         fecha: fechaEntregaIso,
+         createdBy: username || req.user?.id || null,
+       });
      }
 
      // 8.c Evidencia/checklist opcional de entrega
