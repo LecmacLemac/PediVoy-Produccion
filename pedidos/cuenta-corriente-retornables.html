@@ -105,20 +105,27 @@
     function saldoClass(s){ if(s>0) return 'deuda'; if(s<0) return 'favor'; return 'ok'; }
     function estadoText(s){ if(s>0) return 'Debe envases'; if(s<0) return 'A favor cliente'; return 'En cero'; }
 
+    function asArray(payload, keys=[]){
+      if(Array.isArray(payload)) return payload;
+      for(const key of keys){ if(Array.isArray(payload?.[key])) return payload[key]; }
+      if(Array.isArray(payload?.rows)) return payload.rows;
+      if(Array.isArray(payload?.data)) return payload.data;
+      return [];
+    }
     async function loadCombos(){
       const [productos, clientes, choferes] = await Promise.all([
-        api('/api/productos?include_deleted=0').catch(()=>({productos:[]})),
-        api('/api/clientes').catch(()=>({clientes:[]})),
-        api('/api/choferes').catch(()=>({choferes:[]})),
+        api('/api/productos').catch(()=>[]),
+        api('/api/clientes/master').catch(()=>[]),
+        api('/api/choferes').catch(()=>[]),
       ]);
-      state.productos = (productos.productos || productos.rows || productos || []).filter(p => p.retornable === true || p.retornable === 'true' || p.retornable === 1);
-      state.clientes = clientes.clientes || clientes.rows || clientes || [];
-      state.choferes = choferes.choferes || choferes.rows || choferes || [];
+      state.productos = asArray(productos, ['productos']).filter(p => p.retornable === true || p.retornable === 'true' || p.retornable === 1);
+      state.clientes = asArray(clientes, ['clientes']).filter(c => c && c.id);
+      state.choferes = asArray(choferes, ['choferes']).filter(c => c && c.id);
       fillSelect('producto', state.productos, 'id', 'nombre', 'Todos'); fillSelect('ajProducto', state.productos, 'id', 'nombre', 'Seleccionar');
-      fillSelect('cliente', state.clientes, 'id', r => r.cliente || r.nombre || `Cliente #${r.id}`, 'Todos'); fillSelect('ajCliente', state.clientes, 'id', r => r.cliente || r.nombre || `Cliente #${r.id}`, 'Seleccionar');
+      fillSelect('cliente', state.clientes, 'id', r => r.cliente || r.nombre || r.razon_social || `Cliente #${r.id}`, 'Todos'); fillSelect('ajCliente', state.clientes, 'id', r => r.cliente || r.nombre || r.razon_social || `Cliente #${r.id}`, 'Seleccionar');
       fillSelect('chofer', state.choferes, 'id', r => r.nombre || r.username || `Chofer #${r.id}`, 'Todos');
     }
-    function fillSelect(id, rows, valueKey, labelKey, first){ const el=$(id); el.innerHTML = `<option value="">${first}</option>` + rows.map(r=>`<option value="${escapeHtml(r[valueKey])}">${escapeHtml(typeof labelKey==='function'?labelKey(r):r[labelKey])}</option>`).join(''); }
+    function fillSelect(id, rows, valueKey, labelKey, first){ const el=$(id); el.innerHTML = `<option value="">${first}</option>` + rows.map(r=>`<option value="${escapeHtml(r[valueKey])}">${escapeHtml(typeof labelKey==='function'?labelKey(r):r[labelKey])}</option>`).join(''); el.disabled = !rows.length && id.startsWith('aj'); }
 
     function buildParams(extra={}){ const p = new URLSearchParams(); if($('q').value.trim()) p.set('q',$('q').value.trim()); if($('producto').value) p.set('producto_id',$('producto').value); if($('cliente').value) p.set('punto_entrega_id',$('cliente').value); if($('chofer').value) p.set('chofer_id',$('chofer').value); p.set('saldo',$('saldo').value || 'pendientes'); p.set('limit','250'); Object.entries(extra).forEach(([k,v])=>{ if(v!==undefined && v!==null && v!=='') p.set(k,v); }); return p; }
 
