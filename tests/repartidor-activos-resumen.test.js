@@ -525,6 +525,10 @@ function buildEntregaClient({
         return { rows: [] };
       }
 
+      if (sql.includes('FROM items_pedido ip') && sql.includes('COALESCE(p.retornable')) {
+        return { rows: [] };
+      }
+
       if (sql.includes('FROM comprobantes_transferencia')) {
         assert.deepEqual(params, [42, 3]);
         return { rows: comprobantes };
@@ -751,4 +755,83 @@ test('entregar no notifica otros metodos y un fallo de WhatsApp no revierte la e
     assert.equal(sqlCalls.filter(({ sql }) => sql === 'COMMIT').length, 1);
     assert.equal(sqlCalls.filter(({ sql }) => sql === 'ROLLBACK').length, 0);
   });
+});
+
+test('entregar registra saldo de retornables por cliente descontando vacios recibidos', async () => {
+  const sqlCalls = [];
+  const client = {
+    query: async (sql, params) => {
+      sqlCalls.push({ sql, params });
+
+      if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rows: [] };
+
+      if (sql.includes('FROM pedidos p') && sql.includes('FOR UPDATE')) {
+        return { rows: [{
+          id: 42,
+          empresa_id: 3,
+          chofer_id: 7,
+          estado: 'en_ruta',
+          metodo_pago: 'efectivo',
+          zona_id: 5,
+          punto_entrega_id: 9,
+          monto: 1200,
+          cuenta_corriente_habilitada: false,
+        }] };
+      }
+
+      if (sql.includes('UPDATE pedidos') && sql.includes("estado = 'entregado'")) return { rows: [] };
+
+      if (sql.includes('FROM items_pedido ip') && sql.includes('JOIN productos p') && !sql.includes('COALESCE(p.retornable')) {
+        return { rows: [{ cantidad: 3, producto_id: 55 }] };
+      }
+
+      if (sql.includes('INSERT INTO chofer_stock_mov')) return { rows: [] };
+      if (sql.includes('INSERT INTO chofer_stock')) return { rows: [] };
+
+      if (sql.includes('FROM items_pedido ip') && sql.includes('COALESCE(p.retornable')) {
+        return { rows: [{ producto_id: 55, nombre: 'Bidón retornable', entregados: '3' }] };
+      }
+
+      if (sql.includes('INSERT INTO cliente_retornables_saldos')) {
+        assert.deepEqual(params, [3, 9, 55, 1]);
+        return { rows: [{ saldo: '4' }] };
+      }
+
+      if (sql.includes('INSERT INTO cliente_retornables_movimientos')) {
+        assert.equal(params[0], 3);
+        assert.equal(params[1], 9);
+        assert.equal(params[2], 42);
+        assert.equal(params[3], 7);
+        assert.equal(params[4], 55);
+        assert.equal(params[5], 3);
+        assert.equal(params[6], 2);
+        assert.equal(params[7], 1);
+        assert.equal(params[8], 4);
+        return { rows: [] };
+      }
+
+      throw new Error(`Consulta inesperada: ${sql}`);
+    },
+    release: () => {},
+  };
+
+  const app = buildTestAppWithDeps({
+    query: async () => [],
+    pool: { connect: async () => client },
+  });
+
+  await withServer(app, async (baseUrl) => {
+    const resp = await fetch(`${baseUrl}/api/repartidor/pedidos/42/entregar`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        movimientos: [],
+        retornables: [{ producto_id: 55, devueltos: 2 }],
+      }),
+    });
+    assert.equal(resp.status, 200);
+  });
+
+  assert.ok(sqlCalls.some(({ sql }) => sql.includes('cliente_retornables_saldos')));
+  assert.ok(sqlCalls.some(({ sql }) => sql.includes('cliente_retornables_movimientos')));
 });

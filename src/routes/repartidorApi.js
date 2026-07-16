@@ -19,11 +19,60 @@ export function createRepartidorApiRouter(deps) {
 
   const router = express.Router();
   let schemaReady = false;
+  let cuentaCorrienteSchemaReady = false;
+
+  async function ensureCuentaCorrienteSchema() {
+    if (cuentaCorrienteSchemaReady) return;
+    await query(`ALTER TABLE puntos_entrega ADD COLUMN IF NOT EXISTS cuenta_corriente_habilitada BOOLEAN DEFAULT FALSE`);
+    cuentaCorrienteSchemaReady = true;
+  }
 
   async function ensureRepartidorSchema() {
     if (schemaReady) return;
-    await query(`ALTER TABLE puntos_entrega ADD COLUMN IF NOT EXISTS cuenta_corriente_habilitada BOOLEAN DEFAULT FALSE`);
+    await ensureCuentaCorrienteSchema();
+    await query(`
+      CREATE TABLE IF NOT EXISTS cliente_retornables_saldos (
+        empresa_id INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+        punto_entrega_id INTEGER NOT NULL REFERENCES puntos_entrega(id) ON DELETE CASCADE,
+        producto_id INTEGER NOT NULL REFERENCES productos(id) ON DELETE CASCADE,
+        saldo NUMERIC(12,2) NOT NULL DEFAULT 0,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (empresa_id, punto_entrega_id, producto_id)
+      )
+    `);
+    await query(`
+      CREATE TABLE IF NOT EXISTS cliente_retornables_movimientos (
+        id SERIAL PRIMARY KEY,
+        empresa_id INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+        punto_entrega_id INTEGER NOT NULL REFERENCES puntos_entrega(id) ON DELETE CASCADE,
+        pedido_id INTEGER REFERENCES pedidos(id) ON DELETE SET NULL,
+        chofer_id INTEGER REFERENCES choferes(id) ON DELETE SET NULL,
+        producto_id INTEGER NOT NULL REFERENCES productos(id) ON DELETE CASCADE,
+        entregados NUMERIC(12,2) NOT NULL DEFAULT 0,
+        devueltos NUMERIC(12,2) NOT NULL DEFAULT 0,
+        delta NUMERIC(12,2) NOT NULL DEFAULT 0,
+        saldo_resultante NUMERIC(12,2),
+        observacion TEXT,
+        fecha TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await query(`CREATE INDEX IF NOT EXISTS idx_cliente_retornables_mov_cliente ON cliente_retornables_movimientos (empresa_id, punto_entrega_id, producto_id, fecha DESC)`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_cliente_retornables_mov_pedido ON cliente_retornables_movimientos (pedido_id)`);
     schemaReady = true;
+  }
+
+  function normalizeRetornablesPayload(retornables) {
+    const map = new Map();
+    if (!Array.isArray(retornables)) return map;
+    for (const row of retornables) {
+      const productoId = Number(row?.producto_id ?? row?.productoId ?? 0);
+      const devueltos = Number(row?.devueltos ?? row?.cantidad_devuelta ?? row?.cantidadDevuelta ?? 0);
+      if (!Number.isFinite(productoId) || productoId <= 0) continue;
+      if (!Number.isFinite(devueltos) || devueltos < 0) continue;
+      map.set(productoId, devueltos);
+    }
+    return map;
   }
 
   function isCuentaCorrienteMethod(metodo) {
@@ -479,7 +528,7 @@ export function createRepartidorApiRouter(deps) {
 // 2. Actualizar Estado o Pago (PUT) - Para los botones del repartidor
   router.put('/pedidos/:id', withAuth, async (req, res) => {
    try {
-     await ensureRepartidorSchema();
+     await ensureCuentaCorrienteSchema();
      // 1. Usuario autenticado
      const { chofer_id, empresa_id } = req.user;
      const pedidoId = req.params.id;
@@ -660,7 +709,7 @@ export function createRepartidorApiRouter(deps) {
    const { chofer_id, empresa_id, username } = req.user || {};
    const pedidoId = Number(req.params.id);
    // 'movimientos' viene del Modal de Activos del Frontend
-	 const { movimientos = [], zona_id = null, metodo_pago = null, checklist = null, evidencia = null } = req.body || {};
+	 const { movimientos = [], retornables = [], zona_id = null, metodo_pago = null, checklist = null, evidencia = null } = req.body || {};
 
    if (!chofer_id) return res.status(403).json({ error: 'No autorizado: Falta chofer_id' });
    if (!Number.isFinite(pedidoId)) return res.status(400).json({ error: 'ID de pedido inválido' });
@@ -830,7 +879,76 @@ export function createRepartidorApiRouter(deps) {
        }
      }
 
-     // 8.b Evidencia/checklist opcional de entrega
+     // 8.b RETORNABLES: cliente recibe llenos y devuelve vacíos/envases.
+     // El saldo representa envases pendientes de devolver por cliente/producto.
+     const retornablesInput = normalizeRetornablesPayload(retornables);
+     const retornablesQ = await client.query(
+       `
+       SELECT
+         COALESCE(ip.producto_id, p.id) AS producto_id,
+         p.nombre,
+         COALESCE(SUM(ip.cantidad), 0) AS entregados
+       FROM items_pedido ip
+       JOIN productos p
+         ON p.empresa_id = $2
+        AND (
+             p.id = ip.producto_id
+          OR (ip.producto_id IS NULL AND LOWER(TRIM(p.nombre)) = LOWER(TRIM(ip.producto)))
+        )
+       WHERE ip.pedido_id = $1
+         AND COALESCE(p.retornable, FALSE) = TRUE
+       GROUP BY COALESCE(ip.producto_id, p.id), p.nombre
+       `,
+       [pedidoId, empresa_id]
+     );
+
+     for (const row of retornablesQ.rows || []) {
+       const productoId = Number(row.producto_id || 0);
+       const entregados = Number(row.entregados || 0);
+       if (!productoId || entregados <= 0 || !pedido.punto_entrega_id) continue;
+
+       const devueltos = Number(retornablesInput.get(productoId) || 0);
+       const delta = entregados - devueltos;
+
+       const saldoRows = await client.query(
+         `
+         INSERT INTO cliente_retornables_saldos
+           (empresa_id, punto_entrega_id, producto_id, saldo, updated_at)
+         VALUES ($1, $2, $3, $4, NOW())
+         ON CONFLICT (empresa_id, punto_entrega_id, producto_id)
+         DO UPDATE SET
+           saldo = cliente_retornables_saldos.saldo + EXCLUDED.saldo,
+           updated_at = NOW()
+         RETURNING saldo
+         `,
+         [empresa_id, pedido.punto_entrega_id, productoId, delta]
+       );
+
+       const saldoResultante = Number(saldoRows.rows?.[0]?.saldo ?? 0);
+       await client.query(
+         `
+         INSERT INTO cliente_retornables_movimientos
+           (empresa_id, punto_entrega_id, pedido_id, chofer_id, producto_id, entregados, devueltos, delta, saldo_resultante, observacion, fecha)
+         VALUES
+           ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+         `,
+         [
+           empresa_id,
+           pedido.punto_entrega_id,
+           pedidoId,
+           chofer_id,
+           productoId,
+           entregados,
+           devueltos,
+           delta,
+           saldoResultante,
+           `Entrega Pedido #${pedidoId}: +${entregados} llenos / -${devueltos} vacíos`,
+           fechaEntregaIso,
+         ]
+       );
+     }
+
+     // 8.c Evidencia/checklist opcional de entrega
      const checklistSafe = (checklist && typeof checklist === 'object') ? checklist : {};
      const evidenciaSafe = (evidencia && typeof evidencia === 'object') ? evidencia : {};
      if (Object.keys(checklistSafe).length || Object.keys(evidenciaSafe).length) {
@@ -1021,7 +1139,9 @@ export function createRepartidorApiRouter(deps) {
          ip.cantidad,
          ip.precio_unitario,
          COALESCE(ip.producto_id, pr.id) AS producto_id,
-         pr.config_activo
+         pr.config_activo,
+         COALESCE(pr.retornable, FALSE) AS retornable,
+         pr.nombre AS producto_nombre
        FROM items_pedido ip
        LEFT JOIN productos pr
          ON pr.empresa_id = $2
@@ -1052,6 +1172,46 @@ export function createRepartidorApiRouter(deps) {
          precio_unitario: Number(r.precio_unitario) || 0
        }));
 
+     const retornablesMap = new Map();
+     for (const r of (itemsRows || [])) {
+       if (!r.retornable || !r.producto_id) continue;
+       const productoId = Number(r.producto_id);
+       const prev = retornablesMap.get(productoId) || {
+         producto_id: productoId,
+         producto: r.producto_nombre || r.producto || `Producto #${productoId}`,
+         cantidad_entregada: 0,
+         saldo_actual: 0,
+         sugerido_devolver: 0,
+       };
+       prev.cantidad_entregada += Number(r.cantidad || 0);
+       retornablesMap.set(productoId, prev);
+     }
+
+     const items_retornables = Array.from(retornablesMap.values()).filter(r => r.cantidad_entregada > 0);
+     if (items_retornables.length && pedido.punto_entrega_id) {
+       const saldos = await query(
+         `
+         SELECT producto_id, saldo
+         FROM cliente_retornables_saldos
+         WHERE empresa_id = $1
+           AND punto_entrega_id = $2
+           AND producto_id = ANY($3::int[])
+         `,
+         [empresa_id, pedido.punto_entrega_id, items_retornables.map(r => r.producto_id)]
+       );
+       const saldoByProducto = new Map((saldos || []).map(r => [Number(r.producto_id), Number(r.saldo || 0)]));
+       for (const item of items_retornables) {
+         item.saldo_actual = Number(saldoByProducto.get(Number(item.producto_id)) || 0);
+         item.sugerido_devolver = Math.min(item.cantidad_entregada, Math.max(0, item.saldo_actual + item.cantidad_entregada));
+       }
+     }
+
+     const retornables_resumen = {
+       items: items_retornables,
+       total_entregado: items_retornables.reduce((a, r) => a + Number(r.cantidad_entregada || 0), 0),
+       saldo_previo_total: items_retornables.reduce((a, r) => a + Number(r.saldo_actual || 0), 0),
+     };
+
      if (items_activos.length === 0) {
        return res.json({
          pedido: {
@@ -1061,6 +1221,7 @@ export function createRepartidorApiRouter(deps) {
            monto: Number(pedido.monto) || 0
          },
          items_activos,
+         retornables_resumen,
          activos_cliente: [],
          activos_disponibles: [],
          movimientos_existentes: []
@@ -1132,6 +1293,7 @@ export function createRepartidorApiRouter(deps) {
          monto: Number(pedido.monto) || 0
        },
        items_activos,
+       retornables_resumen,
        activos_cliente: activosClienteRows || [],
        activos_disponibles: activosDisponiblesRows || [],
        movimientos_existentes: movRows || []

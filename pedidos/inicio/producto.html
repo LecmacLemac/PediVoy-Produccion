@@ -379,7 +379,10 @@
           </div>
         </div>
         <div style="margin-top:.5rem">
-          <label class="checkbox-label"><input type="checkbox" id="p_retornable"> Producto retornable (usa carga/descarga de vacíos/llenos)</label>
+          <label class="checkbox-label"><input type="checkbox" id="p_retornable"> Producto retornable / con envase a devolver</label>
+          <div style="font-size:0.78rem; color:var(--muted); margin-top:0.25rem;">
+            Al entregar este producto, el repartidor deberá confirmar cuántos envases vacíos recibe del cliente.
+          </div>
         </div>
 
         <!-- NUEVA SECCIÓN: ACTIVOS & ALQUILER -->
@@ -652,6 +655,9 @@
         const promoCfg = p.promo_config?.once_per_client_gift || {};
 
         let metaBadges = '';
+        if (p.retornable) {
+          metaBadges += `<span class="badge" style="margin-left:4px; background:rgba(6,182,212,0.15); color:#67e8f9;">Retornable</span>`;
+        }
         if (isActivoFisico) {
           metaBadges += `<span class="badge" style="margin-left:4px;">Activo</span>`;
         }

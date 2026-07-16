@@ -684,6 +684,37 @@ CREATE TABLE IF NOT EXISTS gastos_repartidor (
   created_at       TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Saldos de envases/retornables por cliente y producto.
+CREATE TABLE IF NOT EXISTS cliente_retornables_saldos (
+  empresa_id        INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+  punto_entrega_id  INTEGER NOT NULL REFERENCES puntos_entrega(id) ON DELETE CASCADE,
+  producto_id       INTEGER NOT NULL REFERENCES productos(id) ON DELETE CASCADE,
+  saldo             NUMERIC(12,2) NOT NULL DEFAULT 0,
+  updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (empresa_id, punto_entrega_id, producto_id)
+);
+
+CREATE TABLE IF NOT EXISTS cliente_retornables_movimientos (
+  id                SERIAL PRIMARY KEY,
+  empresa_id        INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+  punto_entrega_id  INTEGER NOT NULL REFERENCES puntos_entrega(id) ON DELETE CASCADE,
+  pedido_id         INTEGER REFERENCES pedidos(id) ON DELETE SET NULL,
+  chofer_id         INTEGER REFERENCES choferes(id) ON DELETE SET NULL,
+  producto_id       INTEGER NOT NULL REFERENCES productos(id) ON DELETE CASCADE,
+  entregados        NUMERIC(12,2) NOT NULL DEFAULT 0,
+  devueltos         NUMERIC(12,2) NOT NULL DEFAULT 0,
+  delta             NUMERIC(12,2) NOT NULL DEFAULT 0,
+  saldo_resultante  NUMERIC(12,2),
+  observacion       TEXT,
+  fecha             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_cliente_retornables_mov_cliente
+  ON cliente_retornables_movimientos (empresa_id, punto_entrega_id, producto_id, fecha DESC);
+CREATE INDEX IF NOT EXISTS idx_cliente_retornables_mov_pedido
+  ON cliente_retornables_movimientos (pedido_id);
+
 -- CRM comercial: pipeline de oportunidades
 CREATE TABLE IF NOT EXISTS crm_oportunidades (
   id                  SERIAL PRIMARY KEY,
