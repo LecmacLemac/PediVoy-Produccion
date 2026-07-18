@@ -155,11 +155,34 @@ export function createRepartidorApiRouter(deps) {
      const rows = await query(
        `SELECT 
           p.id, p.estado, p.fecha, p.fecha_entrega,
+          p.punto_entrega_id,
           p.cantidad, p.monto, p.metodo_pago, p.chofer_id,
           pe.cliente, pe.direccion, pe.ciudad, pe.telefono,
           COALESCE(pe.cuenta_corriente_habilitada, FALSE) AS cuenta_corriente_habilitada,
           pe.latitud, pe.longitud, pe.notas AS notas,
           pe.zona_id, z.nombre AS zona_nombre,
+          COALESCE((
+            SELECT json_agg(
+              json_build_object(
+                'producto_id', s.producto_id,
+                'producto', pr.nombre,
+                'saldo', s.saldo
+              )
+              ORDER BY pr.nombre
+            )
+            FROM cliente_retornables_saldos s
+            JOIN productos pr ON pr.id = s.producto_id AND pr.empresa_id = s.empresa_id
+            WHERE s.empresa_id = p.empresa_id
+              AND s.punto_entrega_id = p.punto_entrega_id
+              AND s.saldo > 0
+          ), '[]'::json) AS retornables_pendientes,
+          COALESCE((
+            SELECT SUM(s.saldo)
+            FROM cliente_retornables_saldos s
+            WHERE s.empresa_id = p.empresa_id
+              AND s.punto_entrega_id = p.punto_entrega_id
+              AND s.saldo > 0
+          ), 0) AS retornables_pendientes_total,
           COALESCE(
             json_agg(
               json_build_object(
@@ -190,6 +213,7 @@ export function createRepartidorApiRouter(deps) {
           )
         GROUP BY
           p.id, p.estado, p.fecha, p.fecha_entrega,
+          p.punto_entrega_id,
           p.cantidad, p.monto, p.metodo_pago, p.chofer_id,
           pe.cliente, pe.direccion, pe.ciudad, pe.telefono,
           pe.cuenta_corriente_habilitada,

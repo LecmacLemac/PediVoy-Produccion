@@ -44,6 +44,44 @@ async function withServer(app, fn) {
   }
 }
 
+test('GET /api/repartidor/pedidos expone retornables pendientes del cliente', async () => {
+  const calls = [];
+  const app = buildTestApp({
+    query: async (sql, params) => {
+      calls.push({ sql, params });
+
+      if (/^\s*(ALTER|CREATE)\b/i.test(sql)) return [];
+
+      if (sql.includes('FROM pedidos p') && sql.includes('retornables_pendientes')) {
+        assert.deepEqual(params, [7, 3]);
+        return [{
+          id: 42,
+          estado: 'pendiente',
+          punto_entrega_id: 9,
+          cliente: 'Cliente Test',
+          direccion: 'Calle 123',
+          retornables_pendientes: [{ producto_id: 55, producto: 'Bidón retornable', saldo: '3' }],
+          retornables_pendientes_total: '3',
+          items: [],
+        }];
+      }
+
+      throw new Error(`Consulta inesperada: ${sql}`);
+    },
+  });
+
+  await withServer(app, async (baseUrl) => {
+    const resp = await fetch(`${baseUrl}/api/repartidor/pedidos`);
+    assert.equal(resp.status, 200);
+    const body = await resp.json();
+    assert.equal(body[0].retornables_pendientes[0].producto, 'Bidón retornable');
+    assert.equal(body[0].retornables_pendientes[0].saldo, '3');
+    assert.equal(body[0].retornables_pendientes_total, '3');
+  });
+
+  assert.ok(calls.some(({ sql }) => sql.includes('cliente_retornables_saldos')));
+});
+
 test('repartidor de empresa 1 genera QR desde ruta propia sin usar endpoint admin', async () => {
   const calls = [];
   const app = buildTestAppWithDeps({

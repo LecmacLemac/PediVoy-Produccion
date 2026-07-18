@@ -248,6 +248,31 @@ function getItemNameForCarga(item) {
   return Number.isFinite(id) && id > 0 ? `Producto ID ${id}` : 'Producto';
 }
 
+function getRetornablesPendientes(pedido) {
+  const rows = Array.isArray(pedido?.retornables_pendientes) ? pedido.retornables_pendientes : [];
+  return rows
+    .map((r) => ({
+      producto: r?.producto || r?.nombre || r?.producto_nombre || 'Retornable',
+      saldo: Number(r?.saldo || 0),
+    }))
+    .filter((r) => Number.isFinite(r.saldo) && r.saldo > 0);
+}
+
+function renderRetornablesPendientes(pedido) {
+  const rows = getRetornablesPendientes(pedido);
+  if (!rows.length) return '';
+
+  const detail = rows
+    .map((r) => `<span><strong>${Number(r.saldo).toLocaleString('es-AR')}x</strong> ${esc(r.producto)}</span>`)
+    .join('');
+
+  return `
+    <div style="margin-top:10px; background:rgba(245,158,11,.14); color:#fde68a; padding:9px; border-radius:8px; font-size:.88rem; border:1px solid rgba(245,158,11,.35);">
+      <div style="font-weight:800; margin-bottom:4px;">Retirar retornables del cliente</div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">${detail}</div>
+    </div>`;
+}
+
 function renderCargaPendiente(list) {
   const totalEl = document.getElementById('cargaPendienteTotal');
   const listEl = document.getElementById('cargaPendienteList');
@@ -523,6 +548,8 @@ function renderCards() {
       itemsHtml = '<div style="margin-top:5px; font-style:italic; color:var(--muted); font-size:0.85rem">Sin detalle de ítems</div>';
     }
 
+    const retornablesHtml = renderRetornablesPendientes(p);
+
     // --- B. NOTAS DESTACADAS ---
     const notasHtml = p.notas 
       ? `<div style="margin-top:10px; background:rgba(245, 158, 11, 0.15); color:#fbbf24; padding:8px; border-radius:6px; font-size:0.85rem; border:1px solid rgba(245, 158, 11, 0.3); display:flex; gap:6px; align-items:start;">
@@ -610,6 +637,7 @@ function renderCards() {
           <button class="pc-state-btn">${icon}</button>
         </div>
         ${itemsHtml}
+        ${retornablesHtml}
         ${notasHtml}
         <div style="display:flex; justify-content:space-between; align-items:center; margin-top:12px; padding-top:8px; border-top:1px solid var(--border);">
           <span style="color:var(--muted); font-size:0.9rem; text-transform:uppercase; letter-spacing:0.5px;">Total a Cobrar</span>
