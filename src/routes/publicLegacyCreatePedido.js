@@ -711,13 +711,34 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
         const isTransf = String(metodo_pago).toLowerCase().includes('transf');
         const aliasDB = isTransf ? await getAliasEmpresa(empId, txQuery) : null;
 
+        let retornablesPendientes = [];
+        if (punto_entrega_id) {
+          try {
+            retornablesPendientes = await txQuery(
+              `
+              SELECT s.producto_id, p.nombre AS producto, s.saldo
+                FROM cliente_retornables_saldos s
+                JOIN productos p ON p.id = s.producto_id AND p.empresa_id = s.empresa_id
+               WHERE s.empresa_id = $1
+                 AND s.punto_entrega_id = $2
+                 AND s.saldo > 0
+               ORDER BY p.nombre
+              `,
+              [empId, punto_entrega_id]
+            );
+          } catch (e) {
+            errlog('RETORNABLES.WPP.ERROR', e?.message || e);
+          }
+        }
+
         let mensaje = armarMensajeConfirmado({
           cliente,
           items: normItems,
           direccion: [direccion, ciudad, provincia].filter(Boolean).join(', '),
           fecha: new Date(),
           repartidor: repData,
-          configEntrega
+          configEntrega,
+          retornablesPendientes
         });
 
         if (appliedPromos.length > 0) {

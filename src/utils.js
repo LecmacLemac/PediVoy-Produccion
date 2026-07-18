@@ -133,7 +133,7 @@ export function calcularFechaEntregaReal(config, fechaBase = new Date()) {
  * Arma el mensaje de confirmación usando la configuración de entrega de la empresa.
  * Acepta el objeto `configEntrega` que viene de la base de datos.
  */
-export function armarMensajeConfirmado({ cliente, items = [], direccion, fecha, repartidor, configEntrega }) {
+export function armarMensajeConfirmado({ cliente, items = [], direccion, fecha, repartidor, configEntrega, retornablesPendientes = [] }) {
   // 1) Agrupar ítems
   const grupos = new Map();
   for (const it of items) {
@@ -184,6 +184,21 @@ export function armarMensajeConfirmado({ cliente, items = [], direccion, fecha, 
   // Horarios personalizados de la empresa (Texto libre, ej: "9 a 18hs")
   if (configEntrega?.horarios) {
     L.push(`⏰ Horario: ${configEntrega.horarios}`);
+  }
+
+  const retornables = (Array.isArray(retornablesPendientes) ? retornablesPendientes : [])
+    .map((r) => ({
+      producto: String(r?.producto || r?.nombre || r?.producto_nombre || 'Retornable').trim(),
+      saldo: Number(r?.saldo || 0),
+    }))
+    .filter((r) => r.producto && Number.isFinite(r.saldo) && r.saldo > 0);
+
+  if (retornables.length) {
+    L.push('');
+    L.push('♻️ Retornables pendientes:');
+    for (const r of retornables) {
+      L.push(`Recordá entregar ${r.saldo.toLocaleString('es-AR')} ${r.producto} al repartidor.`);
+    }
   }
 
   L.push('');

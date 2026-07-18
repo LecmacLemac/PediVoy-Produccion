@@ -52,6 +52,7 @@ test('POST /public/pedidos crea pedido válido', async () => {
     if (sql.includes('INSERT INTO items_pedido')) return [];
     if (sql.includes('SELECT config_entrega FROM empresas')) return [{ config_entrega: {} }];
     if (sql.includes('SELECT nombre, telefono FROM choferes')) return [{ nombre: 'Juan', telefono: '3871234567' }];
+    if (sql.includes('FROM cliente_retornables_saldos')) return [];
 
     throw new Error(`SQL inesperado en test: ${sql.slice(0, 90)}`);
   };
@@ -94,4 +95,51 @@ test('POST /public/pedidos crea pedido válido', async () => {
     assert.equal(wppCalls, 1);
     assert.ok(calls.some((s) => s.includes('INSERT INTO pedidos')));
   });
+});
+
+test('POST /public/pedidos agrega retornables pendientes al WhatsApp del cliente', async () => {
+  let wppMessage = '';
+  const query = async (sql) => {
+    if (sql.includes('FROM puntos_entrega') && sql.includes('telefono_normalizado LIKE')) return [{ id: 101, zona_id: 7 }];
+    if (sql.includes('FROM zona_chofer')) return [];
+    if (sql.includes('FROM productos') && sql.includes('promo_config')) return [];
+    if (sql.includes('FROM cliente_recompensas')) return [];
+    if (sql.includes('SELECT pg_advisory_xact_lock')) return [{ pg_advisory_xact_lock: null }];
+    if (sql.includes('FROM pedidos WHERE empresa_id=$1 AND submission_id=$2')) return [];
+    if (sql.includes('INSERT INTO pedidos')) return [{ id: 9002, estado: 'pendiente', monto: 7000, tracking_token: 'tok_9002' }];
+    if (sql.includes('INSERT INTO items_pedido')) return [];
+    if (sql.includes('SELECT config_entrega FROM empresas')) return [{ config_entrega: {} }];
+    if (sql.includes('FROM cliente_retornables_saldos')) return [{ producto_id: 55, producto: 'Bidón retornable', saldo: '3' }];
+
+    throw new Error(`SQL inesperado en test: ${sql.slice(0, 90)}`);
+  };
+
+  const app = buildApp({
+    query,
+    enqueueWppMessage: async ({ message }) => { wppMessage = message; },
+  });
+
+  await withServer(app, async (baseUrl) => {
+    const resp = await fetch(`${baseUrl}/public/pedidos`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-forwarded-for': '2.2.2.2' },
+      body: JSON.stringify({
+        empresa_id: 1,
+        cliente: 'Hidro Cliente',
+        telefono: '387-555-1122',
+        direccion: 'Calle Falsa 123',
+        ciudad: 'Salta',
+        provincia: 'Salta',
+        pais: 'Argentina',
+        metodo_pago: 'efectivo',
+        submission_id: 'sub-9002',
+        items: [{ producto: 'Bidón 20L', cantidad: 2, precio_unitario: 3500 }],
+      }),
+    });
+
+    assert.equal(resp.status, 200);
+  });
+
+  assert.match(wppMessage, /Retornables pendientes/);
+  assert.match(wppMessage, /Recordá entregar 3 Bidón retornable al repartidor/);
 });
