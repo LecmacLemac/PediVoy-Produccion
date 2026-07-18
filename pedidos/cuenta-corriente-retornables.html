@@ -12,14 +12,20 @@
 <body>
   <header>
     <nav class="container">
-      <div class="brand"><img class="pedivoy-brand-logo" src="img/brand/pedivoy-logo-horizontal-white.png" alt="PediVoy"> Retornables <span id="rolePill" class="role-badge"></span></div>
+      <div class="brand"><img class="pedivoy-brand-logo" src="img/brand/pedivoy-logo-horizontal-white.png" alt="PediVoy"> MultiEmpresas <span id="rolePill" class="role-badge"></span></div>
       <ul class="menu" id="mainMenu">
         <li><a href="inicio/inicial.html">🚀 Inicio</a></li>
+        <li><a href="inicio/comando.html">Comando</a></li>
         <li><a href="dashboard.html">Dashboard</a></li>
+        <li><a href="facturacion.html">Facturación</a></li>
+        <li><a href="pagos.html">Pagos</a></li>
         <li><a href="stock.html">Stock</a></li>
+        <li><a href="repartidores.html">Repartidor</a></li>
+        <li><a href="estadisticas.html">Estadísticas</a></li>
         <li><a href="gastos.html">Gastos</a></li>
         <li><a href="clientes.html">Clientes</a></li>
         <li><a href="cuenta-corriente-retornables.html" class="active">Retornables</a></li>
+        <li><a href="qr.html">QR</a></li>
         <li><a href="#" id="logout" style="color:var(--danger)">Salir</a></li>
       </ul>
     </nav>
@@ -103,7 +109,7 @@
     function currentEmpresaId(){ return state.isSuper ? ($('empresa')?.value || '') : (state.empresaId || ''); }
     function withEmpresa(url){ const emp = currentEmpresaId(); if(!emp) return url; const sep = url.includes('?') ? '&' : '?'; return `${url}${sep}empresa_id=${encodeURIComponent(emp)}`; }
     function authHeaders(extra={}){ const token=getToken(); return { ...(token?{Authorization:`Bearer ${token}`}:{}) , ...extra }; }
-    async function api(url, opts={}){ const res = await fetch(url, { credentials:'include', ...opts, headers: authHeaders(opts.headers || {}) }); const data = await res.json().catch(()=>({})); if(!res.ok) throw new Error(data.error || `Error ${res.status}`); return data; }
+    async function api(url, opts={}){ const res = await fetch(url, { credentials:'include', ...opts, headers: authHeaders(opts.headers || {}) }); if(res.status === 401){ location.href='login.html'; throw new Error('Sesión expirada'); } const data = await res.json().catch(()=>({})); if(!res.ok) throw new Error(data.error || `Error ${res.status}`); return data; }
     function toast(msg){ const el=$('toast'); el.textContent=msg; el.classList.add('show'); clearTimeout(el._t); el._t=setTimeout(()=>el.classList.remove('show'),3200); }
     function escapeHtml(v){ return String(v ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c])); }
     function saldoClass(s){ if(s>0) return 'deuda'; if(s<0) return 'favor'; return 'ok'; }
@@ -152,12 +158,24 @@
     function buildParams(extra={}){ const p = new URLSearchParams(); if(currentEmpresaId()) p.set('empresa_id', currentEmpresaId()); if($('q').value.trim()) p.set('q',$('q').value.trim()); if($('producto').value) p.set('producto_id',$('producto').value); if($('cliente').value) p.set('punto_entrega_id',$('cliente').value); if($('chofer').value) p.set('chofer_id',$('chofer').value); p.set('saldo',$('saldo').value || 'pendientes'); p.set('limit','250'); Object.entries(extra).forEach(([k,v])=>{ if(v!==undefined && v!==null && v!=='') p.set(k,v); }); return p; }
 
     async function loadResumen(){
+      if(state.isSuper && !currentEmpresaId()){
+        renderKpis({});
+        state.saldos = [];
+        $('metaSaldos').textContent = 'Seleccioná una empresa para consultar retornables';
+        $('saldosBody').innerHTML = '<tr><td colspan="7" class="empty">Seleccioná una empresa para cargar la cuenta corriente.</td></tr>';
+        return;
+      }
       $('saldosBody').innerHTML = '<tr><td colspan="7" class="empty">Cargando...</td></tr>';
       const data = await api(`/api/retornables/resumen?${buildParams()}`);
       state.saldos = data.rows || [];
       renderKpis(data.kpis || {}); renderSaldos();
     }
     async function loadMovimientos(extra={}){
+      if(state.isSuper && !currentEmpresaId()){
+        state.movimientos = [];
+        $('movBody').innerHTML = '<tr><td colspan="6" class="empty">Seleccioná una empresa para ver movimientos.</td></tr>';
+        return;
+      }
       $('movBody').innerHTML = '<tr><td colspan="6" class="empty">Cargando...</td></tr>';
       const p = new URLSearchParams(); if(currentEmpresaId()) p.set('empresa_id', currentEmpresaId()); if(extra.punto_entrega_id) p.set('punto_entrega_id', extra.punto_entrega_id); if(extra.producto_id) p.set('producto_id', extra.producto_id); p.set('limit','80');
       const data = await api(`/api/retornables/movimientos?${p}`);
@@ -173,7 +191,7 @@
         <td><span class="badge ${saldoClass(r.saldo)}">${estadoText(r.saldo)}</span></td>
         <td><div>${escapeHtml(r.ultimo_movimiento||'—')}</div><div class="muted">${r.ultimo_movimiento_at?dateFmt.format(new Date(r.ultimo_movimiento_at)):'Sin fecha'}</div></td>
         <td>${escapeHtml(r.ultimo_chofer||'—')}</td>
-        <td><button class="btn btn-secondary" onclick="verHistorial(${Number(r.punto_entrega_id)},${Number(r.producto_id)},'${escapeHtml(r.cliente)}','${escapeHtml(r.producto)}')">Historial</button></td></tr>`).join('');
+        <td><button class="btn btn-secondary" onclick="verHistorial(${Number(r.punto_entrega_id)},${Number(r.producto_id)},${escapeHtml(JSON.stringify(String(r.cliente || '')))},${escapeHtml(JSON.stringify(String(r.producto || '')))})">Historial</button></td></tr>`).join('');
     }
     function renderMovimientos(){
       if(!state.movimientos.length){ $('movBody').innerHTML='<tr><td colspan="6" class="empty">Sin movimientos.</td></tr>'; return; }
@@ -199,13 +217,18 @@
     $('btnGuardarAjuste').addEventListener('click',()=> guardarAjuste().catch(e=>toast(e.message)));
     $('btnExport').addEventListener('click',exportCsv);
     $('empresa')?.addEventListener('change', async()=>{ await loadCombos(); await Promise.all([loadResumen(), loadMovimientos()]); });
-    $('logout').addEventListener('click',(e)=>{ e.preventDefault(); localStorage.removeItem('token'); sessionStorage.removeItem('token'); location.href='login.html'; });
-    const user = getStoredUser();
-    state.isSuper = String(user.role || '').toLowerCase() === 'super';
-    state.empresaId = user.empresa_id || user.empresaId || null;
-    $('rolePill').textContent = state.isSuper ? 'SUPER ADMIN' : (user.role || '');
+    $('logout').addEventListener('click',async(e)=>{ e.preventDefault(); try{ await fetch('/api/logout',{method:'POST',credentials:'include',headers:authHeaders()}); }catch{} localStorage.removeItem('token'); sessionStorage.removeItem('token'); location.href='login.html'; });
 
-    (async function init(){ try { await loadEmpresas(); await loadCombos(); await Promise.all([loadResumen(), loadMovimientos()]); } catch(e){ toast(e.message); $('saldosBody').innerHTML=`<tr><td colspan="7" class="empty">${escapeHtml(e.message)}</td></tr>`; } })();
+    async function loadCurrentUser(){
+      const me = await api('/api/me');
+      const user = me?.user || getStoredUser();
+      const role = String(user.role || '').toLowerCase();
+      state.isSuper = role === 'super';
+      state.empresaId = user.empresa_id || user.empresaId || null;
+      $('rolePill').textContent = state.isSuper ? 'SUPER ADMIN' : (role ? role.toUpperCase() : '');
+    }
+
+    (async function init(){ try { await loadCurrentUser(); await loadEmpresas(); await loadCombos(); await Promise.all([loadResumen(), loadMovimientos()]); } catch(e){ toast(e.message); $('saldosBody').innerHTML=`<tr><td colspan="7" class="empty">${escapeHtml(e.message)}</td></tr>`; } })();
   </script>
 </body>
 </html>
