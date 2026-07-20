@@ -1,7 +1,56 @@
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+function safeIdSnapshot(id) {
+  if (!id || typeof id !== 'object') return id || null;
+  return {
+    _serialized: id._serialized || null,
+    id: id.id || null,
+    fromMe: typeof id.fromMe === 'boolean' ? id.fromMe : null,
+    remote: typeof id.remote === 'string' ? id.remote : id.remote?._serialized || null,
+    participant: typeof id.participant === 'string' ? id.participant : id.participant?._serialized || null,
+  };
+}
+
+function inferSerializedMessageId(msg) {
+  const id = msg?.id || msg?._data?.id;
+  if (!id || typeof id !== 'object') return null;
+  if (id._serialized) return id._serialized;
+  if (!id.id) return null;
+
+  const fromMe = typeof id.fromMe === 'boolean' ? id.fromMe : !!msg?.fromMe;
+  const remote = typeof id.remote === 'string'
+    ? id.remote
+    : id.remote?._serialized || msg?.from || msg?._data?.from;
+
+  if (!remote) return null;
+
+  const participant = typeof id.participant === 'string'
+    ? id.participant
+    : id.participant?._serialized || null;
+
+  return participant
+    ? `${fromMe}_${remote}_${id.id}_${participant}`
+    : `${fromMe}_${remote}_${id.id}`;
+}
+
+function ensureSerializedMessageId(msg) {
+  const serialized = inferSerializedMessageId(msg);
+  if (!serialized) return null;
+
+  if (msg.id && typeof msg.id === 'object' && !msg.id._serialized) {
+    msg.id._serialized = serialized;
+    console.log('[WPP MEDIA] messageId reconstruido', {
+      messageId: serialized,
+      id: safeIdSnapshot(msg.id),
+    });
+  }
+
+  return serialized;
+}
+
 async function downloadMediaWithRetry(msg, { attempts = 3, delayMs = 1500 } = {}) {
   let lastError = null;
+  const messageId = ensureSerializedMessageId(msg);
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
@@ -15,9 +64,10 @@ async function downloadMediaWithRetry(msg, { attempts = 3, delayMs = 1500 } = {}
 
       console.warn('[WPP MEDIA] downloadMedia sin datos', {
         attempt,
-        messageId: msg.id?._serialized || null,
+        messageId,
         type: msg.type || null,
         hasMedia: !!msg.hasMedia,
+        id: safeIdSnapshot(msg.id),
       });
     } catch (err) {
       lastError = err;
@@ -26,9 +76,10 @@ async function downloadMediaWithRetry(msg, { attempts = 3, delayMs = 1500 } = {}
         message: err?.message || String(err),
         name: err?.name || null,
         stack: err?.stack || null,
-        messageId: msg.id?._serialized || null,
+        messageId,
         type: msg.type || null,
         hasMedia: !!msg.hasMedia,
+        id: safeIdSnapshot(msg.id),
       });
     }
 
@@ -38,7 +89,7 @@ async function downloadMediaWithRetry(msg, { attempts = 3, delayMs = 1500 } = {}
   if (lastError) {
     console.warn('[WPP MEDIA] downloadMedia agotó reintentos', {
       message: lastError?.message || String(lastError),
-      messageId: msg.id?._serialized || null,
+      messageId,
     });
   }
 
@@ -61,7 +112,7 @@ export function createIncomingMediaHandler({ query, lidByPhone, handleIncomingCo
         type: t,
         hasMedia: !!msg.hasMedia,
         isMedia,
-        id: msg.id?._serialized || null,
+        id: inferSerializedMessageId(msg),
       });
 
       if (!isMedia) return;
