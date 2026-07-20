@@ -1,3 +1,50 @@
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function downloadMediaWithRetry(msg, { attempts = 3, delayMs = 1500 } = {}) {
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const media = await msg.downloadMedia();
+      if (media?.data) {
+        if (attempt > 1) {
+          console.log('[WPP MEDIA] Descarga recuperada en reintento', { attempt });
+        }
+        return media;
+      }
+
+      console.warn('[WPP MEDIA] downloadMedia sin datos', {
+        attempt,
+        messageId: msg.id?._serialized || null,
+        type: msg.type || null,
+        hasMedia: !!msg.hasMedia,
+      });
+    } catch (err) {
+      lastError = err;
+      console.error('[WPP MEDIA] Error descargando', {
+        attempt,
+        message: err?.message || String(err),
+        name: err?.name || null,
+        stack: err?.stack || null,
+        messageId: msg.id?._serialized || null,
+        type: msg.type || null,
+        hasMedia: !!msg.hasMedia,
+      });
+    }
+
+    if (attempt < attempts) await wait(delayMs);
+  }
+
+  if (lastError) {
+    console.warn('[WPP MEDIA] downloadMedia agotó reintentos', {
+      message: lastError?.message || String(lastError),
+      messageId: msg.id?._serialized || null,
+    });
+  }
+
+  return null;
+}
+
 export function createIncomingMediaHandler({ query, lidByPhone, handleIncomingComprobanteFromBotPg }) {
   return async function handleIncomingMediaMessage(msg) {
     console.log(`[DEBUG WPP] Evento 'message' detectado en server.js desde: ${msg.from}`);
@@ -57,10 +104,7 @@ export function createIncomingMediaHandler({ query, lidByPhone, handleIncomingCo
 
       console.log(`[WPP MEDIA] Recibido archivo de cliente registrado: ${msg.from} tipo=${t}`);
 
-      const media = await msg.downloadMedia().catch((err) => {
-        console.error('[WPP MEDIA] Error descargando:', err.message);
-        return null;
-      });
+      const media = await downloadMediaWithRetry(msg);
 
       if (!media) {
         console.warn('[WPP MEDIA] downloadMedia devolvió null');
