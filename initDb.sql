@@ -638,6 +638,83 @@ CREATE TABLE IF NOT EXISTS promociones_config (
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS juegos_campanias (
+  id                    SERIAL PRIMARY KEY,
+  empresa_id            INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+  slug                  TEXT NOT NULL,
+  nombre                TEXT NOT NULL,
+  titulo_publico        TEXT NOT NULL,
+  descripcion_publica   TEXT,
+  tipo_juego            TEXT NOT NULL DEFAULT 'raspadita',
+  estado                TEXT NOT NULL DEFAULT 'borrador',
+  participacion_limite  TEXT NOT NULL DEFAULT 'once',
+  max_participaciones   INTEGER,
+  max_ganadores         INTEGER,
+  codigo_prefijo        TEXT DEFAULT 'PV',
+  whatsapp_mensaje      TEXT,
+  bases_condiciones     TEXT,
+  valid_from            TIMESTAMPTZ,
+  valid_to              TIMESTAMPTZ,
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (empresa_id, slug)
+);
+
+CREATE TABLE IF NOT EXISTS juegos_premios (
+  id              SERIAL PRIMARY KEY,
+  empresa_id      INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+  campania_id     INTEGER NOT NULL REFERENCES juegos_campanias(id) ON DELETE CASCADE,
+  tipo            TEXT NOT NULL,
+  producto_id     INTEGER REFERENCES productos(id) ON DELETE SET NULL,
+  nombre_publico  TEXT NOT NULL,
+  descripcion     TEXT,
+  valor           NUMERIC(12,2),
+  probabilidad    INTEGER NOT NULL DEFAULT 1,
+  stock_total     INTEGER,
+  stock_diario    INTEGER,
+  activo          BOOLEAN NOT NULL DEFAULT TRUE,
+  orden           INTEGER NOT NULL DEFAULT 0,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS juegos_participaciones (
+  id                  SERIAL PRIMARY KEY,
+  empresa_id          INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+  campania_id         INTEGER NOT NULL REFERENCES juegos_campanias(id) ON DELETE CASCADE,
+  premio_id           INTEGER REFERENCES juegos_premios(id) ON DELETE SET NULL,
+  producto_id         INTEGER REFERENCES productos(id) ON DELETE SET NULL,
+  punto_entrega_id    INTEGER REFERENCES puntos_entrega(id) ON DELETE SET NULL,
+  pedido_id           INTEGER REFERENCES pedidos(id) ON DELETE SET NULL,
+  telefono            TEXT NOT NULL,
+  telefono_norm       TEXT NOT NULL,
+  codigo              TEXT,
+  resultado_tipo      TEXT NOT NULL,
+  resultado_nombre    TEXT NOT NULL,
+  ip_hash             TEXT,
+  user_agent          TEXT,
+  metadata            JSONB NOT NULL DEFAULT '{}'::jsonb,
+  enviado_whatsapp_at TIMESTAMPTZ,
+  redimido_at         TIMESTAMPTZ,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS juegos_campanias_empresa_estado_idx
+  ON juegos_campanias (empresa_id, estado, valid_from, valid_to);
+
+CREATE INDEX IF NOT EXISTS juegos_premios_campania_idx
+  ON juegos_premios (campania_id, activo, orden);
+
+CREATE INDEX IF NOT EXISTS juegos_participaciones_campania_tel_idx
+  ON juegos_participaciones (campania_id, telefono_norm, created_at DESC);
+
+CREATE UNIQUE INDEX IF NOT EXISTS juegos_participaciones_codigo_uniq
+  ON juegos_participaciones (codigo)
+  WHERE codigo IS NOT NULL;
+
+ALTER TABLE juegos_participaciones
+  ADD COLUMN IF NOT EXISTS punto_entrega_id INTEGER REFERENCES puntos_entrega(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS pedido_id INTEGER REFERENCES pedidos(id) ON DELETE SET NULL;
+
 CREATE TABLE IF NOT EXISTS puntos_movimientos (
   id               SERIAL PRIMARY KEY,
   empresa_id       INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,

@@ -1,0 +1,419 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Juegos Promocionales - PediVoy</title>
+  <link rel="stylesheet" href="theme-base.css">
+  <style>
+    :root{--bg:#0b1020;--panel:#111827;--panel2:#172033;--ink:#f8fafc;--muted:#94a3b8;--brand:#06b6d4;--ok:#22c55e;--warn:#f59e0b;--danger:#ef4444;--border:rgba(148,163,184,.18);--radius:10px}
+    *{box-sizing:border-box}
+    body{margin:0;font-family:system-ui,-apple-system,Segoe UI,sans-serif;background:var(--bg);color:var(--ink);font-size:14px}
+    .container{max-width:1280px;margin:0 auto;padding:0 20px}
+    header{position:sticky;top:0;z-index:10;background:rgba(15,23,42,.94);border-bottom:1px solid var(--border);backdrop-filter:blur(12px)}
+    nav{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:12px 0}
+    .brand{display:flex;align-items:center;gap:10px;font-weight:800}
+    .brand img{height:30px;width:auto}
+    .role-badge{color:var(--brand);font-size:12px;border:1px solid rgba(6,182,212,.35);padding:2px 8px;border-radius:999px}
+    .menu{display:flex;gap:18px;list-style:none;margin:0;padding:0;overflow:auto}
+    .menu a{color:var(--muted);text-decoration:none;white-space:nowrap;font-weight:600}
+    .menu a.active,.menu a:hover{color:#fff}
+    main{padding:26px 0 60px}
+    .page-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:18px;flex-wrap:wrap}
+    h1{margin:0;font-size:28px;line-height:1.1}
+    .subtitle{margin:6px 0 0;color:var(--muted)}
+    .grid{display:grid;grid-template-columns:minmax(0,1fr) 430px;gap:18px;align-items:start}
+    .card{background:rgba(17,24,39,.88);border:1px solid var(--border);border-radius:var(--radius);padding:16px;box-shadow:0 18px 40px rgba(0,0,0,.2)}
+    .toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+    label{display:block;color:var(--muted);font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;margin-bottom:5px}
+    input,select,textarea{width:100%;border:1px solid var(--border);border-radius:8px;background:#0f172a;color:#fff;padding:10px 11px;font:inherit}
+    textarea{resize:vertical}
+    input:focus,select:focus,textarea:focus{outline:2px solid rgba(6,182,212,.22);border-color:rgba(6,182,212,.65)}
+    .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    .btn{border:1px solid var(--border);border-radius:8px;background:rgba(255,255,255,.04);color:#fff;padding:10px 13px;font-weight:800;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;gap:7px}
+    .btn:hover{border-color:var(--brand)}
+    .btn.primary{background:var(--brand);color:#001018;border-color:transparent}
+    .btn.danger{color:#fecaca;border-color:rgba(239,68,68,.45)}
+    .btn.small{padding:7px 10px;font-size:12px}
+    table{width:100%;border-collapse:collapse}
+    th,td{padding:12px;border-bottom:1px solid var(--border);text-align:left;vertical-align:middle}
+    th{color:var(--muted);font-size:12px;text-transform:uppercase}
+    td{color:#e5e7eb}
+    .badge{display:inline-flex;align-items:center;border-radius:999px;padding:3px 8px;font-size:12px;font-weight:800}
+    .badge.activa{background:rgba(34,197,94,.16);color:#86efac}
+    .badge.borrador{background:rgba(148,163,184,.16);color:#cbd5e1}
+    .badge.pausada{background:rgba(245,158,11,.16);color:#fcd34d}
+    .muted{color:var(--muted)}
+    .prize{display:grid;grid-template-columns:1fr 1fr 78px 78px 34px;gap:8px;align-items:end;margin-bottom:8px;padding:10px;border:1px solid var(--border);border-radius:8px;background:rgba(15,23,42,.72)}
+    .prize .wide{grid-column:span 2}
+    .qrBox{display:none;margin-top:12px;padding:12px;background:#fff;border-radius:8px;text-align:center}
+    .qrBox img{width:220px;max-width:100%;height:auto}
+    .linkBox{display:none;margin-top:10px;padding:10px;border:1px solid var(--border);border-radius:8px;background:#0f172a;word-break:break-all}
+    .empty{padding:26px;text-align:center;color:var(--muted)}
+    .toast{position:fixed;right:18px;bottom:18px;background:#fff;color:#0f172a;border-radius:999px;padding:11px 16px;font-weight:800;box-shadow:0 14px 40px rgba(0,0,0,.35);opacity:0;transform:translateY(8px);transition:.2s;z-index:30}
+    .toast.show{opacity:1;transform:translateY(0)}
+    @media(max-width:980px){.grid{grid-template-columns:1fr}.row{grid-template-columns:1fr}.prize{grid-template-columns:1fr 1fr}.prize .wide{grid-column:span 2}}
+  </style>
+</head>
+<body>
+  <header>
+    <nav class="container">
+      <div class="brand">
+        <img src="../img/brand/pedivoy-logo-horizontal-white.png" alt="PediVoy">
+        MultiEmpresas <span id="roleBadge" class="role-badge"></span>
+      </div>
+      <ul class="menu">
+        <li><a href="inicial.html">Inicio</a></li>
+        <li><a href="/pedidos/dashboard.html">Dashboard</a></li>
+        <li><a href="producto.html">Productos</a></li>
+        <li><a href="promociones.html">Promociones</a></li>
+        <li><a href="juegos.html" class="active">Juegos</a></li>
+        <li><a href="comando.html">Comando</a></li>
+        <li><a href="#" id="logout" style="color:var(--danger)">Salir</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <main class="container">
+    <div class="page-head">
+      <div>
+        <h1>Juegos promocionales</h1>
+        <p class="subtitle">Campanias QR con raspadita, premios por producto ID y codigos trazables.</p>
+      </div>
+      <button class="btn primary" id="btnNew">Nueva campania</button>
+    </div>
+
+    <div id="empWrap" class="card" style="display:none;margin-bottom:18px">
+      <label>Empresa</label>
+      <select id="empSel"><option value="">Seleccionar empresa</option></select>
+    </div>
+
+    <section class="grid">
+      <div class="card">
+        <div class="toolbar">
+          <strong>Campanias</strong>
+          <span class="muted" id="campaignCount"></span>
+        </div>
+        <div style="overflow:auto">
+          <table>
+            <thead>
+              <tr><th>Campania</th><th>Estado</th><th>Participaciones</th><th>Ganadores</th><th></th></tr>
+            </thead>
+            <tbody id="campaignRows"><tr><td colspan="5" class="empty">Cargando...</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+      <aside class="card">
+        <form id="campaignForm">
+          <input type="hidden" id="c_id">
+          <div class="row">
+            <div>
+              <label>Nombre interno</label>
+              <input id="c_nombre" placeholder="Raspadita verano">
+            </div>
+            <div>
+              <label>Slug QR</label>
+              <input id="c_slug" placeholder="raspadita-verano">
+            </div>
+          </div>
+          <div style="margin-top:12px">
+            <label>Titulo publico</label>
+            <input id="c_titulo" placeholder="Raspa y gana un premio">
+          </div>
+          <div style="margin-top:12px">
+            <label>Descripcion publica</label>
+            <textarea id="c_desc" rows="2" placeholder="Ingresa tu telefono y proba tu suerte."></textarea>
+          </div>
+          <div class="row" style="margin-top:12px">
+            <div>
+              <label>Estado</label>
+              <select id="c_estado">
+                <option value="borrador">Borrador</option>
+                <option value="activa">Activa</option>
+                <option value="pausada">Pausada</option>
+              </select>
+            </div>
+            <div>
+              <label>Participacion</label>
+              <select id="c_limite">
+                <option value="once">Una vez por telefono</option>
+                <option value="daily">Una vez por dia</option>
+              </select>
+            </div>
+          </div>
+          <div class="row" style="margin-top:12px">
+            <div>
+              <label>Inicio</label>
+              <input type="datetime-local" id="c_from">
+            </div>
+            <div>
+              <label>Fin</label>
+              <input type="datetime-local" id="c_to">
+            </div>
+          </div>
+          <div class="row" style="margin-top:12px">
+            <div>
+              <label>Max. participaciones</label>
+              <input type="number" min="0" id="c_max_part" placeholder="Sin limite">
+            </div>
+            <div>
+              <label>Max. ganadores</label>
+              <input type="number" min="0" id="c_max_win" placeholder="Sin limite">
+            </div>
+          </div>
+          <div style="margin-top:12px">
+            <label>Prefijo codigo</label>
+            <input id="c_prefijo" value="PV" maxlength="8">
+          </div>
+          <div style="margin-top:12px">
+            <label>Mensaje WhatsApp</label>
+            <textarea id="c_wpp" rows="3">Felicitaciones! Ganaste {premio} en {campania}. Tu codigo es {codigo}. Presentalo para reclamar tu premio.</textarea>
+          </div>
+          <div style="margin-top:12px">
+            <label>Bases y condiciones</label>
+            <textarea id="c_bases" rows="2" placeholder="Promocion sin obligacion de compra. Premio no canjeable por dinero."></textarea>
+          </div>
+
+          <div class="toolbar" style="margin-top:16px">
+            <strong>Resultados / premios</strong>
+            <button type="button" class="btn small" id="btnPrize">Agregar</button>
+          </div>
+          <div id="prizes"></div>
+
+          <div class="toolbar" style="margin-top:14px">
+            <button type="submit" class="btn primary" id="btnSave">Guardar</button>
+            <button type="button" class="btn" id="btnReset">Limpiar</button>
+          </div>
+
+          <div id="linkBox" class="linkBox"></div>
+          <div id="qrBox" class="qrBox"><img id="qrImg" alt="QR campania"></div>
+        </form>
+      </aside>
+    </section>
+  </main>
+
+  <div id="toast" class="toast"></div>
+
+  <script>
+    const $ = (s) => document.querySelector(s);
+    const STATE = { isSuper:false, empresaId:null, campaigns:[], products:[], currentPublicUrl:null };
+
+    function toast(msg){ const el=$('#toast'); el.textContent=msg; el.classList.add('show'); setTimeout(()=>el.classList.remove('show'),2400); }
+    function esc(s){ return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+    function apiUrl(path){ const emp=$('#empSel')?.value; if(STATE.isSuper && emp){ return path + (path.includes('?')?'&':'?') + 'empresa_id=' + encodeURIComponent(emp); } return path; }
+    async function api(path, opts={}){
+      const res = await fetch(path, { ...opts, credentials:'include', headers:{'Content-Type':'application/json', ...(opts.headers||{})} });
+      if(res.status===401){ location.href='../login.html'; return null; }
+      const data = await res.json().catch(()=>({}));
+      if(!res.ok) throw new Error(data.error || 'Error de servidor');
+      return data;
+    }
+    function slugify(v){ return String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,80); }
+    function toLocalInput(v){ if(!v) return ''; const d=new Date(v); if(Number.isNaN(d.getTime())) return ''; const p=n=>String(n).padStart(2,'0'); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; }
+
+    function productOptions(selected){
+      return ['<option value="">Sin producto</option>'].concat(STATE.products.map(p => `<option value="${Number(p.id)}" ${String(selected||'')===String(p.id)?'selected':''}>#${Number(p.id)} - ${esc(p.nombre)}</option>`)).join('');
+    }
+
+    function prizeRow(p={}){
+      const id = crypto.randomUUID ? crypto.randomUUID() : String(Date.now()+Math.random());
+      const tipo = p.tipo || 'sin_premio';
+      const wrap = document.createElement('div');
+      wrap.className = 'prize';
+      wrap.dataset.id = id;
+      wrap.innerHTML = `
+        <div>
+          <label>Tipo</label>
+          <select data-field="tipo">
+            <option value="producto_gratis" ${tipo==='producto_gratis'?'selected':''}>Producto gratis</option>
+            <option value="descuento_porcentaje" ${tipo==='descuento_porcentaje'?'selected':''}>% descuento</option>
+            <option value="descuento_monto" ${tipo==='descuento_monto'?'selected':''}>$ descuento</option>
+            <option value="envio_gratis" ${tipo==='envio_gratis'?'selected':''}>Envio gratis</option>
+            <option value="sin_premio" ${tipo==='sin_premio'?'selected':''}>Sin premio</option>
+          </select>
+        </div>
+        <div>
+          <label>Producto ID</label>
+          <select data-field="producto_id">${productOptions(p.producto_id)}</select>
+        </div>
+        <div>
+          <label>Peso</label>
+          <input type="number" min="0" data-field="probabilidad" value="${Number(p.probabilidad ?? 1)}">
+        </div>
+        <div>
+          <label>Stock</label>
+          <input type="number" min="0" data-field="stock_total" value="${p.stock_total ?? ''}">
+        </div>
+        <button type="button" class="btn danger small" data-action="remove" title="Eliminar">X</button>
+        <div class="wide">
+          <label>Texto publico</label>
+          <input data-field="nombre_publico" value="${esc(p.nombre_publico || (tipo==='sin_premio'?'Esta vez no hubo premio':''))}" placeholder="Ganaste un bidon gratis">
+        </div>
+        <div>
+          <label>Valor</label>
+          <input type="number" min="0" step="0.01" data-field="valor" value="${p.valor ?? ''}">
+        </div>
+        <div>
+          <label>Stock diario</label>
+          <input type="number" min="0" data-field="stock_diario" value="${p.stock_diario ?? ''}">
+        </div>
+      `;
+      wrap.querySelector('[data-action="remove"]').addEventListener('click', () => wrap.remove());
+      wrap.querySelector('[data-field="tipo"]').addEventListener('change', (ev) => {
+        const name = wrap.querySelector('[data-field="nombre_publico"]');
+        if(!name.value.trim()){
+          name.value = ev.target.value === 'sin_premio' ? 'Esta vez no hubo premio' : 'Ganaste un premio';
+        }
+      });
+      $('#prizes').appendChild(wrap);
+    }
+
+    function collectPrizes(){
+      return Array.from(document.querySelectorAll('.prize')).map((row, idx) => {
+        const get = (f) => row.querySelector(`[data-field="${f}"]`)?.value;
+        return {
+          tipo:get('tipo'),
+          producto_id:get('producto_id') || null,
+          nombre_publico:get('nombre_publico')?.trim(),
+          valor:get('valor') || null,
+          probabilidad:Number(get('probabilidad') || 0),
+          stock_total:get('stock_total') || null,
+          stock_diario:get('stock_diario') || null,
+          activo:true,
+          orden:idx
+        };
+      });
+    }
+
+    function resetForm(){
+      $('#campaignForm').reset();
+      $('#c_id').value = '';
+      $('#c_estado').value = 'borrador';
+      $('#c_limite').value = 'once';
+      $('#c_prefijo').value = 'PV';
+      $('#c_wpp').value = 'Felicitaciones! Ganaste {premio} en {campania}. Tu codigo es {codigo}. Presentalo para reclamar tu premio.';
+      $('#prizes').innerHTML = '';
+      prizeRow({ tipo:'producto_gratis', nombre_publico:'Ganaste un premio', probabilidad:1 });
+      prizeRow({ tipo:'sin_premio', nombre_publico:'Esta vez no hubo premio', probabilidad:4 });
+      $('#linkBox').style.display='none';
+      $('#qrBox').style.display='none';
+    }
+
+    function renderCampaigns(){
+      $('#campaignCount').textContent = `${STATE.campaigns.length} total`;
+      if(!STATE.campaigns.length){
+        $('#campaignRows').innerHTML = '<tr><td colspan="5" class="empty">Sin campanias creadas.</td></tr>';
+        return;
+      }
+      $('#campaignRows').innerHTML = STATE.campaigns.map(c => `
+        <tr>
+          <td><strong>${esc(c.nombre)}</strong><div class="muted">${esc(c.public_url || '')}</div></td>
+          <td><span class="badge ${esc(c.estado)}">${esc(c.estado)}</span></td>
+          <td>${Number(c.participaciones||0)}</td>
+          <td>${Number(c.ganadores||0)}</td>
+          <td><button type="button" class="btn small" data-action="edit" data-id="${Number(c.id)}">Editar</button></td>
+        </tr>
+      `).join('');
+    }
+
+    async function loadProducts(){
+      const data = await api(apiUrl('/api/productos'));
+      STATE.products = Array.isArray(data) ? data.filter(p => p.activo === true || p.activo === 1) : [];
+    }
+
+    async function loadCampaigns(){
+      const data = await api(apiUrl('/api/juegos/campanias'));
+      STATE.campaigns = data?.items || [];
+      renderCampaigns();
+    }
+
+    async function editCampaign(id){
+      const c = await api(apiUrl(`/api/juegos/campanias/${id}`));
+      $('#c_id').value = c.id;
+      $('#c_nombre').value = c.nombre || '';
+      $('#c_slug').value = c.slug || '';
+      $('#c_titulo').value = c.titulo_publico || '';
+      $('#c_desc').value = c.descripcion_publica || '';
+      $('#c_estado').value = c.estado || 'borrador';
+      $('#c_limite').value = c.participacion_limite || 'once';
+      $('#c_from').value = toLocalInput(c.valid_from);
+      $('#c_to').value = toLocalInput(c.valid_to);
+      $('#c_max_part').value = c.max_participaciones ?? '';
+      $('#c_max_win').value = c.max_ganadores ?? '';
+      $('#c_prefijo').value = c.codigo_prefijo || 'PV';
+      $('#c_wpp').value = c.whatsapp_mensaje || $('#c_wpp').value;
+      $('#c_bases').value = c.bases_condiciones || '';
+      $('#prizes').innerHTML = '';
+      (c.premios || []).forEach(prizeRow);
+      if(!(c.premios || []).length) prizeRow({ tipo:'sin_premio', nombre_publico:'Esta vez no hubo premio', probabilidad:1 });
+      $('#linkBox').textContent = c.public_url || '';
+      $('#linkBox').style.display = c.public_url ? 'block' : 'none';
+      const qr = await api(apiUrl(`/api/juegos/campanias/${id}/qr`));
+      $('#qrImg').src = qr.data_url;
+      $('#qrBox').style.display = 'block';
+    }
+
+    async function saveCampaign(ev){
+      ev.preventDefault();
+      if(STATE.isSuper && !$('#empSel').value){ toast('Selecciona una empresa'); return; }
+      const body = {
+        nombre:$('#c_nombre').value.trim(),
+        slug:$('#c_slug').value.trim() || slugify($('#c_nombre').value),
+        titulo_publico:$('#c_titulo').value.trim() || $('#c_nombre').value.trim(),
+        descripcion_publica:$('#c_desc').value.trim(),
+        estado:$('#c_estado').value,
+        participacion_limite:$('#c_limite').value,
+        valid_from:$('#c_from').value || null,
+        valid_to:$('#c_to').value || null,
+        max_participaciones:$('#c_max_part').value || null,
+        max_ganadores:$('#c_max_win').value || null,
+        codigo_prefijo:$('#c_prefijo').value.trim() || 'PV',
+        whatsapp_mensaje:$('#c_wpp').value.trim(),
+        bases_condiciones:$('#c_bases').value.trim(),
+        premios:collectPrizes()
+      };
+      if(!body.nombre){ toast('Falta nombre'); return; }
+      const badProduct = body.premios.some(p => p.tipo === 'producto_gratis' && !p.producto_id);
+      if(badProduct){ toast('Los premios de producto necesitan Producto ID'); return; }
+      const id = $('#c_id').value;
+      const path = id ? `/api/juegos/campanias/${id}` : '/api/juegos/campanias';
+      const data = await api(apiUrl(path), { method:id?'PUT':'POST', body:JSON.stringify(body) });
+      toast('Campania guardada');
+      $('#linkBox').textContent = data.public_url || '';
+      $('#linkBox').style.display = data.public_url ? 'block' : 'none';
+      await loadCampaigns();
+      if(data.id) await editCampaign(data.id);
+    }
+
+    async function init(){
+      $('#logout')?.addEventListener('click', async (e)=>{ e.preventDefault(); try{ await api('/api/logout',{method:'POST'}); }catch{} location.href='../login.html'; });
+      $('#btnNew').addEventListener('click', resetForm);
+      $('#btnReset').addEventListener('click', resetForm);
+      $('#btnPrize').addEventListener('click', () => prizeRow({ tipo:'producto_gratis', nombre_publico:'Ganaste un premio', probabilidad:1 }));
+      $('#c_nombre').addEventListener('input', () => { if(!$('#c_id').value) $('#c_slug').value = slugify($('#c_nombre').value); });
+      $('#campaignForm').addEventListener('submit', saveCampaign);
+      $('#campaignRows').addEventListener('click', (ev) => {
+        const btn = ev.target.closest('[data-action="edit"]');
+        if(btn) editCampaign(Number(btn.dataset.id)).catch(e => toast(e.message));
+      });
+
+      const me = await api('/api/me');
+      STATE.isSuper = String(me?.user?.role || '').toLowerCase() === 'super';
+      STATE.empresaId = me?.user?.empresa_id || null;
+      $('#roleBadge').textContent = STATE.isSuper ? 'SUPER ADMIN' : 'Admin';
+      if(STATE.isSuper){
+        $('#empWrap').style.display = 'block';
+        const empresas = await api('/api/empresas');
+        $('#empSel').innerHTML = '<option value="">Seleccionar empresa</option>' + (Array.isArray(empresas) ? empresas.map(e => `<option value="${Number(e.id)}">${esc(e.nombre)}</option>`).join('') : '');
+        $('#empSel').addEventListener('change', async () => { await loadProducts(); resetForm(); await loadCampaigns(); });
+      }
+      if(!STATE.isSuper || $('#empSel').value){ await loadProducts(); resetForm(); await loadCampaigns(); }
+      else resetForm();
+      if(STATE.isSuper) $('#campaignRows').innerHTML = '<tr><td colspan="5" class="empty">Selecciona una empresa.</td></tr>';
+    }
+
+    init().catch(e => toast(e.message || 'Error inicializando'));
+  </script>
+</body>
+</html>

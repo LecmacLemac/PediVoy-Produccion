@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Raspa y gana - PediVoy</title>
+  <style>
+    :root{--bg:#07111f;--panel:#fff;--ink:#0f172a;--muted:#64748b;--brand:#0ea5e9;--ok:#16a34a;--danger:#dc2626;--line:#e2e8f0;--radius:14px}
+    *{box-sizing:border-box}
+    body{margin:0;min-height:100vh;font-family:system-ui,-apple-system,Segoe UI,sans-serif;background:linear-gradient(160deg,#07111f 0%,#0f2537 52%,#0b3b48 100%);color:var(--ink);display:flex;align-items:center;justify-content:center;padding:18px}
+    .shell{width:min(460px,100%);background:var(--panel);border-radius:var(--radius);box-shadow:0 24px 70px rgba(0,0,0,.34);overflow:hidden}
+    .hero{padding:24px 22px 18px;background:#0f172a;color:#fff}
+    .brand{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:#7dd3fc;font-weight:900;margin-bottom:10px}
+    h1{margin:0;font-size:30px;line-height:1.08}
+    .lead{margin:10px 0 0;color:#cbd5e1;font-size:15px}
+    .body{padding:22px}
+    label{display:block;color:var(--muted);font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px}
+    input{width:100%;border:1px solid var(--line);border-radius:10px;padding:13px 14px;font-size:17px}
+    input:focus{outline:3px solid rgba(14,165,233,.18);border-color:var(--brand)}
+    .btn{width:100%;border:0;border-radius:10px;background:var(--brand);color:#001521;padding:14px 16px;font-size:16px;font-weight:900;cursor:pointer;margin-top:14px}
+    .btn:disabled{opacity:.55;cursor:not-allowed}
+    .muted{color:var(--muted)}
+    .error{color:var(--danger);font-weight:800;margin-top:12px}
+    .scratch{position:relative;display:none;margin-top:18px;border:1px solid var(--line);border-radius:14px;overflow:hidden;background:#f8fafc;min-height:230px}
+    .result{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;padding:22px}
+    .result h2{margin:0;font-size:26px}
+    .result p{margin:9px 0 0;color:var(--muted)}
+    .code{display:inline-flex;margin-top:12px;padding:8px 10px;border:1px dashed #94a3b8;border-radius:8px;background:#fff;font-weight:900;letter-spacing:.08em}
+    canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none}
+    .actions{display:none;margin-top:16px}
+    .delivery{display:none;margin-top:18px;padding-top:18px;border-top:1px solid var(--line)}
+    .delivery .row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    .legal{font-size:12px;color:var(--muted);line-height:1.45;margin-top:16px}
+    .doneNote{display:none;margin-top:12px;padding:12px;border-radius:10px;background:#ecfdf5;color:#166534;font-weight:800}
+    .lose .doneNote{background:#f8fafc;color:#475569}
+    @media(max-width:520px){.delivery .row{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <section class="hero">
+      <div class="brand" id="company">PediVoy</div>
+      <h1 id="title">Raspa y gana</h1>
+      <p class="lead" id="description">Ingresa tu telefono y proba tu suerte.</p>
+    </section>
+
+    <section class="body">
+      <form id="joinForm">
+        <label>Numero de telefono</label>
+        <input id="phone" inputmode="tel" autocomplete="tel" placeholder="Ej: 351 555 1234">
+        <button class="btn" id="joinBtn">Quiero participar</button>
+        <div class="error" id="error"></div>
+      </form>
+
+      <section class="scratch" id="scratch">
+        <div class="result" id="result"></div>
+        <canvas id="canvas"></canvas>
+      </section>
+
+      <div class="doneNote" id="doneNote"></div>
+      <form class="delivery" id="deliveryForm">
+        <label>Nombre y apellido</label>
+        <input id="fullName" autocomplete="name" placeholder="Ej: Juan Perez">
+        <div style="margin-top:10px">
+          <label>Direccion de entrega</label>
+          <input id="address" autocomplete="street-address" placeholder="Calle, numero, barrio">
+        </div>
+        <div class="row" style="margin-top:10px">
+          <div>
+            <label>Ciudad</label>
+            <input id="city" autocomplete="address-level2" placeholder="Ciudad">
+          </div>
+          <div>
+            <label>Provincia</label>
+            <input id="province" autocomplete="address-level1" placeholder="Provincia">
+          </div>
+        </div>
+        <div style="margin-top:10px">
+          <label>Referencia</label>
+          <input id="notes" placeholder="Entre calles, horario o aclaracion">
+        </div>
+        <button class="btn" id="deliveryBtn">Confirmar entrega del premio</button>
+      </form>
+      <div class="actions" id="actions">
+        <button class="btn" id="waBtn" type="button">Abrir WhatsApp</button>
+      </div>
+
+      <p class="legal" id="legal"></p>
+    </section>
+  </main>
+
+  <script>
+    const $ = (s) => document.querySelector(s);
+    const params = new URLSearchParams(location.search);
+    const empresaId = Number(params.get('empresa_id') || 0);
+    const campania = params.get('campania') || params.get('slug') || '';
+    let lastResult = null;
+    let revealed = false;
+
+    function esc(s){ return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+    function setError(msg){ $('#error').textContent = msg || ''; }
+    function normalizePhone(raw){ return String(raw||'').replace(/\D+/g,''); }
+
+    async function api(path, opts={}){
+      const res = await fetch(path, { ...opts, headers:{'Content-Type':'application/json', ...(opts.headers||{})} });
+      const data = await res.json().catch(()=>({}));
+      if(!res.ok) throw new Error(data.error || 'No se pudo procesar');
+      return data;
+    }
+
+    async function loadCampaign(){
+      if(!empresaId || !campania){ throw new Error('Link de campania incompleto.'); }
+      const data = await api(`/api/juegos-publicos/campania?empresa_id=${encodeURIComponent(empresaId)}&campania=${encodeURIComponent(campania)}`);
+      $('#company').textContent = data.empresa_nombre || 'PediVoy';
+      $('#title').textContent = data.titulo_publico || 'Raspa y gana';
+      $('#description').textContent = data.descripcion_publica || 'Ingresa tu telefono y proba tu suerte.';
+      $('#legal').textContent = data.bases_condiciones || '';
+      if(!data.disponible?.ok){
+        $('#joinBtn').disabled = true;
+        setError(data.disponible?.reason || 'La campania no esta disponible.');
+      }
+    }
+
+    function drawScratch(){
+      const canvas = $('#canvas');
+      const box = $('#scratch').getBoundingClientRect();
+      const ratio = window.devicePixelRatio || 1;
+      canvas.width = Math.max(1, Math.floor(box.width * ratio));
+      canvas.height = Math.max(1, Math.floor(box.height * ratio));
+      const ctx = canvas.getContext('2d');
+      ctx.scale(ratio, ratio);
+      const w = box.width;
+      const h = box.height;
+      const grd = ctx.createLinearGradient(0,0,w,h);
+      grd.addColorStop(0,'#94a3b8');
+      grd.addColorStop(.5,'#cbd5e1');
+      grd.addColorStop(1,'#64748b');
+      ctx.fillStyle = grd;
+      ctx.fillRect(0,0,w,h);
+      ctx.fillStyle = 'rgba(15,23,42,.72)';
+      ctx.font = '900 25px system-ui';
+      ctx.textAlign = 'center';
+      ctx.fillText('RASPA ACA', w/2, h/2 - 8);
+      ctx.font = '700 14px system-ui';
+      ctx.fillText('para descubrir tu resultado', w/2, h/2 + 20);
+      ctx.globalCompositeOperation = 'destination-out';
+
+      let drawing = false;
+      const scratch = (ev) => {
+        if(!drawing && ev.type !== 'pointerdown') return;
+        const r = canvas.getBoundingClientRect();
+        const x = ev.clientX - r.left;
+        const y = ev.clientY - r.top;
+        ctx.beginPath();
+        ctx.arc(x, y, 24, 0, Math.PI * 2);
+        ctx.fill();
+        maybeReveal(canvas, ctx);
+      };
+      canvas.onpointerdown = (ev) => { drawing = true; canvas.setPointerCapture(ev.pointerId); scratch(ev); };
+      canvas.onpointermove = scratch;
+      canvas.onpointerup = () => { drawing = false; };
+      canvas.onpointercancel = () => { drawing = false; };
+    }
+
+    function maybeReveal(canvas, ctx){
+      if(revealed) return;
+      const sample = ctx.getImageData(0,0,canvas.width,canvas.height).data;
+      let clear = 0;
+      for(let i=3;i<sample.length;i+=16){ if(sample[i] < 20) clear++; }
+      const pct = clear / (sample.length / 16);
+      if(pct > .42) reveal();
+    }
+
+    function reveal(){
+      revealed = true;
+      $('#canvas').style.transition = 'opacity .35s';
+      $('#canvas').style.opacity = '0';
+      const winner = !!lastResult?.ganador;
+      document.body.classList.toggle('lose', !winner);
+      $('#doneNote').style.display = 'block';
+      $('#doneNote').textContent = winner
+        ? 'Tu codigo tambien fue enviado por WhatsApp. Completa tus datos para recibir el premio.'
+        : 'Gracias por participar. Podes volver segun las reglas de la campania.';
+      if(winner && lastResult?.codigo){
+        $('#deliveryForm').style.display = 'block';
+      }
+    }
+
+    function renderResult(data){
+      const winner = !!data.ganador;
+      $('#result').innerHTML = `
+        <div>
+          <h2>${winner ? 'Ganaste!' : 'Esta vez no hubo premio'}</h2>
+          <p>${esc(data.resultado_nombre || '')}</p>
+          ${data.codigo ? `<div class="code">${esc(data.codigo)}</div>` : ''}
+        </div>
+      `;
+      $('#scratch').style.display = 'block';
+      requestAnimationFrame(drawScratch);
+    }
+
+    $('#joinForm').addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      setError('');
+      const phone = $('#phone').value.trim();
+      if(normalizePhone(phone).length < 8){ setError('Ingresa un telefono valido.'); return; }
+      $('#joinBtn').disabled = true;
+      $('#joinBtn').textContent = 'Preparando...';
+      try{
+        lastResult = await api('/api/juegos-publicos/participar', {
+          method:'POST',
+          body:JSON.stringify({ empresa_id:empresaId, campania, telefono:phone })
+        });
+        $('#joinForm').style.display = 'none';
+        renderResult(lastResult);
+      }catch(e){
+        setError(e.message);
+        $('#joinBtn').disabled = false;
+        $('#joinBtn').textContent = 'Quiero participar';
+      }
+    });
+
+    $('#deliveryForm').addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      setError('');
+      const nombre = $('#fullName').value.trim();
+      const direccion = $('#address').value.trim();
+      if(nombre.length < 2){ setError('Ingresa tu nombre.'); return; }
+      if(direccion.length < 3){ setError('Ingresa una direccion valida.'); return; }
+      $('#deliveryBtn').disabled = true;
+      $('#deliveryBtn').textContent = 'Generando pedido...';
+      try{
+        const data = await api('/api/juegos-publicos/premio-entrega', {
+          method:'POST',
+          body:JSON.stringify({
+            empresa_id:empresaId,
+            campania,
+            codigo:lastResult?.codigo,
+            telefono:$('#phone').value.trim(),
+            nombre,
+            direccion,
+            ciudad:$('#city').value.trim(),
+            provincia:$('#province').value.trim(),
+            notas:$('#notes').value.trim()
+          })
+        });
+        $('#deliveryForm').style.display = 'none';
+        $('#doneNote').textContent = data.already
+          ? 'Tu premio ya tenia pedido generado.'
+          : `Listo. Generamos el pedido #${data.pedido_id} para entregar tu premio.`;
+        $('#actions').style.display = 'block';
+      }catch(e){
+        setError(e.message);
+        $('#deliveryBtn').disabled = false;
+        $('#deliveryBtn').textContent = 'Confirmar entrega del premio';
+      }
+    });
+
+    $('#waBtn').addEventListener('click', () => {
+      const phone = normalizePhone($('#phone').value);
+      const text = encodeURIComponent(`Hola, gane un premio en PediVoy. Mi codigo es ${lastResult?.codigo || ''}`);
+      location.href = `https://wa.me/${phone}?text=${text}`;
+    });
+
+    loadCampaign().catch(e => setError(e.message));
+  </script>
+</body>
+</html>

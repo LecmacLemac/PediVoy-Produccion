@@ -29,6 +29,7 @@ import { createRepartidorStatsRouter } from './repartidorStats.js';
 import { createLicenciasMpRouter, createMercadoPagoWebhookRouter } from './licenciasMp.js';
 import { createPromptsGlobalesRouter } from './promptsGlobales.js';
 import { createPromocionesRouter } from './promociones.js';
+import { createJuegosPublicosRouter, createJuegosRouter } from './juegos.js';
 import { createReferentesRouter } from './referentes.js';
 import { createReferentePortalRouter } from './referentePortal.js';
 import { createAnalyticsRouter } from './analytics.js';
@@ -109,6 +110,8 @@ export function mountApiModules(app, deps) {
   app.use('/api', createAsignacionesZonasRouter({ query, withAuth, isSuper, getEmpresaIdFromToken }));
   app.use('/api/productos', createProductosRouter({ query, withAuth, isSuper, getEmpresaIdFromToken }));
   app.use('/api/promociones', createPromocionesRouter({ query, withAuth, isSuper, getEmpresaIdFromToken }));
+  app.use('/api/juegos', createJuegosRouter({ query, pool, withAuth, isSuper, getEmpresaIdFromToken }));
+  app.use('/api/juegos-publicos', createJuegosPublicosRouter({ query, pool }));
   app.use('/api/referentes', createReferentesRouter({ query, withAuth, isSuper, getEmpresaIdFromToken }));
   app.use('/api/referente', createReferentePortalRouter({ query, withAuth }));
   app.use('/api/admin', createAdminUsuariosRouter({ query, withAuth, isSuper, getEmpresaIdFromToken }));
