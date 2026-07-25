@@ -9,7 +9,8 @@ const CAMPAIGN_SELECT = `
   jc.tipo_juego, jc.estado, jc.participacion_limite, jc.max_participaciones,
   jc.max_ganadores, jc.codigo_prefijo, jc.whatsapp_mensaje, jc.bases_condiciones,
   jc.valid_from, jc.valid_to, jc.created_at, jc.updated_at,
-  e.nombre AS empresa_nombre
+  e.nombre AS empresa_nombre, e.landing_domain AS empresa_landing_domain,
+  e.landing_slug AS empresa_landing_slug
 `;
 
 function normalizePhone(raw) {
@@ -40,6 +41,22 @@ function publicCampaignUrl(req, campaign) {
   const host = req.headers['x-forwarded-host'] || req.headers.host || 'pedivoy.com';
   const base = `${proto}://${host}`.replace(/\/+$/, '');
   return `${base}/pedidos/juegos/?empresa_id=${encodeURIComponent(campaign.empresa_id)}&campania=${encodeURIComponent(campaign.slug)}`;
+}
+
+function publicCompanyUrl(req, campaign) {
+  const proto = req.headers['x-forwarded-proto'] || req.protocol || 'https';
+  const host = req.headers['x-forwarded-host'] || req.headers.host || 'pedivoy.com';
+  const base = `${proto}://${host}`.replace(/\/+$/, '');
+  const rawDomain = String(campaign?.empresa_landing_domain || '').trim();
+  if (/^https?:\/\//i.test(rawDomain)) return rawDomain;
+  const cleanDomain = rawDomain
+    .replace(/^www\./i, 'www.')
+    .split('/')[0]
+    .replace(/[^a-z0-9.:-]/gi, '');
+  if (cleanDomain && cleanDomain.includes('.')) return `https://${cleanDomain}`;
+  const slug = String(campaign?.empresa_landing_slug || '').trim();
+  if (slug) return `${base}/?slug=${encodeURIComponent(slug)}`;
+  return `${base}/?empresa_id=${encodeURIComponent(campaign.empresa_id)}`;
 }
 
 function resultIsWinner(type) {
@@ -583,16 +600,19 @@ export function createJuegosPublicosRouter(deps) {
       const campaign = await loadCampaign(query, empresaId, slug);
       if (!campaign) return createJsonError(res, 404, 'Campania no encontrada.');
       const prizes = await query(
-        `SELECT tipo, nombre_publico, descripcion, valor, producto_id
-           FROM juegos_premios
-          WHERE empresa_id = $1 AND campania_id = $2 AND activo = TRUE
-          ORDER BY orden ASC, id ASC`,
+        `SELECT jp.tipo, jp.nombre_publico, jp.descripcion, jp.valor, jp.producto_id,
+                p.nombre AS producto_nombre, p.imagen AS producto_imagen
+           FROM juegos_premios jp
+           LEFT JOIN productos p ON p.id = jp.producto_id AND p.empresa_id = jp.empresa_id
+          WHERE jp.empresa_id = $1 AND jp.campania_id = $2 AND jp.activo = TRUE
+          ORDER BY jp.orden ASC, jp.id ASC`,
         [empresaId, campaign.id]
       );
       return res.json({
         id: campaign.id,
         empresa_id: campaign.empresa_id,
         empresa_nombre: campaign.empresa_nombre,
+        empresa_web_url: publicCompanyUrl(req, campaign),
         slug: campaign.slug,
         titulo_publico: campaign.titulo_publico,
         descripcion_publica: campaign.descripcion_publica,
@@ -606,6 +626,8 @@ export function createJuegosPublicosRouter(deps) {
           descripcion: p.descripcion,
           valor: p.valor,
           producto_id: p.producto_id,
+          producto_nombre: p.producto_nombre,
+          producto_imagen: p.producto_imagen,
         })),
       });
     } catch (e) {
@@ -725,6 +747,14 @@ export function createJuegosPublicosRouter(deps) {
             resultado_tipo: prize.tipo,
             resultado_nombre: prize.nombre_publico,
             descripcion: prize.descripcion,
+            premio: {
+              id: prize.id || null,
+              tipo: prize.tipo,
+              producto_id: prize.producto_id || null,
+              producto_nombre: prize.producto_nombre || prize.nombre_publico,
+              nombre_publico: prize.nombre_publico,
+              descripcion: prize.descripcion,
+            },
           },
         };
       });

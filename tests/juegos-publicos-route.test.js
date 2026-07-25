@@ -39,6 +39,8 @@ const campaign = {
   valid_from: null,
   valid_to: null,
   empresa_nombre: 'Agua Hidro',
+  empresa_landing_domain: null,
+  empresa_landing_slug: 'agua-hidro',
 };
 
 test('GET /api/juegos-publicos/campania expone campaña pública', async () => {
@@ -49,7 +51,15 @@ test('GET /api/juegos-publicos/campania expone campaña pública', async () => {
     if (/FROM juegos_campanias jc/.test(sql)) return [campaign];
     if (/FROM juegos_premios/.test(sql)) {
       return [
-        { tipo: 'producto_gratis', nombre_publico: 'Bidon gratis', descripcion: null, valor: null, producto_id: 6 },
+        {
+          tipo: 'producto_gratis',
+          nombre_publico: 'Bidon gratis',
+          descripcion: null,
+          valor: null,
+          producto_id: 6,
+          producto_nombre: 'Bidon 20L',
+          producto_imagen: '/uploads/bidon.png',
+        },
         { tipo: 'sin_premio', nombre_publico: 'Esta vez no hubo premio', descripcion: null, valor: null, producto_id: null },
       ];
     }
@@ -61,9 +71,12 @@ test('GET /api/juegos-publicos/campania expone campaña pública', async () => {
     assert.equal(resp.status, 200);
     const body = await resp.json();
     assert.equal(body.empresa_nombre, 'Agua Hidro');
+    assert.equal(body.empresa_web_url, `${baseUrl}/?slug=agua-hidro`);
     assert.equal(body.titulo_publico, 'Raspa y gana');
     assert.equal(body.disponible.ok, true);
     assert.equal(body.premios.length, 2);
+    assert.equal(body.premios[0].producto_nombre, 'Bidon 20L');
+    assert.equal(body.premios[0].producto_imagen, '/uploads/bidon.png');
   });
 
   assert.ok(queries.some((q) => /FROM juegos_campanias jc/.test(q.sql)));
@@ -86,6 +99,7 @@ test('POST /api/juegos-publicos/participar registra ganador y encola WhatsApp', 
           campania_id: 7,
           tipo: 'producto_gratis',
           producto_id: 6,
+          producto_nombre: 'Bidon 20L',
           nombre_publico: 'Bidon gratis',
           descripcion: 'Un bidon sin cargo',
           probabilidad: 1,
@@ -118,6 +132,8 @@ test('POST /api/juegos-publicos/participar registra ganador y encola WhatsApp', 
     assert.equal(body.ganador, true);
     assert.match(body.codigo, /^AGUA-[A-F0-9]{10}$/);
     assert.equal(body.resultado_tipo, 'producto_gratis');
+    assert.equal(body.premio.producto_id, 6);
+    assert.equal(body.premio.producto_nombre, 'Bidon 20L');
   });
 
   assert.equal(participationInserted[0], 1);

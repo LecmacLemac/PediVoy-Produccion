@@ -28,6 +28,15 @@
     .code{display:inline-flex;margin-top:12px;padding:8px 10px;border:1px dashed #94a3b8;border-radius:8px;background:#fff;font-weight:900;letter-spacing:.08em}
     canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none}
     .actions{display:none;margin-top:16px}
+    .companyLink{display:none;width:100%;margin-top:14px;text-align:center;text-decoration:none;border:1px solid var(--line);border-radius:10px;color:#0f172a;background:#f8fafc;padding:13px 14px;font-weight:900}
+    .prizes{display:none;margin-bottom:18px}
+    .prizesTitle{font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin-bottom:9px}
+    .prizeList{display:grid;gap:9px}
+    .prizeItem{display:grid;grid-template-columns:48px 1fr;gap:10px;align-items:center;border:1px solid var(--line);border-radius:10px;background:#f8fafc;padding:9px}
+    .prizeImage{width:48px;height:48px;border-radius:8px;background:#e0f2fe;color:#075985;display:flex;align-items:center;justify-content:center;font-weight:900;overflow:hidden}
+    .prizeImage img{width:100%;height:100%;object-fit:cover;display:block}
+    .prizeName{font-weight:900;line-height:1.2}
+    .prizeDesc{font-size:13px;color:var(--muted);margin-top:3px;line-height:1.3}
     .delivery{display:none;margin-top:18px;padding-top:18px;border-top:1px solid var(--line)}
     .delivery .row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
     .legal{font-size:12px;color:var(--muted);line-height:1.45;margin-top:16px}
@@ -45,6 +54,11 @@
     </section>
 
     <section class="body">
+      <section class="prizes" id="prizes">
+        <div class="prizesTitle">Productos en juego</div>
+        <div class="prizeList" id="prizeList"></div>
+      </section>
+
       <form id="joinForm">
         <label>Numero de telefono</label>
         <input id="phone" inputmode="tel" autocomplete="tel" placeholder="Ej: 351 555 1234">
@@ -84,6 +98,7 @@
       <div class="actions" id="actions">
         <button class="btn" id="waBtn" type="button">Abrir WhatsApp</button>
       </div>
+      <a class="companyLink" id="companyLink" href="#" target="_blank" rel="noopener">Ver web de la empresa</a>
 
       <p class="legal" id="legal"></p>
     </section>
@@ -100,6 +115,12 @@
     function esc(s){ return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
     function setError(msg){ $('#error').textContent = msg || ''; }
     function normalizePhone(raw){ return String(raw||'').replace(/\D+/g,''); }
+    function productImage(src){
+      const value = String(src || '').trim();
+      if(!value) return '';
+      if(value.startsWith('/') || /^https?:\/\//i.test(value)) return value;
+      return '';
+    }
 
     async function api(path, opts={}){
       const res = await fetch(path, { ...opts, headers:{'Content-Type':'application/json', ...(opts.headers||{})} });
@@ -115,10 +136,37 @@
       $('#title').textContent = data.titulo_publico || 'Raspa y gana';
       $('#description').textContent = data.descripcion_publica || 'Ingresa tu telefono y proba tu suerte.';
       $('#legal').textContent = data.bases_condiciones || '';
+      renderPrizes(data.premios || []);
+      if(data.empresa_web_url){
+        $('#companyLink').href = data.empresa_web_url;
+        $('#companyLink').textContent = `Ver web de ${data.empresa_nombre || 'la empresa'}`;
+        $('#companyLink').style.display = 'block';
+      }
       if(!data.disponible?.ok){
         $('#joinBtn').disabled = true;
         setError(data.disponible?.reason || 'La campania no esta disponible.');
       }
+    }
+
+    function renderPrizes(premios){
+      const productPrizes = premios.filter(p => p && p.tipo !== 'sin_premio');
+      if(!productPrizes.length) return;
+      $('#prizeList').innerHTML = productPrizes.map((p) => {
+        const name = p.producto_nombre || p.nombre_publico || 'Premio';
+        const desc = p.descripcion || p.nombre_publico || '';
+        const img = productImage(p.producto_imagen);
+        const initial = esc(String(name).trim().charAt(0) || 'P');
+        return `
+          <article class="prizeItem">
+            <div class="prizeImage">${img ? `<img src="${esc(img)}" alt="">` : initial}</div>
+            <div>
+              <div class="prizeName">${esc(name)}</div>
+              ${desc && desc !== name ? `<div class="prizeDesc">${esc(desc)}</div>` : ''}
+            </div>
+          </article>
+        `;
+      }).join('');
+      $('#prizes').style.display = 'block';
     }
 
     function drawScratch(){
@@ -192,6 +240,7 @@
         <div>
           <h2>${winner ? 'Ganaste!' : 'Esta vez no hubo premio'}</h2>
           <p>${esc(data.resultado_nombre || '')}</p>
+          ${winner && data.descripcion ? `<p>${esc(data.descripcion)}</p>` : ''}
           ${data.codigo ? `<div class="code">${esc(data.codigo)}</div>` : ''}
         </div>
       `;
