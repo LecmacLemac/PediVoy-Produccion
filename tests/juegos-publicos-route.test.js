@@ -132,6 +132,7 @@ test('POST /api/juegos-publicos/participar registra ganador y encola WhatsApp', 
     assert.equal(body.ganador, true);
     assert.match(body.codigo, /^AGUA-[A-F0-9]{10}$/);
     assert.equal(body.resultado_tipo, 'producto_gratis');
+    assert.equal(body.next_participation_message, 'Esta campania permite participar una sola vez.');
     assert.equal(body.premio.producto_id, 6);
     assert.equal(body.premio.producto_nombre, 'Bidon 20L');
   });
@@ -143,6 +144,34 @@ test('POST /api/juegos-publicos/participar registra ganador y encola WhatsApp', 
   assert.equal(outboxInserted[0], 1);
   assert.equal(outboxInserted[1], '3515551234');
   assert.match(outboxInserted[2], /Bidon gratis/);
+});
+
+test('POST /api/juegos-publicos/participar informa cuando puede volver si ya participo', async () => {
+  const dailyCampaign = { ...campaign, participacion_limite: 'daily' };
+  const query = async (sql) => {
+    if (/CREATE TABLE IF NOT EXISTS juegos_campanias/.test(sql)) return [];
+    if (/FROM juegos_campanias jc/.test(sql)) return [dailyCampaign];
+    if (/pg_advisory_xact_lock/.test(sql)) return [];
+    if (/COUNT\(\*\)::int AS c/.test(sql)) return [{ c: 0 }];
+    if (/FROM juegos_participaciones/.test(sql) && /telefono_norm/.test(sql) && /LIMIT 1/.test(sql)) {
+      return [{ id: 101, created_at: new Date() }];
+    }
+    return [];
+  };
+
+  await withServer(buildApp(query), async (baseUrl) => {
+    const resp = await fetch(`${baseUrl}/api/juegos-publicos/participar`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ empresa_id: 1, campania: 'raspa-y-gana', telefono: '351 555 1234' }),
+    });
+    assert.equal(resp.status, 409);
+    const body = await resp.json();
+    assert.equal(body.already, true);
+    assert.equal(body.error, 'Ese telefono ya participo hoy. Podes volver a participar manana.');
+    assert.equal(body.next_participation_label, 'manana');
+    assert.equal(body.next_participation_message, 'Podes volver a participar manana.');
+  });
 });
 
 test('POST /api/juegos-publicos/premio-entrega crea pedido de premio', async () => {

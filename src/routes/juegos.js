@@ -521,6 +521,27 @@ export function createJuegosPublicosRouter(deps) {
     return { ok: true };
   }
 
+  function nextParticipationInfo(campaign) {
+    if (campaign?.participacion_limite === 'daily') {
+      return {
+        next_participation_label: 'manana',
+        next_participation_message: 'Podes volver a participar manana.',
+      };
+    }
+    return {
+      next_participation_label: null,
+      next_participation_message: 'Esta campania permite participar una sola vez.',
+    };
+  }
+
+  function alreadyParticipationMessage(campaign) {
+    const info = nextParticipationInfo(campaign);
+    if (campaign?.participacion_limite === 'daily') {
+      return `Ese telefono ya participo hoy. ${info.next_participation_message}`;
+    }
+    return `Ese telefono ya participo en esta campania. ${info.next_participation_message}`;
+  }
+
   async function loadAvailablePrizes(q, campaign) {
     const prizes = await q(
       `SELECT jp.*, p.nombre AS producto_nombre
@@ -686,13 +707,13 @@ export function createJuegosPublicosRouter(deps) {
               LIMIT 1`;
         const already = await q(alreadySql, [empresaId, campaign.id, telefonoNorm]);
         if (already.length) {
+          const nextInfo = nextParticipationInfo(campaign);
           return {
             status: 409,
             payload: {
               already: true,
-              error: campaign.participacion_limite === 'daily'
-                ? 'Ese telefono ya participo hoy.'
-                : 'Ese telefono ya participo en esta campania.',
+              error: alreadyParticipationMessage(campaign),
+              ...nextInfo,
             },
           };
         }
@@ -747,6 +768,7 @@ export function createJuegosPublicosRouter(deps) {
             resultado_tipo: prize.tipo,
             resultado_nombre: prize.nombre_publico,
             descripcion: prize.descripcion,
+            ...nextParticipationInfo(campaign),
             premio: {
               id: prize.id || null,
               tipo: prize.tipo,

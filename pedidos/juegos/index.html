@@ -21,12 +21,20 @@
     .btn:disabled{opacity:.55;cursor:not-allowed}
     .muted{color:var(--muted)}
     .error{color:var(--danger);font-weight:800;margin-top:12px}
-    .scratch{position:relative;display:none;margin-top:18px;border:1px solid var(--line);border-radius:14px;overflow:hidden;background:#f8fafc;min-height:230px}
-    .result{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;padding:22px}
+    .scratch{position:relative;display:none;margin-top:18px;border:1px solid var(--line);border-radius:14px;overflow:hidden;background:radial-gradient(circle at 18% 20%,rgba(14,165,233,.18),transparent 28%),radial-gradient(circle at 82% 18%,rgba(22,163,74,.12),transparent 24%),#f8fafc;min-height:230px}
+    .scratch::after{content:"";position:absolute;inset:-40%;z-index:3;pointer-events:none;background:linear-gradient(110deg,transparent 35%,rgba(255,255,255,.34) 48%,transparent 62%);animation:shine 1.8s linear infinite}
+    .scratch.revealed::after{display:none}
+    .result{position:absolute;inset:0;z-index:1;display:flex;align-items:center;justify-content:center;text-align:center;padding:22px}
+    .resultBadge{width:58px;height:58px;margin:0 auto 12px;border-radius:50%;display:grid;place-items:center;position:relative;font-size:13px;font-weight:900;letter-spacing:.04em}
+    .resultBadge::before,.resultBadge::after{content:"";position:absolute;border-radius:999px;background:currentColor;opacity:.22}
+    .resultBadge::before{width:8px;height:8px;left:-8px;top:12px;box-shadow:76px 6px 0 currentColor,58px 52px 0 currentColor}
+    .resultBadge::after{width:5px;height:5px;left:12px;bottom:-7px;box-shadow:41px -56px 0 currentColor}
+    .resultBadge.win{background:#dcfce7;color:#15803d;border:1px solid #86efac}
+    .resultBadge.miss{background:#f1f5f9;color:#64748b;border:1px solid #cbd5e1}
     .result h2{margin:0;font-size:26px}
     .result p{margin:9px 0 0;color:var(--muted)}
     .code{display:inline-flex;margin-top:12px;padding:8px 10px;border:1px dashed #94a3b8;border-radius:8px;background:#fff;font-weight:900;letter-spacing:.08em}
-    canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none}
+    canvas{position:absolute;inset:0;z-index:2;width:100%;height:100%;touch-action:none;cursor:pointer}
     .actions{display:none;margin-top:16px}
     .companyLink{display:none;width:100%;margin-top:14px;text-align:center;text-decoration:none;border:1px solid var(--line);border-radius:10px;color:#0f172a;background:#f8fafc;padding:13px 14px;font-weight:900}
     .prizes{display:none;margin-bottom:18px}
@@ -49,6 +57,7 @@
     .modalText{white-space:pre-wrap;color:#475569;font-size:14px;line-height:1.5}
     .doneNote{display:none;margin-top:12px;padding:12px;border-radius:10px;background:#ecfdf5;color:#166534;font-weight:800}
     .lose .doneNote{background:#f8fafc;color:#475569}
+    @keyframes shine{from{transform:translateX(-35%) rotate(0deg)}to{transform:translateX(35%) rotate(0deg)}}
     @media(max-width:520px){.delivery .row{grid-template-columns:1fr}}
   </style>
 </head>
@@ -128,6 +137,8 @@
     const campania = params.get('campania') || params.get('slug') || '';
     let lastResult = null;
     let revealed = false;
+    let scratchAudio = null;
+    let lastVibrationAt = 0;
 
     function esc(s){ return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
     function setError(msg){ $('#error').textContent = msg || ''; }
@@ -137,6 +148,76 @@
       if(!value) return '';
       if(value.startsWith('/') || /^https?:\/\//i.test(value)) return value;
       return '';
+    }
+
+    function ensureAudio(){
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if(!Ctx) return null;
+      if(!scratchAudio?.ctx) scratchAudio = { ctx:new Ctx(), active:null };
+      if(scratchAudio.ctx.state === 'suspended') scratchAudio.ctx.resume().catch(()=>{});
+      return scratchAudio.ctx;
+    }
+
+    function startScratchFeedback(){
+      const ctx = ensureAudio();
+      if(ctx && !scratchAudio.active){
+        const buffer = ctx.createBuffer(1, Math.floor(ctx.sampleRate * .16), ctx.sampleRate);
+        const data = buffer.getChannelData(0);
+        for(let i=0;i<data.length;i++) data[i] = (Math.random() * 2 - 1) * (1 - i / data.length);
+        const source = ctx.createBufferSource();
+        const filter = ctx.createBiquadFilter();
+        const gain = ctx.createGain();
+        source.buffer = buffer;
+        source.loop = true;
+        filter.type = 'highpass';
+        filter.frequency.value = 900;
+        gain.gain.value = .035;
+        source.connect(filter).connect(gain).connect(ctx.destination);
+        source.start();
+        scratchAudio.active = { source, gain };
+      }
+      vibrate([8]);
+    }
+
+    function stopScratchFeedback(){
+      const active = scratchAudio?.active;
+      if(!active) return;
+      const ctx = scratchAudio.ctx;
+      active.gain.gain.setTargetAtTime(0, ctx.currentTime, .025);
+      window.setTimeout(() => active.source.stop(), 80);
+      scratchAudio.active = null;
+    }
+
+    function tickScratchFeedback(){
+      const now = Date.now();
+      if(now - lastVibrationAt > 95){
+        vibrate(6);
+        lastVibrationAt = now;
+      }
+    }
+
+    function playRevealFeedback(winner){
+      vibrate(winner ? [35,45,70] : [25]);
+      const ctx = ensureAudio();
+      if(!ctx) return;
+      const gain = ctx.createGain();
+      gain.gain.setValueAtTime(.0001, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(.08, ctx.currentTime + .02);
+      gain.gain.exponentialRampToValueAtTime(.0001, ctx.currentTime + .45);
+      gain.connect(ctx.destination);
+      const tones = winner ? [660, 880, 1180] : [260, 220];
+      tones.forEach((freq, index) => {
+        const osc = ctx.createOscillator();
+        osc.type = winner ? 'triangle' : 'sine';
+        osc.frequency.value = freq;
+        osc.connect(gain);
+        osc.start(ctx.currentTime + index * .09);
+        osc.stop(ctx.currentTime + index * .09 + .18);
+      });
+    }
+
+    function vibrate(pattern){
+      if(navigator.vibrate) navigator.vibrate(pattern);
     }
 
     async function api(path, opts={}){
@@ -221,6 +302,36 @@
       grd.addColorStop(1,'#64748b');
       ctx.fillStyle = grd;
       ctx.fillRect(0,0,w,h);
+      ctx.globalAlpha = .18;
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 7;
+      for(let x=-h;x<w+h;x+=28){
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x + h, h);
+        ctx.stroke();
+      }
+      ctx.globalAlpha = .2;
+      ctx.fillStyle = '#0f172a';
+      for(let i=0;i<90;i++){
+        ctx.beginPath();
+        ctx.arc(Math.random() * w, Math.random() * h, Math.random() * 1.8 + .4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = 'rgba(255,255,255,.2)';
+      ['PV','?','PV','?'].forEach((mark, index) => {
+        const x = (index % 2 ? .74 : .24) * w;
+        const y = (index < 2 ? .24 : .76) * h;
+        ctx.beginPath();
+        ctx.arc(x, y, 21, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = 'rgba(15,23,42,.36)';
+        ctx.font = '900 13px system-ui';
+        ctx.textAlign = 'center';
+        ctx.fillText(mark, x, y + 5);
+        ctx.fillStyle = 'rgba(255,255,255,.2)';
+      });
       ctx.fillStyle = 'rgba(15,23,42,.72)';
       ctx.font = '900 25px system-ui';
       ctx.textAlign = 'center';
@@ -238,12 +349,13 @@
         ctx.beginPath();
         ctx.arc(x, y, 24, 0, Math.PI * 2);
         ctx.fill();
+        tickScratchFeedback();
         maybeReveal(canvas, ctx);
       };
-      canvas.onpointerdown = (ev) => { drawing = true; canvas.setPointerCapture(ev.pointerId); scratch(ev); };
+      canvas.onpointerdown = (ev) => { drawing = true; canvas.setPointerCapture(ev.pointerId); startScratchFeedback(); scratch(ev); };
       canvas.onpointermove = scratch;
-      canvas.onpointerup = () => { drawing = false; };
-      canvas.onpointercancel = () => { drawing = false; };
+      canvas.onpointerup = () => { drawing = false; stopScratchFeedback(); };
+      canvas.onpointercancel = () => { drawing = false; stopScratchFeedback(); };
     }
 
     function maybeReveal(canvas, ctx){
@@ -257,14 +369,17 @@
 
     function reveal(){
       revealed = true;
+      $('#scratch').classList.add('revealed');
       $('#canvas').style.transition = 'opacity .35s';
       $('#canvas').style.opacity = '0';
       const winner = !!lastResult?.ganador;
+      stopScratchFeedback();
+      playRevealFeedback(winner);
       document.body.classList.toggle('lose', !winner);
       $('#doneNote').style.display = 'block';
       $('#doneNote').textContent = winner
-        ? 'Tu codigo tambien fue enviado por WhatsApp. Completa tus datos para recibir el premio.'
-        : 'Gracias por participar. Podes volver segun las reglas de la campania.';
+        ? `Tu codigo tambien fue enviado por WhatsApp. Completa tus datos para recibir el premio. ${lastResult?.next_participation_message || ''}`.trim()
+        : `Gracias por participar. ${lastResult?.next_participation_message || 'Podes volver segun las reglas de la campania.'}`;
       if(winner && lastResult?.codigo){
         $('#deliveryForm').style.display = 'block';
       }
@@ -274,6 +389,7 @@
       const winner = !!data.ganador;
       $('#result').innerHTML = `
         <div>
+          <div class="resultBadge ${winner ? 'win' : 'miss'}">${winner ? 'PV' : 'OK'}</div>
           <h2>${winner ? 'Ganaste!' : 'Esta vez no hubo premio'}</h2>
           <p>${esc(data.resultado_nombre || '')}</p>
           ${winner && data.descripcion ? `<p>${esc(data.descripcion)}</p>` : ''}
