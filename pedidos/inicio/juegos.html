@@ -43,16 +43,34 @@
     .badge.activa{background:rgba(34,197,94,.16);color:#86efac}
     .badge.borrador{background:rgba(148,163,184,.16);color:#cbd5e1}
     .badge.pausada{background:rgba(245,158,11,.16);color:#fcd34d}
+    .badge.win{background:rgba(34,197,94,.16);color:#86efac}
+    .badge.loose{background:rgba(148,163,184,.14);color:#cbd5e1}
+    .badge.pending{background:rgba(245,158,11,.16);color:#fcd34d}
+    .badge.done{background:rgba(6,182,212,.16);color:#67e8f9}
     .muted{color:var(--muted)}
     .prize{display:grid;grid-template-columns:1fr 1fr 78px 78px 34px;gap:8px;align-items:end;margin-bottom:8px;padding:10px;border:1px solid var(--border);border-radius:8px;background:rgba(15,23,42,.72)}
     .prize .wide{grid-column:span 2}
+    .follow{display:none;margin-top:18px}
+    .metricGrid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px;margin:12px 0 14px}
+    .metric{border:1px solid var(--border);border-radius:8px;background:rgba(15,23,42,.72);padding:12px;min-height:74px}
+    .metric span{display:block;color:var(--muted);font-size:11px;text-transform:uppercase;font-weight:800}
+    .metric strong{display:block;font-size:24px;margin-top:5px;line-height:1}
+    .seg{display:inline-flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;background:#0f172a}
+    .seg button{border:0;border-right:1px solid var(--border);background:transparent;color:var(--muted);padding:9px 10px;font-weight:800;cursor:pointer}
+    .seg button:last-child{border-right:0}
+    .seg button.active{background:rgba(6,182,212,.18);color:#fff}
+    .trackSearch{max-width:250px}
+    .prizeStats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:10px 0 16px}
+    .prizeStat{border:1px solid var(--border);border-radius:8px;background:rgba(15,23,42,.72);padding:11px}
+    .prizeStat strong{display:block;margin-bottom:4px}
+    .prizeStat .mini{display:flex;gap:10px;flex-wrap:wrap;color:var(--muted);font-size:12px}
     .qrBox{display:none;margin-top:12px;padding:12px;background:#fff;border-radius:8px;text-align:center}
     .qrBox img{width:220px;max-width:100%;height:auto}
     .linkBox{display:none;margin-top:10px;padding:10px;border:1px solid var(--border);border-radius:8px;background:#0f172a;word-break:break-all}
     .empty{padding:26px;text-align:center;color:var(--muted)}
     .toast{position:fixed;right:18px;bottom:18px;background:#fff;color:#0f172a;border-radius:999px;padding:11px 16px;font-weight:800;box-shadow:0 14px 40px rgba(0,0,0,.35);opacity:0;transform:translateY(8px);transition:.2s;z-index:30}
     .toast.show{opacity:1;transform:translateY(0)}
-    @media(max-width:980px){.grid{grid-template-columns:1fr}.row{grid-template-columns:1fr}.prize{grid-template-columns:1fr 1fr}.prize .wide{grid-column:span 2}}
+    @media(max-width:980px){.grid{grid-template-columns:1fr}.row{grid-template-columns:1fr}.prize{grid-template-columns:1fr 1fr}.prize .wide{grid-column:span 2}.metricGrid{grid-template-columns:repeat(2,minmax(0,1fr))}.prizeStats{grid-template-columns:1fr}.trackSearch{max-width:none}}
   </style>
 </head>
 <body>
@@ -191,13 +209,52 @@
         </form>
       </aside>
     </section>
+
+    <section id="followCard" class="card follow">
+      <div class="toolbar">
+        <div>
+          <strong id="followTitle">Seguimiento</strong>
+          <div class="muted" id="followSubtitle"></div>
+        </div>
+        <button type="button" class="btn small" id="btnRefreshTrack">Actualizar</button>
+        <button type="button" class="btn small" id="btnExportTrack">Exportar CSV</button>
+      </div>
+
+      <div class="metricGrid" id="metricRows"></div>
+
+      <div>
+        <strong>Premios</strong>
+        <div class="prizeStats" id="prizeStats"></div>
+      </div>
+
+      <div class="toolbar">
+        <div class="seg" id="trackFilters">
+          <button type="button" class="active" data-filter="all">Todos</button>
+          <button type="button" data-filter="winners">Ganadores</button>
+          <button type="button" data-filter="pending">Pendientes</button>
+          <button type="button" data-filter="done">Entregados</button>
+          <button type="button" data-filter="no_prize">Sin premio</button>
+        </div>
+        <input id="trackSearch" class="trackSearch" placeholder="Buscar telefono o codigo">
+        <span class="muted" id="trackCount"></span>
+      </div>
+
+      <div style="overflow:auto">
+        <table>
+          <thead>
+            <tr><th>Fecha</th><th>Telefono</th><th>Resultado</th><th>Premio</th><th>Codigo</th><th>WhatsApp</th><th>Pedido</th><th>Entrega</th></tr>
+          </thead>
+          <tbody id="trackRows"><tr><td colspan="8" class="empty">Selecciona una campania.</td></tr></tbody>
+        </table>
+      </div>
+    </section>
   </main>
 
   <div id="toast" class="toast"></div>
 
   <script>
     const $ = (s) => document.querySelector(s);
-    const STATE = { isSuper:false, empresaId:null, campaigns:[], products:[], currentPublicUrl:null };
+    const STATE = { isSuper:false, empresaId:null, campaigns:[], products:[], currentPublicUrl:null, tracking:null, trackingCampaignId:null, trackingFilter:'all' };
 
     function toast(msg){ const el=$('#toast'); el.textContent=msg; el.classList.add('show'); setTimeout(()=>el.classList.remove('show'),2400); }
     function esc(s){ return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -211,6 +268,8 @@
     }
     function slugify(v){ return String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,80); }
     function toLocalInput(v){ if(!v) return ''; const d=new Date(v); if(Number.isNaN(d.getTime())) return ''; const p=n=>String(n).padStart(2,'0'); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; }
+    function fmtDate(v){ if(!v) return '-'; const d=new Date(v); if(Number.isNaN(d.getTime())) return '-'; return d.toLocaleString('es-AR', { dateStyle:'short', timeStyle:'short' }); }
+    function isWinner(row){ return row && row.resultado_tipo !== 'sin_premio'; }
 
     function productOptions(selected){
       return ['<option value="">Sin producto</option>'].concat(STATE.products.map(p => `<option value="${Number(p.id)}" ${String(selected||'')===String(p.id)?'selected':''}>#${Number(p.id)} - ${esc(p.nombre)}</option>`)).join('');
@@ -312,9 +371,134 @@
           <td><span class="badge ${esc(c.estado)}">${esc(c.estado)}</span></td>
           <td>${Number(c.participaciones||0)}</td>
           <td>${Number(c.ganadores||0)}</td>
-          <td><button type="button" class="btn small" data-action="edit" data-id="${Number(c.id)}">Editar</button></td>
+          <td>
+            <button type="button" class="btn small" data-action="track" data-id="${Number(c.id)}">Ver</button>
+            <button type="button" class="btn small" data-action="edit" data-id="${Number(c.id)}">Editar</button>
+          </td>
         </tr>
       `).join('');
+    }
+
+    function renderMetrics(data){
+      const r = data?.resumen || {};
+      const total = Number(r.participaciones || 0);
+      const winners = Number(r.ganadores || 0);
+      const rate = total ? Math.round((winners / total) * 100) : 0;
+      const metrics = [
+        ['Participantes', total],
+        ['Ganadores', winners],
+        ['Tasa premio', `${rate}%`],
+        ['Pendientes', Number(r.premios_pendientes || 0)],
+        ['Pedidos', Number(r.pedidos_generados || 0)],
+        ['Redimidos', Number(r.premios_redimidos || 0)],
+      ];
+      $('#metricRows').innerHTML = metrics.map(([label, value]) => `<div class="metric"><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`).join('');
+      $('#followSubtitle').textContent = r.ultima_participacion ? `Ultima participacion: ${fmtDate(r.ultima_participacion)}` : 'Sin participaciones registradas';
+    }
+
+    function renderPrizeStats(data){
+      const prizes = data?.premios || [];
+      if(!prizes.length){
+        $('#prizeStats').innerHTML = '<div class="muted">Sin premios configurados.</div>';
+        return;
+      }
+      $('#prizeStats').innerHTML = prizes.map(p => {
+        const delivered = Number(p.entregados || 0);
+        const stock = p.stock_total == null ? 'sin limite' : Number(p.stock_total);
+        const daily = p.stock_diario == null ? 'sin limite diario' : `${Number(p.stock_diario)} por dia`;
+        return `
+          <div class="prizeStat">
+            <strong>${esc(p.producto_nombre || p.nombre_publico || 'Premio')}</strong>
+            <div class="mini">
+              <span>Salio: ${delivered}</span>
+              <span>Stock: ${esc(stock)}</span>
+              <span>${esc(daily)}</span>
+              <span>Pedidos: ${Number(p.pedidos_generados || 0)}</span>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function filteredTrackingRows(){
+      const q = ($('#trackSearch')?.value || '').trim().toLowerCase();
+      return (STATE.tracking?.items || []).filter(row => {
+        if(STATE.trackingFilter === 'winners' && !isWinner(row)) return false;
+        if(STATE.trackingFilter === 'pending' && (!isWinner(row) || row.pedido_id)) return false;
+        if(STATE.trackingFilter === 'done' && (!isWinner(row) || !row.redimido_at)) return false;
+        if(STATE.trackingFilter === 'no_prize' && isWinner(row)) return false;
+        if(!q) return true;
+        return String(row.telefono || '').toLowerCase().includes(q) || String(row.telefono_norm || '').includes(q) || String(row.codigo || '').toLowerCase().includes(q);
+      });
+    }
+
+    function renderTracking(){
+      const data = STATE.tracking;
+      if(!data){
+        $('#followCard').style.display = 'none';
+        return;
+      }
+      $('#followCard').style.display = 'block';
+      $('#followTitle').textContent = `Seguimiento: ${data.campaign?.titulo_publico || data.campaign?.nombre || 'Campania'}`;
+      renderMetrics(data);
+      renderPrizeStats(data);
+      const rows = filteredTrackingRows();
+      $('#trackCount').textContent = `${rows.length} visibles`;
+      if(!rows.length){
+        $('#trackRows').innerHTML = '<tr><td colspan="8" class="empty">Sin resultados para este filtro.</td></tr>';
+        return;
+      }
+      $('#trackRows').innerHTML = rows.map(row => {
+        const winner = isWinner(row);
+        const pedido = row.pedido_id ? `#${Number(row.pedido_id)}` : (winner ? 'Pendiente' : '-');
+        const entrega = row.redimido_at ? 'Redimido' : (winner ? 'Pendiente' : '-');
+        return `
+          <tr>
+            <td>${esc(fmtDate(row.created_at))}</td>
+            <td>${esc(row.telefono || row.telefono_norm || '-')}</td>
+            <td><span class="badge ${winner ? 'win' : 'loose'}">${winner ? 'Gano' : 'Sin premio'}</span></td>
+            <td>${esc(row.resultado_nombre || '-')}</td>
+            <td>${esc(row.codigo || '-')}</td>
+            <td>${row.enviado_whatsapp_at ? '<span class="badge done">Enviado</span>' : '<span class="badge pending">Pendiente</span>'}</td>
+            <td><span class="badge ${row.pedido_id ? 'done' : (winner ? 'pending' : 'loose')}">${esc(pedido)}</span></td>
+            <td><span class="badge ${row.redimido_at ? 'done' : (winner ? 'pending' : 'loose')}">${esc(entrega)}</span></td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    async function loadTracking(id){
+      STATE.trackingCampaignId = Number(id);
+      $('#followCard').style.display = 'block';
+      $('#trackRows').innerHTML = '<tr><td colspan="8" class="empty">Cargando seguimiento...</td></tr>';
+      const data = await api(apiUrl(`/api/juegos/campanias/${id}/participaciones`));
+      STATE.tracking = data;
+      renderTracking();
+      $('#followCard').scrollIntoView({ behavior:'smooth', block:'start' });
+    }
+
+    function exportTrackingCsv(){
+      const rows = filteredTrackingRows();
+      if(!rows.length){ toast('No hay datos para exportar'); return; }
+      const headers = ['fecha','telefono','resultado','premio','codigo','whatsapp_enviado','pedido_id','redimido'];
+      const csvRows = [headers].concat(rows.map(row => [
+        fmtDate(row.created_at),
+        row.telefono || row.telefono_norm || '',
+        isWinner(row) ? 'ganador' : 'sin_premio',
+        row.resultado_nombre || '',
+        row.codigo || '',
+        row.enviado_whatsapp_at ? 'si' : 'no',
+        row.pedido_id || '',
+        row.redimido_at ? 'si' : 'no',
+      ]));
+      const csv = csvRows.map(cols => cols.map(v => `"${String(v ?? '').replaceAll('"','""')}"`).join(',')).join('\n');
+      const blob = new Blob([csv], { type:'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `juego-${STATE.trackingCampaignId || 'campania'}-participaciones.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
     }
 
     async function loadProducts(){
@@ -396,6 +580,18 @@
       $('#campaignRows').addEventListener('click', (ev) => {
         const btn = ev.target.closest('[data-action="edit"]');
         if(btn) editCampaign(Number(btn.dataset.id)).catch(e => toast(e.message));
+        const trackBtn = ev.target.closest('[data-action="track"]');
+        if(trackBtn) loadTracking(Number(trackBtn.dataset.id)).catch(e => toast(e.message));
+      });
+      $('#btnRefreshTrack').addEventListener('click', () => { if(STATE.trackingCampaignId) loadTracking(STATE.trackingCampaignId).catch(e => toast(e.message)); });
+      $('#btnExportTrack').addEventListener('click', exportTrackingCsv);
+      $('#trackSearch').addEventListener('input', renderTracking);
+      $('#trackFilters').addEventListener('click', (ev) => {
+        const btn = ev.target.closest('[data-filter]');
+        if(!btn) return;
+        STATE.trackingFilter = btn.dataset.filter;
+        Array.from($('#trackFilters').querySelectorAll('button')).forEach(b => b.classList.toggle('active', b === btn));
+        renderTracking();
       });
 
       const me = await api('/api/me');

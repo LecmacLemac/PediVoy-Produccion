@@ -2,12 +2,24 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
 
-import { createJuegosPublicosRouter } from '../src/routes/juegos.js';
+import { createJuegosPublicosRouter, createJuegosRouter } from '../src/routes/juegos.js';
 
 function buildApp(query) {
   const app = express();
   app.use(express.json());
   app.use('/api/juegos-publicos', createJuegosPublicosRouter({ query }));
+  return app;
+}
+
+function buildAdminApp(query) {
+  const app = express();
+  app.use(express.json());
+  app.use('/api/juegos', createJuegosRouter({
+    query,
+    withAuth: (req, res, next) => next(),
+    isSuper: () => false,
+    getEmpresaIdFromToken: () => 1,
+  }));
   return app;
 }
 
@@ -252,4 +264,72 @@ test('POST /api/juegos-publicos/premio-entrega crea pedido de premio', async () 
   assert.equal(itemInserted[2], 6);
   assert.equal(participationUpdated[0], 44);
   assert.equal(participationUpdated[1], 123);
+});
+
+test('GET /api/juegos/campanias/:id/participaciones devuelve seguimiento operativo', async () => {
+  const query = async (sql, params = []) => {
+    if (/CREATE TABLE IF NOT EXISTS juegos_campanias/.test(sql)) return [];
+    if (/SELECT id, empresa_id, nombre, titulo_publico/.test(sql)) {
+      assert.equal(params[0], 7);
+      assert.equal(params[1], 1);
+      return [{ id: 7, empresa_id: 1, nombre: 'Raspadita', titulo_publico: 'Raspa y gana' }];
+    }
+    if (/FROM juegos_participaciones/.test(sql) && /ORDER BY created_at DESC/.test(sql)) {
+      return [
+        {
+          id: 99,
+          telefono: '351 555 1234',
+          telefono_norm: '3515551234',
+          codigo: 'AGUA-ABC123DEF4',
+          resultado_tipo: 'producto_gratis',
+          resultado_nombre: 'Bidon gratis',
+          premio_id: 3,
+          producto_id: 6,
+          punto_entrega_id: 44,
+          pedido_id: 123,
+          enviado_whatsapp_at: new Date(),
+          redimido_at: null,
+          created_at: new Date(),
+        },
+      ];
+    }
+    if (/premios_pendientes/.test(sql)) {
+      return [{
+        participaciones: 3,
+        ganadores: 1,
+        sin_premio: 2,
+        premios_pendientes: 0,
+        pedidos_generados: 1,
+        premios_redimidos: 0,
+        ultima_participacion: new Date(),
+      }];
+    }
+    if (/FROM juegos_premios jp/.test(sql)) {
+      return [{
+        id: 3,
+        tipo: 'producto_gratis',
+        nombre_publico: 'Bidon gratis',
+        producto_id: 6,
+        producto_nombre: 'Bidon 20L',
+        stock_total: 10,
+        stock_diario: 2,
+        entregados: 1,
+        pedidos_generados: 1,
+        redimidos: 0,
+      }];
+    }
+    return [];
+  };
+
+  await withServer(buildAdminApp(query), async (baseUrl) => {
+    const resp = await fetch(`${baseUrl}/api/juegos/campanias/7/participaciones`);
+    assert.equal(resp.status, 200);
+    const body = await resp.json();
+    assert.equal(body.campaign.titulo_publico, 'Raspa y gana');
+    assert.equal(body.resumen.participaciones, 3);
+    assert.equal(body.resumen.ganadores, 1);
+    assert.equal(body.premios[0].producto_nombre, 'Bidon 20L');
+    assert.equal(body.items[0].pedido_id, 123);
+    assert.equal(body.items[0].telefono_norm, '3515551234');
+  });
 });

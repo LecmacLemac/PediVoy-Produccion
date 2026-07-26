@@ -455,15 +455,73 @@ export function createJuegosRouter(deps) {
       await ensureSchema(query);
       const { empresaId } = resolveEmpresa(req);
       if (!empresaId) return createJsonError(res, 400, 'Falta empresa.');
+      const campaignId = Number(req.params.id);
+      if (!campaignId) return createJsonError(res, 400, 'Campania invalida.');
+      const [campaign] = await query(
+        `SELECT id, empresa_id, nombre, titulo_publico
+           FROM juegos_campanias
+          WHERE id = $1 AND empresa_id = $2`,
+        [campaignId, empresaId]
+      );
+      if (!campaign) return createJsonError(res, 404, 'Campania no encontrada.');
+
       const rows = await query(
-        `SELECT id, telefono, codigo, resultado_tipo, resultado_nombre, redimido_at, created_at
+        `SELECT id, telefono, telefono_norm, codigo, resultado_tipo, resultado_nombre,
+                premio_id, producto_id, punto_entrega_id, pedido_id,
+                enviado_whatsapp_at, redimido_at, created_at
            FROM juegos_participaciones
           WHERE empresa_id = $1 AND campania_id = $2
           ORDER BY created_at DESC
-          LIMIT 100`,
-        [empresaId, req.params.id]
+          LIMIT 500`,
+        [empresaId, campaignId]
       );
-      return res.json({ items: rows });
+      const [summary] = await query(
+        `SELECT COUNT(*)::int AS participaciones,
+                COUNT(*) FILTER (WHERE resultado_tipo <> 'sin_premio')::int AS ganadores,
+                COUNT(*) FILTER (WHERE resultado_tipo = 'sin_premio')::int AS sin_premio,
+                COUNT(*) FILTER (WHERE resultado_tipo <> 'sin_premio' AND pedido_id IS NULL)::int AS premios_pendientes,
+                COUNT(*) FILTER (WHERE resultado_tipo <> 'sin_premio' AND pedido_id IS NOT NULL)::int AS pedidos_generados,
+                COUNT(*) FILTER (WHERE resultado_tipo <> 'sin_premio' AND redimido_at IS NOT NULL)::int AS premios_redimidos,
+                MAX(created_at) AS ultima_participacion
+           FROM juegos_participaciones
+          WHERE empresa_id = $1 AND campania_id = $2`,
+        [empresaId, campaignId]
+      );
+      const prizes = await query(
+        `SELECT jp.id, jp.tipo, jp.nombre_publico, jp.producto_id, p.nombre AS producto_nombre,
+                jp.stock_total, jp.stock_diario,
+                COALESCE(stats.entregados, 0)::int AS entregados,
+                COALESCE(stats.pedidos_generados, 0)::int AS pedidos_generados,
+                COALESCE(stats.redimidos, 0)::int AS redimidos
+           FROM juegos_premios jp
+           LEFT JOIN productos p ON p.id = jp.producto_id AND p.empresa_id = jp.empresa_id
+           LEFT JOIN (
+             SELECT premio_id,
+                    COUNT(*)::int AS entregados,
+                    COUNT(*) FILTER (WHERE pedido_id IS NOT NULL)::int AS pedidos_generados,
+                    COUNT(*) FILTER (WHERE redimido_at IS NOT NULL)::int AS redimidos
+               FROM juegos_participaciones
+              WHERE empresa_id = $1 AND campania_id = $2 AND premio_id IS NOT NULL
+              GROUP BY premio_id
+           ) stats ON stats.premio_id = jp.id
+          WHERE jp.empresa_id = $1 AND jp.campania_id = $2
+          ORDER BY jp.orden ASC, jp.id ASC`,
+        [empresaId, campaignId]
+      );
+      return res.json({
+        campaign,
+        resumen: {
+          participaciones: Number(summary?.participaciones || 0),
+          ganadores: Number(summary?.ganadores || 0),
+          sin_premio: Number(summary?.sin_premio || 0),
+          premios_pendientes: Number(summary?.premios_pendientes || 0),
+          pedidos_generados: Number(summary?.pedidos_generados || 0),
+          premios_redimidos: Number(summary?.premios_redimidos || 0),
+          ultima_participacion: summary?.ultima_participacion || null,
+        },
+        premios: prizes,
+        items: rows,
+      });
     } catch (e) {
       console.error(e);
       return createJsonError(res, 500, 'Error listando participaciones.');
