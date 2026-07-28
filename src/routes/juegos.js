@@ -528,6 +528,31 @@ export function createJuegosRouter(deps) {
     }
   });
 
+  router.delete('/campanias/:id/participaciones/:participacionId', withAuth, async (req, res) => {
+    try {
+      await ensureSchema(query);
+      const { empresaId } = resolveEmpresa(req);
+      if (!empresaId) return createJsonError(res, 400, 'Falta empresa.');
+      const campaignId = Number(req.params.id);
+      const participationId = Number(req.params.participacionId);
+      if (!campaignId || !participationId) return createJsonError(res, 400, 'Participacion invalida.');
+
+      const [deleted] = await query(
+        `DELETE FROM juegos_participaciones
+          WHERE id = $1
+            AND campania_id = $2
+            AND empresa_id = $3
+          RETURNING id`,
+        [participationId, campaignId, empresaId]
+      );
+      if (!deleted) return createJsonError(res, 404, 'Participacion no encontrada.');
+      return res.json({ ok: true, id: deleted.id });
+    } catch (e) {
+      console.error(e);
+      return createJsonError(res, 500, 'Error eliminando participacion.');
+    }
+  });
+
   return router;
 }
 

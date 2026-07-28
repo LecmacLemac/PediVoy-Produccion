@@ -333,3 +333,26 @@ test('GET /api/juegos/campanias/:id/participaciones devuelve seguimiento operati
     assert.equal(body.items[0].telefono_norm, '3515551234');
   });
 });
+
+test('DELETE /api/juegos/campanias/:id/participaciones/:participacionId elimina cualquier participante', async () => {
+  const queries = [];
+  const query = async (sql, params = []) => {
+    queries.push({ sql, params });
+    if (/CREATE TABLE IF NOT EXISTS juegos_campanias/.test(sql)) return [];
+    if (/DELETE FROM juegos_participaciones/.test(sql)) {
+      assert.deepEqual(params, [99, 7, 1]);
+      return [{ id: 99 }];
+    }
+    return [];
+  };
+
+  await withServer(buildAdminApp(query), async (baseUrl) => {
+    const resp = await fetch(`${baseUrl}/api/juegos/campanias/7/participaciones/99`, { method: 'DELETE' });
+    assert.equal(resp.status, 200);
+    const body = await resp.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.id, 99);
+  });
+
+  assert.ok(queries.some(({ sql }) => /DELETE FROM juegos_participaciones/.test(sql)));
+});

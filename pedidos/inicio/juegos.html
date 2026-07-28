@@ -242,9 +242,9 @@
       <div style="overflow:auto">
         <table>
           <thead>
-            <tr><th>Fecha</th><th>Telefono</th><th>Resultado</th><th>Premio</th><th>Codigo</th><th>WhatsApp</th><th>Pedido</th><th>Entrega</th></tr>
+            <tr><th>Fecha</th><th>Telefono</th><th>Resultado</th><th>Premio</th><th>Codigo</th><th>WhatsApp</th><th>Pedido</th><th>Entrega</th><th>Acciones</th></tr>
           </thead>
-          <tbody id="trackRows"><tr><td colspan="8" class="empty">Selecciona una campania.</td></tr></tbody>
+          <tbody id="trackRows"><tr><td colspan="9" class="empty">Selecciona una campania.</td></tr></tbody>
         </table>
       </div>
     </section>
@@ -385,7 +385,7 @@
       const winners = Number(r.ganadores || 0);
       const rate = total ? Math.round((winners / total) * 100) : 0;
       const metrics = [
-        ['Participantes', total],
+        ['Participaciones', total],
         ['Ganadores', winners],
         ['Tasa premio', `${rate}%`],
         ['Pendientes', Number(r.premios_pendientes || 0)],
@@ -445,13 +445,14 @@
       const rows = filteredTrackingRows();
       $('#trackCount').textContent = `${rows.length} visibles`;
       if(!rows.length){
-        $('#trackRows').innerHTML = '<tr><td colspan="8" class="empty">Sin resultados para este filtro.</td></tr>';
+        $('#trackRows').innerHTML = '<tr><td colspan="9" class="empty">Sin resultados para este filtro.</td></tr>';
         return;
       }
       $('#trackRows').innerHTML = rows.map(row => {
         const winner = isWinner(row);
         const pedido = row.pedido_id ? `#${Number(row.pedido_id)}` : (winner ? 'Pendiente' : '-');
         const entrega = row.redimido_at ? 'Redimido' : (winner ? 'Pendiente' : '-');
+        const deleteLabel = row.codigo ? `codigo ${row.codigo}` : `participacion #${Number(row.id)}`;
         return `
           <tr>
             <td>${esc(fmtDate(row.created_at))}</td>
@@ -462,6 +463,7 @@
             <td>${row.enviado_whatsapp_at ? '<span class="badge done">Enviado</span>' : '<span class="badge pending">Pendiente</span>'}</td>
             <td><span class="badge ${row.pedido_id ? 'done' : (winner ? 'pending' : 'loose')}">${esc(pedido)}</span></td>
             <td><span class="badge ${row.redimido_at ? 'done' : (winner ? 'pending' : 'loose')}">${esc(entrega)}</span></td>
+            <td><button type="button" class="btn danger small" data-action="delete-participation" data-id="${Number(row.id)}" data-label="${esc(deleteLabel)}">Eliminar</button></td>
           </tr>
         `;
       }).join('');
@@ -470,7 +472,8 @@
     async function loadTracking(id){
       STATE.trackingCampaignId = Number(id);
       $('#followCard').style.display = 'block';
-      $('#trackRows').innerHTML = '<tr><td colspan="8" class="empty">Cargando seguimiento...</td></tr>';
+      $('#followSubtitle').textContent = 'Cargando seguimiento...';
+      $('#trackRows').innerHTML = '<tr><td colspan="9" class="empty">Cargando seguimiento...</td></tr>';
       const data = await api(apiUrl(`/api/juegos/campanias/${id}/participaciones`));
       STATE.tracking = data;
       renderTracking();
@@ -499,6 +502,16 @@
       a.download = `juego-${STATE.trackingCampaignId || 'campania'}-participaciones.csv`;
       a.click();
       URL.revokeObjectURL(url);
+    }
+
+    async function deleteParticipation(id, label){
+      if(!STATE.trackingCampaignId) return;
+      const ok = confirm(`Eliminar ${label || 'esta participacion'} del juego? Esta accion no se puede deshacer.`);
+      if(!ok) return;
+      await api(apiUrl(`/api/juegos/campanias/${STATE.trackingCampaignId}/participaciones/${id}`), { method:'DELETE' });
+      toast('Participacion eliminada');
+      await loadTracking(STATE.trackingCampaignId);
+      await loadCampaigns();
     }
 
     async function loadProducts(){
@@ -592,6 +605,11 @@
         STATE.trackingFilter = btn.dataset.filter;
         Array.from($('#trackFilters').querySelectorAll('button')).forEach(b => b.classList.toggle('active', b === btn));
         renderTracking();
+      });
+      $('#trackRows').addEventListener('click', (ev) => {
+        const btn = ev.target.closest('[data-action="delete-participation"]');
+        if(!btn) return;
+        deleteParticipation(Number(btn.dataset.id), btn.dataset.label).catch(e => toast(e.message));
       });
 
       const me = await api('/api/me');
