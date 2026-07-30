@@ -245,7 +245,14 @@ export function createApp(deps) {
   // CARPETAS ESTÁTICAS DEL SISTEMA (Carrito, etc.)
   // ==================================================
   const PEDIDOS_DIR = path.join(projectDir, 'pedidos');
-  if (fs.existsSync(PEDIDOS_DIR)) app.use('/pedidos', express.static(PEDIDOS_DIR));
+  if (fs.existsSync(PEDIDOS_DIR)) {
+    const JUEGOS_INDEX = path.join(PEDIDOS_DIR, 'juegos', 'index.html');
+    app.get('/pedidos/juegos/:publicCode', (req, res, next) => {
+      if (!/^[A-Za-z0-9]{4,24}$/.test(String(req.params.publicCode || ''))) return next();
+      return res.sendFile(JUEGOS_INDEX);
+    });
+    app.use('/pedidos', express.static(PEDIDOS_DIR));
+  }
 
   const TRANSF_DIR = path.join(projectDir, 'Transferencia');
   if (!fs.existsSync(TRANSF_DIR)) fs.mkdirSync(TRANSF_DIR, { recursive: true });

@@ -37,6 +37,7 @@ const campaign = {
   id: 7,
   empresa_id: 1,
   slug: 'raspa-y-gana',
+  public_code: 'K8X4PZ2Q',
   nombre: 'Raspadita',
   titulo_publico: 'Raspa y gana',
   descripcion_publica: 'Proba tu suerte.',
@@ -92,6 +93,30 @@ test('GET /api/juegos-publicos/campania expone campaña pública', async () => {
   });
 
   assert.ok(queries.some((q) => /FROM juegos_campanias jc/.test(q.sql)));
+});
+
+test('GET /api/juegos-publicos/campania resuelve por codigo publico', async () => {
+  const queries = [];
+  const query = async (sql, params = []) => {
+    queries.push({ sql, params });
+    if (/CREATE TABLE IF NOT EXISTS juegos_campanias/.test(sql)) return [];
+    if (/FROM juegos_campanias jc/.test(sql)) return [campaign];
+    if (/FROM juegos_premios/.test(sql)) return [];
+    return [];
+  };
+
+  await withServer(buildApp(query), async (baseUrl) => {
+    const resp = await fetch(`${baseUrl}/api/juegos-publicos/campania?public_code=K8X4PZ2Q`);
+    assert.equal(resp.status, 200);
+    const body = await resp.json();
+    assert.equal(body.public_code, 'K8X4PZ2Q');
+    assert.equal(body.empresa_id, 1);
+    assert.equal(body.slug, 'raspa-y-gana');
+  });
+
+  const campaignQuery = queries.find((q) => /LOWER\(jc.public_code\)/.test(q.sql));
+  assert.ok(campaignQuery);
+  assert.deepEqual(campaignQuery.params, ['K8X4PZ2Q']);
 });
 
 test('POST /api/juegos-publicos/participar registra ganador y encola WhatsApp', async () => {
@@ -156,6 +181,40 @@ test('POST /api/juegos-publicos/participar registra ganador y encola WhatsApp', 
   assert.equal(outboxInserted[0], 1);
   assert.equal(outboxInserted[1], '3515551234');
   assert.match(outboxInserted[2], /Bidon gratis/);
+});
+
+test('POST /api/juegos-publicos/participar acepta codigo publico sin empresa ni slug', async () => {
+  let participationInserted = null;
+  const query = async (sql, params = []) => {
+    if (/CREATE TABLE IF NOT EXISTS juegos_campanias/.test(sql)) return [];
+    if (/FROM juegos_campanias jc/.test(sql)) return [campaign];
+    if (/pg_advisory_xact_lock/.test(sql)) return [];
+    if (/COUNT\(\*\)::int AS c/.test(sql)) return [{ c: 0 }];
+    if (/FROM juegos_participaciones/.test(sql) && /telefono_norm/.test(sql) && /LIMIT 1/.test(sql)) return [];
+    if (/FROM juegos_premios jp/.test(sql)) {
+      return [{ id: null, tipo: 'sin_premio', producto_id: null, nombre_publico: 'Esta vez no hubo premio', descripcion: null, probabilidad: 1 }];
+    }
+    if (/INSERT INTO juegos_participaciones/.test(sql)) {
+      participationInserted = params;
+      return [{ id: 100, codigo: null, resultado_tipo: params[7], resultado_nombre: params[8], created_at: new Date() }];
+    }
+    return [];
+  };
+
+  await withServer(buildApp(query), async (baseUrl) => {
+    const resp = await fetch(`${baseUrl}/api/juegos-publicos/participar`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ public_code: 'K8X4PZ2Q', telefono: '351 555 1234' }),
+    });
+    assert.equal(resp.status, 200);
+    const body = await resp.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.ganador, false);
+  });
+
+  assert.equal(participationInserted[0], 1);
+  assert.equal(participationInserted[1], 7);
 });
 
 test('POST /api/juegos-publicos/participar informa cuando puede volver si ya participo', async () => {
@@ -331,6 +390,25 @@ test('GET /api/juegos/campanias/:id/participaciones devuelve seguimiento operati
     assert.equal(body.premios[0].producto_nombre, 'Bidon 20L');
     assert.equal(body.items[0].pedido_id, 123);
     assert.equal(body.items[0].telefono_norm, '3515551234');
+  });
+});
+
+test('GET /api/juegos/campanias/:id/qr usa URL con codigo publico', async () => {
+  const query = async (sql, params = []) => {
+    if (/CREATE TABLE IF NOT EXISTS juegos_campanias/.test(sql)) return [];
+    if (/SELECT id, empresa_id, slug, public_code FROM juegos_campanias/.test(sql)) {
+      assert.deepEqual(params, ['7', 1]);
+      return [{ id: 7, empresa_id: 1, slug: 'raspa-y-gana', public_code: 'K8X4PZ2Q' }];
+    }
+    return [];
+  };
+
+  await withServer(buildAdminApp(query), async (baseUrl) => {
+    const resp = await fetch(`${baseUrl}/api/juegos/campanias/7/qr`);
+    assert.equal(resp.status, 200);
+    const body = await resp.json();
+    assert.equal(body.url, `${baseUrl}/pedidos/juegos/K8X4PZ2Q`);
+    assert.match(body.data_url, /^data:image\/png;base64,/);
   });
 });
 

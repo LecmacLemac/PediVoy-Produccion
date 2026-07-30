@@ -133,8 +133,11 @@
   <script>
     const $ = (s) => document.querySelector(s);
     const params = new URLSearchParams(location.search);
-    const empresaId = Number(params.get('empresa_id') || 0);
-    const campania = params.get('campania') || params.get('slug') || '';
+    const pathCode = decodeURIComponent(location.pathname.split('/').filter(Boolean).pop() || '');
+    const publicCode = (params.get('c') || params.get('code') || params.get('public_code') || (!['juegos','index.html'].includes(pathCode) ? pathCode : '') || '').trim();
+    const legacyEmpresaId = Number(params.get('empresa_id') || 0);
+    const legacyCampania = params.get('campania') || params.get('slug') || '';
+    let campaignRef = publicCode ? { public_code: publicCode } : { empresa_id: legacyEmpresaId, campania: legacyCampania };
     let lastResult = null;
     let revealed = false;
     let scratchAudio = null;
@@ -228,8 +231,14 @@
     }
 
     async function loadCampaign(){
-      if(!empresaId || !campania){ throw new Error('Link de campania incompleto.'); }
-      const data = await api(`/api/juegos-publicos/campania?empresa_id=${encodeURIComponent(empresaId)}&campania=${encodeURIComponent(campania)}`);
+      const query = publicCode
+        ? `public_code=${encodeURIComponent(publicCode)}`
+        : `empresa_id=${encodeURIComponent(legacyEmpresaId)}&campania=${encodeURIComponent(legacyCampania)}`;
+      if(!publicCode && (!legacyEmpresaId || !legacyCampania)){ throw new Error('Link de campania incompleto.'); }
+      const data = await api(`/api/juegos-publicos/campania?${query}`);
+      campaignRef = data.public_code
+        ? { public_code:data.public_code }
+        : { empresa_id:data.empresa_id || legacyEmpresaId, campania:data.slug || legacyCampania };
       $('#company').textContent = data.empresa_nombre || 'PediVoy';
       $('#title').textContent = data.titulo_publico || 'Raspa y gana';
       $('#description').textContent = data.descripcion_publica || 'Ingresa tu telefono y proba tu suerte.';
@@ -410,7 +419,7 @@
       try{
         lastResult = await api('/api/juegos-publicos/participar', {
           method:'POST',
-          body:JSON.stringify({ empresa_id:empresaId, campania, telefono:phone })
+          body:JSON.stringify({ ...campaignRef, telefono:phone })
         });
         $('#joinForm').style.display = 'none';
         renderResult(lastResult);
@@ -434,8 +443,7 @@
         const data = await api('/api/juegos-publicos/premio-entrega', {
           method:'POST',
           body:JSON.stringify({
-            empresa_id:empresaId,
-            campania,
+            ...campaignRef,
             codigo:lastResult?.codigo,
             telefono:$('#phone').value.trim(),
             nombre,

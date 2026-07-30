@@ -642,6 +642,7 @@ CREATE TABLE IF NOT EXISTS juegos_campanias (
   id                    SERIAL PRIMARY KEY,
   empresa_id            INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
   slug                  TEXT NOT NULL,
+  public_code           TEXT,
   nombre                TEXT NOT NULL,
   titulo_publico        TEXT NOT NULL,
   descripcion_publica   TEXT,
@@ -700,6 +701,19 @@ CREATE TABLE IF NOT EXISTS juegos_participaciones (
 
 CREATE INDEX IF NOT EXISTS juegos_campanias_empresa_estado_idx
   ON juegos_campanias (empresa_id, estado, valid_from, valid_to);
+
+ALTER TABLE juegos_campanias
+  ADD COLUMN IF NOT EXISTS public_code TEXT;
+
+UPDATE juegos_campanias
+   SET public_code = UPPER(SUBSTRING(MD5(empresa_id::text || ':' || slug || ':' || id::text), 1, 10))
+ WHERE public_code IS NULL OR BTRIM(public_code) = '';
+
+ALTER TABLE juegos_campanias
+  ALTER COLUMN public_code SET NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS juegos_campanias_public_code_uniq
+  ON juegos_campanias (LOWER(public_code));
 
 CREATE INDEX IF NOT EXISTS juegos_premios_campania_idx
   ON juegos_premios (campania_id, activo, orden);

@@ -5,7 +5,7 @@ import QRCode from 'qrcode';
 let schemaReady = false;
 
 const CAMPAIGN_SELECT = `
-  jc.id, jc.empresa_id, jc.slug, jc.nombre, jc.titulo_publico, jc.descripcion_publica,
+  jc.id, jc.empresa_id, jc.slug, jc.public_code, jc.nombre, jc.titulo_publico, jc.descripcion_publica,
   jc.tipo_juego, jc.estado, jc.participacion_limite, jc.max_participaciones,
   jc.max_ganadores, jc.codigo_prefijo, jc.whatsapp_mensaje, jc.bases_condiciones,
   jc.valid_from, jc.valid_to, jc.created_at, jc.updated_at,
@@ -40,6 +40,8 @@ function publicCampaignUrl(req, campaign) {
   const proto = req.headers['x-forwarded-proto'] || req.protocol || 'https';
   const host = req.headers['x-forwarded-host'] || req.headers.host || 'pedivoy.com';
   const base = `${proto}://${host}`.replace(/\/+$/, '');
+  const code = String(campaign?.public_code || '').trim();
+  if (code) return `${base}/pedidos/juegos/${encodeURIComponent(code)}`;
   return `${base}/pedidos/juegos/?empresa_id=${encodeURIComponent(campaign.empresa_id)}&campania=${encodeURIComponent(campaign.slug)}`;
 }
 
@@ -67,6 +69,34 @@ function randomCode(prefix = 'PV') {
   const token = crypto.randomBytes(5).toString('hex').toUpperCase();
   const cleanPrefix = String(prefix || 'PV').replace(/[^A-Z0-9]/gi, '').toUpperCase().slice(0, 8) || 'PV';
   return `${cleanPrefix}-${token}`;
+}
+
+function normalizePublicCode(raw) {
+  return String(raw || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '')
+    .slice(0, 24);
+}
+
+function createPublicCode() {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let out = '';
+  const bytes = crypto.randomBytes(8);
+  for (let i = 0; i < 8; i += 1) out += alphabet[bytes[i] % alphabet.length];
+  return out;
+}
+
+async function generateUniquePublicCode(q) {
+  for (let i = 0; i < 8; i += 1) {
+    const code = createPublicCode();
+    const rows = await q(
+      'SELECT 1 FROM juegos_campanias WHERE LOWER(public_code) = LOWER($1) LIMIT 1',
+      [code]
+    );
+    if (!rows.length) return code;
+  }
+  throw new Error('No se pudo generar un codigo publico unico.');
 }
 
 function createTrackingToken() {
@@ -100,6 +130,7 @@ async function ensureSchema(query) {
       id SERIAL PRIMARY KEY,
       empresa_id INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
       slug TEXT NOT NULL,
+      public_code TEXT,
       nombre TEXT NOT NULL,
       titulo_publico TEXT NOT NULL,
       descripcion_publica TEXT,
@@ -158,6 +189,15 @@ async function ensureSchema(query) {
 
     CREATE INDEX IF NOT EXISTS juegos_campanias_empresa_estado_idx
       ON juegos_campanias (empresa_id, estado, valid_from, valid_to);
+    ALTER TABLE juegos_campanias
+      ADD COLUMN IF NOT EXISTS public_code TEXT;
+    UPDATE juegos_campanias
+       SET public_code = UPPER(SUBSTRING(MD5(empresa_id::text || ':' || slug || ':' || id::text), 1, 10))
+     WHERE public_code IS NULL OR BTRIM(public_code) = '';
+    ALTER TABLE juegos_campanias
+      ALTER COLUMN public_code SET NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS juegos_campanias_public_code_uniq
+      ON juegos_campanias (LOWER(public_code));
     CREATE INDEX IF NOT EXISTS juegos_premios_campania_idx
       ON juegos_premios (campania_id, activo, orden);
     CREATE INDEX IF NOT EXISTS juegos_participaciones_campania_tel_idx
@@ -330,16 +370,17 @@ export function createJuegosRouter(deps) {
       const campaign = await withTransaction(async (q) => {
         const [created] = await q(
           `INSERT INTO juegos_campanias (
-             empresa_id, slug, nombre, titulo_publico, descripcion_publica, tipo_juego,
+             empresa_id, slug, public_code, nombre, titulo_publico, descripcion_publica, tipo_juego,
              estado, participacion_limite, max_participaciones, max_ganadores,
              codigo_prefijo, whatsapp_mensaje, bases_condiciones, valid_from, valid_to,
              updated_at
            )
-           VALUES ($1,$2,$3,$4,$5,'raspadita',$6,$7,$8,$9,$10,$11,$12,$13,$14,NOW())
+           VALUES ($1,$2,$3,$4,$5,$6,'raspadita',$7,$8,$9,$10,$11,$12,$13,$14,$15,NOW())
            RETURNING *`,
           [
             empresaId,
             slug,
+            await generateUniquePublicCode(q),
             nombre,
             String(b.titulo_publico || nombre).trim(),
             b.descripcion_publica ? String(b.descripcion_publica) : null,
@@ -358,7 +399,13 @@ export function createJuegosRouter(deps) {
         return created;
       });
 
-      return res.json({ ok: true, id: campaign.id, slug: campaign.slug, public_url: publicCampaignUrl(req, campaign) });
+      return res.json({
+        ok: true,
+        id: campaign.id,
+        slug: campaign.slug,
+        public_code: campaign.public_code,
+        public_url: publicCampaignUrl(req, campaign),
+      });
     } catch (e) {
       if (e?.code === '23505') return createJsonError(res, 409, 'Ya existe una campania con ese slug para esta empresa.');
       console.error(e);
@@ -423,7 +470,7 @@ export function createJuegosRouter(deps) {
       });
 
       if (!campaign) return createJsonError(res, 404, 'Campania no encontrada.');
-      return res.json({ ok: true, id: campaign.id, slug: campaign.slug, public_url: publicCampaignUrl(req, campaign) });
+      return res.json({ ok: true, id: campaign.id, slug: campaign.slug, public_code: campaign.public_code, public_url: publicCampaignUrl(req, campaign) });
     } catch (e) {
       if (e?.code === '23505') return createJsonError(res, 409, 'Ya existe una campania con ese slug para esta empresa.');
       console.error(e);
@@ -437,7 +484,7 @@ export function createJuegosRouter(deps) {
       const { empresaId } = resolveEmpresa(req);
       if (!empresaId) return createJsonError(res, 400, 'Falta empresa.');
       const [campaign] = await query(
-        `SELECT id, empresa_id, slug FROM juegos_campanias WHERE id = $1 AND empresa_id = $2`,
+        `SELECT id, empresa_id, slug, public_code FROM juegos_campanias WHERE id = $1 AND empresa_id = $2`,
         [req.params.id, empresaId]
       );
       if (!campaign) return createJsonError(res, 404, 'Campania no encontrada.');
@@ -593,6 +640,29 @@ export function createJuegosPublicosRouter(deps) {
     return campaign || null;
   }
 
+  async function loadCampaignByPublicCode(q, publicCode) {
+    const code = normalizePublicCode(publicCode);
+    if (!code) return null;
+    const [campaign] = await q(
+      `SELECT ${CAMPAIGN_SELECT}
+         FROM juegos_campanias jc
+         JOIN empresas e ON e.id = jc.empresa_id
+        WHERE LOWER(jc.public_code) = LOWER($1)`,
+      [code]
+    );
+    return campaign || null;
+  }
+
+  async function loadCampaignFromPublicRequest(q, source) {
+    const publicCode = normalizePublicCode(source?.public_code || source?.codigo_publico || source?.code || source?.c || '');
+    if (publicCode) return loadCampaignByPublicCode(q, publicCode);
+
+    const empresaId = Number(source?.empresa_id || 0);
+    const slug = normalizeSlug(source?.campania || source?.slug || '');
+    if (!empresaId || !slug) return null;
+    return loadCampaign(q, empresaId, slug);
+  }
+
   function campaignAvailability(campaign) {
     if (!campaign) return { ok: false, reason: 'Campania no encontrada.' };
     if (campaign.estado !== 'activa') return { ok: false, reason: 'La campania no esta activa.' };
@@ -698,10 +768,7 @@ export function createJuegosPublicosRouter(deps) {
   router.get('/campania', async (req, res) => {
     try {
       await ensureSchema(query);
-      const empresaId = Number(req.query?.empresa_id || 0);
-      const slug = normalizeSlug(req.query?.campania || req.query?.slug || '');
-      if (!empresaId || !slug) return createJsonError(res, 400, 'Faltan datos de campania.');
-      const campaign = await loadCampaign(query, empresaId, slug);
+      const campaign = await loadCampaignFromPublicRequest(query, req.query || {});
       if (!campaign) return createJsonError(res, 404, 'Campania no encontrada.');
       const prizes = await query(
         `SELECT jp.tipo, jp.nombre_publico, jp.descripcion, jp.valor, jp.producto_id,
@@ -710,11 +777,12 @@ export function createJuegosPublicosRouter(deps) {
            LEFT JOIN productos p ON p.id = jp.producto_id AND p.empresa_id = jp.empresa_id
           WHERE jp.empresa_id = $1 AND jp.campania_id = $2 AND jp.activo = TRUE
           ORDER BY jp.orden ASC, jp.id ASC`,
-        [empresaId, campaign.id]
+        [campaign.empresa_id, campaign.id]
       );
       return res.json({
         id: campaign.id,
         empresa_id: campaign.empresa_id,
+        public_code: campaign.public_code,
         empresa_nombre: campaign.empresa_nombre,
         empresa_web_url: publicCompanyUrl(req, campaign),
         slug: campaign.slug,
@@ -743,16 +811,15 @@ export function createJuegosPublicosRouter(deps) {
   router.post('/participar', async (req, res) => {
     try {
       await ensureSchema(query);
-      const empresaId = Number(req.body?.empresa_id || 0);
-      const slug = normalizeSlug(req.body?.campania || req.body?.slug || '');
       const telefono = String(req.body?.telefono || '').trim();
       const telefonoNorm = normalizePhone(telefono);
-      if (!empresaId || !slug || !telefonoNorm) return createJsonError(res, 400, 'Telefono o campania invalida.');
+      if (!telefonoNorm) return createJsonError(res, 400, 'Telefono o campania invalida.');
 
       const result = await withTransaction(async (q) => {
-        const campaign = await loadCampaign(q, empresaId, slug);
+        const campaign = await loadCampaignFromPublicRequest(q, req.body || {});
         const availability = campaignAvailability(campaign);
         if (!availability.ok) return { status: 409, payload: { error: availability.reason } };
+        const empresaId = campaign.empresa_id;
 
         await q('SELECT pg_advisory_xact_lock(hashtext($1))', [`juego:${empresaId}:${campaign.id}:${telefonoNorm}`]);
 
@@ -875,8 +942,6 @@ export function createJuegosPublicosRouter(deps) {
   router.post('/premio-entrega', async (req, res) => {
     try {
       await ensureSchema(query);
-      const empresaId = Number(req.body?.empresa_id || 0);
-      const slug = normalizeSlug(req.body?.campania || req.body?.slug || '');
       const codigo = String(req.body?.codigo || '').trim().toUpperCase();
       const telefono = String(req.body?.telefono || '').trim();
       const telefonoNorm = normalizePhone(telefono);
@@ -886,7 +951,7 @@ export function createJuegosPublicosRouter(deps) {
       const provincia = cleanText(req.body?.provincia, 120);
       const notas = cleanText(req.body?.notas || req.body?.referencia, 300);
 
-      if (!empresaId || !slug || !codigo || !telefonoNorm) {
+      if (!codigo || !telefonoNorm) {
         return createJsonError(res, 400, 'Faltan datos del premio.');
       }
       if (!cliente || !direccion) {
@@ -894,8 +959,9 @@ export function createJuegosPublicosRouter(deps) {
       }
 
       const result = await withTransaction(async (q) => {
-        const campaign = await loadCampaign(q, empresaId, slug);
+        const campaign = await loadCampaignFromPublicRequest(q, req.body || {});
         if (!campaign) return { status: 404, payload: { error: 'Campania no encontrada.' } };
+        const empresaId = campaign.empresa_id;
 
         const [participation] = await q(
           `SELECT id, empresa_id, campania_id, producto_id, telefono, telefono_norm,
