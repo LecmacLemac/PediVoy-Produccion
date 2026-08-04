@@ -232,7 +232,8 @@
     }
 
     input,
-    select {
+    select,
+    textarea {
       background: var(--bg-2);
       border: 1px solid var(--border);
       color: #fff;
@@ -244,9 +245,17 @@
     }
 
     input:focus,
-    select:focus {
+    select:focus,
+    textarea:focus {
       border-color: var(--brand);
       box-shadow: 0 0 0 2px rgba(6, 182, 212, 0.2);
+    }
+
+    textarea {
+      min-height: 170px;
+      resize: vertical;
+      line-height: 1.45;
+      white-space: pre-wrap;
     }
 
     .btn {
@@ -460,6 +469,65 @@
       display: flex;
       justify-content: flex-end;
       gap: 0.4rem;
+      flex-wrap: wrap;
+    }
+
+    .summary-strip {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+      gap: 0.7rem;
+    }
+
+    .summary-item {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0.75rem 0.85rem;
+      background: rgba(15, 23, 42, 0.55);
+      min-width: 0;
+    }
+
+    .summary-item span {
+      display: block;
+      color: var(--muted);
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 0.25rem;
+    }
+
+    .summary-item strong {
+      display: block;
+      overflow-wrap: anywhere;
+      font-size: 0.95rem;
+    }
+
+    .risk-line {
+      color: var(--muted);
+      font-size: 0.78rem;
+    }
+
+    .communication-grid {
+      display: grid;
+      grid-template-columns: minmax(260px, 1fr) minmax(320px, 1.4fr);
+      gap: 1rem;
+      align-items: start;
+    }
+
+    .communication-panel {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1rem;
+      background: rgba(15, 23, 42, 0.58);
+      display: flex;
+      flex-direction: column;
+      gap: 0.8rem;
+    }
+
+    .message-preview {
+      color: #dbeafe;
+      white-space: pre-wrap;
+      line-height: 1.45;
+      overflow-wrap: anywhere;
     }
 
     dialog {
@@ -571,6 +639,10 @@
       .user-chip {
         align-self: flex-start;
       }
+
+      .communication-grid {
+        grid-template-columns: 1fr;
+      }
     }
 
     @media (max-width: 640px) {
@@ -659,6 +731,7 @@
           <option value="con_deuda">Con deuda</option>
           <option value="al_dia">Al día</option>
           <option value="criticos">Críticos (2+ períodos)</option>
+          <option value="sin_telefono">Sin teléfono</option>
         </select>
       </div>
 
@@ -723,13 +796,17 @@
       </div>
     </div>
 
+    <div class="summary-strip" id="segmentSummary" style="padding:0 1.3rem 1rem;"></div>
+
     <div class="table-responsive">
       <table>
         <thead>
           <tr>
             <th>Cliente</th>
             <th>Estado</th>
+            <th>Prioridad</th>
             <th>Total adeudado</th>
+            <th>Total cobrado</th>
             <th>Períodos adeudados</th>
             <th>Último período cobrado</th>
             <th>Último pago</th>
@@ -737,7 +814,7 @@
           </tr>
         </thead>
         <tbody id="cuentasTableBody">
-          <tr class="loading-row"><td colspan="7">Cargando cuenta corriente…</td></tr>
+          <tr class="loading-row"><td colspan="9">Cargando cuenta corriente…</td></tr>
         </tbody>
       </table>
     </div>
@@ -770,7 +847,7 @@
           </tr>
         </thead>
         <tbody id="detalleTableBody">
-          <tr class="loading-row"><td colspan="6">Sin detalle seleccionado.</td></tr>
+          <tr class="loading-row"><td colspan="7">Sin detalle seleccionado.</td></tr>
         </tbody>
       </table>
     </div>
@@ -779,6 +856,52 @@
   <div class="modal-footer">
     <button class="btn" type="button" id="btnGoToAlquileres">Ir a alquileres</button>
     <button class="btn btn-primary" type="button" id="btnCloseDetalleFooter">Cerrar</button>
+  </div>
+</dialog>
+
+<dialog id="comunicacionModal">
+  <div class="modal-header">
+    <div>
+      <div style="font-size:1rem; font-weight:700;" id="comunicacionTitle">Comunicación al cliente</div>
+      <div class="text-subtle" id="comunicacionSubtitle">Vista previa editable</div>
+    </div>
+    <button class="btn btn-icon btn-sm" type="button" id="btnCloseComunicacion">✕</button>
+  </div>
+
+  <div class="modal-body">
+    <div class="communication-grid">
+      <div class="communication-panel">
+        <div class="summary-strip" id="comunicacionStats"></div>
+
+        <div class="field">
+          <label for="mensajeTipoSelect">Tipo de mensaje</label>
+          <select id="mensajeTipoSelect">
+            <option value="saldo">Saldo pendiente</option>
+            <option value="recordatorio">Recordatorio amable</option>
+            <option value="detalle">Detalle de cuenta</option>
+            <option value="al_dia">Confirmación al día</option>
+          </select>
+        </div>
+
+        <div class="communication-panel">
+          <div class="text-subtle">Vista rápida</div>
+          <div class="message-preview" id="mensajePreview"></div>
+        </div>
+      </div>
+
+      <div class="communication-panel">
+        <div class="field">
+          <label for="mensajeTextarea">Mensaje editable</label>
+          <textarea id="mensajeTextarea"></textarea>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-footer">
+    <button class="btn" type="button" id="btnCopyMessage">Copiar mensaje</button>
+    <a class="btn" href="#" target="_blank" rel="noopener" id="btnOpenWhatsapp">Abrir WhatsApp</a>
+    <button class="btn btn-primary" type="button" id="btnSendAutomatic">Enviar automático</button>
   </div>
 </dialog>
 
@@ -796,6 +919,8 @@
   let visibleAccounts = [];
   let searchText = '';
   let detailSelected = null;
+  let communicationSelected = null;
+  const communicationLog = new Map();
   let isReloading = false;
 
   const currencyFmt = new Intl.NumberFormat('es-AR', {
@@ -832,6 +957,19 @@
     } catch {
       return null;
     }
+  }
+
+  function normalizeWhatsappPhone(value) {
+    let digits = String(value || '').replace(/\D+/g, '');
+    digits = digits.replace(/^0+/, '');
+    if (digits.length === 10) digits = '549' + digits;
+    return digits;
+  }
+
+  function buildWhatsappUrl(phone, message) {
+    const digits = normalizeWhatsappPhone(phone);
+    if (!digits || digits.length < 10) return '';
+    return 'https://wa.me/' + digits + '?text=' + encodeURIComponent(message || '');
   }
 
   function showToast(msg, type = 'info') {
@@ -947,6 +1085,16 @@
     return { label: 'Crítico · ' + debtCount + ' períodos', cls: 'status-danger' };
   }
 
+  function describePriority(account) {
+    if (account.debtPeriods.length >= 3) {
+      return { label: 'Alta', cls: 'status-danger', note: 'Contactar hoy' };
+    }
+    if (account.debtPeriods.length >= 1 || account.totalAdeudado > 0) {
+      return { label: 'Media', cls: 'status-warning', note: 'Seguimiento' };
+    }
+    return { label: 'Baja', cls: 'status-ok', note: 'Control' };
+  }
+
   function getSearchHaystack(account) {
     return [
       account.cliente_nombre,
@@ -964,6 +1112,30 @@
       label += ' · ' + currencyFmt.format(account.lastPaymentAmount);
     }
     return label;
+  }
+
+  function getLastCommunicationLabel(account) {
+    const item = communicationLog.get(String(account.key));
+    if (!item) return 'Sin registro en esta sesión';
+    return item.label;
+  }
+
+  function renderSegmentSummary() {
+    const el = document.getElementById('segmentSummary');
+    if (!el) return;
+    const debtClients = visibleAccounts.filter(a => a.totalAdeudado > 0).length;
+    const criticalClients = visibleAccounts.filter(a => a.debtPeriods.length >= 2).length;
+    const noPhone = visibleAccounts.filter(a => !normalizeWhatsappPhone(a.telefono)).length;
+    const visibleDebt = visibleAccounts.reduce((acc, a) => acc + a.totalAdeudado, 0);
+
+    el.innerHTML = [
+      ['Deuda visible', currencyFmt.format(visibleDebt)],
+      ['Clientes a contactar', String(debtClients)],
+      ['Críticos', String(criticalClients)],
+      ['Sin teléfono', String(noPhone)]
+    ].map(([label, value]) => {
+      return '<div class="summary-item"><span>' + escapeHtml(label) + '</span><strong>' + escapeHtml(value) + '</strong></div>';
+    }).join('');
   }
 
   function setLoadingState(active) {
@@ -1220,6 +1392,7 @@
       if (estado === 'con_deuda' && account.totalAdeudado <= 0) return false;
       if (estado === 'al_dia' && account.totalAdeudado > 0) return false;
       if (estado === 'criticos' && account.debtPeriods.length < 2) return false;
+      if (estado === 'sin_telefono' && normalizeWhatsappPhone(account.telefono)) return false;
       if (term && !getSearchHaystack(account).includes(term)) return false;
       return true;
     });
@@ -1243,9 +1416,10 @@
 
     applyFilters();
     renderKpis();
+    renderSegmentSummary();
 
     if (!visibleAccounts.length) {
-      tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No hay clientes que coincidan con los filtros actuales.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="9" class="empty-state">No hay clientes que coincidan con los filtros actuales.</td></tr>';
       document.getElementById('summaryLine').textContent = 'Sin resultados visibles para el rango elegido.';
       document.getElementById('tableInfo').textContent = '0 clientes visibles.';
       return;
@@ -1253,6 +1427,7 @@
 
     const rowsHtml = visibleAccounts.map(account => {
       const status = describeStatus(account);
+      const priority = describePriority(account);
       const periodsHtml = account.debtPeriods.length
         ? account.debtPeriods.slice(0, 4).map((periodKey, idx) => {
             const cls = account.debtPeriods.length >= 2 ? 'danger' : 'warning';
@@ -1271,12 +1446,22 @@
             </div>
           </td>
           <td><span class="status-badge ${status.cls}">${escapeHtml(status.label)}</span></td>
+          <td>
+            <span class="status-badge ${priority.cls}">${escapeHtml(priority.label)}</span>
+            <div class="risk-line">${escapeHtml(priority.note)}</div>
+          </td>
           <td>${currencyFmt.format(account.totalAdeudado)}</td>
+          <td>${currencyFmt.format(account.totalCobrado)}</td>
           <td><div class="period-list">${periodsHtml}</div></td>
           <td>${escapeHtml(account.latestPaidPeriod ? periodHuman(account.latestPaidPeriod) : 'Sin cobros')}</td>
-          <td>${escapeHtml(computeLastPaymentLabel(account))}</td>
+          <td>
+            ${escapeHtml(computeLastPaymentLabel(account))}
+            <div class="risk-line">${escapeHtml(getLastCommunicationLabel(account))}</div>
+          </td>
           <td>
             <div class="row-actions">
+              <button class="btn btn-sm" type="button" data-action="comunicar">WhatsApp</button>
+              <button class="btn btn-sm" type="button" data-action="copiar-mensaje">Copiar</button>
               <button class="btn btn-sm" type="button" data-action="ver-detalle">Ver detalle</button>
             </div>
           </td>
@@ -1422,6 +1607,189 @@
     }
   }
 
+  function getRangeLabel() {
+    const range = buildPeriodKeysInRange();
+    if (!range.length) return 'rango seleccionado';
+    return periodHuman(range[0]) + ' a ' + periodHuman(range[range.length - 1]);
+  }
+
+  function buildAccountMessage(account, type = 'saldo') {
+    const cliente = account?.cliente_nombre || 'cliente';
+    const empresa = account?.empresa_nombre || currentUser?.empresa_nombre || currentUser?.empresa || 'la empresa';
+    const saldo = currencyFmt.format(account?.totalAdeudado || 0);
+    const deudaPeriodos = account?.debtPeriodsHuman?.length ? account.debtPeriodsHuman.join(', ') : 'sin períodos pendientes';
+    const ultimoPago = computeLastPaymentLabel(account);
+    const rango = getRangeLabel();
+
+    if (type === 'recordatorio') {
+      return [
+        'Hola ' + cliente + ', buen día.',
+        '',
+        'Te escribimos de ' + empresa + ' para recordarte que tu cuenta de alquileres registra un saldo pendiente de ' + saldo + '.',
+        'Períodos pendientes: ' + deudaPeriodos + '.',
+        '',
+        'Cuando puedas, avisanos si ya fue abonado o si necesitás que te enviemos el detalle.'
+      ].join('\n');
+    }
+
+    if (type === 'detalle') {
+      const detalle = (account?.periods || [])
+        .map(p => '- ' + periodHuman(p.periodKey) + ': ' + String(p.estado || 'pendiente') + ' · ' + currencyFmt.format(p.monto))
+        .join('\n');
+      return [
+        'Hola ' + cliente + ', te enviamos el detalle de tu cuenta de alquileres.',
+        '',
+        'Rango: ' + rango,
+        detalle || 'Sin movimientos en el rango seleccionado.',
+        '',
+        'Saldo pendiente: ' + saldo + '.',
+        'Último pago registrado: ' + ultimoPago + '.'
+      ].join('\n');
+    }
+
+    if (type === 'al_dia') {
+      return [
+        'Hola ' + cliente + ', te confirmamos que tu cuenta de alquileres figura al día en el rango ' + rango + '.',
+        '',
+        'Último pago registrado: ' + ultimoPago + '.',
+        'Gracias.'
+      ].join('\n');
+    }
+
+    return [
+      'Hola ' + cliente + ', te enviamos el resumen de tu cuenta de alquileres.',
+      '',
+      'Saldo pendiente: ' + saldo + '.',
+      'Períodos pendientes: ' + deudaPeriodos + '.',
+      'Último pago registrado: ' + ultimoPago + '.',
+      '',
+      'Por favor, respondé este mensaje si ya realizaste el pago o si necesitás el detalle.'
+    ].join('\n');
+  }
+
+  function updateCommunicationPreview() {
+    const textarea = document.getElementById('mensajeTextarea');
+    const preview = document.getElementById('mensajePreview');
+    const link = document.getElementById('btnOpenWhatsapp');
+    if (!textarea || !communicationSelected) return;
+
+    const message = textarea.value || '';
+    if (preview) preview.textContent = message;
+    if (link) {
+      const url = buildWhatsappUrl(communicationSelected.telefono, message);
+      link.href = url || '#';
+      link.classList.toggle('disabled', !url);
+      link.setAttribute('aria-disabled', url ? 'false' : 'true');
+    }
+  }
+
+  function fillCommunicationModal(account, type = 'saldo') {
+    communicationSelected = account;
+    const status = describeStatus(account);
+    const priority = describePriority(account);
+    const title = document.getElementById('comunicacionTitle');
+    const subtitle = document.getElementById('comunicacionSubtitle');
+    const stats = document.getElementById('comunicacionStats');
+    const typeSelect = document.getElementById('mensajeTipoSelect');
+    const textarea = document.getElementById('mensajeTextarea');
+
+    if (title) title.textContent = 'Comunicación · ' + account.cliente_nombre;
+    if (subtitle) subtitle.textContent = (account.telefono || 'sin teléfono') + ' · ' + status.label;
+    if (typeSelect) typeSelect.value = type;
+    if (stats) {
+      stats.innerHTML = [
+        ['Saldo', currencyFmt.format(account.totalAdeudado)],
+        ['Períodos', String(account.debtPeriods.length)],
+        ['Prioridad', priority.label],
+        ['Último contacto', getLastCommunicationLabel(account)]
+      ].map(([label, value]) => '<div class="summary-item"><span>' + escapeHtml(label) + '</span><strong>' + escapeHtml(value) + '</strong></div>').join('');
+    }
+    if (textarea) textarea.value = buildAccountMessage(account, type);
+    updateCommunicationPreview();
+  }
+
+  function openCommunication(accountKey, type = 'saldo') {
+    const account = aggregatedAccounts.find(item => String(item.key) === String(accountKey));
+    if (!account) {
+      showToast('No se encontró el cliente para comunicar', 'warning');
+      return;
+    }
+    fillCommunicationModal(account, account.totalAdeudado > 0 ? type : 'al_dia');
+    document.getElementById('comunicacionModal')?.showModal();
+  }
+
+  async function copyText(text) {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+    const temp = document.createElement('textarea');
+    temp.value = text;
+    temp.style.position = 'fixed';
+    temp.style.opacity = '0';
+    document.body.appendChild(temp);
+    temp.select();
+    document.execCommand('copy');
+    document.body.removeChild(temp);
+  }
+
+  async function copyAccountMessage(accountKey) {
+    const account = aggregatedAccounts.find(item => String(item.key) === String(accountKey));
+    if (!account) return;
+    await copyText(buildAccountMessage(account, account.totalAdeudado > 0 ? 'saldo' : 'al_dia'));
+    showToast('Mensaje copiado', 'success');
+  }
+
+  async function sendAutomaticCommunication() {
+    if (!communicationSelected) return;
+    const btn = document.getElementById('btnSendAutomatic');
+    const textarea = document.getElementById('mensajeTextarea');
+    const message = String(textarea?.value || '').trim();
+    if (!message) {
+      showToast('Escribí un mensaje antes de enviar', 'warning');
+      return;
+    }
+
+    try {
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Enviando…';
+      }
+      const range = buildPeriodKeysInRange();
+      const res = await authFetch(API_BASE + '/comunicacion', {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({
+          cliente_id: communicationSelected.cliente_id,
+          telefono: communicationSelected.telefono,
+          mensaje: message,
+          canal: 'whatsapp',
+          total_adeudado: communicationSelected.totalAdeudado,
+          periodos_adeudados: communicationSelected.debtPeriodsHuman,
+          rango_desde: range[0] || null,
+          rango_hasta: range[range.length - 1] || null,
+          empresa_id: esSuperAdmin && targetEmpresaId ? targetEmpresaId : undefined
+        })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'No se pudo enviar la comunicación');
+
+      const nowLabel = 'Enviado ' + new Date().toLocaleTimeString('es-AR', { timeZone: AR_TZ, hour: '2-digit', minute: '2-digit' });
+      communicationLog.set(String(communicationSelected.key), { label: nowLabel, data });
+      showToast(data.estado === 'duplicado_reciente' ? 'Mensaje ya estaba en cola recientemente' : 'Mensaje encolado para WhatsApp', 'success');
+      document.getElementById('comunicacionModal')?.close();
+      renderTable();
+    } catch (e) {
+      console.error('Error envío comunicación', e);
+      showToast(e.message || 'Error enviando comunicación', 'error');
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = 'Enviar automático';
+      }
+    }
+  }
+
   function exportVisibleCsv() {
     if (!visibleAccounts.length) {
       showToast('No hay clientes visibles para exportar', 'warning');
@@ -1480,7 +1848,7 @@
 
     const tbody = document.getElementById('cuentasTableBody');
     if (tbody) {
-      tbody.innerHTML = '<tr class="loading-row"><td colspan="7">Cargando cuenta corriente…</td></tr>';
+      tbody.innerHTML = '<tr class="loading-row"><td colspan="9">Cargando cuenta corriente…</td></tr>';
     }
 
     setLoadingState(true);
@@ -1501,7 +1869,7 @@
       aggregatedAccounts = [];
       visibleAccounts = [];
       if (tbody) {
-        tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No se pudo cargar la cuenta corriente. Revisá la conexión o el backend.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="9" class="empty-state">No se pudo cargar la cuenta corriente. Revisá la conexión o el backend.</td></tr>';
       }
       document.getElementById('summaryLine').textContent = 'Error cargando la cuenta corriente.';
       document.getElementById('tableInfo').textContent = '0 clientes.';
@@ -1535,8 +1903,14 @@
       if (!btn) return;
       const row = btn.closest('tr[data-account-key]');
       if (!row) return;
-      if (btn.getAttribute('data-action') === 'ver-detalle') {
-        renderDetail(row.getAttribute('data-account-key'));
+      const accountKey = row.getAttribute('data-account-key');
+      const action = btn.getAttribute('data-action');
+      if (action === 'ver-detalle') {
+        renderDetail(accountKey);
+      } else if (action === 'comunicar') {
+        openCommunication(accountKey);
+      } else if (action === 'copiar-mensaje') {
+        copyAccountMessage(accountKey);
       }
     });
 
@@ -1560,6 +1934,26 @@
     document.getElementById('btnGoToAlquileres')?.addEventListener('click', () => {
       window.location.href = '/pedidos/alquileres.html';
     });
+
+    const comunicacionModal = document.getElementById('comunicacionModal');
+    document.getElementById('btnCloseComunicacion')?.addEventListener('click', () => comunicacionModal.close());
+    document.getElementById('mensajeTipoSelect')?.addEventListener('change', ev => {
+      if (!communicationSelected) return;
+      fillCommunicationModal(communicationSelected, ev.target.value || 'saldo');
+    });
+    document.getElementById('mensajeTextarea')?.addEventListener('input', updateCommunicationPreview);
+    document.getElementById('btnCopyMessage')?.addEventListener('click', async () => {
+      const message = document.getElementById('mensajeTextarea')?.value || '';
+      await copyText(message);
+      showToast('Mensaje copiado', 'success');
+    });
+    document.getElementById('btnOpenWhatsapp')?.addEventListener('click', ev => {
+      if (!ev.currentTarget.href || ev.currentTarget.getAttribute('href') === '#') {
+        ev.preventDefault();
+        showToast('El cliente no tiene un teléfono válido', 'warning');
+      }
+    });
+    document.getElementById('btnSendAutomatic')?.addEventListener('click', sendAutomaticCommunication);
   }
 
   document.addEventListener('DOMContentLoaded', () => {

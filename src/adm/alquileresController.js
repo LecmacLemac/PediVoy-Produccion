@@ -108,6 +108,32 @@ function normalizarPeriodo(rawPeriodo) {
   return `${y}-${m}-01`;
 }
 
+function normalizarTelefonoWpp(rawTelefono) {
+  let digits = String(rawTelefono || '').replace(/\D+/g, '');
+  digits = digits.replace(/^0+/, '');
+  if (digits.length === 10) digits = '549' + digits;
+  return digits;
+}
+
+async function ensureAlquileresComunicacionesSchema() {
+  await query(`
+    CREATE TABLE IF NOT EXISTS alquileres_comunicaciones (
+      id BIGSERIAL PRIMARY KEY,
+      empresa_id INTEGER NOT NULL,
+      cliente_id INTEGER,
+      telefono TEXT,
+      canal TEXT NOT NULL DEFAULT 'whatsapp',
+      mensaje TEXT NOT NULL,
+      estado TEXT NOT NULL DEFAULT 'registrado',
+      wpp_outbox_id INTEGER,
+      meta JSONB DEFAULT '{}'::jsonb,
+      created_by INTEGER,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await query('CREATE INDEX IF NOT EXISTS idx_alq_com_empresa_cliente_fecha ON alquileres_comunicaciones (empresa_id, cliente_id, created_at DESC)');
+}
+
 // ==================================================================
 // 1. LISTAR ALQUILERES DEL PERÍODO
 // ==================================================================
@@ -419,6 +445,124 @@ export async function desmarcarAlquilerCobrado(req, res) {
   }
 }
 
+export async function enviarComunicacionAlquiler(req, res) {
+  try {
+    await ensureAlquileresComunicacionesSchema();
+
+    const empresaId = resolveEmpresaId(req);
+    if (!empresaId) {
+      return res.status(400).json({ error: 'Falta empresa.' });
+    }
+
+    const body = req.body || {};
+    const clienteId = Number(body.cliente_id || body.clienteId || 0);
+    const mensaje = String(body.mensaje || '').trim();
+    const canal = String(body.canal || 'whatsapp').trim().toLowerCase();
+
+    if (!Number.isInteger(clienteId) || clienteId <= 0) {
+      return res.status(400).json({ error: 'cliente_id inválido.' });
+    }
+    if (!mensaje || mensaje.length < 8) {
+      return res.status(400).json({ error: 'Mensaje demasiado corto.' });
+    }
+    if (mensaje.length > 1800) {
+      return res.status(400).json({ error: 'Mensaje demasiado largo.' });
+    }
+    if (canal !== 'whatsapp') {
+      return res.status(400).json({ error: 'Canal no soportado para esta acción.' });
+    }
+
+    const clienteRows = await query(
+      `
+      SELECT id, cliente, nombre, telefono
+      FROM puntos_entrega
+      WHERE empresa_id = $1
+        AND id = $2
+      LIMIT 1
+      `,
+      [empresaId, clienteId]
+    );
+
+    const cliente = clienteRows[0];
+    if (!cliente) {
+      return res.status(404).json({ error: 'Cliente no encontrado para esta empresa.' });
+    }
+
+    const telefono = normalizarTelefonoWpp(body.telefono || cliente.telefono);
+    if (!telefono || telefono.length < 10) {
+      return res.status(400).json({ error: 'El cliente no tiene un teléfono válido para WhatsApp.' });
+    }
+
+    const duplicateRows = await query(
+      `
+      SELECT id
+      FROM wpp_outbox
+      WHERE empresa_id = $1
+        AND telefono = $2
+        AND mensaje = $3
+        AND created_at > (NOW() - INTERVAL '10 minutes')
+      LIMIT 1
+      `,
+      [empresaId, telefono, mensaje]
+    );
+
+    let outboxId = duplicateRows[0]?.id || null;
+    let estado = outboxId ? 'duplicado_reciente' : 'encolado';
+
+    if (!outboxId) {
+      const outboxRows = await query(
+        `
+        INSERT INTO wpp_outbox (empresa_id, telefono, mensaje, status, created_at)
+        VALUES ($1, $2, $3, 'pending', NOW())
+        RETURNING id
+        `,
+        [empresaId, telefono, mensaje]
+      );
+      outboxId = outboxRows[0]?.id || null;
+    }
+
+    const meta = {
+      origen: 'cuenta_corriente_alquileres',
+      cliente: cliente.cliente || cliente.nombre || null,
+      total_adeudado: body.total_adeudado ?? null,
+      periodos_adeudados: body.periodos_adeudados ?? null,
+      rango_desde: body.rango_desde || null,
+      rango_hasta: body.rango_hasta || null
+    };
+
+    const logRows = await query(
+      `
+      INSERT INTO alquileres_comunicaciones
+        (empresa_id, cliente_id, telefono, canal, mensaje, estado, wpp_outbox_id, meta, created_by)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9)
+      RETURNING id, created_at
+      `,
+      [
+        empresaId,
+        clienteId,
+        telefono,
+        canal,
+        mensaje,
+        estado,
+        outboxId,
+        JSON.stringify(meta),
+        req.user?.id || null
+      ]
+    );
+
+    return res.json({
+      ok: true,
+      estado,
+      telefono,
+      outbox_id: outboxId,
+      comunicacion: logRows[0] || null
+    });
+  } catch (e) {
+    console.error('Error enviarComunicacionAlquiler:', e);
+    return res.status(500).json({ error: e.message || 'Error enviando comunicación' });
+  }
+}
+
 // ==================================================================
 // 5. GENERAR CARGOS DEL PERÍODO 
 // ==================================================================
@@ -556,6 +700,4 @@ export async function generarCargosPeriodo(req, res) {
     }
   }
 }
-
-
 
