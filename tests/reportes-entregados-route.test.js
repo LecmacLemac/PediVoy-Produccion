@@ -39,6 +39,9 @@ test('GET /api/reportes/entregados expone estado IA del ultimo comprobante asoci
       calls.push({ sql, params });
       assert.match(sql, /LEFT JOIN LATERAL/);
       assert.match(sql, /transferencia_ai_verificada/);
+      assert.match(sql, /transferencia_alias/);
+      assert.match(sql, /transferencia_titular/);
+      assert.match(sql, /empresa_nombre/);
       assert.deepEqual(params, [3, '2026-06-28', '2026-06-28', 'transferencia']);
       return [{
         id: 42,
@@ -46,6 +49,9 @@ test('GET /api/reportes/entregados expone estado IA del ultimo comprobante asoci
         telefono: '3510000000',
         monto: '1500',
         metodo_pago: 'transferencia',
+        empresa_nombre: 'AguaHidro.com',
+        transferencia_alias: 'Agua.Hidro',
+        transferencia_titular: 'MD',
         pagado: true,
         comprobante_transferencia_id: 77,
         transferencia_procesado: true,
@@ -64,6 +70,9 @@ test('GET /api/reportes/entregados expone estado IA del ultimo comprobante asoci
     assert.equal(body[0].comprobante_transferencia_id, 77);
     assert.equal(body[0].transferencia_ai_verificada, true);
     assert.equal(body[0].transferencia_estado_revision, 'aprobado');
+    assert.equal(body[0].empresa_nombre, 'AguaHidro.com');
+    assert.equal(body[0].transferencia_alias, 'Agua.Hidro');
+    assert.equal(body[0].transferencia_titular, 'MD');
   });
 
   assert.equal(calls.length, 1);

@@ -87,7 +87,7 @@
           <span class="${ai.className}" title="${esc(ai.title)}">${esc(ai.text)}</span>
         </td>
         <td class="numeric">
-          <a href="${waLink(t.telefono)}" target="_blank" rel="noopener" class="wa-btn" title="WhatsApp">
+          <a href="${waLink(t)}" target="_blank" rel="noopener" class="wa-btn" title="WhatsApp">
             ${waIcon}
           </a>
         </td>
@@ -180,8 +180,33 @@
     else modal.removeAttribute('open');
   }
 
-  function waLink(tel) {
-    return `https://wa.me/${String(tel).replace(/\D/g, '')}?text=Por Favor, Adjuntar Transferencia de Pago 👆🏻🙏🏻.`;
+  function buildTransferWhatsAppMessage(t) {
+    const cliente = String(t?.cliente || '').trim() || 'cliente';
+    const montoFmt = money(t?.monto || 0);
+    const alias = String(t?.transferencia_alias || '').trim() || 'Agua.Hidro';
+    const titular = String(t?.transferencia_titular || '').trim() || 'MD';
+    const empresa = String(t?.empresa_nombre || '').trim() || 'AguaHidro.com';
+
+    return [
+      '🏦 Pago por transferencia',
+      '',
+      `Hola ${cliente}, tu pedido fue marcado para pagar por transferencia (${montoFmt}).`,
+      '',
+      '💳 Datos para transferir:',
+      `Alias: ${alias}`,
+      `Titular: ${titular}`,
+      '',
+      'Por favor, adjuntá el comprobante de transferencia respondiendo a este mensaje para poder acreditar el pago.',
+      '',
+      '¡Muchas gracias!',
+      empresa,
+    ].join('\n');
+  }
+
+  function waLink(t) {
+    const phone = String(t?.telefono || '').replace(/\D/g, '');
+    const text = encodeURIComponent(buildTransferWhatsAppMessage(t));
+    return `https://wa.me/${phone}?text=${text}`;
   }
 
   function renderTransferModal() {

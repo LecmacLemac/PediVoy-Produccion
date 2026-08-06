@@ -70,6 +70,11 @@ export function createReportesRouter({
           p.cantidad_entregada,
           p.chofer_id,
           c.nombre AS chofer_nombre,
+          e.nombre AS empresa_nombre,
+          cta.alias AS transferencia_alias,
+          cta.titular AS transferencia_titular,
+          cta.cbu AS transferencia_cbu,
+          cta.banco AS transferencia_banco,
           pe.zona_id,
           (CASE WHEN t.id IS NOT NULL THEN true ELSE false END) AS pagado,
           ct.id AS comprobante_transferencia_id,
@@ -86,8 +91,21 @@ export function createReportesRouter({
           ) AS transferencia_ai_verificada
         FROM pedidos p
         JOIN puntos_entrega pe ON p.punto_entrega_id = pe.id
+        LEFT JOIN empresas e ON e.id = p.empresa_id
         LEFT JOIN choferes c   ON p.chofer_id = c.id
         LEFT JOIN transferencias t ON t.pedido_id = p.id AND t.empresa_id = p.empresa_id
+        LEFT JOIN LATERAL (
+          SELECT
+            ctab.alias,
+            ctab.titular,
+            ctab.cbu,
+            ctab.banco
+          FROM empresa_cuentas_bancarias ctab
+          WHERE ctab.empresa_id = p.empresa_id
+            AND ctab.activa = TRUE
+          ORDER BY ctab.prioridad DESC, ctab.id ASC
+          LIMIT 1
+        ) cta ON TRUE
         LEFT JOIN LATERAL (
           SELECT
             cti.id,
