@@ -4,6 +4,10 @@ function getVerifyToken() {
   return String(process.env.WHATSAPP_CLOUD_VERIFY_TOKEN || '').trim();
 }
 
+function shouldLogPayload() {
+  return process.env.WHATSAPP_CLOUD_LOG_PAYLOAD === '1';
+}
+
 export function createWhatsAppCloudWebhookRouter({ logger = console } = {}) {
   const router = express.Router();
 
@@ -33,6 +37,10 @@ export function createWhatsAppCloudWebhookRouter({ logger = console } = {}) {
       object: req.body?.object || null,
       entries: Array.isArray(req.body?.entry) ? req.body.entry.length : 0,
     });
+
+    if (shouldLogPayload()) {
+      logger.info('[whatsapp-cloud] payload', req.body);
+    }
 
     return res.status(200).json({ ok: true });
   });

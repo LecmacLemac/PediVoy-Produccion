@@ -39,6 +39,8 @@ services:
         sync: false
       - key: WHATSAPP_CLOUD_VERIFY_TOKEN
         sync: false
+      - key: WHATSAPP_CLOUD_LOG_PAYLOAD
+        value: "0"
 
 databases:
   - name: pedivoy-db-staging
