@@ -35,6 +35,7 @@ import { createReferentePortalRouter } from './referentePortal.js';
 import { createAnalyticsRouter } from './analytics.js';
 import { createCallCampaignsRouter } from './callCampaigns.js';
 import { createCallsRouter } from './calls.js';
+import { createWhatsAppCloudWebhookRouter } from './whatsappCloudWebhook.js';
 import { trackingPublicRouter } from '../trackingPublic.js';
 
 export function mountApiModules(app, deps) {
@@ -88,6 +89,7 @@ export function mountApiModules(app, deps) {
 
   app.use('/api/admin/licencia', createLicenciasMpRouter({ crearPreferenciaLicencia }));
   app.use('/api/webhooks', createMercadoPagoWebhookRouter({ obtenerPago }));
+  app.use('/api/webhooks/whatsapp', createWhatsAppCloudWebhookRouter());
   app.use('/api/admin/prompts', createPromptsGlobalesRouter());
 
   app.use(
