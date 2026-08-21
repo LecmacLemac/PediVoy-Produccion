@@ -173,3 +173,44 @@ test('PUT /api/gastos conserva producto y depósito existentes si el panel no lo
   assert.equal(updates[0][8], 11);
   assert.equal(updates[0][9], 5);
 });
+
+test('GET /api/gastos filtra por depósito y respeta límite solicitado', async () => {
+  let selectCall = null;
+  const { app, cleanup } = await buildGastosApp({
+    query: async (sql, params = []) => {
+      if (isSchemaQuery(sql)) return [];
+      if (sql.includes('FROM gastos_repartidor g')) {
+        selectCall = { sql, params };
+        return [{
+          id: 91,
+          empresa_id: 3,
+          chofer_id: 7,
+          deposito_id: 5,
+          deposito_nombre: 'Depósito Centro',
+          fecha: '2026-08-21',
+          tipo: 'combustible',
+          descripcion: 'YPF',
+          monto: '15000.00',
+        }];
+      }
+      throw new Error(`Consulta inesperada: ${sql}`);
+    },
+  });
+
+  try {
+    await withServer(app, async (baseUrl) => {
+      const resp = await fetch(`${baseUrl}/api/gastos?deposito_id=5&limit=500`);
+      assert.equal(resp.status, 200);
+      const rows = await resp.json();
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0].deposito_nombre, 'Depósito Centro');
+    });
+  } finally {
+    await cleanup();
+  }
+
+  assert.ok(selectCall);
+  assert.match(selectCall.sql, /COALESCE\(g\.deposito_id, md\.deposito_id\) =/);
+  assert.match(selectCall.sql, /LIMIT \$/);
+  assert.deepEqual(selectCall.params, [3, 5, 500]);
+});

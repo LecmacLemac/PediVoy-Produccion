@@ -126,6 +126,33 @@
       padding: 0.35rem 0.7rem;
       font-size: 0.8rem;
     }
+    .breakdown-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 0.65rem;
+      margin-top: 0.9rem;
+    }
+    .breakdown-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 0.75rem;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: rgba(15,23,42,0.64);
+      padding: 0.65rem 0.8rem;
+      min-width: 0;
+    }
+    .breakdown-item span {
+      color: var(--muted);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .breakdown-item strong {
+      color: #fff;
+      white-space: nowrap;
+    }
 
     /* FORM GRID */
     .grid-form {
@@ -220,6 +247,7 @@
       .flex-between { flex-direction: column; align-items: stretch; }
       .table-responsive th, .table-responsive td { padding: 0.7rem 0.75rem; font-size: 0.82rem; }
       .summary-grid { grid-template-columns: 1fr 1fr; }
+      .breakdown-grid { grid-template-columns: 1fr; }
     }
     @media (max-width: 640px) {
       .grid-form { grid-template-columns: minmax(0,1fr); }
@@ -340,6 +368,7 @@
         </div>
       </div>
       <div id="summaryInsights" class="insight-row"></div>
+      <div id="depositoBreakdown" class="breakdown-grid"></div>
     </section>
     
     <!-- FILTROS -->
@@ -347,11 +376,13 @@
       <div class="flex-between" style="margin-bottom: 0.75rem;">
         <div>
           <h3>🔍 Filtros</h3>
-          <p class="muted">Filtrá por fecha, empresa y chofer</p>
+          <p class="muted">Filtrá por fecha, empresa, chofer y depósito</p>
         </div>
         <div class="btn-group" style="margin-top: 0;">
           <button type="button" id="btnHoy" class="btn-secondary" style="padding:0.35rem 0.9rem; font-size:0.8rem">Hoy</button>
           <button type="button" id="btn30" class="btn-secondary" style="padding:0.35rem 0.9rem; font-size:0.8rem">Últimos 30 días</button>
+          <button type="button" id="btnMes" class="btn-secondary" style="padding:0.35rem 0.9rem; font-size:0.8rem">Mes actual</button>
+          <button type="button" id="btnMesAnt" class="btn-secondary" style="padding:0.35rem 0.9rem; font-size:0.8rem">Mes anterior</button>
         </div>
       </div>
 
@@ -363,6 +394,12 @@
         <div id="boxChoferFilter" hidden>
           <label>Chofer</label>
           <select id="choferFilter">
+            <option value="">Todos</option>
+          </select>
+        </div>
+        <div>
+          <label>Depósito</label>
+          <select id="depositoFilter">
             <option value="">Todos</option>
           </select>
         </div>
@@ -485,7 +522,9 @@
             <option value="50" selected>50</option>
             <option value="100">100</option>
             <option value="200">200</option>
+            <option value="500">500</option>
           </select>
+          <button type="button" id="btnExportCsv" class="btn-secondary" style="padding:0.45rem 0.8rem; font-size:0.82rem;">Exportar CSV</button>
           <span class="role-badge" id="totalLabel">Cargando...</span>
         </div>
       </div>
@@ -499,7 +538,7 @@
               <th>Tipo</th>
               <th>Descripción</th>
               <th class="text-right">Monto</th>
-              <th id="thEmpresa" hidden>Depósito</th>
+              <th id="thDeposito">Depósito</th>
               <th id="thChofer" hidden>Chofer</th>
               <th style="text-align:center">Comp.</th>
               <th style="text-align:right">Acciones</th>
@@ -615,6 +654,7 @@
     const frmFiltro     = $('#frmFiltro');
     const empresaFilter = $('#empresaFilter');
     const choferFilter  = $('#choferFilter');
+    const depositoFilter = $('#depositoFilter');
     const tipoFilter    = $('#tipoFilter');
     const inputFrom     = $('#from');
     const inputTo       = $('#to');
@@ -662,6 +702,7 @@
     let deleteBusy = false;
     let depositosCreate = [];
     let depositosEdit = [];
+    let depositosFilter = [];
     let productosCreate = [];
     let productosEdit = [];
 
@@ -702,6 +743,13 @@
       const has = Array.isArray(depositos) && depositos.length > 0;
       const emptyLabel = has ? 'Seleccionar depósito' : 'Sin depósitos habilitados';
       selectEl.innerHTML = `<option value="">${emptyLabel}</option>` +
+        (has ? depositos.map(d => `<option value="${Number(d.id)}">${esc(d.nombre)}</option>`).join('') : '');
+    }
+
+    function renderDepositosFiltro(selectEl, depositos) {
+      if (!selectEl) return;
+      const has = Array.isArray(depositos) && depositos.length > 0;
+      selectEl.innerHTML = `<option value="">Todos</option>` +
         (has ? depositos.map(d => `<option value="${Number(d.id)}">${esc(d.nombre)}</option>`).join('') : '');
     }
 
@@ -778,6 +826,26 @@
       }
       depositosCreate = await fetchDepositosFor({ empresaId, choferId });
       renderDepositos(depositoCreateSel, depositosCreate);
+    }
+
+    async function loadDepositosFilter() {
+      let empresaId = null;
+      let choferId = null;
+      if (isSuper) {
+        const empVal = empresaFilter?.value || '';
+        empresaId = empVal && empVal !== 'orphans' ? Number(empVal) : null;
+        choferId = Number(choferFilter?.value || 0) || null;
+      } else if (isUser) {
+        choferId = Number(choferFilter?.value || 0) || null;
+      } else if (isRepartidor) {
+        choferId = myChoferId || null;
+      }
+      const current = depositoFilter ? depositoFilter.value : '';
+      depositosFilter = await fetchDepositosFor({ empresaId, choferId });
+      renderDepositosFiltro(depositoFilter, depositosFilter);
+      if (depositoFilter && current && depositosFilter.some(d => String(d.id) === String(current))) {
+        depositoFilter.value = current;
+      }
     }
 
     async function loadProductosCreate() {
@@ -882,6 +950,7 @@
       const from = inputFrom.value;
       const to   = inputTo.value;
       const chId = (isSuper || isUser) ? choferFilter.value : '';
+      const depId = depositoFilter ? depositoFilter.value : '';
       const tVal = tipoFilter ? tipoFilter.value : '';
       const qVal = (qFilter ? qFilter.value : '').trim().toLowerCase();
       const limitVal = Math.max(1, Number(limitFilter ? limitFilter.value : 50) || 50);
@@ -890,6 +959,11 @@
       if (from) baseParams.push(`from=${encodeURIComponent(from)}`);
       if (to)   baseParams.push(`to=${encodeURIComponent(to)}`);
       if (chId) baseParams.push(`chofer_id=${encodeURIComponent(chId)}`);
+      if (depId) baseParams.push(`deposito_id=${encodeURIComponent(depId)}`);
+      if (limitVal) baseParams.push(`limit=${encodeURIComponent(limitVal)}`);
+      if (isSuper && empresaFilter.value && empresaFilter.value !== 'orphans') {
+        baseParams.push(`empresa_id=${encodeURIComponent(empresaFilter.value)}`);
+      }
 
       let url = '/api/gastos';
       const qs = baseParams.length ? ('?' + baseParams.join('&')) : '';
@@ -918,7 +992,8 @@
             const desc = String(r?.descripcion || '').toLowerCase();
             const tipo = String(r?.tipo || '').toLowerCase();
             const chofer = String(r?.chofer_nombre || '').toLowerCase();
-            return desc.includes(qVal) || tipo.includes(qVal) || chofer.includes(qVal);
+            const deposito = String(r?.deposito_nombre || '').toLowerCase();
+            return desc.includes(qVal) || tipo.includes(qVal) || chofer.includes(qVal) || deposito.includes(qVal);
           });
         }
 
@@ -950,7 +1025,7 @@
         const fecha = formatDateDB(g.fecha);
         const depositoTxt = g?.deposito_nombre || (g?.deposito_id ? `#${Number(g.deposito_id)}` : '-');
 
-        const empCol = isSuper ? `<td>${esc(depositoTxt)}</td>` : '';
+        const depCol = `<td>${esc(depositoTxt)}</td>`;
         const chCol  = (isSuper || isUser) ? `<td>${esc(g.chofer_nombre || ('#'+g.chofer_id))}</td>` : '';
         
         const actions = canEdit ? `
@@ -965,7 +1040,7 @@
             <td><span class="badge ${getBadgeClass(g.tipo)}">${esc(g.tipo)}</span></td>
             <td>${esc(g.descripcion || '-')}</td>
             <td class="text-right" style="font-weight:600;">${money(g.monto)}</td>
-            ${empCol}
+            ${depCol}
             ${chCol}
             <td style="text-align:center">${comp}</td>
             <td style="text-align:right">${actions}</td>
@@ -977,7 +1052,8 @@
         ? html 
         : '<tr><td colspan="9" style="text-align:center; padding:2rem; color:var(--muted)">No se encontraron gastos.</td></tr>';
       
-      $('#thEmpresa').hidden = !isSuper;
+      const thDeposito = $('#thDeposito');
+      if (thDeposito) thDeposito.hidden = false;
       $('#thChofer').hidden  = !(isSuper || isUser);
       
       let label = `Total: ${money(total)}`;
@@ -990,6 +1066,7 @@
       const avg = count ? total / count : 0;
       const byType = new Map();
       const byDriver = new Map();
+      const byDeposito = new Map();
 
       rows.forEach(g => {
         const amount = Number(g.monto || 0);
@@ -998,10 +1075,14 @@
 
         const driver = g.chofer_nombre || (g.chofer_id ? `#${g.chofer_id}` : 'Sin chofer');
         byDriver.set(driver, (byDriver.get(driver) || 0) + amount);
+
+        const deposito = g.deposito_nombre || (g.deposito_id ? `#${g.deposito_id}` : 'Sin depósito');
+        byDeposito.set(deposito, (byDeposito.get(deposito) || 0) + amount);
       });
 
       const topType = Array.from(byType.entries()).sort((a, b) => b[1] - a[1])[0];
       const topDriver = Array.from(byDriver.entries()).sort((a, b) => b[1] - a[1])[0];
+      const topDepositos = Array.from(byDeposito.entries()).sort((a, b) => b[1] - a[1]).slice(0, 6);
       const range = inputFrom.value && inputTo.value
         ? `${inputFrom.value} → ${inputTo.value}`
         : 'Rango sin completar';
@@ -1016,12 +1097,61 @@
 
       const insights = [];
       if (topDriver && (isSuper || isUser)) insights.push(`Chofer con más gasto: ${topDriver[0]} (${money(topDriver[1])})`);
+      if (topDepositos[0]) insights.push(`Depósito con más gasto: ${topDepositos[0][0]} (${money(topDepositos[0][1])})`);
       if (tipoFilter?.value) insights.push(`Tipo filtrado: ${tipoLabel(tipoFilter.value)}`);
+      if (depositoFilter?.value) {
+        const dep = depositosFilter.find(d => String(d.id) === String(depositoFilter.value));
+        insights.push(`Depósito filtrado: ${dep?.nombre || `#${depositoFilter.value}`}`);
+      }
       if (qFilter?.value?.trim()) insights.push(`Búsqueda: "${qFilter.value.trim()}"`);
       if (isSuper && empresaFilter?.value === 'orphans') insights.push('Mostrando gastos huérfanos');
       if (!rows.length) insights.push('Sin gastos para los filtros actuales');
 
       $('#summaryInsights').innerHTML = insights.map(txt => `<span class="insight-pill">${esc(txt)}</span>`).join('');
+      $('#depositoBreakdown').innerHTML = topDepositos.map(([name, amount]) => `
+        <div class="breakdown-item">
+          <span title="${esc(name)}">${esc(name)}</span>
+          <strong>${money(amount)}</strong>
+        </div>
+      `).join('');
+    }
+
+    function csvCell(value) {
+      return `"${String(value == null ? '' : value).replace(/"/g, '""')}"`;
+    }
+
+    function exportCsv() {
+      const rows = window.__gastos || [];
+      if (!rows.length) {
+        alert('No hay gastos para exportar con los filtros actuales');
+        return;
+      }
+
+      const header = ['ID', 'Fecha', 'Tipo', 'Descripción', 'Monto', 'Depósito', 'Chofer', 'Comprobante'];
+      const lines = [header.map(csvCell).join(',')];
+      rows.forEach(g => {
+        lines.push([
+          g.id,
+          formatDateDB(g.fecha),
+          tipoLabel(g.tipo),
+          g.descripcion || '',
+          Number(g.monto || 0).toFixed(2),
+          g.deposito_nombre || (g.deposito_id ? `#${g.deposito_id}` : ''),
+          g.chofer_nombre || (g.chofer_id ? `#${g.chofer_id}` : ''),
+          g.comprobante_path ? `/Gastos/${g.comprobante_path}` : ''
+        ].map(csvCell).join(','));
+      });
+
+      const blob = new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const stamp = new Date().toISOString().slice(0, 10);
+      a.href = url;
+      a.download = `gastos-${stamp}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
     }
 
     // ====== CRUD ======
@@ -1370,6 +1500,21 @@
       inputTo.value   = dateOnlyStr(new Date()); 
       loadGastos(); 
     };
+    $('#btnMes').onclick = () => {
+      const now = new Date();
+      inputFrom.value = dateOnlyStr(new Date(now.getFullYear(), now.getMonth(), 1));
+      inputTo.value = dateOnlyStr(new Date(now.getFullYear(), now.getMonth() + 1, 0));
+      loadGastos();
+    };
+    $('#btnMesAnt').onclick = () => {
+      const now = new Date();
+      inputFrom.value = dateOnlyStr(new Date(now.getFullYear(), now.getMonth() - 1, 1));
+      inputTo.value = dateOnlyStr(new Date(now.getFullYear(), now.getMonth(), 0));
+      loadGastos();
+    };
+
+    const btnExportCsv = $('#btnExportCsv');
+    if (btnExportCsv) btnExportCsv.addEventListener('click', exportCsv);
 
     const btnClearFilters = $('#btnClearFilters');
     if (btnClearFilters) {
@@ -1380,9 +1525,11 @@
         if (empresaFilter) empresaFilter.value = '';
         if (choferFilter) choferFilter.value = '';
         if (tipoFilter) tipoFilter.value = '';
+        if (depositoFilter) depositoFilter.value = '';
         if (qFilter) qFilter.value = '';
         if (limitFilter) limitFilter.value = '50';
         if (isSuper) await loadChoferes('');
+        await loadDepositosFilter();
         await loadDepositosCreate();
         loadGastos();
       });
@@ -1394,6 +1541,7 @@
         if(isSuper && val && val !== 'orphans') {
            $('#empresaCreate').value = val;
         }
+        await loadDepositosFilter();
         await loadDepositosCreate();
         await loadProductosCreate();
         loadGastos();
@@ -1436,7 +1584,11 @@
       });
     }
     
-    choferFilter.addEventListener('change', loadGastos);
+    choferFilter.addEventListener('change', async () => {
+      await loadDepositosFilter();
+      loadGastos();
+    });
+    if (depositoFilter) depositoFilter.addEventListener('change', loadGastos);
     if (tipoFilter) tipoFilter.addEventListener('change', loadGastos);
     if (qFilter) qFilter.addEventListener('input', loadGastos);
     if (limitFilter) limitFilter.addEventListener('change', loadGastos);
@@ -1482,6 +1634,7 @@
             await loadChoferes(null);
         }
 
+        await loadDepositosFilter();
         await loadProductosCreate();
         toggleFields();
         loadGastos();

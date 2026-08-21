@@ -224,7 +224,7 @@ export function createGastosRouter({
   router.get('/', authMiddleware, licenciaMiddleware, async (req, res) => {
     try {
       await ensureDepositoRefPromise;
-      const { from, to, chofer_id, empresa_id } = req.query || {};
+      const { from, to, chofer_id, empresa_id, deposito_id, limit } = req.query || {};
       const esSuperUser = isSuperFn(req);
       const esRepartidorUser = isRepartidorFn(req);
       const myEmpresa = getEmpresaIdFromTokenFn(req);
@@ -279,6 +279,11 @@ export function createGastosRouter({
         params.push(Number(chofer_id));
       }
 
+      if (deposito_id) {
+        sql += ` AND COALESCE(g.deposito_id, md.deposito_id) = $${idx++}`;
+        params.push(Number(deposito_id));
+      }
+
       if (from) {
         sql += ` AND g.fecha >= $${idx++}::date`;
         params.push(from.toString().slice(0, 10));
@@ -288,7 +293,9 @@ export function createGastosRouter({
         params.push(to.toString().slice(0, 10));
       }
 
-      sql += ` ORDER BY g.fecha DESC, g.id DESC LIMIT 200`;
+      const limitNum = Math.min(Math.max(Number(limit || 200) || 200, 1), 500);
+      sql += ` ORDER BY g.fecha DESC, g.id DESC LIMIT $${idx++}`;
+      params.push(limitNum);
 
       const rows = await dbQuery(sql, params);
       return res.json(rows);
