@@ -233,6 +233,48 @@
       color: var(--muted);
       font-size: 0.86rem;
     }
+    .retornables-summary-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 1rem;
+      margin-top: 1rem;
+    }
+    .retornables-summary-card {
+      margin-top: 1rem;
+      padding: 1rem;
+      border: 1px solid rgba(245, 158, 11, 0.28);
+      border-radius: 10px;
+      background: rgba(245, 158, 11, 0.08);
+    }
+    .retornables-summary-panel {
+      border: 1px solid rgba(245, 158, 11, 0.26);
+      border-radius: 10px;
+      background: rgba(15, 23, 42, 0.45);
+      padding: 0.9rem;
+      min-width: 0;
+    }
+    .retornables-summary-panel h4 {
+      font-size: 0.9rem;
+      margin-bottom: 0.7rem;
+    }
+    .retornables-list {
+      display: grid;
+      gap: 0.5rem;
+    }
+    .retornables-row {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 0.75rem;
+      padding: 0.55rem 0;
+      border-top: 1px solid rgba(148, 163, 184, 0.12);
+    }
+    .retornables-row:first-child { border-top: 0; padding-top: 0; }
+    .retornables-row strong { color: #fde68a; white-space: nowrap; }
+    .retornables-row small { color: var(--muted); display: block; margin-top: 0.15rem; }
+    @media (max-width: 768px) {
+      .retornables-summary-grid { grid-template-columns: 1fr; }
+    }
 
     /* MAPA */
     .mapbox { height: 65vh; width: 100%; border-radius: 12px; border: 1px solid var(--border); z-index: 1; }
@@ -635,6 +677,40 @@
       <div class="tile" style="margin-top:1rem; border-color:var(--brand); background:rgba(6,182,212,0.1)">
         <small style="color:var(--brand); font-weight:bold; letter-spacing:1px">A RENDIR (Efectivo - Gastos - Retiro)</small>
         <div class="num" id="rRendir" style="font-size:2rem">$ 0</div>
+      </div>
+
+      <div class="retornables-summary-card">
+        <div class="flex-bt" style="gap:0.75rem; align-items:flex-start; flex-wrap:wrap;">
+          <div>
+            <h3 style="margin:0;">Cuenta corriente de retornables</h3>
+            <small class="muted" id="retResumenMeta">Pedidos activos del día seleccionado.</small>
+          </div>
+          <button type="button" class="iconbtn ghost" onclick="refrescarResumenRetornables()">↻</button>
+        </div>
+        <div class="stats" style="margin-top:1rem;">
+          <div class="tile">
+            <small class="muted">A RETIRAR</small>
+            <div class="num" id="retKpiUnidades" style="color:#fde68a">0 u</div>
+          </div>
+          <div class="tile">
+            <small class="muted">CLIENTES</small>
+            <div class="num" id="retKpiClientes">0</div>
+          </div>
+          <div class="tile">
+            <small class="muted">PRODUCTOS</small>
+            <div class="num" id="retKpiProductos">0</div>
+          </div>
+        </div>
+        <div class="retornables-summary-grid">
+          <div class="retornables-summary-panel">
+            <h4>Por producto</h4>
+            <div id="retProductosList" class="retornables-list load-empty">Sin retornables pendientes.</div>
+          </div>
+          <div class="retornables-summary-panel">
+            <h4>Por cliente</h4>
+            <div id="retClientesList" class="retornables-list load-empty">Sin clientes con saldo.</div>
+          </div>
+        </div>
       </div>
 
       <div style="margin-top:2rem">

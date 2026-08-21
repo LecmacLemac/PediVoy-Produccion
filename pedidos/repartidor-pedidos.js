@@ -71,6 +71,9 @@ async function loadPedidos(){
     syncRoutePlanWithPedidos();
     renderCards();
     renderRoutePlanCard();
+    if (!document.getElementById('sec-resumen')?.hidden) {
+      calcResumen().catch((e) => console.error('Error actualizando resumen', e));
+    }
     return list;
   } catch(e){
     if (isAuthRedirectError(e)) return [];
@@ -252,6 +255,7 @@ function getRetornablesPendientes(pedido) {
   const rows = Array.isArray(pedido?.retornables_pendientes) ? pedido.retornables_pendientes : [];
   return rows
     .map((r) => ({
+      producto_id: Number(r?.producto_id || 0) || null,
       producto: r?.producto || r?.nombre || r?.producto_nombre || 'Retornable',
       saldo: Number(r?.saldo || 0),
     }))

@@ -457,6 +457,121 @@ async function loadStockRepartidor(){
 }
 
 // --- RESUMEN ---
+function formatRetornableQty(qty) {
+  const n = Number(qty || 0);
+  return Number.isInteger(n) ? String(n) : n.toLocaleString('es-AR', { maximumFractionDigits: 2 });
+}
+
+function getPedidoFechaResumen(pedido) {
+  return isoToLocalYMD(pedido?.fecha_entrega || pedido?.fecha);
+}
+
+function buildRetornablesRutaResumen(fecha) {
+  const byProduct = new Map();
+  const byClient = new Map();
+  let total = 0;
+
+  (Array.isArray(pedidos) ? pedidos : [])
+    .filter((pedido) => isPedidoActivoCarga(pedido) && getPedidoFechaResumen(pedido) === fecha)
+    .forEach((pedido) => {
+      const rows = getRetornablesPendientes(pedido);
+      if (!rows.length) return;
+
+      const clientKey = Number(pedido?.punto_entrega_id || 0) || `pedido:${pedido?.id || ''}`;
+      const client = byClient.get(clientKey) || {
+        cliente: pedido?.cliente || 'Cliente',
+        direccion: pedido?.direccion || '',
+        pedido_id: pedido?.id || null,
+        total: 0,
+        items: [],
+      };
+
+      rows.forEach((row) => {
+        const saldo = Number(row?.saldo || 0);
+        if (!Number.isFinite(saldo) || saldo <= 0) return;
+
+        const producto = row?.producto || 'Retornable';
+        const productKey = row?.producto_id ? `id:${Number(row.producto_id)}` : `name:${String(producto).toLowerCase()}`;
+        const product = byProduct.get(productKey) || { producto, total: 0, clientes: 0 };
+        product.total += saldo;
+        product.clientes += 1;
+        byProduct.set(productKey, product);
+
+        client.total += saldo;
+        client.items.push({ producto, saldo });
+        total += saldo;
+      });
+
+      if (client.total > 0) byClient.set(clientKey, client);
+    });
+
+  return {
+    total,
+    productos: Array.from(byProduct.values()).sort((a, b) => b.total - a.total || a.producto.localeCompare(b.producto, 'es')),
+    clientes: Array.from(byClient.values()).sort((a, b) => b.total - a.total || a.cliente.localeCompare(b.cliente, 'es')),
+  };
+}
+
+function renderResumenRetornables(fecha) {
+  const resumen = buildRetornablesRutaResumen(fecha);
+  const productosEl = $('#retProductosList');
+  const clientesEl = $('#retClientesList');
+  const totalEl = $('#retKpiUnidades');
+  const clientesKpiEl = $('#retKpiClientes');
+  const productosKpiEl = $('#retKpiProductos');
+  const metaEl = $('#retResumenMeta');
+
+  if (totalEl) totalEl.textContent = `${formatRetornableQty(resumen.total)} u`;
+  if (clientesKpiEl) clientesKpiEl.textContent = String(resumen.clientes.length);
+  if (productosKpiEl) productosKpiEl.textContent = String(resumen.productos.length);
+  if (metaEl) {
+    metaEl.textContent = resumen.total
+      ? 'Saldos pendientes de clientes con pedidos activos para la fecha seleccionada.'
+      : 'Sin saldos pendientes en pedidos activos de la fecha seleccionada.';
+  }
+
+  if (productosEl) {
+    if (!resumen.productos.length) {
+      productosEl.className = 'retornables-list load-empty';
+      productosEl.textContent = 'Sin retornables pendientes.';
+    } else {
+      productosEl.className = 'retornables-list';
+      productosEl.innerHTML = resumen.productos.map((r) => `
+        <div class="retornables-row">
+          <span>${esc(r.producto)}<small>${r.clientes} ${r.clientes === 1 ? 'cliente' : 'clientes'}</small></span>
+          <strong>${formatRetornableQty(r.total)} u</strong>
+        </div>
+      `).join('');
+    }
+  }
+
+  if (clientesEl) {
+    if (!resumen.clientes.length) {
+      clientesEl.className = 'retornables-list load-empty';
+      clientesEl.textContent = 'Sin clientes con saldo.';
+    } else {
+      clientesEl.className = 'retornables-list';
+      clientesEl.innerHTML = resumen.clientes.slice(0, 12).map((r) => {
+        const detalle = r.items.map((item) => `${formatRetornableQty(item.saldo)} ${item.producto}`).join(' · ');
+        return `
+          <div class="retornables-row">
+            <span>${esc(r.cliente)}${r.pedido_id ? ` <small>Pedido #${Number(r.pedido_id)} · ${esc(r.direccion || '-')}</small>` : ''}<small>${esc(detalle)}</small></span>
+            <strong>${formatRetornableQty(r.total)} u</strong>
+          </div>
+        `;
+      }).join('');
+    }
+  }
+
+  return resumen;
+}
+
+async function refrescarResumenRetornables() {
+  await loadPedidos();
+  await calcResumen();
+  toast('Resumen actualizado');
+}
+
 async function calcResumen(){
   const resDateEl = $('#resDate');
   const d = resDateEl?.value;
@@ -517,6 +632,13 @@ async function calcResumen(){
   });
 
   const detalleArt = Object.keys(prodMap).length ? Object.entries(prodMap).map(([nombre, q]) => `• ${q} u. ${nombre}`).join('\n') : '• (sin detalle)';
+  const retResumen = renderResumenRetornables(d);
+  const detalleRetornablesProducto = retResumen.productos.length
+    ? retResumen.productos.map((r) => `• ${formatRetornableQty(r.total)} u. ${r.producto} (${r.clientes} ${r.clientes === 1 ? 'cliente' : 'clientes'})`).join('\n')
+    : '• Sin retornables pendientes en pedidos activos.';
+  const detalleRetornablesCliente = retResumen.clientes.length
+    ? retResumen.clientes.slice(0, 8).map((r) => `• ${r.cliente}: ${r.items.map((item) => `${formatRetornableQty(item.saldo)} ${item.producto}`).join(' · ')}`).join('\n')
+    : '';
 
   let gas = 0, artsC = 0;
   let detalleGastos = '', detalleCarga = '';
@@ -565,6 +687,11 @@ async function calcResumen(){
 🧾 *MERCADERÍA*
 🔢 Tot. Artículos: ${artsV} u.
 ${detalleArt}
+
+♻️ *RETORNABLES A RETIRAR*
+Total pendiente: ${formatRetornableQty(retResumen.total)} u.
+${detalleRetornablesProducto}
+${detalleRetornablesCliente ? '\nClientes:\n' + detalleRetornablesCliente : ''}
 
 💸 *MOVIMIENTOS DE CAJA*
 + Ingreso Efvo: ${money(cash)}
