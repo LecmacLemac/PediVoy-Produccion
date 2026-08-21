@@ -17,6 +17,8 @@
     .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:space-between}
     button{background:var(--bg2);border:1px solid var(--border);color:#fff;border-radius:8px;padding:8px 10px;cursor:pointer}
     .pill{display:inline-block;padding:3px 8px;border-radius:99px;border:1px solid #22c55e;color:#22c55e;font-size:.75rem}
+    .super-only{display:none}
+    body:not([data-authorized="true"]) main{display:none}
     pre{white-space:pre-wrap;margin:0;background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:10px;color:#cbd5e1}
     @media (max-width: 768px){
       .container{padding:0 12px}
@@ -35,7 +37,7 @@
 <header>
   <nav class="container">
     <div><strong>MultiEmpresas</strong> <span id="roleBadge" style="font-size:.75rem;color:var(--brand)">Admin</span></div>
-    <ul class="menu"><li><a href="inicial.html">🚀 Inicio</a></li><li><a href="ejecutivo.html">Ejecutivo</a></li><li><a href="incidencias.html">Incidencias</a></li><li><a href="agentes.html" class="active">Agentes</a></li><li><a href="#" id="logout" style="color:var(--danger)">Salir</a></li></ul>
+    <ul class="menu"><li><a href="inicial.html">🚀 Inicio</a></li><li><a href="ejecutivo.html">Ejecutivo</a></li><li><a href="incidencias.html">Incidencias</a></li><li class="super-only"><a href="agentes.html" class="active">Agentes</a></li><li><a href="#" id="logout" style="color:var(--danger)">Salir</a></li></ul>
   </nav>
 </header>
 <main class="container">
@@ -57,6 +59,15 @@ async function loadMe(){
   const r=await authFetch('/api/me'); if(r.status===401) return location.href='/pedidos/login.html';
   const me=await r.json(); st.isSuper=String(me?.user?.role||'').toLowerCase()==='super'; st.empresaId=me?.user?.empresa_id||null;
   document.getElementById('roleBadge').textContent=st.isSuper?'SUPER ADMIN':'Admin';
+  document.querySelectorAll('.super-only').forEach(el=>{ el.style.display=st.isSuper?'':'none'; });
+  if(!st.isSuper){
+    document.body.dataset.authorized='false';
+    setStatus('Acceso exclusivo para super admin.',true);
+    alert('Esta pantalla es exclusiva para super admin.');
+    location.href='inicial.html';
+    return false;
+  }
+  document.body.dataset.authorized='true';
   if(st.isSuper){
     st.empresaId=null;
     const wrap=document.getElementById('empresaWrap'); wrap.style.display='block';
@@ -72,6 +83,7 @@ async function loadMe(){
     list.forEach(e=>{ const o=document.createElement('option'); o.value=String(Number(e.id)||''); o.textContent=`${e.id} · ${e.nombre}`; sel.appendChild(o); });
     sel.addEventListener('change', ()=>{ st.empresaId=sel.value?Number(sel.value):null; refreshAll(); });
   }
+  return true;
 }
 
 function copyText(t){ return navigator.clipboard.writeText(String(t||'')); }
@@ -120,7 +132,7 @@ async function refreshAll(){
 
 document.getElementById('btnRefresh').addEventListener('click',refreshAll);
 document.getElementById('logout').addEventListener('click',async (e)=>{e.preventDefault(); try{await authFetch('/api/logout',{method:'POST'});}catch{} location.href='/pedidos/login.html';});
-(async()=>{ await loadMe(); await refreshAll(); })();
+(async()=>{ if(await loadMe()) await refreshAll(); })();
 </script>
 </body>
 </html>

@@ -166,12 +166,13 @@ export function createSetupRouter(deps) {
     return Number.isFinite(ownEmpresaId) && ownEmpresaId > 0 ? ownEmpresaId : null;
   };
 
-  const requireSuperMarketing = (req, res, next) => {
+  const requireSuperAdmin = (req, res, next) => {
     if (String(req?.user?.role || '').toLowerCase() !== 'super') {
       return res.status(403).json({ error: 'Acceso exclusivo para super admin' });
     }
     return next();
   };
+  const requireSuperMarketing = requireSuperAdmin;
 
   const validateIncidenciaForeignKeys = async ({ empresaId, payload }) => {
     const b = payload || {};
@@ -2491,7 +2492,7 @@ export function createSetupRouter(deps) {
   }
 
   // GET /api/setup/fase3/agentes
-  router.get('/fase3/agentes', withAuth, async (req, res) => {
+  router.get('/fase3/agentes', withAuth, requireSuperAdmin, async (req, res) => {
     try {
       const empresaId = resolveEmpresaIdForSetup(req);
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
@@ -2531,7 +2532,7 @@ export function createSetupRouter(deps) {
   });
 
   // POST /api/setup/fase3/agentes/:id/accion
-  router.post('/fase3/agentes/:id/accion', withAuth, async (req, res) => {
+  router.post('/fase3/agentes/:id/accion', withAuth, requireSuperAdmin, async (req, res) => {
     try {
       const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });

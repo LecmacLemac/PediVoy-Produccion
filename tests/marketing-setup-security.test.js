@@ -53,6 +53,40 @@ test('marketing rechaza usuarios que no son super admin', async () => {
   assert.equal(queryCalls, 0);
 });
 
+test('panel de agentes rechaza usuarios que no son super admin', async () => {
+  let queryCalls = 0;
+  const result = await requestWithSetup({
+    role: 'admin',
+    path: '/fase3/agentes',
+    query: async () => {
+      queryCalls += 1;
+      return [];
+    },
+  });
+
+  assert.equal(result.status, 403);
+  assert.equal(result.json.error, 'Acceso exclusivo para super admin');
+  assert.equal(queryCalls, 0);
+});
+
+test('acciones de agentes rechazan usuarios que no son super admin', async () => {
+  let queryCalls = 0;
+  const result = await requestWithSetup({
+    role: 'admin',
+    path: '/fase3/agentes/8ff11c9c-a6f6-4caa-af41-ca3e5c765a34/accion',
+    method: 'POST',
+    body: { accion: 'run' },
+    query: async () => {
+      queryCalls += 1;
+      return [];
+    },
+  });
+
+  assert.equal(result.status, 403);
+  assert.equal(result.json.error, 'Acceso exclusivo para super admin');
+  assert.equal(queryCalls, 0);
+});
+
 test('preview de campaña no promueve contactos ni ejecuta envíos', async () => {
   const sqlCalls = [];
   const result = await requestWithSetup({

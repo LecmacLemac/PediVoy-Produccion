@@ -12,6 +12,7 @@
     nav{display:flex;justify-content:space-between;align-items:center}.menu{display:flex;gap:1rem;list-style:none;margin:0;padding:0}.menu a{color:var(--muted);text-decoration:none}.menu a.active,.menu a:hover{color:#fff}
     main{padding:1rem 0 3rem}.card{background:rgba(30,41,59,.7);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:12px}
     .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:.8rem}.kpi{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px}.kpi .l{font-size:.75rem;color:var(--muted);text-transform:uppercase}.kpi .v{font-size:1.2rem;font-weight:700}
+    .super-only{display:none}
 
     @media (max-width: 768px){
       .container{padding:0 12px}
@@ -28,7 +29,7 @@
 <header>
   <nav class="container">
     <div><strong>MultiEmpresas</strong> <span id="roleBadge" style="font-size:.75rem;color:var(--brand)">Admin</span></div>
-    <ul class="menu"><li><a href="inicial.html">🚀 Inicio</a></li><li><a href="comercial.html">Comercial</a></li><li><a href="compras.html">Compras</a></li><li><a href="tesoreria.html">Tesorería</a></li><li><a href="ejecutivo.html" class="active">Ejecutivo</a></li><li><a href="agentes.html">Agentes</a></li><li><a href="#" id="logout" style="color:var(--danger)">Salir</a></li></ul>
+    <ul class="menu"><li><a href="inicial.html">🚀 Inicio</a></li><li><a href="comercial.html">Comercial</a></li><li><a href="compras.html">Compras</a></li><li><a href="tesoreria.html">Tesorería</a></li><li><a href="ejecutivo.html" class="active">Ejecutivo</a></li><li class="super-only"><a href="agentes.html">Agentes</a></li><li><a href="#" id="logout" style="color:var(--danger)">Salir</a></li></ul>
   </nav>
 </header>
 <main class="container">
@@ -81,6 +82,7 @@ async function loadMe(){
   const r=await authFetch('/api/me'); if(r.status===401) return location.href='/pedidos/login.html';
   const me=await r.json(); st.isSuper=String(me?.user?.role||'').toLowerCase()==='super'; st.empresaId=me?.user?.empresa_id||null;
   document.getElementById('roleBadge').textContent=st.isSuper?'SUPER ADMIN':'Admin';
+  document.querySelectorAll('.super-only').forEach(el=>{ el.style.display=st.isSuper?'':'none'; });
   if(st.isSuper){ st.empresaId=null; const wrap=document.getElementById('empresaWrap'); wrap.style.display='block'; const sel=document.getElementById('empresaSelect');
     let list=[]; const r1=await authFetch('/api/admin/empresas-list'); if(r1.ok){const j=await r1.json().catch(()=>[]); list=Array.isArray(j)?j:(Array.isArray(j.data)?j.data:[]);} if(!list.length){const r2=await authFetch('/api/empresas'); if(r2.ok){const j2=await r2.json().catch(()=>[]); list=Array.isArray(j2)?j2:(Array.isArray(j2.data)?j2.data:[]);} }
     sel.innerHTML='<option value="">Seleccionar empresa</option>'; list.forEach(e=>{const o=document.createElement('option');o.value=String(Number(e.id)||'');o.textContent=`${e.id} · ${e.nombre}`;sel.appendChild(o);});

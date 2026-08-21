@@ -18,6 +18,7 @@
     table{width:100%;border-collapse:collapse}th,td{padding:8px;border-bottom:1px solid var(--border);font-size:.9rem}th{color:var(--muted);text-align:left}
     .modal{position:fixed;inset:0;background:rgba(2,6,23,.72);display:none;align-items:center;justify-content:center;padding:16px;z-index:100}
     .modal.open{display:flex}.modal-card{width:min(680px,96vw);background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:14px}
+    .super-only{display:none}
 
     @media (max-width: 768px){
       .container{padding:0 12px}
@@ -37,7 +38,7 @@
   <header>
     <div class="container" style="display:flex;justify-content:space-between;align-items:center">
       <div><strong>MultiEmpresas</strong> <span id="roleBadge" style="font-size:.75rem;color:var(--brand)">Admin</span></div>
-      <ul class="menu"><li><a href="inicial.html">🚀 Inicio</a></li><li><a href="ejecutivo.html">Ejecutivo</a></li><li><a href="incidencias.html" class="active">Incidencias</a></li><li><a href="agentes.html">Agentes</a></li><li><a href="#" id="logout" style="color:var(--danger)">Salir</a></li></ul>
+      <ul class="menu"><li><a href="inicial.html">🚀 Inicio</a></li><li><a href="ejecutivo.html">Ejecutivo</a></li><li><a href="incidencias.html" class="active">Incidencias</a></li><li class="super-only"><a href="agentes.html">Agentes</a></li><li><a href="#" id="logout" style="color:var(--danger)">Salir</a></li></ul>
     </div>
   </header>
 
@@ -147,6 +148,7 @@
       const r=await authFetch('/api/me'); if(r.status===401) return location.href='/pedidos/login.html';
       const me=await r.json(); st.isSuper=String(me?.user?.role||'').toLowerCase()==='super'; st.empresaId=me?.user?.empresa_id||null;
       document.getElementById('roleBadge').textContent=st.isSuper?'SUPER ADMIN':'Admin';
+      document.querySelectorAll('.super-only').forEach(el=>{ el.style.display=st.isSuper?'':'none'; });
       if(st.isSuper){ st.empresaId=null; const wrap=document.getElementById('empresaWrap');wrap.style.display='block'; const sel=document.getElementById('empresaSelect'); let list=[]; const r1=await authFetch('/api/admin/empresas-list'); if(r1.ok){const j=await r1.json().catch(()=>[]); list=Array.isArray(j)?j:(Array.isArray(j.data)?j.data:[]);} if(!list.length){const r2=await authFetch('/api/empresas'); if(r2.ok){const j2=await r2.json().catch(()=>[]); list=Array.isArray(j2)?j2:(Array.isArray(j2.data)?j2.data:[]);} } sel.innerHTML='<option value="">Seleccionar empresa</option>'; list.forEach(e=>{const o=document.createElement('option');o.value=String(Number(e.id)||'');o.textContent=`${e.id} · ${e.nombre}`;sel.appendChild(o);}); sel.addEventListener('change',()=>{st.empresaId=sel.value?Number(sel.value):null; refreshAll();}); }
     }
 
