@@ -5,6 +5,95 @@ function digitsOnly(v) {
   return String(v || '').replace(/\D+/g, '');
 }
 
+function normalizeText(v) {
+  return String(v || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '')
+    .trim();
+}
+
+function normalizeAlias(v) {
+  return normalizeText(v);
+}
+
+function normalizeCbu(v) {
+  return digitsOnly(v);
+}
+
+export function matchCuentaBancariaDestino(cuentas = [], data = {}) {
+  const aliasDestino = normalizeAlias(data.alias_destino || data.aliasDestino);
+  const cbuDestino = normalizeCbu(data.cbu_destino || data.cbuDestino);
+  const titularDestino = normalizeText(data.titular_destino || data.titularDestino);
+  const bancoDestino = normalizeText(data.banco_destino || data.bancoDestino);
+
+  let best = null;
+
+  for (const cuenta of Array.isArray(cuentas) ? cuentas : []) {
+    const cuentaAlias = normalizeAlias(cuenta.alias);
+    const cuentaCbu = normalizeCbu(cuenta.cbu);
+    const cuentaTitular = normalizeText(cuenta.titular);
+    const cuentaBanco = normalizeText(cuenta.banco);
+
+    const fuentes = [];
+    let score = 0;
+
+    if (cbuDestino && cuentaCbu && cbuDestino === cuentaCbu) {
+      score += 100;
+      fuentes.push('cbu');
+    }
+    if (aliasDestino && cuentaAlias && aliasDestino === cuentaAlias) {
+      score += 95;
+      fuentes.push('alias');
+    }
+    if (titularDestino && cuentaTitular && titularDestino === cuentaTitular) {
+      score += 55;
+      fuentes.push('titular');
+    }
+    if (bancoDestino && cuentaBanco && (bancoDestino.includes(cuentaBanco) || cuentaBanco.includes(bancoDestino))) {
+      score += 25;
+      fuentes.push('banco');
+    }
+
+    const confianza = Math.min(score, 100);
+    if (confianza <= 0) continue;
+
+    const candidate = {
+      cuenta,
+      cuenta_bancaria_id: Number(cuenta.id),
+      confianza,
+      fuente: fuentes.join('+'),
+      detalle: `Cuenta #${Number(cuenta.id)} detectada por ${fuentes.join(', ')}`
+    };
+
+    if (!best || candidate.confianza > best.confianza) best = candidate;
+  }
+
+  return best && best.confianza >= 70 ? best : null;
+}
+
+export async function resolverCuentaBancariaDestinoPg({ empresaId, banco_destino, alias_destino, cbu_destino, titular_destino }) {
+  const eid = Number(empresaId || 0);
+  if (!eid) return null;
+
+  const cuentas = await query(
+    `SELECT id, banco, alias, cbu, titular, prioridad
+     FROM empresa_cuentas_bancarias
+     WHERE empresa_id = $1
+       AND COALESCE(activa, TRUE) = TRUE
+     ORDER BY COALESCE(prioridad, 999), id`,
+    [eid]
+  );
+
+  return matchCuentaBancariaDestino(cuentas, {
+    banco_destino,
+    alias_destino,
+    cbu_destino,
+    titular_destino
+  });
+}
+
 // ============================================
 // 1. CHEQUEAR DUPLICADO (Validación de Seguridad)
 // ============================================

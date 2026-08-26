@@ -230,7 +230,7 @@
   <div class="filters-card">
     <div class="field" id="wrapEmpresa" style="display:none;">
       <label><i class="fa-solid fa-building"></i> Empresa (Super)</label>
-      <select id="fEmpresa" onchange="loadPagos()">
+      <select id="fEmpresa" onchange="onEmpresaFilterChange()">
         <option value="">Todas</option>
       </select>
     </div>
@@ -257,6 +257,13 @@
     <div class="field">
       <label><i class="fa-solid fa-truck"></i> Chofer</label>
       <select id="fChofer"><option value="">Todos</option></select>
+    </div>
+
+    <div class="field">
+      <label><i class="fa-solid fa-building-columns"></i> Cuenta bancaria</label>
+      <select id="fCuenta" onchange="loadPagos()">
+        <option value="">Todas</option>
+      </select>
     </div>
 
     <button class="btn btn-primary" onclick="loadPagos()">
@@ -363,6 +370,7 @@
   let currentBeforeId = null;
   let currentBeforeQrId = null;
   let currentBeforeMissingId = null;
+  let cuentasBancarias = [];
 
   // --- Inicialización ---
   $('#logout').onclick = async (ev) => {
@@ -397,9 +405,39 @@
     
     // 3. Sin fecha por defecto: mostrar últimos comprobantes disponibles
     $('#fFecha').value = '';
+    await loadCuentasBancarias();
     
     loadPagos(true);
   })();
+
+  function cuentaLabel(cuenta) {
+    const banco = cuenta?.banco || 'Cuenta';
+    const alias = cuenta?.alias || cuenta?.cbu || `#${Number(cuenta?.id || 0)}`;
+    const emp = cuenta?.empresa_id ? ` · Emp ${Number(cuenta.empresa_id)}` : '';
+    return `${banco} · ${alias}${emp}`;
+  }
+
+  async function loadCuentasBancarias() {
+    const empresa = $('#fEmpresa')?.value || '';
+    let url = '/api/transferencias/cuentas-bancarias';
+    if (empresa) url += `?empresa_id=${encodeURIComponent(empresa)}`;
+
+    const rows = await api(url);
+    cuentasBancarias = Array.isArray(rows) ? rows : [];
+    const current = $('#fCuenta')?.value || '';
+    const opts = [
+      '<option value="">Todas</option>',
+      '<option value="no_detectada">Sin detectar</option>',
+      ...cuentasBancarias.map(c => `<option value="${Number(c.id)}">${esc(cuentaLabel(c))}</option>`)
+    ];
+    $('#fCuenta').innerHTML = opts.join('');
+    if (current && opts.some(o => o.includes(`value="${esc(current)}"`))) $('#fCuenta').value = current;
+  }
+
+  async function onEmpresaFilterChange() {
+    await loadCuentasBancarias();
+    loadPagos(true);
+  }
 
   // --- Cargar Pagos corregido ---
   async function loadPagos(reset = true) {
@@ -407,6 +445,8 @@
     const estadoFiltro = $('#fEstado').value;
     const chofer = $('#fChofer').value;
     const empresa = $('#fEmpresa').value;
+    const cuenta = $('#fCuenta')?.value || '';
+    const hasCuentaFilter = !!cuenta;
 
     if (reset) {
       currentOffset = 0;
@@ -419,8 +459,8 @@
     }
 
     const wantsTransfers = !['qr', 'sin_comprobante'].includes(estadoFiltro);
-    const wantsQr = !['en_revision', 'orphan', 'transferencia', 'sin_comprobante'].includes(estadoFiltro);
-    const wantsMissingProof = ['', 'pendiente', 'transferencia', 'sin_comprobante'].includes(estadoFiltro);
+    const wantsQr = !hasCuentaFilter && !['en_revision', 'orphan', 'transferencia', 'sin_comprobante'].includes(estadoFiltro);
+    const wantsMissingProof = !hasCuentaFilter && ['', 'pendiente', 'transferencia', 'sin_comprobante'].includes(estadoFiltro);
     const requests = [];
 
     if (wantsTransfers) {
@@ -429,6 +469,7 @@
       if (!reset && currentBeforeId) url += `&before_id=${currentBeforeId}`;
       if(chofer) url += `&chofer_id=${chofer}`;
       if(empresa) url += `&empresa_id=${empresa}`;
+      if(cuenta) url += `&cuenta_bancaria_id=${encodeURIComponent(cuenta)}`;
       if(estadoFiltro === 'verificado' || estadoFiltro === 'pendiente') url += `&estado=${estadoFiltro}`;
       if(estadoFiltro === 'en_revision') url += `&estado_revision=en_revision`;
       requests.push(api(url).then(rows => normalizeTransferRows(Array.isArray(rows) ? rows : [])));
@@ -555,6 +596,7 @@
     $('#fEstado').value = '';
     $('#fChofer').value = '';
     if ($('#fEmpresa')) $('#fEmpresa').value = '';
+    if ($('#fCuenta')) $('#fCuenta').value = '';
     loadPagos(true);
     toast('Filtros limpiados');
   }
@@ -596,6 +638,21 @@
     }
     return `<span class="badge badge-warning"><i class="fa-solid fa-hourglass"></i> Pendiente</span>` +
       (riesgo > 0 ? ` <span class="badge badge-danger" title="Score de riesgo"><i class="fa-solid fa-shield-halved"></i> Riesgo ${riesgo}</span>` : '');
+  }
+
+  function cuentaDestinoHtml(t) {
+    if (t.source !== 'transferencia') return '';
+    const alias = t.cuenta_alias || t.alias_destino || '';
+    const banco = t.cuenta_banco || t.banco_destino || '';
+    const confianza = Number(t.cuenta_bancaria_confianza || 0);
+    const detectada = !!t.cuenta_bancaria_id;
+    const label = detectada
+      ? `${banco || 'Cuenta'} · ${alias || `#${Number(t.cuenta_bancaria_id)}`}`
+      : (banco || alias ? `${banco || 'Destino'} ${alias}` : 'Cuenta destino no detectada');
+    const color = detectada ? '#67e8f9' : '#fbbf24';
+    const icon = detectada ? 'fa-building-columns' : 'fa-circle-question';
+    const title = t.cuenta_bancaria_match_detalle || 'Cuenta destino inferida desde comprobante';
+    return `<span class="text-sub" title="${esc(title)}" style="color:${color}"><i class="fa-solid ${icon}"></i> ${esc(label)}${confianza ? ` · ${confianza}%` : ''}</span>`;
   }
 
   // --- Renderizar Tabla ---
@@ -655,6 +712,7 @@
             <div class="text-cell">
               <span class="text-main">${esc(t.display_origen || t.banco_origen || (esEfectivo ? 'Cobro en mano' : 'Banco?'))}</span>
               <span class="text-sub">Ref: ${esc(t.display_referencia || t.nro_operacion || '-')}</span>
+              ${cuentaDestinoHtml(t)}
               ${t.riesgo_flags ? `<span class="text-sub" style="color:#fbbf24">Riesgo: ${esc(t.riesgo_flags)}</span>` : ''}
               ${t.verified_reason ? `<span class="text-sub">Nota: ${esc(t.verified_reason)}</span>` : ''}
               ${t.verified_at ? `<span class="text-sub">Audit: ${esc(t.verified_by_username || `uid:${t.verified_by || '-'}`)} · ${esc(fmtDateTime(t.verified_at))}</span>` : ''}
@@ -826,15 +884,17 @@
     const estadoFiltro = $('#fEstado')?.value || '';
     const chofer = $('#fChofer')?.value || '';
     const empresa = $('#fEmpresa')?.value || '';
+    const cuenta = $('#fCuenta')?.value || '';
 
     const q = new URLSearchParams();
     if (fecha) q.set('fecha', fecha);
     if (chofer) q.set('chofer_id', chofer);
     if (empresa) q.set('empresa_id', empresa);
+    if (cuenta) q.set('cuenta_bancaria_id', cuenta);
     if (estadoFiltro === 'verificado' || estadoFiltro === 'pendiente') q.set('estado', estadoFiltro);
     if (estadoFiltro === 'en_revision') q.set('estado_revision', 'en_revision');
 
-    const headers = ['tipo','fecha','pedido_id','cliente','telefono','monto','metodo_pago','estado','referencia'];
+    const headers = ['tipo','fecha','pedido_id','cliente','telefono','monto','metodo_pago','estado','referencia','cuenta_bancaria','cuenta_confianza'];
     const csv = [headers.map(csvCell).join(',')]
       .concat(currentRows.map((r) => headers.map((h) => {
         const values = {
@@ -846,7 +906,9 @@
           monto: r.monto || '',
           metodo_pago: r.display_metodo || r.metodo_pago || '',
           estado: r.estado || r.estado_revision || '',
-          referencia: r.display_referencia || r.nro_operacion || ''
+          referencia: r.display_referencia || r.nro_operacion || '',
+          cuenta_bancaria: r.cuenta_alias || r.alias_destino || r.cuenta_banco || r.banco_destino || '',
+          cuenta_confianza: r.cuenta_bancaria_confianza || ''
         };
         return csvCell(values[h]);
       }).join(',')))

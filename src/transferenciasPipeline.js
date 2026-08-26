@@ -10,14 +10,15 @@ import {
   actualizarComprobanteDatosPg,
   marcarComprobanteComoProcesadoPg,
   enqueueWppMessagePg,
-  verificarDuplicadoOperacionPg
+  verificarDuplicadoOperacionPg,
+  resolverCuentaBancariaDestinoPg
 } from './transferenciasServices.js';
 
 // --- CONFIGURACIÓN & CONSTANTES ---
 const CONFIG = {
   DIR_NAME: 'Transferencia',
   MODEL: 'gpt-4o',
-  MAX_TOKENS: 300,
+  MAX_TOKENS: 450,
   IMG_QUALITY: 'high',
   AI_MAX_ATTEMPTS: 3,
   DEBUG: process.env.NODE_ENV !== 'production'
@@ -156,6 +157,9 @@ ESTRUCTURA JSON:
   "monto": Number | null,
   "banco_origen": String | null,
   "banco_destino": String | null,
+  "alias_destino": String | null,
+  "cbu_destino": String | null,
+  "titular_destino": String | null,
   "nro_operacion": String | null
 }
 `;
@@ -322,6 +326,27 @@ export async function procesarArchivoTransferenciaPg(filePayload, telefono) {
 
     // --- 6. VALIDACIÓN DE DUPLICADOS ---
     const nroOp = datosIA?.nro_operacion;
+    const cuentaDestinoMatch = await resolverCuentaBancariaDestinoPg({
+      empresaId,
+      banco_destino: datosIA?.banco_destino || null,
+      alias_destino: datosIA?.alias_destino || null,
+      cbu_destino: datosIA?.cbu_destino || null,
+      titular_destino: datosIA?.titular_destino || null
+    }).catch((error) => {
+      console.error(`${logPrefix} Error detectando cuenta destino:`, error?.message || error);
+      return null;
+    });
+
+    const cuentaDestinoFields = {
+      banco_destino: datosIA?.banco_destino || null,
+      alias_destino: datosIA?.alias_destino || null,
+      cbu_destino: datosIA?.cbu_destino || null,
+      titular_destino: datosIA?.titular_destino || null,
+      cuenta_bancaria_id: cuentaDestinoMatch?.cuenta_bancaria_id || null,
+      cuenta_bancaria_confianza: cuentaDestinoMatch?.confianza || 0,
+      cuenta_bancaria_match_fuente: cuentaDestinoMatch?.fuente || null,
+      cuenta_bancaria_match_detalle: cuentaDestinoMatch?.detalle || null
+    };
 
     if (nroOp) {
       // Verificar si este ID ya existe en la DB
@@ -335,7 +360,7 @@ export async function procesarArchivoTransferenciaPg(filePayload, telefono) {
           monto: parseMoney(datosIA?.monto),
           nro_operacion: nroOp,
           banco_origen: datosIA?.banco_origen,
-          banco_destino: datosIA?.banco_destino
+          ...cuentaDestinoFields
         });
 
         // Avisamos al usuario del error
@@ -361,7 +386,7 @@ export async function procesarArchivoTransferenciaPg(filePayload, telefono) {
       monto: monto,
       nro_operacion: nroOp || null,
       banco_origen: datosIA?.banco_origen || null,
-      banco_destino: datosIA?.banco_destino || null
+      ...cuentaDestinoFields
     });
 
     // 9. Respuesta final al usuario
@@ -373,8 +398,11 @@ export async function procesarArchivoTransferenciaPg(filePayload, telefono) {
         '✅ *Comprobante Procesado*',
         `💰 Monto: ${formatMoney(monto)}`,
         `🏦 Banco: ${datosIA?.banco_origen || 'Detectado'}`,
+        cuentaDestinoMatch?.cuenta?.alias
+          ? `🏛️ Cuenta destino: ${cuentaDestinoMatch.cuenta.alias}`
+          : null,
         `🆔 Op: ${nroOp || 'S/D'}`
-      ];
+      ].filter(Boolean);
 
       msgExito.push(`\n🔗 _Comprobante guardado y asociado a tu cuenta._`);
 

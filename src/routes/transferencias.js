@@ -37,8 +37,16 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
       await query(`ALTER TABLE comprobantes_transferencia ADD COLUMN IF NOT EXISTS verified_by INTEGER`);
       await query(`ALTER TABLE comprobantes_transferencia ADD COLUMN IF NOT EXISTS verified_reason TEXT`);
       await query(`ALTER TABLE comprobantes_transferencia ADD COLUMN IF NOT EXISTS verified_at TIMESTAMPTZ`);
+      await query(`ALTER TABLE comprobantes_transferencia ADD COLUMN IF NOT EXISTS alias_destino TEXT`);
+      await query(`ALTER TABLE comprobantes_transferencia ADD COLUMN IF NOT EXISTS cbu_destino TEXT`);
+      await query(`ALTER TABLE comprobantes_transferencia ADD COLUMN IF NOT EXISTS titular_destino TEXT`);
+      await query(`ALTER TABLE comprobantes_transferencia ADD COLUMN IF NOT EXISTS cuenta_bancaria_id INTEGER REFERENCES empresa_cuentas_bancarias(id) ON DELETE SET NULL`);
+      await query(`ALTER TABLE comprobantes_transferencia ADD COLUMN IF NOT EXISTS cuenta_bancaria_confianza INTEGER DEFAULT 0`);
+      await query(`ALTER TABLE comprobantes_transferencia ADD COLUMN IF NOT EXISTS cuenta_bancaria_match_fuente TEXT`);
+      await query(`ALTER TABLE comprobantes_transferencia ADD COLUMN IF NOT EXISTS cuenta_bancaria_match_detalle TEXT`);
       await query(`CREATE INDEX IF NOT EXISTS idx_ct_empresa_file_hash ON comprobantes_transferencia (empresa_id, file_hash)`);
       await query(`CREATE INDEX IF NOT EXISTS idx_ct_estado_revision ON comprobantes_transferencia (estado_revision)`);
+      await query(`CREATE INDEX IF NOT EXISTS idx_ct_cuenta_bancaria ON comprobantes_transferencia (empresa_id, cuenta_bancaria_id, fecha DESC)`);
     } catch (e) {
       console.error('transferencias schema hardening error:', e?.message || e);
     }
@@ -50,7 +58,7 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
   }
 
   function applyTransferFilters({ sql, params, idx, filters }) {
-    const { esSuperUser, myEmpresa, empresa_id, fecha, choferId, estado, estadoRevision } = filters;
+    const { esSuperUser, myEmpresa, empresa_id, fecha, choferId, estado, estadoRevision, cuentaBancariaId } = filters;
 
     if (!esSuperUser) {
       sql += ` AND ct.empresa_id = $${idx++}`;
@@ -82,6 +90,16 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
       params.push(estadoRevision);
     }
 
+    if (cuentaBancariaId === 'no_detectada') {
+      sql += ` AND ct.cuenta_bancaria_id IS NULL`;
+    } else if (cuentaBancariaId) {
+      const cuentaId = Number(cuentaBancariaId);
+      if (Number.isFinite(cuentaId) && cuentaId > 0) {
+        sql += ` AND ct.cuenta_bancaria_id = $${idx++}`;
+        params.push(cuentaId);
+      }
+    }
+
     return { sql, params, idx };
   }
 
@@ -100,6 +118,38 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
     }
   });
 
+  router.get('/cuentas-bancarias', withAuth, async (req, res) => {
+    try {
+      await ensureSchemaPromise;
+      const { empresa_id } = req.query || {};
+      const esSuperUser = isSuper(req);
+      const myEmpresa = getEmpresaIdFromToken(req);
+
+      let sql = `
+        SELECT id, empresa_id, banco, alias, cbu, titular, prioridad
+        FROM empresa_cuentas_bancarias
+        WHERE COALESCE(activa, TRUE) = TRUE
+      `;
+      const params = [];
+      let idx = 1;
+
+      if (!esSuperUser) {
+        sql += ` AND empresa_id = $${idx++}`;
+        params.push(Number(myEmpresa));
+      } else if (empresa_id) {
+        sql += ` AND empresa_id = $${idx++}`;
+        params.push(Number(empresa_id));
+      }
+
+      sql += ` ORDER BY empresa_id, COALESCE(prioridad, 999), banco NULLS LAST, alias NULLS LAST, id`;
+      const rows = await query(sql, params);
+      return res.json(rows || []);
+    } catch (e) {
+      console.error('Error listando cuentas bancarias para transferencias:', e?.message || e);
+      return res.status(500).json({ error: 'Error listando cuentas bancarias' });
+    }
+  });
+
   // LISTAR TRANSFERENCIAS
   router.get('/', withAuth, async (req, res) => {
     try {
@@ -111,6 +161,7 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
       const fecha = (req.query.fecha || '').toString().slice(0, 10);
       const estado = (req.query.estado || '').toString().trim().toLowerCase();
       const estadoRevision = (req.query.estado_revision || '').toString().trim().toLowerCase();
+      const cuentaBancariaId = (req.query.cuenta_bancaria_id || '').toString().trim();
       const choferId = Number(req.query.chofer_id || 0) || null;
       const limitRaw = Number(req.query.limit || 0) || 0;
       const offsetRaw = Number(req.query.offset || 0) || 0;
@@ -137,6 +188,18 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
           ct.verified_at,
           uv.username AS verified_by_username,
           ct.banco_origen,
+          ct.banco_destino,
+          ct.alias_destino,
+          ct.cbu_destino,
+          ct.titular_destino,
+          ct.cuenta_bancaria_id,
+          ct.cuenta_bancaria_confianza,
+          ct.cuenta_bancaria_match_fuente,
+          ct.cuenta_bancaria_match_detalle,
+          cb.banco AS cuenta_banco,
+          cb.alias AS cuenta_alias,
+          cb.cbu AS cuenta_cbu,
+          cb.titular AS cuenta_titular,
           ct.nro_operacion,
           z.nombre AS zona_nombre,
           pe.cliente,
@@ -146,6 +209,7 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
         LEFT JOIN puntos_entrega pe   ON pe.id = p.punto_entrega_id
         LEFT JOIN zonas_geograficas z ON z.id = ct.zona_id
         LEFT JOIN usuarios uv         ON uv.id = ct.verified_by
+        LEFT JOIN empresa_cuentas_bancarias cb ON cb.id = ct.cuenta_bancaria_id
         WHERE 1=1
       `;
 
@@ -156,7 +220,7 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
         sql,
         params,
         idx,
-        filters: { esSuperUser, myEmpresa, empresa_id, fecha, choferId, estado, estadoRevision }
+        filters: { esSuperUser, myEmpresa, empresa_id, fecha, choferId, estado, estadoRevision, cuentaBancariaId }
       }));
 
       if (beforeId) {
@@ -326,6 +390,7 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
       const fecha = (req.query.fecha || '').toString().slice(0, 10);
       const estado = (req.query.estado || '').toString().trim().toLowerCase();
       const estadoRevision = (req.query.estado_revision || '').toString().trim().toLowerCase();
+      const cuentaBancariaId = (req.query.cuenta_bancaria_id || '').toString().trim();
       const choferId = Number(req.query.chofer_id || 0) || null;
 
       let sql = `
@@ -346,7 +411,7 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
         sql,
         params,
         idx,
-        filters: { esSuperUser, myEmpresa, empresa_id, fecha, choferId, estado, estadoRevision }
+        filters: { esSuperUser, myEmpresa, empresa_id, fecha, choferId, estado, estadoRevision, cuentaBancariaId }
       }));
 
       const rows = await query(sql, params);
@@ -373,6 +438,7 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
       const fecha = (req.query.fecha || '').toString().slice(0, 10);
       const estado = (req.query.estado || '').toString().trim().toLowerCase();
       const estadoRevision = (req.query.estado_revision || '').toString().trim().toLowerCase();
+      const cuentaBancariaId = (req.query.cuenta_bancaria_id || '').toString().trim();
       const choferId = Number(req.query.chofer_id || 0) || null;
 
       let sql = `
@@ -390,6 +456,14 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
           ct.riesgo_flags,
           ct.nro_operacion,
           ct.banco_origen,
+          ct.banco_destino,
+          ct.alias_destino,
+          ct.cbu_destino,
+          ct.titular_destino,
+          ct.cuenta_bancaria_id,
+          cb.banco AS cuenta_banco,
+          cb.alias AS cuenta_alias,
+          cb.titular AS cuenta_titular,
           ct.verified_by,
           uv.username AS verified_by_username,
           ct.verified_at,
@@ -398,6 +472,7 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
         FROM comprobantes_transferencia ct
         LEFT JOIN puntos_entrega pe ON pe.id = (SELECT p.punto_entrega_id FROM pedidos p WHERE p.id = ct.pedido_id)
         LEFT JOIN usuarios uv       ON uv.id = ct.verified_by
+        LEFT JOIN empresa_cuentas_bancarias cb ON cb.id = ct.cuenta_bancaria_id
         WHERE 1=1
       `;
 
@@ -407,7 +482,7 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
         sql,
         params,
         idx,
-        filters: { esSuperUser, myEmpresa, empresa_id, fecha, choferId, estado, estadoRevision }
+        filters: { esSuperUser, myEmpresa, empresa_id, fecha, choferId, estado, estadoRevision, cuentaBancariaId }
       }));
       sql += ' ORDER BY ct.fecha DESC, ct.id DESC';
 
@@ -415,6 +490,8 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
       const headers = [
         'id','fecha','pedido_id','cliente','telefono','monto','metodo_pago','validado',
         'estado_revision','riesgo_score','riesgo_flags','nro_operacion','banco_origen',
+        'banco_destino','alias_destino','cbu_destino','titular_destino','cuenta_bancaria_id',
+        'cuenta_banco','cuenta_alias','cuenta_titular',
         'verified_by','verified_by_username','verified_at','verified_reason','comprobante_path'
       ];
 
