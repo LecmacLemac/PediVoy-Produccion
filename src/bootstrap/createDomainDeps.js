@@ -18,6 +18,9 @@ import {
   ejecutarReposicionPredictiva,
   ejecutarCampaniaClima,
   ejecutarCampaniaBaseImportadaAuto,
+  ejecutarReactivacionInteligente,
+  ejecutarPostEntregaUpsell,
+  ejecutarProgramaVip,
 } from '../estrategias.js';
 import { registrarMovimientosActivosDesdePedido } from '../adm/pedidoActivosService.js';
 
@@ -61,6 +64,9 @@ export function createDomainDeps({ projectDir }) {
     ejecutarReposicionPredictiva,
     ejecutarCampaniaClima,
     ejecutarCampaniaBaseImportadaAuto,
+    ejecutarReactivacionInteligente,
+    ejecutarPostEntregaUpsell,
+    ejecutarProgramaVip,
     registrarMovimientosActivosDesdePedido,
 
   };

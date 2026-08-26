@@ -12,7 +12,7 @@ import {
 import { ensureRetornablesLedgerSchema, registrarRetornableMovimiento } from '../services/retornablesLedger.js';
 
 export function createRepartidorApiRouter(deps) {
-  const { query, pool, withAuth, getEmpresaIdFromToken, notifyEstadoPedidoPush, notificarEnRuta, notificarPedidoTransferencia, ejecutarEstrategiaVecinos, registrarMovimientosActivosDesdePedido, crearPagoParaPedido = crearPagoParaPedidoDefault, listarPagosPorPedido = listarPagosPorPedidoDefault, refrescarEstadoPagoPedido = refrescarEstadoPagoPedidoDefault } = deps || {};
+  const { query, pool, withAuth, getEmpresaIdFromToken, notifyEstadoPedidoPush, notificarEnRuta, notificarPedidoTransferencia, ejecutarEstrategiaVecinos, ejecutarPostEntregaUpsell, registrarMovimientosActivosDesdePedido, crearPagoParaPedido = crearPagoParaPedidoDefault, listarPagosPorPedido = listarPagosPorPedidoDefault, refrescarEstadoPagoPedido = refrescarEstadoPagoPedidoDefault } = deps || {};
   if (typeof query !== 'function') throw new Error('createRepartidorApiRouter: falta query(fn)');
   if (typeof withAuth !== 'function') throw new Error('createRepartidorApiRouter: falta withAuth(fn)');
   if (typeof getEmpresaIdFromToken !== 'function') throw new Error('createRepartidorApiRouter: falta getEmpresaIdFromToken(fn)');
@@ -1036,12 +1036,18 @@ export function createRepartidorApiRouter(deps) {
      notifyEstadoPedidoPush(pedidoId, 'entregado').catch(console.error);
      
      // Marketing (Referidos, Puntos)
-     import('./src/estrategias.js')
+     import('../estrategias.js')
        .then(({ ejecutarRecompensaReferido, ejecutarEstrategiaReferidos }) => {
          ejecutarRecompensaReferido({ pedidoId, empresaId: empresa_id }).catch(() => {});
          ejecutarEstrategiaReferidos({ pedidoId, empresaId: empresa_id }).catch(() => {});
        })
        .catch(() => {});
+
+     if (typeof ejecutarPostEntregaUpsell === 'function') {
+       ejecutarPostEntregaUpsell({ pedidoId, empresaId: empresa_id }).catch((err) =>
+         console.error('MARKETING.POSTENTREGA.ERROR', err?.message || err)
+       );
+     }
 
      // Programa de puntos (idempotente por pedido)
      awardPointsForDeliveredOrder({

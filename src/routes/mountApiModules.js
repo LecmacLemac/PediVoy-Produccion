@@ -52,6 +52,7 @@ export function mountApiModules(app, deps) {
     notificarEnRuta,
     notificarPedidoTransferencia,
     ejecutarEstrategiaVecinos,
+    ejecutarPostEntregaUpsell,
     registrarMovimientosActivosDesdePedido,
     TRANSF_DIR,
     GASTOS_DIR,
@@ -129,6 +130,7 @@ export function mountApiModules(app, deps) {
       notificarEnRuta,
       notificarPedidoTransferencia,
       ejecutarEstrategiaVecinos,
+      ejecutarPostEntregaUpsell,
       registrarMovimientosActivosDesdePedido,
     })
   );

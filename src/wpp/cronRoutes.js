@@ -4,6 +4,9 @@ export function registerWppCronAndRoutes(app, deps) {
     ejecutarReposicionPredictiva,
     ejecutarCampaniaClima,
     ejecutarCampaniaBaseImportadaAuto,
+    ejecutarReactivacionInteligente,
+    ejecutarPostEntregaUpsell,
+    ejecutarProgramaVip,
   } = deps;
 
   const ARG_UTC_OFFSET = -3;
@@ -67,6 +70,18 @@ export function registerWppCronAndRoutes(app, deps) {
     ejecutarReposicionPredictiva().catch((err) => console.error('[CRON ERROR]', err));
   });
 
+  programarTareaDiaria(10, 0, () => {
+    if (typeof ejecutarReactivacionInteligente !== 'function') return;
+    console.log('[CRON] Ejecutando Reactivación Inteligente...');
+    ejecutarReactivacionInteligente().catch((err) => console.error('[CRON ERROR REACTIVACION]', err));
+  });
+
+  programarTareaDiaria(10, 30, () => {
+    if (typeof ejecutarProgramaVip !== 'function') return;
+    console.log('[CRON] Ejecutando Programa VIP...');
+    ejecutarProgramaVip().catch((err) => console.error('[CRON ERROR VIP]', err));
+  });
+
   programarTareaDiaria(11, 0, () => {
     if (typeof ejecutarCampaniaClima !== 'function') return;
     console.log('[CRON] Ejecutando Campaña por Clima...');
@@ -83,6 +98,11 @@ export function registerWppCronAndRoutes(app, deps) {
     if (typeof ejecutarCampaniaBaseImportadaAuto !== 'function') return;
     ejecutarCampaniaBaseImportadaAuto().catch((err) => console.error('[CRON ERROR BASE_AUTO]', err));
   }, 15 * 60 * 1000);
+
+  setInterval(() => {
+    if (typeof ejecutarPostEntregaUpsell !== 'function') return;
+    ejecutarPostEntregaUpsell().catch((err) => console.error('[CRON ERROR POSTENTREGA]', err));
+  }, 30 * 60 * 1000);
 
   const requireCronSecret = (req, res) => {
     const cronSecret = String(process.env.CRON_SECRET || '').trim();

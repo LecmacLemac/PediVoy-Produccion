@@ -7,6 +7,7 @@ import { notificarEnRuta } from '../services/notificacionesPedidos.js';
 import { awardPointsForDeliveredOrder } from '../services/puntosService.js';
 import { generateComisionesForDeliveredOrder } from '../services/referentesService.js';
 import { createPedidoEstadoNotifications } from '../services/referenteNotifications.js';
+import { ejecutarPostEntregaUpsell } from '../estrategias.js';
 
 export function createPedidosRouter() {
   const router = express.Router();
@@ -594,6 +595,10 @@ export function createPedidosRouter() {
             empresaId: row.empresa_id,
             pedidoId: row.id,
           }).catch((err) => console.error('REFERENTES.COMISION.ERROR', err?.message || err));
+          ejecutarPostEntregaUpsell({
+            pedidoId: row.id,
+            empresaId: row.empresa_id,
+          }).catch((err) => console.error('MARKETING.POSTENTREGA.ERROR', err?.message || err));
         }
       }
 

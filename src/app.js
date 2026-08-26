@@ -48,6 +48,9 @@ export function createApp(deps) {
     ejecutarReposicionPredictiva,
     ejecutarCampaniaClima,
     ejecutarCampaniaBaseImportadaAuto,
+    ejecutarReactivacionInteligente,
+    ejecutarPostEntregaUpsell,
+    ejecutarProgramaVip,
     registrarMovimientosActivosDesdePedido,
 
     // wpp
@@ -279,6 +282,7 @@ export function createApp(deps) {
     notificarEnRuta,
     notificarPedidoTransferencia,
     ejecutarEstrategiaVecinos,
+    ejecutarPostEntregaUpsell,
     registrarMovimientosActivosDesdePedido,
     TRANSF_DIR,
     GASTOS_DIR,
@@ -325,6 +329,9 @@ export function createApp(deps) {
     ejecutarReposicionPredictiva,
     ejecutarCampaniaClima,
     ejecutarCampaniaBaseImportadaAuto,
+    ejecutarReactivacionInteligente,
+    ejecutarPostEntregaUpsell,
+    ejecutarProgramaVip,
 
     withAuth,
     isSuper,

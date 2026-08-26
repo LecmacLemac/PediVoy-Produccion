@@ -532,6 +532,264 @@ export async function ejecutarRecompensaReferido({ pedidoId, empresaId }) {
   }
 }
 
+/**
+ * ESTRATEGIA 4: REACTIVACIÓN INTELIGENTE
+ * Disparador: Cron. Recupera clientes sin compra reciente con límite de intentos.
+ */
+export async function ejecutarReactivacionInteligente() {
+  try {
+    await ensureTelemetryTable();
+
+    const empresas = await query(`
+      SELECT id, config_estrategias
+      FROM empresas
+      WHERE config_estrategias->>'reactivacion_activado' = 'true'
+    `);
+
+    for (const emp of empresas) {
+      const empresaId = Number(emp.id);
+      const config = emp.config_estrategias || {};
+      const diasSinCompra = Math.min(Math.max(Number(config.reactivacion_dias || 21), 1), 365);
+      const intentosMax = Math.min(Math.max(Number(config.reactivacion_intentos_max || 3), 1), 10);
+      const limite = Math.min(Math.max(Number(config.reactivacion_max_envios || 50), 1), 300);
+
+      const clientes = await query(
+        `
+        WITH ultimos AS (
+          SELECT punto_entrega_id, MAX(fecha) AS ultima_compra
+          FROM pedidos
+          WHERE empresa_id = $1
+            AND estado = 'entregado'
+          GROUP BY punto_entrega_id
+        )
+        SELECT pe.id, pe.cliente, pe.telefono, pe.direccion, pe.latitud, pe.longitud, u.ultima_compra
+        FROM puntos_entrega pe
+        LEFT JOIN ultimos u ON u.punto_entrega_id = pe.id
+        WHERE pe.empresa_id = $1
+          AND pe.telefono IS NOT NULL
+          AND (u.ultima_compra IS NULL OR u.ultima_compra < NOW() - ($2::text || ' days')::interval)
+          AND (
+            SELECT COUNT(*)::int
+            FROM marketing_envios_telemetria t
+            WHERE t.empresa_id = $1
+              AND t.estrategia = 'reactivacion'
+              AND (
+                NULLIF(t.meta->>'cliente_id','')::int = pe.id
+                OR regexp_replace(COALESCE(t.telefono, ''), '\\D', '', 'g') = regexp_replace(COALESCE(pe.telefono, ''), '\\D', '', 'g')
+              )
+          ) < $3
+          AND NOT EXISTS (
+            SELECT 1
+            FROM marketing_envios_telemetria t
+            WHERE t.empresa_id = $1
+              AND t.estrategia = 'reactivacion'
+              AND (
+                NULLIF(t.meta->>'cliente_id','')::int = pe.id
+                OR regexp_replace(COALESCE(t.telefono, ''), '\\D', '', 'g') = regexp_replace(COALESCE(pe.telefono, ''), '\\D', '', 'g')
+              )
+              AND t.created_at > NOW() - INTERVAL '24 hours'
+          )
+        ORDER BY COALESCE(u.ultima_compra, pe.created_at) ASC, pe.id ASC
+        LIMIT $4
+        `,
+        [empresaId, diasSinCompra, intentosMax, limite]
+      );
+
+      for (const c of clientes) {
+        const msg = renderTemplateMsg(
+          config.reactivacion_mensaje || 'Hola {cliente}, hace rato no te pedimos. ¿Te llevo agua hoy?',
+          { cliente: c.cliente || 'Cliente' }
+        );
+
+        await enviarPorCanal({
+          empresaId,
+          estrategia: 'reactivacion',
+          telefono: c.telefono,
+          mensaje: msg,
+          canal: config.reactivacion_canal || 'whatsapp',
+          meta: {
+            cliente_id: c.id || null,
+            cliente: c.cliente || null,
+            direccion: c.direccion || null,
+            ultima_compra: c.ultima_compra || null,
+            latitud: c.latitud == null ? null : Number(c.latitud),
+            longitud: c.longitud == null ? null : Number(c.longitud),
+          },
+        });
+      }
+    }
+  } catch (e) {
+    console.error('[ESTRATEGIAS] Error en ejecutarReactivacionInteligente:', e?.message || e);
+  }
+}
+
+/**
+ * ESTRATEGIA 5: POST-ENTREGA + UPSELL
+ * Disparador: Cron o pedido específico. Envía después de la ventana configurada.
+ */
+export async function ejecutarPostEntregaUpsell({ pedidoId = null, empresaId = null } = {}) {
+  try {
+    await ensureTelemetryTable();
+
+    const params = [];
+    let filtroEmpresa = '';
+    let filtroPedido = '';
+
+    if (empresaId) {
+      params.push(Number(empresaId));
+      filtroEmpresa = `AND e.id = $${params.length}`;
+    }
+    if (pedidoId) {
+      params.push(Number(pedidoId));
+      filtroPedido = `AND p.id = $${params.length}`;
+    }
+
+    const rows = await query(
+      `
+      SELECT
+        p.id AS pedido_id,
+        p.empresa_id,
+        p.fecha_entrega,
+        pe.id AS cliente_id,
+        pe.cliente,
+        pe.telefono,
+        pe.direccion,
+        pe.latitud,
+        pe.longitud,
+        e.config_estrategias
+      FROM pedidos p
+      JOIN empresas e ON e.id = p.empresa_id
+      JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
+      WHERE p.estado = 'entregado'
+        AND p.fecha_entrega IS NOT NULL
+        AND e.config_estrategias->>'postentrega_activado' = 'true'
+        ${filtroEmpresa}
+        ${filtroPedido}
+        AND p.fecha_entrega <= NOW() - ((COALESCE(NULLIF(e.config_estrategias->>'postentrega_horas',''), '4'))::text || ' hours')::interval
+        AND NOT EXISTS (
+          SELECT 1
+          FROM marketing_envios_telemetria t
+          WHERE t.empresa_id = p.empresa_id
+            AND t.estrategia = 'postentrega'
+            AND NULLIF(t.meta->>'pedido_id','')::int = p.id
+        )
+      ORDER BY p.fecha_entrega ASC, p.id ASC
+      LIMIT 200
+      `,
+      params
+    );
+
+    for (const row of rows) {
+      const cfg = row.config_estrategias || {};
+      const producto = String(cfg.postentrega_producto || 'tu próximo pedido').trim();
+      const msg = renderTemplateMsg(
+        String(cfg.postentrega_mensaje || 'Hola {cliente}, ¿todo bien con la entrega? Si querés te sumo {producto} para mañana.').replaceAll('{producto}', producto),
+        { cliente: row.cliente || 'Cliente' }
+      );
+
+      await enviarPorCanal({
+        empresaId: row.empresa_id,
+        estrategia: 'postentrega',
+        telefono: row.telefono,
+        mensaje: msg,
+        canal: cfg.postentrega_canal || 'whatsapp',
+        meta: {
+          pedido_id: row.pedido_id,
+          cliente_id: row.cliente_id || null,
+          cliente: row.cliente || null,
+          direccion: row.direccion || null,
+          producto,
+          latitud: row.latitud == null ? null : Number(row.latitud),
+          longitud: row.longitud == null ? null : Number(row.longitud),
+        },
+      });
+    }
+  } catch (e) {
+    console.error('[ESTRATEGIAS] Error en ejecutarPostEntregaUpsell:', e?.message || e);
+  }
+}
+
+/**
+ * ESTRATEGIA 7: PROGRAMA VIP
+ * Disparador: Cron. Premia clientes que alcanzan el mínimo de pedidos entregados.
+ */
+export async function ejecutarProgramaVip() {
+  try {
+    await ensureTelemetryTable();
+
+    const empresas = await query(`
+      SELECT id, config_estrategias
+      FROM empresas
+      WHERE config_estrategias->>'vip_activado' = 'true'
+    `);
+
+    for (const emp of empresas) {
+      const empresaId = Number(emp.id);
+      const cfg = emp.config_estrategias || {};
+      const pedidosMin = Math.min(Math.max(Number(cfg.vip_pedidos_min || 10), 1), 500);
+      const beneficio = String(cfg.vip_beneficio || 'beneficio especial').trim();
+      const limite = Math.min(Math.max(Number(cfg.vip_max_envios || 100), 1), 500);
+
+      const clientes = await query(
+        `
+        SELECT
+          pe.id,
+          pe.cliente,
+          pe.telefono,
+          pe.direccion,
+          pe.latitud,
+          pe.longitud,
+          COUNT(p.id)::int AS pedidos_entregados
+        FROM puntos_entrega pe
+        JOIN pedidos p ON p.punto_entrega_id = pe.id
+        WHERE pe.empresa_id = $1
+          AND p.empresa_id = $1
+          AND p.estado = 'entregado'
+          AND pe.telefono IS NOT NULL
+        GROUP BY pe.id, pe.cliente, pe.telefono, pe.direccion, pe.latitud, pe.longitud
+        HAVING COUNT(p.id) >= $2
+           AND NOT EXISTS (
+             SELECT 1
+             FROM marketing_envios_telemetria t
+             WHERE t.empresa_id = $1
+               AND t.estrategia = 'vip'
+               AND NULLIF(t.meta->>'cliente_id','')::int = pe.id
+           )
+        ORDER BY COUNT(p.id) DESC, pe.id ASC
+        LIMIT $3
+        `,
+        [empresaId, pedidosMin, limite]
+      );
+
+      for (const c of clientes) {
+        const msg = renderTemplateMsg(
+          String(cfg.vip_mensaje || '¡{cliente}, ya sos VIP! Desde ahora tenés: {beneficio}.').replaceAll('{beneficio}', beneficio),
+          { cliente: c.cliente || 'Cliente' }
+        );
+
+        await enviarPorCanal({
+          empresaId,
+          estrategia: 'vip',
+          telefono: c.telefono,
+          mensaje: msg,
+          canal: cfg.vip_canal || 'whatsapp',
+          meta: {
+            cliente_id: c.id || null,
+            cliente: c.cliente || null,
+            direccion: c.direccion || null,
+            beneficio,
+            pedidos_entregados: Number(c.pedidos_entregados || 0),
+            latitud: c.latitud == null ? null : Number(c.latitud),
+            longitud: c.longitud == null ? null : Number(c.longitud),
+          },
+        });
+      }
+    }
+  } catch (e) {
+    console.error('[ESTRATEGIAS] Error en ejecutarProgramaVip:', e?.message || e);
+  }
+}
+
 function getArgentinaNowParts() {
   const parts = new Intl.DateTimeFormat('en-GB', {
     timeZone: 'America/Argentina/Buenos_Aires',

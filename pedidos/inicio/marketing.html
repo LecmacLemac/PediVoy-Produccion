@@ -88,6 +88,92 @@
     box-shadow: 0 4px 20px rgba(0,0,0,0.2);
   }
 
+  .control-panel {
+    background: rgba(15, 23, 42, 0.88);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    margin-bottom: 20px;
+  }
+  .control-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+  .control-title { font-size: 1rem; font-weight: 800; color: #fff; }
+  .control-subtitle { margin-top: 3px; color: var(--muted); font-size: 0.86rem; }
+  .control-pill {
+    background: rgba(6, 182, 212, 0.12);
+    border: 1px solid rgba(6, 182, 212, 0.25);
+    border-radius: 999px;
+    color: #67e8f9;
+    font-size: 0.78rem;
+    font-weight: 800;
+    padding: 5px 9px;
+    white-space: nowrap;
+  }
+  .campaign-control-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+  .campaign-control {
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    border-radius: 8px;
+    background: rgba(2, 6, 23, 0.36);
+    padding: 12px;
+    min-height: 132px;
+  }
+  .campaign-control-top {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    align-items: flex-start;
+  }
+  .campaign-name { font-weight: 800; color: #fff; line-height: 1.25; }
+  .campaign-trigger { margin-top: 4px; color: var(--muted); font-size: 0.8rem; line-height: 1.35; }
+  .campaign-status {
+    border-radius: 999px;
+    padding: 3px 8px;
+    font-size: 0.72rem;
+    font-weight: 900;
+    white-space: nowrap;
+  }
+  .campaign-status.on { background: #dcfce7; color: #166534; }
+  .campaign-status.off { background: #e2e8f0; color: #334155; }
+  .campaign-status.warn { background: #fef3c7; color: #92400e; }
+  .campaign-meta {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+    margin-top: 10px;
+  }
+  .campaign-metric {
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    border-radius: 8px;
+    padding: 7px;
+    background: rgba(15, 23, 42, 0.6);
+  }
+  .campaign-metric span {
+    display: block;
+    color: #94a3b8;
+    font-size: 0.68rem;
+    font-weight: 800;
+    text-transform: uppercase;
+  }
+  .campaign-metric strong {
+    display: block;
+    color: #f8fafc;
+    font-size: 0.92rem;
+    margin-top: 2px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .campaign-action { margin-top: 9px; color: #cbd5e1; font-size: 0.8rem; line-height: 1.35; }
+
   .strategy-box { 
     border-radius: 12px; padding: 20px; margin-bottom: 20px; 
     border: 1px solid transparent; 
@@ -190,6 +276,9 @@
         width: 100% !important;
         min-height: 44px;
       }
+      .control-head { flex-direction: column; }
+      .campaign-control-grid { grid-template-columns: 1fr; }
+      .campaign-meta { grid-template-columns: 1fr 1fr; }
   }
   .pedivoy-brand-logo{display:inline-block;width:auto;height:32px;max-width:150px;object-fit:contain;vertical-align:middle;flex:0 0 auto}.brand .pedivoy-brand-logo{height:32px}.pedivoy-brand-badge{position:fixed;top:12px;left:12px;z-index:1000;display:inline-flex;align-items:center;padding:7px 10px;border-radius:10px;background:rgba(15,23,42,.82);border:1px solid rgba(148,163,184,.22);box-shadow:0 10px 30px rgba(2,8,23,.25);backdrop-filter:blur(10px)}.pedivoy-brand-badge img{height:28px;width:auto;display:block}
 </style>
@@ -224,6 +313,22 @@
             <option value="">-- Cargar Empresas --</option>
         </select>
     </div>
+
+    <section class="control-panel" aria-labelledby="campaignControlTitle">
+      <div class="control-head">
+        <div>
+          <div id="campaignControlTitle" class="control-title">Control de campañas</div>
+          <div class="control-subtitle">Estado operativo, disparador y resultado de los últimos 7 días.</div>
+        </div>
+        <div id="campaignControlSummary" class="control-pill">Cargando control</div>
+      </div>
+      <div id="campaignControlGrid" class="campaign-control-grid">
+        <div class="campaign-control">
+          <div class="campaign-name">Cargando campañas...</div>
+          <div class="campaign-trigger">Esperando configuración de la empresa.</div>
+        </div>
+      </div>
+    </section>
 
     <form id="marketingForm" class="card">
         
@@ -759,6 +864,92 @@
       dias: new Set([1,2,3,4,5,6]),
     };
 
+    const campaignControlDefs = [
+      {
+        key: 'vecinos',
+        label: 'Radar de Vecinos',
+        activeId: 'vecinos_activado',
+        canalId: 'vecinos_canal',
+        trigger: 'Se dispara cuando un pedido pasa a En Ruta.',
+        engine: true,
+        action: 'Controlar radio, días sin compra y duplicados de WhatsApp.'
+      },
+      {
+        key: 'predictivo',
+        label: 'Mayordomo IA',
+        activeId: 'predictivo_activado',
+        canalId: 'predictivo_canal',
+        trigger: 'Cron diario a las 09:00 ARG.',
+        engine: true,
+        action: 'Revisar clientes con patrón estable y pedidos entregados.'
+      },
+      {
+        key: 'referidos',
+        label: 'Referidos',
+        activeId: 'referidos_activado',
+        canalId: 'referidos_canal',
+        trigger: 'Se dispara al entregar pedidos y al confirmar referidos.',
+        engine: true,
+        action: 'Validar premio, producto elegido y link público de empresa.'
+      },
+      {
+        key: 'reactivacion',
+        label: 'Reactivación',
+        activeId: 'reactivacion_activado',
+        canalId: 'reactivacion_canal',
+        trigger: 'Cron diario a las 10:00 ARG.',
+        engine: true,
+        action: 'Controlar días sin compra, máximo de intentos y tono de recuperación.'
+      },
+      {
+        key: 'postentrega',
+        label: 'Post-entrega + Upsell',
+        activeId: 'postentrega_activado',
+        canalId: 'postentrega_canal',
+        trigger: 'Cron cada 30 minutos después de la entrega.',
+        engine: true,
+        action: 'Controlar horas de espera, producto sugerido y conversiones posteriores.'
+      },
+      {
+        key: 'clima',
+        label: 'Campaña por Clima',
+        activeId: 'clima_activado',
+        canalId: 'clima_canal',
+        trigger: 'Cron diario a las 11:00 y 17:00 ARG.',
+        engine: true,
+        action: 'Controlar umbrales, coordenadas de clientes y volumen máximo.'
+      },
+      {
+        key: 'vip',
+        label: 'Programa VIP',
+        activeId: 'vip_activado',
+        canalId: 'vip_canal',
+        trigger: 'Cron diario a las 10:30 ARG.',
+        engine: true,
+        action: 'Controlar mínimo de pedidos y beneficio comunicado.'
+      },
+      {
+        key: 'base_importada',
+        label: 'Base importada manual',
+        activeId: null,
+        canalId: 'launch_canal',
+        trigger: 'Lanzamiento manual con preview y confirmación.',
+        engine: true,
+        action: 'Usar solo contactos con consentimiento y objetivo claro.'
+      },
+      {
+        key: 'base_importada_auto',
+        label: 'Base importada automática',
+        activeId: 'auto_launch_activado',
+        canalId: 'launch_canal',
+        trigger: 'Cron interno cada 15 minutos dentro de franjas.',
+        engine: true,
+        action: 'Controlar franjas, frecuencia por contacto y mensaje con CTA.'
+      }
+    ];
+
+    const campaignControlState = { telemetry: {} };
+
     const dayNames = [
       { n: 1, l: 'Lun' },
       { n: 2, l: 'Mar' },
@@ -965,6 +1156,86 @@
         });
       }
       refreshAutoLaunchEstadoUi();
+    }
+
+    function readCampaignTelemetry(key) {
+      return campaignControlState.telemetry[key] || { total: 0, exitosos: 0, fallidos: 0 };
+    }
+
+    function renderCampaignControl() {
+      const grid = document.getElementById('campaignControlGrid');
+      const summary = document.getElementById('campaignControlSummary');
+      if (!grid) return;
+
+      let activeCount = 0;
+      let warnCount = 0;
+      let totalSent = 0;
+      let totalFailed = 0;
+
+      const cards = campaignControlDefs.map((def) => {
+        const active = def.activeId ? !!document.getElementById(def.activeId)?.checked : true;
+        const canal = document.getElementById(def.canalId)?.value || 'whatsapp';
+        const tel = readCampaignTelemetry(def.key);
+        const statusClass = !def.engine ? 'warn' : (active ? 'on' : 'off');
+        const statusText = !def.engine ? 'Motor pendiente' : (active ? 'Activa' : 'Pausada');
+
+        if (active && def.engine) activeCount += 1;
+        if (!def.engine) warnCount += 1;
+        totalSent += Number(tel.exitosos || 0);
+        totalFailed += Number(tel.fallidos || 0);
+
+        return `
+          <article class="campaign-control">
+            <div class="campaign-control-top">
+              <div>
+                <div class="campaign-name">${esc(def.label)}</div>
+                <div class="campaign-trigger">${esc(def.trigger)}</div>
+              </div>
+              <span class="campaign-status ${statusClass}">${esc(statusText)}</span>
+            </div>
+            <div class="campaign-meta">
+              <div class="campaign-metric"><span>Canal</span><strong>${esc(canal)}</strong></div>
+              <div class="campaign-metric"><span>OK 7d</span><strong>${Number(tel.exitosos || 0)}</strong></div>
+              <div class="campaign-metric"><span>Fallos</span><strong>${Number(tel.fallidos || 0)}</strong></div>
+            </div>
+            <div class="campaign-action">${esc(def.action)}</div>
+          </article>
+        `;
+      }).join('');
+
+      grid.innerHTML = cards;
+      if (summary) {
+        summary.textContent = `${activeCount} con motor activo | ${warnCount} por conectar | OK 7d: ${totalSent} | Fallos: ${totalFailed}`;
+      }
+    }
+
+    async function loadCampaignTelemetry(empresaId) {
+      campaignControlState.telemetry = {};
+      if (!empresaId) {
+        renderCampaignControl();
+        return;
+      }
+
+      try {
+        const res = await authFetch(`/api/setup/marketing/telemetria?empresa_id=${empresaId}&dias=7`);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !Array.isArray(data.items)) throw new Error(data?.error || 'telemetría no disponible');
+
+        campaignControlState.telemetry = data.items.reduce((acc, item) => {
+          const key = String(item.estrategia || '').trim();
+          if (!key) return acc;
+          acc[key] = {
+            total: Number(item.total || 0),
+            exitosos: Number(item.exitosos || 0),
+            fallidos: Number(item.fallidos || 0),
+          };
+          return acc;
+        }, {});
+      } catch (err) {
+        console.warn('[MARKETING] No se pudo cargar telemetría de control', err?.message || err);
+      } finally {
+        renderCampaignControl();
+      }
     }
 
     function setupLaunchProUi() {
@@ -1291,6 +1562,7 @@
           const data = await res.json().catch(() => ({}));
           if (!res.ok) throw new Error(data?.error || 'No se pudo lanzar campaña');
           updateLaunchDerivedStats(Number(data?.total_candidatos || 0));
+          if (payload.empresa_id) await loadCampaignTelemetry(payload.empresa_id);
           if (resultEl) resultEl.textContent = `✅ Enviados: ${data?.enviados || 0} | Errores: ${data?.errores || 0} | Candidatos: ${data?.total_candidatos || 0}`;
         } catch (err) {
           console.error(err);
@@ -1306,6 +1578,7 @@
     async function changeEmpresa(empId) {
         await loadProducts(empId); // Cargar productos de esa empresa para el combo
         await loadConfig(empId);   // Cargar la configuración
+        await loadCampaignTelemetry(empId);
     }
 
     // Cargar Productos para el Dropdown
@@ -1474,8 +1747,18 @@
             setupAutoLaunchUi();
             setupAutoLaunchPauseUi();
             setupLaunchProUi();
+            renderCampaignControl();
         } catch(e) { console.error('Error loading config:', e); }
     }
+
+    campaignControlDefs.forEach((def) => {
+      [def.activeId, def.canalId].filter(Boolean).forEach((id) => {
+        const el = document.getElementById(id);
+        if (!el || el.dataset.controlBound) return;
+        el.dataset.controlBound = '1';
+        el.addEventListener('change', renderCampaignControl);
+      });
+    });
 
     // Guardar config
     document.getElementById('marketingForm').addEventListener('submit', async (e) => {
@@ -1593,6 +1876,7 @@
 
           if(res.ok) {
             alert('✅ Estrategias actualizadas correctamente');
+            renderCampaignControl();
           } else {
             let msg = '❌ Hubo un error al guardar';
             try {
