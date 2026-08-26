@@ -397,7 +397,7 @@
             <option value="">Todos</option>
           </select>
         </div>
-        <div>
+        <div id="boxDepositoFilter">
           <label>Depósito</label>
           <select id="depositoFilter">
             <option value="">Todos</option>
@@ -829,21 +829,27 @@
     }
 
     async function loadDepositosFilter() {
+      if (!depositoFilter) return;
       let empresaId = null;
       let choferId = null;
       if (isSuper) {
         const empVal = empresaFilter?.value || '';
-        empresaId = empVal && empVal !== 'orphans' ? Number(empVal) : null;
+        if (empVal === 'orphans') {
+          renderDepositosFiltro(depositoFilter, []);
+          depositoFilter.value = '';
+          return;
+        }
+        empresaId = Number(empVal || 0) || null;
         choferId = Number(choferFilter?.value || 0) || null;
       } else if (isUser) {
         choferId = Number(choferFilter?.value || 0) || null;
       } else if (isRepartidor) {
         choferId = myChoferId || null;
       }
-      const current = depositoFilter ? depositoFilter.value : '';
+      const current = depositoFilter.value;
       depositosFilter = await fetchDepositosFor({ empresaId, choferId });
       renderDepositosFiltro(depositoFilter, depositosFilter);
-      if (depositoFilter && current && depositosFilter.some(d => String(d.id) === String(current))) {
+      if (current && depositosFilter.some(d => String(d.id) === String(current))) {
         depositoFilter.value = current;
       }
     }
@@ -949,6 +955,7 @@
     async function loadGastos(){
       const from = inputFrom.value;
       const to   = inputTo.value;
+      const empVal = isSuper && empresaFilter ? empresaFilter.value : '';
       const chId = (isSuper || isUser) ? choferFilter.value : '';
       const depId = depositoFilter ? depositoFilter.value : '';
       const tVal = tipoFilter ? tipoFilter.value : '';
@@ -958,12 +965,10 @@
 
       if (from) baseParams.push(`from=${encodeURIComponent(from)}`);
       if (to)   baseParams.push(`to=${encodeURIComponent(to)}`);
+      if (empVal && empVal !== 'orphans') baseParams.push(`empresa_id=${encodeURIComponent(empVal)}`);
       if (chId) baseParams.push(`chofer_id=${encodeURIComponent(chId)}`);
       if (depId) baseParams.push(`deposito_id=${encodeURIComponent(depId)}`);
       if (limitVal) baseParams.push(`limit=${encodeURIComponent(limitVal)}`);
-      if (isSuper && empresaFilter.value && empresaFilter.value !== 'orphans') {
-        baseParams.push(`empresa_id=${encodeURIComponent(empresaFilter.value)}`);
-      }
 
       let url = '/api/gastos';
       const qs = baseParams.length ? ('?' + baseParams.join('&')) : '';
@@ -975,7 +980,6 @@
         if (!Array.isArray(rows)) rows = [];
 
         if (isSuper) {
-            const empVal = empresaFilter.value;
             if (empVal === 'orphans') {
                 rows = rows.filter(r => !r.empresa_id);
             } else if (empVal) {
@@ -1524,8 +1528,8 @@
         inputFrom.value = dateOnlyStr(new Date(now.getTime() - 30*24*60*60*1000));
         if (empresaFilter) empresaFilter.value = '';
         if (choferFilter) choferFilter.value = '';
-        if (tipoFilter) tipoFilter.value = '';
         if (depositoFilter) depositoFilter.value = '';
+        if (tipoFilter) tipoFilter.value = '';
         if (qFilter) qFilter.value = '';
         if (limitFilter) limitFilter.value = '50';
         if (isSuper) await loadChoferes('');
@@ -1631,7 +1635,7 @@
             if(empresaFilter.options.length) empresaFilter.selectedIndex = 0;
             if(empresaFilter.value) await loadChoferes(empresaFilter.value);
         } else if(isUser) {
-            await loadChoferes(null);
+          await loadChoferes(null);
         }
 
         await loadDepositosFilter();

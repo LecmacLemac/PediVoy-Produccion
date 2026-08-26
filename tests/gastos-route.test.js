@@ -199,7 +199,7 @@ test('GET /api/gastos filtra por depósito y respeta límite solicitado', async 
 
   try {
     await withServer(app, async (baseUrl) => {
-      const resp = await fetch(`${baseUrl}/api/gastos?deposito_id=5&limit=500`);
+      const resp = await fetch(`${baseUrl}/api/gastos?deposito_id=5&from=2026-06-01&to=2026-06-30&limit=500`);
       assert.equal(resp.status, 200);
       const rows = await resp.json();
       assert.equal(rows.length, 1);
@@ -212,5 +212,5 @@ test('GET /api/gastos filtra por depósito y respeta límite solicitado', async 
   assert.ok(selectCall);
   assert.match(selectCall.sql, /COALESCE\(g\.deposito_id, md\.deposito_id\) =/);
   assert.match(selectCall.sql, /LIMIT \$/);
-  assert.deepEqual(selectCall.params, [3, 5, 500]);
+  assert.deepEqual(selectCall.params, [3, 5, '2026-06-01', '2026-06-30', 500]);
 });
