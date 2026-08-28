@@ -136,6 +136,18 @@
     .text-cell { display: flex; flex-direction: column; }
     .text-main { font-weight: 600; color: #fff; }
     .text-sub { font-size: 0.8rem; color: var(--text-muted); margin-top: 2px; }
+    .account-chip {
+      width: max-content;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 9px;
+      border-radius: 999px;
+      color: var(--account-color, #67e8f9);
+      background: var(--account-bg, rgba(103, 232, 249, 0.1));
+      border: 1px solid var(--account-border, rgba(103, 232, 249, 0.28));
+      font-weight: 700;
+    }
 
     /* MODAL */
     .modal-overlay {
@@ -640,6 +652,19 @@
       (riesgo > 0 ? ` <span class="badge badge-danger" title="Score de riesgo"><i class="fa-solid fa-shield-halved"></i> Riesgo ${riesgo}</span>` : '');
   }
 
+  function hashText(value) {
+    return Math.abs(String(value || '').split('').reduce((acc, ch) => ((acc << 5) - acc + ch.charCodeAt(0)) | 0, 0));
+  }
+
+  function cuentaColorStyle(t) {
+    if (!t.cuenta_bancaria_id) {
+      return 'color:#fbbf24;--account-color:#fbbf24;--account-bg:rgba(251,191,36,0.12);--account-border:rgba(251,191,36,0.34)';
+    }
+    const key = t.cuenta_bancaria_id || `${t.cuenta_banco || t.banco_destino || ''}:${t.cuenta_alias || t.alias_destino || ''}`;
+    const hue = (hashText(key) * 137.508) % 360;
+    return `--account-color:hsl(${hue}, 82%, 74%);--account-bg:hsla(${hue}, 82%, 55%, 0.13);--account-border:hsla(${hue}, 82%, 64%, 0.36)`;
+  }
+
   function cuentaDestinoHtml(t) {
     if (t.source !== 'transferencia') return '';
     const alias = t.cuenta_alias || t.alias_destino || '';
@@ -649,10 +674,9 @@
     const label = detectada
       ? `${banco || 'Cuenta'} · ${alias || `#${Number(t.cuenta_bancaria_id)}`}`
       : (banco || alias ? `${banco || 'Destino'} ${alias}` : 'Cuenta destino no detectada');
-    const color = detectada ? '#67e8f9' : '#fbbf24';
     const icon = detectada ? 'fa-building-columns' : 'fa-circle-question';
     const title = t.cuenta_bancaria_match_detalle || 'Cuenta destino inferida desde comprobante';
-    return `<span class="text-sub" title="${esc(title)}" style="color:${color}"><i class="fa-solid ${icon}"></i> ${esc(label)}${confianza ? ` · ${confianza}%` : ''}</span>`;
+    return `<span class="text-sub account-chip" title="${esc(title)}" style="${cuentaColorStyle(t)}"><i class="fa-solid ${icon}"></i> ${esc(label)}${confianza ? ` · ${confianza}%` : ''}</span>`;
   }
 
   // --- Renderizar Tabla ---
