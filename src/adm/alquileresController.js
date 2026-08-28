@@ -617,7 +617,11 @@ export async function generarCargosPeriodo(req, res) {
         jsonb_agg(
           jsonb_build_object(
             'codigo',         a.codigo,
+            'tipo',           a.tipo,
+            'marca',          a.marca,
             'modelo',         a.modelo,
+            'alquiler_mensual', a.alquiler_mensual,
+            'fecha_inicio_alquiler', a.fecha_inicio_alquiler,
             'alquiler_full',  a.alquiler_mensual,
             'fecha_inicio',   a.fecha_inicio_alquiler,
             'es_prorrateo',   (a.fecha_inicio_alquiler >= $2::date)
@@ -700,4 +704,3 @@ export async function generarCargosPeriodo(req, res) {
     }
   }
 }
-

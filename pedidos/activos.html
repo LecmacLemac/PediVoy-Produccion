@@ -812,6 +812,7 @@
     
     // VARIABLE IMPORTANTE PARA EDICIÓN
     let currentEditingId = null;
+    let currentEditingBillingSnapshot = null;
 
     // === Carga de usuario / empresa ===
     async function loadUserInfo() {
@@ -1121,6 +1122,7 @@
     // MODO CREAR
     function openNuevoActivo() {
       currentEditingId = null; // MODO CREAR
+      currentEditingBillingSnapshot = null;
       const title = document.getElementById('modalTitle');
       if(title) title.textContent = 'Nuevo Activo';
 
@@ -1141,6 +1143,10 @@
     // MODO EDITAR
     function abrirEdicion(activo) {
       currentEditingId = activo.id; // MODO EDITAR
+      currentEditingBillingSnapshot = {
+        alquiler_mensual: Number(activo.alquiler_mensual || 0),
+        fecha_inicio_alquiler: activo.fecha_inicio_alquiler ? String(activo.fecha_inicio_alquiler).slice(0, 10) : ''
+      };
       const title = document.getElementById('modalTitle');
       if(title) title.textContent = 'Editar Activo';
 
@@ -1189,6 +1195,10 @@
          alquiler_mensual: parseFloat(document.getElementById('newAlquiler').value) || 0,
          fecha_inicio_alquiler: document.getElementById('newFechaInicio').value || null
        };
+       const billingChanged = !!currentEditingId && !!currentEditingBillingSnapshot && (
+         Number(body.alquiler_mensual || 0) !== Number(currentEditingBillingSnapshot.alquiler_mensual || 0) ||
+         String(body.fecha_inicio_alquiler || '') !== String(currentEditingBillingSnapshot.fecha_inicio_alquiler || '')
+       );
        
        if(esSuperAdmin && targetEmpresaId) {
          body.empresa_id = targetEmpresaId;
@@ -1212,11 +1222,17 @@
              throw new Error(json.error || 'Error al guardar');
           }
 
-          showToast('Guardado correctamente', 'success');
+          showToast(
+            billingChanged
+              ? 'Guardado. Revisá/regenerá cargos pendientes del mes si corresponde.'
+              : 'Guardado correctamente',
+            'success'
+          );
           closeNuevoActivo();
           loadActivos();
           loadResumenActivos();
           currentEditingId = null; // Reset
+          currentEditingBillingSnapshot = null;
        } catch(e) {
           showToast(e.message, 'error');
        }

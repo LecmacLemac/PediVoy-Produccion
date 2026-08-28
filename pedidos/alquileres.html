@@ -938,6 +938,22 @@
       return val + '-01'; // día 1 del mes
     }
 
+    function getUrlParams() {
+      return new URLSearchParams(window.location.search || '');
+    }
+
+    function getRequestedEmpresaId() {
+      const raw = getUrlParams().get('empresa_id');
+      const id = Number(raw);
+      return Number.isInteger(id) && id > 0 ? id : null;
+    }
+
+    function getRequestedPeriodoMonth() {
+      const raw = String(getUrlParams().get('periodo') || '').trim();
+      const match = raw.match(/^(\d{4}-\d{2})(?:-\d{2})?$/);
+      return match ? match[1] : '';
+    }
+
     function formatPeriodoHuman(isoDateString) {
       if (!isoDateString) return '–';
       const d = new Date(isoDateString);
@@ -965,6 +981,9 @@
         currentUser = user;
         esSuperAdmin = (user.role === 'super');
         targetEmpresaId = user.empresa_id || user.empresaId || null;
+        if (esSuperAdmin && getRequestedEmpresaId()) {
+          targetEmpresaId = getRequestedEmpresaId();
+        }
 
         const userName = document.getElementById('userName');
         const userEmpresa = document.getElementById('userEmpresa');
@@ -1027,7 +1046,11 @@
           select.appendChild(opt);
         });
 
-        if (targetEmpresaId) {
+        const requestedEmpresaId = getRequestedEmpresaId();
+        if (requestedEmpresaId && empresas.some(e => Number(e.id) === requestedEmpresaId)) {
+          targetEmpresaId = requestedEmpresaId;
+          select.value = String(targetEmpresaId);
+        } else if (targetEmpresaId) {
           select.value = String(targetEmpresaId);
         } else {
           targetEmpresaId = empresas[0].id;
@@ -1464,7 +1487,7 @@
             const now = new Date();
             const y = now.getFullYear();
             const m = String(now.getMonth() + 1).padStart(2, '0');
-            periodInput.value = y + '-' + m;
+            periodInput.value = getRequestedPeriodoMonth() || (y + '-' + m);
 
             periodInput.addEventListener('change', () => {
               loadResumenAlquileres();
@@ -1755,9 +1778,11 @@
           const cod = escapeHtml(a.codigo || a.codigo_activo || '');
           const tipo = escapeHtml(a.tipo || '');
           const marcaModelo = escapeHtml([a.marca, a.modelo].filter(Boolean).join(' '));
-          const monto = Number(a.alquiler_mensual || a.monto || 0);
-          const fIni = a.fecha_inicio_alquiler ? toLocalDate(a.fecha_inicio_alquiler) : '–';
-          const fFin = a.fecha_fin_alquiler ? toLocalDate(a.fecha_fin_alquiler) : '–';
+          const monto = Number(a.alquiler_mensual || a.monto || a.alquiler_full || 0);
+          const inicio = a.fecha_inicio_alquiler || a.fecha_inicio || null;
+          const fin = a.fecha_fin_alquiler || a.fecha_fin || null;
+          const fIni = inicio ? toLocalDate(inicio) : '–';
+          const fFin = fin ? toLocalDate(fin) : '–';
 
           return `
             <tr>

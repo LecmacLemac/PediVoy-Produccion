@@ -744,7 +744,7 @@
     <div class="actions-row">
       <div class="text-subtle" id="summaryLine">Preparando cuenta corriente…</div>
       <div style="display:flex; gap:0.6rem; flex-wrap:wrap;">
-        <a class="btn btn-sm" href="/pedidos/alquileres.html">↩ Ver gestión de alquileres</a>
+        <a class="btn btn-sm" href="/pedidos/alquileres.html" id="btnGoToAlquileresTop">↩ Ver gestión de alquileres</a>
         <button class="btn btn-primary btn-sm" type="button" id="btnReload">🔄 Actualizar cuenta</button>
         <button class="btn btn-sm" type="button" id="btnExportCsv">⬇️ Exportar CSV</button>
       </div>
@@ -1068,6 +1068,22 @@
     }
 
     return months;
+  }
+
+  function buildAlquileresUrl(periodKey = '') {
+    const params = new URLSearchParams();
+    if (esSuperAdmin && targetEmpresaId) params.set('empresa_id', String(targetEmpresaId));
+    if (periodKey) params.set('periodo', String(periodKey).slice(0, 10));
+    const qs = params.toString();
+    return '/pedidos/alquileres.html' + (qs ? '?' + qs : '');
+  }
+
+  function updateAlquileresLinks() {
+    const range = buildPeriodKeysInRange();
+    const periodKey = detailSelected?.periods?.[0]?.periodKey || range[range.length - 1] || '';
+    const url = buildAlquileresUrl(periodKey);
+    const topLink = document.getElementById('btnGoToAlquileresTop');
+    if (topLink) topLink.href = url;
   }
 
   function comparePeriodKeys(a, b) {
@@ -1531,6 +1547,7 @@
     }).join('');
 
     document.getElementById('detalleModal').showModal();
+    updateAlquileresLinks();
   }
 
   async function marcarPeriodoCobrado(alquilerId, accountKey, periodKey) {
@@ -1864,6 +1881,7 @@
       aggregatedAccounts = aggregateByClient(periodResults);
       renderTable();
       updateLastUpdatedBadge();
+      updateAlquileresLinks();
     } catch (e) {
       console.error('Error recargando cuenta corriente', e);
       aggregatedAccounts = [];
@@ -1932,7 +1950,7 @@
     document.getElementById('btnCloseDetalle')?.addEventListener('click', () => detalleModal.close());
     document.getElementById('btnCloseDetalleFooter')?.addEventListener('click', () => detalleModal.close());
     document.getElementById('btnGoToAlquileres')?.addEventListener('click', () => {
-      window.location.href = '/pedidos/alquileres.html';
+      window.location.href = buildAlquileresUrl(detailSelected?.periods?.[0]?.periodKey || '');
     });
 
     const comunicacionModal = document.getElementById('comunicacionModal');
