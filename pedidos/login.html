@@ -606,6 +606,11 @@
         if (remember.checked) safeStorage.local.set('lastUsername', username);
         else safeStorage.local.remove('lastUsername');
 
+        if (data.licenseExpired || data.user?.licencia_vencida) {
+          location.href = data.redirect || '/pedidos/inicio/licencia.html';
+          return;
+        }
+
         const safeNext = getSafeInternalNext();
         if(safeNext) {
           location.href = safeNext;

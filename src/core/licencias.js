@@ -36,6 +36,7 @@ export async function checkLicencia(req, res, next) {
     if (vencida) {
       return res.status(402).json({
         error: 'licencia_vencida',
+        licenseExpired: true,
         message: '⛔ Tu licencia ha vencido. Realizá el pago para reactivar el servicio.',
         redirect: '/pedidos/inicio/licencia.html'
       });
