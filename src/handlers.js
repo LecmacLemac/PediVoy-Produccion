@@ -1720,7 +1720,9 @@ async function handleReposicionAutomatica(client, numero, ctx) {
 // Router principal
 // --------------------------------------------------------------------------------
 
-function start(client) {
+function start(client, options = {}) {
+  const forcedEmpresaId = Number(options.empresaId || 0);
+
   client.on('message', async (message) => {
     try {
       // Ignorar mensajes propios o de estado
@@ -1741,7 +1743,14 @@ function start(client) {
       if (message.hasMedia === true) return;
       if (!contenido) return;
 
-      const ctx = await _resolverContextoDesdeTelefono(numero);
+      let ctx = await _resolverContextoDesdeTelefono(numero);
+      if (forcedEmpresaId > 0) {
+        ctx = {
+          ...ctx,
+          empresa_id: forcedEmpresaId,
+          source: 'empresa_whatsapp',
+        };
+      }
       const { role, empresa_id, chofer_id } = ctx;
       const contenidoLimpio = contenido.toLowerCase();
 

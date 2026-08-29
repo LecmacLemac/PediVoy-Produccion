@@ -5,10 +5,54 @@ import express from 'express';
 import fs from 'fs';
 import path from 'path';
 import multer from 'multer';
+import QRCode from 'qrcode';
 import { encryptSecret } from '../services/facturacionService.js';
 
 function objectOrEmpty(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+}
+
+function getRequestOrigin(req) {
+  const proto = String(req.headers['x-forwarded-proto'] || req.protocol || 'http')
+    .split(',')[0]
+    .trim();
+  const host = String(req.headers['x-forwarded-host'] || req.headers.host || '').trim();
+  return `${proto || 'http'}://${host}`;
+}
+
+function buildEmpresaPublicUrl(req, empresa, mode = 'id') {
+  const requestedMode = String(mode || 'id').toLowerCase();
+  const origin = getRequestOrigin(req);
+
+  if (requestedMode === 'domain' && empresa.landing_domain) {
+    const rawDomain = String(empresa.landing_domain).trim();
+    return /^https?:\/\//i.test(rawDomain) ? rawDomain : `https://${rawDomain}`;
+  }
+
+  if (requestedMode === 'slug' && empresa.landing_slug) {
+    return `${origin}/pedidos/?slug=${encodeURIComponent(empresa.landing_slug)}`;
+  }
+
+  return `${origin}/pedidos/?empresa_id=${encodeURIComponent(empresa.id)}`;
+}
+
+let empresaWhatsappSchemaReady = false;
+
+async function ensureEmpresaWhatsappSchema(query) {
+  if (empresaWhatsappSchemaReady) return;
+  await query(`
+    ALTER TABLE empresas
+      ADD COLUMN IF NOT EXISTS wpp_qr_code TEXT,
+      ADD COLUMN IF NOT EXISTS wpp_status TEXT DEFAULT 'disconnected',
+      ADD COLUMN IF NOT EXISTS wpp_reset_requested_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  `);
+  empresaWhatsappSchemaReady = true;
+}
+
+function getEmpresaWppSessionDir(empresaId) {
+  const sessionPath = process.env.DISK_PATH || './wpp_sessions';
+  return path.resolve(process.cwd(), sessionPath, `session-empresa_${empresaId}`);
 }
 
 export function redactEmpresaPaymentSecrets(empresa) {
@@ -477,6 +521,145 @@ export function createEmpresasRouter(deps) {
       return res.json({ ok: true });
     } catch {
       return res.status(500).json({ error: 'Error eliminando (tiene datos asociados)' });
+    }
+  });
+
+  // GET /api/empresas/:id/qr-publico
+  router.get('/:id/qr-publico', withAuth, async (req, res) => {
+    try {
+      const empresaId = Number(req.params.id);
+      if (!Number.isFinite(empresaId) || empresaId <= 0) {
+        return res.status(400).json({ error: 'empresa_id inválido' });
+      }
+
+      if (!isSuper(req) && empresaId !== Number(getEmpresaIdFromToken(req))) {
+        return res.status(403).json({ error: 'No autorizado' });
+      }
+
+      const rows = await query(
+        `SELECT id, nombre, landing_domain, landing_slug
+         FROM empresas
+         WHERE id = $1
+         LIMIT 1`,
+        [empresaId]
+      );
+
+      if (!rows.length) return res.status(404).json({ error: 'Empresa no encontrada' });
+
+      const empresa = rows[0];
+      const publicUrl = buildEmpresaPublicUrl(req, empresa, req.query?.mode);
+      const dataUrl = await QRCode.toDataURL(publicUrl, {
+        margin: 1,
+        width: 420,
+        errorCorrectionLevel: 'M',
+      });
+
+      return res.json({
+        ok: true,
+        empresa_id: Number(empresa.id),
+        nombre: empresa.nombre || null,
+        public_url: publicUrl,
+        qr_data_url: dataUrl,
+        variants: {
+          id: buildEmpresaPublicUrl(req, empresa, 'id'),
+          slug: empresa.landing_slug ? buildEmpresaPublicUrl(req, empresa, 'slug') : null,
+          domain: empresa.landing_domain ? buildEmpresaPublicUrl(req, empresa, 'domain') : null,
+        },
+      });
+    } catch (e) {
+      console.error('Error generando QR público de empresa:', e);
+      return res.status(500).json({ error: 'No se pudo generar el QR público' });
+    }
+  });
+
+  // GET /api/empresas/:id/whatsapp-qr
+  router.get('/:id/whatsapp-qr', withAuth, async (req, res) => {
+    try {
+      const empresaId = Number(req.params.id);
+      if (!Number.isFinite(empresaId) || empresaId <= 0) {
+        return res.status(400).json({ error: 'empresa_id inválido' });
+      }
+
+      if (!isSuper(req) && empresaId !== Number(getEmpresaIdFromToken(req))) {
+        return res.status(403).json({ error: 'No autorizado' });
+      }
+
+      await ensureEmpresaWhatsappSchema(query);
+
+      const rows = await query(
+        `SELECT id, nombre, wpp_status, wpp_qr_code
+         FROM empresas
+         WHERE id = $1
+         LIMIT 1`,
+        [empresaId]
+      );
+
+      if (!rows.length) return res.status(404).json({ error: 'Empresa no encontrada' });
+
+      const empresa = rows[0];
+      const qrRaw = empresa.wpp_qr_code ? String(empresa.wpp_qr_code) : '';
+      const qrDataUrl = qrRaw
+        ? await QRCode.toDataURL(qrRaw, { margin: 1, width: 420, errorCorrectionLevel: 'M' })
+        : null;
+
+      return res.json({
+        ok: true,
+        empresa_id: Number(empresa.id),
+        nombre: empresa.nombre || null,
+        status: empresa.wpp_status || 'disconnected',
+        qr_data_url: qrDataUrl,
+        has_qr: Boolean(qrDataUrl),
+      });
+    } catch (e) {
+      console.error('Error leyendo QR WhatsApp de empresa:', e);
+      return res.status(500).json({ error: 'No se pudo leer el QR WhatsApp de la empresa' });
+    }
+  });
+
+  // POST /api/empresas/:id/whatsapp-reset
+  router.post('/:id/whatsapp-reset', withAuth, async (req, res) => {
+    try {
+      const empresaId = Number(req.params.id);
+      if (!Number.isFinite(empresaId) || empresaId <= 0) {
+        return res.status(400).json({ error: 'empresa_id inválido' });
+      }
+
+      if (!isSuper(req) && empresaId !== Number(getEmpresaIdFromToken(req))) {
+        return res.status(403).json({ error: 'No autorizado' });
+      }
+
+      await ensureEmpresaWhatsappSchema(query);
+
+      const rows = await query(
+        `SELECT id
+         FROM empresas
+         WHERE id = $1
+         LIMIT 1`,
+        [empresaId]
+      );
+
+      if (!rows.length) return res.status(404).json({ error: 'Empresa no encontrada' });
+
+      const sessionDir = getEmpresaWppSessionDir(empresaId);
+      try {
+        fs.rmSync(sessionDir, { recursive: true, force: true });
+      } catch (e) {
+        console.warn('No se pudo borrar sesión WhatsApp empresa:', e.message);
+      }
+
+      await query(
+        `UPDATE empresas
+            SET wpp_qr_code = NULL,
+                wpp_status = 'resetting',
+                wpp_reset_requested_at = NOW()
+          WHERE id = $1`,
+        [empresaId]
+      );
+
+      return res.json({ ok: true, empresa_id: empresaId, status: 'resetting' });
+    } catch (e) {
+      console.error('Error reseteando WhatsApp de empresa:', e);
+      return res.status(500).json({ error: 'No se pudo resetear WhatsApp de la empresa' });
     }
   });
 

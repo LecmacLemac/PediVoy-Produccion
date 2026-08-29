@@ -25,11 +25,13 @@ export function createOutboxProcessor({ ENABLE_WPP, query, lidByPhone, safeError
       }
 
       const rows = await query(`
-        SELECT id, telefono, mensaje
-        FROM wpp_outbox
-        WHERE status = 'pending'
-          AND created_at > NOW() - INTERVAL '1 day'
-        ORDER BY id ASC
+        SELECT o.id, o.telefono, o.mensaje
+        FROM wpp_outbox o
+        LEFT JOIN empresas e ON e.id = o.empresa_id
+        WHERE o.status = 'pending'
+          AND o.created_at > NOW() - INTERVAL '1 day'
+          AND COALESCE(e.wpp_status, 'disconnected') <> 'connected'
+        ORDER BY o.id ASC
         LIMIT 3
       `);
 

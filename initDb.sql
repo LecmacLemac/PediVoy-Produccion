@@ -1466,7 +1466,11 @@ ALTER TABLE choferes
 
 -- Empresas: logo opcional para panel admin / branding
 ALTER TABLE empresas
-  ADD COLUMN IF NOT EXISTS logo_url TEXT;
+  ADD COLUMN IF NOT EXISTS logo_url TEXT,
+  ADD COLUMN IF NOT EXISTS wpp_qr_code TEXT,
+  ADD COLUMN IF NOT EXISTS wpp_status TEXT DEFAULT 'disconnected',
+  ADD COLUMN IF NOT EXISTS wpp_reset_requested_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
 -- ACK de incidentes de tracking (operación / NOC)
 CREATE TABLE IF NOT EXISTS tracking_incident_acks (

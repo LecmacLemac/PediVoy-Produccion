@@ -159,6 +159,132 @@
         border: 1px solid rgba(255,255,255,0.05);
     }
 
+    .section-divider {
+        border-top: 1px solid var(--border);
+        margin: 2rem 0;
+    }
+
+    .public-qr-panel {
+        display: grid;
+        gap: 1.2rem;
+    }
+
+    .public-qr-controls {
+        display: grid;
+        grid-template-columns: minmax(220px, 1fr) minmax(150px, 210px) auto;
+        gap: 0.8rem;
+        align-items: end;
+    }
+
+    .field label {
+        display: block;
+        color: var(--muted);
+        font-size: 0.82rem;
+        font-weight: 700;
+        margin-bottom: 0.4rem;
+        text-transform: uppercase;
+    }
+
+    .field select,
+    .field input {
+        width: 100%;
+        min-height: 42px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--bg-2);
+        color: var(--ink);
+        padding: 0.7rem 0.85rem;
+        font: inherit;
+    }
+
+    .field input[readonly] {
+        color: var(--muted);
+    }
+
+    .public-qr-result {
+        display: grid;
+        grid-template-columns: 260px 1fr;
+        gap: 1rem;
+        align-items: center;
+        background: var(--bg-2);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 1rem;
+    }
+
+    .public-qr-image {
+        width: 240px;
+        height: 240px;
+        display: grid;
+        place-items: center;
+        background: #fff;
+        border-radius: 8px;
+        overflow: hidden;
+    }
+
+    .public-qr-image img {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+    }
+
+    .public-qr-actions {
+        display: flex;
+        gap: 0.6rem;
+        flex-wrap: wrap;
+        margin-top: 1rem;
+    }
+
+    .company-wpp-panel {
+        display: grid;
+        gap: 1rem;
+    }
+
+    .status-pill {
+        display: inline-flex;
+        align-items: center;
+        min-height: 28px;
+        border-radius: 99px;
+        padding: 0.25rem 0.7rem;
+        border: 1px solid var(--border);
+        color: var(--muted);
+        background: rgba(255,255,255,0.04);
+        font-weight: 700;
+        font-size: 0.82rem;
+    }
+
+    .status-pill.connected {
+        color: #34d399;
+        border-color: rgba(16,185,129,0.35);
+        background: rgba(16,185,129,0.12);
+    }
+
+    .status-pill.awaiting_scan {
+        color: #fbbf24;
+        border-color: rgba(245,158,11,0.35);
+        background: rgba(245,158,11,0.12);
+    }
+
+    .status-pill.initializing,
+    .status-pill.resetting {
+        color: #67e8f9;
+        border-color: rgba(6,182,212,0.35);
+        background: rgba(6,182,212,0.12);
+    }
+
+    .status-pill.disconnected,
+    .status-pill.error {
+        color: #f87171;
+        border-color: rgba(239,68,68,0.35);
+        background: rgba(239,68,68,0.12);
+    }
+
+    .wpp-company-note {
+        color: var(--muted);
+        font-size: 0.9rem;
+        margin-top: 0.8rem;
+    }
+
     /* FORMS & BUTTONS */
     .btn {
       padding: 0.7rem 1.2rem; border-radius: 8px; font-weight: 600; cursor: pointer;
@@ -215,6 +341,9 @@
       .qr-container { min-height: 260px; padding: 0.8rem; }
       .qr-container img { width: min(100%, 280px); height: auto; }
       .prompt-grid { grid-template-columns: 1fr; }
+      .public-qr-controls,
+      .public-qr-result { grid-template-columns: 1fr; }
+      .public-qr-image { width: 100%; max-width: 260px; height: auto; aspect-ratio: 1; margin: 0 auto; }
       .modal-footer { flex-direction: column-reverse; }
       .modal-footer .btn { width: 100%; justify-content: center; }
       .toast { left: 12px; right: 12px; bottom: 14px; width: auto; border-radius: 12px; }
@@ -281,25 +410,116 @@
     </div>
 
     <div class="card left-align" id="adminConfig">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; flex-wrap:wrap; gap:10px;">
-            <h2><i class="fa-solid fa-robot"></i> Configuración Global IA</h2>
-            <div style="display:flex; gap:5px">
-                <button class="btn btn-ghost btn-sm" onclick="editPrompt('vendedor')">+ Vendedor</button>
-                <button class="btn btn-ghost btn-sm" onclick="editPrompt('soporte')">+ Soporte</button>
-                <button class="btn btn-ghost btn-sm" onclick="editPrompt('general')">+ General</button>
-                
-                <button class="btn btn-ghost btn-sm" style="border-color:var(--brand); color:var(--brand);" onclick="editPrompt('builder_web')">
-                    <i class="fa-solid fa-code"></i> + Generador Web
+        <div class="public-qr-panel">
+            <div>
+                <h2><i class="fa-solid fa-qrcode"></i> QR Público por Empresa</h2>
+                <p class="subtitle" style="text-align:left; margin-bottom:1rem">
+                    Generá el QR que cada comercio puede compartir con sus clientes para entrar directo a su tienda.
+                </p>
+            </div>
+
+            <div class="public-qr-controls">
+                <div class="field">
+                    <label for="publicQrEmpresa">Empresa</label>
+                    <select id="publicQrEmpresa">
+                        <option value="">Cargando empresas...</option>
+                    </select>
+                </div>
+
+                <div class="field">
+                    <label for="publicQrMode">Tipo de enlace</label>
+                    <select id="publicQrMode">
+                        <option value="id">Por ID</option>
+                        <option value="slug">Por slug</option>
+                        <option value="domain">Por dominio</option>
+                    </select>
+                </div>
+
+                <button id="btnGeneratePublicQr" type="button" class="btn">
+                    <i class="fa-solid fa-rotate-right"></i> Generar
                 </button>
             </div>
-        </div>
-        
-        <p class="subtitle" style="text-align:left">
-            Estos son los mensajes <strong>por defecto</strong> que usará el bot para todas las empresas que no tengan su propia configuración personalizada.
-        </p>
 
-        <div id="promptsList" class="prompt-grid">
-            <div style="padding:2rem; text-align:center; color:var(--muted); grid-column: 1 / -1;">Cargando configuración...</div>
+            <div id="publicQrResult" class="public-qr-result">
+                <div class="public-qr-image">
+                    <span style="color:#0f172a; font-weight:700;">QR</span>
+                </div>
+                <div>
+                    <div class="field">
+                        <label for="publicQrUrl">Link público</label>
+                        <input id="publicQrUrl" type="text" readonly value="Seleccioná una empresa para generar el QR">
+                    </div>
+                    <div class="public-qr-actions">
+                        <button id="btnCopyPublicQr" type="button" class="btn btn-ghost btn-sm">
+                            <i class="fa-solid fa-copy"></i> Copiar link
+                        </button>
+                        <button id="btnOpenPublicQr" type="button" class="btn btn-ghost btn-sm">
+                            <i class="fa-solid fa-arrow-up-right-from-square"></i> Abrir tienda
+                        </button>
+                        <button id="btnDownloadPublicQr" type="button" class="btn btn-ghost btn-sm">
+                            <i class="fa-solid fa-download"></i> Descargar QR
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="section-divider"></div>
+
+        <div class="company-wpp-panel">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+                <div>
+                    <h2><i class="fa-brands fa-whatsapp"></i> WhatsApp por Empresa</h2>
+                    <p class="subtitle" style="text-align:left; margin-bottom:0">
+                        Vinculación del bot propio de la empresa seleccionada.
+                    </p>
+                </div>
+                <button id="btnRefreshCompanyWpp" type="button" class="btn btn-ghost btn-sm">
+                    <i class="fa-solid fa-rotate-right"></i> Actualizar
+                </button>
+                <button id="btnResetCompanyWpp" type="button" class="btn btn-ghost btn-sm" style="border-color:rgba(239,68,68,.35); color:#f87171;">
+                    <i class="fa-solid fa-trash-can"></i> Resetear sesión
+                </button>
+            </div>
+
+            <div id="companyWppResult" class="public-qr-result">
+                <div class="public-qr-image">
+                    <span style="color:#0f172a; font-weight:700;">WhatsApp</span>
+                </div>
+                <div>
+                    <div style="display:flex; align-items:center; gap:.6rem; flex-wrap:wrap;">
+                        <span id="companyWppStatus" class="status-pill">Sin consultar</span>
+                    </div>
+                    <p id="companyWppText" class="wpp-company-note">
+                        Seleccioná una empresa para ver el QR de vinculación de su WhatsApp.
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <div id="globalPromptSection">
+            <div class="section-divider"></div>
+
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; flex-wrap:wrap; gap:10px;">
+                <h2><i class="fa-solid fa-robot"></i> Configuración Global IA</h2>
+                <div style="display:flex; gap:5px">
+                    <button class="btn btn-ghost btn-sm" onclick="editPrompt('vendedor')">+ Vendedor</button>
+                    <button class="btn btn-ghost btn-sm" onclick="editPrompt('soporte')">+ Soporte</button>
+                    <button class="btn btn-ghost btn-sm" onclick="editPrompt('general')">+ General</button>
+
+                    <button class="btn btn-ghost btn-sm" style="border-color:var(--brand); color:var(--brand);" onclick="editPrompt('builder_web')">
+                        <i class="fa-solid fa-code"></i> + Generador Web
+                    </button>
+                </div>
+            </div>
+
+            <p class="subtitle" style="text-align:left">
+                Estos son los mensajes <strong>por defecto</strong> que usará el bot para todas las empresas que no tengan su propia configuración personalizada.
+            </p>
+
+            <div id="promptsList" class="prompt-grid">
+                <div style="padding:2rem; text-align:center; color:var(--muted); grid-column: 1 / -1;">Cargando configuración...</div>
+            </div>
         </div>
     </div>
 
@@ -354,6 +574,9 @@
     let promptsLoadedOk = false;
     let qrRefreshTimer = null;
     let isQrLoading = false;
+    let companiesForPublicQr = [];
+    let currentPublicQr = null;
+    let currentCompanyWpp = null;
     const QR_REFRESH_MS = 4000;
 
     // ====== Init ======
@@ -365,16 +588,17 @@
             const meData = await meRes.json();
             const role = (meData.user?.role || '').toLowerCase();
             const isSuper = (role === 'super');
+            const isCompanyAdmin = ['admin', 'user'].includes(role);
 
-            $('#roleBadge').textContent = isSuper ? 'SUPER ADMIN' : role.toUpperCase();
+            $('#roleBadge').textContent = isSuper ? 'SUPER ADMIN' : 'Admin';
 
             // 2. BLOQUEO DE SEGURIDAD VISUAL
-            if (!isSuper) {
-                // Si NO es super admin, borramos el contenido y mostramos aviso
+            if (!isSuper && !isCompanyAdmin) {
+                // Si no es super ni admin de empresa, borramos el contenido y mostramos aviso
                 $('#mainLayout').innerHTML = `
                     <div class="card" style="max-width:500px; margin: 4rem auto; text-align:center;">
                         <h1 style="color:var(--danger); margin-bottom:1rem;">⛔ Acceso Restringido</h1>
-                        <p class="subtitle">Esta configuración es exclusiva para Super Administradores.</p>
+                        <p class="subtitle">Esta sección está disponible para Super Admin y Admin de empresa.</p>
                         <a href="dashboard.html" class="btn" style="justify-content:center;">Volver al Dashboard</a>
                     </div>
                 `;
@@ -382,13 +606,22 @@
                 return;
             }
 
-            // 3. Si es Super Admin, cargamos las herramientas
-            loadQR();
+            if (isSuper) {
+                // Super Admin: QR interno de WhatsApp + QR público + prompts globales.
+                loadQR();
+                $('#mainLayout').classList.add('admin-view');
+                loadGlobalPrompts();
+            } else {
+                // Admin de empresa: solo puede generar el QR público de su empresa.
+                const wppCard = document.querySelector('#mainLayout > .card:not(#adminConfig)');
+                if (wppCard) wppCard.style.display = 'none';
+                const promptSection = $('#globalPromptSection');
+                if (promptSection) promptSection.style.display = 'none';
+            }
 
-            // Habilitamos la vista de admin
-            $('#mainLayout').classList.add('admin-view');
             $('#adminConfig').style.display = 'block';
-            loadGlobalPrompts();
+            bindPublicQrControls();
+            loadCompaniesForPublicQr();
 
         } catch (e) { console.error(e); }
     })();
@@ -436,6 +669,252 @@
         }
     }
     function reloadQR() { stopQrRefresh(); loadQR(); }
+
+    // ====== Public QR por Empresa ======
+    function bindPublicQrControls() {
+        const btnGenerate = $('#btnGeneratePublicQr');
+        const companySelect = $('#publicQrEmpresa');
+        const modeSelect = $('#publicQrMode');
+        const btnCopy = $('#btnCopyPublicQr');
+        const btnOpen = $('#btnOpenPublicQr');
+        const btnDownload = $('#btnDownloadPublicQr');
+        const btnRefreshCompanyWpp = $('#btnRefreshCompanyWpp');
+        const btnResetCompanyWpp = $('#btnResetCompanyWpp');
+
+        if (btnGenerate) btnGenerate.addEventListener('click', () => generatePublicQr());
+        if (companySelect) {
+            companySelect.addEventListener('change', () => {
+                generatePublicQr();
+                loadCompanyWhatsappQr();
+            });
+        }
+        if (modeSelect) modeSelect.addEventListener('change', () => generatePublicQr());
+        if (btnCopy) btnCopy.addEventListener('click', copyPublicQrUrl);
+        if (btnOpen) btnOpen.addEventListener('click', openPublicQrUrl);
+        if (btnDownload) btnDownload.addEventListener('click', downloadPublicQr);
+        if (btnRefreshCompanyWpp) btnRefreshCompanyWpp.addEventListener('click', () => loadCompanyWhatsappQr());
+        if (btnResetCompanyWpp) btnResetCompanyWpp.addEventListener('click', resetCompanyWhatsappSession);
+    }
+
+    async function loadCompaniesForPublicQr() {
+        const select = $('#publicQrEmpresa');
+        if (!select) return;
+
+        try {
+            const res = await authFetch('/api/empresas');
+            if (!res.ok) throw new Error('No se pudieron cargar empresas');
+            const data = await res.json();
+            companiesForPublicQr = Array.isArray(data) ? data : [];
+
+            if (!companiesForPublicQr.length) {
+                select.innerHTML = '<option value="">No hay empresas disponibles</option>';
+                return;
+            }
+
+            select.innerHTML = companiesForPublicQr.map(company => {
+                const id = Number(company.id);
+                const name = escapeHtml(company.nombre || `Empresa ${id}`);
+                return `<option value="${id}">#${id} - ${name}</option>`;
+            }).join('');
+
+            generatePublicQr();
+            loadCompanyWhatsappQr();
+        } catch (e) {
+            console.error(e);
+            select.innerHTML = '<option value="">Error cargando empresas</option>';
+            toast('No se pudieron cargar las empresas');
+        }
+    }
+
+    async function generatePublicQr() {
+        const companyId = Number($('#publicQrEmpresa')?.value || 0);
+        const mode = $('#publicQrMode')?.value || 'id';
+        const result = $('#publicQrResult');
+        const btn = $('#btnGeneratePublicQr');
+
+        if (!companyId || !result) return;
+
+        const originalBtnHtml = btn ? btn.innerHTML : '';
+        if (btn) {
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Generando';
+        }
+
+        try {
+            const res = await authFetch(`/api/empresas/${companyId}/qr-publico?mode=${encodeURIComponent(mode)}`);
+            const data = await res.json().catch(() => null);
+            if (!res.ok || !data?.ok) {
+                throw new Error(data?.error || 'No se pudo generar el QR');
+            }
+
+            currentPublicQr = data;
+            const qrBox = result.querySelector('.public-qr-image');
+            const urlInput = $('#publicQrUrl');
+
+            if (qrBox) {
+                qrBox.innerHTML = `<img src="${data.qr_data_url}" alt="QR público de ${escapeHtml(data.nombre || 'empresa')}">`;
+            }
+            if (urlInput) urlInput.value = data.public_url || '';
+        } catch (e) {
+            console.error(e);
+            currentPublicQr = null;
+            const qrBox = result.querySelector('.public-qr-image');
+            if (qrBox) qrBox.innerHTML = '<span style="color:#991b1b; font-weight:700; text-align:center;">Error generando QR</span>';
+            toast(e.message || 'No se pudo generar el QR');
+        } finally {
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = originalBtnHtml;
+            }
+        }
+    }
+
+    async function copyPublicQrUrl() {
+        const url = currentPublicQr?.public_url || $('#publicQrUrl')?.value || '';
+        if (!url || url.startsWith('Seleccioná')) return toast('Primero generá un QR');
+
+        try {
+            await navigator.clipboard.writeText(url);
+            toast('Link copiado');
+        } catch {
+            const input = $('#publicQrUrl');
+            if (input) {
+                input.select();
+                document.execCommand('copy');
+                toast('Link copiado');
+            }
+        }
+    }
+
+    function openPublicQrUrl() {
+        const url = currentPublicQr?.public_url || '';
+        if (!url) return toast('Primero generá un QR');
+        window.open(url, '_blank', 'noopener,noreferrer');
+    }
+
+    function downloadPublicQr() {
+        if (!currentPublicQr?.qr_data_url) return toast('Primero generá un QR');
+        const safeName = String(currentPublicQr.nombre || `empresa-${currentPublicQr.empresa_id}`)
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, '-')
+            .replace(/^-+|-+$/g, '') || `empresa-${currentPublicQr.empresa_id}`;
+        const a = document.createElement('a');
+        a.href = currentPublicQr.qr_data_url;
+        a.download = `qr-${safeName}.png`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+    }
+
+    async function loadCompanyWhatsappQr() {
+        const companyId = Number($('#publicQrEmpresa')?.value || 0);
+        const result = $('#companyWppResult');
+        const status = $('#companyWppStatus');
+        const text = $('#companyWppText');
+        const btn = $('#btnRefreshCompanyWpp');
+
+        if (!companyId || !result) return;
+
+        const originalBtnHtml = btn ? btn.innerHTML : '';
+        if (btn) {
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Actualizando';
+        }
+
+        try {
+            const res = await authFetch(`/api/empresas/${companyId}/whatsapp-qr`);
+            const data = await res.json().catch(() => null);
+            if (!res.ok || !data?.ok) {
+                throw new Error(data?.error || 'No se pudo leer el QR WhatsApp');
+            }
+
+            currentCompanyWpp = data;
+            const qrBox = result.querySelector('.public-qr-image');
+            const rawStatus = String(data.status || 'disconnected').toLowerCase();
+            const readableStatus = rawStatus === 'connected'
+                ? 'Conectado'
+                : rawStatus === 'awaiting_scan'
+                    ? 'Esperando escaneo'
+                    : rawStatus === 'initializing'
+                        ? 'Inicializando'
+                        : rawStatus === 'resetting'
+                            ? 'Reseteando'
+                            : rawStatus === 'disconnected'
+                                ? 'Desconectado'
+                                : rawStatus;
+
+            if (status) {
+                status.textContent = readableStatus;
+                status.className = `status-pill ${rawStatus}`;
+            }
+
+            if (qrBox) {
+                qrBox.innerHTML = data.qr_data_url
+                    ? `<img src="${data.qr_data_url}" alt="QR WhatsApp de ${escapeHtml(data.nombre || 'empresa')}">`
+                    : '<span style="color:#0f172a; font-weight:700; text-align:center;">Sin QR</span>';
+            }
+
+            if (text) {
+                text.textContent = data.qr_data_url
+                    ? 'Escaneá este QR desde WhatsApp para vincular el bot propio de la empresa.'
+                    : 'No hay QR disponible todavía. El worker WhatsApp de esta empresa debe estar iniciado o reconectándose.';
+            }
+        } catch (e) {
+            console.error(e);
+            currentCompanyWpp = null;
+            const qrBox = result.querySelector('.public-qr-image');
+            if (qrBox) qrBox.innerHTML = '<span style="color:#991b1b; font-weight:700; text-align:center;">Error</span>';
+            if (status) {
+                status.textContent = 'Error';
+                status.className = 'status-pill error';
+            }
+            if (text) text.textContent = e.message || 'No se pudo leer el estado WhatsApp de la empresa.';
+            toast(e.message || 'No se pudo leer el QR WhatsApp');
+        } finally {
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = originalBtnHtml;
+            }
+        }
+    }
+
+    async function resetCompanyWhatsappSession() {
+        const companyId = Number($('#publicQrEmpresa')?.value || 0);
+        const selected = companiesForPublicQr.find(company => Number(company.id) === companyId);
+        const companyName = selected?.nombre || `Empresa ${companyId}`;
+        const btn = $('#btnResetCompanyWpp');
+
+        if (!companyId) return toast('Seleccioná una empresa');
+        if (!confirm(`¿Seguro que querés resetear la sesión de WhatsApp de ${companyName}?`)) return;
+
+        const originalBtnHtml = btn ? btn.innerHTML : '';
+        if (btn) {
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Reseteando';
+        }
+
+        try {
+            const res = await authFetch(`/api/empresas/${companyId}/whatsapp-reset`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            });
+            const data = await res.json().catch(() => null);
+            if (!res.ok || !data?.ok) {
+                throw new Error(data?.error || 'No se pudo resetear la sesión');
+            }
+
+            toast('Sesión WhatsApp de empresa reseteada');
+            await loadCompanyWhatsappQr();
+        } catch (e) {
+            console.error(e);
+            toast(e.message || 'No se pudo resetear la sesión');
+        } finally {
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = originalBtnHtml;
+            }
+        }
+    }
 
     // NUEVA FUNCIÓN: resetear sesión de WhatsApp
     let isResetSubmitting = false;
