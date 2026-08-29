@@ -202,5 +202,13 @@ try {
     setInterval(checkResetRequest, 5000);
 } catch (err) {
     console.error(`[Empresa ${EMPRESA_ID}] Error iniciando cliente de WhatsApp:`, err.message);
-    process.exitCode = 1;
+    try {
+        await query(
+            'UPDATE empresas SET wpp_status = $1, wpp_qr_code = NULL, updated_at = NOW() WHERE id = $2',
+            ['disconnected', EMPRESA_ID]
+        );
+    } catch (dbErr) {
+        console.error(`[Empresa ${EMPRESA_ID}] Error actualizando estado tras fallo:`, dbErr.message);
+    }
+    process.exit(1);
 }
