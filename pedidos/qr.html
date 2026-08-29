@@ -632,6 +632,7 @@
                 <div>
                     <div style="display:flex; align-items:center; gap:.6rem; flex-wrap:wrap;">
                         <span id="companyWppStatus" class="status-pill">Sin consultar</span>
+                        <span id="companyWppRefreshState" class="status-pill">Refresco detenido</span>
                     </div>
                     <p id="companyWppText" class="wpp-company-note">
                         Seleccioná una empresa para ver el QR de vinculación de su WhatsApp.
@@ -723,11 +724,14 @@
     let promptsLoadedOk = false;
     let qrRefreshTimer = null;
     let isQrLoading = false;
+    let companyWppRefreshTimer = null;
+    let isCompanyWppLoading = false;
     let companiesForPublicQr = [];
     let currentPublicQr = null;
     let currentCompanyWpp = null;
     let currentUserRole = '';
     const QR_REFRESH_MS = 4000;
+    const COMPANY_WPP_REFRESH_MS = 4000;
 
     // ====== Init ======
 
@@ -824,6 +828,31 @@
     }
     function reloadQR() { stopQrRefresh(); loadQR(); }
 
+    function stopCompanyWppRefresh() {
+        if (companyWppRefreshTimer) {
+            clearTimeout(companyWppRefreshTimer);
+            companyWppRefreshTimer = null;
+        }
+        const refreshState = $('#companyWppRefreshState');
+        if (refreshState) {
+            refreshState.textContent = 'Refresco detenido';
+            refreshState.className = 'status-pill disconnected';
+        }
+    }
+
+    function scheduleCompanyWppRefresh() {
+        stopCompanyWppRefresh();
+        const refreshState = $('#companyWppRefreshState');
+        if (refreshState) {
+            refreshState.textContent = `Actualiza cada ${COMPANY_WPP_REFRESH_MS / 1000}s`;
+            refreshState.className = 'status-pill awaiting_scan';
+        }
+        companyWppRefreshTimer = setTimeout(
+            () => loadCompanyWhatsappQr({ showLoading: false }),
+            COMPANY_WPP_REFRESH_MS
+        );
+    }
+
     function bindOpsTabs() {
         document.querySelectorAll('.tab-btn[data-tab]').forEach(btn => {
             btn.addEventListener('click', () => {
@@ -855,6 +884,7 @@
         if (btnGenerate) btnGenerate.addEventListener('click', () => generatePublicQr());
         if (companySelect) {
             companySelect.addEventListener('change', () => {
+                stopCompanyWppRefresh();
                 generatePublicQr();
                 loadCompanyWhatsappQr();
             });
@@ -863,7 +893,10 @@
         if (btnCopy) btnCopy.addEventListener('click', copyPublicQrUrl);
         if (btnOpen) btnOpen.addEventListener('click', openPublicQrUrl);
         if (btnDownload) btnDownload.addEventListener('click', downloadPublicQr);
-        if (btnRefreshCompanyWpp) btnRefreshCompanyWpp.addEventListener('click', () => loadCompanyWhatsappQr());
+        if (btnRefreshCompanyWpp) btnRefreshCompanyWpp.addEventListener('click', () => {
+            stopCompanyWppRefresh();
+            loadCompanyWhatsappQr();
+        });
         if (btnResetCompanyWpp) btnResetCompanyWpp.addEventListener('click', resetCompanyWhatsappSession);
         if (btnEditCompanyIa) btnEditCompanyIa.addEventListener('click', openCompanyIaEditor);
         if (btnCopyWorkerCmd) btnCopyWorkerCmd.addEventListener('click', copyWorkerCommand);
@@ -1107,17 +1140,19 @@
         }
     }
 
-    async function loadCompanyWhatsappQr() {
+    async function loadCompanyWhatsappQr({ showLoading = true } = {}) {
         const companyId = Number($('#publicQrEmpresa')?.value || 0);
         const result = $('#companyWppResult');
         const status = $('#companyWppStatus');
         const text = $('#companyWppText');
         const btn = $('#btnRefreshCompanyWpp');
 
-        if (!companyId || !result) return;
+        if (!companyId || !result || isCompanyWppLoading) return;
+        isCompanyWppLoading = true;
+        stopCompanyWppRefresh();
 
         const originalBtnHtml = btn ? btn.innerHTML : '';
-        if (btn) {
+        if (btn && showLoading) {
             btn.disabled = true;
             btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Actualizando';
         }
@@ -1151,6 +1186,12 @@
                     : (data.health?.message || 'No hay QR disponible todavía. El worker WhatsApp de esta empresa debe estar iniciado o reconectándose.');
             }
             renderCompanyWppDetails(data);
+
+            if (rawStatus !== 'connected') {
+                scheduleCompanyWppRefresh();
+            } else {
+                stopCompanyWppRefresh();
+            }
         } catch (e) {
             console.error(e);
             currentCompanyWpp = null;
@@ -1170,11 +1211,13 @@
                 `;
             }
             toast(e.message || 'No se pudo leer el QR WhatsApp');
+            scheduleCompanyWppRefresh();
         } finally {
-            if (btn) {
+            if (btn && showLoading) {
                 btn.disabled = false;
                 btn.innerHTML = originalBtnHtml;
             }
+            isCompanyWppLoading = false;
         }
     }
 
@@ -1223,6 +1266,7 @@
             }
 
             toast('Sesión WhatsApp de empresa reseteada');
+            stopCompanyWppRefresh();
             await loadCompanyWhatsappQr();
         } catch (e) {
             console.error(e);
