@@ -164,6 +164,39 @@
         margin: 2rem 0;
     }
 
+    .ops-tabs {
+        display: flex;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+        margin-bottom: 1.2rem;
+        border-bottom: 1px solid var(--border);
+        padding-bottom: 0.8rem;
+    }
+
+    .tab-btn {
+        min-height: 38px;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        background: rgba(255,255,255,0.03);
+        color: var(--muted);
+        padding: 0.55rem 0.85rem;
+        font: inherit;
+        font-weight: 700;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+
+    .tab-btn.active {
+        color: #001018;
+        background: var(--brand);
+        border-color: var(--brand);
+    }
+
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
     .public-qr-panel {
         display: grid;
         gap: 1.2rem;
@@ -285,6 +318,95 @@
         margin-top: 0.8rem;
     }
 
+    .ops-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+        gap: 0.8rem;
+        margin-top: 1rem;
+    }
+
+    .metric-card {
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: rgba(255,255,255,0.03);
+        padding: 0.9rem;
+        min-height: 92px;
+    }
+
+    .metric-label {
+        color: var(--muted);
+        font-size: 0.75rem;
+        font-weight: 800;
+        text-transform: uppercase;
+    }
+
+    .metric-value {
+        color: #fff;
+        font-size: 1rem;
+        font-weight: 800;
+        margin-top: 0.35rem;
+        overflow-wrap: anywhere;
+    }
+
+    .metric-detail {
+        color: var(--muted);
+        font-size: 0.82rem;
+        margin-top: 0.35rem;
+    }
+
+    .health-box {
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 0.9rem;
+        background: rgba(255,255,255,0.03);
+        margin-top: 1rem;
+    }
+
+    .health-box.ok { border-color: rgba(16,185,129,0.35); background: rgba(16,185,129,0.09); }
+    .health-box.pending { border-color: rgba(245,158,11,0.35); background: rgba(245,158,11,0.09); }
+    .health-box.warning { border-color: rgba(251,191,36,0.45); background: rgba(251,191,36,0.1); }
+    .health-box.offline,
+    .health-box.error { border-color: rgba(239,68,68,0.35); background: rgba(239,68,68,0.09); }
+
+    .health-title {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        color: #fff;
+        font-weight: 800;
+        margin-bottom: 0.35rem;
+    }
+
+    .code-line {
+        margin-top: 0.7rem;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: rgba(2,8,23,0.55);
+        color: #cbd5e1;
+        padding: 0.65rem 0.75rem;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 0.82rem;
+        overflow-x: auto;
+        white-space: nowrap;
+    }
+
+    .check-list {
+        display: grid;
+        gap: 0.45rem;
+        margin-top: 0.75rem;
+    }
+
+    .check-row {
+        display: flex;
+        align-items: center;
+        gap: 0.45rem;
+        color: var(--muted);
+        font-size: 0.88rem;
+    }
+
+    .check-row.ready { color: #bbf7d0; }
+    .check-row.missing { color: #fecaca; }
+
     /* FORMS & BUTTONS */
     .btn {
       padding: 0.7rem 1.2rem; border-radius: 8px; font-weight: 600; cursor: pointer;
@@ -344,6 +466,8 @@
       .public-qr-controls,
       .public-qr-result { grid-template-columns: 1fr; }
       .public-qr-image { width: 100%; max-width: 260px; height: auto; aspect-ratio: 1; margin: 0 auto; }
+      .ops-tabs { display: grid; grid-template-columns: 1fr; }
+      .tab-btn { justify-content: center; }
       .modal-footer { flex-direction: column-reverse; }
       .modal-footer .btn { width: 100%; justify-content: center; }
       .toast { left: 12px; right: 12px; bottom: 14px; width: auto; border-radius: 12px; }
@@ -410,7 +534,19 @@
     </div>
 
     <div class="card left-align" id="adminConfig">
-        <div class="public-qr-panel">
+        <div class="ops-tabs" id="opsTabs">
+            <button type="button" class="tab-btn active" data-tab="publicQrTab">
+                <i class="fa-solid fa-qrcode"></i> Tienda pública
+            </button>
+            <button type="button" class="tab-btn" data-tab="companyWppTab">
+                <i class="fa-brands fa-whatsapp"></i> WhatsApp empresa
+            </button>
+            <button type="button" class="tab-btn" data-tab="globalPromptTab" id="globalPromptTabButton">
+                <i class="fa-solid fa-robot"></i> IA global
+            </button>
+        </div>
+
+        <section id="publicQrTab" class="tab-panel active public-qr-panel">
             <div>
                 <h2><i class="fa-solid fa-qrcode"></i> QR Público por Empresa</h2>
                 <p class="subtitle" style="text-align:left; margin-bottom:1rem">
@@ -462,11 +598,9 @@
                     </div>
                 </div>
             </div>
-        </div>
+        </section>
 
-        <div class="section-divider"></div>
-
-        <div class="company-wpp-panel">
+        <section id="companyWppTab" class="tab-panel company-wpp-panel">
             <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
                 <div>
                     <h2><i class="fa-brands fa-whatsapp"></i> WhatsApp por Empresa</h2>
@@ -474,6 +608,15 @@
                         Vinculación del bot propio de la empresa seleccionada.
                     </p>
                 </div>
+                <button id="btnEditCompanyIa" type="button" class="btn btn-ghost btn-sm">
+                    <i class="fa-solid fa-sliders"></i> Editar IA
+                </button>
+                <button id="btnCopyWorkerCmd" type="button" class="btn btn-ghost btn-sm">
+                    <i class="fa-solid fa-terminal"></i> Copiar worker
+                </button>
+                <button id="btnDownloadCompanyWpp" type="button" class="btn btn-ghost btn-sm">
+                    <i class="fa-solid fa-download"></i> Descargar QR
+                </button>
                 <button id="btnRefreshCompanyWpp" type="button" class="btn btn-ghost btn-sm">
                     <i class="fa-solid fa-rotate-right"></i> Actualizar
                 </button>
@@ -493,13 +636,18 @@
                     <p id="companyWppText" class="wpp-company-note">
                         Seleccioná una empresa para ver el QR de vinculación de su WhatsApp.
                     </p>
+                    <div id="companyWppHealth" class="health-box offline">
+                        <div class="health-title"><i class="fa-solid fa-circle-info"></i> Sin diagnóstico</div>
+                        <div class="metric-detail">Seleccioná una empresa para ver la salud del WhatsApp.</div>
+                    </div>
+                    <div id="companyWppMetrics" class="ops-grid"></div>
+                    <div id="companyIaChecklist" class="check-list"></div>
                 </div>
             </div>
-        </div>
+        </section>
 
-        <div id="globalPromptSection">
-            <div class="section-divider"></div>
-
+        <section id="globalPromptTab" class="tab-panel">
+            <div id="globalPromptSection">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; flex-wrap:wrap; gap:10px;">
                 <h2><i class="fa-solid fa-robot"></i> Configuración Global IA</h2>
                 <div style="display:flex; gap:5px">
@@ -520,7 +668,8 @@
             <div id="promptsList" class="prompt-grid">
                 <div style="padding:2rem; text-align:center; color:var(--muted); grid-column: 1 / -1;">Cargando configuración...</div>
             </div>
-        </div>
+            </div>
+        </section>
     </div>
 
   </main>
@@ -577,6 +726,7 @@
     let companiesForPublicQr = [];
     let currentPublicQr = null;
     let currentCompanyWpp = null;
+    let currentUserRole = '';
     const QR_REFRESH_MS = 4000;
 
     // ====== Init ======
@@ -589,6 +739,7 @@
             const role = (meData.user?.role || '').toLowerCase();
             const isSuper = (role === 'super');
             const isCompanyAdmin = ['admin', 'user'].includes(role);
+            currentUserRole = role;
 
             $('#roleBadge').textContent = isSuper ? 'SUPER ADMIN' : 'Admin';
 
@@ -612,14 +763,17 @@
                 $('#mainLayout').classList.add('admin-view');
                 loadGlobalPrompts();
             } else {
-                // Admin de empresa: solo puede generar el QR público de su empresa.
+                // Admin de empresa: QR público y WhatsApp únicamente de su empresa.
                 const wppCard = document.querySelector('#mainLayout > .card:not(#adminConfig)');
                 if (wppCard) wppCard.style.display = 'none';
                 const promptSection = $('#globalPromptSection');
                 if (promptSection) promptSection.style.display = 'none';
+                const globalTabButton = $('#globalPromptTabButton');
+                if (globalTabButton) globalTabButton.style.display = 'none';
             }
 
             $('#adminConfig').style.display = 'block';
+            bindOpsTabs();
             bindPublicQrControls();
             loadCompaniesForPublicQr();
 
@@ -670,6 +824,20 @@
     }
     function reloadQR() { stopQrRefresh(); loadQR(); }
 
+    function bindOpsTabs() {
+        document.querySelectorAll('.tab-btn[data-tab]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const tabId = btn.dataset.tab;
+                if (!tabId) return;
+                document.querySelectorAll('.tab-btn[data-tab]').forEach(x => x.classList.remove('active'));
+                document.querySelectorAll('.tab-panel').forEach(x => x.classList.remove('active'));
+                btn.classList.add('active');
+                const panel = document.getElementById(tabId);
+                if (panel) panel.classList.add('active');
+            });
+        });
+    }
+
     // ====== Public QR por Empresa ======
     function bindPublicQrControls() {
         const btnGenerate = $('#btnGeneratePublicQr');
@@ -680,6 +848,9 @@
         const btnDownload = $('#btnDownloadPublicQr');
         const btnRefreshCompanyWpp = $('#btnRefreshCompanyWpp');
         const btnResetCompanyWpp = $('#btnResetCompanyWpp');
+        const btnEditCompanyIa = $('#btnEditCompanyIa');
+        const btnCopyWorkerCmd = $('#btnCopyWorkerCmd');
+        const btnDownloadCompanyWpp = $('#btnDownloadCompanyWpp');
 
         if (btnGenerate) btnGenerate.addEventListener('click', () => generatePublicQr());
         if (companySelect) {
@@ -694,6 +865,9 @@
         if (btnDownload) btnDownload.addEventListener('click', downloadPublicQr);
         if (btnRefreshCompanyWpp) btnRefreshCompanyWpp.addEventListener('click', () => loadCompanyWhatsappQr());
         if (btnResetCompanyWpp) btnResetCompanyWpp.addEventListener('click', resetCompanyWhatsappSession);
+        if (btnEditCompanyIa) btnEditCompanyIa.addEventListener('click', openCompanyIaEditor);
+        if (btnCopyWorkerCmd) btnCopyWorkerCmd.addEventListener('click', copyWorkerCommand);
+        if (btnDownloadCompanyWpp) btnDownloadCompanyWpp.addEventListener('click', downloadCompanyWppQr);
     }
 
     async function loadCompaniesForPublicQr() {
@@ -800,10 +974,137 @@
             .replace(/^-+|-+$/g, '') || `empresa-${currentPublicQr.empresa_id}`;
         const a = document.createElement('a');
         a.href = currentPublicQr.qr_data_url;
-        a.download = `qr-${safeName}.png`;
+        a.download = `qr-publico-empresa-${currentPublicQr.empresa_id}-${safeName}.png`;
         document.body.appendChild(a);
         a.click();
         a.remove();
+    }
+
+    function safeCompanySlug(name, companyId) {
+        return String(name || `empresa-${companyId}`)
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, '-')
+            .replace(/^-+|-+$/g, '') || `empresa-${companyId}`;
+    }
+
+    function downloadCompanyWppQr() {
+        if (!currentCompanyWpp?.qr_data_url) return toast('No hay QR WhatsApp para descargar');
+        const safeName = safeCompanySlug(currentCompanyWpp.nombre, currentCompanyWpp.empresa_id);
+        const a = document.createElement('a');
+        a.href = currentCompanyWpp.qr_data_url;
+        a.download = `qr-whatsapp-empresa-${currentCompanyWpp.empresa_id}-${safeName}.png`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+    }
+
+    function formatDateTime(value) {
+        if (!value) return 'Sin dato';
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return 'Sin dato';
+        return date.toLocaleString('es-AR', {
+            dateStyle: 'short',
+            timeStyle: 'short'
+        });
+    }
+
+    function selectedCompany() {
+        const companyId = Number($('#publicQrEmpresa')?.value || 0);
+        return companiesForPublicQr.find(company => Number(company.id) === companyId) || null;
+    }
+
+    function getWorkerCommand(companyId) {
+        return `EMPRESA_ID=${companyId} node src/wppWorker.js`;
+    }
+
+    function statusLabel(rawStatus) {
+        const status = String(rawStatus || 'disconnected').toLowerCase();
+        const labels = {
+            connected: 'Conectado',
+            awaiting_scan: 'Esperando escaneo',
+            initializing: 'Inicializando',
+            resetting: 'Reseteando',
+            disconnected: 'Desconectado',
+            error: 'Error',
+        };
+        return labels[status] || status;
+    }
+
+    function healthIcon(level) {
+        const safeLevel = String(level || 'offline').toLowerCase();
+        if (safeLevel === 'ok') return 'fa-circle-check';
+        if (safeLevel === 'pending') return 'fa-clock';
+        if (safeLevel === 'warning') return 'fa-triangle-exclamation';
+        return 'fa-circle-xmark';
+    }
+
+    function renderCompanyWppDetails(data) {
+        const healthBox = $('#companyWppHealth');
+        const metrics = $('#companyWppMetrics');
+        const checklist = $('#companyIaChecklist');
+        const companyId = Number(data?.empresa_id || $('#publicQrEmpresa')?.value || 0);
+        const health = data?.health || {};
+        const ai = data?.ai_config || {};
+        const workerCommand = getWorkerCommand(companyId);
+
+        if (healthBox) {
+            const level = String(health.level || 'offline').toLowerCase();
+            healthBox.className = `health-box ${level}`;
+            healthBox.innerHTML = `
+                <div class="health-title">
+                    <i class="fa-solid ${healthIcon(level)}"></i>
+                    ${escapeHtml(health.label || 'Sin diagnóstico')}
+                </div>
+                <div class="metric-detail">${escapeHtml(health.message || 'No se pudo calcular el diagnóstico.')}</div>
+                <div class="code-line">${escapeHtml(health.worker_hint || workerCommand)}</div>
+            `;
+        }
+
+        if (metrics) {
+            const qrAge = Number.isFinite(Number(health.qr_age_minutes))
+                ? `${Number(health.qr_age_minutes)} min`
+                : (data.has_qr ? 'Reciente' : 'Sin QR');
+            metrics.innerHTML = `
+                <div class="metric-card">
+                    <div class="metric-label">Empresa</div>
+                    <div class="metric-value">#${companyId}</div>
+                    <div class="metric-detail">${escapeHtml(data.nombre || selectedCompany()?.nombre || 'Sin nombre')}</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Última actualización</div>
+                    <div class="metric-value">${escapeHtml(formatDateTime(data.updated_at))}</div>
+                    <div class="metric-detail">Estado: ${escapeHtml(statusLabel(data.status))}</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">QR WhatsApp</div>
+                    <div class="metric-value">${data.has_qr ? 'Disponible' : 'No disponible'}</div>
+                    <div class="metric-detail">Antigüedad: ${escapeHtml(qrAge)}</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Último reset</div>
+                    <div class="metric-value">${escapeHtml(formatDateTime(data.wpp_reset_requested_at))}</div>
+                    <div class="metric-detail">Reset por panel de empresa</div>
+                </div>
+            `;
+        }
+
+        if (checklist) {
+            const items = [
+                ['Prompt vendedor', ai.prompt_vendedor],
+                ['Prompt general', ai.prompt_general],
+                ['Rubro configurado', ai.rubro],
+                ['Etiquetas configuradas', ai.etiquetas],
+            ];
+            checklist.innerHTML = `
+                <div class="metric-label" style="margin-top:.3rem;">Configuración IA de esta empresa</div>
+                ${items.map(([label, ok]) => `
+                    <div class="check-row ${ok ? 'ready' : 'missing'}">
+                        <i class="fa-solid ${ok ? 'fa-circle-check' : 'fa-circle-minus'}"></i>
+                        <span>${escapeHtml(label)}</span>
+                    </div>
+                `).join('')}
+            `;
+        }
     }
 
     async function loadCompanyWhatsappQr() {
@@ -831,17 +1132,7 @@
             currentCompanyWpp = data;
             const qrBox = result.querySelector('.public-qr-image');
             const rawStatus = String(data.status || 'disconnected').toLowerCase();
-            const readableStatus = rawStatus === 'connected'
-                ? 'Conectado'
-                : rawStatus === 'awaiting_scan'
-                    ? 'Esperando escaneo'
-                    : rawStatus === 'initializing'
-                        ? 'Inicializando'
-                        : rawStatus === 'resetting'
-                            ? 'Reseteando'
-                            : rawStatus === 'disconnected'
-                                ? 'Desconectado'
-                                : rawStatus;
+            const readableStatus = statusLabel(rawStatus);
 
             if (status) {
                 status.textContent = readableStatus;
@@ -857,8 +1148,9 @@
             if (text) {
                 text.textContent = data.qr_data_url
                     ? 'Escaneá este QR desde WhatsApp para vincular el bot propio de la empresa.'
-                    : 'No hay QR disponible todavía. El worker WhatsApp de esta empresa debe estar iniciado o reconectándose.';
+                    : (data.health?.message || 'No hay QR disponible todavía. El worker WhatsApp de esta empresa debe estar iniciado o reconectándose.');
             }
+            renderCompanyWppDetails(data);
         } catch (e) {
             console.error(e);
             currentCompanyWpp = null;
@@ -869,12 +1161,39 @@
                 status.className = 'status-pill error';
             }
             if (text) text.textContent = e.message || 'No se pudo leer el estado WhatsApp de la empresa.';
+            const healthBox = $('#companyWppHealth');
+            if (healthBox) {
+                healthBox.className = 'health-box error';
+                healthBox.innerHTML = `
+                    <div class="health-title"><i class="fa-solid fa-circle-xmark"></i> Error</div>
+                    <div class="metric-detail">${escapeHtml(e.message || 'No se pudo leer el diagnóstico.')}</div>
+                `;
+            }
             toast(e.message || 'No se pudo leer el QR WhatsApp');
         } finally {
             if (btn) {
                 btn.disabled = false;
                 btn.innerHTML = originalBtnHtml;
             }
+        }
+    }
+
+    function openCompanyIaEditor() {
+        const companyId = Number($('#publicQrEmpresa')?.value || currentCompanyWpp?.empresa_id || 0);
+        if (!companyId) return toast('Seleccioná una empresa');
+        window.open(`/pedidos/inicio/empresa.html?empresa_id=${encodeURIComponent(companyId)}`, '_blank', 'noopener,noreferrer');
+    }
+
+    async function copyWorkerCommand() {
+        const companyId = Number($('#publicQrEmpresa')?.value || currentCompanyWpp?.empresa_id || 0);
+        if (!companyId) return toast('Seleccioná una empresa');
+        const command = currentCompanyWpp?.health?.worker_hint || getWorkerCommand(companyId);
+
+        try {
+            await navigator.clipboard.writeText(command);
+            toast('Comando del worker copiado');
+        } catch {
+            toast(command);
         }
     }
 

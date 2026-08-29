@@ -55,6 +55,69 @@ function getEmpresaWppSessionDir(empresaId) {
   return path.resolve(process.cwd(), sessionPath, `session-empresa_${empresaId}`);
 }
 
+function minutesSince(value) {
+  if (!value) return null;
+  const time = new Date(value).getTime();
+  if (!Number.isFinite(time)) return null;
+  return Math.max(0, Math.round((Date.now() - time) / 60000));
+}
+
+function buildEmpresaWppHealth(empresa) {
+  const status = String(empresa.wpp_status || 'disconnected').toLowerCase();
+  const hasQr = Boolean(empresa.wpp_qr_code);
+  const minutesFromUpdate = minutesSince(empresa.updated_at);
+  const qrAgeMinutes = hasQr ? minutesFromUpdate : null;
+  const isStale = ['initializing', 'resetting', 'awaiting_scan'].includes(status)
+    && minutesFromUpdate !== null
+    && minutesFromUpdate > 3;
+
+  if (status === 'connected') {
+    return {
+      level: 'ok',
+      label: 'Operativo',
+      message: 'WhatsApp de empresa conectado y listo para enviar/responder mensajes.',
+      worker_hint: 'Worker activo o sesión conectada.',
+      qr_age_minutes: qrAgeMinutes,
+      stale: false,
+    };
+  }
+
+  if (status === 'awaiting_scan' && hasQr) {
+    return {
+      level: isStale ? 'warning' : 'pending',
+      label: isStale ? 'QR pendiente hace varios minutos' : 'Esperando escaneo',
+      message: 'Escaneá el QR desde WhatsApp para vincular el bot propio de la empresa.',
+      worker_hint: isStale
+        ? 'Si el QR no cambia o no conecta, verificá que el worker de esta empresa siga corriendo.'
+        : 'Worker generando QR correctamente.',
+      qr_age_minutes: qrAgeMinutes,
+      stale: isStale,
+    };
+  }
+
+  if (status === 'resetting' || status === 'initializing') {
+    return {
+      level: isStale ? 'warning' : 'pending',
+      label: isStale ? 'Worker sin avance' : (status === 'resetting' ? 'Reseteando' : 'Inicializando'),
+      message: isStale
+        ? 'El estado quedó pendiente y no apareció un QR nuevo. Probablemente falta iniciar el worker de esta empresa.'
+        : 'La sesión está preparándose. Si el worker está activo, debería aparecer un QR en breve.',
+      worker_hint: `Iniciar worker: EMPRESA_ID=${empresa.id} node src/wppWorker.js`,
+      qr_age_minutes: qrAgeMinutes,
+      stale: isStale,
+    };
+  }
+
+  return {
+    level: 'offline',
+    label: 'Worker apagado o desconectado',
+    message: 'No hay QR disponible. Para vincular WhatsApp, iniciá el worker de esta empresa o reseteá la sesión.',
+    worker_hint: `Iniciar worker: EMPRESA_ID=${empresa.id} node src/wppWorker.js`,
+    qr_age_minutes: qrAgeMinutes,
+    stale: false,
+  };
+}
+
 export function redactEmpresaPaymentSecrets(empresa) {
   if (!empresa) return empresa;
   const integraciones = objectOrEmpty(empresa.config_integraciones);
@@ -587,7 +650,9 @@ export function createEmpresasRouter(deps) {
       await ensureEmpresaWhatsappSchema(query);
 
       const rows = await query(
-        `SELECT id, nombre, wpp_status, wpp_qr_code
+        `SELECT id, nombre, rubro, etiquetas, landing_slug, landing_domain,
+                prompt_ia_vendedor, prompt_ia_general,
+                wpp_status, wpp_qr_code, wpp_reset_requested_at, updated_at
          FROM empresas
          WHERE id = $1
          LIMIT 1`,
@@ -601,6 +666,11 @@ export function createEmpresasRouter(deps) {
       const qrDataUrl = qrRaw
         ? await QRCode.toDataURL(qrRaw, { margin: 1, width: 420, errorCorrectionLevel: 'M' })
         : null;
+      const health = buildEmpresaWppHealth(empresa);
+      const promptVendedor = String(empresa.prompt_ia_vendedor || '').trim();
+      const promptGeneral = String(empresa.prompt_ia_general || '').trim();
+      const rubro = String(empresa.rubro || '').trim();
+      const etiquetas = String(empresa.etiquetas || '').trim();
 
       return res.json({
         ok: true,
@@ -609,6 +679,17 @@ export function createEmpresasRouter(deps) {
         status: empresa.wpp_status || 'disconnected',
         qr_data_url: qrDataUrl,
         has_qr: Boolean(qrDataUrl),
+        updated_at: empresa.updated_at || null,
+        wpp_reset_requested_at: empresa.wpp_reset_requested_at || null,
+        health,
+        ai_config: {
+          prompt_vendedor: Boolean(promptVendedor),
+          prompt_general: Boolean(promptGeneral),
+          rubro: Boolean(rubro),
+          etiquetas: Boolean(etiquetas),
+          ready: Boolean(promptVendedor || promptGeneral || rubro || etiquetas),
+        },
+        edit_url: `/pedidos/inicio/empresa.html?empresa_id=${encodeURIComponent(empresa.id)}`,
       });
     } catch (e) {
       console.error('Error leyendo QR WhatsApp de empresa:', e);
