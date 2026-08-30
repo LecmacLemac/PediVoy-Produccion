@@ -20,6 +20,11 @@
     table td, table th{white-space:nowrap}
     td.wrap{white-space:normal;max-width:360px}
     .muted{color:#6b7280}
+    .dias-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:.35rem;margin-top:.35rem}
+    .dias-grid label{display:flex;align-items:center;justify-content:center;gap:.25rem;border:1px solid #e5e7eb;border-radius:8px;padding:.45rem .35rem;font-size:.85rem}
+    .dias-grid input{margin:0}
+    .dias-line{display:flex;gap:.25rem;flex-wrap:wrap}
+    .dia-chip{display:inline-flex;align-items:center;justify-content:center;min-width:2.2rem;border:1px solid #e5e7eb;border-radius:999px;padding:.15rem .45rem;font-size:.78rem}
     textarea{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;}
     .pedivoy-brand-logo{display:inline-block;width:auto;height:32px;max-width:150px;object-fit:contain;vertical-align:middle;flex:0 0 auto}.brand .pedivoy-brand-logo{height:32px}.pedivoy-brand-badge{position:fixed;top:12px;left:12px;z-index:1000;display:inline-flex;align-items:center;padding:7px 10px;border-radius:10px;background:rgba(15,23,42,.82);border:1px solid rgba(148,163,184,.22);box-shadow:0 10px 30px rgba(2,8,23,.25);backdrop-filter:blur(10px)}.pedivoy-brand-badge img{height:28px;width:auto;display:block}
 </style>
@@ -57,6 +62,18 @@
             <select id="zEmpresa"></select>
           </label>
         </div>
+        <label>Días de entrega de esta zona
+          <div id="zDiasEntrega" class="dias-grid">
+            <label><input type="checkbox" value="1"> Lun</label>
+            <label><input type="checkbox" value="2"> Mar</label>
+            <label><input type="checkbox" value="3"> Mié</label>
+            <label><input type="checkbox" value="4"> Jue</label>
+            <label><input type="checkbox" value="5"> Vie</label>
+            <label><input type="checkbox" value="6"> Sáb</label>
+            <label><input type="checkbox" value="0"> Dom</label>
+          </div>
+          <small class="muted">Si no marcás días, esta zona usa los días generales configurados en la empresa.</small>
+        </label>
         <div class="grid2">
           <div>
             <label>Mapa (dibujar o editar polígono)</label>
@@ -96,6 +113,7 @@
             <tr>
               <th>ID</th>
               <th>Nombre</th>
+              <th>Días</th>
               <th>Puntos</th>
               <th>Acciones</th>
             </tr>
@@ -124,6 +142,7 @@
   const zId = $('#zId');
   const zNombre = $('#zNombre');
   const zCoords = $('#zCoords');
+  const zDiasEntrega = $('#zDiasEntrega');
   const zEmpresa = $('#zEmpresa');
   const rowEmpresa = $('#rowEmpresa');
   const rowFiltroEmp = $('#rowFiltroEmp');
@@ -175,6 +194,25 @@
       if (eq(f[0], l[0]) && eq(f[1], l[1])) return n - 1;
     }
     return n;
+  }
+
+  const dayLabels = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
+  function getDiasEntrega(){
+    return [...zDiasEntrega.querySelectorAll('input[type="checkbox"]:checked')]
+      .map(chk => Number(chk.value))
+      .filter(n => Number.isInteger(n) && n >= 0 && n <= 6)
+      .sort((a,b) => a-b);
+  }
+  function setDiasEntrega(dias){
+    const set = new Set((Array.isArray(dias) ? dias : []).map(Number));
+    zDiasEntrega.querySelectorAll('input[type="checkbox"]').forEach(chk => {
+      chk.checked = set.has(Number(chk.value));
+    });
+  }
+  function renderDiasEntrega(dias){
+    const clean = (Array.isArray(dias) ? dias : []).filter(d => d !== null && d !== undefined && d !== '').map(Number).filter(n => Number.isInteger(n) && n >= 0 && n <= 6);
+    if (!clean.length) return '<span class="muted">Empresa</span>';
+    return '<div class="dias-line">' + clean.map(d => `<span class="dia-chip">${dayLabels[d]}</span>`).join('') + '</div>';
   }
 
   // ----- Leaflet Map -----
@@ -273,6 +311,7 @@
       <tr>
         <td>${z.id}</td>
         <td class="wrap">${esc(z.nombre||'')}</td>
+        <td>${renderDiasEntrega(z.dias_entrega)}</td>
         <td>${Array.isArray(z.poligono)? countVerts(z.poligono): 0}</td>
         <td>
           <button class="secondary" onclick="editZona(${z.id})">Editar</button>
@@ -294,7 +333,7 @@
     if (!nombre) return alert('Ingresá un nombre');
     if (poligono.length < 4) return alert('Dibujá o pegá un polígono con al menos 3 puntos válidos');
 
-    const body = { nombre, poligono };
+    const body = { nombre, poligono, dias_entrega: getDiasEntrega() };
     if (isSuper && zEmpresa.value) body.empresa_id = Number(zEmpresa.value);
 
     btnGuardar.setAttribute('aria-busy','true'); btnGuardar.disabled = true;
@@ -333,6 +372,7 @@
       formTitle.textContent = '✏️ Editar zona #'+z.id;
       zId.value = z.id;
       zNombre.value = z.nombre || '';
+      setDiasEntrega(z.dias_entrega);
       // asegurar cerrado también al cargar existentes
       const closed = closeRing(Array.isArray(z.poligono)? z.poligono : []);
       zCoords.value = JSON.stringify(closed);
@@ -360,6 +400,7 @@
     zId.value = '';
     zNombre.value = '';
     zCoords.value = '';
+    setDiasEntrega([]);
     drawnItems && drawnItems.clearLayers();
     btnCancelar.style.display = 'none';
   }

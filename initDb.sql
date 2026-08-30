@@ -139,10 +139,14 @@ CREATE TABLE IF NOT EXISTS zonas_geograficas (
   empresa_id  INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
   nombre      TEXT NOT NULL,
   color       TEXT DEFAULT '#3388ff',
-  poligono    TEXT, 
-  geom        GEOMETRY(Polygon, 4326), 
+  dias_entrega JSONB DEFAULT '[]'::jsonb,
+  poligono    TEXT,
+  geom        GEOMETRY(Polygon, 4326),
   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE zonas_geograficas
+  ADD COLUMN IF NOT EXISTS dias_entrega JSONB DEFAULT '[]'::jsonb;
 
 -- Asignación Chofer <-> Zona
 CREATE TABLE IF NOT EXISTS zona_chofer (

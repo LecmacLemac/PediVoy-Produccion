@@ -280,6 +280,20 @@
   }
   .zone-header h3 { margin: 0; font-size: 1rem; }
   .zone-meta { color: var(--muted); font-size: 0.76rem; margin-top: 0.25rem; }
+  .zone-days { display:flex; gap:0.25rem; flex-wrap:wrap; margin-top:0.5rem; }
+  .zone-day {
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    min-width:2.2rem;
+    padding:0.15rem 0.45rem;
+    border-radius:999px;
+    border:1px solid rgba(148,163,184,0.22);
+    color:#e2e8f0;
+    font-size:0.72rem;
+    font-weight:700;
+  }
+  .zone-day.fallback { color:var(--muted); min-width:auto; }
   .zone-body { display: flex; flex-direction: column; gap: 0.55rem; padding: 1rem; }
   .driver-chip {
     display: flex;
@@ -609,6 +623,7 @@
     let assignBusy = false;
     let unassignBusy = false;
     let filters = { q: '', coverage: '' };
+    const DAY_LABELS = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
 
     // --- API ---
     async function api(endpoint, opts = {}) {
@@ -681,6 +696,17 @@
       return Number.isFinite(date.getTime()) ? date : null;
     }
 
+    function formatDateAR(value) {
+      const date = parseDate(value);
+      if (!date) return '';
+      return new Intl.DateTimeFormat('es-AR', {
+        timeZone: 'America/Argentina/Buenos_Aires',
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric'
+      }).format(date);
+    }
+
     function delayInfo(order) {
       const created = parseDate(order.fecha);
       if (!created) return { minutes: 0, hours: 0, text: 'Sin fecha', cls: 'sla-warn', critical: false };
@@ -725,6 +751,17 @@
       const id = Number(zoneId || 0);
       if (!id) return [];
       return (assignments[id] || []).map(Number).filter(Boolean);
+    }
+
+    function normalizeDays(days) {
+      if (!Array.isArray(days)) return [];
+      return [...new Set(days.filter(d => d !== null && d !== undefined && d !== '').map(Number).filter(d => Number.isInteger(d) && d >= 0 && d <= 6))].sort((a, b) => a - b);
+    }
+
+    function renderZoneDays(days) {
+      const clean = normalizeDays(days);
+      if (!clean.length) return '<div class="zone-days"><span class="zone-day fallback">Días de empresa</span></div>';
+      return '<div class="zone-days">' + clean.map(d => '<span class="zone-day">' + DAY_LABELS[d] + '</span>').join('') + '</div>';
     }
 
     function suggestDriver(order) {
@@ -826,11 +863,12 @@
         const canAssign = drivers.length > 0;
         const action = orderActionText(order, suggestion, delay);
         const gpsAge = status.ageMin == null ? '' : ' · hace ' + status.ageMin + ' min';
+        const fechaEntrega = formatDateAR(order.fecha_entrega);
 
         return '<tr>' +
           '<td><div class="order-main"><strong>#' + Number(order.id) + ' · ' + esc(order.cliente || 'Cliente') + '</strong>' +
           '<span class="order-meta">' + esc(order.direccion || 'Sin dirección') + '</span>' +
-          '<span class="order-meta">' + esc(zone?.nombre || (order.zona_id ? 'Zona #' + order.zona_id : 'Sin zona')) + ' · ' + esc(order.metodo_pago || '-') + ' · $' + Number(order.monto || 0).toLocaleString('es-AR') + '</span></div></td>' +
+          '<span class="order-meta">' + esc(zone?.nombre || (order.zona_id ? 'Zona #' + order.zona_id : 'Sin zona')) + (fechaEntrega ? ' · Entrega ' + esc(fechaEntrega) : '') + ' · ' + esc(order.metodo_pago || '-') + ' · $' + Number(order.monto || 0).toLocaleString('es-AR') + '</span></div></td>' +
           '<td><span class="sla-pill ' + delay.cls + '">' + esc(delay.text) + '</span><div class="order-meta">' + esc(order.estado || 'pendiente') + '</div></td>' +
           '<td><div class="driver-suggest"><strong>' + esc(driver?.nombre || 'Sin sugerencia') + '</strong><span class="gps-line">' + esc(status.label + gpsAge) + '</span><span class="gps-line">' + esc(suggestion.reason || '') + '</span></div></td>' +
           '<td><div class="action-box"><select class="mini-select" data-order-driver="' + Number(order.id) + '"' + (!canAssign ? ' disabled' : '') + '>' + (canAssign ? driverOptions : '<option value="">Sin choferes</option>') + '</select><button class="btn btn-primary btn-assign-order" data-action="assign-order" data-pedido-id="' + Number(order.id) + '"' + (!canAssign ? ' disabled' : '') + '>Asignar</button><span class="action-text">' + esc(action) + '</span></div></td>' +
@@ -906,6 +944,7 @@
         const haystack = [
           z.nombre,
           z.id,
+          ...normalizeDays(z.dias_entrega).map(d => DAY_LABELS[d]),
           ...assignedDrivers.flatMap(d => [d.nombre, d.telefono, d.email, d.tipo])
         ].map(v => String(v == null ? '' : v).toLowerCase()).join(' ');
 
@@ -968,6 +1007,7 @@
               <div>
                 <h3>${esc(z.nombre)}</h3>
                 <div class="zone-meta">Zona #${Number(z.id)}</div>
+                ${renderZoneDays(z.dias_entrega)}
               </div>
               <span class="badge-count">${assignedDrivers.length}</span>
             </div>

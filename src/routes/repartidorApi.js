@@ -373,7 +373,7 @@ export function createRepartidorApiRouter(deps) {
      if (!empresaId) return res.status(400).json({ error: 'Empresa no determinada' });
 
      const rows = await query(
-       `SELECT z.id, z.nombre, z.poligono
+       `SELECT z.id, z.nombre, z.dias_entrega, z.poligono
           FROM zona_chofer zc
           JOIN zonas_geograficas z ON z.id = zc.zona_id
          WHERE zc.chofer_id = $1

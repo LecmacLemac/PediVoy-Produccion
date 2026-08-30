@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { z } from 'zod';
-import { armarMensajeConfirmado } from '../utils.js';
+import { armarMensajeConfirmado, calcularFechaEntregaReal, resolverConfigEntregaPorZona } from '../utils.js';
 import { ejecutarEstrategiaVecinos } from '../estrategias.js';
 import { associateClienteWithReferente, normalizeReferenteCode } from '../services/referentesService.js';
 
@@ -298,6 +298,23 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
           errlog('CHOFER.RESOLVE.ERROR', e?.message || e);
         }
       }
+
+      const empRowsEntrega = await txQuery('SELECT config_entrega FROM empresas WHERE id=$1', [empId]);
+      const configEntregaEmpresa = empRowsEntrega[0]?.config_entrega || {};
+      let zonaEntrega = null;
+      if (zona_id != null) {
+        const zonaRows = await txQuery(
+          `SELECT id, nombre, dias_entrega
+             FROM zonas_geograficas
+            WHERE id = $1 AND empresa_id = $2
+            LIMIT 1`,
+          [zona_id, empId]
+        );
+        zonaEntrega = zonaRows[0] || null;
+      }
+      const configEntregaFinal = resolverConfigEntregaPorZona(configEntregaEmpresa, zonaEntrega);
+      const fechaEntregaCalc = calcularFechaEntregaReal(configEntregaFinal, new Date());
+      const fechaEntregaIso = fechaEntregaCalc.fecha.toISOString();
 
       const normItems = (Array.isArray(items) ? items : [])
         .map((it) => ({
@@ -649,11 +666,11 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
           empresa_id, punto_entrega_id, fecha, estado,
           cantidad, cantidad_entregada, monto,
           metodo_pago, aviso_recibido, sats,
-          submission_id, chofer_id, zona_id,
+          submission_id, chofer_id, zona_id, fecha_entrega,
           referido_por_id, tracking_token
-        ) VALUES ($1,$2,NOW(),'pendiente',$3,0,$4,$5,0,0,$6,$7,$8,$9,$10)
+        ) VALUES ($1,$2,NOW(),'pendiente',$3,0,$4,$5,0,0,$6,$7,$8,$9,$10,$11)
         RETURNING id, estado, monto, tracking_token`,
-        [empId, punto_entrega_id, totalCantidad, totalMonto, metodo_pago, submission_id, chofer_id, zona_id, padrinoId, createTrackingToken()]
+        [empId, punto_entrega_id, totalCantidad, totalMonto, metodo_pago, submission_id, chofer_id, zona_id, fechaEntregaIso, padrinoId, createTrackingToken()]
       );
 
       const pedido = pedRows[0];
@@ -699,8 +716,7 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
       }
 
       try {
-        const empRows = await txQuery('SELECT config_entrega FROM empresas WHERE id=$1', [empId]);
-        const configEntrega = empRows[0]?.config_entrega || {};
+        const configEntrega = configEntregaFinal;
 
         let repData = null;
         if (chofer_id) {
@@ -736,6 +752,7 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
           items: normItems,
           direccion: [direccion, ciudad, provincia].filter(Boolean).join(', '),
           fecha: new Date(),
+          fechaEntrega: fechaEntregaIso,
           repartidor: repData,
           configEntrega,
           retornablesPendientes
@@ -809,6 +826,7 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
           submission_id,
           estado: pedido.estado,
           monto: pedido.monto,
+          fecha_entrega: fechaEntregaIso,
           tracking_token: pedido.tracking_token,
           tracking_url: buildTrackingPath(pedido.tracking_token),
         },

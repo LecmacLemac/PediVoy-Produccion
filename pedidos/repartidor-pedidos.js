@@ -630,6 +630,14 @@ function renderCards() {
     const payRowHtml = payButtons
       ? `<div class="pay-row">${payButtons}</div>`
       : '';
+    const fechaProgramada = p.fecha_entrega ? formatFechaAR(p.fecha_entrega) : '';
+    const zonaPedido = p.zona_nombre || '';
+    const agendaHtml = (fechaProgramada || zonaPedido)
+      ? `<div style="margin-top:8px; color:var(--muted); font-size:0.85rem; display:flex; gap:8px; flex-wrap:wrap;">
+          ${fechaProgramada ? `<span>📆 Entrega: <b style="color:#e2e8f0">${esc(fechaProgramada)}</b></span>` : ''}
+          ${zonaPedido ? `<span>📍 Zona: <b style="color:#e2e8f0">${esc(zonaPedido)}</b></span>` : ''}
+        </div>`
+      : '';
 
     return `
       <div class="pedido-card ${st}">
@@ -637,6 +645,7 @@ function renderCards() {
           <div style="flex:1">
             <div class="pc-client">${esc(p.cliente)} <small style="opacity:0.6">#${p.id}</small></div>
             <div class="pc-addr">${esc(p.direccion)}</div>
+            ${agendaHtml}
           </div>
           <button class="pc-state-btn">${icon}</button>
         </div>

@@ -129,11 +129,31 @@ export function calcularFechaEntregaReal(config, fechaBase = new Date()) {
   return { fecha: d, motivoFeriado };
 }
 
+export function normalizarDiasEntrega(dias) {
+  if (!Array.isArray(dias)) return [];
+  return [...new Set(
+    dias
+      .filter((d) => d !== null && d !== undefined && d !== '')
+      .map((d) => Number(d))
+      .filter((d) => Number.isInteger(d) && d >= 0 && d <= 6)
+  )].sort((a, b) => a - b);
+}
+
+export function resolverConfigEntregaPorZona(configEntrega = {}, zona = {}) {
+  const diasZona = normalizarDiasEntrega(zona?.dias_entrega);
+  if (!diasZona.length) return configEntrega || {};
+  return {
+    ...(configEntrega || {}),
+    dias_habiles: diasZona,
+    zona_nombre: zona?.nombre || zona?.zona_nombre || undefined,
+  };
+}
+
 /**
  * Arma el mensaje de confirmación usando la configuración de entrega de la empresa.
  * Acepta el objeto `configEntrega` que viene de la base de datos.
  */
-export function armarMensajeConfirmado({ cliente, items = [], direccion, fecha, repartidor, configEntrega, retornablesPendientes = [] }) {
+export function armarMensajeConfirmado({ cliente, items = [], direccion, fecha, fechaEntrega, repartidor, configEntrega, retornablesPendientes = [] }) {
   // 1) Agrupar ítems
   const grupos = new Map();
   for (const it of items) {
@@ -153,7 +173,9 @@ export function armarMensajeConfirmado({ cliente, items = [], direccion, fecha, 
 
   // 2) CALCULO DE FECHA INTELIGENTE
   // Usamos la nueva función con la config que viene de la DB
-  const calculo = calcularFechaEntregaReal(configEntrega, fecha || new Date());
+  const calculo = fechaEntrega
+    ? { fecha: new Date(fechaEntrega), motivoFeriado: null }
+    : calcularFechaEntregaReal(configEntrega, fecha || new Date());
   const fechaReal = calculo.fecha;
   
   const diaNombre = new Intl.DateTimeFormat('es-AR', { weekday: 'long' }).format(fechaReal);
@@ -227,6 +249,8 @@ export default {
   nowIso,
   guardarEnHistorial,
   calcularFechaEntregaReal,
+  normalizarDiasEntrega,
+  resolverConfigEntregaPorZona,
   armarMensajeConfirmado,
   formatARS
 };

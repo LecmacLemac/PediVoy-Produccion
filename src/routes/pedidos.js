@@ -132,6 +132,7 @@ export function createPedidosRouter() {
         SELECT
           p.id,
           p.fecha,
+          p.fecha_entrega,
           p.estado,
           p.monto,
           p.metodo_pago,
@@ -280,6 +281,7 @@ export function createPedidosRouter() {
         SELECT
           p.id,
           p.fecha,
+          p.fecha_entrega,
           pe.cliente,
           pe.telefono,
           pe.direccion,
@@ -295,10 +297,11 @@ export function createPedidosRouter() {
 
       const rows = await query(rowsSql, params);
       const escapeCsv = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-      const header = ['ID','Fecha','Cliente','Telefono','Direccion','Chofer','Estado','Pago','Monto'];
+      const header = ['ID','Fecha','Fecha entrega','Cliente','Telefono','Direccion','Chofer','Estado','Pago','Monto'];
       const body = rows.map((p) => ([
         p.id,
         p.fecha ? new Date(p.fecha).toISOString() : '',
+        p.fecha_entrega ? new Date(p.fecha_entrega).toISOString() : '',
         p.cliente,
         p.telefono,
         p.direccion,
@@ -338,6 +341,7 @@ export function createPedidosRouter() {
         SELECT
           p.id,
           p.fecha,
+          p.fecha_entrega,
           p.estado,
           p.monto,
           p.metodo_pago,
@@ -431,6 +435,7 @@ export function createPedidosRouter() {
           SELECT
             p.id,
             p.fecha,
+            p.fecha_entrega,
             p.estado,
             p.monto,
             p.metodo_pago,

@@ -2,6 +2,7 @@
 // Zonas (CRUD) + asignaciones (GET /choferes) extraído desde server.js
 
 import express from 'express';
+import { normalizarDiasEntrega } from '../utils.js';
 
 export function createZonasRouter(deps) {
   const { query, withAuth, isSuper, getEmpresaIdFromToken } = deps || {};
@@ -19,7 +20,7 @@ export function createZonasRouter(deps) {
       const empresaTarget = esSuperAdmin ? (Number(req.query?.empresa_id) || null) : getEmpresaIdFromToken(req);
       if (esSuperAdmin && !empresaTarget) return res.json([]);
 
-      let sql = `SELECT id, empresa_id, nombre, poligono FROM zonas_geograficas`;
+      let sql = `SELECT id, empresa_id, nombre, dias_entrega, poligono FROM zonas_geograficas`;
       const params = [];
       if (empresaTarget) {
         sql += ` WHERE empresa_id = $1`;
@@ -48,6 +49,7 @@ export function createZonasRouter(deps) {
   router.post('/', withAuth, async (req, res) => {
     try {
       const { nombre, poligono, empresa_id } = req.body || {};
+      const diasEntrega = normalizarDiasEntrega(req.body?.dias_entrega);
       const esSuperAdmin = isSuper(req);
       let finalEmpresaId = esSuperAdmin && empresa_id ? Number(empresa_id) : getEmpresaIdFromToken(req);
 
@@ -73,10 +75,10 @@ export function createZonasRouter(deps) {
       };
 
       const rows = await query(
-        `INSERT INTO zonas_geograficas (empresa_id, nombre, poligono, geom)
-         VALUES ($1, $2, $3, ST_GeomFromGeoJSON($4))
+        `INSERT INTO zonas_geograficas (empresa_id, nombre, dias_entrega, poligono, geom)
+         VALUES ($1, $2, $3, $4, ST_GeomFromGeoJSON($5))
          RETURNING id`,
-        [finalEmpresaId, nombre, poliJson, JSON.stringify(geoJsonObj)]
+        [finalEmpresaId, nombre, JSON.stringify(diasEntrega), poliJson, JSON.stringify(geoJsonObj)]
       );
 
       return res.json(rows[0]);
@@ -110,6 +112,11 @@ export function createZonasRouter(deps) {
       if (nombre) {
         sets.push(`nombre=$${idx++}`);
         vals.push(nombre);
+      }
+
+      if (Object.prototype.hasOwnProperty.call(req.body || {}, 'dias_entrega')) {
+        sets.push(`dias_entrega=$${idx++}`);
+        vals.push(JSON.stringify(normalizarDiasEntrega(req.body?.dias_entrega)));
       }
 
       if (poligono) {
@@ -201,7 +208,7 @@ export function createZonasRouter(deps) {
       const empresaId = esSuperAdmin ? empresaIdParam : getEmpresaIdFromToken(req);
 
       let sql = `
-        SELECT z.id as zona_id, z.nombre as zona_nombre, zc.chofer_id
+        SELECT z.id as zona_id, z.nombre as zona_nombre, z.dias_entrega, zc.chofer_id
         FROM zonas_geograficas z
         JOIN zona_chofer zc ON z.id = zc.zona_id
       `;
@@ -214,7 +221,7 @@ export function createZonasRouter(deps) {
       const rows = await query(sql, params);
       const map = {};
       for (const r of rows) {
-        if (!map[r.zona_id]) map[r.zona_id] = { id: r.zona_id, nombre: r.zona_nombre, choferes: [] };
+        if (!map[r.zona_id]) map[r.zona_id] = { id: r.zona_id, nombre: r.zona_nombre, dias_entrega: r.dias_entrega || [], choferes: [] };
         map[r.zona_id].choferes.push({ id: r.chofer_id });
       }
 
