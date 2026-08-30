@@ -274,6 +274,17 @@
   .flag-warn { background: rgba(249,115,22,0.12); color: #fdba74; border-color: rgba(249,115,22,0.25); }
   .flag-danger { background: rgba(239,68,68,0.12); color: #fca5a5; border-color: rgba(239,68,68,0.25); }
   .flag-info { background: rgba(59,130,246,0.12); color: #93c5fd; border-color: rgba(59,130,246,0.25); }
+  .agenda-stack { display:flex; flex-direction:column; gap:4px; min-width:118px; }
+  .agenda-main { color:#fff; font-weight:800; }
+  .agenda-sub { color:var(--muted); font-size:0.76rem; }
+  .route-chip {
+    display:inline-flex; align-items:center; gap:5px; width:max-content; max-width:220px;
+    padding:3px 8px; border-radius:99px; font-size:0.72rem; font-weight:800;
+    border:1px solid rgba(148,163,184,0.18); background:rgba(15,23,42,0.72); color:#cbd5e1;
+  }
+  .route-chip.today { color:#86efac; border-color:rgba(16,185,129,0.28); background:rgba(16,185,129,0.12); }
+  .route-chip.late { color:#fca5a5; border-color:rgba(239,68,68,0.28); background:rgba(239,68,68,0.12); }
+  .route-chip.future { color:#93c5fd; border-color:rgba(59,130,246,0.28); background:rgba(59,130,246,0.12); }
 
   /* --- DIALOG / MODAL --- */
   dialog {
@@ -412,6 +423,33 @@
           <i class="fa-solid fa-triangle-exclamation"></i>
         </div>
       </div>
+      <div class="kpi-card">
+        <div class="kpi-val">
+          <h3 id="kpiHoy">0</h3>
+          <p>Para Hoy</p>
+        </div>
+        <div class="kpi-icon" style="color: #86efac; background: rgba(16,185,129,0.12);">
+          <i class="fa-solid fa-calendar-day"></i>
+        </div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-val">
+          <h3 id="kpiAtrasados" style="color:var(--danger)">0</h3>
+          <p>Atrasados</p>
+        </div>
+        <div class="kpi-icon" style="color: var(--danger); background: rgba(239,68,68,0.12);">
+          <i class="fa-solid fa-calendar-xmark"></i>
+        </div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-val">
+          <h3 id="kpiSinZona">0</h3>
+          <p>Sin Zona</p>
+        </div>
+        <div class="kpi-icon" style="color: #f97316; background: rgba(249,115,22,0.12);">
+          <i class="fa-solid fa-map-location-dot"></i>
+        </div>
+      </div>
     </section>
 
     <section class="summary-box" id="kpiDetailBox" aria-live="polite">
@@ -446,6 +484,17 @@
             <option value="en_ruta">En Ruta</option>
             <option value="entregado">Entregado</option>
             <option value="cancelado">Cancelado</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>Agenda</label>
+          <select id="agendaFilter">
+            <option value="">Todas</option>
+            <option value="hoy">Para hoy</option>
+            <option value="atrasados">Atrasados</option>
+            <option value="proximos">Próximos</option>
+            <option value="sin_zona">Sin zona</option>
           </select>
         </div>
 
@@ -503,7 +552,7 @@
            <thead>
              <tr>
               <th class="sortable" data-sort="id">ID</th>
-              <th class="sortable" data-sort="fecha">Fecha</th>
+              <th class="sortable" data-sort="agenda">Agenda</th>
               <th class="sortable" data-sort="cliente">Cliente</th>
               <th>Teléfono</th>
               <th>Dirección</th>
@@ -630,6 +679,7 @@
     const empFilter = $('#empSel');        // Select de empresa
     const choferFilter = $('#choferFilter');
     const estadoFilter = $('#estadoFilter');
+    const agendaFilter = $('#agendaFilter');
     const fromFilter = $('#fromFilter');
     const toFilter = $('#toFilter');
     const q = $('#q');
@@ -642,6 +692,9 @@
     const kpiCancel = $('#kpiCancel');
     const kpiTicket = $('#kpiTicket');
     const kpiSinChofer = $('#kpiSinChofer');
+    const kpiHoy = $('#kpiHoy');
+    const kpiAtrasados = $('#kpiAtrasados');
+    const kpiSinZona = $('#kpiSinZona');
     const totalCount = $('#totalCount');
     const kpiDetailMain = $('#kpiDetailMain');
     const kpiDetailSub  = $('#kpiDetailSub');
@@ -682,7 +735,7 @@
     const itemsByPedidoCache = new Map();
     const resumenArticulosCache = new Map();
     let detalleArticulosToken = 0;
-    let sortState = { key: 'fecha', dir: 'desc' };
+    let sortState = { key: 'agenda', dir: 'desc' };
     let currentPage = 1;
     let dashboardMeta = { total_count: 0, total_pages: 1, page: 1, pageSize: 30 };
     let dashboardKpis = null;
@@ -749,6 +802,7 @@
           emp: empFilter?.value || '',
           chofer: choferFilter?.value || '',
           estado: estadoFilter?.value || '',
+          agenda: agendaFilter?.value || '',
           from: fromFilter?.value || '',
           to: toFilter?.value || '',
           q: q?.value || '',
@@ -767,6 +821,7 @@
         const f = JSON.parse(raw);
 
         if (typeof f.estado === 'string') estadoFilter.value = f.estado;
+        if (typeof f.agenda === 'string') agendaFilter.value = f.agenda;
         if (typeof f.from === 'string') fromFilter.value = f.from;
         if (typeof f.to === 'string') toFilter.value = f.to;
         if (typeof f.q === 'string') q.value = f.q;
@@ -810,6 +865,7 @@
       switch (key) {
         case 'id': return Number(p.id) || 0;
         case 'fecha': return new Date(p.fecha || 0).getTime() || 0;
+        case 'agenda': return new Date(p.fecha_operativa || p.fecha_entrega_estimada || p.fecha_entrega || p.fecha || 0).getTime() || 0;
         case 'cliente': return p.cliente || '';
         case 'chofer': return p.chofer_nombre || (p.chofer_id ? `#${p.chofer_id}` : '');
         case 'estado': return p.estado || '';
@@ -913,6 +969,7 @@
     $('#btnClear').onclick = async () => {
       if (dashboardLoading) return;
       estadoFilter.value = '';
+      agendaFilter.value = '';
       fromFilter.value   = '';
       toFilter.value     = '';
       choferFilter.value = '';
@@ -989,6 +1046,7 @@
         });
 
         estadoFilter.onchange = async () => { currentPage = 1; saveFiltersState(); await initLoad(); scheduleAutoRefresh(); };
+        agendaFilter.onchange = async () => { currentPage = 1; saveFiltersState(); await initLoad(); scheduleAutoRefresh(); };
         fromFilter.onchange   = async () => { currentPage = 1; saveFiltersState(); await initLoad(); scheduleAutoRefresh(); };
         toFilter.onchange     = async () => { currentPage = 1; saveFiltersState(); await initLoad(); scheduleAutoRefresh(); };
 
@@ -1021,7 +1079,7 @@
             const key = th.dataset.sort;
             if (!key) return;
             if (sortState.key === key) sortState.dir = sortState.dir === 'asc' ? 'desc' : 'asc';
-            else sortState = { key, dir: key === 'fecha' || key === 'id' || key === 'monto' ? 'desc' : 'asc' };
+            else sortState = { key, dir: key === 'fecha' || key === 'agenda' || key === 'id' || key === 'monto' ? 'desc' : 'asc' };
             currentPage = 1;
             saveFiltersState();
             initLoad();
@@ -1303,14 +1361,31 @@
         const flags = [];
         const isOrphanChofer = !!p.orphan_chofer || p.chofer_id == null || Number(p.chofer_id) === 0;
         const isOrphanEmpresa = !!p.orphan_empresa || p.empresa_id == null || Number(p.empresa_id) === 0;
+        const isSinZona = p.zona_id == null || Number(p.zona_id) === 0;
+        const fechaOperativa = String(p.fecha_operativa || p.fecha_entrega_estimada || '').slice(0, 10);
+        const today = getLocalISO();
+        let agendaClass = 'future';
+        let agendaText = fechaOperativa ? fechaOperativa.split('-').reverse().join('/') : 'Sin fecha';
+        if (fechaOperativa && p.estado !== 'entregado' && p.estado !== 'cancelado') {
+          if (fechaOperativa < today) agendaClass = 'late';
+          else if (fechaOperativa === today) agendaClass = 'today';
+        }
+        if (p.estado === 'entregado') agendaClass = 'today';
         if (isOrphanChofer) flags.push('<span class="flag-badge flag-warn"><i class="fa-solid fa-triangle-exclamation"></i> Sin chofer</span>');
         if (isOrphanEmpresa) flags.push('<span class="flag-badge flag-danger"><i class="fa-solid fa-building-circle-exclamation"></i> Sin empresa</span>');
+        if (isSinZona) flags.push('<span class="flag-badge flag-warn"><i class="fa-solid fa-map-location-dot"></i> Sin zona</span>');
         if (!p.metodo_pago) flags.push('<span class="flag-badge flag-info"><i class="fa-regular fa-credit-card"></i> Pago sin definir</span>');
         
         return `
           <tr>
             <td style="color:var(--muted); font-family:monospace;">#${p.id}</td>
-            <td>${fmtDate(p.fecha)}</td>
+            <td>
+              <div class="agenda-stack">
+                <span class="route-chip ${agendaClass}"><i class="fa-solid fa-calendar-day"></i> ${esc(agendaText)}</span>
+                <span class="agenda-sub">Alta ${esc(fmtDate(p.fecha) || '-')}</span>
+                <span class="agenda-sub">${esc(p.zona_nombre || (isSinZona ? 'Sin zona' : `Zona #${p.zona_id}`))}</span>
+              </div>
+            </td>
             <td style="font-weight:600; color:#fff;">${esc(p.cliente || '')}</td>
             <td>${esc(p.telefono || '')}</td>
             <td style="font-size:0.9rem">${esc(p.direccion || '')}</td>
@@ -1334,6 +1409,9 @@
       const entregados = Number(k.entregados) || 0;
       const cancelados = Number(k.cancelados) || 0;
       const sinChofer = Number(k.sin_chofer) || 0;
+      const sinZona = Number(k.sin_zona) || 0;
+      const paraHoy = Number(k.para_hoy) || 0;
+      const atrasados = Number(k.atrasados) || 0;
       const totalMonto = Number(k.total_monto) || 0;
       const ticketPromedio = Number(k.ticket_promedio) || 0;
 
@@ -1345,9 +1423,12 @@
       if (kpiCancel) kpiCancel.textContent = cancelados;
       if (kpiTicket) kpiTicket.textContent = money(ticketPromedio);
       if (kpiSinChofer) kpiSinChofer.textContent = sinChofer;
+      if (kpiHoy) kpiHoy.textContent = paraHoy;
+      if (kpiAtrasados) kpiAtrasados.textContent = atrasados;
+      if (kpiSinZona) kpiSinZona.textContent = sinZona;
 
       const entregaPct = total ? Math.round((entregados / total) * 100) : 0;
-      kpiDetailMain.textContent = `Efectividad del filtro: ${entregados}/${total} entregados (${entregaPct}%) · ${sinChofer} sin chofer · ${cancelados} cancelados`;
+      kpiDetailMain.textContent = `Efectividad del filtro: ${entregados}/${total} entregados (${entregaPct}%) · ${paraHoy} para hoy · ${atrasados} atrasados · ${sinChofer} sin chofer · ${sinZona} sin zona`;
     }
 
     // ====== Acciones de Pedido ======
@@ -1579,6 +1660,7 @@
       if (fromFilter.value) params.set('from', fromFilter.value);
       if (toFilter.value)   params.set('to', toFilter.value);
       if (estadoFilter.value) params.set('estado', estadoFilter.value);
+      if (agendaFilter.value) params.set('agenda', agendaFilter.value);
       if (q.value.trim()) params.set('q', q.value.trim());
       params.set('sortKey', sortState.key);
       params.set('sortDir', sortState.dir);

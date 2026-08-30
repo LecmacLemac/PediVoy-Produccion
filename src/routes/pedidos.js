@@ -11,8 +11,13 @@ import { ejecutarPostEntregaUpsell } from '../estrategias.js';
 
 export function createPedidosRouter() {
   const router = express.Router();
+  const dashboardFechaExpr = `COALESCE(
+    p.fecha_entrega_estimada,
+    (p.fecha_entrega AT TIME ZONE 'UTC' AT TIME ZONE 'America/Argentina/Buenos_Aires')::date,
+    (p.fecha AT TIME ZONE 'UTC' AT TIME ZONE 'America/Argentina/Buenos_Aires')::date
+  )`;
 
-  function buildDashboardBase({ targetEmpresa, esSuperUser, onlyOrphanEmpresa, onlyOrphanChofer, chofer_id, estado, from, to, q }) {
+  function buildDashboardBase({ targetEmpresa, esSuperUser, onlyOrphanEmpresa, onlyOrphanChofer, chofer_id, estado, agenda, from, to, q }) {
     let whereSql = ' WHERE 1=1 ';
     const params = [];
     let idx = 1;
@@ -50,12 +55,22 @@ export function createPedidosRouter() {
     }
 
     if (from) {
-      whereSql += ` AND p.fecha >= $${idx++}::date`;
+      whereSql += ` AND ${dashboardFechaExpr} >= $${idx++}::date`;
       params.push(from.toString().slice(0, 10));
     }
     if (to) {
-      whereSql += ` AND p.fecha < ($${idx++}::date + INTERVAL '1 day')`;
+      whereSql += ` AND ${dashboardFechaExpr} <= $${idx++}::date`;
       params.push(to.toString().slice(0, 10));
+    }
+
+    if (agenda === 'hoy') {
+      whereSql += ` AND ${dashboardFechaExpr} = (NOW() AT TIME ZONE 'America/Argentina/Buenos_Aires')::date`;
+    } else if (agenda === 'atrasados') {
+      whereSql += ` AND p.estado NOT IN ('entregado', 'cancelado') AND ${dashboardFechaExpr} < (NOW() AT TIME ZONE 'America/Argentina/Buenos_Aires')::date`;
+    } else if (agenda === 'proximos') {
+      whereSql += ` AND p.estado NOT IN ('entregado', 'cancelado') AND ${dashboardFechaExpr} > (NOW() AT TIME ZONE 'America/Argentina/Buenos_Aires')::date`;
+    } else if (agenda === 'sin_zona') {
+      whereSql += ` AND COALESCE(p.zona_id, pe.zona_id) IS NULL`;
     }
 
     if (q) {
@@ -64,6 +79,7 @@ export function createPedidosRouter() {
         OR pe.telefono ILIKE $${idx}
         OR pe.direccion ILIKE $${idx}
         OR COALESCE(c.nombre, '') ILIKE $${idx}
+        OR COALESCE(z.nombre, '') ILIKE $${idx}
         OR CAST(p.id AS text) ILIKE $${idx}
       )`;
       params.push(`%${String(q).trim()}%`);
@@ -78,6 +94,7 @@ export function createPedidosRouter() {
     const keyMap = {
       id: 'p.id',
       fecha: 'p.fecha',
+      agenda: dashboardFechaExpr,
       cliente: 'pe.cliente',
       chofer: 'c.nombre',
       estado: 'p.estado',
@@ -95,7 +112,7 @@ export function createPedidosRouter() {
     try {
       const {
         from, to, estado, chofer_id, empresa_id, orphan_empresa, orphan_chofer,
-        q, page = '1', pageSize = '30', sortKey = 'fecha', sortDir = 'desc'
+        agenda, q, page = '1', pageSize = '30', sortKey = 'agenda', sortDir = 'desc'
       } = req.query || {};
 
       const esSuperUser = isSuper(req);
@@ -113,6 +130,13 @@ export function createPedidosRouter() {
         FROM pedidos p
         LEFT JOIN empresas e ON e.id = p.empresa_id
         LEFT JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
+        LEFT JOIN zonas_geograficas z
+          ON z.id = COALESCE(p.zona_id, pe.zona_id)
+         AND (
+           p.empresa_id IS NULL
+           OR p.empresa_id = 0
+           OR z.empresa_id = p.empresa_id
+         )
         LEFT JOIN choferes c
           ON c.id = p.chofer_id
          AND (
@@ -123,7 +147,7 @@ export function createPedidosRouter() {
       `;
 
       const { whereSql, params, idx } = buildDashboardBase({
-        targetEmpresa, esSuperUser, onlyOrphanEmpresa, onlyOrphanChofer, chofer_id, estado, from, to, q
+        targetEmpresa, esSuperUser, onlyOrphanEmpresa, onlyOrphanChofer, chofer_id, estado, agenda, from, to, q
       });
 
       const sortSql = getDashboardSort(sortKey, sortDir);
@@ -133,6 +157,8 @@ export function createPedidosRouter() {
           p.id,
           p.fecha,
           p.fecha_entrega,
+          p.fecha_entrega_estimada,
+          ${dashboardFechaExpr} AS fecha_operativa,
           p.estado,
           p.monto,
           p.metodo_pago,
@@ -140,7 +166,9 @@ export function createPedidosRouter() {
           pe.telefono,
           pe.direccion,
           p.empresa_id,
-          p.zona_id,
+          COALESCE(p.zona_id, pe.zona_id) AS zona_id,
+          z.nombre AS zona_nombre,
+          z.dias_entrega AS zona_dias_entrega,
           p.chofer_id,
           c.nombre AS chofer_nombre,
           (
@@ -171,6 +199,9 @@ export function createPedidosRouter() {
           COUNT(*) FILTER (WHERE p.estado = 'entregado')::int AS entregados,
           COUNT(*) FILTER (WHERE p.estado = 'cancelado')::int AS cancelados,
           COUNT(*) FILTER (WHERE p.chofer_id IS NULL OR p.chofer_id = 0 OR c.id IS NULL)::int AS sin_chofer,
+          COUNT(*) FILTER (WHERE COALESCE(p.zona_id, pe.zona_id) IS NULL)::int AS sin_zona,
+          COUNT(*) FILTER (WHERE p.estado NOT IN ('entregado', 'cancelado') AND ${dashboardFechaExpr} = (NOW() AT TIME ZONE 'America/Argentina/Buenos_Aires')::date)::int AS para_hoy,
+          COUNT(*) FILTER (WHERE p.estado NOT IN ('entregado', 'cancelado') AND ${dashboardFechaExpr} < (NOW() AT TIME ZONE 'America/Argentina/Buenos_Aires')::date)::int AS atrasados,
           COALESCE(SUM(COALESCE(p.monto, 0)), 0)::numeric AS total_monto
         ${selectBase}
         ${whereSql}
@@ -184,6 +215,13 @@ export function createPedidosRouter() {
         JOIN pedidos p ON p.id = ip.pedido_id
         LEFT JOIN empresas e ON e.id = p.empresa_id
         LEFT JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
+        LEFT JOIN zonas_geograficas z
+          ON z.id = COALESCE(p.zona_id, pe.zona_id)
+         AND (
+           p.empresa_id IS NULL
+           OR p.empresa_id = 0
+           OR z.empresa_id = p.empresa_id
+         )
         LEFT JOIN choferes c
           ON c.id = p.chofer_id
          AND (
@@ -227,6 +265,9 @@ export function createPedidosRouter() {
           entregados: Number(kpi.entregados) || 0,
           cancelados: Number(kpi.cancelados) || 0,
           sin_chofer: Number(kpi.sin_chofer) || 0,
+          sin_zona: Number(kpi.sin_zona) || 0,
+          para_hoy: Number(kpi.para_hoy) || 0,
+          atrasados: Number(kpi.atrasados) || 0,
           total_monto: totalMonto,
           ticket_promedio: totalCount ? totalMonto / totalCount : 0,
         },
@@ -249,7 +290,7 @@ export function createPedidosRouter() {
     try {
       const {
         from, to, estado, chofer_id, empresa_id, orphan_empresa, orphan_chofer,
-        q, sortKey = 'fecha', sortDir = 'desc'
+        agenda, q, sortKey = 'agenda', sortDir = 'desc'
       } = req.query || {};
 
       const esSuperUser = isSuper(req);
@@ -264,6 +305,13 @@ export function createPedidosRouter() {
         FROM pedidos p
         LEFT JOIN empresas e ON e.id = p.empresa_id
         LEFT JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
+        LEFT JOIN zonas_geograficas z
+          ON z.id = COALESCE(p.zona_id, pe.zona_id)
+         AND (
+           p.empresa_id IS NULL
+           OR p.empresa_id = 0
+           OR z.empresa_id = p.empresa_id
+         )
         LEFT JOIN choferes c
           ON c.id = p.chofer_id
          AND (
@@ -274,7 +322,7 @@ export function createPedidosRouter() {
       `;
 
       const { whereSql, params } = buildDashboardBase({
-        targetEmpresa, esSuperUser, onlyOrphanEmpresa, onlyOrphanChofer, chofer_id, estado, from, to, q
+        targetEmpresa, esSuperUser, onlyOrphanEmpresa, onlyOrphanChofer, chofer_id, estado, agenda, from, to, q
       });
 
       const rowsSql = `
@@ -282,9 +330,12 @@ export function createPedidosRouter() {
           p.id,
           p.fecha,
           p.fecha_entrega,
+          p.fecha_entrega_estimada,
+          ${dashboardFechaExpr} AS fecha_operativa,
           pe.cliente,
           pe.telefono,
           pe.direccion,
+          z.nombre AS zona_nombre,
           COALESCE(c.nombre, CASE WHEN p.chofer_id IS NOT NULL AND p.chofer_id <> 0 THEN '#' || p.chofer_id::text ELSE 'Sin asignar' END) AS chofer_nombre,
           p.estado,
           p.metodo_pago,
@@ -297,14 +348,17 @@ export function createPedidosRouter() {
 
       const rows = await query(rowsSql, params);
       const escapeCsv = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-      const header = ['ID','Fecha','Fecha entrega','Cliente','Telefono','Direccion','Chofer','Estado','Pago','Monto'];
+      const header = ['ID','Fecha alta','Fecha operativa','Fecha estimada','Fecha entrega','Cliente','Telefono','Direccion','Zona','Chofer','Estado','Pago','Monto'];
       const body = rows.map((p) => ([
         p.id,
         p.fecha ? new Date(p.fecha).toISOString() : '',
+        p.fecha_operativa || '',
+        p.fecha_entrega_estimada || '',
         p.fecha_entrega ? new Date(p.fecha_entrega).toISOString() : '',
         p.cliente,
         p.telefono,
         p.direccion,
+        p.zona_nombre,
         p.chofer_nombre,
         p.estado,
         p.metodo_pago,
