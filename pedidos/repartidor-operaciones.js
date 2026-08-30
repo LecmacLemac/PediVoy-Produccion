@@ -463,7 +463,7 @@ function formatRetornableQty(qty) {
 }
 
 function getPedidoFechaResumen(pedido) {
-  return isoToLocalYMD(pedido?.fecha_entrega || pedido?.fecha);
+  return getPedidoFechaOperativa(pedido);
 }
 
 function buildRetornablesRutaResumen(fecha) {
@@ -595,7 +595,7 @@ async function calcResumen(){
     return calcResumen();
   }
 
-  const list = pedidos.filter(p => { const fDb = p.fecha_entrega || p.fecha; return isoToLocalYMD(fDb) === d && p.estado === 'entregado'; });
+  const list = pedidos.filter(p => getPedidoFechaOperativa(p) === d && p.estado === 'entregado');
 
   let cash = 0, transf = 0, ctaCte = 0, artsV = 0;
   let cntCash = 0, cntTransf = 0, cntCtaCte = 0;

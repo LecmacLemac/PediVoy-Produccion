@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { z } from 'zod';
-import { armarMensajeConfirmado, calcularFechaEntregaReal, resolverConfigEntregaPorZona } from '../utils.js';
+import { armarMensajeConfirmado, calcularFechaEntregaReal } from '../utils.js';
 import { ejecutarEstrategiaVecinos } from '../estrategias.js';
 import { associateClienteWithReferente, normalizeReferenteCode } from '../services/referentesService.js';
 
@@ -86,6 +86,39 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
   const DEBUG_ORDERS = process.env.DEBUG_ORDERS === '1' && process.env.NODE_ENV !== 'test';
   const tStart = (label) => { if (DEBUG_ORDERS) console.time(label); };
   const tEnd = (label) => { if (DEBUG_ORDERS) console.timeEnd(label); };
+  let pedidoScheduleSchemaReady = false;
+
+  async function ensurePedidoScheduleSchema(txQuery) {
+    if (pedidoScheduleSchemaReady) return;
+    await txQuery(`ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS fecha_entrega_estimada DATE`);
+    await txQuery(`ALTER TABLE zonas_geograficas ADD COLUMN IF NOT EXISTS dias_entrega JSONB DEFAULT '[]'::jsonb`);
+    pedidoScheduleSchemaReady = true;
+  }
+
+  function normalizeDiasEntrega(value) {
+    return Array.from(new Set((Array.isArray(value) ? value : [])
+      .map(Number)
+      .filter((n) => Number.isInteger(n) && n >= 0 && n <= 6)
+    )).sort((a, b) => a - b);
+  }
+
+  function parseConfigJson(value) {
+    if (!value) return {};
+    if (typeof value === 'string') {
+      try {
+        const parsed = JSON.parse(value);
+        return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+      } catch {
+        return {};
+      }
+    }
+    return typeof value === 'object' && !Array.isArray(value) ? value : {};
+  }
+
+  function toDateOnly(value) {
+    if (!(value instanceof Date) || !Number.isFinite(value.getTime())) return null;
+    return value.toISOString().slice(0, 10);
+  }
 
   app.post('/public/pedidos', async (req, res) => {
     const txClient = pool ? await pool.connect() : null;
@@ -166,6 +199,8 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
         codigo_referente,
         codigo_descuento,
       } = parse.data;
+
+      await ensurePedidoScheduleSchema(txQuery);
 
       log('REQ IN', {
         empresa_id, cliente, telefono, direccion, ciudad, provincia, pais,
@@ -298,23 +333,6 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
           errlog('CHOFER.RESOLVE.ERROR', e?.message || e);
         }
       }
-
-      const empRowsEntrega = await txQuery('SELECT config_entrega FROM empresas WHERE id=$1', [empId]);
-      const configEntregaEmpresa = empRowsEntrega[0]?.config_entrega || {};
-      let zonaEntrega = null;
-      if (zona_id != null) {
-        const zonaRows = await txQuery(
-          `SELECT id, nombre, dias_entrega
-             FROM zonas_geograficas
-            WHERE id = $1 AND empresa_id = $2
-            LIMIT 1`,
-          [zona_id, empId]
-        );
-        zonaEntrega = zonaRows[0] || null;
-      }
-      const configEntregaFinal = resolverConfigEntregaPorZona(configEntregaEmpresa, zonaEntrega);
-      const fechaEntregaCalc = calcularFechaEntregaReal(configEntregaFinal, new Date());
-      const fechaEntregaIso = fechaEntregaCalc.fecha.toISOString();
 
       const normItems = (Array.isArray(items) ? items : [])
         .map((it) => ({
@@ -661,16 +679,39 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
         log('DESCUENTO.CODE.RECEIVED', { codigo_descuento: String(codigo_descuento).trim() });
       }
 
+      const empRows = await txQuery('SELECT config_entrega FROM empresas WHERE id=$1', [empId]);
+      const configEntrega = parseConfigJson(empRows[0]?.config_entrega);
+      const configEntregaFinal = { ...configEntrega };
+
+      if (zona_id != null) {
+        try {
+          const zonaRows = await txQuery(
+            `SELECT dias_entrega
+               FROM zonas_geograficas
+              WHERE id=$1 AND empresa_id=$2
+              LIMIT 1`,
+            [zona_id, empId]
+          );
+          const diasZona = normalizeDiasEntrega(zonaRows[0]?.dias_entrega);
+          if (diasZona.length) configEntregaFinal.dias_habiles = diasZona;
+        } catch (e) {
+          errlog('ZONA.DIAS_ENTREGA.ERROR', e?.message || e);
+        }
+      }
+
+      const fechaEntregaEstimada = calcularFechaEntregaReal(configEntregaFinal, new Date()).fecha;
+      const fechaEntregaEstimadaSql = toDateOnly(fechaEntregaEstimada);
+
       const pedRows = await txQuery(
         `INSERT INTO pedidos (
           empresa_id, punto_entrega_id, fecha, estado,
           cantidad, cantidad_entregada, monto,
           metodo_pago, aviso_recibido, sats,
-          submission_id, chofer_id, zona_id, fecha_entrega,
+          submission_id, chofer_id, zona_id, fecha_entrega_estimada,
           referido_por_id, tracking_token
         ) VALUES ($1,$2,NOW(),'pendiente',$3,0,$4,$5,0,0,$6,$7,$8,$9,$10,$11)
         RETURNING id, estado, monto, tracking_token`,
-        [empId, punto_entrega_id, totalCantidad, totalMonto, metodo_pago, submission_id, chofer_id, zona_id, fechaEntregaIso, padrinoId, createTrackingToken()]
+        [empId, punto_entrega_id, totalCantidad, totalMonto, metodo_pago, submission_id, chofer_id, zona_id, fechaEntregaEstimadaSql, padrinoId, createTrackingToken()]
       );
 
       const pedido = pedRows[0];
@@ -716,8 +757,6 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
       }
 
       try {
-        const configEntrega = configEntregaFinal;
-
         let repData = null;
         if (chofer_id) {
           const cRows = await txQuery('SELECT nombre, telefono FROM choferes WHERE id=$1', [chofer_id]);
@@ -752,9 +791,9 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
           items: normItems,
           direccion: [direccion, ciudad, provincia].filter(Boolean).join(', '),
           fecha: new Date(),
-          fechaEntrega: fechaEntregaIso,
+          fechaEntrega: fechaEntregaEstimada,
           repartidor: repData,
-          configEntrega,
+          configEntrega: configEntregaFinal,
           retornablesPendientes
         });
 
@@ -826,7 +865,7 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
           submission_id,
           estado: pedido.estado,
           monto: pedido.monto,
-          fecha_entrega: fechaEntregaIso,
+          fecha_entrega_estimada: fechaEntregaEstimadaSql,
           tracking_token: pedido.tracking_token,
           tracking_url: buildTrackingPath(pedido.tracking_token),
         },

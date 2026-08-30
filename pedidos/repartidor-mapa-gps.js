@@ -207,7 +207,7 @@ function renderMap(){
   pedidos.forEach(p => {
     const directionsUrl = getGoogleMapsDirectionsUrl(p.latitud, p.longitud);
     if(!directionsUrl) return;
-    if(fHoy) { const fDb = p.fecha_entrega || p.fecha; if(isoToLocalYMD(fDb) !== today) return; }
+    if(fHoy && getPedidoFechaOperativa(p) !== today) return;
     if(fSt && p.estado !== fSt) return;
     const lat = Number(p.latitud), lng = Number(p.longitud);
     const color = p.estado==='entregado'?'#10b981' : p.estado==='en_ruta'?'#06b6d4':'#f59e0b';

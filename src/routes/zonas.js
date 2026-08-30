@@ -12,10 +12,27 @@ export function createZonasRouter(deps) {
   if (typeof getEmpresaIdFromToken !== 'function') throw new Error('createZonasRouter: falta getEmpresaIdFromToken(fn)');
 
   const router = express.Router();
+  let schemaReady = false;
+
+  async function ensureZonasSchema() {
+    if (schemaReady) return;
+    await query(`ALTER TABLE zonas_geograficas ADD COLUMN IF NOT EXISTS dias_entrega JSONB DEFAULT '[]'::jsonb`);
+    schemaReady = true;
+  }
+
+  function normalizeDiasEntrega(value) {
+    const arr = Array.isArray(value) ? value : [];
+    return Array.from(new Set(
+      arr
+        .map((n) => Number(n))
+        .filter((n) => Number.isInteger(n) && n >= 0 && n <= 6)
+    )).sort((a, b) => a - b);
+  }
 
   // GET /api/zonas
   router.get('/', withAuth, async (req, res) => {
     try {
+      await ensureZonasSchema();
       const esSuperAdmin = isSuper(req);
       const empresaTarget = esSuperAdmin ? (Number(req.query?.empresa_id) || null) : getEmpresaIdFromToken(req);
       if (esSuperAdmin && !empresaTarget) return res.json([]);
@@ -35,6 +52,7 @@ export function createZonasRouter(deps) {
         } catch {
           r.poligono = [];
         }
+        r.dias_entrega = normalizeDiasEntrega(r.dias_entrega);
         return r;
       });
 
@@ -48,8 +66,8 @@ export function createZonasRouter(deps) {
   // POST /api/zonas
   router.post('/', withAuth, async (req, res) => {
     try {
-      const { nombre, poligono, empresa_id } = req.body || {};
-      const diasEntrega = normalizarDiasEntrega(req.body?.dias_entrega);
+      await ensureZonasSchema();
+      const { nombre, poligono, empresa_id, dias_entrega } = req.body || {};
       const esSuperAdmin = isSuper(req);
       let finalEmpresaId = esSuperAdmin && empresa_id ? Number(empresa_id) : getEmpresaIdFromToken(req);
 
@@ -68,6 +86,7 @@ export function createZonasRouter(deps) {
       }
 
       const poliJson = JSON.stringify(poligono);
+      const diasEntrega = normalizarDiasEntrega(dias_entrega);
       const geoJsonObj = {
         type: 'Polygon',
         coordinates: [poligono],
@@ -91,7 +110,8 @@ export function createZonasRouter(deps) {
   // PUT /api/zonas/:id
   router.put('/:id', withAuth, async (req, res) => {
     try {
-      const { nombre, poligono } = req.body || {};
+      await ensureZonasSchema();
+      const { nombre, poligono, dias_entrega } = req.body || {};
       const esSuperAdmin = isSuper(req);
       const miEmpresa = getEmpresaIdFromToken(req);
 

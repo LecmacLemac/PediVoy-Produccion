@@ -31,6 +31,8 @@ export function createRepartidorApiRouter(deps) {
   async function ensureRepartidorSchema() {
     if (schemaReady) return;
     await ensureCuentaCorrienteSchema();
+    await query(`ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS fecha_entrega_estimada DATE`);
+    await query(`ALTER TABLE zonas_geograficas ADD COLUMN IF NOT EXISTS dias_entrega JSONB DEFAULT '[]'::jsonb`);
     await query(`
       CREATE TABLE IF NOT EXISTS cliente_retornables_saldos (
         empresa_id INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
@@ -152,15 +154,15 @@ export function createRepartidorApiRouter(deps) {
      // Traemos:
      // 1. Pedidos activos completos para la operación diaria
      // 2. Pedidos finalizados de los últimos 30 días para que el resumen histórico funcione
-     const rows = await query(
-       `SELECT 
-          p.id, p.estado, p.fecha, p.fecha_entrega,
-          p.punto_entrega_id,
-          p.cantidad, p.monto, p.metodo_pago, p.chofer_id,
-          pe.cliente, pe.direccion, pe.ciudad, pe.telefono,
-          COALESCE(pe.cuenta_corriente_habilitada, FALSE) AS cuenta_corriente_habilitada,
-          pe.latitud, pe.longitud, pe.notas AS notas,
-          pe.zona_id, z.nombre AS zona_nombre,
+	     const rows = await query(
+	       `SELECT
+	          p.id, p.estado, p.fecha, p.fecha_entrega, p.fecha_entrega_estimada,
+	          p.punto_entrega_id,
+	          p.cantidad, p.monto, p.metodo_pago, p.chofer_id,
+	          pe.cliente, pe.direccion, pe.ciudad, pe.telefono,
+	          COALESCE(pe.cuenta_corriente_habilitada, FALSE) AS cuenta_corriente_habilitada,
+	          pe.latitud, pe.longitud, pe.notas AS notas,
+	          COALESCE(p.zona_id, pe.zona_id) AS zona_id, z.nombre AS zona_nombre, z.dias_entrega AS zona_dias_entrega,
           COALESCE((
             SELECT json_agg(
               json_build_object(
@@ -196,7 +198,7 @@ export function createRepartidorApiRouter(deps) {
           ) AS items
         FROM pedidos p
         JOIN puntos_entrega pe ON p.punto_entrega_id = pe.id
-        LEFT JOIN zonas_geograficas z ON pe.zona_id = z.id
+	        LEFT JOIN zonas_geograficas z ON z.id = COALESCE(p.zona_id, pe.zona_id)
         LEFT JOIN items_pedido ip ON ip.pedido_id = p.id
         WHERE pe.empresa_id = $2
           AND (p.chofer_id = $1 OR p.chofer_id IS NULL)
@@ -211,15 +213,15 @@ export function createRepartidorApiRouter(deps) {
               )
             )
           )
-        GROUP BY
-          p.id, p.estado, p.fecha, p.fecha_entrega,
-          p.punto_entrega_id,
-          p.cantidad, p.monto, p.metodo_pago, p.chofer_id,
-          pe.cliente, pe.direccion, pe.ciudad, pe.telefono,
-          pe.cuenta_corriente_habilitada,
-          pe.latitud, pe.longitud, pe.notas,
-          pe.zona_id, z.nombre
-        ORDER BY p.id ASC`,
+	        GROUP BY
+	          p.id, p.estado, p.fecha, p.fecha_entrega, p.fecha_entrega_estimada,
+	          p.punto_entrega_id,
+	          p.cantidad, p.monto, p.metodo_pago, p.chofer_id,
+	          pe.cliente, pe.direccion, pe.ciudad, pe.telefono,
+	          pe.cuenta_corriente_habilitada,
+	          pe.latitud, pe.longitud, pe.notas,
+	          pe.zona_id, p.zona_id, z.nombre, z.dias_entrega
+	        ORDER BY COALESCE(p.fecha_entrega_estimada, p.fecha::date) ASC, p.id ASC`,
        [chofer_id, empresaId]
      );
 

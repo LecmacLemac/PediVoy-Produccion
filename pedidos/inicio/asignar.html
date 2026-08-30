@@ -280,20 +280,7 @@
   }
   .zone-header h3 { margin: 0; font-size: 1rem; }
   .zone-meta { color: var(--muted); font-size: 0.76rem; margin-top: 0.25rem; }
-  .zone-days { display:flex; gap:0.25rem; flex-wrap:wrap; margin-top:0.5rem; }
-  .zone-day {
-    display:inline-flex;
-    align-items:center;
-    justify-content:center;
-    min-width:2.2rem;
-    padding:0.15rem 0.45rem;
-    border-radius:999px;
-    border:1px solid rgba(148,163,184,0.22);
-    color:#e2e8f0;
-    font-size:0.72rem;
-    font-weight:700;
-  }
-  .zone-day.fallback { color:var(--muted); min-width:auto; }
+  .zone-calendar { color:#86efac; font-size:0.76rem; font-weight:700; margin-top:0.3rem; }
   .zone-body { display: flex; flex-direction: column; gap: 0.55rem; padding: 1rem; }
   .driver-chip {
     display: flex;
@@ -590,6 +577,17 @@
       '"': '&quot;',
       "'": '&#39;'
     }[c]));
+    const DAY_LABELS = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+    function normalizeDays(value) {
+      return Array.from(new Set((Array.isArray(value) ? value : [])
+        .map(Number)
+        .filter(n => Number.isInteger(n) && n >= 0 && n <= 6)
+      )).sort((a, b) => a - b);
+    }
+    function formatDeliveryDays(value) {
+      const days = normalizeDays(value);
+      return days.length ? days.map(d => DAY_LABELS[d]).join(' / ') : 'Días empresa';
+    }
     
     function toast(msg) {
       const t = $('#toast'); t.textContent = msg; t.classList.add('show');
@@ -1007,7 +1005,7 @@
               <div>
                 <h3>${esc(z.nombre)}</h3>
                 <div class="zone-meta">Zona #${Number(z.id)}</div>
-                ${renderZoneDays(z.dias_entrega)}
+                <div class="zone-calendar">Entrega: ${esc(formatDeliveryDays(z.dias_entrega))}</div>
               </div>
               <span class="badge-count">${assignedDrivers.length}</span>
             </div>

@@ -45,8 +45,28 @@ const isoToLocalYMD = (iso) => {
       year: 'numeric',
       month: '2-digit',
       day: '2-digit'
-    }).format(d);
+	    }).format(d);
 };
+
+const dbDateToYMD = (value) => {
+  if (!value) return '';
+  const raw = String(value).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  return isoToLocalYMD(raw);
+};
+
+function getPedidoFechaOperativa(pedido) {
+  return dbDateToYMD(pedido?.fecha_entrega_estimada) || isoToLocalYMD(pedido?.fecha_entrega || pedido?.fecha);
+}
+
+function formatFechaPlanificada(value) {
+  const ymd = dbDateToYMD(value);
+  if (!ymd) return '';
+  const [year, month, day] = ymd.split('-').map(Number);
+  const d = new Date(year, month - 1, day, 12, 0, 0);
+  const weekday = new Intl.DateTimeFormat('es-AR', { weekday: 'short' }).format(d).replace('.', '');
+  return `${weekday} ${String(day).padStart(2, '0')}/${String(month).padStart(2, '0')}`;
+}
 
 // Fecha (DD/MM/YYYY) en AR
 const formatFechaAR = (iso) => {

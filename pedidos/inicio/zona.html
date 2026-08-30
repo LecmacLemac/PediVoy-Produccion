@@ -244,6 +244,13 @@
   .zone-tag.ok { color:#86efac; border-color:rgba(16,185,129,0.28); background:rgba(16,185,129,0.12); }
   .zone-tag.warn { color:#fde68a; border-color:rgba(245,158,11,0.28); background:rgba(245,158,11,0.12); }
   .zone-tag.driver { color:#7dd3fc; border-color:rgba(56,189,248,0.28); background:rgba(56,189,248,0.12); }
+  .days-grid { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:0.5rem; }
+  .days-grid label {
+    display:flex; align-items:center; gap:0.45rem; margin:0; padding:0.55rem 0.65rem;
+    border:1px solid var(--border); border-radius:8px; background:rgba(15,23,42,0.7);
+    color:var(--ink); font-size:0.8rem; text-transform:none; letter-spacing:0; cursor:pointer;
+  }
+  .days-grid input { width:auto; margin:0; }
   .zone-actions { display:flex; gap:0.45rem; flex-shrink:0; }
   .empty-state { text-align:center; padding:2rem; color:var(--muted); border:1px dashed var(--border); border-radius:10px; background:rgba(15,23,42,0.55); }
   .help-box {
@@ -387,6 +394,21 @@
           <label>Nombre de la Zona</label>
           <input type="text" id="z_nombre" required placeholder="Ej: Zona Norte, Centro" style="margin-bottom:0;">
         </div>
+        <div>
+          <label>Días de entrega</label>
+          <div id="z_dias_entrega" class="days-grid">
+            <label><input type="checkbox" value="1"> Lun</label>
+            <label><input type="checkbox" value="2"> Mar</label>
+            <label><input type="checkbox" value="3"> Mié</label>
+            <label><input type="checkbox" value="4"> Jue</label>
+            <label><input type="checkbox" value="5"> Vie</label>
+            <label><input type="checkbox" value="6"> Sáb</label>
+            <label><input type="checkbox" value="0"> Dom</label>
+          </div>
+          <small style="color:var(--muted); font-size:0.8rem; display:block; margin-top:0.45rem;">
+            Si no marcás días, la zona usa la configuración general de la empresa.
+          </small>
+        </div>
       </form>
       <div class="modal-footer">
         <button id="btnCancelModal" type="button" class="btn">Cancelar</button>
@@ -410,6 +432,26 @@
       '"': '&quot;',
       "'": '&#39;'
     }[c]));
+    const DAY_LABELS = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+    function normalizeDays(value) {
+      return Array.from(new Set((Array.isArray(value) ? value : [])
+        .map(Number)
+        .filter(n => Number.isInteger(n) && n >= 0 && n <= 6)
+      )).sort((a, b) => a - b);
+    }
+    function formatDeliveryDays(value) {
+      const days = normalizeDays(value);
+      return days.length ? days.map(d => DAY_LABELS[d]).join(' / ') : 'Días empresa';
+    }
+    function getSelectedDeliveryDays() {
+      return normalizeDays(Array.from(document.querySelectorAll('#z_dias_entrega input[type="checkbox"]:checked')).map(chk => chk.value));
+    }
+    function setSelectedDeliveryDays(value) {
+      const days = normalizeDays(value);
+      document.querySelectorAll('#z_dias_entrega input[type="checkbox"]').forEach((chk) => {
+        chk.checked = days.includes(Number(chk.value));
+      });
+    }
     function toast(msg) {
       const t = $('#toast'); t.textContent = msg; t.classList.add('show');
       setTimeout(() => t.classList.remove('show'), 3000);
@@ -502,6 +544,7 @@
         
         $('#z_id').value = ''; 
         $('#z_nombre').value = '';
+        setSelectedDeliveryDays([]);
         openModal();
       });
 
@@ -586,6 +629,7 @@
         const pointCount = getZonePointCount(z);
         const hasPolygon = pointCount >= 3;
         const driverName = zoneDriverMap[id];
+        const diasEntrega = normalizeDays(z.dias_entrega);
         return `
         <div class="zona-item ${Number(activeZoneId) === id ? 'active' : ''}" data-zone-id="${id}">
           <div class="zona-info">
@@ -594,6 +638,7 @@
               <span class="zone-tag">ID ${id}</span>
               <span class="zone-tag ${hasPolygon ? 'ok' : 'warn'}">${hasPolygon ? `${pointCount} puntos` : 'Sin dibujo'}</span>
               <span class="zone-tag ${driverName ? 'driver' : 'warn'}">${driverName ? `Repartidor: ${esc(driverName)}` : 'Sin repartidor'}</span>
+              <span class="zone-tag ${diasEntrega.length ? 'ok' : ''}">Entrega: ${esc(formatDeliveryDays(diasEntrega))}</span>
             </div>
           </div>
           <div class="zone-actions">
@@ -694,6 +739,7 @@
       if (!z) return;
       $('#z_id').value = z.id;
       $('#z_nombre').value = z.nombre;
+      setSelectedDeliveryDays(z.dias_entrega);
       currentNewPolygon = null; 
       openModal();
       focusZone(id);
@@ -764,10 +810,11 @@
       const id = $('#z_id').value;
       const nombre = $('#z_nombre').value;
       const empId = $('#empSel').value;
+      const diasEntrega = getSelectedDeliveryDays();
 
       if (!nombre) return toast('El nombre es obligatorio');
 
-      const body = { nombre };
+      const body = { nombre, dias_entrega: diasEntrega };
 
       if (!id) {
           if (!currentNewPolygon) return toast('Error: No hay dibujo en el mapa');

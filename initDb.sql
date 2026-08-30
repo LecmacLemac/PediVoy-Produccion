@@ -426,7 +426,8 @@ CREATE TABLE IF NOT EXISTS pedidos (
   metodo_pago        TEXT DEFAULT 'efectivo',
   monto              NUMERIC(10,2) DEFAULT 0,
   fecha              TIMESTAMPTZ DEFAULT NOW(),
-  fecha_entrega      TIMESTAMPTZ,               
+  fecha_entrega_estimada DATE,
+  fecha_entrega      TIMESTAMPTZ,
   tracking_token     TEXT, 
   cantidad_entregada NUMERIC DEFAULT 0,
   origen             TEXT DEFAULT 'manual',
@@ -443,7 +444,8 @@ CREATE TABLE IF NOT EXISTS pedidos (
 );
 
 ALTER TABLE pedidos
-  ADD COLUMN IF NOT EXISTS en_ruta_notificado_at TIMESTAMPTZ;
+  ADD COLUMN IF NOT EXISTS en_ruta_notificado_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS fecha_entrega_estimada DATE;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_pedidos_empresa_submission_id_uniq
   ON pedidos (empresa_id, submission_id)

@@ -41,6 +41,7 @@ test('POST /public/pedidos crea pedido válido', async () => {
   const query = async (sql, params = []) => {
     calls.push(String(sql));
 
+    if (/ALTER TABLE/i.test(sql)) return [];
     if (sql.includes('FROM puntos_entrega') && sql.includes('telefono_normalizado LIKE')) return [];
     if (sql.includes('INSERT INTO puntos_entrega')) return [{ id: 101 }];
     if (sql.includes('FROM zona_chofer')) return [{ id: 55 }];
@@ -51,7 +52,7 @@ test('POST /public/pedidos crea pedido válido', async () => {
     if (sql.includes('INSERT INTO pedidos')) return [{ id: 9001, estado: 'pendiente', monto: 7000, tracking_token: 'tok_9001' }];
     if (sql.includes('INSERT INTO items_pedido')) return [];
     if (sql.includes('SELECT config_entrega FROM empresas')) return [{ config_entrega: {} }];
-    if (sql.includes('FROM zonas_geograficas')) return [{ id: 7, nombre: 'Norte', dias_entrega: [3] }];
+    if (sql.includes('SELECT dias_entrega') && sql.includes('FROM zonas_geograficas')) return [{ dias_entrega: [] }];
     if (sql.includes('SELECT nombre, telefono FROM choferes')) return [{ nombre: 'Juan', telefono: '3871234567' }];
     if (sql.includes('FROM cliente_retornables_saldos')) return [];
 
@@ -98,9 +99,10 @@ test('POST /public/pedidos crea pedido válido', async () => {
   });
 });
 
-test('POST /public/pedidos agrega retornables pendientes al WhatsApp del cliente', async () => {
+  test('POST /public/pedidos agrega retornables pendientes al WhatsApp del cliente', async () => {
   let wppMessage = '';
   const query = async (sql) => {
+    if (/ALTER TABLE/i.test(sql)) return [];
     if (sql.includes('FROM puntos_entrega') && sql.includes('telefono_normalizado LIKE')) return [{ id: 101, zona_id: 7 }];
     if (sql.includes('FROM zona_chofer')) return [];
     if (sql.includes('FROM productos') && sql.includes('promo_config')) return [];
@@ -110,7 +112,7 @@ test('POST /public/pedidos agrega retornables pendientes al WhatsApp del cliente
     if (sql.includes('INSERT INTO pedidos')) return [{ id: 9002, estado: 'pendiente', monto: 7000, tracking_token: 'tok_9002' }];
     if (sql.includes('INSERT INTO items_pedido')) return [];
     if (sql.includes('SELECT config_entrega FROM empresas')) return [{ config_entrega: {} }];
-    if (sql.includes('FROM zonas_geograficas')) return [{ id: 7, nombre: 'Norte', dias_entrega: [3] }];
+    if (sql.includes('SELECT dias_entrega') && sql.includes('FROM zonas_geograficas')) return [{ dias_entrega: [] }];
     if (sql.includes('FROM cliente_retornables_saldos')) return [{ producto_id: 55, producto: 'Bidón retornable', saldo: '3' }];
 
     throw new Error(`SQL inesperado en test: ${sql.slice(0, 90)}`);

@@ -37,6 +37,7 @@ test('POST /api/zonas guarda dias_entrega normalizados', async () => {
   let insertParams = null;
   const app = buildApp({
     query: async (sql, params = []) => {
+      if (sql.includes('ALTER TABLE zonas_geograficas')) return [];
       if (sql.includes('INSERT INTO zonas_geograficas')) {
         insertParams = params;
         return [{ id: 22 }];
@@ -70,6 +71,7 @@ test('PUT /api/zonas actualiza dias_entrega cuando vienen en payload', async () 
   let updateParams = null;
   const app = buildApp({
     query: async (sql, params = []) => {
+      if (sql.includes('ALTER TABLE zonas_geograficas')) return [];
       if (sql.includes('SELECT id FROM zonas_geograficas')) return [{ id: 22 }];
       if (sql.includes('UPDATE zonas_geograficas')) {
         updateParams = params;

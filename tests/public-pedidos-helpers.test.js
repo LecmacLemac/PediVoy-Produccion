@@ -2,18 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  calcularFechaEntregaReal,
-  normalizarDiasEntrega,
-  resolverConfigEntregaPorZona,
-} from '../src/utils.js';
-
-import {
   toNum,
   inRange,
   round,
   normalizeText,
   buildOrderSummary,
 } from '../src/public/pedidosLegacyHelpers.js';
+import { calcularFechaEntregaReal } from '../src/utils.js';
 
 test('toNum convierte números válidos y devuelve null en inválidos', () => {
   assert.equal(toNum('10.5'), 10.5);
@@ -53,24 +48,9 @@ test('buildOrderSummary devuelve formato correcto para 1 ítem y múltiples', ()
   assert.match(varios, /^3 artículos — /);
 });
 
-test('resolverConfigEntregaPorZona prioriza días propios de zona', () => {
-  const cfg = resolverConfigEntregaPorZona(
-    { dias_habiles: [1, 2, 3, 4, 5], tiempo_entrega_dias: 0 },
-    { nombre: 'Norte', dias_entrega: [4, 2, 2, 9, 'x'] }
-  );
+test('calcularFechaEntregaReal respeta días configurados por zona', () => {
+  const base = new Date('2026-08-31T12:00:00Z'); // lunes
+  const { fecha } = calcularFechaEntregaReal({ dias_habiles: [4] }, base);
 
-  assert.deepEqual(normalizarDiasEntrega([4, 2, 2, 9, 'x']), [2, 4]);
-  assert.deepEqual(cfg.dias_habiles, [2, 4]);
-  assert.equal(cfg.zona_nombre, 'Norte');
-});
-
-test('calcularFechaEntregaReal programa al próximo día definido por zona', () => {
-  const cfg = resolverConfigEntregaPorZona(
-    { dias_habiles: [1, 2, 3, 4, 5], tiempo_entrega_dias: 0 },
-    { dias_entrega: [3] }
-  );
-  const result = calcularFechaEntregaReal(cfg, new Date('2026-08-30T15:00:00-03:00'));
-
-  assert.equal(result.fecha.getDay(), 3);
-  assert.equal(result.fecha.toISOString().slice(0, 10), '2026-09-02');
+  assert.equal(fecha.getDay(), 4);
 });

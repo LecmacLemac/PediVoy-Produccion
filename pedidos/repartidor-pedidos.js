@@ -430,9 +430,13 @@ async function optimizarRuta() {
                 body: { lat: latitude, lng: longitude }
             });
 
-            if (res.ok && res.ruta && res.ruta.length > 0) {
-                // Obtenemos el orden devuelto por la API (nearest neighbor)
-                const optimizedIds = res.ruta.map(r => r.id);
+              if (res.ok && res.ruta && res.ruta.length > 0) {
+                const visibleActiveIds = new Set(getFilteredPedidos().filter(isPedidoActivoCarga).map(p => Number(p.id)));
+                const optimizedIds = res.ruta.map(r => Number(r.id)).filter(id => visibleActiveIds.has(id));
+                if (!optimizedIds.length) {
+                  toast('No hay pedidos de la agenda actual para optimizar');
+                  return;
+                }
                 
                 // Mapa para búsqueda rápida de índice
                 const orderMap = new Map(optimizedIds.map((id, index) => [id, index]));
@@ -474,7 +478,7 @@ async function optimizarRuta() {
   }, GEO_OPTS_ACTIVATE);
 }
 
-function renderCards() {
+function getFilteredPedidos() {
   const fEst = $('#fEstado').value;
   const fZon = $('#fZona').value;
   const fHoy = $('#fHoy').checked;
@@ -482,13 +486,12 @@ function renderCards() {
   const today = getOyString();
 
   // 1. FILTRADO
-  let list = pedidos.filter(p => {
+  const list = pedidos.filter(p => {
     const isActive = isPedidoActivoCarga(p);
 
-    // Filtro de "Solo Hoy" (aplica solo si no está activo/pendiente)
-    if (fHoy && !isActive) {
-      const fDb = p.fecha_entrega || p.fecha;
-      if (isoToLocalYMD(fDb) !== today) return false;
+    if (fHoy) {
+      const fechaOp = getPedidoFechaOperativa(p);
+      if (fechaOp !== today) return false;
     }
 
     // Filtros de Zona, Texto y Estado
@@ -513,6 +516,11 @@ function renderCards() {
     }
     return true;
   });
+  return list;
+}
+
+function renderCards() {
+  let list = getFilteredPedidos();
 
   renderCargaPendiente(list);
 
@@ -553,6 +561,24 @@ function renderCards() {
     }
 
     const retornablesHtml = renderRetornablesPendientes(p);
+    const fechaOperativa = getPedidoFechaOperativa(p);
+    const fechaPlanificadaTxt = formatFechaPlanificada(p.fecha_entrega_estimada);
+    const zoneTxt = p.zona_nombre || (p.zona_id ? `Zona #${p.zona_id}` : 'Sin zona');
+    let agendaClass = 'future';
+    let agendaLabel = fechaPlanificadaTxt ? `Planificada ${fechaPlanificadaTxt}` : 'Sin fecha planificada';
+    if (fechaOperativa) {
+      if (fechaOperativa < today) {
+        agendaClass = 'late';
+        agendaLabel = fechaPlanificadaTxt ? `Atrasada ${fechaPlanificadaTxt}` : 'Atrasada';
+      } else if (fechaOperativa === today) {
+        agendaClass = 'today';
+        agendaLabel = fechaPlanificadaTxt ? `Hoy ${fechaPlanificadaTxt}` : 'Hoy';
+      }
+    }
+    if (st === 'entregado' && p.fecha_entrega) {
+      agendaClass = 'today';
+      agendaLabel = `Entregado ${formatFechaPlanificada(p.fecha_entrega) || ''}`.trim();
+    }
 
     // --- B. NOTAS DESTACADAS ---
     const notasHtml = p.notas 
@@ -645,7 +671,10 @@ function renderCards() {
           <div style="flex:1">
             <div class="pc-client">${esc(p.cliente)} <small style="opacity:0.6">#${p.id}</small></div>
             <div class="pc-addr">${esc(p.direccion)}</div>
-            ${agendaHtml}
+            <div class="pc-meta-row">
+              <span class="route-chip ${agendaClass}">${esc(agendaLabel)}</span>
+              <span class="route-chip zone">${esc(zoneTxt)}</span>
+            </div>
           </div>
           <button class="pc-state-btn">${icon}</button>
         </div>
