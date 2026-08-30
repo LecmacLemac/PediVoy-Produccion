@@ -128,6 +128,114 @@
     color: var(--muted);
   }
 
+  .agenda-panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1rem;
+  }
+
+  .agenda-panel-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 0.9rem;
+  }
+
+  .agenda-panel-title {
+    margin: 0;
+    color: #fff;
+    font-size: 1rem;
+  }
+
+  .agenda-panel-sub {
+    margin: 0.25rem 0 0;
+    color: var(--muted);
+    font-size: 0.84rem;
+  }
+
+  .agenda-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    gap: 0.75rem;
+  }
+
+  .agenda-day {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: rgba(15, 23, 42, 0.7);
+    min-height: 132px;
+    overflow: hidden;
+  }
+
+  .agenda-day-head {
+    padding: 0.7rem 0.8rem;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    gap: 0.6rem;
+    align-items: center;
+  }
+
+  .agenda-day-name {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+  }
+
+  .agenda-day-name strong {
+    color: #fff;
+    font-size: 0.88rem;
+  }
+
+  .agenda-day-name span {
+    color: var(--muted);
+    font-size: 0.75rem;
+  }
+
+  .agenda-total {
+    color: #fff;
+    font-weight: 800;
+    font-size: 1.05rem;
+  }
+
+  .agenda-zone-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+    padding: 0.7rem;
+  }
+
+  .agenda-zone {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.5rem;
+    align-items: center;
+  }
+
+  .agenda-zone strong {
+    color: #fff;
+    font-size: 0.82rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .agenda-zone small {
+    color: var(--muted);
+    font-size: 0.72rem;
+  }
+
+  .agenda-empty {
+    padding: 1rem;
+    color: var(--muted);
+    text-align: center;
+    border: 1px dashed var(--border);
+    border-radius: 10px;
+    background: rgba(15, 23, 42, 0.45);
+  }
+
   .ops-rail {
     background: linear-gradient(135deg, rgba(6, 182, 212, 0.12), rgba(15, 23, 42, 0.82));
     border: 1px solid rgba(6, 182, 212, 0.24);
@@ -457,6 +565,19 @@
       <div class="summary-sub" id="kpiDetailSub">Aplicá filtros para ver el detalle por producto entregado.</div>
     </section>
 
+    <section class="agenda-panel" aria-label="Agenda semanal por zona">
+      <div class="agenda-panel-head">
+        <div>
+          <h2 class="agenda-panel-title">Agenda semanal por zona</h2>
+          <p class="agenda-panel-sub">Próximos 7 días con pedidos activos, agrupados por fecha operativa y zona.</p>
+        </div>
+        <span class="role-badge" id="agendaWeeklyTotal">0 activos</span>
+      </div>
+      <div class="agenda-grid" id="agendaWeeklyGrid">
+        <div class="agenda-empty">Cargando agenda semanal...</div>
+      </div>
+    </section>
+
     <section class="toolbar">
       <div class="filters-row">
         
@@ -703,6 +824,8 @@
     const pageLabel = $('#pageLabel');
     const btnPrevPage = $('#btnPrevPage');
     const btnNextPage = $('#btnNextPage');
+    const agendaWeeklyGrid = $('#agendaWeeklyGrid');
+    const agendaWeeklyTotal = $('#agendaWeeklyTotal');
 
     // Dialog Refs
     const dlg          = $('#dlgPedido');
@@ -740,6 +863,7 @@
     let dashboardMeta = { total_count: 0, total_pages: 1, page: 1, pageSize: 30 };
     let dashboardKpis = null;
     let dashboardResumen = null;
+    let dashboardAgendaSemanal = [];
     let searchDebounce = null;
     let dashboardLoading = false;
 
@@ -1249,6 +1373,7 @@
           dashboardMeta = { total_count: 0, total_pages: 1, page: currentPage, pageSize: getPageSize() };
           dashboardKpis = null;
           dashboardResumen = null;
+          dashboardAgendaSemanal = [];
           rows.innerHTML = `<tr><td colspan="10" style="text-align:center; padding:2rem; color:var(--danger)">${esc(errMsg)}</td></tr>`;
           updateSyncInfo();
           return;
@@ -1267,6 +1392,7 @@
         };
         dashboardKpis = data?.kpis || null;
         dashboardResumen = data?.resumen_articulos || null;
+        dashboardAgendaSemanal = Array.isArray(data?.agenda_semanal) ? data.agenda_semanal : [];
         currentPage = dashboardMeta.page;
         itemsByPedidoCache.clear();
         resumenArticulosCache.clear();
@@ -1281,6 +1407,7 @@
         dashboardMeta = { total_count: 0, total_pages: 1, page: currentPage, pageSize: getPageSize() };
         dashboardKpis = null;
         dashboardResumen = null;
+        dashboardAgendaSemanal = [];
         rows.innerHTML = '<tr><td colspan="10" style="text-align:center; padding:2rem; color:var(--danger)">Error de conexión cargando pedidos.</td></tr>';
         updateSyncInfo();
       }
@@ -1330,11 +1457,80 @@
       kpiDetailSub.textContent = `Artículos entregados: ${Number(resumen.total_unidades) || 0} unidades en ${Number(resumen.productos_count) || 0} producto(s) · ${detalle}`;
     }
 
+    function formatAgendaDay(value) {
+      if (!value) return { label: 'Sin fecha', sub: 'Sin agenda' };
+      const iso = String(value).slice(0, 10);
+      const [yyyy, mm, dd] = iso.split('-').map(Number);
+      const d = new Date(Date.UTC(yyyy, (mm || 1) - 1, dd || 1, 12));
+      const label = d.toLocaleDateString('es-AR', {
+        timeZone: 'UTC',
+        weekday: 'short',
+        day: '2-digit',
+        month: '2-digit'
+      });
+      return {
+        label: label.replace('.', ''),
+        sub: iso.split('-').reverse().join('/')
+      };
+    }
+
+    function renderAgendaSemanal() {
+      const agenda = Array.isArray(dashboardAgendaSemanal) ? dashboardAgendaSemanal : [];
+      const total = agenda.reduce((acc, it) => acc + (Number(it.total) || 0), 0);
+      if (agendaWeeklyTotal) agendaWeeklyTotal.textContent = `${total} activos`;
+
+      if (!agendaWeeklyGrid) return;
+      if (!agenda.length) {
+        agendaWeeklyGrid.innerHTML = '<div class="agenda-empty">No hay pedidos activos en agenda para los próximos 7 días con los filtros actuales.</div>';
+        return;
+      }
+
+      const grouped = new Map();
+      agenda.forEach((it) => {
+        const key = String(it.fecha_operativa || '').slice(0, 10) || 'sin_fecha';
+        if (!grouped.has(key)) grouped.set(key, []);
+        grouped.get(key).push(it);
+      });
+
+      agendaWeeklyGrid.innerHTML = Array.from(grouped.entries()).map(([fecha, items]) => {
+        const dayTotal = items.reduce((acc, it) => acc + (Number(it.total) || 0), 0);
+        const day = formatAgendaDay(fecha === 'sin_fecha' ? '' : fecha);
+        const zones = items.slice(0, 4).map((it) => {
+          const sinChofer = Number(it.sin_chofer) || 0;
+          const detail = `${Number(it.pendientes) || 0} pend. · ${Number(it.en_ruta) || 0} ruta${sinChofer ? ` · ${sinChofer} sin chofer` : ''}`;
+          return `
+            <div class="agenda-zone">
+              <div>
+                <strong title="${esc(it.zona_nombre || 'Sin zona')}">${esc(it.zona_nombre || 'Sin zona')}</strong>
+                <small>${esc(detail)}</small>
+              </div>
+              <span class="route-chip ${sinChofer ? 'late' : 'future'}">${Number(it.total) || 0}</span>
+            </div>`;
+        }).join('');
+        const extra = items.length > 4
+          ? `<div class="agenda-zone"><small>+${items.length - 4} zona(s) más</small><span class="route-chip">Ver filtro</span></div>`
+          : '';
+
+        return `
+          <article class="agenda-day">
+            <div class="agenda-day-head">
+              <div class="agenda-day-name">
+                <strong>${esc(day.label)}</strong>
+                <span>${esc(day.sub)}</span>
+              </div>
+              <span class="agenda-total">${dayTotal}</span>
+            </div>
+            <div class="agenda-zone-list">${zones}${extra}</div>
+          </article>`;
+      }).join('');
+    }
+
     function applyFilters() {
       pedidosFiltrados = Array.isArray(pedidos) ? pedidos : [];
       pedidosOrdenados = pedidosFiltrados;
       updateSortHeaders();
       renderKPIs(pedidosFiltrados);
+      renderAgendaSemanal();
       renderTable(pedidosOrdenados);
       renderArticulosDetalle(pedidosFiltrados);
     }

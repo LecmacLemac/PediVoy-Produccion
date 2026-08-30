@@ -236,11 +236,32 @@ export function createPedidosRouter() {
         LIMIT 12
       `;
 
-      const [rows, countRows, kpiRows, resumenRows] = await Promise.all([
+      const agendaSql = `
+        SELECT
+          ${dashboardFechaExpr}::date AS fecha_operativa,
+          COALESCE(NULLIF(BTRIM(z.nombre), ''), 'Sin zona') AS zona_nombre,
+          COALESCE(p.zona_id, pe.zona_id) AS zona_id,
+          COUNT(*)::int AS total,
+          COUNT(*) FILTER (WHERE p.estado = 'pendiente')::int AS pendientes,
+          COUNT(*) FILTER (WHERE p.estado = 'en_ruta')::int AS en_ruta,
+          COUNT(*) FILTER (WHERE p.chofer_id IS NULL OR p.chofer_id = 0 OR c.id IS NULL)::int AS sin_chofer,
+          COALESCE(SUM(COALESCE(p.monto, 0)), 0)::numeric AS total_monto
+        ${selectBase}
+        ${whereSql}
+          AND p.estado NOT IN ('entregado', 'cancelado')
+          AND ${dashboardFechaExpr} BETWEEN (NOW() AT TIME ZONE 'America/Argentina/Buenos_Aires')::date
+            AND ((NOW() AT TIME ZONE 'America/Argentina/Buenos_Aires')::date + INTERVAL '6 days')::date
+        GROUP BY 1, 2, 3
+        ORDER BY fecha_operativa ASC, total DESC, zona_nombre ASC
+        LIMIT 42
+      `;
+
+      const [rows, countRows, kpiRows, resumenRows, agendaRows] = await Promise.all([
         query(rowsSql, [...params, safePageSize, offset]),
         query(countSql, params),
         query(kpiSql, params),
         query(resumenSql, params),
+        query(agendaSql, params),
       ]);
 
       const totalCount = Number(countRows?.[0]?.total) || 0;
@@ -276,6 +297,16 @@ export function createPedidosRouter() {
           productos_count: topProductos.length,
           top_productos: topProductos,
         },
+        agenda_semanal: (agendaRows || []).map((row) => ({
+          fecha_operativa: row.fecha_operativa,
+          zona_id: row.zona_id == null ? null : Number(row.zona_id),
+          zona_nombre: row.zona_nombre,
+          total: Number(row.total) || 0,
+          pendientes: Number(row.pendientes) || 0,
+          en_ruta: Number(row.en_ruta) || 0,
+          sin_chofer: Number(row.sin_chofer) || 0,
+          total_monto: Number(row.total_monto) || 0,
+        })),
       });
     } catch (e) {
       console.error('ERROR GET PEDIDOS DASHBOARD DATA:', e);
