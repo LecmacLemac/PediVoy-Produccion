@@ -64,8 +64,16 @@ async function loadPedidos(){
   try {
     const list = await api('/api/repartidor/pedidos', { cache: 'no-store' });
     pedidos = Array.isArray(list) ? list : [];
-    const trs = await api('/api/transferencias?estado=verificado', { cache: 'no-store' });
-    verificadas = new Set((Array.isArray(trs)?trs:trs.rows||[]).map(t=>Number(t.pedido_id)));
+    try {
+      const trs = await api('/api/transferencias?estado=verificado', { cache: 'no-store' });
+      const rows = Array.isArray(trs) ? trs : (Array.isArray(trs?.rows) ? trs.rows : []);
+      verificadas = new Set(rows.map(t=>Number(t.pedido_id)).filter(Boolean));
+    } catch (e) {
+      if (!isAuthRedirectError(e)) {
+        verificadas = new Set();
+        console.warn('No se pudieron cargar transferencias verificadas para pedidos', e);
+      }
+    }
     pedidosLastSyncAt = Date.now();
     updatePedidosSyncInfo();
     syncRoutePlanWithPedidos();
@@ -77,8 +85,10 @@ async function loadPedidos(){
     return list;
   } catch(e){
     if (isAuthRedirectError(e)) return [];
-    toast('Error cargando pedidos');
+    console.warn('Error cargando pedidos', e);
+    toast(e?.message || 'Error cargando pedidos');
     updatePedidosSyncInfo();
+    return [];
   }
 }
 
@@ -521,6 +531,7 @@ function getFilteredPedidos() {
 
 function renderCards() {
   let list = getFilteredPedidos();
+  const today = getOyString();
 
   renderCargaPendiente(list);
 
