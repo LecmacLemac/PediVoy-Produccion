@@ -85,7 +85,7 @@ export function createAuthRouter({ queryFn = defaultQuery } = {}) {
       const empresaId = Number(user?.empresa_id || 0);
       if (!empresaId) return res.status(401).json({ error: 'No autorizado' });
 
-      const rows = await query(
+      const rows = await queryFn(
         `SELECT config_integraciones
            FROM empresas
           WHERE id = $1

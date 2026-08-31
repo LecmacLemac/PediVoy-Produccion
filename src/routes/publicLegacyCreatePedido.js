@@ -88,10 +88,24 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
   const tEnd = (label) => { if (DEBUG_ORDERS) console.timeEnd(label); };
   let pedidoScheduleSchemaReady = false;
 
-  async function ensurePedidoScheduleSchema(txQuery) {
+  async function ensurePedidoScheduleSchema() {
     if (pedidoScheduleSchemaReady) return;
-    await txQuery(`ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS fecha_entrega_estimada DATE`);
-    await txQuery(`ALTER TABLE zonas_geograficas ADD COLUMN IF NOT EXISTS dias_entrega JSONB DEFAULT '[]'::jsonb`);
+    const rows = await query(`
+      SELECT table_name, column_name
+        FROM information_schema.columns
+       WHERE table_schema = 'public'
+         AND (
+           (table_name = 'pedidos' AND column_name = 'fecha_entrega_estimada')
+           OR (table_name = 'zonas_geograficas' AND column_name = 'dias_entrega')
+         )
+    `);
+    const existing = new Set(rows.map((row) => `${row.table_name}.${row.column_name}`));
+    if (!existing.has('pedidos.fecha_entrega_estimada')) {
+      await query(`ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS fecha_entrega_estimada DATE`);
+    }
+    if (!existing.has('zonas_geograficas.dias_entrega')) {
+      await query(`ALTER TABLE zonas_geograficas ADD COLUMN IF NOT EXISTS dias_entrega JSONB DEFAULT '[]'::jsonb`);
+    }
     pedidoScheduleSchemaReady = true;
   }
 
@@ -121,20 +135,22 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
   }
 
   app.post('/public/pedidos', async (req, res) => {
-    const txClient = pool ? await pool.connect() : null;
+    const reqId = `ped-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const log = (...a) => DEBUG_ORDERS && console.log('[public/pedidos]', reqId, '-', ...a);
+    const errlog = (...a) => console.error('[public/pedidos]', reqId, '-', ...a);
+
+    let txClient = null;
+    let txFinished = false;
+
     const txQuery = async (sql, params = []) => {
       if (!txClient) return query(sql, params);
       const result = await txClient.query(sql, params);
       return result.rows;
     };
-    const reqId = `ped-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    const log = (...a) => DEBUG_ORDERS && console.log('[public/pedidos]', reqId, '-', ...a);
-    const errlog = (...a) => console.error('[public/pedidos]', reqId, '-', ...a);
 
     res.set('x-request-id', reqId);
     tStart(`[public/pedidos] ${reqId} TOTAL`);
 
-    let txFinished = false;
     const rollbackIfNeeded = async () => {
       if (!txClient || txFinished) return;
       await txClient.query('ROLLBACK');
@@ -142,8 +158,6 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
     };
 
     try {
-      if (txClient) await txClient.query('BEGIN');
-
       const contentLength = Number(req.headers['content-length'] || 0);
       if (Number.isFinite(contentLength) && contentLength > PUBLIC_PEDIDOS_MAX_BODY_BYTES) {
         await rollbackIfNeeded();
@@ -200,7 +214,10 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
         codigo_descuento,
       } = parse.data;
 
-      await ensurePedidoScheduleSchema(txQuery);
+      await ensurePedidoScheduleSchema();
+
+      txClient = pool ? await pool.connect() : null;
+      if (txClient) await txClient.query('BEGIN');
 
       log('REQ IN', {
         empresa_id, cliente, telefono, direccion, ciudad, provincia, pais,
