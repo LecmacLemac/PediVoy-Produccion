@@ -3,15 +3,20 @@ import express from 'express';
 import { withAuth, checkLicencia, isSuper, getEmpresaIdFromToken } from '../services.js';
 import { query } from '../db.js';
 
-export function createEstadisticasRouter() {
+export function createEstadisticasRouter(deps = {}) {
+  const authMiddleware = deps.withAuth || withAuth;
+  const licenciaMiddleware = deps.checkLicencia || checkLicencia;
+  const isSuperFn = deps.isSuper || isSuper;
+  const getEmpresaIdFromTokenFn = deps.getEmpresaIdFromToken || getEmpresaIdFromToken;
+  const queryFn = deps.query || query;
   const router = express.Router();
 
   // GET /api/estadisticas/dashboard
-  router.get('/dashboard', withAuth, checkLicencia, async (req, res) => {
+  router.get('/dashboard', authMiddleware, licenciaMiddleware, async (req, res) => {
     try {
       const { from, to, empresa_id, chofer_id } = req.query;
-      const esSuperUser = isSuper(req);
-      const targetEmpresa = (esSuperUser && empresa_id) ? Number(empresa_id) : getEmpresaIdFromToken(req);
+      const esSuperUser = isSuperFn(req);
+      const targetEmpresa = (esSuperUser && empresa_id) ? Number(empresa_id) : getEmpresaIdFromTokenFn(req);
 
       if (!targetEmpresa) {
         return res.status(400).json({ error: 'Empresa no detectada' });
@@ -36,13 +41,14 @@ export function createEstadisticasRouter() {
 
       async function computeDashboard(dateFromISO, dateToISO) {
         const dateFrom = dateFromISO || '2000-01-01';
-        const dateTo = (dateToISO || '2100-12-31') + ' 23:59:59';
+        const dateTo = dateToISO || '2100-12-31';
+        const fechaEntregaDiaSql = `(COALESCE(p.fecha_entrega, p.fecha) AT TIME ZONE 'UTC' AT TIME ZONE 'America/Argentina/Buenos_Aires')::date`;
 
         const sqlDaily = `
           WITH daily_data AS (
             SELECT
               p.chofer_id,
-              (COALESCE(p.fecha_entrega, p.fecha) AT TIME ZONE 'UTC' AT TIME ZONE 'America/Argentina/Buenos_Aires')::date AS fecha_dia,
+              ${fechaEntregaDiaSql} AS fecha_dia,
               COUNT(DISTINCT p.id) as pedidos,
               COALESCE(SUM(p.monto), 0) as ventas,
               COALESCE(
@@ -59,7 +65,8 @@ export function createEstadisticasRouter() {
              AND pe.empresa_id = $1
             WHERE p.estado = 'entregado'
               AND p.empresa_id = $1
-              AND COALESCE(p.fecha_entrega, p.fecha) >= $2 AND COALESCE(p.fecha_entrega, p.fecha) <= $3
+              AND ${fechaEntregaDiaSql} >= $2::date
+              AND ${fechaEntregaDiaSql} <= $3::date
               AND ($4::int IS NULL OR p.chofer_id = $4)
             GROUP BY 1, 2
           )
@@ -114,17 +121,18 @@ export function createEstadisticasRouter() {
             ON pe.id = p.punto_entrega_id
            AND pe.empresa_id = $1
           WHERE p.estado = 'entregado'
-            AND COALESCE(p.fecha_entrega, p.fecha) >= $2 AND COALESCE(p.fecha_entrega, p.fecha) <= $3
+            AND ${fechaEntregaDiaSql} >= $2::date
+            AND ${fechaEntregaDiaSql} <= $3::date
             AND ($4::int IS NULL OR p.chofer_id = $4)
           GROUP BY it.producto
         `;
 
         const [dailyRes, prodRes, fixedRes, choferesRes, topProdRes] = await Promise.all([
-          query(sqlDaily,      [targetEmpresa, dateFrom, dateTo, choferIdParam]),
-          query(sqlProdCosts,  [targetEmpresa, dateFrom, dateTo, choferIdParam]),
-          query(sqlFixedCosts, [targetEmpresa, dateFrom, dateTo, choferIdParam]),
-          query('SELECT id, nombre, tipo FROM choferes WHERE empresa_id=$1', [targetEmpresa]),
-          query(sqlTopProducts,[targetEmpresa, dateFrom, dateTo, choferIdParam]),
+          queryFn(sqlDaily,      [targetEmpresa, dateFrom, dateTo, choferIdParam]),
+          queryFn(sqlProdCosts,  [targetEmpresa, dateFrom, dateTo, choferIdParam]),
+          queryFn(sqlFixedCosts, [targetEmpresa, dateFrom, dateTo, choferIdParam]),
+          queryFn('SELECT id, nombre, tipo FROM choferes WHERE empresa_id=$1', [targetEmpresa]),
+          queryFn(sqlTopProducts,[targetEmpresa, dateFrom, dateTo, choferIdParam]),
         ]);
 
         const choferCostMap = new Map();
