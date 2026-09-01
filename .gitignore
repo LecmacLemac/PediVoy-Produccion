@@ -43,7 +43,10 @@ credentials.json
 node_modules/
 **/node_modules/
 .puppeteer/
+.openclaw/
+.wwebjs_cache/
 .wwebjs_auth/
+wpp_sessions/
 Gastos/
 Transferencia/
 logs/
