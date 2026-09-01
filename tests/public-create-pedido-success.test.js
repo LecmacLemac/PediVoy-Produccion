@@ -41,6 +41,12 @@ test('POST /public/pedidos crea pedido válido', async () => {
   const query = async (sql, params = []) => {
     calls.push(String(sql));
 
+    if (sql.includes('FROM information_schema.columns')) {
+      return [
+        { table_name: 'pedidos', column_name: 'fecha_entrega_estimada' },
+        { table_name: 'zonas_geograficas', column_name: 'dias_entrega' },
+      ];
+    }
     if (/ALTER TABLE/i.test(sql)) return [];
     if (sql.includes('FROM puntos_entrega') && sql.includes('telefono_normalizado LIKE')) return [];
     if (sql.includes('INSERT INTO puntos_entrega')) return [{ id: 101 }];
@@ -99,9 +105,15 @@ test('POST /public/pedidos crea pedido válido', async () => {
   });
 });
 
-  test('POST /public/pedidos agrega retornables pendientes al WhatsApp del cliente', async () => {
+test('POST /public/pedidos agrega retornables pendientes al WhatsApp del cliente', async () => {
   let wppMessage = '';
   const query = async (sql) => {
+    if (sql.includes('FROM information_schema.columns')) {
+      return [
+        { table_name: 'pedidos', column_name: 'fecha_entrega_estimada' },
+        { table_name: 'zonas_geograficas', column_name: 'dias_entrega' },
+      ];
+    }
     if (/ALTER TABLE/i.test(sql)) return [];
     if (sql.includes('FROM puntos_entrega') && sql.includes('telefono_normalizado LIKE')) return [{ id: 101, zona_id: 7 }];
     if (sql.includes('FROM zona_chofer')) return [];
