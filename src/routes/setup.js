@@ -2744,6 +2744,7 @@ export function createSetupRouter(deps) {
       const estado = b.estado ?? null;
       const isResuelta = estado === 'resuelta';
       const actorId = req?.user?.id ? Number(req.user.id) : null;
+      const hasField = (name) => Object.prototype.hasOwnProperty.call(b, name);
       const [before] = await query(`SELECT * FROM incidencias_operativas WHERE id=$1 AND empresa_id=$2`, [id, empresaId]);
       if (!before) return res.status(404).json({ error: 'Incidencia no encontrada' });
 
@@ -2752,27 +2753,35 @@ export function createSetupRouter(deps) {
 
       const [row] = await query(
         `UPDATE incidencias_operativas
-         SET tipo=COALESCE($1,tipo),
-             severidad=COALESCE($2,severidad),
-             estado=COALESCE($3,estado),
-             titulo=COALESCE($4,titulo),
-             detalle=COALESCE($5,detalle),
-             accion_recomendada=COALESCE($6,accion_recomendada),
-             responsable_usuario_id=COALESCE($7,responsable_usuario_id),
-             vence_at=COALESCE($8,vence_at),
-             resuelta_at=CASE WHEN $9 THEN NOW() ELSE resuelta_at END,
-             resuelta_por=CASE WHEN $9 THEN $10 ELSE resuelta_por END,
+         SET tipo=CASE WHEN $1 THEN $2 ELSE tipo END,
+             severidad=CASE WHEN $3 THEN $4 ELSE severidad END,
+             estado=CASE WHEN $5 THEN $6 ELSE estado END,
+             titulo=CASE WHEN $7 THEN $8 ELSE titulo END,
+             detalle=CASE WHEN $9 THEN $10 ELSE detalle END,
+             accion_recomendada=CASE WHEN $11 THEN $12 ELSE accion_recomendada END,
+             responsable_usuario_id=CASE WHEN $13 THEN $14 ELSE responsable_usuario_id END,
+             vence_at=CASE WHEN $15 THEN $16 ELSE vence_at END,
+             resuelta_at=CASE WHEN $17 THEN NOW() ELSE resuelta_at END,
+             resuelta_por=CASE WHEN $17 THEN $18 ELSE resuelta_por END,
              updated_at=NOW()
-         WHERE id=$11 AND empresa_id=$12
+         WHERE id=$19 AND empresa_id=$20
          RETURNING *`,
         [
+          hasField('tipo'),
           b.tipo ?? null,
+          hasField('severidad'),
           b.severidad ?? null,
+          hasField('estado'),
           estado,
+          hasField('titulo'),
           b.titulo ?? null,
+          hasField('detalle'),
           b.detalle ?? null,
+          hasField('accion_recomendada'),
           b.accion_recomendada ?? null,
+          hasField('responsable_usuario_id'),
           b.responsable_usuario_id ?? null,
+          hasField('vence_at'),
           b.vence_at ?? null,
           isResuelta,
           actorId,

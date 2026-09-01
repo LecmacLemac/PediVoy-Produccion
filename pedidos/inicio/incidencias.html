@@ -102,16 +102,27 @@
 
   <script>
     const authFetch=(url,opts={})=>fetch(url,{...opts,headers:{'Content-Type':'application/json',...(opts.headers||{})},credentials:'include'});
-    const st={isSuper:false,empresaId:null,items:[],users:[],editingId:null,historyRows:[]};
+    const st={isSuper:false,empresaId:null,items:[],users:[],editingId:null,historyRows:[],priorityOnly:false};
     const setStatus=(t,e=false)=>{const el=document.getElementById('status');el.textContent=t;el.style.color=e?'var(--danger)':'var(--muted)';};
     const apiUrl=(p)=>st.isSuper&&st.empresaId?(p+(p.includes('?')?'&':'?')+'empresa_id='+encodeURIComponent(String(st.empresaId))):p;
     const editModal=document.getElementById('editModal');
     const historyModal=document.getElementById('historyModal');
 
     const esc=(s)=>String(s==null?'':s).replace(/[&<>"']/g,(c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-    function toLocalInput(iso){ if(!iso) return ''; const d=new Date(iso); const pad=n=>String(n).padStart(2,'0'); return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`; }
+    const dateTimeFmt=new Intl.DateTimeFormat('es-AR',{timeZone:'America/Argentina/Buenos_Aires',dateStyle:'short',timeStyle:'short'});
+    const dateFmt=new Intl.DateTimeFormat('es-AR',{timeZone:'America/Argentina/Buenos_Aires',dateStyle:'short'});
+    const inputFmt=new Intl.DateTimeFormat('en-CA',{timeZone:'America/Argentina/Buenos_Aires',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'});
+    function fmtDateTime(v){ if(!v) return '-'; const d=new Date(v); return Number.isFinite(d.getTime())?dateTimeFmt.format(d):'-'; }
+    function fmtDate(v){ if(!v) return '-'; const d=new Date(v); return Number.isFinite(d.getTime())?dateFmt.format(d):'-'; }
+    function toLocalInput(iso){
+      if(!iso) return '';
+      const d=new Date(iso);
+      if(!Number.isFinite(d.getTime())) return '';
+      const p=Object.fromEntries(inputFmt.formatToParts(d).filter(x=>x.type!=='literal').map(x=>[x.type,x.value]));
+      return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}`;
+    }
     const fieldLabel=(k)=>({estado:'Estado',severidad:'Severidad',responsable_usuario_id:'Responsable',vence_at:'Vence SLA'}[k]||k);
-    const fmtVal=(k,v)=>{ if(v==null||v==='') return '-'; if(k==='vence_at') return new Date(v).toLocaleString('es-AR'); return String(v); };
+    const fmtVal=(k,v)=>{ if(v==null||v==='') return '-'; if(k==='vence_at') return fmtDateTime(v); return String(v); };
     function formatHistoryPayload(payload){
       if(!payload||typeof payload!=='object') return '<div style="color:var(--muted)">Sin detalle.</div>';
       const before=payload.before||null; const after=payload.after||null;
@@ -131,7 +142,7 @@
     function renderHistoryList(){
       const flt=document.getElementById('historyEventFilter')?.value||'';
       const rows=(Array.isArray(st.historyRows)?st.historyRows:[]).filter(h=>!flt||String(h.evento||'')===flt);
-      document.getElementById('historyList').innerHTML=rows.length?rows.map(h=>`<div style="border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--bg2)"><div class="row" style="justify-content:space-between"><div style="font-weight:700">${historyBadge(h.evento||'-')}</div><div style="font-size:.8rem;color:var(--muted)">${h.created_at?new Date(h.created_at).toLocaleString('es-AR'):''} · ${esc(h.actor_username||'sistema')}</div></div>${formatHistoryPayload(h.payload||{})}</div>`).join(''):'<div style="color:var(--muted)">Sin historial para el filtro aplicado.</div>';
+      document.getElementById('historyList').innerHTML=rows.length?rows.map(h=>`<div style="border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--bg2)"><div class="row" style="justify-content:space-between"><div style="font-weight:700">${historyBadge(h.evento||'-')}</div><div style="font-size:.8rem;color:var(--muted)">${fmtDateTime(h.created_at)} · ${esc(h.actor_username||'sistema')}</div></div>${formatHistoryPayload(h.payload||{})}</div>`).join(''):'<div style="color:var(--muted)">Sin historial para el filtro aplicado.</div>';
     }
     function slaBadge(venceAt, estado){
       if(!venceAt) return '<span style="color:var(--muted)">Sin SLA</span>';
@@ -142,6 +153,21 @@
       if(diff<0) return '<span style="color:#ef4444;font-weight:700">Vencida</span>';
       if(diff<=24*60*60*1000) return '<span style="color:#f59e0b;font-weight:700">Vence hoy</span>';
       return '<span style="color:#22c55e">En plazo</span>';
+    }
+    function textBadge(value, type){
+      const maps={
+        sev:{critica:['Crítica','#ef4444'],alta:['Alta','#f59e0b'],media:['Media','#38bdf8'],baja:['Baja','#22c55e']},
+        estado:{abierta:['Abierta','#38bdf8'],en_progreso:['En progreso','#f59e0b'],resuelta:['Resuelta','#22c55e'],cancelada:['Cancelada','#94a3b8']},
+        tipo:{entrega:['Entrega','#38bdf8'],cobranza:['Cobranza','#22c55e'],producto:['Producto','#f59e0b'],cliente:['Cliente','#a78bfa'],sistema:['Sistema','#fb7185']},
+      };
+      const def=[value||'-','#64748b'];
+      const [label,color]=(maps[type]&&maps[type][value])||def;
+      return `<span style="display:inline-block;padding:2px 8px;border-radius:999px;border:1px solid ${color};color:${color};font-size:.75rem;white-space:nowrap">${esc(label)}</span>`;
+    }
+    function clearPriorityMode(){
+      st.priorityOnly=false;
+      const btn=document.getElementById('btnPriorizar');
+      if(btn) btn.textContent='Priorizar críticas/SLA';
     }
 
     async function loadMe(){
@@ -156,14 +182,14 @@
       if(st.isSuper&&!st.empresaId) return;
       const r=await authFetch(apiUrl('/api/setup/fase3/usuarios')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error usuarios');
       st.users=Array.isArray(j.items)?j.items:[];
-      const opts='<option value="">Sin responsable</option>'+st.users.map(u=>`<option value="${Number(u.id)}">${u.username} (${u.role})</option>`).join('');
+      const opts='<option value="">Sin responsable</option>'+st.users.map(u=>`<option value="${Number(u.id)}">${esc(u.username)} (${esc(u.role)})</option>`).join('');
       document.getElementById('incResp').innerHTML=opts;
       document.getElementById('editResp').innerHTML=opts;
     }
 
-    async function loadKpis(){ if(st.isSuper&&!st.empresaId) return; const r=await authFetch(apiUrl('/api/setup/fase3/incidencias/dashboard')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error KPI incidencias'); const k=j.kpis||{}; document.getElementById('kpiGrid').innerHTML=[['Total',k.total||0],['Abiertas',k.abiertas||0],['En progreso',k.en_progreso||0],['Resueltas',k.resueltas||0],['Críticas activas',k.criticas_activas||0],['SLA vencidas',k.sla_vencidas||0]].map(([l,v])=>`<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div></div>`).join(''); }
-    async function loadMisPendientes(){ if(st.isSuper&&!st.empresaId) return; const r=await authFetch(apiUrl('/api/setup/fase3/incidencias/mis-pendientes')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error mis pendientes'); const k=j.kpis||{}; const items=Array.isArray(j.items)?j.items:[]; document.getElementById('misPendKpi').textContent=`Pendientes: ${k.total||0} · SLA vencidas: ${k.sla_vencidas||0} · Críticas: ${k.criticas||0}`; document.getElementById('misPendBody').innerHTML=items.length?items.map(x=>`<tr><td>${x.titulo||'-'}</td><td>${x.severidad||'-'}</td><td>${x.estado||'-'}</td><td>${x.vence_at?new Date(x.vence_at).toLocaleString('es-AR'):'-'}</td><td>${x.estado==='resuelta'?'':`<button type="button" data-action="quick-resolve" data-id="${Number(x.id)}">Resolver</button>`}</td></tr>`).join(''):'<tr><td colspan="5" style="color:var(--muted)">Sin pendientes asignados.</td></tr>'; }
-    async function loadAlertas(){ if(st.isSuper&&!st.empresaId) return; const r=await authFetch(apiUrl('/api/setup/fase3/incidencias/alertas')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error alertas incidencias'); const items=Array.isArray(j.items)?j.items:[]; const color=(n)=>n==='alta'?'#ef4444':(n==='media'?'#f59e0b':'#22c55e'); document.getElementById('incAlertas').innerHTML=items.map(a=>`<div style="border:1px solid var(--border);border-left:4px solid ${color(a.nivel)};border-radius:10px;padding:10px;background:var(--bg2)"><div style="font-weight:700">${a.titulo}</div><div style="font-size:.9rem;color:var(--muted)">${a.detalle||''}</div>${String(a.nivel)==='alta'?'<div style="margin-top:8px"><button type="button" data-action="priorizar-alerta" class="primary">Ver y resolver ahora</button></div>':''}</div>`).join(''); }
+    async function loadKpis(){ if(st.isSuper&&!st.empresaId) return; const r=await authFetch(apiUrl('/api/setup/fase3/incidencias/dashboard')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error KPI incidencias'); const k=j.kpis||{}; document.getElementById('kpiGrid').innerHTML=[['Total',k.total||0],['Abiertas',k.abiertas||0],['En progreso',k.en_progreso||0],['Resueltas',k.resueltas||0],['Críticas activas',k.criticas_activas||0],['SLA vencidas',k.sla_vencidas||0]].map(([l,v])=>`<div class="kpi"><div class="l">${esc(l)}</div><div class="v">${Number(v)||0}</div></div>`).join(''); }
+    async function loadMisPendientes(){ if(st.isSuper&&!st.empresaId) return; const r=await authFetch(apiUrl('/api/setup/fase3/incidencias/mis-pendientes')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error mis pendientes'); const k=j.kpis||{}; const items=Array.isArray(j.items)?j.items:[]; document.getElementById('misPendKpi').textContent=`Pendientes: ${k.total||0} · SLA vencidas: ${k.sla_vencidas||0} · Críticas: ${k.criticas||0}`; document.getElementById('misPendBody').innerHTML=items.length?items.map(x=>`<tr><td>${esc(x.titulo||'-')}</td><td>${textBadge(x.severidad||'-','sev')}</td><td>${textBadge(x.estado||'-','estado')}</td><td>${fmtDateTime(x.vence_at)}</td><td>${x.estado==='resuelta'?'':`<button type="button" data-action="quick-resolve" data-id="${Number(x.id)}">Resolver</button>`}</td></tr>`).join(''):'<tr><td colspan="5" style="color:var(--muted)">Sin pendientes asignados.</td></tr>'; }
+    async function loadAlertas(){ if(st.isSuper&&!st.empresaId) return; const r=await authFetch(apiUrl('/api/setup/fase3/incidencias/alertas')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error alertas incidencias'); const items=Array.isArray(j.items)?j.items:[]; const color=(n)=>n==='alta'?'#ef4444':(n==='media'?'#f59e0b':'#22c55e'); document.getElementById('incAlertas').innerHTML=items.length?items.map(a=>`<div style="border:1px solid var(--border);border-left:4px solid ${color(a.nivel)};border-radius:10px;padding:10px;background:var(--bg2)"><div style="font-weight:700">${esc(a.titulo)}</div><div style="font-size:.9rem;color:var(--muted)">${esc(a.detalle||'')}</div>${String(a.nivel)==='alta'?'<div style="margin-top:8px"><button type="button" data-action="priorizar-alerta" class="primary">Ver y resolver ahora</button></div>':''}</div>`).join(''):'<div style="border:1px solid var(--border);border-left:4px solid #22c55e;border-radius:10px;padding:10px;background:var(--bg2)"><div style="font-weight:700">Sin alertas críticas</div><div style="font-size:.9rem;color:var(--muted)">No hay incidencias críticas ni SLA vencido.</div></div>'; }
 
     async function loadInc(){
       if(st.isSuper&&!st.empresaId) return;
@@ -181,7 +207,10 @@
         return 2;
       };
       const sorted = st.items.slice().sort((a,b)=>prioridad(a)-prioridad(b));
-      body.innerHTML=sorted.length?sorted.map(x=>`<tr><td>${x.created_at?new Date(x.created_at).toLocaleDateString('es-AR'):'-'}</td><td>${x.tipo||'-'}</td><td>${x.severidad||'-'}</td><td>${x.estado||'-'}</td><td>${x.titulo||'-'}</td><td>${x.responsable_nombre||'-'}</td><td>${x.vence_at?new Date(x.vence_at).toLocaleString('es-AR'):'-'}</td><td>${slaBadge(x.vence_at,x.estado)}</td><td>${x.accion_recomendada||'-'}</td><td class="row">${prioridad(x)===0?'<span style="color:#ef4444;font-weight:700">PRIORIDAD</span>':''}<button type="button" data-action="history" data-id="${Number(x.id)}">Historial</button><button type="button" data-action="edit" data-id="${Number(x.id)}">Editar</button></td></tr>`).join(''):'<tr><td colspan="10" style="color:var(--muted)">Sin incidencias.</td></tr>';
+      const visible = st.priorityOnly ? sorted.filter(x=>prioridad(x)===0) : sorted;
+      const emptyMsg = st.priorityOnly ? 'Sin incidencias críticas ni SLA vencidas.' : 'Sin incidencias.';
+      body.innerHTML=visible.length?visible.map(x=>`<tr><td>${fmtDate(x.created_at)}</td><td>${textBadge(x.tipo||'-','tipo')}</td><td>${textBadge(x.severidad||'-','sev')}</td><td>${textBadge(x.estado||'-','estado')}</td><td>${esc(x.titulo||'-')}</td><td>${esc(x.responsable_nombre||'-')}</td><td>${fmtDateTime(x.vence_at)}</td><td>${slaBadge(x.vence_at,x.estado)}</td><td>${esc(x.accion_recomendada||'-')}</td><td class="row">${prioridad(x)===0?'<span style="color:#ef4444;font-weight:700">PRIORIDAD</span>':''}<button type="button" data-action="history" data-id="${Number(x.id)}">Historial</button><button type="button" data-action="edit" data-id="${Number(x.id)}">Editar</button></td></tr>`).join(''):`<tr><td colspan="10" style="color:var(--muted)">${emptyMsg}</td></tr>`;
+      if(st.priorityOnly) setStatus(`Vista priorizada: ${visible.length} críticas o SLA vencidas.`);
     }
 
     function exportCsv(){
@@ -228,11 +257,18 @@
     function closeHistory(){ historyModal.classList.remove('open'); historyModal.setAttribute('aria-hidden','true'); }
 
     function aplicarFiltroPrioridad(){
-      document.getElementById('fltEstado').value='';
-      document.getElementById('fltSev').value='';
-      document.getElementById('fltSla').value='';
-      document.getElementById('fltMias').checked=false;
-      setStatus('Vista priorizada: primero críticas o SLA vencida.');
+      st.priorityOnly=!st.priorityOnly;
+      if(st.priorityOnly){
+        document.getElementById('fltEstado').value='';
+        document.getElementById('fltSev').value='';
+        document.getElementById('fltSla').value='';
+        document.getElementById('fltMias').checked=false;
+        document.getElementById('btnPriorizar').textContent='Ver todas';
+        setStatus('Vista priorizada: críticas activas o SLA vencida.');
+      } else {
+        document.getElementById('btnPriorizar').textContent='Priorizar críticas/SLA';
+        setStatus('Vista completa.');
+      }
       loadInc();
     }
 
@@ -285,10 +321,10 @@
       closeEdit(); setStatus('Incidencia actualizada.'); refreshAll();
     });
 
-    document.getElementById('fltEstado').addEventListener('change', loadInc);
-    document.getElementById('fltSev').addEventListener('change', loadInc);
-    document.getElementById('fltSla').addEventListener('change', loadInc);
-    document.getElementById('fltMias').addEventListener('change', loadInc);
+    document.getElementById('fltEstado').addEventListener('change', ()=>{clearPriorityMode();loadInc();});
+    document.getElementById('fltSev').addEventListener('change', ()=>{clearPriorityMode();loadInc();});
+    document.getElementById('fltSla').addEventListener('change', ()=>{clearPriorityMode();loadInc();});
+    document.getElementById('fltMias').addEventListener('change', ()=>{clearPriorityMode();loadInc();});
     document.getElementById('btnRefresh').addEventListener('click',refreshAll);
     document.getElementById('btnPriorizar').addEventListener('click',aplicarFiltroPrioridad);
     document.getElementById('incAlertas').addEventListener('click', (ev)=>{
