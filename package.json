@@ -15,6 +15,7 @@
     "worker": "node src/wppWorker.js",
     "init-db": "node initDb.js",
     "test": "NODE_ENV=test node --test tests/**/*.test.js",
+    "test:file": "NODE_ENV=test node --test",
     "test:smoke:public": "node scripts/smoke-public.js",
     "test:smoke:postdeploy": "node scripts/smoke-postdeploy.js",
     "test:smoke:security": "node scripts/smoke-security-headers.js",
