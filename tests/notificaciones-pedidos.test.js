@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createNotificarEnRuta } from '../src/services/notificacionesPedidos.js';
+import {
+  createNotificarEnRuta,
+  createNotificarPedidoTransferencia,
+} from '../src/services/notificacionesPedidos.js';
 
 function buildPedido(overrides = {}) {
   return {
@@ -79,4 +82,47 @@ test('notificarEnRuta genera token si falta y envia link con token nuevo', async
 
   assert.equal(enqueued.length, 1);
   assert.match(enqueued[0].message, /https:\/\/clientes\.pedivoy\.test\/pedidos\/seguimiento\.html\?t=tok_nuevo/);
+});
+
+test('notificarPedidoTransferencia usa la cuenta activa de menor prioridad', async () => {
+  const enqueued = [];
+  const queries = [];
+  const notificarPedidoTransferencia = createNotificarPedidoTransferencia({
+    queryFn: async (sql, params = []) => {
+      queries.push({ sql, params });
+      if (sql.includes('FROM pedidos')) {
+        return [{
+          id: 42,
+          monto: 7500,
+          cliente: 'Cliente Test',
+          telefono: '3531234567',
+          direccion: 'Calle Test 123',
+          empresa_nombre: 'PediVoy Test',
+          empresa_id: 1,
+        }];
+      }
+      if (sql.includes('FROM empresa_cuentas_bancarias')) {
+        assert.match(sql, /ORDER BY COALESCE\(prioridad, 999\), id ASC/);
+        return [{
+          alias: 'PRINCIPAL.TEST',
+          banco: 'Banco Principal',
+          cbu: '0000003100012345678901',
+          titular: 'PediVoy Test',
+          prioridad: 1,
+        }];
+      }
+      throw new Error(`SQL no esperado: ${sql}`);
+    },
+    enqueueWppMessageFn: async (msg) => enqueued.push(msg),
+  });
+
+  await notificarPedidoTransferencia(42, 1);
+
+  assert.equal(enqueued.length, 1);
+  assert.equal(enqueued[0].phone, '3531234567');
+  assert.equal(enqueued[0].empresa_id, 1);
+  assert.match(enqueued[0].message, /Alias: PRINCIPAL\.TEST/);
+  assert.match(enqueued[0].message, /CBU: 0000003100012345678901/);
+  assert.match(enqueued[0].message, /Banco: Banco Principal/);
+  assert.ok(queries.some((q) => q.sql.includes('FROM empresa_cuentas_bancarias')));
 });

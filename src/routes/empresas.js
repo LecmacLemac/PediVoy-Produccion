@@ -775,7 +775,10 @@ export function createEmpresasRouter(deps) {
       }
 
       const rows = await query(
-        `SELECT * FROM empresa_cuentas_bancarias WHERE empresa_id = $1 ORDER BY id DESC`,
+        `SELECT *
+         FROM empresa_cuentas_bancarias
+         WHERE empresa_id = $1
+         ORDER BY COALESCE(activa, TRUE) DESC, COALESCE(prioridad, 999), id`,
         [empresaId]
       );
       return res.json(rows);
@@ -1096,6 +1099,7 @@ export function createEmpresasRouter(deps) {
   router.post('/:id/cuentas', withAuth, async (req, res) => {    try {
       const empresaId = Number(req.params.id);
       const { banco, alias, cbu, titular } = req.body || {};
+      const prioridad = Number(req.body?.prioridad) > 0 ? Number(req.body.prioridad) : 1;
       const esSuperAdmin = isSuper(req);
       const myEmpresa = getEmpresaIdFromToken(req);
 
@@ -1107,9 +1111,9 @@ export function createEmpresasRouter(deps) {
 
       await query(
         `INSERT INTO empresa_cuentas_bancarias
-          (empresa_id, banco, alias, cbu, titular)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [empresaId, banco, alias || null, cbu || null, titular || null]
+          (empresa_id, banco, alias, cbu, titular, prioridad)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [empresaId, banco, alias || null, cbu || null, titular || null, prioridad]
       );
 
       return res.json({ ok: true });
@@ -1119,6 +1123,48 @@ export function createEmpresasRouter(deps) {
         return res.status(400).json({ error: 'Ya existe una cuenta con ese Alias o CBU' });
       }
       return res.status(500).json({ error: 'Error agregando cuenta' });
+    }
+  });
+
+  // POST /api/empresas/cuentas/:id/principal
+  router.post('/cuentas/:id/principal', withAuth, async (req, res) => {
+    try {
+      const cuentaId = Number(req.params.id);
+      const esSuperAdmin = isSuper(req);
+      const myEmpresa = getEmpresaIdFromToken(req);
+
+      if (!Number.isInteger(cuentaId) || cuentaId <= 0) {
+        return res.status(400).json({ error: 'Cuenta inválida' });
+      }
+
+      const check = await query('SELECT id, empresa_id FROM empresa_cuentas_bancarias WHERE id=$1', [cuentaId]);
+      if (!check.length) return res.status(404).json({ error: 'Cuenta no encontrada' });
+
+      const empresaId = Number(check[0].empresa_id);
+      if (!esSuperAdmin && empresaId !== myEmpresa) {
+        return res.status(403).json({ error: 'No autorizado' });
+      }
+
+      await query(
+        `UPDATE empresa_cuentas_bancarias
+            SET prioridad = COALESCE(prioridad, 1) + 1
+          WHERE empresa_id = $1
+            AND id <> $2
+            AND COALESCE(activa, TRUE) = TRUE`,
+        [empresaId, cuentaId]
+      );
+      await query(
+        `UPDATE empresa_cuentas_bancarias
+            SET prioridad = 1,
+                activa = TRUE
+          WHERE id = $1`,
+        [cuentaId]
+      );
+
+      return res.json({ ok: true });
+    } catch (e) {
+      console.error('ERROR CUENTA PRINCIPAL:', e);
+      return res.status(500).json({ error: 'Error marcando cuenta principal' });
     }
   });
 

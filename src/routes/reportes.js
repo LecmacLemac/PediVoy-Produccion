@@ -103,7 +103,7 @@ export function createReportesRouter({
           FROM empresa_cuentas_bancarias ctab
           WHERE ctab.empresa_id = p.empresa_id
             AND ctab.activa = TRUE
-          ORDER BY ctab.prioridad DESC, ctab.id ASC
+          ORDER BY COALESCE(ctab.prioridad, 999), ctab.id ASC
           LIMIT 1
         ) cta ON TRUE
         LEFT JOIN LATERAL (

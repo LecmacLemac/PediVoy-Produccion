@@ -1347,6 +1347,15 @@
             </div>
           </div>
 
+          <div class="form-row">
+            <div>
+              <label>Prioridad</label>
+              <input type="number" id="new_prioridad" min="1" value="1">
+              <small style="color:var(--muted); font-size:0.8rem;">1 se usa primero en mensajes de transferencia.</small>
+            </div>
+            <div></div>
+          </div>
+
           <div style="display:flex; justify-content:flex-end;">
             <button id="btnAddCuenta" class="btn btn-primary" type="button">
               <i class="fa-solid fa-plus"></i> Agregar Cuenta
@@ -1640,6 +1649,14 @@ if (logoutLink) {
     const listaCuentas = document.getElementById('listaCuentas');
     if (listaCuentas) {
       listaCuentas.addEventListener('click', (ev) => {
+        const principalBtn = ev.target.closest('button[data-action="principal-cuenta"][data-id]');
+        if (principalBtn) {
+          const id = Number(principalBtn.getAttribute('data-id'));
+          if (!Number.isFinite(id) || id <= 0) return;
+          setCuentaPrincipal(id);
+          return;
+        }
+
         const btn = ev.target.closest('button[data-action="delete-cuenta"][data-id]');
         if (!btn) return;
         const id = Number(btn.getAttribute('data-id'));
@@ -2937,7 +2954,11 @@ if (logoutLink) {
         return;
       }
 
-      res.sort((a, b) => (b.activa === true) - (a.activa === true));
+      res.sort((a, b) =>
+        (b.activa === true) - (a.activa === true)
+        || (Number(a.prioridad) || 999) - (Number(b.prioridad) || 999)
+        || Number(a.id || 0) - Number(b.id || 0)
+      );
 
       ul.innerHTML = res
         .map(
@@ -2953,10 +2974,16 @@ if (logoutLink) {
               ${cta.cbu ? '<br>CBU: ' + esc(cta.cbu) : ''}
             </span>
             ${cta.titular ? `<span class="account-holder">${esc(cta.titular)}</span>` : ''}
+            <span class="account-holder">Prioridad ${Number(cta.prioridad) || 1}</span>
           </div>
-          <button class="btn-icon" data-action="delete-cuenta" data-id="${Number(cta.id)}" style="color:var(--danger); border:none;">
-            <i class="fa-solid fa-trash"></i>
-          </button>
+          <div style="display:flex; align-items:center; gap:6px;">
+            <button class="btn-icon" data-action="principal-cuenta" data-id="${Number(cta.id)}" title="Usar primero en mensajes de transferencia" style="color:var(--success); border:none;">
+              <i class="fa-solid fa-arrow-up-1-9"></i>
+            </button>
+            <button class="btn-icon" data-action="delete-cuenta" data-id="${Number(cta.id)}" style="color:var(--danger); border:none;">
+              <i class="fa-solid fa-trash"></i>
+            </button>
+          </div>
         </li>
       `
         )
@@ -2968,6 +2995,7 @@ if (logoutLink) {
       const alias = $('#new_alias').value.trim();
       const cbu = $('#new_cbu').value.trim();
       const titular = $('#new_titular').value.trim();
+      const prioridad = Math.max(1, Number($('#new_prioridad')?.value || 1) || 1);
 
       if (!banco && !alias && !cbu) {
         toast('Completa al menos el Banco y Alias/CBU');
@@ -2976,7 +3004,7 @@ if (logoutLink) {
 
       const res = await api(`/api/empresas/${currentEmpresaIdCuentas}/cuentas`, {
         method: 'POST',
-        body: JSON.stringify({ banco, alias, cbu, titular }),
+        body: JSON.stringify({ banco, alias, cbu, titular, prioridad }),
       });
 
       if (res && res.error) {
@@ -2987,6 +3015,21 @@ if (logoutLink) {
         $('#new_alias').value = '';
         $('#new_cbu').value = '';
         $('#new_titular').value = '';
+        if ($('#new_prioridad')) $('#new_prioridad').value = '1';
+        loadCuentas(currentEmpresaIdCuentas);
+      }
+    }
+
+    async function setCuentaPrincipal(cuentaId) {
+      if (!cuentaId) return;
+      const res = await api(`/api/empresas/cuentas/${cuentaId}/principal`, {
+        method: 'POST',
+      });
+
+      if (res && res.error) {
+        toast('❌ Error: ' + (res.error || 'No se pudo priorizar'));
+      } else {
+        toast('✅ Cuenta marcada como principal');
         loadCuentas(currentEmpresaIdCuentas);
       }
     }
