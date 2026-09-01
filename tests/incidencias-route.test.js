@@ -30,6 +30,29 @@ function buildApp({ query, user = { id: 10, role: 'admin', empresa_id: 1 } }) {
   return app;
 }
 
+test('GET /api/setup/fase3/incidencias/mis-pendientes acepta token con uid', async () => {
+  const calls = [];
+  const app = buildApp({
+    user: { uid: 10, username: 'admin', role: 'admin', empresa_id: 1 },
+    query: async (sql, params = []) => {
+      calls.push({ sql, params });
+      if (sql.includes('FROM incidencias_operativas i')) return [];
+      throw new Error(`SQL no esperado: ${sql}`);
+    },
+  });
+
+  await withServer(app, async (baseUrl) => {
+    const resp = await fetch(`${baseUrl}/api/setup/fase3/incidencias/mis-pendientes`);
+    assert.equal(resp.status, 200);
+    const body = await resp.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.kpis.total, 0);
+  });
+
+  assert.equal(calls[0].params[0], 1);
+  assert.equal(calls[0].params[1], 10);
+});
+
 test('PUT /api/setup/fase3/incidencias/:id permite limpiar campos anulables', async () => {
   let updateCall;
   const app = buildApp({

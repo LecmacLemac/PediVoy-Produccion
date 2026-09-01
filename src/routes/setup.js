@@ -166,6 +166,11 @@ export function createSetupRouter(deps) {
     return Number.isFinite(ownEmpresaId) && ownEmpresaId > 0 ? ownEmpresaId : null;
   };
 
+  const getUserIdForSetup = (req) => {
+    const uid = Number(req?.user?.id ?? req?.user?.uid ?? 0);
+    return Number.isFinite(uid) && uid > 0 ? uid : null;
+  };
+
   const requireSuperAdmin = (req, res, next) => {
     if (String(req?.user?.role || '').toLowerCase() !== 'super') {
       return res.status(403).json({ error: 'Acceso exclusivo para super admin' });
@@ -2593,7 +2598,7 @@ export function createSetupRouter(deps) {
       if (sla === 'en_plazo') where += ` AND i.vence_at IS NOT NULL AND i.vence_at >= NOW() + INTERVAL '24 hour' AND i.estado IN ('abierta','en_progreso')`;
       if (sla === 'sin_sla') where += ` AND i.vence_at IS NULL`;
       if (soloMias) {
-        const uid = req?.user?.id ? Number(req.user.id) : null;
+        const uid = getUserIdForSetup(req);
         if (!uid) return res.status(400).json({ error: 'usuario inválido para filtro mías' });
         params.push(uid);
         where += ` AND i.responsable_usuario_id=$${params.length}`;
@@ -2637,7 +2642,7 @@ export function createSetupRouter(deps) {
       if (sla === 'en_plazo') where += ` AND i.vence_at IS NOT NULL AND i.vence_at >= NOW() + INTERVAL '24 hour' AND i.estado IN ('abierta','en_progreso')`;
       if (sla === 'sin_sla') where += ` AND i.vence_at IS NULL`;
       if (soloMias) {
-        const uid = req?.user?.id ? Number(req.user.id) : null;
+        const uid = getUserIdForSetup(req);
         if (!uid) return res.status(400).json({ error: 'usuario inválido para filtro mías' });
         params.push(uid);
         where += ` AND i.responsable_usuario_id=$${params.length}`;
@@ -2691,7 +2696,7 @@ export function createSetupRouter(deps) {
       const titulo = String(b.titulo || '').trim();
       if (!titulo) return res.status(400).json({ error: 'titulo requerido' });
 
-      const actorId = req?.user?.id ? Number(req.user.id) : null;
+      const actorId = getUserIdForSetup(req);
 
       const fkValidation = await validateIncidenciaForeignKeys({ empresaId, payload: b });
       if (!fkValidation.ok) return res.status(400).json({ error: fkValidation.error });
@@ -2743,7 +2748,7 @@ export function createSetupRouter(deps) {
 
       const estado = b.estado ?? null;
       const isResuelta = estado === 'resuelta';
-      const actorId = req?.user?.id ? Number(req.user.id) : null;
+      const actorId = getUserIdForSetup(req);
       const hasField = (name) => Object.prototype.hasOwnProperty.call(b, name);
       const [before] = await query(`SELECT * FROM incidencias_operativas WHERE id=$1 AND empresa_id=$2`, [id, empresaId]);
       if (!before) return res.status(404).json({ error: 'Incidencia no encontrada' });
@@ -2816,7 +2821,7 @@ export function createSetupRouter(deps) {
     try {
       const empresaId = resolveEmpresaIdForSetup(req);
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
-      const uid = req?.user?.id ? Number(req.user.id) : null;
+      const uid = getUserIdForSetup(req);
       if (!uid) return res.status(400).json({ error: 'usuario inválido' });
 
       const rows = await query(
