@@ -42,7 +42,7 @@ export function createEstadisticasRouter(deps = {}) {
       async function computeDashboard(dateFromISO, dateToISO) {
         const dateFrom = dateFromISO || '2000-01-01';
         const dateTo = dateToISO || '2100-12-31';
-        const fechaEntregaDiaSql = `(COALESCE(p.fecha_entrega, p.fecha) AT TIME ZONE 'UTC' AT TIME ZONE 'America/Argentina/Buenos_Aires')::date`;
+        const fechaEntregaDiaSql = `COALESCE(p.fecha_entrega, p.fecha)::date`;
 
         const sqlDaily = `
           WITH daily_data AS (

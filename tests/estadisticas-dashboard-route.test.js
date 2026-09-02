@@ -35,14 +35,14 @@ function buildApp({ query, user = { role: 'admin', empresa_id: 1 } }) {
   return app;
 }
 
-test('GET /api/estadisticas/dashboard filtra pedidos por fecha local Argentina', async () => {
+test('GET /api/estadisticas/dashboard filtra pedidos por fecha operativa', async () => {
   const calls = [];
   const app = buildApp({
     query: async (sql, params = []) => {
       calls.push({ sql, params });
 
       if (sql.includes('WITH daily_data')) {
-        assert.match(sql, /America\/Argentina\/Buenos_Aires/);
+        assert.match(sql, /COALESCE\(p\.fecha_entrega, p\.fecha\)::date/);
         assert.match(sql, /::date >= \$2::date/);
         assert.match(sql, /::date <= \$3::date/);
         assert.equal(params[0], 1);
@@ -63,7 +63,7 @@ test('GET /api/estadisticas/dashboard filtra pedidos por fecha local Argentina',
         return [{ id: 5, nombre: 'Repartidor Test', tipo: 'propio' }];
       }
       if (sql.includes('FROM items_pedido')) {
-        assert.match(sql, /America\/Argentina\/Buenos_Aires/);
+        assert.match(sql, /COALESCE\(p\.fecha_entrega, p\.fecha\)::date/);
         return [{ producto: 'Bidon 20 Lts.', cantidad: '12', ventas: '84000' }];
       }
 
