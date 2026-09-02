@@ -1495,7 +1495,7 @@ export function createSetupRouter(deps) {
           b.notas || null,
           Boolean(b.conciliado),
           b.conciliado ? new Date().toISOString() : null,
-          req?.user?.id ? Number(req.user.id) : null,
+          getUserIdForSetup(req),
         ]
       );
 
@@ -1679,9 +1679,14 @@ export function createSetupRouter(deps) {
       const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
       const b = req.body || {};
-      const now = new Date();
-      const anio = Number(b.anio || now.getFullYear());
-      const mes = Number(b.mes || (now.getMonth() + 1));
+      const parts = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/Argentina/Buenos_Aires',
+        year: 'numeric',
+        month: 'numeric',
+      }).formatToParts(new Date());
+      const nowAr = Object.fromEntries(parts.filter((p) => p.type !== 'literal').map((p) => [p.type, p.value]));
+      const anio = Number(b.anio || nowAr.year);
+      const mes = Number(b.mes || nowAr.month);
       const categoria = String(b.categoria || '').trim();
       const monto = Number(b.monto_presupuestado || 0);
       const proveedorId = b.proveedor_id ? Number(b.proveedor_id) : null;
@@ -1710,7 +1715,7 @@ export function createSetupRouter(deps) {
           `INSERT INTO presupuesto_mensual (empresa_id, anio, mes, categoria, proveedor_id, monto_presupuestado, created_by)
            VALUES ($1,$2,$3,$4,$5,$6,$7)
            RETURNING *`,
-          [empresaId, anio, mes, categoria, proveedorId, monto, req?.user?.id ? Number(req.user.id) : null]
+          [empresaId, anio, mes, categoria, proveedorId, monto, getUserIdForSetup(req)]
         );
       }
 
@@ -1726,9 +1731,14 @@ export function createSetupRouter(deps) {
     try {
       const empresaId = resolveEmpresaIdForSetup(req);
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
-      const now = new Date();
-      const anio = Number(req.query?.anio || now.getFullYear());
-      const mes = Number(req.query?.mes || (now.getMonth() + 1));
+      const parts = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/Argentina/Buenos_Aires',
+        year: 'numeric',
+        month: 'numeric',
+      }).formatToParts(new Date());
+      const nowAr = Object.fromEntries(parts.filter((p) => p.type !== 'literal').map((p) => [p.type, p.value]));
+      const anio = Number(req.query?.anio || nowAr.year);
+      const mes = Number(req.query?.mes || nowAr.month);
 
       const rows = await query(
         `WITH bud AS (
