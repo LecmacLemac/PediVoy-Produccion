@@ -1330,8 +1330,8 @@ export function createSetupRouter(deps) {
           b.moneda || 'ARS',
           b.referencia_externa || null,
           b.observaciones || null,
-          req?.user?.id ? Number(req.user.id) : null,
-          req?.user?.id ? Number(req.user.id) : null,
+          getUserIdForSetup(req),
+          getUserIdForSetup(req),
         ]
       );
 
@@ -1365,7 +1365,7 @@ export function createSetupRouter(deps) {
         `INSERT INTO compras_recepciones (empresa_id, orden_id, proveedor_id, numero_remito, observaciones, created_by)
          VALUES ($1,$2,$3,$4,$5,$6)
          RETURNING *`,
-        [empresaId, orden.id, orden.proveedor_id, req.body?.numero_remito || null, req.body?.observaciones || null, req?.user?.id ? Number(req.user.id) : null]
+        [empresaId, orden.id, orden.proveedor_id, req.body?.numero_remito || null, req.body?.observaciones || null, getUserIdForSetup(req)]
       );
 
       const items = await query(`SELECT * FROM compras_orden_items WHERE orden_id=$1`, [orden.id]);
@@ -1381,7 +1381,7 @@ export function createSetupRouter(deps) {
         `UPDATE compras_ordenes
          SET estado='recibida', updated_at=NOW(), updated_by=$1
          WHERE id=$2 AND empresa_id=$3`,
-        [req?.user?.id ? Number(req.user.id) : null, orden.id, empresaId]
+        [getUserIdForSetup(req), orden.id, empresaId]
       );
 
       return res.json({ ok: true, recepcion: rec });

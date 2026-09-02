@@ -15,6 +15,13 @@
     main{padding:1rem 0 3rem}.card{background:rgba(30,41,59,.7);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:12px}
     .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:.8rem}.kpi{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px}.kpi .l{font-size:.75rem;color:var(--muted);text-transform:uppercase}.kpi .v{font-size:1.25rem;font-weight:700}
     .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+    .panel-grid{display:grid;grid-template-columns:1.1fr .9fr;gap:.8rem}
+    .list{display:grid;gap:8px}
+    .item{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:10px}
+    .item-head{display:flex;gap:8px;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;font-weight:700}
+    .muted{color:var(--muted)}
+    .badge{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--border);border-radius:999px;padding:2px 8px;font-size:.75rem;white-space:nowrap}
+    .badge.danger{border-color:rgba(239,68,68,.5);color:#fecaca}.badge.warn{border-color:rgba(245,158,11,.5);color:#fde68a}.badge.ok{border-color:rgba(16,185,129,.5);color:#bbf7d0}
     input,select,textarea,button{background:var(--bg2);border:1px solid var(--border);color:#fff;border-radius:8px;padding:9px 10px}button{cursor:pointer}.btn-primary{background:var(--brand);color:#001018;border:none;font-weight:700}
     table{width:100%;border-collapse:collapse}th,td{padding:8px;border-bottom:1px solid var(--border);font-size:.9rem}th{color:var(--muted);text-align:left}
     .modal{position:fixed;inset:0;background:rgba(2,6,23,.72);display:none;align-items:center;justify-content:center;padding:16px;z-index:100}
@@ -27,6 +34,7 @@
       .menu{overflow-x:auto;white-space:nowrap;padding-bottom:4px}
       .row{align-items:stretch}
       .row > *{min-width:0 !important}
+      .panel-grid{grid-template-columns:1fr}
       input,select,textarea,button{width:100%}
       h1{font-size:1.05rem}
       .toast{left:12px;right:12px;bottom:12px;width:auto}
@@ -57,6 +65,13 @@
 
     <div class="card"><h2 style="margin:0 0 8px;font-size:1rem">Dashboard de compras</h2><div id="kpiGrid" class="grid"></div></div>
 
+    <div class="panel-grid">
+      <div class="card"><h2 style="margin:0 0 8px;font-size:1rem">Semáforo de compras</h2><div id="alertasBox" class="list"></div></div>
+      <div class="card"><h2 style="margin:0 0 8px;font-size:1rem">Acciones sugeridas</h2><div id="accionesBox" class="list"></div></div>
+    </div>
+
+    <div class="card"><h2 style="margin:0 0 8px;font-size:1rem">Vencimientos de proveedores</h2><div id="vencimientosBox" class="list"></div></div>
+
     <div class="card">
       <h2 style="margin:0 0 8px;font-size:1rem">Proveedores</h2>
       <div class="row" style="margin:8px 0">
@@ -75,8 +90,10 @@
         <input id="ordenDesc" placeholder="Descripción item" style="min-width:220px" />
         <input id="ordenCant" type="number" placeholder="Cantidad" style="width:120px" />
         <input id="ordenCosto" type="number" placeholder="Costo unit." style="width:140px" />
+        <input id="ordenFecha" type="date" title="Fecha estimada de entrega" style="width:160px" />
         <button id="btnCrearOrden" class="btn-primary" type="button">Crear orden</button>
       </div>
+      <textarea id="ordenObs" placeholder="Observaciones internas de la orden" rows="2" style="width:100%;margin:0 0 8px"></textarea>
       <div style="overflow:auto"><table><thead><tr><th>ID</th><th>Proveedor</th><th>Estado</th><th>Total</th><th>Fecha</th><th></th></tr></thead><tbody id="ordenBody"></tbody></table></div>
     </div>
   </main>
@@ -112,6 +129,18 @@
     const toastEl=document.getElementById('toast');
 
     function toast(msg){ if(!toastEl) return; toastEl.textContent=msg; toastEl.classList.add('show'); setTimeout(()=>toastEl.classList.remove('show'),2200); }
+    const esc=(s)=>String(s==null?'':s).replace(/[&<>"']/g,(c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const dtFmt=new Intl.DateTimeFormat('es-AR',{timeZone:'America/Argentina/Buenos_Aires',dateStyle:'short'});
+    function fmtDate(v){ if(!v) return '-'; const d=new Date(v); return Number.isFinite(d.getTime())?dtFmt.format(d):'-'; }
+    function badge(label,level='ok'){ return `<span class="badge ${esc(level)}">${esc(label)}</span>`; }
+    function estadoBadge(estado){ const s=String(estado||'-').toLowerCase(); return badge(s.toUpperCase(),s==='recibida'?'ok':(s==='parcial'?'warn':'danger')); }
+    function vencimientoBadge(dias){
+      const n=Number(dias);
+      if(!Number.isFinite(n)) return badge('SIN FECHA','warn');
+      if(n<0) return badge(`VENCIDA ${Math.abs(n)} d`,'danger');
+      if(n<=3) return badge(`VENCE ${n} d`,'warn');
+      return badge(`${n} d`,'ok');
+    }
     function closeProvModal(){ st.editingProvId=null; modal.classList.remove('open'); modal.setAttribute('aria-hidden','true'); }
     function openProvModal(p){
       st.editingProvId=Number(p.id);
@@ -135,20 +164,40 @@
     }
 
     async function loadDashboard(){ if(st.isSuper&&!st.empresaId) return; const r=await authFetch(apiUrl('/api/setup/fase2/dashboard')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error dashboard');
-      const k=j.kpis||{}; document.getElementById('kpiGrid').innerHTML=[['Órdenes',k.ordenes_total||0],['Abiertas',k.ordenes_abiertas||0],['Compras 30d',fmt.format(k.compras_30d||0)],['Proveedores',k.proveedores_total||0],['Proveedores activos',k.proveedores_activos||0]].map(([l,v])=>`<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div></div>`).join('');
+      const k=j.kpis||{}; document.getElementById('kpiGrid').innerHTML=[['Órdenes',k.ordenes_total||0],['Abiertas',k.ordenes_abiertas||0],['Compras 30d',fmt.format(k.compras_30d||0)],['Proveedores',k.proveedores_total||0],['Proveedores activos',k.proveedores_activos||0]].map(([l,v])=>`<div class="kpi"><div class="l">${esc(l)}</div><div class="v">${esc(v)}</div></div>`).join('');
     }
 
     async function loadProveedores(){ if(st.isSuper&&!st.empresaId) return; const r=await authFetch(apiUrl('/api/setup/fase2/proveedores')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error proveedores'); st.proveedores=Array.isArray(j.items)?j.items:[];
-      const body=document.getElementById('provBody'); body.innerHTML=st.proveedores.length?st.proveedores.map(p=>`<tr><td>${p.nombre||'-'}</td><td>${p.contacto||'-'}</td><td>${p.telefono||'-'}</td><td>${p.activo?'Sí':'No'}</td><td><button type="button" data-action="edit-prov" data-id="${Number(p.id)}">Editar</button></td></tr>`).join(''):'<tr><td colspan="5" style="color:var(--muted)">Sin proveedores.</td></tr>';
-      const sel=document.getElementById('ordenProveedor'); sel.innerHTML='<option value="">Seleccionar proveedor</option>'+st.proveedores.map(p=>`<option value="${Number(p.id)}">${p.nombre}</option>`).join('');
+      const body=document.getElementById('provBody'); body.innerHTML=st.proveedores.length?st.proveedores.map(p=>`<tr><td>${esc(p.nombre||'-')}</td><td>${esc(p.contacto||'-')}</td><td>${esc(p.telefono||'-')}</td><td>${p.activo?'Sí':'No'}</td><td><button type="button" data-action="edit-prov" data-id="${Number(p.id)}">Editar</button></td></tr>`).join(''):'<tr><td colspan="5" style="color:var(--muted)">Sin proveedores.</td></tr>';
+      const sel=document.getElementById('ordenProveedor'); sel.innerHTML='<option value="">Seleccionar proveedor</option>'+st.proveedores.map(p=>`<option value="${Number(p.id)}">${esc(p.nombre)}${p.activo?'':' · inactivo'}</option>`).join('');
     }
 
     async function loadOrdenes(){ if(st.isSuper&&!st.empresaId) return; const r=await authFetch(apiUrl('/api/setup/fase2/compras')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error compras'); st.ordenes=Array.isArray(j.items)?j.items:[];
-      const body=document.getElementById('ordenBody'); body.innerHTML=st.ordenes.length?st.ordenes.map(o=>`<tr><td>#${o.id}</td><td>${o.proveedor_nombre||'-'}</td><td>${o.estado}</td><td>${fmt.format(Number(o.total||0))}</td><td>${o.fecha_emision?new Date(o.fecha_emision).toLocaleDateString('es-AR'):'-'}</td><td>${o.estado!=='recibida'?`<button type="button" data-action="recepcionar" data-id="${Number(o.id)}">Recepcionar</button>`:''}</td></tr>`).join(''):'<tr><td colspan="6" style="color:var(--muted)">Sin órdenes.</td></tr>';
+      const body=document.getElementById('ordenBody'); body.innerHTML=st.ordenes.length?st.ordenes.map(o=>`<tr><td>#${Number(o.id)}</td><td>${esc(o.proveedor_nombre||'-')}</td><td>${estadoBadge(o.estado)}</td><td>${fmt.format(Number(o.total||0))}</td><td>${fmtDate(o.fecha_emision)}${o.fecha_entrega_estimada?`<div class="muted" style="font-size:.8rem">Entrega: ${fmtDate(o.fecha_entrega_estimada)}</div>`:''}</td><td>${o.estado!=='recibida'?`<button type="button" data-action="recepcionar" data-id="${Number(o.id)}">Recepcionar</button>`:''}</td></tr>`).join(''):'<tr><td colspan="6" style="color:var(--muted)">Sin órdenes.</td></tr>';
     }
 
-    async function refreshAll(){ if(st.isSuper&&!st.empresaId){ setStatus('Seleccioná una empresa para cargar compras.',true); ['kpiGrid','provBody','ordenBody'].forEach(id=>{const el=document.getElementById(id); if(el) el.innerHTML='';}); return; }
-      setStatus('Actualizando…'); try{ await Promise.all([loadDashboard(),loadProveedores(),loadOrdenes()]); setStatus('Actualizado.'); } catch(e){ setStatus(e.message||'Error',true); }
+    async function loadAlertas(){ if(st.isSuper&&!st.empresaId) return; const r=await authFetch(apiUrl('/api/setup/fase2/alertas')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error alertas');
+      const t=j.totals||{};
+      const vencidas=Number(t.compras_vencidas||0);
+      const porVencer=Number(t.compras_por_vencer||0);
+      const level=vencidas>0?'danger':(porVencer>0?'warn':'ok');
+      document.getElementById('alertasBox').innerHTML=`<div class="item"><div class="item-head"><span>Estado de compras</span>${badge(level==='danger'?'CRÍTICO':(level==='warn'?'ATENCIÓN':'OK'),level)}</div><div class="muted" style="margin-top:6px">Vencidas: ${vencidas} · Por vencer: ${porVencer} · Conciliación pendiente: ${Number(t.pendientes_conciliacion||0)}</div></div>`;
+    }
+
+    async function loadVencimientos(){ if(st.isSuper&&!st.empresaId) return; const r=await authFetch(apiUrl('/api/setup/fase2/vencimientos-proveedores')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error vencimientos');
+      const items=Array.isArray(j.items)?j.items:[];
+      const urgentes=items.filter(x=>Number(x.dias_restantes)<=3).slice(0,8);
+      document.getElementById('vencimientosBox').innerHTML=urgentes.length?urgentes.map(x=>`<div class="item"><div class="item-head"><span>#${Number(x.id)} · ${esc(x.proveedor_nombre||'Proveedor sin nombre')}</span>${vencimientoBadge(x.dias_restantes)}</div><div class="muted" style="margin-top:6px">Entrega estimada: ${fmtDate(x.fecha_entrega_estimada)} · Total: ${fmt.format(Number(x.total||0))} · Estado: ${esc(x.estado||'-')}</div></div>`).join(''):'<div class="item muted">Sin compras vencidas ni próximas a vencer.</div>';
+    }
+
+    async function loadAcciones(){ if(st.isSuper&&!st.empresaId) return; const r=await authFetch(apiUrl('/api/setup/fase2/acciones-sugeridas')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error acciones sugeridas');
+      const items=Array.isArray(j.items)?j.items:[];
+      const color=(p)=>p==='alta'?'danger':(p==='media'?'warn':'ok');
+      document.getElementById('accionesBox').innerHTML=items.length?items.slice(0,5).map(x=>`<div class="item"><div class="item-head"><span>${esc(x.titulo||'Acción')}</span>${badge(String(x.prioridad||'baja').toUpperCase(),color(x.prioridad))}</div><div class="muted" style="margin-top:6px">${esc(x.detalle||'')}</div></div>`).join(''):'<div class="item muted">Sin acciones sugeridas por ahora.</div>';
+    }
+
+    async function refreshAll(){ if(st.isSuper&&!st.empresaId){ setStatus('Seleccioná una empresa para cargar compras.',true); ['kpiGrid','alertasBox','accionesBox','vencimientosBox','provBody','ordenBody'].forEach(id=>{const el=document.getElementById(id); if(el) el.innerHTML='';}); return; }
+      setStatus('Actualizando…'); try{ await Promise.all([loadDashboard(),loadProveedores(),loadOrdenes(),loadAlertas(),loadVencimientos(),loadAcciones()]); setStatus('Actualizado.'); } catch(e){ setStatus(e.message||'Error',true); }
     }
 
     document.getElementById('btnAddProv').addEventListener('click', async ()=>{ if(st.isSuper&&!st.empresaId) return setStatus('Seleccioná empresa primero',true);
@@ -160,9 +209,9 @@
     document.getElementById('btnCrearOrden').addEventListener('click', async ()=>{ if(st.isSuper&&!st.empresaId) return setStatus('Seleccioná empresa primero',true);
       const proveedor_id=Number(document.getElementById('ordenProveedor').value||0); const descripcion=document.getElementById('ordenDesc').value.trim(); const cantidad=Number(document.getElementById('ordenCant').value||0); const costo=Number(document.getElementById('ordenCosto').value||0);
       if(!proveedor_id||!descripcion||cantidad<=0||costo<=0) return setStatus('Completá proveedor, descripción, cantidad y costo',true);
-      const body={ proveedor_id, items:[{descripcion,cantidad,costo_unitario:costo}], estado:'emitida' }; if(st.isSuper) body.empresa_id=st.empresaId;
+      const body={ proveedor_id, items:[{descripcion,cantidad,costo_unitario:costo}], estado:'emitida', fecha_entrega_estimada:document.getElementById('ordenFecha').value||null, observaciones:document.getElementById('ordenObs').value.trim()||null }; if(st.isSuper) body.empresa_id=st.empresaId;
       const r=await authFetch('/api/setup/fase2/compras',{method:'POST',body:JSON.stringify(body)}); const j=await r.json(); if(!r.ok) return setStatus(j.error||'No se pudo crear orden',true);
-      document.getElementById('ordenDesc').value=''; document.getElementById('ordenCant').value=''; document.getElementById('ordenCosto').value=''; refreshAll();
+      document.getElementById('ordenDesc').value=''; document.getElementById('ordenCant').value=''; document.getElementById('ordenCosto').value=''; document.getElementById('ordenFecha').value=''; document.getElementById('ordenObs').value=''; toast('Orden creada'); refreshAll();
     });
 
     document.getElementById('provBody').addEventListener('click', (ev)=>{
@@ -225,6 +274,7 @@
       const id=Number(btn.getAttribute('data-id')); if(!Number.isFinite(id)||id<=0) return;
       const body={}; if(st.isSuper) body.empresa_id=st.empresaId;
       const r=await authFetch(`/api/setup/fase2/compras/${id}/recepcionar`,{method:'POST',body:JSON.stringify(body)}); const j=await r.json(); if(!r.ok) return setStatus(j.error||'No se pudo recepcionar',true);
+      toast('Orden recepcionada');
       refreshAll();
     });
 
