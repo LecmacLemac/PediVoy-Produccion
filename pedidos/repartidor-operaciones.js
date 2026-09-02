@@ -1,3 +1,37 @@
+let gSelectedComprobanteFile = null;
+
+function setGastoComprobanteFile(file, source = 'archivo') {
+  const input = $('#gFile');
+  const hint = $('#gFileHint');
+  gSelectedComprobanteFile = file || null;
+
+  if (file && input && window.DataTransfer) {
+    const dt = new DataTransfer();
+    dt.items.add(file);
+    input.files = dt.files;
+  }
+
+  if (hint) {
+    if (file) {
+      const origen = source === 'camara' ? 'Foto tomada' : 'Archivo seleccionado';
+      hint.textContent = `${origen}: ${file.name}`;
+    } else {
+      hint.textContent = 'Podés subir una imagen o sacar una foto.';
+    }
+  }
+}
+
+function clearGastoComprobanteFile() {
+  gSelectedComprobanteFile = null;
+  if ($('#gFile')) $('#gFile').value = '';
+  if ($('#gCameraFile')) $('#gCameraFile').value = '';
+  if ($('#gFileHint')) $('#gFileHint').textContent = 'Podés subir una imagen o sacar una foto.';
+}
+
+function getGastoComprobanteFile() {
+  return gSelectedComprobanteFile || ($('#gFile')?.files && $('#gFile').files[0]) || null;
+}
+
 function initRepartidorOperacionesUI() {
   // Gastos Inputs
   $('#gTipo').addEventListener('change', gToggle);
@@ -7,6 +41,16 @@ function initRepartidorOperacionesUI() {
   $('#gHistFilter')?.addEventListener('change', loadGHist);
   $('#gHistRange')?.addEventListener('change', loadGHist);
   $('#gHistSearch')?.addEventListener('input', debounce(loadGHist, 180));
+  $('#gTakePhotoBtn')?.addEventListener('click', () => $('#gCameraFile')?.click());
+  $('#gCameraFile')?.addEventListener('change', () => {
+    const file = $('#gCameraFile')?.files && $('#gCameraFile').files[0];
+    if (file) setGastoComprobanteFile(file, 'camara');
+  });
+  $('#gFile')?.addEventListener('change', () => {
+    const file = $('#gFile')?.files && $('#gFile').files[0];
+    setGastoComprobanteFile(file, 'archivo');
+    if (file && $('#gCameraFile')) $('#gCameraFile').value = '';
+  });
 
   // --- GASTOS SUBMIT ---
   $('#gForm').addEventListener('submit', async (e) => {
@@ -18,7 +62,7 @@ function initRepartidorOperacionesUI() {
           const type = $('#gTipo').value;
           const fecha = $('#gFecha').value;
           const descManual = $('#gDesc').value;
-          const file = $('#gFile').files[0];
+          const file = getGastoComprobanteFile();
           let finalBody = {};
 
           // Escenario A: Movimientos de Stock Retornable
@@ -126,6 +170,7 @@ async function gLoadDepositos() {
 
 function gInit(){
   $('#gForm').reset();
+  clearGastoComprobanteFile();
   $('#gFecha').value = getOyString();
   if($('#gHistFilter')) $('#gHistFilter').value='all';
   if($('#gHistRange')) $('#gHistRange').value='30';
