@@ -171,6 +171,8 @@ export function createSetupRouter(deps) {
     return Number.isFinite(uid) && uid > 0 ? uid : null;
   };
 
+  const argentinaTodaySql = `(NOW() AT TIME ZONE 'America/Argentina/Buenos_Aires')::date`;
+
   const requireSuperAdmin = (req, res, next) => {
     if (String(req?.user?.role || '').toLowerCase() !== 'super') {
       return res.status(403).json({ error: 'Acceso exclusivo para super admin' });
@@ -1579,8 +1581,8 @@ export function createSetupRouter(deps) {
 
       const [comp] = await query(
         `SELECT
-           COUNT(*) FILTER (WHERE estado IN ('emitida','parcial') AND fecha_entrega_estimada IS NOT NULL AND fecha_entrega_estimada < CURRENT_DATE)::int AS compras_vencidas,
-           COUNT(*) FILTER (WHERE estado IN ('emitida','parcial') AND fecha_entrega_estimada IS NOT NULL AND fecha_entrega_estimada <= CURRENT_DATE + INTERVAL '3 days')::int AS compras_por_vencer
+           COUNT(*) FILTER (WHERE estado IN ('emitida','parcial') AND fecha_entrega_estimada IS NOT NULL AND fecha_entrega_estimada < ${argentinaTodaySql})::int AS compras_vencidas,
+           COUNT(*) FILTER (WHERE estado IN ('emitida','parcial') AND fecha_entrega_estimada IS NOT NULL AND fecha_entrega_estimada <= ${argentinaTodaySql} + INTERVAL '3 days')::int AS compras_por_vencer
          FROM compras_ordenes
          WHERE empresa_id=$1`,
         [empresaId]
@@ -1646,9 +1648,14 @@ export function createSetupRouter(deps) {
     try {
       const empresaId = resolveEmpresaIdForSetup(req);
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
-      const now = new Date();
-      const anio = Number(req.query?.anio || now.getFullYear());
-      const mes = Number(req.query?.mes || (now.getMonth() + 1));
+      const parts = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/Argentina/Buenos_Aires',
+        year: 'numeric',
+        month: 'numeric',
+      }).formatToParts(new Date());
+      const nowAr = Object.fromEntries(parts.filter((p) => p.type !== 'literal').map((p) => [p.type, p.value]));
+      const anio = Number(req.query?.anio || nowAr.year);
+      const mes = Number(req.query?.mes || nowAr.month);
 
       const rows = await query(
         `SELECT b.*, p.nombre AS proveedor_nombre
@@ -1843,7 +1850,7 @@ export function createSetupRouter(deps) {
         `SELECT o.id, o.proveedor_id, p.nombre AS proveedor_nombre, o.estado,
                 o.fecha_entrega_estimada,
                 o.total,
-                (o.fecha_entrega_estimada::date - CURRENT_DATE) AS dias_restantes
+                (o.fecha_entrega_estimada::date - ${argentinaTodaySql}) AS dias_restantes
          FROM compras_ordenes o
          LEFT JOIN proveedores p ON p.id=o.proveedor_id
          WHERE o.empresa_id=$1
@@ -1889,7 +1896,7 @@ export function createSetupRouter(deps) {
          WHERE o.empresa_id=$1
            AND o.estado IN ('emitida','parcial')
            AND o.fecha_entrega_estimada IS NOT NULL
-           AND o.fecha_entrega_estimada < CURRENT_DATE
+           AND o.fecha_entrega_estimada < ${argentinaTodaySql}
          ORDER BY o.fecha_entrega_estimada ASC
          LIMIT 5`,
         [empresaId]
@@ -1952,9 +1959,14 @@ export function createSetupRouter(deps) {
     try {
       const empresaId = resolveEmpresaIdForSetup(req);
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
-      const now = new Date();
-      const anio = Number(req.query?.anio || now.getFullYear());
-      const mes = Number(req.query?.mes || (now.getMonth() + 1));
+      const parts = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/Argentina/Buenos_Aires',
+        year: 'numeric',
+        month: 'numeric',
+      }).formatToParts(new Date());
+      const nowAr = Object.fromEntries(parts.filter((p) => p.type !== 'literal').map((p) => [p.type, p.value]));
+      const anio = Number(req.query?.anio || nowAr.year);
+      const mes = Number(req.query?.mes || nowAr.month);
 
       const [compras] = await query(
         `SELECT COUNT(*)::int AS ordenes,
@@ -2173,7 +2185,7 @@ export function createSetupRouter(deps) {
          WHERE empresa_id=$1
            AND estado IN ('emitida','parcial')
            AND fecha_entrega_estimada IS NOT NULL
-           AND fecha_entrega_estimada < CURRENT_DATE`,
+           AND fecha_entrega_estimada < ${argentinaTodaySql}`,
         [empresaId]
       );
 
@@ -2231,7 +2243,7 @@ export function createSetupRouter(deps) {
          WHERE empresa_id=$1
            AND estado IN ('emitida','parcial')
            AND fecha_entrega_estimada IS NOT NULL
-           AND fecha_entrega_estimada < CURRENT_DATE`,
+           AND fecha_entrega_estimada < ${argentinaTodaySql}`,
         [empresaId]
       );
 
@@ -2304,7 +2316,7 @@ export function createSetupRouter(deps) {
         `SELECT
            COUNT(*) FILTER (WHERE estado IN ('emitida','parcial'))::int AS compras_abiertas,
            COALESCE(SUM(total) FILTER (WHERE estado IN ('emitida','parcial')),0)::numeric AS compras_comprometidas,
-           COUNT(*) FILTER (WHERE estado IN ('emitida','parcial') AND fecha_entrega_estimada IS NOT NULL AND fecha_entrega_estimada < CURRENT_DATE)::int AS compras_vencidas
+           COUNT(*) FILTER (WHERE estado IN ('emitida','parcial') AND fecha_entrega_estimada IS NOT NULL AND fecha_entrega_estimada < ${argentinaTodaySql})::int AS compras_vencidas
          FROM compras_ordenes
          WHERE empresa_id=$1`,
         [empresaId]
@@ -2370,7 +2382,7 @@ export function createSetupRouter(deps) {
          WHERE empresa_id=$1
            AND estado IN ('emitida','parcial')
            AND fecha_entrega_estimada IS NOT NULL
-           AND fecha_entrega_estimada < CURRENT_DATE`,
+           AND fecha_entrega_estimada < ${argentinaTodaySql}`,
         [empresaId]
       );
 

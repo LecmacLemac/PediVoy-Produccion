@@ -13,6 +13,8 @@
     main{padding:1rem 0 3rem}.card{background:rgba(30,41,59,.7);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:12px}
     .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:.8rem}.kpi{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px}.kpi .l{font-size:.75rem;color:var(--muted);text-transform:uppercase}.kpi .v{font-size:1.2rem;font-weight:700}
     .super-only{display:none}
+    .action-item{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px;align-items:center;border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--bg2)}
+    .action-item a{color:var(--brand);text-decoration:none;font-weight:700;white-space:nowrap}
 
     @media (max-width: 768px){
       .container{padding:0 12px}
@@ -20,6 +22,8 @@
       .menu{overflow-x:auto;white-space:nowrap;padding-bottom:4px}
       h1{font-size:1.05rem}
       button,select,textarea{width:100%}
+      .action-item{grid-template-columns:auto minmax(0,1fr)}
+      .action-item a{grid-column:2/-1;white-space:normal}
     }
     .pedivoy-brand-logo{display:inline-block;width:auto;height:32px;max-width:150px;object-fit:contain;vertical-align:middle;flex:0 0 auto}.brand .pedivoy-brand-logo{height:32px}.pedivoy-brand-badge{position:fixed;top:12px;left:12px;z-index:1000;display:inline-flex;align-items:center;padding:7px 10px;border-radius:10px;background:rgba(15,23,42,.82);border:1px solid rgba(148,163,184,.22);box-shadow:0 10px 30px rgba(2,8,23,.25);backdrop-filter:blur(10px)}.pedivoy-brand-badge img{height:28px;width:auto;display:block}
 </style>
@@ -44,6 +48,8 @@
   <div class="card"><h2 style="margin:0 0 8px;font-size:1rem">Salud de datos operativos</h2><div id="dataHealth"></div></div>
   <div class="card"><h2 style="margin:0 0 8px;font-size:1rem">Integridad por módulo</h2><div id="moduleHealth"></div></div>
   <div class="card"><h2 style="margin:0 0 8px;font-size:1rem">KPI unificado</h2><div id="kpiGrid" class="grid"></div></div>
+  <div class="card"><h2 style="margin:0 0 8px;font-size:1rem">Pulso ejecutivo</h2><div id="executivePulse"></div></div>
+  <div class="card"><h2 style="margin:0 0 8px;font-size:1rem">Acciones críticas</h2><div id="actionQueue" style="display:grid;gap:8px"></div></div>
   <div class="card"><h2 style="margin:0 0 8px;font-size:1rem">Semáforo operativo</h2><div id="semaforo"></div></div>
   <div class="card"><h2 style="margin:0 0 8px;font-size:1rem">Recomendaciones automáticas</h2><div id="recos" style="display:grid;gap:8px"></div></div>
   <div class="card"><h2 style="margin:0 0 8px;font-size:1rem">Control de cierre diario</h2><div id="cierreChecklist" style="display:grid;gap:8px"></div></div>
@@ -77,6 +83,13 @@ const fmt=new Intl.NumberFormat('es-AR',{style:'currency',currency:'ARS',maximum
 const st={isSuper:false,empresaId:null,dashboard:null,semaforo:null,recos:[],cierre:[],autos:[],incidencias:null,dataHealth:null,moduleHealth:null};
 const setStatus=(t,e=false)=>{const el=document.getElementById('status');el.textContent=t;el.style.color=e?'var(--danger)':'var(--muted)';};
 const apiUrl=(p)=>st.isSuper&&st.empresaId?(p+(p.includes('?')?'&':'?')+'empresa_id='+encodeURIComponent(String(st.empresaId))):p;
+const esc=(s)=>String(s==null?'':s).replace(/[&<>"']/g,(c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const dtFmt=new Intl.DateTimeFormat('es-AR',{timeZone:'America/Argentina/Buenos_Aires',dateStyle:'short',timeStyle:'short'});
+function fmtDateTime(v){ if(!v) return 'sin datos'; const d=new Date(v); return Number.isFinite(d.getTime())?dtFmt.format(d):'sin datos'; }
+function badge(label,color){ return `<span style="display:inline-block;padding:2px 8px;border-radius:999px;border:1px solid ${color};color:${color};font-size:.75rem;white-space:nowrap">${esc(label)}</span>`; }
+function statusColor(status){ return status==='ok'?'#22c55e':(status==='atencion'?'#f59e0b':'#ef4444'); }
+function riskColor(level){ return level==='verde'?'#22c55e':(level==='amarillo'?'#f59e0b':'#ef4444'); }
+function currentArDateTime(){ return fmtDateTime(new Date()); }
 
 async function loadMe(){
   const r=await authFetch('/api/me'); if(r.status===401) return location.href='/pedidos/login.html';
@@ -100,7 +113,7 @@ async function loadDataHealth(){
     document.getElementById('dataHealth').innerHTML=`<div style="border:1px solid var(--border);border-left:6px solid #22c55e;border-radius:10px;padding:10px;background:var(--bg2)"><div style="font-weight:700">Datos operativos completos</div><div style="font-size:.9rem;color:var(--muted);margin-top:4px">Incidencias: ${Number(metrics.incidencias||0)} · Tesorería: ${Number(metrics.tesoreria||0)} · Compras: ${Number(metrics.compras||0)} · CRM: ${Number(metrics.crm||0)}</div></div>`;
     return;
   }
-  document.getElementById('dataHealth').innerHTML=`<div style="border:1px solid var(--border);border-left:6px solid #f59e0b;border-radius:10px;padding:10px;background:var(--bg2)"><div style="font-weight:700">Atención: faltan datos operativos</div><ul style="margin:.4rem 0 0 1rem;color:var(--muted)">${alerts.map(a=>`<li>${a}</li>`).join('')}</ul></div>`;
+  document.getElementById('dataHealth').innerHTML=`<div style="border:1px solid var(--border);border-left:6px solid #f59e0b;border-radius:10px;padding:10px;background:var(--bg2)"><div style="font-weight:700">Atención: faltan datos operativos</div><ul style="margin:.4rem 0 0 1rem;color:var(--muted)">${alerts.map(a=>`<li>${esc(a)}</li>`).join('')}</ul></div>`;
 }
 
 async function loadModuleHealth(){
@@ -110,8 +123,7 @@ async function loadModuleHealth(){
   const m=j.modules||{};
   const score=Number(j.score||0);
   const scoreColor=score>=80?'#22c55e':(score>=50?'#f59e0b':'#ef4444');
-  const fmtLast=(v)=>v?new Date(v).toLocaleString('es-AR'):'sin datos';
-  const row=(k,l)=>`<div class="kpi"><div class="l">${l}</div><div class="v">${Number(m[k]?.count||0)}</div><div style="font-size:.8rem;color:var(--muted)">Último: ${fmtLast(m[k]?.last_at)}</div></div>`;
+  const row=(k,l)=>`<div class="kpi"><div class="l">${esc(l)}</div><div class="v">${Number(m[k]?.count||0)}</div><div style="font-size:.8rem;color:var(--muted)">Último: ${fmtDateTime(m[k]?.last_at)}</div></div>`;
   document.getElementById('moduleHealth').innerHTML=`<div style="margin-bottom:8px;font-weight:700;color:${scoreColor}">Score integridad: ${score}/100</div><div class="grid">${row('incidencias','Incidencias')}${row('tesoreria','Tesorería')}${row('compras','Compras')}${row('crm','CRM')}</div>`;
 }
 
@@ -121,16 +133,16 @@ async function loadDashboard(){
   const k=j.kpis||{};
   st.dashboard=k;
   const items=[['Oportunidades abiertas',k.oportunidades_abiertas||0],['Pipeline total',fmt.format(k.pipeline_total||0)],['Pipeline ponderado',fmt.format(k.pipeline_ponderado||0)],['Ingresos 30d',fmt.format(k.ingresos_30d||0)],['Egresos 30d',fmt.format(k.egresos_30d||0)],['Pend. conciliación',k.pendientes_conciliacion||0],['Compras abiertas',k.compras_abiertas||0],['Comprometido compras',fmt.format(k.compras_comprometidas||0)]];
-  document.getElementById('kpiGrid').innerHTML=items.map(([l,v])=>`<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div></div>`).join('');
+  document.getElementById('kpiGrid').innerHTML=items.map(([l,v])=>`<div class="kpi"><div class="l">${esc(l)}</div><div class="v">${esc(v)}</div></div>`).join('');
 }
 
 async function loadSemaforo(){
   if(st.isSuper&&!st.empresaId) return;
   const r=await authFetch(apiUrl('/api/setup/fase3/semaforo-operativo')); const j=await r.json(); if(!r.ok) throw new Error(j.error||'Error semáforo operativo');
   st.semaforo=j;
-  const color=j.nivel==='verde'?'#22c55e':(j.nivel==='amarillo'?'#f59e0b':'#ef4444');
+  const color=riskColor(j.nivel);
   const f=j.factores||{};
-  document.getElementById('semaforo').innerHTML=`<div style="border:1px solid var(--border);border-left:6px solid ${color};border-radius:10px;padding:10px;background:var(--bg2)"><div style="font-weight:700">Nivel ${String(j.nivel||'-').toUpperCase()} · Score ${Number(j.score||0)}/100</div><div style="font-size:.9rem;color:var(--muted);margin-top:4px">Ingresos 30d: ${fmt.format(Number(f.ingresos_30d||0))} · Egresos 30d: ${fmt.format(Number(f.egresos_30d||0))} · Pend. conciliación: ${Number(f.pendientes_conciliacion||0)} · Compras vencidas: ${Number(f.compras_vencidas||0)}</div></div>`;
+  document.getElementById('semaforo').innerHTML=`<div style="border:1px solid var(--border);border-left:6px solid ${color};border-radius:10px;padding:10px;background:var(--bg2)"><div style="font-weight:700">Nivel ${esc(String(j.nivel||'-').toUpperCase())} · Score ${Number(j.score||0)}/100</div><div style="font-size:.9rem;color:var(--muted);margin-top:4px">Ingresos 30d: ${fmt.format(Number(f.ingresos_30d||0))} · Egresos 30d: ${fmt.format(Number(f.egresos_30d||0))} · Pend. conciliación: ${Number(f.pendientes_conciliacion||0)} · Compras vencidas: ${Number(f.compras_vencidas||0)}</div></div>`;
 }
 
 async function loadIncidenciasResumen(){
@@ -146,7 +158,7 @@ async function loadRecos(){
   const items=Array.isArray(j.items)?j.items:[];
   st.recos=items;
   const color=(p)=>p==='alta'?'#ef4444':(p==='media'?'#f59e0b':'#22c55e');
-  document.getElementById('recos').innerHTML=items.length?items.map(x=>`<div style="border:1px solid var(--border);border-left:4px solid ${color(x.prioridad)};border-radius:10px;padding:10px;background:var(--bg2)"><div style="font-weight:700">${x.titulo}</div><div style="font-size:.9rem;color:var(--muted)">${x.detalle||''}</div><div style="font-size:.85rem;margin-top:4px">➡️ ${x.accion||''}</div></div>`).join(''):'<div style="color:var(--muted)">Sin recomendaciones.</div>';
+  document.getElementById('recos').innerHTML=items.length?items.map(x=>`<div style="border:1px solid var(--border);border-left:4px solid ${color(x.prioridad)};border-radius:10px;padding:10px;background:var(--bg2)"><div style="font-weight:700">${esc(x.titulo)}</div><div style="font-size:.9rem;color:var(--muted)">${esc(x.detalle||'')}</div><div style="font-size:.85rem;margin-top:4px">➡️ ${esc(x.accion||'')}</div></div>`).join(''):'<div style="color:var(--muted)">Sin recomendaciones.</div>';
 }
 
 async function loadControlCierre(){
@@ -170,7 +182,63 @@ async function loadControlCierre(){
 
   st.cierre=merged;
   const icon=(s)=>s==='ok'?'✅':(s==='atencion'?'🟡':'🔴');
-  document.getElementById('cierreChecklist').innerHTML=merged.length?merged.map(x=>`<div style="border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--bg2)"><div style="font-weight:700">${icon(x.status)} ${x.titulo}</div><div style="font-size:.9rem;color:var(--muted)">${x.detalle||''}</div></div>`).join(''):'<div style="color:var(--muted)">Sin items de cierre.</div>';
+  document.getElementById('cierreChecklist').innerHTML=merged.length?merged.map(x=>`<div style="border:1px solid var(--border);border-left:4px solid ${statusColor(x.status)};border-radius:10px;padding:10px;background:var(--bg2)"><div style="font-weight:700">${icon(x.status)} ${esc(x.titulo)}</div><div style="font-size:.9rem;color:var(--muted)">${esc(x.detalle||'')}</div></div>`).join(''):'<div style="color:var(--muted)">Sin items de cierre.</div>';
+}
+
+function renderExecutivePulse(){
+  const box=document.getElementById('executivePulse');
+  if(!box) return;
+  const k=st.dashboard||{};
+  const sem=st.semaforo||{};
+  const inc=st.incidencias||{};
+  const mod=st.moduleHealth||{};
+  const ingresos=Number(k.ingresos_30d||0);
+  const egresos=Number(k.egresos_30d||0);
+  const saldo=ingresos-egresos;
+  const level=String(sem.nivel||'rojo').toLowerCase();
+  const color=riskColor(level);
+  const openRisk=Number(inc.criticas_activas||0)+Number(inc.sla_vencidas||0);
+  const checks=Array.isArray(st.cierre)?st.cierre:[];
+  const crit=checks.filter(x=>String(x.status)==='critico').length;
+  const att=checks.filter(x=>String(x.status)==='atencion').length;
+  box.innerHTML=`<div style="border:1px solid var(--border);border-left:6px solid ${color};border-radius:10px;padding:12px;background:var(--bg2)">
+    <div style="display:flex;gap:8px;justify-content:space-between;flex-wrap:wrap;align-items:center">
+      <div style="font-weight:800;font-size:1.05rem">${badge(String(level||'-').toUpperCase(),color)} <span style="margin-left:6px">Score ${Number(sem.score||0)}/100</span></div>
+      <div style="font-size:.85rem;color:var(--muted)">Actualizado: ${currentArDateTime()}</div>
+    </div>
+    <div class="grid" style="margin-top:10px">
+      <div class="kpi"><div class="l">Caja 30d neta</div><div class="v" style="color:${saldo>=0?'#22c55e':'#ef4444'}">${fmt.format(saldo)}</div></div>
+      <div class="kpi"><div class="l">Riesgo incidencias</div><div class="v" style="color:${openRisk?'#ef4444':'#22c55e'}">${openRisk}</div></div>
+      <div class="kpi"><div class="l">Cierre crítico/atención</div><div class="v">${crit}/${att}</div></div>
+      <div class="kpi"><div class="l">Integridad módulos</div><div class="v">${Number(mod.score||0)}/100</div></div>
+    </div>
+  </div>`;
+}
+
+function renderActionQueue(){
+  const box=document.getElementById('actionQueue');
+  if(!box) return;
+  const k=st.dashboard||{};
+  const sem=st.semaforo||{};
+  const inc=st.incidencias||{};
+  const dataAlerts=Array.isArray(st.dataHealth?.alerts)?st.dataHealth.alerts.length:0;
+  const actions=[];
+  const add=(priority,title,detail,href,label)=>actions.push({priority,title,detail,href,label});
+  const critInc=Number(inc.criticas_activas||0);
+  const slaInc=Number(inc.sla_vencidas||0);
+  if(critInc||slaInc) add('alta','Resolver incidencias críticas / SLA',`Críticas activas: ${critInc} · SLA vencidas: ${slaInc}`,'incidencias.html','Abrir incidencias');
+  if(Number(k.pendientes_conciliacion||0)>0) add(Number(k.pendientes_conciliacion||0)>=8?'alta':'media','Conciliar tesorería',`Movimientos pendientes: ${Number(k.pendientes_conciliacion||0)}`,'tesoreria.html','Abrir tesorería');
+  if(Number(sem.factores?.compras_vencidas||0)>0) add('alta','Revisar compras vencidas',`Órdenes vencidas: ${Number(sem.factores.compras_vencidas||0)}`,'compras.html','Abrir compras');
+  if(Number(k.egresos_30d||0)>Number(k.ingresos_30d||0)*1.15) add('alta','Controlar presión de caja',`Egresos 30d ${fmt.format(Number(k.egresos_30d||0))} vs ingresos ${fmt.format(Number(k.ingresos_30d||0))}`,'tesoreria.html','Ver caja');
+  if(dataAlerts>0) add('media','Completar datos operativos',`Alertas de datos: ${dataAlerts}`,'inicial.html','Ver inicio');
+  if(!actions.length) add('baja','Mantener monitoreo ejecutivo','Sin bloqueos críticos detectados en este tablero.','ejecutivo.html','Actualizar tablero');
+  const color=(p)=>p==='alta'?'#ef4444':(p==='media'?'#f59e0b':'#22c55e');
+  actions.sort((a,b)=>({alta:0,media:1,baja:2}[a.priority]-{alta:0,media:1,baja:2}[b.priority]));
+  box.innerHTML=actions.map((a,idx)=>`<div class="action-item" style="border-left:4px solid ${color(a.priority)}">
+    <div style="font-weight:800;color:${color(a.priority)}">#${idx+1}</div>
+    <div><div style="font-weight:700">${esc(a.title)} ${badge(a.priority.toUpperCase(),color(a.priority))}</div><div style="font-size:.9rem;color:var(--muted)">${esc(a.detail)}</div></div>
+    <a href="${esc(a.href)}">${esc(a.label)}</a>
+  </div>`).join('');
 }
 
 async function loadAutomatizaciones(){
@@ -179,7 +247,7 @@ async function loadAutomatizaciones(){
   const items=Array.isArray(j.items)?j.items:[];
   st.autos=items;
   const box=document.getElementById('autoCenter');
-  box.innerHTML=items.length?items.map(x=>`<div style="border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--bg2)"><div style="font-weight:700">${x.nombre}</div><div style="font-size:.9rem;color:var(--muted)">ID: ${x.id}</div><div style="font-size:.9rem;color:var(--muted)">Cron: ${x.cron} · ${x.tz}</div><div style="font-size:.9rem;margin-top:4px">🎯 ${x.objetivo||''}</div></div>`).join(''):'<div style="color:var(--muted)">Sin automatizaciones configuradas.</div>';
+  box.innerHTML=items.length?items.map(x=>`<div style="border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--bg2)"><div style="font-weight:700">${esc(x.nombre)}</div><div style="font-size:.9rem;color:var(--muted)">ID: ${esc(x.id)}</div><div style="font-size:.9rem;color:var(--muted)">Cron: ${esc(x.cron)} · ${esc(x.tz)}</div><div style="font-size:.9rem;margin-top:4px">🎯 ${esc(x.objetivo||'')}</div></div>`).join(''):'<div style="color:var(--muted)">Sin automatizaciones configuradas.</div>';
 }
 
 async function loadResumen(){
@@ -228,7 +296,7 @@ function buildPlantillaCierre(){
   const inc=st.incidencias||{};
   const cierreCrit=Array.isArray(st.cierre)?st.cierre.filter(c=>String(c.status)==='critico').length:0;
   const recosAlta=Array.isArray(st.recos)?st.recos.filter(r=>String(r.prioridad)==='alta').length:0;
-  const now=new Date().toLocaleString('es-AR');
+  const now=currentArDateTime();
 
   const lines=[
     `Cierre operativo diario — ${now}`,
@@ -307,7 +375,7 @@ async function fetchEmpresaSnapshot(empresaId){
 }
 
 function buildPlantillaCierreMulti(items){
-  const now=new Date().toLocaleString('es-AR');
+  const now=currentArDateTime();
   const lines=[`Cierre operativo multi-empresa — ${now}`,'Ordenado por riesgo: Rojo → Amarillo → Verde.',''];
 
   (items||[]).forEach((it)=>{
@@ -390,12 +458,14 @@ async function renderPlantillaCierreMulti(){
   out.value=buildPlantillaCierreMulti(snapshots);
 }
 
-async function refreshAll(){ if(st.isSuper&&!st.empresaId){ setStatus('Seleccioná empresa para ver el tablero ejecutivo.',true); ['dataHealth','moduleHealth','kpiGrid','semaforo','recos','cierreChecklist','autoCenter','uatChecklist'].forEach(id=>{const el=document.getElementById(id); if(el) el.innerHTML='';}); const tx=document.getElementById('resumenText'); if(tx) tx.value=''; const ptx=document.getElementById('plantillaCierreText'); if(ptx) ptx.value=''; return; }
+async function refreshAll(){ if(st.isSuper&&!st.empresaId){ setStatus('Seleccioná empresa para ver el tablero ejecutivo.',true); ['dataHealth','moduleHealth','kpiGrid','executivePulse','actionQueue','semaforo','recos','cierreChecklist','autoCenter','uatChecklist'].forEach(id=>{const el=document.getElementById(id); if(el) el.innerHTML='';}); const tx=document.getElementById('resumenText'); if(tx) tx.value=''; const ptx=document.getElementById('plantillaCierreText'); if(ptx) ptx.value=''; return; }
   setStatus('Actualizando…');
   try{
     await Promise.all([loadDataHealth(),loadModuleHealth(),loadDashboard(),loadSemaforo(),loadRecos(),loadAutomatizaciones(),loadResumen()]);
     await loadIncidenciasResumen();
     await loadControlCierre();
+    renderExecutivePulse();
+    renderActionQueue();
     renderUat();
     renderPlantillaCierre();
     setStatus('Actualizado.');
