@@ -196,6 +196,26 @@
       padding: 0.3rem 0.8rem; border-radius: 6px; margin-right: 1rem; cursor: pointer; transition: 0.2s;
     }
     input[type="file"]::file-selector-button:hover { background: rgba(255,255,255,0.1); }
+    .comprobante-box {
+      display: flex;
+      flex-direction: column;
+      gap: 0.45rem;
+    }
+    .comprobante-actions {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 0.5rem;
+      align-items: center;
+    }
+    .comprobante-actions input[type="file"] {
+      min-width: 0;
+    }
+    .file-hint {
+      color: var(--muted);
+      font-size: 0.76rem;
+      line-height: 1.3;
+      min-height: 1rem;
+    }
 
     /* BUTTONS */
     .btn-group { display: flex; gap: 0.5rem; margin-top: 1.5rem; }
@@ -254,6 +274,8 @@
       .btn-group { flex-direction: column; }
       .btn-group > * { width: 100%; }
       .summary-grid { grid-template-columns: 1fr; }
+      .comprobante-actions { grid-template-columns: minmax(0, 1fr); }
+      .comprobante-actions button { width: 100%; }
     }
 
     /* MODAL EDICIÓN */
@@ -501,7 +523,14 @@
           </div>
           <div>
             <label>Comprobante (foto / PDF)</label>
-            <input type="file" id="comprobante" accept="image/*,application/pdf">
+            <div class="comprobante-box">
+              <div class="comprobante-actions">
+                <input type="file" id="comprobante" accept="image/*,application/pdf">
+                <button type="button" id="btnTomarFoto" class="btn-secondary" style="padding:0.55rem 0.8rem; white-space:nowrap;">📷 Sacar foto</button>
+              </div>
+              <input type="file" id="comprobanteCamara" accept="image/*" capture="environment" style="display:none;">
+              <small id="comprobanteHint" class="file-hint">Podés subir imagen/PDF o sacar una foto con la cámara.</small>
+            </div>
           </div>
         </div>
 
@@ -672,6 +701,10 @@
     const productoCreateSel = $('#productoCreate');
     const boxDepositoCreate = $('#boxDepositoCreate');
     const depositoCreateSel = $('#depositoCreate');
+    const comprobanteInput = $('#comprobante');
+    const comprobanteCamaraInput = $('#comprobanteCamara');
+    const btnTomarFoto = $('#btnTomarFoto');
+    const comprobanteHint = $('#comprobanteHint');
 
     // Refs modal edición
     const editModal       = $('#editModal');
@@ -705,6 +738,7 @@
     let depositosFilter = [];
     let productosCreate = [];
     let productosEdit = [];
+    let comprobanteSeleccionado = null;
 
     window.__gastos = [];
 
@@ -1158,6 +1192,36 @@
       URL.revokeObjectURL(url);
     }
 
+    function setComprobanteSeleccionado(file, source = 'archivo') {
+      comprobanteSeleccionado = file || null;
+
+      if (file && comprobanteInput && window.DataTransfer) {
+        const dt = new DataTransfer();
+        dt.items.add(file);
+        comprobanteInput.files = dt.files;
+      }
+
+      if (comprobanteHint) {
+        if (file) {
+          const origen = source === 'camara' ? 'Foto tomada' : 'Archivo seleccionado';
+          comprobanteHint.textContent = `${origen}: ${file.name}`;
+        } else {
+          comprobanteHint.textContent = 'Podés subir imagen/PDF o sacar una foto con la cámara.';
+        }
+      }
+    }
+
+    function clearComprobanteSeleccionado() {
+      comprobanteSeleccionado = null;
+      if (comprobanteInput) comprobanteInput.value = '';
+      if (comprobanteCamaraInput) comprobanteCamaraInput.value = '';
+      if (comprobanteHint) comprobanteHint.textContent = 'Podés subir imagen/PDF o sacar una foto con la cámara.';
+    }
+
+    function getComprobanteSeleccionado() {
+      return comprobanteSeleccionado || (comprobanteInput?.files && comprobanteInput.files[0]) || null;
+    }
+
     // ====== CRUD ======
     window.editG = async (id) => {
       const g = (window.__gastos || []).find(x => Number(x.id) === Number(id));
@@ -1341,7 +1405,7 @@
         fd.append('chofer_id', document.querySelector('#choferCreate').value);
       }
 
-      const file = document.querySelector('#comprobante').files[0];
+      const file = getComprobanteSeleccionado();
       if (file) fd.append('comprobante', file);
 
       const submitBtn = frmGasto.querySelector('button[type="submit"]');
@@ -1362,6 +1426,7 @@
 
         alert('✅ Gasto registrado correctamente');
         frmGasto.reset();
+        clearComprobanteSeleccionado();
 
         document.querySelector('#fecha').value = dateOnlyStr(new Date());
         toggleFields();
@@ -1519,6 +1584,26 @@
 
     const btnExportCsv = $('#btnExportCsv');
     if (btnExportCsv) btnExportCsv.addEventListener('click', exportCsv);
+
+    if (btnTomarFoto && comprobanteCamaraInput) {
+      btnTomarFoto.addEventListener('click', () => {
+        comprobanteCamaraInput.click();
+      });
+
+      comprobanteCamaraInput.addEventListener('change', () => {
+        const file = comprobanteCamaraInput.files && comprobanteCamaraInput.files[0];
+        if (!file) return;
+        setComprobanteSeleccionado(file, 'camara');
+      });
+    }
+
+    if (comprobanteInput) {
+      comprobanteInput.addEventListener('change', () => {
+        const file = comprobanteInput.files && comprobanteInput.files[0];
+        setComprobanteSeleccionado(file, 'archivo');
+        if (comprobanteCamaraInput && file) comprobanteCamaraInput.value = '';
+      });
+    }
 
     const btnClearFilters = $('#btnClearFilters');
     if (btnClearFilters) {

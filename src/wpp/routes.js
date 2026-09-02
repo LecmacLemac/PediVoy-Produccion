@@ -1,4 +1,4 @@
-import { WPP_SESSION_ID, wait } from './sessionUtils.js';
+import { WPP_SESSION_ID, getWppSessionDir, wait } from './sessionUtils.js';
 
 export function registerWppRoutes(app, deps) {
   const {
@@ -65,7 +65,7 @@ export function registerWppRoutes(app, deps) {
       await wait(1500);
 
       try {
-        const sessionDir = path.join(process.cwd(), '.wwebjs_auth', `session-${WPP_SESSION_ID}`);
+        const sessionDir = getWppSessionDir({ path, sessionId: WPP_SESSION_ID });
         fs.rmSync(sessionDir, { recursive: true, force: true });
         console.log('[WPP SERVER] Carpeta de sesión eliminada:', sessionDir);
       } catch (e) {

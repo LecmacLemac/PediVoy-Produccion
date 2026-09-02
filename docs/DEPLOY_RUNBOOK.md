@@ -11,6 +11,11 @@
 - `DATABASE_URL` correcta (SSL prod)
 - `OPENAI_API_KEY` válida
 - `VAPID_*` si Push activo
+- `CORS_ALLOWED_ORIGINS=https://www.pedivoy.com,https://pedivoy.com`
+- Si WhatsApp Web integrado queda activo:
+  - `ENABLE_WPP=1`
+  - `DISK_PATH=<mount del disco persistente de Render>` o `WPP_SESSION_PATH=<ruta persistente para LocalAuth>`
+  - `PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium`
 - Umbrales opcionales métricas:
   - `METRICS_ALERT_ERROR_RATE`
   - `METRICS_ALERT_P95_MS`

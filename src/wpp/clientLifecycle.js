@@ -1,4 +1,4 @@
-import { WPP_SESSION_ID } from './sessionUtils.js';
+import { WPP_SESSION_ID, getWppSessionBasePath } from './sessionUtils.js';
 
 export function createWppClientLifecycle({
   ENABLE_WPP,
@@ -19,12 +19,14 @@ export function createWppClientLifecycle({
 
   const isRender = process.env.RENDER === 'true';
   const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH || (isRender ? '/usr/bin/chromium' : null);
+  const sessionBasePath = getWppSessionBasePath({ path });
 
   console.log(`[WPP SERVER] Usando ejecutable: ${executablePath || 'default'}`);
   console.log(`[WPP SERVER] En Render: ${isRender}`);
+  console.log(`[WPP SERVER] Sesión LocalAuth en: ${sessionBasePath}`);
 
   const wppClient = new Client({
-    authStrategy: new LocalAuth({ clientId: WPP_SESSION_ID }),
+    authStrategy: new LocalAuth({ clientId: WPP_SESSION_ID, dataPath: sessionBasePath }),
     webVersionCache: {
       type: 'remote',
       remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.3000.x.html',
