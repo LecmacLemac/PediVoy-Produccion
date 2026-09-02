@@ -1,0 +1,692 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Saldos de clientes | PediVoy</title>
+  <link rel="stylesheet" href="theme-base.css" />
+  <style>
+    :root {
+      --bg: #0b1020;
+      --panel: rgba(30, 41, 59, .74);
+      --panel-strong: rgba(15, 23, 42, .92);
+      --ink: #f8fafc;
+      --muted: #94a3b8;
+      --border: rgba(148, 163, 184, .18);
+      --primary: #06b6d4;
+      --primary-hover: #22d3ee;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --info: #3b82f6;
+      --radius: 8px;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 18% 12%, rgba(6, 182, 212, .08), transparent 28%),
+        radial-gradient(circle at 88% 20%, rgba(16, 185, 129, .06), transparent 30%),
+        var(--bg);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 14px;
+    }
+
+    .container { width: min(1480px, calc(100vw - 32px)); margin: 0 auto; }
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      background: rgba(15, 23, 42, .94);
+      border-bottom: 1px solid var(--border);
+      backdrop-filter: blur(14px);
+    }
+    nav { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: .78rem 0; }
+    .brand { display: flex; align-items: center; gap: .7rem; color: #fff; font-weight: 850; white-space: nowrap; }
+    .brand img { height: 32px; width: auto; object-fit: contain; }
+    .role { padding: .16rem .5rem; border-radius: 999px; background: rgba(6, 182, 212, .12); color: #67e8f9; border: 1px solid rgba(6, 182, 212, .28); font-size: .75rem; }
+    .menu { list-style: none; display: flex; gap: 1rem; padding: 0; margin: 0; overflow: auto; }
+    .menu a { color: var(--muted); text-decoration: none; font-weight: 700; white-space: nowrap; }
+    .menu a:hover, .menu a.active { color: #fff; }
+    .menu a.active { border-bottom: 2px solid var(--primary); padding-bottom: 4px; }
+
+    main { padding: 1.3rem 0 3rem; display: grid; gap: 1rem; }
+    .topbar, .card, .kpi {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: 0 12px 38px rgba(2, 8, 23, .2);
+    }
+    .topbar { padding: 1.1rem; display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; }
+    h1, h2, h3, p { margin-top: 0; }
+    h1 { margin-bottom: .25rem; font-size: 1.45rem; letter-spacing: 0; }
+    h2 { margin-bottom: .2rem; font-size: 1.02rem; }
+    p { color: var(--muted); margin-bottom: 0; }
+    .actions { display: flex; gap: .6rem; flex-wrap: wrap; }
+
+    .btn {
+      appearance: none;
+      border: 1px solid transparent;
+      border-radius: var(--radius);
+      padding: .68rem .9rem;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: .42rem;
+      cursor: pointer;
+      font-weight: 800;
+      color: var(--ink);
+      background: rgba(255, 255, 255, .04);
+      min-height: 38px;
+      text-decoration: none;
+    }
+    .btn:hover { border-color: rgba(148, 163, 184, .35); background: rgba(255, 255, 255, .07); }
+    .btn-primary { background: var(--primary); color: #001018; }
+    .btn-primary:hover { background: var(--primary-hover); color: #001018; }
+    .btn-danger { background: rgba(239, 68, 68, .12); color: #fecaca; border-color: rgba(239, 68, 68, .3); }
+    .btn-small { padding: .48rem .62rem; min-height: 32px; font-size: .82rem; }
+    .btn:disabled { opacity: .55; cursor: not-allowed; }
+
+    .kpis { display: grid; grid-template-columns: repeat(4, minmax(180px, 1fr)); gap: .8rem; }
+    .kpi { padding: 1rem; min-height: 94px; display: flex; flex-direction: column; justify-content: space-between; }
+    .kpi span { color: var(--muted); font-size: .78rem; font-weight: 850; text-transform: uppercase; letter-spacing: .04em; }
+    .kpi strong { font-size: 1.45rem; line-height: 1.1; }
+    .kpi small { color: var(--muted); }
+
+    .filters { padding: 1rem; }
+    .filter-grid { display: grid; grid-template-columns: repeat(7, minmax(130px, 1fr)); gap: .75rem; align-items: end; }
+    label { display: grid; gap: .34rem; color: var(--muted); font-size: .76rem; font-weight: 850; text-transform: uppercase; letter-spacing: .04em; }
+    input, select, textarea {
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: .66rem .72rem;
+      background: rgba(15, 23, 42, .94);
+      color: #fff;
+      font: inherit;
+      letter-spacing: 0;
+    }
+    input:focus, select:focus, textarea:focus { outline: 0; border-color: var(--primary); box-shadow: 0 0 0 2px rgba(6, 182, 212, .16); }
+
+    .split { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(360px, .85fr); gap: 1rem; }
+    .card { overflow: hidden; }
+    .card-head { padding: 1rem; display: flex; justify-content: space-between; align-items: flex-start; gap: .75rem; border-bottom: 1px solid var(--border); background: rgba(15, 23, 42, .34); }
+    .table-wrap { overflow: auto; }
+    table { width: 100%; min-width: 960px; border-collapse: collapse; }
+    .detail-table { min-width: 760px; }
+    th, td { padding: .78rem .85rem; border-bottom: 1px solid var(--border); text-align: left; vertical-align: middle; }
+    th { color: var(--muted); background: rgba(15, 23, 42, .7); font-size: .73rem; text-transform: uppercase; letter-spacing: .04em; white-space: nowrap; }
+    tbody tr:hover td { background: rgba(255, 255, 255, .025); }
+    .right { text-align: right; font-variant-numeric: tabular-nums; }
+    .muted { color: var(--muted); }
+    .main-cell { display: grid; gap: .18rem; min-width: 220px; }
+    .main-cell strong { color: #fff; }
+    .badge { display: inline-flex; width: max-content; align-items: center; border-radius: 999px; padding: .23rem .55rem; font-size: .73rem; font-weight: 850; border: 1px solid transparent; white-space: nowrap; }
+    .badge.debe { color: #fbbf24; background: rgba(245, 158, 11, .13); border-color: rgba(245, 158, 11, .28); }
+    .badge.ok { color: #6ee7b7; background: rgba(16, 185, 129, .13); border-color: rgba(16, 185, 129, .28); }
+    .badge.favor { color: #93c5fd; background: rgba(59, 130, 246, .13); border-color: rgba(59, 130, 246, .28); }
+    .badge.local { color: #c4b5fd; background: rgba(139, 92, 246, .13); border-color: rgba(139, 92, 246, .28); }
+    .amount-debt { color: #fbbf24; font-weight: 900; }
+    .amount-ok { color: #6ee7b7; font-weight: 900; }
+    .amount-favor { color: #93c5fd; font-weight: 900; }
+    .empty { color: var(--muted); text-align: center; padding: 2rem; }
+    .toolbar-line { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
+
+    dialog { width: min(560px, calc(100vw - 24px)); padding: 0; border: 1px solid var(--border); border-radius: var(--radius); background: #1e293b; color: #fff; box-shadow: 0 24px 80px rgba(0, 0, 0, .58); }
+    dialog::backdrop { background: rgba(2, 6, 23, .72); backdrop-filter: blur(4px); }
+    .modal-head, .modal-foot { padding: 1rem; display: flex; justify-content: space-between; align-items: center; gap: .75rem; border-bottom: 1px solid var(--border); }
+    .modal-foot { border-bottom: 0; border-top: 1px solid var(--border); justify-content: flex-end; }
+    .modal-body { padding: 1rem; display: grid; gap: .8rem; }
+    .two { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; }
+    textarea { min-height: 86px; resize: vertical; }
+    .toast { position: fixed; right: 18px; bottom: 18px; z-index: 40; display: none; max-width: 420px; background: var(--panel-strong); border: 1px solid var(--border); border-radius: var(--radius); padding: .82rem 1rem; box-shadow: 0 16px 48px rgba(0, 0, 0, .35); }
+    .toast.show { display: block; }
+
+    @media (max-width: 1180px) {
+      .filter-grid { grid-template-columns: repeat(3, minmax(160px, 1fr)); }
+      .split { grid-template-columns: 1fr; }
+      .kpis { grid-template-columns: repeat(2, minmax(180px, 1fr)); }
+    }
+    @media (max-width: 720px) {
+      .container { width: min(100vw - 20px, 1480px); }
+      nav { align-items: stretch; flex-direction: column; }
+      .filter-grid, .two, .kpis { grid-template-columns: 1fr; }
+      .actions, .actions .btn, .toolbar-line .btn { width: 100%; }
+      h1 { font-size: 1.25rem; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <nav class="container">
+      <div class="brand">
+        <img src="img/brand/pedivoy-logo-horizontal-white.png" alt="PediVoy" />
+        <span>Saldos de clientes</span>
+        <span id="rolePill" class="role"></span>
+      </div>
+      <ul class="menu">
+        <li><a href="inicio/inicial.html">Inicio</a></li>
+        <li><a href="dashboard.html">Dashboard</a></li>
+        <li><a href="clientes.html">Clientes</a></li>
+        <li><a href="reportes.html">Reportes</a></li>
+        <li><a href="pagos.html">Pagos</a></li>
+        <li><a href="saldos-clientes.html" class="active">Saldos</a></li>
+        <li><a href="#" id="logout">Salir</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <main class="container">
+    <section class="topbar">
+      <div>
+        <h1>Cuenta por entregas</h1>
+        <p>Controla saldos generados por pedidos entregados y cobros asociados por cliente.</p>
+      </div>
+      <div class="actions">
+        <button class="btn" id="btnImport">Importar CSV</button>
+        <button class="btn" id="btnCSV">Exportar CSV</button>
+        <button class="btn btn-primary" id="btnCobro">Registrar cobro</button>
+      </div>
+    </section>
+
+    <section class="kpis" aria-label="Resumen de saldos">
+      <div class="kpi"><span>Saldo pendiente</span><strong id="kpiSaldo">$ 0</strong><small id="kpiDebeClientes">0 clientes con deuda</small></div>
+      <div class="kpi"><span>Entregado</span><strong id="kpiEntregado">$ 0</strong><small id="kpiPedidos">0 pedidos entregados</small></div>
+      <div class="kpi"><span>Cobrado</span><strong id="kpiCobrado">$ 0</strong><small id="kpiCobros">0 cobros registrados</small></div>
+      <div class="kpi"><span>A favor</span><strong id="kpiFavor">$ 0</strong><small id="kpiClientes">0 clientes analizados</small></div>
+    </section>
+
+    <section class="card filters">
+      <div class="filter-grid">
+        <label id="empresaWrap" hidden>Empresa<select id="empresa"></select></label>
+        <label>Desde<input id="from" type="date" /></label>
+        <label>Hasta<input id="to" type="date" /></label>
+        <label>Buscar<input id="q" type="search" placeholder="Cliente, telefono o direccion" /></label>
+        <label>Estado<select id="estado"><option value="debe">Con saldo pendiente</option><option value="todos">Todos</option><option value="ok">En cero</option><option value="favor">A favor</option></select></label>
+        <label>Pago<select id="metodo"><option value="">Todos</option><option value="cuenta_corriente">Cuenta corriente</option><option value="transferencia">Transferencia</option><option value="efectivo">Efectivo</option></select></label>
+        <button class="btn btn-primary" id="btnBuscar">Actualizar</button>
+      </div>
+    </section>
+
+    <section class="split">
+      <div class="card">
+        <div class="card-head">
+          <div>
+            <h2>Saldos por cliente</h2>
+            <p id="metaClientes">Sin datos cargados</p>
+          </div>
+          <div class="toolbar-line">
+            <button class="btn btn-small" id="btnVerTodos">Ver todos</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Cliente</th>
+                <th class="right">Entregado</th>
+                <th class="right">Cobrado</th>
+                <th class="right">Saldo</th>
+                <th>Estado</th>
+                <th>Ultima entrega</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="clientesBody">
+              <tr><td class="empty" colspan="7">Cargando saldos...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <div>
+            <h2>Detalle</h2>
+            <p id="detailTitle">Selecciona un cliente para ver movimientos</p>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="detail-table">
+            <thead>
+              <tr>
+                <th>Fecha</th>
+                <th>Origen</th>
+                <th>Pago</th>
+                <th class="right">Debe</th>
+                <th class="right">Haber</th>
+              </tr>
+            </thead>
+            <tbody id="detalleBody">
+              <tr><td class="empty" colspan="5">Sin cliente seleccionado</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="cobroDialog">
+    <form method="dialog">
+      <div class="modal-head">
+        <strong>Registrar cobro o ajuste</strong>
+        <button class="btn btn-small" value="cancel">Cerrar</button>
+      </div>
+      <div class="modal-body">
+        <label>Cliente<select id="cobroCliente" required></select></label>
+        <div class="two">
+          <label>Tipo<select id="cobroTipo"><option value="cobro">Cobro recibido</option><option value="ajuste_debe">Ajuste suma deuda</option><option value="ajuste_haber">Ajuste resta deuda</option></select></label>
+          <label>Monto<input id="cobroMonto" type="number" min="0" step="0.01" required /></label>
+        </div>
+        <label>Referencia<input id="cobroRef" placeholder="Ej: transferencia, efectivo, correccion" /></label>
+        <label>Nota<textarea id="cobroNota" placeholder="Detalle breve del movimiento"></textarea></label>
+      </div>
+      <div class="modal-foot">
+        <button class="btn" value="cancel">Cancelar</button>
+        <button type="button" class="btn btn-primary" id="btnGuardarCobro">Guardar</button>
+      </div>
+    </form>
+  </dialog>
+
+  <input id="fileImport" type="file" accept=".csv,text/csv" hidden />
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const state = {
+      user: null,
+      isSuper: false,
+      entregas: [],
+      movimientosLocales: [],
+      clientes: [],
+      selectedKey: null
+    };
+
+    const moneyFmt = new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 });
+    const dateFmt = new Intl.DateTimeFormat('es-AR', { dateStyle: 'short' });
+    const STORAGE_KEY = 'pedivoy_saldos_clientes_v1';
+
+    const authFetch = (url, opts = {}) => fetch(url, { ...opts, headers: opts.headers || {}, credentials: 'include' });
+    const money = (value) => moneyFmt.format(Number(value) || 0);
+    const num = (value) => Number(value) || 0;
+    const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+    const onlyDate = (value) => String(value || '').slice(0, 10);
+
+    function toast(message) {
+      const el = $('toast');
+      el.textContent = message;
+      el.classList.add('show');
+      clearTimeout(el._timer);
+      el._timer = setTimeout(() => el.classList.remove('show'), 3000);
+    }
+
+    async function api(url, opts = {}) {
+      const res = await authFetch(url, opts);
+      if (res.status === 401) {
+        location.href = 'login.html';
+        throw new Error('Sesion expirada');
+      }
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(payload.error || `Error ${res.status}`);
+      return payload;
+    }
+
+    function defaultDates() {
+      const today = new Date();
+      const from = new Date(today);
+      from.setDate(today.getDate() - 30);
+      $('from').value = from.toISOString().slice(0, 10);
+      $('to').value = today.toISOString().slice(0, 10);
+    }
+
+    function empresaQuery() {
+      const emp = state.isSuper ? $('empresa').value : state.user?.empresa_id;
+      return emp ? `empresa_id=${encodeURIComponent(emp)}` : '';
+    }
+
+    async function loadMe() {
+      const me = await api('/api/me');
+      state.user = me.user || me;
+      state.isSuper = String(state.user?.role || '').toLowerCase() === 'super';
+      $('rolePill').textContent = state.isSuper ? 'Super' : `Empresa ${state.user?.empresa_id || ''}`;
+      if (!state.isSuper) return;
+      const empresas = await api('/api/empresas');
+      const rows = Array.isArray(empresas) ? empresas : (empresas.empresas || []);
+      $('empresa').innerHTML = rows.map((e) => `<option value="${esc(e.id)}">${esc(e.nombre || e.razon_social || `Empresa ${e.id}`)}</option>`).join('');
+      $('empresaWrap').hidden = false;
+      if (state.user?.empresa_id) $('empresa').value = String(state.user.empresa_id);
+    }
+
+    function loadLocal() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        state.movimientosLocales = raw ? JSON.parse(raw) : [];
+      } catch {
+        state.movimientosLocales = [];
+      }
+    }
+
+    function saveLocal() {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state.movimientosLocales));
+    }
+
+    function isPaidDelivery(row) {
+      const metodo = String(row.metodo_pago || '').toLowerCase();
+      if (metodo.includes('cuenta')) return false;
+      if (metodo.includes('efectivo')) return true;
+      if (row.pagado === true) return true;
+      if (row.transferencia_validado === true || row.transferencia_procesado === true || row.transferencia_ai_verificada === true) return true;
+      return false;
+    }
+
+    function clientKey(row) {
+      const id = row.punto_entrega_id || row.cliente_id;
+      if (id) return `id:${id}`;
+      return [row.cliente, row.telefono, row.direccion].map((value) => String(value || '').trim().toLowerCase()).join('|');
+    }
+
+    function clientName(row) {
+      return row.cliente || row.nombre || 'Cliente sin nombre';
+    }
+
+    function mapEntrega(row) {
+      const total = num(row.monto);
+      const paid = isPaidDelivery(row) ? total : 0;
+      const key = clientKey(row);
+      return {
+        key,
+        tipo: 'entrega',
+        fecha: row.fecha_entrega || row.fecha,
+        cliente: clientName(row),
+        telefono: row.telefono || '',
+        direccion: row.direccion || '',
+        pedidoId: row.id,
+        metodo: row.metodo_pago || '',
+        debe: total,
+        haber: paid,
+        nota: paid ? 'Pedido entregado cobrado' : 'Pedido entregado pendiente'
+      };
+    }
+
+    function localMovimientoToDetail(mov) {
+      const amount = num(mov.monto);
+      const tipo = String(mov.tipo || 'cobro');
+      return {
+        key: mov.key,
+        tipo: 'local',
+        localId: mov.id,
+        fecha: mov.fecha,
+        cliente: mov.cliente,
+        telefono: mov.telefono || '',
+        direccion: mov.direccion || '',
+        pedidoId: '',
+        metodo: mov.referencia || tipo,
+        debe: tipo === 'ajuste_debe' ? amount : 0,
+        haber: tipo === 'cobro' || tipo === 'ajuste_haber' ? amount : 0,
+        nota: mov.nota || 'Movimiento local'
+      };
+    }
+
+    function getDetails() {
+      const entregas = state.entregas.map(mapEntrega).filter((r) => r.key);
+      const locales = state.movimientosLocales.map(localMovimientoToDetail).filter((r) => r.key);
+      return [...entregas, ...locales].sort((a, b) => String(b.fecha || '').localeCompare(String(a.fecha || '')));
+    }
+
+    function buildClients() {
+      const map = new Map();
+      for (const mov of getDetails()) {
+        const item = map.get(mov.key) || {
+          key: mov.key,
+          cliente: mov.cliente,
+          telefono: mov.telefono,
+          direccion: mov.direccion,
+          entregado: 0,
+          cobrado: 0,
+          pedidos: 0,
+          cobros: 0,
+          ultima: ''
+        };
+        item.cliente = item.cliente || mov.cliente;
+        item.telefono = item.telefono || mov.telefono;
+        item.direccion = item.direccion || mov.direccion;
+        item.entregado += num(mov.debe);
+        item.cobrado += num(mov.haber);
+        item.pedidos += mov.tipo === 'entrega' ? 1 : 0;
+        item.cobros += mov.tipo === 'local' ? 1 : 0;
+        if (String(mov.fecha || '') > String(item.ultima || '')) item.ultima = mov.fecha;
+        map.set(mov.key, item);
+      }
+      state.clientes = Array.from(map.values()).map((item) => ({ ...item, saldo: item.entregado - item.cobrado }));
+    }
+
+    function passesFilters(item) {
+      const q = $('q').value.trim().toLowerCase();
+      const estado = $('estado').value;
+      if (q) {
+        const haystack = [item.cliente, item.telefono, item.direccion].join(' ').toLowerCase();
+        if (!haystack.includes(q)) return false;
+      }
+      if (estado === 'debe' && item.saldo <= 0) return false;
+      if (estado === 'ok' && Math.abs(item.saldo) > .01) return false;
+      if (estado === 'favor' && item.saldo >= 0) return false;
+      return true;
+    }
+
+    function renderKpis(rows) {
+      const totalEntregado = rows.reduce((a, r) => a + r.entregado, 0);
+      const totalCobrado = rows.reduce((a, r) => a + r.cobrado, 0);
+      const totalSaldo = rows.reduce((a, r) => a + Math.max(r.saldo, 0), 0);
+      const totalFavor = rows.reduce((a, r) => a + Math.abs(Math.min(r.saldo, 0)), 0);
+      const pedidos = rows.reduce((a, r) => a + r.pedidos, 0);
+      const cobros = rows.reduce((a, r) => a + r.cobros, 0);
+      $('kpiSaldo').textContent = money(totalSaldo);
+      $('kpiEntregado').textContent = money(totalEntregado);
+      $('kpiCobrado').textContent = money(totalCobrado);
+      $('kpiFavor').textContent = money(totalFavor);
+      $('kpiDebeClientes').textContent = `${rows.filter((r) => r.saldo > .01).length} clientes con deuda`;
+      $('kpiPedidos').textContent = `${pedidos} pedidos entregados`;
+      $('kpiCobros').textContent = `${cobros} cobros registrados`;
+      $('kpiClientes').textContent = `${rows.length} clientes analizados`;
+    }
+
+    function renderClientes() {
+      buildClients();
+      const rows = state.clientes.filter(passesFilters).sort((a, b) => b.saldo - a.saldo || a.cliente.localeCompare(b.cliente));
+      renderKpis(rows);
+      $('metaClientes').textContent = `${rows.length} clientes visibles sobre ${state.clientes.length} con movimientos`;
+      $('cobroCliente').innerHTML = state.clientes
+        .sort((a, b) => a.cliente.localeCompare(b.cliente))
+        .map((c) => `<option value="${esc(c.key)}">${esc(c.cliente)} - saldo ${esc(money(c.saldo))}</option>`)
+        .join('');
+
+      if (!rows.length) {
+        $('clientesBody').innerHTML = '<tr><td class="empty" colspan="7">No hay clientes para los filtros aplicados.</td></tr>';
+        renderDetalle(state.selectedKey);
+        return;
+      }
+
+      $('clientesBody').innerHTML = rows.map((row) => {
+        const status = row.saldo > .01 ? 'debe' : row.saldo < -.01 ? 'favor' : 'ok';
+        const statusText = status === 'debe' ? 'Debe' : status === 'favor' ? 'A favor' : 'En cero';
+        const amountClass = status === 'debe' ? 'amount-debt' : status === 'favor' ? 'amount-favor' : 'amount-ok';
+        return `
+          <tr>
+            <td><div class="main-cell"><strong>${esc(row.cliente)}</strong><span class="muted">${esc(row.telefono || row.direccion || 'Sin datos de contacto')}</span></div></td>
+            <td class="right">${money(row.entregado)}</td>
+            <td class="right">${money(row.cobrado)}</td>
+            <td class="right ${amountClass}">${money(row.saldo)}</td>
+            <td><span class="badge ${status}">${statusText}</span></td>
+            <td>${row.ultima ? esc(dateFmt.format(new Date(row.ultima))) : '-'}</td>
+            <td><button class="btn btn-small" data-detail="${esc(row.key)}">Detalle</button></td>
+          </tr>
+        `;
+      }).join('');
+
+      document.querySelectorAll('[data-detail]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          state.selectedKey = btn.dataset.detail;
+          renderDetalle(state.selectedKey);
+        });
+      });
+
+      if (!state.selectedKey || !rows.some((r) => r.key === state.selectedKey)) state.selectedKey = rows[0]?.key || null;
+      renderDetalle(state.selectedKey);
+    }
+
+    function renderDetalle(key) {
+      const rows = getDetails().filter((row) => !key || row.key === key);
+      const client = state.clientes.find((item) => item.key === key);
+      $('detailTitle').textContent = client ? `${client.cliente} - saldo ${money(client.saldo)}` : 'Ultimos movimientos';
+      if (!rows.length) {
+        $('detalleBody').innerHTML = '<tr><td class="empty" colspan="5">Sin movimientos para mostrar.</td></tr>';
+        return;
+      }
+      $('detalleBody').innerHTML = rows.slice(0, 80).map((row) => `
+        <tr>
+          <td>${row.fecha ? esc(dateFmt.format(new Date(row.fecha))) : '-'}</td>
+          <td><div class="main-cell"><strong>${row.tipo === 'entrega' ? `Pedido #${esc(row.pedidoId)}` : '<span class="badge local">Local</span>'}</strong><span class="muted">${esc(row.nota || row.cliente)}</span></div></td>
+          <td>${esc(formatMetodo(row.metodo))}</td>
+          <td class="right">${row.debe ? money(row.debe) : '-'}</td>
+          <td class="right">${row.haber ? money(row.haber) : '-'}</td>
+        </tr>
+      `).join('');
+    }
+
+    function formatMetodo(value) {
+      const raw = String(value || '').replace(/_/g, ' ').trim();
+      return raw ? raw.charAt(0).toUpperCase() + raw.slice(1) : '-';
+    }
+
+    async function loadEntregas() {
+      const params = new URLSearchParams();
+      const empresa = empresaQuery();
+      if (empresa) params.set('empresa_id', empresa.split('=')[1]);
+      if ($('from').value) params.set('from', $('from').value);
+      if ($('to').value) params.set('to', $('to').value);
+      if ($('metodo').value) params.set('metodo_pago', $('metodo').value);
+      $('clientesBody').innerHTML = '<tr><td class="empty" colspan="7">Cargando entregas...</td></tr>';
+      const rows = await api(`/api/reportes/entregados?${params.toString()}`);
+      state.entregas = Array.isArray(rows) ? rows : (rows.rows || []);
+      renderClientes();
+      toast('Saldos actualizados');
+    }
+
+    function openCobro(clientKeyValue = '') {
+      if (!state.clientes.length) {
+        toast('Primero carga entregas para identificar clientes.');
+        return;
+      }
+      $('cobroCliente').value = clientKeyValue || state.selectedKey || state.clientes[0]?.key || '';
+      $('cobroMonto').value = '';
+      $('cobroRef').value = '';
+      $('cobroNota').value = '';
+      $('cobroDialog').showModal();
+    }
+
+    function guardarCobro() {
+      const key = $('cobroCliente').value;
+      const cliente = state.clientes.find((item) => item.key === key);
+      const monto = num($('cobroMonto').value);
+      if (!key || !cliente) return toast('Selecciona un cliente.');
+      if (monto <= 0) return toast('Ingresa un monto mayor a cero.');
+      state.movimientosLocales.push({
+        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        key,
+        cliente: cliente.cliente,
+        telefono: cliente.telefono,
+        direccion: cliente.direccion,
+        tipo: $('cobroTipo').value,
+        monto,
+        referencia: $('cobroRef').value.trim(),
+        nota: $('cobroNota').value.trim(),
+        fecha: new Date().toISOString()
+      });
+      saveLocal();
+      $('cobroDialog').close();
+      renderClientes();
+      toast('Movimiento guardado en este navegador');
+    }
+
+    function exportCSV() {
+      const rows = state.clientes.filter(passesFilters).sort((a, b) => b.saldo - a.saldo);
+      const header = ['cliente', 'telefono', 'direccion', 'entregado', 'cobrado', 'saldo', 'pedidos', 'cobros', 'ultima_entrega'];
+      const lines = [header.join(',')].concat(rows.map((row) => header.map((key) => `"${String(row[key] ?? '').replace(/"/g, '""')}"`).join(',')));
+      const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `saldos-clientes-${new Date().toISOString().slice(0, 10)}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    function importCSV(file) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const lines = String(reader.result || '').split(/\r?\n/).filter(Boolean);
+        const imported = lines.slice(1).map((line) => {
+          const cols = line.split(',').map((v) => v.replace(/^"|"$/g, '').replace(/""/g, '"'));
+          const cliente = cols[0] || '';
+          const key = cliente.trim().toLowerCase();
+          return {
+            id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+            key,
+            cliente,
+            telefono: cols[1] || '',
+            direccion: cols[2] || '',
+            tipo: 'ajuste_debe',
+            monto: num(cols[5] || cols[3]),
+            referencia: 'importacion_csv',
+            nota: 'Importado desde CSV',
+            fecha: new Date().toISOString()
+          };
+        }).filter((r) => r.key && r.monto > 0);
+        state.movimientosLocales.push(...imported);
+        saveLocal();
+        renderClientes();
+        toast(`${imported.length} movimientos importados`);
+      };
+      reader.readAsText(file);
+    }
+
+    async function boot() {
+      $('logout').addEventListener('click', async (ev) => {
+        ev.preventDefault();
+        try { await authFetch('/api/logout', { method: 'POST' }); } catch {}
+        location.href = 'login.html';
+      });
+      defaultDates();
+      loadLocal();
+      await loadMe();
+      await loadEntregas();
+      $('btnBuscar').addEventListener('click', loadEntregas);
+      $('btnVerTodos').addEventListener('click', () => { $('estado').value = 'todos'; renderClientes(); });
+      $('q').addEventListener('input', renderClientes);
+      $('estado').addEventListener('change', renderClientes);
+      $('metodo').addEventListener('change', loadEntregas);
+      $('from').addEventListener('change', loadEntregas);
+      $('to').addEventListener('change', loadEntregas);
+      $('empresa').addEventListener('change', loadEntregas);
+      $('btnCobro').addEventListener('click', () => openCobro());
+      $('btnGuardarCobro').addEventListener('click', guardarCobro);
+      $('btnCSV').addEventListener('click', exportCSV);
+      $('btnImport').addEventListener('click', () => $('fileImport').click());
+      $('fileImport').addEventListener('change', (ev) => {
+        const file = ev.target.files?.[0];
+        if (file) importCSV(file);
+        ev.target.value = '';
+      });
+    }
+
+    boot().catch((err) => {
+      console.error(err);
+      $('clientesBody').innerHTML = `<tr><td class="empty" colspan="7">${esc(err.message || 'No se pudo cargar la pantalla')}</td></tr>`;
+      toast(err.message || 'No se pudo cargar');
+    });
+  </script>
+</body>
+</html>
