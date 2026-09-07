@@ -1490,6 +1490,7 @@ if (logoutLink) {
     let companies = [];
     let currentEmpresaIdCuentas = null;
     let esSuperAdmin = false;
+    let currentUserEmpresaId = null;
     let saveBusy = false;
     let deleteBusy = false;
     let cuentasBancariasDraft = [];
@@ -1508,9 +1509,52 @@ if (logoutLink) {
 
       const saveBtn = document.getElementById('btnSaveEmpresa');
       if (saveBtn) {
-        saveBtn.disabled = !canManageEmpresas || saveBusy;
-        saveBtn.title = canManageEmpresas ? 'Guardar empresa' : 'Solo superadmin puede guardar empresas';
+        const editingEmpresaId = Number(document.getElementById('e_id')?.value || 0);
+        const canSave = canManageEmpresas || canEditEmpresa(editingEmpresaId);
+        saveBtn.disabled = !canSave || saveBusy;
+        saveBtn.title = canSave ? 'Guardar empresa' : 'Solo podés guardar el perfil de tu empresa';
       }
+    }
+
+    function canEditEmpresa(id) {
+      const empresaId = Number(id);
+      if (!Number.isFinite(empresaId) || empresaId <= 0) return Boolean(esSuperAdmin);
+      return Boolean(esSuperAdmin || empresaId === Number(currentUserEmpresaId));
+    }
+
+    function requireCanEditEmpresa(id) {
+      if (canEditEmpresa(id)) return true;
+      toast('Solo podés editar el perfil de tu empresa.');
+      return false;
+    }
+
+    function setSuperAdminOnlyFieldsDisabled(disabled) {
+      [
+        'e_slug',
+        'e_domain',
+        'e_landing_file',
+        'e_mod_pedidos',
+        'e_mod_logistica',
+        'e_mod_activos',
+        'e_mod_costos',
+        'e_codigo_externo',
+        'e_webhook_url',
+        'e_pagos_proveedor',
+        'e_pagos_token',
+        'e_cobro_qr',
+      ].forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) el.disabled = disabled;
+      });
+
+      document.querySelectorAll('input[name="e_pagos_auto_conf"]').forEach((el) => {
+        el.disabled = disabled;
+      });
+
+      ['btnUploadLanding', 'btnDeleteLanding'].forEach((id) => {
+        const btn = document.getElementById(id);
+        if (btn) btn.disabled = disabled;
+      });
     }
 
     function requireSuperAdmin(actionLabel = 'realizar esta accion') {
@@ -1704,6 +1748,7 @@ if (logoutLink) {
         const me = await api('/api/me');
         if (me && me.user) {
           const role = String(me.user.role || '').toLowerCase();
+          currentUserEmpresaId = Number(me.user.empresa_id || 0) || null;
           $('#roleBadge').textContent = role === 'super' ? 'SUPER ADMIN' : role.toUpperCase();
 
           if (role === 'super') {
@@ -1942,12 +1987,16 @@ if (logoutLink) {
           ? `<div class="risk-line">${warningHtml.map(esc).join(' · ')}</div>`
           : '';
 
+        const canEditThisCompany = canEditEmpresa(numericId);
+        const editAction = canEditThisCompany ? `
+              <button class="btn-icon" data-action="edit" data-id="${hasNumericId ? numericId : ''}" title="Editar perfil de empresa" ${hasNumericId ? '' : 'disabled'}>
+                <i class="fa-solid fa-pen"></i>
+              </button>
+        ` : '';
+
         const adminOnlyActions = esSuperAdmin ? `
               <button class="btn-icon" data-action="restore" data-id="${hasNumericId ? numericId : ''}" title="Restaurar backup JSON (solo superadmin)" ${hasNumericId ? '' : 'disabled'}>
                 <i class="fa-solid fa-file-arrow-up"></i>
-              </button>
-              <button class="btn-icon" data-action="edit" data-id="${hasNumericId ? numericId : ''}" title="Editar" ${hasNumericId ? '' : 'disabled'}>
-                <i class="fa-solid fa-pen"></i>
               </button>
               <button class="btn-icon" data-action="delete" data-id="${hasNumericId ? numericId : ''}" title="Eliminar" style="color:var(--danger); border-color:rgba(239,68,68,0.3);" ${hasNumericId ? '' : 'disabled'}>
                 <i class="fa-solid fa-trash"></i>
@@ -2001,6 +2050,7 @@ if (logoutLink) {
               <button class="btn-icon" data-action="copy-landing" data-id="${hasNumericId ? numericId : ''}" title="Copiar Link" ${hasNumericId ? '' : 'disabled'}>
                 <i class="fa-solid fa-link"></i>
               </button>
+              ${editAction}
               ${adminOnlyActions}
             </td>
           </tr>
@@ -2075,6 +2125,7 @@ if (logoutLink) {
 
     function openModal() {
       if (!requireSuperAdmin('crear empresas')) return;
+      setSuperAdminOnlyFieldsDisabled(false);
       $('#modal').classList.add('open');
       $('#modalTitle').textContent = 'Nueva Empresa';
       $('#formEmpresa').reset();
@@ -2100,12 +2151,13 @@ if (logoutLink) {
     }
 
     function edit(id) {
-      if (!requireSuperAdmin('editar empresas')) return;
+      if (!requireCanEditEmpresa(id)) return;
       const c = companies.find((x) => x.id === id);
       if (!c) return;
 
+      setSuperAdminOnlyFieldsDisabled(!esSuperAdmin);
       $('#modal').classList.add('open');
-      $('#modalTitle').textContent = 'Editar Empresa';
+      $('#modalTitle').textContent = esSuperAdmin ? 'Editar Empresa' : 'Editar perfil de mi empresa';
       $('#e_landing_file').value = ''; // Reset file input
 
       cuentasBancariasDraft = [];
@@ -2114,6 +2166,7 @@ if (logoutLink) {
 
       // 1. Datos básicos
       $('#e_id').value = c.id;
+      syncSuperAdminUi();
       $('#e_nombre').value = c.nombre || '';
       $('#e_logo_url').value = c.logo_url || '';
       $('#e_telefono').value = c.telefono || '';
@@ -2562,10 +2615,11 @@ if (logoutLink) {
     }
 
     async function save() {
-      if (!requireSuperAdmin('guardar empresas')) return;
       if (saveBusy) return;
 
       const id = $('#e_id').value;
+      if (!id && !requireSuperAdmin('crear empresas')) return;
+      if (id && !requireCanEditEmpresa(Number(id))) return;
 
       const body = {
         nombre: $('#e_nombre').value,
@@ -2577,13 +2631,16 @@ if (logoutLink) {
         condicion_iva: $('#e_condicion_iva').value,
         ciudad: $('#e_ciudad').value,
         direccion: $('#e_direccion').value,
-        landing_slug: $('#e_slug').value,
-        landing_domain: $('#e_domain').value,
         rubro: $('#e_rubro').value,
         etiquetas: $('#e_etiquetas').value,
         prompt_ia_vendedor: $('#e_prompt_vendedor').value,
         prompt_ia_general: $('#e_prompt_general').value,
       };
+
+      if (esSuperAdmin) {
+        body.landing_slug = $('#e_slug').value;
+        body.landing_domain = $('#e_domain').value;
+      }
 
       // Módulos habilitados
       const modulos = {
@@ -2592,7 +2649,7 @@ if (logoutLink) {
         activos: $('#e_mod_activos').checked,
         costos: $('#e_mod_costos').checked,
       };
-      body.modulos = modulos;
+      if (esSuperAdmin) body.modulos = modulos;
 
       // Configuración operativa
       const config_operativa = {
@@ -2666,14 +2723,16 @@ if (logoutLink) {
       body.config_activos = config_activos;
 
       // 🔹 Config integraciones (incluye pagos)
-      const pagosCfg = getPagosConfigFromForm(); // usa el form de "Cobros y Pagos"
+      if (esSuperAdmin) {
+        const pagosCfg = getPagosConfigFromForm(); // usa el form de "Cobros y Pagos"
 
-      const config_integraciones = {
-        codigo_externo: $('#e_codigo_externo').value || null,
-        webhook_url: $('#e_webhook_url').value || null,
-        pagos: pagosCfg,
-      };
-      body.config_integraciones = config_integraciones;
+        const config_integraciones = {
+          codigo_externo: $('#e_codigo_externo').value || null,
+          webhook_url: $('#e_webhook_url').value || null,
+          pagos: pagosCfg,
+        };
+        body.config_integraciones = config_integraciones;
+      }
 
       // --- Licencia (solo super admin) ---
       if (typeof esSuperAdmin !== 'undefined' && esSuperAdmin) {
@@ -2776,9 +2835,10 @@ if (logoutLink) {
       } finally {
         saveBusy = false;
         if (saveBtn) {
-          saveBtn.disabled = !esSuperAdmin;
+          saveBtn.disabled = !canEditEmpresa(Number($('#e_id').value || 0));
           saveBtn.textContent = prevTxt;
         }
+        syncSuperAdminUi();
       }
     }
 

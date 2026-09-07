@@ -445,11 +445,16 @@ export function createEmpresasRouter(deps) {
     }
   });
 
-  // PUT /api/empresas/:id (solo superadmin)
+  // PUT /api/empresas/:id
+  // Superadmin administra todo; admin solo puede editar el perfil de su propia empresa.
   router.put('/:id', withAuth, async (req, res) => {
-    if (!isSuper(req)) return res.status(403).json({ error: 'Solo superadmin' });
-
     const { id } = req.params;
+    const targetEmpresaId = Number(id);
+    const esSuperAdmin = isSuper(req);
+    const myEmpresaId = Number(getEmpresaIdFromToken(req));
+    if (!esSuperAdmin && targetEmpresaId !== myEmpresaId) {
+      return res.status(403).json({ error: 'Solo podés editar el perfil de tu empresa' });
+    }
 
     const {
       nombre,
@@ -483,7 +488,7 @@ export function createEmpresasRouter(deps) {
 
     try {
       let securedIntegraciones = null;
-      if (config_integraciones) {
+      if (esSuperAdmin && config_integraciones) {
         const existingRows = await query(
           'SELECT config_integraciones FROM empresas WHERE id = $1 LIMIT 1',
           [id]
@@ -546,20 +551,20 @@ export function createEmpresasRouter(deps) {
           pais || null,
           rubro || null,
           etiquetas || null,
-          landing_domain || null,
-          landing_slug || null,
+          esSuperAdmin ? (landing_domain || null) : null,
+          esSuperAdmin ? (landing_slug || null) : null,
           prompt_ia_vendedor || null,
           prompt_ia_general || null,
           config_entrega ? JSON.stringify(config_entrega) : null,
-          modulos ? JSON.stringify(modulos) : null,
+          esSuperAdmin && modulos ? JSON.stringify(modulos) : null,
           config_operativa ? JSON.stringify(config_operativa) : null,
           config_logistica ? JSON.stringify(config_logistica) : null,
           config_activos ? JSON.stringify(config_activos) : null,
           securedIntegraciones ? JSON.stringify(securedIntegraciones) : null,
-          plan_estado || null,
-          plan_tipo || null,
-          plan_vencimiento || null,
-          plan_precio || null,
+          esSuperAdmin ? (plan_estado || null) : null,
+          esSuperAdmin ? (plan_tipo || null) : null,
+          esSuperAdmin ? (plan_vencimiento || null) : null,
+          esSuperAdmin ? (plan_precio || null) : null,
           logo_url || null,
           id,
         ]
