@@ -55,6 +55,7 @@ export function createApp(deps) {
 
     // wpp
     ENABLE_WPP,
+    WPP_QR_ONLY,
     wpp: {
       Client,
       LocalAuth,
@@ -314,6 +315,7 @@ export function createApp(deps) {
   // --------------------------------------------------
   registerWhatsAppWeb(app, {
     ENABLE_WPP,
+    WPP_QR_ONLY,
     Client,
     LocalAuth,
     qrcode,

@@ -49,21 +49,42 @@ async function ensureEmpresaWhatsappSchema() {
 }
 
 function createCompanyClient() {
+    const isRender = process.env.RENDER === 'true';
+    const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH || (isRender ? '/usr/bin/chromium' : undefined);
     const nextClient = new Client({
         authStrategy: new LocalAuth({
             clientId: `empresa_${EMPRESA_ID}`,
             dataPath: SESSION_PATH
         }),
+        webVersionCache: {
+            type: 'remote',
+            remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.3000.x.html',
+        },
         puppeteer: {
-            headless: true,
+            headless: 'new',
             args: [
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage', // Optimiza memoria en contenedores
-                '--disable-gpu'
+                '--disable-dev-shm-usage',
+                '--disable-gpu',
+                '--disable-accelerated-2d-canvas',
+                '--no-first-run',
+                '--no-zygote',
+                '--disable-extensions',
+                '--disable-background-timer-throttling',
+                '--disable-backgrounding-occluded-windows',
+                '--disable-renderer-backgrounding',
+                '--disable-features=VizDisplayCompositor',
+                '--window-size=1920,1080',
+                '--disable-web-security',
+                '--disable-features=IsolateOrigins,site-per-process',
+                '--disable-software-rasterizer',
+                '--ignore-certificate-errors',
+                '--ignore-certificate-errors-spki-list',
             ],
-            // En Docker (Debian/Ubuntu), usamos el binario instalado por el Dockerfile
-            executablePath: process.env.NODE_ENV === 'production' ? '/usr/bin/chromium' : undefined
+            executablePath,
+            ignoreHTTPSErrors: true,
+            timeout: 60000,
         }
     });
 
@@ -147,7 +168,21 @@ async function resetAndRestartClient() {
         await initializeClient();
     } catch (err) {
         console.error(`[Empresa ${EMPRESA_ID}] Error reseteando cliente:`, err.message);
-        await query('UPDATE empresas SET wpp_status = $1 WHERE id = $2', ['disconnected', EMPRESA_ID]);
+        await query(
+            'UPDATE empresas SET wpp_status = $1, wpp_qr_code = NULL, updated_at = NOW() WHERE id = $2',
+            ['disconnected', EMPRESA_ID]
+        );
+        try {
+            console.log(`[Empresa ${EMPRESA_ID}] Reintentando inicialización luego del error de reset...`);
+            await new Promise(resolve => setTimeout(resolve, 5000));
+            await initializeClient();
+        } catch (retryErr) {
+            console.error(`[Empresa ${EMPRESA_ID}] Reintento tras reset falló:`, retryErr.message);
+            await query(
+                'UPDATE empresas SET wpp_status = $1, wpp_qr_code = NULL, updated_at = NOW() WHERE id = $2',
+                ['disconnected', EMPRESA_ID]
+            );
+        }
     } finally {
         isResetting = false;
     }

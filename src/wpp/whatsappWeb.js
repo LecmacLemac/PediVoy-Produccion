@@ -12,6 +12,7 @@ import { WPP_SESSION_ID, limpiarLocksSesion as clearWppSessionLocks, safeErrorSt
 export function registerWhatsAppWeb(app, deps) {
   const {
     ENABLE_WPP,
+    WPP_QR_ONLY = false,
     Client,
     LocalAuth,
     qrcode,
@@ -99,6 +100,7 @@ export function registerWhatsAppWeb(app, deps) {
   if (ENABLE_WPP) {
     const { wppClient: createdClient, isRender } = createWppClientLifecycle({
       ENABLE_WPP,
+      WPP_QR_ONLY,
       Client,
       LocalAuth,
       handlers,
@@ -176,6 +178,7 @@ export function registerWhatsAppWeb(app, deps) {
 
   registerWppRoutes(app, {
     ENABLE_WPP,
+    WPP_QR_ONLY,
     qrcode,
     fs,
     path,
@@ -233,7 +236,7 @@ export function registerWhatsAppWeb(app, deps) {
   // --------------------------------------------------
 
   const outboxProcessor = createOutboxProcessor({
-    ENABLE_WPP,
+    ENABLE_WPP: ENABLE_WPP && !WPP_QR_ONLY,
     query,
     lidByPhone,
     safeErrorString,
@@ -245,7 +248,7 @@ export function registerWhatsAppWeb(app, deps) {
 
 
   // --- PROCESADOR DE COLA WHATSAPP (Outbox Loop) CORREGIDO ---
-  if (ENABLE_WPP) {
+  if (ENABLE_WPP && !WPP_QR_ONLY) {
     // Intervalo más inteligente: procesar solo si está conectado y no procesando
     setInterval(() => {
       outboxProcessor.releaseWatchdogIfStuck(45000);
@@ -258,7 +261,7 @@ export function registerWhatsAppWeb(app, deps) {
 
     // Log de estado periódico con métricas
     setInterval(async () => {
-      if (ENABLE_WPP) {
+      if (ENABLE_WPP && !WPP_QR_ONLY) {
         try {
           const pendingResult = await query(
             'SELECT COUNT(*) as count FROM wpp_outbox WHERE status = $1',
@@ -274,6 +277,8 @@ export function registerWhatsAppWeb(app, deps) {
         }
       }
     }, 30000); // Cada 30 segundos
+  } else if (ENABLE_WPP && WPP_QR_ONLY) {
+    console.log('[WPP SERVER] Outbox deshabilitado por modo solo QR.');
   }
   registerWppCronAndRoutes(app, {
     query,

@@ -10,9 +10,11 @@ export function createWppDeps() {
   // Solo habilitar WhatsApp cuando se pide explícitamente.
   // En Render puede no existir navegador, así que no se debe forzar por RENDER=true.
   const ENABLE_WPP = process.env.ENABLE_WPP === '1';
+  const WPP_QR_ONLY = process.env.WPP_QR_ONLY === '1';
 
   return {
     ENABLE_WPP,
+    WPP_QR_ONLY,
     wpp: {
       Client,
       LocalAuth,

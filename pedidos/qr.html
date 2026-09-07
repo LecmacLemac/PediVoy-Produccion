@@ -509,6 +509,7 @@
 
         <h1>Vincular Bot</h1>
         <p class="subtitle">Escanea para conectar el motor de WhatsApp.</p>
+        <div id="generalWppStatus" class="status-pill disconnected" style="margin:0 auto 1rem;">Verificando estado...</div>
 
         <div id="qr-container" class="qr-container">
             <span style="color:var(--brand); animation: pulse 1s infinite;">Conectando...</span>
@@ -763,6 +764,7 @@
 
             if (isSuper) {
                 // Super Admin: QR interno de WhatsApp + QR público + prompts globales.
+                loadGeneralWppStatus();
                 loadQR();
                 $('#mainLayout').classList.add('admin-view');
                 loadGlobalPrompts();
@@ -817,6 +819,7 @@
 
             const html = await res.text();
             container.innerHTML = html;
+            loadGeneralWppStatus();
             if (!/Conectado/i.test(html)) scheduleQrRefresh();
         } catch (e) {
             console.error(e);
@@ -827,6 +830,28 @@
         }
     }
     function reloadQR() { stopQrRefresh(); loadQR(); }
+
+    async function loadGeneralWppStatus() {
+        const badge = $('#generalWppStatus');
+        if (!badge) return;
+
+        try {
+            const res = await authFetch('/api/whatsapp/status');
+            const data = await res.json().catch(() => null);
+            if (!res.ok || !data?.ok) throw new Error(data?.error || 'No se pudo leer estado');
+
+            let cls = 'disconnected';
+            if (data.connected) cls = 'connected';
+            else if (data.has_qr) cls = 'awaiting_scan';
+            else if (data.initializing) cls = 'resetting';
+
+            badge.className = `status-pill ${cls}`;
+            badge.textContent = `${data.message}${data.qr_only ? ' · solo QR' : ''}`;
+        } catch (e) {
+            badge.className = 'status-pill disconnected';
+            badge.textContent = e.message || 'No se pudo leer el estado general';
+        }
+    }
 
     function stopCompanyWppRefresh() {
         if (companyWppRefreshTimer) {
@@ -1328,6 +1353,7 @@
             }
 
             toast('Sesión reseteada. Esperá unos segundos y escaneá el nuevo QR.');
+            loadGeneralWppStatus();
             setTimeout(loadQR, 1500);
         } catch (e) {
             console.error(e);

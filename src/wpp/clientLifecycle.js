@@ -2,6 +2,7 @@ import { WPP_SESSION_ID, getWppSessionBasePath } from './sessionUtils.js';
 
 export function createWppClientLifecycle({
   ENABLE_WPP,
+  WPP_QR_ONLY = false,
   Client,
   LocalAuth,
   handlers,
@@ -15,7 +16,7 @@ export function createWppClientLifecycle({
 }) {
   if (!ENABLE_WPP) return { wppClient: null, isRender: false };
 
-  console.log('[WPP SERVER] WhatsApp habilitado. Inicializando cliente...');
+  console.log(`[WPP SERVER] WhatsApp habilitado${WPP_QR_ONLY ? ' en modo solo QR' : ''}. Inicializando cliente...`);
 
   const isRender = process.env.RENDER === 'true';
   const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH || (isRender ? '/usr/bin/chromium' : null);
@@ -68,7 +69,7 @@ export function createWppClientLifecycle({
     setState({ isConnected: true, isReadyWpp: false, lastQr: null });
     console.log('[WPP SERVER] Autenticado ✅');
 
-    if (!getState().wppHandlersStarted) {
+    if (!WPP_QR_ONLY && !getState().wppHandlersStarted) {
       setState({ wppHandlersStarted: true });
       try {
         console.log('[WPP SERVER] Iniciando handlers preventivamente (authenticated)...');
@@ -109,7 +110,7 @@ export function createWppClientLifecycle({
     setState({ isConnected: true, isReadyWpp: true, lastQr: null });
     console.log('[WPP SERVER] CLIENTE LISTO (READY) ✅');
 
-    if (!getState().wppHandlersStarted) {
+    if (!WPP_QR_ONLY && !getState().wppHandlersStarted) {
       setState({ wppHandlersStarted: true });
       try {
         console.log('[WPP SERVER] Iniciando handlers de texto...');
@@ -163,7 +164,11 @@ export function createWppClientLifecycle({
     scheduleInitWhatsApp(10000);
   });
 
-  wppClient.on('message', handleIncomingMediaMessage);
+  if (!WPP_QR_ONLY) {
+    wppClient.on('message', handleIncomingMediaMessage);
+  } else {
+    console.log('[WPP SERVER] Modo solo QR activo: no se atienden mensajes entrantes.');
+  }
 
   return { wppClient, isRender };
 }

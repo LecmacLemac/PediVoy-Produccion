@@ -3,6 +3,7 @@ import { WPP_SESSION_ID, getWppSessionDir, wait } from './sessionUtils.js';
 export function registerWppRoutes(app, deps) {
   const {
     ENABLE_WPP,
+    WPP_QR_ONLY = false,
     qrcode,
     fs,
     path,
@@ -19,13 +20,47 @@ export function registerWppRoutes(app, deps) {
   let lastResetAt = 0;
   const RESET_COOLDOWN_MS = 15000;
 
+  app.get('/api/whatsapp/status', withAuth, async (req, res) => {
+    if (!isSuper(req)) return res.status(403).json({ error: 'Solo SUPER ADMIN' });
+
+    const state = getState();
+    return res.json({
+      ok: true,
+      enabled: Boolean(ENABLE_WPP),
+      qr_only: Boolean(WPP_QR_ONLY),
+      connected: Boolean(state.isConnected),
+      ready: Boolean(state.isReadyWpp),
+      initializing: Boolean(state.isInitializingWpp),
+      shutting_down: Boolean(state.isShuttingDownWpp),
+      has_qr: Boolean(state.lastQr),
+      reset_in_progress: Boolean(isResetInProgress),
+      session_id: WPP_SESSION_ID,
+      message: ENABLE_WPP
+        ? (state.isConnected
+            ? 'WhatsApp general conectado.'
+            : (state.lastQr ? 'QR general disponible para escanear.' : 'WhatsApp general inicializando o esperando QR.'))
+        : 'WhatsApp general deshabilitado. En local levantá con ENABLE_WPP=1.',
+    });
+  });
+
   app.get('/api/whatsapp/qr', withAuth, async (req, res) => {
     if (!isSuper(req)) return res.status(403).send('<h1>⛔ Acceso Denegado</h1>');
-    if (!ENABLE_WPP) return res.status(503).send('WhatsApp deshabilitado en este entorno');
+    if (!ENABLE_WPP) {
+      return res
+        .status(503)
+        .send('<h2>WhatsApp general deshabilitado</h2><p>En local levantá el server con ENABLE_WPP=1 npm start o npm run start:qr.</p>');
+    }
 
-    const { isConnected, lastQr } = getState();
-    if (isConnected) return res.send('<h2 style="color:green">Conectado ✅</h2>');
-    if (!lastQr) return res.send('<h2>Cargando QR... espera la consola</h2>');
+    const { isConnected, isInitializingWpp, lastQr } = getState();
+    if (isConnected) {
+      return res.send(`<h2 style="color:green">Conectado ✅${WPP_QR_ONLY ? ' · modo solo QR' : ''}</h2>`);
+    }
+    if (!lastQr) {
+      const msg = isInitializingWpp
+        ? 'Inicializando WhatsApp general...'
+        : 'Cargando QR... espera la consola';
+      return res.send(`<h2>${msg}</h2><p>${WPP_QR_ONLY ? 'Modo solo QR activo.' : 'Worker general activo.'}</p>`);
+    }
 
     try {
       const url = await qrcode.toDataURL(lastQr);

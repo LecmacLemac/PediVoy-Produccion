@@ -10,6 +10,7 @@
   "scripts": {
     "prestart": "node scripts/check-node.js",
     "start": "node server.js",
+    "start:qr": "ENABLE_WPP=1 WPP_QR_ONLY=1 node server.js",
     "predev": "node scripts/check-node.js",
     "dev": "nodemon server.js",
     "worker": "node src/wppWorker.js",
