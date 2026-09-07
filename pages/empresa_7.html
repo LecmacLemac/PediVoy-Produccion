@@ -1,0 +1,315 @@
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Soderia CONAN - Catálogo de Productos</title>
+  <style>
+    :root {
+      --bg: #1a1a1a;
+      --bg-2: #333;
+      --ink: #fff;
+      --muted: #777;
+      --brand: #007bff;
+      --brand-hover: #0056b3;
+      --surface: #222;
+      --border: #444;
+      --glass: rgba(255, 255, 255, .1);
+      --radius: 8px;
+    }
+
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      color: var(--ink);
+      background: radial-gradient(circle, var(--bg), var(--bg-2));
+    }
+
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 1000;
+      background: var(--glass);
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid var(--border);
+      padding: 10px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .btn {
+      padding: 8px 16px;
+      border-radius: var(--radius);
+      transition: background-color 0.3s ease;
+      cursor: pointer;
+      border: none;
+    }
+
+    .btn-primary {
+      background-color: var(--brand);
+      color: var(--ink);
+    }
+
+    .btn-primary:hover {
+      background-color: var(--brand-hover);
+    }
+
+    .btn-ghost {
+      background-color: transparent;
+      color: var(--ink);
+    }
+
+    main {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 16px;
+      padding: 16px;
+    }
+
+    .card {
+      background: var(--surface);
+      border-radius: var(--radius);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+      overflow: hidden;
+      transition: transform 0.3s ease;
+      cursor: pointer;
+      position: relative;
+    }
+
+    .card:hover {
+      transform: translateY(-4px);
+    }
+
+    .promo-img {
+      height: 180px;
+      width: 100%;
+      object-fit: cover;
+    }
+
+    .badge-pop {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      background-color: var(--brand);
+      color: var(--ink);
+      padding: 4px 8px;
+      border-radius: var(--radius);
+    }
+
+    .field-error {
+      color: red;
+      margin-top: 4px;
+      font-size: 0.9em;
+    }
+
+    .popover {
+      position: absolute;
+      top: 100%;
+      right: 0;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+      width: 300px;
+      border-radius: var(--radius);
+      padding: 16px;
+      display: none;
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(-6px);
+      transition: opacity 0.3s ease, transform 0.3s ease;
+    }
+
+    .popover.open {
+      display: block;
+      opacity: 1;
+      pointer-events: all;
+      transform: translateY(0);
+    }
+
+    .toast {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background-color: var(--surface);
+      color: var(--ink);
+      padding: 16px;
+      border-radius: var(--radius);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+      display: none;
+    }
+
+    .toast.show {
+      display: block;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Soderia CONAN</h1>
+    <button id="btnMisPedidos" class="btn btn-ghost" aria-expanded="false" aria-controls="popoverPedidos">🔍 Mis Pedidos</button>
+  </header>
+
+  <div id="popoverPedidos" class="popover" role="dialog" aria-label="Buscar mis pedidos">
+    <form id="formPedidos" novalidate>
+      <label for="telefono">Tu teléfono</label>
+      <input type="tel" id="telefono" placeholder="Ej: 11 2345 6789" autocomplete="tel" inputmode="numeric" required>
+      <div id="telError" class="field-error" aria-live="polite"></div>
+      <button type="submit" class="btn btn-primary" style="width: 100%;">Buscar pedido</button>
+    </form>
+  </div>
+
+  <main id="productGrid">
+    <!-- Productos renderizados aquí -->
+  </main>
+
+  <div id="emptyState" style="display: none; text-align: center; padding: 20px;">
+    No hay productos disponibles.
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script>
+    const empresa_id = 7;
+    const FALLBACK_SVG_DATA_URI = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="5" ry="5"></rect><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>';
+
+    document.addEventListener("DOMContentLoaded", function() {
+      fetchProductos();
+
+      const btnMisPedidos = document.getElementById('btnMisPedidos');
+      const popoverPedidos = document.getElementById('popoverPedidos');
+      const formPedidos = document.getElementById('formPedidos');
+      const telefonoInput = document.getElementById('telefono');
+      const telError = document.getElementById('telError');
+      const toast = document.getElementById('toast');
+
+      btnMisPedidos.addEventListener('click', function() {
+        const isOpen = popoverPedidos.classList.toggle('open');
+        btnMisPedidos.setAttribute('aria-expanded', isOpen);
+        if (isOpen) {
+          telError.textContent = '';
+          setTimeout(() => telefonoInput.focus(), 0);
+        }
+      });
+
+      document.addEventListener('click', function(event) {
+        if (!popoverPedidos.contains(event.target) && !btnMisPedidos.contains(event.target)) {
+          popoverPedidos.classList.remove('open');
+          btnMisPedidos.setAttribute('aria-expanded', 'false');
+        }
+      });
+
+      document.addEventListener('keydown', function(event) {
+        if (event.key === 'Escape') {
+          popoverPedidos.classList.remove('open');
+          btnMisPedidos.setAttribute('aria-expanded', 'false');
+        }
+      });
+
+      formPedidos.addEventListener('submit', function(event) {
+        event.preventDefault();
+        telError.textContent = '';
+        const phone = telefonoInput.value;
+        const normalizedPhone = normalizePhone(phone);
+        if (normalizedPhone.length < 8) {
+          telError.textContent = "Ingresá un teléfono válido.";
+          return;
+        }
+        const telDB = buildTelefonoDB(phone);
+        if (!telDB) {
+          telError.textContent = "Formato no reconocido. Probá con característica + número.";
+          return;
+        }
+        buscarPedido(telDB);
+      });
+    });
+
+    function fetchProductos() {
+      fetch(`/api/public/productos?empresa_id=${empresa_id}&scope=landing`)
+        .then(response => response.json())
+        .then(productos => {
+          if (!productos.length) {
+            document.getElementById('emptyState').style.display = 'block';
+          } else {
+            renderProducts(productos);
+          }
+        })
+        .catch(() => {
+          showToast("Error al cargar productos");
+        });
+    }
+
+    function renderProducts(productos) {
+      const productGrid = document.getElementById('productGrid');
+      productos.sort((a, b) => {
+        if (a.etiqueta && !b.etiqueta) return -1;
+        if (!a.etiqueta && b.etiqueta) return 1;
+        return a.nombre.localeCompare(b.nombre);
+      });
+
+      productGrid.innerHTML = productos.map(producto => {
+        const imageUrl = producto.imagen_promo || producto.imagen || FALLBACK_SVG_DATA_URI;
+        return `
+          <div class="card" onclick="window.location.href='/pedidos/index.html?empresa_id=${empresa_id}&add=${producto.id}'">
+            <img class="promo-img" src="${imageUrl}" loading="lazy" onerror="this.src='${FALLBACK_SVG_DATA_URI}'" alt="${producto.nombre}">
+            ${producto.etiqueta ? `<div class="badge-pop">${producto.etiqueta}</div>` : ''}
+            <div style="padding: 16px;">
+              <h3>${producto.nombre}</h3>
+              <p>ARS ${new Intl.NumberFormat('es-AR').format(producto.precio)}</p>
+              ${producto.descripcion ? `<ul>${producto.descripcion.split('\n').map(linea => `<li>${linea}</li>`).join('')}</ul>` : ''}
+              <button class="btn btn-primary" onclick="event.stopPropagation(); window.location.href='/pedidos/index.html?empresa_id=${empresa_id}&add=${producto.id}'">Pedir Ahora</button>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function showToast(msg) {
+      const toast = document.getElementById('toast');
+      toast.textContent = msg;
+      toast.classList.add('show');
+      setTimeout(() => toast.classList.remove('show'), 3000);
+    }
+
+    function normalizePhone(phone) {
+      return String(phone || '').replace(/\D/g, '');
+    }
+
+    function buildTelefonoDB(phone) {
+      const n = normalizePhone(phone);
+      if (n.length === 10) return '549' + n;
+      if (n.length === 11 && n.startsWith('0')) return '549' + n.slice(1);
+      if (n.length === 12 && n.startsWith('54')) return '549' + n.slice(2);
+      if (n.length === 13 && n.startsWith('549')) return n;
+      return null;
+    }
+
+    function buscarPedido(telDB) {
+      const formPedidos = document.getElementById('formPedidos');
+      const submitButton = formPedidos.querySelector('button[type="submit"]');
+
+      submitButton.disabled = true;
+      submitButton.textContent = "Buscando…";
+
+      fetch(`/public/ultimo-pedido?empresa_id=${empresa_id}&telefono=${encodeURIComponent(telDB)}`)
+        .then(response => response.json())
+        .then(pedido => {
+          if (pedido.id) {
+            window.location.href = `/pedidos/pedido.html?id=${pedido.id}`;
+          } else {
+            showToast("No encontramos pedidos recientes…");
+          }
+        })
+        .catch(() => {
+          showToast("Error al consultar pedidos");
+        })
+        .finally(() => {
+          submitButton.disabled = false;
+          submitButton.textContent = "Buscar pedido";
+        });
+    }
+  </script>
+</body>
+</html>

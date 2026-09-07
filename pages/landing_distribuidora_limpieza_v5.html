@@ -1,0 +1,1606 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title id="pageTitle">Distribuidora de Limpieza</title>
+  <meta id="metaDescription" name="description" content="Productos de limpieza y entrega a domicilio.">
+  <meta id="themeColor" name="theme-color" content="#0b7a75">
+
+  <style>
+    :root{
+      --bg:#f5f8f7;
+      --surface:#ffffff;
+      --surface-2:#edf5f3;
+      --surface-3:#e7f0ee;
+      --ink:#142321;
+      --muted:#64736f;
+      --line:#d7e2df;
+
+      --brand:#0b7a75;
+      --brand-2:#55c2b8;
+      --brand-3:#123b3a;
+      --lime:#a3e635;
+      --amber:#f5b642;
+
+      --brand-rgb:11,122,117;
+      --brand2-rgb:85,194,184;
+
+      --ok:#15803d;
+      --shadow:0 20px 55px rgba(18,59,58,.10);
+      --shadow-strong:0 34px 85px rgba(18,59,58,.16);
+
+      --radius:28px;
+      --radius-sm:18px;
+    }
+
+    *{box-sizing:border-box}
+    html{scroll-behavior:smooth}
+    body{
+      margin:0;
+      min-height:100vh;
+      overflow-x:hidden;
+      font-family:Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color:var(--ink);
+      background:
+        radial-gradient(circle at 5% 5%,rgba(var(--brand2-rgb),.12),transparent 26rem),
+        radial-gradient(circle at 95% 8%,rgba(163,230,53,.08),transparent 24rem),
+        linear-gradient(180deg,#f8fbfa 0%,#f2f7f5 100%);
+    }
+
+    body::before{
+      content:"";
+      position:fixed;
+      inset:0;
+      pointer-events:none;
+      opacity:.38;
+      background-image:
+        linear-gradient(rgba(18,59,58,.025) 1px,transparent 1px),
+        linear-gradient(90deg,rgba(18,59,58,.025) 1px,transparent 1px);
+      background-size:40px 40px;
+      mask-image:linear-gradient(to bottom,black,transparent 75%);
+    }
+
+    a{text-decoration:none;color:inherit}
+    img{display:block;max-width:100%}
+    button,input{font:inherit}
+    button{color:inherit}
+    .hidden{display:none!important}
+
+    .wrap{width:min(1200px,92%);margin:0 auto}
+    .section{padding:92px 0}
+    .section-head{max-width:760px;margin-bottom:36px}
+    .eyebrow{
+      display:inline-flex;align-items:center;gap:8px;
+      padding:8px 12px;border-radius:999px;
+      background:rgba(var(--brand-rgb),.07);
+      border:1px solid rgba(var(--brand-rgb),.14);
+      color:var(--brand);
+      font-size:.75rem;font-weight:950;text-transform:uppercase;letter-spacing:.12em
+    }
+    .eyebrow svg{width:15px;height:15px}
+    .section h2{
+      margin:16px 0 10px;
+      font-size:clamp(2.1rem,4vw,3.7rem);
+      line-height:1.02;letter-spacing:-.055em
+    }
+    .section-head p{margin:0;color:var(--muted);font-size:1.03rem;line-height:1.75}
+
+    /* HEADER */
+    .header-shell{
+      position:sticky;top:0;z-index:100;
+      padding:12px 0;
+      background:rgba(248,251,250,.84);
+      backdrop-filter:blur(18px)
+    }
+    .navbar{
+      min-height:70px;
+      display:flex;align-items:center;justify-content:space-between;gap:20px;
+      padding:10px 12px 10px 18px;
+      background:rgba(255,255,255,.95);
+      border:1px solid rgba(215,226,223,.95);
+      border-radius:24px;
+      box-shadow:0 10px 35px rgba(18,59,58,.07)
+    }
+    .brand{
+      display:flex;align-items:center;gap:11px;min-width:0;
+      font-weight:950;letter-spacing:-.03em
+    }
+    .brand-logo{height:40px;max-width:160px;object-fit:contain}
+    .brand-mark{
+      width:42px;height:42px;border-radius:15px;
+      display:grid;place-items:center;
+      background:linear-gradient(135deg,var(--brand),var(--brand-3));
+      color:#fff;font-weight:950;
+      box-shadow:0 10px 24px rgba(var(--brand-rgb),.22)
+    }
+    .brand-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .nav-links{display:flex;align-items:center;gap:4px}
+    .nav-links a{
+      padding:10px 12px;border-radius:12px;
+      color:#5f706c;font-size:.91rem;font-weight:800
+    }
+    .nav-links a:hover{background:var(--surface-2);color:var(--ink)}
+    .actions{display:flex;align-items:center;gap:9px}
+
+    .btn{
+      min-height:44px;padding:0 16px;border-radius:14px;border:0;
+      display:inline-flex;align-items:center;justify-content:center;gap:8px;
+      font-weight:900;cursor:pointer;transition:.2s ease;white-space:nowrap
+    }
+    .btn:hover{transform:translateY(-1px)}
+    .btn-primary{
+      color:#fff;
+      background:linear-gradient(135deg,var(--brand),var(--brand-3));
+      box-shadow:0 12px 28px rgba(var(--brand-rgb),.22)
+    }
+    .btn-primary:hover{box-shadow:0 16px 34px rgba(var(--brand-rgb),.30)}
+    .btn-soft{
+      background:#f2f7f5;color:var(--ink);border:1px solid var(--line)
+    }
+    .btn-lime{
+      background:var(--lime);color:#29420d;box-shadow:0 12px 28px rgba(163,230,53,.20)
+    }
+
+    /* POPOVER */
+    .user-menu{position:relative}
+    .popover{
+      position:absolute;right:0;top:calc(100% + 12px);
+      width:min(340px,90vw);padding:18px;
+      border-radius:20px;border:1px solid var(--line);
+      background:#fff;box-shadow:var(--shadow-strong);
+      opacity:0;visibility:hidden;transform:translateY(-8px) scale(.985);
+      transition:.18s ease;transform-origin:top right
+    }
+    .popover.open{opacity:1;visibility:visible;transform:none}
+    .popover label{display:block;margin-bottom:8px;font-size:.85rem;font-weight:900}
+    .field{
+      width:100%;height:48px;padding:0 14px;margin-bottom:10px;
+      border:1px solid var(--line);border-radius:13px;
+      background:#f8fbfa;color:var(--ink);outline:none
+    }
+    .field:focus{border-color:var(--brand);box-shadow:0 0 0 4px rgba(var(--brand-rgb),.09)}
+    .popover .btn{width:100%}
+
+    /* HERO */
+    .hero{padding:68px 0 54px}
+    .hero-grid{
+      display:grid;
+      grid-template-columns:minmax(0,1.02fr) minmax(390px,.98fr);
+      gap:58px;align-items:center
+    }
+    .hero-badge{
+      display:inline-flex;align-items:center;gap:9px;
+      padding:8px 12px;border-radius:999px;
+      background:#eff8f6;border:1px solid #cae6df;
+      color:#315e59;font-size:.84rem;font-weight:850
+    }
+    .hero-badge span{
+      width:24px;height:24px;border-radius:50%;
+      display:grid;place-items:center;background:#dff5ef;color:var(--brand)
+    }
+    .hero h1{
+      margin:18px 0 18px;
+      max-width:780px;
+      font-size:clamp(3.3rem,6.9vw,6.3rem);
+      line-height:.91;letter-spacing:-.075em
+    }
+    .hero h1 .accent{color:var(--brand)}
+    .hero-copy{
+      max-width:670px;margin:0 0 28px;
+      color:var(--muted);font-size:1.13rem;line-height:1.75
+    }
+    .hero-actions{display:flex;gap:10px;flex-wrap:wrap}
+    .hero-actions .btn{min-height:52px;padding:0 21px;border-radius:15px}
+    .hero-proof{
+      display:flex;align-items:center;gap:16px;flex-wrap:wrap;
+      margin-top:24px;color:#667771;font-size:.87rem;font-weight:750
+    }
+    .hero-proof span{display:flex;align-items:center;gap:7px}
+    .hero-proof i{
+      width:22px;height:22px;border-radius:50%;display:grid;place-items:center;
+      font-style:normal;background:#dcfce7;color:#15803d;font-size:.76rem;font-weight:950
+    }
+
+    /* HERO VISUAL - CLEANING PRODUCTS */
+    .hero-visual{position:relative;min-height:570px}
+    .cleaning-back{
+      position:absolute;right:32px;top:34px;width:430px;height:485px;
+      border-radius:36px;
+      background:
+        radial-gradient(circle at 70% 18%,rgba(163,230,53,.18),transparent 15rem),
+        linear-gradient(145deg,#0d8179,#123b3a);
+      box-shadow:0 34px 80px rgba(18,59,58,.20);
+      overflow:hidden
+    }
+    .cleaning-back::before{
+      content:"";
+      position:absolute;inset:20px;border-radius:28px;
+      border:1px solid rgba(255,255,255,.13)
+    }
+    .bubbles{
+      position:absolute;inset:0;pointer-events:none
+    }
+    .bubble{
+      position:absolute;border-radius:50%;border:1px solid rgba(255,255,255,.28);background:rgba(255,255,255,.06)
+    }
+    .bubble.b1{width:74px;height:74px;right:28px;top:28px}
+    .bubble.b2{width:30px;height:30px;right:110px;top:92px}
+    .bubble.b3{width:46px;height:46px;left:28px;bottom:58px}
+    .bubble.b4{width:20px;height:20px;left:96px;bottom:120px}
+
+    .shelf{
+      position:absolute;left:34px;right:34px;bottom:42px;height:18px;
+      border-radius:8px;background:#0b2928;box-shadow:0 12px 0 rgba(255,255,255,.05)
+    }
+
+    .bottle{
+      position:absolute;bottom:60px;
+      width:112px;height:238px;border-radius:28px 28px 22px 22px;
+      background:linear-gradient(180deg,#f7fffd,#d7f4ef);
+      box-shadow:0 22px 40px rgba(0,0,0,.17);
+      border:1px solid rgba(255,255,255,.75)
+    }
+    .bottle::before{
+      content:"";position:absolute;left:34px;right:34px;top:-31px;height:43px;
+      border-radius:10px 10px 7px 7px;background:#072e2c
+    }
+    .bottle::after{
+      content:"";position:absolute;left:17px;right:17px;top:82px;height:72px;
+      border-radius:15px;background:linear-gradient(135deg,var(--brand),var(--brand-2));
+      box-shadow:inset 0 0 0 1px rgba(255,255,255,.18)
+    }
+    .bottle.one{left:62px;transform:rotate(-4deg)}
+    .bottle.two{
+      left:176px;width:102px;height:208px;
+      background:linear-gradient(180deg,#fff,#edfbea);transform:rotate(2deg)
+    }
+    .bottle.two::before{background:#a3e635}
+    .bottle.two::after{background:linear-gradient(135deg,#77a728,#a3e635)}
+    .bottle.three{
+      right:55px;width:118px;height:250px;
+      background:linear-gradient(180deg,#fff,#e3f3ff);transform:rotate(4deg)
+    }
+    .bottle.three::before{background:#1e5d86}
+    .bottle.three::after{background:linear-gradient(135deg,#1e5d86,#55c2b8)}
+
+    .spray{
+      position:absolute;right:52px;top:64px;width:94px;height:158px;
+      border-radius:24px 24px 20px 20px;
+      background:linear-gradient(180deg,#fff,#e4f2ef);
+      box-shadow:0 18px 38px rgba(0,0,0,.13);
+      transform:rotate(8deg)
+    }
+    .spray::before{
+      content:"";position:absolute;left:35px;top:-30px;width:26px;height:42px;
+      border-radius:7px;background:#fb7185
+    }
+    .spray::after{
+      content:"";position:absolute;left:44px;top:-28px;width:58px;height:16px;
+      border-radius:4px 12px 12px 4px;background:#fb7185;transform:rotate(-8deg);transform-origin:left center
+    }
+
+    .visual-card{
+      position:absolute;left:0;bottom:44px;width:235px;padding:16px;
+      border-radius:20px;background:#fff;color:var(--ink);
+      border:1px solid var(--line);box-shadow:var(--shadow-strong);transform:rotate(-4deg)
+    }
+    .visual-card-top{display:flex;align-items:center;gap:10px}
+    .visual-icon{
+      width:42px;height:42px;border-radius:14px;display:grid;place-items:center;
+      background:#e6f6f2;color:var(--brand)
+    }
+    .visual-card strong{display:block;font-size:.92rem}
+    .visual-card small{display:block;margin-top:3px;color:var(--muted)}
+    .visual-meter{height:7px;margin-top:14px;border-radius:999px;background:#e8efed;overflow:hidden}
+    .visual-meter span{display:block;width:82%;height:100%;background:linear-gradient(90deg,var(--brand),var(--lime))}
+
+    .wholesale-sticker{
+      position:absolute;right:-2px;bottom:10px;width:104px;height:104px;
+      border-radius:50%;display:grid;place-items:center;text-align:center;padding:12px;
+      background:#eaffbe;color:#36520d;border:6px solid #f4ffd8;
+      font-size:.66rem;font-weight:950;text-transform:uppercase;letter-spacing:.075em;
+      transform:rotate(8deg);box-shadow:var(--shadow)
+    }
+
+    /* SECTORS */
+    .sectors{padding:14px 0 26px}
+    .sectors-grid{
+      display:grid;grid-template-columns:repeat(5,1fr);gap:12px
+    }
+    .sector-card{
+      padding:18px;border-radius:20px;background:#fff;border:1px solid var(--line);
+      box-shadow:0 10px 25px rgba(18,59,58,.05);transition:.18s ease
+    }
+    .sector-card:hover{transform:translateY(-3px);box-shadow:var(--shadow)}
+    .sector-icon{
+      width:44px;height:44px;border-radius:14px;display:grid;place-items:center;margin-bottom:18px
+    }
+    .sector-icon.a{background:#dff5ef;color:#0b7a75}
+    .sector-icon.b{background:#eefccf;color:#5b7c16}
+    .sector-icon.c{background:#e0f2fe;color:#0369a1}
+    .sector-icon.d{background:#fef3c7;color:#b45309}
+    .sector-icon.e{background:#ffe4e6;color:#be123c}
+    .sector-icon svg{width:22px;height:22px}
+    .sector-card strong{display:block}
+    .sector-card span{display:block;margin-top:4px;color:var(--muted);font-size:.82rem}
+
+    /* CATEGORIES */
+    .category-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:14px}
+    .category-card{
+      position:relative;overflow:hidden;padding:20px;border-radius:24px;
+      background:#fff;border:1px solid var(--line);box-shadow:0 12px 28px rgba(18,59,58,.055);
+      min-height:170px
+    }
+    .category-card::after{
+      content:"";position:absolute;right:-35px;bottom:-45px;width:120px;height:120px;border-radius:50%;
+      background:rgba(var(--brand-rgb),.05)
+    }
+    .category-icon-big{
+      width:52px;height:52px;border-radius:17px;display:grid;place-items:center;margin-bottom:28px;
+      background:var(--surface-2);color:var(--brand)
+    }
+    .category-icon-big svg{width:27px;height:27px}
+    .category-card h3{position:relative;z-index:1;margin:0 0 5px;font-size:1rem}
+    .category-card p{position:relative;z-index:1;margin:0;color:var(--muted);font-size:.82rem;line-height:1.5}
+
+    /* PRODUCTS */
+    .products-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px}
+    .product-card{
+      position:relative;overflow:hidden;display:flex;flex-direction:column;min-height:100%;
+      border-radius:26px;background:#fff;border:1px solid var(--line);
+      box-shadow:0 12px 30px rgba(18,59,58,.06);transition:.22s ease
+    }
+    .product-card:hover{transform:translateY(-5px);box-shadow:var(--shadow-strong);border-color:rgba(var(--brand-rgb),.22)}
+    .product-media{
+      height:245px;display:grid;place-items:center;overflow:hidden;
+      background:
+        radial-gradient(circle at 75% 18%,rgba(163,230,53,.12),transparent 35%),
+        linear-gradient(135deg,#f7fbfa,#edf5f3)
+    }
+    .product-media img{width:100%;height:100%;object-fit:cover}
+    .product-placeholder{
+      width:100px;height:145px;border-radius:28px 28px 22px 22px;
+      display:grid;place-items:center;
+      background:linear-gradient(180deg,#fff,#dff5ef);
+      border:1px solid #d1e7e1;
+      box-shadow:0 18px 38px rgba(18,59,58,.13);
+      position:relative;color:var(--brand)
+    }
+    .product-placeholder::before{
+      content:"";position:absolute;left:31px;right:31px;top:-20px;height:28px;border-radius:8px 8px 5px 5px;background:var(--brand-3)
+    }
+    .product-placeholder svg{width:46px;height:46px}
+    .product-badge{
+      position:absolute;left:18px;top:18px;z-index:2;
+      padding:7px 10px;border-radius:999px;
+      background:#effee2;border:1px solid #d9f99d;color:#4d7c0f;
+      font-size:.72rem;font-weight:950
+    }
+    .product-body{padding:20px;display:flex;flex:1;flex-direction:column}
+    .product-body h3{margin:0;font-size:1.17rem;letter-spacing:-.025em}
+    .product-desc{margin:8px 0 15px;color:var(--muted);font-size:.9rem;line-height:1.6}
+    .features-list{list-style:none;padding:0;margin:0 0 18px;display:grid;gap:7px}
+    .features-list li{display:flex;gap:8px;color:#556762;font-size:.84rem}
+    .features-list li::before{content:"✓";color:var(--ok);font-weight:950}
+    .product-foot{margin-top:auto;display:flex;align-items:center;justify-content:space-between;gap:12px}
+    .product-price{font-size:1.45rem;font-weight:950;letter-spacing:-.04em}
+    .product-foot .btn{min-height:42px;border-radius:12px;padding:0 14px}
+
+    /* B2B */
+    .b2b-grid{display:grid;grid-template-columns:1.08fr .92fr;gap:24px}
+    .b2b-main{
+      position:relative;overflow:hidden;padding:36px;border-radius:30px;
+      background:linear-gradient(145deg,var(--brand-3),#0d635f);
+      color:#fff;box-shadow:0 28px 70px rgba(18,59,58,.20)
+    }
+    .b2b-main::after{
+      content:"";position:absolute;right:-70px;bottom:-70px;width:260px;height:260px;border-radius:50%;
+      border:44px solid rgba(255,255,255,.055)
+    }
+    .b2b-main .eyebrow{
+      background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.12);color:#cfe9e4
+    }
+    .b2b-main h3{margin:18px 0 10px;font-size:2.3rem;letter-spacing:-.045em}
+    .b2b-main p{max-width:620px;margin:0;color:#c9ded9;line-height:1.75}
+    .b2b-features{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:28px}
+    .b2b-item{
+      padding:16px;border-radius:18px;background:rgba(255,255,255,.065);border:1px solid rgba(255,255,255,.10)
+    }
+    .b2b-item strong{display:block}
+    .b2b-item span{display:block;margin-top:4px;color:#abcac3;font-size:.84rem}
+    .b2b-side{display:grid;gap:14px}
+    .b2b-card{
+      padding:24px;border-radius:24px;background:#fff;border:1px solid var(--line);box-shadow:var(--shadow)
+    }
+    .b2b-card .icon{
+      width:48px;height:48px;border-radius:16px;display:grid;place-items:center;margin-bottom:20px
+    }
+    .b2b-card .icon.green{background:#e6f6f2;color:var(--brand)}
+    .b2b-card .icon.lime{background:#eefccf;color:#5b7c16}
+    .b2b-card .icon svg{width:23px;height:23px}
+    .b2b-card h4{margin:0 0 7px;font-size:1.16rem}
+    .b2b-card p{margin:0;color:var(--muted);font-size:.9rem;line-height:1.65}
+
+    /* HOW */
+    .steps{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+    .step{
+      position:relative;padding:24px;border-radius:22px;
+      background:#fff;border:1px solid var(--line);box-shadow:0 10px 26px rgba(18,59,58,.05)
+    }
+    .step-no{
+      width:40px;height:40px;border-radius:13px;display:grid;place-items:center;margin-bottom:42px;
+      background:rgba(var(--brand-rgb),.08);color:var(--brand);font-weight:950
+    }
+    .step h3{margin:0 0 8px;font-size:1.03rem}
+    .step p{margin:0;color:var(--muted);font-size:.87rem;line-height:1.6}
+
+    /* TRUST */
+    .trust-grid{
+      display:grid;grid-template-columns:repeat(4,1fr);gap:1px;
+      overflow:hidden;border:1px solid var(--line);border-radius:24px;background:var(--line);
+      box-shadow:var(--shadow)
+    }
+    .trust-item{padding:24px;background:#fff}
+    .trust-item .trust-icon{
+      width:42px;height:42px;border-radius:14px;display:grid;place-items:center;margin-bottom:20px;
+      background:#edf7f4;color:var(--brand)
+    }
+    .trust-item .trust-icon svg{width:21px;height:21px}
+    .trust-item strong{display:block;font-size:1rem}
+    .trust-item span{display:block;margin-top:5px;color:var(--muted);font-size:.83rem;line-height:1.5}
+
+    /* FAQ */
+    .faq-layout{display:grid;grid-template-columns:.72fr 1.28fr;gap:30px}
+    .faq-aside{
+      align-self:start;padding:28px;border-radius:26px;
+      background:linear-gradient(145deg,#e8f7f3,#f3fbf8);
+      border:1px solid #cfe7e0
+    }
+    .faq-icon{
+      width:50px;height:50px;border-radius:16px;display:grid;place-items:center;
+      background:#fff;color:var(--brand);box-shadow:0 12px 25px rgba(18,59,58,.08)
+    }
+    .faq-icon svg{width:25px;height:25px}
+    .faq-aside h3{margin:16px 0 8px;font-size:1.5rem;letter-spacing:-.03em}
+    .faq-aside p{margin:0;color:#5c6e69;line-height:1.65}
+    details{
+      margin-bottom:12px;border-radius:18px;
+      background:#fff;border:1px solid var(--line);overflow:hidden
+    }
+    summary{cursor:pointer;list-style:none;padding:19px 20px;font-weight:900}
+    summary::-webkit-details-marker{display:none}
+    details p{margin:0;padding:0 20px 20px;color:var(--muted);line-height:1.7}
+
+    /* CTA */
+    .closing{
+      position:relative;overflow:hidden;padding:48px;border-radius:32px;
+      background:
+        radial-gradient(circle at 12% 18%,rgba(var(--brand2-rgb),.22),transparent 24rem),
+        radial-gradient(circle at 92% 90%,rgba(163,230,53,.12),transparent 22rem),
+        var(--brand-3);
+      color:#fff;box-shadow:0 32px 70px rgba(18,59,58,.22)
+    }
+    .closing::before{
+      content:"";position:absolute;right:-80px;top:-90px;width:280px;height:280px;border-radius:50%;
+      border:46px solid rgba(255,255,255,.04)
+    }
+    .closing-grid{position:relative;z-index:1;display:grid;grid-template-columns:1fr auto;align-items:center;gap:26px}
+    .closing h2{margin:0 0 10px;font-size:clamp(2rem,4vw,3.5rem);letter-spacing:-.055em;line-height:1.02}
+    .closing p{margin:0;max-width:680px;color:#bed7d1;line-height:1.7}
+    .closing-actions{display:flex;gap:9px;flex-wrap:wrap}
+    .closing .btn-primary{background:#fff;color:var(--brand-3);box-shadow:none}
+    .closing .btn-soft{background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.14);color:#fff}
+
+    /* FOOTER */
+    footer{padding:42px 0 90px;color:var(--muted)}
+    .footer-grid{
+      display:flex;align-items:center;justify-content:space-between;gap:24px;
+      padding-top:24px;border-top:1px solid var(--line)
+    }
+    .footer-brand{display:flex;align-items:center;gap:10px;color:var(--ink);font-weight:950}
+
+    /* MOBILE CTA */
+    .mobile-cta{
+      display:none;position:fixed;left:12px;right:12px;bottom:12px;z-index:90;
+      gap:8px;padding:8px;border-radius:18px;
+      background:rgba(255,255,255,.94);border:1px solid var(--line);
+      box-shadow:0 18px 50px rgba(18,59,58,.18);backdrop-filter:blur(16px)
+    }
+    .mobile-cta .btn{flex:1}
+
+    /* TOAST + ERROR */
+    .toast{
+      position:fixed;left:50%;bottom:24px;z-index:250;
+      transform:translate(-50%,16px);
+      padding:12px 18px;border-radius:999px;
+      background:var(--brand-3);color:#fff;font-weight:850;
+      box-shadow:0 18px 44px rgba(18,59,58,.25);
+      opacity:0;pointer-events:none;transition:.2s
+    }
+    .toast.show{opacity:1;transform:translate(-50%,0)}
+    .error-screen{min-height:100vh;display:grid;place-items:center;padding:30px}
+    .error-box{
+      max-width:620px;padding:34px;border-radius:28px;
+      background:#fff;border:1px solid var(--line);text-align:center;box-shadow:var(--shadow-strong)
+    }
+    .error-box h1{margin:12px 0 8px;font-size:2.3rem}
+    .error-box p{color:var(--muted)}
+
+    @media(max-width:1050px){
+      .nav-links{display:none}
+      .hero-grid{grid-template-columns:1fr}
+      .hero-visual{min-height:560px}
+      .sectors-grid{grid-template-columns:repeat(3,1fr)}
+      .category-grid{grid-template-columns:repeat(3,1fr)}
+      .products-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+      .b2b-grid{grid-template-columns:1fr}
+      .steps{grid-template-columns:repeat(2,1fr)}
+      .trust-grid{grid-template-columns:repeat(2,1fr)}
+      .faq-layout{grid-template-columns:1fr}
+      .closing-grid{grid-template-columns:1fr}
+    }
+
+    @media(max-width:680px){
+      .wrap{width:min(94%,1200px)}
+      .header-shell{padding-top:8px}
+      .navbar{min-height:60px;border-radius:18px;padding:8px 10px}
+      .brand-name{display:none}
+      .brand-logo{height:34px;max-width:125px}
+      .actions>.btn-primary{display:none}
+      .user-menu .btn-soft{padding:0 12px}
+      .hero{padding:40px 0 28px}
+      .hero h1{font-size:clamp(3rem,15vw,4.9rem)}
+      .hero-copy{font-size:1rem}
+      .hero-actions{display:grid;grid-template-columns:1fr}
+      .hero-visual{min-height:500px}
+      .cleaning-back{right:6px;top:26px;width:94%;height:440px}
+      .bottle.one{left:34px}
+      .bottle.two{left:142px}
+      .bottle.three{right:22px}
+      .spray{right:26px;top:55px}
+      .visual-card{left:0;bottom:18px;width:200px}
+      .wholesale-sticker{right:0;bottom:4px;width:82px;height:82px;font-size:.56rem}
+      .sectors-grid{grid-template-columns:1fr 1fr}
+      .category-grid{grid-template-columns:1fr 1fr}
+      .section{padding:66px 0}
+      .products-grid{grid-template-columns:1fr}
+      .b2b-features{grid-template-columns:1fr}
+      .steps{grid-template-columns:1fr}
+      .trust-grid{grid-template-columns:1fr}
+      .closing{padding:30px 22px}
+      .closing-actions{display:grid;grid-template-columns:1fr;width:100%}
+      .footer-grid{align-items:flex-start;flex-direction:column}
+      .mobile-cta{display:flex}
+      footer{padding-bottom:112px}
+    }
+
+    @media(prefers-reduced-motion:reduce){
+      *{scroll-behavior:auto!important;transition:none!important}
+    }
+  </style>
+</head>
+
+<body>
+  <div id="landingError" class="error-screen hidden">
+    <div class="error-box">
+      <div class="eyebrow">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 17h.01"/></svg>
+        Landing
+      </div>
+      <h1>No pudimos cargar esta empresa</h1>
+      <p id="landingErrorText">Verificá el enlace o el slug configurado.</p>
+    </div>
+  </div>
+
+  <div id="app">
+    <div class="header-shell">
+      <div class="wrap">
+        <div class="navbar">
+          <a href="#" class="brand">
+            <img id="companyLogo" class="brand-logo hidden" alt="Logo">
+            <span id="companyLogoFallback" class="brand-mark">L</span>
+            <span id="companyName" class="brand-name">Distribuidora</span>
+          </a>
+
+          <nav class="nav-links">
+            <a href="#rubros">Rubros</a>
+            <a href="#categorias">Categorías</a>
+            <a href="#productos">Productos</a>
+            <a href="#empresas">Empresas</a>
+            <a href="#faq">Ayuda</a>
+          </nav>
+
+          <div class="actions">
+            <div class="user-menu">
+              <button id="menuBtn" class="btn btn-soft">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+                Mis pedidos
+              </button>
+
+              <form id="statusForm" class="popover">
+                <label for="phoneInput">Consultá tu último pedido</label>
+                <input class="field" type="tel" id="phoneInput" placeholder="Tu celular" autocomplete="tel" required>
+                <button id="searchBtn" type="submit" class="btn btn-primary">Buscar pedido</button>
+              </form>
+            </div>
+
+            <a id="headerOrderButton" href="#" class="btn btn-primary">
+              Hacer pedido
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+            </a>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <main>
+      <section class="hero">
+        <div class="wrap hero-grid">
+          <div>
+            <div id="heroBadge" class="hero-badge">
+              <span>✦</span>
+              Higiene profesional · Entrega programada
+            </div>
+
+            <h1>
+              <span id="heroTitleLine1">Limpieza que</span><br>
+              <span id="heroTitleLine2" class="accent">llega a tu negocio.</span>
+            </h1>
+
+            <p id="heroDescription" class="hero-copy">
+              Productos de limpieza, higiene institucional y soluciones para hogares, comercios y empresas. Pedí online y coordiná tu entrega.
+            </p>
+
+            <div class="hero-actions">
+              <a id="orderButton" href="#" class="btn btn-primary">
+                Ver productos
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+              </a>
+
+              <a id="whatsappButton" href="#" target="_blank" rel="noopener noreferrer" class="btn btn-soft hidden">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 11.5a8 8 0 0 1-11.8 7L4 20l1.5-4.1A8 8 0 1 1 20 11.5Z"/><path d="M9 8.8c.5 2 2 3.5 4 4"/></svg>
+                Consultar
+              </a>
+            </div>
+
+            <div class="hero-proof">
+              <span><i>✓</i> Hogares y comercios</span>
+              <span><i>✓</i> Pedidos por volumen</span>
+              <span><i>✓</i> Entrega coordinada</span>
+            </div>
+          </div>
+
+          <div class="hero-visual" aria-hidden="true">
+            <div class="cleaning-back">
+              <div class="bubbles">
+                <span class="bubble b1"></span>
+                <span class="bubble b2"></span>
+                <span class="bubble b3"></span>
+                <span class="bubble b4"></span>
+              </div>
+
+              <div class="shelf"></div>
+
+              <div class="bottle one"></div>
+              <div class="bottle two"></div>
+              <div class="bottle three"></div>
+              <div class="spray"></div>
+            </div>
+
+            <div class="visual-card">
+              <div class="visual-card-top">
+                <div class="visual-icon">
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h13v10H3z"/><path d="M16 10h3l2 3v4h-5z"/><circle cx="7" cy="18" r="2"/><circle cx="18" cy="18" r="2"/></svg>
+                </div>
+                <div>
+                  <strong>Entrega programada</strong>
+                  <small>Pedido en preparación</small>
+                </div>
+              </div>
+              <div class="visual-meter"><span></span></div>
+            </div>
+
+            <div class="wholesale-sticker">venta minorista & mayorista</div>
+          </div>
+        </div>
+      </section>
+
+      <section id="rubros" class="sectors">
+        <div class="wrap">
+          <div class="sectors-grid">
+            <div class="sector-card">
+              <div class="sector-icon a">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11 12 4l9 7"/><path d="M5 10v10h14V10"/></svg>
+              </div>
+              <strong>Hogares</strong>
+              <span>Consumo diario</span>
+            </div>
+
+            <div class="sector-card">
+              <div class="sector-icon b">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20V7l8-4 8 4v13"/><path d="M9 20v-5h6v5"/></svg>
+              </div>
+              <strong>Comercios</strong>
+              <span>Reposición frecuente</span>
+            </div>
+
+            <div class="sector-card">
+              <div class="sector-icon c">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h10M7 12h10M7 16h6"/></svg>
+              </div>
+              <strong>Empresas</strong>
+              <span>Higiene institucional</span>
+            </div>
+
+            <div class="sector-card">
+              <div class="sector-icon d">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19h16M6 19V9l6-5 6 5v10"/></svg>
+              </div>
+              <strong>Instituciones</strong>
+              <span>Consumo por volumen</span>
+            </div>
+
+            <div class="sector-card">
+              <div class="sector-icon e">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h13v10H3z"/><path d="M16 10h3l2 3v4h-5z"/><circle cx="7" cy="18" r="2"/><circle cx="18" cy="18" r="2"/></svg>
+              </div>
+              <strong>Distribución</strong>
+              <span>Entrega por zona</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="categorias" class="section">
+        <div class="wrap">
+          <div class="section-head">
+            <div class="eyebrow">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+              Categorías
+            </div>
+            <h2>Todo para mantener cada espacio impecable.</h2>
+            <p>Una estructura visual pensada específicamente para distribuidoras de limpieza y abastecimiento institucional.</p>
+          </div>
+
+          <div class="category-grid">
+            <article class="category-card">
+              <div class="category-icon-big">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 3h6v4H9z"/><path d="M7 7h10l1 14H6L7 7Z"/></svg>
+              </div>
+              <h3>Detergentes</h3>
+              <p>Lavado manual y uso diario.</p>
+            </article>
+
+            <article class="category-card">
+              <div class="category-icon-big">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 3h4v3h-4z"/><path d="M8 6h8l1 15H7L8 6Z"/></svg>
+              </div>
+              <h3>Lavandinas</h3>
+              <p>Desinfección y sanitización.</p>
+            </article>
+
+            <article class="category-card">
+              <div class="category-icon-big">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 5h8l2 4v11H6V9l2-4Z"/><path d="M9 12h6"/></svg>
+              </div>
+              <h3>Desengrasantes</h3>
+              <p>Cocinas, talleres e industria.</p>
+            </article>
+
+            <article class="category-card">
+              <div class="category-icon-big">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 3h6v4H9z"/><path d="M7 7h10v14H7z"/><path d="M10 12h4"/></svg>
+              </div>
+              <h3>Suavizantes</h3>
+              <p>Textiles y lavandería.</p>
+            </article>
+
+            <article class="category-card">
+              <div class="category-icon-big">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12c3-4 6-4 9 0s6 4 9 0"/><path d="M3 17c3-4 6-4 9 0s6 4 9 0"/></svg>
+              </div>
+              <h3>Piscinas</h3>
+              <p>Mantenimiento y tratamiento.</p>
+            </article>
+
+            <article class="category-card">
+              <div class="category-icon-big">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 20V9l7-5 7 5v11"/><path d="M9 20v-6h6v6"/></svg>
+              </div>
+              <h3>Institucional</h3>
+              <p>Formatos para alto consumo.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section id="productos" class="section" style="padding-top:28px">
+        <div class="wrap">
+          <div class="section-head">
+            <div class="eyebrow">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 8h12l-1 11H7L6 8Z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/></svg>
+              Productos destacados
+            </div>
+            <h2 id="productsTitle">Productos listos para pedir.</h2>
+            <p id="productsSubtitle">La grilla se carga automáticamente según el empresa_id y muestra precio, imagen, descripción y promoción.</p>
+          </div>
+
+          <div id="productGrid" class="products-grid">
+            <div style="grid-column:1/-1;color:var(--muted);padding:30px 0">Cargando productos…</div>
+          </div>
+        </div>
+      </section>
+
+      <section id="empresas" class="section" style="padding-top:26px">
+        <div class="wrap">
+          <div class="b2b-grid">
+            <div class="b2b-main">
+              <div class="eyebrow">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h10M7 12h6"/></svg>
+                Empresas y comercios
+              </div>
+
+              <h3>Abastecimiento para consumo recurrente.</h3>
+              <p>
+                Ideal para clientes que necesitan reposición periódica, formatos grandes o entregas por volumen.
+              </p>
+
+              <div class="b2b-features">
+                <div class="b2b-item">
+                  <strong>Pedidos grandes</strong>
+                  <span>Productos en formatos de alto consumo.</span>
+                </div>
+                <div class="b2b-item">
+                  <strong>Reposición frecuente</strong>
+                  <span>Una experiencia preparada para repetir pedidos.</span>
+                </div>
+                <div class="b2b-item">
+                  <strong>Entrega por zona</strong>
+                  <span>Logística organizada según cobertura.</span>
+                </div>
+                <div class="b2b-item">
+                  <strong>Atención directa</strong>
+                  <span>Canal rápido para consultas comerciales.</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="b2b-side">
+              <article class="b2b-card">
+                <div class="icon green">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20V7l8-4 8 4v13"/><path d="M9 20v-5h6v5"/></svg>
+                </div>
+                <h4>Higiene institucional</h4>
+                <p>Presentación profesional para oficinas, escuelas, gastronomía, fábricas y otros espacios de alto tránsito.</p>
+              </article>
+
+              <article class="b2b-card">
+                <div class="icon lime">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h13v10H3z"/><path d="M16 10h3l2 3v4h-5z"/><circle cx="7" cy="18" r="2"/><circle cx="18" cy="18" r="2"/></svg>
+                </div>
+                <h4>Distribución organizada</h4>
+                <p>La landing comunica claramente que la empresa no solo vende: también coordina y distribuye.</p>
+              </article>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="como-funciona" class="section">
+        <div class="wrap">
+          <div class="section-head">
+            <div class="eyebrow">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+              Cómo comprar
+            </div>
+            <h2>Pedido simple, entrega organizada.</h2>
+            <p>La experiencia está adaptada al tipo de compra habitual de una distribuidora.</p>
+          </div>
+
+          <div class="steps">
+            <article class="step">
+              <div class="step-no">01</div>
+              <h3>Elegí productos</h3>
+              <p>Seleccioná detergentes, lavandinas, desengrasantes u otras categorías.</p>
+            </article>
+
+            <article class="step">
+              <div class="step-no">02</div>
+              <h3>Indicá cantidades</h3>
+              <p>Armá el pedido según el consumo de tu hogar, comercio o empresa.</p>
+            </article>
+
+            <article class="step">
+              <div class="step-no">03</div>
+              <h3>Confirmá datos</h3>
+              <p>Ingresá teléfono, dirección y la información necesaria para coordinar.</p>
+            </article>
+
+            <article class="step">
+              <div class="step-no">04</div>
+              <h3>Recibí tu pedido</h3>
+              <p>La empresa prepara el pedido y organiza la entrega según su zona de cobertura.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" style="padding-top:28px">
+        <div class="wrap">
+          <div class="trust-grid">
+            <div class="trust-item">
+              <div class="trust-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 4 4L19 6"/></svg>
+              </div>
+              <strong>Catálogo claro</strong>
+              <span>Productos y precios fáciles de encontrar.</span>
+            </div>
+
+            <div class="trust-item">
+              <div class="trust-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h13v10H3z"/><path d="M16 10h3l2 3v4h-5z"/></svg>
+              </div>
+              <strong>Entrega coordinada</strong>
+              <span>Comunicación orientada a distribución.</span>
+            </div>
+
+            <div class="trust-item">
+              <div class="trust-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+              </div>
+              <strong>Pedidos recurrentes</strong>
+              <span>Ideal para consumo frecuente.</span>
+            </div>
+
+            <div class="trust-item">
+              <div class="trust-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16v12H7l-3 3z"/></svg>
+              </div>
+              <strong>Atención comercial</strong>
+              <span>WhatsApp y seguimiento integrados.</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="faq" class="section">
+        <div class="wrap faq-layout">
+          <aside class="faq-aside">
+            <div class="faq-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.8 2.8 0 1 1 4.8 2c-.8.8-1.8 1.3-1.8 2.5M12 17h.01"/></svg>
+            </div>
+            <h3>Preguntas frecuentes</h3>
+            <p>Podés adaptar estas respuestas según las condiciones comerciales de cada distribuidora.</p>
+          </aside>
+
+          <div>
+            <details>
+              <summary>¿Venden a particulares y empresas?</summary>
+              <p>La empresa puede ofrecer productos tanto para hogares como para comercios, instituciones o clientes de mayor consumo.</p>
+            </details>
+
+            <details>
+              <summary>¿Cómo hago un pedido?</summary>
+              <p>Presioná “Hacer pedido”, elegí los productos y completá los datos solicitados.</p>
+            </details>
+
+            <details>
+              <summary>¿Cómo sé si entregan en mi zona?</summary>
+              <p id="coverageText">La cobertura se valida durante el proceso de pedido.</p>
+            </details>
+
+            <details>
+              <summary>¿Qué medios de pago aceptan?</summary>
+              <p id="paymentText">Los medios de pago disponibles se informan durante la compra.</p>
+            </details>
+
+            <details>
+              <summary>¿Cómo consulto el estado de mi pedido?</summary>
+              <p>Usá “Mis pedidos” e ingresá el mismo número de celular utilizado al comprar.</p>
+            </details>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" style="padding-top:26px">
+        <div class="wrap">
+          <div class="closing">
+            <div class="closing-grid">
+              <div>
+                <h2 id="closingTitle">Abastecé tu hogar, comercio o empresa.</h2>
+                <p id="closingText">Elegí los productos que necesitás y armá tu pedido online en pocos minutos.</p>
+              </div>
+
+              <div class="closing-actions">
+                <a id="closingOrderButton" href="#" class="btn btn-primary">
+                  Hacer pedido
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+                </a>
+                <a id="closingWhatsappButton" href="#" target="_blank" rel="noopener noreferrer" class="btn btn-soft hidden">Consultar</a>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="wrap">
+        <div class="footer-grid">
+          <div class="footer-brand">
+            <span id="footerMark" class="brand-mark" style="width:34px;height:34px;border-radius:11px">L</span>
+            <span id="footerCompany">Distribuidora</span>
+          </div>
+
+          <div>
+            © <span id="year"></span> <span id="footerCompanyText">Distribuidora</span>.
+            <span id="footerText">Pedidos online.</span>
+          </div>
+        </div>
+      </div>
+    </footer>
+
+    <div class="mobile-cta">
+      <button id="mobileStatusButton" class="btn btn-soft">Mis pedidos</button>
+      <a id="mobileOrderButton" href="#" class="btn btn-primary">Pedir</a>
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script>
+    const APP = {
+      slug:null,
+      empresaId:null,
+      config:null,
+      locale:'es-AR',
+      currency:'ARS'
+    };
+
+    function $(id){ return document.getElementById(id); }
+
+    function sanitizeSlug(value){
+      return String(value || '')
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9-_]/g,'');
+    }
+
+    function resolveSlug(){
+      const params = new URLSearchParams(location.search);
+      const querySlug = params.get('slug');
+      if(querySlug) return sanitizeSlug(querySlug);
+
+      const parts = location.pathname.split('/').filter(Boolean);
+
+      for(const marker of ['landing','l','empresa']){
+        const index = parts.indexOf(marker);
+
+        if(index !== -1 && parts[index + 1]){
+          return sanitizeSlug(parts[index + 1]);
+        }
+      }
+
+      const host = location.hostname.split('.');
+
+      if(host.length >= 3 && !['www','app','pedidos'].includes(host[0])){
+        return sanitizeSlug(host[0]);
+      }
+
+      return null;
+    }
+
+    function normalizePhone(value){
+      return String(value || '').replace(/\D+/g,'');
+    }
+
+    function buildTelefonoDB(raw){
+      const phone = normalizePhone(raw);
+
+      if(phone.length === 10) return '549' + phone;
+      if(phone.length === 11 && phone.startsWith('0')) return '549' + phone.substring(1);
+      if(phone.length === 12 && phone.startsWith('54')) return '549' + phone.substring(2);
+      if(phone.length === 13 && phone.startsWith('549')) return phone;
+
+      return phone;
+    }
+
+    function escapeHtml(value){
+      return String(value ?? '').replace(/[&<>"']/g, ch => ({
+        '&':'&amp;',
+        '<':'&lt;',
+        '>':'&gt;',
+        '"':'&quot;',
+        "'":'&#39;'
+      })[ch]);
+    }
+
+    function isSafeHex(value){
+      return /^#[0-9a-fA-F]{6}$/.test(String(value || ''));
+    }
+
+    function hexToRgb(hex){
+      const clean = String(hex || '').replace('#','');
+
+      if(clean.length !== 6){
+        return null;
+      }
+
+      return [
+        parseInt(clean.substring(0,2),16),
+        parseInt(clean.substring(2,4),16),
+        parseInt(clean.substring(4,6),16)
+      ].join(',');
+    }
+
+    function toast(message){
+      const el = $('toast');
+      el.textContent = message;
+      el.classList.add('show');
+
+      clearTimeout(window.__toastTimer);
+
+      window.__toastTimer = setTimeout(
+        () => el.classList.remove('show'),
+        3000
+      );
+    }
+
+    function money(value){
+      const number = Number(value || 0);
+
+      if(!Number.isFinite(number) || number <= 0){
+        return 'Consultar';
+      }
+
+      return new Intl.NumberFormat(APP.locale,{
+        style:'currency',
+        currency:APP.currency,
+        maximumFractionDigits:0
+      }).format(number);
+    }
+
+    async function loadCompanyConfig(){
+      APP.slug = resolveSlug();
+
+      if(!APP.slug){
+        throw new Error('LANDING_SLUG_NOT_FOUND');
+      }
+
+      const res = await fetch(
+        `/public/config?slug=${encodeURIComponent(APP.slug)}`,
+        {headers:{'Accept':'application/json'}}
+      );
+
+      if(!res.ok){
+        throw new Error(`COMPANY_CONFIG_${res.status}`);
+      }
+
+      const config = await res.json();
+      const empresaId = Number(config.empresa_id ?? config.id);
+
+      if(!Number.isFinite(empresaId) || empresaId <= 0){
+        throw new Error('INVALID_EMPRESA_ID');
+      }
+
+      APP.empresaId = empresaId;
+      APP.config = config;
+      APP.locale = config.locale || 'es-AR';
+      APP.currency = config.moneda || config.currency || 'ARS';
+
+      applyCompanyConfig(config);
+    }
+
+    function applyCompanyConfig(config){
+      const name =
+        config.nombre_comercial ||
+        config.nombre ||
+        config.empresa_nombre ||
+        APP.slug;
+
+      const description =
+        config.descripcion_landing ||
+        config.hero_descripcion ||
+        config.descripcion ||
+        `Productos de limpieza y entrega a domicilio de ${name}.`;
+
+      const title1 =
+        config.hero_titulo_1 ||
+        config.hero_linea_1 ||
+        'Limpieza que';
+
+      const title2 =
+        config.hero_titulo_2 ||
+        config.hero_linea_2 ||
+        config.titulo_landing ||
+        `llega con ${name}.`;
+
+      $('companyName').textContent = name;
+      $('footerCompany').textContent = name;
+      $('footerCompanyText').textContent = name;
+
+      document.title =
+        config.meta_title ||
+        `${name} – Productos de Limpieza`;
+
+      $('metaDescription').setAttribute(
+        'content',
+        config.meta_description || description
+      );
+
+      $('heroTitleLine1').textContent = title1;
+      $('heroTitleLine2').textContent = title2;
+      $('heroDescription').textContent = description;
+
+      if(config.hero_badge){
+        $('heroBadge').lastChild.textContent = ' ' + config.hero_badge;
+      }
+
+      const brand =
+        config.color_marca ||
+        config.color_primario;
+
+      if(isSafeHex(brand)){
+        document.documentElement.style.setProperty('--brand',brand);
+
+        const rgb = hexToRgb(brand);
+
+        if(rgb){
+          document.documentElement.style.setProperty('--brand-rgb',rgb);
+        }
+
+        $('themeColor').setAttribute('content',brand);
+      }
+
+      const secondary =
+        config.color_secundario ||
+        config.color_secondary;
+
+      if(isSafeHex(secondary)){
+        document.documentElement.style.setProperty('--brand-2',secondary);
+
+        const rgb = hexToRgb(secondary);
+
+        if(rgb){
+          document.documentElement.style.setProperty('--brand2-rgb',rgb);
+        }
+      }
+
+      const tertiary =
+        config.color_terciario ||
+        config.color_tertiary;
+
+      if(isSafeHex(tertiary)){
+        document.documentElement.style.setProperty('--brand-3',tertiary);
+      }
+
+      const initial =
+        name.charAt(0).toUpperCase() || 'L';
+
+      $('companyLogoFallback').textContent = initial;
+      $('footerMark').textContent = initial;
+
+      const logo =
+        config.logo_url ||
+        config.logo;
+
+      if(logo){
+        $('companyLogo').src = logo;
+        $('companyLogo').alt = `Logo de ${name}`;
+        $('companyLogo').classList.remove('hidden');
+        $('companyLogoFallback').classList.add('hidden');
+      }
+
+      const orderHref =
+        `/pedidos/?slug=${encodeURIComponent(APP.slug)}`;
+
+      [
+        'orderButton',
+        'headerOrderButton',
+        'closingOrderButton',
+        'mobileOrderButton'
+      ].forEach(id => {
+        $(id).href = orderHref;
+      });
+
+      const whatsapp =
+        normalizePhone(
+          config.whatsapp ||
+          config.telefono_whatsapp
+        );
+
+      if(whatsapp){
+        const href = `https://wa.me/${whatsapp}`;
+
+        [
+          'whatsappButton',
+          'closingWhatsappButton'
+        ].forEach(id => {
+          $(id).href = href;
+          $(id).classList.remove('hidden');
+        });
+      }
+
+      if(config.cobertura_texto){
+        $('coverageText').textContent =
+          config.cobertura_texto;
+      }
+
+      if(config.medios_pago_texto || config.pagos_texto){
+        $('paymentText').textContent =
+          config.medios_pago_texto ||
+          config.pagos_texto;
+      }
+
+      if(config.productos_titulo){
+        $('productsTitle').textContent =
+          config.productos_titulo;
+      }
+
+      if(config.productos_subtitulo){
+        $('productsSubtitle').textContent =
+          config.productos_subtitulo;
+      }
+
+      if(config.cta_titulo){
+        $('closingTitle').textContent =
+          config.cta_titulo;
+      }
+
+      if(config.cta_texto){
+        $('closingText').textContent =
+          config.cta_texto;
+      }
+
+      if(config.footer_texto){
+        $('footerText').textContent =
+          config.footer_texto;
+      }
+    }
+
+    async function loadProducts(){
+      const grid = $('productGrid');
+
+      try{
+        const res = await fetch(
+          `/public/productos?empresa_id=${encodeURIComponent(APP.empresaId)}&scope=landing`,
+          {headers:{'Accept':'application/json'}}
+        );
+
+        if(!res.ok){
+          throw new Error(`PRODUCTS_${res.status}`);
+        }
+
+        const products = await res.json();
+
+        if(!Array.isArray(products) || !products.length){
+          grid.innerHTML = `
+            <div style="grid-column:1/-1;padding:34px;border:1px solid var(--line);border-radius:22px;color:var(--muted);background:#fff">
+              No hay productos destacados disponibles actualmente.
+            </div>
+          `;
+          return;
+        }
+
+        grid.innerHTML =
+          products.map(renderProduct).join('');
+
+      }catch(error){
+        console.error(error);
+
+        grid.innerHTML = `
+          <div style="grid-column:1/-1;padding:34px;border:1px solid var(--line);border-radius:22px;color:var(--muted);background:#fff">
+            No se pudieron cargar los productos en este momento.
+          </div>
+        `;
+      }
+    }
+
+    function placeholderSvg(){
+      return `
+        <div class="product-placeholder">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+            <path d="M9 3h6v4H9z"/>
+            <path d="M7 7h10l1 14H6L7 7Z"/>
+            <path d="M9 13h6"/>
+          </svg>
+        </div>
+      `;
+    }
+
+    function renderProduct(product){
+      const id = product.id;
+      const name = escapeHtml(product.nombre || 'Producto');
+      const description = String(product.descripcion || '');
+      const image = product.imagen_promo || product.imagen || '';
+      const badge = product.etiqueta || '';
+      const price = money(product.precio);
+
+      const lines = description
+        .split('\n')
+        .map(value => value.trim())
+        .filter(Boolean);
+
+      const summary =
+        escapeHtml(
+          lines[0] ||
+          'Producto disponible para pedido.'
+        );
+
+      const features =
+        lines.slice(1,4)
+          .map(line => `<li>${escapeHtml(line)}</li>`)
+          .join('');
+
+      const media =
+        image
+          ? `<img src="${escapeHtml(image)}" alt="${name}" loading="lazy">`
+          : placeholderSvg();
+
+      const badgeHtml =
+        badge
+          ? `<div class="product-badge">${escapeHtml(badge)}</div>`
+          : '';
+
+      const href =
+        `/pedidos/?slug=${encodeURIComponent(APP.slug)}&add=${encodeURIComponent(id)}`;
+
+      return `
+        <article class="product-card">
+          ${badgeHtml}
+
+          <div class="product-media">
+            ${media}
+          </div>
+
+          <div class="product-body">
+            <h3>${name}</h3>
+
+            <div class="product-desc">
+              ${summary}
+            </div>
+
+            ${features ? `<ul class="features-list">${features}</ul>` : ''}
+
+            <div class="product-foot">
+              <div class="product-price">
+                ${price}
+              </div>
+
+              <a class="btn btn-primary" href="${href}">
+                Pedir
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M5 12h14M13 6l6 6-6 6"/>
+                </svg>
+              </a>
+            </div>
+          </div>
+        </article>
+      `;
+    }
+
+    const menuBtn = $('menuBtn');
+    const statusForm = $('statusForm');
+    const phoneInput = $('phoneInput');
+    const searchBtn = $('searchBtn');
+
+    menuBtn.addEventListener('click',event => {
+      event.stopPropagation();
+      statusForm.classList.toggle('open');
+
+      if(statusForm.classList.contains('open')){
+        phoneInput.focus();
+      }
+    });
+
+    statusForm.addEventListener('click',event => {
+      event.stopPropagation();
+    });
+
+    document.addEventListener('click',event => {
+      if(!statusForm.contains(event.target) && event.target !== menuBtn){
+        statusForm.classList.remove('open');
+      }
+    });
+
+    $('mobileStatusButton').addEventListener('click',() => {
+      window.scrollTo({top:0,behavior:'smooth'});
+      statusForm.classList.add('open');
+
+      setTimeout(() => {
+        phoneInput.focus();
+      },250);
+    });
+
+    statusForm.addEventListener('submit',async event => {
+      event.preventDefault();
+
+      const rawPhone = phoneInput.value;
+
+      if(normalizePhone(rawPhone).length < 8){
+        toast('Ingresá un número válido.');
+        return;
+      }
+
+      searchBtn.disabled = true;
+      searchBtn.textContent = 'Buscando…';
+
+      try{
+        const telefono = buildTelefonoDB(rawPhone);
+
+        const res = await fetch(
+          `/public/ultimo-pedido?empresa_id=${encodeURIComponent(APP.empresaId)}&telefono=${encodeURIComponent(telefono)}`,
+          {headers:{'Accept':'application/json'}}
+        );
+
+        if(!res.ok){
+          throw new Error(`ORDER_${res.status}`);
+        }
+
+        const data = await res.json();
+        const pedido = data.pedido || data;
+
+        if(pedido.tracking_url){
+          location.href = pedido.tracking_url;
+          return;
+        }
+
+        if(pedido.tracking_token){
+          location.href =
+            `/pedidos/seguimiento.html?t=${encodeURIComponent(pedido.tracking_token)}`;
+          return;
+        }
+
+        if(pedido.id){
+          location.href =
+            `/pedidos/pedido.html?id=${encodeURIComponent(pedido.id)}`;
+          return;
+        }
+
+        throw new Error('ORDER_WITHOUT_DESTINATION');
+
+      }catch(error){
+        console.error(error);
+        toast('No encontramos pedidos recientes para ese número.');
+
+      }finally{
+        searchBtn.disabled = false;
+        searchBtn.textContent = 'Buscar pedido';
+      }
+    });
+
+    function showLandingError(error){
+      console.error('Landing error:',error);
+
+      $('app').classList.add('hidden');
+      $('landingError').classList.remove('hidden');
+
+      $('landingErrorText').textContent =
+        APP.slug
+          ? `No encontramos una configuración válida para el slug "${APP.slug}".`
+          : 'No se pudo determinar el slug de la empresa.';
+    }
+
+    async function init(){
+      $('year').textContent =
+        new Date().getFullYear();
+
+      try{
+        await loadCompanyConfig();
+        await loadProducts();
+
+        console.log('Landing distribuidora cargada',{
+          slug:APP.slug,
+          empresaId:APP.empresaId
+        });
+
+      }catch(error){
+        showLandingError(error);
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>

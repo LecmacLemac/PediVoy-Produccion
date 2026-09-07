@@ -1,0 +1,1084 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title id="pageTitle">Pedidos Online</title>
+  <meta id="metaDescription" name="description" content="Hacé tu pedido online.">
+  <meta id="themeColor" name="theme-color" content="#7c3aed">
+
+  <style>
+    :root{
+      --bg:#070912;
+      --bg-soft:#0d1020;
+      --surface:rgba(15,18,35,.72);
+      --surface-strong:#11162a;
+      --surface-2:#171c33;
+      --ink:#f8fafc;
+      --muted:#9aa5bd;
+      --line:rgba(255,255,255,.09);
+      --brand:#7c3aed;
+      --brand-2:#22d3ee;
+      --brand-rgb:124,58,237;
+      --ok:#34d399;
+      --danger:#fb7185;
+      --shadow:0 30px 90px rgba(0,0,0,.45);
+      --radius:24px;
+      --radius-sm:16px;
+    }
+
+    *{box-sizing:border-box}
+    html{scroll-behavior:smooth}
+    body{
+      margin:0;
+      min-height:100vh;
+      overflow-x:hidden;
+      font-family:Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color:var(--ink);
+      background:
+        radial-gradient(circle at 15% 15%, rgba(var(--brand-rgb),.18), transparent 28rem),
+        radial-gradient(circle at 90% 8%, rgba(34,211,238,.12), transparent 26rem),
+        linear-gradient(180deg,#070912 0%,#090c17 50%,#070912 100%);
+    }
+
+    body::before{
+      content:"";
+      position:fixed;
+      inset:0;
+      pointer-events:none;
+      opacity:.35;
+      background-image:
+        linear-gradient(rgba(255,255,255,.025) 1px,transparent 1px),
+        linear-gradient(90deg,rgba(255,255,255,.025) 1px,transparent 1px);
+      background-size:42px 42px;
+      mask-image:linear-gradient(to bottom,black,transparent 78%);
+    }
+
+    a{color:inherit;text-decoration:none}
+    button,input{font:inherit}
+    button{color:inherit}
+    img{max-width:100%;display:block}
+    .hidden{display:none!important}
+    .wrap{width:min(1180px,92%);margin:0 auto}
+    .section{padding:88px 0}
+    .section-head{max-width:720px;margin-bottom:34px}
+    .eyebrow{
+      display:inline-flex;align-items:center;gap:8px;
+      padding:7px 11px;border:1px solid var(--line);border-radius:999px;
+      background:rgba(255,255,255,.035);color:#dbeafe;
+      font-size:.78rem;font-weight:800;text-transform:uppercase;letter-spacing:.12em;
+    }
+    .eyebrow-dot{
+      width:7px;height:7px;border-radius:50%;background:var(--brand-2);
+      box-shadow:0 0 18px var(--brand-2);
+    }
+    .section h2{
+      margin:15px 0 10px;font-size:clamp(2rem,4vw,3.4rem);line-height:1.03;letter-spacing:-.04em;
+    }
+    .section-head p{margin:0;color:var(--muted);font-size:1.05rem}
+
+    /* HEADER */
+    .header-shell{
+      position:sticky;top:0;z-index:100;
+      padding:14px 0;
+      background:linear-gradient(180deg,rgba(7,9,18,.88),rgba(7,9,18,.54),transparent);
+      backdrop-filter:blur(14px);
+    }
+    .navbar{
+      min-height:66px;display:flex;align-items:center;justify-content:space-between;gap:18px;
+      padding:10px 14px 10px 18px;
+      border:1px solid var(--line);border-radius:22px;
+      background:rgba(11,14,27,.75);box-shadow:0 14px 50px rgba(0,0,0,.2);
+    }
+    .brand{
+      display:flex;align-items:center;gap:11px;min-width:0;
+      font-weight:900;letter-spacing:-.03em;
+    }
+    .brand-logo{
+      width:auto;max-width:150px;height:38px;object-fit:contain;
+    }
+    .brand-mark{
+      width:38px;height:38px;border-radius:13px;
+      display:grid;place-items:center;
+      background:linear-gradient(135deg,var(--brand),var(--brand-2));
+      color:#fff;font-weight:950;box-shadow:0 10px 30px rgba(var(--brand-rgb),.28);
+    }
+    .brand-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .nav-links{display:flex;align-items:center;gap:7px}
+    .nav-links a{
+      padding:9px 12px;border-radius:12px;color:var(--muted);font-size:.93rem;font-weight:700
+    }
+    .nav-links a:hover{color:#fff;background:rgba(255,255,255,.05)}
+    .actions{display:flex;align-items:center;gap:9px}
+
+    .btn{
+      border:0;cursor:pointer;
+      min-height:44px;padding:0 16px;border-radius:14px;
+      display:inline-flex;align-items:center;justify-content:center;gap:9px;
+      font-weight:800;transition:.2s ease;white-space:nowrap;
+    }
+    .btn:hover{transform:translateY(-1px)}
+    .btn-primary{
+      color:#fff;
+      background:linear-gradient(135deg,var(--brand),color-mix(in srgb,var(--brand) 70%,var(--brand-2)));
+      box-shadow:0 12px 34px rgba(var(--brand-rgb),.25),inset 0 1px 0 rgba(255,255,255,.18);
+    }
+    .btn-primary:hover{box-shadow:0 18px 42px rgba(var(--brand-rgb),.34)}
+    .btn-ghost{
+      color:#eef2ff;background:rgba(255,255,255,.05);border:1px solid var(--line);
+    }
+    .btn-ghost:hover{background:rgba(255,255,255,.08)}
+
+    /* USER MENU */
+    .user-menu{position:relative}
+    .popover{
+      position:absolute;right:0;top:calc(100% + 12px);width:min(340px,90vw);
+      padding:18px;border:1px solid var(--line);border-radius:20px;
+      background:rgba(14,18,34,.96);box-shadow:var(--shadow);backdrop-filter:blur(18px);
+      opacity:0;visibility:hidden;transform:translateY(-7px) scale(.98);
+      transition:.18s ease;transform-origin:top right;
+    }
+    .popover.open{opacity:1;visibility:visible;transform:none}
+    .popover label{display:block;margin-bottom:8px;color:#dbe4f4;font-size:.86rem;font-weight:800}
+    .field{
+      width:100%;height:48px;padding:0 14px;margin-bottom:10px;
+      color:#fff;background:#090d1a;border:1px solid var(--line);border-radius:13px;outline:none;
+    }
+    .field:focus{border-color:color-mix(in srgb,var(--brand) 75%,white);box-shadow:0 0 0 4px rgba(var(--brand-rgb),.12)}
+    .popover .btn{width:100%}
+
+    /* HERO */
+    .hero{padding:72px 0 56px}
+    .hero-grid{
+      display:grid;grid-template-columns:minmax(0,1.08fr) minmax(360px,.92fr);
+      gap:54px;align-items:center;
+    }
+    .hero-badge{
+      display:inline-flex;align-items:center;gap:9px;
+      padding:8px 12px;border:1px solid rgba(255,255,255,.1);border-radius:999px;
+      background:rgba(255,255,255,.04);color:#e2e8f0;font-size:.86rem;font-weight:800;
+    }
+    .hero-badge::before{
+      content:"";width:8px;height:8px;border-radius:50%;background:var(--ok);
+      box-shadow:0 0 16px var(--ok);
+    }
+    .hero h1{
+      max-width:780px;margin:18px 0 18px;
+      font-size:clamp(3.2rem,7vw,6.3rem);line-height:.92;letter-spacing:-.065em;
+    }
+    .gradient-text{
+      background:linear-gradient(100deg,#fff 12%,#c4b5fd 50%,#67e8f9);
+      -webkit-background-clip:text;background-clip:text;color:transparent;
+    }
+    .hero-copy{max-width:680px;margin:0 0 27px;color:var(--muted);font-size:1.16rem;line-height:1.75}
+    .hero-cta{display:flex;gap:11px;flex-wrap:wrap}
+    .hero-cta .btn{min-height:50px;padding:0 20px;border-radius:15px}
+    .hero-note{
+      display:flex;align-items:center;gap:13px;flex-wrap:wrap;margin-top:22px;
+      color:#93a1ba;font-size:.88rem;font-weight:650;
+    }
+    .hero-note span{display:flex;align-items:center;gap:7px}
+    .check{color:var(--ok);font-weight:900}
+
+    /* LIVE CARD */
+    .visual{position:relative;min-height:530px;display:grid;place-items:center}
+    .orb{
+      position:absolute;border-radius:50%;filter:blur(2px);pointer-events:none;
+    }
+    .orb.one{width:240px;height:240px;right:2%;top:4%;background:rgba(var(--brand-rgb),.17)}
+    .orb.two{width:190px;height:190px;left:2%;bottom:5%;background:rgba(34,211,238,.10)}
+    .order-card{
+      position:relative;width:min(455px,100%);padding:20px;
+      border:1px solid rgba(255,255,255,.11);border-radius:28px;
+      background:linear-gradient(180deg,rgba(24,28,52,.94),rgba(13,17,32,.94));
+      box-shadow:0 35px 100px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.08);
+      backdrop-filter:blur(18px);transform:rotate(1.3deg);
+    }
+    .order-card::before{
+      content:"";position:absolute;inset:-1px;border-radius:28px;padding:1px;
+      background:linear-gradient(135deg,rgba(255,255,255,.22),transparent 30%,rgba(var(--brand-rgb),.5));
+      -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+      -webkit-mask-composite:xor;mask-composite:exclude;pointer-events:none;
+    }
+    .card-top{display:flex;align-items:center;justify-content:space-between;gap:15px;margin-bottom:18px}
+    .mini-brand{display:flex;align-items:center;gap:10px}
+    .mini-logo{width:41px;height:41px;border-radius:13px;display:grid;place-items:center;background:linear-gradient(135deg,var(--brand),var(--brand-2));font-weight:950}
+    .mini-brand strong{display:block}
+    .mini-brand small{display:block;color:var(--muted);margin-top:2px}
+    .status-pill{
+      display:inline-flex;align-items:center;gap:7px;padding:7px 10px;border-radius:999px;
+      background:rgba(52,211,153,.09);border:1px solid rgba(52,211,153,.2);color:#86efac;
+      font-size:.78rem;font-weight:850;
+    }
+    .status-pill::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--ok)}
+    .preview{
+      border:1px solid var(--line);border-radius:20px;padding:16px;background:rgba(255,255,255,.025)
+    }
+    .preview-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 0;border-bottom:1px solid rgba(255,255,255,.06)}
+    .preview-row:last-child{border-bottom:0}
+    .preview-prod{display:flex;align-items:center;gap:10px;min-width:0}
+    .preview-icon{
+      width:42px;height:42px;display:grid;place-items:center;border-radius:12px;
+      background:rgba(var(--brand-rgb),.12);border:1px solid rgba(var(--brand-rgb),.2);font-size:1.15rem
+    }
+    .preview-prod b{font-size:.94rem}
+    .preview-prod span{display:block;color:var(--muted);font-size:.8rem;margin-top:2px}
+    .preview-price{font-weight:900}
+    .summary{margin-top:14px;padding:15px 16px;border-radius:18px;background:#0a0e1b;border:1px solid var(--line)}
+    .summary-line{display:flex;justify-content:space-between;gap:15px;color:var(--muted);font-size:.9rem;margin-bottom:8px}
+    .summary-total{display:flex;justify-content:space-between;gap:15px;padding-top:11px;border-top:1px solid var(--line);font-weight:900;font-size:1.08rem}
+    .tracking{
+      margin-top:14px;padding:14px 16px;border-radius:18px;
+      background:linear-gradient(135deg,rgba(var(--brand-rgb),.16),rgba(34,211,238,.07));
+      border:1px solid rgba(var(--brand-rgb),.24);
+    }
+    .tracking-top{display:flex;justify-content:space-between;align-items:center;font-size:.84rem;font-weight:800}
+    .trackbar{height:7px;margin:13px 0 7px;border-radius:999px;background:rgba(255,255,255,.09);overflow:hidden}
+    .trackbar span{display:block;width:72%;height:100%;border-radius:inherit;background:linear-gradient(90deg,var(--brand),var(--brand-2))}
+    .tracking small{color:#a7b3c8}
+    .float-chip{
+      position:absolute;left:-36px;bottom:72px;padding:12px 14px;border-radius:16px;
+      background:rgba(14,18,34,.92);border:1px solid var(--line);box-shadow:0 20px 50px rgba(0,0,0,.35);
+      font-size:.84rem;font-weight:800;transform:rotate(-3deg)
+    }
+    .float-chip b{display:block;color:#fff;margin-bottom:2px}
+    .float-chip span{color:var(--muted);font-weight:650}
+
+    /* TRUST */
+    .trust{padding:12px 0 24px}
+    .trust-grid{
+      display:grid;grid-template-columns:repeat(4,1fr);gap:12px;
+      padding:14px;border:1px solid var(--line);border-radius:22px;background:rgba(255,255,255,.025)
+    }
+    .trust-item{padding:18px;border-radius:16px}
+    .trust-item strong{display:block;font-size:1.03rem}
+    .trust-item span{display:block;margin-top:4px;color:var(--muted);font-size:.86rem}
+
+    /* PRODUCTS */
+    .products-grid{
+      display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px
+    }
+    .product-card{
+      position:relative;overflow:hidden;display:flex;flex-direction:column;
+      min-height:100%;padding:14px;border:1px solid var(--line);border-radius:24px;
+      background:linear-gradient(180deg,rgba(255,255,255,.052),rgba(255,255,255,.026));
+      transition:.22s ease;
+    }
+    .product-card:hover{transform:translateY(-5px);border-color:rgba(var(--brand-rgb),.48);box-shadow:0 24px 60px rgba(0,0,0,.25)}
+    .product-media{
+      height:220px;display:grid;place-items:center;overflow:hidden;
+      border-radius:18px;background:
+        radial-gradient(circle at 70% 25%,rgba(var(--brand-rgb),.18),transparent 45%),
+        #0c1020;border:1px solid rgba(255,255,255,.06)
+    }
+    .product-media img{width:100%;height:100%;object-fit:cover}
+    .product-placeholder{font-size:3rem;opacity:.8}
+    .product-badge{
+      position:absolute;top:26px;left:26px;padding:7px 10px;border-radius:999px;
+      background:rgba(7,9,18,.82);border:1px solid rgba(255,255,255,.1);
+      font-size:.74rem;font-weight:900;backdrop-filter:blur(10px)
+    }
+    .product-body{display:flex;flex:1;flex-direction:column;padding:17px 5px 4px}
+    .product-body h3{margin:0;font-size:1.15rem;letter-spacing:-.02em}
+    .product-desc{margin:8px 0 16px;color:var(--muted);font-size:.9rem;line-height:1.55;min-height:42px}
+    .features-list{list-style:none;padding:0;margin:0 0 18px;display:grid;gap:7px}
+    .features-list li{display:flex;gap:8px;color:#bcc6d9;font-size:.86rem}
+    .features-list li::before{content:"✓";color:var(--ok);font-weight:900}
+    .product-foot{margin-top:auto;display:flex;align-items:center;justify-content:space-between;gap:12px}
+    .product-price{font-size:1.45rem;font-weight:950;letter-spacing:-.04em}
+    .product-foot .btn{min-height:42px;padding:0 14px;border-radius:12px}
+
+    /* HOW */
+    .how-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+    .step{
+      position:relative;padding:24px;border:1px solid var(--line);border-radius:22px;background:rgba(255,255,255,.028)
+    }
+    .step-number{
+      width:40px;height:40px;display:grid;place-items:center;margin-bottom:38px;
+      border-radius:13px;background:rgba(var(--brand-rgb),.12);border:1px solid rgba(var(--brand-rgb),.22);
+      color:#ddd6fe;font-weight:950
+    }
+    .step h3{margin:0 0 8px}
+    .step p{margin:0;color:var(--muted);font-size:.92rem;line-height:1.6}
+
+    /* FAQ */
+    .faq-wrap{max-width:850px}
+    details{
+      margin-bottom:12px;border:1px solid var(--line);border-radius:18px;background:rgba(255,255,255,.028);overflow:hidden
+    }
+    summary{cursor:pointer;list-style:none;padding:19px 20px;font-weight:850}
+    summary::-webkit-details-marker{display:none}
+    details p{margin:0;padding:0 20px 20px;color:var(--muted);line-height:1.7}
+
+    /* CTA */
+    .closing{
+      position:relative;overflow:hidden;padding:42px;border:1px solid rgba(var(--brand-rgb),.32);
+      border-radius:30px;background:
+        radial-gradient(circle at 10% 10%,rgba(var(--brand-rgb),.26),transparent 32rem),
+        radial-gradient(circle at 90% 100%,rgba(34,211,238,.12),transparent 25rem),
+        #0d1120;
+      box-shadow:var(--shadow)
+    }
+    .closing-grid{display:grid;grid-template-columns:1fr auto;gap:30px;align-items:center}
+    .closing h2{margin:0 0 10px;font-size:clamp(2rem,4vw,3.3rem);letter-spacing:-.045em}
+    .closing p{margin:0;color:var(--muted);max-width:680px;font-size:1.02rem}
+    .closing-actions{display:flex;gap:10px;flex-wrap:wrap}
+
+    /* FOOTER */
+    footer{padding:42px 0 88px;color:var(--muted)}
+    .footer-grid{display:flex;justify-content:space-between;gap:24px;align-items:center;padding-top:24px;border-top:1px solid var(--line)}
+    .footer-brand{display:flex;align-items:center;gap:10px;color:#fff;font-weight:900}
+
+    /* TOAST + ERROR */
+    .toast{
+      position:fixed;left:50%;bottom:24px;z-index:250;transform:translate(-50%,16px);
+      padding:12px 18px;border:1px solid var(--line);border-radius:999px;
+      background:#f8fafc;color:#0f172a;font-weight:850;box-shadow:0 20px 50px rgba(0,0,0,.35);
+      opacity:0;pointer-events:none;transition:.22s ease
+    }
+    .toast.show{opacity:1;transform:translate(-50%,0)}
+    .error-screen{min-height:100vh;display:grid;place-items:center;padding:30px}
+    .error-box{max-width:620px;padding:32px;border:1px solid var(--line);border-radius:28px;background:var(--surface);text-align:center;box-shadow:var(--shadow)}
+    .error-box h1{margin-top:0;font-size:2.3rem}
+    .error-box p{color:var(--muted)}
+
+    /* MOBILE STICKY */
+    .mobile-cta{
+      display:none;position:fixed;left:12px;right:12px;bottom:12px;z-index:90;
+      gap:8px;padding:8px;border:1px solid var(--line);border-radius:18px;
+      background:rgba(9,12,23,.9);box-shadow:0 20px 60px rgba(0,0,0,.45);backdrop-filter:blur(16px)
+    }
+    .mobile-cta .btn{flex:1}
+
+    @media(max-width:980px){
+      .nav-links{display:none}
+      .hero-grid{grid-template-columns:1fr}
+      .hero{padding-top:48px}
+      .visual{min-height:470px}
+      .products-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+      .how-grid{grid-template-columns:repeat(2,1fr)}
+      .trust-grid{grid-template-columns:repeat(2,1fr)}
+      .closing-grid{grid-template-columns:1fr}
+    }
+
+    @media(max-width:680px){
+      .wrap{width:min(94%,1180px)}
+      .header-shell{padding-top:8px}
+      .navbar{min-height:60px;border-radius:18px;padding:8px 10px}
+      .brand-name{display:none}
+      .brand-logo{max-width:125px;height:34px}
+      .actions>.btn-primary{display:none}
+      .user-menu .btn-ghost{padding:0 12px}
+      .section{padding:64px 0}
+      .hero{padding:42px 0 30px}
+      .hero h1{font-size:clamp(3rem,15vw,4.8rem)}
+      .hero-copy{font-size:1rem}
+      .hero-cta{display:grid;grid-template-columns:1fr}
+      .visual{min-height:420px}
+      .order-card{padding:14px;border-radius:23px;transform:none}
+      .float-chip{display:none}
+      .products-grid{grid-template-columns:1fr}
+      .product-media{height:210px}
+      .how-grid,.trust-grid{grid-template-columns:1fr}
+      .trust-item{padding:14px}
+      .closing{padding:28px 22px}
+      .closing-actions{display:grid;grid-template-columns:1fr;width:100%}
+      .footer-grid{align-items:flex-start;flex-direction:column}
+      .mobile-cta{display:flex}
+      footer{padding-bottom:110px}
+    }
+
+    @media(prefers-reduced-motion:reduce){
+      *{scroll-behavior:auto!important;transition:none!important}
+    }
+  </style>
+</head>
+
+<body>
+  <div id="landingError" class="error-screen hidden">
+    <div class="error-box">
+      <div class="eyebrow"><span class="eyebrow-dot"></span> Landing</div>
+      <h1>No pudimos cargar esta empresa</h1>
+      <p id="landingErrorText">Verificá el enlace o el slug configurado.</p>
+    </div>
+  </div>
+
+  <div id="app">
+    <div class="header-shell">
+      <div class="wrap">
+        <div class="navbar">
+          <a href="#" class="brand" aria-label="Inicio">
+            <img id="companyLogo" class="brand-logo hidden" alt="Logo">
+            <span id="companyLogoFallback" class="brand-mark">P</span>
+            <span id="companyName" class="brand-name">Empresa</span>
+          </a>
+
+          <nav class="nav-links">
+            <a href="#productos">Productos</a>
+            <a href="#como-funciona">Cómo funciona</a>
+            <a href="#faq">Ayuda</a>
+          </nav>
+
+          <div class="actions">
+            <div class="user-menu">
+              <button id="menuBtn" class="btn btn-ghost">⌕ Mis pedidos</button>
+              <form id="statusForm" class="popover">
+                <label for="phoneInput">Consultá tu último pedido</label>
+                <input class="field" type="tel" id="phoneInput" placeholder="Tu celular" autocomplete="tel" required>
+                <button id="searchBtn" type="submit" class="btn btn-primary">Buscar pedido</button>
+              </form>
+            </div>
+            <a id="headerOrderButton" href="#" class="btn btn-primary">Pedir ahora</a>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <main>
+      <section class="hero">
+        <div class="wrap hero-grid">
+          <div>
+            <div id="heroBadge" class="hero-badge">Pedidos online activos</div>
+
+            <h1>
+              <span id="heroTitleLine1">Pedí simple.</span><br>
+              <span id="heroTitleLine2" class="gradient-text">Recibí mejor.</span>
+            </h1>
+
+            <p id="heroDescription" class="hero-copy">
+              Elegí tus productos, confirmá tus datos y seguí tu pedido desde un solo lugar.
+            </p>
+
+            <div class="hero-cta">
+              <a id="orderButton" href="#" class="btn btn-primary">Hacer mi pedido →</a>
+              <a id="whatsappButton" href="#" target="_blank" rel="noopener noreferrer" class="btn btn-ghost hidden">WhatsApp</a>
+            </div>
+
+            <div class="hero-note">
+              <span><b class="check">✓</b> Sin registros complicados</span>
+              <span><b class="check">✓</b> Seguimiento del pedido</span>
+              <span><b class="check">✓</b> Compra segura</span>
+            </div>
+          </div>
+
+          <div class="visual" aria-hidden="true">
+            <div class="orb one"></div>
+            <div class="orb two"></div>
+
+            <div class="order-card">
+              <div class="card-top">
+                <div class="mini-brand">
+                  <div id="miniLogo" class="mini-logo">P</div>
+                  <div>
+                    <strong id="miniCompany">Empresa</strong>
+                    <small>Pedido online</small>
+                  </div>
+                </div>
+                <div class="status-pill">En preparación</div>
+              </div>
+
+              <div class="preview">
+                <div class="preview-row">
+                  <div class="preview-prod">
+                    <div class="preview-icon">◈</div>
+                    <div><b>Producto destacado</b><span>Entrega a domicilio</span></div>
+                  </div>
+                  <div class="preview-price">$—</div>
+                </div>
+                <div class="preview-row">
+                  <div class="preview-prod">
+                    <div class="preview-icon">✦</div>
+                    <div><b>Servicio rápido</b><span>Confirmación inmediata</span></div>
+                  </div>
+                  <div class="preview-price">✓</div>
+                </div>
+              </div>
+
+              <div class="summary">
+                <div class="summary-line"><span>Entrega</span><span>Coordinada</span></div>
+                <div class="summary-line"><span>Estado</span><span>Confirmado</span></div>
+                <div class="summary-total"><span>Total</span><span>Ver al pedir</span></div>
+              </div>
+
+              <div class="tracking">
+                <div class="tracking-top"><span>Seguimiento</span><span>72%</span></div>
+                <div class="trackbar"><span></span></div>
+                <small>Tu pedido avanza y podés consultar su estado.</small>
+              </div>
+
+              <div class="float-chip">
+                <b>Todo centralizado</b>
+                <span>Pedido + estado + entrega</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="trust">
+        <div class="wrap">
+          <div class="trust-grid">
+            <div class="trust-item"><strong>Compra simple</strong><span>Menos pasos, más velocidad.</span></div>
+            <div class="trust-item"><strong>Pedidos online</strong><span>Disponible desde cualquier dispositivo.</span></div>
+            <div class="trust-item"><strong>Seguimiento</strong><span>Consultá tu pedido con tu celular.</span></div>
+            <div class="trust-item"><strong>Atención directa</strong><span id="trustWhatsapp">Canal de contacto integrado.</span></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="productos" class="section">
+        <div class="wrap">
+          <div class="section-head">
+            <div class="eyebrow"><span class="eyebrow-dot"></span> Catálogo</div>
+            <h2 id="productsTitle">Elegí lo que necesitás.</h2>
+            <p id="productsSubtitle">Productos y promociones destacados para pedir ahora.</p>
+          </div>
+
+          <div id="productGrid" class="products-grid">
+            <div style="grid-column:1/-1;color:var(--muted);padding:30px 0">Cargando productos…</div>
+          </div>
+        </div>
+      </section>
+
+      <section id="como-funciona" class="section">
+        <div class="wrap">
+          <div class="section-head">
+            <div class="eyebrow"><span class="eyebrow-dot"></span> Simple</div>
+            <h2>Del catálogo a tu puerta.</h2>
+            <p>Un flujo corto, claro y pensado para que el cliente termine el pedido sin fricción.</p>
+          </div>
+
+          <div class="how-grid">
+            <article class="step">
+              <div class="step-number">01</div>
+              <h3>Elegí</h3>
+              <p>Seleccioná los productos disponibles para tu empresa.</p>
+            </article>
+            <article class="step">
+              <div class="step-number">02</div>
+              <h3>Completá tus datos</h3>
+              <p>Ingresá dirección, teléfono y la información necesaria para entregar.</p>
+            </article>
+            <article class="step">
+              <div class="step-number">03</div>
+              <h3>Confirmá</h3>
+              <p>El sistema registra el pedido y prepara el seguimiento.</p>
+            </article>
+            <article class="step">
+              <div class="step-number">04</div>
+              <h3>Recibí</h3>
+              <p>Consultá el estado y recibí tu pedido según la coordinación de entrega.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section id="faq" class="section">
+        <div class="wrap faq-wrap">
+          <div class="section-head">
+            <div class="eyebrow"><span class="eyebrow-dot"></span> Ayuda</div>
+            <h2>Preguntas frecuentes.</h2>
+          </div>
+
+          <details>
+            <summary>¿Cómo hago un pedido?</summary>
+            <p>Presioná “Pedir ahora”, seleccioná los productos y completá los datos solicitados.</p>
+          </details>
+
+          <details>
+            <summary>¿Cómo consulto mi pedido?</summary>
+            <p>Usá “Mis pedidos” e ingresá el mismo número de celular utilizado al comprar.</p>
+          </details>
+
+          <details>
+            <summary>¿Cómo sé si llegan a mi zona?</summary>
+            <p id="coverageText">La cobertura se valida durante el proceso de pedido.</p>
+          </details>
+
+          <details id="paymentFaq">
+            <summary>¿Qué medios de pago aceptan?</summary>
+            <p id="paymentText">Los medios de pago disponibles se informan durante la compra.</p>
+          </details>
+        </div>
+      </section>
+
+      <section class="section" style="padding-top:30px">
+        <div class="wrap">
+          <div class="closing">
+            <div class="closing-grid">
+              <div>
+                <h2 id="closingTitle">Tu próximo pedido, en pocos pasos.</h2>
+                <p id="closingText">Entrá al catálogo, elegí tus productos y completá la compra desde el celular o la computadora.</p>
+              </div>
+              <div class="closing-actions">
+                <a id="closingOrderButton" href="#" class="btn btn-primary">Empezar pedido →</a>
+                <a id="closingWhatsappButton" href="#" target="_blank" rel="noopener noreferrer" class="btn btn-ghost hidden">Consultar</a>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="wrap">
+        <div class="footer-grid">
+          <div class="footer-brand">
+            <span id="footerMark" class="brand-mark" style="width:34px;height:34px;border-radius:11px">P</span>
+            <span id="footerCompany">Empresa</span>
+          </div>
+          <div>
+            © <span id="year"></span> <span id="footerCompanyText">Empresa</span>.
+            <span id="footerText">Powered by PedíVoy.com MD</span>
+          </div>
+        </div>
+      </div>
+    </footer>
+
+    <div class="mobile-cta">
+      <button id="mobileStatusButton" class="btn btn-ghost">Mis pedidos</button>
+      <a id="mobileOrderButton" href="#" class="btn btn-primary">Pedir ahora</a>
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script>
+    const APP = {
+      slug: null,
+      empresaId: null,
+      config: null,
+      locale: 'es-AR',
+      currency: 'ARS'
+    };
+
+    function $(id){ return document.getElementById(id); }
+
+    function sanitizeSlug(value){
+      return String(value || '')
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9-_]/g,'');
+    }
+
+    function resolveSlug(){
+      const params = new URLSearchParams(location.search);
+      const querySlug = params.get('slug');
+      if(querySlug) return sanitizeSlug(querySlug);
+
+      const parts = location.pathname.split('/').filter(Boolean);
+
+      const landingIndex = parts.indexOf('landing');
+      if(landingIndex !== -1 && parts[landingIndex + 1]){
+        return sanitizeSlug(parts[landingIndex + 1]);
+      }
+
+      const lIndex = parts.indexOf('l');
+      if(lIndex !== -1 && parts[lIndex + 1]){
+        return sanitizeSlug(parts[lIndex + 1]);
+      }
+
+      const host = location.hostname.split('.');
+      if(host.length >= 3 && !['www','app','pedidos'].includes(host[0])){
+        return sanitizeSlug(host[0]);
+      }
+
+      return null;
+    }
+
+    function normalizePhone(value){
+      return String(value || '').replace(/\D+/g,'');
+    }
+
+    function buildTelefonoDB(raw){
+      const phone = normalizePhone(raw);
+
+      if(phone.length === 10) return '549' + phone;
+      if(phone.length === 11 && phone.startsWith('0')) return '549' + phone.substring(1);
+      if(phone.length === 12 && phone.startsWith('54')) return '549' + phone.substring(2);
+      if(phone.length === 13 && phone.startsWith('549')) return phone;
+
+      return phone;
+    }
+
+    function escapeHtml(value){
+      return String(value ?? '').replace(/[&<>"']/g, ch => ({
+        '&':'&amp;',
+        '<':'&lt;',
+        '>':'&gt;',
+        '"':'&quot;',
+        "'":'&#39;'
+      })[ch]);
+    }
+
+    function isSafeHex(value){
+      return /^#[0-9a-fA-F]{6}$/.test(String(value || ''));
+    }
+
+    function hexToRgb(hex){
+      const clean = String(hex).replace('#','');
+      if(clean.length !== 6) return null;
+      return [
+        parseInt(clean.substring(0,2),16),
+        parseInt(clean.substring(2,4),16),
+        parseInt(clean.substring(4,6),16)
+      ].join(',');
+    }
+
+    function toast(message){
+      const el = $('toast');
+      el.textContent = message;
+      el.classList.add('show');
+      clearTimeout(window.__toastTimer);
+      window.__toastTimer = setTimeout(() => el.classList.remove('show'),3000);
+    }
+
+    function money(value){
+      const number = Number(value || 0);
+      if(!Number.isFinite(number) || number <= 0) return 'Consultar';
+
+      return new Intl.NumberFormat(APP.locale,{
+        style:'currency',
+        currency:APP.currency,
+        maximumFractionDigits:0
+      }).format(number);
+    }
+
+    async function loadCompanyConfig(){
+      APP.slug = resolveSlug();
+
+      if(!APP.slug){
+        throw new Error('LANDING_SLUG_NOT_FOUND');
+      }
+
+      const res = await fetch(`/public/config?slug=${encodeURIComponent(APP.slug)}`,{
+        headers:{'Accept':'application/json'}
+      });
+
+      if(!res.ok){
+        throw new Error(`COMPANY_CONFIG_${res.status}`);
+      }
+
+      const config = await res.json();
+      const empresaId = Number(config.empresa_id ?? config.id);
+
+      if(!Number.isFinite(empresaId) || empresaId <= 0){
+        throw new Error('INVALID_EMPRESA_ID');
+      }
+
+      APP.empresaId = empresaId;
+      APP.config = config;
+      APP.locale = config.locale || 'es-AR';
+      APP.currency = config.moneda || config.currency || 'ARS';
+
+      applyCompanyConfig(config);
+    }
+
+    function applyCompanyConfig(config){
+      const name =
+        config.nombre_comercial ||
+        config.nombre ||
+        config.empresa_nombre ||
+        APP.slug;
+
+      const description =
+        config.descripcion_landing ||
+        config.hero_descripcion ||
+        config.descripcion ||
+        `Hacé tu pedido online en ${name}.`;
+
+      const line1 =
+        config.hero_titulo_1 ||
+        config.hero_linea_1 ||
+        'Pedí simple.';
+
+      const line2 =
+        config.hero_titulo_2 ||
+        config.hero_linea_2 ||
+        config.titulo_landing ||
+        `Comprá en ${name}.`;
+
+      $('companyName').textContent = name;
+      $('miniCompany').textContent = name;
+      $('footerCompany').textContent = name;
+      $('footerCompanyText').textContent = name;
+
+      document.title = config.meta_title || `${name} – Pedidos Online`;
+      $('metaDescription').setAttribute('content', config.meta_description || description);
+
+      $('heroTitleLine1').textContent = line1;
+      $('heroTitleLine2').textContent = line2;
+      $('heroDescription').textContent = description;
+
+      if(config.hero_badge){
+        $('heroBadge').textContent = config.hero_badge;
+      }
+
+      const brand = config.color_marca || config.color_primario;
+      if(isSafeHex(brand)){
+        document.documentElement.style.setProperty('--brand',brand);
+        const rgb = hexToRgb(brand);
+        if(rgb) document.documentElement.style.setProperty('--brand-rgb',rgb);
+        $('themeColor').setAttribute('content',brand);
+      }
+
+      const secondary = config.color_secundario || config.color_secondary;
+      if(isSafeHex(secondary)){
+        document.documentElement.style.setProperty('--brand-2',secondary);
+      }
+
+      const initial = name.charAt(0).toUpperCase() || 'P';
+      $('companyLogoFallback').textContent = initial;
+      $('miniLogo').textContent = initial;
+      $('footerMark').textContent = initial;
+
+      const logo = config.logo_url || config.logo;
+      if(logo){
+        $('companyLogo').src = logo;
+        $('companyLogo').alt = `Logo de ${name}`;
+        $('companyLogo').classList.remove('hidden');
+        $('companyLogoFallback').classList.add('hidden');
+      }
+
+      const orderHref = `/pedidos/?slug=${encodeURIComponent(APP.slug)}`;
+
+      ['orderButton','headerOrderButton','closingOrderButton','mobileOrderButton']
+        .forEach(id => $(id).href = orderHref);
+
+      const whatsapp = normalizePhone(config.whatsapp || config.telefono_whatsapp);
+      if(whatsapp){
+        const href = `https://wa.me/${whatsapp}`;
+        ['whatsappButton','closingWhatsappButton'].forEach(id => {
+          $(id).href = href;
+          $(id).classList.remove('hidden');
+        });
+        $('trustWhatsapp').textContent = 'WhatsApp directo con la empresa.';
+      }
+
+      if(config.cobertura_texto){
+        $('coverageText').textContent = config.cobertura_texto;
+      }
+
+      if(config.medios_pago_texto || config.pagos_texto){
+        $('paymentText').textContent = config.medios_pago_texto || config.pagos_texto;
+      }
+
+      if(config.productos_titulo){
+        $('productsTitle').textContent = config.productos_titulo;
+      }
+
+      if(config.productos_subtitulo){
+        $('productsSubtitle').textContent = config.productos_subtitulo;
+      }
+
+      if(config.cta_titulo){
+        $('closingTitle').textContent = config.cta_titulo;
+      }
+
+      if(config.cta_texto){
+        $('closingText').textContent = config.cta_texto;
+      }
+
+      if(config.footer_texto){
+        $('footerText').textContent = config.footer_texto;
+      }
+    }
+
+    async function loadProducts(){
+      const grid = $('productGrid');
+
+      try{
+        const res = await fetch(
+          `/public/productos?empresa_id=${encodeURIComponent(APP.empresaId)}&scope=landing`,
+          {headers:{'Accept':'application/json'}}
+        );
+
+        if(!res.ok){
+          throw new Error(`PRODUCTS_${res.status}`);
+        }
+
+        const products = await res.json();
+
+        if(!Array.isArray(products) || !products.length){
+          grid.innerHTML = `
+            <div style="grid-column:1/-1;padding:34px;border:1px solid var(--line);border-radius:22px;color:var(--muted);background:rgba(255,255,255,.025)">
+              No hay productos destacados disponibles actualmente.
+            </div>
+          `;
+          return;
+        }
+
+        grid.innerHTML = products.map(renderProduct).join('');
+      }catch(error){
+        console.error(error);
+        grid.innerHTML = `
+          <div style="grid-column:1/-1;padding:34px;border:1px solid var(--line);border-radius:22px;color:var(--muted);background:rgba(255,255,255,.025)">
+            No se pudieron cargar los productos en este momento.
+          </div>
+        `;
+      }
+    }
+
+    function renderProduct(product){
+      const id = product.id;
+      const name = escapeHtml(product.nombre || 'Producto');
+      const description = String(product.descripcion || '');
+      const img = product.imagen_promo || product.imagen || '';
+      const badge = product.etiqueta || '';
+      const price = money(product.precio);
+
+      const lines = description
+        .split('\n')
+        .map(v => v.trim())
+        .filter(Boolean);
+
+      const summary = escapeHtml(lines[0] || 'Disponible para pedido online.');
+
+      const features = lines.slice(1,4)
+        .map(line => `<li>${escapeHtml(line)}</li>`)
+        .join('');
+
+      const media = img
+        ? `<img src="${escapeHtml(img)}" alt="${name}" loading="lazy">`
+        : `<div class="product-placeholder">◈</div>`;
+
+      const badgeHtml = badge
+        ? `<div class="product-badge">${escapeHtml(badge)}</div>`
+        : '';
+
+      const href =
+        `/pedidos/?slug=${encodeURIComponent(APP.slug)}&add=${encodeURIComponent(id)}`;
+
+      return `
+        <article class="product-card">
+          ${badgeHtml}
+          <div class="product-media">${media}</div>
+
+          <div class="product-body">
+            <h3>${name}</h3>
+            <div class="product-desc">${summary}</div>
+
+            ${features ? `<ul class="features-list">${features}</ul>` : ''}
+
+            <div class="product-foot">
+              <div class="product-price">${price}</div>
+              <a class="btn btn-primary" href="${href}">Pedir →</a>
+            </div>
+          </div>
+        </article>
+      `;
+    }
+
+    const menuBtn = $('menuBtn');
+    const statusForm = $('statusForm');
+    const phoneInput = $('phoneInput');
+    const searchBtn = $('searchBtn');
+
+    menuBtn.addEventListener('click',event => {
+      event.stopPropagation();
+      statusForm.classList.toggle('open');
+      if(statusForm.classList.contains('open')) phoneInput.focus();
+    });
+
+    document.addEventListener('click',event => {
+      if(!statusForm.contains(event.target) && event.target !== menuBtn){
+        statusForm.classList.remove('open');
+      }
+    });
+
+    statusForm.addEventListener('click',event => event.stopPropagation());
+
+    $('mobileStatusButton').addEventListener('click',() => {
+      statusForm.classList.add('open');
+      window.scrollTo({top:0,behavior:'smooth'});
+      setTimeout(() => phoneInput.focus(),250);
+    });
+
+    statusForm.addEventListener('submit',async event => {
+      event.preventDefault();
+
+      const raw = phoneInput.value;
+
+      if(normalizePhone(raw).length < 8){
+        toast('Ingresá un número válido.');
+        return;
+      }
+
+      searchBtn.disabled = true;
+      searchBtn.textContent = 'Buscando…';
+
+      try{
+        const telefono = buildTelefonoDB(raw);
+
+        const res = await fetch(
+          `/public/ultimo-pedido?empresa_id=${encodeURIComponent(APP.empresaId)}&telefono=${encodeURIComponent(telefono)}`,
+          {headers:{'Accept':'application/json'}}
+        );
+
+        if(!res.ok){
+          throw new Error(`ORDER_${res.status}`);
+        }
+
+        const data = await res.json();
+        const pedido = data.pedido || data;
+
+        if(pedido.tracking_url){
+          location.href = pedido.tracking_url;
+          return;
+        }
+
+        if(pedido.tracking_token){
+          location.href =
+            `/pedidos/seguimiento.html?t=${encodeURIComponent(pedido.tracking_token)}`;
+          return;
+        }
+
+        if(pedido.id){
+          location.href =
+            `/pedidos/pedido.html?id=${encodeURIComponent(pedido.id)}`;
+          return;
+        }
+
+        throw new Error('ORDER_WITHOUT_DESTINATION');
+
+      }catch(error){
+        console.error(error);
+        toast('No encontramos pedidos recientes para ese número.');
+      }finally{
+        searchBtn.disabled = false;
+        searchBtn.textContent = 'Buscar pedido';
+      }
+    });
+
+    function showLandingError(error){
+      console.error('Landing error:',error);
+
+      $('app').classList.add('hidden');
+      $('landingError').classList.remove('hidden');
+
+      $('landingErrorText').textContent =
+        APP.slug
+          ? `No encontramos una configuración válida para el slug "${APP.slug}".`
+          : 'No se pudo determinar el slug de la empresa.';
+    }
+
+    async function init(){
+      $('year').textContent = new Date().getFullYear();
+
+      try{
+        await loadCompanyConfig();
+        await loadProducts();
+
+        console.log('Landing multiempresa cargada',{
+          slug:APP.slug,
+          empresaId:APP.empresaId
+        });
+      }catch(error){
+        showLandingError(error);
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>

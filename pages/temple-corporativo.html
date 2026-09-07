@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <title>Pedidos Online | Soluciones Corporativas</title>
+  <meta
+    name="description"
+    content="Gestiona tus pedidos online con la claridad y confianza que tu negocio merece."
+  >
+
+  <meta name="theme-color" content="#2563EB">
+
+  <style>
+    /* --- PALETA DE COLORES CORPORATIVA --- */
+    :root {
+      --bg: #ffffff;         /* Fondo principal blanco */
+      --bg-2: #f9fafb;       /* Fondo secundario muy claro */
+      --ink: #1f2937;        /* Texto oscuro, carbón */
+      --muted: #6b7280;      /* Texto secundario gris */
+
+      /* Branding Institucional: Azul primario suave */
+      --brand: #2563eb;      /* Blue-600 para el principal */
+      --brand-hover: #2766d4; /* Blue-700 en hover */
+
+      /* Elementos de borde y sombras sutiles */
+      --surface: #ffffff;
+    }
+
+    /* Reset y tipografía base */
+    *, *::before, *::after {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+    }
+
+    body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        background-color: var(--bg);
+        color: var(--ink);
+        line-height: 1.6;
+        -webkit-font-smoothing: antialiased;
+    }
+
+    /* Utilidades generales */
+    .container {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 0 20px;
+    }
+
+    .btn {
+        display: inline-block;
+        padding: 12px 28px;
+        border-radius: 8px;
+        text-decoration: none;
+        font-weight: 600;
+        transition: background-color 0.2s, box-shadow 0.2s;
+        border: none;
+        cursor: pointer;
+    }
+
+    .btn-primary {
+        background-color: var(--brand);
+        color: white;
+        box-shadow: 0 4px 10px rgba(37, 99, 235, 0.3);
+    }
+
+    .btn-primary:hover {
+        background-color: var(--brand-hover);
+        box-shadow: 0 6px 15px rgba(37, 99, 235, 0.4);
+    }
+
+    .btn-secondary {
+        background-color: transparent;
+        color: var(--brand);
+        border: 2px solid var(--brand);
+    }
+    
+    .btn-secondary:hover {
+        background-color: var(--bg-2);
+    }
+
+    /* --- SECCIÓN HERO --- */
+    #hero {
+        padding: 100px 0;
+        text-align: center;
+        background-color: var(--bg);
+    }
+
+    #hero h1 {
+        font-size: 3.5rem;
+        margin-bottom: 20px;
+        color: #111827; /* Gris casi negro */
+        line-height: 1.1;
+    }
+
+    #hero p {
+        font-size: 1.25rem;
+        color: var(--muted);
+        margin-bottom: 40px;
+    }
+
+    /* --- SECCIÓN CARACTERÍSTICAS (FEATURES) --- */
+    #features {
+        padding: 80px 0;
+        background-color: var(--bg-2);
+        text-align: center;
+    }
+    
+    .feature-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        gap: 30px;
+        margin-top: 40px;
+    }
+
+    .feature-card {
+        background: var(--surface);
+        padding: 30px;
+        border-radius: 12px;
+        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -2px rgba(0, 0, 0, 0.03);
+        transition: transform 0.3s;
+    }
+
+    .feature-card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+    }
+
+    .feature-card h3 {
+        color: var(--brand);
+        margin-bottom: 10px;
+    }
+    
+    /* --- SECCIÓN PRECIOS (PRICING) --- */
+    #pricing {
+        padding: 100px 0;
+        text-align: center;
+    }
+    
+    .pricing-grid {
+        display: flex;
+        justify-content: center;
+        gap: 30px;
+        margin-top: 50px;
+        flex-wrap: wrap;
+    }
+    
+    .price-card {
+        background: var(--surface);
+        padding: 40px 30px;
+        border-radius: 12px;
+        box-shadow: 0 15px 30px rgba(0, 0, 0, 0.08);
+        width: 300px;
+        text-align: left;
+        transition: border 0.3s;
+    }
+
+    .price-card.highlight {
+        border: 3px solid var(--brand);
+        transform: scale(1.05);
+        box-shadow: 0 25px 50px rgba(37, 99, 235, 0.2);
+    }
+
+    .price-card h3 {
+        color: var(--ink);
+        font-size: 1.75rem;
+        margin-bottom: 15px;
+    }
+
+    .price-tag {
+        font-size: 3rem;
+        font-weight: 700;
+        color: var(--brand);
+        margin-bottom: 20px;
+    }
+    
+    .price-card ul {
+        list-style: none;
+        margin: 20px 0;
+        padding: 0;
+    }
+    
+    .price-card li {
+        padding: 8px 0;
+        border-bottom: 1px solid var(--bg-2);
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        color: var(--ink);
+    }
+
+    .price-card li::before {
+        content: "✓";
+        color: green;
+        font-weight: 900;
+    }
+
+    /* --- FOOTER --- */
+    footer {
+        background-color: var(--bg-2);
+        padding: 40px 0;
+        text-align: center;
+        border-top: 1px solid #e5e7eb;
+    }
+
+  </style>
+</head>
+<body>
+    <!-- HEADER (Simplificado, pero visible) -->
+    <header style="background-color: var(--surface); padding: 20px 0; border-bottom: 1px solid #eee; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+        <div class="container" style="display: flex; justify-content: space-between; align-items: center;">
+            <h1 style="font-size: 1.8rem; color: var(--brand);">PediVoy</h1>
+            <nav>
+                <a href="#features" style="margin-right: 20px; color: var(--muted); text-decoration: none;">Características</a>
+                <a href="#pricing" style="margin-right: 20px; color: var(--muted); text-decoration: none;">Precios</a>
+                <a href="#" class="btn btn-primary">Iniciar Sesión</a>
+            </nav>
+        </div>
+    </header>
+
+    <!-- SECCIÓN HERO -->
+    <section id="hero">
+        <div class="container">
+            <h1>La plataforma de pedidos online que tu negocio necesita.</h1>
+            <p>Gestión completa, interfaz intuitiva y la estabilidad que garantiza el crecimiento continuo.</p>
+            <a href="#pricing" class="btn btn-primary">Ver Planes</a>
+        </div>
+    </section>
+
+    <!-- SECCIÓN CARACTERÍSTICAS (FEATURES) -->
+    <section id="features">
+        <div class="container">
+            <h2 style="font-size: 2.5rem; text-align: center; margin-bottom: 15px;">Funcionalidades clave para el éxito.</h2>
+            <p style="text-align: center; margin-bottom: 50px; color: var(--muted);">Cubrimos cada punto de contacto del cliente, desde la consulta hasta la confirmación.</p>
+            
+            <div class="feature-grid">
+                <div class="feature-card">
+                    <h3 style="color: var(--brand);">Gestión de Catálogo Intuitiva</h3>
+                    <p>Sube, modifica y organiza tu inventario en minutos. Control total sobre la visibilidad de productos.</p>
+                </div>
+                <div class="feature-card">
+                    <h3 style="color: var(--brand);">Pagos Seguros y Múltiples</h3>
+                    <p>Integración con los principales procesadores de pago, garantizando transacciones rápidas y seguras 24/7.</p>
+                </div>
+                <div class="feature-card">
+                    <h3 style="color: var(--brand);">Personalización Total</h3>
+                    <p>Adapta la experiencia de compra a tu marca. Desde el *look* hasta la lógica de negocio.</p>
+                </div>
+                <div class="feature-card">
+                    <h3 style="color: var(--brand);">Reportes Ejecutivos</h3>
+                    <p>Panel de control con métricas clave: ventas, productos más vendidos y comportamiento del usuario.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- SECCIÓN PRECIOS (PRICING) -->
+    <section id="pricing">
+        <div class="container">
+            <h2 style="font-size: 2.5rem; text-align: center; margin-bottom: 50px;">El plan que crece con tu negocio.</h2>
+            
+            <div class="pricing-grid">
+                <!-- Plan Básico -->
+                <div class="price-card">
+                    <h3>Inicio</h3>
+                    <p style="color: var(--muted); margin-bottom: 20px;">Ideal para emprendimientos que inician.</p>
+                    <div class="price-tag">$49<span>/mes</span></div>
+                    <ul>
+                        <li>Hasta 100 productos</li>
+                        <li>Pagos básicos</li>
+                        <li>Soporte por email</li>
+                        <li>1 usuario</li>
+                    </ul>
+                    <a href="#" class="btn btn-secondary" style="width: 100%;">Empezar Prueba</a>
+                </div>
+
+                <!-- Plan Pro (Destacado) -->
+                <div class="price-card highlight">
+                    <h3>Profesional</h3>
+                    <p style="color: var(--brand); font-weight: 600; margin-bottom: 5px;">¡El más recomendado!</p>
+                    <div class="price-tag">$99<span>/mes</span></div>
+                    <ul>
+                        <li>Inventario Ilimitado</li>
+                        <li>Todos los pagos seguros</li>
+                        <li>Soporte 24/7</li>
+                        <li>Hasta 10 usuarios</li>
+                    </ul>
+                    <a href="#" class="btn btn-primary" style="width: 100%;">Elegir Profesional</a>
+                </div>
+                
+                <!-- Plan Empresa -->
+                <div class="price-card">
+                    <h3>Empresa</h3>
+                    <p style="color: var(--muted); margin-bottom: 20px;">Para corporaciones en crecimiento.</p>
+                    <div class="price-tag">Personalizado</div>
+                    <ul>
+                        <li>Todo lo anterior</li>
+                        <li>Integraciones API</li>
+                        <li>Gestión de múltiples tiendas</li>
+                        <li>SLA garantizado</li>
+                    </ul>
+                    <a href="#" class="btn btn-secondary" style="width: 100%;">Contactar Ventas</a>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- FOOTER -->
+    <footer>
+        <div class="container">
+            <p>&copy; 2026 PediVoy. Todos los derechos reservados. | Plataforma construida con enfoque corporativo y estabilidad.</p>
+        </div>
+    </footer>
+
+</body>
+</html>
