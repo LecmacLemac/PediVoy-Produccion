@@ -589,7 +589,7 @@
         <h1>🏢 Gestión de Empresas</h1>
         <p class="subtitle">Administra datos fiscales, landings y cuentas bancarias.</p>
       </div>
-      <button id="btnNuevaEmpresa" type="button" class="btn btn-primary">＋ Nueva Empresa</button>
+      <button id="btnNuevaEmpresa" type="button" class="btn btn-primary" hidden>＋ Nueva Empresa</button>
     </div>
 
     <div class="card">
@@ -1497,6 +1497,28 @@ if (logoutLink) {
     let currentFacturacionConfig = null;
     let currentPagosEmpresaId = null;
 
+    function syncSuperAdminUi() {
+      const canManageEmpresas = Boolean(esSuperAdmin);
+      const newBtn = document.getElementById('btnNuevaEmpresa');
+      if (newBtn) {
+        newBtn.hidden = !canManageEmpresas;
+        newBtn.disabled = !canManageEmpresas;
+        newBtn.title = canManageEmpresas ? 'Crear empresa' : 'Solo superadmin puede crear empresas';
+      }
+
+      const saveBtn = document.getElementById('btnSaveEmpresa');
+      if (saveBtn) {
+        saveBtn.disabled = !canManageEmpresas || saveBusy;
+        saveBtn.title = canManageEmpresas ? 'Guardar empresa' : 'Solo superadmin puede guardar empresas';
+      }
+    }
+
+    function requireSuperAdmin(actionLabel = 'realizar esta accion') {
+      if (esSuperAdmin) return true;
+      toast(`Solo superadmin puede ${actionLabel}.`);
+      return false;
+    }
+
     const btnNuevaEmpresa = document.getElementById('btnNuevaEmpresa');
     if (btnNuevaEmpresa) btnNuevaEmpresa.addEventListener('click', openModal);
 
@@ -1691,9 +1713,11 @@ if (logoutLink) {
             if (panel) panel.style.display = 'block'; 
           }
         }
+        syncSuperAdminUi();
         load();
       } catch (e) {
         console.error(e);
+        syncSuperAdminUi();
       }
     })();
 
@@ -1918,6 +1942,18 @@ if (logoutLink) {
           ? `<div class="risk-line">${warningHtml.map(esc).join(' · ')}</div>`
           : '';
 
+        const adminOnlyActions = esSuperAdmin ? `
+              <button class="btn-icon" data-action="restore" data-id="${hasNumericId ? numericId : ''}" title="Restaurar backup JSON (solo superadmin)" ${hasNumericId ? '' : 'disabled'}>
+                <i class="fa-solid fa-file-arrow-up"></i>
+              </button>
+              <button class="btn-icon" data-action="edit" data-id="${hasNumericId ? numericId : ''}" title="Editar" ${hasNumericId ? '' : 'disabled'}>
+                <i class="fa-solid fa-pen"></i>
+              </button>
+              <button class="btn-icon" data-action="delete" data-id="${hasNumericId ? numericId : ''}" title="Eliminar" style="color:var(--danger); border-color:rgba(239,68,68,0.3);" ${hasNumericId ? '' : 'disabled'}>
+                <i class="fa-solid fa-trash"></i>
+              </button>
+        ` : '';
+
         // Retornamos la fila HTML
         return `
           <tr>
@@ -1962,18 +1998,10 @@ if (logoutLink) {
               <button class="btn-icon" data-action="backup" data-id="${hasNumericId ? numericId : ''}" title="Descargar backup JSON" ${hasNumericId ? '' : 'disabled'}>
                 <i class="fa-solid fa-file-arrow-down"></i>
               </button>
-              <button class="btn-icon" data-action="restore" data-id="${hasNumericId ? numericId : ''}" title="Restaurar backup JSON (solo superadmin)" ${(hasNumericId && esSuperAdmin) ? '' : 'disabled'}>
-                <i class="fa-solid fa-file-arrow-up"></i>
-              </button>
               <button class="btn-icon" data-action="copy-landing" data-id="${hasNumericId ? numericId : ''}" title="Copiar Link" ${hasNumericId ? '' : 'disabled'}>
                 <i class="fa-solid fa-link"></i>
               </button>
-              <button class="btn-icon" data-action="edit" data-id="${hasNumericId ? numericId : ''}" title="Editar" ${hasNumericId ? '' : 'disabled'}>
-                <i class="fa-solid fa-pen"></i>
-              </button>
-              <button class="btn-icon" data-action="delete" data-id="${hasNumericId ? numericId : ''}" title="Eliminar" style="color:var(--danger); border-color:rgba(239,68,68,0.3);" ${hasNumericId ? '' : 'disabled'}>
-                <i class="fa-solid fa-trash"></i>
-              </button>
+              ${adminOnlyActions}
             </td>
           </tr>
         `;
@@ -2046,6 +2074,7 @@ if (logoutLink) {
     }
 
     function openModal() {
+      if (!requireSuperAdmin('crear empresas')) return;
       $('#modal').classList.add('open');
       $('#modalTitle').textContent = 'Nueva Empresa';
       $('#formEmpresa').reset();
@@ -2071,6 +2100,7 @@ if (logoutLink) {
     }
 
     function edit(id) {
+      if (!requireSuperAdmin('editar empresas')) return;
       const c = companies.find((x) => x.id === id);
       if (!c) return;
 
@@ -2532,6 +2562,7 @@ if (logoutLink) {
     }
 
     async function save() {
+      if (!requireSuperAdmin('guardar empresas')) return;
       if (saveBusy) return;
 
       const id = $('#e_id').value;
@@ -2745,13 +2776,14 @@ if (logoutLink) {
       } finally {
         saveBusy = false;
         if (saveBtn) {
-          saveBtn.disabled = false;
+          saveBtn.disabled = !esSuperAdmin;
           saveBtn.textContent = prevTxt;
         }
       }
     }
 
     async function del(id, btnEl = null) {
+      if (!requireSuperAdmin('eliminar empresas')) return;
       if (deleteBusy) return;
       if (!confirm('¿Eliminar empresa?\n\n⚠️ SE BORRARÁN TODOS SUS DATOS (Pedidos, Clientes, etc).')) {
         return;
@@ -2824,6 +2856,7 @@ if (logoutLink) {
     }
 
     async function restoreEmpresa(id) {
+      if (!requireSuperAdmin('restaurar backups')) return;
       const c = companies.find((x) => x.id === id);
       if (!c) return;
 
