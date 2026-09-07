@@ -138,7 +138,7 @@
     dialog { width: min(560px, calc(100vw - 24px)); padding: 0; border: 1px solid var(--border); border-radius: var(--radius); background: #1e293b; color: #fff; box-shadow: 0 24px 80px rgba(0, 0, 0, .58); }
     dialog::backdrop { background: rgba(2, 6, 23, .72); backdrop-filter: blur(4px); }
     .modal-head, .modal-foot { padding: 1rem; display: flex; justify-content: space-between; align-items: center; gap: .75rem; border-bottom: 1px solid var(--border); }
-    .modal-foot { border-bottom: 0; border-top: 1px solid var(--border); justify-content: flex-end; }
+    .modal-foot { border-bottom: 0; border-top: 1px solid var(--border); justify-content: flex-end; flex-wrap: wrap; }
     .modal-body { padding: 1rem; display: grid; gap: .8rem; }
     .two { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; }
     textarea { min-height: 86px; resize: vertical; }
@@ -291,6 +291,26 @@
     </form>
   </dialog>
 
+  <dialog id="saldoDialog">
+    <form method="dialog">
+      <div class="modal-head">
+        <strong>Solicitud de saldo por WhatsApp</strong>
+        <button class="btn btn-small" value="cancel">Cerrar</button>
+      </div>
+      <div class="modal-body">
+        <div class="two">
+          <label>Cliente<input id="saldoCliente" readonly /></label>
+          <label>Telefono<input id="saldoTelefono" inputmode="tel" /></label>
+        </div>
+        <label>Mensaje<textarea id="saldoMensaje" required></textarea></label>
+      </div>
+      <div class="modal-foot">
+        <button type="button" class="btn" id="btnAbrirWhatsapp">Abrir WhatsApp Web</button>
+        <button type="button" class="btn btn-primary" id="btnEnviarSaldo">Enviar automatico</button>
+      </div>
+    </form>
+  </dialog>
+
   <input id="fileImport" type="file" accept=".csv,text/csv" hidden />
   <div class="toast" id="toast"></div>
 
@@ -302,7 +322,8 @@
       entregas: [],
       movimientosLocales: [],
       clientes: [],
-      selectedKey: null
+      selectedKey: null,
+      requestKey: null
     };
 
     const moneyFmt = new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 });
@@ -343,8 +364,12 @@
     }
 
     function empresaQuery() {
-      const emp = state.isSuper ? $('empresa').value : state.user?.empresa_id;
+      const emp = currentEmpresaId();
       return emp ? `empresa_id=${encodeURIComponent(emp)}` : '';
+    }
+
+    function currentEmpresaId() {
+      return state.isSuper ? $('empresa').value : state.user?.empresa_id;
     }
 
     async function loadMe() {
@@ -521,7 +546,12 @@
             <td class="right ${amountClass}">${money(row.saldo)}</td>
             <td><span class="badge ${status}">${statusText}</span></td>
             <td>${row.ultima ? esc(dateFmt.format(new Date(row.ultima))) : '-'}</td>
-            <td><button class="btn btn-small" data-detail="${esc(row.key)}">Detalle</button></td>
+            <td>
+              <div class="toolbar-line">
+                <button class="btn btn-small" data-detail="${esc(row.key)}">Detalle</button>
+                <button class="btn btn-small" data-saldo-wpp="${esc(row.key)}" ${!row.telefono || row.saldo <= .01 ? 'disabled' : ''}>Solicitar</button>
+              </div>
+            </td>
           </tr>
         `;
       }).join('');
@@ -531,6 +561,9 @@
           state.selectedKey = btn.dataset.detail;
           renderDetalle(state.selectedKey);
         });
+      });
+      document.querySelectorAll('[data-saldo-wpp]').forEach((btn) => {
+        btn.addEventListener('click', () => openSaldoRequest(btn.dataset.saldoWpp));
       });
 
       if (!state.selectedKey || !rows.some((r) => r.key === state.selectedKey)) state.selectedKey = rows[0]?.key || null;
@@ -559,6 +592,78 @@
     function formatMetodo(value) {
       const raw = String(value || '').replace(/_/g, ' ').trim();
       return raw ? raw.charAt(0).toUpperCase() + raw.slice(1) : '-';
+    }
+
+    function cleanPhone(value) {
+      const raw = String(value || '').replace(/\D+/g, '');
+      if (raw.length === 10) return `549${raw}`;
+      return raw;
+    }
+
+    function buildSaldoRequestMessage(client) {
+      const desde = $('from').value || 'inicio';
+      const hasta = $('to').value || 'hoy';
+      return [
+        `Hola ${client.cliente}, te escribimos de PediVoy.`,
+        `Registramos un saldo pendiente de ${money(client.saldo)} por entregas realizadas en el periodo ${desde} a ${hasta}.`,
+        'Cuando puedas, respondeme para coordinar el pago. Gracias.'
+      ].join('\n');
+    }
+
+    function openSaldoRequest(key) {
+      const client = state.clientes.find((item) => item.key === key);
+      if (!client) return toast('No se encontro el cliente.');
+      if (!client.telefono) return toast('El cliente no tiene telefono cargado.');
+      if (client.saldo <= .01) return toast('El cliente no tiene saldo pendiente.');
+      state.requestKey = key;
+      $('saldoCliente').value = client.cliente;
+      $('saldoTelefono').value = cleanPhone(client.telefono);
+      $('saldoMensaje').value = buildSaldoRequestMessage(client);
+      $('saldoDialog').showModal();
+    }
+
+    function whatsappWebUrl() {
+      const phone = cleanPhone($('saldoTelefono').value);
+      const message = $('saldoMensaje').value.trim();
+      return `https://web.whatsapp.com/send?phone=${encodeURIComponent(phone)}&text=${encodeURIComponent(message)}`;
+    }
+
+    function abrirWhatsappWeb() {
+      const phone = cleanPhone($('saldoTelefono').value);
+      const message = $('saldoMensaje').value.trim();
+      if (!phone) return toast('Falta telefono para WhatsApp.');
+      if (!message) return toast('Escribi un mensaje antes de abrir WhatsApp.');
+      window.open(whatsappWebUrl(), '_blank', 'noopener');
+    }
+
+    async function enviarSaldoAutomatico() {
+      const client = state.clientes.find((item) => item.key === state.requestKey);
+      const phone = cleanPhone($('saldoTelefono').value);
+      const message = $('saldoMensaje').value.trim();
+      if (!client) return toast('No se encontro el cliente.');
+      if (!phone) return toast('Falta telefono para WhatsApp.');
+      if (!message) return toast('Escribi un mensaje antes de enviar.');
+
+      $('btnEnviarSaldo').disabled = true;
+      try {
+        await api('/api/reportes/saldos-clientes/solicitar', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            empresa_id: currentEmpresaId(),
+            cliente: client.cliente,
+            telefono: phone,
+            saldo: client.saldo,
+            from: $('from').value,
+            to: $('to').value,
+            mensaje: message
+          })
+        });
+        $('saldoDialog').close();
+        toast('Solicitud encolada para WhatsApp automatico');
+      } finally {
+        $('btnEnviarSaldo').disabled = false;
+      }
     }
 
     async function loadEntregas() {
@@ -673,6 +778,8 @@
       $('empresa').addEventListener('change', loadEntregas);
       $('btnCobro').addEventListener('click', () => openCobro());
       $('btnGuardarCobro').addEventListener('click', guardarCobro);
+      $('btnAbrirWhatsapp').addEventListener('click', abrirWhatsappWeb);
+      $('btnEnviarSaldo').addEventListener('click', enviarSaldoAutomatico);
       $('btnCSV').addEventListener('click', exportCSV);
       $('btnImport').addEventListener('click', () => $('fileImport').click());
       $('fileImport').addEventListener('change', (ev) => {

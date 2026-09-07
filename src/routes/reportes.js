@@ -6,12 +6,14 @@ import {
   getEmpresaIdFromToken as defaultGetEmpresaIdFromToken
 } from '../services.js';
 import { query as defaultQuery } from '../db.js';
+import { enqueueWppMessage as defaultEnqueueWppMessage } from '../services/messaging.js';
 
 export function createReportesRouter({
   query: queryFn = defaultQuery,
   withAuth: withAuthFn = defaultWithAuth,
   isSuper: isSuperFn = defaultIsSuper,
-  getEmpresaIdFromToken: getEmpresaIdFromTokenFn = defaultGetEmpresaIdFromToken
+  getEmpresaIdFromToken: getEmpresaIdFromTokenFn = defaultGetEmpresaIdFromToken,
+  enqueueWppMessage: enqueueWppMessageFn = defaultEnqueueWppMessage
 } = {}) {
   const router = express.Router();
   const query = queryFn;
@@ -41,11 +43,70 @@ export function createReportesRouter({
   }
 
   function getTargetEmpresa(req) {
-    const { empresa_id } = req.query || {};
+    const empresa_id = req.query?.empresa_id || req.body?.empresa_id;
     const esSuperUser = isSuper(req);
     const myEmpresa = getEmpresaIdFromToken(req);
     return (esSuperUser && empresa_id) ? Number(empresa_id) : myEmpresa;
   }
+
+  function cleanText(value, max = 500) {
+    return String(value || '').trim().slice(0, max);
+  }
+
+  function cleanPhone(value) {
+    return String(value || '').replace(/\D+/g, '');
+  }
+
+  function formatMoneyAr(value) {
+    const amount = Number(value) || 0;
+    return new Intl.NumberFormat('es-AR', {
+      style: 'currency',
+      currency: 'ARS',
+      maximumFractionDigits: 0
+    }).format(amount);
+  }
+
+  function buildSaldoMessage({ cliente, saldo, from, to, empresaNombre }) {
+    const partes = [
+      `Hola ${cliente || 'cliente'}, te escribimos de ${empresaNombre || 'PediVoy'}.`,
+      `Registramos un saldo pendiente de ${formatMoneyAr(saldo)} por entregas realizadas${from || to ? ` en el periodo ${from || 'inicio'} a ${to || 'hoy'}` : ''}.`,
+      'Cuando puedas, respondeme para coordinar el pago. Gracias.'
+    ];
+    return partes.join('\n');
+  }
+
+  // POST /api/reportes/saldos-clientes/solicitar
+  router.post('/saldos-clientes/solicitar', withAuth, async (req, res) => {
+    try {
+      const targetEmpresa = getTargetEmpresa(req);
+      if (!targetEmpresa) return res.status(400).json({ error: 'Empresa no determinada' });
+
+      const telefono = cleanPhone(req.body?.telefono);
+      const cliente = cleanText(req.body?.cliente, 160);
+      const saldo = Number(req.body?.saldo);
+      const from = cleanText(req.body?.from, 10);
+      const to = cleanText(req.body?.to, 10);
+      const requestedMessage = cleanText(req.body?.mensaje, 1200);
+
+      if (!telefono) return res.status(400).json({ error: 'El cliente no tiene WhatsApp cargado' });
+      if (!Number.isFinite(saldo) || saldo <= 0) return res.status(400).json({ error: 'El saldo debe ser mayor a cero' });
+
+      let empresaNombre = 'PediVoy';
+      try {
+        const empresaRows = await query('SELECT nombre FROM empresas WHERE id = $1 LIMIT 1', [targetEmpresa]);
+        empresaNombre = cleanText(empresaRows?.[0]?.nombre, 120) || empresaNombre;
+      } catch {
+        empresaNombre = 'PediVoy';
+      }
+
+      const mensaje = requestedMessage || buildSaldoMessage({ cliente, saldo, from, to, empresaNombre });
+      await enqueueWppMessageFn({ phone: telefono, message: mensaje, empresa_id: Number(targetEmpresa) });
+      return res.json({ ok: true, queued: true, telefono, mensaje });
+    } catch (e) {
+      console.error('ERROR /api/reportes/saldos-clientes/solicitar', e);
+      return res.status(500).json({ error: 'Error enviando solicitud de saldo' });
+    }
+  });
 
   // GET /api/reportes/entregados
   router.get('/entregados', withAuth, async (req, res) => {
