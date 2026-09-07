@@ -13,6 +13,7 @@ import handlers from './handlers.js';
  */
 const EMPRESA_ID = process.env.EMPRESA_ID;
 const SESSION_PATH = process.env.DISK_PATH || './wpp_sessions';
+const WPP_QR_ONLY = process.env.WPP_QR_ONLY === '1';
 let client = null;
 let isInitializing = false;
 let isResetting = false;
@@ -92,7 +93,11 @@ function createCompanyClient() {
         await query('UPDATE empresas SET wpp_status = $1 WHERE id = $2', ['disconnected', EMPRESA_ID]);
     });
 
-    handlers.start(nextClient, { empresaId: Number(EMPRESA_ID) });
+    if (!WPP_QR_ONLY) {
+        handlers.start(nextClient, { empresaId: Number(EMPRESA_ID) });
+    } else {
+        console.log(`[Empresa ${EMPRESA_ID}] Modo solo QR activo: no se atienden mensajes entrantes.`);
+    }
 
     return nextClient;
 }
@@ -163,6 +168,7 @@ async function checkResetRequest() {
 // 4. PROCESADOR DE COLA DE MENSAJES (OUTBOX)
 // Revisa mensajes pendientes cada 5 segundos para esta empresa específicamente.
 setInterval(async () => {
+    if (WPP_QR_ONLY) return;
     if (!client || isInitializing || isResetting) return;
 
     try {
@@ -194,7 +200,7 @@ setInterval(async () => {
 }, 5000);
 
 // 5. ARRANQUE
-console.log(`[Empresa ${EMPRESA_ID}] Iniciando cliente de WhatsApp...`);
+console.log(`[Empresa ${EMPRESA_ID}] Iniciando cliente de WhatsApp${WPP_QR_ONLY ? ' en modo solo QR' : ''}...`);
 try {
     await ensureEmpresaWhatsappSchema();
     lastResetHandledAt = await loadResetMarker();

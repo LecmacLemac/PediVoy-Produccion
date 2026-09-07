@@ -1047,7 +1047,7 @@
     }
 
     function getWorkerCommand(companyId) {
-        return `EMPRESA_ID=${companyId} node src/wppWorker.js`;
+        return `EMPRESA_ID=${companyId} npm run worker:qr`;
     }
 
     function statusLabel(rawStatus) {

@@ -13,6 +13,7 @@
     "predev": "node scripts/check-node.js",
     "dev": "nodemon server.js",
     "worker": "node src/wppWorker.js",
+    "worker:qr": "WPP_QR_ONLY=1 node src/wppWorker.js",
     "init-db": "node initDb.js",
     "test": "NODE_ENV=test node --test tests/**/*.test.js",
     "test:file": "NODE_ENV=test node --test",
