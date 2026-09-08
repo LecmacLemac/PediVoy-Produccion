@@ -166,6 +166,7 @@ export function createPedidosRouter() {
           pe.telefono,
           pe.direccion,
           p.empresa_id,
+          e.nombre AS empresa_nombre,
           COALESCE(p.zona_id, pe.zona_id) AS zona_id,
           z.nombre AS zona_nombre,
           z.dias_entrega AS zona_dias_entrega,

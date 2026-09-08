@@ -425,6 +425,14 @@
   .loading-row { text-align:center; padding:2rem; color:var(--muted); }
   .row-invalid input { border-color: var(--danger) !important; box-shadow: 0 0 0 2px rgba(239,68,68,0.15); }
   .hint-error { color: #fca5a5; font-size: 0.8rem; margin-top: 0.75rem; }
+  .id-name-hint {
+    min-height: 1.1rem;
+    color: #cbd5e1;
+    font-size: 0.78rem;
+    line-height: 1.35;
+  }
+  .id-name-hint.muted { color: var(--muted); }
+  .id-name-hint.missing { color: #fca5a5; }
   @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 </style>
 </head>
@@ -732,14 +740,17 @@
             <div class="field" style="flex:1">
               <label>Empresa ID</label>
               <input type="number" id="dlg_empresa_id" min="1">
+              <small id="dlg_empresa_name" class="id-name-hint muted">Sin empresa</small>
             </div>
             <div class="field" style="flex:1">
               <label>Chofer ID</label>
               <input type="number" id="dlg_chofer_id" min="0">
+              <small id="dlg_chofer_name" class="id-name-hint muted">Sin chofer</small>
             </div>
             <div class="field" style="flex:1">
               <label>Zona ID</label>
               <input type="number" id="dlg_zona_id" min="0">
+              <small id="dlg_zona_name" class="id-name-hint muted">Sin zona</small>
             </div>
           </div>
         </fieldset>
@@ -842,8 +853,11 @@
     let pedidos      = [];
     let pedidosFiltrados = [];
     let pedidosOrdenados = [];
+    let empresasDashboard = [];
+    let choferesDashboard = [];
     let productosEmpresa = [];
     let zonasEmpresa = [];
+    let zonasEmpresaId = null;
     let editingId    = null;
     let saveBusy      = false;
     let deleteBusy    = false;
@@ -918,6 +932,59 @@
         if (data?.error) msg = data.error;
       } catch {}
       return msg;
+    }
+
+    function findById(list, id) {
+      const n = Number(id);
+      if (!Number.isFinite(n) || n <= 0) return null;
+      return (Array.isArray(list) ? list : []).find((item) => Number(item?.id) === n) || null;
+    }
+
+    function setIdNameHint(elId, text, state = 'ok') {
+      const el = document.getElementById(elId);
+      if (!el) return;
+      el.textContent = text;
+      el.classList.toggle('muted', state === 'muted');
+      el.classList.toggle('missing', state === 'missing');
+    }
+
+    function resolveKnownPedidoField(p, field) {
+      if (!p) return null;
+      if (field === 'empresa') return p.empresa_nombre || null;
+      if (field === 'chofer') return p.chofer_nombre || null;
+      if (field === 'zona') return p.zona_nombre || null;
+      return null;
+    }
+
+    async function updatePedidoIdNameHints(p = pedidos.find(x => x.id == editingId) || {}) {
+      const empresaId = Number($('#dlg_empresa_id').value) || null;
+      const choferId = Number($('#dlg_chofer_id').value) || null;
+      const zonaId = Number($('#dlg_zona_id').value) || null;
+
+      const empresa = findById(empresasDashboard, empresaId);
+      const empresaName = empresa?.nombre || (Number(p?.empresa_id) === empresaId ? resolveKnownPedidoField(p, 'empresa') : null);
+      if (empresaId) {
+        setIdNameHint('dlg_empresa_name', empresaName ? `Empresa: ${empresaName}` : `Empresa #${empresaId}: no encontrada`, empresaName ? 'ok' : 'missing');
+      } else {
+        setIdNameHint('dlg_empresa_name', 'Sin empresa', 'muted');
+      }
+
+      const chofer = findById(choferesDashboard, choferId);
+      const choferName = chofer?.nombre || (Number(p?.chofer_id) === choferId ? resolveKnownPedidoField(p, 'chofer') : null);
+      if (choferId) {
+        setIdNameHint('dlg_chofer_name', choferName ? `Chofer: ${choferName}` : `Chofer #${choferId}: no encontrado`, choferName ? 'ok' : 'missing');
+      } else {
+        setIdNameHint('dlg_chofer_name', 'Sin chofer', 'muted');
+      }
+
+      await loadZonasForEmpresa(empresaId || p?.empresa_id || null);
+      const zona = findById(zonasEmpresa, zonaId);
+      const zonaName = zona?.nombre || (Number(p?.zona_id) === zonaId ? resolveKnownPedidoField(p, 'zona') : null);
+      if (zonaId) {
+        setIdNameHint('dlg_zona_name', zonaName ? `Zona: ${zonaName}` : `Zona #${zonaId}: no encontrada`, zonaName ? 'ok' : 'missing');
+      } else {
+        setIdNameHint('dlg_zona_name', 'Sin zona', 'muted');
+      }
     }
 
     function saveFiltersState(){
@@ -1129,6 +1196,10 @@
     btnCloseDlg.onclick = closeDialog;
     btnCloseX.onclick   = closeDialog;
     dlg.addEventListener('cancel', (ev) => { if (saveBusy) ev.preventDefault(); else setDialogError(''); });
+    ['dlg_empresa_id', 'dlg_chofer_id', 'dlg_zona_id'].forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener('input', () => updatePedidoIdNameHints());
+    });
 
     // ====== Boot principal (una sola vez) ======
     (async function boot(){
@@ -1150,6 +1221,7 @@
         if (isSuper) {
           await setupEmpresas(me); // setupEmpresas llama a initLoad + loadChoferes()
         } else {
+          await preloadEmpresasDashboard();
           // 🆕 Usuario normal: también cargamos choferes al inicio
           await loadChoferes();
           await initLoad();        // carga pedidos + productos
@@ -1251,6 +1323,7 @@
         const list = await r.json();
 
         if (r.ok && Array.isArray(list) && list.length > 0) {
+          empresasDashboard = list;
           $('#rowEmp').hidden = false;
 
           const optionTodas  = `<option value="">⭐ Ver Todas</option>`;
@@ -1279,6 +1352,7 @@
 
       if (!loadedEmpresas) {
         // Fallback: no bloquear tablero si falla /api/empresas.
+        empresasDashboard = [];
         $('#rowEmp').hidden = false;
         empFilter.innerHTML = '<option value="">⭐ Ver Todas</option><option value="null">⚠️ Huérfanos (empresa)</option>';
         applyPendingFilterValues();
@@ -1287,6 +1361,16 @@
 
       await loadChoferes();
       await initLoad();
+    }
+
+    async function preloadEmpresasDashboard() {
+      try {
+        const r = await authFetch('/api/empresas');
+        const list = await r.json();
+        empresasDashboard = r.ok && Array.isArray(list) ? list : [];
+      } catch {
+        empresasDashboard = [];
+      }
     }
 
     async function loadChoferes() {
@@ -1308,13 +1392,31 @@
           ? list.map(c => `<option value="${Number(c.id)}">${esc(c.nombre)}</option>`).join('')
           : '';
 
+        choferesDashboard = Array.isArray(list) ? list : [];
         choferFilter.innerHTML = baseOptions + choferOptions;
         applyPendingFilterValues();
       } catch {
+        choferesDashboard = [];
         choferFilter.innerHTML = `
           <option value="">Error al cargar</option>
         `;
       }
+    }
+
+    async function loadZonasForEmpresa(empresaId = null) {
+      const normalizedEmpresaId = Number(empresaId) || null;
+      if (zonasEmpresaId === normalizedEmpresaId && Array.isArray(zonasEmpresa)) return zonasEmpresa;
+
+      const qs = normalizedEmpresaId ? `?empresa_id=${encodeURIComponent(normalizedEmpresaId)}` : '';
+      try {
+        const r = await authFetch('/api/zonas' + qs);
+        zonasEmpresa = r.ok ? await r.json() : [];
+        if (!Array.isArray(zonasEmpresa)) zonasEmpresa = [];
+      } catch {
+        zonasEmpresa = [];
+      }
+      zonasEmpresaId = normalizedEmpresaId;
+      return zonasEmpresa;
     }
 
     async function initLoad(){
@@ -1638,6 +1740,7 @@
       $('#dlg_empresa_id').value = p.empresa_id != null ? p.empresa_id : '';
       $('#dlg_chofer_id').value  = p.chofer_id  != null ? p.chofer_id  : '';
       $('#dlg_zona_id').value    = p.zona_id    != null ? p.zona_id    : '';
+      await updatePedidoIdNameHints(p);
       setDialogError('');
       setModalBusy(false);
 
