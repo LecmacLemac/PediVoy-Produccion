@@ -855,6 +855,7 @@
     let pedidosOrdenados = [];
     let empresasDashboard = [];
     let choferesDashboard = [];
+    let choferesPedido = [];
     let productosEmpresa = [];
     let zonasEmpresa = [];
     let zonasEmpresaId = null;
@@ -971,11 +972,23 @@
       });
 
       if (selected && !hasSelected) {
-        const label = fallbackName ? `${fallbackName} (ID ${selected})` : `ID ${selected} - no encontrado`;
+        const label = fallbackName || `No encontrado`;
         options.push(`<option value="${selected}">${esc(label)}</option>`);
       }
 
       return options.join('');
+    }
+
+    async function loadChoferesForEmpresa(empresaId = null) {
+      const normalizedEmpresaId = Number(empresaId) || null;
+      const qs = normalizedEmpresaId ? `?empresa_id=${encodeURIComponent(normalizedEmpresaId)}` : '';
+      try {
+        const r = await authFetch('/api/choferes' + qs);
+        const list = await r.json();
+        return r.ok && Array.isArray(list) ? list : [];
+      } catch {
+        return [];
+      }
     }
 
     async function populatePedidoRelationSelects(p = {}) {
@@ -987,16 +1000,17 @@
         list: empresasDashboard,
         selectedId: empresaId,
         emptyLabel: 'Sin empresa',
-        labelFn: (e) => `${e.nombre || 'Empresa'} (ID ${Number(e.id)})`,
+        labelFn: (e) => e.nombre || 'Empresa',
         fallbackName: p.empresa_nombre
       });
       $('#dlg_empresa_id').value = empresaId || '';
 
+      choferesPedido = await loadChoferesForEmpresa(empresaId);
       $('#dlg_chofer_id').innerHTML = buildRelationOptions({
-        list: choferesDashboard,
+        list: choferesPedido,
         selectedId: choferId,
         emptyLabel: 'Sin chofer',
-        labelFn: (c) => `${c.nombre || 'Chofer'} (ID ${Number(c.id)})`,
+        labelFn: (c) => c.nombre || 'Chofer',
         fallbackName: p.chofer_nombre
       });
       $('#dlg_chofer_id').value = choferId || '';
@@ -1006,25 +1020,39 @@
         list: zonasEmpresa,
         selectedId: zonaId,
         emptyLabel: 'Sin zona',
-        labelFn: (z) => `${z.nombre || 'Zona'} (ID ${Number(z.id)})`,
+        labelFn: (z) => z.nombre || 'Zona',
         fallbackName: p.zona_nombre
       });
       $('#dlg_zona_id').value = zonaId || '';
     }
 
-    async function refreshZonaSelectForDialog() {
+    async function refreshRelationSelectsForDialogEmpresa() {
       const p = pedidos.find(x => x.id == editingId) || {};
       const empresaId = Number($('#dlg_empresa_id').value) || null;
+      const currentChoferId = Number($('#dlg_chofer_id').value) || null;
       const currentZonaId = Number($('#dlg_zona_id').value) || null;
-      await loadZonasForEmpresa(empresaId || p?.empresa_id || null);
+
+      choferesPedido = await loadChoferesForEmpresa(empresaId);
+      const hasCurrentChofer = currentChoferId && findById(choferesPedido, currentChoferId);
+      $('#dlg_chofer_id').innerHTML = buildRelationOptions({
+        list: choferesPedido,
+        selectedId: hasCurrentChofer ? currentChoferId : null,
+        emptyLabel: 'Sin chofer',
+        labelFn: (c) => c.nombre || 'Chofer',
+        fallbackName: null
+      });
+      $('#dlg_chofer_id').value = hasCurrentChofer ? currentChoferId : '';
+
+      await loadZonasForEmpresa(empresaId);
+      const hasCurrentZona = currentZonaId && findById(zonasEmpresa, currentZonaId);
       $('#dlg_zona_id').innerHTML = buildRelationOptions({
         list: zonasEmpresa,
-        selectedId: currentZonaId,
+        selectedId: hasCurrentZona ? currentZonaId : null,
         emptyLabel: 'Sin zona',
-        labelFn: (z) => `${z.nombre || 'Zona'} (ID ${Number(z.id)})`,
-        fallbackName: Number(p?.zona_id) === currentZonaId ? p.zona_nombre : null
+        labelFn: (z) => z.nombre || 'Zona',
+        fallbackName: null
       });
-      $('#dlg_zona_id').value = currentZonaId || '';
+      $('#dlg_zona_id').value = hasCurrentZona ? currentZonaId : '';
       await updatePedidoIdNameHints(p);
     }
 
@@ -1036,26 +1064,26 @@
       const empresa = findById(empresasDashboard, empresaId);
       const empresaName = empresa?.nombre || (Number(p?.empresa_id) === empresaId ? resolveKnownPedidoField(p, 'empresa') : null);
       if (empresaId) {
-        setIdNameHint('dlg_empresa_name', empresaName ? `ID ${empresaId}` : `ID ${empresaId}: empresa no encontrada`, empresaName ? 'muted' : 'missing');
+        setIdNameHint('dlg_empresa_name', empresaName ? '' : 'Empresa no encontrada', empresaName ? 'muted' : 'missing');
       } else {
-        setIdNameHint('dlg_empresa_name', 'Sin empresa', 'muted');
+        setIdNameHint('dlg_empresa_name', '', 'muted');
       }
 
-      const chofer = findById(choferesDashboard, choferId);
+      const chofer = findById(choferesPedido, choferId) || findById(choferesDashboard, choferId);
       const choferName = chofer?.nombre || (Number(p?.chofer_id) === choferId ? resolveKnownPedidoField(p, 'chofer') : null);
       if (choferId) {
-        setIdNameHint('dlg_chofer_name', choferName ? `ID ${choferId}` : `ID ${choferId}: chofer no encontrado`, choferName ? 'muted' : 'missing');
+        setIdNameHint('dlg_chofer_name', choferName ? '' : 'Chofer no encontrado', choferName ? 'muted' : 'missing');
       } else {
-        setIdNameHint('dlg_chofer_name', 'Sin chofer', 'muted');
+        setIdNameHint('dlg_chofer_name', '', 'muted');
       }
 
       await loadZonasForEmpresa(empresaId || p?.empresa_id || null);
       const zona = findById(zonasEmpresa, zonaId);
       const zonaName = zona?.nombre || (Number(p?.zona_id) === zonaId ? resolveKnownPedidoField(p, 'zona') : null);
       if (zonaId) {
-        setIdNameHint('dlg_zona_name', zonaName ? `ID ${zonaId}` : `ID ${zonaId}: zona no encontrada`, zonaName ? 'muted' : 'missing');
+        setIdNameHint('dlg_zona_name', zonaName ? '' : 'Zona no encontrada', zonaName ? 'muted' : 'missing');
       } else {
-        setIdNameHint('dlg_zona_name', 'Sin zona', 'muted');
+        setIdNameHint('dlg_zona_name', '', 'muted');
       }
     }
 
@@ -1269,7 +1297,7 @@
     btnCloseX.onclick   = closeDialog;
     dlg.addEventListener('cancel', (ev) => { if (saveBusy) ev.preventDefault(); else setDialogError(''); });
     const dlgEmpresaSelect = document.getElementById('dlg_empresa_id');
-    if (dlgEmpresaSelect) dlgEmpresaSelect.addEventListener('change', () => refreshZonaSelectForDialog());
+    if (dlgEmpresaSelect) dlgEmpresaSelect.addEventListener('change', () => refreshRelationSelectsForDialogEmpresa());
     ['dlg_chofer_id', 'dlg_zona_id'].forEach((id) => {
       const el = document.getElementById(id);
       if (el) el.addEventListener('change', () => updatePedidoIdNameHints());
