@@ -738,18 +738,18 @@
 
           <div style="display:flex; gap:1rem; flex-wrap:wrap; margin-top:1rem;">
             <div class="field" style="flex:1">
-              <label>Empresa ID</label>
-              <input type="number" id="dlg_empresa_id" min="1">
+              <label>Empresa</label>
+              <select id="dlg_empresa_id"></select>
               <small id="dlg_empresa_name" class="id-name-hint muted">Sin empresa</small>
             </div>
             <div class="field" style="flex:1">
-              <label>Chofer ID</label>
-              <input type="number" id="dlg_chofer_id" min="0">
+              <label>Chofer</label>
+              <select id="dlg_chofer_id"></select>
               <small id="dlg_chofer_name" class="id-name-hint muted">Sin chofer</small>
             </div>
             <div class="field" style="flex:1">
-              <label>Zona ID</label>
-              <input type="number" id="dlg_zona_id" min="0">
+              <label>Zona</label>
+              <select id="dlg_zona_id"></select>
               <small id="dlg_zona_name" class="id-name-hint muted">Sin zona</small>
             </div>
           </div>
@@ -956,6 +956,78 @@
       return null;
     }
 
+    function buildRelationOptions({ list, selectedId, emptyLabel, labelFn, fallbackName }) {
+      const selected = Number(selectedId) || null;
+      const safeList = Array.isArray(list) ? list : [];
+      const options = [`<option value="">${esc(emptyLabel)}</option>`];
+      let hasSelected = !selected;
+
+      safeList.forEach((item) => {
+        const id = Number(item?.id) || null;
+        if (!id) return;
+        if (selected && id === selected) hasSelected = true;
+        const label = labelFn(item);
+        options.push(`<option value="${id}">${esc(label)}</option>`);
+      });
+
+      if (selected && !hasSelected) {
+        const label = fallbackName ? `${fallbackName} (ID ${selected})` : `ID ${selected} - no encontrado`;
+        options.push(`<option value="${selected}">${esc(label)}</option>`);
+      }
+
+      return options.join('');
+    }
+
+    async function populatePedidoRelationSelects(p = {}) {
+      const empresaId = p.empresa_id != null ? Number(p.empresa_id) : null;
+      const choferId = p.chofer_id != null ? Number(p.chofer_id) : null;
+      const zonaId = p.zona_id != null ? Number(p.zona_id) : null;
+
+      $('#dlg_empresa_id').innerHTML = buildRelationOptions({
+        list: empresasDashboard,
+        selectedId: empresaId,
+        emptyLabel: 'Sin empresa',
+        labelFn: (e) => `${e.nombre || 'Empresa'} (ID ${Number(e.id)})`,
+        fallbackName: p.empresa_nombre
+      });
+      $('#dlg_empresa_id').value = empresaId || '';
+
+      $('#dlg_chofer_id').innerHTML = buildRelationOptions({
+        list: choferesDashboard,
+        selectedId: choferId,
+        emptyLabel: 'Sin chofer',
+        labelFn: (c) => `${c.nombre || 'Chofer'} (ID ${Number(c.id)})`,
+        fallbackName: p.chofer_nombre
+      });
+      $('#dlg_chofer_id').value = choferId || '';
+
+      await loadZonasForEmpresa(empresaId);
+      $('#dlg_zona_id').innerHTML = buildRelationOptions({
+        list: zonasEmpresa,
+        selectedId: zonaId,
+        emptyLabel: 'Sin zona',
+        labelFn: (z) => `${z.nombre || 'Zona'} (ID ${Number(z.id)})`,
+        fallbackName: p.zona_nombre
+      });
+      $('#dlg_zona_id').value = zonaId || '';
+    }
+
+    async function refreshZonaSelectForDialog() {
+      const p = pedidos.find(x => x.id == editingId) || {};
+      const empresaId = Number($('#dlg_empresa_id').value) || null;
+      const currentZonaId = Number($('#dlg_zona_id').value) || null;
+      await loadZonasForEmpresa(empresaId || p?.empresa_id || null);
+      $('#dlg_zona_id').innerHTML = buildRelationOptions({
+        list: zonasEmpresa,
+        selectedId: currentZonaId,
+        emptyLabel: 'Sin zona',
+        labelFn: (z) => `${z.nombre || 'Zona'} (ID ${Number(z.id)})`,
+        fallbackName: Number(p?.zona_id) === currentZonaId ? p.zona_nombre : null
+      });
+      $('#dlg_zona_id').value = currentZonaId || '';
+      await updatePedidoIdNameHints(p);
+    }
+
     async function updatePedidoIdNameHints(p = pedidos.find(x => x.id == editingId) || {}) {
       const empresaId = Number($('#dlg_empresa_id').value) || null;
       const choferId = Number($('#dlg_chofer_id').value) || null;
@@ -964,7 +1036,7 @@
       const empresa = findById(empresasDashboard, empresaId);
       const empresaName = empresa?.nombre || (Number(p?.empresa_id) === empresaId ? resolveKnownPedidoField(p, 'empresa') : null);
       if (empresaId) {
-        setIdNameHint('dlg_empresa_name', empresaName ? `Empresa: ${empresaName}` : `Empresa #${empresaId}: no encontrada`, empresaName ? 'ok' : 'missing');
+        setIdNameHint('dlg_empresa_name', empresaName ? `ID ${empresaId}` : `ID ${empresaId}: empresa no encontrada`, empresaName ? 'muted' : 'missing');
       } else {
         setIdNameHint('dlg_empresa_name', 'Sin empresa', 'muted');
       }
@@ -972,7 +1044,7 @@
       const chofer = findById(choferesDashboard, choferId);
       const choferName = chofer?.nombre || (Number(p?.chofer_id) === choferId ? resolveKnownPedidoField(p, 'chofer') : null);
       if (choferId) {
-        setIdNameHint('dlg_chofer_name', choferName ? `Chofer: ${choferName}` : `Chofer #${choferId}: no encontrado`, choferName ? 'ok' : 'missing');
+        setIdNameHint('dlg_chofer_name', choferName ? `ID ${choferId}` : `ID ${choferId}: chofer no encontrado`, choferName ? 'muted' : 'missing');
       } else {
         setIdNameHint('dlg_chofer_name', 'Sin chofer', 'muted');
       }
@@ -981,7 +1053,7 @@
       const zona = findById(zonasEmpresa, zonaId);
       const zonaName = zona?.nombre || (Number(p?.zona_id) === zonaId ? resolveKnownPedidoField(p, 'zona') : null);
       if (zonaId) {
-        setIdNameHint('dlg_zona_name', zonaName ? `Zona: ${zonaName}` : `Zona #${zonaId}: no encontrada`, zonaName ? 'ok' : 'missing');
+        setIdNameHint('dlg_zona_name', zonaName ? `ID ${zonaId}` : `ID ${zonaId}: zona no encontrada`, zonaName ? 'muted' : 'missing');
       } else {
         setIdNameHint('dlg_zona_name', 'Sin zona', 'muted');
       }
@@ -1196,9 +1268,11 @@
     btnCloseDlg.onclick = closeDialog;
     btnCloseX.onclick   = closeDialog;
     dlg.addEventListener('cancel', (ev) => { if (saveBusy) ev.preventDefault(); else setDialogError(''); });
-    ['dlg_empresa_id', 'dlg_chofer_id', 'dlg_zona_id'].forEach((id) => {
+    const dlgEmpresaSelect = document.getElementById('dlg_empresa_id');
+    if (dlgEmpresaSelect) dlgEmpresaSelect.addEventListener('change', () => refreshZonaSelectForDialog());
+    ['dlg_chofer_id', 'dlg_zona_id'].forEach((id) => {
       const el = document.getElementById(id);
-      if (el) el.addEventListener('input', () => updatePedidoIdNameHints());
+      if (el) el.addEventListener('change', () => updatePedidoIdNameHints());
     });
 
     // ====== Boot principal (una sola vez) ======
@@ -1737,9 +1811,7 @@
 
       $('#dlg_estado').value     = p.estado || 'pendiente';
       $('#dlg_metodo').value     = (p.metodo_pago || '').toLowerCase();
-      $('#dlg_empresa_id').value = p.empresa_id != null ? p.empresa_id : '';
-      $('#dlg_chofer_id').value  = p.chofer_id  != null ? p.chofer_id  : '';
-      $('#dlg_zona_id').value    = p.zona_id    != null ? p.zona_id    : '';
+      await populatePedidoRelationSelects(p);
       await updatePedidoIdNameHints(p);
       setDialogError('');
       setModalBusy(false);
