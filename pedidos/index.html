@@ -679,18 +679,39 @@
         return s; 
     }
 
-    function buildCompanyWebsiteUrl(domain) {
-      const raw = String(domain || '').trim();
-      if (!raw) return null;
+    function buildCompanyWebsiteLink(config = {}) {
+      const slug = String(config?.landing_slug || '').trim();
+      const empresaId = Number(config?.empresa_id || empresa_id) || null;
+      const raw = String(config?.landing_domain || '').trim();
 
-      const candidate = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
-      try {
-        const url = new URL(candidate);
-        if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
-        return url.href;
-      } catch {
-        return null;
+      if (raw) {
+        const candidate = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+        try {
+          const url = new URL(candidate);
+          if (url.protocol === 'http:' || url.protocol === 'https:') {
+            return {
+              href: url.href,
+              external: true
+            };
+          }
+        } catch {}
       }
+
+      if (slug) {
+        return {
+          href: `/pedidos/?slug=${encodeURIComponent(slug)}`,
+          external: false
+        };
+      }
+
+      if (empresaId) {
+        return {
+          href: `/pedidos/?empresa_id=${encodeURIComponent(empresaId)}`,
+          external: false
+        };
+      }
+
+      return null;
     }
 
     function applyCompanyBranding(config) {
@@ -698,7 +719,7 @@
       const brandLogo = document.getElementById('brandLogo');
       const brandNameEl = document.getElementById('brandName');
       const nombreEmpresa = config?.nombre_empresa || config?.nombre || null;
-      const companyUrl = buildCompanyWebsiteUrl(config?.landing_domain);
+      const companyLink = buildCompanyWebsiteLink(config);
       const logoUrl = String(config?.logo_url || '').trim();
 
       if (nombreEmpresa && brandNameEl) {
@@ -707,10 +728,15 @@
       }
 
       if (brandLink) {
-        if (companyUrl) {
-          brandLink.href = companyUrl;
-          brandLink.target = '_blank';
-          brandLink.rel = 'noopener noreferrer';
+        if (companyLink) {
+          brandLink.href = companyLink.href;
+          if (companyLink.external) {
+            brandLink.target = '_blank';
+            brandLink.rel = 'noopener noreferrer';
+          } else {
+            brandLink.removeAttribute('target');
+            brandLink.removeAttribute('rel');
+          }
           brandLink.title = `Ir a la página de ${nombreEmpresa || 'la empresa'}`;
           brandLink.classList.add('has-company-link');
         } else {
