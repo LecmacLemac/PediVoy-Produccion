@@ -4,6 +4,7 @@
 import express from 'express';
 import fs from 'fs';
 import path from 'path';
+import { spawn } from 'child_process';
 import multer from 'multer';
 import QRCode from 'qrcode';
 import { encryptSecret } from '../services/facturacionService.js';
@@ -53,6 +54,47 @@ async function ensureEmpresaWhatsappSchema(query) {
 function getEmpresaWppSessionDir(empresaId) {
   const sessionPath = process.env.DISK_PATH || './wpp_sessions';
   return path.resolve(process.cwd(), sessionPath, `session-empresa_${empresaId}`);
+}
+
+const empresaWppQrWorkers = new Map();
+
+function shouldAutoStartEmpresaWppWorker() {
+  if (process.env.AUTO_START_EMPRESA_WPP_WORKER === '0') return false;
+  if (process.env.RENDER === 'true') return false;
+  return true;
+}
+
+function ensureEmpresaWppQrWorker(empresaId) {
+  if (!shouldAutoStartEmpresaWppWorker()) {
+    return { started: false, reason: 'disabled' };
+  }
+
+  const existing = empresaWppQrWorkers.get(empresaId);
+  if (existing && !existing.killed && existing.exitCode === null) {
+    return { started: false, reason: 'already_running', pid: existing.pid };
+  }
+
+  const child = spawn(process.execPath, ['src/wppWorker.js'], {
+    cwd: process.cwd(),
+    detached: true,
+    stdio: 'ignore',
+    env: {
+      ...process.env,
+      EMPRESA_ID: String(empresaId),
+      WPP_QR_ONLY: '1',
+    },
+  });
+
+  child.unref();
+  empresaWppQrWorkers.set(empresaId, child);
+
+  child.once('exit', () => {
+    if (empresaWppQrWorkers.get(empresaId) === child) {
+      empresaWppQrWorkers.delete(empresaId);
+    }
+  });
+
+  return { started: true, pid: child.pid };
 }
 
 function minutesSince(value) {
@@ -742,7 +784,9 @@ export function createEmpresasRouter(deps) {
         [empresaId]
       );
 
-      return res.json({ ok: true, empresa_id: empresaId, status: 'resetting' });
+      const worker = ensureEmpresaWppQrWorker(empresaId);
+
+      return res.json({ ok: true, empresa_id: empresaId, status: 'resetting', worker });
     } catch (e) {
       console.error('Error reseteando WhatsApp de empresa:', e);
       return res.status(500).json({ error: 'No se pudo resetear WhatsApp de la empresa' });
