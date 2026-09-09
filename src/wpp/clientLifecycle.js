@@ -60,6 +60,54 @@ export function createWppClientLifecycle({
     },
   });
 
+  const startTextHandlersOnce = async (reason) => {
+    if (WPP_QR_ONLY || getState().wppHandlersStarted) return;
+
+    setState({ wppHandlersStarted: true });
+    try {
+      console.log(`[WPP SERVER] Iniciando handlers de texto (${reason})...`);
+      await handlers.start(wppClient);
+      console.log('[WPP SERVER] Handlers de texto iniciados correctamente.');
+    } catch (e) {
+      setState({ wppHandlersStarted: false });
+      console.error('[WPP SERVER] Error iniciando handlers:', e);
+    }
+  };
+
+  const isWhatsappRuntimeReady = async () => {
+    try {
+      const page = wppClient?.pupPage;
+      if (!page || typeof page.evaluate !== 'function') return false;
+      return Boolean(await page.evaluate(() => {
+        try {
+          return Boolean(window?.Store?.Chat && window?.Store?.Msg && window?.WWebJS);
+        } catch {
+          return false;
+        }
+      }));
+    } catch {
+      return false;
+    }
+  };
+
+  const promoteAuthenticatedToReadyIfNeeded = () => {
+    setTimeout(async () => {
+      const state = getState();
+      if (WPP_QR_ONLY || state.isReadyWpp || !state.isConnected || state.isShuttingDownWpp) return;
+
+      const runtimeReady = await isWhatsappRuntimeReady();
+      if (!runtimeReady) {
+        console.warn('[WPP SERVER] READY no llegó y runtime WWebJS aún no está operativo; se vuelve a chequear en breve.');
+        promoteAuthenticatedToReadyIfNeeded();
+        return;
+      }
+
+      console.warn('[WPP SERVER] READY no llegó después de autenticación; runtime WWebJS operativo, se habilita modo operativo.');
+      setState({ isReadyWpp: true, lastQr: null });
+      await startTextHandlersOnce('authenticated-fallback');
+    }, 8000);
+  };
+
   wppClient.on('qr', (qr) => {
     setState({ lastQr: qr, isConnected: false, isReadyWpp: false });
     console.log('[WPP SERVER] QR RECIBIDO. Escanea para conectar.');
@@ -68,18 +116,7 @@ export function createWppClientLifecycle({
   wppClient.on('authenticated', async () => {
     setState({ isConnected: true, isReadyWpp: false, lastQr: null });
     console.log('[WPP SERVER] Autenticado ✅');
-
-    if (!WPP_QR_ONLY && !getState().wppHandlersStarted) {
-      setState({ wppHandlersStarted: true });
-      try {
-        console.log('[WPP SERVER] Iniciando handlers preventivamente (authenticated)...');
-        await handlers.start(wppClient);
-        console.log('[WPP SERVER] Handlers iniciados preventivamente.');
-      } catch (e) {
-        setState({ wppHandlersStarted: false });
-        console.error('[WPP SERVER] Error en handlers preventivos:', e);
-      }
-    }
+    promoteAuthenticatedToReadyIfNeeded();
   });
 
   wppClient.on('auth_failure', (msg) => {
@@ -111,15 +148,7 @@ export function createWppClientLifecycle({
     console.log('[WPP SERVER] CLIENTE LISTO (READY) ✅');
 
     if (!WPP_QR_ONLY && !getState().wppHandlersStarted) {
-      setState({ wppHandlersStarted: true });
-      try {
-        console.log('[WPP SERVER] Iniciando handlers de texto...');
-        await handlers.start(wppClient);
-        console.log('[WPP SERVER] Handlers de texto iniciados correctamente.');
-      } catch (e) {
-        setState({ wppHandlersStarted: false });
-        console.error('[WPP SERVER] Error iniciando handlers:', e);
-      }
+      await startTextHandlersOnce('ready');
     } else {
       console.log('[WPP SERVER] Handlers ya estaban iniciados.');
     }

@@ -120,7 +120,9 @@ export function createOutboxProcessor({ ENABLE_WPP, query, lidByPhone, safeError
             errorLower.includes('runtime.callfunctionon') ||
             errorLower.includes('target closed') ||
             errorLower.includes('session closed') ||
-            errorLower.includes('protocol error');
+            errorLower.includes('protocol error') ||
+            errorLower.includes("reading 'getchat'") ||
+            errorLower.includes('reading "getchat"');
 
           const isPhoneError =
             errorLower.includes('invalid') ||
