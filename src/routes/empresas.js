@@ -81,7 +81,7 @@ function ensureEmpresaWppQrWorker(empresaId) {
     env: {
       ...process.env,
       EMPRESA_ID: String(empresaId),
-      WPP_QR_ONLY: '1',
+      WPP_QR_ONLY: '0',
     },
   });
 

@@ -200,6 +200,41 @@ async function checkResetRequest() {
     }
 }
 
+function normalizeWhatsappTarget(phone) {
+    let rawPhone = String(phone || '').trim();
+    if (rawPhone.includes('@')) rawPhone = rawPhone.split('@')[0];
+
+    const numeroBase = rawPhone.replace(/\D+/g, '');
+    if (!numeroBase) throw new Error('telefono_invalido');
+
+    const phoneToUse = numeroBase.length === 10 ? `549${numeroBase}` : numeroBase;
+    return `${phoneToUse}@c.us`;
+}
+
+function isConnectionSendError(err) {
+    const errorLower = String(err?.message || err || '').toLowerCase();
+    return (
+        errorLower.includes('not connected') ||
+        errorLower.includes('disconnected') ||
+        errorLower.includes('closed') ||
+        errorLower.includes('websocket') ||
+        errorLower.includes('target closed') ||
+        errorLower.includes('session closed') ||
+        errorLower.includes('protocol error') ||
+        errorLower.includes('execution context was destroyed')
+    );
+}
+
+function isInvalidPhoneError(err) {
+    const errorLower = String(err?.message || err || '').toLowerCase();
+    return (
+        errorLower.includes('telefono_invalido') ||
+        errorLower.includes('invalid') ||
+        errorLower.includes('phone') ||
+        errorLower.includes('number')
+    );
+}
+
 // 4. PROCESADOR DE COLA DE MENSAJES (OUTBOX)
 // Revisa mensajes pendientes cada 5 segundos para esta empresa específicamente.
 setInterval(async () => {
@@ -214,19 +249,42 @@ setInterval(async () => {
 
         for (const fila of filas) {
             try {
-                // Validación básica de formato de teléfono
-                const target = fila.telefono.includes('@c.us') ? fila.telefono : `${fila.telefono}@c.us`;
+                const target = normalizeWhatsappTarget(fila.telefono);
                 
                 await client.sendMessage(target, fila.mensaje);
                 
                 await query(
-                    "UPDATE wpp_outbox SET status = 'sent', sent_at = NOW() WHERE id = $1", 
+                    "UPDATE wpp_outbox SET status = 'sent', sent_at = NOW(), error = NULL WHERE id = $1",
                     [fila.id]
                 );
                 console.log(`[Empresa ${EMPRESA_ID}] Mensaje enviado a ${fila.telefono}`);
             } catch (err) {
                 console.error(`[Empresa ${EMPRESA_ID}] Error al enviar ID ${fila.id}:`, err.message);
-                await query("UPDATE wpp_outbox SET status = 'error' WHERE id = $1", [fila.id]);
+
+                if (isConnectionSendError(err)) {
+                    await query(
+                        "UPDATE empresas SET wpp_status = 'disconnected', updated_at = NOW() WHERE id = $1",
+                        [EMPRESA_ID]
+                    );
+                    await query(
+                        "UPDATE wpp_outbox SET status = 'pending', error = $1 WHERE id = $2",
+                        ['Fallback a WhatsApp general: conexión de empresa no disponible', fila.id]
+                    );
+                    console.warn(`[Empresa ${EMPRESA_ID}] Mensaje ID:${fila.id} queda pendiente para fallback general.`);
+                    break;
+                }
+
+                if (isInvalidPhoneError(err)) {
+                    await query(
+                        "UPDATE wpp_outbox SET status = 'error', error = $1 WHERE id = $2",
+                        ['Número de teléfono inválido', fila.id]
+                    );
+                } else {
+                    await query(
+                        "UPDATE wpp_outbox SET status = 'pending', error = $1 WHERE id = $2",
+                        ['Reintento por error temporal en WhatsApp empresa', fila.id]
+                    );
+                }
             }
         }
     } catch (dbErr) {
