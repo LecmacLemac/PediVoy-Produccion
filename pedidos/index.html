@@ -699,14 +699,14 @@
 
       if (slug) {
         return {
-          href: `/pedidos/?slug=${encodeURIComponent(slug)}`,
+          href: `/?slug=${encodeURIComponent(slug)}`,
           external: false
         };
       }
 
       if (empresaId) {
         return {
-          href: `/pedidos/?empresa_id=${encodeURIComponent(empresaId)}`,
+          href: `/?empresa_id=${encodeURIComponent(empresaId)}`,
           external: false
         };
       }
