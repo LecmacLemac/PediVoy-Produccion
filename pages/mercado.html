@@ -618,7 +618,7 @@
       return fallback;
     }
 
-    // --- LÓGICA DE URLS (Prioridad: Dominio > Slug > ID en tienda pública) ---
+    // --- LÓGICA DE URLS (landing pública: Dominio > Slug > ID) ---
     function getStoreUrl(domain, slug, id) {
       // 1. Dominio propio (web externa)
       if (domain && domain.trim() !== '') {
@@ -627,24 +627,28 @@
         return safeHttpUrl(d.startsWith('http') ? d : `https://${d}`, null);
       }
 
-      // 2. Slug interno -> tienda pública dinámica
+      // 2. Slug interno -> landing pública dinámica
       if (slug && slug.trim() !== '') {
         const cleanSlug = slug.trim().replace(/^\//, '');
-        return `/pedidos/?slug=${encodeURIComponent(cleanSlug)}`;
+        return `/?slug=${encodeURIComponent(cleanSlug)}`;
       }
 
-      // 3. Fallback por ID -> tienda pública dinámica
+      // 3. Fallback por ID -> landing pública dinámica
       if (id !== undefined && id !== null && String(id).trim() !== '') {
-        return `/pedidos/?empresa_id=${encodeURIComponent(String(id).trim())}`;
+        return `/?empresa_id=${encodeURIComponent(String(id).trim())}`;
       }
 
       // 4. Sin dominio ni página configurada
       return null;
     }
 
-    // Link de compra directo (mantiene flujo interno)
-    function getBuyUrl(empId, prodId) { 
-      return `/pedidos/index.html?empresa_id=${empId}&add=${prodId}`; 
+    // Link de compra directo (flujo pedidos)
+    function getBuyUrl(empId, prodId, slug = '') {
+      const cleanSlug = String(slug || '').trim().replace(/^\//, '');
+      const empresaParam = cleanSlug
+        ? `slug=${encodeURIComponent(cleanSlug)}`
+        : `empresa_id=${encodeURIComponent(empId)}`;
+      return `/pedidos/?${empresaParam}&add=${encodeURIComponent(prodId)}`;
     }
 
     // --- Lógica Geo y Carga ---
@@ -804,7 +808,7 @@
             : `<span class="visit-link" style="pointer-events:none; opacity:0.6; cursor:default;">Tienda próximamente</span>`;
           
           const productsHtml = (emp.productos || []).map(p => {
-            const buyLink = getBuyUrl(emp.id, p.id);
+            const buyLink = getBuyUrl(emp.id, p.id, emp.landing_slug);
             const img = safeHttpUrl(p.imagen, "https://dummyimage.com/400x400/eeeeee/999999&text=Sin+Imagen");
             
             const discountHtml = p.descuento
