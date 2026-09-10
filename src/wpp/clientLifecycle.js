@@ -1,4 +1,11 @@
 import { WPP_SESSION_ID, getWppSessionBasePath } from './sessionUtils.js';
+import { createRequire } from 'module';
+
+const require = createRequire(import.meta.url);
+const { ExposeStore } = require('whatsapp-web.js/src/util/Injected/Store');
+const { LoadUtils } = require('whatsapp-web.js/src/util/Injected/Utils');
+const InterfaceController = require('whatsapp-web.js/src/util/InterfaceController');
+const { ClientInfo } = require('whatsapp-web.js/src/structures');
 
 export function createWppClientLifecycle({
   ENABLE_WPP,
@@ -28,10 +35,6 @@ export function createWppClientLifecycle({
 
   const wppClient = new Client({
     authStrategy: new LocalAuth({ clientId: WPP_SESSION_ID, dataPath: sessionBasePath }),
-    webVersionCache: {
-      type: 'remote',
-      remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.3000.x.html',
-    },
     puppeteer: {
       headless: 'new',
       args: [
@@ -90,6 +93,84 @@ export function createWppClientLifecycle({
     }
   };
 
+  let reinjectInProgress = false;
+
+  const finishAuthenticatedRuntime = async () => {
+    const page = wppClient?.pupPage;
+    if (!page || typeof page.evaluate !== 'function') return false;
+
+    const state = await page.evaluate(() => {
+      try {
+        return {
+          synced: Boolean(window.AuthStore?.AppState?.hasSynced),
+          store: Boolean(window.Store),
+          wwebjs: Boolean(window.WWebJS),
+        };
+      } catch {
+        return { synced: false, store: false, wwebjs: false };
+      }
+    });
+
+    if (!state.synced) return false;
+
+    if (!state.store) {
+      await page.evaluate(ExposeStore);
+    }
+
+    let hasStore = false;
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < 30000) {
+      hasStore = Boolean(await page.evaluate(() => {
+        try {
+          return Boolean(window.Store?.Chat && window.Store?.Msg && window.Store?.Conn);
+        } catch {
+          return false;
+        }
+      }));
+      if (hasStore) break;
+      await new Promise(resolve => setTimeout(resolve, 200));
+    }
+
+    if (!hasStore) return false;
+
+    wppClient.info = new ClientInfo(wppClient, await page.evaluate(() => ({
+      ...window.Store.Conn.serialize(),
+      wid: window.Store.User.getMaybeMePnUser() || window.Store.User.getMaybeMeLidUser(),
+    })));
+    wppClient.interface = new InterfaceController(wppClient);
+    await page.evaluate(LoadUtils);
+
+    if (typeof wppClient.attachEventListeners === 'function') {
+      await wppClient.attachEventListeners();
+    }
+
+    return isWhatsappRuntimeReady();
+  };
+
+  const reinjectAuthenticatedSession = async () => {
+    if (reinjectInProgress) return;
+    reinjectInProgress = true;
+    try {
+      console.warn('[WPP SERVER] WhatsApp Web está conectado pero falta WWebJS; reinyectando runtime...');
+      await wppClient.inject();
+      await wppClient.pupPage?.evaluate(() => {
+        try {
+          if (window.AuthStore?.AppState?.hasSynced && typeof window.onAppStateHasSyncedEvent === 'function') {
+            window.onAppStateHasSyncedEvent();
+          }
+        } catch {}
+      });
+      if (!(await isWhatsappRuntimeReady())) {
+        console.warn('[WPP SERVER] Completando runtime WWebJS desde sesión ya sincronizada...');
+        await finishAuthenticatedRuntime();
+      }
+    } catch (e) {
+      console.warn('[WPP SERVER] No se pudo reinyectar runtime WWebJS:', e?.message || e);
+    } finally {
+      reinjectInProgress = false;
+    }
+  };
+
   const promoteAuthenticatedToReadyIfNeeded = () => {
     setTimeout(async () => {
       const state = getState();
@@ -98,6 +179,7 @@ export function createWppClientLifecycle({
       const runtimeReady = await isWhatsappRuntimeReady();
       if (!runtimeReady) {
         console.warn('[WPP SERVER] READY no llegó y runtime WWebJS aún no está operativo; se vuelve a chequear en breve.');
+        await reinjectAuthenticatedSession();
         promoteAuthenticatedToReadyIfNeeded();
         return;
       }

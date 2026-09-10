@@ -56,10 +56,6 @@ function createCompanyClient() {
             clientId: `empresa_${EMPRESA_ID}`,
             dataPath: SESSION_PATH
         }),
-        webVersionCache: {
-            type: 'remote',
-            remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.3000.x.html',
-        },
         puppeteer: {
             headless: 'new',
             args: [
