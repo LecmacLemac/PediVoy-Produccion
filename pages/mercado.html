@@ -595,24 +595,47 @@
     // Store global para filtrado rápido
     let allData = [];
 
-    // --- LÓGICA DE URLS (Prioridad: Dominio > Slug > ID en /pages) ---
+    function escapeHtml(value) {
+      return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function safeHttpUrl(value, fallback = '') {
+      const raw = String(value || '').trim();
+      if (!raw) return fallback;
+
+      try {
+        const url = new URL(raw, window.location.origin);
+        if (url.protocol === 'http:' || url.protocol === 'https:') {
+          return url.href;
+        }
+      } catch {}
+
+      return fallback;
+    }
+
+    // --- LÓGICA DE URLS (Prioridad: Dominio > Slug > ID en tienda pública) ---
     function getStoreUrl(domain, slug, id) {
       // 1. Dominio propio (web externa)
       if (domain && domain.trim() !== '') {
         const d = domain.trim();
         // Aseguramos protocolo
-        return d.startsWith('http') ? d : `https://${d}`;
+        return safeHttpUrl(d.startsWith('http') ? d : `https://${d}`, null);
       }
 
-      // 2. Slug interno -> /pages/<slug>.html
+      // 2. Slug interno -> tienda pública dinámica
       if (slug && slug.trim() !== '') {
         const cleanSlug = slug.trim().replace(/^\//, '');
-        return `/pages/${encodeURIComponent(cleanSlug)}.html`;
+        return `/pedidos/?slug=${encodeURIComponent(cleanSlug)}`;
       }
 
-      // 3. Fallback por ID -> /pages/<id>.html
+      // 3. Fallback por ID -> tienda pública dinámica
       if (id !== undefined && id !== null && String(id).trim() !== '') {
-        return `/pages/${encodeURIComponent(String(id).trim())}.html`;
+        return `/pedidos/?empresa_id=${encodeURIComponent(String(id).trim())}`;
       }
 
       // 4. Sin dominio ni página configurada
@@ -777,30 +800,30 @@
         ${empresas.map(emp => {
           const storeLink = getStoreUrl(emp.landing_domain, emp.landing_slug, emp.id);
           const storeLinkHtml = storeLink
-            ? `<a href="${storeLink}" class="visit-link">Ver tienda ></a>`
+            ? `<a href="${escapeHtml(storeLink)}" class="visit-link">Ver tienda ></a>`
             : `<span class="visit-link" style="pointer-events:none; opacity:0.6; cursor:default;">Tienda próximamente</span>`;
           
           const productsHtml = (emp.productos || []).map(p => {
             const buyLink = getBuyUrl(emp.id, p.id);
-            const img = p.imagen || "https://dummyimage.com/400x400/eeeeee/999999&text=Sin+Imagen";
+            const img = safeHttpUrl(p.imagen, "https://dummyimage.com/400x400/eeeeee/999999&text=Sin+Imagen");
             
             const discountHtml = p.descuento
-              ? `<span class="prod-discount">${p.descuento}% OFF</span>`
+              ? `<span class="prod-discount">${escapeHtml(p.descuento)}% OFF</span>`
               : '';
 
             return `
-              <div class="prod-card" onclick="window.location='${buyLink}'">
+              <div class="prod-card" onclick="window.location='${escapeHtml(buyLink)}'">
                 <div class="prod-img-container">
-                  <img src="${img}" class="prod-img" loading="lazy" alt="${p.nombre || ''}">
+                  <img src="${escapeHtml(img)}" class="prod-img" loading="lazy" alt="${escapeHtml(p.nombre || '')}">
                 </div>
                 <div class="prod-body">
                   <div class="prod-price-area">
                     <span class="prod-price">${ARS.format(p.precio)}</span>
                     ${discountHtml}
                   </div>
-                  <div class="prod-title">${p.nombre || ''}</div>
+                  <div class="prod-title">${escapeHtml(p.nombre || '')}</div>
                   <div class="shipping-tag">Disponible en PediVoy</div>
-                  <a href="${buyLink}" class="btn-buy-overlay" onclick="event.stopPropagation();">Comprar ahora</a>
+                  <a href="${escapeHtml(buyLink)}" class="btn-buy-overlay" onclick="event.stopPropagation();">Comprar ahora</a>
                 </div>
               </div>
             `;
@@ -810,7 +833,7 @@
             <div class="store-block">
               <div class="store-header-bar">
                 <span class="store-tag">OFICIAL</span>
-                <h3 class="store-title">${emp.nombre}</h3>
+                <h3 class="store-title">${escapeHtml(emp.nombre || '')}</h3>
                 ${storeLinkHtml}
               </div>
               <div class="products-row">
