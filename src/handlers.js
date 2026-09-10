@@ -4,6 +4,11 @@ import https from 'node:https';
 import { query } from './db.js';
 import { buildIaMessages } from './iaPromptBuilder.js';
 
+const startedClients = new WeakSet();
+const recentMessageIdsByClient = new WeakMap();
+const RECENT_MESSAGE_TTL_MS = 5 * 60 * 1000;
+const RECENT_MESSAGE_MAX = 500;
+
 
 // ────────────────────────────────────────────────────────────────────────────────
 // Helpers básicos
@@ -1721,7 +1726,11 @@ async function handleReposicionAutomatica(client, numero, ctx) {
 // --------------------------------------------------------------------------------
 
 function start(client, options = {}) {
+  if (!client || startedClients.has(client)) return;
+  startedClients.add(client);
+
   const forcedEmpresaId = Number(options.empresaId || 0);
+  recentMessageIdsByClient.set(client, new Map());
 
   client.on('message', async (message) => {
     try {
@@ -1738,6 +1747,27 @@ function start(client, options = {}) {
 
       const numero = message.from;
       const contenido = (message.body || '').trim();
+      const messageId =
+        message.id?._serialized ||
+        message._data?.id?._serialized ||
+        [message.from, message.timestamp, contenido].join('|');
+
+      const recentMessageIds = recentMessageIdsByClient.get(client);
+      const now = Date.now();
+      if (recentMessageIds) {
+        for (const [id, seenAt] of recentMessageIds) {
+          if (now - seenAt > RECENT_MESSAGE_TTL_MS || recentMessageIds.size > RECENT_MESSAGE_MAX) {
+            recentMessageIds.delete(id);
+          }
+        }
+
+        if (recentMessageIds.has(messageId)) {
+          console.warn(`[WPP IN] Mensaje duplicado ignorado: ${messageId}`);
+          return;
+        }
+
+        recentMessageIds.set(messageId, now);
+      }
       
       // Si es media, lo maneja whatsapp.js (pipeline), aquí ignoramos si no hay texto
       if (message.hasMedia === true) return;

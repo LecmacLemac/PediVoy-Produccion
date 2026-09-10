@@ -140,8 +140,9 @@ export function createWppClientLifecycle({
     wppClient.interface = new InterfaceController(wppClient);
     await page.evaluate(LoadUtils);
 
-    if (typeof wppClient.attachEventListeners === 'function') {
+    if (!wppClient.__pedivoyEventListenersAttached && typeof wppClient.attachEventListeners === 'function') {
       await wppClient.attachEventListeners();
+      wppClient.__pedivoyEventListenersAttached = true;
     }
 
     return isWhatsappRuntimeReady();
