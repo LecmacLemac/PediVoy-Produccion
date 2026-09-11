@@ -701,9 +701,17 @@
 
   <script>
     // ====== Auth Logic (modo seguro: cookie httpOnly) ======
-    const authFetch = (url, opts = {}) => {
+    const authFetch = async (url, opts = {}) => {
       const { headers = {}, ...rest } = opts;
-      return fetch(url, { ...rest, headers, credentials: 'include' });
+      const res = await fetch(url, { ...rest, headers, credentials: 'include' });
+      if (res.status === 401) {
+        const next = `${location.pathname}${location.search}`;
+        toast('Sesión vencida. Iniciá sesión nuevamente.');
+        setTimeout(() => {
+          location.href = `login.html?next=${encodeURIComponent(next)}`;
+        }, 600);
+      }
+      return res;
     };
 
     const $ = s => document.querySelector(s);
