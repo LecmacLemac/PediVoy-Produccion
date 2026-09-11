@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import express from 'express';
 import bcrypt from 'bcryptjs';
 
-import { createAuthRouter, isLicenseExpired } from '../src/routes/auth.js';
+import { createAuthRouter, isLicenseExpired, shouldUseSecureCookie } from '../src/routes/auth.js';
 
 async function withServer(app, fn) {
   const server = await new Promise((resolve) => {
@@ -30,6 +30,18 @@ test('isLicenseExpired detecta estado expired y vencimiento por fecha', () => {
   assert.equal(isLicenseExpired('active', '2026-08-27T12:00:00Z', now), true);
   assert.equal(isLicenseExpired('active', '2026-08-29T12:00:00Z', now), false);
   assert.equal(isLicenseExpired('active', null, now), false);
+});
+
+test('cookie segura se desactiva solo para localhost en production local', () => {
+  const oldNodeEnv = process.env.NODE_ENV;
+  process.env.NODE_ENV = 'production';
+  try {
+    assert.equal(shouldUseSecureCookie({ hostname: 'localhost', headers: {} }), false);
+    assert.equal(shouldUseSecureCookie({ hostname: '127.0.0.1', headers: {} }), false);
+    assert.equal(shouldUseSecureCookie({ hostname: 'pedivoy.example.com', headers: {} }), true);
+  } finally {
+    process.env.NODE_ENV = oldNodeEnv;
+  }
 });
 
 test('login con licencia vencida crea sesion limitada y redirige a renovacion', async () => {

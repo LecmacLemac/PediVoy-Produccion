@@ -16,6 +16,19 @@ export function isLicenseExpired(planEstado, planVencimiento, nowMs = Date.now()
   return estado === 'expired' || (Number.isFinite(vencMs) && vencMs < nowMs);
 }
 
+function isLocalhostRequest(req) {
+  const rawHost = String(req.hostname || req.headers?.host || '').toLowerCase();
+  const host = rawHost.startsWith('[')
+    ? rawHost.slice(1, rawHost.indexOf(']'))
+    : rawHost.split(':')[0];
+  return host === 'localhost' || host === '127.0.0.1' || host === '::1';
+}
+
+export function shouldUseSecureCookie(req) {
+  if (process.env.NODE_ENV !== 'production') return false;
+  return !isLocalhostRequest(req);
+}
+
 function getClientIp(req) {
   return String(
     req.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
@@ -180,7 +193,7 @@ export function createAuthRouter({ queryFn = defaultQuery } = {}) {
       res.cookie('token', token, {
         httpOnly: true,
         sameSite: 'lax',
-        secure: process.env.NODE_ENV === 'production',
+        secure: shouldUseSecureCookie(req),
         maxAge: 8 * 60 * 60 * 1000
       });
 
@@ -202,7 +215,7 @@ export function createAuthRouter({ queryFn = defaultQuery } = {}) {
     res.cookie('token', '', {
       httpOnly: true,
       sameSite: 'lax',
-      secure: process.env.NODE_ENV === 'production',
+      secure: shouldUseSecureCookie(_req),
       maxAge: 0,
     });
     res.json({ ok: true });
