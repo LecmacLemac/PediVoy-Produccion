@@ -1,21 +1,55 @@
+import { randomUUID } from 'crypto';
 import { wait } from './sessionUtils.js';
+import { buildEmpresaWppFallbackCondition } from './fallbackPolicy.js';
+import {
+  claimWppOutboxRows,
+  ensureWppDeliverySchema,
+  finishWppOutboxClaim,
+  releaseWppOutboxClaim,
+  resolveWhatsappTarget,
+} from './delivery.js';
 
-export function createOutboxProcessor({ ENABLE_WPP, query, lidByPhone, safeErrorString, getClient, getIsReady, getIsShuttingDown, reiniciarWhatsApp }) {
+export function createOutboxProcessor({
+  ENABLE_WPP,
+  query,
+  lidByPhone,
+  safeErrorString,
+  getClient,
+  getIsReady,
+  getIsShuttingDown,
+  reiniciarWhatsApp,
+  claimOwner = `general-${process.pid}-${randomUUID()}`,
+}) {
   let isProcessing = false;
-  let processingStartedAt = 0;
+  let schemaReady = false;
+
+  async function ensureSchema() {
+    if (schemaReady) return;
+    await ensureWppDeliverySchema(query);
+    schemaReady = true;
+  }
+
+  async function releaseRemaining(rows, startIndex) {
+    for (const remaining of rows.slice(startIndex)) {
+      await releaseWppOutboxClaim({ query, id: remaining.id, owner: claimOwner, error: null });
+    }
+  }
 
   async function processOutbox() {
     if (!ENABLE_WPP || !getIsReady() || isProcessing || !getClient()) return;
 
     isProcessing = true;
-    processingStartedAt = Date.now();
 
     try {
+      await ensureSchema();
       const cleanupResult = await query(`
         UPDATE wpp_outbox
         SET status = 'skipped',
-            error = 'Caducado - Más de 1 día en cola'
+            error = 'Caducado - Más de 1 día en cola',
+            claim_owner = NULL,
+            claim_until = NULL
         WHERE status = 'pending'
+          AND (claim_until IS NULL OR claim_until < NOW())
           AND created_at < NOW() - INTERVAL '1 day'
         RETURNING id
       `);
@@ -24,176 +58,126 @@ export function createOutboxProcessor({ ENABLE_WPP, query, lidByPhone, safeError
         console.log(`[WPP CLEANUP] ✅ Limpiados ${cleanupResult.length} mensajes viejos (>1 día)`);
       }
 
-      const rows = await query(`
-        SELECT o.id, o.telefono, o.mensaje
-        FROM wpp_outbox o
-        LEFT JOIN empresas e ON e.id = o.empresa_id
-        WHERE o.status = 'pending'
+      const rows = await claimWppOutboxRows({
+        query,
+        owner: claimOwner,
+        limit: 3,
+        whereSql: `
           AND o.created_at > NOW() - INTERVAL '1 day'
-          AND COALESCE(e.wpp_status, 'disconnected') <> 'connected'
-        ORDER BY o.id ASC
-        LIMIT 3
-      `);
+          ${buildEmpresaWppFallbackCondition()}
+        `,
+      });
 
       if (!rows.length) return;
-
       console.log(`[DEBUG OUTBOX] Procesando ${rows.length} mensajes pendientes...`);
 
-      for (const row of rows) {
-        let chatId = null;
-        let errorMessage = null;
-
+      for (const [index, row] of rows.entries()) {
         if (!getIsReady() || !getClient() || getIsShuttingDown()) {
-          console.warn('[WPP OUTBOX] WPP no está listo durante el lote. Se pausa el procesamiento.');
+          await releaseWppOutboxClaim({
+            query,
+            id: row.id,
+            owner: claimOwner,
+            error: 'WhatsApp general pausado antes del envío',
+          });
+          await releaseRemaining(rows, index + 1);
+          console.warn('[WPP OUTBOX] WPP no está listo durante el lote. Se liberaron los claims restantes.');
           break;
         }
 
+        let sendStarted = false;
         try {
-          let rawPhone = String(row.telefono || '').trim();
-          if (rawPhone.includes('@')) rawPhone = rawPhone.split('@')[0];
-
-          const numeroBase = rawPhone.replace(/\D+/g, '');
-          if (!numeroBase) throw new Error('telefono_invalido');
-
-          let phoneToUse = numeroBase;
-          if (phoneToUse.length === 10) {
-            phoneToUse = `549${phoneToUse}`;
-          }
-
-          const key10 = phoneToUse.slice(-10);
-          const cachedLid = lidByPhone.get(key10);
-          chatId = cachedLid || `${phoneToUse}@c.us`;
-          if (cachedLid) {
-            console.log(`[WPP OUTBOX] Usando chat @lid cacheado para ${key10}: ${chatId}`);
-          }
+          const raw = String(row.telefono || '').trim();
+          const digits = raw.includes('@') ? raw.split('@')[0].replace(/\D+/g, '') : raw.replace(/\D+/g, '');
+          const normalizedDigits = digits.length === 10 ? `549${digits}` : digits;
+          const cachedLid = normalizedDigits ? lidByPhone.get(normalizedDigits.slice(-10)) : null;
+          const client = getClient();
+          const chatId = await resolveWhatsappTarget(client, cachedLid || raw);
 
           try {
-            const client = getClient();
             const chatPromise = client.getChatById(chatId).catch(() => null);
-            const chatTimeout = new Promise((resolve) => setTimeout(() => resolve(null), 4000));
+            const chatTimeout = new Promise(resolve => setTimeout(() => resolve(null), 4000));
             const chat = await Promise.race([chatPromise, chatTimeout]);
-            if (!chat) {
-              console.warn(`[WPP OUTBOX] Chat no encontrado/timeout: ${chatId}, continuando con envío directo`);
-            }
+            if (!chat) console.warn(`[WPP OUTBOX] Chat no encontrado/timeout: ${chatId}, continuando con envío directo`);
           } catch {}
 
           console.log(`[DEBUG OUTBOX] Enviando ID:${row.id} a ${chatId}...`);
-          const client = getClient();
+          sendStarted = true;
           const sendPromise = client.sendMessage(chatId, row.mensaje);
-          const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout enviando a WPP')), 8000));
-
+          const timeoutPromise = new Promise((_, reject) => setTimeout(() => {
+            const error = new Error('Timeout enviando a WPP');
+            error.code = 'WPP_SEND_TIMEOUT';
+            reject(error);
+          }, 8000));
           await Promise.race([sendPromise, timeoutPromise]);
+
+          await finishWppOutboxClaim({ query, id: row.id, owner: claimOwner, status: 'sent', sent: true });
           console.log(`[DEBUG OUTBOX] ✅ Mensaje ID:${row.id} enviado con éxito.`);
-
-          await query(
-            `UPDATE wpp_outbox
-             SET status = 'sent',
-                 sent_at = NOW(),
-                 error = NULL
-             WHERE id = $1`,
-            [row.id]
-          );
-
-          const index = rows.indexOf(row);
-          if (index > 0 && index % 3 === 0) {
-            console.log('[WPP OUTBOX] Pausa anti-flood: 1.5 segundos...');
-            await wait(1500);
-          } else {
-            await wait(700);
-          }
+          await wait(index > 0 && index % 3 === 0 ? 1500 : 700);
         } catch (err) {
-          errorMessage = String(err && err.message ? err.message : err);
+          const errorMessage = String(err?.message || err);
           const errorLower = errorMessage.toLowerCase();
-
-          const isConnectionError =
-            errorLower.includes('not connected') ||
-            errorLower.includes('disconnected') ||
-            errorLower.includes('closed') ||
-            errorLower.includes('websocket');
-
-          const isFrameDetached =
-            errorLower.includes('detached frame') ||
-            errorLower.includes('frame detached');
-
-          const isTransientBrowserError =
-            errorLower.includes('execution context was destroyed') ||
-            errorLower.includes('runtime.callfunctionon') ||
-            errorLower.includes('target closed') ||
-            errorLower.includes('session closed') ||
-            errorLower.includes('protocol error') ||
-            errorLower.includes("reading 'getchat'") ||
-            errorLower.includes('reading "getchat"');
-
-          const isPhoneError =
-            errorLower.includes('invalid') ||
-            errorLower.includes('phone') ||
-            errorLower.includes('number') ||
-            errorLower.includes('chat_no_encontrado') ||
-            errorLower.includes('telefono_invalido');
-
-          const isSeenBug = errorMessage.includes('markedUnread') || errorLower.includes('sendseen');
-
           console.error(`[WPP OUTBOX] Error ID:${row.id} tel:${row.telefono}:`, errorMessage);
 
-          const errorSafe = safeErrorString(errorMessage);
-          let statusToSet = 'error';
-          let finalError = errorSafe;
-
-          if (isFrameDetached || isTransientBrowserError) {
-            console.error('[WPP OUTBOX] ⚠️ Contexto Puppeteer inestable. Se reintentará el mensaje tras reinicio/reconexión.');
-            await query(
-              `UPDATE wpp_outbox
-               SET status = 'pending',
-                   error = $1
-               WHERE id = $2`,
-              ['Reintento por reconexión WPP', row.id]
-            );
-            await reiniciarWhatsApp();
-            break;
-          } else if (isConnectionError) {
-            await query(
-              `UPDATE wpp_outbox
-               SET status = 'pending',
-                   error = $1
-               WHERE id = $2`,
-              ['WhatsApp reconectando', row.id]
-            );
-            console.error('[WPP OUTBOX] ❌ WhatsApp desconectado, se mantiene pending para reintento.');
-            break;
-          } else if (isSeenBug) {
-            console.warn(`[WPP OUTBOX] Bug sendSeen ID:${row.id} -> marcado como enviado`);
-            statusToSet = 'sent';
-            finalError = 'Bug sendSeen (marcado como enviado)';
-            await query(
-              `UPDATE wpp_outbox
-               SET status = $1,
-                   sent_at = COALESCE(sent_at, NOW()),
-                   error = $2
-               WHERE id = $3`,
-              [statusToSet, finalError, row.id]
-            );
-          } else if (isPhoneError) {
-            console.error(`[WPP OUTBOX] Número inválido ID:${row.id} -> marcado como error`);
-            statusToSet = 'error';
-            finalError = 'Número de teléfono inválido';
-            await query(
-              `UPDATE wpp_outbox
-               SET status = $1,
-                   error = $2
-               WHERE id = $3`,
-              [statusToSet, finalError, row.id]
-            );
-          } else {
-            console.error(`[WPP OUTBOX] Error genérico ID:${row.id}: ${errorMessage}`);
-            await query(
-              `UPDATE wpp_outbox
-               SET status = $1,
-                   error = $2
-               WHERE id = $3`,
-              [statusToSet, errorSafe, row.id]
-            );
+          if (!sendStarted) {
+            const invalidTarget = errorLower.includes('telefono_invalido') || errorLower.includes('jid_invalido');
+            if (invalidTarget) {
+              await finishWppOutboxClaim({
+                query, id: row.id, owner: claimOwner, status: 'error', error: 'Número de teléfono inválido',
+              });
+            } else {
+              await releaseWppOutboxClaim({
+                query, id: row.id, owner: claimOwner, error: 'Reintento por error previo al envío',
+              });
+            }
+            continue;
           }
 
+          if (err?.code === 'WPP_SEND_TIMEOUT') {
+            await finishWppOutboxClaim({
+              query,
+              id: row.id,
+              owner: claimOwner,
+              status: 'error',
+              error: 'Resultado de envío desconocido por timeout; requiere revisión manual',
+            });
+            await releaseRemaining(rows, index + 1);
+            break;
+          }
+
+          const isConnectionError = ['not connected', 'disconnected', 'closed', 'websocket'].some(value => errorLower.includes(value));
+          const isFrameDetached = errorLower.includes('detached frame') || errorLower.includes('frame detached');
+          const isTransientBrowserError = [
+            'execution context was destroyed', 'runtime.callfunctionon', 'target closed', 'session closed',
+            'protocol error', "reading 'getchat'", 'reading "getchat"',
+          ].some(value => errorLower.includes(value));
+          const isPhoneError = ['invalid', 'phone', 'number', 'chat_no_encontrado', 'telefono_invalido'].some(value => errorLower.includes(value));
+          const isSeenBug = errorMessage.includes('markedUnread') || errorLower.includes('sendseen');
+
+          if (isFrameDetached || isTransientBrowserError) {
+            await releaseWppOutboxClaim({ query, id: row.id, owner: claimOwner, error: 'Reintento por reconexión WPP' });
+            await releaseRemaining(rows, index + 1);
+            await reiniciarWhatsApp();
+            break;
+          }
+          if (isConnectionError) {
+            await releaseWppOutboxClaim({ query, id: row.id, owner: claimOwner, error: 'WhatsApp reconectando' });
+            await releaseRemaining(rows, index + 1);
+            break;
+          }
+          if (isSeenBug) {
+            await finishWppOutboxClaim({
+              query, id: row.id, owner: claimOwner, status: 'sent', sent: true,
+              error: 'Bug sendSeen (marcado como enviado)',
+            });
+          } else if (isPhoneError) {
+            await finishWppOutboxClaim({
+              query, id: row.id, owner: claimOwner, status: 'error', error: 'Número de teléfono inválido',
+            });
+          } else {
+            await finishWppOutboxClaim({
+              query, id: row.id, owner: claimOwner, status: 'error', error: safeErrorString(errorMessage),
+            });
+          }
           await wait(1500);
         }
       }
@@ -201,21 +185,13 @@ export function createOutboxProcessor({ ENABLE_WPP, query, lidByPhone, safeError
       console.error('[WPP OUTBOX] Error general en processOutbox:', e);
     } finally {
       isProcessing = false;
-      processingStartedAt = 0;
     }
   }
 
   return {
     processOutbox,
     getProcessingState() {
-      return { isProcessing, processingStartedAt };
-    },
-    releaseWatchdogIfStuck(maxMs = 45000) {
-      if (isProcessing && processingStartedAt && (Date.now() - processingStartedAt > maxMs)) {
-        console.warn(`[WPP OUTBOX] Watchdog liberó lock de procesamiento (>${Math.floor(maxMs / 1000)}s).`);
-        isProcessing = false;
-        processingStartedAt = 0;
-      }
+      return { isProcessing };
     },
   };
 }

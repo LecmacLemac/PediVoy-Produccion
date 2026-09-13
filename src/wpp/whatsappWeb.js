@@ -251,8 +251,6 @@ export function registerWhatsAppWeb(app, deps) {
   if (ENABLE_WPP && !WPP_QR_ONLY) {
     // Intervalo más inteligente: procesar solo si está conectado y no procesando
     setInterval(() => {
-      outboxProcessor.releaseWatchdogIfStuck(45000);
-
       const { isProcessing } = outboxProcessor.getProcessingState();
       if (isReadyWpp && !isProcessing) {
         outboxProcessor.processOutbox();

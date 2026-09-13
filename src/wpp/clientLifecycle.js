@@ -1,11 +1,4 @@
 import { WPP_SESSION_ID, getWppSessionBasePath } from './sessionUtils.js';
-import { createRequire } from 'module';
-
-const require = createRequire(import.meta.url);
-const { ExposeStore } = require('whatsapp-web.js/src/util/Injected/Store');
-const { LoadUtils } = require('whatsapp-web.js/src/util/Injected/Utils');
-const InterfaceController = require('whatsapp-web.js/src/util/InterfaceController');
-const { ClientInfo } = require('whatsapp-web.js/src/structures');
 
 export function createWppClientLifecycle({
   ENABLE_WPP,
@@ -83,7 +76,16 @@ export function createWppClientLifecycle({
       if (!page || typeof page.evaluate !== 'function') return false;
       return Boolean(await page.evaluate(() => {
         try {
-          return Boolean(window?.Store?.Chat && window?.Store?.Msg && window?.WWebJS);
+          let appState = window.Store?.AppState?.state || null;
+          if (!appState && typeof window.require === 'function') {
+            appState = window.require('WAWebSocketModel')?.Socket?.state || null;
+          }
+          return Boolean(
+            appState === 'CONNECTED' &&
+            typeof window.WWebJS?.getChat === 'function' &&
+            typeof window.WWebJS?.sendMessage === 'function' &&
+            typeof window.WWebJS?.getMessageModel === 'function'
+          );
         } catch {
           return false;
         }
@@ -101,50 +103,29 @@ export function createWppClientLifecycle({
 
     const state = await page.evaluate(() => {
       try {
+        let appState = window.Store?.AppState?.state || null;
+        if (!appState && typeof window.require === 'function') {
+          appState = window.require('WAWebSocketModel')?.Socket?.state || null;
+        }
         return {
-          synced: Boolean(window.AuthStore?.AppState?.hasSynced),
-          store: Boolean(window.Store),
+          connected: appState === 'CONNECTED',
           wwebjs: Boolean(window.WWebJS),
         };
       } catch {
-        return { synced: false, store: false, wwebjs: false };
+        return { connected: false, wwebjs: false };
       }
     });
 
-    if (!state.synced) return false;
+    if (!state.connected) return false;
+    const resumed = await page.evaluate(async () => {
+      if (typeof window.onAppStateHasSyncedEvent === 'function') {
+        await window.onAppStateHasSyncedEvent();
+        return true;
+      }
+      return false;
+    });
 
-    if (!state.store) {
-      await page.evaluate(ExposeStore);
-    }
-
-    let hasStore = false;
-    const startedAt = Date.now();
-    while (Date.now() - startedAt < 30000) {
-      hasStore = Boolean(await page.evaluate(() => {
-        try {
-          return Boolean(window.Store?.Chat && window.Store?.Msg && window.Store?.Conn);
-        } catch {
-          return false;
-        }
-      }));
-      if (hasStore) break;
-      await new Promise(resolve => setTimeout(resolve, 200));
-    }
-
-    if (!hasStore) return false;
-
-    wppClient.info = new ClientInfo(wppClient, await page.evaluate(() => ({
-      ...window.Store.Conn.serialize(),
-      wid: window.Store.User.getMaybeMePnUser() || window.Store.User.getMaybeMeLidUser(),
-    })));
-    wppClient.interface = new InterfaceController(wppClient);
-    await page.evaluate(LoadUtils);
-
-    if (!wppClient.__pedivoyEventListenersAttached && typeof wppClient.attachEventListeners === 'function') {
-      await wppClient.attachEventListeners();
-      wppClient.__pedivoyEventListenersAttached = true;
-    }
-
+    if (!resumed) return false;
     return isWhatsappRuntimeReady();
   };
 
