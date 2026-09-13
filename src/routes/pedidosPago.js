@@ -5,7 +5,7 @@ import {
   isSuper as defaultIsSuper,
   getEmpresaIdFromToken as defaultGetEmpresaIdFromToken
 } from '../services.js';
-import { query, pool } from '../db.js';
+import { query, pool, withTransaction as dbWithTransaction } from '../db.js';
 
 function canTogglePago(req) {
   const role = String(req.user?.role || '').toLowerCase();
@@ -21,29 +21,9 @@ export function createPedidosPagoRouter({
   getEmpresaIdFromToken: getEmpresaIdFromTokenFn = defaultGetEmpresaIdFromToken
 } = {}) {
   const router = express.Router();
-  const dbQuery = queryFn;
-
-  async function withTransaction(fn) {
-    if (!poolFn?.connect) return fn(dbQuery);
-
-    const client = await poolFn.connect();
-    const txQuery = async (sql, params = []) => {
-      const result = await client.query(sql, params);
-      return result.rows || [];
-    };
-
-    try {
-      await client.query('BEGIN');
-      const result = await fn(txQuery);
-      await client.query('COMMIT');
-      return result;
-    } catch (e) {
-      try { await client.query('ROLLBACK'); } catch {}
-      throw e;
-    } finally {
-      client.release();
-    }
-  }
+  const withTransaction = fn => poolFn?.connect
+    ? dbWithTransaction(fn, { pool: poolFn })
+    : fn(queryFn);
 
   // POST /api/pedidos/:id/toggle-pago
   router.post('/:id/toggle-pago', withAuthFn, checkLicenciaFn, async (req, res) => {
@@ -52,7 +32,6 @@ export function createPedidosPagoRouter({
       const { marcado } = req.body;
       const esSuperUser = isSuperFn(req);
       const myEmpresa = getEmpresaIdFromTokenFn(req);
-      const userId = Number(req.user?.uid || req.user?.id || 0) || null;
 
       if (!pedidoId) return res.status(400).json({ error: 'ID inválido' });
       if (!canTogglePago(req)) return res.status(403).json({ error: 'No autorizado para modificar pagos' });
@@ -96,34 +75,10 @@ export function createPedidosPagoRouter({
               [empresaId, p.chofer_id, p.fecha, p.monto, pedidoId]
             );
           }
-
-          await txQuery(
-            `UPDATE comprobantes_transferencia
-                SET validado = 1,
-                    estado_revision = 'aprobado',
-                    verified_by = COALESCE($3::int, verified_by),
-                    verified_at = NOW(),
-                    verified_reason = COALESCE(verified_reason, 'Verificado manual desde Estadísticas')
-              WHERE pedido_id = $1
-                AND empresa_id = $2`,
-            [pedidoId, empresaId, userId]
-          );
         } else {
           await txQuery(
             'DELETE FROM transferencias WHERE pedido_id = $1 AND empresa_id = $2',
             [pedidoId, empresaId]
-          );
-
-          await txQuery(
-            `UPDATE comprobantes_transferencia
-                SET validado = 0,
-                    estado_revision = 'en_revision',
-                    verified_by = COALESCE($3::int, verified_by),
-                    verified_at = NOW(),
-                    verified_reason = 'Desmarcado manual desde Estadísticas'
-              WHERE pedido_id = $1
-                AND empresa_id = $2`,
-            [pedidoId, empresaId, userId]
           );
         }
       });

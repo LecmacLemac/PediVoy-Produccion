@@ -15,9 +15,10 @@ export async function enqueueWppMessage({ phone, message, empresa_id = null }) {
       `SELECT id FROM wpp_outbox
       WHERE telefono = $1
         AND mensaje = $2
+        AND empresa_id IS NOT DISTINCT FROM $3
         AND created_at > (NOW() - INTERVAL '5 minutes')
       LIMIT 1`,
-      [cleanPhone, cleanMsg]
+      [cleanPhone, cleanMsg, empresa_id]
     );
 
     if (duplicados.length > 0) return;

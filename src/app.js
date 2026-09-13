@@ -17,6 +17,7 @@ import { registerPublicLegacyCreatePedidoRoute } from './routes/publicLegacyCrea
 import { toNum, inRange, round, buildOrderSummary, getAliasEmpresa } from './public/pedidosLegacyHelpers.js';
 import { registerWhatsAppWeb } from './wpp/whatsappWeb.js';
 import { assertProductionEnv } from './bootstrap/env.js';
+import { resolveTransferenciaStorageDir, createTransferenciaStorageRouter } from './transferenciaStorage.js';
 
 /**
  * createApp(deps)
@@ -258,9 +259,15 @@ export function createApp(deps) {
     app.use('/pedidos', express.static(PEDIDOS_DIR));
   }
 
-  const TRANSF_DIR = path.join(projectDir, 'Transferencia');
+  const TRANSF_DIR = resolveTransferenciaStorageDir({ projectDir });
   if (!fs.existsSync(TRANSF_DIR)) fs.mkdirSync(TRANSF_DIR, { recursive: true });
-  app.use('/Transferencia', express.static(TRANSF_DIR));
+  app.use('/Transferencia', createTransferenciaStorageRouter({
+    storageDir: TRANSF_DIR,
+    withAuth,
+    checkLicencia,
+    query,
+    isSuper,
+  }));
 
   const GASTOS_DIR = path.join(projectDir, 'Gastos');
   if (!fs.existsSync(GASTOS_DIR)) fs.mkdirSync(GASTOS_DIR, { recursive: true });

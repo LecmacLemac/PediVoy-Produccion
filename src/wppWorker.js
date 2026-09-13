@@ -10,10 +10,15 @@ const require = createRequire(import.meta.url);
 const { LoadUtils } = require('whatsapp-web.js/src/util/Injected/Utils');
 import { query } from './db.js';
 import handlers from './handlers.js';
+import { handleIncomingComprobanteFromBotPg } from './transferenciasPipeline.js';
+import { ensureComprobantesTransferenciaSchema } from './transferenciasServices.js';
+import { registerCompanyIncomingMedia } from './wpp/companyIncomingMedia.js';
+import { parseEnterpriseId } from './wpp/enterpriseId.js';
 import {
     confirmCompanyRuntime,
     createBackoffRecovery,
     createNonOverlappingTask,
+    createPrerequisiteStartup,
     createSingleFlight,
     isRuntimeBridgeError,
     repairCompanyRuntimeBridge,
@@ -31,7 +36,7 @@ import {
  * EMPRESA_ID: Define qué sesión maneja este contenedor.
  * SESSION_PATH: Ruta al disco persistente (/mnt/data/wpp_sessions en Render).
  */
-const EMPRESA_ID = process.env.EMPRESA_ID;
+const EMPRESA_ID = parseEnterpriseId(process.env.EMPRESA_ID);
 const SESSION_PATH = process.env.DISK_PATH || './wpp_sessions';
 const WPP_QR_ONLY = process.env.WPP_QR_ONLY === '1';
 let client = null;
@@ -39,13 +44,9 @@ let isReady = false;
 let isInitializing = false;
 let isResetting = false;
 let isProcessingOutbox = false;
+let isShuttingDown = false;
 let lastResetHandledAt = null;
 const OUTBOX_CLAIM_OWNER = `empresa-${EMPRESA_ID}-${process.pid}-${randomUUID()}`;
-
-if (!EMPRESA_ID) {
-    console.error("❌ ERROR CRÍTICO: No se ha definido la variable de entorno EMPRESA_ID.");
-    process.exit(1);
-}
 
 // 1. LIMPIEZA DE "LOCKS" DE CHROME
 // Evita que el contenedor falle al reiniciar si Chrome se cerró inesperadamente.
@@ -71,6 +72,7 @@ async function ensureEmpresaWhatsappSchema() {
           ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     `);
     await ensureWppDeliverySchema(query);
+    await ensureComprobantesTransferenciaSchema(query);
 }
 
 function createCompanyClient() {
@@ -166,6 +168,11 @@ function createCompanyClient() {
 
     if (!WPP_QR_ONLY) {
         handlers.start(nextClient, { empresaId: Number(EMPRESA_ID) });
+        registerCompanyIncomingMedia(nextClient, {
+            empresaId: Number(EMPRESA_ID),
+            query,
+            handleIncomingComprobanteFromBotPg,
+        });
     } else {
         console.log(`[Empresa ${EMPRESA_ID}] Modo solo QR activo: no se atienden mensajes entrantes.`);
     }
@@ -178,7 +185,7 @@ async function clearCompanySessionDir() {
 }
 
 async function initializeClient() {
-    if (isInitializing) return false;
+    if (isInitializing || isShuttingDown) return false;
     isInitializing = true;
     let startupSyncAssistant = null;
     let nextClient = null;
@@ -229,7 +236,7 @@ async function initializeClient() {
 }
 
 const recoverCompanyRuntime = createSingleFlight(async (reason) => {
-    if (isResetting) return false;
+    if (isResetting || isShuttingDown) return false;
 
     isReady = false;
     console.warn(`[Empresa ${EMPRESA_ID}] Runtime WhatsApp no operativo (${reason}). Intentando recuperar bridge...`);
@@ -284,12 +291,27 @@ const recoverCompanyRuntime = createSingleFlight(async (reason) => {
 
 const workerRecovery = createBackoffRecovery({
     task: async reason => {
+        if (isShuttingDown) return true;
         await ensureEmpresaWhatsappSchema();
         return recoverCompanyRuntime(reason);
     },
     onError: (err, state) => {
         console.error(
             `[Empresa ${EMPRESA_ID}] Recuperación falló (intento ${state.attempt + 1}); se reintentará con backoff:`,
+            err.message
+        );
+    },
+});
+
+const workerStartup = createPrerequisiteStartup({
+    ensurePrerequisites: ensureEmpresaWhatsappSchema,
+    start: async reason => {
+        lastResetHandledAt = await loadResetMarker();
+        return recoverCompanyRuntime(reason);
+    },
+    onError: (err, state) => {
+        console.error(
+            `[Empresa ${EMPRESA_ID}] Preparación inicial falló (intento ${state.attempt + 1}); se reintentará con backoff:`,
             err.message
         );
     },
@@ -374,6 +396,7 @@ async function resetAndRestartClient() {
 }
 
 async function checkResetRequest() {
+    if (!workerStartup.getState().started) return;
     try {
         const marker = await loadResetMarker();
         if (marker && marker !== lastResetHandledAt) {
@@ -411,7 +434,7 @@ function isInvalidPhoneError(err) {
 
 // 4. PROCESADOR DE COLA DE MENSAJES (OUTBOX)
 // Revisa mensajes pendientes cada 5 segundos para esta empresa específicamente.
-setInterval(async () => {
+const outboxInterval = setInterval(async () => {
     if (WPP_QR_ONLY) return;
     if (!client || !isReady || isInitializing || isResetting || isProcessingOutbox) return;
 
@@ -517,17 +540,32 @@ setInterval(async () => {
 
 // 5. ARRANQUE
 console.log(`[Empresa ${EMPRESA_ID}] Iniciando cliente de WhatsApp${WPP_QR_ONLY ? ' en modo solo QR' : ''}...`);
-setInterval(checkResetRequest, 5000);
-setInterval(() => {
+const resetInterval = setInterval(checkResetRequest, 5000);
+const healthInterval = setInterval(() => {
     checkCompanyRuntimeHealthTick().catch(err => {
         console.warn(`[Empresa ${EMPRESA_ID}] Error en health-check WhatsApp:`, err?.message || err);
     });
 }, 15000);
 
-try {
-    await ensureEmpresaWhatsappSchema();
-    lastResetHandledAt = await loadResetMarker();
-} catch (err) {
-    console.error(`[Empresa ${EMPRESA_ID}] Preparación inicial falló; se reintentará con backoff:`, err.message);
+async function shutdownWorker() {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
+    clearInterval(outboxInterval);
+    clearInterval(resetInterval);
+    clearInterval(healthInterval);
+    workerStartup.stop();
+    workerRecovery.stop();
+    const activeClient = client;
+    client = null;
+    isReady = false;
+    activeClient?.removeAllListeners();
+    try {
+        await activeClient?.destroy();
+    } catch (err) {
+        console.warn(`[Empresa ${EMPRESA_ID}] No se pudo cerrar cliente durante shutdown:`, err.message);
+    }
 }
-workerRecovery.trigger('startup');
+
+process.once('SIGTERM', () => { void shutdownWorker(); });
+process.once('SIGINT', () => { void shutdownWorker(); });
+void workerStartup.trigger('startup');

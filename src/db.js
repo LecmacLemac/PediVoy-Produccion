@@ -60,4 +60,37 @@ export async function query(sql, params = []) {
   }
 }
 
-export default { query, pool };
+const RETRYABLE_TRANSACTION_CODES = new Set(['40P01', '40001']);
+
+export async function withTransaction(work, {
+  pool: transactionPool = pool,
+  maxRetries = 2,
+  retryDelayMs = 20,
+} = {}) {
+  if (typeof work !== 'function') throw new TypeError('withTransaction requiere una función');
+
+  for (let attempt = 0; ; attempt += 1) {
+    const client = await transactionPool.connect();
+    const txQuery = async (sql, params = []) => {
+      const result = await client.query(sql, params);
+      return result.rows || [];
+    };
+
+    try {
+      await client.query('BEGIN');
+      const result = await work(txQuery, client);
+      await client.query('COMMIT');
+      return result;
+    } catch (error) {
+      try { await client.query('ROLLBACK'); } catch {}
+      if (!RETRYABLE_TRANSACTION_CODES.has(error?.code) || attempt >= maxRetries) throw error;
+      if (retryDelayMs > 0) {
+        await new Promise(resolve => setTimeout(resolve, retryDelayMs * (attempt + 1)));
+      }
+    } finally {
+      client.release();
+    }
+  }
+}
+
+export default { query, pool, withTransaction };

@@ -429,8 +429,10 @@
     return `${banco} · ${alias}${emp}`;
   }
 
-  async function loadCuentasBancarias() {
-    const empresa = $('#fEmpresa')?.value || '';
+  async function loadCuentasBancarias(empresaId = null) {
+    const empresa = String(currentUser?.role || '').toLowerCase() === 'super' && empresaId
+      ? String(empresaId)
+      : ($('#fEmpresa')?.value || '');
     let url = '/api/transferencias/cuentas-bancarias';
     if (empresa) url += `?empresa_id=${encodeURIComponent(empresa)}`;
 
@@ -693,9 +695,6 @@
       const esEfectivo = metodo.includes('efec');
       const isValidado = !esSinComprobante && (Number(t.validado) === 1 || esEfectivo || t.is_validado);
       const estado = String(t.estado_revision || '').toLowerCase();
-      const requiereForzar = estado === 'en_revision' && !isValidado;
-      const isSuper = String(currentUser?.role || '').toLowerCase() === 'super';
-
       const metodoBadge = esQr
         ? `<span class="badge badge-info"><i class="fa-solid fa-qrcode"></i> QR MP</span>`
         : esSinComprobante
@@ -703,14 +702,9 @@
         : esEfectivo
         ? `<span class="badge badge-info"><i class="fa-solid fa-money-bill"></i> Efec</span>`
         : `<span class="badge badge-info"><i class="fa-solid fa-mobile-screen"></i> Transf</span>`;
-
-      const btnValidar = (!esQr && !esSinComprobante && !esEfectivo && !isValidado && !requiereForzar)
-        ? `<button class="btn btn-primary btn-icon" onclick="verificarPago(${t.id})" title="Validar"><i class="fa-solid fa-check"></i></button>`
+      const btnValidar = (!esQr && !esSinComprobante && !esEfectivo && !isValidado)
+        ? `<button class="btn btn-primary btn-icon" onclick="verificarPago(${t.id})" title="Revisar y validar"><i class="fa-solid fa-check"></i></button>`
         : `<span style="width:32px; display:inline-block"></span>`;
-
-      const btnForzar = (!esQr && !esSinComprobante && !esEfectivo && !isValidado && requiereForzar && isSuper)
-        ? `<button class="btn btn-warning btn-icon" onclick="forzarVerificacion(${t.id})" title="Forzar aprobación (Super)"><i class="fa-solid fa-shield"></i></button>`
-        : '';
 
       const btnSolicitar = esSinComprobante && String(t.telefono || '').replace(/\D+/g, '')
         ? `<button class="btn btn-primary btn-icon" onclick="solicitarComprobante(${Number(t.pedido_id)})" title="Solicitar comprobante por WhatsApp"><i class="fa-brands fa-whatsapp"></i></button>`
@@ -748,7 +742,6 @@
           <td style="text-align:right">
             ${btnSolicitar}
             ${btnValidar}
-            ${btnForzar}
             ${btnEliminar}
           </td>
         </tr>
@@ -780,6 +773,16 @@
 
   async function verificarPago(id) {
     if (verifyBusy) return;
+    const row = currentRows.find(item => item.source === 'transferencia' && Number(item.id) === Number(id)) || {};
+    if (String(currentUser?.role || '').toLowerCase() === 'super' && row.empresa_id) {
+      await loadCuentasBancarias(row.empresa_id);
+    }
+    const nroOperacion = (prompt('Número de operación bancaria:', row.nro_operacion || '') || '').trim();
+    if (!nroOperacion) return alert('Se requiere el número de operación.');
+    const cuentaBancariaId = Number(prompt('ID de la cuenta bancaria receptora:', row.cuenta_bancaria_id || $('#fCuenta')?.value || '') || 0);
+    if (!Number.isInteger(cuentaBancariaId) || cuentaBancariaId <= 0) return alert('Se requiere una cuenta bancaria válida.');
+    const reason = (prompt('Motivo de la revisión:', 'Revisión manual de tesorería') || '').trim();
+    if (!reason) return alert('Se requiere un motivo de revisión.');
     if(!confirm('¿Confirmar que el dinero ingresó a la cuenta?')) return;
     const enviarAviso = confirm('¿Querés enviarle el aviso de pago registrado al cliente por WhatsApp?');
 
@@ -793,7 +796,19 @@
 
     try {
       const params = new URLSearchParams({ enviarAviso: enviarAviso ? '1' : '0' });
-      const resp = await authFetch(`/api/transferencias/${id}/verificar?${params.toString()}`, { method: 'POST' });
+      const payload = {
+        nro_operacion: nroOperacion,
+        cuenta_bancaria_id: cuentaBancariaId,
+        reason,
+      };
+      if (String(currentUser?.role || '').toLowerCase() === 'super' && row.empresa_id) {
+        payload.empresa_id = Number(row.empresa_id);
+      }
+      const resp = await authFetch(`/api/transferencias/${id}/verificar?${params.toString()}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
       const data = await resp.json().catch(() => ({}));
 
       if (resp.ok && data?.ok) {
@@ -812,38 +827,6 @@
         btn.disabled = false;
         btn.innerHTML = prev;
       }
-    }
-  }
-
-  async function forzarVerificacion(id) {
-    const isSuper = String(currentUser?.role || '').toLowerCase() === 'super';
-    if (!isSuper) return alert('Solo un superadmin puede forzar aprobación.');
-
-    const reason = (prompt('Motivo de aprobación forzada (auditoría):', 'Revisión manual confirmada') || '').trim();
-    if (!reason) return alert('Se requiere motivo para auditar la acción.');
-    if (!confirm('⚠️ Vas a forzar aprobación de un comprobante en revisión. ¿Continuar?')) return;
-    const enviarAviso = confirm('¿Querés enviarle el aviso de pago registrado al cliente por WhatsApp?');
-
-    try {
-      const params = new URLSearchParams({
-        enviarAviso: enviarAviso ? '1' : '0',
-        force: '1'
-      });
-      const resp = await authFetch(`/api/transferencias/${id}/verificar?${params.toString()}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reason })
-      });
-      const data = await resp.json().catch(() => ({}));
-
-      if (resp.ok && data?.ok) {
-        toast(enviarAviso ? 'Aprobación forzada registrada y aviso enviado' : 'Aprobación forzada registrada sin aviso');
-        loadPagos();
-      } else {
-        alert(data?.error || 'No se pudo forzar la aprobación');
-      }
-    } catch {
-      alert('Error de red forzando aprobación');
     }
   }
 

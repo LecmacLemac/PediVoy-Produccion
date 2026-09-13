@@ -5,12 +5,13 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { createHash, randomUUID } from 'node:crypto';
+import { resolveTransferenciaStorageDir } from './transferenciaStorage.js';
 import {
   insertarComprobantePg,
   actualizarComprobanteDatosPg,
-  marcarComprobanteComoProcesadoPg,
+  aprobarComprobanteAtomicoPg,
   enqueueWppMessagePg,
-  verificarDuplicadoOperacionPg,
   resolverCuentaBancariaDestinoPg
 } from './transferenciasServices.js';
 
@@ -25,7 +26,8 @@ const CONFIG = {
 };
 
 const __filename = fileURLToPath(import.meta.url);
-const STORAGE_DIR = path.resolve(process.cwd(), CONFIG.DIR_NAME);
+const projectDir = path.dirname(path.dirname(__filename));
+const STORAGE_DIR = resolveTransferenciaStorageDir({ projectDir });
 const execFileAsync = promisify(execFile);
 
 if (!fs.existsSync(STORAGE_DIR)) fs.mkdirSync(STORAGE_DIR, { recursive: true });
@@ -173,7 +175,7 @@ const formatMoney = (n) =>
   }).format(n || 0);
 
 const parseMoney = (input) => {
-  if (typeof input === 'number') return input;
+  if (typeof input === 'number') return Number.isFinite(input) ? input : 0;
   const clean = String(input || '')
     .replace(/[^0-9,.-]+/g, '')
     .replace(',', '.');
@@ -181,19 +183,188 @@ const parseMoney = (input) => {
   return isFinite(num) ? num : 0;
 };
 
-const getSafeExtension = (originalname, mimetype) => {
-  const ext = path.extname(originalname || '').replace('.', '').toLowerCase();
-  if (ext && ext.length <= 4) return ext;
-  if (mimetype === 'application/pdf') return 'pdf';
-  if (mimetype?.startsWith('image/')) return 'jpg';
-  return 'bin';
-};
+export function evaluateReceiptApproval({
+  registroDB, monto, cuentaDestinoMatch, nroOperacion, fechaComprobante, now = new Date()
+}) {
+  const reasons = [];
+  const parsedAmount = Number(monto);
+  const orderAmount = Number(registroDB?.pedido_monto);
+
+  if (!registroDB?.pedido_id || !registroDB?.empresa_id || !Number.isFinite(orderAmount) || orderAmount <= 0) {
+    reasons.push('pedido_no_asociado');
+  }
+  if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+    reasons.push('monto_ia_invalido');
+  } else if (
+    registroDB?.pedido_id &&
+    Number.isFinite(orderAmount) &&
+    Math.abs(parsedAmount - orderAmount) > 0.010000001
+  ) {
+    reasons.push('monto_no_coincide');
+  }
+  if (!cuentaDestinoMatch?.cuenta_bancaria_id || Number(cuentaDestinoMatch?.confianza || 0) < 70) {
+    reasons.push('cuenta_destino_no_verificada');
+  }
+  if (!String(nroOperacion || '').trim()) reasons.push('numero_operacion_faltante');
+  if (!/^[a-f0-9]{64}$/i.test(String(registroDB?.file_hash || ''))) reasons.push('hash_archivo_faltante');
+
+  const dateMatch = String(fechaComprobante || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  let receiptDateMs = NaN;
+  if (dateMatch) {
+    const year = Number(dateMatch[1]);
+    const month = Number(dateMatch[2]);
+    const day = Number(dateMatch[3]);
+    const candidate = new Date(Date.UTC(year, month - 1, day));
+    if (
+      candidate.getUTCFullYear() === year
+      && candidate.getUTCMonth() === month - 1
+      && candidate.getUTCDate() === day
+    ) {
+      receiptDateMs = candidate.getTime();
+    }
+  }
+  const reference = new Date(now);
+  const referenceDay = Date.UTC(
+    reference.getUTCFullYear(), reference.getUTCMonth(), reference.getUTCDate()
+  );
+  const minDate = referenceDay - 90 * 86400000;
+  const maxDate = referenceDay + 1 * 86400000;
+  if (!Number.isFinite(receiptDateMs) || receiptDateMs < minDate || receiptDateMs > maxDate) {
+    reasons.push('fecha_comprobante_fuera_de_rango');
+  }
+  if (registroDB?.pedido_id && String(registroDB?.pedido_metodo_pago || '').toLowerCase() !== 'transferencia') {
+    reasons.push('metodo_pago_no_transferencia');
+  }
+  if (registroDB?.pedido_id && registroDB?.pedido_pago_acreditado === true) {
+    reasons.push('pago_ya_acreditado');
+  }
+
+  return {
+    approved: reasons.length === 0,
+    reasons,
+    riskScore: Math.min(100, reasons.length * 35),
+  };
+}
+
+export async function finalizeReceiptValidation({ registroDB, datosIA, telefono, deps = {} }) {
+  const services = {
+    resolverCuentaBancariaDestinoPg,
+    actualizarComprobanteDatosPg,
+    aprobarComprobanteAtomicoPg,
+    enqueueWppMessagePg,
+    ...deps,
+  };
+  const empresaId = Number(registroDB?.empresa_id || 0) || null;
+  const monto = parseMoney(datosIA?.monto);
+  const nroOperacion = datosIA?.nro_operacion ? String(datosIA.nro_operacion).trim() : null;
+  const cuentaDestinoMatch = empresaId
+    ? await services.resolverCuentaBancariaDestinoPg({
+        empresaId,
+        banco_destino: datosIA?.banco_destino || null,
+        alias_destino: datosIA?.alias_destino || null,
+        cbu_destino: datosIA?.cbu_destino || null,
+        titular_destino: datosIA?.titular_destino || null,
+      }).catch(() => null)
+    : null;
+
+  const decision = evaluateReceiptApproval({
+    registroDB,
+    monto,
+    cuentaDestinoMatch,
+    nroOperacion,
+    fechaComprobante: datosIA?.fecha,
+  });
+  decision.approved = decision.reasons.length === 0;
+  decision.riskScore = Math.min(100, decision.reasons.length * 35);
+
+  const patch = {
+    monto,
+    nro_operacion: nroOperacion,
+    banco_origen: datosIA?.banco_origen || null,
+    banco_destino: datosIA?.banco_destino || null,
+    alias_destino: datosIA?.alias_destino || null,
+    cbu_destino: datosIA?.cbu_destino || null,
+    titular_destino: datosIA?.titular_destino || null,
+    cuenta_bancaria_id: cuentaDestinoMatch?.cuenta_bancaria_id || null,
+    cuenta_bancaria_confianza: cuentaDestinoMatch?.confianza || 0,
+    cuenta_bancaria_match_fuente: cuentaDestinoMatch?.fuente || null,
+    cuenta_bancaria_match_detalle: cuentaDestinoMatch?.detalle || null,
+  };
+
+  if (decision.approved) {
+    try {
+      const approved = await services.aprobarComprobanteAtomicoPg({
+        id: registroDB.id,
+        empresaId,
+        nroOperacion,
+        patch,
+      });
+      if (!approved) {
+        decision.approved = false;
+        decision.reasons.push('estado_comprobante_no_elegible');
+      }
+    } catch (error) {
+      decision.approved = false;
+      decision.reasons.push(error?.code === '23505'
+        ? 'operacion_duplicada'
+        : String(error?.code || 'fallo_aprobacion_transaccional'));
+    }
+    decision.riskScore = Math.min(100, decision.reasons.length * 35);
+  }
+
+  if (decision.approved) {
+    await services.enqueueWppMessagePg({
+      phone: telefono,
+      message: `✅ Comprobante aprobado por ${formatMoney(monto)} y asociado al pedido.`,
+      empresaId,
+    });
+    return { ok: true, id: registroDB.id, pedido_id: registroDB.pedido_id, data: datosIA };
+  }
+
+  Object.assign(patch, {
+    procesado: false,
+    validado: 0,
+    estado_revision: 'pendiente',
+    riesgo_score: decision.riskScore,
+    riesgo_flags: decision.reasons.join(','),
+    verified_reason: decision.reasons.join(','),
+    verified_at: null,
+  });
+  if (decision.reasons.includes('operacion_duplicada')) delete patch.nro_operacion;
+  await services.actualizarComprobanteDatosPg(registroDB.id, patch);
+
+  await services.enqueueWppMessagePg({
+    phone: telefono,
+    message: '📄 Comprobante guardado y pendiente de revisión manual.',
+    empresaId,
+  });
+  return {
+    ok: false,
+    saved: true,
+    reason: decision.reasons.includes('operacion_duplicada') ? 'duplicate' : 'manual_review',
+    reasons: decision.reasons,
+    id: registroDB.id,
+    pedido_id: registroDB.pedido_id || null,
+  };
+}
+
+const MIME_EXTENSIONS = new Map([
+  ['application/pdf', 'pdf'], ['image/jpeg', 'jpg'], ['image/png', 'png'], ['image/webp', 'webp'],
+]);
+
+function hasValidMagicBytes(buffer, mimetype) {
+  if (!Buffer.isBuffer(buffer)) return false;
+  if (mimetype === 'image/jpeg') return buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
+  if (mimetype === 'image/png') return buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10]));
+  if (mimetype === 'image/webp') return buffer.length >= 12 && buffer.toString('ascii', 0, 4) === 'RIFF' && buffer.toString('ascii', 8, 12) === 'WEBP';
+  if (mimetype === 'application/pdf') return buffer.length >= 5 && buffer.toString('ascii', 0, 5) === '%PDF-';
+  return false;
+}
 
 // --- CORE FUNCTIONS ---
-async function saveFileToDisk({ buffer, base64, originalName, mimetype }, telefono) {
-  const ext = getSafeExtension(originalName, mimetype);
-  const safePhone = String(telefono).replace(/\D/g, '').slice(-10);
-  const filename = `comp-${safePhone}-${Date.now()}.${ext}`;
+async function saveFileToDisk({ buffer, base64, originalName, mimetype }) {
+  const ext = MIME_EXTENSIONS.get(mimetype);
+  const filename = `comp-${randomUUID()}.${ext}`;
   const absolutePath = path.join(STORAGE_DIR, filename);
   const relativePath = `/${CONFIG.DIR_NAME}/${filename}`;
 
@@ -272,31 +443,50 @@ async function analyzeReceiptWithAI(imagePayload) {
 }
 
 // --- PIPELINE PRINCIPAL ---
-export async function procesarArchivoTransferenciaPg(filePayload, telefono) {
-  const logPrefix = `[Pipeline ${String(telefono).slice(-4)}]`;
+export async function procesarArchivoTransferenciaPg(filePayload, telefono, {
+  empresaId: canalEmpresaId = null, sourceMessageId = null, deps = {},
+} = {}) {
+  const logPrefix = '[Pipeline comprobante]';
   if (CONFIG.DEBUG) console.time(logPrefix);
 
   let empresaId = null;
   let registroDB = null;
+  let savedFile = null;
+  const services = {
+    saveFileToDisk,
+    insertarComprobantePg,
+    enqueueWppMessagePg,
+    actualizarComprobanteDatosPg,
+    ...deps,
+  };
 
   try {
     // 1. Guardar archivo
-    const savedFile = await saveFileToDisk(filePayload, telefono);
+    savedFile = await services.saveFileToDisk(filePayload, telefono);
+    const fileHash = createHash('sha256').update(filePayload.buffer).digest('hex');
 
     // 2. Registrar en DB (Con Vinculación Automática)
     //    Devuelve ID del registro y empresa_id (si existía)
-    registroDB = await insertarComprobantePg({
+    registroDB = await services.insertarComprobantePg({
       telefono,
       imagen_path: savedFile.relativePath,
       fecha: new Date(), // PG lo guarda como TIMESTAMPTZ
+      empresaId: canalEmpresaId,
       mimetype: savedFile.mimetype,
-      bytes: savedFile.size
+      bytes: savedFile.size,
+      sourceMessageId,
+      fileHash,
     });
+
+    if (registroDB?.duplicate) {
+      await fs.promises.unlink(savedFile.absolutePath).catch(() => {});
+      return { ok: false, duplicate: true, reason: 'duplicate_event_or_file' };
+    }
 
     empresaId = registroDB?.empresa_id || null;
 
     // 3. Feedback inicial (ya conocemos empresaId)
-    enqueueWppMessagePg({
+    services.enqueueWppMessagePg({
       phone: telefono,
       message: '📄 Recibido. Analizando comprobante...',
       empresaId
@@ -308,7 +498,16 @@ export async function procesarArchivoTransferenciaPg(filePayload, telefono) {
     const datosIA = await analyzeReceiptWithAI(imagePayload);
     if (!datosIA) {
       console.warn(`${logPrefix} Comprobante guardado, pero no se pudo leer automáticamente.`);
-      await enqueueWppMessagePg({
+      await services.actualizarComprobanteDatosPg(registroDB.id, {
+        procesado: false,
+        validado: 0,
+        estado_revision: 'pendiente',
+        riesgo_score: 70,
+        riesgo_flags: 'ia_ilegible',
+        verified_reason: 'ia_ilegible',
+        verified_at: null,
+      });
+      await services.enqueueWppMessagePg({
         phone: telefono,
         message:
           '📄 Comprobante guardado. No pude leer los datos automáticamente, así que queda para revisión manual.',
@@ -324,108 +523,15 @@ export async function procesarArchivoTransferenciaPg(filePayload, telefono) {
       };
     }
 
-    // --- 6. VALIDACIÓN DE DUPLICADOS ---
-    const nroOp = datosIA?.nro_operacion;
-    const cuentaDestinoMatch = await resolverCuentaBancariaDestinoPg({
-      empresaId,
-      banco_destino: datosIA?.banco_destino || null,
-      alias_destino: datosIA?.alias_destino || null,
-      cbu_destino: datosIA?.cbu_destino || null,
-      titular_destino: datosIA?.titular_destino || null
-    }).catch((error) => {
-      console.error(`${logPrefix} Error detectando cuenta destino:`, error?.message || error);
-      return null;
-    });
-
-    const cuentaDestinoFields = {
-      banco_destino: datosIA?.banco_destino || null,
-      alias_destino: datosIA?.alias_destino || null,
-      cbu_destino: datosIA?.cbu_destino || null,
-      titular_destino: datosIA?.titular_destino || null,
-      cuenta_bancaria_id: cuentaDestinoMatch?.cuenta_bancaria_id || null,
-      cuenta_bancaria_confianza: cuentaDestinoMatch?.confianza || 0,
-      cuenta_bancaria_match_fuente: cuentaDestinoMatch?.fuente || null,
-      cuenta_bancaria_match_detalle: cuentaDestinoMatch?.detalle || null
-    };
-
-    if (nroOp) {
-      // Verificar si este ID ya existe en la DB
-      const esDuplicado = await verificarDuplicadoOperacionPg(nroOp);
-
-      if (esDuplicado) {
-        console.warn(`${logPrefix} ⚠️ Comprobante duplicado detectado: ${nroOp}`);
-
-        // Guardamos los datos igual por si acaso, pero NO lo marcamos como válido/procesado
-        await actualizarComprobanteDatosPg(registroDB.id, {
-          monto: parseMoney(datosIA?.monto),
-          nro_operacion: nroOp,
-          banco_origen: datosIA?.banco_origen,
-          ...cuentaDestinoFields
-        });
-
-        // Avisamos al usuario del error
-        await enqueueWppMessagePg({
-          phone: telefono,
-          message: `⚠️ *Atención:* El comprobante con operación *${nroOp}* ya fue registrado anteriormente en nuestro sistema.`,
-          empresaId
-        });
-
-        if (CONFIG.DEBUG) console.timeEnd(logPrefix);
-        // Retornamos falso para detener el flujo "exitoso"
-        return { ok: false, reason: 'duplicate', id: registroDB.id };
-      }
-    }
-    // ------------------------------------------
-
-    // 7. Validación de negocio
-    const monto = parseMoney(datosIA?.monto);
-    const esValido = monto > 0;
-
-    // 8. Actualizar DB con resultados (y vincular operación si es nuevo)
-    await actualizarComprobanteDatosPg(registroDB.id, {
-      monto: monto,
-      nro_operacion: nroOp || null,
-      banco_origen: datosIA?.banco_origen || null,
-      ...cuentaDestinoFields
-    });
-
-    // 9. Respuesta final al usuario
-    if (esValido) {
-      await marcarComprobanteComoProcesadoPg(registroDB.id);
-
-      // Mensaje mejorado con vinculación
-      let msgExito = [
-        '✅ *Comprobante Procesado*',
-        `💰 Monto: ${formatMoney(monto)}`,
-        `🏦 Banco: ${datosIA?.banco_origen || 'Detectado'}`,
-        cuentaDestinoMatch?.cuenta?.alias
-          ? `🏛️ Cuenta destino: ${cuentaDestinoMatch.cuenta.alias}`
-          : null,
-        `🆔 Op: ${nroOp || 'S/D'}`
-      ].filter(Boolean);
-
-      msgExito.push(`\n🔗 _Comprobante guardado y asociado a tu cuenta._`);
-
-      await enqueueWppMessagePg({
-        phone: telefono,
-        message: msgExito.join('\n'),
-        empresaId
-      });
-    } else {
-      console.warn(`${logPrefix} Datos insuficientes.`);
-      await enqueueWppMessagePg({
-        phone: telefono,
-        message:
-          '❌ Comprobante guardado, pero no pude leer los datos automáticamente. Un humano lo revisará.',
-        empresaId
-      });
-    }
-
+    const result = await finalizeReceiptValidation({ registroDB, datosIA, telefono });
     if (CONFIG.DEBUG) console.timeEnd(logPrefix);
-    return { ok: esValido, data: datosIA, id: registroDB.id, pedido_id: registroDB?.pedido_id || null };
+    return result;
   } catch (error) {
     console.error(`${logPrefix} ERROR FATAL:`, error);
-    await enqueueWppMessagePg({
+    if (savedFile && !registroDB?.id) {
+      await fs.promises.unlink(savedFile.absolutePath).catch(() => {});
+    }
+    await services.enqueueWppMessagePg({
       phone: telefono,
       message: '⚠️ Error guardando el archivo. Por favor reintenta.',
       empresaId
@@ -435,8 +541,11 @@ export async function procesarArchivoTransferenciaPg(filePayload, telefono) {
 }
 
 // Entrada desde el bot (normaliza payload y delega al pipeline)
-export async function handleIncomingComprobanteFromBotPg(botData) {
-  const { type, telefono, buffer, base64, mimetype, filename } = botData;
+export async function handleIncomingComprobanteFromBotPg(botData, options = {}) {
+  const {
+    type, telefono, buffer, base64, mimetype, filename, empresaId = null,
+    sourceMessageId = null,
+  } = botData;
 
   // Filtro básico
   const supportedTypes = ['image', 'document'];
@@ -447,29 +556,39 @@ export async function handleIncomingComprobanteFromBotPg(botData) {
     'image/webp'
   ];
   const isTypeOk = supportedTypes.includes(type);
-  const isMimeOk =
-    supportedMimes.some((m) => mimetype?.includes(m)) ||
-    mimetype?.startsWith('image/');
+  const isMimeOk = supportedMimes.includes(mimetype);
 
-  if (!isTypeOk && !isMimeOk) {
+  if (!isTypeOk || !isMimeOk) {
     return { ok: false, reason: 'unsupported_type' };
+  }
+
+  const maxBytes = Number(options.maxBytes || process.env.TRANSFERENCIA_MAX_BYTES || 10 * 1024 * 1024);
+  const estimatedBytes = Buffer.isBuffer(buffer)
+    ? buffer.length
+    : Math.floor(String(base64 || '').length * 3 / 4);
+  if (estimatedBytes > maxBytes) return { ok: false, reason: 'file_too_large' };
+
+  const fileBuffer = Buffer.isBuffer(buffer) ? buffer : Buffer.from(String(base64 || ''), 'base64');
+  if (!hasValidMagicBytes(fileBuffer, mimetype)) {
+    return { ok: false, reason: 'invalid_file_signature' };
   }
 
   return await procesarArchivoTransferenciaPg(
     {
-      buffer,
-      base64,
+      buffer: fileBuffer,
       originalName: filename || `archivo.${mimetype?.split('/')[1] || 'bin'}`,
       mimetype
     },
-    telefono
+    telefono,
+    { empresaId, sourceMessageId }
   );
 }
 
 export const __testables = {
   convertPdfFirstPageWithPdftoppm,
   isTransientOpenAIError,
-  buildReceiptAnalysisPayload
+  buildReceiptAnalysisPayload,
+  hasValidMagicBytes,
 };
 
 export default {

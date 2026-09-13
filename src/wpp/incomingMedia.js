@@ -1,16 +1,5 @@
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-function safeIdSnapshot(id) {
-  if (!id || typeof id !== 'object') return id || null;
-  return {
-    _serialized: id._serialized || null,
-    id: id.id || null,
-    fromMe: typeof id.fromMe === 'boolean' ? id.fromMe : null,
-    remote: typeof id.remote === 'string' ? id.remote : id.remote?._serialized || null,
-    participant: typeof id.participant === 'string' ? id.participant : id.participant?._serialized || null,
-  };
-}
-
 function inferSerializedMessageId(msg) {
   const id = msg?.id || msg?._data?.id;
   if (!id || typeof id !== 'object') return null;
@@ -39,10 +28,7 @@ function ensureSerializedMessageId(msg) {
 
   if (msg.id && typeof msg.id === 'object' && !msg.id._serialized) {
     msg.id._serialized = serialized;
-    console.log('[WPP MEDIA] messageId reconstruido', {
-      messageId: serialized,
-      id: safeIdSnapshot(msg.id),
-    });
+    console.log('[WPP MEDIA] messageId reconstruido');
   }
 
   return serialized;
@@ -50,7 +36,7 @@ function ensureSerializedMessageId(msg) {
 
 async function downloadMediaWithRetry(msg, { attempts = 3, delayMs = 1500 } = {}) {
   let lastError = null;
-  const messageId = ensureSerializedMessageId(msg);
+  ensureSerializedMessageId(msg);
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
@@ -64,10 +50,8 @@ async function downloadMediaWithRetry(msg, { attempts = 3, delayMs = 1500 } = {}
 
       console.warn('[WPP MEDIA] downloadMedia sin datos', {
         attempt,
-        messageId,
         type: msg.type || null,
         hasMedia: !!msg.hasMedia,
-        id: safeIdSnapshot(msg.id),
       });
     } catch (err) {
       lastError = err;
@@ -76,10 +60,8 @@ async function downloadMediaWithRetry(msg, { attempts = 3, delayMs = 1500 } = {}
         message: err?.message || String(err),
         name: err?.name || null,
         stack: err?.stack || null,
-        messageId,
         type: msg.type || null,
         hasMedia: !!msg.hasMedia,
-        id: safeIdSnapshot(msg.id),
       });
     }
 
@@ -89,16 +71,15 @@ async function downloadMediaWithRetry(msg, { attempts = 3, delayMs = 1500 } = {}
   if (lastError) {
     console.warn('[WPP MEDIA] downloadMedia agotó reintentos', {
       message: lastError?.message || String(lastError),
-      messageId,
     });
   }
 
   return null;
 }
 
-export function createIncomingMediaHandler({ query, lidByPhone, handleIncomingComprobanteFromBotPg }) {
+export function createIncomingMediaHandler({ query, lidByPhone, handleIncomingComprobanteFromBotPg, empresaId = null }) {
+  const tenantId = Number(empresaId || 0) || null;
   return async function handleIncomingMediaMessage(msg) {
-    console.log(`[DEBUG WPP] Evento 'message' detectado en server.js desde: ${msg.from}`);
     try {
       if (msg.from === 'status@broadcast' || msg.isStatus) return;
       if (msg.from.includes('@g.us')) return;
@@ -108,11 +89,10 @@ export function createIncomingMediaHandler({ query, lidByPhone, handleIncomingCo
       const isMedia = msg.hasMedia || t === 'image' || t === 'document';
 
       console.log('[WPP IN]', {
-        from: msg.from,
+        empresaId: tenantId,
         type: t,
         hasMedia: !!msg.hasMedia,
         isMedia,
-        id: inferSerializedMessageId(msg),
       });
 
       if (!isMedia) return;
@@ -130,11 +110,8 @@ export function createIncomingMediaHandler({ query, lidByPhone, handleIncomingCo
             lidByPhone.set(key10, String(msg.from));
           }
           console.log('[WPP MEDIA] Resolución @lid', {
-            from: msg.from,
-            rawFromDigits,
-            contactDigits: contactDigits || null,
-            usado: telefonoLimpio || null,
-            lidCacheKey: key10 || null,
+            empresaId: tenantId,
+            resolved: !!contactDigits,
           });
         } catch (e) {
           console.warn('[WPP MEDIA] No se pudo resolver número para @lid:', e?.message || e);
@@ -142,18 +119,36 @@ export function createIncomingMediaHandler({ query, lidByPhone, handleIncomingCo
       }
 
       const clienteQuery = await query(
-        `SELECT id FROM puntos_entrega
-         WHERE telefono_normalizado LIKE '%' || $1
-         LIMIT 1`,
-        [telefonoLimpio.slice(-10)]
+        tenantId
+          ? `SELECT id FROM puntos_entrega
+             WHERE telefono_normalizado LIKE '%' || $1
+               AND empresa_id = $2
+             LIMIT 1`
+          : `SELECT DISTINCT empresa_id FROM puntos_entrega
+             WHERE telefono_normalizado LIKE '%' || $1
+             ORDER BY empresa_id
+             LIMIT 2`,
+        tenantId ? [telefonoLimpio.slice(-10), tenantId] : [telefonoLimpio.slice(-10)]
       );
 
       if (clienteQuery.length === 0) {
-        console.log(`[WPP MEDIA] Ignorado: El número ${msg.from} no es un cliente registrado.`);
+        console.log('[WPP MEDIA] Ignorado: remitente no registrado para el canal.');
         return;
       }
 
-      console.log(`[WPP MEDIA] Recibido archivo de cliente registrado: ${msg.from} tipo=${t}`);
+      if (!tenantId && new Set(clienteQuery.map(row => Number(row.empresa_id))).size > 1) {
+        if (typeof msg.reply === 'function') {
+          await msg.reply('Tu teléfono pertenece a más de una empresa. Enviá el comprobante al canal de la empresa correspondiente.');
+        }
+        return;
+      }
+      const resolvedEmpresaId = tenantId || Number(clienteQuery[0]?.empresa_id || 0) || null;
+      if (!resolvedEmpresaId) {
+        console.warn('[WPP MEDIA] No se pudo resolver empresa para el comprobante.');
+        return;
+      }
+
+      console.log(`[WPP MEDIA] Recibido archivo de cliente registrado tipo=${t}`);
 
       const media = await downloadMediaWithRetry(msg);
 
@@ -162,10 +157,15 @@ export function createIncomingMediaHandler({ query, lidByPhone, handleIncomingCo
         return;
       }
 
+      const maxBytes = Number(process.env.TRANSFERENCIA_MAX_BYTES || 10 * 1024 * 1024);
+      const estimatedBytes = Math.floor(String(media.data).length * 3 / 4);
+      if (estimatedBytes > maxBytes) {
+        console.warn('[WPP MEDIA] Archivo rechazado por tamaño');
+        return;
+      }
       const buffer = Buffer.from(media.data, 'base64');
       console.log('[WPP MEDIA] Archivo descargado', {
         mimetype: media.mimetype,
-        filename: media.filename || null,
         bytes: buffer.length,
       });
 
@@ -177,10 +177,12 @@ export function createIncomingMediaHandler({ query, lidByPhone, handleIncomingCo
         base64: media.data,
         mimetype: media.mimetype,
         filename: media.filename || msg.body?.slice(0, 20) || 'archivo',
+        empresaId: resolvedEmpresaId,
+        sourceMessageId: ensureSerializedMessageId(msg),
       });
 
       console.log('[WPP MEDIA] Resultado pipeline comprobante', {
-        from: msg.from,
+        empresaId: resolvedEmpresaId,
         ok: !!result?.ok,
         reason: result?.reason || null,
         error: result?.error || null,
@@ -188,9 +190,9 @@ export function createIncomingMediaHandler({ query, lidByPhone, handleIncomingCo
         pedido_id: result?.pedido_id || null,
       });
 
-      console.log(`[AUDIT COMPROBANTE] jid=${String(msg.from || '-')} tel=${String(telefonoLimpio || '-')} pedido=${String(result?.pedido_id ?? '-')} comp=${String(result?.id ?? '-')} ok=${result?.ok ? 1 : 0}`);
+      console.log(`[AUDIT COMPROBANTE] empresa=${resolvedEmpresaId} pedido=${String(result?.pedido_id ?? '-')} comp=${String(result?.id ?? '-')} ok=${result?.ok ? 1 : 0}`);
     } catch (e) {
-      console.error('[WPP SERVER] Error global mensaje:', e);
+      console.error('[WPP SERVER] Error procesando media:', e?.message || String(e));
     }
   };
 }

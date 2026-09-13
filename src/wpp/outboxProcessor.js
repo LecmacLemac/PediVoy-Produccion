@@ -1,6 +1,5 @@
 import { randomUUID } from 'crypto';
 import { wait } from './sessionUtils.js';
-import { buildEmpresaWppFallbackCondition } from './fallbackPolicy.js';
 import {
   claimWppOutboxRows,
   ensureWppDeliverySchema,
@@ -49,6 +48,7 @@ export function createOutboxProcessor({
             claim_owner = NULL,
             claim_until = NULL
         WHERE status = 'pending'
+          AND empresa_id IS NULL
           AND (claim_until IS NULL OR claim_until < NOW())
           AND created_at < NOW() - INTERVAL '1 day'
         RETURNING id
@@ -64,7 +64,7 @@ export function createOutboxProcessor({
         limit: 3,
         whereSql: `
           AND o.created_at > NOW() - INTERVAL '1 day'
-          ${buildEmpresaWppFallbackCondition()}
+          AND o.empresa_id IS NULL
         `,
       });
 

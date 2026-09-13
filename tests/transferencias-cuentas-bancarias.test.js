@@ -41,9 +41,31 @@ test('detecta la cuenta bancaria destino por alias normalizado', () => {
   assert.equal(match?.fuente, 'alias');
 });
 
+test('detecta la cuenta bancaria destino por titular exacto con confianza suficiente', () => {
+  const match = matchCuentaBancariaDestino([
+    { ...cuentas[0], titular: 'Empresa Uno SA' },
+  ], {
+    titular_destino: 'Empresa Uno S.A.',
+  });
+
+  assert.equal(match?.cuenta_bancaria_id, 11);
+  assert.ok(match?.confianza >= 70);
+  assert.equal(match?.fuente, 'titular');
+});
+
 test('no asigna cuenta si solo coincide el banco', () => {
   const match = matchCuentaBancariaDestino(cuentas, {
     banco_destino: 'Banco Galicia',
+  });
+
+  assert.equal(match, null);
+});
+
+test('nunca asigna una cuenta marcada como inactiva', () => {
+  const match = matchCuentaBancariaDestino([
+    { ...cuentas[0], activa: false },
+  ], {
+    alias_destino: 'PEDIVOY.GALICIA',
   });
 
   assert.equal(match, null);

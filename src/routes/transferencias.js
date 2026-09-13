@@ -2,11 +2,204 @@
 import express from 'express';
 import multer from 'multer';
 import path from 'node:path';
-import { createHash } from 'node:crypto';
-import { readFile, unlink } from 'node:fs/promises';
-import { withAuth, isSuper, getEmpresaIdFromToken, enqueueWppMessage } from '../services.js';
+import { createHash, randomUUID } from 'node:crypto';
+import { readFile, unlink, writeFile } from 'node:fs/promises';
+import { withAuth, checkLicencia, isSuper, getEmpresaIdFromToken, enqueueWppMessage } from '../services.js';
 import { query } from '../db.js';
 import { notificarPedidoTransferencia } from '../services/notificacionesPedidos.js';
+import { aprobarComprobanteManualAtomicoPg } from '../transferenciasServices.js';
+
+export function requireTransferApprovalRole(req, res, next) {
+  const role = String(req.user?.role || '').trim().toLowerCase();
+  const type = String(req.user?.type || '').trim().toLowerCase();
+  if ((type && type !== 'user') || !['admin', 'super'].includes(role)) {
+    return res.status(403).json({ error: 'Rol no autorizado para aprobar comprobantes' });
+  }
+  return next();
+}
+
+const MANUAL_TRANSFER_EXTENSIONS = new Map([
+  ['application/pdf', 'pdf'],
+  ['image/jpeg', 'jpg'],
+  ['image/png', 'png'],
+  ['image/webp', 'webp'],
+]);
+
+function hasValidManualTransferMagic(buffer, mimetype) {
+  if (!Buffer.isBuffer(buffer)) return false;
+  if (mimetype === 'image/jpeg') return buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
+  if (mimetype === 'image/png') return buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+  if (mimetype === 'image/webp') return buffer.length >= 12 && buffer.toString('ascii', 0, 4) === 'RIFF' && buffer.toString('ascii', 8, 12) === 'WEBP';
+  if (mimetype === 'application/pdf') return buffer.length >= 5 && buffer.toString('ascii', 0, 5) === '%PDF-';
+  return false;
+}
+
+export function parseManualTransferFields(body = {}) {
+  const operationProvided = body.nro_operacion != null;
+  const accountProvided = body.cuenta_bancaria_id != null;
+  const invalid = (message) => {
+    const error = new Error(message);
+    error.code = 'INVALID_MANUAL_TRANSFER_FIELDS';
+    throw error;
+  };
+  if (operationProvided !== accountProvided) {
+    invalid('nro_operacion y cuenta_bancaria_id deben enviarse juntos');
+  }
+  if (!operationProvided) return { nroOperacion: null, cuentaBancariaId: null };
+
+  const nroOperacion = String(body.nro_operacion).trim();
+  const cuentaRaw = String(body.cuenta_bancaria_id).trim();
+  const cuentaBancariaId = Number(cuentaRaw);
+  if (!nroOperacion || nroOperacion.length > 200) invalid('nro_operacion inválido');
+  if (!cuentaRaw || !Number.isInteger(cuentaBancariaId) || cuentaBancariaId <= 0) {
+    invalid('cuenta_bancaria_id inválido');
+  }
+  return { nroOperacion, cuentaBancariaId };
+}
+
+export async function saveManualTransferFile({
+  storageDir,
+  buffer,
+  mimetype,
+  maxBytes = Number(process.env.TRANSFERENCIA_MAX_BYTES || 10 * 1024 * 1024),
+  createId = randomUUID,
+  maxAttempts = 8,
+} = {}) {
+  const normalizedMime = String(mimetype || '').trim().toLowerCase();
+  const ext = MANUAL_TRANSFER_EXTENSIONS.get(normalizedMime);
+  if (!ext || !hasValidManualTransferMagic(buffer, normalizedMime)) {
+    const error = new Error('Tipo de archivo inválido');
+    error.code = 'INVALID_FILE_TYPE';
+    throw error;
+  }
+  if (!Number.isFinite(maxBytes) || maxBytes <= 0 || buffer.length > maxBytes) {
+    const error = new Error('Archivo demasiado grande');
+    error.code = 'FILE_TOO_LARGE';
+    throw error;
+  }
+
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const id = String(createId());
+    if (!/^[A-Za-z0-9-]+$/.test(id)) continue;
+    const filename = `tr-${id}.${ext}`;
+    const absolutePath = path.join(storageDir, filename);
+    try {
+      await writeFile(absolutePath, buffer, { flag: 'wx' });
+      return { filename, absolutePath, mimetype: normalizedMime, size: buffer.length };
+    } catch (error) {
+      if (error?.code !== 'EEXIST') throw error;
+    }
+  }
+
+  const error = new Error('No se pudo reservar un nombre de archivo único');
+  error.code = 'UPLOAD_NAME_COLLISION';
+  throw error;
+}
+
+export async function reserveManualTransferUploadPg({
+  empresaId,
+  choferId,
+  monto,
+  metodo,
+  comentario,
+  archivoPath,
+  pedidoId,
+  zonaId,
+  comprobantePath,
+  telefono,
+  fileHash,
+  estadoRevision,
+  riesgoScore,
+  riesgoFlags,
+  nroOperacion = null,
+  cuentaBancariaId = null,
+  absolutePath,
+}, { queryFn = query, unlinkFn = unlink } = {}) {
+  try {
+    const rows = await queryFn(`
+      INSERT INTO comprobantes_transferencia (
+        empresa_id,
+        chofer_id,
+        fecha,
+        monto,
+        metodo_pago,
+        comentario,
+        archivo_path,
+        pedido_id,
+        zona_id,
+        comprobante_path,
+        telefono,
+        file_hash,
+        dedupe_file_hash,
+        estado_revision,
+        riesgo_score,
+        riesgo_flags,
+        nro_operacion,
+        cuenta_bancaria_id,
+        created_at,
+        updated_at,
+        validado
+      )
+      VALUES (
+        $1, $2, NOW(), $3, $4, $5,
+        $6, $7, $8, $9,
+        $10, $11, $12, $13, $14, $15, $16, $17,
+        NOW(), NOW(), 0
+      )
+      RETURNING
+        id AS transferencia_id,
+        id,
+        fecha,
+        monto,
+        metodo_pago,
+        comprobante_path,
+        pedido_id,
+        zona_id,
+        chofer_id,
+        validado,
+        estado_revision,
+        riesgo_score,
+        riesgo_flags
+    `, [
+      empresaId,
+      choferId,
+      monto,
+      metodo,
+      comentario,
+      archivoPath,
+      pedidoId,
+      zonaId,
+      comprobantePath,
+      telefono,
+      fileHash,
+      fileHash,
+      estadoRevision,
+      riesgoScore,
+      riesgoFlags,
+      nroOperacion,
+      cuentaBancariaId,
+    ]);
+    return { duplicate: false, row: rows[0] };
+  } catch (error) {
+    try { await unlinkFn(absolutePath); } catch {}
+    const isFileHashConflict = error?.code === '23505'
+      && error?.constraint === 'uq_ct_file_hash_new';
+    if (!isFileHashConflict) throw error;
+    const existingRows = await queryFn(`
+      SELECT id, fecha, comprobante_path, validado, estado_revision
+      FROM comprobantes_transferencia
+      WHERE empresa_id = $1
+        AND dedupe_file_hash = $2
+      ORDER BY id DESC
+      LIMIT 1
+    `, [empresaId, fileHash]);
+    return {
+      duplicate: true,
+      reason: 'duplicate_file_hash',
+      existing: existingRows[0],
+    };
+  }
+}
 
 function csvCell(v) {
   const s = String(v == null ? '' : v).replace(/"/g, '""');
@@ -20,9 +213,23 @@ function csvCell(v) {
  * - debe montar static de TRANSF_DIR en /Transferencia (URLs públicas)
  * - debe pasar TRANSF_DIR absoluto como opción
  */
-export function createTransferenciasRouter({ TRANSF_DIR }) {
+export function createTransferenciasRouter({
+  TRANSF_DIR,
+  queryFn = query,
+  withAuthFn = withAuth,
+  checkLicenciaFn = checkLicencia,
+  isSuperFn = isSuper,
+  getEmpresaIdFromTokenFn = getEmpresaIdFromToken,
+  approveManualFn = aprobarComprobanteManualAtomicoPg,
+} = {}) {
   if (!TRANSF_DIR) throw new Error('createTransferenciasRouter requiere TRANSF_DIR');
 
+  const query = queryFn;
+  const withAuth = withAuthFn;
+  const checkLicencia = checkLicenciaFn;
+  const isSuper = isSuperFn;
+  const getEmpresaIdFromToken = getEmpresaIdFromTokenFn;
+  const aprobarComprobanteManualAtomicoPg = approveManualFn;
   const router = express.Router();
   const VERIFY_TOLERANCE = Number(process.env.TRANSFER_VERIFY_TOLERANCE || 1);
 
@@ -103,22 +310,29 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
     return { sql, params, idx };
   }
 
+  const maxManualTransferBytes = Number(process.env.TRANSFERENCIA_MAX_BYTES || 10 * 1024 * 1024);
   const transferUploader = multer({
-    storage: multer.diskStorage({
-      destination: (_, __, cb) => cb(null, TRANSF_DIR),
-      filename: (_, file, cb) => {
-        const ext = path.extname(file.originalname || '') || '.bin';
-        cb(null, `tr-${Date.now()}${ext}`);
-      }
-    }),
-    limits: { fileSize: 10 * 1024 * 1024 },
+    storage: multer.memoryStorage(),
+    limits: { fileSize: maxManualTransferBytes },
     fileFilter: (_, file, cb) => {
-      const ok = /image|pdf/.test(file.mimetype);
+      const ok = MANUAL_TRANSFER_EXTENSIONS.has(String(file.mimetype || '').toLowerCase());
       cb(ok ? null : new Error('Tipo no permitido'), ok);
     }
   });
 
-  router.get('/cuentas-bancarias', withAuth, async (req, res) => {
+  function receiveManualTransfer(req, res, next) {
+    transferUploader.single('comprobante')(req, res, error => {
+      if (!error) return next();
+      const tooLarge = error?.code === 'LIMIT_FILE_SIZE';
+      return res.status(tooLarge ? 413 : 400).json({
+        error: tooLarge ? 'Archivo demasiado grande' : 'Tipo no permitido',
+      });
+    });
+  }
+
+  router.use(withAuth, checkLicencia, requireTransferApprovalRole);
+
+  router.get('/cuentas-bancarias', async (req, res) => {
     try {
       await ensureSchemaPromise;
       const { empresa_id } = req.query || {};
@@ -151,7 +365,7 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
   });
 
   // LISTAR TRANSFERENCIAS
-  router.get('/', withAuth, async (req, res) => {
+  router.get('/', async (req, res) => {
     try {
       await ensureSchemaPromise;
       const { empresa_id } = req.query || {};
@@ -173,6 +387,7 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
         SELECT
           ct.id AS transferencia_id,
           ct.id,
+          ct.empresa_id,
           ct.fecha,
           COALESCE(NULLIF(ct.monto, 0), p.monto, 0) AS monto,
           COALESCE(ct.metodo_pago, p.metodo_pago, 'transferencia') AS metodo_pago,
@@ -259,7 +474,7 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
   });
 
   // PEDIDOS CON PAGO POR TRANSFERENCIA SIN COMPROBANTE ADJUNTO
-  router.get('/sin-comprobante', withAuth, async (req, res) => {
+  router.get('/sin-comprobante', async (req, res) => {
     try {
       const { empresa_id } = req.query || {};
       const esSuperUser = isSuper(req);
@@ -342,7 +557,7 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
     }
   });
 
-  router.post('/pedidos/:id/solicitar-comprobante', withAuth, async (req, res) => {
+  router.post('/pedidos/:id/solicitar-comprobante', async (req, res) => {
     try {
       const pedidoId = Number(req.params.id);
       if (!Number.isInteger(pedidoId) || pedidoId <= 0) {
@@ -381,7 +596,7 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
   });
 
   // RESUMEN KPI
-  router.get('/resumen', withAuth, async (req, res) => {
+  router.get('/resumen', async (req, res) => {
     try {
       await ensureSchemaPromise;
       const { empresa_id } = req.query || {};
@@ -429,7 +644,7 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
   });
 
   // EXPORTAR CSV
-  router.get('/export.csv', withAuth, async (req, res) => {
+  router.get('/export.csv', async (req, res) => {
     try {
       await ensureSchemaPromise;
       const { empresa_id } = req.query || {};
@@ -512,9 +727,10 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
   // SUBIR COMPROBANTE
   router.post(
     '/upload',
-    withAuth,
-    transferUploader.single('comprobante'),
+    receiveManualTransfer,
     async (req, res) => {
+      let savedFile = null;
+      let insertConfirmed = false;
       try {
         await ensureSchemaPromise;
         const body = req.body || {};
@@ -525,6 +741,7 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
         if (!req.file) {
           return res.status(400).json({ error: 'archivo requerido' });
         }
+        const { nroOperacion, cuentaBancariaId } = parseManualTransferFields(body);
 
         const esSuperUser = isSuper(req);
         const myEmpresa = getEmpresaIdFromToken(req);
@@ -557,35 +774,32 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
             return res.status(403).json({ error: 'No autorizado para este pedido' });
           }
         }
+        if (cuentaBancariaId) {
+          const accountRows = await query(
+            `SELECT id FROM empresa_cuentas_bancarias
+             WHERE id = $1 AND empresa_id = $2 AND COALESCE(activa, TRUE) = TRUE
+             FOR UPDATE`,
+            [cuentaBancariaId, Number(ped.empresa_id)],
+          );
+          if (!accountRows.length) {
+            return res.status(400).json({ error: 'cuenta bancaria inactiva o de otro tenant' });
+          }
+        }
 
         let choferId = ped.chofer_id || choferToken;
         if (!choferId) {
           return res.status(400).json({ error: 'Sin chofer asociado al pedido' });
         }
 
-        const filename = req.file.filename;
-        const fullPath = path.join(TRANSF_DIR, filename);
+        savedFile = await saveManualTransferFile({
+          storageDir: TRANSF_DIR,
+          buffer: req.file.buffer,
+          mimetype: req.file.mimetype,
+          maxBytes: maxManualTransferBytes,
+        });
+        const filename = savedFile.filename;
+        const fullPath = savedFile.absolutePath;
         const fileHash = await calcSha256FromSavedFile(fullPath);
-
-        const dupHashRows = await query(`
-          SELECT id, fecha, comprobante_path, validado, estado_revision
-          FROM comprobantes_transferencia
-          WHERE empresa_id = $1
-            AND file_hash = $2
-          ORDER BY id DESC
-          LIMIT 1
-        `, [ped.empresa_id, fileHash]);
-
-        // Idempotencia por reintento exacto del mismo archivo
-        if (dupHashRows.length) {
-          try { await unlink(fullPath); } catch {}
-          return res.status(200).json({
-            ok: true,
-            duplicate: true,
-            reason: 'duplicate_file_hash',
-            existing: dupHashRows[0]
-          });
-        }
 
         const archivoPath = filename;
         const comprobantePath = `/Transferencia/${filename}`;
@@ -611,74 +825,48 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
 
         const estadoRevision = riesgoScore >= 30 ? 'en_revision' : 'pendiente';
 
-        const rows = await query(`
-          INSERT INTO comprobantes_transferencia (
-            empresa_id,
-            chofer_id,
-            fecha,
-            monto,
-            metodo_pago,
-            comentario,
-            archivo_path,
-            pedido_id,
-            zona_id,
-            comprobante_path,
-            telefono,
-            file_hash,
-            estado_revision,
-            riesgo_score,
-            riesgo_flags,
-            created_at,
-            updated_at,
-            validado
-          )
-          VALUES (
-            $1, $2, NOW(), $3, $4, $5,
-            $6, $7, $8, $9,
-            $10, $11, $12, $13, $14,
-            NOW(), NOW(), 0
-          )
-          RETURNING
-            id               AS transferencia_id,
-            id,
-            fecha,
-            monto,
-            metodo_pago,
-            comprobante_path,
-            pedido_id,
-            zona_id,
-            chofer_id,
-            validado,
-            estado_revision,
-            riesgo_score,
-            riesgo_flags
-        `, [
-          ped.empresa_id,
+        const reservation = await reserveManualTransferUploadPg({
+          empresaId: ped.empresa_id,
           choferId,
           monto,
           metodo,
-          body.comentario || null,
+          comentario: body.comentario || null,
           archivoPath,
           pedidoId,
-          ped.zona_id || null,
+          zonaId: ped.zona_id || null,
           comprobantePath,
-          ped.telefono || null,
+          telefono: ped.telefono || null,
           fileHash,
           estadoRevision,
           riesgoScore,
-          riesgoFlags.length ? riesgoFlags.join(',') : null
-        ]);
-
-        res.json(rows[0]);
+          riesgoFlags: riesgoFlags.length ? riesgoFlags.join(',') : null,
+          nroOperacion,
+          cuentaBancariaId,
+          absolutePath: fullPath,
+        });
+        if (reservation.duplicate) {
+          return res.status(200).json({ ok: true, ...reservation });
+        }
+        insertConfirmed = true;
+        const faltantes = [
+          ...(!nroOperacion ? ['nro_operacion'] : []),
+          ...(!cuentaBancariaId ? ['cuenta_bancaria_id'] : []),
+        ];
+        return res.json({ ...reservation.row, faltantes });
       } catch (e) {
+        if (savedFile && !insertConfirmed) {
+          try { await unlink(savedFile.absolutePath); } catch {}
+        }
         console.error('Error subiendo comprobante de transferencia:', e);
-        res.status(500).json({ error: 'Error subiendo comprobante' });
+        const status = e?.code === 'FILE_TOO_LARGE' ? 413
+          : ['INVALID_FILE_TYPE', 'INVALID_MANUAL_TRANSFER_FIELDS'].includes(e?.code) ? 400 : 500;
+        res.status(status).json({ error: status === 500 ? 'Error subiendo comprobante' : e.message });
       }
     }
   );
 
   // VERIFICAR
-  router.post('/:id/verificar', withAuth, async (req, res) => {
+  router.post('/:id/verificar', async (req, res) => {
     try {
       await ensureSchemaPromise;
       const id = Number(req.params.id);
@@ -689,127 +877,33 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
       const esSuperUser = isSuper(req);
       const myEmpresa = getEmpresaIdFromToken(req);
       const enviarAviso = String(req.query.enviarAviso || '').trim() === '1';
-      const force = String(req.query.force || '').trim() === '1';
+
       const motivo = (req.body?.reason || req.query.reason || '').toString().trim() || null;
 
-      const rows = await query(`
-        SELECT
-          ct.*,
-          p.monto        AS pedido_monto,
-          p.metodo_pago  AS pedido_metodo,
-          p.fecha        AS pedido_fecha,
-          p.id           AS pedido_id,
-          pe.cliente,
-          pe.telefono
-        FROM comprobantes_transferencia ct
-        LEFT JOIN pedidos p         ON p.id = ct.pedido_id
-        LEFT JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
-        WHERE ct.id = $1
-          AND ($2::int IS NULL OR ct.empresa_id = $2)
-        LIMIT 1
-      `, [id, esSuperUser ? null : Number(myEmpresa)]);
-
-      if (!rows.length) {
-        return res.status(404).json({ error: 'transferencia no encontrada' });
+      const targetEmpresaId = esSuperUser
+        ? Number(req.body?.empresa_id || req.query.empresa_id || 0)
+        : Number(myEmpresa || 0);
+      if (!Number.isInteger(targetEmpresaId) || targetEmpresaId <= 0) {
+        return res.status(400).json({ error: 'empresa_id requerido para aprobar' });
       }
 
-      const ct = rows[0];
-      const monto = Number(ct.monto ?? ct.pedido_monto ?? 0) || 0;
-      const pedidoMonto = Number(ct.pedido_monto ?? 0) || 0;
-      const hayMismatchMonto = !!ct.pedido_id && Math.abs(monto - pedidoMonto) > VERIFY_TOLERANCE;
-
-      if (hayMismatchMonto && !force) {
-        const mismatchReason = `Monto comprobante (${monto}) no coincide con pedido (${pedidoMonto})`;
-        await query(
-          `UPDATE comprobantes_transferencia
-           SET validado = 0,
-               estado_revision = 'en_revision',
-               riesgo_score = GREATEST(COALESCE(riesgo_score, 0), 70),
-               riesgo_flags = TRIM(BOTH ',' FROM CONCAT_WS(',', NULLIF(riesgo_flags, ''), 'MONTO_MISMATCH')),
-               verified_reason = COALESCE($3, $4),
-               updated_at = NOW()
-           WHERE id = $1
-             AND ($2::int IS NULL OR empresa_id = $2)`,
-          [id, esSuperUser ? null : Number(myEmpresa), motivo, mismatchReason]
-        );
-
-        return res.status(409).json({
-          ok: false,
-          needsReview: true,
-          reason: 'monto_mismatch',
-          detail: mismatchReason,
-          tolerance: VERIFY_TOLERANCE
+      let ct;
+      try {
+        ct = await aprobarComprobanteManualAtomicoPg({
+          id,
+          empresaId: targetEmpresaId,
+          actorId: Number(req.user?.uid || 0),
+          reason: motivo,
+          nroOperacion: req.body?.nro_operacion ?? null,
+          cuentaBancariaId: req.body?.cuenta_bancaria_id ?? null,
         });
+      } catch (approvalError) {
+        const code = String(approvalError?.code || 'fallo_aprobacion_transaccional');
+        const status = ['comprobante_no_encontrado', 'tenant_no_coincide'].includes(code) ? 404 : 409;
+        return res.status(status).json({ ok: false, needsReview: true, reason: code });
       }
 
-      await query(
-        `UPDATE comprobantes_transferencia
-         SET validado = 1,
-             estado_revision = 'aprobado',
-             verified_by = $3,
-             verified_reason = COALESCE($4, verified_reason),
-             verified_at = NOW(),
-             updated_at = NOW()
-         WHERE id = $1
-           AND ($2::int IS NULL OR empresa_id = $2)`,
-        [id, esSuperUser ? null : Number(myEmpresa), Number(req.user?.uid || 0) || null, motivo]
-      );
-
-      let metodo = (ct.metodo_pago || ct.pedido_metodo || 'transferencia').toString().toLowerCase();
-      if (metodo !== 'efectivo') metodo = 'transferencia';
-      const fecha = (ct.fecha || ct.pedido_fecha || new Date().toISOString());
-
-      let existe = [];
-      if (ct.pedido_id) {
-        existe = await query(`
-          SELECT id
-          FROM transferencias
-          WHERE empresa_id = $1
-            AND chofer_id  = $2
-            AND pedido_id  = $3
-            AND metodo_pago = $4
-            AND ABS(monto - $5) < 0.01
-          LIMIT 1
-        `, [
-          ct.empresa_id,
-          ct.chofer_id,
-          ct.pedido_id,
-          metodo,
-          monto
-        ]);
-      }
-
-      if (!existe.length) {
-        await query(`
-          INSERT INTO transferencias (
-            empresa_id,
-            chofer_id,
-            fecha,
-            monto,
-            metodo_pago,
-            referencia,
-            comprobante_path,
-            pedido_id,
-            notas
-          )
-          VALUES (
-            $1,$2,$3,$4,$5,$6,$7,$8,$9
-          )
-        `, [
-          ct.empresa_id,
-          ct.chofer_id,
-          fecha,
-          monto,
-          metodo,
-          ct.pedido_id
-            ? `Transferencia verificada pedido #${ct.pedido_id}`
-            : 'Transferencia verificada',
-          ct.comprobante_path || null,
-          ct.pedido_id || null,
-          `Origen comprobantes_transferencia.id=${ct.id}`
-        ]);
-      }
-
+      const monto = Number(ct.monto || 0);
       if (enviarAviso && ct.telefono && typeof enqueueWppMessage === 'function') {
         try {
           const digits = String(ct.telefono).replace(/\D+/g, '');
@@ -827,7 +921,7 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
               `🙏 ¡Muchas gracias!`
             ).trim();
 
-            await enqueueWppMessage({ phone: digits, message: mensaje });
+            await enqueueWppMessage({ phone: digits, message: mensaje, empresa_id: targetEmpresaId });
           }
         } catch (werr) {
           console.error('Error en enqueue WPP transferencia:', werr);
@@ -842,7 +936,7 @@ export function createTransferenciasRouter({ TRANSF_DIR }) {
   });
 
   // ELIMINAR
-  router.delete('/:id', withAuth, async (req, res) => {
+  router.delete('/:id', async (req, res) => {
     try {
       const id = Number(req.params.id);
       if (!Number.isFinite(id)) return res.status(400).json({ error: 'ID inválido' });

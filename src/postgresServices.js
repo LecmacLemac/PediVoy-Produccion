@@ -30,7 +30,7 @@ export async function findPedidoIdByTelefono(arg) {
 // -----------------------------
 // Insertar COMPROBANTE
 // -----------------------------
-export async function saveComprobante(pedido_id, imagen_path, extra = {}) {
+export async function saveComprobante(pedido_id, imagen_path, extra = {}, queryFn = query) {
   const fecha = extra.fecha || nowIso();
   const params = [
     pedido_id,
@@ -49,13 +49,15 @@ export async function saveComprobante(pedido_id, imagen_path, extra = {}) {
     extra.ocr_confidence || 0
   ];
 
-  const rows = await query(`
+  const rows = await queryFn(`
     INSERT INTO comprobantes_transferencia
-      (pedido_id, imagen_path, fecha, monto, moneda,
+      (empresa_id, pedido_id, imagen_path, fecha, monto, moneda,
        banco_origen, banco_destino, alias_destino, cbu_destino,
        nro_operacion, titular_origen, fecha_operacion,
        ocr_text, ocr_confidence)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+    SELECT p.empresa_id, p.id, $2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14
+    FROM pedidos p
+    WHERE p.id = $1
     RETURNING id
   `, params);
 

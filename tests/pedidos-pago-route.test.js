@@ -71,7 +71,7 @@ test('toggle-pago rechaza repartidor antes de tocar DB', async () => {
   assert.equal(pool.calls.length, 0);
 });
 
-test('toggle-pago marca transferencia en una transaccion auditada', async () => {
+test('toggle-pago registra el pago manual sin autoaprobar comprobantes', async () => {
   let licenciaChequeada = false;
   const pool = fakePool(async (sql, params) => {
     if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return [];
@@ -84,9 +84,8 @@ test('toggle-pago marca transferencia en una transaccion auditada', async () => 
       assert.deepEqual(params, [3, 8, '2026-06-28', 1500, 42]);
       return [];
     }
-    if (sql.includes('UPDATE comprobantes_transferencia') && sql.includes('validado = 1')) {
-      assert.deepEqual(params, [42, 3, 99]);
-      return [];
+    if (sql.includes('UPDATE comprobantes_transferencia')) {
+      assert.fail('toggle-pago manual no debe autoaprobar comprobantes');
     }
     throw new Error(`Consulta inesperada: ${sql}`);
   });
@@ -122,8 +121,7 @@ test('toggle-pago revierte la transaccion si falla una escritura', async () => {
       return [{ empresa_id: 3, monto: 1500, chofer_id: 8, fecha: '2026-06-28' }];
     }
     if (sql.includes('FROM transferencias')) return [];
-    if (sql.includes('INSERT INTO transferencias')) return [];
-    if (sql.includes('UPDATE comprobantes_transferencia')) throw new Error('fallo update comprobante');
+    if (sql.includes('INSERT INTO transferencias')) throw new Error('fallo insert pago manual');
     throw new Error(`Consulta inesperada: ${sql}`);
   });
   const app = buildApp({

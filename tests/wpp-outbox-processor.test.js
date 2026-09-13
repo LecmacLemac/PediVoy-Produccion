@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 
 import { createOutboxProcessor } from '../src/wpp/outboxProcessor.js';
 
@@ -31,8 +32,19 @@ test('fallback general obtiene filas exclusivamente mediante claim atómico', as
   const claim = statements.find(entry => /WITH candidates AS/i.test(entry.sql));
   assert.ok(claim, 'debe ejecutar claim CTE');
   assert.match(claim.sql, /FOR UPDATE OF o SKIP LOCKED/i);
-  assert.match(claim.sql, /wpp_heartbeat_at/i);
+  assert.match(claim.sql, /o\.empresa_id IS NULL/i);
+  assert.doesNotMatch(claim.sql, /wpp_heartbeat_at/i);
   assert.doesNotMatch(statements.map(entry => entry.sql).join('\n'), /SELECT o\.id, o\.telefono, o\.mensaje\s+FROM wpp_outbox/i);
   assert.equal(sends, 0);
   assert.equal(processor.releaseWatchdogIfStuck, undefined);
+});
+
+test('worker empresarial reclama exclusivamente filas de su empresa', async () => {
+  const source = await readFile(new URL('../src/wppWorker.js', import.meta.url), 'utf8');
+  const claimStart = source.indexOf('const filas = await claimWppOutboxRows');
+  assert.ok(claimStart >= 0);
+  const claim = source.slice(claimStart, source.indexOf('});', claimStart) + 3);
+  assert.match(claim, /whereSql:\s*'AND o\.empresa_id = \$4'/i);
+  assert.match(claim, /whereParams:\s*\[EMPRESA_ID\]/i);
+  assert.doesNotMatch(claim, /empresa_id IS NULL/i);
 });

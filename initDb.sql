@@ -921,6 +921,9 @@ CREATE TABLE IF NOT EXISTS comprobantes_transferencia (
   cuenta_bancaria_match_fuente TEXT,
   cuenta_bancaria_match_detalle TEXT,
   file_hash        TEXT,
+  source_message_id TEXT,
+  dedupe_file_hash TEXT,
+  approval_dedupe_key TEXT,
   estado_revision  TEXT DEFAULT 'pendiente',
   riesgo_score     INTEGER DEFAULT 0,
   riesgo_flags     TEXT,
@@ -930,6 +933,11 @@ CREATE TABLE IF NOT EXISTS comprobantes_transferencia (
   created_at       TIMESTAMPTZ DEFAULT NOW(),
   updated_at       TIMESTAMPTZ DEFAULT NOW()
 );
+
+ALTER TABLE comprobantes_transferencia
+  ADD COLUMN IF NOT EXISTS source_message_id TEXT,
+  ADD COLUMN IF NOT EXISTS dedupe_file_hash TEXT,
+  ADD COLUMN IF NOT EXISTS approval_dedupe_key TEXT;
 
 
 CREATE TABLE IF NOT EXISTS pedido_pagos (
@@ -978,6 +986,246 @@ CREATE TABLE IF NOT EXISTS pedido_pagos (
 
   CONSTRAINT uq_pedido_pagos_pedido_proveedor UNIQUE (pedido_id, proveedor)
 );
+
+-- BEGIN COMPROBANTE CONCURRENCY MIGRATION
+BEGIN;
+CREATE OR REPLACE FUNCTION normalizar_comprobante_operacion(value TEXT)
+RETURNS TEXT
+LANGUAGE SQL
+IMMUTABLE
+PARALLEL SAFE
+AS $$
+  SELECT NULLIF(LOWER(BTRIM(value)), '')
+$$;
+
+CREATE TABLE IF NOT EXISTS comprobante_operacion_claims (
+  tenant_key BIGINT NOT NULL,
+  operacion_key TEXT NOT NULL,
+  comprobante_id BIGINT NOT NULL,
+  claimed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (tenant_key, operacion_key)
+);
+
+CREATE TABLE IF NOT EXISTS comprobante_pedido_aprobado_claims (
+  tenant_key BIGINT NOT NULL,
+  pedido_id BIGINT NOT NULL,
+  comprobante_id BIGINT NOT NULL,
+  claimed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (tenant_key, pedido_id)
+);
+
+-- El lock evita que un writer se interponga entre el seed legacy y la instalación
+-- del trigger. Los duplicados históricos se reducen al id canónico menor.
+LOCK TABLE comprobantes_transferencia IN SHARE ROW EXCLUSIVE MODE;
+INSERT INTO comprobante_operacion_claims (tenant_key, operacion_key, comprobante_id)
+SELECT COALESCE(empresa_id, 0)::BIGINT,
+       normalizar_comprobante_operacion(nro_operacion),
+       MIN(id)::BIGINT
+FROM comprobantes_transferencia
+WHERE normalizar_comprobante_operacion(nro_operacion) IS NOT NULL
+GROUP BY COALESCE(empresa_id, 0)::BIGINT,
+         normalizar_comprobante_operacion(nro_operacion)
+ON CONFLICT (tenant_key, operacion_key) DO NOTHING;
+
+INSERT INTO comprobante_pedido_aprobado_claims (tenant_key, pedido_id, comprobante_id)
+SELECT COALESCE(empresa_id, 0)::BIGINT, pedido_id::BIGINT, MIN(id)::BIGINT
+FROM comprobantes_transferencia
+WHERE pedido_id IS NOT NULL
+  AND (COALESCE(validado, 0) = 1 OR COALESCE(procesado, FALSE) = TRUE
+       OR LOWER(COALESCE(estado_revision, '')) = 'aprobado')
+GROUP BY COALESCE(empresa_id, 0)::BIGINT, pedido_id::BIGINT
+ON CONFLICT (tenant_key, pedido_id) DO NOTHING;
+
+-- Los aprobados legacy no canónicos quedan en revisión; el claim no se libera.
+UPDATE comprobantes_transferencia ct
+SET validado = 0, procesado = FALSE, estado_revision = 'en_revision',
+    riesgo_flags = CONCAT_WS(',', NULLIF(ct.riesgo_flags, ''), 'legacy_aprobado_no_canonico'),
+    verified_reason = 'legacy_aprobado_no_canonico', updated_at = NOW()
+FROM comprobante_pedido_aprobado_claims claim
+WHERE claim.tenant_key = COALESCE(ct.empresa_id, 0)::BIGINT
+  AND claim.pedido_id = ct.pedido_id::BIGINT
+  AND claim.comprobante_id <> ct.id::BIGINT
+  AND (COALESCE(ct.validado, 0) = 1 OR COALESCE(ct.procesado, FALSE) = TRUE
+       OR LOWER(COALESCE(ct.estado_revision, '')) = 'aprobado');
+
+CREATE OR REPLACE FUNCTION reclamar_comprobante_operacion()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  new_tenant BIGINT := COALESCE(NEW.empresa_id, 0)::BIGINT;
+  new_key TEXT := normalizar_comprobante_operacion(NEW.nro_operacion);
+  old_tenant BIGINT;
+  old_key TEXT;
+  owner_id BIGINT;
+BEGIN
+  IF TG_OP = 'UPDATE' THEN
+    old_tenant := COALESCE(OLD.empresa_id, 0)::BIGINT;
+    old_key := normalizar_comprobante_operacion(OLD.nro_operacion);
+    -- Compatibilidad: tocar una fila legacy duplicada sin cambiar su clave sigue permitido.
+    IF old_tenant IS NOT DISTINCT FROM new_tenant
+       AND old_key IS NOT DISTINCT FROM new_key THEN
+      RETURN NEW;
+    END IF;
+  END IF;
+
+  IF new_key IS NULL THEN
+    RETURN NEW;
+  END IF;
+
+  INSERT INTO comprobante_operacion_claims (tenant_key, operacion_key, comprobante_id)
+  VALUES (new_tenant, new_key, NEW.id)
+  ON CONFLICT (tenant_key, operacion_key) DO NOTHING;
+
+  SELECT comprobante_id INTO owner_id
+  FROM comprobante_operacion_claims
+  WHERE tenant_key = new_tenant AND operacion_key = new_key;
+
+  IF owner_id IS DISTINCT FROM NEW.id::BIGINT THEN
+    RAISE EXCEPTION 'operación de comprobante ya reclamada para tenant %', new_tenant
+      USING ERRCODE = '23505', CONSTRAINT = 'comprobante_operacion_claims_pkey';
+  END IF;
+  RETURN NEW;
+END
+$$;
+
+DROP TRIGGER IF EXISTS trg_reclamar_comprobante_operacion ON comprobantes_transferencia;
+CREATE TRIGGER trg_reclamar_comprobante_operacion
+BEFORE INSERT OR UPDATE OF nro_operacion, empresa_id
+ON comprobantes_transferencia
+FOR EACH ROW EXECUTE FUNCTION reclamar_comprobante_operacion();
+
+CREATE OR REPLACE FUNCTION validar_aprobacion_comprobante()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  new_approved BOOLEAN := LOWER(COALESCE(NEW.estado_revision, '')) = 'aprobado'
+    OR COALESCE(NEW.validado, 0) = 1 OR COALESCE(NEW.procesado, FALSE) = TRUE;
+  parent_empresa_id INTEGER;
+  owner_id BIGINT;
+BEGIN
+  IF NOT new_approved THEN
+    RETURN NEW;
+  END IF;
+
+  IF NEW.pedido_id IS NULL THEN
+    RAISE EXCEPTION 'un comprobante aprobado requiere pedido'
+      USING ERRCODE = '23514', CONSTRAINT = 'ct_approved_order_tenant';
+  END IF;
+
+  SELECT empresa_id INTO parent_empresa_id
+  FROM pedidos WHERE id = NEW.pedido_id FOR UPDATE;
+  IF parent_empresa_id IS NULL OR parent_empresa_id IS DISTINCT FROM NEW.empresa_id THEN
+    RAISE EXCEPTION 'pedido y comprobante pertenecen a tenants distintos'
+      USING ERRCODE = '23514', CONSTRAINT = 'ct_approved_order_tenant';
+  END IF;
+
+  IF normalizar_comprobante_operacion(NEW.nro_operacion) IS NULL OR NOT EXISTS (
+    SELECT 1 FROM comprobante_operacion_claims claim
+    WHERE claim.tenant_key = COALESCE(NEW.empresa_id, 0)::BIGINT
+      AND claim.operacion_key = normalizar_comprobante_operacion(NEW.nro_operacion)
+      AND claim.comprobante_id = NEW.id::BIGINT
+  ) THEN
+    RAISE EXCEPTION 'el comprobante no es propietario de la operación reclamada'
+      USING ERRCODE = '23505', CONSTRAINT = 'comprobante_operacion_claims_pkey';
+  END IF;
+
+  INSERT INTO comprobante_pedido_aprobado_claims (tenant_key, pedido_id, comprobante_id)
+  VALUES (NEW.empresa_id::BIGINT, NEW.pedido_id::BIGINT, NEW.id::BIGINT)
+  ON CONFLICT (tenant_key, pedido_id) DO NOTHING;
+  SELECT comprobante_id INTO owner_id
+  FROM comprobante_pedido_aprobado_claims
+  WHERE tenant_key = NEW.empresa_id::BIGINT AND pedido_id = NEW.pedido_id::BIGINT;
+  IF owner_id IS DISTINCT FROM NEW.id::BIGINT THEN
+    RAISE EXCEPTION 'el pedido ya posee otro comprobante aprobado'
+      USING ERRCODE = '23505', CONSTRAINT = 'ct_one_approved_per_order';
+  END IF;
+  RETURN NEW;
+END
+$$;
+
+DROP TRIGGER IF EXISTS trg_validar_aprobacion_comprobante ON comprobantes_transferencia;
+CREATE TRIGGER trg_validar_aprobacion_comprobante
+BEFORE INSERT OR UPDATE ON comprobantes_transferencia
+FOR EACH ROW EXECUTE FUNCTION validar_aprobacion_comprobante();
+
+CREATE OR REPLACE FUNCTION serializar_pedido_pago_con_comprobante()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  target_pedido_id INTEGER;
+  target_empresa_id INTEGER;
+  parent_empresa_id INTEGER;
+  old_acreditado BOOLEAN := FALSE;
+  new_acreditado BOOLEAN := FALSE;
+  introduce_acreditacion BOOLEAN := FALSE;
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    target_pedido_id := OLD.pedido_id;
+    target_empresa_id := OLD.empresa_id;
+    SELECT empresa_id INTO parent_empresa_id
+      FROM pedidos WHERE id = target_pedido_id FOR UPDATE;
+    RETURN OLD;
+  ELSIF TG_OP = 'INSERT' THEN
+    target_pedido_id := NEW.pedido_id;
+    target_empresa_id := NEW.empresa_id;
+    introduce_acreditacion := TRUE;
+  ELSE
+    -- Si cambia de padre, ambos se bloquean siempre en orden para evitar deadlocks.
+    PERFORM 1 FROM pedidos
+      WHERE id IN (OLD.pedido_id, NEW.pedido_id)
+      ORDER BY id
+      FOR UPDATE;
+    target_pedido_id := NEW.pedido_id;
+    target_empresa_id := NEW.empresa_id;
+    old_acreditado := OLD.settlement_at IS NOT NULL
+      OR LOWER(COALESCE(OLD.estado, '')) IN ('pagado', 'aprobado', 'acreditado');
+    introduce_acreditacion := NOT old_acreditado
+      OR OLD.pedido_id IS DISTINCT FROM NEW.pedido_id
+      OR OLD.empresa_id IS DISTINCT FROM NEW.empresa_id;
+  END IF;
+
+  IF TG_OP <> 'UPDATE' THEN
+    SELECT empresa_id INTO parent_empresa_id
+      FROM pedidos WHERE id = target_pedido_id FOR UPDATE;
+  ELSE
+    SELECT empresa_id INTO parent_empresa_id
+      FROM pedidos WHERE id = target_pedido_id;
+  END IF;
+
+  IF parent_empresa_id IS NULL OR parent_empresa_id IS DISTINCT FROM target_empresa_id THEN
+    RAISE EXCEPTION 'pedido y pago pertenecen a tenants distintos'
+      USING ERRCODE = '23514';
+  END IF;
+
+  new_acreditado := NEW.settlement_at IS NOT NULL
+    OR LOWER(COALESCE(NEW.estado, '')) IN ('pagado', 'aprobado', 'acreditado');
+
+  IF new_acreditado AND introduce_acreditacion
+     AND EXISTS (
+       SELECT 1 FROM comprobantes_transferencia ct
+       WHERE ct.pedido_id = target_pedido_id
+         AND COALESCE(ct.empresa_id, 0) = COALESCE(target_empresa_id, 0)
+         AND (LOWER(COALESCE(ct.estado_revision, '')) = 'aprobado'
+              OR COALESCE(ct.validado, 0) = 1
+              OR COALESCE(ct.procesado, FALSE) = TRUE)
+     ) THEN
+    RAISE EXCEPTION 'el pedido ya posee un comprobante aprobado'
+      USING ERRCODE = '23514';
+  END IF;
+
+  RETURN NEW;
+END
+$$;
+
+DROP TRIGGER IF EXISTS trg_serializar_pedido_pago_comprobante ON pedido_pagos;
+CREATE TRIGGER trg_serializar_pedido_pago_comprobante
+BEFORE INSERT OR UPDATE OR DELETE ON pedido_pagos
+FOR EACH ROW EXECUTE FUNCTION serializar_pedido_pago_con_comprobante();
+COMMIT;
+-- END COMPROBANTE CONCURRENCY MIGRATION
 
 CREATE TABLE IF NOT EXISTS historial_pagos (
   id SERIAL PRIMARY KEY,
@@ -1437,6 +1685,12 @@ CREATE INDEX IF NOT EXISTS idx_pedidos_chofer_estado ON pedidos (chofer_id, esta
 CREATE INDEX IF NOT EXISTS idx_zonas_geom ON zonas_geograficas USING GIST (geom);
 CREATE INDEX IF NOT EXISTS idx_ct_procesado ON comprobantes_transferencia (procesado, fecha);
 CREATE INDEX IF NOT EXISTS idx_ct_empresa_file_hash ON comprobantes_transferencia (empresa_id, file_hash);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_ct_source_message_new
+  ON comprobantes_transferencia ((COALESCE(empresa_id, 0)), source_message_id)
+  WHERE source_message_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_ct_file_hash_new
+  ON comprobantes_transferencia ((COALESCE(empresa_id, 0)), dedupe_file_hash)
+  WHERE dedupe_file_hash IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_ct_estado_revision ON comprobantes_transferencia (estado_revision);
 CREATE INDEX IF NOT EXISTS idx_pedido_track_points_pedido_ts ON pedido_track_points (pedido_id, timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_hist_prod_fecha ON historial_costos_precios (producto_id, fecha_registro DESC);

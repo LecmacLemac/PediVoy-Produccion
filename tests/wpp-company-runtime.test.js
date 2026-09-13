@@ -11,6 +11,7 @@ import {
   isRuntimeBridgeError,
   createSingleFlight,
   createBackoffRecovery,
+  createPrerequisiteStartup,
   createNonOverlappingTask,
 } from '../src/wpp/companyRuntime.js';
 
@@ -305,6 +306,95 @@ test('backoff de recuperación reintenta y colapsa disparos concurrentes', async
   await scheduled.shift()();
   assert.equal(attempts, 3);
   assert.equal(recovery.getState().attempt, 0);
+});
+
+test('startup fail-closed espera migraciones, colapsa triggers y crea un solo cliente tras recuperarse', async () => {
+  const scheduled = [];
+  let migrationAttempts = 0;
+  let clients = 0;
+  let listeners = 0;
+  const startup = createPrerequisiteStartup({
+    ensurePrerequisites: async () => {
+      migrationAttempts += 1;
+      if (migrationAttempts <= 2) throw new Error('migración no disponible');
+    },
+    start: async () => {
+      clients += 1;
+      listeners += 1;
+    },
+    delaysMs: [10, 20],
+    setTimer: (fn) => { scheduled.push(fn); return fn; },
+    clearTimer: () => {},
+  });
+
+  const first = startup.trigger('startup');
+  assert.strictEqual(startup.trigger('startup-duplicado'), first);
+  assert.equal(await first, false);
+  assert.deepEqual({ migrationAttempts, clients, listeners }, { migrationAttempts: 1, clients: 0, listeners: 0 });
+
+  await scheduled.shift()();
+  assert.deepEqual({ migrationAttempts, clients, listeners }, { migrationAttempts: 2, clients: 0, listeners: 0 });
+  await scheduled.shift()();
+  assert.deepEqual({ migrationAttempts, clients, listeners }, { migrationAttempts: 3, clients: 1, listeners: 1 });
+
+  assert.equal(await startup.trigger('late-trigger'), true);
+  assert.deepEqual({ migrationAttempts, clients, listeners }, { migrationAttempts: 3, clients: 1, listeners: 1 });
+});
+
+test('startup cancelado limpia el retry pendiente y no inicia después del shutdown', async () => {
+  let cleared = 0;
+  let clients = 0;
+  const startup = createPrerequisiteStartup({
+    ensurePrerequisites: async () => { throw new Error('DB caída'); },
+    start: async () => { clients += 1; },
+    delaysMs: [10],
+    setTimer: (fn) => fn,
+    clearTimer: () => { cleared += 1; },
+  });
+
+  await startup.trigger('startup');
+  startup.stop();
+  assert.equal(cleared, 1);
+  assert.equal(await startup.trigger('post-shutdown'), false);
+  assert.equal(clients, 0);
+});
+
+test('shutdown durante migración fallida no programa un retry tardío', async () => {
+  const scheduled = [];
+  let rejectMigration;
+  const migration = new Promise((_resolve, reject) => { rejectMigration = reject; });
+  const startup = createPrerequisiteStartup({
+    ensurePrerequisites: () => migration,
+    start: async () => assert.fail('no debe iniciar'),
+    delaysMs: [10],
+    setTimer: fn => { scheduled.push(fn); return fn; },
+    clearTimer: () => {},
+  });
+
+  const inFlight = startup.trigger('startup');
+  await Promise.resolve();
+  startup.stop();
+  rejectMigration(new Error('DB caída durante shutdown'));
+  assert.equal(await inFlight, false);
+  assert.equal(scheduled.length, 0);
+});
+
+test('startup no queda marcado iniciado cuando start devuelve false', async () => {
+  const scheduled = [];
+  let starts = 0;
+  const startup = createPrerequisiteStartup({
+    ensurePrerequisites: async () => {},
+    start: async () => { starts += 1; return starts > 1; },
+    delaysMs: [10],
+    setTimer: fn => { scheduled.push(fn); return fn; },
+    clearTimer: () => {},
+  });
+
+  assert.equal(await startup.trigger('startup'), false);
+  assert.equal(startup.getState().started, false);
+  await scheduled.shift()();
+  assert.equal(startup.getState().started, true);
+  assert.equal(starts, 2);
 });
 
 test('tarea protegida no solapa ticks async', async () => {

@@ -88,6 +88,12 @@ function _parseEmpresaId(contenidoLimpio, defaultEmpresaId) {
   return m ? Number(m[1]) : defaultEmpresaId;
 }
 
+export function resolveCommandEmpresaId(ctx, contenidoLimpio) {
+  return ctx?.tenantLocked
+    ? ctx.empresa_id
+    : _parseEmpresaId(contenidoLimpio, ctx?.empresa_id);
+}
+
 // src/handlers.js
 
 // ... (otros imports)
@@ -316,11 +322,15 @@ async function sugerirEmpresasPorTexto(texto) {
 // IA fallback (multi-prompt empresa/tipo) — para TODO lo que no sea comando
 // ────────────────────────────────────────────────────────────────────────────────
 
+export function shouldSuggestGlobalCompanies(ctx) {
+  return ctx?.source === 'desconocido' && ctx?.tenantLocked !== true;
+}
+
 async function responderConIA(
   client,
   numero,
   contenido,
-  { role, empresa_id, chofer_id, source } // ← incluye source
+  { role, empresa_id, chofer_id, source, tenantLocked }
 ) {
   try {
     const apiKey = process.env.OPENAI_API_KEY;
@@ -352,7 +362,7 @@ async function responderConIA(
 
     // Routing por empresas y solo prompts globales si es desconocido
     let empresaParaIa = empresa_id;
-    if (source === 'desconocido') {
+    if (shouldSuggestGlobalCompanies({ source, tenantLocked })) {
       const sugeridas = await sugerirEmpresasPorTexto(contenidoSeguro);
       if (sugeridas.length) {
         const bullets = sugeridas
@@ -438,6 +448,144 @@ ${contenidoSeguro}
 // ────────────────────────────────────────────────────────────────────────────────
 // Contexto por teléfono (rol, empresa, chofer)
 // ────────────────────────────────────────────────────────────────────────────────
+
+const ENTERPRISE_ROLES = new Set(['super', 'repartidor', 'cliente']);
+
+function normalizeEnterpriseRole(role) {
+  const normalized = String(role || '').toLowerCase();
+  const aliased = normalized === 'admin' ? 'super' : normalized;
+  return ENTERPRISE_ROLES.has(aliased) ? aliased : 'cliente';
+}
+
+export function createWhatsAppContextResolver(queryFn = query) {
+  return async function resolveWhatsAppContext(numero, { empresaId } = {}) {
+    if (empresaId === undefined) return _resolverContextoDesdeTelefono(numero);
+    if (!Number.isSafeInteger(empresaId) || empresaId <= 0) {
+      throw new TypeError('empresaId debe ser un entero seguro mayor que cero');
+    }
+
+    const telRaw = phoneFromWaId(numero);
+    const telDigits = digitsOnly(telRaw);
+    const suffix10 = telDigits.slice(-10) || telDigits;
+    const base = {
+      role: 'cliente',
+      empresa_id: empresaId,
+      chofer_id: null,
+      source: 'desconocido',
+      tenantLocked: true,
+    };
+
+    const users = await queryFn(
+      `SELECT id, role, empresa_id, chofer_id, username
+         FROM usuarios
+        WHERE empresa_id = $1
+          AND activo = TRUE
+          AND (username = $2 OR username = $3)
+        LIMIT 1`,
+      [empresaId, telRaw, suffix10]
+    );
+    const user = users[0];
+    if (user) {
+      let role = normalizeEnterpriseRole(user.role);
+      let choferId = null;
+      if (user.chofer_id != null) {
+        const drivers = await queryFn(
+          `SELECT id
+             FROM choferes
+            WHERE id = $1 AND empresa_id = $2 AND activo = TRUE
+            LIMIT 1`,
+          [user.chofer_id, empresaId]
+        );
+        choferId = drivers[0]?.id ?? null;
+      }
+      if (role === 'repartidor' && choferId == null) role = 'cliente';
+      return {
+        ...base,
+        role,
+        chofer_id: choferId,
+        source: 'usuario_registrado',
+        nombre: user.username,
+      };
+    }
+
+    const drivers = await queryFn(
+      `SELECT id AS chofer_id, empresa_id, nombre
+         FROM choferes
+        WHERE empresa_id = $1
+          AND activo = TRUE
+          AND (regexp_replace(COALESCE(telefono,''),'\\D','','g') LIKE '%' || $2
+            OR regexp_replace(COALESCE(telefono,''),'\\D','','g') LIKE '%' || $3)
+        LIMIT 1`,
+      [empresaId, telDigits, suffix10]
+    );
+    const driver = drivers[0];
+    if (driver?.chofer_id != null) {
+      return {
+        ...base,
+        role: 'repartidor',
+        chofer_id: driver.chofer_id,
+        source: 'chofer',
+        nombre: driver.nombre,
+      };
+    }
+
+    const points = await queryFn(
+      `SELECT empresa_id, cliente
+         FROM puntos_entrega
+        WHERE empresa_id = $1
+          AND regexp_replace(COALESCE(telefono,''),'\\D','','g') LIKE '%' || $2
+        ORDER BY id DESC
+        LIMIT 1`,
+      [empresaId, suffix10]
+    );
+    if (points[0]) {
+      return {
+        ...base,
+        source: 'conocido_historico',
+        nombre: points[0].cliente,
+      };
+    }
+    return base;
+  };
+}
+
+const resolveWhatsAppContext = createWhatsAppContextResolver(query);
+
+export function createTenantCommandQueries(queryFn = query) {
+  return {
+    async findActiveDriver(empresaId, value) {
+      const digits = digitsOnly(value);
+      const rows = await queryFn(
+        `SELECT id
+           FROM choferes
+          WHERE empresa_id = $1
+            AND activo = TRUE
+            AND (id = $2
+              OR regexp_replace(COALESCE(telefono,''),'\\D','','g') LIKE '%' || $3)
+          ORDER BY CASE WHEN id = $2 THEN 0 ELSE 1 END
+          LIMIT 1`,
+        [empresaId, Number(value), digits]
+      );
+      return rows[0] || null;
+    },
+    async findLatestDeliveryPoint(empresaId, numero) {
+      const digits = digitsOnly(phoneFromWaId(numero));
+      const suffix10 = digits.slice(-10) || digits;
+      const rows = await queryFn(
+        `SELECT id, cliente, direccion, empresa_id, zona_id
+           FROM puntos_entrega
+          WHERE empresa_id = $1
+            AND regexp_replace(COALESCE(telefono,''),'\\D','','g') LIKE '%' || $2
+          ORDER BY id DESC
+          LIMIT 1`,
+        [empresaId, suffix10]
+      );
+      return rows[0] || null;
+    },
+  };
+}
+
+const tenantCommandQueries = createTenantCommandQueries(query);
 
 async function _resolverContextoDesdeTelefono(numero) {
   const telRaw = phoneFromWaId(numero);
@@ -1171,43 +1319,51 @@ async function _seriesChofer({ empresa_id, chofer_id, desde, hasta }) {
 // Comprobantes (PostgreSQL)
 // ────────────────────────────────────────────────────────────────────────────────
 
-async function obtenerUltimosComprobantesPorTelefonoPg(telefono) {
-  const digits = digitsOnly(telefono);
-  const suf10 = digits.slice(-10) || digits;
-
-  return await query(
-    `
-    SELECT
-      id,
-      fecha,
-      monto,
-      banco_origen,
-      banco_destino,
-      nro_operacion,
-      nombre,
-      fecha_operacion,
-      fecha_transf
-    FROM comprobantes_transferencia
-    WHERE regexp_replace(COALESCE(telefono,''),'\\D','','g') LIKE '%' || $1
-    ORDER BY fecha DESC, id DESC
-    LIMIT 10
-  `,
-    [suf10]
-  );
+export function createComprobanteTenantQueries(queryFn) {
+  return {
+    async obtenerUltimos(telefono, empresaId) {
+      const digits = digitsOnly(telefono);
+      const suf10 = digits.slice(-10) || digits;
+      return await queryFn(
+        `SELECT id, fecha, monto, banco_origen, banco_destino, nro_operacion,
+                nombre, fecha_operacion, fecha_transf
+         FROM comprobantes_transferencia
+         WHERE regexp_replace(COALESCE(telefono,''),'\\D','','g') LIKE '%' || $1
+           AND empresa_id = $2
+         ORDER BY fecha DESC, id DESC
+         LIMIT 10`,
+        [suf10, Number(empresaId)]
+      );
+    },
+    async marcarProcesado(numeroOperacion, empresaId) {
+      const rows = await queryFn(
+        `UPDATE comprobantes_transferencia
+         SET procesado = FALSE,
+             fecha_procesado = NULL,
+             validado = 0,
+             estado_revision = 'en_revision',
+             approval_dedupe_key = NULL,
+             verified_by = NULL,
+             verified_at = NULL,
+             verified_reason = 'revision_manual_solicitada_whatsapp',
+             updated_at = NOW()
+         WHERE nro_operacion = $1 AND empresa_id = $2
+         RETURNING id`,
+        [numeroOperacion, Number(empresaId)]
+      );
+      return rows.length;
+    },
+  };
 }
 
-async function marcarComprobanteComoProcesadoPg(numeroOperacion) {
-  const rows = await query(
-    `
-    UPDATE comprobantes_transferencia
-    SET procesado = TRUE,
-        fecha_procesado = NOW()
-    WHERE nro_operacion = $1
-    RETURNING id
-  `,
-    [numeroOperacion]
-  );
-  return rows.length;
+const comprobanteTenantQueries = createComprobanteTenantQueries(query);
+
+async function obtenerUltimosComprobantesPorTelefonoPg(telefono, empresaId) {
+  return comprobanteTenantQueries.obtenerUltimos(telefono, empresaId);
+}
+
+async function marcarComprobanteComoProcesadoPg(numeroOperacion, empresaId) {
+  return comprobanteTenantQueries.marcarProcesado(numeroOperacion, empresaId);
 }
 
 
@@ -1222,7 +1378,7 @@ async function handleRentabilidadEmpresa(
   contenidoLimpio
 ) {
   const rango = _parseRangoFechas(contenidoLimpio);
-  const empresaEff = _parseEmpresaId(contenidoLimpio, ctx.empresa_id);
+  const empresaEff = resolveCommandEmpresaId(ctx, contenidoLimpio);
 
   const base = await _sqlResumenVentas({
     empresa_id: empresaEff,
@@ -1304,7 +1460,7 @@ async function handleEstadisticaEmpresa(
   contenidoLimpio
 ) {
   const rango = _parseRangoFechas(contenidoLimpio);
-  const empresaEff = _parseEmpresaId(contenidoLimpio, ctx.empresa_id);
+  const empresaEff = resolveCommandEmpresaId(ctx, contenidoLimpio);
 
   const base = await _sqlResumenVentas({
     empresa_id: empresaEff,
@@ -1418,26 +1574,7 @@ async function handleResumen(
       /chofer\s+([0-9]{7,}|[0-9]+)/i
     );
     const val = m?.[1] || '';
-    const valDigits = digitsOnly(val);
-    const byId =
-      (
-        await query(`SELECT id FROM choferes WHERE id = $1`, [
-          Number(val),
-        ])
-      )[0] || null;
-    const byTel =
-      (
-        await query(
-          `
-        SELECT id
-        FROM choferes
-        WHERE regexp_replace(COALESCE(telefono,''),'\\D','','g') LIKE '%' || $1
-        LIMIT 1
-      `,
-          [valDigits]
-        )
-      )[0] || null;
-    const target = byId || byTel;
+    const target = await tenantCommandQueries.findActiveDriver(empresa_id, val);
     if (target) choferFiltro = Number(target.id);
   }
 
@@ -1594,21 +1731,26 @@ async function handleReposicionAutomatica(client, numero, ctx) {
     const telDigits = digitsOnly(phoneFromWaId(numero));
     const suf10 = telDigits.slice(-10) || telDigits;
 
-    // Buscamos el punto de entrega más reciente usado por este teléfono
-    const pRows = await query(`
-      SELECT id, cliente, direccion, empresa_id, zona_id
-      FROM puntos_entrega
-      WHERE regexp_replace(COALESCE(telefono,''),'\\D','','g') LIKE '%' || $1
-      ORDER BY id DESC
-      LIMIT 1
-    `, [suf10]);
+    let punto = null;
+    if (ctx.tenantLocked) {
+      punto = await tenantCommandQueries.findLatestDeliveryPoint(ctx.empresa_id, numero);
+    } else {
+      const pRows = await query(`
+        SELECT id, cliente, direccion, empresa_id, zona_id
+        FROM puntos_entrega
+        WHERE regexp_replace(COALESCE(telefono,''),'\\D','','g') LIKE '%' || $1
+        ORDER BY id DESC
+        LIMIT 1
+      `, [suf10]);
+      punto = pRows[0] || null;
+    }
 
-    if (!pRows.length) {
+    if (!punto) {
       await client.sendMessage(numero, '😕 No encontré una cuenta vinculada a este teléfono. Por favor, escribinos qué necesitás para tomar tu primer pedido.');
       return;
     }
-    
-    const punto = pRows[0];
+
+    const puntoEmpresaId = ctx.tenantLocked ? ctx.empresa_id : punto.empresa_id;
 
     // 2. Anti-Duplicados: Chequear si ya tiene algo pendiente
     const pendientes = await query(`
@@ -1661,7 +1803,7 @@ async function handleReposicionAutomatica(client, numero, ctx) {
         // Intentar buscar precio actual
         const prodAct = await query(
             'SELECT precio FROM productos WHERE empresa_id=$1 AND LOWER(nombre) = LOWER($2) LIMIT 1', 
-            [punto.empresa_id, it.producto]
+            [puntoEmpresaId, it.producto]
         );
         const precioReal = prodAct.length ? Number(prodAct[0].precio) : Number(it.precio_unitario);
         
@@ -1682,7 +1824,7 @@ async function handleReposicionAutomatica(client, numero, ctx) {
       VALUES ($1, $2, NOW(), 'pendiente', $3, 0, $4, $5, 0, 0, NULL, $6, NOW(), NOW())
       RETURNING id
     `, [
-      punto.empresa_id,
+      puntoEmpresaId,
       punto.id,
       totalCant,
       totalMonto,
@@ -1726,11 +1868,17 @@ async function handleReposicionAutomatica(client, numero, ctx) {
 // --------------------------------------------------------------------------------
 
 function start(client, options = {}) {
+  const hasEmpresaId = Object.prototype.hasOwnProperty.call(options, 'empresaId');
+  const forcedEmpresaId = options.empresaId;
+  if (hasEmpresaId && (!Number.isSafeInteger(forcedEmpresaId) || forcedEmpresaId <= 0)) {
+    throw new TypeError('empresaId debe ser un entero seguro mayor que cero');
+  }
   if (!client || startedClients.has(client)) return;
   startedClients.add(client);
 
-  const forcedEmpresaId = Number(options.empresaId || 0);
   recentMessageIdsByClient.set(client, new Map());
+  const contextResolver = options.contextResolver
+    || (options.queryFn ? createWhatsAppContextResolver(options.queryFn) : resolveWhatsAppContext);
 
   client.on('message', async (message) => {
     try {
@@ -1773,14 +1921,10 @@ function start(client, options = {}) {
       if (message.hasMedia === true) return;
       if (!contenido) return;
 
-      let ctx = await _resolverContextoDesdeTelefono(numero);
-      if (forcedEmpresaId > 0) {
-        ctx = {
-          ...ctx,
-          empresa_id: forcedEmpresaId,
-          source: 'empresa_whatsapp',
-        };
-      }
+      const ctx = await contextResolver(
+        numero,
+        hasEmpresaId ? { empresaId: forcedEmpresaId } : {}
+      );
       const { role, empresa_id, chofer_id } = ctx;
       const contenidoLimpio = contenido.toLowerCase();
 
@@ -1894,7 +2038,7 @@ function start(client, options = {}) {
       if (contenidoLimpio === 'ver comprobantes') {
         try {
           const tel = phoneFromWaId(numero);
-          const comprobantes = await obtenerUltimosComprobantesPorTelefonoPg(tel);
+          const comprobantes = await obtenerUltimosComprobantesPorTelefonoPg(tel, empresa_id);
           
           if (!comprobantes?.length) {
             await client.sendMessage(numero, 'No hay comprobantes registrados para tu número.');
@@ -1930,11 +2074,11 @@ function start(client, options = {}) {
         }
         const numeroOperacion = match[1];
         try {
-          const cambios = await marcarComprobanteComoProcesadoPg(numeroOperacion);
+          const cambios = await marcarComprobanteComoProcesadoPg(numeroOperacion, empresa_id);
           await client.sendMessage(
             numero,
             cambios > 0
-              ? `✅ Marqué como procesado el comprobante con operación ${numeroOperacion}.`
+              ? `✅ Dejé en revisión manual el comprobante con operación ${numeroOperacion}.`
               : `⚠️ No encontré ningún comprobante con operación ${numeroOperacion}.`
           );
         } catch (err) {
@@ -1950,7 +2094,7 @@ function start(client, options = {}) {
           await client.sendMessage(numero, 'No tengo permiso para mostrar rentabilidad.');
           return;
         }
-        await handleRentabilidadEmpresa(client, numero, { empresa_id, chofer_id }, contenidoLimpio);
+        await handleRentabilidadEmpresa(client, numero, ctx, contenidoLimpio);
         return;
       }
 
@@ -1959,7 +2103,7 @@ function start(client, options = {}) {
           await client.sendMessage(numero, 'No tengo permiso para ver estadísticas.');
           return;
         }
-        await handleEstadisticaEmpresa(client, numero, { empresa_id, chofer_id }, contenidoLimpio);
+        await handleEstadisticaEmpresa(client, numero, ctx, contenidoLimpio);
         return;
       }
 

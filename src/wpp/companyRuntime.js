@@ -307,8 +307,10 @@ export function createBackoffRecovery({
   let resolveScheduled = null;
   let attempt = 0;
   let lastReason = null;
+  let stopped = false;
 
   function trigger(reason = 'unspecified') {
+    if (stopped) return Promise.resolve(false);
     lastReason = reason;
     if (inFlight) return inFlight;
     if (timer) return scheduledPromise;
@@ -321,6 +323,7 @@ export function createBackoffRecovery({
         return true;
       })
       .catch(err => {
+        if (stopped) return false;
         onError(err, { reason: lastReason, attempt });
         const delay = delaysMs[Math.min(attempt, delaysMs.length - 1)];
         attempt += 1;
@@ -346,6 +349,7 @@ export function createBackoffRecovery({
   return {
     trigger,
     stop() {
+      stopped = true;
       if (timer) clearTimer(timer);
       timer = null;
       resolveScheduled?.(false);
@@ -353,7 +357,46 @@ export function createBackoffRecovery({
       resolveScheduled = null;
     },
     getState() {
-      return { inFlight: Boolean(inFlight), scheduled: Boolean(timer), attempt, lastReason };
+      return { inFlight: Boolean(inFlight), scheduled: Boolean(timer), attempt, lastReason, stopped };
+    },
+  };
+}
+
+export function createPrerequisiteStartup({
+  ensurePrerequisites,
+  start,
+  ...recoveryOptions
+} = {}) {
+  if (typeof ensurePrerequisites !== 'function') throw new Error('startup prerequisites requeridos');
+  if (typeof start !== 'function') throw new Error('startup task requerida');
+
+  let started = false;
+  let stopped = false;
+  const recovery = createBackoffRecovery({
+    ...recoveryOptions,
+    task: async reason => {
+      if (stopped) return true;
+      await ensurePrerequisites();
+      if (stopped) return true;
+      const result = await start(reason);
+      if (result === false) throw new Error('startup no completado');
+      started = true;
+      return true;
+    },
+  });
+
+  return {
+    trigger(reason) {
+      if (stopped) return Promise.resolve(false);
+      if (started) return Promise.resolve(true);
+      return recovery.trigger(reason);
+    },
+    stop() {
+      stopped = true;
+      recovery.stop();
+    },
+    getState() {
+      return { ...recovery.getState(), started, stopped };
     },
   };
 }
