@@ -4,7 +4,7 @@
 import express from 'express';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
-import crypto from 'node:crypto';
+
 
 const SIGNUP_WINDOW_MS = Number(process.env.SIGNUP_RATE_WINDOW_MS || 60 * 60 * 1000);
 const SIGNUP_MAX_ATTEMPTS = Number(process.env.SIGNUP_RATE_MAX || 8);
@@ -45,57 +45,9 @@ export function createAuthGuestSignupRouter(deps) {
 
   const router = express.Router();
 
-  // ==================================================
-  // LÓGICA DE USUARIOS EFÍMEROS (OPCIÓN A)
-  // ==================================================
-
-  // POST /api/auth/guest
-  router.post('/guest', async (req, res) => {
-    try {
-      const ip = getClientIp(req);
-      const rateKey = `guest:ip:${ip}`;
-      if (hitRateLimit(signupAttempts, rateKey, SIGNUP_WINDOW_MS, SIGNUP_MAX_ATTEMPTS * 2)) {
-        return res.status(429).json({ error: 'Demasiados intentos. Reintentá más tarde.' });
-      }
-
-      const empresa_id = Number(req.body?.empresa_id) || 1;
-      const randomSuffix = crypto.randomBytes(4).toString('hex');
-      const tempUsername = `guest_${Date.now()}_${randomSuffix}`;
-
-      const result = await query(
-        `INSERT INTO usuarios (username, password, role, empresa_id, es_invitado, fecha_expiracion)
-         VALUES ($1, NULL, 'guest', $2, TRUE, NOW() + INTERVAL '2 hours')
-         RETURNING id, username, role, empresa_id`,
-        [tempUsername, empresa_id]
-      );
-
-      const user = result[0];
-
-      const token = jwt.sign(
-        {
-          uid: user.id,
-          username: user.username,
-          empresa_id: user.empresa_id,
-          role: 'guest',
-        },
-        process.env.JWT_SECRET || 'dev',
-        { expiresIn: '2h' }
-      );
-
-      res.cookie('token', token, {
-        httpOnly: true,
-        sameSite: 'lax',
-        secure: process.env.NODE_ENV === 'production',
-        maxAge: 2 * 60 * 60 * 1000,
-      });
-
-      const includeToken = String(req.query?.includeToken || req.headers['x-include-token'] || '') === '1';
-      if (includeToken) return res.json({ ok: true, token, user });
-      return res.json({ ok: true, user });
-    } catch (e) {
-      console.error('ERROR GUEST:', e);
-      return res.status(500).json({ error: 'Error creando sesión de invitado' });
-    }
+  // Endpoint legacy retirado: no existe un contexto tenant server-side seguro.
+  router.post('/guest', (_req, res) => {
+    return res.status(410).json({ error: 'El registro de invitados ya no está disponible' });
   });
 
   // POST /api/auth/register

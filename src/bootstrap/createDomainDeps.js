@@ -1,4 +1,4 @@
-import { query, pool } from '../db.js';
+import { query, pool, withTransaction } from '../db.js';
 import { createLegacyBackendDeps } from '../legacy/backendAdapter.js';
 import {
   withAuth,
@@ -35,6 +35,7 @@ export function createDomainDeps({ projectDir }) {
     // core
     query,
     pool,
+    withTransaction,
 
     // auth/tenant
     withAuth,

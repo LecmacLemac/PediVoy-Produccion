@@ -42,6 +42,7 @@ export function mountApiModules(app, deps) {
   const {
     query,
     pool,
+    withTransaction,
     withAuth,
     isSuper,
     getEmpresaIdFromToken,
@@ -117,7 +118,13 @@ export function mountApiModules(app, deps) {
   app.use('/api/juegos-publicos', createJuegosPublicosRouter({ query, pool }));
   app.use('/api/referentes', createReferentesRouter({ query, withAuth, isSuper, getEmpresaIdFromToken }));
   app.use('/api/referente', createReferentePortalRouter({ query, withAuth }));
-  app.use('/api/admin', createAdminUsuariosRouter({ query, withAuth, isSuper, getEmpresaIdFromToken }));
+  app.use('/api/admin', createAdminUsuariosRouter({
+    query,
+    withTransaction,
+    withAuth,
+    isSuper,
+    getEmpresaIdFromToken,
+  }));
 
   app.use(
     '/api/repartidor',

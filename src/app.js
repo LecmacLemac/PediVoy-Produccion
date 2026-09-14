@@ -30,6 +30,7 @@ export function createApp(deps) {
     // core
     query,
     pool,
+    withTransaction,
 
     // auth/tenant
     withAuth,
@@ -280,6 +281,7 @@ export function createApp(deps) {
   mountApiModules(app, {
     query,
     pool,
+    withTransaction,
     withAuth,
     isSuper,
     getEmpresaIdFromToken,

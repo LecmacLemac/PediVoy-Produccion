@@ -105,7 +105,7 @@ CREATE TABLE IF NOT EXISTS usuarios (
   id               SERIAL PRIMARY KEY,
   username         TEXT NOT NULL,
   password         TEXT NOT NULL,
-  role             TEXT DEFAULT 'admin',
+  role             TEXT NOT NULL DEFAULT 'user',
   empresa_id       INTEGER REFERENCES empresas(id) ON DELETE CASCADE,
   chofer_id        INTEGER,
   referente_id     INTEGER,
@@ -117,6 +117,30 @@ CREATE TABLE IF NOT EXISTS usuarios (
   created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT uq_usuarios_username UNIQUE (username)
 );
+
+-- Roles DB: limpiar datos históricos sin elevar privilegios y cerrar escrituras futuras.
+UPDATE usuarios
+SET role = 'user'
+WHERE role IS NULL
+   OR role NOT IN ('user', 'repartidor', 'referente', 'facturacion', 'contable', 'admin', 'super');
+
+ALTER TABLE usuarios ALTER COLUMN role SET DEFAULT 'user';
+ALTER TABLE usuarios ALTER COLUMN role SET NOT NULL;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'usuarios_role_check'
+      AND conrelid = 'usuarios'::regclass
+  ) THEN
+    ALTER TABLE usuarios
+      ADD CONSTRAINT usuarios_role_check
+      CHECK (role IS NOT NULL AND role IN ('user', 'repartidor', 'referente', 'facturacion', 'contable', 'admin', 'super'));
+  END IF;
+END
+$$;
 
 -- =========================================================
 -- 5. CHOFERES Y LOGÍSTICA
@@ -1745,26 +1769,6 @@ CREATE TABLE IF NOT EXISTS tracking_incident_acks (
 
 CREATE INDEX IF NOT EXISTS idx_tracking_incident_acks_empresa_pedido_ack
   ON tracking_incident_acks (empresa_id, pedido_id, acked_at DESC);
-
--- =========================================================
--- 13. DATOS SEMILLA (deshabilitado)
--- =========================================================
--- 1. PRIMERO: Crear la Empresa por defecto (Para evitar el error FK)
-INSERT INTO empresas (id, nombre, direccion, plan_estado, plan_tipo) 
-VALUES (1, 'AguaHidro.com', 'AguaHidro.com', 'active', 'unlimited')
-ON CONFLICT (id) DO UPDATE 
-SET plan_estado = 'active'; -- Asegura que si ya existe, esté activa
-
--- 2. SEGUNDO: Crear el Usuario Admin vinculado a esa empresa
-DELETE FROM usuarios WHERE username = 'admin';
-
--- User: admin | Pass: admin123 (bcrypt hash)
-INSERT INTO usuarios (username, password, role, empresa_id, chofer_id)
-VALUES ('admin', '$2a$12$H/YwbDUg6CdKqS3KyK8CdeXE31rkSqGGSG3jL7GbOawPZReTMF9Em', 'super', 1, NULL);
-
--- 3. TERCERO: Ajustar secuencias para evitar errores de IDs futuros
-SELECT setval('empresas_id_seq', (SELECT MAX(id) FROM empresas));
-SELECT setval('usuarios_id_seq', (SELECT MAX(id) FROM usuarios));
 
 -- =========================================================
 -- 14. TELEMETRÍA MARKETING POR CANAL
