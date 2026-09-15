@@ -7,20 +7,21 @@ import { bootstrapSuper } from '../scripts/bootstrap-super.js';
 const initSql = fs.readFileSync(new URL('../initDb.sql', import.meta.url), 'utf8');
 const packageJson = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 
-function createPool({ existingSuper = [], insertError = null } = {}) {
+function createPool({ existingSuper = [], insertError = null, rollbackError = null } = {}) {
   const calls = [];
   let connectCount = 0;
   const client = {
     async query(sql, params = []) {
       calls.push({ sql, params });
-      if (/SELECT id FROM usuarios/i.test(sql)) return { rows: existingSuper };
+      if (/SELECT id[\s\S]*FROM usuarios/i.test(sql)) return { rows: existingSuper };
+      if (sql === 'ROLLBACK' && rollbackError) throw rollbackError;
       if (/INSERT INTO usuarios/i.test(sql)) {
         if (insertError) throw insertError;
         return { rows: [{ id: 7, username: params[0], role: 'super', empresa_id: null, activo: true }], rowCount: 1 };
       }
       return { rows: [], rowCount: 0 };
     },
-    release() { calls.push({ sql: 'RELEASE', params: [] }); },
+    release(error) { calls.push({ sql: 'RELEASE', params: [], error }); },
   };
   return {
     calls,
@@ -76,7 +77,7 @@ test('bootstrap rechaza username inválido y contraseña débil antes de conecta
   }
 });
 
-test('bootstrap aborta y revierte si ya existe cualquier super, incluso inactivo', async () => {
+test('bootstrap aborta y revierte si el super existente tiene datos incompletos', async () => {
   const pool = createPool({ existingSuper: [{ id: 3 }] });
 
   await assert.rejects(
@@ -88,7 +89,7 @@ test('bootstrap aborta y revierte si ya existe cualquier super, incluso inactivo
   assert.deepEqual(pool.calls.map(call => call.sql), [
     'BEGIN',
     'SELECT pg_advisory_xact_lock($1)',
-    "SELECT id FROM usuarios WHERE LOWER(BTRIM(role)) = 'super' LIMIT 1",
+    "SELECT id, username, role, empresa_id, activo FROM usuarios WHERE LOWER(BTRIM(role)) = 'super' FOR UPDATE",
     'ROLLBACK',
     'RELEASE',
   ]);
@@ -102,7 +103,7 @@ test('bootstrap detecta variantes sospechosas de super sin normalizarlas ni inse
     /ya existe/i,
   );
 
-  const detection = pool.calls.find(call => /SELECT id FROM usuarios/i.test(call.sql));
+  const detection = pool.calls.find(call => /SELECT id[\s\S]*FROM usuarios/i.test(call.sql));
   assert.match(detection.sql, /LOWER\s*\(\s*BTRIM\s*\(\s*role\s*\)\s*\)\s*=\s*'super'/i);
   assert.equal(pool.calls.some(call => /UPDATE\s+usuarios/i.test(call.sql)), false);
   assert.equal(pool.calls.some(call => /INSERT\s+INTO\s+usuarios/i.test(call.sql)), false);
@@ -118,7 +119,7 @@ test('bootstrap crea exactamente un super global y confirma usando una sola cone
   assert.deepEqual(pool.calls.map(call => call.sql), [
     'BEGIN',
     'SELECT pg_advisory_xact_lock($1)',
-    "SELECT id FROM usuarios WHERE LOWER(BTRIM(role)) = 'super' LIMIT 1",
+    "SELECT id, username, role, empresa_id, activo FROM usuarios WHERE LOWER(BTRIM(role)) = 'super' FOR UPDATE",
     `INSERT INTO usuarios (username, password, role, empresa_id, activo)
        VALUES ($1, $2, 'super', NULL, TRUE)
        RETURNING id, username, role, empresa_id, activo`,
@@ -152,4 +153,35 @@ test('bootstrap-super es explícito y no forma parte de start, prestart ni init-
     const source = fs.readFileSync(new URL(relativePath, import.meta.url), 'utf8');
     assert.doesNotMatch(source, /bootstrap-super/i, relativePath);
   }
+});
+
+test('bootstrap segunda ejecución es no-op para un super canónico activo global', async () => {
+  const first = await bootstrapSuper({ pool: createPool(), bcrypt: fakeBcrypt, env: validEnv });
+  const pool = createPool({ existingSuper: [first] });
+  const result = await bootstrapSuper({ pool, bcrypt: { hash: async () => assert.fail('No rehash') }, env: validEnv });
+  assert.deepEqual(result, first);
+  assert.equal(pool.calls.some(call => /INSERT|UPDATE usuarios/.test(call.sql)), false);
+  assert.deepEqual(pool.calls.slice(-2).map(call => call.sql), ['COMMIT', 'RELEASE']);
+});
+
+for (const patch of [{ role: 'SUPER' }, { role: ' super ' }, { activo: false }, { activo: null }, { empresa_id: 3 }, { id: null }, { username: '' }]) {
+  test(`bootstrap falla cerrado para super inválido ${JSON.stringify(patch)}`, async () => {
+    const pool = createPool({ existingSuper: [{ id: 3, username: 'super.ops', role: 'super', empresa_id: null, activo: true, ...patch }] });
+    await assert.rejects(bootstrapSuper({ pool, bcrypt: fakeBcrypt, env: validEnv }), /ya existe/i);
+    assert.equal(pool.calls.some(call => /INSERT|UPDATE usuarios/.test(call.sql)), false);
+  });
+}
+
+test('bootstrap rechaza múltiples super incluso si ambos son canónicos activos', async () => {
+  const pool = createPool({ existingSuper: [3, 4].map(id => ({ id, username: `super.${id}`, role: 'super', empresa_id: null, activo: true })) });
+  await assert.rejects(bootstrapSuper({ pool, bcrypt: fakeBcrypt, env: validEnv }), /ya existe/i);
+  assert.equal(pool.calls.some(call => /INSERT|UPDATE usuarios/.test(call.sql)), false);
+});
+
+test('bootstrap descarta conexión con error de rollback y conserva error original', async () => {
+  const insertError = new Error('insert failed');
+  const rollbackError = new Error('rollback failed');
+  const pool = createPool({ insertError, rollbackError });
+  await assert.rejects(bootstrapSuper({ pool, bcrypt: fakeBcrypt, env: validEnv }), error => error === insertError);
+  assert.equal(pool.calls.at(-1).error, rollbackError);
 });

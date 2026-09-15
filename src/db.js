@@ -13,12 +13,12 @@ const isRender =
 
 /**
  * Configuración del Pool de Conexiones
- * max: 20 es ideal para el Worker de una sola empresa. 
+ * max: 20 es ideal para el Worker de una sola empresa.
  * Si este archivo lo usa el "MultiWorker", considera subirlo a 50.
  */
 export const pool = new Pool({
   connectionString: url,
-  max: 20, 
+  max: 20,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 5000, // No esperar más de 5s para conectar
   ssl: isRender ? { rejectUnauthorized: false } : false,
@@ -36,11 +36,11 @@ pool.on('error', (err) => {
 export async function query(sql, params = []) {
   const start = Date.now();
   let client;
-  
+
   try {
     client = await pool.connect();
     const res = await client.query(sql, params);
-    
+
     // Log opcional para debug en desarrollo
     if (process.env.NODE_ENV !== 'production' && process.env.DEBUG_DB) {
       const duration = Date.now() - start;
@@ -62,6 +62,7 @@ export async function query(sql, params = []) {
 
 const RETRYABLE_TRANSACTION_CODES = new Set(['40P01', '40001']);
 
+// Mantiene lecturas con bloqueo y escrituras en la misma conexión.
 export async function withTransaction(work, {
   pool: transactionPool = pool,
   maxRetries = 2,
@@ -71,6 +72,8 @@ export async function withTransaction(work, {
 
   for (let attempt = 0; ; attempt += 1) {
     const client = await transactionPool.connect();
+    let releaseError;
+    let retry = false;
     const txQuery = async (sql, params = []) => {
       const result = await client.query(sql, params);
       return result.rows || [];
@@ -82,13 +85,22 @@ export async function withTransaction(work, {
       await client.query('COMMIT');
       return result;
     } catch (error) {
-      try { await client.query('ROLLBACK'); } catch {}
-      if (!RETRYABLE_TRANSACTION_CODES.has(error?.code) || attempt >= maxRetries) throw error;
-      if (retryDelayMs > 0) {
-        await new Promise(resolve => setTimeout(resolve, retryDelayMs * (attempt + 1)));
+      try {
+        await client.query('ROLLBACK');
+      } catch (rollbackError) {
+        releaseError = rollbackError;
       }
+
+      retry = !releaseError
+        && RETRYABLE_TRANSACTION_CODES.has(error?.code)
+        && attempt < maxRetries;
+      if (!retry) throw error;
     } finally {
-      client.release();
+      client.release(releaseError);
+    }
+
+    if (retryDelayMs > 0) {
+      await new Promise(resolve => setTimeout(resolve, retryDelayMs * (attempt + 1)));
     }
   }
 }

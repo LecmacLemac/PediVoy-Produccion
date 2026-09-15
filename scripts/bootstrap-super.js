@@ -44,14 +44,23 @@ export async function bootstrapSuper({
 
   const { username, password } = credentialsFromEnv(env);
   const client = await pool.connect();
+  let releaseError;
 
   try {
     await client.query('BEGIN');
     await client.query('SELECT pg_advisory_xact_lock($1)', [ADVISORY_LOCK_KEY]);
 
     // Los super son globales en el modelo actual: empresa_id siempre queda NULL.
-    const existing = await client.query("SELECT id FROM usuarios WHERE LOWER(BTRIM(role)) = 'super' LIMIT 1");
+    const existing = await client.query("SELECT id, username, role, empresa_id, activo FROM usuarios WHERE LOWER(BTRIM(role)) = 'super' FOR UPDATE");
     if (existing.rows.length > 0) {
+      const row = existing.rows[0];
+      if (existing.rows.length === 1
+        && Number.isInteger(row.id) && row.id > 0
+        && typeof row.username === 'string' && USERNAME_PATTERN.test(row.username)
+        && row.role === 'super' && row.activo === true && row.empresa_id === null) {
+        await client.query('COMMIT');
+        return row;
+      }
       throw new Error('Bootstrap cancelado: ya existe un usuario super');
     }
 
@@ -69,10 +78,10 @@ export async function bootstrapSuper({
     await client.query('COMMIT');
     return inserted.rows[0];
   } catch (error) {
-    try { await client.query('ROLLBACK'); } catch {}
+    try { await client.query('ROLLBACK'); } catch (rollbackError) { releaseError = rollbackError; }
     throw error;
   } finally {
-    client.release();
+    client.release(releaseError);
   }
 }
 

@@ -3,6 +3,7 @@ import express from 'express';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import { query as defaultQuery } from '../db.js';
+import { createWithAuth } from '../core/auth.js';
 
 const LOGIN_WINDOW_MS = Number(process.env.LOGIN_RATE_WINDOW_MS || 10 * 60 * 1000);
 const LOGIN_MAX_ATTEMPTS = Number(process.env.LOGIN_RATE_MAX || 10);
@@ -57,7 +58,7 @@ function hitRateLimit(map, key, windowMs, max) {
   return cur.count > max;
 }
 
-export function createAuthRouter({ queryFn = defaultQuery } = {}) {
+export function createAuthRouter({ queryFn = defaultQuery, withAuth = createWithAuth({ queryFn }) } = {}) {
   const router = express.Router();
 
   async function ensureAuthSchema() {
@@ -71,30 +72,15 @@ export function createAuthRouter({ queryFn = defaultQuery } = {}) {
     authSchemaReady = true;
   }
 
-  function getUserFromRequest(req) {
-    let token = null;
-    const h = req.headers.authorization || '';
-    if (h.startsWith('Bearer ')) token = h.slice(7);
-    if (!token && req.cookies?.token) token = req.cookies.token;
-    if (!token) return null;
-    try {
-      return jwt.verify(token, process.env.JWT_SECRET || 'dev');
-    } catch {
-      return null;
-    }
-  }
-
   // GET /api/me
-  router.get('/me', (req, res) => {
-    const user = getUserFromRequest(req);
-    if (!user) return res.status(401).json({ error: 'Token inválido' });
-    res.json({ user });
+  router.get('/me', withAuth, (req, res) => {
+    res.json({ user: req.user });
   });
 
   // GET /api/empresa/config (compat para front legacy)
-  router.get('/empresa/config', async (req, res) => {
+  router.get('/empresa/config', withAuth, async (req, res) => {
     try {
-      const user = getUserFromRequest(req);
+      const user = req.user;
       const empresaId = Number(user?.empresa_id || 0);
       if (!empresaId) return res.status(401).json({ error: 'No autorizado' });
 

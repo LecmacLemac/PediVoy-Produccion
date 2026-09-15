@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
 import fs from 'node:fs';
+import jwt from 'jsonwebtoken';
+import { createAuthGuestSignupRouter } from '../src/routes/authGuestSignup.js';
 
 import { createAdminUsuariosRouter } from '../src/routes/adminUsuarios.js';
 
@@ -142,7 +144,7 @@ test('admin sin tenant válido y super con filtro inválido fallan cerrado antes
 });
 
 test('admin solo crea roles operativos en su tenant y valida la empresa antes del hash/insert', async () => {
-  for (const role of ['admin', 'super', 'inventado']) {
+  for (const role of ['user', 'admin', 'super', 'inventado']) {
     const calls = [];
     const app = buildApp({ query: async (...args) => { calls.push(args); return []; } });
     await withServer(app, async baseUrl => {
@@ -215,7 +217,7 @@ test('super valida tenant y puede crear admin y super', async () => {
 test('admin edita y elimina operativos solo dentro de su tenant, nunca admin/super', async () => {
   const calls = [];
   const targets = new Map([
-    ['10', { id: 10, role: 'user', empresa_id: 3 }],
+    ['10', { id: 10, role: 'facturacion', empresa_id: 3 }],
     ['11', { id: 11, role: 'admin', empresa_id: 3 }],
   ]);
   const app = buildApp({ actorRow: actorId => ({
@@ -346,15 +348,15 @@ test('POST valida chofer y referente por rol y tenant antes de insertar', async 
     { body: { username: 'chofer-missing', password: 'secreto1', role: 'repartidor', chofer_id: 99 }, status: 400 },
     { body: { username: 'ref-cross', password: 'secreto1', role: 'referente', referente_id: 42 }, status: 400 },
     { body: { username: 'ref-missing', password: 'secreto1', role: 'referente', referente_id: 99 }, status: 400 },
-    { body: { username: 'user-chofer', password: 'secreto1', role: 'user', chofer_id: 11 }, status: 400 },
-    { body: { username: 'user-chofer-empty', password: 'secreto1', role: 'user', chofer_id: '' }, status: 400 },
+    { body: { username: 'user-chofer', password: 'secreto1', role: 'facturacion', chofer_id: 11 }, status: 400 },
+    { body: { username: 'user-chofer-empty', password: 'secreto1', role: 'facturacion', chofer_id: '' }, status: 400 },
     { body: { username: 'rep-chofer-empty', password: 'secreto1', role: 'repartidor', chofer_id: '' }, status: 400 },
-    { body: { username: 'user-ref', password: 'secreto1', role: 'user', referente_id: 31 }, status: 400 },
+    { body: { username: 'user-ref', password: 'secreto1', role: 'facturacion', referente_id: 31 }, status: 400 },
     { body: { username: 'rep-ref', password: 'secreto1', role: 'repartidor', chofer_id: 11, referente_id: 31 }, status: 400 },
     { body: { username: 'ref-chofer', password: 'secreto1', role: 'referente', referente_id: 31, chofer_id: 11 }, status: 400 },
     { body: { username: 'chofer-ok', password: 'secreto1', role: 'repartidor', chofer_id: 11 }, status: 200 },
     { body: { username: 'ref-ok', password: 'secreto1', role: 'referente', referente_id: 31 }, status: 200 },
-    { body: { username: 'user-null', password: 'secreto1', role: 'user', chofer_id: null, referente_id: null }, status: 200 },
+    { body: { username: 'user-null', password: 'secreto1', role: 'facturacion', chofer_id: null, referente_id: null }, status: 200 },
   ];
 
   await withServer(app, async baseUrl => {
@@ -379,10 +381,10 @@ test('POST valida chofer y referente por rol y tenant antes de insertar', async 
   assert.deepEqual(inserts.map(call => [call.params[2], call.params[3], call.params[4], call.params[5]]), [
     ['repartidor', 3, 11, null],
     ['referente', 3, null, 31],
-    ['user', 3, null, null],
+    ['facturacion', 3, null, null],
     ['repartidor', 4, 44, null],
   ]);
-  for (const insert of inserts.filter(call => call.params[2] !== 'user')) {
+  for (const insert of inserts.filter(call => call.params[2] !== 'facturacion')) {
     const insertIndex = calls.indexOf(insert);
     const relationLookupIndex = calls.findIndex((call, index) => index < insertIndex && /FROM (choferes|referentes)/.test(call.sql));
     assert.notEqual(relationLookupIndex, -1, 'el vínculo se valida antes del hash/insert');
@@ -447,15 +449,15 @@ test('PUT valida vínculos con rol y tenant efectivos y limpia los incompatibles
   assert.equal(referenteUpdate.params.includes(32), true);
 
   for (const [target, body] of [
-    [repartidor, { role: 'user', chofer_id: 11 }],
-    [referente, { role: 'user', referente_id: 31 }],
+    [repartidor, { role: 'facturacion', chofer_id: 11 }],
+    [referente, { role: 'facturacion', referente_id: 31 }],
   ]) {
     const calls = await runScenario({ actor: admin, target, body, expectedStatus: 400 });
     assert.equal(calls.some(call => call.sql.includes('UPDATE usuarios')), false);
   }
 
   for (const [target, clearedColumn] of [[repartidor, 'chofer_id'], [referente, 'referente_id']]) {
-    const calls = await runScenario({ actor: admin, target, body: { role: 'user' }, expectedStatus: 200 });
+    const calls = await runScenario({ actor: admin, target, body: { role: 'facturacion' }, expectedStatus: 200 });
     const update = calls.find(call => call.sql.includes('UPDATE usuarios'));
     assert.match(update.sql, new RegExp(`${clearedColumn}=`));
     assert.equal(update.params.includes(null), true);
@@ -495,7 +497,8 @@ test('cada operación autoriza con el actor efectivo de DB y rechaza revocación
   for (const actorRow of [
     null,
     { id: 1, role: 'admin', empresa_id: 3, activo: false },
-    { id: 1, role: 'user', empresa_id: 3, activo: true },
+    { id: 1, role: 'facturacion', empresa_id: 3, activo: true },
+    { id: 1, role: 'user', empresa_id: null, activo: true },
     { id: 1, role: 'admin', empresa_id: null, activo: true },
     { id: 1, role: ' super ', empresa_id: null, activo: true },
     { id: 1, role: 'SUPER', empresa_id: null, activo: true },
@@ -618,7 +621,7 @@ test('PUT y DELETE exigen RETURNING id y fallan cerrado cuando rowCount no es un
     const txQuery = async (sql, params) => {
       calls.push({ sql, params });
       if (/FROM usuarios[\s\S]*FOR SHARE/i.test(sql)) return [{ id: 1, role: 'admin', empresa_id: 3, activo: true }];
-      if (/FROM usuarios[\s\S]*FOR UPDATE/i.test(sql)) return [{ id: 8, role: 'user', empresa_id: 3, chofer_id: null, referente_id: null }];
+      if (/FROM usuarios[\s\S]*FOR UPDATE/i.test(sql)) return [{ id: 8, role: 'facturacion', empresa_id: 3, chofer_id: null, referente_id: null }];
       if (/FROM empresas/i.test(sql)) return [{ id: 3 }];
       throw new Error(`SQL inesperado: ${sql}`);
     };
@@ -673,7 +676,7 @@ test('PUT aplica la misma longitud mínima de password que POST', async () => {
   const app = buildApp({ query: async (sql, params) => {
     calls.push({ sql, params });
     if (/FROM usuarios[\s\S]*FOR UPDATE/i.test(sql)) {
-      return [{ id: 8, role: 'user', empresa_id: 3, chofer_id: null, referente_id: null }];
+      return [{ id: 8, role: 'facturacion', empresa_id: 3, chofer_id: null, referente_id: null }];
     }
     if (/FROM empresas/i.test(sql)) return [{ id: 3 }];
     if (/UPDATE usuarios/i.test(sql)) return [];
@@ -796,7 +799,92 @@ test('initDb usa user por defecto, limpia roles históricos inválidos y agrega 
   assert.match(initSql, /ALTER\s+TABLE\s+usuarios\s+ALTER\s+COLUMN\s+role\s+SET\s+DEFAULT\s+'user'/i);
   assert.match(initSql, /ALTER\s+TABLE\s+usuarios\s+ALTER\s+COLUMN\s+role\s+SET\s+NOT\s+NULL/i);
   assert.match(initSql, new RegExp(`UPDATE\\s+usuarios\\s+SET\\s+role\\s*=\\s*'user'[\\s\\S]*?role\\s+IS\\s+NULL[\\s\\S]*?role\\s+NOT\\s+IN\\s*\\(\\s*${allowed}\\s*\\)`, 'i'));
-  assert.match(initSql, /IF\s+NOT\s+EXISTS[\s\S]*?pg_constraint[\s\S]*?usuarios_role_check/i);
+  assert.match(initSql, /ALTER\s+TABLE\s+usuarios\s+DROP\s+CONSTRAINT\s+IF\s+EXISTS\s+usuarios_role_check/i);
+  assert.match(initSql, /SET\s+role\s*=\s*'user'\s*,\s*activo\s*=\s*false/i);
   assert.match(initSql, new RegExp(`CHECK\\s*\\(\\s*role\\s+IS\\s+NOT\\s+NULL\\s+AND\\s+role\\s+IN\\s*\\(\\s*${allowed}\\s*\\)\\s*\\)`, 'i'));
   assert.doesNotMatch(initSql, /UPDATE\s+usuarios\s+SET\s+role\s*=\s*['"]super['"]/i);
+});
+
+test('signup-full owner user y admin gestionan operativos con tenant DB y protegen todos los administradores', async () => {
+  for (const effectiveRole of ['user', 'admin']) {
+    const calls = [];
+    const owner = { id: 100, username: 'owner', role: 'user', empresa_id: 3, activo: true };
+    const targets = [
+      ...['user', 'admin', 'super'].map((role, i) => ({ id: i + 1, role, empresa_id: 3 })),
+      { id: 4, role: 'contable', empresa_id: 999 },
+      { id: 5, role: 'contable', empresa_id: 3 },
+    ];
+    const query = async (sql, params) => {
+      calls.push({ sql, params });
+      if (/FOR SHARE/.test(sql)) return [{ ...owner, role: effectiveRole }];
+      if (/FROM empresas/.test(sql)) return [{ id: 3 }];
+      if (/FOR UPDATE/.test(sql)) return targets.filter(row => row.id === Number(params[0]) && row.empresa_id === params[1]);
+      if (/^SELECT.*FROM usuarios/.test(sql)) return targets.filter(row => row.empresa_id === params[0]);
+      if (/INSERT INTO usuarios/.test(sql)) return [{ id: 6, username: params[0] }];
+      if (/UPDATE usuarios|DELETE FROM usuarios/.test(sql)) return [{ id: 5 }];
+      throw new Error(`Unexpected SQL: ${sql}`);
+    };
+    const app = express();
+    app.use(express.json());
+    const withAuth = (req, _res, next) => {
+      req.user = jwt.verify(req.headers.authorization.slice(7), process.env.JWT_SECRET || 'dev');
+      next();
+    };
+    app.use('/api/auth', createAuthGuestSignupRouter({ query, withAuth, pool: {
+      connect: async () => ({
+        query: async sql => {
+          if (/INSERT INTO empresas/.test(sql)) return { rows: [{ id: 3 }] };
+          if (/INSERT INTO usuarios/.test(sql)) {
+            assert.match(sql, /VALUES \(\$1, \$2, 'user', \$3, \$4\)/);
+            return { rows: [owner] };
+          }
+          return { rows: [] };
+        }, release() {},
+      }),
+    } }));
+    app.use('/api/admin', createAdminUsuariosRouter({ query, withAuth,
+      withTransaction: work => work(query, { query: async (sql, params) => {
+        const rows = await query(sql, params);
+        return { rows, rowCount: rows.length };
+      } }),
+    }));
+    await withServer(app, async baseUrl => {
+      const signup = await fetch(`${baseUrl}/api/auth/signup-full?includeToken=1`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: 'owner', password: 'Password123!', empresa_nombre: 'Tenant' }),
+      });
+      assert.equal(signup.status, 200);
+      const { token, user } = await signup.json();
+      assert.equal(user.role, 'user');
+      const send = (method, path = '', body, authToken = token) => fetch(`${baseUrl}/api/admin/usuarios${path}`, {
+        method, headers: { authorization: `Bearer ${authToken}`, 'Content-Type': 'application/json' },
+        ...(body ? { body: JSON.stringify(body) } : {}),
+      });
+      const list = await send('GET', '?empresa_id=999');
+      assert.equal(list.status, 200);
+      assert.ok((await list.json()).every(row => row.empresa_id === 3));
+      const staleToken = jwt.sign({ uid: owner.id, role: 'super', empresa_id: 999 }, process.env.JWT_SECRET || 'dev');
+      for (const authToken of [token, staleToken]) {
+        const create = await send('POST', '', { username: 'operativo', password: 'Password123!', role: 'contable', empresa_id: 999 }, authToken);
+        assert.equal(create.status, 200);
+        assert.equal(calls.filter(call => /INSERT INTO usuarios/.test(call.sql)).at(-1).params[3], 3);
+        for (const role of ['user', 'admin', 'super']) {
+          assert.equal((await send('POST', '', { username: 'privileged', password: 'Password123!', role }, authToken)).status, 403);
+          assert.equal((await send('PUT', '/5', { role }, authToken)).status, 403);
+        }
+        for (const method of ['PUT', 'DELETE']) {
+          for (const id of [1, 2, 3]) assert.equal((await send(method, `/${id}`, method === 'PUT' ? { activo: false } : undefined, authToken)).status, 403);
+          assert.equal((await send(method, '/4', method === 'PUT' ? { activo: false } : undefined, authToken)).status, 404);
+          assert.equal((await send(method, '/5', method === 'PUT' ? { activo: false } : undefined, authToken)).status, 200);
+        }
+        assert.equal((await send('PUT', '/5', { empresa_id: 999 }, authToken)).status, 403);
+      }
+      const writes = calls.filter(call => /^(UPDATE|DELETE)/.test(call.sql));
+      assert.equal(writes.length, 4);
+      for (const write of writes) {
+        assert.equal(write.params.at(-1), 3);
+        assert.match(write.sql, /role NOT IN \('user', 'admin', 'super'\)/);
+      }
+    });
+  }
 });

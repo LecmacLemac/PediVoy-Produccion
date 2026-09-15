@@ -50,58 +50,9 @@ export function createAuthGuestSignupRouter(deps) {
     return res.status(410).json({ error: 'El registro de invitados ya no está disponible' });
   });
 
-  // POST /api/auth/register
-  router.post('/register', withAuth, async (req, res) => {
-    try {
-      const { username, password, telefono } = req.body || {};
-      const userId = req.user.uid; // token actual
-
-      if (!username || !password) return res.status(400).json({ error: 'Datos incompletos' });
-      if (!USERNAME_RE.test(String(username))) return res.status(400).json({ error: 'Usuario inválido' });
-      if (String(password).length < 8) return res.status(400).json({ error: 'La contraseña debe tener al menos 8 caracteres' });
-      if (telefono && !PHONE_RE.test(String(telefono))) return res.status(400).json({ error: 'Teléfono inválido' });
-
-      const check = await query('SELECT es_invitado FROM usuarios WHERE id=$1', [userId]);
-      if (!check.length || !check[0].es_invitado) {
-        return res.status(400).json({ error: 'Este usuario ya está registrado o no existe.' });
-      }
-
-      const salt = await bcrypt.genSalt(10);
-      const hash = await bcrypt.hash(String(password), salt);
-
-      await query(
-        `UPDATE usuarios
-         SET username = $1,
-             password = $2,
-             telefono = $3,
-             es_invitado = FALSE,
-             fecha_expiracion = NULL,
-             role = 'user'
-         WHERE id = $4`,
-        [username, hash, telefono || null, userId]
-      );
-
-      const newToken = jwt.sign(
-        { uid: userId, username, empresa_id: req.user.empresa_id, role: 'user' },
-        process.env.JWT_SECRET || 'dev',
-        { expiresIn: '7d' }
-      );
-
-      res.cookie('token', newToken, {
-        httpOnly: true,
-        sameSite: 'lax',
-        secure: process.env.NODE_ENV === 'production',
-        maxAge: 7 * 24 * 60 * 60 * 1000,
-      });
-
-      const includeToken = String(req.query?.includeToken || req.headers['x-include-token'] || '') === '1';
-      if (includeToken) return res.json({ ok: true, message: 'Cuenta creada con éxito', token: newToken });
-      return res.json({ ok: true, message: 'Cuenta creada con éxito' });
-    } catch (e) {
-      if (e?.message?.includes('unique')) return res.status(400).json({ error: 'El email ya está en uso' });
-      console.error('REGISTER ERROR:', e);
-      return res.status(500).json({ error: 'Error en registro' });
-    }
+  // Conversión legacy retirada, incluso para JWT de invitados existentes.
+  router.post('/register', (_req, res) => {
+    return res.status(410).json({ error: 'El registro de invitados ya no está disponible' });
   });
 
   // ==================================================

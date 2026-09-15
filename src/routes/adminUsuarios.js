@@ -5,9 +5,9 @@ import express from 'express';
 import bcrypt from 'bcryptjs';
 import { withTransaction as dbWithTransaction } from '../db.js';
 
-const OPERATIONAL_ROLES = new Set(['user', 'repartidor', 'referente', 'facturacion', 'contable']);
-const MANAGED_ROLES = new Set(['admin', 'super', ...OPERATIONAL_ROLES]);
-const PRIVILEGED_ROLES = new Set(['admin', 'super']);
+const OPERATIONAL_ROLES = new Set(['repartidor', 'referente', 'facturacion', 'contable']);
+const MANAGED_ROLES = new Set(['user', 'admin', 'super', ...OPERATIONAL_ROLES]);
+const PRIVILEGED_ROLES = new Set(['user', 'admin', 'super']);
 
 function normalizeRoleInput(value) {
   return String(value || '').trim().toLowerCase();
@@ -73,7 +73,7 @@ export function createAdminUsuariosRouter(deps) {
     if (!PRIVILEGED_ROLES.has(role)) return null;
 
     const empresaId = positiveInteger(row.empresa_id);
-    if (role === 'admin' && empresaId === null) return null;
+    if (role !== 'super' && empresaId === null) return null;
     return { id: positiveInteger(row.id), role, empresaId };
   }
 
@@ -127,7 +127,7 @@ export function createAdminUsuariosRouter(deps) {
     let sql = `SELECT id, role, empresa_id, chofer_id, referente_id
                  FROM usuarios
                 WHERE id=$1`;
-    if (actor.role === 'admin') {
+    if (actor.role !== 'super') {
       sql += ' AND empresa_id=$2';
       params.push(actor.empresaId);
     }
@@ -155,7 +155,7 @@ export function createAdminUsuariosRouter(deps) {
         if (activo !== undefined && typeof activo !== 'boolean') {
           return { status: 400, payload: { error: 'activo debe ser booleano' } };
         }
-        if (actor.role === 'admin' && !OPERATIONAL_ROLES.has(role)) {
+        if (actor.role !== 'super' && !OPERATIONAL_ROLES.has(role)) {
           return { status: 403, payload: { error: 'Solo super gestiona roles administrativos' } };
         }
         if (role === 'super' && empresa_id !== undefined && empresa_id !== null && empresa_id !== '') {
@@ -245,10 +245,10 @@ export function createAdminUsuariosRouter(deps) {
         if (requestedRole !== null && !MANAGED_ROLES.has(requestedRole)) {
           return { status: 400, payload: { error: 'Rol inválido' } };
         }
-        if (actor.role === 'admin' && requestedRole !== null && !OPERATIONAL_ROLES.has(requestedRole)) {
+        if (actor.role !== 'super' && requestedRole !== null && !OPERATIONAL_ROLES.has(requestedRole)) {
           return { status: 403, payload: { error: 'Solo super gestiona roles administrativos' } };
         }
-        if (actor.role === 'admin' && body.empresa_id !== undefined
+        if (actor.role !== 'super' && body.empresa_id !== undefined
           && positiveInteger(body.empresa_id) !== actor.empresaId) {
           return { status: 403, payload: { error: 'No puede cambiar la empresa' } };
         }
@@ -256,7 +256,7 @@ export function createAdminUsuariosRouter(deps) {
         const target = await lockTarget(txQuery, actor, userId);
         if (!target) return { status: 404, payload: { error: 'Usuario no encontrado' } };
         const targetRole = canonicalStoredRole(target.role);
-        if (actor.role === 'admin' && !OPERATIONAL_ROLES.has(targetRole)) {
+        if (actor.role !== 'super' && !OPERATIONAL_ROLES.has(targetRole)) {
           return { status: 403, payload: { error: 'Solo super gestiona roles administrativos' } };
         }
         if (targetRole === null && requestedRole === null) {
@@ -267,7 +267,7 @@ export function createAdminUsuariosRouter(deps) {
         let requestedEmpresa = body.empresa_id === undefined
           ? positiveInteger(target.empresa_id)
           : positiveInteger(body.empresa_id);
-        if (actor.role === 'admin') requestedEmpresa = actor.empresaId;
+        if (actor.role !== 'super') requestedEmpresa = actor.empresaId;
 
         if (resultingRole === 'super') {
           if (body.empresa_id !== undefined && body.empresa_id !== null && body.empresa_id !== '') {
@@ -344,8 +344,8 @@ export function createAdminUsuariosRouter(deps) {
 
         values.push(userId);
         let sql = `UPDATE usuarios SET ${sets.join(', ')} WHERE id=$${index++}`;
-        if (actor.role === 'admin') {
-          sql += ` AND empresa_id=$${index++} AND role NOT IN ('admin', 'super')`;
+        if (actor.role !== 'super') {
+          sql += ` AND empresa_id=$${index++} AND role NOT IN ('user', 'admin', 'super')`;
           values.push(actor.empresaId);
         } else {
           sql += ` AND empresa_id IS NOT DISTINCT FROM $${index++}`;
@@ -375,14 +375,14 @@ export function createAdminUsuariosRouter(deps) {
         if (userId === null) return { status: 400, payload: { error: 'Usuario inválido' } };
         const target = await lockTarget(txQuery, actor, userId);
         if (!target) return { status: 404, payload: { error: 'Usuario no encontrado' } };
-        if (actor.role === 'admin' && !OPERATIONAL_ROLES.has(canonicalStoredRole(target.role))) {
+        if (actor.role !== 'super' && !OPERATIONAL_ROLES.has(canonicalStoredRole(target.role))) {
           return { status: 403, payload: { error: 'Solo super gestiona roles administrativos' } };
         }
 
         const params = [userId];
         let sql = 'DELETE FROM usuarios WHERE id=$1';
-        if (actor.role === 'admin') {
-          sql += " AND empresa_id=$2 AND role NOT IN ('admin', 'super')";
+        if (actor.role !== 'super') {
+          sql += " AND empresa_id=$2 AND role NOT IN ('user', 'admin', 'super')";
           params.push(actor.empresaId);
         }
         sql += ' RETURNING id';

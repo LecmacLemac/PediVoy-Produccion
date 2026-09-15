@@ -119,28 +119,21 @@ CREATE TABLE IF NOT EXISTS usuarios (
 );
 
 -- Roles DB: limpiar datos históricos sin elevar privilegios y cerrar escrituras futuras.
+BEGIN;
+ALTER TABLE usuarios DROP CONSTRAINT IF EXISTS usuarios_role_check;
+
 UPDATE usuarios
-SET role = 'user'
+SET role = 'user', activo = false
 WHERE role IS NULL
    OR role NOT IN ('user', 'repartidor', 'referente', 'facturacion', 'contable', 'admin', 'super');
 
 ALTER TABLE usuarios ALTER COLUMN role SET DEFAULT 'user';
 ALTER TABLE usuarios ALTER COLUMN role SET NOT NULL;
 
-DO $$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1
-    FROM pg_constraint
-    WHERE conname = 'usuarios_role_check'
-      AND conrelid = 'usuarios'::regclass
-  ) THEN
-    ALTER TABLE usuarios
-      ADD CONSTRAINT usuarios_role_check
-      CHECK (role IS NOT NULL AND role IN ('user', 'repartidor', 'referente', 'facturacion', 'contable', 'admin', 'super'));
-  END IF;
-END
-$$;
+ALTER TABLE usuarios
+  ADD CONSTRAINT usuarios_role_check
+  CHECK (role IS NOT NULL AND role IN ('user', 'repartidor', 'referente', 'facturacion', 'contable', 'admin', 'super'));
+COMMIT;
 
 -- =========================================================
 -- 5. CHOFERES Y LOGÍSTICA
