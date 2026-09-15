@@ -187,6 +187,7 @@ test('PostgreSQL WhatsApp full normalized identities reject suffix collisions an
     `);
     const source = readFileSync(new URL('../src/handlers.js', import.meta.url), 'utf8')
       .replace(/^import .*;\r?$/gm, '')
+      .replace(/^export (?=(?:async )?function|const|let|class)/gm, '')
       .replace('export default { start };', 'globalThis.resolve = _resolverContextoDesdeTelefono;');
     const calls = [];
     const sandbox = { console, process: { env: {} }, query: async (sql, params) => {
