@@ -449,103 +449,18 @@ ${contenidoSeguro}
 // Contexto por teléfono (rol, empresa, chofer)
 // ────────────────────────────────────────────────────────────────────────────────
 
-const ENTERPRISE_ROLES = new Set(['super', 'repartidor', 'cliente']);
-
-function normalizeEnterpriseRole(role) {
-  const normalized = String(role || '').toLowerCase();
-  const aliased = normalized === 'admin' ? 'super' : normalized;
-  return ENTERPRISE_ROLES.has(aliased) ? aliased : 'cliente';
-}
-
 export function createWhatsAppContextResolver(queryFn = query) {
   return async function resolveWhatsAppContext(numero, { empresaId } = {}) {
-    if (empresaId === undefined) return _resolverContextoDesdeTelefono(numero);
-    if (!Number.isSafeInteger(empresaId) || empresaId <= 0) {
+    if (empresaId !== undefined && !_positiveTenantId(empresaId)) {
       throw new TypeError('empresaId debe ser un entero seguro mayor que cero');
     }
+    const ctx = await _resolverContextoDesdeTelefono(numero, queryFn, empresaId);
+    if (!ctx || empresaId === undefined) return ctx;
 
-    const telRaw = phoneFromWaId(numero);
-    const telDigits = digitsOnly(telRaw);
-    const suffix10 = telDigits.slice(-10) || telDigits;
-    const base = {
-      role: 'cliente',
-      empresa_id: empresaId,
-      chofer_id: null,
-      source: 'desconocido',
-      tenantLocked: true,
-    };
-
-    const users = await queryFn(
-      `SELECT id, role, empresa_id, chofer_id, username
-         FROM usuarios
-        WHERE empresa_id = $1
-          AND activo = TRUE
-          AND (username = $2 OR username = $3)
-        LIMIT 1`,
-      [empresaId, telRaw, suffix10]
-    );
-    const user = users[0];
-    if (user) {
-      let role = normalizeEnterpriseRole(user.role);
-      let choferId = null;
-      if (user.chofer_id != null) {
-        const drivers = await queryFn(
-          `SELECT id
-             FROM choferes
-            WHERE id = $1 AND empresa_id = $2 AND activo = TRUE
-            LIMIT 1`,
-          [user.chofer_id, empresaId]
-        );
-        choferId = drivers[0]?.id ?? null;
-      }
-      if (role === 'repartidor' && choferId == null) role = 'cliente';
-      return {
-        ...base,
-        role,
-        chofer_id: choferId,
-        source: 'usuario_registrado',
-        nombre: user.username,
-      };
-    }
-
-    const drivers = await queryFn(
-      `SELECT id AS chofer_id, empresa_id, nombre
-         FROM choferes
-        WHERE empresa_id = $1
-          AND activo = TRUE
-          AND (regexp_replace(COALESCE(telefono,''),'\\D','','g') LIKE '%' || $2
-            OR regexp_replace(COALESCE(telefono,''),'\\D','','g') LIKE '%' || $3)
-        LIMIT 1`,
-      [empresaId, telDigits, suffix10]
-    );
-    const driver = drivers[0];
-    if (driver?.chofer_id != null) {
-      return {
-        ...base,
-        role: 'repartidor',
-        chofer_id: driver.chofer_id,
-        source: 'chofer',
-        nombre: driver.nombre,
-      };
-    }
-
-    const points = await queryFn(
-      `SELECT empresa_id, cliente
-         FROM puntos_entrega
-        WHERE empresa_id = $1
-          AND regexp_replace(COALESCE(telefono,''),'\\D','','g') LIKE '%' || $2
-        ORDER BY id DESC
-        LIMIT 1`,
-      [empresaId, suffix10]
-    );
-    if (points[0]) {
-      return {
-        ...base,
-        source: 'conocido_historico',
-        nombre: points[0].cliente,
-      };
-    }
-    return base;
+    const fixedIdentity = ctx.source === 'usuario_registrado' || ctx.source === 'chofer';
+    const directSuper = ctx.source === 'usuario_registrado' && ctx.role === 'super';
+    if (fixedIdentity && !directSuper && ctx.empresa_id !== empresaId) return null;
+    return { ...ctx, empresa_id: empresaId, tenantLocked: true };
   };
 }
 
@@ -587,34 +502,65 @@ export function createTenantCommandQueries(queryFn = query) {
 
 const tenantCommandQueries = createTenantCommandQueries(query);
 
-async function _resolverContextoDesdeTelefono(numero) {
+const SYSTEM_USER_ROLES = new Set(['user', 'repartidor', 'referente', 'facturacion', 'contable', 'admin', 'super']);
+
+function _positiveTenantId(value) {
+  return Number.isSafeInteger(value) && value > 0;
+}
+
+function _validSystemIdentity(user) {
+  return user.activo === true && SYSTEM_USER_ROLES.has(user.role) &&
+    (user.role === 'super' ? user.empresa_id === null : _positiveTenantId(user.empresa_id));
+}
+
+function _validDirectSystemIdentity(user) {
+  if (!_validSystemIdentity(user)) return false;
+  if (user.role === 'repartidor') {
+    return _positiveTenantId(user.chofer_id) && user.referente_id === null && user.chofer_valid === true;
+  }
+  if (user.role === 'referente') {
+    return _positiveTenantId(user.referente_id) && user.chofer_id === null && user.referente_valid === true;
+  }
+  return user.chofer_id === null && user.referente_id === null;
+}
+
+async function _resolverContextoDesdeTelefono(numero, queryFn = query, workerEmpresaId) {
   const telRaw = phoneFromWaId(numero);
   const telDigits = digitsOnly(telRaw);
+  if (!telDigits) return null;
   const suffix10 = telDigits.slice(-10) || telDigits;
 
   // ────────────────────────────────────────────────────────────────────────
   // NIVEL 1: USUARIOS DEL SISTEMA (Admins, Super, Login Web)
   // ────────────────────────────────────────────────────────────────────────
   // Prioridad máxima: Si tiene login, respetamos su rol y empresa asignada.
-  const uRows = await query(
+  const uRows = await queryFn(
     `
-    SELECT id, role, empresa_id, chofer_id, username
-    FROM usuarios
-    WHERE username = $1 OR username = $2
-    LIMIT 1
+    SELECT u.id, u.role, u.empresa_id, u.chofer_id, u.referente_id, u.username, u.activo,
+           (c.id IS NOT NULL AND c.activo IS TRUE AND c.empresa_id = u.empresa_id) AS chofer_valid,
+           (r.id IS NOT NULL AND r.activo IS TRUE AND r.deleted_at IS NULL
+            AND r.empresa_id = u.empresa_id) AS referente_valid
+    FROM usuarios u
+    LEFT JOIN choferes c ON c.id = u.chofer_id
+    LEFT JOIN referentes r ON r.id = u.referente_id
+    WHERE regexp_replace(COALESCE(u.username,''),'\\D','','g') = $1
+       OR regexp_replace(COALESCE(u.telefono,''),'\\D','','g') = $1
   `,
-    [telRaw, suffix10]
+    [telDigits]
   );
   
+  // Full sender identity only; duplicate normalized identities must not fall back.
+  if (uRows.length > 1) return null;
   const u = uRows[0];
   if (u) {
-    let role = String(u.role || 'user').toLowerCase();
-    if (role === 'admin') role = 'super';
+    // Keep invalid matches visible so they cannot fall through to another identity.
+    if (!_validDirectSystemIdentity(u)) return null;
+    const role = u.role;
     
     // Si el usuario no tiene empresa fija (ej. super), buscamos una default para que no rompa
     let empresaIdFinal = u.empresa_id;
-    if (!empresaIdFinal) {
-        const empRow = (await query(`SELECT id FROM empresas ORDER BY id LIMIT 1`))[0];
+    if (role === 'super' && workerEmpresaId === undefined) {
+        const empRow = (await queryFn(`SELECT id FROM empresas ORDER BY id LIMIT 1`))[0];
         empresaIdFinal = empRow?.id || 1;
     }
 
@@ -622,6 +568,7 @@ async function _resolverContextoDesdeTelefono(numero) {
         role, 
         empresa_id: empresaIdFinal, 
         chofer_id: u.chofer_id || null,
+        referente_id: u.referente_id,
         source: 'usuario_registrado',
         nombre: u.username
     };
@@ -630,31 +577,30 @@ async function _resolverContextoDesdeTelefono(numero) {
   // ────────────────────────────────────────────────────────────────────────
   // NIVEL 2: REPARTIDORES / CHOFERES
   // ────────────────────────────────────────────────────────────────────────
-  // Si no es admin, chequeamos si es un chofer operando por WhatsApp.
-  const cRows = await query(
+  // Si no hay usuario por teléfono, chequeamos si es un chofer.
+  const cRows = await queryFn(
     `
-    SELECT id AS chofer_id, empresa_id, nombre
+    SELECT id AS chofer_id, empresa_id, nombre, activo
     FROM choferes
-    WHERE regexp_replace(COALESCE(telefono,''),'\\D','','g') LIKE '%' || $1
-       OR regexp_replace(COALESCE(telefono,''),'\\D','','g') LIKE '%' || $2
-    LIMIT 1
+    WHERE regexp_replace(COALESCE(telefono,''),'\\D','','g') = $1
   `,
-    [telDigits, suffix10]
+    [telDigits]
   );
   
+  if (cRows.length > 1) return null;
   const c = cRows[0];
-  if (c?.chofer_id) {
+  if (c) {
+    if (c.activo !== true || !_positiveTenantId(c.chofer_id) || !_positiveTenantId(c.empresa_id)) return null;
     // Verificamos si tiene un usuario asociado para afinar el rol, sino es 'repartidor'
-    const u2Rows = await query(
-      `SELECT role FROM usuarios WHERE chofer_id = $1 LIMIT 1`,
+    const u2Rows = await queryFn(
+      `SELECT role, empresa_id, activo, chofer_id, referente_id FROM usuarios WHERE chofer_id = $1`,
       [c.chofer_id]
     );
-    let role = u2Rows[0]?.role
-      ? String(u2Rows[0].role).toLowerCase()
-      : 'repartidor';
-    
-    if (role === 'admin') role = 'super';
-    if (role !== 'super' && role !== 'repartidor') role = 'repartidor';
+    // Every linked row must describe this exact driver; never inherit privileges.
+    if (u2Rows.length > 1 || u2Rows.some(linkedUser => !_validSystemIdentity(linkedUser) ||
+        linkedUser.role !== 'repartidor' || linkedUser.empresa_id !== c.empresa_id ||
+        linkedUser.chofer_id !== c.chofer_id || linkedUser.referente_id !== null)) return null;
+    const role = 'repartidor';
 
     return { 
         role, 
@@ -670,15 +616,16 @@ async function _resolverContextoDesdeTelefono(numero) {
   // ────────────────────────────────────────────────────────────────────────
   // Buscamos si este teléfono ya hizo un pedido antes.
   // Ordenamos por ID DESC para tomar la ÚLTIMA empresa a la que le compró.
-  const pRows = await query(
+  const pRows = await queryFn(
     `
     SELECT empresa_id, cliente
     FROM puntos_entrega
     WHERE regexp_replace(COALESCE(telefono,''),'\\D','','g') LIKE '%' || $1
+      ${workerEmpresaId === undefined ? '' : 'AND empresa_id = $2'}
     ORDER BY id DESC
     LIMIT 1
     `,
-    [suffix10]
+    [suffix10, ...(workerEmpresaId === undefined ? [] : [workerEmpresaId])]
   );
 
   const p = pRows[0];
@@ -697,8 +644,10 @@ async function _resolverContextoDesdeTelefono(numero) {
   // ────────────────────────────────────────────────────────────────────────
   // No sabemos quién es. Asignamos una empresa por defecto (generalmente la primera)
   // y marcamos source='desconocido' para activar el "Buscador de Empresas" en la IA.
-  const empRow = (await query(`SELECT id FROM empresas ORDER BY id LIMIT 1`))[0];
-  const empresa_id = empRow?.id || 1;
+  const empRow = workerEmpresaId === undefined
+    ? (await queryFn(`SELECT id FROM empresas ORDER BY id LIMIT 1`))[0]
+    : null;
+  const empresa_id = workerEmpresaId ?? empRow?.id ?? 1;
   
   return { 
       role: 'cliente', 
@@ -1925,6 +1874,7 @@ function start(client, options = {}) {
         numero,
         hasEmpresaId ? { empresaId: forcedEmpresaId } : {}
       );
+      if (!ctx) return;
       const { role, empresa_id, chofer_id } = ctx;
       const contenidoLimpio = contenido.toLowerCase();
 
@@ -2109,6 +2059,10 @@ function start(client, options = {}) {
 
       // Resumen (super / repartidor) — CON CORRECCIÓN DE SEGURIDAD
       if (contenidoLimpio.startsWith('resumen')) {
+        if (role !== 'super' && role !== 'repartidor') {
+          await client.sendMessage(numero, '⛔ No tenés permisos para ver el resumen.');
+          return;
+        }
         // Bloquear si es repartidor intentando ver a otro chofer
         if (role === 'repartidor' && /\bchofer\s+\S+/.test(contenidoLimpio)) {
           await client.sendMessage(

@@ -127,6 +127,13 @@ SET role = 'user', activo = false
 WHERE role IS NULL
    OR role NOT IN ('user', 'repartidor', 'referente', 'facturacion', 'contable', 'admin', 'super');
 
+-- Desactivar identidades cuyo rol no corresponde a su alcance de empresa.
+UPDATE usuarios
+SET activo = false
+WHERE (role = 'super' AND empresa_id IS NOT NULL)
+   OR (role IN ('user', 'repartidor', 'referente', 'facturacion', 'contable', 'admin')
+       AND (empresa_id IS NULL OR empresa_id <= 0));
+
 ALTER TABLE usuarios ALTER COLUMN role SET DEFAULT 'user';
 ALTER TABLE usuarios ALTER COLUMN role SET NOT NULL;
 
@@ -497,6 +504,28 @@ CREATE TABLE IF NOT EXISTS referentes (
   updated_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   deleted_at             TIMESTAMPTZ
 );
+
+-- Identity-link quarantine: run only after choferes and referentes exist.
+BEGIN;
+UPDATE usuarios u
+SET activo = false
+WHERE CASE
+  WHEN u.role = 'repartidor' THEN
+    u.chofer_id IS NULL OR u.chofer_id <= 0 OR u.referente_id IS NOT NULL
+    OR NOT EXISTS (
+      SELECT 1 FROM choferes c
+      WHERE c.id = u.chofer_id AND c.empresa_id = u.empresa_id AND c.activo IS TRUE
+    )
+  WHEN u.role = 'referente' THEN
+    u.referente_id IS NULL OR u.referente_id <= 0 OR u.chofer_id IS NOT NULL
+    OR NOT EXISTS (
+      SELECT 1 FROM referentes r
+      WHERE r.id = u.referente_id AND r.empresa_id = u.empresa_id
+        AND r.activo IS TRUE AND r.deleted_at IS NULL
+    )
+  ELSE u.chofer_id IS NOT NULL OR u.referente_id IS NOT NULL
+END;
+COMMIT;
 
 CREATE UNIQUE INDEX IF NOT EXISTS referentes_empresa_codigo_uniq
   ON referentes (empresa_id, LOWER(codigo))

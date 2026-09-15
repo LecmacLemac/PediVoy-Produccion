@@ -108,7 +108,7 @@ unset BOOTSTRAP_SUPER_USERNAME BOOTSTRAP_SUPER_PASSWORD
 
 El comando crea un único `super` global activo (`empresa_id=NULL`). Repetirlo con credenciales de entorno válidas termina correctamente sin cambios si ya existe exactamente un super canónico activo y válido; no cambia su contraseña. Variantes como `SUPER` o ` super `, cuentas super inactivas, múltiples super o datos inválidos hacen que aborte. Ante un rechazo, revisar esas filas antes de reintentar. No se ejecuta automáticamente con `start` ni con `init-db`.
 
-La migración deja inactivas las cuentas con rol NULL, `guest` o no canónico al convertir su rol a `user`; requieren revisión explícita antes de reactivarlas. Los roles canónicos y su estado activo se conservan. El alta de empresas sigue en `signup-full`; `/api/auth/guest` y `/api/auth/register` están retirados (410).
+La migración deja inactivas las cuentas con rol NULL, `guest` o no canónico al convertir su rol a `user`; requieren revisión explícita antes de reactivarlas. Las filas con roles canónicos y estado de tenant o vínculos incoherente se desactivan; las identidades coherentes conservan su estado activo o inactivo. El alta de empresas sigue en `signup-full`; `/api/auth/guest` y `/api/auth/register` están retirados (410).
 
 Las pruebas de integración SQL usan un clúster PostgreSQL temporal dentro del worktree, sin usar `DATABASE_URL`. Requieren los binarios de servidor (`pg_config`, `initdb`, `pg_ctl`) y un usuario no root; si faltan, Node informa esas pruebas como omitidas.
 

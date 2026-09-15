@@ -20,7 +20,7 @@ function scriptedQuery(respond) {
   return { query, calls };
 }
 
-test('worker empresarial no hereda super de otro tenant', async () => {
+test('worker empresarial limita clientes desconocidos al tenant', async () => {
   const db = scriptedQuery((sql) => {
     if (sql.includes('FROM usuarios')) return [];
     if (sql.includes('FROM choferes')) return [];
@@ -38,13 +38,17 @@ test('worker empresarial no hereda super de otro tenant', async () => {
     source: 'desconocido',
     tenantLocked: true,
   });
-  assert.ok(db.calls.every(({ params }) => params.includes(7)));
+  const identities = db.calls.filter(({ sql }) => /FROM usuarios|FROM choferes/.test(sql));
+  assert.ok(identities.every(({ params }) => params[0] === '5491112345678'));
+  const historical = db.calls.find(({ sql }) => /FROM puntos_entrega/.test(sql));
+  assert.match(historical.sql, /empresa_id = \$2/);
+  assert.deepEqual(historical.params, ['1112345678', 7]);
 });
 
-test('worker empresarial reconoce super activo del tenant', async () => {
+test('worker empresarial reconoce únicamente super global activo', async () => {
   const db = scriptedQuery((sql, params) => {
-    if (sql.includes('FROM usuarios') && params[0] === 7) {
-      return [{ id: 1, role: 'super', empresa_id: 7, chofer_id: null, username: PHONE.replace('@c.us', '') }];
+    if (sql.includes('FROM usuarios') && params[0] === '5491112345678') {
+      return [{ id: 1, role: 'super', activo: true, empresa_id: null, chofer_id: null, referente_id: null, username: PHONE.replace('@c.us', '') }];
     }
     throw new Error(`consulta inesperada: ${sql}`);
   });
@@ -104,7 +108,7 @@ test('worker empresarial reconoce chofer activo del tenant', async () => {
   const db = scriptedQuery((sql) => {
     if (sql.includes('FROM usuarios')) return [];
     if (sql.includes('FROM choferes')) {
-      return [{ chofer_id: 70, empresa_id: 7, nombre: 'Chofer 7' }];
+      return [{ chofer_id: 70, empresa_id: 7, nombre: 'Chofer 7', activo: true }];
     }
     throw new Error(`consulta inesperada: ${sql}`);
   });
@@ -116,10 +120,10 @@ test('worker empresarial reconoce chofer activo del tenant', async () => {
   assert.equal(ctx.empresa_id, 7);
 });
 
-test('repartidor con chofer cross-tenant degrada a cliente', async () => {
+test('repartidor con chofer cross-tenant detiene la resolución', async () => {
   const db = scriptedQuery((sql) => {
     if (sql.includes('FROM usuarios')) {
-      return [{ role: 'repartidor', empresa_id: 7, chofer_id: 80, username: 'usuario7' }];
+      return [{ role: 'repartidor', activo: true, empresa_id: 7, chofer_id: 80, referente_id: null, chofer_valid: false, username: 'usuario7' }];
     }
     if (sql.includes('FROM choferes')) return [];
     throw new Error(`consulta inesperada: ${sql}`);
@@ -127,8 +131,8 @@ test('repartidor con chofer cross-tenant degrada a cliente', async () => {
 
   const ctx = await createWhatsAppContextResolver(db.query)(PHONE, { empresaId: 7 });
 
-  assert.equal(ctx.role, 'cliente');
-  assert.equal(ctx.chofer_id, null);
+  assert.equal(ctx, null);
+  assert.equal(db.calls.length, 1);
 });
 
 test('roles fuera de allowlist no reciben privilegios empresariales', async () => {
@@ -141,17 +145,20 @@ test('roles fuera de allowlist no reciben privilegios empresariales', async () =
 
   const ctx = await createWhatsAppContextResolver(db.query)(PHONE, { empresaId: 7 });
 
-  assert.equal(ctx.role, 'cliente');
+  assert.equal(ctx, null);
+  assert.equal(db.calls.length, 1);
 });
 
-test('resolución empresarial exige usuario y chofer activos', async () => {
+test('resolución empresarial consulta todas las identidades exactas incluyendo inactivas', async () => {
   const db = scriptedQuery(() => []);
 
   await createWhatsAppContextResolver(db.query)(PHONE, { empresaId: 7 });
 
   const identityQueries = db.calls.filter(({ sql }) => /FROM (usuarios|choferes)/.test(sql));
   assert.equal(identityQueries.length, 2);
-  assert.ok(identityQueries.every(({ sql }) => /activo\s*=\s*TRUE/.test(sql)));
+  assert.ok(identityQueries.every(({ sql }) => /activo/.test(sql)));
+  assert.ok(identityQueries.every(({ sql }) => !/LIMIT|LIKE|WHERE.*activo\s*=/s.test(sql)));
+  assert.ok(identityQueries.every(({ sql, params }) => /regexp_replace/.test(sql) && params[0] === '5491112345678'));
 });
 
 test('canal General conserva selección de empresa por texto', () => {
@@ -168,3 +175,34 @@ test('cliente desconocido empresarial no dispara búsqueda global de empresas', 
   );
   assert.equal(shouldSuggestGlobalCompanies({ source: 'desconocido' }), true);
 });
+
+for (const empresaId of [undefined, 7]) {
+  for (const identity of [
+    { role: 'super', empresa_id: 7 },
+    { role: 'SUPER', empresa_id: null },
+    { role: ' super ', empresa_id: null },
+    { role: 'admin', empresa_id: null },
+    { role: 'user', empresa_id: 7, activo: false },
+  ]) {
+    test(`resolver compartido rechaza ${JSON.stringify(identity)} con worker=${empresaId}`, async () => {
+      const db = scriptedQuery((sql) => {
+        assert.match(sql, /FROM usuarios/);
+        return [{ activo: true, chofer_id: null, referente_id: null, ...identity }];
+      });
+      assert.equal(await createWhatsAppContextResolver(db.query)(PHONE, { empresaId }), null);
+      assert.equal(db.calls.length, 1, 'Una identidad inválida no permite fallback');
+    });
+  }
+}
+
+for (const role of ['admin', 'user', 'facturacion', 'contable']) {
+  test(`worker mantiene ${role} en su tenant sin elevar privilegios`, async () => {
+    const db = scriptedQuery(() => [{ role, activo: true, empresa_id: 7, chofer_id: null, referente_id: null }]);
+    const resolve = createWhatsAppContextResolver(db.query);
+    const ctx = await resolve(PHONE, { empresaId: 7 });
+    assert.equal(ctx.role, role);
+    assert.equal(ctx.empresa_id, 7);
+    assert.equal(ctx.tenantLocked, true);
+    assert.equal(await resolve(PHONE, { empresaId: 8 }), null);
+  });
+}

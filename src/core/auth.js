@@ -21,14 +21,30 @@ export function createWithAuth({ queryFn = defaultQuery, jwtSecret = JWT_SECRET 
         return res.status(401).json({ error: 'Token inválido' });
       }
       const rows = await queryFn(
-        `SELECT id, role, empresa_id, chofer_id, referente_id, activo
-           FROM usuarios WHERE id = $1 LIMIT 1`,
+        `SELECT u.id, u.role, u.empresa_id, u.chofer_id, u.referente_id, u.activo,
+                (c.id IS NOT NULL AND c.activo IS TRUE AND c.empresa_id = u.empresa_id) AS chofer_valid,
+                (r.id IS NOT NULL AND r.activo IS TRUE AND r.deleted_at IS NULL
+                 AND r.empresa_id = u.empresa_id) AS referente_valid
+           FROM usuarios u
+           LEFT JOIN choferes c ON c.id = u.chofer_id
+           LEFT JOIN referentes r ON r.id = u.referente_id
+          WHERE u.id = $1 LIMIT 1`,
         [claims.uid]
       );
       const user = rows?.[0];
       if (!user || user.activo !== true || !USER_ROLES.has(user.role)) {
         return res.status(401).json({ error: 'Token inválido' });
       }
+      const validTenant = user.role === 'super'
+        ? user.empresa_id === null
+        : Number.isSafeInteger(user.empresa_id) && user.empresa_id > 0;
+      const positiveId = value => Number.isSafeInteger(value) && value > 0;
+      const validLinks = user.role === 'repartidor'
+        ? positiveId(user.chofer_id) && user.referente_id === null && user.chofer_valid === true
+        : user.role === 'referente'
+          ? positiveId(user.referente_id) && user.chofer_id === null && user.referente_valid === true
+          : user.chofer_id === null && user.referente_id === null;
+      if (!validTenant || !validLinks) return res.status(401).json({ error: 'Token inválido' });
       req.user = {
         ...claims,
         uid: user.id,
