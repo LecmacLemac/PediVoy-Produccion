@@ -144,7 +144,6 @@
         <div class="wrap">
             <div class="navbar">
                 <div class="brand">
-                    <img src="logo.png" alt="Fuegin Logo" class="brand-logo">
                     Fuegin
                 </div>
                 <nav>
@@ -179,7 +178,7 @@
     </footer>
     <script>
         const empresaId = 8;
-        const FALLBACK_SVG_DATA_URI = 'data:image/svg+xml;base64,...'; // Reemplazar con un SVG válido.
+        const FALLBACK_SVG_DATA_URI = 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22200%22 height=%22200%22%3E%3Crect width=%22200%22 height=%22200%22 fill=%22%23edf5f3%22/%3E%3C/svg%3E';
 
         async function fetchProductos() {
             try {
@@ -192,25 +191,51 @@
             }
         }
 
+        function safeProductImage(value) {
+            try {
+                const url = new URL(String(value || ''), location.origin);
+                if (value && ['https:', 'http:'].includes(url.protocol) && !url.username && !url.password) return url.href;
+            } catch {}
+            return FALLBACK_SVG_DATA_URI;
+        }
+
         function renderProductos(productos) {
-            if (!productos.length) {
-                document.getElementById('productGrid').innerHTML = '<p>No hay productos disponibles actualmente.</p>';
+            const grid = document.getElementById('productGrid');
+            grid.replaceChildren();
+            if (!Array.isArray(productos) || !productos.length) {
+                const empty = document.createElement('p');
+                empty.textContent = 'No hay productos disponibles actualmente.';
+                grid.append(empty);
                 return;
             }
-            productos.sort((a, b) => a.etiqueta ? -1 : 1).sort((a, b) => a.nombre.localeCompare(b.nombre));
-            const productGrid = document.getElementById('productGrid');
-            productGrid.innerHTML = productos.map(producto => {
-                const imageUrl = producto.imagen_promo || producto.imagen || FALLBACK_SVG_DATA_URI;
-                return `<div class="product-card" onclick="window.location.href='/pedidos/index.html?empresa_id=${empresaId}&add=${producto.id}'">
-                    <div class="product-image" style="background-image: url('${imageUrl}');"></div>
-                    <div class="product-info">
-                        ${producto.etiqueta ? `<span class="product-badge">${producto.etiqueta}</span>` : ''}
-                        <h3>${producto.nombre}</h3>
-                        <p>${producto.descripcion || 'Descripción no disponible'}</p>
-                        <span class="product-price">ARS ${new Intl.NumberFormat('es-AR').format(producto.precio)}</span>
-                    </div>
-                </div>`;
-            }).join('');
+            [...productos].sort((a, b) => String(a.nombre || '').localeCompare(String(b.nombre || ''))).forEach(producto => {
+                const card = document.createElement('a');
+                card.className = 'product-card';
+                const target = new URL('/pedidos/index.html', location.origin);
+                target.searchParams.set('empresa_id', empresaId);
+                target.searchParams.set('add', String(producto.id));
+                card.href = target.href;
+                const image = document.createElement('img');
+                image.className = 'product-image';
+                image.alt = String(producto.nombre || 'Producto');
+                image.src = safeProductImage(producto.imagen_promo || producto.imagen);
+                image.addEventListener('error', () => { image.src = FALLBACK_SVG_DATA_URI; }, { once: true });
+                const info = document.createElement('div');
+                info.className = 'product-info';
+                for (const [tag, className, value] of [
+                    ['span', 'product-badge', producto.etiqueta || ''],
+                    ['h3', '', producto.nombre || ''],
+                    ['p', '', producto.descripcion || 'Descripción no disponible'],
+                    ['span', 'product-price', 'ARS ' + new Intl.NumberFormat('es-AR').format(Number(producto.precio) || 0)]
+                ]) {
+                    const element = document.createElement(tag);
+                    element.className = className;
+                    element.textContent = String(value);
+                    info.append(element);
+                }
+                card.append(image, info);
+                grid.append(card);
+            });
         }
 
         function showToast(msg) {

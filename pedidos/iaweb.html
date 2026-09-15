@@ -440,12 +440,13 @@
         <button onclick="setDevice('tablet', this)" title="Tablet"><i class="fa-solid fa-tablet-screen-button"></i></button>
         <button onclick="setDevice('mobile', this)" title="Móvil"><i class="fa-solid fa-mobile-screen-button"></i></button>
       </div>
-      <iframe id="previewFrame" class="desktop"></iframe>
+      <iframe id="previewFrame" class="desktop" sandbox="allow-scripts"></iframe>
     </div>
   </div>
 
   <div id="toast" class="toast"></div>
 
+  <script src="/pedidos/landing-preview.js"></script>
   <script>
     // --- ESTADO GLOBAL ---
     let generatedHtml = '';
@@ -589,7 +590,7 @@
 
         generatedHtml = '';
         document.getElementById('btnSave').disabled = true;
-        document.getElementById('previewFrame').srcdoc = data.html || '';
+        await showLandingPreview(data.html || '', currentEmpresa);
         toast('Vista previa de plantilla cargada');
       } catch (e) {
         console.error(e);
@@ -789,11 +790,12 @@
       const infoBox = document.getElementById('configInfo');
       const ctx = buildEmpresaContext(empresa);
       
-      // Slug y URL real publicada (archivo por ID: empresa_<id>.html)
+      // URL canónica por slug de la empresa
       const slug = empresa.landing_slug || '(sin slug)';
-      const landingPath = `/pages/empresa_${Number(empresa.id)}.html`;
+      const landingPath = /^[a-z0-9_-]+$/.test(empresa.landing_slug || '')
+        ? `/landing/${encodeURIComponent(empresa.landing_slug)}` : '';
       const urlPreview = landingPath;
-      const urlText = `${window.location.origin}${landingPath}`;
+      const urlText = landingPath ? `${window.location.origin}${landingPath}` : 'Configurá un slug válido antes de publicar';
 
       const safePreview = safeHttpUrl(urlPreview) || '#';
       infoBox.innerHTML = `
@@ -885,8 +887,7 @@
         generatedHtml = data.html;
         
         // Preview
-        const iframe = document.getElementById('previewFrame');
-        iframe.srcdoc = generatedHtml;
+        await showLandingPreview(generatedHtml, currentEmpresa);
 
         document.getElementById('btnSave').disabled = false;
         toast('✨ Diseño generado para Empresa #' + currentEmpresaId);

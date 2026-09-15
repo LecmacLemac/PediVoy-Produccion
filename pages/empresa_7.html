@@ -655,34 +655,20 @@
     function $(id){ return document.getElementById(id); }
 
     function sanitizeSlug(value){
-      return String(value || '')
-        .trim()
-        .toLowerCase()
-        .replace(/[^a-z0-9-_]/g,'');
+      const slug = String(value || '').trim().toLowerCase();
+      return /^[a-z0-9_-]+$/.test(slug) ? slug : null;
     }
 
     function resolveSlug(){
-      const params = new URLSearchParams(location.search);
-      const querySlug = params.get('slug');
-      if(querySlug) return sanitizeSlug(querySlug);
-
       const parts = location.pathname.split('/').filter(Boolean);
-
-      const landingIndex = parts.indexOf('landing');
-      if(landingIndex !== -1 && parts[landingIndex + 1]){
-        return sanitizeSlug(parts[landingIndex + 1]);
+      if (['landing', 'l'].includes(parts[0])) {
+        return parts.length === 2 ? sanitizeSlug(parts[1]) : null;
       }
-
-      const lIndex = parts.indexOf('l');
-      if(lIndex !== -1 && parts[lIndex + 1]){
-        return sanitizeSlug(parts[lIndex + 1]);
-      }
-
+      if (parts[0] === 'pages') return null;
+      const params = new URLSearchParams(location.search);
+      if (params.has('slug')) return sanitizeSlug(params.get('slug'));
       const host = location.hostname.split('.');
-      if(host.length >= 3 && !['www','app','pedidos'].includes(host[0])){
-        return sanitizeSlug(host[0]);
-      }
-
+      if(host.length >= 3 && !['www','app','pedidos'].includes(host[0])) return sanitizeSlug(host[0]);
       return null;
     }
 

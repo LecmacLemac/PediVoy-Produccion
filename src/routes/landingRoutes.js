@@ -71,7 +71,7 @@ export function registerLandingRoutes(app, deps) {
         const byId = getEmpresaLandingPath(empresaId);
         if (fs.existsSync(byId)) return byId;
       } else {
-        const cleanSlug = slugParamRaw.replace(/[^a-z0-9\-]/g, '');
+        const cleanSlug = /^[a-z0-9_-]+$/.test(slugParamRaw) ? slugParamRaw : '';
         if (cleanSlug) {
           try {
             const rows = await query(
@@ -93,6 +93,8 @@ export function registerLandingRoutes(app, deps) {
       }
     }
 
+    if (req.query?.slug !== undefined) return null;
+
     // B) ?empresa_id=123
     const empresaIdParam = (req.query?.empresa_id || '').toString().trim();
     if (empresaIdParam && /^\d+$/.test(empresaIdParam)) {
@@ -100,6 +102,8 @@ export function registerLandingRoutes(app, deps) {
       const byEmpresaParam = getEmpresaLandingPath(empresaId);
       if (fs.existsSync(byEmpresaParam)) return byEmpresaParam;
     }
+
+    if (req.query?.empresa_id !== undefined) return null;
 
     // C) Dominio
     const host = normalizeHost(req.headers['x-forwarded-host'] || req.headers.host);
@@ -133,6 +137,7 @@ export function registerLandingRoutes(app, deps) {
     try {
       const customPage = await resolvePagePath(req);
       if (customPage) return res.sendFile(customPage);
+      if (req.query?.slug !== undefined || req.query?.empresa_id !== undefined) return res.sendStatus(404);
       if (DEFAULT_INDEX) return res.sendFile(DEFAULT_INDEX);
       return res.redirect('/pedidos/login.html');
     } catch (err) {
@@ -140,6 +145,35 @@ export function registerLandingRoutes(app, deps) {
       return res.status(500).send('Error interno en ruteo');
     }
   }
+
+  // Template resources belong to the editor, never to tenant resolution.
+  const templateDir = path.join(PAGES_DIR, 'landing');
+  const templateNames = fs.existsSync(templateDir) ? fs.readdirSync(templateDir).filter(name => name.endsWith('.html')) : [];
+  for (const name of templateNames) {
+    app.get([`/pages/${name}`, `/pages/landing/${name}`], (_req, res) => res.redirect('/pedidos/iaweb.html'));
+  }
+  app.use('/pages/landing', (_req, res) => res.sendStatus(404));
+
+  app.get('/pages/empresa_:id.html', async (req, res) => {
+    try {
+      const rows = await query('SELECT landing_slug FROM empresas WHERE id = $1 LIMIT 1', [Number(req.params.id)]);
+      const slug = rows?.[0]?.landing_slug;
+      if (!/^[a-z0-9_-]+$/.test(slug || '')) return res.sendStatus(404);
+      return res.redirect(`/landing/${encodeURIComponent(slug)}`);
+    } catch { return res.sendStatus(500); }
+  });
+  app.get(['/landing/:slug', '/l/:slug'], async (req, res) => {
+    const slug = req.params.slug.toLowerCase();
+    if (!/^[a-z0-9_-]+$/.test(slug)) return res.sendStatus(404);
+    try {
+      const rows = await query('SELECT id FROM empresas WHERE LOWER(landing_slug) = $1 LIMIT 1', [slug]);
+      if (!rows?.length) return res.sendStatus(404);
+      const file = getEmpresaLandingPath(rows[0].id);
+      if (!fs.existsSync(file)) return res.sendStatus(404);
+      return res.sendFile(file);
+    } catch { return res.sendStatus(500); }
+  });
+  app.use(['/landing', '/l'], (_req, res) => res.sendStatus(404));
 
   // Static de /pages
   if (fs.existsSync(PAGES_DIR)) {
@@ -189,6 +223,10 @@ export function registerLandingRoutes(app, deps) {
             return res.status(404).json({ error: 'Empresa no encontrada' });
           }
 
+          if (!/^[a-z0-9_-]+$/.test(rows[0].landing_slug || '')) {
+            return res.status(409).json({ error: 'Configurá un slug válido antes de publicar' });
+          }
+
           const html = req.file.buffer.toString('utf8');
 
           if (!fs.existsSync(PAGES_DIR)) {
@@ -202,8 +240,8 @@ export function registerLandingRoutes(app, deps) {
 
           return res.json({
             ok: true,
-            slug: rows[0].landing_slug || '(sin slug)',
-            path: `/pages/empresa_${requestedId}.html`,
+            slug: rows[0].landing_slug,
+            path: `/landing/${encodeURIComponent(rows[0].landing_slug)}`,
           });
         } catch (err) {
           console.error('Error subiendo landing html:', err);

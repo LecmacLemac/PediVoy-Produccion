@@ -17,17 +17,19 @@ export function isLicenseExpired(planEstado, planVencimiento, nowMs = Date.now()
   return estado === 'expired' || (Number.isFinite(vencMs) && vencMs < nowMs);
 }
 
-function isLocalhostRequest(req) {
-  const rawHost = String(req.hostname || req.headers?.host || '').toLowerCase();
+function isLoopbackHost(req) {
+  const rawHost = String(req?.hostname || req?.headers?.host || '').toLowerCase();
   const host = rawHost.startsWith('[')
     ? rawHost.slice(1, rawHost.indexOf(']'))
     : rawHost.split(':')[0];
   return host === 'localhost' || host === '127.0.0.1' || host === '::1';
 }
 
+// Local HTTP in production mode requires both an explicit operator setting
+// and a loopback request. Remote hosts always retain Secure cookies.
 export function shouldUseSecureCookie(req) {
   if (process.env.NODE_ENV !== 'production') return false;
-  return !isLocalhostRequest(req);
+  return !(process.env.LOCAL_HTTP_DEV === 'true' && isLoopbackHost(req));
 }
 
 function getClientIp(req) {

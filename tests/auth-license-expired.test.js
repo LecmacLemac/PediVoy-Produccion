@@ -32,14 +32,21 @@ test('isLicenseExpired detecta estado expired y vencimiento por fecha', () => {
   assert.equal(isLicenseExpired('active', null, now), false);
 });
 
-test('cookie segura se desactiva solo para localhost en production local', () => {
+test('cookie segura requiere configuración local explícita', () => {
   const oldNodeEnv = process.env.NODE_ENV;
+  const oldLocal = process.env.LOCAL_HTTP_DEV;
+  delete process.env.LOCAL_HTTP_DEV;
   process.env.NODE_ENV = 'production';
   try {
-    assert.equal(shouldUseSecureCookie({ hostname: 'localhost', headers: {} }), false);
-    assert.equal(shouldUseSecureCookie({ hostname: '127.0.0.1', headers: {} }), false);
+    assert.equal(shouldUseSecureCookie({ hostname: 'localhost', headers: {} }), true);
+    assert.equal(shouldUseSecureCookie({ hostname: '127.0.0.1', headers: {} }), true);
     assert.equal(shouldUseSecureCookie({ hostname: 'pedivoy.example.com', headers: {} }), true);
+    process.env.LOCAL_HTTP_DEV = 'true';
+    assert.equal(shouldUseSecureCookie({ hostname: 'localhost' }), false);
+    assert.equal(shouldUseSecureCookie({ hostname: '127.0.0.1' }), false);
+    assert.equal(shouldUseSecureCookie({ hostname: 'pedivoy.example.com' }), true);
   } finally {
+    if (oldLocal === undefined) delete process.env.LOCAL_HTTP_DEV; else process.env.LOCAL_HTTP_DEV = oldLocal;
     process.env.NODE_ENV = oldNodeEnv;
   }
 });

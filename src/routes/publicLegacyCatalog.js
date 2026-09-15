@@ -87,10 +87,13 @@ export function createPublicLegacyCatalogRouter({ query }) {
         }
       }
 
+      if (rawId !== undefined) return res.status(404).json({ error: 'Empresa no encontrada' });
+
       const rawSlug = (req.query.slug || '').toString().trim().toLowerCase();
       let host = (req.headers.host || '').split(':')[0].trim().toLowerCase();
       if (host.startsWith('www.')) host = host.slice(4);
 
+      if (req.query.slug !== undefined && !/^[a-z0-9_-]+$/.test(rawSlug)) return res.status(404).json({ error: 'Slug inválido' });
       let row = null;
       if (rawSlug) {
         const rows = await query(
@@ -103,7 +106,7 @@ export function createPublicLegacyCatalogRouter({ query }) {
         if (rows.length) row = rows[0];
       }
 
-      if (!row && host) {
+      if (!row && !rawSlug && host) {
         const rows = await query(
           `SELECT id, nombre, config_operativa, landing_domain, landing_slug, logo_url
            FROM empresas
@@ -111,16 +114,6 @@ export function createPublicLegacyCatalogRouter({ query }) {
            LIMIT 1`,
           [host]
         );
-        if (rows.length) row = rows[0];
-      }
-
-      if (!row) {
-        const rows = await query(`
-          SELECT id, nombre, config_operativa, landing_domain, landing_slug, logo_url
-          FROM empresas
-          ORDER BY id ASC
-          LIMIT 1
-        `);
         if (rows.length) row = rows[0];
       }
 
@@ -139,13 +132,7 @@ export function createPublicLegacyCatalogRouter({ query }) {
       });
     } catch (e) {
       console.error('PUBLIC CONFIG ERROR', e);
-      return res.json({
-        empresa_id: 1,
-        nombre_empresa: null,
-        nombre: null,
-        pais: 'Argentina',
-        provincia: 'Córdoba',
-      });
+      return res.status(500).json({ error: 'No se pudo resolver la empresa' });
     }
   });
 
