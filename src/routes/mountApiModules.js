@@ -108,7 +108,7 @@ export function mountApiModules(app, deps) {
   );
 
   app.use('/api/entrega', createEntregaConfigRouter({ query, withAuth, resolveEmpresaId }));
-  app.use('/api/ai', createAiSiteBuilderRouter({ query, withAuth, isSuper, getEmpresaIdFromToken }));
+  app.use('/api/ai', createAiSiteBuilderRouter({ query, withAuth, isSuper, getEmpresaIdFromToken, projectDir: deps.projectDir }));
   app.use('/api/zonas', createZonasRouter({ query, withAuth, isSuper, getEmpresaIdFromToken }));
   app.use('/api', createChoferesRouter({ query, withAuth, isSuper, getEmpresaIdFromToken }));
   app.use('/api', createAsignacionesZonasRouter({ query, withAuth, isSuper, getEmpresaIdFromToken }));

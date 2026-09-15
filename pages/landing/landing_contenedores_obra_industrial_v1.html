@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title id="pageTitle">Alquiler de Contenedores y Servicios de Obra</title>
+  <meta id="metaDescription" name="description" content="Contenedores, baños químicos, módulos y servicios para obras, industrias y eventos.">
+  <meta id="themeColor" name="theme-color" content="#f59e0b">
+  <style>
+    *{box-sizing:border-box} html{scroll-behavior:smooth} body{margin:0;min-height:100vh;overflow-x:hidden;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--ink)}
+    a{text-decoration:none;color:inherit} img{display:block;max-width:100%} button,input{font:inherit} button{color:inherit}.hidden{display:none!important}
+    svg{width:1.25em;height:1.25em;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+    .wrap{width:min(1220px,92%);margin:0 auto}.section{padding:88px 0}.section-head{max-width:790px;margin-bottom:34px}.section h2{margin:12px 0;font-size:clamp(2.1rem,4vw,3.8rem);line-height:1;letter-spacing:-.05em}.section-head p{margin:0;color:var(--muted);font-size:1.04rem;line-height:1.72}
+    .eyebrow{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;background:rgba(var(--brand-rgb),.09);border:1px solid rgba(var(--brand-rgb),.18);color:var(--brand);font-size:.75rem;font-weight:950;letter-spacing:.12em;text-transform:uppercase}
+    .header-shell{position:sticky;top:0;z-index:100;padding:12px 0;background:color-mix(in srgb,var(--bg) 84%,transparent);backdrop-filter:blur(18px)}
+    .navbar{min-height:70px;display:flex;align-items:center;justify-content:space-between;gap:18px;padding:10px 12px 10px 16px;border:1px solid var(--line);border-radius:23px;box-shadow:0 12px 35px rgba(0,0,0,.06)}
+    .brand{display:flex;align-items:center;gap:11px;min-width:0;font-weight:950;letter-spacing:-.03em}.brand-logo{height:40px;max-width:160px;object-fit:contain}.brand-mark{width:43px;height:43px;border-radius:14px;display:grid;place-items:center;background:linear-gradient(135deg,var(--brand),var(--brand-3));color:#fff;font-weight:950;box-shadow:0 10px 25px rgba(var(--brand-rgb),.23)}.brand-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .nav-links{display:flex;align-items:center;gap:3px}.nav-links a{padding:10px 12px;border-radius:12px;color:var(--muted);font-size:.91rem;font-weight:800}.nav-links a:hover{background:rgba(var(--brand-rgb),.07);color:var(--ink)}.actions{display:flex;align-items:center;gap:8px}
+    .btn{min-height:44px;padding:0 16px;border-radius:14px;border:0;display:inline-flex;align-items:center;justify-content:center;gap:8px;font-weight:900;cursor:pointer;transition:.2s ease;white-space:nowrap}.btn:hover{transform:translateY(-1px)}.btn-primary{background:linear-gradient(135deg,var(--brand),var(--brand-3));color:#fff;box-shadow:0 13px 30px rgba(var(--brand-rgb),.24)}.btn-soft{background:rgba(var(--brand-rgb),.07);color:var(--ink);border:1px solid var(--line)}
+    .user-menu{position:relative}.popover{position:absolute;right:0;top:calc(100% + 12px);width:min(350px,90vw);padding:18px;border-radius:20px;border:1px solid var(--line);background:var(--surface);box-shadow:var(--shadow);opacity:0;visibility:hidden;transform:translateY(-8px) scale(.985);transition:.18s ease;transform-origin:top right}.popover.open{opacity:1;visibility:visible;transform:none}.popover label{display:block;margin-bottom:8px;font-size:.86rem;font-weight:900}.field{width:100%;height:48px;padding:0 14px;margin-bottom:10px;border:1px solid var(--line);border-radius:13px;background:var(--surface);color:var(--ink);outline:0}.field:focus{border-color:var(--brand);box-shadow:0 0 0 4px rgba(var(--brand-rgb),.10)}
+    .hero{position:relative;padding:72px 0 84px;overflow:hidden}.hero-grid{display:grid;grid-template-columns:1.04fr .96fr;gap:54px;align-items:center}.hero-title{margin:18px 0 22px;font-size:clamp(3.2rem,6.4vw,6.2rem);line-height:.88;letter-spacing:-.065em}.hero-title span{display:block}.hero-title .accent{color:var(--brand)}.hero-copy{max-width:720px;color:var(--muted);font-size:1.12rem;line-height:1.76}.hero-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:30px}.trust-row{display:flex;flex-wrap:wrap;gap:18px;margin-top:30px;color:var(--muted);font-size:.91rem;font-weight:700}.trust-row span{display:flex;align-items:center;gap:7px}.trust-row i{width:9px;height:9px;border-radius:50%;background:var(--brand);box-shadow:0 0 0 5px rgba(var(--brand-rgb),.10)}
+    .hero-visual{min-height:475px;position:relative;overflow:hidden;border:1px solid var(--line);border-radius:34px;box-shadow:var(--shadow)}.visual-content{position:absolute;inset:0;padding:34px;display:flex;flex-direction:column;justify-content:space-between;z-index:2}.visual-label{align-self:flex-start;padding:8px 11px;border-radius:999px;background:var(--surface);border:1px solid var(--line);font-size:.75rem;font-weight:950;letter-spacing:.12em;color:var(--brand)}.visual-stack{display:grid;gap:12px}.visual-tile{display:flex;align-items:center;gap:14px;padding:16px;border-radius:18px;background:color-mix(in srgb,var(--surface) 91%,transparent);border:1px solid var(--line);backdrop-filter:blur(8px);box-shadow:0 12px 30px rgba(0,0,0,.05)}.visual-icon{width:48px;height:48px;border-radius:15px;display:grid;place-items:center;background:rgba(var(--brand-rgb),.11);color:var(--brand)}.visual-icon svg{width:26px;height:26px}.visual-tile strong{display:block}.visual-tile small{display:block;color:var(--muted);margin-top:3px}
+    .service-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}.service-card{padding:24px;border:1px solid var(--line);border-radius:22px;box-shadow:0 12px 35px rgba(0,0,0,.045)}.service-icon{width:48px;height:48px;border-radius:15px;display:grid;place-items:center;background:rgba(var(--brand-rgb),.10);color:var(--brand);margin-bottom:18px}.service-icon svg{width:25px;height:25px}.service-card h3{margin:0 0 9px;font-size:1.08rem}.service-card p{margin:0;color:var(--muted);line-height:1.62;font-size:.93rem}
+    .product-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px}.product-card{position:relative;overflow:hidden;border:1px solid var(--line);border-radius:26px;box-shadow:0 16px 45px rgba(0,0,0,.055);transition:.22s ease}.product-card:hover{transform:translateY(-3px);box-shadow:var(--shadow)}.product-badge{position:absolute;left:16px;top:16px;z-index:2;padding:7px 10px;border-radius:999px;background:var(--brand);color:#fff;font-size:.73rem;font-weight:950}.product-media{height:230px;display:grid;place-items:center;overflow:hidden}.product-media img{width:100%;height:100%;object-fit:cover}.product-placeholder{color:var(--brand)}.product-placeholder svg{width:82px;height:82px;opacity:.7}.product-body{padding:22px}.product-body h3{margin:0 0 9px;font-size:1.22rem}.product-desc{color:var(--muted);line-height:1.62;font-size:.94rem}.features-list{list-style:none;padding:0;margin:14px 0 0}.features-list li{position:relative;padding:7px 0 7px 20px;color:var(--muted);font-size:.88rem;border-bottom:1px solid var(--line)}.features-list li:before{content:'✓';position:absolute;left:0;color:var(--brand);font-weight:950}.product-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:19px;padding-top:16px;border-top:1px solid var(--line)}.product-price{font-size:1.13rem;font-weight:950;color:var(--ink)}.empty-state{grid-column:1/-1;padding:34px;border:1px solid var(--line);border-radius:22px;color:var(--muted)}
+    .steps{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}.step{padding:24px;border:1px solid var(--line);border-radius:22px}.step-number{font-size:.8rem;font-weight:950;color:var(--brand);letter-spacing:.12em}.step h3{margin:18px 0 8px}.step p{margin:0;color:var(--muted);line-height:1.6;font-size:.92rem}
+    .info-band{display:grid;grid-template-columns:1fr 1fr;gap:16px}.info-card{padding:26px;border-radius:24px;border:1px solid var(--line);background:linear-gradient(135deg,rgba(var(--brand-rgb),.08),rgba(var(--brand2-rgb),.05))}.info-card strong{display:block;margin-bottom:7px;font-size:1.05rem}.info-card p{margin:0;color:var(--muted);line-height:1.65}
+    .faq{display:grid;gap:10px}.faq details{border:1px solid var(--line);border-radius:18px;padding:18px 20px}.faq summary{cursor:pointer;font-weight:900}.faq p{color:var(--muted);line-height:1.65;margin:12px 0 0}.closing-card{padding:44px;border:1px solid var(--line);border-radius:30px;box-shadow:var(--shadow);display:grid;grid-template-columns:1fr auto;gap:28px;align-items:center}.closing-card h2{margin:0 0 10px;font-size:clamp(2rem,4vw,3.5rem)}.closing-card p{margin:0;color:var(--muted);line-height:1.7}.closing-actions{display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end}
+    footer{padding:34px 0 98px}.footer-grid{display:flex;align-items:center;justify-content:space-between;gap:20px;padding-top:24px;border-top:1px solid var(--line);color:var(--muted);font-size:.88rem}.footer-brand{display:flex;align-items:center;gap:10px}.footer-mark{width:34px;height:34px;border-radius:11px;display:grid;place-items:center;background:var(--brand);color:white;font-weight:950}
+    .mobile-bar{display:none;position:fixed;left:12px;right:12px;bottom:12px;z-index:120;padding:9px;border-radius:18px;background:color-mix(in srgb,var(--surface) 94%,transparent);border:1px solid var(--line);box-shadow:var(--shadow);backdrop-filter:blur(15px);grid-template-columns:1fr 1fr;gap:8px}.mobile-bar .btn{width:100%}
+    .toast{position:fixed;left:50%;bottom:92px;z-index:200;transform:translate(-50%,20px);padding:12px 16px;border-radius:13px;background:#111827;color:#fff;opacity:0;visibility:hidden;transition:.2s ease;box-shadow:0 14px 35px rgba(0,0,0,.28);font-weight:800;font-size:.9rem}.toast.show{opacity:1;visibility:visible;transform:translate(-50%,0)}
+    .error-page{min-height:100vh;display:grid;place-items:center;padding:30px;background:var(--bg)}.error-card{width:min(600px,100%);padding:36px;border-radius:26px;background:var(--surface);border:1px solid var(--line);box-shadow:var(--shadow);text-align:center}.error-card h1{margin-top:0}.error-card p{color:var(--muted);line-height:1.65}
+    @media(max-width:1000px){.nav-links{display:none}.hero-grid{grid-template-columns:1fr}.hero-visual{min-height:420px}.service-grid,.steps{grid-template-columns:repeat(2,1fr)}.product-grid{grid-template-columns:repeat(2,1fr)}}
+    @media(max-width:680px){.section{padding:68px 0}.actions .btn-primary{display:none}.navbar{min-height:64px}.hero{padding-top:42px}.hero-title{font-size:clamp(3rem,16vw,4.6rem)}.hero-visual{min-height:390px}.service-grid,.steps,.product-grid,.info-band{grid-template-columns:1fr}.closing-card{grid-template-columns:1fr;padding:28px}.closing-actions{justify-content:flex-start}.footer-grid{align-items:flex-start;flex-direction:column}.mobile-bar{display:grid}footer{padding-bottom:120px}}
+
+:root{--bg:#101214;--surface:#171a1d;--surface-2:#202428;--ink:#f8fafc;--muted:#a5adb6;--line:#30363d;--brand:#f59e0b;--brand-2:#facc15;--brand-3:#d97706;--brand-rgb:245,158,11;--brand2-rgb:250,204,21;--shadow:0 24px 70px rgba(0,0,0,.32)}
+body{background:linear-gradient(180deg,#0e1012 0%,#15181b 52%,#0e1012 100%)}
+.hero{background:radial-gradient(circle at 78% 28%,rgba(var(--brand-rgb),.18),transparent 25rem)}
+.hero-title em{color:var(--brand);font-style:normal}
+.hero-visual{background:linear-gradient(145deg,#202428,#111315);border-color:#383f46}
+.hero-visual:before{content:"";position:absolute;inset:18px;background:repeating-linear-gradient(135deg,rgba(var(--brand-rgb),.18) 0 8px,transparent 8px 22px);clip-path:polygon(65% 0,100% 0,100% 35%,35% 100%,0 100%,0 65%);opacity:.55}
+.navbar,.product-card,.service-card,.step,.faq details,.closing-card{background:rgba(23,26,29,.92)}
+.product-media{background:#0e1012} .empty-state{background:#171a1d}</style>
+</head>
+<body>
+  <main id="app">
+    <header class="header-shell">
+      <div class="wrap navbar">
+        <a href="#inicio" class="brand" aria-label="Inicio">
+          <img id="companyLogo" class="brand-logo hidden" alt="">
+          <div id="companyLogoFallback" class="brand-mark">S</div>
+          <div id="companyName" class="brand-name">Soluciones Móviles</div>
+        </a>
+        <nav class="nav-links" aria-label="Navegación principal">
+          <a href="#servicios">Servicios</a><a href="#productos">Equipos y servicios</a><a href="#como-funciona">Cómo funciona</a><a href="#preguntas">Preguntas</a>
+        </nav>
+        <div class="actions">
+          <div class="user-menu">
+            <button id="menuBtn" class="btn btn-soft" type="button">Mis solicitudes</button>
+            <form id="statusForm" class="popover">
+              <label for="phoneInput">Consultá tu última solicitud</label>
+              <input id="phoneInput" class="field" inputmode="tel" autocomplete="tel" placeholder="Ej. 353 4xx xxxx">
+              <button id="searchBtn" class="btn btn-primary" type="submit" style="width:100%">Buscar</button>
+            </form>
+          </div>
+          <a id="headerOrderButton" class="btn btn-primary" href="#">Solicitar servicio</a>
+        </div>
+      </div>
+    </header>
+
+    <section id="inicio" class="hero">
+      <div class="wrap hero-grid">
+        <div>
+          <div id="heroBadge" class="eyebrow"><span>●</span><span id="heroBadgeText">Soluciones para obra, industria y logística</span></div>
+          <h1 class="hero-title"><span id="heroTitleLine1">Todo lo que tu obra</span><span id="heroTitleLine2" class="accent">necesita, en un solo lugar.</span></h1>
+          <p id="heroDescription" class="hero-copy">Alquiler de contenedores, baños químicos, módulos, equipamiento y servicios operativos con entrega, recambio y retiro coordinados.</p>
+          <div class="hero-actions"><a id="orderButton" href="#" class="btn btn-primary">Solicitar servicio →</a><a id="whatsappButton" href="#" target="_blank" rel="noopener noreferrer" class="btn btn-soft hidden">Consultar por WhatsApp</a></div>
+          <div class="trust-row"><span><i></i>Solicitud online</span><span><i></i>Entrega y retiro coordinados</span><span><i></i>Seguimiento por celular</span></div>
+        </div>
+        <div class="hero-visual" aria-label="Soluciones del sector">
+          <div class="visual-content"><div class="visual-label">OPERACIÓN EN CAMPO</div><div class="visual-stack"><div class="visual-tile"><div class="visual-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h18v12H3z"/><path d="M7 7V4h10v3M7 10v6M12 10v6M17 10v6"/></svg></div><div><strong>Contenedores y volquetes</strong><small>Para escombros, residuos de obra, industria y logística.</small></div></div>
+<div class="visual-tile"><div class="visual-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4h8v7H7z"/><path d="M9 11v8M15 11v8M6 19h12"/><path d="M17 5h2v6h-2"/></svg></div><div><strong>Baños químicos</strong><small>Opciones estándar, accesibles, premium y con lavamanos.</small></div></div>
+<div class="visual-tile"><div class="visual-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18v13H3z"/><path d="M7 10h4v4H7zM15 9v10M3 16h18"/></svg></div><div><strong>Módulos y obradores</strong><small>Oficinas, depósitos, comedores, vestuarios y casillas.</small></div></div></div></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="servicios" class="section">
+      <div class="wrap"><div class="section-head"><div class="eyebrow">SERVICIOS</div><h2>Una landing pensada para vender alquiler, logística y mantenimiento.</h2><p>No está limitada a productos físicos: cada ítem del catálogo puede representar un equipo, un alquiler o un servicio operativo.</p></div><div class="service-grid"><article class="service-card"><div class="service-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h18v12H3z"/><path d="M7 7V4h10v3M7 10v6M12 10v6M17 10v6"/></svg></div><h3>Contenedores y volquetes</h3><p>Para escombros, residuos de obra, industria y logística.</p></article>
+<article class="service-card"><div class="service-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4h8v7H7z"/><path d="M9 11v8M15 11v8M6 19h12"/><path d="M17 5h2v6h-2"/></svg></div><h3>Baños químicos</h3><p>Opciones estándar, accesibles, premium y con lavamanos.</p></article>
+<article class="service-card"><div class="service-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18v13H3z"/><path d="M7 10h4v4H7zM15 9v10M3 16h18"/></svg></div><h3>Módulos y obradores</h3><p>Oficinas, depósitos, comedores, vestuarios y casillas.</p></article>
+<article class="service-card"><div class="service-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h11v11H3zM14 10h4l3 3v4h-7z"/><circle cx="7" cy="19" r="2"/><circle cx="18" cy="19" r="2"/></svg></div><h3>Servicios operativos</h3><p>Entrega, retiro, recambio, limpieza, desagote y mantenimiento.</p></article></div></div>
+    </section>
+
+    <section id="productos" class="section" style="padding-top:28px">
+      <div class="wrap"><div class="section-head"><div class="eyebrow">CATÁLOGO ONLINE</div><h2 id="productsTitle">Equipos y servicios disponibles</h2><p id="productsSubtitle">Elegí contenedores, sanitarios, módulos o servicios. Si el precio depende de zona, plazo o capacidad, se muestra como “Consultar”.</p></div><div id="productGrid" class="product-grid"><div class="empty-state">Cargando equipos y servicios…</div></div></div>
+    </section>
+
+    <section id="como-funciona" class="section">
+      <div class="wrap"><div class="section-head"><div class="eyebrow">CÓMO FUNCIONA</div><h2>De la necesidad a la coordinación.</h2><p>El mismo flujo sirve para alquileres puntuales, servicios recurrentes, obras y eventos.</p></div><div class="steps"><article class="step"><div class="step-number">01</div><h3>Seleccioná</h3><p>Elegí el equipo o servicio que necesitás.</p></article>
+<article class="step"><div class="step-number">02</div><h3>Indicá ubicación</h3><p>Completá los datos de obra, evento o establecimiento.</p></article>
+<article class="step"><div class="step-number">03</div><h3>Coordiná</h3><p>La empresa confirma disponibilidad, entrega y frecuencia.</p></article>
+<article class="step"><div class="step-number">04</div><h3>Gestioná</h3><p>Consultá tu solicitud o repetí el servicio cuando lo necesites.</p></article></div></div>
+    </section>
+
+    <section class="section" style="padding-top:20px">
+      <div class="wrap info-band"><div class="info-card"><strong>Cobertura y logística</strong><p id="coverageText">La cobertura, traslado y disponibilidad se validan durante el proceso de solicitud.</p></div><div class="info-card"><strong>Precios y formas de pago</strong><p id="paymentText">Los valores pueden ser fijos o cotizados según plazo, cantidad, zona y tipo de servicio.</p></div></div>
+    </section>
+
+    <section id="preguntas" class="section">
+      <div class="wrap"><div class="section-head"><div class="eyebrow">PREGUNTAS FRECUENTES</div><h2>Información clara antes de solicitar.</h2></div><div class="faq"><details><summary>¿Puedo alquilar por día, semana o mes?</summary><p>Sí. La modalidad final depende de cada empresa y puede configurarse según el servicio.</p></details>
+<details><summary>¿El traslado está incluido?</summary><p>Puede variar según zona, distancia y tipo de equipo. La empresa lo confirma al procesar la solicitud.</p></details>
+<details><summary>¿Cómo consulto mi solicitud?</summary><p>Usá “Mis solicitudes” e ingresá el mismo celular utilizado al solicitar.</p></details>
+<details><summary>¿Puedo pedir mantenimiento periódico?</summary><p>Sí. Baños químicos, contenedores y otros equipos pueden manejarse como servicios recurrentes si la empresa los ofrece.</p></details></div></div>
+    </section>
+
+    <section class="section" style="padding-top:20px">
+      <div class="wrap"><div class="closing-card"><div><div class="eyebrow">SOLICITUD ONLINE</div><h2 id="closingTitle">Coordiná el próximo servicio desde acá.</h2><p id="closingText">Elegí el equipo o servicio, completá los datos y dejá iniciada la solicitud para que la empresa pueda coordinarla.</p></div><div class="closing-actions"><a id="closingOrderButton" href="#" class="btn btn-primary">Solicitar servicio</a><a id="closingWhatsappButton" href="#" target="_blank" rel="noopener noreferrer" class="btn btn-soft hidden">WhatsApp</a></div></div></div>
+    </section>
+
+    <footer><div class="wrap footer-grid"><div class="footer-brand"><div id="footerMark" class="footer-mark">S</div><div><strong id="footerCompany">Soluciones Móviles</strong><div id="footerText">Alquiler y servicios para obras, industrias, comercios y eventos.</div></div></div><div>© <span id="year"></span> <span id="footerCompanyText">Soluciones Móviles</span></div></div></footer>
+
+    <div class="mobile-bar"><button id="mobileStatusButton" class="btn btn-soft" type="button">Mis solicitudes</button><a id="mobileOrderButton" class="btn btn-primary" href="#">Solicitar servicio</a></div>
+  </main>
+
+  <section id="landingError" class="error-page hidden"><div class="error-card"><h1>No pudimos cargar esta landing</h1><p id="landingErrorText">Revisá la configuración de la empresa.</p></div></section>
+  <div id="toast" class="toast"></div>
+
+  <script>
+    const DEFAULTS = {"description": "Alquiler de contenedores, baños químicos, módulos, equipamiento y servicios operativos con entrega, recambio y retiro coordinados.", "title1": "Todo lo que tu obra", "title2": "necesita, en un solo lugar.", "documentSuffix": "Alquiler de Contenedores y Servicios de Obra", "itemCta": "Solicitar"};
+    const APP = { slug:null, empresaId:null, config:null, locale:'es-AR', currency:'ARS' };
+    function $(id){ return document.getElementById(id); }
+    function sanitizeSlug(value){ return String(value || '').trim().toLowerCase().replace(/[^a-z0-9-_]/g,''); }
+    function resolveSlug(){
+      const params = new URLSearchParams(location.search);
+      const querySlug = params.get('slug');
+      if(querySlug) return sanitizeSlug(querySlug);
+      const parts = location.pathname.split('/').filter(Boolean);
+      for(const marker of ['landing','l','empresa']){
+        const index = parts.indexOf(marker);
+        if(index !== -1 && parts[index + 1]) return sanitizeSlug(parts[index + 1]);
+      }
+      const host = location.hostname.split('.');
+      if(host.length >= 3 && !['www','app','pedidos'].includes(host[0])) return sanitizeSlug(host[0]);
+      return null;
+    }
+    function normalizePhone(value){ return String(value || '').replace(/\D+/g,''); }
+    function buildTelefonoDB(raw){
+      const phone = normalizePhone(raw);
+      if(phone.length === 10) return '549' + phone;
+      if(phone.length === 11 && phone.startsWith('0')) return '549' + phone.substring(1);
+      if(phone.length === 12 && phone.startsWith('54')) return '549' + phone.substring(2);
+      if(phone.length === 13 && phone.startsWith('549')) return phone;
+      return phone;
+    }
+    function escapeHtml(value){ return String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[ch]); }
+    function isSafeHex(value){ return /^#[0-9a-fA-F]{6}$/.test(String(value || '')); }
+    function hexToRgb(hex){
+      const clean = String(hex || '').replace('#','');
+      if(clean.length !== 6) return null;
+      return [parseInt(clean.substring(0,2),16),parseInt(clean.substring(2,4),16),parseInt(clean.substring(4,6),16)].join(',');
+    }
+    function toast(message){
+      const el = $('toast'); el.textContent = message; el.classList.add('show');
+      clearTimeout(window.__toastTimer); window.__toastTimer = setTimeout(() => el.classList.remove('show'),3000);
+    }
+    function money(value){
+      const number = Number(value || 0);
+      if(!Number.isFinite(number) || number <= 0) return 'Consultar';
+      return new Intl.NumberFormat(APP.locale,{style:'currency',currency:APP.currency,maximumFractionDigits:0}).format(number);
+    }
+    async function loadCompanyConfig(){
+      APP.slug = resolveSlug();
+      if(!APP.slug) throw new Error('LANDING_SLUG_NOT_FOUND');
+      const res = await fetch(`/public/config?slug=${encodeURIComponent(APP.slug)}`,{headers:{'Accept':'application/json'}});
+      if(!res.ok) throw new Error(`COMPANY_CONFIG_${res.status}`);
+      const config = await res.json();
+      const empresaId = Number(config.empresa_id ?? config.id);
+      if(!Number.isFinite(empresaId) || empresaId <= 0) throw new Error('INVALID_EMPRESA_ID');
+      APP.empresaId = empresaId; APP.config = config; APP.locale = config.locale || 'es-AR'; APP.currency = config.moneda || config.currency || 'ARS';
+      applyCompanyConfig(config);
+    }
+    function applyCompanyConfig(config){
+      const name = config.nombre_comercial || config.nombre || config.empresa_nombre || APP.slug;
+      const description = config.descripcion_landing || config.hero_descripcion || config.descripcion || DEFAULTS.description.replace('{name}',name);
+      const title1 = config.hero_titulo_1 || config.hero_linea_1 || DEFAULTS.title1;
+      const title2 = config.hero_titulo_2 || config.hero_linea_2 || config.titulo_landing || DEFAULTS.title2.replace('{name}',name);
+      $('companyName').textContent = name; $('footerCompany').textContent = name; $('footerCompanyText').textContent = name;
+      document.title = config.meta_title || `${name} – ${DEFAULTS.documentSuffix}`;
+      $('metaDescription').setAttribute('content',config.meta_description || description);
+      $('heroTitleLine1').textContent = title1; $('heroTitleLine2').textContent = title2; $('heroDescription').textContent = description;
+      if(config.hero_badge) $('heroBadgeText').textContent = config.hero_badge;
+      const brand = config.color_marca || config.color_primario;
+      if(isSafeHex(brand)){
+        document.documentElement.style.setProperty('--brand',brand);
+        const rgb = hexToRgb(brand); if(rgb) document.documentElement.style.setProperty('--brand-rgb',rgb);
+        $('themeColor').setAttribute('content',brand);
+      }
+      const secondary = config.color_secundario || config.color_secondary;
+      if(isSafeHex(secondary)){
+        document.documentElement.style.setProperty('--brand-2',secondary);
+        const rgb = hexToRgb(secondary); if(rgb) document.documentElement.style.setProperty('--brand2-rgb',rgb);
+      }
+      const tertiary = config.color_terciario || config.color_tertiary;
+      if(isSafeHex(tertiary)) document.documentElement.style.setProperty('--brand-3',tertiary);
+      const initial = name.charAt(0).toUpperCase() || 'S';
+      $('companyLogoFallback').textContent = initial; $('footerMark').textContent = initial;
+      const logo = config.logo_url || config.logo;
+      if(logo){ $('companyLogo').src = logo; $('companyLogo').alt = `Logo de ${name}`; $('companyLogo').classList.remove('hidden'); $('companyLogoFallback').classList.add('hidden'); }
+      const orderHref = `/pedidos/?slug=${encodeURIComponent(APP.slug)}`;
+      ['orderButton','headerOrderButton','closingOrderButton','mobileOrderButton'].forEach(id => { $(id).href = orderHref; });
+      const whatsapp = normalizePhone(config.whatsapp || config.telefono_whatsapp);
+      if(whatsapp){
+        const href = `https://wa.me/${whatsapp}`;
+        ['whatsappButton','closingWhatsappButton'].forEach(id => { $(id).href = href; $(id).classList.remove('hidden'); });
+      }
+      if(config.cobertura_texto) $('coverageText').textContent = config.cobertura_texto;
+      if(config.medios_pago_texto || config.pagos_texto) $('paymentText').textContent = config.medios_pago_texto || config.pagos_texto;
+      if(config.productos_titulo) $('productsTitle').textContent = config.productos_titulo;
+      if(config.productos_subtitulo) $('productsSubtitle').textContent = config.productos_subtitulo;
+      if(config.cta_titulo) $('closingTitle').textContent = config.cta_titulo;
+      if(config.cta_texto) $('closingText').textContent = config.cta_texto;
+      if(config.footer_texto) $('footerText').textContent = config.footer_texto;
+    }
+    async function loadProducts(){
+      const grid = $('productGrid');
+      try{
+        const res = await fetch(`/public/productos?empresa_id=${encodeURIComponent(APP.empresaId)}&scope=landing`,{headers:{'Accept':'application/json'}});
+        if(!res.ok) throw new Error(`PRODUCTS_${res.status}`);
+        const products = await res.json();
+        if(!Array.isArray(products) || !products.length){ grid.innerHTML = `<div class="empty-state">No hay equipos o servicios destacados disponibles actualmente.</div>`; return; }
+        grid.innerHTML = products.map(renderProduct).join('');
+      }catch(error){ console.error(error); grid.innerHTML = `<div class="empty-state">No se pudieron cargar los equipos y servicios en este momento.</div>`; }
+    }
+    function placeholderSvg(){
+      return `<div class="product-placeholder"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65"><path d="M3 7h18v12H3z"/><path d="M7 7V4h10v3M7 10v6M12 10v6M17 10v6"/></svg></div>`;
+    }
+    function renderProduct(product){
+      const id = product.id;
+      const name = escapeHtml(product.nombre || 'Servicio');
+      const description = String(product.descripcion || '');
+      const image = product.imagen_promo || product.imagen || '';
+      const badge = product.etiqueta || '';
+      const price = money(product.precio);
+      const lines = description.split('\n').map(value => value.trim()).filter(Boolean);
+      const summary = escapeHtml(lines[0] || 'Disponible para solicitar online.');
+      const features = lines.slice(1,4).map(line => `<li>${escapeHtml(line)}</li>`).join('');
+      const media = image ? `<img src="${escapeHtml(image)}" alt="${name}" loading="lazy">` : placeholderSvg();
+      const badgeHtml = badge ? `<div class="product-badge">${escapeHtml(badge)}</div>` : '';
+      const href = `/pedidos/?slug=${encodeURIComponent(APP.slug)}&add=${encodeURIComponent(id)}`;
+      return `<article class="product-card">${badgeHtml}<div class="product-media">${media}</div><div class="product-body"><h3>${name}</h3><div class="product-desc">${summary}</div>${features ? `<ul class="features-list">${features}</ul>` : ''}<div class="product-foot"><div class="product-price">${price}</div><a class="btn btn-primary" href="${href}">${DEFAULTS.itemCta}<span aria-hidden="true">→</span></a></div></div></article>`;
+    }
+    const menuBtn = $('menuBtn'), statusForm = $('statusForm'), phoneInput = $('phoneInput'), searchBtn = $('searchBtn');
+    menuBtn.addEventListener('click',event => { event.stopPropagation(); statusForm.classList.toggle('open'); if(statusForm.classList.contains('open')) phoneInput.focus(); });
+    statusForm.addEventListener('click',event => event.stopPropagation());
+    document.addEventListener('click',event => { if(!statusForm.contains(event.target) && event.target !== menuBtn) statusForm.classList.remove('open'); });
+    $('mobileStatusButton').addEventListener('click',() => { window.scrollTo({top:0,behavior:'smooth'}); statusForm.classList.add('open'); setTimeout(() => phoneInput.focus(),250); });
+    statusForm.addEventListener('submit',async event => {
+      event.preventDefault(); const rawPhone = phoneInput.value;
+      if(normalizePhone(rawPhone).length < 8){ toast('Ingresá un número válido.'); return; }
+      searchBtn.disabled = true; searchBtn.textContent = 'Buscando…';
+      try{
+        const telefono = buildTelefonoDB(rawPhone);
+        const res = await fetch(`/public/ultimo-pedido?empresa_id=${encodeURIComponent(APP.empresaId)}&telefono=${encodeURIComponent(telefono)}`,{headers:{'Accept':'application/json'}});
+        if(!res.ok) throw new Error(`ORDER_${res.status}`);
+        const data = await res.json(); const pedido = data.pedido || data;
+        if(pedido.tracking_url){ location.href = pedido.tracking_url; return; }
+        if(pedido.tracking_token){ location.href = `/pedidos/seguimiento.html?t=${encodeURIComponent(pedido.tracking_token)}`; return; }
+        if(pedido.id){ location.href = `/pedidos/pedido.html?id=${encodeURIComponent(pedido.id)}`; return; }
+        throw new Error('ORDER_WITHOUT_DESTINATION');
+      }catch(error){ console.error(error); toast('No encontramos solicitudes recientes para ese número.'); }
+      finally{ searchBtn.disabled = false; searchBtn.textContent = 'Buscar'; }
+    });
+    function showLandingError(error){
+      console.error('Landing error:',error); $('app').classList.add('hidden'); $('landingError').classList.remove('hidden');
+      $('landingErrorText').textContent = APP.slug ? `No encontramos una configuración válida para el slug "${APP.slug}".` : 'No se pudo determinar el slug de la empresa.';
+    }
+    async function init(){
+      $('year').textContent = new Date().getFullYear();
+      try{ await loadCompanyConfig(); await loadProducts(); console.log('Landing servicios cargada',{slug:APP.slug,empresaId:APP.empresaId}); }
+      catch(error){ showLandingError(error); }
+    }
+    init();
+  </script>
+
+</body>
+</html>

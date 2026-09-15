@@ -279,6 +279,7 @@ export function createApp(deps) {
   app.use('/Facturas', express.static(FACTURAS_DIR));
 
   mountApiModules(app, {
+    projectDir,
     query,
     pool,
     withTransaction,

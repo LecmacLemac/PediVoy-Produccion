@@ -1,0 +1,1388 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title id="pageTitle">Origen Food Service | Insumos para Cafeterías y Gastronomía</title>
+  <meta id="metaDescription" name="description" content="Distribución mayorista de café, bebidas, descartables, alimentos e insumos para cafeterías, restaurantes, hoteles y gastronomía profesional.">
+  <meta id="themeColor" name="theme-color" content="#6f4e37">
+
+  <style>
+    :root{
+      --bg:#f7f2ea;
+      --surface:#fffdf9;
+      --surface-2:#efe6da;
+      --surface-3:#e8ddd0;
+      --ink:#2a211c;
+      --muted:#7c6e64;
+      --line:#e3d7ca;
+
+      --brand:#6f4e37;
+      --brand-2:#c98a45;
+      --brand-3:#2f5d50;
+      --brand-rgb:111,78,55;
+      --accent-rgb:201,138,69;
+
+      --cream:#f4e7d3;
+      --green:#2f5d50;
+      --ok:#2f7d4a;
+
+      --shadow:0 22px 60px rgba(75,52,38,.11);
+      --shadow-strong:0 38px 90px rgba(75,52,38,.18);
+      --radius:30px;
+    }
+
+    *{box-sizing:border-box}
+    html{scroll-behavior:smooth}
+    body{
+      margin:0;
+      min-height:100vh;
+      overflow-x:hidden;
+      font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+      color:var(--ink);
+      background:
+        radial-gradient(circle at 2% 5%,rgba(var(--accent-rgb),.10),transparent 28rem),
+        radial-gradient(circle at 98% 8%,rgba(47,93,80,.09),transparent 28rem),
+        linear-gradient(180deg,#fffaf4 0%,var(--bg) 100%);
+    }
+
+    body::before{
+      content:"";
+      position:fixed;
+      inset:0;
+      pointer-events:none;
+      opacity:.20;
+      background-image:radial-gradient(circle at 1px 1px,rgba(42,33,28,.12) 1px,transparent 0);
+      background-size:30px 30px;
+      mask-image:linear-gradient(to bottom,black,transparent 76%);
+    }
+
+    a{text-decoration:none;color:inherit}
+    img{display:block;max-width:100%}
+    button,input{font:inherit}
+    button{color:inherit}
+    .hidden{display:none!important}
+    .wrap{width:min(1210px,92%);margin:0 auto}
+    .section{padding:94px 0}
+    .section-head{max-width:780px;margin-bottom:38px}
+
+    .eyebrow{
+      display:inline-flex;align-items:center;gap:8px;
+      padding:8px 12px;border-radius:999px;
+      background:rgba(var(--brand-rgb),.07);
+      border:1px solid rgba(var(--brand-rgb),.13);
+      color:var(--brand);
+      font-size:.74rem;font-weight:950;letter-spacing:.13em;text-transform:uppercase
+    }
+    .eyebrow-dot{
+      width:7px;height:7px;border-radius:50%;
+      background:var(--brand-2);
+      box-shadow:0 0 16px rgba(var(--accent-rgb),.55)
+    }
+
+    .section h2{
+      margin:17px 0 10px;
+      font-family:Georgia,"Times New Roman",serif;
+      font-size:clamp(2.25rem,4vw,4rem);
+      line-height:.98;
+      letter-spacing:-.045em;
+      font-weight:700
+    }
+    .section-head p{
+      margin:0;
+      color:var(--muted);
+      font-size:1.03rem;
+      line-height:1.76
+    }
+
+    /* HEADER */
+    .header-shell{
+      position:sticky;top:0;z-index:100;
+      padding:12px 0;
+      background:rgba(255,250,244,.83);
+      backdrop-filter:blur(18px)
+    }
+    .navbar{
+      min-height:72px;
+      display:flex;align-items:center;justify-content:space-between;gap:20px;
+      padding:10px 12px 10px 18px;
+      background:rgba(255,253,249,.96);
+      border:1px solid rgba(227,215,202,.95);
+      border-radius:24px;
+      box-shadow:0 12px 34px rgba(75,52,38,.07)
+    }
+    .brand{
+      display:flex;align-items:center;gap:11px;min-width:0;
+      font-weight:950;letter-spacing:-.03em
+    }
+    .brand-logo{height:40px;max-width:170px;object-fit:contain}
+    .brand-mark{
+      width:44px;height:44px;border-radius:16px;
+      display:grid;place-items:center;
+      background:linear-gradient(145deg,var(--brand),#3f2d22);
+      color:#fff;font-family:Georgia,"Times New Roman",serif;
+      font-weight:900;font-size:1.15rem;
+      box-shadow:0 11px 26px rgba(var(--brand-rgb),.23)
+    }
+    .brand-name{
+      white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+      font-size:1.02rem
+    }
+    .nav-links{display:flex;align-items:center;gap:4px}
+    .nav-links a{
+      padding:10px 12px;border-radius:12px;
+      color:#74665d;font-size:.91rem;font-weight:800
+    }
+    .nav-links a:hover{background:#f5ede4;color:var(--ink)}
+    .actions{display:flex;align-items:center;gap:9px}
+
+    .btn{
+      min-height:45px;padding:0 16px;border-radius:14px;border:0;
+      display:inline-flex;align-items:center;justify-content:center;gap:8px;
+      font-weight:900;cursor:pointer;transition:.2s ease;white-space:nowrap
+    }
+    .btn:hover{transform:translateY(-1px)}
+    .btn-primary{
+      color:#fff;
+      background:linear-gradient(135deg,var(--brand),#4d3427);
+      box-shadow:0 12px 28px rgba(var(--brand-rgb),.22)
+    }
+    .btn-primary:hover{box-shadow:0 17px 36px rgba(var(--brand-rgb),.30)}
+    .btn-accent{
+      color:#fff;
+      background:linear-gradient(135deg,var(--brand-2),#a9682b);
+      box-shadow:0 12px 28px rgba(var(--accent-rgb),.22)
+    }
+    .btn-soft{
+      background:#f7efe5;color:var(--ink);border:1px solid var(--line)
+    }
+
+    /* STATUS */
+    .user-menu{position:relative}
+    .popover{
+      position:absolute;right:0;top:calc(100% + 12px);
+      width:min(345px,90vw);padding:18px;
+      border-radius:20px;border:1px solid var(--line);
+      background:var(--surface);box-shadow:var(--shadow-strong);
+      opacity:0;visibility:hidden;transform:translateY(-8px) scale(.985);
+      transition:.18s ease;transform-origin:top right
+    }
+    .popover.open{opacity:1;visibility:visible;transform:none}
+    .popover label{display:block;margin-bottom:8px;font-size:.85rem;font-weight:900}
+    .field{
+      width:100%;height:48px;padding:0 14px;margin-bottom:10px;
+      border:1px solid var(--line);border-radius:14px;
+      outline:none;background:#fffaf4;color:var(--ink)
+    }
+    .field:focus{
+      border-color:rgba(var(--brand-rgb),.45);
+      box-shadow:0 0 0 4px rgba(var(--brand-rgb),.08)
+    }
+    .popover small{display:block;color:var(--muted);line-height:1.55;margin-top:8px}
+
+    /* HERO */
+    .hero{padding:52px 0 78px}
+    .hero-grid{
+      display:grid;grid-template-columns:1.05fr .95fr;gap:44px;align-items:center
+    }
+    .hero-copy{padding:28px 0}
+    .hero-badge{
+      display:inline-flex;align-items:center;gap:9px;
+      padding:9px 13px;border-radius:999px;
+      background:#fffdf9;border:1px solid var(--line);
+      box-shadow:0 8px 24px rgba(75,52,38,.05);
+      color:#6b5b50;font-size:.8rem;font-weight:900
+    }
+    .hero-badge svg{width:16px;height:16px;color:var(--brand-2)}
+    .hero h1{
+      margin:24px 0 18px;
+      font-family:Georgia,"Times New Roman",serif;
+      font-size:clamp(3.2rem,6.5vw,6.6rem);
+      line-height:.88;letter-spacing:-.065em;
+      max-width:820px;font-weight:700
+    }
+    .hero h1 .accent{color:var(--brand)}
+    .hero-description{
+      margin:0;max-width:740px;
+      color:#74685f;font-size:1.13rem;line-height:1.8
+    }
+    .hero-actions{display:flex;flex-wrap:wrap;gap:12px;margin-top:28px}
+    .trust-row{
+      display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:32px
+    }
+    .trust-card{
+      padding:16px;border-radius:18px;background:rgba(255,253,249,.82);
+      border:1px solid var(--line)
+    }
+    .trust-card b{display:block;font-size:.92rem;margin-bottom:3px}
+    .trust-card span{color:var(--muted);font-size:.78rem;line-height:1.45}
+
+    /* HERO VISUAL */
+    .hero-visual{
+      position:relative;min-height:560px;border-radius:34px;overflow:hidden;
+      background:
+        radial-gradient(circle at 30% 20%,rgba(255,255,255,.15),transparent 14rem),
+        linear-gradient(145deg,#3f2b20 0%,#6f4e37 55%,#2f5d50 100%);
+      box-shadow:var(--shadow-strong);
+      isolation:isolate
+    }
+    .hero-visual::before{
+      content:"";position:absolute;inset:0;
+      background:
+        linear-gradient(90deg,transparent 49%,rgba(255,255,255,.045) 50%,transparent 51%),
+        linear-gradient(transparent 49%,rgba(255,255,255,.035) 50%,transparent 51%);
+      background-size:54px 54px;opacity:.5
+    }
+    .hero-topline{
+      position:absolute;top:26px;left:26px;right:26px;
+      display:flex;align-items:center;justify-content:space-between;gap:12px;
+      z-index:5;padding:12px 14px;border-radius:18px;
+      background:rgba(255,255,255,.10);
+      border:1px solid rgba(255,255,255,.13);
+      color:#fff;backdrop-filter:blur(8px)
+    }
+    .hero-topline b{font-size:.83rem;letter-spacing:.08em;text-transform:uppercase}
+    .hero-topline span{font-size:.76rem;color:#efe8df}
+
+    .cup{
+      position:absolute;left:50%;top:53%;transform:translate(-50%,-50%);
+      width:300px;height:280px;z-index:2
+    }
+    .cup-body{
+      position:absolute;left:38px;top:70px;width:190px;height:150px;
+      background:linear-gradient(145deg,#fffaf2,#e7d4bd);
+      border-radius:12px 12px 70px 70px;
+      box-shadow:0 30px 55px rgba(0,0,0,.25)
+    }
+    .cup-body::before{
+      content:"ORIGEN";position:absolute;left:0;right:0;top:58px;text-align:center;
+      font-family:Georgia,"Times New Roman",serif;font-weight:900;letter-spacing:.18em;
+      color:#6f4e37;font-size:1rem
+    }
+    .cup-handle{
+      position:absolute;left:215px;top:95px;width:72px;height:82px;
+      border:20px solid #ead9c5;border-left-width:14px;border-radius:50%
+    }
+    .cup-saucer{
+      position:absolute;left:5px;top:205px;width:275px;height:38px;
+      border-radius:50%;background:#d9c3a7;
+      box-shadow:0 20px 35px rgba(0,0,0,.22)
+    }
+    .coffee{
+      position:absolute;left:48px;top:60px;width:168px;height:30px;
+      border-radius:50%;background:#2b160d;border:7px solid #f2e3d1
+    }
+    .steam{
+      position:absolute;width:24px;height:80px;border-left:5px solid rgba(255,255,255,.60);
+      border-radius:50%;top:-12px
+    }
+    .steam.s1{left:95px;transform:rotate(12deg)}
+    .steam.s2{left:145px;height:70px;top:0;transform:rotate(-12deg)}
+
+    .floating-card{
+      position:absolute;z-index:4;padding:16px 17px;border-radius:18px;
+      background:rgba(255,255,255,.11);border:1px solid rgba(255,255,255,.14);
+      backdrop-filter:blur(10px);color:#fff
+    }
+    .floating-card b{display:block;font-size:.88rem;margin-bottom:4px}
+    .floating-card span{font-size:.76rem;color:#eee5dc}
+    .fc1{left:24px;bottom:28px}
+    .fc2{right:24px;bottom:28px}
+    .dot-ok{
+      display:inline-block;width:8px;height:8px;border-radius:50%;
+      background:#86efac;margin-right:6px
+    }
+
+    /* CLIENTS */
+    .client-strip{
+      padding:22px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line);
+      background:rgba(255,253,249,.58)
+    }
+    .client-row{
+      display:flex;align-items:center;justify-content:space-between;
+      gap:22px;flex-wrap:wrap
+    }
+    .client-label{
+      font-size:.78rem;font-weight:950;color:var(--brand);
+      letter-spacing:.12em;text-transform:uppercase
+    }
+    .client-list{
+      display:flex;gap:10px;flex-wrap:wrap
+    }
+    .client-pill{
+      padding:9px 12px;border-radius:999px;background:#fffdf9;border:1px solid var(--line);
+      color:#6f6259;font-size:.8rem;font-weight:800
+    }
+
+    /* CATEGORIES */
+    .category-grid{
+      display:grid;grid-template-columns:repeat(3,1fr);gap:18px
+    }
+    .category-card{
+      position:relative;overflow:hidden;
+      padding:26px;border-radius:25px;background:var(--surface);
+      border:1px solid var(--line);min-height:220px;transition:.22s ease
+    }
+    .category-card:hover{transform:translateY(-4px);box-shadow:var(--shadow)}
+    .category-number{
+      position:absolute;right:20px;top:14px;
+      font-family:Georgia,"Times New Roman",serif;
+      font-size:3rem;font-weight:800;color:rgba(var(--brand-rgb),.08)
+    }
+    .category-icon{
+      width:50px;height:50px;border-radius:16px;
+      display:grid;place-items:center;margin-bottom:34px;
+      background:rgba(var(--brand-rgb),.08);color:var(--brand)
+    }
+    .category-icon svg{width:24px;height:24px}
+    .category-card h3{margin:0 0 8px;font-size:1.12rem}
+    .category-card p{margin:0;color:var(--muted);font-size:.88rem;line-height:1.65}
+
+    /* B2B */
+    .b2b-band{
+      position:relative;overflow:hidden;
+      background:linear-gradient(135deg,#2e211a,#463126 62%,#2f5d50);
+      color:#fff;border-radius:34px;padding:46px;
+      box-shadow:var(--shadow-strong)
+    }
+    .b2b-band::after{
+      content:"";position:absolute;width:360px;height:360px;border-radius:50%;
+      right:-130px;top:-130px;background:rgba(255,255,255,.05)
+    }
+    .b2b-band .eyebrow{
+      color:#f4d7b0;background:rgba(201,138,69,.13);
+      border-color:rgba(244,215,176,.15)
+    }
+    .b2b-band h2{max-width:830px}
+    .b2b-band p{color:#ddd2c8;max-width:800px}
+    .b2b-grid{
+      position:relative;z-index:2;
+      display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:34px
+    }
+    .b2b-item{
+      padding:21px;border-radius:20px;background:rgba(255,255,255,.055);
+      border:1px solid rgba(255,255,255,.09)
+    }
+    .b2b-item b{display:block;margin-bottom:7px}
+    .b2b-item span{color:#d5ccc5;font-size:.84rem;line-height:1.6}
+
+    /* PRODUCTS */
+    .product-grid{
+      display:grid;grid-template-columns:repeat(3,1fr);gap:20px
+    }
+    .product-card{
+      position:relative;background:var(--surface);border:1px solid var(--line);
+      border-radius:26px;overflow:hidden;box-shadow:0 12px 34px rgba(75,52,38,.06)
+    }
+    .product-badge{
+      position:absolute;left:16px;top:16px;z-index:2;
+      padding:7px 10px;border-radius:999px;
+      background:var(--brand-3);color:#fff;font-size:.72rem;font-weight:900
+    }
+    .product-media{
+      height:230px;background:linear-gradient(145deg,#f3eadf,#fffaf4);
+      display:grid;place-items:center;overflow:hidden
+    }
+    .product-media img{width:100%;height:100%;object-fit:cover}
+    .product-placeholder{
+      width:100%;height:100%;display:grid;place-items:center;color:var(--brand)
+    }
+    .product-placeholder svg{width:74px;height:74px;opacity:.88}
+    .product-body{padding:22px}
+    .product-body h3{margin:0 0 9px;font-size:1.16rem}
+    .product-desc{color:var(--muted);font-size:.9rem;line-height:1.6}
+    .features-list{list-style:none;margin:16px 0 0;padding:0}
+    .features-list li{
+      position:relative;padding:6px 0 6px 20px;
+      color:#756a62;font-size:.84rem
+    }
+    .features-list li::before{
+      content:"✓";position:absolute;left:0;color:var(--ok);font-weight:950
+    }
+    .product-foot{
+      display:flex;align-items:center;justify-content:space-between;gap:12px;
+      margin-top:20px;padding-top:18px;border-top:1px solid var(--line)
+    }
+    .product-price{font-size:1.08rem;font-weight:950;color:var(--brand)}
+
+    /* DELIVERY */
+    .delivery-grid{
+      display:grid;grid-template-columns:1.1fr .9fr;gap:20px
+    }
+    .delivery-main{
+      padding:34px;border-radius:28px;background:var(--surface);border:1px solid var(--line)
+    }
+    .delivery-main h3{
+      margin:0 0 12px;font-family:Georgia,"Times New Roman",serif;
+      font-size:2rem;letter-spacing:-.03em
+    }
+    .delivery-main p{margin:0;color:var(--muted);line-height:1.75}
+    .delivery-list{
+      display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-top:24px
+    }
+    .delivery-item{
+      padding:16px;border-radius:18px;background:#f8f0e7;border:1px solid var(--line)
+    }
+    .delivery-item b{display:block;margin-bottom:4px;font-size:.9rem}
+    .delivery-item span{color:var(--muted);font-size:.8rem;line-height:1.5}
+
+    .delivery-side{
+      padding:32px;border-radius:28px;color:#fff;
+      background:linear-gradient(145deg,var(--brand-3),#23463d)
+    }
+    .delivery-side small{
+      display:block;text-transform:uppercase;letter-spacing:.12em;
+      color:#b9d0c9;font-weight:900;margin-bottom:18px
+    }
+    .delivery-side h3{
+      margin:0 0 12px;font-family:Georgia,"Times New Roman",serif;
+      font-size:2.1rem;line-height:1
+    }
+    .delivery-side p{color:#d7e4e0;line-height:1.7;margin-bottom:26px}
+
+    /* CTA */
+    .closing{
+      padding:48px;border-radius:34px;
+      background:
+        radial-gradient(circle at 8% 12%,rgba(255,255,255,.13),transparent 25rem),
+        linear-gradient(135deg,var(--brand),#4b3327);
+      color:#fff;box-shadow:0 28px 70px rgba(var(--brand-rgb),.25)
+    }
+    .closing-grid{display:grid;grid-template-columns:1fr auto;gap:28px;align-items:center}
+    .closing h2{
+      margin:0 0 10px;font-family:Georgia,"Times New Roman",serif;
+      font-size:clamp(2.2rem,4vw,3.8rem);letter-spacing:-.04em;line-height:.98
+    }
+    .closing p{margin:0;max-width:720px;color:#f2e5d8;line-height:1.7}
+    .closing-actions{display:flex;gap:10px;flex-wrap:wrap}
+    .closing .btn-primary{background:#fff;color:#4b3327;box-shadow:none}
+    .closing .btn-soft{
+      background:rgba(255,255,255,.11);color:#fff;border-color:rgba(255,255,255,.18)
+    }
+
+    footer{padding:40px 0 110px;color:#7d7067}
+    .footer-grid{display:flex;justify-content:space-between;gap:24px;align-items:center}
+    .footer-brand{display:flex;align-items:center;gap:10px}
+    .footer-mark{
+      width:35px;height:35px;border-radius:12px;display:grid;place-items:center;
+      background:var(--brand);color:#fff;font-family:Georgia,"Times New Roman",serif;font-weight:900
+    }
+
+    /* MOBILE */
+    .mobile-bar{
+      display:none;position:fixed;left:12px;right:12px;bottom:12px;z-index:110;
+      padding:10px;border-radius:20px;background:rgba(255,253,249,.95);
+      border:1px solid var(--line);box-shadow:var(--shadow-strong);backdrop-filter:blur(16px)
+    }
+    .mobile-bar .btn{flex:1}
+
+    .toast{
+      position:fixed;left:50%;bottom:92px;z-index:200;
+      transform:translate(-50%,20px);opacity:0;pointer-events:none;
+      padding:13px 18px;border-radius:14px;background:#2f241e;color:#fff;
+      font-size:.88rem;font-weight:800;box-shadow:var(--shadow);
+      transition:.2s ease
+    }
+    .toast.show{opacity:1;transform:translate(-50%,0)}
+
+    .landing-error{
+      min-height:100vh;display:grid;place-items:center;padding:30px
+    }
+    .error-card{
+      width:min(620px,100%);padding:36px;border-radius:26px;background:#fffdf9;
+      border:1px solid var(--line);box-shadow:var(--shadow);text-align:center
+    }
+
+    @media(max-width:1000px){
+      .nav-links{display:none}
+      .hero-grid,.delivery-grid{grid-template-columns:1fr}
+      .hero-visual{min-height:500px}
+      .category-grid,.product-grid{grid-template-columns:repeat(2,1fr)}
+      .b2b-grid{grid-template-columns:repeat(2,1fr)}
+      .closing-grid{grid-template-columns:1fr}
+    }
+    @media(max-width:700px){
+      .section{padding:72px 0}
+      .actions .btn-primary{display:none}
+      .hero{padding-top:18px}
+      .hero h1{font-size:clamp(3rem,16vw,5rem)}
+      .trust-row,.category-grid,.product-grid,.b2b-grid,.delivery-list{grid-template-columns:1fr}
+      .hero-visual{min-height:450px}
+      .b2b-band,.closing{padding:28px;border-radius:28px}
+      .footer-grid{align-items:flex-start;flex-direction:column}
+      .mobile-bar{display:flex;gap:8px}
+    }
+  </style>
+</head>
+
+<body>
+  <div id="app">
+    <div class="header-shell">
+      <div class="wrap">
+        <header class="navbar">
+          <a class="brand" href="#">
+            <img id="companyLogo" class="brand-logo hidden" alt="">
+            <div id="companyLogoFallback" class="brand-mark">O</div>
+            <span id="companyName" class="brand-name">Origen Food Service</span>
+          </a>
+
+          <nav class="nav-links">
+            <a href="#categorias">Categorías</a>
+            <a href="#mayoristas">Mayoristas</a>
+            <a href="#productos">Productos</a>
+            <a href="#entregas">Entregas</a>
+          </nav>
+
+          <div class="actions">
+            <div class="user-menu">
+              <button id="menuBtn" class="btn btn-soft" type="button">Mi pedido</button>
+              <form id="statusForm" class="popover">
+                <label for="phoneInput">Consultar último pedido</label>
+                <input id="phoneInput" class="field" inputmode="tel" placeholder="Ej. 3515555555">
+                <button id="searchBtn" class="btn btn-primary" style="width:100%" type="submit">Buscar pedido</button>
+                <small>Ingresá el número utilizado al realizar tu compra.</small>
+              </form>
+            </div>
+            <a id="headerOrderButton" class="btn btn-primary" href="#">Hacer pedido</a>
+          </div>
+        </header>
+      </div>
+    </div>
+
+    <main>
+      <section class="hero">
+        <div class="wrap hero-grid">
+          <div class="hero-copy">
+            <div id="heroBadge" class="hero-badge">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M5 12h14"/><path d="M7 8h10"/><path d="M9 4h6"/><path d="M6 12v6h12v-6"/>
+              </svg>
+              Distribución mayorista para gastronomía profesional
+            </div>
+
+            <h1>
+              <span id="heroTitleLine1" class="accent">Todo para tu negocio.</span><br>
+              <span id="heroTitleLine2">Un solo proveedor.</span>
+            </h1>
+
+            <p id="heroDescription" class="hero-description">
+              Abastecemos cafeterías, restaurantes, hoteles, panaderías y comercios gastronómicos con café, bebidas, alimentos, descartables e insumos de uso diario.
+            </p>
+
+            <div class="hero-actions">
+              <a id="orderButton" class="btn btn-primary" href="#">Hacer pedido</a>
+              <a id="whatsappButton" class="btn btn-soft hidden" href="#" target="_blank" rel="noopener">Hablar con ventas</a>
+              <a class="btn btn-soft" href="#productos">Ver catálogo</a>
+            </div>
+
+            <div class="trust-row">
+              <div class="trust-card">
+                <b>Venta mayorista</b>
+                <span>Presentaciones y formatos pensados para consumo profesional.</span>
+              </div>
+              <div class="trust-card">
+                <b>Entrega programada</b>
+                <span>Reposición organizada para que tu operación no se detenga.</span>
+              </div>
+              <div class="trust-card">
+                <b>Atención gastronómica</b>
+                <span>Un catálogo preparado para negocios de alto consumo.</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="hero-visual">
+            <div class="hero-topline">
+              <b>Origen Food Service</b>
+              <span><i class="dot-ok"></i>Pedidos mayoristas</span>
+            </div>
+
+            <div class="cup">
+              <div class="steam s1"></div>
+              <div class="steam s2"></div>
+              <div class="cup-saucer"></div>
+              <div class="cup-handle"></div>
+              <div class="cup-body"></div>
+              <div class="coffee"></div>
+            </div>
+
+            <div class="floating-card fc1">
+              <b>Abastecimiento integral</b>
+              <span>Café · alimentos · bebidas · descartables</span>
+            </div>
+            <div class="floating-card fc2">
+              <b>Clientes profesionales</b>
+              <span>Cafeterías · restaurantes · hoteles</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="client-strip">
+        <div class="wrap client-row">
+          <div class="client-label">Trabajamos con</div>
+          <div class="client-list">
+            <span class="client-pill">Cafeterías</span>
+            <span class="client-pill">Restaurantes</span>
+            <span class="client-pill">Hoteles</span>
+            <span class="client-pill">Panaderías</span>
+            <span class="client-pill">Bares</span>
+            <span class="client-pill">Catering</span>
+            <span class="client-pill">Empresas</span>
+          </div>
+        </div>
+      </section>
+
+      <section id="categorias" class="section">
+        <div class="wrap">
+          <div class="section-head">
+            <div class="eyebrow"><span class="eyebrow-dot"></span> Catálogo profesional</div>
+            <h2>Lo que tu cocina, barra y salón necesitan todos los días.</h2>
+            <p>
+              Centralizá compras, simplificá la reposición y trabajá con un catálogo preparado para el ritmo de la gastronomía.
+            </p>
+          </div>
+
+          <div class="category-grid">
+            <article class="category-card">
+              <div class="category-number">01</div>
+              <div class="category-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M4 8h13v7a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5V8Z"/><path d="M17 10h2a2 2 0 0 1 0 4h-2"/>
+                </svg>
+              </div>
+              <h3>Café e infusiones</h3>
+              <p>Café en grano y molido, té, cacao, endulzantes y productos para servicio de cafetería.</p>
+            </article>
+
+            <article class="category-card">
+              <div class="category-number">02</div>
+              <div class="category-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M8 3h8l1 18H7L8 3Z"/><path d="M9 7h6"/>
+                </svg>
+              </div>
+              <h3>Lácteos y bebidas</h3>
+              <p>Leche, bebidas vegetales, jugos, aguas, gaseosas y opciones para barra y servicio gastronómico.</p>
+            </article>
+
+            <article class="category-card">
+              <div class="category-number">03</div>
+              <div class="category-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M5 8h14l-1 12H6L5 8Z"/><path d="M8 8a4 4 0 0 1 8 0"/>
+                </svg>
+              </div>
+              <h3>Alimentos e insumos</h3>
+              <p>Harinas, azúcar, salsas, aderezos, conservas, chocolates, toppings y materias primas de uso diario.</p>
+            </article>
+
+            <article class="category-card">
+              <div class="category-number">04</div>
+              <div class="category-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M7 3h10l-1 18H8L7 3Z"/><path d="M9 8h6"/>
+                </svg>
+              </div>
+              <h3>Descartables</h3>
+              <p>Vasos, tapas, sorbetes, servilletas, cubiertos, bandejas, potes y packaging para take away.</p>
+            </article>
+
+            <article class="category-card">
+              <div class="category-number">05</div>
+              <div class="category-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M6 5h12v14H6z"/><path d="M9 9h6M9 13h6"/>
+                </svg>
+              </div>
+              <h3>Limpieza profesional</h3>
+              <p>Detergentes, desengrasantes, sanitizantes, papel institucional y consumibles para cocina y salón.</p>
+            </article>
+
+            <article class="category-card">
+              <div class="category-number">06</div>
+              <div class="category-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M4 17h16"/><path d="M6 17V9h12v8"/><path d="M8 9V6h8v3"/>
+                </svg>
+              </div>
+              <h3>Equipamiento menor</h3>
+              <p>Jarras, utensilios, accesorios de barra, recipientes gastronómicos y elementos para operación diaria.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section id="mayoristas" class="section">
+        <div class="wrap">
+          <div class="b2b-band">
+            <div class="eyebrow"><span class="eyebrow-dot"></span> Servicio mayorista</div>
+            <h2>Compras más simples para equipos que trabajan todos los días.</h2>
+            <p>
+              Nuestro servicio está diseñado para negocios que necesitan continuidad de stock, variedad y una reposición ágil sin perder tiempo coordinando múltiples proveedores.
+            </p>
+
+            <div class="b2b-grid">
+              <div class="b2b-item">
+                <b>Pedidos recurrentes</b>
+                <span>Reponé insumos habituales de forma rápida y ordenada.</span>
+              </div>
+              <div class="b2b-item">
+                <b>Catálogo amplio</b>
+                <span>Concentrá compras de diferentes categorías en un solo pedido.</span>
+              </div>
+              <div class="b2b-item">
+                <b>Atención comercial</b>
+                <span>Seguimiento para cuentas gastronómicas y clientes de volumen.</span>
+              </div>
+              <div class="b2b-item">
+                <b>Logística programada</b>
+                <span>Coordinación de entregas para acompañar tu ritmo operativo.</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="productos" class="section">
+        <div class="wrap">
+          <div class="section-head">
+            <div class="eyebrow"><span class="eyebrow-dot"></span> Productos destacados</div>
+            <h2 id="productsTitle">Productos para abastecer tu negocio.</h2>
+            <p id="productsSubtitle">
+              Comprá directamente desde nuestro catálogo y sumá cada producto a tu pedido.
+            </p>
+          </div>
+
+          <div id="productGrid" class="product-grid">
+            <div style="grid-column:1/-1;padding:34px;border:1px solid var(--line);border-radius:22px;color:var(--muted);background:#fffdf9">
+              Cargando productos disponibles…
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="entregas" class="section">
+        <div class="wrap">
+          <div class="delivery-grid">
+            <div class="delivery-main">
+              <div class="eyebrow"><span class="eyebrow-dot"></span> Distribución</div>
+              <h3>Tu reposición, organizada.</h3>
+              <p>
+                Coordinamos pedidos para que recibas los insumos que necesitás sin interrumpir la operación de tu negocio.
+              </p>
+
+              <div class="delivery-list">
+                <div class="delivery-item">
+                  <b>Cobertura</b>
+                  <span id="coverageText">Entregas programadas en nuestra zona de distribución.</span>
+                </div>
+                <div class="delivery-item">
+                  <b>Formas de pago</b>
+                  <span id="paymentText">Transferencia, efectivo y condiciones comerciales según cuenta.</span>
+                </div>
+                <div class="delivery-item">
+                  <b>Pedidos comerciales</b>
+                  <span>Atención para compras de volumen y reposiciones periódicas.</span>
+                </div>
+                <div class="delivery-item">
+                  <b>Seguimiento</b>
+                  <span>Consultá el estado de tu último pedido utilizando tu teléfono.</span>
+                </div>
+              </div>
+            </div>
+
+            <aside class="delivery-side">
+              <small>Abastecimiento gastronómico</small>
+              <h3>Menos proveedores. Más control.</h3>
+              <p>
+                Consolidá en un mismo pedido café, alimentos, descartables, bebidas y consumibles para tu negocio.
+              </p>
+              <a id="sideOrderButton" class="btn btn-accent" href="#">Armar pedido</a>
+            </aside>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" style="padding-top:24px">
+        <div class="wrap">
+          <div class="closing">
+            <div class="closing-grid">
+              <div>
+                <h2 id="closingTitle">Abastecé tu negocio con Origen Food Service.</h2>
+                <p id="closingText">
+                  Armá tu pedido online y recibí los insumos que tu cafetería, restaurante o empresa necesita para seguir funcionando.
+                </p>
+              </div>
+              <div class="closing-actions">
+                <a id="closingOrderButton" class="btn btn-primary" href="#">Hacer pedido</a>
+                <a id="closingWhatsappButton" class="btn btn-soft hidden" href="#" target="_blank" rel="noopener">Hablar con ventas</a>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="wrap footer-grid">
+        <div class="footer-brand">
+          <div id="footerMark" class="footer-mark">O</div>
+          <div>
+            <b id="footerCompany">Origen Food Service</b>
+            <div id="footerText" style="font-size:.8rem;margin-top:2px">
+              Distribución mayorista para cafeterías y gastronomía.
+            </div>
+          </div>
+        </div>
+        <div style="font-size:.82rem">
+          © <span id="year"></span> <span id="footerCompanyText">Origen Food Service</span>
+        </div>
+      </div>
+    </footer>
+
+    <div class="mobile-bar">
+      <button id="mobileStatusButton" class="btn btn-soft" type="button">Mi pedido</button>
+      <a id="mobileOrderButton" class="btn btn-primary" href="#">Comprar</a>
+    </div>
+
+    <div id="toast" class="toast"></div>
+  </div>
+
+  <div id="landingError" class="landing-error hidden">
+    <div class="error-card">
+      <h1>No pudimos cargar esta tienda</h1>
+      <p id="landingErrorText">Verificá el enlace utilizado.</p>
+    </div>
+  </div>
+
+  <script>
+    const APP = {
+      slug:null,
+      empresaId:null,
+      config:null,
+      locale:'es-AR',
+      currency:'ARS'
+    };
+
+    function $(id){ return document.getElementById(id); }
+
+    function sanitizeSlug(value){
+      return String(value || '')
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9-_]/g,'');
+    }
+
+    function resolveSlug(){
+      const params = new URLSearchParams(location.search);
+      const querySlug = params.get('slug');
+      if(querySlug) return sanitizeSlug(querySlug);
+
+      const parts = location.pathname.split('/').filter(Boolean);
+
+      for(const marker of ['landing','l','empresa']){
+        const index = parts.indexOf(marker);
+        if(index !== -1 && parts[index + 1]){
+          return sanitizeSlug(parts[index + 1]);
+        }
+      }
+
+      const host = location.hostname.split('.');
+      if(host.length >= 3 && !['www','app','pedidos'].includes(host[0])){
+        return sanitizeSlug(host[0]);
+      }
+
+      return null;
+    }
+
+    function normalizePhone(value){
+      return String(value || '').replace(/\D+/g,'');
+    }
+
+    function buildTelefonoDB(raw){
+      const phone = normalizePhone(raw);
+
+      if(phone.length === 10) return '549' + phone;
+      if(phone.length === 11 && phone.startsWith('0')) return '549' + phone.substring(1);
+      if(phone.length === 12 && phone.startsWith('54')) return '549' + phone.substring(2);
+      if(phone.length === 13 && phone.startsWith('549')) return phone;
+
+      return phone;
+    }
+
+    function escapeHtml(value){
+      return String(value ?? '').replace(/[&<>"']/g, ch => ({
+        '&':'&amp;',
+        '<':'&lt;',
+        '>':'&gt;',
+        '"':'&quot;',
+        "'":'&#39;'
+      })[ch]);
+    }
+
+    function isSafeHex(value){
+      return /^#[0-9a-fA-F]{6}$/.test(String(value || ''));
+    }
+
+    function hexToRgb(hex){
+      const clean = String(hex || '').replace('#','');
+      if(clean.length !== 6) return null;
+
+      return [
+        parseInt(clean.substring(0,2),16),
+        parseInt(clean.substring(2,4),16),
+        parseInt(clean.substring(4,6),16)
+      ].join(',');
+    }
+
+    function toast(message){
+      const el = $('toast');
+      el.textContent = message;
+      el.classList.add('show');
+
+      clearTimeout(window.__toastTimer);
+      window.__toastTimer = setTimeout(
+        () => el.classList.remove('show'),
+        3000
+      );
+    }
+
+    function money(value){
+      const number = Number(value || 0);
+
+      if(!Number.isFinite(number) || number <= 0){
+        return 'Consultar';
+      }
+
+      return new Intl.NumberFormat(APP.locale,{
+        style:'currency',
+        currency:APP.currency,
+        maximumFractionDigits:0
+      }).format(number);
+    }
+
+    async function loadCompanyConfig(){
+      APP.slug = resolveSlug();
+
+      if(!APP.slug){
+        throw new Error('LANDING_SLUG_NOT_FOUND');
+      }
+
+      const res = await fetch(
+        `/public/config?slug=${encodeURIComponent(APP.slug)}`,
+        {headers:{'Accept':'application/json'}}
+      );
+
+      if(!res.ok){
+        throw new Error(`COMPANY_CONFIG_${res.status}`);
+      }
+
+      const config = await res.json();
+      const empresaId = Number(config.empresa_id ?? config.id);
+
+      if(!Number.isFinite(empresaId) || empresaId <= 0){
+        throw new Error('INVALID_EMPRESA_ID');
+      }
+
+      APP.empresaId = empresaId;
+      APP.config = config;
+      APP.locale = config.locale || 'es-AR';
+      APP.currency = config.moneda || config.currency || 'ARS';
+
+      applyCompanyConfig(config);
+    }
+
+    function applyCompanyConfig(config){
+      const name =
+        config.nombre_comercial ||
+        config.nombre ||
+        config.empresa_nombre ||
+        APP.slug;
+
+      const description =
+        config.descripcion_landing ||
+        config.hero_descripcion ||
+        config.descripcion ||
+        `Distribución mayorista para cafeterías y gastronomía de ${name}.`;
+
+      const title1 =
+        config.hero_titulo_1 ||
+        config.hero_linea_1 ||
+        'Todo para tu negocio.';
+
+      const title2 =
+        config.hero_titulo_2 ||
+        config.hero_linea_2 ||
+        config.titulo_landing ||
+        'Un solo proveedor.';
+
+      $('companyName').textContent = name;
+      $('footerCompany').textContent = name;
+      $('footerCompanyText').textContent = name;
+
+      document.title =
+        config.meta_title ||
+        `${name} – Insumos para Cafeterías y Gastronomía`;
+
+      $('metaDescription').setAttribute(
+        'content',
+        config.meta_description || description
+      );
+
+      $('heroTitleLine1').textContent = title1;
+      $('heroTitleLine2').textContent = title2;
+      $('heroDescription').textContent = description;
+
+      if(config.hero_badge){
+        $('heroBadge').lastChild.textContent = ' ' + config.hero_badge;
+      }
+
+      const brand =
+        config.color_marca ||
+        config.color_primario;
+
+      if(isSafeHex(brand)){
+        document.documentElement.style.setProperty('--brand',brand);
+
+        const rgb = hexToRgb(brand);
+        if(rgb){
+          document.documentElement.style.setProperty('--brand-rgb',rgb);
+        }
+
+        $('themeColor').setAttribute('content',brand);
+      }
+
+      const secondary =
+        config.color_secundario ||
+        config.color_secondary;
+
+      if(isSafeHex(secondary)){
+        document.documentElement.style.setProperty('--brand-2',secondary);
+
+        const rgb = hexToRgb(secondary);
+        if(rgb){
+          document.documentElement.style.setProperty('--accent-rgb',rgb);
+        }
+      }
+
+      const tertiary =
+        config.color_terciario ||
+        config.color_tertiary;
+
+      if(isSafeHex(tertiary)){
+        document.documentElement.style.setProperty('--brand-3',tertiary);
+      }
+
+      const initial = name.charAt(0).toUpperCase() || 'O';
+      $('companyLogoFallback').textContent = initial;
+      $('footerMark').textContent = initial;
+
+      const logo = config.logo_url || config.logo;
+      if(logo){
+        $('companyLogo').src = logo;
+        $('companyLogo').alt = `Logo de ${name}`;
+        $('companyLogo').classList.remove('hidden');
+        $('companyLogoFallback').classList.add('hidden');
+      }
+
+      const orderHref =
+        `/pedidos/?slug=${encodeURIComponent(APP.slug)}`;
+
+      [
+        'orderButton',
+        'headerOrderButton',
+        'closingOrderButton',
+        'mobileOrderButton',
+        'sideOrderButton'
+      ].forEach(id => {
+        $(id).href = orderHref;
+      });
+
+      const whatsapp =
+        normalizePhone(
+          config.whatsapp ||
+          config.telefono_whatsapp
+        );
+
+      if(whatsapp){
+        const href = `https://wa.me/${whatsapp}`;
+
+        [
+          'whatsappButton',
+          'closingWhatsappButton'
+        ].forEach(id => {
+          $(id).href = href;
+          $(id).classList.remove('hidden');
+        });
+      }
+
+      if(config.cobertura_texto){
+        $('coverageText').textContent = config.cobertura_texto;
+      }
+
+      if(config.medios_pago_texto || config.pagos_texto){
+        $('paymentText').textContent =
+          config.medios_pago_texto ||
+          config.pagos_texto;
+      }
+
+      if(config.productos_titulo){
+        $('productsTitle').textContent = config.productos_titulo;
+      }
+
+      if(config.productos_subtitulo){
+        $('productsSubtitle').textContent = config.productos_subtitulo;
+      }
+
+      if(config.cta_titulo){
+        $('closingTitle').textContent = config.cta_titulo;
+      }
+
+      if(config.cta_texto){
+        $('closingText').textContent = config.cta_texto;
+      }
+
+      if(config.footer_texto){
+        $('footerText').textContent = config.footer_texto;
+      }
+    }
+
+    async function loadProducts(){
+      const grid = $('productGrid');
+
+      try{
+        const res = await fetch(
+          `/public/productos?empresa_id=${encodeURIComponent(APP.empresaId)}&scope=landing`,
+          {headers:{'Accept':'application/json'}}
+        );
+
+        if(!res.ok){
+          throw new Error(`PRODUCTS_${res.status}`);
+        }
+
+        const products = await res.json();
+
+        if(!Array.isArray(products) || !products.length){
+          grid.innerHTML = `
+            <div style="grid-column:1/-1;padding:34px;border:1px solid var(--line);border-radius:22px;color:var(--muted);background:#fffdf9">
+              No hay productos destacados disponibles actualmente.
+            </div>
+          `;
+          return;
+        }
+
+        grid.innerHTML = products.map(renderProduct).join('');
+
+      }catch(error){
+        console.error(error);
+
+        grid.innerHTML = `
+          <div style="grid-column:1/-1;padding:34px;border:1px solid var(--line);border-radius:22px;color:var(--muted);background:#fffdf9">
+            No se pudieron cargar los productos en este momento.
+          </div>
+        `;
+      }
+    }
+
+    function placeholderSvg(){
+      return `
+        <div class="product-placeholder">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+            <path d="M5 7h12v7a5 5 0 0 1-5 5H10a5 5 0 0 1-5-5V7Z"/>
+            <path d="M17 9h2a2 2 0 0 1 0 4h-2"/>
+            <path d="M8 3c0 1 1 1 1 2s-1 1-1 2M12 3c0 1 1 1 1 2s-1 1-1 2"/>
+          </svg>
+        </div>
+      `;
+    }
+
+    function renderProduct(product){
+      const id = product.id;
+      const name = escapeHtml(product.nombre || 'Producto');
+      const description = String(product.descripcion || '');
+      const image = product.imagen_promo || product.imagen || '';
+      const badge = product.etiqueta || '';
+      const price = money(product.precio);
+
+      const lines = description
+        .split('\n')
+        .map(value => value.trim())
+        .filter(Boolean);
+
+      const summary =
+        escapeHtml(
+          lines[0] ||
+          'Disponible para pedido mayorista.'
+        );
+
+      const features =
+        lines.slice(1,4)
+          .map(line => `<li>${escapeHtml(line)}</li>`)
+          .join('');
+
+      const media =
+        image
+          ? `<img src="${escapeHtml(image)}" alt="${name}" loading="lazy">`
+          : placeholderSvg();
+
+      const badgeHtml =
+        badge
+          ? `<div class="product-badge">${escapeHtml(badge)}</div>`
+          : '';
+
+      const href =
+        `/pedidos/?slug=${encodeURIComponent(APP.slug)}&add=${encodeURIComponent(id)}`;
+
+      return `
+        <article class="product-card">
+          ${badgeHtml}
+
+          <div class="product-media">
+            ${media}
+          </div>
+
+          <div class="product-body">
+            <h3>${name}</h3>
+
+            <div class="product-desc">
+              ${summary}
+            </div>
+
+            ${features ? `<ul class="features-list">${features}</ul>` : ''}
+
+            <div class="product-foot">
+              <div class="product-price">${price}</div>
+
+              <a class="btn btn-primary" href="${href}">
+                Agregar
+              </a>
+            </div>
+          </div>
+        </article>
+      `;
+    }
+
+    const menuBtn = $('menuBtn');
+    const statusForm = $('statusForm');
+    const phoneInput = $('phoneInput');
+    const searchBtn = $('searchBtn');
+
+    menuBtn.addEventListener('click',event => {
+      event.stopPropagation();
+      statusForm.classList.toggle('open');
+
+      if(statusForm.classList.contains('open')){
+        phoneInput.focus();
+      }
+    });
+
+    statusForm.addEventListener('click',event => {
+      event.stopPropagation();
+    });
+
+    document.addEventListener('click',event => {
+      if(!statusForm.contains(event.target) && event.target !== menuBtn){
+        statusForm.classList.remove('open');
+      }
+    });
+
+    $('mobileStatusButton').addEventListener('click',() => {
+      window.scrollTo({top:0,behavior:'smooth'});
+      statusForm.classList.add('open');
+
+      setTimeout(() => {
+        phoneInput.focus();
+      },250);
+    });
+
+    statusForm.addEventListener('submit',async event => {
+      event.preventDefault();
+
+      const rawPhone = phoneInput.value;
+
+      if(normalizePhone(rawPhone).length < 8){
+        toast('Ingresá un número válido.');
+        return;
+      }
+
+      searchBtn.disabled = true;
+      searchBtn.textContent = 'Buscando…';
+
+      try{
+        const telefono = buildTelefonoDB(rawPhone);
+
+        const res = await fetch(
+          `/public/ultimo-pedido?empresa_id=${encodeURIComponent(APP.empresaId)}&telefono=${encodeURIComponent(telefono)}`,
+          {headers:{'Accept':'application/json'}}
+        );
+
+        if(!res.ok){
+          throw new Error(`ORDER_${res.status}`);
+        }
+
+        const data = await res.json();
+        const pedido = data.pedido || data;
+
+        if(pedido.tracking_url){
+          location.href = pedido.tracking_url;
+          return;
+        }
+
+        if(pedido.tracking_token){
+          location.href =
+            `/pedidos/seguimiento.html?t=${encodeURIComponent(pedido.tracking_token)}`;
+          return;
+        }
+
+        if(pedido.id){
+          location.href =
+            `/pedidos/pedido.html?id=${encodeURIComponent(pedido.id)}`;
+          return;
+        }
+
+        throw new Error('ORDER_WITHOUT_DESTINATION');
+
+      }catch(error){
+        console.error(error);
+        toast('No encontramos pedidos recientes para ese número.');
+
+      }finally{
+        searchBtn.disabled = false;
+        searchBtn.textContent = 'Buscar pedido';
+      }
+    });
+
+    function showLandingError(error){
+      console.error('Landing error:',error);
+
+      $('app').classList.add('hidden');
+      $('landingError').classList.remove('hidden');
+
+      $('landingErrorText').textContent =
+        APP.slug
+          ? `No encontramos una configuración válida para el slug "${APP.slug}".`
+          : 'No se pudo determinar el slug de la empresa.';
+    }
+
+    async function init(){
+      $('year').textContent = new Date().getFullYear();
+
+      try{
+        await loadCompanyConfig();
+        await loadProducts();
+
+        console.log('Landing gastronomía cargada',{
+          slug:APP.slug,
+          empresaId:APP.empresaId
+        });
+
+      }catch(error){
+        showLandingError(error);
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>

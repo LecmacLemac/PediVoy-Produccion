@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fuegin - Matafugo y Recarga de Gas</title>
+    <meta name="description" content="Servicios de Matafugo y Recarga de Gas por Fuegin. Seguridad y calidad garantizadas.">
+    <style>
+        :root {
+            --bg: #f5f8f7;
+            --surface: #ffffff;
+            --surface-2: #edf5f3;
+            --ink: #142321;
+            --muted: #64736f;
+            --line: #d7e2df;
+            --brand: #0b7a75;
+            --brand-2: #55c2b8;
+            --brand-3: #123b3a;
+            --radius: 28px;
+            --shadow: 0 20px 55px rgba(18, 59, 58, 0.1);
+            --shadow-strong: 0 34px 85px rgba(18, 59, 58, 0.16);
+        }
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            margin: 0;
+            min-height: 100vh;
+            background: var(--bg);
+            font-family: Arial, sans-serif;
+            color: var(--ink);
+        }
+        .wrap {
+            width: min(1200px, 92%);
+            margin: 0 auto;
+        }
+        header {
+            background: var(--surface);
+            padding: 10px 0;
+            box-shadow: var(--shadow);
+        }
+        .navbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .brand {
+            display: flex;
+            align-items: center;
+            font-weight: bold;
+        }
+        .brand-logo {
+            height: 40px;
+            margin-right: 10px;
+        }
+        nav a {
+            margin: 0 10px;
+            color: var(--ink);
+            text-decoration: none;
+        }
+        .hero {
+            background: var(--surface-2);
+            padding: 40px 0;
+            text-align: center;
+        }
+        .hero h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+        }
+        .hero p {
+            font-size: 1.2rem;
+            color: var(--muted);
+            margin-bottom: 20px;
+        }
+        .hero .btn {
+            background: var(--brand);
+            color: #fff;
+            padding: 10px 20px;
+            border: none;
+            border-radius: var(--radius);
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        .hero .btn:hover {
+            background: var(--brand-2);
+        }
+        .products {
+            padding: 40px 0;
+        }
+        .product-card {
+            background: #fff;
+            border: 1px solid var(--line);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow-strong);
+            overflow: hidden;
+            transition: transform 0.3s, box-shadow 0.3s;
+        }
+        .product-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 25px 50px rgba(18, 59, 58, 0.16);
+        }
+        .product-image {
+            height: 200px;
+            background-size: cover;
+            background-position: center;
+        }
+        .product-info {
+            padding: 20px;
+        }
+        .product-info h3 {
+            margin: 0 0 10px;
+            font-size: 1.5rem;
+        }
+        .product-info p {
+            color: var(--muted);
+            margin-bottom: 20px;
+        }
+        .product-price {
+            font-size: 1.2rem;
+            font-weight: bold;
+            color: var(--brand-3);
+        }
+        .btn-primary {
+            background: var(--brand);
+            color: #fff;
+            padding: 10px 20px;
+            border: none;
+            border-radius: var(--radius);
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        .btn-primary:hover {
+            background: var(--brand-2);
+        }
+        footer {
+            background: var(--surface);
+            padding: 20px 0;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="wrap">
+            <div class="navbar">
+                <div class="brand">
+                    <img src="logo.png" alt="Fuegin Logo" class="brand-logo">
+                    Fuegin
+                </div>
+                <nav>
+                    <a href="#home">Inicio</a>
+                    <a href="#productos">Productos</a>
+                    <a href="#contacto">Contacto</a>
+                </nav>
+            </div>
+        </div>
+    </header>
+    <main>
+        <section class="hero">
+            <div class="wrap">
+                <h1>Fuegin - Matafugo y Recarga de Gas</h1>
+                <p>Servicios de calidad en matafuego y recarga de gas para tu seguridad.</p>
+                <button class="btn">Ver Productos</button>
+            </div>
+        </section>
+        <section id="productos" class="products">
+            <div class="wrap">
+                <h2>Productos destacados</h2>
+                <div id="productGrid" class="products-grid">
+                    <!-- Productos se cargarán aquí -->
+                </div>
+            </div>
+        </section>
+    </main>
+    <footer>
+        <div class="wrap">
+            <p>&copy; 2023 Fuegin. Todos los derechos reservados.</p>
+        </div>
+    </footer>
+    <script>
+        const empresaId = 8;
+        const FALLBACK_SVG_DATA_URI = 'data:image/svg+xml;base64,...'; // Reemplazar con un SVG válido.
+
+        async function fetchProductos() {
+            try {
+                const response = await fetch(`/api/public/productos?empresa_id=${empresaId}&scope=landing`);
+                if (!response.ok) throw new Error('Error al cargar productos');
+                const productos = await response.json();
+                renderProductos(productos);
+            } catch (error) {
+                showToast('Error al cargar productos');
+            }
+        }
+
+        function renderProductos(productos) {
+            if (!productos.length) {
+                document.getElementById('productGrid').innerHTML = '<p>No hay productos disponibles actualmente.</p>';
+                return;
+            }
+            productos.sort((a, b) => a.etiqueta ? -1 : 1).sort((a, b) => a.nombre.localeCompare(b.nombre));
+            const productGrid = document.getElementById('productGrid');
+            productGrid.innerHTML = productos.map(producto => {
+                const imageUrl = producto.imagen_promo || producto.imagen || FALLBACK_SVG_DATA_URI;
+                return `<div class="product-card" onclick="window.location.href='/pedidos/index.html?empresa_id=${empresaId}&add=${producto.id}'">
+                    <div class="product-image" style="background-image: url('${imageUrl}');"></div>
+                    <div class="product-info">
+                        ${producto.etiqueta ? `<span class="product-badge">${producto.etiqueta}</span>` : ''}
+                        <h3>${producto.nombre}</h3>
+                        <p>${producto.descripcion || 'Descripción no disponible'}</p>
+                        <span class="product-price">ARS ${new Intl.NumberFormat('es-AR').format(producto.precio)}</span>
+                    </div>
+                </div>`;
+            }).join('');
+        }
+
+        function showToast(msg) {
+            const toast = document.getElementById('toast');
+            toast.textContent = msg;
+            toast.classList.add('show');
+            setTimeout(() => toast.classList.remove('show'), 3000);
+        }
+
+        fetchProductos();
+    </script>
+    <div id="toast" class="toast"></div>
+</body>
+</html>
