@@ -140,10 +140,14 @@
     try {
       const meResp = await api('/api/me');
       const u = meResp?.user || meResp;
-      if (!u || !u.empresa_id) throw new Error('Sesión inválida');
+      if (!u) throw new Error('Sesión inválida');
 
-      isSuper = String(u.role || '').toUpperCase() === 'SUPER';
-      empresaId = Number(u.empresa_id);
+      isSuper = u.role === 'super';
+      const tenantId = Number(u.empresa_id);
+      if (!isSuper && (!Number.isSafeInteger(tenantId) || tenantId <= 0)) {
+        throw new Error('Sesión inválida');
+      }
+      empresaId = isSuper ? null : tenantId;
 
       let empresas = [];
       try {
