@@ -74,7 +74,7 @@ export function mountApiModules(app, deps) {
   app.use('/api', createAuthRouter());
   app.use('/api/clientes', createClientesRouter());
   app.use('/api/track', createTrackingRouter());
-  app.use('/api', createFacturacionRouter());
+  app.use('/api', createFacturacionRouter({ projectDir: deps.projectDir }));
   app.use('/api/gastos', createGastosRouter({ GASTOS_DIR }));
   app.use('/api/pedidos', createPedidosRouter());
   app.use('/api/pedidos', createPedidosItemsRouter());

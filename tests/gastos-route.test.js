@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -40,12 +40,30 @@ async function buildGastosApp({ query, user = { role: 'user', empresa_id: 3 } })
       return req.user?.empresa_id;
     },
   }));
-  return { app, cleanup: () => rm(gastosDir, { recursive: true, force: true }) };
+  return { app, gastosDir, cleanup: () => rm(gastosDir, { recursive: true, force: true }) };
 }
 
 function isSchemaQuery(sql) {
   return /ALTER TABLE|CREATE TABLE|CREATE INDEX/i.test(sql);
 }
+
+test('POST /api/gastos elimina el upload cuando la validación rechaza la operación', async () => {
+  const { app, gastosDir, cleanup } = await buildGastosApp({
+    query: async (sql) => isSchemaQuery(sql) ? [] : [],
+  });
+  try {
+    await withServer(app, async (baseUrl) => {
+      const body = new FormData();
+      body.append('tipo', 'combustible');
+      body.append('comprobante', new Blob(['%PDF-test'], { type: 'application/pdf' }), 'ticket.pdf');
+      const response = await fetch(`${baseUrl}/api/gastos`, { method: 'POST', body });
+      assert.equal(response.status, 400);
+    });
+    assert.deepEqual(await readdir(gastosDir), []);
+  } finally {
+    await cleanup();
+  }
+});
 
 test('POST /api/gastos rechaza chofer que no pertenece a la empresa del usuario', async () => {
   const calls = [];

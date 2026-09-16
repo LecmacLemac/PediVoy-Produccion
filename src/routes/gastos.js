@@ -2,6 +2,8 @@
 import express from 'express';
 import multer from 'multer';
 import path from 'path';
+import { randomUUID } from 'node:crypto';
+import { createWriteStream, unlink } from 'node:fs';
 
 import {
   withAuth as defaultWithAuth,
@@ -12,6 +14,59 @@ import {
 } from '../services.js';
 import { query } from '../db.js';
 import { ensureRetornablesLedgerSchema, registrarRetornableMovimiento } from '../services/retornablesLedger.js';
+
+const GASTOS_MIME_EXTENSIONS = new Map([
+  ['application/pdf', '.pdf'],
+  ['image/jpeg', '.jpg'],
+  ['image/png', '.png'],
+  ['image/webp', '.webp'],
+  ['image/gif', '.gif'],
+  ['image/bmp', '.bmp'],
+  ['image/tiff', '.tiff'],
+  ['image/heic', '.heic'],
+  ['image/heif', '.heif'],
+]);
+
+export function createExclusiveGastosStorage(destination, { randomId = randomUUID } = {}) {
+  const storageDir = path.resolve(destination);
+  return {
+    _handleFile(_req, file, cb) {
+      const extension = GASTOS_MIME_EXTENSIONS.get(file.mimetype);
+      if (!extension) return cb(new Error('Tipo no permitido'));
+
+      const filename = `gasto-${randomId()}${extension}`;
+      const filePath = path.join(storageDir, filename);
+      const output = createWriteStream(filePath, { flags: 'wx' });
+      let opened = false;
+      let settled = false;
+      const finish = (error, info) => {
+        if (settled) return;
+        settled = true;
+        cb(error, info);
+      };
+
+      output.once('open', () => { opened = true; });
+      output.once('error', error => {
+        file.stream.unpipe(output);
+        output.destroy();
+        if (!opened) return finish(error);
+        return unlink(filePath, () => finish(error));
+      });
+      file.stream.once('error', error => output.destroy(error));
+      output.once('finish', () => finish(null, {
+        destination: storageDir,
+        filename,
+        path: filePath,
+        size: output.bytesWritten,
+      }));
+      file.stream.pipe(output);
+    },
+    _removeFile(_req, file, cb) {
+      if (!file?.path) return cb(null);
+      return unlink(file.path, cb);
+    },
+  };
+}
 
 export function createGastosRouter({
   GASTOS_DIR,
@@ -28,6 +83,30 @@ export function createGastosRouter({
   const dbQuery = queryFn;
   const authMiddleware = withAuthFn;
   const licenciaMiddleware = checkLicenciaFn;
+  const resolvedGastosDir = path.resolve(GASTOS_DIR);
+
+  async function unlinkBestEffort(filePath, label) {
+    if (!filePath) return;
+    await new Promise(resolve => unlink(filePath, error => {
+      if (error && error.code !== 'ENOENT') {
+        console.warn(`No se pudo eliminar ${label}:`, error.message);
+      }
+      resolve();
+    }));
+  }
+
+  async function cleanupUploadedFile(file) {
+    if (!file?.path) return;
+    const absolute = path.resolve(file.path);
+    if (path.dirname(absolute) !== resolvedGastosDir) return;
+    await unlinkBestEffort(absolute, 'comprobante temporal de gasto');
+  }
+
+  async function cleanupStoredFile(storedPath) {
+    const filename = path.basename(String(storedPath || ''));
+    if (!/^gasto-[A-Za-z0-9_-]+\.[A-Za-z0-9]+$/.test(filename)) return;
+    await unlinkBestEffort(path.join(resolvedGastosDir, filename), 'comprobante reemplazado de gasto');
+  }
 
   const ensureDepositoRefPromise = (async () => {
     try {
@@ -206,16 +285,10 @@ export function createGastosRouter({
   }
 
   const gastosUploader = multer({
-    storage: multer.diskStorage({
-      destination: (_, __, cb) => cb(null, GASTOS_DIR),
-      filename: (_, file, cb) => {
-        const ext = path.extname(file.originalname || '') || '.bin';
-        cb(null, `gasto-${Date.now()}${ext}`);
-      }
-    }),
+    storage: createExclusiveGastosStorage(GASTOS_DIR),
     limits: { fileSize: 10 * 1024 * 1024 },
     fileFilter: (_, file, cb) => {
-      const ok = /image|pdf/.test(file.mimetype);
+      const ok = GASTOS_MIME_EXTENSIONS.has(file.mimetype);
       cb(ok ? null : new Error('Tipo no permitido'), ok);
     }
   });
@@ -307,6 +380,7 @@ export function createGastosRouter({
 
   // POST /api/gastos (multipart: comprobante)
   router.post('/', authMiddleware, licenciaMiddleware, gastosUploader.single('comprobante'), async (req, res) => {
+    let uploadCommitted = false;
     try {
       await ensureDepositoRefPromise;
       const {
@@ -394,6 +468,7 @@ export function createGastosRouter({
         ]
       );
       const gastoId = Number(inserted?.[0]?.id || 0);
+      uploadCommitted = Boolean(!req.file || gastoId);
 
       // Si el chofer carga mercadería, impactamos stock físico.
       if (gastoId && productoIdNum && cantidadNum && (tipoOp === 'carga_llenos' || tipoOp === 'compra_mercaderia')) {
@@ -428,11 +503,14 @@ export function createGastosRouter({
     } catch (e) {
       console.error('ERROR POST GASTOS:', e);
       return res.status(500).json({ error: 'Error guardando gasto' });
+    } finally {
+      if (req.file && !uploadCommitted) await cleanupUploadedFile(req.file);
     }
   });
 
   // PUT /api/gastos/:id (multipart: comprobante)
   router.put('/:id', authMiddleware, licenciaMiddleware, gastosUploader.single('comprobante'), async (req, res) => {
+    let uploadCommitted = false;
     try {
       await ensureDepositoRefPromise;
       const id = Number(req.params.id);
@@ -592,6 +670,10 @@ export function createGastosRouter({
           id
         ]
       );
+      uploadCommitted = Boolean(req.file);
+      if (req.file && g0.comprobante_path && g0.comprobante_path !== req.file.filename) {
+        await cleanupStoredFile(g0.comprobante_path);
+      }
 
       if (newNeedsStock) {
         await applyStockIngresoFromGasto({
@@ -640,6 +722,8 @@ export function createGastosRouter({
     } catch (e) {
       console.error('ERROR PUT GASTOS:', e);
       return res.status(500).json({ error: 'Error actualizando gasto' });
+    } finally {
+      if (req.file && !uploadCommitted) await cleanupUploadedFile(req.file);
     }
   });
 
@@ -660,7 +744,7 @@ export function createGastosRouter({
       const myEmpresa = getEmpresaIdFromTokenFn(req);
 
       const rows0 = await dbQuery(
-        `SELECT id, empresa_id, chofer_id, tipo, cantidad, producto_id FROM gastos_repartidor WHERE id=$1 AND ($2::int IS NULL OR empresa_id=$2) LIMIT 1`,
+        `SELECT id, empresa_id, chofer_id, tipo, cantidad, producto_id, comprobante_path FROM gastos_repartidor WHERE id=$1 AND ($2::int IS NULL OR empresa_id=$2) LIMIT 1`,
         [id, esSuperUser ? null : Number(myEmpresa)]
       );
       if (!rows0.length) return res.status(404).json({ error: 'Gasto no encontrado' });
@@ -701,6 +785,7 @@ export function createGastosRouter({
         `DELETE FROM gastos_repartidor WHERE id=$1 AND ($2::int IS NULL OR empresa_id=$2)`,
         [id, esSuperUser ? null : Number(myEmpresa)]
       );
+      await cleanupStoredFile(g0.comprobante_path);
 
       return res.json({ ok: true });
     } catch (e) {

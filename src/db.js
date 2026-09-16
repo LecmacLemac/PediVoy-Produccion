@@ -33,7 +33,7 @@ pool.on('error', (err) => {
 /**
  * Función de consulta con manejo de errores y logging
  */
-export async function query(sql, params = []) {
+export async function query(sql, params = [], { sensitive = false } = {}) {
   const start = Date.now();
   let client;
 
@@ -49,11 +49,13 @@ export async function query(sql, params = []) {
 
     return res.rows;
   } catch (error) {
-    console.error('❌ Error en ejecución de Query:', {
-      message: error.message,
-      sql: sql.substring(0, 100) + '...', // No logueamos todo el SQL por seguridad
-      params
-    });
+    console.error('❌ Error en ejecución de Query:', sensitive
+      ? { message: 'Consulta sensible fallida', sql: '[REDACTED]', params: '[REDACTED]' }
+      : {
+          message: error.message,
+          sql: sql.substring(0, 100) + '...', // No logueamos todo el SQL por seguridad
+          params,
+        });
     throw error;
   } finally {
     if (client) client.release();

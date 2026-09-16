@@ -209,8 +209,8 @@ function csvCell(v) {
 /**
  * Router de transferencias (comprobantes_transferencia).
  *
- * Requisitos del caller (server.js):
- * - debe montar static de TRANSF_DIR en /Transferencia (URLs públicas)
+ * Requisitos del caller:
+ * - debe montar /Transferencia mediante el router privado tenant-aware
  * - debe pasar TRANSF_DIR absoluto como opción
  */
 export function createTransferenciasRouter({

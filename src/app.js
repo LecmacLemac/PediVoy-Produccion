@@ -17,6 +17,8 @@ import { registerPublicLegacyCreatePedidoRoute } from './routes/publicLegacyCrea
 import { toNum, inRange, round, buildOrderSummary, getAliasEmpresa } from './public/pedidosLegacyHelpers.js';
 import { registerWhatsAppWeb } from './wpp/whatsappWeb.js';
 import { assertProductionEnv } from './bootstrap/env.js';
+import { createFacturaCapabilityRouter } from './facturaCapability.js';
+import { createGastosStorageRouter, createFacturasStorageRouter } from './privateStorage.js';
 import { resolveTransferenciaStorageDir, createTransferenciaStorageRouter } from './transferenciaStorage.js';
 
 /**
@@ -156,7 +158,7 @@ export function createApp(deps) {
       const key = `${req.method} ${req.path}`;
       pushMetric(key, ms, res.statusCode);
       if (process.env.NODE_ENV !== 'test') {
-        console.info(`[http] ${req.method} ${req.originalUrl} -> ${res.statusCode} (${ms}ms) reqId=${req.requestId}`);
+        console.info(`[http] ${req.method} ${req.path} -> ${res.statusCode} (${ms}ms) reqId=${req.requestId}`);
       }
     });
 
@@ -272,11 +274,13 @@ export function createApp(deps) {
 
   const GASTOS_DIR = path.join(projectDir, 'Gastos');
   if (!fs.existsSync(GASTOS_DIR)) fs.mkdirSync(GASTOS_DIR, { recursive: true });
-  app.use('/Gastos', express.static(GASTOS_DIR));
+  app.use('/Gastos', createGastosStorageRouter({ storageDir: GASTOS_DIR, withAuth, checkLicencia, query }));
 
   const FACTURAS_DIR = path.join(projectDir, 'Facturas');
   if (!fs.existsSync(FACTURAS_DIR)) fs.mkdirSync(FACTURAS_DIR, { recursive: true });
-  app.use('/Facturas', express.static(FACTURAS_DIR));
+  app.use('/Facturas', createFacturasStorageRouter({ storageDir: FACTURAS_DIR, withAuth, checkLicencia, query }));
+
+  app.use('/public/facturas', createFacturaCapabilityRouter({ storageDir: FACTURAS_DIR, query }));
 
   mountApiModules(app, {
     projectDir,
@@ -354,7 +358,7 @@ export function createApp(deps) {
   app.use((req, res) => {
     res.status(404).json({
       error: 'Not Found',
-      path: req.originalUrl,
+      path: req.path,
     });
   });
 
@@ -362,7 +366,7 @@ export function createApp(deps) {
     console.error('[http.error]', {
       reqId: req?.requestId,
       method: req?.method,
-      path: req?.originalUrl,
+      path: req?.path,
       statusCode: err?.statusCode || 500,
       message: err?.message,
       stack: err?.stack,

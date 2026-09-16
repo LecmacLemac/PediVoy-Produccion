@@ -1,5 +1,6 @@
 import path from 'node:path';
 import express from 'express';
+import { isSafeStorageFilename, downloadStorageFile } from './privateStorage.js';
 
 export function resolveTransferenciaStorageDir({ projectDir, env = process.env } = {}) {
   if (!projectDir) throw new Error('resolveTransferenciaStorageDir: falta projectDir');
@@ -14,9 +15,8 @@ export function resolveTransferenciaStorageDir({ projectDir, env = process.env }
 }
 
 export function requireTransferenciaStorageRole(req, res, next) {
-  const role = String(req.user?.role || '').trim().toLowerCase();
-  const type = String(req.user?.type || '').trim().toLowerCase();
-  if ((type && type !== 'user') || !['admin', 'super'].includes(role)) {
+  const role = req.user?.role;
+  if (req.user?.type !== undefined || !['admin', 'super'].includes(role)) {
     return res.status(403).json({ error: 'Rol no autorizado para descargar comprobantes' });
   }
   return next();
@@ -28,9 +28,10 @@ export function createTransferenciaStorageRouter({ storageDir, withAuth, checkLi
   if (typeof query !== 'function') throw new Error('createTransferenciaStorageRouter: falta query');
   if (typeof isSuper !== 'function') throw new Error('createTransferenciaStorageRouter: falta isSuper');
   const router = express.Router();
-  router.get('/:filename', withAuth, checkLicencia, requireTransferenciaStorageRole, async (req, res) => {
+  router.use(withAuth, requireTransferenciaStorageRole, checkLicencia);
+  router.get('/:filename', async (req, res, next) => {
     const filename = String(req.params.filename || '');
-    if (!/^[A-Za-z0-9._-]+$/.test(filename) || path.basename(filename) !== filename) {
+    if (!isSafeStorageFilename(filename)) {
       return res.status(400).json({ error: 'Archivo inválido' });
     }
 
@@ -41,28 +42,36 @@ export function createTransferenciaStorageRouter({ storageDir, withAuth, checkLi
         return res.status(403).json({ error: 'Sin empresa asociada' });
       }
 
-      const tenantFilter = superUser ? '' : 'AND empresa_id = $2';
-      const params = superUser ? [filename] : [filename, empresaId];
-      const rows = await query(
-        `SELECT id
-           FROM comprobantes_transferencia
-          WHERE empresa_id IS NOT NULL
-            ${tenantFilter}
-            AND (
-              regexp_replace(COALESCE(archivo_path, ''), '^.*/', '') = $1
-              OR regexp_replace(COALESCE(comprobante_path, ''), '^.*/', '') = $1
-            )
-          LIMIT 1`,
-        params
-      );
+      const rows = superUser
+        ? await query(
+            `SELECT id
+               FROM comprobantes_transferencia
+              WHERE empresa_id IS NOT NULL
+                AND (
+                  regexp_replace(COALESCE(archivo_path, ''), '^.*/', '') = $1
+                  OR regexp_replace(COALESCE(comprobante_path, ''), '^.*/', '') = $1
+                )
+              LIMIT 1`,
+            [filename],
+          )
+        : await query(
+            `SELECT id
+               FROM comprobantes_transferencia
+              WHERE empresa_id = $2
+                AND (
+                  regexp_replace(COALESCE(archivo_path, ''), '^.*/', '') = $1
+                  OR regexp_replace(COALESCE(comprobante_path, ''), '^.*/', '') = $1
+                )
+              LIMIT 1`,
+            [filename, empresaId],
+          );
       if (!rows.length) return res.status(404).json({ error: 'Archivo no encontrado' });
 
-      res.set('X-Content-Type-Options', 'nosniff');
-      return res.download(path.join(storageDir, filename), filename);
+      return downloadStorageFile(res, storageDir, filename, next);
     } catch (error) {
-      console.error('[Transferencia storage] Error autorizando archivo:', error);
       return res.status(500).json({ error: 'Error obteniendo archivo' });
     }
   });
+  router.use((_req, res) => res.sendStatus(404));
   return router;
 }

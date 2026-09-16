@@ -9,8 +9,9 @@ import {
   feCompUltimoAutorizado,
 } from '../integrations/arca/wsfeClient.js';
 
-import { withAuth, checkLicencia, isSuper, getEmpresaIdFromToken } from '../services.js';
-import { query } from '../db.js';
+import { withAuth as defaultWithAuth, checkLicencia as defaultCheckLicencia, isSuper, getEmpresaIdFromToken } from '../services.js';
+import { query as defaultQuery } from '../db.js';
+import { downloadStorageFile, facturaStorageFilename, openStorageFile } from '../privateStorage.js';
 import {
   cacheWsaaCredentials,
   cancelFactura,
@@ -49,7 +50,7 @@ import {
   sendFacturaEmail,
 } from '../services/facturaDeliveryService.js';
 
-export function createFacturacionRouter() {
+export function createFacturacionRouter({ query = defaultQuery, withAuth = defaultWithAuth, checkLicencia = defaultCheckLicencia, projectDir = process.cwd() } = {}) {
   const router = express.Router();
   let schemaReady = false;
   const credentialsUploader = multer({
@@ -116,12 +117,18 @@ export function createFacturacionRouter() {
       throw Object.assign(new Error('Solo se puede generar PDF de facturas emitidas con CAE'), { statusCode: 409 });
     }
     if (factura.pdf_url) {
-      const existingPath = path.resolve(process.cwd(), factura.pdf_url.replace(/^\//, ''));
-      if (existingPath.startsWith(path.resolve(process.cwd(), 'Facturas'))) {
+      const filename = facturaStorageFilename(factura.pdf_url);
+      if (filename) {
+        const storageDir = resolveFacturasDir(projectDir);
+        const existingPath = path.join(storageDir, filename);
         try {
-          await fs.promises.access(existingPath);
-          return { factura, filePath: existingPath, pdfUrl: factura.pdf_url };
-        } catch {
+          const { fileHandle } = await openStorageFile(storageDir, filename);
+          await fileHandle.close();
+          return { factura, filePath: existingPath, storageDir, filename, pdfUrl: factura.pdf_url };
+        } catch (error) {
+          if (error?.code === 'ELOOP') {
+            throw Object.assign(new Error('Archivo de factura inválido'), { statusCode: 404 });
+          }
           // regenerar si la DB tiene URL pero el archivo no existe
         }
       }
@@ -132,11 +139,17 @@ export function createFacturacionRouter() {
     const generated = await generateFacturaPdf({
       factura,
       config,
-      outputDir: resolveFacturasDir(process.cwd()),
+      outputDir: resolveFacturasDir(projectDir),
     });
     await setFacturaPdfUrl(query, { facturaId, empresaId, pdfUrl: generated.publicPath });
     factura = await getFacturaById(query, { facturaId, empresaId });
-    return { factura, filePath: generated.filePath, pdfUrl: generated.publicPath };
+    return {
+      factura,
+      filePath: generated.filePath,
+      storageDir: resolveFacturasDir(projectDir),
+      filename: generated.filename,
+      pdfUrl: generated.publicPath,
+    };
   }
 
   function buildCredentialSecret({ file, type }) {
@@ -565,7 +578,7 @@ export function createFacturacionRouter() {
     }
   });
 
-  router.get('/facturas/:id/pdf', withAuth, checkLicencia, requireFacturacionAccess, async (req, res) => {
+  router.get('/facturas/:id/pdf', withAuth, checkLicencia, requireFacturacionAccess, async (req, res, next) => {
     try {
       await ensureSchema();
       const facturaId = Number(req.params.id);
@@ -573,7 +586,7 @@ export function createFacturacionRouter() {
         return res.status(400).json({ error: 'Factura invalida' });
       }
       const empresaId = resolveEmpresa(req);
-      const { factura, filePath } = await ensureFacturaPdf({ facturaId, empresaId });
+      const { factura, storageDir, filename } = await ensureFacturaPdf({ facturaId, empresaId });
       await logFacturaEvent(query, {
         empresaId,
         facturaId,
@@ -582,8 +595,8 @@ export function createFacturacionRouter() {
         detalle: 'PDF fiscal generado o descargado',
         metadata: { pdf_url: factura.pdf_url || null },
       });
-      const filename = `factura-${factura.punto_venta}-${factura.numero_comprobante}.pdf`;
-      return res.download(filePath, filename);
+      const attachmentName = `factura-${factura.punto_venta}-${factura.numero_comprobante}.pdf`;
+      return downloadStorageFile(res, storageDir, filename, next, { attachmentName });
     } catch (e) {
       return sendError(res, e);
     }
@@ -597,11 +610,11 @@ export function createFacturacionRouter() {
         return res.status(400).json({ error: 'Factura invalida' });
       }
       const empresaId = resolveEmpresa(req);
-      const { factura, filePath, pdfUrl } = await ensureFacturaPdf({ facturaId, empresaId });
+      const { factura, filePath, storageDir, filename, pdfUrl } = await ensureFacturaPdf({ facturaId, empresaId });
       const canales = Array.isArray(req.body?.canales) && req.body.canales.length
         ? req.body.canales
         : [req.body?.canal || 'whatsapp'];
-      const publicUrl = buildFacturaPublicUrl(req, pdfUrl);
+      const publicUrl = buildFacturaPublicUrl(req, factura);
       const result = { ok: true, pdf_url: pdfUrl, public_url: publicUrl, whatsapp: null, email: null };
 
       if (canales.includes('whatsapp')) {
@@ -619,6 +632,8 @@ export function createFacturacionRouter() {
           to: req.body?.email || factura.receptor_email_facturacion,
           factura,
           filePath,
+          storageDir,
+          filename,
           publicUrl,
         });
       }

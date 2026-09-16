@@ -362,16 +362,28 @@ function hasValidMagicBytes(buffer, mimetype) {
 }
 
 // --- CORE FUNCTIONS ---
-async function saveFileToDisk({ buffer, base64, originalName, mimetype }) {
+export async function saveFileToDisk({ buffer, base64, originalName, mimetype }, {
+  storageDir = STORAGE_DIR,
+  randomId = randomUUID,
+  maxAttempts = 3,
+} = {}) {
   const ext = MIME_EXTENSIONS.get(mimetype);
-  const filename = `comp-${randomUUID()}.${ext}`;
-  const absolutePath = path.join(STORAGE_DIR, filename);
-  const relativePath = `/${CONFIG.DIR_NAME}/${filename}`;
-
   const data = buffer || Buffer.from(base64, 'base64');
-  await fs.promises.writeFile(absolutePath, data);
+  await fs.promises.mkdir(storageDir, { recursive: true });
 
-  return { absolutePath, relativePath, filename, mimetype, ext, size: data.length };
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const filename = `comp-${randomId()}.${ext}`;
+    const absolutePath = path.join(storageDir, filename);
+    const relativePath = `/${CONFIG.DIR_NAME}/${filename}`;
+    try {
+      await fs.promises.writeFile(absolutePath, data, { flag: 'wx' });
+      return { absolutePath, relativePath, filename, mimetype, ext, size: data.length };
+    } catch (error) {
+      if (error?.code !== 'EEXIST' || attempt === maxAttempts - 1) throw error;
+    }
+  }
+
+  throw new Error('No se pudo reservar un nombre de comprobante único');
 }
 
 async function convertPdfFirstPageWithPdftoppm(filePath) {

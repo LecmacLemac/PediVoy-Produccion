@@ -44,7 +44,7 @@ test('descarga exige licencia y token user administrativo; admin queda limitado 
   const withAuth = (req, res, next) => {
     req.user = {
       role: String(req.headers['x-role'] || ''),
-      type: String(req.headers['x-type'] || ''),
+      ...(req.headers['x-type'] ? { type: req.headers['x-type'] } : {}),
       empresa_id: Number(req.headers['x-empresa-id'] || 0),
     };
     return next();
@@ -79,13 +79,13 @@ test('descarga exige licencia y token user administrativo; admin queda limitado 
     }
     assert.equal(queries, 0);
 
-    const wrongTenant = await fetch(url, { headers: headers('admin', 'user', 1) });
-    const allowed = await fetch(url, { headers: headers('admin', 'user', 7) });
+    const wrongTenant = await fetch(url, { headers: headers('admin', '', 1) });
+    const allowed = await fetch(url, { headers: headers('admin', '', 7) });
     assert.equal(wrongTenant.status, 404);
     assert.equal(allowed.status, 200);
     assert.match(allowed.headers.get('content-disposition'), /^attachment;/);
     assert.equal(allowed.headers.get('x-content-type-options'), 'nosniff');
-    assert.equal(licenseChecks, 6);
+    assert.equal(licenseChecks, 2);
   } finally {
     await new Promise(resolve => server.close(resolve));
     fs.rmSync(dir, { recursive: true, force: true });
@@ -128,7 +128,7 @@ test('super user administrativo conserva descarga cross-tenant', async () => {
   const app = express();
   app.use('/Transferencia', createTransferenciaStorageRouter({
     storageDir: dir,
-    withAuth: (req, _res, next) => { req.user = { role: 'super', type: 'user', empresa_id: 99 }; next(); },
+    withAuth: (req, _res, next) => { req.user = { role: 'super', empresa_id: null }; next(); },
     checkLicencia: (_req, _res, next) => next(),
     query: async (sql, params) => {
       assert.doesNotMatch(sql, /empresa_id\s*=\s*\$2/);
