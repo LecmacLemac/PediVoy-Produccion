@@ -86,6 +86,7 @@ export function createGeneralSupervisor({
   let terminalFenceGeneration = null;
   let lastInvalidatedGeneration = null;
   const activeWork = new Map();
+  const teardownFlights = new WeakMap();
   const unconfirmedTeardowns = new WeakSet();
 
   const snapshot = () => Object.freeze({
@@ -340,28 +341,34 @@ export function createGeneralSupervisor({
     }
   }
 
-  async function stopCurrent() {
+  function stopCurrent() {
     closeGate();
-    if (!current) return true;
+    if (!current) return Promise.resolve(true);
     const stopping = current;
-    try {
-      await deadline(
-        waitForActiveWork(stopping.generation),
-        destroyDeadlineMs,
-        'General active work drain',
-      );
-      await deadline(stopping.destroy(), destroyDeadlineMs, 'General client destroy');
-      const stopped = await deadline(stopping.confirmStopped(), destroyDeadlineMs, 'General client stop confirmation');
-      if (stopped !== true) throw new Error('General client stop could not be confirmed');
-      if (current === stopping) current = null;
-      return true;
-    } catch (error) {
-      const failure = error && (typeof error === 'object' || typeof error === 'function')
-        ? error
-        : new Error(String(error));
-      unconfirmedTeardowns.add(failure);
-      throw failure;
-    }
+    const existing = teardownFlights.get(stopping);
+    if (existing) return existing;
+    const teardown = (async () => {
+      try {
+        await deadline(
+          waitForActiveWork(stopping.generation),
+          destroyDeadlineMs,
+          'General active work drain',
+        );
+        await deadline(stopping.destroy(), destroyDeadlineMs, 'General client destroy');
+        const stopped = await deadline(stopping.confirmStopped(), destroyDeadlineMs, 'General client stop confirmation');
+        if (stopped !== true) throw new Error('General client stop could not be confirmed');
+        if (current === stopping) current = null;
+        return true;
+      } catch (error) {
+        const failure = error && (typeof error === 'object' || typeof error === 'function')
+          ? error
+          : new Error(String(error));
+        unconfirmedTeardowns.add(failure);
+        throw failure;
+      }
+    })();
+    teardownFlights.set(stopping, teardown);
+    return teardown;
   }
 
   async function releaseAfterInitializationGuard(cause) {
@@ -692,6 +699,10 @@ export function createGeneralSupervisor({
         return true;
       }
       await stopCurrent();
+      if (ownershipLost) {
+        await Promise.resolve(lossPromise).catch(() => false);
+        return false;
+      }
       if (aborted) return false;
       const released = await ownership.releaseAfterQuiesced(async () => {
         if (aborted) throw new Error('General shutdown deadline elapsed during quiescence');

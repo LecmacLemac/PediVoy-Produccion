@@ -1241,6 +1241,8 @@ test('successful shutdown stops and confirms before release and rejects later co
   await new Promise(resolve => setImmediate(resolve));
 
   const shutdown = h.supervisor.shutdown();
+  const duplicateShutdown = h.supervisor.shutdown();
+  assert.equal(shutdown, duplicateShutdown);
   assert.equal(h.supervisor.snapshot().gateOpen, false);
   await assert.rejects(h.supervisor.restart('too-late'), { code: 'WPP_NOT_OWNER' });
   assert.equal(await shutdown, true);
@@ -1290,6 +1292,69 @@ test('heartbeat failure during shutdown performs normal cleanup without a circul
   assert.equal(await shutdown, false);
   assert.equal(h.calls.filter(call => call === 'destroy-during-shutdown').length, 1);
   assert.equal(h.fatalErrors.length, 1);
+});
+
+test('concurrent shutdown and heartbeat rejection share one teardown without releasing uncertain ownership', async () => {
+  const destroyStarted = deferred();
+  const destroyRelease = deferred();
+  const h = makeHarness({
+    destroy: async raw => {
+      h.calls.push(`destroy:${raw.id}`);
+      destroyStarted.resolve();
+      await destroyRelease.promise;
+    },
+    confirmStopped: async raw => { h.calls.push(`stopped:${raw.id}`); return true; },
+    shutdownDeadlineMs: 1000,
+  });
+  await h.supervisor.start();
+
+  const shutdown = h.supervisor.shutdown();
+  await destroyStarted.promise;
+  const heartbeatLoss = h.supervisor.leaseLost(new Error('heartbeat rejected during shutdown'));
+  await new Promise(resolve => setImmediate(resolve));
+  destroyRelease.resolve();
+
+  const [shutdownResult, lossResult] = await Promise.all([shutdown, heartbeatLoss]);
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(h.calls.filter(call => call === 'destroy:1').length, 1);
+  assert.equal(h.calls.filter(call => call === 'stopped:1').length, 1);
+  assert.equal(shutdownResult, false);
+  assert.equal(lossResult, false);
+  assert.equal(h.calls.includes('release-begin'), false);
+  assert.equal(h.ownership.isOwner, true);
+  assert.equal(h.fatalErrors.length, 1);
+  assert.equal(h.supervisor.snapshot().state, 'fenced');
+});
+
+test('concurrent teardown callers share the same destroy rejection and fatal handling', async () => {
+  const destroyStarted = deferred();
+  const destroyRelease = deferred();
+  const failure = new Error('shared destroy rejection');
+  const h = makeHarness({
+    destroy: async raw => {
+      h.calls.push(`destroy:${raw.id}`);
+      destroyStarted.resolve();
+      await destroyRelease.promise;
+      throw failure;
+    },
+    forceStop: async raw => { h.calls.push(`force:${raw.id}`); return true; },
+    shutdownDeadlineMs: 1000,
+  });
+  await h.supervisor.start();
+
+  const shutdown = h.supervisor.shutdown();
+  await destroyStarted.promise;
+  const loss = h.supervisor.leaseLost(new Error('heartbeat rejected during teardown'));
+  destroyRelease.resolve();
+
+  assert.deepEqual(await Promise.all([shutdown, loss]), [false, false]);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.calls.filter(call => call === 'destroy:1').length, 1);
+  assert.equal(h.calls.filter(call => call === 'force:1').length, 1);
+  assert.equal(h.calls.includes('release-begin'), false);
+  assert.equal(h.fatalErrors.length, 1);
+  assert.equal(h.fatalErrors[0], failure);
 });
 
 test('shutdown accepts only an explicitly confirmed ownership release', async t => {

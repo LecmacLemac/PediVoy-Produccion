@@ -40,6 +40,15 @@ export function registerWppCronAndRoutes(app, deps) {
     return intervalId;
   }
 
+  async function runLoggedTask(task, label) {
+    try {
+      return await task();
+    } catch (error) {
+      console.error(label, error);
+      throw error;
+    }
+  }
+
   const ARG_UTC_OFFSET = -3;
 
   function programarTareaDiaria(horaArgentina, minuto, tarea) {
@@ -96,47 +105,48 @@ export function registerWppCronAndRoutes(app, deps) {
       }
     } catch (e) {
       console.error('[CRON ERROR] Falló la auditoría de licencias:', e);
+      throw e;
     }
   });
 
   programarTareaDiaria(9, 0, () => {
     if (typeof ejecutarReposicionPredictiva !== 'function') return;
     console.log('[CRON] Ejecutando Reposición Predictiva...');
-    return ejecutarReposicionPredictiva().catch((err) => console.error('[CRON ERROR]', err));
+    return runLoggedTask(ejecutarReposicionPredictiva, '[CRON ERROR]');
   });
 
   programarTareaDiaria(10, 0, () => {
     if (typeof ejecutarReactivacionInteligente !== 'function') return;
     console.log('[CRON] Ejecutando Reactivación Inteligente...');
-    return ejecutarReactivacionInteligente().catch((err) => console.error('[CRON ERROR REACTIVACION]', err));
+    return runLoggedTask(ejecutarReactivacionInteligente, '[CRON ERROR REACTIVACION]');
   });
 
   programarTareaDiaria(10, 30, () => {
     if (typeof ejecutarProgramaVip !== 'function') return;
     console.log('[CRON] Ejecutando Programa VIP...');
-    return ejecutarProgramaVip().catch((err) => console.error('[CRON ERROR VIP]', err));
+    return runLoggedTask(ejecutarProgramaVip, '[CRON ERROR VIP]');
   });
 
   programarTareaDiaria(11, 0, () => {
     if (typeof ejecutarCampaniaClima !== 'function') return;
     console.log('[CRON] Ejecutando Campaña por Clima...');
-    return ejecutarCampaniaClima().catch((err) => console.error('[CRON ERROR CLIMA]', err));
+    return runLoggedTask(ejecutarCampaniaClima, '[CRON ERROR CLIMA]');
   });
 
   programarTareaDiaria(17, 0, () => {
     if (typeof ejecutarCampaniaClima !== 'function') return;
     console.log('[CRON] Ejecutando Campaña por Clima...');
-    return ejecutarCampaniaClima().catch((err) => console.error('[CRON ERROR CLIMA]', err));
+    return runLoggedTask(ejecutarCampaniaClima, '[CRON ERROR CLIMA]');
   });
 
   scheduleInterval(() => {
     if (typeof ejecutarCampaniaBaseImportadaAuto !== 'function') return;
-    return ejecutarCampaniaBaseImportadaAuto().catch((err) => console.error('[CRON ERROR BASE_AUTO]', err));
+    return runLoggedTask(ejecutarCampaniaBaseImportadaAuto, '[CRON ERROR BASE_AUTO]');
   }, 15 * 60 * 1000);
 
   scheduleInterval(() => {
     if (typeof ejecutarPostEntregaUpsell !== 'function') return;
-    return ejecutarPostEntregaUpsell().catch((err) => console.error('[CRON ERROR POSTENTREGA]', err));
+    return runLoggedTask(ejecutarPostEntregaUpsell, '[CRON ERROR POSTENTREGA]');
   }, 30 * 60 * 1000);
 
   const requireCronSecret = (req, res) => {
@@ -212,8 +222,10 @@ export function registerWppCronAndRoutes(app, deps) {
     }
     timeoutIds.clear();
     intervalIds.clear();
-    Promise.allSettled([...activeWork]).then(() => {
+    Promise.allSettled([...activeWork]).then(results => {
+      const rejected = results.find(result => result.status === 'rejected');
       if (stopError) rejectStop(stopError);
+      else if (rejected) rejectStop(rejected.reason);
       else resolveStop(true);
     });
     return stopPromise;

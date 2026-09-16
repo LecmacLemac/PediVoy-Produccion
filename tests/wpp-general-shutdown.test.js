@@ -405,6 +405,118 @@ test('cron shutdown drains an already-dispatched asynchronous job', async () => 
   assert.equal(await stopping, true);
 });
 
+test('synchronously throwing cron work admitted at shutdown fails closed through process exit', async () => {
+  const failure = new Error('sync cron failure');
+  const intervalCallbacks = [];
+  let cron;
+  const runtime = {
+    repository: {},
+    supervisor: { snapshot: () => ({ state: 'ready' }), shutdown: async () => true },
+    getState: () => ({ isReadyWpp: false }),
+    start: async () => false,
+    stopTimers() {},
+  };
+  const h = makeServerHarness({
+    configureApp: app => registerWhatsAppWeb(app, {
+      ENABLE_WPP: false,
+      query: async () => [],
+      qrcode: { toDataURL: async () => '' },
+      withAuth: (_req, _res, next) => next(),
+      isSuper: () => true,
+      generalRuntime: runtime,
+      ejecutarCampaniaBaseImportadaAuto: () => { throw failure; },
+      registerCronAndRoutesFn: (cronApp, deps) => {
+        cron = registerWppCronAndRoutes(cronApp, {
+          ...deps,
+          timers: {
+            setTimeout: () => Symbol('timeout'),
+            clearTimeout() {},
+            setInterval(callback) { intervalCallbacks.push(callback); return Symbol('interval'); },
+            clearInterval() {},
+          },
+        });
+        return cron;
+      },
+    }),
+  });
+
+  intervalCallbacks[0]();
+  const cronStop = cron.shutdown();
+  h.signals.emit('SIGTERM');
+  h.closeConfirmation.resolve();
+
+  await assert.rejects(cronStop, error => error === failure);
+  assert.equal(await h.returned.shutdown(), false);
+  assert.deepEqual(h.exits, [1]);
+});
+
+test('asynchronously rejected cron work in flight at shutdown fails closed through process exit', async () => {
+  const job = deferred();
+  const failure = new Error('async cron failure');
+  const intervalCallbacks = [];
+  let cron;
+  const runtime = {
+    repository: {},
+    supervisor: { snapshot: () => ({ state: 'ready' }), shutdown: async () => true },
+    getState: () => ({ isReadyWpp: false }),
+    start: async () => false,
+    stopTimers() {},
+  };
+  const h = makeServerHarness({
+    configureApp: app => registerWhatsAppWeb(app, {
+      ENABLE_WPP: false,
+      query: async () => [],
+      qrcode: { toDataURL: async () => '' },
+      withAuth: (_req, _res, next) => next(),
+      isSuper: () => true,
+      generalRuntime: runtime,
+      ejecutarCampaniaBaseImportadaAuto: () => job.promise,
+      registerCronAndRoutesFn: (cronApp, deps) => {
+        cron = registerWppCronAndRoutes(cronApp, {
+          ...deps,
+          timers: {
+            setTimeout: () => Symbol('timeout'),
+            clearTimeout() {},
+            setInterval(callback) { intervalCallbacks.push(callback); return Symbol('interval'); },
+            clearInterval() {},
+          },
+        });
+        return cron;
+      },
+    }),
+  });
+
+  intervalCallbacks[0]();
+  const cronStop = cron.shutdown();
+  h.signals.emit('SIGTERM');
+  h.closeConfirmation.resolve();
+  job.reject(failure);
+
+  await assert.rejects(cronStop, error => error === failure);
+  assert.equal(await h.returned.shutdown(), false);
+  assert.deepEqual(h.exits, [1]);
+});
+
+test('completed historical cron failures do not poison a later shutdown', async () => {
+  const failure = new Error('completed cron failure');
+  const intervalCallbacks = [];
+  const cron = registerWppCronAndRoutes({ post() {} }, {
+    query: async () => [],
+    ejecutarCampaniaBaseImportadaAuto: async () => { throw failure; },
+    timers: {
+      setTimeout: () => Symbol('timeout'),
+      clearTimeout() {},
+      setInterval(callback) { intervalCallbacks.push(callback); return Symbol('interval'); },
+      clearInterval() {},
+    },
+  });
+
+  intervalCallbacks[0]();
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(await cron.shutdown(), true);
+});
+
 test('unconfirmed or failed cron shutdown is fatal through startServer', async t => {
   const cases = [
     ['unconfirmed', () => false],
