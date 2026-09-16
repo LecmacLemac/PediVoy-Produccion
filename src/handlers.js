@@ -9,6 +9,21 @@ const recentMessageIdsByClient = new WeakMap();
 const RECENT_MESSAGE_TTL_MS = 5 * 60 * 1000;
 const RECENT_MESSAGE_MAX = 500;
 
+function fenceReplyClient(client, withActiveClient) {
+  if (typeof withActiveClient !== 'function') return client;
+  return new Proxy(client, {
+    get(target, property, receiver) {
+      if (property !== 'sendMessage') return Reflect.get(target, property, receiver);
+      return (...args) => withActiveClient(({ client: activeClient }) => {
+        if (activeClient !== target) {
+          throw Object.assign(new Error('General client generation changed'), { code: 'WPP_NOT_OWNER' });
+        }
+        return activeClient.sendMessage(...args);
+      });
+    },
+  });
+}
+
 
 // ────────────────────────────────────────────────────────────────────────────────
 // Helpers básicos
@@ -1816,20 +1831,21 @@ async function handleReposicionAutomatica(client, numero, ctx) {
 // Router principal
 // --------------------------------------------------------------------------------
 
-function start(client, options = {}) {
+function start(rawClient, options = {}) {
   const hasEmpresaId = Object.prototype.hasOwnProperty.call(options, 'empresaId');
   const forcedEmpresaId = options.empresaId;
   if (hasEmpresaId && (!Number.isSafeInteger(forcedEmpresaId) || forcedEmpresaId <= 0)) {
     throw new TypeError('empresaId debe ser un entero seguro mayor que cero');
   }
-  if (!client || startedClients.has(client)) return;
-  startedClients.add(client);
+  if (!rawClient || startedClients.has(rawClient)) return;
+  startedClients.add(rawClient);
 
-  recentMessageIdsByClient.set(client, new Map());
+  recentMessageIdsByClient.set(rawClient, new Map());
+  const client = fenceReplyClient(rawClient, options.withActiveClient);
   const contextResolver = options.contextResolver
     || (options.queryFn ? createWhatsAppContextResolver(options.queryFn) : resolveWhatsAppContext);
 
-  client.on('message', async (message) => {
+  rawClient.on('message', async (message) => {
     try {
       // Ignorar mensajes propios o de estado
       if (
@@ -1849,7 +1865,7 @@ function start(client, options = {}) {
         message._data?.id?._serialized ||
         [message.from, message.timestamp, contenido].join('|');
 
-      const recentMessageIds = recentMessageIdsByClient.get(client);
+      const recentMessageIds = recentMessageIdsByClient.get(rawClient);
       const now = Date.now();
       if (recentMessageIds) {
         for (const [id, seenAt] of recentMessageIds) {
@@ -2080,7 +2096,7 @@ function start(client, options = {}) {
       await responderConIA(client, numero, contenido, ctx);
 
     } catch (err) {
-      console.error('handlers.start error:', err);
+      if (err?.code !== 'WPP_NOT_OWNER') console.error('handlers.start error:', err);
       // Evitamos responder si el error es grave para no hacer loop
     }
   });

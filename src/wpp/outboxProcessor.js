@@ -6,6 +6,7 @@ import {
   finishWppOutboxClaim,
   releaseWppOutboxClaim,
   resolveWhatsappTarget,
+  startWppOutboxDelivery,
 } from './delivery.js';
 
 export function createOutboxProcessor({
@@ -17,6 +18,7 @@ export function createOutboxProcessor({
   getIsReady,
   getIsShuttingDown,
   requestRestart,
+  withActiveClient = async fn => fn({ client: getClient(), epoch: 0, generation: 0 }),
   claimOwner = `general-${process.pid}-${randomUUID()}`,
 }) {
   let isProcessing = false;
@@ -28,10 +30,21 @@ export function createOutboxProcessor({
     schemaReady = true;
   }
 
-  async function releaseRemaining(rows, startIndex) {
+  async function releaseRemaining(rows, startIndex, epoch) {
     for (const remaining of rows.slice(startIndex)) {
-      await releaseWppOutboxClaim({ query, id: remaining.id, owner: claimOwner, error: null });
+      await releaseWppOutboxClaim({
+        query, id: remaining.id, owner: claimOwner, epoch, error: null,
+      });
     }
+  }
+
+  async function useActiveClient(epoch, fn) {
+    return withActiveClient(({ client, epoch: activeEpoch }) => {
+      if (String(activeEpoch) !== String(epoch)) {
+        throw Object.assign(new Error('General ownership epoch changed'), { code: 'WPP_NOT_OWNER' });
+      }
+      return fn(client);
+    });
   }
 
   async function processOutbox() {
@@ -46,6 +59,7 @@ export function createOutboxProcessor({
         SET status = 'skipped',
             error = 'Caducado - Más de 1 día en cola',
             claim_owner = NULL,
+            claim_epoch = NULL,
             claim_until = NULL
         WHERE status = 'pending'
           AND empresa_id IS NULL
@@ -58,9 +72,11 @@ export function createOutboxProcessor({
         console.log(`[WPP CLEANUP] ✅ Limpiados ${cleanupResult.length} mensajes viejos (>1 día)`);
       }
 
+      const claimEpoch = await withActiveClient(({ epoch }) => epoch);
       const rows = await claimWppOutboxRows({
         query,
         owner: claimOwner,
+        epoch: claimEpoch,
         limit: 3,
         whereSql: `
           AND o.created_at > NOW() - INTERVAL '1 day'
@@ -77,40 +93,68 @@ export function createOutboxProcessor({
             query,
             id: row.id,
             owner: claimOwner,
+            epoch: claimEpoch,
             error: 'WhatsApp general pausado antes del envío',
           });
-          await releaseRemaining(rows, index + 1);
+          await releaseRemaining(rows, index + 1, claimEpoch);
           console.warn('[WPP OUTBOX] WPP no está listo durante el lote. Se liberaron los claims restantes.');
           break;
         }
 
-        let sendStarted = false;
+        let deliveryStarted = false;
         try {
           const raw = String(row.telefono || '').trim();
           const digits = raw.includes('@') ? raw.split('@')[0].replace(/\D+/g, '') : raw.replace(/\D+/g, '');
           const normalizedDigits = digits.length === 10 ? `549${digits}` : digits;
           const cachedLid = normalizedDigits ? lidByPhone.get(normalizedDigits.slice(-10)) : null;
-          const client = getClient();
-          const chatId = await resolveWhatsappTarget(client, cachedLid || raw);
+          const chatId = await useActiveClient(
+            claimEpoch,
+            client => resolveWhatsappTarget(client, cachedLid || raw),
+          );
 
           try {
-            const chatPromise = client.getChatById(chatId).catch(() => null);
-            const chatTimeout = new Promise(resolve => setTimeout(() => resolve(null), 4000));
-            const chat = await Promise.race([chatPromise, chatTimeout]);
+            const chat = await useActiveClient(claimEpoch, async client => {
+              let timeoutId;
+              try {
+                return await Promise.race([
+                  client.getChatById(chatId).catch(() => null),
+                  new Promise(resolve => { timeoutId = setTimeout(() => resolve(null), 4000); }),
+                ]);
+              } finally {
+                if (timeoutId) clearTimeout(timeoutId);
+              }
+            });
             if (!chat) console.warn(`[WPP OUTBOX] Chat no encontrado/timeout: ${chatId}, continuando con envío directo`);
-          } catch {}
+          } catch (error) {
+            if (error?.code === 'WPP_NOT_OWNER') throw error;
+          }
 
           console.log(`[DEBUG OUTBOX] Enviando ID:${row.id} a ${chatId}...`);
-          sendStarted = true;
-          const sendPromise = client.sendMessage(chatId, row.mensaje);
-          const timeoutPromise = new Promise((_, reject) => setTimeout(() => {
-            const error = new Error('Timeout enviando a WPP');
-            error.code = 'WPP_SEND_TIMEOUT';
-            reject(error);
-          }, 8000));
-          await Promise.race([sendPromise, timeoutPromise]);
+          await startWppOutboxDelivery({
+            query, id: row.id, owner: claimOwner, epoch: claimEpoch,
+          });
+          deliveryStarted = true;
+          await useActiveClient(claimEpoch, async client => {
+            let timeoutId;
+            try {
+              return await Promise.race([
+                client.sendMessage(chatId, row.mensaje),
+                new Promise((_, reject) => {
+                  timeoutId = setTimeout(() => {
+                    const error = new Error('Timeout enviando a WPP');
+                    error.code = 'WPP_SEND_TIMEOUT';
+                    reject(error);
+                  }, 8000);
+                }),
+              ]);
+            } finally {
+              if (timeoutId) clearTimeout(timeoutId);
+            }
+          });
 
-          await finishWppOutboxClaim({ query, id: row.id, owner: claimOwner, status: 'sent', sent: true });
+          await finishWppOutboxClaim({
+            query, id: row.id, owner: claimOwner, epoch: claimEpoch, status: 'sent', sent: true,
+          });
           console.log(`[DEBUG OUTBOX] ✅ Mensaje ID:${row.id} enviado con éxito.`);
           await wait(index > 0 && index % 3 === 0 ? 1500 : 700);
         } catch (err) {
@@ -118,67 +162,48 @@ export function createOutboxProcessor({
           const errorLower = errorMessage.toLowerCase();
           console.error(`[WPP OUTBOX] Error ID:${row.id} tel:${row.telefono}:`, errorMessage);
 
-          if (!sendStarted) {
+          if (!deliveryStarted) {
             const invalidTarget = errorLower.includes('telefono_invalido') || errorLower.includes('jid_invalido');
             if (invalidTarget) {
               await finishWppOutboxClaim({
-                query, id: row.id, owner: claimOwner, status: 'error', error: 'Número de teléfono inválido',
+                query, id: row.id, owner: claimOwner, epoch: claimEpoch,
+                status: 'error', error: 'Número de teléfono inválido',
               });
             } else {
               await releaseWppOutboxClaim({
-                query, id: row.id, owner: claimOwner, error: 'Reintento por error previo al envío',
+                query, id: row.id, owner: claimOwner, epoch: claimEpoch,
+                error: 'Reintento por error previo al envío',
               });
+            }
+            if (err?.code === 'WPP_NOT_OWNER') {
+              await releaseRemaining(rows, index + 1, claimEpoch);
+              break;
             }
             continue;
           }
 
-          if (err?.code === 'WPP_SEND_TIMEOUT') {
-            await finishWppOutboxClaim({
-              query,
-              id: row.id,
-              owner: claimOwner,
-              status: 'error',
-              error: 'Resultado de envío desconocido por timeout; requiere revisión manual',
-            });
-            await releaseRemaining(rows, index + 1);
-            break;
-          }
-
-          const isConnectionError = ['not connected', 'disconnected', 'closed', 'websocket'].some(value => errorLower.includes(value));
           const isFrameDetached = errorLower.includes('detached frame') || errorLower.includes('frame detached');
           const isTransientBrowserError = [
             'execution context was destroyed', 'runtime.callfunctionon', 'target closed', 'session closed',
             'protocol error', "reading 'getchat'", 'reading "getchat"',
           ].some(value => errorLower.includes(value));
-          const isPhoneError = ['invalid', 'phone', 'number', 'chat_no_encontrado', 'telefono_invalido'].some(value => errorLower.includes(value));
           const isSeenBug = errorMessage.includes('markedUnread') || errorLower.includes('sendseen');
+          const unknownError = err?.code === 'WPP_SEND_TIMEOUT'
+            ? 'Resultado de envío desconocido por timeout; requiere revisión manual'
+            : 'Resultado de envío desconocido; requiere revisión manual';
 
-          if (isFrameDetached || isTransientBrowserError) {
-            await releaseWppOutboxClaim({ query, id: row.id, owner: claimOwner, error: 'Reintento por reconexión WPP' });
-            await releaseRemaining(rows, index + 1);
-            await requestRestart();
-            break;
-          }
-          if (isConnectionError) {
-            await releaseWppOutboxClaim({ query, id: row.id, owner: claimOwner, error: 'WhatsApp reconectando' });
-            await releaseRemaining(rows, index + 1);
-            break;
-          }
-          if (isSeenBug) {
-            await finishWppOutboxClaim({
-              query, id: row.id, owner: claimOwner, status: 'sent', sent: true,
-              error: 'Bug sendSeen (marcado como enviado)',
-            });
-          } else if (isPhoneError) {
-            await finishWppOutboxClaim({
-              query, id: row.id, owner: claimOwner, status: 'error', error: 'Número de teléfono inválido',
-            });
-          } else {
-            await finishWppOutboxClaim({
-              query, id: row.id, owner: claimOwner, status: 'error', error: safeErrorString(errorMessage),
-            });
-          }
-          await wait(1500);
+          await finishWppOutboxClaim({
+            query,
+            id: row.id,
+            owner: claimOwner,
+            epoch: claimEpoch,
+            status: isSeenBug ? 'sent' : 'error',
+            sent: isSeenBug,
+            error: isSeenBug ? 'Bug sendSeen (marcado como enviado)' : safeErrorString(unknownError),
+          });
+          await releaseRemaining(rows, index + 1, claimEpoch);
+          if (isFrameDetached || isTransientBrowserError) await requestRestart();
+          break;
         }
       }
     } catch (e) {

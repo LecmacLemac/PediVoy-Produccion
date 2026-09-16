@@ -6,6 +6,7 @@ export async function ensureWppDeliverySchema(query) {
   await query(`
     ALTER TABLE wpp_outbox
       ADD COLUMN IF NOT EXISTS claim_owner TEXT,
+      ADD COLUMN IF NOT EXISTS claim_epoch BIGINT,
       ADD COLUMN IF NOT EXISTS claim_until TIMESTAMPTZ
   `);
   await query(`
@@ -65,6 +66,7 @@ export async function resolveWhatsappTarget(client, destination, { timeoutMs = 8
 export async function claimWppOutboxRows({
   query,
   owner,
+  epoch = null,
   limit,
   leaseMs = WPP_OUTBOX_LEASE_MS,
   whereSql = '',
@@ -74,6 +76,9 @@ export async function claimWppOutboxRows({
   if (!Number.isInteger(limit) || limit <= 0) throw new Error('claim limit inválido');
   if (!Number.isFinite(leaseMs) || leaseMs <= 0) throw new Error('claim lease inválido');
 
+  const fenced = epoch !== null && epoch !== undefined;
+  const leaseIndex = fenced ? 3 : 2;
+  const limitIndex = fenced ? 4 : 3;
   return query(`
     WITH candidates AS (
       SELECT o.id
@@ -84,37 +89,73 @@ export async function claimWppOutboxRows({
         ${whereSql}
       ORDER BY o.created_at ASC, o.id ASC
       FOR UPDATE OF o SKIP LOCKED
-      LIMIT $3::integer
+      LIMIT $${limitIndex}::integer
     )
     UPDATE wpp_outbox o
        SET claim_owner = $1,
-           claim_until = NOW() + ($2::bigint * INTERVAL '1 millisecond')
+           claim_epoch = ${fenced ? '$2::bigint' : 'NULL'},
+           claim_until = NOW() + ($${leaseIndex}::bigint * INTERVAL '1 millisecond')
       FROM candidates c
      WHERE o.id = c.id
     RETURNING o.id, o.empresa_id, o.telefono, o.mensaje, o.created_at
-  `, [owner, leaseMs, limit, ...whereParams]);
+  `, fenced
+    ? [owner, String(epoch), leaseMs, limit, ...whereParams]
+    : [owner, leaseMs, limit, ...whereParams]);
 }
 
-export async function releaseWppOutboxClaim({ query, id, owner, error }) {
+export async function releaseWppOutboxClaim({ query, id, owner, epoch = null, error }) {
+  const fenced = epoch !== null && epoch !== undefined;
   return query(`
     UPDATE wpp_outbox
        SET status = 'pending',
            error = $1,
            claim_owner = NULL,
+           claim_epoch = NULL,
            claim_until = NULL
      WHERE id = $2 AND claim_owner = $3
-  `, [error, id, owner]);
+       ${fenced ? 'AND claim_epoch = $4::bigint' : ''}
+    RETURNING id
+  `, fenced ? [error, id, owner, String(epoch)] : [error, id, owner]);
 }
 
-export async function finishWppOutboxClaim({ query, id, owner, status, error = null, sent = false }) {
+function claimLostError(id) {
+  return Object.assign(new Error(`outbox claim ${id} is no longer owned`), {
+    code: 'WPP_OUTBOX_CLAIM_LOST',
+  });
+}
+
+export async function startWppOutboxDelivery({ query, id, owner, epoch }) {
+  if (epoch === null || epoch === undefined) throw new Error('claim epoch requerido');
+  const rows = await query(`
+    UPDATE wpp_outbox
+       SET status = 'sending'
+     WHERE id = $1
+       AND status = 'pending'
+       AND claim_owner = $2
+       AND claim_epoch = $3::bigint
+    RETURNING id
+  `, [id, owner, String(epoch)]);
+  if (rows.length !== 1) throw claimLostError(id);
+  return rows[0];
+}
+
+export async function finishWppOutboxClaim({ query, id, owner, epoch = null, status, error = null, sent = false }) {
   if (!['sent', 'error', 'skipped'].includes(status)) throw new Error('estado final inválido');
-  return query(`
+  const fenced = epoch !== null && epoch !== undefined;
+  const rows = await query(`
     UPDATE wpp_outbox
        SET status = $1,
            sent_at = CASE WHEN $2 THEN COALESCE(sent_at, NOW()) ELSE sent_at END,
            error = $3,
            claim_owner = NULL,
+           claim_epoch = NULL,
            claim_until = NULL
      WHERE id = $4 AND claim_owner = $5
-  `, [status, sent, error, id, owner]);
+       ${fenced ? 'AND claim_epoch = $6::bigint' : ''}
+    RETURNING id
+  `, fenced
+    ? [status, sent, error, id, owner, String(epoch)]
+    : [status, sent, error, id, owner]);
+  if (rows.length !== 1) throw claimLostError(id);
+  return rows[0];
 }

@@ -53,13 +53,17 @@ export function registerWhatsAppWeb(app, deps = {}) {
   const repository = generalControlRepository ?? injectedRuntime?.repository
     ?? createGeneralControlRepository(query);
   const lidByPhone = new Map();
+  let runtime = injectedRuntime ?? null;
+  const withActiveClient = fn => runtime?.supervisor?.withActiveClient(fn)
+    ?? Promise.reject(Object.assign(new Error('General supervisor is not active'), { code: 'WPP_NOT_OWNER' }));
   const handleIncomingMediaMessage = createIncomingMediaHandler({
     query,
     lidByPhone,
     handleIncomingComprobanteFromBotPg,
+    withActiveClient,
   });
 
-  const runtime = injectedRuntime ?? createGeneralRuntime({
+  runtime = injectedRuntime ?? createGeneralRuntime({
     enabled: Boolean(ENABLE_WPP),
     qrOnly: Boolean(WPP_QR_ONLY),
     Client,
@@ -87,6 +91,7 @@ export function registerWhatsAppWeb(app, deps = {}) {
       getIsReady: () => getState().isReadyWpp,
       getIsShuttingDown: () => getState().isShuttingDownWpp,
       requestRestart: () => runtime.supervisor.restart('outbox_transport_error'),
+      withActiveClient,
     });
     runtime.setOutboxProcessor(outboxProcessor);
   }

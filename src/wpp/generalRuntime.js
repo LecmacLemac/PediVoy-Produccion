@@ -409,7 +409,9 @@ export function createGeneralRuntime({
         if (!handlersStarted.has(client)) {
           handlersStarted.add(client);
           try {
-            await handlers?.start?.(client);
+            await handlers?.start?.(client, {
+              withActiveClient: supervisor.withActiveClient,
+            });
           } catch (error) {
             handlersStarted.delete(client);
             throw error;

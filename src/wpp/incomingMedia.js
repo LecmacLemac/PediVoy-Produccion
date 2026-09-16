@@ -34,13 +34,13 @@ function ensureSerializedMessageId(msg) {
   return serialized;
 }
 
-async function downloadMediaWithRetry(msg, { attempts = 3, delayMs = 1500 } = {}) {
+async function downloadMediaWithRetry(msg, { attempts = 3, delayMs = 1500, useTransport = fn => fn() } = {}) {
   let lastError = null;
   ensureSerializedMessageId(msg);
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
-      const media = await msg.downloadMedia();
+      const media = await useTransport(() => msg.downloadMedia());
       if (media?.data) {
         if (attempt > 1) {
           console.log('[WPP MEDIA] Descarga recuperada en reintento', { attempt });
@@ -54,6 +54,7 @@ async function downloadMediaWithRetry(msg, { attempts = 3, delayMs = 1500 } = {}
         hasMedia: !!msg.hasMedia,
       });
     } catch (err) {
+      if (err?.code === 'WPP_NOT_OWNER') throw err;
       lastError = err;
       console.error('[WPP MEDIA] Error descargando', {
         attempt,
@@ -77,8 +78,17 @@ async function downloadMediaWithRetry(msg, { attempts = 3, delayMs = 1500 } = {}
   return null;
 }
 
-export function createIncomingMediaHandler({ query, lidByPhone, handleIncomingComprobanteFromBotPg, empresaId = null }) {
+export function createIncomingMediaHandler({
+  query,
+  lidByPhone,
+  handleIncomingComprobanteFromBotPg,
+  empresaId = null,
+  withActiveClient = null,
+}) {
   const tenantId = Number(empresaId || 0) || null;
+  const useTransport = typeof withActiveClient === 'function'
+    ? fn => withActiveClient(() => fn())
+    : fn => fn();
   return async function handleIncomingMediaMessage(msg) {
     try {
       if (msg.from === 'status@broadcast' || msg.isStatus) return;
@@ -102,7 +112,7 @@ export function createIncomingMediaHandler({ query, lidByPhone, handleIncomingCo
 
       if (String(msg.from || '').includes('@lid')) {
         try {
-          const contact = await msg.getContact();
+          const contact = await useTransport(() => msg.getContact());
           const contactDigits = String(contact?.number || contact?.id?.user || '').replace(/\D/g, '');
           if (contactDigits) telefonoLimpio = contactDigits;
           const key10 = String(telefonoLimpio || '').replace(/\D/g, '').slice(-10);
@@ -138,7 +148,7 @@ export function createIncomingMediaHandler({ query, lidByPhone, handleIncomingCo
 
       if (!tenantId && new Set(clienteQuery.map(row => Number(row.empresa_id))).size > 1) {
         if (typeof msg.reply === 'function') {
-          await msg.reply('Tu teléfono pertenece a más de una empresa. Enviá el comprobante al canal de la empresa correspondiente.');
+          await useTransport(() => msg.reply('Tu teléfono pertenece a más de una empresa. Enviá el comprobante al canal de la empresa correspondiente.'));
         }
         return;
       }
@@ -150,7 +160,7 @@ export function createIncomingMediaHandler({ query, lidByPhone, handleIncomingCo
 
       console.log(`[WPP MEDIA] Recibido archivo de cliente registrado tipo=${t}`);
 
-      const media = await downloadMediaWithRetry(msg);
+      const media = await downloadMediaWithRetry(msg, { useTransport });
 
       if (!media) {
         console.warn('[WPP MEDIA] downloadMedia devolvió null');
@@ -192,7 +202,9 @@ export function createIncomingMediaHandler({ query, lidByPhone, handleIncomingCo
 
       console.log(`[AUDIT COMPROBANTE] empresa=${resolvedEmpresaId} pedido=${String(result?.pedido_id ?? '-')} comp=${String(result?.id ?? '-')} ok=${result?.ok ? 1 : 0}`);
     } catch (e) {
-      console.error('[WPP SERVER] Error procesando media:', e?.message || String(e));
+      if (e?.code !== 'WPP_NOT_OWNER') {
+        console.error('[WPP SERVER] Error procesando media:', e?.message || String(e));
+      }
     }
   };
 }
