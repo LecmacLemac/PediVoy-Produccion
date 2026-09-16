@@ -277,6 +277,32 @@ export function createGeneralSupervisor({
     return true;
   }
 
+  async function releaseAfterInitializationGuard(cause) {
+    let released;
+    try {
+      released = await ownership.releaseAfterQuiesced(async () => {});
+    } catch (releaseError) {
+      const fatalError = preserveCause(releaseError, cause);
+      state = 'fenced';
+      closeGate();
+      lastError = fatalError;
+      callFatal(fatalError);
+      throw fatalError;
+    }
+    if (released !== true) {
+      const error = preserveCause(
+        notOwnerError('General ownership release after initialization guard failed'),
+        cause,
+      );
+      state = 'fenced';
+      closeGate();
+      lastError = error;
+      callFatal(error);
+      throw error;
+    }
+    state = 'standby';
+  }
+
   function start() {
     if (shuttingDown) return Promise.reject(notOwnerError('General supervisor is shutting down'));
     if (startPromise) return startPromise;
@@ -292,17 +318,17 @@ export function createGeneralSupervisor({
       if (acquired !== true) throw notOwnerError('General ownership acquisition was not confirmed');
       let initializeAllowed;
       try {
-        initializeAllowed = await beforeInitialize();
+        initializeAllowed = await deadline(
+          beforeInitialize(),
+          initializeDeadlineMs,
+          'General initialization guard',
+        );
       } catch (error) {
-        const released = await ownership.releaseAfterQuiesced(async () => {});
-        if (released !== true) throw notOwnerError('General ownership release after initialization guard failed');
-        state = 'standby';
+        await releaseAfterInitializationGuard(error);
         throw error;
       }
       if (initializeAllowed !== true) {
-        const released = await ownership.releaseAfterQuiesced(async () => {});
-        if (released !== true) throw notOwnerError('General ownership release after initialization guard failed');
-        state = 'standby';
+        await releaseAfterInitializationGuard();
         return false;
       }
       return initializeFresh();

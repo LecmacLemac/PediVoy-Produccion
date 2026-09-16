@@ -16,7 +16,7 @@ function makeHarness({
   initialize, destroy, confirmStopped, forceStop, tryAcquire = async () => true,
   heartbeat, assertOwned, updateOwned, initializeDeadlineMs = 30, destroyDeadlineMs = 20,
   shutdownDeadlineMs = 40, markResetStarted, markResetApplied, markResetFailed,
-  releaseResult = () => true, onGenerationInvalidated,
+  releaseResult = () => true, onGenerationInvalidated, beforeInitialize,
 } = {}) {
   const calls = [];
   const clients = [];
@@ -90,6 +90,7 @@ function makeHarness({
     repository,
     fatalExit: error => fatalErrors.push(error),
     onGenerationInvalidated,
+    beforeInitialize,
     initializeDeadlineMs,
     destroyDeadlineMs,
     shutdownDeadlineMs,
@@ -99,7 +100,7 @@ function makeHarness({
 
 test('concurrent start collapses to one ownership acquisition and one client initialization', async () => {
   const init = deferred();
-  const h = makeHarness({ initialize: () => init.promise });
+  const h = makeHarness({ initialize: () => init.promise, initializeDeadlineMs: 1000 });
 
   const first = h.supervisor.start();
   const second = h.supervisor.start();
@@ -113,6 +114,45 @@ test('concurrent start collapses to one ownership acquisition and one client ini
   assert.equal(await first, true);
   assert.equal(await second, true);
   assert.equal(h.supervisor.snapshot().generation, 1);
+});
+
+test('post-acquisition initialization guard is bounded', async () => {
+  const h = makeHarness({
+    beforeInitialize: () => new Promise(() => {}),
+    initializeDeadlineMs: 5,
+  });
+
+  await assert.rejects(
+    Promise.race([
+      h.supervisor.start(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('test wait expired')), 40)),
+    ]),
+    /initialization guard deadline exceeded/i,
+  );
+  assert.equal(h.calls.includes('release-done'), true);
+  assert.equal(h.ownership.isOwner, false);
+  assert.equal(h.clients.length, 0);
+  assert.equal(h.supervisor.snapshot().state, 'standby');
+});
+
+test('unconfirmed quiesced release after a blocked initialization guard is fatal', async t => {
+  for (const releaseConfirmed of [false, undefined]) {
+    await t.test(String(releaseConfirmed), async () => {
+      const h = makeHarness({
+        beforeInitialize: async () => false,
+        releaseResult: () => releaseConfirmed,
+      });
+
+      await assert.rejects(h.supervisor.start(), /release after initialization guard failed/i);
+      await new Promise(resolve => setImmediate(resolve));
+
+      assert.equal(h.clients.length, 0);
+      assert.equal(h.ownership.isOwner, true);
+      assert.equal(h.supervisor.snapshot().state, 'fenced');
+      assert.equal(h.fatalErrors.length, 1);
+      assert.match(h.fatalErrors[0].message, /release after initialization guard failed/i);
+    });
+  }
 });
 
 test('restart during initialize and reset during restart execute in serial order with fresh generations', async () => {
