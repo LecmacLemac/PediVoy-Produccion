@@ -147,6 +147,7 @@ test('PostgreSQL 16 legacy outbox migration fails closed and is idempotent', opt
       ALTER TABLE wpp_outbox
         ADD CONSTRAINT wpp_outbox_status_check
         CHECK (status IN ('pending', 'sent')) NOT VALID;
+      CREATE INDEX wpp_outbox_pending_claim_idx ON wpp_outbox (id);
     `);
 
     await pool.query(migrationSql);

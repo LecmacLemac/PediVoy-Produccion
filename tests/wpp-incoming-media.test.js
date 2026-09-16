@@ -107,6 +107,27 @@ test('canal General propaga la única empresa resuelta al pipeline', async () =>
   assert.equal(payload.empresaId, 7);
 });
 
+test('lease loss while resolving an @lid contact aborts before database and media work', async () => {
+  const calls = { query: 0, download: 0, pipeline: 0, reply: 0 };
+  const notOwner = Object.assign(new Error('lease lost during contact resolution'), { code: 'WPP_NOT_OWNER' });
+  const handler = createIncomingMediaHandler({
+    lidByPhone: new Map(),
+    query: async () => { calls.query += 1; return [{ empresa_id: 7 }]; },
+    handleIncomingComprobanteFromBotPg: async () => { calls.pipeline += 1; },
+    withActiveClient: fn => fn(),
+  });
+  const msg = mediaMessage('123456789012345');
+  msg.from = '123456789012345@lid';
+  msg.id.remote = msg.from;
+  msg.getContact = async () => { throw notOwner; };
+  msg.downloadMedia = async () => { calls.download += 1; return null; };
+  msg.reply = async () => { calls.reply += 1; };
+
+  await handler(msg);
+
+  assert.deepEqual(calls, { query: 0, download: 0, pipeline: 0, reply: 0 });
+});
+
 test('rechaza HTML como documento y magic bytes falsos antes de guardar o analizar', async () => {
   const html = Buffer.from('<html><script>alert(1)</script></html>');
   const htmlResult = await handleIncomingComprobanteFromBotPg({

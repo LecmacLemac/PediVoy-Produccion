@@ -1359,7 +1359,8 @@ ALTER TABLE wpp_outbox
 ALTER TABLE wpp_outbox
   VALIDATE CONSTRAINT wpp_outbox_status_check;
 
-CREATE INDEX IF NOT EXISTS wpp_outbox_pending_claim_idx
+DROP INDEX IF EXISTS wpp_outbox_pending_claim_idx;
+CREATE INDEX wpp_outbox_pending_claim_idx
   ON wpp_outbox (created_at, id)
   WHERE status = 'pending';
 

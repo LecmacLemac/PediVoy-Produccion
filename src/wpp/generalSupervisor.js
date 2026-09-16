@@ -726,6 +726,9 @@ export function createGeneralSupervisor({
         leaseLost(error);
         throw error;
       }
+      if (!ready || !gateOpen || shuttingDown) {
+        throw notOwnerError('General client gate closed before client use');
+      }
       return await fn({
         client: active.client,
         generation: activeGeneration,

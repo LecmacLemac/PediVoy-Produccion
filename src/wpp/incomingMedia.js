@@ -124,6 +124,7 @@ export function createIncomingMediaHandler({
             resolved: !!contactDigits,
           });
         } catch (e) {
+          if (e?.code === 'WPP_NOT_OWNER') throw e;
           console.warn('[WPP MEDIA] No se pudo resolver número para @lid:', e?.message || e);
         }
       }

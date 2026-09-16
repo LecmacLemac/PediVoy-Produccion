@@ -1098,7 +1098,28 @@ test('active-work drain timeout fences before force-stop without starting normal
   assert.equal(h.fatalErrors.length, 1);
 });
 
-test('restart drains active work accepted before its ownership heartbeat completes', async () => {
+test('QR gate closure rejects active work whose ownership heartbeat is still pending', async () => {
+  const heartbeat = deferred();
+  const h = makeHarness({ heartbeat: () => heartbeat.promise });
+  await h.supervisor.start();
+  h.clients[0].emit('ready');
+  await new Promise(resolve => setImmediate(resolve));
+  let invoked = 0;
+
+  const work = h.supervisor.withActiveClient(() => { invoked += 1; });
+  await new Promise(resolve => setImmediate(resolve));
+  h.clients[0].emit('qr', 'replacement-code');
+  assert.equal(h.supervisor.snapshot().gateOpen, false);
+  heartbeat.resolve(true);
+
+  await assert.rejects(work, { code: 'WPP_NOT_OWNER' });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(invoked, 0);
+  assert.equal(h.supervisor.snapshot().state, 'awaiting_qr');
+  assert.equal(h.fatalErrors.length, 0);
+});
+
+test('restart closes the gate before pending-heartbeat work can invoke its callback', async () => {
   const heartbeat = deferred();
   const h = makeHarness({
     heartbeat: () => heartbeat.promise,
@@ -1108,15 +1129,17 @@ test('restart drains active work accepted before its ownership heartbeat complet
   await h.supervisor.start();
   h.clients[0].emit('ready');
   await new Promise(resolve => setImmediate(resolve));
+  let invoked = 0;
 
-  const work = h.supervisor.withActiveClient(() => 'sent');
+  const work = h.supervisor.withActiveClient(() => { invoked += 1; });
   await new Promise(resolve => setImmediate(resolve));
   const restart = h.supervisor.restart('manual');
   await new Promise(resolve => setImmediate(resolve));
 
   assert.equal(h.calls.includes('destroy:1'), false);
   heartbeat.resolve(true);
-  assert.equal(await work, 'sent');
+  await assert.rejects(work, { code: 'WPP_NOT_OWNER' });
+  assert.equal(invoked, 0);
   assert.equal(await restart, true);
   assert.equal(h.fatalErrors.length, 0);
 });

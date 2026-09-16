@@ -88,7 +88,7 @@ test('initDb mantiene esquema canónico de outbox para fencing y estados no rein
   assert.match(sql, /BEGIN;\s*SET LOCAL lock_timeout = '30s';\s*SET LOCAL statement_timeout = '5min';\s*LOCK TABLE wpp_outbox IN ACCESS EXCLUSIVE MODE;/i);
   assert.match(sql, /LOCK TABLE wpp_outbox IN ACCESS EXCLUSIVE MODE;\s*ALTER TABLE wpp_outbox\s*DROP CONSTRAINT IF EXISTS wpp_outbox_status_check;[\s\S]*UPDATE wpp_outbox/i);
   assert.match(sql, /wpp_outbox_status_check[\s\S]*pending[\s\S]*sending[\s\S]*sent[\s\S]*error[\s\S]*skipped/i);
-  assert.match(sql, /CREATE INDEX IF NOT EXISTS wpp_outbox_pending_claim_idx[\s\S]*WHERE status = 'pending'/i);
+  assert.match(sql, /DROP INDEX IF EXISTS wpp_outbox_pending_claim_idx;\s*CREATE INDEX wpp_outbox_pending_claim_idx[\s\S]*WHERE status = 'pending'/i);
 });
 
 test('liberar claim conserva pending para errores previos al envío', async () => {
