@@ -43,12 +43,21 @@ export function registerWhatsAppWeb(app, deps = {}) {
     generalSupervisor,
     generalOwnership,
     runtimeDependencies = {},
+    createGeneralRuntimeFn = createGeneralRuntime,
     createOutboxProcessorFn = createOutboxProcessor,
     registerCronAndRoutesFn = registerWppCronAndRoutes,
   } = deps;
 
   if (!app) throw new Error('registerWhatsAppWeb: falta app');
   if (typeof query !== 'function') throw new Error('registerWhatsAppWeb: falta query(fn)');
+  app.locals ??= {};
+
+  const { fatalExit: injectedFatalExit, ...otherRuntimeDependencies } = runtimeDependencies;
+  const reportFatal = error => {
+    app.locals.wppGeneralFatalError ??= error;
+    app.locals.requestFatalShutdown?.(error);
+    injectedFatalExit?.(error);
+  };
 
   const repository = generalControlRepository ?? injectedRuntime?.repository
     ?? createGeneralControlRepository(query);
@@ -63,7 +72,7 @@ export function registerWhatsAppWeb(app, deps = {}) {
     withActiveClient,
   });
 
-  runtime = injectedRuntime ?? createGeneralRuntime({
+  runtime = injectedRuntime ?? createGeneralRuntimeFn({
     enabled: Boolean(ENABLE_WPP),
     qrOnly: Boolean(WPP_QR_ONLY),
     Client,
@@ -77,7 +86,8 @@ export function registerWhatsAppWeb(app, deps = {}) {
     ownership: generalOwnership,
     handlers,
     handleIncomingMediaMessage,
-    ...runtimeDependencies,
+    ...otherRuntimeDependencies,
+    fatalExit: reportFatal,
   });
 
   const getState = () => runtime.getState();
@@ -164,16 +174,18 @@ export function registerWhatsAppWeb(app, deps = {}) {
     } catch (error) {
       cronStop = Promise.reject(error);
     }
-    Promise.all([timerStop, supervisorStop, cronStop]).then(
-      ([, supervisorResult, cronResult]) => resolveShutdown(
-        supervisorResult === true && cronResult === true,
-      ),
-      rejectShutdown,
-    );
+    Promise.allSettled([timerStop, supervisorStop, cronStop]).then(results => {
+      const rejected = results.find(result => result.status === 'rejected');
+      if (rejected) {
+        rejectShutdown(rejected.reason);
+        return;
+      }
+      const [, supervisorResult, cronResult] = results.map(result => result.value);
+      resolveShutdown(supervisorResult === true && cronResult === true);
+    });
     return shutdownPromise;
   };
   runtime.shutdown = shutdown;
-  app.locals ??= {};
   app.locals.wppGeneralShutdown = shutdown;
 
   return runtime;

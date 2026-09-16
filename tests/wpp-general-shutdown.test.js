@@ -308,6 +308,23 @@ test('HTTP server close failure is fatal', async () => {
   assert.deepEqual(h.exits, [1]);
 });
 
+test('rejected WPP shutdown still waits for pending HTTP close before fatal exit', async () => {
+  const failure = new Error('WPP stop failed');
+  const h = makeServerHarness({ wppShutdown: () => Promise.reject(failure) });
+  let settled = false;
+
+  h.signals.emit('SIGTERM');
+  const shutdown = h.returned.shutdown().then(result => { settled = true; return result; });
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(settled, false);
+  assert.deepEqual(h.exits, []);
+
+  h.closeConfirmation.resolve();
+  assert.equal(await shutdown, false);
+  assert.deepEqual(h.exits, [1]);
+});
+
 test('registration rejects an unconfirmed supervisor shutdown result', async t => {
   for (const result of [undefined, null]) {
     await t.test(String(result), async () => {
@@ -335,6 +352,83 @@ test('registration rejects an unconfirmed supervisor shutdown result', async t =
       assert.equal(await runtime.shutdown(), false);
     });
   }
+});
+
+test('rejected cron shutdown still waits for pending supervisor shutdown', async () => {
+  const supervisorStop = deferred();
+  const failure = new Error('cron stop failed');
+  const runtime = {
+    repository: {},
+    supervisor: {
+      snapshot: () => ({ state: 'ready' }),
+      shutdown: () => supervisorStop.promise,
+    },
+    getState: () => ({ isReadyWpp: false }),
+    start: async () => false,
+    stopTimers() {},
+  };
+  const app = { locals: {}, get() {}, post() {} };
+  registerWhatsAppWeb(app, {
+    ENABLE_WPP: false,
+    query: async () => [],
+    qrcode: { toDataURL: async () => '' },
+    withAuth: (_req, _res, next) => next(),
+    isSuper: () => true,
+    generalRuntime: runtime,
+    registerCronAndRoutesFn: () => ({ shutdown: () => Promise.reject(failure) }),
+  });
+  let settled = false;
+
+  const shutdown = runtime.shutdown().finally(() => { settled = true; });
+  shutdown.catch(() => {});
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(settled, false);
+
+  supervisorStop.resolve(true);
+  await assert.rejects(shutdown, error => error === failure);
+  assert.equal(settled, true);
+});
+
+test('runtime fatal during shutdown is deferred to the central coordinator', async () => {
+  const supervisorStop = deferred();
+  const failure = new Error('ownership lost');
+  let runtimeOptions;
+  const runtime = {
+    repository: {},
+    supervisor: {
+      snapshot: () => ({ state: 'ready' }),
+      shutdown: () => supervisorStop.promise,
+    },
+    getState: () => ({ isReadyWpp: false }),
+    start: async () => false,
+    stopTimers() {},
+  };
+  const h = makeServerHarness({
+    configureApp: app => registerWhatsAppWeb(app, {
+      ENABLE_WPP: false,
+      query: async () => [],
+      qrcode: { toDataURL: async () => '' },
+      withAuth: (_req, _res, next) => next(),
+      isSuper: () => true,
+      createGeneralRuntimeFn: options => {
+        runtimeOptions = options;
+        return runtime;
+      },
+      registerCronAndRoutesFn: () => ({ shutdown: async () => true }),
+    }),
+  });
+
+  h.signals.emit('SIGTERM');
+  runtimeOptions.fatalExit(failure);
+  h.closeConfirmation.resolve();
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.deepEqual(h.exits, []);
+
+  supervisorStop.resolve(true);
+  assert.equal(await h.returned.shutdown(), false);
+  assert.deepEqual(h.exits, [1]);
 });
 
 test('cron shutdown cancels every timer and prevents post-stop rescheduling', async () => {

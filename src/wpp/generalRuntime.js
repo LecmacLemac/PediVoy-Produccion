@@ -44,7 +44,6 @@ export function createGeneralRuntime({
   ownerId = createProcessOwnerId(),
   fatalExit = error => {
     console.error('[WPP GENERAL] fatal ownership/lifecycle failure:', error);
-    process.exit(1);
   },
   logger = console,
   handlers,

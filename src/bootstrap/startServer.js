@@ -25,6 +25,7 @@ export function startServer(app, {
   });
 
   let shutdownPromise = null;
+  let fatalShutdownError = null;
   const closeHttp = () => new Promise((resolve, reject) => {
     try {
       server.close(error => (error ? reject(error) : resolve(true)));
@@ -40,7 +41,8 @@ export function startServer(app, {
     const timer = timers.setTimeout(() => reject(new Error('Process shutdown deadline exceeded')), deadlineMs);
     Promise.resolve(operation).then(resolve, reject).finally(() => timers.clearTimeout(timer));
   });
-  const shutdown = () => {
+  const shutdown = fatalError => {
+    if (fatalError && !fatalShutdownError) fatalShutdownError = fatalError;
     if (shutdownPromise) return shutdownPromise;
 
     shuttingDown = true;
@@ -65,8 +67,12 @@ export function startServer(app, {
       asteriskStopped = Promise.reject(error);
     }
 
-    withDeadline(Promise.all([httpClosed, wppStopped, asteriskStopped]))
-      .then(([, wppResult, asteriskResult]) => {
+    withDeadline(Promise.allSettled([httpClosed, wppStopped, asteriskStopped]))
+      .then(results => {
+        const rejected = results.find(result => result.status === 'rejected');
+        if (fatalShutdownError) throw fatalShutdownError;
+        if (rejected) throw rejected.reason;
+        const [, wppResult, asteriskResult] = results.map(result => result.value);
         if (wppResult !== true) throw new Error('WhatsApp General shutdown was not confirmed');
         if (asteriskResult !== true) throw new Error('Asterisk shutdown was not confirmed');
         removeSignalListeners();
@@ -87,6 +93,9 @@ export function startServer(app, {
   processTarget.on('SIGTERM', onSignal);
   processTarget.on('SIGINT', onSignal);
   server.shutdown = shutdown;
+  app.locals ??= {};
+  app.locals.requestFatalShutdown = error => shutdown(error);
+  if (app.locals.wppGeneralFatalError) void shutdown(app.locals.wppGeneralFatalError);
 
   return server;
 }
