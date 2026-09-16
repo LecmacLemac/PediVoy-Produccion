@@ -681,7 +681,12 @@ export function createGeneralSupervisor({
       closeGate();
       state = 'fenced';
       lastError = error;
-      await scheduleFatalTeardown(error);
+      if (unconfirmedTeardowns.has(error)) {
+        const fencePersisted = await persistTerminalFenceBeforeFatal('shutdown_failed', error);
+        if (fencePersisted) await scheduleFatalTeardown(error);
+      } else {
+        await scheduleFatalTeardown(error);
+      }
       return false;
     });
     tail = shutdownPromise.catch(() => {});

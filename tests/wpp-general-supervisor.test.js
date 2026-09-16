@@ -20,7 +20,7 @@ function makeHarness({
   heartbeat, assertOwned, updateOwned, initializeDeadlineMs = 30,
   postAcquisitionGuardDeadlineMs = 5, destroyDeadlineMs = 20,
   shutdownDeadlineMs = 40, markResetStarted, markResetApplied, markResetFailed,
-  releaseResult = () => true, onGenerationInvalidated, beforeInitialize,
+  releaseResult = () => true, onGenerationInvalidated, beforeInitialize, onFatal,
 } = {}) {
   const calls = [];
   const clients = [];
@@ -92,7 +92,10 @@ function makeHarness({
     ownership,
     clientFactory,
     repository,
-    fatalExit: error => fatalErrors.push(error),
+    fatalExit: error => {
+      fatalErrors.push(error);
+      onFatal?.(error, calls);
+    },
     onGenerationInvalidated,
     beforeInitialize,
     initializeDeadlineMs,
@@ -1195,6 +1198,140 @@ test('force-stop fallback does not mutate a frozen rejection', async () => {
   assert.match(h.fatalErrors[0].cause?.message, /shutdown deadline exceeded/i);
   assert.equal(Object.hasOwn(forceStopError, 'cause'), false);
   await assert.rejects(start, /initialize deadline/);
+});
+
+test('shutdown destroy rejection persists shutdown_failed fence before force-stop and fatal', async () => {
+  const updates = [];
+  const h = makeHarness({
+    destroy: async raw => {
+      h.calls.push(`destroy:${raw.id}`);
+      throw new Error('destroy rejected');
+    },
+    updateOwned: async values => { updates.push(values); return true; },
+    forceStop: async raw => { h.calls.push(`force:${raw.id}`); return true; },
+    onFatal: (_error, calls) => calls.push('fatal'),
+  });
+  await h.supervisor.start();
+
+  assert.equal(await h.supervisor.shutdown(), false);
+  await new Promise(resolve => setImmediate(resolve));
+
+  const terminalUpdate = updates.find(values => values.operation === 'shutdown_failed');
+  assert.equal(terminalUpdate?.state, 'fenced');
+  assert.deepEqual(
+    h.calls.filter(call => call === 'state:fenced' || call.startsWith('force:') || call === 'fatal'),
+    ['state:fenced', 'force:1', 'fatal'],
+  );
+  assert.equal(h.calls.filter(call => call === 'force:1').length, 1);
+  assert.equal(h.fatalErrors.length, 1);
+  assert.equal(h.calls.includes('release-begin'), false);
+  assert.equal(h.clients.length, 1);
+});
+
+test('shutdown unconfirmed stop persists shutdown_failed fence before force-stop and fatal', async () => {
+  const updates = [];
+  const h = makeHarness({
+    destroy: async raw => { h.calls.push(`destroy:${raw.id}`); },
+    confirmStopped: async raw => { h.calls.push(`stopped:${raw.id}`); return false; },
+    updateOwned: async values => { updates.push(values); return true; },
+    forceStop: async raw => { h.calls.push(`force:${raw.id}`); return true; },
+    onFatal: (_error, calls) => calls.push('fatal'),
+  });
+  await h.supervisor.start();
+
+  assert.equal(await h.supervisor.shutdown(), false);
+  await new Promise(resolve => setImmediate(resolve));
+
+  const terminalUpdate = updates.find(values => values.operation === 'shutdown_failed');
+  assert.equal(terminalUpdate?.state, 'fenced');
+  assert.deepEqual(
+    h.calls.filter(call => call === 'state:fenced' || call.startsWith('force:') || call === 'fatal'),
+    ['state:fenced', 'force:1', 'fatal'],
+  );
+  assert.equal(h.fatalErrors.length, 1);
+  assert.equal(h.calls.includes('release-begin'), false);
+  assert.equal(h.clients.length, 1);
+});
+
+test('shutdown active-work drain timeout fences before force-stop without normal destroy or successor', async () => {
+  const updates = [];
+  const workStarted = deferred();
+  const workRelease = deferred();
+  const h = makeHarness({
+    destroy: async raw => { h.calls.push(`destroy:${raw.id}`); },
+    updateOwned: async values => { updates.push(values); return true; },
+    forceStop: async raw => { h.calls.push(`force:${raw.id}`); return true; },
+    onFatal: (_error, calls) => calls.push('fatal'),
+    destroyDeadlineMs: 5,
+    shutdownDeadlineMs: 40,
+  });
+  await h.supervisor.start();
+  h.clients[0].emit('ready');
+  await new Promise(resolve => setImmediate(resolve));
+  const work = h.supervisor.withActiveClient(async () => {
+    workStarted.resolve();
+    await workRelease.promise;
+    return 'sent';
+  });
+  await workStarted.promise;
+
+  assert.equal(await h.supervisor.shutdown(), false);
+  await new Promise(resolve => setImmediate(resolve));
+
+  const terminalUpdate = updates.find(values => values.operation === 'shutdown_failed');
+  assert.equal(terminalUpdate?.state, 'fenced');
+  assert.deepEqual(
+    h.calls.filter(call => call === 'state:fenced' || call.startsWith('force:') || call === 'fatal'),
+    ['state:fenced', 'force:1', 'fatal'],
+  );
+  assert.equal(h.calls.includes('destroy:1'), false);
+  assert.equal(h.calls.includes('release-begin'), false);
+  assert.equal(h.clients.length, 1);
+  assert.equal(h.fatalErrors.length, 1);
+
+  workRelease.resolve();
+  assert.equal(await work, 'sent');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.calls.includes('destroy:1'), false);
+  assert.equal(h.calls.filter(call => call === 'force:1').length, 1);
+  assert.equal(h.fatalErrors.length, 1);
+});
+
+test('shutdown fence persistence failure still force-stops boundedly and calls fatal once', async t => {
+  for (const [name, failPersistence] of [
+    ['rejection', () => { throw new Error('persistence rejected'); }],
+    ['timeout', () => new Promise(() => {})],
+  ]) {
+    await t.test(name, async () => {
+      const updates = [];
+      const h = makeHarness({
+        destroy: async () => { throw new Error('destroy rejected'); },
+        updateOwned: values => {
+          updates.push(values);
+          return values.operation === 'shutdown_failed' ? failPersistence() : true;
+        },
+        forceStop: async raw => { h.calls.push(`force:${raw.id}`); return true; },
+        onFatal: (_error, calls) => calls.push('fatal'),
+        destroyDeadlineMs: 5,
+        shutdownDeadlineMs: 10,
+      });
+      await h.supervisor.start();
+
+      assert.equal(await h.supervisor.shutdown(), false);
+      await new Promise(resolve => setImmediate(resolve));
+
+      const terminalUpdate = updates.find(values => values.operation === 'shutdown_failed');
+      assert.equal(terminalUpdate?.state, 'fenced');
+      assert.deepEqual(
+        h.calls.filter(call => call === 'state:fenced' || call.startsWith('force:') || call === 'fatal'),
+        ['state:fenced', 'force:1', 'fatal'],
+      );
+      assert.equal(h.calls.filter(call => call === 'force:1').length, 1);
+      assert.equal(h.fatalErrors.length, 1);
+      assert.equal(h.calls.includes('release-begin'), false);
+      assert.equal(h.clients.length, 1);
+    });
+  }
 });
 
 test('shutdown destroy failure never releases ownership', async t => {
