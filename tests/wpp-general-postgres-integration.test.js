@@ -1,6 +1,6 @@
 import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { readFileSync } from 'node:fs';
@@ -9,6 +9,10 @@ import pg from 'pg';
 import { createGeneralControlRepository } from '../src/wpp/generalControlRepository.js';
 import { createGeneralOwnership, OwnershipLostError } from '../src/wpp/generalOwnership.js';
 import { createGeneralSupervisor } from '../src/wpp/generalSupervisor.js';
+import {
+  POSTGRES_INTEGRATION_SKIP_REASON,
+  resolvePostgresIntegrationGate,
+} from './support/wpp-postgres-integration-gate.js';
 
 const initSql = readFileSync(new URL('../initDb.sql', import.meta.url), 'utf8');
 const migrationMarker = '-- WhatsApp General: singleton ownership, status and reset coordination.';
@@ -33,24 +37,8 @@ function dockerEnvironment(host) {
   return env;
 }
 
-function resolveLocalDockerHost() {
-  try {
-    const configuredHost = process.env.DOCKER_HOST;
-    const contextHost = configuredHost || execFileSync(
-      'docker', ['context', 'inspect', '--format', '{{(index .Endpoints "docker").Host}}'],
-      { encoding: 'utf8', timeout: 10_000 },
-    ).trim();
-    if (!contextHost.startsWith('unix://')) return null;
-    const env = dockerEnvironment(contextHost);
-    execFileSync('docker', ['info'], { stdio: 'ignore', timeout: 10_000, env });
-    execFileSync('docker', ['image', 'inspect', 'postgres:16'], { stdio: 'ignore', timeout: 10_000, env });
-    return contextHost;
-  } catch {
-    return null;
-  }
-}
-
-const localDockerHost = resolveLocalDockerHost();
+const integrationGate = resolvePostgresIntegrationGate();
+const localDockerHost = integrationGate.host;
 function runDocker(args, options = {}) {
   return execFileSync('docker', args, {
     ...options,
@@ -59,9 +47,29 @@ function runDocker(args, options = {}) {
 }
 
 const integrationOptions = {
-  skip: localDockerHost ? false : 'Requires a local postgres:16 Docker image and Unix-socket daemon',
+  skip: integrationGate.skip,
   timeout: 120_000,
 };
+
+test('required PostgreSQL integration mode exits nonzero when its local Docker prerequisite is unavailable', () => {
+  const helperUrl = new URL('./support/wpp-postgres-integration-gate.js', import.meta.url).href;
+  const probe = spawnSync(process.execPath, [
+    '--input-type=module',
+    '--eval',
+    `import { resolvePostgresIntegrationGate } from ${JSON.stringify(helperUrl)}; resolvePostgresIntegrationGate();`,
+  ], {
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      REQUIRE_WPP_PG_INTEGRATION: '1',
+      DOCKER_HOST: 'tcp://required-mode-must-reject.invalid:2375',
+    },
+  });
+
+  assert.notEqual(probe.status, 0, probe.stdout);
+  assert.match(probe.stderr, /REQUIRE_WPP_PG_INTEGRATION=1/);
+  assert.match(probe.stderr, new RegExp(POSTGRES_INTEGRATION_SKIP_REASON.replaceAll(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+});
 
 async function waitForPostgres(config, deadlineAt) {
   let lastError;
@@ -127,6 +135,17 @@ function deferred() {
   return { promise, resolve };
 }
 
+function assertSettledOutcomes(results, label, { requireTrue = false } = {}) {
+  for (const [index, result] of results.entries()) {
+    assert.equal(
+      result.status,
+      'fulfilled',
+      `${label} ${index} rejected: ${result.status === 'rejected' ? result.reason?.stack ?? result.reason : ''}`,
+    );
+    if (requireTrue) assert.equal(result.value, true, `${label} ${index} was not confirmed`);
+  }
+}
+
 function makeClientFactory(events, label, destroyControl = null) {
   let count = 0;
   return {
@@ -155,7 +174,10 @@ function makeClientFactory(events, label, destroyControl = null) {
   };
 }
 
-async function createOwnedSupervisor({ pool, ownerId, repository, events, fatalErrors, destroyControl = null }) {
+async function createOwnedSupervisor({
+  pool, ownerId, repository, events, fatalErrors, destroyControl = null,
+  beforeInitialize = async () => true,
+}) {
   let supervisor;
   let lossCleanup = null;
   const ownership = createGeneralOwnership({
@@ -166,12 +188,19 @@ async function createOwnedSupervisor({ pool, ownerId, repository, events, fatalE
       return lossCleanup;
     },
   });
+  const releaseAfterQuiesced = ownership.releaseAfterQuiesced.bind(ownership);
+  ownership.releaseAfterQuiesced = async confirmQuiesced => {
+    const released = await releaseAfterQuiesced(confirmQuiesced);
+    if (released === true) events.push(`${ownerId}:released`);
+    return released;
+  };
   const clientFactory = makeClientFactory(events, ownerId, destroyControl);
   supervisor = createGeneralSupervisor({
     ownership,
     repository,
     clientFactory,
     fatalExit: error => { fatalErrors.push(error); },
+    beforeInitialize,
     destroyDeadlineMs: 2_000,
     shutdownDeadlineMs: 4_000,
   });
@@ -275,7 +304,7 @@ test('exact initDb General migration applies twice to fresh and representative l
       await client.query(migrationSql);
 
       const columns = await client.query(`
-        SELECT column_name, is_nullable
+        SELECT column_name, is_nullable, column_default
           FROM information_schema.columns
          WHERE table_schema = $1 AND table_name = 'wpp_general_control'
       `, [schema]);
@@ -290,6 +319,37 @@ test('exact initDb General migration applies twice to fresh and representative l
         'id', 'epoch', 'state', 'reset_requested_seq', 'reset_started_seq',
         'reset_applied_seq', 'reset_failed_seq', 'updated_at',
       ]) assert.equal(byName.get(requiredNotNull).is_nullable, 'NO');
+      const expectedDefaults = new Map([
+        ['id', 'true'],
+        ['epoch', '0'],
+        ['state', "'standby'::text"],
+        ['reset_requested_seq', '0'],
+        ['reset_started_seq', '0'],
+        ['reset_applied_seq', '0'],
+        ['reset_failed_seq', '0'],
+        ['updated_at', 'now()'],
+      ]);
+      for (const [column, expectedDefault] of expectedDefaults) {
+        assert.equal(
+          byName.get(column).column_default,
+          expectedDefault,
+          `${column} default was not repaired in ${legacy ? 'legacy' : 'fresh'} schema`,
+        );
+      }
+
+      const resetOrder = await client.query(`
+        SELECT convalidated, pg_get_expr(conbin, conrelid) AS definition
+          FROM pg_constraint
+         WHERE conrelid = 'wpp_general_control'::regclass
+           AND conname = 'wpp_general_reset_sequence_order'
+           AND contype = 'c'
+      `);
+      assert.equal(resetOrder.rowCount, 1);
+      assert.equal(resetOrder.rows[0].convalidated, true);
+      assert.equal(
+        resetOrder.rows[0].definition.replace(/[()\s]/g, ''),
+        'reset_applied_seq<=reset_started_seqANDreset_failed_seq<=reset_started_seqANDreset_started_seq<=reset_requested_seq',
+      );
 
       const row = await client.query('SELECT * FROM wpp_general_control');
       assert.equal(row.rowCount, 1);
@@ -331,11 +391,17 @@ test('two real dedicated sessions elect one owner and rolling shutdown quiesces 
   t.after(async () => {
     oldDestroy.release.resolve();
     nextDestroy.release.resolve();
-    await Promise.allSettled([
+    const shutdowns = await Promise.allSettled([
       withDeadline(oldRuntime.supervisor.shutdown(), 5_000, 'old runtime cleanup'),
       withDeadline(nextRuntime.supervisor.shutdown(), 5_000, 'next runtime cleanup'),
     ]);
-    await withDeadline(Promise.allSettled([oldPool.end(), nextPool.end()]), 5_000, 'rolling pool cleanup');
+    assertSettledOutcomes(shutdowns, 'rolling runtime cleanup', { requireTrue: true });
+    const pools = await withDeadline(
+      Promise.allSettled([oldPool.end(), nextPool.end()]),
+      5_000,
+      'rolling pool cleanup',
+    );
+    assertSettledOutcomes(pools, 'rolling pool cleanup');
   });
 
   const election = await Promise.all([oldRuntime.supervisor.start(), nextRuntime.supervisor.start()]);
@@ -347,22 +413,52 @@ test('two real dedicated sessions elect one owner and rolling shutdown quiesces 
   const ownerDestroy = election[0] ? oldDestroy : nextDestroy;
   assert.equal(owner.clientFactory.count, 1);
   assert.equal(follower.clientFactory.count, 0);
+  await waitUntil(() => owner.supervisor.snapshot().gateOpen, 'elected owner ready gate');
+
+  const activeWorkRelease = deferred();
+  const activeWork = owner.supervisor.withActiveClient(async () => {
+    events.push(`${ownerLabel}:active-work-started`);
+    await activeWorkRelease.promise;
+    events.push(`${ownerLabel}:active-work-finished`);
+    return true;
+  });
+  await waitUntil(
+    () => events.includes(`${ownerLabel}:active-work-started`),
+    'admitted owner operation',
+  );
 
   events.push(`${ownerLabel}:shutdown-requested`);
   const shutdown = owner.supervisor.shutdown();
-  await withDeadline(ownerDestroy.started.promise, 2_000, 'old owner destroy start');
+  assert.equal(owner.supervisor.snapshot().gateOpen, false);
+  events.push(`${ownerLabel}:gate-closed`);
   assert.equal(await follower.supervisor.start(), false, 'successor cannot acquire before stop confirmation and unlock');
   assert.equal(follower.clientFactory.count, 0);
+  assert.equal(events.includes(`${ownerLabel}:destroy:1`), false);
   assert.equal(events.includes(`${ownerLabel}:stopped:1`), false);
 
+  activeWorkRelease.resolve();
+  assert.equal(await activeWork, true);
+  await withDeadline(ownerDestroy.started.promise, 2_000, 'old owner destroy start');
   ownerDestroy.release.resolve();
   assert.equal(await shutdown, true);
   assert.equal(await follower.supervisor.start(), true);
   assert.equal(follower.clientFactory.count, 1);
 
+  const gateClosedIndex = events.indexOf(`${ownerLabel}:gate-closed`);
+  const workFinishedIndex = events.indexOf(`${ownerLabel}:active-work-finished`);
+  const destroyIndex = events.indexOf(`${ownerLabel}:destroy:1`);
   const stoppedIndex = events.indexOf(`${ownerLabel}:stopped:1`);
+  const releasedIndex = events.indexOf(`${ownerLabel}:released`);
   const successorIndex = events.indexOf(`${followerLabel}:initialize:1`);
-  assert.ok(stoppedIndex >= 0 && successorIndex > stoppedIndex, events.join(', '));
+  assert.ok(
+    gateClosedIndex >= 0
+      && workFinishedIndex > gateClosedIndex
+      && destroyIndex > workFinishedIndex
+      && stoppedIndex > destroyIndex
+      && releasedIndex > stoppedIndex
+      && successorIndex > releasedIndex,
+    events.join(', '),
+  );
   const row = await repository.getClusterStatus();
   assert.equal(row.owner_id, followerLabel);
   assert.equal(row.epoch, 2n);
@@ -419,7 +515,7 @@ test('global reset cooldown/concurrency persists one request and its owner appli
   assert.equal(await runtime.supervisor.shutdown(), true);
 });
 
-test('server-side ownership session loss closes the gate, fatals once, fences stale writes, then permits takeover', integrationOptions, async t => {
+test('backend death releases only the advisory lock while a native-profile guard blocks successor initialization', integrationOptions, async t => {
   await state.admin.query(migrationSql);
   await state.admin.query("UPDATE wpp_general_control SET owner_id = NULL, state = 'standby', heartbeat_at = NULL, operation = NULL WHERE id = TRUE");
   const repository = repositoryFor(state.admin);
@@ -428,6 +524,7 @@ test('server-side ownership session loss closes the gate, fatals once, fences st
   const events = [];
   const fatalErrors = [];
   const lossDestroy = { started: deferred(), release: deferred() };
+  const nativeProfileGuard = deferred();
   const owner = await createOwnedSupervisor({
     pool: ownerPool,
     ownerId: 'loss-owner',
@@ -436,17 +533,29 @@ test('server-side ownership session loss closes the gate, fatals once, fences st
     fatalErrors,
     destroyControl: lossDestroy,
   });
-  const takeover = createGeneralOwnership({ pool: takeoverPool, ownerId: 'takeover-owner' });
+  const takeover = await createOwnedSupervisor({
+    pool: takeoverPool,
+    ownerId: 'takeover-owner',
+    repository,
+    events,
+    fatalErrors,
+    beforeInitialize: async () => {
+      events.push('takeover-owner:native-profile-guard');
+      await nativeProfileGuard.promise;
+      return true;
+    },
+  });
   t.after(async () => {
     lossDestroy.release.resolve();
+    nativeProfileGuard.resolve();
     if (owner.lossCleanup) {
       await withDeadline(owner.lossCleanup, 5_000, 'loss-test pending cleanup').catch(() => {});
     }
     if (owner.ownership.isOwner) {
       await withDeadline(owner.supervisor.shutdown(), 5_000, 'loss-test owner shutdown').catch(() => {});
     }
-    if (takeover.isOwner) {
-      await withDeadline(takeover.releaseAfterQuiesced(async () => {}), 5_000, 'loss-test takeover release').catch(() => {});
+    if (takeover.ownership.isOwner) {
+      await withDeadline(takeover.supervisor.shutdown(), 5_000, 'loss-test takeover shutdown').catch(() => {});
     }
     await state.admin.query(`
       SELECT pg_terminate_backend(pid)
@@ -462,7 +571,12 @@ test('server-side ownership session loss closes the gate, fatals once, fences st
   assert.equal(await owner.supervisor.start(), true);
   const staleEpoch = owner.ownership.epoch;
   await waitUntil(() => owner.supervisor.snapshot().gateOpen, 'owner ready gate');
-  assert.equal(await takeover.tryAcquire(), false);
+  assert.equal(
+    await takeover.supervisor.start(),
+    false,
+    'takeover is rejected while the original PostgreSQL backend still owns the advisory lock',
+  );
+  assert.equal(takeover.clientFactory.count, 0);
 
   const backend = await state.admin.query(`
     SELECT pid FROM pg_stat_activity
@@ -476,6 +590,15 @@ test('server-side ownership session loss closes the gate, fatals once, fences st
     return result.rowCount === 0;
   }, 'server-side owner backend termination');
 
+  const successorStart = takeover.supervisor.start();
+  await waitUntil(() => takeover.ownership.isOwner, 'advisory-lock takeover after backend disappearance');
+  assert.equal(takeover.ownership.epoch, staleEpoch + 1n);
+  await waitUntil(
+    () => events.includes('takeover-owner:native-profile-guard'),
+    'successor native-profile guard',
+  );
+  assert.equal(takeover.clientFactory.count, 0, 'native-profile guard blocks Chromium initialization');
+
   await waitUntil(() => owner.lossCleanup !== null, 'ownership-loss cleanup start');
   await withDeadline(lossDestroy.started.promise, 2_000, 'lease-loss destroy start');
   assert.equal(owner.supervisor.snapshot().gateOpen, false, 'gate closes before teardown and fatal completion');
@@ -487,17 +610,23 @@ test('server-side ownership session loss closes the gate, fatals once, fences st
   await waitUntil(() => fatalErrors.length === 1 && owner.supervisor.snapshot().gateOpen === false, 'fatal closed gate');
   assert.equal(owner.supervisor.snapshot().state, 'fenced');
   assert.throws(() => owner.ownership.assertOwned(), OwnershipLostError);
+  assert.equal(takeover.clientFactory.count, 0, 'successor still cannot initialize before native cleanup confirmation');
 
-  assert.equal(await waitUntil(async () => takeover.tryAcquire().catch(() => false), 'takeover after server-side session loss'), true);
-  assert.equal(takeover.epoch, staleEpoch + 1n);
+  nativeProfileGuard.resolve();
+  assert.equal(await successorStart, true);
+  assert.equal(takeover.clientFactory.count, 1);
+  assert.ok(
+    events.indexOf('takeover-owner:initialize:1') > events.indexOf('loss-owner:destroy:1'),
+    events.join(', '),
+  );
   assert.equal(await repository.updateOwned({
-    ownerId: 'loss-owner', epoch: takeover.epoch, state: 'ready', operation: null,
+    ownerId: 'loss-owner', epoch: takeover.ownership.epoch, state: 'ready', operation: null,
   }), false, 'wrong owner is rejected even with current epoch');
   assert.equal(await repository.updateOwned({
     ownerId: 'takeover-owner', epoch: staleEpoch, state: 'ready', operation: null,
   }), false, 'stale epoch is rejected even with current owner');
-  assert.equal(await repository.heartbeat({ ownerId: 'loss-owner', epoch: takeover.epoch }), false);
+  assert.equal(await repository.heartbeat({ ownerId: 'loss-owner', epoch: takeover.ownership.epoch }), false);
   assert.equal(await repository.heartbeat({ ownerId: 'takeover-owner', epoch: staleEpoch }), false);
   assert.equal(fatalErrors.length, 1);
-  await takeover.releaseAfterQuiesced(async () => {});
+  assert.equal(await takeover.supervisor.shutdown(), true);
 });
