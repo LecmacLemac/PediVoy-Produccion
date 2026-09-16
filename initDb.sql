@@ -2097,13 +2097,17 @@ CREATE TABLE IF NOT EXISTS wpp_general_control (
   reset_requested_seq  BIGINT NOT NULL DEFAULT 0,
   reset_started_seq    BIGINT NOT NULL DEFAULT 0,
   reset_applied_seq    BIGINT NOT NULL DEFAULT 0,
+  reset_failed_seq     BIGINT NOT NULL DEFAULT 0,
   reset_requested_at   TIMESTAMPTZ,
   reset_started_at     TIMESTAMPTZ,
   reset_applied_at     TIMESTAMPTZ,
+  reset_failed_at      TIMESTAMPTZ,
+  reset_failure_error  TEXT,
   reset_requested_by   TEXT,
   updated_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT wpp_general_reset_sequence_order CHECK (
     reset_applied_seq <= reset_started_seq
+    AND reset_failed_seq <= reset_started_seq
     AND reset_started_seq <= reset_requested_seq
   )
 );
@@ -2119,9 +2123,12 @@ ALTER TABLE wpp_general_control
   ADD COLUMN IF NOT EXISTS reset_requested_seq BIGINT NOT NULL DEFAULT 0,
   ADD COLUMN IF NOT EXISTS reset_started_seq BIGINT NOT NULL DEFAULT 0,
   ADD COLUMN IF NOT EXISTS reset_applied_seq BIGINT NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS reset_failed_seq BIGINT NOT NULL DEFAULT 0,
   ADD COLUMN IF NOT EXISTS reset_requested_at TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS reset_started_at TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS reset_applied_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS reset_failed_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS reset_failure_error TEXT,
   ADD COLUMN IF NOT EXISTS reset_requested_by TEXT,
   ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 

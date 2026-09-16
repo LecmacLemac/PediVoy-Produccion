@@ -13,7 +13,11 @@ export class OwnershipLostError extends Error {
 function deadline(promise, milliseconds, label) {
   let timer;
   const timeout = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new OwnershipLostError(`${label} deadline exceeded`)), milliseconds);
+    timer = setTimeout(() => {
+      const error = new OwnershipLostError(`${label} deadline exceeded`);
+      error.timedOut = true;
+      reject(error);
+    }, milliseconds);
   });
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
@@ -22,25 +26,79 @@ export function createGeneralOwnership({
   pool,
   ownerId,
   advisoryLockKey = GENERAL_ADVISORY_LOCK_KEY,
+  operationDeadlineMs = 3000,
   heartbeatDeadlineMs = 3000,
+  quiesceDeadlineMs = 20000,
+  onOwnershipLost = () => {},
 } = {}) {
   if (!pool?.connect) throw new TypeError('pool.connect is required');
   if (!ownerId) throw new TypeError('ownerId is required');
+  if (typeof onOwnershipLost !== 'function') throw new TypeError('onOwnershipLost must be a function');
 
   let client = null;
+  let clientErrorHandler = null;
   let held = false;
+  let acquiring = false;
   let epoch = null;
+  let lossNotified = false;
+  const releasedClients = new WeakSet();
 
   const repository = createGeneralControlRepository(async () => {
     throw new OwnershipLostError('Dedicated ownership client is unavailable');
   });
 
-  function poison(error) {
-    const poisoned = client;
-    client = null;
-    held = false;
-    epoch = null;
-    if (poisoned) poisoned.release(error);
+  function safeRelease(target, error) {
+    if (!target || releasedClients.has(target)) return;
+    releasedClients.add(target);
+    try {
+      target.release(error);
+    } catch {
+      // A pool release failure cannot restore trust in this session.
+    }
+  }
+
+  function detachConnectionError(target) {
+    if (target && clientErrorHandler && typeof target.off === 'function') {
+      target.off('error', clientErrorHandler);
+    }
+    clientErrorHandler = null;
+  }
+
+  function notifyLoss(error) {
+    if (lossNotified) return;
+    lossNotified = true;
+    try {
+      onOwnershipLost(error);
+    } catch {
+      // Ownership loss must remain fail-closed even if the observer fails.
+    }
+  }
+
+  function poison(error, target = client, { notify = held, detach = true } = {}) {
+    if (!target) return;
+    const isActive = target === client;
+    if (isActive) {
+      if (detach) detachConnectionError(target);
+      client = null;
+      held = false;
+      epoch = null;
+    }
+    safeRelease(target, error);
+    if (isActive && notify) notifyLoss(error);
+  }
+
+  function attachConnectionError(target) {
+    if (typeof target.on !== 'function') return;
+    clientErrorHandler = cause => {
+      if (target !== client) return;
+      const error = cause instanceof OwnershipLostError
+        ? cause
+        : new OwnershipLostError('General ownership connection lost', { cause });
+      // Keep the listener on the discarded emitter so duplicate driver errors
+      // are absorbed without repeating loss notification or cleanup.
+      poison(error, target, { notify: held, detach: false });
+    };
+    target.on('error', clientErrorHandler);
   }
 
   function assertOwned() {
@@ -48,40 +106,74 @@ export function createGeneralOwnership({
     return true;
   }
 
-  async function acquire() {
-    if (held) return true;
-    if (client) throw new Error('Ownership acquisition already in progress');
+  async function boundedUnlock(target) {
+    return deadline(
+      target.query('SELECT pg_advisory_unlock($1) AS unlocked', [advisoryLockKey]),
+      operationDeadlineMs,
+      'General advisory unlock',
+    );
+  }
 
-    const candidate = await pool.connect();
+  async function tryAcquire() {
+    if (held) return true;
+    if (acquiring || client) throw new Error('Ownership acquisition already in progress');
+    acquiring = true;
+    lossNotified = false;
+
+    const connectPromise = Promise.resolve().then(() => pool.connect());
+    let candidate;
+    try {
+      candidate = await deadline(connectPromise, operationDeadlineMs, 'General ownership connect');
+    } catch (error) {
+      if (error?.timedOut) {
+        connectPromise.then(lateClient => safeRelease(lateClient, error)).catch(() => {});
+      }
+      acquiring = false;
+      throw error;
+    }
+
     client = candidate;
+    attachConnectionError(candidate);
     let lockAcquired = false;
 
     try {
-      const lockResult = await candidate.query(
-        'SELECT pg_try_advisory_lock($1) AS locked',
-        [advisoryLockKey],
+      const lockResult = await deadline(
+        candidate.query('SELECT pg_try_advisory_lock($1) AS locked', [advisoryLockKey]),
+        operationDeadlineMs,
+        'General advisory lock',
       );
+      if (candidate !== client) throw new OwnershipLostError('General ownership connection lost during acquisition');
       lockAcquired = lockResult?.rows?.[0]?.locked === true;
       if (!lockAcquired) {
+        detachConnectionError(candidate);
         client = null;
-        candidate.release();
+        safeRelease(candidate, undefined);
+        acquiring = false;
         return false;
       }
 
-      const row = await repository.publishOwner({ ownerId, executor: candidate });
+      const row = await deadline(
+        repository.publishOwner({ ownerId, executor: candidate }),
+        operationDeadlineMs,
+        'General owner publication',
+      );
+      if (candidate !== client) throw new OwnershipLostError('General ownership connection lost during publication');
       if (!row) throw new OwnershipLostError('Failed to publish General ownership');
       epoch = row.epoch;
       held = true;
+      acquiring = false;
       return true;
     } catch (error) {
-      if (lockAcquired) {
+      if (candidate === client && lockAcquired && !error?.timedOut) {
         try {
-          await candidate.query('SELECT pg_advisory_unlock($1) AS unlocked', [advisoryLockKey]);
+          await boundedUnlock(candidate);
         } catch {
           // Preserve the acquisition failure; poisoning destroys an uncertain session.
         }
       }
-      poison(error);
+      if (candidate === client) poison(error, candidate, { notify: held });
+      else safeRelease(candidate, error);
+      acquiring = false;
       throw error;
     }
   }
@@ -104,12 +196,13 @@ export function createGeneralOwnership({
       const ownershipError = error instanceof OwnershipLostError
         ? error
         : new OwnershipLostError('General ownership heartbeat failed', { cause: error });
-      poison(ownershipError);
+      if (activeClient === client) poison(ownershipError, activeClient, { notify: true });
       throw ownershipError;
     }
   }
 
-  async function release() {
+  async function releaseAfterQuiesced(quiesceFn) {
+    if (typeof quiesceFn !== 'function') throw new TypeError('quiesceFn must be a function');
     if (!client) {
       held = false;
       epoch = null;
@@ -118,46 +211,61 @@ export function createGeneralOwnership({
 
     const activeClient = client;
     const activeEpoch = epoch;
-    let primaryError = null;
+
+    // A rejected or timed-out quiescence deliberately leaves the healthy lock held.
+    await deadline(
+      Promise.resolve().then(() => quiesceFn()),
+      quiesceDeadlineMs,
+      'General ownership quiescence',
+    );
+    assertOwned();
+    if (client !== activeClient || epoch !== activeEpoch) throw new OwnershipLostError();
 
     held = false;
+    let primaryError = null;
+    let clearTimedOut = false;
+
     try {
-      if (activeEpoch !== null) {
-        const cleared = await repository.releaseOwner({
-          ownerId,
-          epoch: activeEpoch,
-          executor: activeClient,
-        });
-        if (!cleared) throw new OwnershipLostError('General ownership fence rejected release');
-      }
+      const cleared = await deadline(
+        repository.releaseOwner({ ownerId, epoch: activeEpoch, executor: activeClient }),
+        operationDeadlineMs,
+        'General ownership row clear',
+      );
+      if (!cleared) throw new OwnershipLostError('General ownership fence rejected release');
     } catch (error) {
       primaryError = error;
+      clearTimedOut = error?.timedOut === true;
     }
 
-    try {
-      const result = await activeClient.query(
-        'SELECT pg_advisory_unlock($1) AS unlocked',
-        [advisoryLockKey],
-      );
-      if (result?.rows?.[0]?.unlocked !== true && !primaryError) {
-        primaryError = new OwnershipLostError('General advisory lock was not held during release');
+    // Never queue another query behind a timed-out query on the same session.
+    if (!clearTimedOut && activeClient === client) {
+      try {
+        const result = await boundedUnlock(activeClient);
+        if (result?.rows?.[0]?.unlocked !== true && !primaryError) {
+          primaryError = new OwnershipLostError('General advisory lock was not held during release');
+        }
+      } catch (error) {
+        if (!primaryError) primaryError = error;
       }
-    } catch (error) {
-      if (!primaryError) primaryError = error;
     }
 
-    client = null;
-    epoch = null;
-    activeClient.release(primaryError || undefined);
+    if (activeClient === client) {
+      detachConnectionError(activeClient);
+      client = null;
+      epoch = null;
+    }
+    safeRelease(activeClient, primaryError || undefined);
     if (primaryError) throw primaryError;
     return true;
   }
 
   return {
-    acquire,
+    tryAcquire,
+    acquire: tryAcquire,
     assertOwned,
     heartbeat,
-    release,
+    releaseAfterQuiesced,
+    release: releaseAfterQuiesced,
     get epoch() {
       return epoch;
     },
