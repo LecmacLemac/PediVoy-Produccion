@@ -390,10 +390,13 @@ test('rejected cron shutdown still waits for pending supervisor shutdown', async
   assert.equal(settled, true);
 });
 
-test('runtime fatal during shutdown is deferred to the central coordinator', async () => {
+test('runtime fatal during shutdown is deferred exclusively to the central coordinator', async () => {
   const supervisorStop = deferred();
   const failure = new Error('ownership lost');
   let runtimeOptions;
+  let app;
+  let injectedFatalExitCalls = 0;
+  let fatalShutdownRequests = 0;
   const runtime = {
     repository: {},
     supervisor: {
@@ -405,25 +408,39 @@ test('runtime fatal during shutdown is deferred to the central coordinator', asy
     stopTimers() {},
   };
   const h = makeServerHarness({
-    configureApp: app => registerWhatsAppWeb(app, {
-      ENABLE_WPP: false,
-      query: async () => [],
-      qrcode: { toDataURL: async () => '' },
-      withAuth: (_req, _res, next) => next(),
-      isSuper: () => true,
-      createGeneralRuntimeFn: options => {
-        runtimeOptions = options;
-        return runtime;
-      },
-      registerCronAndRoutesFn: () => ({ shutdown: async () => true }),
-    }),
+    configureApp: configuredApp => {
+      app = configuredApp;
+      registerWhatsAppWeb(app, {
+        ENABLE_WPP: false,
+        query: async () => [],
+        qrcode: { toDataURL: async () => '' },
+        withAuth: (_req, _res, next) => next(),
+        isSuper: () => true,
+        runtimeDependencies: {
+          fatalExit: () => { injectedFatalExitCalls += 1; },
+        },
+        createGeneralRuntimeFn: options => {
+          runtimeOptions = options;
+          return runtime;
+        },
+        registerCronAndRoutesFn: () => ({ shutdown: async () => true }),
+      });
+    },
   });
+  const requestFatalShutdown = app.locals.requestFatalShutdown;
+  app.locals.requestFatalShutdown = error => {
+    fatalShutdownRequests += 1;
+    return requestFatalShutdown(error);
+  };
 
   h.signals.emit('SIGTERM');
   runtimeOptions.fatalExit(failure);
   h.closeConfirmation.resolve();
   await new Promise(resolve => setImmediate(resolve));
 
+  assert.equal(injectedFatalExitCalls, 0);
+  assert.equal(fatalShutdownRequests, 1);
+  assert.equal(app.locals.wppGeneralFatalError, failure);
   assert.deepEqual(h.exits, []);
 
   supervisorStop.resolve(true);

@@ -52,11 +52,10 @@ export function registerWhatsAppWeb(app, deps = {}) {
   if (typeof query !== 'function') throw new Error('registerWhatsAppWeb: falta query(fn)');
   app.locals ??= {};
 
-  const { fatalExit: injectedFatalExit, ...otherRuntimeDependencies } = runtimeDependencies;
+  const { fatalExit: _ignoredFatalExit, ...otherRuntimeDependencies } = runtimeDependencies;
   const reportFatal = error => {
     app.locals.wppGeneralFatalError ??= error;
     app.locals.requestFatalShutdown?.(error);
-    injectedFatalExit?.(error);
   };
 
   const repository = generalControlRepository ?? injectedRuntime?.repository
