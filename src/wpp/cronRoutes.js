@@ -7,7 +7,38 @@ export function registerWppCronAndRoutes(app, deps) {
     ejecutarReactivacionInteligente,
     ejecutarPostEntregaUpsell,
     ejecutarProgramaVip,
+    timers = { setTimeout, clearTimeout, setInterval, clearInterval },
   } = deps;
+
+  const timeoutIds = new Set();
+  const intervalIds = new Set();
+  const activeWork = new Set();
+  let stopped = false;
+  let stopPromise = null;
+
+  function runTask(task) {
+    if (stopped) return false;
+    let work;
+    try {
+      work = Promise.resolve(task());
+    } catch (error) {
+      work = Promise.reject(error);
+    }
+    activeWork.add(work);
+    work.then(
+      () => activeWork.delete(work),
+      () => activeWork.delete(work),
+    );
+    return work;
+  }
+
+  function scheduleInterval(task, milliseconds) {
+    const intervalId = timers.setInterval(() => {
+      if (!stopped) runTask(task);
+    }, milliseconds);
+    intervalIds.add(intervalId);
+    return intervalId;
+  }
 
   const ARG_UTC_OFFSET = -3;
 
@@ -26,10 +57,14 @@ export function registerWppCronAndRoutes(app, deps) {
 
     console.log('[CRON] Tarea diaria programada para (ARG):', proximaEjecucion.toLocaleString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' }));
 
-    setTimeout(() => {
-      tarea();
-      setInterval(tarea, 24 * 60 * 60 * 1000);
+    let timeoutId;
+    timeoutId = timers.setTimeout(() => {
+      timeoutIds.delete(timeoutId);
+      if (stopped) return;
+      runTask(tarea);
+      if (!stopped) scheduleInterval(tarea, 24 * 60 * 60 * 1000);
     }, tiempoHastaEjecucion);
+    timeoutIds.add(timeoutId);
   }
 
   programarTareaDiaria(4, 0, async () => {
@@ -67,41 +102,41 @@ export function registerWppCronAndRoutes(app, deps) {
   programarTareaDiaria(9, 0, () => {
     if (typeof ejecutarReposicionPredictiva !== 'function') return;
     console.log('[CRON] Ejecutando Reposición Predictiva...');
-    ejecutarReposicionPredictiva().catch((err) => console.error('[CRON ERROR]', err));
+    return ejecutarReposicionPredictiva().catch((err) => console.error('[CRON ERROR]', err));
   });
 
   programarTareaDiaria(10, 0, () => {
     if (typeof ejecutarReactivacionInteligente !== 'function') return;
     console.log('[CRON] Ejecutando Reactivación Inteligente...');
-    ejecutarReactivacionInteligente().catch((err) => console.error('[CRON ERROR REACTIVACION]', err));
+    return ejecutarReactivacionInteligente().catch((err) => console.error('[CRON ERROR REACTIVACION]', err));
   });
 
   programarTareaDiaria(10, 30, () => {
     if (typeof ejecutarProgramaVip !== 'function') return;
     console.log('[CRON] Ejecutando Programa VIP...');
-    ejecutarProgramaVip().catch((err) => console.error('[CRON ERROR VIP]', err));
+    return ejecutarProgramaVip().catch((err) => console.error('[CRON ERROR VIP]', err));
   });
 
   programarTareaDiaria(11, 0, () => {
     if (typeof ejecutarCampaniaClima !== 'function') return;
     console.log('[CRON] Ejecutando Campaña por Clima...');
-    ejecutarCampaniaClima().catch((err) => console.error('[CRON ERROR CLIMA]', err));
+    return ejecutarCampaniaClima().catch((err) => console.error('[CRON ERROR CLIMA]', err));
   });
 
   programarTareaDiaria(17, 0, () => {
     if (typeof ejecutarCampaniaClima !== 'function') return;
     console.log('[CRON] Ejecutando Campaña por Clima...');
-    ejecutarCampaniaClima().catch((err) => console.error('[CRON ERROR CLIMA]', err));
+    return ejecutarCampaniaClima().catch((err) => console.error('[CRON ERROR CLIMA]', err));
   });
 
-  setInterval(() => {
+  scheduleInterval(() => {
     if (typeof ejecutarCampaniaBaseImportadaAuto !== 'function') return;
-    ejecutarCampaniaBaseImportadaAuto().catch((err) => console.error('[CRON ERROR BASE_AUTO]', err));
+    return ejecutarCampaniaBaseImportadaAuto().catch((err) => console.error('[CRON ERROR BASE_AUTO]', err));
   }, 15 * 60 * 1000);
 
-  setInterval(() => {
+  scheduleInterval(() => {
     if (typeof ejecutarPostEntregaUpsell !== 'function') return;
-    ejecutarPostEntregaUpsell().catch((err) => console.error('[CRON ERROR POSTENTREGA]', err));
+    return ejecutarPostEntregaUpsell().catch((err) => console.error('[CRON ERROR POSTENTREGA]', err));
   }, 30 * 60 * 1000);
 
   const requireCronSecret = (req, res) => {
@@ -157,4 +192,32 @@ export function registerWppCronAndRoutes(app, deps) {
       return res.status(500).json({ error: 'error al limpiar wpp' });
     }
   });
+
+  function stop() {
+    if (stopPromise) return stopPromise;
+    let resolveStop;
+    let rejectStop;
+    stopPromise = new Promise((resolve, reject) => {
+      resolveStop = resolve;
+      rejectStop = reject;
+    });
+    stopPromise.catch(() => {});
+    stopped = true;
+    let stopError = null;
+    for (const timeoutId of timeoutIds) {
+      try { timers.clearTimeout(timeoutId); } catch (error) { stopError ??= error; }
+    }
+    for (const intervalId of intervalIds) {
+      try { timers.clearInterval(intervalId); } catch (error) { stopError ??= error; }
+    }
+    timeoutIds.clear();
+    intervalIds.clear();
+    Promise.allSettled([...activeWork]).then(() => {
+      if (stopError) rejectStop(stopError);
+      else resolveStop(true);
+    });
+    return stopPromise;
+  }
+
+  return { stop, shutdown: stop };
 }

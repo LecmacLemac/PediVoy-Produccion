@@ -1250,6 +1250,48 @@ test('successful shutdown stops and confirms before release and rejects later co
   assert.equal(h.supervisor.snapshot().state, 'stopped');
 });
 
+test('shutdown rejects late heartbeat admission instead of releasing underneath it', async () => {
+  const destroy = deferred();
+  const h = makeHarness({ destroy: () => destroy.promise, shutdownDeadlineMs: 1000 });
+  await h.supervisor.start();
+
+  const shutdown = h.supervisor.shutdown();
+  const heartbeatCalls = h.calls.filter(call => call === 'heartbeat').length;
+  await assert.rejects(h.supervisor.heartbeatOnce(), /shutting down|not owner/i);
+  assert.equal(h.calls.filter(call => call === 'heartbeat').length, heartbeatCalls);
+
+  destroy.resolve();
+  assert.equal(await shutdown, true);
+});
+
+test('heartbeat failure during shutdown performs normal cleanup without a circular wait', async () => {
+  const heartbeat = deferred();
+  let h;
+  h = makeHarness({
+    heartbeat: async () => {
+      try {
+        return await heartbeat.promise;
+      } catch (error) {
+        h.supervisor.leaseLost(error);
+        throw error;
+      }
+    },
+    destroy: async (_raw, calls) => { calls.push('destroy-during-shutdown'); },
+    shutdownDeadlineMs: 1000,
+  });
+  await h.supervisor.start();
+
+  const heartbeatWork = h.supervisor.heartbeatOnce();
+  await new Promise(resolve => setImmediate(resolve));
+  const shutdown = h.supervisor.shutdown();
+  heartbeat.reject(new Error('heartbeat failed during shutdown'));
+
+  await assert.rejects(heartbeatWork, /heartbeat failed during shutdown/);
+  assert.equal(await shutdown, false);
+  assert.equal(h.calls.filter(call => call === 'destroy-during-shutdown').length, 1);
+  assert.equal(h.fatalErrors.length, 1);
+});
+
 test('shutdown accepts only an explicitly confirmed ownership release', async t => {
   for (const releaseConfirmed of [false, undefined]) {
     await t.test(String(releaseConfirmed), async () => {

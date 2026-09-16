@@ -70,44 +70,95 @@ async function resolveSession(message) {
 }
 
 export class AsteriskAmiListener {
-  constructor(config = getAsteriskConfig()) {
+  constructor(config = getAsteriskConfig(), {
+    timers = { setTimeout, clearTimeout },
+    netModule = net,
+  } = {}) {
     this.config = config;
+    this.timers = timers;
+    this.net = netModule;
     this.socket = null;
     this.buffer = '';
     this.started = false;
     this.reconnectTimer = null;
+    this.activeWork = new Set();
+    this.stopPromise = null;
   }
 
   start() {
-    if (this.started || !this.config.enabled || !this.config.amiUsername || !this.config.amiPassword) return;
+    if (this.started || this.stopPromise
+      || !this.config.enabled || !this.config.amiUsername || !this.config.amiPassword) return false;
     this.started = true;
     this.connect();
+    return true;
   }
 
   connect() {
-    this.socket = net.createConnection({ host: this.config.amiHost, port: this.config.amiPort }, () => {
-      this.socket.write(`Action: Login\r\nUsername: ${this.config.amiUsername}\r\nSecret: ${this.config.amiPassword}\r\nEvents: on\r\n\r\n`);
+    if (!this.started) return;
+    const socket = this.net.createConnection({ host: this.config.amiHost, port: this.config.amiPort }, () => {
+      if (!this.started || this.socket !== socket) return;
+      socket.write(`Action: Login\r\nUsername: ${this.config.amiUsername}\r\nSecret: ${this.config.amiPassword}\r\nEvents: on\r\n\r\n`);
     });
+    this.socket = socket;
 
-    this.socket.on('data', (chunk) => this.handleData(chunk.toString('utf8')));
-    this.socket.on('error', (error) => {
+    socket.on('data', (chunk) => this.handleData(chunk.toString('utf8')));
+    socket.on('error', (error) => {
       console.error('[asterisk:ami] error:', error.message);
     });
-    this.socket.on('close', () => {
+    socket.on('close', () => {
+      if (this.socket !== socket) return;
       this.socket = null;
       if (this.started) this.scheduleReconnect();
     });
   }
 
   scheduleReconnect() {
-    if (this.reconnectTimer) return;
-    this.reconnectTimer = setTimeout(() => {
+    if (!this.started || this.reconnectTimer) return;
+    this.reconnectTimer = this.timers.setTimeout(() => {
       this.reconnectTimer = null;
-      this.connect();
+      if (this.started) this.connect();
     }, this.config.amiReconnectMs);
   }
 
+  stop() {
+    if (this.stopPromise) return this.stopPromise;
+    let resolveStop;
+    let rejectStop;
+    this.stopPromise = new Promise((resolve, reject) => {
+      resolveStop = resolve;
+      rejectStop = reject;
+    });
+    this.stopPromise.catch(() => {});
+
+    this.started = false;
+    let stopError = null;
+    if (this.reconnectTimer !== null) {
+      try {
+        this.timers.clearTimeout(this.reconnectTimer);
+      } catch (error) {
+        stopError = error;
+      }
+      this.reconnectTimer = null;
+    }
+    const socket = this.socket;
+    this.socket = null;
+    try {
+      socket?.destroy?.();
+    } catch (error) {
+      stopError ??= error;
+    }
+
+    Promise.allSettled([...this.activeWork]).then(results => {
+      const failedWork = results.find(result => result.status === 'rejected');
+      if (stopError) rejectStop(stopError);
+      else if (failedWork) rejectStop(failedWork.reason);
+      else resolveStop(true);
+    });
+    return this.stopPromise;
+  }
+
   handleData(chunk) {
+    if (!this.started) return;
     this.buffer += chunk;
     let boundary = this.buffer.indexOf('\r\n\r\n');
     while (boundary !== -1) {
@@ -115,7 +166,15 @@ export class AsteriskAmiListener {
       this.buffer = this.buffer.slice(boundary + 4);
       boundary = this.buffer.indexOf('\r\n\r\n');
       const message = parseMessage(raw);
-      void this.processMessage(message);
+      const work = Promise.resolve().then(() => this.processMessage(message));
+      this.activeWork.add(work);
+      work.then(
+        () => this.activeWork.delete(work),
+        error => {
+          this.activeWork.delete(work);
+          console.error('[asterisk:ami] event processing failed:', error);
+        },
+      );
     }
   }
 

@@ -78,6 +78,7 @@ export function createGeneralSupervisor({
   let ownershipLost = false;
   let lossPromise = null;
   let shutdownPromise = null;
+  let heartbeatInFlight = null;
   let fatalCalled = false;
   let fatalTeardownPromise = null;
   let gateHolds = 0;
@@ -598,14 +599,15 @@ export function createGeneralSupervisor({
     }
   }
 
-  function leaseLost(error = notOwnerError('General ownership was lost')) {
+  function leaseLost(error = notOwnerError('General ownership was lost'), { immediate = false } = {}) {
     invalidateCurrentGeneration();
     closeGate();
     ownershipLost = true;
     state = 'fenced';
     lastError = error;
     if (lossPromise) return lossPromise;
-    const cleanup = tail.then(async () => {
+    const cleanupBase = immediate || shuttingDown ? Promise.resolve() : tail;
+    const cleanup = cleanupBase.then(async () => {
       let cleanupError = null;
       try {
         await stopCurrent();
@@ -634,15 +636,29 @@ export function createGeneralSupervisor({
     return lossPromise;
   }
 
-  async function heartbeatOnce() {
-    try {
-      const alive = await ownership.heartbeat();
-      if (alive !== true) throw notOwnerError('General ownership heartbeat was rejected');
-      return true;
-    } catch (error) {
-      leaseLost(error);
-      throw error;
+  function heartbeatOnce() {
+    if (heartbeatInFlight) return heartbeatInFlight;
+    if (shuttingDown || ownershipLost) {
+      return Promise.reject(notOwnerError(shuttingDown
+        ? 'General supervisor is shutting down'
+        : 'General ownership was lost'));
     }
+    const heartbeat = (async () => {
+      try {
+        const alive = await ownership.heartbeat();
+        if (alive !== true) throw notOwnerError('General ownership heartbeat was rejected');
+        return true;
+      } catch (error) {
+        leaseLost(error, { immediate: shuttingDown });
+        throw error;
+      }
+    })();
+    heartbeatInFlight = heartbeat;
+    heartbeat.then(
+      () => { if (heartbeatInFlight === heartbeat) heartbeatInFlight = null; },
+      () => { if (heartbeatInFlight === heartbeat) heartbeatInFlight = null; },
+    );
+    return heartbeat;
   }
 
   function shutdown() {
@@ -656,6 +672,18 @@ export function createGeneralSupervisor({
     }
     let aborted = false;
     const operation = tail.then(async () => {
+      const pendingHeartbeat = heartbeatInFlight;
+      if (pendingHeartbeat) {
+        try {
+          await pendingHeartbeat;
+        } catch (error) {
+          if (ownershipLost) {
+            await Promise.resolve(lossPromise).catch(() => false);
+            return false;
+          }
+          throw error;
+        }
+      }
       if (aborted) return false;
       state = 'stopping';
       if (ownership.isOwner !== true) {

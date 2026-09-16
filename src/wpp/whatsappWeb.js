@@ -107,7 +107,7 @@ export function registerWhatsAppWeb(app, deps = {}) {
     supervisor: runtime.supervisor,
   });
 
-  registerCronAndRoutesFn(app, {
+  const cronRegistration = registerCronAndRoutesFn(app, {
     query,
     ejecutarReposicionPredictiva,
     ejecutarCampaniaClima,
@@ -120,6 +120,61 @@ export function registerWhatsAppWeb(app, deps = {}) {
   if (ENABLE_WPP) runtime.start().catch(error => {
     console.error('[WPP GENERAL] initial runtime start failed:', error);
   });
+
+  let shutdownPromise = null;
+  const shutdown = () => {
+    if (shutdownPromise) return shutdownPromise;
+    let resolveShutdown;
+    let rejectShutdown;
+    shutdownPromise = new Promise((resolve, reject) => {
+      resolveShutdown = resolve;
+      rejectShutdown = reject;
+    });
+    shutdownPromise.catch(() => {});
+
+    let timerStop = true;
+    try {
+      runtime.stopTimers();
+    } catch (error) {
+      timerStop = Promise.reject(error);
+    }
+    let supervisorStop;
+    try {
+      if (runtime.supervisor === null || runtime.supervisor === undefined) {
+        supervisorStop = true;
+      } else if (typeof runtime.supervisor.shutdown === 'function') {
+        supervisorStop = runtime.supervisor.shutdown();
+      } else {
+        supervisorStop = false;
+      }
+    } catch (error) {
+      supervisorStop = Promise.reject(error);
+    }
+    let cronStop;
+    try {
+      if (cronRegistration === null || cronRegistration === undefined) {
+        cronStop = true;
+      } else if (typeof cronRegistration.shutdown === 'function') {
+        cronStop = cronRegistration.shutdown();
+      } else if (typeof cronRegistration.stop === 'function') {
+        cronStop = cronRegistration.stop();
+      } else {
+        cronStop = false;
+      }
+    } catch (error) {
+      cronStop = Promise.reject(error);
+    }
+    Promise.all([timerStop, supervisorStop, cronStop]).then(
+      ([, supervisorResult, cronResult]) => resolveShutdown(
+        supervisorResult === true && cronResult === true,
+      ),
+      rejectShutdown,
+    );
+    return shutdownPromise;
+  };
+  runtime.shutdown = shutdown;
+  app.locals ??= {};
+  app.locals.wppGeneralShutdown = shutdown;
 
   return runtime;
 }
