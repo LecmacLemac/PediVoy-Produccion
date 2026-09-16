@@ -38,6 +38,7 @@ export function createGeneralSupervisor({
   clientFactory,
   repository,
   fatalExit,
+  onGenerationInvalidated = () => {},
   initializeDeadlineMs = 90000,
   destroyDeadlineMs = 10000,
   shutdownDeadlineMs = 20000,
@@ -54,6 +55,9 @@ export function createGeneralSupervisor({
     }
   }
   if (typeof fatalExit !== 'function') throw new TypeError('fatalExit must be a function');
+  if (typeof onGenerationInvalidated !== 'function') {
+    throw new TypeError('onGenerationInvalidated must be a function');
+  }
 
   let state = 'standby';
   let generation = 0;
@@ -88,6 +92,13 @@ export function createGeneralSupervisor({
   function closeGate() {
     ready = false;
     gateOpen = false;
+  }
+
+  function invalidateCurrentGeneration() {
+    if (!current) return;
+    try {
+      onGenerationInvalidated(current.generation);
+    } catch {}
   }
 
   async function assertOwner() {
@@ -313,6 +324,7 @@ export function createGeneralSupervisor({
   }
 
   function restart(reason = 'restart', { expectedGeneration = null } = {}) {
+    invalidateCurrentGeneration();
     gateHolds += 1;
     closeGate();
     return enqueue(async () => {
@@ -342,6 +354,7 @@ export function createGeneralSupervisor({
 
   function reset(sequence, deleteSessionFn) {
     if (typeof deleteSessionFn !== 'function') return Promise.reject(new TypeError('deleteSessionFn is required'));
+    invalidateCurrentGeneration();
     gateHolds += 1;
     closeGate();
     return enqueue(async () => {
@@ -369,6 +382,7 @@ export function createGeneralSupervisor({
         closeGate();
         state = 'fenced';
         lastError = error;
+        if (error?.timedOut === true) leaseLost(error);
         if (started && error?.resetFailurePersistenceAttempted !== true) {
           try {
             const persisted = await repository.markResetFailed({
@@ -384,7 +398,6 @@ export function createGeneralSupervisor({
             leaseLost(preserveCause(persistenceError, error));
           }
         }
-        if (error?.timedOut === true) leaseLost(error);
         if (error?.code === 'WPP_NOT_OWNER') leaseLost(error);
         throw error;
       }
@@ -411,6 +424,7 @@ export function createGeneralSupervisor({
   }
 
   function leaseLost(error = notOwnerError('General ownership was lost')) {
+    invalidateCurrentGeneration();
     closeGate();
     ownershipLost = true;
     state = 'fenced';
@@ -452,6 +466,7 @@ export function createGeneralSupervisor({
   }
 
   function shutdown() {
+    invalidateCurrentGeneration();
     closeGate();
     shuttingDown = true;
     if (shutdownPromise) return shutdownPromise;
@@ -527,29 +542,37 @@ export function createGeneralSupervisor({
       throw new TypeError('expectedGeneration must be a positive integer');
     }
     if (typeof fn !== 'function') throw new TypeError('fn is required');
-    if (!current || current.generation !== expectedGeneration || shuttingDown || ownershipLost) {
-      throw notOwnerError('General client generation is not current');
-    }
-    if (ownership.isOwner !== true) {
-      const error = notOwnerError('General ownership was lost');
-      leaseLost(error);
-      throw error;
-    }
-    const active = current;
-    const activeEpoch = ownership.epoch;
-    try {
-      const owned = await ownership.heartbeat();
-      if (owned !== true) throw notOwnerError('General ownership heartbeat was rejected');
-    } catch (error) {
-      leaseLost(error);
-      throw notOwnerError(error?.message);
-    }
-    if (!current || current !== active || generation !== expectedGeneration
-      || ownership.epoch !== activeEpoch || ownership.isOwner !== true
-      || shuttingDown || ownershipLost) {
-      throw notOwnerError('General client generation changed before use');
-    }
-    return fn({ client: active.client, generation: expectedGeneration, epoch: activeEpoch });
+    return enqueue(async () => {
+      if (!current || current.generation !== expectedGeneration || shuttingDown || ownershipLost) {
+        throw notOwnerError('General client generation is not current');
+      }
+      if (ownership.isOwner !== true) {
+        const error = notOwnerError('General ownership was lost');
+        leaseLost(error);
+        throw error;
+      }
+      const active = current;
+      const activeEpoch = ownership.epoch;
+      try {
+        const owned = await ownership.heartbeat();
+        if (owned !== true) throw notOwnerError('General ownership heartbeat was rejected');
+      } catch (error) {
+        leaseLost(error);
+        throw preserveCause(notOwnerError(error?.message), error);
+      }
+      if (!current || current !== active || generation !== expectedGeneration
+        || ownership.epoch !== activeEpoch || ownership.isOwner !== true
+        || shuttingDown || ownershipLost) {
+        throw notOwnerError('General client generation changed before use');
+      }
+      const result = await fn({ client: active.client, generation: expectedGeneration, epoch: activeEpoch });
+      if (!current || current !== active || generation !== expectedGeneration
+        || ownership.epoch !== activeEpoch || ownership.isOwner !== true
+        || shuttingDown || ownershipLost) {
+        throw notOwnerError('General client generation changed during use');
+      }
+      return result;
+    });
   }
 
   return {

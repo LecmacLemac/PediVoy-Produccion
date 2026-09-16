@@ -337,6 +337,41 @@ test('handlers and incoming media are generation-scoped and disabled in QR-only 
   qrRuntime.stopTimers();
 });
 
+test('a ready successor never exposes the previous active generation before maintenance catches up', async () => {
+  const { FakeClient, clients } = makeClientClass();
+  const runtime = createGeneralRuntime({
+    enabled: true,
+    Client: FakeClient,
+    LocalAuth: FakeLocalAuth,
+    path,
+    repository: makeRepository(),
+    ownership: makeOwnership(),
+    handlers: { start: async () => {} },
+    timers: inertTimers,
+    fatalExit: () => {},
+  });
+
+  await runtime.tick();
+  clients[0].emit('ready');
+  await new Promise(resolve => setImmediate(resolve));
+  await runtime.tick();
+  for (let attempt = 0; attempt < 10 && runtime.getState().wppClient === null; attempt += 1) {
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  const firstActiveClient = runtime.getState().wppClient;
+  assert.notEqual(firstActiveClient, null);
+
+  await runtime.supervisor.restart('manual');
+  clients[1].emit('ready');
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(runtime.snapshot().generation, 2);
+  assert.equal(runtime.snapshot().ready, true);
+  assert.notEqual(runtime.getState().wppClient, firstActiveClient);
+  assert.equal(runtime.getState().wppClient, null);
+  runtime.stopTimers();
+});
+
 test('handler completion is revalidated before exposing a client or attaching media', async () => {
   const handlerStarted = deferred();
   const handlerRelease = deferred();
@@ -451,6 +486,78 @@ test('authenticated fallback promotes the same operational generation to ready a
   runtime.stopTimers();
 });
 
+test('authenticated fallback exhaustion restarts the stuck generation exactly once', async () => {
+  const { FakeClient, clients } = makeClientClass();
+  const scheduled = [];
+  const runtime = createGeneralRuntime({
+    enabled: true,
+    Client: FakeClient,
+    LocalAuth: FakeLocalAuth,
+    path,
+    repository: makeRepository(),
+    ownership: makeOwnership(),
+    authenticatedFallbackMaxAttempts: 2,
+    timers: {
+      setTimeout(callback, milliseconds) { scheduled.push({ callback, milliseconds }); return scheduled.length; },
+      clearTimeout() {},
+    },
+    fatalExit: () => {},
+  });
+  await runtime.tick();
+  clients[0].inject = async () => {};
+  clients[0].pupPage = {
+    evaluate: async callback => String(callback).includes('runtimeReady')
+      ? { connected: true, runtimeReady: false }
+      : undefined,
+  };
+
+  clients[0].emit('authenticated');
+  await new Promise(resolve => setImmediate(resolve));
+  await scheduled[0].callback();
+  await scheduled[1].callback();
+  for (let attempt = 0; attempt < 10 && clients.length < 2; attempt += 1) {
+    await new Promise(resolve => setImmediate(resolve));
+  }
+
+  assert.equal(clients.length, 2);
+  assert.equal(clients[0].destroyCalls, 1);
+  assert.equal(runtime.snapshot().generation, 2);
+  runtime.stopTimers();
+});
+
+test('an external supervisor restart cancels the old generation fallback timer', async () => {
+  const { FakeClient, clients } = makeClientClass();
+  const scheduled = [];
+  const cleared = [];
+  const runtime = createGeneralRuntime({
+    enabled: true,
+    Client: FakeClient,
+    LocalAuth: FakeLocalAuth,
+    path,
+    repository: makeRepository(),
+    ownership: makeOwnership(),
+    timers: {
+      setTimeout(callback, milliseconds) {
+        const id = scheduled.length + 1;
+        scheduled.push({ id, callback, milliseconds });
+        return id;
+      },
+      clearTimeout(id) { cleared.push(id); },
+    },
+    fatalExit: () => {},
+  });
+  await runtime.tick();
+  clients[0].emit('authenticated');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(scheduled.length, 1);
+
+  await runtime.supervisor.restart('manual');
+
+  assert.deepEqual(cleared, [scheduled[0].id]);
+  assert.equal(clients.length, 2);
+  runtime.stopTimers();
+});
+
 test('authenticated fallback timer from a stale generation cannot promote its successor', async () => {
   const { FakeClient, clients } = makeClientClass();
   const scheduled = [];
@@ -530,6 +637,49 @@ test('authenticated fallback reinjects a missing runtime before promoting ready'
   assert.equal(injections, 1);
   assert.equal(syncFinishes, 1);
   assert.equal(runtime.snapshot().ready, true);
+  runtime.stopTimers();
+});
+
+test('ownership loss during a fallback probe prevents later reinjection work', async () => {
+  const { FakeClient, clients } = makeClientClass();
+  const scheduled = [];
+  const probe = deferred();
+  const probeStarted = deferred();
+  let injections = 0;
+  const runtime = createGeneralRuntime({
+    enabled: true,
+    Client: FakeClient,
+    LocalAuth: FakeLocalAuth,
+    path,
+    repository: makeRepository(),
+    ownership: makeOwnership(),
+    timers: {
+      setTimeout(callback, milliseconds) { scheduled.push({ callback, milliseconds }); return scheduled.length; },
+      clearTimeout() {},
+    },
+    fatalExit: () => {},
+  });
+  await runtime.tick();
+  clients[0].inject = async () => { injections += 1; };
+  clients[0].pupPage = {
+    evaluate: async callback => {
+      if (!String(callback).includes('runtimeReady')) return undefined;
+      probeStarted.resolve();
+      return probe.promise;
+    },
+  };
+  clients[0].emit('authenticated');
+  await new Promise(resolve => setImmediate(resolve));
+
+  const fallback = scheduled[0].callback();
+  await probeStarted.promise;
+  const loss = runtime.supervisor.leaseLost(new Error('ownership lost during probe'));
+  probe.resolve({ connected: true, runtimeReady: false });
+  await fallback;
+  await loss;
+
+  assert.equal(injections, 0);
+  assert.equal(runtime.snapshot().state, 'fenced');
   runtime.stopTimers();
 });
 
@@ -689,6 +839,58 @@ test('failed reset sequence is attempted again on the next maintenance tick', as
   await runtime.tick();
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(attempts, 2);
+  runtime.stopTimers();
+});
+
+test('session deletion deadline also bounds a hung quarantine rename', async () => {
+  const rename = deferred();
+  const scheduled = [];
+  const failures = [];
+  const supervisor = {
+    snapshot: () => ({ isOwner: true, ownerId: 'owner:test', epoch: 12n, state: 'ready', ready: true, gateOpen: true }),
+    heartbeatOnce: async () => true,
+    start: async () => true,
+    withActiveClient: async () => false,
+    reset: async (_sequence, deleteSessionFn) => {
+      try {
+        return await deleteSessionFn();
+      } catch (error) {
+        failures.push(error);
+        throw error;
+      }
+    },
+  };
+  const runtime = createGeneralRuntime({
+    enabled: true,
+    path,
+    fs: {
+      promises: {
+        rename: () => rename.promise,
+        rm: async () => {},
+      },
+    },
+    repository: makeRepository({
+      loadPendingReset: async () => ({ reset_requested_seq: 8n, reset_applied_seq: 7n }),
+    }),
+    supervisor,
+    logger: { error() {}, warn() {} },
+    timers: {
+      setTimeout(callback, milliseconds) { scheduled.push({ callback, milliseconds }); return scheduled.length; },
+      clearTimeout() {},
+    },
+  });
+
+  await runtime.tick();
+  for (let attempt = 0; attempt < 10 && scheduled.length === 0; attempt += 1) {
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  assert.equal(scheduled[0]?.milliseconds, 30000);
+  scheduled[0].callback();
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(failures.length, 1);
+  assert.equal(failures[0].timedOut, true);
+  rename.resolve();
   runtime.stopTimers();
 });
 

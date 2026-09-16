@@ -747,6 +747,53 @@ test('authenticated current-client access is authoritative and generation fenced
   );
 });
 
+test('withCurrentClient serializes asynchronous generation work ahead of restart', async () => {
+  const workStarted = deferred();
+  const workRelease = deferred();
+  const h = makeHarness({
+    destroy: async raw => { h.calls.push(`destroy:${raw.id}`); },
+    confirmStopped: async raw => { h.calls.push(`stopped:${raw.id}`); return true; },
+  });
+  await h.supervisor.start();
+
+  const work = h.supervisor.withCurrentClient(1, async () => {
+    workStarted.resolve();
+    await workRelease.promise;
+    return 'repaired';
+  });
+  await workStarted.promise;
+  const restart = h.supervisor.restart('manual');
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(h.calls.includes('destroy:1'), false);
+  workRelease.resolve();
+  assert.equal(await work, 'repaired');
+  assert.equal(await restart, true);
+  assert.equal(h.clients.length, 2);
+});
+
+test('withCurrentClient preserves the authoritative heartbeat failure as its cause', async () => {
+  const heartbeatError = new Error('database heartbeat timed out');
+  let failHeartbeat = false;
+  const h = makeHarness({
+    heartbeat: async () => {
+      if (failHeartbeat) throw heartbeatError;
+      return true;
+    },
+  });
+  await h.supervisor.start();
+  failHeartbeat = true;
+
+  await assert.rejects(
+    h.supervisor.withCurrentClient(1, () => 'unsafe'),
+    error => {
+      assert.equal(error.code, 'WPP_NOT_OWNER');
+      assert.equal(error.cause, heartbeatError);
+      return true;
+    },
+  );
+});
+
 test('successful shutdown stops and confirms before release and rejects later commands', async () => {
   const h = makeHarness({
     destroy: async raw => { h.calls.push(`destroy:${raw.id}`); },
@@ -1257,6 +1304,29 @@ test('reset deletion deadline triggers supervisor fatal handling exactly once', 
   assert.equal(h.calls.filter(call => call === 'reset-failed:24').length, 1);
   assert.equal(h.fatalErrors.length, 1);
   assert.equal(h.fatalErrors[0], timeoutError);
+});
+
+test('reset deletion timeout starts fatal recovery before failure persistence completes', async () => {
+  const persistence = deferred();
+  const timeoutError = Object.assign(new Error('General session deletion deadline exceeded'), { timedOut: true });
+  const h = makeHarness({
+    markResetFailed: () => persistence.promise,
+    forceStop: async raw => { h.calls.push(`force:${raw.id}`); return true; },
+    shutdownDeadlineMs: 10,
+    destroyDeadlineMs: 5,
+  });
+  await h.supervisor.start();
+
+  const reset = h.supervisor.reset(25n, async () => { throw timeoutError; });
+  await new Promise(resolve => setTimeout(resolve, 25));
+
+  assert.equal(h.fatalErrors.length, 1);
+  assert.equal(h.fatalErrors[0], timeoutError);
+  assert.equal(h.supervisor.snapshot().gateOpen, false);
+
+  persistence.resolve(true);
+  await assert.rejects(reset, timeoutError);
+  assert.equal(h.fatalErrors.length, 1);
 });
 
 test('client factory requires an explicit stop confirmation capability', () => {

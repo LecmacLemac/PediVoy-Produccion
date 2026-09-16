@@ -169,7 +169,13 @@ export function createGeneralRuntime({
         return adapter;
       },
     });
-    supervisor = createGeneralSupervisor({ ownership, clientFactory, repository, fatalExit: callFatal });
+    supervisor = createGeneralSupervisor({
+      ownership,
+      clientFactory,
+      repository,
+      fatalExit: callFatal,
+      onGenerationInvalidated: cancelAuthenticatedFallback,
+    });
     assignedSupervisor = supervisor;
   }
 
@@ -179,11 +185,13 @@ export function createGeneralRuntime({
   let heartbeatInFlight = null;
   let schemaReady = false;
   let activeClient = null;
+  let activeGeneration = null;
   let outboxProcessor = null;
   let activeWork = null;
   let maintenanceWork = null;
   const authenticatedFallbackTimers = new Map();
   const authenticatedFallbackAttempts = new Map();
+  const authenticatedFallbackRecoveries = new Set();
 
   const handlersStarted = new WeakSet();
   const mediaAttached = new WeakSet();
@@ -222,11 +230,22 @@ export function createGeneralRuntime({
     }
   }
 
-  async function repairAuthenticatedRuntime(client) {
-    let health = await inspectAuthenticatedRuntime(client);
-    if (!health.connected || health.runtimeReady) return health;
-    try {
+  async function repairAuthenticatedRuntime(client, generation) {
+    let health = await supervisor.withCurrentClient(generation, ({ client: current }) => {
+      if (current !== client) return { connected: false, runtimeReady: false, stale: true };
+      return inspectAuthenticatedRuntime(client);
+    });
+    if (health?.stale || !health.connected || health.runtimeReady) return health;
+
+    const injected = await supervisor.withCurrentClient(generation, async ({ client: current }) => {
+      if (current !== client) return false;
       await client.inject?.();
+      return true;
+    });
+    if (injected !== true) return { connected: false, runtimeReady: false, stale: true };
+
+    const synced = await supervisor.withCurrentClient(generation, async ({ client: current }) => {
+      if (current !== client) return false;
       await client.pupPage?.evaluate(async () => {
         try {
           if (typeof window.onAppStateHasSyncedEvent === 'function') {
@@ -234,10 +253,14 @@ export function createGeneralRuntime({
           }
         } catch {}
       });
-    } catch (error) {
-      logger.warn('[WPP GENERAL] authenticated runtime reinjection failed:', error);
-    }
-    health = await inspectAuthenticatedRuntime(client);
+      return true;
+    });
+    if (synced !== true) return { connected: false, runtimeReady: false, stale: true };
+
+    health = await supervisor.withCurrentClient(generation, ({ client: current }) => {
+      if (current !== client) return { connected: false, runtimeReady: false, stale: true };
+      return inspectAuthenticatedRuntime(client);
+    });
     return health;
   }
 
@@ -245,10 +268,7 @@ export function createGeneralRuntime({
     authenticatedFallbackTimers.delete(generation);
     if (stopped || qrOnly || typeof supervisor.withCurrentClient !== 'function') return false;
     try {
-      const health = await supervisor.withCurrentClient(generation, ({ client: current }) => {
-        if (current !== client) return { connected: false, runtimeReady: false, stale: true };
-        return repairAuthenticatedRuntime(client);
-      });
+      const health = await repairAuthenticatedRuntime(client, generation);
       if (health?.stale) return false;
       if (health?.connected && health.runtimeReady) {
         if (stopped) return false;
@@ -266,12 +286,28 @@ export function createGeneralRuntime({
     return false;
   }
 
+  function recoverAuthenticatedFallback(generation) {
+    if (stopped || authenticatedFallbackRecoveries.has(generation)
+      || typeof supervisor.restart !== 'function') return false;
+    authenticatedFallbackRecoveries.add(generation);
+    Promise.resolve(supervisor.restart('authenticated_fallback_exhausted', { expectedGeneration: generation }))
+      .catch(error => {
+        if (error?.code !== 'WPP_NOT_OWNER') {
+          logger.error('[WPP GENERAL] authenticated fallback recovery failed:', error);
+        }
+      })
+      .finally(() => authenticatedFallbackRecoveries.delete(generation));
+    return true;
+  }
+
   function scheduleAuthenticatedFallback(client, generation) {
     if (stopped || qrOnly || authenticatedFallbackTimers.has(generation)) return false;
     const snapshot = supervisor.snapshot();
     if (!snapshot.isOwner || snapshot.generation !== generation || snapshot.ready) return false;
     const attempts = authenticatedFallbackAttempts.get(generation) ?? 0;
-    if (attempts >= authenticatedFallbackMaxAttempts) return false;
+    if (attempts >= authenticatedFallbackMaxAttempts) {
+      return recoverAuthenticatedFallback(generation);
+    }
     authenticatedFallbackAttempts.set(generation, attempts + 1);
     const timerId = timers.setTimeout(
       () => runAuthenticatedFallback(client, generation),
@@ -287,15 +323,18 @@ export function createGeneralRuntime({
     }
     const canonical = getWppSessionDir({ path, cwd, sessionId: WPP_SESSION_ID });
     const quarantine = `${canonical}.reset-${uuid()}`;
-    try {
-      await fs.promises.rename(canonical, quarantine);
-    } catch (error) {
-      if (error?.code === 'ENOENT') return true;
-      throw error;
-    }
+    const deletion = (async () => {
+      try {
+        await fs.promises.rename(canonical, quarantine);
+      } catch (error) {
+        if (error?.code === 'ENOENT') return true;
+        throw error;
+      }
+      await fs.promises.rm(quarantine, { recursive: true, force: true });
+      return true;
+    })();
+    deletion.catch(() => {});
     let deadlineTimer;
-    const removal = Promise.resolve().then(() => fs.promises.rm(quarantine, { recursive: true, force: true }));
-    removal.catch(() => {});
     const timeout = new Promise((_, reject) => {
       deadlineTimer = timers.setTimeout(() => {
         const error = new Error('General session deletion deadline exceeded');
@@ -303,8 +342,7 @@ export function createGeneralRuntime({
         reject(error);
       }, deleteDeadlineMs);
     });
-    await Promise.race([removal, timeout]).finally(() => timers.clearTimeout(deadlineTimer));
-    return true;
+    return Promise.race([deletion, timeout]).finally(() => timers.clearTimeout(deadlineTimer));
   }
 
   async function applyPendingReset(snapshot) {
@@ -336,6 +374,7 @@ export function createGeneralRuntime({
       return await supervisor.withActiveClient(async ({ client, generation }) => {
         if (!prepared || prepared.client !== client || prepared.generation !== generation) return false;
         activeClient = client;
+        activeGeneration = generation;
         if (typeof handleIncomingMediaMessage === 'function' && !mediaAttached.has(client)) {
           mediaAttached.add(client);
           client.on('message', (...args) => {
@@ -355,6 +394,7 @@ export function createGeneralRuntime({
     } catch (error) {
       if (error?.code !== 'WPP_NOT_OWNER') throw error;
       activeClient = null;
+      activeGeneration = null;
       return false;
     }
   }
@@ -447,6 +487,7 @@ export function createGeneralRuntime({
     for (const timerId of authenticatedFallbackTimers.values()) timers.clearTimeout(timerId);
     authenticatedFallbackTimers.clear();
     authenticatedFallbackAttempts.clear();
+    authenticatedFallbackRecoveries.clear();
   }
 
   return {
@@ -466,7 +507,8 @@ export function createGeneralRuntime({
     snapshot: () => ({ enabled: true, timerActive: timer !== null, running: running !== null, ...supervisor.snapshot() }),
     getState: () => {
       const state = supervisor.snapshot();
-      const exposedClient = state.ready && state.gateOpen ? activeClient : null;
+      const exposedClient = state.ready && state.gateOpen
+        && activeGeneration === state.generation ? activeClient : null;
       return {
         isConnected: state.ready,
         isReadyWpp: state.ready && state.gateOpen,
