@@ -79,6 +79,7 @@ export function createGeneralSupervisor({
   let lossPromise = null;
   let shutdownPromise = null;
   let fatalCalled = false;
+  let fatalTeardownPromise = null;
   let gateHolds = 0;
   let eventRevision = 0;
   let terminalFenceGeneration = null;
@@ -295,17 +296,18 @@ export function createGeneralSupervisor({
 
   async function persistTerminalFenceBeforeFatal(operation, error) {
     try {
-      return await deadline(
-        persistTerminalFence(operation, error),
+      await deadline(
+        publish('fenced', operation, error),
         shutdownDeadlineMs,
         'General terminal fence persistence',
       );
+      return true;
     } catch (persistenceError) {
       const fatalError = preserveCause(persistenceError, error);
       state = 'fenced';
       closeGate();
       lastError = fatalError;
-      callFatal(fatalError);
+      await scheduleFatalTeardown(fatalError);
       return false;
     }
   }
@@ -320,12 +322,18 @@ export function createGeneralSupervisor({
       return true;
     } catch (error) {
       latchTerminalGeneration(error);
+      let cleanupError = null;
       try {
         await stopCurrent();
-      } catch (cleanupError) {
-        callFatal(cleanupError);
+      } catch (failure) {
+        cleanupError = failure;
       }
-      await persistTerminalFence('initialize_failed', error);
+      if (cleanupError) {
+        const fencePersisted = await persistTerminalFenceBeforeFatal('initialize_failed', error);
+        if (fencePersisted) await scheduleFatalTeardown(cleanupError);
+      } else {
+        await persistTerminalFence('initialize_failed', error);
+      }
       if (error?.code === 'WPP_NOT_OWNER') leaseLost(error);
       throw error;
     }
@@ -476,7 +484,7 @@ export function createGeneralSupervisor({
         const fencePersisted = unconfirmedTeardowns.has(error)
           ? await persistTerminalFenceBeforeFatal(reason, error)
           : await persistTerminalFence(reason, error);
-        if (fencePersisted && unconfirmedTeardowns.has(error)) callFatal(error);
+        if (fencePersisted && unconfirmedTeardowns.has(error)) await scheduleFatalTeardown(error);
         if (error?.code === 'WPP_NOT_OWNER') leaseLost(error);
         throw error;
       }
@@ -514,7 +522,7 @@ export function createGeneralSupervisor({
         if (terminalFailure) latchTerminalGeneration(error);
         else closeGate();
         lastError = error;
-        if (error?.timedOut === true) leaseLost(error);
+        if (error?.timedOut === true && !unconfirmedTeardowns.has(error)) leaseLost(error);
         let failurePersisted = true;
         if (started && error?.resetFailurePersistenceAttempted !== true) {
           try {
@@ -540,10 +548,16 @@ export function createGeneralSupervisor({
             if (!fencePersisted) failurePersisted = false;
           } catch (persistenceError) {
             failurePersisted = false;
-            leaseLost(preserveCause(persistenceError, error));
+            const fatalError = preserveCause(persistenceError, error);
+            if (unconfirmedTeardowns.has(error)) {
+              const fencePersisted = await persistTerminalFenceBeforeFatal('reset_failed', error);
+              if (fencePersisted) await scheduleFatalTeardown(fatalError);
+            } else {
+              leaseLost(fatalError);
+            }
           }
         }
-        if (failurePersisted && unconfirmedTeardowns.has(error)) callFatal(error);
+        if (failurePersisted && unconfirmedTeardowns.has(error)) await scheduleFatalTeardown(error);
         if (error?.code === 'WPP_NOT_OWNER') leaseLost(error);
         if (!terminalFailure && !ownershipLost) gateHolds -= 1;
         throw error;
@@ -557,8 +571,22 @@ export function createGeneralSupervisor({
     Promise.resolve().then(() => fatalExit(error)).catch(() => {});
   }
 
+  function scheduleFatalTeardown(error, forceStopCause = error) {
+    if (fatalTeardownPromise) return fatalTeardownPromise;
+    fatalTeardownPromise = Promise.resolve()
+      .then(() => forceStopAfterDeadline(forceStopCause))
+      .catch(forceStopError => preserveCause(forceStopError, forceStopCause))
+      .then(forceStopResult => {
+        const fatalError = forceStopResult === forceStopCause ? error : forceStopResult;
+        callFatal(fatalError);
+        return fatalError;
+      });
+    fatalTeardownPromise.catch(() => callFatal(error));
+    return fatalTeardownPromise;
+  }
+
   async function forceStopAfterDeadline(deadlineError) {
-    if (!deadlineError?.timedOut || !current) return deadlineError;
+    if (!current) return deadlineError;
     try {
       const stopped = await deadline(current.forceStop(), destroyDeadlineMs, 'General client force stop');
       if (stopped !== true) {
@@ -578,13 +606,19 @@ export function createGeneralSupervisor({
     lastError = error;
     if (lossPromise) return lossPromise;
     const cleanup = tail.then(async () => {
+      let cleanupError = null;
       try {
         await stopCurrent();
-      } catch (cleanupError) {
-        if (!lastError) lastError = cleanupError;
+      } catch (failure) {
+        cleanupError = failure;
+        if (!lastError) lastError = failure;
       } finally {
         state = 'fenced';
         closeGate();
+      }
+      if (cleanupError && unconfirmedTeardowns.has(cleanupError)) {
+        await scheduleFatalTeardown(cleanupError);
+      } else {
         callFatal(error);
       }
       return false;
@@ -593,8 +627,7 @@ export function createGeneralSupervisor({
     lossPromise = deadline(cleanup, shutdownDeadlineMs, 'General lease-loss shutdown').catch(async deadlineError => {
       state = 'fenced';
       closeGate();
-      const fatalError = await forceStopAfterDeadline(deadlineError);
-      callFatal(fatalError === deadlineError ? error : fatalError);
+      await scheduleFatalTeardown(error, deadlineError);
       return false;
     });
     tail = lossPromise.catch(() => {});
@@ -648,7 +681,7 @@ export function createGeneralSupervisor({
       closeGate();
       state = 'fenced';
       lastError = error;
-      callFatal(await forceStopAfterDeadline(error));
+      await scheduleFatalTeardown(error);
       return false;
     });
     tail = shutdownPromise.catch(() => {});
