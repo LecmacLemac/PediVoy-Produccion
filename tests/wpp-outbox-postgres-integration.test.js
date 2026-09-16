@@ -134,8 +134,6 @@ test('PostgreSQL 16 legacy outbox migration fails closed and is idempotent', opt
         status TEXT DEFAULT 'pending',
         error TEXT
       );
-      ALTER TABLE wpp_outbox
-        ADD CONSTRAINT wpp_outbox_status_check CHECK (true) NOT VALID;
       INSERT INTO wpp_outbox (telefono, mensaje, sent_at, status, error) VALUES
         ('1', 'null-unsent', NULL, NULL, NULL),
         ('2', 'unknown-unsent', NULL, 'queued_old', 'legacy detail'),
@@ -146,6 +144,9 @@ test('PostgreSQL 16 legacy outbox migration fails closed and is idempotent', opt
         ('7', 'valid-sending', NOW(), 'sending', 'sending detail'),
         ('8', 'valid-error', NULL, 'error', 'error detail'),
         ('9', 'valid-skipped', NULL, 'skipped', 'skip detail');
+      ALTER TABLE wpp_outbox
+        ADD CONSTRAINT wpp_outbox_status_check
+        CHECK (status IN ('pending', 'sent')) NOT VALID;
     `);
 
     await pool.query(migrationSql);

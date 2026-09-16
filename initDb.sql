@@ -1325,7 +1325,13 @@ CREATE TABLE IF NOT EXISTS wpp_outbox (
 
 BEGIN;
 
+SET LOCAL lock_timeout = '30s';
+SET LOCAL statement_timeout = '5min';
+
 LOCK TABLE wpp_outbox IN ACCESS EXCLUSIVE MODE;
+
+ALTER TABLE wpp_outbox
+  DROP CONSTRAINT IF EXISTS wpp_outbox_status_check;
 
 ALTER TABLE wpp_outbox
   ADD COLUMN IF NOT EXISTS claim_owner TEXT,
@@ -1347,7 +1353,6 @@ WHERE status IS NULL
 ALTER TABLE wpp_outbox
   ALTER COLUMN status SET DEFAULT 'pending',
   ALTER COLUMN status SET NOT NULL,
-  DROP CONSTRAINT IF EXISTS wpp_outbox_status_check,
   ADD CONSTRAINT wpp_outbox_status_check
     CHECK (status IN ('pending', 'sending', 'sent', 'error', 'skipped')) NOT VALID;
 
