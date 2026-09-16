@@ -351,6 +351,8 @@ export function createApp(deps) {
 
     withAuth,
     isSuper,
+    generalControlRepository: deps?.generalControlRepository,
+    generalSupervisor: deps?.generalSupervisor,
   });
 
   // Sin fallback legacy: toda ruta pública vive en src/routes/*

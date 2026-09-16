@@ -156,13 +156,14 @@ export function registerWppRoutes(app, deps) {
 
     try {
       const outcome = serializeResetOutcome(await repository.requestReset({
-        requestedBy: String(req.user?.id ?? 'unknown'),
+        requestedBy: String(req.user?.uid ?? 'unknown'),
         cooldownMs: RESET_COOLDOWN_MS,
       }));
       if (!outcome.accepted) {
         return res.status(202).json({
           ok: true,
           accepted: false,
+          skipped: true,
           reason: 'cooldown',
           reset_seq: outcome.sequence,
           sequence: outcome.sequence,

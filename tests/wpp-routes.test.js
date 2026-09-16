@@ -21,7 +21,7 @@ async function withServer(app, fn) {
 function buildApp({
   enabled = true,
   qrOnly = false,
-  user = { id: 1, role: 'super' },
+  user = { uid: 1, role: 'super' },
   state = {},
   client = null,
   initWhatsApp = async () => {},

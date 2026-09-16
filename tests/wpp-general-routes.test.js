@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import express from 'express';
 
 import { registerWppRoutes } from '../src/wpp/routes.js';
@@ -33,7 +34,7 @@ function buildApp({ repository, supervisor, state = {}, destructive = {} } = {})
     WPP_QR_ONLY: false,
     qrcode: { toDataURL: async value => `data:image/png;base64,${value}` },
     withAuth(req, _res, next) {
-      req.user = { id: 7, role: 'super' };
+      req.user = { uid: 7, role: 'super' };
       next();
     },
     isSuper: () => true,
@@ -110,6 +111,7 @@ test('two concurrent reset routes expose one sequence and one global cooldown re
       {
         ok: true,
         accepted: false,
+        skipped: true,
         reason: 'cooldown',
         reset_seq: '30',
         sequence: '30',
@@ -224,6 +226,12 @@ test('QR route renders the persisted owner QR instead of stale local memory', as
     assert.match(await response.text(), /data:image\/png;base64,owner-qr/);
   });
   assert.deepEqual(encoded, ['owner-qr']);
+});
+
+test('createApp forwards injected singleton dependencies to WhatsApp registration', async () => {
+  const source = await readFile(new URL('../src/app.js', import.meta.url), 'utf8');
+
+  assert.match(source, /registerWhatsAppWeb\(app,\s*\{[\s\S]*generalControlRepository:\s*deps\?\.generalControlRepository[\s\S]*generalSupervisor:\s*deps\?\.generalSupervisor[\s\S]*\}\);/);
 });
 
 test('whatsappWeb resolves the persisted repository and supervisor used by routes', async () => {
