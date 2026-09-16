@@ -1,3 +1,5 @@
+export const POST_ACQUISITION_GUARD_DEADLINE_MS = 5000;
+
 function deadline(promise, milliseconds, label) {
   let timer;
   const observed = Promise.resolve(promise);
@@ -41,6 +43,7 @@ export function createGeneralSupervisor({
   onGenerationInvalidated = () => {},
   beforeInitialize = async () => true,
   initializeDeadlineMs = 90000,
+  postAcquisitionGuardDeadlineMs = POST_ACQUISITION_GUARD_DEADLINE_MS,
   destroyDeadlineMs = 10000,
   shutdownDeadlineMs = 20000,
 } = {}) {
@@ -320,7 +323,7 @@ export function createGeneralSupervisor({
       try {
         initializeAllowed = await deadline(
           beforeInitialize(),
-          initializeDeadlineMs,
+          postAcquisitionGuardDeadlineMs,
           'General initialization guard',
         );
       } catch (error) {

@@ -3,7 +3,10 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 
 import { createGeneralClientFactory } from '../src/wpp/generalClientFactory.js';
-import { createGeneralSupervisor } from '../src/wpp/generalSupervisor.js';
+import {
+  createGeneralSupervisor,
+  POST_ACQUISITION_GUARD_DEADLINE_MS,
+} from '../src/wpp/generalSupervisor.js';
 
 const deferred = () => {
   let resolve;
@@ -14,7 +17,8 @@ const deferred = () => {
 
 function makeHarness({
   initialize, destroy, confirmStopped, forceStop, tryAcquire = async () => true,
-  heartbeat, assertOwned, updateOwned, initializeDeadlineMs = 30, destroyDeadlineMs = 20,
+  heartbeat, assertOwned, updateOwned, initializeDeadlineMs = 30,
+  postAcquisitionGuardDeadlineMs = 5, destroyDeadlineMs = 20,
   shutdownDeadlineMs = 40, markResetStarted, markResetApplied, markResetFailed,
   releaseResult = () => true, onGenerationInvalidated, beforeInitialize,
 } = {}) {
@@ -92,6 +96,7 @@ function makeHarness({
     onGenerationInvalidated,
     beforeInitialize,
     initializeDeadlineMs,
+    postAcquisitionGuardDeadlineMs,
     destroyDeadlineMs,
     shutdownDeadlineMs,
   });
@@ -116,10 +121,15 @@ test('concurrent start collapses to one ownership acquisition and one client ini
   assert.equal(h.supervisor.snapshot().generation, 1);
 });
 
-test('post-acquisition initialization guard is bounded', async () => {
+test('post-acquisition guard default deadline is five seconds', () => {
+  assert.equal(POST_ACQUISITION_GUARD_DEADLINE_MS, 5000);
+});
+
+test('post-acquisition initialization guard uses its dedicated deadline', async () => {
   const h = makeHarness({
     beforeInitialize: () => new Promise(() => {}),
-    initializeDeadlineMs: 5,
+    initializeDeadlineMs: 1000,
+    postAcquisitionGuardDeadlineMs: 5,
   });
 
   await assert.rejects(
