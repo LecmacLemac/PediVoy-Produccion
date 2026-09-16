@@ -375,6 +375,7 @@ export function createGeneralSupervisor({
           error: lastError,
         });
         if (persisted !== true) throw notOwnerError('General reset failure fence rejected persistence');
+        await persistTerminalFence('reset_failed', lastError);
       } catch (persistenceError) {
         const failure = preserveCause(persistenceError, lastError, {
           resetFailurePersistenceAttempted: true,
@@ -464,6 +465,7 @@ export function createGeneralSupervisor({
             if (persisted !== true) {
               throw notOwnerError('General reset failure fence rejected persistence');
             }
+            await persistTerminalFence('reset_failed', error);
           } catch (persistenceError) {
             leaseLost(preserveCause(persistenceError, error));
           }
