@@ -18,6 +18,11 @@ const deferred = () => {
 function makeRepository(overrides = {}) {
   return {
     ensureSchema: async () => {},
+    getClusterStatus: async () => ({
+      reset_started_seq: 0n,
+      reset_applied_seq: 0n,
+      reset_failed_seq: 0n,
+    }),
     updateOwned: async () => true,
     markResetStarted: async () => true,
     markResetApplied: async () => true,
@@ -232,7 +237,12 @@ test('profile lock fences the generation without deleting files or creating a su
     Client: FakeClient,
     LocalAuth: FakeLocalAuth,
     path,
-    fs: { promises: { rm: async () => { removals += 1; } } },
+    fs: {
+      promises: {
+        access: async () => { throw Object.assign(new Error('missing'), { code: 'ENOENT' }); },
+        rm: async () => { removals += 1; },
+      },
+    },
     repository: makeRepository(),
     ownership: makeOwnership(),
     timers: inertTimers,
@@ -723,6 +733,536 @@ test('authenticated fallback in flight cannot promote after runtime shutdown', a
   assert.equal(runtime.snapshot().gateOpen, false);
 });
 
+test('unresolved reset counters block takeover in the pre-marker window', async () => {
+  const { FakeClient, clients } = makeClientClass();
+  const runtime = createGeneralRuntime({
+    enabled: true,
+    Client: FakeClient,
+    LocalAuth: FakeLocalAuth,
+    path,
+    cwd: '/srv/app',
+    fs: {
+      promises: {
+        access: async () => { throw Object.assign(new Error('missing'), { code: 'ENOENT' }); },
+      },
+    },
+    repository: makeRepository({
+      getClusterStatus: async () => ({
+        reset_started_seq: 20n,
+        reset_applied_seq: 19n,
+        reset_failed_seq: 19n,
+      }),
+    }),
+    ownership: makeOwnership({ acquired: true }),
+    timers: inertTimers,
+    fatalExit: () => {},
+  });
+
+  assert.equal(await runtime.tick(), false);
+  assert.equal(clients.length, 0);
+  assert.equal(runtime.snapshot().isOwner, false);
+  runtime.stopTimers();
+});
+
+test('takeover rechecks the marker after the DB preflight before client creation', async () => {
+  const canonical = path.join('/srv/app', '.wwebjs_auth', 'session-server_session_hidro');
+  const marker = `${canonical}.reset-in-progress`;
+  const entries = new Set();
+  const { FakeClient, clients } = makeClientClass();
+  const runtime = createGeneralRuntime({
+    enabled: true,
+    Client: FakeClient,
+    LocalAuth: FakeLocalAuth,
+    path,
+    cwd: '/srv/app',
+    fs: {
+      promises: {
+        access: async target => {
+          if (!entries.has(target)) throw Object.assign(new Error('missing'), { code: 'ENOENT' });
+        },
+      },
+    },
+    repository: makeRepository({
+      getClusterStatus: async () => {
+        entries.add(marker);
+        return { reset_started_seq: 24n, reset_applied_seq: 23n, reset_failed_seq: 24n };
+      },
+    }),
+    ownership: makeOwnership({ acquired: true }),
+    timers: inertTimers,
+    fatalExit: () => {},
+  });
+
+  assert.equal(await runtime.tick(), false);
+  assert.equal(clients.length, 0);
+  runtime.stopTimers();
+});
+
+test('malformed reset counters fail closed before takeover', async () => {
+  const { FakeClient, clients } = makeClientClass();
+  const runtime = createGeneralRuntime({
+    enabled: true,
+    Client: FakeClient,
+    LocalAuth: FakeLocalAuth,
+    path,
+    cwd: '/srv/app',
+    fs: {
+      promises: {
+        access: async () => { throw Object.assign(new Error('missing'), { code: 'ENOENT' }); },
+      },
+    },
+    repository: makeRepository({
+      getClusterStatus: async () => ({
+        reset_started_seq: 30n,
+        reset_applied_seq: 31n,
+        reset_failed_seq: 0n,
+      }),
+    }),
+    ownership: makeOwnership({ acquired: true }),
+    timers: inertTimers,
+    fatalExit: () => {},
+  });
+
+  assert.equal(await runtime.tick(), false);
+  assert.equal(clients.length, 0);
+  runtime.stopTimers();
+});
+
+test('coercible non-counter reset values fail closed before takeover', async () => {
+  for (const malformed of ['', ' ', false, []]) {
+    const { FakeClient, clients } = makeClientClass();
+    const runtime = createGeneralRuntime({
+      enabled: true,
+      Client: FakeClient,
+      LocalAuth: FakeLocalAuth,
+      path,
+      cwd: '/srv/app',
+      fs: {
+        promises: {
+          access: async () => { throw Object.assign(new Error('missing'), { code: 'ENOENT' }); },
+        },
+      },
+      repository: makeRepository({
+        getClusterStatus: async () => ({
+          reset_started_seq: malformed,
+          reset_applied_seq: 0n,
+          reset_failed_seq: 0n,
+        }),
+      }),
+      ownership: makeOwnership({ acquired: true }),
+      timers: inertTimers,
+      fatalExit: () => {},
+    });
+    assert.equal(await runtime.tick(), false, `must block ${JSON.stringify(malformed)}`);
+    assert.equal(clients.length, 0);
+    runtime.stopTimers();
+  }
+});
+
+test('pre-existing reset marker is never overwritten or removed and blocks takeover', async () => {
+  const canonical = path.join('/srv/app', '.wwebjs_auth', 'session-server_session_hidro');
+  const marker = `${canonical}.reset-in-progress`;
+  const originalMarker = '{malformed-but-fenced';
+  const entries = new Map([[canonical, 'original'], [marker, originalMarker]]);
+  let renames = 0;
+  let unlinks = 0;
+  const resetAttempted = deferred();
+  const fs = {
+    promises: {
+      async access(target) {
+        if (!entries.has(target)) throw Object.assign(new Error('missing'), { code: 'ENOENT' });
+      },
+      async writeFile(target) {
+        assert.equal(target, marker);
+        throw Object.assign(new Error('exists'), { code: 'EEXIST' });
+      },
+      async rename() { renames += 1; },
+      async unlink() { unlinks += 1; },
+      async rm() {},
+    },
+  };
+  const resetSupervisor = {
+    snapshot: () => ({ isOwner: true, ownerId: 'owner:old', epoch: 12n, state: 'ready', ready: true, gateOpen: true }),
+    heartbeatOnce: async () => true,
+    withActiveClient: async () => false,
+    reset: async (_sequence, deleteSessionFn) => {
+      try {
+        await deleteSessionFn();
+      } catch (error) {
+        resetAttempted.resolve(error);
+        throw error;
+      }
+    },
+  };
+  const oldRuntime = createGeneralRuntime({
+    enabled: true,
+    path,
+    cwd: '/srv/app',
+    fs,
+    repository: makeRepository({
+      loadPendingReset: async () => ({ reset_requested_seq: 21n, reset_applied_seq: 20n }),
+    }),
+    supervisor: resetSupervisor,
+    logger: { error() {}, warn() {} },
+    timers: inertTimers,
+  });
+  await oldRuntime.tick();
+  assert.equal((await resetAttempted.promise).code, 'EEXIST');
+  assert.equal(entries.get(marker), originalMarker);
+  assert.equal(renames, 0);
+  assert.equal(unlinks, 0);
+
+  const made = makeClientClass();
+  const successor = createGeneralRuntime({
+    enabled: true,
+    Client: made.FakeClient,
+    LocalAuth: FakeLocalAuth,
+    path,
+    cwd: '/srv/app',
+    fs,
+    repository: makeRepository(),
+    ownership: makeOwnership({ acquired: true }),
+    timers: inertTimers,
+    fatalExit: () => {},
+  });
+  assert.equal(await successor.tick(), false);
+  assert.equal(made.clients.length, 0);
+  assert.equal(entries.get(marker), originalMarker);
+  oldRuntime.stopTimers();
+  successor.stopTimers();
+});
+
+test('reset total deadline starts before marker creation, rename, and removal', async () => {
+  const events = [];
+  const completed = deferred();
+  const supervisor = {
+    snapshot: () => ({ isOwner: true, ownerId: 'owner:test', epoch: 12n, state: 'ready', ready: true, gateOpen: true }),
+    heartbeatOnce: async () => true,
+    withActiveClient: async () => false,
+    reset: async (_sequence, deleteSessionFn) => {
+      const result = await deleteSessionFn();
+      completed.resolve(result);
+      return result;
+    },
+  };
+  const runtime = createGeneralRuntime({
+    enabled: true,
+    path,
+    fs: {
+      promises: {
+        writeFile: async (_target, contents, options) => {
+          events.push('marker');
+          assert.deepEqual(JSON.parse(contents), { version: 1, resetSequence: '22' });
+          assert.deepEqual(options, { flag: 'wx', mode: 0o600 });
+        },
+        rename: async () => { events.push('rename'); },
+        unlink: async () => { events.push('unlink'); },
+        rm: async () => { events.push('rm'); },
+      },
+    },
+    repository: makeRepository({
+      loadPendingReset: async () => ({ reset_requested_seq: 22n, reset_applied_seq: 21n }),
+    }),
+    supervisor,
+    timers: {
+      setTimeout(_callback, milliseconds) {
+        assert.equal(milliseconds, 30000);
+        events.push('deadline');
+        return 1;
+      },
+      clearTimeout() {},
+    },
+  });
+
+  await runtime.tick();
+  assert.equal(await completed.promise, true);
+  assert.deepEqual(events, ['deadline', 'marker', 'rename', 'unlink', 'rm']);
+  runtime.stopTimers();
+});
+
+test('a hung asynchronous reset rename leaves a marker that blocks takeover client creation', async () => {
+  const renameStarted = deferred();
+  const renameRelease = deferred();
+  const scheduled = [];
+  const canonical = path.join('/srv/app', '.wwebjs_auth', 'session-server_session_hidro');
+  const marker = `${canonical}.reset-in-progress`;
+  const entries = new Map([[canonical, 'original']]);
+  const fs = {
+    promises: {
+      async access(target) {
+        if (!entries.has(target)) throw Object.assign(new Error('missing'), { code: 'ENOENT' });
+      },
+      async writeFile(target, contents, options) {
+        if (entries.has(target)) throw Object.assign(new Error('exists'), { code: 'EEXIST' });
+        assert.deepEqual(options, { flag: 'wx', mode: 0o600 });
+        entries.set(target, contents);
+      },
+      async rename() {
+        renameStarted.resolve();
+        await renameRelease.promise;
+      },
+      async unlink(target) { entries.delete(target); },
+      async rm() {},
+    },
+  };
+  const resetSupervisor = {
+    snapshot: () => ({ isOwner: true, ownerId: 'owner:old', epoch: 12n, state: 'ready', ready: true, gateOpen: true }),
+    heartbeatOnce: async () => true,
+    withActiveClient: async () => false,
+    reset: async (_sequence, deleteSessionFn) => deleteSessionFn(),
+  };
+  const oldRuntime = createGeneralRuntime({
+    enabled: true,
+    path,
+    cwd: '/srv/app',
+    fs,
+    repository: makeRepository({
+      loadPendingReset: async () => ({ reset_requested_seq: 11n, reset_applied_seq: 10n }),
+    }),
+    supervisor: resetSupervisor,
+    logger: { error() {}, warn() {} },
+    timers: {
+      setTimeout(callback, milliseconds) { scheduled.push({ callback, milliseconds }); return scheduled.length; },
+      clearTimeout() {},
+    },
+  });
+
+  await oldRuntime.tick();
+  await renameStarted.promise;
+  assert.equal(entries.has(marker), true);
+  assert.equal(scheduled[0]?.milliseconds, 30000);
+  scheduled[0].callback();
+  await new Promise(resolve => setImmediate(resolve));
+
+  const { FakeClient, clients } = makeClientClass();
+  const successor = createGeneralRuntime({
+    enabled: true,
+    Client: FakeClient,
+    LocalAuth: FakeLocalAuth,
+    path,
+    cwd: '/srv/app',
+    fs,
+    repository: makeRepository({
+      getClusterStatus: async () => ({
+        reset_started_seq: 11n,
+        reset_applied_seq: 10n,
+        reset_failed_seq: 0n,
+      }),
+    }),
+    ownership: makeOwnership({ acquired: true }),
+    timers: inertTimers,
+    fatalExit: () => {},
+  });
+
+  assert.equal(await successor.tick(), false);
+  assert.equal(clients.length, 0);
+  renameRelease.resolve();
+  oldRuntime.stopTimers();
+  successor.stopTimers();
+});
+
+test('marker creation completing after deadline never renames a successor session', async () => {
+  const writeStarted = deferred();
+  const writeRelease = deferred();
+  const scheduled = [];
+  const canonical = path.join('/srv/app', '.wwebjs_auth', 'session-server_session_hidro');
+  const marker = `${canonical}.reset-in-progress`;
+  const entries = new Map([[canonical, 'original']]);
+  let renameCalls = 0;
+  const fs = {
+    promises: {
+      async access(target) {
+        if (!entries.has(target)) throw Object.assign(new Error('missing'), { code: 'ENOENT' });
+      },
+      async writeFile(target, contents) {
+        writeStarted.resolve();
+        await writeRelease.promise;
+        entries.set(target, contents);
+      },
+      async rename(source, target) {
+        renameCalls += 1;
+        entries.set(target, entries.get(source));
+        entries.delete(source);
+      },
+      async unlink(target) { entries.delete(target); },
+      async rm(target) { entries.delete(target); },
+    },
+  };
+  const resetSupervisor = {
+    snapshot: () => ({ isOwner: true, ownerId: 'owner:old', epoch: 12n, state: 'ready', ready: true, gateOpen: true }),
+    heartbeatOnce: async () => true,
+    withActiveClient: async () => false,
+    reset: async (_sequence, deleteSessionFn) => deleteSessionFn(),
+  };
+  const oldRuntime = createGeneralRuntime({
+    enabled: true,
+    path,
+    cwd: '/srv/app',
+    fs,
+    repository: makeRepository({
+      loadPendingReset: async () => ({ reset_requested_seq: 23n, reset_applied_seq: 22n }),
+    }),
+    supervisor: resetSupervisor,
+    logger: { error() {}, warn() {} },
+    timers: {
+      setTimeout(callback, milliseconds) { scheduled.push({ callback, milliseconds }); return scheduled.length; },
+      clearTimeout() {},
+    },
+  });
+  await oldRuntime.tick();
+  await writeStarted.promise;
+  scheduled[0].callback();
+  await new Promise(resolve => setImmediate(resolve));
+
+  const made = makeClientClass();
+  class SessionClient extends made.FakeClient {
+    constructor(options) {
+      super(options);
+      entries.set(canonical, 'successor');
+    }
+  }
+  const successor = createGeneralRuntime({
+    enabled: true,
+    Client: SessionClient,
+    LocalAuth: FakeLocalAuth,
+    path,
+    cwd: '/srv/app',
+    fs,
+    repository: makeRepository({
+      getClusterStatus: async () => ({
+        reset_started_seq: 23n,
+        reset_applied_seq: 22n,
+        reset_failed_seq: 23n,
+      }),
+    }),
+    ownership: makeOwnership({ acquired: true }),
+    timers: inertTimers,
+    fatalExit: () => {},
+  });
+  assert.equal(await successor.tick(), true);
+  assert.equal(entries.get(canonical), 'successor');
+
+  writeRelease.resolve();
+  await new Promise(resolve => setImmediate(resolve));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(renameCalls, 0);
+  assert.equal(entries.get(canonical), 'successor');
+  assert.equal(entries.has(marker), true);
+  oldRuntime.stopTimers();
+  successor.stopTimers();
+});
+
+test('late rename detaches only the old canonical before marker removal and later takeover', async () => {
+  const renameRelease = deferred();
+  const renameStarted = deferred();
+  const removalRelease = deferred();
+  const removalStarted = deferred();
+  const scheduled = [];
+  const canonical = path.join('/srv/app', '.wwebjs_auth', 'session-server_session_hidro');
+  const marker = `${canonical}.reset-in-progress`;
+  const quarantine = `${canonical}.reset-late-safe`;
+  const entries = new Map([[canonical, 'original']]);
+  const fs = {
+    promises: {
+      async access(target) {
+        if (!entries.has(target)) throw Object.assign(new Error('missing'), { code: 'ENOENT' });
+      },
+      async writeFile(target, contents, options) {
+        if (entries.has(target)) throw Object.assign(new Error('exists'), { code: 'EEXIST' });
+        assert.deepEqual(options, { flag: 'wx', mode: 0o600 });
+        entries.set(target, contents);
+      },
+      async rename(source, target) {
+        renameStarted.resolve();
+        await renameRelease.promise;
+        assert.equal(entries.get(source), 'original');
+        entries.set(target, entries.get(source));
+        entries.delete(source);
+      },
+      async unlink(target) {
+        assert.equal(entries.has(canonical), false);
+        assert.equal(entries.get(quarantine), 'original');
+        entries.delete(target);
+      },
+      async rm(target) {
+        removalStarted.resolve();
+        await removalRelease.promise;
+        entries.delete(target);
+      },
+    },
+  };
+  const resetSupervisor = {
+    snapshot: () => ({ isOwner: true, ownerId: 'owner:old', epoch: 12n, state: 'ready', ready: true, gateOpen: true }),
+    heartbeatOnce: async () => true,
+    withActiveClient: async () => false,
+    reset: async (_sequence, deleteSessionFn) => deleteSessionFn(),
+  };
+  const oldRuntime = createGeneralRuntime({
+    enabled: true,
+    path,
+    cwd: '/srv/app',
+    uuid: () => 'late-safe',
+    fs,
+    repository: makeRepository({
+      loadPendingReset: async () => ({ reset_requested_seq: 12n, reset_applied_seq: 11n }),
+    }),
+    supervisor: resetSupervisor,
+    logger: { error() {}, warn() {} },
+    timers: {
+      setTimeout(callback, milliseconds) { scheduled.push({ callback, milliseconds }); return scheduled.length; },
+      clearTimeout() {},
+    },
+  });
+  await oldRuntime.tick();
+  await renameStarted.promise;
+  scheduled[0].callback();
+  await new Promise(resolve => setImmediate(resolve));
+
+  const made = makeClientClass();
+  class SessionClient extends made.FakeClient {
+    constructor(options) {
+      super(options);
+      entries.set(canonical, 'successor');
+    }
+  }
+  const successor = createGeneralRuntime({
+    enabled: true,
+    Client: SessionClient,
+    LocalAuth: FakeLocalAuth,
+    path,
+    cwd: '/srv/app',
+    fs,
+    repository: makeRepository({
+      getClusterStatus: async () => ({
+        reset_started_seq: 12n,
+        reset_applied_seq: 11n,
+        reset_failed_seq: 12n,
+      }),
+    }),
+    ownership: makeOwnership({ acquired: true }),
+    timers: inertTimers,
+    fatalExit: () => {},
+  });
+
+  assert.equal(await successor.tick(), false);
+  assert.equal(made.clients.length, 0);
+  renameRelease.resolve();
+  await removalStarted.promise;
+  assert.equal(entries.has(marker), false);
+  assert.equal(entries.has(canonical), false);
+  assert.equal(entries.get(quarantine), 'original');
+
+  assert.equal(await successor.tick(), true);
+  assert.equal(made.clients.length, 1);
+  assert.equal(entries.get(canonical), 'successor');
+  removalRelease.resolve();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(entries.get(canonical), 'successor');
+  assert.equal(entries.has(quarantine), false);
+  oldRuntime.stopTimers();
+  successor.stopTimers();
+});
+
 test('pending reset quarantines and deletes only the fixed General session directory', async () => {
   const { FakeClient, clients } = makeClientClass();
   const resetCalls = [];
@@ -747,8 +1287,10 @@ test('pending reset quarantines and deletes only the fixed General session direc
     cwd: '/srv/app',
     uuid: () => 'reset-uuid',
     fs: {
-      renameSync: (source, target) => { renames.push([source, target]); },
       promises: {
+        writeFile: async () => {},
+        rename: async (source, target) => { renames.push([source, target]); },
+        unlink: async () => {},
         rm: async (target, options) => { removals.push([target, options]); },
       },
     },
@@ -791,8 +1333,10 @@ test('missing canonical session is a successful reset without recursive removal'
     enabled: true,
     path,
     fs: {
-      renameSync: () => { throw Object.assign(new Error('missing'), { code: 'ENOENT' }); },
       promises: {
+        writeFile: async () => {},
+        rename: async () => { throw Object.assign(new Error('missing'), { code: 'ENOENT' }); },
+        unlink: async () => {},
         rm: async () => { removals += 1; },
       },
     },
@@ -842,8 +1386,8 @@ test('failed reset sequence is attempted again on the next maintenance tick', as
   runtime.stopTimers();
 });
 
-test('session deletion deadline bounds removal after synchronous quarantine', async () => {
-  const removal = deferred();
+test('session deletion deadline also bounds a hung asynchronous quarantine rename', async () => {
+  const rename = deferred();
   const scheduled = [];
   const failures = [];
   const supervisor = {
@@ -864,9 +1408,11 @@ test('session deletion deadline bounds removal after synchronous quarantine', as
     enabled: true,
     path,
     fs: {
-      renameSync: () => {},
       promises: {
-        rm: () => removal.promise,
+        writeFile: async () => {},
+        rename: () => rename.promise,
+        unlink: async () => {},
+        rm: async () => {},
       },
     },
     repository: makeRepository({
@@ -890,76 +1436,7 @@ test('session deletion deadline bounds removal after synchronous quarantine', as
 
   assert.equal(failures.length, 1);
   assert.equal(failures[0].timedOut, true);
-  removal.resolve();
-  runtime.stopTimers();
-});
-
-test('a timed-out reset cannot rename a successor session when quarantine completes late', async () => {
-  const renameStarted = deferred();
-  const renameRelease = deferred();
-  const removalStarted = deferred();
-  const removalRelease = deferred();
-  const scheduled = [];
-  const canonical = path.join('/srv/app', '.wwebjs_auth', 'session-server_session_hidro');
-  const quarantine = `${canonical}.reset-late-rename`;
-  const entries = new Map([[canonical, 'original']]);
-  const supervisor = {
-    snapshot: () => ({ isOwner: true, ownerId: 'owner:test', epoch: 12n, state: 'ready', ready: true, gateOpen: true }),
-    heartbeatOnce: async () => true,
-    start: async () => true,
-    withActiveClient: async () => false,
-    reset: async (_sequence, deleteSessionFn) => deleteSessionFn(),
-  };
-  const move = (source, target) => {
-    if (!entries.has(source)) throw Object.assign(new Error('missing'), { code: 'ENOENT' });
-    entries.set(target, entries.get(source));
-    entries.delete(source);
-  };
-  const runtime = createGeneralRuntime({
-    enabled: true,
-    path,
-    cwd: '/srv/app',
-    uuid: () => 'late-rename',
-    fs: {
-      renameSync: move,
-      promises: {
-        rename: async (source, target) => {
-          renameStarted.resolve();
-          await renameRelease.promise;
-          move(source, target);
-        },
-        rm: async target => {
-          removalStarted.resolve();
-          await removalRelease.promise;
-          entries.delete(target);
-        },
-      },
-    },
-    repository: makeRepository({
-      loadPendingReset: async () => ({ reset_requested_seq: 11n, reset_applied_seq: 10n }),
-    }),
-    supervisor,
-    logger: { error() {}, warn() {} },
-    timers: {
-      setTimeout(callback, milliseconds) { scheduled.push({ callback, milliseconds }); return scheduled.length; },
-      clearTimeout() {},
-    },
-  });
-
-  await runtime.tick();
-  await Promise.race([renameStarted.promise, removalStarted.promise]);
-  assert.equal(scheduled[0]?.milliseconds, 30000);
-  scheduled[0].callback();
-  await new Promise(resolve => setImmediate(resolve));
-
-  entries.set(canonical, 'successor');
-  renameRelease.resolve();
-  removalRelease.resolve();
-  await new Promise(resolve => setImmediate(resolve));
-  await new Promise(resolve => setImmediate(resolve));
-
-  assert.equal(entries.get(canonical), 'successor');
-  assert.equal(entries.has(quarantine), false);
+  rename.resolve();
   runtime.stopTimers();
 });
 
@@ -985,8 +1462,10 @@ test('session deletion rejects at its injected 30 second deadline instead of ass
     enabled: true,
     path,
     fs: {
-      renameSync: () => {},
       promises: {
+        writeFile: async () => {},
+        rename: async () => {},
+        unlink: async () => {},
         rm: () => deletion.promise,
       },
     },
@@ -1035,13 +1514,15 @@ test('late timed-out removal cannot delete a successor canonical session', async
     cwd: '/srv/app',
     uuid: () => 'late-rm',
     fs: {
-      renameSync: (source, target) => {
-        assert.equal(source, canonical);
-        assert.equal(target, quarantine);
-        entries.delete(source);
-        entries.add(target);
-      },
       promises: {
+        writeFile: async () => {},
+        rename: async (source, target) => {
+          assert.equal(source, canonical);
+          assert.equal(target, quarantine);
+          entries.delete(source);
+          entries.add(target);
+        },
+        unlink: async () => {},
         rm: async target => {
           assert.equal(target, quarantine);
           rmStarted.resolve();
@@ -1147,6 +1628,7 @@ test('follower retry and owner heartbeat use injected bounded scheduling', async
   };
   const followerRuntime = createGeneralRuntime({
     enabled: true,
+    path,
     repository: makeRepository(),
     supervisor: follower,
     random: () => 1,
@@ -1193,6 +1675,7 @@ test('owner heartbeats continue while initial client initialization is still pen
   };
   const runtime = createGeneralRuntime({
     enabled: true,
+    path,
     repository: makeRepository(),
     supervisor,
     random: () => 1,
@@ -1203,7 +1686,9 @@ test('owner heartbeats continue while initial client initialization is still pen
   });
 
   const starting = runtime.start();
-  await new Promise(resolve => setImmediate(resolve));
+  for (let attempt = 0; attempt < 10 && !owner; attempt += 1) {
+    await new Promise(resolve => setImmediate(resolve));
+  }
   assert.equal(owner, true);
   assert.equal(scheduled[0].milliseconds, 5000);
   await scheduled[0].callback();
@@ -1233,6 +1718,7 @@ test('follower takeover heartbeats while successor initialization remains pendin
   };
   const runtime = createGeneralRuntime({
     enabled: true,
+    path,
     repository: makeRepository(),
     supervisor,
     timers: {
@@ -1243,7 +1729,9 @@ test('follower takeover heartbeats while successor initialization remains pendin
 
   assert.equal(await runtime.start(), false);
   const takeover = scheduled.shift().callback();
-  await new Promise(resolve => setImmediate(resolve));
+  for (let attempt = 0; attempt < 10 && !owner; attempt += 1) {
+    await new Promise(resolve => setImmediate(resolve));
+  }
   assert.equal(owner, true);
   assert.equal(scheduled.length, 1);
   await scheduled.shift().callback();

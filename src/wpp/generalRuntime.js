@@ -1,4 +1,5 @@
 import os from 'node:os';
+import nodeFs from 'node:fs';
 import { randomUUID } from 'node:crypto';
 
 import { createGeneralControlRepository } from './generalControlRepository.js';
@@ -18,6 +19,12 @@ const PUPPETEER_ARGS = [
   '--ignore-certificate-errors', '--ignore-certificate-errors-spki-list',
 ];
 
+function parseResetCounter(value) {
+  if (typeof value === 'bigint') return value;
+  if (typeof value === 'string' && /^(0|[1-9]\d*)$/.test(value)) return BigInt(value);
+  throw new TypeError('General reset counter is malformed');
+}
+
 export function createProcessOwnerId({ hostname = os.hostname(), pid = process.pid, uuid = randomUUID() } = {}) {
   return `${hostname}:${pid}:${uuid}`;
 }
@@ -28,7 +35,7 @@ export function createGeneralRuntime({
   Client,
   LocalAuth,
   path,
-  fs,
+  fs = nodeFs,
   query,
   pool,
   repository: injectedRepository,
@@ -317,32 +324,44 @@ export function createGeneralRuntime({
     return true;
   }
 
-  async function boundedDeleteSession() {
-    if (typeof fs?.renameSync !== 'function' || typeof fs?.promises?.rm !== 'function') {
-      throw new TypeError('fs.renameSync and fs.promises.rm are required for General session reset');
+  async function boundedDeleteSession(sequence) {
+    for (const method of ['writeFile', 'rename', 'unlink', 'rm']) {
+      if (typeof fs?.promises?.[method] !== 'function') {
+        throw new TypeError(`fs.promises.${method} is required for General session reset`);
+      }
     }
     const canonical = getWppSessionDir({ path, cwd, sessionId: WPP_SESSION_ID });
+    const marker = `${canonical}.reset-in-progress`;
     const quarantine = `${canonical}.reset-${uuid()}`;
-    try {
-      // The canonical name must be detached atomically before a deadline can
-      // return control. An uncancellable async rename could otherwise wake up
-      // after takeover and move the successor's session instead.
-      fs.renameSync(canonical, quarantine);
-    } catch (error) {
-      if (error?.code === 'ENOENT') return true;
-      throw error;
-    }
-    const deletion = Promise.resolve(fs.promises.rm(quarantine, { recursive: true, force: true }))
-      .then(() => true);
-    deletion.catch(() => {});
     let deadlineTimer;
+    let deadlineElapsed = false;
     const timeout = new Promise((_, reject) => {
       deadlineTimer = timers.setTimeout(() => {
+        deadlineElapsed = true;
         const error = new Error('General session deletion deadline exceeded');
         error.timedOut = true;
         reject(error);
       }, deleteDeadlineMs);
     });
+    const deletion = Promise.resolve().then(async () => {
+      const resetSequence = BigInt(sequence);
+      const markerContents = JSON.stringify({ version: 1, resetSequence: resetSequence.toString() });
+      await fs.promises.writeFile(marker, markerContents, { flag: 'wx', mode: 0o600 });
+      // A marker that lands after the deadline cannot authorize this old
+      // operation to rename a canonical directory a successor may now use.
+      if (deadlineElapsed) return false;
+      let detached = true;
+      try {
+        await fs.promises.rename(canonical, quarantine);
+      } catch (error) {
+        if (error?.code !== 'ENOENT') throw error;
+        detached = false;
+      }
+      await fs.promises.unlink(marker);
+      if (detached) await fs.promises.rm(quarantine, { recursive: true, force: true });
+      return true;
+    });
+    deletion.catch(() => {});
     return Promise.race([deletion, timeout]).finally(() => timers.clearTimeout(deadlineTimer));
   }
 
@@ -353,8 +372,33 @@ export function createGeneralRuntime({
     const sequence = BigInt(pending.reset_requested_seq);
     const applied = BigInt(pending.reset_applied_seq ?? 0);
     if (sequence <= applied) return false;
-    await supervisor.reset(sequence, boundedDeleteSession);
+    await supervisor.reset(sequence, () => boundedDeleteSession(sequence));
     return true;
+  }
+
+  async function takeoverIsBlocked() {
+    if (typeof fs?.promises?.access !== 'function'
+      || typeof repository.getClusterStatus !== 'function') return true;
+    const canonical = getWppSessionDir({ path, cwd, sessionId: WPP_SESSION_ID });
+    const marker = `${canonical}.reset-in-progress`;
+    try {
+      const status = await repository.getClusterStatus();
+      if (!status) return true;
+      const started = parseResetCounter(status.reset_started_seq);
+      const applied = parseResetCounter(status.reset_applied_seq);
+      const failed = parseResetCounter(status.reset_failed_seq);
+      if (started < 0n || applied < 0n || failed < 0n
+        || applied > started || failed > started) return true;
+      if (started > applied && failed < started) return true;
+    } catch {
+      return true;
+    }
+    try {
+      await fs.promises.access(marker);
+      return true;
+    } catch (error) {
+      return error?.code !== 'ENOENT';
+    }
   }
 
   async function prepareActiveGeneration() {
@@ -434,6 +478,7 @@ export function createGeneralRuntime({
     }
     let snapshot = supervisor.snapshot();
     if (!snapshot.isOwner) {
+      if (await takeoverIsBlocked()) return false;
       const acquired = await supervisor.start();
       if (!acquired) return false;
       snapshot = supervisor.snapshot();
