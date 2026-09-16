@@ -251,9 +251,10 @@ test('profile lock fences the generation without deleting files or creating a su
 test('handlers and incoming media are generation-scoped and disabled in QR-only mode', async () => {
   const { FakeClient, clients } = makeClientClass();
   const handlerClients = [];
+  const mediaMessages = [];
   let outboxRuns = 0;
   const firstOutboxRun = deferred();
-  const media = () => {};
+  const media = message => { mediaMessages.push(message); };
   const runtime = createGeneralRuntime({
     enabled: true,
     Client: FakeClient,
@@ -273,7 +274,9 @@ test('handlers and incoming media are generation-scoped and disabled in QR-only 
     },
   });
   await runtime.tick();
-  assert.equal(clients[0].listenerCount('message'), 1);
+  clients[0].emit('message', 'before-ready');
+  assert.equal(clients[0].listenerCount('message'), 0);
+  assert.deepEqual(mediaMessages, []);
   clients[0].emit('ready');
   await new Promise(resolve => setImmediate(resolve));
   await runtime.tick();
@@ -281,15 +284,21 @@ test('handlers and incoming media are generation-scoped and disabled in QR-only 
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(handlerClients.length, 1);
   assert.equal(outboxRuns, 1);
+  assert.equal(clients[0].listenerCount('message'), 1);
+  clients[0].emit('message', 'active-first');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(mediaMessages, ['active-first']);
   firstOutboxRun.resolve();
   await new Promise(resolve => setImmediate(resolve));
 
   clients[0].emit('disconnected', 'network');
   for (let attempt = 0; attempt < 10 && clients.length < 2; attempt += 1) await new Promise(resolve => setImmediate(resolve));
   clients[0].emit('ready');
+  clients[0].emit('message', 'stale-first');
   await new Promise(resolve => setImmediate(resolve));
   await runtime.tick();
   assert.equal(handlerClients.length, 1);
+  assert.deepEqual(mediaMessages, ['active-first']);
 
   clients[1].emit('ready');
   await new Promise(resolve => setImmediate(resolve));
@@ -300,6 +309,9 @@ test('handlers and incoming media are generation-scoped and disabled in QR-only 
   assert.equal(handlerClients.length, 2);
   assert.notEqual(handlerClients[0], handlerClients[1]);
   assert.equal(clients[1].listenerCount('message'), 1);
+  clients[1].emit('message', 'active-second');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(mediaMessages, ['active-first', 'active-second']);
   runtime.stopTimers();
 
   const qr = makeClientClass();
@@ -323,6 +335,61 @@ test('handlers and incoming media are generation-scoped and disabled in QR-only 
   assert.equal(qr.clients[0].listenerCount('message'), 0);
   assert.equal(handlerClients.length, 2);
   qrRuntime.stopTimers();
+});
+
+test('handler completion is revalidated before exposing a client or attaching media', async () => {
+  const handlerStarted = deferred();
+  const handlerRelease = deferred();
+  const first = new EventEmitter();
+  const second = new EventEmitter();
+  let active = { client: first, generation: 1, epoch: 1n };
+  let snapshot = {
+    isOwner: true,
+    ownerId: 'owner:test',
+    epoch: 1n,
+    generation: 1,
+    state: 'ready',
+    ready: true,
+    gateOpen: true,
+  };
+  let outboxRuns = 0;
+  const supervisor = {
+    snapshot: () => snapshot,
+    heartbeatOnce: async () => true,
+    start: async () => true,
+    withActiveClient: async fn => {
+      if (!snapshot.ready || !snapshot.gateOpen) {
+        throw Object.assign(new Error('not active'), { code: 'WPP_NOT_OWNER' });
+      }
+      return fn(active);
+    },
+  };
+  const runtime = createGeneralRuntime({
+    enabled: true,
+    repository: makeRepository(),
+    supervisor,
+    handlers: {
+      start: async () => {
+        handlerStarted.resolve();
+        await handlerRelease.promise;
+      },
+    },
+    handleIncomingMediaMessage: () => {},
+    timers: inertTimers,
+  });
+  runtime.setOutboxProcessor({ processOutbox: async () => { outboxRuns += 1; } });
+
+  await runtime.tick();
+  await handlerStarted.promise;
+  snapshot = { ...snapshot, generation: 2, state: 'restarting', ready: false, gateOpen: false };
+  active = { client: second, generation: 2, epoch: 1n };
+  handlerRelease.resolve();
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(first.listenerCount('message'), 0);
+  assert.equal(outboxRuns, 0);
+  assert.equal(runtime.getState().wppClient, null);
+  runtime.stopTimers();
 });
 
 test('ready applies the sendSeen no-op patch to each fresh generation', async () => {
@@ -351,9 +418,165 @@ test('ready applies the sendSeen no-op patch to each fresh generation', async ()
   runtime.stopTimers();
 });
 
-test('pending reset uses the exact sequence and deletes only the fixed General session directory', async () => {
+test('authenticated fallback promotes the same operational generation to ready after 8 seconds', async () => {
+  const { FakeClient, clients } = makeClientClass();
+  const scheduled = [];
+  const runtime = createGeneralRuntime({
+    enabled: true,
+    Client: FakeClient,
+    LocalAuth: FakeLocalAuth,
+    path,
+    repository: makeRepository(),
+    ownership: makeOwnership(),
+    timers: {
+      setTimeout(callback, milliseconds) { scheduled.push({ callback, milliseconds }); return scheduled.length; },
+      clearTimeout() {},
+    },
+    fatalExit: () => {},
+  });
+  await runtime.tick();
+  clients[0].pupPage = {
+    evaluate: async callback => String(callback).includes('runtimeReady')
+      ? { connected: true, runtimeReady: true }
+      : undefined,
+  };
+
+  clients[0].emit('authenticated');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(scheduled[0].milliseconds, 8000);
+  await scheduled[0].callback();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(runtime.snapshot().ready, true);
+  assert.equal(runtime.snapshot().gateOpen, true);
+  runtime.stopTimers();
+});
+
+test('authenticated fallback timer from a stale generation cannot promote its successor', async () => {
+  const { FakeClient, clients } = makeClientClass();
+  const scheduled = [];
+  const readyPublications = [];
+  const runtime = createGeneralRuntime({
+    enabled: true,
+    Client: FakeClient,
+    LocalAuth: FakeLocalAuth,
+    path,
+    repository: makeRepository({
+      updateOwned: async values => {
+        if (values.state === 'ready') readyPublications.push(values);
+        return true;
+      },
+    }),
+    ownership: makeOwnership(),
+    timers: {
+      setTimeout(callback, milliseconds) { scheduled.push({ callback, milliseconds }); return scheduled.length; },
+      clearTimeout() {},
+    },
+    fatalExit: () => {},
+  });
+  await runtime.tick();
+  clients[0].pupPage = { evaluate: async () => ({ connected: true, runtimeReady: true }) };
+  clients[0].emit('authenticated');
+  await new Promise(resolve => setImmediate(resolve));
+  const staleTimer = scheduled[0];
+
+  clients[0].emit('disconnected', 'network');
+  for (let attempt = 0; attempt < 10 && clients.length < 2; attempt += 1) {
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  assert.equal(clients.length, 2);
+  await staleTimer.callback();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(readyPublications.length, 0);
+  assert.equal(runtime.snapshot().ready, false);
+  runtime.stopTimers();
+});
+
+test('authenticated fallback reinjects a missing runtime before promoting ready', async () => {
+  const { FakeClient, clients } = makeClientClass();
+  const scheduled = [];
+  let runtimePresent = false;
+  let injections = 0;
+  let syncFinishes = 0;
+  const runtime = createGeneralRuntime({
+    enabled: true,
+    Client: FakeClient,
+    LocalAuth: FakeLocalAuth,
+    path,
+    repository: makeRepository(),
+    ownership: makeOwnership(),
+    timers: {
+      setTimeout(callback, milliseconds) { scheduled.push({ callback, milliseconds }); return scheduled.length; },
+      clearTimeout() {},
+    },
+    fatalExit: () => {},
+  });
+  await runtime.tick();
+  clients[0].inject = async () => { injections += 1; runtimePresent = true; };
+  clients[0].pupPage = {
+    evaluate: async callback => {
+      if (String(callback).includes('runtimeReady')) {
+        return { connected: true, runtimeReady: runtimePresent };
+      }
+      if (String(callback).includes('onAppStateHasSyncedEvent')) syncFinishes += 1;
+      return true;
+    },
+  };
+
+  clients[0].emit('authenticated');
+  await new Promise(resolve => setImmediate(resolve));
+  await scheduled[0].callback();
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(injections, 1);
+  assert.equal(syncFinishes, 1);
+  assert.equal(runtime.snapshot().ready, true);
+  runtime.stopTimers();
+});
+
+test('authenticated fallback in flight cannot promote after runtime shutdown', async () => {
+  const { FakeClient, clients } = makeClientClass();
+  const scheduled = [];
+  const probe = deferred();
+  const probeStarted = deferred();
+  const runtime = createGeneralRuntime({
+    enabled: true,
+    Client: FakeClient,
+    LocalAuth: FakeLocalAuth,
+    path,
+    repository: makeRepository(),
+    ownership: makeOwnership(),
+    timers: {
+      setTimeout(callback, milliseconds) { scheduled.push({ callback, milliseconds }); return scheduled.length; },
+      clearTimeout() {},
+    },
+    fatalExit: () => {},
+  });
+  await runtime.tick();
+  clients[0].pupPage = {
+    evaluate: async callback => {
+      if (!String(callback).includes('runtimeReady')) return undefined;
+      probeStarted.resolve();
+      return probe.promise;
+    },
+  };
+
+  clients[0].emit('authenticated');
+  await new Promise(resolve => setImmediate(resolve));
+  const fallback = scheduled[0].callback();
+  await probeStarted.promise;
+  runtime.stopTimers();
+  probe.resolve({ connected: true, runtimeReady: true });
+  await fallback;
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(runtime.snapshot().ready, false);
+  assert.equal(runtime.snapshot().gateOpen, false);
+});
+
+test('pending reset quarantines and deletes only the fixed General session directory', async () => {
   const { FakeClient, clients } = makeClientClass();
   const resetCalls = [];
+  const renames = [];
   const removals = [];
   const supervisor = {
     snapshot: () => ({ isOwner: true, ownerId: 'owner:test', epoch: 12n, state: 'ready', ready: true, gateOpen: true }),
@@ -372,7 +595,13 @@ test('pending reset uses the exact sequence and deletes only the fixed General s
     LocalAuth: FakeLocalAuth,
     path,
     cwd: '/srv/app',
-    fs: { promises: { rm: async (target, options) => { removals.push([target, options]); } } },
+    uuid: () => 'reset-uuid',
+    fs: {
+      promises: {
+        rename: async (source, target) => { renames.push([source, target]); },
+        rm: async (target, options) => { removals.push([target, options]); },
+      },
+    },
     repository: makeRepository({
       loadPendingReset: async ({ ownerId, epoch }) => ({
         owner_id: ownerId,
@@ -388,11 +617,78 @@ test('pending reset uses the exact sequence and deletes only the fixed General s
   await runtime.tick();
   await runtime.tick();
   assert.deepEqual(resetCalls, [31n]);
+  const canonical = path.join('/srv/app', '.wwebjs_auth', 'session-server_session_hidro');
+  const quarantine = `${canonical}.reset-reset-uuid`;
+  assert.deepEqual(renames, [[canonical, quarantine]]);
   assert.deepEqual(removals, [[
-    path.join('/srv/app', '.wwebjs_auth', 'session-server_session_hidro'),
+    quarantine,
     { recursive: true, force: true },
   ]]);
   assert.equal(clients.length, 0);
+  runtime.stopTimers();
+});
+
+test('missing canonical session is a successful reset without recursive removal', async () => {
+  let removals = 0;
+  const supervisor = {
+    snapshot: () => ({ isOwner: true, ownerId: 'owner:test', epoch: 12n, state: 'ready', ready: true, gateOpen: true }),
+    heartbeatOnce: async () => true,
+    start: async () => true,
+    withActiveClient: async () => false,
+    reset: async (_sequence, deleteSessionFn) => deleteSessionFn(),
+  };
+  const runtime = createGeneralRuntime({
+    enabled: true,
+    path,
+    fs: {
+      promises: {
+        rename: async () => { throw Object.assign(new Error('missing'), { code: 'ENOENT' }); },
+        rm: async () => { removals += 1; },
+      },
+    },
+    repository: makeRepository({
+      loadPendingReset: async () => ({ reset_requested_seq: 32n, reset_applied_seq: 31n }),
+    }),
+    supervisor,
+    timers: inertTimers,
+  });
+
+  await runtime.tick();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(removals, 0);
+  runtime.stopTimers();
+});
+
+test('failed reset sequence is attempted again on the next maintenance tick', async () => {
+  let attempts = 0;
+  const supervisor = {
+    snapshot: () => ({ isOwner: true, ownerId: 'owner:test', epoch: 12n, state: 'ready', ready: true, gateOpen: true }),
+    heartbeatOnce: async () => true,
+    start: async () => true,
+    withActiveClient: async () => false,
+    reset: async sequence => {
+      attempts += 1;
+      assert.equal(sequence, 44n);
+      if (attempts === 1) throw new Error('transient reset failure');
+      return true;
+    },
+  };
+  const runtime = createGeneralRuntime({
+    enabled: true,
+    repository: makeRepository({
+      loadPendingReset: async () => ({ reset_requested_seq: 44n, reset_applied_seq: 43n }),
+    }),
+    supervisor,
+    logger: { error() {}, warn() {} },
+    timers: inertTimers,
+  });
+
+  await runtime.tick();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(attempts, 1);
+  await runtime.tick();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(attempts, 2);
   runtime.stopTimers();
 });
 
@@ -405,12 +701,24 @@ test('session deletion rejects at its injected 30 second deadline instead of ass
     heartbeatOnce: async () => true,
     start: async () => true,
     withActiveClient: async () => false,
-    reset: async (_sequence, deleteSessionFn) => deleteSessionFn(),
+    reset: async (_sequence, deleteSessionFn) => {
+      try {
+        return await deleteSessionFn();
+      } catch (error) {
+        fatalErrors.push(error);
+        throw error;
+      }
+    },
   };
   const runtime = createGeneralRuntime({
     enabled: true,
     path,
-    fs: { promises: { rm: () => deletion.promise } },
+    fs: {
+      promises: {
+        rename: async () => {},
+        rm: () => deletion.promise,
+      },
+    },
     repository: makeRepository({
       loadPendingReset: async () => ({ reset_requested_seq: 9n, reset_applied_seq: 8n }),
     }),
@@ -436,44 +744,127 @@ test('session deletion rejects at its injected 30 second deadline instead of ass
   runtime.stopTimers();
 });
 
-test('ownership loss during reset deletion terminates immediately before deletion can continue', async () => {
-  const { FakeClient } = makeClientClass();
-  const deletion = deferred();
-  const deletionStarted = deferred();
-  const fatalErrors = [];
-  let loseOwnership;
-  const ownership = makeOwnership();
+test('late timed-out removal cannot delete a successor canonical session', async () => {
+  const rmRelease = deferred();
+  const rmStarted = deferred();
+  const scheduled = [];
+  const canonical = path.join('/srv/app', '.wwebjs_auth', 'session-server_session_hidro');
+  const quarantine = `${canonical}.reset-late-rm`;
+  const entries = new Set([canonical]);
+  const supervisor = {
+    snapshot: () => ({ isOwner: true, ownerId: 'owner:test', epoch: 12n, state: 'ready', ready: true, gateOpen: true }),
+    heartbeatOnce: async () => true,
+    start: async () => true,
+    withActiveClient: async () => false,
+    reset: async (_sequence, deleteSessionFn) => deleteSessionFn(),
+  };
   const runtime = createGeneralRuntime({
     enabled: true,
-    Client: FakeClient,
-    LocalAuth: FakeLocalAuth,
     path,
-    repository: makeRepository({
-      loadPendingReset: async () => ({ reset_requested_seq: 19n, reset_applied_seq: 0n }),
-    }),
-    ownershipFactory: ({ onOwnershipLost }) => {
-      loseOwnership = onOwnershipLost;
-      return ownership;
-    },
+    cwd: '/srv/app',
+    uuid: () => 'late-rm',
     fs: {
       promises: {
-        rm: async () => {
-          deletionStarted.resolve();
-          await deletion.promise;
+        rename: async (source, target) => {
+          assert.equal(source, canonical);
+          assert.equal(target, quarantine);
+          entries.delete(source);
+          entries.add(target);
+        },
+        rm: async target => {
+          assert.equal(target, quarantine);
+          rmStarted.resolve();
+          await rmRelease.promise;
+          entries.delete(target);
         },
       },
+    },
+    repository: makeRepository({
+      loadPendingReset: async () => ({ reset_requested_seq: 10n, reset_applied_seq: 9n }),
+    }),
+    supervisor,
+    logger: { error() {}, warn() {} },
+    fatalExit: () => {},
+    timers: {
+      setTimeout(callback, milliseconds) { scheduled.push({ callback, milliseconds }); return scheduled.length; },
+      clearTimeout() {},
+    },
+  });
+
+  await runtime.tick();
+  await rmStarted.promise;
+  assert.equal(entries.has(canonical), false);
+  assert.equal(entries.has(quarantine), true);
+  scheduled[0].callback();
+  await new Promise(resolve => setImmediate(resolve));
+
+  entries.add(canonical);
+  rmRelease.resolve();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(entries.has(canonical), true);
+  assert.equal(entries.has(quarantine), false);
+  runtime.stopTimers();
+});
+
+test('ownership loss waits for bounded supervisor cleanup and calls fatal exactly once', async () => {
+  const destroy = deferred();
+  let loseOwnership;
+  let owner = false;
+  const fatalErrors = [];
+  class SlowDestroyClient extends EventEmitter {
+    constructor() {
+      super();
+      this.connected = true;
+      this.processHandle = { pid: 201, exitCode: null, signalCode: null };
+      this.pupBrowser = {
+        isConnected: () => this.connected,
+        process: () => this.processHandle,
+      };
+    }
+    async initialize() {}
+    async destroy() {
+      await destroy.promise;
+      this.connected = false;
+      this.processHandle.exitCode = 0;
+    }
+  }
+  const ownership = {
+    ownerId: 'owner:loss-order',
+    epoch: 1n,
+    get isOwner() { return owner; },
+    async tryAcquire() { owner = true; return true; },
+    assertOwned() { return owner; },
+    async heartbeat() { return owner; },
+    async releaseAfterQuiesced(fn) { await fn(); owner = false; return true; },
+  };
+  const runtime = createGeneralRuntime({
+    enabled: true,
+    Client: SlowDestroyClient,
+    LocalAuth: FakeLocalAuth,
+    path,
+    repository: makeRepository(),
+    ownershipFactory: ({ onOwnershipLost }) => {
+      loseOwnership = error => {
+        owner = false;
+        return onOwnershipLost(error);
+      };
+      return ownership;
     },
     timers: inertTimers,
     fatalExit: error => { fatalErrors.push(error); },
   });
 
   await runtime.tick();
-  await deletionStarted.promise;
-  loseOwnership(new Error('advisory connection lost'));
+  const loss = loseOwnership(new Error('advisory connection lost'));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(fatalErrors.length, 0);
+
+  destroy.resolve();
+  await loss;
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(fatalErrors.length, 1);
-  deletion.resolve();
-  await new Promise(resolve => setImmediate(resolve));
+  await runtime.supervisor.leaseLost(new Error('duplicate loss'));
+  assert.equal(fatalErrors.length, 1);
   runtime.stopTimers();
 });
 

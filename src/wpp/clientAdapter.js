@@ -30,7 +30,6 @@ export function createWppClientAdapter({
 
   let initializePromise = null;
   let initializePending = false;
-  let destroyCompleted = false;
 
   const methods = {
     initialize() {
@@ -44,7 +43,6 @@ export function createWppClientAdapter({
 
     async destroy() {
       await rawClient.destroy();
-      destroyCompleted = true;
     },
 
     async confirmStopped() {
@@ -55,11 +53,10 @@ export function createWppClientAdapter({
       if (browser.isConnected()) return false;
       const handle = typeof browser.process === 'function' ? browser.process() : null;
       const exited = processExited(handle, processAlive);
-      return exited === null ? destroyCompleted : exited;
+      return exited === null ? false : exited;
     },
 
     async forceStop() {
-      if (initializePending) return false;
       const browser = rawClient.pupBrowser;
       const handle = typeof browser?.process === 'function' ? browser.process() : null;
       if (!handle || !Number.isInteger(handle.pid) || handle.pid <= 0) return false;

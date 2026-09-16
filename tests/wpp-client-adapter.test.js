@@ -32,6 +32,29 @@ test('unresolved initialize is never reported stopped', async () => {
   await adapter.initialize();
 });
 
+test('forceStop kills and confirms a known Chromium process while initialize is pending', async () => {
+  const pending = deferred();
+  let alive = true;
+  const kills = [];
+  const processHandle = { pid: 40, exitCode: null, signalCode: null };
+  const raw = fakeRawClient({
+    initialize: () => pending.promise,
+    browser: { isConnected: () => true, process: () => processHandle },
+  });
+  const adapter = createWppClientAdapter({
+    rawClient: raw,
+    kill: (pid, signal) => { kills.push([pid, signal]); alive = false; },
+    processAlive: () => alive,
+    wait: async () => {},
+  });
+
+  adapter.initialize();
+  assert.equal(await adapter.forceStop(), true);
+  assert.deepEqual(kills, [[40, 'SIGKILL']]);
+  pending.resolve();
+  await adapter.initialize();
+});
+
 test('missing browser evidence remains uncertain after destroy', async () => {
   const raw = fakeRawClient();
   const adapter = createWppClientAdapter({ rawClient: raw });
@@ -40,6 +63,17 @@ test('missing browser evidence remains uncertain after destroy', async () => {
   await adapter.destroy();
   assert.equal(await adapter.confirmStopped(), false);
   assert.equal(await adapter.forceStop(), false);
+});
+
+test('disconnected browser without a process handle remains uncertain after destroy', async () => {
+  const raw = fakeRawClient({
+    browser: { isConnected: () => false, process: () => null },
+  });
+  const adapter = createWppClientAdapter({ rawClient: raw });
+
+  await adapter.initialize();
+  await adapter.destroy();
+  assert.equal(await adapter.confirmStopped(), false);
 });
 
 test('known browser process must actually exit before stop is confirmed', async () => {

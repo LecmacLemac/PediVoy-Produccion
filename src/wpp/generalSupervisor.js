@@ -384,6 +384,7 @@ export function createGeneralSupervisor({
             leaseLost(preserveCause(persistenceError, error));
           }
         }
+        if (error?.timedOut === true) leaseLost(error);
         if (error?.code === 'WPP_NOT_OWNER') leaseLost(error);
         throw error;
       }
@@ -521,6 +522,36 @@ export function createGeneralSupervisor({
     return fn({ client: active.client, generation: activeGeneration, epoch: activeEpoch });
   }
 
+  async function withCurrentClient(expectedGeneration, fn) {
+    if (!Number.isInteger(expectedGeneration) || expectedGeneration <= 0) {
+      throw new TypeError('expectedGeneration must be a positive integer');
+    }
+    if (typeof fn !== 'function') throw new TypeError('fn is required');
+    if (!current || current.generation !== expectedGeneration || shuttingDown || ownershipLost) {
+      throw notOwnerError('General client generation is not current');
+    }
+    if (ownership.isOwner !== true) {
+      const error = notOwnerError('General ownership was lost');
+      leaseLost(error);
+      throw error;
+    }
+    const active = current;
+    const activeEpoch = ownership.epoch;
+    try {
+      const owned = await ownership.heartbeat();
+      if (owned !== true) throw notOwnerError('General ownership heartbeat was rejected');
+    } catch (error) {
+      leaseLost(error);
+      throw notOwnerError(error?.message);
+    }
+    if (!current || current !== active || generation !== expectedGeneration
+      || ownership.epoch !== activeEpoch || ownership.isOwner !== true
+      || shuttingDown || ownershipLost) {
+      throw notOwnerError('General client generation changed before use');
+    }
+    return fn({ client: active.client, generation: expectedGeneration, epoch: activeEpoch });
+  }
+
   return {
     start,
     restart,
@@ -530,6 +561,7 @@ export function createGeneralSupervisor({
     leaseLost,
     heartbeatOnce,
     withActiveClient,
+    withCurrentClient,
     _deadlines: { shutdownDeadlineMs },
     _fatalExit: fatalExit,
   };

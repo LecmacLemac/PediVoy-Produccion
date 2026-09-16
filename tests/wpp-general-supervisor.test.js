@@ -727,6 +727,26 @@ test('withActiveClient revalidates ownership immediately before invoking the cal
   assert.equal(h.supervisor.snapshot().gateOpen, false);
 });
 
+test('authenticated current-client access is authoritative and generation fenced', async () => {
+  const h = makeHarness({
+    destroy: async raw => { h.calls.push(`destroy:${raw.id}`); },
+    confirmStopped: async raw => { h.calls.push(`stopped:${raw.id}`); return true; },
+  });
+  await h.supervisor.start();
+  h.clients[0].emit('authenticated');
+  await new Promise(resolve => setImmediate(resolve));
+
+  const current = await h.supervisor.withCurrentClient(1, context => context.client.id);
+  assert.equal(current, 1);
+  assert.equal(h.calls.at(-1), 'heartbeat');
+
+  await h.supervisor.restart('next-generation');
+  await assert.rejects(
+    h.supervisor.withCurrentClient(1, () => 'unsafe'),
+    { code: 'WPP_NOT_OWNER' },
+  );
+});
+
 test('successful shutdown stops and confirms before release and rejects later commands', async () => {
   const h = makeHarness({
     destroy: async raw => { h.calls.push(`destroy:${raw.id}`); },
@@ -1219,6 +1239,24 @@ test('failed persistence of a terminal reset failure triggers fatal lease-loss h
   assert.match(h.fatalErrors[0].message, /reset failure fence rejected persistence/i);
   assert.equal(h.fatalErrors[0].cause, resetError);
   assert.equal(h.calls.includes('release-begin'), false);
+});
+
+test('reset deletion deadline triggers supervisor fatal handling exactly once', async () => {
+  const timeoutError = Object.assign(new Error('General session deletion deadline exceeded'), { timedOut: true });
+  const h = makeHarness({
+    destroy: async raw => { h.calls.push(`destroy:${raw.id}`); },
+    confirmStopped: async raw => { h.calls.push(`stopped:${raw.id}`); return true; },
+  });
+  await h.supervisor.start();
+
+  await assert.rejects(h.supervisor.reset(24n, async () => { throw timeoutError; }), timeoutError);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.fatalErrors.length, 1);
+  await h.supervisor.leaseLost(new Error('duplicate'));
+
+  assert.equal(h.calls.filter(call => call === 'reset-failed:24').length, 1);
+  assert.equal(h.fatalErrors.length, 1);
+  assert.equal(h.fatalErrors[0], timeoutError);
 });
 
 test('client factory requires an explicit stop confirmation capability', () => {

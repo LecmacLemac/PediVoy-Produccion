@@ -50,6 +50,9 @@ export function createGeneralRuntime({
   followerMinMs = 2000,
   followerMaxMs = 5000,
   deleteDeadlineMs = 30000,
+  authenticatedFallbackDelayMs = 8000,
+  authenticatedFallbackMaxAttempts = 10,
+  uuid = randomUUID,
   adapterOptions = {},
   ownershipFactory = createGeneralOwnership,
 } = {}) {
@@ -87,10 +90,9 @@ export function createGeneralRuntime({
         pool,
         ownerId,
         onOwnershipLost: error => {
-          assignedSupervisor?.leaseLost(error);
-          // Once the advisory session is lost, a successor may immediately use the
-          // shared profile. Terminate synchronously so an in-flight rm cannot race it.
+          if (assignedSupervisor?.leaseLost) return assignedSupervisor.leaseLost(error);
           callFatal(error);
+          return false;
         },
       });
     }
@@ -118,7 +120,7 @@ export function createGeneralRuntime({
     const executablePath = env.PUPPETEER_EXECUTABLE_PATH || (isRender ? '/usr/bin/chromium' : null);
     const sessionBasePath = getWppSessionBasePath({ path, cwd });
     const clientFactory = createGeneralClientFactory({
-      createClient: () => {
+      createClient: ({ generation }) => {
         const authStrategy = new LocalAuth({ clientId: WPP_SESSION_ID, dataPath: sessionBasePath });
         // LocalAuth.logout recursively removes its profile before the supervisor can
         // confirm Chromium is stopped. General reset is the sole deletion authority.
@@ -135,6 +137,7 @@ export function createGeneralRuntime({
         });
         const adapter = createWppClientAdapter({ rawClient, ...adapterOptions });
         adapter.on('ready', async () => {
+          cancelAuthenticatedFallback(generation);
           const page = adapter.pupPage;
           try {
             if (typeof page?.evaluate === 'function') {
@@ -159,8 +162,9 @@ export function createGeneralRuntime({
             logger.warn('[WPP GENERAL] sendSeen patch failed:', error);
           }
         });
-        if (!qrOnly && typeof handleIncomingMediaMessage === 'function') {
-          adapter.on('message', handleIncomingMediaMessage);
+        adapter.on('authenticated', () => scheduleAuthenticatedFallback(adapter, generation));
+        for (const event of ['disconnected', 'auth_failure', 'error']) {
+          adapter.on(event, () => cancelAuthenticatedFallback(generation));
         }
         return adapter;
       },
@@ -178,29 +182,129 @@ export function createGeneralRuntime({
   let outboxProcessor = null;
   let activeWork = null;
   let maintenanceWork = null;
+  const authenticatedFallbackTimers = new Map();
+  const authenticatedFallbackAttempts = new Map();
 
   const handlersStarted = new WeakSet();
-  const resetSequences = new Set();
+  const mediaAttached = new WeakSet();
 
-  function boundedDeleteSession() {
-    if (typeof fs?.promises?.rm !== 'function') {
-      return Promise.reject(new TypeError('fs.promises.rm is required for General session reset'));
+  function cancelAuthenticatedFallback(generation) {
+    const pending = authenticatedFallbackTimers.get(generation);
+    if (pending !== undefined) timers.clearTimeout(pending);
+    authenticatedFallbackTimers.delete(generation);
+    authenticatedFallbackAttempts.delete(generation);
+  }
+
+  async function inspectAuthenticatedRuntime(client) {
+    const page = client?.pupPage;
+    if (!page || typeof page.evaluate !== 'function') return { connected: false, runtimeReady: false };
+    try {
+      return await page.evaluate(() => {
+        try {
+          let appState = window.Store?.AppState?.state || null;
+          if (!appState && typeof window.require === 'function') {
+            appState = window.require('WAWebSocketModel')?.Socket?.state || null;
+          }
+          return {
+            connected: appState === 'CONNECTED',
+            runtimeReady: Boolean(
+              typeof window.WWebJS?.getChat === 'function'
+              && typeof window.WWebJS?.sendMessage === 'function'
+              && typeof window.WWebJS?.getMessageModel === 'function'
+            ),
+          };
+        } catch {
+          return { connected: false, runtimeReady: false };
+        }
+      });
+    } catch {
+      return { connected: false, runtimeReady: false };
+    }
+  }
+
+  async function repairAuthenticatedRuntime(client) {
+    let health = await inspectAuthenticatedRuntime(client);
+    if (!health.connected || health.runtimeReady) return health;
+    try {
+      await client.inject?.();
+      await client.pupPage?.evaluate(async () => {
+        try {
+          if (typeof window.onAppStateHasSyncedEvent === 'function') {
+            await window.onAppStateHasSyncedEvent();
+          }
+        } catch {}
+      });
+    } catch (error) {
+      logger.warn('[WPP GENERAL] authenticated runtime reinjection failed:', error);
+    }
+    health = await inspectAuthenticatedRuntime(client);
+    return health;
+  }
+
+  async function runAuthenticatedFallback(client, generation) {
+    authenticatedFallbackTimers.delete(generation);
+    if (stopped || qrOnly || typeof supervisor.withCurrentClient !== 'function') return false;
+    try {
+      const health = await supervisor.withCurrentClient(generation, ({ client: current }) => {
+        if (current !== client) return { connected: false, runtimeReady: false, stale: true };
+        return repairAuthenticatedRuntime(client);
+      });
+      if (health?.stale) return false;
+      if (health?.connected && health.runtimeReady) {
+        if (stopped) return false;
+        return await supervisor.withCurrentClient(generation, ({ client: current }) => {
+          if (stopped || current !== client) return false;
+          client.emit('ready');
+          return true;
+        });
+      }
+    } catch (error) {
+      if (error?.code === 'WPP_NOT_OWNER') return false;
+      logger.warn('[WPP GENERAL] authenticated fallback failed:', error);
+    }
+    scheduleAuthenticatedFallback(client, generation);
+    return false;
+  }
+
+  function scheduleAuthenticatedFallback(client, generation) {
+    if (stopped || qrOnly || authenticatedFallbackTimers.has(generation)) return false;
+    const snapshot = supervisor.snapshot();
+    if (!snapshot.isOwner || snapshot.generation !== generation || snapshot.ready) return false;
+    const attempts = authenticatedFallbackAttempts.get(generation) ?? 0;
+    if (attempts >= authenticatedFallbackMaxAttempts) return false;
+    authenticatedFallbackAttempts.set(generation, attempts + 1);
+    const timerId = timers.setTimeout(
+      () => runAuthenticatedFallback(client, generation),
+      authenticatedFallbackDelayMs,
+    );
+    authenticatedFallbackTimers.set(generation, timerId);
+    return true;
+  }
+
+  async function boundedDeleteSession() {
+    if (typeof fs?.promises?.rename !== 'function' || typeof fs?.promises?.rm !== 'function') {
+      throw new TypeError('fs.promises.rename and fs.promises.rm are required for General session reset');
+    }
+    const canonical = getWppSessionDir({ path, cwd, sessionId: WPP_SESSION_ID });
+    const quarantine = `${canonical}.reset-${uuid()}`;
+    try {
+      await fs.promises.rename(canonical, quarantine);
+    } catch (error) {
+      if (error?.code === 'ENOENT') return true;
+      throw error;
     }
     let deadlineTimer;
-    const removal = Promise.resolve().then(() => fs.promises.rm(
-      getWppSessionDir({ path, cwd, sessionId: WPP_SESSION_ID }),
-      { recursive: true, force: true },
-    ));
+    const removal = Promise.resolve().then(() => fs.promises.rm(quarantine, { recursive: true, force: true }));
     removal.catch(() => {});
     const timeout = new Promise((_, reject) => {
       deadlineTimer = timers.setTimeout(() => {
         const error = new Error('General session deletion deadline exceeded');
         error.timedOut = true;
-        callFatal(error);
         reject(error);
       }, deleteDeadlineMs);
     });
-    return Promise.race([removal, timeout]).finally(() => timers.clearTimeout(deadlineTimer));
+    await Promise.race([removal, timeout]).finally(() => timers.clearTimeout(deadlineTimer));
+    return true;
   }
 
   async function applyPendingReset(snapshot) {
@@ -209,8 +313,7 @@ export function createGeneralRuntime({
     if (!pending) return false;
     const sequence = BigInt(pending.reset_requested_seq);
     const applied = BigInt(pending.reset_applied_seq ?? 0);
-    if (sequence <= applied || resetSequences.has(sequence)) return false;
-    resetSequences.add(sequence);
+    if (sequence <= applied) return false;
     await supervisor.reset(sequence, boundedDeleteSession);
     return true;
   }
@@ -218,8 +321,7 @@ export function createGeneralRuntime({
   async function prepareActiveGeneration() {
     if (qrOnly) return false;
     try {
-      return await supervisor.withActiveClient(async ({ client }) => {
-        activeClient = client;
+      const prepared = await supervisor.withActiveClient(async ({ client, generation }) => {
         if (!handlersStarted.has(client)) {
           handlersStarted.add(client);
           try {
@@ -228,6 +330,24 @@ export function createGeneralRuntime({
             handlersStarted.delete(client);
             throw error;
           }
+        }
+        return { client, generation };
+      });
+      return await supervisor.withActiveClient(async ({ client, generation }) => {
+        if (!prepared || prepared.client !== client || prepared.generation !== generation) return false;
+        activeClient = client;
+        if (typeof handleIncomingMediaMessage === 'function' && !mediaAttached.has(client)) {
+          mediaAttached.add(client);
+          client.on('message', (...args) => {
+            Promise.resolve(supervisor.withActiveClient(({ client: current, generation: currentGeneration }) => {
+              if (current !== client || currentGeneration !== generation) return false;
+              return handleIncomingMediaMessage(...args);
+            })).catch(error => {
+              if (error?.code !== 'WPP_NOT_OWNER') {
+                logger.error('[WPP GENERAL] incoming media handling failed:', error);
+              }
+            });
+          });
         }
         await outboxProcessor?.processOutbox?.();
         return true;
@@ -324,6 +444,9 @@ export function createGeneralRuntime({
     stopped = true;
     if (timer !== null) timers.clearTimeout(timer);
     timer = null;
+    for (const timerId of authenticatedFallbackTimers.values()) timers.clearTimeout(timerId);
+    authenticatedFallbackTimers.clear();
+    authenticatedFallbackAttempts.clear();
   }
 
   return {
@@ -343,12 +466,13 @@ export function createGeneralRuntime({
     snapshot: () => ({ enabled: true, timerActive: timer !== null, running: running !== null, ...supervisor.snapshot() }),
     getState: () => {
       const state = supervisor.snapshot();
+      const exposedClient = state.ready && state.gateOpen ? activeClient : null;
       return {
         isConnected: state.ready,
         isReadyWpp: state.ready && state.gateOpen,
         isInitializingWpp: ['acquiring', 'initializing'].includes(state.state),
         isShuttingDownWpp: state.state === 'stopping' || stopped,
-        wppClient: activeClient,
+        wppClient: exposedClient,
         lastQr: null,
       };
     },
