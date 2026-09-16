@@ -312,10 +312,10 @@ export function createGeneralSupervisor({
     }
   }
 
-  async function initializeFresh() {
+  async function initializeFresh(operation = 'initialize') {
     try {
       await assertOwner();
-      await publish('initializing', 'initialize');
+      await publish('initializing', operation);
       generation += 1;
       current = clientFactory.create({ generation, eventSink });
       await deadline(current.initialize(), initializeDeadlineMs, 'General client initialize');
@@ -511,7 +511,7 @@ export function createGeneralSupervisor({
         await assertOwnerAuthoritatively();
         if (await abortResetForTerminalFence({ started, sequence })) return false;
         await deleteSessionFn();
-        await initializeFresh();
+        await initializeFresh('reset');
         const applied = await repository.markResetApplied({ ownerId: ownership.ownerId, epoch: ownership.epoch, sequence });
         if (applied !== true) throw notOwnerError('General reset fence rejected completion');
         gateHolds -= 1;

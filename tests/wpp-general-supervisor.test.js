@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 
 import { createGeneralClientFactory } from '../src/wpp/generalClientFactory.js';
+import { createGeneralControlRepository } from '../src/wpp/generalControlRepository.js';
 import {
   createGeneralSupervisor,
   POST_ACQUISITION_GUARD_DEADLINE_MS,
@@ -21,6 +22,7 @@ function makeHarness({
   postAcquisitionGuardDeadlineMs = 5, destroyDeadlineMs = 20,
   shutdownDeadlineMs = 40, markResetStarted, markResetApplied, markResetFailed,
   releaseResult = () => true, onGenerationInvalidated, beforeInitialize, onFatal,
+  repository: repositoryOverride,
 } = {}) {
   const calls = [];
   const clients = [];
@@ -69,7 +71,7 @@ function makeHarness({
       return raw;
     },
   });
-  const repository = {
+  const repository = repositoryOverride ?? {
     updateOwned: async values => {
       calls.push(`state:${values.state}`);
       return updateOwned ? updateOwned(values, calls) : true;
@@ -106,6 +108,60 @@ function makeHarness({
   return { supervisor, ownership, clients, calls, fatalErrors };
 }
 
+function statefulResetRepository() {
+  const row = {
+    owner_id: 'owner-a',
+    epoch: 7n,
+    state: 'standby',
+    operation: null,
+    reset_requested_seq: 1n,
+    reset_started_seq: 0n,
+    reset_applied_seq: 0n,
+    reset_failed_seq: 0n,
+    reset_failure_error: null,
+  };
+  const query = async (sql, params) => {
+    const owned = row.owner_id === params[0] && row.epoch === BigInt(params[1]);
+    if (/SET\s+state\s*=\s*\$3/i.test(sql)) {
+      if (!owned) return { rows: [], rowCount: 0 };
+      row.state = params[2];
+      row.operation = params[3];
+      return { rows: [], rowCount: 1 };
+    }
+    const sequence = BigInt(params[2]);
+    if (/SET\s+reset_started_seq\s*=\s*\$3/i.test(sql)) {
+      const canStart = row.reset_started_seq < sequence
+        || (row.reset_started_seq === sequence
+          && row.reset_failed_seq === sequence
+          && row.reset_failure_error !== null);
+      if (!owned || !canStart || row.reset_applied_seq >= sequence
+        || row.reset_requested_seq < sequence) return { rows: [], rowCount: 0 };
+      row.reset_started_seq = sequence;
+      row.operation = 'reset';
+      row.reset_failure_error = null;
+      return { rows: [], rowCount: 1 };
+    }
+    if (/SET\s+reset_applied_seq\s*=\s*\$3/i.test(sql)) {
+      if (!owned || row.operation !== 'reset' || row.reset_applied_seq >= sequence
+        || row.reset_started_seq !== sequence) return { rows: [], rowCount: 0 };
+      row.reset_applied_seq = sequence;
+      row.operation = null;
+      row.reset_failure_error = null;
+      return { rows: [], rowCount: 1 };
+    }
+    if (/SET\s+reset_failed_seq\s*=\s*\$3/i.test(sql)) {
+      if (!owned || row.operation !== 'reset' || row.reset_applied_seq >= sequence
+        || row.reset_started_seq !== sequence) return { rows: [], rowCount: 0 };
+      row.reset_failed_seq = sequence;
+      row.operation = null;
+      row.reset_failure_error = params[3];
+      return { rows: [], rowCount: 1 };
+    }
+    throw new Error(`Unsupported stateful repository query: ${sql}`);
+  };
+  return { repository: createGeneralControlRepository(query), row };
+}
+
 test('concurrent start collapses to one ownership acquisition and one client initialization', async () => {
   const init = deferred();
   const h = makeHarness({ initialize: () => init.promise, initializeDeadlineMs: 1000 });
@@ -122,6 +178,17 @@ test('concurrent start collapses to one ownership acquisition and one client ini
   assert.equal(await first, true);
   assert.equal(await second, true);
   assert.equal(h.supervisor.snapshot().generation, 1);
+});
+
+test('reset preserves the real repository reset operation through fresh initialization', async () => {
+  const control = statefulResetRepository();
+  const h = makeHarness({ repository: control.repository });
+  await h.supervisor.start();
+
+  assert.equal(await h.supervisor.reset(1n, async () => {}), true);
+  assert.equal(control.row.reset_applied_seq, 1n);
+  assert.equal(control.row.operation, null);
+  assert.equal(control.row.reset_failure_error, null);
 });
 
 test('post-acquisition guard default deadline is five seconds', () => {
