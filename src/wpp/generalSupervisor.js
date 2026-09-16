@@ -61,7 +61,7 @@ export function createGeneralSupervisor({
   let fatalCalled = false;
   let gateHolds = 0;
   let eventRevision = 0;
-  let terminalFencePending = false;
+  let terminalFenceGeneration = null;
 
   const snapshot = () => Object.freeze({
     state,
@@ -123,7 +123,10 @@ export function createGeneralSupervisor({
     const eventClient = current;
     const eventEpoch = ownership.epoch;
     enqueue(async () => {
-      if (!eventClient || current !== eventClient || generation !== eventGeneration
+      const terminalEvent = operation === 'profile_lock'
+        && terminalFenceGeneration === eventGeneration;
+      if (!eventClient || (!terminalEvent && current !== eventClient)
+        || (terminalEvent && current !== null && current !== eventClient) || generation !== eventGeneration
         || eventClient.generation !== eventGeneration || ownership.epoch !== eventEpoch
         || shuttingDown || ownershipLost) return false;
       await assertOwner();
@@ -136,7 +139,8 @@ export function createGeneralSupervisor({
         lastError: error ? String(error.message ?? error) : null,
       });
       if (updated !== true) throw notOwnerError('General ownership fence rejected event update');
-      if (current !== eventClient || generation !== eventGeneration
+      if ((!terminalEvent && current !== eventClient)
+        || (terminalEvent && current !== null && current !== eventClient) || generation !== eventGeneration
         || ownership.epoch !== eventEpoch || shuttingDown || ownershipLost) return false;
       if (revision !== eventRevision) return false;
       state = nextState;
@@ -151,7 +155,7 @@ export function createGeneralSupervisor({
 
   function eventSink({ event, generation: eventGeneration, args = [] }) {
     if (!current || eventGeneration !== generation || current.generation !== eventGeneration
-      || shuttingDown || ownershipLost || terminalFencePending) return;
+      || shuttingDown || ownershipLost || terminalFenceGeneration !== null) return;
     const revision = ++eventRevision;
     if (event === 'ready') {
       if (ownership.isOwner !== true) return;
@@ -180,7 +184,7 @@ export function createGeneralSupervisor({
       const error = args[0] instanceof Error ? args[0] : new Error(String(args[0] ?? event));
       lastError = error;
       if (/profile\s*lock|singleton(?:lock)?|browser\s+already\s+running/i.test(error.message)) {
-        terminalFencePending = true;
+        terminalFenceGeneration = eventGeneration;
         queueStateEvent({
           eventGeneration,
           revision,
@@ -190,7 +194,7 @@ export function createGeneralSupervisor({
         });
         return;
       }
-      restart(event).catch(() => {});
+      restart(event, { expectedGeneration: eventGeneration }).catch(() => {});
     }
   }
 
@@ -257,14 +261,29 @@ export function createGeneralSupervisor({
     return startPromise;
   }
 
-  function restart(reason = 'restart') {
+  function abortRestartForTerminalFence() {
+    if (terminalFenceGeneration !== generation) return false;
+    gateHolds -= 1;
+    closeGate();
+    return true;
+  }
+
+  function restart(reason = 'restart', { expectedGeneration = null } = {}) {
     gateHolds += 1;
     closeGate();
     return enqueue(async () => {
+      if (abortRestartForTerminalFence()) return false;
+      if (expectedGeneration !== null && generation !== expectedGeneration) {
+        gateHolds -= 1;
+        gateOpen = ready && gateHolds === 0;
+        return false;
+      }
       try {
         await assertOwner();
         await publish('restarting', reason);
+        if (abortRestartForTerminalFence()) return false;
         await stopCurrent();
+        if (abortRestartForTerminalFence()) return false;
         const restarted = await initializeFresh();
         gateHolds -= 1;
         gateOpen = ready && gateHolds === 0;

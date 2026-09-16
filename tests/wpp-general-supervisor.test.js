@@ -282,6 +282,98 @@ test('events from stale generations cannot reopen the gate or enqueue another re
   assert.equal(h.supervisor.snapshot().gateOpen, true);
 });
 
+test('an event-triggered restart is fenced to the generation that emitted it', async () => {
+  const h = makeHarness({
+    destroy: async raw => { h.calls.push(`destroy:${raw.id}`); },
+    confirmStopped: async raw => { h.calls.push(`stopped:${raw.id}`); return true; },
+  });
+  await h.supervisor.start();
+
+  const manualRestart = h.supervisor.restart('manual');
+  h.clients[0].emit('disconnected', 'connection lost');
+
+  await manualRestart;
+  await new Promise(resolve => setImmediate(resolve));
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(h.supervisor.snapshot().generation, 2);
+  assert.equal(h.clients.length, 2);
+  assert.deepEqual(h.calls.filter(call => call.startsWith('destroy:')), ['destroy:1']);
+});
+
+test('a profile-lock event wins a race with an already queued restart', async () => {
+  const h = makeHarness({
+    destroy: async raw => { h.calls.push(`destroy:${raw.id}`); },
+    confirmStopped: async raw => { h.calls.push(`stopped:${raw.id}`); return true; },
+  });
+  await h.supervisor.start();
+
+  const restart = h.supervisor.restart('manual');
+  h.clients[0].emit('error', new Error('Chromium profile lock'));
+
+  assert.equal(await restart, false);
+  await new Promise(resolve => setImmediate(resolve));
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(h.supervisor.snapshot().state, 'fenced');
+  assert.equal(h.supervisor.snapshot().generation, 1);
+  assert.equal(h.supervisor.snapshot().gateOpen, false);
+  assert.equal(h.clients.length, 1);
+  assert.deepEqual(h.calls.filter(call => call.startsWith('destroy:')), []);
+  assert.equal(h.calls.filter(call => call === 'state:fenced').length, 1);
+});
+
+test('a profile-lock event aborts a restart already awaiting state publication', async () => {
+  const restartingPublished = deferred();
+  const h = makeHarness({
+    updateOwned: values => values.state === 'restarting' ? restartingPublished.promise : true,
+    destroy: async raw => { h.calls.push(`destroy:${raw.id}`); },
+    confirmStopped: async raw => { h.calls.push(`stopped:${raw.id}`); return true; },
+  });
+  await h.supervisor.start();
+
+  const restart = h.supervisor.restart('manual');
+  await new Promise(resolve => setImmediate(resolve));
+  h.clients[0].emit('error', new Error('Chromium profile lock'));
+  restartingPublished.resolve(true);
+
+  assert.equal(await restart, false);
+  await new Promise(resolve => setImmediate(resolve));
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(h.supervisor.snapshot().state, 'fenced');
+  assert.equal(h.supervisor.snapshot().generation, 1);
+  assert.equal(h.clients.length, 1);
+  assert.deepEqual(h.calls.filter(call => call.startsWith('destroy:')), []);
+});
+
+test('a profile-lock event during restart teardown prevents a replacement client', async () => {
+  const destroying = deferred();
+  const h = makeHarness({
+    destroy: async raw => {
+      h.calls.push(`destroy:${raw.id}`);
+      await destroying.promise;
+    },
+    confirmStopped: async raw => { h.calls.push(`stopped:${raw.id}`); return true; },
+  });
+  await h.supervisor.start();
+
+  const restart = h.supervisor.restart('manual');
+  await new Promise(resolve => setImmediate(resolve));
+  h.clients[0].emit('error', new Error('Chromium profile lock'));
+  destroying.resolve();
+
+  assert.equal(await restart, false);
+  await new Promise(resolve => setImmediate(resolve));
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(h.supervisor.snapshot().state, 'fenced');
+  assert.equal(h.supervisor.snapshot().generation, 1);
+  assert.equal(h.clients.length, 1);
+  assert.deepEqual(h.calls.filter(call => call.startsWith('destroy:')), ['destroy:1']);
+  assert.equal(h.calls.filter(call => call === 'state:fenced').length, 1);
+});
+
 test('profile-lock errors fence the generation without filesystem deletion or replacement', async () => {
   const h = makeHarness({ destroy: async raw => { h.calls.push(`destroy:${raw.id}`); } });
   await h.supervisor.start();
