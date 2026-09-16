@@ -155,8 +155,14 @@ test('reset requests use one atomic globally monotonic sequence', async () => {
   ]);
   const repository = createGeneralControlRepository(db.query);
 
-  assert.equal(await repository.requestReset({ requestedBy: 'admin-a' }), 41n);
-  assert.equal(await repository.requestReset({ requestedBy: 'admin-b' }), 42n);
+  assert.deepEqual(await repository.requestReset({ requestedBy: 'admin-a' }), {
+    accepted: true,
+    sequence: 41n,
+  });
+  assert.deepEqual(await repository.requestReset({ requestedBy: 'admin-b' }), {
+    accepted: true,
+    sequence: 42n,
+  });
   for (const call of db.calls) {
     assert.match(call.sql, /reset_requested_seq\s*=\s*reset_requested_seq\s*\+\s*1/i);
     assert.match(call.sql, /RETURNING\s+reset_requested_seq/i);

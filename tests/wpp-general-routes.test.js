@@ -55,7 +55,7 @@ test('reset only persists a cluster request and returns 202 with its sequence', 
     repository: {
       requestReset: async input => {
         calls.push(['requestReset', input]);
-        return 12n;
+        return { accepted: true, sequence: 12n };
       },
     },
     destructive: {
@@ -69,7 +69,13 @@ test('reset only persists a cluster request and returns 202 with its sequence', 
   await withServer(app, async baseUrl => {
     const response = await fetch(`${baseUrl}/api/whatsapp/reset`, { method: 'POST' });
     assert.equal(response.status, 202);
-    assert.deepEqual(await response.json(), { ok: true, sequence: '12' });
+    assert.deepEqual(await response.json(), {
+      ok: true,
+      accepted: true,
+      request_id: '12',
+      reset_seq: '12',
+      sequence: '12',
+    });
   });
 
   assert.deepEqual(calls, [['requestReset', { requestedBy: '7', cooldownMs: 15000 }]]);
@@ -82,7 +88,7 @@ test('two concurrent reset routes expose one sequence and one global cooldown re
       async requestReset() {
         const current = requestCount++;
         await Promise.resolve();
-        return current === 0 ? 30n : null;
+        return { accepted: current === 0, sequence: 30n };
       },
     },
   });
@@ -94,8 +100,20 @@ test('two concurrent reset routes expose one sequence and one global cooldown re
     ]);
     assert.deepEqual(responses.map(response => response.status), [202, 202]);
     assert.deepEqual(await Promise.all(responses.map(response => response.json())), [
-      { ok: true, sequence: '30' },
-      { ok: true, skipped: true, reason: 'cooldown' },
+      {
+        ok: true,
+        accepted: true,
+        request_id: '30',
+        reset_seq: '30',
+        sequence: '30',
+      },
+      {
+        ok: true,
+        accepted: false,
+        reason: 'cooldown',
+        reset_seq: '30',
+        sequence: '30',
+      },
     ]);
   });
 });
@@ -103,8 +121,13 @@ test('two concurrent reset routes expose one sequence and one global cooldown re
 test('reset route fails closed for malformed results and repository failures', async t => {
   const cases = [
     ['undefined result', async () => undefined],
-    ['negative sequence', async () => -1n],
-    ['fractional sequence', async () => 1.5],
+    ['legacy bare sequence', async () => 1n],
+    ['missing acceptance result', async () => ({ sequence: 1n })],
+    ['missing sequence', async () => ({ accepted: false })],
+    ['zero sequence', async () => ({ accepted: true, sequence: 0n })],
+    ['negative sequence', async () => ({ accepted: true, sequence: -1n })],
+    ['fractional sequence', async () => ({ accepted: true, sequence: 1.5 })],
+    ['string sequence', async () => ({ accepted: true, sequence: '1' })],
     ['repository rejection', async () => { throw new Error('database unavailable'); }],
   ];
 
@@ -114,7 +137,7 @@ test('reset route fails closed for malformed results and repository failures', a
 
       await withServer(app, async baseUrl => {
         const response = await fetch(`${baseUrl}/api/whatsapp/reset`, { method: 'POST' });
-        assert.equal(response.status, 500);
+        assert.equal(response.status, 503);
         assert.deepEqual(await response.json(), {
           error: 'No se pudo solicitar el reset de WhatsApp',
         });
@@ -229,7 +252,7 @@ test('atomic global cooldown accepts only one of two concurrent reset requests',
     queries.push({ sql, params });
     await Promise.resolve();
     if (/SELECT \* FROM wpp_general_control/i.test(sql)) {
-      return { rows: [{ id: true }], rowCount: 1 };
+      return { rows: [{ id: true, reset_requested_seq: '21' }], rowCount: 1 };
     }
     if (accepted) return { rows: [], rowCount: 0 };
     accepted = true;
@@ -241,7 +264,10 @@ test('atomic global cooldown accepts only one of two concurrent reset requests',
     repository.requestReset({ requestedBy: 'second', cooldownMs: 15000 }),
   ]);
 
-  assert.deepEqual(results, [21n, null]);
+  assert.deepEqual(results, [
+    { accepted: true, sequence: 21n },
+    { accepted: false, sequence: 21n },
+  ]);
   const updates = queries.filter(({ sql }) => /UPDATE wpp_general_control/i.test(sql));
   assert.equal(updates.length, 2);
   for (const { sql, params } of updates) {

@@ -41,12 +41,20 @@ function localSnapshot(supervisor, state) {
 }
 
 function serializeResetSequence(sequence) {
-  const validBigInt = typeof sequence === 'bigint' && sequence >= 0n;
+  const validBigInt = typeof sequence === 'bigint' && sequence > 0n;
   const validNumber = typeof sequence === 'number'
     && Number.isSafeInteger(sequence)
-    && sequence >= 0;
+    && sequence > 0;
   if (!validBigInt && !validNumber) throw new TypeError('Invalid reset sequence');
   return String(sequence);
+}
+
+function serializeResetOutcome(outcome) {
+  if (!outcome || typeof outcome !== 'object' || typeof outcome.accepted !== 'boolean') {
+    throw new TypeError('Invalid reset outcome');
+  }
+  const sequence = serializeResetSequence(outcome.sequence);
+  return { accepted: outcome.accepted, sequence };
 }
 
 export function registerWppRoutes(app, deps) {
@@ -147,17 +155,29 @@ export function registerWppRoutes(app, deps) {
     }
 
     try {
-      const sequence = await repository.requestReset({
+      const outcome = serializeResetOutcome(await repository.requestReset({
         requestedBy: String(req.user?.id ?? 'unknown'),
         cooldownMs: RESET_COOLDOWN_MS,
-      });
-      if (sequence === null) {
-        return res.status(202).json({ ok: true, skipped: true, reason: 'cooldown' });
+      }));
+      if (!outcome.accepted) {
+        return res.status(202).json({
+          ok: true,
+          accepted: false,
+          reason: 'cooldown',
+          reset_seq: outcome.sequence,
+          sequence: outcome.sequence,
+        });
       }
-      return res.status(202).json({ ok: true, sequence: serializeResetSequence(sequence) });
+      return res.status(202).json({
+        ok: true,
+        accepted: true,
+        request_id: outcome.sequence,
+        reset_seq: outcome.sequence,
+        sequence: outcome.sequence,
+      });
     } catch (error) {
       console.error('[WPP SERVER] Error solicitando reset global:', error);
-      return res.status(500).json({ error: 'No se pudo solicitar el reset de WhatsApp' });
+      return res.status(503).json({ error: 'No se pudo solicitar el reset de WhatsApp' });
     }
   });
 }

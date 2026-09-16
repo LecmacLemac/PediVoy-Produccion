@@ -79,7 +79,7 @@ function buildApp({
         };
       },
       async requestReset() {
-        return 1n;
+        return { accepted: true, sequence: 1n };
       },
     },
     supervisor,
@@ -144,7 +144,7 @@ test('reset general persiste una solicitud global sin tocar el cliente local', a
     repository: {
       async requestReset(input) {
         calls.push(['requestReset', input]);
-        return 5n;
+        return { accepted: true, sequence: 5n };
       },
     },
   });
@@ -152,7 +152,13 @@ test('reset general persiste una solicitud global sin tocar el cliente local', a
   await withServer(app, async (baseUrl) => {
     const resp = await fetch(`${baseUrl}/api/whatsapp/reset`, { method: 'POST' });
     assert.equal(resp.status, 202);
-    assert.deepEqual(await resp.json(), { ok: true, sequence: '5' });
+    assert.deepEqual(await resp.json(), {
+      ok: true,
+      accepted: true,
+      request_id: '5',
+      reset_seq: '5',
+      sequence: '5',
+    });
   });
 
   assert.deepEqual(calls, [['requestReset', { requestedBy: '1', cooldownMs: 15000 }]]);
