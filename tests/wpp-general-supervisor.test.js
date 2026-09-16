@@ -216,8 +216,9 @@ test('restart state-fence rejection triggers fatal lease-loss cleanup', async ()
 });
 
 test('failed persistence of a terminal restart fence triggers fatal lease-loss handling', async () => {
+  const lifecycleError = new Error('destroy rejected');
   const h = makeHarness({
-    destroy: async () => { throw new Error('destroy rejected'); },
+    destroy: async () => { throw lifecycleError; },
     updateOwned: async values => values.state !== 'fenced',
   });
   await h.supervisor.start();
@@ -228,6 +229,7 @@ test('failed persistence of a terminal restart fence triggers fatal lease-loss h
   assert.equal(h.supervisor.snapshot().state, 'fenced');
   assert.equal(h.fatalErrors.length, 1);
   assert.match(h.fatalErrors[0].message, /fence rejected state update/i);
+  assert.equal(h.fatalErrors[0].cause, lifecycleError);
   assert.equal(h.calls.includes('release-begin'), false);
 });
 
@@ -564,8 +566,9 @@ test('initialize failure or timeout closes the gate and cleans the failed client
 });
 
 test('failed persistence of a terminal initialize fence triggers fatal lease-loss handling', async () => {
+  const lifecycleError = new Error('initialize rejected');
   const h = makeHarness({
-    initialize: async () => { throw new Error('initialize rejected'); },
+    initialize: async () => { throw lifecycleError; },
     updateOwned: async values => values.state !== 'fenced',
   });
 
@@ -576,6 +579,7 @@ test('failed persistence of a terminal initialize fence triggers fatal lease-los
   assert.equal(h.supervisor.snapshot().gateOpen, false);
   assert.equal(h.fatalErrors.length, 1);
   assert.match(h.fatalErrors[0].message, /fence rejected state update/i);
+  assert.equal(h.fatalErrors[0].cause, lifecycleError);
   assert.equal(h.calls.includes('release-begin'), false);
 });
 
@@ -899,8 +903,9 @@ test('rejected reset persistence fences trigger fatal lease-loss cleanup', async
 });
 
 test('failed persistence of a terminal reset failure triggers fatal lease-loss handling', async () => {
+  const resetError = new Error('destroy rejected');
   const h = makeHarness({
-    destroy: async () => { throw new Error('destroy rejected'); },
+    destroy: async () => { throw resetError; },
     markResetFailed: async () => false,
   });
   await h.supervisor.start();
@@ -912,6 +917,7 @@ test('failed persistence of a terminal reset failure triggers fatal lease-loss h
   assert.equal(h.supervisor.snapshot().gateOpen, false);
   assert.equal(h.fatalErrors.length, 1);
   assert.match(h.fatalErrors[0].message, /reset failure fence rejected persistence/i);
+  assert.equal(h.fatalErrors[0].cause, resetError);
   assert.equal(h.calls.includes('release-begin'), false);
 });
 

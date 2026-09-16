@@ -16,6 +16,14 @@ function notOwnerError(message = 'WhatsApp General client is not active') {
   return Object.assign(new Error(message), { code: 'WPP_NOT_OWNER' });
 }
 
+function preserveCause(error, cause) {
+  if (error && (typeof error === 'object' || typeof error === 'function')) {
+    if (error.cause === undefined) error.cause = cause;
+    return error;
+  }
+  return new Error(String(error), { cause });
+}
+
 export function createGeneralSupervisor({
   ownership,
   clientFactory,
@@ -193,7 +201,7 @@ export function createGeneralSupervisor({
     } catch (persistenceError) {
       state = 'fenced';
       lastError = error;
-      leaseLost(persistenceError);
+      leaseLost(preserveCause(persistenceError, error));
       return false;
     }
   }
@@ -306,7 +314,7 @@ export function createGeneralSupervisor({
               throw notOwnerError('General reset failure fence rejected persistence');
             }
           } catch (persistenceError) {
-            leaseLost(persistenceError);
+            leaseLost(preserveCause(persistenceError, error));
           }
         }
         if (error?.code === 'WPP_NOT_OWNER') leaseLost(error);
