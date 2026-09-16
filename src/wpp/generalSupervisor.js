@@ -83,6 +83,8 @@ export function createGeneralSupervisor({
   let eventRevision = 0;
   let terminalFenceGeneration = null;
   let lastInvalidatedGeneration = null;
+  const activeWork = new Map();
+  const unconfirmedTeardowns = new WeakSet();
 
   const snapshot = () => Object.freeze({
     state,
@@ -100,6 +102,32 @@ export function createGeneralSupervisor({
   function closeGate() {
     ready = false;
     gateOpen = false;
+  }
+
+  function beginActiveWork(activeGeneration) {
+    let entry = activeWork.get(activeGeneration);
+    if (!entry) {
+      entry = { count: 0, drained: null, resolveDrained: null };
+      activeWork.set(activeGeneration, entry);
+    }
+    if (entry.count === 0) {
+      entry.drained = new Promise(resolve => { entry.resolveDrained = resolve; });
+    }
+    entry.count += 1;
+  }
+
+  function finishActiveWork(activeGeneration) {
+    const entry = activeWork.get(activeGeneration);
+    if (!entry) return;
+    entry.count -= 1;
+    if (entry.count === 0) {
+      activeWork.delete(activeGeneration);
+      entry.resolveDrained();
+    }
+  }
+
+  function waitForActiveWork(activeGeneration) {
+    return activeWork.get(activeGeneration)?.drained ?? Promise.resolve();
   }
 
   function invalidateGeneration(invalidatedGeneration) {
@@ -265,6 +293,23 @@ export function createGeneralSupervisor({
     }
   }
 
+  async function persistTerminalFenceBeforeFatal(operation, error) {
+    try {
+      return await deadline(
+        persistTerminalFence(operation, error),
+        shutdownDeadlineMs,
+        'General terminal fence persistence',
+      );
+    } catch (persistenceError) {
+      const fatalError = preserveCause(persistenceError, error);
+      state = 'fenced';
+      closeGate();
+      lastError = fatalError;
+      callFatal(fatalError);
+      return false;
+    }
+  }
+
   async function initializeFresh() {
     try {
       await assertOwner();
@@ -290,11 +335,24 @@ export function createGeneralSupervisor({
     closeGate();
     if (!current) return true;
     const stopping = current;
-    await deadline(stopping.destroy(), destroyDeadlineMs, 'General client destroy');
-    const stopped = await deadline(stopping.confirmStopped(), destroyDeadlineMs, 'General client stop confirmation');
-    if (stopped !== true) throw new Error('General client stop could not be confirmed');
-    if (current === stopping) current = null;
-    return true;
+    try {
+      await deadline(
+        waitForActiveWork(stopping.generation),
+        destroyDeadlineMs,
+        'General active work drain',
+      );
+      await deadline(stopping.destroy(), destroyDeadlineMs, 'General client destroy');
+      const stopped = await deadline(stopping.confirmStopped(), destroyDeadlineMs, 'General client stop confirmation');
+      if (stopped !== true) throw new Error('General client stop could not be confirmed');
+      if (current === stopping) current = null;
+      return true;
+    } catch (error) {
+      const failure = error && (typeof error === 'object' || typeof error === 'function')
+        ? error
+        : new Error(String(error));
+      unconfirmedTeardowns.add(failure);
+      throw failure;
+    }
   }
 
   async function releaseAfterInitializationGuard(cause) {
@@ -415,7 +473,10 @@ export function createGeneralSupervisor({
         return restarted;
       } catch (error) {
         latchTerminalGeneration(error);
-        await persistTerminalFence(reason, error);
+        const fencePersisted = unconfirmedTeardowns.has(error)
+          ? await persistTerminalFenceBeforeFatal(reason, error)
+          : await persistTerminalFence(reason, error);
+        if (fencePersisted && unconfirmedTeardowns.has(error)) callFatal(error);
         if (error?.code === 'WPP_NOT_OWNER') leaseLost(error);
         throw error;
       }
@@ -454,22 +515,35 @@ export function createGeneralSupervisor({
         else closeGate();
         lastError = error;
         if (error?.timedOut === true) leaseLost(error);
+        let failurePersisted = true;
         if (started && error?.resetFailurePersistenceAttempted !== true) {
           try {
-            const persisted = await repository.markResetFailed({
+            const persistence = repository.markResetFailed({
               ownerId: ownership.ownerId,
               epoch: ownership.epoch,
               sequence,
               error,
             });
+            const persisted = unconfirmedTeardowns.has(error)
+              ? await deadline(
+                persistence,
+                shutdownDeadlineMs,
+                'General reset failure persistence',
+              )
+              : await persistence;
             if (persisted !== true) {
               throw notOwnerError('General reset failure fence rejected persistence');
             }
-            await persistTerminalFence('reset_failed', error);
+            const fencePersisted = unconfirmedTeardowns.has(error)
+              ? await persistTerminalFenceBeforeFatal('reset_failed', error)
+              : await persistTerminalFence('reset_failed', error);
+            if (!fencePersisted) failurePersisted = false;
           } catch (persistenceError) {
+            failurePersisted = false;
             leaseLost(preserveCause(persistenceError, error));
           }
         }
+        if (failurePersisted && unconfirmedTeardowns.has(error)) callFatal(error);
         if (error?.code === 'WPP_NOT_OWNER') leaseLost(error);
         if (!terminalFailure && !ownershipLost) gateHolds -= 1;
         throw error;
@@ -594,20 +668,28 @@ export function createGeneralSupervisor({
     const active = current;
     const activeGeneration = generation;
     const activeEpoch = ownership.epoch;
+    beginActiveWork(activeGeneration);
     try {
-      const owned = await ownership.heartbeat();
-      if (owned !== true) throw notOwnerError('General ownership heartbeat was rejected');
-    } catch (error) {
-      leaseLost(error);
-      throw notOwnerError(error?.message);
+      try {
+        const owned = await ownership.heartbeat();
+        if (owned !== true) throw notOwnerError('General ownership heartbeat was rejected');
+      } catch (error) {
+        leaseLost(error);
+        throw notOwnerError(error?.message);
+      }
+      if (terminalFenceGeneration === activeGeneration) {
+        throw notOwnerError('General client generation is terminally fenced');
+      }
+      if (ownership.isOwner !== true || ownershipLost
+        || current !== active || generation !== activeGeneration || ownership.epoch !== activeEpoch) {
+        const error = notOwnerError('General ownership changed before client use');
+        leaseLost(error);
+        throw error;
+      }
+      return await fn({ client: active.client, generation: activeGeneration, epoch: activeEpoch });
+    } finally {
+      finishActiveWork(activeGeneration);
     }
-    if (!ready || !gateOpen || ownership.isOwner !== true || ownershipLost
-      || current !== active || generation !== activeGeneration || ownership.epoch !== activeEpoch) {
-      const error = notOwnerError('General ownership changed before client use');
-      leaseLost(error);
-      throw error;
-    }
-    return fn({ client: active.client, generation: activeGeneration, epoch: activeEpoch });
   }
 
   async function withCurrentClient(expectedGeneration, fn) {

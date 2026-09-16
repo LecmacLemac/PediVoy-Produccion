@@ -208,23 +208,26 @@ test('restart during initialize and reset during restart execute in serial order
   assert.equal(new Set(h.clients).size, 3);
 });
 
-test('failed or hung destroy fences reset without deleting, releasing ownership, or creating a successor', async t => {
-  for (const [name, destroy] of [
-    ['rejected', async () => { throw new Error('destroy rejected'); }],
-    ['hung', () => new Promise(() => {})],
+test('failed or hung teardown fences reset, becomes fatal, and never deletes or replaces', async t => {
+  for (const [name, options] of [
+    ['destroy rejected', { destroy: async () => { throw new Error('destroy rejected'); } }],
+    ['destroy hung', { destroy: () => new Promise(() => {}) }],
+    ['stop unconfirmed', { confirmStopped: async () => false }],
   ]) {
     await t.test(name, async () => {
-      const h = makeHarness({ destroy });
+      const h = makeHarness(options);
       await h.supervisor.start();
       const deletions = [];
 
-      await assert.rejects(h.supervisor.reset(3n, async () => deletions.push('delete')), /destroy/);
+      await assert.rejects(h.supervisor.reset(3n, async () => deletions.push('delete')), /destroy|stop/);
+      await new Promise(resolve => setImmediate(resolve));
 
       assert.deepEqual(deletions, []);
       assert.equal(h.clients.length, 1);
       assert.equal(h.calls.includes('release-begin'), false);
       assert.equal(h.supervisor.snapshot().state, 'fenced');
       assert.equal(h.calls.includes('reset-failed:3'), true);
+      assert.equal(h.fatalErrors.length, 1);
     });
   }
 });
@@ -300,6 +303,28 @@ test('failed persistence of a terminal restart fence triggers fatal lease-loss h
   assert.match(h.fatalErrors[0].message, /fence rejected state update/i);
   assert.equal(h.fatalErrors[0].cause, lifecycleError);
   assert.equal(h.calls.includes('release-begin'), false);
+});
+
+test('fatal teardown handling is bounded when terminal fence persistence hangs', async () => {
+  const h = makeHarness({
+    destroy: async () => { throw new Error('destroy rejected'); },
+    updateOwned: values => values.state === 'fenced' ? new Promise(() => {}) : true,
+    shutdownDeadlineMs: 10,
+  });
+  await h.supervisor.start();
+
+  await assert.rejects(
+    Promise.race([
+      h.supervisor.restart('manual'),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('test wait expired')), 50)),
+    ]),
+    /destroy rejected/,
+  );
+  await new Promise(resolve => setTimeout(resolve, 15));
+
+  assert.equal(h.fatalErrors.length, 1);
+  assert.match(h.fatalErrors[0].message, /terminal fence persistence deadline exceeded/i);
+  assert.match(h.fatalErrors[0].cause?.message, /destroy rejected/i);
 });
 
 test('terminal fence persistence does not mutate a frozen rejection', async () => {
@@ -817,6 +842,76 @@ test('withActiveClient revalidates ownership immediately before invoking the cal
   await assert.rejects(h.supervisor.withActiveClient(() => { invoked += 1; }), { code: 'WPP_NOT_OWNER' });
   assert.equal(invoked, 0);
   assert.equal(h.supervisor.snapshot().gateOpen, false);
+});
+
+test('restart waits for active generation work to drain before teardown', async () => {
+  const workStarted = deferred();
+  const workRelease = deferred();
+  const h = makeHarness({
+    destroy: async raw => { h.calls.push(`destroy:${raw.id}`); },
+    confirmStopped: async raw => { h.calls.push(`stopped:${raw.id}`); return true; },
+  });
+  await h.supervisor.start();
+  h.clients[0].emit('ready');
+  await new Promise(resolve => setImmediate(resolve));
+
+  const work = h.supervisor.withActiveClient(async () => {
+    workStarted.resolve();
+    await workRelease.promise;
+    return 'sent';
+  });
+  await workStarted.promise;
+  const restart = h.supervisor.restart('manual');
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(h.calls.includes('destroy:1'), false);
+  workRelease.resolve();
+  assert.equal(await work, 'sent');
+  assert.equal(await restart, true);
+  assert.deepEqual(h.calls.filter(call => /^(destroy|stopped):/.test(call)), ['destroy:1', 'stopped:1']);
+});
+
+test('restart drains active work accepted before its ownership heartbeat completes', async () => {
+  const heartbeat = deferred();
+  const h = makeHarness({
+    heartbeat: () => heartbeat.promise,
+    destroy: async raw => { h.calls.push(`destroy:${raw.id}`); },
+    confirmStopped: async raw => { h.calls.push(`stopped:${raw.id}`); return true; },
+  });
+  await h.supervisor.start();
+  h.clients[0].emit('ready');
+  await new Promise(resolve => setImmediate(resolve));
+
+  const work = h.supervisor.withActiveClient(() => 'sent');
+  await new Promise(resolve => setImmediate(resolve));
+  const restart = h.supervisor.restart('manual');
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(h.calls.includes('destroy:1'), false);
+  heartbeat.resolve(true);
+  assert.equal(await work, 'sent');
+  assert.equal(await restart, true);
+  assert.equal(h.fatalErrors.length, 0);
+});
+
+test('terminal profile-lock fencing cancels active work awaiting its ownership heartbeat', async () => {
+  const heartbeat = deferred();
+  const h = makeHarness({ heartbeat: () => heartbeat.promise });
+  await h.supervisor.start();
+  h.clients[0].emit('ready');
+  await new Promise(resolve => setImmediate(resolve));
+  let invoked = 0;
+
+  const work = h.supervisor.withActiveClient(() => { invoked += 1; });
+  await new Promise(resolve => setImmediate(resolve));
+  h.clients[0].emit('error', new Error('Chromium profile lock'));
+  heartbeat.resolve(true);
+
+  await assert.rejects(work, { code: 'WPP_NOT_OWNER' });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(invoked, 0);
+  assert.equal(h.supervisor.snapshot().state, 'fenced');
+  assert.equal(h.fatalErrors.length, 0);
 });
 
 test('authenticated current-client access is authoritative and generation fenced', async () => {
@@ -1476,6 +1571,28 @@ test('failed persistence of a terminal reset failure triggers fatal lease-loss h
   assert.match(h.fatalErrors[0].message, /reset failure fence rejected persistence/i);
   assert.equal(h.fatalErrors[0].cause, resetError);
   assert.equal(h.calls.includes('release-begin'), false);
+});
+
+test('fatal teardown handling is bounded when reset failure metadata persistence hangs', async () => {
+  const h = makeHarness({
+    destroy: async () => { throw new Error('destroy rejected'); },
+    markResetFailed: () => new Promise(() => {}),
+    shutdownDeadlineMs: 10,
+  });
+  await h.supervisor.start();
+
+  await assert.rejects(
+    Promise.race([
+      h.supervisor.reset(26n, async () => {}),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('test wait expired')), 50)),
+    ]),
+    /destroy rejected/,
+  );
+  await new Promise(resolve => setTimeout(resolve, 15));
+
+  assert.equal(h.fatalErrors.length, 1);
+  assert.match(h.fatalErrors[0].message, /reset failure persistence deadline exceeded/i);
+  assert.match(h.fatalErrors[0].cause?.message, /destroy rejected/i);
 });
 
 test('reset deletion deadline triggers supervisor fatal handling exactly once', async () => {
