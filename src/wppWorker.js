@@ -48,20 +48,8 @@ let isShuttingDown = false;
 let lastResetHandledAt = null;
 const OUTBOX_CLAIM_OWNER = `empresa-${EMPRESA_ID}-${process.pid}-${randomUUID()}`;
 
-// 1. LIMPIEZA DE "LOCKS" DE CHROME
-// Evita que el contenedor falle al reiniciar si Chrome se cerró inesperadamente.
 const sessionDir = path.join(SESSION_PATH, `session-empresa_${EMPRESA_ID}`);
 const devToolsActivePortFile = path.join(sessionDir, 'DevToolsActivePort');
-const lockFile = path.join(sessionDir, 'Default/SingletonLock');
-
-if (fs.existsSync(lockFile)) {
-    try {
-        fs.unlinkSync(lockFile);
-        console.log(`[Empresa ${EMPRESA_ID}] Archivo de bloqueo de Chrome eliminado para reinicio limpio.`);
-    } catch (e) {
-        console.warn(`[Empresa ${EMPRESA_ID}] No se pudo eliminar el lock (puede estar en uso):`, e.message);
-    }
-}
 
 async function ensureEmpresaWhatsappSchema() {
     await query(`

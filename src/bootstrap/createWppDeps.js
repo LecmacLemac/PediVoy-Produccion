@@ -6,7 +6,7 @@ import handlers from '../handlers.js';
 
 const { Client, LocalAuth } = pkg;
 
-export function createWppDeps() {
+export function createWppDeps(wppOverrides = {}) {
   // Solo habilitar WhatsApp cuando se pide explícitamente.
   // En Render puede no existir navegador, así que no se debe forzar por RENDER=true.
   const ENABLE_WPP = process.env.ENABLE_WPP === '1';
@@ -22,6 +22,7 @@ export function createWppDeps() {
       handlers,
       enqueueWppMessage,
       checkLicencia,
+      ...wppOverrides,
     },
   };
 }

@@ -46,6 +46,9 @@ export function buildWhatsAppRegistrationDeps({
     checkLicencia,
     generalControlRepository,
     generalSupervisor,
+    generalOwnership,
+    generalRuntime,
+    runtimeDependencies,
   } = {},
 } = {}) {
   return {
@@ -72,6 +75,9 @@ export function buildWhatsAppRegistrationDeps({
     isSuper,
     generalControlRepository,
     generalSupervisor,
+    generalOwnership,
+    generalRuntime,
+    runtimeDependencies,
   };
 }
 

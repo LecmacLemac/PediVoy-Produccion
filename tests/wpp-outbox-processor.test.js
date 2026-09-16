@@ -23,7 +23,7 @@ test('fallback general obtiene filas exclusivamente mediante claim atómico', as
     getClient: () => client,
     getIsReady: () => true,
     getIsShuttingDown: () => false,
-    reiniciarWhatsApp: async () => {},
+    requestRestart: async () => {},
     claimOwner: 'general-test',
   });
 

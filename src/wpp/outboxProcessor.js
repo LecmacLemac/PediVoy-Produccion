@@ -16,7 +16,7 @@ export function createOutboxProcessor({
   getClient,
   getIsReady,
   getIsShuttingDown,
-  reiniciarWhatsApp,
+  requestRestart,
   claimOwner = `general-${process.pid}-${randomUUID()}`,
 }) {
   let isProcessing = false;
@@ -156,7 +156,7 @@ export function createOutboxProcessor({
           if (isFrameDetached || isTransientBrowserError) {
             await releaseWppOutboxClaim({ query, id: row.id, owner: claimOwner, error: 'Reintento por reconexión WPP' });
             await releaseRemaining(rows, index + 1);
-            await reiniciarWhatsApp();
+            await requestRestart();
             break;
           }
           if (isConnectionError) {

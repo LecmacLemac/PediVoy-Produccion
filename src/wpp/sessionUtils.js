@@ -10,18 +10,6 @@ export function getWppSessionDir({ path, cwd = process.cwd(), sessionId = WPP_SE
   return path.join(getWppSessionBasePath({ path, cwd }), `session-${sessionId}`);
 }
 
-export function limpiarLocksSesion({ fs, path, cwd = process.cwd(), sessionId = WPP_SESSION_ID }) {
-  try {
-    const dir = getWppSessionDir({ path, cwd, sessionId });
-    const lockFiles = ['SingletonLock', 'SingletonSocket', 'SingletonCookie'];
-    for (const lockFile of lockFiles) {
-      try {
-        fs.rmSync(path.join(dir, lockFile), { force: true });
-      } catch {}
-    }
-  } catch {}
-}
-
 export function safeErrorString(err) {
   if (!err) return null;
   return String(err)

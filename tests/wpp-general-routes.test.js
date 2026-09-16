@@ -291,6 +291,9 @@ test('app composition forwards canonical WhatsApp registration dependencies by i
       checkLicencia: sentinel('checkLicencia'),
       generalControlRepository: sentinel('generalControlRepository'),
       generalSupervisor: sentinel('generalSupervisor'),
+      generalOwnership: sentinel('generalOwnership'),
+      generalRuntime: sentinel('generalRuntime'),
+      runtimeDependencies: sentinel('runtimeDependencies'),
     },
   };
 
@@ -320,6 +323,9 @@ test('app composition forwards canonical WhatsApp registration dependencies by i
     isSuper: input.isSuper,
     generalControlRepository: input.wpp.generalControlRepository,
     generalSupervisor: input.wpp.generalSupervisor,
+    generalOwnership: input.wpp.generalOwnership,
+    generalRuntime: input.wpp.generalRuntime,
+    runtimeDependencies: input.wpp.runtimeDependencies,
   });
 });
 
