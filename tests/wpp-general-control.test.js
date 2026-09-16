@@ -13,6 +13,66 @@ function fakeQuery(results) {
   return { calls, query };
 }
 
+function statefulResetQuery(overrides = {}) {
+  const row = {
+    owner_id: 'owner-a',
+    epoch: 8n,
+    operation: 'reset',
+    reset_requested_seq: 42n,
+    reset_started_seq: 42n,
+    reset_applied_seq: 41n,
+    reset_failed_seq: 0n,
+    reset_failure_error: null,
+    ...overrides,
+  };
+  const calls = [];
+  const ownsAttempt = (sql, params) => {
+    const [ownerId, epoch, sequence] = params;
+    return row.owner_id === ownerId
+      && row.epoch === BigInt(epoch)
+      && row.reset_started_seq === BigInt(sequence)
+      && row.reset_applied_seq < BigInt(sequence)
+      && (!/operation\s*=\s*'reset'/i.test(sql) || row.operation === 'reset');
+  };
+  const query = async (sql, params) => {
+    calls.push({ sql, params });
+    const sequence = BigInt(params[2]);
+    if (/UPDATE wpp_general_control\s+SET\s+reset_started_seq\s*=\s*\$3/i.test(sql)) {
+      const ownsControl = row.owner_id === params[0] && row.epoch === BigInt(params[1]);
+      const canStart = row.reset_started_seq < sequence
+        || (row.reset_started_seq === sequence
+          && row.reset_failed_seq === sequence
+          && row.reset_failure_error !== null);
+      if (!ownsControl
+        || !canStart
+        || row.reset_applied_seq >= sequence
+        || row.reset_requested_seq < sequence) {
+        return { rows: [], rowCount: 0 };
+      }
+      row.reset_started_seq = sequence;
+      row.reset_failure_error = null;
+      row.operation = 'reset';
+      return { rows: [], rowCount: 1 };
+    }
+    if (/UPDATE wpp_general_control\s+SET\s+reset_failed_seq\s*=\s*\$3/i.test(sql)) {
+      if (!ownsAttempt(sql, params)) return { rows: [], rowCount: 0 };
+      row.reset_failed_seq = sequence;
+      row.reset_failure_error = params[3];
+      row.operation = null;
+      return { rows: [], rowCount: 1 };
+    }
+    if (/UPDATE wpp_general_control\s+SET\s+reset_applied_seq\s*=\s*\$3/i.test(sql)) {
+      if (!ownsAttempt(sql, params)) return { rows: [], rowCount: 0 };
+      row.reset_applied_seq = sequence;
+      row.reset_failure_error = null;
+      row.operation = null;
+      return { rows: [], rowCount: 1 };
+    }
+    throw new Error(`Unsupported stateful reset query: ${sql}`);
+  };
+  return { calls, query, row };
+}
+
 test('initDb defines the General singleton control row idempotently', async () => {
   const sql = await readFile(new URL('../initDb.sql', import.meta.url), 'utf8');
 
@@ -162,6 +222,75 @@ test('a reset can fail again after its accepted retry', async () => {
   assert.match(db.calls[0].sql, /reset_failure_error\s*=\s*\$4/i);
   assert.match(db.calls[0].sql, /reset_started_seq\s*=\s*\$3/i);
   assert.deepEqual(db.calls[0].params, ['owner-a', '8', '42', 'retry failed']);
+});
+
+test('an active reset failure succeeds once and a duplicate failure is rejected', async () => {
+  const db = statefulResetQuery();
+  const repository = createGeneralControlRepository(db.query);
+  const input = { ownerId: 'owner-a', epoch: 8n, sequence: 42n, error: 'profile busy' };
+
+  assert.equal(await repository.markResetFailed(input), true);
+  assert.equal(await repository.markResetFailed(input), false);
+  assert.equal(db.row.operation, null);
+  assert.equal(db.row.reset_failed_seq, 42n);
+});
+
+test('a failed reset cannot be marked applied without an accepted retry', async () => {
+  const db = statefulResetQuery();
+  const repository = createGeneralControlRepository(db.query);
+
+  assert.equal(await repository.markResetFailed({
+    ownerId: 'owner-a', epoch: 8n, sequence: 42n, error: 'profile busy',
+  }), true);
+  assert.equal(await repository.markResetApplied({
+    ownerId: 'owner-a', epoch: 8n, sequence: 42n,
+  }), false);
+  assert.equal(db.row.reset_applied_seq, 41n);
+});
+
+test('an accepted retry re-enters reset and can be applied exactly once', async () => {
+  const db = statefulResetQuery({
+    operation: null,
+    reset_failed_seq: 42n,
+    reset_failure_error: 'profile busy',
+  });
+  const repository = createGeneralControlRepository(db.query);
+  const input = { ownerId: 'owner-a', epoch: 8n, sequence: 42n };
+
+  assert.equal(await repository.markResetStarted(input), true);
+  assert.equal(db.row.operation, 'reset');
+  assert.equal(db.row.reset_failure_error, null);
+  assert.equal(await repository.markResetApplied(input), true);
+  assert.equal(await repository.markResetApplied(input), false);
+  assert.equal(db.row.reset_applied_seq, 42n);
+});
+
+test('an accepted retry re-enters reset and can fail exactly once', async () => {
+  const db = statefulResetQuery({
+    operation: null,
+    reset_failed_seq: 42n,
+    reset_failure_error: 'profile busy',
+  });
+  const repository = createGeneralControlRepository(db.query);
+  const input = { ownerId: 'owner-a', epoch: 8n, sequence: 42n };
+
+  assert.equal(await repository.markResetStarted(input), true);
+  assert.equal(db.row.operation, 'reset');
+  assert.equal(await repository.markResetFailed({ ...input, error: 'retry failed' }), true);
+  assert.equal(await repository.markResetFailed({ ...input, error: 'retry failed' }), false);
+  assert.equal(db.row.reset_failure_error, 'retry failed');
+});
+
+test('terminal reset transitions reject a stale exact sequence', async () => {
+  const db = statefulResetQuery();
+  const repository = createGeneralControlRepository(db.query);
+  const stale = { ownerId: 'owner-a', epoch: 8n, sequence: 41n };
+
+  assert.equal(await repository.markResetApplied(stale), false);
+  assert.equal(await repository.markResetFailed({ ...stale, error: 'late' }), false);
+  assert.equal(db.row.operation, 'reset');
+  assert.equal(db.row.reset_applied_seq, 41n);
+  assert.equal(db.row.reset_failed_seq, 0n);
 });
 
 function assertLegacyUpgradeContract(sql) {

@@ -289,6 +289,7 @@ export function createGeneralControlRepository(defaultQuery) {
             reset_failure_error = NULL,
             updated_at = NOW()
         WHERE owner_id = $1 AND epoch = $2 AND id = TRUE
+          AND operation = 'reset'
           AND reset_applied_seq < $3 AND reset_started_seq = $3
       `, [ownerId, bigintParam(epoch), bigintParam(sequence)], executor);
       return result.rowCount === 1;
@@ -304,6 +305,7 @@ export function createGeneralControlRepository(defaultQuery) {
             last_error = $4,
             updated_at = NOW()
         WHERE owner_id = $1 AND epoch = $2 AND id = TRUE
+          AND operation = 'reset'
           AND reset_applied_seq < $3 AND reset_started_seq = $3
       `, [ownerId, bigintParam(epoch), bigintParam(sequence), String(error)], executor);
       return result.rowCount === 1;
