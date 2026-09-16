@@ -92,6 +92,17 @@ export function createGeneralSupervisor({
     }
   }
 
+  async function assertOwnerAuthoritatively() {
+    if (ownership.isOwner !== true) throw notOwnerError();
+    try {
+      const owned = await Promise.resolve(ownership.heartbeat());
+      if (owned !== true) throw notOwnerError('General reset ownership revalidation failed');
+    } catch (error) {
+      if (error?.code === 'WPP_NOT_OWNER') throw error;
+      throw preserveCause(notOwnerError(error?.message ?? 'General reset ownership revalidation failed'), error);
+    }
+  }
+
   async function publish(nextState, operation = null, error = null) {
     state = nextState;
     if (error) lastError = error;
@@ -280,9 +291,10 @@ export function createGeneralSupervisor({
         });
         if (persisted !== true) throw notOwnerError('General reset failure fence rejected persistence');
       } catch (persistenceError) {
-        persistenceError.resetFailurePersistenceAttempted = true;
-        leaseLost(preserveCause(persistenceError, lastError));
-        throw persistenceError;
+        const failure = preserveCause(persistenceError, lastError);
+        failure.resetFailurePersistenceAttempted = true;
+        leaseLost(failure);
+        throw failure;
       }
     }
     gateHolds -= 1;
@@ -334,8 +346,7 @@ export function createGeneralSupervisor({
         if (await abortResetForTerminalFence({ started, sequence })) return false;
         await stopCurrent();
         if (await abortResetForTerminalFence({ started, sequence })) return false;
-        const stillOwned = await Promise.resolve(ownership.assertOwned());
-        if (stillOwned !== true) throw notOwnerError('General reset ownership revalidation failed');
+        await assertOwnerAuthoritatively();
         if (await abortResetForTerminalFence({ started, sequence })) return false;
         await deleteSessionFn();
         await initializeFresh();

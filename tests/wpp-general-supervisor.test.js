@@ -402,6 +402,33 @@ test('a profile-lock event aborts a reset after its start fence without deleting
   assert.equal(h.calls.filter(call => call === 'reset-failed:12').length, 1);
 });
 
+test('profile-lock reset failure persistence robustly handles primitive rejections', async () => {
+  const resetStarted = deferred();
+  const h = makeHarness({
+    markResetStarted: () => resetStarted.promise,
+    markResetFailed: async () => { throw 'reset persistence exploded'; },
+  });
+  await h.supervisor.start();
+
+  const reset = h.supervisor.reset(14n, async () => h.calls.push('delete'));
+  await new Promise(resolve => setImmediate(resolve));
+  h.clients[0].emit('error', new Error('Chromium profile lock'));
+  resetStarted.resolve(true);
+
+  await assert.rejects(reset, error => {
+    assert.equal(error instanceof Error, true);
+    assert.match(error.message, /reset persistence exploded/);
+    assert.match(error.cause?.message, /profile lock/i);
+    return true;
+  });
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(h.calls.includes('delete'), false);
+  assert.equal(h.calls.filter(call => call === 'reset-failed:14').length, 1);
+  assert.equal(h.fatalErrors.length, 1);
+  assert.match(h.fatalErrors[0].message, /reset persistence exploded/);
+});
+
 test('a profile-lock event during reset teardown prevents profile deletion and replacement', async () => {
   const destroying = deferred();
   const h = makeHarness({
@@ -810,19 +837,19 @@ test('client factory creates distinct raw clients and generation-tags forwarded 
   ]);
 });
 
-test('reset revalidates ownership immediately before deletion', async () => {
-  let checks = 0;
-  const h = makeHarness({
-    assertOwned: async () => { checks += 1; return checks < 3; },
-  });
+test('reset authoritatively revalidates ownership immediately before deletion', async () => {
+  const h = makeHarness({ heartbeat: async () => false });
   await h.supervisor.start();
   const deletions = [];
 
   await assert.rejects(h.supervisor.reset(13n, async () => deletions.push('delete')), { code: 'WPP_NOT_OWNER' });
+  await new Promise(resolve => setImmediate(resolve));
 
   assert.deepEqual(deletions, []);
   assert.equal(h.calls.includes('reset-failed:13'), true);
+  assert.equal(h.calls.filter(call => call === 'heartbeat').length, 1);
   assert.equal(h.clients.length, 1);
+  assert.equal(h.fatalErrors.length, 1);
 });
 
 test('shutdown after lease loss never voluntarily releases uncertain ownership', async () => {
