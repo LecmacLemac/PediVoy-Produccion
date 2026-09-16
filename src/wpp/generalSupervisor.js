@@ -27,6 +27,11 @@ export function createGeneralSupervisor({
 } = {}) {
   if (!ownership?.tryAcquire) throw new TypeError('ownership.tryAcquire is required');
   if (!clientFactory?.create) throw new TypeError('clientFactory.create is required');
+  for (const method of ['updateOwned', 'markResetStarted', 'markResetApplied', 'markResetFailed']) {
+    if (typeof repository?.[method] !== 'function') {
+      throw new TypeError(`repository.${method} is required`);
+    }
+  }
   if (typeof fatalExit !== 'function') throw new TypeError('fatalExit must be a function');
 
   let state = 'standby';
@@ -42,6 +47,7 @@ export function createGeneralSupervisor({
   let lossPromise = null;
   let shutdownPromise = null;
   let fatalCalled = false;
+  let gateHolds = 0;
 
   const snapshot = () => Object.freeze({
     state,
@@ -75,16 +81,17 @@ export function createGeneralSupervisor({
   async function publish(nextState, operation = null, error = null) {
     state = nextState;
     if (error) lastError = error;
-    if (repository?.updateOwned && ownership.isOwner) {
-      const updated = await repository.updateOwned({
-        ownerId: ownership.ownerId,
-        epoch: ownership.epoch,
-        state: nextState,
-        operation,
-        lastError: error ? String(error.message ?? error) : null,
-      });
-      if (updated === false) throw notOwnerError('General ownership fence rejected state update');
+    if (ownership.isOwner !== true) {
+      throw notOwnerError('General ownership was lost before state update');
     }
+    const updated = await repository.updateOwned({
+      ownerId: ownership.ownerId,
+      epoch: ownership.epoch,
+      state: nextState,
+      operation,
+      lastError: error ? String(error.message ?? error) : null,
+    });
+    if (updated === false) throw notOwnerError('General ownership fence rejected state update');
   }
 
   function enqueue(fn, { allowShutdown = false } = {}) {
@@ -99,7 +106,7 @@ export function createGeneralSupervisor({
   }
 
   function publishEvent(values) {
-    Promise.resolve(repository?.updateOwned?.(values)).then(updated => {
+    Promise.resolve(repository.updateOwned(values)).then(updated => {
       if (updated === false) leaseLost(notOwnerError('General ownership fence rejected event update'));
     }).catch(error => leaseLost(error));
   }
@@ -110,7 +117,7 @@ export function createGeneralSupervisor({
     if (event === 'ready') {
       if (ownership.isOwner !== true) return;
       ready = true;
-      gateOpen = true;
+      gateOpen = gateHolds === 0;
       state = 'ready';
       publishEvent({
         ownerId: ownership.ownerId, epoch: ownership.epoch, state: 'ready', operation: null,
@@ -217,33 +224,33 @@ export function createGeneralSupervisor({
 
   function reset(sequence, deleteSessionFn) {
     if (typeof deleteSessionFn !== 'function') return Promise.reject(new TypeError('deleteSessionFn is required'));
+    gateHolds += 1;
     closeGate();
     return enqueue(async () => {
       await assertOwner();
       await publish('resetting', 'reset');
       let started = false;
       try {
-        if (repository?.markResetStarted) {
-          started = await repository.markResetStarted({ ownerId: ownership.ownerId, epoch: ownership.epoch, sequence });
-          if (!started) throw new Error('General reset fence rejected start');
-        }
+        started = await repository.markResetStarted({ ownerId: ownership.ownerId, epoch: ownership.epoch, sequence });
+        if (!started) throw notOwnerError('General reset fence rejected start');
         await stopCurrent();
         const stillOwned = await Promise.resolve(ownership.assertOwned());
         if (stillOwned === false) throw notOwnerError('General reset ownership revalidation failed');
         await deleteSessionFn();
         await initializeFresh();
-        if (repository?.markResetApplied) {
-          const applied = await repository.markResetApplied({ ownerId: ownership.ownerId, epoch: ownership.epoch, sequence });
-          if (applied === false) throw new Error('General reset fence rejected completion');
-        }
+        const applied = await repository.markResetApplied({ ownerId: ownership.ownerId, epoch: ownership.epoch, sequence });
+        if (applied === false) throw notOwnerError('General reset fence rejected completion');
+        gateHolds -= 1;
+        gateOpen = ready && gateHolds === 0;
         return true;
       } catch (error) {
         closeGate();
         state = 'fenced';
         lastError = error;
-        if (started && repository?.markResetFailed) {
+        if (started) {
           await repository.markResetFailed({ ownerId: ownership.ownerId, epoch: ownership.epoch, sequence, error }).catch(() => {});
         }
+        if (error?.code === 'WPP_NOT_OWNER') leaseLost(error);
         throw error;
       }
     });
@@ -273,8 +280,19 @@ export function createGeneralSupervisor({
       }
       return false;
     });
-    lossPromise = cleanup;
-    tail = cleanup.catch(() => {});
+    cleanup.catch(() => {});
+    lossPromise = deadline(cleanup, shutdownDeadlineMs, 'General lease-loss shutdown').catch(async deadlineError => {
+      state = 'fenced';
+      closeGate();
+      if (deadlineError?.timedOut && current) {
+        try {
+          await deadline(current.forceStop(), destroyDeadlineMs, 'General client force stop');
+        } catch {}
+      }
+      callFatal(error);
+      return false;
+    });
+    tail = lossPromise.catch(() => {});
     return lossPromise;
   }
 

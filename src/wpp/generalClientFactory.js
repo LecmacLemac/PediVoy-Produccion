@@ -7,6 +7,9 @@ export function createGeneralClientFactory({ createClient } = {}) {
     create({ generation, eventSink }) {
       const client = createClient({ generation });
       if (!client) throw new Error('createClient must return a client');
+      if (typeof client.confirmStopped !== 'function') {
+        throw new TypeError('client.confirmStopped is required');
+      }
       if (typeof eventSink === 'function' && typeof client.on === 'function') {
         for (const event of FORWARDED_EVENTS) {
           client.on(event, (...args) => eventSink({ event, generation, args }));
@@ -17,7 +20,7 @@ export function createGeneralClientFactory({ createClient } = {}) {
         client,
         initialize: () => client.initialize(),
         destroy: () => client.destroy(),
-        confirmStopped: () => typeof client.confirmStopped === 'function' ? client.confirmStopped() : true,
+        confirmStopped: () => client.confirmStopped(),
         forceStop: () => typeof client.forceStop === 'function' ? client.forceStop() : false,
       });
     },

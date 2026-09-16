@@ -15,7 +15,7 @@ const deferred = () => {
 function makeHarness({
   initialize, destroy, confirmStopped, forceStop, tryAcquire = async () => true,
   heartbeat, assertOwned, updateOwned, initializeDeadlineMs = 30, destroyDeadlineMs = 20,
-  shutdownDeadlineMs = 40,
+  shutdownDeadlineMs = 40, markResetStarted, markResetApplied,
 } = {}) {
   const calls = [];
   const clients = [];
@@ -68,8 +68,14 @@ function makeHarness({
       calls.push(`state:${values.state}`);
       return updateOwned ? updateOwned(values, calls) : true;
     },
-    markResetStarted: async ({ sequence }) => { calls.push(`reset-start:${sequence}`); return true; },
-    markResetApplied: async ({ sequence }) => { calls.push(`reset-applied:${sequence}`); return true; },
+    markResetStarted: async values => {
+      calls.push(`reset-start:${values.sequence}`);
+      return markResetStarted ? markResetStarted(values, calls) : true;
+    },
+    markResetApplied: async values => {
+      calls.push(`reset-applied:${values.sequence}`);
+      return markResetApplied ? markResetApplied(values, calls) : true;
+    },
     markResetFailed: async ({ sequence }) => { calls.push(`reset-failed:${sequence}`); return true; },
   };
   const fatalErrors = [];
@@ -385,6 +391,7 @@ test('client factory creates distinct raw clients and generation-tags forwarded 
       const raw = Object.assign(new EventEmitter(), {
         initialize: async () => {},
         destroy: async () => {},
+        confirmStopped: async () => true,
       });
       raws.push(raw);
       return raw;
@@ -498,4 +505,125 @@ test('late destroy completion after shutdown timeout cannot release ownership', 
   assert.equal(h.calls.includes('release-done'), false);
   assert.equal(h.ownership.isOwner, true);
   assert.equal(h.fatalErrors.length, 1);
+});
+
+test('supervisor requires fenced state and reset persistence methods', () => {
+  const ownership = { tryAcquire: async () => false };
+  const clientFactory = { create: () => { throw new Error('unused'); } };
+  const validRepository = {
+    updateOwned: async () => true,
+    markResetStarted: async () => true,
+    markResetApplied: async () => true,
+    markResetFailed: async () => true,
+  };
+
+  for (const method of Object.keys(validRepository)) {
+    const repository = { ...validRepository };
+    delete repository[method];
+    assert.throws(
+      () => createGeneralSupervisor({ ownership, clientFactory, repository }),
+      new RegExp(`repository\\.${method} is required`),
+    );
+  }
+  assert.throws(
+    () => createGeneralSupervisor({ ownership, clientFactory }),
+    /repository\.updateOwned is required/,
+  );
+});
+
+test('ownership loss between assertion and state publication cannot create a successor', async () => {
+  let assertions = 0;
+  const h = makeHarness({
+    assertOwned: async ownership => {
+      assertions += 1;
+      if (assertions === 1) ownership.isOwner = false;
+      return true;
+    },
+    destroy: async raw => { h.calls.push(`destroy:${raw.id}`); },
+  });
+  await h.supervisor.start();
+
+  await assert.rejects(h.supervisor.restart('race'), { code: 'WPP_NOT_OWNER' });
+
+  assert.equal(h.clients.length, 1);
+  assert.equal(h.calls.includes('destroy:1'), false);
+  assert.equal(h.supervisor.snapshot().gateOpen, false);
+});
+
+test('lease loss has a total deadline even behind a hung initialize', async () => {
+  const h = makeHarness({
+    initialize: () => new Promise(() => {}),
+    forceStop: async raw => { h.calls.push(`force:${raw.id}`); return true; },
+    initializeDeadlineMs: 80,
+    destroyDeadlineMs: 5,
+    shutdownDeadlineMs: 10,
+  });
+  const start = h.supervisor.start();
+  await new Promise(resolve => setImmediate(resolve));
+  const began = Date.now();
+
+  assert.equal(await h.supervisor.leaseLost(new Error('lease lost')), false);
+
+  assert.ok(Date.now() - began < 50);
+  assert.equal(h.calls.filter(call => call === 'force:1').length, 1);
+  assert.equal(h.fatalErrors.length, 1);
+  assert.equal(h.calls.includes('release-begin'), false);
+  await assert.rejects(start, /initialize deadline/);
+});
+
+test('rejected reset persistence fences trigger fatal lease-loss cleanup', async t => {
+  for (const [name, options] of [
+    ['start fence', { markResetStarted: async () => false }],
+    ['completion fence', { markResetApplied: async () => false }],
+  ]) {
+    await t.test(name, async () => {
+      const h = makeHarness({
+        ...options,
+        destroy: async raw => { h.calls.push(`destroy:${raw.id}`); },
+        confirmStopped: async raw => { h.calls.push(`stopped:${raw.id}`); return true; },
+      });
+      await h.supervisor.start();
+
+      await assert.rejects(h.supervisor.reset(21n, async () => h.calls.push('delete')), /reset fence/);
+      assert.equal(await h.supervisor.shutdown(), false);
+
+      assert.equal(h.supervisor.snapshot().state, 'fenced');
+      assert.equal(h.supervisor.snapshot().gateOpen, false);
+      assert.equal(h.fatalErrors.length, 1);
+      assert.equal(h.calls.includes('release-begin'), false);
+    });
+  }
+});
+
+test('client factory requires an explicit stop confirmation capability', () => {
+  const factory = createGeneralClientFactory({
+    createClient: () => ({ initialize: async () => {}, destroy: async () => {} }),
+  });
+
+  assert.throws(
+    () => factory.create({ generation: 1 }),
+    /client\.confirmStopped is required/,
+  );
+});
+
+test('reset keeps the send gate closed until completion is durably applied', async () => {
+  const applied = deferred();
+  const h = makeHarness({
+    initialize: async raw => {
+      if (raw.id === 2) raw.emit('ready');
+    },
+    markResetApplied: () => applied.promise,
+  });
+  await h.supervisor.start();
+
+  const reset = h.supervisor.reset(22n, async () => {});
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(h.supervisor.snapshot().state, 'ready');
+  assert.equal(h.supervisor.snapshot().ready, true);
+  assert.equal(h.supervisor.snapshot().gateOpen, false);
+
+  applied.resolve(true);
+  assert.equal(await reset, true);
+  assert.equal(h.supervisor.snapshot().gateOpen, true);
 });
