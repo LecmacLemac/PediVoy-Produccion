@@ -180,6 +180,7 @@ export function createGeneralRuntime({
       ownership,
       clientFactory,
       repository,
+      beforeInitialize: async () => !(await takeoverIsBlocked()),
       fatalExit: callFatal,
       onGenerationInvalidated: cancelAuthenticatedFallback,
     });

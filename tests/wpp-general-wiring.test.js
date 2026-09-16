@@ -733,6 +733,68 @@ test('authenticated fallback in flight cannot promote after runtime shutdown', a
   assert.equal(runtime.snapshot().gateOpen, false);
 });
 
+test('marker appearing after acquisition blocks client creation and releases ownership', async () => {
+  const canonical = path.join('/srv/app', '.wwebjs_auth', 'session-server_session_hidro');
+  const marker = `${canonical}.reset-in-progress`;
+  const entries = new Set();
+  let owner = false;
+  let releases = 0;
+  let statusReads = 0;
+  let markerReads = 0;
+  const ownership = {
+    ownerId: 'owner:test',
+    epoch: 7n,
+    get isOwner() { return owner; },
+    async tryAcquire() {
+      owner = true;
+      entries.add(marker);
+      return true;
+    },
+    assertOwned() { return owner; },
+    async heartbeat() { return owner; },
+    async releaseAfterQuiesced(fn) {
+      await fn();
+      owner = false;
+      releases += 1;
+      return true;
+    },
+  };
+  const { FakeClient, clients } = makeClientClass();
+  const runtime = createGeneralRuntime({
+    enabled: true,
+    Client: FakeClient,
+    LocalAuth: FakeLocalAuth,
+    path,
+    cwd: '/srv/app',
+    fs: {
+      promises: {
+        async access(target) {
+          markerReads += 1;
+          if (!entries.has(target)) throw Object.assign(new Error('missing'), { code: 'ENOENT' });
+        },
+      },
+    },
+    repository: makeRepository({
+      getClusterStatus: async () => {
+        statusReads += 1;
+        return { reset_started_seq: 24n, reset_applied_seq: 24n, reset_failed_seq: 0n };
+      },
+    }),
+    ownership,
+    timers: inertTimers,
+    fatalExit: () => {},
+  });
+
+  assert.equal(await runtime.tick(), false);
+  assert.equal(statusReads, 2);
+  assert.equal(markerReads, 2);
+  assert.equal(clients.length, 0);
+  assert.equal(runtime.snapshot().isOwner, false);
+  assert.equal(runtime.snapshot().state, 'standby');
+  assert.equal(releases, 1);
+  runtime.stopTimers();
+});
+
 test('unresolved reset counters block takeover in the pre-marker window', async () => {
   const { FakeClient, clients } = makeClientClass();
   const runtime = createGeneralRuntime({

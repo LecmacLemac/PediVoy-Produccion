@@ -39,6 +39,7 @@ export function createGeneralSupervisor({
   repository,
   fatalExit,
   onGenerationInvalidated = () => {},
+  beforeInitialize = async () => true,
   initializeDeadlineMs = 90000,
   destroyDeadlineMs = 10000,
   shutdownDeadlineMs = 20000,
@@ -57,6 +58,9 @@ export function createGeneralSupervisor({
   if (typeof fatalExit !== 'function') throw new TypeError('fatalExit must be a function');
   if (typeof onGenerationInvalidated !== 'function') {
     throw new TypeError('onGenerationInvalidated must be a function');
+  }
+  if (typeof beforeInitialize !== 'function') {
+    throw new TypeError('beforeInitialize must be a function');
   }
 
   let state = 'standby';
@@ -286,6 +290,21 @@ export function createGeneralSupervisor({
         return false;
       }
       if (acquired !== true) throw notOwnerError('General ownership acquisition was not confirmed');
+      let initializeAllowed;
+      try {
+        initializeAllowed = await beforeInitialize();
+      } catch (error) {
+        const released = await ownership.releaseAfterQuiesced(async () => {});
+        if (released !== true) throw notOwnerError('General ownership release after initialization guard failed');
+        state = 'standby';
+        throw error;
+      }
+      if (initializeAllowed !== true) {
+        const released = await ownership.releaseAfterQuiesced(async () => {});
+        if (released !== true) throw notOwnerError('General ownership release after initialization guard failed');
+        state = 'standby';
+        return false;
+      }
       return initializeFresh();
     });
     startPromise.finally(() => { startPromise = null; }).catch(() => {});
