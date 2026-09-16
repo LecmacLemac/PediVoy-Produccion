@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import pg from 'pg';
+import { claimWppOutboxRows } from '../src/wpp/delivery.js';
 
 const initSql = readFileSync(new URL('../initDb.sql', import.meta.url), 'utf8');
 const migrationStart = initSql.indexOf('CREATE TABLE IF NOT EXISTS wpp_outbox (');
@@ -11,6 +12,31 @@ const migrationEnd = initSql.indexOf('CREATE TABLE IF NOT EXISTS push_subs (', m
 assert.ok(migrationStart >= 0 && migrationEnd > migrationStart, 'initDb.sql must expose the bounded wpp_outbox migration');
 const migrationSql = initSql.slice(migrationStart, migrationEnd);
 const canonicalStatuses = ['pending', 'sending', 'sent', 'error', 'skipped'];
+const futureClaimUntil = '2099-04-05T06:07:08.000Z';
+const expiredClaimUntil = '2000-01-02T03:04:05.000Z';
+
+function assertClaim(row, { owner, epoch, until }) {
+  assert.equal(row.claim_owner, owner);
+  assert.equal(row.claim_epoch, epoch === null ? null : String(epoch));
+  assert.equal(row.claim_until?.toISOString() ?? null, until);
+}
+
+function pgRows(pool) {
+  return async (sql, params) => (await pool.query(sql, params)).rows;
+}
+
+async function claimByMessage(pool, { mensaje, owner, epoch = null, leaseMs = 60_000 }) {
+  const fenced = epoch !== null;
+  return claimWppOutboxRows({
+    query: pgRows(pool),
+    owner,
+    epoch,
+    limit: 1,
+    leaseMs,
+    whereSql: `AND o.mensaje = $${fenced ? 5 : 4}`,
+    whereParams: [mensaje],
+  });
+}
 
 function dockerAvailable() {
   try {
@@ -93,7 +119,7 @@ const options = {
   timeout: 120_000,
 };
 
-test('PostgreSQL 16 legacy outbox migration fails closed and is idempotent', options, async t => {
+test('PostgreSQL 16 legacy outbox migration preserves valid claims, fails closed, and is idempotent', options, async t => {
   const suffix = randomUUID();
   const containerName = `pedivoy-outbox-${suffix}`;
   const password = randomUUID();
@@ -132,18 +158,35 @@ test('PostgreSQL 16 legacy outbox migration fails closed and is idempotent', opt
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         sent_at TIMESTAMPTZ,
         status TEXT DEFAULT 'pending',
-        error TEXT
+        error TEXT,
+        claim_owner TEXT,
+        claim_epoch BIGINT,
+        claim_until TIMESTAMPTZ
       );
-      INSERT INTO wpp_outbox (telefono, mensaje, sent_at, status, error) VALUES
-        ('1', 'null-unsent', NULL, NULL, NULL),
-        ('2', 'unknown-unsent', NULL, 'queued_old', 'legacy detail'),
-        ('3', 'null-sent', NOW(), NULL, NULL),
-        ('4', 'unknown-sent', NOW(), 'delivered_old', NULL),
-        ('5', 'valid-pending', NULL, 'pending', NULL),
-        ('6', 'valid-sent', NOW(), 'sent', 'preserve me'),
-        ('7', 'valid-sending', NOW(), 'sending', 'sending detail'),
-        ('8', 'valid-error', NULL, 'error', 'error detail'),
-        ('9', 'valid-skipped', NULL, 'skipped', 'skip detail');
+      CREATE TABLE empresas (id INTEGER PRIMARY KEY);
+      INSERT INTO empresas (id) VALUES (1);
+      CREATE TABLE wpp_general_control (
+        id BOOLEAN PRIMARY KEY,
+        owner_id TEXT,
+        epoch BIGINT
+      );
+      INSERT INTO wpp_general_control (id, owner_id, epoch)
+      VALUES (TRUE, 'general-current', 41);
+      INSERT INTO wpp_outbox
+        (empresa_id, telefono, mensaje, sent_at, status, error, claim_owner, claim_epoch, claim_until)
+      VALUES
+        (NULL, '1', 'null-unsent', NULL, NULL, NULL, 'invalid-null-owner', 1, '${futureClaimUntil}'),
+        (NULL, '2', 'unknown-unsent', NULL, 'queued_old', 'legacy detail', 'invalid-unknown-owner', 2, '${expiredClaimUntil}'),
+        (NULL, '3', 'null-sent', NOW(), NULL, NULL, 'invalid-null-sent-owner', 3, '${futureClaimUntil}'),
+        (NULL, '4', 'unknown-sent', NOW(), 'delivered_old', NULL, 'invalid-unknown-sent-owner', 4, '${expiredClaimUntil}'),
+        (1, '5', 'pending-future-company', NULL, 'pending', NULL, 'company-legacy', NULL, '${futureClaimUntil}'),
+        (NULL, '6', 'pending-future-general', NULL, 'pending', NULL, 'general-current', 41, '${futureClaimUntil}'),
+        (1, '7', 'pending-expired', NULL, 'pending', NULL, 'expired-legacy', 7, '${expiredClaimUntil}'),
+        (1, '8', 'sending-future', NULL, 'sending', 'sending future detail', 'sending-future-owner', 8, '${futureClaimUntil}'),
+        (1, '9', 'sending-expired', NULL, 'sending', 'sending expired detail', 'sending-expired-owner', 9, '${expiredClaimUntil}'),
+        (NULL, '10', 'valid-sent', NOW(), 'sent', 'preserve me', 'sent-forensic', 10, '${expiredClaimUntil}'),
+        (NULL, '11', 'valid-error', NULL, 'error', 'error detail', 'error-forensic', 11, '${futureClaimUntil}'),
+        (NULL, '12', 'valid-skipped', NULL, 'skipped', 'skip detail', 'skipped-forensic', 12, '${expiredClaimUntil}');
       ALTER TABLE wpp_outbox
         ADD CONSTRAINT wpp_outbox_status_check
         CHECK (status IN ('pending', 'sent')) NOT VALID;
@@ -162,13 +205,41 @@ test('PostgreSQL 16 legacy outbox migration fails closed and is idempotent', opt
       { mensaje: 'unknown-unsent', status: 'error', error: 'legacy detail' },
       { mensaje: 'null-sent', status: 'sent', error: null },
       { mensaje: 'unknown-sent', status: 'sent', error: null },
-      { mensaje: 'valid-pending', status: 'pending', error: null },
+      { mensaje: 'pending-future-company', status: 'pending', error: null },
+      { mensaje: 'pending-future-general', status: 'pending', error: null },
+      { mensaje: 'pending-expired', status: 'pending', error: null },
+      { mensaje: 'sending-future', status: 'sending', error: 'sending future detail' },
+      { mensaje: 'sending-expired', status: 'sending', error: 'sending expired detail' },
       { mensaje: 'valid-sent', status: 'sent', error: 'preserve me' },
-      { mensaje: 'valid-sending', status: 'sending', error: 'sending detail' },
       { mensaje: 'valid-error', status: 'error', error: 'error detail' },
       { mensaje: 'valid-skipped', status: 'skipped', error: 'skip detail' },
     ]);
     assert.ok(firstRows.slice(0, 4).every(row => row.claim_owner === null && row.claim_epoch === null && row.claim_until === null));
+    const canonicalClaims = new Map(firstRows.slice(4).map(row => [row.mensaje, row]));
+    assertClaim(canonicalClaims.get('pending-future-company'), {
+      owner: 'company-legacy', epoch: null, until: futureClaimUntil,
+    });
+    assertClaim(canonicalClaims.get('pending-future-general'), {
+      owner: 'general-current', epoch: 41, until: futureClaimUntil,
+    });
+    assertClaim(canonicalClaims.get('pending-expired'), {
+      owner: 'expired-legacy', epoch: 7, until: expiredClaimUntil,
+    });
+    assertClaim(canonicalClaims.get('sending-future'), {
+      owner: 'sending-future-owner', epoch: 8, until: futureClaimUntil,
+    });
+    assertClaim(canonicalClaims.get('sending-expired'), {
+      owner: 'sending-expired-owner', epoch: 9, until: expiredClaimUntil,
+    });
+    assertClaim(canonicalClaims.get('valid-sent'), {
+      owner: 'sent-forensic', epoch: 10, until: expiredClaimUntil,
+    });
+    assertClaim(canonicalClaims.get('valid-error'), {
+      owner: 'error-forensic', epoch: 11, until: futureClaimUntil,
+    });
+    assertClaim(canonicalClaims.get('valid-skipped'), {
+      owner: 'skipped-forensic', epoch: 12, until: expiredClaimUntil,
+    });
     await assert.rejects(
       pool.query("INSERT INTO wpp_outbox (telefono, mensaje, status) VALUES ('10', 'bad', 'queued_old')"),
       error => error?.code === '23514',
@@ -178,13 +249,47 @@ test('PostgreSQL 16 legacy outbox migration fails closed and is idempotent', opt
       error => error?.code === '23502',
     );
 
+    assert.deepEqual(await claimByMessage(pool, {
+      mensaje: 'pending-future-company', owner: 'company-reclaimer',
+    }), []);
+    assert.deepEqual(await claimByMessage(pool, {
+      mensaje: 'pending-future-general', owner: 'general-current', epoch: 41n,
+    }), []);
+
+    const reclaimStartedAt = Date.now();
+    const reclaimed = await claimByMessage(pool, {
+      mensaje: 'pending-expired', owner: 'expired-reclaimer', leaseMs: 60_000,
+    });
+    assert.equal(reclaimed.length, 1);
+    assert.equal(reclaimed[0].mensaje, 'pending-expired');
+    const reclaimedRow = (await pool.query(`
+      SELECT mensaje, status, claim_owner, claim_epoch, claim_until
+        FROM wpp_outbox WHERE mensaje = 'pending-expired'
+    `)).rows[0];
+    assert.equal(reclaimedRow.status, 'pending');
+    assert.equal(reclaimedRow.claim_owner, 'expired-reclaimer');
+    assert.equal(reclaimedRow.claim_epoch, null);
+    assert.ok(reclaimedRow.claim_until.getTime() >= reclaimStartedAt + 55_000);
+    assert.ok(reclaimedRow.claim_until.getTime() <= Date.now() + 65_000);
+
+    for (const mensaje of ['sending-future', 'sending-expired']) {
+      assert.deepEqual(await claimByMessage(pool, { mensaje, owner: 'sending-reclaimer' }), []);
+    }
+
+    const canonicalBeforeSecondMigration = (await pool.query(`
+      SELECT id, mensaje, sent_at, status, error, claim_owner, claim_epoch, claim_until
+        FROM wpp_outbox
+       WHERE status IN ('pending', 'sending', 'sent', 'error', 'skipped')
+       ORDER BY id
+    `)).rows;
+
     await pool.query(migrationSql);
     await assertCanonicalContract(pool);
     const secondRows = (await pool.query(`
       SELECT id, mensaje, sent_at, status, error, claim_owner, claim_epoch, claim_until
         FROM wpp_outbox ORDER BY id
     `)).rows;
-    assert.deepEqual(secondRows, firstRows);
+    assert.deepEqual(secondRows, canonicalBeforeSecondMigration);
 
     await pool.query('DROP TABLE wpp_outbox');
     await pool.query(migrationSql);
