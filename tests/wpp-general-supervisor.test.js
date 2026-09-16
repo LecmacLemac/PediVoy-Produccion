@@ -1378,9 +1378,37 @@ test('rejected reset persistence fences trigger fatal lease-loss cleanup', async
   }
 });
 
+test('a failed session deletion can retry the same reset sequence after confirmed teardown', async () => {
+  const failures = [];
+  let deletionAttempts = 0;
+  const h = makeHarness({
+    destroy: async raw => { h.calls.push(`destroy:${raw.id}`); },
+    confirmStopped: async raw => { h.calls.push(`stopped:${raw.id}`); return true; },
+    markResetFailed: async values => { failures.push(values); return true; },
+  });
+  await h.supervisor.start();
+
+  await assert.rejects(h.supervisor.reset(23n, async () => {
+    deletionAttempts += 1;
+    throw new Error('quarantine rejected');
+  }), /quarantine rejected/);
+
+  assert.equal(failures.length, 1);
+  assert.equal(failures[0].sequence, 23n);
+  assert.match(failures[0].error.message, /quarantine rejected/);
+  assert.equal(await h.supervisor.reset(23n, async () => { deletionAttempts += 1; }), true);
+  assert.equal(deletionAttempts, 2);
+  assert.equal(h.clients.length, 2);
+  assert.equal(h.clients[1].id, 2);
+  assert.equal(h.calls.filter(call => call === 'reset-start:23').length, 2);
+  assert.equal(h.calls.filter(call => call === 'reset-applied:23').length, 1);
+});
+
 test('a terminal reset failure cannot be overwritten by late client events', async () => {
+  const invalidated = [];
   const h = makeHarness({
     destroy: async () => { throw new Error('destroy rejected'); },
+    onGenerationInvalidated: generation => invalidated.push(generation),
   });
   await h.supervisor.start();
 
@@ -1392,6 +1420,7 @@ test('a terminal reset failure cannot be overwritten by late client events', asy
   assert.equal(h.supervisor.snapshot().state, 'fenced');
   assert.equal(h.supervisor.snapshot().ready, false);
   assert.equal(h.supervisor.snapshot().gateOpen, false);
+  assert.deepEqual(invalidated, [1]);
   assert.equal(h.calls.filter(call => ['state:ready', 'state:authenticated'].includes(call)).length, 0);
 });
 

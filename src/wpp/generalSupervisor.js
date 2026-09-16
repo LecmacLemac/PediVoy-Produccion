@@ -82,6 +82,7 @@ export function createGeneralSupervisor({
   let gateHolds = 0;
   let eventRevision = 0;
   let terminalFenceGeneration = null;
+  let lastInvalidatedGeneration = null;
 
   const snapshot = () => Object.freeze({
     state,
@@ -101,11 +102,26 @@ export function createGeneralSupervisor({
     gateOpen = false;
   }
 
+  function invalidateGeneration(invalidatedGeneration) {
+    if (lastInvalidatedGeneration === invalidatedGeneration) return;
+    lastInvalidatedGeneration = invalidatedGeneration;
+    try {
+      onGenerationInvalidated(invalidatedGeneration);
+    } catch {}
+  }
+
   function invalidateCurrentGeneration() {
     if (!current) return;
-    try {
-      onGenerationInvalidated(current.generation);
-    } catch {}
+    invalidateGeneration(current.generation);
+  }
+
+  function latchTerminalGeneration(error) {
+    terminalFenceGeneration = generation;
+    eventRevision += 1;
+    state = 'fenced';
+    closeGate();
+    lastError = error;
+    invalidateGeneration(generation);
   }
 
   async function assertOwner() {
@@ -258,8 +274,7 @@ export function createGeneralSupervisor({
       await deadline(current.initialize(), initializeDeadlineMs, 'General client initialize');
       return true;
     } catch (error) {
-      terminalFenceGeneration = generation;
-      closeGate();
+      latchTerminalGeneration(error);
       try {
         await stopCurrent();
       } catch (cleanupError) {
@@ -398,7 +413,7 @@ export function createGeneralSupervisor({
         gateOpen = ready && gateHolds === 0;
         return restarted;
       } catch (error) {
-        terminalFenceGeneration = generation;
+        latchTerminalGeneration(error);
         await persistTerminalFence(reason, error);
         if (error?.code === 'WPP_NOT_OWNER') leaseLost(error);
         throw error;
@@ -433,9 +448,9 @@ export function createGeneralSupervisor({
         gateOpen = ready && gateHolds === 0;
         return true;
       } catch (error) {
-        terminalFenceGeneration = generation;
-        closeGate();
-        state = 'fenced';
+        const terminalFailure = terminalFenceGeneration === generation || current !== null;
+        if (terminalFailure) latchTerminalGeneration(error);
+        else closeGate();
         lastError = error;
         if (error?.timedOut === true) leaseLost(error);
         if (started && error?.resetFailurePersistenceAttempted !== true) {
@@ -454,6 +469,7 @@ export function createGeneralSupervisor({
           }
         }
         if (error?.code === 'WPP_NOT_OWNER') leaseLost(error);
+        if (!terminalFailure && !ownershipLost) gateHolds -= 1;
         throw error;
       }
     });
