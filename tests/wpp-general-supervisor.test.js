@@ -266,6 +266,24 @@ test('restart state-fence rejection triggers fatal lease-loss cleanup', async ()
   assert.equal(h.calls.includes('release-begin'), false);
 });
 
+test('a terminal restart failure cannot be overwritten by late client events', async () => {
+  const h = makeHarness({
+    destroy: async () => { throw new Error('destroy rejected'); },
+  });
+  await h.supervisor.start();
+
+  await assert.rejects(h.supervisor.restart('manual'), /destroy rejected/);
+  h.clients[0].emit('ready');
+  h.clients[0].emit('qr', 'late-code');
+  h.clients[0].emit('authenticated');
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(h.supervisor.snapshot().state, 'fenced');
+  assert.equal(h.supervisor.snapshot().ready, false);
+  assert.equal(h.supervisor.snapshot().gateOpen, false);
+  assert.equal(h.calls.filter(call => ['state:ready', 'state:awaiting_qr', 'state:authenticated'].includes(call)).length, 0);
+});
+
 test('failed persistence of a terminal restart fence triggers fatal lease-loss handling', async () => {
   const lifecycleError = new Error('destroy rejected');
   const h = makeHarness({
@@ -1006,6 +1024,23 @@ test('initialize failure or timeout closes the gate and cleans the failed client
   }
 });
 
+test('a terminal initialize failure cannot be overwritten by late client events', async () => {
+  const h = makeHarness({
+    initialize: async () => { throw new Error('initialize rejected'); },
+    destroy: async () => { throw new Error('cleanup rejected'); },
+  });
+
+  await assert.rejects(h.supervisor.start(), /initialize rejected/);
+  h.clients[0].emit('ready');
+  h.clients[0].emit('qr', 'late-code');
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(h.supervisor.snapshot().state, 'fenced');
+  assert.equal(h.supervisor.snapshot().ready, false);
+  assert.equal(h.supervisor.snapshot().gateOpen, false);
+  assert.equal(h.calls.filter(call => ['state:ready', 'state:awaiting_qr'].includes(call)).length, 0);
+});
+
 test('failed persistence of a terminal initialize fence triggers fatal lease-loss handling', async () => {
   const lifecycleError = new Error('initialize rejected');
   const h = makeHarness({
@@ -1341,6 +1376,23 @@ test('rejected reset persistence fences trigger fatal lease-loss cleanup', async
       assert.equal(h.calls.includes('release-begin'), false);
     });
   }
+});
+
+test('a terminal reset failure cannot be overwritten by late client events', async () => {
+  const h = makeHarness({
+    destroy: async () => { throw new Error('destroy rejected'); },
+  });
+  await h.supervisor.start();
+
+  await assert.rejects(h.supervisor.reset(23n, async () => {}), /destroy rejected/);
+  h.clients[0].emit('ready');
+  h.clients[0].emit('authenticated');
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(h.supervisor.snapshot().state, 'fenced');
+  assert.equal(h.supervisor.snapshot().ready, false);
+  assert.equal(h.supervisor.snapshot().gateOpen, false);
+  assert.equal(h.calls.filter(call => ['state:ready', 'state:authenticated'].includes(call)).length, 0);
 });
 
 test('failed persistence of a terminal reset failure triggers fatal lease-loss handling', async () => {

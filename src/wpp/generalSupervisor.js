@@ -163,6 +163,7 @@ export function createGeneralSupervisor({
     enqueue(async () => {
       const terminalEvent = operation === 'profile_lock'
         && terminalFenceGeneration === eventGeneration;
+      if (!terminalEvent && terminalFenceGeneration === eventGeneration) return false;
       if (!eventClient || (!terminalEvent && current !== eventClient)
         || (terminalEvent && current !== null && current !== eventClient) || generation !== eventGeneration
         || eventClient.generation !== eventGeneration || ownership.epoch !== eventEpoch
@@ -257,6 +258,7 @@ export function createGeneralSupervisor({
       await deadline(current.initialize(), initializeDeadlineMs, 'General client initialize');
       return true;
     } catch (error) {
+      terminalFenceGeneration = generation;
       closeGate();
       try {
         await stopCurrent();
@@ -396,6 +398,7 @@ export function createGeneralSupervisor({
         gateOpen = ready && gateHolds === 0;
         return restarted;
       } catch (error) {
+        terminalFenceGeneration = generation;
         await persistTerminalFence(reason, error);
         if (error?.code === 'WPP_NOT_OWNER') leaseLost(error);
         throw error;
@@ -430,6 +433,7 @@ export function createGeneralSupervisor({
         gateOpen = ready && gateHolds === 0;
         return true;
       } catch (error) {
+        terminalFenceGeneration = generation;
         closeGate();
         state = 'fenced';
         lastError = error;
