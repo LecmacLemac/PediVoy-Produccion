@@ -323,6 +323,114 @@ test('a profile-lock event wins a race with an already queued restart', async ()
   assert.equal(h.calls.filter(call => call === 'state:fenced').length, 1);
 });
 
+test('a profile-lock event wins a race with an already queued reset without deleting the profile', async () => {
+  const h = makeHarness({
+    destroy: async raw => { h.calls.push(`destroy:${raw.id}`); },
+    confirmStopped: async raw => { h.calls.push(`stopped:${raw.id}`); return true; },
+  });
+  await h.supervisor.start();
+  const deletions = [];
+
+  const reset = h.supervisor.reset(10n, async () => {
+    deletions.push('deleted');
+    h.calls.push('delete');
+  });
+  h.clients[0].emit('error', new Error('Chromium profile lock'));
+
+  assert.equal(await reset, false);
+  await new Promise(resolve => setImmediate(resolve));
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.deepEqual(deletions, []);
+  assert.equal(h.supervisor.snapshot().state, 'fenced');
+  assert.equal(h.supervisor.snapshot().generation, 1);
+  assert.equal(h.supervisor.snapshot().gateOpen, false);
+  assert.equal(h.clients.length, 1);
+  assert.deepEqual(h.calls.filter(call => call.startsWith('destroy:')), []);
+  assert.equal(h.calls.filter(call => call.startsWith('reset-')).length, 0);
+  assert.equal(h.calls.filter(call => call === 'state:fenced').length, 1);
+});
+
+test('a profile-lock event aborts a reset awaiting state publication before profile deletion', async () => {
+  const resettingPublished = deferred();
+  const h = makeHarness({
+    updateOwned: values => values.state === 'resetting' ? resettingPublished.promise : true,
+    destroy: async raw => { h.calls.push(`destroy:${raw.id}`); },
+    confirmStopped: async raw => { h.calls.push(`stopped:${raw.id}`); return true; },
+  });
+  await h.supervisor.start();
+  const deletions = [];
+
+  const reset = h.supervisor.reset(11n, async () => deletions.push('deleted'));
+  await new Promise(resolve => setImmediate(resolve));
+  h.clients[0].emit('error', new Error('Chromium profile lock'));
+  resettingPublished.resolve(true);
+
+  assert.equal(await reset, false);
+  await new Promise(resolve => setImmediate(resolve));
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.deepEqual(deletions, []);
+  assert.equal(h.supervisor.snapshot().state, 'fenced');
+  assert.equal(h.supervisor.snapshot().generation, 1);
+  assert.deepEqual(h.calls.filter(call => call.startsWith('destroy:')), []);
+  assert.equal(h.calls.filter(call => call.startsWith('reset-start:')).length, 0);
+});
+
+test('a profile-lock event aborts a reset after its start fence without deleting the profile', async () => {
+  const resetStarted = deferred();
+  const h = makeHarness({
+    markResetStarted: () => resetStarted.promise,
+    destroy: async raw => { h.calls.push(`destroy:${raw.id}`); },
+  });
+  await h.supervisor.start();
+  const deletions = [];
+
+  const reset = h.supervisor.reset(12n, async () => deletions.push('deleted'));
+  await new Promise(resolve => setImmediate(resolve));
+  h.clients[0].emit('error', new Error('Chromium profile lock'));
+  resetStarted.resolve(true);
+
+  assert.equal(await reset, false);
+  await new Promise(resolve => setImmediate(resolve));
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.deepEqual(deletions, []);
+  assert.equal(h.supervisor.snapshot().state, 'fenced');
+  assert.equal(h.supervisor.snapshot().generation, 1);
+  assert.deepEqual(h.calls.filter(call => call.startsWith('destroy:')), []);
+  assert.equal(h.calls.filter(call => call === 'reset-failed:12').length, 1);
+});
+
+test('a profile-lock event during reset teardown prevents profile deletion and replacement', async () => {
+  const destroying = deferred();
+  const h = makeHarness({
+    destroy: async raw => {
+      h.calls.push(`destroy:${raw.id}`);
+      await destroying.promise;
+    },
+    confirmStopped: async raw => { h.calls.push(`stopped:${raw.id}`); return true; },
+  });
+  await h.supervisor.start();
+  const deletions = [];
+
+  const reset = h.supervisor.reset(13n, async () => deletions.push('deleted'));
+  await new Promise(resolve => setImmediate(resolve));
+  h.clients[0].emit('error', new Error('Chromium profile lock'));
+  destroying.resolve();
+
+  assert.equal(await reset, false);
+  await new Promise(resolve => setImmediate(resolve));
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.deepEqual(deletions, []);
+  assert.equal(h.supervisor.snapshot().state, 'fenced');
+  assert.equal(h.supervisor.snapshot().generation, 1);
+  assert.equal(h.clients.length, 1);
+  assert.deepEqual(h.calls.filter(call => call.startsWith('destroy:')), ['destroy:1']);
+  assert.equal(h.calls.filter(call => call === 'reset-failed:13').length, 1);
+});
+
 test('a profile-lock event aborts a restart already awaiting state publication', async () => {
   const restartingPublished = deferred();
   const h = makeHarness({

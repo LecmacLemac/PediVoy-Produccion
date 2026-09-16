@@ -268,6 +268,28 @@ export function createGeneralSupervisor({
     return true;
   }
 
+  async function abortResetForTerminalFence({ started, sequence }) {
+    if (terminalFenceGeneration !== generation) return false;
+    if (started) {
+      try {
+        const persisted = await repository.markResetFailed({
+          ownerId: ownership.ownerId,
+          epoch: ownership.epoch,
+          sequence,
+          error: lastError,
+        });
+        if (persisted !== true) throw notOwnerError('General reset failure fence rejected persistence');
+      } catch (persistenceError) {
+        persistenceError.resetFailurePersistenceAttempted = true;
+        leaseLost(preserveCause(persistenceError, lastError));
+        throw persistenceError;
+      }
+    }
+    gateHolds -= 1;
+    closeGate();
+    return true;
+  }
+
   function restart(reason = 'restart', { expectedGeneration = null } = {}) {
     gateHolds += 1;
     closeGate();
@@ -302,14 +324,19 @@ export function createGeneralSupervisor({
     closeGate();
     return enqueue(async () => {
       let started = false;
+      if (await abortResetForTerminalFence({ started, sequence })) return false;
       try {
         await assertOwner();
         await publish('resetting', 'reset');
+        if (await abortResetForTerminalFence({ started, sequence })) return false;
         started = await repository.markResetStarted({ ownerId: ownership.ownerId, epoch: ownership.epoch, sequence });
         if (started !== true) throw notOwnerError('General reset fence rejected start');
+        if (await abortResetForTerminalFence({ started, sequence })) return false;
         await stopCurrent();
+        if (await abortResetForTerminalFence({ started, sequence })) return false;
         const stillOwned = await Promise.resolve(ownership.assertOwned());
         if (stillOwned !== true) throw notOwnerError('General reset ownership revalidation failed');
+        if (await abortResetForTerminalFence({ started, sequence })) return false;
         await deleteSessionFn();
         await initializeFresh();
         const applied = await repository.markResetApplied({ ownerId: ownership.ownerId, epoch: ownership.epoch, sequence });
@@ -321,7 +348,7 @@ export function createGeneralSupervisor({
         closeGate();
         state = 'fenced';
         lastError = error;
-        if (started) {
+        if (started && error?.resetFailurePersistenceAttempted !== true) {
           try {
             const persisted = await repository.markResetFailed({
               ownerId: ownership.ownerId,
