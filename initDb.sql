@@ -1323,32 +1323,42 @@ CREATE TABLE IF NOT EXISTS wpp_outbox (
     CHECK (status IN ('pending', 'sending', 'sent', 'error', 'skipped'))
 );
 
+BEGIN;
+
+LOCK TABLE wpp_outbox IN ACCESS EXCLUSIVE MODE;
+
 ALTER TABLE wpp_outbox
   ADD COLUMN IF NOT EXISTS claim_owner TEXT,
   ADD COLUMN IF NOT EXISTS claim_epoch BIGINT,
   ADD COLUMN IF NOT EXISTS claim_until TIMESTAMPTZ;
 
-ALTER TABLE wpp_outbox
-  ALTER COLUMN status SET DEFAULT 'pending';
+UPDATE wpp_outbox
+SET status = CASE WHEN sent_at IS NOT NULL THEN 'sent' ELSE 'error' END,
+    error = CASE
+      WHEN sent_at IS NULL THEN COALESCE(error, 'legacy_status_requires_manual_review')
+      ELSE error
+    END,
+    claim_owner = NULL,
+    claim_epoch = NULL,
+    claim_until = NULL
+WHERE status IS NULL
+   OR status NOT IN ('pending', 'sending', 'sent', 'error', 'skipped');
 
-DO $wpp_outbox_status$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1
-    FROM pg_constraint
-    WHERE conrelid = 'wpp_outbox'::regclass
-      AND conname = 'wpp_outbox_status_check'
-  ) THEN
-    ALTER TABLE wpp_outbox
-      ADD CONSTRAINT wpp_outbox_status_check
-      CHECK (status IN ('pending', 'sending', 'sent', 'error', 'skipped')) NOT VALID;
-  END IF;
-END
-$wpp_outbox_status$;
+ALTER TABLE wpp_outbox
+  ALTER COLUMN status SET DEFAULT 'pending',
+  ALTER COLUMN status SET NOT NULL,
+  DROP CONSTRAINT IF EXISTS wpp_outbox_status_check,
+  ADD CONSTRAINT wpp_outbox_status_check
+    CHECK (status IN ('pending', 'sending', 'sent', 'error', 'skipped')) NOT VALID;
+
+ALTER TABLE wpp_outbox
+  VALIDATE CONSTRAINT wpp_outbox_status_check;
 
 CREATE INDEX IF NOT EXISTS wpp_outbox_pending_claim_idx
   ON wpp_outbox (created_at, id)
   WHERE status = 'pending';
+
+COMMIT;
 
 CREATE TABLE IF NOT EXISTS push_subs (
   id         SERIAL PRIMARY KEY,
