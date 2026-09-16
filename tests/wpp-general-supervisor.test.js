@@ -173,6 +173,60 @@ test('failed or hung destroy fences reset without deleting, releasing ownership,
   }
 });
 
+test('restart revalidates ownership immediately before creating its successor', async () => {
+  let checks = 0;
+  const h = makeHarness({
+    assertOwned: async () => {
+      checks += 1;
+      return checks < 3;
+    },
+    destroy: async raw => { h.calls.push(`destroy:${raw.id}`); },
+    confirmStopped: async raw => { h.calls.push(`stopped:${raw.id}`); return true; },
+  });
+  await h.supervisor.start();
+
+  await assert.rejects(h.supervisor.restart('manual'), { code: 'WPP_NOT_OWNER' });
+
+  assert.equal(checks, 3);
+  assert.equal(h.clients.length, 1);
+  assert.equal(h.supervisor.snapshot().gateOpen, false);
+});
+
+test('restart state-fence rejection triggers fatal lease-loss cleanup', async () => {
+  const h = makeHarness({
+    updateOwned: async values => values.state !== 'restarting',
+    destroy: async raw => { h.calls.push(`destroy:${raw.id}`); },
+    confirmStopped: async raw => { h.calls.push(`stopped:${raw.id}`); return true; },
+  });
+  await h.supervisor.start();
+
+  await assert.rejects(h.supervisor.restart('manual'), { code: 'WPP_NOT_OWNER' });
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(h.supervisor.snapshot().state, 'fenced');
+  assert.equal(h.supervisor.snapshot().gateOpen, false);
+  assert.equal(h.calls.filter(call => call === 'destroy:1').length, 1);
+  assert.equal(h.fatalErrors.length, 1);
+  assert.equal(h.calls.includes('release-begin'), false);
+});
+
+test('restart keeps the send gate closed while it waits behind initialization', async () => {
+  const initial = deferred();
+  const h = makeHarness({ initialize: raw => raw.id === 1 ? initial.promise : Promise.resolve() });
+  const start = h.supervisor.start();
+  await new Promise(resolve => setImmediate(resolve));
+
+  const restart = h.supervisor.restart('manual');
+  h.clients[0].emit('ready');
+
+  assert.equal(h.supervisor.snapshot().ready, true);
+  assert.equal(h.supervisor.snapshot().gateOpen, false);
+
+  initial.resolve();
+  await start;
+  await restart;
+});
+
 test('events from stale generations cannot reopen the gate or enqueue another restart', async () => {
   const secondInit = deferred();
   const h = makeHarness({
@@ -413,7 +467,7 @@ test('client factory creates distinct raw clients and generation-tags forwarded 
 test('reset revalidates ownership immediately before deletion', async () => {
   let checks = 0;
   const h = makeHarness({
-    assertOwned: async () => { checks += 1; return checks === 1; },
+    assertOwned: async () => { checks += 1; return checks < 3; },
   });
   await h.supervisor.start();
   const deletions = [];
@@ -450,7 +504,7 @@ test('snapshot is immutable and exposes the documented ownership and gate fields
   assert.equal(value.lastError, null);
 });
 
-test('initialize publication failure cleans the fresh client and leaves the gate closed', async () => {
+test('initialize publication fence rejection happens before client creation', async () => {
   const h = makeHarness({
     updateOwned: async values => values.state !== 'initializing',
     destroy: async raw => { h.calls.push(`destroy:${raw.id}`); },
@@ -458,8 +512,9 @@ test('initialize publication failure cleans the fresh client and leaves the gate
   });
 
   await assert.rejects(h.supervisor.start(), { code: 'WPP_NOT_OWNER' });
-  assert.equal(h.calls.filter(call => call === 'destroy:1').length, 1);
-  assert.equal(h.calls.filter(call => call === 'stopped:1').length, 1);
+  assert.equal(h.clients.length, 0);
+  assert.equal(h.calls.filter(call => call === 'destroy:1').length, 0);
+  assert.equal(h.calls.filter(call => call === 'stopped:1').length, 0);
   assert.equal(h.supervisor.snapshot().gateOpen, false);
   assert.equal(h.supervisor.snapshot().state, 'fenced');
 });
@@ -536,7 +591,7 @@ test('ownership loss between assertion and state publication cannot create a suc
   const h = makeHarness({
     assertOwned: async ownership => {
       assertions += 1;
-      if (assertions === 1) ownership.isOwner = false;
+      if (assertions === 2) ownership.isOwner = false;
       return true;
     },
     destroy: async raw => { h.calls.push(`destroy:${raw.id}`); },
@@ -544,9 +599,11 @@ test('ownership loss between assertion and state publication cannot create a suc
   await h.supervisor.start();
 
   await assert.rejects(h.supervisor.restart('race'), { code: 'WPP_NOT_OWNER' });
+  await new Promise(resolve => setImmediate(resolve));
 
   assert.equal(h.clients.length, 1);
-  assert.equal(h.calls.includes('destroy:1'), false);
+  assert.equal(h.calls.filter(call => call === 'destroy:1').length, 1);
+  assert.equal(h.fatalErrors.length, 1);
   assert.equal(h.supervisor.snapshot().gateOpen, false);
 });
 

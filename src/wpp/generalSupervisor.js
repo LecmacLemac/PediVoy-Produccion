@@ -160,10 +160,11 @@ export function createGeneralSupervisor({
   }
 
   async function initializeFresh() {
-    generation += 1;
-    current = clientFactory.create({ generation, eventSink });
     try {
+      await assertOwner();
       await publish('initializing', 'initialize');
+      generation += 1;
+      current = clientFactory.create({ generation, eventSink });
       await deadline(current.initialize(), initializeDeadlineMs, 'General client initialize');
       return true;
     } catch (error) {
@@ -174,6 +175,7 @@ export function createGeneralSupervisor({
         callFatal(cleanupError);
       }
       await publish('fenced', 'initialize_failed', error).catch(() => { state = 'fenced'; lastError = error; });
+      if (error?.code === 'WPP_NOT_OWNER') leaseLost(error);
       throw error;
     }
   }
@@ -208,15 +210,20 @@ export function createGeneralSupervisor({
   }
 
   function restart(reason = 'restart') {
+    gateHolds += 1;
     closeGate();
     return enqueue(async () => {
-      await assertOwner();
-      await publish('restarting', reason);
       try {
+        await assertOwner();
+        await publish('restarting', reason);
         await stopCurrent();
-        return await initializeFresh();
+        const restarted = await initializeFresh();
+        gateHolds -= 1;
+        gateOpen = ready && gateHolds === 0;
+        return restarted;
       } catch (error) {
         await publish('fenced', reason, error).catch(() => { state = 'fenced'; lastError = error; });
+        if (error?.code === 'WPP_NOT_OWNER') leaseLost(error);
         throw error;
       }
     });
