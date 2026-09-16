@@ -318,21 +318,22 @@ export function createGeneralRuntime({
   }
 
   async function boundedDeleteSession() {
-    if (typeof fs?.promises?.rename !== 'function' || typeof fs?.promises?.rm !== 'function') {
-      throw new TypeError('fs.promises.rename and fs.promises.rm are required for General session reset');
+    if (typeof fs?.renameSync !== 'function' || typeof fs?.promises?.rm !== 'function') {
+      throw new TypeError('fs.renameSync and fs.promises.rm are required for General session reset');
     }
     const canonical = getWppSessionDir({ path, cwd, sessionId: WPP_SESSION_ID });
     const quarantine = `${canonical}.reset-${uuid()}`;
-    const deletion = (async () => {
-      try {
-        await fs.promises.rename(canonical, quarantine);
-      } catch (error) {
-        if (error?.code === 'ENOENT') return true;
-        throw error;
-      }
-      await fs.promises.rm(quarantine, { recursive: true, force: true });
-      return true;
-    })();
+    try {
+      // The canonical name must be detached atomically before a deadline can
+      // return control. An uncancellable async rename could otherwise wake up
+      // after takeover and move the successor's session instead.
+      fs.renameSync(canonical, quarantine);
+    } catch (error) {
+      if (error?.code === 'ENOENT') return true;
+      throw error;
+    }
+    const deletion = Promise.resolve(fs.promises.rm(quarantine, { recursive: true, force: true }))
+      .then(() => true);
     deletion.catch(() => {});
     let deadlineTimer;
     const timeout = new Promise((_, reject) => {

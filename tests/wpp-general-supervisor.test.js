@@ -16,7 +16,7 @@ function makeHarness({
   initialize, destroy, confirmStopped, forceStop, tryAcquire = async () => true,
   heartbeat, assertOwned, updateOwned, initializeDeadlineMs = 30, destroyDeadlineMs = 20,
   shutdownDeadlineMs = 40, markResetStarted, markResetApplied, markResetFailed,
-  releaseResult = () => true,
+  releaseResult = () => true, onGenerationInvalidated,
 } = {}) {
   const calls = [];
   const clients = [];
@@ -89,6 +89,7 @@ function makeHarness({
     clientFactory,
     repository,
     fatalExit: error => fatalErrors.push(error),
+    onGenerationInvalidated,
     initializeDeadlineMs,
     destroyDeadlineMs,
     shutdownDeadlineMs,
@@ -320,6 +321,29 @@ test('an event-triggered restart is fenced to the generation that emitted it', a
   assert.equal(h.supervisor.snapshot().generation, 2);
   assert.equal(h.clients.length, 2);
   assert.deepEqual(h.calls.filter(call => call.startsWith('destroy:')), ['destroy:1']);
+});
+
+test('a stale generation restart cannot invalidate or close the ready successor', async () => {
+  const invalidated = [];
+  const h = makeHarness({
+    onGenerationInvalidated: eventGeneration => invalidated.push(eventGeneration),
+  });
+  await h.supervisor.start();
+  await h.supervisor.restart('manual');
+  h.clients[1].emit('ready');
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(h.supervisor.snapshot().generation, 2);
+  assert.equal(h.supervisor.snapshot().gateOpen, true);
+  assert.deepEqual(invalidated, [1]);
+
+  assert.equal(await h.supervisor.restart('stale', { expectedGeneration: 1 }), false);
+
+  assert.equal(h.supervisor.snapshot().generation, 2);
+  assert.equal(h.supervisor.snapshot().ready, true);
+  assert.equal(h.supervisor.snapshot().gateOpen, true);
+  assert.deepEqual(invalidated, [1]);
+  assert.equal(h.clients.length, 2);
 });
 
 test('a profile-lock event wins a race with an already queued restart', async () => {

@@ -747,8 +747,8 @@ test('pending reset quarantines and deletes only the fixed General session direc
     cwd: '/srv/app',
     uuid: () => 'reset-uuid',
     fs: {
+      renameSync: (source, target) => { renames.push([source, target]); },
       promises: {
-        rename: async (source, target) => { renames.push([source, target]); },
         rm: async (target, options) => { removals.push([target, options]); },
       },
     },
@@ -791,8 +791,8 @@ test('missing canonical session is a successful reset without recursive removal'
     enabled: true,
     path,
     fs: {
+      renameSync: () => { throw Object.assign(new Error('missing'), { code: 'ENOENT' }); },
       promises: {
-        rename: async () => { throw Object.assign(new Error('missing'), { code: 'ENOENT' }); },
         rm: async () => { removals += 1; },
       },
     },
@@ -842,8 +842,8 @@ test('failed reset sequence is attempted again on the next maintenance tick', as
   runtime.stopTimers();
 });
 
-test('session deletion deadline also bounds a hung quarantine rename', async () => {
-  const rename = deferred();
+test('session deletion deadline bounds removal after synchronous quarantine', async () => {
+  const removal = deferred();
   const scheduled = [];
   const failures = [];
   const supervisor = {
@@ -864,9 +864,9 @@ test('session deletion deadline also bounds a hung quarantine rename', async () 
     enabled: true,
     path,
     fs: {
+      renameSync: () => {},
       promises: {
-        rename: () => rename.promise,
-        rm: async () => {},
+        rm: () => removal.promise,
       },
     },
     repository: makeRepository({
@@ -890,7 +890,76 @@ test('session deletion deadline also bounds a hung quarantine rename', async () 
 
   assert.equal(failures.length, 1);
   assert.equal(failures[0].timedOut, true);
-  rename.resolve();
+  removal.resolve();
+  runtime.stopTimers();
+});
+
+test('a timed-out reset cannot rename a successor session when quarantine completes late', async () => {
+  const renameStarted = deferred();
+  const renameRelease = deferred();
+  const removalStarted = deferred();
+  const removalRelease = deferred();
+  const scheduled = [];
+  const canonical = path.join('/srv/app', '.wwebjs_auth', 'session-server_session_hidro');
+  const quarantine = `${canonical}.reset-late-rename`;
+  const entries = new Map([[canonical, 'original']]);
+  const supervisor = {
+    snapshot: () => ({ isOwner: true, ownerId: 'owner:test', epoch: 12n, state: 'ready', ready: true, gateOpen: true }),
+    heartbeatOnce: async () => true,
+    start: async () => true,
+    withActiveClient: async () => false,
+    reset: async (_sequence, deleteSessionFn) => deleteSessionFn(),
+  };
+  const move = (source, target) => {
+    if (!entries.has(source)) throw Object.assign(new Error('missing'), { code: 'ENOENT' });
+    entries.set(target, entries.get(source));
+    entries.delete(source);
+  };
+  const runtime = createGeneralRuntime({
+    enabled: true,
+    path,
+    cwd: '/srv/app',
+    uuid: () => 'late-rename',
+    fs: {
+      renameSync: move,
+      promises: {
+        rename: async (source, target) => {
+          renameStarted.resolve();
+          await renameRelease.promise;
+          move(source, target);
+        },
+        rm: async target => {
+          removalStarted.resolve();
+          await removalRelease.promise;
+          entries.delete(target);
+        },
+      },
+    },
+    repository: makeRepository({
+      loadPendingReset: async () => ({ reset_requested_seq: 11n, reset_applied_seq: 10n }),
+    }),
+    supervisor,
+    logger: { error() {}, warn() {} },
+    timers: {
+      setTimeout(callback, milliseconds) { scheduled.push({ callback, milliseconds }); return scheduled.length; },
+      clearTimeout() {},
+    },
+  });
+
+  await runtime.tick();
+  await Promise.race([renameStarted.promise, removalStarted.promise]);
+  assert.equal(scheduled[0]?.milliseconds, 30000);
+  scheduled[0].callback();
+  await new Promise(resolve => setImmediate(resolve));
+
+  entries.set(canonical, 'successor');
+  renameRelease.resolve();
+  removalRelease.resolve();
+  await new Promise(resolve => setImmediate(resolve));
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(entries.get(canonical), 'successor');
+  assert.equal(entries.has(quarantine), false);
   runtime.stopTimers();
 });
 
@@ -916,8 +985,8 @@ test('session deletion rejects at its injected 30 second deadline instead of ass
     enabled: true,
     path,
     fs: {
+      renameSync: () => {},
       promises: {
-        rename: async () => {},
         rm: () => deletion.promise,
       },
     },
@@ -966,13 +1035,13 @@ test('late timed-out removal cannot delete a successor canonical session', async
     cwd: '/srv/app',
     uuid: () => 'late-rm',
     fs: {
+      renameSync: (source, target) => {
+        assert.equal(source, canonical);
+        assert.equal(target, quarantine);
+        entries.delete(source);
+        entries.add(target);
+      },
       promises: {
-        rename: async (source, target) => {
-          assert.equal(source, canonical);
-          assert.equal(target, quarantine);
-          entries.delete(source);
-          entries.add(target);
-        },
         rm: async target => {
           assert.equal(target, quarantine);
           rmStarted.resolve();

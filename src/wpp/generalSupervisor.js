@@ -324,6 +324,9 @@ export function createGeneralSupervisor({
   }
 
   function restart(reason = 'restart', { expectedGeneration = null } = {}) {
+    if (expectedGeneration !== null && generation !== expectedGeneration) {
+      return Promise.resolve(false);
+    }
     invalidateCurrentGeneration();
     gateHolds += 1;
     closeGate();
