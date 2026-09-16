@@ -40,6 +40,15 @@ function localSnapshot(supervisor, state) {
   };
 }
 
+function serializeResetSequence(sequence) {
+  const validBigInt = typeof sequence === 'bigint' && sequence >= 0n;
+  const validNumber = typeof sequence === 'number'
+    && Number.isSafeInteger(sequence)
+    && sequence >= 0;
+  if (!validBigInt && !validNumber) throw new TypeError('Invalid reset sequence');
+  return String(sequence);
+}
+
 export function registerWppRoutes(app, deps) {
   const {
     ENABLE_WPP,
@@ -145,7 +154,7 @@ export function registerWppRoutes(app, deps) {
       if (sequence === null) {
         return res.status(202).json({ ok: true, skipped: true, reason: 'cooldown' });
       }
-      return res.status(202).json({ ok: true, sequence: String(sequence) });
+      return res.status(202).json({ ok: true, sequence: serializeResetSequence(sequence) });
     } catch (error) {
       console.error('[WPP SERVER] Error solicitando reset global:', error);
       return res.status(500).json({ error: 'No se pudo solicitar el reset de WhatsApp' });

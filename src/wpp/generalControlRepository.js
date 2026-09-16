@@ -248,7 +248,11 @@ export function createGeneralControlRepository(defaultQuery) {
         RETURNING reset_requested_seq
       `, hasCooldown ? [requestedBy, cooldown] : [requestedBy], executor);
       const row = result.rows[0];
-      return row ? BigInt(row.reset_requested_seq) : null;
+      if (row) return BigInt(row.reset_requested_seq);
+      if (!hasCooldown || !await getClusterStatus({ executor })) {
+        throw new Error('General control row is missing');
+      }
+      return null;
     },
 
     async loadPendingReset({ executor } = {}) {

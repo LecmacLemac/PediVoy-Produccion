@@ -100,6 +100,29 @@ test('two concurrent reset routes expose one sequence and one global cooldown re
   });
 });
 
+test('reset route fails closed for malformed results and repository failures', async t => {
+  const cases = [
+    ['undefined result', async () => undefined],
+    ['negative sequence', async () => -1n],
+    ['fractional sequence', async () => 1.5],
+    ['repository rejection', async () => { throw new Error('database unavailable'); }],
+  ];
+
+  for (const [name, requestReset] of cases) {
+    await t.test(name, async () => {
+      const app = buildApp({ repository: { requestReset } });
+
+      await withServer(app, async baseUrl => {
+        const response = await fetch(`${baseUrl}/api/whatsapp/reset`, { method: 'POST' });
+        assert.equal(response.status, 500);
+        assert.deepEqual(await response.json(), {
+          error: 'No se pudo solicitar el reset de WhatsApp',
+        });
+      });
+    });
+  }
+});
+
 test('status returns persisted cluster state and the local supervisor role', async () => {
   const clusterStatus = {
     owner_id: 'render-old',
@@ -205,6 +228,9 @@ test('atomic global cooldown accepts only one of two concurrent reset requests',
   const repository = createGeneralControlRepository(async (sql, params) => {
     queries.push({ sql, params });
     await Promise.resolve();
+    if (/SELECT \* FROM wpp_general_control/i.test(sql)) {
+      return { rows: [{ id: true }], rowCount: 1 };
+    }
     if (accepted) return { rows: [], rowCount: 0 };
     accepted = true;
     return { rows: [{ reset_requested_seq: '21' }], rowCount: 1 };
@@ -216,10 +242,28 @@ test('atomic global cooldown accepts only one of two concurrent reset requests',
   ]);
 
   assert.deepEqual(results, [21n, null]);
-  assert.equal(queries.length, 2);
-  for (const { sql, params } of queries) {
+  const updates = queries.filter(({ sql }) => /UPDATE wpp_general_control/i.test(sql));
+  assert.equal(updates.length, 2);
+  for (const { sql, params } of updates) {
     assert.match(sql, /reset_requested_at\s+IS\s+NULL/i);
     assert.match(sql, /reset_requested_at\s*<=\s*NOW\(\)\s*-\s*\(\$2::bigint\s*\*\s*INTERVAL\s*'1 millisecond'\)/i);
     assert.equal(params[1], '15000');
   }
+  assert.equal(queries.filter(({ sql }) => /SELECT \* FROM wpp_general_control/i.test(sql)).length, 1);
+});
+
+test('reset repository distinguishes a missing control row from cooldown', async () => {
+  const queries = [];
+  const repository = createGeneralControlRepository(async (sql, params) => {
+    queries.push({ sql, params });
+    return { rows: [], rowCount: 0 };
+  });
+
+  await assert.rejects(
+    repository.requestReset({ requestedBy: 'admin', cooldownMs: 15000 }),
+    /General control row is missing/,
+  );
+  assert.equal(queries.length, 2);
+  assert.match(queries[0].sql, /UPDATE wpp_general_control/i);
+  assert.match(queries[1].sql, /SELECT \* FROM wpp_general_control/i);
 });
