@@ -21,6 +21,60 @@ import { createFacturaCapabilityRouter } from './facturaCapability.js';
 import { createGastosStorageRouter, createFacturasStorageRouter } from './privateStorage.js';
 import { resolveTransferenciaStorageDir, createTransferenciaStorageRouter } from './transferenciaStorage.js';
 
+export function buildWhatsAppRegistrationDeps({
+  ENABLE_WPP,
+  WPP_QR_ONLY,
+  projectDir,
+  query,
+  pool,
+  withAuth,
+  isSuper,
+  ejecutarReposicionPredictiva,
+  ejecutarCampaniaClima,
+  ejecutarCampaniaBaseImportadaAuto,
+  ejecutarReactivacionInteligente,
+  ejecutarPostEntregaUpsell,
+  ejecutarProgramaVip,
+  fs: fsDependency,
+  path: pathDependency,
+  wpp: {
+    Client,
+    LocalAuth,
+    qrcode,
+    handlers,
+    enqueueWppMessage,
+    checkLicencia,
+    generalControlRepository,
+    generalSupervisor,
+  } = {},
+} = {}) {
+  return {
+    ENABLE_WPP,
+    WPP_QR_ONLY,
+    Client,
+    LocalAuth,
+    qrcode,
+    fs: fsDependency,
+    path: pathDependency,
+    __dirname: projectDir,
+    query,
+    pool,
+    handlers,
+    enqueueWppMessage,
+    checkLicencia,
+    ejecutarReposicionPredictiva,
+    ejecutarCampaniaClima,
+    ejecutarCampaniaBaseImportadaAuto,
+    ejecutarReactivacionInteligente,
+    ejecutarPostEntregaUpsell,
+    ejecutarProgramaVip,
+    withAuth,
+    isSuper,
+    generalControlRepository,
+    generalSupervisor,
+  };
+}
+
 /**
  * createApp(deps)
  * deps: inyecta implementaciones (db/query, auth, etc.) para testear fácil.
@@ -61,14 +115,7 @@ export function createApp(deps) {
     ENABLE_WPP,
     WPP_QR_ONLY,
     wpp: {
-      Client,
-      LocalAuth,
-      qrcode,
-      handlers,
-      enqueueWppMessage,
       checkLicencia,
-      generalControlRepository,
-      generalSupervisor,
     } = {},
 
   } = deps || {};
@@ -329,33 +376,7 @@ export function createApp(deps) {
   // --------------------------------------------------
   // WhatsApp Web integrado
   // --------------------------------------------------
-  registerWhatsAppWeb(app, {
-    ENABLE_WPP,
-    WPP_QR_ONLY,
-    Client,
-    LocalAuth,
-    qrcode,
-    fs,
-    path,
-    __dirname: projectDir,
-    query,
-    pool,
-    handlers,
-    enqueueWppMessage,
-    checkLicencia,
-
-    ejecutarReposicionPredictiva,
-    ejecutarCampaniaClima,
-    ejecutarCampaniaBaseImportadaAuto,
-    ejecutarReactivacionInteligente,
-    ejecutarPostEntregaUpsell,
-    ejecutarProgramaVip,
-
-    withAuth,
-    isSuper,
-    generalControlRepository,
-    generalSupervisor,
-  });
+  registerWhatsAppWeb(app, buildWhatsAppRegistrationDeps({ ...deps, fs, path }));
 
   // Sin fallback legacy: toda ruta pública vive en src/routes/*
 

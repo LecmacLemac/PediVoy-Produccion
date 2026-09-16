@@ -1,11 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import path from 'node:path';
 import express from 'express';
 
-import { createApp } from '../src/app.js';
+import { buildWhatsAppRegistrationDeps } from '../src/app.js';
 import { registerWppRoutes } from '../src/wpp/routes.js';
 import { resolveGeneralRouteDeps } from '../src/wpp/whatsappWeb.js';
 import { createGeneralControlRepository } from '../src/wpp/generalControlRepository.js';
@@ -171,7 +168,8 @@ test('reset route fails closed for malformed results and repository failures', a
   ];
 
   for (const [name, requestReset] of cases) {
-    await t.test(name, async () => {
+    await t.test(name, async t => {
+      const errorLog = t.mock.method(console, 'error', () => {});
       const app = buildApp({ repository: { requestReset } });
 
       await withServer(app, async baseUrl => {
@@ -181,6 +179,7 @@ test('reset route fails closed for malformed results and repository failures', a
           error: 'No se pudo solicitar el reset de WhatsApp',
         });
       });
+      assert.equal(errorLog.mock.callCount(), 1);
     });
   }
 });
@@ -265,100 +264,63 @@ test('QR route renders the persisted owner QR instead of stale local memory', as
   assert.deepEqual(encoded, ['owner-qr']);
 });
 
-test('createApp uses WPP singleton injections for status and reset', async () => {
-  const projectDir = await mkdtemp(path.join(tmpdir(), 'pedivoy-create-app-'));
-  const resetInputs = [];
-  let statusCalls = 0;
-  let snapshotCalls = 0;
-  const repository = {
-    async getClusterStatus() {
-      statusCalls += 1;
-      return {
-        owner_id: 'owner-app-test',
-        epoch: 3n,
-        state: 'ready',
-        reset_requested_seq: 8n,
-      };
-    },
-    async requestReset(input) {
-      resetInputs.push(input);
-      return { accepted: true, sequence: 9n };
+test('app composition forwards canonical WhatsApp registration dependencies by identity', () => {
+  const sentinel = name => Symbol(name);
+  const input = {
+    ENABLE_WPP: sentinel('ENABLE_WPP'),
+    WPP_QR_ONLY: sentinel('WPP_QR_ONLY'),
+    projectDir: sentinel('projectDir'),
+    query: sentinel('query'),
+    pool: sentinel('pool'),
+    withAuth: sentinel('withAuth'),
+    isSuper: sentinel('isSuper'),
+    ejecutarReposicionPredictiva: sentinel('ejecutarReposicionPredictiva'),
+    ejecutarCampaniaClima: sentinel('ejecutarCampaniaClima'),
+    ejecutarCampaniaBaseImportadaAuto: sentinel('ejecutarCampaniaBaseImportadaAuto'),
+    ejecutarReactivacionInteligente: sentinel('ejecutarReactivacionInteligente'),
+    ejecutarPostEntregaUpsell: sentinel('ejecutarPostEntregaUpsell'),
+    ejecutarProgramaVip: sentinel('ejecutarProgramaVip'),
+    fs: sentinel('fs'),
+    path: sentinel('path'),
+    wpp: {
+      Client: sentinel('Client'),
+      LocalAuth: sentinel('LocalAuth'),
+      qrcode: sentinel('qrcode'),
+      handlers: sentinel('handlers'),
+      enqueueWppMessage: sentinel('enqueueWppMessage'),
+      checkLicencia: sentinel('checkLicencia'),
+      generalControlRepository: sentinel('generalControlRepository'),
+      generalSupervisor: sentinel('generalSupervisor'),
     },
   };
-  const supervisor = {
-    snapshot() {
-      snapshotCalls += 1;
-      return { isOwner: true, state: 'ready', generation: 4, ready: true, gateOpen: true };
-    },
-  };
-  class FakeLocalAuth {}
-  class FakeClient {
-    on() {}
-    async initialize() {}
-    async destroy() {}
-  }
-  const originalSetTimeout = globalThis.setTimeout;
-  const originalSetInterval = globalThis.setInterval;
-  globalThis.setTimeout = () => ({ unref() {} });
-  globalThis.setInterval = () => ({ unref() {} });
 
-  try {
-    const app = createApp({
-      projectDir,
-      query: async () => [],
-      pool: {
-        query: async () => ({ rows: [] }),
-        connect: async () => ({
-          query: async () => ({ rows: [] }),
-          release() {},
-        }),
-      },
-      withTransaction: async callback => callback({ query: async () => ({ rows: [] }) }),
-      withAuth(req, _res, next) {
-        req.user = { uid: 41, role: 'super' };
-        next();
-      },
-      isSuper: req => req.user?.role === 'super',
-      getEmpresaIdFromToken: () => null,
-      resolveEmpresaId: () => null,
-      getEmpresaById: async () => null,
-      crearPreferenciaLicencia: async () => ({}),
-      obtenerPago: async () => ({}),
-      checkLicencia: (_req, _res, next) => next(),
-      ENABLE_WPP: true,
-      WPP_QR_ONLY: true,
-      wpp: {
-        Client: FakeClient,
-        LocalAuth: FakeLocalAuth,
-        qrcode: { toDataURL: async value => value },
-        handlers: { start: async () => {} },
-        enqueueWppMessage: async () => {},
-        checkLicencia: (_req, _res, next) => next(),
-        generalControlRepository: repository,
-        generalSupervisor: supervisor,
-      },
-    });
+  const registrationDeps = buildWhatsAppRegistrationDeps(input);
 
-    await withServer(app, async baseUrl => {
-      const statusResponse = await fetch(`${baseUrl}/api/whatsapp/status`);
-      assert.equal(statusResponse.status, 200);
-      const status = await statusResponse.json();
-      assert.equal(status.cluster.owner_id, 'owner-app-test');
-      assert.equal(status.local.role, 'owner');
-
-      const resetResponse = await fetch(`${baseUrl}/api/whatsapp/reset`, { method: 'POST' });
-      assert.equal(resetResponse.status, 202);
-      assert.equal((await resetResponse.json()).request_id, 'wpp-reset-9');
-    });
-
-    assert.equal(statusCalls, 1);
-    assert.equal(snapshotCalls, 1);
-    assert.deepEqual(resetInputs, [{ requestedBy: '41', cooldownMs: 15000 }]);
-  } finally {
-    globalThis.setTimeout = originalSetTimeout;
-    globalThis.setInterval = originalSetInterval;
-    await rm(projectDir, { recursive: true, force: true });
-  }
+  assert.deepEqual(registrationDeps, {
+    ENABLE_WPP: input.ENABLE_WPP,
+    WPP_QR_ONLY: input.WPP_QR_ONLY,
+    Client: input.wpp.Client,
+    LocalAuth: input.wpp.LocalAuth,
+    qrcode: input.wpp.qrcode,
+    fs: input.fs,
+    path: input.path,
+    __dirname: input.projectDir,
+    query: input.query,
+    pool: input.pool,
+    handlers: input.wpp.handlers,
+    enqueueWppMessage: input.wpp.enqueueWppMessage,
+    checkLicencia: input.wpp.checkLicencia,
+    ejecutarReposicionPredictiva: input.ejecutarReposicionPredictiva,
+    ejecutarCampaniaClima: input.ejecutarCampaniaClima,
+    ejecutarCampaniaBaseImportadaAuto: input.ejecutarCampaniaBaseImportadaAuto,
+    ejecutarReactivacionInteligente: input.ejecutarReactivacionInteligente,
+    ejecutarPostEntregaUpsell: input.ejecutarPostEntregaUpsell,
+    ejecutarProgramaVip: input.ejecutarProgramaVip,
+    withAuth: input.withAuth,
+    isSuper: input.isSuper,
+    generalControlRepository: input.wpp.generalControlRepository,
+    generalSupervisor: input.wpp.generalSupervisor,
+  });
 });
 
 test('whatsappWeb resolves the persisted repository and supervisor used by routes', async () => {
