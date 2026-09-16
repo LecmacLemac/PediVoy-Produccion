@@ -36,20 +36,20 @@ export function createGeneralOwnership({
   if (typeof onOwnershipLost !== 'function') throw new TypeError('onOwnershipLost must be a function');
 
   let client = null;
+  let activeCheckout = null;
   let clientErrorHandler = null;
   let held = false;
   let acquiring = false;
   let epoch = null;
   let lossNotified = false;
-  const releasedClients = new WeakSet();
 
   const repository = createGeneralControlRepository(async () => {
     throw new OwnershipLostError('Dedicated ownership client is unavailable');
   });
 
-  function safeRelease(target, error) {
-    if (!target || releasedClients.has(target)) return;
-    releasedClients.add(target);
+  function safeRelease(target, checkout, error) {
+    if (!target || !checkout || checkout.released) return;
+    checkout.released = true;
     try {
       target.release(error);
     } catch {
@@ -77,13 +77,15 @@ export function createGeneralOwnership({
   function poison(error, target = client, { notify = held, detach = true } = {}) {
     if (!target) return;
     const isActive = target === client;
+    const checkout = isActive ? activeCheckout : null;
     if (isActive) {
       if (detach) detachConnectionError(target);
       client = null;
+      activeCheckout = null;
       held = false;
       epoch = null;
     }
-    safeRelease(target, error);
+    safeRelease(target, checkout, error);
     if (isActive && notify) notifyLoss(error);
   }
 
@@ -120,19 +122,21 @@ export function createGeneralOwnership({
     acquiring = true;
     lossNotified = false;
 
+    const checkout = { released: false };
     const connectPromise = Promise.resolve().then(() => pool.connect());
     let candidate;
     try {
       candidate = await deadline(connectPromise, operationDeadlineMs, 'General ownership connect');
     } catch (error) {
       if (error?.timedOut) {
-        connectPromise.then(lateClient => safeRelease(lateClient, error)).catch(() => {});
+        connectPromise.then(lateClient => safeRelease(lateClient, checkout, error)).catch(() => {});
       }
       acquiring = false;
       throw error;
     }
 
     client = candidate;
+    activeCheckout = checkout;
     attachConnectionError(candidate);
     let lockAcquired = false;
 
@@ -147,7 +151,8 @@ export function createGeneralOwnership({
       if (!lockAcquired) {
         detachConnectionError(candidate);
         client = null;
-        safeRelease(candidate, undefined);
+        activeCheckout = null;
+        safeRelease(candidate, checkout, undefined);
         acquiring = false;
         return false;
       }
@@ -172,7 +177,7 @@ export function createGeneralOwnership({
         }
       }
       if (candidate === client) poison(error, candidate, { notify: held });
-      else safeRelease(candidate, error);
+      else safeRelease(candidate, checkout, error);
       acquiring = false;
       throw error;
     }
@@ -210,6 +215,7 @@ export function createGeneralOwnership({
     }
 
     const activeClient = client;
+    const checkout = activeCheckout;
     const activeEpoch = epoch;
 
     // A rejected or timed-out quiescence deliberately leaves the healthy lock held.
@@ -252,9 +258,10 @@ export function createGeneralOwnership({
     if (activeClient === client) {
       detachConnectionError(activeClient);
       client = null;
+      activeCheckout = null;
       epoch = null;
     }
-    safeRelease(activeClient, primaryError || undefined);
+    safeRelease(activeClient, checkout, primaryError || undefined);
     if (primaryError) throw primaryError;
     return true;
   }

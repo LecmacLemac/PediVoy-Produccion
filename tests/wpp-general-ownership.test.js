@@ -117,6 +117,38 @@ test('releaseAfterQuiesced clears the fenced row, unlocks, and releases the clie
   assert.throws(() => ownership.assertOwned(), OwnershipLostError);
 });
 
+test('reused pooled client is released once for each successful checkout', async () => {
+  let nextEpoch = 20;
+  const client = makeClient(async sql => {
+    if (/pg_try_advisory_lock/i.test(sql)) return { rows: [{ locked: true }], rowCount: 1 };
+    if (/SET epoch = epoch \+ 1/i.test(sql)) {
+      nextEpoch += 1;
+      return { rows: [{ epoch: String(nextEpoch) }], rowCount: 1 };
+    }
+    if (/SET owner_id = NULL/i.test(sql)) return { rows: [], rowCount: 1 };
+    if (/pg_advisory_unlock/i.test(sql)) return { rows: [{ unlocked: true }], rowCount: 1 };
+    throw new Error(`unexpected query: ${sql}`);
+  });
+  const pool = makePool(client);
+  const ownership = createGeneralOwnership({ pool, ownerId: 'reused-client' });
+
+  for (let cycle = 1; cycle <= 2; cycle += 1) {
+    assert.equal(await ownership.tryAcquire(), true);
+    assert.equal(ownership.isOwner, true);
+    assert.equal(client.listenerCount('error'), 1);
+
+    assert.equal(await ownership.releaseAfterQuiesced(async () => {}), true);
+    assert.equal(ownership.isOwner, false);
+    assert.equal(ownership.epoch, null);
+    assert.equal(client.listenerCount('error'), 0);
+    assert.equal(client.releases.length, cycle);
+    assert.throws(() => ownership.assertOwned(), OwnershipLostError);
+  }
+
+  assert.equal(pool.connectCount, 2);
+  assert.deepEqual(client.releases, [undefined, undefined]);
+});
+
 test('release preserves the primary error while still poisoning the client', async () => {
   const primary = new Error('control update failed');
   const client = makeClient(async sql => {
