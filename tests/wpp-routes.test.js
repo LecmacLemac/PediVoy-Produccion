@@ -155,7 +155,7 @@ test('reset general persiste una solicitud global sin tocar el cliente local', a
     assert.deepEqual(await resp.json(), {
       ok: true,
       accepted: true,
-      request_id: '5',
+      request_id: 'wpp-reset-5',
       reset_seq: '5',
       sequence: '5',
     });

@@ -1,8 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import express from 'express';
 
+import { createApp } from '../src/app.js';
 import { registerWppRoutes } from '../src/wpp/routes.js';
 import { resolveGeneralRouteDeps } from '../src/wpp/whatsappWeb.js';
 import { createGeneralControlRepository } from '../src/wpp/generalControlRepository.js';
@@ -17,7 +20,7 @@ async function withServer(app, fn) {
   }
 }
 
-function buildApp({ repository, supervisor, state = {}, destructive = {} } = {}) {
+function buildApp({ repository, supervisor, state = {}, actor = { uid: 7, role: 'super' }, destructive = {} } = {}) {
   const app = express();
   app.use(express.json());
   const localState = {
@@ -34,7 +37,7 @@ function buildApp({ repository, supervisor, state = {}, destructive = {} } = {})
     WPP_QR_ONLY: false,
     qrcode: { toDataURL: async value => `data:image/png;base64,${value}` },
     withAuth(req, _res, next) {
-      req.user = { uid: 7, role: 'super' };
+      req.user = actor;
       next();
     },
     isSuper: () => true,
@@ -73,13 +76,46 @@ test('reset only persists a cluster request and returns 202 with its sequence', 
     assert.deepEqual(await response.json(), {
       ok: true,
       accepted: true,
-      request_id: '12',
+      request_id: 'wpp-reset-12',
       reset_seq: '12',
       sequence: '12',
     });
   });
 
   assert.deepEqual(calls, [['requestReset', { requestedBy: '7', cooldownMs: 15000 }]]);
+});
+
+test('reset rejects non-canonical actor uids before calling the repository', async t => {
+  const actors = [
+    ['missing uid', { role: 'super' }],
+    ['legacy id only', { id: 7, role: 'super' }],
+    ['zero uid', { uid: 0, role: 'super' }],
+    ['negative uid', { uid: -1, role: 'super' }],
+    ['fractional uid', { uid: 1.5, role: 'super' }],
+    ['string uid', { uid: '7', role: 'super' }],
+  ];
+
+  for (const [name, actor] of actors) {
+    await t.test(name, async () => {
+      let repositoryCalls = 0;
+      const app = buildApp({
+        actor,
+        repository: {
+          async requestReset() {
+            repositoryCalls += 1;
+            return { accepted: true, sequence: 1n };
+          },
+        },
+      });
+
+      await withServer(app, async baseUrl => {
+        const response = await fetch(`${baseUrl}/api/whatsapp/reset`, { method: 'POST' });
+        assert.equal(response.status, 403);
+        assert.deepEqual(await response.json(), { error: 'Usuario autenticado inválido' });
+      });
+      assert.equal(repositoryCalls, 0);
+    });
+  }
 });
 
 test('two concurrent reset routes expose one sequence and one global cooldown result', async () => {
@@ -104,7 +140,7 @@ test('two concurrent reset routes expose one sequence and one global cooldown re
       {
         ok: true,
         accepted: true,
-        request_id: '30',
+        request_id: 'wpp-reset-30',
         reset_seq: '30',
         sequence: '30',
       },
@@ -113,6 +149,7 @@ test('two concurrent reset routes expose one sequence and one global cooldown re
         accepted: false,
         skipped: true,
         reason: 'cooldown',
+        request_id: 'wpp-reset-30',
         reset_seq: '30',
         sequence: '30',
       },
@@ -228,10 +265,100 @@ test('QR route renders the persisted owner QR instead of stale local memory', as
   assert.deepEqual(encoded, ['owner-qr']);
 });
 
-test('createApp forwards injected singleton dependencies to WhatsApp registration', async () => {
-  const source = await readFile(new URL('../src/app.js', import.meta.url), 'utf8');
+test('createApp uses WPP singleton injections for status and reset', async () => {
+  const projectDir = await mkdtemp(path.join(tmpdir(), 'pedivoy-create-app-'));
+  const resetInputs = [];
+  let statusCalls = 0;
+  let snapshotCalls = 0;
+  const repository = {
+    async getClusterStatus() {
+      statusCalls += 1;
+      return {
+        owner_id: 'owner-app-test',
+        epoch: 3n,
+        state: 'ready',
+        reset_requested_seq: 8n,
+      };
+    },
+    async requestReset(input) {
+      resetInputs.push(input);
+      return { accepted: true, sequence: 9n };
+    },
+  };
+  const supervisor = {
+    snapshot() {
+      snapshotCalls += 1;
+      return { isOwner: true, state: 'ready', generation: 4, ready: true, gateOpen: true };
+    },
+  };
+  class FakeLocalAuth {}
+  class FakeClient {
+    on() {}
+    async initialize() {}
+    async destroy() {}
+  }
+  const originalSetTimeout = globalThis.setTimeout;
+  const originalSetInterval = globalThis.setInterval;
+  globalThis.setTimeout = () => ({ unref() {} });
+  globalThis.setInterval = () => ({ unref() {} });
 
-  assert.match(source, /registerWhatsAppWeb\(app,\s*\{[\s\S]*generalControlRepository:\s*deps\?\.generalControlRepository[\s\S]*generalSupervisor:\s*deps\?\.generalSupervisor[\s\S]*\}\);/);
+  try {
+    const app = createApp({
+      projectDir,
+      query: async () => [],
+      pool: {
+        query: async () => ({ rows: [] }),
+        connect: async () => ({
+          query: async () => ({ rows: [] }),
+          release() {},
+        }),
+      },
+      withTransaction: async callback => callback({ query: async () => ({ rows: [] }) }),
+      withAuth(req, _res, next) {
+        req.user = { uid: 41, role: 'super' };
+        next();
+      },
+      isSuper: req => req.user?.role === 'super',
+      getEmpresaIdFromToken: () => null,
+      resolveEmpresaId: () => null,
+      getEmpresaById: async () => null,
+      crearPreferenciaLicencia: async () => ({}),
+      obtenerPago: async () => ({}),
+      checkLicencia: (_req, _res, next) => next(),
+      ENABLE_WPP: true,
+      WPP_QR_ONLY: true,
+      wpp: {
+        Client: FakeClient,
+        LocalAuth: FakeLocalAuth,
+        qrcode: { toDataURL: async value => value },
+        handlers: { start: async () => {} },
+        enqueueWppMessage: async () => {},
+        checkLicencia: (_req, _res, next) => next(),
+        generalControlRepository: repository,
+        generalSupervisor: supervisor,
+      },
+    });
+
+    await withServer(app, async baseUrl => {
+      const statusResponse = await fetch(`${baseUrl}/api/whatsapp/status`);
+      assert.equal(statusResponse.status, 200);
+      const status = await statusResponse.json();
+      assert.equal(status.cluster.owner_id, 'owner-app-test');
+      assert.equal(status.local.role, 'owner');
+
+      const resetResponse = await fetch(`${baseUrl}/api/whatsapp/reset`, { method: 'POST' });
+      assert.equal(resetResponse.status, 202);
+      assert.equal((await resetResponse.json()).request_id, 'wpp-reset-9');
+    });
+
+    assert.equal(statusCalls, 1);
+    assert.equal(snapshotCalls, 1);
+    assert.deepEqual(resetInputs, [{ requestedBy: '41', cooldownMs: 15000 }]);
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+    globalThis.setInterval = originalSetInterval;
+    await rm(projectDir, { recursive: true, force: true });
+  }
 });
 
 test('whatsappWeb resolves the persisted repository and supervisor used by routes', async () => {

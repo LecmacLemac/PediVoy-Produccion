@@ -67,6 +67,8 @@ export function createApp(deps) {
       handlers,
       enqueueWppMessage,
       checkLicencia,
+      generalControlRepository,
+      generalSupervisor,
     } = {},
 
   } = deps || {};
@@ -351,8 +353,8 @@ export function createApp(deps) {
 
     withAuth,
     isSuper,
-    generalControlRepository: deps?.generalControlRepository,
-    generalSupervisor: deps?.generalSupervisor,
+    generalControlRepository,
+    generalSupervisor,
   });
 
   // Sin fallback legacy: toda ruta pública vive en src/routes/*

@@ -150,21 +150,27 @@ export function registerWppRoutes(app, deps) {
   app.post('/api/whatsapp/reset', withAuth, async (req, res) => {
     if (!ENABLE_WPP) return res.status(503).json({ error: 'WhatsApp deshabilitado en este entorno' });
     if (!isSuper(req)) return res.status(403).json({ error: 'Solo SUPER ADMIN puede resetear la sesión de WhatsApp' });
+    const actorUid = req.user?.uid;
+    if (!Number.isSafeInteger(actorUid) || actorUid <= 0) {
+      return res.status(403).json({ error: 'Usuario autenticado inválido' });
+    }
     if (typeof repository?.requestReset !== 'function') {
       return res.status(503).json({ error: 'Control global de WhatsApp no disponible' });
     }
 
     try {
       const outcome = serializeResetOutcome(await repository.requestReset({
-        requestedBy: String(req.user?.uid ?? 'unknown'),
+        requestedBy: String(actorUid),
         cooldownMs: RESET_COOLDOWN_MS,
       }));
+      const requestId = `wpp-reset-${outcome.sequence}`;
       if (!outcome.accepted) {
         return res.status(202).json({
           ok: true,
           accepted: false,
           skipped: true,
           reason: 'cooldown',
+          request_id: requestId,
           reset_seq: outcome.sequence,
           sequence: outcome.sequence,
         });
@@ -172,7 +178,7 @@ export function registerWppRoutes(app, deps) {
       return res.status(202).json({
         ok: true,
         accepted: true,
-        request_id: outcome.sequence,
+        request_id: requestId,
         reset_seq: outcome.sequence,
         sequence: outcome.sequence,
       });
