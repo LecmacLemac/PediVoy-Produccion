@@ -1,4 +1,3 @@
-import { randomUUID } from 'crypto';
 import { wait } from './sessionUtils.js';
 import {
   claimWppOutboxRows,
@@ -18,9 +17,11 @@ export function createOutboxProcessor({
   getIsReady,
   getIsShuttingDown,
   requestRestart,
-  withActiveClient = async fn => fn({ client: getClient(), epoch: 0, generation: 0 }),
-  claimOwner = `general-${process.pid}-${randomUUID()}`,
+  withActiveClient,
 }) {
+  if (typeof withActiveClient !== 'function') {
+    throw new TypeError('withActiveClient is required for General outbox processing');
+  }
   let isProcessing = false;
   let schemaReady = false;
 
@@ -30,18 +31,18 @@ export function createOutboxProcessor({
     schemaReady = true;
   }
 
-  async function releaseRemaining(rows, startIndex, epoch) {
+  async function releaseRemaining(rows, startIndex, token) {
     for (const remaining of rows.slice(startIndex)) {
       await releaseWppOutboxClaim({
-        query, id: remaining.id, owner: claimOwner, epoch, error: null,
+        query, id: remaining.id, owner: token.ownerId, epoch: token.epoch, error: null,
       });
     }
   }
 
-  async function useActiveClient(epoch, fn) {
-    return withActiveClient(({ client, epoch: activeEpoch }) => {
-      if (String(activeEpoch) !== String(epoch)) {
-        throw Object.assign(new Error('General ownership epoch changed'), { code: 'WPP_NOT_OWNER' });
+  async function useActiveClient(token, fn) {
+    return withActiveClient(({ client, ownerId: activeOwnerId, epoch: activeEpoch }) => {
+      if (activeOwnerId !== token.ownerId || String(activeEpoch) !== String(token.epoch)) {
+        throw Object.assign(new Error('General ownership token changed'), { code: 'WPP_NOT_OWNER' });
       }
       return fn(client);
     });
@@ -72,11 +73,16 @@ export function createOutboxProcessor({
         console.log(`[WPP CLEANUP] ✅ Limpiados ${cleanupResult.length} mensajes viejos (>1 día)`);
       }
 
-      const claimEpoch = await withActiveClient(({ epoch }) => epoch);
+      const claimToken = await withActiveClient(({ ownerId, epoch }) => {
+        if (!ownerId || epoch === null || epoch === undefined) {
+          throw Object.assign(new Error('General ownership token is unavailable'), { code: 'WPP_NOT_OWNER' });
+        }
+        return Object.freeze({ ownerId, epoch });
+      });
       const rows = await claimWppOutboxRows({
         query,
-        owner: claimOwner,
-        epoch: claimEpoch,
+        owner: claimToken.ownerId,
+        epoch: claimToken.epoch,
         limit: 3,
         whereSql: `
           AND o.created_at > NOW() - INTERVAL '1 day'
@@ -92,28 +98,28 @@ export function createOutboxProcessor({
           await releaseWppOutboxClaim({
             query,
             id: row.id,
-            owner: claimOwner,
-            epoch: claimEpoch,
+            owner: claimToken.ownerId,
+            epoch: claimToken.epoch,
             error: 'WhatsApp general pausado antes del envío',
           });
-          await releaseRemaining(rows, index + 1, claimEpoch);
+          await releaseRemaining(rows, index + 1, claimToken);
           console.warn('[WPP OUTBOX] WPP no está listo durante el lote. Se liberaron los claims restantes.');
           break;
         }
 
-        let deliveryStarted = false;
+        let transportInvoked = false;
         try {
           const raw = String(row.telefono || '').trim();
           const digits = raw.includes('@') ? raw.split('@')[0].replace(/\D+/g, '') : raw.replace(/\D+/g, '');
           const normalizedDigits = digits.length === 10 ? `549${digits}` : digits;
           const cachedLid = normalizedDigits ? lidByPhone.get(normalizedDigits.slice(-10)) : null;
           const chatId = await useActiveClient(
-            claimEpoch,
+            claimToken,
             client => resolveWhatsappTarget(client, cachedLid || raw),
           );
 
           try {
-            const chat = await useActiveClient(claimEpoch, async client => {
+            const chat = await useActiveClient(claimToken, async client => {
               let timeoutId;
               try {
                 return await Promise.race([
@@ -131,14 +137,18 @@ export function createOutboxProcessor({
 
           console.log(`[DEBUG OUTBOX] Enviando ID:${row.id} a ${chatId}...`);
           await startWppOutboxDelivery({
-            query, id: row.id, owner: claimOwner, epoch: claimEpoch,
+            query,
+            id: row.id,
+            owner: claimToken.ownerId,
+            epoch: claimToken.epoch,
           });
-          deliveryStarted = true;
-          await useActiveClient(claimEpoch, async client => {
+          await useActiveClient(claimToken, async client => {
             let timeoutId;
             try {
+              transportInvoked = true;
+              const transport = client.sendMessage(chatId, row.mensaje);
               return await Promise.race([
-                client.sendMessage(chatId, row.mensaje),
+                transport,
                 new Promise((_, reject) => {
                   timeoutId = setTimeout(() => {
                     const error = new Error('Timeout enviando a WPP');
@@ -153,7 +163,12 @@ export function createOutboxProcessor({
           });
 
           await finishWppOutboxClaim({
-            query, id: row.id, owner: claimOwner, epoch: claimEpoch, status: 'sent', sent: true,
+            query,
+            id: row.id,
+            owner: claimToken.ownerId,
+            epoch: claimToken.epoch,
+            status: 'sent',
+            sent: true,
           });
           console.log(`[DEBUG OUTBOX] ✅ Mensaje ID:${row.id} enviado con éxito.`);
           await wait(index > 0 && index % 3 === 0 ? 1500 : 700);
@@ -162,21 +177,28 @@ export function createOutboxProcessor({
           const errorLower = errorMessage.toLowerCase();
           console.error(`[WPP OUTBOX] Error ID:${row.id} tel:${row.telefono}:`, errorMessage);
 
-          if (!deliveryStarted) {
+          if (!transportInvoked) {
             const invalidTarget = errorLower.includes('telefono_invalido') || errorLower.includes('jid_invalido');
             if (invalidTarget) {
               await finishWppOutboxClaim({
-                query, id: row.id, owner: claimOwner, epoch: claimEpoch,
-                status: 'error', error: 'Número de teléfono inválido',
+                query,
+                id: row.id,
+                owner: claimToken.ownerId,
+                epoch: claimToken.epoch,
+                status: 'error',
+                error: 'Número de teléfono inválido',
               });
             } else {
               await releaseWppOutboxClaim({
-                query, id: row.id, owner: claimOwner, epoch: claimEpoch,
+                query,
+                id: row.id,
+                owner: claimToken.ownerId,
+                epoch: claimToken.epoch,
                 error: 'Reintento por error previo al envío',
               });
             }
             if (err?.code === 'WPP_NOT_OWNER') {
-              await releaseRemaining(rows, index + 1, claimEpoch);
+              await releaseRemaining(rows, index + 1, claimToken);
               break;
             }
             continue;
@@ -195,13 +217,13 @@ export function createOutboxProcessor({
           await finishWppOutboxClaim({
             query,
             id: row.id,
-            owner: claimOwner,
-            epoch: claimEpoch,
+            owner: claimToken.ownerId,
+            epoch: claimToken.epoch,
             status: isSeenBug ? 'sent' : 'error',
             sent: isSeenBug,
             error: isSeenBug ? 'Bug sendSeen (marcado como enviado)' : safeErrorString(unknownError),
           });
-          await releaseRemaining(rows, index + 1, claimEpoch);
+          await releaseRemaining(rows, index + 1, claimToken);
           if (isFrameDetached || isTransientBrowserError) await requestRestart();
           break;
         }

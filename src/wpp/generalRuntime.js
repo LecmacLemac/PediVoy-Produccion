@@ -410,6 +410,7 @@ export function createGeneralRuntime({
           handlersStarted.add(client);
           try {
             await handlers?.start?.(client, {
+              generation,
               withActiveClient: supervisor.withActiveClient,
             });
           } catch (error) {

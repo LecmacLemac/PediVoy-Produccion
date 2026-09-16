@@ -86,6 +86,13 @@ export async function claimWppOutboxRows({
       LEFT JOIN empresas e ON e.id = o.empresa_id
       WHERE o.status = 'pending'
         AND (o.claim_until IS NULL OR o.claim_until < NOW())
+        ${fenced ? `AND EXISTS (
+          SELECT 1
+          FROM wpp_general_control gc
+          WHERE gc.id = TRUE
+            AND gc.owner_id = $1
+            AND gc.epoch = $2::bigint
+        )` : ''}
         ${whereSql}
       ORDER BY o.created_at ASC, o.id ASC
       FOR UPDATE OF o SKIP LOCKED
@@ -105,7 +112,7 @@ export async function claimWppOutboxRows({
 
 export async function releaseWppOutboxClaim({ query, id, owner, epoch = null, error }) {
   const fenced = epoch !== null && epoch !== undefined;
-  return query(`
+  const rows = await query(`
     UPDATE wpp_outbox
        SET status = 'pending',
            error = $1,
@@ -113,9 +120,18 @@ export async function releaseWppOutboxClaim({ query, id, owner, epoch = null, er
            claim_epoch = NULL,
            claim_until = NULL
      WHERE id = $2 AND claim_owner = $3
-       ${fenced ? 'AND claim_epoch = $4::bigint' : ''}
+       ${fenced ? `AND claim_epoch = $4::bigint
+       AND EXISTS (
+         SELECT 1
+         FROM wpp_general_control gc
+         WHERE gc.id = TRUE
+           AND gc.owner_id = $3
+           AND gc.epoch = $4::bigint
+       )` : ''}
     RETURNING id
   `, fenced ? [error, id, owner, String(epoch)] : [error, id, owner]);
+  if (fenced && rows.length !== 1) throw claimLostError(id);
+  return rows[0] ?? null;
 }
 
 function claimLostError(id) {
@@ -133,6 +149,13 @@ export async function startWppOutboxDelivery({ query, id, owner, epoch }) {
        AND status = 'pending'
        AND claim_owner = $2
        AND claim_epoch = $3::bigint
+       AND EXISTS (
+         SELECT 1
+         FROM wpp_general_control gc
+         WHERE gc.id = TRUE
+           AND gc.owner_id = $2
+           AND gc.epoch = $3::bigint
+       )
     RETURNING id
   `, [id, owner, String(epoch)]);
   if (rows.length !== 1) throw claimLostError(id);
@@ -151,7 +174,14 @@ export async function finishWppOutboxClaim({ query, id, owner, epoch = null, sta
            claim_epoch = NULL,
            claim_until = NULL
      WHERE id = $4 AND claim_owner = $5
-       ${fenced ? 'AND claim_epoch = $6::bigint' : ''}
+       ${fenced ? `AND claim_epoch = $6::bigint
+       AND EXISTS (
+         SELECT 1
+         FROM wpp_general_control gc
+         WHERE gc.id = TRUE
+           AND gc.owner_id = $5
+           AND gc.epoch = $6::bigint
+       )` : ''}
     RETURNING id
   `, fenced
     ? [status, sent, error, id, owner, String(epoch)]

@@ -1841,11 +1841,13 @@ function start(rawClient, options = {}) {
   startedClients.add(rawClient);
 
   recentMessageIdsByClient.set(rawClient, new Map());
-  const client = fenceReplyClient(rawClient, options.withActiveClient);
+  const withActiveClient = options.withActiveClient;
+  const expectedGeneration = options.generation;
+  const client = fenceReplyClient(rawClient, withActiveClient);
   const contextResolver = options.contextResolver
     || (options.queryFn ? createWhatsAppContextResolver(options.queryFn) : resolveWhatsAppContext);
 
-  rawClient.on('message', async (message) => {
+  async function processMessage(message) {
     try {
       // Ignorar mensajes propios o de estado
       if (
@@ -2099,6 +2101,22 @@ function start(rawClient, options = {}) {
       if (err?.code !== 'WPP_NOT_OWNER') console.error('handlers.start error:', err);
       // Evitamos responder si el error es grave para no hacer loop
     }
+  }
+
+  rawClient.on('message', (message) => {
+    return Promise.resolve().then(() => (
+      typeof withActiveClient === 'function'
+        ? withActiveClient(({ client: activeClient, generation }) => {
+            if (activeClient !== rawClient
+              || (expectedGeneration !== undefined && generation !== expectedGeneration)) {
+              throw Object.assign(new Error('General client generation changed'), { code: 'WPP_NOT_OWNER' });
+            }
+            return processMessage(message);
+          })
+        : processMessage(message)
+    )).catch(err => {
+      if (err?.code !== 'WPP_NOT_OWNER') console.error('handlers.start gate error:', err);
+    });
   });
 }
 

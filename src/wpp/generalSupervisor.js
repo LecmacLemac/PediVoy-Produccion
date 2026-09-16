@@ -705,6 +705,7 @@ export function createGeneralSupervisor({
     }
     const active = current;
     const activeGeneration = generation;
+    const activeOwnerId = ownership.ownerId;
     const activeEpoch = ownership.epoch;
     beginActiveWork(activeGeneration);
     try {
@@ -719,12 +720,18 @@ export function createGeneralSupervisor({
         throw notOwnerError('General client generation is terminally fenced');
       }
       if (ownership.isOwner !== true || ownershipLost
-        || current !== active || generation !== activeGeneration || ownership.epoch !== activeEpoch) {
+        || current !== active || generation !== activeGeneration
+        || ownership.ownerId !== activeOwnerId || ownership.epoch !== activeEpoch) {
         const error = notOwnerError('General ownership changed before client use');
         leaseLost(error);
         throw error;
       }
-      return await fn({ client: active.client, generation: activeGeneration, epoch: activeEpoch });
+      return await fn({
+        client: active.client,
+        generation: activeGeneration,
+        ownerId: activeOwnerId,
+        epoch: activeEpoch,
+      });
     } finally {
       finishActiveWork(activeGeneration);
     }

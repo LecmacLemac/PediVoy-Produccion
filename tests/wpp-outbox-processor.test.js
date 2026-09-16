@@ -24,7 +24,9 @@ test('fallback general obtiene filas exclusivamente mediante claim atómico', as
     getIsReady: () => true,
     getIsShuttingDown: () => false,
     requestRestart: async () => {},
-    claimOwner: 'general-test',
+    withActiveClient: fn => fn({
+      client, ownerId: 'general-test', epoch: 7n, generation: 1,
+    }),
   });
 
   await processor.processOutbox();

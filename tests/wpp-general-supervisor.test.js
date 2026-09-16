@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 
+import handlers from '../src/handlers.js';
+
 import { createGeneralClientFactory } from '../src/wpp/generalClientFactory.js';
 import { createGeneralControlRepository } from '../src/wpp/generalControlRepository.js';
 import {
@@ -984,8 +986,9 @@ test('withActiveClient revalidates ownership immediately before invoking the cal
     id: context.client.id,
     generation: context.generation,
     epoch: context.epoch,
+    ownerId: context.ownerId,
   }));
-  assert.deepEqual(seen, { id: 1, generation: 1, epoch: 7n });
+  assert.deepEqual(seen, { id: 1, generation: 1, epoch: 7n, ownerId: 'owner-a' });
   assert.equal(h.calls.at(-1), 'heartbeat');
 
   h.ownership.isOwner = false;
@@ -993,6 +996,41 @@ test('withActiveClient revalidates ownership immediately before invoking the cal
   await assert.rejects(h.supervisor.withActiveClient(() => { invoked += 1; }), { code: 'WPP_NOT_OWNER' });
   assert.equal(invoked, 0);
   assert.equal(h.supervisor.snapshot().gateOpen, false);
+});
+
+test('restart waits for an admitted inbound handler callback to drain before teardown', async () => {
+  const contextStarted = deferred();
+  const contextRelease = deferred();
+  const h = makeHarness({
+    destroy: async raw => { h.calls.push(`destroy:${raw.id}`); },
+    confirmStopped: async raw => { h.calls.push(`stopped:${raw.id}`); return true; },
+  });
+  await h.supervisor.start();
+  h.clients[0].emit('ready');
+  await new Promise(resolve => setImmediate(resolve));
+  handlers.start(h.clients[0], {
+    generation: 1,
+    withActiveClient: h.supervisor.withActiveClient,
+    contextResolver: async () => {
+      contextStarted.resolve();
+      await contextRelease.promise;
+      return null;
+    },
+  });
+
+  h.clients[0].emit('message', {
+    from: '5493510000002@c.us',
+    body: 'ayuda',
+    id: { _serialized: 'handler-supervisor-drain-1', fromMe: false },
+  });
+  await contextStarted.promise;
+  const restart = h.supervisor.restart('manual');
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(h.calls.includes('destroy:1'), false);
+  contextRelease.resolve();
+  assert.equal(await restart, true);
+  assert.deepEqual(h.calls.filter(call => /^(destroy|stopped):/.test(call)), ['destroy:1', 'stopped:1']);
 });
 
 test('restart waits for active generation work to drain before teardown', async () => {

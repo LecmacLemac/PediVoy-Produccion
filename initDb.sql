@@ -1309,14 +1309,46 @@ CREATE TABLE IF NOT EXISTS historial_costos_precios (
 -- =========================================================
 CREATE TABLE IF NOT EXISTS wpp_outbox (
   id          SERIAL PRIMARY KEY,
-  empresa_id  INTEGER, 
+  empresa_id  INTEGER,
   telefono    TEXT NOT NULL,
   mensaje     TEXT NOT NULL,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   sent_at     TIMESTAMPTZ,
-  status      TEXT DEFAULT 'pending',
-  error       TEXT
+  status      TEXT NOT NULL DEFAULT 'pending',
+  error       TEXT,
+  claim_owner TEXT,
+  claim_epoch BIGINT,
+  claim_until TIMESTAMPTZ,
+  CONSTRAINT wpp_outbox_status_check
+    CHECK (status IN ('pending', 'sending', 'sent', 'error', 'skipped'))
 );
+
+ALTER TABLE wpp_outbox
+  ADD COLUMN IF NOT EXISTS claim_owner TEXT,
+  ADD COLUMN IF NOT EXISTS claim_epoch BIGINT,
+  ADD COLUMN IF NOT EXISTS claim_until TIMESTAMPTZ;
+
+ALTER TABLE wpp_outbox
+  ALTER COLUMN status SET DEFAULT 'pending';
+
+DO $wpp_outbox_status$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conrelid = 'wpp_outbox'::regclass
+      AND conname = 'wpp_outbox_status_check'
+  ) THEN
+    ALTER TABLE wpp_outbox
+      ADD CONSTRAINT wpp_outbox_status_check
+      CHECK (status IN ('pending', 'sending', 'sent', 'error', 'skipped')) NOT VALID;
+  END IF;
+END
+$wpp_outbox_status$;
+
+CREATE INDEX IF NOT EXISTS wpp_outbox_pending_claim_idx
+  ON wpp_outbox (created_at, id)
+  WHERE status = 'pending';
 
 CREATE TABLE IF NOT EXISTS push_subs (
   id         SERIAL PRIMARY KEY,
