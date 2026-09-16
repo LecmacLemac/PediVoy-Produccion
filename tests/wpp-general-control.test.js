@@ -104,6 +104,103 @@ test('reset requests use one atomic globally monotonic sequence', async () => {
   assert.deepEqual(db.calls.map(call => call.params), [['admin-a'], ['admin-b']]);
 });
 
+test('stale reset completion cannot finish after a newer reset starts', async () => {
+  const db = fakeQuery([
+    { rows: [], rowCount: 0 },
+    { rows: [], rowCount: 0 },
+  ]);
+  const repository = createGeneralControlRepository(db.query);
+
+  assert.equal(await repository.markResetApplied({ ownerId: 'owner-a', epoch: 8n, sequence: 41n }), false);
+  assert.equal(await repository.markResetFailed({ ownerId: 'owner-a', epoch: 8n, sequence: 41n, error: 'late' }), false);
+
+  for (const call of db.calls) {
+    assert.match(call.sql, /reset_started_seq\s*=\s*\$3/i);
+    assert.doesNotMatch(call.sql, /reset_started_seq\s*>=\s*\$3/i);
+  }
+});
+
+test('duplicate initial reset start is rejected unless the same sequence has a failure marker', async () => {
+  const db = fakeQuery([{ rows: [], rowCount: 0 }]);
+  const repository = createGeneralControlRepository(db.query);
+
+  assert.equal(await repository.markResetStarted({ ownerId: 'owner-a', epoch: 8n, sequence: 42n }), false);
+
+  assert.match(
+    db.calls[0].sql,
+    /reset_started_seq\s*<\s*\$3\s+OR\s*\(\s*reset_started_seq\s*=\s*\$3\s+AND\s+reset_failed_seq\s*=\s*\$3\s+AND\s+reset_failure_error\s+IS\s+NOT\s+NULL\s*\)/i,
+  );
+});
+
+test('accepted reset retry consumes its failure marker so a duplicate retry is rejected', async () => {
+  const db = fakeQuery([
+    { rows: [], rowCount: 1 },
+    { rows: [], rowCount: 0 },
+  ]);
+  const repository = createGeneralControlRepository(db.query);
+  const input = { ownerId: 'owner-a', epoch: 8n, sequence: 42n };
+
+  assert.equal(await repository.markResetStarted(input), true);
+  assert.equal(await repository.markResetStarted(input), false);
+
+  for (const call of db.calls) {
+    assert.match(call.sql, /SET[\s\S]*reset_failed_at\s*=\s*NULL/i);
+    assert.match(call.sql, /SET[\s\S]*reset_failure_error\s*=\s*NULL/i);
+    assert.match(call.sql, /reset_failure_error\s+IS\s+NOT\s+NULL/i);
+  }
+});
+
+test('a reset can fail again after its accepted retry', async () => {
+  const db = fakeQuery([{ rows: [], rowCount: 1 }]);
+  const repository = createGeneralControlRepository(db.query);
+
+  assert.equal(await repository.markResetFailed({
+    ownerId: 'owner-a', epoch: 8n, sequence: 42n, error: 'retry failed',
+  }), true);
+
+  assert.match(db.calls[0].sql, /SET[\s\S]*reset_failed_seq\s*=\s*\$3/i);
+  assert.match(db.calls[0].sql, /reset_failure_error\s*=\s*\$4/i);
+  assert.match(db.calls[0].sql, /reset_started_seq\s*=\s*\$3/i);
+  assert.deepEqual(db.calls[0].params, ['owner-a', '8', '42', 'retry failed']);
+});
+
+function assertLegacyUpgradeContract(sql) {
+  assert.match(sql, /ADD COLUMN IF NOT EXISTS id\s+BOOLEAN/i);
+  assert.match(sql, /UPDATE wpp_general_control[\s\S]*id\s*=\s*COALESCE\s*\(\s*id\s*,\s*TRUE\s*\)/i);
+  for (const [column, fallback] of [
+    ['epoch', '0'],
+    ['state', "'standby'"],
+    ['reset_requested_seq', '0'],
+    ['reset_started_seq', '0'],
+    ['reset_applied_seq', '0'],
+    ['reset_failed_seq', '0'],
+  ]) {
+    assert.match(sql, new RegExp(`${column}\\s*=\\s*COALESCE\\s*\\(\\s*${column}\\s*,\\s*${fallback}\\s*\\)`, 'i'));
+    assert.match(sql, new RegExp(`ALTER COLUMN ${column} SET DEFAULT[\\s\\S]*ALTER COLUMN ${column} SET NOT NULL`, 'i'));
+  }
+  assert.match(sql, /ALTER COLUMN id SET DEFAULT TRUE[\s\S]*ALTER COLUMN id SET NOT NULL/i);
+  assert.match(sql, /ALTER COLUMN updated_at SET DEFAULT NOW\(\)[\s\S]*ALTER COLUMN updated_at SET NOT NULL/i);
+  assert.match(sql, /CREATE UNIQUE INDEX IF NOT EXISTS wpp_general_control_singleton_id_uidx[\s\S]*\(id\)/i);
+  assert.match(sql, /wpp_general_control_singleton_id[\s\S]*pg_get_constraintdef\s*\(\s*oid\s*\)[\s\S]*DROP CONSTRAINT IF EXISTS wpp_general_control_singleton_id/i);
+  assert.match(sql, /IF NOT EXISTS[\s\S]*wpp_general_reset_sequence_order[\s\S]*reset_failed_seq\s*<=\s*reset_started_seq/i);
+  assert.match(sql, /DROP CONSTRAINT IF EXISTS wpp_general_reset_sequence_order[\s\S]*ADD CONSTRAINT wpp_general_reset_sequence_order/i);
+}
+
+test('legacy singleton schema upgrade enforces the full contract in runtime SQL', async () => {
+  const db = fakeQuery(Array.from({ length: 3 }, () => ({ rows: [], rowCount: 0 })));
+  const repository = createGeneralControlRepository(db.query);
+
+  await repository.ensureSchema();
+
+  assertLegacyUpgradeContract(db.calls[1].sql);
+  assert.deepEqual(db.calls.map(call => call.params), [[], [], [true]]);
+});
+
+test('legacy singleton schema upgrade enforces the full contract in initDb', async () => {
+  const sql = await readFile(new URL('../initDb.sql', import.meta.url), 'utf8');
+  assertLegacyUpgradeContract(sql);
+});
+
 test('pending reset persists started, failed, retried, and applied lifecycle', async () => {
   const pending = {
     reset_requested_seq: '42', reset_started_seq: '41', reset_applied_seq: '41', reset_failed_seq: '0',

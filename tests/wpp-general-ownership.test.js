@@ -229,6 +229,42 @@ test('dedicated client error fails closed and notifies ownership loss exactly on
   assert.deepEqual(client.releases, [losses[0]]);
 });
 
+test('async ownership-loss observer rejection is contained after exactly-once notification', async () => {
+  const observerError = new Error('observer rejected');
+  const unhandled = [];
+  const onUnhandled = error => unhandled.push(error);
+  process.on('unhandledRejection', onUnhandled);
+
+  const client = makeClient(async sql => {
+    if (/pg_try_advisory_lock/i.test(sql)) return { rows: [{ locked: true }], rowCount: 1 };
+    if (/SET epoch = epoch \+ 1/i.test(sql)) return { rows: [{ epoch: '15' }], rowCount: 1 };
+    throw new Error(`unexpected query: ${sql}`);
+  });
+  let notificationCount = 0;
+  const ownership = createGeneralOwnership({
+    pool: makePool(client),
+    ownerId: 'async-observer',
+    onOwnershipLost: async () => {
+      notificationCount += 1;
+      throw observerError;
+    },
+  });
+
+  try {
+    await ownership.tryAcquire();
+    client.emit('error', new Error('socket closed'));
+    client.emit('error', new Error('duplicate socket error'));
+    await new Promise(resolve => setImmediate(resolve));
+
+    assert.equal(notificationCount, 1);
+    assert.deepEqual(unhandled, []);
+    assert.equal(ownership.isOwner, false);
+    assert.throws(() => ownership.assertOwned(), OwnershipLostError);
+  } finally {
+    process.off('unhandledRejection', onUnhandled);
+  }
+});
+
 test('connect deadline releases a client that arrives late', async () => {
   let resolveConnect;
   const connectPromise = new Promise(resolve => { resolveConnect = resolve; });

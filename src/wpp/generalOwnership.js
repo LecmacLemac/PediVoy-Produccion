@@ -68,7 +68,10 @@ export function createGeneralOwnership({
     if (lossNotified) return;
     lossNotified = true;
     try {
-      onOwnershipLost(error);
+      const result = onOwnershipLost(error);
+      Promise.resolve(result).catch(() => {
+        // Ownership loss must remain fail-closed even if the async observer fails.
+      });
     } catch {
       // Ownership loss must remain fail-closed even if the observer fails.
     }

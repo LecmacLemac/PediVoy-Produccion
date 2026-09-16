@@ -2113,24 +2113,104 @@ CREATE TABLE IF NOT EXISTS wpp_general_control (
 );
 
 ALTER TABLE wpp_general_control
-  ADD COLUMN IF NOT EXISTS epoch BIGINT NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS id BOOLEAN,
+  ADD COLUMN IF NOT EXISTS epoch BIGINT DEFAULT 0,
   ADD COLUMN IF NOT EXISTS owner_id TEXT,
-  ADD COLUMN IF NOT EXISTS state TEXT NOT NULL DEFAULT 'standby',
+  ADD COLUMN IF NOT EXISTS state TEXT DEFAULT 'standby',
   ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS operation TEXT,
   ADD COLUMN IF NOT EXISTS qr_code TEXT,
   ADD COLUMN IF NOT EXISTS last_error TEXT,
-  ADD COLUMN IF NOT EXISTS reset_requested_seq BIGINT NOT NULL DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS reset_started_seq BIGINT NOT NULL DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS reset_applied_seq BIGINT NOT NULL DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS reset_failed_seq BIGINT NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS reset_requested_seq BIGINT DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS reset_started_seq BIGINT DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS reset_applied_seq BIGINT DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS reset_failed_seq BIGINT DEFAULT 0,
   ADD COLUMN IF NOT EXISTS reset_requested_at TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS reset_started_at TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS reset_applied_at TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS reset_failed_at TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS reset_failure_error TEXT,
   ADD COLUMN IF NOT EXISTS reset_requested_by TEXT,
-  ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+  ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
+UPDATE wpp_general_control
+SET id = COALESCE(id, TRUE),
+    epoch = COALESCE(epoch, 0),
+    state = COALESCE(state, 'standby'),
+    reset_requested_seq = COALESCE(reset_requested_seq, 0),
+    reset_started_seq = COALESCE(reset_started_seq, 0),
+    reset_applied_seq = COALESCE(reset_applied_seq, 0),
+    reset_failed_seq = COALESCE(reset_failed_seq, 0),
+    updated_at = COALESCE(updated_at, NOW())
+WHERE id IS NULL
+   OR epoch IS NULL
+   OR state IS NULL
+   OR reset_requested_seq IS NULL
+   OR reset_started_seq IS NULL
+   OR reset_applied_seq IS NULL
+   OR reset_failed_seq IS NULL
+   OR updated_at IS NULL;
+
+ALTER TABLE wpp_general_control
+  ALTER COLUMN id SET DEFAULT TRUE,
+  ALTER COLUMN id SET NOT NULL,
+  ALTER COLUMN epoch SET DEFAULT 0,
+  ALTER COLUMN epoch SET NOT NULL,
+  ALTER COLUMN state SET DEFAULT 'standby',
+  ALTER COLUMN state SET NOT NULL,
+  ALTER COLUMN reset_requested_seq SET DEFAULT 0,
+  ALTER COLUMN reset_requested_seq SET NOT NULL,
+  ALTER COLUMN reset_started_seq SET DEFAULT 0,
+  ALTER COLUMN reset_started_seq SET NOT NULL,
+  ALTER COLUMN reset_applied_seq SET DEFAULT 0,
+  ALTER COLUMN reset_applied_seq SET NOT NULL,
+  ALTER COLUMN reset_failed_seq SET DEFAULT 0,
+  ALTER COLUMN reset_failed_seq SET NOT NULL,
+  ALTER COLUMN updated_at SET DEFAULT NOW(),
+  ALTER COLUMN updated_at SET NOT NULL;
+
+DO $wpp_general_singleton$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conrelid = 'wpp_general_control'::regclass
+      AND conname = 'wpp_general_control_singleton_id'
+      AND pg_get_constraintdef(oid) = 'CHECK (id)'
+  ) THEN
+    ALTER TABLE wpp_general_control
+      DROP CONSTRAINT IF EXISTS wpp_general_control_singleton_id;
+    ALTER TABLE wpp_general_control
+      ADD CONSTRAINT wpp_general_control_singleton_id CHECK (id);
+  END IF;
+END
+$wpp_general_singleton$;
+
+CREATE UNIQUE INDEX IF NOT EXISTS wpp_general_control_singleton_id_uidx
+  ON wpp_general_control (id);
+
+DO $wpp_general_reset_order$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conrelid = 'wpp_general_control'::regclass
+      AND conname = 'wpp_general_reset_sequence_order'
+      AND POSITION('reset_applied_seq <= reset_started_seq' IN pg_get_constraintdef(oid)) > 0
+      AND POSITION('reset_failed_seq <= reset_started_seq' IN pg_get_constraintdef(oid)) > 0
+      AND POSITION('reset_started_seq <= reset_requested_seq' IN pg_get_constraintdef(oid)) > 0
+  ) THEN
+    ALTER TABLE wpp_general_control
+      DROP CONSTRAINT IF EXISTS wpp_general_reset_sequence_order;
+    ALTER TABLE wpp_general_control
+      ADD CONSTRAINT wpp_general_reset_sequence_order CHECK (
+        reset_applied_seq <= reset_started_seq
+        AND reset_failed_seq <= reset_started_seq
+        AND reset_started_seq <= reset_requested_seq
+      );
+  END IF;
+END
+$wpp_general_reset_order$;
 
 INSERT INTO wpp_general_control (id)
 VALUES (TRUE)
