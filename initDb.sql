@@ -2083,3 +2083,48 @@ CREATE INDEX IF NOT EXISTS idx_factura_eventos_factura
 CREATE INDEX IF NOT EXISTS idx_factura_eventos_empresa
   ON factura_eventos (empresa_id, created_at DESC);
 
+
+-- WhatsApp General: singleton ownership, status and reset coordination.
+CREATE TABLE IF NOT EXISTS wpp_general_control (
+  id                   BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (id),
+  epoch                BIGINT NOT NULL DEFAULT 0,
+  owner_id             TEXT,
+  state                TEXT NOT NULL DEFAULT 'standby',
+  heartbeat_at         TIMESTAMPTZ,
+  operation            TEXT,
+  qr_code              TEXT,
+  last_error           TEXT,
+  reset_requested_seq  BIGINT NOT NULL DEFAULT 0,
+  reset_started_seq    BIGINT NOT NULL DEFAULT 0,
+  reset_applied_seq    BIGINT NOT NULL DEFAULT 0,
+  reset_requested_at   TIMESTAMPTZ,
+  reset_started_at     TIMESTAMPTZ,
+  reset_applied_at     TIMESTAMPTZ,
+  reset_requested_by   TEXT,
+  updated_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT wpp_general_reset_sequence_order CHECK (
+    reset_applied_seq <= reset_started_seq
+    AND reset_started_seq <= reset_requested_seq
+  )
+);
+
+ALTER TABLE wpp_general_control
+  ADD COLUMN IF NOT EXISTS epoch BIGINT NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS owner_id TEXT,
+  ADD COLUMN IF NOT EXISTS state TEXT NOT NULL DEFAULT 'standby',
+  ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS operation TEXT,
+  ADD COLUMN IF NOT EXISTS qr_code TEXT,
+  ADD COLUMN IF NOT EXISTS last_error TEXT,
+  ADD COLUMN IF NOT EXISTS reset_requested_seq BIGINT NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS reset_started_seq BIGINT NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS reset_applied_seq BIGINT NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS reset_requested_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS reset_started_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS reset_applied_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS reset_requested_by TEXT,
+  ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+INSERT INTO wpp_general_control (id)
+VALUES (TRUE)
+ON CONFLICT (id) DO NOTHING;
