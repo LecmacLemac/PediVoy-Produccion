@@ -53,6 +53,7 @@ export function createGeneralSupervisor({
   let fatalCalled = false;
   let gateHolds = 0;
   let eventRevision = 0;
+  let terminalFencePending = false;
 
   const snapshot = () => Object.freeze({
     state,
@@ -142,7 +143,7 @@ export function createGeneralSupervisor({
 
   function eventSink({ event, generation: eventGeneration, args = [] }) {
     if (!current || eventGeneration !== generation || current.generation !== eventGeneration
-      || shuttingDown || ownershipLost) return;
+      || shuttingDown || ownershipLost || terminalFencePending) return;
     const revision = ++eventRevision;
     if (event === 'ready') {
       if (ownership.isOwner !== true) return;
@@ -171,6 +172,7 @@ export function createGeneralSupervisor({
       const error = args[0] instanceof Error ? args[0] : new Error(String(args[0] ?? event));
       lastError = error;
       if (/profile\s*lock|singleton(?:lock)?|browser\s+already\s+running/i.test(error.message)) {
+        terminalFencePending = true;
         queueStateEvent({
           eventGeneration,
           revision,
@@ -369,11 +371,12 @@ export function createGeneralSupervisor({
       }
       await stopCurrent();
       if (aborted) return false;
-      await ownership.releaseAfterQuiesced(async () => {
+      const released = await ownership.releaseAfterQuiesced(async () => {
         if (aborted) throw new Error('General shutdown deadline elapsed during quiescence');
         if (current !== null) throw new Error('General client remained active during quiescence');
         return true;
       });
+      if (released !== true) throw new Error('General ownership release could not be confirmed');
       if (aborted) return false;
       state = 'stopped';
       return true;

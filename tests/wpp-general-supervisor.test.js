@@ -15,7 +15,7 @@ const deferred = () => {
 function makeHarness({
   initialize, destroy, confirmStopped, forceStop, tryAcquire = async () => true,
   heartbeat, assertOwned, updateOwned, initializeDeadlineMs = 30, destroyDeadlineMs = 20,
-  shutdownDeadlineMs = 40, markResetStarted, markResetApplied,
+  shutdownDeadlineMs = 40, markResetStarted, markResetApplied, releaseResult = () => true,
 } = {}) {
   const calls = [];
   const clients = [];
@@ -45,8 +45,9 @@ function makeHarness({
       calls.push('release-begin');
       await fn();
       calls.push('release-done');
-      ownership.isOwner = false;
-      return true;
+      const releaseConfirmed = releaseResult();
+      if (releaseConfirmed === true) ownership.isOwner = false;
+      return releaseConfirmed;
     },
   };
   const clientFactory = createGeneralClientFactory({
@@ -275,6 +276,26 @@ test('profile-lock errors fence the generation without filesystem deletion or re
   assert.match(h.supervisor.snapshot().lastError.message, /profile lock/i);
 });
 
+test('a terminal profile-lock fence cannot be swallowed by a later ready event', async () => {
+  const fencedPublished = deferred();
+  const h = makeHarness({
+    updateOwned: values => values.operation === 'profile_lock' ? fencedPublished.promise : true,
+  });
+  await h.supervisor.start();
+
+  h.clients[0].emit('error', new Error('Chromium profile lock'));
+  await new Promise(resolve => setImmediate(resolve));
+  h.clients[0].emit('ready');
+  fencedPublished.resolve(true);
+  await new Promise(resolve => setImmediate(resolve));
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(h.supervisor.snapshot().state, 'fenced');
+  assert.equal(h.supervisor.snapshot().ready, false);
+  assert.equal(h.supervisor.snapshot().gateOpen, false);
+  assert.equal(h.calls.filter(call => call === 'state:ready').length, 0);
+});
+
 test('a follower creates no client and rejects restart and reset without side effects', async () => {
   const h = makeHarness({ tryAcquire: async () => false });
 
@@ -424,6 +445,21 @@ test('successful shutdown stops and confirms before release and rejects later co
   const lifecycle = h.calls.filter(call => /^(destroy|stopped|release)/.test(call));
   assert.deepEqual(lifecycle, ['destroy:1', 'stopped:1', 'release-begin', 'release-done']);
   assert.equal(h.supervisor.snapshot().state, 'stopped');
+});
+
+test('shutdown accepts only an explicitly confirmed ownership release', async t => {
+  for (const releaseConfirmed of [false, undefined]) {
+    await t.test(String(releaseConfirmed), async () => {
+      const h = makeHarness({ releaseResult: () => releaseConfirmed });
+      await h.supervisor.start();
+
+      assert.equal(await h.supervisor.shutdown(), false);
+      assert.equal(h.supervisor.snapshot().state, 'fenced');
+      assert.equal(h.ownership.isOwner, true);
+      assert.equal(h.fatalErrors.length, 1);
+      assert.match(h.fatalErrors[0].message, /release could not be confirmed/i);
+    });
+  }
 });
 
 test('shutdown deadline settles a hung initialize, force-stops, and calls fatal once without release', async () => {
