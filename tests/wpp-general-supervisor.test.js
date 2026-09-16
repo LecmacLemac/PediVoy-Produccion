@@ -233,6 +233,27 @@ test('failed persistence of a terminal restart fence triggers fatal lease-loss h
   assert.equal(h.calls.includes('release-begin'), false);
 });
 
+test('terminal fence persistence does not mutate a frozen rejection', async () => {
+  const lifecycleError = new Error('destroy rejected');
+  const persistenceError = Object.freeze(new Error('fence persistence rejected'));
+  const h = makeHarness({
+    destroy: async () => { throw lifecycleError; },
+    updateOwned: async values => {
+      if (values.state === 'fenced') throw persistenceError;
+      return true;
+    },
+  });
+  await h.supervisor.start();
+
+  await assert.rejects(h.supervisor.restart('manual'), /destroy rejected/);
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(h.fatalErrors.length, 1);
+  assert.match(h.fatalErrors[0].message, /fence persistence rejected/);
+  assert.equal(h.fatalErrors[0].cause, lifecycleError);
+  assert.equal(Object.hasOwn(persistenceError, 'cause'), false);
+});
+
 test('restart keeps the send gate closed while it waits behind initialization', async () => {
   const initial = deferred();
   const h = makeHarness({ initialize: raw => raw.id === 1 ? initial.promise : Promise.resolve() });
@@ -427,6 +448,35 @@ test('profile-lock reset failure persistence robustly handles primitive rejectio
   assert.equal(h.calls.filter(call => call === 'reset-failed:14').length, 1);
   assert.equal(h.fatalErrors.length, 1);
   assert.match(h.fatalErrors[0].message, /reset persistence exploded/);
+});
+
+test('profile-lock reset failure persistence does not mutate a frozen rejection', async () => {
+  const resetStarted = deferred();
+  const originalCause = new Error('original persistence cause');
+  const persistenceError = Object.freeze(new Error('frozen reset persistence failure', { cause: originalCause }));
+  const h = makeHarness({
+    markResetStarted: () => resetStarted.promise,
+    markResetFailed: async () => { throw persistenceError; },
+  });
+  await h.supervisor.start();
+
+  const reset = h.supervisor.reset(15n, async () => h.calls.push('delete'));
+  await new Promise(resolve => setImmediate(resolve));
+  h.clients[0].emit('error', new Error('Chromium profile lock'));
+  resetStarted.resolve(true);
+
+  await assert.rejects(reset, error => {
+    assert.match(error.message, /frozen reset persistence failure/);
+    assert.equal(error.cause, originalCause);
+    return true;
+  });
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(h.calls.includes('delete'), false);
+  assert.equal(h.calls.filter(call => call === 'reset-failed:15').length, 1);
+  assert.equal(h.fatalErrors.length, 1);
+  assert.equal(persistenceError.cause, originalCause);
+  assert.equal(Object.hasOwn(persistenceError, 'resetFailurePersistenceAttempted'), false);
 });
 
 test('a profile-lock event during reset teardown prevents profile deletion and replacement', async () => {
@@ -748,6 +798,29 @@ test('unconfirmed force stop is reported as the fatal shutdown failure', async (
   assert.match(h.fatalErrors[0].message, /force stop could not be confirmed/i);
   assert.equal(h.calls.includes('release-begin'), false);
 
+  await assert.rejects(start, /initialize deadline/);
+});
+
+test('force-stop fallback does not mutate a frozen rejection', async () => {
+  const forceStopError = Object.freeze(new Error('force stop exploded'));
+  const h = makeHarness({
+    initialize: () => new Promise(() => {}),
+    forceStop: async raw => {
+      h.calls.push(`force:${raw.id}`);
+      throw forceStopError;
+    },
+    initializeDeadlineMs: 40,
+    destroyDeadlineMs: 5,
+    shutdownDeadlineMs: 10,
+  });
+  const start = h.supervisor.start();
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(await h.supervisor.shutdown(), false);
+  assert.equal(h.fatalErrors.length, 1);
+  assert.match(h.fatalErrors[0].message, /force stop exploded/);
+  assert.match(h.fatalErrors[0].cause?.message, /shutdown deadline exceeded/i);
+  assert.equal(Object.hasOwn(forceStopError, 'cause'), false);
   await assert.rejects(start, /initialize deadline/);
 });
 

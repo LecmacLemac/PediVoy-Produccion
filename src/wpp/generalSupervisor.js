@@ -16,12 +16,21 @@ function notOwnerError(message = 'WhatsApp General client is not active') {
   return Object.assign(new Error(message), { code: 'WPP_NOT_OWNER' });
 }
 
-function preserveCause(error, cause) {
+function preserveCause(error, cause, properties = {}) {
   if (error && (typeof error === 'object' || typeof error === 'function')) {
-    if (error.cause === undefined) error.cause = cause;
-    return error;
+    if (error.cause !== undefined && Object.keys(properties).length === 0) return error;
+    const descriptors = Object.getOwnPropertyDescriptors(error);
+    if (error.cause === undefined) {
+      descriptors.cause = { value: cause, writable: true, configurable: true };
+    }
+    for (const [key, value] of Object.entries(properties)) {
+      descriptors[key] = { value, writable: true, configurable: true, enumerable: true };
+    }
+    return Object.create(Object.getPrototypeOf(error), {
+      ...descriptors,
+    });
   }
-  return new Error(String(error), { cause });
+  return Object.assign(new Error(String(error), { cause }), properties);
 }
 
 export function createGeneralSupervisor({
@@ -291,8 +300,9 @@ export function createGeneralSupervisor({
         });
         if (persisted !== true) throw notOwnerError('General reset failure fence rejected persistence');
       } catch (persistenceError) {
-        const failure = preserveCause(persistenceError, lastError);
-        failure.resetFailurePersistenceAttempted = true;
+        const failure = preserveCause(persistenceError, lastError, {
+          resetFailurePersistenceAttempted: true,
+        });
         leaseLost(failure);
         throw failure;
       }
@@ -395,8 +405,7 @@ export function createGeneralSupervisor({
       }
       return deadlineError;
     } catch (forceStopError) {
-      if (forceStopError && forceStopError.cause === undefined) forceStopError.cause = deadlineError;
-      return forceStopError;
+      return preserveCause(forceStopError, deadlineError);
     }
   }
 
