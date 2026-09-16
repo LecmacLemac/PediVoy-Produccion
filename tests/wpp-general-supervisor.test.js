@@ -219,7 +219,7 @@ test('restart keeps the send gate closed while it waits behind initialization', 
   const restart = h.supervisor.restart('manual');
   h.clients[0].emit('ready');
 
-  assert.equal(h.supervisor.snapshot().ready, true);
+  assert.equal(h.supervisor.snapshot().ready, false);
   assert.equal(h.supervisor.snapshot().gateOpen, false);
 
   initial.resolve();
@@ -335,6 +335,57 @@ test('a false repository event update is ownership loss', async () => {
   assert.equal(h.fatalErrors.length, 1);
 });
 
+test('ready keeps the gate closed until its fenced publication succeeds', async () => {
+  const readyPublished = deferred();
+  const h = makeHarness({
+    updateOwned: values => values.state === 'ready' ? readyPublished.promise : true,
+  });
+  await h.supervisor.start();
+
+  h.clients[0].emit('ready');
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(h.supervisor.snapshot().gateOpen, false);
+  await assert.rejects(h.supervisor.withActiveClient(() => 'unsafe'), { code: 'WPP_NOT_OWNER' });
+
+  readyPublished.resolve(true);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.supervisor.snapshot().gateOpen, true);
+});
+
+test('client events publish in order and a newer event prevents ready from reopening the gate', async () => {
+  const readyPublished = deferred();
+  const publications = [];
+  const h = makeHarness({
+    updateOwned: async values => {
+      if (values.state === 'ready') {
+        publications.push('ready:start');
+        await readyPublished.promise;
+        publications.push('ready:end');
+      } else if (values.state === 'awaiting_qr') {
+        publications.push('qr');
+      }
+      return true;
+    },
+  });
+  await h.supervisor.start();
+
+  h.clients[0].emit('ready');
+  await new Promise(resolve => setImmediate(resolve));
+  h.clients[0].emit('qr', 'next-code');
+
+  assert.deepEqual(publications, ['ready:start']);
+  assert.equal(h.supervisor.snapshot().gateOpen, false);
+
+  readyPublished.resolve();
+  await new Promise(resolve => setImmediate(resolve));
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.deepEqual(publications, ['ready:start', 'ready:end', 'qr']);
+  assert.equal(h.supervisor.snapshot().state, 'awaiting_qr');
+  assert.equal(h.supervisor.snapshot().gateOpen, false);
+});
+
 test('withActiveClient revalidates ownership immediately before invoking the callback', async () => {
   const h = makeHarness();
   await h.supervisor.start();
@@ -394,6 +445,25 @@ test('shutdown deadline settles a hung initialize, force-stops, and calls fatal 
 
   await assert.rejects(start, /initialize deadline/);
   assert.equal(h.fatalErrors.length, 1);
+});
+
+test('unconfirmed force stop is reported as the fatal shutdown failure', async () => {
+  const h = makeHarness({
+    initialize: () => new Promise(() => {}),
+    forceStop: async raw => { h.calls.push(`force:${raw.id}`); return false; },
+    initializeDeadlineMs: 40,
+    destroyDeadlineMs: 5,
+    shutdownDeadlineMs: 10,
+  });
+  const start = h.supervisor.start();
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(await h.supervisor.shutdown(), false);
+  assert.equal(h.fatalErrors.length, 1);
+  assert.match(h.fatalErrors[0].message, /force stop could not be confirmed/i);
+  assert.equal(h.calls.includes('release-begin'), false);
+
+  await assert.rejects(start, /initialize deadline/);
 });
 
 test('shutdown destroy failure never releases ownership', async t => {
@@ -563,8 +633,14 @@ test('late destroy completion after shutdown timeout cannot release ownership', 
 });
 
 test('supervisor requires fenced state and reset persistence methods', () => {
-  const ownership = { tryAcquire: async () => false };
+  const ownership = {
+    tryAcquire: async () => false,
+    assertOwned: () => true,
+    heartbeat: async () => true,
+    releaseAfterQuiesced: async () => true,
+  };
   const clientFactory = { create: () => { throw new Error('unused'); } };
+  const fatalExit = () => {};
   const validRepository = {
     updateOwned: async () => true,
     markResetStarted: async () => true,
@@ -576,14 +652,112 @@ test('supervisor requires fenced state and reset persistence methods', () => {
     const repository = { ...validRepository };
     delete repository[method];
     assert.throws(
-      () => createGeneralSupervisor({ ownership, clientFactory, repository }),
+      () => createGeneralSupervisor({ ownership, clientFactory, repository, fatalExit }),
       new RegExp(`repository\\.${method} is required`),
     );
   }
   assert.throws(
-    () => createGeneralSupervisor({ ownership, clientFactory }),
+    () => createGeneralSupervisor({ ownership, clientFactory, fatalExit }),
     /repository\.updateOwned is required/,
   );
+});
+
+test('supervisor requires every ownership guard capability', () => {
+  const validOwnership = {
+    tryAcquire: async () => false,
+    assertOwned: () => true,
+    heartbeat: async () => true,
+    releaseAfterQuiesced: async () => true,
+  };
+  const clientFactory = { create: () => { throw new Error('unused'); } };
+  const repository = {
+    updateOwned: async () => true,
+    markResetStarted: async () => true,
+    markResetApplied: async () => true,
+    markResetFailed: async () => true,
+  };
+
+  for (const method of Object.keys(validOwnership)) {
+    const ownership = { ...validOwnership };
+    delete ownership[method];
+    assert.throws(
+      () => createGeneralSupervisor({ ownership, clientFactory, repository, fatalExit: () => {} }),
+      new RegExp(`ownership\\.${method} is required`),
+    );
+  }
+});
+
+test('supervisor requires an explicit fatal process terminator', () => {
+  const ownership = {
+    tryAcquire: async () => false,
+    assertOwned: () => true,
+    heartbeat: async () => true,
+    releaseAfterQuiesced: async () => true,
+  };
+  const clientFactory = { create: () => { throw new Error('unused'); } };
+  const repository = {
+    updateOwned: async () => true,
+    markResetStarted: async () => true,
+    markResetApplied: async () => true,
+    markResetFailed: async () => true,
+  };
+
+  assert.throws(
+    () => createGeneralSupervisor({ ownership, clientFactory, repository }),
+    /fatalExit must be a function/,
+  );
+});
+
+test('ownership and fence checks accept only an explicit true result', async t => {
+  await t.test('assertOwned undefined blocks initialization', async () => {
+    const h = makeHarness({ assertOwned: async () => undefined });
+    await assert.rejects(h.supervisor.start(), { code: 'WPP_NOT_OWNER' });
+    assert.equal(h.clients.length, 0);
+  });
+
+  await t.test('updateOwned undefined blocks initialization', async () => {
+    const h = makeHarness({ updateOwned: async () => undefined });
+    await assert.rejects(h.supervisor.start(), { code: 'WPP_NOT_OWNER' });
+    assert.equal(h.clients.length, 0);
+  });
+
+  await t.test('updateOwned undefined during reset triggers lease-loss cleanup', async () => {
+    const h = makeHarness({
+      updateOwned: async values => values.state === 'resetting' ? undefined : true,
+      destroy: async raw => { h.calls.push(`destroy:${raw.id}`); },
+      confirmStopped: async raw => { h.calls.push(`stopped:${raw.id}`); return true; },
+    });
+    await h.supervisor.start();
+
+    await assert.rejects(h.supervisor.reset(30n, async () => {}), { code: 'WPP_NOT_OWNER' });
+    await new Promise(resolve => setImmediate(resolve));
+
+    assert.equal(h.fatalErrors.length, 1);
+    assert.equal(h.calls.filter(call => call === 'destroy:1').length, 1);
+    assert.equal(h.calls.includes('release-begin'), false);
+  });
+
+  await t.test('heartbeat undefined blocks client use', async () => {
+    const h = makeHarness({ heartbeat: async () => undefined });
+    await h.supervisor.start();
+    h.clients[0].emit('ready');
+    await new Promise(resolve => setImmediate(resolve));
+    let invoked = 0;
+
+    await assert.rejects(
+      h.supervisor.withActiveClient(() => { invoked += 1; }),
+      { code: 'WPP_NOT_OWNER' },
+    );
+    assert.equal(invoked, 0);
+  });
+
+  await t.test('markResetApplied undefined rejects reset completion', async () => {
+    const h = makeHarness({ markResetApplied: async () => undefined });
+    await h.supervisor.start();
+
+    await assert.rejects(h.supervisor.reset(31n, async () => {}), { code: 'WPP_NOT_OWNER' });
+    assert.equal(h.supervisor.snapshot().gateOpen, false);
+  });
 });
 
 test('ownership loss between assertion and state publication cannot create a successor', async () => {
@@ -676,11 +850,12 @@ test('reset keeps the send gate closed until completion is durably applied', asy
   const reset = h.supervisor.reset(22n, async () => {});
   await new Promise(resolve => setImmediate(resolve));
 
-  assert.equal(h.supervisor.snapshot().state, 'ready');
-  assert.equal(h.supervisor.snapshot().ready, true);
+  assert.equal(h.supervisor.snapshot().state, 'initializing');
+  assert.equal(h.supervisor.snapshot().ready, false);
   assert.equal(h.supervisor.snapshot().gateOpen, false);
 
   applied.resolve(true);
   assert.equal(await reset, true);
+  await new Promise(resolve => setImmediate(resolve));
   assert.equal(h.supervisor.snapshot().gateOpen, true);
 });

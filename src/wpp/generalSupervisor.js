@@ -20,13 +20,17 @@ export function createGeneralSupervisor({
   ownership,
   clientFactory,
   repository,
-  fatalExit = () => {},
+  fatalExit,
   initializeDeadlineMs = 90000,
   destroyDeadlineMs = 10000,
   shutdownDeadlineMs = 20000,
 } = {}) {
-  if (!ownership?.tryAcquire) throw new TypeError('ownership.tryAcquire is required');
-  if (!clientFactory?.create) throw new TypeError('clientFactory.create is required');
+  for (const method of ['tryAcquire', 'assertOwned', 'heartbeat', 'releaseAfterQuiesced']) {
+    if (typeof ownership?.[method] !== 'function') {
+      throw new TypeError(`ownership.${method} is required`);
+    }
+  }
+  if (typeof clientFactory?.create !== 'function') throw new TypeError('clientFactory.create is required');
   for (const method of ['updateOwned', 'markResetStarted', 'markResetApplied', 'markResetFailed']) {
     if (typeof repository?.[method] !== 'function') {
       throw new TypeError(`repository.${method} is required`);
@@ -48,6 +52,7 @@ export function createGeneralSupervisor({
   let shutdownPromise = null;
   let fatalCalled = false;
   let gateHolds = 0;
+  let eventRevision = 0;
 
   const snapshot = () => Object.freeze({
     state,
@@ -70,8 +75,8 @@ export function createGeneralSupervisor({
   async function assertOwner() {
     if (ownership.isOwner !== true) throw notOwnerError();
     try {
-      const owned = await Promise.resolve(ownership.assertOwned?.());
-      if (owned === false) throw notOwnerError();
+      const owned = await Promise.resolve(ownership.assertOwned());
+      if (owned !== true) throw notOwnerError();
     } catch (error) {
       if (error?.code === 'WPP_NOT_OWNER') throw error;
       throw notOwnerError(error?.message);
@@ -91,7 +96,7 @@ export function createGeneralSupervisor({
       operation,
       lastError: error ? String(error.message ?? error) : null,
     });
-    if (updated === false) throw notOwnerError('General ownership fence rejected state update');
+    if (updated !== true) throw notOwnerError('General ownership fence rejected state update');
   }
 
   function enqueue(fn, { allowShutdown = false } = {}) {
@@ -105,39 +110,60 @@ export function createGeneralSupervisor({
     return result;
   }
 
-  function publishEvent(values) {
-    Promise.resolve(repository.updateOwned(values)).then(updated => {
-      if (updated === false) leaseLost(notOwnerError('General ownership fence rejected event update'));
+  function queueStateEvent({ eventGeneration, revision, nextState, operation, qrCode, error }) {
+    const eventClient = current;
+    const eventEpoch = ownership.epoch;
+    enqueue(async () => {
+      if (!eventClient || current !== eventClient || generation !== eventGeneration
+        || eventClient.generation !== eventGeneration || ownership.epoch !== eventEpoch
+        || shuttingDown || ownershipLost) return false;
+      await assertOwner();
+      const updated = await repository.updateOwned({
+        ownerId: ownership.ownerId,
+        epoch: eventEpoch,
+        state: nextState,
+        operation,
+        qrCode,
+        lastError: error ? String(error.message ?? error) : null,
+      });
+      if (updated !== true) throw notOwnerError('General ownership fence rejected event update');
+      if (current !== eventClient || generation !== eventGeneration
+        || ownership.epoch !== eventEpoch || shuttingDown || ownershipLost) return false;
+      if (revision !== eventRevision) return false;
+      state = nextState;
+      if (error) lastError = error;
+      if (nextState === 'ready') {
+        ready = true;
+        gateOpen = gateHolds === 0;
+      }
+      return true;
     }).catch(error => leaseLost(error));
   }
 
   function eventSink({ event, generation: eventGeneration, args = [] }) {
     if (!current || eventGeneration !== generation || current.generation !== eventGeneration
       || shuttingDown || ownershipLost) return;
+    const revision = ++eventRevision;
     if (event === 'ready') {
       if (ownership.isOwner !== true) return;
-      ready = true;
-      gateOpen = gateHolds === 0;
-      state = 'ready';
-      publishEvent({
-        ownerId: ownership.ownerId, epoch: ownership.epoch, state: 'ready', operation: null,
-      });
+      closeGate();
+      queueStateEvent({ eventGeneration, revision, nextState: 'ready', operation: null });
       return;
     }
     if (event === 'qr') {
       closeGate();
-      state = 'awaiting_qr';
-      publishEvent({
-        ownerId: ownership.ownerId, epoch: ownership.epoch, state, operation: 'qr', qrCode: args[0] ?? null,
+      queueStateEvent({
+        eventGeneration,
+        revision,
+        nextState: 'awaiting_qr',
+        operation: 'qr',
+        qrCode: args[0] ?? null,
       });
       return;
     }
     if (event === 'authenticated') {
       closeGate();
-      state = 'authenticated';
-      publishEvent({
-        ownerId: ownership.ownerId, epoch: ownership.epoch, state, operation: 'authenticated',
-      });
+      queueStateEvent({ eventGeneration, revision, nextState: 'authenticated', operation: 'authenticated' });
       return;
     }
     if (event === 'disconnected' || event === 'auth_failure' || event === 'error') {
@@ -145,13 +171,12 @@ export function createGeneralSupervisor({
       const error = args[0] instanceof Error ? args[0] : new Error(String(args[0] ?? event));
       lastError = error;
       if (/profile\s*lock|singleton(?:lock)?|browser\s+already\s+running/i.test(error.message)) {
-        state = 'fenced';
-        publishEvent({
-          ownerId: ownership.ownerId,
-          epoch: ownership.epoch,
-          state: 'fenced',
+        queueStateEvent({
+          eventGeneration,
+          revision,
+          nextState: 'fenced',
           operation: 'profile_lock',
-          lastError: error.message,
+          error,
         });
         return;
       }
@@ -199,10 +224,11 @@ export function createGeneralSupervisor({
       if (current || (ownership.isOwner && generation > 0)) return true;
       state = 'acquiring';
       const acquired = await ownership.tryAcquire();
-      if (!acquired) {
+      if (acquired === false) {
         state = 'standby';
         return false;
       }
+      if (acquired !== true) throw notOwnerError('General ownership acquisition was not confirmed');
       return initializeFresh();
     });
     startPromise.finally(() => { startPromise = null; }).catch(() => {});
@@ -234,19 +260,19 @@ export function createGeneralSupervisor({
     gateHolds += 1;
     closeGate();
     return enqueue(async () => {
-      await assertOwner();
-      await publish('resetting', 'reset');
       let started = false;
       try {
+        await assertOwner();
+        await publish('resetting', 'reset');
         started = await repository.markResetStarted({ ownerId: ownership.ownerId, epoch: ownership.epoch, sequence });
-        if (!started) throw notOwnerError('General reset fence rejected start');
+        if (started !== true) throw notOwnerError('General reset fence rejected start');
         await stopCurrent();
         const stillOwned = await Promise.resolve(ownership.assertOwned());
-        if (stillOwned === false) throw notOwnerError('General reset ownership revalidation failed');
+        if (stillOwned !== true) throw notOwnerError('General reset ownership revalidation failed');
         await deleteSessionFn();
         await initializeFresh();
         const applied = await repository.markResetApplied({ ownerId: ownership.ownerId, epoch: ownership.epoch, sequence });
-        if (applied === false) throw notOwnerError('General reset fence rejected completion');
+        if (applied !== true) throw notOwnerError('General reset fence rejected completion');
         gateHolds -= 1;
         gateOpen = ready && gateHolds === 0;
         return true;
@@ -267,6 +293,20 @@ export function createGeneralSupervisor({
     if (fatalCalled) return;
     fatalCalled = true;
     Promise.resolve().then(() => fatalExit(error)).catch(() => {});
+  }
+
+  async function forceStopAfterDeadline(deadlineError) {
+    if (!deadlineError?.timedOut || !current) return deadlineError;
+    try {
+      const stopped = await deadline(current.forceStop(), destroyDeadlineMs, 'General client force stop');
+      if (stopped !== true) {
+        return new Error('General client force stop could not be confirmed', { cause: deadlineError });
+      }
+      return deadlineError;
+    } catch (forceStopError) {
+      if (forceStopError && forceStopError.cause === undefined) forceStopError.cause = deadlineError;
+      return forceStopError;
+    }
   }
 
   function leaseLost(error = notOwnerError('General ownership was lost')) {
@@ -291,12 +331,8 @@ export function createGeneralSupervisor({
     lossPromise = deadline(cleanup, shutdownDeadlineMs, 'General lease-loss shutdown').catch(async deadlineError => {
       state = 'fenced';
       closeGate();
-      if (deadlineError?.timedOut && current) {
-        try {
-          await deadline(current.forceStop(), destroyDeadlineMs, 'General client force stop');
-        } catch {}
-      }
-      callFatal(error);
+      const fatalError = await forceStopAfterDeadline(deadlineError);
+      callFatal(fatalError === deadlineError ? error : fatalError);
       return false;
     });
     tail = lossPromise.catch(() => {});
@@ -306,7 +342,7 @@ export function createGeneralSupervisor({
   async function heartbeatOnce() {
     try {
       const alive = await ownership.heartbeat();
-      if (alive === false) throw notOwnerError('General ownership heartbeat was rejected');
+      if (alive !== true) throw notOwnerError('General ownership heartbeat was rejected');
       return true;
     } catch (error) {
       leaseLost(error);
@@ -348,12 +384,7 @@ export function createGeneralSupervisor({
       closeGate();
       state = 'fenced';
       lastError = error;
-      if (error?.timedOut && current) {
-        try {
-          await deadline(current.forceStop(), destroyDeadlineMs, 'General client force stop');
-        } catch {}
-      }
-      callFatal(error);
+      callFatal(await forceStopAfterDeadline(error));
       return false;
     });
     tail = shutdownPromise.catch(() => {});
@@ -375,7 +406,7 @@ export function createGeneralSupervisor({
     const activeEpoch = ownership.epoch;
     try {
       const owned = await ownership.heartbeat();
-      if (owned === false) throw notOwnerError('General ownership heartbeat was rejected');
+      if (owned !== true) throw notOwnerError('General ownership heartbeat was rejected');
     } catch (error) {
       leaseLost(error);
       throw notOwnerError(error?.message);
