@@ -15,7 +15,8 @@ const deferred = () => {
 function makeHarness({
   initialize, destroy, confirmStopped, forceStop, tryAcquire = async () => true,
   heartbeat, assertOwned, updateOwned, initializeDeadlineMs = 30, destroyDeadlineMs = 20,
-  shutdownDeadlineMs = 40, markResetStarted, markResetApplied, releaseResult = () => true,
+  shutdownDeadlineMs = 40, markResetStarted, markResetApplied, markResetFailed,
+  releaseResult = () => true,
 } = {}) {
   const calls = [];
   const clients = [];
@@ -77,7 +78,10 @@ function makeHarness({
       calls.push(`reset-applied:${values.sequence}`);
       return markResetApplied ? markResetApplied(values, calls) : true;
     },
-    markResetFailed: async ({ sequence }) => { calls.push(`reset-failed:${sequence}`); return true; },
+    markResetFailed: async values => {
+      calls.push(`reset-failed:${values.sequence}`);
+      return markResetFailed ? markResetFailed(values, calls) : true;
+    },
   };
   const fatalErrors = [];
   const supervisor = createGeneralSupervisor({
@@ -208,6 +212,22 @@ test('restart state-fence rejection triggers fatal lease-loss cleanup', async ()
   assert.equal(h.supervisor.snapshot().gateOpen, false);
   assert.equal(h.calls.filter(call => call === 'destroy:1').length, 1);
   assert.equal(h.fatalErrors.length, 1);
+  assert.equal(h.calls.includes('release-begin'), false);
+});
+
+test('failed persistence of a terminal restart fence triggers fatal lease-loss handling', async () => {
+  const h = makeHarness({
+    destroy: async () => { throw new Error('destroy rejected'); },
+    updateOwned: async values => values.state !== 'fenced',
+  });
+  await h.supervisor.start();
+
+  await assert.rejects(h.supervisor.restart('manual'), /destroy rejected/);
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(h.supervisor.snapshot().state, 'fenced');
+  assert.equal(h.fatalErrors.length, 1);
+  assert.match(h.fatalErrors[0].message, /fence rejected state update/i);
   assert.equal(h.calls.includes('release-begin'), false);
 });
 
@@ -543,6 +563,22 @@ test('initialize failure or timeout closes the gate and cleans the failed client
   }
 });
 
+test('failed persistence of a terminal initialize fence triggers fatal lease-loss handling', async () => {
+  const h = makeHarness({
+    initialize: async () => { throw new Error('initialize rejected'); },
+    updateOwned: async values => values.state !== 'fenced',
+  });
+
+  await assert.rejects(h.supervisor.start(), /initialize rejected/);
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(h.supervisor.snapshot().state, 'fenced');
+  assert.equal(h.supervisor.snapshot().gateOpen, false);
+  assert.equal(h.fatalErrors.length, 1);
+  assert.match(h.fatalErrors[0].message, /fence rejected state update/i);
+  assert.equal(h.calls.includes('release-begin'), false);
+});
+
 test('client factory creates distinct raw clients and generation-tags forwarded events', () => {
   const raws = [];
   const events = [];
@@ -860,6 +896,23 @@ test('rejected reset persistence fences trigger fatal lease-loss cleanup', async
       assert.equal(h.calls.includes('release-begin'), false);
     });
   }
+});
+
+test('failed persistence of a terminal reset failure triggers fatal lease-loss handling', async () => {
+  const h = makeHarness({
+    destroy: async () => { throw new Error('destroy rejected'); },
+    markResetFailed: async () => false,
+  });
+  await h.supervisor.start();
+
+  await assert.rejects(h.supervisor.reset(23n, async () => {}), /destroy rejected/);
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(h.supervisor.snapshot().state, 'fenced');
+  assert.equal(h.supervisor.snapshot().gateOpen, false);
+  assert.equal(h.fatalErrors.length, 1);
+  assert.match(h.fatalErrors[0].message, /reset failure fence rejected persistence/i);
+  assert.equal(h.calls.includes('release-begin'), false);
 });
 
 test('client factory requires an explicit stop confirmation capability', () => {

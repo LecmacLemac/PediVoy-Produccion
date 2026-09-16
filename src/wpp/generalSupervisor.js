@@ -186,6 +186,18 @@ export function createGeneralSupervisor({
     }
   }
 
+  async function persistTerminalFence(operation, error) {
+    try {
+      await publish('fenced', operation, error);
+      return true;
+    } catch (persistenceError) {
+      state = 'fenced';
+      lastError = error;
+      leaseLost(persistenceError);
+      return false;
+    }
+  }
+
   async function initializeFresh() {
     try {
       await assertOwner();
@@ -201,7 +213,7 @@ export function createGeneralSupervisor({
       } catch (cleanupError) {
         callFatal(cleanupError);
       }
-      await publish('fenced', 'initialize_failed', error).catch(() => { state = 'fenced'; lastError = error; });
+      await persistTerminalFence('initialize_failed', error);
       if (error?.code === 'WPP_NOT_OWNER') leaseLost(error);
       throw error;
     }
@@ -250,7 +262,7 @@ export function createGeneralSupervisor({
         gateOpen = ready && gateHolds === 0;
         return restarted;
       } catch (error) {
-        await publish('fenced', reason, error).catch(() => { state = 'fenced'; lastError = error; });
+        await persistTerminalFence(reason, error);
         if (error?.code === 'WPP_NOT_OWNER') leaseLost(error);
         throw error;
       }
@@ -283,7 +295,19 @@ export function createGeneralSupervisor({
         state = 'fenced';
         lastError = error;
         if (started) {
-          await repository.markResetFailed({ ownerId: ownership.ownerId, epoch: ownership.epoch, sequence, error }).catch(() => {});
+          try {
+            const persisted = await repository.markResetFailed({
+              ownerId: ownership.ownerId,
+              epoch: ownership.epoch,
+              sequence,
+              error,
+            });
+            if (persisted !== true) {
+              throw notOwnerError('General reset failure fence rejected persistence');
+            }
+          } catch (persistenceError) {
+            leaseLost(persistenceError);
+          }
         }
         if (error?.code === 'WPP_NOT_OWNER') leaseLost(error);
         throw error;
