@@ -5,9 +5,21 @@ import { handleIncomingComprobanteFromBotPg } from '../transferenciasPipeline.js
 import { createIncomingMediaHandler } from './incomingMedia.js';
 import { createOutboxProcessor } from './outboxProcessor.js';
 import { createWppClientLifecycle } from './clientLifecycle.js';
+import { createGeneralControlRepository } from './generalControlRepository.js';
 import { registerWppRoutes } from './routes.js';
 import { registerWppCronAndRoutes } from './cronRoutes.js';
 import { WPP_SESSION_ID, limpiarLocksSesion as clearWppSessionLocks, safeErrorString, wait } from './sessionUtils.js';
+
+export function resolveGeneralRouteDeps({
+  query,
+  generalControlRepository,
+  generalSupervisor,
+} = {}) {
+  return {
+    repository: generalControlRepository ?? createGeneralControlRepository(query),
+    supervisor: generalSupervisor ?? null,
+  };
+}
 
 export function registerWhatsAppWeb(app, deps) {
   const {
@@ -176,20 +188,20 @@ export function registerWhatsAppWeb(app, deps) {
     console.log('[WPP SERVER] WhatsApp deshabilitado en este entorno (ENABLE_WPP=0)');
   }
 
+  const generalRouteDeps = resolveGeneralRouteDeps({
+    query,
+    generalControlRepository: deps?.generalControlRepository,
+    generalSupervisor: deps?.generalSupervisor,
+  });
+
   registerWppRoutes(app, {
     ENABLE_WPP,
     WPP_QR_ONLY,
     qrcode,
-    fs,
-    path,
-    query,
     withAuth,
     isSuper,
     getState,
-    setState,
-    getClient: () => wppClient,
-    initWhatsApp,
-    limpiarLocksSesion,
+    ...generalRouteDeps,
   });
 
 

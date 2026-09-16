@@ -25,6 +25,8 @@ function buildApp({
   state = {},
   client = null,
   initWhatsApp = async () => {},
+  repository,
+  supervisor,
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pedivoy-wpp-test-')),
 } = {}) {
   const app = express();
@@ -64,6 +66,23 @@ function buildApp({
     },
     initWhatsApp,
     limpiarLocksSesion() {},
+    repository: repository ?? {
+      async getClusterStatus() {
+        return {
+          state: currentState.isConnected ? 'ready' : (currentState.isInitializingWpp ? 'initializing' : 'awaiting_scan'),
+          qr_code: currentState.lastQr,
+          epoch: 1n,
+          reset_requested_seq: 0n,
+          reset_started_seq: 0n,
+          reset_applied_seq: 0n,
+          reset_failed_seq: 0n,
+        };
+      },
+      async requestReset() {
+        return 1n;
+      },
+    },
+    supervisor,
   });
 
   return { app, tmpDir, state: currentState };
@@ -113,41 +132,30 @@ test('qr general informa cuando WhatsApp esta deshabilitado', async () => {
   });
 });
 
-test('reset general limpia estado y reinicializa si hay cliente', async () => {
-  let destroyed = false;
-  let initialized = false;
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pedivoy-wpp-reset-test-'));
-  const previousSessionPath = process.env.WPP_SESSION_PATH;
+test('reset general persiste una solicitud global sin tocar el cliente local', async () => {
+  const calls = [];
   const { app } = buildApp({
-    tmpDir,
-    state: { lastQr: 'qr-demo', isConnected: true, isReadyWpp: true, wppHandlersStarted: true },
     client: {
       async destroy() {
-        destroyed = true;
+        calls.push('destroy');
       },
     },
-    initWhatsApp: async () => {
-      initialized = true;
+    initWhatsApp: async () => calls.push('initialize'),
+    repository: {
+      async requestReset(input) {
+        calls.push(['requestReset', input]);
+        return 5n;
+      },
     },
   });
 
-  try {
-    process.env.WPP_SESSION_PATH = tmpDir;
-    await withServer(app, async (baseUrl) => {
-      const resp = await fetch(`${baseUrl}/api/whatsapp/reset`, { method: 'POST' });
-      assert.equal(resp.status, 200);
+  await withServer(app, async (baseUrl) => {
+    const resp = await fetch(`${baseUrl}/api/whatsapp/reset`, { method: 'POST' });
+    assert.equal(resp.status, 202);
+    assert.deepEqual(await resp.json(), { ok: true, sequence: '5' });
+  });
 
-      const body = await resp.json();
-      assert.equal(body.ok, true);
-    });
-  } finally {
-    if (previousSessionPath === undefined) delete process.env.WPP_SESSION_PATH;
-    else process.env.WPP_SESSION_PATH = previousSessionPath;
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  }
-
-  assert.equal(destroyed, true);
-  assert.equal(initialized, true);
+  assert.deepEqual(calls, [['requestReset', { requestedBy: '1', cooldownMs: 15000 }]]);
 });
 
 test('reset general sigue siendo solo superadmin', async () => {

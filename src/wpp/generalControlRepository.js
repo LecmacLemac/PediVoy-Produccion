@@ -234,7 +234,9 @@ export function createGeneralControlRepository(defaultQuery) {
       return result.rowCount === 1;
     },
 
-    async requestReset({ requestedBy, executor } = {}) {
+    async requestReset({ requestedBy, cooldownMs, executor } = {}) {
+      const hasCooldown = cooldownMs !== undefined;
+      const cooldown = hasCooldown ? bigintParam(cooldownMs) : null;
       const result = await run(`
         UPDATE wpp_general_control
         SET reset_requested_seq = reset_requested_seq + 1,
@@ -242,11 +244,11 @@ export function createGeneralControlRepository(defaultQuery) {
             reset_requested_by = $1,
             updated_at = NOW()
         WHERE id = TRUE
+          ${hasCooldown ? "AND (reset_requested_at IS NULL OR reset_requested_at <= NOW() - ($2::bigint * INTERVAL '1 millisecond'))" : ''}
         RETURNING reset_requested_seq
-      `, [requestedBy], executor);
+      `, hasCooldown ? [requestedBy, cooldown] : [requestedBy], executor);
       const row = result.rows[0];
-      if (!row) throw new Error('General control row is missing');
-      return BigInt(row.reset_requested_seq);
+      return row ? BigInt(row.reset_requested_seq) : null;
     },
 
     async loadPendingReset({ executor } = {}) {
