@@ -78,6 +78,22 @@ async function downloadMediaWithRetry(msg, { attempts = 3, delayMs = 1500, useTr
   return null;
 }
 
+async function resolveRecentTransferEmpresaId({ query, telSuffix }) {
+  const rows = await query(
+    `SELECT DISTINCT ON (p.empresa_id) p.empresa_id
+       FROM pedidos p
+       JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
+      WHERE pe.telefono_normalizado LIKE '%' || $1
+        AND LOWER(COALESCE(p.metodo_pago, '')) = 'transferencia'
+        AND p.estado IN ('pendiente', 'en_ruta', 'en_camino', 'entregado')
+      ORDER BY p.empresa_id, p.id DESC
+      LIMIT 2`,
+    [telSuffix]
+  );
+  const unique = [...new Set(rows.map(row => Number(row.empresa_id)).filter(Boolean))];
+  return unique.length === 1 ? unique[0] : null;
+}
+
 export function createIncomingMediaHandler({
   query,
   lidByPhone,
@@ -142,12 +158,23 @@ export function createIncomingMediaHandler({
         tenantId ? [telefonoLimpio.slice(-10), tenantId] : [telefonoLimpio.slice(-10)]
       );
 
-      if (clienteQuery.length === 0) {
-        console.log('[WPP MEDIA] Ignorado: remitente no registrado para el canal.');
-        return;
+      if (clienteQuery.length === 0 && tenantId) {
+        console.warn('[WPP MEDIA] Remitente no registrado en empresa; se guarda comprobante pendiente.', {
+          empresaId: tenantId,
+        });
+      } else if (clienteQuery.length === 0) {
+        const fallbackEmpresaId = await resolveRecentTransferEmpresaId({ query, telSuffix: telefonoLimpio.slice(-10) });
+        if (fallbackEmpresaId) {
+          clienteQuery.push({ empresa_id: fallbackEmpresaId, fallback: 'recent_transfer_order' });
+          console.log('[WPP MEDIA] Empresa resuelta por pedido de transferencia reciente.', {
+            empresaId: fallbackEmpresaId,
+          });
+        } else {
+          console.warn('[WPP MEDIA] Remitente no registrado; se guarda comprobante pendiente sin empresa.');
+        }
       }
 
-      if (!tenantId && new Set(clienteQuery.map(row => Number(row.empresa_id))).size > 1) {
+      if (!tenantId && clienteQuery.length > 0 && new Set(clienteQuery.map(row => Number(row.empresa_id))).size > 1) {
         if (typeof msg.reply === 'function') {
           await useTransport(() => msg.reply('Tu teléfono pertenece a más de una empresa. Enviá el comprobante al canal de la empresa correspondiente.'));
         }
@@ -155,8 +182,7 @@ export function createIncomingMediaHandler({
       }
       const resolvedEmpresaId = tenantId || Number(clienteQuery[0]?.empresa_id || 0) || null;
       if (!resolvedEmpresaId) {
-        console.warn('[WPP MEDIA] No se pudo resolver empresa para el comprobante.');
-        return;
+        console.warn('[WPP MEDIA] No se pudo resolver empresa para el comprobante; se guardará como pendiente global.');
       }
 
       console.log(`[WPP MEDIA] Recibido archivo de cliente registrado tipo=${t}`);

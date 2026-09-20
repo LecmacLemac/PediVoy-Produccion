@@ -43,28 +43,33 @@ test('handler empresarial valida cliente dentro del tenant y propaga empresaId f
   assert.equal(received[0].sourceMessageId, 'false_5493510000000@c.us_msg-test');
 });
 
-test('handler empresarial ignora un teléfono que solo existe en otra empresa', async () => {
+test('handler empresarial guarda pendiente un teléfono no registrado en vez de perder el comprobante', async () => {
   let downloaded = false;
-  let processed = false;
+  let payload;
   const msg = mediaMessage();
   msg.downloadMedia = async () => {
     downloaded = true;
-    return null;
+    return {
+      data: Buffer.from([0xff, 0xd8, 0xff, 4]).toString('base64'),
+      mimetype: 'image/jpeg',
+      filename: 'comprobante.jpg',
+    };
   };
 
   const handler = createIncomingMediaHandler({
     empresaId: 7,
     lidByPhone: new Map(),
     query: async () => [],
-    handleIncomingComprobanteFromBotPg: async () => {
-      processed = true;
+    handleIncomingComprobanteFromBotPg: async input => {
+      payload = input;
+      return { ok: false, saved: true, id: 30 };
     },
   });
 
   await handler(msg);
 
-  assert.equal(downloaded, false);
-  assert.equal(processed, false);
+  assert.equal(downloaded, true);
+  assert.equal(payload.empresaId, 7);
 });
 
 test('canal General detecta teléfono multiempresa antes de descargar aunque haya un solo pedido elegible', async () => {
@@ -105,6 +110,54 @@ test('canal General propaga la única empresa resuelta al pipeline', async () =>
   });
   await handler(msg);
   assert.equal(payload.empresaId, 7);
+});
+
+test('canal General recupera empresa por pedido reciente si el remitente no está en puntos_entrega', async () => {
+  const queries = [];
+  let payload;
+  const msg = mediaMessage('5493511112222');
+  msg.id._serialized = 'msg-fallback-1';
+  msg.downloadMedia = async () => ({
+    data: Buffer.from([0xff, 0xd8, 0xff, 2]).toString('base64'),
+    mimetype: 'image/jpeg',
+  });
+  const handler = createIncomingMediaHandler({
+    lidByPhone: new Map(),
+    query: async (sql, params) => {
+      queries.push({ sql, params });
+      if (queries.length === 1) return [];
+      return [{ empresa_id: 1 }];
+    },
+    handleIncomingComprobanteFromBotPg: async input => { payload = input; return { ok: false, saved: true, id: 20 }; },
+  });
+
+  await handler(msg);
+
+  assert.equal(queries.length, 2);
+  assert.match(queries[1].sql, /FROM pedidos p/);
+  assert.match(queries[1].sql, /transferencia/i);
+  assert.deepEqual(queries[1].params, ['3511112222']);
+  assert.equal(payload.empresaId, 1);
+});
+
+test('canal General guarda comprobante pendiente aunque no pueda resolver empresa', async () => {
+  let payload;
+  const msg = mediaMessage('5493519998888');
+  msg.id._serialized = 'msg-unresolved-1';
+  msg.downloadMedia = async () => ({
+    data: Buffer.from([0xff, 0xd8, 0xff, 3]).toString('base64'),
+    mimetype: 'image/jpeg',
+  });
+  const handler = createIncomingMediaHandler({
+    lidByPhone: new Map(),
+    query: async () => [],
+    handleIncomingComprobanteFromBotPg: async input => { payload = input; return { ok: false, saved: true, id: 21 }; },
+  });
+
+  await handler(msg);
+
+  assert.equal(payload.empresaId, null);
+  assert.equal(payload.sourceMessageId, 'msg-unresolved-1');
 });
 
 test('lease loss while resolving an @lid contact aborts before database and media work', async () => {
