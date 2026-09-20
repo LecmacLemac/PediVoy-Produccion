@@ -104,12 +104,10 @@
     const fmt = new Intl.NumberFormat('es-AR', { maximumFractionDigits: 2 });
     const dateFmt = new Intl.DateTimeFormat('es-AR', { dateStyle: 'short', timeStyle: 'short' });
 
-    function getToken(){ return localStorage.getItem('token') || sessionStorage.getItem('token') || ''; }
-    function getStoredUser(){ try { return JSON.parse(localStorage.getItem('user') || sessionStorage.getItem('user') || '{}'); } catch { return {}; } }
+    function clearLegacyAuthStorage(){ localStorage.removeItem('token'); localStorage.removeItem('user'); sessionStorage.removeItem('token'); sessionStorage.removeItem('user'); }
     function currentEmpresaId(){ return state.isSuper ? ($('empresa')?.value || '') : (state.empresaId || ''); }
     function withEmpresa(url){ const emp = currentEmpresaId(); if(!emp) return url; const sep = url.includes('?') ? '&' : '?'; return `${url}${sep}empresa_id=${encodeURIComponent(emp)}`; }
-    function authHeaders(extra={}){ const token=getToken(); return { ...(token?{Authorization:`Bearer ${token}`}:{}) , ...extra }; }
-    async function api(url, opts={}){ const res = await fetch(url, { credentials:'include', ...opts, headers: authHeaders(opts.headers || {}) }); if(res.status === 401){ location.href='login.html'; throw new Error('Sesión expirada'); } const data = await res.json().catch(()=>({})); if(!res.ok) throw new Error(data.error || `Error ${res.status}`); return data; }
+    async function api(url, opts={}){ const res = await fetch(url, { ...opts, credentials:'include', headers: opts.headers || {} }); if(res.status === 401){ location.href='login.html'; throw new Error('Sesión expirada'); } const data = await res.json().catch(()=>({})); if(!res.ok) throw new Error(data.error || `Error ${res.status}`); return data; }
     function toast(msg){ const el=$('toast'); el.textContent=msg; el.classList.add('show'); clearTimeout(el._t); el._t=setTimeout(()=>el.classList.remove('show'),3200); }
     function escapeHtml(v){ return String(v ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c])); }
     function saldoClass(s){ if(s>0) return 'deuda'; if(s<0) return 'favor'; return 'ok'; }
@@ -235,18 +233,19 @@
     $('btnGuardarAjuste').addEventListener('click',()=> guardarAjuste().catch(e=>toast(e.message)));
     $('btnExport').addEventListener('click',exportCsv);
     $('empresa')?.addEventListener('change', async()=>{ await loadCombos(); await Promise.all([loadResumen(), loadMovimientos()]); });
-    $('logout').addEventListener('click',async(e)=>{ e.preventDefault(); try{ await fetch('/api/logout',{method:'POST',credentials:'include',headers:authHeaders()}); }catch{} localStorage.removeItem('token'); sessionStorage.removeItem('token'); location.href='login.html'; });
+    $('logout').addEventListener('click',async(e)=>{ e.preventDefault(); try{ await fetch('/api/logout',{method:'POST',credentials:'include',headers:{}}); }catch{} clearLegacyAuthStorage(); location.href='login.html'; });
 
     async function loadCurrentUser(){
       const me = await api('/api/me');
-      const user = me?.user || getStoredUser();
+      const user = me?.user;
+      if(!user) throw new Error('Sesión inválida');
       const role = String(user.role || '').toLowerCase();
       state.isSuper = role === 'super';
       state.empresaId = user.empresa_id || user.empresaId || null;
       $('rolePill').textContent = state.isSuper ? 'SUPER ADMIN' : (role ? role.toUpperCase() : '');
     }
 
-    (async function init(){ try { await loadCurrentUser(); await loadEmpresas(); await loadCombos(); await Promise.all([loadResumen(), loadMovimientos()]); } catch(e){ toast(e.message); $('saldosBody').innerHTML=`<tr><td colspan="7" class="empty">${escapeHtml(e.message)}</td></tr>`; } })();
+    (async function init(){ try { clearLegacyAuthStorage(); await loadCurrentUser(); await loadEmpresas(); await loadCombos(); await Promise.all([loadResumen(), loadMovimientos()]); } catch(e){ toast(e.message); $('saldosBody').innerHTML=`<tr><td colspan="7" class="empty">${escapeHtml(e.message)}</td></tr>`; } })();
   </script>
 </body>
 </html>
