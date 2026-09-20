@@ -200,6 +200,52 @@ test('hung WPP destroy hits the fatal deadline without releasing ownership', asy
   assert.deepEqual(cleared, []);
 });
 
+test('WPP General fatal runtime failure does not shut down HTTP server', async () => {
+  const fatal = new Error('simulated WPP fatal');
+  const shutdownCalls = [];
+  const originalConsoleError = console.error;
+  const loggedErrors = [];
+  console.error = (...args) => { loggedErrors.push(args); };
+  const runtime = {
+    repository: {},
+    supervisor: null,
+    getState: () => ({ isReadyWpp: false }),
+    start: async () => false,
+    stopTimers() {},
+  };
+  const app = {
+    locals: { requestFatalShutdown: error => shutdownCalls.push(error) },
+    get() {},
+    post() {},
+  };
+
+  try {
+    registerWhatsAppWeb(app, {
+      ENABLE_WPP: true,
+      query: async () => [],
+      qrcode: { toDataURL: async () => '' },
+      withAuth: (_req, _res, next) => next(),
+      isSuper: () => true,
+      registerCronAndRoutesFn: () => {},
+      runtimeDependencies: {
+        fatalExit: () => { throw new Error('must be ignored'); },
+      },
+      createGeneralRuntimeFn: ({ fatalExit }) => {
+        fatalExit(fatal);
+        return runtime;
+      },
+    });
+  } finally {
+    console.error = originalConsoleError;
+  }
+
+  assert.equal(app.locals.wppGeneralFatalError, fatal);
+  assert.deepEqual(shutdownCalls, []);
+  assert.equal(typeof app.locals.wppGeneralShutdown, 'function');
+  assert.equal(loggedErrors.length, 1);
+  assert.match(String(loggedErrors[0][0]), /HTTP service remains online/);
+});
+
 test('registration installs no process listeners and publishes one idempotent shutdown handle', async () => {
   const signalsBefore = {
     term: process.listenerCount('SIGTERM'),
@@ -390,7 +436,7 @@ test('rejected cron shutdown still waits for pending supervisor shutdown', async
   assert.equal(settled, true);
 });
 
-test('runtime fatal during shutdown is deferred exclusively to the central coordinator', async () => {
+test('runtime fatal during shutdown is captured without forcing HTTP failure', async () => {
   const supervisorStop = deferred();
   const failure = new Error('ownership lost');
   let runtimeOptions;
@@ -439,13 +485,13 @@ test('runtime fatal during shutdown is deferred exclusively to the central coord
   await new Promise(resolve => setImmediate(resolve));
 
   assert.equal(injectedFatalExitCalls, 0);
-  assert.equal(fatalShutdownRequests, 1);
+  assert.equal(fatalShutdownRequests, 0);
   assert.equal(app.locals.wppGeneralFatalError, failure);
   assert.deepEqual(h.exits, []);
 
   supervisorStop.resolve(true);
-  assert.equal(await h.returned.shutdown(), false);
-  assert.deepEqual(h.exits, [1]);
+  assert.equal(await h.returned.shutdown(), true);
+  assert.deepEqual(h.exits, [0]);
 });
 
 test('cron shutdown cancels every timer and prevents post-stop rescheduling', async () => {

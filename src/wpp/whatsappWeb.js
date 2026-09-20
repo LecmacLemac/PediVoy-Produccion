@@ -55,7 +55,7 @@ export function registerWhatsAppWeb(app, deps = {}) {
   const { fatalExit: _ignoredFatalExit, ...otherRuntimeDependencies } = runtimeDependencies;
   const reportFatal = error => {
     app.locals.wppGeneralFatalError ??= error;
-    app.locals.requestFatalShutdown?.(error);
+    console.error('[WPP GENERAL] fatal runtime error captured; HTTP service remains online:', error);
   };
 
   const repository = generalControlRepository ?? injectedRuntime?.repository
