@@ -113,7 +113,7 @@ export function createGeneralOwnership({
 
   async function boundedUnlock(target) {
     return deadline(
-      target.query('SELECT pg_advisory_unlock($1) AS unlocked', [advisoryLockKey]),
+      target.query('SELECT pg_advisory_unlock(CAST($1 AS bigint)) AS unlocked', [advisoryLockKey]),
       operationDeadlineMs,
       'General advisory unlock',
     );
@@ -145,7 +145,7 @@ export function createGeneralOwnership({
 
     try {
       const lockResult = await deadline(
-        candidate.query('SELECT pg_try_advisory_lock($1) AS locked', [advisoryLockKey]),
+        candidate.query('SELECT pg_try_advisory_lock(CAST($1 AS bigint)) AS locked', [advisoryLockKey]),
         operationDeadlineMs,
         'General advisory lock',
       );

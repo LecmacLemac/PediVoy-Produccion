@@ -30,10 +30,11 @@ function makePool(client) {
   };
 }
 
-test('tryAcquire uses one dedicated client and publishes an incremented epoch only after locking', async () => {
+test('tryAcquire casts the advisory-lock key as bigint before publishing ownership', async () => {
   let lockAcquired = false;
   const client = makeClient(async sql => {
     if (/pg_try_advisory_lock/i.test(sql)) {
+      assert.match(sql, /pg_try_advisory_lock\(CAST\(\$1 AS bigint\)\)/i);
       lockAcquired = true;
       return { rows: [{ locked: true }], rowCount: 1 };
     }
@@ -112,7 +113,7 @@ test('releaseAfterQuiesced clears the fenced row, unlocks, and releases the clie
   await ownership.acquire();
 
   assert.equal(await ownership.releaseAfterQuiesced(async () => {}), true);
-  assert.match(client.calls.at(-1).sql, /pg_advisory_unlock/i);
+  assert.match(client.calls.at(-1).sql, /pg_advisory_unlock\(CAST\(\$1 AS bigint\)\)/i);
   assert.deepEqual(client.releases, [undefined]);
   assert.throws(() => ownership.assertOwned(), OwnershipLostError);
 });
@@ -176,7 +177,7 @@ test('publish failure unlocks and preserves the publish error', async () => {
   const ownership = createGeneralOwnership({ pool: makePool(client), ownerId: 'owner-g' });
 
   await assert.rejects(ownership.acquire(), error => error === primary);
-  assert.match(client.calls.at(-1).sql, /pg_advisory_unlock/i);
+  assert.match(client.calls.at(-1).sql, /pg_advisory_unlock\(CAST\(\$1 AS bigint\)\)/i);
   assert.deepEqual(client.releases, [primary]);
 });
 

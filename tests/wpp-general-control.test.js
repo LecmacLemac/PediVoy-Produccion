@@ -135,6 +135,21 @@ test('owner writes are fenced and expose zero-row failure', async () => {
   }
 });
 
+test('owner boolean writes work with default query helpers that return rows only', async () => {
+  const db = fakeQuery(Array.from({ length: 6 }, () => [{ ok: 1 }]));
+  const repository = createGeneralControlRepository(db.query);
+
+  assert.equal(await repository.heartbeat({ ownerId: 'owner-a', epoch: 3n }), true);
+  assert.equal(await repository.updateOwned({ ownerId: 'owner-a', epoch: 3n, state: 'ready', operation: null }), true);
+  assert.equal(await repository.markResetStarted({ ownerId: 'owner-a', epoch: 3n, sequence: 4n }), true);
+  assert.equal(await repository.markResetApplied({ ownerId: 'owner-a', epoch: 3n, sequence: 4n }), true);
+  assert.equal(await repository.markResetFailed({ ownerId: 'owner-a', epoch: 3n, sequence: 4n, error: 'boom' }), true);
+  assert.equal(await repository.releaseOwner({ ownerId: 'owner-a', epoch: 3n }), true);
+  for (const call of db.calls) {
+    assert.match(call.sql, /RETURNING\s+1\s+AS\s+ok/i);
+  }
+});
+
 test('getClusterStatus normalizes persisted counters', async () => {
   const db = fakeQuery([{ rows: [{ epoch: '9', reset_requested_seq: '7', reset_failed_seq: '6' }], rowCount: 1 }]);
   const repository = createGeneralControlRepository(db.query);

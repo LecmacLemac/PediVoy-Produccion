@@ -149,9 +149,13 @@ export function registerLandingRoutes(app, deps) {
   // Template resources belong to the editor, never to tenant resolution.
   const templateDir = path.join(PAGES_DIR, 'landing');
   const templateNames = fs.existsSync(templateDir) ? fs.readdirSync(templateDir).filter(name => name.endsWith('.html')) : [];
-  for (const name of templateNames) {
-    app.get([`/pages/${name}`, `/pages/landing/${name}`], (_req, res) => res.redirect('/pedidos/iaweb.html'));
-  }
+  const templateNameSet = new Set(templateNames);
+  const redirectTemplateToEditor = (req, res, next) => {
+    if (!templateNameSet.has(req.params.template)) return next();
+    return res.redirect('/pedidos/iaweb.html');
+  };
+  app.get('/pages/:template', redirectTemplateToEditor);
+  app.get('/pages/landing/:template', redirectTemplateToEditor);
   app.use('/pages/landing', (_req, res) => res.sendStatus(404));
 
   app.get('/pages/empresa_:id.html', async (req, res) => {
