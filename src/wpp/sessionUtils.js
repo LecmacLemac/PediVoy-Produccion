@@ -10,6 +10,21 @@ export function getWppSessionDir({ path, cwd = process.cwd(), sessionId = WPP_SE
   return path.join(getWppSessionBasePath({ path, cwd }), `session-${sessionId}`);
 }
 
+export function removeChromiumSingletonLocks({ fs, path, sessionDir, logger = console } = {}) {
+  if (!fs || !path || !sessionDir) return [];
+  const removed = [];
+  for (const name of ['SingletonLock', 'SingletonSocket', 'SingletonCookie']) {
+    const target = path.join(sessionDir, name);
+    try {
+      fs.rmSync(target, { force: true, recursive: true });
+      removed.push(name);
+    } catch (error) {
+      logger.warn?.('[WPP] could not remove Chromium singleton lock:', target, error);
+    }
+  }
+  return removed;
+}
+
 export function safeErrorString(err) {
   if (!err) return null;
   return String(err)

@@ -14,6 +14,7 @@ import { handleIncomingComprobanteFromBotPg } from './transferenciasPipeline.js'
 import { ensureComprobantesTransferenciaSchema } from './transferenciasServices.js';
 import { registerCompanyIncomingMedia } from './wpp/companyIncomingMedia.js';
 import { parseEnterpriseId } from './wpp/enterpriseId.js';
+import { removeChromiumSingletonLocks } from './wpp/sessionUtils.js';
 import {
     confirmCompanyRuntime,
     createBackoffRecovery,
@@ -64,6 +65,7 @@ async function ensureEmpresaWhatsappSchema() {
 }
 
 function createCompanyClient() {
+    removeChromiumSingletonLocks({ fs, path, sessionDir, logger: console });
     const isRender = process.env.RENDER === 'true';
     const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH || (isRender ? '/usr/bin/chromium' : undefined);
     const nextClient = new Client({

@@ -7,7 +7,7 @@ import { createGeneralOwnership } from './generalOwnership.js';
 import { createGeneralSupervisor } from './generalSupervisor.js';
 import { createGeneralClientFactory } from './generalClientFactory.js';
 import { createWppClientAdapter } from './clientAdapter.js';
-import { WPP_SESSION_ID, getWppSessionBasePath, getWppSessionDir } from './sessionUtils.js';
+import { WPP_SESSION_ID, getWppSessionBasePath, getWppSessionDir, removeChromiumSingletonLocks } from './sessionUtils.js';
 
 const PUPPETEER_ARGS = [
   '--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu',
@@ -128,6 +128,8 @@ export function createGeneralRuntime({
     const clientFactory = createGeneralClientFactory({
       createClient: ({ generation }) => {
         const authStrategy = new LocalAuth({ clientId: WPP_SESSION_ID, dataPath: sessionBasePath });
+        const sessionDir = getWppSessionDir({ path, cwd, sessionId: WPP_SESSION_ID });
+        removeChromiumSingletonLocks({ fs, path, sessionDir, logger });
         // LocalAuth.logout recursively removes its profile before the supervisor can
         // confirm Chromium is stopped. General reset is the sole deletion authority.
         authStrategy.logout = async () => {};
