@@ -51,6 +51,30 @@ async function ensureEmpresaWhatsappSchema(query) {
   empresaWhatsappSchemaReady = true;
 }
 
+function scheduleEmpresaWppBootRecovery(query) {
+  if (process.env.NODE_ENV === 'test') return;
+  if (!shouldAutoStartEmpresaWppWorker()) return;
+  const delayMs = Number(process.env.EMPRESA_WPP_BOOT_RECOVERY_DELAY_MS || 3000);
+  setTimeout(async () => {
+    try {
+      await ensureEmpresaWhatsappSchema(query);
+      const rows = await query(`
+        SELECT id
+          FROM empresas
+         WHERE COALESCE(wpp_status, 'disconnected') IN ('initializing', 'resetting', 'awaiting_scan', 'connected')
+         ORDER BY id
+         LIMIT 10
+      `);
+      for (const row of rows) {
+        const result = ensureEmpresaWppQrWorker(row.id);
+        console.log('[WPP EMPRESA] boot recovery worker:', row.id, result);
+      }
+    } catch (error) {
+      console.warn('[WPP EMPRESA] boot recovery failed:', error);
+    }
+  }, Number.isFinite(delayMs) && delayMs >= 0 ? delayMs : 3000).unref?.();
+}
+
 function getEmpresaWppSessionDir(empresaId) {
   const sessionPath = process.env.DISK_PATH || './wpp_sessions';
   return path.resolve(process.cwd(), sessionPath, `session-empresa_${empresaId}`);
@@ -60,7 +84,10 @@ const empresaWppQrWorkers = new Map();
 
 function shouldAutoStartEmpresaWppWorker() {
   if (process.env.AUTO_START_EMPRESA_WPP_WORKER === '0') return false;
-  if (process.env.RENDER === 'true') return false;
+  if (process.env.AUTO_START_EMPRESA_WPP_WORKER === '1') return true;
+  if (process.env.RENDER === 'true') {
+    return process.env.ENABLE_WPP === '1' && process.env.WPP_QR_ONLY !== '1';
+  }
   return true;
 }
 
@@ -249,6 +276,7 @@ export function createEmpresasRouter(deps) {
   if (typeof getEmpresaById !== 'function') throw new Error('createEmpresasRouter: falta getEmpresaById(fn)');
 
   const router = express.Router();
+  scheduleEmpresaWppBootRecovery(query);
 
   const EMPRESAS_LOGO_DIR = path.resolve(process.cwd(), 'pedidos', 'img', 'empresas');
   fs.mkdirSync(EMPRESAS_LOGO_DIR, { recursive: true });
