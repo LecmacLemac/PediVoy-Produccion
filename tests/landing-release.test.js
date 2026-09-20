@@ -18,6 +18,9 @@ test('canonical tenant landing and legacy company URL resolve only selected comp
     const response = await fetch(base + '/landing/selected');
     assert.equal(response.status, 200);
     assert.match(await response.text(), /LANDING_SLUG_NOT_FOUND/);
+    const conflictingSelector = await fetch(base + '/landing/selected?slug=other&empresa_id=8&campaign=spring', { redirect: 'manual' });
+    assert.equal(conflictingSelector.status, 302);
+    assert.equal(conflictingSelector.headers.get('location'), '/landing/selected?campaign=spring');
     const old = await fetch(base + '/pages/empresa_7.html', { redirect: 'manual' });
     assert.equal(old.headers.get('location'), '/landing/selected');
     for (const url of ['/landing/unknown', '/landing/file.html', '/landing/a/b']) assert.equal((await fetch(base + url)).status, 404);

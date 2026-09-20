@@ -193,6 +193,13 @@ export function registerLandingRoutes(app, deps) {
   app.get(['/landing/:slug', '/l/:slug'], async (req, res) => {
     const slug = req.params.slug.toLowerCase();
     if (!/^[a-z0-9_-]+$/.test(slug)) return res.sendStatus(404);
+    if (req.query?.slug !== undefined || req.query?.empresa_id !== undefined) {
+      const safeQuery = new URLSearchParams(req.originalUrl.split('?')[1] || '');
+      safeQuery.delete('slug');
+      safeQuery.delete('empresa_id');
+      const suffix = safeQuery.toString();
+      return res.redirect(`/landing/${encodeURIComponent(slug)}${suffix ? `?${suffix}` : ''}`);
+    }
     try {
       const rows = await query('SELECT id FROM empresas WHERE LOWER(landing_slug) = $1 LIMIT 1', [slug]);
       if (!rows?.length) return res.sendStatus(404);
