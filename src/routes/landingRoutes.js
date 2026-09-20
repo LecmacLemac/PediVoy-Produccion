@@ -24,6 +24,30 @@ function resolveDefaultIndex(projectDir) {
   return null;
 }
 
+function isSensitiveScannerPath(rawPath) {
+  let normalized = String(rawPath || '/');
+  for (let i = 0; i < 2; i += 1) {
+    try {
+      const decoded = decodeURIComponent(normalized);
+      if (decoded === normalized) break;
+      normalized = decoded;
+    } catch {
+      break;
+    }
+  }
+  normalized = normalized.replace(/\\/g, '/').replace(/^\/+/g, '/').toLowerCase();
+  const firstSegment = normalized.split('/').filter(Boolean)[0] || '';
+  if (firstSegment.startsWith('.') && firstSegment !== '.well-known') return true;
+  return (
+    normalized === '/server-status'
+    || normalized === '/xmlrpc.php'
+    || normalized === '/debug/vars'
+    || normalized.startsWith('/actuator/')
+    || normalized.includes('/wp-includes/')
+    || /^\/(phpinfo|php-info|php_info|_phpinfo|info|test|i|pi)\.php$/.test(normalized)
+  );
+}
+
 /**
  * Registra:
  * - Ruteo inteligente de / (landing por empresa) vs index global
@@ -183,6 +207,11 @@ export function registerLandingRoutes(app, deps) {
   if (fs.existsSync(PAGES_DIR)) {
     app.use('/pages', express.static(PAGES_DIR, { index: false }));
   }
+
+  app.use((req, res, next) => {
+    if (!isSensitiveScannerPath(req.path || req.url)) return next();
+    return res.status(404).json({ error: 'Not Found' });
+  });
 
   // Archivo suelto en raíz (queda acá porque es parte del “frontend base”)
   app.get('/simple-cart.js', (req, res) => res.sendFile(path.join(projectDir, 'simple-cart.js')));

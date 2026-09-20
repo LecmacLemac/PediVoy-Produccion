@@ -36,6 +36,33 @@ test('all template filenames redirect to editor from old and current paths', asy
     }
   });
 });
+test('scanner-style sensitive paths fail closed before landing fallback', async () => {
+  const app = express();
+  let queried = false;
+  registerLandingRoutes(app, {
+    projectDir: path.resolve('.'),
+    query: async () => { queried = true; return [{ id: 1 }]; },
+  });
+  await serve(app, async base => {
+    for (const url of [
+      '/.env',
+      '/%2eenv',
+      '/.git-credentials',
+      '/.npmrc',
+      '/actuator/env',
+      '/server-status',
+      '/phpinfo.php',
+      '/wp-includes/wlwmanifest.xml',
+      '/xmlrpc.php',
+    ]) {
+      const response = await fetch(base + url, { redirect: 'manual' });
+      assert.equal(response.status, 404, url);
+      assert.doesNotMatch(response.headers.get('content-type') || '', /text\/html/i, url);
+    }
+    assert.equal(queried, false);
+  });
+});
+
 test('public config fails closed for unknown, invalid, missing tenant and query errors', async () => {
   const app = express();
   const queries = [];
