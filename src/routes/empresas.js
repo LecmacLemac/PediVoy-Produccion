@@ -51,7 +51,7 @@ async function ensureEmpresaWhatsappSchema(query) {
   empresaWhatsappSchemaReady = true;
 }
 
-function scheduleEmpresaWppBootRecovery(query) {
+function scheduleEmpresaWppBootRecovery(query, ensureWorker = ensureEmpresaWppQrWorker) {
   if (process.env.NODE_ENV === 'test') return;
   if (!shouldAutoStartEmpresaWppWorker()) return;
   const delayMs = Number(process.env.EMPRESA_WPP_BOOT_RECOVERY_DELAY_MS || 3000);
@@ -61,12 +61,12 @@ function scheduleEmpresaWppBootRecovery(query) {
       const rows = await query(`
         SELECT id
           FROM empresas
-         WHERE COALESCE(wpp_status, 'disconnected') IN ('initializing', 'resetting', 'awaiting_scan', 'connected')
+         WHERE COALESCE(wpp_status, 'disconnected') IN ('initializing', 'resetting', 'awaiting_scan', 'connected', 'disconnected')
          ORDER BY id
          LIMIT 10
       `);
       for (const row of rows) {
-        const result = ensureEmpresaWppQrWorker(row.id);
+        const result = ensureWorker(row.id);
         console.log('[WPP EMPRESA] boot recovery worker:', row.id, result);
       }
     } catch (error) {
@@ -81,6 +81,7 @@ function getEmpresaWppSessionDir(empresaId) {
 }
 
 const empresaWppQrWorkers = new Map();
+const empresaWppRespawnTimers = new Map();
 
 function shouldAutoStartEmpresaWppWorker() {
   if (process.env.AUTO_START_EMPRESA_WPP_WORKER === '0') return false;
@@ -91,9 +92,28 @@ function shouldAutoStartEmpresaWppWorker() {
   return true;
 }
 
+function scheduleEmpresaWppRespawn(empresaId, reason = 'exit') {
+  if (!shouldAutoStartEmpresaWppWorker()) return;
+  if (empresaWppRespawnTimers.has(empresaId)) return;
+  const delayMs = Number(process.env.EMPRESA_WPP_WORKER_RESPAWN_DELAY_MS || 5000);
+  const timer = setTimeout(() => {
+    empresaWppRespawnTimers.delete(empresaId);
+    const result = ensureEmpresaWppQrWorker(empresaId);
+    console.warn('[WPP EMPRESA] worker respawn:', empresaId, { reason, ...result });
+  }, Number.isFinite(delayMs) && delayMs >= 0 ? delayMs : 5000);
+  timer.unref?.();
+  empresaWppRespawnTimers.set(empresaId, timer);
+}
+
 function ensureEmpresaWppQrWorker(empresaId) {
   if (!shouldAutoStartEmpresaWppWorker()) {
     return { started: false, reason: 'disabled' };
+  }
+
+  const pendingRespawn = empresaWppRespawnTimers.get(empresaId);
+  if (pendingRespawn) {
+    clearTimeout(pendingRespawn);
+    empresaWppRespawnTimers.delete(empresaId);
   }
 
   const existing = empresaWppQrWorkers.get(empresaId);
@@ -115,9 +135,11 @@ function ensureEmpresaWppQrWorker(empresaId) {
   child.unref();
   empresaWppQrWorkers.set(empresaId, child);
 
-  child.once('exit', () => {
+  child.once('exit', (code, signal) => {
     if (empresaWppQrWorkers.get(empresaId) === child) {
       empresaWppQrWorkers.delete(empresaId);
+      console.warn('[WPP EMPRESA] worker exited:', empresaId, { code, signal });
+      scheduleEmpresaWppRespawn(empresaId, signal || `code_${code ?? 'unknown'}`);
     }
   });
 
@@ -266,6 +288,7 @@ export function createEmpresasRouter(deps) {
     getEmpresaIdFromToken,
     resolveEmpresaId,
     getEmpresaById,
+    ensureEmpresaWppWorker = ensureEmpresaWppQrWorker,
   } = deps || {};
 
   if (typeof query !== 'function') throw new Error('createEmpresasRouter: falta query(fn)');
@@ -276,7 +299,7 @@ export function createEmpresasRouter(deps) {
   if (typeof getEmpresaById !== 'function') throw new Error('createEmpresasRouter: falta getEmpresaById(fn)');
 
   const router = express.Router();
-  scheduleEmpresaWppBootRecovery(query);
+  scheduleEmpresaWppBootRecovery(query, ensureEmpresaWppWorker);
 
   const EMPRESAS_LOGO_DIR = path.resolve(process.cwd(), 'pedidos', 'img', 'empresas');
   fs.mkdirSync(EMPRESAS_LOGO_DIR, { recursive: true });
@@ -737,6 +760,11 @@ export function createEmpresasRouter(deps) {
       if (!rows.length) return res.status(404).json({ error: 'Empresa no encontrada' });
 
       const empresa = rows[0];
+      const recoveryWorker = ['disconnected', 'error', 'initializing', 'resetting'].includes(
+        String(empresa.wpp_status || 'disconnected').toLowerCase()
+      ) && !empresa.wpp_qr_code
+        ? ensureEmpresaWppWorker(empresaId)
+        : null;
       const qrRaw = empresa.wpp_qr_code ? String(empresa.wpp_qr_code) : '';
       const qrDataUrl = qrRaw
         ? await QRCode.toDataURL(qrRaw, { margin: 1, width: 420, errorCorrectionLevel: 'M' })
@@ -757,6 +785,7 @@ export function createEmpresasRouter(deps) {
         updated_at: empresa.updated_at || null,
         wpp_reset_requested_at: empresa.wpp_reset_requested_at || null,
         health,
+        worker: recoveryWorker || undefined,
         ai_config: {
           prompt_vendedor: Boolean(promptVendedor),
           prompt_general: Boolean(promptGeneral),

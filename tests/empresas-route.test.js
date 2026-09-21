@@ -110,6 +110,55 @@ test('admin no puede editar una empresa ajena', async () => {
   });
 });
 
+test('consulta QR de empresa desconectada arranca worker de recuperación sin resetear sesión', async () => {
+  const workerCalls = [];
+  const app = express();
+  app.use(express.json());
+  app.use('/api/empresas', createEmpresasRouter({
+    query: async (sql) => {
+      if (sql.includes('ALTER TABLE empresas')) return [];
+      if (sql.includes('SELECT id, nombre, rubro, etiquetas')) {
+        return [{
+          id: 1,
+          nombre: 'AguaHidro.com',
+          rubro: null,
+          etiquetas: null,
+          landing_slug: null,
+          landing_domain: null,
+          prompt_ia_vendedor: null,
+          prompt_ia_general: null,
+          wpp_status: 'disconnected',
+          wpp_qr_code: null,
+          wpp_reset_requested_at: null,
+          updated_at: new Date('2026-09-21T16:44:40.000Z'),
+        }];
+      }
+      throw new Error(`Consulta inesperada: ${sql}`);
+    },
+    pool: {},
+    withAuth(req, _res, next) { req.user = { role: 'super', empresa_id: null }; next(); },
+    isSuper(req) { return String(req.user?.role || '').toLowerCase() === 'super'; },
+    getEmpresaIdFromToken(req) { return req.user?.empresa_id; },
+    resolveEmpresaId(req) { return req.user?.empresa_id; },
+    getEmpresaById: async () => null,
+    ensureEmpresaWppWorker: (empresaId) => {
+      workerCalls.push(empresaId);
+      return { started: true, pid: 1234 };
+    },
+  }));
+
+  await withServer(app, async (baseUrl) => {
+    const resp = await fetch(`${baseUrl}/api/empresas/1/whatsapp-qr`);
+    assert.equal(resp.status, 200);
+    const body = await resp.json();
+    assert.equal(body.status, 'disconnected');
+    assert.equal(body.has_qr, false);
+    assert.deepEqual(body.worker, { started: true, pid: 1234 });
+  });
+
+  assert.deepEqual(workerCalls, [1]);
+});
+
 test('superadmin conserva edicion completa de empresa', async () => {
   let updateCall = null;
   const app = buildApp({
