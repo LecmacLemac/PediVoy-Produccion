@@ -515,10 +515,14 @@ test('production policy covers both WPP roots and canonical plus legacy Puppetee
 
   const appUnit = await fs.readFile('ops/systemd/pedivoy.service', 'utf8');
   const maintenanceUnit = await fs.readFile('ops/systemd/pedivoy-storage-maintenance.service', 'utf8');
-  assert.match(appUnit, /ExecStart=\/usr\/bin\/env PUPPETEER_CACHE_DIR=%h\/\.cache\/puppeteer \/usr\/bin\/npm start/);
+  assert.match(appUnit, /Environment=PATH=%h\/\.nvm\/versions\/node\/v22\.22\.0\/bin:/);
+  assert.match(appUnit, /ExecStart=\/usr\/bin\/env PATH=%h\/\.nvm\/versions\/node\/v22\.22\.0\/bin:[^ ]+ PUPPETEER_CACHE_DIR=%h\/\.cache\/puppeteer npm start/);
   assert.match(appUnit, /ExecStartPre=\/usr\/bin\/mkdir -p %h\/\.cache\/puppeteer/);
-  assert.match(appUnit, /ExecStartPre=\/usr\/bin\/env PUPPETEER_CACHE_DIR=%h\/\.cache\/puppeteer \/usr\/bin\/node scripts\/prepare-puppeteer-cache\.js/);
-  assert.match(maintenanceUnit, /ExecStart=\/usr\/bin\/env [^\n]*PUPPETEER_CACHE_DIR=%h\/\.cache\/puppeteer/);
+  assert.match(appUnit, /ExecStartPre=\/usr\/bin\/env PATH=%h\/\.nvm\/versions\/node\/v22\.22\.0\/bin:[^ ]+ PUPPETEER_CACHE_DIR=%h\/\.cache\/puppeteer node scripts\/prepare-puppeteer-cache\.js/);
+  assert.doesNotMatch(appUnit, /\/usr\/bin\/(?:node|npm)/);
+  assert.match(maintenanceUnit, /Environment=PATH=%h\/\.nvm\/versions\/node\/v22\.22\.0\/bin:/);
+  assert.match(maintenanceUnit, /ExecStart=\/usr\/bin\/env PATH=%h\/\.nvm\/versions\/node\/v22\.22\.0\/bin:[^ ]+ [^\n]*PUPPETEER_CACHE_DIR=%h\/\.cache\/puppeteer/);
+  assert.doesNotMatch(maintenanceUnit, /\/usr\/bin\/node/);
   assert.match(maintenanceUnit, /LEGACY_PUPPETEER_CACHE_DIR=%h\/\.openclaw\/workspace-pedivoy\/PediVoy\/\.puppeteer/);
   assert.match(maintenanceUnit, /WWEBJS_AUTH_ROOT=%h\/\.openclaw\/workspace-pedivoy\/PediVoy\/\.wwebjs_auth/);
   assert.match(maintenanceUnit, /WPP_SESSIONS_ROOT=%h\/\.openclaw\/workspace-pedivoy\/PediVoy\/wpp_sessions/);
@@ -608,7 +612,7 @@ test('systemd installer is dry-run by default and blocks apply on a system/user 
   const root = await fixture(t);
   const fakeSystemctl = path.join(root, 'systemctl');
   const log = path.join(root, 'calls.log');
-  await fs.writeFile(fakeSystemctl, `#!/bin/sh\nprintf '%s\\n' "$*" >> "$CALLS_LOG"\nif [ "$1" = "--user" ]; then echo disabled; exit 1; fi\nif [ "$1" = "is-enabled" ] || [ "$1" = "is-active" ]; then exit 0; fi\nexit 0\n`);
+  await fs.writeFile(fakeSystemctl, `#!/bin/sh\nprintf '%s\\n' "$*" >> "$CALLS_LOG"\nif [ "$1" = "--user" ] && [ "$2" = "is-active" ]; then echo inactive; exit 1; fi\nif [ "$1" = "--user" ]; then echo disabled; exit 1; fi\nif [ "$1" = "is-enabled" ] || [ "$1" = "is-active" ]; then exit 0; fi\nexit 0\n`);
   await fs.chmod(fakeSystemctl, 0o755);
   const script = path.resolve('ops/systemd/install-user-units.sh');
   const env = {
@@ -633,7 +637,7 @@ test('systemd installer is dry-run by default and blocks apply on a system/user 
 test('systemd installer treats an active system unit as a conflict even when disabled', async (t) => {
   const root = await fixture(t);
   const fakeSystemctl = path.join(root, 'systemctl');
-  await fs.writeFile(fakeSystemctl, `#!/bin/sh\nif [ "$1" = "--user" ]; then echo disabled; exit 1; fi\nif [ "$1" = "is-enabled" ]; then echo disabled; exit 1; fi\nif [ "$1" = "is-active" ]; then exit 0; fi\nexit 0\n`);
+  await fs.writeFile(fakeSystemctl, `#!/bin/sh\nif [ "$1" = "--user" ] && [ "$2" = "is-active" ]; then echo inactive; exit 1; fi\nif [ "$1" = "--user" ]; then echo disabled; exit 1; fi\nif [ "$1" = "is-enabled" ]; then echo disabled; exit 1; fi\nif [ "$1" = "is-active" ]; then exit 0; fi\nexit 0\n`);
   await fs.chmod(fakeSystemctl, 0o755);
   const result = spawnSync(path.resolve('ops/systemd/install-user-units.sh'), ['--apply'], {
     cwd: path.resolve('.'),
@@ -665,4 +669,56 @@ test('systemd installer fails closed when service state cannot be determined', a
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /cannot determine.*system pedivoy\.service/i);
   await assert.rejects(fs.access(path.join(root, 'config', 'systemd', 'user', 'pedivoy.service')), { code: 'ENOENT' });
+});
+
+test('systemd installer validates Node 22 and installs maintenance without replacing the active app service', async (t) => {
+  const root = await fixture(t);
+  const project = path.join(root, 'project');
+  const bin = path.join(root, 'bin');
+  const fakeSystemctl = path.join(bin, 'systemctl');
+  const fakeNode = path.join(bin, 'node');
+  const fakeNpm = path.join(bin, 'npm');
+  const calls = path.join(root, 'calls.log');
+  await fs.mkdir(path.join(project, 'scripts'), { recursive: true });
+  await fs.mkdir(path.join(project, 'config'), { recursive: true });
+  await fs.mkdir(bin, { recursive: true });
+  await fs.writeFile(path.join(project, 'scripts', 'prepare-puppeteer-cache.js'), '');
+  await fs.writeFile(path.join(project, 'scripts', 'storage-maintenance.js'), '');
+  await fs.writeFile(path.join(project, 'config', 'storage-policy.json'), '{}');
+  await fs.writeFile(fakeNode, '#!/bin/sh\nprintf "v22.22.0\\n"\n');
+  await fs.writeFile(fakeNpm, '#!/bin/sh\nexit 0\n');
+  await fs.writeFile(fakeSystemctl, `#!/bin/sh\nprintf '%s\\n' "$*" >> "$CALLS_LOG"\nif [ "$1" = "--user" ] && [ "$2" = "is-enabled" ]; then exit 0; fi\nif [ "$1" = "--user" ] && [ "$2" = "is-active" ]; then exit 0; fi\nif [ "$1" = "is-enabled" ]; then echo disabled; exit 1; fi\nif [ "$1" = "is-active" ]; then echo inactive; exit 1; fi\nexit 0\n`);
+  await Promise.all([fakeSystemctl, fakeNode, fakeNpm].map((file) => fs.chmod(file, 0o755)));
+
+  const env = {
+    ...process.env,
+    SYSTEMCTL_BIN: fakeSystemctl,
+    CALLS_LOG: calls,
+    XDG_CONFIG_HOME: path.join(root, 'config'),
+    PEDIVOY_PROJECT_DIR: project,
+    PEDIVOY_NODE_BIN: fakeNode,
+    PEDIVOY_NPM_BIN: fakeNpm,
+  };
+  const result = spawnSync(path.resolve('ops/systemd/install-user-units.sh'), ['--apply'], {
+    cwd: path.resolve('.'), env, encoding: 'utf8',
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const log = await fs.readFile(calls, 'utf8');
+  assert.match(log, /--user is-active pedivoy\.service/);
+  assert.match(log, /--user enable --now pedivoy-storage-maintenance\.timer/);
+  assert.doesNotMatch(log, /--user restart pedivoy\.service/);
+  assert.doesNotMatch(log, /--user enable --now pedivoy\.service/);
+  await assert.rejects(fs.access(path.join(root, 'config', 'systemd', 'user', 'pedivoy.service')), { code: 'ENOENT' });
+  await fs.access(path.join(root, 'config', 'systemd', 'user', 'pedivoy-storage-maintenance.service'));
+
+  await fs.writeFile(fakeNode, '#!/bin/sh\nprintf "v24.21.0\\n"\n');
+  const rejectedRoot = path.join(root, 'rejected-config');
+  const rejected = spawnSync(path.resolve('ops/systemd/install-user-units.sh'), ['--apply'], {
+    cwd: path.resolve('.'),
+    env: { ...env, XDG_CONFIG_HOME: rejectedRoot },
+    encoding: 'utf8',
+  });
+  assert.notEqual(rejected.status, 0);
+  assert.match(rejected.stderr, /requires Node v22\.22\.0/);
+  await assert.rejects(fs.access(path.join(rejectedRoot, 'systemd', 'user', 'pedivoy.service')), { code: 'ENOENT' });
 });

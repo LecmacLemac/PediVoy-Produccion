@@ -6,7 +6,8 @@ ConditionPathIsDirectory=%h/.openclaw/workspace-pedivoy/PediVoy
 Type=oneshot
 WorkingDirectory=%h/.openclaw/workspace-pedivoy/PediVoy
 EnvironmentFile=-%h/.config/pedivoy/env
-ExecStart=/usr/bin/env WWEBJS_AUTH_ROOT=%h/.openclaw/workspace-pedivoy/PediVoy/.wwebjs_auth WPP_SESSIONS_ROOT=%h/.openclaw/workspace-pedivoy/PediVoy/wpp_sessions PUPPETEER_CACHE_DIR=%h/.cache/puppeteer LEGACY_PUPPETEER_CACHE_DIR=%h/.openclaw/workspace-pedivoy/PediVoy/.puppeteer PEDIVOY_STORAGE_PATH=%h/.openclaw/workspace-pedivoy/PediVoy /usr/bin/node scripts/storage-maintenance.js --apply
+Environment=PATH=%h/.nvm/versions/node/v22.22.0/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/usr/bin/env PATH=%h/.nvm/versions/node/v22.22.0/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin WWEBJS_AUTH_ROOT=%h/.openclaw/workspace-pedivoy/PediVoy/.wwebjs_auth WPP_SESSIONS_ROOT=%h/.openclaw/workspace-pedivoy/PediVoy/wpp_sessions PUPPETEER_CACHE_DIR=%h/.cache/puppeteer LEGACY_PUPPETEER_CACHE_DIR=%h/.openclaw/workspace-pedivoy/PediVoy/.puppeteer PEDIVOY_STORAGE_PATH=%h/.openclaw/workspace-pedivoy/PediVoy node scripts/storage-maintenance.js --apply
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=pedivoy-storage-maintenance
