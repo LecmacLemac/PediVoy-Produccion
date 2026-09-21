@@ -16,6 +16,9 @@
 !*.properties
 !*.yml
 !*.yaml
+!*.sh
+!*.service
+!*.timer
 !gradlew
 !gradlew.bat
 !**/gradle/wrapper/gradle-wrapper.jar

@@ -1,0 +1,21 @@
+[Unit]
+Description=PediVoy PostgreSQL restore smoke in disposable private cluster
+After=pedivoy-postgres-backup.service
+
+[Service]
+Type=oneshot
+User=pedivoy
+Group=pedivoy
+WorkingDirectory=/opt/pedivoy/current
+Environment=BACKUP_DIR=/var/lib/pedivoy/backups
+ExecStart=/bin/bash -c 'set -Eeuo pipefail; marker=$$(/usr/bin/find "$$BACKUP_DIR" -maxdepth 1 -type f -name "pedivoy-*.dump.complete" -printf "%%f\n" | /usr/bin/sort | /usr/bin/tail -n 1); test -n "$$marker"; candidate=$${marker%%.complete}; exec /opt/pedivoy/current/scripts/postgres-restore-smoke.sh "$$BACKUP_DIR/$$candidate"'
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+ReadOnlyPaths=/var/lib/pedivoy/backups

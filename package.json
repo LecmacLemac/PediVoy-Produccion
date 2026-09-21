@@ -24,7 +24,8 @@
     "test:smoke:security": "node scripts/smoke-security-headers.js",
     "arca:check-credentials": "node scripts/arca-credentials-check.js",
     "ops:data-health": "node scripts/ops-data-health.js",
-    "db:backup": "node backup.js",
+    "db:backup": "bash scripts/postgres-backup.sh",
+    "db:restore-smoke": "bash scripts/postgres-restore-smoke.sh",
     "postinstall": "echo \"Postinstall Puppeteer\" && if [ \"$RENDER\" = \"true\" ] || [ \"$CI\" = \"true\" ] || [ \"$PUPPETEER_SKIP_DOWNLOAD\" = \"true\" ]; then echo \"Skipping Puppeteer browser install\"; else PUPPETEER_CACHE_DIR=\"$PWD/.puppeteer\" npx puppeteer browsers install chrome; fi"
   },
   "dependencies": {

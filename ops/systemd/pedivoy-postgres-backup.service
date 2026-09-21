@@ -1,0 +1,26 @@
+[Unit]
+Description=PediVoy validated PostgreSQL backup
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=pedivoy
+Group=pedivoy
+WorkingDirectory=/opt/pedivoy/current
+EnvironmentFile=/etc/pedivoy/backup.env
+Environment=BACKUP_DIR=/var/lib/pedivoy/backups
+Environment=BACKUP_LOCK_FILE=/run/pedivoy/postgres-backup.lock
+RuntimeDirectory=pedivoy
+StateDirectory=pedivoy/backups
+ExecStart=/opt/pedivoy/current/scripts/postgres-backup.sh
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+ReadWritePaths=/var/lib/pedivoy/backups /run/pedivoy

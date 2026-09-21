@@ -1,0 +1,11 @@
+[Unit]
+Description=Run PediVoy PostgreSQL backup daily
+
+[Timer]
+OnCalendar=*-*-* 03:15:00
+RandomizedDelaySec=20m
+Persistent=true
+Unit=pedivoy-postgres-backup.service
+
+[Install]
+WantedBy=timers.target
