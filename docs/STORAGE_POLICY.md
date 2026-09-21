@@ -9,7 +9,10 @@ PediVoy sólo elimina artefactos regenerables. La autenticación de WhatsApp, lo
 - antigüedad mínima de 14 días, calculada con el elemento más nuevo de cada árbol;
 - allowlist cerrada de directorios de caché (`Cache`, `Code Cache`, `GPUCache`, `GrShaderCache`, `ShaderCache`, `DawnCache`);
 - segmentos protegidos: `auth`, `.wwebjs_auth`, `storage`, `Local Storage`, `Session Storage`, `IndexedDB`, `uploads`, `DB`, `databases`, `Service Worker` y cualquier nombre que empiece con `Singleton`;
-- versiones de Puppeteer esperadas por el `package-lock.json` actual.
+- las dos raíces de perfiles usadas por PediVoy (`.wwebjs_auth` y `wpp_sessions`); una raíz ausente se informa y no aborta la otra;
+- múltiples raíces administradas de Puppeteer: la canónica `~/.cache/puppeteer` y la histórica `.puppeteer` del proyecto;
+- versiones de Puppeteer esperadas por el `package-lock.json` actual;
+- alertas de ocupación del filesystem: `warning` desde 80%, `high` desde 90% y `critical` desde 95%.
 
 El mantenedor:
 
@@ -17,9 +20,9 @@ El mantenedor:
 2. rechaza `/`, raíces relativas, raíces que no sean directorios y raíces symlink;
 3. no sigue symlinks; un candidato que contiene uno se conserva completo;
 4. lee `/proc/*/cmdline`, resuelve aliases reales y conserva perfiles señalados por `--user-data-dir`; errores al leer `cmdline` o rutas relativas de navegador sin `cwd` abortan;
-5. conserva las revisiones esperadas por Puppeteer directo y por `whatsapp-web.js`, además de versiones activas o demasiado nuevas;
+5. conserva, en cada raíz de Puppeteer, las revisiones esperadas por Puppeteer directo y por `whatsapp-web.js`, además de versiones activas o demasiado nuevas;
 6. vuelve a validar raíz, symlinks, contenido protegido, edad y actividad justo antes de aplicar;
-7. emite JSON con `mode`, `candidates`, `skipped` y `bytes`.
+7. mide el filesystem después de la limpieza y emite JSON con `mode`, `candidates`, `skipped`, `bytes` y `diskUsage` (`usedPercent`, estado y umbrales); el CLI termina con código 2 si sigue en estado `critical`.
 
 Un error de lectura o una política inválida aborta la ejecución: no continúa con una decisión de borrado insegura.
 
@@ -28,8 +31,11 @@ Un error de lectura o una política inválida aborta la ejecución: no continúa
 Definir rutas absolutas:
 
 ```bash
-export DISK_PATH="$PWD/.wwebjs_auth" # o la ruta persistente ya usada por PediVoy
-export PUPPETEER_CACHE_DIR="$PWD/.puppeteer"
+export WWEBJS_AUTH_ROOT="$PWD/.wwebjs_auth"
+export WPP_SESSIONS_ROOT="$PWD/wpp_sessions"
+export PUPPETEER_CACHE_DIR="$HOME/.cache/puppeteer"
+export LEGACY_PUPPETEER_CACHE_DIR="$PWD/.puppeteer"
+export PEDIVOY_STORAGE_PATH="$PWD"
 ```
 
 Revisar candidatos sin modificar datos:
@@ -44,14 +50,14 @@ Aplicar exactamente los candidatos informados:
 node scripts/storage-maintenance.js --apply
 ```
 
-Puede indicarse otra política con `--policy /ruta/absoluta/policy.json` o `PEDIVOY_STORAGE_POLICY`. Antes de actualizar Puppeteer, actualizar también `puppeteer.expectedVersions` con los nombres reales bajo `$PUPPETEER_CACHE_DIR/<producto>/`.
+Puede indicarse otra política con `--policy /ruta/absoluta/policy.json` o `PEDIVOY_STORAGE_POLICY`. Antes de actualizar Puppeteer, actualizar también `puppeteer.expectedVersions` con los nombres reales bajo cada entrada de `puppeteer.cacheRoots`.
 
 ## systemd de usuario
 
 Los artefactos de `ops/systemd/` establecen una única unidad canónica de usuario:
 
-- `pedivoy.service`: aplicación, `PUPPETEER_CACHE_DIR` estable y logs exclusivamente en journald;
-- `pedivoy-storage-maintenance.service`: limpieza con `--apply`;
+- `pedivoy.service`: aplicación, `PUPPETEER_CACHE_DIR=%h/.cache/puppeteer` estable (impuesto en `ExecStart`, por lo que el archivo de entorno no puede devolverlo a la raíz histórica), provisiona antes de arrancar las revisiones de Chrome requeridas por Puppeteer directo y `whatsapp-web.js`, y registra logs exclusivamente en journald;
+- `pedivoy-storage-maintenance.service`: limpieza con `--apply` sobre ambas raíces de perfiles y ambas cachés de Puppeteer. La raíz histórica sólo resulta elegible si ninguna ruta de proceso apunta a esa versión;
 - `pedivoy-storage-maintenance.timer`: ejecución semanal persistente con demora aleatoria.
 
 El instalador también es dry-run por defecto:

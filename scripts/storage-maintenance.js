@@ -21,13 +21,24 @@ function validatePolicy(policy) {
   for (const field of ['cacheRoots', 'cacheDirectoryAllowlist', 'protectedPathNames', 'protectedPathPrefixes']) {
     if (!Array.isArray(policy[field])) throw new Error(`${field} must be an array`);
   }
-  if (!policy.puppeteer || typeof policy.puppeteer.cacheRoot !== 'string'
+  const puppeteerRoots = policy.puppeteer?.cacheRoots
+    ?? (typeof policy.puppeteer?.cacheRoot === 'string' ? [policy.puppeteer.cacheRoot] : null);
+  if (!Array.isArray(puppeteerRoots) || puppeteerRoots.length === 0
+      || puppeteerRoots.some((root) => typeof root !== 'string')
       || !Array.isArray(policy.puppeteer.expectedVersions)) {
-    throw new Error('puppeteer cacheRoot and expectedVersions are required');
+    throw new Error('puppeteer cacheRoots and expectedVersions are required');
   }
   if (policy.cacheDirectoryAllowlist.length === 0
       || policy.cacheDirectoryAllowlist.some((name) => !SAFE_CACHE_NAMES.has(name))) {
     throw new Error('unsafe cache allowlist entry');
+  }
+  if (policy.diskUsage) {
+    const { thresholds } = policy.diskUsage;
+    if (typeof policy.diskUsage.path !== 'string' || !path.isAbsolute(policy.diskUsage.path)
+        || !thresholds || thresholds.warning !== 80 || thresholds.high !== 90
+        || thresholds.critical !== 95) {
+      throw new Error('diskUsage requires an absolute path and thresholds 80/90/95');
+    }
   }
   const requiredNames = ['auth', 'storage', 'IndexedDB', 'uploads', 'DB'];
   if (requiredNames.some((name) => !policy.protectedPathNames.includes(name))
@@ -196,6 +207,7 @@ export async function runMaintenance({
   processEntriesProvider,
   procRoot = '/proc',
   beforeApply = async () => {},
+  diskUsageProvider = fs.statfs,
 } = {}) {
   validatePolicy(policy);
   const candidates = [];
@@ -264,13 +276,16 @@ export async function runMaintenance({
   for (const root of managedRoots) await walk(root);
   const removalRoots = [...managedRoots];
 
-  const puppeteerRoot = await validateManagedRoot(policy.puppeteer.cacheRoot);
-  if (!puppeteerRoot) {
-    skipped.push({ path: path.resolve(policy.puppeteer.cacheRoot), reason: 'missing-root' });
-  } else {
+  const configuredPuppeteerRoots = policy.puppeteer.cacheRoots ?? [policy.puppeteer.cacheRoot];
+  const processArgs = await processAbsolutePaths(processes);
+  for (const configuredRoot of configuredPuppeteerRoots) {
+    const puppeteerRoot = await validateManagedRoot(configuredRoot);
+    if (!puppeteerRoot) {
+      skipped.push({ path: path.resolve(configuredRoot), reason: 'missing-root' });
+      continue;
+    }
     removalRoots.push(puppeteerRoot);
     const expected = new Set(policy.puppeteer.expectedVersions);
-    const processArgs = await processAbsolutePaths(processes);
     for (const productEntry of await fs.readdir(puppeteerRoot, { withFileTypes: true })) {
       const productPath = path.join(puppeteerRoot, productEntry.name);
       if (productEntry.isSymbolicLink()) {
@@ -341,11 +356,36 @@ export async function runMaintenance({
       await fs.rm(candidate.path, { recursive: true });
     }
   }
+  let diskUsage;
+  if (policy.diskUsage) {
+    const stats = await diskUsageProvider(policy.diskUsage.path);
+    const totalBytesBigInt = BigInt(stats.blocks) * BigInt(stats.bsize);
+    const availableBytesBigInt = BigInt(stats.bavail) * BigInt(stats.bsize);
+    if (totalBytesBigInt <= 0n || availableBytesBigInt < 0n || availableBytesBigInt > totalBytesBigInt) {
+      throw new Error('invalid disk usage statistics');
+    }
+    const usedBytesBigInt = totalBytesBigInt - availableBytesBigInt;
+    const usedPercent = Number((usedBytesBigInt * 10_000n) / totalBytesBigInt) / 100;
+    const { thresholds } = policy.diskUsage;
+    const status = usedPercent >= thresholds.critical ? 'critical'
+      : usedPercent >= thresholds.high ? 'high'
+        : usedPercent >= thresholds.warning ? 'warning' : 'ok';
+    diskUsage = {
+      path: policy.diskUsage.path,
+      totalBytes: Number(totalBytesBigInt),
+      availableBytes: Number(availableBytesBigInt),
+      usedBytes: Number(usedBytesBigInt),
+      usedPercent,
+      status,
+      thresholds,
+    };
+  }
   return {
     mode: apply ? 'apply' : 'dry-run',
     candidates,
     skipped,
     bytes: candidates.reduce((sum, candidate) => sum + candidate.bytes, 0),
+    ...(diskUsage ? { diskUsage } : {}),
   };
 }
 
@@ -359,8 +399,10 @@ function expandEnvironment(value, env) {
 
 export async function loadPolicy(policyPath, env = process.env) {
   const raw = JSON.parse(await fs.readFile(path.resolve(policyPath), 'utf8'));
-  if (!Array.isArray(raw.cacheRoots) || !raw.puppeteer || typeof raw.puppeteer.cacheRoot !== 'string') {
-    throw new Error('cacheRoots and puppeteer.cacheRoot are required');
+  const rawPuppeteerRoots = raw.puppeteer?.cacheRoots
+    ?? (typeof raw.puppeteer?.cacheRoot === 'string' ? [raw.puppeteer.cacheRoot] : null);
+  if (!Array.isArray(raw.cacheRoots) || !Array.isArray(rawPuppeteerRoots)) {
+    throw new Error('cacheRoots and puppeteer.cacheRoots are required');
   }
   const expandPath = (value) => {
     const expanded = expandEnvironment(value, env);
@@ -370,9 +412,15 @@ export async function loadPolicy(policyPath, env = process.env) {
   return validatePolicy({
     ...raw,
     cacheRoots: raw.cacheRoots.map(expandPath),
+    ...(raw.diskUsage ? {
+      diskUsage: { ...raw.diskUsage, path: expandPath(raw.diskUsage.path) },
+    } : {}),
     puppeteer: {
       ...raw.puppeteer,
-      cacheRoot: expandPath(raw.puppeteer.cacheRoot),
+      ...(typeof raw.puppeteer.cacheRoot === 'string'
+        ? { cacheRoot: expandPath(raw.puppeteer.cacheRoot) }
+        : {}),
+      cacheRoots: rawPuppeteerRoots.map(expandPath),
     },
   });
 }
@@ -391,14 +439,23 @@ export function parseArgs(argv, env = {}) {
   return options;
 }
 
-async function main() {
-  const options = parseArgs(process.argv.slice(2), process.env);
-  const policy = await loadPolicy(options.policyPath, process.env);
-  process.stdout.write(`${JSON.stringify(await runMaintenance({ policy, apply: options.apply }), null, 2)}\n`);
+export async function main({
+  argv = process.argv.slice(2),
+  env = process.env,
+  stdout = process.stdout,
+  ...maintenanceOptions
+} = {}) {
+  const options = parseArgs(argv, env);
+  const policy = await loadPolicy(options.policyPath, env);
+  const report = await runMaintenance({ policy, apply: options.apply, ...maintenanceOptions });
+  stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+  return report.diskUsage?.status === 'critical' ? 2 : 0;
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  main().catch((error) => {
+  main().then((exitCode) => {
+    process.exitCode = exitCode;
+  }).catch((error) => {
     process.stderr.write(`${JSON.stringify({ error: error.message })}\n`);
     process.exitCode = 1;
   });

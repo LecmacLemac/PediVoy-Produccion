@@ -10,9 +10,9 @@ Type=simple
 WorkingDirectory=%h/.openclaw/workspace-pedivoy/PediVoy
 EnvironmentFile=-%h/.config/pedivoy/env
 Environment=NODE_ENV=production
-Environment=PUPPETEER_CACHE_DIR=%h/.openclaw/workspace-pedivoy/PediVoy/.puppeteer
-ExecStartPre=/usr/bin/mkdir -p %h/.openclaw/workspace-pedivoy/PediVoy/.puppeteer
-ExecStart=/usr/bin/npm start
+ExecStartPre=/usr/bin/mkdir -p %h/.cache/puppeteer
+ExecStartPre=/usr/bin/env PUPPETEER_CACHE_DIR=%h/.cache/puppeteer /usr/bin/node scripts/prepare-puppeteer-cache.js
+ExecStart=/usr/bin/env PUPPETEER_CACHE_DIR=%h/.cache/puppeteer /usr/bin/npm start
 Restart=on-failure
 RestartSec=10s
 StandardOutput=journal
