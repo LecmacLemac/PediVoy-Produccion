@@ -35,6 +35,8 @@
       "$LEGACY_PUPPETEER_CACHE_DIR"
     ],
     "expectedVersions": [
+      "chrome/linux-153.0.8010.36",
+      "chrome-headless-shell/linux-153.0.8010.36",
       "chrome/linux-146.0.7680.76",
       "chrome-headless-shell/linux-146.0.7680.76",
       "chrome/linux-146.0.7680.31",

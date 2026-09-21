@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { PUPPETEER_REVISIONS } from 'puppeteer-core/internal/revisions.js';
 
 import { runMaintenance, loadPolicy, parseArgs } from '../scripts/storage-maintenance.js';
 import { preparePuppeteerCache } from '../scripts/prepare-puppeteer-cache.js';
@@ -502,6 +503,14 @@ test('production policy covers both WPP roots and canonical plus legacy Puppetee
     path.join(project, 'wpp_sessions'),
   ]);
   assert.deepEqual(loaded.puppeteer.cacheRoots, [homeCache, path.join(project, '.puppeteer')]);
+  assert.ok(
+    loaded.puppeteer.expectedVersions.includes(`chrome/linux-${PUPPETEER_REVISIONS.chrome}`),
+    'La política debe preservar el Chrome requerido por el Puppeteer instalado',
+  );
+  assert.ok(
+    loaded.puppeteer.expectedVersions.includes(`chrome-headless-shell/linux-${PUPPETEER_REVISIONS['chrome-headless-shell']}`),
+    'La política debe preservar el headless shell requerido por el Puppeteer instalado',
+  );
   assert.deepEqual(loaded.diskUsage.thresholds, { warning: 80, high: 90, critical: 95 });
 
   const appUnit = await fs.readFile('ops/systemd/pedivoy.service', 'utf8');
