@@ -1,0 +1,26 @@
+[Unit]
+Description=PediVoy canonical user service
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=%h/.openclaw/workspace-pedivoy/PediVoy
+EnvironmentFile=-%h/.config/pedivoy/env
+Environment=NODE_ENV=production
+Environment=PUPPETEER_CACHE_DIR=%h/.openclaw/workspace-pedivoy/PediVoy/.puppeteer
+ExecStartPre=/usr/bin/mkdir -p %h/.openclaw/workspace-pedivoy/PediVoy/.puppeteer
+ExecStart=/usr/bin/npm start
+Restart=on-failure
+RestartSec=10s
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=pedivoy
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=0077
+
+[Install]
+WantedBy=default.target

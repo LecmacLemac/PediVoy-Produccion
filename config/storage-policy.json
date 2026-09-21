@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "minimumAgeDays": 14,
+  "cacheRoots": [
+    "$DISK_PATH"
+  ],
+  "cacheDirectoryAllowlist": [
+    "Cache",
+    "Code Cache",
+    "GPUCache",
+    "GrShaderCache",
+    "ShaderCache",
+    "DawnCache"
+  ],
+  "protectedPathNames": [
+    "auth",
+    ".wwebjs_auth",
+    "storage",
+    "Local Storage",
+    "Session Storage",
+    "IndexedDB",
+    "uploads",
+    "DB",
+    "databases",
+    "Service Worker"
+  ],
+  "protectedPathPrefixes": [
+    "Singleton"
+  ],
+  "puppeteer": {
+    "cacheRoot": "$PUPPETEER_CACHE_DIR",
+    "expectedVersions": [
+      "chrome/linux-146.0.7680.76",
+      "chrome-headless-shell/linux-146.0.7680.76",
+      "chrome/linux-146.0.7680.31",
+      "chrome-headless-shell/linux-146.0.7680.31"
+    ]
+  }
+}

@@ -19,6 +19,9 @@
 !gradlew
 !gradlew.bat
 !**/gradle/wrapper/gradle-wrapper.jar
+!ops/systemd/*.service
+!ops/systemd/*.timer
+!ops/systemd/*.sh
 
 # Allow key project files
 !package.json

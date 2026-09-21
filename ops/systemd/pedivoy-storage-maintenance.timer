@@ -1,0 +1,11 @@
+[Unit]
+Description=Run PediVoy safe storage maintenance weekly
+
+[Timer]
+OnCalendar=Sun *-*-* 04:30:00
+Persistent=true
+RandomizedDelaySec=30m
+Unit=pedivoy-storage-maintenance.service
+
+[Install]
+WantedBy=timers.target
