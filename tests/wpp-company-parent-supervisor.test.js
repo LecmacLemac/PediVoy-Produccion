@@ -61,6 +61,68 @@ function fakeTimers() {
   };
 }
 
+test('parent runs one-shot startup preparation before the first company worker starts', async () => {
+  const timers = fakeTimers();
+  const events = [];
+  const supervisor = createCompanyWorkerSupervisor({
+    beforeFirstStart: () => events.push('cleanup'),
+    spawnWorker: empresaId => {
+      events.push(`spawn:${empresaId}`);
+      return fakeChild(600 + empresaId, (signal, child) => {
+        if (signal === 'SIGTERM') queueMicrotask(() => exitChild(child, 0, signal));
+      });
+    },
+    shouldAutoStart: () => true,
+    startupStaggerDelayMs: 10,
+    timers,
+    logger: { warn() {} },
+  });
+
+  assert.deepEqual(supervisor.scheduleBootRecovery([4, 5]), { scheduled: 2 });
+  assert.deepEqual(events, ['cleanup', 'spawn:4']);
+  await timers.advance(10);
+  assert.deepEqual(events, ['cleanup', 'spawn:4', 'spawn:5']);
+  assert.equal(supervisor.ensure(6).started, true);
+  assert.deepEqual(events, ['cleanup', 'spawn:4', 'spawn:5', 'spawn:6']);
+  await supervisor.shutdown();
+});
+
+test('shutdown prevents startup preparation and worker creation', async () => {
+  const events = [];
+  const supervisor = createCompanyWorkerSupervisor({
+    beforeFirstStart: () => events.push('cleanup'),
+    spawnWorker: empresaId => {
+      events.push(`spawn:${empresaId}`);
+      return fakeChild(700 + empresaId, () => {});
+    },
+    shouldAutoStart: () => true,
+    logger: { warn() {} },
+  });
+
+  assert.equal(await supervisor.shutdown(), true);
+  assert.deepEqual(supervisor.ensure(1), { started: false, reason: 'shutting_down' });
+  assert.deepEqual(supervisor.scheduleBootRecovery([2]), { scheduled: 0, reason: 'shutting_down' });
+  assert.deepEqual(events, []);
+});
+
+test('explicit boot preparation runs once even while automatic worker starts are disabled', () => {
+  const events = [];
+  const supervisor = createCompanyWorkerSupervisor({
+    beforeFirstStart: () => events.push('cleanup'),
+    spawnWorker: empresaId => {
+      events.push(`spawn:${empresaId}`);
+      return fakeChild(800 + empresaId, () => {});
+    },
+    shouldAutoStart: () => false,
+    logger: { warn() {} },
+  });
+
+  assert.equal(supervisor.prepareStartup(), true);
+  assert.equal(supervisor.prepareStartup(), true);
+  assert.deepEqual(supervisor.ensure(1), { started: false, reason: 'disabled' });
+  assert.deepEqual(events, ['cleanup']);
+});
+
 test('boot recovery staggers company worker starts in order with a safe default delay', async () => {
   const timers = fakeTimers();
   const spawned = [];

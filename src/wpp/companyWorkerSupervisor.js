@@ -31,6 +31,7 @@ function waitForExit(children, deadlineMs, timers) {
 export function createCompanyWorkerSupervisor({
   spawnWorker,
   shouldAutoStart,
+  beforeFirstStart = null,
   respawnDelayMs = 5000,
   startupStaggerDelayMs = 12000,
   shutdownDeadlineMs = 10000,
@@ -39,11 +40,15 @@ export function createCompanyWorkerSupervisor({
 } = {}) {
   if (typeof spawnWorker !== 'function') throw new TypeError('spawnWorker is required');
   if (typeof shouldAutoStart !== 'function') throw new TypeError('shouldAutoStart is required');
+  if (beforeFirstStart !== null && typeof beforeFirstStart !== 'function') {
+    throw new TypeError('beforeFirstStart must be a function');
+  }
   const workers = new Map();
   const respawns = new Map();
   const startupTimers = new Map();
   let shuttingDown = false;
   let shutdownPromise = null;
+  let startupPrepared = false;
 
   const delay = Number.isFinite(Number(respawnDelayMs)) && Number(respawnDelayMs) >= 0
     ? Number(respawnDelayMs)
@@ -54,6 +59,19 @@ export function createCompanyWorkerSupervisor({
   const startupDelay = Number.isFinite(Number(startupStaggerDelayMs)) && Number(startupStaggerDelayMs) >= 0
     ? Number(startupStaggerDelayMs)
     : 12000;
+
+  function prepareStartup() {
+    if (startupPrepared) return true;
+    if (shuttingDown || workers.size > 0 || respawns.size > 0 || startupTimers.size > 0) return false;
+    try {
+      beforeFirstStart?.();
+      startupPrepared = true;
+      return true;
+    } catch (error) {
+      logger.warn('[WPP EMPRESA] startup preparation failed:', { error });
+      return false;
+    }
+  }
 
   function scheduleRespawn(empresaId, reason = 'exit') {
     if (shuttingDown || !shouldAutoStart() || respawns.has(empresaId)) return;
@@ -70,6 +88,7 @@ export function createCompanyWorkerSupervisor({
   function ensure(empresaId) {
     if (shuttingDown) return { started: false, reason: 'shutting_down' };
     if (!shouldAutoStart()) return { started: false, reason: 'disabled' };
+    if (!prepareStartup()) return { started: false, reason: 'startup_preparation_blocked' };
     const pending = respawns.get(empresaId);
     if (pending) {
       timers.clearTimeout(pending);
@@ -99,6 +118,9 @@ export function createCompanyWorkerSupervisor({
     if (shuttingDown) return { scheduled: 0, reason: 'shutting_down' };
     if (!shouldAutoStart()) return { scheduled: 0, reason: 'disabled' };
     const ids = [...new Set(Array.isArray(empresaIds) ? empresaIds : [])];
+    if (ids.length > 0 && !prepareStartup()) {
+      return { scheduled: 0, reason: 'startup_preparation_blocked' };
+    }
     let scheduled = 0;
     for (const empresaId of ids) {
       if (workers.has(empresaId) || startupTimers.has(empresaId)) continue;
@@ -138,6 +160,7 @@ export function createCompanyWorkerSupervisor({
   }
 
   return {
+    prepareStartup,
     ensure,
     scheduleBootRecovery,
     shutdown,

@@ -8,6 +8,7 @@ import { spawn } from 'child_process';
 import multer from 'multer';
 import QRCode from 'qrcode';
 import { encryptSecret } from '../services/facturacionService.js';
+import { clearStaleCompanyChromiumSingletons } from '../wpp/companySession.js';
 import { createCompanyWorkerSupervisor } from '../wpp/companyWorkerSupervisor.js';
 
 function objectOrEmpty(value) {
@@ -99,10 +100,17 @@ function spawnEmpresaWppWorker(empresaId) {
 const empresaWppWorkerSupervisor = createCompanyWorkerSupervisor({
   spawnWorker: spawnEmpresaWppWorker,
   shouldAutoStart: shouldAutoStartEmpresaWppWorker,
+  beforeFirstStart: () => clearStaleCompanyChromiumSingletons({
+    env: process.env,
+    cwd: process.cwd(),
+    fs,
+    logger: console,
+  }),
   respawnDelayMs: Number(process.env.EMPRESA_WPP_WORKER_RESPAWN_DELAY_MS || 5000),
   startupStaggerDelayMs: Number(process.env.EMPRESA_WPP_BOOT_RECOVERY_STAGGER_MS || 12000),
   shutdownDeadlineMs: Number(process.env.EMPRESA_WPP_WORKER_SHUTDOWN_DEADLINE_MS || 10000),
 });
+empresaWppWorkerSupervisor.prepareStartup();
 
 function ensureEmpresaWppQrWorker(empresaId) {
   return empresaWppWorkerSupervisor.ensure(empresaId);

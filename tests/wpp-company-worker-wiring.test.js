@@ -65,4 +65,7 @@ test('web parent keeps child attached with inherited output and configures stagg
   assert.match(source, /EMPRESA_WPP_BOOT_RECOVERY_STAGGER_MS \|\| 12000/);
   assert.match(source, /scheduleBootRecovery\(empresaIds\)/);
   assert.match(source, /shutdownEmpresaWppWorkers/);
+  assert.match(source, /clearStaleCompanyChromiumSingletons/);
+  assert.match(source, /beforeFirstStart:\s*\(\)\s*=>\s*clearStaleCompanyChromiumSingletons\(\{/);
+  assert.match(source, /empresaWppWorkerSupervisor\.prepareStartup\(\);/);
 });
