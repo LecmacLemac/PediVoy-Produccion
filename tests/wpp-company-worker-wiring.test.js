@@ -14,10 +14,11 @@ test('empresa worker acquires distributed ownership before client creation', asy
 
   const ownership = source.indexOf('createCompanyOwnership(');
   const lifecycle = source.indexOf('createCompanyLifecycle(');
-  const startup = source.indexOf('.start()');
+  const startup = source.indexOf('lifecycle.start({ beforeInitialize: ensureEmpresaWhatsappSchema })');
   assert.ok(ownership >= 0 && lifecycle > ownership && startup > lifecycle);
   assert.match(source, /clientFactory:\s*\{\s*create:\s*createManagedCompanyClient\s*\}/);
   assert.match(source, /function createManagedCompanyClient[\s\S]*new Client\(/);
+  assert.match(source, /lifecycle\.start\(\{\s*beforeInitialize:\s*ensureEmpresaWhatsappSchema\s*\}\)/);
 });
 
 test('empresa worker gates stale events and sends on active ownership', async () => {

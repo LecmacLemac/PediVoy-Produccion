@@ -74,6 +74,39 @@ test('start rechaza empresaId inválido antes de registrar listener', () => {
   assert.equal(listeners, 1);
 });
 
+test('handler empresarial descarta ownership cerrado sin resolver contexto ni reportar error operativo', async () => {
+  let listener;
+  let contextCalls = 0;
+  let errorLogs = 0;
+  const originalError = console.error;
+  console.error = () => { errorLogs += 1; };
+  try {
+    const client = {
+      on(event, fn) { if (event === 'message') listener = fn; },
+      async sendMessage() { assert.fail('no debe enviar'); },
+    };
+    handlers.start(client, {
+      empresaId: 7,
+      generation: 3,
+      contextResolver: async () => { contextCalls += 1; return null; },
+      withActiveClient: async () => {
+        throw Object.assign(new Error('ownership lost'), { code: 'WPP_COMPANY_NOT_OWNER' });
+      },
+    });
+
+    await listener({
+      from: PHONE,
+      body: 'ayuda',
+      id: { _serialized: 'company-fence-1', fromMe: false },
+    });
+  } finally {
+    console.error = originalError;
+  }
+
+  assert.equal(contextCalls, 0);
+  assert.equal(errorLogs, 0);
+});
+
 test('comando empresarial ignora empresa indicada por texto', () => {
   const ctx = { empresa_id: 7, tenantLocked: true };
 

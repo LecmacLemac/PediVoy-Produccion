@@ -241,6 +241,7 @@ test('reset de WhatsApp empresa sólo persiste el marcador, asegura worker y res
   const update = calls.find(call => call.sql.includes('UPDATE empresas'));
   assert.match(update.sql, /wpp_reset_requested_at\s*=\s*NOW\(\)/i);
   assert.match(update.sql, /wpp_status\s*=\s*'resetting'/i);
+  assert.doesNotMatch(update.sql, /wpp_qr_code\s*=\s*NULL/i);
   assert.doesNotMatch(update.sql, /DELETE|TRUNCATE/i);
 
   const source = await readFile(new URL('../src/routes/empresas.js', import.meta.url), 'utf8');

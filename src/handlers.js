@@ -9,6 +9,10 @@ const recentMessageIdsByClient = new WeakMap();
 const RECENT_MESSAGE_TTL_MS = 5 * 60 * 1000;
 const RECENT_MESSAGE_MAX = 500;
 
+function isOwnershipFenceError(error) {
+  return error?.code === 'WPP_NOT_OWNER' || error?.code === 'WPP_COMPANY_NOT_OWNER';
+}
+
 function fenceReplyClient(client, withActiveClient) {
   if (typeof withActiveClient !== 'function') return client;
   return new Proxy(client, {
@@ -2098,7 +2102,7 @@ function start(rawClient, options = {}) {
       await responderConIA(client, numero, contenido, ctx);
 
     } catch (err) {
-      if (err?.code !== 'WPP_NOT_OWNER') console.error('handlers.start error:', err);
+      if (!isOwnershipFenceError(err)) console.error('handlers.start error:', err);
       // Evitamos responder si el error es grave para no hacer loop
     }
   }
@@ -2115,7 +2119,7 @@ function start(rawClient, options = {}) {
           })
         : processMessage(message)
     )).catch(err => {
-      if (err?.code !== 'WPP_NOT_OWNER') console.error('handlers.start gate error:', err);
+      if (!isOwnershipFenceError(err)) console.error('handlers.start gate error:', err);
     });
   });
 }

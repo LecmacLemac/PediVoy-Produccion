@@ -2,16 +2,26 @@ function notOwnerError(message = 'WhatsApp Empresa worker is not the active owne
   return Object.assign(new Error(message), { code: 'WPP_COMPANY_NOT_OWNER' });
 }
 
+function deadline(promise, milliseconds, label) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} deadline exceeded`)), milliseconds);
+  });
+  return Promise.race([Promise.resolve(promise), timeout]).finally(() => clearTimeout(timer));
+}
+
 export function createCompanyLifecycle({
   ownership,
   clientFactory,
   deleteSession = async () => {},
+  drainDeadlineMs = 20000,
 } = {}) {
   for (const method of ['tryAcquire', 'assertOwned', 'heartbeat', 'releaseAfterQuiesced']) {
     if (typeof ownership?.[method] !== 'function') throw new TypeError(`ownership.${method} is required`);
   }
   if (typeof clientFactory?.create !== 'function') throw new TypeError('clientFactory.create is required');
   if (typeof deleteSession !== 'function') throw new TypeError('deleteSession must be a function');
+  if (!Number.isFinite(drainDeadlineMs) || drainDeadlineMs <= 0) throw new TypeError('drainDeadlineMs must be positive');
 
   let state = 'standby';
   let generation = 0;
@@ -19,15 +29,49 @@ export function createCompanyLifecycle({
   let tail = Promise.resolve();
   let shuttingDown = false;
   let fenced = false;
+  let gateOpen = false;
   let lastError = null;
+  const activeWork = new Map();
 
   const snapshot = () => Object.freeze({
     state,
     generation,
     isOwner: ownership.isOwner === true,
     hasClient: current !== null,
+    gateOpen,
+    activeOperations: [...activeWork.values()].reduce((total, entry) => total + entry.count, 0),
     lastError,
   });
+
+  function closeGate() {
+    gateOpen = false;
+  }
+
+  function beginActiveWork(activeGeneration) {
+    let entry = activeWork.get(activeGeneration);
+    if (!entry) {
+      entry = { count: 0, drained: null, resolveDrained: null };
+      activeWork.set(activeGeneration, entry);
+    }
+    if (entry.count === 0) {
+      entry.drained = new Promise(resolve => { entry.resolveDrained = resolve; });
+    }
+    entry.count += 1;
+  }
+
+  function finishActiveWork(activeGeneration) {
+    const entry = activeWork.get(activeGeneration);
+    if (!entry) return;
+    entry.count -= 1;
+    if (entry.count === 0) {
+      activeWork.delete(activeGeneration);
+      entry.resolveDrained();
+    }
+  }
+
+  function waitForActiveWork(activeGeneration) {
+    return activeWork.get(activeGeneration)?.drained ?? Promise.resolve();
+  }
 
   function enqueue(work, { allowShutdown = false } = {}) {
     if ((shuttingDown && !allowShutdown) || fenced) {
@@ -48,19 +92,28 @@ export function createCompanyLifecycle({
     try {
       await next.initialize();
       state = 'running';
+      gateOpen = true;
       return true;
     } catch (error) {
       lastError = error;
       state = 'fenced';
       fenced = true;
+      closeGate();
       try { await stopCurrent(); } catch {}
       throw error;
     }
   }
 
   async function stopCurrent() {
+    closeGate();
     if (!current) return true;
     const stopping = current;
+    const stoppingGeneration = generation;
+    await deadline(
+      waitForActiveWork(stoppingGeneration),
+      drainDeadlineMs,
+      'WhatsApp Empresa active work drain',
+    );
     stopping.removeAllListeners?.();
     let destroyError = null;
     try {
@@ -84,7 +137,10 @@ export function createCompanyLifecycle({
     return true;
   }
 
-  function start() {
+  function start({ beforeInitialize = async () => {} } = {}) {
+    if (typeof beforeInitialize !== 'function') {
+      return Promise.reject(new TypeError('beforeInitialize must be a function'));
+    }
     return enqueue(async () => {
       if (current) return true;
       state = 'acquiring';
@@ -93,11 +149,28 @@ export function createCompanyLifecycle({
         state = 'standby';
         return false;
       }
+      try {
+        await beforeInitialize();
+      } catch (error) {
+        lastError = error;
+        try {
+          const released = await ownership.releaseAfterQuiesced(async () => true);
+          if (released !== true) throw new Error('WhatsApp Empresa ownership release was not confirmed');
+          state = 'standby';
+        } catch (releaseError) {
+          state = 'fenced';
+          fenced = true;
+          closeGate();
+          throw releaseError;
+        }
+        throw error;
+      }
       return createFresh('start');
     });
   }
 
   function restart(_reason = 'restart') {
+    closeGate();
     return enqueue(async () => {
       ownership.assertOwned();
       state = 'restarting';
@@ -114,6 +187,7 @@ export function createCompanyLifecycle({
   }
 
   function reset(_sequence) {
+    closeGate();
     return enqueue(async () => {
       ownership.assertOwned();
       state = 'resetting';
@@ -133,15 +207,24 @@ export function createCompanyLifecycle({
 
   function shutdown() {
     shuttingDown = true;
+    closeGate();
     const result = tail.then(async () => {
-      state = 'stopping';
-      if (ownership.isOwner === true) {
-        await ownership.releaseAfterQuiesced(stopCurrent);
-      } else {
-        await stopCurrent();
+      try {
+        state = 'stopping';
+        if (ownership.isOwner === true) {
+          await ownership.releaseAfterQuiesced(stopCurrent);
+        } else {
+          await stopCurrent();
+        }
+        state = 'stopped';
+        return true;
+      } catch (error) {
+        state = 'fenced';
+        fenced = true;
+        lastError = error;
+        closeGate();
+        throw error;
       }
-      state = 'stopped';
-      return true;
     });
     tail = result.catch(() => {});
     return result;
@@ -150,6 +233,7 @@ export function createCompanyLifecycle({
   function ownershipLost(error = notOwnerError('WhatsApp Empresa ownership was lost')) {
     if (fenced) return tail;
     fenced = true;
+    closeGate();
     state = 'fenced';
     lastError = error;
     const result = tail.then(async () => {
@@ -162,14 +246,19 @@ export function createCompanyLifecycle({
 
   async function withActiveClient(fn) {
     if (typeof fn !== 'function') throw new TypeError('fn is required');
-    if (!current || state !== 'running' || ownership.isOwner !== true || shuttingDown || fenced) throw notOwnerError();
+    if (!gateOpen || !current || state !== 'running' || ownership.isOwner !== true || shuttingDown || fenced) throw notOwnerError();
     const active = current;
     const activeGeneration = generation;
-    await ownership.heartbeat();
-    if (current !== active || generation !== activeGeneration || ownership.isOwner !== true || state !== 'running') {
-      throw notOwnerError('WhatsApp Empresa generation changed before client use');
+    beginActiveWork(activeGeneration);
+    try {
+      await ownership.heartbeat();
+      if (!gateOpen || current !== active || generation !== activeGeneration || ownership.isOwner !== true || state !== 'running') {
+        throw notOwnerError('WhatsApp Empresa generation changed before client use');
+      }
+      return await fn({ client: active, generation: activeGeneration });
+    } finally {
+      finishActiveWork(activeGeneration);
     }
-    return fn({ client: active, generation: activeGeneration });
   }
 
   return {

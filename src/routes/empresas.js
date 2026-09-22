@@ -822,8 +822,7 @@ export function createEmpresasRouter(deps) {
 
       await query(
         `UPDATE empresas
-            SET wpp_qr_code = NULL,
-                wpp_status = 'resetting',
+            SET wpp_status = 'resetting',
                 wpp_reset_requested_at = NOW()
           WHERE id = $1`,
         [empresaId]

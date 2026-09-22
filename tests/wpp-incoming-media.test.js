@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createIncomingMediaHandler } from '../src/wpp/incomingMedia.js';
+import { registerCompanyIncomingMedia } from '../src/wpp/companyIncomingMedia.js';
 import { handleIncomingComprobanteFromBotPg } from '../src/transferenciasPipeline.js';
 
 function mediaMessage(phone = '5493510000000') {
@@ -16,6 +17,13 @@ function mediaMessage(phone = '5493510000000') {
       filename: 'comprobante.jpg',
     }),
   };
+}
+
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+  return { promise, resolve, reject };
 }
 
 test('handler empresarial valida cliente dentro del tenant y propaga empresaId fijo', async () => {
@@ -179,6 +187,62 @@ test('lease loss while resolving an @lid contact aborts before database and medi
   await handler(msg);
 
   assert.deepEqual(calls, { query: 0, download: 0, pipeline: 0, reply: 0 });
+});
+
+test('company media listener rejects a stale generation before query, download, or pipeline work', async () => {
+  let listener;
+  const calls = { query: 0, download: 0, pipeline: 0 };
+  const client = {
+    on(event, fn) { if (event === 'message') listener = fn; },
+  };
+  registerCompanyIncomingMedia(client, {
+    empresaId: 7,
+    generation: 4,
+    query: async () => { calls.query += 1; return [{ id: 1 }]; },
+    handleIncomingComprobanteFromBotPg: async () => { calls.pipeline += 1; },
+    withActiveClient: async fn => fn({ client, generation: 5 }),
+  });
+  const msg = mediaMessage();
+  msg.downloadMedia = async () => { calls.download += 1; return null; };
+
+  await listener(msg);
+
+  assert.deepEqual(calls, { query: 0, download: 0, pipeline: 0 });
+});
+
+test('company media listener keeps the whole admitted callback active until pipeline completion', async () => {
+  let listener;
+  let activeWork = 0;
+  const pipelineRelease = deferred();
+  const pipelineStarted = deferred();
+  const client = {
+    on(event, fn) { if (event === 'message') listener = fn; },
+  };
+  registerCompanyIncomingMedia(client, {
+    empresaId: 7,
+    generation: 4,
+    query: async () => [{ id: 1 }],
+    handleIncomingComprobanteFromBotPg: async () => {
+      pipelineStarted.resolve();
+      await pipelineRelease.promise;
+      return { ok: true, id: 1 };
+    },
+    withActiveClient: async fn => {
+      activeWork += 1;
+      try {
+        return await fn({ client, generation: 4 });
+      } finally {
+        activeWork -= 1;
+      }
+    },
+  });
+
+  const work = listener(mediaMessage());
+  await pipelineStarted.promise;
+  assert.equal(activeWork, 1);
+  pipelineRelease.resolve();
+  await work;
+  assert.equal(activeWork, 0);
 });
 
 test('rechaza HTML como documento y magic bytes falsos antes de guardar o analizar', async () => {

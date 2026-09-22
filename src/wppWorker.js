@@ -204,9 +204,17 @@ function createManagedCompanyClient({ generation }) {
   });
 
   if (!WPP_QR_ONLY) {
-    handlers.start(managedClient, { empresaId: Number(EMPRESA_ID) });
+    const incomingGate = {
+      generation,
+      withActiveClient: lifecycle.withActiveClient,
+    };
+    handlers.start(managedClient, {
+      empresaId: Number(EMPRESA_ID),
+      ...incomingGate,
+    });
     registerCompanyIncomingMedia(managedClient, {
       empresaId: Number(EMPRESA_ID),
+      ...incomingGate,
       query,
       handleIncomingComprobanteFromBotPg,
     });
@@ -275,9 +283,9 @@ const workerRecovery = createBackoffRecovery({
 });
 
 const workerStartup = createPrerequisiteStartup({
-  ensurePrerequisites: ensureEmpresaWhatsappSchema,
+  ensurePrerequisites: async () => {},
   start: async () => {
-    const started = await lifecycle.start();
+    const started = await lifecycle.start({ beforeInitialize: ensureEmpresaWhatsappSchema });
     if (!started) {
       console.log(`[Empresa ${EMPRESA_ID}] Otro worker posee la sesión; quedando en standby.`);
       return false;
