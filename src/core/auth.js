@@ -21,7 +21,7 @@ export function createWithAuth({ queryFn = defaultQuery, jwtSecret = JWT_SECRET 
         return res.status(401).json({ error: 'Token inválido' });
       }
       const rows = await queryFn(
-        `SELECT u.id, u.role, u.empresa_id, u.chofer_id, u.referente_id, u.activo,
+        `SELECT u.id, u.username, u.role, u.empresa_id, u.chofer_id, u.referente_id, u.activo,
                 (c.id IS NOT NULL AND c.activo IS TRUE AND c.empresa_id = u.empresa_id) AS chofer_valid,
                 (r.id IS NOT NULL AND r.activo IS TRUE AND r.deleted_at IS NULL
                  AND r.empresa_id = u.empresa_id) AS referente_valid
@@ -48,6 +48,7 @@ export function createWithAuth({ queryFn = defaultQuery, jwtSecret = JWT_SECRET 
       req.user = {
         ...claims,
         uid: user.id,
+        username: user.username ?? null,
         role: user.role,
         empresa_id: user.empresa_id,
         chofer_id: user.chofer_id ?? null,

@@ -1,8 +1,13 @@
 function initRepartidorMapaGpsUI() {
-  $('#mapFiltroEstado').addEventListener('change', renderMap);
+  $('#mapFiltroEstado').addEventListener('change', () => { renderMap.initialFilterResolved = true; renderMap(); });
   $('#mapSoloHoy').addEventListener('change', renderMap);
   $('#mapRefBtn').onclick = () => { loadPedidos().then(renderMap); };
 
+}
+
+function setGpsFeedback(message) {
+  const status = document.getElementById('gpsStatus');
+  if (status) status.textContent = message;
 }
 
 function showGpsHelp() {
@@ -36,10 +41,8 @@ function persistGpsPreference(enabled) {
 }
 
 function restoreGpsPreference() {
-  try {
-    const raw = safeStorage.local.get(GPS_PREF_LS_KEY);
-    if (raw === '1') gpsSyncState.disabled = false;
-  } catch {}
+  // Cada sesión requiere activación explícita antes de consultar ubicación.
+  gpsSyncState.disabled = true;
 }
 
 function getGeoErrorCode(err) {
@@ -55,13 +58,14 @@ function getGeoErrorMessage(err) {
 }
 
 async function requestGpsActivation() {
+  setGpsFeedback('Solicitando permiso de ubicación…');
   if (!navigator.geolocation) {
-    toast('GPS no disponible');
+    setGpsFeedback('GPS no disponible en este dispositivo.');
     return;
   }
 
   if (!window.isSecureContext) {
-    toast('Abrí por HTTPS para usar GPS');
+    setGpsFeedback('Abrí por HTTPS para usar GPS.');
     showGpsHelp();
     return;
   }
@@ -91,8 +95,9 @@ async function requestGpsActivation() {
       }).catch(() => {});
     }
 
-    toast('📍 GPS activado');
+    setGpsFeedback('📍 GPS activado.');
   } catch (e) {
+    setGpsFeedback(getGeoErrorMessage(e));
     const code = getGeoErrorCode(e);
     if (code === 1) {
       gpsSyncState.denied = true;
@@ -202,13 +207,22 @@ function renderMap(){
   if(!map) { map = L.map('map').setView([-31.4, -64.18], 12); L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map); mapMarkers = L.layerGroup().addTo(map); }
   map.invalidateSize(); mapMarkers.clearLayers();
 
-  const fSt = $('#mapFiltroEstado').value, fHoy = $('#mapSoloHoy').checked, today = getOyString();
+  const filter = $('#mapFiltroEstado');
+  const fHoy = $('#mapSoloHoy').checked, today = getOyString();
+  if (!renderMap.initialFilterResolved) {
+    renderMap.initialFilterResolved = true;
+    const visible = pedidos.filter(p => getGoogleMapsDirectionsUrl(p.latitud, p.longitud)
+      && (!fHoy || getPedidoFechaOperativa(p) === today));
+    if (filter.value === 'en_ruta' && !visible.some(p => ['en_ruta', 'en_camino'].includes(p.estado))
+        && visible.some(p => p.estado === 'pendiente')) filter.value = 'pendiente';
+  }
+  const fSt = filter.value;
   const bounds = [];
   pedidos.forEach(p => {
     const directionsUrl = getGoogleMapsDirectionsUrl(p.latitud, p.longitud);
     if(!directionsUrl) return;
     if(fHoy && getPedidoFechaOperativa(p) !== today) return;
-    if(fSt && p.estado !== fSt) return;
+    if(fSt && p.estado !== fSt && !(fSt === 'en_ruta' && p.estado === 'en_camino')) return;
     const lat = Number(p.latitud), lng = Number(p.longitud);
     const color = p.estado==='entregado'?'#10b981' : p.estado==='en_ruta'?'#06b6d4':'#f59e0b';
     const icon = L.divIcon({ className: '', html: `<div class="m-label" style="border-left:4px solid ${color}">${esc(p.cliente.split(' ')[0])}</div>` });

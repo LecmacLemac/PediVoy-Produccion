@@ -1,3 +1,10 @@
+// El prefijo histórico era derivado; cantidad/producto siguen siendo canónicos.
+function getMovimientoNota(row) {
+  const nota = String(row?.descripcion || '');
+  if (!['carga_llenos', 'descarga_vacios'].includes(row?.tipo)) return nota;
+  return nota.replace(/^(?:Carga|Descarga):\s*\d+(?:[.,]\d+)?u\s+.+?\.(?:\s+|$)/i, '').trim();
+}
+
 let gSelectedComprobanteFile = null;
 
 function setGastoComprobanteFile(file, source = 'archivo') {
@@ -68,7 +75,6 @@ function initRepartidorOperacionesUI() {
           // Escenario A: Movimientos de Stock Retornable
           if (type === 'carga_llenos' || type === 'descarga_vacios') {
               const pid = $('#gProducto').value;
-              const nombreProd = $('#gProducto').options[$('#gProducto').selectedIndex]?.text || '';
               const qty = Number($('#gCant').value);
               const pu = Number($('#gPu').value || 0);
               const montoManual = Number($('#gMonto').value || 0);
@@ -80,12 +86,11 @@ function initRepartidorOperacionesUI() {
               const isCarga = type === 'carga_llenos';
               if (isCarga && !depositoId) throw new Error('Seleccioná el depósito de carga.');
               const montoFinal = isCarga ? (qty * pu) : montoManual;
-              const pref = isCarga ? 'Carga' : 'Descarga';
 
               finalBody = {
                   fecha: fecha,
                   tipo: type,
-                  descripcion: `${pref}: ${qty}u ${nombreProd}. ${descManual}`,
+                  descripcion: descManual.trim(),
                   monto: montoFinal,
                   cantidad: qty,
                   precio_unitario: pu,
@@ -260,7 +265,7 @@ async function loadGHist(){
         const productoTxt = g?.producto_id ? getProductoNombreById(g.producto_id) : '';
         const haystack = [
           tipo,
-          g?.descripcion || '',
+          getMovimientoNota(g),
           productoTxt,
           formatFechaAR(g.fecha),
           String(monto),
@@ -288,7 +293,7 @@ async function loadGHist(){
       const detalleMerc = isMercaderia
         ? `${tipo === 'carga_llenos' ? 'Carga' : 'Descarga'}${qty > 0 ? `: ${qty}u` : ''}${productoTxt ? ` · ${productoTxt}` : ''}`
         : '';
-      const detalle = [detalleMerc, g?.descripcion].filter(Boolean).join(' · ');
+      const detalle = [detalleMerc, getMovimientoNota(g)].filter(Boolean).join(' · ');
       const montoOCant = isMercaderia
         ? `${qty > 0 ? `${qty}u` : '-'}${Number(g?.monto || 0) > 0 ? ` • ${money(g.monto)}` : ''}`
         : money(g?.monto);
@@ -327,7 +332,7 @@ function abrirModalEditarGasto(row) {
   $('#megId').value = String(row.id || '');
   $('#megTipo').value = row.tipo || '-';
   $('#megFecha').value = formatFechaAR(row.fecha);
-  $('#megDesc').value = row.descripcion || '';
+  $('#megDesc').value = getMovimientoNota(row);
   $('#megMeta').textContent = `#${Number(row.id)} · ${row.chofer_nombre || 'Chofer'}`;
 
   $('#megRowCant').hidden = !(isMerc || isGastoComun);
@@ -459,6 +464,9 @@ async function loadStockRepartidor(){
     const res = await api(`/api/repartidor/stock-acumulado?fecha=${encodeURIComponent(d)}`);
     const rows = Array.isArray(res?.rows) ? res.rows : [];
     const k = res?.kpis || {};
+    const warning = $('#stWarning');
+    warning.hidden = !rows.some(r => Number(r.saldo_inicial) < 0 || Number(r.saldo_final) < 0);
+    warning.textContent = warning.hidden ? '' : '⚠ Déficit de stock: revisar la integridad de cargas y entregas. Los saldos históricos se muestran sin ajustes.';
 
     const sumInicial = Number(k.saldo_inicial || 0);
     const sumCarga = Number(k.cargado || 0);
@@ -703,9 +711,9 @@ async function calcResumen(){
       if (tipo.includes('carga_llenos') || tipo.includes('carga_vacios')) {
         artsC += Number(g.cantidad || 0);
         const dep = g?.deposito_nombre || (g?.deposito_id ? `Depósito #${Number(g.deposito_id)}` : 'Sin depósito');
-        detalleCarga += `• ${g.cantidad||0} u. ${g.descripcion||g.tipo} (${dep}) ($${m})\n`;
+        detalleCarga += `• ${g.cantidad||0} u. ${getMovimientoNota(g)||g.tipo} (${dep}) ($${m})\n`;
       } else { 
-        detalleGastos += `• ${g.descripcion||g.tipo}: $${m}\n`; 
+        detalleGastos += `• ${getMovimientoNota(g)||g.tipo}: $${m}\n`;
       }
     });
   } catch(e){ console.error(e); }
@@ -763,8 +771,8 @@ function copyRes(){ navigator.clipboard.writeText($('#resText').value).then(()=>
 async function loadTransf(){
   const d = $('#tfDate').value, st = $('#tfFilter').value;
   try {
-      let q = `/api/transferencias?fecha=${d}`; 
-      if(st) q += `&estado=${st}`;
+      let q = `/api/repartidor/transferencias?fecha=${encodeURIComponent(d)}`;
+      if(st) q += `&estado=${encodeURIComponent(st)}`;
       
       const res = await api(q);
       const lista = res.rows || res;
@@ -779,18 +787,15 @@ async function loadTransf(){
           <td>${esc(t.cliente)}</td>
           <td><b>${money(t.monto)}</b></td>
           <td style="text-align:center">
-            ${hasPedido
-              ? `<input type="checkbox" 
-                        style="transform: scale(1.5); cursor: pointer;" 
-                        ${t.validado ? 'checked' : ''} 
-                        onchange="togglePagoRepartidor(${pedidoId}, this)">`
-              : (t.validado ? '✅' : '⏳') // Si no tiene pedido asociado, mostramos solo estado
-            }
+            ${t.validado ? '✅ Verificada' : '⏳ Pendiente'}
           </td>
         </tr>
       `;
       }).join('');
-  } catch(e) { console.error(e); }
+  } catch(e) {
+    console.error(e);
+    $('#tfList').innerHTML = '<tr><td colspan="4" role="status">No se pudieron cargar las transferencias.</td></tr>';
+  }
 }
 
 async function loadEvidenciasEntrega(){
@@ -842,38 +847,5 @@ async function loadEvidenciasEntrega(){
     console.error(e);
     const tbody = document.getElementById('evList');
     if (tbody) tbody.innerHTML = '<tr><td colspan="5" class="muted">Error cargando evidencias</td></tr>';
-  }
-}
-
-async function togglePagoRepartidor(pedidoId, checkbox) {
-  if (!confirm(checkbox.checked ? '¿Validar este pago?' : '¿Anular validación?')) {
-    checkbox.checked = !checkbox.checked;
-    return;
-  }
-
-  const marcado = checkbox.checked;
-  checkbox.disabled = true;
-
-  try {
-    await withLock(`pago:${pedidoId}`, async () => {
-      const res = await api(`/api/pedidos/${pedidoId}/toggle-pago`, {
-        method: 'POST',
-        body: { marcado }
-      });
-
-      if (res && res.ok) {
-        toast(marcado ? '✅ Transferencia validada' : '↩️ Validación anulada');
-        // si tenés alguna función para refrescar resumen/caja, llamala acá
-        // loadCaja?.();
-      } else {
-        throw new Error(res?.error || 'Error al guardar');
-      }
-    });
-  } catch (e) {
-    console.error(e);
-    notifyError(e?.message || 'Error al actualizar pago', e);
-    checkbox.checked = !marcado;
-  } finally {
-    checkbox.disabled = false;
   }
 }

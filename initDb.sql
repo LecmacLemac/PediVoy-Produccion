@@ -385,6 +385,7 @@ CREATE TABLE IF NOT EXISTS chofer_stock_mov (
   chofer_id   INTEGER NOT NULL REFERENCES choferes(id) ON DELETE CASCADE,
   producto_id INTEGER NOT NULL REFERENCES productos(id) ON DELETE CASCADE,
   deposito_id INTEGER,
+  gasto_id    INTEGER,
   fecha       TIMESTAMPTZ DEFAULT NOW(),
   tipo        TEXT NOT NULL, 
   cantidad    NUMERIC(10,2) NOT NULL,
@@ -392,6 +393,8 @@ CREATE TABLE IF NOT EXISTS chofer_stock_mov (
   referencia  TEXT, 
   created_at  TIMESTAMPTZ DEFAULT NOW()
 );
+
+ALTER TABLE chofer_stock_mov ADD COLUMN IF NOT EXISTS gasto_id INTEGER;
 
 CREATE TABLE IF NOT EXISTS depositos (
   id          SERIAL PRIMARY KEY,

@@ -5,7 +5,7 @@ function initRepartidorShellUI() {
   const btn = $('#menuToggle');
   const panel = $('#menuPanel');
   if (btn && panel) {
-    btn.onclick = () => panel.classList.toggle('show');
+    btn.onclick = () => btn.setAttribute('aria-expanded', String(panel.classList.toggle('show')));
   }
 
   $$('.nav-link').forEach(l => l.onclick = async (e) => {
@@ -29,6 +29,7 @@ function initRepartidorShellUI() {
     
     $('#sec-'+sec).hidden = false;
     panel?.classList.remove('show');
+    btn?.setAttribute('aria-expanded', 'false');
 
     if(sec === 'mapa') setTimeout(renderMap, 200);
     if(sec === 'gastos') gInit();

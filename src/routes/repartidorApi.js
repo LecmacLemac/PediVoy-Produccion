@@ -31,6 +31,7 @@ export function createRepartidorApiRouter(deps) {
   async function ensureRepartidorSchema() {
     if (schemaReady) return;
     await ensureCuentaCorrienteSchema();
+    await query(`ALTER TABLE chofer_stock_mov ADD COLUMN IF NOT EXISTS gasto_id INTEGER`);
     await query(`ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS fecha_entrega_estimada DATE`);
     await query(`ALTER TABLE zonas_geograficas ADD COLUMN IF NOT EXISTS dias_entrega JSONB DEFAULT '[]'::jsonb`);
     await query(`
@@ -139,6 +140,44 @@ export function createRepartidorApiRouter(deps) {
 
     return rows[0] || null;
   }
+
+// Lectura mínima para el chofer autenticado. No ejecutar helpers de schema aquí.
+  router.get('/transferencias', withAuth, async (req, res) => {
+    const { role, empresa_id: empresaId, chofer_id: choferId } = req.user || {};
+    if (role !== 'repartidor' || !Number.isSafeInteger(empresaId) || empresaId <= 0
+        || !Number.isSafeInteger(choferId) || choferId <= 0) {
+      return res.status(403).json({ error: 'Sólo para repartidores con chofer vinculado' });
+    }
+    const { fecha = '', estado = '' } = req.query;
+    if (typeof fecha !== 'string' || (fecha && (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)
+        || !Number.isFinite(Date.parse(fecha)) || new Date(fecha).toISOString().slice(0, 10) !== fecha))) {
+      return res.status(400).json({ error: 'Fecha inválida' });
+    }
+    if (typeof estado !== 'string' || !['', 'pendiente', 'verificado'].includes(estado)) {
+      return res.status(400).json({ error: 'Estado inválido' });
+    }
+    try {
+      const rows = await query(`
+        SELECT ct.pedido_id, pe.cliente,
+               COALESCE(NULLIF(ct.monto, 0), p.monto, 0) AS monto,
+               (COALESCE(ct.validado, 0) = 1 OR COALESCE(ct.procesado, FALSE)) AS validado
+          FROM comprobantes_transferencia ct
+          JOIN pedidos p ON p.id = ct.pedido_id AND p.empresa_id = ct.empresa_id
+          JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id AND pe.empresa_id = p.empresa_id
+         WHERE ct.empresa_id = $1 AND p.chofer_id = $2
+           AND ($3::date IS NULL OR (ct.fecha AT TIME ZONE 'America/Argentina/Buenos_Aires')::date = $3::date)
+           AND ($4 = '' OR (CASE WHEN COALESCE(ct.validado, 0) = 1 OR COALESCE(ct.procesado, FALSE)
+                                THEN 'verificado' ELSE 'pendiente' END) = $4)
+         ORDER BY ct.fecha DESC, ct.id DESC`, [empresaId, choferId, fecha || null, estado]);
+      return res.json({ rows: rows.map(({ pedido_id, cliente, monto, validado }) => ({
+        pedido_id, cliente, monto, validado,
+        estado: validado ? 'verificado' : 'pendiente',
+      })) });
+    } catch (e) {
+      console.error('REPARTIDOR TRANSFERENCIAS ERROR:', e);
+      return res.status(500).json({ error: 'Error consultando transferencias' });
+    }
+  });
 
 // 1. Obtener Pedidos
   router.get('/pedidos', withAuth, async (req, res) => {
@@ -457,16 +496,19 @@ export function createRepartidorApiRouter(deps) {
      if (!chofer_id) return res.status(400).json({ error: 'Usuario sin chofer asociado' });
      if (!empresaId) return res.status(400).json({ error: 'Empresa no determinada' });
 
+     await ensureRepartidorSchema();
+
      const rows = await query(
        `WITH
           cargas_prev AS (
             SELECT csm.producto_id, COALESCE(SUM(csm.cantidad),0) AS qty
             FROM chofer_stock_mov csm
+            LEFT JOIN gastos_repartidor g ON g.id = csm.gasto_id
+              AND g.empresa_id = csm.empresa_id AND g.chofer_id = csm.chofer_id
             WHERE csm.empresa_id = $1
               AND csm.chofer_id = $2
-              AND csm.cantidad > 0
-              AND csm.tipo <> 'venta'
-              AND (csm.fecha AT TIME ZONE 'UTC' AT TIME ZONE 'America/Argentina/Buenos_Aires')::date < $3::date
+              AND ((csm.tipo = 'INGRESO_GASTOS' AND csm.cantidad > 0) OR csm.tipo = 'ajuste')
+              AND COALESCE(g.fecha, (csm.fecha AT TIME ZONE 'America/Argentina/Buenos_Aires')::date) < $3::date
             GROUP BY csm.producto_id
           ),
           entregas_prev AS (
@@ -483,18 +525,19 @@ export function createRepartidorApiRouter(deps) {
             WHERE p.empresa_id = $1
               AND p.chofer_id = $2
               AND p.estado = 'entregado'
-              AND (COALESCE(p.fecha_entrega, p.fecha) AT TIME ZONE 'UTC' AT TIME ZONE 'America/Argentina/Buenos_Aires')::date < $3::date
+              AND (COALESCE(p.fecha_entrega, p.fecha) AT TIME ZONE 'America/Argentina/Buenos_Aires')::date < $3::date
               AND COALESCE(ip.producto_id, pr.id) IS NOT NULL
             GROUP BY COALESCE(ip.producto_id, pr.id)
           ),
           cargas_day AS (
             SELECT csm.producto_id, COALESCE(SUM(csm.cantidad),0) AS qty
             FROM chofer_stock_mov csm
+            LEFT JOIN gastos_repartidor g ON g.id = csm.gasto_id
+              AND g.empresa_id = csm.empresa_id AND g.chofer_id = csm.chofer_id
             WHERE csm.empresa_id = $1
               AND csm.chofer_id = $2
-              AND csm.cantidad > 0
-              AND csm.tipo <> 'venta'
-              AND (csm.fecha AT TIME ZONE 'UTC' AT TIME ZONE 'America/Argentina/Buenos_Aires')::date = $3::date
+              AND ((csm.tipo = 'INGRESO_GASTOS' AND csm.cantidad > 0) OR csm.tipo = 'ajuste')
+              AND COALESCE(g.fecha, (csm.fecha AT TIME ZONE 'America/Argentina/Buenos_Aires')::date) = $3::date
             GROUP BY csm.producto_id
           ),
           entregas_day AS (
@@ -511,7 +554,7 @@ export function createRepartidorApiRouter(deps) {
             WHERE p.empresa_id = $1
               AND p.chofer_id = $2
               AND p.estado = 'entregado'
-              AND (COALESCE(p.fecha_entrega, p.fecha) AT TIME ZONE 'UTC' AT TIME ZONE 'America/Argentina/Buenos_Aires')::date = $3::date
+              AND (COALESCE(p.fecha_entrega, p.fecha) AT TIME ZONE 'America/Argentina/Buenos_Aires')::date = $3::date
               AND COALESCE(ip.producto_id, pr.id) IS NOT NULL
             GROUP BY COALESCE(ip.producto_id, pr.id)
           ),
@@ -873,7 +916,9 @@ export function createRepartidorApiRouter(deps) {
        `
        SELECT ip.cantidad, p.id AS producto_id
        FROM items_pedido ip
-       JOIN productos p ON p.empresa_id = $2 AND LOWER(TRIM(p.nombre)) = LOWER(TRIM(ip.producto))
+       JOIN productos p ON p.empresa_id = $2
+         AND (p.id = ip.producto_id
+           OR (ip.producto_id IS NULL AND LOWER(TRIM(p.nombre)) = LOWER(TRIM(ip.producto))))
        WHERE ip.pedido_id = $1
        `,
        [pedidoId, empresa_id]

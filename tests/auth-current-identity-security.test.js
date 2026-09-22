@@ -13,8 +13,8 @@ import { createEmpresasRouter } from '../src/routes/empresas.js';
 import { getEmpresaIdFromToken, resolveEmpresaId } from '../src/core/tenant.js';
 
 const secret = process.env.JWT_SECRET || cfg.jwtSecret;
-const claims = { uid: 12, role: 'super', empresa_id: 99, chofer_id: 88, referente_id: 77 };
-const current = { id: 12, role: 'user', empresa_id: 7, chofer_id: null, referente_id: null, activo: true };
+const claims = { username: 'obsoleto', uid: 12, role: 'super', empresa_id: 99, chofer_id: 88, referente_id: 77 };
+const current = { username: 'actual', id: 12, role: 'user', empresa_id: 7, chofer_id: null, referente_id: null, activo: true };
 const middleware = queryFn => auth.createWithAuth({ queryFn });
 
 async function serve(row, run, { dbError = false, linked = {} } = {}) {
@@ -71,10 +71,11 @@ for (const transport of ['bearer', 'header', 'cookie']) {
         assert.equal(res.status, 200);
         const body = await res.json();
         const user = body.user || body;
-        for (const key of ['role', 'empresa_id', 'chofer_id', 'referente_id']) assert.equal(user[key], current[key]);
+        for (const key of ['username', 'role', 'empresa_id', 'chofer_id', 'referente_id']) assert.equal(user[key], current[key]);
         assert.equal(user.uid, current.id);
       }
       assert.equal(calls.length, 2);
+      assert.ok(calls.every(call => /u\.username/.test(call.sql)));
       assert.ok(calls.every(call => /SELECT.*id.*role.*empresa_id.*chofer_id.*referente_id.*activo/s.test(call.sql)));
       assert.ok(calls.every(call => JSON.stringify(call.params) === '[12]'));
     });

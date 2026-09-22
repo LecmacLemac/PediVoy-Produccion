@@ -65,7 +65,7 @@ async function loadPedidos(){
     const list = await api('/api/repartidor/pedidos', { cache: 'no-store' });
     pedidos = Array.isArray(list) ? list : [];
     try {
-      const trs = await api('/api/transferencias?estado=verificado', { cache: 'no-store' });
+      const trs = await api('/api/repartidor/transferencias?estado=verificado', { cache: 'no-store' });
       const rows = Array.isArray(trs) ? trs : (Array.isArray(trs?.rows) ? trs.rows : []);
       verificadas = new Set(rows.map(t=>Number(t.pedido_id)).filter(Boolean));
     } catch (e) {

@@ -305,7 +305,7 @@ async function bootRepartidorPanel() {
     }
 
     me = j.user;
-    $('#brandTitle').textContent = `Hola, ${me.username}`;
+    $('#brandTitle').textContent = `Hola, ${typeof me.username === 'string' && me.username.trim() ? me.username.trim() : 'repartidor'}`;
     restoreRoutePlan();
     loadRouteSlaThreshold();
 
