@@ -402,6 +402,37 @@ test('initialization failure exits after confirmed teardown and ownership releas
   ]);
 });
 
+test('initialization failure remains observable when terminal client cleanup also fails', async () => {
+  const order = [];
+  const fatalErrors = [];
+  const initializeError = new Error('chromium failed to launch');
+  const client = fakeClient('client-1', order, { confirmed: false, forceStopped: false });
+  client.initialize = async () => {
+    order.push('client-1:initialize');
+    throw initializeError;
+  };
+  const lifecycle = createCompanyLifecycle({
+    ownership: owner(),
+    clientFactory: { create: () => client },
+    fatalExit: async error => { fatalErrors.push(error); order.push('fatal-exit'); },
+  });
+
+  await assert.rejects(lifecycle.start(), error => error === initializeError);
+
+  assert.equal(fatalErrors.length, 1);
+  assert.equal(fatalErrors[0] instanceof AggregateError, true);
+  assert.match(fatalErrors[0].message, /initialization failed.*cleanup failed/i);
+  assert.deepEqual(fatalErrors[0].errors.map(error => error.message), [
+    'chromium failed to launch',
+    'WhatsApp Empresa client stop could not be confirmed',
+  ]);
+  assert.equal(fatalErrors[0].cause, initializeError);
+  assert.deepEqual(order, [
+    'client-1:initialize', 'client-1:listeners-removed', 'client-1:destroy',
+    'client-1:confirm', 'client-1:force', 'fatal-exit',
+  ]);
+});
+
 test('terminal release failure invokes fatal exit once after ownership marks itself lost', async () => {
   const order = [];
   const ownership = owner();
@@ -424,7 +455,10 @@ test('terminal release failure invokes fatal exit once after ownership marks its
   await assert.rejects(lifecycle.start(), /initialize failed/);
 
   assert.equal(ownership.isOwner, false);
-  assert.deepEqual(fatalErrors, [releaseError]);
+  assert.equal(fatalErrors.length, 1);
+  assert.equal(fatalErrors[0] instanceof AggregateError, true);
+  assert.deepEqual(fatalErrors[0].errors.map(error => error.message), ['initialize failed', 'unlock failed']);
+  assert.equal(fatalErrors[0].cause?.message, 'initialize failed');
   assert.deepEqual(order, [
     'client-1:initialize', 'client-1:listeners-removed', 'client-1:destroy',
     'client-1:confirm', 'unlock-attempt', 'fatal-exit',

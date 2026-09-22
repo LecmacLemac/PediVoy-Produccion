@@ -52,7 +52,7 @@ async function ensureEmpresaWhatsappSchema(query) {
   empresaWhatsappSchemaReady = true;
 }
 
-function scheduleEmpresaWppBootRecovery(query, ensureWorker = ensureEmpresaWppQrWorker) {
+function scheduleEmpresaWppBootRecovery(query, scheduleWorkers = scheduleEmpresaWppWorkers) {
   if (process.env.NODE_ENV === 'test') return;
   if (!shouldAutoStartEmpresaWppWorker()) return;
   const delayMs = Number(process.env.EMPRESA_WPP_BOOT_RECOVERY_DELAY_MS || 3000);
@@ -66,10 +66,8 @@ function scheduleEmpresaWppBootRecovery(query, ensureWorker = ensureEmpresaWppQr
          ORDER BY id
          LIMIT 10
       `);
-      for (const row of rows) {
-        const result = ensureWorker(row.id);
-        console.log('[WPP EMPRESA] boot recovery worker:', row.id, result);
-      }
+      const result = scheduleWorkers(rows.map(row => row.id));
+      console.log('[WPP EMPRESA] boot recovery workers:', result);
     } catch (error) {
       console.warn('[WPP EMPRESA] boot recovery failed:', error);
     }
@@ -102,11 +100,16 @@ const empresaWppWorkerSupervisor = createCompanyWorkerSupervisor({
   spawnWorker: spawnEmpresaWppWorker,
   shouldAutoStart: shouldAutoStartEmpresaWppWorker,
   respawnDelayMs: Number(process.env.EMPRESA_WPP_WORKER_RESPAWN_DELAY_MS || 5000),
+  startupStaggerDelayMs: Number(process.env.EMPRESA_WPP_BOOT_RECOVERY_STAGGER_MS || 12000),
   shutdownDeadlineMs: Number(process.env.EMPRESA_WPP_WORKER_SHUTDOWN_DEADLINE_MS || 10000),
 });
 
 function ensureEmpresaWppQrWorker(empresaId) {
   return empresaWppWorkerSupervisor.ensure(empresaId);
+}
+
+function scheduleEmpresaWppWorkers(empresaIds) {
+  return empresaWppWorkerSupervisor.scheduleBootRecovery(empresaIds);
 }
 
 export function shutdownEmpresaWppWorkers() {
@@ -266,7 +269,7 @@ export function createEmpresasRouter(deps) {
   if (typeof getEmpresaById !== 'function') throw new Error('createEmpresasRouter: falta getEmpresaById(fn)');
 
   const router = express.Router();
-  scheduleEmpresaWppBootRecovery(query, ensureEmpresaWppWorker);
+  scheduleEmpresaWppBootRecovery(query);
 
   const EMPRESAS_LOGO_DIR = path.resolve(process.cwd(), 'pedidos', 'img', 'empresas');
   fs.mkdirSync(EMPRESAS_LOGO_DIR, { recursive: true });

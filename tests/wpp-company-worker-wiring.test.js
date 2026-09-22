@@ -34,6 +34,14 @@ test('empresa worker gates stale events and sends on active ownership', async ()
   assert.match(source, /handlers\.start\(managedClient/);
 });
 
+test('empresa worker logs the complete terminal error before exiting', async () => {
+  const source = await readFile(workerUrl, 'utf8');
+  const start = source.indexOf('async function fatalWorkerExit');
+  const fatalExitSource = source.slice(start, source.indexOf('const ownership', start));
+  assert.equal(fatalExitSource.includes('Falla terminal del lifecycle; terminando worker:`, error);'), true);
+  assert.doesNotMatch(fatalExitSource, /error\?\.message \|\| error/);
+});
+
 test('empresa worker marks reset handled only after successful reset', async () => {
   const source = await readFile(workerUrl, 'utf8');
   const resetCall = source.indexOf('await lifecycle.reset(marker)');
@@ -49,10 +57,12 @@ test('empresa worker uses the shared company session path for LocalAuth and rese
   assert.match(source, /fs\.rmSync\(sessionPaths\.sessionDir/);
 });
 
-test('web parent keeps child attached with inherited output', async () => {
+test('web parent keeps child attached with inherited output and configures staggered boot recovery', async () => {
   const source = await readFile(new URL('../src/routes/empresas.js', import.meta.url), 'utf8');
   assert.match(source, /detached:\s*false/);
   assert.match(source, /stdio:\s*\['ignore',\s*'inherit',\s*'inherit'\]/);
   assert.doesNotMatch(source, /child\.unref\(\)/);
+  assert.match(source, /EMPRESA_WPP_BOOT_RECOVERY_STAGGER_MS \|\| 12000/);
+  assert.match(source, /scheduleBootRecovery\(empresaIds\)/);
   assert.match(source, /shutdownEmpresaWppWorkers/);
 });

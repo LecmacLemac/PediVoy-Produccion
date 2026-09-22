@@ -32,6 +32,7 @@ export function createCompanyWorkerSupervisor({
   spawnWorker,
   shouldAutoStart,
   respawnDelayMs = 5000,
+  startupStaggerDelayMs = 12000,
   shutdownDeadlineMs = 10000,
   timers = { setTimeout, clearTimeout },
   logger = console,
@@ -40,6 +41,7 @@ export function createCompanyWorkerSupervisor({
   if (typeof shouldAutoStart !== 'function') throw new TypeError('shouldAutoStart is required');
   const workers = new Map();
   const respawns = new Map();
+  const startupTimers = new Map();
   let shuttingDown = false;
   let shutdownPromise = null;
 
@@ -49,6 +51,9 @@ export function createCompanyWorkerSupervisor({
   const deadline = Number.isFinite(Number(shutdownDeadlineMs)) && Number(shutdownDeadlineMs) > 0
     ? Number(shutdownDeadlineMs)
     : 10000;
+  const startupDelay = Number.isFinite(Number(startupStaggerDelayMs)) && Number(startupStaggerDelayMs) >= 0
+    ? Number(startupStaggerDelayMs)
+    : 12000;
 
   function scheduleRespawn(empresaId, reason = 'exit') {
     if (shuttingDown || !shouldAutoStart() || respawns.has(empresaId)) return;
@@ -90,11 +95,36 @@ export function createCompanyWorkerSupervisor({
     return { started: true, pid: child.pid };
   }
 
+  function scheduleBootRecovery(empresaIds) {
+    if (shuttingDown) return { scheduled: 0, reason: 'shutting_down' };
+    if (!shouldAutoStart()) return { scheduled: 0, reason: 'disabled' };
+    const ids = [...new Set(Array.isArray(empresaIds) ? empresaIds : [])];
+    let scheduled = 0;
+    for (const empresaId of ids) {
+      if (workers.has(empresaId) || startupTimers.has(empresaId)) continue;
+      if (scheduled === 0) {
+        ensure(empresaId);
+      } else {
+        const timer = timers.setTimeout(() => {
+          startupTimers.delete(empresaId);
+          if (shuttingDown) return;
+          ensure(empresaId);
+        }, startupDelay * scheduled);
+        timer.unref?.();
+        startupTimers.set(empresaId, timer);
+      }
+      scheduled += 1;
+    }
+    return { scheduled };
+  }
+
   function shutdown() {
     if (shutdownPromise) return shutdownPromise;
     shuttingDown = true;
     for (const timer of respawns.values()) timers.clearTimeout(timer);
     respawns.clear();
+    for (const timer of startupTimers.values()) timers.clearTimeout(timer);
+    startupTimers.clear();
     const children = [...workers.values()].filter(isAlive);
     shutdownPromise = (async () => {
       for (const child of children) child.kill('SIGTERM');
@@ -109,6 +139,7 @@ export function createCompanyWorkerSupervisor({
 
   return {
     ensure,
+    scheduleBootRecovery,
     shutdown,
     snapshot: () => ({ shuttingDown, workers: workers.size, respawns: respawns.size }),
   };

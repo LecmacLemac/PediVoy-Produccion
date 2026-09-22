@@ -10,6 +10,15 @@ function deadline(promise, milliseconds, label) {
   return Promise.race([Promise.resolve(promise), timeout]).finally(() => clearTimeout(timer));
 }
 
+function aggregateTerminalErrors(primaryError, cleanupError, phase) {
+  if (!cleanupError || cleanupError === primaryError) return primaryError;
+  return new AggregateError(
+    [primaryError, cleanupError],
+    `WhatsApp Empresa ${phase} failed and terminal cleanup failed`,
+    { cause: primaryError },
+  );
+}
+
 export function createCompanyLifecycle({
   ownership,
   clientFactory,
@@ -110,7 +119,7 @@ export function createCompanyLifecycle({
       return true;
     } catch (error) {
       lastError = error;
-      await enterFatalFence(error);
+      await enterFatalFence(error, { phase: 'initialization' });
       throw error;
     }
   }
@@ -148,7 +157,7 @@ export function createCompanyLifecycle({
     return true;
   }
 
-  async function enterFatalFence(error, { stopAlreadyFailed = false } = {}) {
+  async function enterFatalFence(error, { stopAlreadyFailed = false, phase = 'lifecycle' } = {}) {
     if (error && typeof error === 'object' && fatalHandled.has(error)) return false;
     if (error && typeof error === 'object') fatalHandled.add(error);
     fenced = true;
@@ -163,7 +172,7 @@ export function createCompanyLifecycle({
         await stopCurrent();
         stopConfirmed = true;
       } catch (stopError) {
-        terminalError = stopError;
+        terminalError = aggregateTerminalErrors(error, stopError, phase);
       }
     }
 
@@ -172,10 +181,11 @@ export function createCompanyLifecycle({
         const released = await ownership.releaseAfterQuiesced(async () => true);
         if (released !== true) throw new Error('WhatsApp Empresa ownership release was not confirmed');
       } catch (releaseError) {
-        terminalError = releaseError;
+        terminalError = aggregateTerminalErrors(error, releaseError, phase);
       }
     }
 
+    lastError = terminalError;
     await invokeFatalExit(terminalError);
     return false;
   }

@@ -213,7 +213,7 @@ function createManagedCompanyClient({ generation }) {
 async function fatalWorkerExit(error) {
   isReady = false;
   isShuttingDown = true;
-  console.error(`[Empresa ${EMPRESA_ID}] Falla terminal del lifecycle; terminando worker:`, error?.message || error);
+  console.error(`[Empresa ${EMPRESA_ID}] Falla terminal del lifecycle; terminando worker:`, error);
   process.exit(1);
 }
 

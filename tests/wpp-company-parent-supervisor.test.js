@@ -24,6 +24,94 @@ function exitChild(child, code = 0, signal = null) {
   child.emit('exit', code, signal);
 }
 
+function fakeTimers() {
+  let now = 0;
+  let sequence = 0;
+  const scheduled = [];
+  return {
+    scheduled,
+    setTimeout(callback, milliseconds) {
+      const timer = {
+        callback,
+        at: now + milliseconds,
+        sequence: sequence++,
+        active: true,
+        unref() {},
+      };
+      scheduled.push(timer);
+      return timer;
+    },
+    clearTimeout(timer) {
+      if (timer) timer.active = false;
+    },
+    async advance(milliseconds) {
+      const target = now + milliseconds;
+      while (true) {
+        const next = scheduled
+          .filter(timer => timer.active && timer.at <= target)
+          .sort((a, b) => a.at - b.at || a.sequence - b.sequence)[0];
+        if (!next) break;
+        now = next.at;
+        next.active = false;
+        next.callback();
+        await Promise.resolve();
+      }
+      now = target;
+    },
+  };
+}
+
+test('boot recovery staggers company worker starts in order with a safe default delay', async () => {
+  const timers = fakeTimers();
+  const spawned = [];
+  const supervisor = createCompanyWorkerSupervisor({
+    spawnWorker: empresaId => {
+      spawned.push(empresaId);
+      return fakeChild(100 + empresaId, () => {});
+    },
+    shouldAutoStart: () => true,
+    timers,
+    logger: { warn() {} },
+  });
+
+  assert.deepEqual(supervisor.scheduleBootRecovery([1, 2, 7, 8]), { scheduled: 4 });
+  assert.deepEqual(spawned, [1]);
+
+  await timers.advance(11999);
+  assert.deepEqual(spawned, [1]);
+  await timers.advance(1);
+  assert.deepEqual(spawned, [1, 2]);
+  await timers.advance(12000);
+  assert.deepEqual(spawned, [1, 2, 7]);
+  await timers.advance(12000);
+  assert.deepEqual(spawned, [1, 2, 7, 8]);
+});
+
+test('parent shutdown cancels pending boot recovery starts', async () => {
+  const timers = fakeTimers();
+  const spawned = [];
+  const supervisor = createCompanyWorkerSupervisor({
+    spawnWorker: empresaId => {
+      spawned.push(empresaId);
+      return fakeChild(400 + empresaId, (signal, child) => {
+        if (signal === 'SIGTERM') queueMicrotask(() => exitChild(child, 0, signal));
+      });
+    },
+    shouldAutoStart: () => true,
+    startupStaggerDelayMs: 100,
+    timers,
+    logger: { warn() {} },
+  });
+
+  supervisor.scheduleBootRecovery([1, 2, 3]);
+  assert.deepEqual(spawned, [1]);
+  assert.equal(await supervisor.shutdown(), true);
+
+  await timers.advance(1000);
+  assert.deepEqual(spawned, [1]);
+  assert.deepEqual(supervisor.scheduleBootRecovery([4]), { scheduled: 0, reason: 'shutting_down' });
+});
+
 test('parent shutdown disables respawns, SIGTERMs every worker, then SIGKILLs only stragglers', async () => {
   const calls = [];
   const children = [
