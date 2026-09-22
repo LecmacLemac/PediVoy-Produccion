@@ -24,6 +24,7 @@ test('normalizeWhatsappPhone canonicaliza números argentinos para WhatsApp', ()
 
 test('normalizeWhatsappPhone no inventa destino si faltan dígitos', () => {
   assert.equal(normalizeWhatsappPhone('4277739'), '4277739');
+  assert.equal(normalizeWhatsappPhone('1534277739'), '1534277739');
   assert.equal(normalizeWhatsappPhone(''), '');
 });
 

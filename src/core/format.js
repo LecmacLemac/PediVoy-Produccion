@@ -31,6 +31,7 @@ export function normalizeWhatsappPhone(value) {
 
   phone = phone.replace(/^0+/, '');
   if (phone.length === 11 && phone.startsWith('9')) phone = phone.slice(1);
+  if (phone.length === 10 && phone.startsWith('15')) return phone;
   phone = stripArgentinaMobileTrunk(phone);
 
   if (phone.length === 10) return `549${phone}`;
