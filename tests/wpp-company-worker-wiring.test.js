@@ -8,17 +8,19 @@ test('empresa worker acquires distributed ownership before client creation', asy
   const source = await readFile(workerUrl, 'utf8');
   assert.match(source, /createCompanyOwnership/);
   assert.match(source, /createCompanyLifecycle/);
+  assert.match(source, /import \{ ensureCompanyWorkerSchema \} from '\.\/wpp\/companySchema\.js';/);
+  assert.doesNotMatch(source, /async function ensureEmpresaWhatsappSchema/);
   assert.match(source, /createWppClientAdapter/);
   assert.doesNotMatch(source, /removeChromiumSingletonLocks/);
   assert.doesNotMatch(source, /Singleton(?:Lock|Socket|Cookie)/);
 
   const ownership = source.indexOf('createCompanyOwnership(');
   const lifecycle = source.indexOf('createCompanyLifecycle(');
-  const startup = source.indexOf('lifecycle.start({ beforeInitialize: ensureEmpresaWhatsappSchema })');
+  const startup = source.indexOf('lifecycle.start({ beforeInitialize: ensureCompanyWorkerSchema })');
   assert.ok(ownership >= 0 && lifecycle > ownership && startup > lifecycle);
   assert.match(source, /clientFactory:\s*\{\s*create:\s*createManagedCompanyClient\s*\}/);
   assert.match(source, /function createManagedCompanyClient[\s\S]*new Client\(/);
-  assert.match(source, /lifecycle\.start\(\{\s*beforeInitialize:\s*ensureEmpresaWhatsappSchema\s*\}\)/);
+  assert.match(source, /lifecycle\.start\(\{\s*beforeInitialize:\s*ensureCompanyWorkerSchema\s*\}\)/);
 });
 
 test('empresa worker gates stale events and sends on active ownership', async () => {

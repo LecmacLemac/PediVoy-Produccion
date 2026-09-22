@@ -12,12 +12,12 @@ const { LoadUtils } = require('whatsapp-web.js/src/util/Injected/Utils');
 import { pool, query } from './db.js';
 import handlers from './handlers.js';
 import { handleIncomingComprobanteFromBotPg } from './transferenciasPipeline.js';
-import { ensureComprobantesTransferenciaSchema } from './transferenciasServices.js';
 import { registerCompanyIncomingMedia } from './wpp/companyIncomingMedia.js';
 import { parseEnterpriseId } from './wpp/enterpriseId.js';
 import { createWppClientAdapter } from './wpp/clientAdapter.js';
 import { createCompanyOwnership } from './wpp/companyOwnership.js';
 import { createCompanyLifecycle } from './wpp/companyLifecycle.js';
+import { ensureCompanyWorkerSchema } from './wpp/companySchema.js';
 import { createCompanyWorkerShutdown } from './wpp/companyWorkerShutdown.js';
 import { getCompanySessionPaths } from './wpp/companySession.js';
 import {
@@ -31,7 +31,6 @@ import {
 } from './wpp/companyRuntime.js';
 import {
   claimWppOutboxRows,
-  ensureWppDeliverySchema,
   finishWppOutboxClaim,
   releaseWppOutboxClaim,
   resolveWhatsappTarget,
@@ -51,18 +50,6 @@ let outboxInterval;
 let resetInterval;
 let healthInterval;
 let ownershipInterval;
-
-async function ensureEmpresaWhatsappSchema() {
-  await query(`
-    ALTER TABLE empresas
-      ADD COLUMN IF NOT EXISTS wpp_qr_code TEXT,
-      ADD COLUMN IF NOT EXISTS wpp_status TEXT DEFAULT 'disconnected',
-      ADD COLUMN IF NOT EXISTS wpp_reset_requested_at TIMESTAMPTZ,
-      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-  `);
-  await ensureWppDeliverySchema(query);
-  await ensureComprobantesTransferenciaSchema(query);
-}
 
 async function persistStatus(status, { qrCode = null, heartbeat = false } = {}) {
   if (!ownership.isOwner) return false;
@@ -291,7 +278,7 @@ const workerRecovery = createBackoffRecovery({
 const workerStartup = createPrerequisiteStartup({
   ensurePrerequisites: async () => {},
   start: async () => {
-    const started = await lifecycle.start({ beforeInitialize: ensureEmpresaWhatsappSchema });
+    const started = await lifecycle.start({ beforeInitialize: ensureCompanyWorkerSchema });
     if (!started) {
       console.log(`[Empresa ${EMPRESA_ID}] Otro worker posee la sesión; quedando en standby.`);
       return false;
