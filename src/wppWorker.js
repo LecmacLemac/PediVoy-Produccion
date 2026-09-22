@@ -1,560 +1,443 @@
 import 'dotenv/config';
-import fs from 'fs';
-import path from 'path';
-import { randomUUID } from 'crypto';
-import { fork } from 'child_process';
-import { createRequire } from 'module';
+import fs from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { fork } from 'node:child_process';
+import { createRequire } from 'node:module';
 import pkg from 'whatsapp-web.js';
+
 const { Client, LocalAuth } = pkg;
 const require = createRequire(import.meta.url);
 const { LoadUtils } = require('whatsapp-web.js/src/util/Injected/Utils');
-import { query } from './db.js';
+
+import { pool, query } from './db.js';
 import handlers from './handlers.js';
 import { handleIncomingComprobanteFromBotPg } from './transferenciasPipeline.js';
 import { ensureComprobantesTransferenciaSchema } from './transferenciasServices.js';
 import { registerCompanyIncomingMedia } from './wpp/companyIncomingMedia.js';
 import { parseEnterpriseId } from './wpp/enterpriseId.js';
-import { removeChromiumSingletonLocks } from './wpp/sessionUtils.js';
+import { createWppClientAdapter } from './wpp/clientAdapter.js';
+import { createCompanyOwnership } from './wpp/companyOwnership.js';
+import { createCompanyLifecycle } from './wpp/companyLifecycle.js';
+import { getCompanySessionPaths } from './wpp/companySession.js';
 import {
-    confirmCompanyRuntime,
-    createBackoffRecovery,
-    createNonOverlappingTask,
-    createPrerequisiteStartup,
-    createSingleFlight,
-    isRuntimeBridgeError,
-    repairCompanyRuntimeBridge,
+  confirmCompanyRuntime,
+  createBackoffRecovery,
+  createNonOverlappingTask,
+  createPrerequisiteStartup,
+  createSingleFlight,
+  isRuntimeBridgeError,
+  repairCompanyRuntimeBridge,
 } from './wpp/companyRuntime.js';
 import {
-    claimWppOutboxRows,
-    ensureWppDeliverySchema,
-    finishWppOutboxClaim,
-    releaseWppOutboxClaim,
-    resolveWhatsappTarget,
+  claimWppOutboxRows,
+  ensureWppDeliverySchema,
+  finishWppOutboxClaim,
+  releaseWppOutboxClaim,
+  resolveWhatsappTarget,
 } from './wpp/delivery.js';
 
-/**
- * CONFIGURACIÓN DE ENTORNO
- * EMPRESA_ID: Define qué sesión maneja este contenedor.
- * SESSION_PATH: Ruta al disco persistente (/mnt/data/wpp_sessions en Render).
- */
 const EMPRESA_ID = parseEnterpriseId(process.env.EMPRESA_ID);
-const SESSION_PATH = process.env.DISK_PATH || './wpp_sessions';
 const WPP_QR_ONLY = process.env.WPP_QR_ONLY === '1';
-let client = null;
+const sessionPaths = getCompanySessionPaths({ empresaId: EMPRESA_ID });
+const OUTBOX_CLAIM_OWNER = `empresa-${EMPRESA_ID}-${process.pid}-${randomUUID()}`;
+
+let lifecycle;
 let isReady = false;
-let isInitializing = false;
-let isResetting = false;
 let isProcessingOutbox = false;
 let isShuttingDown = false;
 let lastResetHandledAt = null;
-const OUTBOX_CLAIM_OWNER = `empresa-${EMPRESA_ID}-${process.pid}-${randomUUID()}`;
-
-const sessionDir = path.join(SESSION_PATH, `session-empresa_${EMPRESA_ID}`);
-const devToolsActivePortFile = path.join(sessionDir, 'DevToolsActivePort');
+let outboxInterval;
+let resetInterval;
+let healthInterval;
+let ownershipInterval;
 
 async function ensureEmpresaWhatsappSchema() {
-    await query(`
-        ALTER TABLE empresas
-          ADD COLUMN IF NOT EXISTS wpp_qr_code TEXT,
-          ADD COLUMN IF NOT EXISTS wpp_status TEXT DEFAULT 'disconnected',
-          ADD COLUMN IF NOT EXISTS wpp_reset_requested_at TIMESTAMPTZ,
-          ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    `);
-    await ensureWppDeliverySchema(query);
-    await ensureComprobantesTransferenciaSchema(query);
+  await query(`
+    ALTER TABLE empresas
+      ADD COLUMN IF NOT EXISTS wpp_qr_code TEXT,
+      ADD COLUMN IF NOT EXISTS wpp_status TEXT DEFAULT 'disconnected',
+      ADD COLUMN IF NOT EXISTS wpp_reset_requested_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  `);
+  await ensureWppDeliverySchema(query);
+  await ensureComprobantesTransferenciaSchema(query);
 }
 
-function createCompanyClient() {
-    removeChromiumSingletonLocks({ fs, path, sessionDir, logger: console });
-    const isRender = process.env.RENDER === 'true';
-    const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH || (isRender ? '/usr/bin/chromium' : undefined);
-    const nextClient = new Client({
-        authStrategy: new LocalAuth({
-            clientId: `empresa_${EMPRESA_ID}`,
-            dataPath: SESSION_PATH
-        }),
-        puppeteer: {
-            headless: 'new',
-            args: [
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage',
-                '--disable-gpu',
-                '--disable-accelerated-2d-canvas',
-                '--no-first-run',
-                '--no-zygote',
-                '--disable-extensions',
-                '--disable-background-timer-throttling',
-                '--disable-backgrounding-occluded-windows',
-                '--disable-renderer-backgrounding',
-                '--disable-features=VizDisplayCompositor',
-                '--window-size=1920,1080',
-                '--disable-web-security',
-                '--disable-features=IsolateOrigins,site-per-process',
-                '--disable-software-rasterizer',
-                '--ignore-certificate-errors',
-                '--ignore-certificate-errors-spki-list',
-            ],
-            executablePath,
-            ignoreHTTPSErrors: true,
-            timeout: 60000,
-        }
-    });
-
-    nextClient.on('qr', async (qr) => {
-        if (client !== nextClient) return;
-        isReady = false;
-        console.log(`[Empresa ${EMPRESA_ID}] Nuevo QR generado. Esperando escaneo...`);
-        await query(
-            'UPDATE empresas SET wpp_qr_code = $1, wpp_status = $2, updated_at = NOW() WHERE id = $3',
-            [qr, 'awaiting_scan', EMPRESA_ID]
-        );
-    });
-
-    nextClient.on('ready', async () => {
-        if (client !== nextClient) return;
-        isReady = false;
-        try {
-            await query(
-                `UPDATE empresas
-                    SET wpp_status = $1, wpp_qr_code = NULL,
-                        wpp_heartbeat_at = NOW(), updated_at = NOW()
-                  WHERE id = $2`,
-                ['connected', EMPRESA_ID]
-            );
-            if (client !== nextClient) return;
-            isReady = true;
-            console.log(`[Empresa ${EMPRESA_ID}] ¡Conexión exitosa! El worker está operativo.`);
-        } catch (err) {
-            isReady = false;
-            console.error(`[Empresa ${EMPRESA_ID}] No se pudo persistir estado connected:`, err.message);
-            workerRecovery.trigger('persist_connected_failed');
-        }
-    });
-
-    async function handleUnavailable(event, detail) {
-        if (client !== nextClient) return;
-        isReady = false;
-        console.warn(`[Empresa ${EMPRESA_ID}] ${event}:`, detail);
-        try {
-            await query(
-                'UPDATE empresas SET wpp_status = $1, wpp_heartbeat_at = NULL, updated_at = NOW() WHERE id = $2',
-                ['disconnected', EMPRESA_ID]
-            );
-        } catch (err) {
-            console.error(`[Empresa ${EMPRESA_ID}] No se pudo persistir desconexión:`, err.message);
-        } finally {
-            workerRecovery.trigger(event);
-        }
-    }
-
-    nextClient.on('auth_failure', msg => {
-        void handleUnavailable('auth_failure', msg);
-    });
-
-    nextClient.on('disconnected', reason => {
-        void handleUnavailable('disconnected', reason);
-    });
-
-    if (!WPP_QR_ONLY) {
-        handlers.start(nextClient, { empresaId: Number(EMPRESA_ID) });
-        registerCompanyIncomingMedia(nextClient, {
-            empresaId: Number(EMPRESA_ID),
-            query,
-            handleIncomingComprobanteFromBotPg,
-        });
-    } else {
-        console.log(`[Empresa ${EMPRESA_ID}] Modo solo QR activo: no se atienden mensajes entrantes.`);
-    }
-
-    return nextClient;
+async function persistStatus(status, { qrCode = null, heartbeat = false } = {}) {
+  if (!ownership.isOwner) return false;
+  await query(
+    `UPDATE empresas
+        SET wpp_status = $1,
+            wpp_qr_code = $2,
+            wpp_heartbeat_at = CASE WHEN $3::boolean THEN NOW() ELSE NULL END,
+            updated_at = NOW()
+      WHERE id = $4`,
+    [status, qrCode, heartbeat, EMPRESA_ID],
+  );
+  return true;
 }
 
-async function clearCompanySessionDir() {
-    fs.rmSync(sessionDir, { recursive: true, force: true });
-}
+function createManagedCompanyClient({ generation }) {
+  const isRender = process.env.RENDER === 'true';
+  const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH || (isRender ? '/usr/bin/chromium' : undefined);
+  const rawClient = new Client({
+    authStrategy: new LocalAuth({
+      clientId: `empresa_${EMPRESA_ID}`,
+      dataPath: sessionPaths.dataPath,
+    }),
+    puppeteer: {
+      headless: 'new',
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--disable-accelerated-2d-canvas',
+        '--no-first-run',
+        '--no-zygote',
+        '--disable-extensions',
+        '--disable-background-timer-throttling',
+        '--disable-backgrounding-occluded-windows',
+        '--disable-renderer-backgrounding',
+        '--disable-features=VizDisplayCompositor',
+        '--window-size=1920,1080',
+        '--disable-web-security',
+        '--disable-features=IsolateOrigins,site-per-process',
+        '--disable-software-rasterizer',
+        '--ignore-certificate-errors',
+        '--ignore-certificate-errors-spki-list',
+      ],
+      executablePath,
+      ignoreHTTPSErrors: true,
+      timeout: 60000,
+    },
+  });
+  const adapter = createWppClientAdapter({ rawClient });
+  let managedClient;
 
-async function initializeClient() {
-    if (isInitializing || isShuttingDown) return false;
-    isInitializing = true;
-    let startupSyncAssistant = null;
-    let nextClient = null;
+  const current = () => lifecycle?.isCurrent(managedClient, generation) === true;
 
-    try {
-        isReady = false;
-        nextClient = createCompanyClient();
-        client = nextClient;
-        await query(
-            `UPDATE empresas
-                SET wpp_status = $1, wpp_qr_code = NULL,
-                    wpp_heartbeat_at = NULL, updated_at = NOW()
-              WHERE id = $2`,
-            ['initializing', EMPRESA_ID]
-        );
-
-        startupSyncAssistant = fork(
-            new URL('./wpp/startupSyncAssistant.js', import.meta.url),
-            [devToolsActivePortFile],
-            { stdio: ['ignore', 'inherit', 'inherit', 'ipc'] }
-        );
-        startupSyncAssistant.on('message', message => {
-            if (message?.type === 'startup-sync-assistant' && message.resumed) {
-                console.log(`[Empresa ${EMPRESA_ID}] Inicialización reanudada por asistente DevTools independiente.`);
-            }
-        });
-        startupSyncAssistant.on('error', err => {
-            console.warn(`[Empresa ${EMPRESA_ID}] Asistente DevTools no pudo iniciar:`, err.message);
-        });
-
-        await nextClient.initialize();
-        return true;
-    } catch (err) {
-        isReady = false;
-        if (client === nextClient) client = null;
-        nextClient?.removeAllListeners();
-        try {
-            await nextClient?.destroy();
-        } catch (destroyErr) {
-            console.warn(`[Empresa ${EMPRESA_ID}] No se pudo cerrar cliente tras initialize fallido:`, destroyErr.message);
-        }
-        throw err;
-    } finally {
-        if (startupSyncAssistant?.connected) startupSyncAssistant.disconnect();
-        if (startupSyncAssistant && startupSyncAssistant.exitCode === null) startupSyncAssistant.kill('SIGTERM');
-        isInitializing = false;
-    }
-}
-
-const recoverCompanyRuntime = createSingleFlight(async (reason) => {
-    if (isResetting || isShuttingDown) return false;
-
+  rawClient.on('qr', async qr => {
+    if (!current()) return;
     isReady = false;
-    console.warn(`[Empresa ${EMPRESA_ID}] Runtime WhatsApp no operativo (${reason}). Intentando recuperar bridge...`);
-
     try {
-        const activeClient = client;
-        const repaired = await repairCompanyRuntimeBridge(activeClient, LoadUtils);
-        if (activeClient === client && repaired.healthy) {
-            await query(
-                `UPDATE empresas
-                    SET wpp_status = $1, wpp_qr_code = NULL,
-                        wpp_heartbeat_at = NOW(), updated_at = NOW()
-                  WHERE id = $2`,
-                ['connected', EMPRESA_ID]
-            );
-            if (activeClient !== client) return false;
-            isReady = true;
-            console.log(`[Empresa ${EMPRESA_ID}] Bridge WWebJS reinyectado sin reiniciar sesión.`);
-            return true;
-        }
-
-        console.warn(`[Empresa ${EMPRESA_ID}] Reiniciando cliente sin borrar sesión; reparación directa no alcanzó (${repaired.reason}).`);
-        await query(
-            'UPDATE empresas SET wpp_status = $1, wpp_qr_code = NULL, updated_at = NOW() WHERE id = $2',
-            ['initializing', EMPRESA_ID]
-        );
-
-        const previousClient = client;
-        client = null;
-
-        if (previousClient) {
-            previousClient.removeAllListeners();
-            try {
-                await previousClient.destroy();
-            } catch (destroyErr) {
-                console.warn(`[Empresa ${EMPRESA_ID}] No se pudo destruir el cliente con runtime dañado:`, destroyErr.message);
-            }
-        }
-
-        await new Promise(resolve => setTimeout(resolve, 1500));
-        await initializeClient();
-        return true;
-    } catch (err) {
-        console.error(`[Empresa ${EMPRESA_ID}] Error recuperando runtime WhatsApp:`, err.message);
-        await query(
-            'UPDATE empresas SET wpp_status = $1, wpp_qr_code = NULL, wpp_heartbeat_at = NULL, updated_at = NOW() WHERE id = $2',
-            ['disconnected', EMPRESA_ID]
-        ).catch(() => {});
-        return false;
+      await ownership.heartbeat();
+      if (!current()) return;
+      await persistStatus('awaiting_scan', { qrCode: qr });
+      console.log(`[Empresa ${EMPRESA_ID}] Nuevo QR generado. Esperando escaneo...`);
+    } catch (error) {
+      console.error(`[Empresa ${EMPRESA_ID}] No se pudo persistir QR:`, error.message);
     }
+  });
+
+  rawClient.on('ready', async () => {
+    if (!current()) return;
+    isReady = false;
+    try {
+      await ownership.heartbeat();
+      if (!current()) return;
+      await persistStatus('connected', { heartbeat: true });
+      if (!current()) return;
+      isReady = true;
+      console.log(`[Empresa ${EMPRESA_ID}] ¡Conexión exitosa! El worker está operativo.`);
+    } catch (error) {
+      console.error(`[Empresa ${EMPRESA_ID}] No se pudo persistir estado connected:`, error.message);
+      workerRecovery.trigger('persist_connected_failed');
+    }
+  });
+
+  async function unavailable(event, detail) {
+    if (!current()) return;
+    isReady = false;
+    console.warn(`[Empresa ${EMPRESA_ID}] ${event}:`, detail);
+    try {
+      await ownership.heartbeat();
+      if (current()) await persistStatus('disconnected');
+    } catch (error) {
+      console.error(`[Empresa ${EMPRESA_ID}] No se pudo persistir desconexión:`, error.message);
+    }
+    if (current()) workerRecovery.trigger(event);
+  }
+
+  rawClient.on('auth_failure', detail => { void unavailable('auth_failure', detail); });
+  rawClient.on('disconnected', detail => { void unavailable('disconnected', detail); });
+
+  managedClient = new Proxy({
+    async initialize() {
+      await persistStatus('initializing');
+      let assistant = null;
+      try {
+        assistant = fork(
+          new URL('./wpp/startupSyncAssistant.js', import.meta.url),
+          [sessionPaths.devToolsActivePortFile],
+          { stdio: ['ignore', 'inherit', 'inherit', 'ipc'] },
+        );
+        assistant.on('message', message => {
+          if (message?.type === 'startup-sync-assistant' && message.resumed) {
+            console.log(`[Empresa ${EMPRESA_ID}] Inicialización reanudada por asistente DevTools independiente.`);
+          }
+        });
+        assistant.on('error', error => {
+          console.warn(`[Empresa ${EMPRESA_ID}] Asistente DevTools no pudo iniciar:`, error.message);
+        });
+        return await adapter.initialize();
+      } finally {
+        if (assistant?.connected) assistant.disconnect();
+        if (assistant && assistant.exitCode === null) assistant.kill('SIGTERM');
+      }
+    },
+    destroy: () => adapter.destroy(),
+    confirmStopped: () => adapter.confirmStopped(),
+    forceStop: () => adapter.forceStop(),
+    removeAllListeners: () => adapter.removeAllListeners(),
+    async sendMessage(...args) {
+      await ownership.heartbeat();
+      if (!current()) throw Object.assign(new Error('WhatsApp Empresa generation is not active'), { code: 'WPP_COMPANY_NOT_OWNER' });
+      return adapter.sendMessage(...args);
+    },
+  }, {
+    get(target, property, receiver) {
+      if (Reflect.has(target, property)) return Reflect.get(target, property, receiver);
+      const value = adapter[property];
+      return typeof value === 'function' ? value.bind(adapter) : value;
+    },
+  });
+
+  if (!WPP_QR_ONLY) {
+    handlers.start(managedClient, { empresaId: Number(EMPRESA_ID) });
+    registerCompanyIncomingMedia(managedClient, {
+      empresaId: Number(EMPRESA_ID),
+      query,
+      handleIncomingComprobanteFromBotPg,
+    });
+  } else {
+    console.log(`[Empresa ${EMPRESA_ID}] Modo solo QR activo: no se atienden mensajes entrantes.`);
+  }
+
+  return managedClient;
+}
+
+const ownership = createCompanyOwnership({
+  pool,
+  empresaId: Number(EMPRESA_ID),
+  ownerId: OUTBOX_CLAIM_OWNER,
+  onOwnershipLost: error => {
+    isReady = false;
+    console.error(`[Empresa ${EMPRESA_ID}] Ownership PostgreSQL perdido:`, error.message);
+    void lifecycle?.ownershipLost(error);
+  },
+});
+
+lifecycle = createCompanyLifecycle({
+  ownership,
+  clientFactory: { create: createManagedCompanyClient },
+  deleteSession: async () => {
+    fs.rmSync(sessionPaths.sessionDir, { recursive: true, force: true });
+  },
+});
+
+async function loadResetMarker() {
+  const rows = await query('SELECT wpp_reset_requested_at FROM empresas WHERE id = $1 LIMIT 1', [EMPRESA_ID]);
+  return rows[0]?.wpp_reset_requested_at ? new Date(rows[0].wpp_reset_requested_at).toISOString() : null;
+}
+
+const recoverCompanyRuntime = createSingleFlight(async reason => {
+  if (isShuttingDown || !ownership.isOwner) return false;
+  isReady = false;
+  console.warn(`[Empresa ${EMPRESA_ID}] Runtime WhatsApp no operativo (${reason}). Intentando recuperar bridge...`);
+
+  try {
+    const repaired = await lifecycle.withActiveClient(async ({ client }) => {
+      const result = await repairCompanyRuntimeBridge(client, LoadUtils);
+      if (!result.healthy) return result;
+      await persistStatus('connected', { heartbeat: true });
+      return result;
+    });
+    if (repaired.healthy) {
+      isReady = true;
+      console.log(`[Empresa ${EMPRESA_ID}] Bridge WWebJS reinyectado sin reiniciar sesión.`);
+      return true;
+    }
+    await lifecycle.restart(reason);
+    return true;
+  } catch (error) {
+    console.error(`[Empresa ${EMPRESA_ID}] Error recuperando runtime WhatsApp:`, error.message);
+    await persistStatus('disconnected').catch(() => {});
+    return false;
+  }
 });
 
 const workerRecovery = createBackoffRecovery({
-    task: async reason => {
-        if (isShuttingDown) return true;
-        await ensureEmpresaWhatsappSchema();
-        return recoverCompanyRuntime(reason);
-    },
-    onError: (err, state) => {
-        console.error(
-            `[Empresa ${EMPRESA_ID}] Recuperación falló (intento ${state.attempt + 1}); se reintentará con backoff:`,
-            err.message
-        );
-    },
+  task: async reason => recoverCompanyRuntime(reason),
+  onError: (error, state) => {
+    console.error(`[Empresa ${EMPRESA_ID}] Recuperación falló (intento ${state.attempt + 1}):`, error.message);
+  },
 });
 
 const workerStartup = createPrerequisiteStartup({
-    ensurePrerequisites: ensureEmpresaWhatsappSchema,
-    start: async reason => {
-        lastResetHandledAt = await loadResetMarker();
-        return recoverCompanyRuntime(reason);
-    },
-    onError: (err, state) => {
-        console.error(
-            `[Empresa ${EMPRESA_ID}] Preparación inicial falló (intento ${state.attempt + 1}); se reintentará con backoff:`,
-            err.message
-        );
-    },
+  ensurePrerequisites: ensureEmpresaWhatsappSchema,
+  start: async () => {
+    const started = await lifecycle.start();
+    if (!started) {
+      console.log(`[Empresa ${EMPRESA_ID}] Otro worker posee la sesión; quedando en standby.`);
+      return false;
+    }
+    const pendingReset = await loadResetMarker();
+    if (pendingReset) await applyResetMarker(pendingReset);
+    return true;
+  },
+  onError: (error, state) => {
+    console.error(`[Empresa ${EMPRESA_ID}] Startup falló (intento ${state.attempt + 1}):`, error.message);
+  },
 });
 
-async function ensureCompanyRuntimeReady() {
-    const checkedClient = client;
-    const health = await confirmCompanyRuntime(checkedClient);
-
-    if (checkedClient !== client) return false;
-    if (health.healthy) {
-        await persistWorkerHeartbeat();
-        return true;
-    }
-
-    await recoverCompanyRuntime(health.reason);
-    return false;
+async function persistWorkerHeartbeat() {
+  if (!isReady || !ownership.isOwner) return;
+  await ownership.heartbeat();
+  await query(
+    "UPDATE empresas SET wpp_heartbeat_at = NOW() WHERE id = $1 AND wpp_status = 'connected'",
+    [EMPRESA_ID],
+  );
 }
 
 async function checkCompanyRuntimeHealth() {
-    if (!client || !isReady || isInitializing || isResetting) return;
-    await ensureCompanyRuntimeReady();
-}
-
-async function persistWorkerHeartbeat() {
-    if (!client || !isReady || isInitializing || isResetting) return;
-    try {
-        await query(
-            `UPDATE empresas
-                SET wpp_heartbeat_at = NOW()
-              WHERE id = $1 AND wpp_status = 'connected'`,
-            [EMPRESA_ID]
-        );
-    } catch (err) {
-        console.error(`[Empresa ${EMPRESA_ID}] No se pudo persistir heartbeat:`, err.message);
-    }
+  if (!isReady || !ownership.isOwner || isShuttingDown) return;
+  const health = await lifecycle.withActiveClient(({ client }) => confirmCompanyRuntime(client));
+  if (health.healthy) {
+    await persistWorkerHeartbeat();
+    return;
+  }
+  await recoverCompanyRuntime(health.reason);
 }
 
 const checkCompanyRuntimeHealthTick = createNonOverlappingTask(checkCompanyRuntimeHealth);
 
-async function loadResetMarker() {
-    const rows = await query('SELECT wpp_reset_requested_at FROM empresas WHERE id = $1 LIMIT 1', [EMPRESA_ID]);
-    return rows[0]?.wpp_reset_requested_at ? new Date(rows[0].wpp_reset_requested_at).toISOString() : null;
-}
-
-async function resetAndRestartClient() {
-    if (isResetting) return;
-    isResetting = true;
-
-    try {
-        console.log(`[Empresa ${EMPRESA_ID}] Reset solicitado. Reiniciando sesión WhatsApp...`);
-        isReady = false;
-        try {
-            if (client) {
-                const previousClient = client;
-                client = null;
-                previousClient.removeAllListeners();
-                await previousClient.destroy();
-            }
-        } catch (e) {
-            console.warn(`[Empresa ${EMPRESA_ID}] No se pudo destruir cliente previo:`, e.message);
-        }
-
-        await clearCompanySessionDir();
-        await query(
-            'UPDATE empresas SET wpp_qr_code = NULL, wpp_status = $1 WHERE id = $2',
-            ['initializing', EMPRESA_ID]
-        );
-
-        await new Promise(resolve => setTimeout(resolve, 1500));
-        await initializeClient();
-    } catch (err) {
-        console.error(`[Empresa ${EMPRESA_ID}] Error reseteando cliente:`, err.message);
-        await query(
-            'UPDATE empresas SET wpp_status = $1, wpp_qr_code = NULL, wpp_heartbeat_at = NULL, updated_at = NOW() WHERE id = $2',
-            ['disconnected', EMPRESA_ID]
-        ).catch(() => {});
-        workerRecovery.trigger('reset_failed');
-    } finally {
-        isResetting = false;
-    }
+async function applyResetMarker(marker) {
+  isReady = false;
+  await lifecycle.reset(marker);
+  await query(
+    `UPDATE empresas
+        SET wpp_reset_requested_at = NULL,
+            updated_at = NOW()
+      WHERE id = $1
+        AND wpp_reset_requested_at = $2::timestamptz`,
+    [EMPRESA_ID, marker],
+  );
+  lastResetHandledAt = marker;
 }
 
 async function checkResetRequest() {
-    if (!workerStartup.getState().started) return;
-    try {
-        const marker = await loadResetMarker();
-        if (marker && marker !== lastResetHandledAt) {
-            lastResetHandledAt = marker;
-            await resetAndRestartClient();
-        }
-    } catch (err) {
-        console.error(`[Empresa ${EMPRESA_ID}] Error revisando reset:`, err.message);
-    }
+  if (!workerStartup.getState().started || !ownership.isOwner || isShuttingDown) return;
+  try {
+    const marker = await loadResetMarker();
+    if (!marker || marker === lastResetHandledAt) return;
+    await applyResetMarker(marker);
+  } catch (error) {
+    console.error(`[Empresa ${EMPRESA_ID}] Error reseteando cliente:`, error.message);
+    await persistStatus('disconnected').catch(() => {});
+  }
 }
 
-function isConnectionSendError(err) {
-    const errorLower = String(err?.message || err || '').toLowerCase();
-    return (
-        errorLower.includes('not connected') ||
-        errorLower.includes('disconnected') ||
-        errorLower.includes('closed') ||
-        errorLower.includes('websocket') ||
-        errorLower.includes('target closed') ||
-        errorLower.includes('session closed') ||
-        errorLower.includes('protocol error') ||
-        errorLower.includes('execution context was destroyed')
-    );
+function isConnectionSendError(error) {
+  const message = String(error?.message || error || '').toLowerCase();
+  return ['not connected', 'disconnected', 'closed', 'websocket', 'target closed', 'session closed',
+    'protocol error', 'execution context was destroyed'].some(fragment => message.includes(fragment));
 }
 
-function isInvalidPhoneError(err) {
-    const errorLower = String(err?.message || err || '').toLowerCase();
-    return (
-        errorLower.includes('telefono_invalido') ||
-        errorLower.includes('invalid') ||
-        errorLower.includes('phone') ||
-        errorLower.includes('number')
-    );
+function isInvalidPhoneError(error) {
+  const message = String(error?.message || error || '').toLowerCase();
+  return ['telefono_invalido', 'invalid', 'phone', 'number'].some(fragment => message.includes(fragment));
 }
 
-// 4. PROCESADOR DE COLA DE MENSAJES (OUTBOX)
-// Revisa mensajes pendientes cada 5 segundos para esta empresa específicamente.
-const outboxInterval = setInterval(async () => {
-    if (WPP_QR_ONLY) return;
-    if (!client || !isReady || isInitializing || isResetting || isProcessingOutbox) return;
+async function processOutbox() {
+  if (WPP_QR_ONLY || !isReady || !ownership.isOwner || isProcessingOutbox || isShuttingDown) return;
+  isProcessingOutbox = true;
+  try {
+    await lifecycle.withActiveClient(async ({ client }) => {
+      const filas = await claimWppOutboxRows({
+        query,
+        owner: OUTBOX_CLAIM_OWNER,
+        limit: 5,
+        whereSql: 'AND o.empresa_id = $4',
+        whereParams: [EMPRESA_ID],
+      });
 
-    isProcessingOutbox = true;
-
-    try {
-        if (!await ensureCompanyRuntimeReady()) return;
-
-        const filas = await claimWppOutboxRows({
+      for (const [index, fila] of filas.entries()) {
+        let sendStarted = false;
+        try {
+          await ownership.heartbeat();
+          const target = await resolveWhatsappTarget(client, fila.telefono);
+          await ownership.heartbeat();
+          sendStarted = true;
+          await client.sendMessage(target, fila.mensaje);
+          await finishWppOutboxClaim({ query, id: fila.id, owner: OUTBOX_CLAIM_OWNER, status: 'sent', sent: true });
+          await persistWorkerHeartbeat();
+          console.log(`[Empresa ${EMPRESA_ID}] Mensaje enviado a ${fila.telefono}`);
+        } catch (error) {
+          console.error(`[Empresa ${EMPRESA_ID}] Error al enviar ID ${fila.id}:`, error.message);
+          if (!sendStarted && isInvalidPhoneError(error)) {
+            await finishWppOutboxClaim({
+              query, id: fila.id, owner: OUTBOX_CLAIM_OWNER, status: 'error', error: 'Número de teléfono inválido',
+            });
+            continue;
+          }
+          await releaseWppOutboxClaim({
             query,
+            id: fila.id,
             owner: OUTBOX_CLAIM_OWNER,
-            limit: 5,
-            whereSql: 'AND o.empresa_id = $4',
-            whereParams: [EMPRESA_ID],
-        });
-
-        for (const [index, fila] of filas.entries()) {
-            let sendStarted = false;
-            try {
-                const activeClient = client;
-                const target = await resolveWhatsappTarget(activeClient, fila.telefono);
-                if (activeClient !== client || !isReady) {
-                    await releaseWppOutboxClaim({
-                        query, id: fila.id, owner: OUTBOX_CLAIM_OWNER,
-                        error: 'Worker cambió antes del envío',
-                    });
-                    continue;
-                }
-
-                sendStarted = true;
-                await activeClient.sendMessage(target, fila.mensaje);
-
-                await finishWppOutboxClaim({
-                    query, id: fila.id, owner: OUTBOX_CLAIM_OWNER, status: 'sent', sent: true,
-                });
-                await persistWorkerHeartbeat();
-                console.log(`[Empresa ${EMPRESA_ID}] Mensaje enviado a ${fila.telefono}`);
-            } catch (err) {
-                console.error(`[Empresa ${EMPRESA_ID}] Error al enviar ID ${fila.id}:`, err.message);
-
-                if (!sendStarted) {
-                    if (isInvalidPhoneError(err)) {
-                        await finishWppOutboxClaim({
-                            query, id: fila.id, owner: OUTBOX_CLAIM_OWNER,
-                            status: 'error', error: 'Número de teléfono inválido',
-                        });
-                    } else {
-                        await releaseWppOutboxClaim({
-                            query, id: fila.id, owner: OUTBOX_CLAIM_OWNER,
-                            error: 'Reintento por error previo al envío',
-                        });
-                    }
-                    continue;
-                }
-
-                if (isRuntimeBridgeError(err)) {
-                    await releaseWppOutboxClaim({
-                        query, id: fila.id, owner: OUTBOX_CLAIM_OWNER,
-                        error: 'Runtime WhatsApp empresa no disponible; reinicializando worker',
-                    });
-                    for (const remaining of filas.slice(index + 1)) {
-                        await releaseWppOutboxClaim({ query, id: remaining.id, owner: OUTBOX_CLAIM_OWNER, error: null });
-                    }
-                    workerRecovery.trigger('runtime_bridge_send_error');
-                    break;
-                }
-
-                if (isConnectionSendError(err)) {
-                    await query(
-                        "UPDATE empresas SET wpp_status = 'disconnected', wpp_heartbeat_at = NULL, updated_at = NOW() WHERE id = $1",
-                        [EMPRESA_ID]
-                    );
-                    await releaseWppOutboxClaim({
-                        query, id: fila.id, owner: OUTBOX_CLAIM_OWNER,
-                        error: 'Fallback a WhatsApp general: conexión de empresa no disponible',
-                    });
-                    for (const remaining of filas.slice(index + 1)) {
-                        await releaseWppOutboxClaim({ query, id: remaining.id, owner: OUTBOX_CLAIM_OWNER, error: null });
-                    }
-                    workerRecovery.trigger('connection_send_error');
-                    break;
-                }
-
-                if (isInvalidPhoneError(err)) {
-                    await finishWppOutboxClaim({
-                        query, id: fila.id, owner: OUTBOX_CLAIM_OWNER,
-                        status: 'error', error: 'Número de teléfono inválido',
-                    });
-                } else {
-                    await releaseWppOutboxClaim({
-                        query, id: fila.id, owner: OUTBOX_CLAIM_OWNER,
-                        error: 'Reintento por error temporal en WhatsApp empresa',
-                    });
-                }
+            error: isRuntimeBridgeError(error)
+              ? 'Runtime WhatsApp empresa no disponible; reinicializando worker'
+              : (isConnectionSendError(error)
+                ? 'Fallback a WhatsApp general: conexión de empresa no disponible'
+                : 'Reintento por error temporal en WhatsApp empresa'),
+          });
+          if (isRuntimeBridgeError(error) || isConnectionSendError(error)) {
+            for (const remaining of filas.slice(index + 1)) {
+              await releaseWppOutboxClaim({ query, id: remaining.id, owner: OUTBOX_CLAIM_OWNER, error: null });
             }
+            workerRecovery.trigger(isRuntimeBridgeError(error) ? 'runtime_bridge_send_error' : 'connection_send_error');
+            break;
+          }
         }
-    } catch (dbErr) {
-        console.error(`[Empresa ${EMPRESA_ID}] Error consultando DB:`, dbErr.message);
-    } finally {
-        isProcessingOutbox = false;
-    }
-}, 5000);
-
-// 5. ARRANQUE
-console.log(`[Empresa ${EMPRESA_ID}] Iniciando cliente de WhatsApp${WPP_QR_ONLY ? ' en modo solo QR' : ''}...`);
-const resetInterval = setInterval(checkResetRequest, 5000);
-const healthInterval = setInterval(() => {
-    checkCompanyRuntimeHealthTick().catch(err => {
-        console.warn(`[Empresa ${EMPRESA_ID}] Error en health-check WhatsApp:`, err?.message || err);
+      }
     });
-}, 15000);
+  } catch (error) {
+    console.error(`[Empresa ${EMPRESA_ID}] Error procesando outbox:`, error.message);
+  } finally {
+    isProcessingOutbox = false;
+  }
+}
 
 async function shutdownWorker() {
-    if (isShuttingDown) return;
-    isShuttingDown = true;
-    clearInterval(outboxInterval);
-    clearInterval(resetInterval);
-    clearInterval(healthInterval);
-    workerStartup.stop();
-    workerRecovery.stop();
-    const activeClient = client;
-    client = null;
-    isReady = false;
-    activeClient?.removeAllListeners();
-    try {
-        await activeClient?.destroy();
-    } catch (err) {
-        console.warn(`[Empresa ${EMPRESA_ID}] No se pudo cerrar cliente durante shutdown:`, err.message);
-    }
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  isReady = false;
+  clearInterval(outboxInterval);
+  clearInterval(resetInterval);
+  clearInterval(healthInterval);
+  clearInterval(ownershipInterval);
+  workerStartup.stop();
+  workerRecovery.stop();
+  try {
+    await lifecycle.shutdown();
+  } catch (error) {
+    console.error(`[Empresa ${EMPRESA_ID}] Shutdown no confirmado:`, error.message);
+    process.exitCode = 1;
+  }
 }
+
+console.log(`[Empresa ${EMPRESA_ID}] Iniciando cliente de WhatsApp${WPP_QR_ONLY ? ' en modo solo QR' : ''}...`);
+outboxInterval = setInterval(() => { void processOutbox(); }, 5000);
+resetInterval = setInterval(() => { void checkResetRequest(); }, 5000);
+healthInterval = setInterval(() => {
+  checkCompanyRuntimeHealthTick().catch(error => {
+    console.warn(`[Empresa ${EMPRESA_ID}] Error en health-check WhatsApp:`, error?.message || error);
+  });
+}, 15000);
+ownershipInterval = setInterval(() => {
+  if (!ownership.isOwner || isShuttingDown) return;
+  ownership.heartbeat().catch(() => {});
+}, 5000);
 
 process.once('SIGTERM', () => { void shutdownWorker(); });
 process.once('SIGINT', () => { void shutdownWorker(); });

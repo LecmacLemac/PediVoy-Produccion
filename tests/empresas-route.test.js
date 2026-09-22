@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import express from 'express';
 
 import { createEmpresasRouter } from '../src/routes/empresas.js';
@@ -14,7 +15,7 @@ async function withServer(app, fn) {
   }
 }
 
-function buildApp({ query, user = { role: 'admin', empresa_id: 3 } }) {
+function buildApp({ query, user = { role: 'admin', empresa_id: 3 }, ensureEmpresaWppWorker }) {
   const app = express();
   app.use(express.json());
   app.use('/api/empresas', createEmpresasRouter({
@@ -34,6 +35,7 @@ function buildApp({ query, user = { role: 'admin', empresa_id: 3 } }) {
       return req.user?.empresa_id;
     },
     getEmpresaById: async () => null,
+    ...(ensureEmpresaWppWorker ? { ensureEmpresaWppWorker } : {}),
   }));
   return app;
 }
@@ -205,4 +207,45 @@ test('superadmin conserva edicion completa de empresa', async () => {
   assert.equal(updateCall.params[22], 'active');
   assert.equal(updateCall.params[23], 'enterprise');
   assert.equal(typeof updateCall.params[21], 'string');
+});
+
+test('reset de WhatsApp empresa sólo persiste el marcador, asegura worker y responde 202', async () => {
+  const calls = [];
+  const workers = [];
+  const app = buildApp({
+    ensureEmpresaWppWorker: empresaId => {
+      workers.push(empresaId);
+      return { started: true, pid: 555 };
+    },
+    query: async (sql, params = []) => {
+      calls.push({ sql: String(sql), params });
+      if (sql.includes('ALTER TABLE empresas')) return [];
+      if (sql.includes('SELECT id') && sql.includes('FROM empresas')) return [{ id: 3 }];
+      if (sql.includes('UPDATE empresas')) return [];
+      throw new Error(`Consulta inesperada: ${sql}`);
+    },
+  });
+
+  await withServer(app, async baseUrl => {
+    const response = await fetch(`${baseUrl}/api/empresas/3/whatsapp-reset`, { method: 'POST' });
+    assert.equal(response.status, 202);
+    assert.deepEqual(await response.json(), {
+      ok: true,
+      empresa_id: 3,
+      status: 'resetting',
+      worker: { started: true, pid: 555 },
+    });
+  });
+
+  assert.deepEqual(workers, [3]);
+  const update = calls.find(call => call.sql.includes('UPDATE empresas'));
+  assert.match(update.sql, /wpp_reset_requested_at\s*=\s*NOW\(\)/i);
+  assert.match(update.sql, /wpp_status\s*=\s*'resetting'/i);
+  assert.doesNotMatch(update.sql, /DELETE|TRUNCATE/i);
+
+  const source = await readFile(new URL('../src/routes/empresas.js', import.meta.url), 'utf8');
+  const start = source.indexOf("router.post('/:id/whatsapp-reset'");
+  const end = source.indexOf("router.get('/:id'", start);
+  assert.ok(start >= 0 && end > start);
+  assert.doesNotMatch(source.slice(start, end), /rmSync|unlink|removeChromiumSingletonLocks/);
 });

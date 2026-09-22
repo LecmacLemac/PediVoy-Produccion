@@ -75,11 +75,6 @@ function scheduleEmpresaWppBootRecovery(query, ensureWorker = ensureEmpresaWppQr
   }, Number.isFinite(delayMs) && delayMs >= 0 ? delayMs : 3000).unref?.();
 }
 
-function getEmpresaWppSessionDir(empresaId) {
-  const sessionPath = process.env.DISK_PATH || './wpp_sessions';
-  return path.resolve(process.cwd(), sessionPath, `session-empresa_${empresaId}`);
-}
-
 const empresaWppQrWorkers = new Map();
 const empresaWppRespawnTimers = new Map();
 
@@ -123,8 +118,8 @@ function ensureEmpresaWppQrWorker(empresaId) {
 
   const child = spawn(process.execPath, ['src/wppWorker.js'], {
     cwd: process.cwd(),
-    detached: true,
-    stdio: 'ignore',
+    detached: false,
+    stdio: ['ignore', 'inherit', 'inherit'],
     env: {
       ...process.env,
       EMPRESA_ID: String(empresaId),
@@ -825,13 +820,6 @@ export function createEmpresasRouter(deps) {
 
       if (!rows.length) return res.status(404).json({ error: 'Empresa no encontrada' });
 
-      const sessionDir = getEmpresaWppSessionDir(empresaId);
-      try {
-        fs.rmSync(sessionDir, { recursive: true, force: true });
-      } catch (e) {
-        console.warn('No se pudo borrar sesión WhatsApp empresa:', e.message);
-      }
-
       await query(
         `UPDATE empresas
             SET wpp_qr_code = NULL,
@@ -841,9 +829,9 @@ export function createEmpresasRouter(deps) {
         [empresaId]
       );
 
-      const worker = ensureEmpresaWppQrWorker(empresaId);
+      const worker = ensureEmpresaWppWorker(empresaId);
 
-      return res.json({ ok: true, empresa_id: empresaId, status: 'resetting', worker });
+      return res.status(202).json({ ok: true, empresa_id: empresaId, status: 'resetting', worker });
     } catch (e) {
       console.error('Error reseteando WhatsApp de empresa:', e);
       return res.status(500).json({ error: 'No se pudo resetear WhatsApp de la empresa' });
