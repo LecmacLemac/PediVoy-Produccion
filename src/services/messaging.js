@@ -1,14 +1,11 @@
 import { query } from '../db.js';
+import { normalizeWhatsappPhone } from '../core/format.js';
 
 export async function enqueueWppMessage({ phone, message, empresa_id = null }) {
   if (!phone || !message) return;
 
-  let cleanPhone = String(phone).replace(/\D+/g, '');
+  const cleanPhone = normalizeWhatsappPhone(phone);
   const cleanMsg = String(message).trim();
-
-  if (cleanPhone.length === 10) {
-    cleanPhone = '549' + cleanPhone;
-  }
 
   try {
     const duplicados = await query(
