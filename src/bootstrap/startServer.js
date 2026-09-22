@@ -56,6 +56,13 @@ export function startServer(app, {
     } catch (error) {
       wppStopped = Promise.reject(error);
     }
+    let companyWorkersStopped;
+    try {
+      const companyWorkersShutdown = app.locals?.wppEmpresaWorkersShutdown;
+      companyWorkersStopped = typeof companyWorkersShutdown === 'function' ? companyWorkersShutdown() : true;
+    } catch (error) {
+      companyWorkersStopped = Promise.reject(error);
+    }
     let asteriskStopped = true;
     try {
       if (asteriskStarted) {
@@ -67,13 +74,14 @@ export function startServer(app, {
       asteriskStopped = Promise.reject(error);
     }
 
-    withDeadline(Promise.allSettled([httpClosed, wppStopped, asteriskStopped]))
+    withDeadline(Promise.allSettled([httpClosed, wppStopped, companyWorkersStopped, asteriskStopped]))
       .then(results => {
         const rejected = results.find(result => result.status === 'rejected');
         if (fatalShutdownError) throw fatalShutdownError;
         if (rejected) throw rejected.reason;
-        const [, wppResult, asteriskResult] = results.map(result => result.value);
+        const [, wppResult, companyWorkersResult, asteriskResult] = results.map(result => result.value);
         if (wppResult !== true) throw new Error('WhatsApp General shutdown was not confirmed');
+        if (companyWorkersResult !== true) throw new Error('WhatsApp Empresa workers shutdown was not confirmed');
         if (asteriskResult !== true) throw new Error('Asterisk shutdown was not confirmed');
         removeSignalListeners();
         exit(0);

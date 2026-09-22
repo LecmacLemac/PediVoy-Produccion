@@ -3,7 +3,7 @@ import { createAuthGuestSignupRouter } from './authGuestSignup.js';
 import { createSetupRouter } from './setup.js';
 import { createPublicLandingRouter } from './publicLanding.js';
 import { createPublicClientAppRouter } from './publicClientApp.js';
-import { createEmpresasRouter } from './empresas.js';
+import { createEmpresasRouter, shutdownEmpresaWppWorkers } from './empresas.js';
 import { createEntregaConfigRouter } from './entregaConfig.js';
 import { createAiSiteBuilderRouter } from './aiSiteBuilder.js';
 import { createZonasRouter } from './zonas.js';
@@ -59,6 +59,9 @@ export function mountApiModules(app, deps) {
     GASTOS_DIR,
     getEmpresaById,
   } = deps;
+
+  app.locals ??= {};
+  app.locals.wppEmpresaWorkersShutdown ??= shutdownEmpresaWppWorkers;
 
   // AUTH / core multi-tenant
   app.use('/api/auth', createAuthGuestSignupRouter({ query, withAuth, pool }));

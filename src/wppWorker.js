@@ -18,6 +18,7 @@ import { parseEnterpriseId } from './wpp/enterpriseId.js';
 import { createWppClientAdapter } from './wpp/clientAdapter.js';
 import { createCompanyOwnership } from './wpp/companyOwnership.js';
 import { createCompanyLifecycle } from './wpp/companyLifecycle.js';
+import { createCompanyWorkerShutdown } from './wpp/companyWorkerShutdown.js';
 import { getCompanySessionPaths } from './wpp/companySession.js';
 import {
   confirmCompanyRuntime,
@@ -116,51 +117,48 @@ function createManagedCompanyClient({ generation }) {
   let managedClient;
 
   const current = () => lifecycle?.isCurrent(managedClient, generation) === true;
+  const runClientEvent = (event, task, { recover = false } = {}) => {
+    void lifecycle.withClientEvent(managedClient, generation, task).catch(error => {
+      if (error?.code === 'WPP_COMPANY_NOT_OWNER') return;
+      console.error(`[Empresa ${EMPRESA_ID}] Error procesando evento ${event}:`, error?.message || error);
+      if (recover) workerRecovery.trigger(`${event}_failed`);
+    });
+  };
 
-  rawClient.on('qr', async qr => {
-    if (!current()) return;
-    isReady = false;
-    try {
-      await ownership.heartbeat();
-      if (!current()) return;
+  rawClient.on('qr', qr => {
+    runClientEvent('qr', async ({ assertCurrent }) => {
+      isReady = false;
+      assertCurrent();
       await persistStatus('awaiting_scan', { qrCode: qr });
+      assertCurrent();
       console.log(`[Empresa ${EMPRESA_ID}] Nuevo QR generado. Esperando escaneo...`);
-    } catch (error) {
-      console.error(`[Empresa ${EMPRESA_ID}] No se pudo persistir QR:`, error.message);
-    }
+    });
   });
 
-  rawClient.on('ready', async () => {
-    if (!current()) return;
-    isReady = false;
-    try {
-      await ownership.heartbeat();
-      if (!current()) return;
+  rawClient.on('ready', () => {
+    runClientEvent('ready', async ({ assertCurrent }) => {
+      isReady = false;
+      assertCurrent();
       await persistStatus('connected', { heartbeat: true });
-      if (!current()) return;
+      assertCurrent();
       isReady = true;
       console.log(`[Empresa ${EMPRESA_ID}] ¡Conexión exitosa! El worker está operativo.`);
-    } catch (error) {
-      console.error(`[Empresa ${EMPRESA_ID}] No se pudo persistir estado connected:`, error.message);
-      workerRecovery.trigger('persist_connected_failed');
-    }
+    }, { recover: true });
   });
 
-  async function unavailable(event, detail) {
-    if (!current()) return;
-    isReady = false;
-    console.warn(`[Empresa ${EMPRESA_ID}] ${event}:`, detail);
-    try {
-      await ownership.heartbeat();
-      if (current()) await persistStatus('disconnected');
-    } catch (error) {
-      console.error(`[Empresa ${EMPRESA_ID}] No se pudo persistir desconexión:`, error.message);
-    }
-    if (current()) workerRecovery.trigger(event);
+  function unavailable(event, detail) {
+    runClientEvent(event, async ({ assertCurrent }) => {
+      isReady = false;
+      console.warn(`[Empresa ${EMPRESA_ID}] ${event}:`, detail);
+      assertCurrent();
+      await persistStatus('disconnected');
+      assertCurrent();
+      workerRecovery.trigger(event);
+    });
   }
 
-  rawClient.on('auth_failure', detail => { void unavailable('auth_failure', detail); });
-  rawClient.on('disconnected', detail => { void unavailable('disconnected', detail); });
+  rawClient.on('auth_failure', detail => { unavailable('auth_failure', detail); });
+  rawClient.on('disconnected', detail => { unavailable('disconnected', detail); });
 
   managedClient = new Proxy({
     async initialize() {
@@ -225,6 +223,13 @@ function createManagedCompanyClient({ generation }) {
   return managedClient;
 }
 
+async function fatalWorkerExit(error) {
+  isReady = false;
+  isShuttingDown = true;
+  console.error(`[Empresa ${EMPRESA_ID}] Falla terminal del lifecycle; terminando worker:`, error?.message || error);
+  process.exit(1);
+}
+
 const ownership = createCompanyOwnership({
   pool,
   empresaId: Number(EMPRESA_ID),
@@ -232,13 +237,14 @@ const ownership = createCompanyOwnership({
   onOwnershipLost: error => {
     isReady = false;
     console.error(`[Empresa ${EMPRESA_ID}] Ownership PostgreSQL perdido:`, error.message);
-    void lifecycle?.ownershipLost(error);
+    void lifecycle?.ownershipLost(error).catch(fatalWorkerExit);
   },
 });
 
 lifecycle = createCompanyLifecycle({
   ownership,
   clientFactory: { create: createManagedCompanyClient },
+  fatalExit: fatalWorkerExit,
   deleteSession: async () => {
     fs.rmSync(sessionPaths.sessionDir, { recursive: true, force: true });
   },
@@ -416,23 +422,21 @@ async function processOutbox() {
   }
 }
 
-async function shutdownWorker() {
-  if (isShuttingDown) return;
-  isShuttingDown = true;
-  isReady = false;
-  clearInterval(outboxInterval);
-  clearInterval(resetInterval);
-  clearInterval(healthInterval);
-  clearInterval(ownershipInterval);
-  workerStartup.stop();
-  workerRecovery.stop();
-  try {
-    await lifecycle.shutdown();
-  } catch (error) {
-    console.error(`[Empresa ${EMPRESA_ID}] Shutdown no confirmado:`, error.message);
-    process.exitCode = 1;
-  }
-}
+const shutdownWorker = createCompanyWorkerShutdown({
+  stopSchedulers: () => {
+    isShuttingDown = true;
+    isReady = false;
+    clearInterval(outboxInterval);
+    clearInterval(resetInterval);
+    clearInterval(healthInterval);
+    clearInterval(ownershipInterval);
+    workerStartup.stop();
+    workerRecovery.stop();
+  },
+  shutdownLifecycle: () => lifecycle.shutdown(),
+  closePool: () => pool.end(),
+  exit: code => process.exit(code),
+});
 
 console.log(`[Empresa ${EMPRESA_ID}] Iniciando cliente de WhatsApp${WPP_QR_ONLY ? ' en modo solo QR' : ''}...`);
 outboxInterval = setInterval(() => { void processOutbox(); }, 5000);

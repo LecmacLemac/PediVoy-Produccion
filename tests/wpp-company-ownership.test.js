@@ -97,3 +97,25 @@ test('company ownership releases only after successful quiescence', async () => 
   assert.match(client.calls.at(-1).sql, /pg_advisory_unlock\(\$1, \$2\)/i);
   assert.deepEqual(client.releases, [undefined]);
 });
+
+test('late pool connection is released after ownership connect deadline', async () => {
+  let resolveConnect;
+  const connection = new Promise(resolve => { resolveConnect = resolve; });
+  const client = makeClient();
+  const ownership = createCompanyOwnership({
+    pool: { connect: () => connection },
+    empresaId: 13,
+    operationDeadlineMs: 5,
+  });
+
+  await assert.rejects(ownership.tryAcquire(), /connect deadline exceeded/i);
+  assert.equal(client.releases.length, 0);
+
+  resolveConnect(client);
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(ownership.isOwner, false);
+  assert.equal(client.calls.length, 0);
+  assert.equal(client.releases.length, 1);
+  assert.ok(client.releases[0] instanceof CompanyOwnershipLostError);
+});

@@ -18,6 +18,7 @@ const deferred = () => {
 
 function makeServerHarness({
   wppShutdown,
+  companyWorkersShutdown,
   configureApp,
   deadlineMs = 1000,
   timers,
@@ -35,7 +36,10 @@ function makeServerHarness({
     },
   };
   const app = {
-    locals: wppShutdown ? { wppGeneralShutdown: wppShutdown } : {},
+    locals: {
+      ...(wppShutdown ? { wppGeneralShutdown: wppShutdown } : {}),
+      ...(companyWorkersShutdown ? { wppEmpresaWorkersShutdown: companyWorkersShutdown } : {}),
+    },
     get() {},
     post() {},
     listen(_port, callback) {
@@ -126,6 +130,31 @@ test('concurrent SIGTERM and SIGINT share one shutdown flight', async () => {
   stopped.resolve(true);
   await h.returned.shutdown();
 
+  assert.deepEqual(h.exits, [0]);
+});
+
+test('server shutdown waits for company workers before process exit', async () => {
+  const companyStopped = deferred();
+  const calls = [];
+  const h = makeServerHarness({
+    wppShutdown: async () => { calls.push('general-stopped'); return true; },
+    companyWorkersShutdown: async () => {
+      calls.push('company-stop-start');
+      await companyStopped.promise;
+      calls.push('company-stopped');
+      return true;
+    },
+  });
+
+  h.signals.emit('SIGTERM');
+  h.closeConfirmation.resolve();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(h.exits, []);
+  assert.deepEqual(calls, ['general-stopped', 'company-stop-start']);
+
+  companyStopped.resolve();
+  assert.equal(await h.returned.shutdown(), true);
+  assert.deepEqual(calls, ['general-stopped', 'company-stop-start', 'company-stopped']);
   assert.deepEqual(h.exits, [0]);
 });
 

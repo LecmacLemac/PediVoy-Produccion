@@ -248,3 +248,153 @@ test('ownership loss closes the gate and drains admitted work before teardown', 
     'client-1:listeners-removed', 'client-1:destroy', 'client-1:confirm',
   ]);
 });
+
+test('ownership-loss teardown failure invokes fatal exit before rejecting', async () => {
+  const order = [];
+  const fatalErrors = [];
+  const lifecycle = createCompanyLifecycle({
+    ownership: owner(),
+    clientFactory: {
+      create: () => fakeClient('client-1', order, { confirmed: false, forceStopped: false }),
+    },
+    fatalExit: async error => { fatalErrors.push(error); order.push('fatal-exit'); },
+  });
+  await lifecycle.start();
+
+  await assert.rejects(lifecycle.ownershipLost(new Error('lease lost')), /stop could not be confirmed/i);
+
+  assert.equal(fatalErrors.length, 1);
+  assert.deepEqual(order, [
+    'client-1:initialize', 'client-1:listeners-removed', 'client-1:destroy',
+    'client-1:confirm', 'client-1:force', 'fatal-exit',
+  ]);
+});
+
+test('client events are admitted only for the exact running client generation and drain before restart', async () => {
+  const order = [];
+  const eventRelease = deferred();
+  const clients = [];
+  const lifecycle = createCompanyLifecycle({
+    ownership: owner(),
+    clientFactory: {
+      create() {
+        const client = fakeClient(`client-${clients.length + 1}`, order);
+        clients.push(client);
+        return client;
+      },
+    },
+    drainDeadlineMs: 100,
+  });
+  await lifecycle.start();
+
+  const event = lifecycle.withClientEvent(clients[0], 1, async ({ assertCurrent }) => {
+    order.push('event-start');
+    assertCurrent();
+    await eventRelease.promise;
+    assertCurrent();
+    order.push('event-end');
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  const restart = lifecycle.restart('disconnect');
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.deepEqual(order, ['client-1:initialize', 'event-start']);
+  await assert.rejects(
+    lifecycle.withClientEvent(clients[0], 1, async () => true),
+    { code: 'WPP_COMPANY_NOT_OWNER' },
+  );
+
+  eventRelease.resolve();
+  await assert.rejects(event, { code: 'WPP_COMPANY_NOT_OWNER' });
+  await restart;
+  assert.deepEqual(order, [
+    'client-1:initialize', 'event-start',
+    'client-1:listeners-removed', 'client-1:destroy', 'client-1:confirm',
+    'client-2:initialize',
+  ]);
+});
+
+test('current generation events are admitted while client initialization is in progress', async () => {
+  const initialized = deferred();
+  const order = [];
+  let client;
+  const lifecycle = createCompanyLifecycle({
+    ownership: owner(),
+    clientFactory: {
+      create() {
+        client = fakeClient('client-1', order);
+        client.initialize = async () => { order.push('initialize-start'); await initialized.promise; };
+        return client;
+      },
+    },
+  });
+
+  const start = lifecycle.start();
+  await new Promise(resolve => setImmediate(resolve));
+  await lifecycle.withClientEvent(client, 1, async ({ assertCurrent }) => {
+    assertCurrent();
+    order.push('qr-persisted');
+  });
+  initialized.resolve();
+  await start;
+
+  assert.deepEqual(order, ['initialize-start', 'qr-persisted']);
+});
+
+test('unconfirmed terminal stop invokes fatal exit and never releases ownership', async () => {
+  const order = [];
+  const ownership = owner();
+  ownership.releaseAfterQuiesced = async fn => {
+    await fn();
+    order.push('unlock');
+    ownership.isOwner = false;
+    return true;
+  };
+  const fatalErrors = [];
+  const lifecycle = createCompanyLifecycle({
+    ownership,
+    clientFactory: {
+      create: () => fakeClient('client-1', order, { confirmed: false, forceStopped: false }),
+    },
+    fatalExit: async error => { fatalErrors.push(error); order.push('fatal-exit'); },
+  });
+  await lifecycle.start();
+
+  await assert.rejects(lifecycle.restart('disconnect'), /stop could not be confirmed/i);
+
+  assert.equal(ownership.isOwner, true);
+  assert.equal(fatalErrors.length, 1);
+  assert.deepEqual(order, [
+    'client-1:initialize', 'client-1:listeners-removed', 'client-1:destroy',
+    'client-1:confirm', 'client-1:force', 'fatal-exit',
+  ]);
+  await assert.rejects(lifecycle.restart('retry'), { code: 'WPP_COMPANY_NOT_OWNER' });
+});
+
+test('initialization failure tears down and releases ownership when stop is confirmed', async () => {
+  const order = [];
+  const ownership = owner();
+  ownership.releaseAfterQuiesced = async fn => {
+    await fn();
+    order.push('unlock');
+    ownership.isOwner = false;
+    return true;
+  };
+  const fatalErrors = [];
+  const client = fakeClient('client-1', order);
+  client.initialize = async () => { order.push('client-1:initialize'); throw new Error('initialize failed'); };
+  const lifecycle = createCompanyLifecycle({
+    ownership,
+    clientFactory: { create: () => client },
+    fatalExit: async error => { fatalErrors.push(error); },
+  });
+
+  await assert.rejects(lifecycle.start(), /initialize failed/);
+
+  assert.equal(ownership.isOwner, false);
+  assert.equal(fatalErrors.length, 0);
+  assert.deepEqual(order, [
+    'client-1:initialize', 'client-1:listeners-removed', 'client-1:destroy',
+    'client-1:confirm', 'unlock',
+  ]);
+});

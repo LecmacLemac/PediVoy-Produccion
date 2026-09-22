@@ -8,6 +8,7 @@ import { spawn } from 'child_process';
 import multer from 'multer';
 import QRCode from 'qrcode';
 import { encryptSecret } from '../services/facturacionService.js';
+import { createCompanyWorkerSupervisor } from '../wpp/companyWorkerSupervisor.js';
 
 function objectOrEmpty(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
@@ -75,9 +76,6 @@ function scheduleEmpresaWppBootRecovery(query, ensureWorker = ensureEmpresaWppQr
   }, Number.isFinite(delayMs) && delayMs >= 0 ? delayMs : 3000).unref?.();
 }
 
-const empresaWppQrWorkers = new Map();
-const empresaWppRespawnTimers = new Map();
-
 function shouldAutoStartEmpresaWppWorker() {
   if (process.env.AUTO_START_EMPRESA_WPP_WORKER === '0') return false;
   if (process.env.AUTO_START_EMPRESA_WPP_WORKER === '1') return true;
@@ -87,36 +85,8 @@ function shouldAutoStartEmpresaWppWorker() {
   return true;
 }
 
-function scheduleEmpresaWppRespawn(empresaId, reason = 'exit') {
-  if (!shouldAutoStartEmpresaWppWorker()) return;
-  if (empresaWppRespawnTimers.has(empresaId)) return;
-  const delayMs = Number(process.env.EMPRESA_WPP_WORKER_RESPAWN_DELAY_MS || 5000);
-  const timer = setTimeout(() => {
-    empresaWppRespawnTimers.delete(empresaId);
-    const result = ensureEmpresaWppQrWorker(empresaId);
-    console.warn('[WPP EMPRESA] worker respawn:', empresaId, { reason, ...result });
-  }, Number.isFinite(delayMs) && delayMs >= 0 ? delayMs : 5000);
-  timer.unref?.();
-  empresaWppRespawnTimers.set(empresaId, timer);
-}
-
-function ensureEmpresaWppQrWorker(empresaId) {
-  if (!shouldAutoStartEmpresaWppWorker()) {
-    return { started: false, reason: 'disabled' };
-  }
-
-  const pendingRespawn = empresaWppRespawnTimers.get(empresaId);
-  if (pendingRespawn) {
-    clearTimeout(pendingRespawn);
-    empresaWppRespawnTimers.delete(empresaId);
-  }
-
-  const existing = empresaWppQrWorkers.get(empresaId);
-  if (existing && !existing.killed && existing.exitCode === null) {
-    return { started: false, reason: 'already_running', pid: existing.pid };
-  }
-
-  const child = spawn(process.execPath, ['src/wppWorker.js'], {
+function spawnEmpresaWppWorker(empresaId) {
+  return spawn(process.execPath, ['src/wppWorker.js'], {
     cwd: process.cwd(),
     detached: false,
     stdio: ['ignore', 'inherit', 'inherit'],
@@ -126,19 +96,21 @@ function ensureEmpresaWppQrWorker(empresaId) {
       WPP_QR_ONLY: '0',
     },
   });
+}
 
-  child.unref();
-  empresaWppQrWorkers.set(empresaId, child);
+const empresaWppWorkerSupervisor = createCompanyWorkerSupervisor({
+  spawnWorker: spawnEmpresaWppWorker,
+  shouldAutoStart: shouldAutoStartEmpresaWppWorker,
+  respawnDelayMs: Number(process.env.EMPRESA_WPP_WORKER_RESPAWN_DELAY_MS || 5000),
+  shutdownDeadlineMs: Number(process.env.EMPRESA_WPP_WORKER_SHUTDOWN_DEADLINE_MS || 10000),
+});
 
-  child.once('exit', (code, signal) => {
-    if (empresaWppQrWorkers.get(empresaId) === child) {
-      empresaWppQrWorkers.delete(empresaId);
-      console.warn('[WPP EMPRESA] worker exited:', empresaId, { code, signal });
-      scheduleEmpresaWppRespawn(empresaId, signal || `code_${code ?? 'unknown'}`);
-    }
-  });
+function ensureEmpresaWppQrWorker(empresaId) {
+  return empresaWppWorkerSupervisor.ensure(empresaId);
+}
 
-  return { started: true, pid: child.pid };
+export function shutdownEmpresaWppWorkers() {
+  return empresaWppWorkerSupervisor.shutdown();
 }
 
 function minutesSince(value) {

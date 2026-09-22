@@ -23,10 +23,12 @@ test('empresa worker acquires distributed ownership before client creation', asy
 
 test('empresa worker gates stale events and sends on active ownership', async () => {
   const source = await readFile(workerUrl, 'utf8');
-  assert.match(source, /lifecycle\?\.isCurrent\(/);
+  assert.match(source, /lifecycle\.withClientEvent\(managedClient, generation/);
+  assert.match(source, /assertCurrent\(\)[\s\S]*persistStatus[\s\S]*assertCurrent\(\)/);
   assert.match(source, /lifecycle\.withActiveClient\(/);
   assert.match(source, /ownership\.heartbeat\(/);
   assert.match(source, /async sendMessage\([.]{3}args\)[\s\S]*ownership\.heartbeat\([\s\S]*current\(\)/);
+  assert.match(source, /ownershipLost\(error\)\.catch\(fatalWorkerExit\)/);
   assert.match(source, /handlers\.start\(managedClient/);
 });
 
@@ -49,5 +51,6 @@ test('web parent keeps child attached with inherited output', async () => {
   const source = await readFile(new URL('../src/routes/empresas.js', import.meta.url), 'utf8');
   assert.match(source, /detached:\s*false/);
   assert.match(source, /stdio:\s*\['ignore',\s*'inherit',\s*'inherit'\]/);
-  assert.match(source, /child\.unref\(\)/);
+  assert.doesNotMatch(source, /child\.unref\(\)/);
+  assert.match(source, /shutdownEmpresaWppWorkers/);
 });

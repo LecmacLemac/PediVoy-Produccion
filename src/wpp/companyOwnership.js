@@ -8,12 +8,24 @@ export class CompanyOwnershipLostError extends Error {
   }
 }
 
-function deadline(promise, milliseconds, label) {
+function deadline(promise, milliseconds, label, { onLateResolve } = {}) {
   let timer;
-  const timeout = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new CompanyOwnershipLostError(`${label} deadline exceeded`)), milliseconds);
+  let timedOut = false;
+  let timeoutError;
+  const source = Promise.resolve(promise).then(value => {
+    if (timedOut) {
+      try { onLateResolve?.(value, timeoutError); } catch {}
+    }
+    return value;
   });
-  return Promise.race([Promise.resolve(promise), timeout]).finally(() => clearTimeout(timer));
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      timedOut = true;
+      timeoutError = new CompanyOwnershipLostError(`${label} deadline exceeded`);
+      reject(timeoutError);
+    }, milliseconds);
+  });
+  return Promise.race([source, timeout]).finally(() => clearTimeout(timer));
 }
 
 export function createCompanyOwnership({
@@ -82,7 +94,12 @@ export function createCompanyOwnership({
     notified = false;
     let candidate;
     try {
-      candidate = await deadline(pool.connect(), operationDeadlineMs, 'Company ownership connect');
+      candidate = await deadline(
+        pool.connect(),
+        operationDeadlineMs,
+        'Company ownership connect',
+        { onLateResolve: (lateClient, timeoutError) => safeRelease(lateClient, timeoutError) },
+      );
       client = candidate;
       attach(candidate);
       const result = await deadline(
