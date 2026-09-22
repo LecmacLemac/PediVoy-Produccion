@@ -34,6 +34,7 @@ export function createCompanyLifecycle({
   let gateOpen = false;
   let eventGateOpen = false;
   let lastError = null;
+  let fatalExitPromise = null;
   const activeWork = new Map();
   const fatalHandled = new WeakSet();
 
@@ -51,6 +52,12 @@ export function createCompanyLifecycle({
   function closeGate() {
     gateOpen = false;
     eventGateOpen = false;
+  }
+
+  function invokeFatalExit(error) {
+    if (fatalExitPromise) return fatalExitPromise;
+    fatalExitPromise = Promise.resolve().then(() => fatalExit(error)).catch(() => {});
+    return fatalExitPromise;
   }
 
   function beginActiveWork(activeGeneration) {
@@ -166,12 +173,10 @@ export function createCompanyLifecycle({
         if (released !== true) throw new Error('WhatsApp Empresa ownership release was not confirmed');
       } catch (releaseError) {
         terminalError = releaseError;
-        if (ownership.isOwner === true) await fatalExit(releaseError);
       }
-      return false;
     }
 
-    if (!stopConfirmed) await fatalExit(terminalError);
+    await invokeFatalExit(terminalError);
     return false;
   }
 
@@ -199,6 +204,8 @@ export function createCompanyLifecycle({
           state = 'fenced';
           fenced = true;
           closeGate();
+          lastError = releaseError;
+          await invokeFatalExit(releaseError);
           throw releaseError;
         }
         throw error;
@@ -257,6 +264,7 @@ export function createCompanyLifecycle({
         fenced = true;
         lastError = error;
         closeGate();
+        await invokeFatalExit(error);
         throw error;
       }
     });
@@ -275,11 +283,12 @@ export function createCompanyLifecycle({
         await stopCurrent();
       } catch (stopError) {
         lastError = stopError;
-        await fatalExit(stopError);
+        await invokeFatalExit(stopError);
         throw stopError;
       } finally {
         state = 'fenced';
       }
+      await invokeFatalExit(error);
       return false;
     });
     tail = result.catch(() => {});

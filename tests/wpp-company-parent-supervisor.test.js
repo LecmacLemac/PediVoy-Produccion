@@ -80,3 +80,28 @@ test('natural worker exit schedules a respawn while parent is running', async ()
   assert.equal(supervisor.snapshot().workers, 1);
   await supervisor.shutdown();
 });
+
+test('worker spawn error is handled as a failed exit and schedules a respawn', async () => {
+  const children = [
+    fakeChild(301, () => {}),
+    fakeChild(302, () => {}),
+  ];
+  let spawnIndex = 0;
+  const warnings = [];
+  const supervisor = createCompanyWorkerSupervisor({
+    spawnWorker: () => children[spawnIndex++],
+    shouldAutoStart: () => true,
+    respawnDelayMs: 1,
+    shutdownDeadlineMs: 10,
+    logger: { warn(...args) { warnings.push(args); } },
+  });
+
+  supervisor.ensure(9);
+  children[0].emit('error', new Error('spawn failed'));
+  await new Promise(resolve => setTimeout(resolve, 10));
+
+  assert.equal(spawnIndex, 2);
+  assert.equal(supervisor.snapshot().workers, 1);
+  assert.equal(warnings.some(args => args[0] === '[WPP EMPRESA] worker error:'), true);
+  await supervisor.shutdown();
+});

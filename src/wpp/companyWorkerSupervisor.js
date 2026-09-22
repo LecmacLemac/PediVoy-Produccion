@@ -75,6 +75,12 @@ export function createCompanyWorkerSupervisor({
 
     const child = spawnWorker(empresaId);
     workers.set(empresaId, child);
+    child.on('error', error => {
+      if (workers.get(empresaId) !== child) return;
+      workers.delete(empresaId);
+      logger.warn('[WPP EMPRESA] worker error:', empresaId, { error });
+      scheduleRespawn(empresaId, error?.code || 'spawn_error');
+    });
     child.once('exit', (code, signal) => {
       if (workers.get(empresaId) !== child) return;
       workers.delete(empresaId);

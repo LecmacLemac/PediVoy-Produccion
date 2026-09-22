@@ -219,12 +219,13 @@ test('active work drain timeout fails closed without destroying or unlocking', a
   await work;
 });
 
-test('ownership loss closes the gate and drains admitted work before teardown', async () => {
+test('ownership loss drains admitted work and invokes fatal exit after teardown', async () => {
   const order = [];
   const workRelease = deferred();
   const lifecycle = createCompanyLifecycle({
     ownership: owner(),
     clientFactory: { create: () => fakeClient('client-1', order) },
+    fatalExit: async () => { order.push('fatal-exit'); },
     drainDeadlineMs: 100,
   });
   await lifecycle.start();
@@ -246,6 +247,7 @@ test('ownership loss closes the gate and drains admitted work before teardown', 
   assert.deepEqual(order, [
     'client-1:initialize', 'work-start', 'work-end',
     'client-1:listeners-removed', 'client-1:destroy', 'client-1:confirm',
+    'fatal-exit',
   ]);
 });
 
@@ -371,7 +373,7 @@ test('unconfirmed terminal stop invokes fatal exit and never releases ownership'
   await assert.rejects(lifecycle.restart('retry'), { code: 'WPP_COMPANY_NOT_OWNER' });
 });
 
-test('initialization failure tears down and releases ownership when stop is confirmed', async () => {
+test('initialization failure exits after confirmed teardown and ownership release', async () => {
   const order = [];
   const ownership = owner();
   ownership.releaseAfterQuiesced = async fn => {
@@ -386,15 +388,72 @@ test('initialization failure tears down and releases ownership when stop is conf
   const lifecycle = createCompanyLifecycle({
     ownership,
     clientFactory: { create: () => client },
-    fatalExit: async error => { fatalErrors.push(error); },
+    fatalExit: async error => { fatalErrors.push(error); order.push('fatal-exit'); },
   });
 
   await assert.rejects(lifecycle.start(), /initialize failed/);
 
   assert.equal(ownership.isOwner, false);
-  assert.equal(fatalErrors.length, 0);
+  assert.equal(fatalErrors.length, 1);
+  assert.match(fatalErrors[0].message, /initialize failed/);
   assert.deepEqual(order, [
     'client-1:initialize', 'client-1:listeners-removed', 'client-1:destroy',
-    'client-1:confirm', 'unlock',
+    'client-1:confirm', 'unlock', 'fatal-exit',
   ]);
+});
+
+test('terminal release failure invokes fatal exit once after ownership marks itself lost', async () => {
+  const order = [];
+  const ownership = owner();
+  const releaseError = new Error('unlock failed');
+  ownership.releaseAfterQuiesced = async fn => {
+    await fn();
+    order.push('unlock-attempt');
+    ownership.isOwner = false;
+    throw releaseError;
+  };
+  const fatalErrors = [];
+  const client = fakeClient('client-1', order);
+  client.initialize = async () => { order.push('client-1:initialize'); throw new Error('initialize failed'); };
+  const lifecycle = createCompanyLifecycle({
+    ownership,
+    clientFactory: { create: () => client },
+    fatalExit: async error => { fatalErrors.push(error); order.push('fatal-exit'); },
+  });
+
+  await assert.rejects(lifecycle.start(), /initialize failed/);
+
+  assert.equal(ownership.isOwner, false);
+  assert.deepEqual(fatalErrors, [releaseError]);
+  assert.deepEqual(order, [
+    'client-1:initialize', 'client-1:listeners-removed', 'client-1:destroy',
+    'client-1:confirm', 'unlock-attempt', 'fatal-exit',
+  ]);
+});
+
+test('initialization guard release failure invokes fatal exit once after ownership loss', async () => {
+  const order = [];
+  const ownership = owner();
+  const releaseError = new Error('guard unlock failed');
+  ownership.releaseAfterQuiesced = async fn => {
+    await fn();
+    order.push('unlock-attempt');
+    ownership.isOwner = false;
+    throw releaseError;
+  };
+  const fatalErrors = [];
+  const lifecycle = createCompanyLifecycle({
+    ownership,
+    clientFactory: { create() { throw new Error('client must not be created'); } },
+    fatalExit: async error => { fatalErrors.push(error); order.push('fatal-exit'); },
+  });
+
+  await assert.rejects(
+    lifecycle.start({ beforeInitialize: async () => { throw new Error('guard failed'); } }),
+    error => error === releaseError,
+  );
+
+  assert.equal(ownership.isOwner, false);
+  assert.deepEqual(fatalErrors, [releaseError]);
+  assert.deepEqual(order, ['unlock-attempt', 'fatal-exit']);
 });
