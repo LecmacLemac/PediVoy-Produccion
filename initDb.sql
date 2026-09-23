@@ -973,6 +973,8 @@ CREATE TABLE IF NOT EXISTS comprobantes_transferencia (
   source_message_id TEXT,
   dedupe_file_hash TEXT,
   approval_dedupe_key TEXT,
+  source_chat_jid  TEXT,
+  transport_origin TEXT,
   estado_revision  TEXT DEFAULT 'pendiente',
   riesgo_score     INTEGER DEFAULT 0,
   riesgo_flags     TEXT,
@@ -986,7 +988,9 @@ CREATE TABLE IF NOT EXISTS comprobantes_transferencia (
 ALTER TABLE comprobantes_transferencia
   ADD COLUMN IF NOT EXISTS source_message_id TEXT,
   ADD COLUMN IF NOT EXISTS dedupe_file_hash TEXT,
-  ADD COLUMN IF NOT EXISTS approval_dedupe_key TEXT;
+  ADD COLUMN IF NOT EXISTS approval_dedupe_key TEXT,
+  ADD COLUMN IF NOT EXISTS source_chat_jid TEXT,
+  ADD COLUMN IF NOT EXISTS transport_origin TEXT;
 
 
 CREATE TABLE IF NOT EXISTS pedido_pagos (
@@ -1322,6 +1326,7 @@ CREATE TABLE IF NOT EXISTS wpp_outbox (
   claim_owner TEXT,
   claim_epoch BIGINT,
   claim_until TIMESTAMPTZ,
+  transport_origin TEXT,
   CONSTRAINT wpp_outbox_status_check
     CHECK (status IN ('pending', 'sending', 'sent', 'error', 'skipped'))
 );
@@ -1339,7 +1344,8 @@ ALTER TABLE wpp_outbox
 ALTER TABLE wpp_outbox
   ADD COLUMN IF NOT EXISTS claim_owner TEXT,
   ADD COLUMN IF NOT EXISTS claim_epoch BIGINT,
-  ADD COLUMN IF NOT EXISTS claim_until TIMESTAMPTZ;
+  ADD COLUMN IF NOT EXISTS claim_until TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS transport_origin TEXT;
 
 UPDATE wpp_outbox
 SET status = CASE WHEN sent_at IS NOT NULL THEN 'sent' ELSE 'error' END,

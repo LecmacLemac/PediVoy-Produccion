@@ -36,3 +36,21 @@ test('dedupe de outbox incluye tenant null-safe', async () => {
   const source = await readFile(new URL('../src/services/messaging.js', import.meta.url), 'utf8');
   assert.match(source, /empresa_id IS NOT DISTINCT FROM \$3/);
 });
+
+test('aviso manual de comprobante conserva el transporte que recibió el archivo', async () => {
+  const route = await readFile(new URL('../src/routes/transferencias.js', import.meta.url), 'utf8');
+  const messaging = await readFile(new URL('../src/services/messaging.js', import.meta.url), 'utf8');
+  assert.match(route, /transport_origin:\s*ct\.transport_origin/);
+  assert.match(messaging, /transport_origin IS NOT DISTINCT FROM \$4/);
+  assert.match(messaging, /INSERT INTO wpp_outbox \(empresa_id, telefono, mensaje, transport_origin/);
+});
+
+test('pagos permite asociar huérfanos antes de habilitar su validación', async () => {
+  const source = await readFile(new URL('../pedidos/pagos.html', import.meta.url), 'utf8');
+  assert.match(source, /!t\.pedido_id[\s\S]*asociarPedido/);
+  assert.match(source, /\/api\/transferencias\/\$\{id\}\/asociar-pedido/);
+  assert.match(source, /pedido_id:\s*pedidoId/);
+  assert.match(source, /!!t\.pedido_id[^\n]*!isValidado/);
+  const association = source.slice(source.indexOf('async function asociarPedido'), source.indexOf('async function solicitarComprobante'));
+  assert.doesNotMatch(association, /payload\.empresa_id|row\.empresa_id/);
+});

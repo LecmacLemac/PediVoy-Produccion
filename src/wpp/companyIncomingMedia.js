@@ -24,6 +24,10 @@ export function registerCompanyIncomingMedia(client, {
     query,
     lidByPhone,
     handleIncomingComprobanteFromBotPg,
+    // El callback completo ya está protegido por el gate exterior; exponer el
+    // cliente aquí permite resolver de forma oficial LID -> PN sin abrir un
+    // segundo lease ni usar los dígitos internos del LID como teléfono.
+    withActiveClient: fn => fn({ client, generation }),
   });
   const guardedHandler = typeof withActiveClient === 'function'
     ? message => Promise.resolve(withActiveClient(({ client: activeClient, generation: activeGeneration }) => {

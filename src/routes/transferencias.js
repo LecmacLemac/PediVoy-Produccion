@@ -7,7 +7,8 @@ import { readFile, unlink, writeFile } from 'node:fs/promises';
 import { withAuth, checkLicencia, isSuper, getEmpresaIdFromToken, enqueueWppMessage } from '../services.js';
 import { query } from '../db.js';
 import { notificarPedidoTransferencia } from '../services/notificacionesPedidos.js';
-import { aprobarComprobanteManualAtomicoPg } from '../transferenciasServices.js';
+import { aprobarComprobanteManualAtomicoPg, asociarComprobantePedidoPg } from '../transferenciasServices.js';
+import { buildReceiptStatusMessage } from '../transferenciasPipeline.js';
 
 export function requireTransferApprovalRole(req, res, next) {
   const role = String(req.user?.role || '').trim().toLowerCase();
@@ -221,6 +222,7 @@ export function createTransferenciasRouter({
   isSuperFn = isSuper,
   getEmpresaIdFromTokenFn = getEmpresaIdFromToken,
   approveManualFn = aprobarComprobanteManualAtomicoPg,
+  associateReceiptFn = asociarComprobantePedidoPg,
 } = {}) {
   if (!TRANSF_DIR) throw new Error('createTransferenciasRouter requiere TRANSF_DIR');
 
@@ -230,6 +232,7 @@ export function createTransferenciasRouter({
   const isSuper = isSuperFn;
   const getEmpresaIdFromToken = getEmpresaIdFromTokenFn;
   const aprobarComprobanteManualAtomicoPg = approveManualFn;
+  const asociarComprobantePedidoPg = associateReceiptFn;
   const router = express.Router();
   const VERIFY_TOLERANCE = Number(process.env.TRANSFER_VERIFY_TOLERANCE || 1);
 
@@ -238,6 +241,8 @@ export function createTransferenciasRouter({
   const ensureSchemaPromise = (async () => {
     try {
       await query(`ALTER TABLE comprobantes_transferencia ADD COLUMN IF NOT EXISTS file_hash TEXT`);
+      await query(`ALTER TABLE comprobantes_transferencia ADD COLUMN IF NOT EXISTS source_chat_jid TEXT`);
+      await query(`ALTER TABLE comprobantes_transferencia ADD COLUMN IF NOT EXISTS transport_origin TEXT`);
       await query(`ALTER TABLE comprobantes_transferencia ADD COLUMN IF NOT EXISTS estado_revision TEXT DEFAULT 'pendiente'`);
       await query(`ALTER TABLE comprobantes_transferencia ADD COLUMN IF NOT EXISTS riesgo_score INTEGER DEFAULT 0`);
       await query(`ALTER TABLE comprobantes_transferencia ADD COLUMN IF NOT EXISTS riesgo_flags TEXT`);
@@ -865,6 +870,33 @@ export function createTransferenciasRouter({
     }
   );
 
+  router.post('/:id/asociar-pedido', async (req, res) => {
+    try {
+      await ensureSchemaPromise;
+      const id = Number(req.params.id);
+      const pedidoId = Number(req.body?.pedido_id);
+      const reason = String(req.body?.reason || '').trim();
+      const actorId = Number(req.user?.uid || 0);
+      if (![id, pedidoId, actorId].every(value => Number.isInteger(value) && value > 0) || !reason) {
+        return res.status(400).json({ error: 'Comprobante, pedido y motivo son requeridos' });
+      }
+      const row = await asociarComprobantePedidoPg({
+        id,
+        pedidoId,
+        actorRole: req.user?.role,
+        actorEmpresaId: req.user?.empresa_id ?? null,
+        actorId,
+        reason,
+      });
+      return res.json({ ok: true, comprobante: row });
+    } catch (error) {
+      const code = String(error?.code || 'fallo_asociacion_transaccional');
+      const status = code === 'adopcion_global_no_autorizada' ? 403
+        : ['comprobante_no_encontrado', 'tenant_no_coincide', 'pedido_no_asociado'].includes(code) ? 404 : 409;
+      return res.status(status).json({ ok: false, error: code });
+    }
+  });
+
   // VERIFICAR
   router.post('/:id/verificar', async (req, res) => {
     try {
@@ -904,25 +936,23 @@ export function createTransferenciasRouter({
       }
 
       const monto = Number(ct.monto || 0);
-      if (enviarAviso && ct.telefono && typeof enqueueWppMessage === 'function') {
+      const replyTarget = ct.source_chat_jid || ct.telefono;
+      if (enviarAviso && replyTarget && typeof enqueueWppMessage === 'function') {
         try {
-          const digits = String(ct.telefono).replace(/\D+/g, '');
-          if (digits) {
-            const fmt = new Intl.NumberFormat('es-AR', {
-              style: 'currency',
-              currency: 'ARS',
-              minimumFractionDigits: 2
-            }).format(monto || 0);
-
-            const mensaje = (
-              `¡Hola ${ct.cliente || ''}!\n` +
-              `✅ Registramos tu pago por transferencia de ${fmt} ` +
-              `${ct.pedido_id ? `para el pedido #${ct.pedido_id}.` : ''}\n` +
-              `🙏 ¡Muchas gracias!`
-            ).trim();
-
-            await enqueueWppMessage({ phone: digits, message: mensaje, empresa_id: targetEmpresaId });
-          }
+          const mensaje = buildReceiptStatusMessage({
+            status: 'approved',
+            pedidoId: ct.pedido_id,
+            monto,
+            bancoOrigen: ct.banco_origen,
+            cuentaDestino: ct.banco_destino,
+            nroOperacion: ct.nro_operacion,
+          });
+          await enqueueWppMessage({
+            phone: replyTarget,
+            message: mensaje,
+            empresa_id: targetEmpresaId,
+            transport_origin: ct.transport_origin,
+          });
         } catch (werr) {
           console.error('Error en enqueue WPP transferencia:', werr);
         }

@@ -94,6 +94,49 @@ async function resolveRecentTransferEmpresaId({ query, telSuffix }) {
   return unique.length === 1 ? unique[0] : null;
 }
 
+function phoneFromPnJid(value) {
+  const raw = String(value || '').trim();
+  if (!raw.toLowerCase().endsWith('@c.us')) return null;
+  const digits = raw.slice(0, -5).replace(/\D+/g, '');
+  return digits.length >= 10 && digits.length <= 15 ? digits : null;
+}
+
+async function resolvePhoneForLid({ lid, withActiveClient, msg, timeoutMs = 8000 }) {
+  if (typeof withActiveClient === 'function') {
+    try {
+      const rows = await withActiveClient(async ({ client } = {}) => {
+        if (typeof client?.getContactLidAndPhone !== 'function') return [];
+        let timeoutId;
+        try {
+          return await Promise.race([
+            client.getContactLidAndPhone([lid]),
+            new Promise((_, reject) => {
+              timeoutId = setTimeout(() => reject(new Error('lid_resolution_timeout')), timeoutMs);
+            }),
+          ]);
+        } finally {
+          if (timeoutId) clearTimeout(timeoutId);
+        }
+      });
+      const mapping = rows?.[0];
+      const phone = String(mapping?.lid || '') === lid ? phoneFromPnJid(mapping?.pn) : null;
+      if (phone) return phone;
+    } catch (error) {
+      if (error?.code === 'WPP_NOT_OWNER') throw error;
+    }
+  }
+
+  try {
+    const contact = await (typeof withActiveClient === 'function'
+      ? withActiveClient(() => msg.getContact())
+      : msg.getContact());
+    return phoneFromPnJid(contact?.id?._serialized);
+  } catch (error) {
+    if (error?.code === 'WPP_NOT_OWNER') throw error;
+    return null;
+  }
+}
+
 export function createIncomingMediaHandler({
   query,
   lidByPhone,
@@ -123,13 +166,17 @@ export function createIncomingMediaHandler({
 
       if (!isMedia) return;
 
+      const sourceChatJid = /^[^\s@]+@(c\.us|lid)$/i.test(String(msg.from || '').trim())
+        ? String(msg.from).trim()
+        : null;
       const rawFromDigits = String(msg.from || '').replace(/\D/g, '');
-      let telefonoLimpio = rawFromDigits;
+      let telefonoLimpio = String(msg.from || '').includes('@lid') ? null : (rawFromDigits || null);
 
       if (String(msg.from || '').includes('@lid')) {
         try {
-          const contact = await useTransport(() => msg.getContact());
-          const contactDigits = String(contact?.number || contact?.id?.user || '').replace(/\D/g, '');
+          const contactDigits = await resolvePhoneForLid({
+            lid: String(msg.from), withActiveClient, msg,
+          });
           if (contactDigits) telefonoLimpio = contactDigits;
           const key10 = String(telefonoLimpio || '').replace(/\D/g, '').slice(-10);
           if (key10 && String(msg.from || '').includes('@lid')) {
@@ -145,7 +192,7 @@ export function createIncomingMediaHandler({
         }
       }
 
-      const clienteQuery = await query(
+      const clienteQuery = telefonoLimpio ? await query(
         tenantId
           ? `SELECT id FROM puntos_entrega
              WHERE telefono_normalizado LIKE '%' || $1
@@ -156,13 +203,13 @@ export function createIncomingMediaHandler({
              ORDER BY empresa_id
              LIMIT 2`,
         tenantId ? [telefonoLimpio.slice(-10), tenantId] : [telefonoLimpio.slice(-10)]
-      );
+      ) : [];
 
       if (clienteQuery.length === 0 && tenantId) {
         console.warn('[WPP MEDIA] Remitente no registrado en empresa; se guarda comprobante pendiente.', {
           empresaId: tenantId,
         });
-      } else if (clienteQuery.length === 0) {
+      } else if (clienteQuery.length === 0 && telefonoLimpio) {
         const fallbackEmpresaId = await resolveRecentTransferEmpresaId({ query, telSuffix: telefonoLimpio.slice(-10) });
         if (fallbackEmpresaId) {
           clienteQuery.push({ empresa_id: fallbackEmpresaId, fallback: 'recent_transfer_order' });
@@ -209,12 +256,13 @@ export function createIncomingMediaHandler({
       const result = await handleIncomingComprobanteFromBotPg({
         type: t,
         telefono: telefonoLimpio,
-        telefono_jid: msg.from,
+        replyJid: sourceChatJid,
         buffer,
         base64: media.data,
         mimetype: media.mimetype,
         filename: media.filename || msg.body?.slice(0, 20) || 'archivo',
         empresaId: resolvedEmpresaId,
+        transportOrigin: tenantId ? 'company' : 'general',
         sourceMessageId: ensureSerializedMessageId(msg),
       });
 

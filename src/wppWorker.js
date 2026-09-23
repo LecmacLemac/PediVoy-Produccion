@@ -359,7 +359,8 @@ async function processOutbox() {
         query,
         owner: OUTBOX_CLAIM_OWNER,
         limit: 5,
-        whereSql: 'AND o.empresa_id = $4',
+        whereSql: `AND o.empresa_id = $4
+          AND (o.transport_origin = 'company' OR o.transport_origin IS NULL)`,
         whereParams: [EMPRESA_ID],
       });
 

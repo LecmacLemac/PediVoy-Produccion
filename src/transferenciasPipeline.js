@@ -174,6 +174,42 @@ const formatMoney = (n) =>
     minimumFractionDigits: 0
   }).format(n || 0);
 
+function cleanReceiptField(value) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  return text && text.toLowerCase() !== 'null' ? text.slice(0, 80) : null;
+}
+
+function maskReceiptOperation(value) {
+  const text = cleanReceiptField(value);
+  if (!text) return null;
+  const suffix = text.slice(-4);
+  return text.length > 4 ? `••••${suffix}` : suffix;
+}
+
+export function buildReceiptStatusMessage({
+  status,
+  pedidoId = null,
+  monto = null,
+  bancoOrigen = null,
+  cuentaDestino = null,
+  nroOperacion = null,
+} = {}) {
+  const approved = status === 'approved';
+  const lines = [approved ? '✅ Comprobante aprobado' : '📄 Comprobante recibido', ''];
+  if (pedidoId) lines.push(`Pedido: #${pedidoId}`);
+  if (Number.isFinite(Number(monto)) && Number(monto) > 0) {
+    lines.push(`Monto detectado: ${formatMoney(Number(monto))}`);
+  }
+  if (cleanReceiptField(bancoOrigen)) lines.push(`Banco de origen: ${cleanReceiptField(bancoOrigen)}`);
+  if (cleanReceiptField(cuentaDestino)) lines.push(`Cuenta destino: ${cleanReceiptField(cuentaDestino)}`);
+  if (maskReceiptOperation(nroOperacion)) lines.push(`Operación: ${maskReceiptOperation(nroOperacion)}`);
+  lines.push(`Estado: ${approved ? 'aprobado' : 'pendiente de revisión manual'}`);
+  lines.push('', approved
+    ? 'El pago quedó acreditado en tu pedido.'
+    : 'Te avisaremos cuando el pago quede acreditado.');
+  return lines.join('\n');
+}
+
 const parseMoney = (input) => {
   if (typeof input === 'number') return Number.isFinite(input) ? input : 0;
   const clean = String(input || '')
@@ -246,7 +282,9 @@ export function evaluateReceiptApproval({
   };
 }
 
-export async function finalizeReceiptValidation({ registroDB, datosIA, telefono, deps = {} }) {
+export async function finalizeReceiptValidation({
+  registroDB, datosIA, telefono, replyJid = null, transportOrigin = null, deps = {},
+}) {
   const services = {
     resolverCuentaBancariaDestinoPg,
     actualizarComprobanteDatosPg,
@@ -255,6 +293,8 @@ export async function finalizeReceiptValidation({ registroDB, datosIA, telefono,
     ...deps,
   };
   const empresaId = Number(registroDB?.empresa_id || 0) || null;
+  const replyTarget = replyJid || registroDB?.source_chat_jid || telefono;
+  const replyTransportOrigin = transportOrigin || registroDB?.transport_origin || null;
   const monto = parseMoney(datosIA?.monto);
   const nroOperacion = datosIA?.nro_operacion ? String(datosIA.nro_operacion).trim() : null;
   const cuentaDestinoMatch = empresaId
@@ -314,9 +354,17 @@ export async function finalizeReceiptValidation({ registroDB, datosIA, telefono,
 
   if (decision.approved) {
     await services.enqueueWppMessagePg({
-      phone: telefono,
-      message: `✅ Comprobante aprobado por ${formatMoney(monto)} y asociado al pedido.`,
+      phone: replyTarget,
+      message: buildReceiptStatusMessage({
+        status: 'approved',
+        pedidoId: registroDB.pedido_id,
+        monto,
+        bancoOrigen: datosIA?.banco_origen,
+        cuentaDestino: cuentaDestinoMatch?.cuenta?.banco || datosIA?.banco_destino,
+        nroOperacion,
+      }),
       empresaId,
+      transportOrigin: replyTransportOrigin,
     });
     return { ok: true, id: registroDB.id, pedido_id: registroDB.pedido_id, data: datosIA };
   }
@@ -334,9 +382,17 @@ export async function finalizeReceiptValidation({ registroDB, datosIA, telefono,
   await services.actualizarComprobanteDatosPg(registroDB.id, patch);
 
   await services.enqueueWppMessagePg({
-    phone: telefono,
-    message: '📄 Comprobante guardado y pendiente de revisión manual.',
+    phone: replyTarget,
+    message: buildReceiptStatusMessage({
+      status: 'pending',
+      pedidoId: registroDB.pedido_id,
+      monto,
+      bancoOrigen: datosIA?.banco_origen,
+      cuentaDestino: cuentaDestinoMatch?.cuenta?.banco || datosIA?.banco_destino,
+      nroOperacion,
+    }),
     empresaId,
+    transportOrigin: replyTransportOrigin,
   });
   return {
     ok: false,
@@ -456,7 +512,8 @@ async function analyzeReceiptWithAI(imagePayload) {
 
 // --- PIPELINE PRINCIPAL ---
 export async function procesarArchivoTransferenciaPg(filePayload, telefono, {
-  empresaId: canalEmpresaId = null, sourceMessageId = null, deps = {},
+  empresaId: canalEmpresaId = null, sourceMessageId = null, replyJid = null,
+  transportOrigin = null, deps = {},
 } = {}) {
   const logPrefix = '[Pipeline comprobante]';
   if (CONFIG.DEBUG) console.time(logPrefix);
@@ -481,6 +538,8 @@ export async function procesarArchivoTransferenciaPg(filePayload, telefono, {
     //    Devuelve ID del registro y empresa_id (si existía)
     registroDB = await services.insertarComprobantePg({
       telefono,
+      replyJid,
+      transportOrigin,
       imagen_path: savedFile.relativePath,
       fecha: new Date(), // PG lo guarda como TIMESTAMPTZ
       empresaId: canalEmpresaId,
@@ -496,12 +555,14 @@ export async function procesarArchivoTransferenciaPg(filePayload, telefono, {
     }
 
     empresaId = registroDB?.empresa_id || null;
+    const replyTarget = replyJid || registroDB?.source_chat_jid || telefono;
 
     // 3. Feedback inicial (ya conocemos empresaId)
-    services.enqueueWppMessagePg({
-      phone: telefono,
+    await services.enqueueWppMessagePg({
+      phone: replyTarget,
       message: '📄 Recibido. Analizando comprobante...',
-      empresaId
+      empresaId,
+      transportOrigin: registroDB?.transport_origin || transportOrigin,
     }).catch(() => {});
 
     // 4. Preparar imagen y consultar a la IA. Si falla esta parte, el archivo
@@ -520,10 +581,10 @@ export async function procesarArchivoTransferenciaPg(filePayload, telefono, {
         verified_at: null,
       });
       await services.enqueueWppMessagePg({
-        phone: telefono,
-        message:
-          '📄 Comprobante guardado. No pude leer los datos automáticamente, así que queda para revisión manual.',
-        empresaId
+        phone: replyTarget,
+        message: buildReceiptStatusMessage({ status: 'pending', pedidoId: registroDB?.pedido_id }),
+        empresaId,
+        transportOrigin: registroDB?.transport_origin || transportOrigin,
       });
       if (CONFIG.DEBUG) console.timeEnd(logPrefix);
       return {
@@ -535,7 +596,9 @@ export async function procesarArchivoTransferenciaPg(filePayload, telefono, {
       };
     }
 
-    const result = await finalizeReceiptValidation({ registroDB, datosIA, telefono });
+    const result = await finalizeReceiptValidation({
+      registroDB, datosIA, telefono, replyJid, transportOrigin, deps,
+    });
     if (CONFIG.DEBUG) console.timeEnd(logPrefix);
     return result;
   } catch (error) {
@@ -544,9 +607,10 @@ export async function procesarArchivoTransferenciaPg(filePayload, telefono, {
       await fs.promises.unlink(savedFile.absolutePath).catch(() => {});
     }
     await services.enqueueWppMessagePg({
-      phone: telefono,
+      phone: replyJid || telefono,
       message: '⚠️ Error guardando el archivo. Por favor reintenta.',
-      empresaId
+      empresaId,
+      transportOrigin,
     });
     return { ok: false, error: error.message };
   }
@@ -555,8 +619,8 @@ export async function procesarArchivoTransferenciaPg(filePayload, telefono, {
 // Entrada desde el bot (normaliza payload y delega al pipeline)
 export async function handleIncomingComprobanteFromBotPg(botData, options = {}) {
   const {
-    type, telefono, buffer, base64, mimetype, filename, empresaId = null,
-    sourceMessageId = null,
+    type, telefono, replyJid = null, buffer, base64, mimetype, filename, empresaId = null,
+    sourceMessageId = null, transportOrigin = null,
   } = botData;
 
   // Filtro básico
@@ -592,7 +656,7 @@ export async function handleIncomingComprobanteFromBotPg(botData, options = {}) 
       mimetype
     },
     telefono,
-    { empresaId, sourceMessageId }
+    { empresaId, sourceMessageId, replyJid, transportOrigin, deps: options.deps || {} }
   );
 }
 

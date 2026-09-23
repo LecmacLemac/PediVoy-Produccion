@@ -94,13 +94,14 @@ async function assertCanonicalContract(pool) {
       FROM information_schema.columns
      WHERE table_schema = current_schema()
        AND table_name = 'wpp_outbox'
-       AND column_name IN ('claim_owner', 'claim_epoch', 'claim_until')
+       AND column_name IN ('claim_owner', 'claim_epoch', 'claim_until', 'transport_origin')
      ORDER BY column_name
   `);
   assert.deepEqual(claimColumns.rows, [
     { column_name: 'claim_epoch', data_type: 'bigint' },
     { column_name: 'claim_owner', data_type: 'text' },
     { column_name: 'claim_until', data_type: 'timestamp with time zone' },
+    { column_name: 'transport_origin', data_type: 'text' },
   ]);
 
   const pendingIndex = await pool.query(`

@@ -206,6 +206,7 @@ test('aprobación autoritativa bloquea y revalida comprobante, pedido, cuenta y 
     }
     if (sql.includes('FROM pedido_pagos')) return [];
     if (sql.includes('UPDATE comprobantes_transferencia')) return [{ id: 11, pedido_id: 20 }];
+    if (sql.includes('INSERT INTO transferencias')) return [];
     throw new Error(`Consulta inesperada: ${sql}`);
   };
   let transactions = 0;

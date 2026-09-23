@@ -7,7 +7,8 @@ export async function ensureWppDeliverySchema(query) {
     ALTER TABLE wpp_outbox
       ADD COLUMN IF NOT EXISTS claim_owner TEXT,
       ADD COLUMN IF NOT EXISTS claim_epoch BIGINT,
-      ADD COLUMN IF NOT EXISTS claim_until TIMESTAMPTZ
+      ADD COLUMN IF NOT EXISTS claim_until TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS transport_origin TEXT
   `);
   await query(`
     ALTER TABLE empresas

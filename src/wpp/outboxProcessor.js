@@ -63,7 +63,8 @@ export function createOutboxProcessor({
             claim_epoch = NULL,
             claim_until = NULL
         WHERE status = 'pending'
-          AND empresa_id IS NULL
+          AND (transport_origin = 'general'
+            OR (transport_origin IS NULL AND empresa_id IS NULL))
           AND (claim_until IS NULL OR claim_until < NOW())
           AND created_at < NOW() - INTERVAL '1 day'
         RETURNING id
@@ -86,7 +87,8 @@ export function createOutboxProcessor({
         limit: 3,
         whereSql: `
           AND o.created_at > NOW() - INTERVAL '1 day'
-          AND o.empresa_id IS NULL
+          AND (o.transport_origin = 'general'
+            OR (o.transport_origin IS NULL AND o.empresa_id IS NULL))
         `,
       });
 
@@ -110,12 +112,13 @@ export function createOutboxProcessor({
         let transportInvoked = false;
         try {
           const raw = String(row.telefono || '').trim();
-          const digits = raw.includes('@') ? raw.split('@')[0].replace(/\D+/g, '') : raw.replace(/\D+/g, '');
+          const isFullJid = /^[^\s@]+@(c\.us|lid)$/i.test(raw);
+          const digits = isFullJid ? '' : raw.replace(/\D+/g, '');
           const normalizedDigits = digits.length === 10 ? `549${digits}` : digits;
           const cachedLid = normalizedDigits ? lidByPhone.get(normalizedDigits.slice(-10)) : null;
           const chatId = await useActiveClient(
             claimToken,
-            client => resolveWhatsappTarget(client, cachedLid || raw),
+            client => resolveWhatsappTarget(client, isFullJid ? raw : (cachedLid || raw)),
           );
 
           try {

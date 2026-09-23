@@ -702,9 +702,12 @@
         : esEfectivo
         ? `<span class="badge badge-info"><i class="fa-solid fa-money-bill"></i> Efec</span>`
         : `<span class="badge badge-info"><i class="fa-solid fa-mobile-screen"></i> Transf</span>`;
-      const btnValidar = (!esQr && !esSinComprobante && !esEfectivo && !isValidado)
+      const btnValidar = (!esQr && !esSinComprobante && !esEfectivo && !!t.pedido_id && !isValidado)
         ? `<button class="btn btn-primary btn-icon" onclick="verificarPago(${t.id})" title="Revisar y validar"><i class="fa-solid fa-check"></i></button>`
         : `<span style="width:32px; display:inline-block"></span>`;
+      const btnAsociar = (!esQr && !esSinComprobante && !esEfectivo && !t.pedido_id && !isValidado)
+        ? `<button class="btn btn-ghost btn-icon" onclick="asociarPedido(${Number(t.id)})" title="Asociar a un pedido"><i class="fa-solid fa-link"></i></button>`
+        : '';
 
       const btnSolicitar = esSinComprobante && String(t.telefono || '').replace(/\D+/g, '')
         ? `<button class="btn btn-primary btn-icon" onclick="solicitarComprobante(${Number(t.pedido_id)})" title="Solicitar comprobante por WhatsApp"><i class="fa-brands fa-whatsapp"></i></button>`
@@ -741,6 +744,7 @@
           <td>${statusBadge(t, isValidado)}</td>
           <td style="text-align:right">
             ${btnSolicitar}
+            ${btnAsociar}
             ${btnValidar}
             ${btnEliminar}
           </td>
@@ -828,6 +832,27 @@
         btn.innerHTML = prev;
       }
     }
+  }
+
+  async function asociarPedido(id) {
+    const pedidoId = Number(prompt('ID del pedido al que corresponde este comprobante:', '') || 0);
+    if (!Number.isInteger(pedidoId) || pedidoId <= 0) return alert('Ingresá un ID de pedido válido.');
+    const reason = (prompt('Motivo de la asociación:', 'Asociación manual verificada por tesorería') || '').trim();
+    if (!reason) return alert('Se requiere un motivo para dejar trazabilidad.');
+    if (!confirm(`¿Asociar el comprobante #${id} al pedido #${pedidoId}?`)) return;
+
+    const payload = { pedido_id: pedidoId, reason };
+    const response = await authFetch(`/api/transferencias/${id}/asociar-pedido`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data?.ok) {
+      return alert(data?.error || 'No se pudo asociar el comprobante.');
+    }
+    toast(`Comprobante asociado al pedido #${pedidoId}`);
+    await loadPagos();
   }
 
   async function solicitarComprobante(pedidoId) {

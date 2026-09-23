@@ -22,7 +22,7 @@ function tokenFor(user) {
   return Buffer.from(JSON.stringify(user)).toString('base64url');
 }
 
-async function buildApp({ approveManualFn } = {}) {
+async function buildApp({ approveManualFn, associateReceiptFn } = {}) {
   const transferDir = await mkdtemp(path.join(tmpdir(), 'pedivoy-transfer-auth-'));
   const calls = [];
   const queryFn = async (sql, params = []) => {
@@ -58,6 +58,7 @@ async function buildApp({ approveManualFn } = {}) {
     withAuthFn,
     checkLicenciaFn,
     approveManualFn,
+    associateReceiptFn,
   }));
   return {
     app,
@@ -75,6 +76,7 @@ const financialOperations = [
   { method: 'GET', path: '/api/transferencias/export.csv' },
   { method: 'POST', path: '/api/transferencias/upload' },
   { method: 'POST', path: '/api/transferencias/1/verificar' },
+  { method: 'POST', path: '/api/transferencias/1/asociar-pedido' },
   { method: 'DELETE', path: '/api/transferencias/1' },
 ];
 
@@ -237,6 +239,46 @@ test('verificación usa empresa del token para admin y empresa enviada por super
       }
     });
     assert.deepEqual(approvals.map(call => call.empresaId), [3, 7]);
+  } finally {
+    await cleanup();
+  }
+});
+
+test('asociación no confía en empresa enviada y delega adopción solo al super exacto', async () => {
+  const associations = [];
+  const { app, cleanup } = await buildApp({
+    associateReceiptFn: async payload => {
+      associations.push(payload);
+      return { id: payload.id, empresa_id: 7, pedido_id: payload.pedidoId };
+    },
+  });
+  try {
+    await withServer(app, async baseUrl => {
+      for (const user of [
+        { uid: 10, role: 'admin', empresa_id: 3 },
+        { uid: 12, role: 'super', empresa_id: null },
+      ]) {
+        const response = await fetch(`${baseUrl}/api/transferencias/1/asociar-pedido`, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${tokenFor(user)}`,
+            'x-test-license': 'active',
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({ pedido_id: 99, empresa_id: 666, reason: 'revisión' }),
+        });
+        assert.equal(response.status, 200);
+      }
+    });
+    assert.deepEqual(associations.map(call => ({
+      actorRole: call.actorRole,
+      actorEmpresaId: call.actorEmpresaId,
+      pedidoId: call.pedidoId,
+      hasEmpresaId: Object.hasOwn(call, 'empresaId'),
+    })), [
+      { actorRole: 'admin', actorEmpresaId: 3, pedidoId: 99, hasEmpresaId: false },
+      { actorRole: 'super', actorEmpresaId: null, pedidoId: 99, hasEmpresaId: false },
+    ]);
   } finally {
     await cleanup();
   }
