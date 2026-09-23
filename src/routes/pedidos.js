@@ -129,7 +129,9 @@ export function createPedidosRouter() {
       const selectBase = `
         FROM pedidos p
         LEFT JOIN empresas e ON e.id = p.empresa_id
-        LEFT JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
+        LEFT JOIN puntos_entrega pe
+          ON pe.id = p.punto_entrega_id
+         AND pe.empresa_id = p.empresa_id
         LEFT JOIN zonas_geograficas z
           ON z.id = COALESCE(p.zona_id, pe.zona_id)
          AND (
@@ -165,6 +167,12 @@ export function createPedidosRouter() {
           pe.cliente,
           pe.telefono,
           pe.direccion,
+          pe.id AS punto_entrega_id,
+          pe.latitud,
+          pe.longitud,
+          pe.ciudad,
+          pe.provincia,
+          pe.pais,
           p.empresa_id,
           e.nombre AS empresa_nombre,
           COALESCE(p.zona_id, pe.zona_id) AS zona_id,
@@ -215,7 +223,9 @@ export function createPedidosRouter() {
         FROM items_pedido ip
         JOIN pedidos p ON p.id = ip.pedido_id
         LEFT JOIN empresas e ON e.id = p.empresa_id
-        LEFT JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
+        LEFT JOIN puntos_entrega pe
+          ON pe.id = p.punto_entrega_id
+         AND pe.empresa_id = p.empresa_id
         LEFT JOIN zonas_geograficas z
           ON z.id = COALESCE(p.zona_id, pe.zona_id)
          AND (
@@ -336,7 +346,9 @@ export function createPedidosRouter() {
       const selectBase = `
         FROM pedidos p
         LEFT JOIN empresas e ON e.id = p.empresa_id
-        LEFT JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
+        LEFT JOIN puntos_entrega pe
+          ON pe.id = p.punto_entrega_id
+         AND pe.empresa_id = p.empresa_id
         LEFT JOIN zonas_geograficas z
           ON z.id = COALESCE(p.zona_id, pe.zona_id)
          AND (
@@ -455,6 +467,7 @@ export function createPedidosRouter() {
           ON e.id = p.empresa_id
         LEFT JOIN puntos_entrega pe
           ON pe.id = p.punto_entrega_id
+         AND pe.empresa_id = p.empresa_id
         LEFT JOIN choferes c
           ON c.id = p.chofer_id
          AND (
@@ -535,7 +548,9 @@ export function createPedidosRouter() {
             (p.empresa_id IS NULL OR p.empresa_id = 0 OR pe.id IS NULL) AS orphan_empresa,
             (p.chofer_id IS NULL OR p.chofer_id = 0 OR c.id IS NULL) AS orphan_chofer
           FROM pedidos p
-          LEFT JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
+          LEFT JOIN puntos_entrega pe
+            ON pe.id = p.punto_entrega_id
+           AND pe.empresa_id = p.empresa_id
           LEFT JOIN choferes c ON c.id = p.chofer_id
           WHERE 1=1
         `;

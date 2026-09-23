@@ -85,6 +85,43 @@ test('PUT /api/clientes/:id actualiza pin y devuelve latitud, longitud y zona', 
   assert.deepEqual(updateCall.params.slice(0, 3), [-32.4113, -63.2374, 7]);
 });
 
+test('PUT /api/clientes/:id recalcula zona al mover el pin manualmente', async () => {
+  const calls = [];
+  const app = buildApp({
+    query: async (sql, params = []) => {
+      calls.push({ sql, params });
+      if (isSchemaQuery(sql)) return [];
+      if (sql.includes('FROM puntos_entrega WHERE id=$1 AND empresa_id=$2')) return [{ id: 45 }];
+      if (sql.includes('UPDATE puntos_entrega')) {
+        return [{ id: 45, latitud: -32.42, longitud: -63.24, zona_id: 9 }];
+      }
+      throw new Error(`Consulta inesperada: ${sql}`);
+    },
+    pointInAnyZone: async ({ empresa_id, lat, lng }) => {
+      assert.equal(empresa_id, 3);
+      assert.equal(lat, -32.42);
+      assert.equal(lng, -63.24);
+      return 9;
+    },
+  });
+
+  await withServer(app, async (baseUrl) => {
+    const resp = await fetch(`${baseUrl}/api/clientes/45`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ latitud: -32.42, longitud: -63.24 }),
+    });
+    const body = await resp.json();
+
+    assert.equal(resp.status, 200);
+    assert.equal(body.cliente.zona_id, 9);
+  });
+
+  const updateCall = calls.find(c => c.sql.includes('UPDATE puntos_entrega'));
+  assert.ok(updateCall.sql.includes('zona_id='));
+  assert.deepEqual(updateCall.params.slice(0, 3), [-32.42, -63.24, 9]);
+});
+
 test('POST /api/clientes/geocode usa país de la empresa', async () => {
   let geocodeArgs = null;
   const app = buildApp({
@@ -189,5 +226,33 @@ test('PUT /api/clientes/:id rechaza coordenadas inválidas', async () => {
 
     assert.equal(resp.status, 400);
     assert.match(body.error, /Latitud inválida/);
+  });
+});
+
+test('PUT /api/clientes/:id rechaza coordenadas fuera del rango geográfico', async () => {
+  const app = buildApp({
+    query: async (sql) => {
+      if (isSchemaQuery(sql)) return [];
+      if (sql.includes('FROM puntos_entrega WHERE id=$1 AND empresa_id=$2')) return [{ id: 45 }];
+      throw new Error(`Consulta inesperada: ${sql}`);
+    },
+  });
+
+  await withServer(app, async (baseUrl) => {
+    for (const payload of [
+      { latitud: 91, longitud: -63.2374 },
+      { latitud: -32.4113, longitud: 181 },
+      { latitud: -91, longitud: -63.2374 },
+      { latitud: -32.4113, longitud: -181 },
+    ]) {
+      const resp = await fetch(`${baseUrl}/api/clientes/45`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const body = await resp.json();
+      assert.equal(resp.status, 400);
+      assert.match(body.error, /(Latitud|Longitud) inválida/);
+    }
   });
 });

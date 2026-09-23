@@ -46,7 +46,13 @@ export function createClientesRouter({
     if (value === undefined) return undefined;
     if (value === '' || value === null) return null;
     const n = Number(value);
-    if (!Number.isFinite(n)) {
+    const normalizedField = String(fieldName || '').toLowerCase();
+    const outsideRange = normalizedField.startsWith('lat')
+      ? n < -90 || n > 90
+      : normalizedField.startsWith('long')
+        ? n < -180 || n > 180
+        : false;
+    if (!Number.isFinite(n) || outsideRange) {
       const err = new Error(`${fieldName} inválida`);
       err.statusCode = 400;
       throw err;
@@ -323,7 +329,11 @@ export function createClientesRouter({
       if (longitud !== undefined) add('longitud', lngValue);
       if (notas !== undefined) add('notas', notas);
       if (esSuperUser && empresa_id !== undefined) add('empresa_id', Number(empresa_id));
-      if (zona_id !== undefined) add('zona_id', await validateZonaForEmpresa(zona_id, targetEmpresa));
+      if (zona_id !== undefined) {
+        add('zona_id', await validateZonaForEmpresa(zona_id, targetEmpresa));
+      } else if (latValue != null && lngValue != null) {
+        add('zona_id', await pointInAnyZoneFn({ empresa_id: targetEmpresa, lat: latValue, lng: lngValue }));
+      }
 
       if (razon_social !== undefined) add('razon_social', razon_social);
       if (cuit !== undefined) add('cuit', cuit);
