@@ -28,12 +28,50 @@ function serializedNumberId(numberId) {
   return null;
 }
 
+async function withTimeout(promise, timeoutMs, message) {
+  let timeoutId;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error(message)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+}
+
+async function resolveLidToPhone(client, lid, timeoutMs) {
+  if (typeof client?.getContactLidAndPhone !== 'function') return lid;
+
+  try {
+    const mappings = await withTimeout(
+      client.getContactLidAndPhone([lid]),
+      timeoutMs,
+      'getContactLidAndPhone_timeout',
+    );
+    const first = Array.isArray(mappings) ? mappings[0] : mappings;
+    const returnedLid = serializedNumberId(first?.lid);
+    const phone = serializedNumberId(first?.pn || first?.phone);
+    if (returnedLid && returnedLid !== lid) return lid;
+    if (phone && phone.toLowerCase().endsWith('@c.us')) return phone;
+  } catch {
+    // Preserve the original JID; delivery will report the deterministic transport error if unresolved.
+  }
+  return lid;
+}
+
 export async function resolveWhatsappTarget(client, destination, { timeoutMs = 8000 } = {}) {
   const raw = String(destination || '').trim();
   if (!raw) throw new Error('telefono_invalido');
 
   if (raw.includes('@') && !VALID_JID.test(raw)) {
     throw new Error('jid_invalido');
+  }
+
+  if (raw.toLowerCase().endsWith('@lid')) {
+    return resolveLidToPhone(client, raw, timeoutMs);
   }
 
   if (VALID_JID.test(raw) && !raw.toLowerCase().endsWith('@c.us')) {

@@ -378,6 +378,24 @@
       border-radius: var(--radius);
       border: 1px solid var(--border);
       background: var(--bg-2);
+      scrollbar-width: thin;
+      scrollbar-color: rgba(6, 182, 212, 0.55) rgba(15, 23, 42, 0.8);
+    }
+
+    .table-responsive::-webkit-scrollbar {
+      height: 10px;
+    }
+
+    .table-responsive::-webkit-scrollbar-thumb {
+      background: rgba(6, 182, 212, 0.55);
+      border-radius: 999px;
+    }
+
+    .mobile-cards-hint {
+      display: none;
+      color: var(--muted);
+      font-size: 0.78rem;
+      margin-top: 0.35rem;
     }
 
     table {
@@ -621,6 +639,30 @@
       transform: translateY(-10px);
     }
 
+    @media (min-width: 900px) {
+      #cuentasTableBody td:first-child,
+      .table-responsive table thead th:first-child {
+        position: sticky;
+        left: 0;
+        z-index: 2;
+        background: #101827;
+        box-shadow: 10px 0 18px rgba(2, 6, 23, 0.22);
+      }
+
+      #cuentasTableBody td:last-child,
+      .table-responsive table thead th:last-child {
+        position: sticky;
+        right: 0;
+        z-index: 2;
+        background: #101827;
+        box-shadow: -10px 0 18px rgba(2, 6, 23, 0.22);
+      }
+
+      .table-responsive table {
+        min-width: 1180px;
+      }
+    }
+
     @media (max-width: 920px) {
       nav {
         flex-direction: column;
@@ -659,6 +701,167 @@
 
       .row-actions {
         justify-content: flex-start;
+      }
+    }
+    @media (max-width: 760px) {
+      body {
+        font-size: 13px;
+      }
+
+      .container {
+        padding: 0 12px;
+      }
+
+      main {
+        gap: 1rem;
+        padding-top: 1rem;
+      }
+
+      .toolbar,
+      .panel,
+      .kpi-card {
+        border-radius: 14px;
+      }
+
+      .toolbar {
+        padding: 1.15rem;
+      }
+
+      .toolbar-title h1,
+      .panel-head h2 {
+        font-size: 1.35rem;
+        line-height: 1.15;
+      }
+
+      .filters-grid,
+      .grid-kpi,
+      .summary-strip,
+      .detail-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .kpi-card {
+        padding: 1rem 1.05rem;
+      }
+
+      .kpi-val h3 {
+        font-size: 1.55rem;
+      }
+
+      .panel-head {
+        padding: 1.1rem 1.1rem 0.65rem !important;
+      }
+
+      #segmentSummary {
+        padding: 0 1.1rem 1rem !important;
+      }
+
+      .mobile-cards-hint {
+        display: block;
+      }
+
+      .table-responsive {
+        overflow: visible;
+        border: none;
+        background: transparent;
+      }
+
+      .table-responsive table,
+      .table-responsive thead,
+      .table-responsive tbody,
+      .table-responsive th,
+      .table-responsive td,
+      .table-responsive tr {
+        display: block;
+        width: 100%;
+      }
+
+      .table-responsive thead {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+      }
+
+      #cuentasTableBody tr,
+      #detalleTableBody tr {
+        display: block;
+        margin: 0 0 0.9rem;
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        background: rgba(15, 23, 42, 0.82);
+        box-shadow: 0 10px 24px rgba(2, 6, 23, 0.24);
+        overflow: hidden;
+      }
+
+      #cuentasTableBody td,
+      #detalleTableBody td {
+        display: grid;
+        grid-template-columns: minmax(104px, 38%) minmax(0, 1fr);
+        gap: 0.75rem;
+        align-items: start;
+        padding: 0.72rem 0.85rem;
+        border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+        white-space: normal;
+      }
+
+      #cuentasTableBody td::before,
+      #detalleTableBody td::before {
+        content: attr(data-label);
+        color: var(--muted);
+        font-size: 0.68rem;
+        font-weight: 800;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+
+      #cuentasTableBody td:first-child,
+      #detalleTableBody td:first-child {
+        grid-template-columns: 1fr;
+        background: rgba(6, 182, 212, 0.06);
+      }
+
+      #cuentasTableBody td:first-child::before,
+      #detalleTableBody td:first-child::before {
+        margin-bottom: 0.15rem;
+      }
+
+      #cuentasTableBody td:last-child,
+      #detalleTableBody td:last-child {
+        border-bottom: none;
+      }
+
+      .cliente-main {
+        min-width: 0;
+      }
+
+      .period-list,
+      .row-actions {
+        max-width: none;
+        justify-content: stretch;
+      }
+
+      .row-actions .btn {
+        flex: 1 1 100%;
+      }
+
+      dialog {
+        width: calc(100% - 18px);
+        max-width: none;
+        max-height: calc(100dvh - 18px);
+      }
+
+      .modal-body {
+        max-height: calc(100dvh - 145px);
+        padding: 0.9rem;
+      }
+
+      .toast {
+        right: 12px;
+        left: 12px;
+        bottom: 18px;
+        text-align: center;
       }
     }
     .pedivoy-brand-logo{display:inline-block;width:auto;height:32px;max-width:150px;object-fit:contain;vertical-align:middle;flex:0 0 auto}.brand .pedivoy-brand-logo{height:32px}.pedivoy-brand-badge{position:fixed;top:12px;left:12px;z-index:1000;display:inline-flex;align-items:center;padding:7px 10px;border-radius:10px;background:rgba(15,23,42,.82);border:1px solid rgba(148,163,184,.22);box-shadow:0 10px 30px rgba(2,8,23,.25);backdrop-filter:blur(10px)}.pedivoy-brand-badge img{height:28px;width:auto;display:block}
@@ -793,6 +996,7 @@
       </div>
       <div class="table-meta">
         <span class="text-subtle" id="tableInfo">0 clientes.</span>
+        <span class="mobile-cards-hint" id="mobileCardsHint">En celular cada cliente se muestra como tarjeta accionable.</span>
       </div>
     </div>
 
@@ -1453,7 +1657,7 @@
 
       return `
         <tr data-account-key="${escapeHtml(account.key)}">
-          <td>
+          <td data-label="Cliente">
             <div class="cliente-main">
               <strong>${escapeHtml(account.cliente_nombre)}</strong>
               <span class="text-subtle">${escapeHtml(account.empresa_nombre || '–')}</span>
@@ -1461,20 +1665,20 @@
               ${account.direccion ? '<span class="text-subtle">📍 ' + escapeHtml(account.direccion) + '</span>' : ''}
             </div>
           </td>
-          <td><span class="status-badge ${status.cls}">${escapeHtml(status.label)}</span></td>
-          <td>
+          <td data-label="Estado"><span class="status-badge ${status.cls}">${escapeHtml(status.label)}</span></td>
+          <td data-label="Prioridad">
             <span class="status-badge ${priority.cls}">${escapeHtml(priority.label)}</span>
             <div class="risk-line">${escapeHtml(priority.note)}</div>
           </td>
-          <td>${currencyFmt.format(account.totalAdeudado)}</td>
-          <td>${currencyFmt.format(account.totalCobrado)}</td>
-          <td><div class="period-list">${periodsHtml}</div></td>
-          <td>${escapeHtml(account.latestPaidPeriod ? periodHuman(account.latestPaidPeriod) : 'Sin cobros')}</td>
-          <td>
+          <td data-label="Total adeudado">${currencyFmt.format(account.totalAdeudado)}</td>
+          <td data-label="Total cobrado">${currencyFmt.format(account.totalCobrado)}</td>
+          <td data-label="Períodos adeudados"><div class="period-list">${periodsHtml}</div></td>
+          <td data-label="Último período cobrado">${escapeHtml(account.latestPaidPeriod ? periodHuman(account.latestPaidPeriod) : 'Sin cobros')}</td>
+          <td data-label="Último pago">
             ${escapeHtml(computeLastPaymentLabel(account))}
             <div class="risk-line">${escapeHtml(getLastCommunicationLabel(account))}</div>
           </td>
-          <td>
+          <td data-label="Acción">
             <div class="row-actions">
               <button class="btn btn-sm" type="button" data-action="comunicar">WhatsApp</button>
               <button class="btn btn-sm" type="button" data-action="copiar-mensaje">Copiar</button>
@@ -1535,13 +1739,13 @@
 
       return `
         <tr data-period-key="${escapeHtml(period.periodKey)}">
-          <td>${escapeHtml(periodHuman(period.periodKey))}</td>
-          <td><span class="status-badge ${status.cls}">${escapeHtml(status.label)}</span></td>
-          <td>${currencyFmt.format(period.monto)}</td>
-          <td>${period.activos}</td>
-          <td>${escapeHtml(payment)}</td>
-          <td>${safeLink ? '<a class="btn btn-sm" href="' + safeLink + '" target="_blank" rel="noopener">Abrir link</a>' : '<span class="text-subtle">Sin link</span>'}</td>
-          <td>${payAction}</td>
+          <td data-label="Período">${escapeHtml(periodHuman(period.periodKey))}</td>
+          <td data-label="Estado"><span class="status-badge ${status.cls}">${escapeHtml(status.label)}</span></td>
+          <td data-label="Monto">${currencyFmt.format(period.monto)}</td>
+          <td data-label="Activos">${period.activos}</td>
+          <td data-label="Último pago">${escapeHtml(payment)}</td>
+          <td data-label="Link MP">${safeLink ? '<a class="btn btn-sm" href="' + safeLink + '" target="_blank" rel="noopener">Abrir link</a>' : '<span class="text-subtle">Sin link</span>'}</td>
+          <td data-label="Acción">${payAction}</td>
         </tr>
       `;
     }).join('');

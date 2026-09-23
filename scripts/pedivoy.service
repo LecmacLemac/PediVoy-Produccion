@@ -1,0 +1,19 @@
+[Unit]
+Description=PediVoy Node app
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=lemac
+Group=lemac
+WorkingDirectory=/home/lemac/.openclaw/workspace-pedivoy/PediVoy
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/npm start
+Restart=always
+RestartSec=10
+StandardOutput=append:/home/lemac/.openclaw/workspace-pedivoy/PediVoy/logs/systemd.log
+StandardError=append:/home/lemac/.openclaw/workspace-pedivoy/PediVoy/logs/systemd.log
+
+[Install]
+WantedBy=multi-user.target

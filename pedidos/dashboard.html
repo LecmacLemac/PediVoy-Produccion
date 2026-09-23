@@ -354,8 +354,18 @@
 
 
   /* --- TABLE --- */
-  .table-responsive { overflow-x: auto; border-radius: var(--radius); border: 1px solid var(--border); background: var(--bg-2); }
+  .table-responsive {
+    overflow-x: auto;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: var(--bg-2);
+    scrollbar-width: thin;
+    scrollbar-color: rgba(245, 47, 65, 0.65) rgba(15, 23, 42, 0.85);
+  }
+  .table-responsive::-webkit-scrollbar { height: 10px; }
+  .table-responsive::-webkit-scrollbar-thumb { background: rgba(245, 47, 65, 0.65); border-radius: 999px; }
   table { width: 100%; border-collapse: collapse; text-align: left; white-space: nowrap; }
+  #tableCard table { min-width: 1320px; }
   th { 
     background: rgba(15, 23, 42, 0.9); color: var(--muted); font-weight: 600; 
     padding: 1rem; font-size: 0.8rem; text-transform: uppercase; 
@@ -423,6 +433,26 @@
   fieldset { border: 1px solid var(--border); border-radius: 8px; padding: 1rem; margin-bottom: 1rem; }
   legend { padding: 0 10px; color: var(--brand); font-weight: 600; text-transform: uppercase; font-size: 0.8rem; }
 
+  @media (min-width: 900px) {
+    #rows td:first-child,
+    #tableCard thead th:first-child {
+      position: sticky;
+      left: 0;
+      z-index: 2;
+      background: #101827;
+      box-shadow: 10px 0 18px rgba(2, 6, 23, 0.22);
+    }
+
+    #rows td:last-child,
+    #tableCard thead th:last-child {
+      position: sticky;
+      right: 0;
+      z-index: 2;
+      background: #101827;
+      box-shadow: -10px 0 18px rgba(2, 6, 23, 0.22);
+    }
+  }
+
   /* Media Queries */
   @media (max-width: 600px) {
     .actions-row { flex-direction: column; align-items: stretch; }
@@ -431,6 +461,152 @@
     .modal-footer { flex-direction: column-reverse; }
     .modal-footer .btn { width: 100%; }
   }
+
+  @media (max-width: 760px) {
+    body { font-size: 13px; }
+    .container { padding: 0 12px; }
+    main { gap: 1rem; padding-top: 1rem; }
+
+    .ops-rail,
+    .grid-kpi,
+    .agenda-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .ops-rail,
+    .toolbar,
+    .agenda-panel,
+    .summary-box,
+    .kpi-card {
+      border-radius: 14px;
+    }
+
+    .ops-link,
+    .kpi-card {
+      min-height: auto;
+      padding: 1rem;
+    }
+
+    .actions-row > div:last-child {
+      display: grid !important;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      width: 100%;
+    }
+
+    .actions-row .btn {
+      width: 100%;
+    }
+
+    .dashboard-mobile-hint {
+      display: block;
+      color: var(--muted);
+      font-size: 0.78rem;
+      margin: 0.35rem 0 0.75rem;
+    }
+
+    #tableCard {
+      overflow: visible;
+      border: none;
+      background: transparent;
+    }
+
+    #tableCard table,
+    #tableCard thead,
+    #tableCard tbody,
+    #tableCard th,
+    #tableCard td,
+    #tableCard tr {
+      display: block;
+      width: 100%;
+      min-width: 0;
+    }
+
+    #tableCard thead {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip: rect(0 0 0 0);
+    }
+
+    #rows tr {
+      display: block;
+      margin: 0 0 0.9rem;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      background: rgba(15, 23, 42, 0.84);
+      box-shadow: 0 10px 24px rgba(2, 6, 23, 0.24);
+      overflow: hidden;
+    }
+
+    #rows td {
+      display: grid;
+      grid-template-columns: minmax(96px, 34%) minmax(0, 1fr);
+      gap: 0.7rem;
+      align-items: start;
+      padding: 0.72rem 0.85rem;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+      white-space: normal !important;
+      overflow-wrap: anywhere;
+    }
+
+    #rows td::before {
+      content: attr(data-label);
+      color: var(--muted);
+      font-size: 0.68rem;
+      font-weight: 800;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    #rows td:first-child,
+    #rows td[data-label="Cliente"] {
+      grid-template-columns: 1fr;
+      background: rgba(245, 47, 65, 0.06);
+    }
+
+    #rows td:first-child::before,
+    #rows td[data-label="Cliente"]::before {
+      margin-bottom: 0.15rem;
+    }
+
+    #rows td:last-child { border-bottom: none; }
+
+    .agenda-stack,
+    .flag-list {
+      min-width: 0;
+      max-width: none;
+    }
+
+    #rows td[data-label="Acción"] > div,
+    #rows td[data-label="Acción"] {
+      justify-content: stretch;
+    }
+
+    #rows td[data-label="Acción"] .btn-icon {
+      min-height: 38px;
+      flex: 1 1 30%;
+    }
+
+    dialog {
+      width: calc(100% - 18px);
+      max-width: none;
+      max-height: calc(100dvh - 18px);
+    }
+
+    .modal-body {
+      max-height: calc(100dvh - 145px);
+      padding: 0.9rem;
+    }
+
+    .location-summary,
+    .location-coords {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  .dashboard-mobile-hint { display: none; }
+  @media (max-width: 760px) { .dashboard-mobile-hint { display: block; } }
 
   .toast { position: fixed; right: 20px; bottom: 30px; background: #fff; color: #0f172a; padding: 10px 20px; border-radius: 99px; font-weight: 600; box-shadow: 0 10px 30px rgba(0,0,0,0.3); opacity: 0; pointer-events: none; transition: 0.3s; z-index: 2000; }
   .toast.show { opacity: 1; transform: translateY(-10px); }
@@ -688,6 +864,7 @@
           <span class="role-badge"><span id="totalCount">0</span> registros</span>
         </div>
       </div>
+      <p class="dashboard-mobile-hint" id="dashboardMobileHint">En celular cada pedido se muestra como tarjeta accionable para leer y operar sin desplazamiento lateral.</p>
       
       <div class="table-responsive" id="tableCard">
          <table>
@@ -1977,25 +2154,27 @@
         
         return `
           <tr>
-            <td style="color:var(--muted); font-family:monospace;">#${p.id}</td>
-            <td>
+            <td data-label="ID" style="color:var(--muted); font-family:monospace;">#${p.id}</td>
+            <td data-label="Agenda">
               <div class="agenda-stack">
                 <span class="route-chip ${agendaClass}"><i class="fa-solid fa-calendar-day"></i> ${esc(agendaText)}</span>
                 <span class="agenda-sub">Alta ${esc(fmtDate(p.fecha) || '-')}</span>
                 <span class="agenda-sub">${esc(p.zona_nombre || (isSinZona ? 'Sin zona' : `Zona #${p.zona_id}`))}</span>
               </div>
             </td>
-            <td style="font-weight:600; color:#fff;">${esc(p.cliente || '')}</td>
-            <td>${esc(p.telefono || '')}</td>
-            <td style="font-size:0.9rem">${esc(p.direccion || '')}</td>
-            <td style="font-size:0.85rem; color:var(--muted)">${esc(p.chofer_nombre || (p.chofer_id ? `#${p.chofer_id}` : 'Sin asignar'))}${flags.length ? `<div class="flag-list">${flags.join('')}</div>` : ''}</td>
-            <td><span class="status-badge ${stClass}">${esc(stLabel)}</span></td>
-            <td style="font-size:0.85rem; color:var(--muted)">${esc(p.metodo_pago || '-')}</td>
-            <td style="font-weight:bold; color:#fff; font-size:1rem;">${money(p.monto)}</td>
-            <td style="white-space:nowrap; text-align:right;">
-              <button class="btn-icon btn-location ${hasValidCoordinates(p.latitud, p.longitud) ? 'has-pin' : 'no-pin'}" onclick="openUbicacion(${Number(p.id)})" title="${hasValidCoordinates(p.latitud, p.longitud) ? 'Ver o corregir ubicación' : 'Ubicar punto de entrega'}" aria-label="Ubicación del pedido ${Number(p.id)}" ${p.punto_entrega_id ? '' : 'disabled'}><i class="fa-solid fa-location-dot"></i></button>
-              <button class="btn-icon" onclick="openPedido(${Number(p.id)})" title="Editar">✏️</button>
-              <button class="btn-icon" style="color:var(--danger); border-color:rgba(239,68,68,0.3);" onclick="deletePedido(${Number(p.id)})" title="Eliminar"><i class="fa-solid fa-trash"></i></button>
+            <td data-label="Cliente" style="font-weight:600; color:#fff;">${esc(p.cliente || '')}</td>
+            <td data-label="Teléfono">${esc(p.telefono || '')}</td>
+            <td data-label="Dirección" style="font-size:0.9rem">${esc(p.direccion || '')}</td>
+            <td data-label="Chofer" style="font-size:0.85rem; color:var(--muted)">${esc(p.chofer_nombre || (p.chofer_id ? `#${p.chofer_id}` : 'Sin asignar'))}${flags.length ? `<div class="flag-list">${flags.join('')}</div>` : ''}</td>
+            <td data-label="Estado"><span class="status-badge ${stClass}">${esc(stLabel)}</span></td>
+            <td data-label="Pago" style="font-size:0.85rem; color:var(--muted)">${esc(p.metodo_pago || '-')}</td>
+            <td data-label="Monto" style="font-weight:bold; color:#fff; font-size:1rem;">${money(p.monto)}</td>
+            <td data-label="Acción" style="white-space:nowrap; text-align:right;">
+              <div style="display:flex; gap:0.35rem; justify-content:flex-end; flex-wrap:wrap;">
+                <button class="btn-icon btn-location ${hasValidCoordinates(p.latitud, p.longitud) ? 'has-pin' : 'no-pin'}" onclick="openUbicacion(${Number(p.id)})" title="${hasValidCoordinates(p.latitud, p.longitud) ? 'Ver o corregir ubicación' : 'Ubicar punto de entrega'}" aria-label="Ubicación del pedido ${Number(p.id)}" ${p.punto_entrega_id ? '' : 'disabled'}><i class="fa-solid fa-location-dot"></i></button>
+                <button class="btn-icon" onclick="openPedido(${Number(p.id)})" title="Editar">✏️</button>
+                <button class="btn-icon" style="color:var(--danger); border-color:rgba(239,68,68,0.3);" onclick="deletePedido(${Number(p.id)})" title="Eliminar"><i class="fa-solid fa-trash"></i></button>
+              </div>
             </td>
           </tr>`;
       }).join('');

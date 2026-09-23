@@ -9,13 +9,27 @@ import {
   resolveWhatsappTarget,
 } from '../src/wpp/delivery.js';
 
-test('preserva JIDs completos incluyendo @lid sin consultar el número', async () => {
-  let lookups = 0;
-  const client = { getNumberId: async () => { lookups += 1; } };
+test('resuelve @lid a PN cuando WhatsApp lo informa y preserva grupos sin consultar número', async () => {
+  let numberLookups = 0;
+  const lidLookups = [];
+  const client = {
+    getNumberId: async () => { numberLookups += 1; },
+    getContactLidAndPhone: async ids => {
+      lidLookups.push(ids);
+      return [{ lid: '123456789012345@lid', pn: '5493534277739@c.us' }];
+    },
+  };
+
+  assert.equal(await resolveWhatsappTarget(client, '123456789012345@lid'), '5493534277739@c.us');
+  assert.equal(await resolveWhatsappTarget(client, '120363000000000000@g.us'), '120363000000000000@g.us');
+  assert.equal(numberLookups, 0);
+  assert.deepEqual(lidLookups, [['123456789012345@lid']]);
+});
+
+test('preserva @lid cuando no puede resolver PN para no inventar destinatario', async () => {
+  const client = { getContactLidAndPhone: async () => [{ lid: '123456789012345@lid', pn: undefined }] };
 
   assert.equal(await resolveWhatsappTarget(client, '123456789012345@lid'), '123456789012345@lid');
-  assert.equal(await resolveWhatsappTarget(client, '120363000000000000@g.us'), '120363000000000000@g.us');
-  assert.equal(lookups, 0);
 });
 
 test('resuelve teléfonos y @c.us con getNumberId y conserva fallback seguro', async () => {
