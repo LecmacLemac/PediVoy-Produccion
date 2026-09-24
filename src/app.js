@@ -20,6 +20,7 @@ import { assertProductionEnv } from './bootstrap/env.js';
 import { createFacturaCapabilityRouter } from './facturaCapability.js';
 import { createGastosStorageRouter, createFacturasStorageRouter } from './privateStorage.js';
 import { resolveTransferenciaStorageDir, createTransferenciaStorageRouter } from './transferenciaStorage.js';
+import { createWhatsAppCloudJsonMiddleware } from './routes/whatsappCloudWebhook.js';
 
 export function buildWhatsAppRegistrationDeps({
   ENABLE_WPP,
@@ -160,6 +161,7 @@ export function createApp(deps) {
   };
 
   app.use(cors({ origin: corsOrigin, credentials: true }));
+  app.use('/api/webhooks/whatsapp', createWhatsAppCloudJsonMiddleware());
   app.use(express.json({ limit: '1mb' }));
   app.use(express.urlencoded({ extended: true, limit: '1mb' }));
   app.use(cookieParser());
