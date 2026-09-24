@@ -36,7 +36,19 @@ import { createAnalyticsRouter } from './analytics.js';
 import { createCallCampaignsRouter } from './callCampaigns.js';
 import { createCallsRouter } from './calls.js';
 import { createWhatsAppCloudWebhookRouter } from './whatsappCloudWebhook.js';
+import { createWhatsAppCloudEventHandler } from '../whatsappCloud/eventRepository.js';
 import { trackingPublicRouter } from '../trackingPublic.js';
+
+export function mountWhatsAppCloudWebhook(app, {
+  withTransaction,
+  createEventHandler = createWhatsAppCloudEventHandler,
+  createWebhookRouter = createWhatsAppCloudWebhookRouter,
+} = {}) {
+  const handler = createEventHandler({ withTransaction });
+  const router = createWebhookRouter({ handler });
+  app.use('/api/webhooks/whatsapp', router);
+  return { handler, router };
+}
 
 export function mountApiModules(app, deps) {
   const {
@@ -94,7 +106,7 @@ export function mountApiModules(app, deps) {
 
   app.use('/api/admin/licencia', createLicenciasMpRouter({ crearPreferenciaLicencia }));
   app.use('/api/webhooks', createMercadoPagoWebhookRouter({ obtenerPago }));
-  app.use('/api/webhooks/whatsapp', createWhatsAppCloudWebhookRouter());
+  mountWhatsAppCloudWebhook(app, { withTransaction });
   app.use('/api/admin/prompts', createPromptsGlobalesRouter());
 
   app.use(

@@ -209,6 +209,353 @@ test('superadmin conserva edicion completa de empresa', async () => {
   assert.equal(typeof updateCall.params[21], 'string');
 });
 
+test('POST de empresa persiste solo la allowlist WhatsApp sin alterar campos publicos de pagos', async () => {
+  let persistedIntegraciones;
+  const app = buildApp({
+    user: { role: 'super', empresa_id: null },
+    query: async (sql, params = []) => {
+      if (sql.includes('INSERT INTO empresas')) {
+        persistedIntegraciones = JSON.parse(params[21]);
+        return [{
+          id: 7,
+          nombre: 'Empresa Cloud',
+          config_integraciones: {
+            ...persistedIntegraciones,
+            whatsapp: {
+              ...persistedIntegraciones.whatsapp,
+              access_token: 'legacy-token',
+              app_secret: 'legacy-secret',
+              arbitrary: 'legacy-arbitrary',
+            },
+          },
+        }];
+      }
+      throw new Error(`Consulta inesperada: ${sql}`);
+    },
+  });
+
+  await withServer(app, async (baseUrl) => {
+    const resp = await fetch(`${baseUrl}/api/empresas`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        nombre: 'Empresa Cloud',
+        config_integraciones: {
+          pagos: { proveedor: 'mercado_pago', public_key: 'public-safe' },
+          whatsapp: {
+            provider: 'cloud',
+            enabled: true,
+            phone_number_id: 'phone-safe',
+            access_token: 'incoming-token',
+            app_secret: 'incoming-secret',
+            arbitrary: 'incoming-arbitrary',
+          },
+        },
+      }),
+    });
+
+    assert.equal(resp.status, 200);
+    const body = await resp.json();
+    assert.deepEqual(body.config_integraciones.whatsapp, {
+      provider: 'cloud',
+      enabled: true,
+      phone_number_id: 'phone-safe',
+    });
+    assert.equal(body.config_integraciones.pagos.proveedor, 'mercado_pago');
+    assert.equal(body.config_integraciones.pagos.public_key, 'public-safe');
+    assert.equal(JSON.stringify(body).includes('legacy-'), false);
+  });
+
+  assert.deepEqual(persistedIntegraciones.whatsapp, {
+    provider: 'cloud',
+    enabled: true,
+    phone_number_id: 'phone-safe',
+  });
+  assert.deepEqual(persistedIntegraciones.pagos, {
+    proveedor: 'mercado_pago',
+    public_key: 'public-safe',
+    access_token_encrypted: null,
+    webhook_secret_encrypted: null,
+  });
+  assert.equal(JSON.stringify(persistedIntegraciones).includes('incoming-'), false);
+});
+
+test('GET de empresas aplica allowlist WhatsApp y conserva la redaccion existente de pagos', async () => {
+  const app = buildApp({
+    user: { role: 'super', empresa_id: null },
+    query: async (sql) => {
+      if (sql.includes('SELECT * FROM empresas ORDER BY id')) {
+        return [{
+          id: 7,
+          config_integraciones: {
+            pagos: {
+              proveedor: 'mercado_pago',
+              public_key: 'public-safe',
+              access_token_encrypted: 'encrypted-token',
+              webhook_secret_encrypted: 'encrypted-secret',
+            },
+            whatsapp: {
+              provider: 'cloud',
+              enabled: true,
+              phone_number_id: 'phone-public',
+              access_token: 'legacy-token',
+              app_secret: 'legacy-secret',
+              arbitrary: 'legacy-arbitrary',
+            },
+          },
+        }];
+      }
+      throw new Error(`Consulta inesperada: ${sql}`);
+    },
+  });
+
+  await withServer(app, async (baseUrl) => {
+    const resp = await fetch(`${baseUrl}/api/empresas`);
+    assert.equal(resp.status, 200);
+    const [empresa] = await resp.json();
+    assert.deepEqual(empresa.config_integraciones.whatsapp, {
+      provider: 'cloud',
+      enabled: true,
+      phone_number_id: 'phone-public',
+    });
+    assert.deepEqual(empresa.config_integraciones.pagos, {
+      proveedor: 'mercado_pago',
+      public_key: 'public-safe',
+      access_token_configured: true,
+      webhook_secret_configured: true,
+    });
+    assert.equal(JSON.stringify(empresa).includes('encrypted-'), false);
+    assert.equal(JSON.stringify(empresa).includes('legacy-'), false);
+  });
+});
+
+test('superadmin no persiste ni recibe secretos de configuracion WhatsApp Cloud', async () => {
+  let persistedIntegraciones;
+  const app = buildApp({
+    user: { role: 'super', empresa_id: null },
+    query: async (sql, params = []) => {
+      if (sql.includes('SELECT config_integraciones FROM empresas')) {
+        return [{ config_integraciones: {} }];
+      }
+      if (sql.includes('UPDATE empresas')) {
+        persistedIntegraciones = JSON.parse(params[21]);
+        return [{
+          id: 7,
+          nombre: 'Empresa Cloud',
+          config_integraciones: {
+            ...persistedIntegraciones,
+            whatsapp: {
+              ...persistedIntegraciones.whatsapp,
+              access_token: 'legacy-token',
+              app_secret: 'legacy-secret',
+              unexpected: 'legacy-value',
+            },
+          },
+        }];
+      }
+      throw new Error(`Consulta inesperada: ${sql}`);
+    },
+  });
+
+  await withServer(app, async (baseUrl) => {
+    const resp = await fetch(`${baseUrl}/api/empresas/7`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        config_integraciones: {
+          whatsapp: {
+            provider: 'cloud',
+            enabled: true,
+            phone_number_id: 'phone-safe',
+            access_token: 'incoming-token',
+            app_secret: 'incoming-secret',
+            unexpected: 'incoming-value',
+          },
+        },
+      }),
+    });
+
+    assert.equal(resp.status, 200);
+    const body = await resp.json();
+    assert.deepEqual(body.config_integraciones.whatsapp, {
+      provider: 'cloud',
+      enabled: true,
+      phone_number_id: 'phone-safe',
+    });
+    assert.equal(JSON.stringify(body).includes('legacy-'), false);
+  });
+
+  assert.deepEqual(persistedIntegraciones.whatsapp, {
+    provider: 'cloud',
+    enabled: true,
+    phone_number_id: 'phone-safe',
+  });
+  assert.equal(JSON.stringify(persistedIntegraciones).includes('incoming-'), false);
+});
+
+test('PUT parcial conserva pagos cifrados, WhatsApp allowlisted y una integracion hermana', async () => {
+  let persistedIntegraciones;
+  const existingIntegraciones = {
+    pagos: {
+      proveedor: 'mercado_pago',
+      public_key: 'public-existing',
+      access_token_encrypted: 'v1:token-cifrado',
+      webhook_secret_encrypted: 'v1:webhook-cifrado',
+    },
+    whatsapp: {
+      provider: 'cloud',
+      enabled: true,
+      phone_number_id: 'phone-existing',
+      access_token: 'legacy-token',
+      app_secret: 'legacy-secret',
+      unexpected: 'legacy-value',
+    },
+    envios: { proveedor: 'correo', sucursal: 'centro' },
+  };
+  const app = buildApp({
+    user: { role: 'super', empresa_id: null },
+    query: async (sql, params = []) => {
+      if (sql.includes('SELECT config_integraciones FROM empresas')) {
+        return [{ config_integraciones: existingIntegraciones }];
+      }
+      if (sql.includes('UPDATE empresas')) {
+        persistedIntegraciones = JSON.parse(params[21]);
+        return [{ id: 7, nombre: 'Empresa Cloud', config_integraciones: persistedIntegraciones }];
+      }
+      throw new Error(`Consulta inesperada: ${sql}`);
+    },
+  });
+
+  await withServer(app, async (baseUrl) => {
+    const resp = await fetch(`${baseUrl}/api/empresas/7`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        config_integraciones: {
+          pagos: { auto_confirmar: true, access_token: '********' },
+        },
+      }),
+    });
+
+    assert.equal(resp.status, 200);
+    const body = await resp.json();
+    assert.deepEqual(body.config_integraciones.whatsapp, {
+      provider: 'cloud',
+      enabled: true,
+      phone_number_id: 'phone-existing',
+    });
+    assert.deepEqual(body.config_integraciones.envios, { proveedor: 'correo', sucursal: 'centro' });
+    assert.equal(body.config_integraciones.pagos.public_key, 'public-existing');
+    assert.equal(body.config_integraciones.pagos.auto_confirmar, true);
+    assert.equal(body.config_integraciones.pagos.access_token_configured, true);
+    assert.equal(body.config_integraciones.pagos.webhook_secret_configured, true);
+    assert.equal(JSON.stringify(body).includes('legacy-'), false);
+    assert.equal(JSON.stringify(body).includes('v1:'), false);
+  });
+
+  assert.deepEqual(persistedIntegraciones, {
+    pagos: {
+      proveedor: 'mercado_pago',
+      public_key: 'public-existing',
+      auto_confirmar: true,
+      access_token_encrypted: 'v1:token-cifrado',
+      webhook_secret_encrypted: 'v1:webhook-cifrado',
+    },
+    whatsapp: {
+      provider: 'cloud',
+      enabled: true,
+      phone_number_id: 'phone-existing',
+    },
+    envios: { proveedor: 'correo', sucursal: 'centro' },
+  });
+  assert.equal(JSON.stringify(persistedIntegraciones).includes('legacy-'), false);
+});
+
+test('conflicto de phone_number_id Cloud devuelve un error sanitizado y util', async () => {
+  const originalConsoleError = console.error;
+  const errorLogs = [];
+  console.error = (...args) => errorLogs.push(args);
+  const app = buildApp({
+    user: { role: 'super', empresa_id: null },
+    query: async (sql) => {
+      if (sql.includes('SELECT config_integraciones FROM empresas')) return [{ config_integraciones: {} }];
+      if (sql.includes('UPDATE empresas')) {
+        const error = new Error('duplicate key value contains sensitive details');
+        error.code = '23505';
+        error.constraint = 'idx_empresas_whatsapp_cloud_phone_number_id_unique';
+        throw error;
+      }
+      throw new Error(`Consulta inesperada: ${sql}`);
+    },
+  });
+
+  try {
+    await withServer(app, async (baseUrl) => {
+      const resp = await fetch(`${baseUrl}/api/empresas/7`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          config_integraciones: {
+            whatsapp: { provider: 'cloud', enabled: true, phone_number_id: 'sensitive-phone' },
+          },
+        }),
+      });
+
+      assert.equal(resp.status, 400);
+      const body = await resp.json();
+      assert.match(body.error, /phone_number_id|WhatsApp Cloud/i);
+      assert.doesNotMatch(body.error, /dominio o slug/i);
+      assert.equal(JSON.stringify(body).includes('sensitive-phone'), false);
+      assert.equal(JSON.stringify(body).includes('duplicate key'), false);
+    });
+  } finally {
+    console.error = originalConsoleError;
+  }
+  const renderedLogs = errorLogs.flat().map(value => String(value?.stack || value)).join('\n');
+  assert.equal(renderedLogs.includes('sensitive details'), false);
+  assert.equal(renderedLogs.includes('duplicate key'), false);
+});
+
+test('backup de empresa tampoco expone secretos ni claves arbitrarias de WhatsApp', async () => {
+  const app = buildApp({
+    user: { role: 'super', empresa_id: null },
+    query: async (sql) => {
+      if (sql.includes('SELECT * FROM empresas WHERE id')) {
+        return [{
+          id: 7,
+          nombre: 'Empresa Backup',
+          config_integraciones: {
+            whatsapp: {
+              provider: 'cloud',
+              enabled: true,
+              phone_number_id: 'phone-public',
+              access_token: 'backup-token',
+              app_secret: 'backup-secret',
+              arbitrary: 'backup-arbitrary',
+            },
+          },
+        }];
+      }
+      if (sql.includes('FROM information_schema.columns')) return [];
+      throw new Error(`Consulta inesperada: ${sql}`);
+    },
+  });
+
+  await withServer(app, async (baseUrl) => {
+    const resp = await fetch(`${baseUrl}/api/empresas/7/backup`);
+    assert.equal(resp.status, 200);
+    const body = await resp.json();
+    assert.deepEqual(body.empresa.config_integraciones.whatsapp, {
+      provider: 'cloud',
+      enabled: true,
+      phone_number_id: 'phone-public',
+    });
+    assert.equal(JSON.stringify(body).includes('backup-token'), false);
+    assert.equal(JSON.stringify(body).includes('backup-secret'), false);
+    assert.equal(JSON.stringify(body).includes('backup-arbitrary'), false);
+  });
+});
+
 test('reset de WhatsApp empresa sólo persiste el marcador, asegura worker y responde 202', async () => {
   const calls = [];
   const workers = [];

@@ -137,3 +137,124 @@ test('configuracion QR conserva el cifrado cuando el panel envia placeholder', (
 
   assert.equal(secured.pagos.access_token_encrypted, 'v1:ya-cifrado');
 });
+
+test('update solo WhatsApp conserva pagos cifrados y otras integraciones', () => {
+  const secured = securePaymentIntegraciones(
+    {
+      whatsapp: {
+        provider: 'cloud',
+        enabled: true,
+        phone_number_id: 'phone-new',
+      },
+    },
+    {
+      pagos: {
+        proveedor: 'mercado_pago',
+        public_key: 'public-existing',
+        access_token_encrypted: 'v1:token-cifrado',
+        webhook_secret_encrypted: 'v1:webhook-cifrado',
+      },
+      whatsapp: { provider: 'web', enabled: false },
+      envios: { proveedor: 'correo', sucursal: 'centro' },
+    }
+  );
+
+  assert.deepEqual(secured.pagos, {
+    proveedor: 'mercado_pago',
+    public_key: 'public-existing',
+    access_token_encrypted: 'v1:token-cifrado',
+    webhook_secret_encrypted: 'v1:webhook-cifrado',
+  });
+  assert.deepEqual(secured.whatsapp, {
+    provider: 'cloud',
+    enabled: true,
+    phone_number_id: 'phone-new',
+  });
+  assert.deepEqual(secured.envios, { proveedor: 'correo', sucursal: 'centro' });
+});
+
+test('update solo pagos conserva WhatsApp allowlisted y fusiona otras integraciones', () => {
+  const secured = securePaymentIntegraciones(
+    {
+      pagos: {
+        proveedor: 'mercado_pago',
+        access_token: '********',
+        auto_confirmar: true,
+      },
+      envios: { sucursal: 'norte' },
+    },
+    {
+      pagos: {
+        proveedor: 'mercado_pago',
+        public_key: 'public-existing',
+        access_token_encrypted: 'v1:token-cifrado',
+        webhook_secret_encrypted: 'v1:webhook-cifrado',
+      },
+      whatsapp: {
+        provider: 'cloud',
+        enabled: true,
+        phone_number_id: 'phone-existing',
+        access_token: 'legacy-token',
+        app_secret: 'legacy-secret',
+        arbitrary: 'legacy-arbitrary',
+      },
+      envios: { proveedor: 'correo', sucursal: 'centro' },
+    }
+  );
+
+  assert.deepEqual(secured.pagos, {
+    proveedor: 'mercado_pago',
+    public_key: 'public-existing',
+    auto_confirmar: true,
+    access_token_encrypted: 'v1:token-cifrado',
+    webhook_secret_encrypted: 'v1:webhook-cifrado',
+  });
+  assert.deepEqual(secured.whatsapp, {
+    provider: 'cloud',
+    enabled: true,
+    phone_number_id: 'phone-existing',
+  });
+  assert.deepEqual(secured.envios, { proveedor: 'correo', sucursal: 'norte' });
+  assert.equal(JSON.stringify(secured).includes('legacy-'), false);
+});
+
+test('configuracion WhatsApp Cloud conserva solo campos publicos permitidos', () => {
+  const secured = securePaymentIntegraciones({
+    pagos: { proveedor: 'mercado_pago' },
+    whatsapp: {
+      provider: 'cloud',
+      enabled: true,
+      phone_number_id: 'phone-safe',
+      access_token: 'token-secreto',
+      app_secret: 'app-secreto',
+      clave_arbitraria: 'no-permitida',
+    },
+  });
+
+  assert.deepEqual(secured.whatsapp, {
+    provider: 'cloud',
+    enabled: true,
+    phone_number_id: 'phone-safe',
+  });
+
+  const response = redactEmpresaPaymentSecrets({
+    id: 3,
+    config_integraciones: {
+      ...secured,
+      whatsapp: {
+        ...secured.whatsapp,
+        access_token: 'legacy-token',
+        app_secret: 'legacy-secret',
+        otra_clave: 'legacy-arbitrary',
+      },
+    },
+  });
+  assert.deepEqual(response.config_integraciones.whatsapp, {
+    provider: 'cloud',
+    enabled: true,
+    phone_number_id: 'phone-safe',
+  });
+  assert.equal(JSON.stringify(response).includes('legacy-token'), false);
+  assert.equal(JSON.stringify(response).includes('legacy-secret'), false);
+  assert.equal(JSON.stringify(response).includes('legacy-arbitrary'), false);
+});

@@ -55,6 +55,405 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_empresas_landing_domain_unique
   ON empresas (LOWER(landing_domain))
   WHERE landing_domain IS NOT NULL;
 
+-- BEGIN WHATSAPP CLOUD INBOX MIGRATION
+BEGIN;
+CREATE TABLE IF NOT EXISTS whatsapp_cloud_events (
+  id               BIGSERIAL PRIMARY KEY,
+  empresa_id       INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+  event_kind       TEXT NOT NULL,
+  dedupe_key       TEXT NOT NULL,
+  message_id       TEXT NOT NULL,
+  entry_id         TEXT,
+  sender_id        TEXT,
+  recipient_id     TEXT,
+  message_type     TEXT,
+  status           TEXT,
+  source_timestamp TEXT,
+  event_data       JSONB NOT NULL DEFAULT '{}'::jsonb,
+  received_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+DO $$
+DECLARE
+  column_definition RECORD;
+BEGIN
+  FOR column_definition IN
+    SELECT * FROM (VALUES
+      ('id', 'BIGINT'),
+      ('empresa_id', 'INTEGER'),
+      ('event_kind', 'TEXT'),
+      ('dedupe_key', 'TEXT'),
+      ('message_id', 'TEXT'),
+      ('entry_id', 'TEXT'),
+      ('sender_id', 'TEXT'),
+      ('recipient_id', 'TEXT'),
+      ('message_type', 'TEXT'),
+      ('status', 'TEXT'),
+      ('source_timestamp', 'TEXT'),
+      ('event_data', 'JSONB'),
+      ('received_at', 'TIMESTAMPTZ')
+    ) AS required_columns(column_name, data_type)
+  LOOP
+    IF NOT EXISTS (
+      SELECT 1
+        FROM pg_attribute
+       WHERE attrelid = 'whatsapp_cloud_events'::regclass
+         AND attname = column_definition.column_name
+         AND NOT attisdropped
+    ) THEN
+      EXECUTE format(
+        'ALTER TABLE whatsapp_cloud_events ADD COLUMN %I %s',
+        column_definition.column_name,
+        column_definition.data_type
+      );
+    END IF;
+  END LOOP;
+
+  IF EXISTS (
+    SELECT 1
+      FROM pg_attribute
+     WHERE attrelid = 'whatsapp_cloud_events'::regclass
+       AND attname = 'id'
+       AND atttypid <> 'bigint'::regtype
+       AND NOT attisdropped
+  ) THEN
+    ALTER TABLE whatsapp_cloud_events
+      ALTER COLUMN id TYPE BIGINT USING id::bigint;
+  END IF;
+END $$;
+
+CREATE SEQUENCE IF NOT EXISTS whatsapp_cloud_events_id_seq AS BIGINT;
+
+DO $$
+DECLARE
+  id_attribute SMALLINT;
+  current_default TEXT;
+BEGIN
+  SELECT attnum
+    INTO id_attribute
+    FROM pg_attribute
+   WHERE attrelid = 'whatsapp_cloud_events'::regclass
+     AND attname = 'id'
+     AND NOT attisdropped;
+
+  IF NOT EXISTS (
+    SELECT 1
+      FROM pg_depend
+     WHERE classid = 'pg_class'::regclass
+       AND objid = 'whatsapp_cloud_events_id_seq'::regclass
+       AND refclassid = 'pg_class'::regclass
+       AND refobjid = 'whatsapp_cloud_events'::regclass
+       AND refobjsubid = id_attribute
+       AND deptype = 'a'
+  ) THEN
+    ALTER SEQUENCE whatsapp_cloud_events_id_seq
+      OWNED BY whatsapp_cloud_events.id;
+  END IF;
+
+  SELECT pg_get_expr(default_row.adbin, default_row.adrelid)
+    INTO current_default
+    FROM pg_attrdef AS default_row
+   WHERE default_row.adrelid = 'whatsapp_cloud_events'::regclass
+     AND default_row.adnum = id_attribute;
+
+  IF current_default IS DISTINCT FROM 'nextval(''whatsapp_cloud_events_id_seq''::regclass)' THEN
+    ALTER TABLE whatsapp_cloud_events
+      ALTER COLUMN id SET DEFAULT nextval('whatsapp_cloud_events_id_seq'::regclass);
+  END IF;
+END $$;
+
+DO $$
+DECLARE
+  maximum_id BIGINT;
+  sequence_value BIGINT;
+BEGIN
+  SELECT COALESCE(MAX(id), 0) INTO maximum_id FROM whatsapp_cloud_events;
+  SELECT last_value INTO sequence_value FROM whatsapp_cloud_events_id_seq;
+  IF maximum_id >= sequence_value THEN
+    PERFORM setval('whatsapp_cloud_events_id_seq', maximum_id + 1, false);
+  END IF;
+END $$;
+
+UPDATE whatsapp_cloud_events
+   SET id = nextval('whatsapp_cloud_events_id_seq'::regclass)
+ WHERE id IS NULL;
+
+UPDATE whatsapp_cloud_events
+   SET event_data = COALESCE(event_data, '{}'::jsonb),
+       received_at = COALESCE(received_at, NOW())
+ WHERE event_data IS NULL OR received_at IS NULL;
+
+DO $$
+DECLARE
+  required_column TEXT;
+  current_default TEXT;
+BEGIN
+  FOR required_column IN
+    SELECT unnest(ARRAY['id', 'empresa_id', 'event_kind', 'dedupe_key', 'message_id', 'event_data', 'received_at'])
+  LOOP
+    IF EXISTS (
+      SELECT 1
+        FROM pg_attribute
+       WHERE attrelid = 'whatsapp_cloud_events'::regclass
+         AND attname = required_column
+         AND NOT attnotnull
+         AND NOT attisdropped
+    ) THEN
+      EXECUTE format(
+        'ALTER TABLE whatsapp_cloud_events ALTER COLUMN %I SET NOT NULL',
+        required_column
+      );
+    END IF;
+  END LOOP;
+
+  SELECT pg_get_expr(default_row.adbin, default_row.adrelid)
+    INTO current_default
+    FROM pg_attrdef AS default_row
+    JOIN pg_attribute AS attribute_row
+      ON attribute_row.attrelid = default_row.adrelid
+     AND attribute_row.attnum = default_row.adnum
+   WHERE default_row.adrelid = 'whatsapp_cloud_events'::regclass
+     AND attribute_row.attname = 'event_data';
+  IF current_default IS DISTINCT FROM '''{}''::jsonb' THEN
+    ALTER TABLE whatsapp_cloud_events
+      ALTER COLUMN event_data SET DEFAULT '{}'::jsonb;
+  END IF;
+
+  SELECT pg_get_expr(default_row.adbin, default_row.adrelid)
+    INTO current_default
+    FROM pg_attrdef AS default_row
+    JOIN pg_attribute AS attribute_row
+      ON attribute_row.attrelid = default_row.adrelid
+     AND attribute_row.attnum = default_row.adnum
+   WHERE default_row.adrelid = 'whatsapp_cloud_events'::regclass
+     AND attribute_row.attname = 'received_at';
+  IF current_default IS DISTINCT FROM 'now()' THEN
+    ALTER TABLE whatsapp_cloud_events
+      ALTER COLUMN received_at SET DEFAULT NOW();
+  END IF;
+END $$;
+
+DO $$
+DECLARE
+  primary_key_name TEXT;
+  primary_key_columns TEXT[];
+BEGIN
+  SELECT constraint_row.conname,
+         array_agg(attribute_row.attname ORDER BY key_column.ordinality)
+    INTO primary_key_name, primary_key_columns
+    FROM pg_constraint AS constraint_row
+    CROSS JOIN LATERAL unnest(constraint_row.conkey) WITH ORDINALITY AS key_column(attnum, ordinality)
+    JOIN pg_attribute AS attribute_row
+      ON attribute_row.attrelid = constraint_row.conrelid
+     AND attribute_row.attnum = key_column.attnum
+   WHERE constraint_row.conrelid = 'whatsapp_cloud_events'::regclass
+     AND constraint_row.contype = 'p'
+   GROUP BY constraint_row.conname;
+
+  IF primary_key_name IS NULL THEN
+    ALTER TABLE whatsapp_cloud_events
+      ADD CONSTRAINT whatsapp_cloud_events_pkey PRIMARY KEY (id);
+  ELSIF primary_key_columns <> ARRAY['id']::TEXT[] THEN
+    EXECUTE format('ALTER TABLE whatsapp_cloud_events DROP CONSTRAINT %I', primary_key_name);
+    ALTER TABLE whatsapp_cloud_events
+      ADD CONSTRAINT whatsapp_cloud_events_pkey PRIMARY KEY (id);
+  END IF;
+END $$;
+
+DO $$
+DECLARE
+  foreign_key RECORD;
+  empresa_attribute SMALLINT;
+  empresa_target_attribute SMALLINT;
+BEGIN
+  SELECT attnum INTO empresa_attribute
+    FROM pg_attribute
+   WHERE attrelid = 'whatsapp_cloud_events'::regclass AND attname = 'empresa_id' AND NOT attisdropped;
+  SELECT attnum INTO empresa_target_attribute
+    FROM pg_attribute
+   WHERE attrelid = 'empresas'::regclass AND attname = 'id' AND NOT attisdropped;
+
+  FOR foreign_key IN
+    SELECT conname, confrelid, confkey, confdeltype
+      FROM pg_constraint
+     WHERE conrelid = 'whatsapp_cloud_events'::regclass
+       AND contype = 'f'
+       AND conkey = ARRAY[empresa_attribute]::SMALLINT[]
+  LOOP
+    IF foreign_key.conname <> 'whatsapp_cloud_events_empresa_id_fkey'
+       OR foreign_key.confrelid <> 'empresas'::regclass
+       OR foreign_key.confkey <> ARRAY[empresa_target_attribute]::SMALLINT[]
+       OR foreign_key.confdeltype <> 'c' THEN
+      EXECUTE format(
+        'ALTER TABLE whatsapp_cloud_events DROP CONSTRAINT %I',
+        foreign_key.conname
+      );
+    END IF;
+  END LOOP;
+
+  IF NOT EXISTS (
+    SELECT 1
+      FROM pg_constraint
+     WHERE conrelid = 'whatsapp_cloud_events'::regclass
+       AND conname = 'whatsapp_cloud_events_empresa_id_fkey'
+       AND contype = 'f'
+       AND conkey = ARRAY[empresa_attribute]::SMALLINT[]
+       AND confrelid = 'empresas'::regclass
+       AND confkey = ARRAY[empresa_target_attribute]::SMALLINT[]
+       AND confdeltype = 'c'
+  ) THEN
+    ALTER TABLE whatsapp_cloud_events
+      ADD CONSTRAINT whatsapp_cloud_events_empresa_id_fkey
+      FOREIGN KEY (empresa_id) REFERENCES empresas(id) ON DELETE CASCADE NOT VALID;
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+      FROM pg_constraint
+     WHERE conrelid = 'whatsapp_cloud_events'::regclass
+       AND conname = 'whatsapp_cloud_events_empresa_id_fkey'
+       AND NOT convalidated
+  ) THEN
+    ALTER TABLE whatsapp_cloud_events
+      VALIDATE CONSTRAINT whatsapp_cloud_events_empresa_id_fkey;
+  END IF;
+END $$;
+
+DO $$
+DECLARE
+  current_definition TEXT;
+BEGIN
+  SELECT pg_get_constraintdef(oid)
+    INTO current_definition
+    FROM pg_constraint
+   WHERE conrelid = 'whatsapp_cloud_events'::regclass
+     AND conname = 'whatsapp_cloud_events_kind_check'
+     AND contype = 'c';
+
+  IF current_definition IS NOT NULL
+     AND current_definition NOT LIKE 'CHECK ((event_kind = ANY (ARRAY[''message''::text, ''status''::text])))%' THEN
+    ALTER TABLE whatsapp_cloud_events
+      DROP CONSTRAINT whatsapp_cloud_events_kind_check;
+    current_definition := NULL;
+  END IF;
+
+  IF current_definition IS NULL THEN
+    ALTER TABLE whatsapp_cloud_events
+      ADD CONSTRAINT whatsapp_cloud_events_kind_check
+      CHECK (event_kind IN ('message', 'status')) NOT VALID;
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+      FROM pg_constraint
+     WHERE conrelid = 'whatsapp_cloud_events'::regclass
+       AND conname = 'whatsapp_cloud_events_kind_check'
+       AND NOT convalidated
+  ) THEN
+    ALTER TABLE whatsapp_cloud_events
+      VALIDATE CONSTRAINT whatsapp_cloud_events_kind_check;
+  END IF;
+END $$;
+
+DO $$
+DECLARE
+  empresa_attribute SMALLINT;
+  dedupe_attribute SMALLINT;
+  existing_index REGCLASS;
+  valid_index BOOLEAN := FALSE;
+BEGIN
+  SELECT attnum INTO empresa_attribute
+    FROM pg_attribute
+   WHERE attrelid = 'whatsapp_cloud_events'::regclass AND attname = 'empresa_id' AND NOT attisdropped;
+  SELECT attnum INTO dedupe_attribute
+    FROM pg_attribute
+   WHERE attrelid = 'whatsapp_cloud_events'::regclass AND attname = 'dedupe_key' AND NOT attisdropped;
+  existing_index := to_regclass('idx_whatsapp_cloud_events_dedupe_key');
+
+  IF existing_index IS NOT NULL THEN
+    SELECT index_row.indisunique
+       AND index_row.indpred IS NULL
+       AND index_row.indexprs IS NULL
+       AND index_row.indnkeyatts = 2
+       AND index_row.indkey::TEXT = format('%s %s', empresa_attribute, dedupe_attribute)
+      INTO valid_index
+      FROM pg_index AS index_row
+     WHERE index_row.indexrelid = existing_index;
+    IF NOT COALESCE(valid_index, FALSE) THEN
+      EXECUTE 'DROP INDEX idx_whatsapp_cloud_events_dedupe_key';
+      existing_index := NULL;
+    END IF;
+  END IF;
+
+  IF existing_index IS NULL THEN
+    EXECUTE 'CREATE UNIQUE INDEX idx_whatsapp_cloud_events_dedupe_key ON whatsapp_cloud_events (empresa_id, dedupe_key)';
+  END IF;
+END $$;
+
+DO $$
+DECLARE
+  empresa_attribute SMALLINT;
+  received_attribute SMALLINT;
+  existing_index REGCLASS := to_regclass('idx_whatsapp_cloud_events_empresa_received');
+  valid_index BOOLEAN := FALSE;
+BEGIN
+  SELECT attnum INTO empresa_attribute
+    FROM pg_attribute
+   WHERE attrelid = 'whatsapp_cloud_events'::regclass AND attname = 'empresa_id' AND NOT attisdropped;
+  SELECT attnum INTO received_attribute
+    FROM pg_attribute
+   WHERE attrelid = 'whatsapp_cloud_events'::regclass AND attname = 'received_at' AND NOT attisdropped;
+
+  IF existing_index IS NOT NULL THEN
+    SELECT NOT index_row.indisunique
+       AND index_row.indpred IS NULL
+       AND index_row.indexprs IS NULL
+       AND index_row.indnkeyatts = 2
+       AND index_row.indkey::TEXT = format('%s %s', empresa_attribute, received_attribute)
+      INTO valid_index
+      FROM pg_index AS index_row
+     WHERE index_row.indexrelid = existing_index;
+    IF NOT COALESCE(valid_index, FALSE) THEN
+      EXECUTE 'DROP INDEX idx_whatsapp_cloud_events_empresa_received';
+      existing_index := NULL;
+    END IF;
+  END IF;
+
+  IF existing_index IS NULL THEN
+    EXECUTE 'CREATE INDEX idx_whatsapp_cloud_events_empresa_received ON whatsapp_cloud_events (empresa_id, received_at)';
+  END IF;
+END $$;
+
+DO $$
+DECLARE
+  existing_index REGCLASS := to_regclass('idx_empresas_whatsapp_cloud_phone_number_id_unique');
+  index_definition TEXT;
+BEGIN
+  IF existing_index IS NOT NULL THEN
+    SELECT pg_get_indexdef(existing_index) INTO index_definition;
+    IF index_definition NOT LIKE 'CREATE UNIQUE INDEX idx_empresas_whatsapp_cloud_phone_number_id_unique ON public.empresas USING btree %'
+       OR index_definition NOT LIKE '%config_integraciones #>> ''{whatsapp,phone_number_id}''::text[]%'
+       OR index_definition NOT LIKE '%(config_integraciones #>> ''{whatsapp,provider}''::text[]) = ''cloud''::text%'
+       OR index_definition NOT LIKE '%(config_integraciones #>> ''{whatsapp,enabled}''::text[]) = ''true''::text%'
+       OR index_definition NOT LIKE '%(config_integraciones #>> ''{whatsapp,phone_number_id}''::text[]) <> ''''::text%' THEN
+      EXECUTE 'DROP INDEX idx_empresas_whatsapp_cloud_phone_number_id_unique';
+      existing_index := NULL;
+    END IF;
+  END IF;
+
+  IF existing_index IS NULL THEN
+    EXECUTE $index$
+      CREATE UNIQUE INDEX idx_empresas_whatsapp_cloud_phone_number_id_unique
+        ON empresas ((config_integraciones #>> '{whatsapp,phone_number_id}'))
+       WHERE config_integraciones #>> '{whatsapp,provider}' = 'cloud'
+         AND config_integraciones #>> '{whatsapp,enabled}' = 'true'
+         AND config_integraciones #>> '{whatsapp,phone_number_id}' <> ''
+    $index$;
+  END IF;
+END $$;
+COMMIT;
+-- END WHATSAPP CLOUD INBOX MIGRATION
+
 -- =========================================================
 -- 3. CONFIGURACIÓN, PROMPTS Y CUENTAS
 -- =========================================================

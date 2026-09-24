@@ -15,6 +15,28 @@ function objectOrEmpty(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 }
 
+function allowlistedWhatsappConfig(value) {
+  const whatsapp = objectOrEmpty(value);
+  return {
+    ...(Object.hasOwn(whatsapp, 'provider')
+      ? { provider: String(whatsapp.provider || '').trim() }
+      : {}),
+    ...(Object.hasOwn(whatsapp, 'enabled')
+      ? { enabled: whatsapp.enabled === true }
+      : {}),
+    ...(Object.hasOwn(whatsapp, 'phone_number_id')
+      ? { phone_number_id: String(whatsapp.phone_number_id || '').trim() }
+      : {}),
+  };
+}
+
+function empresaUniqueConflictMessage(error) {
+  if (error?.constraint === 'idx_empresas_whatsapp_cloud_phone_number_id_unique') {
+    return 'El phone_number_id de WhatsApp Cloud ya está asignado a otra empresa.';
+  }
+  return 'El dominio o slug ya está en uso por otra empresa.';
+}
+
 function getRequestOrigin(req) {
   const proto = String(req.headers['x-forwarded-proto'] || req.protocol || 'http')
     .split(',')[0]
@@ -191,7 +213,6 @@ export function redactEmpresaPaymentSecrets(empresa) {
   if (!empresa) return empresa;
   const integraciones = objectOrEmpty(empresa.config_integraciones);
   const pagos = objectOrEmpty(integraciones.pagos);
-  if (!Object.keys(pagos).length) return empresa;
 
   const {
     access_token: _accessToken,
@@ -201,26 +222,52 @@ export function redactEmpresaPaymentSecrets(empresa) {
     ...safePagos
   } = pagos;
 
+  const safeIntegraciones = {
+    ...integraciones,
+    ...(Object.hasOwn(integraciones, 'whatsapp')
+      ? { whatsapp: allowlistedWhatsappConfig(integraciones.whatsapp) }
+      : {}),
+  };
+  if (Object.keys(pagos).length) {
+    safeIntegraciones.pagos = {
+      ...safePagos,
+      access_token_configured: Boolean(_accessToken || _accessTokenEncrypted),
+      webhook_secret_configured: Boolean(_webhookSecret || _webhookSecretEncrypted),
+    };
+  }
+
   return {
     ...empresa,
-    config_integraciones: {
-      ...integraciones,
-      pagos: {
-        ...safePagos,
-        access_token_configured: Boolean(_accessToken || _accessTokenEncrypted),
-        webhook_secret_configured: Boolean(_webhookSecret || _webhookSecretEncrypted),
-      },
-    },
+    config_integraciones: safeIntegraciones,
   };
 }
 
 export function securePaymentIntegraciones(configIntegraciones, existingIntegraciones = {}) {
   const incoming = objectOrEmpty(configIntegraciones);
   const existing = objectOrEmpty(existingIntegraciones);
+  const merged = { ...existing };
+
+  for (const [key, value] of Object.entries(incoming)) {
+    if (key === 'pagos' || key === 'whatsapp') continue;
+    const existingValue = objectOrEmpty(existing[key]);
+    const incomingValue = objectOrEmpty(value);
+    merged[key] = Object.keys(existingValue).length || Object.keys(incomingValue).length
+      ? { ...existingValue, ...incomingValue }
+      : value;
+  }
+
+  if (Object.hasOwn(incoming, 'whatsapp')) {
+    merged.whatsapp = allowlistedWhatsappConfig(incoming.whatsapp);
+  } else if (Object.hasOwn(existing, 'whatsapp')) {
+    merged.whatsapp = allowlistedWhatsappConfig(existing.whatsapp);
+  }
+
+  const hasIncomingPagos = Object.hasOwn(incoming, 'pagos');
+  const hasExistingPagos = Object.hasOwn(existing, 'pagos');
+  if (!hasIncomingPagos && !hasExistingPagos) return merged;
+
   const incomingPagos = objectOrEmpty(incoming.pagos);
   const existingPagos = objectOrEmpty(existing.pagos);
-  if (!Object.keys(incomingPagos).length) return incoming;
-
   const secureValue = (newValue, oldEncrypted, oldPlaintext) => {
     const candidate = String(newValue || '').trim();
     if (candidate && candidate !== '********') return encryptSecret(candidate);
@@ -229,32 +276,37 @@ export function securePaymentIntegraciones(configIntegraciones, existingIntegrac
     return null;
   };
 
-  const accessTokenEncrypted = secureValue(
-    incomingPagos.access_token,
-    existingPagos.access_token_encrypted,
-    existingPagos.access_token
-  );
-  const webhookSecretEncrypted = secureValue(
-    incomingPagos.webhook_secret,
-    existingPagos.webhook_secret_encrypted,
-    existingPagos.webhook_secret
-  );
   const {
-    access_token: _accessToken,
-    webhook_secret: _webhookSecret,
-    access_token_configured: _accessConfigured,
-    webhook_secret_configured: _webhookConfigured,
-    ...safePagos
+    access_token: _existingAccessToken,
+    webhook_secret: _existingWebhookSecret,
+    access_token_configured: _existingAccessConfigured,
+    webhook_secret_configured: _existingWebhookConfigured,
+    ...safeExistingPagos
+  } = existingPagos;
+  const {
+    access_token: _incomingAccessToken,
+    webhook_secret: _incomingWebhookSecret,
+    access_token_configured: _incomingAccessConfigured,
+    webhook_secret_configured: _incomingWebhookConfigured,
+    ...safeIncomingPagos
   } = incomingPagos;
 
-  return {
-    ...incoming,
-    pagos: {
-      ...safePagos,
-      access_token_encrypted: accessTokenEncrypted,
-      webhook_secret_encrypted: webhookSecretEncrypted,
-    },
+  merged.pagos = {
+    ...safeExistingPagos,
+    ...safeIncomingPagos,
+    access_token_encrypted: secureValue(
+      incomingPagos.access_token,
+      existingPagos.access_token_encrypted,
+      existingPagos.access_token
+    ),
+    webhook_secret_encrypted: secureValue(
+      incomingPagos.webhook_secret,
+      existingPagos.webhook_secret_encrypted,
+      existingPagos.webhook_secret
+    ),
   };
+
+  return merged;
 }
 
 export function createEmpresasRouter(deps) {
@@ -508,10 +560,10 @@ export function createEmpresasRouter(deps) {
 
       return res.json(redactEmpresaPaymentSecrets(nuevaEmpresa));
     } catch (e) {
-      console.error('❌ [ERROR POST EMPRESA]:', e);
       if (e.code === '23505') {
-        return res.status(400).json({ error: 'El dominio o slug ya está en uso por otra empresa.' });
+        return res.status(400).json({ error: empresaUniqueConflictMessage(e) });
       }
+      console.error('❌ [ERROR POST EMPRESA]:', e);
       return res.status(500).json({ error: 'Error interno al crear la empresa.' });
     }
   });
@@ -644,10 +696,10 @@ export function createEmpresasRouter(deps) {
       if (!rows.length) return res.status(404).json({ error: 'Empresa no encontrada' });
       return res.json(redactEmpresaPaymentSecrets(rows[0]));
     } catch (e) {
-      console.error('❌ [ERROR PUT EMPRESA]:', e);
       if (e.code === '23505') {
-        return res.status(400).json({ error: 'El dominio o slug ya está en uso por otra empresa.' });
+        return res.status(400).json({ error: empresaUniqueConflictMessage(e) });
       }
+      console.error('❌ [ERROR PUT EMPRESA]:', e);
       return res.status(500).json({ error: 'Error interno al actualizar la empresa.' });
     }
   });
@@ -941,7 +993,7 @@ export function createEmpresasRouter(deps) {
             Object.entries(dataset).map(([k, v]) => [k, Array.isArray(v) ? v.length : 0])
           ),
         },
-        empresa: empresaRows[0],
+        empresa: redactEmpresaPaymentSecrets(empresaRows[0]),
         data: dataset,
       };
 
