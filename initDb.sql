@@ -1768,6 +1768,9 @@ CREATE TABLE IF NOT EXISTS wpp_outbox (
   claim_epoch BIGINT,
   claim_until TIMESTAMPTZ,
   transport_origin TEXT,
+  meta_message_id TEXT,
+  cloud_dispatch_state TEXT,
+  dispatch_started_at TIMESTAMPTZ,
   CONSTRAINT wpp_outbox_status_check
     CHECK (status IN ('pending', 'sending', 'sent', 'error', 'skipped'))
 );
@@ -1786,7 +1789,13 @@ ALTER TABLE wpp_outbox
   ADD COLUMN IF NOT EXISTS claim_owner TEXT,
   ADD COLUMN IF NOT EXISTS claim_epoch BIGINT,
   ADD COLUMN IF NOT EXISTS claim_until TIMESTAMPTZ,
-  ADD COLUMN IF NOT EXISTS transport_origin TEXT;
+  ADD COLUMN IF NOT EXISTS transport_origin TEXT,
+  ADD COLUMN IF NOT EXISTS meta_message_id TEXT,
+  ADD COLUMN IF NOT EXISTS cloud_dispatch_state TEXT,
+  ADD COLUMN IF NOT EXISTS dispatch_started_at TIMESTAMPTZ;
+
+ALTER TABLE wpp_outbox
+  DROP CONSTRAINT IF EXISTS wpp_outbox_cloud_dispatch_state_check;
 
 UPDATE wpp_outbox
 SET status = CASE WHEN sent_at IS NOT NULL THEN 'sent' ELSE 'error' END,
@@ -1800,21 +1809,117 @@ SET status = CASE WHEN sent_at IS NOT NULL THEN 'sent' ELSE 'error' END,
 WHERE status IS NULL
    OR status NOT IN ('pending', 'sending', 'sent', 'error', 'skipped');
 
+UPDATE wpp_outbox
+SET cloud_dispatch_state = CASE
+      WHEN transport_origin IS DISTINCT FROM 'cloud' THEN NULL
+      WHEN status = 'sending' THEN CASE
+        WHEN cloud_dispatch_state IN ('pre_dispatch', 'dispatch_started') THEN cloud_dispatch_state
+        ELSE 'dispatch_started'
+      END
+      WHEN status = 'sent' THEN 'sent'
+      WHEN status = 'error' THEN CASE
+        WHEN cloud_dispatch_state IN ('definitive_failed', 'manual_retryable', 'outcome_unknown') THEN cloud_dispatch_state
+        ELSE 'outcome_unknown'
+      END
+      ELSE NULL
+    END,
+    dispatch_started_at = CASE
+      WHEN transport_origin = 'cloud'
+       AND (
+         status = 'sent'
+         OR (status = 'sending' AND cloud_dispatch_state IS DISTINCT FROM 'pre_dispatch')
+         OR (status = 'error' AND (
+           cloud_dispatch_state IS NULL
+           OR cloud_dispatch_state IN ('manual_retryable', 'outcome_unknown')
+         ))
+       )
+        THEN COALESCE(dispatch_started_at, created_at, NOW())
+      ELSE dispatch_started_at
+    END;
+
+UPDATE wpp_outbox
+SET claim_until = NOW() - INTERVAL '1 second'
+WHERE transport_origin = 'cloud'
+  AND status = 'sending'
+  AND cloud_dispatch_state = 'pre_dispatch'
+  AND claim_until IS NULL;
+
 ALTER TABLE wpp_outbox
   ALTER COLUMN status SET DEFAULT 'pending',
   ALTER COLUMN status SET NOT NULL,
   ADD CONSTRAINT wpp_outbox_status_check
-    CHECK (status IN ('pending', 'sending', 'sent', 'error', 'skipped')) NOT VALID;
+    CHECK (status IN ('pending', 'sending', 'sent', 'error', 'skipped')) NOT VALID,
+  ADD CONSTRAINT wpp_outbox_cloud_dispatch_state_check
+    CHECK (
+      cloud_dispatch_state IS NULL
+      OR (
+        transport_origin = 'cloud'
+        AND (
+          (status = 'sending' AND cloud_dispatch_state IN ('pre_dispatch', 'dispatch_started'))
+          OR (status = 'sent' AND cloud_dispatch_state = 'sent')
+          OR (
+            status = 'error'
+            AND cloud_dispatch_state IN ('definitive_failed', 'manual_retryable', 'outcome_unknown')
+          )
+        )
+      )
+    ) NOT VALID;
 
 ALTER TABLE wpp_outbox
   VALIDATE CONSTRAINT wpp_outbox_status_check;
+
+ALTER TABLE wpp_outbox
+  VALIDATE CONSTRAINT wpp_outbox_cloud_dispatch_state_check;
 
 DROP INDEX IF EXISTS wpp_outbox_pending_claim_idx;
 CREATE INDEX wpp_outbox_pending_claim_idx
   ON wpp_outbox (created_at, id)
   WHERE status = 'pending';
 
+DROP INDEX IF EXISTS wpp_outbox_cloud_pre_dispatch_recovery_idx;
+CREATE INDEX wpp_outbox_cloud_pre_dispatch_recovery_idx
+  ON wpp_outbox (claim_until, created_at, id)
+  WHERE status = 'sending' AND cloud_dispatch_state = 'pre_dispatch';
+
 COMMIT;
+
+-- BEGIN WHATSAPP CLOUD OPS MIGRATION
+BEGIN;
+SET LOCAL lock_timeout = '30s';
+SET LOCAL statement_timeout = '5min';
+
+CREATE TABLE IF NOT EXISTS whatsapp_cloud_ops_audit (
+  id BIGSERIAL PRIMARY KEY,
+  outbox_id BIGINT NOT NULL,
+  empresa_id INTEGER,
+  actor TEXT NOT NULL,
+  reason_code TEXT NOT NULL,
+  action TEXT NOT NULL,
+  from_status TEXT NOT NULL,
+  from_cloud_dispatch_state TEXT,
+  to_status TEXT NOT NULL,
+  to_cloud_dispatch_state TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT whatsapp_cloud_ops_audit_actor_check
+    CHECK (actor = BTRIM(actor) AND actor <> '' AND length(actor) <= 100),
+  CONSTRAINT whatsapp_cloud_ops_audit_reason_check
+    CHECK (reason_code = BTRIM(reason_code) AND reason_code <> '' AND length(reason_code) <= 80),
+  CONSTRAINT whatsapp_cloud_ops_audit_action_check
+    CHECK (action IN ('mark_sent', 'mark_failed', 'confirm_not_sent', 'replay'))
+);
+
+CREATE INDEX IF NOT EXISTS whatsapp_cloud_ops_audit_outbox_idx
+  ON whatsapp_cloud_ops_audit (outbox_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS whatsapp_cloud_ops_audit_empresa_idx
+  ON whatsapp_cloud_ops_audit (empresa_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS wpp_outbox_cloud_ops_idx
+  ON wpp_outbox (transport_origin, status, cloud_dispatch_state, created_at, id)
+  WHERE transport_origin = 'cloud';
+
+COMMIT;
+-- END WHATSAPP CLOUD OPS MIGRATION
 
 CREATE TABLE IF NOT EXISTS push_subs (
   id         SERIAL PRIMARY KEY,

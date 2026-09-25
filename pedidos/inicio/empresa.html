@@ -974,6 +974,48 @@
           </small>
         </div>
 
+        <div id="panelWhatsappEmpresa" style="display:none; border:1px solid rgba(6,182,212,0.35); background:rgba(6,182,212,0.04); padding:15px; border-radius:8px; margin-top:20px;">
+          <div class="section-label">WhatsApp de la empresa</div>
+          <div class="form-row">
+            <div>
+              <label>Modo</label>
+              <select id="e_whatsapp_provider">
+                <option value="web">WhatsApp Web</option>
+                <option value="cloud">WhatsApp Cloud API</option>
+              </select>
+              <small style="color:var(--muted); font-size:0.8rem;">
+                Web usa la sesión vinculada por QR. Cloud usa las credenciales oficiales de Meta.
+              </small>
+            </div>
+            <div id="e_whatsapp_cloud_enabled_group" style="display:none;">
+              <label>Habilitar Cloud</label>
+              <label style="display:flex; align-items:center; gap:8px; text-transform:none;">
+                <input type="checkbox" id="e_whatsapp_enabled" style="width:auto; margin:0;">
+                Usar Cloud API para esta empresa
+              </label>
+            </div>
+          </div>
+          <div id="e_whatsapp_cloud_fields" style="display:none;">
+            <div>
+              <label>Phone Number ID</label>
+              <input type="text" id="e_whatsapp_phone_number_id" autocomplete="off" placeholder="ID numérico provisto por Meta">
+            </div>
+            <div>
+              <label>Access Token de Meta</label>
+              <input type="password" id="e_whatsapp_access_token" autocomplete="new-password" placeholder="********">
+              <small id="e_whatsapp_token_status" style="color:var(--muted); font-size:0.8rem;">
+                Token no configurado. Pegá uno nuevo para activar Cloud.
+              </small>
+              <small style="display:block; color:var(--muted); font-size:0.8rem; margin-top:4px;">
+                El campo siempre se carga vacío. El marcador ******** significa “conservar el token existente” y nunca se envía como secreto nuevo.
+              </small>
+            </div>
+          </div>
+          <div id="e_whatsapp_mode_help" style="color:var(--muted); font-size:0.82rem; margin-top:6px;">
+            Volver a WhatsApp Web conserva el token Cloud cifrado y restaura la elegibilidad del worker, sin iniciarlo automáticamente.
+          </div>
+        </div>
+
 
         <div class="section-label">Horarios y Entrega</div>
 
@@ -1381,6 +1423,80 @@
       return {};
     }
 
+    function normalizeWhatsappPanelConfig(configIntegraciones) {
+      const root = configIntegraciones && typeof configIntegraciones === 'object'
+        ? configIntegraciones
+        : {};
+      const whatsapp = root.whatsapp && typeof root.whatsapp === 'object'
+        ? root.whatsapp
+        : {};
+      const provider = String(whatsapp.provider || 'web').trim().toLowerCase() === 'cloud'
+        ? 'cloud'
+        : 'web';
+      return {
+        provider,
+        enabled: provider === 'cloud' && whatsapp.enabled === true,
+        phone_number_id: String(whatsapp.phone_number_id || '').trim(),
+        access_token_configured: whatsapp.access_token_configured === true,
+        access_token: '',
+      };
+    }
+
+    function buildWhatsappConfigPayload(formConfig) {
+      const provider = String(formConfig?.provider || 'web').trim().toLowerCase() === 'cloud'
+        ? 'cloud'
+        : 'web';
+      if (provider === 'web') {
+        return { provider: 'web', enabled: false, phone_number_id: '' };
+      }
+      const payload = {
+        provider: 'cloud',
+        enabled: formConfig?.enabled === true,
+        phone_number_id: String(formConfig?.phone_number_id || '').trim(),
+      };
+      const token = String(formConfig?.access_token || '').trim();
+      if (token && token !== '********') payload.access_token = token;
+      return payload;
+    }
+
+    function validateWhatsappCloudActivation(formConfig) {
+      const provider = String(formConfig?.provider || 'web').trim().toLowerCase();
+      if (provider !== 'cloud' || formConfig?.enabled !== true) return null;
+      if (!String(formConfig?.phone_number_id || '').trim()) {
+        return 'WhatsApp Cloud requiere phone_number_id para activarse.';
+      }
+      const token = String(formConfig?.access_token || '').trim();
+      const hasNewToken = Boolean(token && token !== '********');
+      if (!hasNewToken && formConfig?.access_token_configured !== true) {
+        return 'WhatsApp Cloud requiere un token nuevo o un token previamente configurado.';
+      }
+      return null;
+    }
+
+    function needsWhatsappCloudActivationConfirmation(previousConfig, nextConfig) {
+      const wasActive = String(previousConfig?.provider || '').trim().toLowerCase() === 'cloud'
+        && previousConfig?.enabled === true;
+      const willBeActive = String(nextConfig?.provider || '').trim().toLowerCase() === 'cloud'
+        && nextConfig?.enabled === true;
+      return willBeActive && !wasActive;
+    }
+
+    function mergeEmpresaIntegraciones(existingIntegraciones, updates) {
+      const existing = existingIntegraciones && typeof existingIntegraciones === 'object'
+        ? existingIntegraciones
+        : {};
+      const next = updates && typeof updates === 'object' ? updates : {};
+      return {
+        ...existing,
+        ...(Object.hasOwn(next, 'codigo_externo') ? { codigo_externo: next.codigo_externo } : {}),
+        ...(Object.hasOwn(next, 'webhook_url') ? { webhook_url: next.webhook_url } : {}),
+        ...(Object.hasOwn(next, 'pagos')
+          ? { pagos: { ...(existing.pagos || {}), ...(next.pagos || {}) } }
+          : {}),
+        ...(Object.hasOwn(next, 'whatsapp') ? { whatsapp: next.whatsapp } : {}),
+      };
+    }
+
     function toast(msg) {
       const t = $('#toast');
       t.textContent = msg;
@@ -1497,9 +1613,13 @@ if (logoutLink) {
     let companyFilters = { q: '', license: '', config: '', sort: 'id_desc' };
     let currentFacturacionConfig = null;
     let currentPagosEmpresaId = null;
+    let currentConfigIntegraciones = {};
+    let currentWhatsappPanelConfig = normalizeWhatsappPanelConfig({});
 
     function syncSuperAdminUi() {
       const canManageEmpresas = Boolean(esSuperAdmin);
+      const whatsappPanel = document.getElementById('panelWhatsappEmpresa');
+      if (whatsappPanel) whatsappPanel.style.display = canManageEmpresas ? 'block' : 'none';
       const newBtn = document.getElementById('btnNuevaEmpresa');
       if (newBtn) {
         newBtn.hidden = !canManageEmpresas;
@@ -1542,6 +1662,10 @@ if (logoutLink) {
         'e_pagos_proveedor',
         'e_pagos_token',
         'e_cobro_qr',
+        'e_whatsapp_provider',
+        'e_whatsapp_enabled',
+        'e_whatsapp_phone_number_id',
+        'e_whatsapp_access_token',
       ].forEach((id) => {
         const el = document.getElementById(id);
         if (el) el.disabled = disabled;
@@ -1571,6 +1695,11 @@ if (logoutLink) {
       pagosProveedorSelect.addEventListener('change', () => {
         refreshPagosWebhookUrl(currentPagosEmpresaId);
       });
+    }
+
+    const whatsappProviderSelect = document.getElementById('e_whatsapp_provider');
+    if (whatsappProviderSelect) {
+      whatsappProviderSelect.addEventListener('change', refreshWhatsappPanelVisibility);
     }
 
     const companySearch = document.getElementById('companySearch');
@@ -2139,6 +2268,8 @@ if (logoutLink) {
       limpiarFormularioCuentaDraft();
       renderCuentasDraft();
       setFacturacionConfigInForm(null, {});
+      currentConfigIntegraciones = {};
+      setWhatsappConfigInForm(currentConfigIntegraciones);
 
       // Default: Lun a Sáb
       document.querySelectorAll('#e_dias_entrega input[type="checkbox"]').forEach((chk) => {
@@ -2286,11 +2417,13 @@ if (logoutLink) {
       $('#e_max_activos_cliente').value =
         actCfg.max_activos_por_cliente ?? '';
 
-      // 5. Integraciones (incluye pagos)
+      // 5. Integraciones (incluye pagos y WhatsApp)
       const intCfg = parseMaybeJson(c.config_integraciones);
+      currentConfigIntegraciones = intCfg;
       $('#e_codigo_externo').value = intCfg.codigo_externo || '';
       $('#e_webhook_url').value = intCfg.webhook_url || '';
 
+      setWhatsappConfigInForm(intCfg);
       // Rellenar bloque "Cobros y Pagos"
       setPagosConfigInForm(intCfg, c.id);
       loadFacturacionConfig(c.id, c);
@@ -2368,6 +2501,49 @@ if (logoutLink) {
     }
 
     let pagosTokenConfigured = false;
+
+    function refreshWhatsappPanelVisibility() {
+      const provider = document.getElementById('e_whatsapp_provider')?.value || 'web';
+      const isCloud = provider === 'cloud';
+      const fields = document.getElementById('e_whatsapp_cloud_fields');
+      const enabledGroup = document.getElementById('e_whatsapp_cloud_enabled_group');
+      if (fields) fields.style.display = isCloud ? 'block' : 'none';
+      if (enabledGroup) enabledGroup.style.display = isCloud ? 'block' : 'none';
+      const enabled = document.getElementById('e_whatsapp_enabled');
+      if (enabled && !isCloud) enabled.checked = false;
+    }
+
+    function setWhatsappConfigInForm(configIntegraciones) {
+      currentWhatsappPanelConfig = normalizeWhatsappPanelConfig(configIntegraciones);
+      const provider = document.getElementById('e_whatsapp_provider');
+      const enabled = document.getElementById('e_whatsapp_enabled');
+      const phone = document.getElementById('e_whatsapp_phone_number_id');
+      const token = document.getElementById('e_whatsapp_access_token');
+      const status = document.getElementById('e_whatsapp_token_status');
+      if (provider) provider.value = currentWhatsappPanelConfig.provider;
+      if (enabled) enabled.checked = currentWhatsappPanelConfig.enabled;
+      if (phone) phone.value = currentWhatsappPanelConfig.phone_number_id;
+      if (token) token.value = '';
+      if (status) {
+        status.textContent = currentWhatsappPanelConfig.access_token_configured
+          ? 'Token configurado de forma segura. Dejá el campo vacío para conservarlo.'
+          : 'Token no configurado. Pegá uno nuevo para activar Cloud.';
+        status.style.color = currentWhatsappPanelConfig.access_token_configured
+          ? 'var(--success)'
+          : 'var(--muted)';
+      }
+      refreshWhatsappPanelVisibility();
+    }
+
+    function getWhatsappConfigFromForm() {
+      return {
+        provider: document.getElementById('e_whatsapp_provider')?.value || 'web',
+        enabled: document.getElementById('e_whatsapp_enabled')?.checked === true,
+        phone_number_id: document.getElementById('e_whatsapp_phone_number_id')?.value || '',
+        access_token: document.getElementById('e_whatsapp_access_token')?.value || '',
+        access_token_configured: currentWhatsappPanelConfig.access_token_configured === true,
+      };
+    }
 
     function refreshPagosWebhookUrl(empresaId) {
       const proveedor = document.getElementById('e_pagos_proveedor').value || '';
@@ -2722,16 +2898,31 @@ if (logoutLink) {
       };
       body.config_activos = config_activos;
 
-      // 🔹 Config integraciones (incluye pagos)
+      // Config integraciones (pagos + WhatsApp, sólo superadmin)
       if (esSuperAdmin) {
-        const pagosCfg = getPagosConfigFromForm(); // usa el form de "Cobros y Pagos"
+        const pagosCfg = getPagosConfigFromForm();
+        const whatsappFormConfig = getWhatsappConfigFromForm();
+        const whatsappError = validateWhatsappCloudActivation(whatsappFormConfig);
+        if (whatsappError) {
+          toast('❌ ' + whatsappError);
+          return;
+        }
 
-        const config_integraciones = {
+        const whatsappCfg = buildWhatsappConfigPayload(whatsappFormConfig);
+        if (needsWhatsappCloudActivationConfirmation(currentWhatsappPanelConfig, whatsappCfg)) {
+          const accepted = confirm(
+            'Activar WhatsApp Cloud detendrá el worker de WhatsApp Web de esta empresa. ' +
+            'La sesión Web se conservará y podrá volver a habilitarse más adelante. ¿Continuar?'
+          );
+          if (!accepted) return;
+        }
+
+        body.config_integraciones = mergeEmpresaIntegraciones(currentConfigIntegraciones, {
           codigo_externo: $('#e_codigo_externo').value || null,
           webhook_url: $('#e_webhook_url').value || null,
           pagos: pagosCfg,
-        };
-        body.config_integraciones = config_integraciones;
+          whatsapp: whatsappCfg,
+        });
       }
 
       // --- Licencia (solo super admin) ---
@@ -2815,6 +3006,10 @@ if (logoutLink) {
         if (res && res.error) {
           toast('❌ ' + res.error);
         } else {
+          if (esSuperAdmin && res?.config_integraciones) {
+            currentConfigIntegraciones = parseMaybeJson(res.config_integraciones);
+            setWhatsappConfigInForm(res.config_integraciones);
+          }
           const savedEmpresaId = id || res.id;
           if (savedEmpresaId) {
             const facturacionOk = await saveFacturacionConfig(savedEmpresaId);

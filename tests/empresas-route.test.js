@@ -3,7 +3,10 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import express from 'express';
 
-import { createEmpresasRouter } from '../src/routes/empresas.js';
+import {
+  createEmpresasRouter,
+  redactEmpresaPaymentSecrets,
+} from '../src/routes/empresas.js';
 import { decryptSecret } from '../src/services/facturacionService.js';
 import {
   runTransactionOnLockedClient,
@@ -460,6 +463,7 @@ test('POST de empresa persiste solo la allowlist WhatsApp sin alterar campos pub
       provider: 'cloud',
       enabled: true,
       phone_number_id: 'phone-safe',
+      access_token_configured: true,
     });
     assert.equal(body.config_integraciones.pagos.proveedor, 'mercado_pago');
     assert.equal(body.config_integraciones.pagos.public_key, 'public-safe');
@@ -517,6 +521,7 @@ test('GET de empresas aplica allowlist WhatsApp y conserva la redaccion existent
       provider: 'cloud',
       enabled: true,
       phone_number_id: 'phone-public',
+      access_token_configured: true,
     });
     assert.deepEqual(empresa.config_integraciones.pagos, {
       proveedor: 'mercado_pago',
@@ -581,6 +586,7 @@ test('superadmin no persiste ni recibe secretos de configuracion WhatsApp Cloud'
       provider: 'cloud',
       enabled: true,
       phone_number_id: 'phone-safe',
+      access_token_configured: true,
     });
     assert.equal(JSON.stringify(body).includes('legacy-'), false);
   });
@@ -643,6 +649,7 @@ test('PUT parcial conserva pagos cifrados, WhatsApp allowlisted y una integracio
       provider: 'cloud',
       enabled: true,
       phone_number_id: 'phone-existing',
+      access_token_configured: true,
     });
     assert.deepEqual(body.config_integraciones.envios, { proveedor: 'correo', sucursal: 'centro' });
     assert.equal(body.config_integraciones.pagos.public_key, 'public-existing');
@@ -750,6 +757,7 @@ test('backup de empresa tampoco expone secretos ni claves arbitrarias de WhatsAp
       provider: 'cloud',
       enabled: true,
       phone_number_id: 'phone-public',
+      access_token_configured: true,
     });
     assert.equal(JSON.stringify(body).includes('backup-token'), false);
     assert.equal(JSON.stringify(body).includes('backup-secret'), false);
@@ -1562,6 +1570,66 @@ test('pagos espera la compensación WhatsApp y se aplica sobre la configuración
   assert.equal(persisted.whatsapp.provider, 'web');
   assert.equal(persisted.pagos.proveedor, 'mercado_pago');
   assert.deepEqual(events, ['update:cloud:manual', 'reconcile-fail', 'restore:web', 'update:web:mercado_pago']);
+});
+
+test('redacción WhatsApp expone sólo access_token_configured boolean', () => {
+  const configured = redactEmpresaPaymentSecrets({
+    id: 7,
+    config_integraciones: {
+      whatsapp: {
+        provider: 'cloud',
+        enabled: true,
+        phone_number_id: 'phone-7',
+        access_token_encrypted: 'v1:encrypted-secret',
+        access_token: 'legacy-secret',
+        access_token_configured: false,
+      },
+    },
+  });
+  assert.deepEqual(configured.config_integraciones.whatsapp, {
+    provider: 'cloud',
+    enabled: true,
+    phone_number_id: 'phone-7',
+    access_token_configured: true,
+  });
+  assert.equal(JSON.stringify(configured).includes('encrypted-secret'), false);
+  assert.equal(JSON.stringify(configured).includes('legacy-secret'), false);
+
+  const missing = redactEmpresaPaymentSecrets({
+    id: 8,
+    config_integraciones: { whatsapp: { provider: 'web', enabled: false } },
+  });
+  assert.equal(missing.config_integraciones.whatsapp.access_token_configured, false);
+});
+
+test('access_token_configured entrante no sustituye un token Cloud', async () => {
+  let inserts = 0;
+  const app = buildApp({
+    user: { role: 'super', empresa_id: null },
+    query: async sql => {
+      if (String(sql).includes('INSERT INTO empresas')) inserts += 1;
+      return [];
+    },
+  });
+  await withServer(app, async baseUrl => {
+    const response = await fetch(`${baseUrl}/api/empresas`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        nombre: 'Cloud sin token',
+        config_integraciones: {
+          whatsapp: {
+            provider: 'cloud',
+            enabled: true,
+            phone_number_id: 'phone-7',
+            access_token_configured: true,
+          },
+        },
+      }),
+    });
+    assert.equal(response.status, 422);
+  });
+  assert.equal(inserts, 0);
 });
 
 test('dos updates no-WhatsApp se serializan, preservan WhatsApp y no reconcilian', async () => {

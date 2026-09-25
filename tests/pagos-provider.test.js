@@ -264,9 +264,10 @@ test('configuracion WhatsApp Cloud cifra token, conserva placeholder y migra pla
       provider: 'cloud',
       enabled: true,
       phone_number_id: 'phone-safe',
+      access_token_configured: true,
     });
-    assert.equal(JSON.stringify(response.config_integraciones.whatsapp).includes('access_token'), false);
-    assert.equal(JSON.stringify(response.config_integraciones.whatsapp).includes('configured'), false);
+    assert.equal(response.config_integraciones.whatsapp.access_token, undefined);
+    assert.equal(response.config_integraciones.whatsapp.access_token_encrypted, undefined);
   } finally {
     if (previousKey === undefined) delete process.env.FACTURACION_SECRET_KEY;
     else process.env.FACTURACION_SECRET_KEY = previousKey;

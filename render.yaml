@@ -42,7 +42,42 @@ services:
       - key: WHATSAPP_CLOUD_LOG_PAYLOAD
         value: "0"
 
+  - type: worker
+    name: pedivoy-whatsapp-cloud-worker-staging
+    runtime: node
+    plan: starter
+    rootDir: .
+    buildCommand: which pdftoppm && npm ci --omit=dev
+    startCommand: npm run worker:whatsapp-cloud
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: 22
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: pedivoy-db-staging
+          property: connectionString
+      - key: ARCA_TOKEN_ENCRYPTION_KEY
+        fromService:
+          type: web
+          name: pedivoy-web-staging
+          envVarKey: ARCA_TOKEN_ENCRYPTION_KEY
+      - key: WHATSAPP_GRAPH_VERSION
+        value: v26.0
+      - key: WHATSAPP_CLOUD_POLL_MS
+        value: "1000"
+      - key: WHATSAPP_CLOUD_LEASE_MS
+        value: "120000"
+      - key: WHATSAPP_CLOUD_TIMEOUT_MS
+        value: "8000"
+      - key: WHATSAPP_CLOUD_CANCEL_TIMEOUT_MS
+        value: "100"
+      - key: WHATSAPP_CLOUD_SHUTDOWN_MS
+        value: "10000"
+
 databases:
   - name: pedivoy-db-staging
     plan: starter
-    postgresMajorVersion: 16
+    postgresMajorVersion: "16"

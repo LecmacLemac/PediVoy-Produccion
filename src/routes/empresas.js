@@ -274,7 +274,15 @@ export function redactEmpresaPaymentSecrets(empresa) {
   const safeIntegraciones = {
     ...integraciones,
     ...(Object.hasOwn(integraciones, 'whatsapp')
-      ? { whatsapp: allowlistedWhatsappConfig(integraciones.whatsapp) }
+      ? {
+          whatsapp: {
+            ...allowlistedWhatsappConfig(integraciones.whatsapp),
+            access_token_configured: Boolean(
+              objectOrEmpty(integraciones.whatsapp).access_token
+              || objectOrEmpty(integraciones.whatsapp).access_token_encrypted
+            ),
+          },
+        }
       : {}),
   };
   if (Object.keys(pagos).length) {
