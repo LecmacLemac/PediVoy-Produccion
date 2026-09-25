@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { enqueueWppMessagePg } from '../src/transferenciasServices.js';
+import { createWppEnqueueTestPool } from './support/wpp-enqueue-test-pool.js';
 
 test('pagos no ofrece force y envía tenant del comprobante solo para superadmin', async () => {
   const source = await readFile(new URL('../pedidos/pagos.html', import.meta.url), 'utf8');
@@ -33,16 +35,46 @@ test('rutas manuales validan el par operación/cuenta y lo pasan al servicio', a
 });
 
 test('dedupe de outbox incluye tenant null-safe', async () => {
-  const source = await readFile(new URL('../src/services/messaging.js', import.meta.url), 'utf8');
+  const source = await readFile(new URL('../src/wpp/enqueue.js', import.meta.url), 'utf8');
   assert.match(source, /empresa_id IS NOT DISTINCT FROM \$3/);
 });
 
-test('aviso manual de comprobante conserva el transporte que recibió el archivo', async () => {
-  const route = await readFile(new URL('../src/routes/transferencias.js', import.meta.url), 'utf8');
-  const messaging = await readFile(new URL('../src/services/messaging.js', import.meta.url), 'utf8');
-  assert.match(route, /transport_origin:\s*ct\.transport_origin/);
-  assert.match(messaging, /transport_origin IS NOT DISTINCT FROM \$4/);
-  assert.match(messaging, /INSERT INTO wpp_outbox \(empresa_id, telefono, mensaje, transport_origin/);
+test('transferencias delega el enqueue transaccional e inserta el transporte resuelto', async () => {
+  const transactionPool = createWppEnqueueTestPool({
+    configIntegraciones: {
+      whatsapp: {
+        provider: 'cloud',
+        enabled: true,
+        phone_number_id: 'phone-7',
+        access_token_encrypted: 'encrypted-token',
+      },
+    },
+  });
+  const connect = transactionPool.connect.bind(transactionPool);
+  let connections = 0;
+  transactionPool.connect = async () => {
+    connections += 1;
+    return connect();
+  };
+
+  const result = await enqueueWppMessagePg({
+    empresaId: 7,
+    phone: '3515550000',
+    message: 'comprobante recibido',
+  }, transactionPool);
+
+  const configReadIndex = transactionPool.calls.findIndex(call => /SELECT config_integraciones FROM empresas/.test(call.text));
+  const insertIndex = transactionPool.calls.findIndex(call => /INSERT INTO wpp_outbox/.test(call.text));
+  const commitIndex = transactionPool.calls.findIndex(call => call.text === 'COMMIT');
+  assert.equal(connections, 1);
+  assert.equal(transactionPool.calls[0].text, 'BEGIN');
+  assert.ok(configReadIndex > 0);
+  assert.ok(insertIndex > configReadIndex);
+  assert.ok(commitIndex > insertIndex);
+  assert.match(transactionPool.calls[insertIndex].text, /transport_origin/);
+  assert.equal(transactionPool.calls[insertIndex].values[3], 'cloud');
+  assert.equal(result.transportOrigin, 'cloud');
+  assert.equal(transactionPool.releases, 1);
 });
 
 test('pagos permite asociar huérfanos antes de habilitar su validación', async () => {

@@ -3,11 +3,25 @@ import assert from 'node:assert/strict';
 import express from 'express';
 
 import { createJuegosPublicosRouter, createJuegosRouter } from '../src/routes/juegos.js';
+import { createWppEnqueueTestPool } from './support/wpp-enqueue-test-pool.js';
 
-function buildApp(query) {
+function buildApp(query, pool) {
+  const transactionPool = pool || {
+    async connect() {
+      return {
+        async query(input, params = []) {
+          const text = typeof input === 'string' ? input : input.text;
+          const values = typeof input === 'string' ? params : input.values;
+          if (text === 'BEGIN' || text === 'COMMIT' || text === 'ROLLBACK') return { rows: [] };
+          return { rows: await query(text, values) };
+        },
+        release() {},
+      };
+    },
+  };
   const app = express();
   app.use(express.json());
-  app.use('/api/juegos-publicos', createJuegosPublicosRouter({ query }));
+  app.use('/api/juegos-publicos', createJuegosPublicosRouter({ query, pool: transactionPool }));
   return app;
 }
 
@@ -125,7 +139,7 @@ test('POST /api/juegos-publicos/participar registra ganador y encola WhatsApp', 
   const query = async (sql, params = []) => {
     if (/CREATE TABLE IF NOT EXISTS juegos_campanias/.test(sql)) return [];
     if (/FROM juegos_campanias jc/.test(sql)) return [campaign];
-    if (/pg_advisory_xact_lock/.test(sql)) return [];
+    if (/pg_advisory_xact_lock/.test(sql) && !/INSERT INTO wpp_outbox/.test(sql)) return [];
     if (/COUNT\(\*\)::int AS c/.test(sql)) return [{ c: 0 }];
     if (/FROM juegos_participaciones/.test(sql) && /telefono_norm/.test(sql) && /LIMIT 1/.test(sql)) return [];
     if (/FROM juegos_premios jp/.test(sql)) {
@@ -149,15 +163,25 @@ test('POST /api/juegos-publicos/participar registra ganador y encola WhatsApp', 
       participationInserted = params;
       return [{ id: 99, codigo: params[6], resultado_tipo: params[7], resultado_nombre: params[8], created_at: new Date() }];
     }
-    if (/INSERT INTO wpp_outbox/.test(sql)) {
-      outboxInserted = params;
-      return [];
-    }
     if (/UPDATE juegos_participaciones SET enviado_whatsapp_at/.test(sql)) return [];
     return [];
   };
+  const outboxPool = createWppEnqueueTestPool({
+    configIntegraciones: { whatsapp: { provider: 'cloud', enabled: true, phone_number_id: 'phone-1', access_token_encrypted: 'v1:test' } },
+    async onQuery(request) {
+      if (/INSERT INTO wpp_outbox/.test(request.text)) {
+        outboxInserted = request.values;
+        return undefined;
+      }
+      if (request.text === 'BEGIN' || request.text === 'COMMIT' || request.text === 'ROLLBACK'
+        || /pg_advisory_xact_lock/.test(request.text)
+        || /SELECT config_integraciones FROM empresas/.test(request.text)
+        || /FROM wpp_outbox/.test(request.text)) return undefined;
+      return { rows: await query(request.text, request.values) };
+    },
+  });
 
-  await withServer(buildApp(query), async (baseUrl) => {
+  await withServer(buildApp(query, outboxPool), async (baseUrl) => {
     const resp = await fetch(`${baseUrl}/api/juegos-publicos/participar`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -179,8 +203,221 @@ test('POST /api/juegos-publicos/participar registra ganador y encola WhatsApp', 
   assert.equal(participationInserted[3], 6);
   assert.equal(participationInserted[5], '3515551234');
   assert.equal(outboxInserted[0], 1);
-  assert.equal(outboxInserted[1], '3515551234');
+  assert.equal(outboxInserted[1], '5493515551234');
   assert.match(outboxInserted[2], /Bidon gratis/);
+  assert.equal(outboxInserted[3], 'cloud');
+});
+
+test('POST /participar usa una sola conexión y un único COMMIT exterior para participación y outbox', async () => {
+  const statements = [];
+  let connects = 0;
+  let releases = 0;
+  const client = {
+    async query(input, params = []) {
+      const request = typeof input === 'string' ? { text: input, values: params } : input;
+      statements.push(request);
+      const { text, values = [] } = request;
+      if (['BEGIN', 'COMMIT', 'ROLLBACK'].includes(text)) return { rows: [] };
+      if (/FROM juegos_campanias jc/.test(text)) return { rows: [campaign] };
+      if (/pg_advisory_xact_lock/.test(text)) return { rows: [] };
+      if (/COUNT\(\*\)::int AS c/.test(text)) return { rows: [{ c: 0 }] };
+      if (/FROM juegos_participaciones/.test(text) && /telefono_norm/.test(text) && /LIMIT 1/.test(text)) return { rows: [] };
+      if (/FROM juegos_premios jp/.test(text)) return { rows: [{
+        id: 3, empresa_id: 1, campania_id: 7, tipo: 'producto_gratis', producto_id: 6,
+        producto_nombre: 'Bidon 20L', nombre_publico: 'Bidon gratis', descripcion: 'Premio',
+        probabilidad: 1, stock_total: null, stock_diario: null,
+      }] };
+      if (/INSERT INTO juegos_participaciones/.test(text)) return { rows: [{
+        id: 99, codigo: values[6], resultado_tipo: values[7], resultado_nombre: values[8], created_at: new Date(),
+      }] };
+      if (/SELECT config_integraciones FROM empresas/.test(text)) return { rows: [{ config_integraciones: {} }] };
+      if (/FROM wpp_outbox/.test(text) && !/INSERT INTO wpp_outbox/.test(text)) return { rows: [] };
+      if (/INSERT INTO wpp_outbox/.test(text)) return { rows: [{ id: 44, status: 'pending', transport_origin: 'company' }] };
+      if (/UPDATE juegos_participaciones SET enviado_whatsapp_at/.test(text)) return { rows: [] };
+      throw new Error(`SQL inesperado: ${text}`);
+    },
+    release() { releases += 1; },
+  };
+  const pool = { async connect() { connects += 1; return client; } };
+
+  await withServer(buildApp(async () => [], pool), async (baseUrl) => {
+    const resp = await fetch(`${baseUrl}/api/juegos-publicos/participar`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ empresa_id: 1, campania: 'raspa-y-gana', telefono: '351 555 1234' }),
+    });
+    assert.equal(resp.status, 200);
+  });
+
+  assert.equal(connects, 1);
+  assert.equal(releases, 1);
+  assert.equal(statements.filter(({ text }) => text === 'BEGIN').length, 1);
+  assert.equal(statements.filter(({ text }) => text === 'COMMIT').length, 1);
+  assert.equal(statements.filter(({ text }) => text === 'ROLLBACK').length, 0);
+  const labels = statements.map(({ text }) => {
+    if (/pg_advisory_xact_lock\(\$1::integer, hashtext\(\$2\)::integer\)/.test(text)) return 'GAME_LOCK';
+    if (/\$1::integer, \$2::integer/.test(text)) return 'CONFIG_LOCK';
+    if (/SELECT config_integraciones FROM empresas/.test(text)) return 'CONFIG_READ';
+    if (/hashtextextended/.test(text)) return 'DEDUPE_LOCK';
+    if (/INSERT INTO wpp_outbox/.test(text)) return 'OUTBOX_INSERT';
+    if (/UPDATE juegos_participaciones SET enviado_whatsapp_at/.test(text)) return 'PARTICIPATION_UPDATE';
+    return null;
+  }).filter(Boolean);
+  assert.deepEqual(labels, ['GAME_LOCK', 'CONFIG_LOCK', 'CONFIG_READ', 'DEDUPE_LOCK', 'OUTBOX_INSERT', 'PARTICIPATION_UPDATE']);
+});
+
+test('POST /participar revierte participación y outbox si falla antes de COMMIT', async () => {
+  const committed = { participations: [], outbox: [] };
+  let staged;
+  let loggedError;
+  const statements = [];
+  const client = {
+    async query(input, params = []) {
+      const request = typeof input === 'string' ? { text: input, values: params } : input;
+      const { text, values = [] } = request;
+      statements.push(text);
+      if (text === 'BEGIN') { staged = { participations: [], outbox: [] }; return { rows: [] }; }
+      if (text === 'COMMIT') {
+        committed.participations.push(...staged.participations);
+        committed.outbox.push(...staged.outbox);
+        staged = null;
+        return { rows: [] };
+      }
+      if (text === 'ROLLBACK') { staged = null; return { rows: [] }; }
+      if (/FROM juegos_campanias jc/.test(text)) return { rows: [campaign] };
+      if (/pg_advisory_xact_lock/.test(text)) return { rows: [] };
+      if (/COUNT\(\*\)::int AS c/.test(text)) return { rows: [{ c: 0 }] };
+      if (/FROM juegos_participaciones/.test(text) && /telefono_norm/.test(text) && /LIMIT 1/.test(text)) return { rows: [] };
+      if (/FROM juegos_premios jp/.test(text)) return { rows: [{
+        id: 3, empresa_id: 1, campania_id: 7, tipo: 'producto_gratis', producto_id: 6,
+        producto_nombre: 'Bidon 20L', nombre_publico: 'Bidon gratis', descripcion: 'Premio',
+        probabilidad: 1, stock_total: null, stock_diario: null,
+      }] };
+      if (/INSERT INTO juegos_participaciones/.test(text)) {
+        staged.participations.push(values);
+        return { rows: [{ id: 99, codigo: values[6], resultado_tipo: values[7], resultado_nombre: values[8], created_at: new Date() }] };
+      }
+      if (/SELECT config_integraciones FROM empresas/.test(text)) return { rows: [{ config_integraciones: {} }] };
+      if (/FROM wpp_outbox/.test(text) && !/INSERT INTO wpp_outbox/.test(text)) return { rows: [] };
+      if (/INSERT INTO wpp_outbox/.test(text)) {
+        staged.outbox.push(values);
+        return { rows: [{ id: 44, status: 'pending', transport_origin: 'company' }] };
+      }
+      if (/UPDATE juegos_participaciones SET enviado_whatsapp_at/.test(text)) throw new Error('forced update failure');
+      throw new Error(`SQL inesperado: ${text}`);
+    },
+    release() {},
+  };
+
+  const originalConsoleError = console.error;
+  console.error = error => { loggedError = error; };
+  try {
+    await withServer(buildApp(async () => [], { async connect() { return client; } }), async (baseUrl) => {
+      const resp = await fetch(`${baseUrl}/api/juegos-publicos/participar`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ empresa_id: 1, campania: 'raspa-y-gana', telefono: '351 555 1234' }),
+      });
+      assert.equal(resp.status, 500);
+    });
+  } finally {
+    console.error = originalConsoleError;
+  }
+
+  assert.deepEqual(committed, { participations: [], outbox: [] });
+  assert.equal(loggedError?.message, 'forced update failure');
+  assert.equal(statements.filter(text => text === 'ROLLBACK').length, 1);
+  assert.equal(statements.includes('COMMIT'), false);
+});
+
+test('POST /participar trata fallo de COMMIT como resultado desconocido y descarta la conexión', async () => {
+  const commitError = new Error('forced commit transport failure');
+  const statements = [];
+  const releaseArgs = [];
+  let loggedError;
+  const client = {
+    async query(input, params = []) {
+      const request = typeof input === 'string' ? { text: input, values: params } : input;
+      const { text, values = [] } = request;
+      statements.push(text);
+      if (text === 'BEGIN') return { rows: [] };
+      if (text === 'COMMIT') throw commitError;
+      if (text === 'ROLLBACK') throw new Error('no debe intentar rollback después de COMMIT ambiguo');
+      if (/FROM juegos_campanias jc/.test(text)) return { rows: [campaign] };
+      if (/pg_advisory_xact_lock/.test(text)) return { rows: [] };
+      if (/COUNT\(\*\)::int AS c/.test(text)) return { rows: [{ c: 0 }] };
+      if (/FROM juegos_participaciones/.test(text) && /telefono_norm/.test(text) && /LIMIT 1/.test(text)) return { rows: [] };
+      if (/FROM juegos_premios jp/.test(text)) return { rows: [{
+        id: null, empresa_id: 1, campania_id: 7, tipo: 'sin_premio', producto_id: null,
+        producto_nombre: null, nombre_publico: 'Sin premio', descripcion: null,
+        probabilidad: 1, stock_total: null, stock_diario: null,
+      }] };
+      if (/INSERT INTO juegos_participaciones/.test(text)) return { rows: [{
+        id: 99, codigo: values[6], resultado_tipo: values[7], resultado_nombre: values[8], created_at: new Date(),
+      }] };
+      throw new Error(`SQL inesperado: ${text}`);
+    },
+    release(error) { releaseArgs.push(error); },
+  };
+  const originalConsoleError = console.error;
+  console.error = error => { loggedError = error; };
+  try {
+    await withServer(buildApp(async () => [], { async connect() { return client; } }), async (baseUrl) => {
+      const resp = await fetch(`${baseUrl}/api/juegos-publicos/participar`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ empresa_id: 1, campania: 'raspa-y-gana', telefono: '351 555 1234' }),
+      });
+      assert.equal(resp.status, 500);
+      assert.deepEqual(await resp.json(), { error: 'Error registrando participacion.' });
+    });
+  } finally {
+    console.error = originalConsoleError;
+  }
+
+  assert.equal(statements.filter(text => text === 'COMMIT').length, 1);
+  assert.equal(statements.filter(text => text === 'ROLLBACK').length, 0);
+  assert.deepEqual(releaseArgs, [commitError]);
+  assert.equal(loggedError?.code, 'transaction_outcome_unknown');
+  assert.equal(loggedError?.message, 'transaction_outcome_unknown');
+});
+
+test('POST /participar preserva el error primario si ROLLBACK falla y libera una sola vez descartando el client', async () => {
+  const primaryError = new Error('primary transaction failure');
+  const rollbackError = new Error('rollback transport failure');
+  const statements = [];
+  const releaseArgs = [];
+  let loggedError;
+  const client = {
+    async query(input) {
+      const text = typeof input === 'string' ? input : input.text;
+      statements.push(text);
+      if (text === 'BEGIN') return { rows: [] };
+      if (text === 'ROLLBACK') throw rollbackError;
+      if (/FROM juegos_campanias jc/.test(text)) throw primaryError;
+      throw new Error(`SQL inesperado: ${text}`);
+    },
+    release(error) { releaseArgs.push(error); },
+  };
+  const originalConsoleError = console.error;
+  console.error = error => { loggedError = error; };
+  try {
+    await withServer(buildApp(async () => [], { async connect() { return client; } }), async (baseUrl) => {
+      const resp = await fetch(`${baseUrl}/api/juegos-publicos/participar`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ empresa_id: 1, campania: 'raspa-y-gana', telefono: '351 555 1234' }),
+      });
+      assert.equal(resp.status, 500);
+    });
+  } finally {
+    console.error = originalConsoleError;
+  }
+
+  assert.equal(loggedError, primaryError);
+  assert.equal(statements.filter(text => text === 'ROLLBACK').length, 1);
+  assert.equal(statements.filter(text => text === 'COMMIT').length, 0);
+  assert.deepEqual(releaseArgs, [rollbackError]);
 });
 
 test('POST /api/juegos-publicos/participar acepta codigo publico sin empresa ni slug', async () => {
@@ -188,7 +425,7 @@ test('POST /api/juegos-publicos/participar acepta codigo publico sin empresa ni 
   const query = async (sql, params = []) => {
     if (/CREATE TABLE IF NOT EXISTS juegos_campanias/.test(sql)) return [];
     if (/FROM juegos_campanias jc/.test(sql)) return [campaign];
-    if (/pg_advisory_xact_lock/.test(sql)) return [];
+    if (/pg_advisory_xact_lock/.test(sql) && !/INSERT INTO wpp_outbox/.test(sql)) return [];
     if (/COUNT\(\*\)::int AS c/.test(sql)) return [{ c: 0 }];
     if (/FROM juegos_participaciones/.test(sql) && /telefono_norm/.test(sql) && /LIMIT 1/.test(sql)) return [];
     if (/FROM juegos_premios jp/.test(sql)) {
@@ -222,7 +459,7 @@ test('POST /api/juegos-publicos/participar informa cuando puede volver si ya par
   const query = async (sql) => {
     if (/CREATE TABLE IF NOT EXISTS juegos_campanias/.test(sql)) return [];
     if (/FROM juegos_campanias jc/.test(sql)) return [dailyCampaign];
-    if (/pg_advisory_xact_lock/.test(sql)) return [];
+    if (/pg_advisory_xact_lock/.test(sql) && !/INSERT INTO wpp_outbox/.test(sql)) return [];
     if (/COUNT\(\*\)::int AS c/.test(sql)) return [{ c: 0 }];
     if (/FROM juegos_participaciones/.test(sql) && /telefono_norm/.test(sql) && /LIMIT 1/.test(sql)) {
       return [{ id: 101, created_at: new Date() }];

@@ -10,6 +10,7 @@ import { createFacturaCapabilityRouter } from '../src/facturaCapability.js';
 import { buildFacturaPublicUrl } from '../src/services/facturaDeliveryService.js';
 import { createWithAuth } from '../src/core/auth.js';
 import { cfg } from '../src/config.js';
+import { createWppEnqueueTestPool } from './support/wpp-enqueue-test-pool.js';
 
 const secret = process.env.JWT_SECRET || cfg.jwtSecret;
 test('outbound URL is a signed invoice capability without raw storage filename', () => {
@@ -82,12 +83,18 @@ test('real send route queues capability URL that downloads; authenticated PDF st
   const query = async (sql, args) => {
     if (/FROM usuarios/.test(sql)) return [{ id: 1, role: 'admin', empresa_id: 7, activo: true, chofer_id: null, referente_id: null }];
     if (/FROM facturas(?: f)? WHERE|FROM facturas f\s/.test(sql)) return args[0] === 10 && args[1] === 7 ? [factura] : [];
-    if (/INSERT INTO wpp_outbox/.test(sql)) { message = args[2]; return [{ id: 30, status: 'pending' }]; }
     return [];
   };
+  const transactionPool = createWppEnqueueTestPool({
+    configIntegraciones: { whatsapp: { provider: 'cloud', enabled: true, phone_number_id: 'phone-7', access_token_encrypted: 'v1:test' } },
+    onQuery(request) {
+      if (/INSERT INTO wpp_outbox/.test(request.text)) message = request.values[2];
+      return undefined;
+    },
+  });
   const app = express();
   app.use(express.json());
-  app.use('/api', createFacturacionRouter({ query, withAuth: createWithAuth({ queryFn: query }), checkLicencia: (_q, _s, next) => next(), projectDir }));
+  app.use('/api', createFacturacionRouter({ query, pool: transactionPool, withAuth: createWithAuth({ queryFn: query }), checkLicencia: (_q, _s, next) => next(), projectDir }));
   app.use('/public/facturas', createFacturaCapabilityRouter({ query, storageDir: path.join(projectDir, 'Facturas') }));
   const server = app.listen(0, '127.0.0.1');
   await new Promise(resolve => server.once('listening', resolve));

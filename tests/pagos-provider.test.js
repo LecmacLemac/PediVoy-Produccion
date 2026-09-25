@@ -9,6 +9,8 @@ import {
   securePaymentIntegraciones,
 } from '../src/routes/empresas.js';
 
+process.env.FACTURACION_SECRET_KEY ||= 'test-key-pagos-provider';
+
 test('Mercado Pago vuelve al seguimiento con token publico del pedido', () => {
   const urls = buildPedidoSeguimientoBackUrls({
     baseUrl: 'https://pedivoy.test/',
@@ -173,6 +175,13 @@ test('update solo WhatsApp conserva pagos cifrados y otras integraciones', () =>
   assert.deepEqual(secured.envios, { proveedor: 'correo', sucursal: 'centro' });
 });
 
+test('provider WhatsApp se persiste canónico con trim y lowercase', () => {
+  const cloud = securePaymentIntegraciones({ whatsapp: { provider: '  ClOuD  ' } });
+  const web = securePaymentIntegraciones({ whatsapp: { provider: '\tWeB\n' } });
+  assert.equal(cloud.whatsapp.provider, 'cloud');
+  assert.equal(web.whatsapp.provider, 'web');
+});
+
 test('update solo pagos conserva WhatsApp allowlisted y fusiona otras integraciones', () => {
   const secured = securePaymentIntegraciones(
     {
@@ -209,52 +218,57 @@ test('update solo pagos conserva WhatsApp allowlisted y fusiona otras integracio
     access_token_encrypted: 'v1:token-cifrado',
     webhook_secret_encrypted: 'v1:webhook-cifrado',
   });
-  assert.deepEqual(secured.whatsapp, {
-    provider: 'cloud',
-    enabled: true,
-    phone_number_id: 'phone-existing',
-  });
+  assert.equal(secured.whatsapp.provider, 'cloud');
+  assert.equal(secured.whatsapp.enabled, true);
+  assert.equal(secured.whatsapp.phone_number_id, 'phone-existing');
+  assert.equal(decryptSecret(secured.whatsapp.access_token_encrypted), 'legacy-token');
   assert.deepEqual(secured.envios, { proveedor: 'correo', sucursal: 'norte' });
   assert.equal(JSON.stringify(secured).includes('legacy-'), false);
 });
 
-test('configuracion WhatsApp Cloud conserva solo campos publicos permitidos', () => {
-  const secured = securePaymentIntegraciones({
-    pagos: { proveedor: 'mercado_pago' },
-    whatsapp: {
+test('configuracion WhatsApp Cloud cifra token, conserva placeholder y migra plaintext legacy', () => {
+  const previousKey = process.env.FACTURACION_SECRET_KEY;
+  process.env.FACTURACION_SECRET_KEY = 'test-key-whatsapp-cloud';
+  try {
+    const secured = securePaymentIntegraciones({
+      pagos: { proveedor: 'mercado_pago' },
+      whatsapp: {
+        provider: 'cloud',
+        enabled: true,
+        phone_number_id: 'phone-safe',
+        access_token: 'token-secreto',
+        app_secret: 'app-secreto',
+        clave_arbitraria: 'no-permitida',
+      },
+    });
+
+    assert.equal(secured.whatsapp.access_token, undefined);
+    assert.equal(secured.whatsapp.app_secret, undefined);
+    assert.equal(decryptSecret(secured.whatsapp.access_token_encrypted), 'token-secreto');
+
+    const preserved = securePaymentIntegraciones(
+      { whatsapp: { access_token: '********' } },
+      { whatsapp: { provider: 'cloud', enabled: true, phone_number_id: 'phone-safe', access_token_encrypted: secured.whatsapp.access_token_encrypted } },
+    );
+    assert.equal(preserved.whatsapp.access_token_encrypted, secured.whatsapp.access_token_encrypted);
+
+    const migrated = securePaymentIntegraciones(
+      { pagos: { auto_confirmar: true } },
+      { whatsapp: { provider: 'cloud', enabled: true, phone_number_id: 'phone-safe', access_token: 'legacy-token' } },
+    );
+    assert.equal(migrated.whatsapp.access_token, undefined);
+    assert.equal(decryptSecret(migrated.whatsapp.access_token_encrypted), 'legacy-token');
+
+    const response = redactEmpresaPaymentSecrets({ id: 3, config_integraciones: migrated });
+    assert.deepEqual(response.config_integraciones.whatsapp, {
       provider: 'cloud',
       enabled: true,
       phone_number_id: 'phone-safe',
-      access_token: 'token-secreto',
-      app_secret: 'app-secreto',
-      clave_arbitraria: 'no-permitida',
-    },
-  });
-
-  assert.deepEqual(secured.whatsapp, {
-    provider: 'cloud',
-    enabled: true,
-    phone_number_id: 'phone-safe',
-  });
-
-  const response = redactEmpresaPaymentSecrets({
-    id: 3,
-    config_integraciones: {
-      ...secured,
-      whatsapp: {
-        ...secured.whatsapp,
-        access_token: 'legacy-token',
-        app_secret: 'legacy-secret',
-        otra_clave: 'legacy-arbitrary',
-      },
-    },
-  });
-  assert.deepEqual(response.config_integraciones.whatsapp, {
-    provider: 'cloud',
-    enabled: true,
-    phone_number_id: 'phone-safe',
-  });
-  assert.equal(JSON.stringify(response).includes('legacy-token'), false);
-  assert.equal(JSON.stringify(response).includes('legacy-secret'), false);
-  assert.equal(JSON.stringify(response).includes('legacy-arbitrary'), false);
+    });
+    assert.equal(JSON.stringify(response.config_integraciones.whatsapp).includes('access_token'), false);
+    assert.equal(JSON.stringify(response.config_integraciones.whatsapp).includes('configured'), false);
+  } finally {
+    if (previousKey === undefined) delete process.env.FACTURACION_SECRET_KEY;
+    else process.env.FACTURACION_SECRET_KEY = previousKey;
+  }
 });

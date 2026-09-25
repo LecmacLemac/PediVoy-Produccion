@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createCompanyLifecycle } from '../src/wpp/companyLifecycle.js';
+import { createCompanyWebWorkerGuard } from '../src/wpp/companyWebPolicy.js';
 
 function owner({ acquired = true } = {}) {
   return {
@@ -44,6 +45,29 @@ test('standby company lifecycle never creates a WhatsApp client', async () => {
   }), false);
   assert.equal(prerequisites, 0);
   assert.equal(creates, 0);
+  assert.equal(lifecycle.snapshot().state, 'standby');
+});
+
+test('startup Cloud libera ownership y no crea cliente Chromium', async () => {
+  let creates = 0;
+  const ownership = owner();
+  const lifecycle = createCompanyLifecycle({
+    ownership,
+    clientFactory: { create() { creates += 1; } },
+  });
+  const guard = createCompanyWebWorkerGuard({
+    empresaId: 7,
+    query: async () => [{
+      id: 7,
+      config_integraciones: { whatsapp: { provider: 'cloud', enabled: true, phone_number_id: 'phone-7', access_token_encrypted: 'v1:test' } },
+    }],
+  });
+
+  await assert.rejects(lifecycle.start({ beforeInitialize: guard.assertEligible }), {
+    code: 'WPP_COMPANY_INELIGIBLE',
+  });
+  assert.equal(creates, 0);
+  assert.equal(ownership.isOwner, false);
   assert.equal(lifecycle.snapshot().state, 'standby');
 });
 

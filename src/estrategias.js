@@ -1,6 +1,7 @@
 // src/estrategias.js
-import { query } from './db.js';
+import { pool, query } from './db.js';
 import { sendSmsViaIfttt } from './services/sms.js';
+import { enqueueWppOutbox } from './wpp/enqueue.js';
 
 let telemetryReady = false;
 let telemetryEnsureTried = false;
@@ -92,24 +93,19 @@ function renderTemplateMsg(tpl, ctx = {}) {
 }
 
 // Helper interno para encolar mensajes (WhatsApp)
-async function encolarMensajeWhatsapp(empresaId, telefono, mensaje) {
-  if (!telefono || !mensaje) return { queued: false, skipped: true, reason: 'missing_phone_or_message' };
-  const tel = String(telefono).replace(/\D+/g, '');
-
-  // Anti-Spam: No enviar el mismo mensaje exacto en 24hs
-  const duplicado = await query(`
-    SELECT id FROM wpp_outbox
-    WHERE telefono = $1 AND mensaje = $2 AND created_at > (NOW() - INTERVAL '24 hours')
-  `, [tel, mensaje]);
-
-  if (duplicado.length > 0) return { queued: false, skipped: true, reason: 'duplicate_24h' };
-
-  await query(`
-    INSERT INTO wpp_outbox (empresa_id, telefono, mensaje, status, created_at)
-    VALUES ($1, $2, $3, 'pending', NOW())
-  `, [empresaId, tel, mensaje]);
-
-  return { queued: true };
+export async function encolarMensajeWhatsapp(empresaId, telefono, mensaje, transactionPool = pool) {
+  if (!telefono || !mensaje) {
+    return { queued: false, skipped: true, reason: 'missing_phone_or_message' };
+  }
+  const result = await enqueueWppOutbox({
+    empresaId,
+    phone: telefono,
+    message: mensaje,
+    dedupeWindowMinutes: 24 * 60,
+  }, transactionPool);
+  return result.reason === 'duplicate_1440m'
+    ? { ...result, reason: 'duplicate_24h' }
+    : result;
 }
 
 async function enviarPorCanal({ empresaId, estrategia, telefono, mensaje, canal, meta = null }) {

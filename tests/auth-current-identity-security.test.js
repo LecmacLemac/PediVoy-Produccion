@@ -33,7 +33,15 @@ async function serve(row, run, { dbError = false, linked = {} } = {}) {
   const withAuth = middleware(query);
   app.get('/identity', withAuth, (req, res) => res.json(req.user));
   app.use('/api', createAuthRouter({ queryFn: query }));
-  const deps = { query, withAuth, isSuper: auth.isSuper, getEmpresaIdFromToken, resolveEmpresaId, getEmpresaById: async () => null };
+  const deps = {
+    query,
+    withTransaction: async work => work(query),
+    withAuth,
+    isSuper: auth.isSuper,
+    getEmpresaIdFromToken,
+    resolveEmpresaId,
+    getEmpresaById: async () => null,
+  };
   app.use('/api/productos', createProductosRouter(deps));
   app.use('/api/empresas', createEmpresasRouter(deps));
   const stats = { express, withAuth, query, getEmpresaIdFromToken };

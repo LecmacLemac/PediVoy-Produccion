@@ -7,6 +7,10 @@ import { join } from 'node:path';
 import pg from 'pg';
 
 import { createWhatsAppCloudEventHandler } from '../src/whatsappCloud/eventRepository.js';
+import {
+  runTransactionOnLockedClient,
+  withEmpresaWhatsappConfigLock,
+} from '../src/wpp/companyConfigLock.js';
 
 let bin;
 try { bin = execFileSync('pg_config', ['--bindir'], { encoding: 'utf8' }).trim(); } catch {}
@@ -18,6 +22,14 @@ const endMarker = '-- END WHATSAPP CLOUD INBOX MIGRATION';
 const end = initSql.indexOf(endMarker, start);
 assert.ok(start >= 0 && end > start);
 const migrationSql = initSql.slice(start, end + endMarker.length);
+const empresasSource = readFileSync(new URL('../src/routes/empresas.js', import.meta.url), 'utf8');
+const bootFunction = empresasSource.slice(
+  empresasSource.indexOf('function scheduleEmpresaWppBootRecovery'),
+  empresasSource.indexOf('function shouldAutoStartEmpresaWppWorker'),
+);
+const bootSqlMatch = bootFunction.match(/const rows = await query\(`([\s\S]*?)`\);/);
+assert.ok(bootSqlMatch, 'boot recovery SQL must remain extractable for PostgreSQL policy tests');
+const bootSql = bootSqlMatch[1];
 
 async function withDatabase(work) {
   const directory = mkdtempSync(join(process.cwd(), '.whatsapp-cloud-pg-'));
@@ -39,6 +51,50 @@ async function withDatabase(work) {
     rmSync(directory, { recursive: true, force: true });
   }
 }
+
+test('config lock progresa y serializa con pool PostgreSQL de una conexión', options, async () => {
+  await withDatabase(async pool => {
+    await pool.query('CREATE TABLE empresa_config_lock_test (empresa_id INTEGER PRIMARY KEY, version INTEGER NOT NULL)');
+    await pool.query('INSERT INTO empresa_config_lock_test VALUES (7, 0)');
+    const smallPool = new pg.Pool({ ...pool.options, max: 1 });
+    let connects = 0;
+    let active = 0;
+    let maxActive = 0;
+    const instrumentedPool = {
+      async connect() {
+        connects += 1;
+        return smallPool.connect();
+      },
+    };
+    try {
+      const update = () => withEmpresaWhatsappConfigLock(instrumentedPool, 7, async client => {
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        try {
+          return await runTransactionOnLockedClient(client, async txQuery => {
+            const rows = await txQuery(`
+              UPDATE empresa_config_lock_test
+                 SET version = version + 1
+               WHERE empresa_id = 7
+               RETURNING version
+            `);
+            await txQuery('SELECT pg_sleep(0.03)');
+            return rows[0].version;
+          });
+        } finally {
+          active -= 1;
+        }
+      });
+
+      assert.deepEqual((await Promise.all([update(), update()])).sort(), [1, 2]);
+      assert.equal(connects, 2, 'cada request debe adquirir exactamente un client');
+      assert.equal(maxActive, 1, 'el advisory lock debe serializar callbacks');
+      assert.equal((await smallPool.query('SELECT version FROM empresa_config_lock_test WHERE empresa_id = 7')).rows[0].version, 2);
+    } finally {
+      await smallPool.end();
+    }
+  });
+});
 
 test('migración Cloud deduplica concurrentemente por empresa y permite la misma clave entre empresas', options, async () => {
   await withDatabase(async pool => {
@@ -146,13 +202,13 @@ test('migración Cloud reemplaza una PK legacy incorrecta, agrega la FK y es ree
   });
 });
 
-test('migración Cloud exige phone_number_id único solo para asociaciones Cloud activas', options, async () => {
+test('migración Cloud exige phone_number_id normalizado único solo para asociaciones Cloud activas', options, async () => {
   await withDatabase(async pool => {
     await pool.query("CREATE TABLE empresas (id SERIAL PRIMARY KEY, config_integraciones JSONB NOT NULL DEFAULT '{}'::jsonb)");
     await pool.query(migrationSql);
 
-    const cloud = (enabled, phoneNumberId, provider = 'cloud') => ({
-      whatsapp: { provider, enabled, phone_number_id: phoneNumberId },
+    const cloud = (enabled, phoneNumberId, provider = 'cloud', token = 'v1:test') => ({
+      whatsapp: { provider, enabled, phone_number_id: phoneNumberId, access_token_encrypted: token },
     });
     await pool.query('INSERT INTO empresas(config_integraciones) VALUES ($1)', [cloud(true, 'phone-unique')]);
     await assert.rejects(
@@ -160,9 +216,249 @@ test('migración Cloud exige phone_number_id único solo para asociaciones Cloud
       error => error?.code === '23505'
         && error?.constraint === 'idx_empresas_whatsapp_cloud_phone_number_id_unique'
     );
+    await assert.rejects(
+      pool.query('INSERT INTO empresas(config_integraciones) VALUES ($1)', [cloud(true, 'phone-unique', ' Cloud ')]),
+      error => error?.code === '23505'
+        && error?.constraint === 'idx_empresas_whatsapp_cloud_phone_number_id_unique'
+    );
+    await assert.rejects(
+      pool.query('INSERT INTO empresas(config_integraciones) VALUES ($1)', [cloud(true, '  phone-unique  ', '  CLOUD  ')]),
+      error => error?.code === '23505'
+        && error?.constraint === 'idx_empresas_whatsapp_cloud_phone_number_id_unique'
+    );
     await pool.query('INSERT INTO empresas(config_integraciones) VALUES ($1)', [cloud(false, 'phone-unique')]);
+    await pool.query('INSERT INTO empresas(config_integraciones) VALUES ($1)', [cloud('true', 'phone-unique')]);
     await pool.query('INSERT INTO empresas(config_integraciones) VALUES ($1)', [cloud(true, 'phone-unique', 'web')]);
+    await pool.query('INSERT INTO empresas(config_integraciones) VALUES ($1)', [cloud(true, 'phone-unique', 'cloud', '')]);
+    await pool.query('INSERT INTO empresas(config_integraciones) VALUES ($1)', [cloud(true, 'phone-unique', 'cloud', '   ')]);
     await pool.query('INSERT INTO empresas(config_integraciones) VALUES ($1), ($2)', [cloud(true, ''), cloud(true, '')]);
+
+    const { rows: indexes } = await pool.query(`
+      SELECT indexdef
+        FROM pg_indexes
+       WHERE schemaname = current_schema()
+         AND indexname = 'idx_empresas_whatsapp_cloud_phone_number_id_unique'
+    `);
+    assert.equal(indexes.length, 1);
+    assert.match(indexes[0].indexdef, /UNIQUE.*btrim\(COALESCE\([^)]*phone_number_id/i);
+  });
+});
+
+test('webhook resuelve provider y phone_number_id normalizados sin ambigüedad', options, async () => {
+  await withDatabase(async pool => {
+    await pool.query("CREATE TABLE empresas (id SERIAL PRIMARY KEY, config_integraciones JSONB NOT NULL DEFAULT '{}'::jsonb)");
+    await pool.query(migrationSql);
+    await pool.query('INSERT INTO empresas(config_integraciones) VALUES ($1)', [{
+      whatsapp: {
+        provider: '  ClOuD  ',
+        enabled: true,
+        phone_number_id: ' webhook-phone ',
+        access_token_encrypted: ' v1:test ',
+      },
+    }]);
+
+    const withTransaction = async work => {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const result = await work(async (sql, params = []) => (await client.query(sql, params)).rows);
+        await client.query('COMMIT');
+        return result;
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      } finally {
+        client.release();
+      }
+    };
+    const handler = createWhatsAppCloudEventHandler({ withTransaction });
+    assert.deepEqual(await handler([{
+      kind: 'message',
+      phoneNumberId: ' webhook-phone ',
+      message: { id: 'normalized-provider-message', from: 'sender', timestamp: '1', type: 'text', text: { body: 'safe' } },
+    }]), { accepted: 1, duplicates: 0 });
+
+    const { rows } = await pool.query('SELECT empresa_id, message_id FROM whatsapp_cloud_events');
+    assert.deepEqual(rows, [{ empresa_id: 1, message_id: 'normalized-provider-message' }]);
+  });
+});
+
+test('webhook resuelve tenant con config_integraciones JSON y omite estructuras inválidas', options, async () => {
+  await withDatabase(async pool => {
+    await pool.query("CREATE TABLE empresas (id SERIAL PRIMARY KEY, config_integraciones JSON)");
+    await pool.query(migrationSql);
+    await pool.query('INSERT INTO empresas(config_integraciones) VALUES ($1::json), ($2::json), ($3::json)', [
+      JSON.stringify({ whatsapp: { provider: ' cloud ', enabled: true, phone_number_id: 'json-phone', access_token_encrypted: 'v1:test' } }),
+      JSON.stringify({ whatsapp: null }),
+      JSON.stringify('scalar'),
+    ]);
+    const withTransaction = async work => {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const result = await work(async (sql, params = []) => (await client.query(sql, params)).rows);
+        await client.query('COMMIT');
+        return result;
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      } finally { client.release(); }
+    };
+    const handler = createWhatsAppCloudEventHandler({ withTransaction });
+    assert.deepEqual(await handler([{
+      kind: 'message', phoneNumberId: 'json-phone',
+      message: { id: 'json-message', from: 'sender', timestamp: '1', type: 'text', text: { body: 'safe' } },
+    }]), { accepted: 1, duplicates: 0 });
+  });
+});
+
+test('migración Cloud configura timeouts locales antes del primer LOCK', () => {
+  const begin = migrationSql.indexOf('BEGIN;');
+  const lockTimeout = migrationSql.indexOf("SET LOCAL lock_timeout = '30s';");
+  const statementTimeout = migrationSql.indexOf("SET LOCAL statement_timeout = '5min';");
+  const firstLock = migrationSql.search(/\bLOCK TABLE\b/);
+  assert.ok(begin >= 0 && lockTimeout > begin && statementTimeout > lockTimeout && firstLock > statementTimeout);
+});
+
+test('boot recovery aplica fail-closed canónico con columnas JSON y JSONB', options, async () => {
+  for (const dataType of ['JSON', 'JSONB']) {
+    await withDatabase(async pool => {
+      await pool.query(`CREATE TABLE empresas (
+        id SERIAL PRIMARY KEY,
+        config_integraciones ${dataType},
+        wpp_status TEXT DEFAULT 'disconnected'
+      )`);
+      const cases = [
+        [null, false],
+        ['scalar', false],
+        [[], false],
+        [{ whatsapp: null }, false],
+        [{ whatsapp: 'cloud' }, false],
+        [{ whatsapp: [] }, false],
+        [{}, true],
+        [{ whatsapp: {} }, true],
+        [{ whatsapp: { provider: 'cloud', enabled: true } }, true],
+        [{ whatsapp: { provider: 'cloud', enabled: true, phone_number_id: 'boot', access_token_encrypted: 'v1:test' } }, false],
+      ];
+      const expected = [];
+      for (const [config, eligible] of cases) {
+        const value = config === null ? null : JSON.stringify(config);
+        const { rows } = await pool.query(
+          `INSERT INTO empresas(config_integraciones) VALUES ($1::${dataType.toLowerCase()}) RETURNING id`,
+          [value],
+        );
+        if (eligible) expected.push(rows[0].id);
+      }
+      assert.deepEqual((await pool.query(bootSql)).rows.map(row => row.id), expected, dataType);
+    });
+  }
+});
+
+test('migración reemplaza índice Cloud previo sin guardas estructurales', options, async () => {
+  await withDatabase(async pool => {
+    await pool.query("CREATE TABLE empresas (id SERIAL PRIMARY KEY, config_integraciones JSONB NOT NULL DEFAULT '{}'::jsonb)");
+    await pool.query(`
+      CREATE UNIQUE INDEX idx_empresas_whatsapp_cloud_phone_number_id_unique
+        ON empresas ((BTRIM(COALESCE((config_integraciones::jsonb #>> '{whatsapp,phone_number_id}'), ''))))
+       WHERE LOWER(BTRIM(COALESCE((config_integraciones::jsonb)->'whatsapp'->>'provider', ''))) = 'cloud'
+         AND jsonb_typeof((config_integraciones::jsonb)->'whatsapp'->'enabled') = 'boolean'
+         AND CASE
+               WHEN jsonb_typeof((config_integraciones::jsonb)->'whatsapp'->'enabled') = 'boolean'
+                 THEN ((config_integraciones::jsonb)->'whatsapp'->>'enabled')::boolean
+               ELSE FALSE
+             END IS TRUE
+         AND BTRIM(COALESCE((config_integraciones::jsonb)->'whatsapp'->>'phone_number_id', '')) <> ''
+         AND BTRIM(COALESCE((config_integraciones::jsonb)->'whatsapp'->>'access_token_encrypted', '')) <> ''
+    `);
+    const before = (await pool.query(`SELECT indexrelid::text AS oid FROM pg_index WHERE indexrelid = 'idx_empresas_whatsapp_cloud_phone_number_id_unique'::regclass`)).rows[0];
+    await pool.query(migrationSql);
+    const after = (await pool.query(`SELECT indexrelid::text AS oid, pg_get_indexdef(indexrelid) AS definition FROM pg_index WHERE indexrelid = 'idx_empresas_whatsapp_cloud_phone_number_id_unique'::regclass`)).rows[0];
+    assert.notEqual(after.oid, before.oid);
+    assert.match(after.definition, /jsonb_typeof\([^)]*config_integraciones[^)]*\) = 'object'/i);
+    assert.match(after.definition, /\? 'whatsapp'/i);
+  });
+});
+
+test('migración Cloud acota contención, revierte y permite reintento', options, async () => {
+  await withDatabase(async pool => {
+    await pool.query("CREATE TABLE empresas (id SERIAL PRIMARY KEY, config_integraciones JSONB NOT NULL DEFAULT '{}'::jsonb)");
+    await pool.query("INSERT INTO empresas(config_integraciones) VALUES ('{}'::jsonb)");
+    await pool.query('CREATE UNIQUE INDEX idx_empresas_whatsapp_cloud_phone_number_id_unique ON empresas (id)');
+    const before = (await pool.query(`SELECT indexdef FROM pg_indexes WHERE indexname = 'idx_empresas_whatsapp_cloud_phone_number_id_unique'`)).rows;
+    const locker = await pool.connect();
+    try {
+      await locker.query('BEGIN');
+      await locker.query('LOCK TABLE empresas IN ACCESS EXCLUSIVE MODE');
+      const boundedSql = migrationSql.replace("SET LOCAL lock_timeout = '30s';", "SET LOCAL lock_timeout = '250ms';");
+      const startedAt = Date.now();
+      await assert.rejects(pool.query(boundedSql), error => error?.code === '55P03' && !/phone_number_id|access_token/i.test(error.message));
+      assert.ok(Date.now() - startedAt < 3000, 'lock timeout must bound migration wait');
+      await locker.query('ROLLBACK');
+      const afterFailure = (await pool.query(`SELECT indexdef FROM pg_indexes WHERE indexname = 'idx_empresas_whatsapp_cloud_phone_number_id_unique'`)).rows;
+      assert.deepEqual(afterFailure, before);
+      assert.equal((await pool.query('SELECT count(*)::int AS total FROM empresas')).rows[0].total, 1);
+      await pool.query(migrationSql);
+      assert.match((await pool.query(`SELECT indexdef FROM pg_indexes WHERE indexname = 'idx_empresas_whatsapp_cloud_phone_number_id_unique'`)).rows[0].indexdef, /config_integraciones/i);
+    } finally {
+      await locker.query('ROLLBACK').catch(() => {});
+      locker.release();
+    }
+  });
+});
+
+test('migración Cloud falla cerrado y sin exponer phone_number_id ante colisiones legacy normalizadas', options, async () => {
+  await withDatabase(async pool => {
+    await pool.query("CREATE TABLE empresas (id SERIAL PRIMARY KEY, config_integraciones JSONB NOT NULL DEFAULT '{}'::jsonb)");
+    const cloud = phoneNumberId => ({
+      whatsapp: { provider: ' cloud ', enabled: true, phone_number_id: phoneNumberId, access_token_encrypted: 'v1:test' },
+    });
+    await pool.query(
+      'INSERT INTO empresas(config_integraciones) VALUES ($1), ($2)',
+      [cloud('legacy-sensitive-id'), cloud(' legacy-sensitive-id ')],
+    );
+    await pool.query(`
+      CREATE UNIQUE INDEX idx_empresas_whatsapp_cloud_phone_number_id_unique
+        ON empresas ((config_integraciones #>> '{whatsapp,phone_number_id}'))
+       WHERE config_integraciones #>> '{whatsapp,provider}' = ' cloud '
+         AND config_integraciones #>> '{whatsapp,enabled}' = 'true'
+    `);
+    const { rows: beforeIndexes } = await pool.query(`
+      SELECT indexrelid::text AS oid, pg_get_indexdef(indexrelid) AS definition
+        FROM pg_index
+       WHERE indexrelid = 'idx_empresas_whatsapp_cloud_phone_number_id_unique'::regclass
+    `);
+
+    await assert.rejects(pool.query(migrationSql), error => {
+      assert.equal(error.code, '23505');
+      assert.match(error.message, /phone_number_id.*duplicad|duplicate.*phone_number_id/i);
+      assert.doesNotMatch(error.message, /legacy-sensitive-id/);
+      return true;
+    });
+    const { rows } = await pool.query('SELECT count(*)::int AS total FROM empresas');
+    assert.deepEqual(rows, [{ total: 2 }]);
+    const { rows: afterIndexes } = await pool.query(`
+      SELECT indexrelid::text AS oid, pg_get_indexdef(indexrelid) AS definition
+        FROM pg_index
+       WHERE indexrelid = 'idx_empresas_whatsapp_cloud_phone_number_id_unique'::regclass
+    `);
+    assert.deepEqual(afterIndexes, beforeIndexes, 'la migración fallida no debe borrar el índice legacy');
+  });
+});
+
+test('migración Cloud soporta config_integraciones JSON y conserva unicidad normalizada al reejecutar', options, async () => {
+  await withDatabase(async pool => {
+    await pool.query("CREATE TABLE empresas (id SERIAL PRIMARY KEY, config_integraciones JSON NOT NULL DEFAULT '{}'::json)");
+    await pool.query(migrationSql);
+    await pool.query(migrationSql);
+    const cloud = phoneNumberId => ({
+      whatsapp: { provider: ' CLOUD ', enabled: true, phone_number_id: phoneNumberId, access_token_encrypted: 'v1:test' },
+    });
+    await pool.query('INSERT INTO empresas(config_integraciones) VALUES ($1)', [cloud('json-phone')]);
+    await assert.rejects(
+      pool.query('INSERT INTO empresas(config_integraciones) VALUES ($1)', [cloud(' json-phone ')]),
+      error => error?.code === '23505'
+        && error?.constraint === 'idx_empresas_whatsapp_cloud_phone_number_id_unique',
+    );
   });
 });
 
@@ -256,7 +552,12 @@ test('lock de atribución serializa la reasignación antes de persistir el event
     await pool.query("CREATE TABLE empresas (id SERIAL PRIMARY KEY, config_integraciones JSONB NOT NULL DEFAULT '{}'::jsonb)");
     await pool.query(migrationSql);
     const cloudConfig = phoneNumberId => ({
-      whatsapp: { provider: 'cloud', enabled: true, phone_number_id: phoneNumberId },
+      whatsapp: {
+        provider: 'cloud',
+        enabled: true,
+        phone_number_id: phoneNumberId,
+        access_token_encrypted: 'v1:test',
+      },
     });
     await pool.query(
       'INSERT INTO empresas(id, config_integraciones) VALUES (1, $1), (2, $2)',

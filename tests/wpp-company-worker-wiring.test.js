@@ -11,16 +11,17 @@ test('empresa worker acquires distributed ownership before client creation', asy
   assert.match(source, /import \{ ensureCompanyWorkerSchema \} from '\.\/wpp\/companySchema\.js';/);
   assert.doesNotMatch(source, /async function ensureEmpresaWhatsappSchema/);
   assert.match(source, /createWppClientAdapter/);
+  assert.match(source, /createCompanyWebWorkerGuard/);
   assert.doesNotMatch(source, /removeChromiumSingletonLocks/);
   assert.doesNotMatch(source, /Singleton(?:Lock|Socket|Cookie)/);
 
   const ownership = source.indexOf('createCompanyOwnership(');
   const lifecycle = source.indexOf('createCompanyLifecycle(');
-  const startup = source.indexOf('lifecycle.start({ beforeInitialize: ensureCompanyWorkerSchema })');
+  const startup = source.indexOf('lifecycle.start({');
   assert.ok(ownership >= 0 && lifecycle > ownership && startup > lifecycle);
   assert.match(source, /clientFactory:\s*\{\s*create:\s*createManagedCompanyClient\s*\}/);
   assert.match(source, /function createManagedCompanyClient[\s\S]*new Client\(/);
-  assert.match(source, /lifecycle\.start\(\{\s*beforeInitialize:\s*ensureCompanyWorkerSchema\s*\}\)/);
+  assert.match(source, /beforeInitialize:\s*async\s*\(\)\s*=>\s*\{[\s\S]*ensureCompanyWorkerSchema\(\)[\s\S]*companyWebGuard\.assertEligible\(\)/);
 });
 
 test('empresa worker gates stale events and sends on active ownership', async () => {
@@ -32,6 +33,17 @@ test('empresa worker gates stale events and sends on active ownership', async ()
   assert.match(source, /async sendMessage\([.]{3}args\)[\s\S]*ownership\.heartbeat\([\s\S]*current\(\)/);
   assert.match(source, /ownershipLost\(error\)\.catch\(fatalWorkerExit\)/);
   assert.match(source, /handlers\.start\(managedClient/);
+  assert.match(source, /withActiveClient:\s*companyWebGuard\.wrapActiveClient\(lifecycle\.withActiveClient\)/);
+  assert.match(source, /companyWebGuard\.checkHealth\(\)/);
+  const healthFunction = source.slice(
+    source.indexOf('async function checkCompanyRuntimeHealth'),
+    source.indexOf('const checkCompanyRuntimeHealthTick'),
+  );
+  assert.ok(
+    healthFunction.indexOf('companyWebGuard.checkHealth()') < healthFunction.indexOf('!isReady'),
+    'eligibility must be revalidated even before the client becomes ready',
+  );
+  assert.doesNotMatch(source, /Mensaje enviado a \$\{fila\.telefono\}/);
 });
 
 test('empresa worker logs the complete terminal error before exiting', async () => {
@@ -68,4 +80,11 @@ test('web parent keeps child attached with inherited output and configures stagg
   assert.match(source, /clearStaleCompanyChromiumSingletons/);
   assert.match(source, /beforeFirstStart:\s*\(\)\s*=>\s*clearStaleCompanyChromiumSingletons\(\{/);
   assert.match(source, /empresaWppWorkerSupervisor\.prepareStartup\(\);/);
+  const recoverySql = source.slice(source.indexOf('function scheduleEmpresaWppBootRecovery'), source.indexOf('function shouldAutoStartEmpresaWppWorker'));
+  assert.match(recoverySql, /LOWER\s*\(\s*BTRIM\s*\(\s*COALESCE\([^\n]*provider/i);
+  assert.match(recoverySql, /jsonb_typeof\([^\n]*enabled[^\n]*=\s*'boolean'/i);
+  assert.match(recoverySql, /enabled'[^\n]*\)::boolean[\s\S]*END\s+IS\s+TRUE/i);
+  assert.match(recoverySql, /jsonb_typeof\([^)]*config_integraciones::jsonb[^)]*\)\s*=\s*'object'/i);
+  assert.match(recoverySql, /config_integraciones::jsonb\s*\?\s*'whatsapp'/i);
+  assert.doesNotMatch(recoverySql, /jsonb_typeof\(config_integraciones(?!::jsonb)/i);
 });

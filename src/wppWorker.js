@@ -20,6 +20,7 @@ import { createCompanyLifecycle } from './wpp/companyLifecycle.js';
 import { ensureCompanyWorkerSchema } from './wpp/companySchema.js';
 import { createCompanyWorkerShutdown } from './wpp/companyWorkerShutdown.js';
 import { getCompanySessionPaths } from './wpp/companySession.js';
+import { buildCompanyWebOutboxClaimPolicy, createCompanyWebWorkerGuard, queueCompanyWebHealthCheck } from './wpp/companyWebPolicy.js';
 import {
   confirmCompanyRuntime,
   createBackoffRecovery,
@@ -50,6 +51,7 @@ let outboxInterval;
 let resetInterval;
 let healthInterval;
 let ownershipInterval;
+let shutdownWorker;
 
 async function persistStatus(status, { qrCode = null, heartbeat = false } = {}) {
   if (!ownership.isOwner) return false;
@@ -191,7 +193,7 @@ function createManagedCompanyClient({ generation }) {
   if (!WPP_QR_ONLY) {
     const incomingGate = {
       generation,
-      withActiveClient: lifecycle.withActiveClient,
+      withActiveClient: companyWebGuard.wrapActiveClient(lifecycle.withActiveClient),
     };
     handlers.start(managedClient, {
       empresaId: Number(EMPRESA_ID),
@@ -237,6 +239,15 @@ lifecycle = createCompanyLifecycle({
   },
 });
 
+const companyWebGuard = createCompanyWebWorkerGuard({
+  query,
+  empresaId: Number(EMPRESA_ID),
+  onIneligible: async result => {
+    console.log(`[Empresa ${EMPRESA_ID}] Worker Web no elegible (${result.reason}); iniciando cierre limpio.`);
+    await shutdownWorker?.();
+  },
+});
+
 async function loadResetMarker() {
   const rows = await query('SELECT wpp_reset_requested_at FROM empresas WHERE id = $1 LIMIT 1', [EMPRESA_ID]);
   return rows[0]?.wpp_reset_requested_at ? new Date(rows[0].wpp_reset_requested_at).toISOString() : null;
@@ -278,7 +289,12 @@ const workerRecovery = createBackoffRecovery({
 const workerStartup = createPrerequisiteStartup({
   ensurePrerequisites: async () => {},
   start: async () => {
-    const started = await lifecycle.start({ beforeInitialize: ensureCompanyWorkerSchema });
+    const started = await lifecycle.start({
+      beforeInitialize: async () => {
+        await ensureCompanyWorkerSchema();
+        await companyWebGuard.assertEligible();
+      },
+    });
     if (!started) {
       console.log(`[Empresa ${EMPRESA_ID}] Otro worker posee la sesión; quedando en standby.`);
       return false;
@@ -288,6 +304,10 @@ const workerStartup = createPrerequisiteStartup({
     return true;
   },
   onError: (error, state) => {
+    if (error?.code === 'WPP_COMPANY_INELIGIBLE') {
+      queueCompanyWebHealthCheck(() => companyWebGuard.checkHealth(), console);
+      return;
+    }
     console.error(`[Empresa ${EMPRESA_ID}] Startup falló (intento ${state.attempt + 1}):`, error.message);
   },
 });
@@ -302,7 +322,9 @@ async function persistWorkerHeartbeat() {
 }
 
 async function checkCompanyRuntimeHealth() {
-  if (!isReady || !ownership.isOwner || isShuttingDown) return;
+  if (isShuttingDown) return;
+  const eligibility = await companyWebGuard.checkHealth();
+  if (!eligibility.eligible || !isReady || !ownership.isOwner) return;
   const health = await lifecycle.withActiveClient(({ client }) => confirmCompanyRuntime(client));
   if (health.healthy) {
     await persistWorkerHeartbeat();
@@ -355,13 +377,13 @@ async function processOutbox() {
   isProcessingOutbox = true;
   try {
     await lifecycle.withActiveClient(async ({ client }) => {
+      const claimPolicy = buildCompanyWebOutboxClaimPolicy({ empresaParamIndex: 4 });
       const filas = await claimWppOutboxRows({
         query,
         owner: OUTBOX_CLAIM_OWNER,
         limit: 5,
-        whereSql: `AND o.empresa_id = $4
-          AND (o.transport_origin = 'company' OR o.transport_origin IS NULL)`,
-        whereParams: [EMPRESA_ID],
+        whereSql: claimPolicy.sql,
+        whereParams: [EMPRESA_ID, ...claimPolicy.params],
       });
 
       for (const [index, fila] of filas.entries()) {
@@ -374,7 +396,7 @@ async function processOutbox() {
           await client.sendMessage(target, fila.mensaje);
           await finishWppOutboxClaim({ query, id: fila.id, owner: OUTBOX_CLAIM_OWNER, status: 'sent', sent: true });
           await persistWorkerHeartbeat();
-          console.log(`[Empresa ${EMPRESA_ID}] Mensaje enviado a ${fila.telefono}`);
+          console.log(`[Empresa ${EMPRESA_ID}] Mensaje enviado (outbox ${fila.id})`);
         } catch (error) {
           console.error(`[Empresa ${EMPRESA_ID}] Error al enviar ID ${fila.id}:`, error.message);
           if (!sendStarted && isInvalidPhoneError(error)) {
@@ -410,7 +432,7 @@ async function processOutbox() {
   }
 }
 
-const shutdownWorker = createCompanyWorkerShutdown({
+shutdownWorker = createCompanyWorkerShutdown({
   stopSchedulers: () => {
     isShuttingDown = true;
     isReady = false;
@@ -441,4 +463,12 @@ ownershipInterval = setInterval(() => {
 
 process.once('SIGTERM', () => { void shutdownWorker(); });
 process.once('SIGINT', () => { void shutdownWorker(); });
-void workerStartup.trigger('startup');
+void companyWebGuard.checkHealth()
+  .then(result => {
+    if (result.eligible) return workerStartup.trigger('startup');
+    return false;
+  })
+  .catch(error => {
+    console.warn(`[Empresa ${EMPRESA_ID}] No se pudo validar elegibilidad inicial:`, error?.message || error);
+    return workerStartup.trigger('startup');
+  });

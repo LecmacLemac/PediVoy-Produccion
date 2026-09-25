@@ -5,6 +5,13 @@ import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import pg from 'pg';
 import { claimWppOutboxRows } from '../src/wpp/delivery.js';
+import { empresaWhatsappConfigLockNamespace } from '../src/wpp/companyConfigLock.js';
+import { buildCompanyWebOutboxClaimPolicy } from '../src/wpp/companyWebPolicy.js';
+import {
+  enqueueWppOutbox,
+  enqueueWppOutboxCorrelatedReply,
+  enqueueWppOutboxInTransaction,
+} from '../src/wpp/enqueue.js';
 
 const initSql = readFileSync(new URL('../initDb.sql', import.meta.url), 'utf8');
 const migrationStart = initSql.indexOf('CREATE TABLE IF NOT EXISTS wpp_outbox (');
@@ -301,6 +308,331 @@ test('PostgreSQL 16 legacy outbox migration preserves valid claims, fails closed
       RETURNING status
     `);
     assert.equal(freshDefault.rows[0].status, 'pending');
+
+    await pool.query('ALTER TABLE empresas ADD COLUMN config_integraciones JSONB');
+    await pool.query("UPDATE empresas SET config_integraciones = '{}'::jsonb WHERE id = 1");
+    await pool.query(`
+      CREATE TABLE juegos_participaciones_atomic_test (
+        id SERIAL PRIMARY KEY,
+        empresa_id INTEGER NOT NULL,
+        telefono TEXT NOT NULL
+      )
+    `);
+
+    const atomicClient = await pool.connect();
+    try {
+      await atomicClient.query('BEGIN');
+      await atomicClient.query(
+        'INSERT INTO juegos_participaciones_atomic_test (empresa_id, telefono) VALUES ($1, $2)',
+        [1, '3515557777'],
+      );
+      await enqueueWppOutboxInTransaction({
+        empresaId: 1,
+        phone: '3515557777',
+        message: 'atomic-real-postgres-rollback',
+      }, { client: atomicClient, transactionOwner: 'caller' });
+      assert.equal((await atomicClient.query(
+        "SELECT count(*)::int AS total FROM wpp_outbox WHERE mensaje = 'atomic-real-postgres-rollback'",
+      )).rows[0].total, 1);
+      await atomicClient.query('ROLLBACK');
+    } finally {
+      atomicClient.release();
+    }
+    assert.equal((await pool.query('SELECT count(*)::int AS total FROM juegos_participaciones_atomic_test')).rows[0].total, 0);
+    assert.equal((await pool.query(
+      "SELECT count(*)::int AS total FROM wpp_outbox WHERE mensaje = 'atomic-real-postgres-rollback'",
+    )).rows[0].total, 0);
+
+    const cloudPolicyCases = [
+      {
+        label: 'boolean-true',
+        config: { whatsapp: { provider: 'cloud', enabled: true, phone_number_id: 'phone-1', access_token_encrypted: 'v1:test' } },
+        expectedOrigin: 'cloud',
+      },
+      {
+        label: 'normalized-provider',
+        config: { whatsapp: { provider: '  ClOuD  ', enabled: true, phone_number_id: 'phone-1', access_token_encrypted: 'v1:test' } },
+        expectedOrigin: 'cloud',
+      },
+      {
+        label: 'string-true',
+        config: { whatsapp: { provider: 'cloud', enabled: 'true', phone_number_id: 'phone-1', access_token_encrypted: 'v1:test' } },
+        expectedOrigin: 'company',
+      },
+      {
+        label: 'boolean-false',
+        config: { whatsapp: { provider: 'cloud', enabled: false, phone_number_id: 'phone-1', access_token_encrypted: 'v1:test' } },
+        expectedOrigin: 'company',
+      },
+      {
+        label: 'missing-enabled',
+        config: { whatsapp: { provider: 'cloud', phone_number_id: 'phone-1', access_token_encrypted: 'v1:test' } },
+        expectedOrigin: 'company',
+      },
+      {
+        label: 'incomplete-cloud',
+        config: { whatsapp: { provider: 'cloud', enabled: true, phone_number_id: 'phone-1' } },
+        expectedOrigin: 'company',
+      },
+      { label: 'missing-whatsapp', config: {}, expectedOrigin: 'company' },
+      { label: 'empty-whatsapp', config: { whatsapp: {} }, expectedOrigin: 'company' },
+      { label: 'null-whatsapp', config: { whatsapp: null }, expectedError: 'config_whatsapp_invalida' },
+      { label: 'string-whatsapp', config: { whatsapp: 'cloud' }, expectedError: 'config_whatsapp_invalida' },
+      { label: 'array-whatsapp', config: { whatsapp: [] }, expectedError: 'config_whatsapp_invalida' },
+      { label: 'null-config', config: null, expectedError: 'config_integraciones_invalida' },
+      { label: 'string-config', config: 'cloud', expectedError: 'config_integraciones_invalida' },
+      { label: 'array-config', config: [], expectedError: 'config_integraciones_invalida' },
+    ];
+    for (const policyCase of cloudPolicyCases) {
+      await pool.query('UPDATE empresas SET config_integraciones = $1::jsonb WHERE id = 1', [JSON.stringify(policyCase.config)]);
+      const enqueue = enqueueWppOutbox({
+        empresaId: 1,
+        phone: '3515558000',
+        message: `cloud-policy-${policyCase.label}`,
+      }, pool);
+      if (policyCase.expectedError) {
+        await assert.rejects(enqueue, new RegExp(policyCase.expectedError));
+      } else {
+        assert.equal((await enqueue).transportOrigin, policyCase.expectedOrigin, policyCase.label);
+      }
+    }
+
+    const claimPolicy = buildCompanyWebOutboxClaimPolicy({ empresaParamIndex: 4 });
+    await pool.query(
+      `INSERT INTO wpp_outbox (empresa_id, telefono, mensaje, transport_origin)
+       VALUES (1, '5493515557000', 'claim-normalized-provider', 'company')`,
+    );
+    await pool.query('UPDATE empresas SET config_integraciones = $1::jsonb WHERE id = 1', [JSON.stringify({
+      whatsapp: {
+        provider: '  CLOUD  ', enabled: true, phone_number_id: 'phone-1', access_token_encrypted: 'v1:test',
+      },
+    })]);
+    const normalizedClaimWhere = `${claimPolicy.sql} AND o.mensaje = $5`;
+    assert.deepEqual(await claimWppOutboxRows({
+      query: pgRows(pool),
+      owner: 'company-normalized-claim',
+      limit: 10,
+      whereSql: normalizedClaimWhere,
+      whereParams: [1, 'claim-normalized-provider'],
+    }), []);
+    await pool.query("UPDATE empresas SET config_integraciones = '{\"whatsapp\":{\"provider\":\"web\",\"enabled\":true}}'::jsonb WHERE id = 1");
+    const claimedAfterWeb = await claimWppOutboxRows({
+      query: pgRows(pool),
+      owner: 'company-normalized-claim',
+      limit: 10,
+      whereSql: normalizedClaimWhere,
+      whereParams: [1, 'claim-normalized-provider'],
+    });
+    assert.deepEqual(claimedAfterWeb.map(row => row.mensaje), ['claim-normalized-provider']);
+
+    await pool.query("UPDATE empresas SET config_integraciones = '{}'::jsonb WHERE id = 1");
+
+    const holdFirstCommitPool = () => {
+      let connectionCount = 0;
+      let allowCommit;
+      let signalCommit;
+      const commitReached = new Promise(resolve => { signalCommit = resolve; });
+      const commitAllowed = new Promise(resolve => { allowCommit = resolve; });
+      return {
+        commitReached,
+        allowCommit,
+        async connect() {
+          const raw = await pool.connect();
+          connectionCount += 1;
+          const holdCommit = connectionCount === 1;
+          return {
+            async query(input, params) {
+              const text = typeof input === 'string' ? input : input.text;
+              if (holdCommit && text === 'COMMIT') {
+                signalCommit();
+                await commitAllowed;
+              }
+              return raw.query(input, params);
+            },
+            release(error) { raw.release(error); },
+          };
+        },
+      };
+    };
+
+    const enterpriseGate = holdFirstCommitPool();
+    const concurrentPayload = { empresaId: 1, phone: '3515559090', message: 'concurrent-dedupe' };
+    const firstEnterprise = enqueueWppOutbox(concurrentPayload, enterpriseGate);
+    await enterpriseGate.commitReached;
+    let secondEnterpriseSettled = false;
+    const secondEnterprise = enqueueWppOutbox(concurrentPayload, enterpriseGate).then(result => {
+      secondEnterpriseSettled = true;
+      return result;
+    });
+    await new Promise(resolve => setTimeout(resolve, 75));
+    assert.equal(secondEnterpriseSettled, false, 'second enterprise enqueue must wait while first tx retains locks');
+    enterpriseGate.allowCommit();
+    const concurrentResults = await Promise.all([firstEnterprise, secondEnterprise]);
+    assert.deepEqual(concurrentResults.map(result => result.queued).sort(), [false, true]);
+    const concurrentRows = await pool.query(`
+      SELECT empresa_id, telefono, mensaje, transport_origin
+        FROM wpp_outbox
+       WHERE mensaje = 'concurrent-dedupe'
+    `);
+    assert.deepEqual(concurrentRows.rows, [{
+      empresa_id: 1,
+      telefono: '5493515559090',
+      mensaje: 'concurrent-dedupe',
+      transport_origin: 'company',
+    }]);
+
+    const correlatedGeneral = await enqueueWppOutboxCorrelatedReply({
+      empresaId: 1,
+      phone: '3515559093',
+      message: 'correlated-general-with-tenant',
+      transportOrigin: 'general',
+    }, pool);
+    assert.equal(correlatedGeneral.transportOrigin, 'general');
+    assert.deepEqual((await pool.query(`
+      SELECT empresa_id, telefono, mensaje, transport_origin
+        FROM wpp_outbox
+       WHERE mensaje = 'correlated-general-with-tenant'
+    `)).rows, [{
+      empresa_id: 1,
+      telefono: '5493515559093',
+      mensaje: 'correlated-general-with-tenant',
+      transport_origin: 'general',
+    }]);
+
+    const commitAppliedCalls = [];
+    const commitAppliedThenErrorPool = {
+      async connect() {
+        const raw = await pool.connect();
+        return {
+          async query(input, params) {
+            const text = typeof input === 'string' ? input : input.text;
+            commitAppliedCalls.push(text);
+            if (text === 'COMMIT') {
+              await raw.query(input, params);
+              throw new Error('socket lost after PostgreSQL applied commit private-detail');
+            }
+            return raw.query(input, params);
+          },
+          release(error) { raw.release(error); },
+        };
+      },
+    };
+    await assert.rejects(
+      enqueueWppOutbox({ empresaId: 1, phone: '3515559092', message: 'commit-applied-unknown' }, commitAppliedThenErrorPool),
+      error => error?.code === 'WPP_ENQUEUE_TRANSACTION_OUTCOME_UNKNOWN'
+        && !error.message.includes('private-detail')
+        && !Object.hasOwn(error, 'cause'),
+    );
+    assert.equal(commitAppliedCalls.filter(text => text === 'COMMIT').length, 1);
+    assert.equal(commitAppliedCalls.some(text => text === 'ROLLBACK'), false);
+    assert.equal((await pool.query(
+      "SELECT count(*)::int AS total FROM wpp_outbox WHERE empresa_id = 1 AND mensaje = 'commit-applied-unknown'",
+    )).rows[0].total, 1);
+
+    const generalGate = holdFirstCommitPool();
+    const generalPayload = { phone: '3515559091', message: 'general-concurrent-dedupe' };
+    const firstGeneral = enqueueWppOutbox(generalPayload, generalGate);
+    await generalGate.commitReached;
+    let secondGeneralSettled = false;
+    const secondGeneral = enqueueWppOutbox(generalPayload, generalGate).then(result => {
+      secondGeneralSettled = true;
+      return result;
+    });
+    await new Promise(resolve => setTimeout(resolve, 75));
+    assert.equal(secondGeneralSettled, false, 'second general enqueue must wait for the dedupe lock');
+    generalGate.allowCommit();
+    const generalResults = await Promise.all([firstGeneral, secondGeneral]);
+    assert.deepEqual(generalResults.map(result => result.queued).sort(), [false, true]);
+    assert.equal((await pool.query(
+      "SELECT count(*)::int AS total FROM wpp_outbox WHERE empresa_id IS NULL AND mensaje = 'general-concurrent-dedupe'",
+    )).rows[0].total, 1);
+
+    const assertEnqueueSeesConfigCommittedAfterItStarts = async ({ initialConfig, nextConfig, message, expectedOrigin }) => {
+      await pool.query('UPDATE empresas SET config_integraciones = $1::jsonb WHERE id = 1', [JSON.stringify(initialConfig)]);
+      const writer = await pool.connect();
+      let enqueueSettled = false;
+      try {
+        await writer.query('BEGIN');
+        await writer.query(
+          'SELECT pg_advisory_xact_lock($1::integer, $2::integer)',
+          [empresaWhatsappConfigLockNamespace, 1],
+        );
+        await writer.query(
+          'UPDATE empresas SET config_integraciones = $1::jsonb WHERE id = 1',
+          [JSON.stringify(nextConfig)],
+        );
+        const enqueuePromise = enqueueWppOutbox({
+          empresaId: 1,
+          phone: '3515559191',
+          message,
+        }, pool).then(result => {
+          enqueueSettled = true;
+          return result;
+        });
+        await new Promise(resolve => setTimeout(resolve, 75));
+        assert.equal(enqueueSettled, false, 'enqueue must begin and block before config commit');
+        await writer.query('COMMIT');
+        const result = await enqueuePromise;
+        assert.equal(result.transportOrigin, expectedOrigin);
+        const inserted = await pool.query(
+          'SELECT transport_origin FROM wpp_outbox WHERE empresa_id = 1 AND mensaje = $1',
+          [message],
+        );
+        assert.deepEqual(inserted.rows, [{ transport_origin: expectedOrigin }]);
+      } catch (error) {
+        await writer.query('ROLLBACK').catch(() => {});
+        throw error;
+      } finally {
+        writer.release();
+      }
+    };
+
+    const webConfig = { whatsapp: { provider: 'web', enabled: true } };
+    const cloudConfig = {
+      whatsapp: {
+        provider: 'cloud', enabled: true, phone_number_id: 'phone-1', access_token_encrypted: 'v1:test',
+      },
+    };
+    await assertEnqueueSeesConfigCommittedAfterItStarts({
+      initialConfig: webConfig,
+      nextConfig: cloudConfig,
+      message: 'atomic-web-to-cloud',
+      expectedOrigin: 'cloud',
+    });
+    await assertEnqueueSeesConfigCommittedAfterItStarts({
+      initialConfig: cloudConfig,
+      nextConfig: webConfig,
+      message: 'atomic-cloud-to-web',
+      expectedOrigin: 'company',
+    });
+
+    await pool.query('ALTER TABLE empresas ALTER COLUMN config_integraciones TYPE JSON USING config_integraciones::json');
+    for (const policyCase of cloudPolicyCases) {
+      await pool.query('UPDATE empresas SET config_integraciones = $1::json WHERE id = 1', [JSON.stringify(policyCase.config)]);
+      const enqueue = enqueueWppOutbox({
+        empresaId: 1,
+        phone: '3515558100',
+        message: `json-cloud-policy-${policyCase.label}`,
+      }, pool);
+      if (policyCase.expectedError) await assert.rejects(enqueue, new RegExp(policyCase.expectedError));
+      else assert.equal((await enqueue).transportOrigin, policyCase.expectedOrigin, `JSON ${policyCase.label}`);
+    }
+
+    await pool.query(`
+      INSERT INTO wpp_outbox (empresa_id, telefono, mensaje, transport_origin)
+      VALUES (1, '5493515557100', 'json-claim-valid', 'company'),
+             (1, '5493515557101', 'json-claim-invalid', 'company')
+    `);
+    await pool.query("UPDATE empresas SET config_integraciones = '{}'::json WHERE id = 1");
+    assert.deepEqual((await claimWppOutboxRows({
+      query: pgRows(pool), owner: 'json-claim', limit: 10,
+      whereSql: `${claimPolicy.sql} AND o.mensaje = $5`, whereParams: [1, 'json-claim-valid'],
+    })).map(row => row.mensaje), ['json-claim-valid']);
+    await pool.query("UPDATE empresas SET config_integraciones = 'null'::json WHERE id = 1");
+    assert.deepEqual(await claimWppOutboxRows({
+      query: pgRows(pool), owner: 'json-invalid-claim', limit: 10,
+      whereSql: `${claimPolicy.sql} AND o.mensaje = $5`, whereParams: [1, 'json-claim-invalid'],
+    }), []);
   } finally {
     if (pool) await pool.end();
     if (started) {

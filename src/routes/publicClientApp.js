@@ -1,6 +1,7 @@
 import express from 'express';
 import jwt from 'jsonwebtoken';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { enqueueWppOutbox } from '../wpp/enqueue.js';
 
 const OTP_TTL_MS = Number(process.env.CLIENT_OTP_TTL_MS || 5 * 60 * 1000);
 const OTP_RATE_WINDOW_MS = Number(process.env.CLIENT_OTP_RATE_WINDOW_MS || 10 * 60 * 1000);
@@ -183,7 +184,7 @@ async function getClientCompaniesByPhone(query, telefonoNorm) {
   }));
 }
 
-export function createPublicClientAppRouter({ query }) {
+export function createPublicClientAppRouter({ query, pool }) {
   if (typeof query !== 'function') throw new Error('createPublicClientAppRouter: falta query(fn)');
 
   const router = express.Router();
@@ -251,11 +252,7 @@ export function createPublicClientAppRouter({ query }) {
       });
 
       if (telefonoOutbox) {
-        await query(
-          `INSERT INTO wpp_outbox (empresa_id, telefono, mensaje, status, created_at)
-           VALUES ($1, $2, $3, 'pending', NOW())`,
-          [empresaId, telefonoOutbox, msg]
-        );
+        await enqueueWppOutbox({ empresaId, phone: telefonoOutbox, message: msg }, pool);
       }
 
       const response = { ok: true, sent: true };

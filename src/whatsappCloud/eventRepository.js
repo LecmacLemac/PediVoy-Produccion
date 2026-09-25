@@ -87,9 +87,18 @@ export function createWhatsAppCloudEventHandler({ withTransaction } = {}) {
           const tenants = await query(
             `SELECT id AS empresa_id
                FROM empresas
-              WHERE config_integraciones #>> '{whatsapp,provider}' = 'cloud'
-                AND config_integraciones #>> '{whatsapp,enabled}' = 'true'
-                AND config_integraciones #>> '{whatsapp,phone_number_id}' = $1
+              WHERE jsonb_typeof(config_integraciones::jsonb) = 'object'
+                AND config_integraciones::jsonb ? 'whatsapp'
+                AND jsonb_typeof((config_integraciones::jsonb)->'whatsapp') = 'object'
+                AND LOWER(BTRIM(COALESCE((config_integraciones::jsonb)->'whatsapp'->>'provider', ''))) = 'cloud'
+                AND jsonb_typeof((config_integraciones::jsonb)->'whatsapp'->'enabled') = 'boolean'
+                AND CASE
+                      WHEN jsonb_typeof((config_integraciones::jsonb)->'whatsapp'->'enabled') = 'boolean'
+                        THEN ((config_integraciones::jsonb)->'whatsapp'->>'enabled')::boolean
+                      ELSE FALSE
+                    END IS TRUE
+                AND BTRIM(COALESCE((config_integraciones::jsonb)->'whatsapp'->>'phone_number_id', '')) = $1
+                AND BTRIM(COALESCE((config_integraciones::jsonb)->'whatsapp'->>'access_token_encrypted', '')) <> ''
               ORDER BY id
               LIMIT 2
               FOR SHARE`,

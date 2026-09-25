@@ -1,11 +1,13 @@
 import { asteriskAmiListener, getAsteriskConfig } from '../integrations/asterisk/index.js';
 
+export const DEFAULT_PROCESS_SHUTDOWN_DEADLINE_MS = 45000;
+
 export function startServer(app, {
   PORT,
   processTarget = process,
   exit = code => process.exit(code),
   timers = { setTimeout, clearTimeout },
-  deadlineMs = 30000,
+  deadlineMs = DEFAULT_PROCESS_SHUTDOWN_DEADLINE_MS,
   asteriskListener = asteriskAmiListener,
   getAsteriskConfigFn = getAsteriskConfig,
   logger = console,

@@ -57,6 +57,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_empresas_landing_domain_unique
 
 -- BEGIN WHATSAPP CLOUD INBOX MIGRATION
 BEGIN;
+SET LOCAL lock_timeout = '30s';
+SET LOCAL statement_timeout = '5min';
 CREATE TABLE IF NOT EXISTS whatsapp_cloud_events (
   id               BIGSERIAL PRIMARY KEY,
   empresa_id       INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
@@ -429,13 +431,44 @@ DECLARE
   existing_index REGCLASS := to_regclass('idx_empresas_whatsapp_cloud_phone_number_id_unique');
   index_definition TEXT;
 BEGIN
+  LOCK TABLE empresas IN SHARE MODE;
+
+  IF EXISTS (
+    SELECT 1
+      FROM empresas
+     WHERE jsonb_typeof(config_integraciones::jsonb) = 'object'
+       AND config_integraciones::jsonb ? 'whatsapp'
+       AND jsonb_typeof((config_integraciones::jsonb)->'whatsapp') = 'object'
+       AND LOWER(BTRIM(COALESCE((config_integraciones::jsonb)->'whatsapp'->>'provider', ''))) = 'cloud'
+       AND jsonb_typeof((config_integraciones::jsonb)->'whatsapp'->'enabled') = 'boolean'
+       AND CASE
+             WHEN jsonb_typeof((config_integraciones::jsonb)->'whatsapp'->'enabled') = 'boolean'
+               THEN ((config_integraciones::jsonb)->'whatsapp'->>'enabled')::boolean
+             ELSE FALSE
+           END IS TRUE
+       AND BTRIM(COALESCE((config_integraciones::jsonb)->'whatsapp'->>'phone_number_id', '')) <> ''
+       AND BTRIM(COALESCE((config_integraciones::jsonb)->'whatsapp'->>'access_token_encrypted', '')) <> ''
+     GROUP BY BTRIM(COALESCE((config_integraciones::jsonb)->'whatsapp'->>'phone_number_id', ''))
+    HAVING COUNT(*) > 1
+  ) THEN
+    RAISE EXCEPTION USING
+      ERRCODE = '23505',
+      MESSAGE = 'WhatsApp Cloud phone_number_id normalizado duplicado; resolver asociaciones activas antes de migrar';
+  END IF;
+
   IF existing_index IS NOT NULL THEN
     SELECT pg_get_indexdef(existing_index) INTO index_definition;
     IF index_definition NOT LIKE 'CREATE UNIQUE INDEX idx_empresas_whatsapp_cloud_phone_number_id_unique ON public.empresas USING btree %'
-       OR index_definition NOT LIKE '%config_integraciones #>> ''{whatsapp,phone_number_id}''::text[]%'
-       OR index_definition NOT LIKE '%(config_integraciones #>> ''{whatsapp,provider}''::text[]) = ''cloud''::text%'
-       OR index_definition NOT LIKE '%(config_integraciones #>> ''{whatsapp,enabled}''::text[]) = ''true''::text%'
-       OR index_definition NOT LIKE '%(config_integraciones #>> ''{whatsapp,phone_number_id}''::text[]) <> ''''::text%' THEN
+       OR index_definition NOT LIKE '%btrim(COALESCE%config_integraciones%jsonb%phone_number_id%'
+       OR index_definition NOT LIKE '%jsonb_typeof%config_integraciones%object%'
+       OR index_definition NOT LIKE '%? ''whatsapp''::text%'
+       OR index_definition NOT LIKE '%jsonb_typeof%config_integraciones%-> ''whatsapp''::text%object%'
+       OR index_definition NOT LIKE '%lower(btrim%provider%cloud%'
+       OR index_definition NOT LIKE '%jsonb_typeof%config_integraciones%jsonb%enabled%boolean%'
+       OR index_definition NOT LIKE '%::boolean%'
+       OR index_definition NOT LIKE '%END IS TRUE%'
+       OR index_definition NOT LIKE '%btrim%phone_number_id%<> ''''::text%'
+       OR index_definition NOT LIKE '%btrim%access_token_encrypted%<> ''''::text%' THEN
       EXECUTE 'DROP INDEX idx_empresas_whatsapp_cloud_phone_number_id_unique';
       existing_index := NULL;
     END IF;
@@ -444,10 +477,19 @@ BEGIN
   IF existing_index IS NULL THEN
     EXECUTE $index$
       CREATE UNIQUE INDEX idx_empresas_whatsapp_cloud_phone_number_id_unique
-        ON empresas ((config_integraciones #>> '{whatsapp,phone_number_id}'))
-       WHERE config_integraciones #>> '{whatsapp,provider}' = 'cloud'
-         AND config_integraciones #>> '{whatsapp,enabled}' = 'true'
-         AND config_integraciones #>> '{whatsapp,phone_number_id}' <> ''
+        ON empresas ((BTRIM(COALESCE((config_integraciones::jsonb #>> '{whatsapp,phone_number_id}'), ''))))
+       WHERE jsonb_typeof(config_integraciones::jsonb) = 'object'
+         AND config_integraciones::jsonb ? 'whatsapp'
+         AND jsonb_typeof((config_integraciones::jsonb)->'whatsapp') = 'object'
+         AND LOWER(BTRIM(COALESCE((config_integraciones::jsonb)->'whatsapp'->>'provider', ''))) = 'cloud'
+         AND jsonb_typeof((config_integraciones::jsonb)->'whatsapp'->'enabled') = 'boolean'
+         AND CASE
+               WHEN jsonb_typeof((config_integraciones::jsonb)->'whatsapp'->'enabled') = 'boolean'
+                 THEN ((config_integraciones::jsonb)->'whatsapp'->>'enabled')::boolean
+               ELSE FALSE
+             END IS TRUE
+         AND BTRIM(COALESCE((config_integraciones::jsonb)->'whatsapp'->>'phone_number_id', '')) <> ''
+         AND BTRIM(COALESCE((config_integraciones::jsonb)->'whatsapp'->>'access_token_encrypted', '')) <> ''
     $index$;
   END IF;
 END $$;

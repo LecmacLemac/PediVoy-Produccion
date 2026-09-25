@@ -74,14 +74,9 @@ test('fallback general conserva un @lid válido aunque colisione con el cache po
   assert.equal(numberLookups, 0);
 });
 
-test('worker empresarial reclama exclusivamente filas de su empresa', async () => {
+test('worker empresarial usa la política compartida de claim Web', async () => {
   const source = await readFile(new URL('../src/wppWorker.js', import.meta.url), 'utf8');
-  const claimStart = source.indexOf('const filas = await claimWppOutboxRows');
-  assert.ok(claimStart >= 0);
-  const claim = source.slice(claimStart, source.indexOf('});', claimStart) + 3);
-  assert.match(claim, /o\.empresa_id = \$4/i);
-  assert.match(claim, /o\.transport_origin = 'company'/i);
-  assert.match(claim, /o\.transport_origin IS NULL/i);
-  assert.match(claim, /whereParams:\s*\[EMPRESA_ID\]/i);
-  assert.doesNotMatch(claim, /empresa_id IS NULL/i);
+  assert.match(source, /buildCompanyWebOutboxClaimPolicy/);
+  assert.match(source, /whereSql:\s*claimPolicy\.sql/);
+  assert.match(source, /whereParams:\s*\[EMPRESA_ID, \.\.\.claimPolicy\.params\]/);
 });

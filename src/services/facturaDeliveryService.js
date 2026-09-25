@@ -2,6 +2,7 @@ import path from 'node:path';
 import nodemailer from 'nodemailer';
 import { signFacturaDownload } from '../facturaCapability.js';
 import { openStorageFile } from '../privateStorage.js';
+import { enqueueWppOutbox } from '../wpp/enqueue.js';
 
 function cleanPhone(value) {
   return String(value || '').replace(/\D+/g, '');
@@ -56,7 +57,7 @@ export function buildFacturaPublicUrl(req, factura) {
   return `${baseUrl}/public/facturas/${factura.id}/pdf?token=${encodeURIComponent(token)}`;
 }
 
-export async function queueFacturaWhatsapp(query, {
+export async function queueFacturaWhatsapp(transactionPool, {
   empresaId,
   telefono,
   factura,
@@ -77,14 +78,12 @@ export async function queueFacturaWhatsapp(query, {
   ].join('\n');
 
   try {
-    const rows = await query(
-      `INSERT INTO wpp_outbox (empresa_id, telefono, mensaje, status, created_at)
-       VALUES ($1,$2,$3,'pending',NOW())
-       RETURNING id, status`,
-      [empresaId, clean, mensaje],
-      { sensitive: true },
-    );
-    return rows[0];
+    return await enqueueWppOutbox({
+      empresaId,
+      phone: clean,
+      message: mensaje,
+      queryOptions: { sensitive: true },
+    }, transactionPool);
   } catch {
     throw Object.assign(new Error('No se pudo encolar la factura por WhatsApp'), { statusCode: 500 });
   }

@@ -4,7 +4,14 @@ import multer from 'multer';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { readFile, unlink, writeFile } from 'node:fs/promises';
-import { withAuth, checkLicencia, isSuper, getEmpresaIdFromToken, enqueueWppMessage } from '../services.js';
+import {
+  withAuth,
+  checkLicencia,
+  isSuper,
+  getEmpresaIdFromToken,
+  enqueueWppMessage,
+} from '../services.js';
+import { enqueueCorrelatedWppMessage } from '../services/messaging.js';
 import { query } from '../db.js';
 import { notificarPedidoTransferencia } from '../services/notificacionesPedidos.js';
 import { aprobarComprobanteManualAtomicoPg, asociarComprobantePedidoPg } from '../transferenciasServices.js';
@@ -947,11 +954,14 @@ export function createTransferenciasRouter({
             cuentaDestino: ct.banco_destino,
             nroOperacion: ct.nro_operacion,
           });
-          await enqueueWppMessage({
+          const enqueueReply = ct.transport_origin === 'general'
+            ? enqueueCorrelatedWppMessage
+            : enqueueWppMessage;
+          await enqueueReply({
             phone: replyTarget,
             message: mensaje,
             empresa_id: targetEmpresaId,
-            transport_origin: ct.transport_origin,
+            ...(ct.transport_origin === 'general' ? { transport_origin: 'general' } : {}),
           });
         } catch (werr) {
           console.error('Error en enqueue WPP transferencia:', werr);

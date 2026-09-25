@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
 import { normalizeWhatsappPhone } from '../src/core/format.js';
+import { normalizeWppOutboxPayload } from '../src/wpp/enqueue.js';
 
 const cases = [
   ['3534277739', '5493534277739'],
@@ -28,8 +28,13 @@ test('normalizeWhatsappPhone no inventa destino si faltan dígitos', () => {
   assert.equal(normalizeWhatsappPhone(''), '');
 });
 
-test('enqueueWppMessage usa normalización WhatsApp centralizada', () => {
-  const source = fs.readFileSync(new URL('../src/services/messaging.js', import.meta.url), 'utf8');
-  assert.match(source, /normalizeWhatsappPhone/);
-  assert.doesNotMatch(source, /cleanPhone\.length\s*===\s*10/);
+test('frontera compartida de outbox usa normalización WhatsApp centralizada', () => {
+  assert.deepEqual(normalizeWppOutboxPayload({ phone: '353 427 7739', message: ' hola ' }), {
+    phone: '5493534277739',
+    message: 'hola',
+  });
+  assert.deepEqual(normalizeWppOutboxPayload({ phone: '987654321098765@lid', message: 'respuesta' }), {
+    phone: '987654321098765@lid',
+    message: 'respuesta',
+  });
 });

@@ -49,7 +49,9 @@ test('resuelve el tenant Cloud desde empresas y persiste un mensaje sanitizado',
   const tenantCall = harness.calls.find(({ sql }) => sql.includes('FROM empresas'));
   assert.deepEqual(tenantCall.params, ['cloud-number-safe']);
   assert.match(tenantCall.sql, /config_integraciones[\s\S]*whatsapp[\s\S]*provider[\s\S]*cloud/i);
-  assert.match(tenantCall.sql, /enabled/i);
+  assert.match(tenantCall.sql, /jsonb_typeof\([^\n]*enabled[^\n]*=\s*'boolean'/i);
+  assert.match(tenantCall.sql, /enabled'[^\n]*\)::boolean[\s\S]*END\s+IS\s+TRUE/i);
+  assert.match(tenantCall.sql, /access_token_encrypted/i);
   assert.match(tenantCall.sql, /FOR SHARE/i);
 
   const insertCall = harness.calls.find(({ sql }) => sql.includes('INSERT INTO whatsapp_cloud_events'));

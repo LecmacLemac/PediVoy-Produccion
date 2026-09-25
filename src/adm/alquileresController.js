@@ -3,6 +3,7 @@
 import { query, pool } from '../db.js';
 import { resolveEmpresaId } from '../services.js';
 import { MercadoPagoConfig, Preference } from 'mercadopago';
+import { enqueueWppOutbox } from '../wpp/enqueue.js';
 
 // ==================================================================
 // Configuración Mercado Pago para ALQUILERES
@@ -18,6 +19,15 @@ if (mpAccessToken) {
       integratorId: process.env.MP_CLIENT_ID || undefined
     }
   });
+}
+
+export function enqueueAlquilerWhatsapp({ empresaId, telefono, mensaje }, transactionPool = pool) {
+  return enqueueWppOutbox({
+    empresaId,
+    phone: telefono,
+    message: mensaje,
+    dedupeWindowMinutes: 10,
+  }, transactionPool);
 }
 
 /**
@@ -493,33 +503,9 @@ export async function enviarComunicacionAlquiler(req, res) {
       return res.status(400).json({ error: 'El cliente no tiene un teléfono válido para WhatsApp.' });
     }
 
-    const duplicateRows = await query(
-      `
-      SELECT id
-      FROM wpp_outbox
-      WHERE empresa_id = $1
-        AND telefono = $2
-        AND mensaje = $3
-        AND created_at > (NOW() - INTERVAL '10 minutes')
-      LIMIT 1
-      `,
-      [empresaId, telefono, mensaje]
-    );
-
-    let outboxId = duplicateRows[0]?.id || null;
-    let estado = outboxId ? 'duplicado_reciente' : 'encolado';
-
-    if (!outboxId) {
-      const outboxRows = await query(
-        `
-        INSERT INTO wpp_outbox (empresa_id, telefono, mensaje, status, created_at)
-        VALUES ($1, $2, $3, 'pending', NOW())
-        RETURNING id
-        `,
-        [empresaId, telefono, mensaje]
-      );
-      outboxId = outboxRows[0]?.id || null;
-    }
+    const outbox = await enqueueAlquilerWhatsapp({ empresaId, telefono, mensaje }, pool);
+    const outboxId = outbox.id || null;
+    const estado = outbox.queued ? 'encolado' : 'duplicado_reciente';
 
     const meta = {
       origen: 'cuenta_corriente_alquileres',

@@ -10,6 +10,11 @@ import QRCode from 'qrcode';
 import { encryptSecret } from '../services/facturacionService.js';
 import { clearStaleCompanyChromiumSingletons } from '../wpp/companySession.js';
 import { createCompanyWorkerSupervisor } from '../wpp/companyWorkerSupervisor.js';
+import { isCompanyWebWorkerEligible, isWhatsappCloudActive } from '../wpp/companyWebPolicy.js';
+import {
+  runTransactionOnLockedClient,
+  withEmpresaWhatsappConfigLock,
+} from '../wpp/companyConfigLock.js';
 
 function objectOrEmpty(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
@@ -19,7 +24,7 @@ function allowlistedWhatsappConfig(value) {
   const whatsapp = objectOrEmpty(value);
   return {
     ...(Object.hasOwn(whatsapp, 'provider')
-      ? { provider: String(whatsapp.provider || '').trim() }
+      ? { provider: String(whatsapp.provider || '').trim().toLowerCase() }
       : {}),
     ...(Object.hasOwn(whatsapp, 'enabled')
       ? { enabled: whatsapp.enabled === true }
@@ -35,6 +40,17 @@ function empresaUniqueConflictMessage(error) {
     return 'El phone_number_id de WhatsApp Cloud ya está asignado a otra empresa.';
   }
   return 'El dominio o slug ya está en uso por otra empresa.';
+}
+
+function assertCompleteCloudActivation(configIntegraciones) {
+  const whatsapp = objectOrEmpty(objectOrEmpty(configIntegraciones).whatsapp);
+  const activatingCloud = String(whatsapp.provider || '').trim().toLowerCase() === 'cloud'
+    && whatsapp.enabled === true;
+  if (activatingCloud && !isWhatsappCloudActive(configIntegraciones)) {
+    throw Object.assign(new Error('WhatsApp Cloud configuration is incomplete'), {
+      code: 'WPP_CLOUD_CONFIG_INCOMPLETE',
+    });
+  }
 }
 
 function getRequestOrigin(req) {
@@ -86,6 +102,22 @@ function scheduleEmpresaWppBootRecovery(query, scheduleWorkers = scheduleEmpresa
         SELECT id
           FROM empresas
          WHERE COALESCE(wpp_status, 'disconnected') IN ('initializing', 'resetting', 'awaiting_scan', 'connected', 'disconnected')
+           AND jsonb_typeof(config_integraciones::jsonb) = 'object'
+           AND (
+             NOT (config_integraciones::jsonb ? 'whatsapp')
+             OR jsonb_typeof((config_integraciones::jsonb)->'whatsapp') = 'object'
+           )
+           AND NOT (
+             LOWER(BTRIM(COALESCE((config_integraciones::jsonb)->'whatsapp'->>'provider', ''))) = 'cloud'
+             AND jsonb_typeof((config_integraciones::jsonb)->'whatsapp'->'enabled') = 'boolean'
+             AND CASE
+                   WHEN jsonb_typeof((config_integraciones::jsonb)->'whatsapp'->'enabled') = 'boolean'
+                     THEN ((config_integraciones::jsonb)->'whatsapp'->>'enabled')::boolean
+                   ELSE FALSE
+                 END IS TRUE
+             AND BTRIM(COALESCE((config_integraciones::jsonb)->'whatsapp'->>'phone_number_id', '')) <> ''
+             AND BTRIM(COALESCE((config_integraciones::jsonb)->'whatsapp'->>'access_token_encrypted', '')) <> ''
+           )
          ORDER BY id
          LIMIT 10
       `);
@@ -130,7 +162,12 @@ const empresaWppWorkerSupervisor = createCompanyWorkerSupervisor({
   }),
   respawnDelayMs: Number(process.env.EMPRESA_WPP_WORKER_RESPAWN_DELAY_MS || 5000),
   startupStaggerDelayMs: Number(process.env.EMPRESA_WPP_BOOT_RECOVERY_STAGGER_MS || 12000),
-  shutdownDeadlineMs: Number(process.env.EMPRESA_WPP_WORKER_SHUTDOWN_DEADLINE_MS || 10000),
+  gracefulDeadlineMs: Number(
+    process.env.EMPRESA_WPP_WORKER_GRACEFUL_DEADLINE_MS
+      || process.env.EMPRESA_WPP_WORKER_SHUTDOWN_DEADLINE_MS
+      || 30000,
+  ),
+  killConfirmDeadlineMs: Number(process.env.EMPRESA_WPP_WORKER_KILL_CONFIRM_DEADLINE_MS || 5000),
 });
 empresaWppWorkerSupervisor.prepareStartup();
 
@@ -140,6 +177,18 @@ function ensureEmpresaWppQrWorker(empresaId) {
 
 function scheduleEmpresaWppWorkers(empresaIds) {
   return empresaWppWorkerSupervisor.scheduleBootRecovery(empresaIds);
+}
+
+function reconcileEmpresaWppWorkerEligibility(empresaId, eligible) {
+  return empresaWppWorkerSupervisor.reconcileEligibility(empresaId, eligible);
+}
+
+function getEmpresaWppWorkerOperationalState(empresaId) {
+  return empresaWppWorkerSupervisor.getCompanyState(empresaId);
+}
+
+function restoreEmpresaWppWorkerOperationalState(empresaId, state) {
+  return empresaWppWorkerSupervisor.restoreCompanyState(empresaId, state);
 }
 
 export function shutdownEmpresaWppWorkers() {
@@ -246,6 +295,13 @@ export function securePaymentIntegraciones(configIntegraciones, existingIntegrac
   const incoming = objectOrEmpty(configIntegraciones);
   const existing = objectOrEmpty(existingIntegraciones);
   const merged = { ...existing };
+  const secureValue = (newValue, oldEncrypted, oldPlaintext) => {
+    const candidate = String(newValue || '').trim();
+    if (candidate && candidate !== '********') return encryptSecret(candidate);
+    if (oldEncrypted) return oldEncrypted;
+    if (oldPlaintext) return encryptSecret(oldPlaintext);
+    return null;
+  };
 
   for (const [key, value] of Object.entries(incoming)) {
     if (key === 'pagos' || key === 'whatsapp') continue;
@@ -256,10 +312,21 @@ export function securePaymentIntegraciones(configIntegraciones, existingIntegrac
       : value;
   }
 
-  if (Object.hasOwn(incoming, 'whatsapp')) {
-    merged.whatsapp = allowlistedWhatsappConfig(incoming.whatsapp);
-  } else if (Object.hasOwn(existing, 'whatsapp')) {
-    merged.whatsapp = allowlistedWhatsappConfig(existing.whatsapp);
+  const hasIncomingWhatsapp = Object.hasOwn(incoming, 'whatsapp');
+  const hasExistingWhatsapp = Object.hasOwn(existing, 'whatsapp');
+  if (hasIncomingWhatsapp || hasExistingWhatsapp) {
+    const incomingWhatsapp = objectOrEmpty(incoming.whatsapp);
+    const existingWhatsapp = objectOrEmpty(existing.whatsapp);
+    const encryptedWhatsappToken = secureValue(
+      incomingWhatsapp.access_token,
+      existingWhatsapp.access_token_encrypted,
+      existingWhatsapp.access_token,
+    );
+    merged.whatsapp = {
+      ...allowlistedWhatsappConfig(existingWhatsapp),
+      ...allowlistedWhatsappConfig(incomingWhatsapp),
+      ...(encryptedWhatsappToken ? { access_token_encrypted: encryptedWhatsappToken } : {}),
+    };
   }
 
   const hasIncomingPagos = Object.hasOwn(incoming, 'pagos');
@@ -268,13 +335,6 @@ export function securePaymentIntegraciones(configIntegraciones, existingIntegrac
 
   const incomingPagos = objectOrEmpty(incoming.pagos);
   const existingPagos = objectOrEmpty(existing.pagos);
-  const secureValue = (newValue, oldEncrypted, oldPlaintext) => {
-    const candidate = String(newValue || '').trim();
-    if (candidate && candidate !== '********') return encryptSecret(candidate);
-    if (oldEncrypted) return oldEncrypted;
-    if (oldPlaintext) return encryptSecret(oldPlaintext);
-    return null;
-  };
 
   const {
     access_token: _existingAccessToken,
@@ -319,6 +379,9 @@ export function createEmpresasRouter(deps) {
     resolveEmpresaId,
     getEmpresaById,
     ensureEmpresaWppWorker = ensureEmpresaWppQrWorker,
+    reconcileEmpresaWppWorker = reconcileEmpresaWppWorkerEligibility,
+    getEmpresaWppWorkerState = getEmpresaWppWorkerOperationalState,
+    restoreEmpresaWppWorkerState = restoreEmpresaWppWorkerOperationalState,
   } = deps || {};
 
   if (typeof query !== 'function') throw new Error('createEmpresasRouter: falta query(fn)');
@@ -462,6 +525,7 @@ export function createEmpresasRouter(deps) {
       const securedIntegraciones = config_integraciones
         ? securePaymentIntegraciones(config_integraciones)
         : {};
+      assertCompleteCloudActivation(securedIntegraciones);
       const rows = await query(
         `
         INSERT INTO empresas (
@@ -560,6 +624,9 @@ export function createEmpresasRouter(deps) {
 
       return res.json(redactEmpresaPaymentSecrets(nuevaEmpresa));
     } catch (e) {
+      if (e.code === 'WPP_CLOUD_CONFIG_INCOMPLETE') {
+        return res.status(422).json({ error: 'La activación de WhatsApp Cloud está incompleta.' });
+      }
       if (e.code === '23505') {
         return res.status(400).json({ error: empresaUniqueConflictMessage(e) });
       }
@@ -609,26 +676,18 @@ export function createEmpresasRouter(deps) {
       logo_url,
     } = req.body || {};
 
-    try {
-      let securedIntegraciones = null;
-      if (esSuperAdmin && config_integraciones) {
-        const existingRows = await query(
-          'SELECT config_integraciones FROM empresas WHERE id = $1 LIMIT 1',
-          [id]
-        );
-        securedIntegraciones = securePaymentIntegraciones(
-          config_integraciones,
-          existingRows[0]?.config_integraciones
-        );
-      }
-      const rows = await query(
-        `
+    const integrationsWereSubmitted = esSuperAdmin
+      && Object.hasOwn(req.body || {}, 'config_integraciones');
+    const whatsappWasSubmitted = integrationsWereSubmitted
+      && Object.hasOwn(objectOrEmpty(config_integraciones), 'whatsapp');
+
+    const updateEmpresa = (dbQuery, securedIntegraciones) => dbQuery(
+      `
         UPDATE empresas
         SET
           nombre      = COALESCE($1,  nombre),
           telefono    = COALESCE($2,  telefono),
           email       = COALESCE($3,  email),
-
           razon_social = COALESCE($4,  razon_social),
           cuit         = COALESCE($5,  cuit),
           condicion_iva= COALESCE($6,  condicion_iva),
@@ -636,23 +695,18 @@ export function createEmpresasRouter(deps) {
           ciudad       = COALESCE($8,  ciudad),
           provincia    = COALESCE($9,  provincia),
           pais         = COALESCE($10, pais),
-
           rubro        = COALESCE($11, rubro),
           etiquetas    = COALESCE($12, etiquetas),
-
           landing_domain = COALESCE($13, landing_domain),
           landing_slug   = COALESCE($14, landing_slug),
-
           prompt_ia_vendedor = COALESCE($15, prompt_ia_vendedor),
           prompt_ia_general  = COALESCE($16, prompt_ia_general),
-
           config_entrega       = COALESCE($17, config_entrega),
           modulos              = COALESCE($18, modulos),
           config_operativa     = COALESCE($19, config_operativa),
           config_logistica     = COALESCE($20, config_logistica),
           config_activos       = COALESCE($21, config_activos),
           config_integraciones = COALESCE($22, config_integraciones),
-
           plan_estado      = COALESCE($23, plan_estado),
           plan_tipo        = COALESCE($24, plan_tipo),
           plan_vencimiento = COALESCE($25, plan_vencimiento),
@@ -660,44 +714,207 @@ export function createEmpresasRouter(deps) {
           logo_url         = COALESCE($27, logo_url)
         WHERE id = $28
         RETURNING *
-        `,
-        [
-          nombre || null,
-          telefono || null,
-          email || null,
-          razon_social || null,
-          cuit || null,
-          condicion_iva || null,
-          direccion || null,
-          ciudad || null,
-          provincia || null,
-          pais || null,
-          rubro || null,
-          etiquetas || null,
-          esSuperAdmin ? (landing_domain || null) : null,
-          esSuperAdmin ? (landing_slug || null) : null,
-          prompt_ia_vendedor || null,
-          prompt_ia_general || null,
-          config_entrega ? JSON.stringify(config_entrega) : null,
-          esSuperAdmin && modulos ? JSON.stringify(modulos) : null,
-          config_operativa ? JSON.stringify(config_operativa) : null,
-          config_logistica ? JSON.stringify(config_logistica) : null,
-          config_activos ? JSON.stringify(config_activos) : null,
-          securedIntegraciones ? JSON.stringify(securedIntegraciones) : null,
-          esSuperAdmin ? (plan_estado || null) : null,
-          esSuperAdmin ? (plan_tipo || null) : null,
-          esSuperAdmin ? (plan_vencimiento || null) : null,
-          esSuperAdmin ? (plan_precio || null) : null,
-          logo_url || null,
-          id,
-        ]
-      );
+      `,
+      [
+        nombre || null, telefono || null, email || null, razon_social || null, cuit || null,
+        condicion_iva || null, direccion || null, ciudad || null, provincia || null, pais || null,
+        rubro || null, etiquetas || null,
+        esSuperAdmin ? (landing_domain || null) : null,
+        esSuperAdmin ? (landing_slug || null) : null,
+        prompt_ia_vendedor || null, prompt_ia_general || null,
+        config_entrega ? JSON.stringify(config_entrega) : null,
+        esSuperAdmin && modulos ? JSON.stringify(modulos) : null,
+        config_operativa ? JSON.stringify(config_operativa) : null,
+        config_logistica ? JSON.stringify(config_logistica) : null,
+        config_activos ? JSON.stringify(config_activos) : null,
+        securedIntegraciones ? JSON.stringify(securedIntegraciones) : null,
+        esSuperAdmin ? (plan_estado || null) : null,
+        esSuperAdmin ? (plan_tipo || null) : null,
+        esSuperAdmin ? (plan_vencimiento || null) : null,
+        esSuperAdmin ? (plan_precio || null) : null,
+        logo_url || null, id,
+      ],
+    );
 
-      if (!rows.length) return res.status(404).json({ error: 'Empresa no encontrada' });
-      return res.json(redactEmpresaPaymentSecrets(rows[0]));
+    try {
+      let updatedEmpresa;
+      if (integrationsWereSubmitted) {
+        let previousSupervisorState = null;
+        const alignSupervisorWithDurableConfig = async () => withEmpresaWhatsappConfigLock(
+          pool,
+          targetEmpresaId,
+          async lockedClient => {
+            const durableEmpresa = await runTransactionOnLockedClient(lockedClient, async txQuery => {
+              const rows = await txQuery(
+                'SELECT id, config_integraciones FROM empresas WHERE id = $1 LIMIT 1',
+                [id],
+              );
+              if (rows.length !== 1) throw new Error('empresa durable config unavailable');
+              return rows[0];
+            });
+            const durableEligible = isCompanyWebWorkerEligible(durableEmpresa.config_integraciones);
+            if (!durableEligible) {
+              await reconcileEmpresaWppWorker(targetEmpresaId, false);
+              return durableEmpresa;
+            }
+            const restored = await restoreEmpresaWppWorkerState(targetEmpresaId, {
+              ...(previousSupervisorState || {}),
+              eligible: true,
+              active: previousSupervisorState?.active === true,
+            });
+            if (restored?.restored !== true) throw new Error('durable supervisor alignment was not confirmed');
+            return durableEmpresa;
+          },
+        );
+
+        try {
+          updatedEmpresa = await withEmpresaWhatsappConfigLock(pool, targetEmpresaId, async lockedClient => {
+            previousSupervisorState = whatsappWasSubmitted
+              ? await getEmpresaWppWorkerState(targetEmpresaId)
+              : null;
+            let previousIntegraciones;
+            let reconcileRequired = false;
+            const committedEmpresa = await runTransactionOnLockedClient(lockedClient, async txQuery => {
+              const existingRows = await txQuery(
+                'SELECT id, config_integraciones FROM empresas WHERE id = $1 LIMIT 1 FOR UPDATE',
+                [id],
+              );
+              if (!existingRows.length) return null;
+              previousIntegraciones = securePaymentIntegraciones(
+                {},
+                existingRows[0].config_integraciones,
+              );
+              const previousEligible = isCompanyWebWorkerEligible(previousIntegraciones);
+              if (previousSupervisorState) {
+                previousSupervisorState = {
+                  ...previousSupervisorState,
+                  eligible: previousEligible,
+                };
+              }
+              const securedIntegraciones = securePaymentIntegraciones(
+                config_integraciones,
+                previousIntegraciones,
+              );
+              assertCompleteCloudActivation(securedIntegraciones);
+              reconcileRequired = whatsappWasSubmitted
+                && previousEligible !== isCompanyWebWorkerEligible(securedIntegraciones);
+              const rows = await updateEmpresa(txQuery, securedIntegraciones);
+              return rows[0] || null;
+            });
+            if (!committedEmpresa || !reconcileRequired) return committedEmpresa;
+
+            try {
+              const eligible = isCompanyWebWorkerEligible(committedEmpresa.config_integraciones);
+              await reconcileEmpresaWppWorker(Number(committedEmpresa.id), eligible);
+              return committedEmpresa;
+            } catch {
+              let dbRecovered = false;
+              let supervisorRecovered = false;
+              try {
+                await runTransactionOnLockedClient(lockedClient, async txQuery => {
+                  const restored = await txQuery(
+                    `UPDATE empresas
+                        SET config_integraciones = $1
+                      WHERE id = $2
+                      RETURNING id`,
+                    [JSON.stringify(previousIntegraciones || {}), id],
+                  );
+                  if (restored.length !== 1) throw new Error('empresa config compensation affected no rows');
+                });
+                dbRecovered = true;
+              } catch (compensationDbError) {
+                console.error('[WPP EMPRESA] config recovery failed:', {
+                  empresaId: targetEmpresaId,
+                  errorName: compensationDbError?.name || 'Error',
+                });
+              }
+
+              if (dbRecovered) {
+                try {
+                  const restored = await restoreEmpresaWppWorkerState(
+                    targetEmpresaId,
+                    previousSupervisorState,
+                  );
+                  supervisorRecovered = restored?.restored === true;
+                } catch (compensationSupervisorError) {
+                  console.error('[WPP EMPRESA] supervisor recovery failed:', {
+                    empresaId: targetEmpresaId,
+                    errorName: compensationSupervisorError?.name || 'Error',
+                  });
+                }
+              }
+
+              const recoveryComplete = dbRecovered && supervisorRecovered;
+              throw Object.assign(new Error('WhatsApp worker reconciliation failed'), {
+                code: recoveryComplete
+                  ? 'WPP_WORKER_RECONCILE_FAILED'
+                  : 'WPP_WORKER_RECOVERY_REQUIRED',
+                recoveryComplete,
+              });
+            }
+          });
+        } catch (error) {
+          if (error?.code !== 'WPP_CONFIG_TRANSACTION_OUTCOME_UNKNOWN') throw error;
+          try {
+            await alignSupervisorWithDurableConfig();
+          } catch {
+            throw Object.assign(new Error('WhatsApp durable recovery could not be confirmed'), {
+              code: 'WPP_WORKER_RECOVERY_REQUIRED',
+            });
+          }
+          throw Object.assign(new Error('WhatsApp configuration transaction outcome remains unknown'), {
+            code: 'WPP_CONFIG_TRANSACTION_OUTCOME_UNKNOWN',
+          });
+        }
+      } else {
+        const rows = await updateEmpresa(query, null);
+        updatedEmpresa = rows[0] || null;
+      }
+
+      if (!updatedEmpresa) return res.status(404).json({ error: 'Empresa no encontrada' });
+      return res.json(redactEmpresaPaymentSecrets(updatedEmpresa));
     } catch (e) {
+      if (e.code === 'WPP_CLOUD_CONFIG_INCOMPLETE') {
+        return res.status(422).json({ error: 'La activación de WhatsApp Cloud está incompleta.' });
+      }
       if (e.code === '23505') {
         return res.status(400).json({ error: empresaUniqueConflictMessage(e) });
+      }
+      if (e.code === 'WPP_WORKER_RECONCILE_FAILED') {
+        console.error('[WPP EMPRESA] reconciliation failed and recovered:', {
+          empresaId: targetEmpresaId,
+          errorName: e?.name || 'Error',
+        });
+        return res.status(503).json({
+          error: 'No se pudo aplicar la configuración de WhatsApp; los cambios fueron revertidos.',
+          code: 'WPP_WORKER_RECONCILE_FAILED',
+          updated: false,
+          rolled_back: true,
+        });
+      }
+      if (e.code === 'WPP_CONFIG_TRANSACTION_OUTCOME_UNKNOWN') {
+        console.error('[WPP EMPRESA] transaction outcome unknown after durable reconciliation:', {
+          empresaId: targetEmpresaId,
+          errorName: e?.name || 'Error',
+        });
+        return res.status(503).json({
+          error: 'La configuración durable fue reconciliada, pero no se pudo confirmar el resultado de la solicitud.',
+          code: 'WPP_CONFIG_TRANSACTION_OUTCOME_UNKNOWN',
+          status: 'outcome_unknown',
+          rolled_back: false,
+        });
+      }
+      if (e.code === 'WPP_WORKER_RECOVERY_REQUIRED') {
+        console.error('[WPP EMPRESA] reconciliation recovery required:', {
+          empresaId: targetEmpresaId,
+          errorName: e?.name || 'Error',
+        });
+        return res.status(503).json({
+          error: 'No se pudo recuperar por completo la configuración de WhatsApp.',
+          code: 'WPP_WORKER_RECOVERY_REQUIRED',
+          status: 'recovery_required',
+          rolled_back: false,
+        });
       }
       console.error('❌ [ERROR PUT EMPRESA]:', e);
       return res.status(500).json({ error: 'Error interno al actualizar la empresa.' });
@@ -780,7 +997,7 @@ export function createEmpresasRouter(deps) {
       const rows = await query(
         `SELECT id, nombre, rubro, etiquetas, landing_slug, landing_domain,
                 prompt_ia_vendedor, prompt_ia_general,
-                wpp_status, wpp_qr_code, wpp_reset_requested_at, updated_at
+                config_integraciones, wpp_status, wpp_qr_code, wpp_reset_requested_at, updated_at
          FROM empresas
          WHERE id = $1
          LIMIT 1`,
@@ -790,6 +1007,13 @@ export function createEmpresasRouter(deps) {
       if (!rows.length) return res.status(404).json({ error: 'Empresa no encontrada' });
 
       const empresa = rows[0];
+      if (!isCompanyWebWorkerEligible(empresa.config_integraciones)) {
+        return res.status(409).json({
+          error: 'WhatsApp administrado por Cloud; no usa QR ni sesión Web.',
+          empresa_id: empresaId,
+          status: 'cloud_managed',
+        });
+      }
       const recoveryWorker = ['disconnected', 'error', 'initializing', 'resetting'].includes(
         String(empresa.wpp_status || 'disconnected').toLowerCase()
       ) && !empresa.wpp_qr_code
@@ -846,7 +1070,7 @@ export function createEmpresasRouter(deps) {
       await ensureEmpresaWhatsappSchema(query);
 
       const rows = await query(
-        `SELECT id
+        `SELECT id, config_integraciones
          FROM empresas
          WHERE id = $1
          LIMIT 1`,
@@ -854,6 +1078,13 @@ export function createEmpresasRouter(deps) {
       );
 
       if (!rows.length) return res.status(404).json({ error: 'Empresa no encontrada' });
+      if (!isCompanyWebWorkerEligible(rows[0].config_integraciones)) {
+        return res.status(409).json({
+          error: 'WhatsApp administrado por Cloud; el reset Web no aplica.',
+          empresa_id: empresaId,
+          status: 'cloud_managed',
+        });
+      }
 
       await query(
         `UPDATE empresas

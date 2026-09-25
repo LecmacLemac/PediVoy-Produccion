@@ -80,7 +80,7 @@ export function mountApiModules(app, deps) {
   app.use('/api/setup', createSetupRouter({ query, withAuth, getEmpresaIdFromToken }));
   app.use('/api/public', createPublicLandingRouter({ query }));
   app.use('/api/public', trackingPublicRouter);
-  app.use('/api/public/app', createPublicClientAppRouter({ query }));
+  app.use('/api/public/app', createPublicClientAppRouter({ query, pool }));
 
   // Admin vertical modules: activos/alquileres/costos + pagos QR
   registerRoutes(app);
@@ -89,7 +89,7 @@ export function mountApiModules(app, deps) {
   app.use('/api', createAuthRouter());
   app.use('/api/clientes', createClientesRouter());
   app.use('/api/track', createTrackingRouter());
-  app.use('/api', createFacturacionRouter({ projectDir: deps.projectDir }));
+  app.use('/api', createFacturacionRouter({ projectDir: deps.projectDir, pool }));
   app.use('/api/gastos', createGastosRouter({ GASTOS_DIR }));
   app.use('/api/pedidos', createPedidosRouter());
   app.use('/api/pedidos', createPedidosItemsRouter());
@@ -114,6 +114,7 @@ export function mountApiModules(app, deps) {
     createEmpresasRouter({
       query,
       pool,
+      withTransaction,
       withAuth,
       isSuper,
       getEmpresaIdFromToken,

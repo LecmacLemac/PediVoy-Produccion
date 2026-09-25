@@ -9,9 +9,11 @@ import {
 } from '../src/transferenciasPipeline.js';
 import {
   asociarComprobantePedidoPg,
+  enqueueCorrelatedWppMessagePg,
   enqueueWppMessagePg,
   insertarComprobantePg,
 } from '../src/transferenciasServices.js';
+import { createWppEnqueueTestPool } from './support/wpp-enqueue-test-pool.js';
 
 function lidMessage(lid = '123456789012345@lid') {
   return {
@@ -60,14 +62,21 @@ test('resuelve @lid con la API PN oficial y conserva el JID original para respon
   assert.equal(payload.transportOrigin, 'company');
 });
 
-test('comprobante recibido por General conserva ese transporte aunque resuelva una empresa', async () => {
+test('General inbound resuelve tenant y conserva origin general en la respuesta correlacionada', async () => {
   let payload;
+  const transactionPool = createWppEnqueueTestPool();
   const handler = createIncomingMediaHandler({
     lidByPhone: new Map(),
     query: async () => [{ empresa_id: 7 }],
     withActiveClient: fn => fn({ client: {} }),
     handleIncomingComprobanteFromBotPg: async input => {
       payload = input;
+      await enqueueCorrelatedWppMessagePg({
+        phone: input.replyJid,
+        message: 'Respuesta correlacionada',
+        empresaId: input.empresaId,
+        transportOrigin: input.transportOrigin,
+      }, transactionPool);
       return { ok: false, saved: true, id: 1088 };
     },
   });
@@ -84,8 +93,11 @@ test('comprobante recibido por General conserva ese transporte aunque resuelva u
     }),
   });
 
+  const insert = transactionPool.calls.find(call => call.text.includes('INSERT INTO wpp_outbox'));
   assert.equal(payload.empresaId, 7);
   assert.equal(payload.transportOrigin, 'general');
+  assert.equal(insert.values[0], 7);
+  assert.equal(insert.values[3], 'general');
 });
 
 test('un @lid no resuelto nunca se usa como teléfono ni dispara un LIKE %%', async () => {
@@ -165,21 +177,18 @@ test('no asocia por descarte si hay más de un pedido elegible del mismo cliente
   assert.equal(result.association_reason, 'pedido_ambiguo');
 });
 
-test('outbox de transferencias conserva JID válido y no extrae sus dígitos', async () => {
-  const calls = [];
-  await enqueueWppMessagePg({
+test('outbox correlacionado de transferencias conserva JID y origin general', async () => {
+  const transactionPool = createWppEnqueueTestPool();
+  await enqueueCorrelatedWppMessagePg({
     phone: '987654321098765@lid',
     message: 'Prueba',
     empresaId: 1,
     transportOrigin: 'general',
-  }, async (sql, params) => {
-    calls.push({ sql, params });
-    return [];
-  });
+  }, transactionPool);
 
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].params[1], '987654321098765@lid');
-  assert.equal(calls[0].params[3], 'general');
+  const insert = transactionPool.calls.find(call => call.text.includes('INSERT INTO wpp_outbox'));
+  assert.equal(insert.values[1], '987654321098765@lid');
+  assert.equal(insert.values[3], 'general');
 });
 
 test('esquema canónico declara y migra chat y transporte de comprobantes y outbox', async () => {
@@ -221,8 +230,8 @@ test('mensaje profesional detalla solo datos confiables del comprobante', () => 
   assert.match(message, /Estado: pendiente de revisión/);
 });
 
-test('finalización responde al JID original con pedido, datos y estado', async () => {
-  const messages = [];
+test('finalización responde al JID original por General con pedido, datos y estado', async () => {
+  const transactionPool = createWppEnqueueTestPool();
   const registroDB = {
     id: 10,
     pedido_id: 20,
@@ -248,16 +257,19 @@ test('finalización responde al JID original con pedido, datos y estado', async 
     deps: {
       resolverCuentaBancariaDestinoPg: async () => null,
       actualizarComprobanteDatosPg: async () => {},
-      enqueueWppMessagePg: async payload => messages.push(payload),
+      enqueueWppMessagePg: async () => assert.fail('General correlacionado no debe usar productor ordinario'),
+      enqueueCorrelatedWppMessagePg: payload => enqueueCorrelatedWppMessagePg(payload, transactionPool),
     },
   });
 
+  const insert = transactionPool.calls.find(call => call.text.includes('INSERT INTO wpp_outbox'));
   assert.equal(result.ok, false);
-  assert.equal(messages[0].phone, registroDB.source_chat_jid);
-  assert.equal(messages[0].transportOrigin, 'general');
-  assert.match(messages[0].message, /Pedido: #20/);
-  assert.match(messages[0].message, /Monto detectado: \$\s?1\.499/);
-  assert.match(messages[0].message, /Estado: pendiente de revisión/);
+  assert.equal(insert.values[0], 7);
+  assert.equal(insert.values[1], registroDB.source_chat_jid);
+  assert.equal(insert.values[3], 'general');
+  assert.match(insert.values[2], /Pedido: #20/);
+  assert.match(insert.values[2], /Monto detectado: \$\s?1\.499/);
+  assert.match(insert.values[2], /Estado: pendiente de revisión/);
 });
 
 test('asociación manual de huérfano bloquea tenant y deja trazabilidad sin aprobar', async () => {

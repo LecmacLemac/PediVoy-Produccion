@@ -1,7 +1,7 @@
 // src/transferenciasServices.js — PostgreSQL (Versión Final Completa)
-import { query, withTransaction as dbWithTransaction } from './db.js';
+import { pool, query, withTransaction as dbWithTransaction } from './db.js';
 import { readFile } from 'node:fs/promises';
-import { normalizeWhatsappPhone } from './core/format.js';
+import { enqueueWppOutbox, enqueueWppOutboxCorrelatedReply } from './wpp/enqueue.js';
 
 const MIGRATION_START = '-- BEGIN COMPROBANTE CONCURRENCY MIGRATION';
 const MIGRATION_END = '-- END COMPROBANTE CONCURRENCY MIGRATION';
@@ -729,29 +729,18 @@ export async function marcarComprobanteComoProcesadoPg() {
 // 5. ENCOLAR MENSAJE WHATSAPP (multi-tenant)
 // ============================================
 export async function enqueueWppMessagePg({
-  phone, message, empresaId = null, transportOrigin = null,
-}, queryFn = query) {
-  if (!phone || !message) return;
+  phone, message, empresaId = null,
+}, transactionPool = pool) {
+  return enqueueWppOutbox({ empresaId, phone, message }, transactionPool);
+}
 
-  const rawPhone = String(phone).trim();
-  const cleanPhone = /^[^\s@]+@(c\.us|lid)$/i.test(rawPhone)
-    ? rawPhone
-    : normalizeWhatsappPhone(rawPhone);
-  const cleanMsg = String(message).trim();
-  if (!cleanPhone || !cleanMsg) return;
-
-  await queryFn(
-    `
-    INSERT INTO wpp_outbox (empresa_id, telefono, mensaje, transport_origin, status, created_at)
-    VALUES ($1, $2, $3, $4, 'pending', NOW())
-    `,
-    [
-      empresaId,
-      cleanPhone,
-      cleanMsg,
-      ['general', 'company'].includes(String(transportOrigin || '').trim())
-        ? String(transportOrigin).trim()
-        : null,
-    ]
-  );
+export async function enqueueCorrelatedWppMessagePg({
+  phone, message, empresaId = null, transportOrigin,
+}, transactionPool = pool) {
+  return enqueueWppOutboxCorrelatedReply({
+    empresaId,
+    phone,
+    message,
+    transportOrigin,
+  }, transactionPool);
 }

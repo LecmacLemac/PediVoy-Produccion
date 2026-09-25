@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 
-import { startServer } from '../src/bootstrap/startServer.js';
+import { DEFAULT_PROCESS_SHUTDOWN_DEADLINE_MS, startServer } from '../src/bootstrap/startServer.js';
 import { registerWhatsAppWeb } from '../src/wpp/whatsappWeb.js';
 import { registerWppCronAndRoutes } from '../src/wpp/cronRoutes.js';
 import { AsteriskAmiListener } from '../src/integrations/asterisk/amiListener.js';
@@ -156,6 +156,11 @@ test('server shutdown waits for company workers before process exit', async () =
   assert.equal(await h.returned.shutdown(), true);
   assert.deepEqual(calls, ['general-stopped', 'company-stop-start', 'company-stopped']);
   assert.deepEqual(h.exits, [0]);
+});
+
+test('deadline global por defecto excede grace más kill-confirm del supervisor con margen', () => {
+  assert.equal(DEFAULT_PROCESS_SHUTDOWN_DEADLINE_MS > 30000 + 5000, true);
+  assert.equal(DEFAULT_PROCESS_SHUTDOWN_DEADLINE_MS <= 60000, true);
 });
 
 test('failed WPP destroy exits nonzero without releasing ownership', async () => {

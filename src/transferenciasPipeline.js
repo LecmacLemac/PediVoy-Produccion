@@ -11,9 +11,20 @@ import {
   insertarComprobantePg,
   actualizarComprobanteDatosPg,
   aprobarComprobanteAtomicoPg,
+  enqueueCorrelatedWppMessagePg,
   enqueueWppMessagePg,
   resolverCuentaBancariaDestinoPg
 } from './transferenciasServices.js';
+
+function enqueueReceiptReply(services, payload, transportOrigin) {
+  if (transportOrigin === 'general') {
+    return services.enqueueCorrelatedWppMessagePg({
+      ...payload,
+      transportOrigin: 'general',
+    });
+  }
+  return services.enqueueWppMessagePg(payload);
+}
 
 // --- CONFIGURACIÓN & CONSTANTES ---
 const CONFIG = {
@@ -289,6 +300,7 @@ export async function finalizeReceiptValidation({
     resolverCuentaBancariaDestinoPg,
     actualizarComprobanteDatosPg,
     aprobarComprobanteAtomicoPg,
+    enqueueCorrelatedWppMessagePg,
     enqueueWppMessagePg,
     ...deps,
   };
@@ -353,7 +365,7 @@ export async function finalizeReceiptValidation({
   }
 
   if (decision.approved) {
-    await services.enqueueWppMessagePg({
+    await enqueueReceiptReply(services, {
       phone: replyTarget,
       message: buildReceiptStatusMessage({
         status: 'approved',
@@ -364,8 +376,7 @@ export async function finalizeReceiptValidation({
         nroOperacion,
       }),
       empresaId,
-      transportOrigin: replyTransportOrigin,
-    });
+    }, replyTransportOrigin);
     return { ok: true, id: registroDB.id, pedido_id: registroDB.pedido_id, data: datosIA };
   }
 
@@ -381,7 +392,7 @@ export async function finalizeReceiptValidation({
   if (decision.reasons.includes('operacion_duplicada')) delete patch.nro_operacion;
   await services.actualizarComprobanteDatosPg(registroDB.id, patch);
 
-  await services.enqueueWppMessagePg({
+  await enqueueReceiptReply(services, {
     phone: replyTarget,
     message: buildReceiptStatusMessage({
       status: 'pending',
@@ -392,8 +403,7 @@ export async function finalizeReceiptValidation({
       nroOperacion,
     }),
     empresaId,
-    transportOrigin: replyTransportOrigin,
-  });
+  }, replyTransportOrigin);
   return {
     ok: false,
     saved: true,
@@ -524,6 +534,7 @@ export async function procesarArchivoTransferenciaPg(filePayload, telefono, {
   const services = {
     saveFileToDisk,
     insertarComprobantePg,
+    enqueueCorrelatedWppMessagePg,
     enqueueWppMessagePg,
     actualizarComprobanteDatosPg,
     ...deps,
@@ -558,12 +569,11 @@ export async function procesarArchivoTransferenciaPg(filePayload, telefono, {
     const replyTarget = replyJid || registroDB?.source_chat_jid || telefono;
 
     // 3. Feedback inicial (ya conocemos empresaId)
-    await services.enqueueWppMessagePg({
+    await enqueueReceiptReply(services, {
       phone: replyTarget,
       message: '📄 Recibido. Analizando comprobante...',
       empresaId,
-      transportOrigin: registroDB?.transport_origin || transportOrigin,
-    }).catch(() => {});
+    }, registroDB?.transport_origin || transportOrigin).catch(() => {});
 
     // 4. Preparar imagen y consultar a la IA. Si falla esta parte, el archivo
     // ya quedó guardado y registrado para revisión manual.
@@ -580,12 +590,11 @@ export async function procesarArchivoTransferenciaPg(filePayload, telefono, {
         verified_reason: 'ia_ilegible',
         verified_at: null,
       });
-      await services.enqueueWppMessagePg({
+      await enqueueReceiptReply(services, {
         phone: replyTarget,
         message: buildReceiptStatusMessage({ status: 'pending', pedidoId: registroDB?.pedido_id }),
         empresaId,
-        transportOrigin: registroDB?.transport_origin || transportOrigin,
-      });
+      }, registroDB?.transport_origin || transportOrigin);
       if (CONFIG.DEBUG) console.timeEnd(logPrefix);
       return {
         ok: false,
@@ -606,12 +615,11 @@ export async function procesarArchivoTransferenciaPg(filePayload, telefono, {
     if (savedFile && !registroDB?.id) {
       await fs.promises.unlink(savedFile.absolutePath).catch(() => {});
     }
-    await services.enqueueWppMessagePg({
+    await enqueueReceiptReply(services, {
       phone: replyJid || telefono,
       message: '⚠️ Error guardando el archivo. Por favor reintenta.',
       empresaId,
-      transportOrigin,
-    });
+    }, transportOrigin);
     return { ok: false, error: error.message };
   }
 }

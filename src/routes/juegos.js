@@ -1,8 +1,16 @@
 import crypto from 'node:crypto';
 import express from 'express';
 import QRCode from 'qrcode';
+import { enqueueWppOutboxInTransaction } from '../wpp/enqueue.js';
 
 let schemaReady = false;
+const JUEGOS_PARTICIPATION_LOCK_NAMESPACE = 0x4a554547;
+
+function transactionOutcomeUnknownError() {
+  const error = new Error('transaction_outcome_unknown');
+  error.code = 'transaction_outcome_unknown';
+  return error;
+}
 
 const CAMPAIGN_SELECT = `
   jc.id, jc.empresa_id, jc.slug, jc.public_code, jc.nombre, jc.titulo_publico, jc.descripcion_publica,
@@ -606,26 +614,40 @@ export function createJuegosRouter(deps) {
 export function createJuegosPublicosRouter(deps) {
   const { query, pool } = deps || {};
   if (typeof query !== 'function') throw new Error('createJuegosPublicosRouter: falta query(fn)');
+  if (!pool?.connect) throw new Error('createJuegosPublicosRouter: falta pool.connect(fn)');
 
   const router = express.Router();
 
   async function withTransaction(fn) {
-    if (!pool?.connect) return fn(query);
     const client = await pool.connect();
+    let releaseError;
+    let commitAttempted = false;
     const q = async (sql, params = []) => {
       const result = await client.query(sql, params);
       return result.rows;
     };
     try {
       await client.query('BEGIN');
-      const out = await fn(q);
-      await client.query('COMMIT');
+      const out = await fn(q, client);
+      commitAttempted = true;
+      try {
+        await client.query('COMMIT');
+      } catch (commitError) {
+        releaseError = commitError;
+        throw transactionOutcomeUnknownError();
+      }
       return out;
     } catch (e) {
-      await client.query('ROLLBACK');
+      if (!commitAttempted) {
+        try {
+          await client.query('ROLLBACK');
+        } catch (rollbackError) {
+          releaseError = rollbackError;
+        }
+      }
       throw e;
     } finally {
-      client.release();
+      client.release(releaseError);
     }
   }
 
@@ -815,13 +837,16 @@ export function createJuegosPublicosRouter(deps) {
       const telefonoNorm = normalizePhone(telefono);
       if (!telefonoNorm) return createJsonError(res, 400, 'Telefono o campania invalida.');
 
-      const result = await withTransaction(async (q) => {
+      const result = await withTransaction(async (q, transactionClient) => {
         const campaign = await loadCampaignFromPublicRequest(q, req.body || {});
         const availability = campaignAvailability(campaign);
         if (!availability.ok) return { status: 409, payload: { error: availability.reason } };
         const empresaId = campaign.empresa_id;
 
-        await q('SELECT pg_advisory_xact_lock(hashtext($1))', [`juego:${empresaId}:${campaign.id}:${telefonoNorm}`]);
+        await q(
+          'SELECT pg_advisory_xact_lock($1::integer, hashtext($2)::integer)',
+          [JUEGOS_PARTICIPATION_LOCK_NAMESPACE, `juego:${empresaId}:${campaign.id}:${telefonoNorm}`],
+        );
 
         if (Number(campaign.max_participaciones || 0) > 0) {
           const [total] = await q(
@@ -898,10 +923,9 @@ export function createJuegosPublicosRouter(deps) {
 
         if (winner && code) {
           const message = renderWhatsappMessage(campaign.whatsapp_mensaje, { campaign, prize, code });
-          await q(
-            `INSERT INTO wpp_outbox (empresa_id, telefono, mensaje, status, created_at)
-             VALUES ($1, $2, $3, 'pending', NOW())`,
-            [empresaId, telefonoNorm, message]
+          await enqueueWppOutboxInTransaction(
+            { empresaId, phone: telefonoNorm, message },
+            { client: transactionClient, transactionOwner: 'caller' },
           );
           await q(
             `UPDATE juegos_participaciones SET enviado_whatsapp_at = NOW() WHERE id = $1`,

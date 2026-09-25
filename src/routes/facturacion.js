@@ -10,7 +10,7 @@ import {
 } from '../integrations/arca/wsfeClient.js';
 
 import { withAuth as defaultWithAuth, checkLicencia as defaultCheckLicencia, isSuper, getEmpresaIdFromToken } from '../services.js';
-import { query as defaultQuery } from '../db.js';
+import { pool as defaultPool, query as defaultQuery } from '../db.js';
 import { downloadStorageFile, facturaStorageFilename, openStorageFile } from '../privateStorage.js';
 import {
   cacheWsaaCredentials,
@@ -50,7 +50,7 @@ import {
   sendFacturaEmail,
 } from '../services/facturaDeliveryService.js';
 
-export function createFacturacionRouter({ query = defaultQuery, withAuth = defaultWithAuth, checkLicencia = defaultCheckLicencia, projectDir = process.cwd() } = {}) {
+export function createFacturacionRouter({ query = defaultQuery, pool = defaultPool, withAuth = defaultWithAuth, checkLicencia = defaultCheckLicencia, projectDir = process.cwd() } = {}) {
   const router = express.Router();
   let schemaReady = false;
   const credentialsUploader = multer({
@@ -619,7 +619,7 @@ export function createFacturacionRouter({ query = defaultQuery, withAuth = defau
 
       if (canales.includes('whatsapp')) {
         const telefono = req.body?.telefono || factura.receptor_telefono || req.body?.whatsapp;
-        result.whatsapp = await queueFacturaWhatsapp(query, {
+        result.whatsapp = await queueFacturaWhatsapp(pool, {
           empresaId,
           telefono,
           factura,
