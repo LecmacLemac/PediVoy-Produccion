@@ -192,6 +192,18 @@
       padding-top: 0.9rem;
       border-top: 1px solid rgba(148, 163, 184, 0.12);
     }
+    .history-indicator {
+      margin-top: 0.65rem;
+      padding: 0.65rem 0.8rem;
+      border: 1px solid rgba(34, 197, 94, 0.4);
+      border-radius: 10px;
+      background: rgba(34, 197, 94, 0.12);
+      color: #dcfce7;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+    }
+    .history-indicator:not([hidden]) { display: flex; }
     @keyframes gpsBlink {
       0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.15); }
       50% { opacity: 0.35; box-shadow: 0 0 0 6px rgba(239, 68, 68, 0.28); }
@@ -530,19 +542,19 @@
 
   <section id="sec-pedidos">
     <div class="card">
-      <div class="flex-bt" style="margin-bottom:1rem; cursor:pointer" onclick="toggleFilters()">
-        <h3>Filtros</h3>
-        <span class="iconbtn ghost" style="font-size:1.2rem">⚙️</span>
+      <div class="status-segmented" role="group" aria-label="Filtrar pedidos de la lista" data-filter-scope="pedidos">
+        <button type="button" class="status-segment" data-status-filter="pendiente" aria-pressed="true">
+          Pendientes <span class="status-count" data-status-count="pendiente">0</span>
+        </button>
+        <button type="button" class="status-segment" data-status-filter="en_ruta" aria-pressed="false">
+          En ruta <span class="status-count" data-status-count="en_ruta">0</span>
+        </button>
       </div>
+      <button type="button" class="flex-bt iconbtn ghost" id="filtersToggle" aria-controls="filterBox" aria-expanded="true" onclick="toggleFilters()" style="width:100%; margin-top:0.75rem; padding-inline:0;">
+        <span style="font-weight:700; color:var(--ink);">Filtros</span>
+        <span aria-hidden="true" style="font-size:1.2rem">⚙️</span>
+      </button>
       <div id="filterBox">
-        <div class="status-segmented" role="group" aria-label="Filtrar pedidos de la lista" data-filter-scope="pedidos">
-          <button type="button" class="status-segment" data-status-filter="pendiente" aria-pressed="true">
-            Pendientes <span class="status-count" data-status-count="pendiente">0</span>
-          </button>
-          <button type="button" class="status-segment" data-status-filter="en_ruta" aria-pressed="false">
-            En ruta <span class="status-count" data-status-count="en_ruta">0</span>
-          </button>
-        </div>
         <div class="secondary-filters">
         <div class="row" style="align-items:flex-end">
           <div style="flex:1">
@@ -564,6 +576,10 @@
           
           <button class="iconbtn primary" id="btnOpt" style="font-size:0.9rem;">⚡ Optimizar Ruta</button>
 
+          <button type="button" class="iconbtn ghost" data-history-toggle="pedidos" aria-pressed="false">
+            Ver entregados de los últimos 7 días <span class="status-count" data-history-count="pedidos">0</span>
+          </button>
+
           <small id="pedidosSyncInfo" class="muted" style="margin-left:auto; white-space:nowrap;">Sin sincronizar</small>
         </div>
         </div>
@@ -575,6 +591,10 @@
           </div>
           <div id="cargaPendienteList" class="load-empty">Sin carga pendiente.</div>
         </div>
+      </div>
+      <div class="history-indicator" data-history-indicator="pedidos" hidden>
+        <strong>Viendo: Entregados · últimos 7 días</strong>
+        <button type="button" class="iconbtn ghost" data-history-exit="pedidos">Salir</button>
       </div>
     </div>
 
@@ -614,6 +634,13 @@
         <label style="display:flex; align-items:center; gap:0.5rem; margin:0; font-size:0.8rem; color:#fff;">
           <input type="checkbox" id="mapSoloHoy" checked style="width:auto; transform:scale(1)"> Solo Hoy
         </label>
+        <button type="button" class="iconbtn ghost" data-history-toggle="mapa" aria-pressed="false">
+          Ver entregados de los últimos 7 días <span class="status-count" data-history-count="mapa">0</span>
+        </button>
+      </div>
+      <div class="history-indicator" data-history-indicator="mapa" hidden>
+        <strong>Viendo: Entregados · últimos 7 días</strong>
+        <button type="button" class="iconbtn ghost" data-history-exit="mapa">Salir</button>
       </div>
 
       <div id="map" class="mapbox" style="flex:1;"></div>

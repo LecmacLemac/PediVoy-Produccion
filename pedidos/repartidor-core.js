@@ -28,12 +28,8 @@ const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
 // Formateo de dinero ARS
 const money = n => '$ ' + Number(n||0).toLocaleString('es-AR');
 
-// Obtiene la fecha local de HOY (YYYY-MM-DD)
-const getOyString = () => {
-    const d = new Date();
-    d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
-    return d.toISOString().slice(0,10);
-};
+// Obtiene la fecha de HOY en zona Argentina (YYYY-MM-DD)
+const getOyString = () => isoToLocalYMD(new Date());
 
 // Convierte fecha de DB a YYYY-MM-DD en zona Argentina para comparar sin desfases
 const isoToLocalYMD = (iso) => {
@@ -57,6 +53,25 @@ const dbDateToYMD = (value) => {
 
 function getPedidoFechaOperativa(pedido) {
   return dbDateToYMD(pedido?.fecha_entrega_estimada) || isoToLocalYMD(pedido?.fecha_entrega || pedido?.fecha);
+}
+
+function getPedidoFechaEntregaReal(pedido) {
+  return dbDateToYMD(pedido?.fecha_entrega) || dbDateToYMD(pedido?.fecha);
+}
+
+function getRecentDeliveredRange(today = getOyString()) {
+  const end = dbDateToYMD(today);
+  if (!end) return { start: '', end: '' };
+  const [year, month, day] = end.split('-').map(Number);
+  const startDate = new Date(Date.UTC(year, month - 1, day - 6));
+  return { start: startDate.toISOString().slice(0, 10), end };
+}
+
+function isPedidoEntregadoReciente(pedido, today = getOyString()) {
+  if (String(pedido?.estado || '').toLowerCase() !== 'entregado') return false;
+  const deliveredAt = getPedidoFechaEntregaReal(pedido);
+  const { start, end } = getRecentDeliveredRange(today);
+  return !!deliveredAt && !!start && deliveredAt >= start && deliveredAt <= end;
 }
 
 function formatFechaPlanificada(value) {
@@ -106,6 +121,7 @@ let qrPagoState = { pedidoId: null, link: null };
 let pedidoEnProcesoId = null;
 let pedidosLastSyncAt = null;
 let operationalStatusFilter = 'pendiente';
+let historicalMode = false;
 const gpsSyncState = {
   disabled: true,
   denied: false,
@@ -138,9 +154,13 @@ function getOperationalStatusFilter() {
   return operationalStatusFilter;
 }
 
+function getHistoricalMode() {
+  return historicalMode;
+}
+
 function updateOperationalStatusFilterUI() {
   document.querySelectorAll('[data-status-filter]').forEach((button) => {
-    const active = button.dataset.statusFilter === operationalStatusFilter;
+    const active = !historicalMode && button.dataset.statusFilter === operationalStatusFilter;
     button.setAttribute('aria-pressed', String(active));
     button.classList.toggle('active', active);
   });
@@ -153,10 +173,33 @@ function updateOperationalStatusFilterUI() {
   document.querySelectorAll('[data-status-count]').forEach((node) => {
     node.textContent = String(totals[node.dataset.statusCount] || 0);
   });
+
+  const recentDeliveredCount = (pedidos || []).filter((pedido) => isPedidoEntregadoReciente(pedido)).length;
+  document.querySelectorAll('[data-history-toggle]').forEach((button) => {
+    button.setAttribute('aria-pressed', String(historicalMode));
+    button.classList.toggle('active', historicalMode);
+  });
+  document.querySelectorAll('[data-history-count]').forEach((node) => {
+    node.textContent = String(recentDeliveredCount);
+  });
+  document.querySelectorAll('[data-history-indicator]').forEach((node) => {
+    node.hidden = !historicalMode;
+  });
 }
 
 function setOperationalStatusFilter(status, options = {}) {
   operationalStatusFilter = normalizeOperationalStatus(status) || 'pendiente';
+  historicalMode = false;
+  updateOperationalStatusFilterUI();
+  if (options.persist !== false) saveFiltrosUI();
+  if (options.render !== false) {
+    if (typeof renderCards === 'function') renderCards();
+    if (typeof renderMap === 'function' && map) renderMap();
+  }
+}
+
+function setHistoricalMode(active, options = {}) {
+  historicalMode = !!active;
   updateOperationalStatusFilterUI();
   if (options.persist !== false) saveFiltrosUI();
   if (options.render !== false) {
@@ -169,6 +212,12 @@ function initOperationalStatusFilters() {
   document.querySelectorAll('[data-status-filter]').forEach((button) => {
     button.addEventListener('click', () => setOperationalStatusFilter(button.dataset.statusFilter));
   });
+  document.querySelectorAll('[data-history-toggle]').forEach((button) => {
+    button.addEventListener('click', () => setHistoricalMode(true));
+  });
+  document.querySelectorAll('[data-history-exit]').forEach((button) => {
+    button.addEventListener('click', () => setHistoricalMode(false));
+  });
   updateOperationalStatusFilterUI();
 }
 
@@ -176,6 +225,7 @@ function saveFiltrosUI() {
   try {
     const payload = {
       estado: operationalStatusFilter,
+      historico: historicalMode,
       zona: $('#fZona')?.value || '',
       soloHoy: !!$('#fHoy')?.checked,
       search: $('#fSearch')?.value || ''
@@ -191,6 +241,7 @@ function restoreFiltrosUI() {
     const data = JSON.parse(raw);
 
     if (typeof data.estado === 'string') operationalStatusFilter = normalizeOperationalStatus(data.estado) || 'pendiente';
+    if (typeof data.historico === 'boolean') historicalMode = data.historico;
     if ($('#fSearch') && typeof data.search === 'string') $('#fSearch').value = data.search;
     if ($('#fHoy') && typeof data.soloHoy === 'boolean') $('#fHoy').checked = data.soloHoy;
 

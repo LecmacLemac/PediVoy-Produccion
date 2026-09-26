@@ -271,14 +271,17 @@ function renderMap(){
   map.invalidateSize(); mapMarkers.clearLayers();
   renderStoredDriverLocationOnMap();
 
+  const historical = getHistoricalMode();
   const fHoy = $('#mapSoloHoy').checked, today = getOyString();
   const fSt = getOperationalStatusFilter();
   const bounds = [];
   pedidos.forEach(p => {
     const directionsUrl = getGoogleMapsDirectionsUrl(p.latitud, p.longitud);
     if(!directionsUrl) return;
-    if(fHoy && getPedidoFechaOperativa(p) !== today) return;
-    if(normalizeOperationalStatus(String(p.estado || '').toLowerCase()) !== fSt) return;
+    if(!historical && fHoy && getPedidoFechaOperativa(p) !== today) return;
+    if(historical) {
+      if(!isPedidoEntregadoReciente(p, today)) return;
+    } else if(normalizeOperationalStatus(String(p.estado || '').toLowerCase()) !== fSt) return;
     const lat = Number(p.latitud), lng = Number(p.longitud);
     const color = p.estado==='entregado'?'#10b981' : p.estado==='en_ruta'?'#06b6d4':'#f59e0b';
     const icon = L.divIcon({ className: '', html: `<div class="m-label" style="border-left:4px solid ${color}">${esc(p.cliente.split(' ')[0])}</div>` });

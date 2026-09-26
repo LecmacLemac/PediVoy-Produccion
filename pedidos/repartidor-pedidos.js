@@ -1,4 +1,9 @@
-function toggleFilters(){ const b = $('#filterBox'); b.style.display = b.style.display==='none'?'block':'none'; }
+function toggleFilters(){
+  const box = $('#filterBox');
+  const toggle = $('#filtersToggle');
+  box.hidden = !box.hidden;
+  toggle?.setAttribute('aria-expanded', String(!box.hidden));
+}
 window.toggleFilters = toggleFilters;
 
 function initRepartidorPedidosUI() {
@@ -491,22 +496,19 @@ async function optimizarRuta() {
 }
 
 function getFilteredPedidos() {
+  const historical = getHistoricalMode();
   const fEst = getOperationalStatusFilter();
   const fZon = $('#fZona').value;
   const fHoy = $('#fHoy').checked;
   const fTxt = $('#fSearch').value.toLowerCase();
   const today = getOyString();
 
-  // 1. FILTRADO
   const list = pedidos.filter(p => {
-    const isActive = isPedidoActivoCarga(p);
-
-    if (fHoy) {
+    if (!historical && fHoy) {
       const fechaOp = getPedidoFechaOperativa(p);
       if (fechaOp !== today) return false;
     }
 
-    // Filtros de Zona, Texto y Estado
     if (fZon && String(p.zona_id) !== fZon) return false;
     if (fTxt) {
       const haystack = [
@@ -520,12 +522,14 @@ function getFilteredPedidos() {
       ].map(v => String(v ?? '').toLowerCase()).join(' | ');
       if (!haystack.includes(fTxt)) return false;
     }
-    
-    if (normalizeOperationalStatus(String(p.estado || '').toLowerCase()) !== fEst) {
-      return false;
-    }
-    return true;
+
+    if (historical) return isPedidoEntregadoReciente(p, today);
+    return normalizeOperationalStatus(String(p.estado || '').toLowerCase()) === fEst;
   });
+
+  if (historical) {
+    list.sort((a, b) => getPedidoFechaEntregaReal(b).localeCompare(getPedidoFechaEntregaReal(a)));
+  }
   return list;
 }
 

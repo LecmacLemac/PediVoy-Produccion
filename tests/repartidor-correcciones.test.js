@@ -141,6 +141,8 @@ test('mapa respeta el filtro operativo compartido entre pendientes y en ruta', (
       { estado: 'en_ruta', latitud: -31.1, longitud: -64.1, cliente: 'Beto' },
     ],
     getOperationalStatusFilter: () => status,
+    getHistoricalMode: () => false,
+    isPedidoEntregadoReciente: () => false,
     normalizeOperationalStatus: value => value === 'en_ruta' || value === 'en_camino' ? 'en_ruta' : 'pendiente',
     getOyString: () => '2026-09-22',
     getGoogleMapsDirectionsUrl: () => 'url',
