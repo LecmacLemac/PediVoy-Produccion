@@ -8,7 +8,7 @@ window.toggleFilters = toggleFilters;
 
 function initRepartidorPedidosUI() {
   initOperationalStatusFilters();
-  ['fZona','fHoy','fSearch'].forEach(id => $('#'+id).addEventListener('change', () => {
+  ['fZona','fSearch'].forEach(id => $('#'+id).addEventListener('change', () => {
     saveFiltrosUI();
     renderCards();
   }));
@@ -499,16 +499,10 @@ function getFilteredPedidos() {
   const historical = getHistoricalMode();
   const fEst = getOperationalStatusFilter();
   const fZon = $('#fZona').value;
-  const fHoy = $('#fHoy').checked;
   const fTxt = $('#fSearch').value.toLowerCase();
   const today = getOyString();
 
   const list = pedidos.filter(p => {
-    if (!historical && fHoy) {
-      const fechaOp = getPedidoFechaOperativa(p);
-      if (fechaOp !== today) return false;
-    }
-
     if (fZon && String(p.zona_id) !== fZon) return false;
     if (fTxt) {
       const haystack = [

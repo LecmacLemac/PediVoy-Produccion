@@ -192,6 +192,27 @@
       padding-top: 0.9rem;
       border-top: 1px solid rgba(148, 163, 184, 0.12);
     }
+    .map-secondary-filters {
+      margin-bottom: 0.5rem;
+      align-self: flex-start;
+    }
+    .map-secondary-filters summary {
+      cursor: pointer;
+      color: var(--muted);
+      font-size: 0.8rem;
+      font-weight: 700;
+    }
+    .map-secondary-filters summary:focus-visible {
+      outline: 3px solid rgba(34, 211, 238, 0.55);
+      outline-offset: 2px;
+    }
+    .map-secondary-panel {
+      margin-top: 0.35rem;
+      padding: 0.35rem;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: rgba(0,0,0,0.2);
+    }
     .history-indicator {
       margin-top: 0.65rem;
       padding: 0.65rem 0.8rem;
@@ -382,7 +403,26 @@
     }
 
     /* MAPA */
-    .mapbox { height: 65vh; width: 100%; border-radius: 12px; border: 1px solid var(--border); z-index: 1; }
+    .map-stage { position: relative; flex: 1; min-height: 0; }
+    .mapbox { height: 100%; width: 100%; border-radius: 12px; border: 1px solid var(--border); z-index: 1; }
+    .map-center-button {
+      position: absolute;
+      right: 14px;
+      bottom: 14px;
+      z-index: 500;
+      width: 48px;
+      height: 48px;
+      padding: 0;
+      border: 1px solid rgba(148, 163, 184, 0.45);
+      border-radius: 50%;
+      background: rgba(15, 23, 42, 0.92);
+      color: #fff;
+      box-shadow: 0 8px 24px rgba(2, 8, 23, 0.45);
+      font-size: 1.35rem;
+      cursor: pointer;
+    }
+    .map-center-button:disabled { opacity: 0.45; cursor: not-allowed; }
+    .map-center-button:focus-visible { outline: 3px solid rgba(34, 211, 238, 0.55); outline-offset: 2px; }
     /* Icono mapa personalizado */
     .m-label { 
       background: #1e293b; color: #fff; padding: 4px 8px; border-radius: 6px; 
@@ -561,11 +601,6 @@
             <label>Zona</label>
             <select id="fZona"><option value="">Todas</option></select>
           </div>
-          <div style="padding-bottom:0.8rem">
-            <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer">
-              <input type="checkbox" id="fHoy" checked> Solo Hoy
-            </label>
-          </div>
         </div>
         
         <div class="row" style="margin-top:1rem">
@@ -629,21 +664,25 @@
           En ruta <span class="status-count" data-status-count="en_ruta">0</span>
         </button>
       </div>
-      <div class="row secondary-filters" style="margin-bottom:0.5rem; background:rgba(0,0,0,0.2); padding:0.5rem; border-radius:8px;">
-        <button type="button" class="iconbtn ghost" id="mapCenterMe" disabled>◎ Centrar en mi ubicación</button>
-        <label style="display:flex; align-items:center; gap:0.5rem; margin:0; font-size:0.8rem; color:#fff;">
-          <input type="checkbox" id="mapSoloHoy" checked style="width:auto; transform:scale(1)"> Solo Hoy
-        </label>
-        <button type="button" class="iconbtn ghost" data-history-toggle="mapa" aria-pressed="false">
-          Ver entregados de los últimos 7 días <span class="status-count" data-history-count="mapa">0</span>
-        </button>
-      </div>
+      <details id="mapSecondaryFilters" class="map-secondary-filters">
+        <summary>Filtros secundarios</summary>
+        <div class="map-secondary-panel">
+          <button type="button" class="iconbtn ghost" data-history-toggle="mapa" aria-pressed="false">
+            Ver entregados de los últimos 7 días <span class="status-count" data-history-count="mapa">0</span>
+          </button>
+        </div>
+      </details>
       <div class="history-indicator" data-history-indicator="mapa" hidden>
         <strong>Viendo: Entregados · últimos 7 días</strong>
         <button type="button" class="iconbtn ghost" data-history-exit="mapa">Salir</button>
       </div>
 
-      <div id="map" class="mapbox" style="flex:1;"></div>
+      <div class="map-stage">
+        <div id="map" class="mapbox"></div>
+        <button type="button" class="map-center-button" id="mapCenterMe" aria-label="Centrar mi ubicación" title="Centrar mi ubicación" disabled>
+          <span aria-hidden="true">◎</span>
+        </button>
+      </div>
       <small class="muted" style="margin-top:5px" id="mapHint">Cargando...</small>
     </div>
   </section>

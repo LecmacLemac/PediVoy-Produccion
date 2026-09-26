@@ -1,7 +1,10 @@
 function initRepartidorMapaGpsUI() {
-  $('#mapSoloHoy').addEventListener('change', renderMap);
   $('#mapRefBtn').onclick = () => { loadPedidos().then(renderMap); };
   $('#mapCenterMe').onclick = centerMapOnDriver;
+  $('#mapSecondaryFilters')?.addEventListener('toggle', () => {
+    if (!map) return;
+    requestAnimationFrame(() => map.invalidateSize());
+  });
 
 }
 
@@ -272,13 +275,12 @@ function renderMap(){
   renderStoredDriverLocationOnMap();
 
   const historical = getHistoricalMode();
-  const fHoy = $('#mapSoloHoy').checked, today = getOyString();
+  const today = getOyString();
   const fSt = getOperationalStatusFilter();
   const bounds = [];
   pedidos.forEach(p => {
     const directionsUrl = getGoogleMapsDirectionsUrl(p.latitud, p.longitud);
     if(!directionsUrl) return;
-    if(!historical && fHoy && getPedidoFechaOperativa(p) !== today) return;
     if(historical) {
       if(!isPedidoEntregadoReciente(p, today)) return;
     } else if(normalizeOperationalStatus(String(p.estado || '').toLowerCase()) !== fSt) return;

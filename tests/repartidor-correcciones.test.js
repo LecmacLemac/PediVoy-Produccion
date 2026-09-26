@@ -129,7 +129,7 @@ test('menú anuncia nombre y estado al abrir/cerrar/navegar', async () => {
   btn.onclick(); await link.onclick({ preventDefault() {} }); assert.equal(btn['aria-expanded'], 'false');
 });
 test('mapa respeta el filtro operativo compartido entre pendientes y en ruta', () => {
-  const nodes = { '#mapSoloHoy': { checked: false, addEventListener() {} }, '#mapRefBtn': {}, '#mapCenterMe': {}, '#mapHint': {} };
+  const nodes = { '#mapRefBtn': {}, '#mapCenterMe': {}, '#mapHint': {} };
   let markers = 0;
   let status = 'pendiente';
   const context = {

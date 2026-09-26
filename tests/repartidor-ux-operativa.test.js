@@ -23,21 +23,115 @@ test('tarjetas y mapa usan controles segmentados accesibles con contadores', () 
   }
 });
 
-test('los controles operativos quedan visibles y el histórico se ofrece dentro de filtros secundarios', () => {
+test('Solo Hoy desaparece y los estados operativos incluyen pedidos de cualquier fecha', () => {
+  assert.doesNotMatch(html, /Solo Hoy|id="fHoy"|id="mapSoloHoy"/);
+  assert.doesNotMatch(core, /soloHoy|#fHoy/);
+  assert.doesNotMatch(pedidosSource, /fHoy|#fHoy/);
+  assert.doesNotMatch(gpsSource, /mapSoloHoy/);
+
+  const nodes = { '#fZona': { value: '' }, '#fSearch': { value: '' } };
+  const cardsContext = vm.createContext({
+    $: (selector) => nodes[selector],
+    getHistoricalMode: () => false,
+    getOperationalStatusFilter: () => 'pendiente',
+    getOyString: () => '2026-09-26',
+    getPedidoFechaEntregaReal: () => '',
+    isPedidoEntregadoReciente: () => false,
+    normalizeOperationalStatus: (status) => status,
+    pedidos: [
+      { id: 1, estado: 'pendiente', fecha_entrega_estimada: '2026-09-20' },
+      { id: 2, estado: 'pendiente', fecha_entrega_estimada: '2026-09-26' },
+      { id: 3, estado: 'en_ruta', fecha_entrega_estimada: '2026-09-19' },
+    ],
+  });
+  vm.runInContext(slice(pedidosSource, 'function getFilteredPedidos()', 'function renderCards()'), cardsContext);
+  assert.deepEqual(Array.from(cardsContext.getFilteredPedidos(), (pedido) => pedido.id), [1, 2]);
+
+  let markers = 0;
+  const mapContext = vm.createContext({
+    $: (selector) => selector === '#mapHint' ? { textContent: '' } : null,
+    map: { invalidateSize() {}, fitBounds() {} },
+    mapMarkers: { clearLayers() {} },
+    pedidos: [
+      { estado: 'pendiente', fecha_entrega_estimada: '2026-09-20', latitud: -31, longitud: -64, cliente: 'A' },
+      { estado: 'pendiente', fecha_entrega_estimada: '2026-09-26', latitud: -31.1, longitud: -64.1, cliente: 'B' },
+      { estado: 'en_ruta', fecha_entrega_estimada: '2026-09-19', latitud: -31.2, longitud: -64.2, cliente: 'C' },
+    ],
+    getHistoricalMode: () => false,
+    getOperationalStatusFilter: () => 'pendiente',
+    getOyString: () => '2026-09-26',
+    isPedidoEntregadoReciente: () => false,
+    normalizeOperationalStatus: (status) => status,
+    getGoogleMapsDirectionsUrl: () => 'url',
+    buildRepartidorMapPopup: () => '',
+    renderStoredDriverLocationOnMap() {},
+    esc: String,
+    L: { divIcon: (options) => options, marker: () => ({ addTo() { markers += 1; return this; }, bindPopup() {} }) },
+  });
+  vm.runInContext(slice(gpsSource, 'function renderMap()', '// --- GPS TRACKING'), mapContext);
+  mapContext.renderMap();
+  assert.equal(markers, 2);
+});
+
+test('los controles operativos quedan visibles y el histórico del mapa se ofrece colapsado por defecto', () => {
   const pedidosSection = html.slice(html.indexOf('<section id="sec-pedidos">'), html.indexOf('<section id="sec-mapa"'));
   const mapSection = html.slice(html.indexOf('<section id="sec-mapa"'), html.indexOf('<section id="sec-gastos"'));
   const filterBox = pedidosSection.slice(pedidosSection.indexOf('<div id="filterBox"'), pedidosSection.indexOf('<div id="cargaPendienteBox"'));
 
   assert.ok(pedidosSection.indexOf('data-filter-scope="pedidos"') < pedidosSection.indexOf('id="filterBox"'));
   assert.doesNotMatch(filterBox, /data-filter-scope="pedidos"/);
-  assert.ok(mapSection.indexOf('data-filter-scope="mapa"') < mapSection.indexOf('secondary-filters'));
+  assert.ok(mapSection.indexOf('data-filter-scope="mapa"') < mapSection.indexOf('id="mapSecondaryFilters"'));
+  assert.doesNotMatch(mapSection, /class="row secondary-filters"/);
+
+  assert.match(html, /data-history-toggle="pedidos"[^>]+aria-pressed="false"[\s\S]*?Ver entregados de los últimos 7 días[\s\S]*?data-history-count="pedidos"/);
+  assert.match(mapSection, /<details id="mapSecondaryFilters" class="map-secondary-filters">[\s\S]*?<summary[^>]*>[^<]*Filtros secundarios[^<]*<\/summary>[\s\S]*?data-history-toggle="mapa"[^>]+aria-pressed="false"[\s\S]*?Ver entregados de los últimos 7 días[\s\S]*?data-history-count="mapa"[\s\S]*?<\/details>/);
 
   for (const scope of ['pedidos', 'mapa']) {
-    assert.match(html, new RegExp(`data-history-toggle="${scope}"[^>]+aria-pressed="false"[\\s\\S]*?Ver entregados de los últimos 7 días[\\s\\S]*?data-history-count="${scope}"`));
     assert.match(html, new RegExp(`data-history-indicator="${scope}"[^>]+hidden[\\s\\S]*?Viendo: Entregados · últimos 7 días[\\s\\S]*?data-history-exit="${scope}"`));
   }
-
+  assert.ok(mapSection.indexOf('</details>') < mapSection.indexOf('data-history-indicator="mapa"'));
   assert.match(html, /id="filtersToggle"[^>]+aria-controls="filterBox"[^>]+aria-expanded="true"/);
+});
+
+test('abrir y cerrar los filtros secundarios recalcula el tamaño del mapa en el próximo frame', () => {
+  let toggleListener = null;
+  let animationFrames = 0;
+  let invalidations = 0;
+  const nodes = {
+    '#mapRefBtn': {},
+    '#mapCenterMe': {},
+    '#mapSecondaryFilters': {
+      open: false,
+      addEventListener(type, listener) {
+        if (type === 'toggle') toggleListener = listener;
+      },
+    },
+  };
+  const context = vm.createContext({
+    $: (selector) => nodes[selector],
+    map: { invalidateSize() { invalidations += 1; } },
+    centerMapOnDriver() {},
+    requestAnimationFrame(callback) {
+      animationFrames += 1;
+      callback();
+    },
+  });
+  vm.runInContext(slice(gpsSource, 'function initRepartidorMapaGpsUI()', 'function setGpsFeedback'), context);
+
+  context.initRepartidorMapaGpsUI();
+  assert.equal(typeof toggleListener, 'function');
+
+  nodes['#mapSecondaryFilters'].open = true;
+  toggleListener();
+  nodes['#mapSecondaryFilters'].open = false;
+  toggleListener();
+
+  assert.equal(animationFrames, 2);
+  assert.equal(invalidations, 2);
+});
+
+test('el resumen de filtros secundarios conserva un foco de teclado visible', () => {
+  assert.match(html, /\.map-secondary-filters summary:focus-visible\s*\{[^}]*outline:\s*3px solid [^;]+;[^}]*outline-offset:\s*2px;/s);
 });
 
 test('el botón de filtros mantiene aria-expanded sincronizado', () => {
@@ -233,10 +327,9 @@ test('restoreFiltrosUI recupera el modo histórico persistido con safeStorage', 
   assert.equal(indicator.hidden, false);
 });
 
-test('las tarjetas históricas ignoran Solo Hoy, conservan zona y búsqueda y ordenan por entrega descendente', () => {
+test('las tarjetas históricas conservan zona y búsqueda y ordenan por entrega descendente', () => {
   const nodes = {
     '#fZona': { value: '7' },
-    '#fHoy': { checked: true },
     '#fSearch': { value: 'ana' },
   };
   const context = vm.createContext({
@@ -264,8 +357,8 @@ test('las tarjetas históricas ignoran Solo Hoy, conservan zona y búsqueda y or
   assert.deepEqual(Array.from(context.getFilteredPedidos(), (pedido) => pedido.id), [2, 1]);
 });
 
-test('el mapa histórico ignora Solo Hoy, muestra sólo entregados recientes en verde y conserva GPS', () => {
-  const nodes = { '#mapSoloHoy': { checked: true }, '#mapHint': { textContent: '' } };
+test('el mapa histórico muestra sólo entregados recientes en verde y conserva GPS', () => {
+  const nodes = { '#mapHint': { textContent: '' } };
   const markerIcons = [];
   let gpsRenders = 0;
   const context = vm.createContext({
@@ -311,8 +404,12 @@ test('tarjetas y mapa consumen el mismo filtro operativo sin selectores duplicad
   assert.match(pedidosSource, /initOperationalStatusFilters\(\)/);
 });
 
-test('el mapa ofrece centrar la ubicación y define el punto azul pulsante', () => {
-  assert.match(html, /id="mapCenterMe"[^>]*disabled[^>]*>[^<]*Centrar en mi ubicación/);
+test('el mapa superpone un botón GPS circular, accesible y deshabilitado hasta tener ubicación', () => {
+  const mapSection = html.slice(html.indexOf('<section id="sec-mapa"'), html.indexOf('<section id="sec-gastos"'));
+  assert.match(mapSection, /<div class="map-stage">[\s\S]*?<div id="map"[^>]*>[\s\S]*?<button type="button" class="map-center-button" id="mapCenterMe" aria-label="Centrar mi ubicación" title="Centrar mi ubicación" disabled>[\s\S]*?aria-hidden="true"[\s\S]*?<\/button>[\s\S]*?<\/div>/);
+  assert.doesNotMatch(mapSection, />[^<]*Centrar (?:en )?mi ubicación[^<]*<\/button>/);
+  assert.match(html, /\.map-stage\s*\{[\s\S]*?position:\s*relative/);
+  assert.match(html, /\.map-center-button\s*\{[\s\S]*?position:\s*absolute[\s\S]*?border-radius:\s*50%/);
   assert.match(html, /\.driver-location-dot[\s\S]*background:\s*#(?:2563eb|3b82f6)/i);
   assert.match(html, /@keyframes driverLocationPulse/);
   assert.match(html, /@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*?\.driver-location-dot::after\s*\{[\s\S]*?animation:\s*none/);

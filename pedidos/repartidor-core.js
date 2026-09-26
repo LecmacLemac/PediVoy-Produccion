@@ -227,7 +227,6 @@ function saveFiltrosUI() {
       estado: operationalStatusFilter,
       historico: historicalMode,
       zona: $('#fZona')?.value || '',
-      soloHoy: !!$('#fHoy')?.checked,
       search: $('#fSearch')?.value || ''
     };
     safeStorage.local.set(FILTROS_LS_KEY, JSON.stringify(payload));
@@ -243,7 +242,6 @@ function restoreFiltrosUI() {
     if (typeof data.estado === 'string') operationalStatusFilter = normalizeOperationalStatus(data.estado) || 'pendiente';
     if (typeof data.historico === 'boolean') historicalMode = data.historico;
     if ($('#fSearch') && typeof data.search === 'string') $('#fSearch').value = data.search;
-    if ($('#fHoy') && typeof data.soloHoy === 'boolean') $('#fHoy').checked = data.soloHoy;
 
     // fZona se re-aplica en loadZonas() cuando existan options
     if ($('#fZona') && typeof data.zona === 'string') $('#fZona').dataset.pendingValue = data.zona;
