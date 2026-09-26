@@ -1,7 +1,7 @@
 function initRepartidorMapaGpsUI() {
-  $('#mapFiltroEstado').addEventListener('change', () => { renderMap.initialFilterResolved = true; renderMap(); });
   $('#mapSoloHoy').addEventListener('change', renderMap);
   $('#mapRefBtn').onclick = () => { loadPedidos().then(renderMap); };
+  $('#mapCenterMe').onclick = centerMapOnDriver;
 
 }
 
@@ -74,6 +74,7 @@ async function requestGpsActivation() {
     const pos = await new Promise((resolve, reject) => {
       navigator.geolocation.getCurrentPosition(resolve, reject, GEO_OPTS_ACTIVATE);
     });
+    updateDriverLocationOnMap(pos);
 
     gpsSyncState.disabled = false;
     gpsSyncState.denied = false;
@@ -83,7 +84,7 @@ async function requestGpsActivation() {
     updateGpsButtonUI();
 
     // Ping inicial si ya tiene pedido en ruta
-    const activePed = pedidos.find(p => p.estado === 'en_ruta');
+    const activePed = pedidos.find(p => ['en_ruta', 'en_camino'].includes(p.estado));
     if (activePed) {
       api('/api/track/update', {
         method: 'POST',
@@ -110,6 +111,68 @@ async function requestGpsActivation() {
 
     toast(getGeoErrorMessage(e));
   }
+}
+
+let driverLocationMarker = null;
+let driverAccuracyCircle = null;
+let lastDriverLocation = null;
+
+function updateDriverLocationOnMap(position) {
+  const lat = Number(position?.coords?.latitude);
+  const lng = Number(position?.coords?.longitude);
+  const accuracy = Number(position?.coords?.accuracy);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+
+  lastDriverLocation = { lat, lng, accuracy: Number.isFinite(accuracy) && accuracy > 0 ? accuracy : null };
+  const centerButton = document.getElementById('mapCenterMe');
+  if (centerButton) centerButton.disabled = false;
+  renderStoredDriverLocationOnMap();
+}
+
+function renderStoredDriverLocationOnMap() {
+  if (!lastDriverLocation) return;
+  if (!map) return;
+
+  const { lat, lng } = lastDriverLocation;
+  const latlng = [lat, lng];
+  if (!driverLocationMarker) {
+    const icon = L.divIcon({
+      className: '',
+      html: '<div class="driver-location-dot" aria-hidden="true"></div>',
+      iconSize: [18, 18],
+      iconAnchor: [9, 9],
+    });
+    driverLocationMarker = L.marker(latlng, { icon, zIndexOffset: 1000 })
+      .addTo(map)
+      .bindPopup('<strong>Mi ubicación</strong>');
+  } else {
+    driverLocationMarker.setLatLng(latlng);
+  }
+
+  if (lastDriverLocation.accuracy) {
+    if (!driverAccuracyCircle) {
+      driverAccuracyCircle = L.circle(latlng, {
+        radius: lastDriverLocation.accuracy,
+        color: '#2563eb',
+        weight: 1,
+        fillColor: '#3b82f6',
+        fillOpacity: 0.12,
+        interactive: false,
+      }).addTo(map);
+    } else {
+      driverAccuracyCircle.setLatLng(latlng).setRadius(lastDriverLocation.accuracy);
+    }
+  } else if (driverAccuracyCircle) {
+    map.removeLayer(driverAccuracyCircle);
+    driverAccuracyCircle = null;
+  }
+}
+
+function centerMapOnDriver() {
+  if (!lastDriverLocation) return;
+  if (!map) renderMap();
+  map.setView([lastDriverLocation.lat, lastDriverLocation.lng], Math.max(map.getZoom?.() || 0, 16));
+  driverLocationMarker?.openPopup?.();
 }
 
 // --- MAPA ---
@@ -206,23 +269,16 @@ function buildRepartidorMapPopup(pedido, directionsUrl) {
 function renderMap(){
   if(!map) { map = L.map('map').setView([-31.4, -64.18], 12); L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map); mapMarkers = L.layerGroup().addTo(map); }
   map.invalidateSize(); mapMarkers.clearLayers();
+  renderStoredDriverLocationOnMap();
 
-  const filter = $('#mapFiltroEstado');
   const fHoy = $('#mapSoloHoy').checked, today = getOyString();
-  if (!renderMap.initialFilterResolved) {
-    renderMap.initialFilterResolved = true;
-    const visible = pedidos.filter(p => getGoogleMapsDirectionsUrl(p.latitud, p.longitud)
-      && (!fHoy || getPedidoFechaOperativa(p) === today));
-    if (filter.value === 'en_ruta' && !visible.some(p => ['en_ruta', 'en_camino'].includes(p.estado))
-        && visible.some(p => p.estado === 'pendiente')) filter.value = 'pendiente';
-  }
-  const fSt = filter.value;
+  const fSt = getOperationalStatusFilter();
   const bounds = [];
   pedidos.forEach(p => {
     const directionsUrl = getGoogleMapsDirectionsUrl(p.latitud, p.longitud);
     if(!directionsUrl) return;
     if(fHoy && getPedidoFechaOperativa(p) !== today) return;
-    if(fSt && p.estado !== fSt && !(fSt === 'en_ruta' && p.estado === 'en_camino')) return;
+    if(normalizeOperationalStatus(String(p.estado || '').toLowerCase()) !== fSt) return;
     const lat = Number(p.latitud), lng = Number(p.longitud);
     const color = p.estado==='entregado'?'#10b981' : p.estado==='en_ruta'?'#06b6d4':'#f59e0b';
     const icon = L.divIcon({ className: '', html: `<div class="m-label" style="border-left:4px solid ${color}">${esc(p.cliente.split(' ')[0])}</div>` });
@@ -245,7 +301,7 @@ async function gpsTick() {
   if (gpsSyncState.disabled) return;
 
   // Solo si hay pedidos en ruta
-  const activePed = pedidos.find(p => p.estado === 'en_ruta');
+  const activePed = pedidos.find(p => ['en_ruta', 'en_camino'].includes(p.estado));
   if (!activePed) return;
 
   // Si el navegador dice offline, no insistimos
@@ -266,6 +322,7 @@ async function gpsTick() {
       const pos = await new Promise((resolve, reject) => {
         navigator.geolocation.getCurrentPosition(resolve, reject, GEO_OPTS_TRACK);
       });
+      updateDriverLocationOnMap(pos);
 
       await api('/api/track/update', {
         method: 'POST',

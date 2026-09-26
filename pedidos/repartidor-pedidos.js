@@ -2,7 +2,8 @@ function toggleFilters(){ const b = $('#filterBox'); b.style.display = b.style.d
 window.toggleFilters = toggleFilters;
 
 function initRepartidorPedidosUI() {
-  ['fEstado','fZona','fHoy','fSearch'].forEach(id => $('#'+id).addEventListener('change', () => {
+  initOperationalStatusFilters();
+  ['fZona','fHoy','fSearch'].forEach(id => $('#'+id).addEventListener('change', () => {
     saveFiltrosUI();
     renderCards();
   }));
@@ -75,6 +76,7 @@ async function loadPedidos(){
       }
     }
     pedidosLastSyncAt = Date.now();
+    updateOperationalStatusFilterUI();
     updatePedidosSyncInfo();
     syncRoutePlanWithPedidos();
     renderCards();
@@ -489,7 +491,7 @@ async function optimizarRuta() {
 }
 
 function getFilteredPedidos() {
-  const fEst = $('#fEstado').value;
+  const fEst = getOperationalStatusFilter();
   const fZon = $('#fZona').value;
   const fHoy = $('#fHoy').checked;
   const fTxt = $('#fSearch').value.toLowerCase();
@@ -519,9 +521,7 @@ function getFilteredPedidos() {
       if (!haystack.includes(fTxt)) return false;
     }
     
-    if (fEst === 'activos') {
-      if (!isActive) return false;
-    } else if (fEst && String(p.estado || '').toLowerCase() !== fEst) {
+    if (normalizeOperationalStatus(String(p.estado || '').toLowerCase()) !== fEst) {
       return false;
     }
     return true;

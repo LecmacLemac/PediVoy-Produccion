@@ -854,6 +854,7 @@ async function setStatus(id, st, el = null){
 
       if (st === 'en_ruta' && navigator.geolocation) {
         navigator.geolocation.getCurrentPosition(pos => {
+          updateDriverLocationOnMap(pos);
           gpsSyncState.disabled = false;
           gpsSyncState.denied = false;
           persistGpsPreference(true);

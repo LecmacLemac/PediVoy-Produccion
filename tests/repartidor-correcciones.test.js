@@ -128,15 +128,34 @@ test('menú anuncia nombre y estado al abrir/cerrar/navegar', async () => {
   btn.onclick(); assert.equal(btn['aria-expanded'], 'false');
   btn.onclick(); await link.onclick({ preventDefault() {} }); assert.equal(btn['aria-expanded'], 'false');
 });
-test('mapa hace fallback inicial una vez y respeta selección posterior', () => {
-  const nodes = { '#mapFiltroEstado': { value: 'en_ruta', addEventListener(_, fn) { this.change = fn; } }, '#mapSoloHoy': { checked: false, addEventListener() {} }, '#mapRefBtn': {}, '#mapHint': {} };
+test('mapa respeta el filtro operativo compartido entre pendientes y en ruta', () => {
+  const nodes = { '#mapSoloHoy': { checked: false, addEventListener() {} }, '#mapRefBtn': {}, '#mapCenterMe': {}, '#mapHint': {} };
   let markers = 0;
-  const context = { $: id => nodes[id], map: { invalidateSize() {}, fitBounds() {} }, mapMarkers: { clearLayers() { markers = 0; } }, pedidos: [{ estado: 'pendiente', latitud: -31, longitud: -64, cliente: 'Ana' }], getOyString: () => '2026-09-22', getGoogleMapsDirectionsUrl: () => 'url', buildRepartidorMapPopup: () => '', esc: String, L: { divIcon() {}, marker: () => ({ addTo() { markers++; return this; }, bindPopup() {} }) } };
-  vm.runInNewContext(slice(gps, 'function initRepartidorMapaGpsUI()', 'function showGpsHelp') + slice(gps, 'function renderMap()', '// --- GPS TRACKING'), context);
+  let status = 'pendiente';
+  const context = {
+    $: id => nodes[id],
+    map: { invalidateSize() {}, fitBounds() {} },
+    mapMarkers: { clearLayers() { markers = 0; } },
+    pedidos: [
+      { estado: 'pendiente', latitud: -31, longitud: -64, cliente: 'Ana' },
+      { estado: 'en_ruta', latitud: -31.1, longitud: -64.1, cliente: 'Beto' },
+    ],
+    getOperationalStatusFilter: () => status,
+    normalizeOperationalStatus: value => value === 'en_ruta' || value === 'en_camino' ? 'en_ruta' : 'pendiente',
+    getOyString: () => '2026-09-22',
+    getGoogleMapsDirectionsUrl: () => 'url',
+    buildRepartidorMapPopup: () => '',
+    renderStoredDriverLocationOnMap() {},
+    centerMapOnDriver() {},
+    loadPedidos: async () => {},
+    esc: String,
+    L: { divIcon() {}, marker: () => ({ addTo() { markers++; return this; }, bindPopup() {} }) },
+  };
+  vm.runInNewContext(slice(gps, 'function initRepartidorMapaGpsUI()', 'function setGpsFeedback') + slice(gps, 'function renderMap()', '// --- GPS TRACKING'), context);
   context.initRepartidorMapaGpsUI(); context.renderMap();
-  assert.equal(nodes['#mapFiltroEstado'].value, 'pendiente'); assert.equal(markers, 1);
-  nodes['#mapFiltroEstado'].value = 'en_ruta'; nodes['#mapFiltroEstado'].change(); context.renderMap();
-  assert.equal(nodes['#mapFiltroEstado'].value, 'en_ruta'); assert.equal(markers, 0);
+  assert.equal(markers, 1);
+  status = 'en_ruta'; context.renderMap();
+  assert.equal(markers, 1);
 });
 test('GPS da feedback inmediato y resultado accesible, sólo al activar', async () => {
   assert.match(html, /id="gpsStatus"[^>]*aria-live="polite"/);

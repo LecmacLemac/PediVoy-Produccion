@@ -105,6 +105,7 @@ let activosModalState = { pedidoId: null, data: null };
 let qrPagoState = { pedidoId: null, link: null };
 let pedidoEnProcesoId = null;
 let pedidosLastSyncAt = null;
+let operationalStatusFilter = 'pendiente';
 const gpsSyncState = {
   disabled: true,
   denied: false,
@@ -127,10 +128,54 @@ const GEO_OPTS_TRACK = {
 
 const FILTROS_LS_KEY = 'repartidor:filtros:v1';
 
+function normalizeOperationalStatus(status) {
+  if (status === 'en_ruta' || status === 'en_camino') return 'en_ruta';
+  if (status === 'pendiente') return 'pendiente';
+  return null;
+}
+
+function getOperationalStatusFilter() {
+  return operationalStatusFilter;
+}
+
+function updateOperationalStatusFilterUI() {
+  document.querySelectorAll('[data-status-filter]').forEach((button) => {
+    const active = button.dataset.statusFilter === operationalStatusFilter;
+    button.setAttribute('aria-pressed', String(active));
+    button.classList.toggle('active', active);
+  });
+
+  const totals = { pendiente: 0, en_ruta: 0 };
+  (pedidos || []).forEach((pedido) => {
+    const status = normalizeOperationalStatus(String(pedido?.estado || '').toLowerCase());
+    if (status) totals[status] += 1;
+  });
+  document.querySelectorAll('[data-status-count]').forEach((node) => {
+    node.textContent = String(totals[node.dataset.statusCount] || 0);
+  });
+}
+
+function setOperationalStatusFilter(status, options = {}) {
+  operationalStatusFilter = normalizeOperationalStatus(status) || 'pendiente';
+  updateOperationalStatusFilterUI();
+  if (options.persist !== false) saveFiltrosUI();
+  if (options.render !== false) {
+    if (typeof renderCards === 'function') renderCards();
+    if (typeof renderMap === 'function' && map) renderMap();
+  }
+}
+
+function initOperationalStatusFilters() {
+  document.querySelectorAll('[data-status-filter]').forEach((button) => {
+    button.addEventListener('click', () => setOperationalStatusFilter(button.dataset.statusFilter));
+  });
+  updateOperationalStatusFilterUI();
+}
+
 function saveFiltrosUI() {
   try {
     const payload = {
-      estado: $('#fEstado')?.value || '',
+      estado: operationalStatusFilter,
       zona: $('#fZona')?.value || '',
       soloHoy: !!$('#fHoy')?.checked,
       search: $('#fSearch')?.value || ''
@@ -145,12 +190,13 @@ function restoreFiltrosUI() {
     if (!raw) return;
     const data = JSON.parse(raw);
 
-    if ($('#fEstado') && typeof data.estado === 'string') $('#fEstado').value = data.estado;
+    if (typeof data.estado === 'string') operationalStatusFilter = normalizeOperationalStatus(data.estado) || 'pendiente';
     if ($('#fSearch') && typeof data.search === 'string') $('#fSearch').value = data.search;
     if ($('#fHoy') && typeof data.soloHoy === 'boolean') $('#fHoy').checked = data.soloHoy;
 
     // fZona se re-aplica en loadZonas() cuando existan options
     if ($('#fZona') && typeof data.zona === 'string') $('#fZona').dataset.pendingValue = data.zona;
+    updateOperationalStatusFilterUI();
   } catch {}
 }
 
