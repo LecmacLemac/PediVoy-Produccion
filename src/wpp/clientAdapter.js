@@ -22,6 +22,7 @@ export function createWppClientAdapter({
   wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)),
   forceStopPollMs = 25,
   forceStopAttempts = 40,
+  profileProcessGuard = null,
 } = {}) {
   if (!rawClient || typeof rawClient.initialize !== 'function') {
     throw new TypeError('rawClient.initialize is required');
@@ -50,18 +51,22 @@ export function createWppClientAdapter({
     async confirmStopped() {
       if (initializePending || !destroyAttempted) return false;
       const browser = rawClient.pupBrowser;
-      if (!browser) return true;
-      if (typeof browser.isConnected !== 'function') return true;
+      if (!browser) return !(await profileProcessGuard?.hasLiveProcesses?.());
+      if (typeof browser.isConnected !== 'function') return !(await profileProcessGuard?.hasLiveProcesses?.());
       if (browser.isConnected()) return false;
       const handle = typeof browser.process === 'function' ? browser.process() : null;
       const exited = processExited(handle, processAlive);
-      return exited === null ? true : exited;
+      if (exited !== null) return exited;
+      return !(await profileProcessGuard?.hasLiveProcesses?.());
     },
 
     async forceStop() {
       const browser = rawClient.pupBrowser;
       const handle = typeof browser?.process === 'function' ? browser.process() : null;
-      if (!handle || !Number.isInteger(handle.pid) || handle.pid <= 0) return !initializePending && destroyAttempted;
+      if (!handle || !Number.isInteger(handle.pid) || handle.pid <= 0) {
+        if (await profileProcessGuard?.hasLiveProcesses?.()) return await profileProcessGuard.forceStop() === true;
+        return !initializePending && destroyAttempted;
+      }
       if (processExited(handle, processAlive) === true) return true;
       try {
         kill(handle.pid, 'SIGKILL');

@@ -65,6 +65,26 @@ test('missing browser evidence after completed destroy is treated as stopped', a
   assert.equal(await adapter.forceStop(), true);
 });
 
+test('live profile process without browser handle is force-stopped after destroy', async () => {
+  const raw = fakeRawClient();
+  const calls = [];
+  let liveProfileProcess = true;
+  const adapter = createWppClientAdapter({
+    rawClient: raw,
+    profileProcessGuard: {
+      hasLiveProcesses: async () => liveProfileProcess,
+      forceStop: async () => { calls.push('force-profile'); liveProfileProcess = false; return true; },
+    },
+  });
+
+  await adapter.initialize();
+  await adapter.destroy();
+  assert.equal(await adapter.confirmStopped(), false);
+  assert.equal(await adapter.forceStop(), true);
+  assert.deepEqual(calls, ['force-profile']);
+  assert.equal(await adapter.confirmStopped(), true);
+});
+
 test('disconnected browser without a process handle is treated as stopped after destroy', async () => {
   const raw = fakeRawClient({
     browser: { isConnected: () => false, process: () => null },

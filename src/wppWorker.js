@@ -53,6 +53,81 @@ let healthInterval;
 let ownershipInterval;
 let shutdownWorker;
 
+function procArgs(pid) {
+  return fs.readFileSync(`/proc/${pid}/cmdline`)
+    .toString('utf8')
+    .split('\0')
+    .filter(Boolean);
+}
+
+function isCompanyProfileChromeRoot(pid) {
+  try {
+    const args = procArgs(pid);
+    const text = args.join(' ');
+    if (!text.includes(`--user-data-dir=${sessionPaths.sessionDir}`)) return false;
+    if (/(^|\s)--type=/.test(text)) return false;
+    const exe = fs.readlinkSync(`/proc/${pid}/exe`);
+    return /chrom(e|ium)/i.test(exe);
+  } catch {
+    return false;
+  }
+}
+
+function findCompanyProfileChromeRoots() {
+  let entries = [];
+  try {
+    entries = fs.readdirSync('/proc', { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  return entries
+    .filter(entry => entry.isDirectory() && /^\d+$/.test(entry.name))
+    .map(entry => Number(entry.name))
+    .filter(isCompanyProfileChromeRoot);
+}
+
+function pidAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code !== 'ESRCH';
+  }
+}
+
+async function waitForDead(pid, attempts = 20, delayMs = 100) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (!pidAlive(pid)) return true;
+    await new Promise(resolve => setTimeout(resolve, delayMs));
+  }
+  return !pidAlive(pid);
+}
+
+const profileProcessGuard = {
+  async hasLiveProcesses() {
+    return findCompanyProfileChromeRoots().length > 0;
+  },
+  async forceStop() {
+    const pids = findCompanyProfileChromeRoots();
+    if (pids.length === 0) return true;
+    console.warn(`[Empresa ${EMPRESA_ID}] Cerrando Chromium huérfano del perfil antes de reintentar:`, pids);
+    for (const pid of pids) {
+      try { process.kill(pid, 'SIGTERM'); } catch (error) { if (error?.code !== 'ESRCH') return false; }
+    }
+    const remainingAfterTerm = [];
+    for (const pid of pids) {
+      if (!(await waitForDead(pid))) remainingAfterTerm.push(pid);
+    }
+    for (const pid of remainingAfterTerm) {
+      try { process.kill(pid, 'SIGKILL'); } catch (error) { if (error?.code !== 'ESRCH') return false; }
+    }
+    for (const pid of remainingAfterTerm) {
+      if (!(await waitForDead(pid, 20, 100))) return false;
+    }
+    return true;
+  },
+};
+
 async function persistStatus(status, { qrCode = null, heartbeat = false } = {}) {
   if (!ownership.isOwner) return false;
   await query(
@@ -102,7 +177,7 @@ function createManagedCompanyClient({ generation }) {
       timeout: 60000,
     },
   });
-  const adapter = createWppClientAdapter({ rawClient });
+  const adapter = createWppClientAdapter({ rawClient, profileProcessGuard });
   let managedClient;
 
   const current = () => lifecycle?.isCurrent(managedClient, generation) === true;
