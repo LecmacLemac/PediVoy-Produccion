@@ -147,6 +147,7 @@ export function mountApiModules(app, deps) {
     createRepartidorApiRouter({
       query,
       pool,
+      withTransaction,
       withAuth,
       getEmpresaIdFromToken,
       notifyEstadoPedidoPush,

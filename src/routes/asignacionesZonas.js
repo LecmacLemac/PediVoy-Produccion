@@ -12,8 +12,17 @@ export function createAsignacionesZonasRouter(deps) {
 
   const router = express.Router();
 
+  function requireOperationalAdmin(req, res, next) {
+    const role = req.user?.role;
+    const hasExplicitType = Object.prototype.hasOwnProperty.call(req.user || {}, 'type');
+    if ((role !== 'admin' && role !== 'super') || (hasExplicitType && req.user.type !== 'user')) {
+      return res.status(403).json({ error: 'Acceso denegado' });
+    }
+    return next();
+  }
+
   // POST /api/asignarChofer
-  router.post('/asignarChofer', withAuth, async (req, res) => {
+  router.post('/asignarChofer', withAuth, requireOperationalAdmin, async (req, res) => {
     try {
       const { chofer_id, zona_id, empresa_id } = req.body || {};
       const choferIdNum = Number(chofer_id);
@@ -73,7 +82,7 @@ export function createAsignacionesZonasRouter(deps) {
   });
 
   // DELETE /api/desasignarChofer
-  router.delete('/desasignarChofer', withAuth, async (req, res) => {
+  router.delete('/desasignarChofer', withAuth, requireOperationalAdmin, async (req, res) => {
     try {
       const { chofer_id, zona_id, empresa_id } = req.body || {};
       const choferIdNum = Number(chofer_id);

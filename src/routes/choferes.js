@@ -15,6 +15,15 @@ export function createChoferesRouter(deps) {
 
   const router = express.Router();
 
+  function requireOperationalAdmin(req, res, next) {
+    const role = req.user?.role;
+    const hasExplicitType = Object.prototype.hasOwnProperty.call(req.user || {}, 'type');
+    if ((role !== 'admin' && role !== 'super') || (hasExplicitType && req.user.type !== 'user')) {
+      return res.status(403).json({ error: 'Acceso denegado' });
+    }
+    return next();
+  }
+
   const CHOFERES_IMG_DIR = path.resolve(process.cwd(), 'pedidos', 'img', 'choferes');
   fs.mkdirSync(CHOFERES_IMG_DIR, { recursive: true });
 
@@ -59,7 +68,7 @@ export function createChoferesRouter(deps) {
     }
   });
 
-  router.post('/choferes/upload-foto', withAuth, (req, res) => {
+  router.post('/choferes/upload-foto', withAuth, requireOperationalAdmin, (req, res) => {
     choferesPhotoUploader.single('foto')(req, res, (err) => {
       if (err) {
         const msg = String(err?.message || 'Error subiendo foto');
@@ -74,7 +83,7 @@ export function createChoferesRouter(deps) {
     });
   });
 
-  router.post('/choferes', withAuth, async (req, res) => {
+  router.post('/choferes', withAuth, requireOperationalAdmin, async (req, res) => {
     try {
       const { nombre, telefono, email, tipo, sla_horas, foto_url, empresa_id } = req.body || {};
       const esSuperAdmin = isSuper(req);
@@ -93,7 +102,7 @@ export function createChoferesRouter(deps) {
     }
   });
 
-  router.put('/choferes/:id', withAuth, async (req, res) => {
+  router.put('/choferes/:id', withAuth, requireOperationalAdmin, async (req, res) => {
     try {
       const { nombre, telefono, email, tipo, sla_horas, foto_url } = req.body || {};
       const esSuperAdmin = isSuper(req);
@@ -115,7 +124,7 @@ export function createChoferesRouter(deps) {
     }
   });
 
-  router.delete('/choferes/:id', withAuth, async (req, res) => {
+  router.delete('/choferes/:id', withAuth, requireOperationalAdmin, async (req, res) => {
     try {
       const esSuperAdmin = isSuper(req);
       const myEmpresa = getEmpresaIdFromToken(req);
@@ -160,7 +169,7 @@ export function createChoferesRouter(deps) {
     }
   });
 
-  router.post('/choferes/:id/costos', withAuth, async (req, res) => {
+  router.post('/choferes/:id/costos', withAuth, requireOperationalAdmin, async (req, res) => {
     try {
       const { producto_id, costo_unitario } = req.body || {};
       const esSuperAdmin = isSuper(req);
@@ -189,7 +198,7 @@ export function createChoferesRouter(deps) {
     }
   });
 
-  router.put('/choferes/:id/costos/:pid', withAuth, async (req, res) => {
+  router.put('/choferes/:id/costos/:pid', withAuth, requireOperationalAdmin, async (req, res) => {
     try {
       const { costo_unitario } = req.body || {};
       const esSuperAdmin = isSuper(req);
@@ -211,7 +220,7 @@ export function createChoferesRouter(deps) {
     }
   });
 
-  router.delete('/choferes/:id/costos/:pid', withAuth, async (req, res) => {
+  router.delete('/choferes/:id/costos/:pid', withAuth, requireOperationalAdmin, async (req, res) => {
     try {
       const esSuperAdmin = isSuper(req);
       const myEmpresa = getEmpresaIdFromToken(req);
@@ -265,7 +274,7 @@ export function createChoferesRouter(deps) {
     }
   });
 
-  router.post('/choferes/:id/escalas', withAuth, async (req, res) => {
+  router.post('/choferes/:id/escalas', withAuth, requireOperationalAdmin, async (req, res) => {
     try {
       const { nombre, vigente_desde, vigente_hasta, notas } = req.body || {};
       const esSuperAdmin = isSuper(req);
@@ -291,7 +300,7 @@ export function createChoferesRouter(deps) {
     }
   });
 
-  router.put('/escalas/:id', withAuth, async (req, res) => {
+  router.put('/escalas/:id', withAuth, requireOperationalAdmin, async (req, res) => {
     try {
       const { nombre, vigente_desde, vigente_hasta, notas } = req.body || {};
       const esSuperAdmin = isSuper(req);
@@ -313,7 +322,7 @@ export function createChoferesRouter(deps) {
     }
   });
 
-  router.delete('/escalas/:id', withAuth, async (req, res) => {
+  router.delete('/escalas/:id', withAuth, requireOperationalAdmin, async (req, res) => {
     try {
       const esSuperAdmin = isSuper(req);
       const myEmpresa = getEmpresaIdFromToken(req);
@@ -333,7 +342,7 @@ export function createChoferesRouter(deps) {
     }
   });
 
-  router.post('/escalas/:id/tramos', withAuth, async (req, res) => {
+  router.post('/escalas/:id/tramos', withAuth, requireOperationalAdmin, async (req, res) => {
     try {
       const { rango_min, rango_max, monto } = req.body || {};
       const esSuperAdmin = isSuper(req);
@@ -361,7 +370,7 @@ export function createChoferesRouter(deps) {
     }
   });
 
-  router.put('/tramos/:id', withAuth, async (req, res) => {
+  router.put('/tramos/:id', withAuth, requireOperationalAdmin, async (req, res) => {
     try {
       const { rango_min, rango_max, monto } = req.body || {};
       const esSuperAdmin = isSuper(req);
@@ -388,7 +397,7 @@ export function createChoferesRouter(deps) {
     }
   });
 
-  router.delete('/tramos/:id', withAuth, async (req, res) => {
+  router.delete('/tramos/:id', withAuth, requireOperationalAdmin, async (req, res) => {
     try {
       const esSuperAdmin = isSuper(req);
       const myEmpresa = getEmpresaIdFromToken(req);

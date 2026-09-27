@@ -76,6 +76,7 @@ export async function withTransaction(work, {
     const client = await transactionPool.connect();
     let releaseError;
     let retry = false;
+    let phase = 'BEGIN';
     const txQuery = async (sql, params = []) => {
       const result = await client.query(sql, params);
       return result.rows || [];
@@ -83,10 +84,19 @@ export async function withTransaction(work, {
 
     try {
       await client.query('BEGIN');
+      phase = 'WORK';
       const result = await work(txQuery, client);
+      phase = 'COMMIT';
       await client.query('COMMIT');
       return result;
     } catch (error) {
+      if (phase === 'COMMIT') {
+        releaseError = error;
+        const outcomeUnknown = new Error('No se pudo confirmar el resultado de la transacción');
+        outcomeUnknown.code = 'TRANSACTION_OUTCOME_UNKNOWN';
+        throw outcomeUnknown;
+      }
+
       try {
         await client.query('ROLLBACK');
       } catch (rollbackError) {

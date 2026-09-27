@@ -42,25 +42,27 @@ test('withTransaction usa una sola conexión y confirma el resultado', async () 
   ]);
 });
 
-test('withTransaction revierte, libera y reintenta 40P01 con una conexión nueva', async () => {
-  const deadlock = Object.assign(new Error('deadlock'), { code: '40P01' });
-  const transactionPool = poolWithClients([
-    { query: async (sql) => { if (sql === 'work') throw deadlock; return { rows: [] }; } },
-    { query: async () => ({ rows: [{ ok: true }] }) },
-  ]);
-  let attempts = 0;
+for (const code of ['40P01', '40001']) {
+  test(`withTransaction revierte, libera y reintenta ${code} con una conexión nueva`, async () => {
+    const retryableFailure = Object.assign(new Error(`retryable ${code}`), { code });
+    const transactionPool = poolWithClients([
+      { query: async (sql) => { if (sql === 'work') throw retryableFailure; return { rows: [] }; } },
+      { query: async () => ({ rows: [{ ok: true }] }) },
+    ]);
+    let attempts = 0;
 
-  const result = await withTransaction(async (txQuery) => {
-    attempts += 1;
-    const rows = await txQuery('work');
-    return rows[0]?.ok;
-  }, { pool: transactionPool, maxRetries: 1, retryDelayMs: 0 });
+    const result = await withTransaction(async (txQuery) => {
+      attempts += 1;
+      const rows = await txQuery('work');
+      return rows[0]?.ok;
+    }, { pool: transactionPool, maxRetries: 1, retryDelayMs: 0 });
 
-  assert.equal(result, true);
-  assert.equal(attempts, 2);
-  assert.deepEqual(transactionPool.clients[0].calls.map(({ sql }) => sql), ['BEGIN', 'work', 'ROLLBACK', 'RELEASE']);
-  assert.deepEqual(transactionPool.clients[1].calls.map(({ sql }) => sql), ['BEGIN', 'work', 'COMMIT', 'RELEASE']);
-});
+    assert.equal(result, true);
+    assert.equal(attempts, 2);
+    assert.deepEqual(transactionPool.clients[0].calls.map(({ sql }) => sql), ['BEGIN', 'work', 'ROLLBACK', 'RELEASE']);
+    assert.deepEqual(transactionPool.clients[1].calls.map(({ sql }) => sql), ['BEGIN', 'work', 'COMMIT', 'RELEASE']);
+  });
+}
 
 test('withTransaction no reintenta errores no serializables', async () => {
   const failure = Object.assign(new Error('constraint'), { code: '23514' });
@@ -104,7 +106,7 @@ test('withTransaction keeps row queries and raw writes on one client until commi
   ]);
 });
 
-for (const failureAt of ['BEGIN', 'WORK', 'COMMIT']) {
+for (const failureAt of ['BEGIN', 'WORK']) {
   test(`withTransaction rolls back and releases after ${failureAt} fails`, async t => {
     const failure = new Error(failureAt);
     const calls = [];
@@ -123,6 +125,40 @@ for (const failureAt of ['BEGIN', 'WORK', 'COMMIT']) {
     assert.deepEqual(calls, [...expected.slice(0, expected.indexOf(failureAt) + 1), 'ROLLBACK', 'RELEASE']);
   });
 }
+
+test('withTransaction trata una falla de COMMIT como resultado desconocido sin rollback ni reintento', async () => {
+  const commitFailure = Object.assign(new Error('duplicate customer email: persona@example.com'), {
+    code: '40001',
+  });
+  const transactionPool = poolWithClients([{
+    query: async (sql) => {
+      if (sql === 'COMMIT') throw commitFailure;
+      return { rows: [] };
+    },
+  }]);
+  let attempts = 0;
+
+  await assert.rejects(
+    withTransaction(async () => {
+      attempts += 1;
+      return 'possibly-committed';
+    }, { pool: transactionPool, maxRetries: 3, retryDelayMs: 0 }),
+    error => {
+      assert.equal(error.code, 'TRANSACTION_OUTCOME_UNKNOWN');
+      assert.equal(error.message, 'No se pudo confirmar el resultado de la transacción');
+      assert.equal(Object.hasOwn(error, 'cause'), false);
+      assert.doesNotMatch(String(error.stack), /persona@example\.com|duplicate customer email/);
+      return true;
+    },
+  );
+
+  assert.equal(attempts, 1);
+  assert.equal(transactionPool.clients.length, 1);
+  assert.deepEqual(transactionPool.clients[0].calls.map(({ sql }) => sql), [
+    'BEGIN', 'COMMIT', 'RELEASE',
+  ]);
+  assert.equal(transactionPool.clients[0].calls.at(-1).error, commitFailure);
+});
 
 test('withTransaction preserves the original error and discards a client when rollback fails', async t => {
   const failure = new Error('write failed');

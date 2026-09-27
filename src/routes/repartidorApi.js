@@ -12,7 +12,7 @@ import {
 import { ensureRetornablesLedgerSchema, registrarRetornableMovimiento } from '../services/retornablesLedger.js';
 
 export function createRepartidorApiRouter(deps) {
-  const { query, pool, withAuth, getEmpresaIdFromToken, notifyEstadoPedidoPush, notificarEnRuta, notificarPedidoTransferencia, ejecutarEstrategiaVecinos, ejecutarPostEntregaUpsell, registrarMovimientosActivosDesdePedido, crearPagoParaPedido = crearPagoParaPedidoDefault, listarPagosPorPedido = listarPagosPorPedidoDefault, refrescarEstadoPagoPedido = refrescarEstadoPagoPedidoDefault } = deps || {};
+  const { query, pool, withTransaction, withAuth, getEmpresaIdFromToken, notifyEstadoPedidoPush, notificarEnRuta, notificarPedidoTransferencia, ejecutarEstrategiaVecinos, ejecutarPostEntregaUpsell, registrarMovimientosActivosDesdePedido, crearPagoParaPedido = crearPagoParaPedidoDefault, listarPagosPorPedido = listarPagosPorPedidoDefault, refrescarEstadoPagoPedido = refrescarEstadoPagoPedidoDefault } = deps || {};
   if (typeof query !== 'function') throw new Error('createRepartidorApiRouter: falta query(fn)');
   if (typeof withAuth !== 'function') throw new Error('createRepartidorApiRouter: falta withAuth(fn)');
   if (typeof getEmpresaIdFromToken !== 'function') throw new Error('createRepartidorApiRouter: falta getEmpresaIdFromToken(fn)');
@@ -1429,23 +1429,48 @@ export function createRepartidorApiRouter(deps) {
 // 8. Tomar pedido vacante (chofer_id IS NULL)
   router.post('/tomar/:id', withAuth, async (req, res) => {
    try {
-     const { chofer_id } = req.user;
-     if (!chofer_id) return res.status(403).json({ error: 'No autorizado' });
-
-     const pedidoId = req.params.id;
-
-     const result = await query(
-       `UPDATE pedidos 
-          SET chofer_id = $1 
-        WHERE id = $2 
-          AND chofer_id IS NULL
-        RETURNING id`,
-       [chofer_id, pedidoId]
-     );
-
-     if (!result.length) {
-       return res.status(400).json({ error: 'El pedido ya fue tomado por otro.' });
+     const { role, chofer_id: choferId, empresa_id: empresaId } = req.user || {};
+     if (role !== 'repartidor'
+         || !Number.isSafeInteger(choferId) || choferId <= 0
+         || !Number.isSafeInteger(empresaId) || empresaId <= 0) {
+       return res.status(403).json({ error: 'No autorizado' });
      }
+
+     const pedidoId = Number(req.params.id);
+     if (!Number.isSafeInteger(pedidoId) || pedidoId <= 0) {
+       return res.status(400).json({ error: 'ID inválido' });
+     }
+     if (typeof withTransaction !== 'function') {
+       throw new Error('Transacción no disponible');
+     }
+
+     const outcome = await withTransaction(async txQuery => {
+       const choferRows = await txQuery(
+         `SELECT id
+            FROM choferes
+           WHERE id = $1
+             AND empresa_id = $2
+             AND activo IS TRUE
+           FOR SHARE`,
+         [choferId, empresaId]
+       );
+       if (!choferRows.length) return 'invalid-driver';
+
+       const result = await txQuery(
+         `UPDATE pedidos
+             SET chofer_id = $1
+           WHERE id = $2
+             AND empresa_id = $3
+             AND chofer_id IS NULL
+             AND estado = 'pendiente'
+         RETURNING id`,
+         [choferId, pedidoId, empresaId]
+       );
+       return result.length ? 'taken' : 'unavailable';
+     });
+
+     if (outcome === 'invalid-driver') return res.status(403).json({ error: 'No autorizado' });
+     if (outcome !== 'taken') return res.status(404).json({ error: 'Pedido no disponible' });
 
      res.json({ ok: true });
    } catch (e) {
