@@ -30,6 +30,7 @@ export function createWppClientAdapter({
 
   let initializePromise = null;
   let initializePending = false;
+  let destroyAttempted = false;
 
   const methods = {
     initialize() {
@@ -42,24 +43,25 @@ export function createWppClientAdapter({
     },
 
     async destroy() {
+      destroyAttempted = true;
       await rawClient.destroy();
     },
 
     async confirmStopped() {
-      if (initializePending) return false;
+      if (initializePending || !destroyAttempted) return false;
       const browser = rawClient.pupBrowser;
-      if (!browser) return false;
-      if (typeof browser.isConnected !== 'function') return false;
+      if (!browser) return true;
+      if (typeof browser.isConnected !== 'function') return true;
       if (browser.isConnected()) return false;
       const handle = typeof browser.process === 'function' ? browser.process() : null;
       const exited = processExited(handle, processAlive);
-      return exited === null ? false : exited;
+      return exited === null ? true : exited;
     },
 
     async forceStop() {
       const browser = rawClient.pupBrowser;
       const handle = typeof browser?.process === 'function' ? browser.process() : null;
-      if (!handle || !Number.isInteger(handle.pid) || handle.pid <= 0) return false;
+      if (!handle || !Number.isInteger(handle.pid) || handle.pid <= 0) return !initializePending && destroyAttempted;
       if (processExited(handle, processAlive) === true) return true;
       try {
         kill(handle.pid, 'SIGKILL');

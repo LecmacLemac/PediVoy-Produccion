@@ -55,17 +55,17 @@ test('forceStop kills and confirms a known Chromium process while initialize is 
   await adapter.initialize();
 });
 
-test('missing browser evidence remains uncertain after destroy', async () => {
+test('missing browser evidence after completed destroy is treated as stopped', async () => {
   const raw = fakeRawClient();
   const adapter = createWppClientAdapter({ rawClient: raw });
 
   await adapter.initialize();
   await adapter.destroy();
-  assert.equal(await adapter.confirmStopped(), false);
-  assert.equal(await adapter.forceStop(), false);
+  assert.equal(await adapter.confirmStopped(), true);
+  assert.equal(await adapter.forceStop(), true);
 });
 
-test('disconnected browser without a process handle remains uncertain after destroy', async () => {
+test('disconnected browser without a process handle is treated as stopped after destroy', async () => {
   const raw = fakeRawClient({
     browser: { isConnected: () => false, process: () => null },
   });
@@ -73,7 +73,7 @@ test('disconnected browser without a process handle remains uncertain after dest
 
   await adapter.initialize();
   await adapter.destroy();
-  assert.equal(await adapter.confirmStopped(), false);
+  assert.equal(await adapter.confirmStopped(), true);
 });
 
 test('known browser process must actually exit before stop is confirmed', async () => {
