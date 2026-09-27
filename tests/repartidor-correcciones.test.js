@@ -170,11 +170,106 @@ test('GPS da feedback inmediato y resultado accesible, sólo al activar', async 
   assert.match(status.textContent, /Solicitando/); assert.equal(requests, 1);
   resolvePosition({ coords: {} }); await pending; assert.match(status.textContent, /activado/i);
 });
-test('una preferencia GPS previa no activa ubicación sin interacción', () => {
-  const context = { safeStorage: { local: { get: () => '1' } }, gpsSyncState: { disabled: true }, GPS_PREF_LS_KEY: 'gps' };
-  vm.runInNewContext(slice(gps, 'function restoreGpsPreference()', 'function getGeoErrorCode'), context);
-  context.restoreGpsPreference();
-  assert.equal(context.gpsSyncState.disabled, true);
+test('una preferencia GPS previa reactiva ubicación sólo con permiso concedido y oculta el botón', async () => {
+  let permissionReads = 0;
+  let gpsReads = 0;
+  let markerUpdates = 0;
+  const trackCalls = [];
+  const button = { hidden: false, style: {}, classList: { toggle() {} } };
+  const context = {
+    document: { getElementById: id => id === 'btnGpsHelp' ? button : null },
+    navigator: {
+      permissions: { async query(descriptor) {
+        permissionReads += 1;
+        assert.equal(descriptor.name, 'geolocation');
+        return { state: 'granted' };
+      } },
+      geolocation: { getCurrentPosition(resolve) {
+        gpsReads += 1;
+        resolve({ coords: { latitude: -31.4, longitude: -64.18 } });
+      } },
+    },
+    window: { isSecureContext: true },
+    safeStorage: { local: { get: () => '1', set() {} } },
+    gpsSyncState: { disabled: true, denied: false },
+    pedidos: [{ id: 41, estado: 'en_camino' }],
+    GEO_OPTS_ACTIVATE: {},
+    api: async (url, options) => { trackCalls.push({ url, options }); },
+    updateDriverLocationOnMap() { markerUpdates += 1; },
+    toast() {},
+    alert() {},
+    Date,
+  };
+  vm.runInNewContext(slice(gps, 'function setGpsFeedback', 'let driverLocationMarker'), context);
+
+  await Promise.all([
+    context.restoreGpsPreference(),
+    context.restoreGpsPreference(),
+  ]);
+
+  assert.equal(permissionReads, 1);
+  assert.equal(gpsReads, 1);
+  assert.equal(markerUpdates, 1);
+  assert.equal(trackCalls.length, 1);
+  assert.equal(context.gpsSyncState.disabled, false);
+  assert.equal(button.hidden, true);
+});
+
+test('sin consentimiento seguro no solicita ubicación automática y mantiene activación manual visible', async () => {
+  const scenarios = [
+    { name: 'sin preferencia', preference: null, permissions: { query: async () => ({ state: 'granted' }) }, expectedPermissionReads: 0 },
+    { name: 'permiso prompt', preference: '1', permissions: { query: async () => ({ state: 'prompt' }) }, expectedPermissionReads: 1 },
+    { name: 'permiso denied', preference: '1', permissions: { query: async () => ({ state: 'denied' }) }, expectedPermissionReads: 1 },
+    { name: 'consulta fallida', preference: '1', permissions: { query: async () => { throw new Error('permissions failed'); } }, expectedPermissionReads: 1 },
+    { name: 'sin Permissions API', preference: '1', permissions: undefined, expectedPermissionReads: 0 },
+  ];
+
+  for (const scenario of scenarios) {
+    let permissionReads = 0;
+    let gpsReads = 0;
+    const button = { hidden: true, style: {}, classList: { toggle() {} } };
+    const permissions = scenario.permissions && {
+      query: async descriptor => {
+        permissionReads += 1;
+        return scenario.permissions.query(descriptor);
+      },
+    };
+    const context = {
+      document: { getElementById: id => id === 'btnGpsHelp' ? button : null },
+      navigator: {
+        permissions,
+        geolocation: { getCurrentPosition() { gpsReads += 1; } },
+      },
+      window: { isSecureContext: true },
+      safeStorage: { local: { get: () => scenario.preference, set() {} } },
+      gpsSyncState: { disabled: false, denied: false },
+      pedidos: [],
+      GEO_OPTS_ACTIVATE: {},
+      api: async () => {},
+      updateDriverLocationOnMap() {},
+      toast() {},
+      alert() {},
+      Date,
+    };
+    vm.runInNewContext(slice(gps, 'function setGpsFeedback', 'let driverLocationMarker'), context);
+
+    await context.restoreGpsPreference();
+
+    assert.equal(permissionReads, scenario.expectedPermissionReads, scenario.name);
+    assert.equal(gpsReads, 0, scenario.name);
+    assert.equal(context.gpsSyncState.disabled, true, scenario.name);
+    assert.equal(button.hidden, false, scenario.name);
+  }
+});
+
+test('la reactivación automática espera a que los pedidos estén cargados y se inicia una sola vez', () => {
+  const boot = core.slice(core.indexOf('async function bootRepartidorPanel()'));
+  const loadEnd = boot.indexOf('await Promise.all([');
+  const restore = boot.indexOf('await restoreGpsPreference()');
+
+  assert.ok(loadEnd >= 0);
+  assert.ok(restore > loadEnd);
+  assert.equal((boot.match(/restoreGpsPreference\(\)/g) || []).length, 1);
 });
 
 test('todos los enlaces del menú tienen destinos alcanzables por teclado', () => {

@@ -405,7 +405,6 @@ async function bootRepartidorPanel() {
     loadRouteSlaThreshold();
 
     // Botón GPS visible + activación manual
-    restoreGpsPreference();
     updateGpsButtonUI();
     const gpsBtn = document.getElementById('btnGpsHelp');
     if (gpsBtn) {
@@ -471,6 +470,9 @@ async function bootRepartidorPanel() {
       gLoadProductos(),
       gLoadDepositos()
     ]);
+
+    // Reactivar sólo después de cargar pedidos para incluir el tracking inicial.
+    await restoreGpsPreference();
 
     // Auto refresh suave de pedidos para operación en tiempo real
     startPedidosAutoRefresh();

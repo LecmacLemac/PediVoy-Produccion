@@ -43,9 +43,30 @@ function persistGpsPreference(enabled) {
   try { safeStorage.local.set(GPS_PREF_LS_KEY, enabled ? '1' : '0'); } catch {}
 }
 
-function restoreGpsPreference() {
-  // Cada sesión requiere activación explícita antes de consultar ubicación.
-  gpsSyncState.disabled = true;
+async function restoreGpsPreference() {
+  if (restoreGpsPreference.pending) return restoreGpsPreference.pending;
+
+  const pending = (async () => {
+    gpsSyncState.disabled = true;
+    updateGpsButtonUI();
+
+    let enabled = false;
+    try { enabled = safeStorage.local.get(GPS_PREF_LS_KEY) === '1'; } catch {}
+    if (!enabled || !navigator.permissions?.query) return;
+
+    try {
+      const permission = await navigator.permissions.query({ name: 'geolocation' });
+      if (permission.state !== 'granted') return;
+      await requestGpsActivation();
+    } catch {}
+  })();
+
+  restoreGpsPreference.pending = pending;
+  try {
+    await pending;
+  } finally {
+    if (restoreGpsPreference.pending === pending) delete restoreGpsPreference.pending;
+  }
 }
 
 function getGeoErrorCode(err) {
