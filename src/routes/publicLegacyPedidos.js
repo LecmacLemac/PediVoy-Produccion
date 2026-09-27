@@ -26,6 +26,11 @@ const pushSubscribeSchema = z.object({
   }).optional(),
   empresa_id: z.coerce.number().int().positive().optional(),
   pedido_id: z.coerce.number().int().positive().optional(),
+  tracking_token: z.string().trim().min(1).max(128).optional(),
+  pedidos: z.array(z.object({
+    pedido_id: z.coerce.number().int().positive(),
+    tracking_token: z.string().trim().min(1).max(128),
+  })).max(50).optional(),
 });
 
 const pushUnsubscribeSchema = z.object({
@@ -68,8 +73,11 @@ function toWhatsAppE164AR(tel) {
   return '549' + d;
 }
 
-export function createPublicLegacyPedidosRouter({ query }) {
+export function createPublicLegacyPedidosRouter({ query, withTransaction }) {
   if (typeof query !== 'function') throw new Error('createPublicLegacyPedidosRouter: falta query(fn)');
+  const runInTransaction = typeof withTransaction === 'function'
+    ? withTransaction
+    : async (work) => work(query);
 
   const router = express.Router();
 
@@ -215,31 +223,71 @@ export function createPublicLegacyPedidosRouter({ query }) {
 
       const p256dh = sub?.keys?.p256dh || null;
       const auth = sub?.keys?.auth || null;
+      if (!p256dh || !auth) {
+        return res.status(400).json({ error: 'payload inválido', details: [{ path: 'keys', message: 'p256dh y auth requeridos' }] });
+      }
       const empresa_id = Number(body.empresa_id) || null;
       const pedido_id = Number(body.pedido_id) || null;
+      const tracking_token = String(body.tracking_token || '').trim() || null;
+      const requestedMap = new Map();
+      for (const item of body.pedidos || []) {
+        requestedMap.set(Number(item.pedido_id), String(item.tracking_token || '').trim());
+      }
+      if (pedido_id) requestedMap.set(pedido_id, tracking_token);
+      const requestedPedidos = [...requestedMap.entries()].map(([id, token]) => ({ id, token }));
 
-      const rows = await query(
-        `INSERT INTO push_subs (endpoint, p256dh, auth, empresa_id, created_at)
-         VALUES ($1, $2, $3, $4, NOW())
-         ON CONFLICT(endpoint) DO UPDATE SET
-           p256dh = EXCLUDED.p256dh,
-           auth = EXCLUDED.auth,
-           empresa_id = EXCLUDED.empresa_id
-         RETURNING id`,
-        [endpoint, p256dh, auth, empresa_id]
-      );
-
-      const subId = rows[0]?.id;
-      if (pedido_id && subId) {
-        await query(
-          `INSERT INTO push_sub_pedidos (sub_id, pedido_id)
-           VALUES ($1, $2)
-           ON CONFLICT DO NOTHING`,
-          [subId, pedido_id]
-        );
+      if (requestedPedidos.length && (!empresa_id || requestedPedidos.some((item) => !item.token))) {
+        return res.status(403).json({ error: 'tracking token requerido' });
       }
 
-      return res.json({ ok: true });
+      const pedidoIds = requestedPedidos.map((item) => item.id);
+      const trackingTokens = requestedPedidos.map((item) => item.token);
+      const linked = await runInTransaction(async (txQuery) => {
+        if (pedidoIds.length) {
+          const ownedPedidos = await txQuery(
+            `SELECT p.id
+               FROM pedidos p
+               JOIN unnest($2::bigint[], $3::text[]) AS requested(pedido_id, tracking_token)
+                 ON p.id = requested.pedido_id
+                AND p.tracking_token = requested.tracking_token
+              WHERE p.empresa_id = $1
+              FOR SHARE OF p`,
+            [empresa_id, pedidoIds, trackingTokens]
+          );
+          if (ownedPedidos.length !== pedidoIds.length) return null;
+        }
+
+        const rows = await txQuery(
+          `WITH upserted AS (
+             INSERT INTO push_subs (endpoint, p256dh, auth, empresa_id, created_at)
+             VALUES ($1, $2, $3, $4, NOW())
+             ON CONFLICT(endpoint) DO UPDATE SET
+               p256dh = EXCLUDED.p256dh,
+               auth = EXCLUDED.auth,
+               empresa_id = EXCLUDED.empresa_id
+             RETURNING id
+           ), cleared AS (
+             DELETE FROM push_sub_pedidos links
+             USING upserted
+             WHERE links.sub_id = upserted.id
+             RETURNING links.sub_id
+           ), linked AS (
+             INSERT INTO push_sub_pedidos (sub_id, pedido_id)
+             SELECT upserted.id, requested.pedido_id
+               FROM upserted
+               CROSS JOIN (SELECT COUNT(*) FROM cleared) AS clear_done
+               CROSS JOIN unnest($5::bigint[]) AS requested(pedido_id)
+             ON CONFLICT DO NOTHING
+             RETURNING sub_id
+           )
+           SELECT COUNT(*)::int AS linked_count FROM linked`,
+          [endpoint, p256dh, auth, empresa_id, pedidoIds]
+        );
+        return Number(rows[0]?.linked_count || 0);
+      });
+
+      if (linked === null) return res.status(403).json({ error: 'tracking token inválido' });
+      return res.json({ ok: true, linked });
     } catch (e) {
       console.error('PUSH.SUBSCRIBE ERROR:', e);
       return res.status(500).json({ error: 'No se pudo guardar la suscripción' });

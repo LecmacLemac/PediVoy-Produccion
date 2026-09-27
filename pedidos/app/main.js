@@ -10,6 +10,8 @@ let catalogProducts = [];
 let activeCatalogFilter = 'all';
 let paymentMethod = 'efectivo';
 let ordersTimer = null;
+let lastLoadedOrders = [];
+let lastRegisteredPushFingerprint = '';
 const lastOrderState = new Map();
 
 function getInitialReferenteCode() {
@@ -54,6 +56,80 @@ function getSlug() {
 
 function onlyDigits(v) {
   return String(v || '').replace(/\D+/g, '');
+}
+
+function base64ToUint8Array(base64) {
+  const padding = '='.repeat((4 - (base64.length % 4)) % 4);
+  const b64 = (base64 + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(b64);
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; ++i) out[i] = raw.charCodeAt(i);
+  return out;
+}
+
+function pushCapable() {
+  return 'Notification' in window && 'serviceWorker' in navigator && 'PushManager' in window;
+}
+
+async function registerPushContext(registration, orders = lastLoadedOrders) {
+  const linkedOrders = (orders || []).filter((o) => o?.id && o?.tracking_token);
+  const sub = await registration.pushManager.getSubscription();
+  if (!sub) return 0;
+
+  const empresaId = getSelectedEmpresaId();
+  const pedidos = linkedOrders
+    .map((order) => ({
+      pedido_id: Number(order.id),
+      tracking_token: String(order.tracking_token),
+    }))
+    .sort((a, b) => a.pedido_id - b.pedido_id);
+  const fingerprint = JSON.stringify([sub.endpoint, empresaId, pedidos]);
+  if (fingerprint === lastRegisteredPushFingerprint) return pedidos.length;
+
+  const response = await fetch('/public/push/subscribe', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      empresa_id: empresaId,
+      pedidos: linkedOrders.map((order) => ({
+        pedido_id: Number(order.id),
+        tracking_token: String(order.tracking_token),
+      })),
+      subscription: sub.toJSON(),
+    }),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error?.error || `No se pudo registrar PUSH (HTTP ${response.status})`);
+  }
+  const result = await response.json().catch(() => ({}));
+  lastRegisteredPushFingerprint = fingerprint;
+  return Number(result.linked ?? pedidos.length);
+}
+
+async function enableWebPushNotifications(orders = lastLoadedOrders) {
+  if (!pushCapable()) throw new Error('Este navegador no soporta notificaciones push');
+
+  const permission = await Notification.requestPermission();
+  if (permission !== 'granted') return { ok: false, reason: 'permission' };
+
+  const keyResp = await fetch('/public/push/vapid-key', { cache: 'no-store' });
+  const keyJson = await keyResp.json().catch(() => ({}));
+  const publicKey = String(keyJson?.key || '').trim();
+  if (!publicKey) throw new Error('Notificaciones push no configuradas para esta empresa');
+
+  await navigator.serviceWorker.register('../sw.js');
+  const registration = await navigator.serviceWorker.ready;
+  let sub = await registration.pushManager.getSubscription();
+  if (!sub) {
+    sub = await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: base64ToUint8Array(publicKey),
+    });
+  }
+
+  const linked = await registerPushContext(registration, orders);
+  return { ok: true, linked, endpoint: sub.endpoint };
 }
 
 function resolveImageUrl(src) {
@@ -517,9 +593,23 @@ function renderOrders(orders = []) {
 async function loadOrders() {
   const out = await j('/api/public/app/orders');
   const orders = out.orders || [];
+  lastLoadedOrders = orders;
   updateAppStats({ orderCount: orders.length });
   detectOrderStateChanges(orders);
   renderOrders(orders);
+  if (typeof Notification !== 'undefined' && Notification.permission === 'granted' && navigator.serviceWorker) {
+    navigator.serviceWorker.getRegistration('/pedidos/').then((registration) => {
+      if (registration) registerPushContext(registration, orders).catch(() => {});
+    }).catch(() => {});
+  }
+}
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.addEventListener('message', (event) => {
+    if (event.data?.type !== 'PUSH_RESUBSCRIBED') return;
+    lastRegisteredPushFingerprint = '';
+    loadOrders().catch(() => {});
+  });
 }
 
 function renderCart() {
@@ -812,15 +902,16 @@ $('#btn-save-profile').addEventListener('click', async () => {
 
 $('#btn-enable-notif').addEventListener('click', async () => {
   try {
-    if (!('Notification' in window)) throw new Error('Este navegador no soporta notificaciones');
-    const p = await Notification.requestPermission();
-    if (p === 'granted') {
-      showOrderAlert('Notificaciones activadas ✅');
+    const result = await enableWebPushNotifications(lastLoadedOrders);
+    if (result.ok) {
+      showOrderAlert(result.linked > 0
+        ? `Notificaciones push activadas para ${result.linked} pedido${result.linked === 1 ? '' : 's'} ✅`
+        : 'Notificaciones push activadas. Se vincularán cuando tengas pedidos con seguimiento. ✅');
     } else {
       showOrderAlert('Notificaciones no habilitadas');
     }
   } catch (e) {
-    alert(e.message);
+    showOrderAlert(e.message || 'No se pudieron activar las notificaciones');
   }
 });
 

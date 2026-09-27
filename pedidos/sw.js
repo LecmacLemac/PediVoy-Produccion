@@ -1,5 +1,4 @@
 // Pedidos/sw.js
-let __ctx = { token: null, pedido_id: null };
 
 self.addEventListener('install', () => self.skipWaiting?.());
 self.addEventListener('activate', (evt) => evt.waitUntil(self.clients.claim()));
@@ -23,10 +22,7 @@ function base64ToUint8Array(base64) {
 
 // --- Mensajes entrantes desde páginas ---
 self.addEventListener('message', (event) => {
-  const { type, token, pedido_id } = event.data || {};
-  if (type === 'rememberContext') {
-    __ctx = { token: token || null, pedido_id: pedido_id || null };
-  }
+  const { type } = event.data || {};
   if (type === 'unsubscribeNow') {
     event.waitUntil((async () => {
       try {
@@ -53,14 +49,14 @@ self.addEventListener('push', (event) => {
 
   const title = data.title || 'Notificación';
   const body  = data.body  || '';
-  const url   = data.url   || '/Pedidos/pedido.html';
+  const url   = data.url   || '/pedidos/seguimiento.html';
   const tag   = data.tag   || (data.pedido_id ? `pedido-${data.pedido_id}` : 'pedido');
 
   const options = {
     body,
     data: { url, tag, pedido_id: data.pedido_id || null },
-    icon: data.icon  || '/Pedidos/img/icon-192.png',
-    badge: data.badge || '/Pedidos/img/badge-72.png',
+    icon: data.icon  || '/pedidos/img/brand/pedivoy-logo-square-red-bg.png',
+    badge: data.badge || '/pedidos/img/brand/pedivoy-logo-square-red-bg.png',
     vibrate: [80, 30, 80],
     tag,
     renotify: true,
@@ -80,7 +76,7 @@ self.addEventListener('push', (event) => {
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   const data = event.notification?.data || {};
-  const baseUrl = data.url || '/Pedidos/pedido.html';
+  const baseUrl = data.url || '/pedidos/seguimiento.html';
   const pid = data.pedido_id || null;
 
   const withId = (() => {
@@ -130,7 +126,7 @@ self.addEventListener('notificationclose', (event) => {
   event.waitUntil(broadcast('PUSH_CLOSED', { tag: event.notification?.data?.tag }));
 });
 
-// --- Rotación de suscripción (renovar + registrar en backend con contexto) ---
+// --- Rotación de suscripción (renovar; el cliente restaura vínculos autorizados) ---
 self.addEventListener('pushsubscriptionchange', (event) => {
   event.waitUntil((async () => {
     try {
@@ -141,19 +137,14 @@ self.addEventListener('pushsubscriptionchange', (event) => {
       if (!key) return;
 
       // 2) Re-suscribir
-      const newSub = await self.registration.pushManager.subscribe({
+      await self.registration.pushManager.subscribe({
         userVisibleOnly: true,
         applicationServerKey: base64ToUint8Array(key)
       });
 
-      // 3) Registrar en backend **con** el contexto recordado
-      await fetch('/public/push/subscribe', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ subscription: newSub.toJSON(), ...__ctx })
-      });
-
-      await broadcast('PUSH_RESUBSCRIBED', {});
+      // 3) No restaurar pedidos desde memoria volátil. La app abierta o la
+      // próxima carga vuelve a registrar el lote actual con tokens válidos.
+      await broadcast('PUSH_RESUBSCRIBED', { needsContextRefresh: true });
     } catch {}
   })());
 });

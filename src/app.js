@@ -364,7 +364,7 @@ export function createApp(deps) {
   // Endpoints públicos migrados a módulos dedicados
   app.use('/public', createPublicLegacyCatalogRouter({ query }));
   app.use('/public', createPublicLegacyMarketplaceRouter({ query }));
-  app.use('/public', createPublicLegacyPedidosRouter({ query }));
+  app.use('/public', createPublicLegacyPedidosRouter({ query, withTransaction }));
   registerPublicLegacyCreatePedidoRoute(app, {
     query,
     pool,
