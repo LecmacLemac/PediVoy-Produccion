@@ -50,6 +50,7 @@ import {
   sendFacturaEmail,
 } from '../services/facturaDeliveryService.js';
 
+import { requireCanonicalBackofficeRole } from './canonicalBackofficeRole.js';
 export function createFacturacionRouter({ query = defaultQuery, pool = defaultPool, withAuth = defaultWithAuth, checkLicencia = defaultCheckLicencia, projectDir = process.cwd() } = {}) {
   const router = express.Router();
   let schemaReady = false;
@@ -196,7 +197,7 @@ export function createFacturacionRouter({ query = defaultQuery, pool = defaultPo
     }
   });
 
-  router.put('/facturacion/config', withAuth, checkLicencia, requireFacturacionAccess, async (req, res) => {
+  router.put('/facturacion/config', withAuth, requireCanonicalBackofficeRole, checkLicencia, requireFacturacionAccess, async (req, res) => {
     try {
       await ensureSchema();
       const empresaId = resolveEmpresa(req);
@@ -215,7 +216,7 @@ export function createFacturacionRouter({ query = defaultQuery, pool = defaultPo
     }
   });
 
-  router.post('/facturacion/config/credenciales', withAuth, checkLicencia, requireFacturacionAccess, (req, res) => {
+  router.post('/facturacion/config/credenciales', withAuth, requireCanonicalBackofficeRole, checkLicencia, requireFacturacionAccess, (req, res) => {
     credentialsUploader.fields([
       { name: 'certificado', maxCount: 1 },
       { name: 'clave', maxCount: 1 },
@@ -288,7 +289,7 @@ export function createFacturacionRouter({ query = defaultQuery, pool = defaultPo
     });
   });
 
-  router.post('/facturacion/config/probar-conexion', withAuth, checkLicencia, requireFacturacionAccess, async (req, res) => {
+  router.post('/facturacion/config/probar-conexion', withAuth, requireCanonicalBackofficeRole, checkLicencia, requireFacturacionAccess, async (req, res) => {
     try {
       await ensureSchema();
       const empresaId = resolveEmpresa(req);
@@ -379,7 +380,7 @@ export function createFacturacionRouter({ query = defaultQuery, pool = defaultPo
     }
   });
 
-  router.post('/pedidos/:pedidoId/factura/solicitar', withAuth, checkLicencia, requireFacturacionAccess, async (req, res) => {
+  router.post('/pedidos/:pedidoId/factura/solicitar', withAuth, requireCanonicalBackofficeRole, checkLicencia, requireFacturacionAccess, async (req, res) => {
     try {
       await ensureSchema();
       const pedidoId = Number(req.params.pedidoId);
@@ -408,7 +409,7 @@ export function createFacturacionRouter({ query = defaultQuery, pool = defaultPo
     }
   });
 
-  router.post('/facturacion/facturas/consolidada', withAuth, checkLicencia, requireFacturacionAccess, async (req, res) => {
+  router.post('/facturacion/facturas/consolidada', withAuth, requireCanonicalBackofficeRole, checkLicencia, requireFacturacionAccess, async (req, res) => {
     try {
       await ensureSchema();
       const pedidoIds = req.body?.pedido_ids || req.body?.pedidos || [];
@@ -602,7 +603,7 @@ export function createFacturacionRouter({ query = defaultQuery, pool = defaultPo
     }
   });
 
-  router.post('/facturas/:id/enviar', withAuth, checkLicencia, requireFacturacionAccess, async (req, res) => {
+  router.post('/facturas/:id/enviar', withAuth, requireCanonicalBackofficeRole, checkLicencia, requireFacturacionAccess, async (req, res) => {
     try {
       await ensureSchema();
       const facturaId = Number(req.params.id);
@@ -653,7 +654,7 @@ export function createFacturacionRouter({ query = defaultQuery, pool = defaultPo
     }
   });
 
-  router.post('/facturas/:id/emitir', withAuth, checkLicencia, requireFacturacionAccess, async (req, res) => {
+  router.post('/facturas/:id/emitir', withAuth, requireCanonicalBackofficeRole, checkLicencia, requireFacturacionAccess, async (req, res) => {
     try {
       await ensureSchema();
       const facturaId = Number(req.params.id);
@@ -787,7 +788,7 @@ export function createFacturacionRouter({ query = defaultQuery, pool = defaultPo
     }
   });
 
-  router.post('/facturas/:id/cancelar', withAuth, checkLicencia, requireFacturacionAccess, async (req, res) => {
+  router.post('/facturas/:id/cancelar', withAuth, requireCanonicalBackofficeRole, checkLicencia, requireFacturacionAccess, async (req, res) => {
     try {
       await ensureSchema();
       const facturaId = Number(req.params.id);
@@ -813,7 +814,7 @@ export function createFacturacionRouter({ query = defaultQuery, pool = defaultPo
     }
   });
 
-  router.delete('/facturas/:id', withAuth, checkLicencia, requireFacturacionAccess, async (req, res) => {
+  router.delete('/facturas/:id', withAuth, requireCanonicalBackofficeRole, checkLicencia, requireFacturacionAccess, async (req, res) => {
     try {
       await ensureSchema();
       const facturaId = Number(req.params.id);

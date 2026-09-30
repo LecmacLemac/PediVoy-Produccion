@@ -5,7 +5,7 @@ import express from 'express';
 import { createJuegosPublicosRouter, createJuegosRouter } from '../src/routes/juegos.js';
 import { createWppEnqueueTestPool } from './support/wpp-enqueue-test-pool.js';
 
-function buildApp(query, pool) {
+function buildApp(query, pool, withTransaction) {
   const transactionPool = pool || {
     async connect() {
       return {
@@ -21,16 +21,66 @@ function buildApp(query, pool) {
   };
   const app = express();
   app.use(express.json());
-  app.use('/api/juegos-publicos', createJuegosPublicosRouter({ query, pool: transactionPool }));
+  app.use('/api/juegos-publicos', createJuegosPublicosRouter({ query, pool: transactionPool, withTransaction }));
   return app;
 }
+
+test('router público usa exclusivamente withTransaction inyectado para sus mutaciones', async () => {
+  const calls = [];
+  const injected = async work => {
+    calls.push(work);
+    const q = async (sql, params = []) => {
+      if (/FROM juegos_campanias jc/.test(sql)) return [campaign];
+      if (/pg_advisory_xact_lock/.test(sql)) return [];
+      if (/COUNT\(\*\)::int AS c/.test(sql)) return [{ c: 0 }];
+      if (/FROM juegos_participaciones/.test(sql) && /telefono_norm/.test(sql)) return [];
+      if (/FROM juegos_premios jp/.test(sql)) return [{ id: null, tipo: 'sin_premio', nombre_publico: 'Sin premio', probabilidad: 1 }];
+      if (/INSERT INTO juegos_participaciones/.test(sql)) return [{ id: 1, codigo: null, resultado_tipo: 'sin_premio', resultado_nombre: 'Sin premio' }];
+      return [];
+    };
+    return work(q, { query: (input, params) => q(typeof input === 'string' ? input : input.text, typeof input === 'string' ? params : input.values) });
+  };
+  const query = async () => [];
+  await withServer(buildApp(query, null, injected), async baseUrl => {
+    const response = await fetch(`${baseUrl}/api/juegos-publicos/participar`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ public_code: 'K8X4PZ2Q', telefono: '3515551234' }),
+    });
+    assert.equal(response.status, 200);
+  });
+  assert.equal(calls.length, 1);
+});
+
+test('premio-entrega propaga outcome unknown inyectado como 503 sanitizado sin retry', async () => {
+  let calls = 0;
+  const outcomeUnknown = new Error('detalle sensible del transporte COMMIT');
+  outcomeUnknown.code = 'TRANSACTION_OUTCOME_UNKNOWN';
+  const withTransaction = async () => { calls += 1; throw outcomeUnknown; };
+  await withServer(buildApp(async () => [], null, withTransaction), async baseUrl => {
+    const response = await fetch(`${baseUrl}/api/juegos-publicos/premio-entrega`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        public_code: 'K8X4PZ2Q', codigo: 'AGUA-123', telefono: '3515551234',
+        nombre: 'Cliente', direccion: 'Calle 123',
+      }),
+    });
+    assert.equal(response.status, 503);
+    const body = await response.json();
+    assert.deepEqual(body, {
+      error: 'Resultado de creación de premio indeterminado.',
+      code: 'TRANSACTION_OUTCOME_UNKNOWN',
+    });
+    assert.equal(JSON.stringify(body).includes('detalle sensible'), false);
+  });
+  assert.equal(calls, 1);
+});
 
 function buildAdminApp(query) {
   const app = express();
   app.use(express.json());
   app.use('/api/juegos', createJuegosRouter({
     query,
-    withAuth: (req, res, next) => next(),
+    withAuth: (req, _res, next) => { req.user = { role: 'admin', empresa_id: 1 }; next(); },
     isSuper: () => false,
     getEmpresaIdFromToken: () => 1,
   }));
@@ -310,7 +360,7 @@ test('POST /participar revierte participación y outbox si falla antes de COMMIT
   };
 
   const originalConsoleError = console.error;
-  console.error = error => { loggedError = error; };
+  console.error = (...args) => { loggedError = args; };
   try {
     await withServer(buildApp(async () => [], { async connect() { return client; } }), async (baseUrl) => {
       const resp = await fetch(`${baseUrl}/api/juegos-publicos/participar`, {
@@ -325,7 +375,8 @@ test('POST /participar revierte participación y outbox si falla antes de COMMIT
   }
 
   assert.deepEqual(committed, { participations: [], outbox: [] });
-  assert.equal(loggedError?.message, 'forced update failure');
+  assert.deepEqual(loggedError, ['REQUEST.ERROR', { code: 'UNKNOWN' }]);
+  assert.equal(JSON.stringify(loggedError).includes('forced update failure'), false);
   assert.equal(statements.filter(text => text === 'ROLLBACK').length, 1);
   assert.equal(statements.includes('COMMIT'), false);
 });
@@ -360,7 +411,7 @@ test('POST /participar trata fallo de COMMIT como resultado desconocido y descar
     release(error) { releaseArgs.push(error); },
   };
   const originalConsoleError = console.error;
-  console.error = error => { loggedError = error; };
+  console.error = (...args) => { loggedError = args; };
   try {
     await withServer(buildApp(async () => [], { async connect() { return client; } }), async (baseUrl) => {
       const resp = await fetch(`${baseUrl}/api/juegos-publicos/participar`, {
@@ -368,8 +419,11 @@ test('POST /participar trata fallo de COMMIT como resultado desconocido y descar
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ empresa_id: 1, campania: 'raspa-y-gana', telefono: '351 555 1234' }),
       });
-      assert.equal(resp.status, 500);
-      assert.deepEqual(await resp.json(), { error: 'Error registrando participacion.' });
+      assert.equal(resp.status, 503);
+      assert.deepEqual(await resp.json(), {
+        error: 'Resultado de participación indeterminado.',
+        code: 'TRANSACTION_OUTCOME_UNKNOWN',
+      });
     });
   } finally {
     console.error = originalConsoleError;
@@ -378,8 +432,7 @@ test('POST /participar trata fallo de COMMIT como resultado desconocido y descar
   assert.equal(statements.filter(text => text === 'COMMIT').length, 1);
   assert.equal(statements.filter(text => text === 'ROLLBACK').length, 0);
   assert.deepEqual(releaseArgs, [commitError]);
-  assert.equal(loggedError?.code, 'transaction_outcome_unknown');
-  assert.equal(loggedError?.message, 'transaction_outcome_unknown');
+  assert.equal(loggedError, undefined);
 });
 
 test('POST /participar preserva el error primario si ROLLBACK falla y libera una sola vez descartando el client', async () => {
@@ -400,7 +453,7 @@ test('POST /participar preserva el error primario si ROLLBACK falla y libera una
     release(error) { releaseArgs.push(error); },
   };
   const originalConsoleError = console.error;
-  console.error = error => { loggedError = error; };
+  console.error = (...args) => { loggedError = args; };
   try {
     await withServer(buildApp(async () => [], { async connect() { return client; } }), async (baseUrl) => {
       const resp = await fetch(`${baseUrl}/api/juegos-publicos/participar`, {
@@ -414,7 +467,9 @@ test('POST /participar preserva el error primario si ROLLBACK falla y libera una
     console.error = originalConsoleError;
   }
 
-  assert.equal(loggedError, primaryError);
+  assert.deepEqual(loggedError, ['REQUEST.ERROR', { code: 'UNKNOWN' }]);
+  assert.equal(JSON.stringify(loggedError).includes('primary transaction failure'), false);
+  assert.equal(JSON.stringify(loggedError).includes('rollback transport failure'), false);
   assert.equal(statements.filter(text => text === 'ROLLBACK').length, 1);
   assert.equal(statements.filter(text => text === 'COMMIT').length, 0);
   assert.deepEqual(releaseArgs, [rollbackError]);

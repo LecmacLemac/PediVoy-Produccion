@@ -61,6 +61,7 @@ async function crearPagoMercadoPago({ credenciales, pedido, empresa }) {
   if (!credenciales?.accessToken) {
     const err = new Error('Mercado Pago no está configurado: falta access_token');
     err.statusCode = 400;
+    err.code = 'PAYMENT_PROVIDER_NOT_CONFIGURED';
     throw err;
   }
 
@@ -68,6 +69,7 @@ async function crearPagoMercadoPago({ credenciales, pedido, empresa }) {
   if (!monto || Number.isNaN(monto) || monto <= 0) {
     const err = new Error('El pedido no tiene un monto válido para Mercado Pago');
     err.statusCode = 400;
+    err.code = 'PAYMENT_AMOUNT_INVALID';
     throw err;
   }
 
@@ -143,5 +145,6 @@ export async function crearPagoProveedor({ proveedor, credenciales, pedido, empr
 
   const err = new Error(`Proveedor de pagos no soportado: ${proveedor}`);
   err.statusCode = 400;
+  err.code = 'PAYMENT_PROVIDER_UNSUPPORTED';
   throw err;
 }

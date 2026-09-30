@@ -6,9 +6,11 @@ import {
   isSuper as defaultIsSuper,
   getEmpresaIdFromToken as defaultGetEmpresaIdFromToken
 } from '../services.js';
-import { query as defaultQuery, pool as defaultPool } from '../db.js';
+import { query as defaultQuery, pool as defaultPool, withTransaction as defaultWithTransaction } from '../db.js';
 import {
+  actualizarRetornableSaldo,
   ensureRetornablesLedgerSchema,
+  insertarRetornableMovimiento,
   normalizeRetornableSujetoTipo,
   registrarRetornableMovimiento,
 } from '../services/retornablesLedger.js';
@@ -28,9 +30,25 @@ function normalizeLimit(value, fallback = 50, max = 500) {
   return Math.min(Math.floor(n), max);
 }
 
+function isPositiveSafeInteger(value) {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
+}
+
+function isNonNegativeSafeInteger(value) {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
+
+const AJUSTE_SUJETO_TABLES = Object.freeze({
+  cliente: Object.freeze({ table: 'puntos_entrega', label: 'Cliente', activePredicate: '' }),
+  chofer: Object.freeze({ table: 'choferes', label: 'Chofer', activePredicate: 'AND activo IS TRUE' }),
+  proveedor: Object.freeze({ table: 'proveedores', label: 'Proveedor', activePredicate: 'AND activo = TRUE' }),
+  deposito: Object.freeze({ table: 'depositos', label: 'Depósito', activePredicate: 'AND activo = TRUE' }),
+});
+
 export function createRetornablesRouter({
   query: queryFn = defaultQuery,
   pool: dbPool = defaultPool,
+  withTransaction: withTransactionFn = defaultWithTransaction,
   withAuth: withAuthFn = defaultWithAuth,
   checkLicencia: checkLicenciaFn = defaultCheckLicencia,
   isSuper: isSuperFn = defaultIsSuper,
@@ -41,9 +59,12 @@ export function createRetornablesRouter({
   const authMiddleware = withAuthFn;
   const licenciaMiddleware = checkLicenciaFn;
 
-  const ensureSchemaPromise = (async () => {
-    try {
-      await dbQuery(`
+  let ensureSchemaPromise = null;
+  function ensureSchema() {
+    if (!ensureSchemaPromise) {
+      ensureSchemaPromise = (async () => {
+        try {
+          await dbQuery(`
         CREATE TABLE IF NOT EXISTS cliente_retornables_saldos (
           empresa_id INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
           punto_entrega_id INTEGER NOT NULL REFERENCES puntos_entrega(id) ON DELETE CASCADE,
@@ -74,11 +95,14 @@ export function createRetornablesRouter({
       await dbQuery(`CREATE INDEX IF NOT EXISTS idx_cliente_retornables_mov_cliente ON cliente_retornables_movimientos (empresa_id, punto_entrega_id, producto_id, fecha DESC)`);
       await dbQuery(`CREATE INDEX IF NOT EXISTS idx_cliente_retornables_mov_chofer ON cliente_retornables_movimientos (empresa_id, chofer_id, fecha DESC)`);
       await dbQuery(`CREATE INDEX IF NOT EXISTS idx_cliente_retornables_mov_pedido ON cliente_retornables_movimientos (pedido_id)`);
-      await ensureRetornablesLedgerSchema(dbQuery);
-    } catch (e) {
-      console.error('retornables/schema warning:', e?.message || e);
+          await ensureRetornablesLedgerSchema(dbQuery);
+        } catch (e) {
+          console.error('retornables/schema warning:', e?.message || e);
+        }
+      })();
     }
-  })();
+    return ensureSchemaPromise;
+  }
 
   function resolveEmpresaId(req) {
     const esSuperUser = isSuperFn(req);
@@ -87,32 +111,9 @@ export function createRetornablesRouter({
       : Number(getEmpresaIdFromTokenFn(req));
   }
 
-  async function withTransaction(fn) {
-    if (!dbPool?.connect) {
-      return fn(async (sql, params = []) => dbQuery(sql, params));
-    }
-
-    const client = await dbPool.connect();
-    try {
-      await client.query('BEGIN');
-      const txQuery = async (sql, params = []) => {
-        const result = await client.query(sql, params);
-        return result.rows;
-      };
-      const result = await fn(txQuery);
-      await client.query('COMMIT');
-      return result;
-    } catch (e) {
-      try { await client.query('ROLLBACK'); } catch {}
-      throw e;
-    } finally {
-      client.release();
-    }
-  }
-
   router.get('/saldos', authMiddleware, licenciaMiddleware, async (req, res) => {
     try {
-      await ensureSchemaPromise;
+      await ensureSchema();
       const empresaId = resolveEmpresaId(req);
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido' });
 
@@ -217,7 +218,7 @@ export function createRetornablesRouter({
 
   router.get('/resumen', authMiddleware, licenciaMiddleware, async (req, res) => {
     try {
-      await ensureSchemaPromise;
+      await ensureSchema();
       const empresaId = resolveEmpresaId(req);
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido' });
 
@@ -317,7 +318,7 @@ export function createRetornablesRouter({
 
   router.get('/ledger/movimientos', authMiddleware, licenciaMiddleware, async (req, res) => {
     try {
-      await ensureSchemaPromise;
+      await ensureSchema();
       const empresaId = resolveEmpresaId(req);
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido' });
 
@@ -377,7 +378,7 @@ export function createRetornablesRouter({
 
   router.get('/movimientos', authMiddleware, licenciaMiddleware, async (req, res) => {
     try {
-      await ensureSchemaPromise;
+      await ensureSchema();
       const empresaId = resolveEmpresaId(req);
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido' });
 
@@ -437,59 +438,53 @@ export function createRetornablesRouter({
     }
   });
 
-  router.post('/ajustes', authMiddleware, licenciaMiddleware, express.json({ limit: '80kb' }), async (req, res) => {
+  function requireAjustesAdmin(req, res, next) {
+    const role = req.user?.role;
+    if (role !== 'admin' && role !== 'super') {
+      return res.status(403).json({ error: 'No autorizado' });
+    }
+    return next();
+  }
+
+  router.post('/ajustes', authMiddleware, requireAjustesAdmin, licenciaMiddleware, express.json({ limit: '80kb' }), async (req, res) => {
     try {
-      await ensureSchemaPromise;
-      const empresaId = Number(isSuperFn(req) && req.body?.empresa_id ? req.body.empresa_id : getEmpresaIdFromTokenFn(req));
-      if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido' });
+      const role = req.user?.role;
+      const body = req.body || {};
+      const empresaId = role === 'super' ? body.empresa_id : Number(getEmpresaIdFromTokenFn(req));
+      if (!isPositiveSafeInteger(empresaId)) return res.status(400).json({ error: 'empresa_id requerido' });
 
-      const sujetoTipo = normalizeRetornableSujetoTipo(req.body?.sujeto_tipo || (req.body?.punto_entrega_id ? 'cliente' : 'cliente'));
-      const sujetoId = Number(req.body?.sujeto_id || req.body?.punto_entrega_id || 0);
-      const puntoEntregaId = sujetoTipo === 'cliente' ? sujetoId : Number(req.body?.punto_entrega_id || 0);
-      const productoId = Number(req.body?.producto_id || 0);
-      const cantidad = Number(req.body?.cantidad || 0);
-      const modo = String(req.body?.modo || 'sumar').toLowerCase(); // sumar | restar | fijar
-      const observacion = cleanText(req.body?.observacion, 500) || 'Ajuste manual de cuenta corriente';
-      const choferId = req.body?.chofer_id ? Number(req.body.chofer_id) : null;
+      const sujetoTipoRaw = body.sujeto_tipo ?? 'cliente';
+      const sujetoTipo = normalizeRetornableSujetoTipo(sujetoTipoRaw);
+      const sujetoId = body.sujeto_id ?? body.punto_entrega_id;
+      const puntoEntregaId = sujetoTipo === 'cliente' ? sujetoId : null;
+      const productoId = body.producto_id;
+      const cantidad = body.cantidad;
+      const modo = body.modo ?? 'sumar'; // sumar | restar | fijar
+      const observacion = cleanText(body.observacion, 500) || 'Ajuste manual de cuenta corriente';
+      const choferId = body.chofer_id ?? null;
 
-      if (!sujetoTipo) return res.status(400).json({ error: 'sujeto_tipo inválido' });
-      if (!sujetoId) return res.status(400).json({ error: 'Sujeto requerido' });
-      if (!productoId) return res.status(400).json({ error: 'Producto retornable requerido' });
-      if (!Number.isFinite(cantidad) || cantidad < 0) return res.status(400).json({ error: 'Cantidad inválida' });
+      if (typeof sujetoTipoRaw !== 'string' || sujetoTipo !== sujetoTipoRaw) return res.status(400).json({ error: 'sujeto_tipo inválido' });
+      if (!isPositiveSafeInteger(sujetoId)) return res.status(400).json({ error: 'Sujeto requerido' });
+      if (!isPositiveSafeInteger(productoId)) return res.status(400).json({ error: 'Producto retornable requerido' });
+      if (!isNonNegativeSafeInteger(cantidad)) return res.status(400).json({ error: 'Cantidad inválida' });
+      if (choferId !== null && !isPositiveSafeInteger(choferId)) return res.status(400).json({ error: 'Chofer inválido' });
       if (!['sumar', 'restar', 'fijar'].includes(modo)) return res.status(400).json({ error: 'Modo de ajuste inválido' });
 
-      const result = await withTransaction(async (txQuery) => {
-        const sujetoTables = {
-          cliente: ['puntos_entrega', 'Cliente'],
-          chofer: ['choferes', 'Chofer'],
-          proveedor: ['proveedores', 'Proveedor'],
-          deposito: ['depositos', 'Depósito'],
-        };
-        const [tablaSujeto, labelSujeto] = sujetoTables[sujetoTipo];
-        const sujetoRows = await txQuery(
-          `SELECT id FROM ${tablaSujeto} WHERE id = $1 AND empresa_id = $2 LIMIT 1`,
-          [sujetoId, empresaId]
-        );
-        if (!sujetoRows.length) {
-          const err = new Error(`${labelSujeto} inválido para la empresa`);
-          err.statusCode = 400;
-          throw err;
-        }
+      await ensureSchema();
 
-        const productoRows = await txQuery(
-          `SELECT id, nombre FROM productos WHERE id = $1 AND empresa_id = $2 AND COALESCE(retornable, FALSE) = TRUE AND deleted_at IS NULL LIMIT 1`,
-          [productoId, empresaId]
-        );
-        if (!productoRows.length) {
-          const err = new Error('El producto no es retornable o no pertenece a la empresa');
-          err.statusCode = 400;
-          throw err;
-        }
+      const result = await withTransactionFn(async (txQuery) => {
+        const sujetoConfig = AJUSTE_SUJETO_TABLES[sujetoTipo];
 
-        if (choferId) {
+        const choferIds = [...new Set([
+          ...(sujetoTipo === 'chofer' ? [sujetoId] : []),
+          ...(choferId ? [choferId] : []),
+        ])].sort((a, b) => a - b);
+        for (const id of choferIds) {
           const choferRows = await txQuery(
-            `SELECT id FROM choferes WHERE id = $1 AND empresa_id = $2 LIMIT 1`,
-            [choferId, empresaId]
+            `SELECT id FROM choferes
+              WHERE id = $1 AND empresa_id = $2 AND activo IS TRUE
+              FOR SHARE`,
+            [id, empresaId]
           );
           if (!choferRows.length) {
             const err = new Error('Chofer inválido para la empresa');
@@ -498,23 +493,85 @@ export function createRetornablesRouter({
           }
         }
 
-        const saldoActualRows = await txQuery(
-          `SELECT saldo FROM retornables_saldos WHERE empresa_id = $1 AND sujeto_tipo = $2 AND sujeto_id = $3 AND producto_id = $4 FOR UPDATE`,
-          [empresaId, sujetoTipo, sujetoId, productoId]
+        const productoRows = await txQuery(
+          `SELECT id, nombre FROM productos
+            WHERE id = $1 AND empresa_id = $2 AND retornable = TRUE AND deleted_at IS NULL
+            FOR SHARE`,
+          [productoId, empresaId]
         );
-        const saldoActual = Number(saldoActualRows?.[0]?.saldo || 0);
-        const delta = modo === 'fijar'
+        if (!productoRows.length) {
+          const err = new Error('El producto no es retornable o no pertenece a la empresa');
+          err.statusCode = 400;
+          throw err;
+        }
+
+        if (sujetoTipo !== 'chofer') {
+          const sujetoRows = await txQuery(
+            `SELECT id FROM ${sujetoConfig.table}
+              WHERE id = $1 AND empresa_id = $2 ${sujetoConfig.activePredicate}
+              FOR SHARE`,
+            [sujetoId, empresaId]
+          );
+          if (!sujetoRows.length) {
+            const err = new Error(`${sujetoConfig.label} inválido para la empresa`);
+            err.statusCode = 400;
+            throw err;
+          }
+        }
+
+        let saldoActual;
+        let delta;
+        let saldoResultante;
+
+        // Orden global para clientes: saldo canónico -> ledger genérico -> movimientos.
+        // Crear primero la fila hace que el FOR UPDATE siempre proteja el cálculo.
+        if (sujetoTipo === 'cliente') {
+          await txQuery(
+            `INSERT INTO cliente_retornables_saldos
+              (empresa_id, punto_entrega_id, producto_id, saldo, updated_at)
+             VALUES ($1, $2, $3, 0, NOW())
+             ON CONFLICT (empresa_id, punto_entrega_id, producto_id) DO NOTHING`,
+            [empresaId, puntoEntregaId, productoId]
+          );
+          const saldoActualRows = await txQuery(
+            `SELECT saldo
+               FROM cliente_retornables_saldos
+              WHERE empresa_id = $1
+                AND punto_entrega_id = $2
+                AND producto_id = $3
+              FOR UPDATE`,
+            [empresaId, puntoEntregaId, productoId]
+          );
+          saldoActual = Number(saldoActualRows?.[0]?.saldo || 0);
+        } else {
+          await txQuery(
+            `INSERT INTO retornables_saldos
+              (empresa_id, sujeto_tipo, sujeto_id, producto_id, saldo, updated_at)
+             VALUES ($1, $2, $3, $4, 0, NOW())
+             ON CONFLICT (empresa_id, sujeto_tipo, sujeto_id, producto_id) DO NOTHING`,
+            [empresaId, sujetoTipo, sujetoId, productoId]
+          );
+          const saldoActualRows = await txQuery(
+            `SELECT saldo FROM retornables_saldos WHERE empresa_id = $1 AND sujeto_tipo = $2 AND sujeto_id = $3 AND producto_id = $4 FOR UPDATE`,
+            [empresaId, sujetoTipo, sujetoId, productoId]
+          );
+          saldoActual = Number(saldoActualRows?.[0]?.saldo || 0);
+        }
+
+        delta = modo === 'fijar'
           ? cantidad - saldoActual
           : modo === 'restar'
             ? -cantidad
             : cantidad;
+        saldoResultante = saldoActual + delta;
 
-        const ledger = await registrarRetornableMovimiento(txQuery, {
+        const ledgerInput = {
           empresaId,
           sujetoTipo,
           sujetoId,
           productoId,
           deltaSaldo: delta,
+          ...(sujetoTipo === 'cliente' ? { saldoObjetivo: saldoResultante } : {}),
           cantidadLlenos: delta > 0 ? delta : 0,
           cantidadVacios: delta < 0 ? Math.abs(delta) : 0,
           tipo: 'ajuste',
@@ -523,25 +580,24 @@ export function createRetornablesRouter({
           observacion: `${observacion} (${modo}: ${cantidad})`,
           referencia: `ajuste_manual:${sujetoTipo}:${sujetoId}`,
           createdBy: req.user?.username || req.user?.id || null,
-        });
+        };
 
-        let movRows = [ledger.movimiento].filter(Boolean);
-        let saldoResultante = Number(ledger.saldo_resultante || 0);
-
+        let movRows;
         if (sujetoTipo === 'cliente') {
-          const saldoRows = await txQuery(
-            `
-            INSERT INTO cliente_retornables_saldos
-              (empresa_id, punto_entrega_id, producto_id, saldo, updated_at)
-            VALUES ($1, $2, $3, $4, NOW())
-            ON CONFLICT (empresa_id, punto_entrega_id, producto_id)
-            DO UPDATE SET saldo = cliente_retornables_saldos.saldo + EXCLUDED.saldo, updated_at = NOW()
-            RETURNING saldo
-            `,
-            [empresaId, puntoEntregaId, productoId, delta]
+          // Fase 1: saldo canónico cliente.
+          await txQuery(
+            `UPDATE cliente_retornables_saldos
+                SET saldo = $4, updated_at = NOW()
+              WHERE empresa_id = $1
+                AND punto_entrega_id = $2
+                AND producto_id = $3`,
+            [empresaId, puntoEntregaId, productoId, saldoResultante]
           );
-          saldoResultante = Number(saldoRows?.[0]?.saldo || saldoResultante);
 
+          // Fase 2: saldo genérico, aún sin movimientos.
+          saldoResultante = await actualizarRetornableSaldo(txQuery, ledgerInput);
+
+          // Fase 3: ambos movimientos, después de ambos saldos.
           movRows = await txQuery(
             `
             INSERT INTO cliente_retornables_movimientos
@@ -559,9 +615,14 @@ export function createRetornablesRouter({
               delta < 0 ? Math.abs(delta) : 0,
               delta,
               saldoResultante,
-              `${observacion} (${modo}: ${cantidad})`,
+              ledgerInput.observacion,
             ]
           );
+          await insertarRetornableMovimiento(txQuery, ledgerInput, saldoResultante);
+        } else {
+          const ledger = await registrarRetornableMovimiento(txQuery, ledgerInput);
+          movRows = [ledger.movimiento].filter(Boolean);
+          saldoResultante = Number(ledger.saldo_resultante || 0);
         }
 
         return {
@@ -578,6 +639,12 @@ export function createRetornablesRouter({
       return res.json({ ok: true, ...result });
     } catch (e) {
       console.error('POST /api/retornables/ajustes', e);
+      if (e?.code === 'TRANSACTION_OUTCOME_UNKNOWN') {
+        return res.status(503).json({
+          error: 'Resultado del ajuste indeterminado',
+          code: 'TRANSACTION_OUTCOME_UNKNOWN',
+        });
+      }
       return res.status(e.statusCode || 500).json({ error: e.statusCode ? e.message : 'Error registrando ajuste de retornables' });
     }
   });

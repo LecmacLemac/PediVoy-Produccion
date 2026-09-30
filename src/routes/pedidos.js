@@ -8,6 +8,7 @@ import { awardPointsForDeliveredOrder } from '../services/puntosService.js';
 import { generateComisionesForDeliveredOrder } from '../services/referentesService.js';
 import { createPedidoEstadoNotifications } from '../services/referenteNotifications.js';
 import { ejecutarPostEntregaUpsell } from '../estrategias.js';
+import { requireCanonicalBackofficeRole } from './canonicalBackofficeRole.js';
 
 export function createPedidosRouter() {
   const router = express.Router();
@@ -603,7 +604,7 @@ export function createPedidosRouter() {
   // --------------------------------------------------
   // PUT /api/pedidos/:id
   // --------------------------------------------------
-  router.put('/:id', withAuth, async (req, res) => {
+  router.put('/:id', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     try {
       const { estado, metodo_pago, empresa_id, chofer_id, zona_id } = req.body;
       const esSuperUser = isSuper(req);
@@ -718,7 +719,7 @@ export function createPedidosRouter() {
   // --------------------------------------------------
   // DELETE /api/pedidos/:id
   // --------------------------------------------------
-  router.delete('/:id', withAuth, async (req, res) => {
+  router.delete('/:id', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     try {
       const id = Number(req.params.id);
       if (!id) return res.status(400).json({ error: 'ID inválido' });

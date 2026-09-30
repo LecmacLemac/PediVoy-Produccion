@@ -26,7 +26,7 @@ ASTERISK_AMI_RECONNECT_MS=5000
 ASTERISK_ENDPOINT_TEMPLATE=PJSIP/{phone}@proveedor-trunk
 ASTERISK_CALLER_ID=PediVoy
 
-# Webhook interno opcional
+# Webhook interno obligatorio (sin este secreto el endpoint responde 503 fail-closed)
 ASTERISK_WEBHOOK_SECRET=CAMBIAR_OTRA_CLAVE
 ```
 

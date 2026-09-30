@@ -8,6 +8,8 @@ import { withIsolatedPostgres, postgresOptions } from './support/isolated-postgr
 const read = path => fs.readFileSync(new URL('../' + path, import.meta.url), 'utf8');
 // Evaluate the router without importing payment services or the application DB pool.
 const routerContext = { express, ensureRetornablesLedgerSchema, console,
+  awardPointsForDeliveredOrderDefault() {},
+  generateComisionesForDeliveredOrderDefault() {},
   crearPagoParaPedidoDefault() { throw new Error('Unexpected payment call'); },
   listarPagosPorPedidoDefault() { throw new Error('Unexpected payment call'); },
   refrescarEstadoPagoPedidoDefault() { throw new Error('Unexpected payment call'); },
@@ -22,8 +24,14 @@ const slice = (source, start, end) => source.slice(source.indexOf(start), source
 async function serve(user, rows, run) {
   const calls = [];
   const app = express();
+  const query = async (sql, params) => {
+    calls.push({ sql, params });
+    return typeof rows === 'function' ? rows(sql, params) : rows;
+  };
   app.use('/api/repartidor', createRepartidorApiRouter({
-    query: async (sql, params) => { calls.push({ sql, params }); return typeof rows === 'function' ? rows(sql, params) : rows; },
+    query,
+    withTransaction: work => work(query),
+    resolveProductIdentityItems: async () => [],
     withAuth: (req, res, next) => { req.user = user; next(); },
     getEmpresaIdFromToken: req => req.user.empresa_id,
   }));
@@ -77,9 +85,11 @@ test('stock usa ingresos físicos, fecha del gasto DATE y zona argentina una sol
   });
 });
 test('entrega resuelve ID aunque cambie el nombre y limita fallback a NULL', () => {
-  const sql = slice(read('src/routes/repartidorApi.js'), 'const itemsQ =', 'for (const it of itemsQ.rows)');
-  assert.match(sql, /p.id = ip.producto_id/);
-  assert.match(sql, /ip.producto_id IS NULL AND LOWER\(TRIM\(p.nombre\)\)/);
+  const source = slice(read('src/routes/repartidorApi.js'), 'const itemsQ =', 'function isCuentaCorrienteMethod');
+  assert.match(source, /byId\.get\(Number\(item\.producto_id\)\)/);
+  assert.match(source, /if \(item\.producto_id == null\)/);
+  assert.match(source, /matches\.length !== 1/);
+  assert.doesNotMatch(source, /JOIN productos[\s\S]*p\.id = ip\.producto_id[\s\S]*OR/);
 });
 test('saludo sin username tiene fallback seguro', () => {
   const context = { me: {}, $: () => context.title, title: {} };
@@ -305,7 +315,11 @@ test('stock espera la preparación completa antes del SELECT y reutiliza el esqu
     assert.ok(migration >= 0 && migration < select);
     const count = calls.length;
     assert.equal((await get('/stock-acumulado?fecha=2026-09-22')).status, 200);
-    assert.equal(calls.length, count + 1);
+    assert.equal(calls.length, count + 2, 'segunda lectura debe validar identidad y ejecutar stock sin repetir schema');
+    assert.equal(
+      calls.slice(count).filter(c => /ALTER TABLE chofer_stock_mov ADD COLUMN IF NOT EXISTS gasto_id INTEGER/.test(c.sql)).length,
+      0
+    );
   });
 });
 

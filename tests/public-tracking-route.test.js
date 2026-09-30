@@ -150,3 +150,49 @@ test('GET /api/public/tracking/:token marca pago digital sin registro como sin_p
     assert.equal(body.driverLocation.location_status, 'sin_ubicacion');
   });
 });
+
+test('GET /api/public/tracking/:token sanitiza respuesta y logs ante error SQL', async () => {
+  const token = 'bearer-ultrasecreto-123';
+  const pii = ['Cliente Secreto', 'Calle Privada 123', '5493539999999', '-32.4123,-63.2199'];
+  const requestUrl = `/api/public/tracking/${token}?telefono=${pii[2]}`;
+  const app = buildApp(async () => {
+    throw new Error(`db failed token=${token} url=${requestUrl} pii=${pii.join('|')}`);
+  });
+  const originalError = console.error;
+  const logged = [];
+  console.error = (...args) => logged.push(args.map(String).join(' '));
+
+  try {
+    await withServer(app, async (baseUrl) => {
+      const resp = await fetch(baseUrl + requestUrl);
+      const body = await resp.json();
+
+      assert.equal(resp.status, 500);
+      assert.deepEqual(body, { error: 'Error interno del servidor' });
+      const output = logged.join('\n');
+      assert.doesNotMatch(output, new RegExp(token));
+      assert.doesNotMatch(output, /api\/public\/tracking|telefono=/i);
+      for (const value of pii) assert.equal(output.includes(value), false, value);
+      assert.doesNotMatch(output, /db failed/i);
+    });
+  } finally {
+    console.error = originalError;
+  }
+});
+
+test('GET /api/public/tracking/:token no registra el bearer inválido', async () => {
+  const originalWarn = console.warn;
+  const logged = [];
+  console.warn = (...args) => logged.push(args.map(String).join(' '));
+
+  try {
+    const app = buildApp(async () => []);
+    await withServer(app, async (baseUrl) => {
+      const resp = await fetch(`${baseUrl}/api/public/tracking/bad`);
+      assert.equal(resp.status, 400);
+      assert.equal(logged.join('\n').includes('bad'), false);
+    });
+  } finally {
+    console.warn = originalWarn;
+  }
+});

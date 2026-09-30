@@ -21,6 +21,7 @@ import { createFacturaCapabilityRouter } from './facturaCapability.js';
 import { createGastosStorageRouter, createFacturasStorageRouter } from './privateStorage.js';
 import { resolveTransferenciaStorageDir, createTransferenciaStorageRouter } from './transferenciaStorage.js';
 import { createWhatsAppCloudJsonMiddleware } from './routes/whatsappCloudWebhook.js';
+import { resolvePublicPedidoEmpresaId } from './services/publicPedidoTenant.js';
 
 export function buildWhatsAppRegistrationDeps({
   ENABLE_WPP,
@@ -110,12 +111,16 @@ export function createApp(deps) {
     notificarEnRuta,
     notificarPedidoTransferencia,
     ejecutarEstrategiaVecinos,
+    ejecutarRecompensaReferido,
+    ejecutarEstrategiaReferidos,
     ejecutarReposicionPredictiva,
     ejecutarCampaniaClima,
     ejecutarCampaniaBaseImportadaAuto,
     ejecutarReactivacionInteligente,
     ejecutarPostEntregaUpsell,
     ejecutarProgramaVip,
+    awardPointsForDeliveredOrder,
+    generateComisionesForDeliveredOrder,
     registrarMovimientosActivosDesdePedido,
 
     // wpp
@@ -355,6 +360,10 @@ export function createApp(deps) {
     notificarPedidoTransferencia,
     ejecutarEstrategiaVecinos,
     ejecutarPostEntregaUpsell,
+    ejecutarRecompensaReferido,
+    ejecutarEstrategiaReferidos,
+    awardPointsForDeliveredOrder,
+    generateComisionesForDeliveredOrder,
     registrarMovimientosActivosDesdePedido,
     TRANSF_DIR,
     GASTOS_DIR,
@@ -362,7 +371,7 @@ export function createApp(deps) {
   });
 
   // Endpoints públicos migrados a módulos dedicados
-  app.use('/public', createPublicLegacyCatalogRouter({ query }));
+  app.use('/public', createPublicLegacyCatalogRouter({ query, withTransaction }));
   app.use('/public', createPublicLegacyMarketplaceRouter({ query }));
   app.use('/public', createPublicLegacyPedidosRouter({ query, withTransaction }));
   registerPublicLegacyCreatePedidoRoute(app, {
@@ -379,6 +388,7 @@ export function createApp(deps) {
     buildOrderSummary,
     getAliasEmpresa,
     ejecutarEstrategiaVecinosFn: ejecutarEstrategiaVecinos,
+    resolveEmpresaIdFn: resolvePublicPedidoEmpresaId,
   });
 
   // --------------------------------------------------

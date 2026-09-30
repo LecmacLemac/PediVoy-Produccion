@@ -7,6 +7,7 @@ import {
 } from '../services.js';
 import { query as defaultQuery } from '../db.js';
 import { enqueueWppMessage as defaultEnqueueWppMessage } from '../services/messaging.js';
+import { requireCanonicalBackofficeRole } from './canonicalBackofficeRole.js';
 
 export function createReportesRouter({
   query: queryFn = defaultQuery,
@@ -76,9 +77,9 @@ export function createReportesRouter({
   }
 
   // POST /api/reportes/saldos-clientes/solicitar
-  router.post('/saldos-clientes/solicitar', withAuth, async (req, res) => {
+  router.post('/saldos-clientes/solicitar', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     try {
-      const targetEmpresa = getTargetEmpresa(req);
+      const targetEmpresa = getEmpresaIdFromToken(req);
       if (!targetEmpresa) return res.status(400).json({ error: 'Empresa no determinada' });
 
       const telefono = cleanPhone(req.body?.telefono);
@@ -152,6 +153,7 @@ export function createReportesRouter({
           ) AS transferencia_ai_verificada
         FROM pedidos p
         JOIN puntos_entrega pe ON p.punto_entrega_id = pe.id
+                               AND pe.empresa_id = p.empresa_id
         LEFT JOIN empresas e ON e.id = p.empresa_id
         LEFT JOIN choferes c   ON p.chofer_id = c.id
         LEFT JOIN transferencias t ON t.pedido_id = p.id AND t.empresa_id = p.empresa_id
@@ -182,6 +184,7 @@ export function createReportesRouter({
           LIMIT 1
         ) ct ON TRUE
         WHERE p.estado = 'entregado'
+          AND p.empresa_id = $1
           AND pe.empresa_id = $1
       `;
 
@@ -262,7 +265,9 @@ export function createReportesRouter({
           ) THEN p.monto ELSE 0 END), 0)::numeric AS pagado_transferencia
         FROM pedidos p
         JOIN puntos_entrega pe ON p.punto_entrega_id = pe.id
+                               AND pe.empresa_id = p.empresa_id
         WHERE p.estado = 'entregado'
+          AND p.empresa_id = $1
           AND pe.empresa_id = $1
       `;
       const params = [targetEmpresa];
@@ -396,7 +401,9 @@ export function createReportesRouter({
             EXTRACT(EPOCH FROM (COALESCE(p.fecha_entrega, p.fecha) - p.fecha)) / 60.0 AS demora_min
           FROM pedidos p
           JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
+                                 AND pe.empresa_id = p.empresa_id
           WHERE p.estado = 'entregado'
+            AND p.empresa_id = $1
             AND pe.empresa_id = $1
             AND p.fecha IS NOT NULL
             AND COALESCE(p.fecha_entrega, p.fecha) IS NOT NULL
@@ -471,7 +478,9 @@ export function createReportesRouter({
           COUNT(*)::int AS cantidad
         FROM pedidos p
         JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
+                               AND pe.empresa_id = p.empresa_id
         WHERE p.estado = 'cancelado'
+          AND p.empresa_id = $1
           AND pe.empresa_id = $1
       `;
       const params = [targetEmpresa];
@@ -518,31 +527,44 @@ export function createReportesRouter({
       const hasCostTable = await tableExists('empresa_productos_costos');
       const costJoin = hasCostTable
         ? `LEFT JOIN empresa_productos_costos epc
-             ON epc.empresa_id = p.empresa_id
-            AND epc.producto_id = pr.id`
+             ON epc.empresa_id = ri.empresa_id
+            AND epc.producto_id = ri.producto_resuelto_id`
         : '';
       const costExpr = hasCostTable
         ? 'COALESCE(epc.costo_base, 0) + COALESCE(epc.costo_packaging, 0)'
         : '0';
 
       let sql = `
+        WITH resolved_items AS (
         SELECT
-          COALESCE(pr.nombre, ip.producto, 'Sin nombre') AS producto,
-          SUM(COALESCE(ip.cantidad, 0))::float AS unidades,
-          SUM(COALESCE(ip.cantidad, 0) * COALESCE(ip.precio_unitario, 0))::float AS ventas,
-          SUM(COALESCE(ip.cantidad, 0) * (${costExpr}))::float AS costo_estimado
+          p.empresa_id,
+          ip.producto,
+          ip.producto_id,
+          ip.cantidad,
+          ip.precio_unitario,
+          pr.id AS producto_resuelto_id,
+          pr.nombre AS producto_resuelto_nombre,
+          COALESCE(legacy.match_count, 0)::int AS legacy_match_count
         FROM pedidos p
-        JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
+        JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id AND pe.empresa_id = p.empresa_id
         JOIN items_pedido ip ON ip.pedido_id = p.id
+        LEFT JOIN LATERAL (
+          SELECT COUNT(*)::int AS match_count, MIN(px.id) AS id
+            FROM productos px
+           WHERE ip.producto_id IS NULL
+             AND px.empresa_id = p.empresa_id
+             AND LOWER(TRIM(px.nombre)) = LOWER(TRIM(ip.producto))
+        ) legacy ON TRUE
         LEFT JOIN productos pr
           ON pr.empresa_id = p.empresa_id
-         AND (
-              pr.id = ip.producto_id
-              OR (ip.producto_id IS NULL AND LOWER(pr.nombre) = LOWER(ip.producto))
-         )
-        ${costJoin}
+         AND pr.id = CASE
+           WHEN ip.producto_id IS NOT NULL THEN ip.producto_id
+           WHEN legacy.match_count = 1 THEN legacy.id
+           ELSE NULL
+         END
         WHERE p.estado = 'entregado'
           AND p.empresa_id = $1
+          AND pe.empresa_id = $1
       `;
 
       const params = [targetEmpresa];
@@ -562,7 +584,25 @@ export function createReportesRouter({
       }
 
       sql += `
-        GROUP BY 1
+        ), identity_warnings AS (
+          SELECT
+            COUNT(*) FILTER (WHERE producto_id IS NULL AND legacy_match_count > 1)::int AS legacy_ambiguous,
+            COUNT(*) FILTER (WHERE producto_id IS NULL AND legacy_match_count = 0)::int AS legacy_unresolved,
+            COUNT(*) FILTER (WHERE producto_id IS NOT NULL AND producto_resuelto_id IS NULL)::int AS canonical_invalid
+          FROM resolved_items
+        )
+        SELECT
+          COALESCE(ri.producto_resuelto_nombre, ri.producto, 'Sin nombre') AS producto,
+          SUM(COALESCE(ri.cantidad, 0))::float AS unidades,
+          SUM(COALESCE(ri.cantidad, 0) * COALESCE(ri.precio_unitario, 0))::float AS ventas,
+          SUM(COALESCE(ri.cantidad, 0) * (${costExpr}))::float AS costo_estimado,
+          iw.legacy_ambiguous,
+          iw.legacy_unresolved,
+          iw.canonical_invalid
+        FROM resolved_items ri
+        ${costJoin}
+        CROSS JOIN identity_warnings iw
+        GROUP BY 1, iw.legacy_ambiguous, iw.legacy_unresolved, iw.canonical_invalid
       `;
 
       const rows = await query(sql, params);
@@ -585,7 +625,12 @@ export function createReportesRouter({
       return res.json({
         top: mapped.slice(0, 8),
         bottom: mapped.slice(-8).reverse(),
-        total_productos: mapped.length
+        total_productos: mapped.length,
+        identity_warnings: {
+          legacy_ambiguous: Number(rows[0]?.legacy_ambiguous || 0),
+          legacy_unresolved: Number(rows[0]?.legacy_unresolved || 0),
+          canonical_invalid: Number(rows[0]?.canonical_invalid || 0),
+        }
       });
     } catch (e) {
       console.error('ERROR /api/reportes/productos-margen', e);

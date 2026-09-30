@@ -6,6 +6,7 @@ import {
   getEmpresaIdFromToken as defaultGetEmpresaIdFromToken
 } from '../services.js';
 import { query, pool, withTransaction as dbWithTransaction } from '../db.js';
+import { requireCanonicalBackofficeRole } from './canonicalBackofficeRole.js';
 
 function canTogglePago(req) {
   const role = String(req.user?.role || '').toLowerCase();
@@ -15,6 +16,7 @@ function canTogglePago(req) {
 export function createPedidosPagoRouter({
   query: queryFn = query,
   pool: poolFn = pool,
+  withTransaction: injectedWithTransaction = dbWithTransaction,
   withAuth: withAuthFn = defaultWithAuth,
   checkLicencia: checkLicenciaFn = defaultCheckLicencia,
   isSuper: isSuperFn = defaultIsSuper,
@@ -22,11 +24,11 @@ export function createPedidosPagoRouter({
 } = {}) {
   const router = express.Router();
   const withTransaction = fn => poolFn?.connect
-    ? dbWithTransaction(fn, { pool: poolFn })
+    ? injectedWithTransaction(fn, { pool: poolFn, maxRetries: 0 })
     : fn(queryFn);
 
   // POST /api/pedidos/:id/toggle-pago
-  router.post('/:id/toggle-pago', withAuthFn, checkLicenciaFn, async (req, res) => {
+  router.post('/:id/toggle-pago', withAuthFn, requireCanonicalBackofficeRole, checkLicenciaFn, async (req, res) => {
     try {
       const pedidoId = Number(req.params.id);
       const { marcado } = req.body;
@@ -86,7 +88,14 @@ export function createPedidosPagoRouter({
       res.json({ ok: true });
     } catch (e) {
       if (e?.statusCode === 404) return res.status(404).json({ error: e.message });
-      console.error('ERROR TOGGLE PAGO:', e);
+      if (e?.code === 'TRANSACTION_OUTCOME_UNKNOWN') {
+        console.error('ERROR TOGGLE PAGO:', { code: e.code, route: 'toggle-pago' });
+        return res.status(503).json({
+          error: 'Resultado de actualización de pago indeterminado',
+          code: 'TRANSACTION_OUTCOME_UNKNOWN',
+        });
+      }
+      console.error('ERROR TOGGLE PAGO:', { code: e?.code || 'TOGGLE_PAGO_FAILED', route: 'toggle-pago' });
       res.status(500).json({ error: 'Error actualizando pago' });
     }
   });

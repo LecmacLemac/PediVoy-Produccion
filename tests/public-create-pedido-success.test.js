@@ -41,6 +41,7 @@ test('POST /public/pedidos crea pedido válido', async () => {
   const query = async (sql, params = []) => {
     calls.push(String(sql));
 
+    if (/SELECT\s+id[\s\S]*FROM empresas[\s\S]*WHERE id = \$1/.test(sql)) return [{ id: 1 }];
     if (sql.includes('FROM information_schema.columns')) {
       return [
         { table_name: 'pedidos', column_name: 'fecha_entrega_estimada' },
@@ -48,13 +49,15 @@ test('POST /public/pedidos crea pedido válido', async () => {
       ];
     }
     if (/ALTER TABLE/i.test(sql)) return [];
-    if (sql.includes('FROM puntos_entrega') && sql.includes('telefono_normalizado LIKE')) return [];
+    if (sql.includes('FROM puntos_entrega') && sql.includes('RIGHT(REGEXP_REPLACE')) return [];
     if (sql.includes('INSERT INTO puntos_entrega')) return [{ id: 101 }];
     if (sql.includes('FROM zona_chofer')) return [{ id: 55 }];
-    if (sql.includes('FROM productos') && sql.includes('promo_config')) return [];
+    if (sql.includes('FROM productos') && sql.includes('promo_config')) {
+      return [{ id: 55, nombre: 'Bidón 20L', promo_config: null, config_activo: {}, retornable: false }];
+    }
     if (sql.includes('FROM cliente_recompensas')) return [];
     if (sql.includes('SELECT pg_advisory_xact_lock')) return [{ pg_advisory_xact_lock: null }];
-    if (sql.includes('FROM pedidos WHERE empresa_id=$1 AND submission_id=$2')) return [];
+    if (sql.includes('FROM pedidos') && sql.includes('submission_id = $2')) return [];
     if (sql.includes('INSERT INTO pedidos')) return [{ id: 9001, estado: 'pendiente', monto: 7000, tracking_token: 'tok_9001' }];
     if (sql.includes('INSERT INTO items_pedido')) return [];
     if (sql.includes('SELECT config_entrega FROM empresas')) return [{ config_entrega: {} }];
@@ -72,7 +75,7 @@ test('POST /public/pedidos crea pedido válido', async () => {
   });
 
   await withServer(app, async (baseUrl) => {
-    const resp = await fetch(`${baseUrl}/public/pedidos`, {
+    const resp = await fetch(`${baseUrl}/public/pedidos?empresa_id=1`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-forwarded-for': '1.1.1.1' },
       body: JSON.stringify({
@@ -108,6 +111,7 @@ test('POST /public/pedidos crea pedido válido', async () => {
 test('POST /public/pedidos agrega retornables pendientes al WhatsApp del cliente', async () => {
   let wppMessage = '';
   const query = async (sql) => {
+    if (/SELECT\s+id[\s\S]*FROM empresas[\s\S]*WHERE id = \$1/.test(sql)) return [{ id: 1 }];
     if (sql.includes('FROM information_schema.columns')) {
       return [
         { table_name: 'pedidos', column_name: 'fecha_entrega_estimada' },
@@ -115,12 +119,14 @@ test('POST /public/pedidos agrega retornables pendientes al WhatsApp del cliente
       ];
     }
     if (/ALTER TABLE/i.test(sql)) return [];
-    if (sql.includes('FROM puntos_entrega') && sql.includes('telefono_normalizado LIKE')) return [{ id: 101, zona_id: 7 }];
+    if (sql.includes('FROM puntos_entrega') && sql.includes('RIGHT(REGEXP_REPLACE')) return [{ id: 101, zona_id: 7 }];
     if (sql.includes('FROM zona_chofer')) return [];
-    if (sql.includes('FROM productos') && sql.includes('promo_config')) return [];
+    if (sql.includes('FROM productos') && sql.includes('promo_config')) {
+      return [{ id: 55, nombre: 'Bidón 20L', promo_config: null, config_activo: {}, retornable: false }];
+    }
     if (sql.includes('FROM cliente_recompensas')) return [];
     if (sql.includes('SELECT pg_advisory_xact_lock')) return [{ pg_advisory_xact_lock: null }];
-    if (sql.includes('FROM pedidos WHERE empresa_id=$1 AND submission_id=$2')) return [];
+    if (sql.includes('FROM pedidos') && sql.includes('submission_id = $2')) return [];
     if (sql.includes('INSERT INTO pedidos')) return [{ id: 9002, estado: 'pendiente', monto: 7000, tracking_token: 'tok_9002' }];
     if (sql.includes('INSERT INTO items_pedido')) return [];
     if (sql.includes('SELECT config_entrega FROM empresas')) return [{ config_entrega: {} }];
@@ -136,7 +142,7 @@ test('POST /public/pedidos agrega retornables pendientes al WhatsApp del cliente
   });
 
   await withServer(app, async (baseUrl) => {
-    const resp = await fetch(`${baseUrl}/public/pedidos`, {
+    const resp = await fetch(`${baseUrl}/public/pedidos?empresa_id=1`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-forwarded-for': '2.2.2.2' },
       body: JSON.stringify({

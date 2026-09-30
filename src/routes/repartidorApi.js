@@ -2,17 +2,29 @@
 // API Repartidor (dashboard chofer) — extraído desde server.js
 
 import express from 'express';
-import { awardPointsForDeliveredOrder } from '../services/puntosService.js';
-import { generateComisionesForDeliveredOrder } from '../services/referentesService.js';
+import { awardPointsForDeliveredOrder as awardPointsForDeliveredOrderDefault } from '../services/puntosService.js';
+import { generateComisionesForDeliveredOrder as generateComisionesForDeliveredOrderDefault } from '../services/referentesService.js';
 import {
   crearPagoParaPedido as crearPagoParaPedidoDefault,
   listarPagosPorPedido as listarPagosPorPedidoDefault,
   refrescarEstadoPagoPedido as refrescarEstadoPagoPedidoDefault
 } from '../qr/pagosService.js';
-import { ensureRetornablesLedgerSchema, registrarRetornableMovimiento } from '../services/retornablesLedger.js';
+import {
+  actualizarRetornableSaldo,
+  ensureRetornablesLedgerSchema,
+  insertarRetornableMovimiento,
+} from '../services/retornablesLedger.js';
+import {
+  lockProductIdentityNamespaces,
+  normalizeProductIdentityName,
+  PRODUCT_NAME_IDENTITY_SQL,
+  resolveProductIdentityItems as resolveProductIdentityItemsDefault,
+} from '../services/productIdentityNamespace.js';
+import { lockDeliveryPointRows } from '../services/deliveryPointIdentity.js';
+import { lockStockContext } from '../services/stockLocking.js';
 
 export function createRepartidorApiRouter(deps) {
-  const { query, pool, withTransaction, withAuth, getEmpresaIdFromToken, notifyEstadoPedidoPush, notificarEnRuta, notificarPedidoTransferencia, ejecutarEstrategiaVecinos, ejecutarPostEntregaUpsell, registrarMovimientosActivosDesdePedido, crearPagoParaPedido = crearPagoParaPedidoDefault, listarPagosPorPedido = listarPagosPorPedidoDefault, refrescarEstadoPagoPedido = refrescarEstadoPagoPedidoDefault } = deps || {};
+  const { query, pool, withTransaction, withAuth, getEmpresaIdFromToken, notifyEstadoPedidoPush, notificarEnRuta, notificarPedidoTransferencia, ejecutarEstrategiaVecinos, ejecutarPostEntregaUpsell, ejecutarRecompensaReferido, ejecutarEstrategiaReferidos, awardPointsForDeliveredOrder = awardPointsForDeliveredOrderDefault, generateComisionesForDeliveredOrder = generateComisionesForDeliveredOrderDefault, resolveProductIdentityItems = resolveProductIdentityItemsDefault, registrarMovimientosActivosDesdePedido, crearPagoParaPedido = crearPagoParaPedidoDefault, listarPagosPorPedido = listarPagosPorPedidoDefault, refrescarEstadoPagoPedido = refrescarEstadoPagoPedidoDefault } = deps || {};
   if (typeof query !== 'function') throw new Error('createRepartidorApiRouter: falta query(fn)');
   if (typeof withAuth !== 'function') throw new Error('createRepartidorApiRouter: falta withAuth(fn)');
   if (typeof getEmpresaIdFromToken !== 'function') throw new Error('createRepartidorApiRouter: falta getEmpresaIdFromToken(fn)');
@@ -21,6 +33,16 @@ export function createRepartidorApiRouter(deps) {
   const router = express.Router();
   let schemaReady = false;
   let cuentaCorrienteSchemaReady = false;
+
+  function requireExactRepartidor(req, res, next) {
+    const { role, empresa_id: empresaId, chofer_id: choferId } = req.user || {};
+    if (role !== 'repartidor'
+        || !Number.isSafeInteger(empresaId) || empresaId <= 0
+        || !Number.isSafeInteger(choferId) || choferId <= 0) {
+      return res.status(403).json({ error: 'No autorizado' });
+    }
+    return next();
+  }
 
   async function ensureCuentaCorrienteSchema() {
     if (cuentaCorrienteSchemaReady) return;
@@ -67,26 +89,236 @@ export function createRepartidorApiRouter(deps) {
     schemaReady = true;
   }
 
+  function deliveryHttpError(statusCode, message) {
+    const error = new Error(message);
+    error.statusCode = statusCode;
+    return error;
+  }
+
+  function deliveryValidationError(message) {
+    return deliveryHttpError(400, message);
+  }
+
+  const SAFE_QR_DOMAIN_ERRORS = new Map([
+    ['PAYMENT_PROVIDER_NOT_CONFIGURED', { status: 400, message: 'El proveedor de pagos no está configurado' }],
+    ['PAYMENT_AMOUNT_INVALID', { status: 400, message: 'El pedido no tiene un monto válido para generar el pago' }],
+    ['PAYMENT_PROVIDER_UNSUPPORTED', { status: 400, message: 'Proveedor de pagos no soportado' }],
+    ['PAYMENT_ORDER_NOT_FOUND', { status: 404, message: 'Pedido no encontrado' }],
+  ]);
+
+  function safeQrDomainError(error) {
+    const contract = SAFE_QR_DOMAIN_ERRORS.get(String(error?.code || ''));
+    if (!contract || Number(error?.statusCode) !== contract.status) return null;
+    return { ...contract, code: String(error.code) };
+  }
+
+  function runPostCommitTask(task, label) {
+    if (typeof task !== 'function') return;
+    Promise.resolve()
+      .then(task)
+      .catch(error => console.error(label, error?.message || error));
+  }
+
   function normalizeRetornablesPayload(retornables) {
+    if (!Array.isArray(retornables)) {
+      throw deliveryValidationError('Payload de retornables inválido');
+    }
     const map = new Map();
-    if (!Array.isArray(retornables)) return map;
     for (const row of retornables) {
-      const productoId = Number(row?.producto_id ?? row?.productoId ?? 0);
-      const devueltos = Number(row?.devueltos ?? row?.cantidad_devuelta ?? row?.cantidadDevuelta ?? 0);
-      if (!Number.isFinite(productoId) || productoId <= 0) continue;
-      if (!Number.isFinite(devueltos) || devueltos < 0) continue;
+      if (!row || typeof row !== 'object' || Array.isArray(row)) {
+        throw deliveryValidationError('Cantidad devuelta inválida');
+      }
+      const productoId = row.producto_id;
+      const devueltos = row.devueltos;
+      if (!Number.isSafeInteger(productoId) || productoId <= 0) {
+        throw deliveryValidationError('Producto retornable inválido');
+      }
+      if (!Number.isSafeInteger(devueltos) || devueltos < 0) {
+        throw deliveryValidationError('Cantidad devuelta inválida');
+      }
+      if (map.has(productoId)) {
+        throw deliveryValidationError('Producto retornable duplicado');
+      }
       map.set(productoId, devueltos);
     }
     return map;
   }
 
+  function normalizeMovimientosActivosPayload(movimientos) {
+    if (!Array.isArray(movimientos)) {
+      throw deliveryValidationError('Movimientos de activos inválidos');
+    }
+    const tipos = new Set(['entrega', 'retiro', 'mantenimiento', 'cambio']);
+    const idsUsados = new Set();
+    const positivos = (value) => Number.isSafeInteger(value) && value > 0;
+
+    return movimientos.map((raw) => {
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+        throw deliveryValidationError('Movimientos de activos inválidos');
+      }
+      const tipoOperacion = raw.tipoOperacion ?? raw.tipo_operacion;
+      const activoId = raw.activoId ?? raw.activo_id;
+      const itemPedidoId = raw.itemPedidoId ?? raw.item_pedido_id;
+      const productoId = raw.productoId ?? raw.producto_id;
+      const activoRelacionadoId = raw.activoRelacionadoId ?? raw.activo_relacionado_id ?? null;
+      if (typeof tipoOperacion !== 'string' || !tipos.has(tipoOperacion)
+          || !positivos(activoId) || !positivos(itemPedidoId) || !positivos(productoId)
+          || (tipoOperacion === 'cambio' && !positivos(activoRelacionadoId))
+          || (tipoOperacion !== 'cambio' && activoRelacionadoId != null)) {
+        throw deliveryValidationError('Movimientos de activos inválidos');
+      }
+      const idsMovimiento = tipoOperacion === 'cambio' ? [activoId, activoRelacionadoId] : [activoId];
+      if (idsMovimiento.some((id) => idsUsados.has(id)) || new Set(idsMovimiento).size !== idsMovimiento.length) {
+        throw deliveryValidationError('Movimientos de activos inválidos');
+      }
+      idsMovimiento.forEach((id) => idsUsados.add(id));
+      return {
+        ...raw,
+        tipoOperacion,
+        activoId,
+        itemPedidoId,
+        productoId,
+        ...(tipoOperacion === 'cambio' ? { activoRelacionadoId } : {}),
+      };
+    });
+  }
+
+  function validateEntregasActivasRequeridas(itemsActivos, movimientos) {
+    const requeridos = new Map();
+    for (const row of itemsActivos || []) {
+      const itemPedidoId = Number(row.item_pedido_id);
+      const productoId = Number(row.producto_id);
+      const cantidad = Number(row.cantidad);
+      if (!Number.isSafeInteger(itemPedidoId) || itemPedidoId <= 0
+          || !Number.isSafeInteger(productoId) || productoId <= 0
+          || !Number.isSafeInteger(cantidad) || cantidad <= 0) {
+        throw deliveryValidationError('Configuración de activos del pedido inválida');
+      }
+      if (requeridos.has(itemPedidoId)) {
+        throw deliveryValidationError('Configuración de activos del pedido inválida');
+      }
+      requeridos.set(itemPedidoId, { productoId, cantidad, asignaciones: 0 });
+    }
+
+    for (const movimiento of movimientos) {
+      const requerido = requeridos.get(movimiento.itemPedidoId);
+      if (!requerido || requerido.productoId !== movimiento.productoId) {
+        throw deliveryValidationError('Movimientos de activos inválidos');
+      }
+      if (movimiento.tipoOperacion === 'entrega' || movimiento.tipoOperacion === 'cambio') {
+        requerido.asignaciones += 1;
+      }
+    }
+    for (const requerido of requeridos.values()) {
+      if (requerido.asignaciones !== requerido.cantidad) {
+        throw deliveryValidationError('Movimientos de activos inválidos');
+      }
+    }
+  }
+
+  async function loadCanonicalDeliveryComposition(client, { pedidoId, empresaId, choferId }) {
+    const itemsQ = await client.query(
+      `SELECT id, producto_id, producto, cantidad
+         FROM items_pedido
+        WHERE pedido_id = $1
+        ORDER BY id`,
+      [pedidoId]
+    );
+    const items = itemsQ.rows || [];
+    const canonicalIds = [];
+    const legacyNames = [];
+    for (const item of items) {
+      if (item.producto_id == null) {
+        const legacyName = normalizeProductIdentityName(item.producto);
+        if (!legacyName) throw deliveryHttpError(409, 'Producto legacy inválido en el pedido');
+        legacyNames.push(legacyName);
+      } else {
+        const productoId = Number(item.producto_id);
+        if (!Number.isSafeInteger(productoId) || productoId <= 0) {
+          throw deliveryHttpError(409, 'Producto inválido en el pedido');
+        }
+        canonicalIds.push(productoId);
+      }
+    }
+
+    const canonicalLegacyNames = await lockProductIdentityNamespaces(
+      async (sql, params) => (await client.query(sql, params)).rows,
+      { empresaId, names: legacyNames }
+    );
+
+    const stockProductQ = await client.query(
+      `SELECT id
+         FROM productos
+        WHERE empresa_id = $1
+          AND (
+               id = ANY($2::int[])
+            OR ${PRODUCT_NAME_IDENTITY_SQL} = ANY($3::text[])
+          )
+        ORDER BY id`,
+      [empresaId, Array.from(new Set(canonicalIds)).sort((a, b) => a - b), canonicalLegacyNames]
+    );
+    await lockStockContext(
+      async (sql, params) => (await client.query(sql, params)).rows,
+      {
+        empresaId,
+        referencia: `pedido:${Number(pedidoId)}`,
+        choferId,
+        productoIds: stockProductQ.rows.map(row => Number(row.id)),
+      }
+    );
+
+    const productQ = await client.query(
+      `SELECT id, nombre, retornable, stock_infinito, config_activo
+         FROM productos
+        WHERE empresa_id = $1
+          AND (
+               id = ANY($2::int[])
+            OR ${PRODUCT_NAME_IDENTITY_SQL} = ANY($3::text[])
+          )
+        ORDER BY id
+        FOR SHARE`,
+      [empresaId, Array.from(new Set(canonicalIds)).sort((a, b) => a - b), canonicalLegacyNames]
+    );
+    const products = productQ.rows || [];
+    const byId = new Map(products.map(row => [Number(row.id), row]));
+    const byName = new Map();
+    for (const product of products) {
+      const key = normalizeProductIdentityName(product.nombre);
+      const rows = byName.get(key) || [];
+      rows.push(product);
+      byName.set(key, rows);
+    }
+
+    return items.map(item => {
+      let product;
+      if (item.producto_id == null) {
+        const matches = byName.get(normalizeProductIdentityName(item.producto)) || [];
+        if (matches.length === 0) throw deliveryHttpError(409, 'Producto legacy no encontrado en el pedido');
+        if (matches.length !== 1) throw deliveryHttpError(409, 'Producto legacy ambiguo en el pedido');
+        [product] = matches;
+      } else {
+        product = byId.get(Number(item.producto_id));
+        if (!product) throw deliveryHttpError(409, 'Producto inválido en el pedido');
+      }
+      const cantidad = Number(item.cantidad);
+      if (!Number.isSafeInteger(cantidad) || cantidad <= 0) {
+        throw deliveryHttpError(409, 'Cantidad inválida en el pedido');
+      }
+      return {
+        itemPedidoId: Number(item.id),
+        productoId: Number(product.id),
+        producto: product,
+        cantidad,
+      };
+    });
+  }
+
   function isCuentaCorrienteMethod(metodo) {
-    const m = String(metodo || '').toLowerCase();
-    return m === 'cuenta_corriente' || m.startsWith('cta');
+    return metodo === 'cuenta_corriente';
   }
 
   function isTransferenciaMethod(metodo) {
-    return String(metodo || '').trim().toLowerCase().includes('trans');
+    return metodo === 'transferencia';
   }
 
   function comprobanteBloqueaSolicitud(row) {
@@ -142,7 +374,7 @@ export function createRepartidorApiRouter(deps) {
   }
 
 // Lectura mínima para el chofer autenticado. No ejecutar helpers de schema aquí.
-  router.get('/transferencias', withAuth, async (req, res) => {
+  router.get('/transferencias', withAuth, requireExactRepartidor, async (req, res) => {
     const { role, empresa_id: empresaId, chofer_id: choferId } = req.user || {};
     if (role !== 'repartidor' || !Number.isSafeInteger(empresaId) || empresaId <= 0
         || !Number.isSafeInteger(choferId) || choferId <= 0) {
@@ -180,11 +412,10 @@ export function createRepartidorApiRouter(deps) {
   });
 
 // 1. Obtener Pedidos
-  router.get('/pedidos', withAuth, async (req, res) => {
+  router.get('/pedidos', withAuth, requireExactRepartidor, async (req, res) => {
    try {
      await ensureRepartidorSchema();
-     const { chofer_id } = req.user;
-     const empresaId = getEmpresaIdFromToken(req); // mismo criterio que el dashboard
+     const { chofer_id, empresa_id: empresaId } = req.user;
 
      if (req.user.role === 'repartidor' && !chofer_id) {
        return res.status(403).json({ error: 'Usuario repartidor sin chofer vinculado.' });
@@ -236,10 +467,14 @@ export function createRepartidorApiRouter(deps) {
             '[]'::json
           ) AS items
         FROM pedidos p
-        JOIN puntos_entrega pe ON p.punto_entrega_id = pe.id
-	        LEFT JOIN zonas_geograficas z ON z.id = COALESCE(p.zona_id, pe.zona_id)
+        JOIN puntos_entrega pe
+          ON pe.id = p.punto_entrega_id
+         AND pe.empresa_id = p.empresa_id
+	        LEFT JOIN zonas_geograficas z
+          ON z.id = COALESCE(p.zona_id, pe.zona_id)
+         AND z.empresa_id = p.empresa_id
         LEFT JOIN items_pedido ip ON ip.pedido_id = p.id
-        WHERE pe.empresa_id = $2
+        WHERE p.empresa_id = $2
           AND (p.chofer_id = $1 OR p.chofer_id IS NULL)
           AND (
             p.estado IN ('pendiente', 'en_ruta', 'en_camino')
@@ -272,7 +507,7 @@ export function createRepartidorApiRouter(deps) {
 });
 
 // 1.d Generar link/QR de pago desde la app del repartidor
-  router.post('/pedidos/:id/pago-qr', withAuth, async (req, res) => {
+  router.post('/pedidos/:id/pago-qr', withAuth, requireExactRepartidor, async (req, res) => {
    try {
      const pedidoId = Number(req.params.id);
      const { chofer_id, role } = req.user || {};
@@ -317,14 +552,20 @@ export function createRepartidorApiRouter(deps) {
        proveedor: pago.proveedor,
      });
    } catch (e) {
-     console.error('REPARTIDOR PAGO QR ERROR:', e);
-     const status = e.statusCode || 500;
-     return res.status(status).json({ error: e.message || 'Error generando pago QR' });
+     const domainError = safeQrDomainError(e);
+     console.error('REPARTIDOR_PAGO_QR_FAILED', {
+       code: domainError?.code || 'INTERNAL_ERROR',
+       pedidoId: Number.isSafeInteger(Number(req.params.id)) ? Number(req.params.id) : null,
+     });
+     if (domainError) {
+       return res.status(domainError.status).json({ error: domainError.message, code: domainError.code });
+     }
+     return res.status(500).json({ error: 'Error generando pago QR' });
    }
 });
 
 // 1.e Consultar estado del pago QR desde la app del repartidor
-  router.get('/pedidos/:id/pago-qr/estado', withAuth, async (req, res) => {
+  router.get('/pedidos/:id/pago-qr/estado', withAuth, requireExactRepartidor, async (req, res) => {
    try {
      const pedidoId = Number(req.params.id);
      const { chofer_id, role } = req.user || {};
@@ -370,7 +611,7 @@ export function createRepartidorApiRouter(deps) {
 });
 
 // 1.f Forzar mensaje de transferencia manual desde la app del repartidor
-  router.post('/pedidos/:id/transferencia/notificar', withAuth, async (req, res) => {
+  router.post('/pedidos/:id/transferencia/notificar', withAuth, requireExactRepartidor, async (req, res) => {
    try {
      const pedidoId = Number(req.params.id);
      const { chofer_id, role } = req.user || {};
@@ -405,10 +646,9 @@ export function createRepartidorApiRouter(deps) {
 });
 
 // 1.a Zonas del repartidor actual (compat legacy /api/repartidor/mis-zonas)
-  router.get('/mis-zonas', withAuth, async (req, res) => {
+  router.get('/mis-zonas', withAuth, requireExactRepartidor, async (req, res) => {
    try {
-     const { chofer_id } = req.user || {};
-     const empresaId = getEmpresaIdFromToken(req);
+     const { chofer_id, empresa_id: empresaId } = req.user || {};
 
      if (!chofer_id) return res.json([]);
      if (!empresaId) return res.status(400).json({ error: 'Empresa no determinada' });
@@ -416,7 +656,9 @@ export function createRepartidorApiRouter(deps) {
      const rows = await query(
        `SELECT z.id, z.nombre, z.dias_entrega, z.poligono
           FROM zona_chofer zc
-          JOIN zonas_geograficas z ON z.id = zc.zona_id
+          JOIN zonas_geograficas z
+           ON z.id = zc.zona_id
+          AND z.empresa_id = zc.empresa_id
          WHERE zc.chofer_id = $1
            AND zc.empresa_id = $2
            AND z.empresa_id = $2
@@ -443,7 +685,7 @@ export function createRepartidorApiRouter(deps) {
 });
 
 // 1.b Evidencias de entrega (auditoría rápida)
-  router.get('/entregas-evidencias', withAuth, async (req, res) => {
+  router.get('/entregas-evidencias', withAuth, requireExactRepartidor, async (req, res) => {
    try {
      const { chofer_id, empresa_id, role } = req.user || {};
      const from = String(req.query?.from || '');
@@ -471,9 +713,15 @@ export function createRepartidorApiRouter(deps) {
        `SELECT e.pedido_id, e.chofer_id, e.checklist, e.evidencia, e.updated_at,
                pe.cliente
           FROM entregas_evidencias e
-          JOIN pedidos p ON p.id = e.pedido_id
-          LEFT JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
+          JOIN pedidos p
+            ON p.id = e.pedido_id
+           AND p.empresa_id = e.empresa_id
+          JOIN puntos_entrega pe
+            ON pe.id = p.punto_entrega_id
+           AND pe.empresa_id = p.empresa_id
          WHERE ${where.join(' AND ')}
+           AND p.empresa_id = $1
+           AND p.chofer_id = $2
          ORDER BY e.updated_at DESC
          LIMIT 120`,
        vals
@@ -487,10 +735,9 @@ export function createRepartidorApiRouter(deps) {
 });
 
 // 1.c Stock acumulado del repartidor (con arrastre)
-  router.get('/stock-acumulado', withAuth, async (req, res) => {
+  router.get('/stock-acumulado', withAuth, requireExactRepartidor, async (req, res) => {
    try {
-     const { chofer_id } = req.user || {};
-     const empresaId = getEmpresaIdFromToken(req);
+     const { chofer_id, empresa_id: empresaId } = req.user || {};
      const fecha = String(req.query?.fecha || new Date().toISOString().slice(0, 10)).slice(0, 10);
 
      if (!chofer_id) return res.status(400).json({ error: 'Usuario sin chofer asociado' });
@@ -498,7 +745,21 @@ export function createRepartidorApiRouter(deps) {
 
      await ensureRepartidorSchema();
 
-     const rows = await query(
+     const rows = await withTransaction(async txQuery => {
+      const identityItems = await txQuery(
+        `SELECT ip.id, ip.producto_id, ip.producto
+           FROM pedidos p
+           JOIN items_pedido ip ON ip.pedido_id = p.id
+          WHERE p.empresa_id = $1
+            AND p.chofer_id = $2
+            AND p.estado = 'entregado'
+            AND (COALESCE(p.fecha_entrega, p.fecha) AT TIME ZONE 'America/Argentina/Buenos_Aires')::date <= $3::date
+          ORDER BY ip.id`,
+        [empresaId, chofer_id, fecha]
+      );
+      await resolveProductIdentityItems(txQuery, { empresaId, items: identityItems });
+
+      return txQuery(
        `WITH
           cargas_prev AS (
             SELECT csm.producto_id, COALESCE(SUM(csm.cantidad),0) AS qty
@@ -517,11 +778,16 @@ export function createRepartidorApiRouter(deps) {
               COALESCE(SUM(ip.cantidad),0) AS qty
             FROM pedidos p
             JOIN items_pedido ip ON ip.pedido_id = p.id
-            LEFT JOIN productos pr ON pr.empresa_id = p.empresa_id
-              AND (
-                pr.id = ip.producto_id
-                OR (ip.producto_id IS NULL AND pr.nombre = ip.producto)
-              )
+            LEFT JOIN LATERAL (
+              SELECT CASE WHEN COUNT(*) = 1 THEN MIN(px.id) END AS id
+                FROM productos px
+               WHERE ip.producto_id IS NULL
+                 AND px.empresa_id = p.empresa_id
+                 AND LOWER(TRIM(px.nombre)) = LOWER(TRIM(ip.producto))
+            ) legacy ON TRUE
+            LEFT JOIN productos pr
+              ON pr.empresa_id = p.empresa_id
+             AND pr.id = CASE WHEN ip.producto_id IS NOT NULL THEN ip.producto_id ELSE legacy.id END
             WHERE p.empresa_id = $1
               AND p.chofer_id = $2
               AND p.estado = 'entregado'
@@ -546,11 +812,16 @@ export function createRepartidorApiRouter(deps) {
               COALESCE(SUM(ip.cantidad),0) AS qty
             FROM pedidos p
             JOIN items_pedido ip ON ip.pedido_id = p.id
-            LEFT JOIN productos pr ON pr.empresa_id = p.empresa_id
-              AND (
-                pr.id = ip.producto_id
-                OR (ip.producto_id IS NULL AND pr.nombre = ip.producto)
-              )
+            LEFT JOIN LATERAL (
+              SELECT CASE WHEN COUNT(*) = 1 THEN MIN(px.id) END AS id
+                FROM productos px
+               WHERE ip.producto_id IS NULL
+                 AND px.empresa_id = p.empresa_id
+                 AND LOWER(TRIM(px.nombre)) = LOWER(TRIM(ip.producto))
+            ) legacy ON TRUE
+            LEFT JOIN productos pr
+              ON pr.empresa_id = p.empresa_id
+             AND pr.id = CASE WHEN ip.producto_id IS NOT NULL THEN ip.producto_id ELSE legacy.id END
             WHERE p.empresa_id = $1
               AND p.chofer_id = $2
               AND p.estado = 'entregado'
@@ -579,9 +850,10 @@ export function createRepartidorApiRouter(deps) {
           LEFT JOIN entregas_day ed ON ed.producto_id = p.id
           ORDER BY p.nombre`,
        [empresaId, chofer_id, fecha]
-     );
+      );
+    });
 
-     const kpis = rows.reduce((acc, r) => {
+    const kpis = rows.reduce((acc, r) => {
        acc.saldo_inicial += Number(r.saldo_inicial || 0);
        acc.cargado += Number(r.cargado || 0);
        acc.entregado += Number(r.entregado || 0);
@@ -591,201 +863,268 @@ export function createRepartidorApiRouter(deps) {
 
      res.json({ ok: true, fecha, rows, kpis });
    } catch (e) {
+     if (e?.code === 'PRODUCT_IDENTITY_CONFLICT') {
+       return res.status(409).json({ error: e.message, code: e.code });
+     }
      console.error('REPARTIDOR STOCK-ACUMULADO ERROR:', e);
-     res.status(500).json({ error: 'Error calculando stock acumulado' });
+     return res.status(500).json({ error: 'Error calculando stock acumulado' });
    }
 });
 
 // 2. Actualizar Estado o Pago (PUT) - Para los botones del repartidor
-  router.put('/pedidos/:id', withAuth, async (req, res) => {
-   try {
-     await ensureCuentaCorrienteSchema();
-     // 1. Usuario autenticado
-     const { chofer_id, empresa_id } = req.user;
-     const pedidoId = req.params.id;
+  router.put('/pedidos/:id', withAuth, requireExactRepartidor, async (req, res) => {
+    const rawId = req.params.id;
+    const pedidoId = /^\d+$/.test(rawId) ? Number(rawId) : NaN;
+    const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
+    const hasEstado = Object.hasOwn(body, 'estado');
+    const hasMetodoPago = Object.hasOwn(body, 'metodo_pago');
+    const hasZonaId = Object.hasOwn(body, 'zona_id');
+    const { estado, metodo_pago: metodoPago, zona_id: zonaIdBody } = body;
+    const estadosPermitidos = new Set(['pendiente', 'en_ruta', 'en_camino', 'cancelado']);
+    const metodosPagoPermitidos = new Set(['efectivo', 'transferencia', 'cuenta_corriente']);
 
-     // 👇 Primero leemos el body
-     const { estado, metodo_pago, zona_id: zonaIdBody } = req.body || {};
+    if (!Number.isSafeInteger(pedidoId) || pedidoId <= 0) {
+      return res.status(400).json({ error: 'ID inválido' });
+    }
+    if (!hasEstado && !hasMetodoPago && !hasZonaId) {
+      return res.status(400).json({ error: 'No hay campos para actualizar' });
+    }
+    if (hasEstado) {
+      if (estado === 'entregado') {
+        return res.status(400).json({ error: 'Usá POST /api/repartidor/pedidos/:id/entregar' });
+      }
+      if (typeof estado !== 'string' || !estadosPermitidos.has(estado)) {
+        return res.status(400).json({ error: 'Estado inválido' });
+      }
+    }
+    if (hasMetodoPago && (typeof metodoPago !== 'string' || !metodosPagoPermitidos.has(metodoPago))) {
+      return res.status(400).json({ error: 'Método de pago inválido' });
+    }
+    if (hasZonaId && (!Number.isSafeInteger(zonaIdBody) || zonaIdBody <= 0)) {
+      return res.status(400).json({ error: 'Zona inválida' });
+    }
+    if (typeof withTransaction !== 'function') {
+      return res.status(500).json({ error: 'Error actualizando pedido' });
+    }
 
-     // 👇 Guard correcto (después de leer estado)
-     if (estado && String(estado).toLowerCase() === 'entregado') {
-       return res
-         .status(400)
-         .json({ error: 'Usá POST /api/repartidor/pedidos/:id/entregar' });
-     }
+    const { chofer_id: choferId, empresa_id: empresaId } = req.user;
+    const transiciones = {
+      pendiente: new Set(['pendiente', 'en_ruta', 'en_camino', 'cancelado']),
+      en_ruta: new Set(['pendiente', 'en_ruta', 'en_camino', 'cancelado']),
+      en_camino: new Set(['pendiente', 'en_ruta', 'en_camino', 'cancelado']),
+    };
 
-     if (!chofer_id) {
-       return res.status(403).json({ error: 'No autorizado' });
-     }
+    try {
+      await withTransaction(async txQuery => {
+        const pedidos = await txQuery(
+          `SELECT p.id, p.chofer_id, p.estado, p.metodo_pago, p.zona_id, p.punto_entrega_id
+             FROM pedidos p
+            WHERE p.id = $1
+              AND p.empresa_id = $2
+            FOR UPDATE`,
+          [pedidoId, empresaId]
+        );
+        if (pedidos.length !== 1) throw deliveryHttpError(404, 'Pedido no encontrado');
 
-     // 2. Verificar el pedido (SUMÁ empresa_id para multi-tenant)
-     const rows = await query(
-       `SELECT p.chofer_id, p.metodo_pago, p.estado, p.zona_id, p.punto_entrega_id,
-               COALESCE(pe.cuenta_corriente_habilitada, FALSE) AS cuenta_corriente_habilitada
-          FROM pedidos p
-          LEFT JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
-         WHERE p.id = $1 AND p.empresa_id = $2`,
-       [pedidoId, empresa_id]
-     );
+        // Orden global en flujos repartidor: pedido -> chofer -> punto/zona.
+        // El pedido se bloquea primero para mantener el orden ya usado por entrega;
+        // el lock compartido del chofer mantiene activa la identidad hasta COMMIT.
+        const choferes = await txQuery(
+          `SELECT id
+             FROM choferes
+            WHERE id = $1
+              AND empresa_id = $2
+              AND activo IS TRUE
+            FOR SHARE`,
+          [choferId, empresaId]
+        );
+        if (choferes.length !== 1) throw deliveryHttpError(403, 'No autorizado');
 
-     if (!rows.length) {
-       return res.status(404).json({ error: 'Pedido no encontrado' });
-     }
+        const pedido = pedidos[0];
+        if (pedido.chofer_id != null && Number(pedido.chofer_id) !== choferId) {
+          throw deliveryHttpError(403, 'Pedido asignado a otro chofer');
+        }
+        if (pedido.estado === 'entregado' || pedido.estado === 'cancelado') {
+          throw deliveryHttpError(409, 'El pedido está finalizado y no admite cambios');
+        }
+        if (!Object.hasOwn(transiciones, pedido.estado)) {
+          throw deliveryHttpError(409, 'Estado actual del pedido inválido');
+        }
+        if (pedido.chofer_id == null && pedido.estado !== 'pendiente') {
+          throw deliveryHttpError(409, 'El pedido no está disponible para tomar');
+        }
+        if (hasEstado && !transiciones[pedido.estado].has(estado)) {
+          throw deliveryHttpError(409, 'Transición de estado no permitida');
+        }
 
-     const pedido             = rows[0];
-     const actualChofer       = pedido.chofer_id;
-     const teniaZonaAntes     = pedido.zona_id != null;
-     const puntoEntregaId     = pedido.punto_entrega_id;
+        const metodoPagoFinal = hasMetodoPago ? metodoPago : pedido.metodo_pago;
+        if (metodoPagoFinal === 'cuenta_corriente') {
+          if (!Number.isSafeInteger(Number(pedido.punto_entrega_id)) || Number(pedido.punto_entrega_id) <= 0) {
+            throw deliveryValidationError('El pedido no tiene cliente válido para cuenta corriente');
+          }
+          const puntos = await txQuery(
+            `SELECT id, cuenta_corriente_habilitada
+               FROM puntos_entrega
+              WHERE id = $1
+                AND empresa_id = $2
+              FOR SHARE`,
+            [pedido.punto_entrega_id, empresaId]
+          );
+          if (puntos.length !== 1 || puntos[0].cuenta_corriente_habilitada !== true) {
+            throw deliveryValidationError('Este cliente no está habilitado para cuenta corriente');
+          }
+        }
 
-     if (isCuentaCorrienteMethod(metodo_pago) && !pedido.cuenta_corriente_habilitada) {
-       return res.status(400).json({ error: 'Este cliente no está habilitado para cuenta corriente' });
-     }
+        let zonaIdFinal = pedido.zona_id;
+        let actualizarZonaPuntoEntrega = false;
+        if (hasZonaId) {
+          const zonas = await txQuery(
+            `SELECT zona_id
+               FROM zona_chofer
+              WHERE chofer_id = $1
+                AND empresa_id = $2
+                AND zona_id = $3
+              FOR SHARE`,
+            [choferId, empresaId, zonaIdBody]
+          );
+          if (zonas.length !== 1) throw deliveryValidationError('Zona no válida para este chofer');
+          zonaIdFinal = zonaIdBody;
+          actualizarZonaPuntoEntrega = true;
+        } else if (pedido.zona_id == null) {
+          const zonas = await txQuery(
+            `SELECT zona_id
+               FROM zona_chofer
+              WHERE chofer_id = $1
+                AND empresa_id = $2
+              ORDER BY zona_id
+              FOR SHARE`,
+            [choferId, empresaId]
+          );
+          if (zonas.length === 1) {
+            zonaIdFinal = zonas[0].zona_id;
+            actualizarZonaPuntoEntrega = true;
+          }
+        }
 
-     // 3. Si ya está asignado a OTRO chofer, bloquear
-     if (actualChofer && actualChofer !== chofer_id) {
-       return res.status(403).json({ error: 'Pedido asignado a otro chofer' });
-     }
-
-     // 4. Si no tiene chofer, lo tomo para mí de forma segura
-     if (!actualChofer) {
-       const taken = await query(
-         `UPDATE pedidos
-            SET chofer_id = $1
-          WHERE id = $2
-            AND empresa_id = $3
-            AND chofer_id IS NULL
+        const sets = ['chofer_id = $1'];
+        const values = [choferId];
+        if (hasEstado) {
+          values.push(estado);
+          sets.push(`estado = $${values.length}`);
+        }
+        if (hasMetodoPago) {
+          values.push(metodoPago);
+          sets.push(`metodo_pago = $${values.length}`);
+        }
+        if (zonaIdFinal != null && (hasZonaId || pedido.zona_id == null)) {
+          values.push(zonaIdFinal);
+          sets.push(`zona_id = $${values.length}`);
+        }
+        values.push(pedidoId, empresaId);
+        const pedidoIdIndex = values.length - 1;
+        const empresaIdIndex = values.length;
+        if (actualizarZonaPuntoEntrega && pedido.punto_entrega_id != null) {
+          const pointRows = await txQuery(
+            `SELECT pe.id, pe.empresa_id,
+                    to_jsonb(pe)->>'telefono' AS telefono,
+                    to_jsonb(pe)->>'telefono_normalizado' AS telefono_normalizado,
+                    to_jsonb(pe)->>'direccion' AS direccion
+               FROM puntos_entrega pe
+              WHERE pe.id = $1 AND pe.empresa_id = $2`,
+            [pedido.punto_entrega_id, empresaId]
+          );
+          if (pointRows.length !== 1) throw deliveryHttpError(409, 'Punto de entrega inválido');
+          await lockDeliveryPointRows(txQuery, {
+            empresaId,
+            rows: pointRows,
+            normalizePhoneFn: value => String(value || '').replace(/\D+/g, ''),
+          });
+        }
+        const actualizados = await txQuery(
+          `UPDATE pedidos
+              SET ${sets.join(', ')}
+            WHERE id = $${pedidoIdIndex}
+              AND empresa_id = $${empresaIdIndex}
+              AND (chofer_id = $1 OR (chofer_id IS NULL AND estado = 'pendiente'))
           RETURNING id`,
-         [chofer_id, pedidoId, empresa_id]
-       );
+          values
+        );
+        if (actualizados.length !== 1) {
+          throw deliveryHttpError(409, 'El pedido cambió durante la actualización');
+        }
 
-       if (!taken.length) {
-         return res.status(400).json({ error: 'El pedido ya fue tomado por otro.' });
-       }
-     }
+        if (actualizarZonaPuntoEntrega && pedido.punto_entrega_id != null) {
+          const puntosActualizados = await txQuery(
+            `UPDATE puntos_entrega
+                SET zona_id = $1
+              WHERE id = $2
+                AND empresa_id = $3
+            RETURNING id`,
+            [zonaIdFinal, pedido.punto_entrega_id, empresaId]
+          );
+          if (puntosActualizados.length !== 1) {
+            throw deliveryHttpError(409, 'No se pudo actualizar la zona del cliente');
+          }
+        }
+      });
 
-     // 🔁 LOGICA DE ZONA (solo si el pedido venía SIN zona)
-     let zonaIdToSet = null;
-     let actualizarZonaPuntoEntrega = false;
+      const postCommit = (fn, label) => {
+        if (typeof fn !== 'function') return;
+        Promise.resolve()
+          .then(fn)
+          .catch(error => console.error(label, error?.message || error));
+      };
+      if (hasEstado) {
+        postCommit(() => notifyEstadoPedidoPush(pedidoId, estado), 'PUSH estado pedido error:');
+      }
+      if (estado === 'en_ruta' || estado === 'en_camino') {
+        postCommit(() => notificarEnRuta(pedidoId, empresaId), 'Error en notificación background:');
+        postCommit(
+          () => ejecutarEstrategiaVecinos({ pedidoId, empresaId }),
+          'Error estrategia vecinos:'
+        );
+      }
 
-     if (!teniaZonaAntes) {
-       // PRIORIDAD 1: el front mandó zona explícita
-       if (zonaIdBody) {
-         const zCheck = await query(
-           `
-           SELECT zona_id
-             FROM zona_chofer
-            WHERE chofer_id = $1
-              AND empresa_id = $2
-              AND zona_id = $3
-           `,
-           [chofer_id, empresa_id, zonaIdBody]
-         );
+      return res.json({ ok: true });
+    } catch (e) {
+      if (e?.code === 'TRANSACTION_OUTCOME_UNKNOWN') {
+        return res.status(503).json({
+          error: 'Resultado de actualización indeterminado',
+          code: 'TRANSACTION_OUTCOME_UNKNOWN',
+        });
+      }
+      const statusCode = Number(e?.statusCode);
+      if (Number.isInteger(statusCode) && statusCode >= 400 && statusCode < 500) {
+        return res.status(statusCode).json({ error: e.message });
+      }
+      console.error('UPDATE REPARTIDOR ERROR:', e);
+      return res.status(500).json({ error: 'Error actualizando pedido' });
+    }
+  });
 
-         if (!zCheck.length) {
-           return res.status(400).json({ error: 'Zona no válida para este chofer' });
-         }
-
-         zonaIdToSet = zonaIdBody;
-         actualizarZonaPuntoEntrega = true;
-       } else {
-         // PRIORIDAD 2: el chofer tiene exactamente 1 zona → auto-asignar
-         const zRows = await query(
-           `
-           SELECT zona_id
-             FROM zona_chofer
-            WHERE chofer_id = $1
-              AND empresa_id = $2
-           `,
-           [chofer_id, empresa_id]
-         );
-
-         if (zRows.length === 1) {
-           zonaIdToSet = zRows[0].zona_id;
-           actualizarZonaPuntoEntrega = true;
-         }
-       }
-     }
-
-     // 5. Armar UPDATE (SIN entregado)
-     const sets = [];
-     const vals = [];
-     let idx = 1;
-
-     if (estado) {
-       sets.push(`estado = $${idx++}`);
-       vals.push(estado);
-     }
-
-     if (metodo_pago) {
-       sets.push(`metodo_pago = $${idx++}`);
-       vals.push(metodo_pago);
-     }
-
-     if (zonaIdToSet != null) {
-       sets.push(`zona_id = $${idx++}`);
-       vals.push(zonaIdToSet);
-     }
-
-     if (sets.length) {
-       vals.push(pedidoId, empresa_id);
-       await query(
-         `UPDATE pedidos SET ${sets.join(', ')} WHERE id = $${idx++} AND empresa_id = $${idx}`,
-         vals
-       );
-
-       // si definimos zona, actualizamos punto_entrega
-       if (zonaIdToSet != null && actualizarZonaPuntoEntrega && puntoEntregaId) {
-         try {
-           await query(
-             `UPDATE puntos_entrega
-                 SET zona_id = $1
-               WHERE id = $2`,
-             [zonaIdToSet, puntoEntregaId]
-           );
-         } catch (err) {
-           console.error('Error actualizando zona en punto_entrega:', err);
-         }
-       }
-
-       // 🔔 PUSH cambio de estado (si aplica)
-       if (estado) {
-         notifyEstadoPedidoPush(pedidoId, estado).catch(err =>
-           console.error('PUSH estado pedido error:', err)
-         );
-       }
-
-       // CASO B: EN RUTA / EN CAMINO
-       if (estado === 'en_ruta' || estado === 'en_camino') {
-         notificarEnRuta(pedidoId, empresa_id).catch(err =>
-           console.error('Error en notificación background:', err)
-         );
-
-         ejecutarEstrategiaVecinos({
-           pedidoId: pedidoId,
-           empresaId: empresa_id
-         }).catch(err => console.error('Error estrategia vecinos:', err));
-       }
-
-     }
-
-     res.json({ ok: true });
-   } catch (e) {
-     console.error('UPDATE REPARTIDOR ERROR:', e);
-     res.status(500).json({ error: 'Error actualizando pedido' });
-   }
-});
-
-  router.post('/pedidos/:id/entregar', withAuth, async (req, res) => {
+  router.post('/pedidos/:id/entregar', withAuth, requireExactRepartidor, async (req, res) => {
    // 1. Extracción y Validación Básica
    const { chofer_id, empresa_id, username } = req.user || {};
    const pedidoId = Number(req.params.id);
+   const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
+   const hasMetodoPago = Object.hasOwn(body, 'metodo_pago');
+   const metodosPagoPermitidos = new Set(['efectivo', 'transferencia', 'cuenta_corriente']);
    // 'movimientos' viene del Modal de Activos del Frontend
-	 const { movimientos = [], retornables = [], zona_id = null, metodo_pago = null, checklist = null, evidencia = null } = req.body || {};
+	 const { movimientos = [], retornables = [], zona_id = null, metodo_pago = null, checklist = null, evidencia = null } = body;
+   const hasZonaId = Object.hasOwn(body, 'zona_id') && zona_id != null;
 
    if (!chofer_id) return res.status(403).json({ error: 'No autorizado: Falta chofer_id' });
    if (!Number.isFinite(pedidoId)) return res.status(400).json({ error: 'ID de pedido inválido' });
+   if (hasMetodoPago && (typeof metodo_pago !== 'string' || !metodosPagoPermitidos.has(metodo_pago))) {
+     return res.status(400).json({ error: 'Método de pago inválido' });
+   }
+   if (hasZonaId && (!Number.isSafeInteger(zona_id) || zona_id <= 0)) {
+     return res.status(400).json({ error: 'Zona inválida' });
+   }
 
    const client = await pool.connect();
+   let transactionPhase = 'before_begin';
+   let releaseError = null;
    
 	   try {
 	     await ensureRepartidorSchema();
@@ -793,14 +1132,13 @@ export function createRepartidorApiRouter(deps) {
      // INICIO TRANSACCIÓN (Todo o Nada)
      // -----------------------------------------------------
      await client.query('BEGIN');
+     transactionPhase = 'work';
 
      // 2. Lock del Pedido (Evita doble entrega concurrente)
      const pedQ = await client.query(
        `
-       SELECT p.id, p.empresa_id, p.chofer_id, p.estado, p.metodo_pago, p.zona_id, p.punto_entrega_id, p.monto,
-              COALESCE(pe.cuenta_corriente_habilitada, FALSE) AS cuenta_corriente_habilitada
+       SELECT p.id, p.empresa_id, p.chofer_id, p.estado, p.metodo_pago, p.zona_id, p.punto_entrega_id, p.monto
        FROM pedidos p
-       LEFT JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
        WHERE p.id = $1 AND p.empresa_id = $2
        FOR UPDATE OF p
        `,
@@ -808,196 +1146,368 @@ export function createRepartidorApiRouter(deps) {
      );
 
      if (!pedQ.rows.length) {
-       await client.query('ROLLBACK');
-       return res.status(404).json({ error: 'Pedido no encontrado' });
+       throw deliveryHttpError(404, 'Pedido no encontrado');
      }
 
      const pedido = pedQ.rows[0];
-     const estadoAnterior = String(pedido.estado || '').toLowerCase();
-     const metodoPagoFinal = metodo_pago ?? pedido.metodo_pago;
+     const estadoAnterior = pedido.estado;
+     const metodoPagoFinal = hasMetodoPago ? metodo_pago : pedido.metodo_pago;
 
-     if (isCuentaCorrienteMethod(metodo_pago) && !pedido.cuenta_corriente_habilitada) {
-       await client.query('ROLLBACK');
-       return res.status(400).json({ error: 'Este cliente no está habilitado para cuenta corriente' });
+     // 3. Revalidar y bloquear la identidad operativa dentro de la transacción.
+     // Orden global de locks: pedido -> chofer -> punto/zona.
+     const choferQ = await client.query(
+       `SELECT id
+          FROM choferes
+         WHERE id = $1
+           AND empresa_id = $2
+           AND activo IS TRUE
+         FOR SHARE`,
+       [chofer_id, empresa_id]
+     );
+     if (choferQ.rows.length !== 1) {
+       throw deliveryHttpError(403, 'Chofer no autorizado');
      }
 
-     // 3. Validar Asignación de Chofer
-     // Si el pedido ya tiene chofer y NO soy yo, error.
+     // Validar asignación: si el pedido ya tiene chofer y NO soy yo, error.
      if (pedido.chofer_id && Number(pedido.chofer_id) !== Number(chofer_id)) {
-       await client.query('ROLLBACK');
-       return res.status(403).json({ error: 'Este pedido fue tomado por otro chofer.' });
-     }
-     
-     // Si no tiene chofer (ej: auto-asignación al entregar), me lo asigno.
-     if (!pedido.chofer_id) {
-       await client.query(
-         `UPDATE pedidos SET chofer_id = $1 WHERE id = $2`,
-         [chofer_id, pedidoId]
-       );
+       throw deliveryHttpError(403, 'Este pedido fue tomado por otro chofer.');
      }
 
      // 4. Idempotencia (Si ya se entregó, salimos bien sin hacer nada)
      if (estadoAnterior === 'entregado') {
+       transactionPhase = 'commit';
        await client.query('COMMIT');
+       transactionPhase = 'committed';
        return res.json({ ok: true, already: true });
      }
+     if (estadoAnterior !== 'en_ruta' && estadoAnterior !== 'en_camino') {
+       throw deliveryHttpError(409, 'El pedido no está en un estado entregable');
+     }
+
+     if (typeof metodoPagoFinal !== 'string' || !metodosPagoPermitidos.has(metodoPagoFinal)) {
+       throw deliveryHttpError(409, 'El pedido tiene un método de pago inválido');
+     }
+
+     let puntoEntrega = null;
+     if (pedido.punto_entrega_id != null) {
+       const puntoQ = await client.query(
+         `SELECT id, cuenta_corriente_habilitada
+            FROM puntos_entrega
+           WHERE id = $1
+             AND empresa_id = $2
+           FOR SHARE`,
+         [pedido.punto_entrega_id, empresa_id]
+       );
+       if (puntoQ.rows.length !== 1) {
+         throw deliveryValidationError('El punto de entrega no pertenece a la empresa');
+       }
+       puntoEntrega = puntoQ.rows[0];
+     }
+
+     if (isCuentaCorrienteMethod(metodoPagoFinal)) {
+       if (puntoEntrega?.cuenta_corriente_habilitada !== true) {
+         throw deliveryValidationError('Este cliente no está habilitado para cuenta corriente');
+       }
+     }
+
+     const checklistCompleto = checklist?.cliente_confirmado === true
+       && checklist?.producto_entregado === true
+       && checklist?.cobro_confirmado === true;
+     if (!checklistCompleto) {
+       throw deliveryValidationError('Checklist de entrega incompleto');
+     }
+
+     const movimientosNormalizados = normalizeMovimientosActivosPayload(movimientos);
 
      // 5. Lógica de Zona (Opcional, pero recomendada)
      let zonaIdToSet = pedido.zona_id; // Por defecto mantenemos la que tiene
      let actualizarZonaPuntoEntrega = false;
 
-     if (pedido.zona_id == null) {
-       // Si viene zona en el body, validamos que el chofer la tenga permitida
-       if (zona_id != null) {
+     // Si viene zona en el body, validamos que el chofer la tenga permitida,
+     // aunque el pedido ya tuviera otra zona persistida.
+     if (hasZonaId) {
          const zCheck = await client.query(
-           `SELECT zona_id FROM zona_chofer WHERE chofer_id = $1 AND zona_id = $2`,
-           [chofer_id, zona_id]
+           `SELECT zona_id
+              FROM zona_chofer
+             WHERE chofer_id = $1
+               AND empresa_id = $2
+               AND zona_id = $3
+             FOR SHARE`,
+           [chofer_id, empresa_id, zona_id]
          );
-         if (!zCheck.rows.length) {
-           await client.query('ROLLBACK');
-           return res.status(400).json({ error: 'La zona indicada no pertenece a este chofer.' });
+         if (zCheck.rows.length !== 1) {
+           throw deliveryValidationError('La zona indicada no pertenece a este chofer.');
          }
          zonaIdToSet = zona_id;
          actualizarZonaPuntoEntrega = true;
-       } else {
+     } else if (pedido.zona_id == null) {
          // Auto-detectar si el chofer solo tiene 1 zona
          const zRows = await client.query(
-           `SELECT zona_id FROM zona_chofer WHERE chofer_id = $1 AND empresa_id = $2`,
+           `SELECT zona_id
+              FROM zona_chofer
+             WHERE chofer_id = $1
+               AND empresa_id = $2
+             ORDER BY zona_id
+             FOR SHARE`,
            [chofer_id, empresa_id]
          );
          if (zRows.rows.length === 1) {
            zonaIdToSet = zRows.rows[0].zona_id;
            actualizarZonaPuntoEntrega = true;
          }
+     }
+
+     // Orden global: pedido -> chofer -> punto/zona -> productos ordenados.
+     // Esta única composición bloqueada alimenta stock, retornables y activos.
+     const composicion = await loadCanonicalDeliveryComposition(client, {
+       pedidoId,
+       empresaId: empresa_id,
+       choferId: chofer_id,
+     });
+     const activosRequeridos = composicion
+       .filter(({ producto }) => {
+         const config = producto.config_activo || {};
+         return config.es_activo === true || config.es_activo === 'true'
+           || config.usa_alquiler === true || config.usa_alquiler === 'true';
+       })
+       .map(item => ({
+         item_pedido_id: item.itemPedidoId,
+         producto_id: item.productoId,
+         cantidad: item.cantidad,
+       }));
+     validateEntregasActivasRequeridas(activosRequeridos, movimientosNormalizados);
+
+     // Recién después de validar y congelar la composición puede haber escrituras.
+     if (!pedido.chofer_id) {
+       const asignado = await client.query(
+         `UPDATE pedidos
+             SET chofer_id = $1
+           WHERE id = $2
+             AND empresa_id = $3
+             AND chofer_id IS NULL
+         RETURNING id`,
+         [chofer_id, pedidoId, empresa_id]
+       );
+       if (asignado.rows.length !== 1) {
+         throw deliveryHttpError(409, 'El pedido cambió durante el cierre');
        }
      }
 
      const fechaEntregaIso = new Date().toISOString();
 
-     // 6. PROCESAMIENTO DE ACTIVOS (FSM) - CORREGIDO
+     // 6. RETORNABLES: validar todo y bloquear saldos antes de cualquier mutación de entrega.
+     const retornablesInput = normalizeRetornablesPayload(retornables);
+     const retornablesPedido = new Map();
+     for (const item of composicion) {
+       if (item.producto.retornable !== true) continue;
+       const previo = retornablesPedido.get(item.productoId) || {
+         productoId: item.productoId,
+         nombre: item.producto.nombre,
+         entregados: 0,
+       };
+       previo.entregados += item.cantidad;
+       retornablesPedido.set(item.productoId, previo);
+     }
+     for (const productoId of retornablesInput.keys()) {
+       if (!retornablesPedido.has(productoId)) {
+         throw deliveryValidationError('Producto retornable desconocido');
+       }
+     }
+
+     const retornablesPlan = [];
+     if (pedido.punto_entrega_id) {
+       const retornablesOrdenados = Array.from(retornablesPedido.values()).sort((a, b) => a.productoId - b.productoId);
+       for (const row of retornablesOrdenados) {
+         await client.query(
+           `INSERT INTO cliente_retornables_saldos
+              (empresa_id, punto_entrega_id, producto_id, saldo, updated_at)
+            VALUES ($1, $2, $3, 0, NOW())
+            ON CONFLICT (empresa_id, punto_entrega_id, producto_id) DO NOTHING`,
+           [empresa_id, pedido.punto_entrega_id, row.productoId]
+         );
+         const saldoQ = await client.query(
+           `SELECT saldo
+              FROM cliente_retornables_saldos
+             WHERE empresa_id = $1
+               AND punto_entrega_id = $2
+               AND producto_id = $3
+             FOR UPDATE`,
+           [empresa_id, pedido.punto_entrega_id, row.productoId]
+         );
+         const saldoActualRaw = Number(saldoQ.rows?.[0]?.saldo ?? 0);
+         const saldoActual = Number.isFinite(saldoActualRaw) ? saldoActualRaw : 0;
+         const devueltos = retornablesInput.get(row.productoId) ?? 0;
+         const saldoAntesDeDevolucion = saldoActual + row.entregados;
+         const maxExigible = Math.max(0, saldoAntesDeDevolucion);
+         if (devueltos > maxExigible) {
+           throw deliveryValidationError('La devolución de retornables supera el máximo exigible');
+         }
+         retornablesPlan.push({
+           productoId: row.productoId,
+           entregados: row.entregados,
+           devueltos,
+           delta: row.entregados - devueltos,
+           saldoResultante: saldoAntesDeDevolucion - devueltos,
+         });
+       }
+     } else if (retornablesInput.size) {
+       throw deliveryValidationError('El pedido no tiene cliente para registrar retornables');
+     }
+
+     // 7. PROCESAMIENTO DE ACTIVOS (FSM) - CORREGIDO
      // Usamos la función robusta que soporta transacciones externas y array de movimientos
-     if (Array.isArray(movimientos) && movimientos.length > 0) {
+     if (movimientosNormalizados.length > 0) {
        await registrarMovimientosActivosDesdePedido({
-         dbClient: client,              // Pasamos el cliente de la transacción
+         dbClient: client,
          empresaId: empresa_id,
          clienteId: pedido.punto_entrega_id,
-         pedidoId: pedidoId,
-         movimientos: movimientos,      // Array de { activo_id, tipo, ... }
+         pedidoId,
+         movimientos: movimientosNormalizados,
          usuario: username || 'repartidor',
-         origen: 'app_repartidor'
+         origen: 'app_repartidor',
+         estricto: true,
+         itemsCanonicos: composicion,
        });
      }
 
      // 7. Actualizar Pedido a ENTREGADO
-     await client.query(
+     if (actualizarZonaPuntoEntrega && pedido.punto_entrega_id && zonaIdToSet) {
+       const pointRows = await client.query(
+         `SELECT pe.id, pe.empresa_id,
+                 to_jsonb(pe)->>'telefono' AS telefono,
+                 to_jsonb(pe)->>'telefono_normalizado' AS telefono_normalizado,
+                 to_jsonb(pe)->>'direccion' AS direccion
+            FROM puntos_entrega pe
+           WHERE pe.id = $1 AND pe.empresa_id = $2`,
+         [pedido.punto_entrega_id, empresa_id]
+       );
+       if (pointRows.rows.length !== 1) throw deliveryHttpError(409, 'Punto de entrega inválido');
+       const txQuery = async (sql, params = []) => (await client.query(sql, params)).rows;
+       await lockDeliveryPointRows(txQuery, {
+         empresaId: empresa_id,
+         rows: pointRows.rows,
+         normalizePhoneFn: value => String(value || '').replace(/\D+/g, ''),
+       });
+     }
+     const pedidoActualizado = await client.query(
        `
        UPDATE pedidos
        SET estado = 'entregado',
            fecha_entrega = $2,
            cantidad_entregada = cantidad, -- Asumimos entrega total por defecto
-           metodo_pago = COALESCE($3, metodo_pago),
+           metodo_pago = $3,
            zona_id = COALESCE($4, zona_id)
        WHERE id = $1
+         AND empresa_id = $5
+         AND chofer_id = $6
+         AND estado = $7
+       RETURNING id
        `,
-       [pedidoId, fechaEntregaIso, metodo_pago, zonaIdToSet]
+       [pedidoId, fechaEntregaIso, metodoPagoFinal, zonaIdToSet, empresa_id, chofer_id, estadoAnterior]
      );
+     if (pedidoActualizado.rows.length !== 1) {
+       throw deliveryHttpError(409, 'El pedido cambió durante el cierre');
+     }
 
      // 7.b Actualizar Zona del Cliente si correspondía
      if (actualizarZonaPuntoEntrega && pedido.punto_entrega_id && zonaIdToSet) {
-       await client.query(
-         `UPDATE puntos_entrega SET zona_id = $1 WHERE id = $2`,
-         [zonaIdToSet, pedido.punto_entrega_id]
+       const puntoActualizado = await client.query(
+         `UPDATE puntos_entrega
+             SET zona_id = $1
+           WHERE id = $2
+             AND empresa_id = $3
+         RETURNING id`,
+         [zonaIdToSet, pedido.punto_entrega_id, empresa_id]
        );
+       if (puntoActualizado.rows.length !== 1) {
+         throw new Error('No se pudo actualizar el punto de entrega del pedido');
+       }
      }
 
      // 8. DESCUENTO DE STOCK DEL CHOFER (Consumibles / Productos vendidos)
      // Obtenemos los productos del pedido para descontarlos del inventario del chofer
-     const itemsQ = await client.query(
-       `
-       SELECT ip.cantidad, p.id AS producto_id
-       FROM items_pedido ip
-       JOIN productos p ON p.empresa_id = $2
-         AND (p.id = ip.producto_id
-           OR (ip.producto_id IS NULL AND LOWER(TRIM(p.nombre)) = LOWER(TRIM(ip.producto))))
-       WHERE ip.pedido_id = $1
-       `,
-       [pedidoId, empresa_id]
-     );
-
-     for (const it of itemsQ.rows) {
-       const qty = Number(it.cantidad) || 0;
-       const productoId = it.producto_id;
+     for (const it of composicion) {
+       const qty = it.cantidad;
+       const productoId = it.productoId;
+       // PostgreSQL entrega booleanos reales; NULL/legacy y cualquier valor no booleano son finitos.
+       const stockInfinito = it.producto.stock_infinito === true;
        
-       if (qty > 0 && productoId) {
-         // a) Registrar Movimiento (Historial)
-         await client.query(
+       if (qty > 0 && productoId && !stockInfinito) {
+         // a) Descontar sólo si la fila física existe y el saldo actual alcanza.
+         // El UPDATE condicionado relee el saldo después del lock compartido y evita
+         // tanto crear filas negativas como perder carreras con otros writers.
+         const stockWrite = await client.query(
+           `
+           UPDATE chofer_stock
+              SET cantidad = cantidad - $4
+            WHERE empresa_id = $1
+              AND chofer_id = $2
+              AND producto_id = $3
+              AND cantidad >= $4
+           RETURNING empresa_id, chofer_id, producto_id
+           `,
+           [empresa_id, chofer_id, productoId, qty]
+         );
+         if (stockWrite.rows.length !== 1) {
+           throw deliveryHttpError(409, 'Stock insuficiente para completar la entrega');
+         }
+
+         // b) Registrar el movimiento exacto después del saldo.
+         const movementWrite = await client.query(
            `
            INSERT INTO chofer_stock_mov
              (empresa_id, chofer_id, producto_id, cantidad, tipo, motivo, referencia, fecha)
            VALUES ($1, $2, $3, $4, 'venta', 'Entrega Pedido App', $5, $6)
+           RETURNING id
            `,
            [empresa_id, chofer_id, productoId, qty, `Pedido #${pedidoId}`, fechaEntregaIso]
          );
-
-         // b) Restar del Stock Físico (UPSERT negativo)
-         await client.query(
-           `
-           INSERT INTO chofer_stock (empresa_id, chofer_id, producto_id, cantidad)
-           VALUES ($1, $2, $3, $4) 
-           ON CONFLICT (empresa_id, chofer_id, producto_id)
-           DO UPDATE SET cantidad = chofer_stock.cantidad + EXCLUDED.cantidad
-           `,
-           [empresa_id, chofer_id, productoId, -qty] // -qty para restar
-         );
+         if (movementWrite.rows.length !== 1) throw new Error('No se pudo registrar el movimiento de stock');
        }
      }
 
-     // 8.b RETORNABLES: cliente recibe llenos y devuelve vacíos/envases.
-     // El saldo representa envases pendientes de devolver por cliente/producto.
-     const retornablesInput = normalizeRetornablesPayload(retornables);
-     const retornablesQ = await client.query(
-       `
-       SELECT
-         COALESCE(ip.producto_id, p.id) AS producto_id,
-         p.nombre,
-         COALESCE(SUM(ip.cantidad), 0) AS entregados
-       FROM items_pedido ip
-       JOIN productos p
-         ON p.empresa_id = $2
-        AND (
-             p.id = ip.producto_id
-          OR (ip.producto_id IS NULL AND LOWER(TRIM(p.nombre)) = LOWER(TRIM(ip.producto)))
-        )
-       WHERE ip.pedido_id = $1
-         AND COALESCE(p.retornable, FALSE) = TRUE
-       GROUP BY COALESCE(ip.producto_id, p.id), p.nombre
-       `,
-       [pedidoId, empresa_id]
-     );
-
-     for (const row of retornablesQ.rows || []) {
-       const productoId = Number(row.producto_id || 0);
-       const entregados = Number(row.entregados || 0);
-       if (!productoId || entregados <= 0 || !pedido.punto_entrega_id) continue;
-
-       const devueltos = Number(retornablesInput.get(productoId) || 0);
-       const delta = entregados - devueltos;
-
-       const saldoRows = await client.query(
-         `
-         INSERT INTO cliente_retornables_saldos
-           (empresa_id, punto_entrega_id, producto_id, saldo, updated_at)
-         VALUES ($1, $2, $3, $4, NOW())
-         ON CONFLICT (empresa_id, punto_entrega_id, producto_id)
-         DO UPDATE SET
-           saldo = cliente_retornables_saldos.saldo + EXCLUDED.saldo,
-           updated_at = NOW()
-         RETURNING saldo
-         `,
-         [empresa_id, pedido.punto_entrega_id, productoId, delta]
+     // 8.b RETORNABLES, fase 1: escribir todos los saldos canónicos del cliente.
+     for (const plan of retornablesPlan) {
+       await client.query(
+         `UPDATE cliente_retornables_saldos
+             SET saldo = $4, updated_at = NOW()
+           WHERE empresa_id = $1
+             AND punto_entrega_id = $2
+             AND producto_id = $3`,
+         [empresa_id, pedido.punto_entrega_id, plan.productoId, plan.saldoResultante]
        );
+     }
 
-       const saldoResultante = Number(saldoRows.rows?.[0]?.saldo ?? 0);
+     const txQuery = async (sql, params = []) => {
+       const result = await client.query(sql, params);
+       return result.rows;
+     };
+
+     // Fase 2: escribir todos los saldos del ledger genérico, todavía sin movimientos.
+     for (const plan of retornablesPlan) {
+       plan.ledgerInput = {
+         empresaId: empresa_id,
+         sujetoTipo: 'cliente',
+         sujetoId: pedido.punto_entrega_id,
+         productoId: plan.productoId,
+         deltaSaldo: plan.delta,
+         saldoObjetivo: plan.saldoResultante,
+         cantidadLlenos: plan.entregados,
+         cantidadVacios: plan.devueltos,
+         pedidoId,
+         choferId: chofer_id,
+         tipo: 'entrega_cliente',
+         origen: 'pedido',
+         referencia: `Pedido #${pedidoId}`,
+         observacion: `Entrega Pedido #${pedidoId}: +${plan.entregados} llenos / -${plan.devueltos} vacíos`,
+         fecha: fechaEntregaIso,
+         createdBy: username || req.user?.id || null,
+       };
+       plan.ledgerSaldoResultante = await actualizarRetornableSaldo(txQuery, plan.ledgerInput);
+     }
+
+     // Fase 3: recién con ambos conjuntos de saldos escritos, insertar los movimientos.
+     for (const plan of retornablesPlan) {
        await client.query(
          `
          INSERT INTO cliente_retornables_movimientos
@@ -1010,37 +1520,20 @@ export function createRepartidorApiRouter(deps) {
            pedido.punto_entrega_id,
            pedidoId,
            chofer_id,
-           productoId,
-           entregados,
-           devueltos,
-           delta,
-           saldoResultante,
-           `Entrega Pedido #${pedidoId}: +${entregados} llenos / -${devueltos} vacíos`,
+           plan.productoId,
+           plan.entregados,
+           plan.devueltos,
+           plan.delta,
+           plan.saldoResultante,
+           plan.ledgerInput.observacion,
            fechaEntregaIso,
          ]
        );
-
-       const txQuery = async (sql, params = []) => {
-         const result = await client.query(sql, params);
-         return result.rows;
-       };
-       await registrarRetornableMovimiento(txQuery, {
-         empresaId: empresa_id,
-         sujetoTipo: 'cliente',
-         sujetoId: pedido.punto_entrega_id,
-         productoId,
-         deltaSaldo: delta,
-         cantidadLlenos: entregados,
-         cantidadVacios: devueltos,
-         pedidoId,
-         choferId: chofer_id,
-         tipo: 'entrega_cliente',
-         origen: 'pedido',
-         referencia: `Pedido #${pedidoId}`,
-         observacion: `Entrega Pedido #${pedidoId}: +${entregados} llenos / -${devueltos} vacíos`,
-         fecha: fechaEntregaIso,
-         createdBy: username || req.user?.id || null,
-       });
+       await insertarRetornableMovimiento(
+         txQuery,
+         plan.ledgerInput,
+         plan.ledgerSaldoResultante
+       );
      }
 
      // 8.c Evidencia/checklist opcional de entrega
@@ -1075,187 +1568,162 @@ export function createRepartidorApiRouter(deps) {
      // -----------------------------------------------------
      // FIN TRANSACCIÓN
      // -----------------------------------------------------
+     transactionPhase = 'commit';
      await client.query('COMMIT');
+     transactionPhase = 'committed';
 
      // 9. Tareas Post-Entrega (Fuera del hilo principal)
      
      // Notificación Push
-     notifyEstadoPedidoPush(pedidoId, 'entregado').catch(console.error);
+     runPostCommitTask(
+       () => notifyEstadoPedidoPush(pedidoId, 'entregado'),
+       'PUSH estado pedido error:'
+     );
      
      // Marketing (Referidos, Puntos)
-     import('../estrategias.js')
-       .then(({ ejecutarRecompensaReferido, ejecutarEstrategiaReferidos }) => {
-         ejecutarRecompensaReferido({ pedidoId, empresaId: empresa_id }).catch(() => {});
-         ejecutarEstrategiaReferidos({ pedidoId, empresaId: empresa_id }).catch(() => {});
-       })
-       .catch(() => {});
+     if (typeof ejecutarRecompensaReferido === 'function') {
+       runPostCommitTask(
+         () => ejecutarRecompensaReferido({ pedidoId, empresaId: empresa_id }),
+         'REFERIDOS.RECOMPENSA.ERROR'
+       );
+     }
+     if (typeof ejecutarEstrategiaReferidos === 'function') {
+       runPostCommitTask(
+         () => ejecutarEstrategiaReferidos({ pedidoId, empresaId: empresa_id }),
+         'REFERIDOS.ESTRATEGIA.ERROR'
+       );
+     }
 
      if (typeof ejecutarPostEntregaUpsell === 'function') {
-       ejecutarPostEntregaUpsell({ pedidoId, empresaId: empresa_id }).catch((err) =>
-         console.error('MARKETING.POSTENTREGA.ERROR', err?.message || err)
+       runPostCommitTask(
+         () => ejecutarPostEntregaUpsell({ pedidoId, empresaId: empresa_id }),
+         'MARKETING.POSTENTREGA.ERROR'
        );
      }
 
      // Programa de puntos (idempotente por pedido)
-     awardPointsForDeliveredOrder({
-       queryFn: query,
-       empresaId: empresa_id,
-       puntoEntregaId: pedido.punto_entrega_id,
-       pedidoId,
-       monto: pedido.monto,
-     }).catch((err) => console.error('POINTS.AWARD.ERROR', err?.message || err));
+     if (typeof awardPointsForDeliveredOrder === 'function') {
+       runPostCommitTask(
+         () => awardPointsForDeliveredOrder({
+           queryFn: query,
+           empresaId: empresa_id,
+           puntoEntregaId: pedido.punto_entrega_id,
+           pedidoId,
+           monto: pedido.monto,
+         }),
+         'POINTS.AWARD.ERROR'
+       );
+     }
 
-     generateComisionesForDeliveredOrder({
-       queryFn: query,
-       empresaId: empresa_id,
-       pedidoId,
-     }).catch((err) => console.error('REFERENTES.COMISION.ERROR', err?.message || err));
+     if (typeof generateComisionesForDeliveredOrder === 'function') {
+       runPostCommitTask(
+         () => generateComisionesForDeliveredOrder({
+           queryFn: query,
+           empresaId: empresa_id,
+           pedidoId,
+         }),
+         'REFERENTES.COMISION.ERROR'
+       );
+     }
 
      // Solicitar comprobante solo después de confirmar la entrega. Un fallo de
      // WhatsApp no puede revertir la transacción ya confirmada.
      if (solicitarComprobanteTransferencia && typeof notificarPedidoTransferencia === 'function') {
-       try {
-         await notificarPedidoTransferencia(pedidoId, empresa_id);
-       } catch (wppError) {
-         console.error('ENTREGA.TRANSFERENCIA.NOTIFICACION.ERROR', wppError?.message || wppError);
-       }
+       runPostCommitTask(
+         () => notificarPedidoTransferencia(pedidoId, empresa_id),
+         'ENTREGA.TRANSFERENCIA.NOTIFICACION.ERROR'
+       );
      }
 
      res.json({ ok: true });
 
    } catch (e) {
-     // Si algo falló, deshacemos TODO.
-     await client.query('ROLLBACK');
+     if (transactionPhase === 'commit') {
+       releaseError = e;
+       console.error('POST /entregar COMMIT con resultado indeterminado');
+       return res.status(503).json({
+         error: 'Resultado de entrega indeterminado',
+         code: 'TRANSACTION_OUTCOME_UNKNOWN',
+       });
+     }
+
+     if (transactionPhase === 'work') {
+       try {
+         await client.query('ROLLBACK');
+       } catch (rollbackError) {
+         releaseError = rollbackError;
+         console.error('POST /entregar ROLLBACK falló; conexión descartada');
+       }
+     }
+
      console.error('POST /entregar ERROR CRÍTICO:', e);
-     
-     // Feedback amigable
+     if (e?.code === 'ACTIVOS_VALIDATION') {
+       return res.status(400).json({ error: 'Movimientos de activos inválidos' });
+     }
+     const statusCode = Number(e?.statusCode);
+     if (Number.isInteger(statusCode) && statusCode >= 400 && statusCode < 500) {
+       return res.status(statusCode).json({ error: e.message });
+     }
      if (e.message && e.message.includes('No autorizado')) {
-         return res.status(403).json({ error: e.message });
+       return res.status(403).json({ error: e.message });
      }
-     // Devolvemos 500 JSON para evitar el error de parseo en el frontend
-     res.status(500).json({ error: 'Error al procesar la entrega: ' + (e.message || 'Error interno') });
+     return res.status(500).json({ error: 'Error al procesar la entrega' });
    } finally {
-     client.release();
+     client.release(releaseError || undefined);
    }
 });
 
-// 3. Movimientos de activos manuales enviados por el repartidor
-  router.post('/pedidos/:id/activos-movimientos', withAuth, async (req, res) => {
-   try {
-     const { chofer_id, empresa_id, username } = req.user;
-     const pedidoId = Number(req.params.id);
-     const { movimientos } = req.body || {};
-
-     if (!chofer_id) {
-       return res.status(403).json({ error: 'No autorizado' });
-     }
-
-     const pedRes = await query(
-       `
-       SELECT chofer_id, punto_entrega_id
-       FROM pedidos
-       WHERE id = $1
-       `,
-       [pedidoId]
-     );
-
-     // CORRECCIÓN: Usamos .length directamente, ya que 'query' devuelve el array
-     if (!pedRes.length) {
-       return res.status(404).json({ error: 'Pedido no encontrado' });
-     }
-
-     // CORRECCIÓN: Accedemos al primer elemento directamente
-     const pedido = pedRes[0];
-
-     // Verificamos asignación
-     if (pedido.chofer_id && pedido.chofer_id !== chofer_id) {
-       return res.status(403).json({ error: 'Pedido asignado a otro chofer' });
-     }
-
-     const result = await registrarMovimientosActivosDesdePedido({
-       empresaId: empresa_id,
-       clienteId: pedido.punto_entrega_id,
-       pedidoId,
-       usuario: username || 'repartidor',
-       origen: 'app_repartidor',
-       movimientos: Array.isArray(movimientos) ? movimientos : []
-     });
-
-     res.json(result);
-   } catch (e) {
-     console.error('REPARTIDOR activos-movimientos ERROR:', e);
-     res.status(500).json({ error: 'Error registrando movimientos de activos' });
-   }
-});
+// 3. Endpoint retirado: los movimientos de activos sólo se aceptan dentro del cierre atómico.
+  router.post('/pedidos/:id/activos-movimientos', withAuth, requireExactRepartidor, (_req, res) => {
+    return res.status(410).json({
+      error: 'Endpoint retirado; use el cierre de entrega del pedido',
+      code: 'ACTIVOS_MOVIMIENTOS_REQUIERE_CIERRE',
+    });
+  });
 
 // 4. Resumen de activos asociados a un pedido (para el modal del repartidor)
-  router.get('/pedidos/:id/activos-resumen', withAuth, async (req, res) => {
+  router.get('/pedidos/:id/activos-resumen', withAuth, requireExactRepartidor, async (req, res) => {
    try {
      const { chofer_id, empresa_id } = req.user || {};
      const pedidoId = Number(req.params.id);
-
-     if (!chofer_id) {
-       return res.status(403).json({ error: 'No autorizado' });
-     }
-
-     if (!Number.isFinite(pedidoId)) {
+     if (!Number.isSafeInteger(pedidoId) || pedidoId <= 0) {
        return res.status(400).json({ error: 'Pedido inválido' });
      }
 
-     // Pedido + datos del cliente (punto de entrega)
-     const pedRows = await query(
-       `
-       SELECT 
-         p.id,
-         p.monto,
-         p.chofer_id,
-         p.punto_entrega_id,
-         pe.cliente,
-         COALESCE(pe.direccion_completa, pe.direccion) AS direccion
-       FROM pedidos p
-       LEFT JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
-       WHERE p.id = $1
-         AND p.empresa_id = $2
-       `,
-       [pedidoId, empresa_id]
-     );
+     const summary = await withTransaction(async txQuery => {
+       const pedRows = await txQuery(
+         `SELECT p.id, p.monto, p.metodo_pago, p.chofer_id, p.punto_entrega_id,
+                 pe.cliente, COALESCE(pe.direccion_completa, pe.direccion) AS direccion
+            FROM pedidos p
+            JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id AND pe.empresa_id = p.empresa_id
+           WHERE p.id = $1 AND p.empresa_id = $2 AND p.chofer_id = $3
+           FOR SHARE OF p, pe`,
+         [pedidoId, empresa_id, chofer_id]
+       );
+       if (pedRows.length !== 1) throw deliveryHttpError(404, 'Pedido no encontrado');
+       const pedido = pedRows[0];
 
-     if (!pedRows.length) {
-       return res.status(404).json({ error: 'Pedido no encontrado' });
-     }
+       const rawItems = await txQuery(
+         `SELECT ip.id AS item_pedido_id, ip.producto_id, ip.producto,
+                 ip.cantidad, ip.precio_unitario
+            FROM items_pedido ip
+           WHERE ip.pedido_id = $1
+           ORDER BY ip.id`,
+         [pedidoId]
+       );
+       const resolvedItems = await resolveProductIdentityItems(txQuery, {
+         empresaId: empresa_id,
+         items: rawItems,
+       });
+       const itemsRows = resolvedItems.map(item => ({
+         ...item,
+         producto_id: item.producto_resuelto_id,
+         config_activo: item.producto_resuelto.config_activo,
+         retornable: item.producto_resuelto.retornable === true,
+         producto_nombre: item.producto_resuelto.nombre,
+       }));
 
-     const pedido = pedRows[0];
-
-     // El chofer sólo puede ver pedidos propios
-     if (pedido.chofer_id && Number(pedido.chofer_id) !== Number(chofer_id)) {
-       return res.status(403).json({ error: 'Pedido asignado a otro chofer' });
-     }
-
-     // Items del pedido + productos con config_activo
-     const itemsRows = await query(
-       `
-       SELECT 
-         ip.id AS item_pedido_id,
-         ip.producto,
-         ip.cantidad,
-         ip.precio_unitario,
-         COALESCE(ip.producto_id, pr.id) AS producto_id,
-         pr.config_activo,
-         COALESCE(pr.retornable, FALSE) AS retornable,
-         pr.nombre AS producto_nombre
-       FROM items_pedido ip
-       LEFT JOIN productos pr
-         ON pr.empresa_id = $2
-        AND (
-             pr.id = ip.producto_id
-          OR LOWER(TRIM(pr.nombre)) = LOWER(TRIM(ip.producto))
-        )
-       WHERE ip.pedido_id = $1
-       `,
-       [pedidoId, empresa_id]
-     );
-
-     const items_activos = (itemsRows || [])
+       const items_activos = itemsRows
        .filter(r => {
          const cfg = r.config_activo || {};
          const esActivo =
@@ -1273,8 +1741,8 @@ export function createRepartidorApiRouter(deps) {
          precio_unitario: Number(r.precio_unitario) || 0
        }));
 
-     const retornablesMap = new Map();
-     for (const r of (itemsRows || [])) {
+       const retornablesMap = new Map();
+       for (const r of itemsRows) {
        if (!r.retornable || !r.producto_id) continue;
        const productoId = Number(r.producto_id);
        const prev = retornablesMap.get(productoId) || {
@@ -1286,11 +1754,11 @@ export function createRepartidorApiRouter(deps) {
        };
        prev.cantidad_entregada += Number(r.cantidad || 0);
        retornablesMap.set(productoId, prev);
-     }
+       }
 
-     const items_retornables = Array.from(retornablesMap.values()).filter(r => r.cantidad_entregada > 0);
-     if (items_retornables.length && pedido.punto_entrega_id) {
-       const saldos = await query(
+       const items_retornables = Array.from(retornablesMap.values()).filter(r => r.cantidad_entregada > 0);
+       if (items_retornables.length && pedido.punto_entrega_id) {
+         const saldos = await txQuery(
          `
          SELECT producto_id, saldo
          FROM cliente_retornables_saldos
@@ -1300,62 +1768,64 @@ export function createRepartidorApiRouter(deps) {
          `,
          [empresa_id, pedido.punto_entrega_id, items_retornables.map(r => r.producto_id)]
        );
-       const saldoByProducto = new Map((saldos || []).map(r => [Number(r.producto_id), Number(r.saldo || 0)]));
-       for (const item of items_retornables) {
+         const saldoByProducto = new Map((saldos || []).map(r => [Number(r.producto_id), Number(r.saldo || 0)]));
+         for (const item of items_retornables) {
          item.saldo_actual = Number(saldoByProducto.get(Number(item.producto_id)) || 0);
          item.sugerido_devolver = Math.min(item.cantidad_entregada, Math.max(0, item.saldo_actual + item.cantidad_entregada));
+         }
        }
-     }
 
-     const retornables_resumen = {
+       const retornables_resumen = {
        items: items_retornables,
        total_entregado: items_retornables.reduce((a, r) => a + Number(r.cantidad_entregada || 0), 0),
        saldo_previo_total: items_retornables.reduce((a, r) => a + Number(r.saldo_actual || 0), 0),
-     };
+       };
 
-     if (items_activos.length === 0) {
-       return res.json({
+       if (items_activos.length === 0) {
+         return {
          pedido: {
            id: pedido.id,
            cliente: pedido.cliente,
            direccion: pedido.direccion,
-           monto: Number(pedido.monto) || 0
-         },
+           monto: Number(pedido.monto) || 0,
+           metodo_pago: pedido.metodo_pago || null
+           },
          items_activos,
          retornables_resumen,
          activos_cliente: [],
          activos_disponibles: [],
          movimientos_existentes: []
-       });
-     }
+         };
+       }
 
-     // Activos actualmente vinculados a ese cliente (punto_entrega_id)
-     const activosClienteRows = await query(
+       const activosClienteRows = await txQuery(
        `
        SELECT 
          a.id,
          a.codigo,
          a.tipo,
          a.estado,
+         a.producto_id,
          a.numero_serie,
          a.alquiler_mensual
        FROM empresa_activos a
        WHERE a.empresa_id = $1
          AND a.cliente_id = $2
-         AND a.estado IN ('prestado','en_mantenimiento','disponible')
+         AND a.estado IN ('prestado','reparacion','disponible')
        ORDER BY a.estado, a.codigo
        `,
        [empresa_id, pedido.punto_entrega_id]
      );
 
      // Activos disponibles para cambio (sin cliente asignado)
-     const activosDisponiblesRows = await query(
+       const activosDisponiblesRows = await txQuery(
        `
        SELECT 
          a.id,
          a.codigo,
          a.tipo,
          a.estado,
+         a.producto_id,
          a.numero_serie,
          a.alquiler_mensual
        FROM empresa_activos a
@@ -1368,7 +1838,7 @@ export function createRepartidorApiRouter(deps) {
      );
 
      // Movimientos ya registrados de este pedido
-     const movRows = await query(
+       const movRows = await txQuery(
        `
        SELECT 
          id,
@@ -1386,26 +1856,35 @@ export function createRepartidorApiRouter(deps) {
        [empresa_id, pedidoId]
      );
 
-     res.json({
+       return {
        pedido: {
          id: pedido.id,
          cliente: pedido.cliente,
          direccion: pedido.direccion,
-         monto: Number(pedido.monto) || 0
-       },
+         monto: Number(pedido.monto) || 0,
+         metodo_pago: pedido.metodo_pago || null
+         },
        items_activos,
        retornables_resumen,
        activos_cliente: activosClienteRows || [],
        activos_disponibles: activosDisponiblesRows || [],
        movimientos_existentes: movRows || []
+       };
      });
+     return res.json(summary);
    } catch (e) {
+     if (e?.code === 'PRODUCT_IDENTITY_CONFLICT') {
+       return res.status(409).json({ error: e.message, code: e.code });
+     }
+     if (Number.isInteger(e?.statusCode) && e.statusCode >= 400 && e.statusCode < 500) {
+       return res.status(e.statusCode).json({ error: e.message });
+     }
      console.error('REPARTIDOR activos-resumen ERROR:', e);
-     res.status(500).json({ error: 'Error cargando activos del pedido' });
+     return res.status(500).json({ error: 'Error cargando activos del pedido' });
    }
 });
 
-  router.get('/activos/stock-disponible', withAuth, async (req, res) => {
+  router.get('/activos/stock-disponible', withAuth, requireExactRepartidor, async (req, res) => {
    const { chofer_id, empresa_id } = req.user || {};
    if (!chofer_id) return res.status(403).json({ error: 'No autorizado' });
 
@@ -1427,7 +1906,7 @@ export function createRepartidorApiRouter(deps) {
 // Repartidor stats (resumen-dia, pago-dia) movidos a src/routes/repartidorStats.js
 
 // 8. Tomar pedido vacante (chofer_id IS NULL)
-  router.post('/tomar/:id', withAuth, async (req, res) => {
+  router.post('/tomar/:id', withAuth, requireExactRepartidor, async (req, res) => {
    try {
      const { role, chofer_id: choferId, empresa_id: empresaId } = req.user || {};
      if (role !== 'repartidor'
@@ -1445,6 +1924,19 @@ export function createRepartidorApiRouter(deps) {
      }
 
      const outcome = await withTransaction(async txQuery => {
+       // Orden global en flujos repartidor: pedido -> chofer -> punto/zona.
+       const pedidoRows = await txQuery(
+         `SELECT id
+            FROM pedidos
+           WHERE id = $1
+             AND empresa_id = $2
+             AND chofer_id IS NULL
+             AND estado = 'pendiente'
+           FOR UPDATE`,
+         [pedidoId, empresaId]
+       );
+       if (pedidoRows.length !== 1) return 'unavailable';
+
        const choferRows = await txQuery(
          `SELECT id
             FROM choferes
@@ -1454,7 +1946,7 @@ export function createRepartidorApiRouter(deps) {
            FOR SHARE`,
          [choferId, empresaId]
        );
-       if (!choferRows.length) return 'invalid-driver';
+       if (choferRows.length !== 1) return 'invalid-driver';
 
        const result = await txQuery(
          `UPDATE pedidos
@@ -1466,7 +1958,7 @@ export function createRepartidorApiRouter(deps) {
          RETURNING id`,
          [choferId, pedidoId, empresaId]
        );
-       return result.length ? 'taken' : 'unavailable';
+       return result.length === 1 ? 'taken' : 'unavailable';
      });
 
      if (outcome === 'invalid-driver') return res.status(403).json({ error: 'No autorizado' });
@@ -1474,13 +1966,19 @@ export function createRepartidorApiRouter(deps) {
 
      res.json({ ok: true });
    } catch (e) {
+     if (e?.code === 'TRANSACTION_OUTCOME_UNKNOWN') {
+       return res.status(503).json({
+         error: 'Resultado de toma indeterminado',
+         code: 'TRANSACTION_OUTCOME_UNKNOWN',
+       });
+     }
      console.error('REPARTIDOR TOMAR ERROR:', e);
      res.status(500).json({ error: 'Error al tomar pedido' });
    }
 });
 
 // 9. OPTIMIZADOR DE RUTA (PostGIS Nearest Neighbor)
-  router.post('/optimizar-ruta', withAuth, async (req, res) => {
+  router.post('/optimizar-ruta', withAuth, requireExactRepartidor, async (req, res) => {
      try {
        const { lat, lng } = req.body;
        const { chofer_id, empresa_id } = req.user;
@@ -1507,8 +2005,11 @@ export function createRepartidorApiRouter(deps) {
                  pe.cliente,
                  p.fecha
              FROM pedidos p
-             JOIN puntos_entrega pe ON p.punto_entrega_id = pe.id
+             JOIN puntos_entrega pe
+               ON pe.id = p.punto_entrega_id
+              AND pe.empresa_id = p.empresa_id
              WHERE p.chofer_id = $1
+               AND p.empresa_id = $4
                AND p.estado IN ('pendiente', 'en_ruta', 'en_camino')
                AND pe.latitud IS NOT NULL 
                AND pe.longitud IS NOT NULL
@@ -1547,7 +2048,7 @@ export function createRepartidorApiRouter(deps) {
          SELECT * FROM ruta;
        `;
 
-       const rutaOptimizada = await query(sql, [chofer_id, lat, lng]);
+       const rutaOptimizada = await query(sql, [chofer_id, lat, lng, empresa_id]);
 
        // Si no hay ruta (ej: no hay pedidos o no tienen coords), devolvemos lista vacía
        res.json({ 

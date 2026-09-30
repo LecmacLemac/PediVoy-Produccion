@@ -18,7 +18,7 @@ function isSchemaQuery(sql) {
   return /CREATE TABLE|CREATE INDEX|ALTER TABLE/i.test(sql);
 }
 
-function buildApp({ query, pool, user = { role: 'user', empresa_id: 3 } }) {
+function buildApp({ query, pool, user = { role: 'admin', empresa_id: 3 } }) {
   const app = express();
   app.use(express.json());
   app.use('/api/stock', createStockRouter({
@@ -48,6 +48,7 @@ function buildPool(handler, calls = []) {
         async query(sql, params = []) {
           calls.push({ sql, params, tx: true });
           if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rows: [] };
+          if (sql.includes('pg_advisory_xact_lock')) return { rows: [{ locked: null }] };
           const rows = await handler(sql, params);
           return { rows };
         },
@@ -60,13 +61,15 @@ function buildPool(handler, calls = []) {
 }
 
 test('POST /api/stock/ajuste rechaza chofer externo a la empresa', async () => {
-  const calls = [];
+  const txCalls = [];
   const app = buildApp({
-    pool: buildPool(async () => []),
-    query: async (sql, params = []) => {
-      calls.push({ sql, params });
-      if (isSchemaQuery(sql)) return [];
+    pool: buildPool(async (sql) => {
+      if (sql.includes('FROM empresas')) return [{ id: 3 }];
       if (sql.includes('FROM choferes')) return [];
+      throw new Error(`Consulta transaccional inesperada: ${sql}`);
+    }, txCalls),
+    query: async (sql) => {
+      if (isSchemaQuery(sql)) return [];
       throw new Error(`Consulta inesperada: ${sql}`);
     },
   });
@@ -82,19 +85,21 @@ test('POST /api/stock/ajuste rechaza chofer externo a la empresa', async () => {
     assert.match((await resp.json()).error, /Chofer inválido/);
   });
 
-  assert.ok(calls.some((c) => c.sql.includes('FROM choferes') && c.params[0] === 99 && c.params[1] === 3));
+  assert.ok(txCalls.some((c) => c.sql.includes('FROM choferes') && c.params[0] === 99 && c.params[1] === 3));
+  assert.ok(txCalls.some((c) => c.sql === 'ROLLBACK'));
 });
 
 test('POST /api/stock/ajuste exige depósito cuando permisos estrictos está activo', async () => {
   const app = buildApp({
-    pool: buildPool(async () => {
-      throw new Error('No debe abrir transacción');
-    }),
-    query: async (sql) => {
-      if (isSchemaQuery(sql)) return [];
+    pool: buildPool(async (sql) => {
+      if (sql.includes('FROM empresas') && sql.includes('FOR SHARE')) return [{ id: 3 }];
       if (sql.includes('FROM choferes')) return [{ id: 7 }];
       if (sql.includes('FROM productos')) return [{ id: 11 }];
       if (sql.includes("config_operativa->>'deposito_permisos_estricto'")) return [{ estricto: true }];
+      throw new Error(`Consulta transaccional inesperada: ${sql}`);
+    }),
+    query: async (sql) => {
+      if (isSchemaQuery(sql)) return [];
       throw new Error(`Consulta inesperada: ${sql}`);
     },
   });
@@ -114,12 +119,17 @@ test('POST /api/stock/ajuste exige depósito cuando permisos estrictos está act
 test('POST /api/stock/ajuste confirma movimiento y agregado en una transacción', async () => {
   const txCalls = [];
   const app = buildApp({
-    pool: buildPool(async () => [], txCalls),
-    query: async (sql) => {
-      if (isSchemaQuery(sql)) return [];
+    pool: buildPool(async (sql) => {
+      if (sql.includes('FROM empresas') && sql.includes('FOR SHARE')) return [{ id: 3 }];
       if (sql.includes('FROM choferes')) return [{ id: 7 }];
       if (sql.includes('FROM productos')) return [{ id: 11 }];
       if (sql.includes("config_operativa->>'deposito_permisos_estricto'")) return [{ estricto: false }];
+      if (sql.includes('INSERT INTO chofer_stock_mov')) return [{ id: 1 }];
+      if (sql.includes('INSERT INTO chofer_stock')) return [{ empresa_id: 3, chofer_id: 7, producto_id: 11 }];
+      throw new Error(`Consulta transaccional inesperada: ${sql}`);
+    }, txCalls),
+    query: async (sql) => {
+      if (isSchemaQuery(sql)) return [];
       throw new Error(`Consulta inesperada: ${sql}`);
     },
   });
@@ -185,10 +195,13 @@ test('POST /api/stock/depositos/transferir revierte si falla una escritura del p
 
 test('POST /api/stock/depositos/choferes rechaza chofer externo a la empresa', async () => {
   const app = buildApp({
-    pool: buildPool(async () => []),
+    pool: buildPool(async (sql) => {
+      if (sql.includes('FROM empresas')) return [{ id: 3 }];
+      if (sql.includes('FROM choferes')) return [];
+      throw new Error(`Consulta transaccional inesperada: ${sql}`);
+    }),
     query: async (sql) => {
       if (isSchemaQuery(sql)) return [];
-      if (sql.includes('FROM choferes')) return [];
       throw new Error(`Consulta inesperada: ${sql}`);
     },
   });

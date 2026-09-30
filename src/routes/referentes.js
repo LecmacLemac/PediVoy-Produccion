@@ -3,6 +3,14 @@ import bcrypt from 'bcryptjs';
 
 import { normalizeReferenteCode } from '../services/referentesService.js';
 import { createComisionLiquidadaNotifications } from '../services/referenteNotifications.js';
+import { lockProductIdentityNamespaces } from '../services/productIdentityNamespace.js';
+import { requireCanonicalBackofficeRole } from './canonicalBackofficeRole.js';
+import {
+  deliveryPointConflict,
+  deliveryPointIdentity,
+  findDeliveryPointsByIdentity,
+  lockDeliveryPointIdentities,
+} from '../services/deliveryPointIdentity.js';
 
 let referentesAccessSchemaReady = false;
 let referentesLiquidacionesSchemaReady = false;
@@ -16,8 +24,9 @@ function cleanText(value, max = 280) {
 }
 
 export function createReferentesRouter(deps) {
-  const { query, withAuth, isSuper, getEmpresaIdFromToken } = deps || {};
+  const { query, withTransaction, withAuth, isSuper, getEmpresaIdFromToken } = deps || {};
   if (typeof query !== 'function') throw new Error('createReferentesRouter: falta query(fn)');
+  const runTransaction = typeof withTransaction === 'function' ? withTransaction : async work => work(query);
   if (typeof withAuth !== 'function') throw new Error('createReferentesRouter: falta withAuth(fn)');
   if (typeof isSuper !== 'function') throw new Error('createReferentesRouter: falta isSuper(fn)');
   if (typeof getEmpresaIdFromToken !== 'function') throw new Error('createReferentesRouter: falta getEmpresaIdFromToken(fn)');
@@ -116,18 +125,6 @@ export function createReferentesRouter(deps) {
     referentesClienteVinculosSchemaReady = true;
   }
 
-  function isReferenteUser(req) {
-    return String(req.user?.role || '').toLowerCase() === 'referente';
-  }
-
-  function requireBackoffice(req, res) {
-    if (isReferenteUser(req)) {
-      res.status(403).json({ error: 'No autorizado para administrar referentes.' });
-      return false;
-    }
-    return true;
-  }
-
   function resolveEmpresa(req, source = req.query || {}) {
     const superAdmin = isSuper(req);
     const empresaId = superAdmin && source?.empresa_id
@@ -141,9 +138,45 @@ export function createReferentesRouter(deps) {
     return Number.isFinite(n) && n >= 0 && n <= 100 ? n : null;
   }
 
-  router.get('/resumen', withAuth, async (req, res) => {
+  function isPositivePgInteger(value) {
+    return Number.isSafeInteger(value) && value > 0 && value <= 2147483647;
+  }
+
+  function parsePathPgInteger(value) {
+    if (!/^\d+$/.test(String(value || ''))) return null;
+    const parsed = Number(value);
+    return isPositivePgInteger(parsed) ? parsed : null;
+  }
+
+  function resolveMutationEmpresa(req, source = {}) {
+    if (isSuper(req)) {
+      return isPositivePgInteger(source?.empresa_id) ? source.empresa_id : null;
+    }
+    const tokenEmpresa = Number(getEmpresaIdFromToken(req));
+    return isPositivePgInteger(tokenEmpresa) ? tokenEmpresa : null;
+  }
+
+  function referenteMutationError(statusCode, message, code) {
+    const error = new Error(message);
+    error.statusCode = statusCode;
+    if (code) error.code = code;
+    return error;
+  }
+
+  function normalizeOptionalDate(value) {
+    if (value == null || value === '') return null;
+    if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+    const [year, month, day] = value.split('-').map(Number);
+    const date = new Date(Date.UTC(year, month - 1, day));
+    return date.getUTCFullYear() === year
+      && date.getUTCMonth() === month - 1
+      && date.getUTCDate() === day
+      ? value
+      : false;
+  }
+
+  router.get('/resumen', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     try {
-      if (!requireBackoffice(req, res)) return;
       await ensureReferenteLiquidacionesSchema();
       await ensureReferenteClientesPropuestosSchema();
       await ensureReferenteClienteVinculosSchema();
@@ -227,9 +260,8 @@ export function createReferentesRouter(deps) {
     }
   });
 
-  router.get('/liquidaciones/:id', withAuth, async (req, res) => {
+  router.get('/liquidaciones/:id', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     try {
-      if (!requireBackoffice(req, res)) return;
       await ensureReferenteLiquidacionesSchema();
       const empresaId = resolveEmpresa(req);
       const loteId = Number(req.params.id);
@@ -285,9 +317,8 @@ export function createReferentesRouter(deps) {
     }
   });
 
-  router.get('/', withAuth, async (req, res) => {
+  router.get('/', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     try {
-      if (!requireBackoffice(req, res)) return;
       await ensureReferenteAccessSchema();
       await ensureReferenteProfileSchema();
       const empresaId = resolveEmpresa(req);
@@ -342,9 +373,8 @@ export function createReferentesRouter(deps) {
     }
   });
 
-  router.post('/', withAuth, async (req, res) => {
+  router.post('/', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     try {
-      if (!requireBackoffice(req, res)) return;
       await ensureReferenteProfileSchema();
       const empresaId = resolveEmpresa(req, req.body || {});
       if (!empresaId) return res.status(400).json({ error: 'Falta empresa.' });
@@ -387,9 +417,8 @@ export function createReferentesRouter(deps) {
     }
   });
 
-  router.put('/:id', withAuth, async (req, res) => {
+  router.put('/:id', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     try {
-      if (!requireBackoffice(req, res)) return;
       await ensureReferenteProfileSchema();
       const empresaId = resolveEmpresa(req, req.body || {});
       const id = Number(req.params.id);
@@ -439,9 +468,8 @@ export function createReferentesRouter(deps) {
     }
   });
 
-  router.get('/:id/acceso', withAuth, async (req, res) => {
+  router.get('/:id/acceso', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     try {
-      if (!requireBackoffice(req, res)) return;
       await ensureReferenteAccessSchema();
       const empresaId = resolveEmpresa(req);
       const referenteId = Number(req.params.id);
@@ -473,9 +501,8 @@ export function createReferentesRouter(deps) {
     }
   });
 
-  router.post('/:id/acceso', withAuth, async (req, res) => {
+  router.post('/:id/acceso', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     try {
-      if (!requireBackoffice(req, res)) return;
       await ensureReferenteAccessSchema();
       const empresaId = resolveEmpresa(req, req.body || {});
       const referenteId = Number(req.params.id);
@@ -489,57 +516,89 @@ export function createReferentesRouter(deps) {
       }
       if (password && password.length < 8) return res.status(400).json({ error: 'Clave minima 8 caracteres.' });
 
-      const refRows = await query(
-        `SELECT id FROM referentes
-          WHERE id = $1 AND empresa_id = $2 AND deleted_at IS NULL
-          LIMIT 1`,
-        [referenteId, empresaId]
-      );
-      if (!refRows.length) return res.status(404).json({ error: 'Referente no encontrado.' });
-
-      const existing = await query(
-        `SELECT id FROM usuarios
-          WHERE empresa_id = $1
-            AND referente_id = $2
-            AND LOWER(role) = 'referente'
-          LIMIT 1`,
-        [empresaId, referenteId]
-      );
-
       const passwordHash = password
         ? await bcrypt.hash(password, await bcrypt.genSalt(10))
         : null;
-
-      if (existing.length) {
-        const sets = ['username = $1', 'activo = $2'];
-        const params = [username, activo];
-        let idx = 3;
-        if (passwordHash) {
-          sets.push(`password = $${idx++}`);
-          params.push(passwordHash);
-        }
-        params.push(existing[0].id);
-        const rows = await query(
-          `UPDATE usuarios
-              SET ${sets.join(', ')}
-            WHERE id = $${idx}
-            RETURNING id, username, role, empresa_id, referente_id, activo, last_login_at`,
-          params
+      const result = await runTransaction(async txQuery => {
+        const refRows = await txQuery(
+          `SELECT id
+             FROM referentes
+            WHERE id = $1
+              AND empresa_id = $2
+              AND activo IS TRUE
+              AND deleted_at IS NULL
+            FOR UPDATE`,
+          [referenteId, empresaId]
         );
-        return res.json(rows[0]);
-      }
+        if (refRows.length !== 1) {
+          throw referenteMutationError(404, 'Referente no encontrado.');
+        }
 
-      if (!passwordHash) return res.status(400).json({ error: 'Falta clave inicial.' });
+        const existing = await txQuery(
+          `SELECT id
+             FROM usuarios
+            WHERE empresa_id = $1
+              AND referente_id = $2
+              AND LOWER(role) = 'referente'
+            ORDER BY id
+            FOR UPDATE`,
+          [empresaId, referenteId]
+        );
+        if (existing.length > 1) {
+          throw referenteMutationError(409, 'Acceso de referente ambiguo.');
+        }
 
-      const rows = await query(
-        `INSERT INTO usuarios (username, password, role, empresa_id, referente_id, activo)
-         VALUES ($1,$2,'referente',$3,$4,$5)
-         RETURNING id, username, role, empresa_id, referente_id, activo, last_login_at`,
-        [username, passwordHash, empresaId, referenteId, activo]
-      );
+        if (existing.length === 1) {
+          const sets = ['username = $1', 'activo = $2'];
+          const params = [username, activo];
+          let idx = 3;
+          if (passwordHash) {
+            sets.push(`password = $${idx++}`);
+            params.push(passwordHash);
+          }
+          params.push(existing[0].id, empresaId, referenteId);
+          const rows = await txQuery(
+            `UPDATE usuarios
+                SET ${sets.join(', ')}
+              WHERE id = $${idx++}
+                AND empresa_id = $${idx++}
+                AND referente_id = $${idx}
+                AND LOWER(role) = 'referente'
+              RETURNING id, username, role, empresa_id, referente_id, activo, last_login_at`,
+            params
+          );
+          if (rows.length !== 1) {
+            throw referenteMutationError(409, 'El acceso del referente cambió durante la actualización.');
+          }
+          return { created: false, row: rows[0] };
+        }
 
-      return res.status(201).json(rows[0]);
+        if (!passwordHash) {
+          throw referenteMutationError(400, 'Falta clave inicial.');
+        }
+        const rows = await txQuery(
+          `INSERT INTO usuarios (username, password, role, empresa_id, referente_id, activo)
+           VALUES ($1,$2,'referente',$3,$4,$5)
+           RETURNING id, username, role, empresa_id, referente_id, activo, last_login_at`,
+          [username, passwordHash, empresaId, referenteId, activo]
+        );
+        if (rows.length !== 1) {
+          throw referenteMutationError(409, 'No se pudo confirmar el acceso del referente.');
+        }
+        return { created: true, row: rows[0] };
+      });
+
+      return res.status(result.created ? 201 : 200).json(result.row);
     } catch (e) {
+      if (e?.code === 'TRANSACTION_OUTCOME_UNKNOWN') {
+        return res.status(503).json({
+          error: 'Resultado de acceso del referente indeterminado',
+          code: 'TRANSACTION_OUTCOME_UNKNOWN',
+        });
+      }
+      if (Number.isInteger(e?.statusCode)) {
+        return res.status(e.statusCode).json({ error: e.message });
+      }
       if (String(e?.message || '').includes('unique')) {
         return res.status(409).json({ error: 'Usuario ya existe.' });
       }
@@ -548,44 +607,158 @@ export function createReferentesRouter(deps) {
     }
   });
 
-  router.post('/:id/productos', withAuth, async (req, res) => {
+  router.post('/:id/productos', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     try {
-      if (!requireBackoffice(req, res)) return;
-      const empresaId = resolveEmpresa(req, req.body || {});
-      const referenteId = Number(req.params.id);
-      const productos = Array.isArray(req.body?.productos) ? req.body.productos : [];
-      if (!empresaId || !referenteId) return res.status(400).json({ error: 'Datos invalidos.' });
-
-      await query('DELETE FROM referente_productos WHERE empresa_id = $1 AND referente_id = $2', [empresaId, referenteId]);
-
-      for (const p of productos) {
-        const productoId = Number(p?.producto_id || p?.id);
-        if (!productoId) continue;
-        const pct = p?.porcentaje_comision == null ? null : parsePercent(p.porcentaje_comision);
-        await query(
-          `INSERT INTO referente_productos (
-             empresa_id, referente_id, producto_id, porcentaje_comision, vigente_desde, vigente_hasta, activo
-           ) VALUES ($1,$2,$3,$4,$5,$6,COALESCE($7, TRUE))
-           ON CONFLICT (referente_id, producto_id)
-           DO UPDATE SET
-             porcentaje_comision = EXCLUDED.porcentaje_comision,
-             vigente_desde = EXCLUDED.vigente_desde,
-             vigente_hasta = EXCLUDED.vigente_hasta,
-             activo = EXCLUDED.activo`,
-          [empresaId, referenteId, productoId, pct, p?.vigente_desde || null, p?.vigente_hasta || null, p?.activo]
-        );
+      const source = req.body || {};
+      const empresaId = resolveMutationEmpresa(req, source);
+      const referenteId = parsePathPgInteger(req.params.id);
+      if (!empresaId || !referenteId || !Array.isArray(source.productos)) {
+        return res.status(400).json({ error: 'Datos invalidos.' });
       }
+
+      const seenProductIds = new Set();
+      const productos = [];
+      for (const item of source.productos) {
+        if (!item || typeof item !== 'object' || Array.isArray(item)
+            || !isPositivePgInteger(item.producto_id)) {
+          return res.status(400).json({ error: 'Producto invalido.' });
+        }
+        if (seenProductIds.has(item.producto_id)) {
+          return res.status(409).json({ error: 'Producto duplicado en la asignacion.' });
+        }
+        seenProductIds.add(item.producto_id);
+        const porcentaje = item.porcentaje_comision == null ? null : parsePercent(item.porcentaje_comision);
+        if (item.porcentaje_comision != null && porcentaje == null) {
+          return res.status(400).json({ error: 'Porcentaje invalido.' });
+        }
+        if (item.activo !== undefined && typeof item.activo !== 'boolean') {
+          return res.status(400).json({ error: 'Estado de producto invalido.' });
+        }
+        const vigenteDesde = normalizeOptionalDate(item.vigente_desde);
+        const vigenteHasta = normalizeOptionalDate(item.vigente_hasta);
+        if (vigenteDesde === false || vigenteHasta === false) {
+          return res.status(400).json({ error: 'Fecha de vigencia invalida.' });
+        }
+        productos.push({
+          productoId: item.producto_id,
+          porcentaje,
+          vigenteDesde,
+          vigenteHasta,
+          activo: item.activo,
+        });
+      }
+      productos.sort((a, b) => a.productoId - b.productoId);
+      const productoIds = productos.map(item => item.productoId);
+
+      await runTransaction(async txQuery => {
+        const referentes = await txQuery(
+          `SELECT id
+             FROM referentes
+            WHERE id = $1
+              AND empresa_id = $2
+              AND activo IS TRUE
+              AND deleted_at IS NULL
+            FOR UPDATE`,
+          [referenteId, empresaId]
+        );
+        if (referentes.length !== 1) {
+          throw referenteMutationError(404, 'Referente no encontrado.');
+        }
+
+        let observedProducts = [];
+        if (productoIds.length) {
+          observedProducts = await txQuery(
+            `SELECT id, nombre
+               FROM productos
+              WHERE empresa_id = $1
+                AND id = ANY($2::int[])
+              ORDER BY id`,
+            [empresaId, productoIds]
+          );
+          if (observedProducts.length !== productoIds.length) {
+            throw referenteMutationError(404, 'Producto no encontrado.');
+          }
+          await lockProductIdentityNamespaces(txQuery, {
+            empresaId,
+            names: observedProducts.map(product => product.nombre),
+          });
+          const lockedProducts = await txQuery(
+            `SELECT id
+               FROM productos
+              WHERE empresa_id = $1
+                AND id = ANY($2::int[])
+                AND activo IS TRUE
+                AND deleted_at IS NULL
+              ORDER BY id
+              FOR SHARE`,
+            [empresaId, productoIds]
+          );
+          if (lockedProducts.length !== productoIds.length) {
+            throw referenteMutationError(404, 'Producto no encontrado.');
+          }
+
+          const conflicts = await txQuery(
+            `SELECT empresa_id, producto_id
+               FROM referente_productos
+              WHERE referente_id = $1
+                AND producto_id = ANY($2::int[])
+              ORDER BY producto_id
+              FOR UPDATE`,
+            [referenteId, productoIds]
+          );
+          if (conflicts.some(row => Number(row.empresa_id) !== empresaId)) {
+            throw referenteMutationError(409, 'Conflicto de asignacion de producto.');
+          }
+        }
+
+        await txQuery(
+          'DELETE FROM referente_productos WHERE empresa_id = $1 AND referente_id = $2',
+          [empresaId, referenteId]
+        );
+
+        for (const item of productos) {
+          const inserted = await txQuery(
+            `INSERT INTO referente_productos (
+               empresa_id, referente_id, producto_id, porcentaje_comision, vigente_desde, vigente_hasta, activo
+             ) VALUES ($1,$2,$3,$4,$5,$6,COALESCE($7, TRUE))
+             RETURNING id`,
+            [
+              empresaId,
+              referenteId,
+              item.productoId,
+              item.porcentaje,
+              item.vigenteDesde,
+              item.vigenteHasta,
+              item.activo,
+            ]
+          );
+          if (inserted.length !== 1) {
+            throw referenteMutationError(409, 'No se pudo confirmar la asignacion de producto.');
+          }
+        }
+      });
 
       return res.json({ ok: true });
     } catch (e) {
+      if (e?.code === 'TRANSACTION_OUTCOME_UNKNOWN') {
+        return res.status(503).json({
+          error: 'Resultado de asignación de productos indeterminado',
+          code: 'TRANSACTION_OUTCOME_UNKNOWN',
+        });
+      }
+      if (Number.isInteger(e?.statusCode)) {
+        return res.status(e.statusCode).json({ error: e.message });
+      }
+      if (e?.code === '23505') {
+        return res.status(409).json({ error: 'Conflicto de asignacion de producto.' });
+      }
       console.error('REFERENTES.PRODUCTOS.ERROR', e);
       return res.status(500).json({ error: 'Error guardando productos del referente' });
     }
   });
 
-  router.get('/clientes-propuestos', withAuth, async (req, res) => {
+  router.get('/clientes-propuestos', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     try {
-      if (!requireBackoffice(req, res)) return;
       await ensureReferenteClientesPropuestosSchema();
       const empresaId = resolveEmpresa(req);
       if (!empresaId) return res.status(400).json({ error: 'Falta empresa.' });
@@ -625,9 +798,8 @@ export function createReferentesRouter(deps) {
     }
   });
 
-  router.get('/clientes', withAuth, async (req, res) => {
+  router.get('/clientes', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     try {
-      if (!requireBackoffice(req, res)) return;
       await ensureReferenteClienteVinculosSchema();
       const empresaId = resolveEmpresa(req);
       if (!empresaId) return res.status(400).json({ error: 'Falta empresa.' });
@@ -694,92 +866,99 @@ export function createReferentesRouter(deps) {
     }
   });
 
-  router.post('/clientes-propuestos/:id/aprobar', withAuth, async (req, res) => {
+  router.post('/clientes-propuestos/:id/aprobar', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     try {
-      if (!requireBackoffice(req, res)) return;
       await ensureReferenteClientesPropuestosSchema();
       const empresaId = resolveEmpresa(req, req.body || {});
       const id = Number(req.params.id);
       if (!empresaId || !id) return res.status(400).json({ error: 'Datos invalidos.' });
 
-      const rows = await query(
-        `WITH propuesta AS (
-           SELECT *
-             FROM referente_clientes_propuestos
-            WHERE id = $1
-              AND empresa_id = $2
-              AND estado = 'pendiente'
-         ),
-         cliente_creado AS (
-           INSERT INTO puntos_entrega (
-             empresa_id, cliente, telefono, direccion, ciudad, provincia, pais,
-             email, notas
-           )
-           SELECT empresa_id,
-                  COALESCE($4, cliente),
-                  COALESCE($5, telefono),
-                  COALESCE($6, direccion),
-                  COALESCE($7, ciudad),
-                  COALESCE($8, provincia),
-                  COALESCE($9, pais, 'Argentina'),
-                  COALESCE($10, email),
-                  COALESCE($11, notas)
-             FROM propuesta
-           RETURNING id
-         ),
-         vinculo AS (
-           INSERT INTO cliente_referentes (
-             empresa_id, punto_entrega_id, referente_id, codigo_referente, estado, asociado_at
-           )
-           SELECT p.empresa_id, cc.id, p.referente_id, r.codigo, 'activo', NOW()
-             FROM propuesta p
-             JOIN cliente_creado cc ON TRUE
-             JOIN referentes r ON r.id = p.referente_id
-           ON CONFLICT DO NOTHING
-           RETURNING id
-         ),
-         actualizada AS (
-           UPDATE referente_clientes_propuestos rcp
-              SET estado = 'aprobado',
-                  punto_entrega_id = (SELECT id FROM cliente_creado),
-                  reviewed_at = NOW(),
-                  reviewed_by = $3,
-                  updated_at = NOW()
+      const result = await runTransaction(async (txQuery) => {
+        const proposals = await txQuery(
+          `SELECT rcp.*, r.codigo AS referente_codigo
+             FROM referente_clientes_propuestos rcp
+             JOIN referentes r
+               ON r.id = rcp.referente_id
+              AND r.empresa_id = rcp.empresa_id
+              AND r.activo IS TRUE
+              AND r.deleted_at IS NULL
             WHERE rcp.id = $1
               AND rcp.empresa_id = $2
               AND rcp.estado = 'pendiente'
-            RETURNING rcp.*
-         )
-         SELECT actualizada.*,
-                (SELECT id FROM cliente_creado) AS cliente_id,
-                (SELECT id FROM vinculo) AS vinculo_id
-           FROM actualizada`,
-        [
-          id,
-          empresaId,
-          req.user?.uid || null,
-          cleanText(req.body?.cliente, 160),
-          cleanText(req.body?.telefono, 80),
-          cleanText(req.body?.direccion, 220),
-          cleanText(req.body?.ciudad, 120),
-          cleanText(req.body?.provincia, 120),
-          cleanText(req.body?.pais, 80),
-          cleanText(req.body?.email, 180),
-          cleanText(req.body?.notas, 600),
-        ]
-      );
+            FOR UPDATE OF rcp, r`,
+          [id, empresaId]
+        );
+        if (proposals.length !== 1) return null;
+        const proposal = proposals[0];
+        const cliente = cleanText(req.body?.cliente, 160) || proposal.cliente;
+        const telefono = cleanText(req.body?.telefono, 80) || proposal.telefono;
+        const direccion = cleanText(req.body?.direccion, 220) || proposal.direccion;
+        const ciudad = cleanText(req.body?.ciudad, 120) || proposal.ciudad;
+        const provincia = cleanText(req.body?.provincia, 120) || proposal.provincia;
+        const pais = cleanText(req.body?.pais, 80) || proposal.pais || 'Argentina';
+        const email = cleanText(req.body?.email, 180) || proposal.email;
+        const notas = cleanText(req.body?.notas, 600) || proposal.notas;
+        const identity = deliveryPointIdentity({
+          normalizePhoneFn: value => String(value || '').replace(/\D+/g, ''),
+          telefono,
+          direccion,
+        });
+        if (!identity) throw deliveryPointConflict('Teléfono y dirección son requeridos para aprobar el cliente');
+        await lockDeliveryPointIdentities(txQuery, { empresaId, identities: [identity] });
 
-      if (!rows.length) return res.status(404).json({ error: 'Cliente propuesto pendiente no encontrado.' });
-      return res.json(rows[0]);
+        const existing = await findDeliveryPointsByIdentity(txQuery, { empresaId, identity });
+        if (existing.length > 1) throw deliveryPointConflict();
+        let puntoEntregaId = existing[0]?.id || null;
+        if (!puntoEntregaId) {
+          const inserted = await txQuery(
+            `INSERT INTO puntos_entrega (
+               empresa_id, cliente, telefono, telefono_normalizado, direccion, ciudad, provincia, pais, email, notas
+             ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+             RETURNING id`,
+            [empresaId, cliente, telefono, String(telefono || '').replace(/\D+/g, ''), direccion, ciudad, provincia, pais, email, notas]
+          );
+          if (inserted.length !== 1) throw deliveryPointConflict('No se creó exactamente un cliente');
+          puntoEntregaId = inserted[0].id;
+        }
+
+        const vinculo = await txQuery(
+          `INSERT INTO cliente_referentes (
+             empresa_id, punto_entrega_id, referente_id, codigo_referente, estado, asociado_at
+           ) VALUES ($1,$2,$3,$4,'activo',NOW())
+           ON CONFLICT DO NOTHING
+           RETURNING id`,
+          [empresaId, puntoEntregaId, proposal.referente_id, proposal.referente_codigo]
+        );
+        const updated = await txQuery(
+          `UPDATE referente_clientes_propuestos
+              SET estado='aprobado', punto_entrega_id=$1, reviewed_at=NOW(), reviewed_by=$2, updated_at=NOW()
+            WHERE id=$3 AND empresa_id=$4 AND estado='pendiente'
+            RETURNING *`,
+          [puntoEntregaId, req.user?.uid || null, id, empresaId]
+        );
+        if (updated.length !== 1) throw deliveryPointConflict('La propuesta cambió durante la aprobación');
+        return { ...updated[0], cliente_id: puntoEntregaId, vinculo_id: vinculo[0]?.id || null };
+      });
+
+      if (!result) return res.status(404).json({ error: 'Cliente propuesto pendiente no encontrado.' });
+      return res.json(result);
     } catch (e) {
+      if (e?.code === 'TRANSACTION_OUTCOME_UNKNOWN') {
+        return res.status(503).json({
+          error: 'Resultado de aprobación indeterminado',
+          code: 'TRANSACTION_OUTCOME_UNKNOWN',
+        });
+      }
+      if (e?.code === 'DELIVERY_POINT_IDENTITY_CONFLICT') {
+        return res.status(409).json({ error: e.message, code: e.code });
+      }
       console.error('REFERENTES.CLIENTES_PROPUESTOS.APROBAR.ERROR', e);
       return res.status(500).json({ error: 'Error aprobando cliente propuesto' });
     }
   });
 
-  router.post('/clientes-propuestos/:id/rechazar', withAuth, async (req, res) => {
+  router.post('/clientes-propuestos/:id/rechazar', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     try {
-      if (!requireBackoffice(req, res)) return;
       await ensureReferenteClientesPropuestosSchema();
       const empresaId = resolveEmpresa(req, req.body || {});
       const id = Number(req.params.id);
@@ -806,9 +985,8 @@ export function createReferentesRouter(deps) {
     }
   });
 
-  router.get('/:id/productos', withAuth, async (req, res) => {
+  router.get('/:id/productos', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     try {
-      if (!requireBackoffice(req, res)) return;
       const empresaId = resolveEmpresa(req);
       const referenteId = Number(req.params.id);
       if (!empresaId || !referenteId) return res.status(400).json({ error: 'Datos invalidos.' });
@@ -838,9 +1016,8 @@ export function createReferentesRouter(deps) {
     }
   });
 
-  router.delete('/:id', withAuth, async (req, res) => {
+  router.delete('/:id', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     try {
-      if (!requireBackoffice(req, res)) return;
       const empresaId = resolveEmpresa(req, req.query || {});
       const referenteId = Number(req.params.id);
       if (!empresaId || !referenteId) return res.status(400).json({ error: 'Datos invalidos.' });
@@ -865,9 +1042,8 @@ export function createReferentesRouter(deps) {
     }
   });
 
-  router.post('/comisiones/liquidar', withAuth, async (req, res) => {
+  router.post('/comisiones/liquidar', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     try {
-      if (!requireBackoffice(req, res)) return;
       await ensureReferenteLiquidacionesSchema();
       const empresaId = resolveEmpresa(req, req.body || {});
       if (!empresaId) return res.status(400).json({ error: 'Falta empresa.' });
@@ -881,11 +1057,14 @@ export function createReferentesRouter(deps) {
       const nota = cleanText(req.body?.nota, 500);
       const rows = await query(
         `WITH candidates AS (
-           SELECT id, referente_id, monto_comision
-             FROM referente_comisiones
-            WHERE empresa_id = $1
-              AND id = ANY($2::int[])
-              AND estado = 'validada'
+           SELECT rc.id, rc.referente_id, rc.monto_comision
+             FROM referente_comisiones rc
+             JOIN referentes r
+               ON r.id = rc.referente_id
+              AND r.empresa_id = rc.empresa_id
+            WHERE rc.empresa_id = $1
+              AND rc.id = ANY($2::int[])
+              AND rc.estado = 'validada'
          ),
          totals AS (
            SELECT COUNT(*)::int AS comisiones_count,
@@ -947,9 +1126,8 @@ export function createReferentesRouter(deps) {
     }
   });
 
-  router.get('/comisiones', withAuth, async (req, res) => {
+  router.get('/comisiones', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     try {
-      if (!requireBackoffice(req, res)) return;
       await ensureReferenteLiquidacionesSchema();
       const empresaId = resolveEmpresa(req);
       if (!empresaId) return res.status(400).json({ error: 'Falta empresa.' });
@@ -999,9 +1177,8 @@ export function createReferentesRouter(deps) {
     }
   });
 
-  router.post('/clientes/:clienteId/desvincular', withAuth, async (req, res) => {
+  router.post('/clientes/:clienteId/desvincular', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     try {
-      if (!requireBackoffice(req, res)) return;
       await ensureReferenteClienteVinculosSchema();
       const empresaId = resolveEmpresa(req, req.body || {});
       const clienteId = Number(req.params.clienteId);

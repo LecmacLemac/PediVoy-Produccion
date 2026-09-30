@@ -1,6 +1,6 @@
 // src/adm/alquileresController.js
 
-import { query, pool } from '../db.js';
+import { query, pool, withTransaction as dbWithTransaction } from '../db.js';
 import { resolveEmpresaId } from '../services.js';
 import { MercadoPagoConfig, Preference } from 'mercadopago';
 import { enqueueWppOutbox } from '../wpp/enqueue.js';
@@ -9,6 +9,12 @@ import { enqueueWppOutbox } from '../wpp/enqueue.js';
 // Configuración Mercado Pago para ALQUILERES
 // ==================================================================
 const mpAccessToken = process.env.MP_ACCESS_TOKEN || '';
+function transactionRunner(req) { return req.app?.locals?.withTransaction || dbWithTransaction; }
+function transactionError(res, error) {
+  if (error?.code === 'TRANSACTION_OUTCOME_UNKNOWN') return res.status(503).json({ error: 'No se pudo confirmar el resultado de la transacción.', code: error.code });
+  console.error('ALQUILERES.GENERAR.ERROR', { code: error?.code || 'UNKNOWN' });
+  return res.status(500).json({ error: 'Error generando cargos' });
+}
 let mpClient = null;
 
 if (mpAccessToken) {
@@ -200,8 +206,8 @@ export async function listarAlquileres(req, res) {
 
     return res.json({ ok: true, data: rows });
   } catch (e) {
-    console.error('Error listarAlquileres:', e);
-    return res.status(500).json({ error: e.message || 'Error listando alquileres' });
+    console.error('Error listarAlquileres:', { code: e?.code || 'UNKNOWN' });
+    return res.status(500).json({ error: 'Error listando alquileres' });
   }
 }
 
@@ -245,8 +251,8 @@ export async function resumenAlquileres(req, res) {
 
     return res.json({ ok: true, data });
   } catch (e) {
-    console.error('Error resumenAlquileres:', e);
-    return res.status(500).json({ error: e.message || 'Error obteniendo resumen de alquileres' });
+    console.error('Error resumenAlquileres:', { code: e?.code || 'UNKNOWN' });
+    return res.status(500).json({ error: 'Error obteniendo resumen de alquileres' });
   }
 }
 
@@ -364,8 +370,8 @@ export async function generarLinkMercadoPago(req, res) {
       data: updated[0] || null
     });
   } catch (e) {
-    console.error('Error generarLinkMercadoPago:', e);
-    return res.status(500).json({ error: e.message || 'Error generando link de pago' });
+    console.error('Error generarLinkMercadoPago:', { code: e?.code || 'UNKNOWN' });
+    return res.status(500).json({ error: 'Error generando link de pago' });
   }
 }
 
@@ -411,8 +417,8 @@ export async function marcarAlquilerCobrado(req, res) {
 
     return res.json({ ok: true, data: row });
   } catch (e) {
-    console.error('Error marcarAlquilerCobrado:', e);
-    return res.status(500).json({ error: e.message || 'Error marcando alquiler como cobrado' });
+    console.error('Error marcarAlquilerCobrado:', { code: e?.code || 'UNKNOWN' });
+    return res.status(500).json({ error: 'Error marcando alquiler como cobrado' });
   }
 }
 
@@ -450,8 +456,8 @@ export async function desmarcarAlquilerCobrado(req, res) {
 
     return res.json({ ok: true, data: row });
   } catch (e) {
-    console.error('Error desmarcarAlquilerCobrado:', e);
-    return res.status(500).json({ error: e.message || 'Error deshaciendo cobro de alquiler' });
+    console.error('Error desmarcarAlquilerCobrado:', { code: e?.code || 'UNKNOWN' });
+    return res.status(500).json({ error: 'Error deshaciendo cobro de alquiler' });
   }
 }
 
@@ -544,8 +550,8 @@ export async function enviarComunicacionAlquiler(req, res) {
       comunicacion: logRows[0] || null
     });
   } catch (e) {
-    console.error('Error enviarComunicacionAlquiler:', e);
-    return res.status(500).json({ error: e.message || 'Error enviando comunicación' });
+    console.error('Error enviarComunicacionAlquiler:', { code: e?.code || 'UNKNOWN' });
+    return res.status(500).json({ error: 'Error enviando comunicación' });
   }
 }
 
@@ -554,139 +560,42 @@ export async function enviarComunicacionAlquiler(req, res) {
 // ==================================================================
 
 export async function generarCargosPeriodo(req, res) {
-  let client;
-
   try {
-    client = await pool.connect();
-
-    // 1. Lógica Super Admin
     let empresaId = resolveEmpresaId(req);
-    if (req.user.role === 'super' && req.body.empresa_id) {
-      empresaId = Number(req.body.empresa_id);
-    }
-
-    const rawPeriodo = req.body?.periodo; 
-    const periodoNorm = normalizarPeriodo(rawPeriodo);
-
-    if (!periodoNorm) {
-      return res.status(400).json({ error: 'Período inválido.' });
-    }
-
-    await client.query('BEGIN');
-
-    // --- CAMBIO 1: Eliminamos el bloque que verificaba existencia y daba error 400 ---
-    // Queremos permitir la regeneración (actualización) si ya existen.
-
-    // 2. Calcular cargos con PRORRATEO
-    const sqlCalculo = `
-      WITH periodo_params AS (
-        SELECT 
-          $2::date as inicio_mes,
-          ($2::date + INTERVAL '1 month' - INTERVAL '1 day')::date as fin_mes
-      )
-      SELECT
-        a.cliente_id,
-        SUM(
-          CASE 
-            WHEN a.fecha_inicio_alquiler >= (SELECT inicio_mes FROM periodo_params) THEN
-              ROUND(
-                (a.alquiler_mensual / 30.0) * (
-                  EXTRACT(DAY FROM (SELECT fin_mes FROM periodo_params)) 
-                  - EXTRACT(DAY FROM a.fecha_inicio_alquiler) 
-                  + 1
-                )
-              , 2)
-            ELSE a.alquiler_mensual 
-          END
-        ) as monto_total,
-        COUNT(a.id) as cantidad_activos,
-        jsonb_agg(
-          jsonb_build_object(
-            'codigo',         a.codigo,
-            'tipo',           a.tipo,
-            'marca',          a.marca,
-            'modelo',         a.modelo,
-            'alquiler_mensual', a.alquiler_mensual,
-            'fecha_inicio_alquiler', a.fecha_inicio_alquiler,
-            'alquiler_full',  a.alquiler_mensual,
-            'fecha_inicio',   a.fecha_inicio_alquiler,
-            'es_prorrateo',   (a.fecha_inicio_alquiler >= $2::date)
-          )
-        ) as detalle_activos
-      FROM empresa_activos a
-      WHERE a.empresa_id = $1
-        AND a.cliente_id IS NOT NULL
-        AND a.estado = 'prestado'
-        AND a.alquiler_mensual > 0
-        AND a.fecha_inicio_alquiler <= (SELECT fin_mes FROM periodo_params)
-      GROUP BY a.cliente_id
-    `;
-
-    const { rows: cargos } = await client.query(sqlCalculo, [
-      empresaId,
-      periodoNorm
-    ]);
-
-    if (cargos.length === 0) {
-      await client.query('ROLLBACK');
-      return res.json({
-        mensaje: 'No hay activos alquilados para facturar en este período.'
-      });
-    }
-
-    // 3. Insertar o Actualizar (Upsert) los cargos
-    // --- CAMBIO 2: Usamos ON CONFLICT para actualizar si ya existe ---
-    for (const c of cargos) {
-      await client.query(
-        `
-        INSERT INTO empresa_activos_alquileres 
+    if (req.user.role === 'super' && req.body.empresa_id) empresaId = Number(req.body.empresa_id);
+    const periodoNorm = normalizarPeriodo(req.body?.periodo);
+    if (!periodoNorm) return res.status(400).json({ error: 'Período inválido.' });
+    const result = await transactionRunner(req)(async q => {
+      const cargos = await q(`WITH periodo_params AS (
+          SELECT $2::date AS inicio_mes, ($2::date + INTERVAL '1 month' - INTERVAL '1 day')::date AS fin_mes
+        ) SELECT a.cliente_id,
+          SUM(CASE WHEN a.fecha_inicio_alquiler >= (SELECT inicio_mes FROM periodo_params)
+            THEN ROUND((a.alquiler_mensual / 30.0) * (EXTRACT(DAY FROM (SELECT fin_mes FROM periodo_params)) - EXTRACT(DAY FROM a.fecha_inicio_alquiler) + 1), 2)
+            ELSE a.alquiler_mensual END) AS monto_total,
+          COUNT(a.id) AS cantidad_activos,
+          jsonb_agg(jsonb_build_object('codigo', a.codigo, 'tipo', a.tipo, 'marca', a.marca, 'modelo', a.modelo,
+            'alquiler_mensual', a.alquiler_mensual, 'fecha_inicio_alquiler', a.fecha_inicio_alquiler,
+            'alquiler_full', a.alquiler_mensual, 'fecha_inicio', a.fecha_inicio_alquiler,
+            'es_prorrateo', (a.fecha_inicio_alquiler >= $2::date))) AS detalle_activos
+        FROM empresa_activos a WHERE a.empresa_id = $1 AND a.cliente_id IS NOT NULL AND a.estado = 'prestado'
+          AND a.alquiler_mensual > 0 AND a.fecha_inicio_alquiler <= (SELECT fin_mes FROM periodo_params)
+        GROUP BY a.cliente_id`, [empresaId, periodoNorm]);
+      if (!cargos.length) return { count: 0 };
+      for (const cargo of cargos) {
+        const rows = await q(`INSERT INTO empresa_activos_alquileres
           (empresa_id, cliente_id, periodo, monto_total, total_activos, detalle_activos, estado, created_at, updated_at)
-        VALUES (
-          $1,
-          $2,
-          date_trunc('month', $3::date),
-          $4,
-          $5,
-          $6,
-          'pendiente',
-          NOW(),
-          NOW()
-        )
-        ON CONFLICT (empresa_id, cliente_id, periodo)
-        DO UPDATE SET
-          monto_total     = EXCLUDED.monto_total,
-          total_activos   = EXCLUDED.total_activos,
-          detalle_activos = EXCLUDED.detalle_activos,
-          updated_at      = NOW()
-        WHERE empresa_activos_alquileres.estado = 'pendiente'
-        `,
-        [
-          empresaId,
-          c.cliente_id,
-          periodoNorm,
-          c.monto_total,
-          c.cantidad_activos,
-          JSON.stringify(c.detalle_activos)
-        ]
-      );
-    }
-
-    await client.query('COMMIT');
-
-    return res.json({
-      mensaje: `Proceso finalizado. Se procesaron ${cargos.length} cargos de alquiler (creados o actualizados).`
+          VALUES ($1,$2,date_trunc('month',$3::date),$4,$5,$6,'pendiente',NOW(),NOW())
+          ON CONFLICT (empresa_id, cliente_id, periodo) DO UPDATE SET monto_total = EXCLUDED.monto_total,
+          total_activos = EXCLUDED.total_activos, detalle_activos = EXCLUDED.detalle_activos, updated_at = NOW()
+          WHERE empresa_activos_alquileres.estado = 'pendiente' RETURNING id`,
+          [empresaId, cargo.cliente_id, periodoNorm, cargo.monto_total, cargo.cantidad_activos, JSON.stringify(cargo.detalle_activos)]);
+        if (rows.length !== 1) throw new Error('RENT_EXACT_ROW_FAILED');
+      }
+      return { count: cargos.length };
     });
-  } catch (e) {
-    if (client) {
-      try {
-        await client.query('ROLLBACK');
-      } catch (_) {}
-    }
-    console.error('Error generando cargos de alquiler:', e);
-    return res.status(500).json({ error: 'Error generando cargos' });
-  } finally {
-    if (client) {
-      client.release();
-    }
+    if (!result.count) return res.json({ mensaje: 'No hay activos alquilados para facturar en este período.' });
+    return res.json({ mensaje: `Proceso finalizado. Se procesaron ${result.count} cargos de alquiler (creados o actualizados).` });
+  } catch (error) {
+    return transactionError(res, error);
   }
 }

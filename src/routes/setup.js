@@ -6,7 +6,13 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { enqueueWppMessage } from '../services/messaging.js';
 import { sendSmsViaIfttt } from '../services/sms.js';
+import {
+  lockProductIdentityNamespaces,
+  normalizeProductIdentityName,
+} from '../services/productIdentityNamespace.js';
+import { lockDeliveryPointRows } from '../services/deliveryPointIdentity.js';
 
+import { requireCanonicalBackofficeRole } from './canonicalBackofficeRole.js';
 const execFileAsync = promisify(execFile);
 
 const CATALOG_TEMPLATES = {
@@ -92,27 +98,62 @@ async function upsertCatalogTemplate({ query, empresaId, vertical, overwrite = f
   let inserted = 0;
   let updated = 0;
   let skipped = 0;
+  const skus = items.map(it => String(it.sku || '').trim().toLowerCase()).filter(Boolean);
+  const loadExisting = () => query(
+    `SELECT id, LOWER(sku) AS sku_key, nombre
+       FROM productos
+      WHERE empresa_id = $1
+        AND LOWER(sku) = ANY($2::text[])
+        AND deleted_at IS NULL
+      ORDER BY id`,
+    [empresaId, skus]
+  );
+  const observedRows = await loadExisting();
+  const namespaceNames = items.map(item => item.nombre);
+  if (overwrite) namespaceNames.push(...observedRows.map(row => row.nombre));
+  const lockedNames = new Set(await lockProductIdentityNamespaces(query, {
+    empresaId,
+    names: namespaceNames,
+  }));
+  const existingRows = await loadExisting();
+  if (overwrite && existingRows.some(row => !lockedNames.has(normalizeProductIdentityName(row.nombre)))) {
+    const error = new Error('El catálogo cambió durante la actualización');
+    error.statusCode = 409;
+    throw error;
+  }
+  const existingBySku = new Map(existingRows.map(row => [String(row.sku_key), row]));
+  const existingIds = existingRows.map(row => Number(row.id)).sort((a, b) => a - b);
+
+  if (overwrite && existingIds.length) {
+    const locked = await query(
+      `SELECT id
+         FROM productos
+        WHERE empresa_id = $1
+          AND id = ANY($2::int[])
+          AND deleted_at IS NULL
+        ORDER BY id
+        FOR UPDATE`,
+      [empresaId, existingIds]
+    );
+    if (locked.length !== existingIds.length) {
+      const error = new Error('El catálogo cambió durante la actualización');
+      error.statusCode = 409;
+      throw error;
+    }
+  }
 
   for (const it of items) {
     const sku = String(it.sku || '').trim();
     if (!sku) continue;
+    const existing = existingBySku.get(sku.toLowerCase());
 
-    const existing = await query(
-      `SELECT id FROM productos
-       WHERE empresa_id = $1
-         AND lower(sku) = lower($2)
-         AND deleted_at IS NULL
-       LIMIT 1`,
-      [empresaId, sku]
-    );
-
-    if (existing.length && !overwrite) {
+    if (existing && !overwrite) {
       skipped += 1;
       continue;
     }
 
-    if (existing.length && overwrite) {
-      await query(
+    if (existing && overwrite) {
+      const changed = await query(
         `UPDATE productos
          SET nombre = $1,
              descripcion = $2,
@@ -122,20 +163,30 @@ async function upsertCatalogTemplate({ query, empresaId, vertical, overwrite = f
              activo = TRUE,
              mostrar_en_catalogo = TRUE,
              updated_at = NOW()
-         WHERE id = $6`,
-        [it.nombre, it.descripcion || null, Number(it.precio || 0), it.categoria || null, it.unidad_medida || 'unidad', existing[0].id]
+         WHERE id = $6
+           AND empresa_id = $7
+           AND deleted_at IS NULL
+         RETURNING id`,
+        [it.nombre, it.descripcion || null, Number(it.precio || 0), it.categoria || null, it.unidad_medida || 'unidad', existing.id, empresaId]
       );
+      if (changed.length !== 1) {
+        const error = new Error('El producto cambió durante la actualización');
+        error.statusCode = 409;
+        throw error;
+      }
       updated += 1;
       continue;
     }
 
-    await query(
+    const created = await query(
       `INSERT INTO productos (
           empresa_id, nombre, descripcion, precio, categoria, unidad_medida,
           activo, mostrar_en_catalogo, mostrar_en_landing, sku
-       ) VALUES ($1,$2,$3,$4,$5,$6,TRUE,TRUE,TRUE,$7)`,
+       ) VALUES ($1,$2,$3,$4,$5,$6,TRUE,TRUE,TRUE,$7)
+       RETURNING id`,
       [empresaId, it.nombre, it.descripcion || null, Number(it.precio || 0), it.categoria || null, it.unidad_medida || 'unidad', sku]
     );
+    if (created.length !== 1) throw new Error('No se pudo crear el producto del catálogo');
     inserted += 1;
   }
 
@@ -143,8 +194,9 @@ async function upsertCatalogTemplate({ query, empresaId, vertical, overwrite = f
 }
 
 export function createSetupRouter(deps) {
-  const { query, withAuth, getEmpresaIdFromToken } = deps || {};
+  const { query, withTransaction, withAuth, getEmpresaIdFromToken } = deps || {};
   if (typeof query !== 'function') throw new Error('createSetupRouter: falta query(fn)');
+  if (typeof withTransaction !== 'function') throw new Error('createSetupRouter: falta withTransaction(fn)');
   if (typeof withAuth !== 'function') throw new Error('createSetupRouter: falta withAuth(fn)');
   if (typeof getEmpresaIdFromToken !== 'function') throw new Error('createSetupRouter: falta getEmpresaIdFromToken(fn)');
 
@@ -238,7 +290,7 @@ export function createSetupRouter(deps) {
   });
 
   // POST /api/setup/step
-  router.post('/step', withAuth, async (req, res) => {
+  router.post('/step', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     try {
       const { step, done } = req.body || {};
       const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
@@ -397,7 +449,7 @@ export function createSetupRouter(deps) {
   });
 
   // POST /api/setup/apply-vertical
-  router.post('/apply-vertical', withAuth, async (req, res) => {
+  router.post('/apply-vertical', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     try {
       const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
@@ -439,7 +491,7 @@ export function createSetupRouter(deps) {
   });
 
   // POST /api/setup/seed-catalog
-  router.post('/seed-catalog', withAuth, async (req, res) => {
+  router.post('/seed-catalog', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     try {
       const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
@@ -449,16 +501,25 @@ export function createSetupRouter(deps) {
         return res.status(400).json({ error: 'Vertical inválida para catálogo' });
       }
 
-      const summary = await upsertCatalogTemplate({ query, empresaId, vertical, overwrite });
+      const summary = await withTransaction(txQuery => upsertCatalogTemplate({
+        query: txQuery,
+        empresaId,
+        vertical,
+        overwrite,
+      }));
       return res.json({ ok: true, vertical, summary });
     } catch (e) {
+      if (e?.code === 'TRANSACTION_OUTCOME_UNKNOWN') {
+        return res.status(503).json({ error: 'Resultado de catálogo indeterminado', code: e.code });
+      }
+      if (Number.isInteger(e?.statusCode)) return res.status(e.statusCode).json({ error: e.message });
       console.error(e);
       return res.status(500).json({ error: 'Error aplicando catálogo base' });
     }
   });
 
   // POST /api/setup/apply-vertical-full
-  router.post('/apply-vertical-full', withAuth, async (req, res) => {
+  router.post('/apply-vertical-full', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     try {
       const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
@@ -467,15 +528,17 @@ export function createSetupRouter(deps) {
       const tpl = VERTICAL_TEMPLATES[vertical];
       if (!tpl) return res.status(400).json({ error: 'Vertical inválida' });
 
-      const rows = await query('SELECT setup_steps FROM empresas WHERE id=$1', [empresaId]);
-      let steps = {};
-      if (rows.length && rows[0].setup_steps) {
-        try { steps = JSON.parse(rows[0].setup_steps); } catch { steps = {}; }
-      }
-
-      const mergedSteps = { ...steps, ...tpl.suggestedSteps };
-      await query('UPDATE empresas SET rubro=$1, setup_steps=$2 WHERE id=$3', [tpl.rubro, JSON.stringify(mergedSteps), empresaId]);
-      const summary = await upsertCatalogTemplate({ query, empresaId, vertical, overwrite });
+      const { mergedSteps, summary } = await withTransaction(async txQuery => {
+        const rows = await txQuery('SELECT setup_steps FROM empresas WHERE id=$1 FOR UPDATE', [empresaId]);
+        let steps = {};
+        if (rows.length && rows[0].setup_steps) {
+          try { steps = JSON.parse(rows[0].setup_steps); } catch { steps = {}; }
+        }
+        const nextSteps = { ...steps, ...tpl.suggestedSteps };
+        await txQuery('UPDATE empresas SET rubro=$1, setup_steps=$2 WHERE id=$3', [tpl.rubro, JSON.stringify(nextSteps), empresaId]);
+        const catalog = await upsertCatalogTemplate({ query: txQuery, empresaId, vertical, overwrite });
+        return { mergedSteps: nextSteps, summary: catalog };
+      });
 
       return res.json({
         ok: true,
@@ -484,6 +547,10 @@ export function createSetupRouter(deps) {
         catalog: summary,
       });
     } catch (e) {
+      if (e?.code === 'TRANSACTION_OUTCOME_UNKNOWN') {
+        return res.status(503).json({ error: 'Resultado de vertical indeterminado', code: e.code });
+      }
+      if (Number.isInteger(e?.statusCode)) return res.status(e.statusCode).json({ error: e.message });
       console.error(e);
       return res.status(500).json({ error: 'Error aplicando vertical completo' });
     }
@@ -648,7 +715,7 @@ export function createSetupRouter(deps) {
   });
 
   // POST /api/setup/fase1/pipeline
-  router.post('/fase1/pipeline', withAuth, async (req, res) => {
+  router.post('/fase1/pipeline', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     try {
       const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
@@ -688,7 +755,7 @@ export function createSetupRouter(deps) {
   });
 
   // PUT /api/setup/fase1/pipeline/:id
-  router.put('/fase1/pipeline/:id', withAuth, async (req, res) => {
+  router.put('/fase1/pipeline/:id', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     try {
       const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
@@ -741,7 +808,7 @@ export function createSetupRouter(deps) {
   });
 
   // POST /api/setup/fase1/pipeline/:id/actividad
-  router.post('/fase1/pipeline/:id/actividad', withAuth, async (req, res) => {
+  router.post('/fase1/pipeline/:id/actividad', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     try {
       const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
@@ -821,7 +888,7 @@ export function createSetupRouter(deps) {
   });
 
   // POST /api/setup/fase1/cuentas-corrientes/movimiento
-  router.post('/fase1/cuentas-corrientes/movimiento', withAuth, async (req, res) => {
+  router.post('/fase1/cuentas-corrientes/movimiento', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     try {
       const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
@@ -1020,7 +1087,7 @@ export function createSetupRouter(deps) {
   });
 
   // PUT /api/setup/fase1/clientes-crm/:id
-  router.put('/fase1/clientes-crm/:id', withAuth, async (req, res) => {
+  router.put('/fase1/clientes-crm/:id', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     try {
       const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
@@ -1028,32 +1095,56 @@ export function createSetupRouter(deps) {
       if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: 'id inválido' });
 
       const b = req.body || {};
-      const [row] = await query(
-        `UPDATE puntos_entrega
-         SET crm_estado = COALESCE($1, crm_estado),
-             crm_riesgo = COALESCE($2, crm_riesgo),
-             crm_segmento = COALESCE($3, crm_segmento),
-             crm_motivo = COALESCE($4, crm_motivo),
-             crm_ticket_objetivo = COALESCE($5, crm_ticket_objetivo),
-             crm_proxima_accion = COALESCE($6, crm_proxima_accion),
-             crm_ultima_accion = NOW()
-         WHERE id=$7 AND empresa_id=$8
-         RETURNING id, cliente, telefono, crm_estado, crm_riesgo, crm_segmento, crm_motivo, crm_ticket_objetivo, crm_proxima_accion, crm_ultima_accion`,
-        [
-          b.crm_estado ?? null,
-          b.crm_riesgo ?? null,
-          b.crm_segmento ?? null,
-          b.crm_motivo ?? null,
-          b.crm_ticket_objetivo != null ? Number(b.crm_ticket_objetivo) : null,
-          b.crm_proxima_accion ?? null,
-          id,
+      const row = await withTransaction(async (txQuery) => {
+        const initial = await txQuery(
+          `SELECT id, empresa_id, telefono, telefono_normalizado, direccion
+             FROM puntos_entrega
+            WHERE id=$1 AND empresa_id=$2`,
+          [id, empresaId]
+        );
+        if (initial.length !== 1) return null;
+        await lockDeliveryPointRows(txQuery, {
           empresaId,
-        ]
-      );
+          rows: initial,
+          normalizePhoneFn: value => String(value || '').replace(/\D+/g, ''),
+        });
+        const rows = await txQuery(
+          `UPDATE puntos_entrega
+           SET crm_estado = COALESCE($1, crm_estado),
+               crm_riesgo = COALESCE($2, crm_riesgo),
+               crm_segmento = COALESCE($3, crm_segmento),
+               crm_motivo = COALESCE($4, crm_motivo),
+               crm_ticket_objetivo = COALESCE($5, crm_ticket_objetivo),
+               crm_proxima_accion = COALESCE($6, crm_proxima_accion),
+               crm_ultima_accion = NOW()
+           WHERE id=$7 AND empresa_id=$8
+           RETURNING id, cliente, telefono, crm_estado, crm_riesgo, crm_segmento, crm_motivo, crm_ticket_objetivo, crm_proxima_accion, crm_ultima_accion`,
+          [
+            b.crm_estado ?? null,
+            b.crm_riesgo ?? null,
+            b.crm_segmento ?? null,
+            b.crm_motivo ?? null,
+            b.crm_ticket_objetivo != null ? Number(b.crm_ticket_objetivo) : null,
+            b.crm_proxima_accion ?? null,
+            id,
+            empresaId,
+          ]
+        );
+        return rows.length === 1 ? rows[0] : null;
+      });
 
       if (!row) return res.status(404).json({ error: 'Cliente no encontrado' });
       return res.json({ ok: true, item: row });
     } catch (e) {
+      if (e?.code === 'TRANSACTION_OUTCOME_UNKNOWN') {
+        return res.status(503).json({
+          error: 'Resultado de actualización CRM indeterminado',
+          code: 'TRANSACTION_OUTCOME_UNKNOWN',
+        });
+      }
+      if (e?.code === 'DELIVERY_POINT_IDENTITY_CONFLICT') {
+        return res.status(409).json({ error: e.message, code: e.code });
+      }
       console.error(e);
       return res.status(500).json({ error: 'Error actualizando CRM de cliente' });
     }
@@ -1108,7 +1199,7 @@ export function createSetupRouter(deps) {
   });
 
   // POST /api/setup/fase1/clientes-crm/:id/oportunidad
-  router.post('/fase1/clientes-crm/:id/oportunidad', withAuth, async (req, res) => {
+  router.post('/fase1/clientes-crm/:id/oportunidad', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     try {
       const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
@@ -1176,7 +1267,7 @@ export function createSetupRouter(deps) {
   });
 
   // POST /api/setup/fase2/proveedores
-  router.post('/fase2/proveedores', withAuth, async (req, res) => {
+  router.post('/fase2/proveedores', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     try {
       const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
@@ -1199,7 +1290,7 @@ export function createSetupRouter(deps) {
   });
 
   // PUT /api/setup/fase2/proveedores/:id
-  router.put('/fase2/proveedores/:id', withAuth, async (req, res) => {
+  router.put('/fase2/proveedores/:id', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     try {
       const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
@@ -1231,7 +1322,7 @@ export function createSetupRouter(deps) {
   });
 
   // DELETE /api/setup/fase2/proveedores/:id
-  router.delete('/fase2/proveedores/:id', withAuth, async (req, res) => {
+  router.delete('/fase2/proveedores/:id', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     try {
       const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
@@ -1284,7 +1375,7 @@ export function createSetupRouter(deps) {
   });
 
   // POST /api/setup/fase2/compras
-  router.post('/fase2/compras', withAuth, async (req, res) => {
+  router.post('/fase2/compras', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     try {
       const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
@@ -1351,7 +1442,7 @@ export function createSetupRouter(deps) {
   });
 
   // POST /api/setup/fase2/compras/:id/recepcionar
-  router.post('/fase2/compras/:id/recepcionar', withAuth, async (req, res) => {
+  router.post('/fase2/compras/:id/recepcionar', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     try {
       const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
@@ -1465,7 +1556,7 @@ export function createSetupRouter(deps) {
   });
 
   // POST /api/setup/fase2/tesoreria
-  router.post('/fase2/tesoreria', withAuth, async (req, res) => {
+  router.post('/fase2/tesoreria', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     try {
       const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
@@ -1507,7 +1598,7 @@ export function createSetupRouter(deps) {
   });
 
   // PUT /api/setup/fase2/tesoreria/:id/conciliar
-  router.put('/fase2/tesoreria/:id/conciliar', withAuth, async (req, res) => {
+  router.put('/fase2/tesoreria/:id/conciliar', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     try {
       const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
@@ -1674,7 +1765,7 @@ export function createSetupRouter(deps) {
   });
 
   // POST /api/setup/fase2/presupuesto
-  router.post('/fase2/presupuesto', withAuth, async (req, res) => {
+  router.post('/fase2/presupuesto', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     try {
       const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
@@ -2559,7 +2650,7 @@ export function createSetupRouter(deps) {
   });
 
   // POST /api/setup/fase3/agentes/:id/accion
-  router.post('/fase3/agentes/:id/accion', withAuth, requireSuperAdmin, async (req, res) => {
+  router.post('/fase3/agentes/:id/accion', withAuth, requireCanonicalBackofficeRole, requireSuperAdmin, async (req, res) => {
     try {
       const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
@@ -2710,7 +2801,7 @@ export function createSetupRouter(deps) {
   });
 
   // POST /api/setup/fase3/incidencias
-  router.post('/fase3/incidencias', withAuth, async (req, res) => {
+  router.post('/fase3/incidencias', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     try {
       const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
@@ -2760,7 +2851,7 @@ export function createSetupRouter(deps) {
   });
 
   // PUT /api/setup/fase3/incidencias/:id
-  router.put('/fase3/incidencias/:id', withAuth, async (req, res) => {
+  router.put('/fase3/incidencias/:id', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     try {
       const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
@@ -3055,7 +3146,7 @@ export function createSetupRouter(deps) {
   });
 
   // PUT /api/setup/marketing/config
-  router.put('/marketing/config', withAuth, requireSuperMarketing, async (req, res) => {
+  router.put('/marketing/config', withAuth, requireCanonicalBackofficeRole, requireSuperMarketing, async (req, res) => {
     try {
       const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
@@ -3163,7 +3254,7 @@ export function createSetupRouter(deps) {
   });
 
   // POST /api/setup/marketing/base/preview
-  router.post('/marketing/base/preview', withAuth, requireSuperMarketing, async (req, res) => {
+  router.post('/marketing/base/preview', withAuth, requireCanonicalBackofficeRole, requireSuperMarketing, async (req, res) => {
     try {
       const telefonosIn = Array.isArray(req.body?.telefonos) ? req.body.telefonos : [];
       if (!telefonosIn.length) return res.status(400).json({ error: 'No se recibieron teléfonos para previsualizar' });
@@ -3201,7 +3292,7 @@ export function createSetupRouter(deps) {
   });
 
   // POST /api/setup/marketing/base/import
-  router.post('/marketing/base/import', withAuth, requireSuperMarketing, async (req, res) => {
+  router.post('/marketing/base/import', withAuth, requireCanonicalBackofficeRole, requireSuperMarketing, async (req, res) => {
     try {
       const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
@@ -3381,7 +3472,7 @@ export function createSetupRouter(deps) {
   });
 
   // PATCH /api/setup/marketing/base/contact/:id/status
-  router.patch('/marketing/base/contact/:id/status', withAuth, requireSuperMarketing, async (req, res) => {
+  router.patch('/marketing/base/contact/:id/status', withAuth, requireCanonicalBackofficeRole, requireSuperMarketing, async (req, res) => {
     try {
       const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
@@ -3414,7 +3505,7 @@ export function createSetupRouter(deps) {
   });
 
   // POST /api/setup/marketing/base/contact/:id/optout
-  router.post('/marketing/base/contact/:id/optout', withAuth, requireSuperMarketing, async (req, res) => {
+  router.post('/marketing/base/contact/:id/optout', withAuth, requireCanonicalBackofficeRole, requireSuperMarketing, async (req, res) => {
     try {
       const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });
@@ -3441,7 +3532,7 @@ export function createSetupRouter(deps) {
   });
 
   // POST /api/setup/marketing/base/launch
-  router.post('/marketing/base/launch', withAuth, requireSuperMarketing, async (req, res) => {
+  router.post('/marketing/base/launch', withAuth, requireCanonicalBackofficeRole, requireSuperMarketing, async (req, res) => {
     try {
       const empresaId = resolveEmpresaIdForSetup(req, { fromBody: true });
       if (!empresaId) return res.status(400).json({ error: 'empresa_id requerido para super admin' });

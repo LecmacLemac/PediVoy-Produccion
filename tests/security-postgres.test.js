@@ -195,7 +195,8 @@ test('PostgreSQL WhatsApp full normalized identities reject suffix collisions an
       return (await pool.query(sql, params)).rows;
     } };
     vm.runInNewContext(source, sandbox);
-    const resolve = (sender = '5493871234567') => sandbox.resolve(`${sender}@c.us`);
+    const resolve = (sender = '5493871234567', workerEmpresaId) =>
+      sandbox.resolve(`${sender}@c.us`, sandbox.query, workerEmpresaId);
     const reset = () => pool.query('TRUNCATE usuarios, choferes');
     const addUser = (username, telefono = null, activo = true) => pool.query(
       "INSERT INTO usuarios(username, telefono, role, activo) VALUES ($1,$2,'super',$3)", [username, telefono, activo]);
@@ -210,29 +211,29 @@ test('PostgreSQL WhatsApp full normalized identities reject suffix collisions an
     await reset();
     await addUser('+54 (938) 712-34567');
     await addUser('+34 387 123 4567');
-    assert.equal((await resolve()).role, 'super');
-    assert.equal((await resolve('343871234567')).role, 'super');
+    assert.equal((await resolve('5493871234567', 7)).role, 'super');
+    assert.equal((await resolve('343871234567', 7)).role, 'super');
     for (const activo of [true, false]) {
       await reset();
       await addUser('5493871234567');
       await addUser('+54 (938) 712-34567', null, activo);
       calls.length = 0;
-      assert.equal(await resolve(), null);
+      assert.equal((await resolve()).resolution, 'ambiguous');
       assert.equal(calls.length, 1, 'Ambiguous users cannot fall back');
       await reset();
       await pool.query("INSERT INTO choferes VALUES (4,'5493871234567',7,'A',true),(5,'+54 (938) 712-34567',8,'B',$1)", [activo]);
       calls.length = 0;
-      assert.equal(await resolve(), null);
+      assert.equal((await resolve()).resolution, 'ambiguous');
       assert.equal(calls.length, 2, 'Ambiguous drivers cannot read linked users or customers');
     }
     await reset();
     await addUser('operator', '+54 (938) 712-34567');
-    assert.equal((await resolve()).role, 'super');
+    assert.equal((await resolve('5493871234567', 7)).role, 'super');
     await addUser('5493871234567');
-    assert.equal(await resolve(), null, 'Cross-field duplicate must fail closed');
+    assert.equal((await resolve()).resolution, 'ambiguous', 'Cross-field duplicate must fail closed');
     await reset();
     await addUser('+54 (938) 712-34567', '5493871234567');
-    assert.equal((await resolve()).role, 'super', 'Two fields on one user are one candidate');
+    assert.equal((await resolve('5493871234567', 7)).role, 'super', 'Two fields on one user are one candidate');
     await reset();
     await pool.query("INSERT INTO choferes VALUES (5,'+34 387 123 4567',8,'B',true),(4,'+54 (938) 712-34567',7,'A',true)");
     for (const [sender, id, tenant] of [['5493871234567', 4, 7], ['343871234567', 5, 8]]) {

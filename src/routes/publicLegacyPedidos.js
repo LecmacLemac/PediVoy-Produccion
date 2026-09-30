@@ -105,7 +105,9 @@ export function createPublicLegacyPedidosRouter({ query, withTransaction }) {
         rows = await query(
           `SELECT c.id AS chofer_id, c.nombre, c.telefono
            FROM pedidos p
-           JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
+           JOIN puntos_entrega pe
+             ON pe.id = p.punto_entrega_id
+            AND pe.empresa_id = p.empresa_id
            JOIN zona_chofer zc ON zc.zona_id = pe.zona_id
            JOIN choferes c ON c.id = zc.chofer_id
            WHERE p.id=$1 AND p.tracking_token=$2
@@ -148,7 +150,9 @@ export function createPublicLegacyPedidosRouter({ query, withTransaction }) {
         `SELECT p.id, p.estado, p.fecha, p.empresa_id, p.tracking_token,
                 pe.cliente, pe.direccion, pe.latitud, pe.longitud, p.monto
          FROM pedidos p
-         JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
+         JOIN puntos_entrega pe
+           ON pe.id = p.punto_entrega_id
+          AND pe.empresa_id = p.empresa_id
          WHERE p.id=$1 AND p.tracking_token=$2`,
         [id, token]
       );

@@ -152,8 +152,8 @@ test('same super token loses DELETE permission immediately after downgrade or de
   });
 });
 
-test('tenant reassignment is immediate for company config and product writes', async () => {
-  const row = { ...current };
+test('tenant reassignment is immediate for company config and canonical admin product writes', async () => {
+  const row = { ...current, role: 'admin' };
   await serve(row, async ({ request, calls }) => {
     for (const empresaId of [7, 8]) {
       row.empresa_id = empresaId;

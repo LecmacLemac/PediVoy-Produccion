@@ -481,8 +481,12 @@ export async function asociarComprobantePedidoPg(
               pe.telefono_normalizado
          FROM pedidos p
          JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
-        WHERE p.id = $1 FOR UPDATE`,
-      [pid],
+                               AND pe.empresa_id = p.empresa_id
+        WHERE p.id = $1
+          AND ($2::integer IS NULL OR p.empresa_id = $2)
+          AND pe.empresa_id = p.empresa_id
+        FOR UPDATE OF p, pe`,
+      [pid, role === 'super' ? null : actorTenant],
     ))[0];
     if (!pedido) approvalFailure('pedido_no_asociado');
     const eid = Number(pedido.empresa_id);
@@ -545,7 +549,7 @@ export async function asociarComprobantePedidoPg(
 // ============================================
 // 2. INSERTAR NUEVO COMPROBANTE (Con Vinculación Automática)
 // ============================================
-export async function insertarComprobantePg({
+async function insertarComprobantePgWork({
   telefono,
   replyJid = null,
   transportOrigin = null,
@@ -556,7 +560,7 @@ export async function insertarComprobantePg({
   fileHash = null,
   mimetype, // (por ahora no se usa, pero lo dejamos por si se loguea a futuro)
   bytes     // (idem)
-}, queryFn = query) {
+}, queryFn = query, { transactional = false } = {}) {
   const telClean = digitsOnly(telefono) || null;
   // Usamos los últimos 10 dígitos para mejorar el "match" (evita problemas con 549 vs 0)
   const telSuffix = telClean ? telClean.slice(-10) : null;
@@ -578,9 +582,11 @@ export async function insertarComprobantePg({
           OR LOWER(pp.estado) IN ('pagado','aprobado','acreditado'))) AS pago_acreditado
     FROM pedidos p
     JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
+                          AND pe.empresa_id = p.empresa_id
     WHERE 
       pe.telefono_normalizado LIKE '%' || $1
       AND p.empresa_id = $2
+      AND pe.empresa_id = p.empresa_id
       AND pe.empresa_id = $2
       AND LOWER(COALESCE(p.metodo_pago, '')) = 'transferencia'
       AND p.estado IN ('pendiente', 'en_ruta', 'en_camino', 'entregado')
@@ -603,6 +609,7 @@ export async function insertarComprobantePg({
           OR LOWER(pp.estado) IN ('pagado','aprobado','acreditado'))) AS pago_acreditado
     FROM pedidos p
     JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
+                          AND pe.empresa_id = p.empresa_id
     WHERE pe.telefono_normalizado LIKE '%' || $1
       AND p.estado IN ('pendiente', 'en_ruta', 'en_camino', 'entregado')
     ORDER BY p.empresa_id, p.id DESC
@@ -618,7 +625,35 @@ export async function insertarComprobantePg({
     && new Set(eligibleMatches.map(row => Number(row.empresa_id))).size > 1;
   const orderAmbiguous = !!explicitEmpresaId && eligibleMatches.length > 1;
   const ambiguous = tenantAmbiguous || orderAmbiguous;
-  const pedidoEncontrado = ambiguous ? {} : (eligibleMatches[0] || {});
+  let pedidoEncontrado = ambiguous ? {} : (eligibleMatches[0] || {});
+
+  if (pedidoEncontrado.pedido_id) {
+    const lockedMatches = await queryFn(
+      `SELECT p.id AS pedido_id, p.empresa_id, p.chofer_id, p.monto, p.metodo_pago,
+              EXISTS (SELECT 1 FROM pedido_pagos pp
+                       WHERE pp.pedido_id = p.id AND pp.empresa_id = p.empresa_id
+                         AND (pp.settlement_at IS NOT NULL
+                           OR LOWER(COALESCE(pp.estado, '')) IN ('pagado','aprobado','acreditado'))) AS pago_acreditado
+         FROM pedidos p
+         JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
+                               AND pe.empresa_id = p.empresa_id
+        WHERE p.id = $1
+          AND p.empresa_id = $2
+          AND pe.empresa_id = $2
+          AND pe.telefono_normalizado LIKE '%' || $3
+          AND LOWER(COALESCE(p.metodo_pago, '')) = 'transferencia'
+          AND p.estado IN ('pendiente', 'en_ruta', 'en_camino', 'entregado')
+          AND NOT EXISTS (SELECT 1 FROM pedido_pagos paid
+                           WHERE paid.pedido_id = p.id AND paid.empresa_id = p.empresa_id
+                             AND (paid.settlement_at IS NOT NULL
+                               OR LOWER(COALESCE(paid.estado, '')) IN ('pagado','aprobado','acreditado')))
+          AND NOT EXISTS (SELECT 1 FROM comprobante_pedido_aprobado_claims claim
+                           WHERE claim.tenant_key = p.empresa_id AND claim.pedido_id = p.id)
+        FOR UPDATE OF p, pe`,
+      [Number(pedidoEncontrado.pedido_id), Number(pedidoEncontrado.empresa_id), telSuffix]
+    );
+    pedidoEncontrado = lockedMatches.length === 1 ? lockedMatches[0] : {};
+  }
 
   // Datos para vincular (o NULL si no se encontró nada)
   const pid = pedidoEncontrado.pedido_id || null;
@@ -641,6 +676,7 @@ export async function insertarComprobantePg({
 
   // --- INSERTAR ---
   let rows;
+  if (transactional) await queryFn('SAVEPOINT comprobante_insert');
   try {
     rows = await queryFn(
       `
@@ -672,6 +708,7 @@ export async function insertarComprobantePg({
     const isExpectedDuplicate = error?.code === '23505'
       && ['uq_ct_source_message_new', 'uq_ct_file_hash_new'].includes(error?.constraint);
     if (!isExpectedDuplicate) throw error;
+    if (transactional) await queryFn('ROLLBACK TO SAVEPOINT comprobante_insert');
     const bySource = error.constraint === 'uq_ct_source_message_new';
     const existing = await queryFn(
       `SELECT id, empresa_id, pedido_id FROM comprobantes_transferencia
@@ -686,6 +723,7 @@ export async function insertarComprobantePg({
       existing: existing[0],
     };
   }
+  if (rows.length !== 1) throw new Error('No se pudo insertar exactamente un comprobante');
 
   return {
     ...rows[0],
@@ -696,6 +734,15 @@ export async function insertarComprobantePg({
     ambiguous,
     association_reason: pendingReason,
   };
+}
+
+export async function insertarComprobantePg(input, queryFn = query, {
+  withTransaction = null,
+} = {}) {
+  const transaction = withTransaction
+    || (queryFn === query ? dbWithTransaction : null);
+  if (!transaction) return insertarComprobantePgWork(input, queryFn);
+  return transaction(txQuery => insertarComprobantePgWork(input, txQuery, { transactional: true }));
 }
 
 // ============================================

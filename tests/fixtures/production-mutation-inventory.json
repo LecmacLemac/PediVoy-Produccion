@@ -1,0 +1,1260 @@
+[
+  {
+    "source": "src/adm/activosRouter.js",
+    "method": "POST",
+    "path": "/",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/adm/activosRouter.js",
+    "method": "PUT",
+    "path": "/:id",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/adm/activosRouter.js",
+    "method": "POST",
+    "path": "/:id/baja",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/adm/activosRouter.js",
+    "method": "POST",
+    "path": "/asignar",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/adm/activosRouter.js",
+    "method": "POST",
+    "path": "/devolver",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/adm/activosRouter.js",
+    "method": "POST",
+    "path": "/sanitizar",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/adm/activosRouter.js",
+    "method": "POST",
+    "path": "/en-reparacion",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/adm/activosRouter.js",
+    "method": "POST",
+    "path": "/fin-reparacion",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/adm/alquileresRouter.js",
+    "method": "POST",
+    "path": "/mp-link",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/adm/alquileresRouter.js",
+    "method": "POST",
+    "path": "/marcar-cobrado",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/adm/alquileresRouter.js",
+    "method": "POST",
+    "path": "/desmarcar-cobrado",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/adm/alquileresRouter.js",
+    "method": "POST",
+    "path": "/comunicacion",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/adm/alquileresRouter.js",
+    "method": "POST",
+    "path": "/generar",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/adm/costosRouter.js",
+    "method": "POST",
+    "path": "/actualizar",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/adm/costosRouter.js",
+    "method": "POST",
+    "path": "/fijos",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/adm/costosRouter.js",
+    "method": "PUT",
+    "path": "/fijos/:id",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/adm/costosRouter.js",
+    "method": "DELETE",
+    "path": "/fijos/:id",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/adm/costosRouter.js",
+    "method": "POST",
+    "path": "/variables/definiciones",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/adm/costosRouter.js",
+    "method": "PUT",
+    "path": "/variables/definiciones/:id",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/adm/costosRouter.js",
+    "method": "DELETE",
+    "path": "/variables/definiciones/:id",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/adm/costosRouter.js",
+    "method": "POST",
+    "path": "/variables/aplicacion",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/qr/pagosRouter.js",
+    "method": "POST",
+    "path": "/pedidos/:pedidoId/link",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/adminUsuarios.js",
+    "method": "POST",
+    "path": "/usuarios",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/adminUsuarios.js",
+    "method": "PUT",
+    "path": "/usuarios/:id",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/adminUsuarios.js",
+    "method": "DELETE",
+    "path": "/usuarios/:id",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/aiSiteBuilder.js",
+    "method": "POST",
+    "path": "/build-site",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/asignacionesZonas.js",
+    "method": "POST",
+    "path": "/asignarChofer",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/asignacionesZonas.js",
+    "method": "DELETE",
+    "path": "/desasignarChofer",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/auth.js",
+    "method": "POST",
+    "path": "/login",
+    "classification": "publico_capability_explicita",
+    "authorityEvidence": {
+      "module": "tests/support/mutationAuthorityContracts.js",
+      "export": "publicAuthorityContract",
+      "case": "src/routes/auth.js|POST|/login"
+    }
+  },
+  {
+    "source": "src/routes/auth.js",
+    "method": "POST",
+    "path": "/logout",
+    "classification": "publico_capability_explicita",
+    "authorityEvidence": {
+      "module": "tests/support/mutationAuthorityContracts.js",
+      "export": "publicAuthorityContract",
+      "case": "src/routes/auth.js|POST|/logout"
+    }
+  },
+  {
+    "source": "src/routes/authGuestSignup.js",
+    "method": "POST",
+    "path": "/guest",
+    "classification": "publico_capability_explicita",
+    "authorityEvidence": {
+      "module": "tests/support/mutationAuthorityContracts.js",
+      "export": "publicAuthorityContract",
+      "case": "src/routes/authGuestSignup.js|POST|/guest"
+    }
+  },
+  {
+    "source": "src/routes/authGuestSignup.js",
+    "method": "POST",
+    "path": "/register",
+    "classification": "publico_capability_explicita",
+    "authorityEvidence": {
+      "module": "tests/support/mutationAuthorityContracts.js",
+      "export": "publicAuthorityContract",
+      "case": "src/routes/authGuestSignup.js|POST|/register"
+    }
+  },
+  {
+    "source": "src/routes/authGuestSignup.js",
+    "method": "POST",
+    "path": "/signup-full",
+    "classification": "publico_capability_explicita",
+    "authorityEvidence": {
+      "module": "tests/support/mutationAuthorityContracts.js",
+      "export": "publicAuthorityContract",
+      "case": "src/routes/authGuestSignup.js|POST|/signup-full"
+    }
+  },
+  {
+    "source": "src/routes/callCampaigns.js",
+    "method": "POST",
+    "path": "/",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/callCampaigns.js",
+    "method": "POST",
+    "path": "/:id/start",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/callCampaigns.js",
+    "method": "POST",
+    "path": "/:id/pause",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/callCampaigns.js",
+    "method": "POST",
+    "path": "/:id/contacts/import",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/calls.js",
+    "method": "POST",
+    "path": "/call-dispatch/run",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/calls.js",
+    "method": "POST",
+    "path": "/asterisk/events",
+    "classification": "webhook_firmado"
+  },
+  {
+    "source": "src/routes/calls.js",
+    "method": "POST",
+    "path": "/calls/:sessionId/ai-result",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/calls.js",
+    "method": "POST",
+    "path": "/calls/:sessionId/transfer-human",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/choferes.js",
+    "method": "POST",
+    "path": "/choferes/upload-foto",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/choferes.js",
+    "method": "POST",
+    "path": "/choferes",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/choferes.js",
+    "method": "PUT",
+    "path": "/choferes/:id",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/choferes.js",
+    "method": "DELETE",
+    "path": "/choferes/:id",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/choferes.js",
+    "method": "POST",
+    "path": "/choferes/:id/costos",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/choferes.js",
+    "method": "PUT",
+    "path": "/choferes/:id/costos/:pid",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/choferes.js",
+    "method": "DELETE",
+    "path": "/choferes/:id/costos/:pid",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/choferes.js",
+    "method": "POST",
+    "path": "/choferes/:id/escalas",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/choferes.js",
+    "method": "PUT",
+    "path": "/escalas/:id",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/choferes.js",
+    "method": "DELETE",
+    "path": "/escalas/:id",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/choferes.js",
+    "method": "POST",
+    "path": "/escalas/:id/tramos",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/choferes.js",
+    "method": "PUT",
+    "path": "/tramos/:id",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/choferes.js",
+    "method": "DELETE",
+    "path": "/tramos/:id",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/clientes.js",
+    "method": "POST",
+    "path": "/geocode",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/clientes.js",
+    "method": "POST",
+    "path": "/",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/clientes.js",
+    "method": "PUT",
+    "path": "/:id",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/clientes.js",
+    "method": "DELETE",
+    "path": "/:id",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/empresas.js",
+    "method": "POST",
+    "path": "/upload-logo",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/empresas.js",
+    "method": "POST",
+    "path": "/",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/empresas.js",
+    "method": "PUT",
+    "path": "/:id",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/empresas.js",
+    "method": "DELETE",
+    "path": "/:id",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/empresas.js",
+    "method": "POST",
+    "path": "/:id/whatsapp-reset",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/empresas.js",
+    "method": "POST",
+    "path": "/:id/backup/validate",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/empresas.js",
+    "method": "POST",
+    "path": "/:id/backup/restore",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/empresas.js",
+    "method": "POST",
+    "path": "/:id/cuentas",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/empresas.js",
+    "method": "POST",
+    "path": "/cuentas/:id/principal",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/empresas.js",
+    "method": "DELETE",
+    "path": "/cuentas/:id",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/entregaConfig.js",
+    "method": "PUT",
+    "path": "/config",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/facturacion.js",
+    "method": "PUT",
+    "path": "/facturacion/config",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/facturacion.js",
+    "method": "POST",
+    "path": "/facturacion/config/credenciales",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/facturacion.js",
+    "method": "POST",
+    "path": "/facturacion/config/probar-conexion",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/facturacion.js",
+    "method": "POST",
+    "path": "/pedidos/:pedidoId/factura/solicitar",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/facturacion.js",
+    "method": "POST",
+    "path": "/facturacion/facturas/consolidada",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/facturacion.js",
+    "method": "POST",
+    "path": "/facturas/:id/enviar",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/facturacion.js",
+    "method": "POST",
+    "path": "/facturas/:id/emitir",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/facturacion.js",
+    "method": "POST",
+    "path": "/facturas/:id/cancelar",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/facturacion.js",
+    "method": "DELETE",
+    "path": "/facturas/:id",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/gastos.js",
+    "method": "POST",
+    "path": "/",
+    "classification": "repartidor_o_admin_ownership",
+    "authorityEvidence": {
+      "module": "tests/support/mutationAuthorityContracts.js",
+      "export": "ownershipAuthorityContract",
+      "case": "src/routes/gastos.js|POST|/"
+    }
+  },
+  {
+    "source": "src/routes/gastos.js",
+    "method": "PUT",
+    "path": "/:id",
+    "classification": "repartidor_o_admin_ownership",
+    "authorityEvidence": {
+      "module": "tests/support/mutationAuthorityContracts.js",
+      "export": "ownershipAuthorityContract",
+      "case": "src/routes/gastos.js|PUT|/:id"
+    }
+  },
+  {
+    "source": "src/routes/gastos.js",
+    "method": "DELETE",
+    "path": "/:id",
+    "classification": "repartidor_o_admin_ownership",
+    "authorityEvidence": {
+      "module": "tests/support/mutationAuthorityContracts.js",
+      "export": "ownershipAuthorityContract",
+      "case": "src/routes/gastos.js|DELETE|/:id"
+    }
+  },
+  {
+    "source": "src/routes/juegos.js",
+    "method": "POST",
+    "path": "/campanias",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/juegos.js",
+    "method": "PUT",
+    "path": "/campanias/:id",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/juegos.js",
+    "method": "DELETE",
+    "path": "/campanias/:id/participaciones/:participacionId",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/juegos.js",
+    "method": "POST",
+    "path": "/participar",
+    "classification": "publico_capability_explicita",
+    "authorityEvidence": {
+      "module": "tests/support/mutationAuthorityContracts.js",
+      "export": "publicAuthorityContract",
+      "case": "src/routes/juegos.js|POST|/participar"
+    }
+  },
+  {
+    "source": "src/routes/juegos.js",
+    "method": "POST",
+    "path": "/premio-entrega",
+    "classification": "publico_capability_explicita",
+    "authorityEvidence": {
+      "module": "tests/support/mutationAuthorityContracts.js",
+      "export": "publicAuthorityContract",
+      "case": "src/routes/juegos.js|POST|/premio-entrega"
+    }
+  },
+  {
+    "source": "src/routes/licenciasMp.js",
+    "method": "POST",
+    "path": "/generar-pago",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/licenciasMp.js",
+    "method": "POST",
+    "path": "/mercadopago",
+    "classification": "webhook_firmado"
+  },
+  {
+    "source": "src/routes/pedidos.js",
+    "method": "PUT",
+    "path": "/:id",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/pedidos.js",
+    "method": "DELETE",
+    "path": "/:id",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/pedidosItems.js",
+    "method": "PUT",
+    "path": "/:id/items",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/pedidosPago.js",
+    "method": "POST",
+    "path": "/:id/toggle-pago",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/productos.js",
+    "method": "POST",
+    "path": "/",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/productos.js",
+    "method": "PUT",
+    "path": "/:id",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/productos.js",
+    "method": "DELETE",
+    "path": "/:id",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/promociones.js",
+    "method": "PUT",
+    "path": "/config",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/promptsGlobales.js",
+    "method": "POST",
+    "path": "/global",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/promptsGlobales.js",
+    "method": "DELETE",
+    "path": "/global/:tipo",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/publicClientApp.js",
+    "method": "POST",
+    "path": "/auth/companies",
+    "classification": "publico_capability_explicita",
+    "authorityEvidence": {
+      "module": "tests/support/mutationAuthorityContracts.js",
+      "export": "publicAuthorityContract",
+      "case": "src/routes/publicClientApp.js|POST|/auth/companies"
+    }
+  },
+  {
+    "source": "src/routes/publicClientApp.js",
+    "method": "POST",
+    "path": "/auth/request-otp",
+    "classification": "publico_capability_explicita",
+    "authorityEvidence": {
+      "module": "tests/support/mutationAuthorityContracts.js",
+      "export": "publicAuthorityContract",
+      "case": "src/routes/publicClientApp.js|POST|/auth/request-otp"
+    }
+  },
+  {
+    "source": "src/routes/publicClientApp.js",
+    "method": "POST",
+    "path": "/auth/verify-otp",
+    "classification": "publico_capability_explicita",
+    "authorityEvidence": {
+      "module": "tests/support/mutationAuthorityContracts.js",
+      "export": "publicAuthorityContract",
+      "case": "src/routes/publicClientApp.js|POST|/auth/verify-otp"
+    }
+  },
+  {
+    "source": "src/routes/publicClientApp.js",
+    "method": "POST",
+    "path": "/profile",
+    "classification": "publico_capability_explicita",
+    "authorityEvidence": {
+      "module": "tests/support/mutationAuthorityContracts.js",
+      "export": "publicAuthorityContract",
+      "case": "src/routes/publicClientApp.js|POST|/profile"
+    }
+  },
+  {
+    "source": "src/routes/publicClientApp.js",
+    "method": "POST",
+    "path": "/auth/logout",
+    "classification": "publico_capability_explicita",
+    "authorityEvidence": {
+      "module": "tests/support/mutationAuthorityContracts.js",
+      "export": "publicAuthorityContract",
+      "case": "src/routes/publicClientApp.js|POST|/auth/logout"
+    }
+  },
+  {
+    "source": "src/routes/publicLegacyPedidos.js",
+    "method": "POST",
+    "path": "/push/subscribe",
+    "classification": "publico_capability_explicita",
+    "authorityEvidence": {
+      "module": "tests/support/mutationAuthorityContracts.js",
+      "export": "publicAuthorityContract",
+      "case": "src/routes/publicLegacyPedidos.js|POST|/push/subscribe"
+    }
+  },
+  {
+    "source": "src/routes/publicLegacyPedidos.js",
+    "method": "POST",
+    "path": "/push/unsubscribe",
+    "classification": "publico_capability_explicita",
+    "authorityEvidence": {
+      "module": "tests/support/mutationAuthorityContracts.js",
+      "export": "publicAuthorityContract",
+      "case": "src/routes/publicLegacyPedidos.js|POST|/push/unsubscribe"
+    }
+  },
+  {
+    "source": "src/routes/referentePortal.js",
+    "method": "PUT",
+    "path": "/perfil",
+    "classification": "referente_exacto_ownership",
+    "authorityEvidence": {
+      "module": "tests/support/mutationAuthorityContracts.js",
+      "export": "ownershipAuthorityContract",
+      "case": "src/routes/referentePortal.js|PUT|/perfil"
+    }
+  },
+  {
+    "source": "src/routes/referentePortal.js",
+    "method": "PUT",
+    "path": "/password",
+    "classification": "referente_exacto_ownership",
+    "authorityEvidence": {
+      "module": "tests/support/mutationAuthorityContracts.js",
+      "export": "ownershipAuthorityContract",
+      "case": "src/routes/referentePortal.js|PUT|/password"
+    }
+  },
+  {
+    "source": "src/routes/referentePortal.js",
+    "method": "POST",
+    "path": "/clientes-propuestos",
+    "classification": "referente_exacto_ownership",
+    "authorityEvidence": {
+      "module": "tests/support/mutationAuthorityContracts.js",
+      "export": "ownershipAuthorityContract",
+      "case": "src/routes/referentePortal.js|POST|/clientes-propuestos"
+    }
+  },
+  {
+    "source": "src/routes/referentePortal.js",
+    "method": "POST",
+    "path": "/notificaciones/marcar-leidas",
+    "classification": "referente_exacto_ownership",
+    "authorityEvidence": {
+      "module": "tests/support/mutationAuthorityContracts.js",
+      "export": "ownershipAuthorityContract",
+      "case": "src/routes/referentePortal.js|POST|/notificaciones/marcar-leidas"
+    }
+  },
+  {
+    "source": "src/routes/referentePortal.js",
+    "method": "POST",
+    "path": "/notificaciones/:id/leida",
+    "classification": "referente_exacto_ownership",
+    "authorityEvidence": {
+      "module": "tests/support/mutationAuthorityContracts.js",
+      "export": "ownershipAuthorityContract",
+      "case": "src/routes/referentePortal.js|POST|/notificaciones/:id/leida"
+    }
+  },
+  {
+    "source": "src/routes/referentes.js",
+    "method": "POST",
+    "path": "/",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/referentes.js",
+    "method": "PUT",
+    "path": "/:id",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/referentes.js",
+    "method": "POST",
+    "path": "/:id/acceso",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/referentes.js",
+    "method": "POST",
+    "path": "/:id/productos",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/referentes.js",
+    "method": "POST",
+    "path": "/clientes-propuestos/:id/aprobar",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/referentes.js",
+    "method": "POST",
+    "path": "/clientes-propuestos/:id/rechazar",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/referentes.js",
+    "method": "DELETE",
+    "path": "/:id",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/referentes.js",
+    "method": "POST",
+    "path": "/comisiones/liquidar",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/referentes.js",
+    "method": "POST",
+    "path": "/clientes/:clienteId/desvincular",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/repartidorApi.js",
+    "method": "POST",
+    "path": "/pedidos/:id/pago-qr",
+    "classification": "repartidor_exacto_ownership",
+    "authorityEvidence": {
+      "module": "tests/support/mutationAuthorityContracts.js",
+      "export": "ownershipAuthorityContract",
+      "case": "src/routes/repartidorApi.js|POST|/pedidos/:id/pago-qr"
+    }
+  },
+  {
+    "source": "src/routes/repartidorApi.js",
+    "method": "POST",
+    "path": "/pedidos/:id/transferencia/notificar",
+    "classification": "repartidor_exacto_ownership",
+    "authorityEvidence": {
+      "module": "tests/support/mutationAuthorityContracts.js",
+      "export": "ownershipAuthorityContract",
+      "case": "src/routes/repartidorApi.js|POST|/pedidos/:id/transferencia/notificar"
+    }
+  },
+  {
+    "source": "src/routes/repartidorApi.js",
+    "method": "PUT",
+    "path": "/pedidos/:id",
+    "classification": "repartidor_exacto_ownership",
+    "authorityEvidence": {
+      "module": "tests/support/mutationAuthorityContracts.js",
+      "export": "ownershipAuthorityContract",
+      "case": "src/routes/repartidorApi.js|PUT|/pedidos/:id"
+    }
+  },
+  {
+    "source": "src/routes/repartidorApi.js",
+    "method": "POST",
+    "path": "/pedidos/:id/entregar",
+    "classification": "repartidor_exacto_ownership",
+    "authorityEvidence": {
+      "module": "tests/support/mutationAuthorityContracts.js",
+      "export": "ownershipAuthorityContract",
+      "case": "src/routes/repartidorApi.js|POST|/pedidos/:id/entregar"
+    }
+  },
+  {
+    "source": "src/routes/repartidorApi.js",
+    "method": "POST",
+    "path": "/pedidos/:id/activos-movimientos",
+    "classification": "repartidor_exacto_ownership",
+    "authorityEvidence": {
+      "module": "tests/support/mutationAuthorityContracts.js",
+      "export": "ownershipAuthorityContract",
+      "case": "src/routes/repartidorApi.js|POST|/pedidos/:id/activos-movimientos"
+    }
+  },
+  {
+    "source": "src/routes/repartidorApi.js",
+    "method": "POST",
+    "path": "/tomar/:id",
+    "classification": "repartidor_exacto_ownership",
+    "authorityEvidence": {
+      "module": "tests/support/mutationAuthorityContracts.js",
+      "export": "ownershipAuthorityContract",
+      "case": "src/routes/repartidorApi.js|POST|/tomar/:id"
+    }
+  },
+  {
+    "source": "src/routes/repartidorApi.js",
+    "method": "POST",
+    "path": "/optimizar-ruta",
+    "classification": "repartidor_exacto_ownership",
+    "authorityEvidence": {
+      "module": "tests/support/mutationAuthorityContracts.js",
+      "export": "ownershipAuthorityContract",
+      "case": "src/routes/repartidorApi.js|POST|/optimizar-ruta"
+    }
+  },
+  {
+    "source": "src/routes/reportes.js",
+    "method": "POST",
+    "path": "/saldos-clientes/solicitar",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/retornables.js",
+    "method": "POST",
+    "path": "/ajustes",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/setup.js",
+    "method": "POST",
+    "path": "/step",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/setup.js",
+    "method": "POST",
+    "path": "/apply-vertical",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/setup.js",
+    "method": "POST",
+    "path": "/seed-catalog",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/setup.js",
+    "method": "POST",
+    "path": "/apply-vertical-full",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/setup.js",
+    "method": "POST",
+    "path": "/fase1/pipeline",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/setup.js",
+    "method": "PUT",
+    "path": "/fase1/pipeline/:id",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/setup.js",
+    "method": "POST",
+    "path": "/fase1/pipeline/:id/actividad",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/setup.js",
+    "method": "POST",
+    "path": "/fase1/cuentas-corrientes/movimiento",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/setup.js",
+    "method": "PUT",
+    "path": "/fase1/clientes-crm/:id",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/setup.js",
+    "method": "POST",
+    "path": "/fase1/clientes-crm/:id/oportunidad",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/setup.js",
+    "method": "POST",
+    "path": "/fase2/proveedores",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/setup.js",
+    "method": "PUT",
+    "path": "/fase2/proveedores/:id",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/setup.js",
+    "method": "DELETE",
+    "path": "/fase2/proveedores/:id",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/setup.js",
+    "method": "POST",
+    "path": "/fase2/compras",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/setup.js",
+    "method": "POST",
+    "path": "/fase2/compras/:id/recepcionar",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/setup.js",
+    "method": "POST",
+    "path": "/fase2/tesoreria",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/setup.js",
+    "method": "PUT",
+    "path": "/fase2/tesoreria/:id/conciliar",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/setup.js",
+    "method": "POST",
+    "path": "/fase2/presupuesto",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/setup.js",
+    "method": "POST",
+    "path": "/fase3/agentes/:id/accion",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/setup.js",
+    "method": "POST",
+    "path": "/fase3/incidencias",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/setup.js",
+    "method": "PUT",
+    "path": "/fase3/incidencias/:id",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/setup.js",
+    "method": "PUT",
+    "path": "/marketing/config",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/setup.js",
+    "method": "POST",
+    "path": "/marketing/base/preview",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/setup.js",
+    "method": "POST",
+    "path": "/marketing/base/import",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/setup.js",
+    "method": "PATCH",
+    "path": "/marketing/base/contact/:id/status",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/setup.js",
+    "method": "POST",
+    "path": "/marketing/base/contact/:id/optout",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/setup.js",
+    "method": "POST",
+    "path": "/marketing/base/launch",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/stock.js",
+    "method": "POST",
+    "path": "/depositos",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/stock.js",
+    "method": "PUT",
+    "path": "/depositos/permisos-config",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/stock.js",
+    "method": "PUT",
+    "path": "/depositos/:id",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/stock.js",
+    "method": "DELETE",
+    "path": "/depositos/:id",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/stock.js",
+    "method": "POST",
+    "path": "/depositos/transferir",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/stock.js",
+    "method": "POST",
+    "path": "/depositos/transferencias/revertir",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/stock.js",
+    "method": "POST",
+    "path": "/depositos/choferes",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/stock.js",
+    "method": "POST",
+    "path": "/ajuste",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/tracking.js",
+    "method": "POST",
+    "path": "/update",
+    "classification": "repartidor_exacto_ownership",
+    "authorityEvidence": {
+      "module": "tests/support/mutationAuthorityContracts.js",
+      "export": "ownershipAuthorityContract",
+      "case": "src/routes/tracking.js|POST|/update"
+    }
+  },
+  {
+    "source": "src/routes/tracking.js",
+    "method": "POST",
+    "path": "/location",
+    "classification": "repartidor_exacto_ownership",
+    "authorityEvidence": {
+      "module": "tests/support/mutationAuthorityContracts.js",
+      "export": "ownershipAuthorityContract",
+      "case": "src/routes/tracking.js|POST|/location"
+    }
+  },
+  {
+    "source": "src/routes/tracking.js",
+    "method": "POST",
+    "path": "/incidents/:pedidoId/ack",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/transferencias.js",
+    "method": "POST",
+    "path": "/pedidos/:id/solicitar-comprobante",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/transferencias.js",
+    "method": "POST",
+    "path": "/upload",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/transferencias.js",
+    "method": "POST",
+    "path": "/:id/asociar-pedido",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/transferencias.js",
+    "method": "POST",
+    "path": "/:id/verificar",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/transferencias.js",
+    "method": "DELETE",
+    "path": "/:id",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/whatsappCloudWebhook.js",
+    "method": "POST",
+    "path": "/",
+    "classification": "webhook_firmado"
+  },
+  {
+    "source": "src/routes/zonas.js",
+    "method": "POST",
+    "path": "/",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/zonas.js",
+    "method": "PUT",
+    "path": "/:id",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/zonas.js",
+    "method": "DELETE",
+    "path": "/:id",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/landingRoutes.js",
+    "method": "POST",
+    "path": "/api/empresas/:id/landing-page",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/landingRoutes.js",
+    "method": "DELETE",
+    "path": "/api/empresas/:id/landing-page",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/publicLegacyCreatePedido.js",
+    "method": "POST",
+    "path": "/public/pedidos",
+    "classification": "publico_capability_explicita",
+    "authorityEvidence": {
+      "module": "tests/support/mutationAuthorityContracts.js",
+      "export": "publicAuthorityContract",
+      "case": "src/routes/publicLegacyCreatePedido.js|POST|/public/pedidos"
+    }
+  },
+  {
+    "source": "src/qr/pagosWebhookRouter.js",
+    "method": "POST",
+    "path": "/pagos",
+    "classification": "webhook_firmado"
+  },
+  {
+    "source": "src/qr/pagosWebhookRouter.js",
+    "method": "POST",
+    "path": "/pagos/:proveedor",
+    "classification": "webhook_firmado"
+  },
+  {
+    "source": "src/wpp/routes.js",
+    "method": "POST",
+    "path": "/api/whatsapp/reset",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/wpp/cronRoutes.js",
+    "method": "POST",
+    "path": "/internal/cron/cleanup-tracking",
+    "classification": "cron_secret"
+  },
+  {
+    "source": "src/wpp/cronRoutes.js",
+    "method": "POST",
+    "path": "/internal/cron/cleanup-wpp",
+    "classification": "cron_secret"
+  }
+]

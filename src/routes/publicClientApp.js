@@ -2,6 +2,17 @@ import express from 'express';
 import jwt from 'jsonwebtoken';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { enqueueWppOutbox } from '../wpp/enqueue.js';
+import { withTransaction as defaultWithTransaction } from '../db.js';
+import { resolvePublicPedidoEmpresaId } from '../services/publicPedidoTenant.js';
+import {
+  deliveryPointConflict,
+  deliveryPointIdentity,
+  deliveryPointIdentityFromRow,
+  findDeliveryPointsByIdentity,
+  lockGeneralPhoneIdentity,
+  lockDeliveryPointIdentities,
+  sameDeliveryPointIdentity,
+} from '../services/deliveryPointIdentity.js';
 
 const OTP_TTL_MS = Number(process.env.CLIENT_OTP_TTL_MS || 5 * 60 * 1000);
 const OTP_RATE_WINDOW_MS = Number(process.env.CLIENT_OTP_RATE_WINDOW_MS || 10 * 60 * 1000);
@@ -87,6 +98,35 @@ function cleanupGoogleState(now = Date.now()) {
   }
 }
 
+function getCanonicalPublicSelector(req, empresaId) {
+  const slug = typeof req.query?.slug === 'string' ? req.query.slug.trim().toLowerCase() : '';
+  const empresaIdRaw = typeof req.query?.empresa_id === 'string' ? req.query.empresa_id : '';
+  const hasSlug = Boolean(slug);
+  const hasEmpresaId = Boolean(empresaIdRaw);
+  if (hasSlug && hasEmpresaId) {
+    return { selectorType: 'both', slug, empresaId: String(empresaId) };
+  }
+  if (hasSlug) return { selectorType: 'slug', slug, empresaId: null };
+  if (hasEmpresaId) return { selectorType: 'empresa_id', slug: null, empresaId: String(empresaId) };
+  return null;
+}
+
+function buildClientAppRedirect(selector, resolvedEmpresaId) {
+  if (!selector || !['slug', 'empresa_id', 'both'].includes(selector.selectorType)) return null;
+  const params = new URLSearchParams();
+  if (selector.selectorType === 'slug' || selector.selectorType === 'both') {
+    const slug = String(selector.slug || '').trim().toLowerCase();
+    if (!slug) return null;
+    params.set('slug', slug);
+  }
+  if (selector.selectorType === 'empresa_id' || selector.selectorType === 'both') {
+    const empresaId = String(selector.empresaId || '');
+    if (empresaId !== String(resolvedEmpresaId)) return null;
+    params.set('empresa_id', empresaId);
+  }
+  return `/pedidos/app/?${params.toString()}`;
+}
+
 function hashOtp({ key, code }) {
   const secret = String(process.env.JWT_SECRET || 'dev');
   return createHash('sha256').update(`${key}:${code}:${secret}`).digest('hex');
@@ -99,11 +139,12 @@ function secureEquals(a, b) {
   return timingSafeEqual(ba, bb);
 }
 
-function signClientToken({ empresaId, telefono, telefonoNorm, amr, riskFp, email = null }) {
+function signClientToken({ empresaId, profileId = null, telefono, telefonoNorm, amr, riskFp, email = null }) {
   return jwt.sign(
     {
       type: 'client',
       empresa_id: empresaId,
+      profile_id: profileId,
       telefono: telefono,
       telefono_norm: telefonoNorm,
       email,
@@ -130,19 +171,6 @@ function getClientFromRequest(req, { strictRisk = false } = {}) {
   }
 }
 
-async function resolveEmpresaId(query, rawEmpresaId, rawSlug) {
-  if (Number(rawEmpresaId) > 0) return Number(rawEmpresaId);
-  const slug = String(rawSlug || '').trim().toLowerCase();
-  if (!slug) return null;
-
-  const rows = await query(
-    `SELECT id FROM empresas WHERE LOWER(landing_slug) = $1 LIMIT 1`,
-    [slug]
-  );
-  if (!rows.length) return null;
-  return Number(rows[0].id);
-}
-
 function setClientCookie(res, token) {
   res.cookie('client_token', token, {
     httpOnly: true,
@@ -152,29 +180,98 @@ function setClientCookie(res, token) {
   });
 }
 
-async function getLastProfileByPhone(query, empresaId, telefonoNorm) {
-  const contactoRows = await query(
-    `SELECT id, cliente, telefono, direccion, ciudad, provincia, pais, notas, email
-     FROM puntos_entrega
-     WHERE empresa_id = $1
-       AND telefono_normalizado LIKE '%' || $2
-     ORDER BY id DESC
-     LIMIT 1`,
-    [empresaId, telefonoNorm]
-  );
-  return contactoRows[0] || null;
+const PUBLIC_PROFILE_FIELDS = `id, cliente, telefono, telefono_normalizado,
+  direccion, ciudad, provincia, pais, notas, email`;
+
+function publicIdentityConflict(message = 'La identidad del cliente es ambigua') {
+  const error = new Error(message);
+  error.code = 'PUBLIC_CLIENT_IDENTITY_AMBIGUOUS';
+  error.statusCode = 409;
+  return error;
 }
 
-async function getClientCompaniesByPhone(query, telefonoNorm) {
+async function lockPublicIdentity(queryFn, { empresaId, kind, value }) {
+  if (kind === 'phone') {
+    await lockGeneralPhoneIdentity(queryFn, {
+      normalizePhoneFn: normalizePhone,
+      telefono: value,
+    });
+  }
+  await queryFn(
+    'SELECT pg_advisory_xact_lock($1::integer, hashtext($2::text))',
+    [empresaId, `public-client:${kind}:${value}`]
+  );
+}
+
+function cardinality(rows) {
+  if (!rows.length) return { status: 'none', profile: null };
+  if (rows.length !== 1) return { status: 'ambiguous', profile: null };
+  return { status: 'unique', profile: rows[0] };
+}
+
+async function resolveProfileByPhone(queryFn, empresaId, telefonoNorm) {
+  if (!telefonoNorm) return { status: 'none', profile: null };
+  const rows = await queryFn(
+    `SELECT ${PUBLIC_PROFILE_FIELDS}
+       FROM puntos_entrega
+      WHERE empresa_id = $1
+        AND RIGHT(REGEXP_REPLACE(COALESCE(telefono_normalizado, telefono, ''), '\\D', '', 'g'), LENGTH($2)) = $2
+      ORDER BY id
+      LIMIT 2`,
+    [empresaId, telefonoNorm]
+  );
+  return cardinality(rows);
+}
+
+async function resolveProfileByEmail(queryFn, empresaId, email) {
+  if (!email) return { status: 'none', profile: null };
+  const rows = await queryFn(
+    `SELECT ${PUBLIC_PROFILE_FIELDS}
+       FROM puntos_entrega
+      WHERE empresa_id = $1 AND LOWER(COALESCE(email,'')) = $2
+      ORDER BY id
+      LIMIT 2`,
+    [empresaId, email]
+  );
+  return cardinality(rows);
+}
+
+async function resolveSessionProfile(queryFn, empresaId, payload) {
+  const profileId = Number(payload?.profile_id);
+  if (Number.isSafeInteger(profileId) && profileId > 0) {
+    const rows = await queryFn(
+      `SELECT ${PUBLIC_PROFILE_FIELDS}
+         FROM puntos_entrega
+        WHERE id = $1 AND empresa_id = $2`,
+      [profileId, empresaId]
+    );
+    if (rows.length !== 1) throw publicIdentityConflict('El perfil de la sesión ya no es válido');
+    return rows[0];
+  }
+
+  const telefonoNorm = normalizePhone(payload?.telefono_norm || payload?.telefono || '');
+  const email = String(payload?.email || '').trim().toLowerCase();
+  const phoneResolution = await resolveProfileByPhone(queryFn, empresaId, telefonoNorm);
+  const emailResolution = await resolveProfileByEmail(queryFn, empresaId, email);
+  if (phoneResolution.status === 'ambiguous' || emailResolution.status === 'ambiguous') {
+    throw publicIdentityConflict();
+  }
+  const ids = new Set([phoneResolution.profile?.id, emailResolution.profile?.id].filter(Boolean).map(Number));
+  if (ids.size > 1) throw publicIdentityConflict('Teléfono y email corresponden a perfiles diferentes');
+  return phoneResolution.profile || emailResolution.profile || null;
+}
+
+async function getClientCompaniesByPhone(query, telefonoNorm, empresaId) {
   if (!telefonoNorm) return [];
   const rows = await query(
     `SELECT DISTINCT e.id, e.nombre, e.landing_slug, e.landing_domain
      FROM puntos_entrega pe
      JOIN empresas e ON e.id = pe.empresa_id
      WHERE pe.telefono_normalizado LIKE '%' || $1
+       AND e.id = $2
      ORDER BY e.nombre ASC, e.id ASC
      LIMIT 50`,
-    [telefonoNorm]
+    [telefonoNorm, empresaId]
   );
   return rows.map((row) => ({
     id: Number(row.id),
@@ -184,10 +281,47 @@ async function getClientCompaniesByPhone(query, telefonoNorm) {
   }));
 }
 
-export function createPublicClientAppRouter({ query, pool }) {
+export function createPublicClientAppRouter({
+  query,
+  pool,
+  withTransaction = defaultWithTransaction,
+  resolveEmpresaIdFn = resolvePublicPedidoEmpresaId,
+}) {
   if (typeof query !== 'function') throw new Error('createPublicClientAppRouter: falta query(fn)');
 
   const router = express.Router();
+  const runTransaction = pool?.connect && typeof withTransaction === 'function'
+    ? (work) => withTransaction(work, { pool, maxRetries: 0 })
+    : (work) => work(query);
+
+  function tenantError(code, message, statusCode) {
+    const error = new Error(message);
+    error.code = code;
+    error.statusCode = statusCode;
+    return error;
+  }
+
+  function publicFailure(res, error, fallback, { text = false } = {}) {
+    const status = Number(error?.statusCode) || 500;
+    if (text) return res.status(status).send(status < 500 ? error.message : fallback);
+    return res.status(status).json({
+      error: status < 500 ? error.message : fallback,
+      ...(error?.code ? { code: error.code } : {}),
+    });
+  }
+
+  async function resolveRequestTenant(req) {
+    return resolveEmpresaIdFn(req, query);
+  }
+
+  async function resolveSessionTenant(req, payload) {
+    const empresaId = await resolveRequestTenant(req);
+    const sessionEmpresaId = Number(payload?.empresa_id);
+    if (!Number.isSafeInteger(sessionEmpresaId) || sessionEmpresaId <= 0 || sessionEmpresaId !== empresaId) {
+      throw tenantError('PUBLIC_TENANT_CONFLICT', 'La sesión no coincide con la empresa pública', 403);
+    }
+    return empresaId;
+  }
 
   router.get('/auth/providers', (_req, res) => {
     return res.json({
@@ -198,11 +332,11 @@ export function createPublicClientAppRouter({ query, pool }) {
 
   router.post('/auth/companies', async (req, res) => {
     try {
+      const preferredEmpresaId = await resolveRequestTenant(req);
       const telefonoNorm = normalizePhone(req.body?.telefono);
       if (!telefonoNorm) return res.status(400).json({ error: 'telefono inválido' });
 
-      const companies = await getClientCompaniesByPhone(query, telefonoNorm);
-      const preferredEmpresaId = await resolveEmpresaId(query, req.body?.empresa_id, req.body?.slug);
+      const companies = await getClientCompaniesByPhone(query, telefonoNorm, preferredEmpresaId);
 
       return res.json({
         ok: true,
@@ -211,7 +345,7 @@ export function createPublicClientAppRouter({ query, pool }) {
       });
     } catch (e) {
       console.error('CLIENT COMPANIES LOOKUP ERROR', e);
-      return res.status(500).json({ error: 'No se pudieron obtener las empresas del cliente' });
+      return publicFailure(res, e, 'No se pudieron obtener las empresas del cliente');
     }
   });
 
@@ -221,9 +355,16 @@ export function createPublicClientAppRouter({ query, pool }) {
       cleanupOtpStore(now);
       cleanupRateMap(otpRate, now);
 
-      const empresaId = await resolveEmpresaId(query, req.body?.empresa_id, req.body?.slug);
+      const empresaId = await resolveRequestTenant(req);
       const telefonoNorm = normalizePhone(req.body?.telefono);
-      if (!empresaId || !telefonoNorm) return res.status(400).json({ error: 'empresa_id/slug y telefono son requeridos' });
+      if (!telefonoNorm) return res.status(400).json({ error: 'telefono inválido' });
+
+      const identity = await runTransaction(async (txQuery) => {
+        await lockPublicIdentity(txQuery, { empresaId, kind: 'phone', value: telefonoNorm });
+        const resolved = await resolveProfileByPhone(txQuery, empresaId, telefonoNorm);
+        if (resolved.status === 'ambiguous') throw publicIdentityConflict();
+        return resolved;
+      });
 
       const ip = getClientIp(req);
       if (
@@ -249,6 +390,8 @@ export function createPublicClientAppRouter({ query, pool }) {
         expiresAt: now + OTP_TTL_MS,
         lastSentAt: now,
         tries: 0,
+        profileId: identity.profile?.id ? Number(identity.profile.id) : null,
+        identityStatus: identity.status,
       });
 
       if (telefonoOutbox) {
@@ -260,7 +403,7 @@ export function createPublicClientAppRouter({ query, pool }) {
       return res.json(response);
     } catch (e) {
       console.error('CLIENT OTP REQUEST ERROR', e);
-      return res.status(500).json({ error: 'No se pudo enviar el código' });
+      return publicFailure(res, e, 'No se pudo enviar el código');
     }
   });
 
@@ -270,12 +413,12 @@ export function createPublicClientAppRouter({ query, pool }) {
       cleanupOtpStore(now);
       cleanupRateMap(otpVerifyRate, now);
 
-      const empresaId = await resolveEmpresaId(query, req.body?.empresa_id, req.body?.slug);
+      const empresaId = await resolveRequestTenant(req);
       const telefonoRaw = String(req.body?.telefono || '').trim();
       const telefonoNorm = normalizePhone(telefonoRaw);
       const code = String(req.body?.code || '').trim();
 
-      if (!empresaId || !telefonoNorm || !/^\d{6}$/.test(code)) {
+      if (!telefonoNorm || !/^\d{6}$/.test(code)) {
         return res.status(400).json({ error: 'Datos inválidos' });
       }
 
@@ -304,10 +447,25 @@ export function createPublicClientAppRouter({ query, pool }) {
         return res.status(401).json({ error: 'Código inválido' });
       }
 
+      const identity = await runTransaction(async (txQuery) => {
+        await lockPublicIdentity(txQuery, { empresaId, kind: 'phone', value: telefonoNorm });
+        const resolved = await resolveProfileByPhone(txQuery, empresaId, telefonoNorm);
+        if (resolved.status === 'ambiguous') throw publicIdentityConflict();
+        const currentProfileId = resolved.profile?.id ? Number(resolved.profile.id) : null;
+        if (resolved.status !== otp.identityStatus || currentProfileId !== otp.profileId) {
+          throw publicIdentityConflict('La identidad cambió desde que se emitió el código');
+        }
+        return resolved;
+      }).catch((error) => {
+        if (error?.code === 'PUBLIC_CLIENT_IDENTITY_AMBIGUOUS') otpStore.delete(key);
+        throw error;
+      });
+
       otpStore.delete(key);
 
       const token = signClientToken({
         empresaId,
+        profileId: identity.profile?.id ? Number(identity.profile.id) : null,
         telefono: telefonoRaw,
         telefonoNorm,
         amr: 'otp',
@@ -315,18 +473,16 @@ export function createPublicClientAppRouter({ query, pool }) {
       });
       setClientCookie(res, token);
 
-      const profile = await getLastProfileByPhone(query, empresaId, telefonoNorm);
-      return res.json({ ok: true, profile });
+      return res.json({ ok: true, profile: identity.profile });
     } catch (e) {
       console.error('CLIENT OTP VERIFY ERROR', e);
-      return res.status(500).json({ error: 'No se pudo validar el código' });
+      return publicFailure(res, e, 'No se pudo validar el código');
     }
   });
 
   router.get('/auth/google/start', async (req, res) => {
     try {
-      const empresaId = await resolveEmpresaId(query, req.query?.empresa_id, req.query?.slug);
-      if (!empresaId) return res.status(400).json({ error: 'empresa_id/slug inválido' });
+      const empresaId = await resolveRequestTenant(req);
 
       const clientId = process.env.GOOGLE_CLIENT_ID;
       const redirectUri = process.env.GOOGLE_REDIRECT_URI;
@@ -336,9 +492,11 @@ export function createPublicClientAppRouter({ query, pool }) {
 
       cleanupGoogleState();
       const state = randomBytes(24).toString('hex');
+      const selector = getCanonicalPublicSelector(req, empresaId);
+      if (!selector) return res.status(400).json({ error: 'Selector público inválido' });
       googleStateStore.set(state, {
         empresaId,
-        slug: String(req.query?.slug || ''),
+        selector,
         expiresAt: Date.now() + GOOGLE_STATE_TTL_MS,
       });
 
@@ -354,7 +512,7 @@ export function createPublicClientAppRouter({ query, pool }) {
       return res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${qp.toString()}`);
     } catch (e) {
       console.error('CLIENT GOOGLE START ERROR', e);
-      return res.status(500).json({ error: 'No se pudo iniciar login con Google' });
+      return publicFailure(res, e, 'No se pudo iniciar login con Google');
     }
   });
 
@@ -367,6 +525,13 @@ export function createPublicClientAppRouter({ query, pool }) {
       googleStateStore.delete(state);
 
       if (!stateData || !code) return res.status(401).send('Google login inválido');
+
+      const empresaId = await resolveEmpresaIdFn({
+        method: 'GET',
+        query: { empresa_id: String(stateData.empresaId) },
+      }, query);
+      const redirectTarget = buildClientAppRedirect(stateData.selector, empresaId);
+      if (!redirectTarget) return res.status(401).send('Google login inválido');
 
       const clientId = process.env.GOOGLE_CLIENT_ID;
       const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
@@ -400,27 +565,29 @@ export function createPublicClientAppRouter({ query, pool }) {
       const nombre = String(u?.name || '').trim();
       if (!email) return res.status(401).send('Google sin email');
 
-      const empresaId = Number(stateData.empresaId);
-      let profile = null;
+      const identity = await runTransaction(async (txQuery) => {
+        await lockPublicIdentity(txQuery, { empresaId, kind: 'email', value: email });
+        const resolved = await resolveProfileByEmail(txQuery, empresaId, email);
+        if (resolved.status === 'ambiguous') throw publicIdentityConflict();
+        return resolved;
+      });
 
-      const byEmail = await query(
-        `SELECT id, cliente, telefono, telefono_normalizado, direccion, ciudad, provincia, pais, notas, email
-         FROM puntos_entrega
-         WHERE empresa_id = $1 AND LOWER(COALESCE(email,'')) = $2
-         ORDER BY id DESC LIMIT 1`,
-        [empresaId, email]
-      );
-
-      if (byEmail.length) {
-        profile = byEmail[0];
-      } else {
-        const ins = await query(
-          `INSERT INTO puntos_entrega (empresa_id, cliente, nombre, email)
-           VALUES ($1, $2, $3, $4)
-           RETURNING id, cliente, telefono, telefono_normalizado, direccion, ciudad, provincia, pais, notas, email`,
-          [empresaId, nombre || email.split('@')[0], nombre || null, email]
-        );
-        profile = ins[0] || null;
+      let profile = identity.profile;
+      if (!profile) {
+        // No crear un punto incompleto: la identidad canónica requiere teléfono + dirección.
+        // El endpoint /profile lo crea bajo el namespace bloqueado cuando el usuario completa ambos.
+        profile = {
+          id: null,
+          cliente: nombre || email.split('@')[0],
+          telefono: null,
+          telefono_normalizado: null,
+          direccion: null,
+          ciudad: null,
+          provincia: null,
+          pais: null,
+          notas: null,
+          email,
+        };
       }
 
       const telefono = String(profile?.telefono || '').trim();
@@ -428,6 +595,7 @@ export function createPublicClientAppRouter({ query, pool }) {
 
       const token = signClientToken({
         empresaId,
+        profileId: profile?.id ? Number(profile.id) : null,
         telefono: telefono || email,
         telefonoNorm: telefonoNorm || `mail-${createHash('sha256').update(email).digest('hex').slice(0, 10)}`,
         email,
@@ -436,11 +604,10 @@ export function createPublicClientAppRouter({ query, pool }) {
       });
       setClientCookie(res, token);
 
-      const slugQ = stateData.slug ? `?slug=${encodeURIComponent(stateData.slug)}` : '';
-      return res.redirect(`/pedidos/app/${slugQ}`);
+      return res.redirect(redirectTarget);
     } catch (e) {
       console.error('CLIENT GOOGLE CALLBACK ERROR', e);
-      return res.status(500).send('Error en login con Google');
+      return publicFailure(res, e, 'Error en login con Google', { text: true });
     }
   });
 
@@ -455,7 +622,7 @@ export function createPublicClientAppRouter({ query, pool }) {
       }
 
       const payload = session.payload;
-      const empresaId = Number(payload.empresa_id);
+      const empresaId = await resolveSessionTenant(req, payload);
       const cliente = String(req.body?.cliente || '').trim();
       const direccion = String(req.body?.direccion || '').trim();
       const ciudad = String(req.body?.ciudad || '').trim() || null;
@@ -468,46 +635,112 @@ export function createPublicClientAppRouter({ query, pool }) {
       const telefonoNorm = normalizePhone(telefonoIn);
       if (!telefonoNorm) return res.status(400).json({ error: 'telefono inválido' });
 
-      let rows = await query(
-        `SELECT id FROM puntos_entrega
-         WHERE empresa_id = $1
-           AND telefono_normalizado LIKE '%' || $2
-         ORDER BY id DESC LIMIT 1`,
-        [empresaId, telefonoNorm]
-      );
+      const profile = await runTransaction(async (txQuery) => {
+        const sessionProfileId = Number(payload.profile_id);
+        const hasSessionProfileId = Number.isSafeInteger(sessionProfileId) && sessionProfileId > 0;
+        const candidateRows = hasSessionProfileId
+          ? await txQuery(
+              `SELECT id, empresa_id, cliente, nombre, telefono, telefono_normalizado, direccion,
+                      ciudad, provincia, pais, notas, email, zona_id
+                 FROM puntos_entrega
+                WHERE id = $1 AND empresa_id = $2`,
+              [sessionProfileId, empresaId]
+            )
+          : await txQuery(
+              `SELECT id, empresa_id, cliente, nombre, telefono, telefono_normalizado, direccion,
+                      ciudad, provincia, pais, notas, email, zona_id
+                 FROM puntos_entrega
+                WHERE empresa_id = $1
+                  AND (
+                    RIGHT(REGEXP_REPLACE(COALESCE(telefono_normalizado, telefono, ''), '\\D', '', 'g'), 7) = $2
+                    OR ($3::text IS NOT NULL AND LOWER(COALESCE(email,'')) = $3)
+                  )
+                ORDER BY id
+                LIMIT 2`,
+              [empresaId, telefonoNorm.slice(-7), email]
+            );
+        if (candidateRows.length > 1) throw deliveryPointConflict('Perfil de cliente ambiguo');
+        if (hasSessionProfileId && candidateRows.length !== 1) {
+          throw deliveryPointConflict('El perfil de la sesión ya no es válido');
+        }
 
-      if (!rows.length && email) {
-        rows = await query(
-          `SELECT id FROM puntos_entrega
-           WHERE empresa_id = $1
-             AND LOWER(COALESCE(email,'')) = $2
-           ORDER BY id DESC LIMIT 1`,
-          [empresaId, email]
-        );
-      }
+        const candidate = candidateRows[0] || null;
+        const oldIdentity = deliveryPointIdentityFromRow(normalizePhone, candidate);
+        const newIdentity = deliveryPointIdentity({
+          normalizePhoneFn: normalizePhone,
+          telefono: telefonoIn,
+          direccion,
+        });
+        if (!newIdentity) throw deliveryPointConflict('Teléfono o dirección inválidos para identificar el punto');
 
-      let profile;
-      if (rows.length) {
-        const upd = await query(
-          `UPDATE puntos_entrega
-              SET cliente=$1, nombre=$2, direccion=$3, ciudad=$4, notas=$5, telefono=$6, telefono_normalizado=$7, email=COALESCE($8, email)
-            WHERE id=$9
-            RETURNING id, cliente, telefono, telefono_normalizado, direccion, ciudad, provincia, pais, notas, email`,
-          [cliente, cliente, direccion, ciudad, notas, telefonoIn, telefonoNorm, email, rows[0].id]
-        );
-        profile = upd[0] || null;
-      } else {
-        const ins = await query(
+        await lockDeliveryPointIdentities(txQuery, {
+          empresaId,
+          identities: [oldIdentity, newIdentity],
+        });
+        if (email) {
+          await lockPublicIdentity(txQuery, { empresaId, kind: 'email', value: email });
+          const emailResolution = await resolveProfileByEmail(txQuery, empresaId, email);
+          if (emailResolution.status === 'ambiguous') throw deliveryPointConflict('Email de cliente ambiguo');
+          if (emailResolution.status === 'unique'
+              && Number(emailResolution.profile.id) !== Number(candidate?.id || 0)) {
+            throw deliveryPointConflict('El email quedó asociado a otro perfil');
+          }
+        }
+
+        let lockedCandidate = null;
+        if (candidate) {
+          const lockedRows = await txQuery(
+            `SELECT id, empresa_id, cliente, nombre, telefono, telefono_normalizado, direccion,
+                    ciudad, provincia, pais, notas, email, zona_id
+               FROM puntos_entrega
+              WHERE id = $1 AND empresa_id = $2
+              FOR UPDATE`,
+            [candidate.id, empresaId]
+          );
+          if (lockedRows.length !== 1) throw deliveryPointConflict('El perfil cambió durante la actualización');
+          lockedCandidate = lockedRows[0];
+          const lockedIdentity = deliveryPointIdentityFromRow(normalizePhone, lockedCandidate);
+          if ((oldIdentity || lockedIdentity) && !sameDeliveryPointIdentity(oldIdentity, lockedIdentity)) {
+            throw deliveryPointConflict('El perfil cambió durante la actualización');
+          }
+        }
+
+        const conflicts = await findDeliveryPointsByIdentity(txQuery, {
+          empresaId,
+          identity: newIdentity,
+          excludeId: lockedCandidate?.id || null,
+        });
+        if (conflicts.length > 1 || (conflicts.length === 1 && lockedCandidate)) {
+          throw deliveryPointConflict('Ya existe otro punto con ese teléfono y dirección');
+        }
+
+        const target = lockedCandidate || conflicts[0] || null;
+        if (target) {
+          const upd = await txQuery(
+            `UPDATE puntos_entrega
+                SET cliente=$1, nombre=$2, direccion=$3, ciudad=$4, notas=$5,
+                    telefono=$6, telefono_normalizado=$7, email=COALESCE($8, email)
+              WHERE id=$9 AND empresa_id=$10
+              RETURNING id, cliente, telefono, telefono_normalizado, direccion, ciudad, provincia, pais, notas, email`,
+            [cliente, cliente, direccion, ciudad, notas, telefonoIn, telefonoNorm, email, target.id, empresaId]
+          );
+          if (upd.length !== 1) throw deliveryPointConflict('No se pudo actualizar exactamente un punto');
+          return upd[0];
+        }
+
+        const ins = await txQuery(
           `INSERT INTO puntos_entrega (empresa_id, cliente, nombre, direccion, ciudad, telefono, telefono_normalizado, notas, email)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
            RETURNING id, cliente, telefono, telefono_normalizado, direccion, ciudad, provincia, pais, notas, email`,
           [empresaId, cliente, cliente, direccion, ciudad, telefonoIn, telefonoNorm, notas, email]
         );
-        profile = ins[0] || null;
-      }
+        if (ins.length !== 1) throw deliveryPointConflict('No se pudo crear exactamente un punto');
+        return ins[0];
+      });
 
       const newToken = signClientToken({
         empresaId,
+        profileId: Number(profile.id),
         telefono: telefonoIn,
         telefonoNorm,
         email,
@@ -518,8 +751,17 @@ export function createPublicClientAppRouter({ query, pool }) {
 
       return res.json({ ok: true, profile });
     } catch (e) {
+      if (e?.code === 'DELIVERY_POINT_IDENTITY_CONFLICT') {
+        return res.status(409).json({ error: e.message, code: e.code });
+      }
+      if (e?.code === 'TRANSACTION_OUTCOME_UNKNOWN') {
+        return res.status(503).json({
+          error: 'No se pudo confirmar el guardado del perfil',
+          code: 'TRANSACTION_OUTCOME_UNKNOWN',
+        });
+      }
       console.error('CLIENT APP /profile ERROR', e);
-      return res.status(500).json({ error: 'No se pudo guardar perfil' });
+      return publicFailure(res, e, 'No se pudo guardar perfil');
     }
   });
 
@@ -534,54 +776,29 @@ export function createPublicClientAppRouter({ query, pool }) {
       }
 
       const payload = session.payload;
-      const empresaId = Number(payload.empresa_id);
-      const telefonoNorm = normalizePhone(payload.telefono_norm || payload.telefono || '');
-      const email = String(payload.email || '').trim().toLowerCase();
+      const empresaId = await resolveSessionTenant(req, payload);
+      const profile = await resolveSessionProfile(query, empresaId, payload);
+      if (!profile) return res.json({ ok: true, orders: [] });
 
-      if (!telefonoNorm && !email) return res.json({ ok: true, orders: [] });
-
-      let puntos = [];
-      if (telefonoNorm) {
-        puntos = await query(
-          `SELECT id FROM puntos_entrega
-           WHERE empresa_id = $1
-             AND telefono_normalizado LIKE '%' || $2
-           ORDER BY id DESC
-           LIMIT 20`,
-          [empresaId, telefonoNorm]
-        );
-      }
-
-      if (!puntos.length && email) {
-        puntos = await query(
-          `SELECT id FROM puntos_entrega
-           WHERE empresa_id = $1
-             AND LOWER(COALESCE(email,'')) = $2
-           ORDER BY id DESC
-           LIMIT 20`,
-          [empresaId, email]
-        );
-      }
-
-      if (!puntos.length) return res.json({ ok: true, orders: [] });
-
-      const ids = puntos.map((p) => Number(p.id)).filter(Boolean);
       const orders = await query(
         `SELECT p.id, p.fecha, p.estado, p.metodo_pago, p.monto, p.tracking_token,
                 pe.cliente, pe.direccion
          FROM pedidos p
-         JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
+         JOIN puntos_entrega pe
+           ON pe.id = p.punto_entrega_id
+          AND pe.empresa_id = p.empresa_id
          WHERE p.empresa_id = $1
-           AND p.punto_entrega_id = ANY($2::int[])
+           AND pe.empresa_id = $1
+           AND p.punto_entrega_id = $2
          ORDER BY p.fecha DESC, p.id DESC
          LIMIT 30`,
-        [empresaId, ids]
+        [empresaId, Number(profile.id)]
       );
 
       return res.json({ ok: true, orders });
     } catch (e) {
       console.error('CLIENT APP /orders ERROR', e);
-      return res.status(500).json({ error: 'No se pudo obtener historial' });
+      return publicFailure(res, e, 'No se pudo obtener historial');
     }
   });
 
@@ -596,27 +813,24 @@ export function createPublicClientAppRouter({ query, pool }) {
       }
 
       const payload = session.payload;
-      const empresaId = Number(payload.empresa_id);
+      const empresaId = await resolveSessionTenant(req, payload);
+      const profile = await resolveSessionProfile(query, empresaId, payload);
       const pedidoId = Number(req.params.id || 0);
       if (!pedidoId) return res.status(400).json({ error: 'id inválido' });
+      if (!profile) return res.status(404).json({ error: 'Pedido no encontrado' });
 
       const owns = await query(
         `SELECT p.id
          FROM pedidos p
-         JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
+         JOIN puntos_entrega pe
+           ON pe.id = p.punto_entrega_id
+          AND pe.empresa_id = p.empresa_id
          WHERE p.id = $1
            AND p.empresa_id = $2
-           AND (
-             pe.telefono_normalizado LIKE '%' || $3
-             OR LOWER(COALESCE(pe.email,'')) = $4
-           )
+           AND pe.empresa_id = $2
+           AND p.punto_entrega_id = $3
          LIMIT 1`,
-        [
-          pedidoId,
-          empresaId,
-          normalizePhone(payload.telefono_norm || payload.telefono || ''),
-          String(payload.email || '').trim().toLowerCase(),
-        ]
+        [pedidoId, empresaId, Number(profile.id)]
       );
 
       if (!owns.length) return res.status(404).json({ error: 'Pedido no encontrado' });
@@ -632,7 +846,7 @@ export function createPublicClientAppRouter({ query, pool }) {
       return res.json({ ok: true, items });
     } catch (e) {
       console.error('CLIENT APP /orders/:id/items ERROR', e);
-      return res.status(500).json({ error: 'No se pudo obtener detalle del pedido' });
+      return publicFailure(res, e, 'No se pudo obtener detalle del pedido');
     }
   });
 
@@ -657,27 +871,13 @@ export function createPublicClientAppRouter({ query, pool }) {
       }
 
       const payload = session.payload;
-      let profile = await getLastProfileByPhone(
-        query,
-        Number(payload.empresa_id),
-        String(payload.telefono_norm || '')
-      );
-
-      if (!profile && payload?.email) {
-        const byEmail = await query(
-          `SELECT id, cliente, telefono, telefono_normalizado, direccion, ciudad, provincia, pais, notas, email
-           FROM puntos_entrega
-           WHERE empresa_id = $1 AND LOWER(COALESCE(email,'')) = $2
-           ORDER BY id DESC LIMIT 1`,
-          [Number(payload.empresa_id), String(payload.email).toLowerCase()]
-        );
-        profile = byEmail[0] || null;
-      }
+      const empresaId = await resolveSessionTenant(req, payload);
+      const profile = await resolveSessionProfile(query, empresaId, payload);
 
       return res.json({
         ok: true,
         session: {
-          empresa_id: Number(payload.empresa_id),
+          empresa_id: empresaId,
           telefono: payload.telefono,
           telefono_norm: payload.telefono_norm,
           amr: payload.amr || 'otp',
@@ -686,7 +886,7 @@ export function createPublicClientAppRouter({ query, pool }) {
       });
     } catch (e) {
       console.error('CLIENT APP /me ERROR', e);
-      return res.status(500).json({ error: 'Error obteniendo sesión' });
+      return publicFailure(res, e, 'Error obteniendo sesión');
     }
   });
 

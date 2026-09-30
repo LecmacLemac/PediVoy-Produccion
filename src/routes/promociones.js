@@ -1,4 +1,5 @@
 import express from 'express';
+import { requireCanonicalBackofficeRole } from './canonicalBackofficeRole.js';
 
 export function createPromocionesRouter(deps) {
   const { query, withAuth, isSuper, getEmpresaIdFromToken } = deps || {};
@@ -124,7 +125,7 @@ export function createPromocionesRouter(deps) {
     }
   });
 
-  router.put('/config', withAuth, async (req, res) => {
+  router.put('/config', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     try {
       const { empresaId } = resolveEmpresa(req);
       if (!empresaId) return res.status(400).json({ error: 'Falta empresa.' });

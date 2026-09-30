@@ -2,6 +2,7 @@
 // Extraído desde server.js para reducir el monolito.
 
 import express from 'express';
+import { requireCanonicalBackofficeRole } from './canonicalBackofficeRole.js';
 
 export function createEntregaConfigRouter(deps) {
   const { query, withAuth, resolveEmpresaId } = deps || {};
@@ -24,7 +25,7 @@ export function createEntregaConfigRouter(deps) {
   });
 
   // PUT /api/entrega/config
-  router.put('/config', withAuth, async (req, res) => {
+  router.put('/config', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     try {
       const empresaId = resolveEmpresaId(req);
       const nuevaConfig = req.body || {};

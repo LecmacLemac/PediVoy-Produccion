@@ -19,6 +19,7 @@ function buildApp({ query, user = { uid: 10, role: 'admin', empresa_id: 1 } }) {
   app.use(express.json());
   app.use('/api/setup', createSetupRouter({
     query,
+    withTransaction: work => work(query),
     withAuth(req, _res, next) {
       req.user = user;
       next();

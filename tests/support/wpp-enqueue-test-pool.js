@@ -25,6 +25,7 @@ export function createWppEnqueueTestPool({
           if (/SELECT config_integraciones FROM empresas/i.test(text)) {
             return { rows: companyExists ? [{ config_integraciones: configIntegraciones }] : [] };
           }
+          if (/FROM puntos_entrega/i.test(text)) return { rows: [] };
           if (/FROM wpp_outbox/i.test(text) && !/INSERT INTO wpp_outbox/i.test(text)) return { rows: recentRows };
           if (/INSERT INTO wpp_outbox/i.test(text)) {
             return { rows: [{ ...insertedRow, transport_origin: insertedRow.transport_origin || request.values[3] }] };

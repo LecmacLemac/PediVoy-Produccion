@@ -9,7 +9,16 @@ import {
   geocodeIfNeeded as defaultGeocodeIfNeeded,
   pointInAnyZone as defaultPointInAnyZone
 } from '../services.js';
-import { query as defaultQuery } from '../db.js';
+import { query as defaultQuery, withTransaction as defaultWithTransaction } from '../db.js';
+import {
+  deliveryPointConflict,
+  deliveryPointIdentity,
+  deliveryPointIdentityFromRow,
+  findDeliveryPointsByIdentity,
+  lockDeliveryPointIdentities,
+  sameDeliveryPointIdentity,
+} from '../services/deliveryPointIdentity.js';
+import { requireCanonicalBackofficeRole } from './canonicalBackofficeRole.js';
 
 export function createClientesRouter({
   query: queryFn = defaultQuery,
@@ -19,10 +28,15 @@ export function createClientesRouter({
   getEmpresaIdFromToken: getEmpresaIdFromTokenFn = defaultGetEmpresaIdFromToken,
   normalizePhone: normalizePhoneFn = defaultNormalizePhone,
   geocodeIfNeeded: geocodeIfNeededFn = defaultGeocodeIfNeeded,
-  pointInAnyZone: pointInAnyZoneFn = defaultPointInAnyZone
+  pointInAnyZone: pointInAnyZoneFn = defaultPointInAnyZone,
+  pool: transactionPool = null,
+  withTransaction: withTransactionFn = defaultWithTransaction,
 } = {}) {
   const router = express.Router();
   const dbQuery = queryFn;
+  const runTransaction = transactionPool?.connect && typeof withTransactionFn === 'function'
+    ? (work) => withTransactionFn(work, { pool: transactionPool, maxRetries: 0 })
+    : (work) => work(dbQuery);
   let schemaReady = false;
 
   const parseBooleanFlag = (value) => {
@@ -186,7 +200,7 @@ export function createClientesRouter({
   });
 
   // 3) Geocodificar dirección del cliente sin guardar cambios
-  router.post('/geocode', withAuthFn, checkLicenciaFn, async (req, res) => {
+  router.post('/geocode', withAuthFn, requireCanonicalBackofficeRole, checkLicenciaFn, async (req, res) => {
     try {
       const { direccion, ciudad, provincia, pais, empresa_id } = req.body || {};
       const esSuperUser = isSuperFn(req);
@@ -223,7 +237,7 @@ export function createClientesRouter({
   });
 
   // 4) Crear cliente
-  router.post('/', withAuthFn, async (req, res) => {
+  router.post('/', withAuthFn, requireCanonicalBackofficeRole, async (req, res) => {
     try {
       await ensureClientesSchema();
       const {
@@ -246,39 +260,60 @@ export function createClientesRouter({
       if (latValue != null && lngValue != null) assertNotNullIsland(latValue, lngValue);
       const zonaValue = await validateZonaForEmpresa(zona_id, targetEmpresa);
 
-      const rows = await dbQuery(`
-        INSERT INTO puntos_entrega (
-          cliente, telefono, telefono_normalizado, direccion,
-          ciudad, provincia, pais, latitud, longitud, notas,
-          empresa_id, zona_id,
-          razon_social, cuit, condicion_iva, email_facturacion,
-          crm_estado, crm_riesgo, crm_segmento, crm_motivo, crm_ticket_objetivo, crm_proxima_accion,
-          cuenta_corriente_habilitada, requiere_factura
-        )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
-        RETURNING id
-      `, [
-        cliente, telefono || null, telNorm, direccion || null,
-        ciudad || null, provincia || null, pais || 'Argentina',
-        latValue ?? null, lngValue ?? null, notas || null,
-        targetEmpresa, zonaValue,
-        razon_social || null, cuit || null, condicion_iva || null, email_facturacion || null,
-        crm_estado || 'activo', crm_riesgo || 'bajo', crm_segmento || null, crm_motivo || null,
-        crm_ticket_objetivo != null ? Number(crm_ticket_objetivo) : null,
-        crm_proxima_accion || null,
-        parseBooleanFlag(cuenta_corriente_habilitada),
-        parseBooleanFlag(requiere_factura)
-      ]);
+      const identity = deliveryPointIdentity({
+        normalizePhoneFn,
+        telefono,
+        direccion,
+      });
+      if (!identity) throw deliveryPointConflict('Teléfono y dirección son requeridos para identificar el punto');
+
+      const rows = await runTransaction(async (txQuery) => {
+        await lockDeliveryPointIdentities(txQuery, { empresaId: targetEmpresa, identities: [identity] });
+        const existing = await findDeliveryPointsByIdentity(txQuery, {
+          empresaId: targetEmpresa,
+          identity,
+        });
+        if (existing.length) throw deliveryPointConflict('Ya existe un cliente con ese teléfono y dirección');
+
+        const inserted = await txQuery(`
+          INSERT INTO puntos_entrega (
+            cliente, telefono, telefono_normalizado, direccion,
+            ciudad, provincia, pais, latitud, longitud, notas,
+            empresa_id, zona_id,
+            razon_social, cuit, condicion_iva, email_facturacion,
+            crm_estado, crm_riesgo, crm_segmento, crm_motivo, crm_ticket_objetivo, crm_proxima_accion,
+            cuenta_corriente_habilitada, requiere_factura
+          )
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
+          RETURNING id
+        `, [
+          cliente, telefono || null, telNorm, direccion || null,
+          ciudad || null, provincia || null, pais || 'Argentina',
+          latValue ?? null, lngValue ?? null, notas || null,
+          targetEmpresa, zonaValue,
+          razon_social || null, cuit || null, condicion_iva || null, email_facturacion || null,
+          crm_estado || 'activo', crm_riesgo || 'bajo', crm_segmento || null, crm_motivo || null,
+          crm_ticket_objetivo != null ? Number(crm_ticket_objetivo) : null,
+          crm_proxima_accion || null,
+          parseBooleanFlag(cuenta_corriente_habilitada),
+          parseBooleanFlag(requiere_factura)
+        ]);
+        if (inserted.length !== 1) throw deliveryPointConflict('No se pudo crear exactamente un cliente');
+        return inserted;
+      });
 
       res.json({ ok: true, id: rows[0].id });
     } catch (e) {
+      if (e?.code === 'TRANSACTION_OUTCOME_UNKNOWN') {
+        return res.status(503).json({ error: 'Resultado de creación indeterminado', code: e.code });
+      }
       if (!e.statusCode) console.error('Error creando cliente:', e);
-      res.status(e.statusCode || 500).json({ error: e.statusCode ? e.message : 'Error al crear cliente' });
+      res.status(e.statusCode || 500).json({ error: e.statusCode ? e.message : 'Error al crear cliente', ...(e.code ? { code: e.code } : {}) });
     }
   });
 
   // 5) Actualizar cliente
-  router.put('/:id', withAuthFn, async (req, res) => {
+  router.put('/:id', withAuthFn, requireCanonicalBackofficeRole, async (req, res) => {
     try {
       await ensureClientesSchema();
       const { id } = req.params;
@@ -355,50 +390,134 @@ export function createClientesRouter({
       if (sets.length === 0) return res.json({ ok: true });
 
       vals.push(id);
-      const tenantParam = esSuperUser ? null : Number(myEmpresa);
-      vals.push(tenantParam);
+      vals.push(Number(targetEmpresa));
 
-      const updated = await dbQuery(
-        `UPDATE puntos_entrega
-         SET ${sets.join(', ')}
-         WHERE id=$${idx} AND ($${idx + 1}::int IS NULL OR empresa_id=$${idx + 1})
-         RETURNING id, latitud, longitud, zona_id, cuenta_corriente_habilitada, requiere_factura, razon_social, cuit, condicion_iva, email_facturacion`,
-        vals
-      );
+      const updated = await runTransaction(async (txQuery) => {
+        const initialRows = await txQuery(
+          `SELECT id, empresa_id, cliente, nombre, telefono, telefono_normalizado, direccion,
+                  ciudad, provincia, pais, notas, email, zona_id
+             FROM puntos_entrega
+            WHERE id = $1 AND empresa_id = $2`,
+          [id, targetEmpresa]
+        );
+        if (initialRows.length !== 1) return [];
+        const initial = initialRows[0];
+        if (esSuperUser && empresa_id !== undefined && Number(empresa_id) !== Number(initial.empresa_id)) {
+          throw deliveryPointConflict('No se permite mover un punto entre empresas');
+        }
+
+        const oldIdentity = deliveryPointIdentityFromRow(normalizePhoneFn, initial);
+        const newIdentity = deliveryPointIdentity({
+          normalizePhoneFn,
+          telefono: telefono !== undefined ? telefono : (initial.telefono_normalizado || initial.telefono),
+          direccion: direccion !== undefined ? direccion : initial.direccion,
+        });
+        if ((telefono !== undefined || direccion !== undefined) && !newIdentity) {
+          throw deliveryPointConflict('Teléfono y dirección son requeridos para identificar el punto');
+        }
+
+        await lockDeliveryPointIdentities(txQuery, {
+          empresaId: targetEmpresa,
+          identities: [oldIdentity, newIdentity],
+        });
+
+        const lockedRows = await txQuery(
+          `SELECT id, empresa_id, cliente, nombre, telefono, telefono_normalizado, direccion,
+                  ciudad, provincia, pais, notas, email, zona_id
+             FROM puntos_entrega
+            WHERE id = $1 AND empresa_id = $2
+            FOR UPDATE`,
+          [id, targetEmpresa]
+        );
+        if (lockedRows.length !== 1) return [];
+        const lockedIdentity = deliveryPointIdentityFromRow(normalizePhoneFn, lockedRows[0]);
+        if ((oldIdentity || lockedIdentity) && !sameDeliveryPointIdentity(oldIdentity, lockedIdentity)) {
+          throw deliveryPointConflict('El punto cambió durante la actualización');
+        }
+
+        if (newIdentity) {
+          const conflicts = await findDeliveryPointsByIdentity(txQuery, {
+            empresaId: targetEmpresa,
+            identity: newIdentity,
+            excludeId: Number(id),
+          });
+          if (conflicts.length) throw deliveryPointConflict('Ya existe otro punto con ese teléfono y dirección');
+        }
+
+        const rows = await txQuery(
+          `UPDATE puntos_entrega
+           SET ${sets.join(', ')}
+           WHERE id=$${idx} AND empresa_id=$${idx + 1}
+           RETURNING id, latitud, longitud, zona_id, cuenta_corriente_habilitada, requiere_factura, razon_social, cuit, condicion_iva, email_facturacion`,
+          vals
+        );
+        if (rows.length > 1) throw deliveryPointConflict('Se actualizaron múltiples puntos');
+        return rows;
+      });
 
       if (updated.length === 0) return res.status(404).json({ error: 'Cliente no encontrado o sin permiso para actualizar' });
 
       res.json({ ok: true, cliente: updated[0] });
 
     } catch (e) {
+      if (e?.code === 'TRANSACTION_OUTCOME_UNKNOWN') {
+        return res.status(503).json({ error: 'Resultado de actualización indeterminado', code: e.code });
+      }
       if (!e.statusCode) console.error('Error actualizando cliente:', e);
-      res.status(e.statusCode || 500).json({ error: e.statusCode ? e.message : 'Error al actualizar cliente' });
+      res.status(e.statusCode || 500).json({ error: e.statusCode ? e.message : 'Error al actualizar cliente', ...(e.code ? { code: e.code } : {}) });
     }
   });
 
   // 6) Eliminar cliente
-  router.delete('/:id', withAuthFn, async (req, res) => {
+  router.delete('/:id', withAuthFn, requireCanonicalBackofficeRole, async (req, res) => {
     try {
       const { id } = req.params;
       const esSuperUser = isSuperFn(req);
       const myEmpresa = getEmpresaIdFromTokenFn(req);
 
-      const checkSql = esSuperUser
-        ? 'SELECT id, empresa_id FROM puntos_entrega WHERE id=$1'
-        : 'SELECT id, empresa_id FROM puntos_entrega WHERE id=$1 AND empresa_id=$2';
+      const target = await runTransaction(async (txQuery) => {
+        const initialRows = await txQuery(
+          `SELECT id, empresa_id, telefono, telefono_normalizado, direccion
+             FROM puntos_entrega
+            WHERE id = $1 AND ($2::int IS NULL OR empresa_id = $2)`,
+          [id, esSuperUser ? null : Number(myEmpresa)]
+        );
+        if (initialRows.length !== 1) return null;
+        const initial = initialRows[0];
+        const targetEmpresa = Number(initial.empresa_id);
+        const identity = deliveryPointIdentityFromRow(normalizePhoneFn, initial);
+        await lockDeliveryPointIdentities(txQuery, { empresaId: targetEmpresa, identities: [identity] });
 
-      const check = await dbQuery(checkSql, esSuperUser ? [id] : [id, myEmpresa]);
-      if (!check.length) return res.status(404).json({ error: 'Cliente no encontrado' });
+        const lockedRows = await txQuery(
+          `SELECT id, empresa_id, telefono, telefono_normalizado, direccion
+             FROM puntos_entrega
+            WHERE id = $1 AND empresa_id = $2
+            FOR UPDATE`,
+          [id, targetEmpresa]
+        );
+        if (lockedRows.length !== 1) return null;
+        const lockedIdentity = deliveryPointIdentityFromRow(normalizePhoneFn, lockedRows[0]);
+        if ((identity || lockedIdentity) && !sameDeliveryPointIdentity(identity, lockedIdentity)) {
+          throw deliveryPointConflict('El punto cambió durante la eliminación');
+        }
 
-      const targetEmpresa = Number(check[0].empresa_id);
-
-      await dbQuery('DELETE FROM pedidos WHERE punto_entrega_id=$1 AND empresa_id=$2', [id, targetEmpresa]);
-      await dbQuery('DELETE FROM puntos_entrega WHERE id=$1 AND empresa_id=$2', [id, targetEmpresa]);
+        await txQuery('DELETE FROM pedidos WHERE punto_entrega_id=$1 AND empresa_id=$2', [id, targetEmpresa]);
+        const deleted = await txQuery(
+          'DELETE FROM puntos_entrega WHERE id=$1 AND empresa_id=$2 RETURNING id',
+          [id, targetEmpresa]
+        );
+        if (deleted.length !== 1) throw deliveryPointConflict('No se eliminó exactamente un punto');
+        return deleted[0];
+      });
+      if (!target) return res.status(404).json({ error: 'Cliente no encontrado' });
 
       res.json({ ok: true });
     } catch (e) {
+      if (e?.code === 'TRANSACTION_OUTCOME_UNKNOWN') {
+        return res.status(503).json({ error: 'Resultado de eliminación indeterminado', code: e.code });
+      }
       console.error('Error delete cliente:', e);
-      res.status(500).json({ error: 'Error eliminando cliente' });
+      res.status(e.statusCode || 500).json({ error: e.statusCode ? e.message : 'Error eliminando cliente', ...(e.code ? { code: e.code } : {}) });
     }
   });
 

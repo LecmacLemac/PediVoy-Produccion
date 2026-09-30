@@ -5,15 +5,12 @@ import express from 'express';
 import multer from 'multer';
 import path from 'node:path';
 import fs from 'node:fs';
+import { resolvePublicPedidoEmpresaId } from '../services/publicPedidoTenant.js';
+import { requireCanonicalBackofficeRole } from './canonicalBackofficeRole.js';
 
 // Helper: nombre y path del archivo HTML asociado a una empresa
 function getEmpresaLandingFilename(empresaId) {
   return `empresa_${empresaId}.html`;
-}
-
-function normalizeHost(host) {
-  const h = String(host || '').split(':')[0].toLowerCase();
-  return h.replace(/^www\./, '');
 }
 
 function resolveDefaultIndex(projectDir) {
@@ -87,74 +84,15 @@ export function registerLandingRoutes(app, deps) {
   });
 
   async function resolvePagePath(req) {
-    // A) ?slug=xyz
-    const slugParamRaw = (req.query?.slug || '').toString().trim().toLowerCase();
-    if (slugParamRaw) {
-      if (/^\d+$/.test(slugParamRaw)) {
-        const empresaId = Number(slugParamRaw);
-        const byId = getEmpresaLandingPath(empresaId);
-        if (fs.existsSync(byId)) return byId;
-      } else {
-        const cleanSlug = /^[a-z0-9_-]+$/.test(slugParamRaw) ? slugParamRaw : '';
-        if (cleanSlug) {
-          try {
-            const rows = await query(
-              `SELECT id
-               FROM empresas
-               WHERE LOWER(landing_slug) = $1
-               LIMIT 1`,
-              [cleanSlug]
-            );
-            if (rows?.length) {
-              const empresaId = rows[0].id;
-              const bySlug = getEmpresaLandingPath(empresaId);
-              if (fs.existsSync(bySlug)) return bySlug;
-            }
-          } catch (e) {
-            console.error('Error resolviendo slug landing:', e.message);
-          }
-        }
-      }
-    }
-
-    if (req.query?.slug !== undefined) return null;
-
-    // B) ?empresa_id=123
-    const empresaIdParam = (req.query?.empresa_id || '').toString().trim();
-    if (empresaIdParam && /^\d+$/.test(empresaIdParam)) {
-      const empresaId = Number(empresaIdParam);
-      const byEmpresaParam = getEmpresaLandingPath(empresaId);
-      if (fs.existsSync(byEmpresaParam)) return byEmpresaParam;
-    }
-
-    if (req.query?.empresa_id !== undefined) return null;
-
-    // C) Dominio
-    const host = normalizeHost(req.headers['x-forwarded-host'] || req.headers.host);
-    if (host.includes('localhost') || host.match(/^\d+\.\d+\.\d+\.\d+$/)) {
+    if (req.query?.slug === undefined && req.query?.empresa_id === undefined) return null;
+    try {
+      const empresaId = await resolvePublicPedidoEmpresaId(req, query);
+      const file = getEmpresaLandingPath(empresaId);
+      return fs.existsSync(file) ? file : null;
+    } catch (e) {
+      if (!e?.statusCode || e.statusCode >= 500) console.error('Error resolviendo landing pública:', e.message);
       return null;
     }
-
-    try {
-      const rows = await query(
-        `SELECT id
-         FROM empresas
-         WHERE LOWER(landing_domain) = $1
-            OR LOWER(landing_domain) = $2
-         LIMIT 1`,
-        [host, `www.${host}`]
-      );
-
-      if (rows?.length) {
-        const empresaId = rows[0].id;
-        const byDomain = getEmpresaLandingPath(empresaId);
-        if (fs.existsSync(byDomain)) return byDomain;
-      }
-    } catch (e) {
-      console.error('Error resolviendo dominio landing:', e.message);
-    }
-
-    return null;
   }
 
   async function serveDetectedPage(req, res) {
@@ -184,11 +122,12 @@ export function registerLandingRoutes(app, deps) {
 
   app.get('/pages/empresa_:id.html', async (req, res) => {
     try {
-      const rows = await query('SELECT landing_slug FROM empresas WHERE id = $1 LIMIT 1', [Number(req.params.id)]);
+      const empresaId = await resolvePublicPedidoEmpresaId({ method: 'GET', query: { empresa_id: req.params.id } }, query);
+      const rows = await query('SELECT landing_slug FROM empresas WHERE id = $1 LIMIT 1', [empresaId]);
       const slug = rows?.[0]?.landing_slug;
       if (!/^[a-z0-9_-]+$/.test(slug || '')) return res.sendStatus(404);
       return res.redirect(`/landing/${encodeURIComponent(slug)}`);
-    } catch { return res.sendStatus(500); }
+    } catch (error) { return res.sendStatus(error?.statusCode && error.statusCode < 500 ? 404 : 500); }
   });
   app.get(['/landing/:slug', '/l/:slug'], async (req, res) => {
     const slug = req.params.slug.toLowerCase();
@@ -201,12 +140,11 @@ export function registerLandingRoutes(app, deps) {
       return res.redirect(`/landing/${encodeURIComponent(slug)}${suffix ? `?${suffix}` : ''}`);
     }
     try {
-      const rows = await query('SELECT id FROM empresas WHERE LOWER(landing_slug) = $1 LIMIT 1', [slug]);
-      if (!rows?.length) return res.sendStatus(404);
-      const file = getEmpresaLandingPath(rows[0].id);
+      const empresaId = await resolvePublicPedidoEmpresaId({ method: 'GET', query: { slug } }, query);
+      const file = getEmpresaLandingPath(empresaId);
       if (!fs.existsSync(file)) return res.sendStatus(404);
       return res.sendFile(file);
-    } catch { return res.sendStatus(500); }
+    } catch (error) { return res.sendStatus(error?.statusCode && error.statusCode < 500 ? 404 : 500); }
   });
   app.use(['/landing', '/l'], (_req, res) => res.sendStatus(404));
 
@@ -237,6 +175,7 @@ export function registerLandingRoutes(app, deps) {
     app.post(
       '/api/empresas/:id/landing-page',
       withAuth,
+      requireCanonicalBackofficeRole,
       pagesUploader.single('file'),
       async (req, res) => {
         try {
@@ -290,7 +229,7 @@ export function registerLandingRoutes(app, deps) {
       }
     );
 
-    app.delete('/api/empresas/:id/landing-page', withAuth, async (req, res) => {
+    app.delete('/api/empresas/:id/landing-page', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
       try {
         const requestedId = Number(req.params.id);
         if (!Number.isFinite(requestedId) || requestedId <= 0) {

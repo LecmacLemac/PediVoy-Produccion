@@ -2,6 +2,7 @@
 import express from 'express';
 import { withAuth } from '../services.js';
 import { query } from '../db.js';
+import { requireCanonicalBackofficeRole } from './canonicalBackofficeRole.js';
 
 const MAX_HISTORY_LIMIT = 500;
 const MAX_ACK_COMMENT = 500;
@@ -51,6 +52,16 @@ async function resolveTargetEmpresaId(req, queryFn = query) {
 
 export function createTrackingRouter({ queryFn = query, withAuthFn = withAuth } = {}) {
   const router = express.Router();
+
+  function requireExactRepartidor(req, res, next) {
+    const { role, empresa_id: empresaId, chofer_id: choferId } = req.user || {};
+    if (role !== 'repartidor'
+      || !Number.isSafeInteger(Number(empresaId)) || Number(empresaId) <= 0
+      || !Number.isSafeInteger(Number(choferId)) || Number(choferId) <= 0) {
+      return res.status(403).json({ error: 'No autorizado' });
+    }
+    return next();
+  }
 
   // POST /api/track/update (compat)
   // POST /api/track/location (nuevo payload recomendado)
@@ -124,8 +135,8 @@ export function createTrackingRouter({ queryFn = query, withAuthFn = withAuth } 
     }
   };
 
-  router.post('/update', withAuthFn, saveLocationHandler);
-  router.post('/location', withAuthFn, saveLocationHandler);
+  router.post('/update', withAuthFn, requireExactRepartidor, saveLocationHandler);
+  router.post('/location', withAuthFn, requireExactRepartidor, saveLocationHandler);
 
   // GET /api/track/live
   // Vista live para admins/super por empresa (multi-tenant)
@@ -311,7 +322,7 @@ export function createTrackingRouter({ queryFn = query, withAuthFn = withAuth } 
   });
 
   // POST /api/track/incidents/:pedidoId/ack
-  router.post('/incidents/:pedidoId/ack', withAuthFn, async (req, res) => {
+  router.post('/incidents/:pedidoId/ack', withAuthFn, requireCanonicalBackofficeRole, async (req, res) => {
     try {
       if (!canManageTracking(req.user?.role)) {
         return res.status(403).json({ error: 'No autorizado' });

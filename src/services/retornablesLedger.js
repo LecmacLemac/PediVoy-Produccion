@@ -58,7 +58,10 @@ export async function ensureRetornablesLedgerSchema(queryFn) {
   await queryFn(`CREATE INDEX IF NOT EXISTS idx_retornables_movimientos_origen ON retornables_movimientos (empresa_id, origen, tipo, fecha DESC)`);
 }
 
-export async function registrarRetornableMovimiento(queryFn, input = {}) {
+/**
+ * Normaliza y valida una operación antes de separar sus fases de saldo y ledger.
+ */
+function normalizeMovimientoInput(input = {}) {
   const empresaId = toNum(input.empresaId || input.empresa_id);
   const productoId = toNum(input.productoId || input.producto_id);
   const sujetoTipo = normalizeSujetoTipo(input.sujetoTipo || input.sujeto_tipo);
@@ -71,19 +74,65 @@ export async function registrarRetornableMovimiento(queryFn, input = {}) {
     throw err;
   }
 
-  const saldoRows = await queryFn(
-    `
-    INSERT INTO retornables_saldos
-      (empresa_id, sujeto_tipo, sujeto_id, producto_id, saldo, updated_at)
-    VALUES ($1, $2, $3, $4, $5, NOW())
-    ON CONFLICT (empresa_id, sujeto_tipo, sujeto_id, producto_id)
-    DO UPDATE SET saldo = retornables_saldos.saldo + EXCLUDED.saldo, updated_at = NOW()
-    RETURNING saldo
-    `,
-    [empresaId, sujetoTipo, sujetoId, productoId, delta]
-  );
-  const saldoResultante = Number(saldoRows?.[0]?.saldo || 0);
+  const saldoObjetivoRaw = input.saldoObjetivo ?? input.saldo_objetivo;
+  const tieneSaldoObjetivo = saldoObjetivoRaw !== undefined && saldoObjetivoRaw !== null;
 
+  return {
+    input,
+    empresaId,
+    productoId,
+    sujetoTipo,
+    sujetoId,
+    delta,
+    tieneSaldoObjetivo,
+    saldoObjetivo: toNum(saldoObjetivoRaw),
+  };
+}
+
+/**
+ * Fase de saldo del ledger genérico. No inserta movimientos.
+ *
+ * Cuando `saldoObjetivo` está presente, el caller debe haber bloqueado primero
+ * la fila canónica del sujeto dentro de la misma transacción. Para clientes el
+ * orden global es cliente_retornables_saldos -> retornables_saldos.
+ */
+export async function actualizarRetornableSaldo(queryFn, input = {}) {
+  const movimiento = normalizeMovimientoInput(input);
+  const saldoRows = await queryFn(
+    movimiento.tieneSaldoObjetivo
+      ? `
+        INSERT INTO retornables_saldos
+          (empresa_id, sujeto_tipo, sujeto_id, producto_id, saldo, updated_at)
+        VALUES ($1, $2, $3, $4, $5, NOW())
+        ON CONFLICT (empresa_id, sujeto_tipo, sujeto_id, producto_id)
+        DO UPDATE SET saldo = EXCLUDED.saldo, updated_at = NOW()
+        RETURNING saldo
+        `
+      : `
+        INSERT INTO retornables_saldos
+          (empresa_id, sujeto_tipo, sujeto_id, producto_id, saldo, updated_at)
+        VALUES ($1, $2, $3, $4, $5, NOW())
+        ON CONFLICT (empresa_id, sujeto_tipo, sujeto_id, producto_id)
+        DO UPDATE SET saldo = retornables_saldos.saldo + EXCLUDED.saldo, updated_at = NOW()
+        RETURNING saldo
+        `,
+    [
+      movimiento.empresaId,
+      movimiento.sujetoTipo,
+      movimiento.sujetoId,
+      movimiento.productoId,
+      movimiento.tieneSaldoObjetivo ? movimiento.saldoObjetivo : movimiento.delta,
+    ]
+  );
+  return Number(saldoRows?.[0]?.saldo || 0);
+}
+
+/**
+ * Fase de movimiento del ledger genérico. El saldo debe haberse escrito antes.
+ */
+export async function insertarRetornableMovimiento(queryFn, input = {}, saldoResultante) {
+  const movimiento = normalizeMovimientoInput(input);
+  const saldoFinal = toNum(saldoResultante);
   const movRows = await queryFn(
     `
     INSERT INTO retornables_movimientos
@@ -97,11 +146,11 @@ export async function registrarRetornableMovimiento(queryFn, input = {}) {
     RETURNING id, saldo_resultante
     `,
     [
-      empresaId,
+      movimiento.empresaId,
       input.fecha || new Date().toISOString(),
-      productoId,
-      sujetoTipo,
-      sujetoId,
+      movimiento.productoId,
+      movimiento.sujetoTipo,
+      movimiento.sujetoId,
       input.contraparteTipo || input.contraparte_tipo || null,
       input.contraparteId || input.contraparte_id || null,
       input.pedidoId || input.pedido_id || null,
@@ -112,17 +161,26 @@ export async function registrarRetornableMovimiento(queryFn, input = {}) {
       String(input.tipo || 'ajuste'),
       toNum(input.cantidadLlenos ?? input.cantidad_llenos),
       toNum(input.cantidadVacios ?? input.cantidad_vacios),
-      delta,
-      saldoResultante,
+      movimiento.delta,
+      saldoFinal,
       input.observacion || null,
       String(input.origen || 'admin'),
       input.referencia || null,
       input.createdBy || input.created_by || null,
     ]
   );
+  return movRows?.[0] || null;
+}
+
+/**
+ * API compatible para callers que no necesitan separar las fases.
+ */
+export async function registrarRetornableMovimiento(queryFn, input = {}) {
+  const saldoResultante = await actualizarRetornableSaldo(queryFn, input);
+  const movimiento = await insertarRetornableMovimiento(queryFn, input, saldoResultante);
 
   return {
-    movimiento: movRows?.[0] || null,
+    movimiento,
     saldo_resultante: saldoResultante,
   };
 }

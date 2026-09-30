@@ -7,6 +7,7 @@ import path from 'path';
 import { spawn } from 'child_process';
 import multer from 'multer';
 import QRCode from 'qrcode';
+import { withTransaction as dbWithTransaction } from '../db.js';
 import { encryptSecret } from '../services/facturacionService.js';
 import { clearStaleCompanyChromiumSingletons } from '../wpp/companySession.js';
 import { createCompanyWorkerSupervisor } from '../wpp/companyWorkerSupervisor.js';
@@ -16,6 +17,7 @@ import {
   withEmpresaWhatsappConfigLock,
 } from '../wpp/companyConfigLock.js';
 
+import { requireCanonicalBackofficeRole } from './canonicalBackofficeRole.js';
 function objectOrEmpty(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 }
@@ -381,6 +383,7 @@ export function createEmpresasRouter(deps) {
   const {
     query,
     pool,
+    withTransaction = dbWithTransaction,
     withAuth,
     isSuper,
     getEmpresaIdFromToken,
@@ -393,6 +396,7 @@ export function createEmpresasRouter(deps) {
   } = deps || {};
 
   if (typeof query !== 'function') throw new Error('createEmpresasRouter: falta query(fn)');
+  if (typeof withTransaction !== 'function') throw new Error('createEmpresasRouter: falta withTransaction(fn)');
   if (typeof withAuth !== 'function') throw new Error('createEmpresasRouter: falta withAuth(fn)');
   if (typeof isSuper !== 'function') throw new Error('createEmpresasRouter: falta isSuper(fn)');
   if (typeof getEmpresaIdFromToken !== 'function') throw new Error('createEmpresasRouter: falta getEmpresaIdFromToken(fn)');
@@ -423,8 +427,8 @@ export function createEmpresasRouter(deps) {
 
   const quoteIdent = (v) => `"${String(v || '').replace(/"/g, '""')}"`;
 
-  async function getEmpresaScopedTables() {
-    return query(
+  async function getEmpresaScopedTables(queryFn = query) {
+    return queryFn(
       `
       SELECT c.table_name
       FROM information_schema.columns c
@@ -439,8 +443,8 @@ export function createEmpresasRouter(deps) {
     );
   }
 
-  async function getTableColumns(tableName) {
-    return query(
+  async function getTableColumns(tableName, queryFn = query) {
+    return queryFn(
       `
       SELECT column_name
       FROM information_schema.columns
@@ -456,7 +460,7 @@ export function createEmpresasRouter(deps) {
     return v && typeof v === 'object' && !Array.isArray(v) ? v : null;
   }
 
-  router.post('/upload-logo', withAuth, (req, res) => {
+  router.post('/upload-logo', withAuth, requireCanonicalBackofficeRole, (req, res) => {
     empresasLogoUploader.single('logo')(req, res, (err) => {
       if (err) {
         const msg = String(err?.message || 'Error subiendo logo');
@@ -493,7 +497,7 @@ export function createEmpresasRouter(deps) {
   });
 
   // POST /api/empresas (solo superadmin)
-  router.post('/', withAuth, async (req, res) => {
+  router.post('/', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     if (!isSuper(req)) return res.status(403).json({ error: 'Solo superadmin' });
 
     const {
@@ -645,7 +649,7 @@ export function createEmpresasRouter(deps) {
 
   // PUT /api/empresas/:id
   // Superadmin administra todo; admin solo puede editar el perfil de su propia empresa.
-  router.put('/:id', withAuth, async (req, res) => {
+  router.put('/:id', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     const { id } = req.params;
     const targetEmpresaId = Number(id);
     const esSuperAdmin = isSuper(req);
@@ -930,7 +934,7 @@ export function createEmpresasRouter(deps) {
   });
 
   // DELETE /api/empresas/:id (solo superadmin)
-  router.delete('/:id', withAuth, async (req, res) => {
+  router.delete('/:id', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     if (!isSuper(req)) return res.status(403).json({ error: 'Solo superadmin' });
     try {
       await query(`DELETE FROM empresas WHERE id=$1`, [req.params.id]);
@@ -1064,7 +1068,7 @@ export function createEmpresasRouter(deps) {
   });
 
   // POST /api/empresas/:id/whatsapp-reset
-  router.post('/:id/whatsapp-reset', withAuth, async (req, res) => {
+  router.post('/:id/whatsapp-reset', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     try {
       const empresaId = Number(req.params.id);
       if (!Number.isFinite(empresaId) || empresaId <= 0) {
@@ -1247,7 +1251,7 @@ export function createEmpresasRouter(deps) {
 
   // POST /api/empresas/:id/backup/validate
   // Dry-run: valida estructura del backup y qué se podría restaurar
-  router.post('/:id/backup/validate', withAuth, async (req, res) => {
+  router.post('/:id/backup/validate', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     try {
       if (!isSuper(req)) return res.status(403).json({ error: 'Solo superadmin' });
 
@@ -1337,7 +1341,7 @@ export function createEmpresasRouter(deps) {
 
   // POST /api/empresas/:id/backup/restore
   // Restore no destructivo (upsert por id cuando exista, insert en caso contrario)
-  router.post('/:id/backup/restore', withAuth, async (req, res) => {
+  router.post('/:id/backup/restore', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     try {
       if (!isSuper(req)) return res.status(403).json({ error: 'Solo superadmin' });
       if (!pool?.connect) return res.status(500).json({ error: 'Pool DB no disponible para restore' });
@@ -1355,29 +1359,29 @@ export function createEmpresasRouter(deps) {
         return res.status(400).json({ error: 'Formato inválido: falta objeto data' });
       }
 
-      const empresaRows = await query('SELECT id, nombre FROM empresas WHERE id = $1 LIMIT 1', [empresaId]);
-      if (!empresaRows.length) {
-        return res.status(404).json({ error: 'Empresa no encontrada' });
-      }
-
-      const tablesRows = await getEmpresaScopedTables();
-      const allowedTables = (tablesRows || []).map((r) => String(r.table_name || '')).filter(Boolean);
-
       const report = {
         empresa_id: empresaId,
         restored_by: req.user?.username || req.user?.id || 'unknown',
         tables: {},
       };
 
-      const client = await pool.connect();
-      try {
-        await client.query('BEGIN');
+      const outcome = await withTransaction(async txQuery => {
+        const empresaRows = await txQuery(
+          'SELECT id, nombre FROM empresas WHERE id = $1 LIMIT 1 FOR UPDATE',
+          [empresaId],
+        );
+        if (empresaRows.length !== 1) {
+          return { status: 404, payload: { error: 'Empresa no encontrada' } };
+        }
+
+        const tablesRows = await getEmpresaScopedTables(txQuery);
+        const allowedTables = (tablesRows || []).map((r) => String(r.table_name || '')).filter(Boolean);
 
         for (const tableName of allowedTables) {
           const rowsRaw = data[tableName];
           if (!Array.isArray(rowsRaw) || !rowsRaw.length) continue;
 
-          const colsMeta = await getTableColumns(tableName);
+          const colsMeta = await getTableColumns(tableName, txQuery);
           const allowedCols = (colsMeta || []).map((c) => String(c.column_name || '')).filter(Boolean);
           const hasId = allowedCols.includes('id');
 
@@ -1410,12 +1414,12 @@ export function createEmpresasRouter(deps) {
             const values = columns.map((k) => clean[k]);
 
             if (hasId && clean.id != null) {
-              const exists = await client.query(
+              const exists = await txQuery(
                 `SELECT 1 FROM ${quoteIdent(tableName)} WHERE id = $1 AND empresa_id = $2 LIMIT 1`,
                 [clean.id, empresaId]
               );
 
-              if (exists.rowCount > 0) {
+              if (exists.length > 0) {
                 const updatableCols = columns.filter((c) => c !== 'id');
                 if (!updatableCols.length) {
                   skipped += 1;
@@ -1427,10 +1431,11 @@ export function createEmpresasRouter(deps) {
                   .join(', ');
                 const setValues = updatableCols.map((c) => clean[c]);
 
-                await client.query(
-                  `UPDATE ${quoteIdent(tableName)} SET ${setSql} WHERE id = $${updatableCols.length + 1} AND empresa_id = $${updatableCols.length + 2}`,
+                const updatedRows = await txQuery(
+                  `UPDATE ${quoteIdent(tableName)} SET ${setSql} WHERE id = $${updatableCols.length + 1} AND empresa_id = $${updatableCols.length + 2} RETURNING id`,
                   [...setValues, clean.id, empresaId]
                 );
+                if (updatedRows.length !== 1) throw new Error('restore update affected unexpected rows');
                 updated += 1;
                 continue;
               }
@@ -1438,32 +1443,35 @@ export function createEmpresasRouter(deps) {
 
             const colSql = columns.map((c) => quoteIdent(c)).join(', ');
             const valSql = columns.map((_, idx) => `$${idx + 1}`).join(', ');
-            await client.query(
-              `INSERT INTO ${quoteIdent(tableName)} (${colSql}) VALUES (${valSql})`,
+            const insertedRows = await txQuery(
+              `INSERT INTO ${quoteIdent(tableName)} (${colSql}) VALUES (${valSql}) RETURNING 1 AS restored`,
               values
             );
+            if (insertedRows.length !== 1) throw new Error('restore insert affected unexpected rows');
             inserted += 1;
           }
 
           report.tables[tableName] = { inserted, updated, skipped, total: rowsRaw.length };
         }
 
-        await client.query('COMMIT');
-      } catch (txError) {
-        await client.query('ROLLBACK');
-        throw txError;
-      } finally {
-        client.release();
-      }
+        return { status: 200, payload: { ok: true, mode: 'upsert_non_destructive', report } };
+      }, { pool, maxRetries: 0 });
 
-      return res.json({ ok: true, mode: 'upsert_non_destructive', report });
+      return res.status(outcome.status).json(outcome.payload);
     } catch (e) {
-      console.error('ERROR RESTORE BACKUP EMPRESA:', e);
-      return res.status(500).json({ error: 'Error restaurando backup', detail: e.message });
+      if (e?.code === 'TRANSACTION_OUTCOME_UNKNOWN') {
+        console.error('ERROR RESTORE BACKUP EMPRESA:', { code: e.code, route: 'empresa-backup-restore' });
+        return res.status(503).json({
+          error: 'Resultado de restauración indeterminado',
+          code: 'TRANSACTION_OUTCOME_UNKNOWN',
+        });
+      }
+      console.error('ERROR RESTORE BACKUP EMPRESA:', { code: e?.code || 'RESTORE_FAILED', route: 'empresa-backup-restore' });
+      return res.status(500).json({ error: 'Error restaurando backup' });
     }
   });
 
-  router.post('/:id/cuentas', withAuth, async (req, res) => {    try {
+  router.post('/:id/cuentas', withAuth, requireCanonicalBackofficeRole, async (req, res) => {    try {
       const empresaId = Number(req.params.id);
       const { banco, alias, cbu, titular } = req.body || {};
       const prioridad = Number(req.body?.prioridad) > 0 ? Number(req.body.prioridad) : 1;
@@ -1494,7 +1502,7 @@ export function createEmpresasRouter(deps) {
   });
 
   // POST /api/empresas/cuentas/:id/principal
-  router.post('/cuentas/:id/principal', withAuth, async (req, res) => {
+  router.post('/cuentas/:id/principal', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     try {
       const cuentaId = Number(req.params.id);
       const esSuperAdmin = isSuper(req);
@@ -1536,7 +1544,7 @@ export function createEmpresasRouter(deps) {
   });
 
   // DELETE /api/empresas/cuentas/:id
-  router.delete('/cuentas/:id', withAuth, async (req, res) => {
+  router.delete('/cuentas/:id', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     try {
       const cuentaId = Number(req.params.id);
       const esSuperAdmin = isSuper(req);

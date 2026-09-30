@@ -74,7 +74,7 @@ function harness({ user = null, linked = null, chofer = driver, referente = refe
   let sequence = 0;
   return {
     queries, business, replies, errors,
-    resolve: () => sandbox.router.resolve(`${sender}@c.us`),
+    resolve: () => sandbox.router.resolve(`${sender}@c.us`, sandbox.query, empresaId),
     send: body => receive({ from: `${sender}@c.us`, body, id: { _serialized: String(++sequence) } }),
   };
 }
@@ -136,12 +136,16 @@ test('active linked repartidor from another tenant fails closed', async () => {
 });
 
 for (const path of ['direct']) {
-  test(`${path}: exact active global super retains privileged dispatch and write`, async () => {
+  test(`${path}: exact active global super without tenant fails closed`, async () => {
     const h = harness({ [path === 'direct' ? 'user' : 'linked']: active });
-    assert.equal((await h.resolve()).role, 'super');
+    const ctx = await h.resolve();
+    assert.equal(ctx.resolution, 'unresolved');
+    assert.equal(ctx.source, 'super_sin_tenant');
     for (const command of commands) await h.send(command);
-    assert.deepEqual(h.business.map(call => call.name), ['marcarComprobanteComoProcesadoPg', 'handleRentabilidadEmpresa', 'handleEstadisticaEmpresa']);
-    assert.equal(h.queries.filter(({ sql }) => /UPDATE comprobantes_transferencia/.test(sql)).length, 1);
+    assert.deepEqual(h.business, []);
+    assert.equal(h.queries.filter(({ sql }) => /UPDATE comprobantes_transferencia/.test(sql)).length, 0);
+    assert.equal(h.replies.length, commands.length);
+    assert.ok(h.replies.every(reply => /proveedor|canal oficial/i.test(reply)));
   });
 }
 
@@ -289,9 +293,9 @@ for (const role of ['repartidor', 'referente']) {
 
 // Model both the old suffix lookup and the exact normalized SQL, including LIMIT.
 // These fixtures exercise the real resolver and message dispatch with distinct senders.
-function phoneHarness({ users = [], drivers = [], sender = active.username } = {}) {
+function phoneHarness({ users = [], drivers = [], sender = active.username, empresaId } = {}) {
   const digits = value => String(value ?? '').replace(/\D/g, '');
-  return harness({ sender, identityQuery(sql, params) {
+  return harness({ sender, empresaId, identityQuery(sql, params) {
     let rows;
     if (/WHERE chofer_id/.test(sql)) return users.filter(row => row.chofer_id === params[0]);
     if (/FROM usuarios/.test(sql)) {
@@ -324,10 +328,13 @@ for (const path of ['user', 'chofer']) {
       const h = phoneHarness(path === 'user'
         ? { users: [active, { ...active, id: 13, username: '+54 (938) 712-34567', activo }], drivers: [{ ...driver, telefono: active.username }] }
         : { drivers: [{ ...driver, telefono: active.username }, { ...driver, chofer_id: 5, telefono: '+54 (938) 712-34567', activo }] });
-      assert.equal(await h.resolve(), null);
+      const ctx = await h.resolve();
+      assert.equal(ctx.resolution, 'ambiguous');
+      assert.equal(ctx.source, path === 'user' ? 'usuario_ambiguo' : 'chofer_ambiguo');
       for (const command of [...commands, 'resumen', 'hola']) await h.send(command);
       assert.deepEqual(h.business, []);
-      assert.deepEqual(h.replies, []);
+      assert.equal(h.replies.length, 5);
+      assert.ok(h.replies.every(reply => /empresa|canal|soporte/i.test(reply)));
       assert.deepEqual(h.errors, []);
       assert.ok(h.queries.every(({ sql }) => path === 'user' ? /FROM usuarios/.test(sql) : /FROM usuarios|FROM choferes/.test(sql)));
     }
@@ -336,7 +343,7 @@ for (const path of ['user', 'chofer']) {
 for (const role of ['super', 'repartidor']) {
   test(`unique formatted full username preserves valid ${role} alongside a suffix-sharing number`, async () => {
     const user = role === 'super' ? active : { ...directUser(role), chofer_valid: true };
-    const h = phoneHarness({ users: [
+    const h = phoneHarness({ empresaId: role === 'super' ? 7 : undefined, users: [
       { ...active, id: 13, username: otherInternational },
       { ...user, username: '+54 (938) 712-34567' },
     ] });
@@ -365,9 +372,11 @@ test('unique formatted full chofer identity selects only its own tenant and driv
 });
 test('usuarios.telefono accepts exact formatted identity and detects ambiguity across fields', async () => {
   const users = [{ ...active, username: 'operator', telefono: '+54 (938) 712-34567' }];
-  assert.equal((await phoneHarness({ users }).resolve()).role, 'super');
+  assert.equal((await phoneHarness({ users, empresaId: 7 }).resolve()).role, 'super');
   users.push({ ...active, id: 13 });
-  assert.equal(await phoneHarness({ users }).resolve(), null);
+  const ambiguous = await phoneHarness({ users, empresaId: 7 }).resolve();
+  assert.equal(ambiguous.resolution, 'ambiguous');
+  assert.equal(ambiguous.source, 'usuario_ambiguo');
 });
 
 test('duplicate coherent users linked to one driver fail closed', async () => {

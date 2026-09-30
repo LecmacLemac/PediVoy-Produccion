@@ -1,7 +1,7 @@
 const $ = (s) => document.querySelector(s);
 const money = (n) => new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(Number(n || 0));
 
-let empresaId = 1;
+let empresaId = null;
 let selectedEmpresaId = null;
 let telefono = '';
 let lastCompaniesLookup = '';
@@ -52,6 +52,27 @@ async function j(url, options = {}) {
 
 function getSlug() {
   return new URLSearchParams(location.search).get('slug') || '';
+}
+
+function getExplicitPublicTenantQuery() {
+  const params = new URLSearchParams(location.search);
+  const query = new URLSearchParams();
+  const slug = String(params.get('slug') || '').trim().toLowerCase();
+  const rawEmpresaId = params.get('empresa_id');
+  if (/^[a-z0-9_-]+$/.test(slug)) query.set('slug', slug);
+  if (/^[1-9]\d*$/.test(String(rawEmpresaId || '')) && Number.isSafeInteger(Number(rawEmpresaId))) {
+    query.set('empresa_id', rawEmpresaId);
+  }
+  return query;
+}
+
+function withPublicTenant(pathname, extra = {}) {
+  const query = getExplicitPublicTenantQuery();
+  if (!query.size) throw new Error('Falta slug o empresa_id explícito para identificar la empresa');
+  for (const [key, value] of Object.entries(extra)) {
+    if (value !== undefined && value !== null && value !== '') query.set(key, String(value));
+  }
+  return `${pathname}?${query.toString()}`;
 }
 
 function onlyDigits(v) {
@@ -149,7 +170,8 @@ function normalizePhoneForInput(v) {
 }
 
 function getSelectedEmpresaId() {
-  return Number(selectedEmpresaId || empresaId || 1);
+  const value = Number(selectedEmpresaId || empresaId);
+  return Number.isSafeInteger(value) && value > 0 ? value : null;
 }
 
 function updateAppStats({ companyName = null, cartCount = null, orderCount = null } = {}) {
@@ -349,9 +371,9 @@ async function lookupCompaniesForPhone() {
   const normalized = telefono;
   if (normalized === lastCompaniesLookup && selectedEmpresaId) return [];
 
-  const out = await j('/api/public/app/auth/companies', {
+  const out = await j(withPublicTenant('/api/public/app/auth/companies'), {
     method: 'POST',
-    body: JSON.stringify({ telefono, slug: getSlug() }),
+    body: JSON.stringify({ telefono }),
   });
 
   const companies = Array.isArray(out.companies) ? out.companies : [];
@@ -359,8 +381,10 @@ async function lookupCompaniesForPhone() {
   renderEmpresaOptions(companies, out.preferred_empresa_id || null);
 
   if (!companies.length) {
-    selectedEmpresaId = Number(out.preferred_empresa_id || empresaId || 1);
-    empresaId = selectedEmpresaId;
+    const preferred = Number(out.preferred_empresa_id);
+    if (!Number.isSafeInteger(preferred) || preferred <= 0) throw new Error('Empresa pública inválida');
+    selectedEmpresaId = preferred;
+    empresaId = preferred;
   }
 
   return companies;
@@ -476,7 +500,7 @@ function detectOrderStateChanges(orders = []) {
 
 async function repeatOrder(orderId) {
   try {
-    const out = await j(`/api/public/app/orders/${orderId}/items`);
+    const out = await j(withPublicTenant(`/api/public/app/orders/${orderId}/items`));
     const items = out.items || [];
     cart.length = 0;
     items.forEach((it, idx) => {
@@ -572,7 +596,7 @@ function renderOrders(orders = []) {
           return;
         }
 
-        const out = await j(`/api/public/app/orders/${o.id}/items`);
+        const out = await j(withPublicTenant(`/api/public/app/orders/${o.id}/items`));
         const items = out.items || [];
         box.innerHTML = items.length
           ? items.map((it) => `• ${esc(it.producto)} x${esc(it.cantidad)} — ${money(Number(it.precio_unitario || 0) * Number(it.cantidad || 0))}`).join('<br>')
@@ -591,7 +615,7 @@ function renderOrders(orders = []) {
 }
 
 async function loadOrders() {
-  const out = await j('/api/public/app/orders');
+  const out = await j(withPublicTenant('/api/public/app/orders'));
   const orders = out.orders || [];
   lastLoadedOrders = orders;
   updateAppStats({ orderCount: orders.length });
@@ -690,16 +714,17 @@ async function loadEmpresa() {
     empresaId = Number(selectedEmpresaId);
     return;
   }
-  const slug = getSlug();
-  const q = slug ? `?slug=${encodeURIComponent(slug)}` : '';
-  const cfg = await j(`/public/config${q}`);
-  empresaId = Number(cfg.empresa_id || 1);
+  const tenantQuery = getExplicitPublicTenantQuery();
+  if (!tenantQuery.size) throw new Error('Falta slug o empresa_id explícito para cargar la empresa');
+  const cfg = await j(`/public/config?${tenantQuery.toString()}`);
+  empresaId = Number(cfg.empresa_id);
+  if (!Number.isSafeInteger(empresaId) || empresaId <= 0) throw new Error('Empresa pública inválida');
   selectedEmpresaId = empresaId;
   updateAppStats({ companyName: cfg.nombre_empresa || cfg.nombre || `Empresa #${empresaId}` });
 }
 
 async function loadCatalog() {
-  const rows = await j(`/public/productos?empresa_id=${empresaId}&scope=catalog`);
+  const rows = await j(withPublicTenant('/public/productos', { scope: 'catalog' }));
   catalogProducts = Array.isArray(rows) ? rows : [];
   renderCatalogFilters();
   renderCatalog();
@@ -831,10 +856,7 @@ $('#btn-google').addEventListener('click', async () => {
   try {
     await lookupCompaniesForPhone().catch(() => []);
     await loadEmpresa();
-    const slug = getSlug();
-    const q = new URLSearchParams({ empresa_id: String(getSelectedEmpresaId()) });
-    if (slug) q.set('slug', slug);
-    location.href = `/api/public/app/auth/google/start?${q.toString()}`;
+    location.href = withPublicTenant('/api/public/app/auth/google/start');
   } catch (e) {
     alert(e.message);
   }
@@ -850,9 +872,9 @@ $('#btn-otp').addEventListener('click', async () => {
 
     telefono = normalizePhoneForInput($('#telefono').value.trim());
     $('#telefono').value = telefono;
-    const body = await j('/api/public/app/auth/request-otp', {
+    const body = await j(withPublicTenant('/api/public/app/auth/request-otp'), {
       method: 'POST',
-      body: JSON.stringify({ empresa_id: currentEmpresaId, telefono, slug: getSlug() }),
+      body: JSON.stringify({ telefono }),
     });
     empresaId = currentEmpresaId;
     selectedEmpresaId = currentEmpresaId;
@@ -865,12 +887,12 @@ $('#btn-otp').addEventListener('click', async () => {
 
 $('#btn-verify').addEventListener('click', async () => {
   try {
-    await j('/api/public/app/auth/verify-otp', {
+    await j(withPublicTenant('/api/public/app/auth/verify-otp'), {
       method: 'POST',
-      body: JSON.stringify({ empresa_id: getSelectedEmpresaId(), telefono, code: $('#code').value.trim(), slug: getSlug() }),
+      body: JSON.stringify({ telefono, code: $('#code').value.trim() }),
     });
 
-    const me = await j('/api/public/app/me');
+    const me = await j(withPublicTenant('/api/public/app/me'));
     showApp();
     loadProfileToForm(me.profile, me.session);
     await loadCatalog();
@@ -887,7 +909,7 @@ $('#btn-save-profile').addEventListener('click', async () => {
     const ciudad = $('#ciudad').value.trim();
     const tel = $('#telefono-perfil').value.trim();
 
-    const out = await j('/api/public/app/profile', {
+    const out = await j(withPublicTenant('/api/public/app/profile'), {
       method: 'POST',
       body: JSON.stringify({ cliente, direccion, ciudad, telefono: tel }),
     });
@@ -938,7 +960,6 @@ $('#btn-send').addEventListener('click', async () => {
     if (onlyDigits(tel).length < 8) throw new Error('Completá un teléfono válido');
 
     const payload = {
-      empresa_id: getSelectedEmpresaId(),
       cliente,
       telefono: tel,
       direccion,
@@ -954,7 +975,7 @@ $('#btn-send').addEventListener('click', async () => {
       })),
     };
 
-    const out = await j('/public/pedidos', {
+    const out = await j(withPublicTenant('/public/pedidos'), {
       method: 'POST',
       body: JSON.stringify(payload),
     });
@@ -992,7 +1013,7 @@ document.addEventListener('visibilitychange', () => {
   }
   try {
     await loadEmpresa();
-    const me = await j('/api/public/app/me');
+    const me = await j(withPublicTenant('/api/public/app/me'));
     if (me?.ok) {
       showApp();
       loadProfileToForm(me.profile, me.session);

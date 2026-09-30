@@ -38,6 +38,7 @@ import { createCallsRouter } from './calls.js';
 import { createWhatsAppCloudWebhookRouter } from './whatsappCloudWebhook.js';
 import { createWhatsAppCloudEventHandler } from '../whatsappCloud/eventRepository.js';
 import { trackingPublicRouter } from '../trackingPublic.js';
+import { resolvePublicPedidoEmpresaId } from '../services/publicPedidoTenant.js';
 
 export function mountWhatsAppCloudWebhook(app, {
   withTransaction,
@@ -66,6 +67,10 @@ export function mountApiModules(app, deps) {
     notificarPedidoTransferencia,
     ejecutarEstrategiaVecinos,
     ejecutarPostEntregaUpsell,
+    ejecutarRecompensaReferido,
+    ejecutarEstrategiaReferidos,
+    awardPointsForDeliveredOrder,
+    generateComisionesForDeliveredOrder,
     registrarMovimientosActivosDesdePedido,
     TRANSF_DIR,
     GASTOS_DIR,
@@ -76,32 +81,65 @@ export function mountApiModules(app, deps) {
   app.locals.wppEmpresaWorkersShutdown ??= shutdownEmpresaWppWorkers;
 
   // AUTH / core multi-tenant
-  app.use('/api/auth', createAuthGuestSignupRouter({ query, withAuth, pool }));
-  app.use('/api/setup', createSetupRouter({ query, withAuth, getEmpresaIdFromToken }));
-  app.use('/api/public', createPublicLandingRouter({ query }));
+  app.use('/api/auth', createAuthGuestSignupRouter({ query, withAuth, pool, withTransaction }));
+  app.use('/api/setup', createSetupRouter({ query, withTransaction, withAuth, getEmpresaIdFromToken }));
+  app.use('/api/public', createPublicLandingRouter({ query, withTransaction }));
   app.use('/api/public', trackingPublicRouter);
-  app.use('/api/public/app', createPublicClientAppRouter({ query, pool }));
+  app.use('/api/public/app', createPublicClientAppRouter({
+    query,
+    pool,
+    resolveEmpresaIdFn: resolvePublicPedidoEmpresaId,
+  }));
 
   // Admin vertical modules: activos/alquileres/costos + pagos QR
   registerRoutes(app);
 
   // API de negocio
   app.use('/api', createAuthRouter());
-  app.use('/api/clientes', createClientesRouter());
+  app.use('/api/clientes', createClientesRouter({
+    query,
+    pool,
+    withTransaction,
+    withAuth,
+    isSuper,
+    getEmpresaIdFromToken,
+  }));
   app.use('/api/track', createTrackingRouter());
   app.use('/api', createFacturacionRouter({ projectDir: deps.projectDir, pool }));
-  app.use('/api/gastos', createGastosRouter({ GASTOS_DIR }));
+  app.use('/api/gastos', createGastosRouter({ GASTOS_DIR, query, withTransaction, withAuth, isSuper, getEmpresaIdFromToken }));
   app.use('/api/pedidos', createPedidosRouter());
-  app.use('/api/pedidos', createPedidosItemsRouter());
+  app.use('/api/pedidos', createPedidosItemsRouter({
+    query,
+    withTransaction,
+    withAuth,
+    isSuper,
+    getEmpresaIdFromToken,
+  }));
   app.use('/api/pedidos', createPedidosPagoRouter());
   app.use('/api/estadisticas', createEstadisticasRouter());
   app.use('/api/analytics', createAnalyticsRouter({ query, withAuth, isSuper, getEmpresaIdFromToken }));
   app.use('/api/call-campaigns', createCallCampaignsRouter({ withAuth, resolveEmpresaId }));
   app.use('/api', createCallsRouter({ withAuth, resolveEmpresaId }));
-  app.use('/api/stock', createStockRouter());
-  app.use('/api/retornables', createRetornablesRouter({ query, pool, withAuth, isSuper, getEmpresaIdFromToken }));
-  app.use('/api/reportes', createReportesRouter());
-  app.use('/api/repartidor', createRepartidorStatsRouter());
+  app.use('/api/stock', createStockRouter({
+    query,
+    pool,
+    withTransaction,
+    withAuth,
+    isSuper,
+    getEmpresaIdFromToken,
+  }));
+  app.use('/api/retornables', createRetornablesRouter({ query, pool, withTransaction, withAuth, isSuper, getEmpresaIdFromToken }));
+  app.use('/api/reportes', createReportesRouter({
+    query,
+    withAuth,
+    isSuper,
+    getEmpresaIdFromToken,
+  }));
+  app.use('/api/repartidor', createRepartidorStatsRouter({
+    query,
+    withAuth,
+    getEmpresaIdFromToken,
+  }));
   app.use('/api/transferencias', createTransferenciasRouter({ TRANSF_DIR }));
 
   app.use('/api/admin/licencia', createLicenciasMpRouter({ crearPreferenciaLicencia }));
@@ -125,14 +163,14 @@ export function mountApiModules(app, deps) {
 
   app.use('/api/entrega', createEntregaConfigRouter({ query, withAuth, resolveEmpresaId }));
   app.use('/api/ai', createAiSiteBuilderRouter({ query, withAuth, isSuper, getEmpresaIdFromToken, projectDir: deps.projectDir }));
-  app.use('/api/zonas', createZonasRouter({ query, withAuth, isSuper, getEmpresaIdFromToken }));
+  app.use('/api/zonas', createZonasRouter({ query, withTransaction, withAuth, isSuper, getEmpresaIdFromToken }));
   app.use('/api', createChoferesRouter({ query, withAuth, isSuper, getEmpresaIdFromToken }));
   app.use('/api', createAsignacionesZonasRouter({ query, withAuth, isSuper, getEmpresaIdFromToken }));
-  app.use('/api/productos', createProductosRouter({ query, withAuth, isSuper, getEmpresaIdFromToken }));
+  app.use('/api/productos', createProductosRouter({ query, withTransaction, withAuth, isSuper, getEmpresaIdFromToken }));
   app.use('/api/promociones', createPromocionesRouter({ query, withAuth, isSuper, getEmpresaIdFromToken }));
-  app.use('/api/juegos', createJuegosRouter({ query, pool, withAuth, isSuper, getEmpresaIdFromToken }));
-  app.use('/api/juegos-publicos', createJuegosPublicosRouter({ query, pool }));
-  app.use('/api/referentes', createReferentesRouter({ query, withAuth, isSuper, getEmpresaIdFromToken }));
+  app.use('/api/juegos', createJuegosRouter({ query, pool, withTransaction, withAuth, isSuper, getEmpresaIdFromToken }));
+  app.use('/api/juegos-publicos', createJuegosPublicosRouter({ query, pool, withTransaction }));
+  app.use('/api/referentes', createReferentesRouter({ query, withTransaction, withAuth, isSuper, getEmpresaIdFromToken }));
   app.use('/api/referente', createReferentePortalRouter({ query, withAuth }));
   app.use('/api/admin', createAdminUsuariosRouter({
     query,
@@ -155,6 +193,10 @@ export function mountApiModules(app, deps) {
       notificarPedidoTransferencia,
       ejecutarEstrategiaVecinos,
       ejecutarPostEntregaUpsell,
+      ejecutarRecompensaReferido,
+      ejecutarEstrategiaReferidos,
+      awardPointsForDeliveredOrder,
+      generateComisionesForDeliveredOrder,
       registrarMovimientosActivosDesdePedido,
     })
   );

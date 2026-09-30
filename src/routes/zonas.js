@@ -3,10 +3,13 @@
 
 import express from 'express';
 import { normalizarDiasEntrega } from '../utils.js';
+import { lockDeliveryPointRows } from '../services/deliveryPointIdentity.js';
+import { requireCanonicalBackofficeRole } from './canonicalBackofficeRole.js';
 
 export function createZonasRouter(deps) {
-  const { query, withAuth, isSuper, getEmpresaIdFromToken } = deps || {};
+  const { query, withTransaction, withAuth, isSuper, getEmpresaIdFromToken } = deps || {};
   if (typeof query !== 'function') throw new Error('createZonasRouter: falta query(fn)');
+  if (typeof withTransaction !== 'function') throw new Error('createZonasRouter: falta withTransaction(fn)');
   if (typeof withAuth !== 'function') throw new Error('createZonasRouter: falta withAuth(fn)');
   if (typeof isSuper !== 'function') throw new Error('createZonasRouter: falta isSuper(fn)');
   if (typeof getEmpresaIdFromToken !== 'function') throw new Error('createZonasRouter: falta getEmpresaIdFromToken(fn)');
@@ -64,7 +67,7 @@ export function createZonasRouter(deps) {
   });
 
   // POST /api/zonas
-  router.post('/', withAuth, async (req, res) => {
+  router.post('/', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     try {
       await ensureZonasSchema();
       const { nombre, poligono, empresa_id, dias_entrega } = req.body || {};
@@ -108,7 +111,7 @@ export function createZonasRouter(deps) {
   });
 
   // PUT /api/zonas/:id
-  router.put('/:id', withAuth, async (req, res) => {
+  router.put('/:id', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     try {
       await ensureZonasSchema();
       const { nombre, poligono, dias_entrega } = req.body || {};
@@ -187,7 +190,7 @@ export function createZonasRouter(deps) {
   });
 
   // DELETE /api/zonas/:id
-  router.delete('/:id', withAuth, async (req, res) => {
+  router.delete('/:id', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     const id = Number(req.params.id);
     if (!id) return res.status(400).json({ error: 'ID de zona inválido' });
 
@@ -209,12 +212,43 @@ export function createZonasRouter(deps) {
 
       const zonaEmpresa = Number(zonaRows[0].empresa_id);
 
-      await query('DELETE FROM zona_chofer WHERE zona_id = $1 AND empresa_id = $2', [id, zonaEmpresa]);
-      await query('UPDATE puntos_entrega SET zona_id = NULL WHERE zona_id = $1 AND empresa_id = $2', [id, zonaEmpresa]);
-      await query('DELETE FROM zonas_geograficas WHERE id = $1 AND empresa_id = $2', [id, zonaEmpresa]);
+      await withTransaction(async (txQuery) => {
+        const points = await txQuery(
+          `SELECT id, empresa_id, telefono, telefono_normalizado, direccion
+             FROM puntos_entrega
+            WHERE zona_id = $1 AND empresa_id = $2
+            ORDER BY id`,
+          [id, zonaEmpresa]
+        );
+        await lockDeliveryPointRows(txQuery, {
+          empresaId: zonaEmpresa,
+          rows: points,
+          normalizePhoneFn: value => String(value || '').replace(/\D+/g, ''),
+        });
+        await txQuery('DELETE FROM zona_chofer WHERE zona_id = $1 AND empresa_id = $2', [id, zonaEmpresa]);
+        const updated = await txQuery(
+          'UPDATE puntos_entrega SET zona_id = NULL WHERE zona_id = $1 AND empresa_id = $2 RETURNING id',
+          [id, zonaEmpresa]
+        );
+        if (updated.length !== points.length) throw new Error('DELIVERY_POINT_SET_CHANGED');
+        const deleted = await txQuery(
+          'DELETE FROM zonas_geograficas WHERE id = $1 AND empresa_id = $2 RETURNING id',
+          [id, zonaEmpresa]
+        );
+        if (deleted.length !== 1) throw new Error('ZONE_DELETE_FAILED');
+      });
 
       return res.json({ ok: true });
     } catch (e) {
+      if (e?.code === 'TRANSACTION_OUTCOME_UNKNOWN') {
+        return res.status(503).json({
+          error: 'Resultado de eliminación de zona indeterminado',
+          code: 'TRANSACTION_OUTCOME_UNKNOWN',
+        });
+      }
+      if (e?.code === 'DELIVERY_POINT_IDENTITY_CONFLICT') {
+        return res.status(409).json({ error: e.message, code: e.code });
+      }
       console.error('Error eliminando zona:', e);
       return res.status(500).json({ error: e.detail || e.message || 'Error eliminando zona' });
     }

@@ -38,9 +38,11 @@ async function resolverZonaParaPedido(pedidoId){
   return zona.id;
 }
 
-async function abrirActivosPaso(pedidoId) {
+async function abrirActivosPaso(pedidoId, { movimientosIniciales = [], propagarError = false } = {}) {
   activosModalState.pedidoId = pedidoId;
-  let etapa = 'activos';
+  activosModalState.movimientosIniciales = Array.isArray(movimientosIniciales)
+    ? movimientosIniciales.map(movimiento => ({ ...movimiento }))
+    : [];
 
   try {
     const data = await api(`/api/repartidor/pedidos/${pedidoId}/activos-resumen`);
@@ -48,36 +50,6 @@ async function abrirActivosPaso(pedidoId) {
 
     const itemsActivos = Array.isArray(data.items_activos) ? data.items_activos : [];
     const retItems = Array.isArray(data?.retornables_resumen?.items) ? data.retornables_resumen.items : [];
-
-    // 🔴 CASO 1: NO hay productos activos NI retornables -> entregar directo (TRANSACCIONAL)
-    if (itemsActivos.length === 0 && retItems.length === 0) {
-      const zonaId = await resolverZonaParaPedido(pedidoId);
-
-      etapa = 'entrega';
-      await withLock(`entregar:${pedidoId}`, async () => {
-        await api(`/api/repartidor/pedidos/${pedidoId}/entregar`, {
-          method: 'POST',
-          body: {
-            zona_id: zonaId != null ? zonaId : null,
-            movimientos: [],
-            retornables: [],
-            checklist: {
-              cliente_confirmado: true,
-              producto_entregado: true,
-              cobro_confirmado: false,
-            },
-          }
-        });
-      });
-
-      toast('✅ Pedido entregado');
-      activosModalState.pedidoId = null;
-      activosModalState.data = null;
-      await loadPedidos();
-      return;
-    }
-
-    // 🟢 CASO 2: SÍ hay productos activos -> mostrar modal
 
     const ped = data.pedido || {};
     $('#amPedidoTitle').textContent = [
@@ -88,10 +60,19 @@ async function abrirActivosPaso(pedidoId) {
     ].filter(Boolean).join(' · ');
 
     const c = $('#amContenido');
-    let html = '';
+    let html = `
+      <div style="border:1px solid rgba(148,163,184,0.22); border-radius:12px; padding:0.75rem; background:rgba(15,23,42,0.45);">
+        <div style="font-weight:700;">Resumen de cierre</div>
+        <div class="muted" style="font-size:0.84rem; margin-top:4px;">
+          Método de pago: <b>${esc(ped.metodo_pago || 'Sin definir')}</b>
+          · Importe: <b>${money(Number(ped.monto || 0))}</b>
+        </div>
+      </div>
+    `;
 
     const actosCliente = Array.isArray(data.activos_cliente) ? data.activos_cliente : [];
     const actosDisp    = Array.isArray(data.activos_disponibles) ? data.activos_disponibles : [];
+    const itemActivoPorProducto = new Map(itemsActivos.map(item => [Number(item.producto_id), Number(item.item_pedido_id)]));
 
     // Opciones de activos disponibles (las usamos para entrega nueva y para cambio)
     const opcionesDisp = actosDisp.map(ad => `
@@ -117,17 +98,18 @@ async function abrirActivosPaso(pedidoId) {
               const pid = Number(r.producto_id);
               const entregados = Number(r.cantidad_entregada || 0);
               const saldoPrevio = Number(r.saldo_actual || 0);
-              const sugerido = Math.max(0, Number(r.sugerido_devolver ?? Math.min(entregados, saldoPrevio + entregados)));
+              const maxExigible = Math.max(0, saldoPrevio + entregados);
+              const sugerido = Math.min(maxExigible, Math.max(0, Number(r.sugerido_devolver ?? Math.min(entregados, maxExigible))));
               return `
                 <div style="background:rgba(15,23,42,0.62); border:1px solid rgba(148,163,184,0.22); border-radius:12px; padding:0.7rem;">
                   <div style="display:flex; justify-content:space-between; gap:10px; align-items:flex-start; flex-wrap:wrap;">
                     <div style="min-width:170px; flex:1;">
                       <div><strong>${esc(r.producto || ('Producto #' + pid))}</strong></div>
-                      <div class="muted" style="font-size:0.82rem; margin-top:2px;">Entrega: <b>${entregados}</b> lleno(s) · Deuda previa: <b>${saldoPrevio}</b></div>
+                      <div class="muted" style="font-size:0.82rem; margin-top:2px;">Llenos entregados: <b>${entregados}</b> · Deuda previa: <b>${saldoPrevio}</b> · Máximo a recibir: <b>${maxExigible}</b></div>
                     </div>
                     <label style="margin:0; min-width:145px; flex:0 0 145px;">
                       <span style="font-size:0.72rem; color:#67e8f9; text-transform:uppercase; font-weight:700;">Vacíos recibidos</span>
-                      <input type="number" min="0" step="1" value="${sugerido}" data-retornable-devuelto="1" data-producto-id="${pid}" data-entregados="${entregados}" style="margin-top:4px; font-size:1.25rem; font-weight:800; text-align:center;">
+                      <input type="number" min="0" max="${maxExigible}" step="1" value="${sugerido}" data-retornable-devuelto="1" data-producto-id="${pid}" data-entregados="${entregados}" data-max-exigible="${maxExigible}" style="margin-top:4px; font-size:1.25rem; font-weight:800; text-align:center;">
                     </label>
                   </div>
                   <div style="display:flex; gap:0.5rem; margin-top:0.55rem; flex-wrap:wrap;">
@@ -142,10 +124,28 @@ async function abrirActivosPaso(pedidoId) {
       `;
     }
 
-    // 2) Activos a entregar: solo queda abierto cuando realmente requiere acción del repartidor
-    if (itemsActivos.length) {
+    // 2) Activos a entregar: el scanner conserva sus movimientos y evita pedirlos de nuevo.
+    const usaScanner = activosModalState.movimientosIniciales.length > 0;
+    if (usaScanner) {
+      html += `
+        <div style="margin-top:0.75rem; border:1px solid rgba(16,185,129,0.35); border-radius:12px; padding:0.75rem; background:rgba(16,185,129,0.10);">
+          <strong>📷 Movimientos escaneados</strong>
+          <div class="muted" style="font-size:0.82rem; margin-top:3px;">${activosModalState.movimientosIniciales.length} movimiento(s) conservados. Revisá el checklist y confirmá el cierre.</div>
+        </div>
+      `;
+    } else if (itemsActivos.length) {
       html += `<div style="margin-top:0.75rem;">`;
       html += `<div style="font-weight:700; margin-bottom:0.45rem;">📦 Activos/equipos a entregar</div>`;
+      html += `
+        <button
+          type="button"
+          class="iconbtn primary"
+          data-abrir-scanner="1"
+          aria-label="Escanear activos o equipos requeridos por el pedido"
+          style="width:100%; margin-bottom:0.65rem;">
+          📷 Escanear activos/equipos
+        </button>
+      `;
 
       if (!actosDisp.length) {
         html += `
@@ -215,7 +215,10 @@ async function abrirActivosPaso(pedidoId) {
         <div>
           <small class="muted">Activos actualmente vinculados al cliente</small>
           <div class="modal-list" style="margin-top:0.4rem;">
-            ${actosCliente.map(a => `
+            ${actosCliente.map(a => {
+              const productoId = Number(a.producto_id);
+              const itemPedidoId = itemActivoPorProducto.get(productoId);
+              return `
               <div style="padding:6px 0; border-bottom:1px dashed rgba(148,163,184,0.25);">
                 <div style="display:flex; justify-content:space-between; gap:8px; align-items:center; flex-wrap:wrap;">
                   <div>
@@ -228,7 +231,7 @@ async function abrirActivosPaso(pedidoId) {
                   </div>
 
                   <div style="min-width:170px; flex:1;">
-                    <select data-am-accion="${a.id}" style="width:100%; margin-bottom:4px;">
+                    <select data-am-accion="${a.id}" data-am-item-id="${itemPedidoId}" data-am-producto-id="${productoId}" style="width:100%; margin-bottom:4px;">
                       <option value="">(Sin cambios)</option>
                       <option value="retiro">Retirar</option>
                       <option value="mantenimiento">Retirar a mant.</option>
@@ -242,7 +245,7 @@ async function abrirActivosPaso(pedidoId) {
                   </div>
                 </div>
               </div>
-            `).join('')}
+            `; }).join('')}
           </div>
         </div>
       `);
@@ -304,6 +307,10 @@ async function abrirActivosPaso(pedidoId) {
 
     c.innerHTML = html;
 
+    $$('#activosModal button[data-abrir-scanner]').forEach(btn => {
+      btn.addEventListener('click', abrirScannerActivosDesdeModal);
+    });
+
     $$('#activosModal button[data-ret-btn]').forEach(btn => {
       btn.addEventListener('click', () => {
         const productoId = btn.getAttribute('data-producto-id');
@@ -346,13 +353,11 @@ async function abrirActivosPaso(pedidoId) {
 
   } catch (e) {
     console.error(e);
-    if (etapa === 'entrega') {
-      alert(e?.message || 'No se pudo entregar el pedido.');
-    } else {
-      alert('No se pudieron cargar los activos de este pedido.');
-    }
+    alert('No se pudieron cargar los datos de cierre de este pedido.');
     activosModalState.pedidoId = null;
     activosModalState.data = null;
+    activosModalState.movimientosIniciales = [];
+    if (propagarError) throw e;
   }
 }
 
@@ -445,7 +450,7 @@ async function buildEntregaMeta() {
 
 function cerrarActivosModal() {
   $('#activosModal').hidden = true;
-  activosModalState = { pedidoId: null, data: null };
+  activosModalState = { pedidoId: null, data: null, movimientosIniciales: [] };
 }
 
 async function confirmarEntregaConActivos() {
@@ -455,72 +460,110 @@ async function confirmarEntregaConActivos() {
     return;
   }
 
-  if (!confirm('¿Confirmás la entrega y los movimientos de activos seleccionados?')) {
+  const checklist = {
+    cliente_confirmado: document.getElementById('amChkCliente')?.checked === true,
+    producto_entregado: document.getElementById('amChkProducto')?.checked === true,
+    cobro_confirmado: document.getElementById('amChkCobro')?.checked === true,
+  };
+  const faltantesChecklist = [];
+  if (checklist.cliente_confirmado !== true) faltantesChecklist.push('cliente');
+  if (checklist.producto_entregado !== true) faltantesChecklist.push('producto');
+  if (checklist.cobro_confirmado !== true) faltantesChecklist.push('cobro');
+  if (faltantesChecklist.length) {
+    alert(`Falta confirmar: ${faltantesChecklist.join(', ')}.`);
     return;
   }
 
-  const movimientos = [];
+  if (!confirm('¿Confirmás el cierre final de la entrega y los movimientos seleccionados?')) {
+    return;
+  }
+
+  const movimientos = Array.isArray(activosModalState.movimientosIniciales)
+    ? activosModalState.movimientosIniciales.map(movimiento => ({ ...movimiento }))
+    : [];
   let faltaSeleccionNuevo = false;
-  let faltaEntregaNuevo = false;
-
-  // 0) NUEVO: ENTREGAS (activos disponibles seleccionados para entregar)
-  // 1 select por unidad: data-am-entrega="1" + data-am-item-id + data-am-producto-id
-  $$('#activosModal select[data-am-entrega="1"]').forEach(sel => {
-    const activoId = Number(sel.value || 0);
-    const itemPedidoId = Number(sel.getAttribute('data-am-item-id') || 0) || null;
-    const productoId = Number(sel.getAttribute('data-am-producto-id') || 0) || null;
-
-    // Si existe el select, se espera que el repartidor elija un activo
-    if (!activoId) {
-      faltaEntregaNuevo = true;
-      return;
+  const claveAsignacion = (itemPedidoId, productoId) => `${Number(itemPedidoId)}:${Number(productoId)}`;
+  const requeridosPorClave = new Map();
+  for (const item of (activosModalState.data?.items_activos || [])) {
+    const itemPedidoId = Number(item.item_pedido_id);
+    const productoId = Number(item.producto_id);
+    const cantidad = Number(item.cantidad);
+    requeridosPorClave.set(claveAsignacion(itemPedidoId, productoId), cantidad);
+  }
+  const asignacionesPorClave = new Map();
+  for (const movimiento of movimientos) {
+    if (movimiento.tipoOperacion === 'entrega' || movimiento.tipoOperacion === 'cambio') {
+      const clave = claveAsignacion(movimiento.itemPedidoId, movimiento.productoId);
+      asignacionesPorClave.set(clave, (asignacionesPorClave.get(clave) || 0) + 1);
     }
-
-    movimientos.push({
-      tipoOperacion: 'entrega',
-      activoId,
-      itemPedidoId,
-      productoId
-    });
-  });
-
-  if (faltaEntregaNuevo) {
-    alert('Faltan activos a entregar: seleccioná un equipo en cada "Elegir activo..."');
-    return;
   }
 
-  // 1) Movimientos sobre activos del cliente (retiro / mantenimiento / cambio)
+  // 0) Recolectar primero cambios: cada cambio consume una unidad requerida.
   $$('#activosModal select[data-am-accion]').forEach(sel => {
     const tipo = sel.value;
     const activoViejoId = Number(sel.getAttribute('data-am-accion'));
+    const itemPedidoId = Number(sel.getAttribute('data-am-item-id'));
+    const productoId = Number(sel.getAttribute('data-am-producto-id'));
     if (!tipo || !activoViejoId) return;
 
     if (tipo === 'retiro' || tipo === 'mantenimiento') {
-      movimientos.push({
-        tipoOperacion: tipo,
-        activoId: activoViejoId
-        // motivo: opcional (si después agregás UI: 'reparacion' | 'devolucion')
-      });
-    } else if (tipo === 'cambio') {
+      movimientos.push({ tipoOperacion: tipo, activoId: activoViejoId, itemPedidoId, productoId });
+      return;
+    }
+    if (tipo === 'cambio') {
       const nuevoSel = $(`#activosModal select[data-am-nuevo="${activoViejoId}"]`);
       const nuevoId = nuevoSel ? Number(nuevoSel.value) : 0;
-
       if (!nuevoId) {
         faltaSeleccionNuevo = true;
         return;
       }
-
       movimientos.push({
         tipoOperacion: 'cambio',
-        activoId: nuevoId,                 // entra
-        activoRelacionadoId: activoViejoId // sale
-        // motivo: opcional
+        activoId: nuevoId,
+        activoRelacionadoId: activoViejoId,
+        itemPedidoId,
+        productoId
       });
+      const clave = claveAsignacion(itemPedidoId, productoId);
+      asignacionesPorClave.set(clave, (asignacionesPorClave.get(clave) || 0) + 1);
     }
   });
 
   if (faltaSeleccionNuevo) {
     alert('Seleccionaste "Cambiar por..." pero no elegiste el activo nuevo en al menos un caso.');
+    return;
+  }
+  for (const [clave, asignadas] of asignacionesPorClave) {
+    if (asignadas > (requeridosPorClave.get(clave) || 0)) {
+      alert('Sobran cambios o asignaciones de activos para los productos del pedido.');
+      return;
+    }
+  }
+
+  // 1) Exigir entregas sólo para las unidades que no fueron cubiertas por cambios.
+  let faltaAsignacion = false;
+  $$('#activosModal select[data-am-entrega="1"]').forEach(sel => {
+    const itemPedidoId = Number(sel.getAttribute('data-am-item-id') || 0) || null;
+    const productoId = Number(sel.getAttribute('data-am-producto-id') || 0) || null;
+    const clave = claveAsignacion(itemPedidoId, productoId);
+    const requeridas = requeridosPorClave.get(clave) || 0;
+    const asignadas = asignacionesPorClave.get(clave) || 0;
+    if (asignadas >= requeridas) return;
+
+    const activoId = Number(sel.value || 0);
+    if (!activoId) {
+      faltaAsignacion = true;
+      return;
+    }
+    movimientos.push({ tipoOperacion: 'entrega', activoId, itemPedidoId, productoId });
+    asignacionesPorClave.set(clave, asignadas + 1);
+  });
+
+  for (const [clave, requeridas] of requeridosPorClave) {
+    if ((asignacionesPorClave.get(clave) || 0) !== requeridas) faltaAsignacion = true;
+  }
+  if (faltaAsignacion) {
+    alert('Faltan asignaciones de activos: completá las entregas restantes o revisá los cambios.');
     return;
   }
 
@@ -546,13 +589,27 @@ async function confirmarEntregaConActivos() {
     const meta = await buildEntregaMeta();
 
     const retornables = [];
+    let errorRetornable = '';
     $$('[data-retornable-devuelto="1"]').forEach(inp => {
+      if (errorRetornable) return;
       const productoId = Number(inp.getAttribute('data-producto-id') || 0);
-      const devueltos = Number(inp.value || 0);
-      if (productoId && Number.isFinite(devueltos) && devueltos >= 0) {
-        retornables.push({ producto_id: productoId, devueltos });
+      const raw = String(inp.value ?? '').trim();
+      const devueltos = Number(raw);
+      const maxExigible = Number(inp.getAttribute('data-max-exigible'));
+      if (!raw || !Number.isSafeInteger(devueltos) || devueltos < 0) {
+        errorRetornable = 'La cantidad de vacíos debe ser un entero mayor o igual a 0.';
+        return;
       }
+      if (!Number.isSafeInteger(maxExigible) || devueltos > maxExigible) {
+        errorRetornable = `La cantidad de vacíos supera el máximo exigible (${maxExigible}).`;
+        return;
+      }
+      retornables.push({ producto_id: productoId, devueltos });
     });
+    if (errorRetornable) {
+      alert(errorRetornable);
+      return;
+    }
 
     // ✅ ÚNICA llamada transaccional: entrega + movimientos + stock chofer + retornables (backend)
     const body = { movimientos, retornables, checklist: meta.checklist, evidencia: meta.evidencia };
@@ -566,12 +623,95 @@ async function confirmarEntregaConActivos() {
     });
 
     toast('✅ Entrega registrada');
+    pedidoEnProcesoId = null;
     cerrarActivosModal();
     await loadPedidos();
   } catch (e) {
     console.error(e);
-    alert('Error guardando la entrega y los movimientos de activos.');
+    alert(e?.message || 'Error guardando la entrega y los movimientos de activos.');
   }
+}
+
+function limpiarEstadoScannerActivos() {
+  document.querySelectorAll('.input-asignar, .input-retirar').forEach(input => {
+    input.value = '';
+    input.style.border = '';
+  });
+  const lista = document.getElementById('listaActivosEscanear');
+  if (lista) lista.innerHTML = '';
+  pedidoEnProcesoId = null;
+}
+
+async function abrirScannerActivosDesdeModal() {
+  const pedidoId = Number(activosModalState.pedidoId);
+  const movimientosIniciales = Array.isArray(activosModalState.movimientosIniciales)
+    ? activosModalState.movimientosIniciales
+    : [];
+  const itemsActivos = Array.isArray(activosModalState.data?.items_activos)
+    ? activosModalState.data.items_activos
+    : [];
+
+  if (!Number.isSafeInteger(pedidoId) || pedidoId <= 0 || movimientosIniciales.length > 0) {
+    toast('⚠️ No se puede abrir el scanner para este cierre.');
+    return;
+  }
+  if (!itemsActivos.length) {
+    toast('⚠️ Este pedido no tiene activos requeridos para escanear.');
+    return;
+  }
+
+  const unidades = [];
+  for (const item of itemsActivos) {
+    const itemPedidoId = Number(item?.item_pedido_id);
+    const productoId = Number(item?.producto_id);
+    const cantidad = Number(item?.cantidad);
+    if (!Number.isSafeInteger(itemPedidoId) || itemPedidoId <= 0
+        || !Number.isSafeInteger(productoId) || productoId <= 0
+        || !Number.isSafeInteger(cantidad) || cantidad <= 0) {
+      toast('⚠️ Los activos requeridos no tienen IDs o cantidades válidos.');
+      return;
+    }
+    for (let unidad = 1; unidad <= cantidad; unidad += 1) {
+      unidades.push({
+        itemPedidoId,
+        productoId,
+        producto: String(item?.producto || `Producto #${productoId}`),
+        unidad,
+        cantidad,
+      });
+    }
+  }
+
+  if (!unidades.length) {
+    toast('⚠️ Este pedido no tiene activos requeridos para escanear.');
+    return;
+  }
+
+  const lista = document.getElementById('listaActivosEscanear');
+  const scannerModal = document.getElementById('modalEscanearActivos');
+  const universalModal = document.getElementById('activosModal');
+  if (!lista || !scannerModal || !universalModal) {
+    toast('⚠️ No se pudo abrir el scanner de activos.');
+    return;
+  }
+
+  lista.innerHTML = unidades.map(({ itemPedidoId, productoId, producto, unidad, cantidad }) => `
+    <div class="scan-item" style="padding:0.75rem; border:1px solid var(--border); border-radius:10px; margin-bottom:0.65rem;">
+      <div style="font-weight:700; margin-bottom:0.5rem;">${esc(producto)} <span class="muted">(${unidad}/${cantidad})</span></div>
+      <label style="display:block; margin-bottom:0.5rem;">
+        Equipo a entregar
+        <input class="input-asignar" data-item-id="${itemPedidoId}" data-prod-id="${productoId}" inputmode="numeric" autocomplete="off" aria-label="ID del equipo a entregar para ${esc(producto)}, unidad ${unidad} de ${cantidad}" placeholder="Escanear ID a entregar">
+      </label>
+      <label style="display:block;">
+        Equipo a retirar (opcional)
+        <input class="input-retirar" data-item-id="${itemPedidoId}" data-prod-id="${productoId}" inputmode="numeric" autocomplete="off" aria-label="ID del equipo a retirar para ${esc(producto)}, unidad ${unidad} de ${cantidad}" placeholder="Escanear ID a retirar">
+      </label>
+    </div>
+  `).join('');
+
+  pedidoEnProcesoId = pedidoId;
+  universalModal.hidden = true;
+  scannerModal.style.display = 'flex';
 }
 
 async function confirmarEntregaScanner() {
@@ -581,35 +721,68 @@ async function confirmarEntregaScanner() {
   
   const movimientos = [];
   let error = false;
+  let errorMensaje = '';
+  const idsUsados = new Set();
+
+  if (!inputsAsignar.length || inputsAsignar.length !== inputsRetirar.length) {
+    toast('⚠️ No hay filas válidas para confirmar el scanner.');
+    return;
+  }
 
   // 2. Recorremos cada fila (cada ítem del pedido)
   inputsAsignar.forEach((inp, idx) => {
     const valorAsignar = inp.value.trim();                // ID Nuevo (Entrega)
-    const valorRetirar = inputsRetirar[idx].value.trim(); // ID Viejo (Retiro)
-    const prodId = parseInt(inp.dataset.prodId, 10);
+    const retirarInput = inputsRetirar[idx];
+    const valorRetirar = retirarInput.value.trim(); // ID Viejo (Retiro)
+    const itemPedidoId = Number(inp.dataset.itemId);
+    const prodId = Number(inp.dataset.prodId);
+    const asignarId = valorAsignar ? Number(valorAsignar) : null;
+    const retirarId = valorRetirar ? Number(valorRetirar) : null;
+    const itemPedidoIdValido = /^\d+$/.test(String(inp.dataset.itemId || '')) && Number.isSafeInteger(itemPedidoId) && itemPedidoId > 0;
+    const prodIdValido = /^\d+$/.test(String(inp.dataset.prodId || '')) && Number.isSafeInteger(prodId) && prodId > 0;
+    const asignarIdValido = /^\d+$/.test(valorAsignar) && Number.isSafeInteger(asignarId) && asignarId > 0;
+    const retirarIdValido = !valorRetirar || (/^\d+$/.test(valorRetirar) && Number.isSafeInteger(retirarId) && retirarId > 0);
+    const idsFila = [asignarId, retirarId].filter(id => id != null);
+    const tieneDuplicado = idsFila.some(id => idsUsados.has(id)) || (idsFila.length === 2 && idsFila[0] === idsFila[1]);
 
     // Validación visual: marcar rojo si ambos están vacíos
-    if (!valorAsignar && !valorRetirar) {
+    if (
+      !valorAsignar
+      || !itemPedidoIdValido
+      || !prodIdValido
+      || !asignarIdValido
+      || !retirarIdValido
+      || tieneDuplicado
+    ) {
       inp.style.border = '1px solid red';
+      retirarInput.style.border = '1px solid red';
       error = true;
+      if (!valorAsignar || !asignarIdValido) {
+        errorMensaje = '⚠️ El equipo a entregar es obligatorio y debe tener un ID válido en cada fila.';
+      } else if (tieneDuplicado) {
+        errorMensaje = '⚠️ Hay un ID de activo repetido entre filas u operaciones.';
+      } else {
+        errorMensaje = '⚠️ La fila contiene IDs de pedido, producto o activo inválidos.';
+      }
     } else {
       inp.style.border = '1px solid var(--border)';
+      retirarInput.style.border = '1px solid var(--border)';
       
-      // A. ENTREGA: Si hay un valor en el input de asignar, es una entrega
-      if (valorAsignar) {
-        movimientos.push({
-          tipoOperacion: 'entrega',
-          activoId: parseInt(valorAsignar, 10),
-          productoId: prodId,
-          origen: 'scanner_app'
-        });
-      }
+      idsFila.forEach(id => idsUsados.add(id));
+      movimientos.push({
+        tipoOperacion: 'entrega',
+        activoId: asignarId,
+        itemPedidoId,
+        productoId: prodId,
+        origen: 'scanner_app'
+      });
 
       // B. RETIRO: Si hay un valor en el input de retirar, es un retiro
       if (valorRetirar) {
         movimientos.push({
           tipoOperacion: 'retiro',
-          activoId: parseInt(valorRetirar, 10),
+          activoId: retirarId,
+          itemPedidoId,
           productoId: prodId,
           observacion: 'Retiro registrado por escáner'
         });
@@ -619,7 +792,7 @@ async function confirmarEntregaScanner() {
 
   // 3. Validaciones finales
   if (error) {
-    toast('⚠️ Escaneá al menos un equipo (entrega o retiro) por ítem.');
+    toast(errorMensaje || '⚠️ El equipo a entregar es obligatorio en cada fila.');
     return;
   }
 
@@ -628,54 +801,25 @@ async function confirmarEntregaScanner() {
     return;
   }
 
-  // 4. Enviar al servidor
+  // 4. Volver al mismo cierre universal sin reconstruir su DOM ni repetir consultas.
   const modal = document.getElementById('modalEscanearActivos');
-  modal.style.display = 'none';
-  
-  try {
-    // Usamos la variable global pedidoEnProcesoId que seteaste en iniciarProcesoEntrega
-    if (!pedidoEnProcesoId) throw new Error('ID de pedido perdido');
-
-    // Igual que en confirmarEntregaConActivos: resolvemos zona (si aplica)
-    const zonaId = await resolverZonaParaPedido(pedidoEnProcesoId);
-
-    const geo = await getGeoEntregaIfEnabled();
-    const body = {
-      movimientos,
-      checklist: {
-        cliente_confirmado: true,
-        producto_entregado: true,
-        cobro_confirmado: false,
-      },
-      evidencia: { geo, ts: new Date().toISOString() },
-    };
-    if (zonaId != null) body.zona_id = zonaId;
-
-    // Llamada transaccional: entrega + movimientos + stock chofer
-    await withLock(`entregar:${pedidoEnProcesoId}`, async () => {
-      await api(`/api/repartidor/pedidos/${pedidoEnProcesoId}/entregar`, {
-        method: 'POST',
-        body
-      });
-    });
-
-    toast('✅ Entrega registrada (Escáner)');
-    pedidoEnProcesoId = null;
-    await loadPedidos(); // Recargar la lista
-
-  } catch (e) {
-    console.error(e);
-    toast('❌ Error: ' + (e.message || 'Error al procesar entrega'));
-    // Si falla, volvemos a mostrar el modal
-    modal.style.display = 'flex';
+  const universalModal = document.getElementById('activosModal');
+  if (!pedidoEnProcesoId || !universalModal) {
+    toast('❌ Error: se perdió el cierre activo');
+    return;
   }
+  activosModalState.movimientosIniciales = movimientos.map(movimiento => ({ ...movimiento }));
+  if (modal) modal.style.display = 'none';
+  universalModal.hidden = false;
+  limpiarEstadoScannerActivos();
 }
 
 function cerrarModalEscaneo() {
   const modal = document.getElementById('modalEscanearActivos');
   if (modal) modal.style.display = 'none';
-  // Si querés, limpiar los inputs:
-  document.querySelectorAll('.input-asignar, .input-retirar').forEach(i => i.value = '');
+  limpiarEstadoScannerActivos();
+  const universalModal = document.getElementById('activosModal');
+  if (universalModal && activosModalState.pedidoId) universalModal.hidden = false;
 }
 
 async function abrirModalPagoQR(pedidoId) {

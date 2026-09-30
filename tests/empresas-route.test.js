@@ -1632,6 +1632,105 @@ test('access_token_configured entrante no sustituye un token Cloud', async () =>
   assert.equal(inserts, 0);
 });
 
+test('restore usa transacción canónica y preserva COMMIT ambiguo como 503 sin filtrar detalle', async () => {
+  const txCalls = [];
+  let transactionCalls = 0;
+  const app = buildApp({
+    user: { uid: 1, role: 'super', empresa_id: null, username: 'root' },
+    query: async () => assert.fail('restore completo debe usar txQuery'),
+    pool: { connect: async () => assert.fail('la ruta no debe abrir una transacción manual') },
+    withTransaction: async work => {
+      transactionCalls += 1;
+      const txQuery = async (sql, params = []) => {
+        txCalls.push({ sql: String(sql), params });
+        if (/SELECT id, nombre FROM empresas/i.test(sql)) return [{ id: 7, nombre: 'Siete' }];
+        if (/SELECT c\.table_name/i.test(sql)) return [{ table_name: 'clientes' }];
+        if (/SELECT column_name/i.test(sql)) return [{ column_name: 'id' }, { column_name: 'empresa_id' }, { column_name: 'nombre' }];
+        if (/SELECT 1 FROM "clientes"/i.test(sql)) return [];
+        if (/INSERT INTO "clientes"/i.test(sql)) return [{ id: 10 }];
+        throw new Error(`SQL inesperado: ${sql}`);
+      };
+      await work(txQuery);
+      throw Object.assign(new Error('COMMIT failed password=restore-secret'), { code: 'TRANSACTION_OUTCOME_UNKNOWN' });
+    },
+  });
+
+  const logged = [];
+  const originalConsoleError = console.error;
+  console.error = (...args) => logged.push(args);
+  try {
+    await withServer(app, async baseUrl => {
+      const response = await fetch(`${baseUrl}/api/empresas/7/backup/restore`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: { clientes: [{ id: 10, empresa_id: 7, nombre: 'Cliente' }] } }),
+      });
+      assert.equal(response.status, 503);
+      assert.deepEqual(await response.json(), {
+        error: 'Resultado de restauración indeterminado',
+        code: 'TRANSACTION_OUTCOME_UNKNOWN',
+      });
+    });
+  } finally {
+    console.error = originalConsoleError;
+  }
+
+  assert.equal(transactionCalls, 1);
+  assert.equal(txCalls.some(call => /INSERT INTO "clientes"/.test(call.sql)), true);
+  assert.equal(JSON.stringify(logged).includes('restore-secret'), false);
+});
+
+test('restore revierte work-phase una vez y responde 500 sin detalle de DB', async () => {
+  const events = [];
+  const releases = [];
+  const pool = {
+    async connect() {
+      return {
+        async query(sql) {
+          events.push(String(sql));
+          if (sql === 'BEGIN' || sql === 'ROLLBACK') return { rows: [] };
+          if (/SELECT id, nombre FROM empresas/i.test(sql)) return { rows: [{ id: 7, nombre: 'Siete' }] };
+          if (/SELECT c\.table_name/i.test(sql)) throw new Error('db secret=restore-work-token');
+          throw new Error(`SQL inesperado: ${sql}`);
+        },
+        release(error) { releases.push(error); },
+      };
+    },
+  };
+  const app = buildApp({
+    user: { uid: 1, role: 'super', empresa_id: null },
+    query: async () => assert.fail('restore completo debe usar txQuery'),
+    pool,
+    withTransaction: async (work, options) => {
+      const { withTransaction: canonical } = await import('../src/db.js');
+      return canonical(work, options);
+    },
+  });
+
+  const logged = [];
+  const originalConsoleError = console.error;
+  console.error = (...args) => logged.push(args);
+  try {
+    await withServer(app, async baseUrl => {
+      const response = await fetch(`${baseUrl}/api/empresas/7/backup/restore`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: { clientes: [{ id: 10, empresa_id: 7 }] } }),
+      });
+      assert.equal(response.status, 500);
+      assert.deepEqual(await response.json(), { error: 'Error restaurando backup' });
+    });
+  } finally {
+    console.error = originalConsoleError;
+  }
+
+  assert.equal(events.filter(sql => sql === 'BEGIN').length, 1);
+  assert.equal(events.filter(sql => sql === 'ROLLBACK').length, 1);
+  assert.equal(events.includes('COMMIT'), false);
+  assert.deepEqual(releases, [undefined]);
+  assert.equal(JSON.stringify(logged).includes('restore-work-token'), false);
+});
+
 test('dos updates no-WhatsApp se serializan, preservan WhatsApp y no reconcilian', async () => {
   let persisted = { whatsapp: { provider: 'cloud', enabled: true, phone_number_id: 'phone-7', access_token_encrypted: 'v1:test' } };
   const transactionQuery = async (sql, params = []) => {

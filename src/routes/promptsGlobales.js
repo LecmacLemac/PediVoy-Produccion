@@ -3,6 +3,7 @@ import express from 'express';
 import { withAuth, isSuper } from '../services.js';
 import { query } from '../db.js';
 
+import { requireCanonicalBackofficeRole } from './canonicalBackofficeRole.js';
 export function createPromptsGlobalesRouter() {
   const router = express.Router();
 
@@ -24,7 +25,7 @@ export function createPromptsGlobalesRouter() {
   });
 
   // 2) Guardar/Actualizar prompt global
-  router.post('/global', withAuth, async (req, res) => {
+  router.post('/global', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     if (!isSuper(req)) return res.status(403).json({ error: 'Acceso denegado' });
 
     const { tipo, contenido } = req.body || {};
@@ -51,7 +52,7 @@ export function createPromptsGlobalesRouter() {
   });
 
   // 3) Eliminar prompt global
-  router.delete('/global/:tipo', withAuth, async (req, res) => {
+  router.delete('/global/:tipo', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     if (!isSuper(req)) return res.status(403).json({ error: 'Acceso denegado' });
     try {
       await query(

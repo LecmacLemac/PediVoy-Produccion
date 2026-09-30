@@ -1,3 +1,5 @@
+import { requireSharedSecret } from '../routes/secretGuard.js';
+
 export function registerWppCronAndRoutes(app, deps) {
   const {
     query,
@@ -150,9 +152,11 @@ export function registerWppCronAndRoutes(app, deps) {
   }, 30 * 60 * 1000);
 
   const requireCronSecret = (req, res) => {
-    const cronSecret = String(process.env.CRON_SECRET || '').trim();
-    if (!cronSecret) return res.status(503).json({ error: 'cron_secret_not_configured' });
-    if (String(req.headers['x-cron-secret'] || '') !== cronSecret) return res.status(403).json({ error: 'forbidden' });
+    if (!requireSharedSecret({
+      expected: process.env.CRON_SECRET,
+      provided: req.headers['x-cron-secret'],
+      res,
+    })) return true;
     return null;
   };
 

@@ -1,10 +1,17 @@
 // src/adm/costosController.js
-import { pool, query } from '../db.js';
+import { query, withTransaction as dbWithTransaction } from '../db.js';
 import { resolveEmpresaId } from '../services.js';
 
 // Configuración de tipos / niveles para variables de costo
 const TIPOS_VARIABLES = ['unitario', '%_sobre_precio', '%_sobre_costo'];
 const NIVELES_VARIABLES = ['empresa', 'categoria', 'etiqueta', 'producto'];
+
+function transactionRunner(req) { return req.app?.locals?.withTransaction || dbWithTransaction; }
+function transactionError(res, error) {
+  if (error?.code === 'TRANSACTION_OUTCOME_UNKNOWN') return res.status(503).json({ error: 'No se pudo confirmar el resultado de la transacción.', code: error.code });
+  console.error('COSTOS.ACTUALIZAR.ERROR', { code: error?.code || 'UNKNOWN' });
+  return res.status(error?.statusCode === 404 ? 404 : 500).json({ error: error?.statusCode === 404 ? 'Producto no encontrado' : 'Error actualizando costos. Se revirtieron los cambios.' });
+}
 
 function normalizarTipoVariable(tipoRaw) {
   const t = String(tipoRaw || '').toLowerCase();
@@ -209,7 +216,7 @@ export async function simularPrecio(req, res) {
       },
     });
   } catch (e) {
-    console.error(e);
+    console.error('REQUEST.ERROR', { code: e?.code || 'UNKNOWN' });
     res.status(500).json({ error: 'Error simulando' });
   }
 }
@@ -220,196 +227,53 @@ export async function simularPrecio(req, res) {
 // 2. ACTUALIZAR COSTO (Guardar y Auditar)
 // ==================================================================
 export async function actualizarCosto(req, res) {
-  let client;
-  let transactionStarted = false;
   try {
     const empresa_id = resolveEmpresaId(req);
-    const {
-      producto_id,
-      costo_base,
-      costo_packaging,
-      precio_venta,
-      stock_actual,
-      cotizacion_usd,
-      motivo,
-      variables_extra 
-    } = req.body;
-
+    const { producto_id, costo_base, costo_packaging, precio_venta, stock_actual, cotizacion_usd, motivo, variables_extra } = req.body;
     const productoId = Number(producto_id);
     const costoBase = Number(costo_base);
     const costoPackaging = Number(costo_packaging);
-    if (!Number.isFinite(productoId) || productoId <= 0) {
-      return res.status(400).json({ error: 'producto_id inválido' });
-    }
-    if (!Number.isFinite(costoBase) || costoBase < 0 || !Number.isFinite(costoPackaging) || costoPackaging < 0) {
-      return res.status(400).json({ error: 'costos inválidos' });
-    }
+    if (!Number.isFinite(productoId) || productoId <= 0) return res.status(400).json({ error: 'producto_id inválido' });
+    if (!Number.isFinite(costoBase) || costoBase < 0 || !Number.isFinite(costoPackaging) || costoPackaging < 0) return res.status(400).json({ error: 'costos inválidos' });
     const debeActualizarPrecio = precio_venta !== undefined && precio_venta !== null && precio_venta !== '';
     const precioSolicitado = debeActualizarPrecio ? Number(precio_venta) : null;
-    if (debeActualizarPrecio && (!Number.isFinite(precioSolicitado) || precioSolicitado < 0)) {
-      return res.status(400).json({ error: 'precio_venta inválido' });
-    }
-
+    if (debeActualizarPrecio && (!Number.isFinite(precioSolicitado) || precioSolicitado < 0)) return res.status(400).json({ error: 'precio_venta inválido' });
     const usuario = req.user?.username || 'desconocido';
-
-    client = await pool.connect();
-    const txQuery = async (sql, params = []) => (await client.query(sql, params)).rows;
-    await client.query('BEGIN');
-    transactionStarted = true;
-
-    const productoRows = await txQuery(
-      `SELECT precio FROM productos WHERE id = $1 AND empresa_id = $2 FOR UPDATE`,
-      [productoId, empresa_id]
-    );
-    if (!productoRows.length) {
-      const err = new Error('Producto no encontrado');
-      err.statusCode = 404;
-      throw err;
-    }
-    const precioVenta = debeActualizarPrecio ? precioSolicitado : Number(productoRows[0].precio || 0);
-
-    // 1) Upsert costos del producto (base + packaging) por empresa/producto
-    await txQuery(
-      `
-      INSERT INTO empresa_productos_costos (empresa_id, producto_id, costo_base, costo_packaging)
-      VALUES ($1, $2, $3, $4)
-      ON CONFLICT (empresa_id, producto_id)
-      DO UPDATE SET
-        costo_base = EXCLUDED.costo_base,
-        costo_packaging = EXCLUDED.costo_packaging
-      `,
-      [empresa_id, productoId, costoBase, costoPackaging]
-    );
-
-    // 2) Actualizar precio solo si la llamada lo indicó; el contrato legacy lo omitía al resetear.
-    if (debeActualizarPrecio) {
-      await txQuery(
-        `UPDATE productos SET precio = $1 WHERE id = $2 AND empresa_id = $3`,
-        [precioVenta, productoId, empresa_id]
-      );
-    }
-
-    // 3) Upsert o eliminación de overrides a nivel producto.
-    const varsExtra = Array.isArray(variables_extra) ? variables_extra : [];
-    for (const item of varsExtra) {
-      const variableId = Number(item.variable_id || item.id);
-      if (!Number.isFinite(variableId) || variableId <= 0) continue;
-
-      if (item.eliminar_override === true) {
-        await txQuery(
-          `
-          DELETE FROM empresa_costos_variables_aplicacion
-          WHERE empresa_id = $1 AND variable_id = $2 AND nivel = 'producto' AND producto_id = $3
-          `,
-          [empresa_id, variableId, productoId]
-        );
-        continue;
+    await transactionRunner(req)(async txQuery => {
+      const productoRows = await txQuery('SELECT precio FROM productos WHERE id = $1 AND empresa_id = $2 FOR UPDATE', [productoId, empresa_id]);
+      if (productoRows.length !== 1) { const error = new Error('PRODUCT_NOT_FOUND'); error.statusCode = 404; throw error; }
+      const precioVenta = debeActualizarPrecio ? precioSolicitado : Number(productoRows[0].precio || 0);
+      await txQuery(`INSERT INTO empresa_productos_costos (empresa_id, producto_id, costo_base, costo_packaging)
+        VALUES ($1, $2, $3, $4) ON CONFLICT (empresa_id, producto_id) DO UPDATE SET
+        costo_base = EXCLUDED.costo_base, costo_packaging = EXCLUDED.costo_packaging`, [empresa_id, productoId, costoBase, costoPackaging]);
+      if (debeActualizarPrecio) {
+        const updated = await txQuery('UPDATE productos SET precio = $1 WHERE id = $2 AND empresa_id = $3 RETURNING id', [precioVenta, productoId, empresa_id]);
+        if (updated.length !== 1) throw new Error('PRODUCT_EXACT_ROW_FAILED');
       }
-
-      const valor = Number(item.valor);
-      if (!Number.isFinite(valor) || valor < 0) continue;
-
-      // Buscamos si ya existe una fila para este (empresa, variable, nivel, producto)
-      const existing = await txQuery(
-        `
-        SELECT id
-        FROM empresa_costos_variables_aplicacion
-        WHERE empresa_id = $1
-          AND variable_id = $2
-          AND nivel = 'producto'
-          AND producto_id = $3
-        LIMIT 1
-        `,
-        [empresa_id, variableId, productoId]
-      );
-
-      if (existing.length) {
-        await txQuery(
-          `
-          UPDATE empresa_costos_variables_aplicacion
-             SET valor = $1,
-                 activo = TRUE
-           WHERE id = $2
-          `,
-          [valor, existing[0].id]
-        );
-      } else {
-        await txQuery(
-          `
-          INSERT INTO empresa_costos_variables_aplicacion
-            (empresa_id, variable_id, nivel, producto_id, valor, activo)
-          VALUES ($1,$2,'producto',$3,$4,TRUE)
-          `,
-          [empresa_id, variableId, productoId, valor]
-        );
+      for (const item of Array.isArray(variables_extra) ? variables_extra : []) {
+        const variableId = Number(item.variable_id || item.id);
+        if (!Number.isFinite(variableId) || variableId <= 0) continue;
+        if (item.eliminar_override === true) {
+          await txQuery(`DELETE FROM empresa_costos_variables_aplicacion WHERE empresa_id = $1 AND variable_id = $2 AND nivel = 'producto' AND producto_id = $3`, [empresa_id, variableId, productoId]);
+          continue;
+        }
+        const valor = Number(item.valor);
+        if (!Number.isFinite(valor) || valor < 0) continue;
+        const existing = await txQuery(`SELECT id FROM empresa_costos_variables_aplicacion WHERE empresa_id = $1 AND variable_id = $2 AND nivel = 'producto' AND producto_id = $3 LIMIT 1 FOR UPDATE`, [empresa_id, variableId, productoId]);
+        if (existing.length) await txQuery('UPDATE empresa_costos_variables_aplicacion SET valor = $1, activo = TRUE WHERE id = $2', [valor, existing[0].id]);
+        else await txQuery(`INSERT INTO empresa_costos_variables_aplicacion (empresa_id, variable_id, nivel, producto_id, valor, activo) VALUES ($1,$2,'producto',$3,$4,TRUE)`, [empresa_id, variableId, productoId, valor]);
       }
-    }
-
-    // 4) Calcular costo fijo mensual total equivalente (mismo criterio que simulación)
-    const fijosRows = await txQuery(
-      `SELECT COALESCE(SUM(
-        CASE
-          WHEN lower(frecuencia) = 'anual' THEN monto / 12.0
-          WHEN lower(frecuencia) = 'mensual' THEN monto
-          WHEN lower(frecuencia) = 'semanal' THEN monto * 4.345
-          ELSE 0
-        END
-      ), 0) AS total
-      FROM empresa_costos_fijos
-      WHERE empresa_id = $1`,
-      [empresa_id]
-    );
-    const totalFijos = Number(fijosRows?.[0]?.total) || 0;
-
-    // 5) Ventas del último mes (para prorrateo unitario)
-    const ventasReales = await txQuery(
-      `
-      SELECT COALESCE(COUNT(*), 1) AS total
-      FROM pedidos
-      WHERE empresa_id = $1 AND created_at >= (NOW() - INTERVAL '30 days')
-      `,
-      [empresa_id]
-    );
-    const ventasMes = Number(ventasReales?.[0]?.total) || 1;
-    const costoFijoUnitarioReal = totalFijos / ventasMes;
-
-    // 6) Registrar historia/auditoría (CORREGIDO: usa historial_costos_precios)
-    await txQuery(
-      `
-      INSERT INTO historial_costos_precios
-        (empresa_id, producto_id, costo_base, costo_packaging, costo_fijo_asignado,
-         precio_venta, stock_al_momento, cotizacion_dolar, motivo_cambio, usuario_editor, fecha_registro)
-      VALUES
-        ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, NOW())
-      `,
-      [
-        empresa_id,
-        productoId,
-        costoBase,
-        costoPackaging,
-        Number(costoFijoUnitarioReal.toFixed(2)),
-        precioVenta,
-        stock_actual,     // Mapeado a stock_al_momento
-        cotizacion_usd,   // Mapeado a cotizacion_dolar
-        motivo,
-        usuario
-      ]
-    );
-
-    await client.query('COMMIT');
-    transactionStarted = false;
-    res.json({ ok: true, message: 'Costos actualizados y auditados correctamente.' });
-
-  } catch (e) {
-    if (client && transactionStarted) {
-      try { await client.query('ROLLBACK'); } catch {}
-    }
-    console.error('Error actualizarCosto:', e);
-    res.status(e.statusCode || 500).json({
-      error: e.statusCode === 404 ? 'Producto no encontrado' : 'Error actualizando costos. Se revirtieron los cambios.'
+      const fijosRows = await txQuery(`SELECT COALESCE(SUM(CASE WHEN lower(frecuencia) = 'anual' THEN monto / 12.0 WHEN lower(frecuencia) = 'mensual' THEN monto WHEN lower(frecuencia) = 'semanal' THEN monto * 4.345 ELSE 0 END), 0) AS total FROM empresa_costos_fijos WHERE empresa_id = $1`, [empresa_id]);
+      const ventasRows = await txQuery(`SELECT COALESCE(COUNT(*), 1) AS total FROM pedidos WHERE empresa_id = $1 AND created_at >= (NOW() - INTERVAL '30 days')`, [empresa_id]);
+      const costoFijoUnitario = (Number(fijosRows?.[0]?.total) || 0) / (Number(ventasRows?.[0]?.total) || 1);
+      await txQuery(`INSERT INTO historial_costos_precios
+        (empresa_id, producto_id, costo_base, costo_packaging, costo_fijo_asignado, precio_venta, stock_al_momento, cotizacion_dolar, motivo_cambio, usuario_editor, fecha_registro)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW())`,
+        [empresa_id, productoId, costoBase, costoPackaging, Number(costoFijoUnitario.toFixed(2)), precioVenta, stock_actual, cotizacion_usd, motivo, usuario]);
     });
-  } finally {
-    if (client) client.release();
+    return res.json({ ok: true, message: 'Costos actualizados y auditados correctamente.' });
+  } catch (error) {
+    return transactionError(res, error);
   }
 }
 
@@ -456,7 +320,7 @@ export async function obtenerEvolucion(req, res) {
     });
 
   } catch (e) {
-    console.error(e);
+    console.error('REQUEST.ERROR', { code: e?.code || 'UNKNOWN' });
     res.status(500).json({ error: 'Error obteniendo evolución' });
   }
 }
@@ -501,7 +365,7 @@ export async function listarCostosFijos(req, res) {
 
     res.json({ items, total_mensual, count: items.length });
   } catch (e) {
-    console.error('listarCostosFijos:', e);
+    console.error('listarCostosFijos:', { code: e?.code || 'UNKNOWN' });
     res.status(500).json({ error: 'Error listando costos fijos' });
   }
 }
@@ -528,7 +392,7 @@ export async function crearCostoFijo(req, res) {
 
     res.status(201).json(rows[0]);
   } catch (e) {
-    console.error('crearCostoFijo:', e);
+    console.error('crearCostoFijo:', { code: e?.code || 'UNKNOWN' });
     res.status(500).json({ error: 'Error creando costo fijo' });
   }
 }
@@ -551,7 +415,7 @@ export async function borrarCostoFijo(req, res) {
 
     res.json({ ok: true });
   } catch (e) {
-    console.error('borrarCostoFijo:', e);
+    console.error('borrarCostoFijo:', { code: e?.code || 'UNKNOWN' });
     res.status(500).json({ error: 'Error borrando costo fijo' });
   }
 }
@@ -614,7 +478,7 @@ export async function editarCostoFijo(req, res) {
 
     res.json(rows[0]);
   } catch (e) {
-    console.error('editarCostoFijo:', e);
+    console.error('editarCostoFijo:', { code: e?.code || 'UNKNOWN' });
     res.status(500).json({ error: 'Error editando costo fijo' });
   }
 }
@@ -639,7 +503,7 @@ export async function listarVariablesCostoDef(req, res) {
 
     res.json({ items: rows });
   } catch (e) {
-    console.error('listarVariablesCostoDef:', e);
+    console.error('listarVariablesCostoDef:', { code: e?.code || 'UNKNOWN' });
     res.status(500).json({ error: 'Error listando variables de costo' });
   }
 }
@@ -669,7 +533,7 @@ export async function crearVariableCostoDef(req, res) {
 
     res.status(201).json(rows[0]);
   } catch (e) {
-    console.error('crearVariableCostoDef:', e);
+    console.error('crearVariableCostoDef:', { code: e?.code || 'UNKNOWN' });
     res.status(500).json({ error: 'Error creando variable de costo' });
   }
 }
@@ -725,7 +589,7 @@ export async function editarVariableCostoDef(req, res) {
     if (!rows.length) return res.status(404).json({ error: 'No encontrado' });
     res.json(rows[0]);
   } catch (e) {
-    console.error('editarVariableCostoDef:', e);
+    console.error('editarVariableCostoDef:', { code: e?.code || 'UNKNOWN' });
     res.status(500).json({ error: 'Error editando variable de costo' });
   }
 }
@@ -750,7 +614,7 @@ export async function borrarVariableCostoDef(req, res) {
     if (!rows.length) return res.status(404).json({ error: 'No encontrado' });
     res.json({ ok: true });
   } catch (e) {
-    console.error('borrarVariableCostoDef:', e);
+    console.error('borrarVariableCostoDef:', { code: e?.code || 'UNKNOWN' });
     res.status(500).json({ error: 'Error eliminando variable de costo' });
   }
 }
@@ -809,7 +673,7 @@ export async function listarVariablesCostoAplicacion(req, res) {
 
     res.json({ items: rows });
   } catch (e) {
-    console.error('listarVariablesCostoAplicacion:', e);
+    console.error('listarVariablesCostoAplicacion:', { code: e?.code || 'UNKNOWN' });
     res.status(500).json({ error: 'Error listando variables aplicadas' });
   }
 }
@@ -904,7 +768,7 @@ export async function upsertVariableCostoAplicacion(req, res) {
 
     res.json(rows[0]);
   } catch (e) {
-    console.error('upsertVariableCostoAplicacion:', e);
+    console.error('upsertVariableCostoAplicacion:', { code: e?.code || 'UNKNOWN' });
     res.status(500).json({ error: 'Error guardando variable aplicada' });
   }
 }

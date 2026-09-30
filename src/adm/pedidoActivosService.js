@@ -1,5 +1,6 @@
 // src/adm//pedidoActivosService.js
 import { pool } from '../db.js';
+import { resolveProductIdentityItems } from '../services/productIdentityNamespace.js';
 
 
 export async function registrarActivosDesdePedidoEntrega({
@@ -49,9 +50,20 @@ export async function registrarMovimientosActivosDesdePedido({
   pedidoId,
   usuario = 'sistema',
   origen = 'app_repartidor',
-  movimientos = []
+  movimientos = [],
+  estricto = false,
+  itemsCanonicos = [],
 }) {
-  if (!Array.isArray(movimientos) || movimientos.length === 0) {
+  const invalidar = () => {
+    const error = new Error('Movimiento de activo inválido');
+    error.code = 'ACTIVOS_VALIDATION';
+    throw error;
+  };
+  if (!Array.isArray(movimientos)) {
+    if (estricto) invalidar();
+    return { ok: true, movimientosProcesados: 0 };
+  }
+  if (movimientos.length === 0) {
     return { ok: true, movimientosProcesados: 0 };
   }
 
@@ -60,6 +72,11 @@ export async function registrarMovimientosActivosDesdePedido({
 
   try {
     if (ownTx) await client.query('BEGIN');
+    const queryRows = async (sql, params = []) => (await client.query(sql, params)).rows;
+    const canonicalByItem = new Map((Array.isArray(itemsCanonicos) ? itemsCanonicos : []).map(item => [
+      Number(item.itemPedidoId ?? item.item_pedido_id),
+      Number(item.productoId ?? item.producto_id),
+    ]));
 
     // Resolver empresa / cliente en base al pedido si hace falta
     // y asegurar coherencia multi-tenant (si empresaId viene seteado, el pedido debe pertenecer a esa empresa)
@@ -96,51 +113,72 @@ export async function registrarMovimientosActivosDesdePedido({
     const validTipos = new Set(['entrega', 'retiro', 'mantenimiento', 'cambio']);
     let movimientosProcesados = 0;
 
+    if (estricto) {
+      const idsTocados = [];
+      const idsVistos = new Set();
+      for (const rawMov of movimientos) {
+        const tipo = rawMov?.tipoOperacion ?? rawMov?.tipo_operacion;
+        if (typeof tipo !== 'string' || !validTipos.has(tipo)) invalidar();
+        const activoId = Number(rawMov.activoId ?? rawMov.activo_id);
+        const activoRelacionadoId = tipo === 'cambio'
+          ? Number(rawMov.activoRelacionadoId ?? rawMov.activo_relacionado_id)
+          : null;
+        const idsMovimiento = tipo === 'cambio' ? [activoId, activoRelacionadoId] : [activoId];
+        for (const id of idsMovimiento) {
+          if (!Number.isSafeInteger(id) || id <= 0 || idsVistos.has(id)) invalidar();
+          idsVistos.add(id);
+          idsTocados.push(id);
+        }
+      }
+      idsTocados.sort((a, b) => a - b);
+      const locks = await client.query(
+        `SELECT id
+           FROM empresa_activos
+          WHERE empresa_id = $1
+            AND id = ANY($2::int[])
+          ORDER BY id
+          FOR UPDATE`,
+        [empresaId, idsTocados]
+      );
+      if (locks.rowCount !== idsTocados.length) invalidar();
+    }
+
     // helper: normalizar motivo (devolucion / reparacion)
     const normMotivo = (m) =>
       String(m || '').trim().toLowerCase() || null;
 
     // helper: alquiler desde movimiento o config_activo del producto (si se puede)
     async function resolverAlquilerMensual({ productoId, itemPedidoId }) {
-      // 1) si tengo productoId, busco config_activo directo
       if (productoId) {
         const pr = await client.query(
           `SELECT config_activo FROM productos WHERE empresa_id = $1 AND id = $2`,
           [empresaId, productoId]
         );
-        if (pr.rowCount) {
-          const cfg = pr.rows[0].config_activo || {};
-          const val =
-            cfg.alquiler_mensual != null ? Number(cfg.alquiler_mensual)
-              : (cfg.monto_alquiler_mensual != null ? Number(cfg.monto_alquiler_mensual) : null);
-          return Number.isFinite(val) ? val : null;
-        }
+        if (!pr.rowCount) return null;
+        const cfg = pr.rows[0].config_activo || {};
+        const val = cfg.alquiler_mensual != null
+          ? Number(cfg.alquiler_mensual)
+          : (cfg.monto_alquiler_mensual != null ? Number(cfg.monto_alquiler_mensual) : null);
+        return Number.isFinite(val) ? val : null;
       }
 
-      // 2) si tengo itemPedidoId, intento deducir producto + config
       if (itemPedidoId) {
-        const it = await client.query(
-          `
-          SELECT COALESCE(ip.producto_id, p.id) AS producto_id, p.config_activo
-          FROM items_pedido ip
-          JOIN pedidos ped
-            ON ped.id = ip.pedido_id
-           AND ped.empresa_id = $2
-          LEFT JOIN productos p
-            ON p.empresa_id = $2
-           AND (
-                p.id = ip.producto_id
-             OR LOWER(TRIM(p.nombre)) = LOWER(TRIM(ip.producto))
-           )
-          WHERE ip.id = $1
-          `,
+        const itemRows = await queryRows(
+          `SELECT ip.id AS item_pedido_id, ip.producto_id, ip.producto
+             FROM items_pedido ip
+             JOIN pedidos ped ON ped.id = ip.pedido_id AND ped.empresa_id = $2
+            WHERE ip.id = $1`,
           [itemPedidoId, empresaId]
         );
-        if (it.rowCount) {
-          const cfg = it.rows[0].config_activo || {};
-          const val =
-            cfg.alquiler_mensual != null ? Number(cfg.alquiler_mensual)
-              : (cfg.monto_alquiler_mensual != null ? Number(cfg.monto_alquiler_mensual) : null);
+        if (itemRows.length === 1) {
+          const [resolved] = await resolveProductIdentityItems(queryRows, {
+            empresaId: Number(empresaId),
+            items: itemRows,
+          });
+          const cfg = resolved.producto_resuelto.config_activo || {};
+          const val = cfg.alquiler_mensual != null
+            ? Number(cfg.alquiler_mensual)
+            : (cfg.monto_alquiler_mensual != null ? Number(cfg.monto_alquiler_mensual) : null);
           return Number.isFinite(val) ? val : null;
         }
       }
@@ -148,17 +186,44 @@ export async function registrarMovimientosActivosDesdePedido({
       return null;
     }
 
+    async function validarItemProducto(itemPedidoId, productoId) {
+      if (!estricto) return;
+      if (!Number.isSafeInteger(itemPedidoId) || itemPedidoId <= 0
+          || !Number.isSafeInteger(productoId) || productoId <= 0) invalidar();
+      if (canonicalByItem.size) {
+        if (canonicalByItem.get(itemPedidoId) !== productoId) invalidar();
+        return;
+      }
+      const itemRows = await queryRows(
+        `SELECT ip.id AS item_pedido_id, ip.producto_id, ip.producto
+           FROM items_pedido ip
+           JOIN pedidos ped ON ped.id = ip.pedido_id AND ped.empresa_id = $3
+          WHERE ip.id = $1 AND ip.pedido_id = $2`,
+        [itemPedidoId, pedidoId, empresaId]
+      );
+      if (itemRows.length !== 1) invalidar();
+      const [resolved] = await resolveProductIdentityItems(queryRows, {
+        empresaId: Number(empresaId),
+        items: itemRows,
+      });
+      if (resolved.producto_resuelto_id !== productoId) invalidar();
+    }
+
     for (const rawMov of movimientos) {
       const tipo = String(rawMov.tipoOperacion || rawMov.tipo_operacion || '')
         .trim()
         .toLowerCase();
 
-      if (!validTipos.has(tipo)) continue;
+      if (!validTipos.has(tipo)) {
+        if (estricto) invalidar();
+        continue;
+      }
 
       const itemPedidoId =
         rawMov.itemPedidoId ?? rawMov.item_pedido_id ?? null;
       const productoId =
         rawMov.productoId ?? rawMov.producto_id ?? null;
+      await validarItemProducto(itemPedidoId, productoId);
 
       const motivo = normMotivo(rawMov.motivo || rawMov.motivo_operacion || rawMov.motivoOperacion);
 
@@ -172,12 +237,15 @@ export async function registrarMovimientosActivosDesdePedido({
       // -------------------
       if (tipo === 'entrega') {
         const activoId = Number(rawMov.activoId ?? rawMov.activo_id);
-        if (!activoId) continue;
+        if (!Number.isSafeInteger(activoId) || activoId <= 0) {
+          if (estricto) invalidar();
+          continue;
+        }
 
         // lock + validar disponible
         const aRes = await client.query(
           `
-          SELECT id, estado, cliente_id, alquiler_mensual, fecha_inicio_alquiler
+          SELECT id, codigo, estado, cliente_id, producto_id, alquiler_mensual, fecha_inicio_alquiler
           FROM empresa_activos
           WHERE id = $1
             AND empresa_id = $2
@@ -185,13 +253,20 @@ export async function registrarMovimientosActivosDesdePedido({
           `,
           [activoId, empresaId]
         );
-        if (!aRes.rowCount) continue;
+        if (!aRes.rowCount) {
+          if (estricto) invalidar();
+          continue;
+        }
 
         const activo = aRes.rows[0];
-        const estadoActual = String(activo.estado || '').toLowerCase();
+        const estadoActual = estricto
+          ? activo.estado
+          : String(activo.estado || '').toLowerCase();
 
         // debe estar disponible (y sin cliente)
-        if (estadoActual !== 'disponible' || activo.cliente_id != null) {
+        if (estadoActual !== 'disponible' || activo.cliente_id != null
+            || (estricto && Number(activo.producto_id) !== Number(productoId))) {
+          if (estricto) invalidar();
           throw new Error(`El activo ${activo.codigo || activoId} ya no está disponible (quizás lo tomó otro chofer).`);
         }
 
@@ -269,11 +344,14 @@ export async function registrarMovimientosActivosDesdePedido({
       // -------------------
       if (tipo === 'retiro' || tipo === 'mantenimiento') {
         const activoId = Number(rawMov.activoId ?? rawMov.activo_id);
-        if (!activoId) continue;
+        if (!Number.isSafeInteger(activoId) || activoId <= 0) {
+          if (estricto) invalidar();
+          continue;
+        }
 
         const aRes = await client.query(
           `
-          SELECT id, estado, cliente_id
+          SELECT id, estado, cliente_id, producto_id
           FROM empresa_activos
           WHERE id = $1
             AND empresa_id = $2
@@ -281,9 +359,17 @@ export async function registrarMovimientosActivosDesdePedido({
           `,
           [activoId, empresaId]
         );
-        if (!aRes.rowCount) continue;
+        if (!aRes.rowCount) {
+          if (estricto) invalidar();
+          continue;
+        }
 
         const activo = aRes.rows[0];
+        if (estricto && (
+          activo.estado !== 'prestado'
+          || Number(activo.cliente_id) !== Number(clienteId)
+          || Number(activo.producto_id) !== Number(productoId)
+        )) invalidar();
         const clienteMovimientoId = activo.cliente_id || clienteId;
 
         // Validación soft: retiro/mantenimiento generalmente debe venir prestado
@@ -292,8 +378,8 @@ export async function registrarMovimientosActivosDesdePedido({
         // if (est !== 'prestado') continue;
 
         if (tipo === 'retiro') {
-          // motivo: reparacion => en_mantenimiento, devolucion => disponible
-          const estadoFinal = (motivo === 'reparacion') ? 'en_mantenimiento' : 'disponible';
+          // motivo: reparacion => reparacion, devolucion => disponible
+          const estadoFinal = (motivo === 'reparacion') ? 'reparacion' : 'disponible';
 
           await client.query(
             `
@@ -308,11 +394,11 @@ export async function registrarMovimientosActivosDesdePedido({
             [activoId, empresaId, estadoFinal]
           );
         } else {
-          // mantenimiento: lo dejamos en_mantenimiento y sin cliente
+          // mantenimiento: lo dejamos en reparacion y sin cliente
           await client.query(
             `
             UPDATE empresa_activos
-            SET estado = 'en_mantenimiento',
+            SET estado = 'reparacion',
                 cliente_id = NULL,
                 fecha_fin_alquiler = COALESCE(fecha_fin_alquiler, NOW()),
                 updated_at = NOW()
@@ -382,12 +468,13 @@ export async function registrarMovimientosActivosDesdePedido({
         );
 
         if (!activoIdNuevo || !activoIdViejo || activoIdNuevo === activoIdViejo) {
+          if (estricto) invalidar();
           continue;
         }
 
         const actsRes = await client.query(
           `
-          SELECT id, estado, cliente_id, alquiler_mensual, fecha_inicio_alquiler
+          SELECT id, estado, cliente_id, producto_id, alquiler_mensual, fecha_inicio_alquiler
           FROM empresa_activos
           WHERE empresa_id = $1
             AND id IN ($2, $3)
@@ -395,24 +482,35 @@ export async function registrarMovimientosActivosDesdePedido({
           `,
           [empresaId, activoIdNuevo, activoIdViejo]
         );
-        if (actsRes.rowCount < 2) continue;
+        if (actsRes.rowCount < 2) {
+          if (estricto) invalidar();
+          continue;
+        }
 
         const viejo = actsRes.rows.find(r => Number(r.id) === activoIdViejo);
         const nuevo = actsRes.rows.find(r => Number(r.id) === activoIdNuevo);
-        if (!viejo || !nuevo) continue;
+        if (!viejo || !nuevo) {
+          if (estricto) invalidar();
+          continue;
+        }
 
         const clienteMovimientoId = viejo.cliente_id || clienteId;
 
-        // Validaciones recomendadas (soft)
-        const estViejo = String(viejo.estado || '').toLowerCase();
-        const estNuevo = String(nuevo.estado || '').toLowerCase();
-        // viejo debería estar prestado, nuevo disponible
+        // viejo debe pertenecer al cliente y el nuevo estar disponible.
+        const estViejo = estricto ? viejo.estado : String(viejo.estado || '').toLowerCase();
+        const estNuevo = estricto ? nuevo.estado : String(nuevo.estado || '').toLowerCase();
+        if (estricto && (
+          estViejo !== 'prestado'
+          || Number(viejo.cliente_id) !== Number(clienteId)
+          || Number(viejo.producto_id) !== Number(productoId)
+          || estNuevo !== 'disponible'
+          || nuevo.cliente_id != null
+          || Number(nuevo.producto_id) !== Number(productoId)
+        )) invalidar();
         if (estNuevo !== 'disponible' || nuevo.cliente_id != null) continue;
-        // si querés estricto:
-        // if (estViejo !== 'prestado') continue;
 
-        // 1) Retiramos el viejo: devolucion => disponible, reparacion => en_mantenimiento
-        const estadoViejoFinal = (motivo === 'reparacion') ? 'en_mantenimiento' : 'disponible';
+        // 1) Retiramos el viejo: devolucion => disponible, reparacion => reparacion
+        const estadoViejoFinal = (motivo === 'reparacion') ? 'reparacion' : 'disponible';
 
         await client.query(
           `

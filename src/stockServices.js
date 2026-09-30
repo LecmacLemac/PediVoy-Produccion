@@ -166,11 +166,10 @@ function getUnidadesVendidasPorProducto({ empresaId, desde, hasta }) {
         // si viene por nombre, resolvemos al id por nombre exacto (mejorable)
         if (!hasTable('productos')) continue;
         const prod = db.prepare(`
-          SELECT id FROM productos
-          WHERE empresa_id = @empresaId AND LOWER(nombre) = LOWER(@nombre)
-          LIMIT 1
+          SELECT MIN(id) AS id, COUNT(*) AS match_count FROM productos
+          WHERE empresa_id = @empresaId AND LOWER(TRIM(nombre)) = LOWER(TRIM(@nombre))
         `).get({ empresaId, nombre: r.producto_nombre });
-        if (prod?.id) map.set(toInt(prod.id), toNum(r.unidades));
+        if (Number(prod?.match_count) === 1 && prod?.id) map.set(toInt(prod.id), toNum(r.unidades));
       }
     }
   } catch (e) {
@@ -246,11 +245,10 @@ function getMovimientosPorProducto({ empresaId, desde, hasta }) {
         keyId = toInt(r.producto_id);
       } else if ('producto_nombre' in r && r.producto_nombre && hasTable('productos')) {
         const prod = db.prepare(`
-          SELECT id FROM productos
-          WHERE empresa_id = @empresaId AND LOWER(nombre) = LOWER(@nombre)
-          LIMIT 1
+          SELECT MIN(id) AS id, COUNT(*) AS match_count FROM productos
+          WHERE empresa_id = @empresaId AND LOWER(TRIM(nombre)) = LOWER(TRIM(@nombre))
         `).get({ empresaId, nombre: r.producto_nombre });
-        keyId = prod?.id ? toInt(prod.id) : null;
+        keyId = Number(prod?.match_count) === 1 && prod?.id ? toInt(prod.id) : null;
       }
       if (keyId != null) {
         map.set(keyId, { entradas: toNum(r.entradas), salidas: toNum(r.salidas) });

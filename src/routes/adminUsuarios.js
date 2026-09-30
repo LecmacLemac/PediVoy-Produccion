@@ -4,10 +4,11 @@
 import express from 'express';
 import bcrypt from 'bcryptjs';
 import { withTransaction as dbWithTransaction } from '../db.js';
+import { requireCanonicalBackofficeRole } from './canonicalBackofficeRole.js';
 
 const OPERATIONAL_ROLES = new Set(['repartidor', 'referente', 'facturacion', 'contable']);
 const MANAGED_ROLES = new Set(['user', 'admin', 'super', ...OPERATIONAL_ROLES]);
-const PRIVILEGED_ROLES = new Set(['user', 'admin', 'super']);
+const PRIVILEGED_ROLES = new Set(['admin', 'super']);
 
 function normalizeRoleInput(value) {
   return String(value || '').trim().toLowerCase();
@@ -31,6 +32,17 @@ function pgErrorResponse(error, fallbackMessage) {
   if (error?.code === '23505') return { status: 400, payload: { error: 'Username en uso' } };
   if (error?.code === '23503') return { status: 409, payload: { error: 'Referencia inválida' } };
   return { status: 500, payload: { error: fallbackMessage } };
+}
+
+function transactionOutcomeUnknownResponse(error) {
+  if (error?.code !== 'TRANSACTION_OUTCOME_UNKNOWN') return null;
+  return {
+    status: 503,
+    payload: {
+      error: 'Resultado de gestión de usuario indeterminado',
+      code: 'TRANSACTION_OUTCOME_UNKNOWN',
+    },
+  };
 }
 
 function sendResult(res, result) {
@@ -136,7 +148,7 @@ export function createAdminUsuariosRouter(deps) {
     return rows[0] || null;
   }
 
-  router.use('/usuarios', withAuth, requireUserToken);
+  router.use('/usuarios', withAuth, requireCanonicalBackofficeRole, requireUserToken);
 
   router.post('/usuarios', async (req, res) => {
     try {
@@ -186,6 +198,8 @@ export function createAdminUsuariosRouter(deps) {
       });
       return sendResult(res, result);
     } catch (error) {
+      const outcomeUnknown = transactionOutcomeUnknownResponse(error);
+      if (outcomeUnknown) return sendResult(res, outcomeUnknown);
       return sendResult(res, pgErrorResponse(error, 'Error interno'));
     }
   });
@@ -361,6 +375,8 @@ export function createAdminUsuariosRouter(deps) {
       });
       return sendResult(res, result);
     } catch (error) {
+      const outcomeUnknown = transactionOutcomeUnknownResponse(error);
+      if (outcomeUnknown) return sendResult(res, outcomeUnknown);
       return sendResult(res, pgErrorResponse(error, 'Error actualizando usuario'));
     }
   });
@@ -395,6 +411,8 @@ export function createAdminUsuariosRouter(deps) {
       });
       return sendResult(res, result);
     } catch (error) {
+      const outcomeUnknown = transactionOutcomeUnknownResponse(error);
+      if (outcomeUnknown) return sendResult(res, outcomeUnknown);
       return sendResult(res, pgErrorResponse(error, 'Error borrando usuario'));
     }
   });

@@ -66,21 +66,45 @@ test('scanner-style sensitive paths fail closed before landing fallback', async 
   });
 });
 
+test('landing raíz ignora Host/XFH y no resuelve tenant sin selector explícito', async () => {
+  const root = fs.mkdtempSync(path.join((await import('node:os')).tmpdir(), 'landing-hostless-'));
+  fs.writeFileSync(path.join(root, 'index.html'), '<!doctype html><title>Global</title><p>GLOBAL_INDEX</p>');
+  let queried = false;
+  const app = express();
+  app.set('trust proxy', 1);
+  registerLandingRoutes(app, {
+    projectDir: root,
+    query: async () => { queried = true; return [{ id: 7 }]; },
+  });
+  try {
+    await serve(app, async base => {
+      const response = await fetch(base + '/', {
+        headers: { host: 'victima.example.test', 'x-forwarded-host': 'victima.example.test' },
+      });
+      assert.equal(response.status, 200);
+      assert.match(await response.text(), /GLOBAL_INDEX/);
+      assert.equal(queried, false);
+    });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('public config fails closed for unknown, invalid, missing tenant and query errors', async () => {
   const app = express();
   const queries = [];
-  app.use('/public', createPublicLegacyCatalogRouter({ query: async (sql, params) => {
+  const query = async (sql, params) => {
     queries.push(sql);
     if (params?.[0] === 'broken') throw Error('database unavailable');
-    if (sql.includes('ORDER BY')) return [{ id: 1 }];
     return [];
-  } }));
+  };
+  app.use('/public', createPublicLegacyCatalogRouter({ query, withTransaction: work => work(query) }));
   await serve(app, async base => {
     for (const suffix of ['?slug=unknown', '?slug=file.html', '?empresa_id=999', '?empresa_id=bad', '']) {
-      assert.equal((await fetch(base + '/public/config' + suffix)).status, 404);
+      assert.equal((await fetch(base + '/public/config' + suffix)).status, 400);
     }
     assert.equal((await fetch(base + '/public/config?slug=broken')).status, 500);
-    assert.ok(queries.every(sql => !sql.includes('ORDER BY')));
+    assert.ok(queries.every(sql => !/landing_domain\s*=|LOWER\s*\(\s*landing_domain/i.test(sql)));
   });
 });
 
@@ -91,7 +115,7 @@ test('publishing returns canonical URL, rejects missing slug and preserves tenan
   registerLandingRoutes(app, {
     projectDir: root,
     query: async (_sql, params) => [{ id: params[0], landing_slug: slug }],
-    withAuth: (_req, _res, next) => next(), resolveEmpresaId: () => 7, isSuper: () => false,
+    withAuth: (req, _res, next) => { req.user = { role: 'admin', empresa_id: 7 }; next(); }, resolveEmpresaId: () => 7, isSuper: () => false,
   });
   const upload = async (base, id) => {
     const form = new FormData();
@@ -108,6 +132,65 @@ test('publishing returns canonical URL, rejects missing slug and preserves tenan
       slug = null;
       assert.equal((await upload(base, 7)).status, 409);
       assert.equal(fs.readFileSync(path.join(root, 'pages/empresa_7.html'), 'utf8'), before);
+    });
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('landing admin rechaza roles no canónicos antes del uploader, query y filesystem', async () => {
+  const root = fs.mkdtempSync(path.join((await import('node:os')).tmpdir(), 'landing-role-guard-'));
+  const roles = ['repartidor', 'user', 'referente', 'facturacion', 'contable', ' admin', 'ADMIN', 'admin '];
+  let role = roles[0];
+  let queries = 0;
+  const app = express();
+  registerLandingRoutes(app, {
+    projectDir: root,
+    query: async () => { queries += 1; return [{ id: 7, landing_slug: 'selected' }]; },
+    withAuth: (req, _res, next) => { req.user = { role, empresa_id: 7 }; next(); },
+    resolveEmpresaId: () => 7,
+    isSuper: req => req.user?.role === 'super',
+  });
+  try {
+    await serve(app, async base => {
+      for (const candidate of roles) {
+        role = candidate;
+        const oversized = new FormData();
+        oversized.append('file', new Blob(['x'.repeat(600 * 1024)], { type: 'text/html' }), 'landing.html');
+        const upload = await fetch(`${base}/api/empresas/7/landing-page`, { method: 'POST', body: oversized });
+        assert.equal(upload.status, 403, candidate);
+        assert.equal(await upload.text(), '{"error":"Acceso denegado"}', candidate);
+        assert.equal((await fetch(`${base}/api/empresas/7/landing-page`, { method: 'DELETE' })).status, 403, candidate);
+      }
+      assert.equal(queries, 0);
+      assert.equal(fs.existsSync(path.join(root, 'pages/empresa_7.html')), false);
+    });
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('landing admin permite admin tenant y super explícito, y bloquea cross-tenant admin', async () => {
+  const root = fs.mkdtempSync(path.join((await import('node:os')).tmpdir(), 'landing-role-success-'));
+  let user = { role: 'admin', empresa_id: 7 };
+  const app = express();
+  registerLandingRoutes(app, {
+    projectDir: root,
+    query: async (_sql, params) => [{ id: params[0], landing_slug: `empresa-${params[0]}` }],
+    withAuth: (req, _res, next) => { req.user = user; next(); },
+    resolveEmpresaId: req => req.user.empresa_id,
+    isSuper: req => req.user.role === 'super',
+  });
+  const upload = async (base, id) => {
+    const form = new FormData();
+    form.append('file', new Blob([`<!doctype html>${id}`], { type: 'text/html' }), 'landing.html');
+    return fetch(`${base}/api/empresas/${id}/landing-page`, { method: 'POST', body: form });
+  };
+  try {
+    await serve(app, async base => {
+      assert.equal((await upload(base, 7)).status, 200);
+      assert.equal((await upload(base, 8)).status, 403);
+      assert.equal(fs.existsSync(path.join(root, 'pages/empresa_8.html')), false);
+      user = { role: 'super', empresa_id: null };
+      assert.equal((await upload(base, 8)).status, 200);
+      assert.equal((await fetch(`${base}/api/empresas/8/landing-page`, { method: 'DELETE' })).status, 200);
+      assert.equal(fs.existsSync(path.join(root, 'pages/empresa_8.html')), false);
     });
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });

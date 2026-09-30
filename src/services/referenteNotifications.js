@@ -54,6 +54,9 @@ export async function createPedidoEstadoNotifications({ queryFn, empresaId, pedi
          ON cr.empresa_id = p.empresa_id
        AND cr.punto_entrega_id = p.punto_entrega_id
         AND cr.estado IN ('activo','desvinculado')
+       JOIN referentes r
+         ON r.id = cr.referente_id
+        AND r.empresa_id = cr.empresa_id
        LEFT JOIN puntos_entrega pe
          ON pe.id = p.punto_entrega_id
         AND pe.empresa_id = p.empresa_id
@@ -87,6 +90,9 @@ export async function createComisionLiquidadaNotifications({ queryFn, empresaId,
             rc.pedido_id,
             rc.id
        FROM referente_comisiones rc
+       JOIN referentes r
+         ON r.id = rc.referente_id
+        AND r.empresa_id = rc.empresa_id
       WHERE rc.empresa_id = $1
         AND rc.id = ANY($2::int[])
      RETURNING id, referente_id`,

@@ -34,9 +34,9 @@ async function run() {
     await expectJson(r, [200]);
   }));
 
-  results.push(await check('GET /public/config', async () => {
+  results.push(await check('GET /public/config sin selector', async () => {
     const r = await fetch(`${BASE_URL}/public/config`);
-    const j = await expectJson(r, [200, 404]);
+    const j = await expectJson(r, [400]);
     if (j == null || typeof j !== 'object') throw new Error('respuesta no es objeto JSON');
   }));
 

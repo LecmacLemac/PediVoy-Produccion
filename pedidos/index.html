@@ -633,7 +633,20 @@
   <script>
     // --- Configuración Inicial ---
     const params = new URLSearchParams(location.search);
-    let empresa_id = Number(params.get('empresa_id')) || null;
+    const rawPublicSlug = params.get('slug');
+    const rawPublicEmpresaId = params.get('empresa_id');
+    const publicSlug = typeof rawPublicSlug === 'string' ? rawPublicSlug.trim().toLowerCase() : '';
+    const publicEmpresaId = typeof rawPublicEmpresaId === 'string' && /^[1-9]\d*$/.test(rawPublicEmpresaId)
+      && Number.isSafeInteger(Number(rawPublicEmpresaId))
+      ? Number(rawPublicEmpresaId)
+      : null;
+    const publicTenantParams = new URLSearchParams();
+    if (rawPublicSlug !== null && /^[a-z0-9_-]+$/.test(publicSlug)) publicTenantParams.set('slug', rawPublicSlug);
+    if (rawPublicEmpresaId !== null && publicEmpresaId !== null) publicTenantParams.set('empresa_id', rawPublicEmpresaId);
+    const hasInvalidPublicTenant = (rawPublicSlug !== null && !publicTenantParams.has('slug'))
+      || (rawPublicEmpresaId !== null && !publicTenantParams.has('empresa_id'));
+    let empresa_id = null;
+    let tenantAuthorized = false;
 
     const ARS = new Intl.NumberFormat('es-AR', {
       style: 'currency',
@@ -654,6 +667,15 @@
 
     let allProducts = [];
     let carrito = [];
+
+    function setOrderingEnabled(enabled) {
+      tenantAuthorized = enabled;
+      for (const element of formEl.querySelectorAll('input, textarea, select, button')) element.disabled = !enabled;
+      const mobileSubmit = document.getElementById('mobSubmit');
+      if (mobileSubmit) mobileSubmit.disabled = !enabled;
+    }
+
+    setOrderingEnabled(false);
 
     // --- IDEMPOTENCIA ---
     const getSubmissionId = () => {
@@ -848,17 +870,21 @@
     // --- 1. INIT ---
     async function init() {
       try {
-        const currentParams = window.location.search;
-        const r = await fetch('/public/config' + currentParams);
+        if (hasInvalidPublicTenant || publicTenantParams.size === 0) {
+          throw new Error('El enlace no identifica una tienda válida. Usá un enlace con slug o empresa_id.');
+        }
+        const r = await fetch('/public/config?' + publicTenantParams.toString());
+        if (!r.ok) throw new Error('No se pudo resolver la tienda indicada por el enlace');
         const d = await r.json();
-
-        if (!empresa_id) {
-          if (d.empresa_id) {
-            empresa_id = Number(d.empresa_id);
-          } else {
-            console.warn('No se resolvió empresa, usando ID 1');
-            empresa_id = 1; 
-          }
+        empresa_id = Number(d.empresa_id);
+        if (!Number.isSafeInteger(empresa_id) || empresa_id <= 0) {
+          throw new Error('No se pudo resolver una empresa pública válida');
+        }
+        if (publicEmpresaId !== null && empresa_id !== publicEmpresaId) {
+          throw new Error('La configuración recibida no coincide con la empresa del enlace');
+        }
+        if (publicSlug && String(d.landing_slug || '').trim().toLowerCase() !== publicSlug) {
+          throw new Error('La configuración recibida no coincide con el slug del enlace');
         }
 
         applyCompanyBranding(d);
@@ -868,6 +894,7 @@
         if (d.provincia && formEl.elements.provincia) formEl.elements.provincia.value = d.provincia;
 
         await loadProducts();
+        setOrderingEnabled(true);
 
         // Intentamos capturar ubicación sin bloquear la UI
         captureBrowserLocation({ timeout: 2500, silent: true });
@@ -877,15 +904,10 @@
 
       } catch (e) {
         console.error('Error crítico en init:', e);
-        if (!empresa_id) {
-            empresa_id = 1;
-            $('#empresa_id').value = 1;
-            await loadProducts();
-        } else {
-            $('#loading').innerHTML = '❌ Error cargando la tienda.<br><button id="btnRetryLoad" type="button" style="margin-top:1rem">Reintentar</button>';
-            const btnRetryLoad = document.getElementById('btnRetryLoad');
-            if (btnRetryLoad) btnRetryLoad.addEventListener('click', () => location.reload());
-        }
+        setOrderingEnabled(false);
+        $('#loading').innerHTML = '❌ No se pudo identificar la tienda. Verificá que el enlace incluya un slug o empresa_id válido.<br><button id="btnRetryLoad" type="button" style="margin-top:1rem">Reintentar</button>';
+        const btnRetryLoad = document.getElementById('btnRetryLoad');
+        if (btnRetryLoad) btnRetryLoad.addEventListener('click', () => location.reload());
       }
     }
 
@@ -1127,6 +1149,11 @@
     formEl.addEventListener('submit', async (ev) => {
       ev.preventDefault();
 
+      if (!tenantAuthorized) {
+        toast('⚠️ El enlace no identifica una tienda válida.');
+        return;
+      }
+
       if (!carrito.length) {
         toast('⚠️ El carrito está vacío.');
         return;
@@ -1134,6 +1161,7 @@
 
       const fd = new FormData(formEl);
       const data = Object.fromEntries(fd.entries());
+      delete data.empresa_id;
       if (data.codigo_referente) data.codigo_referente = String(data.codigo_referente).trim().toUpperCase();
 
       const digits = normalizePhone(data.telefono || '');
@@ -1161,7 +1189,6 @@
       const payload = {
         ...data,
         telefono: buildTelefonoDB(data.telefono),
-        empresa_id,
         items: carrito,
         submission_id: getSubmissionId(),
         latitud: Number.isFinite(latNum) ? latNum : null,
@@ -1176,7 +1203,7 @@
       }
 
       try {
-        const r = await fetch('/public/pedidos', {
+        const r = await fetch('/public/pedidos?' + publicTenantParams.toString(), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)

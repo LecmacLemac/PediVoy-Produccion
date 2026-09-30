@@ -427,7 +427,7 @@
     const qs = (name) => new URLSearchParams(window.location.search).get(name);
     const $ = (id) => document.getElementById(id);
 
-    let EMPRESA_ID = 1;
+    let EMPRESA_ID = null;
     let EMPRESA_TEL = '';
     let CHOFER_WA = '';
     let currentStatusKey = '';
@@ -436,14 +436,22 @@
     async function init() {
       // 1) Config de empresa
       try {
-        const res = await fetch('/public/config');
-        if (res.ok) {
+        const publicParams = new URLSearchParams();
+        const slug = String(qs('slug') || '').trim().toLowerCase();
+        const rawEmpresaId = qs('empresa_id');
+        if (/^[a-z0-9_-]+$/.test(slug)) publicParams.set('slug', slug);
+        if (/^[1-9]\d*$/.test(String(rawEmpresaId || '')) && Number.isSafeInteger(Number(rawEmpresaId))) {
+          publicParams.set('empresa_id', rawEmpresaId);
+        }
+        if (publicParams.size) {
+          const res = await fetch('/public/config?' + publicParams.toString());
+          if (!res.ok) throw new Error('No se pudo resolver la empresa del enlace');
           const cfg = await res.json();
-          EMPRESA_ID = Number(cfg.empresa_id) || 1;
+          EMPRESA_ID = Number(cfg.empresa_id) || null;
           if (cfg.nombre_empresa) {
             $('headerTitle').textContent = cfg.nombre_empresa;
           }
-          fetchEmpresaInfo(EMPRESA_ID);
+          if (EMPRESA_ID) fetchEmpresaInfo(EMPRESA_ID);
         }
       } catch (err) {
         console.error('Error config:', err);
@@ -466,7 +474,7 @@
       const telefonoQuery = qs('telefono');
 
       // Caso especial: viene sólo teléfono
-      if (!pedidoId && telefonoQuery) {
+      if (!pedidoId && telefonoQuery && EMPRESA_ID) {
         $('statusTitle').textContent = 'Buscando tu pedido...';
         try {
           const res = await fetch(

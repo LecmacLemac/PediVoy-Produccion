@@ -69,6 +69,8 @@ test('administracion puede liquidar comisiones pendientes seleccionadas', async 
         assert.match(sql, /estado = 'validada'/);
         assert.match(sql, /INSERT INTO referente_liquidaciones/);
         assert.match(sql, /liquidacion_lote_id = lote\.id/);
+        assert.match(sql, /JOIN referentes r/);
+        assert.match(sql, /r\.empresa_id = rc\.empresa_id/);
         return [
           {
             id: 10,
@@ -98,6 +100,8 @@ test('administracion puede liquidar comisiones pendientes seleccionadas', async 
         assert.equal(params[0], 2);
         assert.deepEqual(params[1], [10, 11]);
         assert.match(sql, /comision_liquidada/);
+        assert.match(sql, /JOIN referentes r/);
+        assert.match(sql, /r\.empresa_id = rc\.empresa_id/);
         return [{ id: 90, referente_id: 4 }, { id: 91, referente_id: 4 }];
       }
       throw new Error(`SQL inesperado: ${sql.slice(0, 80)}`);

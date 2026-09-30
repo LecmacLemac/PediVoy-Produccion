@@ -32,17 +32,18 @@ test('worker empresarial limita clientes desconocidos al tenant', async () => {
   const ctx = await resolve(PHONE, { empresaId: 7 });
 
   assert.deepEqual(ctx, {
-    role: 'cliente',
+    resolution: 'unresolved',
+    source: 'sin_identidad',
     empresa_id: 7,
-    chofer_id: null,
-    source: 'desconocido',
     tenantLocked: true,
+    workerTenantFixed: true,
+    generalPhoneIdentity: false,
   });
   const identities = db.calls.filter(({ sql }) => /FROM usuarios|FROM choferes/.test(sql));
   assert.ok(identities.every(({ params }) => params[0] === '5491112345678'));
   const historical = db.calls.find(({ sql }) => /FROM puntos_entrega/.test(sql));
-  assert.match(historical.sql, /empresa_id = \$2/);
-  assert.deepEqual(historical.params, ['1112345678', 7]);
+  assert.match(historical.sql, /empresa_id = \$3/);
+  assert.deepEqual(historical.params, ['5491112345678', '1112345678', 7]);
 });
 
 test('worker empresarial reconoce únicamente super global activo', async () => {
@@ -70,7 +71,7 @@ test('start rechaza empresaId inválido antes de registrar listener', () => {
   );
   assert.equal(listeners, 0);
 
-  handlers.start(client, { empresaId: 7, contextResolver: async () => ({ role: 'cliente', empresa_id: 7 }) });
+  handlers.start(client, { empresaId: 7, contextResolver: async () => ({ resolution: 'unique', role: 'cliente', empresa_id: 7 }) });
   assert.equal(listeners, 1);
 });
 
@@ -123,7 +124,18 @@ test('resumen resuelve chofer exclusivamente dentro del tenant', async () => {
   assert.equal(db.calls.length, 1);
   assert.match(db.calls[0].sql, /empresa_id\s*=\s*\$1/);
   assert.match(db.calls[0].sql, /activo\s*=\s*TRUE/);
+  assert.match(db.calls[0].sql, /LIMIT\s+2/);
   assert.deepEqual(db.calls[0].params, [7, 42, '42']);
+});
+
+test('resumen falla cerrado si id/teléfono resuelven más de un chofer activo', async () => {
+  const db = scriptedQuery((sql) => {
+    if (sql.includes('FROM choferes')) return [{ id: 42 }, { id: 43 }];
+    return [];
+  });
+  const commands = createTenantCommandQueries(db.query);
+
+  assert.equal(await commands.findActiveDriver(7, '42'), null);
 });
 
 test('reposición busca el punto de entrega exclusivamente dentro del tenant', async () => {
@@ -133,8 +145,8 @@ test('reposición busca el punto de entrega exclusivamente dentro del tenant', a
   await commands.findLatestDeliveryPoint(7, PHONE);
 
   assert.equal(db.calls.length, 1);
-  assert.match(db.calls[0].sql, /empresa_id\s*=\s*\$1/);
-  assert.deepEqual(db.calls[0].params, [7, '1112345678']);
+  assert.match(db.calls[0].sql, /empresa_id\s*=\s*\$3/);
+  assert.deepEqual(db.calls[0].params, ['5491112345678', '1112345678', 7]);
 });
 
 test('worker empresarial reconoce chofer activo del tenant', async () => {
@@ -194,10 +206,10 @@ test('resolución empresarial consulta todas las identidades exactas incluyendo 
   assert.ok(identityQueries.every(({ sql, params }) => /regexp_replace/.test(sql) && params[0] === '5491112345678'));
 });
 
-test('canal General conserva selección de empresa por texto', () => {
+test('canal General ignora selección de empresa por texto', () => {
   assert.equal(
     resolveCommandEmpresaId({ empresa_id: 7 }, 'rentabilidad empresa 8'),
-    8
+    7
   );
 });
 

@@ -8,20 +8,32 @@ import {
   updateContactResult,
 } from '../calls/repository.js';
 import { asteriskAriClient } from '../integrations/asterisk/index.js';
+import { requireCanonicalBackofficeRole } from './canonicalBackofficeRole.js';
+import { requireSharedSecret } from './secretGuard.js';
 
 function ensureAsteriskSecret(req, res, next) {
-  const expected = process.env.ASTERISK_WEBHOOK_SECRET || '';
-  if (!expected) return next();
-  const given = String(req.headers['x-asterisk-secret'] || '');
-  if (given !== expected) return res.status(401).json({ error: 'Unauthorized' });
+  if (!requireSharedSecret({
+    expected: process.env.ASTERISK_WEBHOOK_SECRET,
+    provided: req.headers['x-asterisk-secret'],
+    res,
+    invalidStatus: 401,
+  })) return;
   return next();
 }
 
 export function createCallsRouter(deps) {
-  const { withAuth, resolveEmpresaId } = deps;
+  const {
+    withAuth,
+    resolveEmpresaId,
+    createCallEvent: createCallEventFn = createCallEvent,
+    createCallTask: createCallTaskFn = createCallTask,
+    getCallSession: getCallSessionFn = getCallSession,
+    updateCallSession: updateCallSessionFn = updateCallSession,
+    updateContactResult: updateContactResultFn = updateContactResult,
+  } = deps;
   const router = express.Router();
 
-  router.post('/call-dispatch/run', withAuth, async (req, res) => {
+  router.post('/call-dispatch/run', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     try {
       const empresaId = resolveEmpresaId(req);
       const limit = Number(req.body?.limit || req.query?.limit || 10);
@@ -40,7 +52,7 @@ export function createCallsRouter(deps) {
         return res.status(400).json({ error: 'session_id, event_type y empresa_id requeridos' });
       }
 
-      const session = await updateCallSession({
+      const session = await updateCallSessionFn({
         sessionId: Number(session_id),
         empresaId: Number(empresa_id),
         fields: {
@@ -52,14 +64,14 @@ export function createCallsRouter(deps) {
 
       if (!session) return res.status(404).json({ error: 'Sesión no encontrada' });
 
-      await createCallEvent({
+      await createCallEventFn({
         callSessionId: session.id,
         eventType: event_type,
         payload: payload || req.body,
       });
 
       if (status || final_disposition || next_retry_at) {
-        await updateContactResult({
+        await updateContactResultFn({
           contactId: session.campaign_contact_id,
           empresaId: session.empresa_id,
           status: status === 'failed' ? 'retry' : status === 'completed' ? 'done' : undefined,
@@ -70,7 +82,7 @@ export function createCallsRouter(deps) {
 
       res.json({ ok: true });
     } catch (error) {
-      console.error('asterisk event error:', error);
+      console.error('asterisk event error: procesamiento fallido');
       res.status(500).json({ error: 'Error procesando evento Asterisk' });
     }
   });
@@ -78,7 +90,7 @@ export function createCallsRouter(deps) {
   router.get('/calls/:sessionId', withAuth, async (req, res) => {
     try {
       const empresaId = resolveEmpresaId(req);
-      const session = await getCallSession({ sessionId: Number(req.params.sessionId), empresaId });
+      const session = await getCallSessionFn({ sessionId: Number(req.params.sessionId), empresaId });
       if (!session) return res.status(404).json({ error: 'Sesión no encontrada' });
       res.json(session);
     } catch (error) {
@@ -87,15 +99,15 @@ export function createCallsRouter(deps) {
     }
   });
 
-  router.post('/calls/:sessionId/ai-result', withAuth, async (req, res) => {
+  router.post('/calls/:sessionId/ai-result', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     try {
       const empresaId = resolveEmpresaId(req);
       const sessionId = Number(req.params.sessionId);
-      const session = await getCallSession({ sessionId, empresaId });
+      const session = await getCallSessionFn({ sessionId, empresaId });
       if (!session) return res.status(404).json({ error: 'Sesión no encontrada' });
 
       const { disposition, confidence, summary, transcript_text, callback_at, transfer_to_human } = req.body || {};
-      const updated = await updateCallSession({
+      const updated = await updateCallSessionFn({
         sessionId,
         empresaId,
         fields: {
@@ -109,13 +121,13 @@ export function createCallsRouter(deps) {
         },
       });
 
-      await createCallEvent({
+      await createCallEventFn({
         callSessionId: sessionId,
         eventType: 'ai_result',
         payload: req.body || {},
       });
 
-      await updateContactResult({
+      await updateContactResultFn({
         contactId: session.campaign_contact_id,
         empresaId,
         status: disposition === 'callback' ? 'retry' : 'done',
@@ -124,7 +136,7 @@ export function createCallsRouter(deps) {
       });
 
       if (disposition === 'callback' && callback_at) {
-        await createCallTask({
+        await createCallTaskFn({
           callSessionId: sessionId,
           taskType: 'callback',
           dueAt: callback_at,
@@ -139,15 +151,15 @@ export function createCallsRouter(deps) {
     }
   });
 
-  router.post('/calls/:sessionId/transfer-human', withAuth, async (req, res) => {
+  router.post('/calls/:sessionId/transfer-human', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     try {
       const empresaId = resolveEmpresaId(req);
       const sessionId = Number(req.params.sessionId);
-      const session = await getCallSession({ sessionId, empresaId });
+      const session = await getCallSessionFn({ sessionId, empresaId });
       if (!session) return res.status(404).json({ error: 'Sesión no encontrada' });
 
       const queue = String(req.body?.queue || 'ventas');
-      const updated = await updateCallSession({
+      const updated = await updateCallSessionFn({
         sessionId,
         empresaId,
         fields: {
@@ -164,7 +176,7 @@ export function createCallsRouter(deps) {
         };
       }
 
-      await createCallEvent({
+      await createCallEventFn({
         callSessionId: sessionId,
         eventType: 'transfer_human_requested',
         payload: { queue, requested_by: req.user?.id || null, ariResult },

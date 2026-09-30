@@ -19,14 +19,18 @@ test('POST /public/pedidos con mismo submission_id no duplica pedido', async () 
   const seen = new Map();
 
   const query = async (sql, params = []) => {
-    if (sql.includes('FROM puntos_entrega') && sql.includes('telefono_normalizado LIKE')) return [];
+    if (/SELECT\s+id[\s\S]*FROM empresas[\s\S]*WHERE id = \$1/.test(sql)) return [{ id: Number(params[0]) }];
+    if (sql.includes('FROM puntos_entrega') && sql.includes('RIGHT(REGEXP_REPLACE')) return [];
     if (sql.includes('INSERT INTO puntos_entrega')) return [{ id: 777 }];
     if (sql.includes('FROM zona_chofer')) return [];
     if (sql.includes('FROM cliente_recompensas')) return [];
+    if (sql.includes('FROM productos')) {
+      return [{ id: 55, nombre: 'Bidón', promo_config: null, config_activo: {}, retornable: false }];
+    }
 
     if (sql.includes('SELECT pg_advisory_xact_lock')) return [{ pg_advisory_xact_lock: null }];
 
-    if (sql.includes('FROM pedidos WHERE empresa_id=$1 AND submission_id=$2')) {
+    if (sql.includes('FROM pedidos') && sql.includes('submission_id = $2')) {
       const key = `${params[0]}:${params[1]}`;
       return seen.has(key) ? [seen.get(key)] : [];
     }
@@ -72,10 +76,10 @@ test('POST /public/pedidos con mismo submission_id no duplica pedido', async () 
   await withServer(app, async (baseUrl) => {
     const headers = { 'content-type': 'application/json', 'x-forwarded-for': '9.9.9.9' };
 
-    const r1 = await fetch(`${baseUrl}/public/pedidos`, { method: 'POST', headers, body: JSON.stringify(payload) });
+    const r1 = await fetch(`${baseUrl}/public/pedidos?empresa_id=1`, { method: 'POST', headers, body: JSON.stringify(payload) });
     const j1 = await r1.json();
 
-    const r2 = await fetch(`${baseUrl}/public/pedidos`, { method: 'POST', headers, body: JSON.stringify(payload) });
+    const r2 = await fetch(`${baseUrl}/public/pedidos?empresa_id=1`, { method: 'POST', headers, body: JSON.stringify(payload) });
     const j2 = await r2.json();
 
     assert.equal(r1.status, 200);

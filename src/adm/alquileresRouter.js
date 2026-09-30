@@ -1,48 +1,19 @@
-// src/adm/alquileresRouter.js
 import { Router } from 'express';
-import { withAuth, isRepartidor } from '../services.js';
-import {
-  listarAlquileres,
-  resumenAlquileres,
-  generarLinkMercadoPago,
-  marcarAlquilerCobrado,
-  desmarcarAlquilerCobrado,
-  enviarComunicacionAlquiler,
-  generarCargosPeriodo
-} from './alquileresController.js';
+import { withAuth as defaultWithAuth } from '../services.js';
+import { requireCanonicalBackofficeRole } from '../routes/canonicalBackofficeRole.js';
+import * as defaultHandlers from './alquileresController.js';
 
-const router = Router();
+export function createAlquileresRouter({ withAuth = defaultWithAuth, handlers = defaultHandlers } = {}) {
+  const router = Router();
+  const secured = [withAuth, requireCanonicalBackofficeRole];
+  router.get('/', ...secured, handlers.listarAlquileres);
+  router.get('/resumen', ...secured, handlers.resumenAlquileres);
+  router.post('/mp-link', ...secured, handlers.generarLinkMercadoPago);
+  router.post('/marcar-cobrado', ...secured, handlers.marcarAlquilerCobrado);
+  router.post('/desmarcar-cobrado', ...secured, handlers.desmarcarAlquilerCobrado);
+  router.post('/comunicacion', ...secured, handlers.enviarComunicacionAlquiler);
+  router.post('/generar', ...secured, handlers.generarCargosPeriodo);
+  return router;
+}
 
-router.use(withAuth);
-router.use((req, res, next) => {
-  if (isRepartidor(req)) {
-    return res.status(403).json({ error: 'No autorizado.' });
-  }
-  next();
-});
-
-// Todas las rutas de este módulo requieren autenticación
-router.use(withAuth);
-
-// Listado de alquileres por período
-router.get('/', listarAlquileres);
-
-// KPIs / resumen para período
-router.get('/resumen', resumenAlquileres);
-
-// Integración Mercado Pago: generar link de pago para cliente + período
-router.post('/mp-link', generarLinkMercadoPago);
-
-// Marcar alquiler como cobrado (cruce manual con pagos)
-router.post('/marcar-cobrado', marcarAlquilerCobrado);
-
-// Deshacer cobro manual y volver a facturado
-router.post('/desmarcar-cobrado', desmarcarAlquilerCobrado);
-
-// Comunicación individual desde cuenta corriente
-router.post('/comunicacion', enviarComunicacionAlquiler);
-
-// Generar cargos masivos para el mes (Botón "Generar Período")
-router.post('/generar', generarCargosPeriodo);
-
-export default router;
+export default createAlquileresRouter();

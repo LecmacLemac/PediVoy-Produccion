@@ -4,6 +4,12 @@ import express from 'express';
 
 import { createRepartidorApiRouter } from '../src/routes/repartidorApi.js';
 
+const validChecklist = {
+  cliente_confirmado: true,
+  producto_entregado: true,
+  cobro_confirmado: true,
+};
+
 function buildTestApp({ query }) {
   return buildTestAppWithDeps({ query });
 }
@@ -14,6 +20,7 @@ function buildTestAppWithDeps({ query, pool = {}, ...overrides }) {
   app.use('/api/repartidor', createRepartidorApiRouter({
     query,
     pool,
+    withTransaction: async work => work(query),
     withAuth: (req, res, next) => {
       req.user = {
         chofer_id: 7,
@@ -28,6 +35,8 @@ function buildTestAppWithDeps({ query, pool = {}, ...overrides }) {
     notificarEnRuta: async () => {},
     notificarPedidoTransferencia: async () => {},
     ejecutarEstrategiaVecinos: async () => {},
+    awardPointsForDeliveredOrder: async () => {},
+    generateComisionesForDeliveredOrder: async () => {},
     registrarMovimientosActivosDesdePedido: async () => {},
     ...overrides,
   }));
@@ -42,6 +51,56 @@ async function withServer(app, fn) {
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
+}
+
+function createCanonicalCompositionMock({
+  items = [],
+  products = [],
+  empresaId = 3,
+  pedidoId = 42,
+  choferId = 7,
+} = {}) {
+  const productIds = [...new Set(items.map(row => row.producto_id).filter(Number.isSafeInteger))].sort((a, b) => a - b);
+  const legacyNames = [...new Set(items
+    .filter(row => row.producto_id == null)
+    .map(row => String(row.producto || '').trim().toLowerCase())
+    .filter(Boolean))].sort();
+  const expectedLocks = [
+    `stock:${empresaId}:referencia:pedido:${pedidoId}`,
+    `stock:${empresaId}:chofer:${choferId}`,
+    ...productIds.map(id => `stock:${empresaId}:producto:${id}`),
+  ];
+  const seenLocks = [];
+
+  return {
+    handle(sql, params) {
+      if (sql.includes('FROM items_pedido') && sql.includes('ORDER BY id') && !sql.includes('JOIN')) {
+        assert.deepEqual(params, [pedidoId]);
+        return { rows: items };
+      }
+      if (sql.includes('SELECT id') && sql.includes('FROM productos') && !sql.includes('FOR SHARE')) {
+        assert.deepEqual(params, [empresaId, productIds, legacyNames]);
+        assert.match(sql, /WHERE empresa_id = \$1/);
+        return { rows: products.map(({ id }) => ({ id })) };
+      }
+      if (sql.includes('pg_advisory_xact_lock(hashtextextended')) {
+        assert.equal(params.length, 1);
+        seenLocks.push(params[0]);
+        assert.equal(params[0], expectedLocks[seenLocks.length - 1]);
+        return { rows: [{ locked: true }] };
+      }
+      if (sql.includes('SELECT id, nombre, retornable, stock_infinito, config_activo') && sql.includes('FOR SHARE')) {
+        assert.deepEqual(params, [empresaId, productIds, legacyNames]);
+        assert.match(sql, /ORDER BY id\s+FOR SHARE/);
+        assert.deepEqual(seenLocks, expectedLocks);
+        return { rows: products };
+      }
+      return null;
+    },
+    assertComplete() {
+      assert.deepEqual(seenLocks, expectedLocks);
+    },
+  };
 }
 
 test('GET /api/repartidor/pedidos expone retornables pendientes del cliente', async () => {
@@ -347,10 +406,10 @@ test('cambiar pedido a transferencia no envia WhatsApp antes del modal QR', asyn
   const notificaciones = [];
   const app = buildTestAppWithDeps({
     query: async (sql, params) => {
-      if (sql.startsWith('ALTER TABLE puntos_entrega')) return [];
-
-      if (sql.includes('FROM pedidos p') && sql.includes('p.id = $1 AND p.empresa_id = $2')) {
+      if (sql.includes('FROM pedidos p') && sql.includes('FOR UPDATE')) {
+        assert.deepEqual(params, [42, 3]);
         return [{
+          id: 42,
           chofer_id: 7,
           metodo_pago: 'efectivo',
           estado: 'pendiente',
@@ -360,9 +419,11 @@ test('cambiar pedido a transferencia no envia WhatsApp antes del modal QR', asyn
         }];
       }
 
-      if (sql.includes('UPDATE pedidos SET metodo_pago')) {
-        assert.deepEqual(params, ['transferencia', '42', 3]);
-        return [];
+      if (sql.includes('FROM choferes')) return [{ id: 7 }];
+
+      if (sql.includes('UPDATE pedidos')) {
+        assert.deepEqual(params, [7, 'transferencia', 42, 3]);
+        return [{ id: 42 }];
       }
 
       throw new Error(`Consulta inesperada: ${sql}`);
@@ -388,11 +449,10 @@ test('repartidor notifica al cliente cuando inicia ruta', async () => {
   const notificaciones = [];
   const app = buildTestAppWithDeps({
     query: async (sql, params) => {
-      if (sql.startsWith('ALTER TABLE puntos_entrega')) return [];
-
-      if (sql.includes('FROM pedidos p') && sql.includes('p.id = $1 AND p.empresa_id = $2')) {
-        assert.deepEqual(params, ['42', 3]);
+      if (sql.includes('FROM pedidos p') && sql.includes('FOR UPDATE')) {
+        assert.deepEqual(params, [42, 3]);
         return [{
+          id: 42,
           chofer_id: 7,
           metodo_pago: 'efectivo',
           estado: 'pendiente',
@@ -402,9 +462,11 @@ test('repartidor notifica al cliente cuando inicia ruta', async () => {
         }];
       }
 
-      if (sql.includes('UPDATE pedidos SET estado')) {
-        assert.deepEqual(params, ['en_ruta', '42', 3]);
-        return [];
+      if (sql.includes('FROM choferes')) return [{ id: 7 }];
+
+      if (sql.includes('UPDATE pedidos')) {
+        assert.deepEqual(params, [7, 'en_ruta', 42, 3]);
+        return [{ id: 42 }];
       }
 
       throw new Error(`Consulta inesperada: ${sql}`);
@@ -423,7 +485,7 @@ test('repartidor notifica al cliente cuando inicia ruta', async () => {
     assert.equal(resp.status, 200);
   });
 
-  assert.deepEqual(notificaciones, [{ pedidoId: '42', empresaId: 3 }]);
+  assert.deepEqual(notificaciones, [{ pedidoId: 42, empresaId: 3 }]);
 });
 
 test('activos-resumen no consulta inventario cuando el pedido no tiene productos activos', async () => {
@@ -450,7 +512,15 @@ test('activos-resumen no consulta inventario cuando el pedido no tiene productos
           cantidad: 2,
           precio_unitario: 600,
           producto_id: 55,
+        }];
+      }
+
+      if (sql.includes('FROM productos') && sql.includes('FOR SHARE')) {
+        return [{
+          id: 55,
+          nombre: 'Bidón 20L',
           config_activo: null,
+          retornable: false,
         }];
       }
 
@@ -469,7 +539,7 @@ test('activos-resumen no consulta inventario cuando el pedido no tiene productos
     assert.deepEqual(body.movimientos_existentes, []);
   });
 
-  assert.equal(sqlCalls.length, 2);
+  assert.equal(sqlCalls.length, 3);
   assert.ok(sqlCalls.every((sql) => !sql.includes('empresa_activos')));
   assert.ok(sqlCalls.every((sql) => !sql.includes('pedido_activos')));
 });
@@ -494,10 +564,15 @@ test('entregar bloquea solo la fila de pedidos cuando usa LEFT JOIN', async () =
             metodo_pago: 'efectivo',
             zona_id: null,
             punto_entrega_id: 9,
+            punto_entrega_tenant_id: 9,
             monto: 1200,
             cuenta_corriente_habilitada: false,
           }],
         };
+      }
+
+      if (sql.includes('FROM choferes') && sql.includes('FOR SHARE')) {
+        return { rows: [{ id: 7 }] };
       }
 
       throw new Error(`Consulta inesperada: ${sql}`);
@@ -516,7 +591,7 @@ test('entregar bloquea solo la fila de pedidos cuando usa LEFT JOIN', async () =
     const resp = await fetch(`${baseUrl}/api/repartidor/pedidos/42/entregar`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ movimientos: [] }),
+      body: JSON.stringify({ movimientos: [], checklist: validChecklist }),
     });
     assert.equal(resp.status, 200);
   });
@@ -531,6 +606,7 @@ function buildEntregaClient({
   comprobantes = [],
 } = {}) {
   const sqlCalls = [];
+  const canonical = createCanonicalCompositionMock();
   const client = {
     query: async (sql, params) => {
       sqlCalls.push({ sql, params });
@@ -538,6 +614,9 @@ function buildEntregaClient({
       if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
         return { rows: [] };
       }
+
+      const canonicalResult = canonical.handle(sql, params);
+      if (canonicalResult) return canonicalResult;
 
       if (sql.includes('FROM pedidos p') && sql.includes('FOR UPDATE')) {
         return {
@@ -549,14 +628,33 @@ function buildEntregaClient({
             metodo_pago: metodoPago,
             zona_id: 5,
             punto_entrega_id: 9,
+            punto_entrega_tenant_id: 9,
             monto: 1200,
             cuenta_corriente_habilitada: false,
           }],
         };
       }
 
-      if (sql.includes('UPDATE pedidos') && sql.includes("estado = 'entregado'")) {
+      if (sql.includes('FROM choferes') && sql.includes('FOR SHARE')) {
+        assert.deepEqual(params, [7, 3]);
+        return { rows: [{ id: 7 }] };
+      }
+
+      if (sql.includes('FROM puntos_entrega') && sql.includes('FOR SHARE')) {
+        assert.deepEqual(params, [9, 3]);
+        return { rows: [{ id: 9, cuenta_corriente_habilitada: false }] };
+      }
+
+      if (sql.includes('FROM items_pedido') && sql.includes('ORDER BY id')) {
         return { rows: [] };
+      }
+
+      if (sql.includes('FROM productos') && sql.includes('FOR SHARE')) {
+        return { rows: [] };
+      }
+
+      if (sql.includes('UPDATE pedidos') && sql.includes("estado = 'entregado'")) {
+        return { rows: [{ id: 42 }] };
       }
 
       if (sql.includes('FROM items_pedido ip') && sql.includes('JOIN productos p')) {
@@ -564,6 +662,10 @@ function buildEntregaClient({
       }
 
       if (sql.includes('FROM items_pedido ip') && sql.includes('COALESCE(p.retornable')) {
+        return { rows: [] };
+      }
+
+      if (sql.includes('INSERT INTO entregas_evidencias')) {
         return { rows: [] };
       }
 
@@ -595,7 +697,7 @@ test('entregar solicita comprobante cuando transferencia ya estaba guardada y no
     const resp = await fetch(`${baseUrl}/api/repartidor/pedidos/42/entregar`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ movimientos: [] }),
+      body: JSON.stringify({ movimientos: [], checklist: validChecklist }),
     });
     assert.equal(resp.status, 200);
     assert.deepEqual(await resp.json(), { ok: true });
@@ -625,7 +727,7 @@ test('reintentar una entrega ya confirmada no duplica la solicitud de comprobant
     const resp = await fetch(`${baseUrl}/api/repartidor/pedidos/42/entregar`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ movimientos: [] }),
+      body: JSON.stringify({ movimientos: [], checklist: validChecklist }),
     });
     assert.equal(resp.status, 200);
     assert.deepEqual(await resp.json(), { ok: true, already: true });
@@ -695,7 +797,7 @@ test('entregar no solicita comprobante si hay adjunto pendiente o aprobado', asy
         const resp = await fetch(`${baseUrl}/api/repartidor/pedidos/42/entregar`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ movimientos: [] }),
+          body: JSON.stringify({ movimientos: [], checklist: validChecklist }),
         });
         assert.equal(resp.status, 200);
       });
@@ -737,7 +839,7 @@ test('entregar vuelve a solicitar si solo hay comprobantes rechazados o duplicad
     const resp = await fetch(`${baseUrl}/api/repartidor/pedidos/42/entregar`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ movimientos: [] }),
+      body: JSON.stringify({ movimientos: [], checklist: validChecklist }),
     });
     assert.equal(resp.status, 200);
   });
@@ -761,7 +863,7 @@ test('entregar no notifica otros metodos y un fallo de WhatsApp no revierte la e
       const resp = await fetch(`${baseUrl}/api/repartidor/pedidos/42/entregar`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ movimientos: [] }),
+        body: JSON.stringify({ movimientos: [], checklist: validChecklist }),
       });
       assert.equal(resp.status, 200);
     });
@@ -784,7 +886,7 @@ test('entregar no notifica otros metodos y un fallo de WhatsApp no revierte la e
       const resp = await fetch(`${baseUrl}/api/repartidor/pedidos/42/entregar`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ movimientos: [] }),
+        body: JSON.stringify({ movimientos: [], checklist: validChecklist }),
       });
       assert.equal(resp.status, 200);
       assert.deepEqual(await resp.json(), { ok: true });
@@ -797,11 +899,24 @@ test('entregar no notifica otros metodos y un fallo de WhatsApp no revierte la e
 
 test('entregar registra saldo de retornables por cliente descontando vacios recibidos', async () => {
   const sqlCalls = [];
+  const canonical = createCanonicalCompositionMock({
+    items: [{ id: 501, producto_id: 55, producto: 'Bidón retornable', cantidad: 3 }],
+    products: [{
+      id: 55,
+      nombre: 'Bidón retornable',
+      retornable: true,
+      stock_infinito: false,
+      config_activo: {},
+    }],
+  });
   const client = {
     query: async (sql, params) => {
       sqlCalls.push({ sql, params });
 
       if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rows: [] };
+
+      const canonicalResult = canonical.handle(sql, params);
+      if (canonicalResult) return canonicalResult;
 
       if (sql.includes('FROM pedidos p') && sql.includes('FOR UPDATE')) {
         return { rows: [{
@@ -812,27 +927,68 @@ test('entregar registra saldo de retornables por cliente descontando vacios reci
           metodo_pago: 'efectivo',
           zona_id: 5,
           punto_entrega_id: 9,
+          punto_entrega_tenant_id: 9,
           monto: 1200,
           cuenta_corriente_habilitada: false,
         }] };
       }
 
-      if (sql.includes('UPDATE pedidos') && sql.includes("estado = 'entregado'")) return { rows: [] };
+      if (sql.includes('FROM choferes') && sql.includes('FOR SHARE')) {
+        assert.deepEqual(params, [7, 3]);
+        return { rows: [{ id: 7 }] };
+      }
+
+      if (sql.includes('FROM puntos_entrega') && sql.includes('FOR SHARE')) {
+        assert.deepEqual(params, [9, 3]);
+        return { rows: [{ id: 9, cuenta_corriente_habilitada: false }] };
+      }
+
+      if (sql.includes('FROM items_pedido') && sql.includes('ORDER BY id')) {
+        return { rows: [{ id: 501, producto_id: 55, producto: 'Bidón retornable', cantidad: 3 }] };
+      }
+
+      if (sql.includes('FROM productos') && sql.includes('FOR SHARE')) {
+        return { rows: [{ id: 55, nombre: 'Bidón retornable', retornable: true, config_activo: {} }] };
+      }
+
+      if (sql.includes('UPDATE pedidos') && sql.includes("estado = 'entregado'")) return { rows: [{ id: 42 }] };
+
+      if (sql.includes('config_activo') && sql.includes('item_pedido_id')) return { rows: [] };
 
       if (sql.includes('FROM items_pedido ip') && sql.includes('JOIN productos p') && !sql.includes('COALESCE(p.retornable')) {
         return { rows: [{ cantidad: 3, producto_id: 55 }] };
       }
 
-      if (sql.includes('INSERT INTO chofer_stock_mov')) return { rows: [] };
-      if (sql.includes('INSERT INTO chofer_stock')) return { rows: [] };
+      if (sql.includes('UPDATE chofer_stock') && sql.includes('cantidad = cantidad - $4')) {
+        assert.deepEqual(params, [3, 7, 55, 3]);
+        return { rows: [{ empresa_id: 3, chofer_id: 7, producto_id: 55 }] };
+      }
+      if (sql.includes('INSERT INTO chofer_stock_mov')) {
+        assert.equal(params[0], 3);
+        assert.equal(params[1], 7);
+        assert.equal(params[2], 55);
+        assert.equal(params[3], 3);
+        assert.equal(params[4], 'Pedido #42');
+        return { rows: [{ id: 81 }] };
+      }
 
       if (sql.includes('FROM items_pedido ip') && sql.includes('COALESCE(p.retornable')) {
         return { rows: [{ producto_id: 55, nombre: 'Bidón retornable', entregados: '3' }] };
       }
 
-      if (sql.includes('INSERT INTO cliente_retornables_saldos')) {
-        assert.deepEqual(params, [3, 9, 55, 1]);
-        return { rows: [{ saldo: '4' }] };
+      if (sql.includes('INSERT INTO cliente_retornables_saldos') && sql.includes('DO NOTHING')) {
+        assert.deepEqual(params, [3, 9, 55]);
+        return { rows: [] };
+      }
+
+      if (sql.includes('FROM cliente_retornables_saldos') && sql.includes('FOR UPDATE')) {
+        assert.deepEqual(params, [3, 9, 55]);
+        return { rows: [{ saldo: '3' }] };
+      }
+
+      if (sql.includes('UPDATE cliente_retornables_saldos')) {
+        assert.deepEqual(params, [3, 9, 55, 4]);
+        return { rows: [] };
       }
 
       if (sql.includes('INSERT INTO cliente_retornables_movimientos')) {
@@ -849,7 +1005,7 @@ test('entregar registra saldo de retornables por cliente descontando vacios reci
       }
 
       if (sql.includes('INSERT INTO retornables_saldos')) {
-        assert.deepEqual(params, [3, 'cliente', 9, 55, 1]);
+        assert.deepEqual(params, [3, 'cliente', 9, 55, 4]);
         return { rows: [{ saldo: '4' }] };
       }
 
@@ -867,6 +1023,8 @@ test('entregar registra saldo de retornables por cliente descontando vacios reci
         return { rows: [{ id: 91, saldo_resultante: '4' }] };
       }
 
+      if (sql.includes('INSERT INTO entregas_evidencias')) return { rows: [] };
+
       throw new Error(`Consulta inesperada: ${sql}`);
     },
     release: () => {},
@@ -883,6 +1041,7 @@ test('entregar registra saldo de retornables por cliente descontando vacios reci
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         movimientos: [],
+        checklist: validChecklist,
         retornables: [{ producto_id: 55, devueltos: 2 }],
       }),
     });

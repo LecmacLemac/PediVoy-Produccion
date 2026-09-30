@@ -6,6 +6,7 @@ import OpenAI from 'openai';
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { requireCanonicalBackofficeRole } from './canonicalBackofficeRole.js';
 const LANDING_TEMPLATES = [
   {
     id: 'multiempresa-pro',
@@ -174,7 +175,7 @@ export function createAiSiteBuilderRouter(deps) {
   });
 
   // POST /api/ai/build-site
-  router.post('/build-site', withAuth, async (req, res) => {
+  router.post('/build-site', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     try {
       const { prompt, empresa_id, template_id } = req.body || {};
       const esSuperAdmin = isSuper(req);

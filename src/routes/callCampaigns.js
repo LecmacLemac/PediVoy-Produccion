@@ -7,6 +7,7 @@ import {
   listCampaigns,
   updateCampaignStatus,
 } from '../calls/repository.js';
+import { requireCanonicalBackofficeRole } from './canonicalBackofficeRole.js';
 
 export function createCallCampaignsRouter(deps) {
   const { withAuth, resolveEmpresaId } = deps;
@@ -23,7 +24,7 @@ export function createCallCampaignsRouter(deps) {
     }
   });
 
-  router.post('/', withAuth, async (req, res) => {
+  router.post('/', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     try {
       const empresaId = resolveEmpresaId(req);
       const { name, purpose, prompt_version, max_attempts, allowed_start_time, allowed_end_time, metadata } = req.body || {};
@@ -60,7 +61,7 @@ export function createCallCampaignsRouter(deps) {
     }
   });
 
-  router.post('/:id/start', withAuth, async (req, res) => {
+  router.post('/:id/start', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     try {
       const empresaId = resolveEmpresaId(req);
       const campaign = await updateCampaignStatus({ id: Number(req.params.id), empresaId, status: 'active' });
@@ -72,7 +73,7 @@ export function createCallCampaignsRouter(deps) {
     }
   });
 
-  router.post('/:id/pause', withAuth, async (req, res) => {
+  router.post('/:id/pause', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     try {
       const empresaId = resolveEmpresaId(req);
       const campaign = await updateCampaignStatus({ id: Number(req.params.id), empresaId, status: 'paused' });
@@ -84,7 +85,7 @@ export function createCallCampaignsRouter(deps) {
     }
   });
 
-  router.post('/:id/contacts/import', withAuth, async (req, res) => {
+  router.post('/:id/contacts/import', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     try {
       const empresaId = resolveEmpresaId(req);
       const campaignId = Number(req.params.id);

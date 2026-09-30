@@ -20,7 +20,10 @@ function buildLandingPreview(html, slug, config, products) {
       if (options.method && options.method.toUpperCase() !== 'GET') throw new Error('Preview is read only');
       let body;
       if (url.pathname === '/public/config' && url.searchParams.get('slug') === data.slug) body = data.config;
-      else if (['/public/productos', '/api/public/productos'].includes(url.pathname) && url.searchParams.get('empresa_id') === String(data.config.empresa_id)) body = data.products;
+      else if (['/public/productos', '/api/public/productos'].includes(url.pathname) && (
+        url.searchParams.get('slug') === data.slug
+        || url.searchParams.get('empresa_id') === String(data.config.empresa_id)
+      )) body = data.products;
       else throw new Error('API unavailable in preview');
       return new Response(JSON.stringify(body), { headers: { 'Content-Type': 'application/json' } });
     };
@@ -36,7 +39,7 @@ async function showLandingPreview(html, empresa) {
   if (!response.ok) throw new Error('No se pudo cargar la empresa');
   const config = await response.json();
   if (Number(config.empresa_id) !== Number(empresa.id)) throw new Error('El slug no corresponde a la empresa seleccionada');
-  const catalog = await fetch(`/public/productos?empresa_id=${encodeURIComponent(config.empresa_id)}&scope=landing`, { credentials: 'omit' });
+  const catalog = await fetch(`/public/productos?slug=${encodeURIComponent(slug)}&scope=landing`, { credentials: 'omit' });
   if (!catalog.ok) throw new Error('No se pudo cargar el catálogo');
   const htmlPreview = buildLandingPreview(html, slug, config, await catalog.json());
   // Discard an in-flight preview after changing the selected company.

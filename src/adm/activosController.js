@@ -1,4 +1,17 @@
-import { query, pool } from '../db.js';
+import { query, withTransaction as dbWithTransaction } from '../db.js';
+
+function transactionRunner(req) {
+  return req.app?.locals?.withTransaction || dbWithTransaction;
+}
+
+function transactionFailure(res, label, error, fallback) {
+  if (error?.code === 'TRANSACTION_OUTCOME_UNKNOWN') {
+    return res.status(503).json({ error: 'No se pudo confirmar el resultado de la transacción.', code: 'TRANSACTION_OUTCOME_UNKNOWN' });
+  }
+  console.error(label, { code: error?.code || 'UNKNOWN' });
+  return res.status(500).json({ error: fallback });
+}
+
 
 // ==================================================================
 // HELPER: Resolver Empresa (Super Admin vs Usuario Normal)
@@ -59,7 +72,7 @@ export async function listarActivos(req, res) {
     const rows = await query(sql, params);
     res.json(rows);
   } catch (e) {
-    console.error('Error listarActivos:', e);
+    console.error('Error listarActivos:', { code: e?.code || 'UNKNOWN' });
     res.status(500).json({ error: 'Error obteniendo inventario de activos' });
   }
 }
@@ -96,7 +109,7 @@ export async function getActivoPorId(req, res) {
     // Devolvemos un solo registro (la ficha del activo)
     return res.json(rows[0]);
   } catch (e) {
-    console.error('Error getActivoPorId:', e);
+    console.error('Error getActivoPorId:', { code: e?.code || 'UNKNOWN' });
     return res.status(500).json({ error: 'Error obteniendo activo' });
   }
 }
@@ -143,7 +156,7 @@ export async function crearActivo(req, res) {
     res.json({ ok: true, message: 'Activo creado correctamente.' });
 
   } catch (e) {
-    console.error('Error crearActivo:', e);
+    console.error('Error crearActivo:', { code: e?.code || 'UNKNOWN' });
     if (e.message.includes('unique')) {
       return res.status(400).json({ error: 'Ya existe un activo con ese código en esta empresa.' });
     }
@@ -159,75 +172,25 @@ export async function asignarActivo(req, res) {
   const { activo_id, cliente_id, notas, firma_base64 } = req.body;
   const empresaId = getTargetEmpresa(req);
   const usuario = req.user.username;
-
-  const client = await pool.connect();
   try {
-    await client.query('BEGIN');
-
-    // 1) Bloqueamos el activo para esta empresa
-    const { rows: check } = await client.query(
-      'SELECT estado FROM empresa_activos WHERE id = $1 AND empresa_id = $2 FOR UPDATE',
-      [activo_id, empresaId]
-    );
-
-    if (!check.length) {
-      await client.query('ROLLBACK');
-      return res.status(404).json({ error: 'Activo no encontrado' });
-    }
-
-    if (check[0].estado !== 'disponible') {
-      await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'Activo no disponible.' });
-    }
-
-    // 2) Validar que el cliente pertenezca a la misma empresa
-    const { rows: cRows } = await client.query(
-      'SELECT id FROM puntos_entrega WHERE id = $1 AND empresa_id = $2 LIMIT 1',
-      [cliente_id, empresaId]
-    );
-    if (!cRows.length) {
-      await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'Cliente no encontrado para esta empresa' });
-    }
-
-    // 3) Marcamos como prestado al cliente
-    await client.query(
-      `
-      UPDATE empresa_activos 
-      SET estado = 'prestado',
-          cliente_id = $1,
-          updated_at = NOW()
-      WHERE empresa_id = $2 AND id = $3
-      `,
-      [cliente_id, empresaId, activo_id]
-    );
-
-    // 4) Registramos en historial
-    await client.query(
-      `
-      INSERT INTO historial_activos 
+    const result = await transactionRunner(req)(async q => {
+      const check = await q('SELECT estado FROM empresa_activos WHERE id = $1 AND empresa_id = $2 FOR UPDATE', [activo_id, empresaId]);
+      if (!check.length) return { status: 404, payload: { error: 'Activo no encontrado' } };
+      if (check[0].estado !== 'disponible') return { status: 400, payload: { error: 'Activo no disponible.' } };
+      const clients = await q('SELECT id FROM puntos_entrega WHERE id = $1 AND empresa_id = $2 LIMIT 1', [cliente_id, empresaId]);
+      if (!clients.length) return { status: 400, payload: { error: 'Cliente no encontrado para esta empresa' } };
+      const updated = await q(`UPDATE empresa_activos SET estado = 'prestado', cliente_id = $1, updated_at = NOW()
+        WHERE empresa_id = $2 AND id = $3 AND estado = 'disponible' RETURNING id`, [cliente_id, empresaId, activo_id]);
+      if (updated.length !== 1) throw new Error('ASSET_EXACT_ROW_FAILED');
+      await q(`INSERT INTO historial_activos
         (empresa_id, activo_id, cliente_id, accion, usuario, observacion, firma_digital, fecha)
-      VALUES 
-        ($1, $2, $3, 'asignacion', $4, $5, $6, NOW())
-      `,
-      [
-        empresaId,
-        activo_id,
-        cliente_id,
-        usuario,
-        notas || 'Entrega bajo firma',
-        firma_base64 || null
-      ]
-    );
-
-    await client.query('COMMIT');
-    return res.json({ ok: true });
-  } catch (e) {
-    try { await client.query('ROLLBACK'); } catch {}
-    console.error('Error asignarActivo:', e);
-    return res.status(400).json({ error: e.message || 'Error asignando activo' });
-  } finally {
-    client.release();
+        VALUES ($1, $2, $3, 'asignacion', $4, $5, $6, NOW())`,
+        [empresaId, activo_id, cliente_id, usuario, notas || 'Entrega bajo firma', firma_base64 || null]);
+      return { status: 200, payload: { ok: true } };
+    });
+    return res.status(result.status).json(result.payload);
+  } catch (error) {
+    return transactionFailure(res, 'ACTIVOS.ASIGNAR.ERROR', error, 'Error asignando activo');
   }
 }
 
@@ -238,61 +201,23 @@ export async function devolverActivo(req, res) {
   const { activo_id, motivo, estado_final } = req.body;
   const empresaId = getTargetEmpresa(req);
   const usuario = req.user.username;
-
-  const client = await pool.connect();
   try {
-    await client.query('BEGIN');
-
-    // 1) Leemos el cliente actual del activo
-    const { rows: actual } = await client.query(
-      'SELECT cliente_id FROM empresa_activos WHERE id = $1 AND empresa_id = $2 FOR UPDATE',
-      [activo_id, empresaId]
-    );
-
-    if (!actual.length) {
-      await client.query('ROLLBACK');
-      return res.status(404).json({ error: 'Activo no encontrado' });
-    }
-
-    const clientePrevio = actual[0]?.cliente_id || null;
-
-    // 2) Volvemos el activo al depósito
-    await client.query(
-      `
-      UPDATE empresa_activos 
-      SET estado = $1,
-          cliente_id = NULL,
-          updated_at = NOW()
-      WHERE empresa_id = $2 AND id = $3
-      `,
-      [estado_final || 'disponible', empresaId, activo_id]
-    );
-
-    // 3) Registramos devolución en historial
-    await client.query(
-      `
-      INSERT INTO historial_activos 
+    const result = await transactionRunner(req)(async q => {
+      const actual = await q('SELECT cliente_id FROM empresa_activos WHERE id = $1 AND empresa_id = $2 FOR UPDATE', [activo_id, empresaId]);
+      if (!actual.length) return { status: 404, payload: { error: 'Activo no encontrado' } };
+      const clientePrevio = actual[0]?.cliente_id || null;
+      const updated = await q(`UPDATE empresa_activos SET estado = $1, cliente_id = NULL, updated_at = NOW()
+        WHERE empresa_id = $2 AND id = $3 RETURNING id`, [estado_final || 'disponible', empresaId, activo_id]);
+      if (updated.length !== 1) throw new Error('ASSET_EXACT_ROW_FAILED');
+      await q(`INSERT INTO historial_activos
         (empresa_id, activo_id, cliente_id, accion, usuario, observacion, fecha)
-      VALUES 
-        ($1, $2, $3, 'devolucion', $4, $5, NOW())
-      `,
-      [
-        empresaId,
-        activo_id,
-        clientePrevio,
-        usuario,
-        motivo || 'Devolución al depósito'
-      ]
-    );
-
-    await client.query('COMMIT');
-    return res.json({ ok: true });
-  } catch (e) {
-    try { await client.query('ROLLBACK'); } catch {}
-    console.error('Error devolverActivo:', e);
-    return res.status(500).json({ error: 'Error procesando devolución' });
-  } finally {
-    client.release();
+        VALUES ($1, $2, $3, 'devolucion', $4, $5, NOW())`,
+        [empresaId, activo_id, clientePrevio, usuario, motivo || 'Devolución al depósito']);
+      return { status: 200, payload: { ok: true } };
+    });
+    return res.status(result.status).json(result.payload);
+  } catch (error) {
+    return transactionFailure(res, 'ACTIVOS.DEVOLVER.ERROR', error, 'Error procesando devolución');
   }
 }
 
@@ -304,52 +229,20 @@ export async function registrarSanitizacion(req, res) {
   const { activo_id, notas } = req.body;
   const empresaId = getTargetEmpresa(req);
   const usuario = req.user.username;
-
-  const client = await pool.connect();
   try {
-    await client.query('BEGIN');
-
-    // 1) Actualizamos la fecha de sanitización
-    const { rows: updated } = await client.query(
-      `
-      UPDATE empresa_activos 
-      SET ultima_sanitizacion = NOW(),
-          updated_at = NOW()
-      WHERE id = $1 AND empresa_id = $2
-      RETURNING id
-      `,
-      [activo_id, empresaId]
-    );
-
-    if (!updated.length) {
-      await client.query('ROLLBACK');
-      return res.status(404).json({ error: 'Activo no encontrado o sin permisos' });
-    }
-
-    // 2) Guardamos historial de mantenimiento
-    await client.query(
-      `
-      INSERT INTO historial_activos 
+    const result = await transactionRunner(req)(async q => {
+      const updated = await q(`UPDATE empresa_activos SET ultima_sanitizacion = NOW(), updated_at = NOW()
+        WHERE id = $1 AND empresa_id = $2 RETURNING id`, [activo_id, empresaId]);
+      if (updated.length !== 1) return { status: 404, payload: { error: 'Activo no encontrado o sin permisos' } };
+      await q(`INSERT INTO historial_activos
         (empresa_id, activo_id, accion, usuario, observacion, fecha)
-      VALUES 
-        ($1, $2, 'mantenimiento', $3, $4, NOW())
-      `,
-      [
-        empresaId,
-        activo_id,
-        usuario,
-        notas || 'Limpieza y Sanitización Realizada'
-      ]
-    );
-
-    await client.query('COMMIT');
-    return res.json({ ok: true, message: 'Mantenimiento registrado exitosamente.' });
-  } catch (e) {
-    try { await client.query('ROLLBACK'); } catch {}
-    console.error('Error registrarSanitizacion:', e);
-    return res.status(500).json({ error: e.message || 'Error registrando mantenimiento' });
-  } finally {
-    client.release();
+        VALUES ($1, $2, 'mantenimiento', $3, $4, NOW())`,
+        [empresaId, activo_id, usuario, notas || 'Limpieza y Sanitización Realizada']);
+      return { status: 200, payload: { ok: true, message: 'Mantenimiento registrado exitosamente.' } };
+    });
+    return res.status(result.status).json(result.payload);
+  } catch (error) {
+    return transactionFailure(res, 'ACTIVOS.SANITIZAR.ERROR', error, 'Error registrando mantenimiento');
   }
 }
 
@@ -433,8 +326,8 @@ export async function actualizarActivo(req, res) {
     }
     return res.json({ ok: true, data: rows[0] });
   } catch (e) {
-    console.error('Error actualizarActivo:', e);
-    return res.status(500).json({ error: e.message || 'Error actualizando activo' });
+    console.error('Error actualizarActivo:', { code: e?.code || 'UNKNOWN' });
+    return res.status(500).json({ error: 'Error actualizando activo' });
   }
 }
 
@@ -443,48 +336,23 @@ export async function marcarBajaActivo(req, res) {
   const id = Number(req.params.id || req.body.id);
   const { notas } = req.body || {};
   const usuario = req.user?.username || null;
-
-  if (!Number.isInteger(id) || id <= 0) {
-    return res.status(400).json({ error: 'ID de activo inválido.' });
-  }
-
-  const client = await pool.connect();
+  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'ID de activo inválido.' });
   try {
-    await client.query('BEGIN');
-    const { rows: activos } = await client.query(
-      `SELECT id, estado, cliente_id FROM empresa_activos WHERE empresa_id = $1 AND id = $2 FOR UPDATE`,
-      [empresaId, id]
-    );
-
-    if (!activos.length) {
-      await client.query('ROLLBACK');
-      return res.status(404).json({ error: 'Activo no encontrado para esta empresa.' });
-    }
-
-    const activo = activos[0];
-    if (activo.estado === 'baja') {
-      await client.query('COMMIT');
-      return res.json({ ok: true, message: 'El activo ya estaba dado de baja.' });
-    }
-
-    await client.query(
-      `UPDATE empresa_activos SET estado = 'baja', cliente_id = NULL, updated_at = NOW() WHERE empresa_id = $1 AND id = $2`,
-      [empresaId, id]
-    );
-
-    await client.query(
-      `INSERT INTO historial_activos (empresa_id, activo_id, cliente_id, accion, usuario, observacion) VALUES ($1, $2, $3, $4, $5, $6)`,
-      [empresaId, id, activo.cliente_id || null, 'baja', usuario, notas || 'Baja definitiva del activo']
-    );
-
-    await client.query('COMMIT');
-    return res.json({ ok: true, message: 'Activo dado de baja correctamente.' });
-  } catch (e) {
-    try { await client.query('ROLLBACK'); } catch {}
-    console.error('Error marcarBajaActivo:', e);
-    return res.status(500).json({ error: e.message || 'Error marcando baja de activo' });
-  } finally {
-    client.release();
+    const result = await transactionRunner(req)(async q => {
+      const activos = await q('SELECT id, estado, cliente_id FROM empresa_activos WHERE empresa_id = $1 AND id = $2 FOR UPDATE', [empresaId, id]);
+      if (!activos.length) return { status: 404, payload: { error: 'Activo no encontrado para esta empresa.' } };
+      const activo = activos[0];
+      if (activo.estado === 'baja') return { status: 200, payload: { ok: true, message: 'El activo ya estaba dado de baja.' } };
+      const updated = await q(`UPDATE empresa_activos SET estado = 'baja', cliente_id = NULL, updated_at = NOW()
+        WHERE empresa_id = $1 AND id = $2 RETURNING id`, [empresaId, id]);
+      if (updated.length !== 1) throw new Error('ASSET_EXACT_ROW_FAILED');
+      await q(`INSERT INTO historial_activos (empresa_id, activo_id, cliente_id, accion, usuario, observacion)
+        VALUES ($1, $2, $3, $4, $5, $6)`, [empresaId, id, activo.cliente_id || null, 'baja', usuario, notas || 'Baja definitiva del activo']);
+      return { status: 200, payload: { ok: true, message: 'Activo dado de baja correctamente.' } };
+    });
+    return res.status(result.status).json(result.payload);
+  } catch (error) {
+    return transactionFailure(res, 'ACTIVOS.BAJA.ERROR', error, 'Error marcando baja de activo');
   }
 }
 
@@ -511,8 +379,8 @@ export async function getHistorialActivo(req, res) {
 
     return res.json({ ok: true, data: rows });
   } catch (e) {
-    console.error('Error getHistorialActivo:', e);
-    return res.status(500).json({ error: e.message || 'Error obteniendo historial de activo' });
+    console.error('Error getHistorialActivo:', { code: e?.code || 'UNKNOWN' });
+    return res.status(500).json({ error: 'Error obteniendo historial de activo' });
   }
 }
 
@@ -521,53 +389,25 @@ export async function enviarAReparacion(req, res) {
   const { activo_id, notas, lat, lng, firma_base64 } = req.body || {};
   const usuario = req.user?.username || null;
   const activoId = Number(activo_id);
-
   if (!Number.isInteger(activoId) || activoId <= 0) return res.status(400).json({ error: 'activo_id inválido.' });
-
-  const client = await pool.connect();
   try {
-    await client.query('BEGIN');
-    const { rows: activos } = await client.query(
-      `SELECT id, estado, cliente_id FROM empresa_activos WHERE empresa_id = $1 AND id = $2 FOR UPDATE`,
-      [empresaId, activoId]
-    );
-
-    if (!activos.length) {
-      await client.query('ROLLBACK');
-      return res.status(404).json({ error: 'Activo no encontrado para esta empresa.' });
-    }
-
-    const activo = activos[0];
-    const estadosValidos = ['disponible', 'prestado', 'reparacion'];
-    if (!estadosValidos.includes(activo.estado)) {
-      await client.query('ROLLBACK');
-      return res.status(400).json({ error: `No se puede enviar a reparación desde estado: ${activo.estado}` });
-    }
-
-    if (activo.estado === 'reparacion') {
-      await client.query('COMMIT');
-      return res.json({ ok: true, message: 'El activo ya está marcado en reparación.' });
-    }
-
-    await client.query(
-      `UPDATE empresa_activos SET estado = 'reparacion', cliente_id = NULL, updated_at = NOW() WHERE empresa_id = $1 AND id = $2`,
-      [empresaId, activoId]
-    );
-
-    await client.query(
-      `INSERT INTO historial_activos (empresa_id, activo_id, cliente_id, accion, usuario, observacion, latitud, longitud, firma_digital)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-      [empresaId, activoId, activo.cliente_id || null, 'reparacion', usuario, notas || 'Enviado a reparación', typeof lat === 'number' ? lat : null, typeof lng === 'number' ? lng : null, firma_base64 || null]
-    );
-
-    await client.query('COMMIT');
-    return res.json({ ok: true, message: 'Activo marcado como en reparación.' });
-  } catch (e) {
-    try { await client.query('ROLLBACK'); } catch {}
-    console.error('Error enviarAReparacion:', e);
-    return res.status(500).json({ error: e.message || 'Error enviando activo a reparación' });
-  } finally {
-    client.release();
+    const result = await transactionRunner(req)(async q => {
+      const activos = await q('SELECT id, estado, cliente_id FROM empresa_activos WHERE empresa_id = $1 AND id = $2 FOR UPDATE', [empresaId, activoId]);
+      if (!activos.length) return { status: 404, payload: { error: 'Activo no encontrado para esta empresa.' } };
+      const activo = activos[0];
+      if (!['disponible', 'prestado', 'reparacion'].includes(activo.estado)) return { status: 400, payload: { error: 'No se puede enviar a reparación desde el estado actual.' } };
+      if (activo.estado === 'reparacion') return { status: 200, payload: { ok: true, message: 'El activo ya está marcado en reparación.' } };
+      const updated = await q(`UPDATE empresa_activos SET estado = 'reparacion', cliente_id = NULL, updated_at = NOW()
+        WHERE empresa_id = $1 AND id = $2 RETURNING id`, [empresaId, activoId]);
+      if (updated.length !== 1) throw new Error('ASSET_EXACT_ROW_FAILED');
+      await q(`INSERT INTO historial_activos (empresa_id, activo_id, cliente_id, accion, usuario, observacion, latitud, longitud, firma_digital)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [empresaId, activoId, activo.cliente_id || null, 'reparacion', usuario, notas || 'Enviado a reparación', typeof lat === 'number' ? lat : null, typeof lng === 'number' ? lng : null, firma_base64 || null]);
+      return { status: 200, payload: { ok: true, message: 'Activo marcado como en reparación.' } };
+    });
+    return res.status(result.status).json(result.payload);
+  } catch (error) {
+    return transactionFailure(res, 'ACTIVOS.REPARACION.ERROR', error, 'Error enviando activo a reparación');
   }
 }
 
@@ -576,46 +416,22 @@ export async function finReparacion(req, res) {
   const { activo_id, notas } = req.body || {};
   const usuario = req.user?.username || null;
   const activoId = Number(activo_id);
-
   if (!Number.isInteger(activoId) || activoId <= 0) return res.status(400).json({ error: 'activo_id inválido.' });
-
-  const client = await pool.connect();
   try {
-    await client.query('BEGIN');
-    const { rows: activos } = await client.query(
-      `SELECT id, estado, cliente_id FROM empresa_activos WHERE empresa_id = $1 AND id = $2 FOR UPDATE`,
-      [empresaId, activoId]
-    );
-
-    if (!activos.length) {
-      await client.query('ROLLBACK');
-      return res.status(404).json({ error: 'Activo no encontrado para esta empresa.' });
-    }
-
-    const activo = activos[0];
-    if (activo.estado !== 'reparacion') {
-      await client.query('ROLLBACK');
-      return res.status(400).json({ error: `Solo se puede finalizar reparación desde estado 'reparacion'. Estado actual: ${activo.estado}` });
-    }
-
-    await client.query(
-      `UPDATE empresa_activos SET estado = 'disponible', updated_at = NOW() WHERE empresa_id = $1 AND id = $2`,
-      [empresaId, activoId]
-    );
-
-    await client.query(
-      `INSERT INTO historial_activos (empresa_id, activo_id, cliente_id, accion, usuario, observacion) VALUES ($1, $2, $3, $4, $5, $6)`,
-      [empresaId, activoId, null, 'fin_reparacion', usuario, notas || 'Reparación finalizada; activo disponible']
-    );
-
-    await client.query('COMMIT');
-    return res.json({ ok: true, message: 'Reparación finalizada; activo disponible.' });
-  } catch (e) {
-    try { await client.query('ROLLBACK'); } catch {}
-    console.error('Error finReparacion:', e);
-    return res.status(500).json({ error: e.message || 'Error finalizando reparación de activo' });
-  } finally {
-    client.release();
+    const result = await transactionRunner(req)(async q => {
+      const activos = await q('SELECT id, estado, cliente_id FROM empresa_activos WHERE empresa_id = $1 AND id = $2 FOR UPDATE', [empresaId, activoId]);
+      if (!activos.length) return { status: 404, payload: { error: 'Activo no encontrado para esta empresa.' } };
+      if (activos[0].estado !== 'reparacion') return { status: 400, payload: { error: "Solo se puede finalizar una reparación activa." } };
+      const updated = await q(`UPDATE empresa_activos SET estado = 'disponible', updated_at = NOW()
+        WHERE empresa_id = $1 AND id = $2 AND estado = 'reparacion' RETURNING id`, [empresaId, activoId]);
+      if (updated.length !== 1) throw new Error('ASSET_EXACT_ROW_FAILED');
+      await q(`INSERT INTO historial_activos (empresa_id, activo_id, cliente_id, accion, usuario, observacion)
+        VALUES ($1, $2, $3, $4, $5, $6)`, [empresaId, activoId, null, 'fin_reparacion', usuario, notas || 'Reparación finalizada; activo disponible']);
+      return { status: 200, payload: { ok: true, message: 'Reparación finalizada; activo disponible.' } };
+    });
+    return res.status(result.status).json(result.payload);
+  } catch (error) {
+    return transactionFailure(res, 'ACTIVOS.FIN_REPARACION.ERROR', error, 'Error finalizando reparación de activo');
   }
 }
 
@@ -660,8 +476,8 @@ export async function resumenActivos(req, res) {
       }
     });
   } catch (e) {
-    console.error('Error resumenActivos:', e);
-    return res.status(500).json({ error: e.message || 'Error obteniendo resumen de activos' });
+    console.error('Error resumenActivos:', { code: e?.code || 'UNKNOWN' });
+    return res.status(500).json({ error: 'Error obteniendo resumen de activos' });
   }
 }
 
@@ -686,8 +502,8 @@ export async function activosMantenimientoPendiente(req, res) {
     );
     return res.json({ ok: true, data: rows });
   } catch (e) {
-    console.error('Error activosMantenimientoPendiente:', e);
-    return res.status(500).json({ error: e.message || 'Error obteniendo activos con mantenimiento pendiente' });
+    console.error('Error activosMantenimientoPendiente:', { code: e?.code || 'UNKNOWN' });
+    return res.status(500).json({ error: 'Error obteniendo activos con mantenimiento pendiente' });
   }
 }
 
@@ -741,7 +557,7 @@ export async function reporteActivosOciosos(req, res) {
     });
 
   } catch (e) {
-    console.error('Error reporteActivosOciosos:', e);
+    console.error('Error reporteActivosOciosos:', { code: e?.code || 'UNKNOWN' });
     return res.status(500).json({ error: 'Error generando reporte de ociosos' });
   }
 }
@@ -766,7 +582,7 @@ export async function getMisActivosDisponibles(req, res) {
 
     res.json(rows);
   } catch (e) {
-    console.error(e);
+    console.error('REQUEST.ERROR', { code: e?.code || 'UNKNOWN' });
     res.status(500).json({ error: 'Error cargando stock de activos' });
   }
 }

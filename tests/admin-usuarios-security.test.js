@@ -575,7 +575,7 @@ test('POST bloquea actor y vínculos y escribe por el mismo cliente transacciona
   });
 
   await withServer(app, async baseUrl => {
-    const response = await request(baseUrl, { uid: 1, role: 'user', empresa_id: 999 }, 'POST', '/api/admin/usuarios', {
+    const response = await request(baseUrl, { uid: 1, role: 'admin', empresa_id: 999 }, 'POST', '/api/admin/usuarios', {
       username: 'nuevo', password: 'secreto1', role: 'repartidor', chofer_id: 11,
     });
     assert.equal(response.status, 200);
@@ -671,6 +671,51 @@ test("activo='false' se rechaza y los errores PG se clasifican por code", async 
   }
 });
 
+test('POST/PUT/DELETE preservan TRANSACTION_OUTCOME_UNKNOWN como 503 sanitizado y no reintentan', async () => {
+  const operations = [
+    { method: 'POST', path: '/api/admin/usuarios', body: { username: 'nuevo', password: 'secreto1', role: 'contable' } },
+    { method: 'PUT', path: '/api/admin/usuarios/8', body: { username: 'editado' } },
+    { method: 'DELETE', path: '/api/admin/usuarios/8' },
+  ];
+
+  for (const operation of operations) {
+    let transactionCalls = 0;
+    const app = buildApp({
+      withTransaction: async work => {
+        transactionCalls += 1;
+        const txQuery = async sql => {
+          if (/FOR SHARE/i.test(sql)) return [{ id: 1, role: 'admin', empresa_id: 3, activo: true }];
+          if (/FOR UPDATE/i.test(sql)) return [{ id: 8, role: 'contable', empresa_id: 3, chofer_id: null, referente_id: null }];
+          if (/FROM empresas/i.test(sql)) return [{ id: 3 }];
+          if (/INSERT INTO usuarios/i.test(sql)) return [{ id: 8, username: 'nuevo' }];
+          throw new Error(`SQL inesperado: ${sql}`);
+        };
+        const client = {
+          async query() { return { rows: [{ id: 8 }], rowCount: 1 }; },
+        };
+        await work(txQuery, client);
+        throw Object.assign(new Error('commit secret=usuario-token'), { code: 'TRANSACTION_OUTCOME_UNKNOWN' });
+      },
+    });
+
+    await withServer(app, async baseUrl => {
+      const response = await request(
+        baseUrl,
+        { uid: 1, role: 'admin', empresa_id: 3 },
+        operation.method,
+        operation.path,
+        operation.body,
+      );
+      assert.equal(response.status, 503, operation.method);
+      assert.deepEqual(await response.json(), {
+        error: 'Resultado de gestión de usuario indeterminado',
+        code: 'TRANSACTION_OUTCOME_UNKNOWN',
+      });
+    });
+    assert.equal(transactionCalls, 1, operation.method);
+  }
+});
+
 test('PUT aplica la misma longitud mínima de password que POST', async () => {
   const calls = [];
   const app = buildApp({ query: async (sql, params) => {
@@ -684,7 +729,7 @@ test('PUT aplica la misma longitud mínima de password que POST', async () => {
   } });
 
   await withServer(app, async baseUrl => {
-    const response = await request(baseUrl, { uid: 10, role: 'claim-ignorado' }, 'PUT', '/api/admin/usuarios/8', { password: '12345' });
+    const response = await request(baseUrl, { uid: 10, role: 'admin' }, 'PUT', '/api/admin/usuarios/8', { password: '12345' });
     assert.equal(response.status, 400);
   });
   assert.equal(calls.some(call => /UPDATE usuarios/i.test(call.sql)), false);
@@ -718,7 +763,7 @@ test('normaliza únicamente input nuevo permitido y guarda el rol canónico', as
   } });
 
   await withServer(app, async baseUrl => {
-    const response = await request(baseUrl, { uid: 10, role: 'claim-ignorado', empresa_id: 999 }, 'POST', '/api/admin/usuarios', {
+    const response = await request(baseUrl, { uid: 10, role: 'admin', empresa_id: 999 }, 'POST', '/api/admin/usuarios', {
       username: 'facturacion', password: 'secreto1', role: ' FACTURACION ',
     });
     assert.equal(response.status, 200);
@@ -805,8 +850,8 @@ test('initDb usa user por defecto, limpia roles históricos inválidos y agrega 
   assert.doesNotMatch(initSql, /UPDATE\s+usuarios\s+SET\s+role\s*=\s*['"]super['"]/i);
 });
 
-test('signup-full owner user y admin gestionan operativos con tenant DB y protegen todos los administradores', async () => {
-  for (const effectiveRole of ['user', 'admin']) {
+test('signup-full owner user queda bloqueado y admin gestiona operativos con tenant DB', async () => {
+  for (const effectiveRole of ['admin']) {
     const calls = [];
     const owner = { id: 100, username: 'owner', role: 'user', empresa_id: 3, activo: true };
     const targets = [
@@ -856,7 +901,12 @@ test('signup-full owner user y admin gestionan operativos con tenant DB y proteg
       assert.equal(signup.status, 200);
       const { token, user } = await signup.json();
       assert.equal(user.role, 'user');
-      const send = (method, path = '', body, authToken = token) => fetch(`${baseUrl}/api/admin/usuarios${path}`, {
+      const blockedOwner = await fetch(`${baseUrl}/api/admin/usuarios`, {
+        headers: { authorization: ['Bearer', token].join(' ') },
+      });
+      assert.equal(blockedOwner.status, 403);
+      const adminToken = jwt.sign({ uid: owner.id, role: 'admin', empresa_id: 3 }, process.env.JWT_SECRET || 'dev');
+      const send = (method, path = '', body, authToken = adminToken) => fetch(`${baseUrl}/api/admin/usuarios${path}`, {
         method, headers: { authorization: `Bearer ${authToken}`, 'Content-Type': 'application/json' },
         ...(body ? { body: JSON.stringify(body) } : {}),
       });
@@ -864,7 +914,7 @@ test('signup-full owner user y admin gestionan operativos con tenant DB y proteg
       assert.equal(list.status, 200);
       assert.ok((await list.json()).every(row => row.empresa_id === 3));
       const staleToken = jwt.sign({ uid: owner.id, role: 'super', empresa_id: 999 }, process.env.JWT_SECRET || 'dev');
-      for (const authToken of [token, staleToken]) {
+      for (const authToken of [adminToken, staleToken]) {
         const create = await send('POST', '', { username: 'operativo', password: 'Password123!', role: 'contable', empresa_id: 999 }, authToken);
         assert.equal(create.status, 200);
         assert.equal(calls.filter(call => /INSERT INTO usuarios/.test(call.sql)).at(-1).params[3], 3);

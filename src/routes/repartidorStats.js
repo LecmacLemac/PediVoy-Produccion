@@ -1,16 +1,31 @@
 // src/routes/repartidorStats.js
 import express from 'express';
-import { withAuth, getEmpresaIdFromToken } from '../services.js';
+import { withAuth } from '../services.js';
 import { query } from '../db.js';
 
-export function createRepartidorStatsRouter() {
+export function createRepartidorStatsRouter({
+  query: queryFn = query,
+  withAuth: withAuthFn = withAuth,
+} = {}) {
   const router = express.Router();
 
+  function requireExactRepartidor(req, res, next) {
+    const { role, empresa_id: empresaId, chofer_id: choferId } = req.user || {};
+    if (role !== 'repartidor'
+        || !Number.isSafeInteger(empresaId) || empresaId <= 0
+        || !Number.isSafeInteger(choferId) || choferId <= 0) {
+      return res.status(403).json({ error: 'No autorizado' });
+    }
+    return next();
+  }
+
+  router.use(withAuthFn, requireExactRepartidor);
+
   // GET /api/repartidor/resumen-dia
-  router.get('/resumen-dia', withAuth, async (req, res) => {
+  router.get('/resumen-dia', async (req, res) => {
     try {
-      const { chofer_id } = req.user || {};
-      if (!chofer_id) {
+      const { empresa_id: empresaId, chofer_id: choferId } = req.user || {};
+      if (!choferId) {
         return res.json({ entregados: 0, pendientes: 0, dinero: 0 });
       }
 
@@ -19,13 +34,14 @@ export function createRepartidorStatsRouter() {
           COUNT(*) FILTER (WHERE estado = 'entregado') AS entregados,
           COUNT(*) FILTER (WHERE estado IN ('pendiente','en_ruta','en_camino')) AS pendientes,
           COALESCE(SUM(monto) FILTER (WHERE estado = 'entregado'), 0) AS dinero
-        FROM pedidos
-        WHERE chofer_id = $1
+        FROM pedidos p
+        WHERE p.empresa_id = $1
+          AND p.chofer_id = $2
           AND COALESCE(fecha_entrega, fecha) >= CURRENT_DATE
           AND COALESCE(fecha_entrega, fecha) < (CURRENT_DATE + INTERVAL '1 day')
       `;
 
-      const rows = await query(sql, [chofer_id]);
+      const rows = await queryFn(sql, [empresaId, choferId]);
       return res.json(rows[0] || { entregados: 0, pendientes: 0, dinero: 0 });
     } catch (e) {
       console.error('ERROR /api/repartidor/resumen-dia', e);
@@ -34,30 +50,22 @@ export function createRepartidorStatsRouter() {
   });
 
   // GET /api/repartidor/pago-dia
-  router.get('/pago-dia', withAuth, async (req, res) => {
+  router.get('/pago-dia', async (req, res) => {
     try {
-      const user = req.user;
-      if (!user || !user.chofer_id) {
-        return res.status(400).json({ error: 'Usuario sin chofer asociado' });
-      }
-
-      const choferId = user.chofer_id;
+      const { empresa_id: empresaId, chofer_id: choferId } = req.user;
       const fecha = (req.query.fecha || new Date().toISOString().slice(0, 10)).slice(0, 10);
 
-      const empresaId = getEmpresaIdFromToken(req);
-      if (!empresaId) {
-        return res.status(400).json({ error: 'No se pudo determinar la empresa del chofer' });
-      }
-
       const row = (
-        await query(
+        await queryFn(
           `
           WITH entregas AS (
             SELECT COALESCE(SUM(CASE WHEN COALESCE(it.precio_unitario, 0) > 0 THEN it.cantidad ELSE 0 END),0) AS q
             FROM items_pedido it
             JOIN pedidos p          ON p.id = it.pedido_id
             JOIN puntos_entrega pe  ON pe.id = p.punto_entrega_id
-            WHERE pe.empresa_id = $1
+                                    AND pe.empresa_id = p.empresa_id
+            WHERE p.empresa_id = $1
+              AND pe.empresa_id = $1
               AND p.chofer_id  = $2
               AND COALESCE(p.fecha_entrega, p.fecha) >= $3::date
               AND COALESCE(p.fecha_entrega, p.fecha) < ($3::date + INTERVAL '1 day')

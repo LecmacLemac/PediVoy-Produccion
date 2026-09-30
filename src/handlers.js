@@ -1,13 +1,17 @@
 // src/handlers.js — ESM + PostgreSQL
 
 import https from 'node:https';
-import { query } from './db.js';
+import { query, withTransaction } from './db.js';
+import { lockGeneralPhoneIdentity } from './services/deliveryPointIdentity.js';
+import { resolveProductIdentityItems } from './services/productIdentityNamespace.js';
 import { buildIaMessages } from './iaPromptBuilder.js';
 
 const startedClients = new WeakSet();
 const recentMessageIdsByClient = new WeakMap();
 const RECENT_MESSAGE_TTL_MS = 5 * 60 * 1000;
 const RECENT_MESSAGE_MAX = 500;
+const GENERAL_PHONE_AMBIGUOUS_REPLY = 'No pude identificar una empresa de forma segura para este número. Usá el canal o enlace de la empresa correspondiente, o contactá a soporte.';
+const GENERAL_PHONE_UNRESOLVED_REPLY = 'No pude vincular este número con una cuenta de forma segura. Contactá a tu proveedor por su canal oficial.';
 
 function isOwnershipFenceError(error) {
   return error?.code === 'WPP_NOT_OWNER' || error?.code === 'WPP_COMPANY_NOT_OWNER';
@@ -100,17 +104,8 @@ function _parseRangoFechas(input) {
   return { desde: s, hasta: s };
 }
 
-function _parseEmpresaId(contenidoLimpio, defaultEmpresaId) {
-  const m = contenidoLimpio.match(
-    /\b(?:empresa|emp|e)\s*[:=]?\s*(\d{1,6})\b/i
-  );
-  return m ? Number(m[1]) : defaultEmpresaId;
-}
-
-export function resolveCommandEmpresaId(ctx, contenidoLimpio) {
-  return ctx?.tenantLocked
-    ? ctx.empresa_id
-    : _parseEmpresaId(contenidoLimpio, ctx?.empresa_id);
+export function resolveCommandEmpresaId(ctx, _contenidoLimpio) {
+  return ctx?.empresa_id ?? null;
 }
 
 // src/handlers.js
@@ -479,7 +474,13 @@ export function createWhatsAppContextResolver(queryFn = query) {
     const fixedIdentity = ctx.source === 'usuario_registrado' || ctx.source === 'chofer';
     const directSuper = ctx.source === 'usuario_registrado' && ctx.role === 'super';
     if (fixedIdentity && !directSuper && ctx.empresa_id !== empresaId) return null;
-    return { ...ctx, empresa_id: empresaId, tenantLocked: true };
+    return {
+      ...ctx,
+      empresa_id: empresaId,
+      tenantLocked: true,
+      workerTenantFixed: true,
+      generalPhoneIdentity: false,
+    };
   };
 }
 
@@ -496,25 +497,15 @@ export function createTenantCommandQueries(queryFn = query) {
             AND activo = TRUE
             AND (id = $2
               OR regexp_replace(COALESCE(telefono,''),'\\D','','g') LIKE '%' || $3)
-          ORDER BY CASE WHEN id = $2 THEN 0 ELSE 1 END
-          LIMIT 1`,
+          ORDER BY CASE WHEN id = $2 THEN 0 ELSE 1 END, id
+          LIMIT 2`,
         [empresaId, Number(value), digits]
       );
-      return rows[0] || null;
+      return rows.length === 1 ? rows[0] : null;
     },
     async findLatestDeliveryPoint(empresaId, numero) {
-      const digits = digitsOnly(phoneFromWaId(numero));
-      const suffix10 = digits.slice(-10) || digits;
-      const rows = await queryFn(
-        `SELECT id, cliente, direccion, empresa_id, zona_id
-           FROM puntos_entrega
-          WHERE empresa_id = $1
-            AND regexp_replace(COALESCE(telefono,''),'\\D','','g') LIKE '%' || $2
-          ORDER BY id DESC
-          LIMIT 1`,
-        [empresaId, suffix10]
-      );
-      return rows[0] || null;
+      const resolved = await resolveDeliveryPointByPhone(queryFn, numero, { empresaId });
+      return resolved.status === 'unique' ? resolved.point : null;
     },
   };
 }
@@ -543,11 +534,37 @@ function _validDirectSystemIdentity(user) {
   return user.chofer_id === null && user.referente_id === null;
 }
 
+async function resolveDeliveryPointByPhone(queryFn, numero, { empresaId } = {}) {
+  const telDigits = digitsOnly(phoneFromWaId(numero));
+  if (!telDigits) return { status: 'none', phone: '', point: null };
+  const suffix10 = telDigits.slice(-10) || telDigits;
+  const rows = await queryFn(
+    `SELECT id, cliente, empresa_id,
+            regexp_replace(COALESCE(telefono,''),'\\D','','g') AS resolved_phone,
+            regexp_replace(COALESCE(telefono,''),'\\D','','g') = $1 AS exact_phone
+       FROM puntos_entrega
+      WHERE RIGHT(regexp_replace(COALESCE(telefono,''),'\\D','','g'), LENGTH($2)) = $2
+        ${empresaId === undefined ? '' : 'AND empresa_id = $3'}
+      ORDER BY empresa_id, id`,
+    [telDigits, suffix10, ...(empresaId === undefined ? [] : [empresaId])]
+  );
+  if (!rows.length) return { status: 'none', phone: suffix10, point: null };
+
+  const tenantIds = new Set(rows.map(row => Number(row.empresa_id)));
+  if (tenantIds.size !== 1) return { status: 'ambiguous', phone: suffix10, point: null };
+
+  const exact = rows.filter(row => row.exact_phone === true);
+  if (exact.length === 1) return { status: 'unique', phone: suffix10, point: exact[0] };
+  if (exact.length > 1 || rows.length > 1) {
+    return { status: 'ambiguous', phone: suffix10, point: null };
+  }
+  return { status: 'unique', phone: suffix10, point: rows[0] };
+}
+
 async function _resolverContextoDesdeTelefono(numero, queryFn = query, workerEmpresaId) {
   const telRaw = phoneFromWaId(numero);
   const telDigits = digitsOnly(telRaw);
   if (!telDigits) return null;
-  const suffix10 = telDigits.slice(-10) || telDigits;
 
   // ────────────────────────────────────────────────────────────────────────
   // NIVEL 1: USUARIOS DEL SISTEMA (Admins, Super, Login Web)
@@ -561,30 +578,34 @@ async function _resolverContextoDesdeTelefono(numero, queryFn = query, workerEmp
             AND r.empresa_id = u.empresa_id) AS referente_valid
     FROM usuarios u
     LEFT JOIN choferes c ON c.id = u.chofer_id
+                        AND c.empresa_id = u.empresa_id
     LEFT JOIN referentes r ON r.id = u.referente_id
-    WHERE regexp_replace(COALESCE(u.username,''),'\\D','','g') = $1
-       OR regexp_replace(COALESCE(u.telefono,''),'\\D','','g') = $1
+                          AND r.empresa_id = u.empresa_id
+    WHERE (
+      regexp_replace(COALESCE(u.username,''),'\\D','','g') = $1
+      OR regexp_replace(COALESCE(u.telefono,''),'\\D','','g') = $1
+    )
+      AND ($2::int IS NULL OR u.empresa_id = $2 OR (u.role = 'super' AND u.empresa_id IS NULL))
   `,
-    [telDigits]
+    [telDigits, workerEmpresaId ?? null]
   );
   
   // Full sender identity only; duplicate normalized identities must not fall back.
-  if (uRows.length > 1) return null;
+  if (uRows.length > 1) return { resolution: 'ambiguous', source: 'usuario_ambiguo' };
   const u = uRows[0];
   if (u) {
     // Keep invalid matches visible so they cannot fall through to another identity.
     if (!_validDirectSystemIdentity(u)) return null;
     const role = u.role;
-    
-    // Si el usuario no tiene empresa fija (ej. super), buscamos una default para que no rompa
-    let empresaIdFinal = u.empresa_id;
-    if (role === 'super' && workerEmpresaId === undefined) {
-        const empRow = (await queryFn(`SELECT id FROM empresas ORDER BY id LIMIT 1`))[0];
-        empresaIdFinal = empRow?.id || 1;
-    }
 
-    return { 
-        role, 
+    if (role === 'super' && workerEmpresaId === undefined) {
+      return { resolution: 'unresolved', source: 'super_sin_tenant' };
+    }
+    const empresaIdFinal = role === 'super' ? workerEmpresaId : u.empresa_id;
+
+    return {
+        resolution: 'unique',
+        role,
         empresa_id: empresaIdFinal, 
         chofer_id: u.chofer_id || null,
         referente_id: u.referente_id,
@@ -602,14 +623,17 @@ async function _resolverContextoDesdeTelefono(numero, queryFn = query, workerEmp
     SELECT id AS chofer_id, empresa_id, nombre, activo
     FROM choferes
     WHERE regexp_replace(COALESCE(telefono,''),'\\D','','g') = $1
+      AND ($2::int IS NULL OR empresa_id = $2)
   `,
-    [telDigits]
+    [telDigits, workerEmpresaId ?? null]
   );
   
-  if (cRows.length > 1) return null;
+  if (cRows.length > 1) return { resolution: 'ambiguous', source: 'chofer_ambiguo' };
   const c = cRows[0];
   if (c) {
-    if (c.activo !== true || !_positiveTenantId(c.chofer_id) || !_positiveTenantId(c.empresa_id)) return null;
+    if (c.activo !== true || !_positiveTenantId(c.chofer_id) || !_positiveTenantId(c.empresa_id)) {
+      return null;
+    }
     // Verificamos si tiene un usuario asociado para afinar el rol, sino es 'repartidor'
     const u2Rows = await queryFn(
       `SELECT role, empresa_id, activo, chofer_id, referente_id FROM usuarios WHERE chofer_id = $1`,
@@ -618,10 +642,13 @@ async function _resolverContextoDesdeTelefono(numero, queryFn = query, workerEmp
     // Every linked row must describe this exact driver; never inherit privileges.
     if (u2Rows.length > 1 || u2Rows.some(linkedUser => !_validSystemIdentity(linkedUser) ||
         linkedUser.role !== 'repartidor' || linkedUser.empresa_id !== c.empresa_id ||
-        linkedUser.chofer_id !== c.chofer_id || linkedUser.referente_id !== null)) return null;
+        linkedUser.chofer_id !== c.chofer_id || linkedUser.referente_id !== null)) {
+      return null;
+    }
     const role = 'repartidor';
 
-    return { 
+    return {
+        resolution: 'unique',
         role, 
         empresa_id: c.empresa_id, 
         chofer_id: c.chofer_id,
@@ -631,49 +658,39 @@ async function _resolverContextoDesdeTelefono(numero, queryFn = query, workerEmp
   }
 
   // ────────────────────────────────────────────────────────────────────────
-  // NIVEL 3: CLIENTES HISTÓRICOS (PUNTOS DE ENTREGA) - ¡NUEVO!
+  // NIVEL 3: CLIENTES HISTÓRICOS (PUNTOS DE ENTREGA)
   // ────────────────────────────────────────────────────────────────────────
-  // Buscamos si este teléfono ya hizo un pedido antes.
-  // Ordenamos por ID DESC para tomar la ÚLTIMA empresa a la que le compró.
-  const pRows = await queryFn(
-    `
-    SELECT empresa_id, cliente
-    FROM puntos_entrega
-    WHERE regexp_replace(COALESCE(telefono,''),'\\D','','g') LIKE '%' || $1
-      ${workerEmpresaId === undefined ? '' : 'AND empresa_id = $2'}
-    ORDER BY id DESC
-    LIMIT 1
-    `,
-    [suffix10, ...(workerEmpresaId === undefined ? [] : [workerEmpresaId])]
+  // La identidad por teléfono nunca se decide por recencia o ID mutable.
+  const pointResolution = await resolveDeliveryPointByPhone(
+    queryFn,
+    numero,
+    workerEmpresaId === undefined ? {} : { empresaId: workerEmpresaId }
   );
+  if (pointResolution.status === 'ambiguous') {
+    return { resolution: 'ambiguous', source: 'telefono_ambiguo' };
+  }
 
-  const p = pRows[0];
-  if (p) {
+  const p = pointResolution.point;
+  if (pointResolution.status === 'unique' && p) {
     return {
+        resolution: 'unique',
         role: 'cliente',
         empresa_id: p.empresa_id,
         chofer_id: null,
-        source: 'conocido_historico', // Útil para que la IA sepa que ya es cliente
-        nombre: p.cliente // Para que la IA le diga "Hola [Nombre]"
+        source: 'conocido_historico',
+        nombre: p.cliente,
+        delivery_point_id: p.id,
+        resolved_phone: p.resolved_phone,
+        tenantLocked: true,
+        workerTenantFixed: workerEmpresaId !== undefined,
+        generalPhoneIdentity: workerEmpresaId === undefined,
     };
   }
 
   // ────────────────────────────────────────────────────────────────────────
-  // NIVEL 4: DESCONOCIDO (Default)
+  // NIVEL 4: DESCONOCIDO (fail closed)
   // ────────────────────────────────────────────────────────────────────────
-  // No sabemos quién es. Asignamos una empresa por defecto (generalmente la primera)
-  // y marcamos source='desconocido' para activar el "Buscador de Empresas" en la IA.
-  const empRow = workerEmpresaId === undefined
-    ? (await queryFn(`SELECT id FROM empresas ORDER BY id LIMIT 1`))[0]
-    : null;
-  const empresa_id = workerEmpresaId ?? empRow?.id ?? 1;
-  
-  return { 
-      role: 'cliente', 
-      empresa_id, 
-      chofer_id: null, 
-      source: 'desconocido' 
-  };
+  return { resolution: 'unresolved', source: 'sin_identidad' };
 }
 
 // ────────────────────────────────────────────────────────────────────────────────
@@ -701,7 +718,9 @@ async function _sqlResumenVentas({
              COALESCE(SUM(COALESCE(p.monto,0)),0) AS total
       FROM pedidos p
       JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
-      WHERE pe.empresa_id = $1
+                              AND pe.empresa_id = p.empresa_id
+      WHERE p.empresa_id = $1
+        AND pe.empresa_id = $1
         AND DATE(COALESCE(p.fecha_entrega, p.fecha)) BETWEEN $2::date AND $3::date
         AND LOWER(p.estado) = 'entregado'
         ${whereChofer}
@@ -737,7 +756,9 @@ async function _sqlResumenVentas({
         FROM items_pedido it
         JOIN pedidos p ON p.id = it.pedido_id
         JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
-        WHERE pe.empresa_id = $1
+                              AND pe.empresa_id = p.empresa_id
+        WHERE p.empresa_id = $1
+        AND pe.empresa_id = $1
           AND DATE(COALESCE(p.fecha_entrega, p.fecha)) BETWEEN $2::date AND $3::date
           AND LOWER(p.estado) = 'entregado'
           ${whereChofer2}
@@ -761,7 +782,9 @@ async function _sqlResumenVentas({
         SELECT COUNT(*) AS c
         FROM pedidos p
         JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
-        WHERE pe.empresa_id = $1
+                              AND pe.empresa_id = p.empresa_id
+        WHERE p.empresa_id = $1
+        AND pe.empresa_id = $1
           AND DATE(COALESCE(p.fecha_entrega, p.fecha)) BETWEEN $2::date AND $3::date
           AND LOWER(p.estado) = 'entregado'
           ${whereChofer3}
@@ -808,11 +831,16 @@ async function _sqlCOGSVentasRango({
         ON c.empresa_id = m.empresa_id
        AND c.chofer_id  = m.chofer_id
        AND c.producto_id= m.producto_id
-      LEFT JOIN pedidos p ON p.id = m.ref_pedido_id
+      LEFT JOIN pedidos p
+        ON p.id = m.ref_pedido_id
+       AND p.empresa_id = m.empresa_id
       WHERE m.empresa_id = $1
         AND DATE(m.fecha) BETWEEN $2::date AND $3::date
         AND m.tipo = 'venta'
-        AND (p.id IS NULL OR LOWER(p.estado) = 'entregado')
+        AND (
+          (m.ref_pedido_id IS NULL AND p.id IS NULL)
+          OR (p.id IS NOT NULL AND LOWER(p.estado) = 'entregado')
+        )
         ${whereChofer}
     `,
         params
@@ -863,7 +891,9 @@ async function _sqlPagoChoferDia({ empresa_id, chofer_id, fecha }) {
       FROM items_pedido it
       JOIN pedidos p          ON p.id = it.pedido_id
       JOIN puntos_entrega pe  ON pe.id = p.punto_entrega_id
-      WHERE pe.empresa_id = $1
+                              AND pe.empresa_id = p.empresa_id
+      WHERE p.empresa_id = $1
+        AND pe.empresa_id = $1
         AND p.chofer_id  = $2
         AND DATE(COALESCE(p.fecha_entrega, p.fecha)) = $3::date
         AND LOWER(p.estado) = 'entregado'
@@ -978,8 +1008,11 @@ async function _sqlPorZona({ empresa_id, desde, hasta }) {
            COALESCE(SUM(p.monto),0) AS ingresos
     FROM pedidos p
     JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
+                              AND pe.empresa_id = p.empresa_id
     LEFT JOIN zonas_geograficas z ON z.id = pe.zona_id
-    WHERE pe.empresa_id = $1
+                                  AND z.empresa_id = pe.empresa_id
+    WHERE p.empresa_id = $1
+        AND pe.empresa_id = $1
       AND DATE(COALESCE(p.fecha_entrega, p.fecha)) BETWEEN $2::date AND $3::date
       AND LOWER(p.estado) = 'entregado'
     GROUP BY 1
@@ -1002,7 +1035,9 @@ async function _sqlClientesNuevosRecurrentes({
       SELECT DISTINCT pe.id AS pe_id
       FROM pedidos p
       JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
-      WHERE pe.empresa_id = $1
+                              AND pe.empresa_id = p.empresa_id
+      WHERE p.empresa_id = $1
+        AND pe.empresa_id = $1
         AND DATE(COALESCE(p.fecha_entrega, p.fecha)) BETWEEN $2::date AND $3::date
         AND LOWER(p.estado)='entregado'
     ),
@@ -1010,7 +1045,9 @@ async function _sqlClientesNuevosRecurrentes({
       SELECT e.pe_id
       FROM entregas e
       JOIN pedidos p2 ON p2.punto_entrega_id = e.pe_id
+                     AND p2.empresa_id = $1
       JOIN puntos_entrega pe2 ON pe2.id = p2.punto_entrega_id
+                             AND pe2.empresa_id = p2.empresa_id
       WHERE pe2.empresa_id = $1
         AND DATE(COALESCE(p2.fecha_entrega, p2.fecha)) < $2::date
     )
@@ -1087,7 +1124,9 @@ async function _seriesVentasEmpresa({ empresa_id, desde, hasta }) {
            COUNT(*) AS pedidos
     FROM pedidos p
     JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
-    WHERE pe.empresa_id = $1
+                              AND pe.empresa_id = p.empresa_id
+    WHERE p.empresa_id = $1
+        AND pe.empresa_id = $1
       AND DATE(COALESCE(p.fecha_entrega, p.fecha)) BETWEEN $2::date AND $3::date
       AND LOWER(p.estado)='entregado'
     GROUP BY 1
@@ -1102,7 +1141,9 @@ async function _seriesVentasEmpresa({ empresa_id, desde, hasta }) {
     FROM items_pedido it
     JOIN pedidos p ON p.id = it.pedido_id
     JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
-    WHERE pe.empresa_id = $1
+                              AND pe.empresa_id = p.empresa_id
+    WHERE p.empresa_id = $1
+        AND pe.empresa_id = $1
       AND DATE(COALESCE(p.fecha_entrega, p.fecha)) BETWEEN $2::date AND $3::date
       AND LOWER(p.estado)='entregado'
     GROUP BY 1
@@ -1118,10 +1159,14 @@ async function _seriesVentasEmpresa({ empresa_id, desde, hasta }) {
     LEFT JOIN chofer_costos c
       ON c.empresa_id=m.empresa_id AND c.chofer_id=m.chofer_id AND c.producto_id=m.producto_id
     LEFT JOIN pedidos p ON p.id = m.ref_pedido_id
+                       AND p.empresa_id = m.empresa_id
     WHERE m.empresa_id=$1
       AND DATE(m.fecha) BETWEEN $2::date AND $3::date
       AND m.tipo='venta'
-      AND (p.id IS NULL OR LOWER(p.estado)='entregado')
+      AND (
+        (m.ref_pedido_id IS NULL AND p.id IS NULL)
+        OR (p.id IS NOT NULL AND LOWER(p.estado)='entregado')
+      )
     GROUP BY 1
   `,
     [empresa_id, desde, hasta]
@@ -1194,7 +1239,9 @@ async function _seriesChofer({ empresa_id, chofer_id, desde, hasta }) {
            COUNT(*) AS pedidos
     FROM pedidos p
     JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
-    WHERE pe.empresa_id = $1
+                              AND pe.empresa_id = p.empresa_id
+    WHERE p.empresa_id = $1
+        AND pe.empresa_id = $1
       AND p.chofer_id = $2
       AND DATE(COALESCE(p.fecha_entrega, p.fecha)) BETWEEN $3::date AND $4::date
       AND LOWER(p.estado)='entregado'
@@ -1210,7 +1257,9 @@ async function _seriesChofer({ empresa_id, chofer_id, desde, hasta }) {
     FROM items_pedido it
     JOIN pedidos p ON p.id = it.pedido_id
     JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
-    WHERE pe.empresa_id = $1
+                              AND pe.empresa_id = p.empresa_id
+    WHERE p.empresa_id = $1
+        AND pe.empresa_id = $1
       AND p.chofer_id = $2
       AND DATE(COALESCE(p.fecha_entrega, p.fecha)) BETWEEN $3::date AND $4::date
       AND LOWER(p.estado)='entregado'
@@ -1227,11 +1276,15 @@ async function _seriesChofer({ empresa_id, chofer_id, desde, hasta }) {
     LEFT JOIN chofer_costos c
       ON c.empresa_id=m.empresa_id AND c.chofer_id=m.chofer_id AND c.producto_id=m.producto_id
     LEFT JOIN pedidos p ON p.id = m.ref_pedido_id
+                       AND p.empresa_id = m.empresa_id
     WHERE m.empresa_id=$1
       AND m.chofer_id=$2
       AND DATE(m.fecha) BETWEEN $3::date AND $4::date
       AND m.tipo='venta'
-      AND (p.id IS NULL OR LOWER(p.estado)='entregado')
+      AND (
+        (m.ref_pedido_id IS NULL AND p.id IS NULL)
+        OR (p.id IS NOT NULL AND LOWER(p.estado)='entregado')
+      )
     GROUP BY 1
   `,
     [empresa_id, chofer_id, desde, hasta]
@@ -1289,18 +1342,21 @@ async function _seriesChofer({ empresa_id, chofer_id, desde, hasta }) {
 
 export function createComprobanteTenantQueries(queryFn) {
   return {
-    async obtenerUltimos(telefono, empresaId) {
+    async obtenerUltimos(telefono, empresaId, { exactPhone } = {}) {
       const digits = digitsOnly(telefono);
       const suf10 = digits.slice(-10) || digits;
+      const exactDigits = digitsOnly(exactPhone);
       return await queryFn(
         `SELECT id, fecha, monto, banco_origen, banco_destino, nro_operacion,
                 nombre, fecha_operacion, fecha_transf
          FROM comprobantes_transferencia
-         WHERE regexp_replace(COALESCE(telefono,''),'\\D','','g') LIKE '%' || $1
+         WHERE ${exactDigits
+    ? "regexp_replace(COALESCE(telefono,''),'\\D','','g') = $1"
+    : "regexp_replace(COALESCE(telefono,''),'\\D','','g') LIKE '%' || $1"}
            AND empresa_id = $2
          ORDER BY fecha DESC, id DESC
          LIMIT 10`,
-        [suf10, Number(empresaId)]
+        [exactDigits || suf10, Number(empresaId)]
       );
     },
     async marcarProcesado(numeroOperacion, empresaId) {
@@ -1326,8 +1382,8 @@ export function createComprobanteTenantQueries(queryFn) {
 
 const comprobanteTenantQueries = createComprobanteTenantQueries(query);
 
-async function obtenerUltimosComprobantesPorTelefonoPg(telefono, empresaId) {
-  return comprobanteTenantQueries.obtenerUltimos(telefono, empresaId);
+async function obtenerUltimosComprobantesPorTelefonoPg(telefono, empresaId, options) {
+  return comprobanteTenantQueries.obtenerUltimos(telefono, empresaId, options);
 }
 
 async function marcarComprobanteComoProcesadoPg(numeroOperacion, empresaId) {
@@ -1692,130 +1748,187 @@ function menuPorRol(role) {
 // Lógica del "Botón de Pánico" (Reposición Automática)
 // --------------------------------------------------------------------------------
 
-async function handleReposicionAutomatica(client, numero, ctx) {
+async function handleReposicionAutomatica(
+  client,
+  numero,
+  ctx,
+  { withTransactionFn = withTransaction } = {}
+) {
   try {
-    // 1. Identificar al cliente real en la base de datos
-    // Usamos el teléfono normalizado para buscar el punto de entrega
-    const telDigits = digitsOnly(phoneFromWaId(numero));
-    const suf10 = telDigits.slice(-10) || telDigits;
+    const reposicion = await withTransactionFn(async txQuery => {
+      const generalChannel = ctx.generalPhoneIdentity === true
+        || (ctx.source === 'desconocido' && ctx.workerTenantFixed !== true);
+      if (generalChannel) {
+        // Orden global: teléfono General → reposición tenant+punto → productos → punto → pedido/items.
+        await lockGeneralPhoneIdentity(txQuery, {
+          normalizePhoneFn: digitsOnly,
+          telefono: phoneFromWaId(numero),
+        });
+      }
 
-    let punto = null;
-    if (ctx.tenantLocked) {
-      punto = await tenantCommandQueries.findLatestDeliveryPoint(ctx.empresa_id, numero);
-    } else {
-      const pRows = await query(`
-        SELECT id, cliente, direccion, empresa_id, zona_id
+      const pointResolution = await resolveDeliveryPointByPhone(
+        txQuery,
+        numero,
+        generalChannel ? {} : { empresaId: ctx.empresa_id }
+      );
+      if (pointResolution.status === 'ambiguous') return { ambiguousIdentity: true };
+      if (pointResolution.status !== 'unique' || !pointResolution.point) return { missingPoint: true };
+
+      const punto = pointResolution.point;
+      const puntoEmpresaId = Number(ctx.empresa_id);
+      if (!_positiveTenantId(puntoEmpresaId)
+          || Number(punto.empresa_id) !== puntoEmpresaId
+          || (generalChannel && Number(ctx.delivery_point_id) !== Number(punto.id))) {
+        return { ambiguousIdentity: true };
+      }
+
+      // El namespace de identidad global ya está tomado para General. A continuación
+      // serializamos la reposición tenant+punto antes de leer historial o mutar.
+      await txQuery(
+        'SELECT pg_advisory_xact_lock($1::integer, hashtext($2::text))',
+        [puntoEmpresaId, `whatsapp-reposicion:punto:${Number(punto.id)}`]
+      );
+
+      const validatedPoints = await txQuery(`
+        SELECT id, direccion, zona_id
         FROM puntos_entrega
-        WHERE regexp_replace(COALESCE(telefono,''),'\\D','','g') LIKE '%' || $1
-        ORDER BY id DESC
+        WHERE empresa_id = $1 AND id = $2
+      `, [puntoEmpresaId, punto.id]);
+      if (validatedPoints.length !== 1) return { missingPoint: true };
+
+      const pendientes = await txQuery(`
+        SELECT p.id
+        FROM pedidos p
+        JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
+                               AND pe.empresa_id = p.empresa_id
+        WHERE p.empresa_id = $1
+          AND pe.empresa_id = $1
+          AND p.punto_entrega_id = $2
+          AND p.estado IN ('pendiente', 'en_ruta', 'en_camino')
+        ORDER BY p.id
         LIMIT 1
-      `, [suf10]);
-      punto = pRows[0] || null;
-    }
+        FOR UPDATE OF p
+      `, [puntoEmpresaId, punto.id]);
+      if (pendientes.length > 0) return { pendingId: pendientes[0].id };
 
-    if (!punto) {
-      await client.sendMessage(numero, '😕 No encontré una cuenta vinculada a este teléfono. Por favor, escribinos qué necesitás para tomar tu primer pedido.');
+      const lastOrderRows = await txQuery(`
+        SELECT p.id, p.metodo_pago
+        FROM pedidos p
+        JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
+                               AND pe.empresa_id = p.empresa_id
+        WHERE p.empresa_id = $1
+          AND pe.empresa_id = $1
+          AND p.punto_entrega_id = $2
+          AND p.estado = 'entregado'
+        ORDER BY p.id DESC
+        LIMIT 1
+        FOR SHARE OF p
+      `, [puntoEmpresaId, punto.id]);
+      if (!lastOrderRows.length) return { missingLastOrder: true };
+      const lastPedido = lastOrderRows[0];
+
+      const items = await txQuery(`
+        SELECT it.id AS item_pedido_id, it.producto_id, it.producto,
+               it.cantidad, it.precio_unitario
+        FROM items_pedido it
+        JOIN pedidos p ON p.id = it.pedido_id
+        JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
+                               AND pe.empresa_id = p.empresa_id
+        WHERE p.empresa_id = $1
+          AND pe.empresa_id = $1
+          AND p.id = $2
+          AND p.punto_entrega_id = $3
+        ORDER BY it.id
+      `, [puntoEmpresaId, lastPedido.id, punto.id]);
+      if (!items.length) return { missingItems: true };
+
+      const resolvedItems = await resolveProductIdentityItems(txQuery, {
+        empresaId: Number(puntoEmpresaId),
+        items,
+        includePrice: true,
+      });
+      let totalMonto = 0;
+      let totalCant = 0;
+      const resumenItems = [];
+      for (const item of resolvedItems) {
+        const precioActual = Number(item.producto_resuelto.precio);
+        const precioReal = Number.isFinite(precioActual) ? precioActual : Number(item.precio_unitario);
+        item.precio_nuevo = precioReal;
+        totalMonto += Number(item.cantidad) * precioReal;
+        totalCant += Number(item.cantidad);
+        resumenItems.push(`${item.cantidad} x ${item.producto}`);
+      }
+
+      const lockedPoints = await txQuery(`
+        SELECT id, direccion, zona_id
+        FROM puntos_entrega
+        WHERE empresa_id = $1 AND id = $2
+        FOR SHARE
+      `, [puntoEmpresaId, punto.id]);
+      if (lockedPoints.length !== 1) return { missingPoint: true };
+      const lockedPoint = lockedPoints[0];
+
+      const newOrder = await txQuery(`
+        INSERT INTO pedidos (
+          empresa_id, punto_entrega_id, fecha, estado,
+          cantidad, cantidad_entregada, monto,
+          metodo_pago, aviso_recibido, sats,
+          chofer_id, zona_id, created_at, updated_at
+        )
+        SELECT pe.empresa_id, pe.id, NOW(), 'pendiente', $3, 0, $4, $5,
+               0, 0, NULL, pe.zona_id, NOW(), NOW()
+        FROM puntos_entrega pe
+        WHERE pe.empresa_id = $1 AND pe.id = $2
+        RETURNING id
+      `, [puntoEmpresaId, punto.id, totalCant, totalMonto, lastPedido.metodo_pago]);
+      if (newOrder.length !== 1) throw new Error('No se pudo crear la reposición');
+      const newId = newOrder[0].id;
+
+      for (const item of resolvedItems) {
+        const inserted = await txQuery(`
+          INSERT INTO items_pedido (pedido_id, producto_id, producto, cantidad, precio_unitario)
+          VALUES ($1, $2, $3, $4, $5)
+          RETURNING id
+        `, [newId, item.producto_resuelto_id, item.producto, item.cantidad, item.precio_nuevo]);
+        if (inserted.length !== 1) throw new Error('No se pudo crear un ítem de reposición');
+      }
+      return { newId, totalMonto, resumenItems, direccion: lockedPoint.direccion };
+    });
+
+    if (reposicion.ambiguousIdentity) {
+      await client.sendMessage(numero, GENERAL_PHONE_AMBIGUOUS_REPLY);
       return;
     }
-
-    const puntoEmpresaId = ctx.tenantLocked ? ctx.empresa_id : punto.empresa_id;
-
-    // 2. Anti-Duplicados: Chequear si ya tiene algo pendiente
-    const pendientes = await query(`
-      SELECT id FROM pedidos 
-      WHERE punto_entrega_id = $1 
-        AND estado IN ('pendiente', 'en_ruta', 'en_camino')
-    `, [punto.id]);
-
-    if (pendientes.length > 0) {
-      await client.sendMessage(numero, `✋ Ya tenés el pedido #${pendientes[0].id} en curso. ¡Te lo llevamos pronto!`);
+    if (reposicion.pendingId) {
+      await client.sendMessage(numero, `✋ Ya tenés el pedido #${reposicion.pendingId} en curso. ¡Te lo llevamos pronto!`);
       return;
     }
-
-    // 3. Buscar el ÚLTIMO pedido entregado para clonar
-    const lastOrderRows = await query(`
-      SELECT id, metodo_pago 
-      FROM pedidos 
-      WHERE punto_entrega_id = $1 AND estado = 'entregado'
-      ORDER BY id DESC 
-      LIMIT 1
-    `, [punto.id]);
-
-    if (!lastOrderRows.length) {
+    if (reposicion.missingLastOrder) {
       await client.sendMessage(numero, '📝 Vemos que es tu primera vez o hace mucho no pedís. Por favor escribime qué productos necesitás.');
       return;
     }
-
-    const lastPedido = lastOrderRows[0];
-
-    // 4. Traer los ítems de ese pedido
-    const items = await query(`
-      SELECT producto, cantidad, precio_unitario 
-      FROM items_pedido 
-      WHERE pedido_id = $1
-    `, [lastPedido.id]);
-
-    if (!items.length) {
+    if (reposicion.missingItems) {
       await client.sendMessage(numero, 'Hubo un error leyendo tu historial. Por favor pedí escribiendo el producto.');
       return;
     }
-
-    // 5. Calcular nuevo total (usando precios históricos o actuales, aquí usamos históricos por simplicidad,
-    // pero lo ideal sería buscar el precio actual en la tabla productos)
-    let totalMonto = 0;
-    let totalCant = 0;
-    let resumenItems = [];
-
-    // Opcional: Actualizar precios al valor actual de la tabla productos
-    for (let it of items) {
-        // Intentar buscar precio actual
-        const prodAct = await query(
-            'SELECT precio FROM productos WHERE empresa_id=$1 AND LOWER(nombre) = LOWER($2) LIMIT 1', 
-            [puntoEmpresaId, it.producto]
-        );
-        const precioReal = prodAct.length ? Number(prodAct[0].precio) : Number(it.precio_unitario);
-        
-        it.precio_nuevo = precioReal;
-        totalMonto += (it.cantidad * precioReal);
-        totalCant += Number(it.cantidad);
-        resumenItems.push(`${it.cantidad} x ${it.producto}`);
+    if (reposicion.missingPoint) {
+      await client.sendMessage(
+        numero,
+        ctx.source === 'desconocido'
+          ? '😕 No encontré una cuenta vinculada a este teléfono. Por favor, escribinos qué necesitás para tomar tu primer pedido.'
+          : 'No pude validar tu punto de entrega. Por favor escribime con un humano.'
+      );
+      return;
     }
 
-    // 6. CREAR EL PEDIDO (INSERT)
-    const newOrder = await query(`
-      INSERT INTO pedidos (
-        empresa_id, punto_entrega_id, fecha, estado,
-        cantidad, cantidad_entregada, monto,
-        metodo_pago, aviso_recibido, sats,
-        chofer_id, zona_id, created_at, updated_at
-      )
-      VALUES ($1, $2, NOW(), 'pendiente', $3, 0, $4, $5, 0, 0, NULL, $6, NOW(), NOW())
-      RETURNING id
-    `, [
-      puntoEmpresaId,
-      punto.id,
-      totalCant,
-      totalMonto,
-      lastPedido.metodo_pago, // Mantenemos mismo método de pago
-      punto.zona_id
-    ]);
-
-    const newId = newOrder[0].id;
-
-    // 7. Insertar Ítems
-    for (let it of items) {
-      await query(`
-        INSERT INTO items_pedido (pedido_id, producto, cantidad, precio_unitario)
-        VALUES ($1, $2, $3, $4)
-      `, [newId, it.producto, it.cantidad, it.precio_nuevo]);
-    }
+    const { newId, totalMonto, resumenItems, direccion } = reposicion;
 
     // 8. Confirmar al Cliente
     const textoItems = resumenItems.join('\n');
     const msg = [
       `🚀 *¡Reposición Automática Generada!*`,
       `Pedido #${newId} confirmado.`,
-      `📍 Dirección: ${punto.direccion}`,
+      `📍 Dirección: ${direccion}`,
       `📦 Pedido:`,
       textoItems,
       `💰 Total estimado: $${totalMonto}`,
@@ -1897,6 +2010,15 @@ function start(rawClient, options = {}) {
         hasEmpresaId ? { empresaId: forcedEmpresaId } : {}
       );
       if (!ctx) return;
+      if (ctx.resolution !== 'unique') {
+        await client.sendMessage(
+          numero,
+          ctx.resolution === 'ambiguous'
+            ? GENERAL_PHONE_AMBIGUOUS_REPLY
+            : GENERAL_PHONE_UNRESOLVED_REPLY
+        );
+        return;
+      }
       const { role, empresa_id, chofer_id } = ctx;
       const contenidoLimpio = contenido.toLowerCase();
 
@@ -1925,7 +2047,9 @@ function start(rawClient, options = {}) {
         contenidoLimpio.includes('necesitas reposición') || 
         contenidoLimpio.includes('necesitas reposicion')
       ) {
-        await handleReposicionAutomatica(client, numero, ctx);
+        await handleReposicionAutomatica(client, numero, ctx, {
+          withTransactionFn: options.replenishmentWithTransaction || withTransaction,
+        });
         return; // IMPORTANTE: Cortamos aquí para que la IA no responda encima
       }
 
@@ -1938,7 +2062,9 @@ function start(rawClient, options = {}) {
                    pe.cliente, pe.direccion
             FROM pedidos p
             JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
-            WHERE pe.empresa_id = $1
+                              AND pe.empresa_id = p.empresa_id
+            WHERE p.empresa_id = $1
+        AND pe.empresa_id = $1
               AND p.chofer_id = $2
             ORDER BY DATE(COALESCE(p.fecha_entrega, p.fecha)) DESC, p.id DESC
             LIMIT 20
@@ -1952,7 +2078,9 @@ function start(rawClient, options = {}) {
                    pe.cliente, pe.direccion
             FROM pedidos p
             JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
-            WHERE pe.empresa_id = $1
+                              AND pe.empresa_id = p.empresa_id
+            WHERE p.empresa_id = $1
+        AND pe.empresa_id = $1
             ORDER BY DATE(COALESCE(p.fecha_entrega, p.fecha)) DESC, p.id DESC
             LIMIT 20
           `,
@@ -1960,21 +2088,43 @@ function start(rawClient, options = {}) {
           );
         } else {
           // Cliente
-          const telDigits = digitsOnly(phoneFromWaId(numero));
-          const suf10 = telDigits.slice(-10) || telDigits;
-          pedidos = await query(
-            `
-            SELECT p.id, p.fecha, p.estado, p.cantidad, p.monto, p.metodo_pago,
-                   pe.cliente, pe.direccion
-            FROM pedidos p
-            JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
-            WHERE pe.empresa_id = $1
-              AND regexp_replace(COALESCE(pe.telefono,''),'\\D','','g') LIKE '%' || $2
-            ORDER BY DATE(COALESCE(p.fecha_entrega, p.fecha)) DESC, p.id DESC
-            LIMIT 20
-          `,
-            [empresa_id, suf10]
-          );
+          if (_positiveTenantId(Number(ctx.delivery_point_id))) {
+            pedidos = await query(
+              `
+              SELECT p.id, p.fecha, p.estado, p.cantidad, p.monto, p.metodo_pago,
+                     pe.cliente, pe.direccion
+              FROM pedidos p
+              JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
+                                AND pe.empresa_id = p.empresa_id
+              WHERE p.empresa_id = $1
+                AND pe.empresa_id = $1
+                AND p.punto_entrega_id = $2
+              ORDER BY DATE(COALESCE(p.fecha_entrega, p.fecha)) DESC, p.id DESC
+              LIMIT 20
+            `,
+              [empresa_id, Number(ctx.delivery_point_id)]
+            );
+          } else if (ctx.source === 'usuario_registrado' || ctx.source === 'chofer') {
+            const telDigits = digitsOnly(phoneFromWaId(numero));
+            const suf10 = telDigits.slice(-10) || telDigits;
+            pedidos = await query(
+              `
+              SELECT p.id, p.fecha, p.estado, p.cantidad, p.monto, p.metodo_pago,
+                     pe.cliente, pe.direccion
+              FROM pedidos p
+              JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
+                                AND pe.empresa_id = p.empresa_id
+              WHERE p.empresa_id = $1
+                AND pe.empresa_id = $1
+                AND regexp_replace(COALESCE(pe.telefono,''),'\\D','','g') LIKE '%' || $2
+              ORDER BY DATE(COALESCE(p.fecha_entrega, p.fecha)) DESC, p.id DESC
+              LIMIT 20
+            `,
+              [empresa_id, suf10]
+            );
+          } else {
+            pedidos = [];
+          }
         }
 
         if (!pedidos?.length) {
@@ -2010,7 +2160,11 @@ function start(rawClient, options = {}) {
       if (contenidoLimpio === 'ver comprobantes') {
         try {
           const tel = phoneFromWaId(numero);
-          const comprobantes = await obtenerUltimosComprobantesPorTelefonoPg(tel, empresa_id);
+          const comprobantes = ctx.source === 'desconocido'
+            ? []
+            : await obtenerUltimosComprobantesPorTelefonoPg(tel, empresa_id, {
+              exactPhone: ctx.resolved_phone,
+            });
           
           if (!comprobantes?.length) {
             await client.sendMessage(numero, 'No hay comprobantes registrados para tu número.');

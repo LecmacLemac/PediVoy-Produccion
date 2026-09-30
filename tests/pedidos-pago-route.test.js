@@ -14,11 +14,12 @@ async function withServer(app, fn) {
   }
 }
 
-function buildApp({ user, pool, checkLicencia = (_req, _res, next) => next() }) {
+function buildApp({ user, pool, withTransaction, checkLicencia = (_req, _res, next) => next() }) {
   const app = express();
   app.use(express.json());
   app.use('/api/pedidos', createPedidosPagoRouter({
     pool,
+    ...(withTransaction ? { withTransaction } : {}),
     withAuth(req, _res, next) {
       req.user = user;
       next();
@@ -142,3 +143,67 @@ test('toggle-pago revierte la transaccion si falla una escritura', async () => {
   assert.ok(pool.calls.some(c => c.sql === 'ROLLBACK'));
   assert.equal(pool.calls.some(c => c.sql === 'COMMIT'), false);
 });
+
+for (const marcado of [true, false]) {
+  test(`toggle-pago responde outcome unknown sanitizado sin retry ni rollback post-COMMIT (marcado=${marcado})`, async () => {
+    const events = [];
+    const releasedWith = [];
+    const pool = {
+      async connect() {
+        return {
+          async query(sql) {
+            events.push(sql);
+            if (sql === 'BEGIN') return { rows: [] };
+            if (sql === 'COMMIT') throw new Error('transport secret=pg-token');
+            if (sql === 'ROLLBACK') return { rows: [] };
+            if (String(sql).includes('FROM pedidos')) {
+              return { rows: [{ empresa_id: 3, monto: 1500, chofer_id: 8, fecha: '2026-06-28' }] };
+            }
+            if (String(sql).includes('FROM transferencias')) return { rows: [] };
+            if (String(sql).includes('INSERT INTO transferencias') || String(sql).includes('DELETE FROM transferencias')) {
+              return { rows: [], rowCount: 1 };
+            }
+            throw new Error(`Consulta inesperada: ${sql}`);
+          },
+          release(error) { releasedWith.push(error); },
+        };
+      },
+    };
+    let transactionCalls = 0;
+    const app = buildApp({
+      user: { uid: 99, role: 'admin', empresa_id: 3 },
+      pool,
+      withTransaction: async (work, options) => {
+        transactionCalls += 1;
+        const { withTransaction: canonical } = await import('../src/db.js');
+        return canonical(work, options);
+      },
+    });
+
+    const originalConsoleError = console.error;
+    console.error = () => {};
+    try {
+      await withServer(app, async (baseUrl) => {
+        const resp = await fetch(`${baseUrl}/api/pedidos/42/toggle-pago`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ marcado }),
+        });
+        assert.equal(resp.status, 503);
+        assert.deepEqual(await resp.json(), {
+          error: 'Resultado de actualización de pago indeterminado',
+          code: 'TRANSACTION_OUTCOME_UNKNOWN',
+        });
+      });
+    } finally {
+      console.error = originalConsoleError;
+    }
+
+    assert.equal(transactionCalls, 1);
+    assert.equal(events.filter(sql => sql === 'BEGIN').length, 1);
+    assert.equal(events.filter(sql => sql === 'COMMIT').length, 1);
+    assert.equal(events.includes('ROLLBACK'), false);
+    assert.equal(releasedWith.length, 1);
+    assert.equal(releasedWith[0]?.message, 'transport secret=pg-token');
+  });
+}

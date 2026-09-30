@@ -20,7 +20,7 @@ function isSchemaQuery(sql) {
 
 function buildApp({
   query,
-  user = { role: 'user', empresa_id: 3 },
+  user = { role: 'admin', empresa_id: 3 },
   geocodeIfNeeded = async () => ({ lat: -32.4113, lng: -63.2374 }),
   pointInAnyZone = async () => 7,
 } = {}) {
@@ -56,7 +56,9 @@ test('PUT /api/clientes/:id actualiza pin y devuelve latitud, longitud y zona', 
     query: async (sql, params = []) => {
       calls.push({ sql, params });
       if (isSchemaQuery(sql)) return [];
-      if (sql.includes('FROM puntos_entrega WHERE id=$1 AND empresa_id=$2')) return [{ id: 45 }];
+      if (/FROM puntos_entrega[\s\S]*WHERE id\s*=\s*\$1[\s\S]*empresa_id\s*=\s*\$2/.test(sql)) {
+        return [{ id: 45, empresa_id: 3, telefono: null, telefono_normalizado: null, direccion: null }];
+      }
       if (sql.includes('FROM zonas_geograficas')) return [{ id: 7 }];
       if (sql.includes('UPDATE puntos_entrega')) {
         return [{ id: 45, latitud: -32.4113, longitud: -63.2374, zona_id: 7 }];
@@ -91,7 +93,9 @@ test('PUT /api/clientes/:id recalcula zona al mover el pin manualmente', async (
     query: async (sql, params = []) => {
       calls.push({ sql, params });
       if (isSchemaQuery(sql)) return [];
-      if (sql.includes('FROM puntos_entrega WHERE id=$1 AND empresa_id=$2')) return [{ id: 45 }];
+      if (/FROM puntos_entrega[\s\S]*WHERE id\s*=\s*\$1[\s\S]*empresa_id\s*=\s*\$2/.test(sql)) {
+        return [{ id: 45, empresa_id: 3, telefono: null, telefono_normalizado: null, direccion: null }];
+      }
       if (sql.includes('UPDATE puntos_entrega')) {
         return [{ id: 45, latitud: -32.42, longitud: -63.24, zona_id: 9 }];
       }
@@ -188,7 +192,9 @@ test('PUT /api/clientes/:id rechaza zona de otra empresa', async () => {
   const app = buildApp({
     query: async (sql) => {
       if (isSchemaQuery(sql)) return [];
-      if (sql.includes('FROM puntos_entrega WHERE id=$1 AND empresa_id=$2')) return [{ id: 45 }];
+      if (/FROM puntos_entrega[\s\S]*WHERE id\s*=\s*\$1[\s\S]*empresa_id\s*=\s*\$2/.test(sql)) {
+        return [{ id: 45, empresa_id: 3, telefono: null, telefono_normalizado: null, direccion: null }];
+      }
       if (sql.includes('FROM zonas_geograficas')) return [];
       throw new Error(`Consulta inesperada: ${sql}`);
     },
@@ -211,7 +217,9 @@ test('PUT /api/clientes/:id rechaza coordenadas inválidas', async () => {
   const app = buildApp({
     query: async (sql) => {
       if (isSchemaQuery(sql)) return [];
-      if (sql.includes('FROM puntos_entrega WHERE id=$1 AND empresa_id=$2')) return [{ id: 45 }];
+      if (/FROM puntos_entrega[\s\S]*WHERE id\s*=\s*\$1[\s\S]*empresa_id\s*=\s*\$2/.test(sql)) {
+        return [{ id: 45, empresa_id: 3, telefono: null, telefono_normalizado: null, direccion: null }];
+      }
       throw new Error(`Consulta inesperada: ${sql}`);
     },
   });
@@ -233,7 +241,9 @@ test('PUT /api/clientes/:id rechaza coordenadas fuera del rango geográfico', as
   const app = buildApp({
     query: async (sql) => {
       if (isSchemaQuery(sql)) return [];
-      if (sql.includes('FROM puntos_entrega WHERE id=$1 AND empresa_id=$2')) return [{ id: 45 }];
+      if (/FROM puntos_entrega[\s\S]*WHERE id\s*=\s*\$1[\s\S]*empresa_id\s*=\s*\$2/.test(sql)) {
+        return [{ id: 45, empresa_id: 3, telefono: null, telefono_normalizado: null, direccion: null }];
+      }
       throw new Error(`Consulta inesperada: ${sql}`);
     },
   });

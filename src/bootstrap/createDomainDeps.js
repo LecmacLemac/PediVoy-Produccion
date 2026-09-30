@@ -21,8 +21,12 @@ import {
   ejecutarReactivacionInteligente,
   ejecutarPostEntregaUpsell,
   ejecutarProgramaVip,
+  ejecutarRecompensaReferido,
+  ejecutarEstrategiaReferidos,
 } from '../estrategias.js';
 import { registrarMovimientosActivosDesdePedido } from '../adm/pedidoActivosService.js';
+import { awardPointsForDeliveredOrder } from '../services/puntosService.js';
+import { generateComisionesForDeliveredOrder } from '../services/referentesService.js';
 
 export function createDomainDeps({ projectDir }) {
   const legacy = createLegacyBackendDeps();
@@ -68,6 +72,10 @@ export function createDomainDeps({ projectDir }) {
     ejecutarReactivacionInteligente,
     ejecutarPostEntregaUpsell,
     ejecutarProgramaVip,
+    ejecutarRecompensaReferido,
+    ejecutarEstrategiaReferidos,
+    awardPointsForDeliveredOrder,
+    generateComisionesForDeliveredOrder,
     registrarMovimientosActivosDesdePedido,
 
   };

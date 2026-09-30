@@ -1,5 +1,5 @@
 // src/estrategias.js
-import { pool, query } from './db.js';
+import { pool, query, withTransaction } from './db.js';
 import { sendSmsViaIfttt } from './services/sms.js';
 import { enqueueWppOutbox } from './wpp/enqueue.js';
 
@@ -165,8 +165,8 @@ async function enviarPorCanal({ empresaId, estrategia, telefono, mensaje, canal,
 }
 
 // Helper para obtener configuración
-async function getConfig(empresaId) {
-  const emp = await query('SELECT config_estrategias FROM empresas WHERE id=$1', [empresaId]);
+async function getConfig(empresaId, queryFn = query) {
+  const emp = await queryFn('SELECT config_estrategias FROM empresas WHERE id=$1', [empresaId]);
   return emp[0]?.config_estrategias || {};
 }
 
@@ -174,15 +174,18 @@ async function getConfig(empresaId) {
  * ESTRATEGIA 1: VECINOS CERCANOS (Geomarketing)
  * Disparador: Cambio de estado a "En Ruta"
  */
-export async function ejecutarEstrategiaVecinos({ pedidoId, empresaId }) {
-  const config = await getConfig(empresaId);
+export async function ejecutarEstrategiaVecinos({ pedidoId, empresaId, queryFn = query, sendFn = enviarPorCanal }) {
+  const config = await getConfig(empresaId, queryFn);
   if (!config.vecinos_activado) return;
 
-  const pRows = await query(`
+  const pRows = await queryFn(`
     SELECT pe.latitud, pe.longitud
     FROM pedidos p
     JOIN puntos_entrega pe ON p.punto_entrega_id = pe.id
-    WHERE p.id = $1`, [pedidoId]);
+                           AND pe.empresa_id = p.empresa_id
+    WHERE p.id = $1
+      AND p.empresa_id = $2
+      AND pe.empresa_id = $2`, [pedidoId, empresaId]);
 
   const centro = pRows[0];
   if (!centro || !centro.latitud) return;
@@ -190,7 +193,7 @@ export async function ejecutarEstrategiaVecinos({ pedidoId, empresaId }) {
   const radio = config.vecinos_radio || 200;
   const diasSinCompra = config.vecinos_dias || 7;
 
-  const vecinos = await query(`
+  const vecinos = await queryFn(`
     SELECT pe.id, pe.cliente, pe.telefono, pe.direccion, pe.latitud, pe.longitud
     FROM puntos_entrega pe
     WHERE pe.empresa_id = $1
@@ -203,6 +206,7 @@ export async function ejecutarEstrategiaVecinos({ pedidoId, empresaId }) {
       AND NOT EXISTS (
         SELECT 1 FROM pedidos p
         WHERE p.punto_entrega_id = pe.id
+          AND p.empresa_id = pe.empresa_id
           AND p.fecha > NOW() - INTERVAL '${diasSinCompra} days'
       )
     LIMIT 5
@@ -211,7 +215,7 @@ export async function ejecutarEstrategiaVecinos({ pedidoId, empresaId }) {
   for (const v of vecinos) {
     let msg = config.vecinos_mensaje || 'Hola {cliente} 👋, el camión está en tu cuadra. Avisame si te dejo algo!';
     msg = msg.replace('{cliente}', v.cliente);
-    await enviarPorCanal({
+    await sendFn({
       empresaId,
       estrategia: 'vecinos',
       telefono: v.telefono,
@@ -260,9 +264,12 @@ export async function ejecutarReposicionPredictiva() {
       SELECT pe.id, pe.cliente, pe.telefono, pe.direccion, pe.latitud, pe.longitud
       FROM puntos_entrega pe
       JOIN pedidos p ON p.punto_entrega_id = pe.id
+                    AND p.empresa_id = pe.empresa_id
       JOIN consumo c ON c.punto_entrega_id = pe.id
       WHERE pe.empresa_id = $1
-        AND p.fecha = (SELECT MAX(fecha) FROM pedidos WHERE punto_entrega_id = pe.id)
+        AND p.empresa_id = $1
+        AND p.fecha = (SELECT MAX(fecha) FROM pedidos
+                        WHERE punto_entrega_id = pe.id AND empresa_id = pe.empresa_id)
         -- Si la fecha estimada es mañana (rango de 24h)
         AND (p.fecha + (c.dias_promedio || ' days')::interval)::date = (CURRENT_DATE + 1)
     `, [empresaId]);
@@ -355,6 +362,7 @@ export async function ejecutarCampaniaClima() {
           SELECT 1
           FROM pedidos p
           WHERE p.punto_entrega_id = pe.id
+            AND p.empresa_id = pe.empresa_id
             AND p.fecha > NOW() - ($2::text || ' days')::interval
         )
         AND NOT EXISTS (
@@ -392,15 +400,15 @@ export async function ejecutarCampaniaClima() {
  * Disparador: Cuando un pedido cambia a "Entregado".
  * Acción: Envía un link al cliente actual para que invite a un vecino.
  */
-export async function ejecutarEstrategiaReferidos({ pedidoId, empresaId }) {
+export async function ejecutarEstrategiaReferidos({ pedidoId, empresaId, queryFn = query, sendFn = enviarPorCanal }) {
   // 1. Obtener configuración de la empresa
-  const config = await getConfig(empresaId);
+  const config = await getConfig(empresaId, queryFn);
 
   // Si la estrategia no está activada, salimos sin hacer nada
   if (!config.referidos_activado) return;
 
   // 2. Obtener datos del pedido, cliente y dominio de la empresa
-  const rows = await query(`
+  const rows = await queryFn(`
     SELECT
         pe.id,
         pe.cliente,
@@ -412,9 +420,13 @@ export async function ejecutarEstrategiaReferidos({ pedidoId, empresaId }) {
         e.landing_domain
     FROM pedidos p
     JOIN puntos_entrega pe ON p.punto_entrega_id = pe.id
-    JOIN empresas e ON e.id = pe.empresa_id
+                           AND pe.empresa_id = p.empresa_id
+    JOIN empresas e ON e.id = p.empresa_id
     WHERE p.id = $1
-  `, [pedidoId]);
+      AND p.empresa_id = $2
+      AND pe.empresa_id = $2
+      AND e.id = $2
+  `, [pedidoId, empresaId]);
 
   const data = rows[0];
   // Validamos que exista el cliente y tenga teléfono
@@ -438,7 +450,7 @@ export async function ejecutarEstrategiaReferidos({ pedidoId, empresaId }) {
     .replace('{link}', link);
 
   // 6. Envío por canal configurado
-  await enviarPorCanal({
+  await sendFn({
     empresaId,
     estrategia: 'referidos',
     telefono: data.telefono,
@@ -463,46 +475,121 @@ export async function ejecutarEstrategiaReferidos({ pedidoId, empresaId }) {
  * Disparador: Cuando el pedido del "Referido" se marca como "entregado".
  * Acción: Busca quién refirió este pedido, le carga un premio en DB y le avisa por WhatsApp.
  */
+export async function grantReferralReward({
+  pedidoId,
+  empresaId,
+  productoId,
+  withTransactionFn = withTransaction,
+}) {
+  const normalizedPedidoId = Number(pedidoId);
+  const normalizedEmpresaId = Number(empresaId);
+  const normalizedProductoId = Number(productoId);
+  if (![normalizedPedidoId, normalizedEmpresaId, normalizedProductoId]
+    .every(value => Number.isSafeInteger(value) && value > 0)) {
+    return { created: false, reason: 'invalid_identity' };
+  }
+
+  return withTransactionFn(async txQuery => {
+    // Orden global: evento referral -> producto -> pedido -> puntos -> recompensa.
+    await txQuery(
+      'SELECT pg_advisory_xact_lock($1::integer, hashtext($2::text))',
+      [normalizedEmpresaId, `referral-reward:${normalizedPedidoId}`]
+    );
+
+    const productRows = await txQuery(
+      `SELECT id
+         FROM productos
+        WHERE id = $1
+          AND empresa_id = $2
+          AND deleted_at IS NULL
+          AND COALESCE(activo, TRUE) IS TRUE
+        FOR SHARE`,
+      [normalizedProductoId, normalizedEmpresaId]
+    );
+    if (productRows.length !== 1) return { created: false, reason: 'invalid_product' };
+
+    const referralRows = await txQuery(
+      `SELECT p.id AS pedido_id,
+              vecino.cliente AS nombre_vecino,
+              padrino.id AS padrino_id,
+              padrino.cliente AS padrino_nombre,
+              padrino.telefono AS padrino_telefono
+         FROM pedidos p
+         JOIN puntos_entrega vecino
+           ON vecino.id = p.punto_entrega_id
+          AND vecino.empresa_id = p.empresa_id
+         JOIN puntos_entrega padrino
+           ON padrino.id = p.referido_por_id
+          AND padrino.empresa_id = p.empresa_id
+        WHERE p.id = $1
+          AND p.empresa_id = $2
+          AND vecino.empresa_id = $2
+          AND padrino.empresa_id = $2
+          AND padrino.id <> vecino.id
+          AND EXISTS (
+            SELECT 1
+              FROM pedidos pedido_padrino
+              JOIN puntos_entrega punto_padrino
+                ON punto_padrino.id = pedido_padrino.punto_entrega_id
+               AND punto_padrino.empresa_id = pedido_padrino.empresa_id
+             WHERE pedido_padrino.punto_entrega_id = padrino.id
+               AND pedido_padrino.empresa_id = $2
+               AND punto_padrino.empresa_id = $2
+          )
+        FOR UPDATE OF p, vecino, padrino`,
+      [normalizedPedidoId, normalizedEmpresaId]
+    );
+    if (referralRows.length !== 1) return { created: false, reason: 'invalid_referral' };
+
+    const existingRows = await txQuery(
+      `SELECT id
+         FROM cliente_recompensas
+        WHERE origen_pedido_id = $1
+        ORDER BY id
+        LIMIT 1
+        FOR UPDATE`,
+      [normalizedPedidoId]
+    );
+    if (existingRows.length) {
+      return { created: false, reason: 'already_granted', rewardId: existingRows[0].id };
+    }
+
+    const referral = referralRows[0];
+    const insertedRows = await txQuery(
+      `INSERT INTO cliente_recompensas
+         (cliente_id, producto_id, cantidad, reclamado, fecha_ganado, origen_pedido_id)
+       VALUES ($1, $2, 1, FALSE, NOW(), $3)
+       RETURNING id`,
+      [referral.padrino_id, normalizedProductoId, normalizedPedidoId]
+    );
+    if (insertedRows.length !== 1) {
+      throw new Error('No se pudo confirmar la creación exacta de la recompensa referral');
+    }
+    return {
+      created: true,
+      rewardId: insertedRows[0].id,
+      padrino: {
+        id: referral.padrino_id,
+        cliente: referral.padrino_nombre,
+        telefono: referral.padrino_telefono,
+      },
+      nombreVecino: referral.nombre_vecino,
+    };
+  });
+}
+
 export async function ejecutarRecompensaReferido({ pedidoId, empresaId }) {
   try {
     const config = await getConfig(empresaId);
     if (!config.referidos_activado) return;
-
-    // 1. Verificar si este pedido fue referido por alguien (tiene referido_por_id)
-    const rows = await query(`
-      SELECT p.referido_por_id, pe.cliente AS nombre_vecino
-      FROM pedidos p
-      JOIN puntos_entrega pe ON p.punto_entrega_id = pe.id
-      WHERE p.id = $1
-    `, [pedidoId]);
-
-    if (!rows.length) return;
-    const { referido_por_id, nombre_vecino } = rows[0];
-
-    if (!referido_por_id) return;
-
-    // 2. Obtener datos del Padrino (quien refirió)
-    const padrinoRows = await query(`
-      SELECT id, cliente, telefono
-      FROM puntos_entrega
-      WHERE id = $1 AND empresa_id = $2
-    `, [referido_por_id, empresaId]);
-
-    if (!padrinoRows.length) return;
-    const padrino = padrinoRows[0];
-
-    // 3. Otorgar Recompensa (Insertar en cliente_recompensas)
     const idPremio = config.referidos_producto_id ? parseInt(config.referidos_producto_id, 10) : null;
+    if (!idPremio) return;
+    const granted = await grantReferralReward({ pedidoId, empresaId, productoId: idPremio });
+    if (!granted.created) return;
+    const padrino = granted.padrino;
 
-    if (idPremio) {
-      await query(`
-        INSERT INTO cliente_recompensas (cliente_id, producto_id, cantidad, reclamado, fecha_generado)
-        VALUES ($1, $2, 1, FALSE, NOW())
-      `, [padrino.id, idPremio]);
-
-      if (process.env.DEBUG_ORDERS === '1') {
-        console.log(`[MARKETING] Premio otorgado al padrino ${padrino.id} por pedido #${pedidoId}`);
-      }
+    if (process.env.DEBUG_ORDERS === '1') {
+      console.log(`[MARKETING] Premio otorgado al padrino ${padrino.id} por pedido #${pedidoId}`);
     }
 
     // 4. Avisar al Padrino por canal configurado
@@ -510,7 +597,7 @@ export async function ejecutarRecompensaReferido({ pedidoId, empresaId }) {
       || '¡Buenas noticias {padrino}! 🥳 Tu vecino {vecino} recibió su primer pedido. Te ganaste un regalo para tu próxima compra por haberlo invitado. ¡Gracias!';
 
     msg = msg.replace('{padrino}', padrino.cliente || 'Cliente')
-      .replace('{vecino}', nombre_vecino || 'tu vecino');
+      .replace('{vecino}', granted.nombreVecino || 'tu vecino');
 
     await enviarPorCanal({
       empresaId,
@@ -656,6 +743,7 @@ export async function ejecutarPostEntregaUpsell({ pedidoId = null, empresaId = n
       FROM pedidos p
       JOIN empresas e ON e.id = p.empresa_id
       JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
+                            AND pe.empresa_id = p.empresa_id
       WHERE p.estado = 'entregado'
         AND p.fecha_entrega IS NOT NULL
         AND e.config_estrategias->>'postentrega_activado' = 'true'
@@ -738,6 +826,7 @@ export async function ejecutarProgramaVip() {
           COUNT(p.id)::int AS pedidos_entregados
         FROM puntos_entrega pe
         JOIN pedidos p ON p.punto_entrega_id = pe.id
+                      AND p.empresa_id = pe.empresa_id
         WHERE pe.empresa_id = $1
           AND p.empresa_id = $1
           AND p.estado = 'entregado'

@@ -211,6 +211,7 @@ export async function crearPagoParaPedido({ pedidoId, empresaId }, options = {})
   if (!pedido) {
     const err = new Error('Pedido no encontrado');
     err.statusCode = 404;
+    err.code = 'PAYMENT_ORDER_NOT_FOUND';
     throw err;
   }
 
@@ -218,6 +219,7 @@ export async function crearPagoParaPedido({ pedidoId, empresaId }, options = {})
   if (!configPagos) {
     const err = new Error('La empresa no tiene configurado config_integraciones.pagos');
     err.statusCode = 400;
+    err.code = 'PAYMENT_PROVIDER_NOT_CONFIGURED';
     throw err;
   }
 
@@ -240,6 +242,7 @@ export async function crearPagoParaPedido({ pedidoId, empresaId }, options = {})
   if (!monto || Number.isNaN(monto) || monto <= 0) {
     const err = new Error('El pedido no tiene un monto válido');
     err.statusCode = 400;
+    err.code = 'PAYMENT_AMOUNT_INVALID';
     throw err;
   }
 

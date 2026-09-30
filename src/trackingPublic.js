@@ -124,7 +124,7 @@ router.get('/tracking/:token', rateLimitTracking, async (req, res) => {
   try {
     // 1. Validación estricta del token
     if (!token || typeof token !== 'string' || token.length < 5) {
-      console.warn(`[TRACKING] Intento de acceso con token inválido: ${token}`);
+      console.warn('[TRACKING] Solicitud rechazada por token inválido');
       return res.status(400).json({ error: 'Token inválido' });
     }
 
@@ -153,10 +153,15 @@ router.get('/tracking/:token', rateLimitTracking, async (req, res) => {
         e.landing_domain AS empresa_landing_domain,
         e.landing_slug   AS empresa_landing_slug
       FROM pedidos p
-      JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id
-      LEFT JOIN choferes c    ON c.id = p.chofer_id
-      LEFT JOIN empresas e    ON e.id = p.empresa_id
+      JOIN puntos_entrega pe
+        ON pe.id = p.punto_entrega_id
+       AND pe.empresa_id = p.empresa_id
+      LEFT JOIN choferes c
+        ON c.id = p.chofer_id
+       AND c.empresa_id = p.empresa_id
+      JOIN empresas e         ON e.id = p.empresa_id
       WHERE p.tracking_token = $1
+        AND (p.chofer_id IS NULL OR c.id IS NOT NULL)
       LIMIT 1
     `, [token]);
 
@@ -276,8 +281,8 @@ router.get('/tracking/:token', rateLimitTracking, async (req, res) => {
 
     return res.json({ pedido: safePedido, driverLocation: safeDriverLocation });
 
-  } catch (err) {
-    console.error(`[TRACKING ERROR] Token: ${token}`, err);
+  } catch {
+    console.error('[TRACKING ERROR] Falló la consulta pública');
     // Es importante devolver JSON incluso en error para que el frontend no se cuelgue parseando HTML de error
     return res.status(500).json({ error: 'Error interno del servidor' });
   }

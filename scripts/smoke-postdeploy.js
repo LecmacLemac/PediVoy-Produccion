@@ -72,9 +72,9 @@ async function runPublicChecks() {
     await expectHtml(r, [200]);
   }));
 
-  results.push(await check('GET /public/config', async () => {
+  results.push(await check('GET /public/config sin selector', async () => {
     const r = await request('/public/config');
-    await expectJson(r, [200, 404]);
+    await expectJson(r, [400]);
   }));
 
   results.push(await check('POST /public/pedidos inválido', async () => {

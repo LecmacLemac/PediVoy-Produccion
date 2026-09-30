@@ -18,6 +18,7 @@ async function requestWithSetup({ role = 'super', path, method = 'GET', body, qu
       return req.user?.empresa_id;
     },
     query,
+    withTransaction: work => work(query),
   }));
 
   const server = http.createServer(app);

@@ -1,0 +1,6 @@
+[
+  {
+    "source": "src/costosServices.js",
+    "reason": "Módulo legacy SQLite sin import productivo desde src/app.js ni sus registradores; no se monta en la aplicación Express actual."
+  }
+]

@@ -27,7 +27,10 @@ test('canal empresarial asocia solo un pedido de su empresa y conserva empresa f
 
   assert.match(calls[0].sql, /p\.empresa_id = \$2/);
   assert.deepEqual(calls[0].params, ['3510000000', 7]);
-  assert.equal(calls[1].params[5], 7);
+  const locked = calls.find(call => /FOR UPDATE OF p, pe/.test(call.sql));
+  assert.deepEqual(locked.params, [202, 7, '3510000000']);
+  const inserted = calls.find(call => /INSERT INTO comprobantes_transferencia/.test(call.sql));
+  assert.equal(inserted.params[5], 7);
   assert.equal(result.empresa_id, 7);
   assert.equal(result.pedido_monto, 1500);
 });

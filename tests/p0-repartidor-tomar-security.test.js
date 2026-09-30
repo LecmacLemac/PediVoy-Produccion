@@ -44,12 +44,36 @@ async function tomar(baseUrl, id, body = { empresa_id: 999, chofer_id: 999 }) {
 
 const driver = { role: 'repartidor', empresa_id: 7, chofer_id: 4 };
 
+test('tomar pedido usa orden de locks pedido -> chofer y exclusivamente identidad autenticada', async () => {
+  const calls = [];
+  const query = async (sql, params) => {
+    calls.push({ sql, params });
+    if (sql.includes('FROM pedidos')) return [{ id: 55 }];
+    if (sql.includes('FROM choferes')) return [{ id: 4 }];
+    if (sql.includes('UPDATE pedidos')) return [{ id: 55 }];
+    throw new Error(`SQL inesperado: ${sql}`);
+  };
+  const app = buildApp({ user: driver, query });
+
+  await withServer(app, async baseUrl => {
+    const response = await tomar(baseUrl, 55);
+    assert.equal(response.status, 200);
+  });
+
+  assert.equal(calls.length, 3);
+  assert.match(calls[0].sql, /FROM pedidos[\s\S]*id\s*=\s*\$1[\s\S]*empresa_id\s*=\s*\$2[\s\S]*chofer_id\s+IS\s+NULL[\s\S]*estado\s*=\s*'pendiente'[\s\S]*FOR UPDATE/i);
+  assert.deepEqual(calls[0].params, [55, 7]);
+  assert.match(calls[1].sql, /FROM choferes[\s\S]*empresa_id\s*=\s*\$2[\s\S]*activo\s+IS\s+TRUE[\s\S]*FOR SHARE/i);
+  assert.deepEqual(calls[1].params, [4, 7]);
+  assert.match(calls[2].sql, /UPDATE pedidos[\s\S]*empresa_id\s*=\s*\$3[\s\S]*chofer_id\s+IS\s+NULL/i);
+  assert.deepEqual(calls[2].params, [4, 55, 7]);
+});
+
 test('tomar pedido usa exclusivamente empresa y chofer autenticados y no revela pedidos cross-tenant', async () => {
   const calls = [];
   const query = async (sql, params) => {
     calls.push({ sql, params });
-    if (sql.includes('FROM choferes')) return [{ id: 4 }];
-    if (sql.includes('UPDATE pedidos')) return [];
+    if (sql.includes('FROM pedidos')) return [];
     throw new Error(`SQL inesperado: ${sql}`);
   };
   const app = buildApp({ user: driver, query });
@@ -59,14 +83,11 @@ test('tomar pedido usa exclusivamente empresa y chofer autenticados y no revela 
     assert.equal(response.status, 404);
   });
 
-  assert.equal(calls.length, 2);
-  assert.match(calls[0].sql, /empresa_id\s*=\s*\$2/i);
-  assert.match(calls[0].sql, /activo\s+IS\s+TRUE/i);
-  assert.deepEqual(calls[0].params, [4, 7]);
-  assert.match(calls[1].sql, /WHERE\s+id\s*=\s*\$2[\s\S]*empresa_id\s*=\s*\$3[\s\S]*chofer_id\s+IS\s+NULL/i);
-  assert.match(calls[1].sql, /estado\s*=\s*'pendiente'/);
-  assert.doesNotMatch(calls[1].sql, /LOWER\s*\(|COALESCE\s*\(\s*estado/i);
-  assert.deepEqual(calls[1].params, [4, 55, 7]);
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].sql, /WHERE\s+id\s*=\s*\$1[\s\S]*empresa_id\s*=\s*\$2[\s\S]*chofer_id\s+IS\s+NULL/i);
+  assert.match(calls[0].sql, /estado\s*=\s*'pendiente'/);
+  assert.doesNotMatch(calls[0].sql, /LOWER\s*\(|COALESCE\s*\(\s*estado/i);
+  assert.deepEqual(calls[0].params, [55, 7]);
 });
 
 test('tomar pedido valida un ID entero positivo y seguro antes de abrir transacción', async () => {
@@ -116,6 +137,7 @@ test('tomar pedido rechaza chofer inactivo o de otra empresa sin intentar actual
     const calls = [];
     const query = async (sql, params) => {
       calls.push({ sql, params });
+      if (sql.includes('FROM pedidos')) return [{ id: 55 }];
       if (sql.includes('FROM choferes')) return [];
       throw new Error('No debe actualizar pedidos');
     };
@@ -124,8 +146,42 @@ test('tomar pedido rechaza chofer inactivo o de otra empresa sin intentar actual
       const response = await tomar(baseUrl, 55);
       assert.equal(response.status, 403, scenario);
     });
-    assert.equal(calls.length, 1, scenario);
+    assert.equal(calls.length, 2, scenario);
   }
+});
+
+test('tomar pedido responde 503 sanitizado ante COMMIT ambiguo sin retry ni efectos posteriores', async () => {
+  const privateError = new Error('detalle privado del COMMIT');
+  privateError.code = 'TRANSACTION_OUTCOME_UNKNOWN';
+  let transactionCalls = 0;
+  let workCalls = 0;
+  const app = buildApp({
+    user: driver,
+    query: async () => { throw new Error('No debe usar query fuera de la transacción'); },
+    withTransaction: async work => {
+      transactionCalls += 1;
+      await work(async sql => {
+        workCalls += 1;
+        if (sql.includes('FROM pedidos')) return [{ id: 55 }];
+        if (sql.includes('FROM choferes')) return [{ id: 4 }];
+        if (sql.includes('UPDATE pedidos')) return [{ id: 55 }];
+        throw new Error(`SQL inesperado: ${sql}`);
+      });
+      throw privateError;
+    },
+  });
+
+  await withServer(app, async baseUrl => {
+    const response = await tomar(baseUrl, 55);
+    assert.equal(response.status, 503);
+    assert.deepEqual(await response.json(), {
+      error: 'Resultado de toma indeterminado',
+      code: 'TRANSACTION_OUTCOME_UNKNOWN',
+    });
+  });
+
+  assert.equal(transactionCalls, 1);
+  assert.equal(workCalls, 3);
 });
 
 test('dos repartidores concurrentes: exactamente uno toma el pedido', postgresOptions, async () => {

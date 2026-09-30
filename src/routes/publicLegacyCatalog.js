@@ -1,6 +1,14 @@
 import express from 'express';
 import crypto from 'node:crypto';
 import { normalizePhone } from '../services.js';
+import {
+  assertPublicPedidoEmpresaActive,
+  resolvePublicPedidoEmpresaId,
+} from '../services/publicPedidoTenant.js';
+import {
+  lockGeneralPhoneIdentity,
+  resolveTenantDeliveryPointByPhone,
+} from '../services/deliveryPointIdentity.js';
 
 function getClientIp(req) {
   const xff = req.headers['x-forwarded-for'];
@@ -53,71 +61,44 @@ async function resolveLocationForEmpresa(req, empresaRow) {
   return getLocationFromIp(req);
 }
 
-export function createPublicLegacyCatalogRouter({ query }) {
+export function createPublicLegacyCatalogRouter({ query, withTransaction }) {
   if (typeof query !== 'function') throw new Error('createPublicLegacyCatalogRouter: falta query(fn)');
+  if (typeof withTransaction !== 'function') throw new Error('createPublicLegacyCatalogRouter: falta withTransaction(fn)');
+  const runInTransaction = withTransaction;
 
   const router = express.Router();
 
+  function publicTenantFailure(res, error, fallback) {
+    if (error?.code === 'TRANSACTION_OUTCOME_UNKNOWN') {
+      return res.status(503).json({
+        error: 'No se pudo confirmar la lectura',
+        code: 'TRANSACTION_OUTCOME_UNKNOWN',
+      });
+    }
+    const status = Number(error?.statusCode) || 500;
+    return res.status(status).json({
+      error: status < 500 ? error.message : fallback,
+      ...(error?.code ? { code: error.code } : {}),
+    });
+  }
+
   router.get('/config', async (req, res) => {
     try {
-      const rawId = req.query.empresa_id;
-      if (rawId !== undefined && rawId !== null && rawId !== '') {
-        const parsed = Number(rawId);
-        if (Number.isFinite(parsed) && parsed > 0) {
-          const rows = await query(
-            `SELECT id, nombre, config_operativa, landing_domain, landing_slug, logo_url
-             FROM empresas
-             WHERE id = $1
-             LIMIT 1`,
-            [parsed]
-          );
-          if (rows.length) {
-            const loc = await resolveLocationForEmpresa(req, rows[0]);
-            const nombre_empresa = rows[0].nombre ? String(rows[0].nombre) : null;
-            return res.json({
-              empresa_id: Number(rows[0].id),
-              nombre_empresa,
-              nombre: nombre_empresa,
-              landing_domain: rows[0].landing_domain || null,
-              landing_slug: rows[0].landing_slug || null,
-              logo_url: rows[0].logo_url || null,
-              ...loc,
-            });
-          }
-        }
+      const empresaId = await resolvePublicPedidoEmpresaId(req, query);
+      const rows = await query(
+        `SELECT id, nombre, config_operativa, landing_domain, landing_slug, logo_url
+         FROM empresas
+         WHERE id = $1
+         LIMIT 1`,
+        [empresaId]
+      );
+      const row = rows[0];
+      if (!row || Number(row.id) !== empresaId) {
+        const error = new Error('No se pudo resolver la empresa pública');
+        error.code = 'PUBLIC_TENANT_UNRESOLVED';
+        error.statusCode = 400;
+        throw error;
       }
-
-      if (rawId !== undefined) return res.status(404).json({ error: 'Empresa no encontrada' });
-
-      const rawSlug = (req.query.slug || '').toString().trim().toLowerCase();
-      let host = (req.headers.host || '').split(':')[0].trim().toLowerCase();
-      if (host.startsWith('www.')) host = host.slice(4);
-
-      if (req.query.slug !== undefined && !/^[a-z0-9_-]+$/.test(rawSlug)) return res.status(404).json({ error: 'Slug inválido' });
-      let row = null;
-      if (rawSlug) {
-        const rows = await query(
-          `SELECT id, nombre, config_operativa, landing_domain, landing_slug, logo_url
-           FROM empresas
-           WHERE LOWER(landing_slug) = $1
-           LIMIT 1`,
-          [rawSlug]
-        );
-        if (rows.length) row = rows[0];
-      }
-
-      if (!row && !rawSlug && host) {
-        const rows = await query(
-          `SELECT id, nombre, config_operativa, landing_domain, landing_slug, logo_url
-           FROM empresas
-           WHERE LOWER(landing_domain) = $1
-           LIMIT 1`,
-          [host]
-        );
-        if (rows.length) row = rows[0];
-      }
-
-      if (!row) return res.status(404).json({ error: 'No hay empresas configuradas' });
 
       const loc = await resolveLocationForEmpresa(req, row);
       const nombre_empresa = row.nombre ? String(row.nombre) : null;
@@ -132,16 +113,17 @@ export function createPublicLegacyCatalogRouter({ query }) {
       });
     } catch (e) {
       console.error('PUBLIC CONFIG ERROR', e);
-      return res.status(500).json({ error: 'No se pudo resolver la empresa' });
+      const status = Number(e?.statusCode) || 500;
+      return res.status(status).json({
+        error: status < 500 ? e.message : 'No se pudo resolver la empresa',
+        ...(e?.code ? { code: e.code } : {}),
+      });
     }
   });
 
   router.get('/empresa', async (req, res) => {
     try {
-      const empresaId = Number(req.query.empresa_id);
-      if (!Number.isFinite(empresaId) || empresaId <= 0) {
-        return res.status(400).json({ error: 'empresa_id inválido' });
-      }
+      const empresaId = await resolvePublicPedidoEmpresaId(req, query);
 
       const rows = await query(
         `SELECT id, nombre, razon_social, cuit, direccion, ciudad, provincia, pais, telefono, email
@@ -154,13 +136,13 @@ export function createPublicLegacyCatalogRouter({ query }) {
       return res.json(rows[0]);
     } catch (err) {
       console.error('PUBLIC EMPRESA ERROR', err);
-      return res.status(500).json({ error: 'Error al obtener datos de empresa' });
+      return publicTenantFailure(res, err, 'Error al obtener datos de empresa');
     }
   });
 
   router.get('/productos', async (req, res) => {
     try {
-      const empresa_id = Number(req.query.empresa_id) || 1;
+      const empresa_id = await resolvePublicPedidoEmpresaId(req, query);
       const scope = req.query.scope || 'all';
       const soloDestacados = req.query.destacado === 'true';
 
@@ -182,106 +164,140 @@ export function createPublicLegacyCatalogRouter({ query }) {
       return res.json(rows);
     } catch (e) {
       console.error(e);
-      return res.status(500).json({ error: 'No se pudieron obtener productos' });
+      return publicTenantFailure(res, e, 'No se pudieron obtener productos');
     }
   });
 
   router.get('/contacto', async (req, res) => {
     try {
-      const empresa_id = Number(req.query.empresa_id || 1);
+      const empresa_id = await resolvePublicPedidoEmpresaId(req, query);
       const telefonoNorm = normalizePhone(req.query.telefono);
       if (!telefonoNorm) return res.status(400).json({ error: 'telefono requerido' });
 
-      const rows = await query(
-        `SELECT id, cliente, telefono, direccion, ciudad, provincia, pais,
-                latitud, longitud, notas, zona_id
-         FROM puntos_entrega
-         WHERE empresa_id = $1
-           AND telefono_normalizado LIKE '%' || $2
-         ORDER BY id DESC
-         LIMIT 1`,
-        [empresa_id, telefonoNorm]
-      );
-
-      if (!rows.length) return res.json({ ok: true, found: false });
-      return res.json({ ok: true, found: true, contacto: rows[0] });
+      const result = await runInTransaction(async txQuery => {
+        await lockGeneralPhoneIdentity(txQuery, {
+          normalizePhoneFn: normalizePhone,
+          telefono: req.query.telefono,
+        });
+        await assertPublicPedidoEmpresaActive(txQuery, empresa_id);
+        const identity = await resolveTenantDeliveryPointByPhone(txQuery, {
+          empresaId: empresa_id,
+          telefono: req.query.telefono,
+          normalizePhoneFn: normalizePhone,
+        });
+        if (identity.status !== 'unique') return { identity, rows: [] };
+        const rows = await txQuery(
+          `SELECT id, cliente, telefono, direccion, ciudad, provincia, pais,
+                  latitud, longitud, notas, zona_id
+           FROM puntos_entrega
+           WHERE empresa_id = $1 AND id = $2`,
+          [empresa_id, Number(identity.point.id)]
+        );
+        return { identity, rows };
+      });
+      if (result.identity.status === 'ambiguous') {
+        return res.status(409).json({ error: 'Identidad de contacto ambigua', code: 'PUBLIC_CLIENT_IDENTITY_AMBIGUOUS' });
+      }
+      if (result.identity.status === 'none' || !result.rows.length) {
+        return res.json({ ok: true, found: false });
+      }
+      return res.json({ ok: true, found: true, contacto: result.rows[0] });
     } catch (e) {
-      console.error('ERROR /public/contacto', e);
-      return res.status(500).json({ error: 'No se pudo buscar el contacto' });
+      if (e?.code !== 'TRANSACTION_OUTCOME_UNKNOWN') {
+        console.error('PUBLIC CONTACT LOOKUP FAILED', { code: String(e?.code || 'UNKNOWN') });
+      }
+      return publicTenantFailure(res, e, 'No se pudo buscar el contacto');
     }
   });
 
   router.get('/ultimo-pedido', async (req, res) => {
     try {
-      const empresa_id = Number(req.query.empresa_id) || 1;
       const telefonoIn = String(req.query.telefono || '').trim();
-      const contactoId = Number(req.query.contacto_id) || null;
+      if (!telefonoIn || !normalizePhone(telefonoIn)) {
+        return res.status(400).json({ error: 'telefono requerido', code: 'PUBLIC_PHONE_REQUIRED' });
+      }
+      const empresa_id = await resolvePublicPedidoEmpresaId(req, query);
+      let contactoId = null;
+      if (req.query.contacto_id !== undefined) {
+        const rawContactoId = req.query.contacto_id;
+        if (typeof rawContactoId !== 'string' || !/^[1-9]\d*$/.test(rawContactoId)) {
+          return res.status(400).json({ error: 'contacto_id inválido', code: 'PUBLIC_CONTACT_ID_INVALID' });
+        }
+        contactoId = Number(rawContactoId);
+        if (!Number.isSafeInteger(contactoId)) {
+          return res.status(400).json({ error: 'contacto_id inválido', code: 'PUBLIC_CONTACT_ID_INVALID' });
+        }
+      }
 
-      let punto_entrega_id = null;
+      const result = await runInTransaction(async txQuery => {
+        await lockGeneralPhoneIdentity(txQuery, {
+          normalizePhoneFn: normalizePhone,
+          telefono: telefonoIn,
+        });
+        await assertPublicPedidoEmpresaActive(txQuery, empresa_id);
+        const identity = await resolveTenantDeliveryPointByPhone(txQuery, {
+          empresaId: empresa_id,
+          telefono: telefonoIn,
+          normalizePhoneFn: normalizePhone,
+        });
+        const identityStatus = identity.status;
+        if (identity.status !== 'unique') return { identityStatus, pedRows: [] };
 
-      if (contactoId) {
-        const rows = await query(
-          `SELECT id FROM puntos_entrega WHERE empresa_id = $1 AND id = $2`,
-          [empresa_id, contactoId]
-        );
-        if (rows.length) punto_entrega_id = rows[0].id;
-      } else if (telefonoIn) {
-        const norm = normalizePhone(telefonoIn);
-
-        let rows = await query(
-          `SELECT id
-           FROM puntos_entrega
-           WHERE empresa_id = $1
-             AND telefono_normalizado = $2
-           ORDER BY id DESC
-           LIMIT 1`,
-          [empresa_id, norm]
-        );
-
-        if (!rows.length) {
-          rows = await query(
-            `SELECT id
-             FROM puntos_entrega
-             WHERE empresa_id = $1
-               AND telefono_normalizado LIKE '%' || $2
-             ORDER BY id DESC
-             LIMIT 1`,
-            [empresa_id, norm]
-          );
+        const punto_entrega_id = Number(identity.point.id);
+        if (contactoId !== null && contactoId !== punto_entrega_id) {
+          const error = new Error('contacto_id no coincide con la identidad telefónica');
+          error.code = 'PUBLIC_CONTACT_ID_CONFLICT';
+          error.statusCode = 403;
+          throw error;
         }
 
-        if (rows.length) punto_entrega_id = rows[0].id;
-      }
-
-      if (!punto_entrega_id) return res.status(404).json({ error: 'contacto no encontrado' });
-
-      let pedRows = await query(
-        `SELECT id, estado, fecha, tracking_token
-         FROM pedidos
-         WHERE punto_entrega_id = $1
-         ORDER BY fecha DESC, id DESC
-         LIMIT 1`,
-        [punto_entrega_id]
-      );
-
-      if (!pedRows.length) return res.status(404).json({ error: 'no hay pedidos para este contacto' });
-      if (!pedRows[0].tracking_token) {
-        const tokenRows = await query(
-          `UPDATE pedidos
-              SET tracking_token = COALESCE(tracking_token, $1)
-            WHERE id = $2
-            RETURNING tracking_token`,
-          [crypto.randomBytes(16).toString('hex'), pedRows[0].id]
+        let pedRows = await txQuery(
+          `SELECT p.id, p.estado, p.fecha, p.tracking_token
+           FROM pedidos p
+           JOIN puntos_entrega pe
+             ON pe.id = p.punto_entrega_id
+            AND pe.empresa_id = p.empresa_id
+           WHERE p.punto_entrega_id = $1
+             AND p.empresa_id = $2
+             AND pe.empresa_id = $2
+           ORDER BY p.fecha DESC, p.id DESC
+           LIMIT 1`,
+          [punto_entrega_id, empresa_id]
         );
-        pedRows = [{ ...pedRows[0], tracking_token: tokenRows[0]?.tracking_token || null }];
+
+        if (pedRows.length && !pedRows[0].tracking_token) {
+          const tokenRows = await txQuery(
+            `UPDATE pedidos
+                SET tracking_token = COALESCE(tracking_token, $1)
+              WHERE id = $2 AND empresa_id = $3
+              RETURNING tracking_token`,
+            [crypto.randomBytes(16).toString('hex'), pedRows[0].id, empresa_id]
+          );
+          pedRows = [{ ...pedRows[0], tracking_token: tokenRows[0]?.tracking_token || null }];
+        }
+        return { identityStatus, pedRows };
+      });
+
+      if (result.identityStatus === 'ambiguous') {
+        return res.status(409).json({ error: 'Identidad de contacto ambigua', code: 'PUBLIC_CLIENT_IDENTITY_AMBIGUOUS' });
       }
-      pedRows[0].tracking_url = pedRows[0].tracking_token
-        ? `/pedidos/seguimiento.html?t=${encodeURIComponent(pedRows[0].tracking_token)}`
+      if (!result.pedRows.length) {
+        return res.status(404).json({
+          error: result.identityStatus === 'none' || (!contactoId && telefonoIn)
+            ? 'contacto no encontrado'
+            : 'no hay pedidos para este contacto',
+        });
+      }
+      const [{ tracking_token: trackingToken, ...pedido }] = result.pedRows;
+      pedido.tracking_url = trackingToken
+        ? `/pedidos/seguimiento.html?t=${encodeURIComponent(trackingToken)}`
         : null;
-      return res.json({ ok: true, pedido: pedRows[0] });
+      return res.json({ ok: true, pedido });
     } catch (e) {
-      console.error('ERROR /public/ultimo-pedido', e);
-      return res.status(500).json({ error: 'No se pudo buscar el último pedido' });
+      if (e?.code !== 'TRANSACTION_OUTCOME_UNKNOWN') {
+        console.error('PUBLIC LAST ORDER LOOKUP FAILED', { code: String(e?.code || 'UNKNOWN') });
+      }
+      return publicTenantFailure(res, e, 'No se pudo buscar el último pedido');
     }
   });
 

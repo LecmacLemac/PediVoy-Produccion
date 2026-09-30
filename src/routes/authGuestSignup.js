@@ -4,6 +4,7 @@
 import express from 'express';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
+import { withTransaction as canonicalWithTransaction } from '../db.js';
 
 
 const SIGNUP_WINDOW_MS = Number(process.env.SIGNUP_RATE_WINDOW_MS || 60 * 60 * 1000);
@@ -38,10 +39,11 @@ function hitRateLimit(map, key, windowMs, max) {
 }
 
 export function createAuthGuestSignupRouter(deps) {
-  const { query, withAuth, pool } = deps || {};
+  const { query, withAuth, pool, withTransaction = canonicalWithTransaction } = deps || {};
   if (typeof query !== 'function') throw new Error('createAuthGuestSignupRouter: falta query(fn)');
   if (typeof withAuth !== 'function') throw new Error('createAuthGuestSignupRouter: falta withAuth(fn)');
   if (!pool || typeof pool.connect !== 'function') throw new Error('createAuthGuestSignupRouter: falta pool.connect(fn)');
+  if (typeof withTransaction !== 'function') throw new Error('createAuthGuestSignupRouter: falta withTransaction(fn)');
 
   const router = express.Router();
 
@@ -93,12 +95,9 @@ export function createAuthGuestSignupRouter(deps) {
         '-' +
         Date.now().toString().slice(-4);
 
-      const client = await pool.connect();
-
       try {
-        await client.query('BEGIN');
-
-        const empRes = await client.query(
+        const { newUser } = await withTransaction(async txQuery => {
+        const empRows = await txQuery(
           `INSERT INTO empresas (
               nombre, telefono, email, rubro, landing_slug,
               plan_estado, plan_tipo, plan_vencimiento, setup_steps
@@ -108,18 +107,19 @@ export function createAuthGuestSignupRouter(deps) {
           [empresa_nombre, telefono, email, rubro || 'general', slug]
         );
 
-        const newEmpresaId = empRes.rows[0].id;
+        if (empRows.length !== 1) throw new Error('SIGNUP_EMPRESA_INSERT_FAILED');
+        const newEmpresaId = empRows[0].id;
 
-        const userRes = await client.query(
+        const userRows = await txQuery(
           `INSERT INTO usuarios (username, password, role, empresa_id, telefono)
            VALUES ($1, $2, 'user', $3, $4)
            RETURNING id, username, role, empresa_id`,
           [username, hash, newEmpresaId, telefono]
         );
 
-        const newUser = userRes.rows[0];
-
-        await client.query('COMMIT');
+        if (userRows.length !== 1) throw new Error('SIGNUP_USER_INSERT_FAILED');
+        return { newUser: userRows[0] };
+        }, { pool, maxRetries: 0 });
 
         const token = jwt.sign(
           {
@@ -152,17 +152,20 @@ export function createAuthGuestSignupRouter(deps) {
 
         return res.json({ ok: true, user: newUser, message: '¡Empresa creada con éxito!' });
       } catch (err) {
-        await client.query('ROLLBACK');
-        console.error('ROLLBACK SIGNUP:', err);
-        if (err?.message?.includes('users_username_key') || err?.message?.includes('unique')) {
+        if (err?.code === 'TRANSACTION_OUTCOME_UNKNOWN') {
+          return res.status(503).json({
+            error: 'Resultado de creación indeterminado',
+            code: 'TRANSACTION_OUTCOME_UNKNOWN',
+          });
+        }
+        console.error('SIGNUP_TRANSACTION_FAILED', { code: String(err?.code || 'INTERNAL_ERROR') });
+        if (err?.code === '23505') {
           return res.status(400).json({ error: 'El usuario o empresa ya existen.' });
         }
         throw err;
-      } finally {
-        client.release();
       }
     } catch (e) {
-      console.error('SIGNUP ERROR:', e);
+      console.error('SIGNUP_FAILED', { code: String(e?.code || 'INTERNAL_ERROR') });
       return res.status(500).json({ error: 'Error interno al crear cuenta.' });
     }
   });

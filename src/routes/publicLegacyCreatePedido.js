@@ -3,6 +3,15 @@ import { z } from 'zod';
 import { armarMensajeConfirmado, calcularFechaEntregaReal } from '../utils.js';
 import { ejecutarEstrategiaVecinos } from '../estrategias.js';
 import { associateClienteWithReferente, normalizeReferenteCode } from '../services/referentesService.js';
+import { resolveProductIdentityItems } from '../services/productIdentityNamespace.js';
+import { resolvePublicPedidoEmpresaId } from '../services/publicPedidoTenant.js';
+import {
+  deliveryPointConflict,
+  deliveryPointIdentity,
+  findDeliveryPointsByIdentity,
+  lockDeliveryPointIdentity,
+  lockGeneralPhoneIdentity,
+} from '../services/deliveryPointIdentity.js';
 
 const RATE_LIMIT_WINDOW_MS = Number(process.env.PUBLIC_PEDIDOS_RATE_LIMIT_WINDOW_MS || 60_000);
 const RATE_LIMIT_MAX = Number(process.env.PUBLIC_PEDIDOS_RATE_LIMIT_MAX || 20);
@@ -42,6 +51,7 @@ function checkRateLimit(req) {
   return { allowed: true, remaining: Math.max(0, RATE_LIMIT_MAX - current.count), resetAt: current.resetAt };
 }
 
+
 const createPedidoSchema = z.object({
   empresa_id: z.coerce.number().int().positive().optional(),
   cliente: z.string().trim().min(2, 'cliente es requerido'),
@@ -60,7 +70,7 @@ const createPedidoSchema = z.object({
   codigo_descuento: z.string().optional(),
   items: z.array(z.object({
     producto: z.string().trim().min(1),
-    producto_id: z.coerce.number().int().positive().optional(),
+    producto_id: z.number().safe().int().positive().optional(),
     cantidad: z.coerce.number().positive(),
     precio_unitario: z.coerce.number().nonnegative(),
   })).min(1, 'items es requerido y no puede estar vacío'),
@@ -81,6 +91,7 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
     buildOrderSummary,
     getAliasEmpresa,
     ejecutarEstrategiaVecinosFn = ejecutarEstrategiaVecinos,
+    resolveEmpresaIdFn = resolvePublicPedidoEmpresaId,
   } = deps;
 
   const DEBUG_ORDERS = process.env.DEBUG_ORDERS === '1' && process.env.NODE_ENV !== 'test';
@@ -141,6 +152,9 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
 
     let txClient = null;
     let txFinished = false;
+    let transactionCommitStarted = false;
+    let releaseError;
+    const postCommitTasks = [];
 
     const txQuery = async (sql, params = []) => {
       if (!txClient) return query(sql, params);
@@ -152,9 +166,33 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
     tStart(`[public/pedidos] ${reqId} TOTAL`);
 
     const rollbackIfNeeded = async () => {
-      if (!txClient || txFinished) return;
+      if (!txClient || txFinished || transactionCommitStarted) return;
       await txClient.query('ROLLBACK');
       txFinished = true;
+    };
+
+    const commitIfNeeded = async () => {
+      if (!txClient || txFinished) return;
+      transactionCommitStarted = true;
+      try {
+        await txClient.query('COMMIT');
+        txFinished = true;
+      } catch (error) {
+        releaseError = error;
+        const outcomeUnknown = new Error('No se pudo confirmar el resultado de la transacción');
+        outcomeUnknown.code = 'TRANSACTION_OUTCOME_UNKNOWN';
+        throw outcomeUnknown;
+      }
+    };
+
+    const runPostCommitTasks = async () => {
+      for (const task of postCommitTasks) {
+        try {
+          await task();
+        } catch (error) {
+          errlog('POSTCOMMIT.ERROR', error?.message || error);
+        }
+      }
     };
 
     try {
@@ -196,7 +234,6 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
       }
 
       const {
-        empresa_id = 1,
         cliente,
         telefono,
         direccion,
@@ -214,112 +251,155 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
         codigo_descuento,
       } = parse.data;
 
-      await ensurePedidoScheduleSchema();
-
       txClient = pool ? await pool.connect() : null;
       if (txClient) await txClient.query('BEGIN');
 
+      if (typeof resolveEmpresaIdFn !== 'function') {
+        const error = new Error('Resolver público de empresa no configurado');
+        error.code = 'PUBLIC_TENANT_UNRESOLVED';
+        error.statusCode = 400;
+        throw error;
+      }
+      const empId = Number(await resolveEmpresaIdFn(req, txQuery));
+      if (!Number.isSafeInteger(empId) || empId <= 0) {
+        const error = new Error('Resolver público de empresa devolvió un tenant inválido');
+        error.code = 'PUBLIC_TENANT_UNRESOLVED';
+        error.statusCode = 400;
+        throw error;
+      }
+
       log('REQ IN', {
-        empresa_id, cliente, telefono, direccion, ciudad, provincia, pais,
+        empresa_id: empId, cliente, telefono, direccion, ciudad, provincia, pais,
         latitud, longitud, notas, metodo_pago, submission_id,
         itemsCount: items.length,
       });
 
-      const empId = Number(empresa_id) > 0 ? Number(empresa_id) : 1;
+      const normItems = (Array.isArray(items) ? items : [])
+        .map((it) => ({
+          producto: String(it?.producto || '').trim(),
+          cantidad: Number(it?.cantidad ?? 0),
+          precio_unitario: Number(it?.precio_unitario ?? 0),
+          producto_id: it.producto_id ?? null,
+        }))
+        .filter((it) => it.producto && Number.isFinite(it.cantidad) && it.cantidad > 0 && Number.isFinite(it.precio_unitario) && it.precio_unitario >= 0);
+
+      if (normItems.length === 0) {
+        await rollbackIfNeeded();
+        tEnd(`[public/pedidos] ${reqId} TOTAL`);
+        return res.status(400).json({ error: 'items inválidos', reqId });
+      }
+
+      if (submission_id) {
+        // Orden global: submission namespace -> product-name namespaces (sorted) -> rows/resources.
+        await txQuery('SELECT pg_advisory_xact_lock(hashtext($1))', [`pedido:${empId}:${submission_id}`]);
+        const existingRows = await txQuery(
+          `SELECT id, estado, monto, tracking_token
+             FROM pedidos
+            WHERE empresa_id = $1 AND submission_id = $2
+            LIMIT 1`,
+          [empId, submission_id]
+        );
+        if (existingRows.length) {
+          const existing = existingRows[0];
+          let trackingToken = existing.tracking_token;
+          if (!trackingToken) {
+            const candidate = createTrackingToken();
+            const tokenRows = await txQuery(
+              `UPDATE pedidos
+                  SET tracking_token = COALESCE(tracking_token, $1)
+                WHERE id = $2 AND empresa_id = $3
+                RETURNING tracking_token`,
+              [candidate, existing.id, empId]
+            );
+            trackingToken = tokenRows[0]?.tracking_token || candidate;
+          }
+          const retryPayment = String(metodo_pago || '').toLowerCase();
+          const retryPaymentTag = retryPayment
+            ? (retryPayment === 'transferencia' ? ' (Transferencia)' : retryPayment === 'efectivo' ? ' (Efectivo)' : ` (${retryPayment})`)
+            : '';
+          await commitIfNeeded();
+          tEnd(`[public/pedidos] ${reqId} TOTAL`);
+          return res.json({
+            ok: true,
+            created: false,
+            pedido: {
+              id: existing.id,
+              submission_id,
+              estado: existing.estado,
+              monto: existing.monto,
+              tracking_token: trackingToken,
+              tracking_url: buildTrackingPath(trackingToken),
+            },
+            zona_id: null,
+            coords: null,
+            resumen: buildOrderSummary(normItems) + retryPaymentTag,
+            reqId,
+          });
+        }
+      }
+
+      await ensurePedidoScheduleSchema();
+
+      const pointIdentity = deliveryPointIdentity({ normalizePhoneFn: normalizePhone, telefono, direccion });
+      if (!pointIdentity) throw deliveryPointConflict('Teléfono o dirección inválidos para identificar el punto');
+      await lockGeneralPhoneIdentity(txQuery, { normalizePhoneFn: normalizePhone, telefono });
+
+      // Orden global: submission -> teléfono General -> productos -> identidad tenant+punto -> resto.
+      const resolvedIdentityItems = await resolveProductIdentityItems(txQuery, {
+        empresaId: empId,
+        items: normItems,
+        includePromoConfig: true,
+        requirePublicActive: true,
+      });
+      for (let index = 0; index < normItems.length; index += 1) {
+        const resolved = resolvedIdentityItems[index];
+        normItems[index].producto_id = resolved.producto_resuelto_id;
+        normItems[index].producto = String(resolved.producto_resuelto.nombre);
+      }
+
+      await lockDeliveryPointIdentity(txQuery, {
+        empresaId: empId,
+        identity: pointIdentity,
+        globalPhoneLocked: true,
+      });
+
+      const existingPoints = await findDeliveryPointsByIdentity(txQuery, {
+        empresaId: empId,
+        identity: pointIdentity,
+      });
+      if (existingPoints.length > 1) throw deliveryPointConflict();
 
       let lat = toNum(latitud);
       let lng = toNum(longitud);
       lat = inRange(lat, -90, 90) ? round(lat) : null;
       lng = inRange(lng, -180, 180) ? round(lng) : null;
 
-      if ((lat == null || lng == null) && (direccion || ciudad || provincia || pais)) {
-        let foundInCache = false;
-
-        try {
-          const phoneNorm = normalizePhone(telefono || '');
-          const searchPhone = phoneNorm.length > 7 ? phoneNorm.slice(-7) : phoneNorm;
-
-          if (searchPhone.length >= 4) {
-            const history = await txQuery(
-              `SELECT direccion, ciudad, latitud, longitud
-               FROM puntos_entrega
-               WHERE empresa_id=$1
-                 AND latitud IS NOT NULL
-                 AND longitud IS NOT NULL
-                 AND telefono_normalizado LIKE '%' || $2
-               ORDER BY id DESC
-               LIMIT 5`,
-              [empId, searchPhone]
-            );
-
-            const currentDir = (direccion || '').trim().toLowerCase();
-            for (const h of history) {
-              const hDir = (h.direccion || '').trim().toLowerCase();
-              if (currentDir && hDir && currentDir === hDir) {
-                lat = Number(h.latitud);
-                lng = Number(h.longitud);
-                foundInCache = true;
-                log(`[GEOCODE] 💰 CACHÉ AHORRO: Usamos coords guardadas para "${cliente}" (${direccion}) -> Lat=${lat}, Lng=${lng}`);
-                break;
-              }
-            }
-          }
-        } catch (e) {
-          console.warn('[GEOCODE] Error al buscar historial:', e.message);
-        }
-
-        if (!foundInCache) {
-          try {
-            const loc = await geocodeIfNeeded({ direccion, ciudad, provincia, pais });
-            if (lat == null) lat = toNum(loc?.lat);
-            if (lng == null) lng = toNum(loc?.lng);
-
-            if (lat && lng) log(`[GEOCODE] 🌎 API GOOGLE: Coordenadas nuevas para "${direccion}": ${lat}, ${lng}`);
-            else log(`[GEOCODE] ⚠️ FALLÓ: Google no encontró "${direccion}"`);
-          } catch (e) {
-            console.warn('[GEOCODE] Error en geocodeIfNeeded:', e.message);
-          }
-        }
+      let punto_entrega_id = existingPoints[0]?.id || null;
+      let zona_id = existingPoints[0]?.zona_id ?? null;
+      if ((lat == null || lng == null) && existingPoints[0]?.latitud != null && existingPoints[0]?.longitud != null) {
+        lat = Number(existingPoints[0].latitud);
+        lng = Number(existingPoints[0].longitud);
+        log(`[GEOCODE] CACHÉ: punto ${punto_entrega_id} -> Lat=${lat}, Lng=${lng}`);
       }
 
-      let zona_id = null;
-      if (lat != null && lng != null) {
+      if ((lat == null || lng == null) && (direccion || ciudad || provincia || pais)) {
+        try {
+          const loc = await geocodeIfNeeded({ direccion, ciudad, provincia, pais });
+          if (lat == null) lat = toNum(loc?.lat);
+          if (lng == null) lng = toNum(loc?.lng);
+        } catch (e) {
+          console.warn('[GEOCODE] Error en geocodeIfNeeded:', e.message);
+        }
+      }
+      lat = inRange(lat, -90, 90) ? round(lat) : null;
+      lng = inRange(lng, -180, 180) ? round(lng) : null;
+      if (zona_id == null && lat != null && lng != null) {
         zona_id = await pointInAnyZone({ empresa_id: empId, lat, lng });
       }
 
-      let punto_entrega_id = null;
-      try {
-        const phoneNorm = normalizePhone(telefono || '');
-        const searchPhone = phoneNorm.length > 7 ? phoneNorm.slice(-7) : phoneNorm;
-
-        if (searchPhone && direccion) {
-          const existingPoints = await txQuery(
-            `SELECT id, latitud, longitud, zona_id
-             FROM puntos_entrega
-             WHERE empresa_id = $1
-               AND telefono_normalizado LIKE '%' || $2
-               AND LOWER(TRIM(direccion)) = LOWER(TRIM($3))
-             ORDER BY id DESC
-             LIMIT 1`,
-            [empId, searchPhone, direccion]
-          );
-
-          if (existingPoints.length > 0) {
-            const match = existingPoints[0];
-            punto_entrega_id = match.id;
-            if (zona_id == null && match.zona_id != null) zona_id = match.zona_id;
-            if ((lat == null || lng == null) && match.latitud != null && match.longitud != null) {
-              lat = Number(match.latitud);
-              lng = Number(match.longitud);
-            }
-            log('PUNTO_ENTREGA.REUSE', { punto_entrega_id, direccion, match_db: true });
-          }
-        }
-      } catch (e) {
-        errlog('PUNTO_ENTREGA.REUSE.ERROR', e?.message || e);
-      }
-
-      if (!punto_entrega_id) {
+      if (punto_entrega_id) {
+        log('PUNTO_ENTREGA.REUSE', { punto_entrega_id, direccion, match_db: true });
+      } else {
         const telNorm = normalizePhone(telefono || '');
         const peRows = await txQuery(
           `INSERT INTO puntos_entrega (
@@ -351,48 +431,18 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
         }
       }
 
-      const normItems = (Array.isArray(items) ? items : [])
-        .map((it) => ({
-          producto: String(it?.producto || '').trim(),
-          cantidad: Number(it?.cantidad ?? 0),
-          precio_unitario: Number(it?.precio_unitario ?? 0),
-          producto_id: Number(it?.producto_id ?? 0) || null,
-        }))
-        .filter((it) => it.producto && Number.isFinite(it.cantidad) && it.cantidad > 0 && Number.isFinite(it.precio_unitario) && it.precio_unitario >= 0);
-
-      if (normItems.length === 0) {
-        await rollbackIfNeeded();
-        tEnd(`[public/pedidos] ${reqId} TOTAL`);
-        return res.status(400).json({ error: 'items inválidos', reqId });
-      }
-
       const catalogRows = await txQuery(
         `SELECT id, nombre, promo_config
          FROM productos
-         WHERE empresa_id = $1 AND deleted_at IS NULL`,
+         WHERE empresa_id = $1
+           AND deleted_at IS NULL
+           AND COALESCE(activo, TRUE) IS TRUE`,
         [empId]
       );
 
       const byId = new Map();
-      const byName = new Map();
       for (const row of catalogRows) {
         byId.set(Number(row.id), row);
-        byName.set(String(row.nombre || '').trim().toLowerCase(), row);
-      }
-
-      for (const it of normItems) {
-        let p = null;
-        if (it.producto_id && byId.has(Number(it.producto_id))) {
-          p = byId.get(Number(it.producto_id));
-        } else {
-          p = byName.get(String(it.producto || '').trim().toLowerCase()) || null;
-        }
-        if (p) {
-          it.producto_id = Number(p.id);
-          it.producto = String(p.nombre || it.producto);
-        } else {
-          it.producto_id = null;
-        }
       }
 
       const qtyByProductId = new Map();
@@ -576,25 +626,36 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
 
       let rewardIdsToUpdate = [];
       if (punto_entrega_id) {
-        try {
-          const premios = await txQuery(
-            `SELECT cr.id, cr.cantidad, p.nombre
+        // Orden global: submission -> productos -> punto -> recompensas (IDs ordenados).
+        const premios = await txQuery(
+          `SELECT cr.id, cr.cantidad, p.id AS producto_id, p.nombre
              FROM cliente_recompensas cr
-             JOIN productos p ON p.id = cr.producto_id
-             WHERE cr.cliente_id = $1
-               AND cr.reclamado = FALSE`,
-            [punto_entrega_id]
-          );
+             JOIN puntos_entrega pe
+               ON pe.id = cr.cliente_id
+              AND pe.empresa_id = $2
+             JOIN productos p
+               ON p.id = cr.producto_id
+              AND p.empresa_id = $2
+              AND p.deleted_at IS NULL
+              AND COALESCE(p.activo, TRUE) IS TRUE
+            WHERE cr.cliente_id = $1
+              AND cr.reclamado = FALSE
+            ORDER BY cr.id
+            FOR UPDATE OF cr`,
+          [punto_entrega_id, empId]
+        );
 
-          if (premios.length > 0) {
-            log('REWARDS', `Cliente ${punto_entrega_id} tiene ${premios.length} premios para canjear.`);
-            for (const premio of premios) {
-              normItems.push({ producto: `🎁 PREMIO: ${premio.nombre}`, cantidad: Number(premio.cantidad), precio_unitario: 0 });
-              rewardIdsToUpdate.push(premio.id);
-            }
+        if (premios.length > 0) {
+          log('REWARDS', `Cliente ${punto_entrega_id} tiene ${premios.length} premios para canjear.`);
+          for (const premio of premios) {
+            normItems.push({
+              producto: `🎁 PREMIO: ${premio.nombre}`,
+              producto_id: Number(premio.producto_id),
+              cantidad: Number(premio.cantidad),
+              precio_unitario: 0,
+            });
+            rewardIdsToUpdate.push(Number(premio.id));
           }
-        } catch (e) {
-          errlog('REWARDS.ERROR', e?.message || e);
         }
       }
 
@@ -605,64 +666,38 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
       const pagoTag = mPago ? (mPago === 'transferencia' ? ' (Transferencia)' : mPago === 'efectivo' ? ' (Efectivo)' : ` (${mPago})`) : '';
       const resumenTxt = buildOrderSummary(normItems) + pagoTag;
 
-      if (submission_id) {
-        await txQuery('SELECT pg_advisory_xact_lock(hashtext($1))', [`pedido:${empId}:${submission_id}`]);
-      }
-
-      const pedExist = submission_id
-        ? await txQuery(
-            `SELECT id, estado, monto, tracking_token FROM pedidos WHERE empresa_id=$1 AND submission_id=$2 LIMIT 1`,
-            [empId, submission_id]
-          )
-        : [];
-
-      if (submission_id && pedExist.length) {
-        const existing = pedExist[0];
-        let trackingToken = existing.tracking_token;
-        if (!trackingToken) {
-          const candidate = createTrackingToken();
-          const tokenRows = await txQuery(
-            `UPDATE pedidos
-                SET tracking_token = COALESCE(tracking_token, $1)
-              WHERE id = $2 AND empresa_id = $3
-              RETURNING tracking_token`,
-            [candidate, existing.id, empId]
-          );
-          trackingToken = tokenRows[0]?.tracking_token || candidate;
-        }
-
-        if (txClient && !txFinished) {
-          await txClient.query('COMMIT');
-          txFinished = true;
-        }
-        tEnd(`[public/pedidos] ${reqId} TOTAL`);
-        return res.json({
-          ok: true,
-          created: false,
-          pedido: {
-            id: existing.id,
-            submission_id,
-            estado: existing.estado,
-            monto: existing.monto,
-            tracking_token: trackingToken,
-            tracking_url: buildTrackingPath(trackingToken),
-          },
-          zona_id,
-          coords: (lat != null && lng != null) ? { lat, lng } : null,
-          resumen: resumenTxt,
-          reqId
-        });
-      }
-
       let padrinoId = null;
       if (referral_code && referral_code.startsWith('VECINO-')) {
-        const historial = await txQuery('SELECT id FROM pedidos WHERE punto_entrega_id=$1 LIMIT 1', [punto_entrega_id]);
+        const historial = await txQuery(
+          `SELECT p.id
+             FROM pedidos p
+             JOIN puntos_entrega pe
+               ON pe.id = p.punto_entrega_id
+              AND pe.empresa_id = p.empresa_id
+            WHERE p.punto_entrega_id = $1
+              AND p.empresa_id = $2
+              AND pe.empresa_id = $2
+            LIMIT 1`,
+          [punto_entrega_id, empId]
+        );
         const esClienteNuevo = historial.length === 0;
 
         if (esClienteNuevo) {
-          const idOrigen = parseInt(referral_code.split('-')[1]);
-          if (Number.isInteger(idOrigen)) {
-            const rowPadrino = await txQuery(`SELECT punto_entrega_id FROM pedidos WHERE id=$1`, [idOrigen]);
+          const referralMatch = /^VECINO-([1-9]\d*)$/.exec(String(referral_code));
+          const idOrigen = referralMatch ? Number(referralMatch[1]) : null;
+          if (Number.isSafeInteger(idOrigen)) {
+            const rowPadrino = await txQuery(
+              `SELECT pe.id AS punto_entrega_id
+                 FROM pedidos p
+                 JOIN puntos_entrega pe
+                   ON pe.id = p.punto_entrega_id
+                  AND pe.empresa_id = p.empresa_id
+                WHERE p.id = $1
+                  AND p.empresa_id = $2
+                  AND pe.empresa_id = $2
+                LIMIT 1`,
+              [idOrigen, empId]
+            );
             if (rowPadrino.length > 0) {
               const candidatoId = rowPadrino[0].punto_entrega_id;
               if (candidatoId !== punto_entrega_id) {
@@ -758,19 +793,30 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
       }
 
       if (rewardIdsToUpdate.length > 0) {
-        try {
-          await txQuery(
-            `UPDATE cliente_recompensas
-             SET reclamado = TRUE,
-                 fecha_reclamado = NOW(),
-                 origen_pedido_id = $2
-             WHERE id = ANY($1::int[])`,
-            [rewardIdsToUpdate, pedido.id]
-          );
-          log('REWARDS.CLAIMED', `Premios IDs [${rewardIdsToUpdate.join(',')}] marcados como reclamados.`);
-        } catch (e) {
-          errlog('REWARDS.UPDATE.ERROR', e?.message || e);
+        rewardIdsToUpdate = [...new Set(rewardIdsToUpdate)].sort((a, b) => a - b);
+        const claimedRows = await txQuery(
+          `UPDATE cliente_recompensas cr
+              SET reclamado = TRUE,
+                  fecha_reclamado = NOW()
+             FROM puntos_entrega pe, productos p
+            WHERE cr.id = ANY($1::int[])
+              AND cr.cliente_id = $2
+              AND cr.reclamado = FALSE
+              AND pe.id = cr.cliente_id
+              AND pe.empresa_id = $3
+              AND p.id = cr.producto_id
+              AND p.empresa_id = $3
+              AND p.deleted_at IS NULL
+              AND COALESCE(p.activo, TRUE) IS TRUE
+            RETURNING cr.id`,
+          [rewardIdsToUpdate, punto_entrega_id, empId]
+        );
+        if (claimedRows.length !== rewardIdsToUpdate.length) {
+          const mismatch = new Error('No se pudo reclamar exactamente el conjunto de recompensas seleccionado');
+          mismatch.code = 'REWARD_CLAIM_MISMATCH';
+          throw mismatch;
         }
+        log('REWARDS.CLAIMED', `Premios IDs [${rewardIdsToUpdate.join(',')}] marcados como reclamados.`);
       }
 
       try {
@@ -828,49 +874,45 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
           mensaje += `\n\n📄 Alias para transferir: *${aliasDB}*\nPor favor enviá el comprobante por aquí.`;
         }
 
-        await enqueueWppMessage({ phone: telefono, message: mensaje, empresa_id: empId });
+        postCommitTasks.push(async () => {
+          await enqueueWppMessage({ phone: telefono, message: mensaje, empresa_id: empId });
 
-        const smsEnabled = String(process.env.IFTTT_SMS_ENABLED || '0') === '1';
-        if (smsEnabled && typeof sendSmsViaIfttt === 'function') {
-          const smsResp = await sendSmsViaIfttt({ phone: telefono, message: mensaje });
-          if (!smsResp?.ok && !smsResp?.skipped) {
-            errlog('SMS.NOTIFY.ERROR', smsResp?.error || `status ${smsResp?.status || 'n/a'}`);
+          const smsEnabled = String(process.env.IFTTT_SMS_ENABLED || '0') === '1';
+          if (smsEnabled && typeof sendSmsViaIfttt === 'function') {
+            const smsResp = await sendSmsViaIfttt({ phone: telefono, message: mensaje });
+            if (!smsResp?.ok && !smsResp?.skipped) {
+              errlog('SMS.NOTIFY.ERROR', smsResp?.error || `status ${smsResp?.status || 'n/a'}`);
+            }
           }
-        }
 
-        if (repData?.telefono) {
-          const promoItems = normItems.filter((it) => {
-            const n = String(it?.producto || '').toUpperCase();
-            return n.includes('🎁 REGALO:') || n.includes('🎟️ DESCUENTO PROMO:');
-          });
+          if (repData?.telefono) {
+            const promoItems = normItems.filter((it) => {
+              const n = String(it?.producto || '').toUpperCase();
+              return n.includes('🎁 REGALO:') || n.includes('🎟️ DESCUENTO PROMO:');
+            });
 
-          if (promoItems.length > 0) {
-            const promoDetalle = promoItems.map((it) => `• ${Number(it.cantidad || 0)} x ${String(it.producto || '')}`).join('\n');
-            const msgRepartidor = [
-              '🧾 *Pedido con promoción aplicada*',
-              `Pedido #${pedido.id} · Cliente: ${cliente || '-'}${direccion ? ` · ${direccion}` : ''}`,
-              '',
-              'Entregar también estos ítems promo:',
-              promoDetalle,
-            ].join('\n');
+            if (promoItems.length > 0) {
+              const promoDetalle = promoItems.map((it) => `• ${Number(it.cantidad || 0)} x ${String(it.producto || '')}`).join('\n');
+              const msgRepartidor = [
+                '🧾 *Pedido con promoción aplicada*',
+                `Pedido #${pedido.id} · Cliente: ${cliente || '-'}${direccion ? ` · ${direccion}` : ''}`,
+                '',
+                'Entregar también estos ítems promo:',
+                promoDetalle,
+              ].join('\n');
 
-            await enqueueWppMessage({ phone: repData.telefono, message: msgRepartidor, empresa_id: empId });
+              await enqueueWppMessage({ phone: repData.telefono, message: msgRepartidor, empresa_id: empId });
+            }
           }
-        }
+        });
       } catch (e) {
         errlog('WPP.NOTIFY.ERROR', e?.message || e);
       }
 
-      try {
-        await ejecutarEstrategiaVecinosFn({ pedidoId: pedido.id, empresaId: empId });
-      } catch (e) {
-        errlog('VECINOS.ESTRATEGIA.ERROR', e?.message || e);
-      }
+      postCommitTasks.push(() => ejecutarEstrategiaVecinosFn({ pedidoId: pedido.id, empresaId: empId }));
 
-      if (txClient && !txFinished) {
-        await txClient.query('COMMIT');
-        txFinished = true;
-      }
+      await commitIfNeeded();
+      await runPostCommitTasks();
 
       tEnd(`[public/pedidos] ${reqId} TOTAL`);
 
@@ -894,6 +936,38 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
       });
     } catch (err) {
       await rollbackIfNeeded();
+      if (err?.code === 'TRANSACTION_OUTCOME_UNKNOWN') {
+        tEnd(`[public/pedidos] ${reqId} TOTAL`);
+        return res.status(503).json({
+          error: 'Resultado de creación de pedido indeterminado',
+          code: 'TRANSACTION_OUTCOME_UNKNOWN',
+          reqId,
+        });
+      }
+      if (err?.code === 'PRODUCT_IDENTITY_CONFLICT') {
+        tEnd(`[public/pedidos] ${reqId} TOTAL`);
+        return res.status(err.statusCode === 409 ? 409 : 400).json({
+          error: err.statusCode === 409 ? 'Identidad de producto ambigua' : 'Producto inválido',
+          code: err.code,
+          reqId,
+        });
+      }
+      if (String(err?.code || '').startsWith('PUBLIC_TENANT_')) {
+        tEnd(`[public/pedidos] ${reqId} TOTAL`);
+        return res.status(err.statusCode || 400).json({
+          error: 'No se pudo resolver la empresa pública',
+          code: err.code,
+          reqId,
+        });
+      }
+      if (err?.code === 'DELIVERY_POINT_IDENTITY_CONFLICT') {
+        tEnd(`[public/pedidos] ${reqId} TOTAL`);
+        return res.status(409).json({
+          error: 'Identidad de punto de entrega ambigua',
+          code: err.code,
+          reqId,
+        });
+      }
       errlog('UNHANDLED', {
         message: err?.message,
         stack: err?.stack,
@@ -903,7 +977,7 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
       tEnd(`[public/pedidos] ${reqId} TOTAL`);
       return res.status(500).json({ error: 'No se pudo crear el pedido', reqId });
     } finally {
-      if (txClient) txClient.release();
+      if (txClient) txClient.release(releaseError);
     }
   });
 }

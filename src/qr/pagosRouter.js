@@ -3,11 +3,12 @@ import { Router } from 'express';
 import { withAuth, isSuper, checkLicencia, resolveEmpresaId } from '../services.js';
 import { query } from '../db.js';
 import { crearPagoParaPedido, listarPagosPorPedido } from '../qr/pagosService.js';
+import { requireCanonicalBackofficeRole } from '../routes/canonicalBackofficeRole.js';
 
 const router = Router();
 
 // Todas estas rutas requieren auth + licencia activa
-router.use(withAuth, checkLicencia);
+router.use(withAuth, requireCanonicalBackofficeRole, checkLicencia);
 
 // Permisos mínimos: evitar que repartidores/roles limitados generen links de cobro
 router.use((req, res, next) => {

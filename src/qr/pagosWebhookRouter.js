@@ -12,8 +12,6 @@ import {
 } from './pagosService.js';
 import { normalizePagoEstado } from './pagosEstado.js';
 
-const router = Router();
-
 function timingSafeEqualHex(a, b) {
   try {
     const ba = Buffer.from(String(a || ''), 'hex');
@@ -100,7 +98,7 @@ function sanitizeMercadoPagoPayment({ payment, canonicalEstado, ip }) {
   };
 }
 
-async function handleMercadoPagoWebhook(req, res) {
+async function handleMercadoPagoWebhook(req, res, deps) {
   const topic = getMercadoPagoTopic(req);
   const paymentId = getMercadoPagoPaymentId(req);
 
@@ -117,12 +115,21 @@ async function handleMercadoPagoWebhook(req, res) {
     return res.status(400).json({ error: 'Falta empresa_id en webhook de Mercado Pago' });
   }
 
-  const configPagos = await getConfigPagosEmpresa(empresaIdFromUrl);
+  const configPagos = await deps.getConfigPagosEmpresa(empresaIdFromUrl);
   if (!configPagos?.accessToken) {
     return res.status(403).json({ error: 'Mercado Pago no configurado para la empresa' });
   }
 
-  const payment = await getMercadoPagoPayment({
+  const secret = configPagos?.webhookSecret;
+  if (!secret) return res.status(503).json({ error: 'Webhook no configurado' });
+  const providedSig = req.headers['x-pagos-signature'];
+  const canonicalMessage = `mercado_pago|${empresaIdFromUrl}|${paymentId}`;
+  const expectedSig = crypto.createHmac('sha256', String(secret)).update(canonicalMessage).digest('hex');
+  if (!timingSafeEqualHex(providedSig, expectedSig)) {
+    return res.status(403).json({ error: 'Firma inválida' });
+  }
+
+  const payment = await deps.getMercadoPagoPayment({
     accessToken: configPagos.accessToken,
     paymentId
   });
@@ -132,7 +139,7 @@ async function handleMercadoPagoWebhook(req, res) {
     return res.status(200).json({ ok: true, ignored: true });
   }
 
-  const pago = await getPagoPorPedidoProveedor({
+  const pago = await deps.getPagoPorPedidoProveedor({
     empresaId: ref.empresaId,
     pedidoId: ref.pedidoId,
     proveedor: 'mercado_pago'
@@ -160,7 +167,7 @@ async function handleMercadoPagoWebhook(req, res) {
 
   const ip = (req.headers['x-forwarded-for'] || req.ip || '').toString().split(',')[0].trim();
   const aplicarEstado = canonicalEstado !== 'pagado' || configPagos.autoConfirmar === true;
-  const updated = await actualizarEstadoPagoPedido({
+  const updated = await deps.actualizarEstadoPagoPedido({
     empresaId: ref.empresaId,
     pedidoId: ref.pedidoId,
     proveedor: 'mercado_pago',
@@ -188,11 +195,27 @@ async function handleMercadoPagoWebhook(req, res) {
  *  - nuevoEstado: 'pendiente'|'pagado'|'rechazado'|'expired'|...
  *  - providerStatus?: string
  */
+export function createPagosWebhookRouter({
+  queryFn = query,
+  getConfigPagosEmpresaFn = getConfigPagosEmpresa,
+  getPagoPorPedidoProveedorFn = getPagoPorPedidoProveedor,
+  actualizarEstadoPagoPedidoFn = actualizarEstadoPagoPedido,
+  actualizarEstadoPagoScopedFn = actualizarEstadoPagoScoped,
+  getMercadoPagoPaymentFn = getMercadoPagoPayment,
+} = {}) {
+  const router = Router();
+  const deps = {
+    getConfigPagosEmpresa: getConfigPagosEmpresaFn,
+    getPagoPorPedidoProveedor: getPagoPorPedidoProveedorFn,
+    actualizarEstadoPagoPedido: actualizarEstadoPagoPedidoFn,
+    getMercadoPagoPayment: getMercadoPagoPaymentFn,
+  };
+
 router.post(['/pagos', '/pagos/:proveedor'], async (req, res) => {
   try {
     const proveedorRuta = req.params?.proveedor ? String(req.params.proveedor) : null;
     if (proveedorRuta === 'mercado_pago' || proveedorRuta === 'mercadopago' || proveedorRuta === 'mp') {
-      return handleMercadoPagoWebhook(req, res);
+      return handleMercadoPagoWebhook(req, res, deps);
     }
 
     const {
@@ -217,7 +240,7 @@ router.post(['/pagos', '/pagos/:proveedor'], async (req, res) => {
     }
 
     // 1) Resolver empresa a partir del pago (guard-rail multi-tenant)
-    const pagoRows = await query(
+    const pagoRows = await queryFn(
       `SELECT id, empresa_id
          FROM pedido_pagos
         WHERE proveedor = $1
@@ -234,12 +257,12 @@ router.post(['/pagos', '/pagos/:proveedor'], async (req, res) => {
     const empresaId = Number(pagoRows[0].empresa_id);
 
     // 2) Leer secretos por empresa (incluye soporte para credenciales cifradas)
-    const pagosCfg = await getConfigPagosEmpresa(empresaId);
+    const pagosCfg = await getConfigPagosEmpresaFn(empresaId);
     const secret = pagosCfg?.webhookSecret || null;
     const autoConfirmar = pagosCfg?.autoConfirmar === true;
 
     if (!secret) {
-      return res.status(403).json({ error: 'Webhook no habilitado' });
+      return res.status(503).json({ error: 'Webhook no configurado' });
     }
 
     // 3) Verificar firma
@@ -261,7 +284,7 @@ router.post(['/pagos', '/pagos/:proveedor'], async (req, res) => {
     });
     const aplicarEstado = canonicalEstado !== 'pagado' || autoConfirmar;
 
-    const updated = await actualizarEstadoPagoScoped({
+    const updated = await actualizarEstadoPagoScopedFn({
       proveedor: String(proveedor),
       providerPaymentId: String(providerPaymentId),
       nuevoEstado: aplicarEstado ? String(canonicalEstado) : 'pendiente',
@@ -273,9 +296,12 @@ router.post(['/pagos', '/pagos/:proveedor'], async (req, res) => {
     return res.status(200).json({ ok: true, updated: !!updated, auto_confirmado: aplicarEstado });
 
   } catch (e) {
-    console.error('WEBHOOK pagos error:', e);
+    console.error('WEBHOOK pagos error: procesamiento fallido');
     return res.status(500).json({ error: 'Error interno' });
   }
 });
 
-export default router;
+  return router;
+}
+
+export default createPagosWebhookRouter();

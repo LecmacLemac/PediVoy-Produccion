@@ -14,11 +14,12 @@ async function withServer(app, fn) {
   }
 }
 
-function buildApp({ query, user = { role: 'user', empresa_id: 3 } } = {}) {
+function buildApp({ query, user = { role: 'admin', empresa_id: 3 } } = {}) {
   const app = express();
   app.use(express.json());
   app.use('/api/zonas', createZonasRouter({
     query,
+    withTransaction: work => work(query),
     withAuth(req, _res, next) {
       req.user = user;
       next();

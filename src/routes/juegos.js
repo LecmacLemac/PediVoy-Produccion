@@ -2,15 +2,18 @@ import crypto from 'node:crypto';
 import express from 'express';
 import QRCode from 'qrcode';
 import { enqueueWppOutboxInTransaction } from '../wpp/enqueue.js';
+import { withTransaction as runCanonicalTransaction } from '../db.js';
+import { requireCanonicalBackofficeRole } from './canonicalBackofficeRole.js';
+import {
+  deliveryPointConflict,
+  deliveryPointIdentity,
+  findDeliveryPointsByIdentity,
+  lockDeliveryPointIdentity,
+} from '../services/deliveryPointIdentity.js';
 
 let schemaReady = false;
 const JUEGOS_PARTICIPATION_LOCK_NAMESPACE = 0x4a554547;
 
-function transactionOutcomeUnknownError() {
-  const error = new Error('transaction_outcome_unknown');
-  error.code = 'transaction_outcome_unknown';
-  return error;
-}
 
 const CAMPAIGN_SELECT = `
   jc.id, jc.empresa_id, jc.slug, jc.public_code, jc.nombre, jc.titulo_publico, jc.descripcion_publica,
@@ -226,7 +229,7 @@ function createJsonError(res, status, message, extra = {}) {
 }
 
 export function createJuegosRouter(deps) {
-  const { query, pool, withAuth, isSuper, getEmpresaIdFromToken } = deps || {};
+  const { query, pool, withTransaction: injectedWithTransaction, withAuth, isSuper, getEmpresaIdFromToken } = deps || {};
   if (typeof query !== 'function') throw new Error('createJuegosRouter: falta query(fn)');
   if (typeof withAuth !== 'function') throw new Error('createJuegosRouter: falta withAuth(fn)');
   if (typeof isSuper !== 'function') throw new Error('createJuegosRouter: falta isSuper(fn)');
@@ -242,25 +245,10 @@ export function createJuegosRouter(deps) {
     return { superAdmin, empresaId: Number(empresaId || 0) || null };
   }
 
-  async function withTransaction(fn) {
-    if (!pool?.connect) return fn(query);
-    const client = await pool.connect();
-    const q = async (sql, params = []) => {
-      const result = await client.query(sql, params);
-      return result.rows;
-    };
-    try {
-      await client.query('BEGIN');
-      const out = await fn(q);
-      await client.query('COMMIT');
-      return out;
-    } catch (e) {
-      await client.query('ROLLBACK');
-      throw e;
-    } finally {
-      client.release();
-    }
-  }
+  const withTransaction = typeof injectedWithTransaction === 'function'
+    ? injectedWithTransaction
+    : (fn) => runCanonicalTransaction(fn, { pool, maxRetries: 0 });
+  const secured = [withAuth, requireCanonicalBackofficeRole];
 
   async function replacePrizes(q, empresaId, campaignId, prizes = []) {
     await q('DELETE FROM juegos_premios WHERE empresa_id = $1 AND campania_id = $2', [empresaId, campaignId]);
@@ -303,7 +291,7 @@ export function createJuegosRouter(deps) {
     }
   }
 
-  router.get('/campanias', withAuth, async (req, res) => {
+  router.get('/campanias', ...secured, async (req, res) => {
     try {
       await ensureSchema(query);
       const { empresaId } = resolveEmpresa(req);
@@ -328,12 +316,12 @@ export function createJuegosRouter(deps) {
       );
       return res.json({ items: rows.map((r) => ({ ...r, public_url: publicCampaignUrl(req, r) })) });
     } catch (e) {
-      console.error(e);
+      console.error('REQUEST.ERROR', { code: e?.code || 'UNKNOWN' });
       return createJsonError(res, 500, 'Error listando juegos.');
     }
   });
 
-  router.get('/campanias/:id', withAuth, async (req, res) => {
+  router.get('/campanias/:id', ...secured, async (req, res) => {
     try {
       await ensureSchema(query);
       const { empresaId } = resolveEmpresa(req);
@@ -356,12 +344,12 @@ export function createJuegosRouter(deps) {
       );
       return res.json({ ...campaign, public_url: publicCampaignUrl(req, campaign), premios: prizes });
     } catch (e) {
-      console.error(e);
+      console.error('REQUEST.ERROR', { code: e?.code || 'UNKNOWN' });
       return createJsonError(res, 500, 'Error leyendo juego.');
     }
   });
 
-  router.post('/campanias', withAuth, async (req, res) => {
+  router.post('/campanias', ...secured, async (req, res) => {
     try {
       await ensureSchema(query);
       const { empresaId } = resolveEmpresa(req);
@@ -416,12 +404,15 @@ export function createJuegosRouter(deps) {
       });
     } catch (e) {
       if (e?.code === '23505') return createJsonError(res, 409, 'Ya existe una campania con ese slug para esta empresa.');
-      console.error(e);
-      return createJsonError(res, 500, e.message || 'Error creando juego.');
+      if (e?.code === 'TRANSACTION_OUTCOME_UNKNOWN') {
+        return createJsonError(res, 503, 'No se pudo confirmar el resultado de la transacción.', { code: e.code });
+      }
+      console.error('JUEGOS.ADMIN.CREATE.ERROR', { code: e?.code || 'UNKNOWN' });
+      return createJsonError(res, 500, 'Error creando juego.');
     }
   });
 
-  router.put('/campanias/:id', withAuth, async (req, res) => {
+  router.put('/campanias/:id', ...secured, async (req, res) => {
     try {
       await ensureSchema(query);
       const { empresaId } = resolveEmpresa(req);
@@ -481,12 +472,15 @@ export function createJuegosRouter(deps) {
       return res.json({ ok: true, id: campaign.id, slug: campaign.slug, public_code: campaign.public_code, public_url: publicCampaignUrl(req, campaign) });
     } catch (e) {
       if (e?.code === '23505') return createJsonError(res, 409, 'Ya existe una campania con ese slug para esta empresa.');
-      console.error(e);
-      return createJsonError(res, 500, e.message || 'Error actualizando juego.');
+      if (e?.code === 'TRANSACTION_OUTCOME_UNKNOWN') {
+        return createJsonError(res, 503, 'No se pudo confirmar el resultado de la transacción.', { code: e.code });
+      }
+      console.error('JUEGOS.ADMIN.UPDATE.ERROR', { code: e?.code || 'UNKNOWN' });
+      return createJsonError(res, 500, 'Error actualizando juego.');
     }
   });
 
-  router.get('/campanias/:id/qr', withAuth, async (req, res) => {
+  router.get('/campanias/:id/qr', ...secured, async (req, res) => {
     try {
       await ensureSchema(query);
       const { empresaId } = resolveEmpresa(req);
@@ -500,12 +494,12 @@ export function createJuegosRouter(deps) {
       const data_url = await QRCode.toDataURL(url, { margin: 1, width: 420 });
       return res.json({ url, data_url });
     } catch (e) {
-      console.error(e);
+      console.error('REQUEST.ERROR', { code: e?.code || 'UNKNOWN' });
       return createJsonError(res, 500, 'Error generando QR.');
     }
   });
 
-  router.get('/campanias/:id/participaciones', withAuth, async (req, res) => {
+  router.get('/campanias/:id/participaciones', ...secured, async (req, res) => {
     try {
       await ensureSchema(query);
       const { empresaId } = resolveEmpresa(req);
@@ -578,12 +572,12 @@ export function createJuegosRouter(deps) {
         items: rows,
       });
     } catch (e) {
-      console.error(e);
+      console.error('REQUEST.ERROR', { code: e?.code || 'UNKNOWN' });
       return createJsonError(res, 500, 'Error listando participaciones.');
     }
   });
 
-  router.delete('/campanias/:id/participaciones/:participacionId', withAuth, async (req, res) => {
+  router.delete('/campanias/:id/participaciones/:participacionId', ...secured, async (req, res) => {
     try {
       await ensureSchema(query);
       const { empresaId } = resolveEmpresa(req);
@@ -603,7 +597,7 @@ export function createJuegosRouter(deps) {
       if (!deleted) return createJsonError(res, 404, 'Participacion no encontrada.');
       return res.json({ ok: true, id: deleted.id });
     } catch (e) {
-      console.error(e);
+      console.error('REQUEST.ERROR', { code: e?.code || 'UNKNOWN' });
       return createJsonError(res, 500, 'Error eliminando participacion.');
     }
   });
@@ -612,44 +606,15 @@ export function createJuegosRouter(deps) {
 }
 
 export function createJuegosPublicosRouter(deps) {
-  const { query, pool } = deps || {};
+  const { query, pool, withTransaction: injectedWithTransaction } = deps || {};
   if (typeof query !== 'function') throw new Error('createJuegosPublicosRouter: falta query(fn)');
   if (!pool?.connect) throw new Error('createJuegosPublicosRouter: falta pool.connect(fn)');
 
   const router = express.Router();
 
-  async function withTransaction(fn) {
-    const client = await pool.connect();
-    let releaseError;
-    let commitAttempted = false;
-    const q = async (sql, params = []) => {
-      const result = await client.query(sql, params);
-      return result.rows;
-    };
-    try {
-      await client.query('BEGIN');
-      const out = await fn(q, client);
-      commitAttempted = true;
-      try {
-        await client.query('COMMIT');
-      } catch (commitError) {
-        releaseError = commitError;
-        throw transactionOutcomeUnknownError();
-      }
-      return out;
-    } catch (e) {
-      if (!commitAttempted) {
-        try {
-          await client.query('ROLLBACK');
-        } catch (rollbackError) {
-          releaseError = rollbackError;
-        }
-      }
-      throw e;
-    } finally {
-      client.release(releaseError);
-    }
-  }
+  const withTransaction = typeof injectedWithTransaction === 'function'
+    ? injectedWithTransaction
+    : (fn) => runCanonicalTransaction(fn, { pool, maxRetries: 0 });
 
   async function loadCampaign(q, empresaId, slug) {
     const [campaign] = await q(
@@ -825,7 +790,7 @@ export function createJuegosPublicosRouter(deps) {
         })),
       });
     } catch (e) {
-      console.error(e);
+      console.error('REQUEST.ERROR', { code: e?.code || 'UNKNOWN' });
       return createJsonError(res, 500, 'Error cargando campania.');
     }
   });
@@ -958,7 +923,12 @@ export function createJuegosPublicosRouter(deps) {
       return res.status(result.status).json(result.payload);
     } catch (e) {
       if (e?.code === '23505') return createJsonError(res, 409, 'No se pudo generar el codigo. Intenta nuevamente.');
-      console.error(e);
+      if (e?.code === 'TRANSACTION_OUTCOME_UNKNOWN') {
+        return createJsonError(res, 503, 'Resultado de participación indeterminado.', {
+          code: 'TRANSACTION_OUTCOME_UNKNOWN',
+        });
+      }
+      console.error('REQUEST.ERROR', { code: e?.code || 'UNKNOWN' });
       return createJsonError(res, 500, 'Error registrando participacion.');
     }
   });
@@ -1026,20 +996,24 @@ export function createJuegosPublicosRouter(deps) {
         );
         if (!product) return { status: 409, payload: { error: 'Producto premio no disponible.' } };
 
-        const [existingPoint] = await q(
-          `SELECT id
-             FROM puntos_entrega
-            WHERE empresa_id = $1
-              AND telefono_normalizado LIKE '%' || $2
-              AND LOWER(TRIM(COALESCE(direccion, ''))) = LOWER(TRIM($3))
-            ORDER BY id DESC
-            LIMIT 1`,
-          [empresaId, telefonoNorm, direccion]
-        );
+        const pointIdentity = deliveryPointIdentity({
+          normalizePhoneFn: normalizePhone,
+          telefono,
+          direccion,
+        });
+        if (!pointIdentity) throw deliveryPointConflict('Teléfono o dirección inválidos para identificar el punto');
+        await lockDeliveryPointIdentity(q, { empresaId, identity: pointIdentity });
+
+        const existingPoints = await findDeliveryPointsByIdentity(q, {
+          empresaId,
+          identity: pointIdentity,
+        });
+        if (existingPoints.length > 1) throw deliveryPointConflict();
+        const existingPoint = existingPoints[0];
 
         let puntoEntregaId = existingPoint?.id || null;
         if (puntoEntregaId) {
-          await q(
+          const updatedPoints = await q(
             `UPDATE puntos_entrega
                 SET cliente = $1,
                     nombre = $1,
@@ -1048,9 +1022,11 @@ export function createJuegosPublicosRouter(deps) {
                     telefono = $4,
                     telefono_normalizado = $5,
                     notas = COALESCE($6, notas)
-              WHERE id = $7 AND empresa_id = $8`,
+              WHERE id = $7 AND empresa_id = $8
+              RETURNING id`,
             [cliente, ciudad, provincia, telefono, telefonoNorm, notas, puntoEntregaId, empresaId]
           );
+          if (updatedPoints.length !== 1) throw deliveryPointConflict('No se actualizó exactamente un punto');
         } else {
           const inserted = await q(
             `INSERT INTO puntos_entrega (
@@ -1127,7 +1103,15 @@ export function createJuegosPublicosRouter(deps) {
 
       return res.status(result.status).json(result.payload);
     } catch (e) {
-      console.error(e);
+      if (e?.code === 'TRANSACTION_OUTCOME_UNKNOWN') {
+        return createJsonError(res, 503, 'Resultado de creación de premio indeterminado.', {
+          code: 'TRANSACTION_OUTCOME_UNKNOWN',
+        });
+      }
+      if (e?.code === 'DELIVERY_POINT_IDENTITY_CONFLICT') {
+        return createJsonError(res, 409, 'Conflicto de identidad del punto de entrega.', { code: e.code });
+      }
+      console.error('REQUEST.ERROR', { code: e?.code || 'UNKNOWN' });
       return createJsonError(res, 500, 'Error generando pedido del premio.');
     }
   });

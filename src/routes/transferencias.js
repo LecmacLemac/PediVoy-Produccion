@@ -18,9 +18,9 @@ import { aprobarComprobanteManualAtomicoPg, asociarComprobantePedidoPg } from '.
 import { buildReceiptStatusMessage } from '../transferenciasPipeline.js';
 
 export function requireTransferApprovalRole(req, res, next) {
-  const role = String(req.user?.role || '').trim().toLowerCase();
-  const type = String(req.user?.type || '').trim().toLowerCase();
-  if ((type && type !== 'user') || !['admin', 'super'].includes(role)) {
+  const role = req.user?.role;
+  const type = req.user?.type;
+  if ((type && type !== 'user') || (role !== 'admin' && role !== 'super')) {
     return res.status(403).json({ error: 'Rol no autorizado para aprobar comprobantes' });
   }
   return next();

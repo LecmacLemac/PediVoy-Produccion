@@ -24,7 +24,10 @@ async function withServer(app, fn) {
 
 test('POST /api/public/app/auth/request-otp normaliza teléfono local para WhatsApp', async () => {
   let inserted = null;
-  const query = async (sql) => { throw new Error(`SQL inesperado en test: ${String(sql).slice(0, 90)}`); };
+  const query = async (sql, params) => {
+    if (/SELECT\s+id\s+FROM empresas/i.test(sql)) return params[0] === 1 ? [{ id: 1 }] : [];
+    throw new Error(`SQL inesperado en test: ${String(sql).slice(0, 90)}`);
+  };
   const pool = createWppEnqueueTestPool({
     configIntegraciones: { whatsapp: { provider: 'cloud', enabled: true, phone_number_id: 'phone-1', access_token_encrypted: 'v1:test' } },
     onQuery(request) {
@@ -36,14 +39,13 @@ test('POST /api/public/app/auth/request-otp normaliza teléfono local para Whats
   const app = buildApp({ query, pool });
 
   await withServer(app, async (baseUrl) => {
-    const resp = await fetch(`${baseUrl}/api/public/app/auth/request-otp`, {
+    const resp = await fetch(`${baseUrl}/api/public/app/auth/request-otp?empresa_id=1`, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
         'x-forwarded-for': '203.0.113.91',
       },
       body: JSON.stringify({
-        empresa_id: 1,
         telefono: '353 427-7739',
       }),
     });
