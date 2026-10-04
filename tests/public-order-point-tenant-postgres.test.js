@@ -62,6 +62,7 @@ async function createFixture(pool) {
       chofer_id integer,
       metodo_pago text,
       monto numeric,
+      notas text,
       tracking_token text
     );
     CREATE TABLE choferes (
@@ -98,13 +99,13 @@ async function createFixture(pool) {
     INSERT INTO puntos_entrega (id, empresa_id, cliente, telefono, telefono_normalizado, email, direccion) VALUES
       (10, 1, 'Cliente A', '3531111111', '3531111111', 'shared@example.com', 'A'),
       (20, 2, 'Cliente B', '3531111111', '3531111111', 'shared@example.com', 'B');
-    INSERT INTO pedidos (id, empresa_id, punto_entrega_id, fecha, estado, metodo_pago, monto, tracking_token) VALUES
-      (99, 1, 10, '2026-09-19T10:00:00Z', 'entregado', 'efectivo', 90, 'older-a'),
-      (100, 1, 10, '2026-09-20T10:00:00Z', 'pendiente', 'efectivo', 100, 'valid-a'),
-      (102, 1, 10, '2026-09-22T10:00:00Z', 'pendiente', 'efectivo', 102, 'latest-a'),
-      (101, 1, 20, '2026-09-23T10:00:00Z', 'pendiente', 'efectivo', 101, 'corrupt-a-to-b'),
-      (200, 2, 20, '2026-09-21T10:00:00Z', 'pendiente', 'efectivo', 200, 'valid-b'),
-      (201, 2, 10, '2026-09-24T10:00:00Z', 'pendiente', 'efectivo', 201, 'corrupt-b-to-a');
+    INSERT INTO pedidos (id, empresa_id, punto_entrega_id, fecha, estado, metodo_pago, monto, notas, tracking_token) VALUES
+      (99, 1, 10, '2026-09-19T10:00:00Z', 'entregado', 'efectivo', 90, 'Nota vieja A', 'older-a'),
+      (100, 1, 10, '2026-09-20T10:00:00Z', 'pendiente', 'efectivo', 100, 'Nota intermedia A', 'valid-a'),
+      (102, 1, 10, '2026-09-22T10:00:00Z', 'pendiente', 'efectivo', 102, 'Departamento 4 B', 'latest-a'),
+      (101, 1, 20, '2026-09-23T10:00:00Z', 'pendiente', 'efectivo', 101, 'Secreto corrupto A-B', 'corrupt-a-to-b'),
+      (200, 2, 20, '2026-09-21T10:00:00Z', 'pendiente', 'efectivo', 200, 'Torre B', 'valid-b'),
+      (201, 2, 10, '2026-09-24T10:00:00Z', 'pendiente', 'efectivo', 201, 'Secreto corrupto B-A', 'corrupt-b-to-a');
     INSERT INTO items_pedido (id, pedido_id, producto, producto_id, cantidad, precio_unitario) VALUES
       (1, 100, 'Válido A', 1, 1, 100),
       (2, 101, 'Ajeno B vía A', 2, 1, 101),
@@ -140,7 +141,15 @@ function clientCookie(empresaId) {
 
 async function json(base, requestPath, options = {}) {
   const response = await fetch(base + requestPath, options);
-  return { status: response.status, body: await response.json() };
+  return { status: response.status, headers: response.headers, body: await response.json() };
+}
+
+async function contactJson(base, empresaId, telefono) {
+  return json(base, `/public/contacto?empresa_id=${empresaId}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ telefono }),
+  });
 }
 
 test('PostgreSQL real: identidad única elige el último pedido sólo dentro del punto resuelto', postgresOptions, async () => {
@@ -167,30 +176,119 @@ test('PostgreSQL real: identidad única elige el último pedido sólo dentro del
   });
 });
 
-test('PostgreSQL real: contacto y últimos pedidos fallan cerrado con dos puntos del mismo tenant/teléfono', postgresOptions, async () => {
+test('PostgreSQL real: contacto elige el punto del pedido más reciente; últimos pedidos siguen fail-closed', postgresOptions, async () => {
   await withIsolatedPostgres(async pool => {
     await createFixture(pool);
     await pool.query(`
       INSERT INTO puntos_entrega
-        (id, empresa_id, cliente, telefono, telefono_normalizado, email, direccion)
-      VALUES (11, 1, 'Cliente secreto', '3531111111', '3531111111', 'otro@example.com', 'Dirección secreta');
+        (id, empresa_id, cliente, telefono, telefono_normalizado, email, direccion, ciudad, notas, latitud, longitud)
+      VALUES (11, 1, 'Cliente reciente', '3531111111', '3531111111', 'otro@example.com', 'Dirección reciente', 'Villa María', 'nota interna', -32.4, -63.2);
       INSERT INTO pedidos
-        (id, empresa_id, punto_entrega_id, fecha, estado, metodo_pago, monto, tracking_token)
-      VALUES (103, 1, 11, '2026-09-25T10:00:00Z', 'pendiente', 'efectivo', 999, 'secret');
+        (id, empresa_id, punto_entrega_id, fecha, estado, metodo_pago, monto, notas, tracking_token)
+      VALUES (103, 1, 11, '2026-09-25T10:00:00Z', 'pendiente', 'efectivo', 999, 'Departamento 7 C', 'secret');
     `);
     const app = buildApp(pool);
     await withServer(app, async base => {
+      const partial = await contactJson(base, 1, '1');
+      assert.equal(partial.status, 400);
+      assert.doesNotMatch(JSON.stringify(partial.body), /Cliente reciente|Dirección reciente|nota interna|otro@example.com|999|secret/i);
+
+      const contacto = await contactJson(base, 1, '3531111111');
+      assert.equal(contacto.status, 200);
+      assert.deepEqual(contacto.body, {
+        ok: true,
+        found: true,
+        contacto: {
+          id: 11,
+          cliente: 'Cliente R.',
+          direccion: 'Dirección reciente',
+          ciudad: 'Villa María',
+          provincia: null,
+          pais: null,
+          notas: 'Departamento 7 C',
+        },
+      });
+      assert.match(String(contacto.headers.get('cache-control') || ''), /no-store/);
+      assert.doesNotMatch(JSON.stringify(contacto.body), /Cliente reciente|nota interna|otro@example.com|999|secret|latitud|longitud|zona_id/i);
+
       for (const pathName of [
-        '/public/contacto?empresa_id=1&telefono=3531111111',
         '/public/ultimo-pedido?empresa_id=1&telefono=3531111111',
         '/api/public/pedidos/ultimo?empresa_id=1&telefono=3531111111',
       ]) {
         const result = await json(base, pathName);
         assert.equal(result.status, 409, pathName);
         assert.match(JSON.stringify(result.body), /ambigua|ambiguo/i);
-        assert.doesNotMatch(JSON.stringify(result.body), /Cliente secreto|Dirección secreta|999|103/);
+        assert.doesNotMatch(JSON.stringify(result.body), /Cliente reciente|Dirección reciente|999|103/);
       }
     });
+  });
+});
+
+test('PostgreSQL real: contacto recupera sólo la nota del último pedido del punto y tenant seleccionados', postgresOptions, async () => {
+  await withIsolatedPostgres(async pool => {
+    await createFixture(pool);
+    await pool.query(`
+      INSERT INTO puntos_entrega
+        (id, empresa_id, cliente, telefono, telefono_normalizado, direccion, notas)
+      VALUES
+        (12, 1, 'Sin pedidos', '3532222222', '3532222222', 'Calle 12', 'Nota interna no pública');
+    `);
+    const app = buildApp(pool);
+    await withServer(app, async base => {
+      const tenantA = await contactJson(base, 1, '3531111111');
+      assert.equal(tenantA.status, 200);
+      assert.equal(tenantA.body.contacto.id, 10);
+      assert.equal(tenantA.body.contacto.notas, 'Departamento 4 B');
+      assert.doesNotMatch(JSON.stringify(tenantA.body), /Torre B|Secreto corrupto|Nota vieja A|Nota intermedia A/);
+
+      await pool.query(`
+        INSERT INTO pedidos
+          (id, empresa_id, punto_entrega_id, fecha, estado, metodo_pago, monto, notas, tracking_token)
+        VALUES
+          (104, 1, 10, '2026-09-26T10:00:00Z', 'pendiente', 'efectivo', 110, '', 'latest-empty-a')
+      `);
+      const clearedLatest = await contactJson(base, 1, '3531111111');
+      assert.equal(clearedLatest.status, 200);
+      assert.equal(clearedLatest.body.contacto.notas, '');
+      assert.doesNotMatch(JSON.stringify(clearedLatest.body), /Departamento 4 B|Nota vieja A|Nota intermedia A/);
+
+      const tenantB = await contactJson(base, 2, '3531111111');
+      assert.equal(tenantB.status, 200);
+      assert.equal(tenantB.body.contacto.id, 20);
+      assert.equal(tenantB.body.contacto.notas, 'Torre B');
+      assert.doesNotMatch(JSON.stringify(tenantB.body), /Departamento 4 B|Secreto corrupto/);
+
+      const withoutOrders = await contactJson(base, 1, '3532222222');
+      assert.equal(withoutOrders.status, 200);
+      assert.equal(withoutOrders.body.contacto.id, 12);
+      assert.equal(withoutOrders.body.contacto.notas, null);
+      assert.doesNotMatch(JSON.stringify(withoutOrders.body), /Nota interna no pública/);
+    });
+  });
+});
+
+test('PostgreSQL real: limita consultas repetidas de contacto por IP y empresa', postgresOptions, async () => {
+  await withIsolatedPostgres(async pool => {
+    await createFixture(pool);
+    const previousMax = process.env.PUBLIC_CONTACT_RATE_LIMIT_MAX;
+    const previousWindow = process.env.PUBLIC_CONTACT_RATE_LIMIT_WINDOW_MS;
+    process.env.PUBLIC_CONTACT_RATE_LIMIT_MAX = '1';
+    process.env.PUBLIC_CONTACT_RATE_LIMIT_WINDOW_MS = '60000';
+    try {
+      const app = buildApp(pool);
+      await withServer(app, async base => {
+        const first = await contactJson(base, 1, '3531111111');
+        assert.equal(first.status, 200);
+        const second = await contactJson(base, 1, '3531111111');
+        assert.equal(second.status, 429);
+        assert.equal(second.body.code, 'PUBLIC_CONTACT_RATE_LIMITED');
+      });
+    } finally {
+      if (previousMax === undefined) delete process.env.PUBLIC_CONTACT_RATE_LIMIT_MAX;
+      else process.env.PUBLIC_CONTACT_RATE_LIMIT_MAX = previousMax;
+      if (previousWindow === undefined) delete process.env.PUBLIC_CONTACT_RATE_LIMIT_WINDOW_MS;
+      else process.env.PUBLIC_CONTACT_RATE_LIMIT_WINDOW_MS = previousWindow;
+    }
   });
 });
 

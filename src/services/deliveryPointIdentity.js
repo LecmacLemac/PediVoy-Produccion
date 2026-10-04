@@ -1,9 +1,13 @@
-export const DELIVERY_POINT_ADDRESS_SQL = "LOWER(TRIM(COALESCE(direccion, '')))";
 export const GENERAL_PHONE_LOCK_CLASS = 0x57505047;
 
 export function normalizeGeneralPhoneIdentity(normalizePhoneFn, value) {
-  const normalized = String(normalizePhoneFn(value || '') || '').replace(/\D+/g, '');
-  return normalized.length > 10 ? normalized.slice(-10) : normalized;
+  const rawDigits = String(value || '').replace(/\D+/g, '');
+  const validNational = digits => digits.length === 10 && !digits.startsWith('0') && !digits.startsWith('54');
+  if (validNational(rawDigits)) return rawDigits;
+  if (rawDigits.length === 11 && rawDigits.startsWith('0') && validNational(rawDigits.slice(1))) return rawDigits.slice(1);
+  if (rawDigits.length === 12 && rawDigits.startsWith('54') && validNational(rawDigits.slice(2))) return rawDigits.slice(2);
+  if (rawDigits.length === 13 && rawDigits.startsWith('549') && validNational(rawDigits.slice(3))) return rawDigits.slice(3);
+  return '';
 }
 
 export function normalizeDeliveryPointPhone(normalizePhoneFn, value) {
@@ -12,7 +16,16 @@ export function normalizeDeliveryPointPhone(normalizePhoneFn, value) {
 }
 
 export function normalizeDeliveryPointAddress(value) {
-  return String(value || '').trim().toLowerCase();
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .replace(/\b(?:bv|blvd)\b/g, 'boulevard')
+    .replace(/\bav\b/g, 'avenida')
+    .replace(/\bn\s+(?=\d)/g, '')
+    .replace(/\s+/g, ' ');
 }
 
 export function deliveryPointIdentity({ normalizePhoneFn, telefono, direccion }) {
@@ -93,20 +106,45 @@ export async function resolveTenantDeliveryPointByPhone(queryFn, {
   return { status: 'unique', phone, point: rows[0] };
 }
 
+export async function resolveLatestTenantDeliveryPointByPhone(queryFn, {
+  empresaId,
+  telefono,
+  normalizePhoneFn,
+}) {
+  const phone = normalizeGeneralPhoneIdentity(normalizePhoneFn, telefono);
+  if (!phone) return { status: 'none', phone, point: null };
+  const rows = await queryFn(
+    `SELECT pe.id, pe.empresa_id
+       FROM pedidos p
+       JOIN puntos_entrega pe
+         ON pe.id = p.punto_entrega_id
+        AND pe.empresa_id = p.empresa_id
+      WHERE p.empresa_id = $1
+        AND pe.empresa_id = $1
+        AND RIGHT(REGEXP_REPLACE(COALESCE(pe.telefono_normalizado, pe.telefono, ''), '\\D', '', 'g'), LENGTH($2)) = $2
+      ORDER BY p.fecha DESC NULLS LAST, p.id DESC
+      LIMIT 1`,
+    [empresaId, phone]
+  );
+  if (!rows.length) return { status: 'none', phone, point: null };
+  return { status: 'unique', phone, point: rows[0] };
+}
+
 export async function findDeliveryPointsByIdentity(queryFn, { empresaId, identity, excludeId = null }) {
   if (!identity) return [];
-  return queryFn(
+  const rows = await queryFn(
     `SELECT id, empresa_id, cliente, telefono, telefono_normalizado, direccion,
-            ciudad, provincia, pais, notas, latitud, longitud, zona_id
+            ciudad, provincia, pais, latitud, longitud, zona_id
        FROM puntos_entrega
       WHERE empresa_id = $1
         AND RIGHT(REGEXP_REPLACE(COALESCE(telefono_normalizado, telefono, ''), '\\D', '', 'g'), 7) = $2
-        AND ${DELIVERY_POINT_ADDRESS_SQL} = $3
-        AND ($4::int IS NULL OR id <> $4)
-      ORDER BY id
-      LIMIT 2`,
-    [empresaId, identity.phone, identity.address, excludeId]
+        AND ($3::int IS NULL OR id <> $3)
+      ORDER BY id`,
+    [empresaId, identity.phone, excludeId]
   );
+  return rows
+    .filter(row => normalizeDeliveryPointAddress(row?.direccion) === identity.address)
+    .slice(0, 2);
 }
 
 export function sameDeliveryPointIdentity(left, right) {

@@ -75,6 +75,7 @@ async function createFixture(pool) {
       zona_id integer,
       fecha_entrega_estimada date,
       referido_por_id integer,
+      notas text,
       tracking_token text
     );
     CREATE TABLE items_pedido (
@@ -131,7 +132,7 @@ function buildApp(pool, overrides = {}) {
   registerPublicLegacyCreatePedidoRoute(app, {
     query,
     pool: overrides.pool || pool,
-    geocodeIfNeeded: async () => null,
+    geocodeIfNeeded: overrides.geocodeIfNeeded || (async () => null),
     normalizePhone: value => String(value || '').replace(/\D+/g, ''),
     pointInAnyZone: async () => null,
     enqueueWppMessage: overrides.enqueueWppMessage || (async () => null),
@@ -191,6 +192,233 @@ function deferred() {
   const promise = new Promise(r => { resolve = r; });
   return { promise, resolve };
 }
+
+test('POST /public/pedidos rechaza metodo_pago arbitrario sin mutaciones', postgresOptions, async () => {
+  await withIsolatedPostgres(async pool => {
+    await createFixture(pool);
+    await pool.query(`INSERT INTO productos (id, empresa_id, nombre) VALUES (55, 1, 'Bidón')`);
+    const app = buildApp(pool);
+
+    await withServer(app, async baseUrl => {
+      const result = await postPedido(baseUrl, {
+        ...payload({ producto_id: 55, producto: 'Bidón' }, 9001),
+        metodo_pago: 'bitcoin',
+      }, 90);
+      assert.equal(result.status, 400);
+      assert.equal(result.body.error, 'payload inválido');
+      assert.deepEqual(await mutationCounts(pool), {
+        pedidos: 0,
+        items: 0,
+        promociones: 0,
+        puntos_entrega: 0,
+      });
+    });
+  });
+});
+
+test('POST /public/pedidos deja el pago a definir cuando metodo_pago se omite', postgresOptions, async () => {
+  await withIsolatedPostgres(async pool => {
+    await createFixture(pool);
+    await pool.query(`INSERT INTO productos (id, empresa_id, nombre) VALUES (55, 1, 'Bidón')`);
+    const app = buildApp(pool);
+
+    await withServer(app, async baseUrl => {
+      const result = await postPedido(baseUrl, payload({ producto_id: 55, producto: 'Bidón' }, 9002), 91);
+      assert.equal(result.status, 200);
+      const saved = await pool.query('SELECT metodo_pago FROM pedidos WHERE id = $1', [result.body.pedido.id]);
+      assert.deepEqual(saved.rows, [{ metodo_pago: null }]);
+    });
+  });
+});
+
+test('POST /public/pedidos reutiliza autoritativamente el último punto aceptado sin coordenadas del navegador', postgresOptions, async () => {
+  await withIsolatedPostgres(async pool => {
+    await createFixture(pool);
+    await pool.query(`
+      INSERT INTO productos (id, empresa_id, nombre) VALUES (55, 1, 'Bidón');
+      INSERT INTO puntos_entrega
+        (id, empresa_id, cliente, telefono, telefono_normalizado, direccion, ciudad, latitud, longitud, zona_id)
+      VALUES
+        (10, 1, 'Anterior', '3515550000', '3515550000', 'Calle vieja 10', 'Córdoba', -31.1, -64.1, NULL),
+        (11, 1, 'Cliente canónico', '3515550000', '3515550000', 'Bv. San Martín 123', 'Villa María', -32.4101, -63.2402, NULL),
+        (20, 2, 'Ajeno', '3515550000', '3515550000', 'Calle ajena 9', 'Otra', -30, -60, NULL);
+      INSERT INTO pedidos (id, empresa_id, punto_entrega_id, fecha, estado, monto, tracking_token)
+      VALUES
+        (100, 1, 10, '2026-09-01T10:00:00Z', 'entregado', 100, 'old'),
+        (101, 1, 11, '2026-10-01T10:00:00Z', 'entregado', 100, 'latest'),
+        (200, 2, 20, '2026-10-02T10:00:00Z', 'entregado', 100, 'other');
+    `);
+    let geocodeCalls = 0;
+    const app = buildApp(pool, {
+      geocodeIfNeeded: async () => {
+        geocodeCalls += 1;
+        return { lat: -1, lng: -1 };
+      },
+    });
+
+    await withServer(app, async baseUrl => {
+      const result = await postPedido(baseUrl, {
+        empresa_id: 1,
+        punto_entrega_id: 11,
+        cliente: 'Dato manipulado',
+        telefono: '3515550000',
+        direccion: 'Dirección manipulada 999',
+        ciudad: 'Ciudad manipulada',
+        latitud: 0,
+        longitud: 0,
+        notas: 'Departamento 4 B',
+        submission_id: 'reuse-latest-point',
+        items: [{ producto_id: 55, producto: 'Bidón', cantidad: 1, precio_unitario: 100 }],
+      }, 88);
+      assert.equal(result.status, 200);
+      assert.equal(geocodeCalls, 0);
+      assert.deepEqual(result.body.coords, { lat: -32.4101, lng: -63.2402 });
+
+      const order = await pool.query(`
+        SELECT p.punto_entrega_id, p.notas, pe.cliente, pe.direccion, pe.ciudad, pe.latitud, pe.longitud
+          FROM pedidos p
+          JOIN puntos_entrega pe ON pe.id = p.punto_entrega_id AND pe.empresa_id = p.empresa_id
+         WHERE p.submission_id = 'reuse-latest-point' AND p.empresa_id = 1
+      `);
+      assert.deepEqual(order.rows, [{
+        punto_entrega_id: 11,
+        notas: 'Departamento 4 B',
+        cliente: 'Cliente canónico',
+        direccion: 'Bv. San Martín 123',
+        ciudad: 'Villa María',
+        latitud: '-32.4101',
+        longitud: '-63.2402',
+      }]);
+      const count = await pool.query('SELECT COUNT(*)::int AS c FROM puntos_entrega');
+      assert.equal(count.rows[0].c, 3);
+
+      const forged = await postPedido(baseUrl, {
+        empresa_id: 1,
+        punto_entrega_id: 20,
+        cliente: 'Intento ajeno',
+        telefono: '3515550000',
+        direccion: 'Calle ajena 9',
+        ciudad: 'Otra',
+        submission_id: 'forged-cross-tenant-point',
+        items: [{ producto_id: 55, producto: 'Bidón', cantidad: 1, precio_unitario: 100 }],
+      }, 89);
+      assert.equal(forged.status, 409);
+      assert.equal(forged.body.code, 'DELIVERY_POINT_IDENTITY_CONFLICT');
+      const forgedOrder = await pool.query("SELECT COUNT(*)::int AS c FROM pedidos WHERE submission_id = 'forged-cross-tenant-point'");
+      assert.equal(forgedOrder.rows[0].c, 0);
+      assert.equal(geocodeCalls, 0);
+    });
+  });
+});
+
+test('POST /public/pedidos acepta un punto único recuperado aunque todavía no tenga pedidos previos', postgresOptions, async () => {
+  await withIsolatedPostgres(async pool => {
+    await createFixture(pool);
+    await pool.query(`
+      INSERT INTO productos (id, empresa_id, nombre) VALUES (55, 1, 'Bidón');
+      INSERT INTO puntos_entrega
+        (id, empresa_id, cliente, telefono, telefono_normalizado, direccion, ciudad, latitud, longitud)
+      VALUES
+        (15, 1, 'Cliente nuevo', '3515550015', '3515550015', 'Avenida Colón 15', 'Córdoba', -31.415, -64.185);
+    `);
+    const app = buildApp(pool);
+
+    await withServer(app, async baseUrl => {
+      const result = await postPedido(baseUrl, {
+        empresa_id: 1,
+        punto_entrega_id: 15,
+        cliente: 'Cliente nuevo',
+        telefono: '3515550015',
+        direccion: 'Avenida Colón 15',
+        ciudad: 'Córdoba',
+        submission_id: 'unique-point-without-orders',
+        items: [{ producto_id: 55, producto: 'Bidón', cantidad: 1, precio_unitario: 100 }],
+      }, 90);
+      assert.equal(result.status, 200);
+      assert.deepEqual(result.body.coords, { lat: -31.415, lng: -64.185 });
+      const order = await pool.query("SELECT punto_entrega_id FROM pedidos WHERE submission_id = 'unique-point-without-orders'");
+      assert.deepEqual(order.rows, [{ punto_entrega_id: 15 }]);
+
+      await pool.query("UPDATE pedidos SET tracking_token = NULL WHERE submission_id = 'unique-point-without-orders'");
+      const partialPhone = await postPedido(baseUrl, {
+        empresa_id: 1,
+        punto_entrega_id: 15,
+        cliente: 'Cliente nuevo',
+        telefono: '5550015',
+        direccion: 'Avenida Colón 15',
+        ciudad: 'Córdoba',
+        submission_id: 'unique-point-without-orders',
+        items: [{ producto_id: 55, producto: 'Bidón', cantidad: 1, precio_unitario: 100 }],
+      }, 91);
+      assert.equal(partialPhone.status, 400);
+      assert.equal(partialPhone.body.code, 'PUBLIC_PHONE_INVALID');
+      assert.equal(Object.hasOwn(partialPhone.body, 'pedido'), false);
+      const replayedOrder = await pool.query("SELECT tracking_token FROM pedidos WHERE submission_id = 'unique-point-without-orders'");
+      assert.deepEqual(replayedOrder.rows, [{ tracking_token: null }]);
+    });
+  });
+});
+
+test('POST /public/pedidos guarda notas sólo en el pedido y permite borrarlas en el siguiente', postgresOptions, async () => {
+  await withIsolatedPostgres(async pool => {
+    await createFixture(pool);
+    await pool.query("INSERT INTO productos (id, empresa_id, nombre) VALUES (55, 1, 'Bidón')");
+    const app = buildApp(pool);
+
+    await withServer(app, async baseUrl => {
+      const first = await postPedido(baseUrl, {
+        empresa_id: 1,
+        cliente: 'Cliente notas',
+        telefono: '3515550099',
+        direccion: 'Calle Notas 99',
+        ciudad: 'Córdoba',
+        notas: 'Departamento 4 B',
+        submission_id: 'note-order-first',
+        items: [{ producto_id: 55, producto: 'Bidón', cantidad: 1, precio_unitario: 100 }],
+      }, 92);
+      assert.equal(first.status, 200);
+
+      const stored = await pool.query(`
+        SELECT p.punto_entrega_id, p.notas AS pedido_notas, pe.notas AS punto_notas
+          FROM pedidos p
+          JOIN puntos_entrega pe
+            ON pe.id = p.punto_entrega_id
+           AND pe.empresa_id = p.empresa_id
+         WHERE p.empresa_id = 1
+           AND p.submission_id = 'note-order-first'
+      `);
+      assert.deepEqual(stored.rows, [{
+        punto_entrega_id: stored.rows[0].punto_entrega_id,
+        pedido_notas: 'Departamento 4 B',
+        punto_notas: null,
+      }]);
+
+      const second = await postPedido(baseUrl, {
+        empresa_id: 1,
+        punto_entrega_id: stored.rows[0].punto_entrega_id,
+        cliente: 'Cliente notas',
+        telefono: '3515550099',
+        direccion: 'Calle Notas 99',
+        ciudad: 'Córdoba',
+        notas: '',
+        submission_id: 'note-order-cleared',
+        items: [{ producto_id: 55, producto: 'Bidón', cantidad: 1, precio_unitario: 100 }],
+      }, 93);
+      assert.equal(second.status, 200);
+
+      const cleared = await pool.query(`
+        SELECT p.notas AS pedido_notas, pe.notas AS punto_notas
+          FROM pedidos p
+          JOIN puntos_entrega pe
+            ON pe.id = p.punto_entrega_id
+           AND pe.empresa_id = p.empresa_id
+         WHERE p.empresa_id = 1
+           AND p.submission_id = 'note-order-cleared'
+      `);
+      assert.deepEqual(cleared.rows, [{ pedido_notas: null, punto_notas: null }]);
+    });
+  });
+});
 
 test('POST /public/pedidos usa identidad de producto autoritativa con PostgreSQL real', postgresOptions, async t => {
   await withIsolatedPostgres(async pool => {

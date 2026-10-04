@@ -390,6 +390,64 @@
       box-shadow: 0 10px 15px -3px rgba(37, 99, 235, 0.5);
     }
 
+    button[type="submit"]:disabled, #mobSubmit:disabled {
+      cursor: not-allowed;
+      opacity: 0.52;
+      transform: none;
+      box-shadow: none;
+    }
+
+
+    .checkout-step {
+      margin: 0.25rem 0 0.5rem;
+      color: var(--muted);
+      font-size: 0.82rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .lookup-status {
+      min-height: 1.35rem;
+      margin: 0.35rem 0 0;
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+
+    .address-history-card {
+      margin-top: 1rem;
+      padding: 1rem;
+      border: 1px solid #bfdbfe;
+      border-radius: 14px;
+      background: #eff6ff;
+    }
+
+    .address-history-card h6 { margin: 0 0 0.4rem; font-size: 1rem; }
+    .address-history-card p { margin: 0; color: var(--ink); line-height: 1.45; }
+    .address-history-card .muted { color: var(--muted); font-size: 0.88rem; }
+    .address-actions { display: grid; gap: 0.65rem; margin-top: 1rem; }
+    .address-actions button { margin: 0; width: 100%; border-radius: 10px; font-weight: 700; }
+    .address-actions .secondary { background: transparent; color: var(--brand); border: 1px solid #93c5fd; }
+
+    #deliveryFields {
+      border: 0;
+      padding: 0;
+      margin: 0;
+      min-width: 0;
+    }
+
+    .gps-button {
+      width: 100%;
+      margin: 0.75rem 0 0;
+      border-radius: 10px;
+      background: transparent;
+      color: var(--ink);
+      border: 1px solid var(--border);
+      font-weight: 600;
+    }
+
+    [hidden] { display: none !important; }
+
     /* --- Barra Móvil Flotante --- */
     .mobile-bar {
       position: fixed;
@@ -557,7 +615,7 @@
         <div id="cart" class="cart-box">
           <div style="text-align:center; color:var(--muted); padding:2rem 1rem; background:#f8fafc; border-radius:12px; border:1px dashed var(--border);">
             <div style="font-size:2rem; margin-bottom:0.5rem">🛒</div>
-            Tu carrito está vacío.<br>¡Agregá algo rico!
+            Tu carrito está vacío.<br>¡Elegí tus productos!
           </div>
         </div>
 
@@ -568,48 +626,66 @@
 
         <form id="form" novalidate style="margin-top: 1.5rem;">
           <input type="hidden" name="empresa_id" id="empresa_id"/>
+          <input type="hidden" name="punto_entrega_id" id="punto_entrega_id" value="">
           <input type="hidden" name="latitud" id="lat">
           <input type="hidden" name="longitud" id="lng">
           <input type="hidden" name="pais" id="pais" value="">
           <input type="hidden" name="provincia" id="provincia" value="">
-          <input type="hidden" name="metodo_pago" value="efectivo">
 
-          <h5 style="margin: 2rem 0 1rem; font-weight:700; font-size:1.1rem; color:var(--ink)">
+
+          <h5 style="margin: 2rem 0 0.25rem; font-weight:700; font-size:1.1rem; color:var(--ink)">
             Datos de Entrega
           </h5>
+          <p class="checkout-step">Paso 1 · Ingresá tu celular</p>
 
           <label>
             Celular (WhatsApp)
-            <input name="telefono" type="tel" inputmode="numeric" required minlength="10" maxlength="10"
-                   placeholder="Ej: 3534112233">
+            <input name="telefono" type="tel" inputmode="tel" autocomplete="tel" required minlength="10" maxlength="24"
+                   aria-describedby="phoneLookupStatus" placeholder="Ej: 3534112233">
           </label>
+          <p id="phoneLookupStatus" class="lookup-status" role="status" aria-live="polite">Ingresá los 10 dígitos para continuar.</p>
 
-          <label>
-            Nombre completo
-            <input name="cliente" required placeholder="¿Quién recibe?">
-          </label>
-
-          <label>
-            Dirección
-            <div style="display:flex; gap:0.8rem">
-              <input name="direccion" required placeholder="Calle y número" style="flex:2">
-              <input name="ciudad" required placeholder="Ciudad" style="flex:1">
+          <section id="addressHistoryCard" class="address-history-card" aria-labelledby="addressHistoryTitle" hidden>
+            <h6 id="addressHistoryTitle">Tu última dirección</h6>
+            <p><strong id="savedCustomerName"></strong></p>
+            <p id="savedAddress"></p>
+            <p id="savedCity" class="muted"></p>
+            <div class="address-actions">
+              <button id="changeSavedAddress" class="secondary" type="button">Cambiar dirección</button>
             </div>
-          </label>
+          </section>
+
+          <fieldset id="deliveryFields" hidden>
+            <p class="checkout-step">Paso 2 · Confirmá la entrega</p>
+            <label>
+              Nombre completo
+              <input name="cliente" required autocomplete="name" placeholder="¿Quién recibe?">
+            </label>
+
+            <label>
+              Dirección
+              <div style="display:flex; gap:0.8rem; flex-wrap:wrap">
+                <input name="direccion" required autocomplete="street-address" placeholder="Calle y número" style="flex:2; min-width:180px">
+                <input name="ciudad" required autocomplete="address-level2" placeholder="Ciudad" style="flex:1; min-width:120px">
+              </div>
+            </label>
+
+            <button id="useGpsLocation" class="gps-button" type="button">📍 Usar mi ubicación actual</button>
+          </fieldset>
 
           <label>
-            Notas (Opcional)
-            <textarea name="notas" rows="2" placeholder="Portón negro, timbre roto, dejar en guardia..."></textarea>
+            Notas para este pedido (Opcional)
+            <textarea name="notas" rows="2" maxlength="1000" placeholder="Portón negro, timbre roto, dejar en guardia..."></textarea>
           </label>
-
-          <button type="submit" style="width:100%; margin-top:1.5rem;">
-            Confirmar Pedido ➔
-          </button>
 
           <label style="margin-top:0.75rem;">
             Código de descuento (Opcional)
             <input name="codigo_referente" id="codigo_referente" placeholder="Si tenés un código, ingresalo acá">
           </label>
+
+          <button type="submit" style="width:100%; margin-top:1.5rem;" disabled>
+            Confirmar pedido
+          </button>
         </form>
       </div>
     </aside>
@@ -620,7 +696,7 @@
       <span style="font-size:0.75rem; opacity:0.8; font-weight:500">Total estimado</span>
       <span id="mobTotal" style="font-size:1.2rem; font-weight:800;">$0</span>
     </div>
-    <button id="mobSubmit" type="button">
+    <button id="mobSubmit" type="button" disabled>
       Confirmar
     </button>
   </div>
@@ -663,16 +739,31 @@
     const searchInp = $('#prodSearch');
     const latInput = $('#lat');
     const lngInput = $('#lng');
+    const pointInput = $('#punto_entrega_id');
+    const deliveryFields = $('#deliveryFields');
+    const addressHistoryCard = $('#addressHistoryCard');
+    const phoneLookupStatus = $('#phoneLookupStatus');
+    const useGpsLocationButton = $('#useGpsLocation');
     const DEFAULT_BRAND_LOGO = '/pedidos/img/brand/pedivoy-symbol-red.png';
 
     let allProducts = [];
     let carrito = [];
+    let recoveredContact = null;
+    let phoneLookupSequence = 0;
+    let phoneLookupPending = false;
+    let currentCartTotal = 0;
+    let defaultProvince = '';
+    let defaultCountry = '';
+    let orderSubmissionPending = false;
+    let orderSubmissionSucceeded = false;
+    let gpsRequestSequence = 0;
 
     function setOrderingEnabled(enabled) {
       tenantAuthorized = enabled;
       for (const element of formEl.querySelectorAll('input, textarea, select, button')) element.disabled = !enabled;
       const mobileSubmit = document.getElementById('mobSubmit');
       if (mobileSubmit) mobileSubmit.disabled = !enabled;
+      if (enabled) updateCheckoutActionState();
     }
 
     setOrderingEnabled(false);
@@ -692,13 +783,18 @@
       return (p || '').toString().replace(/\D/g, '');
     }
 
+    function normalizeArgentineNationalPhone(raw) {
+      const digits = normalizePhone(raw);
+      if (digits.length === 10 && !digits.startsWith('0') && !digits.startsWith('54')) return digits;
+      if (digits.length === 11 && digits.startsWith('0')) return digits.substring(1);
+      if (digits.length === 12 && digits.startsWith('54') && !digits.startsWith('549')) return digits.substring(2);
+      if (digits.length === 13 && digits.startsWith('549')) return digits.substring(3);
+      return '';
+    }
+
     function buildTelefonoDB(raw) {
-        let s = normalizePhone(raw);
-        if (s.length === 10) return '549' + s;
-        if (s.length === 11 && s.startsWith('0')) return '549' + s.substring(1);
-        if (s.length === 12 && s.startsWith('54')) return '549' + s.substring(2);
-        if (s.length === 13 && s.startsWith('549')) return s;
-        return s; 
+        const national = normalizeArgentineNationalPhone(raw);
+        return national ? '549' + national : normalizePhone(raw);
     }
 
     function buildCompanyWebsiteLink(config = {}) {
@@ -810,7 +906,7 @@
       });
     }
 
-    async function captureBrowserLocation({ timeout = 2500, silent = true } = {}) {
+    async function captureBrowserLocation({ timeout = 2500, silent = true, isCurrent = () => true } = {}) {
       try {
         const pos = await getCurrentPositionAsync({
           enableHighAccuracy: false,
@@ -818,6 +914,7 @@
           maximumAge: 300000
         });
 
+        if (!isCurrent()) return false;
         const ok = setHiddenCoords(pos?.coords?.latitude, pos?.coords?.longitude);
         if (ok && !silent) toast('📍 Ubicación detectada para mejorar la entrega');
         return ok;
@@ -892,12 +989,11 @@
         $('#empresa_id').value = empresa_id;
         if (d.pais && formEl.elements.pais) formEl.elements.pais.value = d.pais;
         if (d.provincia && formEl.elements.provincia) formEl.elements.provincia.value = d.provincia;
+        defaultCountry = formEl.elements.pais ? String(formEl.elements.pais.value || '') : '';
+        defaultProvince = formEl.elements.provincia ? String(formEl.elements.provincia.value || '') : '';
 
         await loadProducts();
         setOrderingEnabled(true);
-
-        // Intentamos capturar ubicación sin bloquear la UI
-        captureBrowserLocation({ timeout: 2500, silent: true });
 
         const addId = params.get('add');
         if (addId) setTimeout(() => checkAutoAdd(addId), 800);
@@ -1104,42 +1200,173 @@
     }
 
     function updateTotal(val) {
+      currentCartTotal = Number(val) || 0;
       const txt = ARS.format(val);
       totalEl.textContent = txt;
       mobTotalEl.textContent = txt;
+      updateCheckoutActionState();
+    }
+
+    function updateCheckoutActionState() {
+      const submitButton = formEl.querySelector('button[type="submit"]');
+      const mobileSubmitButton = $('#mobSubmit');
+      const phoneReady = normalizeArgentineNationalPhone(formEl.elements.telefono?.value || '').length === 10;
+      const deliveryReady = ['cliente', 'direccion', 'ciudad'].every(name => String(formEl.elements[name]?.value || '').trim());
+      const canSubmit = tenantAuthorized
+        && carrito.length > 0
+        && phoneReady
+        && deliveryReady
+        && !phoneLookupPending
+        && !orderSubmissionPending
+        && !orderSubmissionSucceeded;
+      const totalText = currentCartTotal > 0 ? ARS.format(currentCartTotal) : '';
+
+      if (submitButton) {
+        submitButton.disabled = !canSubmit;
+        submitButton.textContent = totalText ? `Confirmar pedido · ${totalText}` : 'Confirmar pedido';
+      }
+      if (mobileSubmitButton) {
+        mobileSubmitButton.disabled = !canSubmit;
+        mobileSubmitButton.textContent = totalText ? `Confirmar · ${totalText}` : 'Confirmar';
+      }
     }
 
     // --- 4. FORMULARIO ---
     const telInput = formEl.elements.telefono;
-    telInput.addEventListener('blur', async () => {
-      const raw = telInput.value;
-      const digits = normalizePhone(raw);
-      if (digits.length < 10) return;
 
-      const telDB = buildTelefonoDB(digits);
-      try {
-        const url = '/public/contacto?telefono=' +
-          encodeURIComponent(telDB) +
-          '&empresa_id=' + encodeURIComponent(empresa_id);
-        const r = await fetch(url);
-        if (!r.ok) return;
-        const data = await r.json();
-        if (!data || !data.contacto) return;
+    function clearHiddenCoords() {
+      latInput.value = '';
+      lngInput.value = '';
+    }
 
-        const c = data.contacto;
-
-        if (c.cliente && !formEl.elements.cliente.value) {
-            formEl.elements.cliente.value = c.cliente;
-            formEl.elements.cliente.style.backgroundColor = "#f0fdf4";
-        }
-        if (c.direccion && !formEl.elements.direccion.value) formEl.elements.direccion.value = c.direccion;
-        if (c.ciudad && !formEl.elements.ciudad.value) formEl.elements.ciudad.value = c.ciudad;
-        if (c.notas && !formEl.elements.notas.value) formEl.elements.notas.value = c.notas;
-        
-        toast('👋 ¡Te reconocimos! Datos cargados.');
-      } catch (err) {
-        console.error('Error consultando contacto', err);
+    function setDeliveryReadOnly(readOnly) {
+      for (const name of ['cliente', 'direccion', 'ciudad']) {
+        const input = formEl.elements[name];
+        if (input) input.readOnly = readOnly;
       }
+    }
+
+    function clearRecoveredDeliveryValues({ preserveName = false } = {}) {
+      gpsRequestSequence += 1;
+      pointInput.value = '';
+      clearHiddenCoords();
+      setDeliveryReadOnly(false);
+      if (!preserveName) formEl.elements.cliente.value = '';
+      formEl.elements.direccion.value = '';
+      formEl.elements.ciudad.value = '';
+      formEl.elements.notas.value = '';
+      if (formEl.elements.provincia) formEl.elements.provincia.value = defaultProvince;
+      if (formEl.elements.pais) formEl.elements.pais.value = defaultCountry;
+      updateCheckoutActionState();
+    }
+
+    function showManualDeliveryForm({ preserveName = false } = {}) {
+      clearRecoveredDeliveryValues({ preserveName });
+      deliveryFields.hidden = false;
+      addressHistoryCard.hidden = true;
+      useGpsLocationButton.hidden = false;
+      updateCheckoutActionState();
+    }
+
+    function showRecoveredAddress(contact) {
+      recoveredContact = contact;
+      pointInput.value = String(contact.id || '');
+      clearHiddenCoords();
+      formEl.elements.cliente.value = String(contact.cliente || '');
+      formEl.elements.direccion.value = String(contact.direccion || '');
+      formEl.elements.ciudad.value = String(contact.ciudad || '');
+      formEl.elements.notas.value = String(contact.notas || '');
+      if (formEl.elements.provincia) formEl.elements.provincia.value = String(contact.provincia || defaultProvince);
+      if (formEl.elements.pais) formEl.elements.pais.value = String(contact.pais || defaultCountry);
+      setDeliveryReadOnly(true);
+      $('#savedCustomerName').textContent = String(contact.cliente || 'Cliente');
+      $('#savedAddress').textContent = String(contact.direccion || 'Dirección guardada');
+      $('#savedCity').textContent = [contact.ciudad, contact.provincia].filter(Boolean).join(', ');
+      addressHistoryCard.hidden = false;
+      deliveryFields.hidden = true;
+      useGpsLocationButton.hidden = true;
+      phoneLookupStatus.textContent = 'Encontramos tu última dirección. Revisala antes de confirmar el pedido.';
+      updateCheckoutActionState();
+    }
+
+    async function lookupContactByPhone(digits) {
+      const sequence = ++phoneLookupSequence;
+      phoneLookupPending = true;
+      phoneLookupStatus.textContent = 'Buscando tu última dirección…';
+      updateCheckoutActionState();
+      try {
+        const url = '/public/contacto?empresa_id=' + encodeURIComponent(empresa_id);
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ telefono: buildTelefonoDB(digits) }),
+        });
+        const data = response.ok ? await response.json() : null;
+        if (sequence !== phoneLookupSequence) return;
+        phoneLookupPending = false;
+        if (data?.found && data.contacto?.id && data.contacto?.direccion) {
+          showRecoveredAddress(data.contacto);
+          return;
+        }
+        recoveredContact = null;
+        showManualDeliveryForm();
+        phoneLookupStatus.textContent = 'No encontramos una dirección anterior. Completá los datos de entrega.';
+      } catch (err) {
+        if (sequence !== phoneLookupSequence) return;
+        phoneLookupPending = false;
+        console.error('Error consultando contacto', err);
+        recoveredContact = null;
+        showManualDeliveryForm();
+        phoneLookupStatus.textContent = 'No pudimos consultar el historial. Completá los datos de entrega.';
+      }
+    }
+
+    telInput.addEventListener('input', () => {
+      const digits = normalizeArgentineNationalPhone(telInput.value);
+      phoneLookupSequence += 1;
+      phoneLookupPending = false;
+      recoveredContact = null;
+      clearRecoveredDeliveryValues();
+      addressHistoryCard.hidden = true;
+      deliveryFields.hidden = true;
+      useGpsLocationButton.hidden = true;
+      if (digits.length !== 10) {
+        phoneLookupStatus.textContent = 'Ingresá 10 dígitos o pegá el número con código de país.';
+        updateCheckoutActionState();
+        return;
+      }
+      if (telInput.value !== digits) telInput.value = digits;
+      lookupContactByPhone(digits);
+    });
+
+    for (const name of ['cliente', 'direccion', 'ciudad']) {
+      formEl.elements[name].addEventListener('input', () => {
+        if (name === 'direccion' || name === 'ciudad') gpsRequestSequence += 1;
+        updateCheckoutActionState();
+      });
+    }
+
+    $('#changeSavedAddress').addEventListener('click', () => {
+      showManualDeliveryForm();
+      phoneLookupStatus.textContent = 'Ingresá la nueva dirección.';
+      formEl.elements.direccion.focus();
+    });
+    useGpsLocationButton.addEventListener('click', async () => {
+      useGpsLocationButton.disabled = true;
+      const requestSequence = ++gpsRequestSequence;
+      const phoneAtRequest = String(telInput.value || '');
+      const addressAtRequest = String(formEl.elements.direccion.value || '');
+      const ok = await captureBrowserLocation({
+        timeout: 5000,
+        silent: false,
+        isCurrent: () => (
+          requestSequence === gpsRequestSequence
+          && String(telInput.value || '') === phoneAtRequest
+          && String(formEl.elements.direccion.value || '') === addressAtRequest
+        ),
+      });
+      useGpsLocationButton.disabled = false;
+      if (!ok) toast('No pudimos obtener tu ubicación. Podés continuar sin GPS.');
     });
 
     $('#mobSubmit').addEventListener('click', () => {
@@ -1148,6 +1375,8 @@
 
     formEl.addEventListener('submit', async (ev) => {
       ev.preventDefault();
+
+      if (orderSubmissionPending || orderSubmissionSucceeded) return;
 
       if (!tenantAuthorized) {
         toast('⚠️ El enlace no identifica una tienda válida.');
@@ -1164,27 +1393,25 @@
       delete data.empresa_id;
       if (data.codigo_referente) data.codigo_referente = String(data.codigo_referente).trim().toUpperCase();
 
-      const digits = normalizePhone(data.telefono || '');
+      const digits = normalizeArgentineNationalPhone(data.telefono || '');
       if (digits.length !== 10) {
         toast('⚠️ El celular debe tener 10 dígitos (cod area + numero).');
         formEl.elements.telefono.focus();
         return;
       }
+      data.telefono = digits;
 
       if (!data.cliente || !data.direccion || !data.ciudad) {
         toast('⚠️ Faltan datos de entrega.');
         return;
       }
 
-      // Si aún no hay coordenadas, intentamos una captura rápida al enviar
-      if (!data.latitud || !data.longitud) {
-        await captureBrowserLocation({ timeout: 1800, silent: true });
-        data.latitud = latInput.value || data.latitud;
-        data.longitud = lngInput.value || data.longitud;
-      }
-
-      const latNum = Number(data.latitud);
-      const lngNum = Number(data.longitud);
+      if (!data.punto_entrega_id) delete data.punto_entrega_id;
+      else data.punto_entrega_id = Number(data.punto_entrega_id);
+      const latRaw = String(data.latitud ?? '').trim();
+      const lngRaw = String(data.longitud ?? '').trim();
+      const latNum = latRaw === '' ? null : Number(latRaw);
+      const lngNum = lngRaw === '' ? null : Number(lngRaw);
 
       const payload = {
         ...data,
@@ -1196,11 +1423,12 @@
       };
 
       const submitBtn = formEl.querySelector('button[type="submit"]');
+      const mobileSubmitBtn = $('#mobSubmit');
       const originalText = submitBtn ? submitBtn.textContent : '';
-      if (submitBtn) {
-        submitBtn.disabled = true;
-        submitBtn.textContent = 'Enviando pedido... 🚀';
-      }
+      orderSubmissionPending = true;
+      updateCheckoutActionState();
+      if (submitBtn) submitBtn.textContent = 'Enviando pedido... 🚀';
+      if (mobileSubmitBtn) mobileSubmitBtn.textContent = 'Enviando...';
 
       try {
         const r = await fetch('/public/pedidos?' + publicTenantParams.toString(), {
@@ -1220,6 +1448,7 @@
           throw new Error(msg);
         }
 
+        orderSubmissionSucceeded = true;
         toast('✅ Pedido enviado con éxito');
 
         if (res.pedido && res.pedido.id) {
@@ -1244,10 +1473,11 @@
         console.error(err);
         toast(err.message || 'Error al enviar el pedido');
       } finally {
+        orderSubmissionPending = false;
         if (submitBtn) {
-          submitBtn.disabled = false;
-          submitBtn.textContent = originalText || 'Confirmar Pedido';
+          submitBtn.textContent = originalText || 'Confirmar pedido';
         }
+        updateCheckoutActionState();
       }
     });
 

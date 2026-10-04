@@ -7,6 +7,8 @@ import {
 } from '../services/publicPedidoTenant.js';
 import {
   lockGeneralPhoneIdentity,
+  normalizeGeneralPhoneIdentity,
+  resolveLatestTenantDeliveryPointByPhone,
   resolveTenantDeliveryPointByPhone,
 } from '../services/deliveryPointIdentity.js';
 
@@ -61,12 +63,57 @@ async function resolveLocationForEmpresa(req, empresaRow) {
   return getLocationFromIp(req);
 }
 
+function maskContactName(value) {
+  const parts = String(value || '').trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return 'Cliente';
+  const first = parts[0];
+  const surnameInitial = parts[1] ? ` ${parts[1].charAt(0).toUpperCase()}.` : '';
+  return `${first}${surnameInitial}`;
+}
+
 export function createPublicLegacyCatalogRouter({ query, withTransaction }) {
   if (typeof query !== 'function') throw new Error('createPublicLegacyCatalogRouter: falta query(fn)');
   if (typeof withTransaction !== 'function') throw new Error('createPublicLegacyCatalogRouter: falta withTransaction(fn)');
   const runInTransaction = withTransaction;
 
   const router = express.Router();
+  const configuredContactLimit = Number(process.env.PUBLIC_CONTACT_RATE_LIMIT_MAX);
+  const configuredContactWindow = Number(process.env.PUBLIC_CONTACT_RATE_LIMIT_WINDOW_MS);
+  const contactRateLimitMax = Number.isInteger(configuredContactLimit) && configuredContactLimit > 0
+    ? configuredContactLimit
+    : 20;
+  const contactRateLimitWindowMs = Number.isFinite(configuredContactWindow) && configuredContactWindow >= 1000
+    ? configuredContactWindow
+    : 5 * 60 * 1000;
+  const configuredContactBucketCap = Number(process.env.PUBLIC_CONTACT_RATE_LIMIT_BUCKETS);
+  const contactRateLimitBucketCap = Number.isInteger(configuredContactBucketCap) && configuredContactBucketCap > 0
+    ? configuredContactBucketCap
+    : 5000;
+  const contactLookupBuckets = new Map();
+
+  function consumeContactLookup(req, empresaId) {
+    const now = Date.now();
+    const key = `${empresaId}:${req.ip || req.socket?.remoteAddress || 'unknown'}`;
+    const previous = contactLookupBuckets.get(key);
+    const bucket = !previous || previous.resetAt <= now
+      ? { count: 0, resetAt: now + contactRateLimitWindowMs }
+      : previous;
+    if (bucket.count >= contactRateLimitMax) {
+      return { allowed: false, retryAfterSeconds: Math.max(1, Math.ceil((bucket.resetAt - now) / 1000)) };
+    }
+    bucket.count += 1;
+    if (!previous && contactLookupBuckets.size >= contactRateLimitBucketCap) {
+      const oldestKey = contactLookupBuckets.keys().next().value;
+      if (oldestKey !== undefined) contactLookupBuckets.delete(oldestKey);
+    }
+    contactLookupBuckets.delete(key);
+    contactLookupBuckets.set(key, bucket);
+    return {
+      allowed: true,
+      remaining: Math.max(0, contactRateLimitMax - bucket.count),
+      retryAfterSeconds: Math.max(1, Math.ceil((bucket.resetAt - now) / 1000)),
+    };
+  }
 
   function publicTenantFailure(res, error, fallback) {
     if (error?.code === 'TRANSACTION_OUTCOME_UNKNOWN') {
@@ -168,32 +215,62 @@ export function createPublicLegacyCatalogRouter({ query, withTransaction }) {
     }
   });
 
-  router.get('/contacto', async (req, res) => {
+  router.post('/contacto', async (req, res) => {
     try {
+      res.setHeader('Cache-Control', 'private, no-store, max-age=0');
+      res.setHeader('Pragma', 'no-cache');
       const empresa_id = await resolvePublicPedidoEmpresaId(req, query);
-      const telefonoNorm = normalizePhone(req.query.telefono);
-      if (!telefonoNorm) return res.status(400).json({ error: 'telefono requerido' });
+      const telefonoInput = req.body?.telefono;
+      const telefonoNorm = normalizeGeneralPhoneIdentity(normalizePhone, telefonoInput);
+      if (!telefonoNorm) {
+        return res.status(400).json({ error: 'telefono inválido', code: 'PUBLIC_PHONE_INVALID' });
+      }
+      const rateLimit = consumeContactLookup(req, empresa_id);
+      res.setHeader('X-RateLimit-Limit', String(contactRateLimitMax));
+      res.setHeader('X-RateLimit-Remaining', String(rateLimit.remaining || 0));
+      if (!rateLimit.allowed) {
+        res.setHeader('Retry-After', String(rateLimit.retryAfterSeconds));
+        return res.status(429).json({
+          error: 'Demasiadas consultas de contacto. Intentá nuevamente más tarde.',
+          code: 'PUBLIC_CONTACT_RATE_LIMITED',
+        });
+      }
 
       const result = await runInTransaction(async txQuery => {
         await lockGeneralPhoneIdentity(txQuery, {
           normalizePhoneFn: normalizePhone,
-          telefono: req.query.telefono,
+          telefono: telefonoInput,
         });
         await assertPublicPedidoEmpresaActive(txQuery, empresa_id);
-        const identity = await resolveTenantDeliveryPointByPhone(txQuery, {
+        let identity = await resolveTenantDeliveryPointByPhone(txQuery, {
           empresaId: empresa_id,
-          telefono: req.query.telefono,
+          telefono: telefonoInput,
           normalizePhoneFn: normalizePhone,
         });
+        if (identity.status === 'ambiguous') {
+          identity = await resolveLatestTenantDeliveryPointByPhone(txQuery, {
+            empresaId: empresa_id,
+            telefono: telefonoInput,
+            normalizePhoneFn: normalizePhone,
+          });
+        }
         if (identity.status !== 'unique') return { identity, rows: [] };
         const rows = await txQuery(
-          `SELECT id, cliente, telefono, direccion, ciudad, provincia, pais,
-                  latitud, longitud, notas, zona_id
+          `SELECT id, cliente, direccion, ciudad, provincia, pais
            FROM puntos_entrega
            WHERE empresa_id = $1 AND id = $2`,
           [empresa_id, Number(identity.point.id)]
         );
-        return { identity, rows };
+        const noteRows = rows.length ? await txQuery(
+          `SELECT notas
+             FROM pedidos
+            WHERE empresa_id = $1
+              AND punto_entrega_id = $2
+            ORDER BY fecha DESC NULLS LAST, id DESC
+            LIMIT 1`,
+          [empresa_id, Number(identity.point.id)]
+        ) : [];
+        return { identity, rows, latestOrderNote: noteRows[0]?.notas ?? null };
       });
       if (result.identity.status === 'ambiguous') {
         return res.status(409).json({ error: 'Identidad de contacto ambigua', code: 'PUBLIC_CLIENT_IDENTITY_AMBIGUOUS' });
@@ -201,7 +278,20 @@ export function createPublicLegacyCatalogRouter({ query, withTransaction }) {
       if (result.identity.status === 'none' || !result.rows.length) {
         return res.json({ ok: true, found: false });
       }
-      return res.json({ ok: true, found: true, contacto: result.rows[0] });
+      const contact = result.rows[0];
+      return res.json({
+        ok: true,
+        found: true,
+        contacto: {
+          id: contact.id,
+          cliente: maskContactName(contact.cliente),
+          direccion: contact.direccion,
+          ciudad: contact.ciudad,
+          provincia: contact.provincia,
+          pais: contact.pais,
+          notas: result.latestOrderNote,
+        },
+      });
     } catch (e) {
       if (e?.code !== 'TRANSACTION_OUTCOME_UNKNOWN') {
         console.error('PUBLIC CONTACT LOOKUP FAILED', { code: String(e?.code || 'UNKNOWN') });

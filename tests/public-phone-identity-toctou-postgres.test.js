@@ -43,6 +43,7 @@ async function fixture(pool) {
       fecha timestamptz DEFAULT now(),
       estado text,
       monto numeric,
+      notas text,
       tracking_token text
     );
     INSERT INTO empresas (id, nombre, landing_slug) VALUES
@@ -63,6 +64,7 @@ async function fixture(pool) {
 
 function buildApp(pool, { withTransaction } = {}) {
   const app = express();
+  app.use(express.json());
   const query = async (sql, params = []) => (await pool.query(sql, params)).rows;
   const runTransaction = withTransaction || (work => dbWithTransaction(work, {
     pool,
@@ -84,8 +86,8 @@ async function withServer(app, work) {
   }
 }
 
-async function requestJson(base, path) {
-  const response = await fetch(base + path);
+async function requestJson(base, path, options = {}) {
+  const response = await fetch(base + path, options);
   return { status: response.status, body: await response.json() };
 }
 
@@ -138,7 +140,12 @@ async function assertPending(promise, waitMs = 100) {
 const endpoints = [
   {
     name: 'contacto',
-    path: `/public/contacto?empresa_id=1&telefono=${PHONE}`,
+    path: '/public/contacto?empresa_id=1',
+    options: {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ telefono: PHONE }),
+    },
     assertUnique(response) {
       assert.equal(response.status, 200);
       assert.equal(response.body.found, true);
@@ -178,13 +185,18 @@ for (const endpoint of endpoints) {
       const writer = await beginDuplicateWriter(pool);
       try {
         await withServer(buildApp(pool), async base => {
-          const responsePromise = requestJson(base, endpoint.path);
+          const responsePromise = requestJson(base, endpoint.path, endpoint.options);
           await assertPending(responsePromise);
           await writer.query('COMMIT');
           const response = await responsePromise;
-          assert.equal(response.status, 409);
-          assert.equal(response.body.code, 'PUBLIC_CLIENT_IDENTITY_AMBIGUOUS');
-          assert.doesNotMatch(JSON.stringify(response.body), /Original|Duplicado|Calle|101/);
+          if (endpoint.name === 'contacto') {
+            endpoint.assertUnique(response);
+            assert.doesNotMatch(JSON.stringify(response.body), /Duplicado|Calle duplicada/);
+          } else {
+            assert.equal(response.status, 409);
+            assert.equal(response.body.code, 'PUBLIC_CLIENT_IDENTITY_AMBIGUOUS');
+            assert.doesNotMatch(JSON.stringify(response.body), /Original|Duplicado|Calle|101/);
+          }
         });
       } finally {
         writer.release();
@@ -197,7 +209,7 @@ for (const endpoint of endpoints) {
       await fixture(pool);
       const barrier = readerBarrierTransaction(pool);
       await withServer(buildApp(pool, { withTransaction: barrier.withTransaction }), async base => {
-        const responsePromise = requestJson(base, endpoint.path);
+        const responsePromise = requestJson(base, endpoint.path, endpoint.options);
         await barrier.readResolved;
         const writerPromise = beginDuplicateWriter(pool);
         await assertPending(writerPromise);
@@ -219,7 +231,7 @@ for (const endpoint of endpoints) {
       const writer = await beginDuplicateWriter(pool, { empresaId: 2, cliente: 'Duplicado tenant dos' });
       try {
         await withServer(buildApp(pool), async base => {
-          const responsePromise = requestJson(base, endpoint.path);
+          const responsePromise = requestJson(base, endpoint.path, endpoint.options);
           await assertPending(responsePromise);
           await writer.query('COMMIT');
           const response = await responsePromise;
@@ -267,7 +279,11 @@ test('PostgreSQL real: cero identidad conserva contrato en los tres endpoints', 
     await fixture(pool);
     await withServer(buildApp(pool), async base => {
       const missing = '3530000000';
-      const contacto = await requestJson(base, `/public/contacto?empresa_id=1&telefono=${missing}`);
+      const contacto = await requestJson(base, '/public/contacto?empresa_id=1', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ telefono: missing }),
+      });
       assert.deepEqual(contacto, { status: 200, body: { ok: true, found: false } });
       const legacy = await requestJson(base, `/public/ultimo-pedido?empresa_id=1&telefono=${missing}`);
       assert.equal(legacy.status, 404);
@@ -297,10 +313,11 @@ for (const endpoint of endpoints) {
       throw error;
     };
     const app = express();
+  app.use(express.json());
     app.use('/public', createPublicLegacyCatalogRouter({ query, withTransaction }));
     app.use('/api/public', createPublicLandingRouter({ query, withTransaction }));
     await withServer(app, async base => {
-      const response = await requestJson(base, endpoint.path);
+      const response = await requestJson(base, endpoint.path, endpoint.options);
       assert.equal(response.status, 503);
       assert.equal(response.body.code, 'TRANSACTION_OUTCOME_UNKNOWN');
       assert.doesNotMatch(JSON.stringify(response.body), /detalle SQL|private-token|Privado|3534277739/);
@@ -323,10 +340,11 @@ for (const endpoint of endpoints) {
       throw error;
     };
     const app = express();
+  app.use(express.json());
     app.use('/public', createPublicLegacyCatalogRouter({ query, withTransaction }));
     app.use('/api/public', createPublicLandingRouter({ query, withTransaction }));
     await withServer(app, async base => {
-      const response = await requestJson(base, endpoint.path);
+      const response = await requestJson(base, endpoint.path, endpoint.options);
       assert.equal(response.status, 500);
       assert.doesNotMatch(JSON.stringify(response.body), /syntax|SQL|3534277739/);
     });
@@ -345,7 +363,7 @@ for (const endpoint of endpoints) {
         return dbWithTransaction(work, { pool, maxRetries: 0, retryDelayMs: 0 });
       };
       await withServer(buildApp(pool, { withTransaction }), async base => {
-        const response = await requestJson(base, endpoint.path);
+        const response = await requestJson(base, endpoint.path, endpoint.options);
         assert.equal(response.status, 400);
         assert.equal(response.body.code, 'PUBLIC_TENANT_UNRESOLVED');
         assert.doesNotMatch(JSON.stringify(response.body), /Original|latest|101/);

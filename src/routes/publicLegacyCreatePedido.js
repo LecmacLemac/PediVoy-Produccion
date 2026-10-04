@@ -8,9 +8,13 @@ import { resolvePublicPedidoEmpresaId } from '../services/publicPedidoTenant.js'
 import {
   deliveryPointConflict,
   deliveryPointIdentity,
+  deliveryPointIdentityFromRow,
   findDeliveryPointsByIdentity,
   lockDeliveryPointIdentity,
   lockGeneralPhoneIdentity,
+  normalizeGeneralPhoneIdentity,
+  resolveLatestTenantDeliveryPointByPhone,
+  resolveTenantDeliveryPointByPhone,
 } from '../services/deliveryPointIdentity.js';
 
 const RATE_LIMIT_WINDOW_MS = Number(process.env.PUBLIC_PEDIDOS_RATE_LIMIT_WINDOW_MS || 60_000);
@@ -54,6 +58,7 @@ function checkRateLimit(req) {
 
 const createPedidoSchema = z.object({
   empresa_id: z.coerce.number().int().positive().optional(),
+  punto_entrega_id: z.coerce.number().int().positive().optional(),
   cliente: z.string().trim().min(2, 'cliente es requerido'),
   telefono: z.string().trim().min(6, 'telefono es requerido'),
   direccion: z.string().trim().min(3, 'direccion es requerida'),
@@ -62,8 +67,8 @@ const createPedidoSchema = z.object({
   pais: z.string().trim().optional(),
   latitud: z.union([z.number(), z.string()]).optional(),
   longitud: z.union([z.number(), z.string()]).optional(),
-  notas: z.string().optional(),
-  metodo_pago: z.string().optional(),
+  notas: z.string().trim().max(1000, 'notas excede el máximo permitido').optional(),
+  metodo_pago: z.enum(['efectivo', 'transferencia']).optional(),
   submission_id: z.union([z.string(), z.number()]).optional(),
   referral_code: z.string().optional(),
   codigo_referente: z.string().optional(),
@@ -233,7 +238,8 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
         });
       }
 
-      const {
+      let {
+        punto_entrega_id: requestedPointId,
         cliente,
         telefono,
         direccion,
@@ -250,6 +256,13 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
         codigo_referente,
         codigo_descuento,
       } = parse.data;
+
+      if (!normalizeGeneralPhoneIdentity(normalizePhone, telefono)) {
+        const error = new Error('Teléfono inválido');
+        error.code = 'PUBLIC_PHONE_INVALID';
+        error.statusCode = 400;
+        throw error;
+      }
 
       txClient = pool ? await pool.connect() : null;
       if (txClient) await txClient.query('BEGIN');
@@ -270,7 +283,7 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
 
       log('REQ IN', {
         empresa_id: empId, cliente, telefono, direccion, ciudad, provincia, pais,
-        latitud, longitud, notas, metodo_pago, submission_id,
+        latitud, longitud, metodo_pago, submission_id,
         itemsCount: items.length,
       });
 
@@ -340,9 +353,45 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
 
       await ensurePedidoScheduleSchema();
 
-      const pointIdentity = deliveryPointIdentity({ normalizePhoneFn: normalizePhone, telefono, direccion });
-      if (!pointIdentity) throw deliveryPointConflict('Teléfono o dirección inválidos para identificar el punto');
       await lockGeneralPhoneIdentity(txQuery, { normalizePhoneFn: normalizePhone, telefono });
+      let selectedPoint = null;
+      if (requestedPointId !== undefined) {
+        let preferredIdentity = await resolveTenantDeliveryPointByPhone(txQuery, {
+          empresaId: empId,
+          telefono,
+          normalizePhoneFn: normalizePhone,
+        });
+        if (preferredIdentity.status === 'ambiguous') {
+          preferredIdentity = await resolveLatestTenantDeliveryPointByPhone(txQuery, {
+            empresaId: empId,
+            telefono,
+            normalizePhoneFn: normalizePhone,
+          });
+        }
+        if (preferredIdentity.status !== 'unique' || Number(preferredIdentity.point.id) !== Number(requestedPointId)) {
+          throw deliveryPointConflict('El punto de entrega seleccionado ya no es válido');
+        }
+        const selectedRows = await txQuery(
+          `SELECT id, empresa_id, cliente, telefono, telefono_normalizado, direccion,
+                  ciudad, provincia, pais, latitud, longitud, zona_id
+             FROM puntos_entrega
+            WHERE empresa_id = $1 AND id = $2
+            LIMIT 1`,
+          [empId, Number(preferredIdentity.point.id)]
+        );
+        selectedPoint = selectedRows[0] || null;
+        if (!selectedPoint) throw deliveryPointConflict('El punto de entrega seleccionado ya no existe');
+        cliente = selectedPoint.cliente || cliente;
+        direccion = selectedPoint.direccion;
+        ciudad = selectedPoint.ciudad || '';
+        provincia = selectedPoint.provincia || '';
+        pais = selectedPoint.pais || '';
+      }
+
+      const pointIdentity = selectedPoint
+        ? deliveryPointIdentityFromRow(normalizePhone, selectedPoint)
+        : deliveryPointIdentity({ normalizePhoneFn: normalizePhone, telefono, direccion });
+      if (!pointIdentity) throw deliveryPointConflict('Teléfono o dirección inválidos para identificar el punto');
 
       // Orden global: submission -> teléfono General -> productos -> identidad tenant+punto -> resto.
       const resolvedIdentityItems = await resolveProductIdentityItems(txQuery, {
@@ -363,14 +412,14 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
         globalPhoneLocked: true,
       });
 
-      const existingPoints = await findDeliveryPointsByIdentity(txQuery, {
+      const existingPoints = selectedPoint ? [selectedPoint] : await findDeliveryPointsByIdentity(txQuery, {
         empresaId: empId,
         identity: pointIdentity,
       });
       if (existingPoints.length > 1) throw deliveryPointConflict();
 
-      let lat = toNum(latitud);
-      let lng = toNum(longitud);
+      let lat = selectedPoint ? toNum(selectedPoint.latitud) : toNum(latitud);
+      let lng = selectedPoint ? toNum(selectedPoint.longitud) : toNum(longitud);
       lat = inRange(lat, -90, 90) ? round(lat) : null;
       lng = inRange(lng, -180, 180) ? round(lng) : null;
 
@@ -382,7 +431,7 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
         log(`[GEOCODE] CACHÉ: punto ${punto_entrega_id} -> Lat=${lat}, Lng=${lng}`);
       }
 
-      if ((lat == null || lng == null) && (direccion || ciudad || provincia || pais)) {
+      if (!selectedPoint && (lat == null || lng == null) && (direccion || ciudad || provincia || pais)) {
         try {
           const loc = await geocodeIfNeeded({ direccion, ciudad, provincia, pais });
           if (lat == null) lat = toNum(loc?.lat);
@@ -404,10 +453,10 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
         const peRows = await txQuery(
           `INSERT INTO puntos_entrega (
             empresa_id, cliente, telefono, telefono_normalizado, direccion, ciudad, provincia, pais,
-            latitud, longitud, notas, zona_id
-          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+            latitud, longitud, zona_id
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
           RETURNING id`,
-          [empId, cliente, telefono, telNorm, direccion, ciudad, provincia, pais, lat, lng, notas, zona_id]
+          [empId, cliente, telefono, telNorm, direccion, ciudad, provincia, pais, lat, lng, zona_id]
         );
         punto_entrega_id = peRows[0].id;
         log('PUNTO_ENTREGA.NEW', { punto_entrega_id, direccion, ciudad, telefono });
@@ -760,10 +809,10 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
           cantidad, cantidad_entregada, monto,
           metodo_pago, aviso_recibido, sats,
           submission_id, chofer_id, zona_id, fecha_entrega_estimada,
-          referido_por_id, tracking_token
-        ) VALUES ($1,$2,NOW(),'pendiente',$3,0,$4,$5,0,0,$6,$7,$8,$9,$10,$11)
+          referido_por_id, tracking_token, notas
+        ) VALUES ($1,$2,NOW(),'pendiente',$3,0,$4,$5,0,0,$6,$7,$8,$9,$10,$11,$12)
         RETURNING id, estado, monto, tracking_token`,
-        [empId, punto_entrega_id, totalCantidad, totalMonto, metodo_pago, submission_id, chofer_id, zona_id, fechaEntregaEstimadaSql, padrinoId, createTrackingToken()]
+        [empId, punto_entrega_id, totalCantidad, totalMonto, metodo_pago, submission_id, chofer_id, zona_id, fechaEntregaEstimadaSql, padrinoId, createTrackingToken(), notas || null]
       );
 
       const pedido = pedRows[0];
@@ -948,6 +997,14 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
         tEnd(`[public/pedidos] ${reqId} TOTAL`);
         return res.status(err.statusCode === 409 ? 409 : 400).json({
           error: err.statusCode === 409 ? 'Identidad de producto ambigua' : 'Producto inválido',
+          code: err.code,
+          reqId,
+        });
+      }
+      if (err?.code === 'PUBLIC_PHONE_INVALID') {
+        tEnd(`[public/pedidos] ${reqId} TOTAL`);
+        return res.status(400).json({
+          error: 'Teléfono inválido',
           code: err.code,
           reqId,
         });

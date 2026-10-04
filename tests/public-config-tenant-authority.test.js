@@ -155,7 +155,7 @@ test('carrito exige selector, preserva canal original y bloquea config discordan
     requests.push({ kind: 'productos', url: req.originalUrl });
     res.json([{ id: 11, nombre: 'Bidón', precio: 100 }]);
   });
-  app.get('/public/contacto', (_req, res) => res.json({ ok: true, found: false }));
+  app.post('/public/contacto', (_req, res) => res.json({ ok: true, found: false }));
   app.post('/public/pedidos', (req, res) => {
     requests.push({ kind: 'pedido', url: req.originalUrl, body: req.body });
     res.json({ ok: true, pedido: {} });
@@ -176,8 +176,9 @@ test('carrito exige selector, preserva canal original y bloquea config discordan
         await page.goto(base + '/pedidos/' + search);
         await page.waitForSelector('button[data-action="add-to-cart"]');
         await page.click('button[data-action="add-to-cart"]');
-        await page.type('[name="cliente"]', 'Cliente Test');
         await page.type('[name="telefono"]', '3531234567');
+        await page.waitForSelector('#deliveryFields:not([hidden])');
+        await page.type('[name="cliente"]', 'Cliente Test');
         await page.type('[name="direccion"]', 'Calle 123');
         await page.type('[name="ciudad"]', 'Ciudad');
         const pedidoResponse = page.waitForResponse((response) => {
