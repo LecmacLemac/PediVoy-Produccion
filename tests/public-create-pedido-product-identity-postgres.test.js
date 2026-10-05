@@ -231,6 +231,24 @@ test('POST /public/pedidos deja el pago a definir cuando metodo_pago se omite', 
   });
 });
 
+test('POST /public/pedidos trata coordenadas null como ubicación no informada', postgresOptions, async () => {
+  await withIsolatedPostgres(async pool => {
+    await createFixture(pool);
+    await pool.query(`INSERT INTO productos (id, empresa_id, nombre) VALUES (55, 1, 'Bidón')`);
+    const app = buildApp(pool);
+
+    await withServer(app, async baseUrl => {
+      const result = await postPedido(baseUrl, {
+        ...payload({ producto_id: 55, producto: 'Bidón' }, 9003),
+        latitud: null,
+        longitud: null,
+      }, 92);
+      assert.equal(result.status, 200);
+      assert.equal(result.body.ok, true);
+    });
+  });
+});
+
 test('POST /public/pedidos reutiliza autoritativamente el último punto aceptado sin coordenadas del navegador', postgresOptions, async () => {
   await withIsolatedPostgres(async pool => {
     await createFixture(pool);

@@ -1421,6 +1421,8 @@
         latitud: Number.isFinite(latNum) ? latNum : null,
         longitud: Number.isFinite(lngNum) ? lngNum : null
       };
+      if (payload.latitud == null) delete payload.latitud;
+      if (payload.longitud == null) delete payload.longitud;
 
       const submitBtn = formEl.querySelector('button[type="submit"]');
       const mobileSubmitBtn = $('#mobSubmit');

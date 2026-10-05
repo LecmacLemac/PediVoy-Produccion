@@ -228,8 +228,8 @@ test('checkout teléfono primero recupera y acepta la última dirección sin GPS
       assert.equal(order.body.punto_entrega_id, 41);
       assert.equal(order.body.direccion, 'Bv. San Martín 123');
       assert.equal(order.body.cliente, 'Ana P.');
-      assert.equal(order.body.latitud, null);
-      assert.equal(order.body.longitud, null);
+      assert.equal(Object.hasOwn(order.body, 'latitud'), false);
+      assert.equal(Object.hasOwn(order.body, 'longitud'), false);
       assert.equal(order.body.notas, 'Departamento 4 B, tocar timbre');
       assert.equal(await page.evaluate(() => window.__geoCalls), 0);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth === document.documentElement.clientWidth), true);
