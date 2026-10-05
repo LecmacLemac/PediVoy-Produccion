@@ -128,6 +128,7 @@ export function createApp(deps) {
     WPP_QR_ONLY,
     wpp: {
       checkLicencia,
+      enqueueWppMessage,
     } = {},
 
   } = deps || {};
@@ -380,7 +381,7 @@ export function createApp(deps) {
     geocodeIfNeeded: deps?.geocodeIfNeeded,
     normalizePhone: deps?.normalizePhone,
     pointInAnyZone: deps?.pointInAnyZone,
-    enqueueWppMessage: deps?.enqueueWppMessage,
+    enqueueWppMessage,
     sendSmsViaIfttt: deps?.sendSmsViaIfttt,
     toNum,
     inRange,
