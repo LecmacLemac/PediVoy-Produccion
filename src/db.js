@@ -1,9 +1,16 @@
 // src/db.js — PostgreSQL (ESM)
 import 'dotenv/config';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import pkg from 'pg';
 const { Pool } = pkg;
 
 const url = process.env.DATABASE_URL || '';
+const dbQueryContext = new AsyncLocalStorage();
+
+export function runWithSensitiveDbQueries(work) {
+  if (typeof work !== 'function') throw new TypeError('work es requerida');
+  return dbQueryContext.run({ sensitive: true, suppressErrors: true }, work);
+}
 
 // Detectar si estamos en Render para forzar SSL
 const isRender =
@@ -49,13 +56,17 @@ export async function query(sql, params = [], { sensitive = false } = {}) {
 
     return res.rows;
   } catch (error) {
-    console.error('❌ Error en ejecución de Query:', sensitive
-      ? { message: 'Consulta sensible fallida', sql: '[REDACTED]', params: '[REDACTED]' }
-      : {
-          message: error.message,
-          sql: sql.substring(0, 100) + '...', // No logueamos todo el SQL por seguridad
-          params,
-        });
+    const context = dbQueryContext.getStore();
+    const effectiveSensitive = sensitive || context?.sensitive === true;
+    if (context?.suppressErrors !== true) {
+      console.error('❌ Error en ejecución de Query:', effectiveSensitive
+        ? { message: 'Consulta sensible fallida', sql: '[REDACTED]', params: '[REDACTED]' }
+        : {
+            message: error.message,
+            sql: sql.substring(0, 100) + '...', // No logueamos todo el SQL por seguridad
+            params,
+          });
+    }
     throw error;
   } finally {
     if (client) client.release();
@@ -117,4 +128,4 @@ export async function withTransaction(work, {
   }
 }
 
-export default { query, pool, withTransaction };
+export default { query, pool, runWithSensitiveDbQueries, withTransaction };

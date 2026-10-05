@@ -8,12 +8,13 @@ export async function enqueueWppMessage({
 }
 
 export async function enqueueCorrelatedWppMessage({
-  phone, message, empresa_id = null, transport_origin,
+  phone, message, empresa_id = null, transport_origin, correlation_id = null,
 }, transactionPool = pool) {
   return enqueueWppOutboxCorrelatedReply({
     empresaId: empresa_id,
     phone,
     message,
     transportOrigin: transport_origin,
+    correlationId: correlation_id,
   }, transactionPool);
 }

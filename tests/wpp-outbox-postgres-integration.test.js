@@ -499,6 +499,30 @@ test('PostgreSQL 16 legacy outbox migration preserves valid claims, fails closed
       transport_origin: 'general',
     }]);
 
+    await pool.query('UPDATE empresas SET config_integraciones = $1::jsonb WHERE id = 1', [JSON.stringify({
+      whatsapp: { provider: 'cloud', enabled: true, phone_number_id: 'phone-1', access_token_encrypted: 'v1:test' },
+    })]);
+    const correlatedCloudPayload = {
+      empresaId: 1,
+      phone: '3515559094',
+      message: 'durable-correlated-cloud',
+      transportOrigin: 'cloud',
+      correlationId: 'wamid.durable-1',
+    };
+    const firstCorrelatedCloud = await enqueueWppOutboxCorrelatedReply(correlatedCloudPayload, pool);
+    await pool.query("UPDATE wpp_outbox SET created_at = NOW() - INTERVAL '1 day' WHERE id = $1", [firstCorrelatedCloud.id]);
+    const secondCorrelatedCloud = await enqueueWppOutboxCorrelatedReply({
+      ...correlatedCloudPayload,
+      phone: '3515559999',
+      message: 'texto cambiado tras restart',
+    }, pool);
+    assert.equal(firstCorrelatedCloud.queued, true);
+    assert.equal(secondCorrelatedCloud.queued, false);
+    assert.equal(secondCorrelatedCloud.reason, 'duplicate_correlation');
+    assert.equal((await pool.query(
+      "SELECT count(*)::int AS total FROM wpp_outbox WHERE empresa_id = 1 AND transport_origin = 'cloud' AND reply_correlation_id = 'wamid.durable-1'",
+    )).rows[0].total, 1);
+
     const commitAppliedCalls = [];
     const commitAppliedThenErrorPool = {
       async connect() {

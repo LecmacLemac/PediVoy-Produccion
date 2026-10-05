@@ -72,7 +72,13 @@ CREATE TABLE IF NOT EXISTS whatsapp_cloud_events (
   status           TEXT,
   source_timestamp TEXT,
   event_data       JSONB NOT NULL DEFAULT '{}'::jsonb,
-  received_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  received_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  processing_state TEXT NOT NULL DEFAULT 'pending',
+  claim_owner      TEXT,
+  claim_until      TIMESTAMPTZ,
+  processing_started_at TIMESTAMPTZ,
+  processed_at     TIMESTAMPTZ,
+  processing_error_code TEXT
 );
 
 DO $$
@@ -93,7 +99,13 @@ BEGIN
       ('status', 'TEXT'),
       ('source_timestamp', 'TEXT'),
       ('event_data', 'JSONB'),
-      ('received_at', 'TIMESTAMPTZ')
+      ('received_at', 'TIMESTAMPTZ'),
+      ('processing_state', 'TEXT'),
+      ('claim_owner', 'TEXT'),
+      ('claim_until', 'TIMESTAMPTZ'),
+      ('processing_started_at', 'TIMESTAMPTZ'),
+      ('processed_at', 'TIMESTAMPTZ'),
+      ('processing_error_code', 'TEXT')
     ) AS required_columns(column_name, data_type)
   LOOP
     IF NOT EXISTS (
@@ -182,8 +194,9 @@ UPDATE whatsapp_cloud_events
 
 UPDATE whatsapp_cloud_events
    SET event_data = COALESCE(event_data, '{}'::jsonb),
-       received_at = COALESCE(received_at, NOW())
- WHERE event_data IS NULL OR received_at IS NULL;
+       received_at = COALESCE(received_at, NOW()),
+       processing_state = COALESCE(processing_state, 'pending')
+ WHERE event_data IS NULL OR received_at IS NULL OR processing_state IS NULL;
 
 DO $$
 DECLARE
@@ -191,7 +204,7 @@ DECLARE
   current_default TEXT;
 BEGIN
   FOR required_column IN
-    SELECT unnest(ARRAY['id', 'empresa_id', 'event_kind', 'dedupe_key', 'message_id', 'event_data', 'received_at'])
+    SELECT unnest(ARRAY['id', 'empresa_id', 'event_kind', 'dedupe_key', 'message_id', 'event_data', 'received_at', 'processing_state'])
   LOOP
     IF EXISTS (
       SELECT 1
@@ -232,6 +245,19 @@ BEGIN
   IF current_default IS DISTINCT FROM 'now()' THEN
     ALTER TABLE whatsapp_cloud_events
       ALTER COLUMN received_at SET DEFAULT NOW();
+  END IF;
+
+  SELECT pg_get_expr(default_row.adbin, default_row.adrelid)
+    INTO current_default
+    FROM pg_attrdef AS default_row
+    JOIN pg_attribute AS attribute_row
+      ON attribute_row.attrelid = default_row.adrelid
+     AND attribute_row.attnum = default_row.adnum
+   WHERE default_row.adrelid = 'whatsapp_cloud_events'::regclass
+     AND attribute_row.attname = 'processing_state';
+  IF current_default IS DISTINCT FROM '''pending''::text' THEN
+    ALTER TABLE whatsapp_cloud_events
+      ALTER COLUMN processing_state SET DEFAULT 'pending';
   END IF;
 END $$;
 
@@ -356,6 +382,51 @@ BEGIN
       VALIDATE CONSTRAINT whatsapp_cloud_events_kind_check;
   END IF;
 END $$;
+
+DO $$
+DECLARE
+  current_definition TEXT;
+BEGIN
+  SELECT pg_get_constraintdef(oid)
+    INTO current_definition
+    FROM pg_constraint
+   WHERE conrelid = 'whatsapp_cloud_events'::regclass
+     AND conname = 'whatsapp_cloud_events_processing_state_check'
+     AND contype = 'c';
+
+  IF current_definition IS NOT NULL
+     AND current_definition NOT LIKE '%pending%pre_process%processing_started%processed%skipped%outcome_unknown%' THEN
+    ALTER TABLE whatsapp_cloud_events
+      DROP CONSTRAINT whatsapp_cloud_events_processing_state_check;
+    current_definition := NULL;
+  END IF;
+
+  IF current_definition IS NULL THEN
+    ALTER TABLE whatsapp_cloud_events
+      ADD CONSTRAINT whatsapp_cloud_events_processing_state_check
+      CHECK (processing_state IN ('pending', 'pre_process', 'processing_started', 'processed', 'skipped', 'outcome_unknown')) NOT VALID;
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conrelid = 'whatsapp_cloud_events'::regclass
+       AND conname = 'whatsapp_cloud_events_processing_state_check'
+       AND NOT convalidated
+  ) THEN
+    ALTER TABLE whatsapp_cloud_events
+      VALIDATE CONSTRAINT whatsapp_cloud_events_processing_state_check;
+  END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_whatsapp_cloud_events_inbound_claim
+  ON whatsapp_cloud_events (processing_state, received_at, id)
+  WHERE event_kind = 'message'
+    AND processing_state IN ('pending', 'pre_process');
+
+CREATE INDEX IF NOT EXISTS idx_whatsapp_cloud_events_processing_reconcile
+  ON whatsapp_cloud_events (claim_until, id)
+  WHERE event_kind = 'message'
+    AND processing_state = 'processing_started';
 
 DO $$
 DECLARE
@@ -1768,6 +1839,7 @@ CREATE TABLE IF NOT EXISTS wpp_outbox (
   claim_epoch BIGINT,
   claim_until TIMESTAMPTZ,
   transport_origin TEXT,
+  reply_correlation_id TEXT,
   meta_message_id TEXT,
   cloud_dispatch_state TEXT,
   dispatch_started_at TIMESTAMPTZ,
@@ -1790,6 +1862,7 @@ ALTER TABLE wpp_outbox
   ADD COLUMN IF NOT EXISTS claim_epoch BIGINT,
   ADD COLUMN IF NOT EXISTS claim_until TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS transport_origin TEXT,
+  ADD COLUMN IF NOT EXISTS reply_correlation_id TEXT,
   ADD COLUMN IF NOT EXISTS meta_message_id TEXT,
   ADD COLUMN IF NOT EXISTS cloud_dispatch_state TEXT,
   ADD COLUMN IF NOT EXISTS dispatch_started_at TIMESTAMPTZ;
@@ -1875,6 +1948,11 @@ DROP INDEX IF EXISTS wpp_outbox_pending_claim_idx;
 CREATE INDEX wpp_outbox_pending_claim_idx
   ON wpp_outbox (created_at, id)
   WHERE status = 'pending';
+
+DROP INDEX IF EXISTS wpp_outbox_reply_correlation_uidx;
+CREATE UNIQUE INDEX wpp_outbox_reply_correlation_uidx
+  ON wpp_outbox (COALESCE(empresa_id, 0), transport_origin, reply_correlation_id)
+  WHERE reply_correlation_id IS NOT NULL;
 
 DROP INDEX IF EXISTS wpp_outbox_cloud_pre_dispatch_recovery_idx;
 CREATE INDEX wpp_outbox_cloud_pre_dispatch_recovery_idx

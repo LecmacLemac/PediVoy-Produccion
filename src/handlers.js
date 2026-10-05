@@ -17,6 +17,11 @@ function isOwnershipFenceError(error) {
   return error?.code === 'WPP_NOT_OWNER' || error?.code === 'WPP_COMPANY_NOT_OWNER';
 }
 
+function isConservativeEnqueueError(error) {
+  return error?.code === 'WPP_ENQUEUE_TRANSACTION_OUTCOME_UNKNOWN'
+    || error?.code === 'CLOUD_INBOUND_LEASE_LOST';
+}
+
 function fenceReplyClient(client, withActiveClient) {
   if (typeof withActiveClient !== 'function') return client;
   return new Proxy(client, {
@@ -224,7 +229,7 @@ async function createChatCompletionViaHttps({ apiKey, payload }) {
   });
 }
 
-async function crearRespuestaIaWhatsApp({ apiKey, messages }) {
+async function crearRespuestaIaWhatsApp({ apiKey, messages, logProcessingErrors = true }) {
   const payload = {
     model: 'gpt-4o-mini',
     messages,
@@ -237,7 +242,7 @@ async function crearRespuestaIaWhatsApp({ apiKey, messages }) {
       return await createChatCompletionViaHttps({ apiKey, payload });
     } catch (error) {
       const canRetry = isTransientOpenAIError(error) && attempt < 3;
-      console.error(`IA WhatsApp error intento ${attempt}/3:`, error.message);
+      if (logProcessingErrors) console.error(`IA WhatsApp error intento ${attempt}/3:`, error.message);
       if (!canRetry) throw error;
       await wait(750 * attempt);
     }
@@ -344,7 +349,8 @@ async function responderConIA(
   client,
   numero,
   contenido,
-  { role, empresa_id, chofer_id, source, tenantLocked }
+  { role, empresa_id, chofer_id, source, tenantLocked },
+  { logProcessingErrors = true } = {},
 ) {
   try {
     const apiKey = process.env.OPENAI_API_KEY;
@@ -409,13 +415,14 @@ ${contenidoSeguro}
       contextoExtra,
     });
 
-    const resp = await crearRespuestaIaWhatsApp({ apiKey, messages: mensajes });
+    const resp = await crearRespuestaIaWhatsApp({ apiKey, messages: mensajes, logProcessingErrors });
 
     const texto = resp.choices?.[0]?.message?.content?.trim()
       || '¿En qué te puedo ayudar?';
 
     await client.sendMessage(numero, texto);
   } catch (err) {
+    if (isConservativeEnqueueError(err)) throw err;
     const msg = String(err && err.message ? err.message : err);
 
     // 1️⃣ Primero detectamos el bug de whatsapp-web.js
@@ -424,7 +431,7 @@ ${contenidoSeguro}
       msg.toLowerCase().includes('sendseen');
 
     if (isSeenBug) {
-      console.warn(
+      if (logProcessingErrors) console.warn(
         `Ignorando bug sendSeen/markedUnread en responderConIA para ${numero}:`,
         msg
       );
@@ -432,7 +439,7 @@ ${contenidoSeguro}
     }
 
     // 2️⃣ Para otros errores sí logueamos como error y mandamos el mensaje de demora
-    console.error('IA fallback error:', msg);
+    if (logProcessingErrors) console.error('IA fallback error:', msg);
 
     try {
       await client.sendMessage(
@@ -446,12 +453,12 @@ ${contenidoSeguro}
         msg2.toLowerCase().includes('sendseen');
 
       if (isSeenBug2) {
-        console.warn(
+        if (logProcessingErrors) console.warn(
           `Bug sendSeen/markedUnread al enviar mensaje de demora a ${numero}, lo ignoro:`,
           msg2
         );
       } else {
-        console.error('Error enviando mensaje de demora:', msg2);
+        if (logProcessingErrors) console.error('Error enviando mensaje de demora:', msg2);
       }
     }
   }
@@ -1752,7 +1759,7 @@ async function handleReposicionAutomatica(
   client,
   numero,
   ctx,
-  { withTransactionFn = withTransaction } = {}
+  { withTransactionFn = withTransaction, logProcessingErrors = true } = {}
 ) {
   try {
     const reposicion = await withTransactionFn(async txQuery => {
@@ -1939,7 +1946,8 @@ async function handleReposicionAutomatica(
     await client.sendMessage(numero, msg);
 
   } catch (e) {
-    console.error('Error Reposición Automática:', e);
+    if (isConservativeEnqueueError(e)) throw e;
+    if (logProcessingErrors) console.error('Error Reposición Automática:', e);
     await client.sendMessage(numero, 'Tuve un problema procesando la reposición. Por favor escribime con un humano.');
   }
 }
@@ -1994,7 +2002,9 @@ function start(rawClient, options = {}) {
         }
 
         if (recentMessageIds.has(messageId)) {
-          console.warn(`[WPP IN] Mensaje duplicado ignorado: ${messageId}`);
+          if (options.logProcessingErrors !== false) {
+            console.warn(`[WPP IN] Mensaje duplicado ignorado: ${messageId}`);
+          }
           return;
         }
 
@@ -2049,6 +2059,7 @@ function start(rawClient, options = {}) {
       ) {
         await handleReposicionAutomatica(client, numero, ctx, {
           withTransactionFn: options.replenishmentWithTransaction || withTransaction,
+          logProcessingErrors: options.logProcessingErrors !== false,
         });
         return; // IMPORTANTE: Cortamos aquí para que la IA no responda encima
       }
@@ -2182,7 +2193,8 @@ function start(rawClient, options = {}) {
             
           await client.sendMessage(numero, `📋 Tus últimos comprobantes:\n\n${texto}`);
         } catch (err) {
-          console.error('Error al obtener comprobantes:', err);
+          if (isConservativeEnqueueError(err)) throw err;
+          if (options.logProcessingErrors !== false) console.error('Error al obtener comprobantes:', err);
           await client.sendMessage(numero, 'Ocurrió un error al consultar comprobantes.');
         }
         return;
@@ -2208,7 +2220,8 @@ function start(rawClient, options = {}) {
               : `⚠️ No encontré ningún comprobante con operación ${numeroOperacion}.`
           );
         } catch (err) {
-          console.error('Error procesando comprobante:', err);
+          if (isConservativeEnqueueError(err)) throw err;
+          if (options.logProcessingErrors !== false) console.error('Error procesando comprobante:', err);
           await client.sendMessage(numero, '❌ No pude procesar ese comprobante por un error interno.');
         }
         return;
@@ -2253,10 +2266,15 @@ function start(rawClient, options = {}) {
       }
 
       // ── Fallback a IA (promptVendedor) ────────────────────────────────────
-      await responderConIA(client, numero, contenido, ctx);
+      await responderConIA(client, numero, contenido, ctx, {
+        logProcessingErrors: options.logProcessingErrors !== false,
+      });
 
     } catch (err) {
-      if (!isOwnershipFenceError(err)) console.error('handlers.start error:', err);
+      if (!isOwnershipFenceError(err) && options.logProcessingErrors !== false) {
+        console.error('handlers.start error:', err);
+      }
+      if (options.propagateErrors === true) throw err;
       // Evitamos responder si el error es grave para no hacer loop
     }
   }
@@ -2273,7 +2291,10 @@ function start(rawClient, options = {}) {
           })
         : processMessage(message)
     )).catch(err => {
-      if (!isOwnershipFenceError(err)) console.error('handlers.start gate error:', err);
+      if (!isOwnershipFenceError(err) && options.logProcessingErrors !== false) {
+        console.error('handlers.start gate error:', err);
+      }
+      if (options.propagateErrors === true) throw err;
     });
   });
 }

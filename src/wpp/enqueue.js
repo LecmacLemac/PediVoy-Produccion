@@ -75,7 +75,7 @@ function prepareEnqueue({
   phone,
   message,
   dedupeWindowMinutes = 5,
-}, { correlatedGeneralReply = false } = {}) {
+}, { correlatedTransportOrigin = null, correlationId = null } = {}) {
   const payload = normalizeWppOutboxPayload({ phone, message });
   if (!payload) return { skippedResult: { queued: false, skipped: true, reason: 'invalid_payload' } };
 
@@ -88,18 +88,29 @@ function prepareEnqueue({
     && (!Number.isSafeInteger(normalizedEmpresaId) || normalizedEmpresaId <= 0 || normalizedEmpresaId > 0x7fffffff)) {
     throw new WppTransportConfigError('empresa_id_invalido');
   }
+  if (correlatedTransportOrigin === 'cloud' && normalizedEmpresaId === null) {
+    throw new WppTransportConfigError('empresa_id_invalido');
+  }
+  const normalizedCorrelationId = correlationId == null ? null : String(correlationId).trim();
+  if (correlatedTransportOrigin === 'cloud' && !normalizedCorrelationId) {
+    throw new WppTransportConfigError('correlation_id_requerido');
+  }
+  if (correlationId != null && (!normalizedCorrelationId || normalizedCorrelationId.length > 512)) {
+    throw new WppTransportConfigError('correlation_id_invalido');
+  }
 
-  return { payload, windowMinutes, normalizedEmpresaId, correlatedGeneralReply };
+  return { payload, windowMinutes, normalizedEmpresaId, correlatedTransportOrigin, correlationId: normalizedCorrelationId };
 }
 
 async function enqueuePreparedWithClient({
   payload,
   windowMinutes,
   normalizedEmpresaId,
-  correlatedGeneralReply = false,
+  correlatedTransportOrigin = null,
+  correlationId = null,
 }, client) {
-  let transportOrigin = 'general';
-  if (normalizedEmpresaId !== null && !correlatedGeneralReply) {
+  let transportOrigin = correlatedTransportOrigin || 'general';
+  if (normalizedEmpresaId !== null && correlatedTransportOrigin !== 'general') {
     await clientRows(
       client,
       'SELECT pg_advisory_xact_lock($1::integer, $2::integer) AS locked',
@@ -111,24 +122,37 @@ async function enqueuePreparedWithClient({
       [normalizedEmpresaId],
     );
     if (companies.length !== 1) throw new WppTransportConfigError('empresa_no_encontrada');
-    transportOrigin = isWhatsappCloudActive(companies[0].config_integraciones) ? 'cloud' : 'company';
+    const cloudActive = isWhatsappCloudActive(companies[0].config_integraciones);
+    if (correlatedTransportOrigin === 'cloud' && !cloudActive) {
+      throw new WppTransportConfigError('cloud_config_invalida');
+    }
+    transportOrigin = correlatedTransportOrigin === 'cloud'
+      ? 'cloud'
+      : cloudActive ? 'cloud' : 'company';
   }
 
-  const dedupeKey = stableDedupeKey({
-    empresaId: normalizedEmpresaId,
-    phone: payload.phone,
-    message: payload.message,
-    transportOrigin,
-  });
+  const dedupeKey = correlationId
+    ? `reply:${normalizedEmpresaId ?? 0}:${transportOrigin}:${correlationId}`
+    : stableDedupeKey({
+        empresaId: normalizedEmpresaId,
+        phone: payload.phone,
+        message: payload.message,
+        transportOrigin,
+      });
   await clientRows(
     client,
     'SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0)) AS locked',
     [dedupeKey],
   );
 
-  const recent = await clientRows(
-    client,
-    `SELECT id, status, transport_origin
+  const recent = await clientRows(client, correlationId
+    ? `SELECT id, status, transport_origin
+       FROM wpp_outbox
+      WHERE empresa_id IS NOT DISTINCT FROM $1::integer
+        AND transport_origin = $2
+        AND reply_correlation_id = $3
+      LIMIT 1`
+    : `SELECT id, status, transport_origin
        FROM wpp_outbox
       WHERE telefono = $1
         AND mensaje = $2
@@ -137,7 +161,9 @@ async function enqueuePreparedWithClient({
         AND created_at > (NOW() - ($5 * INTERVAL '1 minute'))
       ORDER BY created_at DESC, id DESC
       LIMIT 1`,
-    [payload.phone, payload.message, normalizedEmpresaId, transportOrigin, windowMinutes],
+    correlationId
+      ? [normalizedEmpresaId, transportOrigin, correlationId]
+      : [payload.phone, payload.message, normalizedEmpresaId, transportOrigin, windowMinutes],
     { sensitive: true },
   );
 
@@ -146,7 +172,7 @@ async function enqueuePreparedWithClient({
     return {
       queued: false,
       skipped: true,
-      reason: `duplicate_${windowMinutes}m`,
+      reason: correlationId ? 'duplicate_correlation' : `duplicate_${windowMinutes}m`,
       id: row.id || null,
       status: row.status || null,
       transportOrigin,
@@ -156,10 +182,10 @@ async function enqueuePreparedWithClient({
   const inserted = await clientRows(
     client,
     `INSERT INTO wpp_outbox
-       (empresa_id, telefono, mensaje, transport_origin, status, created_at)
-     VALUES ($1::integer, $2, $3, $4, 'pending', NOW())
+       (empresa_id, telefono, mensaje, transport_origin, reply_correlation_id, status, created_at)
+     VALUES ($1::integer, $2, $3, $4, $5, 'pending', NOW())
      RETURNING id, status, transport_origin`,
-    [normalizedEmpresaId, payload.phone, payload.message, transportOrigin],
+    [normalizedEmpresaId, payload.phone, payload.message, transportOrigin, correlationId],
     { sensitive: true },
   );
   if (inserted.length !== 1) throw new WppTransportConfigError('enqueue_sin_resultado');
@@ -205,8 +231,9 @@ export async function enqueueWppOutboxCorrelatedReply({
   message,
   dedupeWindowMinutes = 5,
   transportOrigin,
+  correlationId = null,
 }, transactionPool = defaultPool) {
-  if (transportOrigin !== 'general') {
+  if (transportOrigin !== 'general' && transportOrigin !== 'cloud') {
     throw new WppTransportConfigError('transport_origin_correlacionado_no_permitido');
   }
   return enqueueWppOutboxWithPolicy({
@@ -214,7 +241,7 @@ export async function enqueueWppOutboxCorrelatedReply({
     phone,
     message,
     dedupeWindowMinutes,
-  }, transactionPool, { correlatedGeneralReply: true });
+  }, transactionPool, { correlatedTransportOrigin: transportOrigin, correlationId });
 }
 
 async function enqueueWppOutboxWithPolicy(input, transactionPool, policy = {}) {

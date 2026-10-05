@@ -782,12 +782,13 @@ export async function enqueueWppMessagePg({
 }
 
 export async function enqueueCorrelatedWppMessagePg({
-  phone, message, empresaId = null, transportOrigin,
+  phone, message, empresaId = null, transportOrigin, correlationId = null,
 }, transactionPool = pool) {
   return enqueueWppOutboxCorrelatedReply({
     empresaId,
     phone,
     message,
     transportOrigin,
+    correlationId,
   }, transactionPool);
 }

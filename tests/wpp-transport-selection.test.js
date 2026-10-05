@@ -88,6 +88,7 @@ for (const [name, enqueue] of [
     message: payload.message,
     empresaId: payload.empresa_id,
     transportOrigin: payload.transport_origin,
+    correlationId: payload.correlation_id,
   }, pool)],
 ]) {
   test(`${name}: sólo general conserva el canal de ingreso con empresa para auditoría`, async () => {
@@ -108,8 +109,19 @@ for (const [name, enqueue] of [
     assert.equal(pool.calls.some(call => /FROM empresas/.test(call.text)), false);
   });
 
-  test(`${name}: rechaza transportes correlacionados distintos de general antes de conectar`, async () => {
-    for (const transport_origin of ['company', 'cloud', 'otro', '', null]) {
+  test(`${name}: permite sólo literales internos allowlisted general/cloud`, async () => {
+    const cloudPool = createWppEnqueueTestPool({
+      configIntegraciones: { whatsapp: { provider: 'cloud', enabled: true, phone_number_id: 'phone-7', access_token_encrypted: 'v1:token' } },
+    });
+    const cloud = await enqueue({
+      phone: '3515550000', message: 'reply cloud', empresa_id: 7,
+      transport_origin: 'cloud', correlation_id: 'wamid.internal-7',
+    }, cloudPool);
+    assert.equal(cloud.transportOrigin, 'cloud');
+    const cloudInsert = cloudPool.calls.find(call => /INSERT INTO wpp_outbox/.test(call.text));
+    assert.equal(cloudInsert.values[4], 'wamid.internal-7');
+
+    for (const transport_origin of ['company', 'otro', '', null]) {
       let connects = 0;
       await assert.rejects(
         enqueue({
