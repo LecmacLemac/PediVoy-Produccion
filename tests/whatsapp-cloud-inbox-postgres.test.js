@@ -109,6 +109,24 @@ async function indexShape(pool, indexName) {
   `, [indexName])).rows[0];
 }
 
+async function triggerShape(pool, tableName) {
+  return (await pool.query(`
+    SELECT table_namespace.nspname AS table_schema,
+           table_row.relname AS table_name,
+           trigger_row.tgenabled,
+           trigger_row.tgtype,
+           trigger_row.tgisinternal,
+           trigger_row.tgfoid::pg_catalog.regprocedure::text AS function_name,
+           pg_catalog.encode(trigger_row.tgargs, 'escape') AS arguments,
+           pg_catalog.pg_get_triggerdef(trigger_row.oid, true) AS definition
+      FROM pg_catalog.pg_trigger AS trigger_row
+      JOIN pg_catalog.pg_class AS table_row ON table_row.oid = trigger_row.tgrelid
+      JOIN pg_catalog.pg_namespace AS table_namespace ON table_namespace.oid = table_row.relnamespace
+     WHERE trigger_row.tgrelid = $1::pg_catalog.regclass
+       AND trigger_row.tgname = 'whatsapp_cloud_messages_capture_insert'
+  `, [tableName])).rows[0];
+}
+
 async function seedBackfillSources(pool) {
   await pool.query('INSERT INTO empresas(id) VALUES (1), (2)');
   await pool.query(`
@@ -236,6 +254,120 @@ test('migración crea proyección tenant-scoped, constraints e índices exactos 
       sort_options: '0 0 3 3',
       key_columns: ['empresa_id', 'participant_wa_id', 'message_at', 'id'],
       predicate: null,
+    });
+  });
+});
+
+test('migración repara definición completa de triggers canónicos y preserva triggers ajenos', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (1)');
+    await pool.query(migrationSql);
+    await pool.query(`
+      CREATE OR REPLACE FUNCTION public.whatsapp_cloud_messages_unrelated_capture()
+      RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$;
+      CREATE TRIGGER whatsapp_cloud_messages_unrelated_insert
+        AFTER INSERT ON public.whatsapp_cloud_events
+        FOR EACH ROW EXECUTE FUNCTION public.whatsapp_cloud_messages_unrelated_capture()
+    `);
+    const unrelatedBefore = (await pool.query(`
+      SELECT trigger_row.oid::text AS oid,
+             pg_catalog.pg_get_triggerdef(trigger_row.oid, true) AS definition
+        FROM pg_catalog.pg_trigger AS trigger_row
+       WHERE trigger_row.tgrelid = 'public.whatsapp_cloud_events'::pg_catalog.regclass
+         AND trigger_row.tgname = 'whatsapp_cloud_messages_unrelated_insert'
+    `)).rows[0];
+
+    const canonical = new Map();
+    for (const [tableName, functionName] of [
+      ['public.whatsapp_cloud_events', 'whatsapp_cloud_messages_capture_event_insert'],
+      ['public.wpp_outbox', 'whatsapp_cloud_messages_capture_outbox_insert'],
+    ]) {
+      const shape = await triggerShape(pool, tableName);
+      assert.deepEqual({
+        table_schema: shape.table_schema,
+        table_name: shape.table_name,
+        tgenabled: shape.tgenabled,
+        tgtype: shape.tgtype,
+        tgisinternal: shape.tgisinternal,
+        arguments: shape.arguments,
+      }, {
+        table_schema: 'public',
+        table_name: tableName.split('.')[1],
+        tgenabled: 'O',
+        tgtype: 5,
+        tgisinternal: false,
+        arguments: '',
+      });
+      assert.match(shape.function_name, new RegExp(`${functionName}\\(\\)$`));
+      assert.match(shape.definition,
+        new RegExp(`^CREATE TRIGGER whatsapp_cloud_messages_capture_insert AFTER INSERT ON (?:public\\.)?${tableName.split('.')[1]} FOR EACH ROW EXECUTE FUNCTION (?:public\\.)?${functionName}\\(\\)$`));
+      canonical.set(tableName, shape);
+    }
+
+    await pool.query(`
+      CREATE OR REPLACE FUNCTION public.whatsapp_cloud_messages_wrong_capture()
+      RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$
+    `);
+    const variants = [
+      tableName => `ALTER TABLE ${tableName} DISABLE TRIGGER whatsapp_cloud_messages_capture_insert`,
+      (tableName, functionName) => `
+        DROP TRIGGER whatsapp_cloud_messages_capture_insert ON ${tableName};
+        CREATE TRIGGER whatsapp_cloud_messages_capture_insert
+          BEFORE INSERT ON ${tableName}
+          FOR EACH ROW EXECUTE FUNCTION public.${functionName}()`,
+      (tableName, functionName) => `
+        DROP TRIGGER whatsapp_cloud_messages_capture_insert ON ${tableName};
+        CREATE TRIGGER whatsapp_cloud_messages_capture_insert
+          AFTER UPDATE ON ${tableName}
+          FOR EACH ROW EXECUTE FUNCTION public.${functionName}()`,
+      (tableName, functionName) => `
+        DROP TRIGGER whatsapp_cloud_messages_capture_insert ON ${tableName};
+        CREATE TRIGGER whatsapp_cloud_messages_capture_insert
+          AFTER INSERT ON ${tableName}
+          FOR EACH STATEMENT EXECUTE FUNCTION public.${functionName}()`,
+      tableName => `
+        DROP TRIGGER whatsapp_cloud_messages_capture_insert ON ${tableName};
+        CREATE TRIGGER whatsapp_cloud_messages_capture_insert
+          AFTER INSERT ON ${tableName}
+          FOR EACH ROW EXECUTE FUNCTION public.whatsapp_cloud_messages_wrong_capture('unexpected')`,
+    ];
+
+    for (const [tableName, functionName] of [
+      ['public.whatsapp_cloud_events', 'whatsapp_cloud_messages_capture_event_insert'],
+      ['public.wpp_outbox', 'whatsapp_cloud_messages_capture_outbox_insert'],
+    ]) {
+      for (const variant of variants) {
+        await pool.query(variant(tableName, functionName));
+        await pool.query(projectionSql);
+        assert.deepEqual(await triggerShape(pool, tableName), canonical.get(tableName),
+          `${tableName} canonical trigger must be restored exactly`);
+      }
+    }
+
+    assert.deepEqual((await pool.query(`
+      SELECT trigger_row.oid::text AS oid,
+             pg_catalog.pg_get_triggerdef(trigger_row.oid, true) AS definition
+        FROM pg_catalog.pg_trigger AS trigger_row
+       WHERE trigger_row.tgrelid = 'public.whatsapp_cloud_events'::pg_catalog.regclass
+         AND trigger_row.tgname = 'whatsapp_cloud_messages_unrelated_insert'
+    `)).rows[0], unrelatedBefore);
+
+    await pool.query(`
+      INSERT INTO public.whatsapp_cloud_events
+        (empresa_id, event_kind, dedupe_key, message_id, sender_id, message_type, event_data)
+      VALUES (1, 'message', 'trigger-repair:inbound', 'trigger-repair-inbound',
+              '549351555077', 'text', '{"text":{"body":"capturado después de reparar"}}'::jsonb)
+    `);
+    assert.deepEqual((await pool.query(`
+      SELECT direction, participant_wa_id, provider_message_id, text_body, delivery_status
+        FROM public.whatsapp_cloud_messages
+       WHERE provider_message_id = 'trigger-repair-inbound'
+    `)).rows[0], {
+      direction: 'inbound',
+      participant_wa_id: '549351555077',
+      provider_message_id: 'trigger-repair-inbound',
+      text_body: 'capturado después de reparar',
+      delivery_status: 'received',
     });
   });
 });
@@ -1716,6 +1848,201 @@ test('search_path shadow,public sólo crea y repara objetos canónicos en public
     assert.equal((await pool.query(
       "SELECT count(*)::int AS total FROM shadow.whatsapp_cloud_messages",
     )).rows[0].total, 0);
+  });
+});
+
+test('locks tenant-scoped serializan estados inversos sin deadlock, aíslan tenants y no se filtran', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (1), (2)');
+    await pool.query(migrationSql);
+
+    const functionDefinitions = (await pool.query(`
+      SELECT procedure_row.proname,
+             pg_catalog.pg_get_functiondef(procedure_row.oid) AS definition
+        FROM pg_catalog.pg_proc AS procedure_row
+        JOIN pg_catalog.pg_namespace AS namespace_row ON namespace_row.oid = procedure_row.pronamespace
+       WHERE namespace_row.nspname = 'public'
+         AND procedure_row.proname = ANY($1::text[])
+       ORDER BY procedure_row.proname
+    `, [[
+      'whatsapp_cloud_messages_lock_projection',
+      'whatsapp_cloud_messages_reconcile_status',
+      'whatsapp_cloud_messages_capture_event_insert',
+      'whatsapp_cloud_messages_capture_outbox_insert',
+    ]])).rows;
+    assert.equal(functionDefinitions.length, 4);
+    const definitions = new Map(functionDefinitions.map(row => [row.proname, row.definition]));
+    assert.match(definitions.get('whatsapp_cloud_messages_lock_projection'),
+      /pg_advisory_xact_lock\(1464550735, target_empresa_id\)/i);
+    for (const functionName of [
+      'whatsapp_cloud_messages_reconcile_status',
+      'whatsapp_cloud_messages_capture_event_insert',
+      'whatsapp_cloud_messages_capture_outbox_insert',
+    ]) {
+      assert.match(definitions.get(functionName),
+        /BEGIN\s+PERFORM public\.whatsapp_cloud_messages_lock_projection\(/i,
+        `${functionName} must acquire the shared tenant lock before projection work`);
+    }
+
+    async function createMessages(label, empresaId) {
+      await pool.query(`
+        INSERT INTO public.wpp_outbox
+          (empresa_id, telefono, mensaje, created_at, sent_at, status, transport_origin,
+           meta_message_id, cloud_dispatch_state)
+        VALUES
+          ($1, $2, $3, '2026-10-01T10:00:00Z', '2026-10-01T10:01:00Z',
+           'sent', 'cloud', $4, 'sent'),
+          ($1, $5, $6, '2026-10-01T10:00:00Z', '2026-10-01T10:01:00Z',
+           'sent', 'cloud', $7, 'sent')
+      `, [
+        empresaId,
+        `549351${String(empresaId).padStart(3, '0')}101`, `${label} one`, `${label}-one`,
+        `549351${String(empresaId).padStart(3, '0')}102`, `${label} two`, `${label}-two`,
+      ]);
+      return [`${label}-one`, `${label}-two`];
+    }
+
+    async function insertStatus(client, { empresaId = 1, dedupeKey, messageId, status, at }) {
+      return client.query(`
+        INSERT INTO public.whatsapp_cloud_events
+          (empresa_id, event_kind, dedupe_key, message_id, recipient_id, status,
+           source_timestamp, event_data, received_at)
+        VALUES ($1, 'status', $2, $3, '549351555099', $4,
+                EXTRACT(EPOCH FROM $5::timestamptz)::bigint::text, '{}'::jsonb,
+                $5::timestamptz + interval '1 second')
+      `, [empresaId, dedupeKey, messageId, status, at]);
+    }
+
+    for (const leaderName of ['lower-first', 'higher-first']) {
+      const [messageOne, messageTwo] = await createMessages(`deadlock-${leaderName}`, 1);
+      const lower = [
+        { dedupeKey: `${leaderName}:lower:one`, messageId: messageOne, status: 'delivered', at: '2026-10-01T10:02:00Z' },
+        { dedupeKey: `${leaderName}:lower:two`, messageId: messageTwo, status: 'sent', at: '2026-10-01T10:02:30Z' },
+      ];
+      const higher = [
+        { dedupeKey: `${leaderName}:higher:two`, messageId: messageTwo, status: 'read', at: '2026-10-01T10:04:00Z' },
+        { dedupeKey: `${leaderName}:higher:one`, messageId: messageOne, status: 'read', at: '2026-10-01T10:03:30Z' },
+      ];
+      const leaderPlan = leaderName === 'lower-first' ? lower : higher;
+      const followerPlan = leaderName === 'lower-first' ? higher : lower;
+      const leader = await pool.connect();
+      const follower = await pool.connect();
+      let leaderDone = false;
+      let followerDone = false;
+      try {
+        await leader.query('BEGIN');
+        await follower.query('BEGIN');
+        await leader.query("SET LOCAL deadlock_timeout = '100ms'; SET LOCAL lock_timeout = '2s'; SET LOCAL statement_timeout = '3s'");
+        await follower.query("SET LOCAL deadlock_timeout = '100ms'; SET LOCAL lock_timeout = '2s'; SET LOCAL statement_timeout = '3s'");
+        await insertStatus(leader, leaderPlan[0]);
+
+        let followerFirstSettled = false;
+        const followerFirst = insertStatus(follower, followerPlan[0]).then(
+          value => { followerFirstSettled = true; return value; },
+          error => { followerFirstSettled = true; throw error; },
+        );
+        await new Promise(resolve => setTimeout(resolve, 150));
+
+        if (followerFirstSettled) {
+          const inverse = await Promise.allSettled([
+            insertStatus(leader, leaderPlan[1]),
+            insertStatus(follower, followerPlan[1]),
+          ]);
+          assert.ok(inverse.every(result => result.status === 'fulfilled'),
+            `inverse status order must not deadlock: ${inverse.map(result => result.reason?.code || result.status).join(',')}`);
+        } else {
+          const wait = (await pool.query(`
+            SELECT wait_event_type, wait_event
+              FROM pg_catalog.pg_stat_activity
+             WHERE pid = $1
+          `, [follower.processID])).rows[0];
+          assert.deepEqual(wait, { wait_event_type: 'Lock', wait_event: 'advisory' });
+          await insertStatus(leader, leaderPlan[1]);
+          await leader.query('COMMIT');
+          leaderDone = true;
+          await followerFirst;
+          await insertStatus(follower, followerPlan[1]);
+        }
+        if (!leaderDone) {
+          await leader.query('COMMIT');
+          leaderDone = true;
+        }
+        await follower.query('COMMIT');
+        followerDone = true;
+      } finally {
+        if (!leaderDone) await leader.query('ROLLBACK').catch(() => {});
+        if (!followerDone) await follower.query('ROLLBACK').catch(() => {});
+        leader.release();
+        follower.release();
+      }
+
+      assert.deepEqual((await pool.query(`
+        SELECT provider_message_id, delivery_status, state_rank
+          FROM public.whatsapp_cloud_messages
+         WHERE provider_message_id = ANY($1::text[])
+         ORDER BY provider_message_id
+      `, [[messageOne, messageTwo]])).rows, [
+        { provider_message_id: messageOne, delivery_status: 'read', state_rank: 50 },
+        { provider_message_id: messageTwo, delivery_status: 'read', state_rank: 50 },
+      ]);
+    }
+
+    const [tenantOneMessage] = await createMessages('parallel-tenant-one', 1);
+    const [tenantTwoMessage] = await createMessages('parallel-tenant-two', 2);
+    const tenantOne = await pool.connect();
+    const tenantTwo = await pool.connect();
+    const trackedPids = [tenantOne.processID, tenantTwo.processID];
+    let tenantOneDone = false;
+    let tenantTwoDone = false;
+    try {
+      await tenantOne.query('BEGIN');
+      await tenantTwo.query('BEGIN');
+      await insertStatus(tenantOne, {
+        empresaId: 1, dedupeKey: 'parallel:tenant-one', messageId: tenantOneMessage,
+        status: 'delivered', at: '2026-10-01T10:05:00Z',
+      });
+      const startedAt = Date.now();
+      await Promise.race([
+        insertStatus(tenantTwo, {
+          empresaId: 2, dedupeKey: 'parallel:tenant-two', messageId: tenantTwoMessage,
+          status: 'delivered', at: '2026-10-01T10:05:00Z',
+        }),
+        new Promise((_, reject) => setTimeout(
+          () => reject(new Error('different tenant was blocked by tenant 1 projection lock')), 500,
+        )),
+      ]);
+      assert.ok(Date.now() - startedAt < 500);
+      await tenantTwo.query('COMMIT');
+      tenantTwoDone = true;
+      await tenantOne.query('COMMIT');
+      tenantOneDone = true;
+    } finally {
+      if (!tenantOneDone) await tenantOne.query('ROLLBACK').catch(() => {});
+      if (!tenantTwoDone) await tenantTwo.query('ROLLBACK').catch(() => {});
+      tenantOne.release();
+      tenantTwo.release();
+    }
+
+    const rollbackWriter = await pool.connect();
+    trackedPids.push(rollbackWriter.processID);
+    try {
+      await rollbackWriter.query('BEGIN');
+      await insertStatus(rollbackWriter, {
+        empresaId: 1, dedupeKey: 'lock-leak:rollback', messageId: tenantOneMessage,
+        status: 'read', at: '2026-10-01T10:06:00Z',
+      });
+      await rollbackWriter.query('ROLLBACK');
+    } finally {
+      await rollbackWriter.query('ROLLBACK').catch(() => {});
+      rollbackWriter.release();
+    }
+
+    assert.equal((await pool.query(`
+      SELECT count(*)::int AS total
+        FROM pg_catalog.pg_locks
+       WHERE locktype = 'advisory'
+         AND pid = ANY($1::integer[])
+    `, [trackedPids])).rows[0].total, 0, 'transaction advisory locks must be released at commit/rollback');
   });
 });
 

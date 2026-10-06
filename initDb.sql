@@ -2768,13 +2768,29 @@ BEGIN
   END IF;
 END $$;
 
+CREATE OR REPLACE FUNCTION public.whatsapp_cloud_messages_lock_projection(
+  target_empresa_id INTEGER
+) RETURNS VOID
+LANGUAGE plpgsql
+SET search_path = pg_catalog, public
+AS $$
+BEGIN
+  IF target_empresa_id IS NULL THEN
+    RETURN;
+  END IF;
+  PERFORM pg_catalog.pg_advisory_xact_lock(1464550735, target_empresa_id);
+END $$;
+
 CREATE OR REPLACE FUNCTION public.whatsapp_cloud_messages_reconcile_status(
   target_empresa_id INTEGER,
   target_provider_message_id TEXT
 ) RETURNS VOID
-LANGUAGE SQL
+LANGUAGE plpgsql
 SET search_path = pg_catalog, public
 AS $$
+BEGIN
+  PERFORM public.whatsapp_cloud_messages_lock_projection(target_empresa_id);
+
   WITH status_events AS (
     SELECT event.status,
            CASE
@@ -2892,7 +2908,7 @@ AS $$
        canonical.canonical_delivered_at, canonical.canonical_read_at,
        canonical.canonical_failed_at, canonical.canonical_updated_at
      );
-$$;
+END $$;
 
 CREATE OR REPLACE FUNCTION public.whatsapp_cloud_messages_capture_event_insert()
 RETURNS TRIGGER
@@ -2900,6 +2916,8 @@ LANGUAGE plpgsql
 SET search_path = pg_catalog, public
 AS $$
 BEGIN
+  PERFORM public.whatsapp_cloud_messages_lock_projection(NEW.empresa_id);
+
   IF NEW.event_kind = 'message'
      AND NEW.message_type IN ('text', 'image', 'document')
      AND NEW.sender_id ~ '^[0-9]{6,15}$'
@@ -2961,6 +2979,8 @@ LANGUAGE plpgsql
 SET search_path = pg_catalog, public
 AS $$
 BEGIN
+  PERFORM public.whatsapp_cloud_messages_lock_projection(NEW.empresa_id);
+
   IF NEW.transport_origin = 'cloud'
      AND NEW.empresa_id IS NOT NULL
      AND NEW.telefono ~ '^[0-9]{6,15}$'
@@ -3025,39 +3045,57 @@ END $$;
 
 DO $$
 DECLARE
+  trigger_spec RECORD;
   trigger_row RECORD;
 BEGIN
-  SELECT trigger_meta.tgfoid::pg_catalog.regprocedure AS function_name
-    INTO trigger_row
-    FROM pg_catalog.pg_trigger AS trigger_meta
-   WHERE trigger_meta.tgrelid = 'public.whatsapp_cloud_events'::pg_catalog.regclass
-     AND trigger_meta.tgname = 'whatsapp_cloud_messages_capture_insert'
-     AND NOT trigger_meta.tgisinternal;
-  IF FOUND AND trigger_row.function_name IS DISTINCT FROM
-      'public.whatsapp_cloud_messages_capture_event_insert()'::pg_catalog.regprocedure THEN
-    RAISE EXCEPTION 'canonical trigger collision: public.whatsapp_cloud_events.whatsapp_cloud_messages_capture_insert uses %',
-      trigger_row.function_name;
-  ELSIF NOT FOUND THEN
-    CREATE TRIGGER whatsapp_cloud_messages_capture_insert
-      AFTER INSERT ON public.whatsapp_cloud_events
-      FOR EACH ROW EXECUTE FUNCTION public.whatsapp_cloud_messages_capture_event_insert();
-  END IF;
+  FOR trigger_spec IN
+    SELECT * FROM (VALUES
+      (
+        'public.whatsapp_cloud_events'::pg_catalog.regclass,
+        'public.whatsapp_cloud_messages_capture_event_insert()'::pg_catalog.regprocedure,
+        'CREATE TRIGGER whatsapp_cloud_messages_capture_insert AFTER INSERT ON whatsapp_cloud_events FOR EACH ROW EXECUTE FUNCTION whatsapp_cloud_messages_capture_event_insert()',
+        'CREATE TRIGGER whatsapp_cloud_messages_capture_insert AFTER INSERT ON public.whatsapp_cloud_events FOR EACH ROW EXECUTE FUNCTION public.whatsapp_cloud_messages_capture_event_insert()'
+      ),
+      (
+        'public.wpp_outbox'::pg_catalog.regclass,
+        'public.whatsapp_cloud_messages_capture_outbox_insert()'::pg_catalog.regprocedure,
+        'CREATE TRIGGER whatsapp_cloud_messages_capture_insert AFTER INSERT ON wpp_outbox FOR EACH ROW EXECUTE FUNCTION whatsapp_cloud_messages_capture_outbox_insert()',
+        'CREATE TRIGGER whatsapp_cloud_messages_capture_insert AFTER INSERT ON public.wpp_outbox FOR EACH ROW EXECUTE FUNCTION public.whatsapp_cloud_messages_capture_outbox_insert()'
+      )
+    ) AS required(table_oid, function_oid, expected_definition, create_sql)
+  LOOP
+    SELECT trigger_meta.tgrelid,
+           trigger_meta.tgfoid,
+           trigger_meta.tgenabled,
+           trigger_meta.tgtype,
+           trigger_meta.tgisinternal,
+           trigger_meta.tgnargs,
+           trigger_meta.tgargs,
+           pg_catalog.pg_get_triggerdef(trigger_meta.oid, true) AS definition
+      INTO trigger_row
+      FROM pg_catalog.pg_trigger AS trigger_meta
+     WHERE trigger_meta.tgrelid = trigger_spec.table_oid
+       AND trigger_meta.tgname = 'whatsapp_cloud_messages_capture_insert';
 
-  SELECT trigger_meta.tgfoid::pg_catalog.regprocedure AS function_name
-    INTO trigger_row
-    FROM pg_catalog.pg_trigger AS trigger_meta
-   WHERE trigger_meta.tgrelid = 'public.wpp_outbox'::pg_catalog.regclass
-     AND trigger_meta.tgname = 'whatsapp_cloud_messages_capture_insert'
-     AND NOT trigger_meta.tgisinternal;
-  IF FOUND AND trigger_row.function_name IS DISTINCT FROM
-      'public.whatsapp_cloud_messages_capture_outbox_insert()'::pg_catalog.regprocedure THEN
-    RAISE EXCEPTION 'canonical trigger collision: public.wpp_outbox.whatsapp_cloud_messages_capture_insert uses %',
-      trigger_row.function_name;
-  ELSIF NOT FOUND THEN
-    CREATE TRIGGER whatsapp_cloud_messages_capture_insert
-      AFTER INSERT ON public.wpp_outbox
-      FOR EACH ROW EXECUTE FUNCTION public.whatsapp_cloud_messages_capture_outbox_insert();
-  END IF;
+    IF FOUND AND NOT (
+      trigger_row.tgrelid = trigger_spec.table_oid
+      AND trigger_row.tgfoid = trigger_spec.function_oid
+      AND trigger_row.tgenabled = 'O'
+      AND trigger_row.tgtype = 5
+      AND NOT trigger_row.tgisinternal
+      AND trigger_row.tgnargs = 0
+      AND trigger_row.tgargs = '\x'::pg_catalog.bytea
+      AND trigger_row.definition = trigger_spec.expected_definition
+    ) THEN
+      EXECUTE pg_catalog.format(
+        'DROP TRIGGER %I ON %s',
+        'whatsapp_cloud_messages_capture_insert', trigger_spec.table_oid
+      );
+      EXECUTE trigger_spec.create_sql;
+    ELSIF NOT FOUND THEN
+      EXECUTE trigger_spec.create_sql;
+    END IF;
+  END LOOP;
 END $$;
 
 -- CUTOVER CAPTURE INSTALL COMPLETE; COMMIT IMMEDIATELY
