@@ -2381,6 +2381,9 @@ SET search_path = pg_catalog, public
 AS $$
 DECLARE
   transaction_empresa_id TEXT;
+  cleanup_max_empresa_id_text TEXT;
+  cleanup_locked_empresa_ids_text TEXT;
+  cleanup_locked_empresa_ids INTEGER[] := ARRAY[]::INTEGER[];
 BEGIN
   IF target_empresa_id IS NULL THEN
     RETURN;
@@ -2390,6 +2393,26 @@ BEGIN
     'pedivoy.whatsapp_cloud_projection_empresa_id', TRUE
   );
   IF transaction_empresa_id IS NULL OR transaction_empresa_id = '' THEN
+    cleanup_max_empresa_id_text := pg_catalog.current_setting(
+      'pedivoy.whatsapp_cloud_projection_cleanup_max_empresa_id', TRUE
+    );
+    cleanup_locked_empresa_ids_text := pg_catalog.current_setting(
+      'pedivoy.whatsapp_cloud_projection_cleanup_locked_empresa_ids', TRUE
+    );
+    IF cleanup_locked_empresa_ids_text IS NOT NULL
+       AND cleanup_locked_empresa_ids_text <> '' THEN
+      cleanup_locked_empresa_ids := pg_catalog.string_to_array(
+        cleanup_locked_empresa_ids_text, ','
+      )::INTEGER[];
+    END IF;
+    IF cleanup_max_empresa_id_text IS NOT NULL
+       AND cleanup_max_empresa_id_text <> ''
+       AND target_empresa_id < cleanup_max_empresa_id_text::INTEGER
+       AND NOT target_empresa_id = ANY(cleanup_locked_empresa_ids) THEN
+      RAISE EXCEPTION USING
+        ERRCODE = 'P0001',
+        MESSAGE = 'whatsapp_cloud_projection_cleanup_lock_order';
+    END IF;
     PERFORM pg_catalog.set_config(
       'pedivoy.whatsapp_cloud_projection_empresa_id', target_empresa_id::TEXT, TRUE
     );
@@ -2413,6 +2436,117 @@ BEGIN
     RETURN;
   END IF;
   PERFORM pg_catalog.pg_advisory_xact_lock(1464550735, target_empresa_id);
+END $$;
+
+CREATE OR REPLACE FUNCTION public.whatsapp_cloud_messages_lock_projection_cleanup(
+  target_empresa_ids INTEGER[]
+) RETURNS VOID
+LANGUAGE plpgsql
+SET search_path = pg_catalog, public
+AS $$
+DECLARE
+  transaction_empresa_id TEXT;
+  cleanup_max_empresa_id_text TEXT;
+  cleanup_max_empresa_id INTEGER;
+  cleanup_locked_empresa_ids_text TEXT;
+  cleanup_locked_empresa_ids INTEGER[] := ARRAY[]::INTEGER[];
+  new_empresa_ids INTEGER[] := ARRAY[]::INTEGER[];
+  has_null_empresa_id BOOLEAN;
+  target_empresa_id INTEGER;
+BEGIN
+  SELECT EXISTS (
+    SELECT 1
+      FROM pg_catalog.unnest(COALESCE(target_empresa_ids, ARRAY[]::INTEGER[]))
+        AS requested(empresa_id)
+     WHERE requested.empresa_id IS NULL
+  ) INTO has_null_empresa_id;
+
+  SELECT pg_catalog.array_agg(distinct_tenant.empresa_id ORDER BY distinct_tenant.empresa_id)
+    INTO target_empresa_ids
+    FROM (
+      SELECT DISTINCT requested.empresa_id
+        FROM pg_catalog.unnest(COALESCE(target_empresa_ids, ARRAY[]::INTEGER[]))
+          AS requested(empresa_id)
+       WHERE requested.empresa_id IS NOT NULL
+    ) AS distinct_tenant;
+
+  transaction_empresa_id := pg_catalog.current_setting(
+    'pedivoy.whatsapp_cloud_projection_empresa_id', TRUE
+  );
+  IF transaction_empresa_id IS NOT NULL AND transaction_empresa_id <> '' THEN
+    IF has_null_empresa_id OR EXISTS (
+      SELECT 1
+        FROM pg_catalog.unnest(COALESCE(target_empresa_ids, ARRAY[]::INTEGER[]))
+          AS requested(empresa_id)
+       WHERE requested.empresa_id::TEXT IS DISTINCT FROM transaction_empresa_id
+    ) THEN
+      RAISE EXCEPTION USING
+        ERRCODE = 'P0001',
+        MESSAGE = 'whatsapp_cloud_projection_cross_tenant_transaction';
+    END IF;
+    RETURN;
+  END IF;
+
+  IF COALESCE(pg_catalog.cardinality(target_empresa_ids), 0) = 0 THEN
+    RETURN;
+  END IF;
+
+  cleanup_locked_empresa_ids_text := pg_catalog.current_setting(
+    'pedivoy.whatsapp_cloud_projection_cleanup_locked_empresa_ids', TRUE
+  );
+  IF cleanup_locked_empresa_ids_text IS NOT NULL AND cleanup_locked_empresa_ids_text <> '' THEN
+    cleanup_locked_empresa_ids := pg_catalog.string_to_array(
+      cleanup_locked_empresa_ids_text, ','
+    )::INTEGER[];
+  END IF;
+
+  SELECT COALESCE(
+           pg_catalog.array_agg(requested.empresa_id ORDER BY requested.empresa_id),
+           ARRAY[]::INTEGER[]
+         )
+    INTO new_empresa_ids
+    FROM pg_catalog.unnest(target_empresa_ids) AS requested(empresa_id)
+   WHERE NOT requested.empresa_id = ANY(cleanup_locked_empresa_ids);
+
+  cleanup_max_empresa_id_text := pg_catalog.current_setting(
+    'pedivoy.whatsapp_cloud_projection_cleanup_max_empresa_id', TRUE
+  );
+  IF cleanup_max_empresa_id_text IS NOT NULL AND cleanup_max_empresa_id_text <> '' THEN
+    cleanup_max_empresa_id := cleanup_max_empresa_id_text::INTEGER;
+    IF EXISTS (
+      SELECT 1
+        FROM pg_catalog.unnest(new_empresa_ids) AS requested(empresa_id)
+       WHERE requested.empresa_id < cleanup_max_empresa_id
+    ) THEN
+      RAISE EXCEPTION USING
+        ERRCODE = 'P0001',
+        MESSAGE = 'whatsapp_cloud_projection_cleanup_lock_order';
+    END IF;
+  END IF;
+
+  FOREACH target_empresa_id IN ARRAY new_empresa_ids
+  LOOP
+    PERFORM public.whatsapp_cloud_messages_lock_projection_migration(target_empresa_id);
+  END LOOP;
+
+  SELECT pg_catalog.array_agg(distinct_tenant.empresa_id ORDER BY distinct_tenant.empresa_id)
+    INTO cleanup_locked_empresa_ids
+    FROM (
+      SELECT DISTINCT retained.empresa_id
+        FROM pg_catalog.unnest(cleanup_locked_empresa_ids || target_empresa_ids)
+          AS retained(empresa_id)
+    ) AS distinct_tenant;
+
+  PERFORM pg_catalog.set_config(
+    'pedivoy.whatsapp_cloud_projection_cleanup_locked_empresa_ids',
+    pg_catalog.array_to_string(cleanup_locked_empresa_ids, ','),
+    TRUE
+  );
+  PERFORM pg_catalog.set_config(
+    'pedivoy.whatsapp_cloud_projection_cleanup_max_empresa_id',
+    cleanup_locked_empresa_ids[pg_catalog.cardinality(cleanup_locked_empresa_ids)]::TEXT,
+    TRUE
+  );
 END $$;
 
 CREATE OR REPLACE FUNCTION public.whatsapp_cloud_messages_reconcile_status_locked(
@@ -2697,31 +2831,13 @@ SET search_path = pg_catalog, public
 AS $$
 DECLARE
   target_empresa_id INTEGER;
-  transaction_empresa_id TEXT;
   status_row RECORD;
 BEGIN
-  transaction_empresa_id := pg_catalog.current_setting(
-    'pedivoy.whatsapp_cloud_projection_empresa_id', TRUE
-  );
-  IF transaction_empresa_id IS NULL OR transaction_empresa_id = '' THEN
-    FOR target_empresa_id IN
-      SELECT DISTINCT deleted.empresa_id
-        FROM deleted_rows AS deleted
-       WHERE deleted.empresa_id IS NOT NULL
-       ORDER BY deleted.empresa_id
-    LOOP
-      PERFORM public.whatsapp_cloud_messages_lock_projection_migration(target_empresa_id);
-    END LOOP;
-  ELSIF EXISTS (
-    SELECT 1
+  PERFORM public.whatsapp_cloud_messages_lock_projection_cleanup(ARRAY(
+    SELECT DISTINCT deleted.empresa_id
       FROM deleted_rows AS deleted
-     WHERE deleted.empresa_id IS NULL
-        OR deleted.empresa_id::TEXT IS DISTINCT FROM transaction_empresa_id
-  ) THEN
-    RAISE EXCEPTION USING
-      ERRCODE = 'P0001',
-      MESSAGE = 'whatsapp_cloud_projection_cross_tenant_transaction';
-  END IF;
+     ORDER BY deleted.empresa_id NULLS LAST
+  ));
 
   FOR target_empresa_id IN
     SELECT DISTINCT deleted.empresa_id
@@ -3003,31 +3119,13 @@ SET search_path = pg_catalog, public
 AS $$
 DECLARE
   target_empresa_id INTEGER;
-  transaction_empresa_id TEXT;
   message_row RECORD;
 BEGIN
-  transaction_empresa_id := pg_catalog.current_setting(
-    'pedivoy.whatsapp_cloud_projection_empresa_id', TRUE
-  );
-  IF transaction_empresa_id IS NULL OR transaction_empresa_id = '' THEN
-    FOR target_empresa_id IN
-      SELECT DISTINCT deleted.empresa_id
-        FROM deleted_rows AS deleted
-       WHERE deleted.empresa_id IS NOT NULL
-       ORDER BY deleted.empresa_id
-    LOOP
-      PERFORM public.whatsapp_cloud_messages_lock_projection_migration(target_empresa_id);
-    END LOOP;
-  ELSIF EXISTS (
-    SELECT 1
+  PERFORM public.whatsapp_cloud_messages_lock_projection_cleanup(ARRAY(
+    SELECT DISTINCT deleted.empresa_id
       FROM deleted_rows AS deleted
-     WHERE deleted.empresa_id IS NULL
-        OR deleted.empresa_id::TEXT IS DISTINCT FROM transaction_empresa_id
-  ) THEN
-    RAISE EXCEPTION USING
-      ERRCODE = 'P0001',
-      MESSAGE = 'whatsapp_cloud_projection_cross_tenant_transaction';
-  END IF;
+     ORDER BY deleted.empresa_id NULLS LAST
+  ));
 
   FOR target_empresa_id IN
     SELECT DISTINCT deleted.empresa_id

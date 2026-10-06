@@ -147,6 +147,53 @@ test('gate estructural fija captura DELETE statement-level antes del commit de i
   const backfill = projectionSql.indexOf(projectionStructureFixture.backfillMarker);
   assert.ok(installCommit > 0 && backfill > installCommit);
 
+  const cleanupLockFunction = projectionSql.match(
+    /CREATE OR REPLACE FUNCTION public\.whatsapp_cloud_messages_lock_projection_cleanup\([\s\S]*?END \$\$;/,
+  )?.[0];
+  assert.ok(cleanupLockFunction, 'shared cleanup lock protocol must be installed');
+  assert.ok(projectionSql.indexOf(cleanupLockFunction) < installCommit,
+    'shared cleanup lock protocol must commit before backfill');
+  const runtimeBinding = cleanupLockFunction.indexOf("'pedivoy.whatsapp_cloud_projection_empresa_id'");
+  const cleanupMaximum = cleanupLockFunction.indexOf(
+    "'pedivoy.whatsapp_cloud_projection_cleanup_max_empresa_id'",
+  );
+  const descendingRejection = cleanupLockFunction.indexOf(
+    "MESSAGE = 'whatsapp_cloud_projection_cleanup_lock_order'",
+  );
+  const tenantLock = cleanupLockFunction.indexOf(
+    'PERFORM public.whatsapp_cloud_messages_lock_projection_migration(target_empresa_id);',
+  );
+  const maximumWrite = cleanupLockFunction.indexOf('PERFORM pg_catalog.set_config(');
+  assert.ok(runtimeBinding >= 0 && cleanupMaximum > runtimeBinding
+    && descendingRejection > cleanupMaximum && tenantLock > descendingRejection
+    && maximumWrite > tenantLock,
+  'binding/order validation must precede every cleanup advisory and the max advances after locks');
+  assert.match(cleanupLockFunction,
+    /array_agg\(distinct_tenant\.empresa_id ORDER BY distinct_tenant\.empresa_id\)[\s\S]*SELECT DISTINCT requested\.empresa_id/i,
+    'shared protocol must normalize unique tenants in ascending order');
+  assert.match(cleanupLockFunction,
+    /requested\.empresa_id < cleanup_max_empresa_id[\s\S]*whatsapp_cloud_projection_cleanup_lock_order/i,
+    'shared protocol must reject every tenant below the retained maximum');
+  assert.match(cleanupLockFunction,
+    /whatsapp_cloud_projection_cross_tenant_transaction/i,
+    'shared protocol must preserve the runtime transaction binding');
+  const runtimeLockFunction = projectionSql.match(
+    /CREATE OR REPLACE FUNCTION public\.whatsapp_cloud_messages_lock_projection\([\s\S]*?END \$\$;/,
+  )?.[0];
+  assert.ok(runtimeLockFunction, 'runtime tenant lock protocol must be installed');
+  const runtimeCleanupMaximum = runtimeLockFunction.indexOf(
+    "'pedivoy.whatsapp_cloud_projection_cleanup_max_empresa_id'",
+  );
+  const runtimeDescendingRejection = runtimeLockFunction.indexOf(
+    "MESSAGE = 'whatsapp_cloud_projection_cleanup_lock_order'",
+  );
+  const runtimeAdvisory = runtimeLockFunction.indexOf(
+    'PERFORM pg_catalog.pg_advisory_xact_lock(1464550735, target_empresa_id);',
+  );
+  assert.ok(runtimeCleanupMaximum >= 0 && runtimeDescendingRejection > runtimeCleanupMaximum
+    && runtimeAdvisory > runtimeDescendingRejection,
+  'runtime binding after cleanup must reject descending tenants before its advisory');
+
   for (const spec of projectionStructureFixture.deleteTriggers) {
     const functionBlock = projectionSql.match(new RegExp(
       `CREATE OR REPLACE FUNCTION public\\.${spec.function}\\(\\)[\\s\\S]*?END \\$\\$;`,
@@ -155,25 +202,19 @@ test('gate estructural fija captura DELETE statement-level antes del commit de i
     assert.ok(projectionSql.indexOf(functionBlock) < installCommit,
       `${spec.function} must commit before backfill`);
     assert.match(functionBlock,
-      /current_setting\([\s\S]*whatsapp_cloud_projection_cross_tenant_transaction/i,
-      `${spec.function} must validate a runtime transaction binding before cleanup locks`);
-    assert.match(functionBlock,
-      new RegExp(`SELECT DISTINCT deleted\\.empresa_id[\\s\\S]*FROM ${spec.transition} AS deleted[\\s\\S]*ORDER BY deleted\\.empresa_id`));
-    const bindingRead = functionBlock.indexOf("'pedivoy.whatsapp_cloud_projection_empresa_id'");
-    const tenantLock = functionBlock.indexOf(
-      'PERFORM public.whatsapp_cloud_messages_lock_projection_migration(target_empresa_id);',
+      new RegExp(`whatsapp_cloud_messages_lock_projection_cleanup\\(ARRAY\\([\\s\\S]*SELECT DISTINCT deleted\\.empresa_id[\\s\\S]*FROM ${spec.transition} AS deleted[\\s\\S]*ORDER BY deleted\\.empresa_id[\\s\\S]*\\)\\)`),
+      `${spec.function} must collect ordered OLD tenants before the shared lock protocol`);
+    const cleanupGuard = functionBlock.indexOf(
+      'PERFORM public.whatsapp_cloud_messages_lock_projection_cleanup(ARRAY(',
     );
     const firstProjectionLockOrWrite = functionBlock.search(
       /(?:INSERT INTO public\.whatsapp_cloud_messages|FOR UPDATE OF message)/,
     );
-    assert.ok(bindingRead >= 0 && tenantLock > bindingRead && firstProjectionLockOrWrite > tenantLock,
-      `${spec.function} must inspect the binding before any new advisory and lock before projection work`);
-    assert.match(functionBlock,
-      /IF transaction_empresa_id IS NULL OR transaction_empresa_id = '' THEN[\s\S]*whatsapp_cloud_messages_lock_projection_migration/i,
-      `${spec.function} must acquire ordered tenant locks only for pure cleanup transactions`);
+    assert.ok(cleanupGuard >= 0 && firstProjectionLockOrWrite > cleanupGuard,
+      `${spec.function} must finish cleanup order validation/locking before projection work`);
     assert.doesNotMatch(functionBlock,
-      /whatsapp_cloud_messages_lock_projection\(target_empresa_id\)/,
-      `${spec.function} must not use the runtime single-tenant transaction guard`);
+      /whatsapp_cloud_messages_lock_projection(?:_migration)?\(target_empresa_id\)/,
+      `${spec.function} must not bypass the shared cleanup protocol`);
     assert.match(projectionSql, new RegExp(
       `CREATE TRIGGER ${spec.trigger} AFTER DELETE ON public\\.${spec.table.split('.')[1]} REFERENCING OLD TABLE AS ${spec.transition} FOR EACH STATEMENT EXECUTE FUNCTION public\\.${spec.function}\\(\\)`,
     ));
@@ -929,6 +970,48 @@ for (const source of ['whatsapp_cloud_events', 'wpp_outbox']) {
   });
 }
 
+test('binding runtime conserva rechazo de cleanup outbox sin tenant', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (1)');
+    await pool.query(outboxSql);
+    await pool.query(`
+      INSERT INTO public.wpp_outbox (empresa_id, telefono, mensaje, status, transport_origin)
+      VALUES (NULL, '549351555190', 'general cleanup', 'pending', 'general')
+    `);
+    await pool.query(projectionSql);
+    const client = await pool.connect();
+    const processId = client.processID;
+    let rejection;
+    try {
+      await client.query('BEGIN');
+      await client.query(`
+        INSERT INTO public.whatsapp_cloud_events
+          (empresa_id, event_kind, dedupe_key, message_id, sender_id, message_type, event_data)
+        VALUES (1, 'message', 'runtime-null:bind', 'runtime-null-bind', '549351555191',
+                'text', '{"text":{"body":"bound"}}'::jsonb)
+      `);
+      await assert.rejects(
+        client.query("DELETE FROM public.wpp_outbox WHERE empresa_id IS NULL AND transport_origin = 'general'"),
+        error => {
+          rejection = error;
+          return error?.code === 'P0001'
+            && error?.message === 'whatsapp_cloud_projection_cross_tenant_transaction';
+        },
+      );
+      await client.query('ROLLBACK').catch(() => {});
+    } finally {
+      await client.query('ROLLBACK').catch(() => {});
+      client.release();
+    }
+    assert.ok(rejection);
+    assert.equal((await pool.query(
+      "SELECT count(*)::int AS total FROM public.wpp_outbox WHERE empresa_id IS NULL AND transport_origin = 'general'",
+    )).rows[0].total, 1);
+    await assertNoAdvisoryLocks(pool, [processId],
+      'runtime-bound null cleanup rejection must release its advisory on rollback');
+  });
+});
+
 test('cleanups puros de tenants disjuntos siguen paralelos y liberan advisories', async () => {
   await withDatabase(async pool => {
     await pool.query('INSERT INTO empresas(id) VALUES (1), (2)');
@@ -964,6 +1047,358 @@ test('cleanups puros de tenants disjuntos siguen paralelos y liberan advisories'
     assert.equal((await pool.query(
       'SELECT count(*)::int AS total FROM public.wpp_outbox WHERE empresa_id = 2',
     )).rows[0].total, 0, 'committed pure cleanup must remove tenant 2 outbox');
+  });
+});
+
+test('cleanup puro multi-sentencia rechaza 2→1 antes del advisory y evita el 40P01 exacto entre fuentes', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (1), (2)');
+    await pool.query(outboxSql);
+    await seedCleanupRaceSources(pool, 'global-order-red');
+    await pool.query(`
+      INSERT INTO public.wpp_outbox
+        (empresa_id, telefono, mensaje, status, transport_origin)
+      VALUES (1, '549351555199', 'global order B', 'pending', 'cloud')
+    `);
+    await pool.query(projectionSql);
+    const baseline = (await pool.query(`
+      SELECT
+        (SELECT count(*)::int FROM public.whatsapp_cloud_events) AS events,
+        (SELECT count(*)::int FROM public.wpp_outbox WHERE transport_origin = 'cloud') AS outbox,
+        (SELECT count(*)::int FROM public.whatsapp_cloud_messages) AS projection,
+        (SELECT count(*)::int FROM public.whatsapp_cloud_messages
+          WHERE source_event_id IS NOT NULL OR outbox_id IS NOT NULL) AS linked_projection
+    `)).rows[0];
+
+    const transactionA = await pool.connect();
+    const transactionB = await pool.connect();
+    const trackedPids = [transactionA.processID, transactionB.processID];
+    let descendingError;
+    try {
+      await transactionA.query('BEGIN');
+      await transactionB.query('BEGIN');
+      await transactionA.query("SET LOCAL deadlock_timeout = '100ms'; SET LOCAL statement_timeout = '3s'");
+      await transactionB.query("SET LOCAL deadlock_timeout = '100ms'; SET LOCAL statement_timeout = '3s'");
+
+      await transactionA.query(`
+        DELETE FROM public.whatsapp_cloud_events
+         WHERE empresa_id = 2 AND event_kind = 'message'
+      `);
+      await transactionB.query(`
+        DELETE FROM public.wpp_outbox
+         WHERE empresa_id = 1 AND transport_origin = 'cloud' AND mensaje = 'global order B'
+      `);
+
+      const ascendingPromise = transactionB.query(`
+        DELETE FROM public.whatsapp_cloud_events
+         WHERE empresa_id = 2 AND event_kind = 'status'
+      `);
+      await waitUntil(async () => (await pool.query(`
+        SELECT wait_event_type
+          FROM pg_catalog.pg_stat_activity
+         WHERE pid = $1
+      `, [transactionB.processID])).rows[0]?.wait_event_type === 'Lock',
+      'transaction B did not reach the exact cross-source advisory wait');
+
+      await assert.rejects(
+        transactionA.query(`
+          DELETE FROM public.wpp_outbox
+           WHERE empresa_id = 1 AND transport_origin = 'cloud' AND mensaje = 'cleanup outbound one'
+        `),
+        error => {
+          descendingError = error;
+          return error?.code === 'P0001'
+            && error?.message === 'whatsapp_cloud_projection_cleanup_lock_order'
+            && error?.code !== '40P01';
+        },
+      );
+      await ascendingPromise;
+      await transactionA.query('ROLLBACK');
+      await transactionB.query('ROLLBACK').catch(() => {});
+    } finally {
+      await transactionA.query('ROLLBACK').catch(() => {});
+      await transactionB.query('ROLLBACK').catch(() => {});
+      transactionA.release();
+      transactionB.release();
+    }
+
+    assert.ok(descendingError, 'descending cleanup must expose one deterministic sanitized error');
+    for (const property of ['message', 'detail', 'hint', 'where', 'schema', 'table', 'constraint']) {
+      const exposed = String(descendingError[property] ?? '');
+      assert.equal(exposed.includes('1'), false, `${property} must not expose tenant 1`);
+      assert.equal(exposed.includes('2'), false, `${property} must not expose tenant 2`);
+    }
+    assert.deepEqual((await pool.query(`
+      SELECT
+        (SELECT count(*)::int FROM public.whatsapp_cloud_events) AS events,
+        (SELECT count(*)::int FROM public.wpp_outbox WHERE transport_origin = 'cloud') AS outbox,
+        (SELECT count(*)::int FROM public.whatsapp_cloud_messages) AS projection,
+        (SELECT count(*)::int FROM public.whatsapp_cloud_messages
+          WHERE source_event_id IS NOT NULL OR outbox_id IS NOT NULL) AS linked_projection
+    `)).rows[0], baseline);
+    await assertNoAdvisoryLocks(pool, trackedPids,
+      'descending rejection plus rollback must release all transaction advisories');
+  });
+});
+
+test('cleanup puro cross-source con outbox 2→events 1 también deja ganar 1→2 sin 40P01', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (1), (2)');
+    await pool.query(outboxSql);
+    await seedCleanupRaceSources(pool, 'global-order-reverse');
+    await pool.query(`
+      INSERT INTO public.wpp_outbox
+        (empresa_id, telefono, mensaje, status, transport_origin)
+      VALUES (2, '549351555298', 'global order tenant two B', 'pending', 'cloud')
+    `);
+    await pool.query(projectionSql);
+    const baseline = (await pool.query(`
+      SELECT
+        (SELECT count(*)::int FROM public.whatsapp_cloud_events) AS events,
+        (SELECT count(*)::int FROM public.wpp_outbox WHERE transport_origin = 'cloud') AS outbox,
+        (SELECT count(*)::int FROM public.whatsapp_cloud_messages) AS projection
+    `)).rows[0];
+
+    const descending = await pool.connect();
+    const ascending = await pool.connect();
+    const trackedPids = [descending.processID, ascending.processID];
+    let descendingError;
+    try {
+      await descending.query('BEGIN');
+      await ascending.query('BEGIN');
+      await descending.query("SET LOCAL deadlock_timeout = '100ms'; SET LOCAL statement_timeout = '3s'");
+      await ascending.query("SET LOCAL deadlock_timeout = '100ms'; SET LOCAL statement_timeout = '3s'");
+      await descending.query(`
+        DELETE FROM public.wpp_outbox
+         WHERE empresa_id = 2 AND transport_origin = 'cloud' AND mensaje = 'cleanup outbound two'
+      `);
+      await ascending.query(`
+        DELETE FROM public.whatsapp_cloud_events
+         WHERE empresa_id = 1 AND event_kind = 'message'
+      `);
+
+      const ascendingPromise = ascending.query(`
+        DELETE FROM public.wpp_outbox
+         WHERE empresa_id = 2 AND transport_origin = 'cloud'
+           AND mensaje = 'global order tenant two B'
+      `);
+      await waitUntil(async () => (await pool.query(`
+        SELECT wait_event_type FROM pg_catalog.pg_stat_activity WHERE pid = $1
+      `, [ascending.processID])).rows[0]?.wait_event_type === 'Lock',
+      'ascending reverse transaction did not wait on tenant 2');
+
+      await assert.rejects(descending.query(`
+        DELETE FROM public.whatsapp_cloud_events
+         WHERE empresa_id = 1 AND event_kind = 'status'
+      `), error => {
+        descendingError = error;
+        return error?.code === 'P0001'
+          && error?.message === 'whatsapp_cloud_projection_cleanup_lock_order'
+          && error?.code !== '40P01';
+      });
+      await ascendingPromise;
+      await ascending.query('ROLLBACK');
+      await descending.query('ROLLBACK').catch(() => {});
+    } finally {
+      await descending.query('ROLLBACK').catch(() => {});
+      await ascending.query('ROLLBACK').catch(() => {});
+      descending.release();
+      ascending.release();
+    }
+
+    assert.ok(descendingError);
+    assert.deepEqual((await pool.query(`
+      SELECT
+        (SELECT count(*)::int FROM public.whatsapp_cloud_events) AS events,
+        (SELECT count(*)::int FROM public.wpp_outbox WHERE transport_origin = 'cloud') AS outbox,
+        (SELECT count(*)::int FROM public.whatsapp_cloud_messages) AS projection
+    `)).rows[0], baseline);
+    await assertNoAdvisoryLocks(pool, trackedPids,
+      'reverse cross-source winner must release advisories after rollback');
+  });
+});
+
+for (const source of ['whatsapp_cloud_events', 'wpp_outbox']) {
+  test(`cleanup puro ${source} acepta 1→1→2 y multi-tenant, rechaza 2→1 sin leaks`, async () => {
+    await withDatabase(async pool => {
+      await pool.query('INSERT INTO empresas(id) VALUES (1), (2)');
+      await pool.query(outboxSql);
+      await seedCleanupRaceSources(pool, `monotonic:${source}`);
+      await pool.query(`
+        INSERT INTO public.wpp_outbox
+          (empresa_id, telefono, mensaje, status, transport_origin)
+        VALUES
+          (1, '549351555391', 'monotonic tenant one extra', 'pending', 'cloud'),
+          (2, '549351555392', 'monotonic tenant two extra', 'pending', 'cloud')
+      `);
+      await pool.query(projectionSql);
+      const baseline = (await pool.query(`
+        SELECT
+          (SELECT count(*)::int FROM public.${source}) AS source_rows,
+          (SELECT count(*)::int FROM public.whatsapp_cloud_messages) AS projection_rows
+      `)).rows[0];
+      const client = await pool.connect();
+      const processId = client.processID;
+      let descendingError;
+      try {
+        await client.query('BEGIN');
+        if (source === 'whatsapp_cloud_events') {
+          await client.query("DELETE FROM public.whatsapp_cloud_events WHERE empresa_id = 1 AND event_kind = 'message'");
+          await client.query("DELETE FROM public.whatsapp_cloud_events WHERE empresa_id = 1 AND event_kind = 'status'");
+          await client.query('DELETE FROM public.whatsapp_cloud_events WHERE empresa_id = 2');
+        } else {
+          await client.query("DELETE FROM public.wpp_outbox WHERE empresa_id = 1 AND mensaje = 'cleanup outbound one'");
+          await client.query("DELETE FROM public.wpp_outbox WHERE empresa_id = 1 AND mensaje = 'monotonic tenant one extra'");
+          await client.query('DELETE FROM public.wpp_outbox WHERE empresa_id = 2');
+        }
+        assert.equal((await pool.query(`
+          SELECT count(*)::int AS total
+            FROM pg_catalog.pg_locks
+           WHERE locktype = 'advisory' AND pid = $1 AND granted
+        `, [processId])).rows[0].total, 2, '1→1→2 must retain exactly tenant advisories 1 and 2');
+        await client.query('ROLLBACK');
+
+        await client.query('BEGIN');
+        await client.query(source === 'whatsapp_cloud_events'
+          ? 'DELETE FROM public.whatsapp_cloud_events WHERE empresa_id IN (2, 1)'
+          : "DELETE FROM public.wpp_outbox WHERE empresa_id IN (2, 1) AND transport_origin = 'cloud'");
+        assert.equal((await pool.query(`
+          SELECT count(*)::int AS total
+            FROM pg_catalog.pg_locks
+           WHERE locktype = 'advisory' AND pid = $1 AND granted
+        `, [processId])).rows[0].total, 2,
+        'one multi-tenant statement must deduplicate and retain both ordered advisories');
+        await client.query('ROLLBACK');
+
+        await client.query('BEGIN');
+        await client.query(`DELETE FROM public.${source} WHERE empresa_id = 2`);
+        await assert.rejects(
+          client.query(`DELETE FROM public.${source} WHERE empresa_id = 1`),
+          error => {
+            descendingError = error;
+            return error?.code === 'P0001'
+              && error?.message === 'whatsapp_cloud_projection_cleanup_lock_order'
+              && error?.code !== '40P01';
+          },
+        );
+        await client.query('ROLLBACK').catch(() => {});
+      } finally {
+        await client.query('ROLLBACK').catch(() => {});
+        client.release();
+      }
+
+      assert.ok(descendingError);
+      for (const property of ['message', 'detail', 'hint', 'where', 'schema', 'table', 'constraint']) {
+        const exposed = String(descendingError[property] ?? '');
+        assert.equal(exposed.includes('1'), false, `${source} ${property} must not expose tenant 1`);
+        assert.equal(exposed.includes('2'), false, `${source} ${property} must not expose tenant 2`);
+      }
+      assert.deepEqual((await pool.query(`
+        SELECT
+          (SELECT count(*)::int FROM public.${source}) AS source_rows,
+          (SELECT count(*)::int FROM public.whatsapp_cloud_messages) AS projection_rows
+      `)).rows[0], baseline);
+      await assertNoAdvisoryLocks(pool, [processId],
+        `${source}: every monotonic commit/rollback path must release advisories`);
+    });
+  });
+}
+
+test('binding runtime posterior respeta el máximo de cleanup sin afectar el orden ascendente', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (1), (2)');
+    await pool.query(outboxSql);
+    await seedCleanupRaceSources(pool, 'cleanup-then-runtime');
+    await pool.query(projectionSql);
+    const baseline = (await pool.query(`
+      SELECT
+        (SELECT count(*)::int FROM public.whatsapp_cloud_events) AS events,
+        (SELECT count(*)::int FROM public.whatsapp_cloud_messages) AS projection
+    `)).rows[0];
+    const client = await pool.connect();
+    const processId = client.processID;
+    let rejection;
+    try {
+      await client.query('BEGIN');
+      await client.query('DELETE FROM public.whatsapp_cloud_events WHERE empresa_id = 2');
+      await assert.rejects(client.query(`
+        INSERT INTO public.whatsapp_cloud_events
+          (empresa_id, event_kind, dedupe_key, message_id, sender_id, message_type, event_data)
+        VALUES (1, 'message', 'cleanup-runtime:descending', 'cleanup-runtime-descending',
+                '549351555499', 'text', '{"text":{"body":"descending runtime"}}'::jsonb)
+      `), error => {
+        rejection = error;
+        return error?.code === 'P0001'
+          && error?.message === 'whatsapp_cloud_projection_cleanup_lock_order'
+          && error?.code !== '40P01';
+      });
+      await client.query('ROLLBACK').catch(() => {});
+
+      await client.query('BEGIN');
+      await client.query('DELETE FROM public.whatsapp_cloud_events WHERE empresa_id = 1');
+      await client.query(`
+        INSERT INTO public.whatsapp_cloud_events
+          (empresa_id, event_kind, dedupe_key, message_id, sender_id, message_type, event_data)
+        VALUES (2, 'message', 'cleanup-runtime:ascending', 'cleanup-runtime-ascending',
+                '549351555498', 'text', '{"text":{"body":"ascending runtime"}}'::jsonb)
+      `);
+      assert.equal((await pool.query(`
+        SELECT count(*)::int AS total
+          FROM pg_catalog.pg_locks
+         WHERE locktype = 'advisory' AND pid = $1 AND granted
+      `, [processId])).rows[0].total, 2,
+      'cleanup 1 then runtime 2 must retain only the two ascending tenant advisories');
+      await client.query('ROLLBACK');
+    } finally {
+      await client.query('ROLLBACK').catch(() => {});
+      client.release();
+    }
+
+    assert.ok(rejection);
+    assert.deepEqual((await pool.query(`
+      SELECT
+        (SELECT count(*)::int FROM public.whatsapp_cloud_events) AS events,
+        (SELECT count(*)::int FROM public.whatsapp_cloud_messages) AS projection
+    `)).rows[0], baseline);
+    await assertNoAdvisoryLocks(pool, [processId],
+      'cleanup/runtime binding integration must not leak advisories');
+  });
+});
+
+test('cleanup puro tenant 1 no serializa writer runtime normal tenant 2', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (1), (2)');
+    await pool.query(outboxSql);
+    await seedCleanupRaceSources(pool, 'normal-writer-parallel');
+    await pool.query(projectionSql);
+    const cleanup = await pool.connect();
+    const writer = await pool.connect();
+    const trackedPids = [cleanup.processID, writer.processID];
+    try {
+      await cleanup.query('BEGIN');
+      await cleanup.query('DELETE FROM public.whatsapp_cloud_events WHERE empresa_id = 1');
+      await writer.query('BEGIN');
+      await Promise.race([
+        writer.query(`
+          INSERT INTO public.whatsapp_cloud_events
+            (empresa_id, event_kind, dedupe_key, message_id, sender_id, message_type, event_data)
+          VALUES (2, 'message', 'normal-writer:parallel', 'normal-writer-parallel',
+                  '549351555497', 'text', '{"text":{"body":"parallel writer"}}'::jsonb)
+        `),
+        new Promise((_, reject) => setTimeout(
+          () => reject(new Error('normal tenant 2 writer was serialized behind cleanup tenant 1')), 500,
+        )),
+      ]);
+      await writer.query('ROLLBACK');
+      await cleanup.query('ROLLBACK');
+    } finally {
+      await cleanup.query('ROLLBACK').catch(() => {});
+      await writer.query('ROLLBACK').catch(() => {});
+      cleanup.release();
+      writer.release();
+    }
+    await assertNoAdvisoryLocks(pool, trackedPids,
+      'parallel normal writer and cleanup rollbacks must release advisories');
   });
 });
 
