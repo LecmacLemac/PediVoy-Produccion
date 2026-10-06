@@ -1605,7 +1605,7 @@ test('DDL de reparación de trigger fuente no deadlockea con writer operativo y 
 
 test('migración toma lock advisory transaccional estable antes del primer DDL y dos ejecuciones completas frescas terminan exit 0', async () => {
   const begin = projectionSql.indexOf('BEGIN;');
-  const safePath = projectionSql.indexOf('SET LOCAL search_path = public, pg_catalog;');
+  const safePath = projectionSql.indexOf('SET LOCAL search_path = public;');
   const lockTimeout = projectionSql.indexOf("SET LOCAL lock_timeout = '30s';");
   const statementTimeout = projectionSql.indexOf("SET LOCAL statement_timeout = '5min';");
   const advisoryLock = projectionSql.indexOf('SELECT pg_catalog.pg_advisory_xact_lock(1464550724, 1229867347);');
@@ -2996,7 +2996,7 @@ test('secuencia canónica preexistente valida relkind y tipo exactos antes de re
 
 test('search_path shadow,public sólo crea y repara objetos canónicos en public sin tocar homónimos', async () => {
   const begin = projectionSql.indexOf('BEGIN;');
-  const safePath = projectionSql.indexOf('SET LOCAL search_path = public, pg_catalog;');
+  const safePath = projectionSql.indexOf('SET LOCAL search_path = public;');
   const firstObjectReference = projectionSql.search(/(?:pg_advisory|to_regclass|CREATE\s+(?:TABLE|SEQUENCE|FUNCTION|TRIGGER)|pg_class)/i);
   assert.ok(begin >= 0 && safePath > begin && firstObjectReference > safePath,
     'safe transaction-local search_path must precede every object lookup or DDL');
@@ -3103,7 +3103,7 @@ test('search_path shadow,public sólo crea y repara objetos canónicos en public
 
 test('initDb completo repara sólo la FK pública de outbox bajo search_path hostil y conserva shadow', async () => {
   const migrationBegin = outboxSql.indexOf('BEGIN;');
-  const safePath = outboxSql.indexOf('SET LOCAL search_path = public, pg_catalog;', migrationBegin);
+  const safePath = outboxSql.indexOf('SET LOCAL search_path = public;', migrationBegin);
   const firstRepairLookupOrDdl = outboxSql.slice(migrationBegin).search(
     /(?:LOCK TABLE|ALTER TABLE|FROM pg_catalog\.pg_|'public\.wpp_outbox'::regclass)/,
   );

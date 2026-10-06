@@ -1,5 +1,5 @@
 BEGIN;
-SET LOCAL search_path = public, pg_catalog;
+SET LOCAL search_path = public;
 
 -- =========================================================
 -- ARCHIVO DE INICIALIZACIÓN DE BASE DE DATOS (PostgreSQL)
@@ -61,7 +61,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_empresas_landing_domain_unique
 -- BEGIN WHATSAPP CLOUD INBOX MIGRATION
 COMMIT;
 BEGIN;
-SET LOCAL search_path = public, pg_catalog;
+SET LOCAL search_path = public;
 SET LOCAL lock_timeout = '30s';
 SET LOCAL statement_timeout = '5min';
 CREATE TABLE IF NOT EXISTS whatsapp_cloud_events (
@@ -128,7 +128,7 @@ BEGIN
          AND attname = column_definition.column_name
          AND NOT attisdropped
     ) THEN
-      EXECUTE format(
+      EXECUTE pg_catalog.format(
         'ALTER TABLE whatsapp_cloud_events ADD COLUMN %I %s',
         column_definition.column_name,
         column_definition.data_type
@@ -230,7 +230,7 @@ BEGIN
          AND NOT attnotnull
          AND NOT attisdropped
     ) THEN
-      EXECUTE format(
+      EXECUTE pg_catalog.format(
         'ALTER TABLE whatsapp_cloud_events ALTER COLUMN %I SET NOT NULL',
         required_column
       );
@@ -302,7 +302,7 @@ BEGIN
     ALTER TABLE whatsapp_cloud_events
       ADD CONSTRAINT whatsapp_cloud_events_pkey PRIMARY KEY (id);
   ELSIF primary_key_columns <> ARRAY['id']::TEXT[] THEN
-    EXECUTE format('ALTER TABLE whatsapp_cloud_events DROP CONSTRAINT %I', primary_key_name);
+    EXECUTE pg_catalog.format('ALTER TABLE whatsapp_cloud_events DROP CONSTRAINT %I', primary_key_name);
     ALTER TABLE whatsapp_cloud_events
       ADD CONSTRAINT whatsapp_cloud_events_pkey PRIMARY KEY (id);
   END IF;
@@ -332,7 +332,7 @@ BEGIN
        OR foreign_key.confrelid <> 'empresas'::regclass
        OR foreign_key.confkey <> ARRAY[empresa_target_attribute]::SMALLINT[]
        OR foreign_key.confdeltype <> 'c' THEN
-      EXECUTE format(
+      EXECUTE pg_catalog.format(
         'ALTER TABLE whatsapp_cloud_events DROP CONSTRAINT %I',
         foreign_key.conname
       );
@@ -515,7 +515,7 @@ BEGIN
        AND index_row.indpred IS NULL
        AND index_row.indexprs IS NULL
        AND index_row.indnkeyatts = 2
-       AND index_row.indkey::TEXT = format('%s %s', empresa_attribute, dedupe_attribute)
+       AND index_row.indkey::TEXT = pg_catalog.format('%s %s', empresa_attribute, dedupe_attribute)
       INTO valid_index
       FROM pg_index AS index_row
      WHERE index_row.indexrelid = existing_index;
@@ -549,7 +549,7 @@ BEGIN
        AND index_row.indpred IS NULL
        AND index_row.indexprs IS NULL
        AND index_row.indnkeyatts = 2
-       AND index_row.indkey::TEXT = format('%s %s', empresa_attribute, received_attribute)
+       AND index_row.indkey::TEXT = pg_catalog.format('%s %s', empresa_attribute, received_attribute)
       INTO valid_index
       FROM pg_index AS index_row
      WHERE index_row.indexrelid = existing_index;
@@ -635,7 +635,7 @@ COMMIT;
 -- END WHATSAPP CLOUD INBOX MIGRATION
 
 BEGIN;
-SET LOCAL search_path = public, pg_catalog;
+SET LOCAL search_path = public;
 
 -- =========================================================
 -- 3. CONFIGURACIÓN, PROMPTS Y CUENTAS
@@ -703,7 +703,7 @@ CREATE TABLE IF NOT EXISTS usuarios (
 -- Roles DB: limpiar datos históricos sin elevar privilegios y cerrar escrituras futuras.
 COMMIT;
 BEGIN;
-SET LOCAL search_path = public, pg_catalog;
+SET LOCAL search_path = public;
 ALTER TABLE usuarios DROP CONSTRAINT IF EXISTS usuarios_role_check;
 
 UPDATE usuarios
@@ -727,7 +727,7 @@ ALTER TABLE usuarios
 COMMIT;
 
 BEGIN;
-SET LOCAL search_path = public, pg_catalog;
+SET LOCAL search_path = public;
 
 -- =========================================================
 -- 5. CHOFERES Y LOGÍSTICA
@@ -1098,7 +1098,7 @@ CREATE TABLE IF NOT EXISTS referentes (
 -- Identity-link quarantine: run only after choferes and referentes exist.
 COMMIT;
 BEGIN;
-SET LOCAL search_path = public, pg_catalog;
+SET LOCAL search_path = public;
 UPDATE usuarios u
 SET activo = false
 WHERE CASE
@@ -1120,7 +1120,7 @@ END;
 COMMIT;
 
 BEGIN;
-SET LOCAL search_path = public, pg_catalog;
+SET LOCAL search_path = public;
 
 CREATE UNIQUE INDEX IF NOT EXISTS referentes_empresa_codigo_uniq
   ON referentes (empresa_id, LOWER(codigo))
@@ -1635,7 +1635,7 @@ CREATE TABLE IF NOT EXISTS pedido_pagos (
 -- BEGIN COMPROBANTE CONCURRENCY MIGRATION
 COMMIT;
 BEGIN;
-SET LOCAL search_path = public, pg_catalog;
+SET LOCAL search_path = public;
 SET LOCAL lock_timeout = '30s';
 SET LOCAL statement_timeout = '5min';
 CREATE OR REPLACE FUNCTION normalizar_comprobante_operacion(value TEXT)
@@ -1877,7 +1877,7 @@ COMMIT;
 -- END COMPROBANTE CONCURRENCY MIGRATION
 
 BEGIN;
-SET LOCAL search_path = public, pg_catalog;
+SET LOCAL search_path = public;
 
 CREATE TABLE IF NOT EXISTS historial_pagos (
   id SERIAL PRIMARY KEY,
@@ -1937,7 +1937,7 @@ CREATE TABLE IF NOT EXISTS wpp_outbox (
 COMMIT;
 BEGIN;
 
-SET LOCAL search_path = public, pg_catalog;
+SET LOCAL search_path = public;
 SET LOCAL lock_timeout = '30s';
 SET LOCAL statement_timeout = '5min';
 
@@ -2131,7 +2131,7 @@ COMMIT;
 
 -- BEGIN WHATSAPP CLOUD OPS MIGRATION
 BEGIN;
-SET LOCAL search_path = public, pg_catalog;
+SET LOCAL search_path = public;
 SET LOCAL lock_timeout = '30s';
 SET LOCAL statement_timeout = '5min';
 
@@ -2170,7 +2170,7 @@ COMMIT;
 -- END WPP OUTBOX MIGRATION
 
 BEGIN;
-SET LOCAL search_path = public, pg_catalog;
+SET LOCAL search_path = public;
 
 CREATE TABLE IF NOT EXISTS push_subs (
   id         SERIAL PRIMARY KEY,
@@ -2186,7 +2186,7 @@ COMMIT;
 
 -- BEGIN WHATSAPP CLOUD MESSAGE PROJECTION MIGRATION
 BEGIN;
-SET LOCAL search_path = public, pg_catalog;
+SET LOCAL search_path = public;
 SET LOCAL lock_timeout = '30s';
 SET LOCAL statement_timeout = '5min';
 -- Stable namespace/key pair for the complete WhatsApp Cloud inbox projection migration.
@@ -2334,7 +2334,7 @@ BEGIN
          AND attname = column_row.column_name
          AND NOT attisdropped
     ) THEN
-      EXECUTE format(
+      EXECUTE pg_catalog.format(
         'ALTER TABLE public.whatsapp_cloud_messages ADD COLUMN %I %s',
         column_row.column_name, column_row.column_definition
       );
@@ -2383,12 +2383,12 @@ BEGIN
       IF column_row.column_name IN (
         'message_at', 'sent_at', 'delivered_at', 'read_at', 'failed_at', 'created_at', 'updated_at'
       ) THEN
-        EXECUTE format(
+        EXECUTE pg_catalog.format(
           'ALTER TABLE public.whatsapp_cloud_messages ALTER COLUMN %I TYPE TIMESTAMPTZ USING %I AT TIME ZONE ''UTC''',
           column_row.column_name, column_row.column_name
         );
       ELSE
-        EXECUTE format(
+        EXECUTE pg_catalog.format(
           'ALTER TABLE public.whatsapp_cloud_messages ALTER COLUMN %I TYPE %s USING %I::%s',
           column_row.column_name, column_row.data_type, column_row.column_name, column_row.data_type
         );
@@ -2476,7 +2476,7 @@ BEGIN
      AND constraint_row.contype = 'p';
 
   IF FOUND AND primary_row.key_columns IS DISTINCT FROM ARRAY['id']::TEXT[] THEN
-    EXECUTE format('ALTER TABLE public.whatsapp_cloud_messages DROP CONSTRAINT %I', primary_row.conname);
+    EXECUTE pg_catalog.format('ALTER TABLE public.whatsapp_cloud_messages DROP CONSTRAINT %I', primary_row.conname);
   END IF;
   IF NOT EXISTS (
     SELECT 1
@@ -3755,7 +3755,7 @@ BEGIN
        WHERE attrelid = 'public.whatsapp_cloud_messages'::pg_catalog.regclass
          AND attname = column_name AND NOT attisdropped AND NOT attnotnull
     ) THEN
-      EXECUTE format(
+      EXECUTE pg_catalog.format(
         'ALTER TABLE public.whatsapp_cloud_messages ALTER COLUMN %I SET NOT NULL',
         column_name
       );
@@ -3819,9 +3819,9 @@ BEGIN
         FROM pg_catalog.pg_constraint AS constraint_row
        WHERE constraint_row.conindid = pg_catalog.to_regclass(index_row.index_name);
       IF FOUND THEN
-        EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', backing_constraint.table_name, backing_constraint.conname);
+        EXECUTE pg_catalog.format('ALTER TABLE %s DROP CONSTRAINT %I', backing_constraint.table_name, backing_constraint.conname);
       ELSE
-        EXECUTE format('DROP INDEX %s', index_row.index_name);
+        EXECUTE pg_catalog.format('DROP INDEX %s', index_row.index_name);
       END IF;
     END IF;
   END LOOP;
@@ -4014,21 +4014,21 @@ BEGIN
 
     IF FOUND AND current_definition = expected_definition THEN
       IF NOT current_validated THEN
-        EXECUTE format(
+        EXECUTE pg_catalog.format(
           'ALTER TABLE public.whatsapp_cloud_messages VALIDATE CONSTRAINT %I',
           constraint_row.constraint_name
         );
       END IF;
     ELSE
-      EXECUTE format(
+      EXECUTE pg_catalog.format(
         'ALTER TABLE public.whatsapp_cloud_messages DROP CONSTRAINT IF EXISTS %I',
         constraint_row.constraint_name
       );
-      EXECUTE format(
+      EXECUTE pg_catalog.format(
         'ALTER TABLE public.whatsapp_cloud_messages ADD CONSTRAINT %I %s NOT VALID',
         constraint_row.constraint_name, constraint_row.definition_sql
       );
-      EXECUTE format(
+      EXECUTE pg_catalog.format(
         'ALTER TABLE public.whatsapp_cloud_messages VALIDATE CONSTRAINT %I',
         constraint_row.constraint_name
       );
@@ -4074,7 +4074,7 @@ BEGIN
             WHERE key_column.ordinality <= candidate.indnkeyatts
          ) = expected_columns
     ) THEN
-      EXECUTE format('DROP INDEX %s', index_row.index_name);
+      EXECUTE pg_catalog.format('DROP INDEX %s', index_row.index_name);
     END IF;
   END LOOP;
 END $$;
@@ -4097,7 +4097,7 @@ END $$;
 COMMIT;
 
 BEGIN;
-SET LOCAL search_path = public, pg_catalog;
+SET LOCAL search_path = public;
 SET LOCAL lock_timeout = '30s';
 SET LOCAL statement_timeout = '5min';
 SELECT pg_catalog.pg_advisory_xact_lock(1464550724, 1229867347);
@@ -4214,7 +4214,7 @@ COMMIT;
 -- END WHATSAPP CLOUD MESSAGE PROJECTION MIGRATION
 
 BEGIN;
-SET LOCAL search_path = public, pg_catalog;
+SET LOCAL search_path = public;
 
 CREATE TABLE IF NOT EXISTS push_sub_pedidos (
   sub_id    INTEGER NOT NULL REFERENCES push_subs(id) ON DELETE CASCADE,

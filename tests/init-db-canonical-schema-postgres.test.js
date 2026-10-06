@@ -37,7 +37,7 @@ async function withDatabase(work) {
     pool = new pg.Pool({ host: '127.0.0.1', port, user: 'init_db_test', database: 'postgres', max: 2 });
     const version = await pool.query('SHOW server_version');
     assert.match(version.rows[0].server_version, /^18\./);
-    await work(pool);
+    await work(pool, { host: '127.0.0.1', port, database: 'postgres' });
   } finally {
     if (pool) await pool.end();
     if (started) execFileSync(join(bin, 'pg_ctl'), [
@@ -200,7 +200,7 @@ function assertTransactionScopedSearchPath(sql) {
     if (lines[index].trim() === 'BEGIN;') {
       beginCount += 1;
       const next = nextExecutableLine(index + 1);
-      assert.equal(lines[next]?.trim(), 'SET LOCAL search_path = public, pg_catalog;',
+      assert.equal(lines[next]?.trim(), 'SET LOCAL search_path = public;',
         `BEGIN at line ${index + 1} must set the canonical local search_path first`);
     }
     if (lines[index].trim() === 'COMMIT;') {
@@ -216,8 +216,8 @@ function assertTransactionScopedSearchPath(sql) {
 
 test('initDb completo limita public a cada transacción y preserva search_path y shadow en doble migración',
   { timeout: 180_000 }, async () => {
-    assert.match(initSql, /^BEGIN;\s*SET LOCAL search_path = public, pg_catalog;/);
-    assert.doesNotMatch(initSql, /^SET search_path = public, pg_catalog;/m);
+    assert.match(initSql, /^BEGIN;\s*SET LOCAL search_path = public;/);
+    assert.doesNotMatch(initSql, /^SET(?: LOCAL)? search_path = public, pg_catalog;/m);
     assert.doesNotMatch(initSql, /^RESET search_path;/m);
     assert.match(initSql, /COMMIT;\s*$/);
     assertTransactionScopedSearchPath(initSql);
@@ -249,10 +249,170 @@ test('initDb completo limita public a cada transacción y preserva search_path y
     });
   });
 
+test('rol de migración no resuelve funciones homónimas maliciosas de public',
+  { timeout: 180_000 }, async () => {
+    await withDatabase(async (admin, connection) => {
+      await admin.query(`
+        CREATE EXTENSION pg_trgm;
+        CREATE EXTENSION postgis;
+        CREATE ROLE init_db_attacker LOGIN;
+        CREATE ROLE init_db_migrator LOGIN;
+        GRANT USAGE, CREATE ON SCHEMA public TO init_db_attacker, init_db_migrator;
+        CREATE SCHEMA hijack AUTHORIZATION init_db_attacker;
+      `);
+
+      const attacker = new pg.Pool({ ...connection, user: 'init_db_attacker', max: 1 });
+      const migrator = new pg.Pool({ ...connection, user: 'init_db_migrator', max: 1 });
+      try {
+        await attacker.query(`
+          CREATE SEQUENCE hijack.jsonb_typeof_calls;
+          CREATE SEQUENCE hijack.format_calls;
+
+          CREATE FUNCTION public.jsonb_typeof(value JSONB)
+          RETURNS TEXT
+          LANGUAGE plpgsql
+          IMMUTABLE
+          SECURITY DEFINER
+          SET search_path = pg_catalog
+          AS $function$
+          BEGIN
+            PERFORM pg_catalog.nextval('hijack.jsonb_typeof_calls'::pg_catalog.regclass);
+            RETURN pg_catalog.jsonb_typeof(value);
+          END
+          $function$;
+
+          CREATE FUNCTION public.format(value TEXT, first_arg TEXT, second_arg TEXT)
+          RETURNS TEXT
+          LANGUAGE plpgsql
+          IMMUTABLE
+          SECURITY DEFINER
+          SET search_path = pg_catalog
+          AS $function$
+          BEGIN
+            PERFORM pg_catalog.nextval('hijack.format_calls'::pg_catalog.regclass);
+            RETURN pg_catalog.format(value, first_arg, second_arg);
+          END
+          $function$;
+        `);
+
+        const vulnerableResolution = await admin.query(`
+          BEGIN;
+          SET LOCAL search_path = public, pg_catalog;
+          SELECT
+            (SELECT namespace_row.nspname
+               FROM pg_catalog.pg_proc AS procedure_row
+               JOIN pg_catalog.pg_namespace AS namespace_row
+                 ON namespace_row.oid = procedure_row.pronamespace
+              WHERE procedure_row.oid = 'jsonb_typeof(jsonb)'::pg_catalog.regprocedure) AS jsonb_schema,
+            (SELECT namespace_row.nspname
+               FROM pg_catalog.pg_proc AS procedure_row
+               JOIN pg_catalog.pg_namespace AS namespace_row
+                 ON namespace_row.oid = procedure_row.pronamespace
+              WHERE procedure_row.oid = 'format(text,text,text)'::pg_catalog.regprocedure) AS format_schema;
+          ROLLBACK;
+        `);
+        assert.deepEqual(vulnerableResolution[2].rows[0], {
+          jsonb_schema: 'public',
+          format_schema: 'public',
+        }, 'the test must install actually resolvable hijacks under the old explicit ordering');
+
+        const shadowBefore = await prepareShadow(admin);
+        const client = await migrator.connect();
+        try {
+          await client.query('SET search_path = shadow, public');
+          await client.query(initSql);
+          assert.equal((await client.query('SHOW search_path')).rows[0].search_path, 'shadow, public');
+          await client.query(initSql);
+          assert.equal((await client.query('SHOW search_path')).rows[0].search_path, 'shadow, public');
+        } finally {
+          client.release();
+        }
+
+        assert.deepEqual(await snapshotNamespace(admin, 'shadow'), shadowBefore);
+        const callState = await admin.query(`
+          SELECT 'jsonb_typeof' AS function_name, last_value::BIGINT, is_called
+            FROM hijack.jsonb_typeof_calls
+          UNION ALL
+          SELECT 'format', last_value::BIGINT, is_called
+            FROM hijack.format_calls
+          ORDER BY function_name
+        `);
+        assert.deepEqual(callState.rows, [
+          { function_name: 'format', last_value: '1', is_called: false },
+          { function_name: 'jsonb_typeof', last_value: '1', is_called: false },
+        ]);
+
+        await admin.query('BEGIN');
+        try {
+          await admin.query('SET LOCAL search_path = public');
+          const resolution = await admin.query(`
+            SELECT current_schema() AS current_schema,
+                   current_schemas(true)::TEXT[] AS effective_path,
+                   (SELECT namespace_row.nspname
+                      FROM pg_catalog.pg_proc AS procedure_row
+                      JOIN pg_catalog.pg_namespace AS namespace_row
+                        ON namespace_row.oid = procedure_row.pronamespace
+                     WHERE procedure_row.oid = 'jsonb_typeof(jsonb)'::pg_catalog.regprocedure) AS jsonb_schema,
+                   (SELECT namespace_row.nspname
+                      FROM pg_catalog.pg_proc AS procedure_row
+                      JOIN pg_catalog.pg_namespace AS namespace_row
+                        ON namespace_row.oid = procedure_row.pronamespace
+                     WHERE procedure_row.oid = 'format(text,text,text)'::pg_catalog.regprocedure) AS format_schema,
+                   pg_catalog.format('%s %s', 'builtin', 'resolved') AS builtin_format_result,
+                   (SELECT namespace_row.nspname
+                      FROM pg_catalog.pg_operator AS operator_row
+                      JOIN pg_catalog.pg_namespace AS namespace_row
+                        ON namespace_row.oid = operator_row.oprnamespace
+                     WHERE operator_row.oid = '=(integer,integer)'::pg_catalog.regoperator) AS operator_schema,
+                   (SELECT namespace_row.nspname
+                      FROM pg_catalog.pg_type AS type_row
+                      JOIN pg_catalog.pg_namespace AS namespace_row
+                        ON namespace_row.oid = type_row.typnamespace
+                     WHERE type_row.oid = 'integer'::pg_catalog.regtype) AS cast_type_schema
+          `);
+          assert.deepEqual(resolution.rows[0], {
+            current_schema: 'public',
+            effective_path: ['pg_catalog', 'public'],
+            jsonb_schema: 'pg_catalog',
+            format_schema: 'public',
+            builtin_format_result: 'builtin resolved',
+            operator_schema: 'pg_catalog',
+            cast_type_schema: 'pg_catalog',
+          });
+        } finally {
+          await admin.query('ROLLBACK');
+        }
+
+        const misplacedObjects = await admin.query(`
+          SELECT kind, schema_name, object_name
+            FROM (
+              SELECT 'relation'::TEXT AS kind, namespace_row.nspname AS schema_name,
+                     class_row.relname AS object_name
+                FROM pg_catalog.pg_class AS class_row
+                JOIN pg_catalog.pg_namespace AS namespace_row ON namespace_row.oid = class_row.relnamespace
+               WHERE class_row.relowner = 'init_db_migrator'::pg_catalog.regrole
+                 AND namespace_row.nspname NOT IN ('public', 'pg_toast')
+              UNION ALL
+              SELECT 'function', namespace_row.nspname, procedure_row.proname
+                FROM pg_catalog.pg_proc AS procedure_row
+                JOIN pg_catalog.pg_namespace AS namespace_row ON namespace_row.oid = procedure_row.pronamespace
+               WHERE procedure_row.proowner = 'init_db_migrator'::pg_catalog.regrole
+                 AND namespace_row.nspname <> 'public'
+            ) AS misplaced
+           ORDER BY kind, schema_name, object_name
+        `);
+        assert.deepEqual(misplacedObjects.rows, []);
+      } finally {
+        await attacker.end();
+        await migrator.end();
+      }
+    });
+  });
+
 for (const [phase, marker] of [
-  ['temprano', 'SET LOCAL search_path = public, pg_catalog;'],
+  ['temprano', 'SET LOCAL search_path = public;'],
   ['medio', 'LOCK TABLE public.wpp_outbox IN ACCESS EXCLUSIVE MODE;'],
-  ['tardío', '-- END WHATSAPP CLOUD MESSAGE PROJECTION MIGRATION\n\nBEGIN;\nSET LOCAL search_path = public, pg_catalog;'],
+  ['tardío', '-- END WHATSAPP CLOUD MESSAGE PROJECTION MIGRATION\n\nBEGIN;\nSET LOCAL search_path = public;'],
 ]) {
   test(`initDb restaura search_path original tras error ${phase}, rollback y query posterior`,
     { timeout: 180_000 }, async () => {
