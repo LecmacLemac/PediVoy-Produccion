@@ -11,6 +11,8 @@ import {
   resolveCloudConversationParticipant,
 } from '../whatsappCloud/inboxRepository.js';
 
+const PG_INT4_MAX = 2147483647;
+
 function positiveInteger(value) {
   if (typeof value === 'number') {
     return Number.isSafeInteger(value) && value > 0 ? value : null;
@@ -20,17 +22,36 @@ function positiveInteger(value) {
   return Number.isSafeInteger(parsed) ? parsed : null;
 }
 
-function positiveIntegerNumber(value) {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : null;
+function pgInt4Number(value) {
+  return typeof value === 'number'
+    && Number.isInteger(value)
+    && value > 0
+    && value <= PG_INT4_MAX
+    ? value
+    : null;
+}
+
+function pgInt4Query(value) {
+  if (typeof value !== 'string' || !/^[1-9][0-9]*$/.test(value)) return null;
+  const parsed = Number(value);
+  return parsed <= PG_INT4_MAX ? parsed : null;
 }
 
 function isInvalidArgument(error) {
   return error?.code === 'CLOUD_INBOX_INVALID_ARGUMENT';
 }
 
-function resolveTenant(req) {
-  if (req.user?.role === 'admin') return req.user.empresa_id;
-  return positiveInteger(req.query?.empresa_id);
+function resolveTenant(req, { allowBody = false } = {}) {
+  if (req.user?.role === 'admin') return pgInt4Number(req.user.empresa_id);
+  const queryPresent = req.query?.empresa_id != null;
+  const queryTenant = queryPresent ? pgInt4Query(req.query.empresa_id) : null;
+  if (!allowBody) return queryTenant;
+  const bodyPresent = Object.prototype.hasOwnProperty.call(req.body ?? {}, 'empresa_id');
+  const bodyTenant = bodyPresent ? pgInt4Number(req.body.empresa_id) : null;
+  if (queryPresent && bodyPresent) {
+    return queryTenant && bodyTenant && queryTenant === bodyTenant ? queryTenant : null;
+  }
+  return bodyPresent ? bodyTenant : queryTenant;
 }
 
 function validReplyBody(body) {
@@ -134,9 +155,7 @@ export function createWhatsAppCloudInboxAdminRouter({
     }
   });
   router.post('/conversations/:conversationId/replies', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
-    const empresaId = req.user?.role === 'super'
-      ? positiveIntegerNumber(req.body?.empresa_id)
-      : req.user?.empresa_id;
+    const empresaId = resolveTenant(req, { allowBody: true });
     if (!empresaId) return res.status(400).json({ error: 'empresa_id_required' });
     if (!positiveInteger(req.params.conversationId)) {
       return res.status(400).json({ error: 'conversation_id_invalid' });

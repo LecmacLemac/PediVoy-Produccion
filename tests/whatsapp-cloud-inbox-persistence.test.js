@@ -368,19 +368,19 @@ test('helper de reconciliación invoca la función canónica y falla cerrado sin
   });
 });
 
-test('empresaId acepta sólo entero seguro positivo o decimal canónico', async () => {
+test('empresaId acepta sólo int4 positivo o decimal canónico', async () => {
   const accepted = [];
   const query = async (_sql, params) => { accepted.push(params[0]); return []; };
-  for (const value of [1, Number.MAX_SAFE_INTEGER, '1', String(Number.MAX_SAFE_INTEGER)]) {
+  for (const value of [1, 2147483647, '1', '2147483647']) {
     assert.equal(await findCloudMessageProjectionByProviderMessageId({
       query, empresaId: value, providerMessageId: 'wamid.valid',
     }), null);
   }
-  assert.deepEqual(accepted, [1, Number.MAX_SAFE_INTEGER, 1, Number.MAX_SAFE_INTEGER]);
+  assert.deepEqual(accepted, [1, 2147483647, 1, 2147483647]);
 
   for (const value of [
-    true, false, null, undefined, {}, [], 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1,
-    '', ' 1', '1 ', '+1', '-1', '01', '0', '1.0', '1e3', '9007199254740992',
+    true, false, null, undefined, {}, [], 0, -1, 1.5, 2147483648,
+    '', ' 1', '1 ', '+1', '-1', '01', '0', '1.0', '1e3', '2147483648',
   ]) {
     await assert.rejects(findCloudMessageProjectionByProviderMessageId({
       query: async () => assert.fail('invalid empresaId must fail before query'),

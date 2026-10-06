@@ -18,6 +18,21 @@ function requirePositiveInteger(value, field) {
   return normalized;
 }
 
+function requireTenantId(value) {
+  const normalized = typeof value === 'string' && /^[1-9][0-9]*$/.test(value)
+    ? Number(value)
+    : value;
+  if (typeof normalized !== 'number'
+    || !Number.isInteger(normalized)
+    || normalized <= 0
+    || normalized > 2147483647) {
+    const error = new Error('Invalid empresaId');
+    error.code = 'CLOUD_INBOX_INVALID_ARGUMENT';
+    throw error;
+  }
+  return normalized;
+}
+
 function requireQuery(query) {
   if (typeof query !== 'function') throw new TypeError('query es requerido');
   return query;
@@ -73,7 +88,7 @@ function decodeCursor(value) {
 
 export async function listCloudConversations({ query, empresaId, limit = 25, cursor = null } = {}) {
   const runQuery = requireQuery(query);
-  const tenantId = requirePositiveInteger(empresaId, 'empresaId');
+  const tenantId = requireTenantId(empresaId);
   const pageSize = requirePositiveInteger(limit, 'limit');
   if (pageSize > 100) throw sanitizedError('CLOUD_INBOX_INVALID_ARGUMENT', 'Invalid limit');
   const pageCursor = decodeCursor(cursor);
@@ -121,7 +136,7 @@ export async function listCloudConversationMessages({
   cursor = null,
 } = {}) {
   const runQuery = requireQuery(query);
-  const tenantId = requirePositiveInteger(empresaId, 'empresaId');
+  const tenantId = requireTenantId(empresaId);
   const anchorId = requirePositiveInteger(conversationId, 'conversationId');
   const pageSize = requirePositiveInteger(limit, 'limit');
   if (pageSize > 100) throw sanitizedError('CLOUD_INBOX_INVALID_ARGUMENT', 'Invalid limit');
@@ -182,7 +197,7 @@ export async function listCloudConversationMessages({
 
 export async function getCloudAttachmentMetadata({ query, empresaId, messageId } = {}) {
   const runQuery = requireQuery(query);
-  const tenantId = requirePositiveInteger(empresaId, 'empresaId');
+  const tenantId = requireTenantId(empresaId);
   const normalizedMessageId = requirePositiveInteger(messageId, 'messageId');
   try {
     const rows = await runQuery(
@@ -210,7 +225,7 @@ export async function getCloudAttachmentMetadata({ query, empresaId, messageId }
 
 export async function resolveCloudConversationParticipant({ query, empresaId, conversationId } = {}) {
   const runQuery = requireQuery(query);
-  const tenantId = requirePositiveInteger(empresaId, 'empresaId');
+  const tenantId = requireTenantId(empresaId);
   const anchorId = requirePositiveInteger(conversationId, 'conversationId');
   try {
     const rows = await runQuery(
@@ -235,7 +250,7 @@ export async function matchesCloudReplyCorrelation({
   message,
 } = {}) {
   const runQuery = requireQuery(query);
-  const tenantId = requirePositiveInteger(empresaId, 'empresaId');
+  const tenantId = requireTenantId(empresaId);
   const normalizedOutboxId = requirePositiveInteger(outboxId, 'outboxId');
   const normalizedCorrelationId = requireNonEmptyString(correlationId, 'correlationId');
   const normalizedParticipant = requireNonEmptyString(participant, 'participant');
@@ -284,7 +299,7 @@ export async function findCloudMessageProjectionBySourceEvent({
   sourceEventId,
 } = {}) {
   const runQuery = requireQuery(query);
-  const tenantId = requirePositiveInteger(empresaId, 'empresaId');
+  const tenantId = requireTenantId(empresaId);
   const eventId = requirePositiveInteger(sourceEventId, 'sourceEventId');
   let rows;
   try {
@@ -310,7 +325,7 @@ export async function findCloudMessageProjectionByProviderMessageId({
   providerMessageId,
 } = {}) {
   const runQuery = requireQuery(query);
-  const tenantId = requirePositiveInteger(empresaId, 'empresaId');
+  const tenantId = requireTenantId(empresaId);
   const messageId = requireNonEmptyString(providerMessageId, 'providerMessageId');
   let rows;
   try {
@@ -341,7 +356,7 @@ export async function reconcileCloudMessageProjectionStatus({
   providerMessageId,
 } = {}) {
   const runQuery = requireQuery(query);
-  const tenantId = requirePositiveInteger(empresaId, 'empresaId');
+  const tenantId = requireTenantId(empresaId);
   const messageId = requireNonEmptyString(providerMessageId, 'providerMessageId');
   try {
     const rows = await runQuery(

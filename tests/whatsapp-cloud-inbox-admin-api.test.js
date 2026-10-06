@@ -4,6 +4,16 @@ import express from 'express';
 import { readFileSync } from 'node:fs';
 
 import { createWhatsAppCloudInboxAdminRouter } from '../src/routes/whatsappCloudInboxAdmin.js';
+import {
+  findCloudMessageProjectionByProviderMessageId,
+  findCloudMessageProjectionBySourceEvent,
+  getCloudAttachmentMetadata,
+  listCloudConversationMessages,
+  listCloudConversations,
+  matchesCloudReplyCorrelation,
+  reconcileCloudMessageProjectionStatus,
+  resolveCloudConversationParticipant,
+} from '../src/whatsappCloud/inboxRepository.js';
 
 async function withServer(app, work) {
   const server = app.listen(0, '127.0.0.1');
@@ -417,4 +427,157 @@ test('validación estricta rechaza cursores, ids, empresa y reply mal tipados an
   });
   assert.equal(queries, 0);
   assert.equal(enqueues, 0);
+});
+
+test('reply super rechaza selectores de empresa discordantes antes de query o enqueue', async () => {
+  let queries = 0;
+  let enqueues = 0;
+  const app = express();
+  app.use(express.json());
+  app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+    withAuth(req, _res, next) {
+      req.user = { uid: 11, role: 'super', empresa_id: null };
+      next();
+    },
+    async query() {
+      queries += 1;
+      return [{ participant_wa_id: '5493515550001' }];
+    },
+    async enqueueReply() {
+      enqueues += 1;
+      return { queued: true, id: 1, status: 'pending' };
+    },
+  }));
+
+  await withServer(app, async baseUrl => {
+    const response = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations/44/replies?empresa_id=9`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ empresa_id: 8, text: 'ok', idempotency_key: 'tenant-conflict' }),
+    });
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), { error: 'empresa_id_required' });
+  });
+  assert.equal(queries, 0);
+  assert.equal(enqueues, 0);
+});
+
+test('reply super acepta un selector query único y duplicados concordantes', async () => {
+  const selectedTenants = [];
+  const app = express();
+  app.use(express.json());
+  app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+    withAuth(req, _res, next) {
+      req.user = { uid: 11, role: 'super', empresa_id: null };
+      next();
+    },
+    async query(_sql, params) {
+      selectedTenants.push(params[0]);
+      return [{ participant_wa_id: '5493515550001' }];
+    },
+    async enqueueReply(input) {
+      selectedTenants.push(input.empresaId);
+      return { queued: true, id: selectedTenants.length, status: 'pending' };
+    },
+  }));
+
+  await withServer(app, async baseUrl => {
+    const queryOnly = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations/44/replies?empresa_id=9`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: 'query', idempotency_key: 'tenant-query' }),
+    });
+    assert.equal(queryOnly.status, 202);
+
+    const concordant = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations/44/replies?empresa_id=8`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ empresa_id: 8, text: 'same', idempotency_key: 'tenant-same' }),
+    });
+    assert.equal(concordant.status, 202);
+  });
+  assert.deepEqual(selectedTenants, [9, 9, 8, 8]);
+});
+
+test('API rechaza empresa_id fuera de int4 y tipos JSON no numéricos antes de query o enqueue', async () => {
+  let queries = 0;
+  let enqueues = 0;
+  const app = express();
+  app.use(express.json());
+  app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+    withAuth(req, _res, next) {
+      req.user = { uid: 11, role: 'super', empresa_id: null };
+      next();
+    },
+    async query() {
+      queries += 1;
+      return [];
+    },
+    async enqueueReply() {
+      enqueues += 1;
+      return { queued: true };
+    },
+  }));
+
+  await withServer(app, async baseUrl => {
+    const getPaths = [
+      '/conversations',
+      '/conversations/44/messages',
+      '/messages/91/attachment',
+      '/messages/91/attachment/download',
+    ];
+    for (const path of getPaths) {
+      const response = await fetch(`${baseUrl}/api/admin/whatsapp-cloud${path}?empresa_id=2147483648`);
+      assert.equal(response.status, 400, path);
+      assert.deepEqual(await response.json(), { error: 'empresa_id_required' });
+    }
+
+    for (const empresa_id of [2147483648, 0, -1, 1.5, true, [], {}, '8']) {
+      const response = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations/44/replies`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ empresa_id, text: 'ok', idempotency_key: 'strict-tenant' }),
+      });
+      assert.equal(response.status, 400, JSON.stringify(empresa_id));
+      assert.deepEqual(await response.json(), { error: 'empresa_id_required' });
+    }
+  });
+  assert.equal(queries, 0);
+  assert.equal(enqueues, 0);
+});
+
+test('repositorio rechaza empresaId fuera de int4 antes de ejecutar SQL', async () => {
+  let queries = 0;
+  const query = async () => {
+    queries += 1;
+    return [];
+  };
+  const calls = [
+    () => listCloudConversations({ query, empresaId: 2147483648 }),
+    () => listCloudConversationMessages({ query, empresaId: 2147483648, conversationId: 1 }),
+    () => getCloudAttachmentMetadata({ query, empresaId: 2147483648, messageId: 1 }),
+    () => resolveCloudConversationParticipant({ query, empresaId: 2147483648, conversationId: 1 }),
+    () => matchesCloudReplyCorrelation({
+      query,
+      empresaId: 2147483648,
+      outboxId: 1,
+      correlationId: 'admin:key',
+      participant: '5493515550001',
+      message: 'ok',
+    }),
+    () => findCloudMessageProjectionBySourceEvent({ query, empresaId: 2147483648, sourceEventId: 1 }),
+    () => findCloudMessageProjectionByProviderMessageId({ query, empresaId: 2147483648, providerMessageId: 'wamid.1' }),
+    () => reconcileCloudMessageProjectionStatus({ query, empresaId: 2147483648, providerMessageId: 'wamid.1' }),
+  ];
+
+  for (const call of calls) {
+    await assert.rejects(call, error => error?.code === 'CLOUD_INBOX_INVALID_ARGUMENT');
+  }
+  for (const empresaId of [0, -1, 1.5, true, [], {}, '01', '1.0', '2147483648']) {
+    await assert.rejects(
+      () => listCloudConversations({ query, empresaId }),
+      error => error?.code === 'CLOUD_INBOX_INVALID_ARGUMENT',
+    );
+  }
+  assert.equal(queries, 0);
 });
