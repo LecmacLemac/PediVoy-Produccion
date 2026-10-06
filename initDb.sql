@@ -2141,7 +2141,8 @@ BEGIN
       ('public.wpp_outbox_empresa_id_id_uidx', 'public.wpp_outbox'),
       ('public.whatsapp_cloud_messages_source_event_uidx', 'public.whatsapp_cloud_messages'),
       ('public.whatsapp_cloud_messages_outbox_uidx', 'public.whatsapp_cloud_messages'),
-      ('public.whatsapp_cloud_messages_provider_message_uidx', 'public.whatsapp_cloud_messages'),
+      ('public.whatsapp_cloud_messages_source_outbox_uidx', 'public.whatsapp_cloud_messages'),
+      ('public.whatsapp_cloud_messages_provider_message_idx', 'public.whatsapp_cloud_messages'),
       ('public.whatsapp_cloud_events_status_message_idx', 'public.whatsapp_cloud_events'),
       ('public.idx_whatsapp_cloud_messages_conversations', 'public.whatsapp_cloud_messages'),
       ('public.idx_whatsapp_cloud_messages_timeline', 'public.whatsapp_cloud_messages')
@@ -2167,6 +2168,7 @@ CREATE TABLE IF NOT EXISTS public.whatsapp_cloud_messages (
   participant_wa_id TEXT NOT NULL,
   source_event_id BIGINT,
   outbox_id BIGINT,
+  source_outbox_id BIGINT,
   provider_message_id TEXT,
   message_type TEXT NOT NULL,
   text_body TEXT,
@@ -2196,6 +2198,7 @@ BEGIN
       ('participant_wa_id', 'TEXT'),
       ('source_event_id', 'BIGINT'),
       ('outbox_id', 'BIGINT'),
+      ('source_outbox_id', 'BIGINT'),
       ('provider_message_id', 'TEXT'),
       ('message_type', 'TEXT'),
       ('text_body', 'TEXT'),
@@ -2240,6 +2243,7 @@ BEGIN
       ('participant_wa_id', 'text'),
       ('source_event_id', 'bigint'),
       ('outbox_id', 'bigint'),
+      ('source_outbox_id', 'bigint'),
       ('provider_message_id', 'text'),
       ('message_type', 'text'),
       ('text_body', 'text'),
@@ -2572,7 +2576,7 @@ BEGIN
            END AS status_at
       FROM public.whatsapp_cloud_events AS event
      WHERE event.empresa_id = target_empresa_id
-       AND event.message_id = target_provider_message_id
+       AND BTRIM(event.message_id) = NULLIF(BTRIM(target_provider_message_id), '')
        AND event.event_kind = 'status'
        AND event.status IN ('sent', 'delivered', 'read', 'failed')
        AND NULLIF(BTRIM(event.message_id), '') IS NOT NULL
@@ -2594,7 +2598,7 @@ BEGIN
     SELECT message.*
       FROM public.whatsapp_cloud_messages AS message
      WHERE message.empresa_id = target_empresa_id
-       AND message.provider_message_id = target_provider_message_id
+       AND BTRIM(message.provider_message_id) = NULLIF(BTRIM(target_provider_message_id), '')
        AND message.direction = 'outbound'
      FOR UPDATE OF message
   ), winners AS (
@@ -2688,7 +2692,7 @@ BEGIN
   PERFORM public.whatsapp_cloud_messages_lock_projection(target_empresa_id);
   PERFORM public.whatsapp_cloud_messages_reconcile_status_locked(
     target_empresa_id,
-    target_provider_message_id
+    NULLIF(BTRIM(target_provider_message_id), '')
   );
 END $$;
 
@@ -2749,11 +2753,15 @@ BEGIN
         AND NULLIF(BTRIM(NEW.message_id), '') IS NOT NULL THEN
     PERFORM public.whatsapp_cloud_messages_reconcile_status(
       NEW.empresa_id,
-      NEW.message_id
+      NULLIF(BTRIM(NEW.message_id), '')
     );
   END IF;
   RETURN NEW;
 END $$;
+
+DROP FUNCTION IF EXISTS public.whatsapp_cloud_messages_upsert_outbox_locked(
+  INTEGER, BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, TIMESTAMPTZ, TIMESTAMPTZ
+);
 
 CREATE OR REPLACE FUNCTION public.whatsapp_cloud_messages_upsert_outbox_locked(
   target_empresa_id INTEGER,
@@ -2765,7 +2773,8 @@ CREATE OR REPLACE FUNCTION public.whatsapp_cloud_messages_upsert_outbox_locked(
   target_meta_message_id TEXT,
   target_cloud_dispatch_state TEXT,
   target_created_at TIMESTAMPTZ,
-  target_sent_at TIMESTAMPTZ
+  target_sent_at TIMESTAMPTZ,
+  target_link_outbox BOOLEAN DEFAULT TRUE
 ) RETURNS VOID
 LANGUAGE plpgsql
 SET search_path = pg_catalog, public
@@ -2777,7 +2786,6 @@ DECLARE
   incoming_sent_at TIMESTAMPTZ;
   incoming_failed_at TIMESTAMPTZ;
   incoming_updated_at TIMESTAMPTZ;
-  detached_message_id BIGINT;
 BEGIN
   IF target_transport_origin IS DISTINCT FROM 'cloud'
      OR target_empresa_id IS NULL
@@ -2812,34 +2820,56 @@ BEGIN
 
   IF target_outbox_id IS NOT NULL THEN
     INSERT INTO public.whatsapp_cloud_messages (
-      empresa_id, direction, participant_wa_id, outbox_id,
+      empresa_id, direction, participant_wa_id, outbox_id, source_outbox_id,
       provider_message_id, message_type, text_body, delivery_status, state_rank,
       message_at, sent_at, failed_at, created_at, updated_at
     ) VALUES (
-      target_empresa_id, 'outbound', target_telefono, target_outbox_id,
+      target_empresa_id, 'outbound', target_telefono,
+      CASE WHEN target_link_outbox THEN target_outbox_id END,
+      target_outbox_id,
       incoming_provider_message_id, 'text', LEFT(target_mensaje, 4096),
       incoming_status, incoming_rank, target_created_at, incoming_sent_at,
       incoming_failed_at, target_created_at, incoming_updated_at
-    ) ON CONFLICT (empresa_id, outbox_id) WHERE outbox_id IS NOT NULL
+    ) ON CONFLICT (empresa_id, source_outbox_id) WHERE source_outbox_id IS NOT NULL
     DO UPDATE SET
+      outbox_id = COALESCE(EXCLUDED.outbox_id, whatsapp_cloud_messages.outbox_id),
       participant_wa_id = EXCLUDED.participant_wa_id,
       provider_message_id = COALESCE(EXCLUDED.provider_message_id, whatsapp_cloud_messages.provider_message_id),
       text_body = EXCLUDED.text_body,
-      delivery_status = CASE WHEN EXCLUDED.state_rank > whatsapp_cloud_messages.state_rank
-        THEN EXCLUDED.delivery_status ELSE whatsapp_cloud_messages.delivery_status END,
-      state_rank = GREATEST(whatsapp_cloud_messages.state_rank, EXCLUDED.state_rank),
+      delivery_status = CASE
+        WHEN EXCLUDED.state_rank > whatsapp_cloud_messages.state_rank THEN EXCLUDED.delivery_status
+        WHEN whatsapp_cloud_messages.delivery_status = 'outcome_unknown'
+         AND EXCLUDED.delivery_status IN ('failed', 'manual_retry') THEN EXCLUDED.delivery_status
+        WHEN whatsapp_cloud_messages.delivery_status = 'manual_retry'
+         AND EXCLUDED.delivery_status = 'queued' THEN EXCLUDED.delivery_status
+        ELSE whatsapp_cloud_messages.delivery_status END,
+      state_rank = CASE
+        WHEN whatsapp_cloud_messages.delivery_status = 'outcome_unknown'
+         AND EXCLUDED.delivery_status IN ('failed', 'manual_retry') THEN EXCLUDED.state_rank
+        WHEN whatsapp_cloud_messages.delivery_status = 'manual_retry'
+         AND EXCLUDED.delivery_status = 'queued' THEN EXCLUDED.state_rank
+        ELSE GREATEST(whatsapp_cloud_messages.state_rank, EXCLUDED.state_rank) END,
       message_at = LEAST(whatsapp_cloud_messages.message_at, EXCLUDED.message_at),
       sent_at = CASE WHEN EXCLUDED.state_rank > whatsapp_cloud_messages.state_rank
+          OR (whatsapp_cloud_messages.delivery_status = 'outcome_unknown' AND EXCLUDED.delivery_status IN ('failed', 'manual_retry'))
+          OR (whatsapp_cloud_messages.delivery_status = 'manual_retry' AND EXCLUDED.delivery_status = 'queued')
         THEN EXCLUDED.sent_at ELSE whatsapp_cloud_messages.sent_at END,
       delivered_at = CASE WHEN EXCLUDED.state_rank > whatsapp_cloud_messages.state_rank
+          OR (whatsapp_cloud_messages.delivery_status = 'outcome_unknown' AND EXCLUDED.delivery_status IN ('failed', 'manual_retry'))
+          OR (whatsapp_cloud_messages.delivery_status = 'manual_retry' AND EXCLUDED.delivery_status = 'queued')
         THEN NULL ELSE whatsapp_cloud_messages.delivered_at END,
       read_at = CASE WHEN EXCLUDED.state_rank > whatsapp_cloud_messages.state_rank
+          OR (whatsapp_cloud_messages.delivery_status = 'outcome_unknown' AND EXCLUDED.delivery_status IN ('failed', 'manual_retry'))
+          OR (whatsapp_cloud_messages.delivery_status = 'manual_retry' AND EXCLUDED.delivery_status = 'queued')
         THEN NULL ELSE whatsapp_cloud_messages.read_at END,
       failed_at = CASE WHEN EXCLUDED.state_rank > whatsapp_cloud_messages.state_rank
+          OR (whatsapp_cloud_messages.delivery_status = 'outcome_unknown' AND EXCLUDED.delivery_status IN ('failed', 'manual_retry'))
+          OR (whatsapp_cloud_messages.delivery_status = 'manual_retry' AND EXCLUDED.delivery_status = 'queued')
         THEN EXCLUDED.failed_at ELSE whatsapp_cloud_messages.failed_at END,
       created_at = LEAST(whatsapp_cloud_messages.created_at, EXCLUDED.created_at),
       updated_at = GREATEST(whatsapp_cloud_messages.updated_at, EXCLUDED.updated_at)
     WHERE ROW(
+      whatsapp_cloud_messages.outbox_id,
       whatsapp_cloud_messages.participant_wa_id,
       whatsapp_cloud_messages.provider_message_id,
       whatsapp_cloud_messages.text_body,
@@ -2853,70 +2883,39 @@ BEGIN
       whatsapp_cloud_messages.created_at,
       whatsapp_cloud_messages.updated_at
     ) IS DISTINCT FROM ROW(
+      COALESCE(EXCLUDED.outbox_id, whatsapp_cloud_messages.outbox_id),
       EXCLUDED.participant_wa_id,
       COALESCE(EXCLUDED.provider_message_id, whatsapp_cloud_messages.provider_message_id),
       EXCLUDED.text_body,
-      CASE WHEN EXCLUDED.state_rank > whatsapp_cloud_messages.state_rank
-        THEN EXCLUDED.delivery_status ELSE whatsapp_cloud_messages.delivery_status END,
-      GREATEST(whatsapp_cloud_messages.state_rank, EXCLUDED.state_rank),
+      CASE
+        WHEN EXCLUDED.state_rank > whatsapp_cloud_messages.state_rank THEN EXCLUDED.delivery_status
+        WHEN whatsapp_cloud_messages.delivery_status = 'outcome_unknown' AND EXCLUDED.delivery_status IN ('failed', 'manual_retry') THEN EXCLUDED.delivery_status
+        WHEN whatsapp_cloud_messages.delivery_status = 'manual_retry' AND EXCLUDED.delivery_status = 'queued' THEN EXCLUDED.delivery_status
+        ELSE whatsapp_cloud_messages.delivery_status END,
+      CASE
+        WHEN whatsapp_cloud_messages.delivery_status = 'outcome_unknown' AND EXCLUDED.delivery_status IN ('failed', 'manual_retry') THEN EXCLUDED.state_rank
+        WHEN whatsapp_cloud_messages.delivery_status = 'manual_retry' AND EXCLUDED.delivery_status = 'queued' THEN EXCLUDED.state_rank
+        ELSE GREATEST(whatsapp_cloud_messages.state_rank, EXCLUDED.state_rank) END,
       LEAST(whatsapp_cloud_messages.message_at, EXCLUDED.message_at),
       CASE WHEN EXCLUDED.state_rank > whatsapp_cloud_messages.state_rank
+          OR (whatsapp_cloud_messages.delivery_status = 'outcome_unknown' AND EXCLUDED.delivery_status IN ('failed', 'manual_retry'))
+          OR (whatsapp_cloud_messages.delivery_status = 'manual_retry' AND EXCLUDED.delivery_status = 'queued')
         THEN EXCLUDED.sent_at ELSE whatsapp_cloud_messages.sent_at END,
       CASE WHEN EXCLUDED.state_rank > whatsapp_cloud_messages.state_rank
+          OR (whatsapp_cloud_messages.delivery_status = 'outcome_unknown' AND EXCLUDED.delivery_status IN ('failed', 'manual_retry'))
+          OR (whatsapp_cloud_messages.delivery_status = 'manual_retry' AND EXCLUDED.delivery_status = 'queued')
         THEN NULL ELSE whatsapp_cloud_messages.delivered_at END,
       CASE WHEN EXCLUDED.state_rank > whatsapp_cloud_messages.state_rank
+          OR (whatsapp_cloud_messages.delivery_status = 'outcome_unknown' AND EXCLUDED.delivery_status IN ('failed', 'manual_retry'))
+          OR (whatsapp_cloud_messages.delivery_status = 'manual_retry' AND EXCLUDED.delivery_status = 'queued')
         THEN NULL ELSE whatsapp_cloud_messages.read_at END,
       CASE WHEN EXCLUDED.state_rank > whatsapp_cloud_messages.state_rank
+          OR (whatsapp_cloud_messages.delivery_status = 'outcome_unknown' AND EXCLUDED.delivery_status IN ('failed', 'manual_retry'))
+          OR (whatsapp_cloud_messages.delivery_status = 'manual_retry' AND EXCLUDED.delivery_status = 'queued')
         THEN EXCLUDED.failed_at ELSE whatsapp_cloud_messages.failed_at END,
       LEAST(whatsapp_cloud_messages.created_at, EXCLUDED.created_at),
       GREATEST(whatsapp_cloud_messages.updated_at, EXCLUDED.updated_at)
     );
-  ELSE
-    SELECT message.id
-      INTO detached_message_id
-      FROM public.whatsapp_cloud_messages AS message
-     WHERE message.empresa_id = target_empresa_id
-       AND message.direction = 'outbound'
-       AND message.outbox_id IS NULL
-       AND (
-         (incoming_provider_message_id IS NOT NULL
-          AND message.provider_message_id = incoming_provider_message_id)
-         OR (message.provider_message_id IS NOT DISTINCT FROM incoming_provider_message_id
-          AND message.participant_wa_id = target_telefono
-          AND message.message_at = target_created_at
-          AND message.text_body = LEFT(target_mensaje, 4096))
-       )
-     ORDER BY message.id
-     LIMIT 1
-     FOR UPDATE OF message;
-
-    IF detached_message_id IS NULL THEN
-      INSERT INTO public.whatsapp_cloud_messages (
-        empresa_id, direction, participant_wa_id, outbox_id,
-        provider_message_id, message_type, text_body, delivery_status, state_rank,
-        message_at, sent_at, failed_at, created_at, updated_at
-      ) VALUES (
-        target_empresa_id, 'outbound', target_telefono, NULL,
-        incoming_provider_message_id, 'text', LEFT(target_mensaje, 4096),
-        incoming_status, incoming_rank, target_created_at, incoming_sent_at,
-        incoming_failed_at, target_created_at, incoming_updated_at
-      ) ON CONFLICT (empresa_id, provider_message_id) WHERE provider_message_id IS NOT NULL
-      DO UPDATE SET updated_at = GREATEST(whatsapp_cloud_messages.updated_at, EXCLUDED.updated_at);
-    ELSE
-      UPDATE public.whatsapp_cloud_messages AS message
-         SET provider_message_id = COALESCE(incoming_provider_message_id, message.provider_message_id),
-             delivery_status = CASE WHEN incoming_rank > message.state_rank
-               THEN incoming_status ELSE message.delivery_status END,
-             state_rank = GREATEST(message.state_rank, incoming_rank),
-             sent_at = CASE WHEN incoming_rank > message.state_rank
-               THEN incoming_sent_at ELSE message.sent_at END,
-             delivered_at = CASE WHEN incoming_rank > message.state_rank THEN NULL ELSE message.delivered_at END,
-             read_at = CASE WHEN incoming_rank > message.state_rank THEN NULL ELSE message.read_at END,
-             failed_at = CASE WHEN incoming_rank > message.state_rank
-               THEN incoming_failed_at ELSE message.failed_at END,
-             updated_at = GREATEST(message.updated_at, incoming_updated_at)
-       WHERE message.id = detached_message_id;
-    END IF;
   END IF;
 
   IF incoming_provider_message_id IS NOT NULL THEN
@@ -2954,6 +2953,41 @@ BEGIN
     NEW.transport_origin, NEW.meta_message_id, NEW.cloud_dispatch_state,
     NEW.created_at, NEW.sent_at
   );
+  RETURN NEW;
+END $$;
+
+CREATE OR REPLACE FUNCTION public.whatsapp_cloud_messages_reject_outbox_identity_change()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SET search_path = pg_catalog, public
+AS $$
+BEGIN
+  IF (OLD.transport_origin = 'cloud' OR NEW.transport_origin = 'cloud')
+     AND (OLD.transport_origin IS DISTINCT FROM NEW.transport_origin
+       OR OLD.empresa_id IS DISTINCT FROM NEW.empresa_id) THEN
+    RAISE EXCEPTION USING
+      ERRCODE = 'P0001',
+      MESSAGE = 'whatsapp_cloud_outbox_identity_change_rejected';
+  END IF;
+  RETURN NEW;
+END $$;
+
+CREATE OR REPLACE FUNCTION public.whatsapp_cloud_messages_reject_source_outbox_identity_change()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SET search_path = pg_catalog, public
+AS $$
+BEGIN
+  IF OLD.source_outbox_id IS DISTINCT FROM NEW.source_outbox_id
+     AND NOT (
+       OLD.source_outbox_id IS NULL
+       AND NEW.source_outbox_id IS NOT DISTINCT FROM OLD.outbox_id
+       AND OLD.direction = 'outbound'
+     ) THEN
+    RAISE EXCEPTION USING
+      ERRCODE = 'P0001',
+      MESSAGE = 'whatsapp_cloud_source_outbox_identity_immutable';
+  END IF;
   RETURN NEW;
 END $$;
 
@@ -3062,12 +3096,12 @@ BEGIN
       PERFORM public.whatsapp_cloud_messages_upsert_outbox_locked(
         outbox_row.empresa_id, outbox_row.id, outbox_row.telefono, outbox_row.mensaje,
         outbox_row.status, outbox_row.transport_origin, outbox_row.meta_message_id,
-        outbox_row.cloud_dispatch_state, outbox_row.created_at, outbox_row.sent_at
+        outbox_row.cloud_dispatch_state, outbox_row.created_at, outbox_row.sent_at, FALSE
       );
     END LOOP;
 
     FOR status_row IN
-      SELECT deleted.message_id AS provider_message_id,
+      SELECT NULLIF(BTRIM(deleted.message_id), '') AS provider_message_id,
              (array_agg(deleted.status ORDER BY
                CASE deleted.status WHEN 'read' THEN 50 WHEN 'delivered' THEN 40
                                    WHEN 'sent' THEN 30 WHEN 'failed' THEN 25 ELSE 0 END DESC,
@@ -3138,8 +3172,8 @@ BEGIN
          AND deleted.event_kind = 'status'
          AND deleted.status IN ('sent', 'delivered', 'read', 'failed')
          AND NULLIF(BTRIM(deleted.message_id), '') IS NOT NULL
-       GROUP BY deleted.message_id
-       ORDER BY deleted.message_id
+       GROUP BY NULLIF(BTRIM(deleted.message_id), '')
+       ORDER BY NULLIF(BTRIM(deleted.message_id), '')
     LOOP
       WITH locked AS (
         SELECT message.*,
@@ -3156,7 +3190,7 @@ BEGIN
           FROM public.whatsapp_cloud_messages AS message
          WHERE message.empresa_id = target_empresa_id
            AND message.direction = 'outbound'
-           AND message.provider_message_id = status_row.provider_message_id
+           AND BTRIM(message.provider_message_id) = status_row.provider_message_id
          FOR UPDATE OF message
       ), sent_timeline AS (
         SELECT locked.*,
@@ -3239,9 +3273,9 @@ BEGIN
        ORDER BY deleted.id
     LOOP
       PERFORM public.whatsapp_cloud_messages_upsert_outbox_locked(
-        deleted_row.empresa_id, NULL, deleted_row.telefono, deleted_row.mensaje,
+        deleted_row.empresa_id, deleted_row.id, deleted_row.telefono, deleted_row.mensaje,
         deleted_row.status, deleted_row.transport_origin, deleted_row.meta_message_id,
-        deleted_row.cloud_dispatch_state, deleted_row.created_at, deleted_row.sent_at
+        deleted_row.cloud_dispatch_state, deleted_row.created_at, deleted_row.sent_at, FALSE
       );
     END LOOP;
   END LOOP;
@@ -3270,6 +3304,22 @@ BEGIN
         5::SMALLINT,
         'CREATE TRIGGER whatsapp_cloud_messages_capture_insert AFTER INSERT ON wpp_outbox FOR EACH ROW EXECUTE FUNCTION whatsapp_cloud_messages_capture_outbox_insert()',
         'CREATE TRIGGER whatsapp_cloud_messages_capture_insert AFTER INSERT ON public.wpp_outbox FOR EACH ROW EXECUTE FUNCTION public.whatsapp_cloud_messages_capture_outbox_insert()'
+      ),
+      (
+        'public.wpp_outbox'::pg_catalog.regclass,
+        'whatsapp_cloud_messages_reject_identity_change'::TEXT,
+        'public.whatsapp_cloud_messages_reject_outbox_identity_change()'::pg_catalog.regprocedure,
+        19::SMALLINT,
+        'CREATE TRIGGER whatsapp_cloud_messages_reject_identity_change BEFORE UPDATE OF empresa_id, transport_origin ON wpp_outbox FOR EACH ROW EXECUTE FUNCTION whatsapp_cloud_messages_reject_outbox_identity_change()',
+        'CREATE TRIGGER whatsapp_cloud_messages_reject_identity_change BEFORE UPDATE OF empresa_id, transport_origin ON public.wpp_outbox FOR EACH ROW EXECUTE FUNCTION public.whatsapp_cloud_messages_reject_outbox_identity_change()'
+      ),
+      (
+        'public.whatsapp_cloud_messages'::pg_catalog.regclass,
+        'whatsapp_cloud_messages_reject_source_outbox_identity_change'::TEXT,
+        'public.whatsapp_cloud_messages_reject_source_outbox_identity_change()'::pg_catalog.regprocedure,
+        19::SMALLINT,
+        'CREATE TRIGGER whatsapp_cloud_messages_reject_source_outbox_identity_change BEFORE UPDATE OF source_outbox_id ON whatsapp_cloud_messages FOR EACH ROW EXECUTE FUNCTION whatsapp_cloud_messages_reject_source_outbox_identity_change()',
+        'CREATE TRIGGER whatsapp_cloud_messages_reject_source_outbox_identity_change BEFORE UPDATE OF source_outbox_id ON public.whatsapp_cloud_messages FOR EACH ROW EXECUTE FUNCTION public.whatsapp_cloud_messages_reject_source_outbox_identity_change()'
       ),
       (
         'public.wpp_outbox'::pg_catalog.regclass,
@@ -3332,6 +3382,38 @@ BEGIN
 END $$;
 
 -- CUTOVER CAPTURE INSTALL COMPLETE; DDL/REPAIRS STILL PRECEDE TENANT DML
+
+DO $drop_legacy_provider_unique$
+DECLARE
+  legacy_index pg_catalog.REGCLASS := pg_catalog.to_regclass('public.whatsapp_cloud_messages_provider_message_uidx');
+  backing_constraint TEXT;
+BEGIN
+  IF legacy_index IS NOT NULL AND EXISTS (
+    SELECT 1 FROM pg_catalog.pg_index
+     WHERE indexrelid = legacy_index
+       AND indrelid = 'public.whatsapp_cloud_messages'::pg_catalog.regclass
+  ) THEN
+    SELECT conname INTO backing_constraint
+      FROM pg_catalog.pg_constraint
+     WHERE conindid = legacy_index;
+    IF backing_constraint IS NOT NULL THEN
+      EXECUTE pg_catalog.format(
+        'ALTER TABLE public.whatsapp_cloud_messages DROP CONSTRAINT %I', backing_constraint
+      );
+    ELSE
+      DROP INDEX public.whatsapp_cloud_messages_provider_message_uidx;
+    END IF;
+  END IF;
+END $drop_legacy_provider_unique$;
+
+DO $repair_source_outbox_identity$
+BEGIN
+  UPDATE public.whatsapp_cloud_messages
+     SET source_outbox_id = outbox_id
+   WHERE direction = 'outbound'
+     AND outbox_id IS NOT NULL
+     AND source_outbox_id IS DISTINCT FROM outbox_id;
+END $repair_source_outbox_identity$;
 
 DO $repair_state_rank$
 DECLARE
@@ -3545,8 +3627,10 @@ BEGIN
        ARRAY['empresa_id', 'source_event_id']::TEXT[], TRUE, 'source_event_idisnotnull'),
       ('public.whatsapp_cloud_messages_outbox_uidx', 'public.whatsapp_cloud_messages',
        ARRAY['empresa_id', 'outbox_id']::TEXT[], TRUE, 'outbox_idisnotnull'),
-      ('public.whatsapp_cloud_messages_provider_message_uidx', 'public.whatsapp_cloud_messages',
-       ARRAY['empresa_id', 'provider_message_id']::TEXT[], TRUE, 'provider_message_idisnotnull')
+      ('public.whatsapp_cloud_messages_source_outbox_uidx', 'public.whatsapp_cloud_messages',
+       ARRAY['empresa_id', 'source_outbox_id']::TEXT[], TRUE, 'source_outbox_idisnotnull'),
+      ('public.whatsapp_cloud_messages_provider_message_idx', 'public.whatsapp_cloud_messages',
+       ARRAY['empresa_id', 'provider_message_id']::TEXT[], FALSE, 'provider_message_idisnotnull')
     ) AS required(index_name, table_name, key_columns, is_unique, predicate_key)
   LOOP
     expected_columns := index_row.key_columns;
@@ -3609,8 +3693,13 @@ BEGIN
       ON public.whatsapp_cloud_messages (empresa_id, outbox_id)
       WHERE outbox_id IS NOT NULL;
   END IF;
-  IF pg_catalog.to_regclass('public.whatsapp_cloud_messages_provider_message_uidx') IS NULL THEN
-    CREATE UNIQUE INDEX whatsapp_cloud_messages_provider_message_uidx
+  IF pg_catalog.to_regclass('public.whatsapp_cloud_messages_source_outbox_uidx') IS NULL THEN
+    CREATE UNIQUE INDEX whatsapp_cloud_messages_source_outbox_uidx
+      ON public.whatsapp_cloud_messages (empresa_id, source_outbox_id)
+      WHERE source_outbox_id IS NOT NULL;
+  END IF;
+  IF pg_catalog.to_regclass('public.whatsapp_cloud_messages_provider_message_idx') IS NULL THEN
+    CREATE INDEX whatsapp_cloud_messages_provider_message_idx
       ON public.whatsapp_cloud_messages (empresa_id, provider_message_id)
       WHERE provider_message_id IS NOT NULL;
   END IF;
@@ -3697,7 +3786,9 @@ BEGIN
       ('whatsapp_cloud_messages_source_direction_check',
        'CHECK (source_event_id IS NULL OR (direction = ''inbound'' AND outbox_id IS NULL))'),
       ('whatsapp_cloud_messages_outbox_direction_check',
-       'CHECK (outbox_id IS NULL OR (direction = ''outbound'' AND source_event_id IS NULL))')
+       'CHECK (outbox_id IS NULL OR (direction = ''outbound'' AND source_event_id IS NULL))'),
+      ('whatsapp_cloud_messages_source_outbox_direction_check',
+       'CHECK (source_outbox_id IS NULL OR (direction = ''outbound'' AND source_event_id IS NULL))')
     ) AS required(constraint_name, definition_sql)
   LOOP
     expected_definition := CASE constraint_row.constraint_name
@@ -3729,6 +3820,8 @@ BEGIN
         THEN 'CHECK (((source_event_id IS NULL) OR ((direction = ''inbound''::text) AND (outbox_id IS NULL))))'
       WHEN 'whatsapp_cloud_messages_outbox_direction_check'
         THEN 'CHECK (((outbox_id IS NULL) OR ((direction = ''outbound''::text) AND (source_event_id IS NULL))))'
+      WHEN 'whatsapp_cloud_messages_source_outbox_direction_check'
+        THEN 'CHECK (((source_outbox_id IS NULL) OR ((direction = ''outbound''::text) AND (source_event_id IS NULL))))'
     END;
 
     SELECT regexp_replace(pg_get_constraintdef(oid), '\s+', ' ', 'g'), convalidated
@@ -3920,7 +4013,7 @@ BEGIN
            SELECT 1
              FROM public.whatsapp_cloud_events AS event
             WHERE event.empresa_id = target_empresa_id
-              AND event.message_id = message.provider_message_id
+              AND BTRIM(event.message_id) = BTRIM(message.provider_message_id)
               AND event.event_kind = 'status'
               AND event.status IN ('sent', 'delivered', 'read', 'failed')
               AND NULLIF(BTRIM(event.message_id), '') IS NOT NULL

@@ -5,6 +5,7 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSy
 import net from 'node:net';
 import { basename, join } from 'node:path';
 import pg from 'pg';
+import { createCloudOps } from '../src/whatsappCloud/opsRepository.js';
 
 let bin;
 try { bin = execFileSync('pg_config', ['--bindir'], { encoding: 'utf8' }).trim(); } catch {}
@@ -22,6 +23,11 @@ assert.ok(projectionStart >= 0 && projectionEnd > projectionStart, 'initDb.sql m
 const outboxSql = initSql.slice(outboxStart, outboxEnd);
 const projectionSql = initSql.slice(projectionStart, projectionEnd + projectionEndMarker.length);
 const migrationSql = `${outboxSql}\n${projectionSql}`;
+const opsStart = initSql.indexOf('-- BEGIN WHATSAPP CLOUD OPS MIGRATION');
+const opsEndMarker = '-- END WHATSAPP CLOUD OPS MIGRATION';
+const opsEnd = initSql.indexOf(opsEndMarker, opsStart);
+assert.ok(opsStart >= 0 && opsEnd > opsStart, 'initDb.sql must expose the Cloud ops migration');
+const opsSql = initSql.slice(opsStart, opsEnd + opsEndMarker.length);
 const projectionStructureFixture = JSON.parse(readFileSync(
   new URL('./fixtures/whatsapp-cloud-message-projection-structure.json', import.meta.url),
   'utf8',
@@ -342,7 +348,7 @@ test('migración crea proyección tenant-scoped, constraints e índices exactos 
        ORDER BY attnum
     `)).rows;
     assert.deepEqual(columns.map(row => row.attname), [
-      'id', 'empresa_id', 'direction', 'participant_wa_id', 'source_event_id', 'outbox_id',
+      'id', 'empresa_id', 'direction', 'participant_wa_id', 'source_event_id', 'outbox_id', 'source_outbox_id',
       'provider_message_id', 'message_type', 'text_body', 'media_mime_type', 'media_caption',
       'document_filename', 'delivery_status', 'state_rank', 'message_at', 'sent_at', 'delivered_at',
       'read_at', 'failed_at', 'created_at', 'updated_at',
@@ -368,17 +374,19 @@ test('migración crea proyección tenant-scoped, constraints e índices exactos 
     assert.match(definitions.get('whatsapp_cloud_messages_timestamps_check'), /sent_at.*delivered_at.*read_at.*failed_at/i);
     assert.match(definitions.get('whatsapp_cloud_messages_source_direction_check'), /source_event_id/i);
     assert.match(definitions.get('whatsapp_cloud_messages_outbox_direction_check'), /outbox_id/i);
+    assert.match(definitions.get('whatsapp_cloud_messages_source_outbox_direction_check'), /source_outbox_id/i);
     assert.match(definitions.get('whatsapp_cloud_messages_empresa_id_fkey'), /FOREIGN KEY \(empresa_id\) REFERENCES empresas\(id\) ON DELETE CASCADE/i);
     assert.match(definitions.get('whatsapp_cloud_messages_source_event_fkey'), /FOREIGN KEY \(empresa_id, source_event_id\).*whatsapp_cloud_events\(empresa_id, id\).*ON DELETE SET NULL \(source_event_id\)/i);
     assert.match(definitions.get('whatsapp_cloud_messages_outbox_fkey'), /FOREIGN KEY \(empresa_id, outbox_id\).*wpp_outbox\(empresa_id, id\).*ON DELETE SET NULL \(outbox_id\)/i);
 
-    for (const [indexName, linkColumn] of [
-      ['whatsapp_cloud_messages_source_event_uidx', 'source_event_id'],
-      ['whatsapp_cloud_messages_outbox_uidx', 'outbox_id'],
-      ['whatsapp_cloud_messages_provider_message_uidx', 'provider_message_id'],
+    for (const [indexName, linkColumn, unique] of [
+      ['whatsapp_cloud_messages_source_event_uidx', 'source_event_id', true],
+      ['whatsapp_cloud_messages_outbox_uidx', 'outbox_id', true],
+      ['whatsapp_cloud_messages_source_outbox_uidx', 'source_outbox_id', true],
+      ['whatsapp_cloud_messages_provider_message_idx', 'provider_message_id', false],
     ]) {
       const shape = await indexShape(pool, indexName);
-      assert.equal(shape.indisunique, true);
+      assert.equal(shape.indisunique, unique);
       assert.equal(shape.indnkeyatts, 2);
       assert.equal(shape.indnatts, 2);
       assert.equal(shape.has_expressions, false);
@@ -2126,7 +2134,7 @@ test('migración repara fixture legacy incompleto, constraints, uniques e índic
     `)).rows;
     assert.deepEqual(new Set(columns.map(row => row.attname)), new Set([
       'id', 'empresa_id', 'direction', 'participant_wa_id', 'delivery_status', 'message_at',
-      'source_event_id', 'outbox_id', 'provider_message_id', 'message_type', 'text_body',
+      'source_event_id', 'outbox_id', 'source_outbox_id', 'provider_message_id', 'message_type', 'text_body',
       'media_mime_type', 'media_caption', 'document_filename', 'state_rank', 'sent_at',
       'delivered_at', 'read_at', 'failed_at', 'created_at', 'updated_at',
     ]));
@@ -2504,7 +2512,7 @@ test('colisiones cross-table de todos los índices canónicos abortan sin tocar 
     await pool.query(`
       CREATE TABLE foreign_index_owner (
         empresa_id INTEGER NOT NULL, id BIGINT NOT NULL, source_event_id BIGINT,
-        outbox_id BIGINT, provider_message_id TEXT, message_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        outbox_id BIGINT, source_outbox_id BIGINT, provider_message_id TEXT, message_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         participant_wa_id TEXT NOT NULL DEFAULT '549351555099'
       )
     `);
@@ -2513,7 +2521,8 @@ test('colisiones cross-table de todos los índices canónicos abortan sin tocar 
       'wpp_outbox_empresa_id_id_uidx',
       'whatsapp_cloud_messages_source_event_uidx',
       'whatsapp_cloud_messages_outbox_uidx',
-      'whatsapp_cloud_messages_provider_message_uidx',
+      'whatsapp_cloud_messages_source_outbox_uidx',
+      'whatsapp_cloud_messages_provider_message_idx',
       'idx_whatsapp_cloud_messages_conversations',
       'idx_whatsapp_cloud_messages_timeline',
     ];
@@ -2983,13 +2992,14 @@ test('search_path shadow,public sólo crea y repara objetos canónicos en public
        WHERE index_row.relname IN (
          'whatsapp_cloud_messages_source_event_uidx',
          'whatsapp_cloud_messages_outbox_uidx',
-         'whatsapp_cloud_messages_provider_message_uidx',
+         'whatsapp_cloud_messages_source_outbox_uidx',
+         'whatsapp_cloud_messages_provider_message_idx',
          'idx_whatsapp_cloud_messages_conversations',
          'idx_whatsapp_cloud_messages_timeline'
        ) AND index_namespace.nspname = 'public'
        ORDER BY index_row.relname
     `)).rows;
-    assert.equal(publicIndexOwners.length, 5);
+    assert.equal(publicIndexOwners.length, 6);
     assert.ok(publicIndexOwners.every(row => row.index_schema === 'public' && row.table_schema === 'public'));
     assert.deepEqual((await pool.query(`
       SELECT class_row.oid::text, class_row.relkind, class_row.relname
@@ -3994,6 +4004,121 @@ test('lookup status exacto usa índice parcial canónico con 200k filas', async 
     assert.match(serialized, /whatsapp_cloud_events_status_message_idx/);
     assert.doesNotMatch(serialized, /Seq Scan/);
     assert.ok(plan['Execution Time'] < 1000, `exact indexed lookup took ${plan['Execution Time']}ms`);
+  });
+});
+
+test('identidad source_outbox_id sobrevive cleanup y distingue fuentes idénticas antes del backfill', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (1)');
+    await pool.query(outboxSql);
+    const ids = (await pool.query(`
+      INSERT INTO public.wpp_outbox
+        (empresa_id, telefono, mensaje, status, transport_origin, created_at, meta_message_id)
+      VALUES
+        (1, '549351555700', 'idéntico', 'pending', 'cloud', '2026-10-06T15:00:00Z', 'wamid.same'),
+        (1, '549351555700', 'idéntico', 'pending', 'cloud', '2026-10-06T15:00:00Z', 'wamid.same')
+      RETURNING id
+    `)).rows.map(row => row.id).sort((a, b) => Number(a) - Number(b));
+    const { installSql, backfillSql } = projectionCutoverPhases();
+    await pool.query(installSql);
+    await pool.query('DELETE FROM public.wpp_outbox WHERE id = ANY($1::bigint[])', [ids]);
+    await pool.query(backfillSql);
+    assert.deepEqual((await pool.query(`
+      SELECT source_outbox_id, outbox_id, delivery_status
+        FROM public.whatsapp_cloud_messages
+       WHERE source_outbox_id = ANY($1::bigint[]) ORDER BY source_outbox_id
+    `, [ids])).rows, ids.map(id => ({ source_outbox_id: String(id), outbox_id: null, delivery_status: 'queued' })));
+    await assert.rejects(pool.query(`
+      UPDATE public.whatsapp_cloud_messages SET source_outbox_id = source_outbox_id + 100
+       WHERE source_outbox_id = $1
+    `, [ids[0]]), error => error?.code === 'P0001'
+      && error?.message === 'whatsapp_cloud_source_outbox_identity_immutable');
+  });
+});
+
+test('transiciones autorizadas reabren outcome_unknown sin degradar terminales ni failed ordinario', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (1)');
+    await pool.query(migrationSql);
+    await pool.query(opsSql);
+    const ops = createCloudOps({ pool });
+    const id = (await pool.query(`
+      INSERT INTO public.wpp_outbox
+        (empresa_id, telefono, mensaje, status, transport_origin, cloud_dispatch_state,
+         dispatch_started_at, error, meta_message_id, sent_at)
+      VALUES (1, '549351555701', 'incierto', 'error', 'cloud', 'outcome_unknown',
+              NOW(), 'cloud_dispatch_unknown', 'wamid.legacy', NOW()) RETURNING id
+    `)).rows[0].id;
+    await ops.markFailed({ id: Number(id), actor: 'ops-test', reason: 'meta_rejected' });
+    assert.deepEqual((await pool.query(`SELECT delivery_status, state_rank, failed_at IS NOT NULL AS failed,
+      sent_at, delivered_at, read_at FROM whatsapp_cloud_messages WHERE source_outbox_id=$1`, [id])).rows[0],
+    { delivery_status: 'failed', state_rank: 25, failed: true, sent_at: null, delivered_at: null, read_at: null });
+
+    const replayId = (await pool.query(`INSERT INTO public.wpp_outbox
+      (empresa_id, telefono, mensaje, status, transport_origin, cloud_dispatch_state,
+       dispatch_started_at, error, meta_message_id, sent_at)
+      VALUES (1,'549351555705','replay','error','cloud','outcome_unknown',NOW(),
+              'cloud_dispatch_unknown','wamid.old',NOW()) RETURNING id`)).rows[0].id;
+    await ops.confirmNotSent({ id: Number(replayId), actor: 'ops-test', reason: 'meta_confirmed_not_sent' });
+    await ops.replay({ id: Number(replayId), actor: 'ops-test', reason: 'manual_replay' });
+    assert.deepEqual((await pool.query(`SELECT delivery_status, state_rank, sent_at, delivered_at, read_at, failed_at
+      FROM whatsapp_cloud_messages WHERE source_outbox_id=$1`, [replayId])).rows[0],
+    { delivery_status: 'queued', state_rank: 10, sent_at: null, delivered_at: null, read_at: null, failed_at: null });
+
+    await pool.query(`UPDATE public.wpp_outbox SET status='sent', cloud_dispatch_state='sent',
+      meta_message_id='wamid.final', sent_at=NOW() WHERE id=$1`, [replayId]);
+    await pool.query(`UPDATE public.wpp_outbox SET status='error', cloud_dispatch_state='outcome_unknown' WHERE id=$1`, [replayId]);
+    assert.equal((await pool.query(`SELECT delivery_status FROM whatsapp_cloud_messages WHERE source_outbox_id=$1`, [replayId])).rows[0].delivery_status, 'sent');
+
+    const ordinary = (await pool.query(`INSERT INTO public.wpp_outbox
+      (empresa_id, telefono, mensaje, status, transport_origin, cloud_dispatch_state)
+      VALUES (1,'549351555702','falló','error','cloud','definitive_failed') RETURNING id`)).rows[0].id;
+    await pool.query(`UPDATE public.wpp_outbox SET status='pending', cloud_dispatch_state=NULL WHERE id=$1`, [ordinary]);
+    assert.equal((await pool.query(`SELECT delivery_status FROM whatsapp_cloud_messages WHERE source_outbox_id=$1`, [ordinary])).rows[0].delivery_status, 'failed');
+  });
+});
+
+test('UPDATE de tenant/transport Cloud falla cerrado, revierte y permite updates ordinarios', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (1), (2)');
+    await pool.query(migrationSql);
+    const cloudId = (await pool.query(`INSERT INTO wpp_outbox
+      (empresa_id, telefono, mensaje, status, transport_origin)
+      VALUES (1,'549351555703','estable','pending','cloud') RETURNING id`)).rows[0].id;
+    const companyId = (await pool.query(`INSERT INTO wpp_outbox
+      (empresa_id, telefono, mensaje, status, transport_origin)
+      VALUES (1,'549351555706','web','pending','company') RETURNING id`)).rows[0].id;
+    for (const [sql, id] of [
+      [`UPDATE wpp_outbox SET empresa_id=2 WHERE id=$1`, cloudId],
+      [`UPDATE wpp_outbox SET transport_origin='company' WHERE id=$1`, cloudId],
+      [`UPDATE wpp_outbox SET transport_origin='cloud' WHERE id=$1`, companyId],
+    ]) {
+      await assert.rejects(pool.query(sql, [id]), error => error?.code === 'P0001'
+        && error?.message === 'whatsapp_cloud_outbox_identity_change_rejected'
+        && !JSON.stringify(error).match(/549351|estable|web|empresa_id|transport_origin/i));
+    }
+    assert.deepEqual((await pool.query(`SELECT empresa_id, transport_origin, mensaje FROM wpp_outbox WHERE id=$1`, [cloudId])).rows[0],
+      { empresa_id: 1, transport_origin: 'cloud', mensaje: 'estable' });
+    await pool.query(`UPDATE wpp_outbox SET mensaje='permitido' WHERE id=$1`, [cloudId]);
+    assert.equal((await pool.query(`SELECT text_body FROM whatsapp_cloud_messages WHERE source_outbox_id=$1`, [cloudId])).rows[0].text_body, 'permitido');
+  });
+});
+
+test('correlación status aplica BTRIM a eventos y outbox legacy con whitespace', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (1)');
+    await pool.query(migrationSql);
+    const id = (await pool.query(`INSERT INTO wpp_outbox
+      (empresa_id, telefono, mensaje, status, transport_origin, cloud_dispatch_state, meta_message_id, sent_at)
+      VALUES (1,'549351555704','trim','sent','cloud','sent','  wamid.trim  ',NOW()) RETURNING id`)).rows[0].id;
+    await pool.query(`INSERT INTO whatsapp_cloud_events
+      (empresa_id,event_kind,dedupe_key,message_id,status,source_timestamp,event_data)
+      VALUES (1,'status','trim:delivered',' wamid.trim ','delivered',extract(epoch from now())::bigint::text,'{}'),
+             (1,'status','trim:read','   wamid.trim   ','read',extract(epoch from now())::bigint::text,'{}')`);
+    assert.deepEqual((await pool.query(`SELECT provider_message_id, delivery_status, state_rank,
+      delivered_at IS NOT NULL AS delivered, read_at IS NOT NULL AS read
+      FROM whatsapp_cloud_messages WHERE source_outbox_id=$1`, [id])).rows[0],
+      { provider_message_id: 'wamid.trim', delivery_status: 'read', state_rank: 50, delivered: true, read: true });
   });
 });
 
