@@ -455,15 +455,17 @@ test('migración repara secuencia propia para id BIGINT legacy sin default y la 
     await pool.query(outboxSql);
     await pool.query(`
       CREATE TABLE whatsapp_cloud_messages (
-        id BIGINT NOT NULL PRIMARY KEY,
+        id BIGINT NOT NULL,
         empresa_id INTEGER,
         direction TEXT,
         participant_wa_id TEXT,
+        message_type TEXT,
+        text_body TEXT,
+        delivery_status TEXT,
+        state_rank SMALLINT,
         message_at TIMESTAMPTZ
       )
     `);
-
-    await pool.query(projectionSql);
     await pool.query(`
       INSERT INTO whatsapp_cloud_messages
         (id, empresa_id, direction, participant_wa_id, message_type, text_body,
@@ -472,6 +474,23 @@ test('migración repara secuencia propia para id BIGINT legacy sin default y la 
         (9001, 1, 'outbound', '549351555011', 'text', 'legacy explícito',
          'queued', 10, '2026-10-01T16:00:00Z')
     `);
+
+    const legacyId = (await pool.query(`
+      SELECT column_row.attnotnull,
+             pg_get_expr(default_row.adbin, default_row.adrelid) AS default_expression,
+             pg_get_serial_sequence('whatsapp_cloud_messages', 'id') AS sequence_name
+        FROM pg_attribute AS column_row
+        LEFT JOIN pg_attrdef AS default_row
+          ON default_row.adrelid = column_row.attrelid
+         AND default_row.adnum = column_row.attnum
+       WHERE column_row.attrelid = 'whatsapp_cloud_messages'::regclass
+         AND column_row.attname = 'id'
+    `)).rows[0];
+    assert.deepEqual(legacyId, {
+      attnotnull: true,
+      default_expression: null,
+      sequence_name: null,
+    });
 
     await pool.query(projectionSql);
 
@@ -515,7 +534,26 @@ test('migración repara secuencia propia para id BIGINT legacy sin default y la 
       RETURNING id
     `)).rows[0];
     assert.ok(Number(inserted.id) > 9001);
-    assert.equal((await pool.query('SELECT count(*)::int AS total FROM whatsapp_cloud_messages')).rows[0].total, 2);
+
+    await pool.query(projectionSql);
+
+    assert.deepEqual((await pool.query(`
+      SELECT id::text, text_body
+        FROM whatsapp_cloud_messages
+       ORDER BY id
+    `)).rows, [
+      { id: '9001', text_body: 'legacy explícito' },
+      { id: inserted.id, text_body: 'id automático' },
+    ]);
+    assert.equal((await pool.query(`
+      SELECT count(*)::int AS total
+        FROM pg_depend
+       WHERE classid = 'pg_class'::regclass
+         AND objid = 'whatsapp_cloud_messages_id_seq'::regclass
+         AND refclassid = 'pg_class'::regclass
+         AND refobjid = 'whatsapp_cloud_messages'::regclass
+         AND deptype = 'a'
+    `)).rows[0].total, 1);
   });
 });
 
