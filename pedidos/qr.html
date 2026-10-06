@@ -1179,10 +1179,16 @@
         const status = $('#companyWppStatus');
         const text = $('#companyWppText');
         const btn = $('#btnRefreshCompanyWpp');
+        const resetBtn = $('#btnResetCompanyWpp');
+        const downloadBtn = $('#btnDownloadCompanyWpp');
+        const workerBtn = $('#btnCopyWorkerCmd');
 
         if (!companyId || !result || isCompanyWppLoading) return;
         isCompanyWppLoading = true;
         stopCompanyWppRefresh();
+        [resetBtn, downloadBtn, workerBtn].forEach(actionBtn => {
+            if (actionBtn) actionBtn.disabled = false;
+        });
 
         const originalBtnHtml = btn ? btn.innerHTML : '';
         if (btn && showLoading) {
@@ -1193,6 +1199,76 @@
         try {
             const res = await authFetch(`/api/empresas/${companyId}/whatsapp-qr`);
             const data = await res.json().catch(() => null);
+            const cloudManaged = res.status === 409 && data?.status === 'cloud_managed';
+
+            if (cloudManaged) {
+                const company = selectedCompany();
+                const companyName = company?.nombre || `Empresa ${companyId}`;
+                const qrBox = result.querySelector('.public-qr-image');
+                const refreshState = $('#companyWppRefreshState');
+                const healthBox = $('#companyWppHealth');
+                const metrics = $('#companyWppMetrics');
+                const checklist = $('#companyIaChecklist');
+
+                currentCompanyWpp = {
+                    ...data,
+                    ok: true,
+                    provider: 'cloud',
+                    nombre: companyName,
+                };
+
+                if (status) {
+                    status.textContent = 'Cloud habilitado';
+                    status.className = 'status-pill connected';
+                }
+                if (refreshState) {
+                    refreshState.textContent = 'Cloud activo';
+                    refreshState.className = 'status-pill connected';
+                }
+                if (qrBox) {
+                    qrBox.innerHTML = `
+                        <div style="text-align:center; color:#0f172a;">
+                            <i class="fa-solid fa-cloud" style="font-size:3.5rem; margin-bottom:.65rem;"></i>
+                            <div style="font-weight:800;">Cloud API</div>
+                        </div>
+                    `;
+                }
+                if (text) {
+                    text.textContent = 'WhatsApp Cloud está habilitado. Esta conexión no usa QR ni sesión de WhatsApp Web.';
+                }
+                if (healthBox) {
+                    healthBox.className = 'health-box ok';
+                    healthBox.innerHTML = `
+                        <div class="health-title"><i class="fa-solid fa-cloud-circle-check"></i> WhatsApp Cloud activo</div>
+                        <div class="metric-detail">La empresa opera mediante la API oficial de WhatsApp Cloud y no necesita escanear un QR.</div>
+                    `;
+                }
+                if (metrics) {
+                    metrics.innerHTML = `
+                        <div class="metric-card">
+                            <div class="metric-label">Empresa</div>
+                            <div class="metric-value">#${companyId}</div>
+                            <div class="metric-detail">${escapeHtml(companyName)}</div>
+                        </div>
+                        <div class="metric-card">
+                            <div class="metric-label">Canal</div>
+                            <div class="metric-value">WhatsApp Cloud</div>
+                            <div class="metric-detail">Administrado por Meta Cloud API</div>
+                        </div>
+                        <div class="metric-card">
+                            <div class="metric-label">QR WhatsApp</div>
+                            <div class="metric-value">No aplica</div>
+                            <div class="metric-detail">Cloud no requiere vinculación Web</div>
+                        </div>
+                    `;
+                }
+                if (checklist) checklist.innerHTML = '';
+                [resetBtn, downloadBtn, workerBtn].forEach(actionBtn => {
+                    if (actionBtn) actionBtn.disabled = true;
+                });
+                return;
+            }
+
             if (!res.ok || !data?.ok) {
                 throw new Error(data?.error || 'No se pudo leer el QR WhatsApp');
             }
