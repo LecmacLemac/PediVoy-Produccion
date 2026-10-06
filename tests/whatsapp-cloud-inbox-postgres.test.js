@@ -332,6 +332,85 @@ test('backfill conserva status sent legacy sin sent_at usando created_at sólo c
   });
 });
 
+test('backfill canoniza cronologías irregulares sin abortar ni violar constraints', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (1)');
+    await pool.query(outboxSql);
+    await pool.query(`
+      INSERT INTO wpp_outbox
+        (empresa_id, telefono, mensaje, created_at, sent_at, status, transport_origin,
+         meta_message_id, cloud_dispatch_state)
+      VALUES
+        (1, '549351555020', 'delivered sin sent', '2026-10-01T10:00:00Z', NULL,
+         'sending', 'cloud', 'irregular-delivered-only', 'pre_dispatch'),
+        (1, '549351555021', 'reloj desalineado', '2026-10-01T11:00:00Z', NULL,
+         'sending', 'cloud', 'irregular-clock-skew', 'pre_dispatch'),
+        (1, '549351555022', 'sent y failed', '2026-10-01T12:00:00Z', NULL,
+         'sending', 'cloud', 'irregular-sent-failed', 'pre_dispatch'),
+        (1, '549351555023', 'failed legacy con sent_at', '2026-10-01T13:00:00Z',
+         '2026-10-01T13:02:00Z', 'error', 'cloud', 'irregular-failed', 'definitive_failed')
+    `);
+    await pool.query(`
+      INSERT INTO whatsapp_cloud_events
+        (empresa_id, event_kind, dedupe_key, message_id, recipient_id, status,
+         source_timestamp, event_data, received_at)
+      VALUES
+        (1, 'status', 'irregular:delivered-only', 'irregular-delivered-only', '549351555020',
+         'delivered', EXTRACT(EPOCH FROM TIMESTAMPTZ '2026-10-01T10:05:00Z')::bigint::text,
+         '{}'::jsonb, '2026-10-01T10:05:01Z'),
+        (1, 'status', 'irregular:clock:delivered', 'irregular-clock-skew', '549351555021',
+         'delivered', EXTRACT(EPOCH FROM TIMESTAMPTZ '2026-10-01T11:01:00Z')::bigint::text,
+         '{}'::jsonb, '2026-10-01T11:01:01Z'),
+        (1, 'status', 'irregular:clock:sent', 'irregular-clock-skew', '549351555021',
+         'sent', EXTRACT(EPOCH FROM TIMESTAMPTZ '2026-10-01T11:03:00Z')::bigint::text,
+         '{}'::jsonb, '2026-10-01T11:03:01Z'),
+        (1, 'status', 'irregular:mixed:failed', 'irregular-sent-failed', '549351555022',
+         'failed', EXTRACT(EPOCH FROM TIMESTAMPTZ '2026-10-01T12:04:00Z')::bigint::text,
+         '{}'::jsonb, '2026-10-01T12:04:01Z'),
+        (1, 'status', 'irregular:mixed:sent', 'irregular-sent-failed', '549351555022',
+         'sent', EXTRACT(EPOCH FROM TIMESTAMPTZ '2026-10-01T12:02:00Z')::bigint::text,
+         '{}'::jsonb, '2026-10-01T12:02:01Z')
+    `);
+
+    await pool.query(projectionSql);
+    await pool.query(projectionSql);
+
+    const rows = (await pool.query(`
+      SELECT provider_message_id, delivery_status, state_rank,
+             to_char(message_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS message_at,
+             to_char(sent_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS sent_at,
+             to_char(delivered_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS delivered_at,
+             to_char(read_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS read_at,
+             to_char(failed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS failed_at
+        FROM whatsapp_cloud_messages
+       WHERE provider_message_id LIKE 'irregular-%'
+       ORDER BY provider_message_id
+    `)).rows;
+    assert.deepEqual(rows, [
+      {
+        provider_message_id: 'irregular-clock-skew', delivery_status: 'delivered', state_rank: 40,
+        message_at: '2026-10-01T11:00:00Z', sent_at: '2026-10-01T11:03:00Z',
+        delivered_at: '2026-10-01T11:03:00Z', read_at: null, failed_at: null,
+      },
+      {
+        provider_message_id: 'irregular-delivered-only', delivery_status: 'delivered', state_rank: 40,
+        message_at: '2026-10-01T10:00:00Z', sent_at: '2026-10-01T10:05:00Z',
+        delivered_at: '2026-10-01T10:05:00Z', read_at: null, failed_at: null,
+      },
+      {
+        provider_message_id: 'irregular-failed', delivery_status: 'failed', state_rank: 25,
+        message_at: '2026-10-01T13:00:00Z', sent_at: null, delivered_at: null,
+        read_at: null, failed_at: '2026-10-01T13:02:00Z',
+      },
+      {
+        provider_message_id: 'irregular-sent-failed', delivery_status: 'sent', state_rank: 30,
+        message_at: '2026-10-01T12:00:00Z', sent_at: '2026-10-01T12:02:00Z',
+        delivered_at: null, read_at: null, failed_at: null,
+      },
+    ]);
+  });
+});
+
 test('constraints aíslan tenant, dirección/estado/rank/timestamps y rechazan enlaces cruzados', async () => {
   await withDatabase(async pool => {
     await seedBackfillSources(pool);
@@ -614,6 +693,175 @@ test('migración repara fixture legacy incompleto, constraints, uniques e índic
       ['empresa_id', 'source_event_id']);
     assert.deepEqual((await indexShape(pool, 'idx_whatsapp_cloud_messages_timeline')).key_columns,
       ['empresa_id', 'participant_wa_id', 'message_at', 'id']);
+  });
+});
+
+test('reparación canónica reemplaza sólo timestamps legacy y sanea filas antes de validar', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (1)');
+    await pool.query(migrationSql);
+    await pool.query(`
+      ALTER TABLE whatsapp_cloud_messages
+        DROP CONSTRAINT whatsapp_cloud_messages_timestamps_check;
+      ALTER TABLE whatsapp_cloud_messages
+        ADD CONSTRAINT whatsapp_cloud_messages_timestamps_check
+        CHECK (
+          direction = 'inbound'
+          OR (direction = 'outbound'
+            AND (sent_at IS NULL OR sent_at >= message_at)
+            AND (failed_at IS NULL OR failed_at >= message_at)
+            AND CASE delivery_status
+              WHEN 'failed' THEN delivered_at IS NULL AND read_at IS NULL AND failed_at IS NOT NULL
+              ELSE TRUE
+            END)
+        );
+      INSERT INTO whatsapp_cloud_messages
+        (empresa_id, direction, participant_wa_id, message_type, text_body,
+         delivery_status, state_rank, message_at, sent_at, failed_at)
+      VALUES
+        (1, 'outbound', '549351555024', 'text', 'legacy permitido',
+         'failed', 25, '2026-10-01T14:00:00Z', '2026-10-01T14:01:00Z',
+         '2026-10-01T14:02:00Z')
+    `);
+
+    await pool.query(projectionSql);
+
+    assert.deepEqual((await pool.query(`
+      SELECT sent_at, delivered_at, read_at, failed_at IS NOT NULL AS has_failed_at
+        FROM whatsapp_cloud_messages
+       WHERE text_body = 'legacy permitido'
+    `)).rows[0], {
+      sent_at: null, delivered_at: null, read_at: null, has_failed_at: true,
+    });
+    const definition = (await pool.query(`
+      SELECT lower(pg_get_constraintdef(oid)) AS definition
+        FROM pg_constraint
+       WHERE conrelid = 'whatsapp_cloud_messages'::regclass
+         AND conname = 'whatsapp_cloud_messages_timestamps_check'
+    `)).rows[0].definition;
+    assert.match(definition, /when 'failed'::text then .*sent_at is null.*failed_at is not null/i);
+  });
+});
+
+test('reparación legacy conserva constraints ajenos durante doble migración', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (1)');
+    await pool.query(outboxSql);
+    await pool.query(projectionSql);
+    await pool.query(`
+      ALTER TABLE whatsapp_cloud_messages
+        ADD CONSTRAINT whatsapp_cloud_messages_independent_check
+        CHECK (char_length(participant_wa_id) >= 6),
+        ADD CONSTRAINT whatsapp_cloud_messages_independent_unique
+        UNIQUE (empresa_id, id, participant_wa_id)
+    `);
+
+    await pool.query(projectionSql);
+    await pool.query(projectionSql);
+
+    const constraints = (await pool.query(`
+      SELECT conname, contype, pg_get_constraintdef(oid) AS definition
+        FROM pg_constraint
+       WHERE conrelid = 'whatsapp_cloud_messages'::regclass
+         AND conname LIKE 'whatsapp_cloud_messages_independent_%'
+       ORDER BY conname
+    `)).rows;
+    assert.deepEqual(constraints.map(row => ({ conname: row.conname, contype: row.contype })), [
+      { conname: 'whatsapp_cloud_messages_independent_check', contype: 'c' },
+      { conname: 'whatsapp_cloud_messages_independent_unique', contype: 'u' },
+    ]);
+    assert.match(constraints[0].definition, /char_length\(participant_wa_id\) >= 6/i);
+    assert.match(constraints[1].definition, /UNIQUE \(empresa_id, id, participant_wa_id\)/i);
+  });
+});
+
+test('reejecución normal no pide ACCESS EXCLUSIVE sobre eventos/outbox ni bloquea sus escritores', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (1)');
+    await pool.query(migrationSql);
+    assert.doesNotMatch(projectionSql,
+      /LOCK\s+TABLE\s+[^;]*(?:whatsapp_cloud_events|wpp_outbox)[^;]*ACCESS\s+EXCLUSIVE/is);
+    const canonicalObjectsBefore = (await pool.query(`
+      SELECT 'constraint' AS kind, conname AS name, oid::text
+        FROM pg_constraint
+       WHERE conrelid = 'whatsapp_cloud_messages'::regclass
+         AND conname LIKE 'whatsapp_cloud_messages_%'
+      UNION ALL
+      SELECT 'index', relname, oid::text
+        FROM pg_class
+       WHERE relname IN (
+         'whatsapp_cloud_events_empresa_id_id_uidx',
+         'wpp_outbox_empresa_id_id_uidx',
+         'whatsapp_cloud_messages_source_event_uidx',
+         'whatsapp_cloud_messages_outbox_uidx',
+         'whatsapp_cloud_messages_provider_message_uidx',
+         'idx_whatsapp_cloud_messages_conversations',
+         'idx_whatsapp_cloud_messages_timeline'
+       )
+       ORDER BY kind, name
+    `)).rows;
+
+    const writer = await pool.connect();
+    let committed = false;
+    try {
+      await writer.query('BEGIN');
+      await writer.query(`
+        INSERT INTO whatsapp_cloud_events
+          (empresa_id, event_kind, dedupe_key, message_id, sender_id, message_type, event_data)
+        VALUES (1, 'message', 'concurrent:event', 'concurrent-event', '549351555030', 'text',
+                '{"text":{"body":"concurrente"}}'::jsonb)
+      `);
+      await writer.query(`
+        INSERT INTO wpp_outbox
+          (empresa_id, telefono, mensaje, status, transport_origin)
+        VALUES (1, '549351555031', 'concurrente', 'pending', 'cloud')
+      `);
+
+      const migrator = await pool.connect();
+      try {
+        await migrator.query("SET lock_timeout = '750ms'");
+        await migrator.query(projectionSql);
+      } finally {
+        migrator.release();
+      }
+      await writer.query('COMMIT');
+      committed = true;
+    } finally {
+      if (!committed) await writer.query('ROLLBACK').catch(() => {});
+      writer.release();
+    }
+
+    assert.equal((await pool.query(`
+      SELECT count(*)::int AS total
+        FROM whatsapp_cloud_events
+       WHERE dedupe_key = 'concurrent:event'
+    `)).rows[0].total, 1);
+    assert.equal((await pool.query(`
+      SELECT count(*)::int AS total
+        FROM wpp_outbox
+       WHERE mensaje = 'concurrente'
+    `)).rows[0].total, 1);
+    const canonicalObjectsAfter = (await pool.query(`
+      SELECT 'constraint' AS kind, conname AS name, oid::text
+        FROM pg_constraint
+       WHERE conrelid = 'whatsapp_cloud_messages'::regclass
+         AND conname LIKE 'whatsapp_cloud_messages_%'
+      UNION ALL
+      SELECT 'index', relname, oid::text
+        FROM pg_class
+       WHERE relname IN (
+         'whatsapp_cloud_events_empresa_id_id_uidx',
+         'wpp_outbox_empresa_id_id_uidx',
+         'whatsapp_cloud_messages_source_event_uidx',
+         'whatsapp_cloud_messages_outbox_uidx',
+         'whatsapp_cloud_messages_provider_message_uidx',
+         'idx_whatsapp_cloud_messages_conversations',
+         'idx_whatsapp_cloud_messages_timeline'
+       )
+       ORDER BY kind, name
+    `)).rows;
+    assert.deepEqual(canonicalObjectsAfter, canonicalObjectsBefore,
+      'canonical constraints and indexes must not be rebuilt on a normal rerun');
   });
 });
 
