@@ -2684,14 +2684,35 @@ AS $$
       )
 $$;
 
+DROP FUNCTION IF EXISTS public.whatsapp_cloud_messages_reconcile_status(INTEGER, TEXT);
+DROP FUNCTION IF EXISTS public.whatsapp_cloud_messages_reconcile_status_locked(INTEGER, TEXT);
+
 CREATE OR REPLACE FUNCTION public.whatsapp_cloud_messages_reconcile_status_locked(
   target_empresa_id INTEGER,
   target_provider_message_id TEXT
-) RETURNS VOID
+) RETURNS TEXT
 LANGUAGE plpgsql
 SET search_path = pg_catalog, public
 AS $$
+DECLARE
+  matching_messages INTEGER;
+  updated_messages INTEGER;
 BEGIN
+  SELECT pg_catalog.COUNT(*)::INTEGER
+    INTO matching_messages
+    FROM public.whatsapp_cloud_messages AS message
+   WHERE message.empresa_id = target_empresa_id
+     AND pg_catalog.BTRIM(message.provider_message_id) = NULLIF(pg_catalog.BTRIM(target_provider_message_id), '')
+     AND message.direction = 'outbound';
+
+  IF matching_messages = 0 THEN
+    RETURN 'not_found';
+  ELSIF matching_messages > 1 THEN
+    RAISE EXCEPTION USING
+      ERRCODE = 'P0001',
+      MESSAGE = 'whatsapp_cloud_messages_provider_identity_ambiguous';
+  END IF;
+
   WITH status_events AS (
     SELECT event.status,
            CASE
@@ -2805,28 +2826,36 @@ BEGIN
    WHERE message.id = canonical.id
      AND canonical.latest_rank >= message.state_rank
      AND ROW(
-       message.delivery_status, message.state_rank, message.sent_at,
-       message.delivered_at, message.read_at, message.failed_at, message.updated_at
-     ) IS DISTINCT FROM ROW(
-       canonical.winning_status, canonical.winning_rank, canonical.canonical_sent_at,
-       canonical.canonical_delivered_at, canonical.canonical_read_at,
-       canonical.canonical_failed_at, canonical.canonical_updated_at
-     );
+      message.delivery_status, message.state_rank, message.sent_at,
+      message.delivered_at, message.read_at, message.failed_at, message.updated_at
+    ) IS DISTINCT FROM ROW(
+      canonical.winning_status, canonical.winning_rank, canonical.canonical_sent_at,
+      canonical.canonical_delivered_at, canonical.canonical_read_at,
+      canonical.canonical_failed_at, canonical.canonical_updated_at
+    );
+  GET DIAGNOSTICS updated_messages = ROW_COUNT;
+  IF updated_messages = 1 THEN
+    RETURN 'reconciled';
+  END IF;
+  RETURN 'unchanged';
 END $$;
 
 CREATE OR REPLACE FUNCTION public.whatsapp_cloud_messages_reconcile_status(
   target_empresa_id INTEGER,
   target_provider_message_id TEXT
-) RETURNS VOID
+) RETURNS TEXT
 LANGUAGE plpgsql
 SET search_path = pg_catalog, public
 AS $$
+DECLARE
+  reconciliation_result TEXT;
 BEGIN
   PERFORM public.whatsapp_cloud_messages_lock_projection(target_empresa_id);
-  PERFORM public.whatsapp_cloud_messages_reconcile_status_locked(
+  SELECT public.whatsapp_cloud_messages_reconcile_status_locked(
     target_empresa_id,
     NULLIF(pg_catalog.BTRIM(target_provider_message_id), '')
-  );
+  ) INTO reconciliation_result;
+  RETURN reconciliation_result;
 END $$;
 
 CREATE OR REPLACE FUNCTION public.whatsapp_cloud_messages_capture_event_insert()
@@ -3765,6 +3794,92 @@ END $$;
 
 DO $$
 DECLARE
+  canonical_index pg_catalog.REGCLASS := pg_catalog.to_regclass(
+    'public.whatsapp_cloud_messages_provider_message_idx'
+  );
+BEGIN
+  IF EXISTS (
+    WITH provider_identities AS (
+      SELECT message.empresa_id,
+             NULLIF(pg_catalog.BTRIM(message.provider_message_id), '') AS provider_message_id
+        FROM public.whatsapp_cloud_messages AS message
+       WHERE message.direction = 'outbound'
+         AND NULLIF(pg_catalog.BTRIM(message.provider_message_id), '') IS NOT NULL
+         AND NOT EXISTS (
+           SELECT 1
+             FROM public.wpp_outbox AS source
+            WHERE source.empresa_id = message.empresa_id
+              AND source.id = message.source_outbox_id
+              AND source.transport_origin = 'cloud'
+              AND source.telefono ~ '^[0-9]{6,15}$'
+              AND source.mensaje IS NOT NULL
+              AND NULLIF(pg_catalog.BTRIM(source.meta_message_id), '') IS NOT NULL
+         )
+      UNION ALL
+      SELECT source.empresa_id,
+             NULLIF(pg_catalog.BTRIM(source.meta_message_id), '') AS provider_message_id
+        FROM public.wpp_outbox AS source
+       WHERE source.transport_origin = 'cloud'
+         AND source.empresa_id IS NOT NULL
+         AND source.telefono ~ '^[0-9]{6,15}$'
+         AND source.mensaje IS NOT NULL
+         AND NULLIF(pg_catalog.BTRIM(source.meta_message_id), '') IS NOT NULL
+    )
+    SELECT 1
+      FROM provider_identities
+     GROUP BY empresa_id, provider_message_id
+    HAVING pg_catalog.COUNT(*) > 1
+  ) THEN
+    RAISE EXCEPTION USING
+      ERRCODE = 'P0001',
+      MESSAGE = 'whatsapp_cloud_messages_provider_identity_duplicates';
+  END IF;
+
+  UPDATE public.whatsapp_cloud_messages
+     SET provider_message_id = NULLIF(pg_catalog.BTRIM(provider_message_id), '')
+   WHERE provider_message_id IS DISTINCT FROM NULLIF(pg_catalog.BTRIM(provider_message_id), '');
+
+  IF canonical_index IS NOT NULL AND NOT EXISTS (
+    SELECT 1
+      FROM pg_catalog.pg_index AS candidate
+      JOIN pg_catalog.pg_class AS index_class ON index_class.oid = candidate.indexrelid
+      JOIN pg_catalog.pg_namespace AS index_namespace ON index_namespace.oid = index_class.relnamespace
+      JOIN pg_catalog.pg_am AS access_method ON access_method.oid = index_class.relam
+     WHERE candidate.indexrelid = canonical_index
+       AND index_namespace.nspname = 'public'
+       AND index_class.relname = 'whatsapp_cloud_messages_provider_message_idx'
+       AND candidate.indrelid = 'public.whatsapp_cloud_messages'::pg_catalog.regclass
+       AND access_method.amname = 'btree'
+       AND candidate.indisvalid
+       AND candidate.indisready
+       AND candidate.indisunique
+       AND candidate.indexprs IS NULL
+       AND candidate.indnkeyatts = 2
+       AND candidate.indnatts = 2
+       AND candidate.indoption::TEXT = '0 0'
+       AND (
+         SELECT pg_catalog.array_agg(attribute_row.attname::TEXT ORDER BY key_column.ordinality)
+           FROM pg_catalog.unnest(candidate.indkey) WITH ORDINALITY AS key_column(attnum, ordinality)
+           JOIN pg_catalog.pg_attribute AS attribute_row
+             ON attribute_row.attrelid = candidate.indrelid
+            AND attribute_row.attnum = key_column.attnum
+       ) = ARRAY['empresa_id', 'provider_message_id']::TEXT[]
+       AND pg_catalog.pg_get_expr(candidate.indpred, candidate.indrelid) =
+         '((provider_message_id IS NOT NULL) AND (direction = ''outbound''::text))'
+  ) THEN
+    DROP INDEX public.whatsapp_cloud_messages_provider_message_idx;
+    canonical_index := NULL;
+  END IF;
+
+  IF canonical_index IS NULL THEN
+    CREATE UNIQUE INDEX whatsapp_cloud_messages_provider_message_idx
+      ON public.whatsapp_cloud_messages USING btree (empresa_id, provider_message_id)
+      WHERE provider_message_id IS NOT NULL AND direction = 'outbound';
+  END IF;
+END $$;
+
+DO $$
+DECLARE
   index_row RECORD;
   backing_constraint RECORD;
   expected_columns TEXT[];
@@ -3782,9 +3897,7 @@ BEGIN
       ('public.whatsapp_cloud_messages_outbox_uidx', 'public.whatsapp_cloud_messages',
        ARRAY['empresa_id', 'outbox_id']::TEXT[], TRUE, 'outbox_idisnotnull'),
       ('public.whatsapp_cloud_messages_source_outbox_uidx', 'public.whatsapp_cloud_messages',
-       ARRAY['empresa_id', 'source_outbox_id']::TEXT[], TRUE, 'source_outbox_idisnotnull'),
-      ('public.whatsapp_cloud_messages_provider_message_idx', 'public.whatsapp_cloud_messages',
-       ARRAY['empresa_id', 'provider_message_id']::TEXT[], FALSE, 'provider_message_idisnotnull')
+       ARRAY['empresa_id', 'source_outbox_id']::TEXT[], TRUE, 'source_outbox_idisnotnull')
     ) AS required(index_name, table_name, key_columns, is_unique, predicate_key)
   LOOP
     expected_columns := index_row.key_columns;
@@ -3851,11 +3964,6 @@ BEGIN
     CREATE UNIQUE INDEX whatsapp_cloud_messages_source_outbox_uidx
       ON public.whatsapp_cloud_messages (empresa_id, source_outbox_id)
       WHERE source_outbox_id IS NOT NULL;
-  END IF;
-  IF pg_catalog.to_regclass('public.whatsapp_cloud_messages_provider_message_idx') IS NULL THEN
-    CREATE INDEX whatsapp_cloud_messages_provider_message_idx
-      ON public.whatsapp_cloud_messages (empresa_id, provider_message_id)
-      WHERE provider_message_id IS NOT NULL;
   END IF;
 END $$;
 

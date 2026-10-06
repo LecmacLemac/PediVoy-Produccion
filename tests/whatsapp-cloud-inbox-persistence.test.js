@@ -340,8 +340,19 @@ test('helper de reconciliación invoca la función canónica y falla cerrado sin
       empresaId: 1,
       providerMessageId: ' wamid.out-1 ',
     });
-    assert.deepEqual(result, { reconciled: true });
+    assert.deepEqual(result, { result: 'reconciled' });
     assert.equal((await pool.query('SELECT delivery_status FROM whatsapp_cloud_messages WHERE empresa_id=1')).rows[0].delivery_status, 'delivered');
+
+    assert.deepEqual(await reconcileCloudMessageProjectionStatus({
+      query: async (sql, params) => (await pool.query(sql, params)).rows,
+      empresaId: '1',
+      providerMessageId: 'wamid.out-1',
+    }), { result: 'unchanged' });
+    assert.deepEqual(await reconcileCloudMessageProjectionStatus({
+      query: async (sql, params) => (await pool.query(sql, params)).rows,
+      empresaId: 1,
+      providerMessageId: 'wamid.missing',
+    }), { result: 'not_found' });
 
     await assert.rejects(reconcileCloudMessageProjectionStatus({
       query: async () => { throw new Error('private phone 5493515550001 wamid.out-1'); },
@@ -354,6 +365,89 @@ test('helper de reconciliación invoca la función canónica y falla cerrado sin
       assert.doesNotMatch(JSON.stringify(error), /5493515550001|wamid\.out-1|private/);
       return true;
     });
+  });
+});
+
+test('empresaId acepta sólo entero seguro positivo o decimal canónico', async () => {
+  const accepted = [];
+  const query = async (_sql, params) => { accepted.push(params[0]); return []; };
+  for (const value of [1, Number.MAX_SAFE_INTEGER, '1', String(Number.MAX_SAFE_INTEGER)]) {
+    assert.equal(await findCloudMessageProjectionByProviderMessageId({
+      query, empresaId: value, providerMessageId: 'wamid.valid',
+    }), null);
+  }
+  assert.deepEqual(accepted, [1, Number.MAX_SAFE_INTEGER, 1, Number.MAX_SAFE_INTEGER]);
+
+  for (const value of [
+    true, false, null, undefined, {}, [], 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1,
+    '', ' 1', '1 ', '+1', '-1', '01', '0', '1.0', '1e3', '9007199254740992',
+  ]) {
+    await assert.rejects(findCloudMessageProjectionByProviderMessageId({
+      query: async () => assert.fail('invalid empresaId must fail before query'),
+      empresaId: value,
+      providerMessageId: 'wamid.invalid',
+    }), error => error?.code === 'CLOUD_INBOX_INVALID_ARGUMENT');
+  }
+});
+
+test('lookup por provider limita a dos, no usa recencia y falla cerrado ante cardinalidad múltiple', async () => {
+  let capturedSql = '';
+  await assert.rejects(findCloudMessageProjectionByProviderMessageId({
+    query: async sql => {
+      capturedSql = sql;
+      return [{ id: 1 }, { id: 2 }];
+    },
+    empresaId: 1,
+    providerMessageId: 'wamid.ambiguous',
+  }), error => error?.code === 'CLOUD_INBOX_LOOKUP_FAILED'
+    && error?.message === 'WhatsApp Cloud projection lookup failed'
+    && error?.cause === undefined);
+  assert.match(capturedSql, /LIMIT 2/i);
+  assert.doesNotMatch(capturedSql, /ORDER BY/i);
+});
+
+test('segundo attachment del mismo provider outbound falla atómico', async () => {
+  await withDatabase(async pool => {
+    await seedTenant(pool);
+    await seedOutbound(pool, { providerMessageId: 'wamid.unique-provider' });
+    const before = (await pool.query('SELECT count(*)::int AS total FROM wpp_outbox')).rows[0].total;
+    await assert.rejects(seedOutbound(pool, {
+      participant: '5493515550002', providerMessageId: 'wamid.unique-provider',
+    }), error => error?.code === '23505');
+    assert.deepEqual((await pool.query(`SELECT
+      (SELECT count(*)::int FROM wpp_outbox) AS outbox,
+      (SELECT count(*)::int FROM whatsapp_cloud_messages
+        WHERE empresa_id=1 AND direction='outbound' AND provider_message_id='wamid.unique-provider') AS projections
+    `)).rows[0], { outbox: before, projections: 1 });
+  });
+});
+
+test('status ante identidad outbound ambigua falla atómico y nunca actualiza ambas filas', async () => {
+  await withDatabase(async pool => {
+    await seedTenant(pool);
+    await pool.query('DROP INDEX whatsapp_cloud_messages_provider_message_idx');
+    await seedOutbound(pool, { providerMessageId: 'wamid.ambiguous-status' });
+    await pool.query(`
+      INSERT INTO whatsapp_cloud_messages
+        (empresa_id,direction,participant_wa_id,provider_message_id,message_type,text_body,
+         delivery_status,state_rank,message_at,sent_at,created_at,updated_at)
+      VALUES (1,'outbound','5493515550002','wamid.ambiguous-status','text','segunda',
+              'sent',30,'2026-10-06T10:00:00Z','2026-10-06T10:00:01Z',
+              '2026-10-06T10:00:00Z','2026-10-06T10:00:01Z')
+    `);
+    const handler = handlerFor(pool);
+    await assert.rejects(handler([statusEvent('read', '1760000030', {
+      id: 'wamid.ambiguous-status',
+    })]), error => error?.code === 'processing_failed'
+      && error?.message === 'WhatsApp Cloud event rejected'
+      && error?.cause === undefined);
+    assert.deepEqual((await pool.query(`
+      SELECT delivery_status FROM whatsapp_cloud_messages
+       WHERE empresa_id=1 AND direction='outbound' AND provider_message_id='wamid.ambiguous-status'
+       ORDER BY id
+    `)).rows, [{ delivery_status: 'sent' }, { delivery_status: 'sent' }]);
+    assert.equal((await pool.query(`SELECT count(*)::int AS total FROM whatsapp_cloud_events
+      WHERE message_id='wamid.ambiguous-status'`)).rows[0].total, 0);
   });
 });
 

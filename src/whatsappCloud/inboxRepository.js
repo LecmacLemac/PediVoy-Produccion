@@ -1,5 +1,15 @@
 function requirePositiveInteger(value, field) {
-  const normalized = Number(value);
+  if (typeof value !== 'number' && typeof value !== 'string') {
+    const error = new Error(`Invalid ${field}`);
+    error.code = 'CLOUD_INBOX_INVALID_ARGUMENT';
+    throw error;
+  }
+  if (typeof value === 'string' && !/^[1-9][0-9]*$/.test(value)) {
+    const error = new Error(`Invalid ${field}`);
+    error.code = 'CLOUD_INBOX_INVALID_ARGUMENT';
+    throw error;
+  }
+  const normalized = typeof value === 'number' ? value : Number(value);
   if (!Number.isSafeInteger(normalized) || normalized <= 0) {
     const error = new Error(`Invalid ${field}`);
     error.code = 'CLOUD_INBOX_INVALID_ARGUMENT';
@@ -90,11 +100,14 @@ export async function findCloudMessageProjectionByProviderMessageId({
         WHERE empresa_id = $1
           AND provider_message_id = $2
           AND direction = 'outbound'
-        ORDER BY id DESC
-        LIMIT 1`,
+        LIMIT 2`,
       [tenantId, messageId],
     );
   } catch {
+    throw sanitizedError('CLOUD_INBOX_LOOKUP_FAILED', 'WhatsApp Cloud projection lookup failed');
+  }
+  if (rows.length === 0) return null;
+  if (rows.length !== 1) {
     throw sanitizedError('CLOUD_INBOX_LOOKUP_FAILED', 'WhatsApp Cloud projection lookup failed');
   }
   return toProjectionDto(rows[0]);
@@ -109,11 +122,15 @@ export async function reconcileCloudMessageProjectionStatus({
   const tenantId = requirePositiveInteger(empresaId, 'empresaId');
   const messageId = requireNonEmptyString(providerMessageId, 'providerMessageId');
   try {
-    await runQuery(
-      'SELECT public.whatsapp_cloud_messages_reconcile_status($1, $2)',
+    const rows = await runQuery(
+      'SELECT public.whatsapp_cloud_messages_reconcile_status($1, $2) AS result',
       [tenantId, messageId],
     );
-    return { reconciled: true };
+    const result = rows[0]?.result;
+    if (!['not_found', 'unchanged', 'reconciled'].includes(result)) {
+      throw new Error('invalid reconciliation result');
+    }
+    return { result };
   } catch {
     throw sanitizedError(
       'CLOUD_INBOX_RECONCILE_FAILED',
