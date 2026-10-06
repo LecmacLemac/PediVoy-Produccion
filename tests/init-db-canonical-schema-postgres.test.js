@@ -16,6 +16,61 @@ const initSql = readFileSync(new URL('../initDb.sql', import.meta.url), 'utf8');
 const tempPrefix = '.init-db-canonical-pg-';
 const createdDirectories = new Set();
 
+const nonFunctionCallIdentifiers = new Set([
+  'and', 'any', 'array', 'as', 'btree', 'canonical', 'check', 'coalesce', 'conflict',
+  'default', 'exists', 'expected', 'filter', 'from', 'geometry', 'gin', 'gist', 'greatest',
+  'if', 'in', 'include', 'index_column', 'key', 'key_column', 'least', 'not', 'nullif',
+  'numeric', 'nvarchar', 'or', 'over', 'position', 'requested', 'required', 'required_columns',
+  'varchar',
+  'required_indexes', 'retained', 'row', 'select', 'then', 'unique', 'values', 'where',
+  // Relation names followed by a column/index/CTE list are SQL grammar, not calls.
+  'call_campaign_contacts', 'call_campaigns', 'call_events', 'call_sessions', 'call_tasks',
+  'chofer_costos', 'chofer_escala_tramos', 'chofer_escalas', 'chofer_stock',
+  'chofer_stock_mov', 'choferes', 'cliente_cta_corriente_mov', 'cliente_datos_fiscales',
+  'cliente_recompensas', 'cliente_referentes', 'cliente_retornables_movimientos',
+  'cliente_retornables_saldos', 'compras_orden_items', 'compras_ordenes',
+  'compras_recepcion_items', 'compras_recepciones', 'comprobante_operacion_claims',
+  'comprobante_pedido_aprobado_claims', 'comprobantes_transferencia', 'configuracion',
+  'crm_oportunidad_actividades', 'crm_oportunidades', 'deposito_chofer', 'depositos',
+  'empresa_activos', 'empresa_activos_alquileres', 'empresa_costos_fijos',
+  'empresa_costos_variables_aplicacion', 'empresa_costos_variables_def',
+  'empresa_cuentas_bancarias', 'empresa_facturacion_config', 'empresa_productos_costos',
+  'empresa_prompts', 'empresas', 'entregas_evidencias', 'factura_afip_auditoria',
+  'factura_eventos', 'factura_items', 'facturas', 'gastos_repartidor', 'historial_activos',
+  'historial_costos_precios', 'historial_pagos', 'incidencias_operativas',
+  'incidencias_operativas_historial', 'items_pedido', 'juegos_campanias',
+  'juegos_participaciones', 'juegos_premios', 'marketing_contactos',
+  'marketing_envios_telemetria', 'page_view_events', 'page_views', 'pedido_activos',
+  'pedido_pagos', 'pedido_track_points', 'pedidos', 'presupuesto_mensual', 'producto_prefs',
+  'productos', 'promociones_config', 'promociones_redenciones', 'proveedores',
+  'puntos_entrega', 'puntos_movimientos', 'push_sub_pedidos', 'push_subs',
+  'referente_clientes_propuestos', 'referente_comisiones', 'referente_notificaciones',
+  'referente_productos', 'referentes', 'tesoreria_movimientos', 'tracking_incident_acks',
+  'transferencias', 'usuarios', 'whatsapp_cloud_events', 'wpp_general_control',
+  'wpp_outbox', 'zona_chofer', 'zonas_geograficas',
+]);
+
+function unqualifiedCallInventory(sql) {
+  const scrubbed = sql
+    .replaceAll('\r\n', '\n')
+    .replace(/\/\*[\s\S]*?\*\//g, match => match.replace(/[^\n]/g, ' '))
+    .replace(/--[^\n]*/g, match => ' '.repeat(match.length))
+    .replace(/'(?:''|[^'])*'/g, match => match.replace(/[^\n]/g, ' '))
+    // Keep PL/pgSQL bodies visible while removing their dollar-quote delimiters.
+    .replace(/\$[A-Za-z_][A-Za-z_0-9]*\$|\$\$/g, match => ' '.repeat(match.length));
+  const calls = [];
+  const pattern = /(?<![\w$.])([A-Za-z_][A-Za-z_0-9$]*)\s*\(/g;
+  for (const match of scrubbed.matchAll(pattern)) {
+    const identifier = match[1].toLowerCase();
+    if (nonFunctionCallIdentifiers.has(identifier)) continue;
+    calls.push({
+      identifier,
+      line: scrubbed.slice(0, match.index).split('\n').length,
+    });
+  }
+  return calls;
+}
+
 async function withDatabase(work) {
   const directory = mkdtempSync(join(process.cwd(), tempPrefix));
   createdDirectories.add(directory);
@@ -214,6 +269,10 @@ function assertTransactionScopedSearchPath(sql) {
   assert.equal(commitCount, beginCount);
 }
 
+test('inventario estructural no permite llamadas a funciones sin schema en initDb.sql', () => {
+  assert.deepEqual(unqualifiedCallInventory(initSql), []);
+});
+
 test('initDb completo limita public a cada transacción y preserva search_path y shadow en doble migración',
   { timeout: 180_000 }, async () => {
     assert.match(initSql, /^BEGIN;\s*SET LOCAL search_path = public;/);
@@ -265,6 +324,7 @@ test('rol de migración no resuelve funciones homónimas maliciosas de public',
       const migrator = new pg.Pool({ ...connection, user: 'init_db_migrator', max: 1 });
       try {
         await attacker.query(`
+          CREATE SEQUENCE hijack.concat_ws_calls;
           CREATE SEQUENCE hijack.jsonb_typeof_calls;
           CREATE SEQUENCE hijack.format_calls;
 
@@ -280,6 +340,25 @@ test('rol de migración no resuelve funciones homónimas maliciosas de public',
             RETURN pg_catalog.jsonb_typeof(value);
           END
           $function$;
+
+          CREATE FUNCTION public.concat_ws(separator TEXT, first_arg TEXT, second_arg TEXT)
+          RETURNS TEXT
+          LANGUAGE plpgsql
+          IMMUTABLE
+          SECURITY DEFINER
+          SET search_path = pg_catalog
+          AS $function$
+          BEGIN
+            PERFORM pg_catalog.nextval('hijack.concat_ws_calls'::pg_catalog.regclass);
+            RETURN pg_catalog.concat_ws(separator, first_arg, second_arg);
+          END
+          $function$;
+
+          CREATE FUNCTION public.unnest(value SMALLINT[])
+          RETURNS SETOF SMALLINT
+          LANGUAGE SQL
+          IMMUTABLE
+          AS 'SELECT * FROM pg_catalog.unnest(value)';
 
           CREATE FUNCTION public.format(value TEXT, first_arg TEXT, second_arg TEXT)
           RETURNS TEXT
@@ -308,13 +387,42 @@ test('rol de migración no resuelve funciones homónimas maliciosas de public',
                FROM pg_catalog.pg_proc AS procedure_row
                JOIN pg_catalog.pg_namespace AS namespace_row
                  ON namespace_row.oid = procedure_row.pronamespace
+              WHERE procedure_row.oid = 'concat_ws(text,text,text)'::pg_catalog.regprocedure) AS concat_ws_schema,
+            (SELECT namespace_row.nspname
+               FROM pg_catalog.pg_proc AS procedure_row
+               JOIN pg_catalog.pg_namespace AS namespace_row
+                 ON namespace_row.oid = procedure_row.pronamespace
               WHERE procedure_row.oid = 'format(text,text,text)'::pg_catalog.regprocedure) AS format_schema;
           ROLLBACK;
         `);
         assert.deepEqual(vulnerableResolution[2].rows[0], {
           jsonb_schema: 'public',
+          concat_ws_schema: 'public',
           format_schema: 'public',
         }, 'the test must install actually resolvable hijacks under the old explicit ordering');
+
+        const invokedHijack = await admin.query(`
+          BEGIN;
+          SET LOCAL search_path = public, pg_catalog;
+          SELECT concat_ws('|', 'hostile', 'invoked') AS value;
+          ROLLBACK;
+        `);
+        assert.equal(invokedHijack[2].rows[0].value, 'hostile|invoked');
+        assert.deepEqual((await admin.query(`
+          SELECT last_value::BIGINT, is_called FROM hijack.concat_ws_calls
+        `)).rows[0], { last_value: '1', is_called: true });
+        await admin.query(`SELECT pg_catalog.setval('hijack.concat_ws_calls'::pg_catalog.regclass, 1, false)`);
+
+        await admin.query('BEGIN');
+        try {
+          await admin.query('SET LOCAL search_path = public, pg_catalog');
+          await assert.rejects(
+            admin.query(`SELECT * FROM unnest('1 2'::pg_catalog.int2vector)`),
+            error => error?.code === '42725',
+          );
+        } finally {
+          await admin.query('ROLLBACK');
+        }
 
         const shadowBefore = await prepareShadow(admin);
         const client = await migrator.connect();
@@ -330,7 +438,10 @@ test('rol de migración no resuelve funciones homónimas maliciosas de public',
 
         assert.deepEqual(await snapshotNamespace(admin, 'shadow'), shadowBefore);
         const callState = await admin.query(`
-          SELECT 'jsonb_typeof' AS function_name, last_value::BIGINT, is_called
+          SELECT 'concat_ws' AS function_name, last_value::BIGINT, is_called
+            FROM hijack.concat_ws_calls
+          UNION ALL
+          SELECT 'jsonb_typeof', last_value::BIGINT, is_called
             FROM hijack.jsonb_typeof_calls
           UNION ALL
           SELECT 'format', last_value::BIGINT, is_called
@@ -338,6 +449,7 @@ test('rol de migración no resuelve funciones homónimas maliciosas de public',
           ORDER BY function_name
         `);
         assert.deepEqual(callState.rows, [
+          { function_name: 'concat_ws', last_value: '1', is_called: false },
           { function_name: 'format', last_value: '1', is_called: false },
           { function_name: 'jsonb_typeof', last_value: '1', is_called: false },
         ]);

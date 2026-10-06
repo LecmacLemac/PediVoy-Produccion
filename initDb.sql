@@ -41,10 +41,10 @@ CREATE TABLE IF NOT EXISTS empresas (
   -- SISTEMA DE LICENCIAS
   plan_estado        TEXT DEFAULT 'active', 
   plan_tipo          TEXT DEFAULT 'trial', 
-  plan_vencimiento   TIMESTAMPTZ DEFAULT (NOW() + INTERVAL '30 days'),
+  plan_vencimiento   TIMESTAMPTZ DEFAULT (pg_catalog.NOW() + INTERVAL '30 days'),
   plan_precio        NUMERIC(12, 2) DEFAULT 0,
   
-  created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW()
 );
 
 ALTER TABLE empresas
@@ -55,7 +55,7 @@ ALTER TABLE empresas
   ADD COLUMN IF NOT EXISTS config_integraciones JSONB DEFAULT '{}'::jsonb;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_empresas_landing_domain_unique
-  ON empresas (LOWER(landing_domain))
+  ON empresas (pg_catalog.LOWER(landing_domain))
   WHERE landing_domain IS NOT NULL;
 
 -- BEGIN WHATSAPP CLOUD INBOX MIGRATION
@@ -78,7 +78,7 @@ CREATE TABLE IF NOT EXISTS whatsapp_cloud_events (
   source_timestamp TEXT,
   phone_number_id  TEXT,
   event_data       JSONB NOT NULL DEFAULT '{}'::jsonb,
-  received_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  received_at      TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW(),
   processing_state TEXT NOT NULL DEFAULT 'pending',
   claim_owner      TEXT,
   claim_until      TIMESTAMPTZ,
@@ -177,7 +177,7 @@ BEGIN
       OWNED BY whatsapp_cloud_events.id;
   END IF;
 
-  SELECT pg_get_expr(default_row.adbin, default_row.adrelid)
+  SELECT pg_catalog.pg_get_expr(default_row.adbin, default_row.adrelid)
     INTO current_default
     FROM pg_attrdef AS default_row
    WHERE default_row.adrelid = 'whatsapp_cloud_events'::regclass
@@ -185,7 +185,7 @@ BEGIN
 
   IF current_default IS DISTINCT FROM 'nextval(''whatsapp_cloud_events_id_seq''::regclass)' THEN
     ALTER TABLE whatsapp_cloud_events
-      ALTER COLUMN id SET DEFAULT nextval('whatsapp_cloud_events_id_seq'::regclass);
+      ALTER COLUMN id SET DEFAULT pg_catalog.nextval('whatsapp_cloud_events_id_seq'::regclass);
   END IF;
 END $$;
 
@@ -194,20 +194,20 @@ DECLARE
   maximum_id BIGINT;
   sequence_value BIGINT;
 BEGIN
-  SELECT COALESCE(MAX(id), 0) INTO maximum_id FROM whatsapp_cloud_events;
+  SELECT COALESCE(pg_catalog.MAX(id), 0) INTO maximum_id FROM whatsapp_cloud_events;
   SELECT last_value INTO sequence_value FROM whatsapp_cloud_events_id_seq;
   IF maximum_id >= sequence_value THEN
-    PERFORM setval('whatsapp_cloud_events_id_seq', maximum_id + 1, false);
+    PERFORM pg_catalog.setval('whatsapp_cloud_events_id_seq', maximum_id + 1, false);
   END IF;
 END $$;
 
 UPDATE whatsapp_cloud_events
-   SET id = nextval('whatsapp_cloud_events_id_seq'::regclass)
+   SET id = pg_catalog.nextval('whatsapp_cloud_events_id_seq'::regclass)
  WHERE id IS NULL;
 
 UPDATE whatsapp_cloud_events
    SET event_data = COALESCE(event_data, '{}'::jsonb),
-       received_at = COALESCE(received_at, NOW()),
+       received_at = COALESCE(received_at, pg_catalog.NOW()),
        processing_state = COALESCE(processing_state, 'pending'),
        attempt_count = COALESCE(attempt_count, 0),
        retry_count = COALESCE(retry_count, 0)
@@ -220,7 +220,7 @@ DECLARE
   current_default TEXT;
 BEGIN
   FOR required_column IN
-    SELECT unnest(ARRAY['id', 'empresa_id', 'event_kind', 'dedupe_key', 'message_id', 'event_data', 'received_at', 'processing_state', 'attempt_count', 'retry_count'])
+    SELECT pg_catalog.unnest(ARRAY['id', 'empresa_id', 'event_kind', 'dedupe_key', 'message_id', 'event_data', 'received_at', 'processing_state', 'attempt_count', 'retry_count'])
   LOOP
     IF EXISTS (
       SELECT 1
@@ -237,7 +237,7 @@ BEGIN
     END IF;
   END LOOP;
 
-  SELECT pg_get_expr(default_row.adbin, default_row.adrelid)
+  SELECT pg_catalog.pg_get_expr(default_row.adbin, default_row.adrelid)
     INTO current_default
     FROM pg_attrdef AS default_row
     JOIN pg_attribute AS attribute_row
@@ -250,7 +250,7 @@ BEGIN
       ALTER COLUMN event_data SET DEFAULT '{}'::jsonb;
   END IF;
 
-  SELECT pg_get_expr(default_row.adbin, default_row.adrelid)
+  SELECT pg_catalog.pg_get_expr(default_row.adbin, default_row.adrelid)
     INTO current_default
     FROM pg_attrdef AS default_row
     JOIN pg_attribute AS attribute_row
@@ -260,10 +260,10 @@ BEGIN
      AND attribute_row.attname = 'received_at';
   IF current_default IS DISTINCT FROM 'now()' THEN
     ALTER TABLE whatsapp_cloud_events
-      ALTER COLUMN received_at SET DEFAULT NOW();
+      ALTER COLUMN received_at SET DEFAULT pg_catalog.NOW();
   END IF;
 
-  SELECT pg_get_expr(default_row.adbin, default_row.adrelid)
+  SELECT pg_catalog.pg_get_expr(default_row.adbin, default_row.adrelid)
     INTO current_default
     FROM pg_attrdef AS default_row
     JOIN pg_attribute AS attribute_row
@@ -287,10 +287,10 @@ DECLARE
   primary_key_columns TEXT[];
 BEGIN
   SELECT constraint_row.conname,
-         array_agg(attribute_row.attname ORDER BY key_column.ordinality)
+         pg_catalog.array_agg(attribute_row.attname ORDER BY key_column.ordinality)
     INTO primary_key_name, primary_key_columns
     FROM pg_constraint AS constraint_row
-    CROSS JOIN LATERAL unnest(constraint_row.conkey) WITH ORDINALITY AS key_column(attnum, ordinality)
+    CROSS JOIN LATERAL pg_catalog.unnest(constraint_row.conkey) WITH ORDINALITY AS key_column(attnum, ordinality)
     JOIN pg_attribute AS attribute_row
       ON attribute_row.attrelid = constraint_row.conrelid
      AND attribute_row.attnum = key_column.attnum
@@ -371,7 +371,7 @@ DO $$
 DECLARE
   current_definition TEXT;
 BEGIN
-  SELECT pg_get_constraintdef(oid)
+  SELECT pg_catalog.pg_get_constraintdef(oid)
     INTO current_definition
     FROM pg_constraint
    WHERE conrelid = 'whatsapp_cloud_events'::regclass
@@ -407,7 +407,7 @@ DO $$
 DECLARE
   current_definition TEXT;
 BEGIN
-  SELECT pg_get_constraintdef(oid)
+  SELECT pg_catalog.pg_get_constraintdef(oid)
     INTO current_definition
     FROM pg_constraint
    WHERE conrelid = 'whatsapp_cloud_events'::regclass
@@ -440,23 +440,23 @@ END $$;
 
 DO $$
 DECLARE
-  existing_index REGCLASS := to_regclass('idx_whatsapp_cloud_events_inbound_claim');
+  existing_index REGCLASS := pg_catalog.to_regclass('idx_whatsapp_cloud_events_inbound_claim');
   key_columns TEXT[];
   predicate_definition TEXT;
   normalized_predicate TEXT;
   valid_index BOOLEAN := FALSE;
 BEGIN
   IF existing_index IS NOT NULL THEN
-    SELECT array_agg(attribute_row.attname ORDER BY key_column.ordinality)
+    SELECT pg_catalog.array_agg(attribute_row.attname ORDER BY key_column.ordinality)
              FILTER (WHERE key_column.ordinality <= index_row.indnkeyatts),
-           pg_get_expr(index_row.indpred, index_row.indrelid),
+           pg_catalog.pg_get_expr(index_row.indpred, index_row.indrelid),
            NOT index_row.indisunique
              AND index_row.indexprs IS NULL
              AND index_row.indnkeyatts = 4
              AND index_row.indnatts = 4
            INTO key_columns, predicate_definition, valid_index
       FROM pg_index AS index_row
-      CROSS JOIN LATERAL unnest(index_row.indkey) WITH ORDINALITY AS key_column(attnum, ordinality)
+      CROSS JOIN LATERAL pg_catalog.unnest(index_row.indkey) WITH ORDINALITY AS key_column(attnum, ordinality)
       JOIN pg_attribute AS attribute_row
         ON attribute_row.attrelid = index_row.indrelid
        AND attribute_row.attnum = key_column.attnum
@@ -464,8 +464,8 @@ BEGIN
      GROUP BY index_row.indnkeyatts, index_row.indnatts, index_row.indpred, index_row.indrelid,
               index_row.indisunique, index_row.indexprs;
 
-    normalized_predicate := regexp_replace(
-      lower(COALESCE(predicate_definition, '')),
+    normalized_predicate := pg_catalog.regexp_replace(
+      pg_catalog.lower(COALESCE(predicate_definition, '')),
       '(::text|[[:space:]()])',
       '',
       'g'
@@ -508,7 +508,7 @@ BEGIN
   SELECT attnum INTO dedupe_attribute
     FROM pg_attribute
    WHERE attrelid = 'whatsapp_cloud_events'::regclass AND attname = 'dedupe_key' AND NOT attisdropped;
-  existing_index := to_regclass('idx_whatsapp_cloud_events_dedupe_key');
+  existing_index := pg_catalog.to_regclass('idx_whatsapp_cloud_events_dedupe_key');
 
   IF existing_index IS NOT NULL THEN
     SELECT index_row.indisunique
@@ -534,7 +534,7 @@ DO $$
 DECLARE
   empresa_attribute SMALLINT;
   received_attribute SMALLINT;
-  existing_index REGCLASS := to_regclass('idx_whatsapp_cloud_events_empresa_received');
+  existing_index REGCLASS := pg_catalog.to_regclass('idx_whatsapp_cloud_events_empresa_received');
   valid_index BOOLEAN := FALSE;
 BEGIN
   SELECT attnum INTO empresa_attribute
@@ -566,7 +566,7 @@ END $$;
 
 DO $$
 DECLARE
-  existing_index REGCLASS := to_regclass('idx_empresas_whatsapp_cloud_phone_number_id_unique');
+  existing_index REGCLASS := pg_catalog.to_regclass('idx_empresas_whatsapp_cloud_phone_number_id_unique');
   index_definition TEXT;
 BEGIN
   LOCK TABLE empresas IN SHARE MODE;
@@ -574,20 +574,20 @@ BEGIN
   IF EXISTS (
     SELECT 1
       FROM empresas
-     WHERE jsonb_typeof(config_integraciones::jsonb) = 'object'
+     WHERE pg_catalog.jsonb_typeof(config_integraciones::jsonb) = 'object'
        AND config_integraciones::jsonb ? 'whatsapp'
-       AND jsonb_typeof((config_integraciones::jsonb)->'whatsapp') = 'object'
-       AND LOWER(BTRIM(COALESCE((config_integraciones::jsonb)->'whatsapp'->>'provider', ''))) = 'cloud'
-       AND jsonb_typeof((config_integraciones::jsonb)->'whatsapp'->'enabled') = 'boolean'
+       AND pg_catalog.jsonb_typeof((config_integraciones::jsonb)->'whatsapp') = 'object'
+       AND pg_catalog.LOWER(pg_catalog.BTRIM(COALESCE((config_integraciones::jsonb)->'whatsapp'->>'provider', ''))) = 'cloud'
+       AND pg_catalog.jsonb_typeof((config_integraciones::jsonb)->'whatsapp'->'enabled') = 'boolean'
        AND CASE
-             WHEN jsonb_typeof((config_integraciones::jsonb)->'whatsapp'->'enabled') = 'boolean'
+             WHEN pg_catalog.jsonb_typeof((config_integraciones::jsonb)->'whatsapp'->'enabled') = 'boolean'
                THEN ((config_integraciones::jsonb)->'whatsapp'->>'enabled')::boolean
              ELSE FALSE
            END IS TRUE
-       AND BTRIM(COALESCE((config_integraciones::jsonb)->'whatsapp'->>'phone_number_id', '')) <> ''
-       AND BTRIM(COALESCE((config_integraciones::jsonb)->'whatsapp'->>'access_token_encrypted', '')) <> ''
-     GROUP BY BTRIM(COALESCE((config_integraciones::jsonb)->'whatsapp'->>'phone_number_id', ''))
-    HAVING COUNT(*) > 1
+       AND pg_catalog.BTRIM(COALESCE((config_integraciones::jsonb)->'whatsapp'->>'phone_number_id', '')) <> ''
+       AND pg_catalog.BTRIM(COALESCE((config_integraciones::jsonb)->'whatsapp'->>'access_token_encrypted', '')) <> ''
+     GROUP BY pg_catalog.BTRIM(COALESCE((config_integraciones::jsonb)->'whatsapp'->>'phone_number_id', ''))
+    HAVING pg_catalog.COUNT(*) > 1
   ) THEN
     RAISE EXCEPTION USING
       ERRCODE = '23505',
@@ -595,7 +595,7 @@ BEGIN
   END IF;
 
   IF existing_index IS NOT NULL THEN
-    SELECT pg_get_indexdef(existing_index) INTO index_definition;
+    SELECT pg_catalog.pg_get_indexdef(existing_index) INTO index_definition;
     IF index_definition NOT LIKE 'CREATE UNIQUE INDEX idx_empresas_whatsapp_cloud_phone_number_id_unique ON public.empresas USING btree %'
        OR index_definition NOT LIKE '%btrim(COALESCE%config_integraciones%jsonb%phone_number_id%'
        OR index_definition NOT LIKE '%jsonb_typeof%config_integraciones%object%'
@@ -615,19 +615,19 @@ BEGIN
   IF existing_index IS NULL THEN
     EXECUTE $index$
       CREATE UNIQUE INDEX idx_empresas_whatsapp_cloud_phone_number_id_unique
-        ON empresas ((BTRIM(COALESCE((config_integraciones::jsonb #>> '{whatsapp,phone_number_id}'), ''))))
-       WHERE jsonb_typeof(config_integraciones::jsonb) = 'object'
+        ON empresas ((pg_catalog.BTRIM(COALESCE((config_integraciones::jsonb #>> '{whatsapp,phone_number_id}'), ''))))
+       WHERE pg_catalog.jsonb_typeof(config_integraciones::jsonb) = 'object'
          AND config_integraciones::jsonb ? 'whatsapp'
-         AND jsonb_typeof((config_integraciones::jsonb)->'whatsapp') = 'object'
-         AND LOWER(BTRIM(COALESCE((config_integraciones::jsonb)->'whatsapp'->>'provider', ''))) = 'cloud'
-         AND jsonb_typeof((config_integraciones::jsonb)->'whatsapp'->'enabled') = 'boolean'
+         AND pg_catalog.jsonb_typeof((config_integraciones::jsonb)->'whatsapp') = 'object'
+         AND pg_catalog.LOWER(pg_catalog.BTRIM(COALESCE((config_integraciones::jsonb)->'whatsapp'->>'provider', ''))) = 'cloud'
+         AND pg_catalog.jsonb_typeof((config_integraciones::jsonb)->'whatsapp'->'enabled') = 'boolean'
          AND CASE
-               WHEN jsonb_typeof((config_integraciones::jsonb)->'whatsapp'->'enabled') = 'boolean'
+               WHEN pg_catalog.jsonb_typeof((config_integraciones::jsonb)->'whatsapp'->'enabled') = 'boolean'
                  THEN ((config_integraciones::jsonb)->'whatsapp'->>'enabled')::boolean
                ELSE FALSE
              END IS TRUE
-         AND BTRIM(COALESCE((config_integraciones::jsonb)->'whatsapp'->>'phone_number_id', '')) <> ''
-         AND BTRIM(COALESCE((config_integraciones::jsonb)->'whatsapp'->>'access_token_encrypted', '')) <> ''
+         AND pg_catalog.BTRIM(COALESCE((config_integraciones::jsonb)->'whatsapp'->>'phone_number_id', '')) <> ''
+         AND pg_catalog.BTRIM(COALESCE((config_integraciones::jsonb)->'whatsapp'->>'access_token_encrypted', '')) <> ''
     $index$;
   END IF;
 END $$;
@@ -650,7 +650,7 @@ CREATE TABLE IF NOT EXISTS empresa_prompts (
   empresa_id  INTEGER REFERENCES empresas(id) ON DELETE CASCADE,
   tipo        TEXT NOT NULL, 
   contenido   TEXT NOT NULL,
-  updated_at  TIMESTAMPTZ DEFAULT NOW(),
+  updated_at  TIMESTAMPTZ DEFAULT pg_catalog.NOW(),
   UNIQUE(empresa_id, tipo)
 );
 
@@ -677,7 +677,7 @@ CREATE TABLE IF NOT EXISTS empresa_costos_fijos (
   nombre      TEXT NOT NULL,
   monto       NUMERIC(10,2) DEFAULT 0,
   frecuencia  TEXT DEFAULT 'mensual', 
-  created_at  TIMESTAMPTZ DEFAULT NOW()
+  created_at  TIMESTAMPTZ DEFAULT pg_catalog.NOW()
 );
 
 -- =========================================================
@@ -696,7 +696,7 @@ CREATE TABLE IF NOT EXISTS usuarios (
   telefono         TEXT,
   es_invitado      BOOLEAN DEFAULT FALSE,
   fecha_expiracion TIMESTAMPTZ,
-  created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW(),
   CONSTRAINT uq_usuarios_username UNIQUE (username)
 );
 
@@ -741,7 +741,7 @@ CREATE TABLE IF NOT EXISTS choferes (
   activo      BOOLEAN DEFAULT TRUE,
   tipo        TEXT DEFAULT 'propio', 
   sla_horas   INTEGER DEFAULT 24,
-  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW()
 );
 
 -- Zonas de reparto
@@ -753,7 +753,7 @@ CREATE TABLE IF NOT EXISTS zonas_geograficas (
   dias_entrega JSONB DEFAULT '[]'::jsonb,
   poligono    TEXT,
   geom        GEOMETRY(Polygon, 4326),
-  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW()
 );
 
 ALTER TABLE zonas_geograficas
@@ -776,7 +776,7 @@ CREATE TABLE IF NOT EXISTS chofer_escalas (
   vigente_desde  DATE NOT NULL,
   vigente_hasta  DATE,
   notas          TEXT,
-  created_at     TIMESTAMPTZ DEFAULT NOW()
+  created_at     TIMESTAMPTZ DEFAULT pg_catalog.NOW()
 );
 
 CREATE TABLE IF NOT EXISTS chofer_escala_tramos (
@@ -816,7 +816,7 @@ CREATE TABLE IF NOT EXISTS puntos_entrega (
   condicion_iva        TEXT,
   frecuencia           INTEGER DEFAULT 7,
   ultima_visita        TIMESTAMPTZ,
-  created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at           TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW()
 );
 
 ALTER TABLE puntos_entrega
@@ -853,7 +853,7 @@ CREATE TABLE IF NOT EXISTS productos (
   mostrar_en_catalogo BOOLEAN DEFAULT TRUE,
   mostrar_en_landing  BOOLEAN DEFAULT FALSE,
   config_activo       JSONB,
-  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW()
 );
 
 -- Alteraciones y columnas extra de productos
@@ -868,7 +868,7 @@ ALTER TABLE productos
     ADD COLUMN IF NOT EXISTS external_id TEXT,
     ADD COLUMN IF NOT EXISTS created_by INTEGER,
     ADD COLUMN IF NOT EXISTS updated_by INTEGER,
-    ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW(),
     ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ,
     ADD COLUMN IF NOT EXISTS deleted_by INTEGER,
     ADD COLUMN IF NOT EXISTS promo_config JSONB,
@@ -876,12 +876,12 @@ ALTER TABLE productos
     ADD COLUMN IF NOT EXISTS imagen_3 TEXT;
 
 CREATE UNIQUE INDEX IF NOT EXISTS productos_empresa_sku_uniq
-  ON productos (empresa_id, lower(sku))
-  WHERE sku IS NOT NULL AND btrim(sku) <> '' AND deleted_at IS NULL;
+  ON productos (empresa_id, pg_catalog.lower(sku))
+  WHERE sku IS NOT NULL AND pg_catalog.btrim(sku) <> '' AND deleted_at IS NULL;
 
 CREATE UNIQUE INDEX IF NOT EXISTS productos_empresa_external_id_uniq
   ON productos (empresa_id, external_id)
-  WHERE external_id IS NOT NULL AND btrim(external_id) <> '' AND deleted_at IS NULL;
+  WHERE external_id IS NOT NULL AND pg_catalog.btrim(external_id) <> '' AND deleted_at IS NULL;
 
 CREATE INDEX IF NOT EXISTS productos_empresa_deleted_idx
   ON productos (empresa_id, deleted_at);
@@ -899,13 +899,13 @@ CREATE TABLE IF NOT EXISTS empresa_costos_variables_def (
   tipo_calculo TEXT NOT NULL DEFAULT 'unitario', 
   orden        INTEGER DEFAULT 0,
   activo       BOOLEAN DEFAULT TRUE,
-  created_at   TIMESTAMPTZ DEFAULT NOW(),
-  updated_at   TIMESTAMPTZ DEFAULT NOW()
+  created_at   TIMESTAMPTZ DEFAULT pg_catalog.NOW(),
+  updated_at   TIMESTAMPTZ DEFAULT pg_catalog.NOW()
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS empresa_costos_variables_def_empresa_codigo_idx
-  ON empresa_costos_variables_def (empresa_id, lower(codigo))
-  WHERE codigo IS NOT NULL AND btrim(codigo) <> '';
+  ON empresa_costos_variables_def (empresa_id, pg_catalog.lower(codigo))
+  WHERE codigo IS NOT NULL AND pg_catalog.btrim(codigo) <> '';
 
 CREATE INDEX IF NOT EXISTS empresa_costos_variables_def_empresa_idx
   ON empresa_costos_variables_def (empresa_id, activo, orden);
@@ -923,7 +923,7 @@ CREATE TABLE IF NOT EXISTS empresa_costos_variables_aplicacion (
   etiqueta     TEXT,
   valor        NUMERIC(10,2) NOT NULL DEFAULT 0,
   activo       BOOLEAN DEFAULT TRUE,
-  created_at   TIMESTAMPTZ DEFAULT NOW()
+  created_at   TIMESTAMPTZ DEFAULT pg_catalog.NOW()
 );
 
 CREATE INDEX IF NOT EXISTS empresa_costos_variables_aplicacion_empresa_idx
@@ -939,7 +939,7 @@ CREATE TABLE IF NOT EXISTS empresa_productos_costos (
   producto_id INTEGER NOT NULL REFERENCES productos(id) ON DELETE CASCADE,
   costo_base  NUMERIC(10,2) DEFAULT 0,
   proveedor   TEXT,
-  updated_at  TIMESTAMPTZ DEFAULT NOW(),
+  updated_at  TIMESTAMPTZ DEFAULT pg_catalog.NOW(),
   UNIQUE(empresa_id, producto_id)
 );
 
@@ -953,7 +953,7 @@ CREATE TABLE IF NOT EXISTS producto_prefs (
   producto_id      INTEGER REFERENCES productos(id) ON DELETE CASCADE,
   cantidad_usual   INTEGER DEFAULT 1,
   observaciones    TEXT,
-  created_at       TIMESTAMPTZ DEFAULT NOW()
+  created_at       TIMESTAMPTZ DEFAULT pg_catalog.NOW()
 );
 
 -- Stock físico (Inventario móvil)
@@ -962,7 +962,7 @@ CREATE TABLE IF NOT EXISTS chofer_stock (
   chofer_id   INTEGER NOT NULL REFERENCES choferes(id) ON DELETE CASCADE,
   producto_id INTEGER NOT NULL REFERENCES productos(id) ON DELETE CASCADE,
   cantidad    NUMERIC(10,2) DEFAULT 0,
-  updated_at  TIMESTAMPTZ DEFAULT NOW(),
+  updated_at  TIMESTAMPTZ DEFAULT pg_catalog.NOW(),
   PRIMARY KEY (empresa_id, chofer_id, producto_id)
 );
 
@@ -973,12 +973,12 @@ CREATE TABLE IF NOT EXISTS chofer_stock_mov (
   producto_id INTEGER NOT NULL REFERENCES productos(id) ON DELETE CASCADE,
   deposito_id INTEGER,
   gasto_id    INTEGER,
-  fecha       TIMESTAMPTZ DEFAULT NOW(),
+  fecha       TIMESTAMPTZ DEFAULT pg_catalog.NOW(),
   tipo        TEXT NOT NULL, 
   cantidad    NUMERIC(10,2) NOT NULL,
   motivo      TEXT,
   referencia  TEXT, 
-  created_at  TIMESTAMPTZ DEFAULT NOW()
+  created_at  TIMESTAMPTZ DEFAULT pg_catalog.NOW()
 );
 
 ALTER TABLE chofer_stock_mov ADD COLUMN IF NOT EXISTS gasto_id INTEGER;
@@ -989,8 +989,8 @@ CREATE TABLE IF NOT EXISTS depositos (
   nombre      TEXT NOT NULL,
   direccion   TEXT,
   activo      BOOLEAN DEFAULT TRUE,
-  created_at  TIMESTAMPTZ DEFAULT NOW(),
-  updated_at  TIMESTAMPTZ DEFAULT NOW(),
+  created_at  TIMESTAMPTZ DEFAULT pg_catalog.NOW(),
+  updated_at  TIMESTAMPTZ DEFAULT pg_catalog.NOW(),
   UNIQUE (empresa_id, nombre)
 );
 
@@ -1000,8 +1000,8 @@ CREATE TABLE IF NOT EXISTS deposito_chofer (
   deposito_id INTEGER NOT NULL REFERENCES depositos(id) ON DELETE CASCADE,
   chofer_id   INTEGER NOT NULL REFERENCES choferes(id) ON DELETE CASCADE,
   activo      BOOLEAN DEFAULT TRUE,
-  created_at  TIMESTAMPTZ DEFAULT NOW(),
-  updated_at  TIMESTAMPTZ DEFAULT NOW(),
+  created_at  TIMESTAMPTZ DEFAULT pg_catalog.NOW(),
+  updated_at  TIMESTAMPTZ DEFAULT pg_catalog.NOW(),
   UNIQUE (empresa_id, deposito_id, chofer_id)
 );
 
@@ -1039,7 +1039,7 @@ CREATE TABLE IF NOT EXISTS pedidos (
   estado             TEXT DEFAULT 'pendiente', 
   metodo_pago        TEXT DEFAULT 'efectivo',
   monto              NUMERIC(10,2) DEFAULT 0,
-  fecha              TIMESTAMPTZ DEFAULT NOW(),
+  fecha              TIMESTAMPTZ DEFAULT pg_catalog.NOW(),
   fecha_entrega_estimada DATE,
   fecha_entrega      TIMESTAMPTZ,
   tracking_token     TEXT, 
@@ -1054,7 +1054,7 @@ CREATE TABLE IF NOT EXISTS pedidos (
   notas              TEXT,
   latitud            NUMERIC,
   longitud           NUMERIC,
-  created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW()
 );
 
 ALTER TABLE pedidos
@@ -1090,8 +1090,8 @@ CREATE TABLE IF NOT EXISTS referentes (
   vigente_hasta          DATE,
   activo                 BOOLEAN NOT NULL DEFAULT TRUE,
   notas                  TEXT,
-  created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at             TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW(),
+  updated_at             TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW(),
   deleted_at             TIMESTAMPTZ
 );
 
@@ -1123,7 +1123,7 @@ BEGIN;
 SET LOCAL search_path = public;
 
 CREATE UNIQUE INDEX IF NOT EXISTS referentes_empresa_codigo_uniq
-  ON referentes (empresa_id, LOWER(codigo))
+  ON referentes (empresa_id, pg_catalog.LOWER(codigo))
   WHERE deleted_at IS NULL;
 
 CREATE INDEX IF NOT EXISTS referentes_empresa_activo_idx
@@ -1138,7 +1138,7 @@ CREATE TABLE IF NOT EXISTS referente_productos (
   vigente_desde          DATE,
   vigente_hasta          DATE,
   activo                 BOOLEAN NOT NULL DEFAULT TRUE,
-  created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at             TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW(),
   UNIQUE(referente_id, producto_id)
 );
 
@@ -1152,7 +1152,7 @@ CREATE TABLE IF NOT EXISTS cliente_referentes (
   referente_id           INTEGER NOT NULL REFERENCES referentes(id) ON DELETE CASCADE,
   codigo_referente       TEXT,
   estado                 TEXT NOT NULL DEFAULT 'activo',
-  asociado_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  asociado_at            TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW(),
   desvinculado_at        TIMESTAMPTZ,
   desvinculado_por       INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
   desvinculado_motivo    TEXT
@@ -1182,8 +1182,8 @@ CREATE TABLE IF NOT EXISTS referente_clientes_propuestos (
   reviewed_at            TIMESTAMPTZ,
   reviewed_by            INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
   rechazo_motivo         TEXT,
-  created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at             TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at             TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW(),
+  updated_at             TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW()
 );
 
 CREATE INDEX IF NOT EXISTS referente_clientes_propuestos_empresa_estado_idx
@@ -1204,12 +1204,12 @@ CREATE TABLE IF NOT EXISTS referente_comisiones (
   porcentaje             NUMERIC(5,2) NOT NULL DEFAULT 0,
   monto_comision         NUMERIC(12,2) NOT NULL DEFAULT 0,
   estado                 TEXT NOT NULL DEFAULT 'validada',
-  validada_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  validada_at            TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW(),
   liquidada_at           TIMESTAMPTZ,
   liquidacion_referencia TEXT,
   liquidacion_nota       TEXT,
   liquidada_por          INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
-  created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at             TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW(),
   UNIQUE(pedido_id, item_pedido_id, referente_id)
 );
 
@@ -1226,7 +1226,7 @@ CREATE TABLE IF NOT EXISTS referente_notificaciones (
   pedido_id      INTEGER REFERENCES pedidos(id) ON DELETE SET NULL,
   comision_id    INTEGER REFERENCES referente_comisiones(id) ON DELETE SET NULL,
   leida_at       TIMESTAMPTZ,
-  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW()
 );
 
 CREATE INDEX IF NOT EXISTS referente_notificaciones_ref_idx
@@ -1237,7 +1237,7 @@ CREATE TABLE IF NOT EXISTS pedido_track_points (
   pedido_id  INTEGER REFERENCES pedidos(id) ON DELETE CASCADE,
   latitud    NUMERIC,
   longitud   NUMERIC,
-  timestamp  TIMESTAMPTZ DEFAULT NOW(),
+  timestamp  TIMESTAMPTZ DEFAULT pg_catalog.NOW(),
   source     TEXT DEFAULT 'gps',
   precision  NUMERIC,
   speed      NUMERIC,
@@ -1253,10 +1253,10 @@ CREATE TABLE IF NOT EXISTS cliente_recompensas (
   producto_id      INTEGER REFERENCES productos(id) ON DELETE SET NULL,
   cantidad         INTEGER DEFAULT 1,
   reclamado        BOOLEAN DEFAULT FALSE,
-  fecha_ganado     TIMESTAMPTZ DEFAULT NOW(),
+  fecha_ganado     TIMESTAMPTZ DEFAULT pg_catalog.NOW(),
   fecha_reclamado  TIMESTAMPTZ,
   origen_pedido_id INTEGER REFERENCES pedidos(id) ON DELETE SET NULL,
-  created_at       TIMESTAMPTZ DEFAULT NOW()
+  created_at       TIMESTAMPTZ DEFAULT pg_catalog.NOW()
 );
 
 CREATE TABLE IF NOT EXISTS promociones_redenciones (
@@ -1267,7 +1267,7 @@ CREATE TABLE IF NOT EXISTS promociones_redenciones (
   beneficio_tipo     TEXT NOT NULL,
   beneficio_producto_id INTEGER REFERENCES productos(id) ON DELETE SET NULL,
   pedido_id          INTEGER REFERENCES pedidos(id) ON DELETE SET NULL,
-  created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW()
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS promo_redencion_once_idx
@@ -1282,7 +1282,7 @@ CREATE TABLE IF NOT EXISTS promociones_config (
   empresa_id    INTEGER PRIMARY KEY REFERENCES empresas(id) ON DELETE CASCADE,
   points_config JSONB NOT NULL DEFAULT '{}'::jsonb,
   promos_config JSONB NOT NULL DEFAULT '{}'::jsonb,
-  updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW()
 );
 
 CREATE TABLE IF NOT EXISTS juegos_campanias (
@@ -1303,8 +1303,8 @@ CREATE TABLE IF NOT EXISTS juegos_campanias (
   bases_condiciones     TEXT,
   valid_from            TIMESTAMPTZ,
   valid_to              TIMESTAMPTZ,
-  created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW(),
+  updated_at            TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW(),
   UNIQUE (empresa_id, slug)
 );
 
@@ -1322,7 +1322,7 @@ CREATE TABLE IF NOT EXISTS juegos_premios (
   stock_diario    INTEGER,
   activo          BOOLEAN NOT NULL DEFAULT TRUE,
   orden           INTEGER NOT NULL DEFAULT 0,
-  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW()
 );
 
 CREATE TABLE IF NOT EXISTS juegos_participaciones (
@@ -1343,7 +1343,7 @@ CREATE TABLE IF NOT EXISTS juegos_participaciones (
   metadata            JSONB NOT NULL DEFAULT '{}'::jsonb,
   enviado_whatsapp_at TIMESTAMPTZ,
   redimido_at         TIMESTAMPTZ,
-  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW()
 );
 
 CREATE INDEX IF NOT EXISTS juegos_campanias_empresa_estado_idx
@@ -1353,14 +1353,14 @@ ALTER TABLE juegos_campanias
   ADD COLUMN IF NOT EXISTS public_code TEXT;
 
 UPDATE juegos_campanias
-   SET public_code = UPPER(SUBSTRING(MD5(empresa_id::text || ':' || slug || ':' || id::text), 1, 10))
- WHERE public_code IS NULL OR BTRIM(public_code) = '';
+   SET public_code = pg_catalog.UPPER(pg_catalog.SUBSTRING(pg_catalog.MD5(empresa_id::text || ':' || slug || ':' || id::text), 1, 10))
+ WHERE public_code IS NULL OR pg_catalog.BTRIM(public_code) = '';
 
 ALTER TABLE juegos_campanias
   ALTER COLUMN public_code SET NOT NULL;
 
 CREATE UNIQUE INDEX IF NOT EXISTS juegos_campanias_public_code_uniq
-  ON juegos_campanias (LOWER(public_code));
+  ON juegos_campanias (pg_catalog.LOWER(public_code));
 
 CREATE INDEX IF NOT EXISTS juegos_premios_campania_idx
   ON juegos_premios (campania_id, activo, orden);
@@ -1384,7 +1384,7 @@ CREATE TABLE IF NOT EXISTS puntos_movimientos (
   tipo             TEXT NOT NULL,
   puntos           INTEGER NOT NULL,
   detalle          TEXT,
-  created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW()
 );
 
 CREATE INDEX IF NOT EXISTS puntos_movimientos_empresa_cliente_idx
@@ -1401,8 +1401,8 @@ CREATE TABLE IF NOT EXISTS entregas_evidencias (
   chofer_id   INTEGER REFERENCES choferes(id) ON DELETE SET NULL,
   checklist   JSONB NOT NULL DEFAULT '{}'::jsonb,
   evidencia   JSONB NOT NULL DEFAULT '{}'::jsonb,
-  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW()
 );
 
 -- =========================================================
@@ -1419,7 +1419,7 @@ CREATE TABLE IF NOT EXISTS gastos_repartidor (
   comprobante_path TEXT,
   cantidad         NUMERIC,
   producto_id      INTEGER REFERENCES productos(id) ON DELETE SET NULL,
-  created_at       TIMESTAMPTZ DEFAULT NOW()
+  created_at       TIMESTAMPTZ DEFAULT pg_catalog.NOW()
 );
 
 -- Saldos de envases/retornables por cliente y producto.
@@ -1428,7 +1428,7 @@ CREATE TABLE IF NOT EXISTS cliente_retornables_saldos (
   punto_entrega_id  INTEGER NOT NULL REFERENCES puntos_entrega(id) ON DELETE CASCADE,
   producto_id       INTEGER NOT NULL REFERENCES productos(id) ON DELETE CASCADE,
   saldo             NUMERIC(12,2) NOT NULL DEFAULT 0,
-  updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at        TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW(),
   PRIMARY KEY (empresa_id, punto_entrega_id, producto_id)
 );
 
@@ -1444,8 +1444,8 @@ CREATE TABLE IF NOT EXISTS cliente_retornables_movimientos (
   delta             NUMERIC(12,2) NOT NULL DEFAULT 0,
   saldo_resultante  NUMERIC(12,2),
   observacion       TEXT,
-  fecha             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  fecha             TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW(),
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_cliente_retornables_mov_cliente
@@ -1471,8 +1471,8 @@ CREATE TABLE IF NOT EXISTS crm_oportunidades (
   notas               TEXT,
   perdida_motivo      TEXT,
   estado              TEXT NOT NULL DEFAULT 'abierta',
-  created_at          TIMESTAMPTZ DEFAULT NOW(),
-  updated_at          TIMESTAMPTZ DEFAULT NOW()
+  created_at          TIMESTAMPTZ DEFAULT pg_catalog.NOW(),
+  updated_at          TIMESTAMPTZ DEFAULT pg_catalog.NOW()
 );
 
 CREATE INDEX IF NOT EXISTS crm_oportunidades_empresa_etapa_idx
@@ -1489,7 +1489,7 @@ CREATE TABLE IF NOT EXISTS crm_oportunidad_actividades (
   usuario_id       INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
   fecha_programada TIMESTAMPTZ,
   completada       BOOLEAN DEFAULT FALSE,
-  created_at       TIMESTAMPTZ DEFAULT NOW()
+  created_at       TIMESTAMPTZ DEFAULT pg_catalog.NOW()
 );
 
 CREATE INDEX IF NOT EXISTS crm_oportunidad_actividades_empresa_idx
@@ -1505,12 +1505,12 @@ CREATE TABLE IF NOT EXISTS cliente_cta_corriente_mov (
   concepto         TEXT,
   debe             NUMERIC(12,2) DEFAULT 0,
   haber            NUMERIC(12,2) DEFAULT 0,
-  fecha            TIMESTAMPTZ DEFAULT NOW(),
+  fecha            TIMESTAMPTZ DEFAULT pg_catalog.NOW(),
   vencimiento      TIMESTAMPTZ,
   estado           TEXT DEFAULT 'pendiente',
   referencia       TEXT,
   usuario_id       INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
-  created_at       TIMESTAMPTZ DEFAULT NOW()
+  created_at       TIMESTAMPTZ DEFAULT pg_catalog.NOW()
 );
 
 CREATE INDEX IF NOT EXISTS cliente_cta_corriente_empresa_cliente_idx
@@ -1523,7 +1523,7 @@ CREATE TABLE IF NOT EXISTS transferencias (
   empresa_id       INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
   chofer_id        INTEGER REFERENCES choferes(id) ON DELETE SET NULL,
   pedido_id        INTEGER REFERENCES pedidos(id) ON DELETE SET NULL,
-  fecha            TIMESTAMPTZ DEFAULT NOW(),
+  fecha            TIMESTAMPTZ DEFAULT pg_catalog.NOW(),
   monto            NUMERIC(10,2) NOT NULL,
   metodo_pago      TEXT DEFAULT 'transferencia',
   referencia       TEXT,
@@ -1531,8 +1531,8 @@ CREATE TABLE IF NOT EXISTS transferencias (
   estado           TEXT DEFAULT 'verificado', 
   tipo             TEXT DEFAULT 'cobro',      
   notas            TEXT,
-  created_at       TIMESTAMPTZ DEFAULT NOW(),
-  updated_at       TIMESTAMPTZ DEFAULT NOW()
+  created_at       TIMESTAMPTZ DEFAULT pg_catalog.NOW(),
+  updated_at       TIMESTAMPTZ DEFAULT pg_catalog.NOW()
 );
 
 CREATE TABLE IF NOT EXISTS comprobantes_transferencia (
@@ -1541,7 +1541,7 @@ CREATE TABLE IF NOT EXISTS comprobantes_transferencia (
   chofer_id        INTEGER REFERENCES choferes(id) ON DELETE SET NULL,
   pedido_id        INTEGER REFERENCES pedidos(id) ON DELETE SET NULL,
   zona_id          INTEGER REFERENCES zonas_geograficas(id) ON DELETE SET NULL,
-  fecha            TIMESTAMPTZ DEFAULT NOW(),
+  fecha            TIMESTAMPTZ DEFAULT pg_catalog.NOW(),
   monto            NUMERIC(10,2),
   metodo_pago      TEXT,
   comentario       TEXT,
@@ -1573,8 +1573,8 @@ CREATE TABLE IF NOT EXISTS comprobantes_transferencia (
   verified_by      INTEGER,
   verified_reason  TEXT,
   verified_at      TIMESTAMPTZ,
-  created_at       TIMESTAMPTZ DEFAULT NOW(),
-  updated_at       TIMESTAMPTZ DEFAULT NOW()
+  created_at       TIMESTAMPTZ DEFAULT pg_catalog.NOW(),
+  updated_at       TIMESTAMPTZ DEFAULT pg_catalog.NOW()
 );
 
 ALTER TABLE comprobantes_transferencia
@@ -1626,8 +1626,8 @@ CREATE TABLE IF NOT EXISTS pedido_pagos (
   -- Flex
   metadata            JSONB DEFAULT '{}'::jsonb,
 
-  created_at          TIMESTAMPTZ DEFAULT NOW(),
-  updated_at          TIMESTAMPTZ DEFAULT NOW(),
+  created_at          TIMESTAMPTZ DEFAULT pg_catalog.NOW(),
+  updated_at          TIMESTAMPTZ DEFAULT pg_catalog.NOW(),
 
   CONSTRAINT uq_pedido_pagos_pedido_proveedor UNIQUE (pedido_id, proveedor)
 );
@@ -1638,20 +1638,20 @@ BEGIN;
 SET LOCAL search_path = public;
 SET LOCAL lock_timeout = '30s';
 SET LOCAL statement_timeout = '5min';
-CREATE OR REPLACE FUNCTION normalizar_comprobante_operacion(value TEXT)
+CREATE OR REPLACE FUNCTION public.normalizar_comprobante_operacion(value TEXT)
 RETURNS TEXT
 LANGUAGE SQL
 IMMUTABLE
 PARALLEL SAFE
 AS $$
-  SELECT NULLIF(LOWER(BTRIM(value)), '')
+  SELECT NULLIF(pg_catalog.LOWER(pg_catalog.BTRIM(value)), '')
 $$;
 
 CREATE TABLE IF NOT EXISTS comprobante_operacion_claims (
   tenant_key BIGINT NOT NULL,
   operacion_key TEXT NOT NULL,
   comprobante_id BIGINT NOT NULL,
-  claimed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  claimed_at TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW(),
   PRIMARY KEY (tenant_key, operacion_key)
 );
 
@@ -1659,7 +1659,7 @@ CREATE TABLE IF NOT EXISTS comprobante_pedido_aprobado_claims (
   tenant_key BIGINT NOT NULL,
   pedido_id BIGINT NOT NULL,
   comprobante_id BIGINT NOT NULL,
-  claimed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  claimed_at TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW(),
   PRIMARY KEY (tenant_key, pedido_id)
 );
 
@@ -1668,49 +1668,49 @@ CREATE TABLE IF NOT EXISTS comprobante_pedido_aprobado_claims (
 LOCK TABLE comprobantes_transferencia IN SHARE ROW EXCLUSIVE MODE;
 INSERT INTO comprobante_operacion_claims (tenant_key, operacion_key, comprobante_id)
 SELECT COALESCE(empresa_id, 0)::BIGINT,
-       normalizar_comprobante_operacion(nro_operacion),
-       MIN(id)::BIGINT
+       public.normalizar_comprobante_operacion(nro_operacion),
+       pg_catalog.MIN(id)::BIGINT
 FROM comprobantes_transferencia
-WHERE normalizar_comprobante_operacion(nro_operacion) IS NOT NULL
+WHERE public.normalizar_comprobante_operacion(nro_operacion) IS NOT NULL
 GROUP BY COALESCE(empresa_id, 0)::BIGINT,
-         normalizar_comprobante_operacion(nro_operacion)
+         public.normalizar_comprobante_operacion(nro_operacion)
 ON CONFLICT (tenant_key, operacion_key) DO NOTHING;
 
 INSERT INTO comprobante_pedido_aprobado_claims (tenant_key, pedido_id, comprobante_id)
-SELECT COALESCE(empresa_id, 0)::BIGINT, pedido_id::BIGINT, MIN(id)::BIGINT
+SELECT COALESCE(empresa_id, 0)::BIGINT, pedido_id::BIGINT, pg_catalog.MIN(id)::BIGINT
 FROM comprobantes_transferencia
 WHERE pedido_id IS NOT NULL
   AND (COALESCE(validado, 0) = 1 OR COALESCE(procesado, FALSE) = TRUE
-       OR LOWER(COALESCE(estado_revision, '')) = 'aprobado')
+       OR pg_catalog.LOWER(COALESCE(estado_revision, '')) = 'aprobado')
 GROUP BY COALESCE(empresa_id, 0)::BIGINT, pedido_id::BIGINT
 ON CONFLICT (tenant_key, pedido_id) DO NOTHING;
 
 -- Los aprobados legacy no canónicos quedan en revisión; el claim no se libera.
 UPDATE comprobantes_transferencia ct
 SET validado = 0, procesado = FALSE, estado_revision = 'en_revision',
-    riesgo_flags = CONCAT_WS(',', NULLIF(ct.riesgo_flags, ''), 'legacy_aprobado_no_canonico'),
-    verified_reason = 'legacy_aprobado_no_canonico', updated_at = NOW()
+    riesgo_flags = pg_catalog.CONCAT_WS(',', NULLIF(ct.riesgo_flags, ''), 'legacy_aprobado_no_canonico'),
+    verified_reason = 'legacy_aprobado_no_canonico', updated_at = pg_catalog.NOW()
 FROM comprobante_pedido_aprobado_claims claim
 WHERE claim.tenant_key = COALESCE(ct.empresa_id, 0)::BIGINT
   AND claim.pedido_id = ct.pedido_id::BIGINT
   AND claim.comprobante_id <> ct.id::BIGINT
   AND (COALESCE(ct.validado, 0) = 1 OR COALESCE(ct.procesado, FALSE) = TRUE
-       OR LOWER(COALESCE(ct.estado_revision, '')) = 'aprobado');
+       OR pg_catalog.LOWER(COALESCE(ct.estado_revision, '')) = 'aprobado');
 
-CREATE OR REPLACE FUNCTION reclamar_comprobante_operacion()
+CREATE OR REPLACE FUNCTION public.reclamar_comprobante_operacion()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 AS $$
 DECLARE
   new_tenant BIGINT := COALESCE(NEW.empresa_id, 0)::BIGINT;
-  new_key TEXT := normalizar_comprobante_operacion(NEW.nro_operacion);
+  new_key TEXT := public.normalizar_comprobante_operacion(NEW.nro_operacion);
   old_tenant BIGINT;
   old_key TEXT;
   owner_id BIGINT;
 BEGIN
   IF TG_OP = 'UPDATE' THEN
     old_tenant := COALESCE(OLD.empresa_id, 0)::BIGINT;
-    old_key := normalizar_comprobante_operacion(OLD.nro_operacion);
+    old_key := public.normalizar_comprobante_operacion(OLD.nro_operacion);
     -- Compatibilidad: tocar una fila legacy duplicada sin cambiar su clave sigue permitido.
     IF old_tenant IS NOT DISTINCT FROM new_tenant
        AND old_key IS NOT DISTINCT FROM new_key THEN
@@ -1742,14 +1742,14 @@ DROP TRIGGER IF EXISTS trg_reclamar_comprobante_operacion ON comprobantes_transf
 CREATE TRIGGER trg_reclamar_comprobante_operacion
 BEFORE INSERT OR UPDATE OF nro_operacion, empresa_id
 ON comprobantes_transferencia
-FOR EACH ROW EXECUTE FUNCTION reclamar_comprobante_operacion();
+FOR EACH ROW EXECUTE FUNCTION public.reclamar_comprobante_operacion();
 
-CREATE OR REPLACE FUNCTION validar_aprobacion_comprobante()
+CREATE OR REPLACE FUNCTION public.validar_aprobacion_comprobante()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 AS $$
 DECLARE
-  new_approved BOOLEAN := LOWER(COALESCE(NEW.estado_revision, '')) = 'aprobado'
+  new_approved BOOLEAN := pg_catalog.LOWER(COALESCE(NEW.estado_revision, '')) = 'aprobado'
     OR COALESCE(NEW.validado, 0) = 1 OR COALESCE(NEW.procesado, FALSE) = TRUE;
   parent_empresa_id INTEGER;
   owner_id BIGINT;
@@ -1770,10 +1770,10 @@ BEGIN
       USING ERRCODE = '23514', CONSTRAINT = 'ct_approved_order_tenant';
   END IF;
 
-  IF normalizar_comprobante_operacion(NEW.nro_operacion) IS NULL OR NOT EXISTS (
+  IF public.normalizar_comprobante_operacion(NEW.nro_operacion) IS NULL OR NOT EXISTS (
     SELECT 1 FROM comprobante_operacion_claims claim
     WHERE claim.tenant_key = COALESCE(NEW.empresa_id, 0)::BIGINT
-      AND claim.operacion_key = normalizar_comprobante_operacion(NEW.nro_operacion)
+      AND claim.operacion_key = public.normalizar_comprobante_operacion(NEW.nro_operacion)
       AND claim.comprobante_id = NEW.id::BIGINT
   ) THEN
     RAISE EXCEPTION 'el comprobante no es propietario de la operación reclamada'
@@ -1797,9 +1797,9 @@ $$;
 DROP TRIGGER IF EXISTS trg_validar_aprobacion_comprobante ON comprobantes_transferencia;
 CREATE TRIGGER trg_validar_aprobacion_comprobante
 BEFORE INSERT OR UPDATE ON comprobantes_transferencia
-FOR EACH ROW EXECUTE FUNCTION validar_aprobacion_comprobante();
+FOR EACH ROW EXECUTE FUNCTION public.validar_aprobacion_comprobante();
 
-CREATE OR REPLACE FUNCTION serializar_pedido_pago_con_comprobante()
+CREATE OR REPLACE FUNCTION public.serializar_pedido_pago_con_comprobante()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 AS $$
@@ -1830,7 +1830,7 @@ BEGIN
     target_pedido_id := NEW.pedido_id;
     target_empresa_id := NEW.empresa_id;
     old_acreditado := OLD.settlement_at IS NOT NULL
-      OR LOWER(COALESCE(OLD.estado, '')) IN ('pagado', 'aprobado', 'acreditado');
+      OR pg_catalog.LOWER(COALESCE(OLD.estado, '')) IN ('pagado', 'aprobado', 'acreditado');
     introduce_acreditacion := NOT old_acreditado
       OR OLD.pedido_id IS DISTINCT FROM NEW.pedido_id
       OR OLD.empresa_id IS DISTINCT FROM NEW.empresa_id;
@@ -1850,14 +1850,14 @@ BEGIN
   END IF;
 
   new_acreditado := NEW.settlement_at IS NOT NULL
-    OR LOWER(COALESCE(NEW.estado, '')) IN ('pagado', 'aprobado', 'acreditado');
+    OR pg_catalog.LOWER(COALESCE(NEW.estado, '')) IN ('pagado', 'aprobado', 'acreditado');
 
   IF new_acreditado AND introduce_acreditacion
      AND EXISTS (
        SELECT 1 FROM comprobantes_transferencia ct
        WHERE ct.pedido_id = target_pedido_id
          AND COALESCE(ct.empresa_id, 0) = COALESCE(target_empresa_id, 0)
-         AND (LOWER(COALESCE(ct.estado_revision, '')) = 'aprobado'
+         AND (pg_catalog.LOWER(COALESCE(ct.estado_revision, '')) = 'aprobado'
               OR COALESCE(ct.validado, 0) = 1
               OR COALESCE(ct.procesado, FALSE) = TRUE)
      ) THEN
@@ -1872,7 +1872,7 @@ $$;
 DROP TRIGGER IF EXISTS trg_serializar_pedido_pago_comprobante ON pedido_pagos;
 CREATE TRIGGER trg_serializar_pedido_pago_comprobante
 BEFORE INSERT OR UPDATE OR DELETE ON pedido_pagos
-FOR EACH ROW EXECUTE FUNCTION serializar_pedido_pago_con_comprobante();
+FOR EACH ROW EXECUTE FUNCTION public.serializar_pedido_pago_con_comprobante();
 COMMIT;
 -- END COMPROBANTE CONCURRENCY MIGRATION
 
@@ -1882,7 +1882,7 @@ SET LOCAL search_path = public;
 CREATE TABLE IF NOT EXISTS historial_pagos (
   id SERIAL PRIMARY KEY,
   empresa_id INT NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
-  fecha TIMESTAMP DEFAULT NOW(),
+  fecha TIMESTAMP DEFAULT pg_catalog.NOW(),
   monto NUMERIC(12,2) NOT NULL,
   metodo TEXT DEFAULT 'mercadopago',
   referencia TEXT,
@@ -1907,7 +1907,7 @@ CREATE TABLE IF NOT EXISTS historial_costos_precios (
     usuario_editor TEXT,
     origen_dato VARCHAR(20) DEFAULT 'manual',
     meta_datos JSONB DEFAULT '{}',
-    fecha_registro TIMESTAMP DEFAULT NOW()
+    fecha_registro TIMESTAMP DEFAULT pg_catalog.NOW()
 );
 
 -- =========================================================
@@ -1918,7 +1918,7 @@ CREATE TABLE IF NOT EXISTS wpp_outbox (
   empresa_id  INTEGER,
   telefono    TEXT NOT NULL,
   mensaje     TEXT NOT NULL,
-  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW(),
   sent_at     TIMESTAMPTZ,
   status      TEXT NOT NULL DEFAULT 'pending',
   error       TEXT,
@@ -2074,12 +2074,12 @@ SET cloud_dispatch_state = CASE
            OR cloud_dispatch_state IN ('manual_retryable', 'outcome_unknown')
          ))
        )
-        THEN COALESCE(dispatch_started_at, created_at, NOW())
+        THEN COALESCE(dispatch_started_at, created_at, pg_catalog.NOW())
       ELSE dispatch_started_at
     END;
 
 UPDATE public.wpp_outbox
-SET claim_until = NOW() - INTERVAL '1 second'
+SET claim_until = pg_catalog.NOW() - INTERVAL '1 second'
 WHERE transport_origin = 'cloud'
   AND status = 'sending'
   AND cloud_dispatch_state = 'pre_dispatch'
@@ -2146,11 +2146,11 @@ CREATE TABLE IF NOT EXISTS public.whatsapp_cloud_ops_audit (
   from_cloud_dispatch_state TEXT,
   to_status TEXT NOT NULL,
   to_cloud_dispatch_state TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW(),
   CONSTRAINT whatsapp_cloud_ops_audit_actor_check
-    CHECK (actor = BTRIM(actor) AND actor <> '' AND length(actor) <= 100),
+    CHECK (actor = pg_catalog.BTRIM(actor) AND actor <> '' AND pg_catalog.length(actor) <= 100),
   CONSTRAINT whatsapp_cloud_ops_audit_reason_check
-    CHECK (reason_code = BTRIM(reason_code) AND reason_code <> '' AND length(reason_code) <= 80),
+    CHECK (reason_code = pg_catalog.BTRIM(reason_code) AND reason_code <> '' AND pg_catalog.length(reason_code) <= 80),
   CONSTRAINT whatsapp_cloud_ops_audit_action_check
     CHECK (action IN ('mark_sent', 'mark_failed', 'confirm_not_sent', 'replay'))
 );
@@ -2179,7 +2179,7 @@ CREATE TABLE IF NOT EXISTS push_subs (
   p256dh     TEXT NOT NULL,
   auth       TEXT NOT NULL,
   user_agent TEXT,
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  created_at TIMESTAMPTZ DEFAULT pg_catalog.NOW()
 );
 
 COMMIT;
@@ -2293,8 +2293,8 @@ CREATE TABLE IF NOT EXISTS public.whatsapp_cloud_messages (
   delivered_at TIMESTAMPTZ,
   read_at TIMESTAMPTZ,
   failed_at TIMESTAMPTZ,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW()
 );
 
 DO $$
@@ -2378,7 +2378,7 @@ BEGIN
        WHERE attrelid = 'public.whatsapp_cloud_messages'::pg_catalog.regclass
          AND attname = column_row.column_name
          AND NOT attisdropped
-         AND format_type(atttypid, atttypmod) = column_row.data_type
+         AND pg_catalog.format_type(atttypid, atttypmod) = column_row.data_type
     ) THEN
       IF column_row.column_name IN (
         'message_at', 'sent_at', 'delivered_at', 'read_at', 'failed_at', 'created_at', 'updated_at'
@@ -2448,7 +2448,7 @@ BEGIN
       ALTER COLUMN id SET DEFAULT pg_catalog.nextval('public.whatsapp_cloud_messages_id_seq'::pg_catalog.regclass);
   END IF;
 
-  SELECT COALESCE(MAX(id), 0) INTO max_id FROM public.whatsapp_cloud_messages;
+  SELECT COALESCE(pg_catalog.MAX(id), 0) INTO max_id FROM public.whatsapp_cloud_messages;
   SELECT last_value, is_called INTO sequence_last, sequence_called
     FROM public.whatsapp_cloud_messages_id_seq;
   IF max_id > sequence_last OR (max_id = sequence_last AND NOT sequence_called) THEN
@@ -2465,8 +2465,8 @@ DECLARE
   primary_row RECORD;
 BEGIN
   SELECT conname,
-         (SELECT array_agg(attribute_row.attname::TEXT ORDER BY key_column.ordinality)
-            FROM unnest(constraint_row.conkey) WITH ORDINALITY AS key_column(attnum, ordinality)
+         (SELECT pg_catalog.array_agg(attribute_row.attname::TEXT ORDER BY key_column.ordinality)
+            FROM pg_catalog.unnest(constraint_row.conkey) WITH ORDINALITY AS key_column(attnum, ordinality)
             JOIN pg_attribute AS attribute_row
               ON attribute_row.attrelid = constraint_row.conrelid
              AND attribute_row.attnum = key_column.attnum) AS key_columns
@@ -2706,29 +2706,29 @@ BEGIN
            END AS status_at
       FROM public.whatsapp_cloud_events AS event
      WHERE event.empresa_id = target_empresa_id
-       AND BTRIM(event.message_id) = NULLIF(BTRIM(target_provider_message_id), '')
+       AND pg_catalog.BTRIM(event.message_id) = NULLIF(pg_catalog.BTRIM(target_provider_message_id), '')
        AND event.event_kind = 'status'
        AND event.status IN ('sent', 'delivered', 'read', 'failed')
-       AND NULLIF(BTRIM(event.message_id), '') IS NOT NULL
+       AND NULLIF(pg_catalog.BTRIM(event.message_id), '') IS NOT NULL
   ), status_summary AS (
-    SELECT (array_agg(status ORDER BY
+    SELECT (pg_catalog.array_agg(status ORDER BY
              CASE status WHEN 'read' THEN 50 WHEN 'delivered' THEN 40
                          WHEN 'sent' THEN 30 WHEN 'failed' THEN 25 ELSE 0 END DESC,
              status_at DESC))[1] AS latest_status,
-           MAX(CASE status WHEN 'read' THEN 50 WHEN 'delivered' THEN 40
+           pg_catalog.MAX(CASE status WHEN 'read' THEN 50 WHEN 'delivered' THEN 40
                            WHEN 'sent' THEN 30 WHEN 'failed' THEN 25 ELSE 0 END) AS latest_rank,
-           MIN(status_at) FILTER (WHERE status = 'sent') AS sent_at,
-           MIN(status_at) FILTER (WHERE status = 'delivered') AS delivered_at,
-           MIN(status_at) FILTER (WHERE status = 'read') AS read_at,
-           MIN(status_at) FILTER (WHERE status = 'failed') AS failed_at,
-           MAX(status_at) AS updated_at
+           pg_catalog.MIN(status_at) FILTER (WHERE status = 'sent') AS sent_at,
+           pg_catalog.MIN(status_at) FILTER (WHERE status = 'delivered') AS delivered_at,
+           pg_catalog.MIN(status_at) FILTER (WHERE status = 'read') AS read_at,
+           pg_catalog.MIN(status_at) FILTER (WHERE status = 'failed') AS failed_at,
+           pg_catalog.MAX(status_at) AS updated_at
       FROM status_events
-    HAVING COUNT(*) > 0
+    HAVING pg_catalog.COUNT(*) > 0
   ), locked_message AS (
     SELECT message.*
       FROM public.whatsapp_cloud_messages AS message
      WHERE message.empresa_id = target_empresa_id
-       AND BTRIM(message.provider_message_id) = NULLIF(BTRIM(target_provider_message_id), '')
+       AND pg_catalog.BTRIM(message.provider_message_id) = NULLIF(pg_catalog.BTRIM(target_provider_message_id), '')
        AND message.direction = 'outbound'
      FOR UPDATE OF message
   ), winners AS (
@@ -2825,7 +2825,7 @@ BEGIN
   PERFORM public.whatsapp_cloud_messages_lock_projection(target_empresa_id);
   PERFORM public.whatsapp_cloud_messages_reconcile_status_locked(
     target_empresa_id,
-    NULLIF(BTRIM(target_provider_message_id), '')
+    NULLIF(pg_catalog.BTRIM(target_provider_message_id), '')
   );
 END $$;
 
@@ -2852,20 +2852,20 @@ BEGIN
       'inbound',
       NEW.sender_id,
       NEW.id,
-      NULLIF(BTRIM(NEW.message_id), ''),
+      NULLIF(pg_catalog.BTRIM(NEW.message_id), ''),
       NEW.message_type,
       CASE WHEN NEW.message_type = 'text'
              AND pg_catalog.jsonb_typeof(NEW.event_data->'text'->'body') = 'string'
-        THEN LEFT(NEW.event_data->'text'->>'body', 4096) END,
+        THEN pg_catalog.LEFT(NEW.event_data->'text'->>'body', 4096) END,
       CASE WHEN NEW.message_type IN ('image', 'document')
              AND pg_catalog.jsonb_typeof(NEW.event_data->NEW.message_type->'mime_type') = 'string'
-        THEN NULLIF(LEFT(NEW.event_data->NEW.message_type->>'mime_type', 255), '') END,
+        THEN NULLIF(pg_catalog.LEFT(NEW.event_data->NEW.message_type->>'mime_type', 255), '') END,
       CASE WHEN NEW.message_type IN ('image', 'document')
              AND pg_catalog.jsonb_typeof(NEW.event_data->NEW.message_type->'caption') = 'string'
-        THEN LEFT(NEW.event_data->NEW.message_type->>'caption', 1024) END,
+        THEN pg_catalog.LEFT(NEW.event_data->NEW.message_type->>'caption', 1024) END,
       CASE WHEN NEW.message_type = 'document'
              AND pg_catalog.jsonb_typeof(NEW.event_data->'document'->'filename') = 'string'
-        THEN LEFT(NEW.event_data->'document'->>'filename', 255) END,
+        THEN pg_catalog.LEFT(NEW.event_data->'document'->>'filename', 255) END,
       'received',
       0,
       CASE
@@ -2883,10 +2883,10 @@ BEGIN
     ) ON CONFLICT DO NOTHING;
   ELSIF NEW.event_kind = 'status'
         AND NEW.status IN ('sent', 'delivered', 'read', 'failed')
-        AND NULLIF(BTRIM(NEW.message_id), '') IS NOT NULL THEN
+        AND NULLIF(pg_catalog.BTRIM(NEW.message_id), '') IS NOT NULL THEN
     PERFORM public.whatsapp_cloud_messages_reconcile_status(
       NEW.empresa_id,
-      NULLIF(BTRIM(NEW.message_id), '')
+      NULLIF(pg_catalog.BTRIM(NEW.message_id), '')
     );
   END IF;
   RETURN NEW;
@@ -2913,7 +2913,7 @@ LANGUAGE plpgsql
 SET search_path = pg_catalog, public
 AS $$
 DECLARE
-  incoming_provider_message_id TEXT := NULLIF(BTRIM(target_meta_message_id), '');
+  incoming_provider_message_id TEXT := NULLIF(pg_catalog.BTRIM(target_meta_message_id), '');
   incoming_status TEXT;
   incoming_rank SMALLINT;
   incoming_sent_at TIMESTAMPTZ;
@@ -2960,7 +2960,7 @@ BEGIN
       target_empresa_id, 'outbound', target_telefono,
       CASE WHEN target_link_outbox THEN target_outbox_id END,
       target_outbox_id,
-      incoming_provider_message_id, 'text', LEFT(target_mensaje, 4096),
+      incoming_provider_message_id, 'text', pg_catalog.LEFT(target_mensaje, 4096),
       incoming_status, incoming_rank, target_created_at, incoming_sent_at,
       incoming_failed_at, target_created_at, incoming_updated_at
     ) ON CONFLICT (empresa_id, source_outbox_id) WHERE source_outbox_id IS NOT NULL
@@ -3165,20 +3165,20 @@ BEGIN
            'inbound',
            deleted.sender_id,
            NULL,
-           NULLIF(BTRIM(deleted.message_id), ''),
+           NULLIF(pg_catalog.BTRIM(deleted.message_id), ''),
            deleted.message_type,
            CASE WHEN deleted.message_type = 'text'
                   AND pg_catalog.jsonb_typeof(deleted.event_data->'text'->'body') = 'string'
-             THEN LEFT(deleted.event_data->'text'->>'body', 4096) END,
+             THEN pg_catalog.LEFT(deleted.event_data->'text'->>'body', 4096) END,
            CASE WHEN deleted.message_type IN ('image', 'document')
                   AND pg_catalog.jsonb_typeof(deleted.event_data->deleted.message_type->'mime_type') = 'string'
-             THEN NULLIF(LEFT(deleted.event_data->deleted.message_type->>'mime_type', 255), '') END,
+             THEN NULLIF(pg_catalog.LEFT(deleted.event_data->deleted.message_type->>'mime_type', 255), '') END,
            CASE WHEN deleted.message_type IN ('image', 'document')
                   AND pg_catalog.jsonb_typeof(deleted.event_data->deleted.message_type->'caption') = 'string'
-             THEN LEFT(deleted.event_data->deleted.message_type->>'caption', 1024) END,
+             THEN pg_catalog.LEFT(deleted.event_data->deleted.message_type->>'caption', 1024) END,
            CASE WHEN deleted.message_type = 'document'
                   AND pg_catalog.jsonb_typeof(deleted.event_data->'document'->'filename') = 'string'
-             THEN LEFT(deleted.event_data->'document'->>'filename', 255) END,
+             THEN pg_catalog.LEFT(deleted.event_data->'document'->>'filename', 255) END,
            'received',
            0,
            CASE
@@ -3206,7 +3206,7 @@ BEGIN
           WHERE projected.empresa_id = deleted.empresa_id
             AND projected.direction = 'inbound'
             AND projected.participant_wa_id = deleted.sender_id
-            AND projected.provider_message_id IS NOT DISTINCT FROM NULLIF(BTRIM(deleted.message_id), '')
+            AND projected.provider_message_id IS NOT DISTINCT FROM NULLIF(pg_catalog.BTRIM(deleted.message_id), '')
             AND projected.message_type = deleted.message_type
             AND projected.message_at = CASE
               WHEN deleted.source_timestamp ~ '^[0-9]{1,12}$'
@@ -3231,7 +3231,7 @@ BEGIN
             WHERE deleted.empresa_id = outbox.empresa_id
               AND deleted.event_kind = 'status'
               AND deleted.status IN ('sent', 'delivered', 'read', 'failed')
-              AND NULLIF(BTRIM(deleted.message_id), '') = NULLIF(BTRIM(outbox.meta_message_id), '')
+              AND NULLIF(pg_catalog.BTRIM(deleted.message_id), '') = NULLIF(pg_catalog.BTRIM(outbox.meta_message_id), '')
          )
        ORDER BY outbox.id
     LOOP
@@ -3243,8 +3243,8 @@ BEGIN
     END LOOP;
 
     FOR status_row IN
-      SELECT NULLIF(BTRIM(deleted.message_id), '') AS provider_message_id,
-             (array_agg(deleted.status ORDER BY
+      SELECT NULLIF(pg_catalog.BTRIM(deleted.message_id), '') AS provider_message_id,
+             (pg_catalog.array_agg(deleted.status ORDER BY
                CASE deleted.status WHEN 'read' THEN 50 WHEN 'delivered' THEN 40
                                    WHEN 'sent' THEN 30 WHEN 'failed' THEN 25 ELSE 0 END DESC,
                CASE
@@ -3257,9 +3257,9 @@ BEGIN
                    THEN pg_catalog.to_timestamp(deleted.source_timestamp::DOUBLE PRECISION)
                  ELSE deleted.received_at
                END DESC))[1] AS latest_status,
-             MAX(CASE deleted.status WHEN 'read' THEN 50 WHEN 'delivered' THEN 40
+             pg_catalog.MAX(CASE deleted.status WHEN 'read' THEN 50 WHEN 'delivered' THEN 40
                                      WHEN 'sent' THEN 30 WHEN 'failed' THEN 25 ELSE 0 END) AS latest_rank,
-             MIN(CASE
+             pg_catalog.MIN(CASE
                WHEN deleted.source_timestamp ~ '^[0-9]{1,12}$'
                 AND deleted.source_timestamp::NUMERIC > 0
                 AND deleted.source_timestamp::NUMERIC <= 253402300799
@@ -3269,7 +3269,7 @@ BEGIN
                  THEN pg_catalog.to_timestamp(deleted.source_timestamp::DOUBLE PRECISION)
                ELSE deleted.received_at
              END) FILTER (WHERE deleted.status = 'sent') AS sent_at,
-             MIN(CASE
+             pg_catalog.MIN(CASE
                WHEN deleted.source_timestamp ~ '^[0-9]{1,12}$'
                 AND deleted.source_timestamp::NUMERIC > 0
                 AND deleted.source_timestamp::NUMERIC <= 253402300799
@@ -3279,7 +3279,7 @@ BEGIN
                  THEN pg_catalog.to_timestamp(deleted.source_timestamp::DOUBLE PRECISION)
                ELSE deleted.received_at
              END) FILTER (WHERE deleted.status = 'delivered') AS delivered_at,
-             MIN(CASE
+             pg_catalog.MIN(CASE
                WHEN deleted.source_timestamp ~ '^[0-9]{1,12}$'
                 AND deleted.source_timestamp::NUMERIC > 0
                 AND deleted.source_timestamp::NUMERIC <= 253402300799
@@ -3289,7 +3289,7 @@ BEGIN
                  THEN pg_catalog.to_timestamp(deleted.source_timestamp::DOUBLE PRECISION)
                ELSE deleted.received_at
              END) FILTER (WHERE deleted.status = 'read') AS read_at,
-             MIN(CASE
+             pg_catalog.MIN(CASE
                WHEN deleted.source_timestamp ~ '^[0-9]{1,12}$'
                 AND deleted.source_timestamp::NUMERIC > 0
                 AND deleted.source_timestamp::NUMERIC <= 253402300799
@@ -3299,7 +3299,7 @@ BEGIN
                  THEN pg_catalog.to_timestamp(deleted.source_timestamp::DOUBLE PRECISION)
                ELSE deleted.received_at
              END) FILTER (WHERE deleted.status = 'failed') AS failed_at,
-             MAX(CASE
+             pg_catalog.MAX(CASE
                WHEN deleted.source_timestamp ~ '^[0-9]{1,12}$'
                 AND deleted.source_timestamp::NUMERIC > 0
                 AND deleted.source_timestamp::NUMERIC <= 253402300799
@@ -3313,9 +3313,9 @@ BEGIN
        WHERE deleted.empresa_id = target_empresa_id
          AND deleted.event_kind = 'status'
          AND deleted.status IN ('sent', 'delivered', 'read', 'failed')
-         AND NULLIF(BTRIM(deleted.message_id), '') IS NOT NULL
-       GROUP BY NULLIF(BTRIM(deleted.message_id), '')
-       ORDER BY NULLIF(BTRIM(deleted.message_id), '')
+         AND NULLIF(pg_catalog.BTRIM(deleted.message_id), '') IS NOT NULL
+       GROUP BY NULLIF(pg_catalog.BTRIM(deleted.message_id), '')
+       ORDER BY NULLIF(pg_catalog.BTRIM(deleted.message_id), '')
     LOOP
       WITH locked AS (
         SELECT message.*,
@@ -3335,7 +3335,7 @@ BEGIN
           FROM public.whatsapp_cloud_messages AS message
          WHERE message.empresa_id = target_empresa_id
            AND message.direction = 'outbound'
-           AND BTRIM(message.provider_message_id) = status_row.provider_message_id
+           AND pg_catalog.BTRIM(message.provider_message_id) = status_row.provider_message_id
          FOR UPDATE OF message
       ), sent_timeline AS (
         SELECT locked.*,
@@ -3593,8 +3593,8 @@ BEGIN
              WHEN 'read' THEN 50
              ELSE state_rank
            END,
-           created_at = COALESCE(created_at, message_at, NOW()),
-           updated_at = COALESCE(updated_at, created_at, message_at, NOW())
+           created_at = COALESCE(created_at, message_at, pg_catalog.NOW()),
+           updated_at = COALESCE(updated_at, created_at, message_at, pg_catalog.NOW())
      WHERE empresa_id = target_empresa_id
        AND (state_rank IS DISTINCT FROM CASE delivery_status
              WHEN 'received' THEN 0
@@ -3625,15 +3625,15 @@ BEGIN
   LOOP
     -- PRE-DDL REPAIR CONTENT START
     UPDATE public.whatsapp_cloud_messages
-       SET text_body = LEFT(text_body, 4096),
-           media_mime_type = LEFT(media_mime_type, 255),
-           media_caption = LEFT(media_caption, 1024),
-           document_filename = LEFT(document_filename, 255)
+       SET text_body = pg_catalog.LEFT(text_body, 4096),
+           media_mime_type = pg_catalog.LEFT(media_mime_type, 255),
+           media_caption = pg_catalog.LEFT(media_caption, 1024),
+           document_filename = pg_catalog.LEFT(document_filename, 255)
      WHERE empresa_id = target_empresa_id
-       AND (length(text_body) > 4096
-        OR length(media_mime_type) > 255
-        OR length(media_caption) > 1024
-        OR length(document_filename) > 255);
+       AND (pg_catalog.length(text_body) > 4096
+        OR pg_catalog.length(media_mime_type) > 255
+        OR pg_catalog.length(media_caption) > 1024
+        OR pg_catalog.length(document_filename) > 255);
   END LOOP;
 END $repair_content_lengths$;
 
@@ -3723,7 +3723,7 @@ DECLARE
   column_name TEXT;
 BEGIN
   IF COALESCE((
-    SELECT pg_get_expr(default_row.adbin, default_row.adrelid)
+    SELECT pg_catalog.pg_get_expr(default_row.adbin, default_row.adrelid)
       FROM pg_attribute AS column_row
       LEFT JOIN pg_attrdef AS default_row
         ON default_row.adrelid = column_row.attrelid
@@ -3731,10 +3731,10 @@ BEGIN
      WHERE column_row.attrelid = 'public.whatsapp_cloud_messages'::pg_catalog.regclass
        AND column_row.attname = 'created_at'
   ), '') <> 'now()' THEN
-    ALTER TABLE public.whatsapp_cloud_messages ALTER COLUMN created_at SET DEFAULT NOW();
+    ALTER TABLE public.whatsapp_cloud_messages ALTER COLUMN created_at SET DEFAULT pg_catalog.NOW();
   END IF;
   IF COALESCE((
-    SELECT pg_get_expr(default_row.adbin, default_row.adrelid)
+    SELECT pg_catalog.pg_get_expr(default_row.adbin, default_row.adrelid)
       FROM pg_attribute AS column_row
       LEFT JOIN pg_attrdef AS default_row
         ON default_row.adrelid = column_row.attrelid
@@ -3742,7 +3742,7 @@ BEGIN
      WHERE column_row.attrelid = 'public.whatsapp_cloud_messages'::pg_catalog.regclass
        AND column_row.attname = 'updated_at'
   ), '') <> 'now()' THEN
-    ALTER TABLE public.whatsapp_cloud_messages ALTER COLUMN updated_at SET DEFAULT NOW();
+    ALTER TABLE public.whatsapp_cloud_messages ALTER COLUMN updated_at SET DEFAULT pg_catalog.NOW();
   END IF;
 
   FOREACH column_name IN ARRAY ARRAY[
@@ -3797,12 +3797,12 @@ BEGIN
          AND candidate.indrelid = index_row.table_name::pg_catalog.regclass
          AND candidate.indisunique = expected_unique
          AND candidate.indexprs IS NULL
-         AND candidate.indnkeyatts = cardinality(expected_columns)
-         AND candidate.indnatts = cardinality(expected_columns)
-         AND candidate.indoption::TEXT = array_to_string(array_fill(0, ARRAY[cardinality(expected_columns)]), ' ')
+         AND candidate.indnkeyatts = pg_catalog.cardinality(expected_columns)
+         AND candidate.indnatts = pg_catalog.cardinality(expected_columns)
+         AND candidate.indoption::TEXT = pg_catalog.array_to_string(pg_catalog.array_fill(0, ARRAY[pg_catalog.cardinality(expected_columns)]), ' ')
          AND (
-           SELECT array_agg(attribute_row.attname::TEXT ORDER BY key_column.ordinality)
-             FROM unnest(candidate.indkey) WITH ORDINALITY AS key_column(attnum, ordinality)
+           SELECT pg_catalog.array_agg(attribute_row.attname::TEXT ORDER BY key_column.ordinality)
+             FROM pg_catalog.unnest(candidate.indkey) WITH ORDINALITY AS key_column(attnum, ordinality)
              JOIN pg_attribute AS attribute_row
                ON attribute_row.attrelid = candidate.indrelid
               AND attribute_row.attnum = key_column.attnum
@@ -3810,7 +3810,7 @@ BEGIN
          ) = expected_columns
          AND CASE
            WHEN expected_predicate IS NULL THEN candidate.indpred IS NULL
-           ELSE regexp_replace(lower(pg_get_expr(candidate.indpred, candidate.indrelid)), '[^a-z_]', '', 'g')
+           ELSE pg_catalog.regexp_replace(pg_catalog.lower(pg_catalog.pg_get_expr(candidate.indpred, candidate.indrelid)), '[^a-z_]', '', 'g')
                 = expected_predicate
          END
     ) THEN
@@ -3928,7 +3928,7 @@ BEGIN
       INCLUDE (status, source_timestamp, received_at)
       WHERE event_kind = 'status'
         AND status IN ('sent', 'delivered', 'read', 'failed')
-        AND NULLIF(BTRIM(message_id), '') IS NOT NULL;
+        AND NULLIF(pg_catalog.BTRIM(message_id), '') IS NOT NULL;
   END IF;
 END $$;
 
@@ -3956,7 +3956,7 @@ BEGIN
       ('whatsapp_cloud_messages_content_check',
        'CHECK (((message_type = ''text'' AND text_body IS NOT NULL AND media_mime_type IS NULL AND media_caption IS NULL AND document_filename IS NULL) OR (message_type = ''image'' AND text_body IS NULL AND document_filename IS NULL) OR (message_type = ''document'' AND text_body IS NULL)))'),
       ('whatsapp_cloud_messages_content_length_check',
-       'CHECK ((length(COALESCE(text_body, '''')) <= 4096 AND length(COALESCE(media_mime_type, '''')) <= 255 AND length(COALESCE(media_caption, '''')) <= 1024 AND length(COALESCE(document_filename, '''')) <= 255))'),
+       'CHECK ((pg_catalog.length(COALESCE(text_body, '''')) <= 4096 AND pg_catalog.length(COALESCE(media_mime_type, '''')) <= 255 AND pg_catalog.length(COALESCE(media_caption, '''')) <= 1024 AND pg_catalog.length(COALESCE(document_filename, '''')) <= 255))'),
       ('whatsapp_cloud_messages_delivery_status_check',
        'CHECK (delivery_status IN (''received'', ''queued'', ''sending'', ''sent'', ''delivered'', ''read'', ''failed'', ''manual_retry'', ''outcome_unknown''))'),
       ('whatsapp_cloud_messages_direction_status_check',
@@ -4006,7 +4006,7 @@ BEGIN
         THEN 'CHECK (((source_outbox_id IS NULL) OR ((direction = ''outbound''::text) AND (source_event_id IS NULL))))'
     END;
 
-    SELECT regexp_replace(pg_get_constraintdef(oid), '\s+', ' ', 'g'), convalidated
+    SELECT pg_catalog.regexp_replace(pg_catalog.pg_get_constraintdef(oid), '\s+', ' ', 'g'), convalidated
       INTO current_definition, current_validated
       FROM pg_constraint
      WHERE conrelid = 'public.whatsapp_cloud_messages'::pg_catalog.regclass
@@ -4066,8 +4066,8 @@ BEGIN
          AND candidate.indnatts = 4
          AND candidate.indoption::TEXT = expected_options
          AND (
-           SELECT array_agg(attribute_row.attname::TEXT ORDER BY key_column.ordinality)
-             FROM unnest(candidate.indkey) WITH ORDINALITY AS key_column(attnum, ordinality)
+           SELECT pg_catalog.array_agg(attribute_row.attname::TEXT ORDER BY key_column.ordinality)
+             FROM pg_catalog.unnest(candidate.indkey) WITH ORDINALITY AS key_column(attnum, ordinality)
              JOIN pg_attribute AS attribute_row
                ON attribute_row.attrelid = candidate.indrelid
               AND attribute_row.attnum = key_column.attnum
@@ -4127,30 +4127,30 @@ BEGIN
            'inbound',
            event.sender_id,
            event.id,
-           NULLIF(BTRIM(event.message_id), ''),
+           NULLIF(pg_catalog.BTRIM(event.message_id), ''),
            event.message_type,
            CASE WHEN event.message_type = 'text'
-                  AND jsonb_typeof(event.event_data->'text'->'body') = 'string'
-             THEN LEFT(event.event_data->'text'->>'body', 4096) END,
+                  AND pg_catalog.jsonb_typeof(event.event_data->'text'->'body') = 'string'
+             THEN pg_catalog.LEFT(event.event_data->'text'->>'body', 4096) END,
            CASE WHEN event.message_type IN ('image', 'document')
-                  AND jsonb_typeof(event.event_data->event.message_type->'mime_type') = 'string'
-             THEN NULLIF(LEFT(event.event_data->event.message_type->>'mime_type', 255), '') END,
+                  AND pg_catalog.jsonb_typeof(event.event_data->event.message_type->'mime_type') = 'string'
+             THEN NULLIF(pg_catalog.LEFT(event.event_data->event.message_type->>'mime_type', 255), '') END,
            CASE WHEN event.message_type IN ('image', 'document')
-                  AND jsonb_typeof(event.event_data->event.message_type->'caption') = 'string'
-             THEN LEFT(event.event_data->event.message_type->>'caption', 1024) END,
+                  AND pg_catalog.jsonb_typeof(event.event_data->event.message_type->'caption') = 'string'
+             THEN pg_catalog.LEFT(event.event_data->event.message_type->>'caption', 1024) END,
            CASE WHEN event.message_type = 'document'
-                  AND jsonb_typeof(event.event_data->'document'->'filename') = 'string'
-             THEN LEFT(event.event_data->'document'->>'filename', 255) END,
+                  AND pg_catalog.jsonb_typeof(event.event_data->'document'->'filename') = 'string'
+             THEN pg_catalog.LEFT(event.event_data->'document'->>'filename', 255) END,
            'received',
            0,
            CASE
              WHEN event.source_timestamp ~ '^[0-9]{1,12}$'
               AND event.source_timestamp::NUMERIC > 0
               AND event.source_timestamp::NUMERIC <= 253402300799
-              AND to_timestamp(event.source_timestamp::DOUBLE PRECISION)
+              AND pg_catalog.to_timestamp(event.source_timestamp::DOUBLE PRECISION)
                   BETWEEN event.received_at - INTERVAL '30 days'
                       AND event.received_at + INTERVAL '5 minutes'
-               THEN to_timestamp(event.source_timestamp::DOUBLE PRECISION)
+               THEN pg_catalog.to_timestamp(event.source_timestamp::DOUBLE PRECISION)
              ELSE event.received_at
            END,
            event.received_at,
@@ -4162,7 +4162,7 @@ BEGIN
        AND event.sender_id ~ '^[0-9]{6,15}$'
        AND (
          event.message_type <> 'text'
-         OR jsonb_typeof(event.event_data->'text'->'body') = 'string'
+         OR pg_catalog.jsonb_typeof(event.event_data->'text'->'body') = 'string'
        )
        AND NOT EXISTS (
          SELECT 1
@@ -4195,10 +4195,10 @@ BEGIN
            SELECT 1
              FROM public.whatsapp_cloud_events AS event
             WHERE event.empresa_id = target_empresa_id
-              AND BTRIM(event.message_id) = BTRIM(message.provider_message_id)
+              AND pg_catalog.BTRIM(event.message_id) = pg_catalog.BTRIM(message.provider_message_id)
               AND event.event_kind = 'status'
               AND event.status IN ('sent', 'delivered', 'read', 'failed')
-              AND NULLIF(BTRIM(event.message_id), '') IS NOT NULL
+              AND NULLIF(pg_catalog.BTRIM(event.message_id), '') IS NOT NULL
          )
        ORDER BY message.id
        FOR UPDATE OF message
@@ -4232,7 +4232,7 @@ CREATE TABLE IF NOT EXISTS page_views (
   referer      TEXT,
   session_id   TEXT,
   ip           TEXT,
-  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW()
 );
 
 CREATE TABLE IF NOT EXISTS page_view_events (
@@ -4240,7 +4240,7 @@ CREATE TABLE IF NOT EXISTS page_view_events (
   page_view_id INTEGER NOT NULL REFERENCES page_views(id) ON DELETE CASCADE,
   tipo         TEXT NOT NULL,
   payload      TEXT,
-  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW()
 );
 
 -- =========================================================
@@ -4258,8 +4258,8 @@ CREATE TABLE IF NOT EXISTS empresa_activos (
   estado       TEXT DEFAULT 'disponible',
   cliente_id   INTEGER REFERENCES puntos_entrega(id) ON DELETE SET NULL,
   notas        TEXT,
-  created_at   TIMESTAMPTZ DEFAULT NOW(),
-  updated_at   TIMESTAMPTZ DEFAULT NOW(),
+  created_at   TIMESTAMPTZ DEFAULT pg_catalog.NOW(),
+  updated_at   TIMESTAMPTZ DEFAULT pg_catalog.NOW(),
   UNIQUE(empresa_id, codigo)
 );
 
@@ -4298,7 +4298,7 @@ CREATE TABLE IF NOT EXISTS historial_activos (
   activo_id    INTEGER NOT NULL REFERENCES empresa_activos(id) ON DELETE CASCADE,
   cliente_id   INTEGER REFERENCES puntos_entrega(id) ON DELETE SET NULL,
   accion       TEXT NOT NULL,
-  fecha        TIMESTAMPTZ DEFAULT NOW(),
+  fecha        TIMESTAMPTZ DEFAULT pg_catalog.NOW(),
   usuario      TEXT,
   observacion  TEXT
 );
@@ -4316,12 +4316,12 @@ CREATE TABLE IF NOT EXISTS empresa_activos_alquileres (
   monto_total    NUMERIC(12,2) NOT NULL,
   total_activos  INT NOT NULL DEFAULT 0,
   estado         TEXT NOT NULL DEFAULT 'pendiente', -- pendiente, facturado, cobrado
-  created_at     TIMESTAMPTZ DEFAULT NOW(),
+  created_at     TIMESTAMPTZ DEFAULT pg_catalog.NOW(),
   mp_link            TEXT,
   mp_preference_id   TEXT,
   ultimo_pago_fecha  TIMESTAMPTZ,
   ultimo_pago_monto  NUMERIC(12,2),
-  updated_at         TIMESTAMPTZ DEFAULT NOW(),
+  updated_at         TIMESTAMPTZ DEFAULT pg_catalog.NOW(),
   detalle_activos    JSONB DEFAULT '[]'::jsonb
 );
 
@@ -4367,7 +4367,7 @@ CREATE TABLE IF NOT EXISTS pedido_activos (
   motivo                TEXT,
 
   -- Momento y lugar de la acción
-  accion_at_utc         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  accion_at_utc         TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW(),
   accion_lat            DOUBLE PRECISION,
   accion_lng            DOUBLE PRECISION,
 
@@ -4377,7 +4377,7 @@ CREATE TABLE IF NOT EXISTS pedido_activos (
   firma_cliente_url        TEXT,
 
   -- Auditoría
-  created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW(),
   created_by            TEXT,
 
   CONSTRAINT fk_pedido_activos_empresa
@@ -4437,8 +4437,8 @@ CREATE TABLE IF NOT EXISTS proveedores (
   condiciones_pago  TEXT,
   activo            BOOLEAN DEFAULT TRUE,
   notas             TEXT,
-  created_at        TIMESTAMPTZ DEFAULT NOW(),
-  updated_at        TIMESTAMPTZ DEFAULT NOW()
+  created_at        TIMESTAMPTZ DEFAULT pg_catalog.NOW(),
+  updated_at        TIMESTAMPTZ DEFAULT pg_catalog.NOW()
 );
 
 CREATE INDEX IF NOT EXISTS proveedores_empresa_idx
@@ -4449,7 +4449,7 @@ CREATE TABLE IF NOT EXISTS compras_ordenes (
   empresa_id            INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
   proveedor_id          INTEGER REFERENCES proveedores(id) ON DELETE SET NULL,
   estado                TEXT NOT NULL DEFAULT 'borrador',
-  fecha_emision         TIMESTAMPTZ DEFAULT NOW(),
+  fecha_emision         TIMESTAMPTZ DEFAULT pg_catalog.NOW(),
   fecha_entrega_estimada DATE,
   subtotal              NUMERIC(12,2) DEFAULT 0,
   impuestos             NUMERIC(12,2) DEFAULT 0,
@@ -4459,8 +4459,8 @@ CREATE TABLE IF NOT EXISTS compras_ordenes (
   observaciones         TEXT,
   created_by            INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
   updated_by            INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
-  created_at            TIMESTAMPTZ DEFAULT NOW(),
-  updated_at            TIMESTAMPTZ DEFAULT NOW()
+  created_at            TIMESTAMPTZ DEFAULT pg_catalog.NOW(),
+  updated_at            TIMESTAMPTZ DEFAULT pg_catalog.NOW()
 );
 
 CREATE INDEX IF NOT EXISTS compras_ordenes_empresa_estado_idx
@@ -4475,7 +4475,7 @@ CREATE TABLE IF NOT EXISTS compras_orden_items (
   costo_unitario    NUMERIC(12,2) NOT NULL DEFAULT 0,
   impuesto_pct      NUMERIC(6,2) DEFAULT 0,
   subtotal          NUMERIC(12,2) DEFAULT 0,
-  created_at        TIMESTAMPTZ DEFAULT NOW()
+  created_at        TIMESTAMPTZ DEFAULT pg_catalog.NOW()
 );
 
 CREATE INDEX IF NOT EXISTS compras_orden_items_orden_idx
@@ -4486,11 +4486,11 @@ CREATE TABLE IF NOT EXISTS compras_recepciones (
   empresa_id        INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
   orden_id          INTEGER REFERENCES compras_ordenes(id) ON DELETE SET NULL,
   proveedor_id      INTEGER REFERENCES proveedores(id) ON DELETE SET NULL,
-  fecha_recepcion   TIMESTAMPTZ DEFAULT NOW(),
+  fecha_recepcion   TIMESTAMPTZ DEFAULT pg_catalog.NOW(),
   numero_remito     TEXT,
   observaciones     TEXT,
   created_by        INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
-  created_at        TIMESTAMPTZ DEFAULT NOW()
+  created_at        TIMESTAMPTZ DEFAULT pg_catalog.NOW()
 );
 
 CREATE TABLE IF NOT EXISTS compras_recepcion_items (
@@ -4500,7 +4500,7 @@ CREATE TABLE IF NOT EXISTS compras_recepcion_items (
   cantidad          NUMERIC(12,2) NOT NULL DEFAULT 0,
   costo_unitario    NUMERIC(12,2) NOT NULL DEFAULT 0,
   subtotal          NUMERIC(12,2) DEFAULT 0,
-  created_at        TIMESTAMPTZ DEFAULT NOW()
+  created_at        TIMESTAMPTZ DEFAULT pg_catalog.NOW()
 );
 
 CREATE INDEX IF NOT EXISTS compras_recepciones_empresa_idx
@@ -4514,7 +4514,7 @@ CREATE TABLE IF NOT EXISTS tesoreria_movimientos (
   categoria             TEXT NOT NULL DEFAULT 'pago_proveedor',
   proveedor_id          INTEGER REFERENCES proveedores(id) ON DELETE SET NULL,
   compra_orden_id       INTEGER REFERENCES compras_ordenes(id) ON DELETE SET NULL,
-  fecha                 TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  fecha                 TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW(),
   monto                 NUMERIC(12,2) NOT NULL DEFAULT 0,
   medio_pago            TEXT,
   referencia            TEXT,
@@ -4522,7 +4522,7 @@ CREATE TABLE IF NOT EXISTS tesoreria_movimientos (
   conciliado            BOOLEAN NOT NULL DEFAULT FALSE,
   conciliado_at         TIMESTAMPTZ,
   created_by            INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
-  created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW()
 );
 
 CREATE INDEX IF NOT EXISTS tesoreria_movimientos_empresa_fecha_idx
@@ -4541,8 +4541,8 @@ CREATE TABLE IF NOT EXISTS presupuesto_mensual (
   proveedor_id        INTEGER REFERENCES proveedores(id) ON DELETE SET NULL,
   monto_presupuestado NUMERIC(12,2) NOT NULL DEFAULT 0,
   created_by          INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
-  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW(),
+  updated_at          TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW(),
   CONSTRAINT presupuesto_mensual_mes_chk CHECK (mes BETWEEN 1 AND 12)
 );
 
@@ -4570,8 +4570,8 @@ CREATE TABLE IF NOT EXISTS incidencias_operativas (
   resuelta_at         TIMESTAMPTZ,
   resuelta_por        INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
   created_by          INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
-  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW(),
+  updated_at          TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW()
 );
 
 ALTER TABLE incidencias_operativas
@@ -4592,7 +4592,7 @@ CREATE TABLE IF NOT EXISTS incidencias_operativas_historial (
   evento              TEXT NOT NULL, -- creada|actualizada|estado|resuelta
   payload             JSONB,
   actor_usuario_id    INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
-  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW()
 );
 
 CREATE INDEX IF NOT EXISTS incidencias_historial_incidencia_idx
@@ -4664,7 +4664,7 @@ ALTER TABLE empresas
   ADD COLUMN IF NOT EXISTS wpp_qr_code TEXT,
   ADD COLUMN IF NOT EXISTS wpp_status TEXT DEFAULT 'disconnected',
   ADD COLUMN IF NOT EXISTS wpp_reset_requested_at TIMESTAMPTZ,
-  ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+  ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW();
 
 -- ACK de incidentes de tracking (operación / NOC)
 CREATE TABLE IF NOT EXISTS tracking_incident_acks (
@@ -4674,7 +4674,7 @@ CREATE TABLE IF NOT EXISTS tracking_incident_acks (
   acked_by_user_id  INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
   acked_by_username TEXT,
   comment           TEXT,
-  acked_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  acked_at          TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_tracking_incident_acks_empresa_pedido_ack
@@ -4695,7 +4695,7 @@ CREATE TABLE IF NOT EXISTS marketing_envios_telemetria (
   costo_estimado NUMERIC(12,2),
   detalle_error TEXT,
   meta JSONB DEFAULT '{}'::jsonb,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_marketing_tel_empresa_fecha
@@ -4725,8 +4725,8 @@ CREATE TABLE IF NOT EXISTS marketing_contactos (
   consent_at TIMESTAMPTZ,
   optout_at TIMESTAMPTZ,
   estado TEXT NOT NULL DEFAULT 'nuevo',
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW()
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_marketing_contactos_unique
@@ -4750,8 +4750,8 @@ CREATE TABLE IF NOT EXISTS call_campaigns (
   allowed_end_time TIME,
   metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_by INT REFERENCES usuarios(id) ON DELETE SET NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_call_campaigns_empresa_status
@@ -4771,8 +4771,8 @@ CREATE TABLE IF NOT EXISTS call_campaign_contacts (
   last_call_at TIMESTAMPTZ,
   next_retry_at TIMESTAMPTZ,
   final_disposition TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW(),
   UNIQUE (campaign_id, phone_normalized)
 );
 
@@ -4786,7 +4786,7 @@ CREATE TABLE IF NOT EXISTS call_sessions (
   campaign_id BIGINT NOT NULL REFERENCES call_campaigns(id) ON DELETE CASCADE,
   asterisk_channel_id TEXT,
   asterisk_linkedid TEXT,
-  started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  started_at TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW(),
   answered_at TIMESTAMPTZ,
   ended_at TIMESTAMPTZ,
   duration_seconds INT,
@@ -4799,8 +4799,8 @@ CREATE TABLE IF NOT EXISTS call_sessions (
   transferred_to_human BOOLEAN NOT NULL DEFAULT FALSE,
   metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
   recording_path TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_call_sessions_empresa_status
@@ -4811,7 +4811,7 @@ CREATE TABLE IF NOT EXISTS call_events (
   call_session_id BIGINT NOT NULL REFERENCES call_sessions(id) ON DELETE CASCADE,
   event_type TEXT NOT NULL,
   payload JSONB NOT NULL DEFAULT '{}'::jsonb,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_call_events_session_created
@@ -4825,7 +4825,7 @@ CREATE TABLE IF NOT EXISTS call_tasks (
   due_at TIMESTAMPTZ,
   status TEXT NOT NULL DEFAULT 'pending',
   notes TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_call_tasks_due
@@ -4853,8 +4853,8 @@ CREATE TABLE IF NOT EXISTS empresa_facturacion_config (
   wsaa_sign_encrypted TEXT,
   wsaa_expires_at TIMESTAMPTZ,
   activo BOOLEAN NOT NULL DEFAULT TRUE,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW(),
   CONSTRAINT uq_empresa_facturacion_config_empresa UNIQUE (empresa_id),
   CONSTRAINT chk_empresa_facturacion_config_modo
     CHECK (modo_afip IN ('homologacion', 'produccion'))
@@ -4873,8 +4873,8 @@ CREATE TABLE IF NOT EXISTS cliente_datos_fiscales (
   condicion_iva TEXT,
   domicilio_fiscal TEXT,
   email_facturacion TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW(),
   CONSTRAINT uq_cliente_datos_fiscales_cliente UNIQUE (empresa_id, punto_entrega_id)
 );
 
@@ -4906,8 +4906,8 @@ CREATE TABLE IF NOT EXISTS facturas (
   created_by INT REFERENCES usuarios(id) ON DELETE SET NULL,
   emitted_by INT REFERENCES usuarios(id) ON DELETE SET NULL,
   emitted_at TIMESTAMPTZ,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW(),
   CONSTRAINT chk_facturas_estado
     CHECK (estado IN ('borrador', 'pendiente_confirmacion', 'emitiendo', 'emitida', 'rechazada', 'anulada')),
   CONSTRAINT chk_facturas_modo
@@ -4948,7 +4948,7 @@ CREATE TABLE IF NOT EXISTS factura_afip_auditoria (
   resultado TEXT,
   error_codigo TEXT,
   error_mensaje TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_factura_afip_auditoria_factura
@@ -4962,7 +4962,7 @@ CREATE TABLE IF NOT EXISTS factura_eventos (
   accion TEXT NOT NULL,
   detalle TEXT,
   metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_factura_eventos_factura
@@ -4992,7 +4992,7 @@ CREATE TABLE IF NOT EXISTS wpp_general_control (
   reset_failed_at      TIMESTAMPTZ,
   reset_failure_error  TEXT,
   reset_requested_by   TEXT,
-  updated_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at           TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW(),
   CONSTRAINT wpp_general_reset_sequence_order CHECK (
     reset_applied_seq <= reset_started_seq
     AND reset_failed_seq <= reset_started_seq
@@ -5019,7 +5019,7 @@ ALTER TABLE wpp_general_control
   ADD COLUMN IF NOT EXISTS reset_failed_at TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS reset_failure_error TEXT,
   ADD COLUMN IF NOT EXISTS reset_requested_by TEXT,
-  ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+  ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT pg_catalog.NOW();
 
 UPDATE wpp_general_control
 SET id = COALESCE(id, TRUE),
@@ -5029,7 +5029,7 @@ SET id = COALESCE(id, TRUE),
     reset_started_seq = COALESCE(reset_started_seq, 0),
     reset_applied_seq = COALESCE(reset_applied_seq, 0),
     reset_failed_seq = COALESCE(reset_failed_seq, 0),
-    updated_at = COALESCE(updated_at, NOW())
+    updated_at = COALESCE(updated_at, pg_catalog.NOW())
 WHERE id IS NULL
    OR epoch IS NULL
    OR state IS NULL
@@ -5054,7 +5054,7 @@ ALTER TABLE wpp_general_control
   ALTER COLUMN reset_applied_seq SET NOT NULL,
   ALTER COLUMN reset_failed_seq SET DEFAULT 0,
   ALTER COLUMN reset_failed_seq SET NOT NULL,
-  ALTER COLUMN updated_at SET DEFAULT NOW(),
+  ALTER COLUMN updated_at SET DEFAULT pg_catalog.NOW(),
   ALTER COLUMN updated_at SET NOT NULL;
 
 DO $wpp_general_singleton$
@@ -5064,7 +5064,7 @@ BEGIN
     FROM pg_constraint
     WHERE conrelid = 'wpp_general_control'::regclass
       AND conname = 'wpp_general_control_singleton_id'
-      AND pg_get_constraintdef(oid) = 'CHECK (id)'
+      AND pg_catalog.pg_get_constraintdef(oid) = 'CHECK (id)'
   ) THEN
     ALTER TABLE wpp_general_control
       DROP CONSTRAINT IF EXISTS wpp_general_control_singleton_id;
@@ -5084,9 +5084,9 @@ BEGIN
     FROM pg_constraint
     WHERE conrelid = 'wpp_general_control'::regclass
       AND conname = 'wpp_general_reset_sequence_order'
-      AND POSITION('reset_applied_seq <= reset_started_seq' IN pg_get_constraintdef(oid)) > 0
-      AND POSITION('reset_failed_seq <= reset_started_seq' IN pg_get_constraintdef(oid)) > 0
-      AND POSITION('reset_started_seq <= reset_requested_seq' IN pg_get_constraintdef(oid)) > 0
+      AND POSITION('reset_applied_seq <= reset_started_seq' IN pg_catalog.pg_get_constraintdef(oid)) > 0
+      AND POSITION('reset_failed_seq <= reset_started_seq' IN pg_catalog.pg_get_constraintdef(oid)) > 0
+      AND POSITION('reset_started_seq <= reset_requested_seq' IN pg_catalog.pg_get_constraintdef(oid)) > 0
   ) THEN
     ALTER TABLE wpp_general_control
       DROP CONSTRAINT IF EXISTS wpp_general_reset_sequence_order;

@@ -363,7 +363,7 @@ test('initDb crea y migra el inbox Cloud con constraints de idempotencia', async
   assert.match(migration, /CHECK\s*\(event_kind IN \('message', 'status'\)\)/i);
   assert.match(migration, /ALTER TABLE whatsapp_cloud_events ADD COLUMN %I %s/i);
   assert.match(migration, /CREATE SEQUENCE IF NOT EXISTS whatsapp_cloud_events_id_seq AS BIGINT/i);
-  assert.match(migration, /ALTER COLUMN id SET DEFAULT nextval/i);
+  assert.match(migration, /ALTER COLUMN id SET DEFAULT pg_catalog\.nextval/i);
   assert.match(migration, /ALTER COLUMN event_data SET DEFAULT/i);
   assert.match(migration, /ALTER TABLE whatsapp_cloud_events ALTER COLUMN %I SET NOT NULL/i);
   assert.doesNotMatch(migration, /DROP INDEX IF EXISTS idx_whatsapp_cloud_events_dedupe_key/i);
