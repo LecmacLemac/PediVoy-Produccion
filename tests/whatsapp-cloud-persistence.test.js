@@ -37,7 +37,7 @@ test('resuelve el tenant Cloud desde empresas y persiste un mensaje sanitizado',
     credentials: { accessToken: 'no-usar' },
     message: {
       id: 'message-safe',
-      from: 'sender-safe',
+      from: '5493515550001',
       timestamp: '1710000000',
       type: 'text',
       text: { body: 'contenido necesario' },
@@ -61,12 +61,14 @@ test('resuelve el tenant Cloud desde empresas y persiste un mensaje sanitizado',
   assert.equal(insertCall.params[2], 'message:message-safe');
   assert.equal(insertCall.params[3], 'message-safe');
   assert.equal(insertCall.params[4], 'entry-safe');
-  assert.equal(insertCall.params[5], 'sender-safe');
+  assert.equal(insertCall.params[5], '5493515550001');
   assert.equal(insertCall.params[6], null);
   assert.equal(insertCall.params[7], 'text');
   assert.equal(insertCall.params[8], null);
   assert.equal(insertCall.params[9], '1710000000');
   assert.deepEqual(insertCall.params[10], { text: { body: 'contenido necesario' } });
+  assert.equal(insertCall.params[11], 'cloud-number-safe');
+  assert.match(insertCall.sql, /phone_number_id/i);
   assert.equal(JSON.stringify(insertCall.params).includes('no-persistir'), false);
   assert.equal(JSON.stringify(insertCall.params).includes('no-usar'), false);
   assert.equal(insertCall.params.includes(999), false);
@@ -101,9 +103,9 @@ test('confirma grupos multiempresa independientes y el retry recupera solo lo pe
   };
   const handler = createWhatsAppCloudEventHandler({ withTransaction });
   const events = [
-    { kind: 'message', phoneNumberId: 'cloud-a', message: { id: 'same-id', from: 'sender-a', timestamp: '1', type: 'future' } },
-    { kind: 'message', phoneNumberId: 'cloud-missing', message: { id: 'pending-id', from: 'sender-x', timestamp: '2', type: 'future' } },
-    { kind: 'message', phoneNumberId: 'cloud-b', message: { id: 'same-id', from: 'sender-b', timestamp: '3', type: 'future' } },
+    { kind: 'message', phoneNumberId: 'cloud-a', message: { id: 'same-id', from: '5493515550001', timestamp: '1', type: 'future' } },
+    { kind: 'message', phoneNumberId: 'cloud-missing', message: { id: 'pending-id', from: '5493515550002', timestamp: '2', type: 'future' } },
+    { kind: 'message', phoneNumberId: 'cloud-b', message: { id: 'same-id', from: '5493515550003', timestamp: '3', type: 'future' } },
   ];
 
   await assert.rejects(handler(events), error => error?.code === 'unknown_tenant');
@@ -159,7 +161,7 @@ test('procesa un batch multiempresa y distingue transiciones de estado sin dupli
       kind: 'message',
       entryId: 'entry-a',
       phoneNumberId: 'cloud-a',
-      message: { id: 'incoming-safe', from: 'sender-safe', timestamp: '1710000000', type: 'image', image: { id: 'media-safe', caption: 'foto' } },
+      message: { id: 'incoming-safe', from: '5493515550001', timestamp: '1710000000', type: 'image', image: { id: 'media-safe', caption: 'foto' } },
     },
     delivered,
     delivered,
@@ -189,6 +191,40 @@ test('procesa un batch multiempresa y distingue transiciones de estado sin dupli
     { conversationId: 'conversation-safe', pricingCategory: 'utility' },
   ]);
   assert.equal(JSON.stringify(inserts).includes('no-persistir'), false);
+});
+
+test('persiste metadata sanitizada de image y document sin token ni URL', async () => {
+  const harness = createTransactionHarness(async (sql) => {
+    if (sql.includes('FROM empresas')) return [{ empresa_id: 2 }];
+    if (sql.includes('INSERT INTO whatsapp_cloud_events')) return [{ id: 1 }];
+    throw new Error(`Consulta inesperada: ${sql}`);
+  });
+  const handler = createWhatsAppCloudEventHandler({ withTransaction: harness.withTransaction });
+
+  await handler([
+    {
+      kind: 'message', phoneNumberId: 'phone-2',
+      message: {
+        id: 'img-1', from: '5493515550002', timestamp: '1', type: 'image',
+        image: { id: 'media-img', mime_type: 'image/jpeg', sha256: 'abc', caption: 'pago', url: 'https://secret' },
+      },
+    },
+    {
+      kind: 'message', phoneNumberId: 'phone-2',
+      message: {
+        id: 'doc-1', from: '5493515550002', timestamp: '2', type: 'document',
+        document: { id: 'media-pdf', mime_type: 'application/pdf', sha256: 'def', filename: 'ticket.pdf', caption: 'pdf', token: 'secret' },
+      },
+    },
+  ]);
+
+  const inserts = harness.calls.filter(({ sql }) => sql.includes('INSERT INTO whatsapp_cloud_events'));
+  assert.deepEqual(inserts.map(call => call.params[10]), [
+    { image: { id: 'media-img', mime_type: 'image/jpeg', sha256: 'abc', caption: 'pago' } },
+    { document: { id: 'media-pdf', mime_type: 'application/pdf', sha256: 'def', caption: 'pdf', filename: 'ticket.pdf' } },
+  ]);
+  assert.equal(JSON.stringify(inserts).includes('https://secret'), false);
+  assert.equal(JSON.stringify(inserts).includes('token'), false);
 });
 
 test('falla cerrado con tenant ausente, desconocido o ambiguo sin filtrar el phone number id', async () => {
@@ -239,14 +275,42 @@ test('rechaza estados sin identidad completa antes de persistir', async () => {
   );
 });
 
+test('rechaza WA_ID no decimal o fuera de 6 a 15 dígitos y acepta uno válido', async () => {
+  for (const sender of ['abc123', '', '+5493515550002', '-123456', '12345', '1234567890123456']) {
+    let inserts = 0;
+    const harness = createTransactionHarness(async sql => {
+      if (sql.includes('FROM empresas')) return [{ empresa_id: 1 }];
+      if (sql.includes('INSERT INTO whatsapp_cloud_events')) inserts += 1;
+      return [];
+    });
+    const handler = createWhatsAppCloudEventHandler({ withTransaction: harness.withTransaction });
+    await assert.rejects(handler([{
+      kind: 'message', phoneNumberId: 'cloud-safe',
+      message: { id: 'm-invalid-sender', from: sender, timestamp: '1', type: 'text', text: { body: 'safe' } },
+    }]), error => error?.code === 'invalid_event');
+    assert.equal(inserts, 0, sender);
+  }
+
+  const harness = createTransactionHarness(async sql => {
+    if (sql.includes('FROM empresas')) return [{ empresa_id: 1 }];
+    if (sql.includes('INSERT INTO whatsapp_cloud_events')) return [{ id: 1 }];
+    return [];
+  });
+  const handler = createWhatsAppCloudEventHandler({ withTransaction: harness.withTransaction });
+  assert.deepEqual(await handler([{
+    kind: 'message', phoneNumberId: 'cloud-safe',
+    message: { id: 'm-valid-sender', from: '5493515550002', timestamp: '1', type: 'text', text: { body: 'safe' } },
+  }]), { accepted: 1, duplicates: 0 });
+});
+
 test('rechaza mensajes inbound con identidad incompleta o payload conocido incompleto', async () => {
   const invalidMessages = [
-    { id: '', from: 'sender', timestamp: '1', type: 'future' },
+    { id: '', from: '5493515550001', timestamp: '1', type: 'future' },
     { id: 'm-1', from: '', timestamp: '1', type: 'future' },
-    { id: 'm-1', from: 'sender', timestamp: '', type: 'future' },
-    { id: 'm-1', from: 'sender', timestamp: '1', type: '' },
-    { id: 'm-1', from: 'sender', timestamp: '1', type: 'text', text: {} },
-    { id: 'm-1', from: 'sender', timestamp: '1', type: 'image', image: {} },
+    { id: 'm-1', from: '5493515550001', timestamp: '', type: 'future' },
+    { id: 'm-1', from: '5493515550001', timestamp: '1', type: '' },
+    { id: 'm-1', from: '5493515550001', timestamp: '1', type: 'text', text: {} },
+    { id: 'm-1', from: '5493515550001', timestamp: '1', type: 'image', image: {} },
   ];
 
   for (const message of invalidMessages) {
@@ -276,7 +340,7 @@ test('persiste tipos futuros sin copiar el payload opaco', async () => {
   await handler([{
     kind: 'message',
     phoneNumberId: 'cloud-safe',
-    message: { id: 'future-1', from: 'sender', timestamp: '1', type: 'future_type', future_type: { secret: 'opaque' } },
+    message: { id: 'future-1', from: '5493515550001', timestamp: '1', type: 'future_type', future_type: { secret: 'opaque' } },
   }]);
 
   const insert = harness.calls.find(({ sql }) => sql.includes('INSERT INTO whatsapp_cloud_events'));
@@ -295,6 +359,7 @@ test('initDb crea y migra el inbox Cloud con constraints de idempotencia', async
   assert.doesNotMatch(migration, /LOCK TABLE whatsapp_cloud_events/i);
   assert.match(migration, /empresa_id\s+INTEGER\s+NOT NULL\s+REFERENCES empresas\(id\)/i);
   assert.match(migration, /dedupe_key\s+TEXT\s+NOT NULL/i);
+  assert.match(migration, /phone_number_id\s+TEXT/i);
   assert.match(migration, /CHECK\s*\(event_kind IN \('message', 'status'\)\)/i);
   assert.match(migration, /ALTER TABLE whatsapp_cloud_events ADD COLUMN %I %s/i);
   assert.match(migration, /CREATE SEQUENCE IF NOT EXISTS whatsapp_cloud_events_id_seq AS BIGINT/i);

@@ -71,6 +71,7 @@ CREATE TABLE IF NOT EXISTS whatsapp_cloud_events (
   message_type     TEXT,
   status           TEXT,
   source_timestamp TEXT,
+  phone_number_id  TEXT,
   event_data       JSONB NOT NULL DEFAULT '{}'::jsonb,
   received_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   processing_state TEXT NOT NULL DEFAULT 'pending',
@@ -78,7 +79,10 @@ CREATE TABLE IF NOT EXISTS whatsapp_cloud_events (
   claim_until      TIMESTAMPTZ,
   processing_started_at TIMESTAMPTZ,
   processed_at     TIMESTAMPTZ,
-  processing_error_code TEXT
+  processing_error_code TEXT,
+  attempt_count    INTEGER NOT NULL DEFAULT 0,
+  retry_count      INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at  TIMESTAMPTZ
 );
 
 DO $$
@@ -98,6 +102,7 @@ BEGIN
       ('message_type', 'TEXT'),
       ('status', 'TEXT'),
       ('source_timestamp', 'TEXT'),
+      ('phone_number_id', 'TEXT'),
       ('event_data', 'JSONB'),
       ('received_at', 'TIMESTAMPTZ'),
       ('processing_state', 'TEXT'),
@@ -105,7 +110,10 @@ BEGIN
       ('claim_until', 'TIMESTAMPTZ'),
       ('processing_started_at', 'TIMESTAMPTZ'),
       ('processed_at', 'TIMESTAMPTZ'),
-      ('processing_error_code', 'TEXT')
+      ('processing_error_code', 'TEXT'),
+      ('attempt_count', 'INTEGER'),
+      ('retry_count', 'INTEGER'),
+      ('next_attempt_at', 'TIMESTAMPTZ')
     ) AS required_columns(column_name, data_type)
   LOOP
     IF NOT EXISTS (
@@ -195,8 +203,11 @@ UPDATE whatsapp_cloud_events
 UPDATE whatsapp_cloud_events
    SET event_data = COALESCE(event_data, '{}'::jsonb),
        received_at = COALESCE(received_at, NOW()),
-       processing_state = COALESCE(processing_state, 'pending')
- WHERE event_data IS NULL OR received_at IS NULL OR processing_state IS NULL;
+       processing_state = COALESCE(processing_state, 'pending'),
+       attempt_count = COALESCE(attempt_count, 0),
+       retry_count = COALESCE(retry_count, 0)
+ WHERE event_data IS NULL OR received_at IS NULL OR processing_state IS NULL
+    OR attempt_count IS NULL OR retry_count IS NULL;
 
 DO $$
 DECLARE
@@ -204,7 +215,7 @@ DECLARE
   current_default TEXT;
 BEGIN
   FOR required_column IN
-    SELECT unnest(ARRAY['id', 'empresa_id', 'event_kind', 'dedupe_key', 'message_id', 'event_data', 'received_at', 'processing_state'])
+    SELECT unnest(ARRAY['id', 'empresa_id', 'event_kind', 'dedupe_key', 'message_id', 'event_data', 'received_at', 'processing_state', 'attempt_count', 'retry_count'])
   LOOP
     IF EXISTS (
       SELECT 1
@@ -259,6 +270,10 @@ BEGIN
     ALTER TABLE whatsapp_cloud_events
       ALTER COLUMN processing_state SET DEFAULT 'pending';
   END IF;
+
+  ALTER TABLE whatsapp_cloud_events
+    ALTER COLUMN attempt_count SET DEFAULT 0,
+    ALTER COLUMN retry_count SET DEFAULT 0;
 END $$;
 
 DO $$
@@ -418,10 +433,57 @@ BEGIN
   END IF;
 END $$;
 
-CREATE INDEX IF NOT EXISTS idx_whatsapp_cloud_events_inbound_claim
-  ON whatsapp_cloud_events (processing_state, received_at, id)
-  WHERE event_kind = 'message'
-    AND processing_state IN ('pending', 'pre_process');
+DO $$
+DECLARE
+  existing_index REGCLASS := to_regclass('idx_whatsapp_cloud_events_inbound_claim');
+  key_columns TEXT[];
+  predicate_definition TEXT;
+  normalized_predicate TEXT;
+  valid_index BOOLEAN := FALSE;
+BEGIN
+  IF existing_index IS NOT NULL THEN
+    SELECT array_agg(attribute_row.attname ORDER BY key_column.ordinality)
+             FILTER (WHERE key_column.ordinality <= index_row.indnkeyatts),
+           pg_get_expr(index_row.indpred, index_row.indrelid),
+           NOT index_row.indisunique
+             AND index_row.indexprs IS NULL
+             AND index_row.indnkeyatts = 4
+             AND index_row.indnatts = 4
+           INTO key_columns, predicate_definition, valid_index
+      FROM pg_index AS index_row
+      CROSS JOIN LATERAL unnest(index_row.indkey) WITH ORDINALITY AS key_column(attnum, ordinality)
+      JOIN pg_attribute AS attribute_row
+        ON attribute_row.attrelid = index_row.indrelid
+       AND attribute_row.attnum = key_column.attnum
+     WHERE index_row.indexrelid = existing_index
+     GROUP BY index_row.indnkeyatts, index_row.indnatts, index_row.indpred, index_row.indrelid,
+              index_row.indisunique, index_row.indexprs;
+
+    normalized_predicate := regexp_replace(
+      lower(COALESCE(predicate_definition, '')),
+      '(::text|[[:space:]()])',
+      '',
+      'g'
+    );
+    valid_index := COALESCE(valid_index, FALSE)
+      AND key_columns = ARRAY['processing_state', 'next_attempt_at', 'received_at', 'id']::TEXT[]
+      AND normalized_predicate = 'event_kind=''message''andprocessing_state=anyarray[''pending'',''pre_process'']';
+
+    IF NOT valid_index THEN
+      EXECUTE 'DROP INDEX idx_whatsapp_cloud_events_inbound_claim';
+      existing_index := NULL;
+    END IF;
+  END IF;
+
+  IF existing_index IS NULL THEN
+    EXECUTE $index$
+      CREATE INDEX idx_whatsapp_cloud_events_inbound_claim
+        ON whatsapp_cloud_events (processing_state, next_attempt_at, received_at, id)
+       WHERE event_kind = 'message'
+         AND processing_state IN ('pending', 'pre_process')
+    $index$;
+  END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS idx_whatsapp_cloud_events_processing_reconcile
   ON whatsapp_cloud_events (claim_until, id)
@@ -1554,6 +1616,8 @@ CREATE TABLE IF NOT EXISTS pedido_pagos (
 
 -- BEGIN COMPROBANTE CONCURRENCY MIGRATION
 BEGIN;
+SET LOCAL lock_timeout = '30s';
+SET LOCAL statement_timeout = '5min';
 CREATE OR REPLACE FUNCTION normalizar_comprobante_operacion(value TEXT)
 RETURNS TEXT
 LANGUAGE SQL

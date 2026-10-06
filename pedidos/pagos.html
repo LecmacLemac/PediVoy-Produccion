@@ -819,6 +819,9 @@
         toast(enviarAviso ? 'Pago verificado y aviso enviado' : 'Pago verificado sin aviso al cliente');
         loadPagos();
         closeModal();
+      } else if (resp.status === 503 && data?.code === 'TRANSACTION_OUTCOME_UNKNOWN' && data?.status === 'outcome_unknown') {
+        alert('⚠️ No se pudo confirmar el resultado. No reintentes: el pago requiere reconciliación manual.');
+        loadPagos();
       } else if (resp.status === 409 && data?.needsReview) {
         alert(`⚠️ Este comprobante requiere revisión manual.\n\n${data.detail || 'Monto no coincide con pedido.'}`);
         loadPagos();
@@ -848,6 +851,10 @@
       body: JSON.stringify(payload),
     });
     const data = await response.json().catch(() => ({}));
+    if (response.status === 503 && data?.code === 'TRANSACTION_OUTCOME_UNKNOWN' && data?.status === 'outcome_unknown') {
+      alert('⚠️ No se pudo confirmar la asociación. No reintentes: requiere reconciliación manual.');
+      return loadPagos();
+    }
     if (!response.ok || !data?.ok) {
       return alert(data?.error || 'No se pudo asociar el comprobante.');
     }

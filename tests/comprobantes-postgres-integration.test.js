@@ -6,7 +6,7 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import pg from 'pg';
-import { aprobarComprobanteAtomicoPg } from '../src/transferenciasServices.js';
+import { aprobarComprobanteAtomicoPg, transicionarComprobanteARevisionPg } from '../src/transferenciasServices.js';
 import { withTransaction } from '../src/db.js';
 
 const { Pool } = pg;
@@ -48,9 +48,58 @@ test('migración declara claims persistentes y triggers de comprobantes/pagos', 
 test('bloque de migración ejecutable envuelve lock, seed y triggers en transacción explícita', async () => {
   const sql = (await migrationSql()).trim();
   assert.match(sql, /^BEGIN;/i);
+  assert.match(sql, /^BEGIN;\s*SET LOCAL lock_timeout = '30s';\s*SET LOCAL statement_timeout = '5min';/i);
   assert.match(sql, /COMMIT;$/i);
   assert.ok(sql.indexOf('BEGIN;') < sql.indexOf('LOCK TABLE comprobantes_transferencia'));
   assert.ok(sql.indexOf('COMMIT;') > sql.indexOf('CREATE TRIGGER trg_serializar_pedido_pago_comprobante'));
+});
+
+test('PostgreSQL real: lock timeout de migración revierte completo y luego permite dos ejecuciones', { skip: !pgUrl && 'PG_TEST_URL no configurado; test de lock omitido explícitamente' }, async () => {
+  const admin = new Pool({ connectionString: pgUrl, max: 4 });
+  const schema = `ct_lock_${process.pid}_${Date.now()}`;
+  let pool;
+  let locker;
+  try {
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    pool = new Pool({ connectionString: pgUrl, max: 4, options: `-c search_path=${schema}` });
+    await pool.query(`
+      CREATE TABLE pedidos (id integer PRIMARY KEY, empresa_id integer NOT NULL);
+      CREATE TABLE comprobantes_transferencia (
+        id bigserial PRIMARY KEY, empresa_id integer, pedido_id integer,
+        nro_operacion text, validado integer DEFAULT 0, procesado boolean DEFAULT false,
+        estado_revision text DEFAULT 'pendiente', riesgo_flags text,
+        verified_reason text, updated_at timestamptz DEFAULT now()
+      );
+      CREATE TABLE pedido_pagos (
+        id bigserial PRIMARY KEY, empresa_id integer NOT NULL, pedido_id integer NOT NULL,
+        estado text, settlement_at timestamptz
+      );
+    `);
+    locker = await pool.connect();
+    await locker.query('BEGIN');
+    await locker.query('LOCK TABLE comprobantes_transferencia IN ACCESS EXCLUSIVE MODE');
+    const bounded = (await migrationSql()).replace("SET LOCAL lock_timeout = '30s';", "SET LOCAL lock_timeout = '250ms';");
+    const started = Date.now();
+    await assert.rejects(pool.query(bounded), error => error?.code === '55P03');
+    assert.ok(Date.now() - started < 3000);
+    const rolledBack = await pool.query(`SELECT to_regclass('comprobante_operacion_claims') AS claims`);
+    assert.equal(rolledBack.rows[0].claims, null);
+    await locker.query('ROLLBACK');
+    locker.release();
+    locker = null;
+    const migration = await migrationSql();
+    await pool.query(migration);
+    await pool.query(migration);
+    assert.equal((await pool.query(`SELECT to_regclass('comprobante_operacion_claims') AS claims`)).rows[0].claims, 'comprobante_operacion_claims');
+  } finally {
+    if (locker) {
+      try { await locker.query('ROLLBACK'); } catch {}
+      locker.release();
+    }
+    if (pool) await pool.end();
+    await admin.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+    await admin.end();
+  }
 });
 
 test('PostgreSQL real: migración, claims y exclusión pago/aprobación', { skip: !pgUrl && 'PG_TEST_URL no configurado; test MVCC omitido explícitamente' }, async (t) => {
@@ -72,6 +121,7 @@ test('PostgreSQL real: migración, claims y exclusión pago/aprobación', { skip
       );
       CREATE TABLE comprobantes_transferencia (
         id bigserial PRIMARY KEY, empresa_id integer, pedido_id integer,
+        chofer_id integer, fecha timestamptz DEFAULT now(), comprobante_path text,
         nro_operacion text, approval_dedupe_key text, monto numeric(12,2),
         banco_origen text, banco_destino text, alias_destino text,
         cbu_destino text, titular_destino text, cuenta_bancaria_id integer,
@@ -88,6 +138,11 @@ test('PostgreSQL real: migración, claims y exclusión pago/aprobación', { skip
         proveedor text NOT NULL DEFAULT 'test', monto numeric(12,2) NOT NULL DEFAULT 1,
         notas text
       );
+      CREATE TABLE transferencias (
+        id bigserial PRIMARY KEY, empresa_id integer, chofer_id integer, fecha timestamptz,
+        monto numeric(12,2), metodo_pago text, referencia text, comprobante_path text,
+        pedido_id integer, notas text
+      );
       INSERT INTO empresas VALUES (1), (2);
       INSERT INTO pedidos VALUES
         (10, 1, 100.00, 'transferencia'),
@@ -101,7 +156,11 @@ test('PostgreSQL real: migración, claims y exclusión pago/aprobación', { skip
         (45, 1, 100.00, 'transferencia'),
         (46, 1, 100.00, 'transferencia'),
         (47, 1, 100.00, 'transferencia'),
-        (48, 1, 100.00, 'transferencia');
+        (48, 1, 100.00, 'transferencia'),
+        (49, 1, 100.00, 'transferencia'),
+        (50, 1, 100.00, 'transferencia'),
+        (51, 1, 100.00, 'transferencia'),
+        (52, 1, 100.00, 'transferencia');
       INSERT INTO empresa_cuentas_bancarias VALUES
         (11, 1, true, 'Banco', 'destino.uno', '123', 'Empresa Uno'),
         (22, 2, true, 'Banco', 'destino.dos', '456', 'Empresa Dos'),
@@ -363,6 +422,48 @@ test('PostgreSQL real: migración, claims y exclusión pago/aprobación', { skip
     assert.equal(approvalRace.filter(result => result.status === 'rejected'
       && result.reason?.code === '23505'
       && result.reason?.constraint === 'ct_one_approved_per_order').length, 1);
+
+    for (const [pedidoId, reason] of [[49, 'manual_review'], [50, 'ia_ilegible']]) {
+      const receiptId = await newReceipt(pedidoId);
+      const approved = await aprobarComprobanteAtomicoPg(
+        approvalPayload(receiptId, `admin-first-${reason}`),
+        { withTransaction: work => withTransaction(work, { pool, maxRetries: 0 }) },
+      );
+      assert.equal(Number(approved.id), receiptId);
+      const lateWorker = await transicionarComprobanteARevisionPg({
+        id: receiptId,
+        empresaId: 1,
+        patch: {
+          estado_revision: 'pendiente', validado: 0, procesado: false,
+          riesgo_flags: reason, verified_reason: reason,
+        },
+      }, { withTransaction: work => withTransaction(work, { pool, maxRetries: 0 }) });
+      assert.equal(lateWorker.outcome, 'already_finalized', reason);
+      const state = (await pool.query(`SELECT estado_revision, validado, procesado FROM comprobantes_transferencia WHERE id=$1`, [receiptId])).rows[0];
+      assert.deepEqual(state, { estado_revision: 'aprobado', validado: 1, procesado: true });
+      assert.equal(Number((await pool.query(`SELECT COUNT(*) FROM transferencias WHERE pedido_id=$1`, [pedidoId])).rows[0].count), 1);
+    }
+
+    for (const [pedidoId, reason] of [[51, 'manual_review'], [52, 'ia_ilegible']]) {
+      const receiptId = await newReceipt(pedidoId);
+      const worker = await transicionarComprobanteARevisionPg({
+        id: receiptId,
+        empresaId: 1,
+        patch: {
+          estado_revision: 'pendiente', validado: 0, procesado: false,
+          riesgo_flags: reason, verified_reason: reason,
+        },
+      }, { withTransaction: work => withTransaction(work, { pool, maxRetries: 0 }) });
+      assert.equal(worker.outcome, 'transitioned', reason);
+      const approved = await aprobarComprobanteAtomicoPg(
+        approvalPayload(receiptId, `worker-first-${reason}`),
+        { withTransaction: work => withTransaction(work, { pool, maxRetries: 0 }) },
+      );
+      assert.equal(Number(approved.id), receiptId);
+      const state = (await pool.query(`SELECT estado_revision, validado, procesado FROM comprobantes_transferencia WHERE id=$1`, [receiptId])).rows[0];
+      assert.deepEqual(state, { estado_revision: 'aprobado', validado: 1, procesado: true });
+      assert.equal(Number((await pool.query(`SELECT COUNT(*) FROM transferencias WHERE pedido_id=$1`, [pedidoId])).rows[0].count), 1);
+    }
 
     const tenantMismatch = await insertPendingReceipt(48, 'tenant-mismatch', 2);
     await assert.rejects(

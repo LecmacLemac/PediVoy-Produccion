@@ -34,7 +34,8 @@ export async function claimNextCloudInboundEvent({ query, owner, leaseMs } = {})
         FROM whatsapp_cloud_events AS event
        WHERE event.event_kind = 'message'
          AND (
-           event.processing_state = 'pending'
+           (event.processing_state = 'pending'
+             AND (event.next_attempt_at IS NULL OR event.next_attempt_at <= NOW()))
            OR (
              event.processing_state = 'pre_process'
              AND event.claim_until IS NOT NULL
@@ -49,11 +50,14 @@ export async function claimNextCloudInboundEvent({ query, owner, leaseMs } = {})
        SET processing_state = 'pre_process',
            claim_owner = $1,
            claim_until = NOW() + ($2 * INTERVAL '1 millisecond'),
-           processing_error_code = NULL
+           processing_error_code = NULL,
+           next_attempt_at = NULL,
+           attempt_count = event.attempt_count + 1
       FROM candidate
      WHERE event.id = candidate.id
      RETURNING event.id, event.empresa_id, event.message_id, event.sender_id,
-               event.message_type, event.event_data, event.received_at
+               event.message_type, event.event_data, event.phone_number_id, event.received_at,
+               event.attempt_count, event.retry_count
   `, [owner.trim(), lease]);
   return rows[0] || null;
 }
@@ -62,7 +66,9 @@ export async function loadActiveCloudInboundTenant({ query, empresaId } = {}) {
   requireQuery(query);
   const id = requireId(empresaId, 'empresaId');
   const rows = await query(`
-    SELECT id AS empresa_id
+    SELECT id AS empresa_id,
+           BTRIM(config_integraciones::jsonb #>> '{whatsapp,phone_number_id}') AS phone_number_id,
+           BTRIM(config_integraciones::jsonb #>> '{whatsapp,access_token_encrypted}') AS access_token_encrypted
       FROM empresas
      WHERE id = $1
        AND jsonb_typeof(config_integraciones::jsonb) = 'object'
@@ -79,7 +85,12 @@ export async function loadActiveCloudInboundTenant({ query, empresaId } = {}) {
        AND BTRIM(COALESCE((config_integraciones::jsonb)->'whatsapp'->>'access_token_encrypted', '')) <> ''
      LIMIT 1
   `, [id]);
-  return rows.length === 1 ? { empresaId: Number(rows[0].empresa_id) } : null;
+  if (rows.length !== 1) return null;
+  return {
+    empresaId: Number(rows[0].empresa_id),
+    ...(rows[0].phone_number_id ? { phoneNumberId: rows[0].phone_number_id } : {}),
+    ...(rows[0].access_token_encrypted ? { accessTokenEncrypted: rows[0].access_token_encrypted } : {}),
+  };
 }
 
 export async function startCloudInboundProcessing({ query, id, owner, leaseMs } = {}) {
@@ -110,11 +121,34 @@ export async function renewCloudInboundProcessingLease({ query, id, owner, lease
        SET claim_until = NOW() + ($3 * INTERVAL '1 millisecond')
      WHERE id = $1
        AND claim_owner = $2
-       AND processing_state = 'processing_started'
+       AND processing_state IN ('pre_process', 'processing_started')
        AND claim_until >= NOW()
      RETURNING id
   `, [eventId, owner.trim(), lease]);
   return rows.length === 1;
+}
+
+export async function scheduleCloudInboundRetry({ query, id, owner, delayMs, errorCode } = {}) {
+  requireQuery(query);
+  const eventId = requireId(id, 'id');
+  if (typeof owner !== 'string' || !owner.trim()) throw new TypeError('owner inválido');
+  const delay = normalizeCloudDeadline('retry', delayMs);
+  const rows = await query(`
+    UPDATE whatsapp_cloud_events
+       SET processing_state = 'pending',
+           processing_error_code = $4,
+           retry_count = retry_count + 1,
+           next_attempt_at = NOW() + ($3 * INTERVAL '1 millisecond'),
+           claim_owner = NULL,
+           claim_until = NULL
+     WHERE id = $1
+       AND claim_owner = $2
+       AND processing_state = 'pre_process'
+       AND claim_until >= NOW()
+     RETURNING id, retry_count, next_attempt_at
+  `, [eventId, owner.trim(), delay, errorCode || 'cloud_media_retryable']);
+  if (rows.length !== 1) throw Object.assign(new Error('Cloud inbound claim perdido'), { code: 'CLOUD_INBOUND_CLAIM_LOST' });
+  return rows[0];
 }
 
 export async function finishCloudInboundEvent({ query, id, owner, state, errorCode = null } = {}) {

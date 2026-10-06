@@ -86,3 +86,16 @@ test('pagos permite asociar huérfanos antes de habilitar su validación', async
   const association = source.slice(source.indexOf('async function asociarPedido'), source.indexOf('async function solicitarComprobante'));
   assert.doesNotMatch(association, /payload\.empresa_id|row\.empresa_id/);
 });
+
+test('pagos trata outcome_unknown como reconciliación obligatoria y nunca como conflicto ordinario', async () => {
+  const source = await readFile(new URL('../pedidos/pagos.html', import.meta.url), 'utf8');
+  const verify = source.slice(source.indexOf('async function verificarPago'), source.indexOf('async function asociarPedido'));
+  const association = source.slice(source.indexOf('async function asociarPedido'), source.indexOf('async function solicitarComprobante'));
+  for (const flow of [verify, association]) {
+    assert.match(flow, /TRANSACTION_OUTCOME_UNKNOWN/);
+    assert.match(flow, /outcome_unknown/);
+    assert.match(flow, /reconcili/i);
+  }
+  assert.match(verify, /resp\.status\s*===\s*503/);
+  assert.match(association, /response\.status\s*===\s*503/);
+});

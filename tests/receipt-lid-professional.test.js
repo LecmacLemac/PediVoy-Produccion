@@ -154,6 +154,31 @@ test('inserción huérfana sin teléfono no busca pedidos y persiste el chat de 
   assert.equal(result.association_reason, 'remitente_no_resuelto');
 });
 
+test('inserción Cloud conserva sender numérico, source_message_id y source_chat_jid null', async () => {
+  const calls = [];
+  const result = await insertarComprobantePg({
+    telefono: '5493515550002',
+    replyJid: null,
+    transportOrigin: 'cloud',
+    imagen_path: '/Transferencia/cloud.jpg',
+    fecha: new Date('2026-10-06T12:00:00Z'),
+    empresaId: 2,
+    sourceMessageId: 'wamid.cloud-receipt',
+    fileHash: 'c'.repeat(64),
+  }, async (sql, params) => {
+    calls.push({ sql, params });
+    if (sql.includes('FROM pedidos')) return [];
+    return [{ id: 1200, empresa_id: 2, pedido_id: null, source_chat_jid: params[12], transport_origin: params[13] }];
+  });
+
+  const insert = calls.find(call => call.sql.includes('INSERT INTO comprobantes_transferencia'));
+  assert.equal(insert.params[0], '5493515550002');
+  assert.equal(insert.params[10], 'wamid.cloud-receipt');
+  assert.equal(insert.params[12], null);
+  assert.equal(insert.params[13], 'cloud');
+  assert.equal(result.transport_origin, 'cloud');
+});
+
 test('no asocia por descarte si hay más de un pedido elegible del mismo cliente', async () => {
   const calls = [];
   const result = await insertarComprobantePg({

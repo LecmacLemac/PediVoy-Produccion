@@ -1,16 +1,28 @@
 // src/transferenciasPipeline.js — Versión Profesional & Modular
 import fs from 'node:fs';
 import https from 'node:https';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createHash, randomUUID } from 'node:crypto';
+import sharp from 'sharp';
 import { resolveTransferenciaStorageDir } from './transferenciaStorage.js';
+import {
+  hasValidReceiptMagicBytes,
+  MAX_RECEIPT_PDF_PAGES,
+  normalizeReceiptMimeType,
+  receiptExtensionForMime,
+  receiptValidationMetadata,
+  validateReceiptMediaPreEffect,
+  verifiesInternalReceiptValidationProof,
+} from './receiptMediaValidation.js';
 import {
   insertarComprobantePg,
   actualizarComprobanteDatosPg,
   aprobarComprobanteAtomicoPg,
+  transicionarComprobanteARevisionPg,
   enqueueCorrelatedWppMessagePg,
   enqueueWppMessagePg,
   resolverCuentaBancariaDestinoPg
@@ -24,6 +36,30 @@ function enqueueReceiptReply(services, payload, transportOrigin) {
     });
   }
   return services.enqueueWppMessagePg(payload);
+}
+
+async function dispatchReceiptReply({ services, enqueueReply, assertLease, effect, payload, transportOrigin }) {
+  await assertLease();
+  if (typeof enqueueReply === 'function') {
+    return enqueueReply({ ...payload, effect, transportOrigin });
+  }
+  return enqueueReceiptReply(services, payload, transportOrigin);
+}
+
+const CLOUD_RECEIPT_PROCESSING_ERROR = 'cloud_receipt_processing_failed';
+
+function sanitizedPipelineError(code) {
+  const error = new Error(code);
+  error.code = code;
+  return error;
+}
+
+function isUnknownEnqueueOutcome(error) {
+  return error?.code === 'WPP_ENQUEUE_TRANSACTION_OUTCOME_UNKNOWN';
+}
+
+function isTransactionOutcomeUnknown(error) {
+  return error?.code === 'TRANSACTION_OUTCOME_UNKNOWN';
 }
 
 // --- CONFIGURACIÓN & CONSTANTES ---
@@ -295,11 +331,19 @@ export function evaluateReceiptApproval({
 
 export async function finalizeReceiptValidation({
   registroDB, datosIA, telefono, replyJid = null, transportOrigin = null, deps = {},
+  assertLease = async () => {}, enqueueReply = null,
 }) {
   const services = {
     resolverCuentaBancariaDestinoPg,
     actualizarComprobanteDatosPg,
     aprobarComprobanteAtomicoPg,
+    transicionarComprobanteARevisionPg: deps.transicionarComprobanteARevisionPg
+      || (deps.actualizarComprobanteDatosPg
+        ? async ({ id, patch: reviewPatch }) => {
+            await deps.actualizarComprobanteDatosPg(id, reviewPatch);
+            return { outcome: 'transitioned' };
+          }
+        : transicionarComprobanteARevisionPg),
     enqueueCorrelatedWppMessagePg,
     enqueueWppMessagePg,
     ...deps,
@@ -345,17 +389,27 @@ export async function finalizeReceiptValidation({
 
   if (decision.approved) {
     try {
+      await assertLease();
       const approved = await services.aprobarComprobanteAtomicoPg({
         id: registroDB.id,
         empresaId,
         nroOperacion,
         patch,
       });
+      if (approved?.outcome === 'already_finalized') {
+        return {
+          ok: true, handled: true, saved: true, reason: 'already_finalized',
+          id: registroDB.id, pedido_id: registroDB.pedido_id || null,
+        };
+      }
       if (!approved) {
         decision.approved = false;
         decision.reasons.push('estado_comprobante_no_elegible');
       }
     } catch (error) {
+      if (isTransactionOutcomeUnknown(error)) {
+        throw sanitizedPipelineError('TRANSACTION_OUTCOME_UNKNOWN');
+      }
       decision.approved = false;
       decision.reasons.push(error?.code === '23505'
         ? 'operacion_duplicada'
@@ -365,7 +419,7 @@ export async function finalizeReceiptValidation({
   }
 
   if (decision.approved) {
-    await enqueueReceiptReply(services, {
+    await dispatchReceiptReply({ services, enqueueReply, assertLease, effect: 'approved', payload: {
       phone: replyTarget,
       message: buildReceiptStatusMessage({
         status: 'approved',
@@ -376,8 +430,8 @@ export async function finalizeReceiptValidation({
         nroOperacion,
       }),
       empresaId,
-    }, replyTransportOrigin);
-    return { ok: true, id: registroDB.id, pedido_id: registroDB.pedido_id, data: datosIA };
+    }, transportOrigin: replyTransportOrigin });
+    return { ok: true, handled: true, saved: true, id: registroDB.id, pedido_id: registroDB.pedido_id, data: datosIA };
   }
 
   Object.assign(patch, {
@@ -390,9 +444,24 @@ export async function finalizeReceiptValidation({
     verified_at: null,
   });
   if (decision.reasons.includes('operacion_duplicada')) delete patch.nro_operacion;
-  await services.actualizarComprobanteDatosPg(registroDB.id, patch);
+  await assertLease();
+  const transition = await services.transicionarComprobanteARevisionPg({
+    id: registroDB.id, empresaId, patch,
+  });
+  if (transition?.outcome === 'already_finalized') {
+    return {
+      ok: true, handled: true, saved: true, reason: 'already_finalized',
+      id: registroDB.id, pedido_id: registroDB.pedido_id || null,
+    };
+  }
+  if (transition?.outcome !== 'transitioned') {
+    return {
+      ok: false, handled: true, saved: true, reason: 'already_handled',
+      id: registroDB.id, pedido_id: registroDB.pedido_id || null,
+    };
+  }
 
-  await enqueueReceiptReply(services, {
+  await dispatchReceiptReply({ services, enqueueReply, assertLease, effect: 'pending', payload: {
     phone: replyTarget,
     message: buildReceiptStatusMessage({
       status: 'pending',
@@ -403,9 +472,10 @@ export async function finalizeReceiptValidation({
       nroOperacion,
     }),
     empresaId,
-  }, replyTransportOrigin);
+  }, transportOrigin: replyTransportOrigin });
   return {
     ok: false,
+    handled: true,
     saved: true,
     reason: decision.reasons.includes('operacion_duplicada') ? 'duplicate' : 'manual_review',
     reasons: decision.reasons,
@@ -414,26 +484,13 @@ export async function finalizeReceiptValidation({
   };
 }
 
-const MIME_EXTENSIONS = new Map([
-  ['application/pdf', 'pdf'], ['image/jpeg', 'jpg'], ['image/png', 'png'], ['image/webp', 'webp'],
-]);
-
-function hasValidMagicBytes(buffer, mimetype) {
-  if (!Buffer.isBuffer(buffer)) return false;
-  if (mimetype === 'image/jpeg') return buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
-  if (mimetype === 'image/png') return buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10]));
-  if (mimetype === 'image/webp') return buffer.length >= 12 && buffer.toString('ascii', 0, 4) === 'RIFF' && buffer.toString('ascii', 8, 12) === 'WEBP';
-  if (mimetype === 'application/pdf') return buffer.length >= 5 && buffer.toString('ascii', 0, 5) === '%PDF-';
-  return false;
-}
-
 // --- CORE FUNCTIONS ---
 export async function saveFileToDisk({ buffer, base64, originalName, mimetype }, {
   storageDir = STORAGE_DIR,
   randomId = randomUUID,
   maxAttempts = 3,
 } = {}) {
-  const ext = MIME_EXTENSIONS.get(mimetype);
+  const ext = receiptExtensionForMime(mimetype);
   const data = buffer || Buffer.from(base64, 'base64');
   await fs.promises.mkdir(storageDir, { recursive: true });
 
@@ -452,35 +509,89 @@ export async function saveFileToDisk({ buffer, base64, originalName, mimetype },
   throw new Error('No se pudo reservar un nombre de comprobante único');
 }
 
-async function convertPdfFirstPageWithPdftoppm(filePath) {
-  const tmpPrefix = path.join(STORAGE_DIR, `pdf-${Date.now()}-${Math.random().toString(36).slice(2)}`);
-  const outPng = `${tmpPrefix}.png`;
-
+async function convertPdfFirstPageWithPdftoppm({ buffer, validation }, {
+  execFileImpl = execFileAsync,
+  scratchRoot = os.tmpdir(),
+  timeoutMs = 5000,
+  maxOutputBytes = 20 * 1024 * 1024,
+  maxPixels = 25_000_000,
+  maxDimension = 10_000,
+} = {}) {
+  const metadata = receiptValidationMetadata(validation?.proof, buffer, 'application/pdf');
+  if (!metadata || metadata.kind !== 'pdf'
+      || !Number.isSafeInteger(metadata.pageCount) || metadata.pageCount < 1
+      || !Number.isSafeInteger(metadata.maxPages) || metadata.maxPages < 1
+      || metadata.maxPages > MAX_RECEIPT_PDF_PAGES || metadata.pageCount > metadata.maxPages) {
+    throw sanitizedPipelineError('receipt_pdf_raster_invalid');
+  }
+  const deadlineAt = Date.now() + timeoutMs;
+  let directory;
   try {
-    await execFileAsync('pdftoppm', [
-      '-f', '1',
-      '-l', '1',
-      '-singlefile',
-      '-png',
-      '-r', '150',
-      filePath,
-      tmpPrefix
-    ]);
-
-    const raw = await fs.promises.readFile(outPng);
+    directory = await fs.promises.mkdtemp(path.join(scratchRoot, 'pedivoy-pdf-raster-'));
+    await fs.promises.chmod(directory, 0o700);
+    const inputPath = path.join(directory, 'receipt.pdf');
+    const prefix = path.join(directory, 'page');
+    const outputPath = `${prefix}.png`;
+    await fs.promises.writeFile(inputPath, buffer, { mode: 0o600, flag: 'wx' });
+    const remaining = Math.max(100, deadlineAt - Date.now());
+    await execFileImpl('pdftoppm', [
+      '-f', '1', '-l', '1', '-singlefile', '-png',
+      '-r', String(metadata.dpi), inputPath, prefix,
+    ], {
+      shell: false,
+      timeout: remaining,
+      killSignal: 'SIGKILL',
+      maxBuffer: 64 * 1024,
+      windowsHide: true,
+    });
+    const stat = await fs.promises.stat(outputPath);
+    if (!stat.isFile() || stat.size <= 0 || stat.size > maxOutputBytes) {
+      throw sanitizedPipelineError('receipt_pdf_raster_invalid');
+    }
+    const raw = await fs.promises.readFile(outputPath);
+    const decodeRemaining = Math.max(100, deadlineAt - Date.now());
+    const image = sharp(raw, {
+      failOn: 'warning', limitInputPixels: maxPixels, sequentialRead: true,
+    });
+    image.timeout({ seconds: Math.max(1, Math.ceil(decodeRemaining / 1000)) });
+    try {
+      const decoded = await image.metadata();
+      const width = Number(decoded?.width);
+      const height = Number(decoded?.height);
+      if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height)
+          || width <= 0 || height <= 0 || width > maxDimension || height > maxDimension
+          || width * height > maxPixels || Number(decoded?.pages || 1) !== 1
+          || decoded?.format !== 'png') {
+        throw sanitizedPipelineError('receipt_pdf_raster_invalid');
+      }
+      await image.stats();
+    } finally {
+      image.destroy();
+    }
     return raw.toString('base64');
+  } catch (error) {
+    if (['receipt_pdf_raster_invalid', 'receipt_pdf_raster_unavailable'].includes(error?.code)) throw error;
+    if (error?.code === 'ETIMEDOUT' || error?.code === 'ENOENT' || error?.killed === true || error?.signal) {
+      throw sanitizedPipelineError('receipt_pdf_raster_unavailable');
+    }
+    throw sanitizedPipelineError('receipt_pdf_raster_invalid');
   } finally {
-    try { await fs.promises.unlink(outPng); } catch {}
+    if (directory) await fs.promises.rm(directory, { recursive: true, force: true }).catch(() => {});
   }
 }
 
-async function prepareImageForAI(fileData) {
+async function prepareImageForAI(fileData, {
+  logger = console,
+  convertPdf = convertPdfFirstPageWithPdftoppm,
+  assertLease = async () => {},
+} = {}) {
   try {
     // Si es PDF, convertimos primera página a imagen
     if (fileData.mimetype === 'application/pdf' || fileData.ext === 'pdf') {
       // Poppler evita la cadena pdf-img-convert/canvas/tar y reduce superficie de riesgo.
+      await assertLease();
       return {
-        base64: await convertPdfFirstPageWithPdftoppm(fileData.absolutePath),
+        base64: await convertPdf({ buffer: fileData.buffer, validation: fileData.validation }),
         mimeType: 'image/png'
       };
     }
@@ -491,29 +602,36 @@ async function prepareImageForAI(fileData) {
       base64: raw.toString('base64'),
       mimeType: fileData.mimetype?.startsWith('image/') ? fileData.mimetype : 'image/jpeg'
     };
-  } catch (error) {
-    console.error('❌ Error preparando imagen:', error);
+  } catch {
+    logger.error('receipt_image_prepare_failed', { code: 'receipt_image_prepare_failed', stage: 'prepare_image' });
     return null;
   }
 }
 
-async function analyzeReceiptWithAI(imagePayload) {
+async function analyzeReceiptWithAI(imagePayload, {
+  logger = console,
+  createCompletion = createChatCompletionViaHttps,
+  waitImpl = wait,
+  maxAttempts = CONFIG.AI_MAX_ATTEMPTS,
+} = {}) {
   if (!imagePayload?.base64) return null;
   const payload = buildReceiptAnalysisPayload(imagePayload);
+  const attempts = Number.isSafeInteger(maxAttempts) && maxAttempts > 0
+    ? Math.min(maxAttempts, CONFIG.AI_MAX_ATTEMPTS)
+    : CONFIG.AI_MAX_ATTEMPTS;
 
-  for (let attempt = 1; attempt <= CONFIG.AI_MAX_ATTEMPTS; attempt += 1) {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
-      const response = await createChatCompletionViaHttps(payload);
+      const response = await createCompletion(payload);
       return JSON.parse(response.choices[0]?.message?.content);
     } catch (error) {
       const transient = isTransientOpenAIError(error);
-      const canRetry = transient && attempt < CONFIG.AI_MAX_ATTEMPTS;
-      console.error(
-        `❌ Error OpenAI intento ${attempt}/${CONFIG.AI_MAX_ATTEMPTS}:`,
-        error.message
-      );
+      const canRetry = transient && attempt < attempts;
+      logger.error('receipt_ai_analysis_failed', {
+        code: 'receipt_ai_analysis_failed', stage: 'openai', attempt, maxAttempts: attempts, retryable: canRetry,
+      });
       if (!canRetry) return null;
-      await wait(750 * attempt);
+      await waitImpl(750 * attempt);
     }
   }
 
@@ -523,7 +641,9 @@ async function analyzeReceiptWithAI(imagePayload) {
 // --- PIPELINE PRINCIPAL ---
 export async function procesarArchivoTransferenciaPg(filePayload, telefono, {
   empresaId: canalEmpresaId = null, sourceMessageId = null, replyJid = null,
-  transportOrigin = null, deps = {},
+  transportOrigin = null, deps = {}, assertLease = async () => {}, enqueueReply = null,
+  preparedValidation = null,
+  sanitizeErrors = transportOrigin === 'cloud',
 } = {}) {
   const logPrefix = '[Pipeline comprobante]';
   if (CONFIG.DEBUG) console.time(logPrefix);
@@ -537,16 +657,27 @@ export async function procesarArchivoTransferenciaPg(filePayload, telefono, {
     enqueueCorrelatedWppMessagePg,
     enqueueWppMessagePg,
     actualizarComprobanteDatosPg,
+    transicionarComprobanteARevisionPg: deps.transicionarComprobanteARevisionPg
+      || (deps.actualizarComprobanteDatosPg
+        ? async ({ id, patch: reviewPatch }) => {
+            await deps.actualizarComprobanteDatosPg(id, reviewPatch);
+            return { outcome: 'transitioned' };
+          }
+        : transicionarComprobanteARevisionPg),
+    prepareImageForAI,
+    analyzeReceiptWithAI,
     ...deps,
   };
 
   try {
     // 1. Guardar archivo
+    await assertLease();
     savedFile = await services.saveFileToDisk(filePayload, telefono);
     const fileHash = createHash('sha256').update(filePayload.buffer).digest('hex');
 
     // 2. Registrar en DB (Con Vinculación Automática)
     //    Devuelve ID del registro y empresa_id (si existía)
+    await assertLease();
     registroDB = await services.insertarComprobantePg({
       telefono,
       replyJid,
@@ -562,42 +693,70 @@ export async function procesarArchivoTransferenciaPg(filePayload, telefono, {
 
     if (registroDB?.duplicate) {
       await fs.promises.unlink(savedFile.absolutePath).catch(() => {});
-      return { ok: false, duplicate: true, reason: 'duplicate_event_or_file' };
+      return { ok: false, handled: true, saved: true, duplicate: true, reason: 'duplicate_event_or_file' };
     }
 
     empresaId = registroDB?.empresa_id || null;
     const replyTarget = replyJid || registroDB?.source_chat_jid || telefono;
 
     // 3. Feedback inicial (ya conocemos empresaId)
-    await enqueueReceiptReply(services, {
+    const receivedReply = dispatchReceiptReply({ services, enqueueReply, assertLease, effect: 'received', payload: {
       phone: replyTarget,
       message: '📄 Recibido. Analizando comprobante...',
       empresaId,
-    }, registroDB?.transport_origin || transportOrigin).catch(() => {});
+    }, transportOrigin: registroDB?.transport_origin || transportOrigin });
+    if (typeof enqueueReply === 'function') await receivedReply;
+    else await receivedReply.catch(() => {});
 
     // 4. Preparar imagen y consultar a la IA. Si falla esta parte, el archivo
     // ya quedó guardado y registrado para revisión manual.
-    const imagePayload = await prepareImageForAI(savedFile);
-    const datosIA = await analyzeReceiptWithAI(imagePayload);
+    await assertLease();
+    const imagePayload = await services.prepareImageForAI({
+      ...savedFile,
+      buffer: filePayload.buffer,
+      validation: preparedValidation,
+    }, { assertLease });
+    await assertLease();
+    const datosIA = await services.analyzeReceiptWithAI(imagePayload);
     if (!datosIA) {
       console.warn(`${logPrefix} Comprobante guardado, pero no se pudo leer automáticamente.`);
-      await services.actualizarComprobanteDatosPg(registroDB.id, {
-        procesado: false,
-        validado: 0,
-        estado_revision: 'pendiente',
-        riesgo_score: 70,
-        riesgo_flags: 'ia_ilegible',
-        verified_reason: 'ia_ilegible',
-        verified_at: null,
+      await assertLease();
+      const unreadableTransition = await services.transicionarComprobanteARevisionPg({
+        id: registroDB.id,
+        empresaId,
+        patch: {
+          procesado: false,
+          validado: 0,
+          estado_revision: 'pendiente',
+          riesgo_score: 70,
+          riesgo_flags: 'ia_ilegible',
+          verified_reason: 'ia_ilegible',
+          verified_at: null,
+        },
       });
-      await enqueueReceiptReply(services, {
+      if (unreadableTransition?.outcome === 'already_finalized') {
+        if (CONFIG.DEBUG) console.timeEnd(logPrefix);
+        return {
+          ok: true, handled: true, saved: true, reason: 'already_finalized',
+          id: registroDB.id, pedido_id: registroDB?.pedido_id || null,
+        };
+      }
+      if (unreadableTransition?.outcome !== 'transitioned') {
+        if (CONFIG.DEBUG) console.timeEnd(logPrefix);
+        return {
+          ok: false, handled: true, saved: true, reason: 'already_handled',
+          id: registroDB.id, pedido_id: registroDB?.pedido_id || null,
+        };
+      }
+      await dispatchReceiptReply({ services, enqueueReply, assertLease, effect: 'pending', payload: {
         phone: replyTarget,
         message: buildReceiptStatusMessage({ status: 'pending', pedidoId: registroDB?.pedido_id }),
         empresaId,
-      }, registroDB?.transport_origin || transportOrigin);
+      }, transportOrigin: registroDB?.transport_origin || transportOrigin });
       if (CONFIG.DEBUG) console.timeEnd(logPrefix);
       return {
         ok: false,
+        handled: true,
         saved: true,
         reason: 'unreadable_saved',
         id: registroDB.id,
@@ -607,19 +766,50 @@ export async function procesarArchivoTransferenciaPg(filePayload, telefono, {
 
     const result = await finalizeReceiptValidation({
       registroDB, datosIA, telefono, replyJid, transportOrigin, deps,
+      assertLease, enqueueReply,
     });
     if (CONFIG.DEBUG) console.timeEnd(logPrefix);
     return result;
   } catch (error) {
-    console.error(`${logPrefix} ERROR FATAL:`, error);
+    if (isUnknownEnqueueOutcome(error) || isTransactionOutcomeUnknown(error)) {
+      if (CONFIG.DEBUG) console.timeEnd(logPrefix);
+      throw sanitizeErrors ? sanitizedPipelineError(error.code) : error;
+    }
+    if (sanitizeErrors) {
+      console.error(`${logPrefix} ERROR FATAL`, {
+        code: CLOUD_RECEIPT_PROCESSING_ERROR,
+        empresaId: Number(empresaId || canalEmpresaId || 0) || null,
+        transportOrigin: 'cloud',
+      });
+    } else {
+      console.error(`${logPrefix} ERROR FATAL:`, error);
+    }
     if (savedFile && !registroDB?.id) {
       await fs.promises.unlink(savedFile.absolutePath).catch(() => {});
     }
-    await enqueueReceiptReply(services, {
-      phone: replyJid || telefono,
-      message: '⚠️ Error guardando el archivo. Por favor reintenta.',
-      empresaId,
-    }, transportOrigin);
+    try {
+      await dispatchReceiptReply({ services, enqueueReply, assertLease, effect: 'error', payload: {
+        phone: replyJid || telefono,
+        message: '⚠️ Error guardando el archivo. Por favor reintenta.',
+        empresaId,
+      }, transportOrigin });
+    } catch (replyError) {
+      if (CONFIG.DEBUG) console.timeEnd(logPrefix);
+      if (sanitizeErrors) {
+        throw sanitizedPipelineError(isUnknownEnqueueOutcome(replyError)
+          ? replyError.code
+          : CLOUD_RECEIPT_PROCESSING_ERROR);
+      }
+      throw replyError;
+    }
+    if (CONFIG.DEBUG) console.timeEnd(logPrefix);
+    if (sanitizeErrors) {
+      return {
+        ok: false,
+        error: CLOUD_RECEIPT_PROCESSING_ERROR,
+        code: CLOUD_RECEIPT_PROCESSING_ERROR,
+      };
+    }
     return { ok: false, error: error.message };
   }
 }
@@ -639,8 +829,9 @@ export async function handleIncomingComprobanteFromBotPg(botData, options = {}) 
     'image/png',
     'image/webp'
   ];
+  const normalizedMimeType = normalizeReceiptMimeType(mimetype);
   const isTypeOk = supportedTypes.includes(type);
-  const isMimeOk = supportedMimes.includes(mimetype);
+  const isMimeOk = supportedMimes.includes(normalizedMimeType);
 
   if (!isTypeOk || !isMimeOk) {
     return { ok: false, reason: 'unsupported_type' };
@@ -653,26 +844,47 @@ export async function handleIncomingComprobanteFromBotPg(botData, options = {}) 
   if (estimatedBytes > maxBytes) return { ok: false, reason: 'file_too_large' };
 
   const fileBuffer = Buffer.isBuffer(buffer) ? buffer : Buffer.from(String(base64 || ''), 'base64');
-  if (!hasValidMagicBytes(fileBuffer, mimetype)) {
+  const validateMedia = options.deps?.validateReceiptMediaPreEffect || validateReceiptMediaPreEffect;
+  let validation = options.preparedValidation;
+  const alreadyValidated = verifiesInternalReceiptValidationProof(
+    validation?.proof,
+    fileBuffer,
+    normalizedMimeType,
+  );
+  if (!hasValidReceiptMagicBytes(fileBuffer, normalizedMimeType)) {
     return { ok: false, reason: 'invalid_file_signature' };
+  }
+  if (!alreadyValidated) {
+    validation = await validateMedia(fileBuffer, normalizedMimeType);
+    if (!validation || (validation !== true && !verifiesInternalReceiptValidationProof(
+      validation?.proof, fileBuffer, normalizedMimeType,
+    ))) {
+      return { ok: false, reason: 'invalid_file_signature' };
+    }
   }
 
   return await procesarArchivoTransferenciaPg(
     {
       buffer: fileBuffer,
-      originalName: filename || `archivo.${mimetype?.split('/')[1] || 'bin'}`,
-      mimetype
+      originalName: filename || `archivo.${normalizedMimeType?.split('/')[1] || 'bin'}`,
+      mimetype: normalizedMimeType
     },
     telefono,
-    { empresaId, sourceMessageId, replyJid, transportOrigin, deps: options.deps || {} }
+    {
+      empresaId, sourceMessageId, replyJid, transportOrigin, deps: options.deps || {},
+      assertLease: options.assertLease, enqueueReply: options.enqueueReply,
+      preparedValidation: validation === true ? null : validation,
+    }
   );
 }
 
 export const __testables = {
   convertPdfFirstPageWithPdftoppm,
+  prepareImageForAI,
+  analyzeReceiptWithAI,
   isTransientOpenAIError,
   buildReceiptAnalysisPayload,
-  hasValidMagicBytes,
+  hasValidMagicBytes: hasValidReceiptMagicBytes,
 };
 
 export default {

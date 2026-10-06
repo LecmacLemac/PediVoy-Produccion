@@ -155,6 +155,12 @@ function approvalFailure(code, message) {
   throw new ComprobanteApprovalError(code, message);
 }
 
+function isComprobanteFinalized(row) {
+  return Number(row?.validado || 0) === 1
+    || row?.procesado === true
+    || String(row?.estado_revision || '').toLowerCase() === 'aprobado';
+}
+
 export async function aprobarComprobanteAtomicoPg(
   { id, empresaId, nroOperacion, patch = {} },
   { withTransaction = dbWithTransaction } = {},
@@ -182,11 +188,10 @@ export async function aprobarComprobanteAtomicoPg(
       if (!comprobante) approvalFailure('comprobante_no_encontrado');
       if (Number(comprobante.empresa_id || 0) !== eid) approvalFailure('tenant_no_coincide');
       const currentState = String(comprobante.estado_revision || 'pendiente').toLowerCase();
-      if (
-        Number(comprobante.validado || 0) === 1
-        || comprobante.procesado === true
-        || !['pendiente', 'en_revision'].includes(currentState)
-      ) {
+      if (isComprobanteFinalized(comprobante)) {
+        return { outcome: 'already_finalized', row: comprobante };
+      }
+      if (!['pendiente', 'en_revision'].includes(currentState)) {
         approvalFailure('estado_comprobante_no_elegible');
       }
       if (!comprobante.pedido_id) approvalFailure('pedido_no_asociado');
@@ -298,6 +303,65 @@ export async function aprobarComprobanteAtomicoPg(
     }
     throw error;
   }
+}
+
+const REVIEW_PATCH_COLUMNS = new Set([
+  'monto', 'nro_operacion', 'banco_origen', 'banco_destino', 'alias_destino',
+  'cbu_destino', 'titular_destino', 'cuenta_bancaria_id', 'cuenta_bancaria_confianza',
+  'cuenta_bancaria_match_fuente', 'cuenta_bancaria_match_detalle', 'procesado',
+  'validado', 'estado_revision', 'riesgo_score', 'riesgo_flags', 'verified_reason',
+  'verified_at',
+]);
+
+export async function transicionarComprobanteARevisionPg(
+  { id, empresaId, patch = {} },
+  { withTransaction = dbWithTransaction } = {},
+) {
+  const comprobanteId = Number(id);
+  const eid = Number(empresaId);
+  const entries = Object.entries(patch);
+  if (!Number.isSafeInteger(comprobanteId) || comprobanteId <= 0
+      || !Number.isSafeInteger(eid) || eid <= 0 || entries.length === 0
+      || entries.some(([key]) => !REVIEW_PATCH_COLUMNS.has(key))) {
+    approvalFailure('datos_revision_invalidos');
+  }
+
+  return withTransaction(async txQuery => {
+    const current = (await txQuery(
+      `SELECT id, empresa_id, pedido_id, estado_revision, validado, procesado
+         FROM comprobantes_transferencia
+        WHERE id=$1 AND empresa_id=$2
+        FOR UPDATE`,
+      [comprobanteId, eid],
+    ))[0];
+    if (!current) approvalFailure('comprobante_no_encontrado');
+    if (isComprobanteFinalized(current)) return { outcome: 'already_finalized', row: current };
+    if (!['pendiente', 'en_revision'].includes(String(current.estado_revision || 'pendiente').toLowerCase())) {
+      return { outcome: 'already_handled', row: current };
+    }
+
+    const sets = entries.map(([key], index) => `${key}=$${index + 3}`).join(', ');
+    const rows = await txQuery(
+      `UPDATE comprobantes_transferencia
+          SET ${sets}, updated_at=NOW()
+        WHERE id=$1 AND empresa_id=$2
+          AND COALESCE(validado, 0)=0
+          AND COALESCE(procesado, FALSE)=FALSE
+          AND LOWER(COALESCE(estado_revision, 'pendiente')) IN ('pendiente', 'en_revision')
+        RETURNING id, empresa_id, pedido_id, estado_revision, validado, procesado`,
+      [comprobanteId, eid, ...entries.map(([, value]) => value)],
+    );
+    if (rows[0]) return { outcome: 'transitioned', row: rows[0] };
+
+    const observed = (await txQuery(
+      `SELECT id, empresa_id, pedido_id, estado_revision, validado, procesado
+         FROM comprobantes_transferencia WHERE id=$1 AND empresa_id=$2`,
+      [comprobanteId, eid],
+    ))[0];
+    return isComprobanteFinalized(observed)
+      ? { outcome: 'already_finalized', row: observed }
+      : { outcome: 'already_handled', row: observed || null };
+  });
 }
 
 export async function aprobarComprobanteManualAtomicoPg(
@@ -699,7 +763,7 @@ async function insertarComprobantePgWork({
         sourceMessageId ? String(sourceMessageId) : null,
         fileHash ? String(fileHash).toLowerCase() : null,
         /^[^\s@]+@(c\.us|lid)$/i.test(String(replyJid || '').trim()) ? String(replyJid).trim() : null,
-        ['general', 'company'].includes(String(transportOrigin || '').trim())
+        ['general', 'company', 'cloud'].includes(String(transportOrigin || '').trim())
           ? String(transportOrigin).trim()
           : null,
       ],

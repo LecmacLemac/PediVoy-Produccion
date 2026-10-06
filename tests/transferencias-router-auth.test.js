@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { createTransferenciasRouter } from '../src/routes/transferencias.js';
+import { withTransaction } from '../src/db.js';
 
 
 async function withServer(app, fn) {
@@ -82,6 +83,41 @@ const financialOperations = [
 
 function businessCalls(calls) {
   return calls.filter(call => !/ALTER TABLE|CREATE INDEX/i.test(call.sql));
+}
+
+function createAmbiguousCommitService(result) {
+  const state = {
+    connects: 0,
+    workCalls: 0,
+    rollbackAfterCommit: 0,
+    releasedWithError: false,
+  };
+  const pool = {
+    async connect() {
+      state.connects += 1;
+      let commitAttempted = false;
+      return {
+        async query(sql) {
+          if (sql === 'COMMIT') {
+            commitAttempted = true;
+            throw new Error('private COMMIT socket detail');
+          }
+          if (sql === 'ROLLBACK' && commitAttempted) state.rollbackAfterCommit += 1;
+          return { rows: [] };
+        },
+        release(error) {
+          state.releasedWithError = !!error;
+        },
+      };
+    },
+  };
+  return {
+    state,
+    service: () => withTransaction(async () => {
+      state.workCalls += 1;
+      return result;
+    }, { pool, maxRetries: 3, retryDelayMs: 0 }),
+  };
 }
 
 test('todas las operaciones financieras exigen token antes de consultar datos', async () => {
@@ -279,6 +315,105 @@ test('asociación no confía en empresa enviada y delega adopción solo al super
       { actorRole: 'admin', actorEmpresaId: 3, pedidoId: 99, hasEmpresaId: false },
       { actorRole: 'super', actorEmpresaId: null, pedidoId: 99, hasEmpresaId: false },
     ]);
+  } finally {
+    await cleanup();
+  }
+});
+
+test('COMMIT ambiguo al asociar devuelve 503 estable, no revierte ni reintenta y descarta conexión', async () => {
+  const ambiguous = createAmbiguousCommitService({ id: 1, pedido_id: 99 });
+  const { app, cleanup } = await buildApp({ associateReceiptFn: ambiguous.service });
+  try {
+    await withServer(app, async baseUrl => {
+      const response = await fetch(`${baseUrl}/api/transferencias/1/asociar-pedido`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${tokenFor({ uid: 10, role: 'admin', empresa_id: 3 })}`,
+          'x-test-license': 'active',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ pedido_id: 99, reason: 'revisión' }),
+      });
+      assert.equal(response.status, 503);
+      assert.deepEqual(await response.json(), {
+        ok: false,
+        code: 'TRANSACTION_OUTCOME_UNKNOWN',
+        status: 'outcome_unknown',
+      });
+    });
+    assert.deepEqual(ambiguous.state, {
+      connects: 1,
+      workCalls: 1,
+      rollbackAfterCommit: 0,
+      releasedWithError: true,
+    });
+  } finally {
+    await cleanup();
+  }
+});
+
+test('COMMIT ambiguo al aprobar devuelve 503 estable sin aviso postcommit, rollback ni retry', async () => {
+  const ambiguous = createAmbiguousCommitService({
+    id: 1,
+    monto: 100,
+    telefono: 'private-phone',
+    source_chat_jid: 'private-chat',
+  });
+  const { app, cleanup } = await buildApp({ approveManualFn: ambiguous.service });
+  try {
+    await withServer(app, async baseUrl => {
+      const response = await fetch(`${baseUrl}/api/transferencias/1/verificar?enviarAviso=1`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${tokenFor({ uid: 10, role: 'admin', empresa_id: 3 })}`,
+          'x-test-license': 'active',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ nro_operacion: 'OP-1', cuenta_bancaria_id: 9, reason: 'revisión' }),
+      });
+      assert.equal(response.status, 503);
+      const body = await response.json();
+      assert.deepEqual(body, {
+        ok: false,
+        code: 'TRANSACTION_OUTCOME_UNKNOWN',
+        status: 'outcome_unknown',
+      });
+      assert.doesNotMatch(JSON.stringify(body), /private|socket|phone|chat/i);
+    });
+    assert.deepEqual(ambiguous.state, {
+      connects: 1,
+      workCalls: 1,
+      rollbackAfterCommit: 0,
+      releasedWithError: true,
+    });
+  } finally {
+    await cleanup();
+  }
+});
+
+test('conflictos deterministas de asociación y aprobación conservan HTTP 409', async () => {
+  const associationError = Object.assign(new Error('conflicto esperado'), { code: 'pedido_ya_asociado' });
+  const approvalError = Object.assign(new Error('conflicto esperado'), { code: 'pago_ya_acreditado' });
+  const { app, cleanup } = await buildApp({
+    associateReceiptFn: async () => { throw associationError; },
+    approveManualFn: async () => { throw approvalError; },
+  });
+  try {
+    await withServer(app, async baseUrl => {
+      const headers = {
+        authorization: `Bearer ${tokenFor({ uid: 10, role: 'admin', empresa_id: 3 })}`,
+        'x-test-license': 'active',
+        'content-type': 'application/json',
+      };
+      const association = await fetch(`${baseUrl}/api/transferencias/1/asociar-pedido`, {
+        method: 'POST', headers, body: JSON.stringify({ pedido_id: 99, reason: 'revisión' }),
+      });
+      assert.equal(association.status, 409);
+      const approval = await fetch(`${baseUrl}/api/transferencias/1/verificar`, {
+        method: 'POST', headers, body: JSON.stringify({ reason: 'revisión' }),
+      });
+      assert.equal(approval.status, 409);
+    });
   } finally {
     await cleanup();
   }

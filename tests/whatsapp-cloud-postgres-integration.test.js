@@ -275,7 +275,7 @@ test('webhook resuelve provider y phone_number_id normalizados sin ambigüedad',
     assert.deepEqual(await handler([{
       kind: 'message',
       phoneNumberId: ' webhook-phone ',
-      message: { id: 'normalized-provider-message', from: 'sender', timestamp: '1', type: 'text', text: { body: 'safe' } },
+      message: { id: 'normalized-provider-message', from: '5493515550001', timestamp: '1', type: 'text', text: { body: 'safe' } },
     }]), { accepted: 1, duplicates: 0 });
 
     const { rows } = await pool.query('SELECT empresa_id, message_id FROM whatsapp_cloud_events');
@@ -307,7 +307,7 @@ test('webhook resuelve tenant con config_integraciones JSON y omite estructuras 
     const handler = createWhatsAppCloudEventHandler({ withTransaction });
     assert.deepEqual(await handler([{
       kind: 'message', phoneNumberId: 'json-phone',
-      message: { id: 'json-message', from: 'sender', timestamp: '1', type: 'text', text: { body: 'safe' } },
+      message: { id: 'json-message', from: '5493515550001', timestamp: '1', type: 'text', text: { body: 'safe' } },
     }]), { accepted: 1, duplicates: 0 });
   });
 });
@@ -591,7 +591,7 @@ test('lock de atribución serializa la reasignación antes de persistir el event
     const handling = handler([{
       kind: 'message',
       phoneNumberId: 'phone-lock',
-      message: { id: 'locked-message', from: 'sender', timestamp: '1', type: 'text', text: { body: 'safe' } },
+      message: { id: 'locked-message', from: '5493515550001', timestamp: '1', type: 'text', text: { body: 'safe' } },
     }]);
     await locked;
 

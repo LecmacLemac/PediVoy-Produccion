@@ -7,6 +7,7 @@ import {
 } from '../src/transferenciasPipeline.js';
 import {
   aprobarComprobanteAtomicoPg,
+  transicionarComprobanteARevisionPg,
   marcarComprobanteComoProcesadoPg,
 } from '../src/transferenciasServices.js';
 
@@ -356,4 +357,89 @@ test('tras 23505 persiste revisión sin reescribir la operación duplicada', asy
   assert.equal(result.reason, 'duplicate');
   assert.equal(updates[0].estado_revision, 'pendiente');
   assert.match(updates[0].riesgo_flags, /operacion_duplicada/);
+});
+
+test('CAS de revisión no degrada un comprobante ya aprobado por otro actor', async () => {
+  const calls = [];
+  const result = await transicionarComprobanteARevisionPg({
+    id: 11,
+    empresaId: 7,
+    patch: { estado_revision: 'pendiente', procesado: false, validado: 0, riesgo_flags: 'ia_ilegible' },
+  }, {
+    withTransaction: async work => work(async (sql, params) => {
+      calls.push({ sql, params });
+      if (sql.includes('FOR UPDATE')) {
+        return [{ id: 11, empresa_id: 7, pedido_id: 20, estado_revision: 'aprobado', validado: 1, procesado: true }];
+      }
+      assert.fail('no debe ejecutar UPDATE sobre un aprobado');
+    }),
+  });
+
+  assert.equal(result.outcome, 'already_finalized');
+  assert.equal(result.row.estado_revision, 'aprobado');
+  assert.equal(calls.length, 1);
+});
+
+test('CAS de revisión devuelve already_handled para un estado no finalizado pero no elegible', async () => {
+  const result = await transicionarComprobanteARevisionPg({
+    id: 11,
+    empresaId: 7,
+    patch: { estado_revision: 'pendiente', procesado: false, validado: 0 },
+  }, {
+    withTransaction: async work => work(async sql => {
+      if (sql.includes('FOR UPDATE')) {
+        return [{ id: 11, empresa_id: 7, pedido_id: 20, estado_revision: 'rechazado', validado: 0, procesado: false }];
+      }
+      assert.fail('no debe ejecutar UPDATE sobre un estado no elegible');
+    }),
+  });
+
+  assert.equal(result.outcome, 'already_handled');
+  assert.equal(result.row.estado_revision, 'rechazado');
+});
+
+test('CAS de revisión actualiza sólo tenant y estado elegible exactos con RETURNING', async () => {
+  const calls = [];
+  const result = await transicionarComprobanteARevisionPg({
+    id: 11,
+    empresaId: 7,
+    patch: { estado_revision: 'pendiente', procesado: false, validado: 0, riesgo_flags: 'manual' },
+  }, {
+    withTransaction: async work => work(async (sql, params) => {
+      calls.push({ sql, params });
+      if (sql.includes('FOR UPDATE')) {
+        return [{ id: 11, empresa_id: 7, pedido_id: 20, estado_revision: 'en_revision', validado: 0, procesado: false }];
+      }
+      assert.match(sql, /WHERE id=\$1 AND empresa_id=\$2/i);
+      assert.match(sql, /estado_revision[^\n]+IN \('pendiente', 'en_revision'\)/i);
+      assert.match(sql, /RETURNING id, empresa_id, pedido_id, estado_revision, validado, procesado/i);
+      return [{ id: 11, empresa_id: 7, pedido_id: 20, estado_revision: 'pendiente', validado: 0, procesado: false }];
+    }),
+  });
+
+  assert.equal(result.outcome, 'transitioned');
+  assert.equal(calls.length, 2);
+});
+
+test('finalización no compensa ni responde pendiente si aprobación concurrente ya finalizó', async () => {
+  const updates = [];
+  const messages = [];
+  const result = await finalizeReceiptValidation({
+    registroDB: validContext().registroDB,
+    datosIA: { monto: 1500, nro_operacion: 'OP-RACE', fecha: new Date().toISOString().slice(0, 10), alias_destino: 'destino' },
+    telefono: '3510000000',
+    deps: {
+      resolverCuentaBancariaDestinoPg: async () => validContext().cuentaDestinoMatch,
+      aprobarComprobanteAtomicoPg: async () => ({ outcome: 'already_finalized', row: { estado_revision: 'aprobado', validado: 1, procesado: true } }),
+      transicionarComprobanteARevisionPg: async payload => { updates.push(payload); return { outcome: 'already_finalized' }; },
+      enqueueWppMessagePg: async payload => messages.push(payload),
+    },
+  });
+
+  assert.deepEqual(result, {
+    ok: true, handled: true, saved: true, reason: 'already_finalized',
+    id: 10, pedido_id: 20,
+  });
+  assert.equal(updates.length, 0);
+  assert.equal(messages.length, 0);
 });

@@ -898,6 +898,13 @@ export function createTransferenciasRouter({
       return res.json({ ok: true, comprobante: row });
     } catch (error) {
       const code = String(error?.code || 'fallo_asociacion_transaccional');
+      if (code === 'TRANSACTION_OUTCOME_UNKNOWN') {
+        return res.status(503).json({
+          ok: false,
+          code: 'TRANSACTION_OUTCOME_UNKNOWN',
+          status: 'outcome_unknown',
+        });
+      }
       const status = code === 'adopcion_global_no_autorizada' ? 403
         : ['comprobante_no_encontrado', 'tenant_no_coincide', 'pedido_no_asociado'].includes(code) ? 404 : 409;
       return res.status(status).json({ ok: false, error: code });
@@ -938,6 +945,13 @@ export function createTransferenciasRouter({
         });
       } catch (approvalError) {
         const code = String(approvalError?.code || 'fallo_aprobacion_transaccional');
+        if (code === 'TRANSACTION_OUTCOME_UNKNOWN') {
+          return res.status(503).json({
+            ok: false,
+            code: 'TRANSACTION_OUTCOME_UNKNOWN',
+            status: 'outcome_unknown',
+          });
+        }
         const status = ['comprobante_no_encontrado', 'tenant_no_coincide'].includes(code) ? 404 : 409;
         return res.status(status).json({ ok: false, needsReview: true, reason: code });
       }

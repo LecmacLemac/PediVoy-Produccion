@@ -3,6 +3,7 @@ export const CLOUD_DEADLINES = Object.freeze({
   cancel: Object.freeze({ default: 100, min: 10, max: 5_000 }),
   poll: Object.freeze({ default: 1_000, min: 50, max: 60_000 }),
   lease: Object.freeze({ default: 120_000, min: 1_000, max: 900_000 }),
+  retry: Object.freeze({ default: 1_000, min: 1, max: 86_400_000 }),
   drain: Object.freeze({ default: 10_000, min: 100, max: 120_000 }),
   shutdown: Object.freeze({ default: 10_000, min: 100, max: 300_000 }),
 });

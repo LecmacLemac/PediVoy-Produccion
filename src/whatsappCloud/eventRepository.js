@@ -1,8 +1,16 @@
+import { normalizeWhatsAppWaId } from './waId.js';
+
 function requireNonEmptyString(value, field) {
   if (typeof value !== 'string' || !value.trim()) {
     throw new WhatsAppCloudEventError('invalid_event', `Invalid ${field}`);
   }
   return value.trim();
+}
+
+function requireWaId(value) {
+  const waId = normalizeWhatsAppWaId(value);
+  if (!waId) throw new WhatsAppCloudEventError('invalid_event', 'Invalid message sender');
+  return waId;
 }
 
 function sanitizeMessage(message) {
@@ -13,18 +21,22 @@ function sanitizeMessage(message) {
       throw new WhatsAppCloudEventError('invalid_event', 'Invalid text body');
     }
     content.text = { body: message.text.body };
-  } else if (type === 'image') {
-    if (typeof message?.image?.id !== 'string') {
-      throw new WhatsAppCloudEventError('invalid_event', 'Invalid image id');
+  } else if (type === 'image' || type === 'document') {
+    const media = message?.[type];
+    if (typeof media?.id !== 'string' || !media.id.trim()) {
+      throw new WhatsAppCloudEventError('invalid_event', `Invalid ${type} id`);
     }
-    content.image = {
-      id: message.image.id,
-      ...(typeof message.image.caption === 'string' ? { caption: message.image.caption } : {}),
+    content[type] = {
+      id: media.id.trim(),
+      ...(typeof media.mime_type === 'string' ? { mime_type: media.mime_type } : {}),
+      ...(typeof media.sha256 === 'string' ? { sha256: media.sha256 } : {}),
+      ...(typeof media.caption === 'string' ? { caption: media.caption } : {}),
+      ...(type === 'document' && typeof media.filename === 'string' ? { filename: media.filename } : {}),
     };
   }
   return {
     messageId: requireNonEmptyString(message?.id, 'message id'),
-    senderId: requireNonEmptyString(message?.from, 'message sender'),
+    senderId: requireWaId(message?.from),
     recipientId: null,
     messageType: type,
     status: null,
@@ -128,8 +140,9 @@ export function createWhatsAppCloudEventHandler({ withTransaction } = {}) {
             const rows = await query(
               `INSERT INTO whatsapp_cloud_events (
                  empresa_id, event_kind, dedupe_key, message_id, entry_id,
-                 sender_id, recipient_id, message_type, status, source_timestamp, event_data
-               ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb)
+                 sender_id, recipient_id, message_type, status, source_timestamp, event_data,
+                 phone_number_id
+               ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12)
                ON CONFLICT (empresa_id, dedupe_key) DO NOTHING
                RETURNING id`,
               [
@@ -144,6 +157,7 @@ export function createWhatsAppCloudEventHandler({ withTransaction } = {}) {
                 sanitized.status,
                 sanitized.sourceTimestamp,
                 sanitized.content,
+                phoneNumberId,
               ]
             );
             if (rows.length) groupAccepted += 1;

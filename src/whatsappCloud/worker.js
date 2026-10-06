@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { pool, query } from '../db.js';
+import { pool, query, runWithSensitiveDbQueries } from '../db.js';
 import { createWhatsAppContextResolver } from '../handlers.js';
 import { decryptSecret } from '../services/facturacionService.js';
 import { enqueueWppOutboxCorrelatedReply } from '../wpp/enqueue.js';
@@ -9,11 +9,14 @@ import { createWhatsAppCloudCombinedConsumer } from './combinedConsumer.js';
 import { createWhatsAppCloudConsumer } from './consumer.js';
 import { createWhatsAppCloudGraphClient } from './graphClient.js';
 import { createWhatsAppCloudInboundConsumer } from './inboundConsumer.js';
+import { createWhatsAppCloudMediaClient } from './mediaClient.js';
+import { createWhatsAppCloudReceiptProcessor } from './receiptProcessor.js';
 import {
   claimNextCloudInboundEvent,
   finishCloudInboundEvent,
   loadActiveCloudInboundTenant,
   renewCloudInboundProcessingLease,
+  scheduleCloudInboundRetry,
   startCloudInboundProcessing,
 } from './inboundRepository.js';
 import {
@@ -44,6 +47,12 @@ const botAdapter = createCloudInboundBotAdapter({
   contextResolver: createWhatsAppContextResolver(sensitiveQuery),
   logger: console,
 });
+const receiptProcessor = createWhatsAppCloudReceiptProcessor({
+  loadTenant: options => loadActiveCloudInboundTenant({ query: sensitiveQuery, ...options }),
+  decryptToken: decryptSecret,
+  mediaClient: createWhatsAppCloudMediaClient(),
+  enqueueReply: input => enqueueWppOutboxCorrelatedReply(input, pool),
+});
 const inboundConsumer = createWhatsAppCloudInboundConsumer({
   owner,
   leaseMs: process.env.WHATSAPP_CLOUD_LEASE_MS,
@@ -52,7 +61,10 @@ const inboundConsumer = createWhatsAppCloudInboundConsumer({
   startProcessing: options => startCloudInboundProcessing({ query: sensitiveQuery, ...options }),
   renewLease: options => renewCloudInboundProcessingLease({ query: sensitiveQuery, ...options }),
   finish: options => finishCloudInboundEvent({ query: sensitiveQuery, ...options }),
+  scheduleRetry: options => scheduleCloudInboundRetry({ query: sensitiveQuery, ...options }),
   processBotMessage: botAdapter.process,
+  prepareReceipt: input => runWithSensitiveDbQueries(() => receiptProcessor.prepare(input)),
+  processReceipt: input => runWithSensitiveDbQueries(() => receiptProcessor.processPrepared(input)),
   logger: console,
 });
 const combinedConsumer = createWhatsAppCloudCombinedConsumer({

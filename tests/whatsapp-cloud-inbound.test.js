@@ -2,7 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-import { createWhatsAppCloudInboundConsumer } from '../src/whatsappCloud/inboundConsumer.js';
+import {
+  calculateCloudInboundRetryDelay,
+  createWhatsAppCloudInboundConsumer,
+} from '../src/whatsappCloud/inboundConsumer.js';
 import { createCloudInboundBotAdapter } from '../src/whatsappCloud/botAdapter.js';
 import {
   claimNextCloudInboundEvent,
@@ -13,8 +16,18 @@ import {
   startCloudInboundProcessing,
 } from '../src/whatsappCloud/inboundRepository.js';
 import { createWhatsAppCloudCombinedConsumer } from '../src/whatsappCloud/combinedConsumer.js';
+import { createWhatsAppCloudReceiptProcessor } from '../src/whatsappCloud/receiptProcessor.js';
 import { enqueueWppOutboxCorrelatedReply } from '../src/wpp/enqueue.js';
 import { pool as dbPool, query as dbQuery, runWithSensitiveDbQueries } from '../src/db.js';
+import {
+  corruptJpegThatPassesStructure,
+  corruptPngThatPassesStructure,
+  corruptWebpThatPassesStructure,
+  validJpeg,
+  validPdf,
+  validPng,
+  xrefCorruptPdf,
+} from './receipt-media-fixtures.js';
 
 const logger = { info() {}, warn() {}, error() {} };
 
@@ -160,11 +173,336 @@ test('tenant Cloud deshabilitado/config cambiado se salta antes de ejecutar bot'
   assert.equal(finishes[0].state, 'skipped');
 });
 
+test('image/document usan processReceipt separado con tenant server-side y lease', async () => {
+  for (const messageType of ['image', 'document']) {
+    const calls = [];
+    const media = {
+      id: `media-${messageType}`, mime_type: messageType === 'image' ? 'image/jpeg' : 'application/pdf',
+      sha256: 'hash', ...(messageType === 'document' ? { filename: 'ticket.pdf' } : {}),
+    };
+    const consumer = createWhatsAppCloudInboundConsumer({
+      owner: 'inbound-media',
+      claimNext: async () => textRow({
+        message_type: messageType, phone_number_id: 'phone-2', event_data: { [messageType]: media },
+      }),
+      loadTenant: async () => ({ empresaId: 2, phoneNumberId: 'phone-2', accessTokenEncrypted: 'cipher-2' }),
+      prepareReceipt: async input => { calls.push('prepare'); return { input, downloaded: true }; },
+      scheduleRetry: async () => assert.fail('no debe reintentar'),
+      startProcessing: async () => calls.push('start'),
+      renewLease: async () => true,
+      finish: async update => calls.push(update.state),
+      processBotMessage: async () => assert.fail('media no usa bot text'),
+      processReceipt: async input => {
+        calls.push('receipt');
+        assert.equal(input.prepared.downloaded, true);
+        assert.equal(input.empresaId, 2);
+        assert.equal(input.messageId, 'wamid.inbound-41');
+        assert.equal(input.senderId, '5493515550041');
+        assert.deepEqual(input.media, media);
+        assert.equal(input.tenant.phoneNumberId, 'phone-2');
+        assert.equal(input.originalPhoneNumberId, 'phone-2');
+        await input.assertLease();
+        return { handled: true, saved: true };
+      },
+      logger,
+    });
+    assert.deepEqual(await consumer.processOnce(), { outcome: 'processed', eventId: 41 });
+    assert.deepEqual(calls, ['prepare', 'start', 'receipt', 'processed']);
+  }
+});
+
+test('invalid magic termina skipped antes de processing_started y sin efectos durables', async () => {
+  const effects = [];
+  const processor = createWhatsAppCloudReceiptProcessor({
+    loadTenant: async () => ({ empresaId: 2, phoneNumberId: 'phone-2', accessTokenEncrypted: 'cipher-2' }),
+    decryptToken: () => 'token',
+    mediaClient: { download: async () => ({
+      buffer: Buffer.from('<html>not a jpeg</html>'),
+      metadata: { mimeType: 'image/jpeg', httpContentType: 'image/jpeg' },
+    }) },
+    processPipeline: async () => { effects.push('pipeline'); return { saved: true }; },
+    enqueueReply: async () => { effects.push('outbox'); return { queued: true }; },
+  });
+  const finishes = [];
+  const consumer = createWhatsAppCloudInboundConsumer({
+    owner: 'invalid-magic',
+    claimNext: async () => textRow({
+      message_type: 'image', phone_number_id: 'phone-2',
+      event_data: { image: { id: 'media', mime_type: 'image/jpeg', sha256: 'hash' } },
+    }),
+    loadTenant: async () => ({ empresaId: 2, phoneNumberId: 'phone-2', accessTokenEncrypted: 'cipher-2' }),
+    prepareReceipt: processor.prepare,
+    processReceipt: processor.processPrepared,
+    scheduleRetry: async () => assert.fail('no retry'),
+    startProcessing: async () => effects.push('start'),
+    renewLease: async () => true,
+    finish: async update => finishes.push(update),
+    processBotMessage: async () => assert.fail('no text'),
+    logger,
+  });
+
+  assert.deepEqual(await consumer.processOnce(), {
+    outcome: 'skipped', eventId: 41, errorCode: 'invalid_file_signature',
+  });
+  assert.deepEqual(effects, []);
+  assert.deepEqual(finishes, [{ id: 41, owner: 'invalid-magic', state: 'skipped', errorCode: 'invalid_file_signature' }]);
+});
+
+test('malformados estructurales JPEG/PNG/WebP/PDF no cruzan processing_started ni pipeline', async () => {
+  const jpeg = validJpeg();
+  const png = validPng();
+  const pngBadCrc = Buffer.from(png);
+  pngBadCrc[29] ^= 0xff;
+  const webpArbitrary = Buffer.concat([Buffer.from('RIFF'), Buffer.alloc(4), Buffer.from('WEBPgarbage!')]);
+  webpArbitrary.writeUInt32LE(webpArbitrary.length - 8, 4);
+  const pdf = validPdf();
+  const pdfBadXref = Buffer.from(pdf.toString('latin1').replace(/startxref\n\d+/, 'startxref\n999999'), 'latin1');
+  const scenarios = [
+    ['jpeg', 'image', 'image/jpeg', Buffer.concat([jpeg, Buffer.from('trailing')])],
+    ['png', 'image', 'image/png', pngBadCrc],
+    ['webp', 'image', 'image/webp', webpArbitrary],
+    ['pdf', 'document', 'application/pdf', pdfBadXref],
+  ];
+
+  for (const [name, messageType, mimeType, bytes] of scenarios) {
+    let startProcessing = 0;
+    let pipelineCalls = 0;
+    const finishes = [];
+    const processor = createWhatsAppCloudReceiptProcessor({
+      loadTenant: async () => ({ empresaId: 2, phoneNumberId: 'phone-2', accessTokenEncrypted: 'cipher-2' }),
+      decryptToken: () => 'token',
+      mediaClient: { download: async () => ({ buffer: bytes, metadata: { mimeType, httpContentType: mimeType } }) },
+      processPipeline: async () => { pipelineCalls += 1; return { saved: true }; },
+      enqueueReply: async () => assert.fail('no outbox'),
+    });
+    const consumer = createWhatsAppCloudInboundConsumer({
+      owner: `invalid-${name}`,
+      claimNext: async () => textRow({
+        message_type: messageType, phone_number_id: 'phone-2',
+        event_data: { [messageType]: { id: `media-${name}`, mime_type: mimeType, sha256: 'hash' } },
+      }),
+      loadTenant: async () => ({ empresaId: 2, phoneNumberId: 'phone-2', accessTokenEncrypted: 'cipher-2' }),
+      prepareReceipt: processor.prepare,
+      processReceipt: processor.processPrepared,
+      scheduleRetry: async () => assert.fail('no retry'),
+      startProcessing: async () => { startProcessing += 1; },
+      renewLease: async () => true,
+      finish: async update => finishes.push(update),
+      processBotMessage: async () => assert.fail('no text'),
+      logger,
+    });
+
+    assert.deepEqual(await consumer.processOnce(), {
+      outcome: 'skipped', eventId: 41, errorCode: 'invalid_file_signature',
+    }, name);
+    assert.equal(startProcessing, 0, name);
+    assert.equal(pipelineCalls, 0, name);
+    assert.equal(finishes[0].state, 'skipped', name);
+  }
+});
+
+test('corruptos decodificables sólo en apariencia no cruzan processing_started ni pipeline', async () => {
+  const scenarios = [
+    ['jpeg', 'image', 'image/jpeg', corruptJpegThatPassesStructure()],
+    ['png', 'image', 'image/png', corruptPngThatPassesStructure()],
+    ['webp', 'image', 'image/webp', corruptWebpThatPassesStructure()],
+    ['pdf-xref', 'document', 'application/pdf', xrefCorruptPdf()],
+  ];
+  for (const [name, messageType, mimeType, bytes] of scenarios) {
+    let startProcessing = 0;
+    let pipelineCalls = 0;
+    const processor = createWhatsAppCloudReceiptProcessor({
+      loadTenant: async () => ({ empresaId: 2, phoneNumberId: 'phone-2', accessTokenEncrypted: 'cipher-2' }),
+      decryptToken: () => 'token',
+      mediaClient: { download: async () => ({ buffer: bytes, metadata: { mimeType, httpContentType: mimeType } }) },
+      processPipeline: async () => { pipelineCalls += 1; return { saved: true }; },
+      enqueueReply: async () => assert.fail('no outbox'),
+    });
+    const consumer = createWhatsAppCloudInboundConsumer({
+      owner: `decoder-${name}`,
+      claimNext: async () => textRow({
+        message_type: messageType, phone_number_id: 'phone-2',
+        event_data: { [messageType]: { id: `media-${name}`, mime_type: mimeType, sha256: 'hash' } },
+      }),
+      loadTenant: async () => ({ empresaId: 2, phoneNumberId: 'phone-2', accessTokenEncrypted: 'cipher-2' }),
+      prepareReceipt: processor.prepare,
+      processReceipt: processor.processPrepared,
+      scheduleRetry: async () => assert.fail('archivo inválido no es retryable'),
+      startProcessing: async () => { startProcessing += 1; },
+      renewLease: async () => true,
+      finish: async () => {},
+      processBotMessage: async () => assert.fail('no text'),
+      logger,
+    });
+    assert.deepEqual(await consumer.processOnce(), {
+      outcome: 'skipped', eventId: 41, errorCode: 'invalid_file_signature',
+    }, name);
+    assert.equal(startProcessing, 0, name);
+    assert.equal(pipelineCalls, 0, name);
+  }
+});
+
+test('resultado de comprobante sin handled/saved después de start queda outcome_unknown', async () => {
+  for (const result of [undefined, { ok: false, reason: 'unsupported_type', handled: false, saved: false }]) {
+    const finishes = [];
+    const consumer = createWhatsAppCloudInboundConsumer({
+      owner: 'receipt-contract',
+      claimNext: async () => textRow({
+        message_type: 'image', phone_number_id: 'phone-2',
+        event_data: { image: { id: 'media', mime_type: 'image/jpeg', sha256: 'hash' } },
+      }),
+      loadTenant: async () => ({ empresaId: 2 }),
+      prepareReceipt: async () => ({ ready: true }),
+      scheduleRetry: async () => assert.fail('no retry'),
+      startProcessing: async () => {},
+      renewLease: async () => true,
+      finish: async update => finishes.push(update),
+      processBotMessage: async () => assert.fail('no text'),
+      processReceipt: async () => result,
+      logger,
+    });
+    assert.deepEqual(await consumer.processOnce(), {
+      outcome: 'outcome_unknown', eventId: 41, errorCode: 'bot_processing_unknown',
+    });
+    assert.equal(finishes[0].state, 'outcome_unknown');
+  }
+});
+
+test('manual_review guardado se considera processed aunque ok sea false', async () => {
+  const finishes = [];
+  const consumer = createWhatsAppCloudInboundConsumer({
+    owner: 'receipt-manual',
+    claimNext: async () => textRow({
+      message_type: 'image', phone_number_id: 'phone-2',
+      event_data: { image: { id: 'media', mime_type: 'image/jpeg', sha256: 'hash' } },
+    }),
+    loadTenant: async () => ({ empresaId: 2 }),
+    prepareReceipt: async () => ({ ready: true }),
+    scheduleRetry: async () => assert.fail('no retry'),
+    startProcessing: async () => {},
+    renewLease: async () => true,
+    finish: async update => finishes.push(update),
+    processBotMessage: async () => assert.fail('no text'),
+    processReceipt: async () => ({ ok: false, handled: true, saved: true, reason: 'manual_review' }),
+    logger,
+  });
+  assert.deepEqual(await consumer.processOnce(), { outcome: 'processed', eventId: 41 });
+  assert.equal(finishes[0].state, 'processed');
+});
+
+test('cloud_media_retryable antes de efectos agenda retry durable con backoff sin iniciar processing', async () => {
+  const events = [];
+  const consumer = createWhatsAppCloudInboundConsumer({
+    owner: 'retry-owner',
+    maxPreEffectRetries: 3,
+    retryBaseMs: 1000,
+    claimNext: async () => textRow({
+      retry_count: 0,
+      message_type: 'image',
+      phone_number_id: 'phone-2',
+      event_data: { image: { id: 'media-retry', mime_type: 'image/jpeg', sha256: 'hash' } },
+    }),
+    loadTenant: async () => ({ empresaId: 2, phoneNumberId: 'phone-2', accessTokenEncrypted: 'cipher-2' }),
+    prepareReceipt: async () => {
+      events.push('download');
+      throw Object.assign(new Error('private network URL token'), { code: 'cloud_media_retryable', retryable: true });
+    },
+    scheduleRetry: async input => events.push(['retry', input]),
+    startProcessing: async () => assert.fail('no inicia etapa con efectos'),
+    renewLease: async () => true,
+    finish: async () => assert.fail('no termina outcome_unknown ni skipped mientras quedan retries'),
+    processBotMessage: async () => assert.fail('no usa texto'),
+    processReceipt: async () => assert.fail('no procesa bytes no descargados'),
+    logger,
+  });
+
+  assert.deepEqual(await consumer.processOnce(), {
+    outcome: 'retry_scheduled', eventId: 41, errorCode: 'cloud_media_retryable', retryCount: 1,
+  });
+  assert.equal(events[0], 'download');
+  assert.equal(events[1][0], 'retry');
+  assert.equal(events[1][1].id, 41);
+  assert.equal(events[1][1].owner, 'retry-owner');
+  assert.equal(events[1][1].errorCode, 'cloud_media_retryable');
+  assert.ok(events[1][1].delayMs >= 1000 && events[1][1].delayMs <= 1200);
+});
+
+test('cualquier error pre-efecto retryable agenda retry durable conservando sólo código allowlisted', async () => {
+  const retries = [];
+  const consumer = createWhatsAppCloudInboundConsumer({
+    owner: 'decoder-retry-owner', maxPreEffectRetries: 3,
+    claimNext: async () => textRow({
+      retry_count: 0, message_type: 'image', phone_number_id: 'phone-2',
+      event_data: { image: { id: 'media-retry', mime_type: 'image/jpeg', sha256: 'hash' } },
+    }),
+    loadTenant: async () => ({ empresaId: 2 }),
+    prepareReceipt: async () => {
+      throw Object.assign(new Error('private decoder path'), {
+        code: 'receipt_image_decoder_unavailable', retryable: true,
+      });
+    },
+    scheduleRetry: async input => retries.push(input),
+    startProcessing: async () => assert.fail('no inicia efectos'),
+    renewLease: async () => true,
+    finish: async () => assert.fail('no termina mientras quedan retries'),
+    processBotMessage: async () => assert.fail('no text'),
+    processReceipt: async () => assert.fail('no pipeline'),
+    logger,
+  });
+  assert.deepEqual(await consumer.processOnce(), {
+    outcome: 'retry_scheduled', eventId: 41, errorCode: 'cloud_media_retryable', retryCount: 1,
+  });
+  assert.equal(retries.length, 1);
+  assert.equal(retries[0].errorCode, 'cloud_media_retryable');
+});
+
+test('backoff pre-efecto es exponencial, acotado y con jitter determinista', () => {
+  const first = calculateCloudInboundRetryDelay({ eventId: 41, retryCount: 0, baseMs: 1000, maxMs: 5000 });
+  const repeated = calculateCloudInboundRetryDelay({ eventId: 41, retryCount: 0, baseMs: 1000, maxMs: 5000 });
+  const second = calculateCloudInboundRetryDelay({ eventId: 41, retryCount: 1, baseMs: 1000, maxMs: 5000 });
+  const capped = calculateCloudInboundRetryDelay({ eventId: 41, retryCount: 20, baseMs: 1000, maxMs: 5000 });
+  assert.equal(first, repeated);
+  assert.ok(first >= 1000 && first <= 1200);
+  assert.ok(second >= 2000 && second <= 2400);
+  assert.equal(capped, 5000);
+});
+
+test('retry media agotado y errores no retryables terminan skipped seguro antes de efectos', async () => {
+  for (const scenario of [
+    { code: 'cloud_media_retryable', retryable: true, retryCount: 3, terminal: 'cloud_media_retry_exhausted' },
+    { code: 'cloud_media_auth_failed', retryable: false, retryCount: 0, terminal: 'cloud_media_auth_failed' },
+  ]) {
+    const finishes = [];
+    const consumer = createWhatsAppCloudInboundConsumer({
+      owner: 'terminal-owner', maxPreEffectRetries: 3,
+      claimNext: async () => textRow({
+        retry_count: scenario.retryCount,
+        message_type: 'image', phone_number_id: 'phone-2',
+        event_data: { image: { id: 'media-terminal', mime_type: 'image/jpeg', sha256: 'hash' } },
+      }),
+      loadTenant: async () => ({ empresaId: 2, phoneNumberId: 'phone-2', accessTokenEncrypted: 'cipher-2' }),
+      prepareReceipt: async () => { throw Object.assign(new Error('private body'), scenario); },
+      scheduleRetry: async () => assert.fail('no agenda retry'),
+      startProcessing: async () => assert.fail('no inicia etapa con efectos'),
+      renewLease: async () => true,
+      finish: async input => finishes.push(input),
+      processBotMessage: async () => assert.fail('no usa texto'),
+      processReceipt: async () => assert.fail('no procesa'),
+      logger,
+    });
+    assert.deepEqual(await consumer.processOnce(), {
+      outcome: 'skipped', eventId: 41, errorCode: scenario.terminal,
+    });
+    assert.equal(finishes[0].state, 'skipped');
+    assert.equal(finishes[0].errorCode, scenario.terminal);
+  }
+});
+
 test('tipos no soportados quedan skipped sin ejecutar IA ni responder', async () => {
   let botCalls = 0;
   const finishes = [];
   const consumer = createWhatsAppCloudInboundConsumer({
-    owner: 'inbound-a', claimNext: async () => textRow({ message_type: 'image', event_data: { image: { id: 'media-1' } } }),
+    owner: 'inbound-a', claimNext: async () => textRow({ message_type: 'audio', event_data: { audio: { id: 'media-1' } } }),
     loadTenant: async () => ({ empresaId: 2 }), startProcessing: async () => assert.fail('no debe iniciar'),
     renewLease: async () => true,
     finish: async update => finishes.push(update), processBotMessage: async () => { botCalls += 1; }, logger,
@@ -172,6 +510,35 @@ test('tipos no soportados quedan skipped sin ejecutar IA ni responder', async ()
   assert.equal((await consumer.processOnce()).errorCode, 'unsupported_message_type');
   assert.equal(botCalls, 0);
   assert.equal(finishes[0].state, 'skipped');
+});
+
+test('consumer marca outcome_unknown cuando comprobante propaga enqueue ambiguo', async () => {
+  const finishes = [];
+  const consumer = createWhatsAppCloudInboundConsumer({
+    owner: 'inbound-receipt-unknown',
+    claimNext: async () => textRow({
+      message_type: 'image',
+      event_data: { image: { id: 'media-unknown', mime_type: 'image/jpeg', sha256: 'hash' } },
+    }),
+    loadTenant: async () => ({ empresaId: 2, phoneNumberId: 'phone-2', accessTokenEncrypted: 'cipher-2' }),
+    startProcessing: async () => {},
+    renewLease: async () => true,
+    finish: async update => finishes.push(update),
+    processBotMessage: async () => assert.fail('no debe usar bot text'),
+    processReceipt: async () => {
+      throw Object.assign(new Error('private enqueue outcome'), {
+        code: 'WPP_ENQUEUE_TRANSACTION_OUTCOME_UNKNOWN',
+      });
+    },
+    logger,
+  });
+
+  assert.deepEqual(await consumer.processOnce(), {
+    outcome: 'outcome_unknown', eventId: 41, errorCode: 'bot_processing_unknown',
+  });
+  assert.deepEqual(finishes, [{
+    id: 41, owner: 'inbound-receipt-unknown', state: 'outcome_unknown', errorCode: 'bot_processing_unknown',
+  }]);
 });
 
 test('fallo después de processing_started queda outcome_unknown y no se reintenta automáticamente', async () => {
@@ -226,6 +593,7 @@ test('repository usa claim atómico con lease, fencing y policy Cloud durable', 
   const claimSql = calls[0].sql;
   assert.match(claimSql, /FOR UPDATE OF event SKIP LOCKED/i);
   assert.match(claimSql, /event_kind = 'message'/i);
+  assert.match(claimSql, /event\.phone_number_id/i);
   assert.match(claimSql, /processing_state = 'pending'/i);
   assert.match(claimSql, /processing_state = 'pre_process'.+claim_until < NOW\(\)/is);
   assert.match(claimSql, /outcome_unknown.+processing_state = 'processing_started'/is);
@@ -236,6 +604,20 @@ test('repository usa claim atómico con lease, fencing y policy Cloud durable', 
   assert.match(calls[2].sql, /claim_until = NOW\(\) \+ \(\$3 \* INTERVAL '1 millisecond'\)/i);
   assert.match(calls[3].sql, /processing_state = 'processing_started'/i);
   assert.match(calls[3].sql, /claim_until >= NOW\(\)/i);
+});
+
+test('repository carga config Cloud cifrada server-side para el worker', async () => {
+  const calls = [];
+  const query = async (sql, params) => {
+    calls.push({ sql, params });
+    return [{ empresa_id: 2, phone_number_id: 'phone-2', access_token_encrypted: 'cipher-2' }];
+  };
+  assert.deepEqual(await loadActiveCloudInboundTenant({ query, empresaId: 2 }), {
+    empresaId: 2, phoneNumberId: 'phone-2', accessTokenEncrypted: 'cipher-2',
+  });
+  assert.deepEqual(calls[0].params, [2]);
+  assert.match(calls[0].sql, /phone_number_id/i);
+  assert.match(calls[0].sql, /access_token_encrypted/i);
 });
 
 test('retry manual sólo reabre skipped seguros; nunca outcome_unknown', async () => {
@@ -327,7 +709,7 @@ test('heartbeat renueva durante IA, fencea cada reply y limpia timer al completa
   await intervalCallback();
   releaseBot();
   assert.equal((await processing).outcome, 'processed');
-  assert.equal(renewals.length, 3, 'heartbeat, guard pre-reply y revalidación pre-finish');
+  assert.equal(renewals.length, 4, 'heartbeat, fence pre-start, guard pre-reply y revalidación pre-finish');
   assert.deepEqual(cleared, [91]);
 });
 
@@ -428,6 +810,10 @@ test('worker Cloud cablea inbound y outbound en el mismo runtime', () => {
   const source = readFileSync(new URL('../src/whatsappCloud/worker.js', import.meta.url), 'utf8');
   assert.match(source, /createWhatsAppCloudInboundConsumer/);
   assert.match(source, /createCloudInboundBotAdapter/);
+  assert.match(source, /createWhatsAppCloudMediaClient/);
+  assert.match(source, /createWhatsAppCloudReceiptProcessor/);
+  assert.match(source, /runWithSensitiveDbQueries/);
+  assert.match(source, /processReceipt:\s*input\s*=>\s*runWithSensitiveDbQueries/);
   assert.match(source, /enqueueWppOutboxCorrelatedReply/);
   assert.match(source, /createWhatsAppCloudCombinedConsumer/);
   assert.match(source, /consumer:\s*combinedConsumer/);
