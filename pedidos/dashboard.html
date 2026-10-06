@@ -2387,6 +2387,18 @@
       btnSaveAll.textContent = 'Guardando...';
 
       try {
+        const itemsResp = await authFetch(`/api/pedidos/${editingId}/items`, {
+          method: 'PUT',
+          headers:{
+            'Content-Type':'application/json'
+          },
+          body: JSON.stringify({ items })
+        });
+
+        if (!itemsResp.ok) {
+          throw new Error(await parseErrorResponse(itemsResp, 'No se pudieron actualizar los ítems del pedido.'));
+        }
+
         const pedidoResp = await authFetch(`/api/pedidos/${editingId}`, {
           method: 'PUT',
           headers:{
@@ -2403,18 +2415,6 @@
 
         if (!pedidoResp.ok) {
           throw new Error(await parseErrorResponse(pedidoResp, 'No se pudo actualizar el pedido.'));
-        }
-
-        const itemsResp = await authFetch(`/api/pedidos/${editingId}/items`, {
-          method: 'PUT',
-          headers:{
-            'Content-Type':'application/json'
-          },
-          body: JSON.stringify({ items })
-        });
-
-        if (!itemsResp.ok) {
-          throw new Error(await parseErrorResponse(itemsResp, 'No se pudieron actualizar los ítems del pedido.'));
         }
 
         showToast('Guardado correctamente');
