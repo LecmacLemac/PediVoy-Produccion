@@ -1,0 +1,203 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { access, readFile } from 'node:fs/promises';
+import {
+  appendSafeText,
+  attachmentDownloadNotice,
+  bootstrapInboxState,
+  buildCloudApiUrl,
+  conversationPreview,
+  createComposerState,
+  createRequestGate,
+  mergeHistoryPage,
+  reduceMobileView,
+  resolveSubmission,
+  safeParticipant,
+  sanitizeCloudError,
+  startSubmission,
+  statusMeta,
+} from '../pedidos/whatsapp-cloud-ui.js';
+
+const root = new URL('../', import.meta.url);
+const pageUrl = new URL('pedidos/whatsapp-cloud.html', root);
+const controllerUrl = new URL('pedidos/whatsapp-cloud.js', root);
+const helpersUrl = new URL('pedidos/whatsapp-cloud-ui.js', root);
+
+async function source(url) {
+  return readFile(url, 'utf8');
+}
+
+test('existen la pantalla Cloud y sus scripts en el árbol estático de pedidos', async () => {
+  await Promise.all([access(pageUrl), access(controllerUrl), access(helpersUrl)]);
+  const app = await source(new URL('src/app.js', root));
+  assert.match(app, /app\.use\('\/pedidos',\s*express\.static\(PEDIDOS_DIR\)\)/);
+});
+
+test('la pantalla carga el controlador como módulo sin frameworks nuevos', async () => {
+  const html = await source(pageUrl);
+  assert.match(html, /<script\s+type="module"\s+src="whatsapp-cloud\.js"><\/script>/);
+  assert.doesNotMatch(html, /react|vue|angular|svelte/i);
+});
+
+test('la navegación backoffice expone WhatsApp Cloud y conserva QR', async () => {
+  const dashboard = await source(new URL('pedidos/dashboard.html', root));
+  assert.match(dashboard, /href="whatsapp-cloud\.html"[^>]*>WhatsApp Cloud</);
+  assert.match(dashboard, /href="qr\.html"[^>]*>QR</);
+});
+
+test('la pantalla declara layout accesible de lista, chat y volver móvil', async () => {
+  const html = await source(pageUrl);
+  assert.match(html, /id="conversationList"/);
+  assert.match(html, /id="chatPanel"/);
+  assert.match(html, /id="backToList"/);
+  assert.match(html, /aria-live="polite"/);
+  assert.match(html, /@media\s*\(max-width:\s*760px\)/);
+});
+
+test('bootstrap fija admin a su empresa y obliga selección explícita para super', () => {
+  assert.deepEqual(bootstrapInboxState({ role: 'admin', empresa_id: 7 }), {
+    access: 'ready', role: 'admin', companyId: 7, needsCompanySelection: false,
+  });
+  assert.deepEqual(bootstrapInboxState({ role: 'super', empresa_id: null }), {
+    access: 'ready', role: 'super', companyId: null, needsCompanySelection: true,
+  });
+  assert.deepEqual(bootstrapInboxState({ role: 'user', empresa_id: 7 }), {
+    access: 'denied', role: 'user', companyId: null, needsCompanySelection: false,
+  });
+  assert.deepEqual(bootstrapInboxState({ role: 'Admin', empresa_id: 7 }), {
+    access: 'denied', role: 'Admin', companyId: null, needsCompanySelection: false,
+  });
+});
+
+test('URLs Cloud no aceptan tenant global ni campos sensibles', () => {
+  assert.equal(buildCloudApiUrl('/conversations', { role: 'admin', companyId: 7, limit: 25 }), '/api/admin/whatsapp-cloud/conversations?limit=25');
+  assert.equal(buildCloudApiUrl('/conversations', { role: 'super', companyId: 9, cursor: 'abc_123', limit: 25 }), '/api/admin/whatsapp-cloud/conversations?empresa_id=9&limit=25&cursor=abc_123');
+  assert.equal(buildCloudApiUrl('/conversations/44/replies', { role: 'super', companyId: 9, tenantInBody: true }), '/api/admin/whatsapp-cloud/conversations/44/replies');
+  assert.throws(() => buildCloudApiUrl('/conversations', { role: 'super', companyId: null }), /empresa/i);
+  assert.throws(() => buildCloudApiUrl('/conversations', { role: 'super', companyId: 1, phone: '5493515550001' }), /parámetro/i);
+});
+
+test('teléfono se acepta sólo si ya viene enmascarado y preview no usa PII cruda', () => {
+  assert.equal(safeParticipant('*********0001'), '*********0001');
+  assert.equal(safeParticipant('5493515550001'), 'Contacto protegido');
+  assert.equal(safeParticipant('+54 9 351 555-0001'), 'Contacto protegido');
+  assert.equal(conversationPreview({ lastMessageType: 'text', text: 'secreto' }), 'Mensaje de texto');
+  assert.equal(conversationPreview({ lastMessageType: 'document', filename: 'privado.pdf' }), 'Documento');
+});
+
+test('estados tienen etiquetas españolas y outcome_unknown advierte no reenviar', () => {
+  const expected = {
+    queued: 'En cola', sent: 'Enviado', delivered: 'Entregado', read: 'Leído',
+    failed: 'Falló', outcome_unknown: 'Resultado incierto', received: 'Recibido',
+  };
+  for (const [status, label] of Object.entries(expected)) assert.equal(statusMeta(status).label, label);
+  assert.match(statusMeta('outcome_unknown').help, /no vuelvas a enviar/i);
+  assert.equal(statusMeta('outcome_unknown').retrySafe, false);
+});
+
+test('historial pagina hacia atrás, deduplica y mantiene cronología', () => {
+  const current = [
+    { id: '3', messageAt: '2026-10-06T10:03:00Z' },
+    { id: '4', messageAt: '2026-10-06T10:04:00Z' },
+  ];
+  const older = [
+    { id: '1', messageAt: '2026-10-06T10:01:00Z' },
+    { id: '2', messageAt: '2026-10-06T10:02:00Z' },
+    { id: '3', messageAt: '2026-10-06T10:03:00Z' },
+  ];
+  assert.deepEqual(mergeHistoryPage(current, older).map(item => item.id), ['1', '2', '3', '4']);
+});
+
+test('guard monotónico rechaza respuestas obsoletas', () => {
+  const gate = createRequestGate();
+  const first = gate.begin();
+  const second = gate.begin();
+  assert.equal(gate.isCurrent(first), false);
+  assert.equal(gate.isCurrent(second), true);
+  gate.invalidate();
+  assert.equal(gate.isCurrent(second), false);
+});
+
+test('vista móvil abre detalle y vuelve explícitamente a la lista', () => {
+  const initial = { mobileView: 'list', activeConversationId: null };
+  const detail = reduceMobileView(initial, { type: 'open', conversationId: '44' });
+  assert.deepEqual(detail, { mobileView: 'detail', activeConversationId: '44' });
+  assert.deepEqual(reduceMobileView(detail, { type: 'back' }), { mobileView: 'list', activeConversationId: null });
+});
+
+test('composer conserva borrador en fallas y sólo limpia con 202 confirmado', () => {
+  const initial = createComposerState(' respuesta ');
+  const pending = startSubmission(initial, 'key-1');
+  assert.equal(pending.sending, true);
+  assert.equal(pending.draft, ' respuesta ');
+  assert.deepEqual(pending.pending, { text: 'respuesta', idempotencyKey: 'key-1' });
+
+  const failed = resolveSubmission(pending, { status: 502, errorCode: 'reply_enqueue_failed' });
+  assert.equal(failed.sending, false);
+  assert.equal(failed.draft, ' respuesta ');
+  assert.equal(failed.pending, null);
+
+  const unknown = resolveSubmission(pending, { status: 503, errorCode: 'reply_enqueue_outcome_unknown' });
+  assert.equal(unknown.draft, ' respuesta ');
+  assert.match(unknown.notice, /no vuelvas a enviar/i);
+  assert.equal(unknown.canRetry, false);
+
+  const networkUnknown = resolveSubmission(pending, { status: 0 });
+  assert.match(networkUnknown.notice, /no vuelvas a enviar/i);
+  assert.equal(networkUnknown.canRetry, false);
+
+  const accepted = resolveSubmission(pending, { status: 202 });
+  assert.equal(accepted.draft, '');
+  assert.equal(accepted.sending, false);
+});
+
+test('composer aplica límite de API y exige una key nueva válida por envío', () => {
+  assert.throws(() => startSubmission(createComposerState(''), 'key-1'), /mensaje/i);
+  assert.throws(() => startSubmission(createComposerState('x'.repeat(4097)), 'key-1'), /4096/);
+  assert.throws(() => startSubmission(createComposerState('hola'), ''), /clave/i);
+});
+
+test('adjunto 409 se comunica como no disponible sin URL de proveedor', () => {
+  assert.equal(attachmentDownloadNotice(409), 'La descarga todavía no está disponible.');
+  assert.equal(attachmentDownloadNotice(404), 'El adjunto ya no está disponible.');
+});
+
+test('errores visibles son españoles, acotados y no reflejan payload privado', () => {
+  assert.equal(sanitizeCloudError(403, { error: 'private phone token sql detail' }), 'No tenés acceso a esta bandeja.');
+  assert.equal(sanitizeCloudError(503, { error: 'reply_enqueue_outcome_unknown', secret: 'token' }), 'Resultado incierto: no vuelvas a enviar este mensaje. Verificá la conversación más tarde.');
+  assert.equal(sanitizeCloudError(500, { error: 'private phone token sql detail' }), 'No se pudo completar la operación. Intentá nuevamente más tarde.');
+});
+
+test('texto no confiable se inserta sólo con textContent', () => {
+  const created = [];
+  const documentLike = {
+    createElement(tag) {
+      const node = { tag, className: '', textContent: '', children: [], append(child) { this.children.push(child); } };
+      created.push(node);
+      return node;
+    },
+  };
+  const parent = { children: [], append(child) { this.children.push(child); } };
+  const node = appendSafeText(documentLike, parent, 'p', '<img src=x onerror=alert(1)>', 'message-text');
+  assert.equal(node.textContent, '<img src=x onerror=alert(1)>');
+  assert.equal(node.className, 'message-text');
+  assert.equal(parent.children[0], node);
+});
+
+test('fuentes frontend rechazan persistencia, HTML inseguro, logs sensibles y retry automático', async () => {
+  const combined = `${await source(controllerUrl)}\n${await source(helpersUrl)}`;
+  assert.doesNotMatch(combined, /localStorage|sessionStorage|indexedDB|document\.cookie/i);
+  assert.doesNotMatch(combined, /innerHTML|outerHTML|insertAdjacentHTML|document\.write/i);
+  assert.doesNotMatch(combined, /console\.(?:log|debug|info|warn|error)/);
+  assert.doesNotMatch(combined, /setInterval|automaticRetry|autoRetry/i);
+  assert.doesNotMatch(combined, /media_id|provider_url|webhook_filename|access_token/i);
+});
+
+test('controlador usa credenciales same-origin, AbortController y envío único', async () => {
+  const controller = await source(controllerUrl);
+  assert.match(controller, /credentials:\s*'same-origin'/);
+  assert.match(controller, /new AbortController\(\)/);
+  assert.match(controller, /crypto\.randomUUID\(\)/);
+  assert.match(controller, /status\s*===\s*202/);
+  assert.doesNotMatch(controller, /window\.location\.search|URLSearchParams\(location\.search/);
+});

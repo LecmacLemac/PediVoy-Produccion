@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WhatsApp Cloud – PediVoy</title>
+  <link rel="stylesheet" href="theme-base.css">
+  <style>
+    :root {
+      --bg:#0b1020; --bg-2:#0f172a; --surface:rgba(30,41,59,.78); --border:rgba(148,163,184,.18);
+      --ink:#f1f5f9; --muted:#94a3b8; --brand:#25d366; --brand-dark:#128c4a; --danger:#ef4444;
+      --warning:#f59e0b; --info:#60a5fa; --radius:16px;
+    }
+    * { box-sizing:border-box; }
+    body { margin:0; min-height:100vh; background:radial-gradient(circle at 85% 15%,rgba(37,211,102,.08),transparent 28%),var(--bg); color:var(--ink); font-family:system-ui,-apple-system,sans-serif; }
+    button,textarea,select { font:inherit; }
+    button:focus-visible,textarea:focus-visible,select:focus-visible,a:focus-visible { outline:3px solid rgba(37,211,102,.5); outline-offset:2px; }
+    .topbar { border-bottom:1px solid var(--border); background:rgba(15,23,42,.96); position:sticky; top:0; z-index:20; }
+    .topbar-inner { max-width:1400px; margin:auto; padding:.75rem 1rem; display:flex; align-items:center; justify-content:space-between; gap:1rem; }
+    .brand { display:flex; align-items:center; gap:.7rem; color:#fff; text-decoration:none; font-weight:800; }
+    .brand img { width:auto; height:30px; }
+    .nav { display:flex; gap:1rem; align-items:center; }
+    .nav a { color:var(--muted); text-decoration:none; white-space:nowrap; }
+    .nav a[aria-current="page"] { color:var(--brand); font-weight:700; }
+    .nav .logout { color:#fca5a5; }
+    .shell { max-width:1400px; margin:0 auto; padding:1rem; }
+    #appStatus { padding:.75rem 1rem; margin-bottom:.75rem; border-radius:12px; border:1px solid var(--border); background:var(--surface); }
+    #appStatus[data-tone="error"] { color:#fecaca; border-color:rgba(239,68,68,.45); }
+    #appStatus[data-tone="warning"] { color:#fde68a; border-color:rgba(245,158,11,.45); }
+    #appStatus[data-tone="success"] { color:#bbf7d0; border-color:rgba(37,211,102,.45); }
+    .inbox { display:grid; grid-template-columns:minmax(300px,380px) minmax(0,1fr); height:calc(100dvh - 112px); min-height:620px; border:1px solid var(--border); border-radius:var(--radius); overflow:hidden; background:var(--surface); box-shadow:0 22px 60px rgba(0,0,0,.28); }
+    .conversation-pane { min-width:0; display:flex; flex-direction:column; border-right:1px solid var(--border); background:rgba(15,23,42,.78); }
+    .pane-head { padding:1rem; border-bottom:1px solid var(--border); display:grid; gap:.75rem; }
+    .title-row { display:flex; align-items:center; justify-content:space-between; gap:.75rem; }
+    h1 { font-size:1.15rem; margin:0; }
+    .icon-button,.secondary-button,.attachment-action { border:1px solid var(--border); color:var(--ink); background:rgba(255,255,255,.04); border-radius:9px; padding:.55rem .75rem; cursor:pointer; }
+    .icon-button:hover,.secondary-button:hover,.attachment-action:hover { border-color:var(--brand); }
+    .company-field { display:grid; gap:.35rem; color:var(--muted); font-size:.8rem; font-weight:700; }
+    select,textarea { width:100%; color:var(--ink); background:var(--bg-2); border:1px solid var(--border); border-radius:10px; padding:.7rem; }
+    .conversation-list { min-height:0; overflow:auto; }
+    .conversation-card { width:100%; border:0; border-bottom:1px solid var(--border); background:transparent; color:var(--ink); padding:1rem; text-align:left; cursor:pointer; display:grid; gap:.5rem; }
+    .conversation-card:hover,.conversation-card.active { background:rgba(37,211,102,.08); }
+    .conversation-card.active { box-shadow:inset 3px 0 var(--brand); }
+    .conversation-top,.conversation-summary,.message-meta { display:flex; align-items:center; justify-content:space-between; gap:.75rem; min-width:0; }
+    .participant,.preview { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .timestamp,time { color:var(--muted); font-size:.75rem; white-space:nowrap; }
+    .preview { color:var(--muted); font-size:.86rem; }
+    .more-wrap { padding:.75rem; border-top:1px solid var(--border); }
+    .secondary-button { width:100%; }
+    .chat-pane { min-width:0; display:flex; flex-direction:column; background:radial-gradient(circle at center,rgba(37,211,102,.035),transparent 55%),#0c1424; }
+    .chat-head { min-height:66px; padding:.85rem 1rem; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:.75rem; }
+    #backToList { display:none; }
+    #chatTitle { font-weight:800; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .history-wrap { flex:1; min-height:0; position:relative; display:flex; flex-direction:column; }
+    #loadOlderMessages { align-self:center; width:auto; margin:.65rem; }
+    .message-history { flex:1; overflow:auto; padding:1rem clamp(.75rem,3vw,2rem); display:flex; flex-direction:column; gap:.75rem; }
+    .message { max-width:min(78%,720px); border:1px solid var(--border); border-radius:14px; padding:.75rem; box-shadow:0 8px 18px rgba(0,0,0,.14); }
+    .message-inbound { align-self:flex-start; background:#172238; border-bottom-left-radius:4px; }
+    .message-outbound { align-self:flex-end; background:#123523; border-color:rgba(37,211,102,.22); border-bottom-right-radius:4px; }
+    .message-meta { justify-content:flex-end; margin-bottom:.35rem; }
+    .message-text { margin:.25rem 0 0; white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word; line-height:1.45; }
+    .status-badge { display:inline-flex; align-items:center; border:1px solid transparent; border-radius:999px; padding:.18rem .48rem; font-size:.68rem; font-weight:800; white-space:nowrap; }
+    .status-pending { color:#fde68a; background:rgba(245,158,11,.12); border-color:rgba(245,158,11,.25); }
+    .status-sent,.status-delivered,.status-read { color:#bfdbfe; background:rgba(96,165,250,.12); border-color:rgba(96,165,250,.25); }
+    .status-received { color:#bbf7d0; background:rgba(37,211,102,.12); border-color:rgba(37,211,102,.25); }
+    .status-failed,.status-unknown { color:#fecaca; background:rgba(239,68,68,.12); border-color:rgba(239,68,68,.28); }
+    .attachment-card { display:grid; gap:.35rem; margin-top:.65rem; padding:.7rem; border:1px solid var(--border); border-radius:10px; background:rgba(2,6,23,.24); overflow:hidden; }
+    .attachment-name,.attachment-caption,.attachment-type { overflow-wrap:anywhere; word-break:break-word; }
+    .attachment-caption { white-space:pre-wrap; }
+    .attachment-type { color:var(--muted); }
+    .attachment-action { justify-self:start; }
+    .composer { position:sticky; bottom:0; display:grid; grid-template-columns:minmax(0,1fr) auto; gap:.65rem; padding:.85rem 1rem; border-top:1px solid var(--border); background:rgba(15,23,42,.97); }
+    .composer textarea { min-height:48px; max-height:150px; resize:vertical; white-space:pre-wrap; overflow-wrap:anywhere; }
+    .send-button { align-self:end; min-height:48px; border:0; border-radius:10px; padding:.7rem 1.15rem; background:var(--brand); color:#052e16; font-weight:900; cursor:pointer; }
+    .send-button:disabled,.attachment-action:disabled { cursor:not-allowed; opacity:.55; }
+    #composerNotice { grid-column:1/-1; min-height:1.2rem; color:var(--muted); font-size:.82rem; }
+    #composerNotice[data-tone="error"] { color:#fecaca; }
+    #composerNotice[data-tone="warning"] { color:#fde68a; }
+    #composerNotice[data-tone="success"] { color:#bbf7d0; }
+    .empty-state { margin:auto; padding:1.25rem; color:var(--muted); text-align:center; }
+    [hidden] { display:none!important; }
+    @media (max-width:760px) {
+      .topbar-inner { align-items:flex-start; }
+      .nav { overflow-x:auto; max-width:58vw; padding-bottom:.25rem; }
+      .shell { padding:.5rem; }
+      .inbox { display:block; height:calc(100dvh - 83px); min-height:480px; border-radius:12px; }
+      .conversation-pane { height:100%; border-right:0; }
+      .chat-pane { display:none; height:100%; }
+      .inbox.mobile-detail .conversation-pane { display:none; }
+      .inbox.mobile-detail .chat-pane { display:flex; }
+      .inbox.mobile-detail #backToList { display:inline-flex; }
+      .message { max-width:91%; }
+      .composer { grid-template-columns:minmax(0,1fr); }
+      .send-button { width:100%; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="brand" href="dashboard.html"><img src="img/brand/pedivoy-logo-horizontal-white.png" alt="PediVoy"><span>Bandeja Cloud</span></a>
+      <nav class="nav" aria-label="Navegación backoffice">
+        <a href="dashboard.html">Dashboard</a>
+        <a href="whatsapp-cloud.html" aria-current="page">WhatsApp Cloud</a>
+        <a href="qr.html">QR</a>
+        <a class="logout" href="login.html" id="logout">Salir</a>
+      </nav>
+    </div>
+  </header>
+  <main class="shell">
+    <div id="appStatus" role="status" aria-live="polite"></div>
+    <section class="inbox" id="inboxLayout" aria-label="Bandeja de WhatsApp Cloud">
+      <aside class="conversation-pane" aria-label="Conversaciones">
+        <header class="pane-head">
+          <div class="title-row"><h1>WhatsApp Cloud</h1><button id="refreshConversations" class="icon-button" type="button" aria-label="Actualizar conversaciones">Actualizar</button></div>
+          <div id="companyPicker"></div>
+        </header>
+        <div id="conversationList" class="conversation-list"></div>
+        <div class="more-wrap"><button id="loadMoreConversations" class="secondary-button" type="button" hidden>Cargar más conversaciones</button></div>
+      </aside>
+      <section class="chat-pane" id="chatPanel" aria-label="Chat activo">
+        <header class="chat-head"><button id="backToList" class="icon-button" type="button">← Volver</button><div id="chatTitle">Seleccioná una conversación</div></header>
+        <div class="history-wrap">
+          <button id="loadOlderMessages" class="secondary-button" type="button" hidden>Cargar mensajes anteriores</button>
+          <div id="messageHistory" class="message-history" aria-live="polite"><p class="empty-state">Elegí una conversación para ver el historial.</p></div>
+        </div>
+        <form id="composerForm" class="composer">
+          <label for="messageInput" hidden>Mensaje</label>
+          <textarea id="messageInput" maxlength="4096" placeholder="Escribí un mensaje" disabled></textarea>
+          <button id="sendButton" class="send-button" type="submit" disabled>Enviar</button>
+          <div id="composerNotice" role="status" aria-live="polite"></div>
+        </form>
+      </section>
+    </section>
+  </main>
+  <script type="module" src="whatsapp-cloud.js"></script>
+</body>
+</html>
