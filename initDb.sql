@@ -1,3 +1,5 @@
+SET search_path = public, pg_catalog;
+
 -- =========================================================
 -- ARCHIVO DE INICIALIZACIÓN DE BASE DE DATOS (PostgreSQL)
 -- Versión "Definitiva" (Orden de Dependencias Corregido)
@@ -1960,7 +1962,8 @@ BEGIN
      AND NOT attisdropped;
 
   FOR foreign_key IN
-    SELECT conname, confrelid, confkey, confdeltype
+    SELECT conname, confrelid, confkey, confupdtype, confdeltype, confmatchtype,
+           condeferrable, condeferred, convalidated
       FROM pg_catalog.pg_constraint
      WHERE conrelid = 'public.wpp_outbox'::regclass
        AND contype = 'f'
@@ -1969,7 +1972,12 @@ BEGIN
     IF foreign_key.conname <> 'wpp_outbox_empresa_id_fkey'
        OR foreign_key.confrelid <> 'public.empresas'::regclass
        OR foreign_key.confkey <> ARRAY[empresa_target_attribute]::SMALLINT[]
-       OR foreign_key.confdeltype <> 'c' THEN
+       OR foreign_key.confupdtype <> 'a'
+       OR foreign_key.confdeltype <> 'c'
+       OR foreign_key.confmatchtype <> 's'
+       OR foreign_key.condeferrable
+       OR foreign_key.condeferred
+       OR NOT foreign_key.convalidated THEN
       EXECUTE format('ALTER TABLE public.wpp_outbox DROP CONSTRAINT %I', foreign_key.conname);
     END IF;
   END LOOP;
@@ -1982,7 +1990,12 @@ BEGIN
        AND conkey = ARRAY[empresa_attribute]::SMALLINT[]
        AND confrelid = 'public.empresas'::regclass
        AND confkey = ARRAY[empresa_target_attribute]::SMALLINT[]
+       AND confupdtype = 'a'
        AND confdeltype = 'c'
+       AND confmatchtype = 's'
+       AND NOT condeferrable
+       AND NOT condeferred
+       AND convalidated
   ) THEN
     ALTER TABLE public.wpp_outbox
       ADD CONSTRAINT wpp_outbox_empresa_id_fkey
@@ -5058,3 +5071,5 @@ $wpp_general_reset_order$;
 INSERT INTO wpp_general_control (id)
 VALUES (TRUE)
 ON CONFLICT (id) DO NOTHING;
+
+RESET search_path;
