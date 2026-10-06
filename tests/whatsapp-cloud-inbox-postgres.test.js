@@ -14,13 +14,14 @@ assert.ok(available,
   'PostgreSQL focal gate requires local initdb/pg_ctl binaries and a non-root user; refusing a false-green skip');
 const initSql = readFileSync(new URL('../initDb.sql', import.meta.url), 'utf8');
 const outboxStart = initSql.indexOf('CREATE TABLE IF NOT EXISTS wpp_outbox (');
-const outboxEnd = initSql.indexOf('CREATE TABLE IF NOT EXISTS push_subs (', outboxStart);
+const outboxEndMarker = '-- END WPP OUTBOX MIGRATION';
+const outboxEnd = initSql.indexOf(outboxEndMarker, outboxStart);
 const projectionStart = initSql.indexOf('-- BEGIN WHATSAPP CLOUD MESSAGE PROJECTION MIGRATION');
 const projectionEndMarker = '-- END WHATSAPP CLOUD MESSAGE PROJECTION MIGRATION';
 const projectionEnd = initSql.indexOf(projectionEndMarker, projectionStart);
 assert.ok(outboxStart >= 0 && outboxEnd > outboxStart, 'initDb.sql must expose the outbox migration');
 assert.ok(projectionStart >= 0 && projectionEnd > projectionStart, 'initDb.sql must expose the inbox projection migration');
-const outboxSql = initSql.slice(outboxStart, outboxEnd);
+const outboxSql = initSql.slice(outboxStart, outboxEnd + outboxEndMarker.length);
 const projectionSql = initSql.slice(projectionStart, projectionEnd + projectionEndMarker.length);
 const migrationSql = `${outboxSql}\n${projectionSql}`;
 const opsStart = initSql.indexOf('-- BEGIN WHATSAPP CLOUD OPS MIGRATION');
@@ -1604,7 +1605,7 @@ test('DDL de reparación de trigger fuente no deadlockea con writer operativo y 
 
 test('migración toma lock advisory transaccional estable antes del primer DDL y dos ejecuciones completas frescas terminan exit 0', async () => {
   const begin = projectionSql.indexOf('BEGIN;');
-  const safePath = projectionSql.indexOf('SET LOCAL search_path = pg_catalog, public;');
+  const safePath = projectionSql.indexOf('SET LOCAL search_path = public, pg_catalog;');
   const lockTimeout = projectionSql.indexOf("SET LOCAL lock_timeout = '30s';");
   const statementTimeout = projectionSql.indexOf("SET LOCAL statement_timeout = '5min';");
   const advisoryLock = projectionSql.indexOf('SELECT pg_catalog.pg_advisory_xact_lock(1464550724, 1229867347);');
@@ -2995,7 +2996,7 @@ test('secuencia canónica preexistente valida relkind y tipo exactos antes de re
 
 test('search_path shadow,public sólo crea y repara objetos canónicos en public sin tocar homónimos', async () => {
   const begin = projectionSql.indexOf('BEGIN;');
-  const safePath = projectionSql.indexOf('SET LOCAL search_path = pg_catalog, public;');
+  const safePath = projectionSql.indexOf('SET LOCAL search_path = public, pg_catalog;');
   const firstObjectReference = projectionSql.search(/(?:pg_advisory|to_regclass|CREATE\s+(?:TABLE|SEQUENCE|FUNCTION|TRIGGER)|pg_class)/i);
   assert.ok(begin >= 0 && safePath > begin && firstObjectReference > safePath,
     'safe transaction-local search_path must precede every object lookup or DDL');
@@ -3102,7 +3103,7 @@ test('search_path shadow,public sólo crea y repara objetos canónicos en public
 
 test('initDb completo repara sólo la FK pública de outbox bajo search_path hostil y conserva shadow', async () => {
   const migrationBegin = outboxSql.indexOf('BEGIN;');
-  const safePath = outboxSql.indexOf('SET LOCAL search_path = pg_catalog, public;', migrationBegin);
+  const safePath = outboxSql.indexOf('SET LOCAL search_path = public, pg_catalog;', migrationBegin);
   const firstRepairLookupOrDdl = outboxSql.slice(migrationBegin).search(
     /(?:LOCK TABLE|ALTER TABLE|FROM pg_catalog\.pg_|'public\.wpp_outbox'::regclass)/,
   );

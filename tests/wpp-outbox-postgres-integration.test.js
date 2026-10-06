@@ -15,9 +15,10 @@ import {
 
 const initSql = readFileSync(new URL('../initDb.sql', import.meta.url), 'utf8');
 const migrationStart = initSql.indexOf('CREATE TABLE IF NOT EXISTS wpp_outbox (');
-const migrationEnd = initSql.indexOf('CREATE TABLE IF NOT EXISTS push_subs (', migrationStart);
+const migrationEndMarker = '-- END WPP OUTBOX MIGRATION';
+const migrationEnd = initSql.indexOf(migrationEndMarker, migrationStart);
 assert.ok(migrationStart >= 0 && migrationEnd > migrationStart, 'initDb.sql must expose the bounded wpp_outbox migration');
-const migrationSql = initSql.slice(migrationStart, migrationEnd);
+const migrationSql = initSql.slice(migrationStart, migrationEnd + migrationEndMarker.length);
 const canonicalStatuses = ['pending', 'sending', 'sent', 'error', 'skipped'];
 const futureClaimUntil = '2099-04-05T06:07:08.000Z';
 const expiredClaimUntil = '2000-01-02T03:04:05.000Z';

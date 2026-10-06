@@ -1,4 +1,5 @@
-SET search_path = public, pg_catalog;
+BEGIN;
+SET LOCAL search_path = public, pg_catalog;
 
 -- =========================================================
 -- ARCHIVO DE INICIALIZACIÓN DE BASE DE DATOS (PostgreSQL)
@@ -58,7 +59,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_empresas_landing_domain_unique
   WHERE landing_domain IS NOT NULL;
 
 -- BEGIN WHATSAPP CLOUD INBOX MIGRATION
+COMMIT;
 BEGIN;
+SET LOCAL search_path = public, pg_catalog;
 SET LOCAL lock_timeout = '30s';
 SET LOCAL statement_timeout = '5min';
 CREATE TABLE IF NOT EXISTS whatsapp_cloud_events (
@@ -631,6 +634,9 @@ END $$;
 COMMIT;
 -- END WHATSAPP CLOUD INBOX MIGRATION
 
+BEGIN;
+SET LOCAL search_path = public, pg_catalog;
+
 -- =========================================================
 -- 3. CONFIGURACIÓN, PROMPTS Y CUENTAS
 -- =========================================================
@@ -695,7 +701,9 @@ CREATE TABLE IF NOT EXISTS usuarios (
 );
 
 -- Roles DB: limpiar datos históricos sin elevar privilegios y cerrar escrituras futuras.
+COMMIT;
 BEGIN;
+SET LOCAL search_path = public, pg_catalog;
 ALTER TABLE usuarios DROP CONSTRAINT IF EXISTS usuarios_role_check;
 
 UPDATE usuarios
@@ -717,6 +725,9 @@ ALTER TABLE usuarios
   ADD CONSTRAINT usuarios_role_check
   CHECK (role IS NOT NULL AND role IN ('user', 'repartidor', 'referente', 'facturacion', 'contable', 'admin', 'super'));
 COMMIT;
+
+BEGIN;
+SET LOCAL search_path = public, pg_catalog;
 
 -- =========================================================
 -- 5. CHOFERES Y LOGÍSTICA
@@ -1085,7 +1096,9 @@ CREATE TABLE IF NOT EXISTS referentes (
 );
 
 -- Identity-link quarantine: run only after choferes and referentes exist.
+COMMIT;
 BEGIN;
+SET LOCAL search_path = public, pg_catalog;
 UPDATE usuarios u
 SET activo = false
 WHERE CASE
@@ -1105,6 +1118,9 @@ WHERE CASE
   ELSE u.chofer_id IS NOT NULL OR u.referente_id IS NOT NULL
 END;
 COMMIT;
+
+BEGIN;
+SET LOCAL search_path = public, pg_catalog;
 
 CREATE UNIQUE INDEX IF NOT EXISTS referentes_empresa_codigo_uniq
   ON referentes (empresa_id, LOWER(codigo))
@@ -1617,7 +1633,9 @@ CREATE TABLE IF NOT EXISTS pedido_pagos (
 );
 
 -- BEGIN COMPROBANTE CONCURRENCY MIGRATION
+COMMIT;
 BEGIN;
+SET LOCAL search_path = public, pg_catalog;
 SET LOCAL lock_timeout = '30s';
 SET LOCAL statement_timeout = '5min';
 CREATE OR REPLACE FUNCTION normalizar_comprobante_operacion(value TEXT)
@@ -1858,6 +1876,9 @@ FOR EACH ROW EXECUTE FUNCTION serializar_pedido_pago_con_comprobante();
 COMMIT;
 -- END COMPROBANTE CONCURRENCY MIGRATION
 
+BEGIN;
+SET LOCAL search_path = public, pg_catalog;
+
 CREATE TABLE IF NOT EXISTS historial_pagos (
   id SERIAL PRIMARY KEY,
   empresa_id INT NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
@@ -1913,9 +1934,10 @@ CREATE TABLE IF NOT EXISTS wpp_outbox (
     CHECK (status IN ('pending', 'sending', 'sent', 'error', 'skipped'))
 );
 
+COMMIT;
 BEGIN;
 
-SET LOCAL search_path = pg_catalog, public;
+SET LOCAL search_path = public, pg_catalog;
 SET LOCAL lock_timeout = '30s';
 SET LOCAL statement_timeout = '5min';
 
@@ -1961,26 +1983,27 @@ BEGIN
      AND attname = 'id'
      AND NOT attisdropped;
 
-  FOR foreign_key IN
-    SELECT conname, confrelid, confkey, confupdtype, confdeltype, confmatchtype,
-           condeferrable, condeferred, convalidated
-      FROM pg_catalog.pg_constraint
-     WHERE conrelid = 'public.wpp_outbox'::regclass
-       AND contype = 'f'
-       AND conkey = ARRAY[empresa_attribute]::SMALLINT[]
-  LOOP
-    IF foreign_key.conname <> 'wpp_outbox_empresa_id_fkey'
-       OR foreign_key.confrelid <> 'public.empresas'::regclass
-       OR foreign_key.confkey <> ARRAY[empresa_target_attribute]::SMALLINT[]
-       OR foreign_key.confupdtype <> 'a'
-       OR foreign_key.confdeltype <> 'c'
-       OR foreign_key.confmatchtype <> 's'
-       OR foreign_key.condeferrable
-       OR foreign_key.condeferred
-       OR NOT foreign_key.convalidated THEN
-      EXECUTE format('ALTER TABLE public.wpp_outbox DROP CONSTRAINT %I', foreign_key.conname);
-    END IF;
-  END LOOP;
+  SELECT contype, conkey, confrelid, confkey, confupdtype, confdeltype, confmatchtype,
+         condeferrable, condeferred, convalidated
+    INTO foreign_key
+    FROM pg_catalog.pg_constraint
+   WHERE conrelid = 'public.wpp_outbox'::regclass
+     AND conname = 'wpp_outbox_empresa_id_fkey';
+
+  IF FOUND AND (
+       foreign_key.contype IS DISTINCT FROM 'f'
+       OR foreign_key.conkey IS DISTINCT FROM ARRAY[empresa_attribute]::SMALLINT[]
+       OR foreign_key.confrelid IS DISTINCT FROM 'public.empresas'::regclass
+       OR foreign_key.confkey IS DISTINCT FROM ARRAY[empresa_target_attribute]::SMALLINT[]
+       OR foreign_key.confupdtype IS DISTINCT FROM 'a'
+       OR foreign_key.confdeltype IS DISTINCT FROM 'c'
+       OR foreign_key.confmatchtype IS DISTINCT FROM 's'
+       OR foreign_key.condeferrable IS DISTINCT FROM FALSE
+       OR foreign_key.condeferred IS DISTINCT FROM FALSE
+       OR foreign_key.convalidated IS DISTINCT FROM TRUE
+     ) THEN
+    ALTER TABLE public.wpp_outbox DROP CONSTRAINT wpp_outbox_empresa_id_fkey;
+  END IF;
 
   IF NOT EXISTS (
     SELECT 1 FROM pg_catalog.pg_constraint
@@ -2108,7 +2131,7 @@ COMMIT;
 
 -- BEGIN WHATSAPP CLOUD OPS MIGRATION
 BEGIN;
-SET LOCAL search_path = pg_catalog, public;
+SET LOCAL search_path = public, pg_catalog;
 SET LOCAL lock_timeout = '30s';
 SET LOCAL statement_timeout = '5min';
 
@@ -2144,6 +2167,10 @@ CREATE INDEX IF NOT EXISTS wpp_outbox_cloud_ops_idx
 
 COMMIT;
 -- END WHATSAPP CLOUD OPS MIGRATION
+-- END WPP OUTBOX MIGRATION
+
+BEGIN;
+SET LOCAL search_path = public, pg_catalog;
 
 CREATE TABLE IF NOT EXISTS push_subs (
   id         SERIAL PRIMARY KEY,
@@ -2155,9 +2182,11 @@ CREATE TABLE IF NOT EXISTS push_subs (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+COMMIT;
+
 -- BEGIN WHATSAPP CLOUD MESSAGE PROJECTION MIGRATION
 BEGIN;
-SET LOCAL search_path = pg_catalog, public;
+SET LOCAL search_path = public, pg_catalog;
 SET LOCAL lock_timeout = '30s';
 SET LOCAL statement_timeout = '5min';
 -- Stable namespace/key pair for the complete WhatsApp Cloud inbox projection migration.
@@ -4068,7 +4097,7 @@ END $$;
 COMMIT;
 
 BEGIN;
-SET LOCAL search_path = pg_catalog, public;
+SET LOCAL search_path = public, pg_catalog;
 SET LOCAL lock_timeout = '30s';
 SET LOCAL statement_timeout = '5min';
 SELECT pg_catalog.pg_advisory_xact_lock(1464550724, 1229867347);
@@ -4183,6 +4212,9 @@ BEGIN
 END $backfill$;
 COMMIT;
 -- END WHATSAPP CLOUD MESSAGE PROJECTION MIGRATION
+
+BEGIN;
+SET LOCAL search_path = public, pg_catalog;
 
 CREATE TABLE IF NOT EXISTS push_sub_pedidos (
   sub_id    INTEGER NOT NULL REFERENCES push_subs(id) ON DELETE CASCADE,
@@ -5072,4 +5104,4 @@ INSERT INTO wpp_general_control (id)
 VALUES (TRUE)
 ON CONFLICT (id) DO NOTHING;
 
-RESET search_path;
+COMMIT;

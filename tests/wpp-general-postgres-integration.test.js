@@ -433,14 +433,14 @@ after(async () => {
   ]);
 });
 
-test('exact initDb General migration applies twice to fresh and representative legacy schemas under rollback', integrationOptions, async () => {
+test('exact initDb General migration applies twice to fresh and representative legacy schemas with explicit cleanup', integrationOptions, async () => {
   for (const legacy of [false, true]) {
     const client = await state.admin.connect();
     const schema = `singleton_${legacy ? 'legacy' : 'fresh'}_${randomUUID().replaceAll('-', '')}`;
+    let primaryError = null;
     try {
-      await client.query('BEGIN');
       await client.query(`CREATE SCHEMA ${schema}`);
-      await client.query(`SET LOCAL search_path TO ${schema}`);
+      await client.query(`SET search_path TO ${schema}`);
       if (legacy) {
         await client.query(`
           CREATE TABLE wpp_general_control (
@@ -514,17 +514,21 @@ test('exact initDb General migration applies twice to fresh and representative l
         client.query("INSERT INTO wpp_general_control (id) VALUES (FALSE)"),
         error => error?.code === '23514',
       );
-      await client.query('ROLLBACK');
     } catch (error) {
-      let rollbackError = null;
-      try {
-        await client.query('ROLLBACK');
-      } catch (cleanupError) {
-        rollbackError = cleanupError;
-      }
-      throw preservePrimaryFailure(error, rollbackError, 'migration verification and emergency rollback failed');
+      primaryError = error;
     } finally {
+      let cleanupError = null;
+      try {
+        await client.query('RESET search_path');
+        await client.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+      } catch (error) {
+        cleanupError = error;
+      }
       client.release();
+      if (primaryError) {
+        throw preservePrimaryFailure(primaryError, cleanupError, 'migration verification and cleanup failed');
+      }
+      if (cleanupError) throw cleanupError;
     }
     const schemaExists = await state.admin.query('SELECT to_regnamespace($1) AS schema', [schema]);
     assert.equal(schemaExists.rows[0].schema, null);

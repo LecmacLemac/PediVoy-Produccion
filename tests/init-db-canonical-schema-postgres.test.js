@@ -164,27 +164,71 @@ async function canonicalOutboxForeignKey(pool) {
   `);
 }
 
-test('initDb completo fija public antes de todo DDL, preserva íntegro shadow y limpia la sesión al terminar',
+async function prepareShadow(client) {
+  await client.query('CREATE SCHEMA shadow');
+  await client.query(`
+    SET search_path = shadow, public;
+    CREATE TABLE shadow.empresas(id INTEGER PRIMARY KEY, marker TEXT DEFAULT 'shadow');
+    CREATE FUNCTION shadow.now() RETURNS TIMESTAMPTZ LANGUAGE SQL IMMUTABLE
+      AS 'SELECT TIMESTAMPTZ ''2000-01-01T00:00:00Z''';
+    CREATE VIEW shadow.empresas_view AS SELECT id, marker FROM shadow.empresas;
+  `);
+  return snapshotNamespace(client, 'shadow');
+}
+
+async function assertOriginalSearchPathAndShadow(client, shadowBefore) {
+  assert.equal((await client.query('SHOW search_path')).rows[0].search_path, 'shadow, public');
+  assert.deepEqual(await snapshotNamespace(client, 'shadow'), shadowBefore);
+}
+
+function injectFailureAfter(sql, marker) {
+  const offset = sql.indexOf(marker);
+  assert.ok(offset >= 0, `missing failure marker: ${marker}`);
+  return `${sql.slice(0, offset + marker.length)}\nSELECT 1 / 0;\n${sql.slice(offset + marker.length)}`;
+}
+
+function assertTransactionScopedSearchPath(sql) {
+  const lines = sql.replaceAll('\r\n', '\n').split('\n');
+  const nextExecutableLine = start => {
+    let index = start;
+    while (index < lines.length && (!lines[index].trim() || lines[index].trimStart().startsWith('--'))) index += 1;
+    return index;
+  };
+  let beginCount = 0;
+  let commitCount = 0;
+  for (let index = 0; index < lines.length; index += 1) {
+    if (lines[index].trim() === 'BEGIN;') {
+      beginCount += 1;
+      const next = nextExecutableLine(index + 1);
+      assert.equal(lines[next]?.trim(), 'SET LOCAL search_path = public, pg_catalog;',
+        `BEGIN at line ${index + 1} must set the canonical local search_path first`);
+    }
+    if (lines[index].trim() === 'COMMIT;') {
+      commitCount += 1;
+      const next = nextExecutableLine(index + 1);
+      if (next < lines.length) assert.equal(lines[next].trim(), 'BEGIN;',
+        `COMMIT at line ${index + 1} must be followed by the next scoped phase`);
+    }
+  }
+  assert.ok(beginCount > 0);
+  assert.equal(commitCount, beginCount);
+}
+
+test('initDb completo limita public a cada transacción y preserva search_path y shadow en doble migración',
   { timeout: 180_000 }, async () => {
-    assert.match(initSql, /^SET search_path = public, pg_catalog;/);
-    assert.match(initSql, /RESET search_path;\s*$/);
+    assert.match(initSql, /^BEGIN;\s*SET LOCAL search_path = public, pg_catalog;/);
+    assert.doesNotMatch(initSql, /^SET search_path = public, pg_catalog;/m);
+    assert.doesNotMatch(initSql, /^RESET search_path;/m);
+    assert.match(initSql, /COMMIT;\s*$/);
+    assertTransactionScopedSearchPath(initSql);
 
     await withDatabase(async pool => {
       const client = await pool.connect();
       try {
-        await client.query('CREATE SCHEMA shadow');
-        await client.query(`
-          SET search_path = shadow, public;
-          CREATE TABLE shadow.empresas(id INTEGER PRIMARY KEY, marker TEXT DEFAULT 'shadow');
-          CREATE FUNCTION shadow.now() RETURNS TIMESTAMPTZ LANGUAGE SQL IMMUTABLE
-            AS 'SELECT TIMESTAMPTZ ''2000-01-01T00:00:00Z''';
-          CREATE VIEW shadow.empresas_view AS SELECT id, marker FROM shadow.empresas;
-        `);
-        const shadowBefore = await snapshotNamespace(client, 'shadow');
+        const shadowBefore = await prepareShadow(client);
 
         await client.query(initSql);
-        assert.deepEqual(await snapshotNamespace(client, 'shadow'), shadowBefore);
-        assert.equal((await client.query('SHOW search_path')).rows[0].search_path, '"$user", public');
+        await assertOriginalSearchPathAndShadow(client, shadowBefore);
 
         const publicObjects = await client.query(`
           SELECT COUNT(*)::INTEGER AS count
@@ -197,88 +241,106 @@ test('initDb completo fija public antes de todo DDL, preserva íntegro shadow y 
           assert.notEqual((await client.query('SELECT pg_catalog.to_regclass($1) AS oid', [relation])).rows[0].oid, null);
         }
 
-        await client.query('SET search_path = shadow, public');
         await client.query(initSql);
-        assert.deepEqual(await snapshotNamespace(client, 'shadow'), shadowBefore);
-        assert.equal((await client.query('SHOW search_path')).rows[0].search_path, '"$user", public');
-
-        const failingSql = initSql.replace(/RESET search_path;\s*$/, `
-          BEGIN;
-          CREATE TABLE init_db_rollback_probe(id INTEGER);
-          SELECT 1 / 0;
-          COMMIT;
-          RESET search_path;
-        `);
-        await client.query('SET search_path = shadow, public');
-        await assert.rejects(client.query(failingSql), error => error?.code === '22012');
-        await client.query('ROLLBACK');
-        assert.equal((await client.query("SELECT pg_catalog.to_regclass('public.init_db_rollback_probe') AS oid")).rows[0].oid, null);
-        assert.equal((await client.query("SELECT pg_catalog.to_regclass('shadow.init_db_rollback_probe') AS oid")).rows[0].oid, null);
-        assert.deepEqual(await snapshotNamespace(client, 'shadow'), shadowBefore);
-        assert.equal((await client.query('SHOW search_path')).rows[0].search_path, 'public, pg_catalog');
-        await client.query('RESET search_path');
+        await assertOriginalSearchPathAndShadow(client, shadowBefore);
       } finally {
         client.release();
       }
     });
   });
 
-test('initDb repara exactamente la FK canónica engañosa y preserva constraints ajenos',
+for (const [phase, marker] of [
+  ['temprano', 'SET LOCAL search_path = public, pg_catalog;'],
+  ['medio', 'LOCK TABLE public.wpp_outbox IN ACCESS EXCLUSIVE MODE;'],
+  ['tardío', '-- END WHATSAPP CLOUD MESSAGE PROJECTION MIGRATION\n\nBEGIN;\nSET LOCAL search_path = public, pg_catalog;'],
+]) {
+  test(`initDb restaura search_path original tras error ${phase}, rollback y query posterior`,
+    { timeout: 180_000 }, async () => {
+      await withDatabase(async pool => {
+        const client = await pool.connect();
+        try {
+          const shadowBefore = await prepareShadow(client);
+          const failingSql = injectFailureAfter(initSql.replaceAll('\r\n', '\n'), marker);
+          await assert.rejects(client.query(failingSql), error => error?.code === '22012');
+          await client.query('ROLLBACK');
+          await assertOriginalSearchPathAndShadow(client, shadowBefore);
+          assert.equal((await client.query('SELECT current_schema() AS schema')).rows[0].schema, 'shadow');
+        } finally {
+          client.release();
+        }
+      });
+    });
+}
+
+test('initDb repara cualquier constraint homónima y preserva constraints de otros nombres',
   { timeout: 180_000 }, async () => {
     await withDatabase(async pool => {
       await pool.query(initSql);
       await pool.query(`
         CREATE TABLE public.outbox_reply_parent(id TEXT PRIMARY KEY);
+        CREATE TABLE public.outbox_empresa_parent(id INTEGER PRIMARY KEY);
         ALTER TABLE public.wpp_outbox
           ADD CONSTRAINT wpp_outbox_reply_correlation_fkey
           FOREIGN KEY (reply_correlation_id) REFERENCES public.outbox_reply_parent(id)
           ON DELETE SET NULL;
-        ALTER TABLE public.wpp_outbox DROP CONSTRAINT wpp_outbox_empresa_id_fkey;
         ALTER TABLE public.wpp_outbox
-          ADD CONSTRAINT wpp_outbox_empresa_id_fkey
-          FOREIGN KEY (empresa_id) REFERENCES public.empresas(id)
-          MATCH SIMPLE ON UPDATE CASCADE ON DELETE CASCADE
-          DEFERRABLE INITIALLY DEFERRED NOT VALID;
+          ADD CONSTRAINT wpp_outbox_empresa_alt_fkey
+          FOREIGN KEY (empresa_id) REFERENCES public.outbox_empresa_parent(id);
       `);
-      const unrelatedBefore = (await pool.query(`
+
+      const unrelatedConstraints = async () => (await pool.query(`
         SELECT oid::TEXT, pg_catalog.pg_get_constraintdef(oid, true) AS definition
           FROM pg_catalog.pg_constraint
          WHERE conrelid = 'public.wpp_outbox'::pg_catalog.regclass
-           AND conname = 'wpp_outbox_reply_correlation_fkey'
+           AND conname IN ('wpp_outbox_reply_correlation_fkey', 'wpp_outbox_empresa_alt_fkey')
+         ORDER BY conname
       `)).rows;
+      const unrelatedBefore = await unrelatedConstraints();
 
-      const deceptive = await canonicalOutboxForeignKey(pool);
-      assert.equal(deceptive.rows[0].confupdtype, 'c');
-      assert.equal(deceptive.rows[0].condeferrable, true);
-      assert.equal(deceptive.rows[0].condeferred, true);
-      assert.equal(deceptive.rows[0].convalidated, false);
+      const deceptiveDefinitions = [
+        `ALTER TABLE public.wpp_outbox
+           ADD CONSTRAINT wpp_outbox_empresa_id_fkey
+           CHECK (claim_owner IS NULL OR claim_owner <> '') NOT VALID`,
+        `ALTER TABLE public.wpp_outbox
+           ADD CONSTRAINT wpp_outbox_empresa_id_fkey
+           FOREIGN KEY (claim_owner) REFERENCES public.outbox_reply_parent(id) NOT VALID`,
+        `ALTER TABLE public.wpp_outbox
+           ADD CONSTRAINT wpp_outbox_empresa_id_fkey
+           FOREIGN KEY (empresa_id) REFERENCES public.outbox_empresa_parent(id) NOT VALID`,
+        `ALTER TABLE public.wpp_outbox
+           ADD CONSTRAINT wpp_outbox_empresa_id_fkey
+           FOREIGN KEY (empresa_id) REFERENCES public.empresas(id)
+           MATCH SIMPLE ON UPDATE CASCADE ON DELETE CASCADE
+           DEFERRABLE INITIALLY DEFERRED NOT VALID`,
+      ];
 
-      await pool.query(initSql);
+      for (const deceptiveDefinition of deceptiveDefinitions) {
+        await pool.query('ALTER TABLE public.wpp_outbox DROP CONSTRAINT wpp_outbox_empresa_id_fkey');
+        await pool.query(deceptiveDefinition);
 
-      const canonical = await canonicalOutboxForeignKey(pool);
-      assert.equal(canonical.rowCount, 1);
-      assert.deepEqual(canonical.rows[0], {
-        oid: canonical.rows[0].oid,
-        source_schema: 'public',
-        source_table: 'wpp_outbox',
-        source_columns: ['empresa_id'],
-        target_schema: 'public',
-        target_table: 'empresas',
-        target_columns: ['id'],
-        confupdtype: 'a',
-        confdeltype: 'c',
-        confmatchtype: 's',
-        condeferrable: false,
-        condeferred: false,
-        convalidated: true,
-        definition: 'FOREIGN KEY (empresa_id) REFERENCES empresas(id) ON DELETE CASCADE',
-      });
-      assert.deepEqual((await pool.query(`
-        SELECT oid::TEXT, pg_catalog.pg_get_constraintdef(oid, true) AS definition
-          FROM pg_catalog.pg_constraint
-         WHERE conrelid = 'public.wpp_outbox'::pg_catalog.regclass
-           AND conname = 'wpp_outbox_reply_correlation_fkey'
-      `)).rows, unrelatedBefore);
+        await pool.query(initSql);
+        await pool.query(initSql);
+
+        const canonical = await canonicalOutboxForeignKey(pool);
+        assert.equal(canonical.rowCount, 1);
+        assert.deepEqual(canonical.rows[0], {
+          oid: canonical.rows[0].oid,
+          source_schema: 'public',
+          source_table: 'wpp_outbox',
+          source_columns: ['empresa_id'],
+          target_schema: 'public',
+          target_table: 'empresas',
+          target_columns: ['id'],
+          confupdtype: 'a',
+          confdeltype: 'c',
+          confmatchtype: 's',
+          condeferrable: false,
+          condeferred: false,
+          convalidated: true,
+          definition: 'FOREIGN KEY (empresa_id) REFERENCES empresas(id) ON DELETE CASCADE',
+        });
+        assert.deepEqual(await unrelatedConstraints(), unrelatedBefore);
+      }
     });
   });
 

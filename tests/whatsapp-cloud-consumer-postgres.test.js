@@ -19,9 +19,10 @@ const available = bin && existsSync(join(bin, 'initdb')) && process.getuid?.() !
 const options = { skip: available ? false : 'Requires local PostgreSQL binaries and a non-root user' };
 const initSql = readFileSync(new URL('../initDb.sql', import.meta.url), 'utf8');
 const migrationStart = initSql.indexOf('CREATE TABLE IF NOT EXISTS wpp_outbox (');
-const migrationEnd = initSql.indexOf('CREATE TABLE IF NOT EXISTS push_subs (', migrationStart);
+const migrationEndMarker = '-- END WPP OUTBOX MIGRATION';
+const migrationEnd = initSql.indexOf(migrationEndMarker, migrationStart);
 assert.ok(migrationStart >= 0 && migrationEnd > migrationStart);
-const migrationSql = initSql.slice(migrationStart, migrationEnd);
+const migrationSql = initSql.slice(migrationStart, migrationEnd + migrationEndMarker.length);
 
 async function withDatabase(work) {
   const directory = mkdtempSync(join(process.cwd(), '.whatsapp-cloud-consumer-pg-'));
