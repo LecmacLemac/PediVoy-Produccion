@@ -3858,18 +3858,40 @@ test('trigger UPDATE e índice status canónicos se reparan exactos y preservan 
       FOR EACH STATEMENT EXECUTE FUNCTION public.whatsapp_cloud_messages_capture_outbox_update();
       DROP INDEX public.whatsapp_cloud_events_status_message_idx;
       CREATE INDEX whatsapp_cloud_events_status_message_idx
-        ON public.whatsapp_cloud_events (empresa_id, message_id) INCLUDE (status)
+        ON public.whatsapp_cloud_events (empresa_id, message_id)
+        INCLUDE (status, source_timestamp, received_at)
         WHERE event_kind = 'status'
+          AND status IN ('sent', 'delivered', 'read', 'failed')
+          AND NULLIF(BTRIM(message_id), '') IS NOT NULL
     `);
     await pool.query(projectionSql);
     assert.deepEqual(await triggerShape(pool, 'public.wpp_outbox', 'whatsapp_cloud_messages_capture_update'), canonicalUpdate);
     assert.deepEqual(await triggerShape(pool, 'public.wpp_outbox', 'outbox_unrelated_update'), unrelatedBefore);
 
+    const repairedIndexOid = (await pool.query(`
+      SELECT indexrelid::text AS oid
+        FROM pg_catalog.pg_index
+       WHERE indexrelid = 'public.whatsapp_cloud_events_status_message_idx'::regclass
+    `)).rows[0].oid;
+    await pool.query(`
+      UPDATE pg_catalog.pg_index
+         SET indisvalid = FALSE, indisready = FALSE
+       WHERE indexrelid = 'public.whatsapp_cloud_events_status_message_idx'::regclass
+    `);
+    await pool.query(projectionSql);
+    assert.notEqual((await pool.query(`
+      SELECT indexrelid::text AS oid
+        FROM pg_catalog.pg_index
+       WHERE indexrelid = 'public.whatsapp_cloud_events_status_message_idx'::regclass
+    `)).rows[0].oid, repairedIndexOid, 'invalid/unready canonical indexes must be rebuilt');
+
     const index = (await pool.query(`
-      SELECT table_namespace.nspname AS table_schema, table_row.relname AS table_name,
+      SELECT index_namespace.nspname AS index_schema,
+             table_namespace.nspname AS table_schema, table_row.relname AS table_name,
              access_method.amname, index_row.indisvalid, index_row.indisready,
              index_row.indisunique, index_row.indnkeyatts, index_row.indnatts,
              index_row.indexprs IS NOT NULL AS has_expressions,
+             pg_get_expr(index_row.indexprs, index_row.indrelid) AS expressions,
              index_row.indoption::text AS sort_options,
              array_agg(attribute_row.attname::text ORDER BY key_column.ordinality)
                FILTER (WHERE key_column.ordinality <= index_row.indnkeyatts) AS key_columns,
@@ -3878,6 +3900,7 @@ test('trigger UPDATE e índice status canónicos se reparan exactos y preservan 
              pg_get_expr(index_row.indpred, index_row.indrelid) AS predicate
         FROM pg_catalog.pg_index AS index_row
         JOIN pg_catalog.pg_class AS index_class ON index_class.oid = index_row.indexrelid
+        JOIN pg_catalog.pg_namespace AS index_namespace ON index_namespace.oid = index_class.relnamespace
         JOIN pg_catalog.pg_class AS table_row ON table_row.oid = index_row.indrelid
         JOIN pg_catalog.pg_namespace AS table_namespace ON table_namespace.oid = table_row.relnamespace
         JOIN pg_catalog.pg_am AS access_method ON access_method.oid = index_class.relam
@@ -3885,16 +3908,17 @@ test('trigger UPDATE e índice status canónicos se reparan exactos y preservan 
         LEFT JOIN pg_catalog.pg_attribute AS attribute_row
           ON attribute_row.attrelid = index_row.indrelid AND attribute_row.attnum = key_column.attnum
        WHERE index_row.indexrelid = 'public.whatsapp_cloud_events_status_message_idx'::regclass
-       GROUP BY table_namespace.nspname, table_row.relname, access_method.amname,
+       GROUP BY index_namespace.nspname, table_namespace.nspname, table_row.relname, access_method.amname,
                 index_row.indisvalid, index_row.indisready, index_row.indisunique,
                 index_row.indnkeyatts, index_row.indnatts, index_row.indexprs,
                 index_row.indoption, index_row.indpred, index_row.indrelid
     `)).rows[0];
     assert.deepEqual(index, {
-      table_schema: 'public', table_name: 'whatsapp_cloud_events', amname: 'btree',
-      indisvalid: true, indisready: true, indisunique: false, indnkeyatts: 2, indnatts: 2,
-      has_expressions: false, sort_options: '0 0', key_columns: ['empresa_id', 'message_id'],
-      include_columns: null,
+      index_schema: 'public', table_schema: 'public', table_name: 'whatsapp_cloud_events', amname: 'btree',
+      indisvalid: true, indisready: true, indisunique: false, indnkeyatts: 2, indnatts: 5,
+      has_expressions: true, expressions: 'btrim(message_id)', sort_options: '0 0',
+      key_columns: ['empresa_id', null],
+      include_columns: ['status', 'source_timestamp', 'received_at'],
       predicate: "((event_kind = 'status'::text) AND (status = ANY (ARRAY['sent'::text, 'delivered'::text, 'read'::text, 'failed'::text])) AND (NULLIF(btrim(message_id), ''::text) IS NOT NULL))",
     });
   });
@@ -3974,7 +3998,7 @@ test('backfill y UPDATE outbox serializan ambos ganadores y convergen una sola f
   }
 });
 
-test('lookup status exacto usa índice parcial canónico con 200k filas', async () => {
+test('consulta productiva status normalizada usa índice parcial canónico con 200k filas', async () => {
   await withDatabase(async pool => {
     await pool.query('INSERT INTO empresas(id) VALUES (1), (2)');
     await pool.query(outboxSql);
@@ -3992,17 +4016,28 @@ test('lookup status exacto usa índice parcial canónico con 200k filas', async 
     await pool.query('ANALYZE public.whatsapp_cloud_events');
     const plan = (await pool.query(`
       EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)
-      SELECT status, source_timestamp, received_at
-        FROM public.whatsapp_cloud_events
-       WHERE empresa_id = 1
-         AND message_id = 'wamid.benchmark.200000'
-         AND event_kind = 'status'
-         AND status IN ('sent', 'delivered', 'read', 'failed')
-         AND NULLIF(BTRIM(message_id), '') IS NOT NULL
+      SELECT event.status,
+             CASE
+               WHEN event.source_timestamp ~ '^[0-9]{1,12}$'
+                AND event.source_timestamp::NUMERIC > 0
+                AND event.source_timestamp::NUMERIC <= 253402300799
+                AND pg_catalog.to_timestamp(event.source_timestamp::DOUBLE PRECISION)
+                    BETWEEN event.received_at - INTERVAL '30 days'
+                        AND event.received_at + INTERVAL '5 minutes'
+                 THEN pg_catalog.to_timestamp(event.source_timestamp::DOUBLE PRECISION)
+               ELSE event.received_at
+             END AS status_at
+        FROM public.whatsapp_cloud_events AS event
+       WHERE event.empresa_id = 1
+         AND BTRIM(event.message_id) = NULLIF(BTRIM('  wamid.benchmark.200000  '), '')
+         AND event.event_kind = 'status'
+         AND event.status IN ('sent', 'delivered', 'read', 'failed')
+         AND NULLIF(BTRIM(event.message_id), '') IS NOT NULL
     `)).rows[0]['QUERY PLAN'][0];
     const serialized = JSON.stringify(plan);
     assert.match(serialized, /whatsapp_cloud_events_status_message_idx/);
-    assert.doesNotMatch(serialized, /Seq Scan/);
+    assert.match(serialized, /(?:Index Scan|Index Only Scan|Bitmap Index Scan)/);
+    assert.doesNotMatch(serialized, /Seq Scan|Gather/);
     assert.ok(plan['Execution Time'] < 1000, `exact indexed lookup took ${plan['Execution Time']}ms`);
   });
 });

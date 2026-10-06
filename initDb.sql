@@ -3715,25 +3715,49 @@ BEGIN
     SELECT 1
       FROM pg_catalog.pg_index AS candidate
       JOIN pg_catalog.pg_class AS index_class ON index_class.oid = candidate.indexrelid
+      JOIN pg_catalog.pg_namespace AS index_namespace
+        ON index_namespace.oid = index_class.relnamespace
+      JOIN pg_catalog.pg_class AS table_class ON table_class.oid = candidate.indrelid
+      JOIN pg_catalog.pg_namespace AS table_namespace
+        ON table_namespace.oid = table_class.relnamespace
       JOIN pg_catalog.pg_am AS access_method ON access_method.oid = index_class.relam
      WHERE candidate.indexrelid = canonical_index
+       AND index_namespace.nspname = 'public'
+       AND index_class.relname = 'whatsapp_cloud_events_status_message_idx'
+       AND table_namespace.nspname = 'public'
+       AND table_class.relname = 'whatsapp_cloud_events'
        AND candidate.indrelid = 'public.whatsapp_cloud_events'::pg_catalog.regclass
        AND access_method.amname = 'btree'
        AND candidate.indisvalid
        AND candidate.indisready
        AND NOT candidate.indisunique
-       AND candidate.indexprs IS NULL
        AND candidate.indnkeyatts = 2
-       AND candidate.indnatts = 2
+       AND candidate.indnatts = 5
        AND candidate.indoption::TEXT = '0 0'
        AND (
-         SELECT pg_catalog.array_agg(attribute_row.attname::TEXT ORDER BY key_column.ordinality)
-           FROM pg_catalog.unnest(candidate.indkey) WITH ORDINALITY AS key_column(attnum, ordinality)
+         SELECT pg_catalog.array_agg(
+                  attribute_row.attname::TEXT ORDER BY index_column.ordinality
+                )
+           FROM pg_catalog.unnest(candidate.indkey) WITH ORDINALITY
+             AS index_column(attnum, ordinality)
+           LEFT JOIN pg_catalog.pg_attribute AS attribute_row
+             ON attribute_row.attrelid = candidate.indrelid
+            AND attribute_row.attnum = index_column.attnum
+          WHERE index_column.ordinality <= candidate.indnkeyatts
+       ) IS NOT DISTINCT FROM ARRAY['empresa_id', NULL]::TEXT[]
+       AND pg_catalog.pg_get_expr(candidate.indexprs, candidate.indrelid) =
+         'btrim(message_id)'
+       AND (
+         SELECT pg_catalog.array_agg(
+                  attribute_row.attname::TEXT ORDER BY index_column.ordinality
+                )
+           FROM pg_catalog.unnest(candidate.indkey) WITH ORDINALITY
+             AS index_column(attnum, ordinality)
            JOIN pg_catalog.pg_attribute AS attribute_row
              ON attribute_row.attrelid = candidate.indrelid
-            AND attribute_row.attnum = key_column.attnum
-          WHERE key_column.ordinality <= candidate.indnkeyatts
-       ) = ARRAY['empresa_id', 'message_id']::TEXT[]
+            AND attribute_row.attnum = index_column.attnum
+          WHERE index_column.ordinality > candidate.indnkeyatts
+       ) = ARRAY['status', 'source_timestamp', 'received_at']::TEXT[]
        AND pg_catalog.pg_get_expr(candidate.indpred, candidate.indrelid) =
          '((event_kind = ''status''::text) AND (status = ANY (ARRAY[''sent''::text, ''delivered''::text, ''read''::text, ''failed''::text])) AND (NULLIF(btrim(message_id), ''''::text) IS NOT NULL))'
   ) THEN
@@ -3742,8 +3766,12 @@ BEGIN
   END IF;
 
   IF canonical_index IS NULL THEN
+    -- The productive reconciliation CTE reads these three values after the
+    -- normalized tenant/message lookup, so INCLUDE keeps that lookup covered.
     CREATE INDEX whatsapp_cloud_events_status_message_idx
-      ON public.whatsapp_cloud_events USING btree (empresa_id, message_id)
+      ON public.whatsapp_cloud_events USING btree
+        (empresa_id, (pg_catalog.btrim(message_id)))
+      INCLUDE (status, source_timestamp, received_at)
       WHERE event_kind = 'status'
         AND status IN ('sent', 'delivered', 'read', 'failed')
         AND NULLIF(BTRIM(message_id), '') IS NOT NULL;
