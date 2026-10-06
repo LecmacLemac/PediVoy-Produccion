@@ -126,7 +126,7 @@ function assertSanitizedProviderIdentityDuplicate(error, forbiddenValues = []) {
   assert.equal(error?.code, 'P0001');
   assert.equal(error?.message, 'whatsapp_cloud_messages_provider_identity_duplicates');
   for (const property of ['detail', 'hint']) assert.equal(error?.[property], undefined);
-  for (const property of ['message', 'detail', 'hint', 'where']) {
+  for (const property of Object.getOwnPropertyNames(error ?? {})) {
     const exposed = String(error?.[property] ?? '');
     for (const value of forbiddenValues) {
       assert.equal(exposed.includes(value), false, `${property} must not expose ${value}`);
@@ -531,6 +531,152 @@ test('migración rechaza identidad provider combinada entre proyección y outbox
       FROM public.whatsapp_cloud_messages ORDER BY id`)).rows, beforeProjection);
     assert.deepEqual((await pool.query(`SELECT id::text,meta_message_id,mensaje
       FROM public.wpp_outbox ORDER BY id`)).rows, beforeOutbox);
+  });
+});
+
+test('precheck rechaza la identidad provider efectiva posterior al backfill antes de mutar filas', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (1)');
+    await pool.query(migrationSql);
+    await pool.query(`
+      DROP INDEX public.whatsapp_cloud_messages_provider_message_idx;
+      DROP TRIGGER whatsapp_cloud_messages_capture_insert ON public.wpp_outbox;
+      DROP TRIGGER whatsapp_cloud_messages_capture_update ON public.wpp_outbox
+    `);
+    const outboxId = (await pool.query(`
+      INSERT INTO public.wpp_outbox
+        (empresa_id,telefono,mensaje,status,transport_origin,meta_message_id,created_at)
+      VALUES (1,'549351555020','linked source secret','sent','cloud',
+              '  wamid.target-owned  ','2026-10-06T10:00:00Z')
+      RETURNING id
+    `)).rows[0].id;
+    await pool.query(`
+      INSERT INTO public.whatsapp_cloud_messages
+        (empresa_id,direction,participant_wa_id,outbox_id,source_outbox_id,
+         provider_message_id,message_type,text_body,delivery_status,state_rank,
+         message_at,sent_at,created_at,updated_at)
+      VALUES
+        (1,'outbound','549351555020',$1,$1,'wamid.old-provider','text',
+         'projection A secret','sent',30,'2026-10-06T10:00:00Z','2026-10-06T10:00:00Z',
+         '2026-10-06T10:00:00Z','2026-10-06T10:00:00Z'),
+        (1,'outbound','549351555021',NULL,NULL,'wamid.target-owned','text',
+         'projection B secret','sent',30,'2026-10-06T10:01:00Z','2026-10-06T10:01:00Z',
+         '2026-10-06T10:01:00Z','2026-10-06T10:01:00Z')
+    `, [outboxId]);
+    const beforeProjection = (await pool.query(`
+      SELECT id::text,outbox_id::text,source_outbox_id::text,provider_message_id,text_body
+        FROM public.whatsapp_cloud_messages ORDER BY id
+    `)).rows;
+    const beforeOutbox = (await pool.query(`
+      SELECT id::text,meta_message_id,mensaje FROM public.wpp_outbox ORDER BY id
+    `)).rows;
+
+    await assert.rejects(pool.query(projectionSql), error => assertSanitizedProviderIdentityDuplicate(
+      error,
+      ['wamid.target-owned', 'wamid.old-provider', '549351', 'linked source secret',
+        'projection A secret', 'projection B secret'],
+    ));
+
+    assert.deepEqual((await pool.query(`
+      SELECT id::text,outbox_id::text,source_outbox_id::text,provider_message_id,text_body
+        FROM public.whatsapp_cloud_messages ORDER BY id
+    `)).rows, beforeProjection);
+    assert.deepEqual((await pool.query(`
+      SELECT id::text,meta_message_id,mensaje FROM public.wpp_outbox ORDER BY id
+    `)).rows, beforeOutbox);
+    assert.equal(await pool.query(`
+      SELECT to_regclass('public.whatsapp_cloud_messages_provider_message_idx') AS index_name
+    `).then(result => result.rows[0].index_name), null);
+  });
+});
+
+test('precheck cuenta cada fuente outbound efectiva una vez y respeta elegibilidad y nulos', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (1)');
+    await pool.query(migrationSql);
+    await pool.query(`
+      DROP INDEX public.whatsapp_cloud_messages_provider_message_idx;
+      DROP TRIGGER whatsapp_cloud_messages_capture_insert ON public.wpp_outbox;
+      DROP TRIGGER whatsapp_cloud_messages_capture_update ON public.wpp_outbox
+    `);
+    const outboxes = (await pool.query(`
+      INSERT INTO public.wpp_outbox
+        (empresa_id,telefono,mensaje,status,transport_origin,meta_message_id,created_at)
+      VALUES
+        (1,'549351555030','same source','pending','cloud','  wamid.same-source  ',
+         '2026-10-06T11:00:00Z'),
+        (1,'549351555031','replacement source','pending','cloud','  wamid.replaced  ',
+         '2026-10-06T11:01:00Z'),
+        (1,'549351555032','fallback source','pending','cloud','   ',
+         '2026-10-06T11:02:00Z'),
+        (1,'549351555033','outbox only','pending','cloud',' wamid.outbox-only ',
+         '2026-10-06T11:03:00Z'),
+        (1,'bad phone','ineligible source','pending','cloud','wamid.ignored-source',
+         '2026-10-06T11:04:00Z'),
+        (1,'549351555034','noncloud source','pending','company','wamid.ignored-source',
+         '2026-10-06T11:05:00Z'),
+        (1,'549351555035','null source','pending','cloud',NULL,
+         '2026-10-06T11:06:00Z')
+      RETURNING id,mensaje
+    `)).rows;
+    const idByMessage = new Map(outboxes.map(row => [row.mensaje, row.id]));
+    await pool.query(`
+      INSERT INTO public.whatsapp_cloud_messages
+        (empresa_id,direction,participant_wa_id,outbox_id,source_outbox_id,
+         provider_message_id,message_type,text_body,delivery_status,state_rank,
+         message_at,created_at,updated_at)
+      VALUES
+        (1,'outbound','549351555030',$1,$1,'wamid.same-source','text','same projection',
+         'queued',10,'2026-10-06T11:00:00Z','2026-10-06T11:00:00Z','2026-10-06T11:00:00Z'),
+        (1,'outbound','549351555031',$2,$2,'  wamid.old-replaced  ','text','replacement projection',
+         'queued',10,'2026-10-06T11:01:00Z','2026-10-06T11:01:00Z','2026-10-06T11:01:00Z'),
+        (1,'outbound','549351555032',$3,$3,'  wamid.fallback  ','text','fallback projection',
+         'queued',10,'2026-10-06T11:02:00Z','2026-10-06T11:02:00Z','2026-10-06T11:02:00Z'),
+        (1,'outbound','549351555036',NULL,NULL,'wamid.ignored-source','text','standalone projection',
+         'queued',10,'2026-10-06T11:07:00Z','2026-10-06T11:07:00Z','2026-10-06T11:07:00Z'),
+        (1,'outbound','549351555037',NULL,NULL,'   ','text','null projection',
+         'queued',10,'2026-10-06T11:08:00Z','2026-10-06T11:08:00Z','2026-10-06T11:08:00Z')
+    `, [
+      idByMessage.get('same source'),
+      idByMessage.get('replacement source'),
+      idByMessage.get('fallback source'),
+    ]);
+
+    await pool.query(projectionSql);
+
+    const projectedSources = (await pool.query(`
+      SELECT source_outbox_id::text,provider_message_id
+        FROM public.whatsapp_cloud_messages
+       WHERE source_outbox_id = ANY($1::bigint[])
+       ORDER BY source_outbox_id
+    `, [[
+      idByMessage.get('same source'),
+      idByMessage.get('replacement source'),
+      idByMessage.get('fallback source'),
+      idByMessage.get('outbox only'),
+      idByMessage.get('null source'),
+    ]])).rows;
+    assert.deepEqual(projectedSources, [
+      { source_outbox_id: String(idByMessage.get('same source')), provider_message_id: 'wamid.same-source' },
+      { source_outbox_id: String(idByMessage.get('replacement source')), provider_message_id: 'wamid.replaced' },
+      { source_outbox_id: String(idByMessage.get('fallback source')), provider_message_id: 'wamid.fallback' },
+      { source_outbox_id: String(idByMessage.get('outbox only')), provider_message_id: 'wamid.outbox-only' },
+      { source_outbox_id: String(idByMessage.get('null source')), provider_message_id: null },
+    ]);
+    assert.equal((await pool.query(`
+      SELECT count(*)::int AS total
+        FROM public.whatsapp_cloud_messages
+       WHERE source_outbox_id = ANY($1::bigint[])
+    `, [[idByMessage.get('ineligible source'), idByMessage.get('noncloud source')]])).rows[0].total, 0);
+    assert.deepEqual((await pool.query(`
+      SELECT provider_message_id,count(*)::int AS total
+        FROM public.whatsapp_cloud_messages
+       WHERE text_body IN ('standalone projection','null projection')
+       GROUP BY provider_message_id ORDER BY provider_message_id NULLS LAST
+    `)).rows, [
+      { provider_message_id: 'wamid.ignored-source', total: 1 },
+      { provider_message_id: null, total: 1 },
+    ]);
   });
 });
 

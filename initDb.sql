@@ -3800,31 +3800,41 @@ DECLARE
   );
 BEGIN
   IF EXISTS (
-    WITH provider_identities AS (
-      SELECT message.empresa_id,
-             NULLIF(pg_catalog.BTRIM(message.provider_message_id), '') AS provider_message_id
-        FROM public.whatsapp_cloud_messages AS message
-       WHERE message.direction = 'outbound'
-         AND NULLIF(pg_catalog.BTRIM(message.provider_message_id), '') IS NOT NULL
-      UNION ALL
-      SELECT source.empresa_id,
+    WITH eligible_outboxes AS (
+      SELECT source.id,
+             source.empresa_id,
              NULLIF(pg_catalog.BTRIM(source.meta_message_id), '') AS provider_message_id
         FROM public.wpp_outbox AS source
        WHERE source.transport_origin = 'cloud'
          AND source.empresa_id IS NOT NULL
          AND source.telefono ~ '^[0-9]{6,15}$'
          AND source.mensaje IS NOT NULL
-         AND NULLIF(pg_catalog.BTRIM(source.meta_message_id), '') IS NOT NULL
-         AND NOT EXISTS (
-           SELECT 1
-             FROM public.whatsapp_cloud_messages AS message
-            WHERE message.empresa_id = source.empresa_id
-              AND message.source_outbox_id = source.id
-              AND message.direction = 'outbound'
-         )
+    ), provider_identities AS (
+      SELECT message.empresa_id,
+             COALESCE(
+               source.provider_message_id,
+               NULLIF(pg_catalog.BTRIM(message.provider_message_id), '')
+             ) AS provider_message_id
+        FROM public.whatsapp_cloud_messages AS message
+        LEFT JOIN eligible_outboxes AS source
+          ON source.empresa_id = message.empresa_id
+         AND source.id = message.source_outbox_id
+       WHERE message.direction = 'outbound'
+      UNION ALL
+      SELECT source.empresa_id,
+             source.provider_message_id
+        FROM eligible_outboxes AS source
+       WHERE NOT EXISTS (
+         SELECT 1
+           FROM public.whatsapp_cloud_messages AS message
+          WHERE message.empresa_id = source.empresa_id
+            AND message.source_outbox_id = source.id
+            AND message.direction = 'outbound'
+       )
     )
     SELECT 1
       FROM provider_identities
+     WHERE provider_message_id IS NOT NULL
      GROUP BY empresa_id, provider_message_id
     HAVING pg_catalog.COUNT(*) > 1
   ) THEN
