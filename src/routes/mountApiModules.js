@@ -36,6 +36,7 @@ import { createAnalyticsRouter } from './analytics.js';
 import { createCallCampaignsRouter } from './callCampaigns.js';
 import { createCallsRouter } from './calls.js';
 import { createWhatsAppCloudWebhookRouter } from './whatsappCloudWebhook.js';
+import { createWhatsAppCloudInboxAdminRouter } from './whatsappCloudInboxAdmin.js';
 import { createWhatsAppCloudEventHandler } from '../whatsappCloud/eventRepository.js';
 import { trackingPublicRouter } from '../trackingPublic.js';
 import { resolvePublicPedidoEmpresaId } from '../services/publicPedidoTenant.js';
@@ -145,6 +146,7 @@ export function mountApiModules(app, deps) {
   app.use('/api/admin/licencia', createLicenciasMpRouter({ crearPreferenciaLicencia }));
   app.use('/api/webhooks', createMercadoPagoWebhookRouter({ obtenerPago }));
   mountWhatsAppCloudWebhook(app, { withTransaction });
+  app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({ query, pool, withAuth }));
   app.use('/api/admin/prompts', createPromptsGlobalesRouter());
 
   app.use(
