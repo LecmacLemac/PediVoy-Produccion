@@ -1913,15 +1913,16 @@ CREATE TABLE IF NOT EXISTS wpp_outbox (
 
 BEGIN;
 
+SET LOCAL search_path = pg_catalog, public;
 SET LOCAL lock_timeout = '30s';
 SET LOCAL statement_timeout = '5min';
 
-LOCK TABLE wpp_outbox IN ACCESS EXCLUSIVE MODE;
+LOCK TABLE public.wpp_outbox IN ACCESS EXCLUSIVE MODE;
 
-ALTER TABLE wpp_outbox
+ALTER TABLE public.wpp_outbox
   DROP CONSTRAINT IF EXISTS wpp_outbox_status_check;
 
-ALTER TABLE wpp_outbox
+ALTER TABLE public.wpp_outbox
   ADD COLUMN IF NOT EXISTS claim_owner TEXT,
   ADD COLUMN IF NOT EXISTS claim_epoch BIGINT,
   ADD COLUMN IF NOT EXISTS claim_until TIMESTAMPTZ,
@@ -1948,56 +1949,60 @@ BEGIN
      );
 
   SELECT attnum INTO empresa_attribute
-    FROM pg_attribute
-   WHERE attrelid = 'wpp_outbox'::regclass AND attname = 'empresa_id' AND NOT attisdropped;
+    FROM pg_catalog.pg_attribute
+   WHERE attrelid = 'public.wpp_outbox'::regclass
+     AND attname = 'empresa_id'
+     AND NOT attisdropped;
   SELECT attnum INTO empresa_target_attribute
-    FROM pg_attribute
-   WHERE attrelid = 'empresas'::regclass AND attname = 'id' AND NOT attisdropped;
+    FROM pg_catalog.pg_attribute
+   WHERE attrelid = 'public.empresas'::regclass
+     AND attname = 'id'
+     AND NOT attisdropped;
 
   FOR foreign_key IN
     SELECT conname, confrelid, confkey, confdeltype
-      FROM pg_constraint
-     WHERE conrelid = 'wpp_outbox'::regclass
+      FROM pg_catalog.pg_constraint
+     WHERE conrelid = 'public.wpp_outbox'::regclass
        AND contype = 'f'
        AND conkey = ARRAY[empresa_attribute]::SMALLINT[]
   LOOP
     IF foreign_key.conname <> 'wpp_outbox_empresa_id_fkey'
-       OR foreign_key.confrelid <> 'empresas'::regclass
+       OR foreign_key.confrelid <> 'public.empresas'::regclass
        OR foreign_key.confkey <> ARRAY[empresa_target_attribute]::SMALLINT[]
        OR foreign_key.confdeltype <> 'c' THEN
-      EXECUTE format('ALTER TABLE wpp_outbox DROP CONSTRAINT %I', foreign_key.conname);
+      EXECUTE format('ALTER TABLE public.wpp_outbox DROP CONSTRAINT %I', foreign_key.conname);
     END IF;
   END LOOP;
 
   IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint
-     WHERE conrelid = 'wpp_outbox'::regclass
+    SELECT 1 FROM pg_catalog.pg_constraint
+     WHERE conrelid = 'public.wpp_outbox'::regclass
        AND conname = 'wpp_outbox_empresa_id_fkey'
        AND contype = 'f'
        AND conkey = ARRAY[empresa_attribute]::SMALLINT[]
-       AND confrelid = 'empresas'::regclass
+       AND confrelid = 'public.empresas'::regclass
        AND confkey = ARRAY[empresa_target_attribute]::SMALLINT[]
        AND confdeltype = 'c'
   ) THEN
-    ALTER TABLE wpp_outbox
+    ALTER TABLE public.wpp_outbox
       ADD CONSTRAINT wpp_outbox_empresa_id_fkey
-      FOREIGN KEY (empresa_id) REFERENCES empresas(id) ON DELETE CASCADE NOT VALID;
+      FOREIGN KEY (empresa_id) REFERENCES public.empresas(id) ON DELETE CASCADE NOT VALID;
   END IF;
 
   IF EXISTS (
-    SELECT 1 FROM pg_constraint
-     WHERE conrelid = 'wpp_outbox'::regclass
+    SELECT 1 FROM pg_catalog.pg_constraint
+     WHERE conrelid = 'public.wpp_outbox'::regclass
        AND conname = 'wpp_outbox_empresa_id_fkey'
        AND NOT convalidated
   ) THEN
-    ALTER TABLE wpp_outbox VALIDATE CONSTRAINT wpp_outbox_empresa_id_fkey;
+    ALTER TABLE public.wpp_outbox VALIDATE CONSTRAINT wpp_outbox_empresa_id_fkey;
   END IF;
 END $$;
 
-ALTER TABLE wpp_outbox
+ALTER TABLE public.wpp_outbox
   DROP CONSTRAINT IF EXISTS wpp_outbox_cloud_dispatch_state_check;
 
-UPDATE wpp_outbox
+UPDATE public.wpp_outbox
 SET status = CASE WHEN sent_at IS NOT NULL THEN 'sent' ELSE 'error' END,
     error = CASE
       WHEN sent_at IS NULL THEN COALESCE(error, 'legacy_status_requires_manual_review')
@@ -2009,7 +2014,7 @@ SET status = CASE WHEN sent_at IS NOT NULL THEN 'sent' ELSE 'error' END,
 WHERE status IS NULL
    OR status NOT IN ('pending', 'sending', 'sent', 'error', 'skipped');
 
-UPDATE wpp_outbox
+UPDATE public.wpp_outbox
 SET cloud_dispatch_state = CASE
       WHEN transport_origin IS DISTINCT FROM 'cloud' THEN NULL
       WHEN status = 'sending' THEN CASE
@@ -2037,14 +2042,14 @@ SET cloud_dispatch_state = CASE
       ELSE dispatch_started_at
     END;
 
-UPDATE wpp_outbox
+UPDATE public.wpp_outbox
 SET claim_until = NOW() - INTERVAL '1 second'
 WHERE transport_origin = 'cloud'
   AND status = 'sending'
   AND cloud_dispatch_state = 'pre_dispatch'
   AND claim_until IS NULL;
 
-ALTER TABLE wpp_outbox
+ALTER TABLE public.wpp_outbox
   ALTER COLUMN status SET DEFAULT 'pending',
   ALTER COLUMN status SET NOT NULL,
   ADD CONSTRAINT wpp_outbox_status_check
@@ -2065,35 +2070,36 @@ ALTER TABLE wpp_outbox
       )
     ) NOT VALID;
 
-ALTER TABLE wpp_outbox
+ALTER TABLE public.wpp_outbox
   VALIDATE CONSTRAINT wpp_outbox_status_check;
 
-ALTER TABLE wpp_outbox
+ALTER TABLE public.wpp_outbox
   VALIDATE CONSTRAINT wpp_outbox_cloud_dispatch_state_check;
 
-DROP INDEX IF EXISTS wpp_outbox_pending_claim_idx;
+DROP INDEX IF EXISTS public.wpp_outbox_pending_claim_idx;
 CREATE INDEX wpp_outbox_pending_claim_idx
-  ON wpp_outbox (created_at, id)
+  ON public.wpp_outbox (created_at, id)
   WHERE status = 'pending';
 
-DROP INDEX IF EXISTS wpp_outbox_reply_correlation_uidx;
+DROP INDEX IF EXISTS public.wpp_outbox_reply_correlation_uidx;
 CREATE UNIQUE INDEX wpp_outbox_reply_correlation_uidx
-  ON wpp_outbox (COALESCE(empresa_id, 0), transport_origin, reply_correlation_id)
+  ON public.wpp_outbox (COALESCE(empresa_id, 0), transport_origin, reply_correlation_id)
   WHERE reply_correlation_id IS NOT NULL;
 
-DROP INDEX IF EXISTS wpp_outbox_cloud_pre_dispatch_recovery_idx;
+DROP INDEX IF EXISTS public.wpp_outbox_cloud_pre_dispatch_recovery_idx;
 CREATE INDEX wpp_outbox_cloud_pre_dispatch_recovery_idx
-  ON wpp_outbox (claim_until, created_at, id)
+  ON public.wpp_outbox (claim_until, created_at, id)
   WHERE status = 'sending' AND cloud_dispatch_state = 'pre_dispatch';
 
 COMMIT;
 
 -- BEGIN WHATSAPP CLOUD OPS MIGRATION
 BEGIN;
+SET LOCAL search_path = pg_catalog, public;
 SET LOCAL lock_timeout = '30s';
 SET LOCAL statement_timeout = '5min';
 
-CREATE TABLE IF NOT EXISTS whatsapp_cloud_ops_audit (
+CREATE TABLE IF NOT EXISTS public.whatsapp_cloud_ops_audit (
   id BIGSERIAL PRIMARY KEY,
   outbox_id BIGINT NOT NULL,
   empresa_id INTEGER,
@@ -2114,13 +2120,13 @@ CREATE TABLE IF NOT EXISTS whatsapp_cloud_ops_audit (
 );
 
 CREATE INDEX IF NOT EXISTS whatsapp_cloud_ops_audit_outbox_idx
-  ON whatsapp_cloud_ops_audit (outbox_id, created_at DESC);
+  ON public.whatsapp_cloud_ops_audit (outbox_id, created_at DESC);
 
 CREATE INDEX IF NOT EXISTS whatsapp_cloud_ops_audit_empresa_idx
-  ON whatsapp_cloud_ops_audit (empresa_id, created_at DESC);
+  ON public.whatsapp_cloud_ops_audit (empresa_id, created_at DESC);
 
 CREATE INDEX IF NOT EXISTS wpp_outbox_cloud_ops_idx
-  ON wpp_outbox (transport_origin, status, cloud_dispatch_state, created_at, id)
+  ON public.wpp_outbox (transport_origin, status, cloud_dispatch_state, created_at, id)
   WHERE transport_origin = 'cloud';
 
 COMMIT;

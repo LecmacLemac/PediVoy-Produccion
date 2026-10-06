@@ -35,7 +35,7 @@ const projectionStructureFixture = JSON.parse(readFileSync(
 const tempPrefix = '.whatsapp-cloud-inbox-pg-';
 const createdDirectories = new Set();
 
-async function withDatabase(work) {
+async function withDatabase(work, { bootstrap = true } = {}) {
   const directory = mkdtempSync(join(process.cwd(), tempPrefix));
   createdDirectories.add(directory);
   const listener = net.createServer();
@@ -49,24 +49,26 @@ async function withDatabase(work) {
     execFileSync(join(bin, 'pg_ctl'), ['-D', directory, '-l', join(directory, 'postgres.log'), '-o', `-h 127.0.0.1 -p ${port} -k ''`, '-w', 'start'], { stdio: 'pipe' });
     started = true;
     pool = new pg.Pool({ host: '127.0.0.1', port, user: 'cloud_inbox_test', database: 'postgres' });
-    await pool.query('CREATE TABLE empresas (id INTEGER PRIMARY KEY)');
-    await pool.query(`
-      CREATE TABLE whatsapp_cloud_events (
-        id BIGSERIAL PRIMARY KEY,
-        empresa_id INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
-        event_kind TEXT NOT NULL,
-        dedupe_key TEXT NOT NULL,
-        message_id TEXT NOT NULL,
-        sender_id TEXT,
-        recipient_id TEXT,
-        message_type TEXT,
-        status TEXT,
-        source_timestamp TEXT,
-        event_data JSONB NOT NULL DEFAULT '{}'::jsonb,
-        received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        UNIQUE (empresa_id, dedupe_key)
-      )
-    `);
+    if (bootstrap) {
+      await pool.query('CREATE TABLE empresas (id INTEGER PRIMARY KEY)');
+      await pool.query(`
+        CREATE TABLE whatsapp_cloud_events (
+          id BIGSERIAL PRIMARY KEY,
+          empresa_id INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+          event_kind TEXT NOT NULL,
+          dedupe_key TEXT NOT NULL,
+          message_id TEXT NOT NULL,
+          sender_id TEXT,
+          recipient_id TEXT,
+          message_type TEXT,
+          status TEXT,
+          source_timestamp TEXT,
+          event_data JSONB NOT NULL DEFAULT '{}'::jsonb,
+          received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          UNIQUE (empresa_id, dedupe_key)
+        )
+      `);
+    }
     await work(pool, { directory, port });
   } finally {
     if (pool) await pool.end();
@@ -3096,6 +3098,157 @@ test('search_path shadow,public sólo crea y repara objetos canónicos en public
       "SELECT count(*)::int AS total FROM shadow.whatsapp_cloud_messages",
     )).rows[0].total, 0);
   });
+});
+
+test('initDb completo repara sólo la FK pública de outbox bajo search_path hostil y conserva shadow', async () => {
+  const migrationBegin = outboxSql.indexOf('BEGIN;');
+  const safePath = outboxSql.indexOf('SET LOCAL search_path = pg_catalog, public;', migrationBegin);
+  const firstRepairLookupOrDdl = outboxSql.slice(migrationBegin).search(
+    /(?:LOCK TABLE|ALTER TABLE|FROM pg_catalog\.pg_|'public\.wpp_outbox'::regclass)/,
+  );
+  assert.ok(migrationBegin >= 0 && safePath > migrationBegin
+    && firstRepairLookupOrDdl > safePath - migrationBegin,
+  'transaction-local safe search_path must precede the first outbox repair lookup or DDL');
+
+  await withDatabase(async pool => {
+    await pool.query(initSql);
+    await pool.query(`
+      INSERT INTO public.empresas(nombre) VALUES ('tenant público') RETURNING id
+    `);
+    const publicTenantId = (await pool.query(
+      "SELECT id FROM public.empresas WHERE nombre = 'tenant público'",
+    )).rows[0].id;
+    await pool.query(`
+      INSERT INTO public.wpp_outbox(empresa_id, telefono, mensaje)
+      VALUES ($1, '549351555099', 'public teardown')
+    `, [publicTenantId]);
+    await pool.query(`
+      ALTER TABLE public.wpp_outbox DROP CONSTRAINT wpp_outbox_empresa_id_fkey;
+      ALTER TABLE public.wpp_outbox
+        ADD CONSTRAINT wpp_outbox_empresa_id_fkey
+        FOREIGN KEY (empresa_id) REFERENCES public.empresas(id) ON DELETE RESTRICT;
+
+      CREATE SCHEMA shadow;
+      CREATE TABLE shadow.empresas (LIKE public.empresas INCLUDING ALL);
+      CREATE TABLE shadow.wpp_outbox (LIKE public.wpp_outbox INCLUDING ALL);
+      ALTER TABLE shadow.wpp_outbox DROP CONSTRAINT IF EXISTS wpp_outbox_empresa_id_fkey;
+      ALTER TABLE shadow.wpp_outbox
+        ADD CONSTRAINT wpp_outbox_empresa_id_fkey
+        FOREIGN KEY (empresa_id) REFERENCES shadow.empresas(id) ON DELETE RESTRICT;
+      DROP INDEX IF EXISTS shadow.wpp_outbox_pending_claim_idx;
+      CREATE INDEX wpp_outbox_pending_claim_idx ON shadow.wpp_outbox(id)
+        WHERE status = 'error';
+      INSERT INTO shadow.empresas(id, nombre) VALUES (910001, 'tenant shadow');
+      INSERT INTO shadow.wpp_outbox(id, empresa_id, telefono, mensaje, status)
+      VALUES (920001, 910001, 'shadow-phone', 'shadow-message', 'pending');
+    `);
+
+    const shadowBefore = (await pool.query(`
+      SELECT class_row.oid::text AS oid,
+             namespace_row.nspname AS schema_name,
+             class_row.relname,
+             class_row.relkind,
+             CASE WHEN class_row.relkind = 'i'
+               THEN pg_catalog.pg_get_indexdef(class_row.oid)
+               ELSE NULL
+             END AS definition
+        FROM pg_catalog.pg_class AS class_row
+        JOIN pg_catalog.pg_namespace AS namespace_row
+          ON namespace_row.oid = class_row.relnamespace
+       WHERE namespace_row.nspname = 'shadow'
+         AND (
+           class_row.relname IN ('empresas', 'wpp_outbox')
+           OR class_row.oid IN (
+             SELECT index_row.indexrelid
+               FROM pg_catalog.pg_index AS index_row
+              WHERE index_row.indrelid = 'shadow.wpp_outbox'::pg_catalog.regclass
+           )
+         )
+       ORDER BY class_row.oid
+    `)).rows;
+    const shadowConstraintsBefore = (await pool.query(`
+      SELECT oid::text AS oid, conname, contype,
+             pg_catalog.pg_get_constraintdef(oid, true) AS definition
+        FROM pg_catalog.pg_constraint
+       WHERE conrelid IN (
+         'shadow.empresas'::pg_catalog.regclass,
+         'shadow.wpp_outbox'::pg_catalog.regclass
+       )
+       ORDER BY oid
+    `)).rows;
+
+    const client = await pool.connect();
+    try {
+      await client.query('SET search_path TO shadow, public');
+      await client.query(initSql);
+      await client.query(initSql);
+    } finally {
+      await client.query('RESET search_path').catch(() => {});
+      client.release();
+    }
+
+    const publicForeignKey = (await pool.query(`
+      SELECT constraint_row.confrelid::oid = 'public.empresas'::pg_catalog.regclass::oid AS targets_public,
+             constraint_row.confdeltype,
+             pg_catalog.pg_get_constraintdef(constraint_row.oid, true) AS definition
+        FROM pg_catalog.pg_constraint AS constraint_row
+       WHERE constraint_row.conrelid = 'public.wpp_outbox'::pg_catalog.regclass
+         AND constraint_row.conname = 'wpp_outbox_empresa_id_fkey'
+         AND constraint_row.contype = 'f'
+    `)).rows;
+    assert.deepEqual(publicForeignKey, [{
+      targets_public: true,
+      confdeltype: 'c',
+      definition: 'FOREIGN KEY (empresa_id) REFERENCES empresas(id) ON DELETE CASCADE',
+    }]);
+    assert.deepEqual((await pool.query(`
+      SELECT class_row.oid::text AS oid,
+             namespace_row.nspname AS schema_name,
+             class_row.relname,
+             class_row.relkind,
+             CASE WHEN class_row.relkind = 'i'
+               THEN pg_catalog.pg_get_indexdef(class_row.oid)
+               ELSE NULL
+             END AS definition
+        FROM pg_catalog.pg_class AS class_row
+        JOIN pg_catalog.pg_namespace AS namespace_row
+          ON namespace_row.oid = class_row.relnamespace
+       WHERE namespace_row.nspname = 'shadow'
+         AND (
+           class_row.relname IN ('empresas', 'wpp_outbox')
+           OR class_row.oid IN (
+             SELECT index_row.indexrelid
+               FROM pg_catalog.pg_index AS index_row
+              WHERE index_row.indrelid = 'shadow.wpp_outbox'::pg_catalog.regclass
+           )
+         )
+       ORDER BY class_row.oid
+    `)).rows, shadowBefore);
+    assert.deepEqual((await pool.query(`
+      SELECT oid::text AS oid, conname, contype,
+             pg_catalog.pg_get_constraintdef(oid, true) AS definition
+        FROM pg_catalog.pg_constraint
+       WHERE conrelid IN (
+         'shadow.empresas'::pg_catalog.regclass,
+         'shadow.wpp_outbox'::pg_catalog.regclass
+       )
+       ORDER BY oid
+    `)).rows, shadowConstraintsBefore);
+
+    await pool.query('DELETE FROM public.empresas WHERE id = $1', [publicTenantId]);
+    assert.equal((await pool.query(
+      "SELECT count(*)::int AS total FROM public.wpp_outbox WHERE mensaje = 'public teardown'",
+    )).rows[0].total, 0);
+    assert.deepEqual((await pool.query(`
+      SELECT empresa_id, telefono, mensaje, status
+        FROM shadow.wpp_outbox WHERE id = 920001
+    `)).rows, [{
+      empresa_id: 910001,
+      telefono: 'shadow-phone',
+      mensaje: 'shadow-message',
+      status: 'pending',
+    }]);
+  }, { bootstrap: false });
 });
 
 test('backfill recorre empresas en orden y toma el advisory tenant antes de tocar filas de proyección', () => {
