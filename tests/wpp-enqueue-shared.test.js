@@ -343,16 +343,21 @@ async function collectJsFiles(dir) {
   return nested.flat();
 }
 
-test('inventario: ninguna fuente productiva inserta wpp_outbox fuera de la frontera compartida', async () => {
+test('inventario: existe un solo INSERT productivo a wpp_outbox y vive en la frontera compartida', async () => {
   const srcDir = path.resolve(new URL('../src/', import.meta.url).pathname);
   const allowed = path.resolve(srcDir, 'wpp/enqueue.js');
   const offenders = [];
+  let productiveInsertCount = 0;
 
   for (const file of await collectJsFiles(srcDir)) {
-    if (path.resolve(file) === allowed) continue;
     const source = await readFile(file, 'utf8');
-    if (/INSERT\s+INTO\s+wpp_outbox/i.test(source)) offenders.push(path.relative(srcDir, file));
+    const inserts = source.match(/INSERT\s+INTO\s+wpp_outbox/gi) || [];
+    productiveInsertCount += inserts.length;
+    if (path.resolve(file) !== allowed && inserts.length) {
+      offenders.push(path.relative(srcDir, file));
+    }
   }
 
+  assert.equal(productiveInsertCount, 1);
   assert.deepEqual(offenders.sort(), []);
 });

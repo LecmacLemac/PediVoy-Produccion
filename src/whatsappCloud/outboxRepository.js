@@ -123,23 +123,36 @@ export async function finishCloudOutboxRow({
   const allowedSourceStates = dispatchState === CloudDispatchState.DEFINITIVE_FAILED
     ? [CloudDispatchState.PRE_DISPATCH, CloudDispatchState.DISPATCH_STARTED]
     : [CloudDispatchState.DISPATCH_STARTED];
-  const rows = await query(`
-    UPDATE wpp_outbox
-       SET status = $1,
-           error = $2,
-           sent_at = CASE WHEN $1 = 'sent' THEN COALESCE(sent_at, NOW()) ELSE sent_at END,
-           meta_message_id = $4,
-           cloud_dispatch_state = $6,
-           claim_owner = NULL,
-           claim_epoch = NULL,
-           claim_until = NULL
-     WHERE id = $3
-       AND status = 'sending'
-       AND transport_origin = 'cloud'
-       AND claim_owner = $5
-       AND cloud_dispatch_state = ANY($7::text[])
-    RETURNING id
-  `, [status, errorCode, id, sanitizeMetaMessageId(messageId), owner, dispatchState, allowedSourceStates], { sensitive: true });
+  let rows;
+  try {
+    rows = await query(`
+      UPDATE wpp_outbox
+         SET status = $1,
+             error = $2,
+             sent_at = CASE WHEN $1 = 'sent' THEN COALESCE(sent_at, NOW()) ELSE sent_at END,
+             meta_message_id = $4,
+             cloud_dispatch_state = $6,
+             claim_owner = NULL,
+             claim_epoch = NULL,
+             claim_until = NULL
+       WHERE id = $3
+         AND status = 'sending'
+         AND transport_origin = 'cloud'
+         AND claim_owner = $5
+         AND cloud_dispatch_state = ANY($7::text[])
+      RETURNING id
+    `, [status, errorCode, id, sanitizeMetaMessageId(messageId), owner, dispatchState, allowedSourceStates], { sensitive: true });
+  } catch (error) {
+    const identityConflict = error?.code === '23505';
+    throw Object.assign(
+      new Error(identityConflict
+        ? 'cloud outbox provider identity conflict'
+        : 'cloud outbox update failed'),
+      { code: identityConflict
+        ? 'CLOUD_OUTBOX_PROVIDER_IDENTITY_CONFLICT'
+        : 'CLOUD_OUTBOX_UPDATE_FAILED' },
+    );
+  }
   if (rows.length !== 1) {
     throw Object.assign(new Error('cloud outbox claim perdido'), { code: 'CLOUD_OUTBOX_CLAIM_LOST' });
   }
