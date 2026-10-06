@@ -208,7 +208,7 @@ test('gate estructural fija captura DELETE statement-level antes del commit de i
       'PERFORM public.whatsapp_cloud_messages_lock_projection_cleanup(ARRAY(',
     );
     const firstProjectionLockOrWrite = functionBlock.search(
-      /(?:INSERT INTO public\.whatsapp_cloud_messages|FOR UPDATE OF message)/,
+      /(?:INSERT INTO public\.whatsapp_cloud_messages|whatsapp_cloud_messages_upsert_outbox_locked|FOR UPDATE OF message)/,
     );
     assert.ok(cleanupGuard >= 0 && firstProjectionLockOrWrite > cleanupGuard,
       `${spec.function} must finish cleanup order validation/locking before projection work`);
@@ -3019,7 +3019,8 @@ test('backfill recorre empresas en orden y toma el advisory tenant antes de toca
   assert.ok(tenantLock >= 0 && firstProjectionWrite > tenantLock && firstProjectionRowLock > tenantLock,
     'every tenant advisory lock must precede projection inserts and row locks');
   assert.match(tenantLoop, /ORDER BY event\.id[\s\S]*ON CONFLICT DO NOTHING/i);
-  assert.match(tenantLoop, /ORDER BY outbox\.id[\s\S]*ON CONFLICT DO NOTHING/i);
+  assert.match(tenantLoop,
+    /ORDER BY outbox\.id[\s\S]*whatsapp_cloud_messages_upsert_outbox_locked\([\s\S]*END LOOP/i);
   assert.match(tenantLoop, /ORDER BY message\.id[\s\S]*FOR UPDATE OF message/i);
   assert.doesNotMatch(projectionSql.slice(projectionSql.indexOf('-- CUTOVER CAPTURE COMMITTED; SOURCE SCANS FOLLOW')),
     /SELECT message\.id[\s\S]*ORDER BY message\.id[\s\S]*FOR UPDATE OF message;[\s\S]*WITH status_events/i,
@@ -3672,6 +3673,327 @@ test('locks tenant-scoped serializan estados inversos sin deadlock, aíslan tena
        WHERE locktype = 'advisory'
          AND pid = ANY($1::integer[])
     `, [trackedPids])).rows[0].total, 0, 'transaction advisory locks must be released at commit/rollback');
+  });
+});
+
+test('cutover captura UPDATE outbox antes y después del backfill y cleanup no duplica', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (1)');
+    await pool.query(outboxSql);
+    const { installSql, backfillSql } = projectionCutoverPhases();
+    await pool.query(installSql);
+
+    const beforeId = (await pool.query(`
+      INSERT INTO public.wpp_outbox
+        (empresa_id, telefono, mensaje, status, transport_origin, created_at)
+      VALUES (1, '549351555601', 'cutover before', 'pending', 'cloud', '2026-10-06T10:00:00Z')
+      RETURNING id
+    `)).rows[0].id;
+    await pool.query(`
+      UPDATE public.wpp_outbox
+         SET status = 'sending', cloud_dispatch_state = 'pre_dispatch'
+       WHERE empresa_id = 1 AND id = $1
+    `, [beforeId]);
+    await pool.query(`
+      UPDATE public.wpp_outbox
+         SET status = 'sent', cloud_dispatch_state = 'sent',
+             meta_message_id = 'wamid.cutover-before', sent_at = '2026-10-06T10:01:00Z'
+       WHERE empresa_id = 1 AND id = $1
+    `, [beforeId]);
+    await pool.query(`
+      INSERT INTO public.whatsapp_cloud_events
+        (empresa_id, event_kind, dedupe_key, message_id, recipient_id, status,
+         source_timestamp, event_data, received_at)
+      VALUES
+        (1, 'status', 'cutover-before:delivered', 'wamid.cutover-before', '549351555601',
+         'delivered', extract(epoch from timestamptz '2026-10-06T10:02:00Z')::bigint::text,
+         '{}'::jsonb, '2026-10-06T10:02:01Z'),
+        (1, 'status', 'cutover-before:read', 'wamid.cutover-before', '549351555601',
+         'read', extract(epoch from timestamptz '2026-10-06T10:03:00Z')::bigint::text,
+         '{}'::jsonb, '2026-10-06T10:03:01Z')
+    `);
+    await pool.query(backfillSql);
+
+    const afterId = (await pool.query(`
+      INSERT INTO public.wpp_outbox
+        (empresa_id, telefono, mensaje, status, transport_origin, created_at)
+      VALUES (1, '549351555602', 'cutover after', 'pending', 'cloud', '2026-10-06T11:00:00Z')
+      RETURNING id
+    `)).rows[0].id;
+    await pool.query(`
+      UPDATE public.wpp_outbox
+         SET status = 'sent', cloud_dispatch_state = 'sent',
+             meta_message_id = 'wamid.cutover-after', sent_at = '2026-10-06T11:01:00Z'
+       WHERE empresa_id = 1 AND id = $1
+    `, [afterId]);
+    await pool.query(`
+      INSERT INTO public.whatsapp_cloud_events
+        (empresa_id, event_kind, dedupe_key, message_id, recipient_id, status,
+         source_timestamp, event_data, received_at)
+      VALUES
+        (1, 'status', 'cutover-after:delivered', 'wamid.cutover-after', '549351555602',
+         'delivered', extract(epoch from timestamptz '2026-10-06T11:02:00Z')::bigint::text,
+         '{}'::jsonb, '2026-10-06T11:02:01Z'),
+        (1, 'status', 'cutover-after:read', 'wamid.cutover-after', '549351555602',
+         'read', extract(epoch from timestamptz '2026-10-06T11:03:00Z')::bigint::text,
+         '{}'::jsonb, '2026-10-06T11:03:01Z')
+    `);
+
+    const rows = (await pool.query(`
+      SELECT outbox_id, provider_message_id, delivery_status, state_rank,
+             message_at <= sent_at AS message_before_sent,
+             sent_at <= delivered_at AS sent_before_delivered,
+             delivered_at <= read_at AS delivered_before_read
+        FROM public.whatsapp_cloud_messages
+       WHERE empresa_id = 1 AND outbox_id = ANY($1::bigint[])
+       ORDER BY outbox_id
+    `, [[beforeId, afterId]])).rows;
+    assert.deepEqual(rows, [
+      { outbox_id: String(beforeId), provider_message_id: 'wamid.cutover-before',
+        delivery_status: 'read', state_rank: 50, message_before_sent: true,
+        sent_before_delivered: true, delivered_before_read: true },
+      { outbox_id: String(afterId), provider_message_id: 'wamid.cutover-after',
+        delivery_status: 'read', state_rank: 50, message_before_sent: true,
+        sent_before_delivered: true, delivered_before_read: true },
+    ]);
+
+    await pool.query('DELETE FROM public.wpp_outbox WHERE empresa_id = 1 AND id = ANY($1::bigint[])', [[beforeId, afterId]]);
+    await pool.query(projectionSql);
+    assert.deepEqual((await pool.query(`
+      SELECT provider_message_id, count(*)::int AS total, bool_and(outbox_id IS NULL) AS detached
+        FROM public.whatsapp_cloud_messages
+       WHERE empresa_id = 1 AND provider_message_id LIKE 'wamid.cutover-%'
+       GROUP BY provider_message_id ORDER BY provider_message_id
+    `)).rows, [
+      { provider_message_id: 'wamid.cutover-after', total: 1, detached: true },
+      { provider_message_id: 'wamid.cutover-before', total: 1, detached: true },
+    ]);
+  });
+});
+
+test('UPDATE outbox converge failed/success, ignora columnas ajenas y retries son idempotentes', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (1)');
+    await pool.query(migrationSql);
+    const id = (await pool.query(`
+      INSERT INTO public.wpp_outbox
+        (empresa_id, telefono, mensaje, status, transport_origin, created_at)
+      VALUES (1, '549351555610', 'retry exacto', 'pending', 'cloud', '2026-10-06T12:00:00Z')
+      RETURNING id
+    `)).rows[0].id;
+    const initialUpdatedAt = (await pool.query(
+      'SELECT updated_at FROM public.whatsapp_cloud_messages WHERE empresa_id = 1 AND outbox_id = $1', [id],
+    )).rows[0].updated_at;
+    await pool.query("UPDATE public.wpp_outbox SET claim_owner = 'irrelevant' WHERE empresa_id = 1 AND id = $1", [id]);
+    assert.equal((await pool.query(
+      'SELECT updated_at FROM public.whatsapp_cloud_messages WHERE empresa_id = 1 AND outbox_id = $1', [id],
+    )).rows[0].updated_at.getTime(), initialUpdatedAt.getTime());
+
+    await pool.query(`
+      UPDATE public.wpp_outbox
+         SET status = 'error', cloud_dispatch_state = 'definitive_failed', sent_at = '2026-10-06T12:01:00Z'
+       WHERE empresa_id = 1 AND id = $1
+    `, [id]);
+    await pool.query(`
+      UPDATE public.wpp_outbox
+         SET status = 'sent', cloud_dispatch_state = 'sent', meta_message_id = 'wamid.retry-exacto',
+             sent_at = '2026-10-06T12:02:00Z'
+       WHERE empresa_id = 1 AND id = $1
+    `, [id]);
+    await pool.query(`
+      UPDATE public.wpp_outbox
+         SET status = 'error', cloud_dispatch_state = 'definitive_failed', sent_at = '2026-10-06T12:03:00Z'
+       WHERE empresa_id = 1 AND id = $1
+    `, [id]);
+    await pool.query(`
+      UPDATE public.wpp_outbox
+         SET status = 'sending', cloud_dispatch_state = 'pre_dispatch'
+       WHERE empresa_id = 1 AND id = $1
+    `, [id]);
+    await pool.query(projectionSql);
+
+    assert.deepEqual((await pool.query(`
+      SELECT count(*)::int AS total, min(provider_message_id) AS provider_message_id,
+             min(delivery_status) AS delivery_status, min(state_rank)::int AS state_rank,
+             bool_and(sent_at IS NOT NULL) AS has_sent_at, bool_and(failed_at IS NULL) AS no_failed_at
+        FROM public.whatsapp_cloud_messages
+       WHERE empresa_id = 1 AND outbox_id = $1
+    `, [id])).rows[0], {
+      total: 1, provider_message_id: 'wamid.retry-exacto', delivery_status: 'sent',
+      state_rank: 30, has_sent_at: true, no_failed_at: true,
+    });
+  });
+});
+
+test('trigger UPDATE e índice status canónicos se reparan exactos y preservan objetos ajenos', async () => {
+  await withDatabase(async pool => {
+    await pool.query(migrationSql);
+    await pool.query(`
+      CREATE OR REPLACE FUNCTION public.outbox_unrelated_update()
+      RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$;
+      CREATE TRIGGER outbox_unrelated_update AFTER UPDATE ON public.wpp_outbox
+      FOR EACH ROW EXECUTE FUNCTION public.outbox_unrelated_update()
+    `);
+    const unrelatedBefore = await triggerShape(pool, 'public.wpp_outbox', 'outbox_unrelated_update');
+    const canonicalUpdate = await triggerShape(pool, 'public.wpp_outbox', 'whatsapp_cloud_messages_capture_update');
+    assert.equal(canonicalUpdate.tgenabled, 'O');
+    assert.equal(canonicalUpdate.tgtype, 17);
+    assert.match(canonicalUpdate.function_name, /whatsapp_cloud_messages_capture_outbox_update\(\)$/);
+    assert.match(canonicalUpdate.definition,
+      /^CREATE TRIGGER whatsapp_cloud_messages_capture_update AFTER UPDATE OF empresa_id, telefono, mensaje, status, sent_at, transport_origin, meta_message_id, cloud_dispatch_state ON (?:public\.)?wpp_outbox FOR EACH ROW EXECUTE FUNCTION (?:public\.)?whatsapp_cloud_messages_capture_outbox_update\(\)$/);
+
+    await pool.query(`
+      DROP TRIGGER whatsapp_cloud_messages_capture_update ON public.wpp_outbox;
+      CREATE TRIGGER whatsapp_cloud_messages_capture_update BEFORE UPDATE ON public.wpp_outbox
+      FOR EACH STATEMENT EXECUTE FUNCTION public.whatsapp_cloud_messages_capture_outbox_update();
+      DROP INDEX public.whatsapp_cloud_events_status_message_idx;
+      CREATE INDEX whatsapp_cloud_events_status_message_idx
+        ON public.whatsapp_cloud_events (empresa_id, message_id) INCLUDE (status)
+        WHERE event_kind = 'status'
+    `);
+    await pool.query(projectionSql);
+    assert.deepEqual(await triggerShape(pool, 'public.wpp_outbox', 'whatsapp_cloud_messages_capture_update'), canonicalUpdate);
+    assert.deepEqual(await triggerShape(pool, 'public.wpp_outbox', 'outbox_unrelated_update'), unrelatedBefore);
+
+    const index = (await pool.query(`
+      SELECT table_namespace.nspname AS table_schema, table_row.relname AS table_name,
+             access_method.amname, index_row.indisvalid, index_row.indisready,
+             index_row.indisunique, index_row.indnkeyatts, index_row.indnatts,
+             index_row.indexprs IS NOT NULL AS has_expressions,
+             index_row.indoption::text AS sort_options,
+             array_agg(attribute_row.attname::text ORDER BY key_column.ordinality)
+               FILTER (WHERE key_column.ordinality <= index_row.indnkeyatts) AS key_columns,
+             array_agg(attribute_row.attname::text ORDER BY key_column.ordinality)
+               FILTER (WHERE key_column.ordinality > index_row.indnkeyatts) AS include_columns,
+             pg_get_expr(index_row.indpred, index_row.indrelid) AS predicate
+        FROM pg_catalog.pg_index AS index_row
+        JOIN pg_catalog.pg_class AS index_class ON index_class.oid = index_row.indexrelid
+        JOIN pg_catalog.pg_class AS table_row ON table_row.oid = index_row.indrelid
+        JOIN pg_catalog.pg_namespace AS table_namespace ON table_namespace.oid = table_row.relnamespace
+        JOIN pg_catalog.pg_am AS access_method ON access_method.oid = index_class.relam
+        CROSS JOIN LATERAL unnest(index_row.indkey) WITH ORDINALITY AS key_column(attnum, ordinality)
+        LEFT JOIN pg_catalog.pg_attribute AS attribute_row
+          ON attribute_row.attrelid = index_row.indrelid AND attribute_row.attnum = key_column.attnum
+       WHERE index_row.indexrelid = 'public.whatsapp_cloud_events_status_message_idx'::regclass
+       GROUP BY table_namespace.nspname, table_row.relname, access_method.amname,
+                index_row.indisvalid, index_row.indisready, index_row.indisunique,
+                index_row.indnkeyatts, index_row.indnatts, index_row.indexprs,
+                index_row.indoption, index_row.indpred, index_row.indrelid
+    `)).rows[0];
+    assert.deepEqual(index, {
+      table_schema: 'public', table_name: 'whatsapp_cloud_events', amname: 'btree',
+      indisvalid: true, indisready: true, indisunique: false, indnkeyatts: 2, indnatts: 2,
+      has_expressions: false, sort_options: '0 0', key_columns: ['empresa_id', 'message_id'],
+      include_columns: null,
+      predicate: "((event_kind = 'status'::text) AND (status = ANY (ARRAY['sent'::text, 'delivered'::text, 'read'::text, 'failed'::text])) AND (NULLIF(btrim(message_id), ''::text) IS NOT NULL))",
+    });
+  });
+
+  await withDatabase(async pool => {
+    await pool.query(outboxSql);
+    await pool.query('CREATE TABLE public.index_collision (empresa_id integer, message_id text)');
+    await pool.query('CREATE INDEX whatsapp_cloud_events_status_message_idx ON public.index_collision (empresa_id, message_id)');
+    const before = (await pool.query(`SELECT oid::text, relfilenode::text FROM pg_class WHERE oid = 'public.whatsapp_cloud_events_status_message_idx'::regclass`)).rows[0];
+    await assert.rejects(pool.query(projectionSql), /canonical index name collision/);
+    assert.deepEqual((await pool.query(`SELECT oid::text, relfilenode::text FROM pg_class WHERE oid = 'public.whatsapp_cloud_events_status_message_idx'::regclass`)).rows[0], before);
+  });
+});
+
+test('backfill y UPDATE outbox serializan ambos ganadores y convergen una sola fila', async () => {
+  for (const winner of ['update-first', 'backfill-first']) {
+    await withDatabase(async pool => {
+      await pool.query('INSERT INTO empresas(id) VALUES (1)');
+      await pool.query(outboxSql);
+      const id = (await pool.query(`
+        INSERT INTO public.wpp_outbox
+          (empresa_id, telefono, mensaje, status, transport_origin, created_at)
+        VALUES (1, '549351555620', $1, 'pending', 'cloud', '2026-10-06T13:00:00Z') RETURNING id
+      `, [`race ${winner}`])).rows[0].id;
+      const { installSql, backfillSql } = projectionCutoverPhases();
+      await pool.query(installSql);
+      const writer = await pool.connect();
+      let writerDone = false;
+      try {
+        await writer.query('BEGIN');
+        if (winner === 'update-first') {
+          await writer.query(`
+            UPDATE public.wpp_outbox SET status = 'sent', cloud_dispatch_state = 'sent',
+                   meta_message_id = $2, sent_at = '2026-10-06T13:01:00Z'
+             WHERE empresa_id = 1 AND id = $1
+          `, [id, `wamid.${winner}`]);
+          const backfillPromise = pool.query(backfillSql);
+          await waitUntil(async () => (await pool.query(`
+            SELECT count(*)::int AS total FROM pg_stat_activity
+             WHERE query LIKE '%CUTOVER CAPTURE COMMITTED; SOURCE SCANS FOLLOW%'
+               AND wait_event_type = 'Lock'
+          `)).rows[0].total > 0, 'backfill did not wait behind outbox update');
+          await writer.query('COMMIT');
+          writerDone = true;
+          await backfillPromise;
+        } else {
+          await writer.query('ROLLBACK');
+          writerDone = true;
+          const heldBackfill = backfillSql.replace(
+            '-- TENANT BACKFILL LOCK ACQUIRED',
+            "PERFORM pg_catalog.pg_sleep(0.35);\n    -- TENANT BACKFILL LOCK ACQUIRED",
+          );
+          const backfillPromise = pool.query(heldBackfill);
+          await waitUntil(async () => (await pool.query(`
+            SELECT count(*)::int AS total FROM pg_stat_activity
+             WHERE query LIKE '%PERFORM pg_catalog.pg_sleep(0.35)%' AND wait_event = 'PgSleep'
+          `)).rows[0].total > 0, 'backfill did not retain tenant lock before scan');
+          const updatePromise = pool.query(`
+            UPDATE public.wpp_outbox SET status = 'sent', cloud_dispatch_state = 'sent',
+                   meta_message_id = $2, sent_at = '2026-10-06T13:01:00Z'
+             WHERE empresa_id = 1 AND id = $1
+          `, [id, `wamid.${winner}`]);
+          await Promise.all([backfillPromise, updatePromise]);
+        }
+      } finally {
+        if (!writerDone) await writer.query('ROLLBACK').catch(() => {});
+        writer.release();
+      }
+      assert.deepEqual((await pool.query(`
+        SELECT count(*)::int AS total, min(provider_message_id) AS provider_message_id,
+               min(delivery_status) AS delivery_status, min(state_rank)::int AS state_rank
+          FROM public.whatsapp_cloud_messages WHERE empresa_id = 1 AND outbox_id = $1
+      `, [id])).rows[0], {
+        total: 1, provider_message_id: `wamid.${winner}`, delivery_status: 'sent', state_rank: 30,
+      });
+    });
+  }
+});
+
+test('lookup status exacto usa índice parcial canónico con 200k filas', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (1), (2)');
+    await pool.query(outboxSql);
+    await pool.query(`
+      INSERT INTO public.whatsapp_cloud_events
+        (empresa_id, event_kind, dedupe_key, message_id, status, source_timestamp, event_data, received_at)
+      SELECT CASE WHEN series % 2 = 0 THEN 1 ELSE 2 END,
+             'status', 'benchmark:' || series, 'wamid.benchmark.' || series,
+             (ARRAY['sent','delivered','read','failed'])[(series % 4) + 1],
+             extract(epoch from timestamptz '2026-10-06T14:00:00Z')::bigint::text,
+             '{}'::jsonb, '2026-10-06T14:00:01Z'
+        FROM generate_series(1, 200000) AS series
+    `);
+    await pool.query(projectionSql);
+    await pool.query('ANALYZE public.whatsapp_cloud_events');
+    const plan = (await pool.query(`
+      EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)
+      SELECT status, source_timestamp, received_at
+        FROM public.whatsapp_cloud_events
+       WHERE empresa_id = 1
+         AND message_id = 'wamid.benchmark.200000'
+         AND event_kind = 'status'
+         AND status IN ('sent', 'delivered', 'read', 'failed')
+         AND NULLIF(BTRIM(message_id), '') IS NOT NULL
+    `)).rows[0]['QUERY PLAN'][0];
+    const serialized = JSON.stringify(plan);
+    assert.match(serialized, /whatsapp_cloud_events_status_message_idx/);
+    assert.doesNotMatch(serialized, /Seq Scan/);
+    assert.ok(plan['Execution Time'] < 1000, `exact indexed lookup took ${plan['Execution Time']}ms`);
   });
 });
 
