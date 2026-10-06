@@ -155,15 +155,22 @@ test('gate estructural fija captura DELETE statement-level antes del commit de i
     assert.ok(projectionSql.indexOf(functionBlock) < installCommit,
       `${spec.function} must commit before backfill`);
     assert.match(functionBlock,
+      /current_setting\([\s\S]*whatsapp_cloud_projection_cross_tenant_transaction/i,
+      `${spec.function} must validate a runtime transaction binding before cleanup locks`);
+    assert.match(functionBlock,
       new RegExp(`SELECT DISTINCT deleted\\.empresa_id[\\s\\S]*FROM ${spec.transition} AS deleted[\\s\\S]*ORDER BY deleted\\.empresa_id`));
+    const bindingRead = functionBlock.indexOf("'pedivoy.whatsapp_cloud_projection_empresa_id'");
     const tenantLock = functionBlock.indexOf(
       'PERFORM public.whatsapp_cloud_messages_lock_projection_migration(target_empresa_id);',
     );
     const firstProjectionLockOrWrite = functionBlock.search(
       /(?:INSERT INTO public\.whatsapp_cloud_messages|FOR UPDATE OF message)/,
     );
-    assert.ok(tenantLock >= 0 && firstProjectionLockOrWrite > tenantLock,
-      `${spec.function} must take stable tenant advisory before projection locks/writes`);
+    assert.ok(bindingRead >= 0 && tenantLock > bindingRead && firstProjectionLockOrWrite > tenantLock,
+      `${spec.function} must inspect the binding before any new advisory and lock before projection work`);
+    assert.match(functionBlock,
+      /IF transaction_empresa_id IS NULL OR transaction_empresa_id = '' THEN[\s\S]*whatsapp_cloud_messages_lock_projection_migration/i,
+      `${spec.function} must acquire ordered tenant locks only for pure cleanup transactions`);
     assert.doesNotMatch(functionBlock,
       /whatsapp_cloud_messages_lock_projection\(target_empresa_id\)/,
       `${spec.function} must not use the runtime single-tenant transaction guard`);
@@ -731,6 +738,232 @@ test('cleanup simultáneo de events/outbox serializa tenants y preserva la proye
         (SELECT count(*)::int FROM public.wpp_outbox) AS outbox,
         (SELECT count(*)::int FROM public.whatsapp_cloud_messages) AS projection
     `)).rows[0], { events: 0, outbox: 0, projection: 4 });
+  });
+});
+
+function cleanupDeleteSql(source, tenantOrder) {
+  if (source === 'whatsapp_cloud_events') {
+    return {
+      text: 'DELETE FROM public.whatsapp_cloud_events WHERE empresa_id IN ($1, $2)',
+      values: tenantOrder,
+    };
+  }
+  return {
+    text: "DELETE FROM public.wpp_outbox WHERE empresa_id IN ($1, $2) AND transport_origin = 'cloud'",
+    values: tenantOrder,
+  };
+}
+
+async function assertNoAdvisoryLocks(pool, processIds, message) {
+  assert.equal((await pool.query(`
+    SELECT count(*)::int AS total
+      FROM pg_catalog.pg_locks
+     WHERE locktype = 'advisory'
+       AND pid = ANY($1::integer[])
+  `, [processIds])).rows[0].total, 0, message);
+}
+
+async function assertRuntimeBoundMixedCleanupRace({ source, tenantOrder, winner }) {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (1), (2)');
+    await pool.query(outboxSql);
+    const suffix = `${source}:${tenantOrder.join('-')}:${winner}`;
+    await seedCleanupRaceSources(pool, suffix);
+    await pool.query(projectionSql);
+
+    const runtime = await pool.connect();
+    const cleanup = await pool.connect();
+    const blocker = winner === 'runtime-guard-first' ? await pool.connect() : null;
+    const trackedPids = [runtime.processID, cleanup.processID, blocker?.processID].filter(Boolean);
+    let cleanupDone = false;
+    let blockerDone = false;
+    let rejection;
+    const runtimeDelete = cleanupDeleteSql(source, tenantOrder);
+    const pureCleanupSource = source === 'whatsapp_cloud_events'
+      ? 'wpp_outbox'
+      : 'whatsapp_cloud_events';
+    const pureDelete = cleanupDeleteSql(pureCleanupSource, tenantOrder);
+    try {
+      await runtime.query('BEGIN');
+      await cleanup.query('BEGIN');
+      await runtime.query("SET LOCAL deadlock_timeout = '100ms'; SET LOCAL statement_timeout = '3s'");
+      await cleanup.query("SET LOCAL deadlock_timeout = '100ms'; SET LOCAL statement_timeout = '3s'");
+      await runtime.query(`
+        INSERT INTO public.whatsapp_cloud_events
+          (empresa_id, event_kind, dedupe_key, message_id, sender_id, message_type, event_data)
+        VALUES (2, 'message', $1, $2, '549351555188', 'text',
+                '{"text":{"body":"runtime-bound tenant two"}}'::jsonb)
+      `, [`runtime-bound:${suffix}`, `runtime-bound-${suffix}`]);
+
+      if (blocker) {
+        await blocker.query('BEGIN');
+        await blocker.query('SELECT pg_catalog.pg_advisory_xact_lock(1464550735, 1)');
+      }
+
+      const cleanupPromise = cleanup.query(pureDelete).then(
+        value => ({ value }),
+        error => ({ error }),
+      );
+      await waitUntil(async () => {
+        const wait = (await pool.query(`
+          SELECT wait_event_type, wait_event
+            FROM pg_catalog.pg_stat_activity
+           WHERE pid = $1
+        `, [cleanup.processID])).rows[0];
+        return wait?.wait_event_type === 'Lock' && wait?.wait_event === 'advisory';
+      }, `${suffix}: pure cleanup did not reach its ordered advisory wait`);
+
+      if (winner === 'cleanup-first') {
+        const locks = (await pool.query(`
+          SELECT granted
+            FROM pg_catalog.pg_locks
+           WHERE locktype = 'advisory' AND pid = $1
+           ORDER BY granted DESC
+        `, [cleanup.processID])).rows.map(row => row.granted);
+        assert.deepEqual(locks, [true, false],
+          `${suffix}: pure cleanup must hold tenant 1 before waiting for tenant 2`);
+      }
+
+      const runtimeOutcome = await runtime.query(runtimeDelete).then(
+        value => ({ value }),
+        error => ({ error }),
+      );
+      rejection = runtimeOutcome.error;
+      await runtime.query('ROLLBACK').catch(() => {});
+
+      if (blocker) {
+        await blocker.query('COMMIT');
+        blockerDone = true;
+      }
+      const cleanupOutcome = await cleanupPromise;
+      assert.equal(cleanupOutcome.error, undefined,
+        `${suffix}: pure cleanup must never lose with ${cleanupOutcome.error?.code || 'unknown error'}`);
+      await cleanup.query('COMMIT');
+      cleanupDone = true;
+
+      assert.ok(rejection, `${suffix}: mixed runtime cleanup must reject`);
+      assert.equal(rejection.code, 'P0001');
+      assert.equal(rejection.message, 'whatsapp_cloud_projection_cross_tenant_transaction');
+      assert.notEqual(rejection.code, '40P01');
+    } finally {
+      await runtime.query('ROLLBACK').catch(() => {});
+      if (!cleanupDone) await cleanup.query('ROLLBACK').catch(() => {});
+      if (blocker && !blockerDone) await blocker.query('ROLLBACK').catch(() => {});
+      runtime.release();
+      cleanup.release();
+      blocker?.release();
+    }
+
+    assert.ok(rejection, `${suffix}: mixed cleanup must expose one sanitized error`);
+    for (const property of ['message', 'detail', 'hint', 'schema', 'table', 'constraint']) {
+      const exposed = String(rejection[property] ?? '');
+      assert.equal(exposed.includes('1'), false, `${suffix}: ${property} must not expose tenant 1`);
+      assert.equal(exposed.includes('2'), false, `${suffix}: ${property} must not expose tenant 2`);
+    }
+    assert.deepEqual((await pool.query(`
+      SELECT
+        (SELECT count(*)::int FROM public.${source}
+          WHERE empresa_id IN (1, 2)) AS restored_source_rows,
+        (SELECT count(*)::int FROM public.whatsapp_cloud_events
+          WHERE dedupe_key = $1) AS rolled_back_insert,
+        (SELECT count(*)::int FROM public.whatsapp_cloud_messages
+          WHERE provider_message_id = $2) AS rolled_back_projection
+    `, [`runtime-bound:${suffix}`, `runtime-bound-${suffix}`])).rows[0], {
+      restored_source_rows: source === 'whatsapp_cloud_events' ? 5 : 2,
+      rolled_back_insert: 0,
+      rolled_back_projection: 0,
+    });
+    await assertNoAdvisoryLocks(pool, trackedPids,
+      `${suffix}: commit/rollback must release every transaction advisory`);
+  });
+}
+
+for (const source of ['whatsapp_cloud_events', 'wpp_outbox']) {
+  for (const tenantOrder of [[1, 2], [2, 1]]) {
+    for (const winner of ['cleanup-first', 'runtime-guard-first']) {
+      test(`runtime-bound ${source} ${tenantOrder.join('→')} ${winner} aborta antes del segundo lock`, async () => {
+        await assertRuntimeBoundMixedCleanupRace({ source, tenantOrder, winner });
+      });
+    }
+  }
+}
+
+for (const source of ['whatsapp_cloud_events', 'wpp_outbox']) {
+  test(`runtime-bound ${source} reutiliza el lock del mismo tenant sin namespace nuevo`, async () => {
+    await withDatabase(async pool => {
+      await pool.query('INSERT INTO empresas(id) VALUES (1), (2)');
+      await pool.query(outboxSql);
+      await seedCleanupRaceSources(pool, `same-tenant:${source}`);
+      await pool.query(projectionSql);
+      const client = await pool.connect();
+      const processId = client.processID;
+      try {
+        await client.query('BEGIN');
+        await client.query(`
+          INSERT INTO public.whatsapp_cloud_events
+            (empresa_id, event_kind, dedupe_key, message_id, sender_id, message_type, event_data)
+          VALUES (2, 'message', $1, $2, '549351555189', 'text',
+                  '{"text":{"body":"same bound tenant"}}'::jsonb)
+        `, [`same-bound:${source}`, `same-bound-${source}`]);
+        await client.query(source === 'whatsapp_cloud_events'
+          ? 'DELETE FROM public.whatsapp_cloud_events WHERE empresa_id = 2'
+          : "DELETE FROM public.wpp_outbox WHERE empresa_id = 2 AND transport_origin = 'cloud'");
+        assert.equal((await pool.query(`
+          SELECT count(*)::int AS total
+            FROM pg_catalog.pg_locks
+           WHERE locktype = 'advisory' AND pid = $1 AND granted
+        `, [processId])).rows[0].total, 1,
+        'same-tenant cleanup must retain only the runtime tenant advisory');
+        await client.query('ROLLBACK');
+      } finally {
+        await client.query('ROLLBACK').catch(() => {});
+        client.release();
+      }
+      await assertNoAdvisoryLocks(pool, [processId],
+        `${source}: same-tenant rollback must release the reused advisory`);
+      assert.equal((await pool.query(`
+        SELECT count(*)::int AS total FROM public.${source} WHERE empresa_id = 2
+      `)).rows[0].total, source === 'whatsapp_cloud_events' ? 2 : 1,
+      'same-tenant rollback must restore deleted source rows and remove the runtime insert');
+    });
+  });
+}
+
+test('cleanups puros de tenants disjuntos siguen paralelos y liberan advisories', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (1), (2)');
+    await pool.query(outboxSql);
+    await seedCleanupRaceSources(pool, 'pure-parallel');
+    await pool.query(projectionSql);
+    const tenantOne = await pool.connect();
+    const tenantTwo = await pool.connect();
+    const trackedPids = [tenantOne.processID, tenantTwo.processID];
+    try {
+      await tenantOne.query('BEGIN');
+      await tenantTwo.query('BEGIN');
+      await tenantOne.query('DELETE FROM public.whatsapp_cloud_events WHERE empresa_id = 1');
+      await Promise.race([
+        tenantTwo.query("DELETE FROM public.wpp_outbox WHERE empresa_id = 2 AND transport_origin = 'cloud'"),
+        new Promise((_, reject) => setTimeout(
+          () => reject(new Error('pure cleanup for tenant 2 was blocked by tenant 1')), 500,
+        )),
+      ]);
+      await tenantTwo.query('COMMIT');
+      await tenantOne.query('ROLLBACK');
+    } finally {
+      await tenantOne.query('ROLLBACK').catch(() => {});
+      await tenantTwo.query('ROLLBACK').catch(() => {});
+      tenantOne.release();
+      tenantTwo.release();
+    }
+    await assertNoAdvisoryLocks(pool, trackedPids,
+      'parallel pure cleanup commit/rollback must not leak advisories');
+    assert.equal((await pool.query(
+      'SELECT count(*)::int AS total FROM public.whatsapp_cloud_events WHERE empresa_id = 1',
+    )).rows[0].total, 3, 'rolled-back pure cleanup must restore tenant 1 events');
+    assert.equal((await pool.query(
+      'SELECT count(*)::int AS total FROM public.wpp_outbox WHERE empresa_id = 2',
+    )).rows[0].total, 0, 'committed pure cleanup must remove tenant 2 outbox');
   });
 });
 

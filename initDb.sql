@@ -2697,16 +2697,38 @@ SET search_path = pg_catalog, public
 AS $$
 DECLARE
   target_empresa_id INTEGER;
+  transaction_empresa_id TEXT;
   status_row RECORD;
 BEGIN
+  transaction_empresa_id := pg_catalog.current_setting(
+    'pedivoy.whatsapp_cloud_projection_empresa_id', TRUE
+  );
+  IF transaction_empresa_id IS NULL OR transaction_empresa_id = '' THEN
+    FOR target_empresa_id IN
+      SELECT DISTINCT deleted.empresa_id
+        FROM deleted_rows AS deleted
+       WHERE deleted.empresa_id IS NOT NULL
+       ORDER BY deleted.empresa_id
+    LOOP
+      PERFORM public.whatsapp_cloud_messages_lock_projection_migration(target_empresa_id);
+    END LOOP;
+  ELSIF EXISTS (
+    SELECT 1
+      FROM deleted_rows AS deleted
+     WHERE deleted.empresa_id IS NULL
+        OR deleted.empresa_id::TEXT IS DISTINCT FROM transaction_empresa_id
+  ) THEN
+    RAISE EXCEPTION USING
+      ERRCODE = 'P0001',
+      MESSAGE = 'whatsapp_cloud_projection_cross_tenant_transaction';
+  END IF;
+
   FOR target_empresa_id IN
     SELECT DISTINCT deleted.empresa_id
       FROM deleted_rows AS deleted
      WHERE deleted.empresa_id IS NOT NULL
      ORDER BY deleted.empresa_id
   LOOP
-    PERFORM public.whatsapp_cloud_messages_lock_projection_migration(target_empresa_id);
-
     INSERT INTO public.whatsapp_cloud_messages (
       empresa_id, direction, participant_wa_id, source_event_id,
       provider_message_id, message_type, text_body, media_mime_type,
@@ -2981,16 +3003,38 @@ SET search_path = pg_catalog, public
 AS $$
 DECLARE
   target_empresa_id INTEGER;
+  transaction_empresa_id TEXT;
   message_row RECORD;
 BEGIN
+  transaction_empresa_id := pg_catalog.current_setting(
+    'pedivoy.whatsapp_cloud_projection_empresa_id', TRUE
+  );
+  IF transaction_empresa_id IS NULL OR transaction_empresa_id = '' THEN
+    FOR target_empresa_id IN
+      SELECT DISTINCT deleted.empresa_id
+        FROM deleted_rows AS deleted
+       WHERE deleted.empresa_id IS NOT NULL
+       ORDER BY deleted.empresa_id
+    LOOP
+      PERFORM public.whatsapp_cloud_messages_lock_projection_migration(target_empresa_id);
+    END LOOP;
+  ELSIF EXISTS (
+    SELECT 1
+      FROM deleted_rows AS deleted
+     WHERE deleted.empresa_id IS NULL
+        OR deleted.empresa_id::TEXT IS DISTINCT FROM transaction_empresa_id
+  ) THEN
+    RAISE EXCEPTION USING
+      ERRCODE = 'P0001',
+      MESSAGE = 'whatsapp_cloud_projection_cross_tenant_transaction';
+  END IF;
+
   FOR target_empresa_id IN
     SELECT DISTINCT deleted.empresa_id
       FROM deleted_rows AS deleted
      WHERE deleted.empresa_id IS NOT NULL
      ORDER BY deleted.empresa_id
   LOOP
-    PERFORM public.whatsapp_cloud_messages_lock_projection_migration(target_empresa_id);
-
     INSERT INTO public.whatsapp_cloud_messages (
       empresa_id, direction, participant_wa_id, outbox_id,
       provider_message_id, message_type, text_body, delivery_status, state_rank,
