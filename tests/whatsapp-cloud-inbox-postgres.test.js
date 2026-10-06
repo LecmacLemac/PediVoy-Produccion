@@ -22,6 +22,10 @@ assert.ok(projectionStart >= 0 && projectionEnd > projectionStart, 'initDb.sql m
 const outboxSql = initSql.slice(outboxStart, outboxEnd);
 const projectionSql = initSql.slice(projectionStart, projectionEnd + projectionEndMarker.length);
 const migrationSql = `${outboxSql}\n${projectionSql}`;
+const projectionStructureFixture = JSON.parse(readFileSync(
+  new URL('./fixtures/whatsapp-cloud-message-projection-structure.json', import.meta.url),
+  'utf8',
+));
 const tempPrefix = '.whatsapp-cloud-inbox-pg-';
 const createdDirectories = new Set();
 
@@ -109,7 +113,7 @@ async function indexShape(pool, indexName) {
   `, [indexName])).rows[0];
 }
 
-async function triggerShape(pool, tableName) {
+async function triggerShape(pool, tableName, triggerName = 'whatsapp_cloud_messages_capture_insert') {
   return (await pool.query(`
     SELECT table_namespace.nspname AS table_schema,
            table_row.relname AS table_name,
@@ -123,9 +127,51 @@ async function triggerShape(pool, tableName) {
       JOIN pg_catalog.pg_class AS table_row ON table_row.oid = trigger_row.tgrelid
       JOIN pg_catalog.pg_namespace AS table_namespace ON table_namespace.oid = table_row.relnamespace
      WHERE trigger_row.tgrelid = $1::pg_catalog.regclass
-       AND trigger_row.tgname = 'whatsapp_cloud_messages_capture_insert'
-  `, [tableName])).rows[0];
+       AND trigger_row.tgname = $2
+  `, [tableName, triggerName])).rows[0];
 }
+
+function projectionCutoverPhases() {
+  const scanBoundary = projectionSql.indexOf('-- CUTOVER CAPTURE COMMITTED; SOURCE SCANS FOLLOW');
+  const backfillBegin = projectionSql.lastIndexOf('BEGIN;', scanBoundary);
+  assert.ok(scanBoundary > 0 && backfillBegin > 0,
+    'projection migration must expose separate committed install and backfill transactions');
+  return {
+    installSql: projectionSql.slice(0, backfillBegin),
+    backfillSql: projectionSql.slice(backfillBegin),
+  };
+}
+
+test('gate estructural fija captura DELETE statement-level antes del commit de instalación', () => {
+  const installCommit = projectionSql.indexOf(projectionStructureFixture.installCommitMarker);
+  const backfill = projectionSql.indexOf(projectionStructureFixture.backfillMarker);
+  assert.ok(installCommit > 0 && backfill > installCommit);
+
+  for (const spec of projectionStructureFixture.deleteTriggers) {
+    const functionBlock = projectionSql.match(new RegExp(
+      `CREATE OR REPLACE FUNCTION public\\.${spec.function}\\(\\)[\\s\\S]*?END \\$\\$;`,
+    ))?.[0];
+    assert.ok(functionBlock, `${spec.function} must be installed by the DDL phase`);
+    assert.ok(projectionSql.indexOf(functionBlock) < installCommit,
+      `${spec.function} must commit before backfill`);
+    assert.match(functionBlock,
+      new RegExp(`SELECT DISTINCT deleted\\.empresa_id[\\s\\S]*FROM ${spec.transition} AS deleted[\\s\\S]*ORDER BY deleted\\.empresa_id`));
+    const tenantLock = functionBlock.indexOf(
+      'PERFORM public.whatsapp_cloud_messages_lock_projection_migration(target_empresa_id);',
+    );
+    const firstProjectionLockOrWrite = functionBlock.search(
+      /(?:INSERT INTO public\.whatsapp_cloud_messages|FOR UPDATE OF message)/,
+    );
+    assert.ok(tenantLock >= 0 && firstProjectionLockOrWrite > tenantLock,
+      `${spec.function} must take stable tenant advisory before projection locks/writes`);
+    assert.doesNotMatch(functionBlock,
+      /whatsapp_cloud_messages_lock_projection\(target_empresa_id\)/,
+      `${spec.function} must not use the runtime single-tenant transaction guard`);
+    assert.match(projectionSql, new RegExp(
+      `CREATE TRIGGER ${spec.trigger} AFTER DELETE ON public\\.${spec.table.split('.')[1]} REFERENCING OLD TABLE AS ${spec.transition} FOR EACH STATEMENT EXECUTE FUNCTION public\\.${spec.function}\\(\\)`,
+    ));
+  }
+});
 
 async function seedBackfillSources(pool) {
   await pool.query('INSERT INTO empresas(id) VALUES (1), (2)');
@@ -360,6 +406,32 @@ test('migración repara definición completa de triggers canónicos y preserva t
       canonical.set(tableName, shape);
     }
 
+    for (const [tableName, functionName] of [
+      ['public.whatsapp_cloud_events', 'whatsapp_cloud_messages_capture_event_delete'],
+      ['public.wpp_outbox', 'whatsapp_cloud_messages_capture_outbox_delete'],
+    ]) {
+      const shape = await triggerShape(pool, tableName, 'whatsapp_cloud_messages_capture_delete');
+      assert.deepEqual({
+        table_schema: shape.table_schema,
+        table_name: shape.table_name,
+        tgenabled: shape.tgenabled,
+        tgtype: shape.tgtype,
+        tgisinternal: shape.tgisinternal,
+        arguments: shape.arguments,
+      }, {
+        table_schema: 'public',
+        table_name: tableName.split('.')[1],
+        tgenabled: 'O',
+        tgtype: 8,
+        tgisinternal: false,
+        arguments: '',
+      });
+      assert.match(shape.function_name, new RegExp(`${functionName}\\(\\)$`));
+      assert.match(shape.definition,
+        new RegExp(`^CREATE TRIGGER whatsapp_cloud_messages_capture_delete AFTER DELETE ON (?:public\\.)?${tableName.split('.')[1]} REFERENCING OLD TABLE AS deleted_rows FOR EACH STATEMENT EXECUTE FUNCTION (?:public\\.)?${functionName}\\(\\)$`));
+      canonical.set(`${tableName}:delete`, shape);
+    }
+
     await pool.query(`
       CREATE OR REPLACE FUNCTION public.whatsapp_cloud_messages_wrong_capture()
       RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$
@@ -400,6 +472,24 @@ test('migración repara definición completa de triggers canónicos y preserva t
       }
     }
 
+    for (const [tableName, functionName] of [
+      ['public.whatsapp_cloud_events', 'whatsapp_cloud_messages_capture_event_delete'],
+      ['public.wpp_outbox', 'whatsapp_cloud_messages_capture_outbox_delete'],
+    ]) {
+      await pool.query(`
+        DROP TRIGGER whatsapp_cloud_messages_capture_delete ON ${tableName};
+        CREATE TRIGGER whatsapp_cloud_messages_capture_delete
+          AFTER DELETE ON ${tableName}
+          FOR EACH ROW EXECUTE FUNCTION public.${functionName}()
+      `);
+      await pool.query(projectionSql);
+      assert.deepEqual(
+        await triggerShape(pool, tableName, 'whatsapp_cloud_messages_capture_delete'),
+        canonical.get(`${tableName}:delete`),
+        `${tableName} canonical delete trigger must be restored exactly`,
+      );
+    }
+
     assert.deepEqual((await pool.query(`
       SELECT trigger_row.oid::text AS oid,
              pg_catalog.pg_get_triggerdef(trigger_row.oid, true) AS definition
@@ -425,6 +515,222 @@ test('migración repara definición completa de triggers canónicos y preserva t
       text_body: 'capturado después de reparar',
       delivery_status: 'received',
     });
+  });
+});
+
+async function seedCleanupRaceSources(pool, suffix) {
+  const params = [
+    `cleanup:${suffix}:in-one`, `cleanup-${suffix}-in-one`,
+    `cleanup:${suffix}:in-two`, `cleanup-${suffix}-in-two`,
+    `cleanup:${suffix}:status-one`, `cleanup-${suffix}-out-one`,
+    `cleanup:${suffix}:status-two`, `cleanup-${suffix}-out-two`,
+    `cleanup:${suffix}:status-downgrade`,
+  ];
+  await pool.query(`
+    INSERT INTO public.whatsapp_cloud_events
+      (empresa_id, event_kind, dedupe_key, message_id, sender_id, recipient_id,
+       message_type, status, source_timestamp, event_data, received_at)
+    VALUES
+      (1, 'message', $1, $2, '549351555101', NULL, 'text', NULL, '1760000000',
+       '{"text":{"body":"cleanup inbound one"},"opaque":"must-not-copy-one"}'::jsonb,
+       '2026-10-01T10:00:00Z'),
+      (2, 'message', $3, $4, '549351555102', NULL, 'document', NULL, '1760000001',
+       '{"document":{"id":"opaque-document-id","mime_type":"application/pdf","caption":"cleanup doc","filename":"cleanup.pdf"},"opaque":"must-not-copy-two"}'::jsonb,
+       '2026-10-01T10:00:01Z'),
+      (1, 'status', $5, $6, NULL, '549351555111', NULL, 'read', '1760000030',
+       '{"opaque":"must-not-copy-status-one"}'::jsonb, '2026-10-01T10:00:31Z'),
+      (2, 'status', $7, $8, NULL, '549351555112', NULL, 'delivered', '1760000020',
+       '{"opaque":"must-not-copy-status-two"}'::jsonb, '2026-10-01T10:00:21Z'),
+      (1, 'status', $9, $6, NULL, '549351555111', NULL, 'failed', '1760000040',
+       '{"opaque":"must-not-copy-status-downgrade"}'::jsonb, '2026-10-01T10:00:41Z')
+  `, params);
+  await pool.query(`
+    INSERT INTO public.wpp_outbox
+      (empresa_id, telefono, mensaje, created_at, sent_at, status, transport_origin,
+       meta_message_id, cloud_dispatch_state)
+    VALUES
+      (1, '549351555111', 'cleanup outbound one', '2026-10-01T10:00:00Z',
+       '2026-10-01T10:00:10Z', 'sent', 'cloud', $1, 'sent'),
+      (2, '549351555112', 'cleanup outbound two', '2026-10-01T10:00:00Z',
+       '2026-10-01T10:00:10Z', 'sent', 'cloud', $2, 'sent')
+  `, [params[5], params[7]]);
+}
+
+async function assertCleanupProjection(pool, suffix, { detached = true } = {}) {
+  const rows = (await pool.query(`
+    SELECT empresa_id, direction, provider_message_id, participant_wa_id, message_type,
+           text_body, media_mime_type, media_caption, document_filename,
+           delivery_status, state_rank, source_event_id, outbox_id
+      FROM public.whatsapp_cloud_messages
+     WHERE provider_message_id = ANY($1::text[])
+     ORDER BY empresa_id, direction
+  `, [[
+    `cleanup-${suffix}-in-one`, `cleanup-${suffix}-out-one`,
+    `cleanup-${suffix}-in-two`, `cleanup-${suffix}-out-two`,
+  ]])).rows;
+  assert.equal(rows.length, 4);
+  assert.deepEqual(rows.map(row => [row.empresa_id, row.direction, row.delivery_status, row.state_rank]), [
+    [1, 'inbound', 'received', 0],
+    [1, 'outbound', 'read', 50],
+    [2, 'inbound', 'received', 0],
+    [2, 'outbound', 'delivered', 40],
+  ]);
+  assert.equal(rows.find(row => row.provider_message_id === `cleanup-${suffix}-in-one`).text_body,
+    'cleanup inbound one');
+  assert.deepEqual(rows.find(row => row.provider_message_id === `cleanup-${suffix}-in-two`), {
+    empresa_id: 2,
+    direction: 'inbound',
+    provider_message_id: `cleanup-${suffix}-in-two`,
+    participant_wa_id: '549351555102',
+    message_type: 'document',
+    text_body: null,
+    media_mime_type: 'application/pdf',
+    media_caption: 'cleanup doc',
+    document_filename: 'cleanup.pdf',
+    delivery_status: 'received',
+    state_rank: 0,
+    source_event_id: detached ? null : rows.find(row => row.provider_message_id === `cleanup-${suffix}-in-two`).source_event_id,
+    outbox_id: null,
+  });
+  if (!detached) {
+    assert.match(rows.find(row => row.provider_message_id === `cleanup-${suffix}-in-two`).source_event_id, /^\d+$/);
+  }
+  assert.doesNotMatch(JSON.stringify(rows), /must-not-copy|opaque-document-id/);
+}
+
+test('cleanup DELETE multi-tenant entre commit DDL y backfill conserva inbound/status/outbound durable', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (1), (2)');
+    await pool.query(outboxSql);
+    await seedCleanupRaceSources(pool, 'before');
+    const { installSql, backfillSql } = projectionCutoverPhases();
+
+    await pool.query(installSql);
+    await pool.query('DELETE FROM public.whatsapp_cloud_events WHERE empresa_id IN (2, 1)');
+    await pool.query("DELETE FROM public.wpp_outbox WHERE empresa_id IN (2, 1) AND transport_origin = 'cloud'");
+    assert.deepEqual((await pool.query(`
+      SELECT
+        (SELECT count(*)::int FROM public.whatsapp_cloud_events) AS events,
+        (SELECT count(*)::int FROM public.wpp_outbox) AS outbox
+    `)).rows[0], { events: 0, outbox: 0 });
+    await assertCleanupProjection(pool, 'before');
+
+    await pool.query(backfillSql);
+    await assertCleanupProjection(pool, 'before');
+    assert.equal((await pool.query(
+      'SELECT count(*)::int AS total FROM public.whatsapp_cloud_messages',
+    )).rows[0].total, 4);
+  });
+});
+
+test('cleanup después del backfill es idempotente, monotónico y no restaura fuentes', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (1), (2)');
+    await pool.query(outboxSql);
+    await seedCleanupRaceSources(pool, 'after');
+    await pool.query(projectionSql);
+    await assertCleanupProjection(pool, 'after', { detached: false });
+
+    await pool.query("DELETE FROM public.wpp_outbox WHERE empresa_id IN (2, 1) AND transport_origin = 'cloud'");
+    await pool.query('DELETE FROM public.whatsapp_cloud_events WHERE empresa_id IN (2, 1)');
+    await assertCleanupProjection(pool, 'after');
+    assert.deepEqual((await pool.query(`
+      SELECT
+        (SELECT count(*)::int FROM public.whatsapp_cloud_events) AS events,
+        (SELECT count(*)::int FROM public.wpp_outbox) AS outbox,
+        (SELECT count(*)::int FROM public.whatsapp_cloud_messages) AS projection
+    `)).rows[0], { events: 0, outbox: 0, projection: 4 });
+  });
+});
+
+test('rollback del cleanup DELETE revierte captura y deja fuentes intactas', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (1), (2)');
+    await pool.query(outboxSql);
+    await seedCleanupRaceSources(pool, 'rollback');
+    const { installSql } = projectionCutoverPhases();
+    await pool.query(installSql);
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('DELETE FROM public.whatsapp_cloud_events WHERE empresa_id IN (1, 2)');
+      await client.query("DELETE FROM public.wpp_outbox WHERE empresa_id IN (1, 2) AND transport_origin = 'cloud'");
+      assert.equal((await client.query(
+        'SELECT count(*)::int AS total FROM public.whatsapp_cloud_messages',
+      )).rows[0].total, 4);
+      await client.query('ROLLBACK');
+    } finally {
+      await client.query('ROLLBACK').catch(() => {});
+      client.release();
+    }
+
+    assert.deepEqual((await pool.query(`
+      SELECT
+        (SELECT count(*)::int FROM public.whatsapp_cloud_events) AS events,
+        (SELECT count(*)::int FROM public.wpp_outbox) AS outbox,
+        (SELECT count(*)::int FROM public.whatsapp_cloud_messages) AS projection
+    `)).rows[0], { events: 5, outbox: 2, projection: 0 });
+  });
+});
+
+test('cleanup simultáneo de events/outbox serializa tenants y preserva la proyección', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (1), (2)');
+    await pool.query(outboxSql);
+    await seedCleanupRaceSources(pool, 'simultaneous');
+    const { installSql, backfillSql } = projectionCutoverPhases();
+    await pool.query(installSql);
+
+    const blocker = await pool.connect();
+    const eventCleanup = await pool.connect();
+    const outboxCleanup = await pool.connect();
+    try {
+      await blocker.query('BEGIN');
+      await blocker.query('SELECT pg_catalog.pg_advisory_xact_lock(1464550735, 1)');
+      await eventCleanup.query('BEGIN');
+      await outboxCleanup.query('BEGIN');
+      const eventPromise = eventCleanup.query(
+        'DELETE FROM public.whatsapp_cloud_events WHERE empresa_id IN (2, 1)',
+      ).then(() => 'event');
+      const outboxPromise = outboxCleanup.query(
+        "DELETE FROM public.wpp_outbox WHERE empresa_id IN (2, 1) AND transport_origin = 'cloud'",
+      ).then(() => 'outbox');
+      await waitUntil(async () => {
+        const waits = (await pool.query(`
+          SELECT count(*)::int AS total
+            FROM pg_catalog.pg_stat_activity
+           WHERE pid = ANY($1::int[])
+             AND wait_event_type = 'Lock'
+             AND wait_event = 'advisory'
+        `, [[eventCleanup.processID, outboxCleanup.processID]])).rows[0].total;
+        return waits === 2;
+      }, 'both cleanup statements must reach the tenant advisory barrier');
+      await blocker.query('COMMIT');
+
+      const winner = await Promise.race([eventPromise, outboxPromise]);
+      if (winner === 'event') await eventCleanup.query('COMMIT');
+      else await outboxCleanup.query('COMMIT');
+      await Promise.all([eventPromise, outboxPromise]);
+      if (winner === 'event') await outboxCleanup.query('COMMIT');
+      else await eventCleanup.query('COMMIT');
+    } finally {
+      await blocker.query('ROLLBACK').catch(() => {});
+      await eventCleanup.query('ROLLBACK').catch(() => {});
+      await outboxCleanup.query('ROLLBACK').catch(() => {});
+      blocker.release();
+      eventCleanup.release();
+      outboxCleanup.release();
+    }
+
+    await pool.query(backfillSql);
+    await assertCleanupProjection(pool, 'simultaneous');
+    assert.deepEqual((await pool.query(`
+      SELECT
+        (SELECT count(*)::int FROM public.whatsapp_cloud_events) AS events,
+        (SELECT count(*)::int FROM public.wpp_outbox) AS outbox,
+        (SELECT count(*)::int FROM public.whatsapp_cloud_messages) AS projection
+    `)).rows[0], { events: 0, outbox: 0, projection: 4 });
   });
 });
 
@@ -2054,8 +2360,10 @@ test('backfill recorre empresas en orden y toma el advisory tenant antes de toca
 
 test('todo DDL termina confirmado antes del primer advisory tenant retenido', () => {
   const ddlCommit = projectionSql.indexOf('-- CLOUD PROJECTION DDL COMPLETE; COMMIT BEFORE TENANT DML');
+  const scanBoundary = projectionSql.indexOf('-- CUTOVER CAPTURE COMMITTED; SOURCE SCANS FOLLOW');
   const firstTenantAdvisory = projectionSql.indexOf(
     'PERFORM public.whatsapp_cloud_messages_lock_projection_migration(target_empresa_id);',
+    scanBoundary,
   );
   assert.ok(ddlCommit >= 0 && firstTenantAdvisory > ddlCommit,
     'all source/projection DDL must commit before any retained tenant advisory is acquired');

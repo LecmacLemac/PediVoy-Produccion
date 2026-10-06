@@ -2690,6 +2690,388 @@ BEGIN
   RETURN NEW;
 END $$;
 
+CREATE OR REPLACE FUNCTION public.whatsapp_cloud_messages_capture_event_delete()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SET search_path = pg_catalog, public
+AS $$
+DECLARE
+  target_empresa_id INTEGER;
+  status_row RECORD;
+BEGIN
+  FOR target_empresa_id IN
+    SELECT DISTINCT deleted.empresa_id
+      FROM deleted_rows AS deleted
+     WHERE deleted.empresa_id IS NOT NULL
+     ORDER BY deleted.empresa_id
+  LOOP
+    PERFORM public.whatsapp_cloud_messages_lock_projection_migration(target_empresa_id);
+
+    INSERT INTO public.whatsapp_cloud_messages (
+      empresa_id, direction, participant_wa_id, source_event_id,
+      provider_message_id, message_type, text_body, media_mime_type,
+      media_caption, document_filename, delivery_status, state_rank, message_at,
+      created_at, updated_at
+    )
+    SELECT deleted.empresa_id,
+           'inbound',
+           deleted.sender_id,
+           NULL,
+           NULLIF(BTRIM(deleted.message_id), ''),
+           deleted.message_type,
+           CASE WHEN deleted.message_type = 'text'
+                  AND pg_catalog.jsonb_typeof(deleted.event_data->'text'->'body') = 'string'
+             THEN LEFT(deleted.event_data->'text'->>'body', 4096) END,
+           CASE WHEN deleted.message_type IN ('image', 'document')
+                  AND pg_catalog.jsonb_typeof(deleted.event_data->deleted.message_type->'mime_type') = 'string'
+             THEN NULLIF(LEFT(deleted.event_data->deleted.message_type->>'mime_type', 255), '') END,
+           CASE WHEN deleted.message_type IN ('image', 'document')
+                  AND pg_catalog.jsonb_typeof(deleted.event_data->deleted.message_type->'caption') = 'string'
+             THEN LEFT(deleted.event_data->deleted.message_type->>'caption', 1024) END,
+           CASE WHEN deleted.message_type = 'document'
+                  AND pg_catalog.jsonb_typeof(deleted.event_data->'document'->'filename') = 'string'
+             THEN LEFT(deleted.event_data->'document'->>'filename', 255) END,
+           'received',
+           0,
+           CASE
+             WHEN deleted.source_timestamp ~ '^[0-9]{1,12}$'
+              AND deleted.source_timestamp::NUMERIC > 0
+              AND deleted.source_timestamp::NUMERIC <= 253402300799
+              AND pg_catalog.to_timestamp(deleted.source_timestamp::DOUBLE PRECISION)
+                  BETWEEN deleted.received_at - INTERVAL '30 days'
+                      AND deleted.received_at + INTERVAL '5 minutes'
+               THEN pg_catalog.to_timestamp(deleted.source_timestamp::DOUBLE PRECISION)
+             ELSE deleted.received_at
+           END,
+           deleted.received_at,
+           deleted.received_at
+      FROM deleted_rows AS deleted
+     WHERE deleted.empresa_id = target_empresa_id
+       AND deleted.event_kind = 'message'
+       AND deleted.message_type IN ('text', 'image', 'document')
+       AND deleted.sender_id ~ '^[0-9]{6,15}$'
+       AND (deleted.message_type <> 'text'
+         OR pg_catalog.jsonb_typeof(deleted.event_data->'text'->'body') = 'string')
+       AND NOT EXISTS (
+         SELECT 1
+           FROM public.whatsapp_cloud_messages AS projected
+          WHERE projected.empresa_id = deleted.empresa_id
+            AND projected.direction = 'inbound'
+            AND projected.participant_wa_id = deleted.sender_id
+            AND projected.provider_message_id IS NOT DISTINCT FROM NULLIF(BTRIM(deleted.message_id), '')
+            AND projected.message_type = deleted.message_type
+            AND projected.message_at = CASE
+              WHEN deleted.source_timestamp ~ '^[0-9]{1,12}$'
+               AND deleted.source_timestamp::NUMERIC > 0
+               AND deleted.source_timestamp::NUMERIC <= 253402300799
+               AND pg_catalog.to_timestamp(deleted.source_timestamp::DOUBLE PRECISION)
+                   BETWEEN deleted.received_at - INTERVAL '30 days'
+                       AND deleted.received_at + INTERVAL '5 minutes'
+                THEN pg_catalog.to_timestamp(deleted.source_timestamp::DOUBLE PRECISION)
+              ELSE deleted.received_at
+            END
+       )
+     ORDER BY deleted.id
+    ON CONFLICT DO NOTHING;
+
+    INSERT INTO public.whatsapp_cloud_messages (
+      empresa_id, direction, participant_wa_id, outbox_id,
+      provider_message_id, message_type, text_body, delivery_status, state_rank,
+      message_at, sent_at, failed_at, created_at, updated_at
+    )
+    SELECT outbox.empresa_id,
+           'outbound',
+           outbox.telefono,
+           NULL,
+           NULLIF(BTRIM(outbox.meta_message_id), ''),
+           'text',
+           LEFT(outbox.mensaje, 4096),
+           CASE
+             WHEN outbox.status = 'pending' THEN 'queued'
+             WHEN outbox.status = 'sending' THEN 'sending'
+             WHEN outbox.status = 'sent' THEN 'sent'
+             WHEN outbox.status = 'error' AND outbox.cloud_dispatch_state = 'manual_retryable' THEN 'manual_retry'
+             WHEN outbox.status = 'error' AND outbox.cloud_dispatch_state = 'outcome_unknown' THEN 'outcome_unknown'
+             ELSE 'failed'
+           END,
+           CASE
+             WHEN outbox.status = 'pending' THEN 10
+             WHEN outbox.status = 'sending' THEN 20
+             WHEN outbox.status = 'sent' THEN 30
+             WHEN outbox.status = 'error' AND outbox.cloud_dispatch_state = 'manual_retryable' THEN 15
+             ELSE 25
+           END,
+           outbox.created_at,
+           CASE WHEN outbox.status = 'sent'
+             THEN GREATEST(outbox.created_at, COALESCE(outbox.sent_at, outbox.created_at))
+             WHEN outbox.status IN ('error', 'skipped')
+              AND outbox.cloud_dispatch_state IS DISTINCT FROM 'manual_retryable'
+              AND outbox.cloud_dispatch_state IS DISTINCT FROM 'outcome_unknown' THEN NULL
+             ELSE outbox.sent_at END,
+           CASE WHEN outbox.status IN ('error', 'skipped')
+                  AND outbox.cloud_dispatch_state IS DISTINCT FROM 'manual_retryable'
+                  AND outbox.cloud_dispatch_state IS DISTINCT FROM 'outcome_unknown'
+             THEN GREATEST(outbox.created_at, COALESCE(outbox.sent_at, outbox.created_at)) END,
+           outbox.created_at,
+           COALESCE(outbox.sent_at, outbox.created_at)
+      FROM public.wpp_outbox AS outbox
+     WHERE outbox.empresa_id = target_empresa_id
+       AND outbox.transport_origin = 'cloud'
+       AND outbox.telefono ~ '^[0-9]{6,15}$'
+       AND outbox.mensaje IS NOT NULL
+       AND EXISTS (
+         SELECT 1 FROM deleted_rows AS deleted
+          WHERE deleted.empresa_id = outbox.empresa_id
+            AND deleted.event_kind = 'status'
+            AND deleted.status IN ('sent', 'delivered', 'read', 'failed')
+            AND NULLIF(BTRIM(deleted.message_id), '') = NULLIF(BTRIM(outbox.meta_message_id), '')
+       )
+     ORDER BY outbox.id
+    ON CONFLICT DO NOTHING;
+
+    FOR status_row IN
+      SELECT deleted.message_id AS provider_message_id,
+             (array_agg(deleted.status ORDER BY
+               CASE deleted.status WHEN 'read' THEN 50 WHEN 'delivered' THEN 40
+                                   WHEN 'sent' THEN 30 WHEN 'failed' THEN 25 ELSE 0 END DESC,
+               CASE
+                 WHEN deleted.source_timestamp ~ '^[0-9]{1,12}$'
+                  AND deleted.source_timestamp::NUMERIC > 0
+                  AND deleted.source_timestamp::NUMERIC <= 253402300799
+                  AND pg_catalog.to_timestamp(deleted.source_timestamp::DOUBLE PRECISION)
+                      BETWEEN deleted.received_at - INTERVAL '30 days'
+                          AND deleted.received_at + INTERVAL '5 minutes'
+                   THEN pg_catalog.to_timestamp(deleted.source_timestamp::DOUBLE PRECISION)
+                 ELSE deleted.received_at
+               END DESC))[1] AS latest_status,
+             MAX(CASE deleted.status WHEN 'read' THEN 50 WHEN 'delivered' THEN 40
+                                     WHEN 'sent' THEN 30 WHEN 'failed' THEN 25 ELSE 0 END) AS latest_rank,
+             MIN(CASE
+               WHEN deleted.source_timestamp ~ '^[0-9]{1,12}$'
+                AND deleted.source_timestamp::NUMERIC > 0
+                AND deleted.source_timestamp::NUMERIC <= 253402300799
+                AND pg_catalog.to_timestamp(deleted.source_timestamp::DOUBLE PRECISION)
+                    BETWEEN deleted.received_at - INTERVAL '30 days'
+                        AND deleted.received_at + INTERVAL '5 minutes'
+                 THEN pg_catalog.to_timestamp(deleted.source_timestamp::DOUBLE PRECISION)
+               ELSE deleted.received_at
+             END) FILTER (WHERE deleted.status = 'sent') AS sent_at,
+             MIN(CASE
+               WHEN deleted.source_timestamp ~ '^[0-9]{1,12}$'
+                AND deleted.source_timestamp::NUMERIC > 0
+                AND deleted.source_timestamp::NUMERIC <= 253402300799
+                AND pg_catalog.to_timestamp(deleted.source_timestamp::DOUBLE PRECISION)
+                    BETWEEN deleted.received_at - INTERVAL '30 days'
+                        AND deleted.received_at + INTERVAL '5 minutes'
+                 THEN pg_catalog.to_timestamp(deleted.source_timestamp::DOUBLE PRECISION)
+               ELSE deleted.received_at
+             END) FILTER (WHERE deleted.status = 'delivered') AS delivered_at,
+             MIN(CASE
+               WHEN deleted.source_timestamp ~ '^[0-9]{1,12}$'
+                AND deleted.source_timestamp::NUMERIC > 0
+                AND deleted.source_timestamp::NUMERIC <= 253402300799
+                AND pg_catalog.to_timestamp(deleted.source_timestamp::DOUBLE PRECISION)
+                    BETWEEN deleted.received_at - INTERVAL '30 days'
+                        AND deleted.received_at + INTERVAL '5 minutes'
+                 THEN pg_catalog.to_timestamp(deleted.source_timestamp::DOUBLE PRECISION)
+               ELSE deleted.received_at
+             END) FILTER (WHERE deleted.status = 'read') AS read_at,
+             MIN(CASE
+               WHEN deleted.source_timestamp ~ '^[0-9]{1,12}$'
+                AND deleted.source_timestamp::NUMERIC > 0
+                AND deleted.source_timestamp::NUMERIC <= 253402300799
+                AND pg_catalog.to_timestamp(deleted.source_timestamp::DOUBLE PRECISION)
+                    BETWEEN deleted.received_at - INTERVAL '30 days'
+                        AND deleted.received_at + INTERVAL '5 minutes'
+                 THEN pg_catalog.to_timestamp(deleted.source_timestamp::DOUBLE PRECISION)
+               ELSE deleted.received_at
+             END) FILTER (WHERE deleted.status = 'failed') AS failed_at,
+             MAX(CASE
+               WHEN deleted.source_timestamp ~ '^[0-9]{1,12}$'
+                AND deleted.source_timestamp::NUMERIC > 0
+                AND deleted.source_timestamp::NUMERIC <= 253402300799
+                AND pg_catalog.to_timestamp(deleted.source_timestamp::DOUBLE PRECISION)
+                    BETWEEN deleted.received_at - INTERVAL '30 days'
+                        AND deleted.received_at + INTERVAL '5 minutes'
+                 THEN pg_catalog.to_timestamp(deleted.source_timestamp::DOUBLE PRECISION)
+               ELSE deleted.received_at
+             END) AS updated_at
+        FROM deleted_rows AS deleted
+       WHERE deleted.empresa_id = target_empresa_id
+         AND deleted.event_kind = 'status'
+         AND deleted.status IN ('sent', 'delivered', 'read', 'failed')
+         AND NULLIF(BTRIM(deleted.message_id), '') IS NOT NULL
+       GROUP BY deleted.message_id
+       ORDER BY deleted.message_id
+    LOOP
+      WITH locked AS (
+        SELECT message.*,
+               status_row.latest_status AS incoming_status,
+               status_row.latest_rank AS incoming_rank,
+               status_row.sent_at AS incoming_sent_at,
+               status_row.delivered_at AS incoming_delivered_at,
+               status_row.read_at AS incoming_read_at,
+               status_row.failed_at AS incoming_failed_at,
+               status_row.updated_at AS incoming_updated_at,
+               GREATEST(message.state_rank, status_row.latest_rank) AS winning_rank,
+               CASE WHEN status_row.latest_rank > message.state_rank
+                 THEN status_row.latest_status ELSE message.delivery_status END AS winning_status
+          FROM public.whatsapp_cloud_messages AS message
+         WHERE message.empresa_id = target_empresa_id
+           AND message.direction = 'outbound'
+           AND message.provider_message_id = status_row.provider_message_id
+         FOR UPDATE OF message
+      ), sent_timeline AS (
+        SELECT locked.*,
+               CASE
+                 WHEN winning_rank >= 30 THEN GREATEST(
+                   message_at,
+                   LEAST(sent_at, incoming_sent_at, incoming_delivered_at,
+                         incoming_read_at, incoming_updated_at)
+                 )
+                 WHEN winning_status = 'failed' THEN NULL
+                 ELSE sent_at
+               END AS canonical_sent_at
+          FROM locked
+      ), delivered_timeline AS (
+        SELECT sent_timeline.*,
+               CASE WHEN winning_rank >= 40 THEN GREATEST(
+                 canonical_sent_at,
+                 LEAST(delivered_at, incoming_delivered_at, incoming_read_at)
+               )
+               WHEN winning_status IN ('failed', 'sent') THEN NULL
+               ELSE delivered_at END AS canonical_delivered_at
+          FROM sent_timeline
+      ), canonical AS (
+        SELECT delivered_timeline.*,
+               CASE WHEN winning_rank >= 50 THEN GREATEST(
+                 canonical_delivered_at,
+                 LEAST(read_at, incoming_read_at)
+               )
+               WHEN winning_status IN ('failed', 'sent', 'delivered') THEN NULL
+               ELSE read_at END AS canonical_read_at,
+               CASE WHEN winning_status = 'failed' THEN GREATEST(
+                 message_at,
+                 LEAST(failed_at, incoming_failed_at, incoming_updated_at)
+               )
+               WHEN winning_rank >= 30 THEN NULL
+               ELSE failed_at END AS canonical_failed_at
+          FROM delivered_timeline
+      )
+      UPDATE public.whatsapp_cloud_messages AS message
+         SET delivery_status = canonical.winning_status,
+             state_rank = canonical.winning_rank,
+             sent_at = canonical.canonical_sent_at,
+             delivered_at = canonical.canonical_delivered_at,
+             read_at = canonical.canonical_read_at,
+             failed_at = canonical.canonical_failed_at,
+             updated_at = GREATEST(canonical.updated_at, canonical.incoming_updated_at)
+        FROM canonical
+       WHERE message.id = canonical.id
+         AND canonical.incoming_rank >= message.state_rank;
+    END LOOP;
+  END LOOP;
+  RETURN NULL;
+END $$;
+
+CREATE OR REPLACE FUNCTION public.whatsapp_cloud_messages_capture_outbox_delete()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SET search_path = pg_catalog, public
+AS $$
+DECLARE
+  target_empresa_id INTEGER;
+  message_row RECORD;
+BEGIN
+  FOR target_empresa_id IN
+    SELECT DISTINCT deleted.empresa_id
+      FROM deleted_rows AS deleted
+     WHERE deleted.empresa_id IS NOT NULL
+     ORDER BY deleted.empresa_id
+  LOOP
+    PERFORM public.whatsapp_cloud_messages_lock_projection_migration(target_empresa_id);
+
+    INSERT INTO public.whatsapp_cloud_messages (
+      empresa_id, direction, participant_wa_id, outbox_id,
+      provider_message_id, message_type, text_body, delivery_status, state_rank,
+      message_at, sent_at, failed_at, created_at, updated_at
+    )
+    SELECT deleted.empresa_id,
+           'outbound',
+           deleted.telefono,
+           NULL,
+           NULLIF(BTRIM(deleted.meta_message_id), ''),
+           'text',
+           LEFT(deleted.mensaje, 4096),
+           CASE
+             WHEN deleted.status = 'pending' THEN 'queued'
+             WHEN deleted.status = 'sending' THEN 'sending'
+             WHEN deleted.status = 'sent' THEN 'sent'
+             WHEN deleted.status = 'error' AND deleted.cloud_dispatch_state = 'manual_retryable' THEN 'manual_retry'
+             WHEN deleted.status = 'error' AND deleted.cloud_dispatch_state = 'outcome_unknown' THEN 'outcome_unknown'
+             ELSE 'failed'
+           END,
+           CASE
+             WHEN deleted.status = 'pending' THEN 10
+             WHEN deleted.status = 'sending' THEN 20
+             WHEN deleted.status = 'sent' THEN 30
+             WHEN deleted.status = 'error' AND deleted.cloud_dispatch_state = 'manual_retryable' THEN 15
+             ELSE 25
+           END,
+           deleted.created_at,
+           CASE WHEN deleted.status = 'sent'
+             THEN GREATEST(deleted.created_at, COALESCE(deleted.sent_at, deleted.created_at))
+             WHEN deleted.status IN ('error', 'skipped')
+              AND deleted.cloud_dispatch_state IS DISTINCT FROM 'manual_retryable'
+              AND deleted.cloud_dispatch_state IS DISTINCT FROM 'outcome_unknown' THEN NULL
+             ELSE deleted.sent_at END,
+           CASE WHEN deleted.status IN ('error', 'skipped')
+                  AND deleted.cloud_dispatch_state IS DISTINCT FROM 'manual_retryable'
+                  AND deleted.cloud_dispatch_state IS DISTINCT FROM 'outcome_unknown'
+             THEN GREATEST(deleted.created_at, COALESCE(deleted.sent_at, deleted.created_at)) END,
+           deleted.created_at,
+           COALESCE(deleted.sent_at, deleted.created_at)
+      FROM deleted_rows AS deleted
+     WHERE deleted.empresa_id = target_empresa_id
+       AND deleted.transport_origin = 'cloud'
+       AND deleted.telefono ~ '^[0-9]{6,15}$'
+       AND deleted.mensaje IS NOT NULL
+       AND NOT EXISTS (
+         SELECT 1
+           FROM public.whatsapp_cloud_messages AS projected
+          WHERE projected.empresa_id = deleted.empresa_id
+            AND projected.direction = 'outbound'
+            AND projected.participant_wa_id = deleted.telefono
+            AND projected.provider_message_id IS NOT DISTINCT FROM NULLIF(BTRIM(deleted.meta_message_id), '')
+            AND projected.message_at = deleted.created_at
+            AND projected.text_body = LEFT(deleted.mensaje, 4096)
+       )
+     ORDER BY deleted.id
+    ON CONFLICT DO NOTHING;
+
+    FOR message_row IN
+      SELECT message.id, message.provider_message_id
+        FROM public.whatsapp_cloud_messages AS message
+       WHERE message.empresa_id = target_empresa_id
+         AND message.direction = 'outbound'
+         AND message.provider_message_id IS NOT NULL
+         AND EXISTS (
+           SELECT 1 FROM deleted_rows AS deleted
+            WHERE deleted.empresa_id = target_empresa_id
+              AND NULLIF(BTRIM(deleted.meta_message_id), '') = message.provider_message_id
+         )
+       ORDER BY message.id
+       FOR UPDATE OF message
+    LOOP
+      PERFORM public.whatsapp_cloud_messages_reconcile_status_locked(
+        target_empresa_id,
+        message_row.provider_message_id
+      );
+    END LOOP;
+  END LOOP;
+  RETURN NULL;
+END $$;
+
 DO $$
 DECLARE
   trigger_spec RECORD;
@@ -2699,17 +3081,37 @@ BEGIN
     SELECT * FROM (VALUES
       (
         'public.whatsapp_cloud_events'::pg_catalog.regclass,
+        'whatsapp_cloud_messages_capture_insert'::TEXT,
         'public.whatsapp_cloud_messages_capture_event_insert()'::pg_catalog.regprocedure,
+        5::SMALLINT,
         'CREATE TRIGGER whatsapp_cloud_messages_capture_insert AFTER INSERT ON whatsapp_cloud_events FOR EACH ROW EXECUTE FUNCTION whatsapp_cloud_messages_capture_event_insert()',
         'CREATE TRIGGER whatsapp_cloud_messages_capture_insert AFTER INSERT ON public.whatsapp_cloud_events FOR EACH ROW EXECUTE FUNCTION public.whatsapp_cloud_messages_capture_event_insert()'
       ),
       (
         'public.wpp_outbox'::pg_catalog.regclass,
+        'whatsapp_cloud_messages_capture_insert'::TEXT,
         'public.whatsapp_cloud_messages_capture_outbox_insert()'::pg_catalog.regprocedure,
+        5::SMALLINT,
         'CREATE TRIGGER whatsapp_cloud_messages_capture_insert AFTER INSERT ON wpp_outbox FOR EACH ROW EXECUTE FUNCTION whatsapp_cloud_messages_capture_outbox_insert()',
         'CREATE TRIGGER whatsapp_cloud_messages_capture_insert AFTER INSERT ON public.wpp_outbox FOR EACH ROW EXECUTE FUNCTION public.whatsapp_cloud_messages_capture_outbox_insert()'
+      ),
+      (
+        'public.whatsapp_cloud_events'::pg_catalog.regclass,
+        'whatsapp_cloud_messages_capture_delete'::TEXT,
+        'public.whatsapp_cloud_messages_capture_event_delete()'::pg_catalog.regprocedure,
+        8::SMALLINT,
+        'CREATE TRIGGER whatsapp_cloud_messages_capture_delete AFTER DELETE ON whatsapp_cloud_events REFERENCING OLD TABLE AS deleted_rows FOR EACH STATEMENT EXECUTE FUNCTION whatsapp_cloud_messages_capture_event_delete()',
+        'CREATE TRIGGER whatsapp_cloud_messages_capture_delete AFTER DELETE ON public.whatsapp_cloud_events REFERENCING OLD TABLE AS deleted_rows FOR EACH STATEMENT EXECUTE FUNCTION public.whatsapp_cloud_messages_capture_event_delete()'
+      ),
+      (
+        'public.wpp_outbox'::pg_catalog.regclass,
+        'whatsapp_cloud_messages_capture_delete'::TEXT,
+        'public.whatsapp_cloud_messages_capture_outbox_delete()'::pg_catalog.regprocedure,
+        8::SMALLINT,
+        'CREATE TRIGGER whatsapp_cloud_messages_capture_delete AFTER DELETE ON wpp_outbox REFERENCING OLD TABLE AS deleted_rows FOR EACH STATEMENT EXECUTE FUNCTION whatsapp_cloud_messages_capture_outbox_delete()',
+        'CREATE TRIGGER whatsapp_cloud_messages_capture_delete AFTER DELETE ON public.wpp_outbox REFERENCING OLD TABLE AS deleted_rows FOR EACH STATEMENT EXECUTE FUNCTION public.whatsapp_cloud_messages_capture_outbox_delete()'
       )
-    ) AS required(table_oid, function_oid, expected_definition, create_sql)
+    ) AS required(table_oid, trigger_name, function_oid, expected_type, expected_definition, create_sql)
   LOOP
     SELECT trigger_meta.tgrelid,
            trigger_meta.tgfoid,
@@ -2722,13 +3124,13 @@ BEGIN
       INTO trigger_row
       FROM pg_catalog.pg_trigger AS trigger_meta
      WHERE trigger_meta.tgrelid = trigger_spec.table_oid
-       AND trigger_meta.tgname = 'whatsapp_cloud_messages_capture_insert';
+       AND trigger_meta.tgname = trigger_spec.trigger_name;
 
     IF FOUND AND NOT (
       trigger_row.tgrelid = trigger_spec.table_oid
       AND trigger_row.tgfoid = trigger_spec.function_oid
       AND trigger_row.tgenabled = 'O'
-      AND trigger_row.tgtype = 5
+      AND trigger_row.tgtype = trigger_spec.expected_type
       AND NOT trigger_row.tgisinternal
       AND trigger_row.tgnargs = 0
       AND trigger_row.tgargs = '\x'::pg_catalog.bytea
@@ -2736,7 +3138,7 @@ BEGIN
     ) THEN
       EXECUTE pg_catalog.format(
         'DROP TRIGGER %I ON %s',
-        'whatsapp_cloud_messages_capture_insert', trigger_spec.table_oid
+        trigger_spec.trigger_name, trigger_spec.table_oid
       );
       EXECUTE trigger_spec.create_sql;
     ELSIF NOT FOUND THEN

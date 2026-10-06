@@ -1,0 +1,18 @@
+{
+  "installCommitMarker": "-- CLOUD PROJECTION DDL COMPLETE; COMMIT BEFORE TENANT DML",
+  "backfillMarker": "-- CUTOVER CAPTURE COMMITTED; SOURCE SCANS FOLLOW",
+  "deleteTriggers": [
+    {
+      "table": "public.whatsapp_cloud_events",
+      "trigger": "whatsapp_cloud_messages_capture_delete",
+      "function": "whatsapp_cloud_messages_capture_event_delete",
+      "transition": "deleted_rows"
+    },
+    {
+      "table": "public.wpp_outbox",
+      "trigger": "whatsapp_cloud_messages_capture_delete",
+      "function": "whatsapp_cloud_messages_capture_outbox_delete",
+      "transition": "deleted_rows"
+    }
+  ]
+}
