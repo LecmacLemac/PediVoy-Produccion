@@ -2078,12 +2078,6 @@ BEGIN;
 SET LOCAL lock_timeout = '30s';
 SET LOCAL statement_timeout = '5min';
 
-CREATE UNIQUE INDEX IF NOT EXISTS whatsapp_cloud_events_empresa_id_id_uidx
-  ON whatsapp_cloud_events (empresa_id, id);
-
-CREATE UNIQUE INDEX IF NOT EXISTS wpp_outbox_empresa_id_id_uidx
-  ON wpp_outbox (empresa_id, id);
-
 CREATE TABLE IF NOT EXISTS whatsapp_cloud_messages (
   id BIGSERIAL PRIMARY KEY,
   empresa_id INTEGER NOT NULL,
@@ -2098,50 +2092,234 @@ CREATE TABLE IF NOT EXISTS whatsapp_cloud_messages (
   media_caption TEXT,
   document_filename TEXT,
   delivery_status TEXT NOT NULL,
+  state_rank SMALLINT NOT NULL,
   message_at TIMESTAMPTZ NOT NULL,
   sent_at TIMESTAMPTZ,
   delivered_at TIMESTAMPTZ,
   read_at TIMESTAMPTZ,
   failed_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT whatsapp_cloud_messages_empresa_id_fkey
-    FOREIGN KEY (empresa_id) REFERENCES empresas(id) ON DELETE CASCADE,
-  CONSTRAINT whatsapp_cloud_messages_source_event_fkey
-    FOREIGN KEY (empresa_id, source_event_id)
-    REFERENCES whatsapp_cloud_events(empresa_id, id),
-  CONSTRAINT whatsapp_cloud_messages_outbox_fkey
-    FOREIGN KEY (empresa_id, outbox_id)
-    REFERENCES wpp_outbox(empresa_id, id),
-  CONSTRAINT whatsapp_cloud_messages_direction_check
-    CHECK (direction IN ('inbound', 'outbound')),
-  CONSTRAINT whatsapp_cloud_messages_participant_check
-    CHECK (participant_wa_id ~ '^[0-9]{6,15}$'),
-  CONSTRAINT whatsapp_cloud_messages_type_check
-    CHECK (message_type IN ('text', 'image', 'document')),
-  CONSTRAINT whatsapp_cloud_messages_content_check
-    CHECK (
-      (message_type = 'text'
-        AND text_body IS NOT NULL
-        AND media_mime_type IS NULL
-        AND media_caption IS NULL
-        AND document_filename IS NULL)
-      OR (message_type = 'image'
-        AND text_body IS NULL
-        AND document_filename IS NULL)
-      OR (message_type = 'document'
-        AND text_body IS NULL)
-    ),
-  CONSTRAINT whatsapp_cloud_messages_delivery_status_check
-    CHECK (delivery_status IN (
-      'received', 'queued', 'sending', 'sent', 'delivered', 'read',
-      'failed', 'manual_retry', 'outcome_unknown'
-    )),
-  CONSTRAINT whatsapp_cloud_messages_source_direction_check
-    CHECK (source_event_id IS NULL OR (direction = 'inbound' AND outbox_id IS NULL)),
-  CONSTRAINT whatsapp_cloud_messages_outbox_direction_check
-    CHECK (outbox_id IS NULL OR (direction = 'outbound' AND source_event_id IS NULL))
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+LOCK TABLE whatsapp_cloud_events, wpp_outbox, whatsapp_cloud_messages IN ACCESS EXCLUSIVE MODE;
+
+ALTER TABLE whatsapp_cloud_messages
+  ADD COLUMN IF NOT EXISTS id BIGSERIAL,
+  ADD COLUMN IF NOT EXISTS empresa_id INTEGER,
+  ADD COLUMN IF NOT EXISTS direction TEXT,
+  ADD COLUMN IF NOT EXISTS participant_wa_id TEXT,
+  ADD COLUMN IF NOT EXISTS source_event_id BIGINT,
+  ADD COLUMN IF NOT EXISTS outbox_id BIGINT,
+  ADD COLUMN IF NOT EXISTS provider_message_id TEXT,
+  ADD COLUMN IF NOT EXISTS message_type TEXT,
+  ADD COLUMN IF NOT EXISTS text_body TEXT,
+  ADD COLUMN IF NOT EXISTS media_mime_type TEXT,
+  ADD COLUMN IF NOT EXISTS media_caption TEXT,
+  ADD COLUMN IF NOT EXISTS document_filename TEXT,
+  ADD COLUMN IF NOT EXISTS delivery_status TEXT,
+  ADD COLUMN IF NOT EXISTS state_rank SMALLINT,
+  ADD COLUMN IF NOT EXISTS message_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS sent_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS read_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS failed_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
+
+DO $$
+DECLARE
+  column_row RECORD;
+BEGIN
+  FOR column_row IN
+    SELECT * FROM (VALUES
+      ('id', 'bigint'),
+      ('empresa_id', 'integer'),
+      ('direction', 'text'),
+      ('participant_wa_id', 'text'),
+      ('source_event_id', 'bigint'),
+      ('outbox_id', 'bigint'),
+      ('provider_message_id', 'text'),
+      ('message_type', 'text'),
+      ('text_body', 'text'),
+      ('media_mime_type', 'text'),
+      ('media_caption', 'text'),
+      ('document_filename', 'text'),
+      ('delivery_status', 'text'),
+      ('state_rank', 'smallint'),
+      ('message_at', 'timestamp with time zone'),
+      ('sent_at', 'timestamp with time zone'),
+      ('delivered_at', 'timestamp with time zone'),
+      ('read_at', 'timestamp with time zone'),
+      ('failed_at', 'timestamp with time zone'),
+      ('created_at', 'timestamp with time zone'),
+      ('updated_at', 'timestamp with time zone')
+    ) AS expected(column_name, data_type)
+  LOOP
+    IF NOT EXISTS (
+      SELECT 1
+        FROM pg_attribute
+       WHERE attrelid = 'whatsapp_cloud_messages'::regclass
+         AND attname = column_row.column_name
+         AND NOT attisdropped
+         AND format_type(atttypid, atttypmod) = column_row.data_type
+    ) THEN
+      IF column_row.column_name IN (
+        'message_at', 'sent_at', 'delivered_at', 'read_at', 'failed_at', 'created_at', 'updated_at'
+      ) THEN
+        EXECUTE format(
+          'ALTER TABLE whatsapp_cloud_messages ALTER COLUMN %I TYPE TIMESTAMPTZ USING %I AT TIME ZONE ''UTC''',
+          column_row.column_name, column_row.column_name
+        );
+      ELSE
+        EXECUTE format(
+          'ALTER TABLE whatsapp_cloud_messages ALTER COLUMN %I TYPE %s USING %I::%s',
+          column_row.column_name, column_row.data_type, column_row.column_name, column_row.data_type
+        );
+      END IF;
+    END IF;
+  END LOOP;
+END $$;
+
+DO $$
+DECLARE
+  primary_row RECORD;
+BEGIN
+  SELECT conname,
+         (SELECT array_agg(attribute_row.attname::TEXT ORDER BY key_column.ordinality)
+            FROM unnest(constraint_row.conkey) WITH ORDINALITY AS key_column(attnum, ordinality)
+            JOIN pg_attribute AS attribute_row
+              ON attribute_row.attrelid = constraint_row.conrelid
+             AND attribute_row.attnum = key_column.attnum) AS key_columns
+    INTO primary_row
+    FROM pg_constraint AS constraint_row
+   WHERE constraint_row.conrelid = 'whatsapp_cloud_messages'::regclass
+     AND constraint_row.contype = 'p';
+
+  IF FOUND AND primary_row.key_columns IS DISTINCT FROM ARRAY['id']::TEXT[] THEN
+    EXECUTE format('ALTER TABLE whatsapp_cloud_messages DROP CONSTRAINT %I', primary_row.conname);
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1
+      FROM pg_constraint AS constraint_row
+     WHERE constraint_row.conrelid = 'whatsapp_cloud_messages'::regclass
+       AND constraint_row.contype = 'p'
+  ) THEN
+    ALTER TABLE whatsapp_cloud_messages
+      ADD CONSTRAINT whatsapp_cloud_messages_pkey PRIMARY KEY (id);
+  END IF;
+END $$;
+
+UPDATE whatsapp_cloud_messages
+   SET state_rank = CASE delivery_status
+         WHEN 'received' THEN 0
+         WHEN 'queued' THEN 10
+         WHEN 'manual_retry' THEN 15
+         WHEN 'sending' THEN 20
+         WHEN 'failed' THEN 25
+         WHEN 'outcome_unknown' THEN 25
+         WHEN 'sent' THEN 30
+         WHEN 'delivered' THEN 40
+         WHEN 'read' THEN 50
+         ELSE state_rank
+       END,
+       created_at = COALESCE(created_at, message_at, NOW()),
+       updated_at = COALESCE(updated_at, created_at, message_at, NOW());
+
+ALTER TABLE whatsapp_cloud_messages
+  ALTER COLUMN created_at SET DEFAULT NOW(),
+  ALTER COLUMN updated_at SET DEFAULT NOW(),
+  ALTER COLUMN empresa_id SET NOT NULL,
+  ALTER COLUMN direction SET NOT NULL,
+  ALTER COLUMN participant_wa_id SET NOT NULL,
+  ALTER COLUMN message_type SET NOT NULL,
+  ALTER COLUMN delivery_status SET NOT NULL,
+  ALTER COLUMN state_rank SET NOT NULL,
+  ALTER COLUMN message_at SET NOT NULL,
+  ALTER COLUMN created_at SET NOT NULL,
+  ALTER COLUMN updated_at SET NOT NULL;
+
+DO $$
+DECLARE
+  constraint_row RECORD;
+BEGIN
+  FOR constraint_row IN
+    SELECT conname
+      FROM pg_constraint
+     WHERE conrelid = 'whatsapp_cloud_messages'::regclass
+       AND contype IN ('c', 'f', 'u')
+  LOOP
+    EXECUTE format('ALTER TABLE whatsapp_cloud_messages DROP CONSTRAINT %I', constraint_row.conname);
+  END LOOP;
+END $$;
+
+DO $$
+DECLARE
+  index_row RECORD;
+  backing_constraint RECORD;
+  expected_columns TEXT[];
+  expected_unique BOOLEAN;
+  expected_predicate TEXT;
+BEGIN
+  FOR index_row IN
+    SELECT * FROM (VALUES
+      ('whatsapp_cloud_events_empresa_id_id_uidx', 'whatsapp_cloud_events',
+       ARRAY['empresa_id', 'id']::TEXT[], TRUE, NULL::TEXT),
+      ('wpp_outbox_empresa_id_id_uidx', 'wpp_outbox',
+       ARRAY['empresa_id', 'id']::TEXT[], TRUE, NULL::TEXT),
+      ('whatsapp_cloud_messages_source_event_uidx', 'whatsapp_cloud_messages',
+       ARRAY['empresa_id', 'source_event_id']::TEXT[], TRUE, 'source_event_idisnotnull'),
+      ('whatsapp_cloud_messages_outbox_uidx', 'whatsapp_cloud_messages',
+       ARRAY['empresa_id', 'outbox_id']::TEXT[], TRUE, 'outbox_idisnotnull'),
+      ('whatsapp_cloud_messages_provider_message_uidx', 'whatsapp_cloud_messages',
+       ARRAY['empresa_id', 'provider_message_id']::TEXT[], TRUE, 'provider_message_idisnotnull')
+    ) AS required(index_name, table_name, key_columns, is_unique, predicate_key)
+  LOOP
+    expected_columns := index_row.key_columns;
+    expected_unique := index_row.is_unique;
+    expected_predicate := index_row.predicate_key;
+    IF to_regclass(index_row.index_name) IS NOT NULL AND NOT EXISTS (
+      SELECT 1
+        FROM pg_index AS candidate
+       WHERE candidate.indexrelid = to_regclass(index_row.index_name)
+         AND candidate.indrelid = index_row.table_name::regclass
+         AND candidate.indisunique = expected_unique
+         AND candidate.indexprs IS NULL
+         AND candidate.indnkeyatts = cardinality(expected_columns)
+         AND candidate.indnatts = cardinality(expected_columns)
+         AND candidate.indoption::TEXT = array_to_string(array_fill(0, ARRAY[cardinality(expected_columns)]), ' ')
+         AND (
+           SELECT array_agg(attribute_row.attname::TEXT ORDER BY key_column.ordinality)
+             FROM unnest(candidate.indkey) WITH ORDINALITY AS key_column(attnum, ordinality)
+             JOIN pg_attribute AS attribute_row
+               ON attribute_row.attrelid = candidate.indrelid
+              AND attribute_row.attnum = key_column.attnum
+            WHERE key_column.ordinality <= candidate.indnkeyatts
+         ) = expected_columns
+         AND CASE
+           WHEN expected_predicate IS NULL THEN candidate.indpred IS NULL
+           ELSE lower(regexp_replace(pg_get_expr(candidate.indpred, candidate.indrelid), '[^a-z_]', '', 'g'))
+                = expected_predicate
+         END
+    ) THEN
+      SELECT constraint_row.conrelid::regclass AS table_name, constraint_row.conname
+        INTO backing_constraint
+        FROM pg_constraint AS constraint_row
+       WHERE constraint_row.conindid = to_regclass(index_row.index_name);
+      IF FOUND THEN
+        EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', backing_constraint.table_name, backing_constraint.conname);
+      ELSE
+        EXECUTE format('DROP INDEX %I', index_row.index_name);
+      END IF;
+    END IF;
+  END LOOP;
+END $$;
+
+CREATE UNIQUE INDEX IF NOT EXISTS whatsapp_cloud_events_empresa_id_id_uidx
+  ON whatsapp_cloud_events (empresa_id, id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS wpp_outbox_empresa_id_id_uidx
+  ON wpp_outbox (empresa_id, id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS whatsapp_cloud_messages_source_event_uidx
   ON whatsapp_cloud_messages (empresa_id, source_event_id)
@@ -2154,6 +2332,87 @@ CREATE UNIQUE INDEX IF NOT EXISTS whatsapp_cloud_messages_outbox_uidx
 CREATE UNIQUE INDEX IF NOT EXISTS whatsapp_cloud_messages_provider_message_uidx
   ON whatsapp_cloud_messages (empresa_id, provider_message_id)
   WHERE provider_message_id IS NOT NULL;
+
+ALTER TABLE whatsapp_cloud_messages
+  ADD CONSTRAINT whatsapp_cloud_messages_empresa_id_fkey
+    FOREIGN KEY (empresa_id) REFERENCES empresas(id) ON DELETE CASCADE,
+  ADD CONSTRAINT whatsapp_cloud_messages_source_event_fkey
+    FOREIGN KEY (empresa_id, source_event_id)
+    REFERENCES whatsapp_cloud_events(empresa_id, id)
+    ON DELETE SET NULL (source_event_id),
+  ADD CONSTRAINT whatsapp_cloud_messages_outbox_fkey
+    FOREIGN KEY (empresa_id, outbox_id)
+    REFERENCES wpp_outbox(empresa_id, id)
+    ON DELETE SET NULL (outbox_id),
+  ADD CONSTRAINT whatsapp_cloud_messages_direction_check
+    CHECK (direction IN ('inbound', 'outbound')),
+  ADD CONSTRAINT whatsapp_cloud_messages_participant_check
+    CHECK (participant_wa_id ~ '^[0-9]{6,15}$'),
+  ADD CONSTRAINT whatsapp_cloud_messages_type_check
+    CHECK (message_type IN ('text', 'image', 'document')),
+  ADD CONSTRAINT whatsapp_cloud_messages_content_check
+    CHECK (
+      (message_type = 'text'
+        AND text_body IS NOT NULL
+        AND media_mime_type IS NULL
+        AND media_caption IS NULL
+        AND document_filename IS NULL)
+      OR (message_type = 'image'
+        AND text_body IS NULL
+        AND document_filename IS NULL)
+      OR (message_type = 'document'
+        AND text_body IS NULL)
+    ),
+  ADD CONSTRAINT whatsapp_cloud_messages_delivery_status_check
+    CHECK (delivery_status IN (
+      'received', 'queued', 'sending', 'sent', 'delivered', 'read',
+      'failed', 'manual_retry', 'outcome_unknown'
+    )),
+  ADD CONSTRAINT whatsapp_cloud_messages_direction_status_check
+    CHECK (
+      (direction = 'inbound' AND delivery_status = 'received')
+      OR (direction = 'outbound' AND delivery_status IN (
+        'queued', 'sending', 'sent', 'delivered', 'read',
+        'failed', 'manual_retry', 'outcome_unknown'
+      ))
+    ),
+  ADD CONSTRAINT whatsapp_cloud_messages_state_rank_check
+    CHECK (state_rank = CASE delivery_status
+      WHEN 'received' THEN 0
+      WHEN 'queued' THEN 10
+      WHEN 'manual_retry' THEN 15
+      WHEN 'sending' THEN 20
+      WHEN 'failed' THEN 25
+      WHEN 'outcome_unknown' THEN 25
+      WHEN 'sent' THEN 30
+      WHEN 'delivered' THEN 40
+      WHEN 'read' THEN 50
+    END),
+  ADD CONSTRAINT whatsapp_cloud_messages_timestamps_check
+    CHECK (
+      (direction = 'inbound'
+        AND sent_at IS NULL AND delivered_at IS NULL AND read_at IS NULL AND failed_at IS NULL)
+      OR (direction = 'outbound'
+        AND (sent_at IS NULL OR sent_at >= message_at)
+        AND (delivered_at IS NULL OR (sent_at IS NOT NULL AND delivered_at >= sent_at))
+        AND (read_at IS NULL OR (delivered_at IS NOT NULL AND read_at >= delivered_at))
+        AND (failed_at IS NULL OR failed_at >= message_at)
+        AND CASE delivery_status
+          WHEN 'queued' THEN sent_at IS NULL AND delivered_at IS NULL AND read_at IS NULL AND failed_at IS NULL
+          WHEN 'sending' THEN delivered_at IS NULL AND read_at IS NULL AND failed_at IS NULL
+          WHEN 'manual_retry' THEN delivered_at IS NULL AND read_at IS NULL AND failed_at IS NULL
+          WHEN 'outcome_unknown' THEN delivered_at IS NULL AND read_at IS NULL AND failed_at IS NULL
+          WHEN 'sent' THEN sent_at IS NOT NULL AND delivered_at IS NULL AND read_at IS NULL AND failed_at IS NULL
+          WHEN 'delivered' THEN sent_at IS NOT NULL AND delivered_at IS NOT NULL AND read_at IS NULL AND failed_at IS NULL
+          WHEN 'read' THEN sent_at IS NOT NULL AND delivered_at IS NOT NULL AND read_at IS NOT NULL AND failed_at IS NULL
+          WHEN 'failed' THEN delivered_at IS NULL AND read_at IS NULL AND failed_at IS NOT NULL
+          ELSE FALSE
+        END)
+    ),
+  ADD CONSTRAINT whatsapp_cloud_messages_source_direction_check
+    CHECK (source_event_id IS NULL OR (direction = 'inbound' AND outbox_id IS NULL)),
+  ADD CONSTRAINT whatsapp_cloud_messages_outbox_direction_check
+    CHECK (outbox_id IS NULL OR (direction = 'outbound' AND source_event_id IS NULL));
 
 DO $$
 DECLARE
@@ -2209,7 +2468,7 @@ CREATE INDEX IF NOT EXISTS idx_whatsapp_cloud_messages_timeline
 INSERT INTO whatsapp_cloud_messages (
   empresa_id, direction, participant_wa_id, source_event_id,
   provider_message_id, message_type, text_body, media_mime_type,
-  media_caption, document_filename, delivery_status, message_at,
+  media_caption, document_filename, delivery_status, state_rank, message_at,
   created_at, updated_at
 )
 SELECT event.empresa_id,
@@ -2227,9 +2486,14 @@ SELECT event.empresa_id,
        CASE WHEN event.message_type = 'document'
          THEN event.event_data->'document'->>'filename' END,
        'received',
+       0,
        CASE
          WHEN event.source_timestamp ~ '^[0-9]{1,12}$'
+          AND event.source_timestamp::NUMERIC > 0
           AND event.source_timestamp::NUMERIC <= 253402300799
+          AND to_timestamp(event.source_timestamp::DOUBLE PRECISION)
+              BETWEEN event.received_at - INTERVAL '30 days'
+                  AND event.received_at + INTERVAL '5 minutes'
            THEN to_timestamp(event.source_timestamp::DOUBLE PRECISION)
          ELSE event.received_at
        END,
@@ -2247,7 +2511,7 @@ ON CONFLICT DO NOTHING;
 
 INSERT INTO whatsapp_cloud_messages (
   empresa_id, direction, participant_wa_id, outbox_id,
-  provider_message_id, message_type, text_body, delivery_status,
+  provider_message_id, message_type, text_body, delivery_status, state_rank,
   message_at, sent_at, failed_at, created_at, updated_at
 )
 SELECT outbox.empresa_id,
@@ -2266,6 +2530,14 @@ SELECT outbox.empresa_id,
          WHEN outbox.status = 'error' AND outbox.cloud_dispatch_state = 'outcome_unknown'
            THEN 'outcome_unknown'
          ELSE 'failed'
+       END,
+       CASE
+         WHEN outbox.status = 'pending' THEN 10
+         WHEN outbox.status = 'sending' THEN 20
+         WHEN outbox.status = 'sent' THEN 30
+         WHEN outbox.status = 'error' AND outbox.cloud_dispatch_state = 'manual_retryable' THEN 15
+         WHEN outbox.status = 'error' AND outbox.cloud_dispatch_state = 'outcome_unknown' THEN 25
+         ELSE 25
        END,
        outbox.created_at,
        outbox.sent_at,
@@ -2288,7 +2560,11 @@ WITH status_events AS (
          event.status,
          CASE
            WHEN event.source_timestamp ~ '^[0-9]{1,12}$'
+            AND event.source_timestamp::NUMERIC > 0
             AND event.source_timestamp::NUMERIC <= 253402300799
+            AND to_timestamp(event.source_timestamp::DOUBLE PRECISION)
+                BETWEEN event.received_at - INTERVAL '30 days'
+                    AND event.received_at + INTERVAL '5 minutes'
              THEN to_timestamp(event.source_timestamp::DOUBLE PRECISION)
            ELSE event.received_at
          END AS status_at
@@ -2313,6 +2589,12 @@ WITH status_events AS (
 )
 UPDATE whatsapp_cloud_messages AS message
    SET delivery_status = summary.latest_status,
+       state_rank = CASE summary.latest_status
+         WHEN 'failed' THEN 25
+         WHEN 'sent' THEN 30
+         WHEN 'delivered' THEN 40
+         WHEN 'read' THEN 50
+       END,
        sent_at = COALESCE(message.sent_at, summary.sent_at),
        delivered_at = COALESCE(message.delivered_at, summary.delivered_at),
        read_at = COALESCE(message.read_at, summary.read_at),

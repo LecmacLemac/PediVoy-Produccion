@@ -9,7 +9,8 @@ import pg from 'pg';
 let bin;
 try { bin = execFileSync('pg_config', ['--bindir'], { encoding: 'utf8' }).trim(); } catch {}
 const available = bin && existsSync(join(bin, 'initdb')) && process.getuid?.() !== 0;
-const options = { skip: available ? false : 'Requires local PostgreSQL binaries and a non-root user' };
+assert.ok(available,
+  'PostgreSQL focal gate requires local initdb/pg_ctl binaries and a non-root user; refusing a false-green skip');
 const initSql = readFileSync(new URL('../initDb.sql', import.meta.url), 'utf8');
 const outboxStart = initSql.indexOf('CREATE TABLE IF NOT EXISTS wpp_outbox (');
 const outboxEnd = initSql.indexOf('CREATE TABLE IF NOT EXISTS push_subs (', outboxStart);
@@ -18,7 +19,9 @@ const projectionEndMarker = '-- END WHATSAPP CLOUD MESSAGE PROJECTION MIGRATION'
 const projectionEnd = initSql.indexOf(projectionEndMarker, projectionStart);
 assert.ok(outboxStart >= 0 && outboxEnd > outboxStart, 'initDb.sql must expose the outbox migration');
 assert.ok(projectionStart >= 0 && projectionEnd > projectionStart, 'initDb.sql must expose the inbox projection migration');
-const migrationSql = `${initSql.slice(outboxStart, outboxEnd)}\n${initSql.slice(projectionStart, projectionEnd + projectionEndMarker.length)}`;
+const outboxSql = initSql.slice(outboxStart, outboxEnd);
+const projectionSql = initSql.slice(projectionStart, projectionEnd + projectionEndMarker.length);
+const migrationSql = `${outboxSql}\n${projectionSql}`;
 const tempPrefix = '.whatsapp-cloud-inbox-pg-';
 const createdDirectories = new Set();
 
@@ -136,7 +139,7 @@ async function seedBackfillSources(pool) {
   `);
 }
 
-test('migración crea proyección tenant-scoped, constraints e índices exactos y es reejecutable', options, async () => {
+test('migración crea proyección tenant-scoped, constraints e índices exactos y es reejecutable', async () => {
   await withDatabase(async pool => {
     await pool.query(migrationSql);
     await pool.query(migrationSql);
@@ -151,7 +154,7 @@ test('migración crea proyección tenant-scoped, constraints e índices exactos 
     assert.deepEqual(columns.map(row => row.attname), [
       'id', 'empresa_id', 'direction', 'participant_wa_id', 'source_event_id', 'outbox_id',
       'provider_message_id', 'message_type', 'text_body', 'media_mime_type', 'media_caption',
-      'document_filename', 'delivery_status', 'message_at', 'sent_at', 'delivered_at',
+      'document_filename', 'delivery_status', 'state_rank', 'message_at', 'sent_at', 'delivered_at',
       'read_at', 'failed_at', 'created_at', 'updated_at',
     ]);
     assert.equal(columns.find(row => row.attname === 'empresa_id').attnotnull, true);
@@ -169,11 +172,14 @@ test('migración crea proyección tenant-scoped, constraints e índices exactos 
     assert.match(definitions.get('whatsapp_cloud_messages_type_check'), /text.*image.*document/i);
     assert.match(definitions.get('whatsapp_cloud_messages_content_check'), /text_body/i);
     assert.match(definitions.get('whatsapp_cloud_messages_delivery_status_check'), /received.*queued.*sending.*sent.*delivered.*read.*failed.*manual_retry.*outcome_unknown/i);
+    assert.match(definitions.get('whatsapp_cloud_messages_direction_status_check'), /inbound.*received.*outbound/i);
+    assert.match(definitions.get('whatsapp_cloud_messages_state_rank_check'), /state_rank/i);
+    assert.match(definitions.get('whatsapp_cloud_messages_timestamps_check'), /sent_at.*delivered_at.*read_at.*failed_at/i);
     assert.match(definitions.get('whatsapp_cloud_messages_source_direction_check'), /source_event_id/i);
     assert.match(definitions.get('whatsapp_cloud_messages_outbox_direction_check'), /outbox_id/i);
     assert.match(definitions.get('whatsapp_cloud_messages_empresa_id_fkey'), /FOREIGN KEY \(empresa_id\) REFERENCES empresas\(id\) ON DELETE CASCADE/i);
-    assert.match(definitions.get('whatsapp_cloud_messages_source_event_fkey'), /FOREIGN KEY \(empresa_id, source_event_id\).*whatsapp_cloud_events\(empresa_id, id\)/i);
-    assert.match(definitions.get('whatsapp_cloud_messages_outbox_fkey'), /FOREIGN KEY \(empresa_id, outbox_id\).*wpp_outbox\(empresa_id, id\)/i);
+    assert.match(definitions.get('whatsapp_cloud_messages_source_event_fkey'), /FOREIGN KEY \(empresa_id, source_event_id\).*whatsapp_cloud_events\(empresa_id, id\).*ON DELETE SET NULL \(source_event_id\)/i);
+    assert.match(definitions.get('whatsapp_cloud_messages_outbox_fkey'), /FOREIGN KEY \(empresa_id, outbox_id\).*wpp_outbox\(empresa_id, id\).*ON DELETE SET NULL \(outbox_id\)/i);
 
     for (const [indexName, linkColumn] of [
       ['whatsapp_cloud_messages_source_event_uidx', 'source_event_id'],
@@ -211,7 +217,7 @@ test('migración crea proyección tenant-scoped, constraints e índices exactos 
   });
 });
 
-test('backfill copia sólo contenido allowlisted, estados/timestamps y vínculos Cloud inequívocos', options, async () => {
+test('backfill copia sólo contenido allowlisted, estados/timestamps y vínculos Cloud inequívocos', async () => {
   await withDatabase(async pool => {
     await seedBackfillSources(pool);
     await pool.query(migrationSql);
@@ -294,7 +300,7 @@ test('backfill copia sólo contenido allowlisted, estados/timestamps y vínculos
   });
 });
 
-test('constraints aíslan tenant, validan WA ID/contenido y rechazan enlaces cruzados', options, async () => {
+test('constraints aíslan tenant, dirección/estado/rank/timestamps y rechazan enlaces cruzados', async () => {
   await withDatabase(async pool => {
     await seedBackfillSources(pool);
     const eventId = (await pool.query("SELECT id FROM whatsapp_cloud_events WHERE message_id = 'tenant-two'")).rows[0].id;
@@ -302,33 +308,176 @@ test('constraints aíslan tenant, validan WA ID/contenido y rechazan enlaces cru
 
     await assert.rejects(pool.query(`
       INSERT INTO whatsapp_cloud_messages
-        (empresa_id, direction, participant_wa_id, message_type, text_body, delivery_status, message_at)
-      VALUES (1, 'sideways', '549351555001', 'text', 'x', 'received', NOW())
+        (empresa_id, direction, participant_wa_id, message_type, text_body, delivery_status, state_rank, message_at)
+      VALUES (1, 'sideways', '549351555001', 'text', 'x', 'received', 0, NOW())
     `), error => error?.code === '23514');
     await assert.rejects(pool.query(`
       INSERT INTO whatsapp_cloud_messages
-        (empresa_id, direction, participant_wa_id, message_type, text_body, delivery_status, message_at)
-      VALUES (1, 'inbound', '+549351555001', 'text', 'x', 'received', NOW())
+        (empresa_id, direction, participant_wa_id, message_type, text_body, delivery_status, state_rank, message_at)
+      VALUES (1, 'inbound', '+549****5001', 'text', 'x', 'received', 0, NOW())
     `), error => error?.code === '23514');
     await assert.rejects(pool.query(`
       INSERT INTO whatsapp_cloud_messages
-        (empresa_id, direction, participant_wa_id, message_type, text_body, media_mime_type, delivery_status, message_at)
-      VALUES (1, 'inbound', '549351555001', 'text', 'x', 'image/jpeg', 'received', NOW())
+        (empresa_id, direction, participant_wa_id, message_type, text_body, media_mime_type, delivery_status, state_rank, message_at)
+      VALUES (1, 'inbound', '549351555001', 'text', 'x', 'image/jpeg', 'received', 0, NOW())
     `), error => error?.code === '23514');
     await assert.rejects(pool.query(`
       INSERT INTO whatsapp_cloud_messages
-        (empresa_id, direction, participant_wa_id, source_event_id, message_type, text_body, delivery_status, message_at)
-      VALUES (1, 'inbound', '549351555001', $1, 'text', 'x', 'received', NOW())
+        (empresa_id, direction, participant_wa_id, source_event_id, message_type, text_body, delivery_status, state_rank, message_at)
+      VALUES (1, 'inbound', '549351555001', $1, 'text', 'x', 'received', 0, NOW())
     `, [eventId]), error => error?.code === '23503');
     await assert.rejects(pool.query(`
       INSERT INTO whatsapp_cloud_messages
-        (empresa_id, direction, participant_wa_id, outbox_id, message_type, text_body, delivery_status, message_at)
-      VALUES (2, 'outbound', '549351555003', $1, 'text', 'x', 'queued', NOW())
+        (empresa_id, direction, participant_wa_id, outbox_id, message_type, text_body, delivery_status, state_rank, message_at)
+      VALUES (2, 'outbound', '549351555003', $1, 'text', 'x', 'queued', 10, NOW())
     `, [outboxId]), error => error?.code === '23503');
+
+    await assert.rejects(pool.query(`
+      INSERT INTO whatsapp_cloud_messages
+        (empresa_id, direction, participant_wa_id, message_type, text_body, delivery_status, state_rank, message_at)
+      VALUES (1, 'inbound', '549351555001', 'text', 'x', 'sent', 30, NOW())
+    `), error => error?.code === '23514');
+    await assert.rejects(pool.query(`
+      INSERT INTO whatsapp_cloud_messages
+        (empresa_id, direction, participant_wa_id, message_type, text_body, delivery_status, state_rank, message_at)
+      VALUES (1, 'outbound', '549351555001', 'text', 'x', 'received', 0, NOW())
+    `), error => error?.code === '23514');
+    await assert.rejects(pool.query(`
+      INSERT INTO whatsapp_cloud_messages
+        (empresa_id, direction, participant_wa_id, message_type, text_body, delivery_status, state_rank, message_at)
+      VALUES (1, 'outbound', '549351555001', 'text', 'x', 'delivered', 30, NOW())
+    `), error => error?.code === '23514');
+    await assert.rejects(pool.query(`
+      INSERT INTO whatsapp_cloud_messages
+        (empresa_id, direction, participant_wa_id, message_type, text_body, delivery_status, state_rank,
+         message_at, delivered_at)
+      VALUES (1, 'outbound', '549351555001', 'text', 'x', 'queued', 10, NOW(), NOW())
+    `), error => error?.code === '23514');
   });
 });
 
-test('migración reemplaza índice legacy engañoso aunque contenga columnas sólo en INCLUDE/predicado', options, async () => {
+test('cleanup de fuentes conserva la proyección y sólo anula el vínculo borrado', async () => {
+  await withDatabase(async pool => {
+    await seedBackfillSources(pool);
+    await pool.query(migrationSql);
+    const inbound = (await pool.query("SELECT id, source_event_id FROM whatsapp_cloud_messages WHERE provider_message_id = 'in-text'")).rows[0];
+    const outbound = (await pool.query("SELECT id, outbox_id FROM whatsapp_cloud_messages WHERE provider_message_id = 'out-sent'")).rows[0];
+
+    await pool.query('DELETE FROM whatsapp_cloud_events WHERE id = $1', [inbound.source_event_id]);
+    await pool.query('DELETE FROM wpp_outbox WHERE id = $1', [outbound.outbox_id]);
+
+    assert.deepEqual((await pool.query(
+      'SELECT empresa_id, source_event_id, provider_message_id, text_body FROM whatsapp_cloud_messages WHERE id = $1',
+      [inbound.id],
+    )).rows[0], { empresa_id: 1, source_event_id: null, provider_message_id: 'in-text', text_body: 'hola' });
+    assert.deepEqual((await pool.query(
+      'SELECT empresa_id, outbox_id, provider_message_id, text_body FROM whatsapp_cloud_messages WHERE id = $1',
+      [outbound.id],
+    )).rows[0], { empresa_id: 1, outbox_id: null, provider_message_id: 'out-sent', text_body: 'respuesta' });
+  });
+});
+
+test('source_timestamp usa límites explícitos contra received_at y fallback fuera de tolerancia', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (1)');
+    await pool.query(`
+      INSERT INTO whatsapp_cloud_events
+        (empresa_id, event_kind, dedupe_key, message_id, sender_id, message_type,
+         source_timestamp, event_data, received_at)
+      VALUES
+        (1, 'message', 'message:epoch-zero', 'epoch-zero', '549351555001', 'text', '0',
+         '{"text":{"body":"zero"}}', '2026-10-01T12:00:00Z'),
+        (1, 'message', 'message:past-boundary', 'past-boundary', '549351555001', 'text',
+         EXTRACT(EPOCH FROM TIMESTAMPTZ '2026-09-01T12:00:00Z')::bigint::text,
+         '{"text":{"body":"past-boundary"}}', '2026-10-01T12:00:00Z'),
+        (1, 'message', 'message:past-outside', 'past-outside', '549351555001', 'text',
+         EXTRACT(EPOCH FROM TIMESTAMPTZ '2026-09-01T11:59:59Z')::bigint::text,
+         '{"text":{"body":"past-outside"}}', '2026-10-01T12:00:00Z'),
+        (1, 'message', 'message:future-boundary', 'future-boundary', '549351555001', 'text',
+         EXTRACT(EPOCH FROM TIMESTAMPTZ '2026-10-01T12:05:00Z')::bigint::text,
+         '{"text":{"body":"future-boundary"}}', '2026-10-01T12:00:00Z'),
+        (1, 'message', 'message:future-outside', 'future-outside', '549351555001', 'text',
+         EXTRACT(EPOCH FROM TIMESTAMPTZ '2026-10-01T12:05:01Z')::bigint::text,
+         '{"text":{"body":"future-outside"}}', '2026-10-01T12:00:00Z')
+    `);
+
+    await pool.query(migrationSql);
+    const rows = (await pool.query(`
+      SELECT provider_message_id, message_at
+        FROM whatsapp_cloud_messages
+       ORDER BY provider_message_id
+    `)).rows.map(row => ({ ...row, message_at: row.message_at.toISOString() }));
+    assert.deepEqual(rows, [
+      { provider_message_id: 'epoch-zero', message_at: '2026-10-01T12:00:00.000Z' },
+      { provider_message_id: 'future-boundary', message_at: '2026-10-01T12:05:00.000Z' },
+      { provider_message_id: 'future-outside', message_at: '2026-10-01T12:00:00.000Z' },
+      { provider_message_id: 'past-boundary', message_at: '2026-09-01T12:00:00.000Z' },
+      { provider_message_id: 'past-outside', message_at: '2026-10-01T12:00:00.000Z' },
+    ]);
+  });
+});
+
+test('migración repara fixture legacy incompleto, constraints, uniques e índices parentales engañosos', async () => {
+  await withDatabase(async pool => {
+    await pool.query(outboxSql);
+    await pool.query(`
+      CREATE UNIQUE INDEX whatsapp_cloud_events_empresa_id_id_uidx
+        ON whatsapp_cloud_events (empresa_id) INCLUDE (id)
+       WHERE id IS NOT NULL;
+      CREATE UNIQUE INDEX wpp_outbox_empresa_id_id_uidx
+        ON wpp_outbox (empresa_id) INCLUDE (id)
+       WHERE id IS NOT NULL;
+      CREATE TABLE whatsapp_cloud_messages (
+        id BIGSERIAL PRIMARY KEY,
+        empresa_id INTEGER,
+        direction TEXT,
+        participant_wa_id TEXT,
+        message_at TIMESTAMP WITHOUT TIME ZONE
+      );
+      ALTER TABLE whatsapp_cloud_messages
+        ADD CONSTRAINT whatsapp_cloud_messages_direction_check CHECK (direction <> 'sideways');
+      CREATE UNIQUE INDEX whatsapp_cloud_messages_source_event_uidx
+        ON whatsapp_cloud_messages (empresa_id) INCLUDE (id);
+      CREATE INDEX idx_whatsapp_cloud_messages_timeline
+        ON whatsapp_cloud_messages (empresa_id, message_at, id)
+        INCLUDE (participant_wa_id)
+       WHERE participant_wa_id IS NOT NULL;
+    `);
+
+    await pool.query(projectionSql);
+    await pool.query(projectionSql);
+
+    const columns = (await pool.query(`
+      SELECT attname, format_type(atttypid, atttypmod) AS data_type, attnotnull
+        FROM pg_attribute
+       WHERE attrelid = 'whatsapp_cloud_messages'::regclass
+         AND attnum > 0 AND NOT attisdropped
+       ORDER BY attnum
+    `)).rows;
+    assert.deepEqual(new Set(columns.map(row => row.attname)), new Set([
+      'id', 'empresa_id', 'direction', 'participant_wa_id', 'delivery_status', 'message_at',
+      'source_event_id', 'outbox_id', 'provider_message_id', 'message_type', 'text_body',
+      'media_mime_type', 'media_caption', 'document_filename', 'state_rank', 'sent_at',
+      'delivered_at', 'read_at', 'failed_at', 'created_at', 'updated_at',
+    ]));
+    for (const required of ['empresa_id', 'direction', 'participant_wa_id', 'delivery_status',
+      'message_at', 'message_type', 'state_rank', 'created_at', 'updated_at']) {
+      assert.equal(columns.find(row => row.attname === required).attnotnull, true, `${required} repaired NOT NULL`);
+    }
+    assert.equal(columns.find(row => row.attname === 'message_at').data_type, 'timestamp with time zone');
+
+    assert.deepEqual((await indexShape(pool, 'whatsapp_cloud_events_empresa_id_id_uidx')).key_columns,
+      ['empresa_id', 'id']);
+    assert.deepEqual((await indexShape(pool, 'wpp_outbox_empresa_id_id_uidx')).key_columns,
+      ['empresa_id', 'id']);
+    assert.deepEqual((await indexShape(pool, 'whatsapp_cloud_messages_source_event_uidx')).key_columns,
+      ['empresa_id', 'source_event_id']);
+    assert.deepEqual((await indexShape(pool, 'idx_whatsapp_cloud_messages_timeline')).key_columns,
+      ['empresa_id', 'participant_wa_id', 'message_at', 'id']);
+  });
+});
+
+test('migración reemplaza índice legacy engañoso aunque contenga columnas sólo en INCLUDE/predicado', async () => {
   await withDatabase(async pool => {
     await pool.query(migrationSql);
     await pool.query('DROP INDEX idx_whatsapp_cloud_messages_timeline');
