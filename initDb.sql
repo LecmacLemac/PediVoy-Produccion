@@ -1931,6 +1931,69 @@ ALTER TABLE wpp_outbox
   ADD COLUMN IF NOT EXISTS cloud_dispatch_state TEXT,
   ADD COLUMN IF NOT EXISTS dispatch_started_at TIMESTAMPTZ;
 
+DO $$
+DECLARE
+  foreign_key RECORD;
+  empresa_attribute SMALLINT;
+  empresa_target_attribute SMALLINT;
+BEGIN
+  IF pg_catalog.to_regclass('public.empresas') IS NULL THEN
+    RETURN;
+  END IF;
+
+  DELETE FROM public.wpp_outbox AS outbox
+   WHERE outbox.empresa_id IS NOT NULL
+     AND NOT EXISTS (
+       SELECT TRUE FROM public.empresas AS tenant WHERE tenant.id = outbox.empresa_id
+     );
+
+  SELECT attnum INTO empresa_attribute
+    FROM pg_attribute
+   WHERE attrelid = 'wpp_outbox'::regclass AND attname = 'empresa_id' AND NOT attisdropped;
+  SELECT attnum INTO empresa_target_attribute
+    FROM pg_attribute
+   WHERE attrelid = 'empresas'::regclass AND attname = 'id' AND NOT attisdropped;
+
+  FOR foreign_key IN
+    SELECT conname, confrelid, confkey, confdeltype
+      FROM pg_constraint
+     WHERE conrelid = 'wpp_outbox'::regclass
+       AND contype = 'f'
+       AND conkey = ARRAY[empresa_attribute]::SMALLINT[]
+  LOOP
+    IF foreign_key.conname <> 'wpp_outbox_empresa_id_fkey'
+       OR foreign_key.confrelid <> 'empresas'::regclass
+       OR foreign_key.confkey <> ARRAY[empresa_target_attribute]::SMALLINT[]
+       OR foreign_key.confdeltype <> 'c' THEN
+      EXECUTE format('ALTER TABLE wpp_outbox DROP CONSTRAINT %I', foreign_key.conname);
+    END IF;
+  END LOOP;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conrelid = 'wpp_outbox'::regclass
+       AND conname = 'wpp_outbox_empresa_id_fkey'
+       AND contype = 'f'
+       AND conkey = ARRAY[empresa_attribute]::SMALLINT[]
+       AND confrelid = 'empresas'::regclass
+       AND confkey = ARRAY[empresa_target_attribute]::SMALLINT[]
+       AND confdeltype = 'c'
+  ) THEN
+    ALTER TABLE wpp_outbox
+      ADD CONSTRAINT wpp_outbox_empresa_id_fkey
+      FOREIGN KEY (empresa_id) REFERENCES empresas(id) ON DELETE CASCADE NOT VALID;
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conrelid = 'wpp_outbox'::regclass
+       AND conname = 'wpp_outbox_empresa_id_fkey'
+       AND NOT convalidated
+  ) THEN
+    ALTER TABLE wpp_outbox VALIDATE CONSTRAINT wpp_outbox_empresa_id_fkey;
+  END IF;
+END $$;
+
 ALTER TABLE wpp_outbox
   DROP CONSTRAINT IF EXISTS wpp_outbox_cloud_dispatch_state_check;
 
@@ -2554,6 +2617,25 @@ BEGIN
   );
 END $$;
 
+CREATE OR REPLACE FUNCTION public.whatsapp_cloud_messages_status_transition_wins(
+  current_status TEXT,
+  current_rank INTEGER,
+  incoming_status TEXT,
+  incoming_rank INTEGER
+) RETURNS BOOLEAN
+LANGUAGE SQL
+IMMUTABLE
+PARALLEL SAFE
+SET search_path = pg_catalog, public
+AS $$
+  SELECT incoming_rank > current_rank
+      OR (
+        incoming_rank = current_rank
+        AND current_status = 'outcome_unknown'
+        AND incoming_status = 'failed'
+      )
+$$;
+
 CREATE OR REPLACE FUNCTION public.whatsapp_cloud_messages_reconcile_status_locked(
   target_empresa_id INTEGER,
   target_provider_message_id TEXT
@@ -2612,7 +2694,10 @@ BEGIN
            message.failed_at AS previous_failed_at,
            message.updated_at AS previous_updated_at,
            summary.*,
-           CASE WHEN summary.latest_rank > message.state_rank
+           CASE WHEN public.whatsapp_cloud_messages_status_transition_wins(
+                       message.delivery_status, message.state_rank,
+                       summary.latest_status, summary.latest_rank
+                     )
              THEN summary.latest_status ELSE message.delivery_status END AS winning_status,
            GREATEST(summary.latest_rank, message.state_rank) AS winning_rank
       FROM locked_message AS message
@@ -3004,6 +3089,11 @@ BEGIN
   PERFORM public.whatsapp_cloud_messages_lock_projection_cleanup(ARRAY(
     SELECT DISTINCT deleted.empresa_id
       FROM deleted_rows AS deleted
+     WHERE deleted.empresa_id IS NULL
+        OR EXISTS (
+       SELECT TRUE FROM public.empresas AS tenant
+        WHERE tenant.id = deleted.empresa_id
+     )
      ORDER BY deleted.empresa_id NULLS LAST
   ));
 
@@ -3011,6 +3101,10 @@ BEGIN
     SELECT DISTINCT deleted.empresa_id
       FROM deleted_rows AS deleted
      WHERE deleted.empresa_id IS NOT NULL
+       AND EXISTS (
+         SELECT 1 FROM public.empresas AS tenant
+          WHERE tenant.id = deleted.empresa_id
+       )
      ORDER BY deleted.empresa_id
   LOOP
     INSERT INTO public.whatsapp_cloud_messages (
@@ -3185,7 +3279,10 @@ BEGIN
                status_row.failed_at AS incoming_failed_at,
                status_row.updated_at AS incoming_updated_at,
                GREATEST(message.state_rank, status_row.latest_rank) AS winning_rank,
-               CASE WHEN status_row.latest_rank > message.state_rank
+               CASE WHEN public.whatsapp_cloud_messages_status_transition_wins(
+                           message.delivery_status, message.state_rank,
+                           status_row.latest_status, status_row.latest_rank
+                         )
                  THEN status_row.latest_status ELSE message.delivery_status END AS winning_status
           FROM public.whatsapp_cloud_messages AS message
          WHERE message.empresa_id = target_empresa_id
@@ -3257,6 +3354,11 @@ BEGIN
   PERFORM public.whatsapp_cloud_messages_lock_projection_cleanup(ARRAY(
     SELECT DISTINCT deleted.empresa_id
       FROM deleted_rows AS deleted
+     WHERE deleted.empresa_id IS NULL
+        OR EXISTS (
+       SELECT TRUE FROM public.empresas AS tenant
+        WHERE tenant.id = deleted.empresa_id
+     )
      ORDER BY deleted.empresa_id NULLS LAST
   ));
 
@@ -3264,6 +3366,10 @@ BEGIN
     SELECT DISTINCT deleted.empresa_id
       FROM deleted_rows AS deleted
      WHERE deleted.empresa_id IS NOT NULL
+       AND EXISTS (
+         SELECT 1 FROM public.empresas AS tenant
+          WHERE tenant.id = deleted.empresa_id
+       )
      ORDER BY deleted.empresa_id
   LOOP
     FOR deleted_row IN

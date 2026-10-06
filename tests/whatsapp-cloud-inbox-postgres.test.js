@@ -730,6 +730,85 @@ test('rollback del cleanup DELETE revierte captura y deja fuentes intactas', asy
   });
 });
 
+test('tenant teardown no recaptura PII, revierte completo y no afecta cleanup ordinario ni otro tenant', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (1), (2)');
+    await pool.query(migrationSql);
+    await pool.query(`
+      INSERT INTO whatsapp_cloud_events
+        (empresa_id,event_kind,dedupe_key,message_id,sender_id,recipient_id,message_type,status,event_data)
+      VALUES
+        (1,'message','teardown:in','teardown-in','5493515999001',NULL,'document',NULL,
+         '{"document":{"mime_type":"application/pdf","caption":"PII teardown caption","filename":"pii-teardown.pdf"}}'),
+        (1,'status','teardown:status','wamid.teardown',NULL,'5493515999001',NULL,'delivered','{}');
+      INSERT INTO wpp_outbox
+        (empresa_id,telefono,mensaje,status,transport_origin,cloud_dispatch_state,meta_message_id,sent_at)
+      VALUES (1,'5493515999001','PII teardown text','sent','cloud','sent','wamid.teardown',NOW())
+    `);
+    await pool.query(`
+      INSERT INTO whatsapp_cloud_events
+        (empresa_id,event_kind,dedupe_key,message_id,sender_id,recipient_id,message_type,status,event_data)
+      VALUES
+        (2,'message','retained:in','retained-in','5493515999002',NULL,'text',NULL,
+         '{"text":{"body":"retained tenant"}}'),
+        (2,'status','retained:status','wamid.retained',NULL,'5493515999002',NULL,'read','{}');
+      INSERT INTO wpp_outbox
+        (empresa_id,telefono,mensaje,status,transport_origin,cloud_dispatch_state,meta_message_id,sent_at)
+      VALUES (2,'5493515999002','retained outbound','sent','cloud','sent','wamid.retained',NOW())
+    `);
+    const before = (await pool.query(`SELECT
+      (SELECT count(*)::int FROM empresas) empresas,
+      (SELECT count(*)::int FROM whatsapp_cloud_events) events,
+      (SELECT count(*)::int FROM wpp_outbox) outbox,
+      (SELECT count(*)::int FROM whatsapp_cloud_messages) projection`)).rows[0];
+    assert.deepEqual(before, { empresas: 2, events: 4, outbox: 2, projection: 4 });
+
+    const tx = await pool.connect();
+    try {
+      await tx.query('BEGIN');
+      await tx.query('DELETE FROM empresas WHERE id = 1');
+      assert.deepEqual((await tx.query(`SELECT
+        (SELECT count(*)::int FROM empresas WHERE id=1) empresa,
+        (SELECT count(*)::int FROM whatsapp_cloud_events WHERE empresa_id=1) events,
+        (SELECT count(*)::int FROM wpp_outbox WHERE empresa_id=1) outbox,
+        (SELECT count(*)::int FROM whatsapp_cloud_messages WHERE empresa_id=1) projection`)).rows[0],
+      { empresa: 0, events: 0, outbox: 0, projection: 0 });
+      await tx.query('ROLLBACK');
+    } finally {
+      await tx.query('ROLLBACK').catch(() => {});
+      tx.release();
+    }
+    assert.deepEqual((await pool.query(`SELECT
+      (SELECT count(*)::int FROM empresas) empresas,
+      (SELECT count(*)::int FROM whatsapp_cloud_events) events,
+      (SELECT count(*)::int FROM wpp_outbox) outbox,
+      (SELECT count(*)::int FROM whatsapp_cloud_messages) projection`)).rows[0], before);
+
+    const ordinary = (await pool.query(`INSERT INTO whatsapp_cloud_events
+      (empresa_id,event_kind,dedupe_key,message_id,sender_id,message_type,event_data)
+      VALUES (1,'message','teardown:ordinary','ordinary-cleanup','5493515999003','text',
+              '{"text":{"body":"ordinary cleanup projection"}}') RETURNING id`)).rows[0].id;
+    await pool.query('DELETE FROM whatsapp_cloud_events WHERE id=$1', [ordinary]);
+    assert.deepEqual((await pool.query(`SELECT source_event_id,text_body FROM whatsapp_cloud_messages
+      WHERE provider_message_id='ordinary-cleanup'`)).rows[0],
+    { source_event_id: null, text_body: 'ordinary cleanup projection' });
+
+    await pool.query('DELETE FROM empresas WHERE id = ANY($1::int[])', [[1]]);
+    assert.deepEqual((await pool.query(`SELECT
+      (SELECT count(*)::int FROM empresas WHERE id=2) empresa,
+      (SELECT count(*)::int FROM whatsapp_cloud_events WHERE empresa_id=2) events,
+      (SELECT count(*)::int FROM wpp_outbox WHERE empresa_id=2) outbox,
+      (SELECT count(*)::int FROM whatsapp_cloud_messages WHERE empresa_id=2) projection,
+      (SELECT count(*)::int FROM whatsapp_cloud_messages WHERE empresa_id=1) deleted_projection`)).rows[0],
+    { empresa: 1, events: 2, outbox: 1, projection: 2, deleted_projection: 0 });
+    const residual = JSON.stringify((await pool.query(`SELECT * FROM whatsapp_cloud_messages
+      UNION ALL SELECT NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,mensaje,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL
+      FROM wpp_outbox`)).rows);
+    assert.doesNotMatch(residual,
+      /5493515999001|5493515999003|PII teardown text|PII teardown caption|pii-teardown\.pdf|ordinary cleanup projection/);
+  });
+});
+
 test('cleanup simultáneo de events/outbox serializa tenants y preserva la proyección', async () => {
   await withDatabase(async pool => {
     await pool.query('INSERT INTO empresas(id) VALUES (1), (2)');
@@ -4110,6 +4189,90 @@ test('transiciones autorizadas reabren outcome_unknown sin degradar terminales n
       VALUES (1,'549351555702','falló','error','cloud','definitive_failed') RETURNING id`)).rows[0].id;
     await pool.query(`UPDATE public.wpp_outbox SET status='pending', cloud_dispatch_state=NULL WHERE id=$1`, [ordinary]);
     assert.equal((await pool.query(`SELECT delivery_status FROM whatsapp_cloud_messages WHERE source_outbox_id=$1`, [ordinary])).rows[0].delivery_status, 'failed');
+  });
+});
+
+test('failed vence outcome_unknown a igual rank en ambos órdenes, cleanup/backfill, carreras y callbacks tardíos', async () => {
+  const failedSql = `INSERT INTO whatsapp_cloud_events
+    (empresa_id,event_kind,dedupe_key,message_id,recipient_id,status,source_timestamp,event_data,received_at)
+    VALUES (1,'status',$1,$2,$3,'failed',extract(epoch from $4::timestamptz)::bigint::text,'{}',$4::timestamptz + interval '1 second')`;
+  const unknownSql = `INSERT INTO wpp_outbox
+    (empresa_id,telefono,mensaje,status,transport_origin,cloud_dispatch_state,meta_message_id,created_at,sent_at)
+    VALUES (1,$1,$2,'error','cloud','outcome_unknown',$3,$4,$4)`;
+  const assertFailed = async (pool, providerId, at) => assert.deepEqual((await pool.query(`
+    SELECT delivery_status,state_rank,sent_at,delivered_at,read_at,
+           to_char(failed_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"') failed_at
+      FROM whatsapp_cloud_messages WHERE empresa_id=1 AND provider_message_id=$1`, [providerId])).rows[0],
+  { delivery_status: 'failed', state_rank: 25, sent_at: null, delivered_at: null, read_at: null, failed_at: at });
+
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (1)');
+    await pool.query(migrationSql);
+    await pool.query(unknownSql, ['5493515999101', 'after', 'wamid.failed-after', '2026-10-06T08:00:00Z']);
+    await pool.query(failedSql, ['failed:after', 'wamid.failed-after', '5493515999101', '2026-10-06T08:01:00Z']);
+    await assertFailed(pool, 'wamid.failed-after', '2026-10-06T08:01:00Z');
+    await pool.query("UPDATE wpp_outbox SET sent_at='2026-10-06T08:02:00Z' WHERE meta_message_id='wamid.failed-after'");
+    await assertFailed(pool, 'wamid.failed-after', '2026-10-06T08:01:00Z');
+
+    await pool.query(failedSql, ['failed:before', 'wamid.failed-before', '5493515999102', '2026-10-06T09:01:00Z']);
+    await pool.query(unknownSql, ['5493515999102', 'before', 'wamid.failed-before', '2026-10-06T09:00:00Z']);
+    await assertFailed(pool, 'wamid.failed-before', '2026-10-06T09:01:00Z');
+
+    for (const winner of ['outbox-first', 'status-first']) {
+      const providerId = `wamid.failed-${winner}`;
+      const first = await pool.connect();
+      const second = await pool.connect();
+      try {
+        await first.query('BEGIN');
+        if (winner === 'outbox-first') await first.query(unknownSql,
+          ['5493515999201', winner, providerId, '2026-10-06T10:00:00Z']);
+        else await first.query(failedSql,
+          [`failed:${winner}`, providerId, '5493515999202', '2026-10-06T10:01:00Z']);
+        const blocked = winner === 'outbox-first'
+          ? second.query(failedSql, [`failed:${winner}`, providerId, '5493515999201', '2026-10-06T10:01:00Z'])
+          : second.query(unknownSql, ['5493515999202', winner, providerId, '2026-10-06T10:00:00Z']);
+        await waitUntil(async () => (await pool.query(
+          'SELECT wait_event_type FROM pg_stat_activity WHERE pid=$1', [second.processID],
+        )).rows[0]?.wait_event_type === 'Lock', `${winner} must overlap on the tenant advisory`);
+        await first.query('COMMIT');
+        await blocked;
+      } finally {
+        await first.query('ROLLBACK').catch(() => {});
+        first.release();
+        second.release();
+      }
+      await assertFailed(pool, providerId, '2026-10-06T10:01:00Z');
+    }
+
+    for (const [status, rank] of [['sent', 30], ['delivered', 40], ['read', 50]]) {
+      const providerId = `wamid.late-failed-${status}`;
+      await pool.query(`INSERT INTO wpp_outbox
+        (empresa_id,telefono,mensaje,status,transport_origin,cloud_dispatch_state,meta_message_id,sent_at)
+        VALUES (1,$1,$2,'sent','cloud','sent',$3,'2026-10-06T11:01:00Z')`,
+      [`54935159993${rank}`, status, providerId]);
+      if (status !== 'sent') await pool.query(`INSERT INTO whatsapp_cloud_events
+        (empresa_id,event_kind,dedupe_key,message_id,status,event_data)
+        VALUES (1,'status',$1,$2,$3,'{}')`, [`late:${status}`, providerId, status]);
+      await pool.query(failedSql,
+        [`late:${status}:failed`, providerId, `54935159993${rank}`, '2026-10-06T11:03:00Z']);
+      assert.deepEqual((await pool.query(`SELECT delivery_status,state_rank FROM whatsapp_cloud_messages
+        WHERE provider_message_id=$1`, [providerId])).rows[0], { delivery_status: status, state_rank: rank });
+    }
+  });
+
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (1)');
+    await pool.query(outboxSql);
+    await pool.query(unknownSql, ['5493515999401', 'cleanup', 'wamid.failed-cleanup', '2026-10-06T12:00:00Z']);
+    await pool.query(unknownSql, ['5493515999402', 'backfill', 'wamid.failed-backfill', '2026-10-06T13:00:00Z']);
+    await pool.query(failedSql, ['failed:cleanup', 'wamid.failed-cleanup', '5493515999401', '2026-10-06T12:01:00Z']);
+    await pool.query(failedSql, ['failed:backfill', 'wamid.failed-backfill', '5493515999402', '2026-10-06T13:01:00Z']);
+    const { installSql, backfillSql } = projectionCutoverPhases();
+    await pool.query(installSql);
+    await pool.query("DELETE FROM whatsapp_cloud_events WHERE dedupe_key='failed:cleanup'");
+    await pool.query(backfillSql);
+    await assertFailed(pool, 'wamid.failed-cleanup', '2026-10-06T12:01:00Z');
+    await assertFailed(pool, 'wamid.failed-backfill', '2026-10-06T13:01:00Z');
   });
 });
 
