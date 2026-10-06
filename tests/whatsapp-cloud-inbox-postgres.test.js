@@ -1164,7 +1164,7 @@ test('reparación legacy conserva constraints ajenos durante doble migración', 
   });
 });
 
-test('reejecución normal no pide ACCESS EXCLUSIVE sobre eventos/outbox ni bloquea sus escritores', async () => {
+test('reejecución normal no pide ACCESS EXCLUSIVE y espera al writer del tenant sin reconstruir objetos', async () => {
   await withDatabase(async pool => {
     await pool.query('INSERT INTO empresas(id) VALUES (1)');
     await pool.query(migrationSql);
@@ -1208,13 +1208,21 @@ test('reejecución normal no pide ACCESS EXCLUSIVE sobre eventos/outbox ni bloqu
 
       const migrator = await pool.connect();
       try {
-        await migrator.query("SET lock_timeout = '750ms'");
-        await migrator.query(projectionSql);
+        const migrationPromise = migrator.query(projectionSql);
+        await waitUntil(async () => {
+          const wait = (await pool.query(`
+            SELECT wait_event_type, wait_event
+              FROM pg_catalog.pg_stat_activity
+             WHERE pid = $1
+          `, [migrator.processID])).rows[0];
+          return wait?.wait_event_type === 'Lock' && wait?.wait_event === 'advisory';
+        }, 'rerun did not wait on the active tenant writer advisory');
+        await writer.query('COMMIT');
+        committed = true;
+        await migrationPromise;
       } finally {
         migrator.release();
       }
-      await writer.query('COMMIT');
-      committed = true;
     } finally {
       if (!committed) await writer.query('ROLLBACK').catch(() => {});
       writer.release();
@@ -1848,6 +1856,219 @@ test('search_path shadow,public sólo crea y repara objetos canónicos en public
     assert.equal((await pool.query(
       "SELECT count(*)::int AS total FROM shadow.whatsapp_cloud_messages",
     )).rows[0].total, 0);
+  });
+});
+
+test('backfill recorre empresas en orden y toma el advisory tenant antes de tocar filas de proyección', () => {
+  const tenantLoop = projectionSql.match(/DO \$backfill\$[\s\S]*?END \$backfill\$;/)?.[0];
+  assert.ok(tenantLoop, 'migration must expose one explicit tenant-ordered backfill loop');
+  assert.match(tenantLoop, /SELECT empresa\.id[\s\S]*FROM public\.empresas AS empresa[\s\S]*ORDER BY empresa\.id/i);
+  const tenantLock = tenantLoop.indexOf('PERFORM public.whatsapp_cloud_messages_lock_projection(target_empresa_id);');
+  const firstProjectionRowLock = tenantLoop.search(/FOR UPDATE OF message/i);
+  const firstProjectionWrite = tenantLoop.search(/INSERT INTO public\.whatsapp_cloud_messages/i);
+  assert.ok(tenantLock >= 0 && firstProjectionWrite > tenantLock && firstProjectionRowLock > tenantLock,
+    'every tenant advisory lock must precede projection inserts and row locks');
+  assert.match(tenantLoop, /ORDER BY event\.id[\s\S]*ON CONFLICT DO NOTHING/i);
+  assert.match(tenantLoop, /ORDER BY outbox\.id[\s\S]*ON CONFLICT DO NOTHING/i);
+  assert.match(tenantLoop, /ORDER BY message\.id[\s\S]*FOR UPDATE OF message/i);
+  assert.doesNotMatch(projectionSql.slice(projectionSql.indexOf('-- CUTOVER CAPTURE COMMITTED; SOURCE SCANS FOLLOW')),
+    /SELECT message\.id[\s\S]*ORDER BY message\.id[\s\S]*FOR UPDATE OF message;[\s\S]*WITH status_events/i,
+    'global status row locking must be replaced by tenant-scoped reconciliation');
+});
+
+test('RED controlado reproduce 40P01 legacy y migración/runtime terminan con ambos ganadores', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (1), (2), (3)');
+    await pool.query(outboxSql);
+    await pool.query(projectionSql);
+
+    async function createPair(prefix, empresaId) {
+      const rows = (await pool.query(`
+        INSERT INTO public.wpp_outbox
+          (empresa_id, telefono, mensaje, created_at, sent_at, status, transport_origin,
+           meta_message_id, cloud_dispatch_state)
+        VALUES
+          ($1, $2, $3, '2026-10-01T10:00:00Z', '2026-10-01T10:01:00Z',
+           'sent', 'cloud', $4, 'sent'),
+          ($1, $5, $6, '2026-10-01T10:00:00Z', '2026-10-01T10:01:00Z',
+           'sent', 'cloud', $7, 'sent')
+        RETURNING meta_message_id
+      `, [
+        empresaId,
+        `549351${String(empresaId).padStart(3, '0')}201`, `${prefix} one`, `${prefix}-one`,
+        `549351${String(empresaId).padStart(3, '0')}202`, `${prefix} two`, `${prefix}-two`,
+      ])).rows;
+      return rows.map(row => row.meta_message_id);
+    }
+
+    async function insertStatus(client, { empresaId, dedupeKey, messageId, status = 'delivered' }) {
+      return client.query(`
+        INSERT INTO public.whatsapp_cloud_events
+          (empresa_id, event_kind, dedupe_key, message_id, recipient_id, status,
+           source_timestamp, event_data, received_at)
+        VALUES ($1, 'status', $2, $3, '549351555299', $4,
+                EXTRACT(EPOCH FROM TIMESTAMPTZ '2026-10-01T10:02:00Z')::bigint::text,
+                '{}'::jsonb, '2026-10-01T10:02:01Z')
+      `, [empresaId, dedupeKey, messageId, status]);
+    }
+
+    const legacyMessages = await createPair('legacy-deadlock', 1);
+    const legacyRuntime = await pool.connect();
+    const legacyMigrator = await pool.connect();
+    try {
+      await legacyRuntime.query('BEGIN');
+      await legacyMigrator.query('BEGIN');
+      await legacyRuntime.query("SET LOCAL deadlock_timeout = '100ms'; SET LOCAL statement_timeout = '3s'");
+      await legacyMigrator.query("SET LOCAL deadlock_timeout = '100ms'; SET LOCAL statement_timeout = '3s'");
+      await insertStatus(legacyRuntime, {
+        empresaId: 1, dedupeKey: 'legacy-deadlock:two', messageId: legacyMessages[1],
+      });
+      const legacyBackfill = legacyMigrator.query(`
+        SELECT message.id
+          FROM public.whatsapp_cloud_messages AS message
+         WHERE message.empresa_id = 1
+           AND message.provider_message_id = ANY($1::text[])
+         ORDER BY message.id
+         FOR UPDATE OF message
+      `, [legacyMessages]);
+      await waitUntil(async () => (await pool.query(
+        'SELECT wait_event_type FROM pg_catalog.pg_stat_activity WHERE pid = $1',
+        [legacyMigrator.processID],
+      )).rows[0]?.wait_event_type === 'Lock', 'legacy backfill did not hold row one and wait on row two');
+      const outcomes = await Promise.allSettled([
+        legacyBackfill,
+        insertStatus(legacyRuntime, {
+          empresaId: 1, dedupeKey: 'legacy-deadlock:one', messageId: legacyMessages[0], status: 'read',
+        }),
+      ]);
+      assert.equal(outcomes.filter(result => result.status === 'rejected'
+        && result.reason?.code === '40P01').length, 1,
+      `legacy inverse order must reproduce one 40P01: ${outcomes.map(result => result.reason?.code || result.status).join(',')}`);
+    } finally {
+      await legacyRuntime.query('ROLLBACK').catch(() => {});
+      await legacyMigrator.query('ROLLBACK').catch(() => {});
+      legacyRuntime.release();
+      legacyMigrator.release();
+    }
+
+    const runtimeFirstMessages = await createPair('runtime-first', 1);
+    const runtimeFirst = await pool.connect();
+    const migrationSecond = await pool.connect();
+    try {
+      await runtimeFirst.query('BEGIN');
+      await insertStatus(runtimeFirst, {
+        empresaId: 1, dedupeKey: 'runtime-first:two', messageId: runtimeFirstMessages[1],
+      });
+      const migrationPromise = migrationSecond.query(projectionSql);
+      await waitUntil(async () => {
+        const wait = (await pool.query(`
+          SELECT wait_event_type, wait_event
+            FROM pg_catalog.pg_stat_activity
+           WHERE pid = $1
+        `, [migrationSecond.processID])).rows[0];
+        return wait?.wait_event_type === 'Lock' && wait?.wait_event === 'advisory';
+      }, 'migration did not wait on the runtime tenant advisory before taking projection row locks');
+      await insertStatus(runtimeFirst, {
+        empresaId: 1, dedupeKey: 'runtime-first:one', messageId: runtimeFirstMessages[0], status: 'read',
+      });
+      await runtimeFirst.query('COMMIT');
+      await migrationPromise;
+    } finally {
+      await runtimeFirst.query('ROLLBACK').catch(() => {});
+      runtimeFirst.release();
+      migrationSecond.release();
+    }
+
+    const migrationFirstMessages = await createPair('migration-first', 1);
+    const delayedMigration = projectionSql.replace(
+      '-- TENANT BACKFILL LOCK ACQUIRED',
+      "-- TENANT BACKFILL LOCK ACQUIRED\n    IF target_empresa_id = 1 THEN PERFORM pg_catalog.pg_sleep(0.35); END IF;",
+    );
+    assert.notEqual(delayedMigration, projectionSql, 'tenant backfill lock marker must be injectable');
+    const migrationFirst = await pool.connect();
+    const runtimeSecond = await pool.connect();
+    try {
+      const migrationPromise = migrationFirst.query(delayedMigration);
+      await waitUntil(async () => (await pool.query(
+        'SELECT wait_event FROM pg_catalog.pg_stat_activity WHERE pid = $1',
+        [migrationFirst.processID],
+      )).rows[0]?.wait_event === 'PgSleep', 'migration did not hold the tenant advisory first');
+      await runtimeSecond.query('BEGIN');
+      let runtimeSettled = false;
+      const runtimePromise = insertStatus(runtimeSecond, {
+        empresaId: 1, dedupeKey: 'migration-first:two', messageId: migrationFirstMessages[1],
+      }).then(value => { runtimeSettled = true; return value; });
+      await new Promise(resolve => setTimeout(resolve, 120));
+      assert.equal(runtimeSettled, false, 'runtime must wait on migration advisory before touching its row');
+      await migrationPromise;
+      await runtimePromise;
+      await insertStatus(runtimeSecond, {
+        empresaId: 1, dedupeKey: 'migration-first:one', messageId: migrationFirstMessages[0], status: 'read',
+      });
+      await runtimeSecond.query('COMMIT');
+    } finally {
+      await runtimeSecond.query('ROLLBACK').catch(() => {});
+      migrationFirst.release();
+      runtimeSecond.release();
+    }
+
+    const tenantOne = await pool.connect();
+    const tenantTwo = await pool.connect();
+    try {
+      await tenantOne.query('BEGIN');
+      await tenantOne.query('SELECT public.whatsapp_cloud_messages_lock_projection(1)');
+      const startedAt = Date.now();
+      await tenantTwo.query(`
+        INSERT INTO public.whatsapp_cloud_events
+          (empresa_id, event_kind, dedupe_key, message_id, sender_id, message_type, event_data)
+        VALUES (2, 'message', 'new-candidate:tenant-two', 'new-candidate-tenant-two',
+                '549351555298', 'text', '{"text":{"body":"capturado por trigger"}}'::jsonb)
+      `);
+      assert.ok(Date.now() - startedAt < 500, 'different tenant trigger capture must remain parallel');
+      await tenantOne.query('ROLLBACK');
+    } finally {
+      await tenantOne.query('ROLLBACK').catch(() => {});
+      tenantOne.release();
+      tenantTwo.release();
+    }
+    assert.equal((await pool.query(`
+      SELECT count(*)::int AS total
+        FROM public.whatsapp_cloud_messages
+       WHERE empresa_id = 2 AND provider_message_id = 'new-candidate-tenant-two'
+    `)).rows[0].total, 1);
+    assert.equal((await pool.query(
+      'SELECT count(*)::int AS total FROM public.whatsapp_cloud_messages WHERE empresa_id = 3',
+    )).rows[0].total, 0, 'tenant without candidates must remain a clean no-op');
+  });
+});
+
+test('backfill advisory transaccional se libera en commit y rollback y permite retry limpio', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (1), (2)');
+    await pool.query(outboxSql);
+    const failingMigration = projectionSql.replace(
+      '-- TENANT BACKFILL LOCK ACQUIRED',
+      "-- TENANT BACKFILL LOCK ACQUIRED\n    IF target_empresa_id = 1 THEN RAISE EXCEPTION 'controlled backfill rollback'; END IF;",
+    );
+    assert.notEqual(failingMigration, projectionSql);
+    const migrator = await pool.connect();
+    try {
+      await assert.rejects(migrator.query(failingMigration), /controlled backfill rollback/);
+      await migrator.query('ROLLBACK');
+      assert.equal((await pool.query(`
+        SELECT count(*)::int AS total FROM pg_catalog.pg_locks
+         WHERE locktype = 'advisory' AND pid = $1
+      `, [migrator.processID])).rows[0].total, 0);
+      await migrator.query(projectionSql);
+      assert.equal((await pool.query(`
+        SELECT count(*)::int AS total FROM pg_catalog.pg_locks
+         WHERE locktype = 'advisory' AND pid = $1
+      `, [migrator.processID])).rows[0].total, 0);
+      await migrator.query(projectionSql);
+    } finally {
+      await migrator.query('ROLLBACK').catch(() => {});
+      migrator.release();
+    }
   });
 });
 

@@ -3108,250 +3108,159 @@ SET LOCAL statement_timeout = '5min';
 SELECT pg_catalog.pg_advisory_xact_lock(1464550724, 1229867347);
 -- CUTOVER CAPTURE COMMITTED; SOURCE SCANS FOLLOW
 
-INSERT INTO public.whatsapp_cloud_messages (
-  empresa_id, direction, participant_wa_id, source_event_id,
-  provider_message_id, message_type, text_body, media_mime_type,
-  media_caption, document_filename, delivery_status, state_rank, message_at,
-  created_at, updated_at
-)
-SELECT event.empresa_id,
-       'inbound',
-       event.sender_id,
-       event.id,
-       NULLIF(BTRIM(event.message_id), ''),
-       event.message_type,
-       CASE WHEN event.message_type = 'text'
-              AND jsonb_typeof(event.event_data->'text'->'body') = 'string'
-         THEN LEFT(event.event_data->'text'->>'body', 4096) END,
-       CASE WHEN event.message_type IN ('image', 'document')
-              AND jsonb_typeof(event.event_data->event.message_type->'mime_type') = 'string'
-         THEN NULLIF(LEFT(event.event_data->event.message_type->>'mime_type', 255), '') END,
-       CASE WHEN event.message_type IN ('image', 'document')
-              AND jsonb_typeof(event.event_data->event.message_type->'caption') = 'string'
-         THEN LEFT(event.event_data->event.message_type->>'caption', 1024) END,
-       CASE WHEN event.message_type = 'document'
-              AND jsonb_typeof(event.event_data->'document'->'filename') = 'string'
-         THEN LEFT(event.event_data->'document'->>'filename', 255) END,
-       'received',
-       0,
-       CASE
-         WHEN event.source_timestamp ~ '^[0-9]{1,12}$'
-          AND event.source_timestamp::NUMERIC > 0
-          AND event.source_timestamp::NUMERIC <= 253402300799
-          AND to_timestamp(event.source_timestamp::DOUBLE PRECISION)
-              BETWEEN event.received_at - INTERVAL '30 days'
-                  AND event.received_at + INTERVAL '5 minutes'
-           THEN to_timestamp(event.source_timestamp::DOUBLE PRECISION)
-         ELSE event.received_at
-       END,
-       event.received_at,
-       event.received_at
-  FROM public.whatsapp_cloud_events AS event
- WHERE event.event_kind = 'message'
-   AND event.message_type IN ('text', 'image', 'document')
-   AND event.sender_id ~ '^[0-9]{6,15}$'
-   AND (
-     event.message_type <> 'text'
-     OR jsonb_typeof(event.event_data->'text'->'body') = 'string'
-   )
-   AND NOT EXISTS (
-     SELECT 1
-       FROM public.whatsapp_cloud_messages AS projected
-      WHERE projected.empresa_id = event.empresa_id
-        AND projected.source_event_id = event.id
-   )
-ON CONFLICT DO NOTHING;
+DO $backfill$
+DECLARE
+  target_empresa_id INTEGER;
+  message_row RECORD;
+BEGIN
+  FOR target_empresa_id IN
+    SELECT empresa.id
+      FROM public.empresas AS empresa
+     ORDER BY empresa.id
+  LOOP
+    PERFORM public.whatsapp_cloud_messages_lock_projection(target_empresa_id);
+    -- TENANT BACKFILL LOCK ACQUIRED
 
-INSERT INTO public.whatsapp_cloud_messages (
-  empresa_id, direction, participant_wa_id, outbox_id,
-  provider_message_id, message_type, text_body, delivery_status, state_rank,
-  message_at, sent_at, failed_at, created_at, updated_at
-)
-SELECT outbox.empresa_id,
-       'outbound',
-       outbox.telefono,
-       outbox.id,
-       NULLIF(BTRIM(outbox.meta_message_id), ''),
-       'text',
-       LEFT(outbox.mensaje, 4096),
-       CASE
-         WHEN outbox.status = 'pending' THEN 'queued'
-         WHEN outbox.status = 'sending' THEN 'sending'
-         WHEN outbox.status = 'sent' THEN 'sent'
-         WHEN outbox.status = 'error' AND outbox.cloud_dispatch_state = 'manual_retryable'
-           THEN 'manual_retry'
-         WHEN outbox.status = 'error' AND outbox.cloud_dispatch_state = 'outcome_unknown'
-           THEN 'outcome_unknown'
-         ELSE 'failed'
-       END,
-       CASE
-         WHEN outbox.status = 'pending' THEN 10
-         WHEN outbox.status = 'sending' THEN 20
-         WHEN outbox.status = 'sent' THEN 30
-         WHEN outbox.status = 'error' AND outbox.cloud_dispatch_state = 'manual_retryable' THEN 15
-         WHEN outbox.status = 'error' AND outbox.cloud_dispatch_state = 'outcome_unknown' THEN 25
-         ELSE 25
-       END,
-       outbox.created_at,
-       CASE
-         WHEN outbox.status = 'sent'
-           THEN GREATEST(outbox.created_at, COALESCE(outbox.sent_at, outbox.created_at))
-         WHEN outbox.status IN ('error', 'skipped')
-          AND outbox.cloud_dispatch_state IS DISTINCT FROM 'manual_retryable'
-          AND outbox.cloud_dispatch_state IS DISTINCT FROM 'outcome_unknown'
-           THEN NULL
-         ELSE outbox.sent_at
-       END,
-       CASE WHEN outbox.status IN ('error', 'skipped')
+    INSERT INTO public.whatsapp_cloud_messages (
+      empresa_id, direction, participant_wa_id, source_event_id,
+      provider_message_id, message_type, text_body, media_mime_type,
+      media_caption, document_filename, delivery_status, state_rank, message_at,
+      created_at, updated_at
+    )
+    SELECT event.empresa_id,
+           'inbound',
+           event.sender_id,
+           event.id,
+           NULLIF(BTRIM(event.message_id), ''),
+           event.message_type,
+           CASE WHEN event.message_type = 'text'
+                  AND jsonb_typeof(event.event_data->'text'->'body') = 'string'
+             THEN LEFT(event.event_data->'text'->>'body', 4096) END,
+           CASE WHEN event.message_type IN ('image', 'document')
+                  AND jsonb_typeof(event.event_data->event.message_type->'mime_type') = 'string'
+             THEN NULLIF(LEFT(event.event_data->event.message_type->>'mime_type', 255), '') END,
+           CASE WHEN event.message_type IN ('image', 'document')
+                  AND jsonb_typeof(event.event_data->event.message_type->'caption') = 'string'
+             THEN LEFT(event.event_data->event.message_type->>'caption', 1024) END,
+           CASE WHEN event.message_type = 'document'
+                  AND jsonb_typeof(event.event_data->'document'->'filename') = 'string'
+             THEN LEFT(event.event_data->'document'->>'filename', 255) END,
+           'received',
+           0,
+           CASE
+             WHEN event.source_timestamp ~ '^[0-9]{1,12}$'
+              AND event.source_timestamp::NUMERIC > 0
+              AND event.source_timestamp::NUMERIC <= 253402300799
+              AND to_timestamp(event.source_timestamp::DOUBLE PRECISION)
+                  BETWEEN event.received_at - INTERVAL '30 days'
+                      AND event.received_at + INTERVAL '5 minutes'
+               THEN to_timestamp(event.source_timestamp::DOUBLE PRECISION)
+             ELSE event.received_at
+           END,
+           event.received_at,
+           event.received_at
+      FROM public.whatsapp_cloud_events AS event
+     WHERE event.empresa_id = target_empresa_id
+       AND event.event_kind = 'message'
+       AND event.message_type IN ('text', 'image', 'document')
+       AND event.sender_id ~ '^[0-9]{6,15}$'
+       AND (
+         event.message_type <> 'text'
+         OR jsonb_typeof(event.event_data->'text'->'body') = 'string'
+       )
+       AND NOT EXISTS (
+         SELECT 1
+           FROM public.whatsapp_cloud_messages AS projected
+          WHERE projected.empresa_id = event.empresa_id
+            AND projected.source_event_id = event.id
+       )
+     ORDER BY event.id
+    ON CONFLICT DO NOTHING;
+
+    INSERT INTO public.whatsapp_cloud_messages (
+      empresa_id, direction, participant_wa_id, outbox_id,
+      provider_message_id, message_type, text_body, delivery_status, state_rank,
+      message_at, sent_at, failed_at, created_at, updated_at
+    )
+    SELECT outbox.empresa_id,
+           'outbound',
+           outbox.telefono,
+           outbox.id,
+           NULLIF(BTRIM(outbox.meta_message_id), ''),
+           'text',
+           LEFT(outbox.mensaje, 4096),
+           CASE
+             WHEN outbox.status = 'pending' THEN 'queued'
+             WHEN outbox.status = 'sending' THEN 'sending'
+             WHEN outbox.status = 'sent' THEN 'sent'
+             WHEN outbox.status = 'error' AND outbox.cloud_dispatch_state = 'manual_retryable'
+               THEN 'manual_retry'
+             WHEN outbox.status = 'error' AND outbox.cloud_dispatch_state = 'outcome_unknown'
+               THEN 'outcome_unknown'
+             ELSE 'failed'
+           END,
+           CASE
+             WHEN outbox.status = 'pending' THEN 10
+             WHEN outbox.status = 'sending' THEN 20
+             WHEN outbox.status = 'sent' THEN 30
+             WHEN outbox.status = 'error' AND outbox.cloud_dispatch_state = 'manual_retryable' THEN 15
+             WHEN outbox.status = 'error' AND outbox.cloud_dispatch_state = 'outcome_unknown' THEN 25
+             ELSE 25
+           END,
+           outbox.created_at,
+           CASE
+             WHEN outbox.status = 'sent'
+               THEN GREATEST(outbox.created_at, COALESCE(outbox.sent_at, outbox.created_at))
+             WHEN outbox.status IN ('error', 'skipped')
               AND outbox.cloud_dispatch_state IS DISTINCT FROM 'manual_retryable'
               AND outbox.cloud_dispatch_state IS DISTINCT FROM 'outcome_unknown'
-         THEN GREATEST(outbox.created_at, COALESCE(outbox.sent_at, outbox.created_at)) END,
-       outbox.created_at,
-       COALESCE(outbox.sent_at, outbox.created_at)
-  FROM public.wpp_outbox AS outbox
- WHERE outbox.transport_origin = 'cloud'
-   AND outbox.empresa_id IS NOT NULL
-   AND outbox.telefono ~ '^[0-9]{6,15}$'
-   AND outbox.mensaje IS NOT NULL
-   AND NOT EXISTS (
-     SELECT 1
-       FROM public.whatsapp_cloud_messages AS projected
-      WHERE projected.empresa_id = outbox.empresa_id
-        AND projected.outbox_id = outbox.id
-   )
-ON CONFLICT DO NOTHING;
+               THEN NULL
+             ELSE outbox.sent_at
+           END,
+           CASE WHEN outbox.status IN ('error', 'skipped')
+                  AND outbox.cloud_dispatch_state IS DISTINCT FROM 'manual_retryable'
+                  AND outbox.cloud_dispatch_state IS DISTINCT FROM 'outcome_unknown'
+             THEN GREATEST(outbox.created_at, COALESCE(outbox.sent_at, outbox.created_at)) END,
+           outbox.created_at,
+           COALESCE(outbox.sent_at, outbox.created_at)
+      FROM public.wpp_outbox AS outbox
+     WHERE outbox.empresa_id = target_empresa_id
+       AND outbox.transport_origin = 'cloud'
+       AND outbox.telefono ~ '^[0-9]{6,15}$'
+       AND outbox.mensaje IS NOT NULL
+       AND NOT EXISTS (
+         SELECT 1
+           FROM public.whatsapp_cloud_messages AS projected
+          WHERE projected.empresa_id = outbox.empresa_id
+            AND projected.outbox_id = outbox.id
+       )
+     ORDER BY outbox.id
+    ON CONFLICT DO NOTHING;
 
-SELECT message.id
-  FROM public.whatsapp_cloud_messages AS message
- WHERE message.direction = 'outbound'
-   AND EXISTS (
-     SELECT 1
-       FROM public.whatsapp_cloud_events AS event
-      WHERE event.empresa_id = message.empresa_id
-        AND event.message_id = message.provider_message_id
-        AND event.event_kind = 'status'
-        AND event.status IN ('sent', 'delivered', 'read', 'failed')
-        AND NULLIF(BTRIM(event.message_id), '') IS NOT NULL
-   )
- ORDER BY message.id
- FOR UPDATE OF message;
-
-WITH status_events AS (
-  SELECT event.empresa_id,
-         event.message_id AS provider_message_id,
-         event.status,
-         CASE
-           WHEN event.source_timestamp ~ '^[0-9]{1,12}$'
-            AND event.source_timestamp::NUMERIC > 0
-            AND event.source_timestamp::NUMERIC <= 253402300799
-            AND to_timestamp(event.source_timestamp::DOUBLE PRECISION)
-                BETWEEN event.received_at - INTERVAL '30 days'
-                    AND event.received_at + INTERVAL '5 minutes'
-             THEN to_timestamp(event.source_timestamp::DOUBLE PRECISION)
-           ELSE event.received_at
-         END AS status_at
-    FROM public.whatsapp_cloud_events AS event
-   WHERE event.event_kind = 'status'
-     AND event.status IN ('sent', 'delivered', 'read', 'failed')
-     AND NULLIF(BTRIM(event.message_id), '') IS NOT NULL
-), status_summary AS (
-  SELECT empresa_id,
-         provider_message_id,
-         (array_agg(status ORDER BY
-           CASE status WHEN 'read' THEN 50 WHEN 'delivered' THEN 40
-                       WHEN 'sent' THEN 30 WHEN 'failed' THEN 25 ELSE 0 END DESC,
-           status_at DESC))[1] AS latest_status,
-         MAX(CASE status WHEN 'read' THEN 50 WHEN 'delivered' THEN 40
-                         WHEN 'sent' THEN 30 WHEN 'failed' THEN 25 ELSE 0 END) AS latest_rank,
-         MIN(status_at) FILTER (WHERE status = 'sent') AS sent_at,
-         MIN(status_at) FILTER (WHERE status = 'delivered') AS delivered_at,
-         MIN(status_at) FILTER (WHERE status = 'read') AS read_at,
-         MIN(status_at) FILTER (WHERE status = 'failed') AS failed_at,
-         MAX(status_at) AS updated_at
-    FROM status_events
-   GROUP BY empresa_id, provider_message_id
-), winners AS (
-  SELECT message.id,
-         message.message_at,
-         message.delivery_status AS previous_status,
-         message.state_rank AS previous_rank,
-         message.sent_at AS previous_sent_at,
-         message.delivered_at AS previous_delivered_at,
-         message.read_at AS previous_read_at,
-         message.failed_at AS previous_failed_at,
-         message.updated_at AS previous_updated_at,
-         summary.*,
-         CASE WHEN summary.latest_rank > message.state_rank
-           THEN summary.latest_status ELSE message.delivery_status END AS winning_status,
-         GREATEST(summary.latest_rank, message.state_rank) AS winning_rank
-    FROM public.whatsapp_cloud_messages AS message
-    JOIN status_summary AS summary
-      ON message.empresa_id = summary.empresa_id
-     AND message.provider_message_id = summary.provider_message_id
-   WHERE message.direction = 'outbound'
-), sent_timeline AS (
-  SELECT winners.*,
-         CASE
-           WHEN winning_rank >= 30 THEN GREATEST(
-             message_at,
-             LEAST(previous_sent_at, sent_at, delivered_at, read_at, updated_at)
-           )
-           WHEN winning_status = 'failed' THEN NULL
-           ELSE previous_sent_at
-         END AS canonical_sent_at
-    FROM winners
-), delivered_timeline AS (
-  SELECT sent_timeline.*,
-         CASE
-           WHEN winning_rank >= 40 THEN GREATEST(
-             canonical_sent_at,
-             LEAST(previous_delivered_at, delivered_at, read_at)
-           )
-           WHEN winning_status IN ('failed', 'sent') THEN NULL
-           ELSE previous_delivered_at
-         END AS canonical_delivered_at
-    FROM sent_timeline
-), canonical AS (
-  SELECT delivered_timeline.*,
-         CASE
-           WHEN winning_rank >= 50 THEN GREATEST(
-             canonical_delivered_at,
-             LEAST(previous_read_at, read_at)
-           )
-           WHEN winning_status IN ('failed', 'sent', 'delivered') THEN NULL
-           ELSE previous_read_at
-         END AS canonical_read_at,
-         CASE
-           WHEN winning_status = 'failed' THEN GREATEST(
-             message_at,
-             LEAST(previous_failed_at, failed_at, updated_at)
-           )
-           WHEN winning_rank >= 30 THEN NULL
-           ELSE previous_failed_at
-         END AS canonical_failed_at,
-         GREATEST(previous_updated_at, updated_at) AS canonical_updated_at
-    FROM delivered_timeline
-)
-UPDATE public.whatsapp_cloud_messages AS message
-   SET delivery_status = canonical.winning_status,
-       state_rank = canonical.winning_rank,
-       sent_at = canonical.canonical_sent_at,
-       delivered_at = canonical.canonical_delivered_at,
-       read_at = canonical.canonical_read_at,
-       failed_at = canonical.canonical_failed_at,
-       updated_at = canonical.canonical_updated_at
-  FROM canonical
-  WHERE message.id = canonical.id
-    AND canonical.latest_rank >= message.state_rank
-    AND ROW(
-     message.delivery_status, message.state_rank, message.sent_at,
-     message.delivered_at, message.read_at, message.failed_at, message.updated_at
-   ) IS DISTINCT FROM ROW(
-     canonical.winning_status, canonical.winning_rank, canonical.canonical_sent_at,
-     canonical.canonical_delivered_at, canonical.canonical_read_at,
-     canonical.canonical_failed_at, canonical.canonical_updated_at
-   );
-
+    FOR message_row IN
+      SELECT message.id, message.provider_message_id
+        FROM public.whatsapp_cloud_messages AS message
+       WHERE message.empresa_id = target_empresa_id
+         AND message.direction = 'outbound'
+         AND EXISTS (
+           SELECT 1
+             FROM public.whatsapp_cloud_events AS event
+            WHERE event.empresa_id = target_empresa_id
+              AND event.message_id = message.provider_message_id
+              AND event.event_kind = 'status'
+              AND event.status IN ('sent', 'delivered', 'read', 'failed')
+              AND NULLIF(BTRIM(event.message_id), '') IS NOT NULL
+         )
+       ORDER BY message.id
+       FOR UPDATE OF message
+    LOOP
+      PERFORM public.whatsapp_cloud_messages_reconcile_status(
+        target_empresa_id,
+        message_row.provider_message_id
+      );
+    END LOOP;
+  END LOOP;
+END $backfill$;
 COMMIT;
 -- END WHATSAPP CLOUD MESSAGE PROJECTION MIGRATION
 
