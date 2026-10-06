@@ -179,6 +179,45 @@ async function seedBackfillSources(pool) {
   `);
 }
 
+async function assertMixedTenantRuntimeTransactionRejected(pool, tenantOrder) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query("SET LOCAL deadlock_timeout = '100ms'; SET LOCAL statement_timeout = '3s'");
+    await client.query(`
+      INSERT INTO public.whatsapp_cloud_events
+        (empresa_id, event_kind, dedupe_key, message_id, sender_id, message_type, event_data)
+      VALUES ($1, 'message', $2, $3, '549351555081', 'text',
+              '{"text":{"body":"primer tenant"}}'::jsonb)
+    `, [tenantOrder[0], `mixed:${tenantOrder.join('-')}:first`, `mixed-${tenantOrder.join('-')}-first`]);
+
+    await assert.rejects(client.query(`
+      INSERT INTO public.whatsapp_cloud_events
+        (empresa_id, event_kind, dedupe_key, message_id, sender_id, message_type, event_data)
+      VALUES ($1, 'message', $2, $3, '549351555082', 'text',
+              '{"text":{"body":"segundo tenant"}}'::jsonb)
+    `, [tenantOrder[1], `mixed:${tenantOrder.join('-')}:second`, `mixed-${tenantOrder.join('-')}-second`]),
+    error => error?.code === 'P0001'
+      && error?.message === 'whatsapp_cloud_projection_cross_tenant_transaction'
+      && error?.code !== '40P01');
+    await client.query('ROLLBACK');
+  } finally {
+    await client.query('ROLLBACK').catch(() => {});
+    client.release();
+  }
+
+  assert.deepEqual((await pool.query(`
+    SELECT
+      (SELECT count(*)::int FROM public.whatsapp_cloud_events
+        WHERE dedupe_key LIKE $1) AS source_total,
+      (SELECT count(*)::int FROM public.whatsapp_cloud_messages
+        WHERE provider_message_id LIKE $2) AS projection_total
+  `, [`mixed:${tenantOrder.join('-')}:%`, `mixed-${tenantOrder.join('-')}-%`])).rows[0], {
+    source_total: 0,
+    projection_total: 0,
+  });
+}
+
 test('migración crea proyección tenant-scoped, constraints e índices exactos y es reejecutable', async () => {
   await withDatabase(async pool => {
     await pool.query(migrationSql);
@@ -844,7 +883,8 @@ test('migración repara secuencia propia para id BIGINT legacy sin default y la 
         delivery_status TEXT,
         state_rank SMALLINT,
         message_at TIMESTAMPTZ
-      )
+      );
+      CREATE SEQUENCE public.whatsapp_cloud_messages_id_seq AS BIGINT
     `);
     await pool.query(`
       INSERT INTO whatsapp_cloud_messages
@@ -871,6 +911,14 @@ test('migración repara secuencia propia para id BIGINT legacy sin default y la 
       default_expression: null,
       sequence_name: null,
     });
+    assert.equal((await pool.query(`
+      SELECT count(*)::int AS total
+        FROM pg_depend
+       WHERE classid = 'pg_class'::regclass
+         AND objid = 'public.whatsapp_cloud_messages_id_seq'::regclass
+         AND refclassid = 'pg_class'::regclass
+         AND deptype = 'a'
+    `)).rows[0].total, 0, 'legacy canonical BIGINT sequence starts without an owner');
 
     await pool.query(projectionSql);
 
@@ -1863,7 +1911,7 @@ test('backfill recorre empresas en orden y toma el advisory tenant antes de toca
   const tenantLoop = projectionSql.match(/DO \$backfill\$[\s\S]*?END \$backfill\$;/)?.[0];
   assert.ok(tenantLoop, 'migration must expose one explicit tenant-ordered backfill loop');
   assert.match(tenantLoop, /SELECT empresa\.id[\s\S]*FROM public\.empresas AS empresa[\s\S]*ORDER BY empresa\.id/i);
-  const tenantLock = tenantLoop.indexOf('PERFORM public.whatsapp_cloud_messages_lock_projection(target_empresa_id);');
+  const tenantLock = tenantLoop.indexOf('PERFORM public.whatsapp_cloud_messages_lock_projection_migration(target_empresa_id);');
   const firstProjectionRowLock = tenantLoop.search(/FOR UPDATE OF message/i);
   const firstProjectionWrite = tenantLoop.search(/INSERT INTO public\.whatsapp_cloud_messages/i);
   assert.ok(tenantLock >= 0 && firstProjectionWrite > tenantLock && firstProjectionRowLock > tenantLock,
@@ -1874,6 +1922,121 @@ test('backfill recorre empresas en orden y toma el advisory tenant antes de toca
   assert.doesNotMatch(projectionSql.slice(projectionSql.indexOf('-- CUTOVER CAPTURE COMMITTED; SOURCE SCANS FOLLOW')),
     /SELECT message\.id[\s\S]*ORDER BY message\.id[\s\S]*FOR UPDATE OF message;[\s\S]*WITH status_events/i,
     'global status row locking must be replaced by tenant-scoped reconciliation');
+});
+
+test('las tres reparaciones globales recorren tenants estables y bloquean antes de cualquier UPDATE', () => {
+  for (const [tag, marker] of [
+    ['repair_state_rank', '-- TENANT REPAIR STATE LOCK ACQUIRED'],
+    ['repair_content_lengths', '-- TENANT REPAIR CONTENT LOCK ACQUIRED'],
+    ['repair_timeline', '-- TENANT REPAIR TIMELINE LOCK ACQUIRED'],
+  ]) {
+    const phase = projectionSql.match(new RegExp(`DO \\$${tag}\\$[\\s\\S]*?END \\$${tag}\\$;`))?.[0];
+    assert.ok(phase, `${tag} must be an explicit tenant repair phase`);
+    assert.match(phase,
+      /SELECT DISTINCT message\.empresa_id[\s\S]*FROM public\.whatsapp_cloud_messages AS message[\s\S]*ORDER BY message\.empresa_id/i);
+    const lock = phase.indexOf('PERFORM public.whatsapp_cloud_messages_lock_projection_migration(target_empresa_id);');
+    const instrumented = phase.indexOf(marker);
+    const firstUpdate = phase.search(/UPDATE public\.whatsapp_cloud_messages/i);
+    assert.ok(lock >= 0 && instrumented > lock && firstUpdate > instrumented,
+      `${tag} must acquire its tenant advisory before projection DML`);
+    assert.doesNotMatch(phase.slice(0, lock), /\b(?:UPDATE|DELETE|INSERT)\s+public\.whatsapp_cloud_messages/i);
+  }
+});
+
+test('runtime rechaza transacción cross-tenant 2→1 antes del segundo advisory y revierte todo', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (1), (2)');
+    await pool.query(migrationSql);
+    await assertMixedTenantRuntimeTransactionRejected(pool, [2, 1]);
+  });
+});
+
+test('runtime rechaza transacción cross-tenant 1→2 antes del segundo advisory y revierte todo', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (1), (2)');
+    await pool.query(migrationSql);
+    await assertMixedTenantRuntimeTransactionRejected(pool, [1, 2]);
+  });
+});
+
+test('cada fase de reparación retiene advisory tenant antes de DML frente a runtime concurrente', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (1)');
+    await pool.query(migrationSql);
+    await pool.query(`
+      INSERT INTO public.wpp_outbox
+        (empresa_id, telefono, mensaje, status, transport_origin)
+      VALUES (1, '549351555083', 'repair race seed', 'pending', 'cloud')
+    `);
+
+    const phases = [
+      {
+        marker: '-- TENANT REPAIR STATE LOCK ACQUIRED',
+        prepare: `
+          ALTER TABLE public.whatsapp_cloud_messages
+            DROP CONSTRAINT whatsapp_cloud_messages_state_rank_check;
+          UPDATE public.whatsapp_cloud_messages SET state_rank = 0
+           WHERE text_body = 'repair race seed'
+        `,
+      },
+      {
+        marker: '-- TENANT REPAIR CONTENT LOCK ACQUIRED',
+        prepare: `
+          ALTER TABLE public.whatsapp_cloud_messages
+            DROP CONSTRAINT whatsapp_cloud_messages_content_length_check;
+          UPDATE public.whatsapp_cloud_messages SET text_body = repeat('x', 5000)
+           WHERE participant_wa_id = '549351555083'
+        `,
+      },
+      {
+        marker: '-- TENANT REPAIR TIMELINE LOCK ACQUIRED',
+        prepare: `
+          ALTER TABLE public.whatsapp_cloud_messages
+            DROP CONSTRAINT whatsapp_cloud_messages_timestamps_check;
+          UPDATE public.whatsapp_cloud_messages
+             SET delivery_status = 'read', state_rank = 50,
+                 sent_at = NULL, delivered_at = NULL, read_at = NULL, failed_at = NULL
+           WHERE participant_wa_id = '549351555083'
+        `,
+      },
+    ];
+
+    for (const [index, phase] of phases.entries()) {
+      await pool.query(phase.prepare);
+      const delayedMigration = projectionSql.replace(
+        phase.marker,
+        `${phase.marker}\n    PERFORM pg_catalog.pg_sleep(0.3);`,
+      );
+      assert.notEqual(delayedMigration, projectionSql);
+      const migrator = await pool.connect();
+      const runtime = await pool.connect();
+      try {
+        const migrationPromise = migrator.query(delayedMigration);
+        await waitUntil(async () => (await pool.query(
+          'SELECT wait_event FROM pg_catalog.pg_stat_activity WHERE pid = $1', [migrator.processID],
+        )).rows[0]?.wait_event === 'PgSleep', `${phase.marker} was not reached`);
+        const runtimePromise = runtime.query(`
+          INSERT INTO public.whatsapp_cloud_events
+            (empresa_id, event_kind, dedupe_key, message_id, sender_id, message_type, event_data)
+          VALUES (1, 'message', $1, $2, '549351555084', 'text',
+                  '{"text":{"body":"runtime espera repair"}}'::jsonb)
+        `, [`repair-race:${index}`, `repair-race-${index}`]);
+        await waitUntil(async () => {
+          const wait = (await pool.query(`
+            SELECT wait_event_type, wait_event
+              FROM pg_catalog.pg_stat_activity
+             WHERE pid = $1
+          `, [runtime.processID])).rows[0];
+          return wait?.wait_event_type === 'Lock' && wait?.wait_event === 'advisory';
+        }, `runtime did not wait on ${phase.marker}`);
+        await migrationPromise;
+        await runtimePromise;
+      } finally {
+        migrator.release();
+        runtime.release();
+      }
+    }
+  });
 });
 
 test('RED controlado reproduce 40P01 legacy y migración/runtime terminan con ambos ganadores', async () => {
@@ -2094,7 +2257,8 @@ test('locks tenant-scoped serializan estados inversos sin deadlock, aíslan tena
     assert.equal(functionDefinitions.length, 4);
     const definitions = new Map(functionDefinitions.map(row => [row.proname, row.definition]));
     assert.match(definitions.get('whatsapp_cloud_messages_lock_projection'),
-      /pg_advisory_xact_lock\(1464550735, target_empresa_id\)/i);
+      /current_setting\([\s\S]*set_config\([\s\S]*whatsapp_cloud_projection_cross_tenant_transaction[\s\S]*pg_advisory_xact_lock\(1464550735, target_empresa_id\)/i,
+      'runtime tenant guard must record/reject before attempting the advisory lock');
     for (const functionName of [
       'whatsapp_cloud_messages_reconcile_status',
       'whatsapp_cloud_messages_capture_event_insert',

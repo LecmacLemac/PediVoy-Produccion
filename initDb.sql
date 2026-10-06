@@ -2123,10 +2123,10 @@ BEGIN
        AND dependency.refclassid = 'pg_catalog.pg_class'::pg_catalog.regclass
        AND dependency.deptype = 'a';
 
-    IF NOT FOUND
-       OR sequence_owner.ownership_count IS DISTINCT FROM 1
+    IF FOUND AND (
+       sequence_owner.ownership_count IS DISTINCT FROM 1
        OR sequence_owner.owner_table IS DISTINCT FROM pg_catalog.to_regclass('public.whatsapp_cloud_messages')
-       OR sequence_owner.owner_column IS DISTINCT FROM 'id' THEN
+       OR sequence_owner.owner_column IS DISTINCT FROM 'id') THEN
       RAISE EXCEPTION 'canonical sequence ownership collision: public.whatsapp_cloud_messages_id_seq is owned by %.%, expected public.whatsapp_cloud_messages.id',
         COALESCE(sequence_owner.owner_table::TEXT, '<none>'),
         COALESCE(sequence_owner.owner_column, '<none>');
@@ -2371,111 +2371,203 @@ BEGIN
   END IF;
 END $$;
 
-UPDATE public.whatsapp_cloud_messages
-   SET state_rank = CASE delivery_status
-         WHEN 'received' THEN 0
-         WHEN 'queued' THEN 10
-         WHEN 'manual_retry' THEN 15
-         WHEN 'sending' THEN 20
-         WHEN 'failed' THEN 25
-         WHEN 'outcome_unknown' THEN 25
-         WHEN 'sent' THEN 30
-         WHEN 'delivered' THEN 40
-         WHEN 'read' THEN 50
-         ELSE state_rank
-       END,
-       created_at = COALESCE(created_at, message_at, NOW()),
-       updated_at = COALESCE(updated_at, created_at, message_at, NOW())
- WHERE state_rank IS DISTINCT FROM CASE delivery_status
-         WHEN 'received' THEN 0
-         WHEN 'queued' THEN 10
-         WHEN 'manual_retry' THEN 15
-         WHEN 'sending' THEN 20
-         WHEN 'failed' THEN 25
-         WHEN 'outcome_unknown' THEN 25
-         WHEN 'sent' THEN 30
-         WHEN 'delivered' THEN 40
-         WHEN 'read' THEN 50
-         ELSE state_rank
-       END
-    OR created_at IS NULL
-    OR updated_at IS NULL;
+CREATE OR REPLACE FUNCTION public.whatsapp_cloud_messages_lock_projection(
+  target_empresa_id INTEGER
+) RETURNS VOID
+LANGUAGE plpgsql
+SET search_path = pg_catalog, public
+AS $$
+DECLARE
+  transaction_empresa_id TEXT;
+BEGIN
+  IF target_empresa_id IS NULL THEN
+    RETURN;
+  END IF;
 
-UPDATE public.whatsapp_cloud_messages
-   SET text_body = LEFT(text_body, 4096),
-       media_mime_type = LEFT(media_mime_type, 255),
-       media_caption = LEFT(media_caption, 1024),
-       document_filename = LEFT(document_filename, 255)
- WHERE length(text_body) > 4096
-    OR length(media_mime_type) > 255
-    OR length(media_caption) > 1024
-    OR length(document_filename) > 255;
+  transaction_empresa_id := pg_catalog.current_setting(
+    'pedivoy.whatsapp_cloud_projection_empresa_id', TRUE
+  );
+  IF transaction_empresa_id IS NULL OR transaction_empresa_id = '' THEN
+    PERFORM pg_catalog.set_config(
+      'pedivoy.whatsapp_cloud_projection_empresa_id', target_empresa_id::TEXT, TRUE
+    );
+  ELSIF transaction_empresa_id IS DISTINCT FROM target_empresa_id::TEXT THEN
+    RAISE EXCEPTION USING
+      ERRCODE = 'P0001',
+      MESSAGE = 'whatsapp_cloud_projection_cross_tenant_transaction',
+      DETAIL = pg_catalog.format(
+        'projection transaction tenant %s cannot acquire tenant %s',
+        transaction_empresa_id, target_empresa_id
+      );
+  END IF;
 
-WITH sent_timeline AS (
-  SELECT id,
-         CASE
-           WHEN direction = 'inbound' OR delivery_status IN ('queued', 'failed') THEN NULL
-           WHEN delivery_status IN ('sent', 'delivered', 'read') THEN GREATEST(
+  PERFORM pg_catalog.pg_advisory_xact_lock(1464550735, target_empresa_id);
+END $$;
+
+CREATE OR REPLACE FUNCTION public.whatsapp_cloud_messages_lock_projection_migration(
+  target_empresa_id INTEGER
+) RETURNS VOID
+LANGUAGE plpgsql
+SET search_path = pg_catalog, public
+AS $$
+BEGIN
+  IF target_empresa_id IS NULL THEN
+    RETURN;
+  END IF;
+  PERFORM pg_catalog.pg_advisory_xact_lock(1464550735, target_empresa_id);
+END $$;
+
+DO $repair_state_rank$
+DECLARE
+  target_empresa_id INTEGER;
+BEGIN
+  FOR target_empresa_id IN
+    SELECT DISTINCT message.empresa_id
+      FROM public.whatsapp_cloud_messages AS message
+     WHERE message.empresa_id IS NOT NULL
+     ORDER BY message.empresa_id
+  LOOP
+    PERFORM public.whatsapp_cloud_messages_lock_projection_migration(target_empresa_id);
+    -- TENANT REPAIR STATE LOCK ACQUIRED
+    UPDATE public.whatsapp_cloud_messages
+       SET state_rank = CASE delivery_status
+             WHEN 'received' THEN 0
+             WHEN 'queued' THEN 10
+             WHEN 'manual_retry' THEN 15
+             WHEN 'sending' THEN 20
+             WHEN 'failed' THEN 25
+             WHEN 'outcome_unknown' THEN 25
+             WHEN 'sent' THEN 30
+             WHEN 'delivered' THEN 40
+             WHEN 'read' THEN 50
+             ELSE state_rank
+           END,
+           created_at = COALESCE(created_at, message_at, NOW()),
+           updated_at = COALESCE(updated_at, created_at, message_at, NOW())
+     WHERE empresa_id = target_empresa_id
+       AND (state_rank IS DISTINCT FROM CASE delivery_status
+             WHEN 'received' THEN 0
+             WHEN 'queued' THEN 10
+             WHEN 'manual_retry' THEN 15
+             WHEN 'sending' THEN 20
+             WHEN 'failed' THEN 25
+             WHEN 'outcome_unknown' THEN 25
+             WHEN 'sent' THEN 30
+             WHEN 'delivered' THEN 40
+             WHEN 'read' THEN 50
+             ELSE state_rank
+           END
+        OR created_at IS NULL
+        OR updated_at IS NULL);
+  END LOOP;
+END $repair_state_rank$;
+
+DO $repair_content_lengths$
+DECLARE
+  target_empresa_id INTEGER;
+BEGIN
+  FOR target_empresa_id IN
+    SELECT DISTINCT message.empresa_id
+      FROM public.whatsapp_cloud_messages AS message
+     WHERE message.empresa_id IS NOT NULL
+     ORDER BY message.empresa_id
+  LOOP
+    PERFORM public.whatsapp_cloud_messages_lock_projection_migration(target_empresa_id);
+    -- TENANT REPAIR CONTENT LOCK ACQUIRED
+    UPDATE public.whatsapp_cloud_messages
+       SET text_body = LEFT(text_body, 4096),
+           media_mime_type = LEFT(media_mime_type, 255),
+           media_caption = LEFT(media_caption, 1024),
+           document_filename = LEFT(document_filename, 255)
+     WHERE empresa_id = target_empresa_id
+       AND (length(text_body) > 4096
+        OR length(media_mime_type) > 255
+        OR length(media_caption) > 1024
+        OR length(document_filename) > 255);
+  END LOOP;
+END $repair_content_lengths$;
+
+DO $repair_timeline$
+DECLARE
+  target_empresa_id INTEGER;
+BEGIN
+  FOR target_empresa_id IN
+    SELECT DISTINCT message.empresa_id
+      FROM public.whatsapp_cloud_messages AS message
+     WHERE message.empresa_id IS NOT NULL
+     ORDER BY message.empresa_id
+  LOOP
+    PERFORM public.whatsapp_cloud_messages_lock_projection_migration(target_empresa_id);
+    -- TENANT REPAIR TIMELINE LOCK ACQUIRED
+    WITH sent_timeline AS (
+      SELECT id,
+             CASE
+               WHEN direction = 'inbound' OR delivery_status IN ('queued', 'failed') THEN NULL
+               WHEN delivery_status IN ('sent', 'delivered', 'read') THEN GREATEST(
+                 message_at,
+                 CASE delivery_status
+                   WHEN 'sent' THEN COALESCE(sent_at, message_at)
+                   WHEN 'delivered' THEN COALESCE(sent_at, delivered_at, message_at)
+                   WHEN 'read' THEN COALESCE(sent_at, delivered_at, read_at, message_at)
+                 END
+               )
+               WHEN sent_at IS NOT NULL THEN GREATEST(message_at, sent_at)
+               ELSE NULL
+             END AS canonical_sent_at,
+             direction,
+             delivery_status,
              message_at,
-             CASE delivery_status
-               WHEN 'sent' THEN COALESCE(sent_at, message_at)
-               WHEN 'delivered' THEN COALESCE(sent_at, delivered_at, message_at)
-               WHEN 'read' THEN COALESCE(sent_at, delivered_at, read_at, message_at)
-             END
-           )
-           WHEN sent_at IS NOT NULL THEN GREATEST(message_at, sent_at)
-           ELSE NULL
-         END AS canonical_sent_at,
-         direction,
-         delivery_status,
-         message_at,
-         sent_at,
-         delivered_at,
-         read_at,
-         failed_at,
-         created_at,
-         updated_at
-    FROM public.whatsapp_cloud_messages
-), delivered_timeline AS (
-  SELECT sent_timeline.*,
-         CASE
-           WHEN delivery_status IN ('delivered', 'read') THEN GREATEST(
-             canonical_sent_at,
-             CASE delivery_status
-               WHEN 'delivered' THEN COALESCE(delivered_at, canonical_sent_at)
-               WHEN 'read' THEN COALESCE(delivered_at, read_at, canonical_sent_at)
-             END
-           )
-           ELSE NULL
-         END AS canonical_delivered_at
-    FROM sent_timeline
-), canonical AS (
-  SELECT delivered_timeline.*,
-         CASE WHEN delivery_status = 'read'
-           THEN GREATEST(canonical_delivered_at, COALESCE(read_at, canonical_delivered_at))
-           ELSE NULL
-         END AS canonical_read_at,
-         CASE WHEN delivery_status = 'failed'
-           THEN GREATEST(
-             message_at,
-             COALESCE(failed_at, sent_at, updated_at, created_at, message_at)
-           )
-           ELSE NULL
-         END AS canonical_failed_at
-    FROM delivered_timeline
-)
-UPDATE public.whatsapp_cloud_messages AS message
-   SET sent_at = canonical.canonical_sent_at,
-       delivered_at = canonical.canonical_delivered_at,
-       read_at = canonical.canonical_read_at,
-       failed_at = canonical.canonical_failed_at
-  FROM canonical
- WHERE message.id = canonical.id
-   AND ROW(message.sent_at, message.delivered_at, message.read_at, message.failed_at)
-       IS DISTINCT FROM ROW(
-         canonical.canonical_sent_at, canonical.canonical_delivered_at,
-         canonical.canonical_read_at, canonical.canonical_failed_at
-       );
+             sent_at,
+             delivered_at,
+             read_at,
+             failed_at,
+             created_at,
+             updated_at
+        FROM public.whatsapp_cloud_messages
+       WHERE empresa_id = target_empresa_id
+    ), delivered_timeline AS (
+      SELECT sent_timeline.*,
+             CASE
+               WHEN delivery_status IN ('delivered', 'read') THEN GREATEST(
+                 canonical_sent_at,
+                 CASE delivery_status
+                   WHEN 'delivered' THEN COALESCE(delivered_at, canonical_sent_at)
+                   WHEN 'read' THEN COALESCE(delivered_at, read_at, canonical_sent_at)
+                 END
+               )
+               ELSE NULL
+             END AS canonical_delivered_at
+        FROM sent_timeline
+    ), canonical AS (
+      SELECT delivered_timeline.*,
+             CASE WHEN delivery_status = 'read'
+               THEN GREATEST(canonical_delivered_at, COALESCE(read_at, canonical_delivered_at))
+               ELSE NULL
+             END AS canonical_read_at,
+             CASE WHEN delivery_status = 'failed'
+               THEN GREATEST(
+                 message_at,
+                 COALESCE(failed_at, sent_at, updated_at, created_at, message_at)
+               )
+               ELSE NULL
+             END AS canonical_failed_at
+        FROM delivered_timeline
+    )
+    UPDATE public.whatsapp_cloud_messages AS message
+       SET sent_at = canonical.canonical_sent_at,
+           delivered_at = canonical.canonical_delivered_at,
+           read_at = canonical.canonical_read_at,
+           failed_at = canonical.canonical_failed_at
+      FROM canonical
+     WHERE message.empresa_id = target_empresa_id
+       AND message.id = canonical.id
+       AND ROW(message.sent_at, message.delivered_at, message.read_at, message.failed_at)
+           IS DISTINCT FROM ROW(
+             canonical.canonical_sent_at, canonical.canonical_delivered_at,
+             canonical.canonical_read_at, canonical.canonical_failed_at
+           );
+  END LOOP;
+END $repair_timeline$;
 
 DO $$
 DECLARE
@@ -2768,20 +2860,7 @@ BEGIN
   END IF;
 END $$;
 
-CREATE OR REPLACE FUNCTION public.whatsapp_cloud_messages_lock_projection(
-  target_empresa_id INTEGER
-) RETURNS VOID
-LANGUAGE plpgsql
-SET search_path = pg_catalog, public
-AS $$
-BEGIN
-  IF target_empresa_id IS NULL THEN
-    RETURN;
-  END IF;
-  PERFORM pg_catalog.pg_advisory_xact_lock(1464550735, target_empresa_id);
-END $$;
-
-CREATE OR REPLACE FUNCTION public.whatsapp_cloud_messages_reconcile_status(
+CREATE OR REPLACE FUNCTION public.whatsapp_cloud_messages_reconcile_status_locked(
   target_empresa_id INTEGER,
   target_provider_message_id TEXT
 ) RETURNS VOID
@@ -2789,8 +2868,6 @@ LANGUAGE plpgsql
 SET search_path = pg_catalog, public
 AS $$
 BEGIN
-  PERFORM public.whatsapp_cloud_messages_lock_projection(target_empresa_id);
-
   WITH status_events AS (
     SELECT event.status,
            CASE
@@ -2908,6 +2985,21 @@ BEGIN
        canonical.canonical_delivered_at, canonical.canonical_read_at,
        canonical.canonical_failed_at, canonical.canonical_updated_at
      );
+END $$;
+
+CREATE OR REPLACE FUNCTION public.whatsapp_cloud_messages_reconcile_status(
+  target_empresa_id INTEGER,
+  target_provider_message_id TEXT
+) RETURNS VOID
+LANGUAGE plpgsql
+SET search_path = pg_catalog, public
+AS $$
+BEGIN
+  PERFORM public.whatsapp_cloud_messages_lock_projection(target_empresa_id);
+  PERFORM public.whatsapp_cloud_messages_reconcile_status_locked(
+    target_empresa_id,
+    target_provider_message_id
+  );
 END $$;
 
 CREATE OR REPLACE FUNCTION public.whatsapp_cloud_messages_capture_event_insert()
@@ -3118,7 +3210,7 @@ BEGIN
       FROM public.empresas AS empresa
      ORDER BY empresa.id
   LOOP
-    PERFORM public.whatsapp_cloud_messages_lock_projection(target_empresa_id);
+    PERFORM public.whatsapp_cloud_messages_lock_projection_migration(target_empresa_id);
     -- TENANT BACKFILL LOCK ACQUIRED
 
     INSERT INTO public.whatsapp_cloud_messages (
@@ -3254,7 +3346,7 @@ BEGIN
        ORDER BY message.id
        FOR UPDATE OF message
     LOOP
-      PERFORM public.whatsapp_cloud_messages_reconcile_status(
+      PERFORM public.whatsapp_cloud_messages_reconcile_status_locked(
         target_empresa_id,
         message_row.provider_message_id
       );
