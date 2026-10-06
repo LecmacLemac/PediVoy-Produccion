@@ -2806,7 +2806,7 @@ WITH status_events AS (
          CASE
            WHEN winning_rank >= 30 THEN GREATEST(
              message_at,
-             COALESCE(previous_sent_at, sent_at, delivered_at, read_at, updated_at, message_at)
+             LEAST(previous_sent_at, sent_at, delivered_at, read_at, updated_at)
            )
            WHEN winning_status = 'failed' THEN NULL
            ELSE previous_sent_at
@@ -2817,7 +2817,7 @@ WITH status_events AS (
          CASE
            WHEN winning_rank >= 40 THEN GREATEST(
              canonical_sent_at,
-             COALESCE(previous_delivered_at, delivered_at, read_at, canonical_sent_at)
+             LEAST(previous_delivered_at, delivered_at, read_at)
            )
            WHEN winning_status IN ('failed', 'sent') THEN NULL
            ELSE previous_delivered_at
@@ -2828,7 +2828,7 @@ WITH status_events AS (
          CASE
            WHEN winning_rank >= 50 THEN GREATEST(
              canonical_delivered_at,
-             COALESCE(previous_read_at, read_at, canonical_delivered_at)
+             LEAST(previous_read_at, read_at)
            )
            WHEN winning_status IN ('failed', 'sent', 'delivered') THEN NULL
            ELSE previous_read_at
@@ -2836,7 +2836,7 @@ WITH status_events AS (
          CASE
            WHEN winning_status = 'failed' THEN GREATEST(
              message_at,
-             COALESCE(previous_failed_at, failed_at, updated_at, message_at)
+             LEAST(previous_failed_at, failed_at, updated_at)
            )
            WHEN winning_rank >= 30 THEN NULL
            ELSE previous_failed_at

@@ -389,8 +389,8 @@ test('backfill canoniza cronologías irregulares sin abortar ni violar constrain
     assert.deepEqual(rows, [
       {
         provider_message_id: 'irregular-clock-skew', delivery_status: 'delivered', state_rank: 40,
-        message_at: '2026-10-01T11:00:00Z', sent_at: '2026-10-01T11:03:00Z',
-        delivered_at: '2026-10-01T11:03:00Z', read_at: null, failed_at: null,
+        message_at: '2026-10-01T11:00:00Z', sent_at: '2026-10-01T11:01:00Z',
+        delivered_at: '2026-10-01T11:01:00Z', read_at: null, failed_at: null,
       },
       {
         provider_message_id: 'irregular-delivered-only', delivery_status: 'delivered', state_rank: 40,
@@ -408,6 +408,75 @@ test('backfill canoniza cronologías irregulares sin abortar ni violar constrain
         delivered_at: null, read_at: null, failed_at: null,
       },
     ]);
+  });
+});
+
+test('backfill converge timestamps inferidos cuando llega después el evento real más temprano', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (1)');
+    await pool.query(outboxSql);
+    await pool.query(`
+      INSERT INTO wpp_outbox
+        (empresa_id, telefono, mensaje, created_at, sent_at, status, transport_origin,
+         meta_message_id, cloud_dispatch_state)
+      VALUES
+        (1, '549351555030', 'convergencia temporal', '2026-10-01T10:00:00Z', NULL,
+         'sending', 'cloud', 'convergent-timestamps', 'pre_dispatch')
+    `);
+    await pool.query(`
+      INSERT INTO whatsapp_cloud_events
+        (empresa_id, event_kind, dedupe_key, message_id, recipient_id, status,
+         source_timestamp, event_data, received_at)
+      VALUES
+        (1, 'status', 'convergent:delivered', 'convergent-timestamps', '549351555030',
+         'delivered', EXTRACT(EPOCH FROM TIMESTAMPTZ '2026-10-01T10:05:00Z')::bigint::text,
+         '{}'::jsonb, '2026-10-01T10:05:01Z')
+    `);
+
+    await pool.query(projectionSql);
+
+    const inferred = (await pool.query(`
+      SELECT delivery_status, state_rank, message_at, sent_at, delivered_at, read_at, failed_at
+        FROM whatsapp_cloud_messages
+       WHERE provider_message_id = 'convergent-timestamps'
+    `)).rows[0];
+    assert.equal(inferred.delivery_status, 'delivered');
+    assert.equal(inferred.state_rank, 40);
+    assert.equal(inferred.sent_at.toISOString(), '2026-10-01T10:05:00.000Z');
+    assert.equal(inferred.delivered_at.toISOString(), '2026-10-01T10:05:00.000Z');
+    assert.equal(inferred.read_at, null);
+    assert.equal(inferred.failed_at, null);
+
+    await pool.query(`
+      INSERT INTO whatsapp_cloud_events
+        (empresa_id, event_kind, dedupe_key, message_id, recipient_id, status,
+         source_timestamp, event_data, received_at)
+      VALUES
+        (1, 'status', 'convergent:sent', 'convergent-timestamps', '549351555030',
+         'sent', EXTRACT(EPOCH FROM TIMESTAMPTZ '2026-10-01T10:02:00Z')::bigint::text,
+         '{}'::jsonb, '2026-10-01T10:06:00Z')
+    `);
+
+    await pool.query(projectionSql);
+
+    const converged = (await pool.query(`
+      SELECT delivery_status, state_rank, message_at, sent_at, delivered_at, read_at, failed_at,
+             message_at <= sent_at AS message_before_sent,
+             sent_at <= delivered_at AS sent_before_delivered,
+             delivered_at <= COALESCE(read_at, delivered_at) AS delivered_before_read
+        FROM whatsapp_cloud_messages
+       WHERE provider_message_id = 'convergent-timestamps'
+    `)).rows[0];
+    assert.equal(converged.delivery_status, 'delivered');
+    assert.equal(converged.state_rank, 40);
+    assert.equal(converged.message_at.toISOString(), '2026-10-01T10:00:00.000Z');
+    assert.equal(converged.sent_at.toISOString(), '2026-10-01T10:02:00.000Z');
+    assert.equal(converged.delivered_at.toISOString(), '2026-10-01T10:05:00.000Z');
+    assert.equal(converged.read_at, null);
+    assert.equal(converged.failed_at, null);
+    assert.equal(converged.message_before_sent, true);
+    assert.equal(converged.sent_before_delivered, true);
+    assert.equal(converged.delivered_before_read, true);
   });
 });
 
