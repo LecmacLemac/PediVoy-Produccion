@@ -2075,33 +2075,81 @@ CREATE TABLE IF NOT EXISTS push_subs (
 
 -- BEGIN WHATSAPP CLOUD MESSAGE PROJECTION MIGRATION
 BEGIN;
+SET LOCAL search_path = pg_catalog, public;
 SET LOCAL lock_timeout = '30s';
 SET LOCAL statement_timeout = '5min';
 -- Stable namespace/key pair for the complete WhatsApp Cloud inbox projection migration.
-SELECT pg_advisory_xact_lock(1464550724, 1229867347);
+SELECT pg_catalog.pg_advisory_xact_lock(1464550724, 1229867347);
 
 DO $$
 DECLARE
   index_row RECORD;
-  actual_table REGCLASS;
+  actual_table pg_catalog.REGCLASS;
+  sequence_relation RECORD;
+  sequence_owner RECORD;
 BEGIN
+  SELECT class_row.relkind,
+         namespace_row.nspname,
+         sequence_meta.seqtypid
+    INTO sequence_relation
+    FROM pg_catalog.pg_class AS class_row
+    JOIN pg_catalog.pg_namespace AS namespace_row
+      ON namespace_row.oid = class_row.relnamespace
+    LEFT JOIN pg_catalog.pg_sequence AS sequence_meta
+      ON sequence_meta.seqrelid = class_row.oid
+   WHERE class_row.oid = pg_catalog.to_regclass('public.whatsapp_cloud_messages_id_seq');
+
+  IF FOUND THEN
+    IF sequence_relation.nspname IS DISTINCT FROM 'public'
+       OR sequence_relation.relkind IS DISTINCT FROM 'S' THEN
+      RAISE EXCEPTION 'canonical sequence relation kind collision: public.whatsapp_cloud_messages_id_seq is %.% relkind %',
+        sequence_relation.nspname, 'whatsapp_cloud_messages_id_seq', sequence_relation.relkind;
+    END IF;
+    IF sequence_relation.seqtypid IS DISTINCT FROM 'pg_catalog.int8'::pg_catalog.regtype THEN
+      RAISE EXCEPTION 'canonical sequence type collision: public.whatsapp_cloud_messages_id_seq has type %, expected bigint',
+        pg_catalog.format_type(sequence_relation.seqtypid, NULL);
+    END IF;
+
+    SELECT dependency.refobjid::pg_catalog.regclass AS owner_table,
+           owner_column.attname AS owner_column,
+           pg_catalog.count(*) OVER ()::INTEGER AS ownership_count
+      INTO sequence_owner
+      FROM pg_catalog.pg_depend AS dependency
+      JOIN pg_catalog.pg_attribute AS owner_column
+        ON owner_column.attrelid = dependency.refobjid
+       AND owner_column.attnum = dependency.refobjsubid
+     WHERE dependency.classid = 'pg_catalog.pg_class'::pg_catalog.regclass
+       AND dependency.objid = pg_catalog.to_regclass('public.whatsapp_cloud_messages_id_seq')
+       AND dependency.refclassid = 'pg_catalog.pg_class'::pg_catalog.regclass
+       AND dependency.deptype = 'a';
+
+    IF NOT FOUND
+       OR sequence_owner.ownership_count IS DISTINCT FROM 1
+       OR sequence_owner.owner_table IS DISTINCT FROM pg_catalog.to_regclass('public.whatsapp_cloud_messages')
+       OR sequence_owner.owner_column IS DISTINCT FROM 'id' THEN
+      RAISE EXCEPTION 'canonical sequence ownership collision: public.whatsapp_cloud_messages_id_seq is owned by %.%, expected public.whatsapp_cloud_messages.id',
+        COALESCE(sequence_owner.owner_table::TEXT, '<none>'),
+        COALESCE(sequence_owner.owner_column, '<none>');
+    END IF;
+  END IF;
+
   FOR index_row IN
     SELECT * FROM (VALUES
-      ('whatsapp_cloud_events_empresa_id_id_uidx', 'whatsapp_cloud_events'),
-      ('wpp_outbox_empresa_id_id_uidx', 'wpp_outbox'),
-      ('whatsapp_cloud_messages_source_event_uidx', 'whatsapp_cloud_messages'),
-      ('whatsapp_cloud_messages_outbox_uidx', 'whatsapp_cloud_messages'),
-      ('whatsapp_cloud_messages_provider_message_uidx', 'whatsapp_cloud_messages'),
-      ('idx_whatsapp_cloud_messages_conversations', 'whatsapp_cloud_messages'),
-      ('idx_whatsapp_cloud_messages_timeline', 'whatsapp_cloud_messages')
+      ('public.whatsapp_cloud_events_empresa_id_id_uidx', 'public.whatsapp_cloud_events'),
+      ('public.wpp_outbox_empresa_id_id_uidx', 'public.wpp_outbox'),
+      ('public.whatsapp_cloud_messages_source_event_uidx', 'public.whatsapp_cloud_messages'),
+      ('public.whatsapp_cloud_messages_outbox_uidx', 'public.whatsapp_cloud_messages'),
+      ('public.whatsapp_cloud_messages_provider_message_uidx', 'public.whatsapp_cloud_messages'),
+      ('public.idx_whatsapp_cloud_messages_conversations', 'public.whatsapp_cloud_messages'),
+      ('public.idx_whatsapp_cloud_messages_timeline', 'public.whatsapp_cloud_messages')
     ) AS canonical(index_name, table_name)
   LOOP
-    IF to_regclass(index_row.index_name) IS NOT NULL THEN
-      SELECT candidate.indrelid::regclass
+    IF pg_catalog.to_regclass(index_row.index_name) IS NOT NULL THEN
+      SELECT candidate.indrelid::pg_catalog.regclass
         INTO actual_table
-        FROM pg_index AS candidate
-       WHERE candidate.indexrelid = to_regclass(index_row.index_name);
-      IF NOT FOUND OR actual_table IS DISTINCT FROM to_regclass(index_row.table_name) THEN
+        FROM pg_catalog.pg_index AS candidate
+       WHERE candidate.indexrelid = pg_catalog.to_regclass(index_row.index_name);
+      IF NOT FOUND OR actual_table IS DISTINCT FROM pg_catalog.to_regclass(index_row.table_name) THEN
         RAISE EXCEPTION 'canonical index name collision: % belongs to %, expected %',
           index_row.index_name, COALESCE(actual_table::TEXT, 'non-index relation'), index_row.table_name;
       END IF;
@@ -2109,7 +2157,7 @@ BEGIN
   END LOOP;
 END $$;
 
-CREATE TABLE IF NOT EXISTS whatsapp_cloud_messages (
+CREATE TABLE IF NOT EXISTS public.whatsapp_cloud_messages (
   id BIGSERIAL PRIMARY KEY,
   empresa_id INTEGER NOT NULL,
   direction TEXT NOT NULL,
@@ -2165,12 +2213,12 @@ BEGIN
     IF NOT EXISTS (
       SELECT 1
         FROM pg_attribute
-       WHERE attrelid = 'whatsapp_cloud_messages'::regclass
+       WHERE attrelid = 'public.whatsapp_cloud_messages'::pg_catalog.regclass
          AND attname = column_row.column_name
          AND NOT attisdropped
     ) THEN
       EXECUTE format(
-        'ALTER TABLE whatsapp_cloud_messages ADD COLUMN %I %s',
+        'ALTER TABLE public.whatsapp_cloud_messages ADD COLUMN %I %s',
         column_row.column_name, column_row.column_definition
       );
     END IF;
@@ -2209,7 +2257,7 @@ BEGIN
     IF NOT EXISTS (
       SELECT 1
         FROM pg_attribute
-       WHERE attrelid = 'whatsapp_cloud_messages'::regclass
+       WHERE attrelid = 'public.whatsapp_cloud_messages'::pg_catalog.regclass
          AND attname = column_row.column_name
          AND NOT attisdropped
          AND format_type(atttypid, atttypmod) = column_row.data_type
@@ -2218,12 +2266,12 @@ BEGIN
         'message_at', 'sent_at', 'delivered_at', 'read_at', 'failed_at', 'created_at', 'updated_at'
       ) THEN
         EXECUTE format(
-          'ALTER TABLE whatsapp_cloud_messages ALTER COLUMN %I TYPE TIMESTAMPTZ USING %I AT TIME ZONE ''UTC''',
+          'ALTER TABLE public.whatsapp_cloud_messages ALTER COLUMN %I TYPE TIMESTAMPTZ USING %I AT TIME ZONE ''UTC''',
           column_row.column_name, column_row.column_name
         );
       ELSE
         EXECUTE format(
-          'ALTER TABLE whatsapp_cloud_messages ALTER COLUMN %I TYPE %s USING %I::%s',
+          'ALTER TABLE public.whatsapp_cloud_messages ALTER COLUMN %I TYPE %s USING %I::%s',
           column_row.column_name, column_row.data_type, column_row.column_name, column_row.data_type
         );
       END IF;
@@ -2231,51 +2279,66 @@ BEGIN
   END LOOP;
 END $$;
 
-CREATE SEQUENCE IF NOT EXISTS whatsapp_cloud_messages_id_seq AS BIGINT;
+CREATE SEQUENCE IF NOT EXISTS public.whatsapp_cloud_messages_id_seq AS BIGINT;
 DO $$
 DECLARE
   max_id BIGINT;
   sequence_last BIGINT;
   sequence_called BOOLEAN;
+  ownership_count INTEGER;
 BEGIN
-  IF (SELECT seqtypid FROM pg_sequence WHERE seqrelid = 'whatsapp_cloud_messages_id_seq'::regclass) <> 'bigint'::regtype THEN
-    ALTER SEQUENCE whatsapp_cloud_messages_id_seq AS BIGINT;
-  END IF;
+  SELECT pg_catalog.count(*)::INTEGER
+    INTO ownership_count
+    FROM pg_catalog.pg_depend AS dependency
+   WHERE dependency.classid = 'pg_catalog.pg_class'::pg_catalog.regclass
+     AND dependency.objid = 'public.whatsapp_cloud_messages_id_seq'::pg_catalog.regclass
+     AND dependency.refclassid = 'pg_catalog.pg_class'::pg_catalog.regclass
+     AND dependency.deptype = 'a';
 
-  IF NOT EXISTS (
+  IF ownership_count = 0 THEN
+    ALTER SEQUENCE public.whatsapp_cloud_messages_id_seq
+      OWNED BY public.whatsapp_cloud_messages.id;
+  ELSIF ownership_count <> 1 OR NOT EXISTS (
     SELECT 1
-      FROM pg_depend
-     WHERE classid = 'pg_class'::regclass
-       AND objid = 'whatsapp_cloud_messages_id_seq'::regclass
-       AND refclassid = 'pg_class'::regclass
-       AND refobjid = 'whatsapp_cloud_messages'::regclass
-       AND refobjsubid = (
-         SELECT attnum FROM pg_attribute
-          WHERE attrelid = 'whatsapp_cloud_messages'::regclass AND attname = 'id'
+      FROM pg_catalog.pg_depend AS dependency
+     WHERE dependency.classid = 'pg_catalog.pg_class'::pg_catalog.regclass
+       AND dependency.objid = 'public.whatsapp_cloud_messages_id_seq'::pg_catalog.regclass
+       AND dependency.refclassid = 'pg_catalog.pg_class'::pg_catalog.regclass
+       AND dependency.refobjid = 'public.whatsapp_cloud_messages'::pg_catalog.regclass
+       AND dependency.refobjsubid = (
+         SELECT attribute_row.attnum
+           FROM pg_catalog.pg_attribute AS attribute_row
+          WHERE attribute_row.attrelid = 'public.whatsapp_cloud_messages'::pg_catalog.regclass
+            AND attribute_row.attname = 'id'
+            AND NOT attribute_row.attisdropped
        )
-       AND deptype = 'a'
+       AND dependency.deptype = 'a'
   ) THEN
-    ALTER SEQUENCE whatsapp_cloud_messages_id_seq OWNED BY whatsapp_cloud_messages.id;
+    RAISE EXCEPTION 'canonical sequence ownership collision: public.whatsapp_cloud_messages_id_seq must be owned only by public.whatsapp_cloud_messages.id';
   END IF;
 
   IF COALESCE((
-    SELECT pg_get_expr(default_row.adbin, default_row.adrelid)
-      FROM pg_attribute AS column_row
-      LEFT JOIN pg_attrdef AS default_row
+    SELECT pg_catalog.pg_get_expr(default_row.adbin, default_row.adrelid)
+      FROM pg_catalog.pg_attribute AS column_row
+      LEFT JOIN pg_catalog.pg_attrdef AS default_row
         ON default_row.adrelid = column_row.attrelid
        AND default_row.adnum = column_row.attnum
-     WHERE column_row.attrelid = 'whatsapp_cloud_messages'::regclass
+     WHERE column_row.attrelid = 'public.whatsapp_cloud_messages'::pg_catalog.regclass
        AND column_row.attname = 'id'
   ), '') <> 'nextval(''whatsapp_cloud_messages_id_seq''::regclass)' THEN
-    ALTER TABLE whatsapp_cloud_messages
-      ALTER COLUMN id SET DEFAULT nextval('whatsapp_cloud_messages_id_seq'::regclass);
+    ALTER TABLE public.whatsapp_cloud_messages
+      ALTER COLUMN id SET DEFAULT pg_catalog.nextval('public.whatsapp_cloud_messages_id_seq'::pg_catalog.regclass);
   END IF;
 
-  SELECT COALESCE(MAX(id), 0) INTO max_id FROM whatsapp_cloud_messages;
+  SELECT COALESCE(MAX(id), 0) INTO max_id FROM public.whatsapp_cloud_messages;
   SELECT last_value, is_called INTO sequence_last, sequence_called
-    FROM whatsapp_cloud_messages_id_seq;
+    FROM public.whatsapp_cloud_messages_id_seq;
   IF max_id > sequence_last OR (max_id = sequence_last AND NOT sequence_called) THEN
-    PERFORM setval('whatsapp_cloud_messages_id_seq'::regclass, GREATEST(max_id, 1), max_id >= 1);
+    PERFORM pg_catalog.setval(
+      'public.whatsapp_cloud_messages_id_seq'::pg_catalog.regclass,
+      GREATEST(max_id, 1),
+      max_id >= 1
+    );
   END IF;
 END $$;
 
@@ -2291,24 +2354,24 @@ BEGIN
              AND attribute_row.attnum = key_column.attnum) AS key_columns
     INTO primary_row
     FROM pg_constraint AS constraint_row
-   WHERE constraint_row.conrelid = 'whatsapp_cloud_messages'::regclass
+   WHERE constraint_row.conrelid = 'public.whatsapp_cloud_messages'::pg_catalog.regclass
      AND constraint_row.contype = 'p';
 
   IF FOUND AND primary_row.key_columns IS DISTINCT FROM ARRAY['id']::TEXT[] THEN
-    EXECUTE format('ALTER TABLE whatsapp_cloud_messages DROP CONSTRAINT %I', primary_row.conname);
+    EXECUTE format('ALTER TABLE public.whatsapp_cloud_messages DROP CONSTRAINT %I', primary_row.conname);
   END IF;
   IF NOT EXISTS (
     SELECT 1
       FROM pg_constraint AS constraint_row
-     WHERE constraint_row.conrelid = 'whatsapp_cloud_messages'::regclass
+     WHERE constraint_row.conrelid = 'public.whatsapp_cloud_messages'::pg_catalog.regclass
        AND constraint_row.contype = 'p'
   ) THEN
-    ALTER TABLE whatsapp_cloud_messages
+    ALTER TABLE public.whatsapp_cloud_messages
       ADD CONSTRAINT whatsapp_cloud_messages_pkey PRIMARY KEY (id);
   END IF;
 END $$;
 
-UPDATE whatsapp_cloud_messages
+UPDATE public.whatsapp_cloud_messages
    SET state_rank = CASE delivery_status
          WHEN 'received' THEN 0
          WHEN 'queued' THEN 10
@@ -2338,7 +2401,7 @@ UPDATE whatsapp_cloud_messages
     OR created_at IS NULL
     OR updated_at IS NULL;
 
-UPDATE whatsapp_cloud_messages
+UPDATE public.whatsapp_cloud_messages
    SET text_body = LEFT(text_body, 4096),
        media_mime_type = LEFT(media_mime_type, 255),
        media_caption = LEFT(media_caption, 1024),
@@ -2372,7 +2435,7 @@ WITH sent_timeline AS (
          failed_at,
          created_at,
          updated_at
-    FROM whatsapp_cloud_messages
+    FROM public.whatsapp_cloud_messages
 ), delivered_timeline AS (
   SELECT sent_timeline.*,
          CASE
@@ -2401,7 +2464,7 @@ WITH sent_timeline AS (
          END AS canonical_failed_at
     FROM delivered_timeline
 )
-UPDATE whatsapp_cloud_messages AS message
+UPDATE public.whatsapp_cloud_messages AS message
    SET sent_at = canonical.canonical_sent_at,
        delivered_at = canonical.canonical_delivered_at,
        read_at = canonical.canonical_read_at,
@@ -2424,10 +2487,10 @@ BEGIN
       LEFT JOIN pg_attrdef AS default_row
         ON default_row.adrelid = column_row.attrelid
        AND default_row.adnum = column_row.attnum
-     WHERE column_row.attrelid = 'whatsapp_cloud_messages'::regclass
+     WHERE column_row.attrelid = 'public.whatsapp_cloud_messages'::pg_catalog.regclass
        AND column_row.attname = 'created_at'
   ), '') <> 'now()' THEN
-    ALTER TABLE whatsapp_cloud_messages ALTER COLUMN created_at SET DEFAULT NOW();
+    ALTER TABLE public.whatsapp_cloud_messages ALTER COLUMN created_at SET DEFAULT NOW();
   END IF;
   IF COALESCE((
     SELECT pg_get_expr(default_row.adbin, default_row.adrelid)
@@ -2435,10 +2498,10 @@ BEGIN
       LEFT JOIN pg_attrdef AS default_row
         ON default_row.adrelid = column_row.attrelid
        AND default_row.adnum = column_row.attnum
-     WHERE column_row.attrelid = 'whatsapp_cloud_messages'::regclass
+     WHERE column_row.attrelid = 'public.whatsapp_cloud_messages'::pg_catalog.regclass
        AND column_row.attname = 'updated_at'
   ), '') <> 'now()' THEN
-    ALTER TABLE whatsapp_cloud_messages ALTER COLUMN updated_at SET DEFAULT NOW();
+    ALTER TABLE public.whatsapp_cloud_messages ALTER COLUMN updated_at SET DEFAULT NOW();
   END IF;
 
   FOREACH column_name IN ARRAY ARRAY[
@@ -2448,11 +2511,11 @@ BEGIN
   LOOP
     IF EXISTS (
       SELECT 1 FROM pg_attribute
-       WHERE attrelid = 'whatsapp_cloud_messages'::regclass
+       WHERE attrelid = 'public.whatsapp_cloud_messages'::pg_catalog.regclass
          AND attname = column_name AND NOT attisdropped AND NOT attnotnull
     ) THEN
       EXECUTE format(
-        'ALTER TABLE whatsapp_cloud_messages ALTER COLUMN %I SET NOT NULL',
+        'ALTER TABLE public.whatsapp_cloud_messages ALTER COLUMN %I SET NOT NULL',
         column_name
       );
     END IF;
@@ -2469,26 +2532,26 @@ DECLARE
 BEGIN
   FOR index_row IN
     SELECT * FROM (VALUES
-      ('whatsapp_cloud_events_empresa_id_id_uidx', 'whatsapp_cloud_events',
+      ('public.whatsapp_cloud_events_empresa_id_id_uidx', 'public.whatsapp_cloud_events',
        ARRAY['empresa_id', 'id']::TEXT[], TRUE, NULL::TEXT),
-      ('wpp_outbox_empresa_id_id_uidx', 'wpp_outbox',
+      ('public.wpp_outbox_empresa_id_id_uidx', 'public.wpp_outbox',
        ARRAY['empresa_id', 'id']::TEXT[], TRUE, NULL::TEXT),
-      ('whatsapp_cloud_messages_source_event_uidx', 'whatsapp_cloud_messages',
+      ('public.whatsapp_cloud_messages_source_event_uidx', 'public.whatsapp_cloud_messages',
        ARRAY['empresa_id', 'source_event_id']::TEXT[], TRUE, 'source_event_idisnotnull'),
-      ('whatsapp_cloud_messages_outbox_uidx', 'whatsapp_cloud_messages',
+      ('public.whatsapp_cloud_messages_outbox_uidx', 'public.whatsapp_cloud_messages',
        ARRAY['empresa_id', 'outbox_id']::TEXT[], TRUE, 'outbox_idisnotnull'),
-      ('whatsapp_cloud_messages_provider_message_uidx', 'whatsapp_cloud_messages',
+      ('public.whatsapp_cloud_messages_provider_message_uidx', 'public.whatsapp_cloud_messages',
        ARRAY['empresa_id', 'provider_message_id']::TEXT[], TRUE, 'provider_message_idisnotnull')
     ) AS required(index_name, table_name, key_columns, is_unique, predicate_key)
   LOOP
     expected_columns := index_row.key_columns;
     expected_unique := index_row.is_unique;
     expected_predicate := index_row.predicate_key;
-    IF to_regclass(index_row.index_name) IS NOT NULL AND NOT EXISTS (
+    IF pg_catalog.to_regclass(index_row.index_name) IS NOT NULL AND NOT EXISTS (
       SELECT 1
-        FROM pg_index AS candidate
-       WHERE candidate.indexrelid = to_regclass(index_row.index_name)
-         AND candidate.indrelid = index_row.table_name::regclass
+        FROM pg_catalog.pg_index AS candidate
+       WHERE candidate.indexrelid = pg_catalog.to_regclass(index_row.index_name)
+         AND candidate.indrelid = index_row.table_name::pg_catalog.regclass
          AND candidate.indisunique = expected_unique
          AND candidate.indexprs IS NULL
          AND candidate.indnkeyatts = cardinality(expected_columns)
@@ -2510,12 +2573,12 @@ BEGIN
     ) THEN
       SELECT constraint_row.conrelid::regclass AS table_name, constraint_row.conname
         INTO backing_constraint
-        FROM pg_constraint AS constraint_row
-       WHERE constraint_row.conindid = to_regclass(index_row.index_name);
+        FROM pg_catalog.pg_constraint AS constraint_row
+       WHERE constraint_row.conindid = pg_catalog.to_regclass(index_row.index_name);
       IF FOUND THEN
         EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', backing_constraint.table_name, backing_constraint.conname);
       ELSE
-        EXECUTE format('DROP INDEX %I', index_row.index_name);
+        EXECUTE format('DROP INDEX %s', index_row.index_name);
       END IF;
     END IF;
   END LOOP;
@@ -2523,27 +2586,27 @@ END $$;
 
 DO $$
 BEGIN
-  IF to_regclass('whatsapp_cloud_events_empresa_id_id_uidx') IS NULL THEN
+  IF pg_catalog.to_regclass('public.whatsapp_cloud_events_empresa_id_id_uidx') IS NULL THEN
     CREATE UNIQUE INDEX whatsapp_cloud_events_empresa_id_id_uidx
-      ON whatsapp_cloud_events (empresa_id, id);
+      ON public.whatsapp_cloud_events (empresa_id, id);
   END IF;
-  IF to_regclass('wpp_outbox_empresa_id_id_uidx') IS NULL THEN
+  IF pg_catalog.to_regclass('public.wpp_outbox_empresa_id_id_uidx') IS NULL THEN
     CREATE UNIQUE INDEX wpp_outbox_empresa_id_id_uidx
-      ON wpp_outbox (empresa_id, id);
+      ON public.wpp_outbox (empresa_id, id);
   END IF;
-  IF to_regclass('whatsapp_cloud_messages_source_event_uidx') IS NULL THEN
+  IF pg_catalog.to_regclass('public.whatsapp_cloud_messages_source_event_uidx') IS NULL THEN
     CREATE UNIQUE INDEX whatsapp_cloud_messages_source_event_uidx
-      ON whatsapp_cloud_messages (empresa_id, source_event_id)
+      ON public.whatsapp_cloud_messages (empresa_id, source_event_id)
       WHERE source_event_id IS NOT NULL;
   END IF;
-  IF to_regclass('whatsapp_cloud_messages_outbox_uidx') IS NULL THEN
+  IF pg_catalog.to_regclass('public.whatsapp_cloud_messages_outbox_uidx') IS NULL THEN
     CREATE UNIQUE INDEX whatsapp_cloud_messages_outbox_uidx
-      ON whatsapp_cloud_messages (empresa_id, outbox_id)
+      ON public.whatsapp_cloud_messages (empresa_id, outbox_id)
       WHERE outbox_id IS NOT NULL;
   END IF;
-  IF to_regclass('whatsapp_cloud_messages_provider_message_uidx') IS NULL THEN
+  IF pg_catalog.to_regclass('public.whatsapp_cloud_messages_provider_message_uidx') IS NULL THEN
     CREATE UNIQUE INDEX whatsapp_cloud_messages_provider_message_uidx
-      ON whatsapp_cloud_messages (empresa_id, provider_message_id)
+      ON public.whatsapp_cloud_messages (empresa_id, provider_message_id)
       WHERE provider_message_id IS NOT NULL;
   END IF;
 END $$;
@@ -2558,11 +2621,11 @@ BEGIN
   FOR constraint_row IN
     SELECT * FROM (VALUES
       ('whatsapp_cloud_messages_empresa_id_fkey',
-       'FOREIGN KEY (empresa_id) REFERENCES empresas(id) ON DELETE CASCADE'),
+       'FOREIGN KEY (empresa_id) REFERENCES public.empresas(id) ON DELETE CASCADE'),
       ('whatsapp_cloud_messages_source_event_fkey',
-       'FOREIGN KEY (empresa_id, source_event_id) REFERENCES whatsapp_cloud_events(empresa_id, id) ON DELETE SET NULL (source_event_id)'),
+       'FOREIGN KEY (empresa_id, source_event_id) REFERENCES public.whatsapp_cloud_events(empresa_id, id) ON DELETE SET NULL (source_event_id)'),
       ('whatsapp_cloud_messages_outbox_fkey',
-       'FOREIGN KEY (empresa_id, outbox_id) REFERENCES wpp_outbox(empresa_id, id) ON DELETE SET NULL (outbox_id)'),
+       'FOREIGN KEY (empresa_id, outbox_id) REFERENCES public.wpp_outbox(empresa_id, id) ON DELETE SET NULL (outbox_id)'),
       ('whatsapp_cloud_messages_direction_check',
        'CHECK (direction IN (''inbound'', ''outbound''))'),
       ('whatsapp_cloud_messages_participant_check',
@@ -2621,27 +2684,27 @@ BEGIN
     SELECT regexp_replace(pg_get_constraintdef(oid), '\s+', ' ', 'g'), convalidated
       INTO current_definition, current_validated
       FROM pg_constraint
-     WHERE conrelid = 'whatsapp_cloud_messages'::regclass
+     WHERE conrelid = 'public.whatsapp_cloud_messages'::pg_catalog.regclass
        AND conname = constraint_row.constraint_name;
 
     IF FOUND AND current_definition = expected_definition THEN
       IF NOT current_validated THEN
         EXECUTE format(
-          'ALTER TABLE whatsapp_cloud_messages VALIDATE CONSTRAINT %I',
+          'ALTER TABLE public.whatsapp_cloud_messages VALIDATE CONSTRAINT %I',
           constraint_row.constraint_name
         );
       END IF;
     ELSE
       EXECUTE format(
-        'ALTER TABLE whatsapp_cloud_messages DROP CONSTRAINT IF EXISTS %I',
+        'ALTER TABLE public.whatsapp_cloud_messages DROP CONSTRAINT IF EXISTS %I',
         constraint_row.constraint_name
       );
       EXECUTE format(
-        'ALTER TABLE whatsapp_cloud_messages ADD CONSTRAINT %I %s NOT VALID',
+        'ALTER TABLE public.whatsapp_cloud_messages ADD CONSTRAINT %I %s NOT VALID',
         constraint_row.constraint_name, constraint_row.definition_sql
       );
       EXECUTE format(
-        'ALTER TABLE whatsapp_cloud_messages VALIDATE CONSTRAINT %I',
+        'ALTER TABLE public.whatsapp_cloud_messages VALIDATE CONSTRAINT %I',
         constraint_row.constraint_name
       );
     END IF;
@@ -2656,21 +2719,21 @@ DECLARE
 BEGIN
   FOR index_row IN
     SELECT * FROM (VALUES
-      ('idx_whatsapp_cloud_messages_conversations',
+      ('public.idx_whatsapp_cloud_messages_conversations',
        ARRAY['empresa_id', 'message_at', 'id', 'participant_wa_id']::TEXT[],
        '0 3 3 0'),
-      ('idx_whatsapp_cloud_messages_timeline',
+      ('public.idx_whatsapp_cloud_messages_timeline',
        ARRAY['empresa_id', 'participant_wa_id', 'message_at', 'id']::TEXT[],
        '0 0 3 3')
     ) AS required_indexes(index_name, key_columns, sort_options)
   LOOP
     expected_columns := index_row.key_columns;
     expected_options := index_row.sort_options;
-    IF to_regclass(index_row.index_name) IS NOT NULL AND NOT EXISTS (
+    IF pg_catalog.to_regclass(index_row.index_name) IS NOT NULL AND NOT EXISTS (
       SELECT 1
-        FROM pg_index AS candidate
-       WHERE candidate.indexrelid = to_regclass(index_row.index_name)
-         AND candidate.indrelid = 'whatsapp_cloud_messages'::regclass
+        FROM pg_catalog.pg_index AS candidate
+       WHERE candidate.indexrelid = pg_catalog.to_regclass(index_row.index_name)
+         AND candidate.indrelid = 'public.whatsapp_cloud_messages'::pg_catalog.regclass
          AND NOT candidate.indisunique
          AND candidate.indpred IS NULL
          AND candidate.indexprs IS NULL
@@ -2686,26 +2749,328 @@ BEGIN
             WHERE key_column.ordinality <= candidate.indnkeyatts
          ) = expected_columns
     ) THEN
-      EXECUTE format('DROP INDEX %I', index_row.index_name);
+      EXECUTE format('DROP INDEX %s', index_row.index_name);
     END IF;
   END LOOP;
 END $$;
 
 DO $$
 BEGIN
-  IF to_regclass('idx_whatsapp_cloud_messages_conversations') IS NULL THEN
+  IF pg_catalog.to_regclass('public.idx_whatsapp_cloud_messages_conversations') IS NULL THEN
     CREATE INDEX idx_whatsapp_cloud_messages_conversations
-      ON whatsapp_cloud_messages
+      ON public.whatsapp_cloud_messages
       (empresa_id, message_at DESC, id DESC, participant_wa_id);
   END IF;
-  IF to_regclass('idx_whatsapp_cloud_messages_timeline') IS NULL THEN
+  IF pg_catalog.to_regclass('public.idx_whatsapp_cloud_messages_timeline') IS NULL THEN
     CREATE INDEX idx_whatsapp_cloud_messages_timeline
-      ON whatsapp_cloud_messages
+      ON public.whatsapp_cloud_messages
       (empresa_id, participant_wa_id, message_at DESC, id DESC);
   END IF;
 END $$;
 
-INSERT INTO whatsapp_cloud_messages (
+CREATE OR REPLACE FUNCTION public.whatsapp_cloud_messages_reconcile_status(
+  target_empresa_id INTEGER,
+  target_provider_message_id TEXT
+) RETURNS VOID
+LANGUAGE SQL
+SET search_path = pg_catalog, public
+AS $$
+  WITH status_events AS (
+    SELECT event.status,
+           CASE
+             WHEN event.source_timestamp ~ '^[0-9]{1,12}$'
+              AND event.source_timestamp::NUMERIC > 0
+              AND event.source_timestamp::NUMERIC <= 253402300799
+              AND pg_catalog.to_timestamp(event.source_timestamp::DOUBLE PRECISION)
+                  BETWEEN event.received_at - INTERVAL '30 days'
+                      AND event.received_at + INTERVAL '5 minutes'
+               THEN pg_catalog.to_timestamp(event.source_timestamp::DOUBLE PRECISION)
+             ELSE event.received_at
+           END AS status_at
+      FROM public.whatsapp_cloud_events AS event
+     WHERE event.empresa_id = target_empresa_id
+       AND event.message_id = target_provider_message_id
+       AND event.event_kind = 'status'
+       AND event.status IN ('sent', 'delivered', 'read', 'failed')
+       AND NULLIF(BTRIM(event.message_id), '') IS NOT NULL
+  ), status_summary AS (
+    SELECT (array_agg(status ORDER BY
+             CASE status WHEN 'read' THEN 50 WHEN 'delivered' THEN 40
+                         WHEN 'sent' THEN 30 WHEN 'failed' THEN 25 ELSE 0 END DESC,
+             status_at DESC))[1] AS latest_status,
+           MAX(CASE status WHEN 'read' THEN 50 WHEN 'delivered' THEN 40
+                           WHEN 'sent' THEN 30 WHEN 'failed' THEN 25 ELSE 0 END) AS latest_rank,
+           MIN(status_at) FILTER (WHERE status = 'sent') AS sent_at,
+           MIN(status_at) FILTER (WHERE status = 'delivered') AS delivered_at,
+           MIN(status_at) FILTER (WHERE status = 'read') AS read_at,
+           MIN(status_at) FILTER (WHERE status = 'failed') AS failed_at,
+           MAX(status_at) AS updated_at
+      FROM status_events
+    HAVING COUNT(*) > 0
+  ), locked_message AS (
+    SELECT message.*
+      FROM public.whatsapp_cloud_messages AS message
+     WHERE message.empresa_id = target_empresa_id
+       AND message.provider_message_id = target_provider_message_id
+       AND message.direction = 'outbound'
+     FOR UPDATE OF message
+  ), winners AS (
+    SELECT message.id,
+           message.message_at,
+           message.delivery_status AS previous_status,
+           message.state_rank AS previous_rank,
+           message.sent_at AS previous_sent_at,
+           message.delivered_at AS previous_delivered_at,
+           message.read_at AS previous_read_at,
+           message.failed_at AS previous_failed_at,
+           message.updated_at AS previous_updated_at,
+           summary.*,
+           CASE WHEN summary.latest_rank > message.state_rank
+             THEN summary.latest_status ELSE message.delivery_status END AS winning_status,
+           GREATEST(summary.latest_rank, message.state_rank) AS winning_rank
+      FROM locked_message AS message
+      CROSS JOIN status_summary AS summary
+  ), sent_timeline AS (
+    SELECT winners.*,
+           CASE
+             WHEN winning_rank >= 30 THEN GREATEST(
+               message_at,
+               LEAST(previous_sent_at, sent_at, delivered_at, read_at, updated_at)
+             )
+             WHEN winning_status = 'failed' THEN NULL
+             ELSE previous_sent_at
+           END AS canonical_sent_at
+      FROM winners
+  ), delivered_timeline AS (
+    SELECT sent_timeline.*,
+           CASE
+             WHEN winning_rank >= 40 THEN GREATEST(
+               canonical_sent_at,
+               LEAST(previous_delivered_at, delivered_at, read_at)
+             )
+             WHEN winning_status IN ('failed', 'sent') THEN NULL
+             ELSE previous_delivered_at
+           END AS canonical_delivered_at
+      FROM sent_timeline
+  ), canonical AS (
+    SELECT delivered_timeline.*,
+           CASE
+             WHEN winning_rank >= 50 THEN GREATEST(
+               canonical_delivered_at,
+               LEAST(previous_read_at, read_at)
+             )
+             WHEN winning_status IN ('failed', 'sent', 'delivered') THEN NULL
+             ELSE previous_read_at
+           END AS canonical_read_at,
+           CASE
+             WHEN winning_status = 'failed' THEN GREATEST(
+               message_at,
+               LEAST(previous_failed_at, failed_at, updated_at)
+             )
+             WHEN winning_rank >= 30 THEN NULL
+             ELSE previous_failed_at
+           END AS canonical_failed_at,
+           GREATEST(previous_updated_at, updated_at) AS canonical_updated_at
+      FROM delivered_timeline
+  )
+  UPDATE public.whatsapp_cloud_messages AS message
+     SET delivery_status = canonical.winning_status,
+         state_rank = canonical.winning_rank,
+         sent_at = canonical.canonical_sent_at,
+         delivered_at = canonical.canonical_delivered_at,
+         read_at = canonical.canonical_read_at,
+         failed_at = canonical.canonical_failed_at,
+         updated_at = canonical.canonical_updated_at
+    FROM canonical
+   WHERE message.id = canonical.id
+     AND canonical.latest_rank >= message.state_rank
+     AND ROW(
+       message.delivery_status, message.state_rank, message.sent_at,
+       message.delivered_at, message.read_at, message.failed_at, message.updated_at
+     ) IS DISTINCT FROM ROW(
+       canonical.winning_status, canonical.winning_rank, canonical.canonical_sent_at,
+       canonical.canonical_delivered_at, canonical.canonical_read_at,
+       canonical.canonical_failed_at, canonical.canonical_updated_at
+     );
+$$;
+
+CREATE OR REPLACE FUNCTION public.whatsapp_cloud_messages_capture_event_insert()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SET search_path = pg_catalog, public
+AS $$
+BEGIN
+  IF NEW.event_kind = 'message'
+     AND NEW.message_type IN ('text', 'image', 'document')
+     AND NEW.sender_id ~ '^[0-9]{6,15}$'
+     AND (NEW.message_type <> 'text'
+       OR pg_catalog.jsonb_typeof(NEW.event_data->'text'->'body') = 'string') THEN
+    INSERT INTO public.whatsapp_cloud_messages (
+      empresa_id, direction, participant_wa_id, source_event_id,
+      provider_message_id, message_type, text_body, media_mime_type,
+      media_caption, document_filename, delivery_status, state_rank, message_at,
+      created_at, updated_at
+    ) VALUES (
+      NEW.empresa_id,
+      'inbound',
+      NEW.sender_id,
+      NEW.id,
+      NULLIF(BTRIM(NEW.message_id), ''),
+      NEW.message_type,
+      CASE WHEN NEW.message_type = 'text'
+             AND pg_catalog.jsonb_typeof(NEW.event_data->'text'->'body') = 'string'
+        THEN LEFT(NEW.event_data->'text'->>'body', 4096) END,
+      CASE WHEN NEW.message_type IN ('image', 'document')
+             AND pg_catalog.jsonb_typeof(NEW.event_data->NEW.message_type->'mime_type') = 'string'
+        THEN NULLIF(LEFT(NEW.event_data->NEW.message_type->>'mime_type', 255), '') END,
+      CASE WHEN NEW.message_type IN ('image', 'document')
+             AND pg_catalog.jsonb_typeof(NEW.event_data->NEW.message_type->'caption') = 'string'
+        THEN LEFT(NEW.event_data->NEW.message_type->>'caption', 1024) END,
+      CASE WHEN NEW.message_type = 'document'
+             AND pg_catalog.jsonb_typeof(NEW.event_data->'document'->'filename') = 'string'
+        THEN LEFT(NEW.event_data->'document'->>'filename', 255) END,
+      'received',
+      0,
+      CASE
+        WHEN NEW.source_timestamp ~ '^[0-9]{1,12}$'
+         AND NEW.source_timestamp::NUMERIC > 0
+         AND NEW.source_timestamp::NUMERIC <= 253402300799
+         AND pg_catalog.to_timestamp(NEW.source_timestamp::DOUBLE PRECISION)
+             BETWEEN NEW.received_at - INTERVAL '30 days'
+                 AND NEW.received_at + INTERVAL '5 minutes'
+          THEN pg_catalog.to_timestamp(NEW.source_timestamp::DOUBLE PRECISION)
+        ELSE NEW.received_at
+      END,
+      NEW.received_at,
+      NEW.received_at
+    ) ON CONFLICT DO NOTHING;
+  ELSIF NEW.event_kind = 'status'
+        AND NEW.status IN ('sent', 'delivered', 'read', 'failed')
+        AND NULLIF(BTRIM(NEW.message_id), '') IS NOT NULL THEN
+    PERFORM public.whatsapp_cloud_messages_reconcile_status(
+      NEW.empresa_id,
+      NEW.message_id
+    );
+  END IF;
+  RETURN NEW;
+END $$;
+
+CREATE OR REPLACE FUNCTION public.whatsapp_cloud_messages_capture_outbox_insert()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SET search_path = pg_catalog, public
+AS $$
+BEGIN
+  IF NEW.transport_origin = 'cloud'
+     AND NEW.empresa_id IS NOT NULL
+     AND NEW.telefono ~ '^[0-9]{6,15}$'
+     AND NEW.mensaje IS NOT NULL THEN
+    INSERT INTO public.whatsapp_cloud_messages (
+      empresa_id, direction, participant_wa_id, outbox_id,
+      provider_message_id, message_type, text_body, delivery_status, state_rank,
+      message_at, sent_at, failed_at, created_at, updated_at
+    ) VALUES (
+      NEW.empresa_id,
+      'outbound',
+      NEW.telefono,
+      NEW.id,
+      NULLIF(BTRIM(NEW.meta_message_id), ''),
+      'text',
+      LEFT(NEW.mensaje, 4096),
+      CASE
+        WHEN NEW.status = 'pending' THEN 'queued'
+        WHEN NEW.status = 'sending' THEN 'sending'
+        WHEN NEW.status = 'sent' THEN 'sent'
+        WHEN NEW.status = 'error' AND NEW.cloud_dispatch_state = 'manual_retryable'
+          THEN 'manual_retry'
+        WHEN NEW.status = 'error' AND NEW.cloud_dispatch_state = 'outcome_unknown'
+          THEN 'outcome_unknown'
+        ELSE 'failed'
+      END,
+      CASE
+        WHEN NEW.status = 'pending' THEN 10
+        WHEN NEW.status = 'sending' THEN 20
+        WHEN NEW.status = 'sent' THEN 30
+        WHEN NEW.status = 'error' AND NEW.cloud_dispatch_state = 'manual_retryable' THEN 15
+        WHEN NEW.status = 'error' AND NEW.cloud_dispatch_state = 'outcome_unknown' THEN 25
+        ELSE 25
+      END,
+      NEW.created_at,
+      CASE
+        WHEN NEW.status = 'sent'
+          THEN GREATEST(NEW.created_at, COALESCE(NEW.sent_at, NEW.created_at))
+        WHEN NEW.status IN ('error', 'skipped')
+         AND NEW.cloud_dispatch_state IS DISTINCT FROM 'manual_retryable'
+         AND NEW.cloud_dispatch_state IS DISTINCT FROM 'outcome_unknown'
+          THEN NULL
+        ELSE NEW.sent_at
+      END,
+      CASE WHEN NEW.status IN ('error', 'skipped')
+             AND NEW.cloud_dispatch_state IS DISTINCT FROM 'manual_retryable'
+             AND NEW.cloud_dispatch_state IS DISTINCT FROM 'outcome_unknown'
+        THEN GREATEST(NEW.created_at, COALESCE(NEW.sent_at, NEW.created_at)) END,
+      NEW.created_at,
+      COALESCE(NEW.sent_at, NEW.created_at)
+    ) ON CONFLICT DO NOTHING;
+
+    IF NULLIF(BTRIM(NEW.meta_message_id), '') IS NOT NULL THEN
+      PERFORM public.whatsapp_cloud_messages_reconcile_status(
+        NEW.empresa_id,
+        NEW.meta_message_id
+      );
+    END IF;
+  END IF;
+  RETURN NEW;
+END $$;
+
+DO $$
+DECLARE
+  trigger_row RECORD;
+BEGIN
+  SELECT trigger_meta.tgfoid::pg_catalog.regprocedure AS function_name
+    INTO trigger_row
+    FROM pg_catalog.pg_trigger AS trigger_meta
+   WHERE trigger_meta.tgrelid = 'public.whatsapp_cloud_events'::pg_catalog.regclass
+     AND trigger_meta.tgname = 'whatsapp_cloud_messages_capture_insert'
+     AND NOT trigger_meta.tgisinternal;
+  IF FOUND AND trigger_row.function_name IS DISTINCT FROM
+      'public.whatsapp_cloud_messages_capture_event_insert()'::pg_catalog.regprocedure THEN
+    RAISE EXCEPTION 'canonical trigger collision: public.whatsapp_cloud_events.whatsapp_cloud_messages_capture_insert uses %',
+      trigger_row.function_name;
+  ELSIF NOT FOUND THEN
+    CREATE TRIGGER whatsapp_cloud_messages_capture_insert
+      AFTER INSERT ON public.whatsapp_cloud_events
+      FOR EACH ROW EXECUTE FUNCTION public.whatsapp_cloud_messages_capture_event_insert();
+  END IF;
+
+  SELECT trigger_meta.tgfoid::pg_catalog.regprocedure AS function_name
+    INTO trigger_row
+    FROM pg_catalog.pg_trigger AS trigger_meta
+   WHERE trigger_meta.tgrelid = 'public.wpp_outbox'::pg_catalog.regclass
+     AND trigger_meta.tgname = 'whatsapp_cloud_messages_capture_insert'
+     AND NOT trigger_meta.tgisinternal;
+  IF FOUND AND trigger_row.function_name IS DISTINCT FROM
+      'public.whatsapp_cloud_messages_capture_outbox_insert()'::pg_catalog.regprocedure THEN
+    RAISE EXCEPTION 'canonical trigger collision: public.wpp_outbox.whatsapp_cloud_messages_capture_insert uses %',
+      trigger_row.function_name;
+  ELSIF NOT FOUND THEN
+    CREATE TRIGGER whatsapp_cloud_messages_capture_insert
+      AFTER INSERT ON public.wpp_outbox
+      FOR EACH ROW EXECUTE FUNCTION public.whatsapp_cloud_messages_capture_outbox_insert();
+  END IF;
+END $$;
+
+-- CUTOVER CAPTURE INSTALL COMPLETE; COMMIT IMMEDIATELY
+COMMIT;
+
+BEGIN;
+SET LOCAL search_path = pg_catalog, public;
+SET LOCAL lock_timeout = '30s';
+SET LOCAL statement_timeout = '5min';
+SELECT pg_catalog.pg_advisory_xact_lock(1464550724, 1229867347);
+-- CUTOVER CAPTURE COMMITTED; SOURCE SCANS FOLLOW
+
+INSERT INTO public.whatsapp_cloud_messages (
   empresa_id, direction, participant_wa_id, source_event_id,
   provider_message_id, message_type, text_body, media_mime_type,
   media_caption, document_filename, delivery_status, state_rank, message_at,
@@ -2743,7 +3108,7 @@ SELECT event.empresa_id,
        END,
        event.received_at,
        event.received_at
-  FROM whatsapp_cloud_events AS event
+  FROM public.whatsapp_cloud_events AS event
  WHERE event.event_kind = 'message'
    AND event.message_type IN ('text', 'image', 'document')
    AND event.sender_id ~ '^[0-9]{6,15}$'
@@ -2753,13 +3118,13 @@ SELECT event.empresa_id,
    )
    AND NOT EXISTS (
      SELECT 1
-       FROM whatsapp_cloud_messages AS projected
+       FROM public.whatsapp_cloud_messages AS projected
       WHERE projected.empresa_id = event.empresa_id
         AND projected.source_event_id = event.id
    )
 ON CONFLICT DO NOTHING;
 
-INSERT INTO whatsapp_cloud_messages (
+INSERT INTO public.whatsapp_cloud_messages (
   empresa_id, direction, participant_wa_id, outbox_id,
   provider_message_id, message_type, text_body, delivery_status, state_rank,
   message_at, sent_at, failed_at, created_at, updated_at
@@ -2805,25 +3170,25 @@ SELECT outbox.empresa_id,
          THEN GREATEST(outbox.created_at, COALESCE(outbox.sent_at, outbox.created_at)) END,
        outbox.created_at,
        COALESCE(outbox.sent_at, outbox.created_at)
-  FROM wpp_outbox AS outbox
+  FROM public.wpp_outbox AS outbox
  WHERE outbox.transport_origin = 'cloud'
    AND outbox.empresa_id IS NOT NULL
    AND outbox.telefono ~ '^[0-9]{6,15}$'
    AND outbox.mensaje IS NOT NULL
    AND NOT EXISTS (
      SELECT 1
-       FROM whatsapp_cloud_messages AS projected
+       FROM public.whatsapp_cloud_messages AS projected
       WHERE projected.empresa_id = outbox.empresa_id
         AND projected.outbox_id = outbox.id
    )
 ON CONFLICT DO NOTHING;
 
 SELECT message.id
-  FROM whatsapp_cloud_messages AS message
+  FROM public.whatsapp_cloud_messages AS message
  WHERE message.direction = 'outbound'
    AND EXISTS (
      SELECT 1
-       FROM whatsapp_cloud_events AS event
+       FROM public.whatsapp_cloud_events AS event
       WHERE event.empresa_id = message.empresa_id
         AND event.message_id = message.provider_message_id
         AND event.event_kind = 'status'
@@ -2847,7 +3212,7 @@ WITH status_events AS (
              THEN to_timestamp(event.source_timestamp::DOUBLE PRECISION)
            ELSE event.received_at
          END AS status_at
-    FROM whatsapp_cloud_events AS event
+    FROM public.whatsapp_cloud_events AS event
    WHERE event.event_kind = 'status'
      AND event.status IN ('sent', 'delivered', 'read', 'failed')
      AND NULLIF(BTRIM(event.message_id), '') IS NOT NULL
@@ -2881,7 +3246,7 @@ WITH status_events AS (
          CASE WHEN summary.latest_rank > message.state_rank
            THEN summary.latest_status ELSE message.delivery_status END AS winning_status,
          GREATEST(summary.latest_rank, message.state_rank) AS winning_rank
-    FROM whatsapp_cloud_messages AS message
+    FROM public.whatsapp_cloud_messages AS message
     JOIN status_summary AS summary
       ON message.empresa_id = summary.empresa_id
      AND message.provider_message_id = summary.provider_message_id
@@ -2929,7 +3294,7 @@ WITH status_events AS (
          GREATEST(previous_updated_at, updated_at) AS canonical_updated_at
     FROM delivered_timeline
 )
-UPDATE whatsapp_cloud_messages AS message
+UPDATE public.whatsapp_cloud_messages AS message
    SET delivery_status = canonical.winning_status,
        state_rank = canonical.winning_rank,
        sent_at = canonical.canonical_sent_at,

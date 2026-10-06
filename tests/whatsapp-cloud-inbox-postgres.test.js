@@ -242,13 +242,14 @@ test('migración crea proyección tenant-scoped, constraints e índices exactos 
 
 test('migración toma lock advisory transaccional estable antes del primer DDL y dos ejecuciones completas frescas terminan exit 0', async () => {
   const begin = projectionSql.indexOf('BEGIN;');
+  const safePath = projectionSql.indexOf('SET LOCAL search_path = pg_catalog, public;');
   const lockTimeout = projectionSql.indexOf("SET LOCAL lock_timeout = '30s';");
   const statementTimeout = projectionSql.indexOf("SET LOCAL statement_timeout = '5min';");
-  const advisoryLock = projectionSql.indexOf('SELECT pg_advisory_xact_lock(1464550724, 1229867347);');
+  const advisoryLock = projectionSql.indexOf('SELECT pg_catalog.pg_advisory_xact_lock(1464550724, 1229867347);');
   const firstDdl = projectionSql.search(/\b(?:CREATE|ALTER|DROP)\s+(?:TABLE|SEQUENCE|INDEX)\b/i);
-  assert.ok(begin >= 0 && lockTimeout > begin && statementTimeout > lockTimeout
+  assert.ok(begin >= 0 && safePath > begin && lockTimeout > safePath && statementTimeout > lockTimeout
     && advisoryLock > statementTimeout && firstDdl > advisoryLock,
-  'timeouts and the stable migration advisory lock must precede the first DDL');
+  'safe search_path, timeouts and the stable migration advisory lock must precede the first DDL');
   assert.doesNotMatch(projectionSql,
     /LOCK\s+TABLE\s+[^;]*(?:whatsapp_cloud_events|wpp_outbox)/is,
     'migration serialization must not lock source tables explicitly');
@@ -256,8 +257,8 @@ test('migración toma lock advisory transaccional estable antes del primer DDL y
   await withDatabase(async (pool, { directory, port }) => {
     await pool.query(outboxSql);
     const delayedMigration = projectionSql.replace(
-      'SELECT pg_advisory_xact_lock(1464550724, 1229867347);',
-      "SELECT pg_advisory_xact_lock(1464550724, 1229867347);\nSELECT pg_sleep(0.35);",
+      'SELECT pg_catalog.pg_advisory_xact_lock(1464550724, 1229867347);',
+      "SELECT pg_catalog.pg_advisory_xact_lock(1464550724, 1229867347);\nSELECT pg_catalog.pg_sleep(0.35);",
     );
     const file = join(directory, 'cloud-inbox-projection.sql');
     writeFileSync(file, delayedMigration);
@@ -1358,6 +1359,363 @@ test('status backfill usa compare-and-set monotónico en ambos ganadores del row
       sent_at: '2026-10-01T10:00:30Z', delivered_at: '2026-10-01T10:02:00Z',
       read_at: '2026-10-01T10:03:00Z',
     });
+  });
+});
+
+test('cutover captura inserts concurrentes con ambos ganadores y converge sin bloquear durante scans', async () => {
+  const installBoundary = '-- CUTOVER CAPTURE INSTALL COMPLETE; COMMIT IMMEDIATELY';
+  const scanBoundary = '-- CUTOVER CAPTURE COMMITTED; SOURCE SCANS FOLLOW';
+  assert.ok(projectionSql.indexOf(installBoundary) >= 0
+    && projectionSql.indexOf('COMMIT;', projectionSql.indexOf(installBoundary))
+      < projectionSql.indexOf(scanBoundary),
+  'capture installation must commit before source scans start');
+  assert.doesNotMatch(projectionSql,
+    /LOCK\s+TABLE\s+public\.(?:whatsapp_cloud_events|wpp_outbox)[^;]*(?:SHARE|EXCLUSIVE)/is,
+    'source scans must not run under an explicit heavyweight table lock');
+
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (1)');
+    await pool.query(outboxSql);
+
+    const writerFirst = await pool.connect();
+    const migratorSecond = await pool.connect();
+    try {
+      await writerFirst.query('BEGIN');
+      await writerFirst.query(`
+        INSERT INTO public.whatsapp_cloud_events
+          (empresa_id, event_kind, dedupe_key, message_id, sender_id, message_type, event_data)
+        VALUES (1, 'message', 'cutover:writer-first:event', 'cutover-writer-first-event',
+                '549351555060', 'text', '{"text":{"body":"writer first inbound"}}'::jsonb)
+      `);
+      await writerFirst.query(`
+        INSERT INTO public.wpp_outbox
+          (empresa_id, telefono, mensaje, status, transport_origin)
+        VALUES (1, '549351555061', 'writer first outbound', 'pending', 'cloud')
+      `);
+
+      const migrationPromise = migratorSecond.query(projectionSql);
+      await waitUntil(async () => (await pool.query(
+        'SELECT wait_event_type FROM pg_catalog.pg_stat_activity WHERE pid = $1',
+        [migratorSecond.processID],
+      )).rows[0]?.wait_event_type === 'Lock',
+      'migration did not wait for the pre-existing source writer before installing capture');
+      await writerFirst.query('COMMIT');
+      await migrationPromise;
+    } finally {
+      await writerFirst.query('ROLLBACK').catch(() => {});
+      writerFirst.release();
+      migratorSecond.release();
+    }
+
+    assert.equal((await pool.query(`
+      SELECT count(*)::int AS total
+        FROM public.whatsapp_cloud_messages
+       WHERE provider_message_id = 'cutover-writer-first-event'
+          OR text_body = 'writer first outbound'
+    `)).rows[0].total, 2);
+
+    // Recreate a first-install cutover for the opposite winner; normal reruns intentionally
+    // keep the already-installed capture triggers and therefore do not exclude writers.
+    await pool.query(`
+      DROP TRIGGER whatsapp_cloud_messages_capture_insert
+        ON public.whatsapp_cloud_events;
+      DROP TRIGGER whatsapp_cloud_messages_capture_insert
+        ON public.wpp_outbox
+    `);
+    const delayedProjection = projectionSql
+      .replace(installBoundary,
+        `${installBoundary}\nSELECT pg_catalog.pg_sleep(0.25);`)
+      .replace(scanBoundary,
+        `${scanBoundary}\nSELECT pg_catalog.pg_sleep(0.45);`);
+    assert.notEqual(delayedProjection, projectionSql);
+    const migratorFirst = await pool.connect();
+    const writerSecond = await pool.connect();
+    try {
+      const migrationPromise = migratorFirst.query(delayedProjection);
+      await waitUntil(async () => (await pool.query(
+        'SELECT wait_event FROM pg_catalog.pg_stat_activity WHERE pid = $1',
+        [migratorFirst.processID],
+      )).rows[0]?.wait_event === 'PgSleep',
+      'migration did not reach the short trigger-install hold');
+
+      const installWriterStartedAt = Date.now();
+      const installWriterPromise = writerSecond.query(`
+        WITH inbound AS (
+          INSERT INTO public.whatsapp_cloud_events
+            (empresa_id, event_kind, dedupe_key, message_id, sender_id, message_type, event_data)
+          VALUES (1, 'message', 'cutover:migrator-first:event', 'cutover-migrator-first-event',
+                  '549351555062', 'text', '{"text":{"body":"migrator first inbound"}}'::jsonb)
+          RETURNING id
+        )
+        INSERT INTO public.wpp_outbox
+          (empresa_id, telefono, mensaje, status, transport_origin)
+        SELECT 1, '549351555063', 'migrator first outbound', 'pending', 'cloud'
+          FROM inbound
+      `);
+      await waitUntil(async () => (await pool.query(
+        'SELECT wait_event_type FROM pg_catalog.pg_stat_activity WHERE pid = $1',
+        [writerSecond.processID],
+      )).rows[0]?.wait_event_type === 'Lock',
+      'writer did not wait for the short trigger-install transaction to commit');
+      await installWriterPromise;
+      const installWriterElapsedMs = Date.now() - installWriterStartedAt;
+      assert.ok(installWriterElapsedMs >= 120 && installWriterElapsedMs < 1500,
+        `short cutover exclusion should be bounded (writer waited ${installWriterElapsedMs}ms)`);
+
+      await waitUntil(async () => (await pool.query(
+        'SELECT wait_event FROM pg_catalog.pg_stat_activity WHERE pid = $1',
+        [migratorFirst.processID],
+      )).rows[0]?.wait_event === 'PgSleep',
+      'migration did not reach the post-commit source-scan hold');
+      const scanWriterStartedAt = Date.now();
+      await writerSecond.query(`
+        WITH inbound AS (
+          INSERT INTO public.whatsapp_cloud_events
+            (empresa_id, event_kind, dedupe_key, message_id, sender_id, message_type, event_data)
+          VALUES (1, 'message', 'cutover:scan:event', 'cutover-scan-event',
+                  '549351555064', 'text', '{"text":{"body":"scan inbound"}}'::jsonb)
+          RETURNING id
+        )
+        INSERT INTO public.wpp_outbox
+          (empresa_id, telefono, mensaje, status, transport_origin)
+        SELECT 1, '549351555065', 'scan outbound', 'pending', 'cloud'
+          FROM inbound
+      `);
+      const scanWriterElapsedMs = Date.now() - scanWriterStartedAt;
+      assert.ok(scanWriterElapsedMs < 250,
+        `source writer must not wait for the 450ms scan hold (elapsed ${scanWriterElapsedMs}ms)`);
+      await migrationPromise;
+    } finally {
+      migratorFirst.release();
+      writerSecond.release();
+    }
+
+    assert.equal((await pool.query(`
+      SELECT count(*)::int AS total
+        FROM public.whatsapp_cloud_messages
+       WHERE provider_message_id = 'cutover-migrator-first-event'
+          OR text_body = 'migrator first outbound'
+    `)).rows[0].total, 2);
+    assert.equal((await pool.query(`
+      SELECT count(*)::int AS total
+        FROM public.whatsapp_cloud_messages
+       WHERE provider_message_id = 'cutover-scan-event'
+          OR text_body = 'scan outbound'
+    `)).rows[0].total, 2);
+    assert.equal((await pool.query(`
+      SELECT
+        (SELECT count(*) FROM public.whatsapp_cloud_events
+          WHERE dedupe_key LIKE 'cutover:%:event')
+        + (SELECT count(*) FROM public.wpp_outbox
+          WHERE mensaje IN ('writer first outbound', 'migrator first outbound', 'scan outbound')) AS source_total,
+        (SELECT count(*) FROM public.whatsapp_cloud_messages
+          WHERE provider_message_id IN (
+            'cutover-writer-first-event', 'cutover-migrator-first-event', 'cutover-scan-event')
+             OR text_body IN ('writer first outbound', 'migrator first outbound', 'scan outbound')) AS projection_total
+    `)).rows[0].source_total, '6');
+    assert.equal((await pool.query(`
+      SELECT count(*)::int AS total FROM public.whatsapp_cloud_messages
+       WHERE provider_message_id IN (
+         'cutover-writer-first-event', 'cutover-migrator-first-event', 'cutover-scan-event')
+          OR text_body IN ('writer first outbound', 'migrator first outbound', 'scan outbound')
+    `)).rows[0].total, 6);
+  });
+});
+
+test('secuencia canónica owned por tabla ajena aborta explícitamente y rollback preserva ownership/default', async () => {
+  await withDatabase(async pool => {
+    await pool.query(outboxSql);
+    await pool.query(`
+      CREATE TABLE public.foreign_sequence_owner (
+        id BIGINT NOT NULL DEFAULT 1,
+        payload TEXT
+      );
+      CREATE SEQUENCE public.whatsapp_cloud_messages_id_seq AS BIGINT
+        OWNED BY public.foreign_sequence_owner.id;
+      ALTER TABLE public.foreign_sequence_owner
+        ALTER COLUMN id SET DEFAULT pg_catalog.nextval('public.whatsapp_cloud_messages_id_seq'::pg_catalog.regclass)
+    `);
+    const before = (await pool.query(`
+      SELECT sequence_row.oid::text AS sequence_oid,
+             dependency.refobjid::pg_catalog.regclass::text AS owner_table,
+             owner_column.attname AS owner_column,
+             pg_catalog.pg_get_expr(default_row.adbin, default_row.adrelid) AS default_expression
+        FROM pg_catalog.pg_class AS sequence_row
+        JOIN pg_catalog.pg_namespace AS namespace_row ON namespace_row.oid = sequence_row.relnamespace
+        JOIN pg_catalog.pg_depend AS dependency
+          ON dependency.classid = 'pg_catalog.pg_class'::pg_catalog.regclass
+         AND dependency.objid = sequence_row.oid
+         AND dependency.refclassid = 'pg_catalog.pg_class'::pg_catalog.regclass
+         AND dependency.deptype = 'a'
+        JOIN pg_catalog.pg_attribute AS owner_column
+          ON owner_column.attrelid = dependency.refobjid
+         AND owner_column.attnum = dependency.refobjsubid
+        LEFT JOIN pg_catalog.pg_attrdef AS default_row
+          ON default_row.adrelid = owner_column.attrelid
+         AND default_row.adnum = owner_column.attnum
+       WHERE namespace_row.nspname = 'public'
+         AND sequence_row.relname = 'whatsapp_cloud_messages_id_seq'
+    `)).rows[0];
+
+    await assert.rejects(pool.query(projectionSql), error => error?.code === 'P0001'
+      && /canonical sequence ownership collision/i.test(error.message));
+    await pool.query('ROLLBACK');
+
+    assert.deepEqual((await pool.query(`
+      SELECT sequence_row.oid::text AS sequence_oid,
+             dependency.refobjid::pg_catalog.regclass::text AS owner_table,
+             owner_column.attname AS owner_column,
+             pg_catalog.pg_get_expr(default_row.adbin, default_row.adrelid) AS default_expression
+        FROM pg_catalog.pg_class AS sequence_row
+        JOIN pg_catalog.pg_namespace AS namespace_row ON namespace_row.oid = sequence_row.relnamespace
+        JOIN pg_catalog.pg_depend AS dependency
+          ON dependency.classid = 'pg_catalog.pg_class'::pg_catalog.regclass
+         AND dependency.objid = sequence_row.oid
+         AND dependency.refclassid = 'pg_catalog.pg_class'::pg_catalog.regclass
+         AND dependency.deptype = 'a'
+        JOIN pg_catalog.pg_attribute AS owner_column
+          ON owner_column.attrelid = dependency.refobjid
+         AND owner_column.attnum = dependency.refobjsubid
+        LEFT JOIN pg_catalog.pg_attrdef AS default_row
+          ON default_row.adrelid = owner_column.attrelid
+         AND default_row.adnum = owner_column.attnum
+       WHERE namespace_row.nspname = 'public'
+         AND sequence_row.relname = 'whatsapp_cloud_messages_id_seq'
+    `)).rows[0], before);
+    assert.equal((await pool.query(
+      "SELECT pg_catalog.to_regclass('public.whatsapp_cloud_messages') AS relation",
+    )).rows[0].relation, null);
+  });
+});
+
+test('secuencia canónica preexistente valida relkind y tipo exactos antes de reutilizar', async () => {
+  await withDatabase(async pool => {
+    await pool.query(outboxSql);
+    await pool.query('CREATE TABLE public.whatsapp_cloud_messages_id_seq(id BIGINT)');
+    await assert.rejects(pool.query(projectionSql), error => error?.code === 'P0001'
+      && /canonical sequence relation kind collision/i.test(error.message));
+    await pool.query('ROLLBACK');
+    assert.equal((await pool.query(`
+      SELECT relkind FROM pg_catalog.pg_class
+       WHERE oid = 'public.whatsapp_cloud_messages_id_seq'::pg_catalog.regclass
+    `)).rows[0].relkind, 'r');
+
+    await pool.query('DROP TABLE public.whatsapp_cloud_messages_id_seq');
+    await pool.query('CREATE SEQUENCE public.whatsapp_cloud_messages_id_seq AS INTEGER');
+    await assert.rejects(pool.query(projectionSql), error => error?.code === 'P0001'
+      && /canonical sequence type collision/i.test(error.message));
+    await pool.query('ROLLBACK');
+    assert.equal((await pool.query(`
+      SELECT seqtypid = 'pg_catalog.int4'::pg_catalog.regtype AS is_integer
+        FROM pg_catalog.pg_sequence
+       WHERE seqrelid = 'public.whatsapp_cloud_messages_id_seq'::pg_catalog.regclass
+    `)).rows[0].is_integer, true);
+  });
+});
+
+test('search_path shadow,public sólo crea y repara objetos canónicos en public sin tocar homónimos', async () => {
+  const begin = projectionSql.indexOf('BEGIN;');
+  const safePath = projectionSql.indexOf('SET LOCAL search_path = pg_catalog, public;');
+  const firstObjectReference = projectionSql.search(/(?:pg_advisory|to_regclass|CREATE\s+(?:TABLE|SEQUENCE|FUNCTION|TRIGGER)|pg_class)/i);
+  assert.ok(begin >= 0 && safePath > begin && firstObjectReference > safePath,
+    'safe transaction-local search_path must precede every object lookup or DDL');
+
+  await withDatabase(async pool => {
+    await pool.query(outboxSql);
+    await pool.query(`
+      CREATE SCHEMA shadow;
+      CREATE TABLE shadow.empresas(id INTEGER PRIMARY KEY);
+      CREATE TABLE shadow.whatsapp_cloud_events(
+        id BIGINT PRIMARY KEY, empresa_id INTEGER, event_kind TEXT, message_id TEXT
+      );
+      CREATE TABLE shadow.wpp_outbox(
+        id BIGINT PRIMARY KEY, empresa_id INTEGER, telefono TEXT, mensaje TEXT
+      );
+      CREATE TABLE shadow.whatsapp_cloud_messages(
+        id BIGINT PRIMARY KEY, marker TEXT NOT NULL DEFAULT 'shadow'
+      );
+      CREATE SEQUENCE shadow.whatsapp_cloud_messages_id_seq AS INTEGER;
+      CREATE INDEX whatsapp_cloud_messages_source_event_uidx
+        ON shadow.whatsapp_cloud_messages(marker);
+      ALTER TABLE shadow.whatsapp_cloud_messages
+        ADD CONSTRAINT whatsapp_cloud_messages_direction_check CHECK (marker = 'shadow');
+    `);
+    const shadowBefore = (await pool.query(`
+      SELECT class_row.oid::text, class_row.relkind, class_row.relname
+        FROM pg_catalog.pg_class AS class_row
+        JOIN pg_catalog.pg_namespace AS namespace_row ON namespace_row.oid = class_row.relnamespace
+       WHERE namespace_row.nspname = 'shadow'
+       ORDER BY class_row.relname, class_row.relkind
+    `)).rows;
+    const shadowConstraintBefore = (await pool.query(`
+      SELECT oid::text, pg_catalog.pg_get_constraintdef(oid) AS definition
+        FROM pg_catalog.pg_constraint
+       WHERE conrelid = 'shadow.whatsapp_cloud_messages'::pg_catalog.regclass
+    `)).rows;
+
+    const client = await pool.connect();
+    try {
+      await client.query('SET search_path TO shadow, public');
+      await client.query(projectionSql);
+    } finally {
+      client.release();
+    }
+
+    assert.equal((await pool.query(
+      "SELECT pg_catalog.to_regclass('public.whatsapp_cloud_messages') IS NOT NULL AS present",
+    )).rows[0].present, true);
+    assert.equal((await pool.query(`
+      SELECT namespace_row.nspname
+        FROM pg_catalog.pg_class AS sequence_row
+        JOIN pg_catalog.pg_namespace AS namespace_row ON namespace_row.oid = sequence_row.relnamespace
+       WHERE sequence_row.oid = pg_catalog.pg_get_serial_sequence(
+         'public.whatsapp_cloud_messages', 'id')::pg_catalog.regclass
+    `)).rows[0].nspname, 'public');
+    const foreignSchemas = (await pool.query(`
+      SELECT DISTINCT target_namespace.nspname
+        FROM pg_catalog.pg_constraint AS constraint_row
+        JOIN pg_catalog.pg_class AS target_table ON target_table.oid = constraint_row.confrelid
+        JOIN pg_catalog.pg_namespace AS target_namespace ON target_namespace.oid = target_table.relnamespace
+       WHERE constraint_row.conrelid = 'public.whatsapp_cloud_messages'::pg_catalog.regclass
+         AND constraint_row.contype = 'f'
+       ORDER BY target_namespace.nspname
+    `)).rows.map(row => row.nspname);
+    assert.deepEqual(foreignSchemas, ['public']);
+    const publicIndexOwners = (await pool.query(`
+      SELECT index_namespace.nspname AS index_schema,
+             table_namespace.nspname AS table_schema,
+             index_row.relname
+        FROM pg_catalog.pg_class AS index_row
+        JOIN pg_catalog.pg_namespace AS index_namespace ON index_namespace.oid = index_row.relnamespace
+        JOIN pg_catalog.pg_index AS index_meta ON index_meta.indexrelid = index_row.oid
+        JOIN pg_catalog.pg_class AS table_row ON table_row.oid = index_meta.indrelid
+        JOIN pg_catalog.pg_namespace AS table_namespace ON table_namespace.oid = table_row.relnamespace
+       WHERE index_row.relname IN (
+         'whatsapp_cloud_messages_source_event_uidx',
+         'whatsapp_cloud_messages_outbox_uidx',
+         'whatsapp_cloud_messages_provider_message_uidx',
+         'idx_whatsapp_cloud_messages_conversations',
+         'idx_whatsapp_cloud_messages_timeline'
+       ) AND index_namespace.nspname = 'public'
+       ORDER BY index_row.relname
+    `)).rows;
+    assert.equal(publicIndexOwners.length, 5);
+    assert.ok(publicIndexOwners.every(row => row.index_schema === 'public' && row.table_schema === 'public'));
+    assert.deepEqual((await pool.query(`
+      SELECT class_row.oid::text, class_row.relkind, class_row.relname
+        FROM pg_catalog.pg_class AS class_row
+        JOIN pg_catalog.pg_namespace AS namespace_row ON namespace_row.oid = class_row.relnamespace
+       WHERE namespace_row.nspname = 'shadow'
+       ORDER BY class_row.relname, class_row.relkind
+    `)).rows, shadowBefore);
+    assert.deepEqual((await pool.query(`
+      SELECT oid::text, pg_catalog.pg_get_constraintdef(oid) AS definition
+        FROM pg_catalog.pg_constraint
+       WHERE conrelid = 'shadow.whatsapp_cloud_messages'::pg_catalog.regclass
+    `)).rows, shadowConstraintBefore);
+    assert.equal((await pool.query(
+      "SELECT count(*)::int AS total FROM shadow.whatsapp_cloud_messages",
+    )).rows[0].total, 0);
   });
 });
 
