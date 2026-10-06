@@ -2697,12 +2697,13 @@ AS $$
 DECLARE
   matching_messages INTEGER;
   updated_messages INTEGER;
+  normalized_provider_message_id TEXT := NULLIF(pg_catalog.BTRIM(target_provider_message_id), '');
 BEGIN
   SELECT pg_catalog.COUNT(*)::INTEGER
     INTO matching_messages
     FROM public.whatsapp_cloud_messages AS message
    WHERE message.empresa_id = target_empresa_id
-     AND pg_catalog.BTRIM(message.provider_message_id) = NULLIF(pg_catalog.BTRIM(target_provider_message_id), '')
+     AND message.provider_message_id = normalized_provider_message_id
      AND message.direction = 'outbound';
 
   IF matching_messages = 0 THEN
@@ -2727,7 +2728,7 @@ BEGIN
            END AS status_at
       FROM public.whatsapp_cloud_events AS event
      WHERE event.empresa_id = target_empresa_id
-       AND pg_catalog.BTRIM(event.message_id) = NULLIF(pg_catalog.BTRIM(target_provider_message_id), '')
+       AND pg_catalog.BTRIM(event.message_id) = normalized_provider_message_id
        AND event.event_kind = 'status'
        AND event.status IN ('sent', 'delivered', 'read', 'failed')
        AND NULLIF(pg_catalog.BTRIM(event.message_id), '') IS NOT NULL
@@ -2749,7 +2750,7 @@ BEGIN
     SELECT message.*
       FROM public.whatsapp_cloud_messages AS message
      WHERE message.empresa_id = target_empresa_id
-       AND pg_catalog.BTRIM(message.provider_message_id) = NULLIF(pg_catalog.BTRIM(target_provider_message_id), '')
+       AND message.provider_message_id = normalized_provider_message_id
        AND message.direction = 'outbound'
      FOR UPDATE OF message
   ), winners AS (
@@ -2853,7 +2854,7 @@ BEGIN
   PERFORM public.whatsapp_cloud_messages_lock_projection(target_empresa_id);
   SELECT public.whatsapp_cloud_messages_reconcile_status_locked(
     target_empresa_id,
-    NULLIF(pg_catalog.BTRIM(target_provider_message_id), '')
+    target_provider_message_id
   ) INTO reconciliation_result;
   RETURN reconciliation_result;
 END $$;
@@ -3805,16 +3806,6 @@ BEGIN
         FROM public.whatsapp_cloud_messages AS message
        WHERE message.direction = 'outbound'
          AND NULLIF(pg_catalog.BTRIM(message.provider_message_id), '') IS NOT NULL
-         AND NOT EXISTS (
-           SELECT 1
-             FROM public.wpp_outbox AS source
-            WHERE source.empresa_id = message.empresa_id
-              AND source.id = message.source_outbox_id
-              AND source.transport_origin = 'cloud'
-              AND source.telefono ~ '^[0-9]{6,15}$'
-              AND source.mensaje IS NOT NULL
-              AND NULLIF(pg_catalog.BTRIM(source.meta_message_id), '') IS NOT NULL
-         )
       UNION ALL
       SELECT source.empresa_id,
              NULLIF(pg_catalog.BTRIM(source.meta_message_id), '') AS provider_message_id
@@ -3824,6 +3815,13 @@ BEGIN
          AND source.telefono ~ '^[0-9]{6,15}$'
          AND source.mensaje IS NOT NULL
          AND NULLIF(pg_catalog.BTRIM(source.meta_message_id), '') IS NOT NULL
+         AND NOT EXISTS (
+           SELECT 1
+             FROM public.whatsapp_cloud_messages AS message
+            WHERE message.empresa_id = source.empresa_id
+              AND message.source_outbox_id = source.id
+              AND message.direction = 'outbound'
+         )
     )
     SELECT 1
       FROM provider_identities
