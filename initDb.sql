@@ -2080,6 +2080,8 @@ SET LOCAL lock_timeout = '30s';
 SET LOCAL statement_timeout = '5min';
 -- Stable namespace/key pair for the complete WhatsApp Cloud inbox projection migration.
 SELECT pg_catalog.pg_advisory_xact_lock(1464550724, 1229867347);
+-- Establish one heavyweight order for every writer: sources before projection DDL.
+LOCK TABLE public.whatsapp_cloud_events, public.wpp_outbox IN SHARE ROW EXCLUSIVE MODE;
 
 DO $$
 DECLARE
@@ -2743,15 +2745,7 @@ BEGIN
   END LOOP;
 END $$;
 
--- CUTOVER CAPTURE INSTALL COMPLETE; COMMIT IMMEDIATELY
-COMMIT;
-
-BEGIN;
-SET LOCAL search_path = pg_catalog, public;
-SET LOCAL lock_timeout = '30s';
-SET LOCAL statement_timeout = '5min';
-SELECT pg_catalog.pg_advisory_xact_lock(1464550724, 1229867347);
--- CUTOVER CAPTURE COMMITTED; SOURCE SCANS FOLLOW
+-- CUTOVER CAPTURE INSTALL COMPLETE; DDL/REPAIRS STILL PRECEDE TENANT DML
 
 DO $repair_state_rank$
 DECLARE
@@ -2763,8 +2757,7 @@ BEGIN
      WHERE message.empresa_id IS NOT NULL
      ORDER BY message.empresa_id
   LOOP
-    PERFORM public.whatsapp_cloud_messages_lock_projection_migration(target_empresa_id);
-    -- TENANT REPAIR STATE LOCK ACQUIRED
+    -- PRE-DDL REPAIR STATE START
     UPDATE public.whatsapp_cloud_messages
        SET state_rank = CASE delivery_status
              WHEN 'received' THEN 0
@@ -2808,8 +2801,7 @@ BEGIN
      WHERE message.empresa_id IS NOT NULL
      ORDER BY message.empresa_id
   LOOP
-    PERFORM public.whatsapp_cloud_messages_lock_projection_migration(target_empresa_id);
-    -- TENANT REPAIR CONTENT LOCK ACQUIRED
+    -- PRE-DDL REPAIR CONTENT START
     UPDATE public.whatsapp_cloud_messages
        SET text_body = LEFT(text_body, 4096),
            media_mime_type = LEFT(media_mime_type, 255),
@@ -2833,8 +2825,7 @@ BEGIN
      WHERE message.empresa_id IS NOT NULL
      ORDER BY message.empresa_id
   LOOP
-    PERFORM public.whatsapp_cloud_messages_lock_projection_migration(target_empresa_id);
-    -- TENANT REPAIR TIMELINE LOCK ACQUIRED
+    -- PRE-DDL REPAIR TIMELINE START
     WITH sent_timeline AS (
       SELECT id,
              CASE
@@ -3195,6 +3186,16 @@ BEGIN
       (empresa_id, participant_wa_id, message_at DESC, id DESC);
   END IF;
 END $$;
+
+-- CLOUD PROJECTION DDL COMPLETE; COMMIT BEFORE TENANT DML
+COMMIT;
+
+BEGIN;
+SET LOCAL search_path = pg_catalog, public;
+SET LOCAL lock_timeout = '30s';
+SET LOCAL statement_timeout = '5min';
+SELECT pg_catalog.pg_advisory_xact_lock(1464550724, 1229867347);
+-- CUTOVER CAPTURE COMMITTED; SOURCE SCANS FOLLOW
 
 DO $backfill$
 DECLARE

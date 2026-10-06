@@ -451,12 +451,11 @@ test('DDL de reparación de trigger fuente no deadlockea con writer operativo y 
     await installOperationalWrongTrigger();
     await insertInbound(pool, 'seed');
 
-    const beforeTriggerRepair = /(DO \$\$\r?\nDECLARE\r?\n  trigger_spec RECORD;\r?\n  trigger_row RECORD;)/;
     const writerFirstMigration = projectionSql.replace(
-      beforeTriggerRepair,
-      "SELECT pg_catalog.pg_sleep(0.35);\n$1",
+      'LOCK TABLE public.whatsapp_cloud_events, public.wpp_outbox IN SHARE ROW EXCLUSIVE MODE;',
+      'SELECT pg_catalog.pg_sleep(0.35);\nLOCK TABLE public.whatsapp_cloud_events, public.wpp_outbox IN SHARE ROW EXCLUSIVE MODE;',
     );
-    assert.notEqual(writerFirstMigration, projectionSql, 'trigger repair phase must be injectable');
+    assert.notEqual(writerFirstMigration, projectionSql, 'pre-source-lock phase must be injectable');
     const migrationSecond = await pool.connect();
     const writerFirst = await pool.connect();
     try {
@@ -469,7 +468,7 @@ test('DDL de reparación de trigger fuente no deadlockea con writer operativo y 
       await Promise.race([
         insertInbound(writerFirst, 'writer-first'),
         new Promise((_, reject) => setTimeout(
-          () => reject(new Error('writer blocked behind a tenant advisory retained before trigger DDL')),
+          () => reject(new Error('writer blocked before migration acquired the ordered source locks')),
           250,
         )),
       ]);
@@ -520,9 +519,10 @@ test('DDL de reparación de trigger fuente no deadlockea con writer operativo y 
         DISABLE TRIGGER whatsapp_cloud_messages_capture_insert
     `);
     const failingRepair = projectionSql.replace(
-      '-- CUTOVER CAPTURE INSTALL COMPLETE; COMMIT IMMEDIATELY',
-      'SELECT 1 / 0;\n-- CUTOVER CAPTURE INSTALL COMPLETE; COMMIT IMMEDIATELY',
+      '-- CLOUD PROJECTION DDL COMPLETE; COMMIT BEFORE TENANT DML',
+      'SELECT 1 / 0;\n-- CLOUD PROJECTION DDL COMPLETE; COMMIT BEFORE TENANT DML',
     );
+    assert.notEqual(failingRepair, projectionSql, 'pre-commit DDL failure must be injectable');
     const retrying = await pool.connect();
     try {
       await assert.rejects(retrying.query(failingRepair), /division by zero/);
@@ -545,13 +545,13 @@ test('migración toma lock advisory transaccional estable antes del primer DDL y
   const lockTimeout = projectionSql.indexOf("SET LOCAL lock_timeout = '30s';");
   const statementTimeout = projectionSql.indexOf("SET LOCAL statement_timeout = '5min';");
   const advisoryLock = projectionSql.indexOf('SELECT pg_catalog.pg_advisory_xact_lock(1464550724, 1229867347);');
+  const sourceLock = projectionSql.indexOf(
+    'LOCK TABLE public.whatsapp_cloud_events, public.wpp_outbox IN SHARE ROW EXCLUSIVE MODE;',
+  );
   const firstDdl = projectionSql.search(/\b(?:CREATE|ALTER|DROP)\s+(?:TABLE|SEQUENCE|INDEX)\b/i);
   assert.ok(begin >= 0 && safePath > begin && lockTimeout > safePath && statementTimeout > lockTimeout
-    && advisoryLock > statementTimeout && firstDdl > advisoryLock,
-  'safe search_path, timeouts and the stable migration advisory lock must precede the first DDL');
-  assert.doesNotMatch(projectionSql,
-    /LOCK\s+TABLE\s+[^;]*(?:whatsapp_cloud_events|wpp_outbox)/is,
-    'migration serialization must not lock source tables explicitly');
+    && advisoryLock > statementTimeout && sourceLock > advisoryLock && firstDdl > sourceLock,
+  'safe search_path, timeouts, migration advisory and ordered source locks must precede projection DDL');
 
   await withDatabase(async (pool, { directory, port }) => {
     await pool.query(outboxSql);
@@ -1340,7 +1340,7 @@ test('reparación legacy conserva constraints ajenos durante doble migración', 
   });
 });
 
-test('reejecución normal no pide ACCESS EXCLUSIVE y espera al writer del tenant sin reconstruir objetos', async () => {
+test('reejecución normal espera al writer en el lock fuente ordenado sin reconstruir objetos', async () => {
   await withDatabase(async pool => {
     await pool.query('INSERT INTO empresas(id) VALUES (1)');
     await pool.query(migrationSql);
@@ -1391,8 +1391,8 @@ test('reejecución normal no pide ACCESS EXCLUSIVE y espera al writer del tenant
               FROM pg_catalog.pg_stat_activity
              WHERE pid = $1
           `, [migrator.processID])).rows[0];
-          return wait?.wait_event_type === 'Lock' && wait?.wait_event === 'advisory';
-        }, 'rerun did not wait on the active tenant writer advisory');
+          return wait?.wait_event_type === 'Lock' && wait?.wait_event === 'relation';
+        }, 'rerun did not wait on the active writer source relation lock');
         await writer.query('COMMIT');
         committed = true;
         await migrationPromise;
@@ -1679,13 +1679,13 @@ test('status backfill usa compare-and-set monotónico en ambos ganadores del row
 });
 
 test('cutover captura inserts concurrentes con ambos ganadores y converge sin bloquear durante scans', async () => {
-  const installBoundary = '-- CUTOVER CAPTURE INSTALL COMPLETE; COMMIT IMMEDIATELY';
+  const installBoundary = '-- CUTOVER CAPTURE INSTALL COMPLETE; DDL/REPAIRS STILL PRECEDE TENANT DML';
   const scanBoundary = '-- CUTOVER CAPTURE COMMITTED; SOURCE SCANS FOLLOW';
   assert.ok(projectionSql.indexOf(installBoundary) >= 0
     && projectionSql.indexOf('COMMIT;', projectionSql.indexOf(installBoundary))
       < projectionSql.indexOf(scanBoundary),
   'capture installation must commit before source scans start');
-  assert.doesNotMatch(projectionSql,
+  assert.doesNotMatch(projectionSql.slice(projectionSql.indexOf(scanBoundary)),
     /LOCK\s+TABLE\s+public\.(?:whatsapp_cloud_events|wpp_outbox)[^;]*(?:SHARE|EXCLUSIVE)/is,
     'source scans must not run under an explicit heavyweight table lock');
 
@@ -2052,36 +2052,162 @@ test('backfill recorre empresas en orden y toma el advisory tenant antes de toca
     'global status row locking must be replaced by tenant-scoped reconciliation');
 });
 
-test('DDL de triggers fuente termina antes del primer advisory tenant retenido para reparación/backfill', () => {
-  const triggerInspection = projectionSql.indexOf('trigger_spec RECORD;');
-  const triggerCommit = projectionSql.indexOf('-- CUTOVER CAPTURE INSTALL COMPLETE; COMMIT IMMEDIATELY');
+test('todo DDL termina confirmado antes del primer advisory tenant retenido', () => {
+  const ddlCommit = projectionSql.indexOf('-- CLOUD PROJECTION DDL COMPLETE; COMMIT BEFORE TENANT DML');
   const firstTenantAdvisory = projectionSql.indexOf(
     'PERFORM public.whatsapp_cloud_messages_lock_projection_migration(target_empresa_id);',
   );
-  assert.ok(triggerInspection >= 0 && triggerCommit > triggerInspection
-    && firstTenantAdvisory > triggerCommit,
-  'source trigger inspection/repair must commit before any retained tenant advisory is acquired');
-  assert.doesNotMatch(projectionSql.slice(firstTenantAdvisory),
-    /\b(?:DROP\s+TRIGGER|CREATE\s+TRIGGER|ALTER\s+TABLE\s+public\.(?:whatsapp_cloud_events|wpp_outbox)[^;]*\bTRIGGER\b)/i,
-    'no source trigger DDL may execute after tenant repair/backfill advisories begin');
+  assert.ok(ddlCommit >= 0 && firstTenantAdvisory > ddlCommit,
+    'all source/projection DDL must commit before any retained tenant advisory is acquired');
+  const postAdvisorySql = projectionSql.slice(firstTenantAdvisory)
+    .replace(/--.*$/gm, '')
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.doesNotMatch(postAdvisorySql,
+    /\b(?:CREATE|DROP|ALTER|TRUNCATE|LOCK)\b/i,
+    'after the first retained tenant advisory only DML/reconciliation and non-blocking checks are allowed');
 });
 
-test('las tres reparaciones globales recorren tenants estables y bloquean antes de cualquier UPDATE', () => {
+async function assertDeceptiveParentIndexRace(pool, source) {
+  const isEvent = source === 'whatsapp_cloud_events';
+  const indexName = isEvent
+    ? 'whatsapp_cloud_events_empresa_id_id_uidx'
+    : 'wpp_outbox_empresa_id_id_uidx';
+  const includeColumn = isEvent ? 'dedupe_key' : 'telefono';
+  const writerSql = isEvent ? `
+    INSERT INTO public.whatsapp_cloud_events
+      (empresa_id, event_kind, dedupe_key, message_id, sender_id, message_type, event_data)
+    VALUES (1, 'message', $1, $2, '549351555093', 'text',
+            jsonb_build_object('text', jsonb_build_object('body', $3::text)))
+  ` : `
+    INSERT INTO public.wpp_outbox
+      (empresa_id, telefono, mensaje, status, transport_origin)
+    VALUES (1, '549351555094', $1, 'pending', 'cloud')
+  `;
+  const writerParams = suffix => isEvent
+    ? [`parent-index:${source}:${suffix}`, `parent-index-${source}-${suffix}`, suffix]
+    : [`parent index ${source} ${suffix}`];
+
+  async function installDeceptiveIndex() {
+    const foreignKeyName = isEvent
+      ? 'whatsapp_cloud_messages_source_event_fkey'
+      : 'whatsapp_cloud_messages_outbox_fkey';
+    await pool.query(`
+      ALTER TABLE public.whatsapp_cloud_messages
+        DROP CONSTRAINT IF EXISTS ${foreignKeyName};
+      DROP INDEX public.${indexName};
+      CREATE UNIQUE INDEX ${indexName}
+        ON public.${source} (empresa_id, id)
+        INCLUDE (${includeColumn})
+       WHERE id IS NOT NULL
+    `);
+  }
+
+  await installDeceptiveIndex();
+  const writerFirst = await pool.connect();
+  const migrationSecond = await pool.connect();
+  try {
+    await writerFirst.query('BEGIN');
+    await writerFirst.query(writerSql, writerParams('writer-first'));
+    const migrationPromise = migrationSecond.query(projectionSql);
+    await waitUntil(async () => {
+      const wait = (await pool.query(`
+        SELECT wait_event_type, wait_event
+          FROM pg_catalog.pg_stat_activity
+         WHERE pid = $1
+      `, [migrationSecond.processID])).rows[0];
+      return wait?.wait_event_type === 'Lock';
+    }, `${source}: migration did not wait behind writer-first`);
+    await writerFirst.query('COMMIT');
+    await migrationPromise;
+  } finally {
+    await writerFirst.query('ROLLBACK').catch(() => {});
+    writerFirst.release();
+    migrationSecond.release();
+  }
+
+  await installDeceptiveIndex();
+  const delayedMigration = projectionSql.replace(
+    '-- PRE-DDL REPAIR STATE START',
+    "-- PRE-DDL REPAIR STATE START\n    PERFORM pg_catalog.set_config('deadlock_timeout', '100ms', TRUE);\n    PERFORM pg_catalog.pg_sleep(0.35);",
+  );
+  assert.notEqual(delayedMigration, projectionSql, 'repair hold must be injectable');
+  const migrationFirst = await pool.connect();
+  const writerSecond = await pool.connect();
+  try {
+    const migrationPromise = migrationFirst.query(delayedMigration);
+    await waitUntil(async () => (await pool.query(
+      'SELECT wait_event FROM pg_catalog.pg_stat_activity WHERE pid = $1',
+      [migrationFirst.processID],
+    )).rows[0]?.wait_event === 'PgSleep', `${source}: migration did not reach repair hold`);
+    await writerSecond.query('BEGIN');
+    await writerSecond.query("SET LOCAL deadlock_timeout = '100ms'; SET LOCAL statement_timeout = '4s'");
+    const writerPromise = writerSecond.query(writerSql, writerParams('migration-first'));
+    await waitUntil(async () => (await pool.query(
+      'SELECT wait_event_type FROM pg_catalog.pg_stat_activity WHERE pid = $1',
+      [writerSecond.processID],
+    )).rows[0]?.wait_event_type === 'Lock', `${source}: writer did not wait behind migration-first`);
+    const outcomes = await Promise.allSettled([migrationPromise, writerPromise]);
+    assert.ok(outcomes.every(result => result.status === 'fulfilled'),
+      `${source}: both lock winners must finish without deadlock: ${outcomes.map(result => result.reason?.code || result.status).join(',')}`);
+    await writerSecond.query('COMMIT');
+  } finally {
+    await migrationFirst.query('ROLLBACK').catch(() => {});
+    await writerSecond.query('ROLLBACK').catch(() => {});
+    migrationFirst.release();
+    writerSecond.release();
+  }
+
+  assert.deepEqual((await indexShape(pool, indexName)).key_columns, ['empresa_id', 'id']);
+}
+
+test('índice parental engañoso en whatsapp_cloud_events no deadlockea con writer en ambos ganadores', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (1)');
+    await pool.query(outboxSql);
+    await pool.query(projectionSql);
+    await pool.query(`
+      INSERT INTO public.wpp_outbox
+        (empresa_id, telefono, mensaje, status, transport_origin)
+      VALUES (1, '549351555095', 'proyección existente events', 'pending', 'cloud')
+    `);
+    await assertDeceptiveParentIndexRace(pool, 'whatsapp_cloud_events');
+  });
+});
+
+test('índice parental engañoso en wpp_outbox no deadlockea con writer en ambos ganadores', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (1)');
+    await pool.query(outboxSql);
+    await pool.query(projectionSql);
+    await pool.query(`
+      INSERT INTO public.whatsapp_cloud_events
+        (empresa_id, event_kind, dedupe_key, message_id, sender_id, message_type, event_data)
+      VALUES (1, 'message', 'projection-existing-outbox', 'projection-existing-outbox',
+              '549351555096', 'text', '{"text":{"body":"proyección existente outbox"}}'::jsonb)
+    `);
+    await assertDeceptiveParentIndexRace(pool, 'wpp_outbox');
+  });
+});
+
+test('las tres reparaciones globales terminan dentro de la fase DDL previa a advisories tenant', () => {
+  const ddlCommit = projectionSql.indexOf('-- CLOUD PROJECTION DDL COMPLETE; COMMIT BEFORE TENANT DML');
   for (const [tag, marker] of [
-    ['repair_state_rank', '-- TENANT REPAIR STATE LOCK ACQUIRED'],
-    ['repair_content_lengths', '-- TENANT REPAIR CONTENT LOCK ACQUIRED'],
-    ['repair_timeline', '-- TENANT REPAIR TIMELINE LOCK ACQUIRED'],
+    ['repair_state_rank', '-- PRE-DDL REPAIR STATE START'],
+    ['repair_content_lengths', '-- PRE-DDL REPAIR CONTENT START'],
+    ['repair_timeline', '-- PRE-DDL REPAIR TIMELINE START'],
   ]) {
     const phase = projectionSql.match(new RegExp(`DO \\$${tag}\\$[\\s\\S]*?END \\$${tag}\\$;`))?.[0];
     assert.ok(phase, `${tag} must be an explicit tenant repair phase`);
     assert.match(phase,
       /SELECT DISTINCT message\.empresa_id[\s\S]*FROM public\.whatsapp_cloud_messages AS message[\s\S]*ORDER BY message\.empresa_id/i);
-    const lock = phase.indexOf('PERFORM public.whatsapp_cloud_messages_lock_projection_migration(target_empresa_id);');
     const instrumented = phase.indexOf(marker);
     const firstUpdate = phase.search(/UPDATE public\.whatsapp_cloud_messages/i);
-    assert.ok(lock >= 0 && instrumented > lock && firstUpdate > instrumented,
-      `${tag} must acquire its tenant advisory before projection DML`);
-    assert.doesNotMatch(phase.slice(0, lock), /\b(?:UPDATE|DELETE|INSERT)\s+public\.whatsapp_cloud_messages/i);
+    assert.ok(instrumented >= 0 && firstUpdate > instrumented
+      && projectionSql.indexOf(phase) < ddlCommit,
+    `${tag} must repair legacy rows before DDL commits and before tenant advisories begin`);
+    assert.doesNotMatch(phase,
+      /whatsapp_cloud_messages_lock_projection_migration\(target_empresa_id\)/,
+      `${tag} must rely on the ordered source/projection DDL transaction, not retain a tenant advisory`);
   }
 });
 
@@ -2101,7 +2227,7 @@ test('runtime rechaza transacción cross-tenant 710001→720002 antes del segund
   });
 });
 
-test('cada fase de reparación retiene advisory tenant antes de DML frente a runtime concurrente', async () => {
+test('cada reparación pre-DDL excluye writers por lock fuente sin adquirir advisory tenant', async () => {
   await withDatabase(async pool => {
     await pool.query('INSERT INTO empresas(id) VALUES (1)');
     await pool.query(migrationSql);
@@ -2113,7 +2239,7 @@ test('cada fase de reparación retiene advisory tenant antes de DML frente a run
 
     const phases = [
       {
-        marker: '-- TENANT REPAIR STATE LOCK ACQUIRED',
+        marker: '-- PRE-DDL REPAIR STATE START',
         prepare: `
           ALTER TABLE public.whatsapp_cloud_messages
             DROP CONSTRAINT whatsapp_cloud_messages_state_rank_check;
@@ -2122,7 +2248,7 @@ test('cada fase de reparación retiene advisory tenant antes de DML frente a run
         `,
       },
       {
-        marker: '-- TENANT REPAIR CONTENT LOCK ACQUIRED',
+        marker: '-- PRE-DDL REPAIR CONTENT START',
         prepare: `
           ALTER TABLE public.whatsapp_cloud_messages
             DROP CONSTRAINT whatsapp_cloud_messages_content_length_check;
@@ -2131,7 +2257,7 @@ test('cada fase de reparación retiene advisory tenant antes de DML frente a run
         `,
       },
       {
-        marker: '-- TENANT REPAIR TIMELINE LOCK ACQUIRED',
+        marker: '-- PRE-DDL REPAIR TIMELINE START',
         prepare: `
           ALTER TABLE public.whatsapp_cloud_messages
             DROP CONSTRAINT whatsapp_cloud_messages_timestamps_check;
@@ -2169,8 +2295,8 @@ test('cada fase de reparación retiene advisory tenant antes de DML frente a run
               FROM pg_catalog.pg_stat_activity
              WHERE pid = $1
           `, [runtime.processID])).rows[0];
-          return wait?.wait_event_type === 'Lock' && wait?.wait_event === 'advisory';
-        }, `runtime did not wait on ${phase.marker}`);
+          return wait?.wait_event_type === 'Lock' && wait?.wait_event === 'relation';
+        }, `runtime did not wait on the ordered source lock during ${phase.marker}`);
         await migrationPromise;
         await runtimePromise;
       } finally {
@@ -2271,8 +2397,8 @@ test('RED controlado reproduce 40P01 legacy y migración/runtime terminan con am
             FROM pg_catalog.pg_stat_activity
            WHERE pid = $1
         `, [migrationSecond.processID])).rows[0];
-        return wait?.wait_event_type === 'Lock' && wait?.wait_event === 'advisory';
-      }, 'migration did not wait on the runtime tenant advisory before taking projection row locks');
+        return wait?.wait_event_type === 'Lock' && wait?.wait_event === 'relation';
+      }, 'migration did not wait on the runtime source relation before taking projection locks');
       await insertStatus(runtimeFirst, {
         empresaId: 1, dedupeKey: 'runtime-first:one', messageId: runtimeFirstMessages[0], status: 'read',
       });
