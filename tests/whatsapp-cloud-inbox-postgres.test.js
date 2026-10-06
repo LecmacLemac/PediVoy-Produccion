@@ -79,6 +79,15 @@ function runPsqlFile({ port, file }) {
   });
 }
 
+async function waitUntil(check, message, timeoutMs = 3000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await check()) return;
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  assert.fail(message);
+}
+
 async function indexShape(pool, indexName) {
   return (await pool.query(`
     SELECT index_row.indisunique,
@@ -184,6 +193,7 @@ test('migración crea proyección tenant-scoped, constraints e índices exactos 
     assert.match(definitions.get('whatsapp_cloud_messages_participant_check'), /\^\[0-9\]\{6,15\}\$/);
     assert.match(definitions.get('whatsapp_cloud_messages_type_check'), /text.*image.*document/i);
     assert.match(definitions.get('whatsapp_cloud_messages_content_check'), /text_body/i);
+    assert.match(definitions.get('whatsapp_cloud_messages_content_length_check'), /4096.*255.*1024.*255/i);
     assert.match(definitions.get('whatsapp_cloud_messages_delivery_status_check'), /received.*queued.*sending.*sent.*delivered.*read.*failed.*manual_retry.*outcome_unknown/i);
     assert.match(definitions.get('whatsapp_cloud_messages_direction_status_check'), /inbound.*received.*outbound/i);
     assert.match(definitions.get('whatsapp_cloud_messages_state_rank_check'), /state_rank/i);
@@ -873,6 +883,7 @@ test('reparación canónica exacta corrige variantes engañosas de todas las con
       'whatsapp_cloud_messages_participant_check',
       'whatsapp_cloud_messages_type_check',
       'whatsapp_cloud_messages_content_check',
+      'whatsapp_cloud_messages_content_length_check',
       'whatsapp_cloud_messages_delivery_status_check',
       'whatsapp_cloud_messages_direction_status_check',
       'whatsapp_cloud_messages_state_rank_check',
@@ -1094,6 +1105,219 @@ test('migración reemplaza índice legacy engañoso aunque contenga columnas só
     await pool.query(migrationSql);
     assert.deepEqual((await indexShape(pool, 'idx_whatsapp_cloud_messages_timeline')).key_columns,
       ['empresa_id', 'participant_wa_id', 'message_at', 'id']);
+  });
+});
+
+test('backfill de contenido sólo acepta strings JSON y limita texto, MIME, caption y filename', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (1)');
+    await pool.query(`
+      INSERT INTO whatsapp_cloud_events
+        (empresa_id, event_kind, dedupe_key, message_id, sender_id, message_type,
+         source_timestamp, event_data, received_at)
+      VALUES
+        (1, 'message', 'json-types:image', 'json-types-image', '549351555041', 'image',
+         '1760000000',
+         '{"image":{"mime_type":{"opaque":"image/jpeg"},"caption":["opaque"]}}'::jsonb,
+         '2026-10-01T10:00:00Z'),
+        (1, 'message', 'json-types:document', 'json-types-document', '549351555042', 'document',
+         '1760000001',
+         jsonb_build_object('document', jsonb_build_object(
+           'mime_type', repeat('m', 300), 'caption', repeat('c', 1100),
+           'filename', repeat('f', 300))),
+         '2026-10-01T10:00:01Z'),
+        (1, 'message', 'json-types:text', 'json-types-text', '549351555043', 'text',
+         '1760000002', jsonb_build_object('text', jsonb_build_object('body', repeat('t', 5000))),
+         '2026-10-01T10:00:02Z')
+    `);
+
+    await pool.query(migrationSql);
+
+    const rows = (await pool.query(`
+      SELECT provider_message_id, media_mime_type, media_caption, document_filename,
+             length(text_body) AS text_length, length(media_mime_type) AS mime_length,
+             length(media_caption) AS caption_length, length(document_filename) AS filename_length
+        FROM whatsapp_cloud_messages
+       ORDER BY provider_message_id
+    `)).rows;
+    assert.deepEqual(rows, [
+      {
+        provider_message_id: 'json-types-document', media_mime_type: 'm'.repeat(255),
+        media_caption: 'c'.repeat(1024), document_filename: 'f'.repeat(255),
+        text_length: null, mime_length: 255, caption_length: 1024, filename_length: 255,
+      },
+      {
+        provider_message_id: 'json-types-image', media_mime_type: null,
+        media_caption: null, document_filename: null,
+        text_length: null, mime_length: null, caption_length: null, filename_length: null,
+      },
+      {
+        provider_message_id: 'json-types-text', media_mime_type: null,
+        media_caption: null, document_filename: null,
+        text_length: 4096, mime_length: null, caption_length: null, filename_length: null,
+      },
+    ]);
+    await assert.rejects(pool.query(`
+      INSERT INTO whatsapp_cloud_messages
+        (empresa_id, direction, participant_wa_id, message_type, text_body,
+         delivery_status, state_rank, message_at)
+      VALUES (1, 'inbound', '549351555044', 'text', repeat('x', 4097), 'received', 0, NOW())
+    `), error => error?.code === '23514'
+      && error?.constraint === 'whatsapp_cloud_messages_content_length_check');
+  });
+});
+
+test('colisiones cross-table de todos los índices canónicos abortan sin tocar objetos ajenos', async () => {
+  await withDatabase(async pool => {
+    await pool.query(outboxSql);
+    await pool.query(`
+      CREATE TABLE foreign_index_owner (
+        empresa_id INTEGER NOT NULL, id BIGINT NOT NULL, source_event_id BIGINT,
+        outbox_id BIGINT, provider_message_id TEXT, message_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        participant_wa_id TEXT NOT NULL DEFAULT '549351555099'
+      )
+    `);
+    const canonicalIndexes = [
+      'whatsapp_cloud_events_empresa_id_id_uidx',
+      'wpp_outbox_empresa_id_id_uidx',
+      'whatsapp_cloud_messages_source_event_uidx',
+      'whatsapp_cloud_messages_outbox_uidx',
+      'whatsapp_cloud_messages_provider_message_uidx',
+      'idx_whatsapp_cloud_messages_conversations',
+      'idx_whatsapp_cloud_messages_timeline',
+    ];
+    for (const indexName of canonicalIndexes) {
+      await pool.query(`CREATE UNIQUE INDEX ${indexName} ON foreign_index_owner (empresa_id, id)`);
+      await pool.query(`ALTER TABLE foreign_index_owner ADD CONSTRAINT ${indexName} UNIQUE USING INDEX ${indexName}`);
+      const before = (await pool.query(`
+        SELECT constraint_row.oid::text AS constraint_oid, index_row.oid::text AS index_oid,
+               constraint_row.conrelid::regclass::text AS table_name
+          FROM pg_constraint AS constraint_row
+          JOIN pg_class AS index_row ON index_row.oid = constraint_row.conindid
+         WHERE constraint_row.conname = $1
+      `, [indexName])).rows[0];
+      await assert.rejects(pool.query(projectionSql), error => error?.code === 'P0001'
+        && /canonical index name collision/i.test(error.message));
+      await pool.query('ROLLBACK');
+      assert.deepEqual((await pool.query(`
+        SELECT constraint_row.oid::text AS constraint_oid, index_row.oid::text AS index_oid,
+               constraint_row.conrelid::regclass::text AS table_name
+          FROM pg_constraint AS constraint_row
+          JOIN pg_class AS index_row ON index_row.oid = constraint_row.conindid
+         WHERE constraint_row.conname = $1
+      `, [indexName])).rows[0], before, `${indexName} must remain untouched`);
+      assert.equal((await pool.query("SELECT to_regclass('whatsapp_cloud_messages') AS relation")).rows[0].relation, null);
+      await pool.query(`ALTER TABLE foreign_index_owner DROP CONSTRAINT ${indexName}`);
+    }
+  });
+});
+
+test('status backfill usa compare-and-set monotónico en ambos ganadores del row lock', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (1)');
+    await pool.query(outboxSql);
+    await pool.query(`
+      INSERT INTO wpp_outbox
+        (empresa_id, telefono, mensaje, created_at, sent_at, status, transport_origin,
+         meta_message_id, cloud_dispatch_state)
+      VALUES (1, '549351555050', 'race monotónica', '2026-10-01T10:00:00Z',
+              '2026-10-01T10:01:00Z', 'sent', 'cloud', 'race-monotonic', 'sent');
+      INSERT INTO whatsapp_cloud_events
+        (empresa_id, event_kind, dedupe_key, message_id, recipient_id, status,
+         source_timestamp, event_data, received_at)
+      VALUES (1, 'status', 'race:sent', 'race-monotonic', '549351555050', 'sent',
+              EXTRACT(EPOCH FROM TIMESTAMPTZ '2026-10-01T10:01:00Z')::bigint::text,
+              '{}'::jsonb, '2026-10-01T10:01:01Z')
+    `);
+    await pool.query(projectionSql);
+
+    const writer = await pool.connect();
+    const migrator = await pool.connect();
+    try {
+      await writer.query('BEGIN');
+      await writer.query("SELECT id FROM whatsapp_cloud_messages WHERE provider_message_id = 'race-monotonic' FOR UPDATE");
+      const migrationPromise = migrator.query(projectionSql);
+      await waitUntil(async () => (await pool.query(
+        'SELECT wait_event_type FROM pg_stat_activity WHERE pid = $1', [migrator.processID],
+      )).rows[0]?.wait_event_type === 'Lock', 'migration did not wait on the writer row lock');
+      await writer.query(`
+        UPDATE whatsapp_cloud_messages
+           SET delivery_status = 'read', state_rank = 50,
+               delivered_at = '2026-10-01T10:02:00Z', read_at = '2026-10-01T10:03:00Z',
+               updated_at = '2026-10-01T10:03:00Z'
+         WHERE provider_message_id = 'race-monotonic'
+      `);
+      await writer.query('COMMIT');
+      await migrationPromise;
+    } finally {
+      await writer.query('ROLLBACK').catch(() => {});
+      writer.release();
+      migrator.release();
+    }
+    assert.deepEqual((await pool.query(`
+      SELECT delivery_status, state_rank,
+             to_char(sent_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS sent_at,
+             to_char(delivered_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS delivered_at,
+             to_char(read_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS read_at
+        FROM whatsapp_cloud_messages WHERE provider_message_id = 'race-monotonic'
+    `)).rows[0], {
+      delivery_status: 'read', state_rank: 50,
+      sent_at: '2026-10-01T10:01:00Z', delivered_at: '2026-10-01T10:02:00Z',
+      read_at: '2026-10-01T10:03:00Z',
+    });
+
+    await pool.query(`
+      UPDATE whatsapp_cloud_messages
+         SET delivery_status = 'sent', state_rank = 30,
+             sent_at = '2026-10-01T10:01:00Z', delivered_at = NULL, read_at = NULL,
+             updated_at = '2026-10-01T10:01:00Z'
+       WHERE provider_message_id = 'race-monotonic';
+      INSERT INTO whatsapp_cloud_events
+        (empresa_id, event_kind, dedupe_key, message_id, recipient_id, status,
+         source_timestamp, event_data, received_at)
+      VALUES (1, 'status', 'race:sent-earlier', 'race-monotonic', '549351555050', 'sent',
+              EXTRACT(EPOCH FROM TIMESTAMPTZ '2026-10-01T10:00:30Z')::bigint::text,
+              '{}'::jsonb, '2026-10-01T10:04:00Z')
+    `);
+    const delayedProjection = projectionSql.replace(
+      /\r?\nCOMMIT;\r?\n-- END WHATSAPP CLOUD MESSAGE PROJECTION MIGRATION/,
+      '\nSELECT pg_sleep(0.4);\nCOMMIT;\n-- END WHATSAPP CLOUD MESSAGE PROJECTION MIGRATION',
+    );
+    assert.notEqual(delayedProjection, projectionSql);
+    const migratorFirst = await pool.connect();
+    const writerSecond = await pool.connect();
+    try {
+      const migrationPromise = migratorFirst.query(delayedProjection);
+      await waitUntil(async () => (await pool.query(
+        'SELECT wait_event FROM pg_stat_activity WHERE pid = $1', [migratorFirst.processID],
+      )).rows[0]?.wait_event === 'PgSleep', 'migration did not reach its post-update hold');
+      const writerPromise = writerSecond.query(`
+        UPDATE whatsapp_cloud_messages
+           SET delivery_status = 'read', state_rank = 50,
+               delivered_at = '2026-10-01T10:02:00Z', read_at = '2026-10-01T10:03:00Z',
+               updated_at = '2026-10-01T10:03:00Z'
+         WHERE provider_message_id = 'race-monotonic'
+      `);
+      await waitUntil(async () => (await pool.query(
+        'SELECT wait_event_type FROM pg_stat_activity WHERE pid = $1', [writerSecond.processID],
+      )).rows[0]?.wait_event_type === 'Lock', 'writer did not wait on the migration row lock');
+      await migrationPromise;
+      await writerPromise;
+    } finally {
+      migratorFirst.release();
+      writerSecond.release();
+    }
+    assert.deepEqual((await pool.query(`
+      SELECT delivery_status, state_rank,
+             to_char(sent_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS sent_at,
+             to_char(delivered_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS delivered_at,
+             to_char(read_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS read_at
+        FROM whatsapp_cloud_messages WHERE provider_message_id = 'race-monotonic'
+    `)).rows[0], {
+      delivery_status: 'read', state_rank: 50,
+      sent_at: '2026-10-01T10:00:30Z', delivered_at: '2026-10-01T10:02:00Z',
+      read_at: '2026-10-01T10:03:00Z',
+    });
   });
 });
 

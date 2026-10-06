@@ -2080,6 +2080,35 @@ SET LOCAL statement_timeout = '5min';
 -- Stable namespace/key pair for the complete WhatsApp Cloud inbox projection migration.
 SELECT pg_advisory_xact_lock(1464550724, 1229867347);
 
+DO $$
+DECLARE
+  index_row RECORD;
+  actual_table REGCLASS;
+BEGIN
+  FOR index_row IN
+    SELECT * FROM (VALUES
+      ('whatsapp_cloud_events_empresa_id_id_uidx', 'whatsapp_cloud_events'),
+      ('wpp_outbox_empresa_id_id_uidx', 'wpp_outbox'),
+      ('whatsapp_cloud_messages_source_event_uidx', 'whatsapp_cloud_messages'),
+      ('whatsapp_cloud_messages_outbox_uidx', 'whatsapp_cloud_messages'),
+      ('whatsapp_cloud_messages_provider_message_uidx', 'whatsapp_cloud_messages'),
+      ('idx_whatsapp_cloud_messages_conversations', 'whatsapp_cloud_messages'),
+      ('idx_whatsapp_cloud_messages_timeline', 'whatsapp_cloud_messages')
+    ) AS canonical(index_name, table_name)
+  LOOP
+    IF to_regclass(index_row.index_name) IS NOT NULL THEN
+      SELECT candidate.indrelid::regclass
+        INTO actual_table
+        FROM pg_index AS candidate
+       WHERE candidate.indexrelid = to_regclass(index_row.index_name);
+      IF NOT FOUND OR actual_table IS DISTINCT FROM to_regclass(index_row.table_name) THEN
+        RAISE EXCEPTION 'canonical index name collision: % belongs to %, expected %',
+          index_row.index_name, COALESCE(actual_table::TEXT, 'non-index relation'), index_row.table_name;
+      END IF;
+    END IF;
+  END LOOP;
+END $$;
+
 CREATE TABLE IF NOT EXISTS whatsapp_cloud_messages (
   id BIGSERIAL PRIMARY KEY,
   empresa_id INTEGER NOT NULL,
@@ -2309,6 +2338,16 @@ UPDATE whatsapp_cloud_messages
     OR created_at IS NULL
     OR updated_at IS NULL;
 
+UPDATE whatsapp_cloud_messages
+   SET text_body = LEFT(text_body, 4096),
+       media_mime_type = LEFT(media_mime_type, 255),
+       media_caption = LEFT(media_caption, 1024),
+       document_filename = LEFT(document_filename, 255)
+ WHERE length(text_body) > 4096
+    OR length(media_mime_type) > 255
+    OR length(media_caption) > 1024
+    OR length(document_filename) > 255;
+
 WITH sent_timeline AS (
   SELECT id,
          CASE
@@ -2532,6 +2571,8 @@ BEGIN
        'CHECK (message_type IN (''text'', ''image'', ''document''))'),
       ('whatsapp_cloud_messages_content_check',
        'CHECK (((message_type = ''text'' AND text_body IS NOT NULL AND media_mime_type IS NULL AND media_caption IS NULL AND document_filename IS NULL) OR (message_type = ''image'' AND text_body IS NULL AND document_filename IS NULL) OR (message_type = ''document'' AND text_body IS NULL)))'),
+      ('whatsapp_cloud_messages_content_length_check',
+       'CHECK ((length(COALESCE(text_body, '''')) <= 4096 AND length(COALESCE(media_mime_type, '''')) <= 255 AND length(COALESCE(media_caption, '''')) <= 1024 AND length(COALESCE(document_filename, '''')) <= 255))'),
       ('whatsapp_cloud_messages_delivery_status_check',
        'CHECK (delivery_status IN (''received'', ''queued'', ''sending'', ''sent'', ''delivered'', ''read'', ''failed'', ''manual_retry'', ''outcome_unknown''))'),
       ('whatsapp_cloud_messages_direction_status_check',
@@ -2561,6 +2602,8 @@ BEGIN
         THEN 'CHECK ((message_type = ANY (ARRAY[''text''::text, ''image''::text, ''document''::text])))'
       WHEN 'whatsapp_cloud_messages_content_check'
         THEN 'CHECK ((((message_type = ''text''::text) AND (text_body IS NOT NULL) AND (media_mime_type IS NULL) AND (media_caption IS NULL) AND (document_filename IS NULL)) OR ((message_type = ''image''::text) AND (text_body IS NULL) AND (document_filename IS NULL)) OR ((message_type = ''document''::text) AND (text_body IS NULL))))'
+      WHEN 'whatsapp_cloud_messages_content_length_check'
+        THEN 'CHECK (((length(COALESCE(text_body, ''''::text)) <= 4096) AND (length(COALESCE(media_mime_type, ''''::text)) <= 255) AND (length(COALESCE(media_caption, ''''::text)) <= 1024) AND (length(COALESCE(document_filename, ''''::text)) <= 255)))'
       WHEN 'whatsapp_cloud_messages_delivery_status_check'
         THEN 'CHECK ((delivery_status = ANY (ARRAY[''received''::text, ''queued''::text, ''sending''::text, ''sent''::text, ''delivered''::text, ''read''::text, ''failed''::text, ''manual_retry''::text, ''outcome_unknown''::text])))'
       WHEN 'whatsapp_cloud_messages_direction_status_check'
@@ -2675,13 +2718,17 @@ SELECT event.empresa_id,
        NULLIF(BTRIM(event.message_id), ''),
        event.message_type,
        CASE WHEN event.message_type = 'text'
-         THEN event.event_data->'text'->>'body' END,
+              AND jsonb_typeof(event.event_data->'text'->'body') = 'string'
+         THEN LEFT(event.event_data->'text'->>'body', 4096) END,
        CASE WHEN event.message_type IN ('image', 'document')
-         THEN NULLIF(event.event_data->event.message_type->>'mime_type', '') END,
+              AND jsonb_typeof(event.event_data->event.message_type->'mime_type') = 'string'
+         THEN NULLIF(LEFT(event.event_data->event.message_type->>'mime_type', 255), '') END,
        CASE WHEN event.message_type IN ('image', 'document')
-         THEN event.event_data->event.message_type->>'caption' END,
+              AND jsonb_typeof(event.event_data->event.message_type->'caption') = 'string'
+         THEN LEFT(event.event_data->event.message_type->>'caption', 1024) END,
        CASE WHEN event.message_type = 'document'
-         THEN event.event_data->'document'->>'filename' END,
+              AND jsonb_typeof(event.event_data->'document'->'filename') = 'string'
+         THEN LEFT(event.event_data->'document'->>'filename', 255) END,
        'received',
        0,
        CASE
@@ -2770,6 +2817,21 @@ SELECT outbox.empresa_id,
         AND projected.outbox_id = outbox.id
    )
 ON CONFLICT DO NOTHING;
+
+SELECT message.id
+  FROM whatsapp_cloud_messages AS message
+ WHERE message.direction = 'outbound'
+   AND EXISTS (
+     SELECT 1
+       FROM whatsapp_cloud_events AS event
+      WHERE event.empresa_id = message.empresa_id
+        AND event.message_id = message.provider_message_id
+        AND event.event_kind = 'status'
+        AND event.status IN ('sent', 'delivered', 'read', 'failed')
+        AND NULLIF(BTRIM(event.message_id), '') IS NOT NULL
+   )
+ ORDER BY message.id
+ FOR UPDATE OF message;
 
 WITH status_events AS (
   SELECT event.empresa_id,
@@ -2876,8 +2938,9 @@ UPDATE whatsapp_cloud_messages AS message
        failed_at = canonical.canonical_failed_at,
        updated_at = canonical.canonical_updated_at
   FROM canonical
- WHERE message.id = canonical.id
-   AND ROW(
+  WHERE message.id = canonical.id
+    AND canonical.latest_rank >= message.state_rank
+    AND ROW(
      message.delivery_status, message.state_rank, message.sent_at,
      message.delivered_at, message.read_at, message.failed_at, message.updated_at
    ) IS DISTINCT FROM ROW(
