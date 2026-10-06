@@ -2770,7 +2770,7 @@ SELECT outbox.empresa_id,
        outbox.id,
        NULLIF(BTRIM(outbox.meta_message_id), ''),
        'text',
-       outbox.mensaje,
+       LEFT(outbox.mensaje, 4096),
        CASE
          WHEN outbox.status = 'pending' THEN 'queued'
          WHEN outbox.status = 'sending' THEN 'sending'

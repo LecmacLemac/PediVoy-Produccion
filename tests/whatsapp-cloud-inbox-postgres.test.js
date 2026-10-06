@@ -35,7 +35,7 @@ async function withDatabase(work) {
   let started = false;
   let pool;
   try {
-    execFileSync(join(bin, 'initdb'), ['-D', directory, '-A', 'trust', '-U', 'cloud_inbox_test', '--no-locale'], { stdio: 'pipe' });
+    execFileSync(join(bin, 'initdb'), ['-D', directory, '-A', 'trust', '-U', 'cloud_inbox_test', '--no-locale', '--encoding=UTF8'], { stdio: 'pipe' });
     execFileSync(join(bin, 'pg_ctl'), ['-D', directory, '-l', join(directory, 'postgres.log'), '-o', `-h 127.0.0.1 -p ${port} -k ''`, '-w', 'start'], { stdio: 'pipe' });
     started = true;
     pool = new pg.Pool({ host: '127.0.0.1', port, user: 'cloud_inbox_test', database: 'postgres' });
@@ -356,6 +356,46 @@ test('backfill copia sólo contenido allowlisted, estados/timestamps y vínculos
       assert.equal(serialized.includes(forbidden), false, `must not copy ${forbidden}`);
     }
     assert.equal((await pool.query('SELECT count(*)::int AS total FROM whatsapp_cloud_messages')).rows[0].total, 8);
+  });
+});
+
+test('backfill limita texto outbound legacy largo por caracteres sin abortar y converge idempotentemente', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (1)');
+    await pool.query(outboxSql);
+    await pool.query(`
+      INSERT INTO wpp_outbox
+        (empresa_id, telefono, mensaje, status, transport_origin)
+      VALUES
+        (1, '549351555040', repeat('a', 4096), 'pending', 'cloud'),
+        (1, '549351555041', repeat('b', 4097), 'pending', 'cloud'),
+        (1, '549351555042', repeat('🙂', 5001), 'pending', 'cloud')
+    `);
+
+    await pool.query(projectionSql);
+    await pool.query(projectionSql);
+
+    const rows = (await pool.query(`
+      SELECT participant_wa_id, text_body, length(text_body)::int AS character_length,
+             octet_length(text_body)::int AS byte_length
+        FROM whatsapp_cloud_messages
+       WHERE participant_wa_id IN ('549351555040', '549351555041', '549351555042')
+       ORDER BY participant_wa_id
+    `)).rows;
+
+    assert.equal(rows.length, 3, 'rerunning the migration must not duplicate projected outbox rows');
+    assert.deepEqual(rows.map(row => ({
+      participant_wa_id: row.participant_wa_id,
+      character_length: row.character_length,
+      byte_length: row.byte_length,
+    })), [
+      { participant_wa_id: '549351555040', character_length: 4096, byte_length: 4096 },
+      { participant_wa_id: '549351555041', character_length: 4096, byte_length: 4096 },
+      { participant_wa_id: '549351555042', character_length: 4096, byte_length: 16384 },
+    ]);
+    assert.equal(rows[0].text_body, 'a'.repeat(4096));
+    assert.equal(rows[1].text_body, 'b'.repeat(4096));
+    assert.equal(rows[2].text_body, '🙂'.repeat(4096));
   });
 });
 
