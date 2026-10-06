@@ -2073,6 +2073,259 @@ CREATE TABLE IF NOT EXISTS push_subs (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- BEGIN WHATSAPP CLOUD MESSAGE PROJECTION MIGRATION
+BEGIN;
+SET LOCAL lock_timeout = '30s';
+SET LOCAL statement_timeout = '5min';
+
+CREATE UNIQUE INDEX IF NOT EXISTS whatsapp_cloud_events_empresa_id_id_uidx
+  ON whatsapp_cloud_events (empresa_id, id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS wpp_outbox_empresa_id_id_uidx
+  ON wpp_outbox (empresa_id, id);
+
+CREATE TABLE IF NOT EXISTS whatsapp_cloud_messages (
+  id BIGSERIAL PRIMARY KEY,
+  empresa_id INTEGER NOT NULL,
+  direction TEXT NOT NULL,
+  participant_wa_id TEXT NOT NULL,
+  source_event_id BIGINT,
+  outbox_id BIGINT,
+  provider_message_id TEXT,
+  message_type TEXT NOT NULL,
+  text_body TEXT,
+  media_mime_type TEXT,
+  media_caption TEXT,
+  document_filename TEXT,
+  delivery_status TEXT NOT NULL,
+  message_at TIMESTAMPTZ NOT NULL,
+  sent_at TIMESTAMPTZ,
+  delivered_at TIMESTAMPTZ,
+  read_at TIMESTAMPTZ,
+  failed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT whatsapp_cloud_messages_empresa_id_fkey
+    FOREIGN KEY (empresa_id) REFERENCES empresas(id) ON DELETE CASCADE,
+  CONSTRAINT whatsapp_cloud_messages_source_event_fkey
+    FOREIGN KEY (empresa_id, source_event_id)
+    REFERENCES whatsapp_cloud_events(empresa_id, id),
+  CONSTRAINT whatsapp_cloud_messages_outbox_fkey
+    FOREIGN KEY (empresa_id, outbox_id)
+    REFERENCES wpp_outbox(empresa_id, id),
+  CONSTRAINT whatsapp_cloud_messages_direction_check
+    CHECK (direction IN ('inbound', 'outbound')),
+  CONSTRAINT whatsapp_cloud_messages_participant_check
+    CHECK (participant_wa_id ~ '^[0-9]{6,15}$'),
+  CONSTRAINT whatsapp_cloud_messages_type_check
+    CHECK (message_type IN ('text', 'image', 'document')),
+  CONSTRAINT whatsapp_cloud_messages_content_check
+    CHECK (
+      (message_type = 'text'
+        AND text_body IS NOT NULL
+        AND media_mime_type IS NULL
+        AND media_caption IS NULL
+        AND document_filename IS NULL)
+      OR (message_type = 'image'
+        AND text_body IS NULL
+        AND document_filename IS NULL)
+      OR (message_type = 'document'
+        AND text_body IS NULL)
+    ),
+  CONSTRAINT whatsapp_cloud_messages_delivery_status_check
+    CHECK (delivery_status IN (
+      'received', 'queued', 'sending', 'sent', 'delivered', 'read',
+      'failed', 'manual_retry', 'outcome_unknown'
+    )),
+  CONSTRAINT whatsapp_cloud_messages_source_direction_check
+    CHECK (source_event_id IS NULL OR (direction = 'inbound' AND outbox_id IS NULL)),
+  CONSTRAINT whatsapp_cloud_messages_outbox_direction_check
+    CHECK (outbox_id IS NULL OR (direction = 'outbound' AND source_event_id IS NULL))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS whatsapp_cloud_messages_source_event_uidx
+  ON whatsapp_cloud_messages (empresa_id, source_event_id)
+  WHERE source_event_id IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS whatsapp_cloud_messages_outbox_uidx
+  ON whatsapp_cloud_messages (empresa_id, outbox_id)
+  WHERE outbox_id IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS whatsapp_cloud_messages_provider_message_uidx
+  ON whatsapp_cloud_messages (empresa_id, provider_message_id)
+  WHERE provider_message_id IS NOT NULL;
+
+DO $$
+DECLARE
+  index_row RECORD;
+  expected_columns TEXT[];
+  expected_options TEXT;
+BEGIN
+  FOR index_row IN
+    SELECT * FROM (VALUES
+      ('idx_whatsapp_cloud_messages_conversations',
+       ARRAY['empresa_id', 'message_at', 'id', 'participant_wa_id']::TEXT[],
+       '0 3 3 0'),
+      ('idx_whatsapp_cloud_messages_timeline',
+       ARRAY['empresa_id', 'participant_wa_id', 'message_at', 'id']::TEXT[],
+       '0 0 3 3')
+    ) AS required_indexes(index_name, key_columns, sort_options)
+  LOOP
+    expected_columns := index_row.key_columns;
+    expected_options := index_row.sort_options;
+    IF to_regclass(index_row.index_name) IS NOT NULL AND NOT EXISTS (
+      SELECT 1
+        FROM pg_index AS candidate
+       WHERE candidate.indexrelid = to_regclass(index_row.index_name)
+         AND candidate.indrelid = 'whatsapp_cloud_messages'::regclass
+         AND NOT candidate.indisunique
+         AND candidate.indpred IS NULL
+         AND candidate.indexprs IS NULL
+         AND candidate.indnkeyatts = 4
+         AND candidate.indnatts = 4
+         AND candidate.indoption::TEXT = expected_options
+         AND (
+           SELECT array_agg(attribute_row.attname::TEXT ORDER BY key_column.ordinality)
+             FROM unnest(candidate.indkey) WITH ORDINALITY AS key_column(attnum, ordinality)
+             JOIN pg_attribute AS attribute_row
+               ON attribute_row.attrelid = candidate.indrelid
+              AND attribute_row.attnum = key_column.attnum
+            WHERE key_column.ordinality <= candidate.indnkeyatts
+         ) = expected_columns
+    ) THEN
+      EXECUTE format('DROP INDEX %I', index_row.index_name);
+    END IF;
+  END LOOP;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_whatsapp_cloud_messages_conversations
+  ON whatsapp_cloud_messages
+  (empresa_id, message_at DESC, id DESC, participant_wa_id);
+
+CREATE INDEX IF NOT EXISTS idx_whatsapp_cloud_messages_timeline
+  ON whatsapp_cloud_messages
+  (empresa_id, participant_wa_id, message_at DESC, id DESC);
+
+INSERT INTO whatsapp_cloud_messages (
+  empresa_id, direction, participant_wa_id, source_event_id,
+  provider_message_id, message_type, text_body, media_mime_type,
+  media_caption, document_filename, delivery_status, message_at,
+  created_at, updated_at
+)
+SELECT event.empresa_id,
+       'inbound',
+       event.sender_id,
+       event.id,
+       NULLIF(BTRIM(event.message_id), ''),
+       event.message_type,
+       CASE WHEN event.message_type = 'text'
+         THEN event.event_data->'text'->>'body' END,
+       CASE WHEN event.message_type IN ('image', 'document')
+         THEN NULLIF(event.event_data->event.message_type->>'mime_type', '') END,
+       CASE WHEN event.message_type IN ('image', 'document')
+         THEN event.event_data->event.message_type->>'caption' END,
+       CASE WHEN event.message_type = 'document'
+         THEN event.event_data->'document'->>'filename' END,
+       'received',
+       CASE
+         WHEN event.source_timestamp ~ '^[0-9]{1,12}$'
+          AND event.source_timestamp::NUMERIC <= 253402300799
+           THEN to_timestamp(event.source_timestamp::DOUBLE PRECISION)
+         ELSE event.received_at
+       END,
+       event.received_at,
+       event.received_at
+  FROM whatsapp_cloud_events AS event
+ WHERE event.event_kind = 'message'
+   AND event.message_type IN ('text', 'image', 'document')
+   AND event.sender_id ~ '^[0-9]{6,15}$'
+   AND (
+     event.message_type <> 'text'
+     OR jsonb_typeof(event.event_data->'text'->'body') = 'string'
+   )
+ON CONFLICT DO NOTHING;
+
+INSERT INTO whatsapp_cloud_messages (
+  empresa_id, direction, participant_wa_id, outbox_id,
+  provider_message_id, message_type, text_body, delivery_status,
+  message_at, sent_at, failed_at, created_at, updated_at
+)
+SELECT outbox.empresa_id,
+       'outbound',
+       outbox.telefono,
+       outbox.id,
+       NULLIF(BTRIM(outbox.meta_message_id), ''),
+       'text',
+       outbox.mensaje,
+       CASE
+         WHEN outbox.status = 'pending' THEN 'queued'
+         WHEN outbox.status = 'sending' THEN 'sending'
+         WHEN outbox.status = 'sent' THEN 'sent'
+         WHEN outbox.status = 'error' AND outbox.cloud_dispatch_state = 'manual_retryable'
+           THEN 'manual_retry'
+         WHEN outbox.status = 'error' AND outbox.cloud_dispatch_state = 'outcome_unknown'
+           THEN 'outcome_unknown'
+         ELSE 'failed'
+       END,
+       outbox.created_at,
+       outbox.sent_at,
+       CASE WHEN outbox.status IN ('error', 'skipped')
+              AND outbox.cloud_dispatch_state IS DISTINCT FROM 'manual_retryable'
+              AND outbox.cloud_dispatch_state IS DISTINCT FROM 'outcome_unknown'
+         THEN COALESCE(outbox.sent_at, outbox.created_at) END,
+       outbox.created_at,
+       COALESCE(outbox.sent_at, outbox.created_at)
+  FROM wpp_outbox AS outbox
+ WHERE outbox.transport_origin = 'cloud'
+   AND outbox.empresa_id IS NOT NULL
+   AND outbox.telefono ~ '^[0-9]{6,15}$'
+   AND outbox.mensaje IS NOT NULL
+ON CONFLICT DO NOTHING;
+
+WITH status_events AS (
+  SELECT event.empresa_id,
+         event.message_id AS provider_message_id,
+         event.status,
+         CASE
+           WHEN event.source_timestamp ~ '^[0-9]{1,12}$'
+            AND event.source_timestamp::NUMERIC <= 253402300799
+             THEN to_timestamp(event.source_timestamp::DOUBLE PRECISION)
+           ELSE event.received_at
+         END AS status_at
+    FROM whatsapp_cloud_events AS event
+   WHERE event.event_kind = 'status'
+     AND event.status IN ('sent', 'delivered', 'read', 'failed')
+     AND NULLIF(BTRIM(event.message_id), '') IS NOT NULL
+), status_summary AS (
+  SELECT empresa_id,
+         provider_message_id,
+         (array_agg(status ORDER BY
+           CASE status WHEN 'read' THEN 4 WHEN 'delivered' THEN 3
+                       WHEN 'sent' THEN 2 WHEN 'failed' THEN 1 ELSE 0 END DESC,
+           status_at DESC))[1] AS latest_status,
+         MIN(status_at) FILTER (WHERE status = 'sent') AS sent_at,
+         MIN(status_at) FILTER (WHERE status = 'delivered') AS delivered_at,
+         MIN(status_at) FILTER (WHERE status = 'read') AS read_at,
+         MIN(status_at) FILTER (WHERE status = 'failed') AS failed_at,
+         MAX(status_at) AS updated_at
+    FROM status_events
+   GROUP BY empresa_id, provider_message_id
+)
+UPDATE whatsapp_cloud_messages AS message
+   SET delivery_status = summary.latest_status,
+       sent_at = COALESCE(message.sent_at, summary.sent_at),
+       delivered_at = COALESCE(message.delivered_at, summary.delivered_at),
+       read_at = COALESCE(message.read_at, summary.read_at),
+       failed_at = COALESCE(message.failed_at, summary.failed_at),
+       updated_at = GREATEST(message.updated_at, summary.updated_at)
+  FROM status_summary AS summary
+ WHERE message.empresa_id = summary.empresa_id
+   AND message.direction = 'outbound'
+   AND message.provider_message_id = summary.provider_message_id;
+
+COMMIT;
+-- END WHATSAPP CLOUD MESSAGE PROJECTION MIGRATION
+
 CREATE TABLE IF NOT EXISTS push_sub_pedidos (
   sub_id    INTEGER NOT NULL REFERENCES push_subs(id) ON DELETE CASCADE,
   pedido_id INTEGER NOT NULL REFERENCES pedidos(id) ON DELETE CASCADE,
