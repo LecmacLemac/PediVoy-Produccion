@@ -1,7 +1,7 @@
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { execFileSync, spawn } from 'node:child_process';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import net from 'node:net';
 import { basename, join } from 'node:path';
 import pg from 'pg';
@@ -57,13 +57,26 @@ async function withDatabase(work) {
         UNIQUE (empresa_id, dedupe_key)
       )
     `);
-    await work(pool);
+    await work(pool, { directory, port });
   } finally {
     if (pool) await pool.end();
     if (started) execFileSync(join(bin, 'pg_ctl'), ['-D', directory, '-m', 'immediate', '-w', 'stop'], { stdio: 'pipe' });
     rmSync(directory, { recursive: true, force: true });
     createdDirectories.delete(directory);
   }
+}
+
+function runPsqlFile({ port, file }) {
+  return new Promise(resolve => {
+    const child = spawn(join(bin, 'psql'), [
+      '-X', '-h', '127.0.0.1', '-p', String(port), '-U', 'cloud_inbox_test',
+      '-d', 'postgres', '-v', 'ON_ERROR_STOP=1', '-f', file,
+    ], { stdio: 'pipe' });
+    let stderr = '';
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', chunk => { stderr += chunk; });
+    child.on('close', code => resolve({ code, stderr }));
+  });
 }
 
 async function indexShape(pool, indexName) {
@@ -214,6 +227,42 @@ test('migración crea proyección tenant-scoped, constraints e índices exactos 
       key_columns: ['empresa_id', 'participant_wa_id', 'message_at', 'id'],
       predicate: null,
     });
+  });
+});
+
+test('migración toma lock advisory transaccional estable antes del primer DDL y dos ejecuciones completas frescas terminan exit 0', async () => {
+  const begin = projectionSql.indexOf('BEGIN;');
+  const lockTimeout = projectionSql.indexOf("SET LOCAL lock_timeout = '30s';");
+  const statementTimeout = projectionSql.indexOf("SET LOCAL statement_timeout = '5min';");
+  const advisoryLock = projectionSql.indexOf('SELECT pg_advisory_xact_lock(1464550724, 1229867347);');
+  const firstDdl = projectionSql.search(/\b(?:CREATE|ALTER|DROP)\s+(?:TABLE|SEQUENCE|INDEX)\b/i);
+  assert.ok(begin >= 0 && lockTimeout > begin && statementTimeout > lockTimeout
+    && advisoryLock > statementTimeout && firstDdl > advisoryLock,
+  'timeouts and the stable migration advisory lock must precede the first DDL');
+  assert.doesNotMatch(projectionSql,
+    /LOCK\s+TABLE\s+[^;]*(?:whatsapp_cloud_events|wpp_outbox)/is,
+    'migration serialization must not lock source tables explicitly');
+
+  await withDatabase(async (pool, { directory, port }) => {
+    await pool.query(outboxSql);
+    const delayedMigration = projectionSql.replace(
+      'SELECT pg_advisory_xact_lock(1464550724, 1229867347);',
+      "SELECT pg_advisory_xact_lock(1464550724, 1229867347);\nSELECT pg_sleep(0.35);",
+    );
+    const file = join(directory, 'cloud-inbox-projection.sql');
+    writeFileSync(file, delayedMigration);
+    const startedAt = Date.now();
+    const results = await Promise.all([
+      runPsqlFile({ port, file }),
+      runPsqlFile({ port, file }),
+    ]);
+    const elapsedMs = Date.now() - startedAt;
+
+    assert.deepEqual(results.map(result => result.code), [0, 0],
+      results.map(result => result.stderr).join('\n'));
+    assert.ok(elapsedMs >= 600,
+      `advisory lock must serialize both 350ms critical sections (elapsed ${elapsedMs}ms)`);
+    assert.equal((await pool.query("SELECT to_regclass('whatsapp_cloud_messages') IS NOT NULL AS present")).rows[0].present, true);
   });
 });
 
@@ -809,6 +858,93 @@ test('reparación canónica reemplaza sólo timestamps legacy y sanea filas ante
          AND conname = 'whatsapp_cloud_messages_timestamps_check'
     `)).rows[0].definition;
     assert.match(definition, /when 'failed'::text then .*sent_at is null.*failed_at is not null/i);
+  });
+});
+
+test('reparación canónica exacta corrige variantes engañosas de todas las constraints y conserva constraints ajenos', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (1)');
+    await pool.query(migrationSql);
+    const canonicalNames = [
+      'whatsapp_cloud_messages_empresa_id_fkey',
+      'whatsapp_cloud_messages_source_event_fkey',
+      'whatsapp_cloud_messages_outbox_fkey',
+      'whatsapp_cloud_messages_direction_check',
+      'whatsapp_cloud_messages_participant_check',
+      'whatsapp_cloud_messages_type_check',
+      'whatsapp_cloud_messages_content_check',
+      'whatsapp_cloud_messages_delivery_status_check',
+      'whatsapp_cloud_messages_direction_status_check',
+      'whatsapp_cloud_messages_state_rank_check',
+      'whatsapp_cloud_messages_timestamps_check',
+      'whatsapp_cloud_messages_source_direction_check',
+      'whatsapp_cloud_messages_outbox_direction_check',
+    ];
+    const canonicalBefore = (await pool.query(`
+      SELECT conname, contype, pg_get_constraintdef(oid) AS definition
+        FROM pg_constraint
+       WHERE conrelid = 'whatsapp_cloud_messages'::regclass
+         AND conname = ANY($1::text[])
+       ORDER BY conname
+    `, [canonicalNames])).rows;
+    assert.equal(canonicalBefore.length, canonicalNames.length);
+
+    await pool.query(`
+      ALTER TABLE whatsapp_cloud_messages
+        ADD CONSTRAINT whatsapp_cloud_messages_unrelated_check
+        CHECK (char_length(participant_wa_id) >= 6)
+    `);
+    const unrelatedBefore = (await pool.query(`
+      SELECT oid::text, pg_get_constraintdef(oid) AS definition
+        FROM pg_constraint
+       WHERE conrelid = 'whatsapp_cloud_messages'::regclass
+         AND conname = 'whatsapp_cloud_messages_unrelated_check'
+    `)).rows[0];
+
+    for (const constraint of canonicalBefore) {
+      await pool.query(`ALTER TABLE whatsapp_cloud_messages DROP CONSTRAINT ${constraint.conname}`);
+      if (constraint.contype === 'c') {
+        assert.match(constraint.definition, /^CHECK \([\s\S]*\)$/);
+        const expression = constraint.definition.slice('CHECK ('.length, -1);
+        await pool.query(`
+          ALTER TABLE whatsapp_cloud_messages
+            ADD CONSTRAINT ${constraint.conname}
+            CHECK ((${expression}) OR participant_wa_id = 'not-a-wa-id')
+        `);
+      } else {
+        assert.equal(constraint.contype, 'f');
+        await pool.query(`
+          ALTER TABLE whatsapp_cloud_messages
+            ADD CONSTRAINT ${constraint.conname}
+            ${constraint.definition} DEFERRABLE INITIALLY DEFERRED
+        `);
+      }
+    }
+
+    await pool.query(projectionSql);
+
+    const canonicalAfter = (await pool.query(`
+      SELECT conname, contype, pg_get_constraintdef(oid) AS definition
+        FROM pg_constraint
+       WHERE conrelid = 'whatsapp_cloud_messages'::regclass
+         AND conname = ANY($1::text[])
+       ORDER BY conname
+    `, [canonicalNames])).rows;
+    assert.deepEqual(canonicalAfter, canonicalBefore,
+      'every canonical constraint must be repaired to its exact PostgreSQL definition');
+    assert.deepEqual((await pool.query(`
+      SELECT oid::text, pg_get_constraintdef(oid) AS definition
+        FROM pg_constraint
+       WHERE conrelid = 'whatsapp_cloud_messages'::regclass
+         AND conname = 'whatsapp_cloud_messages_unrelated_check'
+    `)).rows[0], unrelatedBefore, 'unrelated constraints must retain identity and definition');
+    await assert.rejects(pool.query(`
+      INSERT INTO whatsapp_cloud_messages
+        (empresa_id, direction, participant_wa_id, message_type, text_body,
+         delivery_status, state_rank, message_at)
+      VALUES (1, 'inbound', 'not-a-wa-id', 'text', 'rechazar', 'received', 0, NOW())
+    `), error => error?.code === '23514'
+      && error?.constraint === 'whatsapp_cloud_messages_participant_check');
   });
 });
 

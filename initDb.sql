@@ -2077,6 +2077,8 @@ CREATE TABLE IF NOT EXISTS push_subs (
 BEGIN;
 SET LOCAL lock_timeout = '30s';
 SET LOCAL statement_timeout = '5min';
+-- Stable namespace/key pair for the complete WhatsApp Cloud inbox projection migration.
+SELECT pg_advisory_xact_lock(1464550724, 1229867347);
 
 CREATE TABLE IF NOT EXISTS whatsapp_cloud_messages (
   id BIGSERIAL PRIMARY KEY,
@@ -2511,65 +2513,86 @@ DO $$
 DECLARE
   constraint_row RECORD;
   current_definition TEXT;
+  current_validated BOOLEAN;
+  expected_definition TEXT;
 BEGIN
   FOR constraint_row IN
     SELECT * FROM (VALUES
       ('whatsapp_cloud_messages_empresa_id_fkey',
-       'FOREIGN KEY (empresa_id) REFERENCES empresas(id) ON DELETE CASCADE',
-       'foreign key.*empresa_id.*references empresas.*id.*on delete cascade'),
+       'FOREIGN KEY (empresa_id) REFERENCES empresas(id) ON DELETE CASCADE'),
       ('whatsapp_cloud_messages_source_event_fkey',
-       'FOREIGN KEY (empresa_id, source_event_id) REFERENCES whatsapp_cloud_events(empresa_id, id) ON DELETE SET NULL (source_event_id)',
-       'foreign key.*empresa_id.*source_event_id.*references whatsapp_cloud_events.*empresa_id.*id.*on delete set null.*source_event_id'),
+       'FOREIGN KEY (empresa_id, source_event_id) REFERENCES whatsapp_cloud_events(empresa_id, id) ON DELETE SET NULL (source_event_id)'),
       ('whatsapp_cloud_messages_outbox_fkey',
-       'FOREIGN KEY (empresa_id, outbox_id) REFERENCES wpp_outbox(empresa_id, id) ON DELETE SET NULL (outbox_id)',
-       'foreign key.*empresa_id.*outbox_id.*references wpp_outbox.*empresa_id.*id.*on delete set null.*outbox_id'),
+       'FOREIGN KEY (empresa_id, outbox_id) REFERENCES wpp_outbox(empresa_id, id) ON DELETE SET NULL (outbox_id)'),
       ('whatsapp_cloud_messages_direction_check',
-       'CHECK (direction IN (''inbound'', ''outbound''))',
-       'check.*direction.*inbound.*outbound'),
+       'CHECK (direction IN (''inbound'', ''outbound''))'),
       ('whatsapp_cloud_messages_participant_check',
-       'CHECK (participant_wa_id ~ ''^[0-9]{6,15}$'')',
-       'check.*participant_wa_id.*0-9.*6,15'),
+       'CHECK (participant_wa_id ~ ''^[0-9]{6,15}$'')'),
       ('whatsapp_cloud_messages_type_check',
-       'CHECK (message_type IN (''text'', ''image'', ''document''))',
-       'check.*message_type.*text.*image.*document'),
+       'CHECK (message_type IN (''text'', ''image'', ''document''))'),
       ('whatsapp_cloud_messages_content_check',
-       'CHECK (((message_type = ''text'' AND text_body IS NOT NULL AND media_mime_type IS NULL AND media_caption IS NULL AND document_filename IS NULL) OR (message_type = ''image'' AND text_body IS NULL AND document_filename IS NULL) OR (message_type = ''document'' AND text_body IS NULL)))',
-       'check.*message_type.*text.*text_body.*media_mime_type.*media_caption.*document_filename.*image.*document'),
+       'CHECK (((message_type = ''text'' AND text_body IS NOT NULL AND media_mime_type IS NULL AND media_caption IS NULL AND document_filename IS NULL) OR (message_type = ''image'' AND text_body IS NULL AND document_filename IS NULL) OR (message_type = ''document'' AND text_body IS NULL)))'),
       ('whatsapp_cloud_messages_delivery_status_check',
-       'CHECK (delivery_status IN (''received'', ''queued'', ''sending'', ''sent'', ''delivered'', ''read'', ''failed'', ''manual_retry'', ''outcome_unknown''))',
-       'check.*delivery_status.*received.*queued.*sending.*sent.*delivered.*read.*failed.*manual_retry.*outcome_unknown'),
+       'CHECK (delivery_status IN (''received'', ''queued'', ''sending'', ''sent'', ''delivered'', ''read'', ''failed'', ''manual_retry'', ''outcome_unknown''))'),
       ('whatsapp_cloud_messages_direction_status_check',
-       'CHECK (((direction = ''inbound'' AND delivery_status = ''received'') OR (direction = ''outbound'' AND delivery_status IN (''queued'', ''sending'', ''sent'', ''delivered'', ''read'', ''failed'', ''manual_retry'', ''outcome_unknown''))))',
-       'check.*direction.*inbound.*delivery_status.*received.*direction.*outbound.*queued.*outcome_unknown'),
+       'CHECK (((direction = ''inbound'' AND delivery_status = ''received'') OR (direction = ''outbound'' AND delivery_status IN (''queued'', ''sending'', ''sent'', ''delivered'', ''read'', ''failed'', ''manual_retry'', ''outcome_unknown''))))'),
       ('whatsapp_cloud_messages_state_rank_check',
-       'CHECK (state_rank = CASE delivery_status WHEN ''received'' THEN 0 WHEN ''queued'' THEN 10 WHEN ''manual_retry'' THEN 15 WHEN ''sending'' THEN 20 WHEN ''failed'' THEN 25 WHEN ''outcome_unknown'' THEN 25 WHEN ''sent'' THEN 30 WHEN ''delivered'' THEN 40 WHEN ''read'' THEN 50 END)',
-       'check.*state_rank.*delivery_status.*received.*0.*queued.*10.*manual_retry.*15.*sending.*20.*failed.*25.*outcome_unknown.*25.*sent.*30.*delivered.*40.*read.*50'),
+       'CHECK (state_rank = CASE delivery_status WHEN ''received'' THEN 0 WHEN ''queued'' THEN 10 WHEN ''manual_retry'' THEN 15 WHEN ''sending'' THEN 20 WHEN ''failed'' THEN 25 WHEN ''outcome_unknown'' THEN 25 WHEN ''sent'' THEN 30 WHEN ''delivered'' THEN 40 WHEN ''read'' THEN 50 END)'),
       ('whatsapp_cloud_messages_timestamps_check',
-       'CHECK (((direction = ''inbound'' AND sent_at IS NULL AND delivered_at IS NULL AND read_at IS NULL AND failed_at IS NULL) OR (direction = ''outbound'' AND (sent_at IS NULL OR sent_at >= message_at) AND (delivered_at IS NULL OR (sent_at IS NOT NULL AND delivered_at >= sent_at)) AND (read_at IS NULL OR (delivered_at IS NOT NULL AND read_at >= delivered_at)) AND (failed_at IS NULL OR failed_at >= message_at) AND (CASE delivery_status WHEN ''queued'' THEN (sent_at IS NULL AND delivered_at IS NULL AND read_at IS NULL AND failed_at IS NULL) WHEN ''sending'' THEN (delivered_at IS NULL AND read_at IS NULL AND failed_at IS NULL) WHEN ''manual_retry'' THEN (delivered_at IS NULL AND read_at IS NULL AND failed_at IS NULL) WHEN ''outcome_unknown'' THEN (delivered_at IS NULL AND read_at IS NULL AND failed_at IS NULL) WHEN ''sent'' THEN (sent_at IS NOT NULL AND delivered_at IS NULL AND read_at IS NULL AND failed_at IS NULL) WHEN ''delivered'' THEN (sent_at IS NOT NULL AND delivered_at IS NOT NULL AND read_at IS NULL AND failed_at IS NULL) WHEN ''read'' THEN (sent_at IS NOT NULL AND delivered_at IS NOT NULL AND read_at IS NOT NULL AND failed_at IS NULL) WHEN ''failed'' THEN (sent_at IS NULL AND delivered_at IS NULL AND read_at IS NULL AND failed_at IS NOT NULL) ELSE FALSE END))))',
-       'check.*direction.*inbound.*sent_at.*delivered_at.*read_at.*failed_at.*outbound.*message_at.*delivery_status.*queued.*sending.*manual_retry.*outcome_unknown.*sent.*delivered.*read.*when ''failed''::text then.*sent_at is null.*failed_at is not null'),
+       'CHECK (((direction = ''inbound'' AND sent_at IS NULL AND delivered_at IS NULL AND read_at IS NULL AND failed_at IS NULL) OR (direction = ''outbound'' AND (sent_at IS NULL OR sent_at >= message_at) AND (delivered_at IS NULL OR (sent_at IS NOT NULL AND delivered_at >= sent_at)) AND (read_at IS NULL OR (delivered_at IS NOT NULL AND read_at >= delivered_at)) AND (failed_at IS NULL OR failed_at >= message_at) AND (CASE delivery_status WHEN ''queued'' THEN (sent_at IS NULL AND delivered_at IS NULL AND read_at IS NULL AND failed_at IS NULL) WHEN ''sending'' THEN (delivered_at IS NULL AND read_at IS NULL AND failed_at IS NULL) WHEN ''manual_retry'' THEN (delivered_at IS NULL AND read_at IS NULL AND failed_at IS NULL) WHEN ''outcome_unknown'' THEN (delivered_at IS NULL AND read_at IS NULL AND failed_at IS NULL) WHEN ''sent'' THEN (sent_at IS NOT NULL AND delivered_at IS NULL AND read_at IS NULL AND failed_at IS NULL) WHEN ''delivered'' THEN (sent_at IS NOT NULL AND delivered_at IS NOT NULL AND read_at IS NULL AND failed_at IS NULL) WHEN ''read'' THEN (sent_at IS NOT NULL AND delivered_at IS NOT NULL AND read_at IS NOT NULL AND failed_at IS NULL) WHEN ''failed'' THEN (sent_at IS NULL AND delivered_at IS NULL AND read_at IS NULL AND failed_at IS NOT NULL) ELSE FALSE END))))'),
       ('whatsapp_cloud_messages_source_direction_check',
-       'CHECK (source_event_id IS NULL OR (direction = ''inbound'' AND outbox_id IS NULL))',
-       'check.*source_event_id.*direction.*inbound.*outbox_id'),
+       'CHECK (source_event_id IS NULL OR (direction = ''inbound'' AND outbox_id IS NULL))'),
       ('whatsapp_cloud_messages_outbox_direction_check',
-       'CHECK (outbox_id IS NULL OR (direction = ''outbound'' AND source_event_id IS NULL))',
-       'check.*outbox_id.*direction.*outbound.*source_event_id')
-    ) AS required(constraint_name, definition_sql, definition_pattern)
+       'CHECK (outbox_id IS NULL OR (direction = ''outbound'' AND source_event_id IS NULL))')
+    ) AS required(constraint_name, definition_sql)
   LOOP
-    SELECT lower(regexp_replace(pg_get_constraintdef(oid), '\s+', ' ', 'g'))
-      INTO current_definition
+    expected_definition := CASE constraint_row.constraint_name
+      WHEN 'whatsapp_cloud_messages_empresa_id_fkey'
+        THEN 'FOREIGN KEY (empresa_id) REFERENCES empresas(id) ON DELETE CASCADE'
+      WHEN 'whatsapp_cloud_messages_source_event_fkey'
+        THEN 'FOREIGN KEY (empresa_id, source_event_id) REFERENCES whatsapp_cloud_events(empresa_id, id) ON DELETE SET NULL (source_event_id)'
+      WHEN 'whatsapp_cloud_messages_outbox_fkey'
+        THEN 'FOREIGN KEY (empresa_id, outbox_id) REFERENCES wpp_outbox(empresa_id, id) ON DELETE SET NULL (outbox_id)'
+      WHEN 'whatsapp_cloud_messages_direction_check'
+        THEN 'CHECK ((direction = ANY (ARRAY[''inbound''::text, ''outbound''::text])))'
+      WHEN 'whatsapp_cloud_messages_participant_check'
+        THEN 'CHECK ((participant_wa_id ~ ''^[0-9]{6,15}$''::text))'
+      WHEN 'whatsapp_cloud_messages_type_check'
+        THEN 'CHECK ((message_type = ANY (ARRAY[''text''::text, ''image''::text, ''document''::text])))'
+      WHEN 'whatsapp_cloud_messages_content_check'
+        THEN 'CHECK ((((message_type = ''text''::text) AND (text_body IS NOT NULL) AND (media_mime_type IS NULL) AND (media_caption IS NULL) AND (document_filename IS NULL)) OR ((message_type = ''image''::text) AND (text_body IS NULL) AND (document_filename IS NULL)) OR ((message_type = ''document''::text) AND (text_body IS NULL))))'
+      WHEN 'whatsapp_cloud_messages_delivery_status_check'
+        THEN 'CHECK ((delivery_status = ANY (ARRAY[''received''::text, ''queued''::text, ''sending''::text, ''sent''::text, ''delivered''::text, ''read''::text, ''failed''::text, ''manual_retry''::text, ''outcome_unknown''::text])))'
+      WHEN 'whatsapp_cloud_messages_direction_status_check'
+        THEN 'CHECK ((((direction = ''inbound''::text) AND (delivery_status = ''received''::text)) OR ((direction = ''outbound''::text) AND (delivery_status = ANY (ARRAY[''queued''::text, ''sending''::text, ''sent''::text, ''delivered''::text, ''read''::text, ''failed''::text, ''manual_retry''::text, ''outcome_unknown''::text])))))'
+      WHEN 'whatsapp_cloud_messages_state_rank_check'
+        THEN 'CHECK ((state_rank = CASE delivery_status WHEN ''received''::text THEN 0 WHEN ''queued''::text THEN 10 WHEN ''manual_retry''::text THEN 15 WHEN ''sending''::text THEN 20 WHEN ''failed''::text THEN 25 WHEN ''outcome_unknown''::text THEN 25 WHEN ''sent''::text THEN 30 WHEN ''delivered''::text THEN 40 WHEN ''read''::text THEN 50 ELSE NULL::integer END))'
+      WHEN 'whatsapp_cloud_messages_timestamps_check'
+        THEN 'CHECK ((((direction = ''inbound''::text) AND (sent_at IS NULL) AND (delivered_at IS NULL) AND (read_at IS NULL) AND (failed_at IS NULL)) OR ((direction = ''outbound''::text) AND ((sent_at IS NULL) OR (sent_at >= message_at)) AND ((delivered_at IS NULL) OR ((sent_at IS NOT NULL) AND (delivered_at >= sent_at))) AND ((read_at IS NULL) OR ((delivered_at IS NOT NULL) AND (read_at >= delivered_at))) AND ((failed_at IS NULL) OR (failed_at >= message_at)) AND CASE delivery_status WHEN ''queued''::text THEN ((sent_at IS NULL) AND (delivered_at IS NULL) AND (read_at IS NULL) AND (failed_at IS NULL)) WHEN ''sending''::text THEN ((delivered_at IS NULL) AND (read_at IS NULL) AND (failed_at IS NULL)) WHEN ''manual_retry''::text THEN ((delivered_at IS NULL) AND (read_at IS NULL) AND (failed_at IS NULL)) WHEN ''outcome_unknown''::text THEN ((delivered_at IS NULL) AND (read_at IS NULL) AND (failed_at IS NULL)) WHEN ''sent''::text THEN ((sent_at IS NOT NULL) AND (delivered_at IS NULL) AND (read_at IS NULL) AND (failed_at IS NULL)) WHEN ''delivered''::text THEN ((sent_at IS NOT NULL) AND (delivered_at IS NOT NULL) AND (read_at IS NULL) AND (failed_at IS NULL)) WHEN ''read''::text THEN ((sent_at IS NOT NULL) AND (delivered_at IS NOT NULL) AND (read_at IS NOT NULL) AND (failed_at IS NULL)) WHEN ''failed''::text THEN ((sent_at IS NULL) AND (delivered_at IS NULL) AND (read_at IS NULL) AND (failed_at IS NOT NULL)) ELSE false END)))'
+      WHEN 'whatsapp_cloud_messages_source_direction_check'
+        THEN 'CHECK (((source_event_id IS NULL) OR ((direction = ''inbound''::text) AND (outbox_id IS NULL))))'
+      WHEN 'whatsapp_cloud_messages_outbox_direction_check'
+        THEN 'CHECK (((outbox_id IS NULL) OR ((direction = ''outbound''::text) AND (source_event_id IS NULL))))'
+    END;
+
+    SELECT regexp_replace(pg_get_constraintdef(oid), '\s+', ' ', 'g'), convalidated
+      INTO current_definition, current_validated
       FROM pg_constraint
      WHERE conrelid = 'whatsapp_cloud_messages'::regclass
        AND conname = constraint_row.constraint_name;
 
-    IF FOUND AND current_definition !~ constraint_row.definition_pattern THEN
+    IF FOUND AND current_definition = expected_definition THEN
+      IF NOT current_validated THEN
+        EXECUTE format(
+          'ALTER TABLE whatsapp_cloud_messages VALIDATE CONSTRAINT %I',
+          constraint_row.constraint_name
+        );
+      END IF;
+    ELSE
       EXECUTE format(
-        'ALTER TABLE whatsapp_cloud_messages DROP CONSTRAINT %I',
+        'ALTER TABLE whatsapp_cloud_messages DROP CONSTRAINT IF EXISTS %I',
         constraint_row.constraint_name
       );
-      current_definition := NULL;
-    END IF;
-
-    IF current_definition IS NULL THEN
       EXECUTE format(
         'ALTER TABLE whatsapp_cloud_messages ADD CONSTRAINT %I %s NOT VALID',
         constraint_row.constraint_name, constraint_row.definition_sql
