@@ -4,15 +4,13 @@ import {
   bootstrapInboxState,
   buildCloudApiUrl,
   conversationPreview,
-  createComposerState,
+  createInboxComposerController,
   createRequestGate,
   formatCloudTimestamp,
   mergeHistoryPage,
   reduceMobileView,
-  resolveSubmission,
   safeParticipant,
   sanitizeCloudError,
-  startSubmission,
   statusMeta,
 } from './whatsapp-cloud-ui.js';
 
@@ -44,8 +42,9 @@ const state = {
   messages: [],
   historyCursor: null,
   mobile: { mobileView: 'list', activeConversationId: null },
-  composer: createComposerState(''),
 };
+
+const composerController = createInboxComposerController({ input: elements.input, send: elements.send });
 
 const conversationGate = createRequestGate();
 const historyGate = createRequestGate();
@@ -63,10 +62,12 @@ function setComposerNotice(message, tone = 'neutral') {
   elements.composerNotice.dataset.tone = tone;
 }
 
-function setComposerEnabled(enabled) {
-  elements.input.disabled = !enabled || state.composer.sending;
-  elements.send.disabled = !enabled || state.composer.sending;
-  elements.send.textContent = state.composer.sending ? 'Enviando…' : 'Enviar';
+function syncContextControls() {
+  const sending = composerController.snapshot().composer.sending;
+  const companySelect = elements.companyWrap.querySelector('select');
+  if (companySelect) companySelect.disabled = sending;
+  elements.back.disabled = sending;
+  elements.conversations.querySelectorAll('button').forEach(button => { button.disabled = sending; });
 }
 
 async function readJson(response) {
@@ -92,7 +93,11 @@ async function request(url, options = {}) {
   return { response, payload };
 }
 
-function clearChat() {
+function clearChat({ composerAlreadyReset = false } = {}) {
+  if (!composerAlreadyReset && !composerController.closeConversation()) {
+    setComposerNotice('Esperá a que termine el envío antes de cambiar de conversación.', 'warning');
+    return false;
+  }
   state.activeConversation = null;
   state.messages = [];
   state.historyCursor = null;
@@ -102,7 +107,8 @@ function clearChat() {
   elements.history.replaceChildren();
   elements.older.hidden = true;
   setComposerNotice('');
-  setComposerEnabled(false);
+  syncContextControls();
+  return true;
 }
 
 function makeBadge(status, direction) {
@@ -123,6 +129,7 @@ function renderConversations() {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'conversation-card';
+    button.disabled = composerController.snapshot().composer.sending;
     button.dataset.conversationId = String(conversation.conversationId);
     if (String(state.activeConversation?.conversationId) === String(conversation.conversationId)) {
       button.classList.add('active');
@@ -256,6 +263,11 @@ async function loadHistory({ older = false } = {}) {
 }
 
 function openConversation(conversation) {
+  const activation = composerController.beginConversationChange(conversation.conversationId);
+  if (!activation) {
+    setComposerNotice('Esperá a que termine el envío antes de cambiar de conversación.', 'warning');
+    return;
+  }
   historyGate.invalidate();
   historyController?.abort();
   state.activeConversation = conversation;
@@ -266,9 +278,10 @@ function openConversation(conversation) {
   elements.chatTitle.textContent = safeParticipant(conversation.participant);
   elements.history.replaceChildren();
   appendSafeText(document, elements.history, 'p', 'Cargando historial…', 'empty-state');
-  setComposerEnabled(true);
+  composerController.activateConversation(activation);
   setComposerNotice('');
   renderConversations();
+  syncContextControls();
   loadHistory();
 }
 
@@ -308,7 +321,13 @@ function renderCompanyPicker(companies) {
   }
   select.addEventListener('change', () => {
     const selected = Number(select.value);
-    state.companyId = Number.isSafeInteger(selected) && selected > 0 ? selected : null;
+    const nextCompanyId = Number.isSafeInteger(selected) && selected > 0 ? selected : null;
+    if (!composerController.changeCompany(nextCompanyId)) {
+      select.value = state.companyId == null ? '' : String(state.companyId);
+      setComposerNotice('Esperá a que termine el envío antes de cambiar de empresa.', 'warning');
+      return;
+    }
+    state.companyId = nextCompanyId;
     conversationGate.invalidate();
     historyGate.invalidate();
     conversationsController?.abort();
@@ -316,7 +335,7 @@ function renderCompanyPicker(companies) {
     state.conversations = [];
     state.conversationsCursor = null;
     elements.conversations.replaceChildren();
-    clearChat();
+    clearChat({ composerAlreadyReset: true });
     if (state.companyId) loadConversations();
     else setStatus('Seleccioná una empresa para ver sus conversaciones.', 'warning');
   });
@@ -336,42 +355,42 @@ async function loadCompanies() {
 
 async function submitMessage(event) {
   event.preventDefault();
-  if (!state.activeConversation || state.composer.sending) return;
-  state.composer = createComposerState(elements.input.value);
+  if (!state.activeConversation) return;
+  let submission;
   try {
-    state.composer = startSubmission(state.composer, crypto.randomUUID());
+    submission = composerController.startSend(crypto.randomUUID());
   } catch (error) {
     setComposerNotice(error.message, 'error');
     return;
   }
-  setComposerEnabled(true);
-  const conversationId = String(state.activeConversation.conversationId);
-  const pending = state.composer.pending;
+  syncContextControls();
+  const conversationId = submission.context.conversationId;
+  const companyId = submission.context.companyId;
+  const pending = submission.pending;
   const body = { text: pending.text, idempotency_key: pending.idempotencyKey };
-  if (state.role === 'super') body.empresa_id = state.companyId;
+  if (state.role === 'super') body.empresa_id = companyId;
   try {
     const path = `/conversations/${encodeURIComponent(conversationId)}/replies`;
-    const url = buildCloudApiUrl(path, { role: state.role, companyId: state.companyId, tenantInBody: true });
+    const url = buildCloudApiUrl(path, { role: state.role, companyId, tenantInBody: true });
     const { response, payload } = await request(url, { method: 'POST', body: JSON.stringify(body) });
-    state.composer = resolveSubmission(state.composer, { status: response.status, errorCode: payload?.error });
+    if (!composerController.settleSend(submission, { status: response.status, errorCode: payload?.error })) return;
     if (response.status === 202) {
-      elements.input.value = '';
       setComposerNotice('Mensaje en cola. No se reenviará automáticamente.', 'success');
     } else {
-      setComposerNotice(state.composer.notice, payload?.error === 'reply_enqueue_outcome_unknown' ? 'warning' : 'error');
+      setComposerNotice(composerController.snapshot().composer.notice, payload?.error === 'reply_enqueue_outcome_unknown' ? 'warning' : 'error');
     }
   } catch (error) {
     if (error?.message !== 'session_expired') {
-      state.composer = resolveSubmission(state.composer, { status: 0 });
-      setComposerNotice(state.composer.notice, 'error');
+      if (composerController.settleSend(submission, { status: 0 })) {
+        setComposerNotice(composerController.snapshot().composer.notice, 'error');
+      }
     }
   } finally {
-    setComposerEnabled(Boolean(state.activeConversation));
+    syncContextControls();
   }
 }
 
 async function bootstrap() {
-  setComposerEnabled(false);
   setStatus('Validando acceso…');
   try {
     const { response, payload } = await request('/api/me');
@@ -387,6 +406,7 @@ async function bootstrap() {
     }
     state.role = access.role;
     state.companyId = access.companyId;
+    composerController.changeCompany(access.companyId);
     if (access.needsCompanySelection) await loadCompanies();
     else {
       elements.companyWrap.replaceChildren();
@@ -403,7 +423,7 @@ elements.conversationsMore.addEventListener('click', () => loadConversations({ a
 elements.refresh.addEventListener('click', () => loadConversations());
 elements.composer.addEventListener('submit', submitMessage);
 elements.input.addEventListener('input', () => {
-  state.composer = createComposerState(elements.input.value);
+  composerController.captureDraft();
   setComposerNotice('');
 });
 elements.logout.addEventListener('click', async (event) => {

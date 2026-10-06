@@ -143,6 +143,107 @@ export function resolveSubmission(state, result = {}) {
   };
 }
 
+export function createInboxComposerController({ input, send }) {
+  if (!input || !send) throw new Error('Controles del composer requeridos');
+
+  let composer = createComposerState('');
+  let context = { companyId: null, conversationId: null };
+  let contextVersion = 0;
+  let activationSequence = 0;
+  let submissionSequence = 0;
+  let activeSubmission = null;
+
+  function render() {
+    input.value = composer.draft;
+    const enabled = context.conversationId != null && !composer.sending;
+    input.disabled = !enabled;
+    send.disabled = !enabled;
+    send.textContent = composer.sending ? 'Enviando…' : 'Enviar';
+  }
+
+  function resetComposer() {
+    composer = createComposerState('');
+    activeSubmission = null;
+    contextVersion += 1;
+    render();
+  }
+
+  function canChangeContext() {
+    return !composer.sending;
+  }
+
+  render();
+
+  return {
+    snapshot() {
+      return {
+        context: { ...context },
+        composer: {
+          ...composer,
+          pending: composer.pending ? { ...composer.pending } : null,
+        },
+      };
+    },
+    captureDraft() {
+      if (composer.sending) return false;
+      composer = createComposerState(input.value);
+      return true;
+    },
+    changeCompany(companyId) {
+      if (!canChangeContext()) return false;
+      context = { companyId: companyId ?? null, conversationId: null };
+      resetComposer();
+      return true;
+    },
+    beginConversationChange(conversationId) {
+      if (!canChangeContext()) return null;
+      context = { ...context, conversationId: null };
+      resetComposer();
+      activationSequence += 1;
+      return Object.freeze({
+        id: activationSequence,
+        contextVersion,
+        conversationId: String(conversationId),
+      });
+    },
+    activateConversation(activation) {
+      if (!activation || activation.contextVersion !== contextVersion || composer.sending) return false;
+      context = { ...context, conversationId: activation.conversationId };
+      render();
+      return true;
+    },
+    closeConversation() {
+      if (!canChangeContext()) return false;
+      context = { ...context, conversationId: null };
+      resetComposer();
+      return true;
+    },
+    startSend(idempotencyKey) {
+      if (context.conversationId == null) throw new Error('Seleccioná una conversación');
+      composer = createComposerState(input.value);
+      composer = startSubmission(composer, idempotencyKey);
+      submissionSequence += 1;
+      activeSubmission = Object.freeze({
+        id: submissionSequence,
+        contextVersion,
+        context: Object.freeze({ ...context }),
+        pending: Object.freeze({ ...composer.pending }),
+      });
+      render();
+      return activeSubmission;
+    },
+    settleSend(submission, result) {
+      if (!activeSubmission
+        || submission?.id !== activeSubmission.id
+        || submission?.contextVersion !== contextVersion) return false;
+      composer = resolveSubmission(composer, result);
+      activeSubmission = null;
+      render();
+      return true;
+    },
+  };
+}
+
 export function attachmentDownloadNotice(status) {
   if (status === 409) return 'La descarga todavía no está disponible.';
   if (status === 404) return 'El adjunto ya no está disponible.';

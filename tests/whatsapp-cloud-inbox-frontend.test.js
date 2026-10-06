@@ -8,6 +8,7 @@ import {
   buildCloudApiUrl,
   conversationPreview,
   createComposerState,
+  createInboxComposerController,
   createRequestGate,
   mergeHistoryPage,
   reduceMobileView,
@@ -22,6 +23,7 @@ const root = new URL('../', import.meta.url);
 const pageUrl = new URL('pedidos/whatsapp-cloud.html', root);
 const controllerUrl = new URL('pedidos/whatsapp-cloud.js', root);
 const helpersUrl = new URL('pedidos/whatsapp-cloud-ui.js', root);
+const dashboardNavUrl = new URL('pedidos/dashboard-nav.js', root);
 
 async function source(url) {
   return readFile(url, 'utf8');
@@ -39,10 +41,31 @@ test('la pantalla carga el controlador como módulo sin frameworks nuevos', asyn
   assert.doesNotMatch(html, /react|vue|angular|svelte/i);
 });
 
-test('la navegación backoffice expone WhatsApp Cloud y conserva QR', async () => {
+test('la navegación backoffice oculta WhatsApp Cloud por defecto y conserva QR', async () => {
   const dashboard = await source(new URL('pedidos/dashboard.html', root));
-  assert.match(dashboard, /href="whatsapp-cloud\.html"[^>]*>WhatsApp Cloud</);
+  assert.match(dashboard, /<li[^>]*id="whatsappCloudNavItem"[^>]*hidden[^>]*>\s*<a href="whatsapp-cloud\.html">WhatsApp Cloud<\/a>/);
   assert.match(dashboard, /href="qr\.html"[^>]*>QR</);
+});
+
+test('dashboard revela WhatsApp Cloud sólo para roles canónicos admin y super', async () => {
+  const { applyCloudInboxNavigation } = await import(dashboardNavUrl);
+  const item = { hidden: false };
+  const documentLike = { querySelector: selector => selector === '#whatsappCloudNavItem' ? item : null };
+
+  for (const role of ['user', 'facturacion', 'contable', 'repartidor', 'referente', 'Admin', ' admin', 'super ', '', null, 7]) {
+    item.hidden = false;
+    assert.equal(applyCloudInboxNavigation(documentLike, role), false, JSON.stringify(role));
+    assert.equal(item.hidden, true, JSON.stringify(role));
+  }
+  for (const role of ['admin', 'super']) {
+    item.hidden = true;
+    assert.equal(applyCloudInboxNavigation(documentLike, role), true, role);
+    assert.equal(item.hidden, false, role);
+  }
+
+  const dashboard = await source(new URL('pedidos/dashboard.html', root));
+  assert.match(dashboard, /import\s*\{\s*applyCloudInboxNavigation\s*\}\s*from\s*['"]\.\/dashboard-nav\.js['"]/);
+  assert.match(dashboard, /applyCloudInboxNavigation\(document,\s*user\?\.role\)/);
 });
 
 test('la pantalla declara layout accesible de lista, chat y volver móvil', async () => {
@@ -52,6 +75,78 @@ test('la pantalla declara layout accesible de lista, chat y volver móvil', asyn
   assert.match(html, /id="backToList"/);
   assert.match(html, /aria-live="polite"/);
   assert.match(html, /@media\s*\(max-width:\s*760px\)/);
+  assert.match(html, /<label\s+for="messageInput"\s+class="sr-only">Mensaje<\/label>/);
+  assert.match(html, /\.sr-only\s*\{/);
+  assert.doesNotMatch(html, /<label\s+for="messageInput"[^>]*hidden/);
+});
+
+function composerDomHarness() {
+  const input = { value: '', disabled: true };
+  const send = { disabled: true, textContent: 'Enviar' };
+  return { input, send, controller: createInboxComposerController({ input, send }) };
+}
+
+test('cambio de empresa limpia el borrador, deshabilita el composer y no permite enviar', () => {
+  const { input, send, controller } = composerDomHarness();
+  controller.changeCompany(7);
+  const activation = controller.beginConversationChange('conv-a');
+  assert.equal(controller.activateConversation(activation), true);
+  input.value = 'BORRADOR PRIVADO EMPRESA A';
+  controller.captureDraft();
+
+  assert.equal(controller.changeCompany(9), true);
+  assert.equal(input.value, '');
+  assert.equal(input.disabled, true);
+  assert.equal(send.disabled, true);
+  assert.throws(() => controller.startSend('key-company'), /conversación/i);
+});
+
+test('cambio de conversación exige reescritura y el envío pertenece sólo al destinatario activo', () => {
+  const { input, controller } = composerDomHarness();
+  controller.changeCompany(7);
+  const first = controller.beginConversationChange('recipient-a');
+  controller.activateConversation(first);
+  input.value = 'SECRETO PARA A';
+  controller.captureDraft();
+
+  const second = controller.beginConversationChange('recipient-b');
+  assert.equal(input.value, '');
+  assert.equal(input.disabled, true);
+  controller.activateConversation(second);
+  assert.throws(() => controller.startSend('key-empty'), /mensaje/i);
+
+  input.value = 'mensaje explícito para B';
+  controller.captureDraft();
+  const submission = controller.startSend('key-b');
+  assert.deepEqual(submission.context, { companyId: 7, conversationId: 'recipient-b' });
+  assert.equal(submission.pending.text, 'mensaje explícito para B');
+});
+
+test('envío en vuelo bloquea cambios y una respuesta demorada no muta el contexto nuevo', () => {
+  const { input, controller } = composerDomHarness();
+  controller.changeCompany(7);
+  const first = controller.beginConversationChange('recipient-a');
+  controller.activateConversation(first);
+  input.value = 'mensaje A';
+  controller.captureDraft();
+  const delayed = controller.startSend('key-a');
+
+  assert.equal(controller.changeCompany(9), false);
+  assert.equal(controller.beginConversationChange('recipient-b'), null);
+  assert.equal(controller.closeConversation(), false);
+  assert.deepEqual(controller.snapshot().context, { companyId: 7, conversationId: 'recipient-a' });
+
+  assert.equal(controller.settleSend(delayed, { status: 202 }), true);
+  assert.equal(controller.changeCompany(9), true);
+  const second = controller.beginConversationChange('recipient-b');
+  controller.activateConversation(second);
+  input.value = 'borrador B';
+  controller.captureDraft();
+
+  assert.equal(controller.settleSend(delayed, { status: 502, errorCode: 'reply_enqueue_failed' }), false);
+  assert.equal(input.value, 'borrador B');
+  assert.equal(input.disabled, false);
+  assert.deepEqual(controller.snapshot().context, { companyId: 9, conversationId: 'recipient-b' });
 });
 
 test('bootstrap fija admin a su empresa y obliga selección explícita para super', () => {
