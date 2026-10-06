@@ -2181,6 +2181,17 @@ BEGIN
   END LOOP;
 END $$;
 
+CREATE SEQUENCE IF NOT EXISTS whatsapp_cloud_messages_id_seq AS BIGINT;
+ALTER SEQUENCE whatsapp_cloud_messages_id_seq AS BIGINT;
+ALTER SEQUENCE whatsapp_cloud_messages_id_seq OWNED BY whatsapp_cloud_messages.id;
+ALTER TABLE whatsapp_cloud_messages
+  ALTER COLUMN id SET DEFAULT nextval('whatsapp_cloud_messages_id_seq'::regclass);
+SELECT setval(
+  'whatsapp_cloud_messages_id_seq'::regclass,
+  GREATEST(COALESCE((SELECT MAX(id) FROM whatsapp_cloud_messages), 1), 1),
+  COALESCE((SELECT MAX(id) FROM whatsapp_cloud_messages), 0) >= 1
+);
+
 DO $$
 DECLARE
   primary_row RECORD;
@@ -2540,7 +2551,10 @@ SELECT outbox.empresa_id,
          ELSE 25
        END,
        outbox.created_at,
-       outbox.sent_at,
+       CASE WHEN outbox.status = 'sent'
+         THEN COALESCE(outbox.sent_at, outbox.created_at)
+         ELSE outbox.sent_at
+       END,
        CASE WHEN outbox.status IN ('error', 'skipped')
               AND outbox.cloud_dispatch_state IS DISTINCT FROM 'manual_retryable'
               AND outbox.cloud_dispatch_state IS DISTINCT FROM 'outcome_unknown'

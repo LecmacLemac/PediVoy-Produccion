@@ -300,6 +300,38 @@ test('backfill copia sólo contenido allowlisted, estados/timestamps y vínculos
   });
 });
 
+test('backfill conserva status sent legacy sin sent_at usando created_at sólo como timestamp mínimo de envío', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (1)');
+    await pool.query(outboxSql);
+    await pool.query(`
+      INSERT INTO wpp_outbox
+        (empresa_id, telefono, mensaje, created_at, sent_at, status, transport_origin,
+         meta_message_id, cloud_dispatch_state)
+      VALUES
+        (1, '549351555010', 'sent legacy sin timestamp', '2026-10-01T15:00:00Z', NULL,
+         'sent', 'cloud', 'out-sent-without-timestamp', 'sent')
+    `);
+
+    await pool.query(projectionSql);
+
+    const row = (await pool.query(`
+      SELECT delivery_status, state_rank, message_at, sent_at, delivered_at, read_at, failed_at
+        FROM whatsapp_cloud_messages
+       WHERE provider_message_id = 'out-sent-without-timestamp'
+    `)).rows[0];
+    assert.equal(row.delivery_status, 'sent');
+    assert.equal(row.state_rank, 30);
+    assert.equal(row.message_at.toISOString(), '2026-10-01T15:00:00.000Z');
+    // El status fuente prueba envío, pero no delivery: created_at es sólo el fallback conservador
+    // necesario para mantener el estado sent coherente con el constraint temporal.
+    assert.equal(row.sent_at.toISOString(), '2026-10-01T15:00:00.000Z');
+    assert.equal(row.delivered_at, null);
+    assert.equal(row.read_at, null);
+    assert.equal(row.failed_at, null);
+  });
+});
+
 test('constraints aíslan tenant, dirección/estado/rank/timestamps y rechazan enlaces cruzados', async () => {
   await withDatabase(async pool => {
     await seedBackfillSources(pool);
@@ -414,6 +446,76 @@ test('source_timestamp usa límites explícitos contra received_at y fallback fu
       { provider_message_id: 'past-boundary', message_at: '2026-09-01T12:00:00.000Z' },
       { provider_message_id: 'past-outside', message_at: '2026-10-01T12:00:00.000Z' },
     ]);
+  });
+});
+
+test('migración repara secuencia propia para id BIGINT legacy sin default y la sincroniza sobre MAX(id)', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (1)');
+    await pool.query(outboxSql);
+    await pool.query(`
+      CREATE TABLE whatsapp_cloud_messages (
+        id BIGINT NOT NULL PRIMARY KEY,
+        empresa_id INTEGER,
+        direction TEXT,
+        participant_wa_id TEXT,
+        message_at TIMESTAMPTZ
+      )
+    `);
+
+    await pool.query(projectionSql);
+    await pool.query(`
+      INSERT INTO whatsapp_cloud_messages
+        (id, empresa_id, direction, participant_wa_id, message_type, text_body,
+         delivery_status, state_rank, message_at)
+      VALUES
+        (9001, 1, 'outbound', '549351555011', 'text', 'legacy explícito',
+         'queued', 10, '2026-10-01T16:00:00Z')
+    `);
+
+    await pool.query(projectionSql);
+
+    const sequence = (await pool.query(`
+      SELECT pg_get_serial_sequence('whatsapp_cloud_messages', 'id') AS name,
+             pg_get_expr(default_row.adbin, default_row.adrelid) AS default_expression
+        FROM pg_attribute AS column_row
+        LEFT JOIN pg_attrdef AS default_row
+          ON default_row.adrelid = column_row.attrelid
+         AND default_row.adnum = column_row.attnum
+       WHERE column_row.attrelid = 'whatsapp_cloud_messages'::regclass
+         AND column_row.attname = 'id'
+    `)).rows[0];
+    assert.equal(sequence.name, 'public.whatsapp_cloud_messages_id_seq');
+    assert.match(sequence.default_expression, /^nextval\('whatsapp_cloud_messages_id_seq'::regclass\)$/);
+
+    const ownership = (await pool.query(`
+      SELECT count(*)::int AS total
+        FROM pg_depend
+       WHERE classid = 'pg_class'::regclass
+         AND objid = $1::regclass
+         AND refclassid = 'pg_class'::regclass
+         AND refobjid = 'whatsapp_cloud_messages'::regclass
+         AND refobjsubid = (
+           SELECT attnum
+             FROM pg_attribute
+            WHERE attrelid = 'whatsapp_cloud_messages'::regclass
+              AND attname = 'id'
+         )
+         AND deptype = 'a'
+    `, [sequence.name])).rows[0];
+    assert.equal(ownership.total, 1);
+
+    const inserted = (await pool.query(`
+      INSERT INTO whatsapp_cloud_messages
+        (empresa_id, direction, participant_wa_id, message_type, text_body,
+         delivery_status, state_rank, message_at)
+      VALUES
+        (1, 'outbound', '549351555012', 'text', 'id automático',
+         'queued', 10, '2026-10-01T16:01:00Z')
+      RETURNING id
+    `)).rows[0];
+    assert.ok(Number(inserted.id) > 9001);
+    assert.equal((await pool.query('SELECT count(*)::int AS total FROM whatsapp_cloud_messages')).rows[0].total, 2);
   });
 });
 
