@@ -51,7 +51,9 @@ function sanitizeStatus(status) {
   return {
     messageId: requireNonEmptyString(status?.id, 'status message id'),
     senderId: null,
-    recipientId: typeof status?.recipient_id === 'string' && status.recipient_id ? status.recipient_id : null,
+    recipientId: typeof status?.recipient_id === 'string' && status.recipient_id.trim()
+      ? status.recipient_id.trim()
+      : null,
     messageType: null,
     status: normalizedStatus,
     sourceTimestamp,
