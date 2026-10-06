@@ -181,6 +181,7 @@ async function seedBackfillSources(pool) {
 
 async function assertMixedTenantRuntimeTransactionRejected(pool, tenantOrder) {
   const client = await pool.connect();
+  let rejection;
   try {
     await client.query('BEGIN');
     await client.query("SET LOCAL deadlock_timeout = '100ms'; SET LOCAL statement_timeout = '3s'");
@@ -197,13 +198,29 @@ async function assertMixedTenantRuntimeTransactionRejected(pool, tenantOrder) {
       VALUES ($1, 'message', $2, $3, '549351555082', 'text',
               '{"text":{"body":"segundo tenant"}}'::jsonb)
     `, [tenantOrder[1], `mixed:${tenantOrder.join('-')}:second`, `mixed-${tenantOrder.join('-')}-second`]),
-    error => error?.code === 'P0001'
-      && error?.message === 'whatsapp_cloud_projection_cross_tenant_transaction'
-      && error?.code !== '40P01');
+    error => {
+      rejection = error;
+      return error?.code === 'P0001'
+        && error?.message === 'whatsapp_cloud_projection_cross_tenant_transaction'
+        && error?.code !== '40P01';
+    });
     await client.query('ROLLBACK');
   } finally {
     await client.query('ROLLBACK').catch(() => {});
     client.release();
+  }
+
+  assert.ok(rejection, 'cross-tenant insert must expose one sanitized PostgreSQL error');
+  assert.equal(rejection.message, 'whatsapp_cloud_projection_cross_tenant_transaction');
+  for (const property of ['detail', 'hint', 'schema', 'table', 'constraint']) {
+    assert.equal(rejection[property], undefined, `${property} must not expose tenant context`);
+  }
+  for (const property of ['message', 'detail', 'hint', 'where', 'schema', 'table', 'constraint']) {
+    const exposed = String(rejection[property] ?? '');
+    for (const tenantId of tenantOrder) {
+      assert.equal(exposed.includes(String(tenantId)), false,
+        `${property} must not contain tenant id ${tenantId}`);
+    }
   }
 
   assert.deepEqual((await pool.query(`
@@ -408,6 +425,117 @@ test('migración repara definición completa de triggers canónicos y preserva t
       text_body: 'capturado después de reparar',
       delivery_status: 'received',
     });
+  });
+});
+
+test('DDL de reparación de trigger fuente no deadlockea con writer operativo y soporta disabled rollback/retry', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (710001)');
+    await pool.query(outboxSql);
+    await pool.query(projectionSql);
+
+    const installOperationalWrongTrigger = async () => pool.query(`
+      DROP TRIGGER whatsapp_cloud_messages_capture_insert ON public.whatsapp_cloud_events;
+      CREATE TRIGGER whatsapp_cloud_messages_capture_insert
+        AFTER INSERT ON public.whatsapp_cloud_events
+        FOR EACH ROW WHEN (NEW.empresa_id IS NOT NULL)
+        EXECUTE FUNCTION public.whatsapp_cloud_messages_capture_event_insert()
+    `);
+    const insertInbound = (client, suffix) => client.query(`
+      INSERT INTO public.whatsapp_cloud_events
+        (empresa_id, event_kind, dedupe_key, message_id, sender_id, message_type, event_data)
+      VALUES (710001, 'message', $1, $2, '549351555091', 'text',
+              jsonb_build_object('text', jsonb_build_object('body', $3::text)))
+    `, [`trigger-ddl:${suffix}`, `trigger-ddl-${suffix}`, suffix]);
+
+    await installOperationalWrongTrigger();
+    await insertInbound(pool, 'seed');
+
+    const beforeTriggerRepair = /(DO \$\$\r?\nDECLARE\r?\n  trigger_spec RECORD;\r?\n  trigger_row RECORD;)/;
+    const writerFirstMigration = projectionSql.replace(
+      beforeTriggerRepair,
+      "SELECT pg_catalog.pg_sleep(0.35);\n$1",
+    );
+    assert.notEqual(writerFirstMigration, projectionSql, 'trigger repair phase must be injectable');
+    const migrationSecond = await pool.connect();
+    const writerFirst = await pool.connect();
+    try {
+      const migrationPromise = migrationSecond.query(writerFirstMigration);
+      await waitUntil(async () => (await pool.query(
+        'SELECT wait_event FROM pg_catalog.pg_stat_activity WHERE pid = $1',
+        [migrationSecond.processID],
+      )).rows[0]?.wait_event === 'PgSleep', 'migration did not reach pre-trigger-repair hold');
+      await writerFirst.query('BEGIN');
+      await Promise.race([
+        insertInbound(writerFirst, 'writer-first'),
+        new Promise((_, reject) => setTimeout(
+          () => reject(new Error('writer blocked behind a tenant advisory retained before trigger DDL')),
+          250,
+        )),
+      ]);
+      await writerFirst.query('COMMIT');
+      await migrationPromise;
+    } finally {
+      await writerFirst.query('ROLLBACK').catch(() => {});
+      writerFirst.release();
+      migrationSecond.release();
+    }
+    assert.equal((await pool.query(`
+      SELECT count(*)::int AS total FROM public.whatsapp_cloud_messages
+       WHERE provider_message_id = 'trigger-ddl-writer-first'
+    `)).rows[0].total, 1, 'writer that commits before repair must remain projected');
+
+    await installOperationalWrongTrigger();
+    const migrationFirstSql = projectionSql.replace(
+      '      EXECUTE trigger_spec.create_sql;',
+      '      EXECUTE trigger_spec.create_sql;\n      PERFORM pg_catalog.pg_sleep(0.35);',
+    );
+    assert.notEqual(migrationFirstSql, projectionSql, 'post-trigger-DDL hold must be injectable');
+    const migrationFirst = await pool.connect();
+    const writerSecond = await pool.connect();
+    try {
+      const migrationPromise = migrationFirst.query(migrationFirstSql);
+      await waitUntil(async () => (await pool.query(
+        'SELECT wait_event FROM pg_catalog.pg_stat_activity WHERE pid = $1',
+        [migrationFirst.processID],
+      )).rows[0]?.wait_event === 'PgSleep', 'migration did not hold repaired trigger DDL first');
+      const writerPromise = insertInbound(writerSecond, 'migration-first');
+      await waitUntil(async () => (await pool.query(
+        'SELECT wait_event_type FROM pg_catalog.pg_stat_activity WHERE pid = $1',
+        [writerSecond.processID],
+      )).rows[0]?.wait_event_type === 'Lock', 'writer did not wait for trigger DDL transaction');
+      await migrationPromise;
+      await writerPromise;
+    } finally {
+      migrationFirst.release();
+      writerSecond.release();
+    }
+    assert.equal((await pool.query(`
+      SELECT count(*)::int AS total FROM public.whatsapp_cloud_messages
+       WHERE provider_message_id = 'trigger-ddl-migration-first'
+    `)).rows[0].total, 1, 'writer that loses trigger DDL lock must use repaired capture after commit');
+
+    await pool.query(`
+      ALTER TABLE public.whatsapp_cloud_events
+        DISABLE TRIGGER whatsapp_cloud_messages_capture_insert
+    `);
+    const failingRepair = projectionSql.replace(
+      '-- CUTOVER CAPTURE INSTALL COMPLETE; COMMIT IMMEDIATELY',
+      'SELECT 1 / 0;\n-- CUTOVER CAPTURE INSTALL COMPLETE; COMMIT IMMEDIATELY',
+    );
+    const retrying = await pool.connect();
+    try {
+      await assert.rejects(retrying.query(failingRepair), /division by zero/);
+      await retrying.query('ROLLBACK');
+      assert.equal((await triggerShape(pool, 'public.whatsapp_cloud_events')).tgenabled, 'D',
+        'failed repair must roll back to the previously disabled trigger');
+      await retrying.query(projectionSql);
+    } finally {
+      await retrying.query('ROLLBACK').catch(() => {});
+      retrying.release();
+    }
+    assert.equal((await triggerShape(pool, 'public.whatsapp_cloud_events')).tgenabled, 'O',
+      'clean retry must restore the canonical enabled trigger');
   });
 });
 
@@ -1924,6 +2052,20 @@ test('backfill recorre empresas en orden y toma el advisory tenant antes de toca
     'global status row locking must be replaced by tenant-scoped reconciliation');
 });
 
+test('DDL de triggers fuente termina antes del primer advisory tenant retenido para reparación/backfill', () => {
+  const triggerInspection = projectionSql.indexOf('trigger_spec RECORD;');
+  const triggerCommit = projectionSql.indexOf('-- CUTOVER CAPTURE INSTALL COMPLETE; COMMIT IMMEDIATELY');
+  const firstTenantAdvisory = projectionSql.indexOf(
+    'PERFORM public.whatsapp_cloud_messages_lock_projection_migration(target_empresa_id);',
+  );
+  assert.ok(triggerInspection >= 0 && triggerCommit > triggerInspection
+    && firstTenantAdvisory > triggerCommit,
+  'source trigger inspection/repair must commit before any retained tenant advisory is acquired');
+  assert.doesNotMatch(projectionSql.slice(firstTenantAdvisory),
+    /\b(?:DROP\s+TRIGGER|CREATE\s+TRIGGER|ALTER\s+TABLE\s+public\.(?:whatsapp_cloud_events|wpp_outbox)[^;]*\bTRIGGER\b)/i,
+    'no source trigger DDL may execute after tenant repair/backfill advisories begin');
+});
+
 test('las tres reparaciones globales recorren tenants estables y bloquean antes de cualquier UPDATE', () => {
   for (const [tag, marker] of [
     ['repair_state_rank', '-- TENANT REPAIR STATE LOCK ACQUIRED'],
@@ -1943,19 +2085,19 @@ test('las tres reparaciones globales recorren tenants estables y bloquean antes 
   }
 });
 
-test('runtime rechaza transacción cross-tenant 2→1 antes del segundo advisory y revierte todo', async () => {
+test('runtime rechaza transacción cross-tenant 720002→710001 antes del segundo advisory y revierte todo', async () => {
   await withDatabase(async pool => {
-    await pool.query('INSERT INTO empresas(id) VALUES (1), (2)');
+    await pool.query('INSERT INTO empresas(id) VALUES (710001), (720002)');
     await pool.query(migrationSql);
-    await assertMixedTenantRuntimeTransactionRejected(pool, [2, 1]);
+    await assertMixedTenantRuntimeTransactionRejected(pool, [720002, 710001]);
   });
 });
 
-test('runtime rechaza transacción cross-tenant 1→2 antes del segundo advisory y revierte todo', async () => {
+test('runtime rechaza transacción cross-tenant 710001→720002 antes del segundo advisory y revierte todo', async () => {
   await withDatabase(async pool => {
-    await pool.query('INSERT INTO empresas(id) VALUES (1), (2)');
+    await pool.query('INSERT INTO empresas(id) VALUES (710001), (720002)');
     await pool.query(migrationSql);
-    await assertMixedTenantRuntimeTransactionRejected(pool, [1, 2]);
+    await assertMixedTenantRuntimeTransactionRejected(pool, [710001, 720002]);
   });
 });
 
