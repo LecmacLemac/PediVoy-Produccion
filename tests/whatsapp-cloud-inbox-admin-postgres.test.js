@@ -241,13 +241,15 @@ test('API admin Cloud conserva tenant, paginación, redacción e idempotencia en
       });
       assert.equal(firstReply.status, 202);
       const firstReplyBody = await firstReply.json();
-      assert.equal(firstReplyBody.queued, true);
+      assert.equal(firstReplyBody.accepted, true);
+      assert.equal(firstReplyBody.deduplicated, false);
       const replay = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations/${tenantOneDoc.id}/replies`, {
         method: 'POST', headers: { Origin: 'https://admin.pedivoy.test', 'Content-Type': 'application/json' }, body: JSON.stringify(replyBody),
       });
       assert.equal(replay.status, 200);
       assert.deepEqual(await replay.json(), {
-        queued: false,
+        accepted: true,
+        deduplicated: true,
         id: firstReplyBody.id,
         status: 'pending',
       });

@@ -329,7 +329,9 @@ test('reply manual usa sólo enqueue correlacionado Cloud, ignora transport del 
       }),
     });
     assert.equal(response.status, 202);
-    assert.deepEqual(await response.json(), { queued: true, id: '501', status: 'pending' });
+    assert.deepEqual(await response.json(), {
+      accepted: true, deduplicated: false, id: '501', status: 'pending',
+    });
   });
 
   assert.equal(queryCalls.length, 1);
@@ -345,6 +347,78 @@ test('reply manual usa sólo enqueue correlacionado Cloud, ignora transport del 
     },
     pool: { marker: 'canonical-pool' },
   }]);
+});
+
+test('reply replay idempotente responde 200 accepted/deduplicated sin crear otro outbox', async () => {
+  let enqueueAttempts = 0;
+  const app = express();
+  app.use(express.json());
+  app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+    canonicalOrigin: 'https://admin.pedivoy.test',
+    withAuth(req, _res, next) {
+      req.user = { uid: 22, role: 'admin', empresa_id: 7 };
+      next();
+    },
+    async query(sql) {
+      if (/FROM public\.whatsapp_cloud_messages/.test(sql)) {
+        return [{ participant_wa_id: '5493515550001' }];
+      }
+      return [{ id: 501, status: 'pending', same_phone: true, same_message: true }];
+    },
+    async enqueueReply() {
+      enqueueAttempts += 1;
+      return { queued: false, skipped: true, reason: 'duplicate_correlation', id: 501, status: 'pending' };
+    },
+  }));
+
+  await withServer(app, async baseUrl => {
+    const response = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations/44/replies`, {
+      method: 'POST',
+      headers: { Origin: 'https://admin.pedivoy.test', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: 'misma respuesta', idempotency_key: 'same-request' }),
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      accepted: true, deduplicated: true, id: '501', status: 'pending',
+    });
+  });
+  assert.equal(enqueueAttempts, 1);
+});
+
+test('reply informa configuración Cloud inactiva con error público sin filtrar detalles', async () => {
+  let attempts = 0;
+  const app = express();
+  app.use(express.json());
+  app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+    canonicalOrigin: 'https://admin.pedivoy.test',
+    withAuth(req, _res, next) {
+      req.user = { uid: 22, role: 'admin', empresa_id: 7 };
+      next();
+    },
+    async query() {
+      return [{ participant_wa_id: '5493515550001' }];
+    },
+    async enqueueReply() {
+      attempts += 1;
+      throw Object.assign(new Error('private token phone sql provider-id'), {
+        code: 'cloud_config_invalida',
+        cause: new Error('private config'),
+      });
+    },
+  }));
+
+  await withServer(app, async baseUrl => {
+    const response = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations/44/replies`, {
+      method: 'POST',
+      headers: { Origin: 'https://admin.pedivoy.test', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: 'respuesta', idempotency_key: 'inactive-cloud-1' }),
+    });
+    assert.equal(response.status, 409);
+    const body = await response.json();
+    assert.deepEqual(body, { error: 'cloud_config_inactive' });
+    assert.doesNotMatch(JSON.stringify(body), /private|token|phone|sql|provider/i);
+  });
+  assert.equal(attempts, 1);
 });
 
 test('reply distingue outcome_unknown sanitizado y no intenta retry ni fallback', async () => {

@@ -13,6 +13,11 @@ import {
 } from '../whatsappCloud/inboxRepository.js';
 
 const PG_INT4_MAX = 2147483647;
+const INACTIVE_CLOUD_CONFIG_CODES = new Set([
+  'cloud_config_invalida',
+  'config_integraciones_invalida',
+  'config_whatsapp_invalida',
+]);
 
 function configuredCanonicalOrigin(req, override) {
   const configured = override || process.env.PUBLIC_BASE_URL || process.env.APP_PUBLIC_URL || '';
@@ -253,13 +258,17 @@ export function createWhatsAppCloudInboxAdminRouter({
         if (!matchesOriginal) return res.status(409).json({ error: 'idempotency_key_conflict' });
       }
       return res.status(result.queued ? 202 : 200).json({
-        queued: result.queued === true,
+        accepted: true,
+        deduplicated: result.queued !== true,
         id: result.id == null ? null : String(result.id),
         status: result.status ?? null,
       });
     } catch (error) {
       if (error?.code === 'WPP_ENQUEUE_TRANSACTION_OUTCOME_UNKNOWN') {
         return res.status(503).json({ error: 'reply_enqueue_outcome_unknown' });
+      }
+      if (INACTIVE_CLOUD_CONFIG_CODES.has(error?.code)) {
+        return res.status(409).json({ error: 'cloud_config_inactive' });
       }
       return res.status(502).json({ error: 'reply_enqueue_failed' });
     }

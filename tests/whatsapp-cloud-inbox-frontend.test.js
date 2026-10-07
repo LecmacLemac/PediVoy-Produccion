@@ -256,7 +256,7 @@ test('vista móvil abre detalle y vuelve explícitamente a la lista', () => {
   assert.deepEqual(reduceMobileView(detail, { type: 'back' }), { mobileView: 'list', activeConversationId: null });
 });
 
-test('composer conserva borrador en fallas y sólo limpia con 202 confirmado', () => {
+test('composer conserva borrador en fallas y limpia con 202 nuevo o 200 replay confirmado', () => {
   const initial = createComposerState(' respuesta ');
   const pending = startSubmission(initial, 'key-1');
   assert.equal(pending.sending, true);
@@ -283,6 +283,34 @@ test('composer conserva borrador en fallas y sólo limpia con 202 confirmado', (
   const accepted = resolveSubmission(pending, { status: 202 });
   assert.equal(accepted.draft, '');
   assert.equal(accepted.sending, false);
+  assert.equal(accepted.notice, 'Mensaje en cola. No se reenviará automáticamente.');
+
+  const replayed = resolveSubmission(pending, { status: 200 });
+  assert.equal(replayed.draft, '');
+  assert.equal(replayed.sending, false);
+  assert.equal(replayed.notice, 'El mensaje ya estaba en cola. No se creó un duplicado.');
+});
+
+test('conflicto idempotente conserva borrador, desbloquea y exige una key nueva en retry manual', () => {
+  const { input, send, controller } = composerDomHarness();
+  controller.changeCompany(7);
+  controller.activateConversation(controller.beginConversationChange('recipient-a'));
+  input.value = 'mensaje para revisar';
+  controller.captureDraft();
+  const first = controller.startSend('conflicting-key');
+  controller.settleSend(first, { status: 409, errorCode: 'idempotency_key_conflict' });
+
+  const conflicted = controller.snapshot().composer;
+  assert.equal(conflicted.draft, 'mensaje para revisar');
+  assert.equal(conflicted.pending, null);
+  assert.equal(conflicted.reconciliationRequired, false);
+  assert.equal(input.disabled, false);
+  assert.equal(send.disabled, false);
+  assert.match(conflicted.notice, /conservamos tu borrador/i);
+
+  const retry = controller.startSend('fresh-manual-key');
+  assert.equal(retry.pending.idempotencyKey, 'fresh-manual-key');
+  assert.notEqual(retry.pending.idempotencyKey, first.pending.idempotencyKey);
 });
 
 test('resultado incierto bloquea segundo envío y conserva la misma key hasta descarte explícito', () => {
@@ -347,10 +375,27 @@ test('adjunto 409 se comunica como no disponible sin URL de proveedor', () => {
   assert.equal(attachmentDownloadNotice(404), 'El adjunto ya no está disponible.');
 });
 
-test('errores visibles son españoles, acotados y no reflejan payload privado', () => {
-  assert.equal(sanitizeCloudError(403, { error: 'private phone token sql detail' }), 'No tenés acceso a esta bandeja.');
-  assert.equal(sanitizeCloudError(503, { error: 'reply_enqueue_outcome_unknown', secret: 'token' }), 'Resultado incierto: no vuelvas a enviar este mensaje. Verificá la conversación más tarde.');
-  assert.equal(sanitizeCloudError(500, { error: 'private phone token sql detail' }), 'No se pudo completar la operación. Intentá nuevamente más tarde.');
+test('catálogo público de errores es allowlisted, accionable y no refleja payload privado', () => {
+  const cases = [
+    [401, { error: 'private phone token sql detail' }, 'Tu sesión venció. Volvé a iniciar sesión.'],
+    [403, { error: 'access_denied' }, 'No tenés acceso a esta bandeja.'],
+    [403, { error: 'request_origin_invalid' }, 'El origen de la solicitud no es válido. Recargá la página e intentá nuevamente.'],
+    [400, { error: 'empresa_id_required' }, 'Seleccioná una empresa para continuar.'],
+    [400, { error: 'empresa_id_invalid' }, 'La empresa seleccionada no es válida. Elegí otra empresa.'],
+    [409, { error: 'cloud_config_inactive' }, 'WhatsApp Cloud no está activo para esta empresa. Revisá su configuración.'],
+    [404, { error: 'conversation_not_found' }, 'La conversación ya no está disponible. Actualizá la bandeja.'],
+    [400, { error: 'reply_invalid' }, 'Revisá el mensaje antes de enviarlo.'],
+    [415, { error: 'content_type_invalid' }, 'Revisá el mensaje antes de enviarlo.'],
+    [409, { error: 'idempotency_key_conflict' }, 'La clave de envío ya fue usada con otro mensaje. Conservamos tu borrador: revisalo y enviá nuevamente para generar una clave nueva.'],
+    [502, { error: 'reply_enqueue_failed' }, 'No se pudo poner el mensaje en cola. Conservamos tu borrador; intentá enviarlo nuevamente.'],
+    [503, { error: 'reply_enqueue_outcome_unknown' }, 'Resultado incierto: no vuelvas a enviar este mensaje. Verificá la conversación más tarde.'],
+  ];
+  for (const [status, payload, expected] of cases) {
+    assert.equal(sanitizeCloudError(status, { ...payload, secret: 'token', cause: 'sql phone provider-id' }), expected);
+  }
+  const fallback = sanitizeCloudError(500, { error: 'private phone token sql detail', message: 'provider-id' });
+  assert.equal(fallback, 'No se pudo completar la operación. Intentá nuevamente más tarde.');
+  assert.doesNotMatch(`${cases.map(([, , expected]) => expected).join(' ')} ${fallback}`, /token|sql|provider-id|5493515550001/i);
 });
 
 test('texto no confiable se inserta sólo con textContent', () => {
@@ -383,7 +428,8 @@ test('controlador usa credenciales same-origin, AbortController y envío único'
   assert.match(controller, /credentials:\s*'same-origin'/);
   assert.match(controller, /new AbortController\(\)/);
   assert.match(controller, /crypto\.randomUUID\(\)/);
-  assert.match(controller, /status\s*===\s*202/);
+  assert.match(controller, /response\.status === 202 \|\| response\.status === 200/);
+  assert.match(controller, /snapshot\(\)\.composer\.notice/);
   assert.match(controller, /SEND_TIMEOUT_MS/);
   assert.match(controller, /visibilitychange[\s\S]*loadConversations/);
   assert.match(controller, /matchMedia\(['"]\(max-width:\s*760px\)['"]\)/);

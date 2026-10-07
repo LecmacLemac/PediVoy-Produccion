@@ -188,7 +188,14 @@ export function startSubmission(state, idempotencyKey) {
 }
 
 export function resolveSubmission(state, result = {}) {
-  if (result.status === 202) return createComposerState('');
+  if (result.status === 202 || result.status === 200) {
+    return {
+      ...createComposerState(''),
+      notice: result.status === 202
+        ? 'Mensaje en cola. No se reenviará automáticamente.'
+        : 'El mensaje ya estaba en cola. No se creó un duplicado.',
+    };
+  }
   const outcomeUnknown = result.status === 0 || result.errorCode === 'reply_enqueue_outcome_unknown';
   return {
     draft: String(state?.draft || ''),
@@ -315,16 +322,26 @@ export function attachmentDownloadNotice(status) {
   return 'No se pudo descargar el adjunto.';
 }
 
+const PUBLIC_CLOUD_ERRORS = Object.freeze({
+  access_denied: 'No tenés acceso a esta bandeja.',
+  request_origin_invalid: 'El origen de la solicitud no es válido. Recargá la página e intentá nuevamente.',
+  empresa_id_required: 'Seleccioná una empresa para continuar.',
+  empresa_id_invalid: 'La empresa seleccionada no es válida. Elegí otra empresa.',
+  cloud_config_inactive: 'WhatsApp Cloud no está activo para esta empresa. Revisá su configuración.',
+  conversation_not_found: 'La conversación ya no está disponible. Actualizá la bandeja.',
+  reply_invalid: 'Revisá el mensaje antes de enviarlo.',
+  content_type_invalid: 'Revisá el mensaje antes de enviarlo.',
+  idempotency_key_conflict: 'La clave de envío ya fue usada con otro mensaje. Conservamos tu borrador: revisalo y enviá nuevamente para generar una clave nueva.',
+  reply_enqueue_failed: 'No se pudo poner el mensaje en cola. Conservamos tu borrador; intentá enviarlo nuevamente.',
+  reply_enqueue_outcome_unknown: 'Resultado incierto: no vuelvas a enviar este mensaje. Verificá la conversación más tarde.',
+  attachment_download_unavailable: 'La descarga todavía no está disponible.',
+});
+
 export function sanitizeCloudError(status, payload = {}) {
   const code = typeof payload?.error === 'string' ? payload.error : '';
   if (status === 401) return 'Tu sesión venció. Volvé a iniciar sesión.';
-  if (status === 403) return 'No tenés acceso a esta bandeja.';
-  if (status === 404 && code === 'conversation_not_found') return 'La conversación ya no está disponible.';
-  if (status === 409 && code === 'attachment_download_unavailable') return attachmentDownloadNotice(409);
-  if (status === 409 && code === 'idempotency_key_conflict') return 'El envío no se procesó porque la solicitud ya no coincide. Escribí un mensaje nuevo.';
-  if (code === 'reply_enqueue_outcome_unknown') return 'Resultado incierto: no vuelvas a enviar este mensaje. Verificá la conversación más tarde.';
-  if (code === 'reply_invalid') return 'Revisá el mensaje antes de enviarlo.';
-  if (code === 'empresa_id_required') return 'Seleccioná una empresa para continuar.';
+  if (Object.hasOwn(PUBLIC_CLOUD_ERRORS, code)) return PUBLIC_CLOUD_ERRORS[code];
+  if (status === 403) return PUBLIC_CLOUD_ERRORS.access_denied;
   return 'No se pudo completar la operación. Intentá nuevamente más tarde.';
 }
 

@@ -470,10 +470,11 @@ async function submitMessage(event) {
       method: 'POST', body: JSON.stringify(body), signal: deadline.signal,
     });
     if (!composerController.settleSend(submission, { status: response.status, errorCode: payload?.error })) return;
-    if (response.status === 202) {
-      setComposerNotice('Mensaje en cola. No se reenviará automáticamente.', 'success');
+    const composer = composerController.snapshot().composer;
+    if (response.status === 202 || response.status === 200) {
+      setComposerNotice(composer.notice, 'success');
     } else {
-      setComposerNotice(composerController.snapshot().composer.notice, payload?.error === 'reply_enqueue_outcome_unknown' ? 'warning' : 'error');
+      setComposerNotice(composer.notice, payload?.error === 'reply_enqueue_outcome_unknown' ? 'warning' : 'error');
     }
   } catch (error) {
     if (error?.message !== 'session_expired') {
