@@ -17,12 +17,12 @@
     button,textarea,select { font:inherit; }
     .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
     button:focus-visible,textarea:focus-visible,select:focus-visible,a:focus-visible { outline:3px solid rgba(37,211,102,.5); outline-offset:2px; }
-    .topbar { flex:0 0 auto; padding:0; border-bottom:1px solid var(--border); background:rgba(15,23,42,.96); position:relative; top:auto; z-index:20; }
+    .topbar { flex:0 0 auto; padding:0; border-bottom:1px solid var(--border); background:rgba(15,23,42,.96); position:relative; top:auto; z-index:20; backdrop-filter:blur(12px); }
     .topbar-inner { max-width:1400px; margin:auto; padding:.75rem 1rem; display:flex; align-items:center; justify-content:space-between; gap:1rem; }
     .brand { display:flex; align-items:center; gap:.7rem; color:#fff; text-decoration:none; font-weight:800; }
     .brand img { width:auto; height:30px; }
     .cloud-nav { display:flex; flex-direction:row; justify-content:flex-start; gap:1rem; align-items:center; }
-    .cloud-nav a { color:var(--muted); text-decoration:none; white-space:nowrap; }
+    .cloud-nav a { color:var(--muted); text-decoration:none; white-space:nowrap; min-height:44px; display:flex; align-items:center; }
     .cloud-nav a[aria-current="page"] { color:var(--brand); font-weight:700; }
     .cloud-nav .logout { color:#fca5a5; }
     .shell { width:100%; max-width:1400px; margin:0 auto; padding:1rem; flex:1 1 auto; min-height:0; display:flex; flex-direction:column; gap:0; }
@@ -32,7 +32,7 @@
     #appStatus[data-tone="success"] { color:#bbf7d0; border-color:rgba(37,211,102,.45); }
     .inbox { display:grid; grid-template-columns:minmax(300px,380px) minmax(0,1fr); flex:1 1 auto; min-height:0; border:1px solid var(--border); border-radius:var(--radius); overflow:hidden; background:var(--surface); box-shadow:0 22px 60px rgba(0,0,0,.28); }
     .conversation-pane { min-width:0; display:flex; flex-direction:column; border-right:1px solid var(--border); background:rgba(15,23,42,.78); }
-    .pane-head { padding:1rem; border-bottom:1px solid var(--border); display:grid; gap:.75rem; }
+    .pane-head { padding:1rem; border-bottom:1px solid var(--border); display:grid; gap:.75rem; position:static; top:auto; z-index:auto; background:transparent; backdrop-filter:none; }
     .title-row { display:flex; align-items:center; justify-content:space-between; gap:.75rem; }
     h1 { font-size:1.15rem; margin:0; }
     .icon-button,.secondary-button,.attachment-action { border:1px solid var(--border); color:var(--ink); background:rgba(255,255,255,.04); border-radius:9px; padding:.55rem .75rem; cursor:pointer; }
@@ -50,7 +50,7 @@
     .more-wrap { padding:.75rem; border-top:1px solid var(--border); }
     .secondary-button { width:100%; }
     .chat-pane { min-width:0; display:flex; flex-direction:column; background:radial-gradient(circle at center,rgba(37,211,102,.035),transparent 55%),#0c1424; }
-    .chat-head { min-height:66px; padding:.85rem 1rem; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:.75rem; }
+    .chat-head { min-height:66px; padding:.85rem 1rem; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:.75rem; position:static; top:auto; z-index:auto; background:rgba(15,23,42,.78); backdrop-filter:none; }
     #backToList { display:none; }
     #chatTitle { font-weight:800; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .history-wrap { flex:1; min-height:0; position:relative; display:flex; flex-direction:column; }
@@ -83,8 +83,11 @@
     .empty-state { margin:auto; padding:1.25rem; color:var(--muted); text-align:center; }
     [hidden] { display:none!important; }
     @media (max-width:760px) {
-      .topbar-inner { align-items:flex-start; }
-      .cloud-nav { flex-direction:row; align-items:center; overflow-x:auto; max-width:58vw; padding-bottom:.25rem; }
+      .topbar-inner { display:grid; grid-template-columns:minmax(0,1fr); gap:.45rem; padding:.55rem 1rem .65rem; }
+      .brand { min-width:0; }
+      .brand span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+      .cloud-nav { width:100%; display:grid; grid-template-columns:1fr 1.45fr .55fr .65fr; gap:.25rem; align-items:stretch; overflow:visible; max-width:none; padding:0; }
+      .cloud-nav a { justify-content:center; min-width:0; padding:.45rem .2rem; text-align:center; white-space:normal; line-height:1.15; overflow-wrap:anywhere; }
       .shell { padding:.5rem; }
       .inbox { display:block; min-height:0; border-radius:12px; }
       .conversation-pane { height:100%; border-right:0; }

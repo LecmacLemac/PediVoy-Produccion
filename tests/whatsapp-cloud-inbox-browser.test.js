@@ -11,6 +11,18 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const chromePath = '/usr/bin/google-chrome';
 const screenshotDir = process.env.TMPDIR || root;
 
+function assertInsideViewport(box, viewport, label) {
+  assert.ok(box.width > 0 && box.height > 0, `${label} debe tener tamaño positivo`);
+  assert.ok(box.left >= 0 && box.top >= 0, `${label} debe comenzar dentro del viewport`);
+  assert.ok(box.right <= viewport.width && box.bottom <= viewport.height, `${label} debe terminar dentro del viewport`);
+}
+
+function overlapArea(first, second) {
+  const width = Math.max(0, Math.min(first.right, second.right) - Math.max(first.left, second.left));
+  const height = Math.max(0, Math.min(first.bottom, second.bottom) - Math.max(first.top, second.top));
+  return width * height;
+}
+
 async function withBrowserPage(viewport, work) {
   const app = express();
   app.post('/api/admin/whatsapp-cloud/conversations/:id/replies', req => {
@@ -73,6 +85,32 @@ async function withBrowserPage(viewport, work) {
 
 test('browser móvil mantiene composer visible, foco reversible, timeout incierto y resume visible', { skip: !existsSync(chromePath) }, async () => {
   await withBrowserPage({ width: 390, height: 844, deviceScaleFactor: 1 }, async ({ page, counts }) => {
+    const mobileHeader = await page.evaluate(() => {
+      const selectors = {
+        title: '.brand span',
+        status: '#conversationHeading',
+        dashboard: '.cloud-nav a[href="dashboard.html"]',
+        whatsappCloud: '.cloud-nav a[aria-current="page"]',
+        qr: '.cloud-nav a[href="qr.html"]',
+        salir: '#logout',
+      };
+      return Object.fromEntries(Object.entries(selectors).map(([name, selector]) => {
+        const element = document.querySelector(selector);
+        const rect = element.getBoundingClientRect();
+        return [name, {
+          left: rect.left,
+          top: rect.top,
+          right: rect.right,
+          bottom: rect.bottom,
+          width: rect.width,
+          height: rect.height,
+          scrollWidth: element.scrollWidth,
+          clientWidth: element.clientWidth,
+          scrollHeight: element.scrollHeight,
+          clientHeight: element.clientHeight,
+        }];
+      }));
+    });
     await page.click('.conversation-card[data-conversation-id="44"]');
     await page.waitForSelector('#inboxLayout.mobile-detail');
     await page.waitForFunction(() => document.activeElement?.id === 'backToList');
@@ -83,12 +121,27 @@ test('browser móvil mantiene composer visible, foco reversible, timeout inciert
       return {
         scrollHeight: document.documentElement.scrollHeight,
         viewportHeight: window.innerHeight,
+        viewportWidth: window.innerWidth,
         composerTop: composer.top,
         composerBottom: composer.bottom,
       };
     });
+    mobileLayout.boxes = mobileHeader;
     assert.ok(mobileLayout.scrollHeight <= mobileLayout.viewportHeight);
     assert.ok(mobileLayout.composerTop >= 0 && mobileLayout.composerBottom <= mobileLayout.viewportHeight);
+    const viewport = { width: mobileLayout.viewportWidth, height: mobileLayout.viewportHeight };
+    for (const [label, box] of Object.entries(mobileLayout.boxes)) {
+      assertInsideViewport(box, viewport, label);
+      assert.ok(box.scrollWidth <= box.clientWidth && box.scrollHeight <= box.clientHeight, `${label} no debe recortarse`);
+    }
+    const entries = Object.entries(mobileLayout.boxes);
+    for (let index = 0; index < entries.length; index += 1) {
+      for (let other = index + 1; other < entries.length; other += 1) {
+        const [firstLabel, firstBox] = entries[index];
+        const [secondLabel, secondBox] = entries[other];
+        assert.equal(overlapArea(firstBox, secondBox), 0, `${firstLabel} y ${secondLabel} no deben superponerse`);
+      }
+    }
     console.log('MOBILE_LAYOUT', JSON.stringify(mobileLayout));
     await page.screenshot({ path: path.join(screenshotDir, 'whatsapp-cloud-mobile-390x844.png') });
 
@@ -148,16 +201,23 @@ test('browser desktop no desborda y no mueve foco al botón Volver', { skip: !ex
     await page.click('.conversation-card[data-conversation-id="44"]');
     const measured = await page.evaluate(() => {
       const composer = document.querySelector('#composerForm').getBoundingClientRect();
+      const topbar = document.querySelector('.topbar').getBoundingClientRect();
+      const nav = document.querySelector('.cloud-nav').getBoundingClientRect();
       return {
         activeId: document.activeElement?.id || '',
         scrollHeight: document.documentElement.scrollHeight,
+        viewportWidth: window.innerWidth,
         viewportHeight: window.innerHeight,
         composerBottom: composer.bottom,
+        topbar: { left: topbar.left, right: topbar.right, top: topbar.top, bottom: topbar.bottom },
+        nav: { left: nav.left, right: nav.right, top: nav.top, bottom: nav.bottom },
       };
     });
     assert.notEqual(measured.activeId, 'backToList');
     assert.ok(measured.scrollHeight <= measured.viewportHeight);
     assert.ok(measured.composerBottom <= measured.viewportHeight);
+    assert.ok(measured.topbar.left >= 0 && measured.topbar.right <= measured.viewportWidth);
+    assert.ok(measured.nav.left >= 0 && measured.nav.right <= measured.viewportWidth);
     console.log('DESKTOP_LAYOUT', JSON.stringify(measured));
     await page.screenshot({ path: path.join(screenshotDir, 'whatsapp-cloud-desktop-1440x900.png') });
   });
