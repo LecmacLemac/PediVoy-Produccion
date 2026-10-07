@@ -431,12 +431,12 @@ test('lista de conversaciones pagina por última actividad, enmascara teléfono 
     {
       id: '31', participant_wa_id: '5493515550001', direction: 'inbound', message_type: 'text',
       delivery_status: 'received', message_at: new Date('2026-10-06T12:00:00Z'), text_body: 'secreto uno',
-      customer_name: 'Cliente Uno', delivery_address: 'San Martín 123',
+      customer_name: 'Cliente Uno', delivery_address: 'San Martín 123', payment_method: 'transferencia',
     },
     {
       id: '21', participant_wa_id: '5493515550002', direction: 'outbound', message_type: 'text',
       delivery_status: 'sent', message_at: new Date('2026-10-06T11:00:00Z'), text_body: 'secreto dos',
-      customer_name: 'Cliente Dos', delivery_address: 'Belgrano 456',
+      customer_name: 'Cliente Dos', delivery_address: 'Belgrano 456', payment_method: 'efectivo',
     },
     {
       id: '11', participant_wa_id: '5493515550003', direction: 'inbound', message_type: 'document',
@@ -467,10 +467,11 @@ test('lista de conversaciones pagina por última actividad, enmascara teléfono 
       participant: item.participant,
       customerName: item.customerName,
       customerAddress: item.customerAddress,
+      paymentMethod: item.paymentMethod,
       lastMessageAt: item.lastMessageAt,
     })), [
-      { conversationId: '31', participant: '*********0001', customerName: 'Cliente Uno', customerAddress: 'San Martín 123', lastMessageAt: '2026-10-06T12:00:00.000Z' },
-      { conversationId: '21', participant: '*********0002', customerName: 'Cliente Dos', customerAddress: 'Belgrano 456', lastMessageAt: '2026-10-06T11:00:00.000Z' },
+      { conversationId: '31', participant: '*********0001', customerName: 'Cliente Uno', customerAddress: 'San Martín 123', paymentMethod: 'transferencia', lastMessageAt: '2026-10-06T12:00:00.000Z' },
+      { conversationId: '21', participant: '*********0002', customerName: 'Cliente Dos', customerAddress: 'Belgrano 456', paymentMethod: 'efectivo', lastMessageAt: '2026-10-06T11:00:00.000Z' },
     ]);
     assert.equal(typeof body.nextCursor, 'string');
     assert.ok(body.nextCursor.length > 10);
@@ -482,6 +483,7 @@ test('lista de conversaciones pagina por última actividad, enmascara teléfono 
   assert.match(calls[0].sql, /LEFT JOIN LATERAL/);
   assert.match(calls[0].sql, /customer_name/);
   assert.match(calls[0].sql, /delivery_address/);
+  assert.match(calls[0].sql, /payment_method/);
 });
 
 test('historial pagina hacia atrás pero responde cada página en orden cronológico', async () => {

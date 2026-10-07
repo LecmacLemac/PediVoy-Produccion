@@ -57,6 +57,17 @@ async function withDatabase(work) {
       )
     `);
     await pool.query(`
+      CREATE TABLE pedidos (
+        id SERIAL PRIMARY KEY,
+        empresa_id INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+        punto_entrega_id INTEGER REFERENCES puntos_entrega(id) ON DELETE SET NULL,
+        estado TEXT DEFAULT 'pendiente',
+        metodo_pago TEXT DEFAULT 'efectivo',
+        monto NUMERIC(10,2) DEFAULT 0,
+        fecha TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`
       CREATE TABLE whatsapp_cloud_events (
         id BIGSERIAL PRIMARY KEY,
         empresa_id INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
@@ -124,6 +135,15 @@ test('API admin Cloud conserva tenant, paginación, redacción e idempotencia en
         (1, 'Cliente Dos', 'Nombre Dos', 'Belgrano 456', 'Belgrano 456, Córdoba', 'Córdoba', '3515550002', '5493515550002'),
         (2, 'Cliente Tenant Dos', NULL, 'No visible 999', NULL, 'Córdoba', '3515550001', '5493515550001')
     `);
+    const points = (await pool.query(`
+      SELECT id, cliente FROM puntos_entrega WHERE empresa_id = 1 ORDER BY id
+    `)).rows;
+    await pool.query(`
+      INSERT INTO pedidos (empresa_id, punto_entrega_id, estado, metodo_pago, monto, fecha)
+      VALUES
+        (1, $1, 'pendiente', 'transferencia', 1000, '2026-10-06T09:00:00Z'),
+        (1, $2, 'pendiente', 'efectivo', 900, '2026-10-06T08:00:00Z')
+    `, [points[0].id, points[1].id]);
     const inserted = (await pool.query(`
       INSERT INTO whatsapp_cloud_messages
         (empresa_id,direction,participant_wa_id,message_type,text_body,media_mime_type,
@@ -163,6 +183,7 @@ test('API admin Cloud conserva tenant, paginación, redacción e idempotencia en
       assert.equal(firstPage.conversations[0].participant, '*********0001');
       assert.equal(firstPage.conversations[0].customerName, 'Cliente Uno');
       assert.equal(firstPage.conversations[0].customerAddress, 'San Martín 123, Córdoba');
+      assert.equal(firstPage.conversations[0].paymentMethod, 'transferencia');
       assert.equal(typeof firstPage.nextCursor, 'string');
       assert.doesNotMatch(JSON.stringify(firstPage), /5493515550001|tenant one|tenant two|factura|No visible/i);
 
@@ -173,6 +194,7 @@ test('API admin Cloud conserva tenant, paginación, redacción e idempotencia en
       assert.equal(secondPage.conversations[0].participant, '*********0002');
       assert.equal(secondPage.conversations[0].customerName, 'Nombre Dos');
       assert.equal(secondPage.conversations[0].customerAddress, 'Belgrano 456, Córdoba');
+      assert.equal(secondPage.conversations[0].paymentMethod, 'efectivo');
       assert.equal(secondPage.nextCursor, null);
 
       const historyResponse = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations/${tenantOneDoc.id}/messages?limit=1`);

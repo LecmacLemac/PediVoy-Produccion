@@ -209,6 +209,11 @@ function renderConversations() {
     summary.className = 'conversation-summary';
     appendSafeText(document, summary, 'span', conversationPreview(conversation), 'preview');
     summary.append(makeBadge(conversation.lastDeliveryStatus, conversation.lastDirection));
+    const paymentMethod = String(conversation.paymentMethod || '').toLowerCase();
+    if (paymentMethod === 'efectivo' || paymentMethod === 'transferencia') {
+      const paymentLabel = paymentMethod === 'transferencia' ? 'Transferencia' : 'Efectivo';
+      appendSafeText(document, summary, 'span', paymentLabel, `payment-label payment-${paymentMethod}`);
+    }
     button.append(summary);
 
     const customerParts = [conversation.customerName, conversation.customerAddress]
