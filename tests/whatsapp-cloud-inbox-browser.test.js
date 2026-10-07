@@ -71,14 +71,21 @@ function assertVisibleLayout(measured, { touch = [], nonOverlapping = [] } = {})
   }
 }
 
-async function withBrowserPage(viewport, work) {
+async function withBrowserPage(viewport, work, {
+  replyResponse = null,
+  replyDelayMs = 0,
+  sendTimeoutMs = 30,
+} = {}) {
   const app = express();
   app.post('/api/admin/whatsapp-cloud/conversations/:id/replies', req => {
     req.on('close', () => {});
   });
   app.get('/pedidos/whatsapp-cloud.js', async (_req, res) => {
     const controller = await readFile(path.join(root, 'pedidos/whatsapp-cloud.js'), 'utf8');
-    res.type('text/javascript').send(controller.replace('const SEND_TIMEOUT_MS = 25_000;', 'const SEND_TIMEOUT_MS = 30;'));
+    res.type('text/javascript').send(controller.replace(
+      'const SEND_TIMEOUT_MS = 25_000;',
+      `const SEND_TIMEOUT_MS = ${sendTimeoutMs};`,
+    ));
   });
   app.use('/pedidos', express.static(path.join(root, 'pedidos')));
   const server = app.listen(0, '127.0.0.1');
@@ -97,7 +104,7 @@ async function withBrowserPage(viewport, work) {
       };
     });
     await page.setRequestInterception(true);
-    const counts = { conversations: 0, messages: 0, replies: 0 };
+    const counts = { conversations: 0, messages: 0, replies: 0, replyKeys: [] };
     page.on('request', request => {
       const url = new URL(request.url());
       if (url.pathname === '/api/me') {
@@ -115,7 +122,20 @@ async function withBrowserPage(viewport, work) {
         ], nextCursor: null }) });
       } else if (/\/api\/admin\/whatsapp-cloud\/conversations\/\d+\/replies/.test(url.pathname)) {
         counts.replies += 1;
-        request.continue();
+        try {
+          counts.replyKeys.push(JSON.parse(request.postData() || '{}').idempotency_key ?? null);
+        } catch {
+          counts.replyKeys.push(null);
+        }
+        if (replyResponse) {
+          setTimeout(() => request.respond({
+            status: replyResponse.status,
+            contentType: 'application/json',
+            body: JSON.stringify(replyResponse.body),
+          }), replyDelayMs);
+        } else {
+          request.continue();
+        }
       } else if (url.pathname.startsWith('/api/')) {
         request.respond({ status: 404, contentType: 'application/json', body: '{}' });
       } else {
@@ -220,6 +240,49 @@ test('browser móvil mantiene composer visible, foco reversible, timeout inciert
     })), { value: '', disabled: false, active: 'messageInput' });
 
   });
+});
+
+test('browser conecta doble submit sincronizado a una sola key, un POST y un settle aceptado', { skip: !existsSync(chromePath) }, async () => {
+  await withBrowserPage(
+    { width: 1440, height: 900, deviceScaleFactor: 1 },
+    async ({ page, counts }) => {
+      await page.click('.conversation-card[data-conversation-id="44"]');
+      await page.type('#messageInput', 'respuesta única');
+      await page.evaluate(() => {
+        const form = document.querySelector('#composerForm');
+        form.requestSubmit();
+        form.requestSubmit();
+      });
+
+      await page.waitForFunction(() => (
+        document.querySelector('#messageInput').value === ''
+        && document.querySelector('#composerNotice').textContent.includes('Mensaje en cola')
+        && document.querySelector('#sendButton').disabled === false
+      ), { timeout: 2_000 });
+
+      assert.equal(counts.replies, 1);
+      assert.equal(counts.replyKeys.length, 1);
+      assert.match(counts.replyKeys[0], /^[0-9a-f-]{36}$/i);
+      assert.equal(await page.evaluate(() => window.__uuidCalls), 1);
+      assert.deepEqual(await page.evaluate(() => ({
+        draft: document.querySelector('#messageInput').value,
+        notice: document.querySelector('#composerNotice').textContent,
+        sendDisabled: document.querySelector('#sendButton').disabled,
+      })), {
+        draft: '',
+        notice: 'Mensaje en cola. No se reenviará automáticamente.',
+        sendDisabled: false,
+      });
+    },
+    {
+      replyDelayMs: 40,
+      sendTimeoutMs: 1_000,
+      replyResponse: {
+        status: 202,
+        body: { accepted: true, deduplicated: false, id: '501', status: 'accepted' },
+      },
+    },
+  );
 });
 
 test('browser desktop no desborda y no mueve foco al botón Volver', { skip: !existsSync(chromePath) }, async () => {

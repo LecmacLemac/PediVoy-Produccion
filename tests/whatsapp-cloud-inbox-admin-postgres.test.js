@@ -251,7 +251,7 @@ test('API admin Cloud conserva tenant, paginación, redacción e idempotencia en
         accepted: true,
         deduplicated: true,
         id: firstReplyBody.id,
-        status: 'pending',
+        status: 'accepted',
       });
       const conflict = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations/${tenantOneDoc.id}/replies`, {
         method: 'POST',

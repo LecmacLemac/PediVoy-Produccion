@@ -12,7 +12,7 @@ const STATUS = Object.freeze({
   outcome_unknown: Object.freeze({ label: 'Resultado incierto', tone: 'unknown', help: 'No vuelvas a enviar: el proveedor podría haber aceptado el mensaje.', retrySafe: false }),
   received: Object.freeze({ label: 'Recibido', tone: 'received', help: 'Mensaje entrante recibido.', retrySafe: false }),
 });
-const PUBLIC_REPLY_QUEUE_STATUSES = new Set(['pending', 'queued']);
+const PUBLIC_REPLY_ACCEPTANCE_STATUS = 'accepted';
 
 export function statusMeta(value) {
   return STATUS[String(value || '').toLowerCase()] || Object.freeze({
@@ -238,7 +238,7 @@ function acceptedReplyResult(result = {}) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return false;
   if (payload.accepted !== true || payload.deduplicated !== (result.status === 200)) return false;
   if (typeof payload.id !== 'string' || !/^[1-9][0-9]*$/.test(payload.id)) return false;
-  return typeof payload.status === 'string' && PUBLIC_REPLY_QUEUE_STATUSES.has(payload.status);
+  return payload.status === PUBLIC_REPLY_ACCEPTANCE_STATUS;
 }
 
 export function resolveSubmission(state, result = {}) {
@@ -247,7 +247,7 @@ export function resolveSubmission(state, result = {}) {
       ...createComposerState(''),
       notice: result.status === 202
         ? 'Mensaje en cola. No se reenviará automáticamente.'
-        : 'El mensaje ya estaba en cola. No se creó un duplicado.',
+        : 'El envío original ya estaba registrado. No se creó un duplicado; revisá la conversación para conocer su estado.',
     };
   }
   const outcomeUnknown = result.status === 0

@@ -330,7 +330,7 @@ test('reply manual usa sólo enqueue correlacionado Cloud, ignora transport del 
     });
     assert.equal(response.status, 202);
     assert.deepEqual(await response.json(), {
-      accepted: true, deduplicated: false, id: '501', status: 'pending',
+      accepted: true, deduplicated: false, id: '501', status: 'accepted',
     });
   });
 
@@ -349,40 +349,49 @@ test('reply manual usa sólo enqueue correlacionado Cloud, ignora transport del 
   }]);
 });
 
-test('reply replay idempotente responde 200 accepted/deduplicated sin crear otro outbox', async () => {
-  let enqueueAttempts = 0;
-  const app = express();
-  app.use(express.json());
-  app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
-    canonicalOrigin: 'https://admin.pedivoy.test',
-    withAuth(req, _res, next) {
-      req.user = { uid: 22, role: 'admin', empresa_id: 7 };
-      next();
-    },
-    async query(sql) {
-      if (/FROM public\.whatsapp_cloud_messages/.test(sql)) {
-        return [{ participant_wa_id: '5493515550001' }];
-      }
-      return [{ id: 501, status: 'pending', same_phone: true, same_message: true }];
-    },
-    async enqueueReply() {
-      enqueueAttempts += 1;
-      return { queued: false, skipped: true, reason: 'duplicate_correlation', id: 501, status: 'pending' };
-    },
-  }));
+test('reply replay normaliza todo lifecycle durable a aceptación pública sin afirmar entrega', async () => {
+  const durableStatuses = ['pending', 'queued', 'sending', 'sent', 'delivered', 'read', 'failed', 'error', 'skipped'];
+  for (const durableStatus of durableStatuses) {
+    let enqueueAttempts = 0;
+    const app = express();
+    app.use(express.json());
+    app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+      canonicalOrigin: 'https://admin.pedivoy.test',
+      withAuth(req, _res, next) {
+        req.user = { uid: 22, role: 'admin', empresa_id: 7 };
+        next();
+      },
+      async query(sql) {
+        if (/FROM public\.whatsapp_cloud_messages/.test(sql)) {
+          return [{ participant_wa_id: '5493515550001' }];
+        }
+        return [{ id: 501, status: durableStatus, same_phone: true, same_message: true }];
+      },
+      async enqueueReply() {
+        enqueueAttempts += 1;
+        return {
+          queued: false,
+          skipped: true,
+          reason: 'duplicate_correlation',
+          id: 501,
+          status: durableStatus,
+        };
+      },
+    }));
 
-  await withServer(app, async baseUrl => {
-    const response = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations/44/replies`, {
-      method: 'POST',
-      headers: { Origin: 'https://admin.pedivoy.test', 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: 'misma respuesta', idempotency_key: 'same-request' }),
+    await withServer(app, async baseUrl => {
+      const response = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations/44/replies`, {
+        method: 'POST',
+        headers: { Origin: 'https://admin.pedivoy.test', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: 'misma respuesta', idempotency_key: `same-request-${durableStatus}` }),
+      });
+      assert.equal(response.status, 200, durableStatus);
+      assert.deepEqual(await response.json(), {
+        accepted: true, deduplicated: true, id: '501', status: 'accepted',
+      }, durableStatus);
     });
-    assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), {
-      accepted: true, deduplicated: true, id: '501', status: 'pending',
-    });
-  });
-  assert.equal(enqueueAttempts, 1);
+    assert.equal(enqueueAttempts, 1, durableStatus);
+  }
 });
 
 test('reply replay cuyo lookup de correlación falla responde outcome_unknown sin habilitar reenvío', async () => {

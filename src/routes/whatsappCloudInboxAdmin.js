@@ -266,7 +266,9 @@ export function createWhatsAppCloudInboxAdminRouter({
         accepted: true,
         deduplicated: result.queued !== true,
         id: result.id == null ? null : String(result.id),
-        status: result.status ?? null,
+        // Public acceptance state: the original durable enqueue exists. This
+        // intentionally does not expose or imply its current delivery state.
+        status: 'accepted',
       });
     } catch (error) {
       if (error?.code === 'WPP_ENQUEUE_TRANSACTION_OUTCOME_UNKNOWN') {

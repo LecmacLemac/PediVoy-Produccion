@@ -163,7 +163,7 @@ test('envío en vuelo rechaza un segundo start sincronizado y conserva la submis
   assert.equal(controller.snapshot().composer.pending.idempotencyKey, 'key-a');
   assert.equal(controller.settleSend(first, {
     status: 202,
-    payload: { accepted: true, deduplicated: false, id: '501', status: 'pending' },
+    payload: { accepted: true, deduplicated: false, id: '501', status: 'accepted' },
   }), true);
 });
 
@@ -183,7 +183,7 @@ test('envío en vuelo bloquea cambios y una respuesta demorada no muta el contex
 
   assert.equal(controller.settleSend(delayed, {
     status: 202,
-    payload: { accepted: true, deduplicated: false, id: '502', status: 'pending' },
+    payload: { accepted: true, deduplicated: false, id: '502', status: 'accepted' },
   }), true);
   assert.equal(controller.changeCompany(9), true);
   const second = controller.beginConversationChange('recipient-b');
@@ -303,7 +303,7 @@ test('composer conserva borrador en fallas y limpia con 202 nuevo o 200 replay c
 
   const accepted = resolveSubmission(pending, {
     status: 202,
-    payload: { accepted: true, deduplicated: false, id: '501', status: 'pending' },
+    payload: { accepted: true, deduplicated: false, id: '501', status: 'accepted' },
   });
   assert.equal(accepted.draft, '');
   assert.equal(accepted.sending, false);
@@ -311,23 +311,43 @@ test('composer conserva borrador en fallas y limpia con 202 nuevo o 200 replay c
 
   const replayed = resolveSubmission(pending, {
     status: 200,
-    payload: { accepted: true, deduplicated: true, id: '501', status: 'pending' },
+    payload: { accepted: true, deduplicated: true, id: '501', status: 'accepted' },
   });
   assert.equal(replayed.draft, '');
   assert.equal(replayed.sending, false);
-  assert.equal(replayed.notice, 'El mensaje ya estaba en cola. No se creó un duplicado.');
+  assert.equal(replayed.notice, 'El envío original ya estaba registrado. No se creó un duplicado; revisá la conversación para conocer su estado.');
+});
+
+test('replay aceptado limpia el draft sin interpretar estados terminales como entrega', () => {
+  for (const durableStatus of ['pending', 'queued', 'sending', 'sent', 'delivered', 'read', 'failed', 'error', 'skipped']) {
+    const pending = startSubmission(createComposerState(' mensaje durable '), 'durable-key');
+    const replayed = resolveSubmission(pending, {
+      status: 200,
+      payload: {
+        accepted: true,
+        deduplicated: true,
+        id: '501',
+        status: 'accepted',
+        durable_status: durableStatus,
+      },
+    });
+    assert.equal(replayed.draft, '', durableStatus);
+    assert.equal(replayed.reconciliationRequired, false, durableStatus);
+    assert.match(replayed.notice, /registrado/i, durableStatus);
+    assert.doesNotMatch(replayed.notice, /enviado|entregado|leído/i, durableStatus);
+  }
 });
 
 test('2xx vacío, inválido o incoherente conserva draft/key y bloquea reenvío', () => {
   const invalidResults = [
     { status: 202, payload: null },
     { status: 202, payload: {} },
-    { status: 202, payload: { accepted: false, deduplicated: false, id: '501', status: 'pending' } },
-    { status: 202, payload: { accepted: true, deduplicated: true, id: '501', status: 'pending' } },
-    { status: 202, payload: { accepted: true, deduplicated: false, id: null, status: 'pending' } },
+    { status: 202, payload: { accepted: false, deduplicated: false, id: '501', status: 'accepted' } },
+    { status: 202, payload: { accepted: true, deduplicated: true, id: '501', status: 'accepted' } },
+    { status: 202, payload: { accepted: true, deduplicated: false, id: null, status: 'accepted' } },
     { status: 202, payload: { accepted: true, deduplicated: false, id: '501', status: 'private-provider-state' } },
-    { status: 200, payload: { accepted: true, deduplicated: false, id: '501', status: 'pending' } },
-    { status: 200, payload: { accepted: true, deduplicated: true, id: 'not-an-id', status: 'pending' } },
+    { status: 200, payload: { accepted: true, deduplicated: false, id: '501', status: 'accepted' } },
+    { status: 200, payload: { accepted: true, deduplicated: true, id: 'not-an-id', status: 'accepted' } },
   ];
 
   for (const result of invalidResults) {
