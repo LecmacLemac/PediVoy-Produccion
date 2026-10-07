@@ -99,6 +99,35 @@ export function createRequestGate() {
   };
 }
 
+export function createSendDeadline({
+  parentSignal,
+  timeoutMs,
+  setTimeoutFn = globalThis.setTimeout,
+  clearTimeoutFn = globalThis.clearTimeout,
+} = {}) {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error('Deadline inválido');
+  const controller = new AbortController();
+  let timeoutReached = false;
+  let cleaned = false;
+  const onParentAbort = () => controller.abort(parentSignal?.reason);
+  if (parentSignal?.aborted) onParentAbort();
+  else parentSignal?.addEventListener('abort', onParentAbort, { once: true });
+  const timer = setTimeoutFn(() => {
+    timeoutReached = true;
+    controller.abort(new DOMException('Tiempo de envío agotado', 'TimeoutError'));
+  }, timeoutMs);
+  return {
+    signal: controller.signal,
+    timedOut: () => timeoutReached,
+    cleanup() {
+      if (cleaned) return;
+      cleaned = true;
+      clearTimeoutFn(timer);
+      parentSignal?.removeEventListener('abort', onParentAbort);
+    },
+  };
+}
+
 export function reduceMobileView(state, action) {
   if (action?.type === 'open') {
     return { mobileView: 'detail', activeConversationId: String(action.conversationId) };
@@ -108,7 +137,14 @@ export function reduceMobileView(state, action) {
 }
 
 export function createComposerState(draft = '') {
-  return { draft: String(draft), sending: false, pending: null, notice: '', canRetry: false };
+  return {
+    draft: String(draft),
+    sending: false,
+    pending: null,
+    notice: '',
+    canRetry: false,
+    reconciliationRequired: false,
+  };
 }
 
 export function startSubmission(state, idempotencyKey) {
@@ -126,6 +162,7 @@ export function startSubmission(state, idempotencyKey) {
     pending: { text, idempotencyKey },
     notice: '',
     canRetry: false,
+    reconciliationRequired: false,
   };
 }
 
@@ -135,11 +172,12 @@ export function resolveSubmission(state, result = {}) {
   return {
     draft: String(state?.draft || ''),
     sending: false,
-    pending: null,
+    pending: outcomeUnknown && state?.pending ? { ...state.pending } : null,
     notice: outcomeUnknown
-      ? 'Resultado incierto: no vuelvas a enviar este mensaje. Verificá la conversación más tarde.'
+      ? 'Resultado incierto: puede haberse enviado. No vuelvas a enviar este mensaje; requiere reconciliación o iniciar un mensaje distinto.'
       : sanitizeCloudError(result.status, { error: result.errorCode }),
     canRetry: false,
+    reconciliationRequired: outcomeUnknown,
   };
 }
 
@@ -155,7 +193,7 @@ export function createInboxComposerController({ input, send }) {
 
   function render() {
     input.value = composer.draft;
-    const enabled = context.conversationId != null && !composer.sending;
+    const enabled = context.conversationId != null && !composer.sending && !composer.reconciliationRequired;
     input.disabled = !enabled;
     send.disabled = !enabled;
     send.textContent = composer.sending ? 'Enviando…' : 'Enviar';
@@ -169,7 +207,7 @@ export function createInboxComposerController({ input, send }) {
   }
 
   function canChangeContext() {
-    return !composer.sending;
+    return !composer.sending && !composer.reconciliationRequired;
   }
 
   render();
@@ -220,6 +258,7 @@ export function createInboxComposerController({ input, send }) {
     },
     startSend(idempotencyKey) {
       if (context.conversationId == null) throw new Error('Seleccioná una conversación');
+      if (composer.reconciliationRequired) throw new Error('El resultado es incierto y requiere reconciliación');
       composer = createComposerState(input.value);
       composer = startSubmission(composer, idempotencyKey);
       submissionSequence += 1;
@@ -239,6 +278,11 @@ export function createInboxComposerController({ input, send }) {
       composer = resolveSubmission(composer, result);
       activeSubmission = null;
       render();
+      return true;
+    },
+    discardUncertainDraft() {
+      if (!composer.reconciliationRequired || composer.sending) return false;
+      resetComposer();
       return true;
     },
   };

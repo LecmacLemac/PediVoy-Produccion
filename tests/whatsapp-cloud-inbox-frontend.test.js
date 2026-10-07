@@ -10,6 +10,7 @@ import {
   createComposerState,
   createInboxComposerController,
   createRequestGate,
+  createSendDeadline,
   mergeHistoryPage,
   reduceMobileView,
   resolveSubmission,
@@ -236,14 +237,68 @@ test('composer conserva borrador en fallas y sólo limpia con 202 confirmado', (
   assert.equal(unknown.draft, ' respuesta ');
   assert.match(unknown.notice, /no vuelvas a enviar/i);
   assert.equal(unknown.canRetry, false);
+  assert.equal(unknown.reconciliationRequired, true);
+  assert.deepEqual(unknown.pending, { text: 'respuesta', idempotencyKey: 'key-1' });
 
   const networkUnknown = resolveSubmission(pending, { status: 0 });
   assert.match(networkUnknown.notice, /no vuelvas a enviar/i);
   assert.equal(networkUnknown.canRetry, false);
+  assert.equal(networkUnknown.reconciliationRequired, true);
 
   const accepted = resolveSubmission(pending, { status: 202 });
   assert.equal(accepted.draft, '');
   assert.equal(accepted.sending, false);
+});
+
+test('resultado incierto bloquea segundo envío y conserva la misma key hasta descarte explícito', () => {
+  const { input, send, controller } = composerDomHarness();
+  controller.changeCompany(7);
+  controller.activateConversation(controller.beginConversationChange('recipient-a'));
+  input.value = 'mensaje potencialmente enviado';
+  controller.captureDraft();
+  const first = controller.startSend('uncertain-key-1');
+  controller.settleSend(first, { status: 0 });
+
+  assert.equal(input.disabled, true);
+  assert.equal(send.disabled, true);
+  assert.throws(() => controller.startSend('fresh-key-must-not-be-used'), /incierto|reconciliación/i);
+  assert.equal(controller.snapshot().composer.pending.idempotencyKey, 'uncertain-key-1');
+  assert.equal(controller.discardUncertainDraft(), true);
+  assert.equal(input.value, '');
+  assert.equal(input.disabled, false);
+  assert.equal(send.disabled, false);
+});
+
+test('deadline aborta exactamente al límite, compone abort externo y limpia recursos', () => {
+  let timerCallback = null;
+  let cleared = 0;
+  const parent = new AbortController();
+  const deadline = createSendDeadline({
+    parentSignal: parent.signal,
+    timeoutMs: 25_000,
+    setTimeoutFn(callback, ms) {
+      assert.equal(ms, 25_000);
+      timerCallback = callback;
+      return 91;
+    },
+    clearTimeoutFn(id) {
+      assert.equal(id, 91);
+      cleared += 1;
+    },
+  });
+  assert.equal(deadline.signal.aborted, false);
+  timerCallback();
+  assert.equal(deadline.signal.aborted, true);
+  assert.equal(deadline.timedOut(), true);
+  deadline.cleanup();
+  assert.equal(cleared, 1);
+
+  const external = new AbortController();
+  const composed = createSendDeadline({ parentSignal: external.signal, timeoutMs: 25_000 });
+  external.abort();
+  assert.equal(composed.signal.aborted, true);
+  assert.equal(composed.timedOut(), false);
+  composed.cleanup();
 });
 
 test('composer aplica límite de API y exige una key nueva válida por envío', () => {
@@ -294,5 +349,18 @@ test('controlador usa credenciales same-origin, AbortController y envío único'
   assert.match(controller, /new AbortController\(\)/);
   assert.match(controller, /crypto\.randomUUID\(\)/);
   assert.match(controller, /status\s*===\s*202/);
+  assert.match(controller, /SEND_TIMEOUT_MS/);
+  assert.match(controller, /visibilitychange[\s\S]*loadConversations/);
+  assert.match(controller, /matchMedia\(['"]\(max-width:\s*760px\)['"]\)/);
   assert.doesNotMatch(controller, /window\.location\.search|URLSearchParams\(location\.search/);
+});
+
+test('layout usa shell flex de viewport y neutraliza nav global sin restas fijas', async () => {
+  const html = await source(pageUrl);
+  assert.match(html, /body\s*\{[^}]*display:flex[^}]*flex-direction:column[^}]*min-height:100vh/s);
+  assert.match(html, /min-height:100dvh/);
+  assert.match(html, /\.cloud-nav\s*\{/);
+  assert.match(html, /\.shell\s*\{[^}]*flex:1[^}]*min-height:0/s);
+  assert.match(html, /\.inbox\s*\{[^}]*min-height:0/s);
+  assert.doesNotMatch(html, /height:calc\(100dvh\s*-\s*\d+px\)/);
 });

@@ -21,6 +21,7 @@ import { createFacturaCapabilityRouter } from './facturaCapability.js';
 import { createGastosStorageRouter, createFacturasStorageRouter } from './privateStorage.js';
 import { resolveTransferenciaStorageDir, createTransferenciaStorageRouter } from './transferenciaStorage.js';
 import { createWhatsAppCloudJsonMiddleware } from './routes/whatsappCloudWebhook.js';
+import { whatsappCloudInboxMutationGuard } from './routes/whatsappCloudInboxAdmin.js';
 import { resolvePublicPedidoEmpresaId } from './services/publicPedidoTenant.js';
 
 export function buildWhatsAppRegistrationDeps({
@@ -167,6 +168,8 @@ export function createApp(deps) {
   };
 
   app.use(cors({ origin: corsOrigin, credentials: true }));
+  // Run the mutation guard before any body parser so rejected requests do no body work.
+  app.use('/api/admin/whatsapp-cloud', whatsappCloudInboxMutationGuard());
   app.use('/api/webhooks/whatsapp', createWhatsAppCloudJsonMiddleware());
   app.use(express.json({ limit: '1mb' }));
   app.use(express.urlencoded({ extended: true, limit: '1mb' }));

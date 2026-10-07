@@ -12,24 +12,25 @@
       --warning:#f59e0b; --info:#60a5fa; --radius:16px;
     }
     * { box-sizing:border-box; }
-    body { margin:0; min-height:100vh; background:radial-gradient(circle at 85% 15%,rgba(37,211,102,.08),transparent 28%),var(--bg); color:var(--ink); font-family:system-ui,-apple-system,sans-serif; }
+    html { height:100%; }
+    body { margin:0; padding-bottom:0; display:flex; flex-direction:column; min-height:100vh; min-height:100dvh; overflow:hidden; background:radial-gradient(circle at 85% 15%,rgba(37,211,102,.08),transparent 28%),var(--bg); color:var(--ink); font-family:system-ui,-apple-system,sans-serif; }
     button,textarea,select { font:inherit; }
     .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
     button:focus-visible,textarea:focus-visible,select:focus-visible,a:focus-visible { outline:3px solid rgba(37,211,102,.5); outline-offset:2px; }
-    .topbar { border-bottom:1px solid var(--border); background:rgba(15,23,42,.96); position:sticky; top:0; z-index:20; }
+    .topbar { flex:0 0 auto; padding:0; border-bottom:1px solid var(--border); background:rgba(15,23,42,.96); position:relative; top:auto; z-index:20; }
     .topbar-inner { max-width:1400px; margin:auto; padding:.75rem 1rem; display:flex; align-items:center; justify-content:space-between; gap:1rem; }
     .brand { display:flex; align-items:center; gap:.7rem; color:#fff; text-decoration:none; font-weight:800; }
     .brand img { width:auto; height:30px; }
-    .nav { display:flex; gap:1rem; align-items:center; }
-    .nav a { color:var(--muted); text-decoration:none; white-space:nowrap; }
-    .nav a[aria-current="page"] { color:var(--brand); font-weight:700; }
-    .nav .logout { color:#fca5a5; }
-    .shell { max-width:1400px; margin:0 auto; padding:1rem; }
+    .cloud-nav { display:flex; flex-direction:row; justify-content:flex-start; gap:1rem; align-items:center; }
+    .cloud-nav a { color:var(--muted); text-decoration:none; white-space:nowrap; }
+    .cloud-nav a[aria-current="page"] { color:var(--brand); font-weight:700; }
+    .cloud-nav .logout { color:#fca5a5; }
+    .shell { width:100%; max-width:1400px; margin:0 auto; padding:1rem; flex:1 1 auto; min-height:0; display:flex; flex-direction:column; gap:0; }
     #appStatus { padding:.75rem 1rem; margin-bottom:.75rem; border-radius:12px; border:1px solid var(--border); background:var(--surface); }
     #appStatus[data-tone="error"] { color:#fecaca; border-color:rgba(239,68,68,.45); }
     #appStatus[data-tone="warning"] { color:#fde68a; border-color:rgba(245,158,11,.45); }
     #appStatus[data-tone="success"] { color:#bbf7d0; border-color:rgba(37,211,102,.45); }
-    .inbox { display:grid; grid-template-columns:minmax(300px,380px) minmax(0,1fr); height:calc(100dvh - 112px); min-height:620px; border:1px solid var(--border); border-radius:var(--radius); overflow:hidden; background:var(--surface); box-shadow:0 22px 60px rgba(0,0,0,.28); }
+    .inbox { display:grid; grid-template-columns:minmax(300px,380px) minmax(0,1fr); flex:1 1 auto; min-height:0; border:1px solid var(--border); border-radius:var(--radius); overflow:hidden; background:var(--surface); box-shadow:0 22px 60px rgba(0,0,0,.28); }
     .conversation-pane { min-width:0; display:flex; flex-direction:column; border-right:1px solid var(--border); background:rgba(15,23,42,.78); }
     .pane-head { padding:1rem; border-bottom:1px solid var(--border); display:grid; gap:.75rem; }
     .title-row { display:flex; align-items:center; justify-content:space-between; gap:.75rem; }
@@ -70,11 +71,12 @@
     .attachment-caption { white-space:pre-wrap; }
     .attachment-type { color:var(--muted); }
     .attachment-action { justify-self:start; }
-    .composer { position:sticky; bottom:0; display:grid; grid-template-columns:minmax(0,1fr) auto; gap:.65rem; padding:.85rem 1rem; border-top:1px solid var(--border); background:rgba(15,23,42,.97); }
+    .composer { position:sticky; bottom:0; display:grid; grid-template-columns:minmax(0,1fr) auto; gap:.65rem; padding:.85rem 1rem max(.85rem,env(safe-area-inset-bottom)); border-top:1px solid var(--border); background:rgba(15,23,42,.97); }
     .composer textarea { min-height:48px; max-height:150px; resize:vertical; white-space:pre-wrap; overflow-wrap:anywhere; }
     .send-button { align-self:end; min-height:48px; border:0; border-radius:10px; padding:.7rem 1.15rem; background:var(--brand); color:#052e16; font-weight:900; cursor:pointer; }
     .send-button:disabled,.attachment-action:disabled { cursor:not-allowed; opacity:.55; }
     #composerNotice { grid-column:1/-1; min-height:1.2rem; color:var(--muted); font-size:.82rem; }
+    #startNewMessage { grid-column:1/-1; width:auto; justify-self:start; }
     #composerNotice[data-tone="error"] { color:#fecaca; }
     #composerNotice[data-tone="warning"] { color:#fde68a; }
     #composerNotice[data-tone="success"] { color:#bbf7d0; }
@@ -82,9 +84,9 @@
     [hidden] { display:none!important; }
     @media (max-width:760px) {
       .topbar-inner { align-items:flex-start; }
-      .nav { overflow-x:auto; max-width:58vw; padding-bottom:.25rem; }
+      .cloud-nav { flex-direction:row; align-items:center; overflow-x:auto; max-width:58vw; padding-bottom:.25rem; }
       .shell { padding:.5rem; }
-      .inbox { display:block; height:calc(100dvh - 83px); min-height:480px; border-radius:12px; }
+      .inbox { display:block; min-height:0; border-radius:12px; }
       .conversation-pane { height:100%; border-right:0; }
       .chat-pane { display:none; height:100%; }
       .inbox.mobile-detail .conversation-pane { display:none; }
@@ -100,7 +102,7 @@
   <header class="topbar">
     <div class="topbar-inner">
       <a class="brand" href="dashboard.html"><img src="img/brand/pedivoy-logo-horizontal-white.png" alt="PediVoy"><span>Bandeja Cloud</span></a>
-      <nav class="nav" aria-label="Navegación backoffice">
+      <nav class="cloud-nav" aria-label="Navegación backoffice">
         <a href="dashboard.html">Dashboard</a>
         <a href="whatsapp-cloud.html" aria-current="page">WhatsApp Cloud</a>
         <a href="qr.html">QR</a>
@@ -113,7 +115,7 @@
     <section class="inbox" id="inboxLayout" aria-label="Bandeja de WhatsApp Cloud">
       <aside class="conversation-pane" aria-label="Conversaciones">
         <header class="pane-head">
-          <div class="title-row"><h1>WhatsApp Cloud</h1><button id="refreshConversations" class="icon-button" type="button" aria-label="Actualizar conversaciones">Actualizar</button></div>
+          <div class="title-row"><h1 id="conversationHeading" tabindex="-1">WhatsApp Cloud</h1><button id="refreshConversations" class="icon-button" type="button" aria-label="Actualizar conversaciones">Actualizar</button></div>
           <div id="companyPicker"></div>
         </header>
         <div id="conversationList" class="conversation-list"></div>
@@ -130,6 +132,7 @@
           <textarea id="messageInput" maxlength="4096" placeholder="Escribí un mensaje" disabled></textarea>
           <button id="sendButton" class="send-button" type="submit" disabled>Enviar</button>
           <div id="composerNotice" role="status" aria-live="polite"></div>
+          <button id="startNewMessage" class="secondary-button" type="button" hidden>Iniciar mensaje distinto</button>
         </form>
       </section>
     </section>

@@ -6,6 +6,7 @@ import {
   conversationPreview,
   createInboxComposerController,
   createRequestGate,
+  createSendDeadline,
   formatCloudTimestamp,
   mergeHistoryPage,
   reduceMobileView,
@@ -13,6 +14,8 @@ import {
   sanitizeCloudError,
   statusMeta,
 } from './whatsapp-cloud-ui.js';
+
+const SEND_TIMEOUT_MS = 25_000;
 
 const elements = {
   status: document.querySelector('#appStatus'),
@@ -30,6 +33,7 @@ const elements = {
   input: document.querySelector('#messageInput'),
   send: document.querySelector('#sendButton'),
   composerNotice: document.querySelector('#composerNotice'),
+  newMessage: document.querySelector('#startNewMessage'),
   logout: document.querySelector('#logout'),
 };
 
@@ -50,6 +54,12 @@ const conversationGate = createRequestGate();
 const historyGate = createRequestGate();
 let conversationsController = null;
 let historyController = null;
+let sendController = null;
+let returnFocusConversationId = null;
+
+function isMobileLayout() {
+  return window.matchMedia('(max-width: 760px)').matches;
+}
 
 function setStatus(message, tone = 'neutral') {
   elements.status.textContent = message;
@@ -63,11 +73,13 @@ function setComposerNotice(message, tone = 'neutral') {
 }
 
 function syncContextControls() {
-  const sending = composerController.snapshot().composer.sending;
+  const composer = composerController.snapshot().composer;
+  const locked = composer.sending || composer.reconciliationRequired;
   const companySelect = elements.companyWrap.querySelector('select');
-  if (companySelect) companySelect.disabled = sending;
-  elements.back.disabled = sending;
-  elements.conversations.querySelectorAll('button').forEach(button => { button.disabled = sending; });
+  if (companySelect) companySelect.disabled = locked;
+  elements.back.disabled = locked;
+  elements.conversations.querySelectorAll('button').forEach(button => { button.disabled = locked; });
+  elements.newMessage.hidden = !composer.reconciliationRequired;
 }
 
 async function readJson(response) {
@@ -93,7 +105,7 @@ async function request(url, options = {}) {
   return { response, payload };
 }
 
-function clearChat({ composerAlreadyReset = false } = {}) {
+function clearChat({ composerAlreadyReset = false, restoreFocus = true } = {}) {
   if (!composerAlreadyReset && !composerController.closeConversation()) {
     setComposerNotice('Esperá a que termine el envío antes de cambiar de conversación.', 'warning');
     return false;
@@ -108,6 +120,12 @@ function clearChat({ composerAlreadyReset = false } = {}) {
   elements.older.hidden = true;
   setComposerNotice('');
   syncContextControls();
+  if (restoreFocus && isMobileLayout()) {
+    const target = [...elements.conversations.querySelectorAll('button')]
+      .find(button => button.dataset.conversationId === returnFocusConversationId)
+      || document.querySelector('#conversationHeading');
+    target?.focus();
+  }
   return true;
 }
 
@@ -271,6 +289,7 @@ function openConversation(conversation) {
   historyGate.invalidate();
   historyController?.abort();
   state.activeConversation = conversation;
+  returnFocusConversationId = String(conversation.conversationId);
   state.messages = [];
   state.historyCursor = null;
   state.mobile = reduceMobileView(state.mobile, { type: 'open', conversationId: conversation.conversationId });
@@ -282,6 +301,7 @@ function openConversation(conversation) {
   setComposerNotice('');
   renderConversations();
   syncContextControls();
+  if (isMobileLayout()) window.requestAnimationFrame(() => elements.back.focus());
   loadHistory();
 }
 
@@ -356,6 +376,7 @@ async function loadCompanies() {
 async function submitMessage(event) {
   event.preventDefault();
   if (!state.activeConversation) return;
+  if (composerController.snapshot().composer.reconciliationRequired) return;
   let submission;
   try {
     submission = composerController.startSend(crypto.randomUUID());
@@ -369,10 +390,14 @@ async function submitMessage(event) {
   const pending = submission.pending;
   const body = { text: pending.text, idempotency_key: pending.idempotencyKey };
   if (state.role === 'super') body.empresa_id = companyId;
+  sendController = new AbortController();
+  const deadline = createSendDeadline({ parentSignal: sendController.signal, timeoutMs: SEND_TIMEOUT_MS });
   try {
     const path = `/conversations/${encodeURIComponent(conversationId)}/replies`;
     const url = buildCloudApiUrl(path, { role: state.role, companyId, tenantInBody: true });
-    const { response, payload } = await request(url, { method: 'POST', body: JSON.stringify(body) });
+    const { response, payload } = await request(url, {
+      method: 'POST', body: JSON.stringify(body), signal: deadline.signal,
+    });
     if (!composerController.settleSend(submission, { status: response.status, errorCode: payload?.error })) return;
     if (response.status === 202) {
       setComposerNotice('Mensaje en cola. No se reenviará automáticamente.', 'success');
@@ -386,6 +411,8 @@ async function submitMessage(event) {
       }
     }
   } finally {
+    deadline.cleanup();
+    sendController = null;
     syncContextControls();
   }
 }
@@ -417,11 +444,20 @@ async function bootstrap() {
   }
 }
 
-elements.back.addEventListener('click', clearChat);
+elements.back.addEventListener('click', () => clearChat());
 elements.older.addEventListener('click', () => loadHistory({ older: true }));
 elements.conversationsMore.addEventListener('click', () => loadConversations({ append: true }));
 elements.refresh.addEventListener('click', () => loadConversations());
 elements.composer.addEventListener('submit', submitMessage);
+elements.newMessage.addEventListener('click', () => {
+  const warning = 'El mensaje anterior puede haberse enviado. Al continuar se descartará el borrador incierto. ¿Iniciar un mensaje distinto?';
+  if (!window.confirm(warning)) return;
+  if (composerController.discardUncertainDraft()) {
+    setComposerNotice('Escribí un mensaje distinto. El mensaje incierto no se reenviará.', 'warning');
+    syncContextControls();
+    elements.input.focus();
+  }
+});
 elements.input.addEventListener('input', () => {
   composerController.captureDraft();
   setComposerNotice('');
@@ -436,7 +472,11 @@ document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
     conversationsController?.abort();
     historyController?.abort();
+    sendController?.abort();
+    return;
   }
+  loadConversations();
+  if (state.activeConversation) loadHistory();
 });
 
 bootstrap();

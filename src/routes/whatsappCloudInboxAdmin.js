@@ -13,6 +13,58 @@ import {
 
 const PG_INT4_MAX = 2147483647;
 
+function isLoopbackHostname(hostname) {
+  const value = String(hostname || '').toLowerCase();
+  return value === 'localhost' || value.endsWith('.localhost') || value === '::1'
+    || /^127(?:\.\d{1,3}){3}$/.test(value);
+}
+
+function configuredCanonicalOrigin(req, override) {
+  const configured = String(override || process.env.PUBLIC_BASE_URL || process.env.APP_PUBLIC_URL || '').trim();
+  if (configured) {
+    try {
+      const parsed = new URL(configured);
+      if (parsed.username || parsed.password || !['https:', 'http:'].includes(parsed.protocol)) return null;
+      if (parsed.protocol === 'http:' && !isLoopbackHostname(parsed.hostname)) return null;
+      return parsed.origin;
+    } catch {
+      return null;
+    }
+  }
+  // Local-only trust boundary: Host is accepted solely for loopback development.
+  if (process.env.NODE_ENV === 'production' && process.env.LOCAL_HTTP_DEV !== 'true') return null;
+  try {
+    const parsed = new URL(`${req.protocol || 'http'}://${req.get('host') || ''}`);
+    return isLoopbackHostname(parsed.hostname) ? parsed.origin : null;
+  } catch {
+    return null;
+  }
+}
+
+export function whatsappCloudInboxMutationGuard({ canonicalOrigin } = {}) {
+  return function guard(req, res, next) {
+    if (req.method !== 'POST' || !/\/conversations\/[^/]+\/replies\/?$/.test(req.path || req.originalUrl || '')) {
+      return next();
+    }
+    const mediaType = String(req.get('content-type') || '').split(';', 1)[0].trim().toLowerCase();
+    if (mediaType !== 'application/json') return res.status(415).json({ error: 'content_type_invalid' });
+    const expected = configuredCanonicalOrigin(req, canonicalOrigin);
+    const supplied = req.get('origin');
+    if (!expected || !supplied || supplied === 'null' || supplied.includes(',')) {
+      return res.status(403).json({ error: 'request_origin_invalid' });
+    }
+    try {
+      const parsed = new URL(supplied);
+      if (parsed.origin !== supplied || parsed.username || parsed.password || supplied !== expected) {
+        return res.status(403).json({ error: 'request_origin_invalid' });
+      }
+    } catch {
+      return res.status(403).json({ error: 'request_origin_invalid' });
+    }
+    return next();
+  };
+}
+
 function positiveInteger(value) {
   if (typeof value === 'number') {
     return Number.isSafeInteger(value) && value > 0 ? value : null;
@@ -79,6 +131,7 @@ export function createWhatsAppCloudInboxAdminRouter({
   pool = defaultPool,
   withAuth = defaultWithAuth,
   enqueueReply = enqueueWppOutboxCorrelatedReply,
+  canonicalOrigin,
 } = {}) {
   const router = Router();
   router.use((_req, res, next) => {
@@ -154,7 +207,7 @@ export function createWhatsAppCloudInboxAdminRouter({
       return res.status(500).json({ error: 'cloud_inbox_unavailable' });
     }
   });
-  router.post('/conversations/:conversationId/replies', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
+  router.post('/conversations/:conversationId/replies', whatsappCloudInboxMutationGuard({ canonicalOrigin }), withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     const empresaId = resolveTenant(req, { allowBody: true });
     if (!empresaId) return res.status(400).json({ error: 'empresa_id_required' });
     if (!positiveInteger(req.params.conversationId)) {

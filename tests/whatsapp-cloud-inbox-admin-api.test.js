@@ -30,6 +30,7 @@ function createHarness({ role, empresaId = 7 } = {}) {
   const app = express();
   app.use(express.json());
   app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+    canonicalOrigin: 'https://admin.pedivoy.test',
     withAuth(req, _res, next) {
       req.user = { uid: 11, role, empresa_id: empresaId };
       next();
@@ -42,6 +43,62 @@ function createHarness({ role, empresaId = 7 } = {}) {
   }));
   return { app, calls };
 }
+
+test('reply exige JSON y Origin canónico exacto antes de query o enqueue', async () => {
+  let queries = 0;
+  let enqueues = 0;
+  const app = express();
+  app.use(express.json());
+  app.use(express.urlencoded({ extended: true }));
+  app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+    canonicalOrigin: 'https://admin.pedivoy.test',
+    withAuth(req, _res, next) {
+      req.user = { uid: 22, role: 'admin', empresa_id: 7 };
+      next();
+    },
+    async query() {
+      queries += 1;
+      return [{ participant_wa_id: '5493515550001' }];
+    },
+    async enqueueReply() {
+      enqueues += 1;
+      return { queued: true, id: 1, status: 'pending' };
+    },
+  }));
+
+  await withServer(app, async baseUrl => {
+    const path = `${baseUrl}/api/admin/whatsapp-cloud/conversations/44/replies`;
+    const rejected = [
+      { expected: 415, headers: { Origin: 'https://admin.pedivoy.test', 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'text=hola&idempotency_key=form-1' },
+      { expected: 415, headers: { Origin: 'https://admin.pedivoy.test', 'Content-Type': 'multipart/form-data; boundary=test-boundary' }, body: '--test-boundary--' },
+      { expected: 415, headers: { Origin: 'https://admin.pedivoy.test' }, body: 'plain text' },
+      { expected: 403, headers: { Origin: 'https://sibling.pedivoy.test', 'Content-Type': 'application/json' }, body: JSON.stringify({ text: 'hola', idempotency_key: 'sibling-1' }) },
+      { expected: 403, headers: { Origin: 'null', 'Content-Type': 'application/json' }, body: JSON.stringify({ text: 'hola', idempotency_key: 'null-1' }) },
+      { expected: 403, headers: { Origin: 'https://admin.pedivoy.test, https://evil.test', 'Content-Type': 'application/json' }, body: JSON.stringify({ text: 'hola', idempotency_key: 'duplicate-1' }) },
+      { expected: 403, headers: { Origin: 'not an origin', 'Content-Type': 'application/json' }, body: JSON.stringify({ text: 'hola', idempotency_key: 'malformed-1' }) },
+      { expected: 403, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: 'hola', idempotency_key: 'missing-1' }) },
+    ];
+    for (const options of rejected) {
+      const { expected, ...requestOptions } = options;
+      const response = await fetch(path, { method: 'POST', ...requestOptions });
+      assert.equal(response.status, expected);
+      assert.deepEqual(await response.json(), {
+        error: expected === 415 ? 'content_type_invalid' : 'request_origin_invalid',
+      });
+    }
+    assert.equal(queries, 0);
+    assert.equal(enqueues, 0);
+
+    const accepted = await fetch(path, {
+      method: 'POST',
+      headers: { Origin: 'https://admin.pedivoy.test', 'Content-Type': 'application/json; charset=utf-8' },
+      body: JSON.stringify({ text: 'hola', idempotency_key: 'valid-1' }),
+    });
+    assert.equal(accepted.status, 202);
+  });
+  assert.equal(queries, 1);
+  assert.equal(enqueues, 1);
+});
 
 for (const role of ['user', 'repartidor', 'referente', 'facturacion', 'contable', 'Admin', 'super ']) {
   test(`Cloud inbox bloquea rol no autorizado ${JSON.stringify(role)} antes de consultar`, async () => {
@@ -87,6 +144,7 @@ test('historial resuelve la conversación por id tenant-scoped y devuelve sólo 
   const app = express();
   app.use(express.json());
   app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+    canonicalOrigin: 'https://admin.pedivoy.test',
     withAuth(req, _res, next) {
       req.user = { uid: 11, role: 'admin', empresa_id: 7 };
       next();
@@ -133,6 +191,7 @@ test('attachment expone metadatos allowlisted y download falla cerrado sin stora
   const app = express();
   app.use(express.json());
   app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+    canonicalOrigin: 'https://admin.pedivoy.test',
     withAuth(req, _res, next) {
       req.user = { uid: 11, role: 'super', empresa_id: null };
       next();
@@ -175,6 +234,7 @@ test('reply manual usa sólo enqueue correlacionado Cloud, ignora transport del 
   const app = express();
   app.use(express.json());
   app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+    canonicalOrigin: 'https://admin.pedivoy.test',
     withAuth(req, _res, next) {
       req.user = { uid: 22, role: 'admin', empresa_id: 7 };
       next();
@@ -193,7 +253,7 @@ test('reply manual usa sólo enqueue correlacionado Cloud, ignora transport del 
   await withServer(app, async baseUrl => {
     const response = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations/44/replies`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { Origin: 'https://admin.pedivoy.test', 'Content-Type': 'application/json' },
       body: JSON.stringify({
         empresa_id: 999,
         text: ' respuesta manual ',
@@ -226,6 +286,7 @@ test('reply distingue outcome_unknown sanitizado y no intenta retry ni fallback'
   const app = express();
   app.use(express.json());
   app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+    canonicalOrigin: 'https://admin.pedivoy.test',
     withAuth(req, _res, next) {
       req.user = { uid: 22, role: 'super', empresa_id: null };
       next();
@@ -246,7 +307,7 @@ test('reply distingue outcome_unknown sanitizado y no intenta retry ni fallback'
   await withServer(app, async baseUrl => {
     const response = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations/44/replies`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { Origin: 'https://admin.pedivoy.test', 'Content-Type': 'application/json' },
       body: JSON.stringify({
         empresa_id: 8,
         text: 'respuesta incierta',
@@ -266,6 +327,7 @@ test('reply duplicado con la misma key pero distinto destinatario o texto respon
   const app = express();
   app.use(express.json());
   app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+    canonicalOrigin: 'https://admin.pedivoy.test',
     withAuth(req, _res, next) {
       req.user = { uid: 22, role: 'admin', empresa_id: 7 };
       next();
@@ -285,7 +347,7 @@ test('reply duplicado con la misma key pero distinto destinatario o texto respon
   await withServer(app, async baseUrl => {
     const response = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations/44/replies`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { Origin: 'https://admin.pedivoy.test', 'Content-Type': 'application/json' },
       body: JSON.stringify({ text: 'texto cambiado', idempotency_key: 'same-key' }),
     });
     assert.equal(response.status, 409);
@@ -316,6 +378,7 @@ test('lista de conversaciones pagina por última actividad, enmascara teléfono 
   const app = express();
   app.use(express.json());
   app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+    canonicalOrigin: 'https://admin.pedivoy.test',
     withAuth(req, _res, next) {
       req.user = { uid: 11, role: 'admin', empresa_id: 7 };
       next();
@@ -352,6 +415,7 @@ test('historial pagina hacia atrás pero responde cada página en orden cronoló
   const app = express();
   app.use(express.json());
   app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+    canonicalOrigin: 'https://admin.pedivoy.test',
     withAuth(req, _res, next) {
       req.user = { uid: 11, role: 'admin', empresa_id: 7 };
       next();
@@ -390,6 +454,7 @@ test('validación estricta rechaza cursores, ids, empresa y reply mal tipados an
   const app = express();
   app.use(express.json());
   app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+    canonicalOrigin: 'https://admin.pedivoy.test',
     withAuth(req, _res, next) {
       req.user = { uid: 11, role: 'super', empresa_id: null };
       next();
@@ -410,15 +475,15 @@ test('validación estricta rechaza cursores, ids, empresa y reply mal tipados an
       fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations/01/messages?empresa_id=8`),
       fetch(`${baseUrl}/api/admin/whatsapp-cloud/messages/1.0/attachment?empresa_id=8`),
       fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations/44/replies`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { Origin: 'https://admin.pedivoy.test', 'Content-Type': 'application/json' },
         body: JSON.stringify({ empresa_id: '8', text: 'ok', idempotency_key: 'typed' }),
       }),
       fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations/44/replies`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { Origin: 'https://admin.pedivoy.test', 'Content-Type': 'application/json' },
         body: JSON.stringify({ empresa_id: 8, text: 9, idempotency_key: 'typed' }),
       }),
       fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations/44/replies`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { Origin: 'https://admin.pedivoy.test', 'Content-Type': 'application/json' },
         body: JSON.stringify({ empresa_id: 8, text: 'ok', idempotency_key: ' con espacio ' }),
       }),
     ];
@@ -435,6 +500,7 @@ test('reply super rechaza selectores de empresa discordantes antes de query o en
   const app = express();
   app.use(express.json());
   app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+    canonicalOrigin: 'https://admin.pedivoy.test',
     withAuth(req, _res, next) {
       req.user = { uid: 11, role: 'super', empresa_id: null };
       next();
@@ -452,7 +518,7 @@ test('reply super rechaza selectores de empresa discordantes antes de query o en
   await withServer(app, async baseUrl => {
     const response = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations/44/replies?empresa_id=9`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { Origin: 'https://admin.pedivoy.test', 'Content-Type': 'application/json' },
       body: JSON.stringify({ empresa_id: 8, text: 'ok', idempotency_key: 'tenant-conflict' }),
     });
     assert.equal(response.status, 400);
@@ -467,6 +533,7 @@ test('reply super acepta un selector query único y duplicados concordantes', as
   const app = express();
   app.use(express.json());
   app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+    canonicalOrigin: 'https://admin.pedivoy.test',
     withAuth(req, _res, next) {
       req.user = { uid: 11, role: 'super', empresa_id: null };
       next();
@@ -484,14 +551,14 @@ test('reply super acepta un selector query único y duplicados concordantes', as
   await withServer(app, async baseUrl => {
     const queryOnly = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations/44/replies?empresa_id=9`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { Origin: 'https://admin.pedivoy.test', 'Content-Type': 'application/json' },
       body: JSON.stringify({ text: 'query', idempotency_key: 'tenant-query' }),
     });
     assert.equal(queryOnly.status, 202);
 
     const concordant = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations/44/replies?empresa_id=8`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { Origin: 'https://admin.pedivoy.test', 'Content-Type': 'application/json' },
       body: JSON.stringify({ empresa_id: 8, text: 'same', idempotency_key: 'tenant-same' }),
     });
     assert.equal(concordant.status, 202);
@@ -505,6 +572,7 @@ test('API rechaza empresa_id fuera de int4 y tipos JSON no numéricos antes de q
   const app = express();
   app.use(express.json());
   app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+    canonicalOrigin: 'https://admin.pedivoy.test',
     withAuth(req, _res, next) {
       req.user = { uid: 11, role: 'super', empresa_id: null };
       next();
@@ -535,7 +603,7 @@ test('API rechaza empresa_id fuera de int4 y tipos JSON no numéricos antes de q
     for (const empresa_id of [2147483648, 0, -1, 1.5, true, [], {}, '8']) {
       const response = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations/44/replies`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { Origin: 'https://admin.pedivoy.test', 'Content-Type': 'application/json' },
         body: JSON.stringify({ empresa_id, text: 'ok', idempotency_key: 'strict-tenant' }),
       });
       assert.equal(response.status, 400, JSON.stringify(empresa_id));

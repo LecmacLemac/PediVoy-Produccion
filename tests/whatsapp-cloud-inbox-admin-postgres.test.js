@@ -124,6 +124,7 @@ test('API admin Cloud conserva tenant, paginación, redacción e idempotencia en
     const app = express();
     app.use(express.json());
     app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+      canonicalOrigin: 'https://admin.pedivoy.test',
       withAuth(req, _res, next) {
         req.user = { uid: 1, role: 'admin', empresa_id: 1 };
         next();
@@ -189,13 +190,13 @@ test('API admin Cloud conserva tenant, paginación, redacción e idempotencia en
         transportOrigin: 'company',
       };
       const firstReply = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations/${tenantOneDoc.id}/replies`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(replyBody),
+        method: 'POST', headers: { Origin: 'https://admin.pedivoy.test', 'Content-Type': 'application/json' }, body: JSON.stringify(replyBody),
       });
       assert.equal(firstReply.status, 202);
       const firstReplyBody = await firstReply.json();
       assert.equal(firstReplyBody.queued, true);
       const replay = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations/${tenantOneDoc.id}/replies`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(replyBody),
+        method: 'POST', headers: { Origin: 'https://admin.pedivoy.test', 'Content-Type': 'application/json' }, body: JSON.stringify(replyBody),
       });
       assert.equal(replay.status, 200);
       assert.deepEqual(await replay.json(), {
@@ -205,7 +206,7 @@ test('API admin Cloud conserva tenant, paginación, redacción e idempotencia en
       });
       const conflict = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations/${tenantOneDoc.id}/replies`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { Origin: 'https://admin.pedivoy.test', 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...replyBody, text: 'texto distinto' }),
       });
       assert.equal(conflict.status, 409);
