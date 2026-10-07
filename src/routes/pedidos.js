@@ -2,13 +2,167 @@
 import express from 'express';
 
 import { withAuth, checkLicencia, isSuper, getEmpresaIdFromToken } from '../services.js';
-import { query } from '../db.js';
+import { query, withTransaction } from '../db.js';
 import { notificarEnRuta } from '../services/notificacionesPedidos.js';
 import { awardPointsForDeliveredOrder } from '../services/puntosService.js';
 import { generateComisionesForDeliveredOrder } from '../services/referentesService.js';
 import { createPedidoEstadoNotifications } from '../services/referenteNotifications.js';
 import { ejecutarPostEntregaUpsell } from '../estrategias.js';
 import { requireCanonicalBackofficeRole } from './canonicalBackofficeRole.js';
+
+function pedidoUpdateError(statusCode, message) {
+  return Object.assign(new Error(message), { statusCode });
+}
+
+export function createUpdatePedidoHandler({
+  withTransactionFn = withTransaction,
+  isSuperFn = isSuper,
+  getEmpresaIdFromTokenFn = getEmpresaIdFromToken,
+  notifyEstadoFn = createPedidoEstadoNotifications,
+  notifyEnRutaFn = notificarEnRuta,
+  awardPointsFn = awardPointsForDeliveredOrder,
+  generateComisionesFn = generateComisionesForDeliveredOrder,
+  postEntregaFn = ejecutarPostEntregaUpsell,
+} = {}) {
+  return async function updatePedido(req, res) {
+    try {
+      const pedidoId = Number(req.params.id);
+      if (!Number.isSafeInteger(pedidoId) || pedidoId <= 0) {
+        throw pedidoUpdateError(400, 'ID de pedido inválido');
+      }
+
+      const body = req.body || {};
+      const { estado, metodo_pago, empresa_id, chofer_id, zona_id } = body;
+      const esSuperUser = isSuperFn(req);
+      const myEmpresa = getEmpresaIdFromTokenFn(req);
+      const tenantEmpresa = esSuperUser ? null : Number(myEmpresa);
+      if (!esSuperUser && (!Number.isSafeInteger(tenantEmpresa) || tenantEmpresa <= 0)) {
+        throw pedidoUpdateError(400, 'Falta empresa.');
+      }
+
+      const outcome = await withTransactionFn(async (txQuery) => {
+        const rows = await txQuery(
+          `SELECT id, empresa_id, punto_entrega_id, monto, estado
+             FROM pedidos
+            WHERE id = $1
+              AND ($2::int IS NULL OR empresa_id = $2)
+            FOR UPDATE`,
+          [pedidoId, tenantEmpresa]
+        );
+        if (rows.length !== 1) throw pedidoUpdateError(404, 'Pedido no encontrado o sin permiso');
+
+        const current = rows[0];
+        const finalized = current.estado === 'entregado' || current.estado === 'cancelado';
+        if (finalized && (Object.hasOwn(body, 'estado') || Object.hasOwn(body, 'empresa_id'))) {
+          throw pedidoUpdateError(409, 'El pedido finalizado sólo admite correcciones administrativas');
+        }
+
+        const sets = [];
+        const vals = [];
+        let idx = 1;
+        if (estado) {
+          sets.push(`estado = $${idx++}`);
+          vals.push(estado);
+        }
+        if (metodo_pago) {
+          sets.push(`metodo_pago = $${idx++}`);
+          vals.push(metodo_pago);
+        }
+        if (esSuperUser && empresa_id != null) {
+          sets.push(`empresa_id = $${idx++}`);
+          vals.push(Number(empresa_id));
+        }
+        if (chofer_id != null) {
+          sets.push(`chofer_id = $${idx++}`);
+          vals.push(chofer_id);
+        }
+        if (zona_id != null) {
+          sets.push(`zona_id = $${idx++}`);
+          vals.push(zona_id);
+        }
+
+        let updated = current;
+        if (sets.length) {
+          vals.push(pedidoId);
+          const idPos = idx++;
+          vals.push(current.empresa_id);
+          const currentEmpresaPos = idx++;
+          const updatedRows = await txQuery(
+            `UPDATE pedidos SET ${sets.join(', ')}
+             WHERE id = $${idPos}
+               AND empresa_id IS NOT DISTINCT FROM $${currentEmpresaPos}
+             RETURNING id, empresa_id, punto_entrega_id, monto, estado`,
+            vals
+          );
+          if (updatedRows.length !== 1) {
+            throw pedidoUpdateError(409, 'El pedido cambió durante la actualización');
+          }
+          updated = updatedRows[0];
+        }
+
+        return {
+          row: updated,
+          estadoChanged: Boolean(estado) && estado !== current.estado,
+          requestedEstado: estado,
+        };
+      });
+
+      if (outcome.estadoChanged) {
+        const row = outcome.row;
+        notifyEstadoFn({
+          queryFn: query,
+          empresaId: row.empresa_id,
+          pedidoId: row.id,
+          estado: outcome.requestedEstado,
+        }).catch((err) => console.error('REFERENTES.NOTIFICACION.PEDIDO.ERROR', err?.message || err));
+
+        if (outcome.requestedEstado === 'en_ruta' || outcome.requestedEstado === 'en_camino') {
+          notifyEnRutaFn(row.id, Number(row.empresa_id)).catch((err) =>
+            console.error('Error en notificación background:', err)
+          );
+        }
+
+        if (outcome.requestedEstado === 'entregado' && process.env.TRACK_CLEAR_ON_DELIVER === '1') {
+          await query('UPDATE pedidos SET tracking_token = NULL WHERE id = $1 AND empresa_id = $2', [row.id, row.empresa_id]);
+        }
+
+        if (outcome.requestedEstado === 'entregado') {
+          awardPointsFn({
+            queryFn: query,
+            empresaId: row.empresa_id,
+            puntoEntregaId: row.punto_entrega_id,
+            pedidoId: row.id,
+            monto: row.monto,
+          }).catch((err) => console.error('POINTS.AWARD.ERROR', err?.message || err));
+          generateComisionesFn({
+            queryFn: query,
+            empresaId: row.empresa_id,
+            pedidoId: row.id,
+          }).catch((err) => console.error('REFERENTES.COMISION.ERROR', err?.message || err));
+          postEntregaFn({
+            pedidoId: row.id,
+            empresaId: row.empresa_id,
+          }).catch((err) => console.error('MARKETING.POSTENTREGA.ERROR', err?.message || err));
+        }
+      }
+
+      return res.json({ ok: true });
+    } catch (e) {
+      if (e?.code === 'TRANSACTION_OUTCOME_UNKNOWN') {
+        return res.status(503).json({
+          error: 'Resultado de actualización de pedido indeterminado',
+          code: 'TRANSACTION_OUTCOME_UNKNOWN',
+        });
+      }
+      const statusCode = Number(e?.statusCode);
+      if (Number.isInteger(statusCode) && statusCode >= 400 && statusCode < 500) {
+        return res.status(statusCode).json({ error: e.message });
+      }
+      console.error(e);
+      return res.status(500).json({ error: 'Error actualizando pedido' });
+    }
+  };
+}
 
 export function createPedidosRouter() {
   const router = express.Router();
@@ -604,117 +758,7 @@ export function createPedidosRouter() {
   // --------------------------------------------------
   // PUT /api/pedidos/:id
   // --------------------------------------------------
-  router.put('/:id', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
-    try {
-      const { estado, metodo_pago, empresa_id, chofer_id, zona_id } = req.body;
-      const esSuperUser = isSuper(req);
-      const myEmpresa = getEmpresaIdFromToken(req);
-
-      const targetEmpresa = esSuperUser
-        ? (empresa_id != null ? Number(empresa_id) : null)
-        : Number(myEmpresa);
-
-      if (!esSuperUser && !targetEmpresa) {
-        return res.status(400).json({ error: 'Falta empresa.' });
-      }
-
-      const sets = [];
-      const vals = [];
-      let idx = 1;
-
-      if (estado) {
-        sets.push(`estado = $${idx++}`);
-        vals.push(estado);
-      }
-      if (metodo_pago) {
-        sets.push(`metodo_pago = $${idx++}`);
-        vals.push(metodo_pago);
-      }
-
-      if (esSuperUser && empresa_id != null) {
-        sets.push(`empresa_id = $${idx++}`);
-        vals.push(Number(empresa_id));
-      }
-
-      if (chofer_id != null) {
-        sets.push(`chofer_id = $${idx++}`);
-        vals.push(chofer_id);
-      }
-      if (zona_id != null) {
-        sets.push(`zona_id = $${idx++}`);
-        vals.push(zona_id);
-      }
-
-      if (sets.length) {
-        vals.push(req.params.id);
-        const idPos = idx++;
-        vals.push(targetEmpresa);
-        const empPos = idx++;
-
-        const r = await query(
-          `UPDATE pedidos SET ${sets.join(', ')}
-           WHERE id = $${idPos}
-             AND ($${empPos}::int IS NULL OR empresa_id = $${empPos})
-           RETURNING id, empresa_id, punto_entrega_id, monto, estado`,
-          vals
-        );
-
-        if (!r.length) {
-          return res.status(404).json({ error: 'Pedido no encontrado o sin permiso' });
-        }
-
-        if (estado) {
-          const row = r[0];
-          createPedidoEstadoNotifications({
-            queryFn: query,
-            empresaId: row.empresa_id,
-            pedidoId: row.id,
-            estado,
-          }).catch((err) => console.error('REFERENTES.NOTIFICACION.PEDIDO.ERROR', err?.message || err));
-        }
-
-        if (estado === 'en_ruta' || estado === 'en_camino') {
-          const emp = Number(r[0].empresa_id);
-          notificarEnRuta(req.params.id, emp).catch((err) =>
-            console.error('Error en notificación background:', err)
-          );
-        }
-
-        if (estado === 'entregado' && process.env.TRACK_CLEAR_ON_DELIVER === '1') {
-          const emp = Number(r[0].empresa_id);
-          await query(
-            'UPDATE pedidos SET tracking_token = NULL WHERE id = $1 AND empresa_id = $2',
-            [req.params.id, emp]
-          );
-        }
-
-        if (estado === 'entregado') {
-          const row = r[0];
-          awardPointsForDeliveredOrder({
-            queryFn: query,
-            empresaId: row.empresa_id,
-            puntoEntregaId: row.punto_entrega_id,
-            pedidoId: row.id,
-            monto: row.monto,
-          }).catch((err) => console.error('POINTS.AWARD.ERROR', err?.message || err));
-          generateComisionesForDeliveredOrder({
-            queryFn: query,
-            empresaId: row.empresa_id,
-            pedidoId: row.id,
-          }).catch((err) => console.error('REFERENTES.COMISION.ERROR', err?.message || err));
-          ejecutarPostEntregaUpsell({
-            pedidoId: row.id,
-            empresaId: row.empresa_id,
-          }).catch((err) => console.error('MARKETING.POSTENTREGA.ERROR', err?.message || err));
-        }
-      }
-
-      res.json({ ok: true });
-    } catch (e) {
-      console.error(e);
-      res.status(500).json({ error: 'Error actualizando pedido' });
-    }
-  });
+  router.put('/:id', withAuth, requireCanonicalBackofficeRole, createUpdatePedidoHandler());
 
   // --------------------------------------------------
   // DELETE /api/pedidos/:id

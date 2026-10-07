@@ -948,6 +948,9 @@
 
         <fieldset>
           <legend>Ítems del Pedido</legend>
+          <p id="dlg_finalized_notice" class="muted" hidden style="margin-top:0;">
+            Los ítems quedan protegidos. Se permiten correcciones administrativas de método de pago, chofer y zona.
+          </p>
           <div class="table-responsive" style="border:none; box-shadow:none;">
             <table>
               <thead>
@@ -1023,6 +1026,7 @@
   <script type="module">
     import { hasValidCoordinates } from './location-utils.js';
     import { applyCloudInboxNavigation } from './dashboard-nav.js';
+    import { applyFinalizedOrderControls, buildPedidoSavePlan, isPedidoFinalizado } from './dashboard-order-edit.js';
 
     // ====== Auth (modo seguro: cookie httpOnly) ======
     const authFetch = (url, opts = {}) => {
@@ -1082,6 +1086,7 @@
     const btnCloseX    = $('#btnCloseX');
     const btnAddItem   = $('#dlg_addItem');
     const dlgError     = $('#dlgError');
+    const dlgFinalizedNotice = $('#dlg_finalized_notice');
 
     // ====== State ======
     let isSuper      = false;
@@ -1096,6 +1101,7 @@
     let zonasEmpresa = [];
     let zonasEmpresaId = null;
     let editingId    = null;
+    let editingPedidoFinalizado = false;
     let saveBusy      = false;
     let deleteBusy    = false;
     let pedidosReqSeq = 0;
@@ -1660,6 +1666,16 @@
         if (el === btnSaveAll || el === btnCloseDlg || el === btnCloseX || el === btnAddItem) return;
         el.disabled = saveBusy;
       });
+      if (!saveBusy) {
+        applyFinalizedOrderControls({
+          finalized: editingPedidoFinalizado,
+          estado: $('#dlg_estado'),
+          empresa: $('#dlg_empresa_id'),
+          addItem: btnAddItem,
+          itemsBody: dlg_itemsBody,
+          notice: dlgFinalizedNotice,
+        });
+      }
     }
 
     const closeDialog = () => { if (!saveBusy) { setDialogError(''); dlg.close(); } };
@@ -2224,6 +2240,7 @@
       editingId = id;
       $('#dlg_pid').textContent = id;
       const p = pedidos.find(x => x.id == id) || {};
+      editingPedidoFinalizado = isPedidoFinalizado(p.estado);
 
       $('#dlg_estado').value     = p.estado || 'pendiente';
       $('#dlg_metodo').value     = (p.metodo_pago || '').toLowerCase();
@@ -2242,10 +2259,12 @@
         const list  = Array.isArray(items) && items.length ? items : [{producto:'', cantidad:1, precio_unitario:0}];
         dlg_itemsBody.innerHTML = list.map(renderItemRow).join('');
         recalcTotal();
+        setModalBusy(false);
       } catch (err) {
         setDialogError(err?.message || 'Error cargando ítems');
         dlg_itemsBody.innerHTML = renderItemRow({ producto:'', cantidad:1, precio_unitario:0 });
         recalcTotal();
+        setModalBusy(false);
       }
     };
 
@@ -2321,7 +2340,7 @@
     };
 
     window.removeItemRow = function(btn){
-      if (saveBusy) return;
+      if (saveBusy || editingPedidoFinalizado) return;
       const tr = btn.closest('tr');
       tr?.remove();
       if (!dlg_itemsBody.querySelector('tr')) {
@@ -2331,7 +2350,7 @@
     };
 
     btnAddItem.onclick = () => {
-      if (saveBusy) return;
+      if (saveBusy || editingPedidoFinalizado) return;
       dlg_itemsBody.insertAdjacentHTML('beforeend', renderItemRow({ cantidad:1, precio_unitario:0 }));
       recalcTotal();
     };
@@ -2340,7 +2359,7 @@
       if (saveBusy) return;
       setDialogError('');
 
-      const rowData = Array.from(dlg_itemsBody.querySelectorAll('tr')).map(tr => {
+      const rowData = editingPedidoFinalizado ? [] : Array.from(dlg_itemsBody.querySelectorAll('tr')).map(tr => {
         tr.classList.remove('row-invalid');
         const i = tr.querySelectorAll('input');
         return {
@@ -2358,14 +2377,14 @@
       const zonaId    = Number($('#dlg_zona_id').value)    || null;
 
       // Validaciones fuertes
-      if (!items.length) {
+      if (!editingPedidoFinalizado && !items.length) {
         setDialogError('Agregá al menos un ítem válido.');
         return;
       }
 
       const invalidRows = rowData.filter(it => it.producto && (!Number.isFinite(it.cantidad) || it.cantidad <= 0 || !Number.isFinite(it.precio_unitario) || it.precio_unitario < 0));
       invalidRows.forEach(it => it.tr.classList.add('row-invalid'));
-      if (invalidRows.length) {
+      if (!editingPedidoFinalizado && invalidRows.length) {
         setDialogError('Revisá los ítems marcados: cantidad debe ser mayor a 0 y precio mayor o igual a 0.');
         invalidRows[0]?.tr.querySelector('input')?.focus();
         return;
@@ -2373,7 +2392,7 @@
 
       const estadoVal = String($('#dlg_estado').value || '').trim();
       const estadosPermitidos = ['pendiente', 'en_ruta', 'entregado', 'cancelado'];
-      if (!estadosPermitidos.includes(estadoVal)) {
+      if (!editingPedidoFinalizado && !estadosPermitidos.includes(estadoVal)) {
         setDialogError('Estado inválido.');
         return;
       }
@@ -2385,21 +2404,33 @@
         return;
       }
 
+      const savePlan = buildPedidoSavePlan({
+        finalized: editingPedidoFinalizado,
+        items,
+        estado: estadoVal,
+        metodoPago: metodoVal,
+        empresaId,
+        choferId,
+        zonaId,
+      });
+
       const prevTxt = btnSaveAll.textContent;
       setModalBusy(true);
       btnSaveAll.textContent = 'Guardando...';
 
       try {
-        const itemsResp = await authFetch(`/api/pedidos/${editingId}/items`, {
-          method: 'PUT',
-          headers:{
-            'Content-Type':'application/json'
-          },
-          body: JSON.stringify({ items })
-        });
+        if (savePlan.updateItems) {
+          const itemsResp = await authFetch(`/api/pedidos/${editingId}/items`, {
+            method: 'PUT',
+            headers:{
+              'Content-Type':'application/json'
+            },
+            body: JSON.stringify({ items: savePlan.items })
+          });
 
-        if (!itemsResp.ok) {
-          throw new Error(await parseErrorResponse(itemsResp, 'No se pudieron actualizar los ítems del pedido.'));
+          if (!itemsResp.ok) {
+            throw new Error(await parseErrorResponse(itemsResp, 'No se pudieron actualizar los ítems del pedido.'));
+          }
         }
 
         const pedidoResp = await authFetch(`/api/pedidos/${editingId}`, {
@@ -2407,13 +2438,7 @@
           headers:{
             'Content-Type':'application/json'
           },
-          body: JSON.stringify({
-            estado:      estadoVal,
-            metodo_pago: metodoVal,
-            empresa_id:  empresaId,
-            chofer_id:   choferId,
-            zona_id:     zonaId
-          })
+          body: JSON.stringify(savePlan.pedidoBody)
         });
 
         if (!pedidoResp.ok) {

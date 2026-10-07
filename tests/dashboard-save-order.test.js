@@ -12,7 +12,7 @@ function saveHandlerSource() {
   return source.slice(start, end);
 }
 
-function createHarness({ itemsOk = true } = {}) {
+function createHarness({ itemsOk = true, finalized = false } = {}) {
   const requests = [];
   const errors = [];
   let closed = false;
@@ -43,6 +43,7 @@ function createHarness({ itemsOk = true } = {}) {
   const context = {
     saveBusy: false,
     editingId: 42,
+    editingPedidoFinalizado: finalized,
     dlg_itemsBody: { querySelectorAll: () => [row] },
     btnSaveAll: { textContent: 'Guardar' },
     dlg: { close() { closed = true; } },
@@ -58,6 +59,24 @@ function createHarness({ itemsOk = true } = {}) {
     showToast() {},
     loadPedidos: async () => {},
     applyFilters() {},
+    buildPedidoSavePlan({ items, estado, metodoPago, empresaId, choferId, zonaId }) {
+      return finalized
+        ? {
+            updateItems: false,
+            pedidoBody: { metodo_pago: metodoPago, chofer_id: choferId, zona_id: zonaId },
+          }
+        : {
+            updateItems: true,
+            items,
+            pedidoBody: {
+              estado,
+              metodo_pago: metodoPago,
+              empresa_id: empresaId,
+              chofer_id: choferId,
+              zona_id: zonaId,
+            },
+          };
+    },
   };
 
   vm.runInNewContext(saveHandlerSource(), context, { filename: 'dashboard-save-handler.js' });
@@ -85,4 +104,18 @@ test('si falla el guardado de ítems no envía la finalización del pedido', asy
   assert.deepEqual(harness.requests.map(request => request.url), ['/api/pedidos/42/items']);
   assert.match(harness.errors.at(-1), /No se pudieron actualizar los ítems/);
   assert.equal(harness.wasClosed(), false);
+});
+
+test('al corregir un pedido finalizado omite PUT items y envía sólo campos administrativos', async () => {
+  const harness = createHarness({ finalized: true });
+
+  await harness.context.btnSaveAll.onclick();
+
+  assert.deepEqual(harness.requests.map(request => request.url), ['/api/pedidos/42']);
+  assert.deepEqual(JSON.parse(harness.requests[0].options.body), {
+    metodo_pago: 'efectivo',
+    chofer_id: 3,
+    zona_id: 2,
+  });
+  assert.equal(harness.wasClosed(), true);
 });
