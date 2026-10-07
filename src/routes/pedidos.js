@@ -9,13 +9,18 @@ import { generateComisionesForDeliveredOrder } from '../services/referentesServi
 import { createPedidoEstadoNotifications } from '../services/referenteNotifications.js';
 import { ejecutarPostEntregaUpsell } from '../estrategias.js';
 import { requireCanonicalBackofficeRole } from './canonicalBackofficeRole.js';
+import {
+  backofficeMutationError,
+  lockCanonicalBackofficeActor,
+  parseCanonicalPositiveInt4,
+  requireCanonicalActorUid,
+} from './pedidoBackofficeMutation.js';
 
 const PEDIDO_ESTADOS = new Set(['pendiente', 'en_ruta', 'en_camino', 'entregado', 'cancelado']);
 const PEDIDO_METODOS_PAGO = new Set(['efectivo', 'transferencia', 'cuenta_corriente', 'qr_dinamico']);
-const POSTGRES_INT4_MAX = 2147483647;
 
 function pedidoUpdateError(statusCode, message) {
-  return Object.assign(new Error(message), { statusCode });
+  return backofficeMutationError(statusCode, message);
 }
 
 function hasOwn(object, key) {
@@ -42,44 +47,12 @@ export function createUpdatePedidoHandler({
 } = {}) {
   return async function updatePedido(req, res) {
     try {
-      const pedidoIdParam = req.params.id;
-      if (typeof pedidoIdParam !== 'string' || !/^[1-9]\d*$/.test(pedidoIdParam)) {
-        throw pedidoUpdateError(400, 'ID de pedido inválido');
-      }
-      const pedidoId = Number(pedidoIdParam);
-      if (!Number.isSafeInteger(pedidoId) || pedidoId > POSTGRES_INT4_MAX) {
-        throw pedidoUpdateError(400, 'ID de pedido inválido');
-      }
-      const actorUid = req.user?.uid;
-      if (!Number.isSafeInteger(actorUid) || actorUid <= 0) {
-        throw pedidoUpdateError(403, 'Usuario autenticado inválido');
-      }
+      const pedidoId = parseCanonicalPositiveInt4(req.params.id, 'ID de pedido inválido');
+      const actorUid = requireCanonicalActorUid(req.user);
 
       const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
       const outcome = await withTransactionFn(async (txQuery) => {
-        const actorRows = await txQuery(
-          `SELECT id, role, empresa_id, activo
-             FROM usuarios
-            WHERE id = $1
-            FOR SHARE`,
-          [actorUid]
-        );
-        if (actorRows.length !== 1) throw pedidoUpdateError(403, 'Actor no autorizado');
-        const actor = actorRows[0];
-        const tokenRole = req.user?.role;
-        const tokenEmpresa = req.user?.empresa_id;
-        const actorRoleValid = actor.role === 'admin' || actor.role === 'super';
-        const adminEmpresa = Number(actor.empresa_id);
-        const adminScopeValid = actor.role !== 'admin'
-          || (Number.isSafeInteger(adminEmpresa) && adminEmpresa > 0
-            && tokenRole === 'admin' && tokenEmpresa === adminEmpresa);
-        const superScopeValid = actor.role !== 'super'
-          || (actor.empresa_id === null && tokenRole === 'super' && tokenEmpresa == null);
-        if (actor.activo !== true || !actorRoleValid || !adminScopeValid || !superScopeValid) {
-          throw pedidoUpdateError(403, 'Actor no autorizado');
-        }
-
-        const tenantEmpresa = actor.role === 'admin' ? adminEmpresa : null;
+        const { tenantEmpresa } = await lockCanonicalBackofficeActor(txQuery, req.user, actorUid);
         const rows = await txQuery(
           `SELECT id, empresa_id, punto_entrega_id, monto, estado
              FROM pedidos

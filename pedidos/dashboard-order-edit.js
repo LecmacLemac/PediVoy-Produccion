@@ -1,3 +1,23 @@
+export function resetPedidoEditView({
+  notice,
+  itemsBody,
+  total,
+  relationSelects = [],
+  relationHints = [],
+}) {
+  notice.hidden = true;
+  notice.textContent = '';
+  itemsBody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:1rem; color:var(--muted);">Cargando ítems...</td></tr>';
+  total.textContent = '$ 0';
+  relationSelects.forEach((select) => {
+    select.innerHTML = '<option value="">Cargando...</option>';
+    select.value = '';
+  });
+  relationHints.forEach((hint) => {
+    hint.textContent = '';
+  });
+}
+
 export function createPedidoEditCoordinator() {
   let generation = 0;
   let active = null;

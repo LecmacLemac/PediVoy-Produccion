@@ -46,6 +46,12 @@ async function requestJson(url, method, body) {
 
 async function createFixture(pool) {
   await pool.query(`
+    CREATE TABLE usuarios (
+      id integer PRIMARY KEY,
+      role text NOT NULL,
+      empresa_id integer,
+      activo boolean NOT NULL
+    );
     CREATE TABLE empresas (id integer PRIMARY KEY, config_entrega jsonb DEFAULT '{}'::jsonb);
     CREATE TABLE choferes (
       id integer PRIMARY KEY,
@@ -208,6 +214,7 @@ async function createFixture(pool) {
       created_at timestamptz DEFAULT now()
     );
 
+    INSERT INTO usuarios VALUES (80, 'admin', 3, true);
     INSERT INTO empresas (id) VALUES (3), (4);
     INSERT INTO choferes (id, empresa_id) VALUES (7, 3);
     INSERT INTO puntos_entrega (id, empresa_id) VALUES (9, 3);

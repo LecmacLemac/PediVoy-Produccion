@@ -65,11 +65,19 @@ function createHarness(role) {
   const downstream = { auth: 0, license: 0, query: 0, tx: 0, geocode: 0, enqueue: 0, pool: 0 };
   const withAuth = (req, _res, next) => {
     downstream.auth += 1;
-    req.user = { role, empresa_id: 3, chofer_id: 123 };
+    req.user = { uid: 80, role, empresa_id: role === 'super' ? null : 3, chofer_id: 123 };
     next();
   };
   const query = async () => { downstream.query += 1; throw new Error('downstream query'); };
-  const withTransaction = async () => { downstream.tx += 1; throw new Error('downstream tx'); };
+  const withTransaction = async work => {
+    downstream.tx += 1;
+    return work(async statement => {
+      if (/FROM usuarios/.test(statement)) {
+        return [{ id: 80, role, empresa_id: role === 'super' ? null : 3, activo: true }];
+      }
+      throw new Error('downstream tx');
+    });
+  };
   const checkLicencia = (_req, _res, next) => { downstream.license += 1; next(); };
   const deps = {
     query,

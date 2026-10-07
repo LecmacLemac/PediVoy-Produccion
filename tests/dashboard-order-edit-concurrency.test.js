@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-import { createPedidoEditCoordinator } from '../pedidos/dashboard-order-edit.js';
+import { createPedidoEditCoordinator, resetPedidoEditView } from '../pedidos/dashboard-order-edit.js';
 
 function deferred() {
   let resolve;
@@ -70,6 +70,45 @@ for (const finalized of [false, true]) {
   });
 }
 
+test('limpieza visual de B elimina residuos de A y una respuesta stale no los restaura', () => {
+  const coordinator = createPedidoEditCoordinator();
+  const notice = { hidden: false, textContent: 'Los ítems quedan protegidos' };
+  const itemsBody = { innerHTML: '<tr><td>Pedido A</td></tr>' };
+  const total = { textContent: '$ 9.999' };
+  const relationSelects = [
+    { innerHTML: '<option>Empresa A</option>', value: '7' },
+    { innerHTML: '<option>Chofer A</option>', value: '9' },
+    { innerHTML: '<option>Zona A</option>', value: '4' },
+  ];
+  const relationHints = [
+    { textContent: 'Empresa A' },
+    { textContent: 'Chofer A' },
+    { textContent: 'Zona A' },
+  ];
+
+  const first = coordinator.begin({ id: 41, finalized: true });
+  const second = coordinator.begin({ id: 42, finalized: false });
+  resetPedidoEditView({ notice, itemsBody, total, relationSelects, relationHints });
+
+  assert.equal(notice.hidden, true);
+  assert.equal(notice.textContent, '');
+  assert.match(itemsBody.innerHTML, /Cargando ítems/);
+  assert.equal(itemsBody.innerHTML.includes('Pedido A'), false);
+  assert.equal(total.textContent, '$ 0');
+  assert.equal(relationSelects.every(select => select.value === '' && /Cargando/.test(select.innerHTML)), true);
+  assert.equal(relationHints.every(hint => hint.textContent === ''), true);
+  assert.equal(coordinator.canSave(second), false);
+
+  assert.equal(coordinator.commit(first, () => {
+    notice.hidden = false;
+    itemsBody.innerHTML = '<tr><td>Pedido A restaurado</td></tr>';
+    total.textContent = '$ 9.999';
+  }), false);
+  assert.equal(notice.hidden, true);
+  assert.match(itemsBody.innerHTML, /Cargando ítems/);
+  assert.equal(total.textContent, '$ 0');
+});
+
 test('dashboard protege showModal, cargas y guardado con el contexto capturado', async () => {
   const source = await readFile(new URL('../pedidos/dashboard.html', import.meta.url), 'utf8');
   const openStart = source.indexOf('window.openPedido = async (id) => {');
@@ -79,6 +118,8 @@ test('dashboard protege showModal, cargas y guardado con el contexto capturado',
 
   assert.match(openSource, /pedidoEditCoordinator\.begin/);
   assert.match(openSource, /setModalBusy\(true\)/);
+  assert.match(openSource, /resetPedidoEditView\(/);
+  assert.ok(openSource.indexOf('resetPedidoEditView({') < openSource.indexOf('await Promise.all('));
   assert.match(openSource, /if \(!dlg\.open\) dlg\.showModal\(\)/);
   assert.match(openSource, /applyPedidoIdNameHints\(p\)/);
   assert.doesNotMatch(openSource, /await updatePedidoIdNameHints\(p\)/);
