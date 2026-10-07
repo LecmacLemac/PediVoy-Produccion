@@ -548,6 +548,95 @@ test('migración de conversaciones rechaza constraints ajenas sin eliminarlas ni
   });
 });
 
+test('migración de conversaciones rechaza EXCLUDE ajena antes de reparar defaults u objetos', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (1)');
+    await pool.query(migrationSql);
+    await pool.query(`
+      INSERT INTO whatsapp_cloud_conversations
+        (empresa_id, participant_wa_id, workflow_status, priority, version)
+      VALUES (1, '5493515550009', 'resolved', 'high', 23);
+      ALTER TABLE whatsapp_cloud_conversations ALTER COLUMN priority DROP DEFAULT;
+      ALTER TABLE whatsapp_cloud_conversations
+        ADD CONSTRAINT legacy_conversation_empresa_exclude
+        EXCLUDE USING hash (empresa_id WITH =)
+    `);
+
+    const snapshot = async () => {
+      const [relation, constraints, indexes, columns, rows] = await Promise.all([
+        pool.query(`
+          SELECT oid::text AS table_oid
+            FROM pg_class
+           WHERE oid = 'whatsapp_cloud_conversations'::regclass
+        `),
+        pool.query(`
+          SELECT oid::text AS constraint_oid, conname, contype,
+                 conindid::text AS index_oid,
+                 pg_get_constraintdef(oid, true) AS definition
+            FROM pg_constraint
+           WHERE conrelid = 'whatsapp_cloud_conversations'::regclass
+           ORDER BY conname
+        `),
+        pool.query(`
+          SELECT index_row.indexrelid::text AS index_oid,
+                 index_class.relname,
+                 pg_get_indexdef(index_row.indexrelid) AS definition
+            FROM pg_index AS index_row
+            JOIN pg_class AS index_class ON index_class.oid = index_row.indexrelid
+           WHERE index_row.indrelid = 'whatsapp_cloud_conversations'::regclass
+           ORDER BY index_class.relname
+        `),
+        pool.query(`
+          SELECT attribute_row.attname,
+                 attribute_row.atthasdef,
+                 default_row.oid::text AS default_oid,
+                 pg_get_expr(default_row.adbin, default_row.adrelid) AS default_expression
+            FROM pg_attribute AS attribute_row
+            LEFT JOIN pg_attrdef AS default_row
+              ON default_row.adrelid = attribute_row.attrelid
+             AND default_row.adnum = attribute_row.attnum
+           WHERE attribute_row.attrelid = 'whatsapp_cloud_conversations'::regclass
+             AND attribute_row.attnum > 0
+             AND NOT attribute_row.attisdropped
+           ORDER BY attribute_row.attnum
+        `),
+        pool.query(`
+          SELECT id::text, empresa_id, participant_wa_id, workflow_status, priority, version,
+                 created_at::text, updated_at::text, xmin::text
+            FROM whatsapp_cloud_conversations
+           ORDER BY id
+        `),
+      ]);
+      return {
+        relation: relation.rows,
+        constraints: constraints.rows,
+        indexes: indexes.rows,
+        columns: columns.rows,
+        rows: rows.rows,
+      };
+    };
+
+    const before = await snapshot();
+    const alien = before.constraints.find(row => row.conname === 'legacy_conversation_empresa_exclude');
+    assert.equal(alien?.contype, 'x');
+    assert.equal(alien?.definition, 'EXCLUDE USING hash (empresa_id WITH =)');
+    assert.equal(
+      before.columns.find(row => row.attname === 'priority')?.default_expression,
+      null,
+    );
+
+    await assert.rejects(pool.query(projectionSql), error => {
+      assert.equal(error?.code, 'P0001');
+      assert.equal(error?.message, 'whatsapp_cloud_conversations_schema_unsafe');
+      assert.equal(error?.detail, undefined);
+      assert.equal(error?.hint, undefined);
+      assert.doesNotMatch(JSON.stringify(error), /5493515550009|empresa_exclude|empresa_id/i);
+      return true;
+    });
+    assert.deepEqual(await snapshot(), before);
+  });
+});
+
 test('migración de conversaciones es estructuralmente idempotente en esquema canónico', async () => {
   await withDatabase(async pool => {
     await pool.query(migrationSql);

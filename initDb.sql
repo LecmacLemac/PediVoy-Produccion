@@ -2442,10 +2442,25 @@ BEGIN
        SELECT 1
          FROM pg_catalog.pg_constraint AS constraint_row
         WHERE constraint_row.conrelid = conversation_relation.oid
-          AND constraint_row.contype IN ('p', 'u', 'f', 'c')
           AND NOT (
             (constraint_row.conname = 'whatsapp_cloud_conversations_pkey'
              AND pg_catalog.pg_get_constraintdef(constraint_row.oid, true) = 'PRIMARY KEY (id)')
+            OR (constraint_row.conname = 'whatsapp_cloud_conversations_id_not_null'
+             AND pg_catalog.pg_get_constraintdef(constraint_row.oid, true) = 'NOT NULL id')
+            OR (constraint_row.conname = 'whatsapp_cloud_conversations_empresa_id_not_null'
+             AND pg_catalog.pg_get_constraintdef(constraint_row.oid, true) = 'NOT NULL empresa_id')
+            OR (constraint_row.conname = 'whatsapp_cloud_conversations_participant_wa_id_not_null'
+             AND pg_catalog.pg_get_constraintdef(constraint_row.oid, true) = 'NOT NULL participant_wa_id')
+            OR (constraint_row.conname = 'whatsapp_cloud_conversations_workflow_status_not_null'
+             AND pg_catalog.pg_get_constraintdef(constraint_row.oid, true) = 'NOT NULL workflow_status')
+            OR (constraint_row.conname = 'whatsapp_cloud_conversations_priority_not_null'
+             AND pg_catalog.pg_get_constraintdef(constraint_row.oid, true) = 'NOT NULL priority')
+            OR (constraint_row.conname = 'whatsapp_cloud_conversations_version_not_null'
+             AND pg_catalog.pg_get_constraintdef(constraint_row.oid, true) = 'NOT NULL version')
+            OR (constraint_row.conname = 'whatsapp_cloud_conversations_created_at_not_null'
+             AND pg_catalog.pg_get_constraintdef(constraint_row.oid, true) = 'NOT NULL created_at')
+            OR (constraint_row.conname = 'whatsapp_cloud_conversations_updated_at_not_null'
+             AND pg_catalog.pg_get_constraintdef(constraint_row.oid, true) = 'NOT NULL updated_at')
             OR (constraint_row.conname = 'whatsapp_cloud_conversations_empresa_id_fkey'
              AND pg_catalog.pg_get_constraintdef(constraint_row.oid, true) = 'FOREIGN KEY (empresa_id) REFERENCES empresas(id) ON DELETE CASCADE')
             OR (constraint_row.conname = 'whatsapp_cloud_conversations_empresa_participant_key'
