@@ -1282,7 +1282,7 @@ test('inventario estructural: todo writer de productos.nombre y todo lector lega
     'POST, PUT y DELETE de productos deben bloquear namespace');
   assert.match(productosSource, /namespace\(s\) -> fila de producto/);
   assert.match(sources.get('src/routes/setup.js'), /lockProductIdentityNamespaces\(/);
-  assert.match(sources.get('src/routes/pedidosItems.js'), /lockProductIdentityNamespaces\(/);
+  assert.match(sources.get('src/routes/pedidoItemsMutation.js'), /lockProductIdentityNamespaces\(/);
   const readerInventory = {
     'src/routes/repartidorApi.js': {
       resolverCalls: 2,

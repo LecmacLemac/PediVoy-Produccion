@@ -64,8 +64,6 @@ export function buildPedidoSavePlan({
 }) {
   if (finalized) {
     return {
-      updateItems: false,
-      items: null,
       pedidoBody: {
         metodo_pago: metodoPago,
         chofer_id: choferId,
@@ -75,12 +73,10 @@ export function buildPedidoSavePlan({
   }
 
   return {
-    updateItems: true,
-    items,
     pedidoBody: {
+      items,
       estado,
       metodo_pago: metodoPago,
-      empresa_id: empresaId,
       chofer_id: choferId,
       zona_id: zonaId,
     },
@@ -96,7 +92,7 @@ export function applyFinalizedOrderControls({
   notice,
 }) {
   estado.disabled = finalized;
-  empresa.disabled = finalized;
+  empresa.disabled = true;
   addItem.disabled = finalized;
   itemsBody.querySelectorAll('input, button').forEach((control) => {
     control.disabled = finalized;

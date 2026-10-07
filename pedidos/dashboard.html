@@ -2473,20 +2473,6 @@
       btnSaveAll.textContent = 'Guardando...';
 
       try {
-        if (savePlan.updateItems) {
-          const itemsResp = await authFetch(`/api/pedidos/${savePedidoId}/items`, {
-            method: 'PUT',
-            headers:{
-              'Content-Type':'application/json'
-            },
-            body: JSON.stringify({ items: savePlan.items })
-          });
-
-          if (!itemsResp.ok) {
-            throw new Error(await parseErrorResponse(itemsResp, 'No se pudieron actualizar los ítems del pedido.'));
-          }
-        }
-
         const pedidoResp = await authFetch(`/api/pedidos/${savePedidoId}`, {
           method: 'PUT',
           headers:{

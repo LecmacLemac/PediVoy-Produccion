@@ -55,6 +55,23 @@ async function createFixture(pool) {
       chofer_id integer,
       zona_id integer
     );
+    CREATE TABLE productos (
+      id integer PRIMARY KEY,
+      empresa_id integer NOT NULL,
+      nombre text NOT NULL,
+      activo boolean NOT NULL DEFAULT true,
+      deleted_at timestamptz,
+      config_activo boolean,
+      retornable boolean
+    );
+    CREATE TABLE items_pedido (
+      id serial PRIMARY KEY,
+      pedido_id integer NOT NULL REFERENCES pedidos(id),
+      producto text NOT NULL,
+      producto_id integer NOT NULL REFERENCES productos(id),
+      cantidad numeric NOT NULL,
+      precio_unitario numeric NOT NULL
+    );
     INSERT INTO usuarios VALUES
       (5, 'admin', 7, true),
       (6, 'super', NULL, true);
@@ -66,9 +83,97 @@ async function createFixture(pool) {
       (4, 7),
       (14, 8);
     INSERT INTO pedidos VALUES
-      (42, 7, 12, 3000, 'entregado', 'efectivo', 9, 4);
+      (42, 7, 12, 3000, 'entregado', 'efectivo', 9, 4),
+      (43, 7, 12, 100, 'pendiente', 'efectivo', 9, 4);
+    INSERT INTO productos VALUES
+      (55, 7, 'Anterior', true, NULL, false, false),
+      (66, 7, 'Nuevo', true, NULL, false, false);
+    INSERT INTO items_pedido (pedido_id, producto, producto_id, cantidad, precio_unitario)
+    VALUES (43, 'Anterior', 55, 1, 100);
   `);
 }
+
+async function invokePedido(pool, pedidoId, body, user = { uid: 5, role: 'admin', empresa_id: 7 }) {
+  const handler = createUpdatePedidoHandler({
+    withTransactionFn: work => withTransaction(work, { pool, maxRetries: 0 }),
+    notifyEstadoFn: () => Promise.resolve(),
+    notifyEnRutaFn: () => Promise.resolve(),
+    awardPointsFn: () => Promise.resolve(),
+    generateComisionesFn: () => Promise.resolve(),
+    postEntregaFn: () => Promise.resolve(),
+  });
+  const res = responseHarness();
+  await handler({ params: { id: String(pedidoId) }, body, user }, res);
+  return res;
+}
+
+async function snapshotEditablePedido(pool) {
+  return {
+    pedido: (await pool.query('SELECT monto, estado, metodo_pago, chofer_id, zona_id FROM pedidos WHERE id = 43')).rows,
+    items: (await pool.query('SELECT producto_id, producto, cantidad, precio_unitario FROM items_pedido WHERE pedido_id = 43 ORDER BY id')).rows,
+  };
+}
+
+test('PostgreSQL real: rollback atómico conserva items, monto y admin si zona cross-tenant falla', postgresOptions, async () => {
+  await withIsolatedPostgres(async pool => {
+    await createFixture(pool);
+    const before = await snapshotEditablePedido(pool);
+    const response = await invokePedido(pool, 43, {
+      items: [{ producto_id: 66, cantidad: 2, precio_unitario: 75 }],
+      estado: 'en_ruta',
+      metodo_pago: 'transferencia',
+      chofer_id: null,
+      zona_id: 14,
+    });
+    assert.equal(response.statusCode, 400);
+    assert.deepEqual(await snapshotEditablePedido(pool), before);
+  });
+});
+
+test('PostgreSQL real: guardado completo persiste items, monto y admin en una transacción', postgresOptions, async () => {
+  await withIsolatedPostgres(async pool => {
+    await createFixture(pool);
+    const response = await invokePedido(pool, 43, {
+      items: [{ producto_id: 66, cantidad: 2, precio_unitario: 75 }],
+      estado: 'en_ruta',
+      metodo_pago: 'transferencia',
+      chofer_id: null,
+      zona_id: null,
+    });
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(await snapshotEditablePedido(pool), {
+      pedido: [{ monto: '150', estado: 'en_ruta', metodo_pago: 'transferencia', chofer_id: null, zona_id: null }],
+      items: [{ producto_id: 66, producto: 'Nuevo', cantidad: '2', precio_unitario: '75' }],
+    });
+  });
+});
+
+test('PostgreSQL real: actor revocado concurrentemente bloquea el guardado completo sin cambios', postgresOptions, async () => {
+  await withIsolatedPostgres(async pool => {
+    await createFixture(pool);
+    const before = await snapshotEditablePedido(pool);
+    const revoker = await pool.connect();
+    try {
+      await revoker.query('BEGIN');
+      await revoker.query('UPDATE usuarios SET activo = false WHERE id = 5');
+      const request = invokePedido(pool, 43, {
+        items: [{ producto_id: 66, cantidad: 2, precio_unitario: 75 }],
+        estado: 'en_ruta',
+        metodo_pago: 'transferencia',
+        chofer_id: null,
+        zona_id: null,
+      });
+      await new Promise(resolve => setTimeout(resolve, 60));
+      await revoker.query('COMMIT');
+      const response = await request;
+      assert.equal(response.statusCode, 403);
+      assert.deepEqual(await snapshotEditablePedido(pool), before);
+    } finally {
+      try { await revoker.query('ROLLBACK'); } catch {}
+      revoker.release();
+    }
+  });
+});
 
 test('PostgreSQL real: corrección finalizada valida tenant/links y null limpia con exact-row', postgresOptions, async () => {
   await withIsolatedPostgres(async pool => {

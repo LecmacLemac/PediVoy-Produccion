@@ -30,7 +30,6 @@ test('finalizado omite items y estado/empresa pero envia metodo, chofer y zona',
     zonaId: 2,
   });
 
-  assert.equal(plan.updateItems, false);
   assert.deepEqual(plan.pedidoBody, {
     metodo_pago: 'transferencia',
     chofer_id: 3,
@@ -52,18 +51,17 @@ test('no finalizado conserva items y actualizacion completa existente', () => {
     zonaId: 2,
   });
 
-  assert.equal(plan.updateItems, true);
-  assert.deepEqual(plan.items, items);
   assert.deepEqual(plan.pedidoBody, {
+    items,
     estado: 'entregado',
     metodo_pago: 'efectivo',
-    empresa_id: 7,
     chofer_id: 3,
     zona_id: 2,
   });
+  assert.equal(Object.hasOwn(plan.pedidoBody, 'empresa_id'), false);
 });
 
-test('controles de items, estado y empresa quedan bloqueados en finalizados', () => {
+test('empresa queda bloqueada en todo pedido y estado/items sólo en finalizados', () => {
   const estado = control();
   const empresa = control();
   const addItem = control();
@@ -88,4 +86,22 @@ test('controles de items, estado y empresa quedan bloqueados en finalizados', ()
   assert.equal(notice.hidden, false);
   assert.match(notice.textContent, /ítems quedan protegidos/i);
   assert.match(notice.textContent, /correcciones administrativas/i);
+
+  const editableEstado = control();
+  const editableEmpresa = control();
+  const editableAddItem = control();
+  const editableNotice = control();
+  const editableItems = [control(), control()];
+  applyFinalizedOrderControls({
+    finalized: false,
+    estado: editableEstado,
+    empresa: editableEmpresa,
+    addItem: editableAddItem,
+    itemsBody: { querySelectorAll: () => editableItems },
+    notice: editableNotice,
+  });
+  assert.equal(editableEstado.disabled, false);
+  assert.equal(editableEmpresa.disabled, true);
+  assert.equal(editableAddItem.disabled, false);
+  assert.equal(editableItems.some((item) => item.disabled), false);
 });

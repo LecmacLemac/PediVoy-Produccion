@@ -13,8 +13,14 @@ import {
   backofficeMutationError,
   lockCanonicalBackofficeActor,
   parseCanonicalPositiveInt4,
+  POSTGRES_INT4_MAX,
   requireCanonicalActorUid,
 } from './pedidoBackofficeMutation.js';
+import {
+  normalizeRequestedPedidoItems,
+  replacePedidoItems,
+  resolveAndLockPedidoProducts,
+} from './pedidoItemsMutation.js';
 
 const PEDIDO_ESTADOS = new Set(['pendiente', 'en_ruta', 'en_camino', 'entregado', 'cancelado']);
 const PEDIDO_METODOS_PAGO = new Set(['efectivo', 'transferencia', 'cuenta_corriente', 'qr_dinamico']);
@@ -31,7 +37,7 @@ function requireOptionalPositiveJsonInteger(body, field) {
   if (!hasOwn(body, field)) return { present: false, value: undefined };
   const value = body[field];
   if (value === null) return { present: true, value: null };
-  if (!Number.isSafeInteger(value) || value <= 0) {
+  if (!Number.isSafeInteger(value) || value <= 0 || value > POSTGRES_INT4_MAX) {
     throw pedidoUpdateError(400, `${field} inválido`);
   }
   return { present: true, value };
@@ -51,6 +57,8 @@ export function createUpdatePedidoHandler({
       const actorUid = requireCanonicalActorUid(req.user);
 
       const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
+      const choferInput = requireOptionalPositiveJsonInteger(body, 'chofer_id');
+      const zonaInput = requireOptionalPositiveJsonInteger(body, 'zona_id');
       const outcome = await withTransactionFn(async (txQuery) => {
         const { tenantEmpresa } = await lockCanonicalBackofficeActor(txQuery, req.user, actorUid);
         const rows = await txQuery(
@@ -71,7 +79,11 @@ export function createUpdatePedidoHandler({
         const estado = body.estado;
         const empresaPresent = hasOwn(body, 'empresa_id');
         const empresaRaw = body.empresa_id;
+        const itemsPresent = hasOwn(body, 'items');
         const finalized = current.estado === 'entregado' || current.estado === 'cancelado';
+        if (finalized && itemsPresent) {
+          throw pedidoUpdateError(409, 'El pedido finalizado no admite cambios de ítems');
+        }
         if (finalized && estadoPresent && estado !== null && estado !== current.estado) {
           throw pedidoUpdateError(409, 'El pedido finalizado sólo admite correcciones administrativas');
         }
@@ -96,10 +108,16 @@ export function createUpdatePedidoHandler({
           throw pedidoUpdateError(400, 'metodo_pago inválido');
         }
 
-        const choferInput = requireOptionalPositiveJsonInteger(body, 'chofer_id');
-        const zonaInput = requireOptionalPositiveJsonInteger(body, 'zona_id');
+        let canonicalItems = null;
 
-        // Orden global: actor -> pedido -> chofer -> zona -> pedido UPDATE.
+        // Orden global: actor -> pedido -> productos -> chofer -> zona -> escrituras.
+        if (itemsPresent) {
+          const requestedItems = normalizeRequestedPedidoItems(body.items);
+          canonicalItems = await resolveAndLockPedidoProducts(txQuery, {
+            empresaId: current.empresa_id,
+            requestedItems,
+          });
+        }
         if (choferInput.present && choferInput.value !== null) {
           const choferRows = await txQuery(
             `SELECT id
@@ -146,6 +164,13 @@ export function createUpdatePedidoHandler({
         }
 
         let updated = current;
+        if (canonicalItems) {
+          updated = await replacePedidoItems(txQuery, {
+            pedidoId,
+            empresaId: current.empresa_id,
+            canonicalItems,
+          });
+        }
         if (sets.length) {
           vals.push(pedidoId);
           const idPos = idx++;

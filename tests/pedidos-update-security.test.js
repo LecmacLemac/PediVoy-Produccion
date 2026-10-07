@@ -63,13 +63,30 @@ test('acepta ID decimal positivo canónico dentro de int4', async () => {
 });
 
 for (const [label, value] of [
-  ['string', '9'], ['cero', 0], ['negativo', -1], ['decimal', 1.5], ['NaN', Number.NaN], ['objeto', {}],
+  ['string', '9'], ['cero', 0], ['negativo', -1], ['decimal', 1.5], ['NaN', Number.NaN], ['objeto', {}], ['fuera de int4', 2147483648],
 ]) {
   test(`rechaza chofer_id ${label} sin UPDATE`, async () => {
     const h = buildHarness();
     const res = await invoke(h.handler, { chofer_id: value });
     assert.equal(res.statusCode, 400);
     assert.equal(h.calls.some(call => /UPDATE pedidos/.test(call.sql)), false);
+  });
+}
+
+for (const field of ['chofer_id', 'zona_id']) {
+  test(`${field} acepta el límite int4`, async () => {
+    const h = buildHarness();
+    const res = await invoke(h.handler, { [field]: 2147483647 });
+    assert.equal(res.statusCode, 200);
+    const relation = h.calls.find(call => field === 'chofer_id' ? /FROM choferes/.test(call.sql) : /FROM zonas_geograficas/.test(call.sql));
+    assert.equal(relation.params[0], 2147483647);
+  });
+
+  test(`${field} rechaza 2147483648 antes de cualquier SQL`, async () => {
+    const h = buildHarness();
+    const res = await invoke(h.handler, { [field]: 2147483648 });
+    assert.equal(res.statusCode, 400);
+    assert.deepEqual(h.calls, []);
   });
 }
 
@@ -202,4 +219,15 @@ test('acepta cuenta_corriente y vacío/null de método conserva compatibilidad c
     assert.equal(res.statusCode, 200);
     assert.equal(h.calls.some(call => /UPDATE pedidos/.test(call.sql)), false);
   }
+});
+
+test('pedido finalizado rechaza items antes de resolver productos o escribir', async () => {
+  const h = buildHarness();
+  const res = await invoke(h.handler, {
+    items: [{ producto_id: 11, cantidad: 1, precio_unitario: 25 }],
+    metodo_pago: 'transferencia',
+  });
+  assert.equal(res.statusCode, 409);
+  assert.match(res.payload.error, /no admite cambios de ítems/i);
+  assert.equal(h.calls.some(call => /FROM productos|DELETE FROM items_pedido|INSERT INTO items_pedido|UPDATE pedidos/.test(call.sql)), false);
 });

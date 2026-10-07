@@ -12,7 +12,7 @@ function saveHandlerSource() {
   return source.slice(start, end);
 }
 
-function createHarness({ itemsOk = true, finalized = false, pedidoResponse } = {}) {
+function createHarness({ finalized = false, pedidoResponse } = {}) {
   const requests = [];
   const errors = [];
   let closed = false;
@@ -60,7 +60,6 @@ function createHarness({ itemsOk = true, finalized = false, pedidoResponse } = {
     parseErrorResponse: async (_response, fallback) => fallback,
     authFetch: async (url, options) => {
       requests.push({ url, options });
-      if (url.endsWith('/items')) return { ok: itemsOk };
       if (pedidoResponse) return pedidoResponse;
       return { ok: true };
     },
@@ -70,16 +69,13 @@ function createHarness({ itemsOk = true, finalized = false, pedidoResponse } = {
     buildPedidoSavePlan({ items, estado, metodoPago, empresaId, choferId, zonaId }) {
       return finalized
         ? {
-            updateItems: false,
             pedidoBody: { metodo_pago: metodoPago, chofer_id: choferId, zona_id: zonaId },
           }
         : {
-            updateItems: true,
-            items,
             pedidoBody: {
+              items,
               estado,
               metodo_pago: metodoPago,
-              empresa_id: empresaId,
               chofer_id: choferId,
               zona_id: zonaId,
             },
@@ -98,26 +94,32 @@ function createHarness({ itemsOk = true, finalized = false, pedidoResponse } = {
   };
 }
 
-test('al finalizar un pedido guarda los ítems antes de enviar estado entregado', async () => {
+test('pedido no finalizado se guarda con exactamente un request atómico', async () => {
   const harness = createHarness();
 
   await harness.context.btnSaveAll.onclick();
 
   assert.deepEqual(
     harness.requests.map(request => request.url),
-    ['/api/pedidos/42/items', '/api/pedidos/42'],
+    ['/api/pedidos/42'],
   );
-  assert.equal(JSON.parse(harness.requests[1].options.body).estado, 'entregado');
+  assert.deepEqual(JSON.parse(harness.requests[0].options.body), {
+    items: [{ producto: 'Bidón 20L', cantidad: 2, precio_unitario: 1500 }],
+    estado: 'entregado',
+    metodo_pago: 'efectivo',
+    chofer_id: 3,
+    zona_id: 2,
+  });
   assert.equal(harness.wasClosed(), true);
 });
 
-test('si falla el guardado de ítems no envía la finalización del pedido', async () => {
-  const harness = createHarness({ itemsOk: false });
+test('un error del guardado atómico muestra un único error sin segundo request', async () => {
+  const harness = createHarness({ pedidoResponse: { ok: false } });
 
   await harness.context.btnSaveAll.onclick();
 
-  assert.deepEqual(harness.requests.map(request => request.url), ['/api/pedidos/42/items']);
-  assert.match(harness.errors.at(-1), /No se pudieron actualizar los ítems/);
+  assert.deepEqual(harness.requests.map(request => request.url), ['/api/pedidos/42']);
+  assert.match(harness.errors.at(-1), /No se pudo actualizar el pedido/);
   assert.equal(harness.wasClosed(), false);
 });
 
