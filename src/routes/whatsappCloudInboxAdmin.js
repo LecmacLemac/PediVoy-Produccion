@@ -115,6 +115,24 @@ function pagination(query, defaultLimit) {
   return { limit, cursor: cursor ?? null };
 }
 
+function strictIsoUtc(value) {
+  if (value == null || value === '') return null;
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) return undefined;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString() !== value) return undefined;
+  return value;
+}
+
+function conversationFilters(query) {
+  const from = strictIsoUtc(query?.from);
+  const to = strictIsoUtc(query?.to);
+  if (from === undefined || to === undefined) return null;
+  const payment = query?.payment == null || query.payment === '' ? null : String(query.payment);
+  if (payment != null && payment !== 'transferencia') return null;
+  if (from && to && Date.parse(from) >= Date.parse(to)) return null;
+  return { from, to, payment };
+}
+
 export function createWhatsAppCloudInboxAdminRouter({
   query = defaultQuery,
   pool = defaultPool,
@@ -133,8 +151,10 @@ export function createWhatsAppCloudInboxAdminRouter({
     if (!empresaId) return res.status(400).json({ error: 'empresa_id_required' });
     const page = pagination(req.query, 25);
     if (!page) return res.status(400).json({ error: 'pagination_invalid' });
+    const filters = conversationFilters(req.query);
+    if (!filters) return res.status(400).json({ error: 'filters_invalid' });
     try {
-      const result = await listCloudConversations({ query, empresaId, ...page });
+      const result = await listCloudConversations({ query, empresaId, ...page, ...filters });
       return res.json(result);
     } catch (error) {
       if (isInvalidArgument(error)) return res.status(400).json({ error: 'pagination_invalid' });

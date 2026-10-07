@@ -24,6 +24,8 @@ const elements = {
   conversations: document.querySelector('#conversationList'),
   conversationsMore: document.querySelector('#loadMoreConversations'),
   refresh: document.querySelector('#refreshConversations'),
+  dateFilter: document.querySelector('#dateFilter'),
+  transferFilter: document.querySelector('#transferFilter'),
   chatPanel: document.querySelector('#chatPanel'),
   chatTitle: document.querySelector('#chatTitle'),
   back: document.querySelector('#backToList'),
@@ -61,6 +63,47 @@ function isMobileLayout() {
   return window.matchMedia('(max-width: 760px)').matches;
 }
 
+function startOfLocalDay(date = new Date()) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function resolveDateFilter(value, now = new Date()) {
+  const selected = String(value || 'all');
+  const today = startOfLocalDay(now);
+  let from = null;
+  let to = null;
+  if (selected === 'today') {
+    from = today;
+    to = new Date(today);
+    to.setDate(to.getDate() + 1);
+  } else if (selected === 'yesterday') {
+    to = today;
+    from = new Date(today);
+    from.setDate(from.getDate() - 1);
+  } else if (selected === 'last7') {
+    to = new Date(today);
+    to.setDate(to.getDate() + 1);
+    from = new Date(today);
+    from.setDate(from.getDate() - 6);
+  } else if (selected === 'month') {
+    from = new Date(today.getFullYear(), today.getMonth(), 1);
+    to = new Date(today);
+    to.setDate(to.getDate() + 1);
+  }
+  return {
+    from: from ? from.toISOString() : null,
+    to: to ? to.toISOString() : null,
+  };
+}
+
+function currentFilters() {
+  const dateRange = resolveDateFilter(elements.dateFilter?.value);
+  return {
+    ...dateRange,
+    payment: elements.transferFilter?.checked ? 'transferencia' : null,
+  };
+}
+
 function setStatus(message, tone = 'neutral') {
   elements.status.textContent = message;
   elements.status.dataset.tone = tone;
@@ -77,6 +120,8 @@ function syncContextControls() {
   const locked = composer.sending || composer.reconciliationRequired;
   const companySelect = elements.companyWrap.querySelector('select');
   if (companySelect) companySelect.disabled = locked;
+  if (elements.dateFilter) elements.dateFilter.disabled = locked;
+  if (elements.transferFilter) elements.transferFilter.disabled = locked;
   elements.back.disabled = locked;
   elements.conversations.querySelectorAll('button').forEach(button => { button.disabled = locked; });
   elements.newMessage.hidden = !composer.reconciliationRequired;
@@ -222,10 +267,14 @@ async function loadConversations({ append = false } = {}) {
   const cursor = append ? state.conversationsCursor : null;
   if (!append) setStatus('Cargando conversaciones…');
   try {
+    const filters = currentFilters();
     const url = buildCloudApiUrl('/conversations', {
       role: state.role,
       companyId: state.companyId,
       limit: 25,
+      from: filters.from,
+      to: filters.to,
+      payment: filters.payment,
       ...(cursor ? { cursor } : {}),
     });
     const { response, payload } = await request(url, { signal: conversationsController.signal });
@@ -246,6 +295,14 @@ async function loadConversations({ append = false } = {}) {
       setStatus('No se pudieron cargar las conversaciones.', 'error');
     }
   }
+}
+
+async function reloadConversationsFromStart() {
+  state.conversations = [];
+  state.conversationsCursor = null;
+  renderConversations();
+  clearChat({ restoreFocus: false });
+  await loadConversations();
 }
 
 async function loadHistory({ older = false } = {}) {
@@ -448,6 +505,8 @@ elements.back.addEventListener('click', () => clearChat());
 elements.older.addEventListener('click', () => loadHistory({ older: true }));
 elements.conversationsMore.addEventListener('click', () => loadConversations({ append: true }));
 elements.refresh.addEventListener('click', () => loadConversations());
+elements.dateFilter?.addEventListener('change', () => reloadConversationsFromStart());
+elements.transferFilter?.addEventListener('change', () => reloadConversationsFromStart());
 elements.composer.addEventListener('submit', submitMessage);
 elements.newMessage.addEventListener('click', () => {
   const warning = 'El mensaje anterior puede haberse enviado. Al continuar se descartará el borrador incierto. ¿Iniciar un mensaje distinto?';

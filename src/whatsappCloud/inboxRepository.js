@@ -86,30 +86,60 @@ function decodeCursor(value) {
   }
 }
 
-export async function listCloudConversations({ query, empresaId, limit = 25, cursor = null } = {}) {
+export async function listCloudConversations({
+  query,
+  empresaId,
+  limit = 25,
+  cursor = null,
+  from = null,
+  to = null,
+  payment = null,
+} = {}) {
   const runQuery = requireQuery(query);
   const tenantId = requireTenantId(empresaId);
   const pageSize = requirePositiveInteger(limit, 'limit');
   if (pageSize > 100) throw sanitizedError('CLOUD_INBOX_INVALID_ARGUMENT', 'Invalid limit');
   const pageCursor = decodeCursor(cursor);
+  const fromFilter = from == null ? null : requireNonEmptyString(from, 'from');
+  const toFilter = to == null ? null : requireNonEmptyString(to, 'to');
+  const paymentFilter = payment == null ? null : requireNonEmptyString(payment, 'payment').toLowerCase();
+  if (paymentFilter != null && paymentFilter !== 'transferencia') {
+    throw sanitizedError('CLOUD_INBOX_INVALID_ARGUMENT', 'Invalid payment');
+  }
+  const transferCondition = paymentFilter === 'transferencia'
+    ? `AND EXISTS (
+          SELECT 1
+            FROM public.pedidos p
+            JOIN public.puntos_entrega pe
+              ON pe.id = p.punto_entrega_id
+             AND pe.empresa_id = p.empresa_id
+           WHERE p.empresa_id = latest.empresa_id
+             AND LOWER(p.metodo_pago) = 'transferencia'
+             AND RIGHT(regexp_replace(COALESCE(pe.telefono_normalizado, pe.telefono, ''), '\\D', '', 'g'), 10)
+                 = RIGHT(regexp_replace(latest.participant_wa_id, '\\D', '', 'g'), 10)
+        )`
+    : '';
   let rows;
   try {
     rows = await runQuery(
       `WITH latest AS (
          SELECT DISTINCT ON (participant_wa_id)
-                id, participant_wa_id, direction, message_type, delivery_status, message_at,
+                id, empresa_id, participant_wa_id, direction, message_type, delivery_status, message_at,
                 to_char(message_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cursor_message_at
            FROM public.whatsapp_cloud_messages
           WHERE empresa_id = $1
+            AND ($5::timestamptz IS NULL OR message_at >= $5::timestamptz)
+            AND ($6::timestamptz IS NULL OR message_at < $6::timestamptz)
           ORDER BY participant_wa_id, message_at DESC, id DESC
        )
        SELECT id, participant_wa_id, direction, message_type, delivery_status, message_at,
               cursor_message_at
          FROM latest
         WHERE ($3::timestamptz IS NULL OR (message_at, id) < ($3::timestamptz, $4::bigint))
+          ${transferCondition}
         ORDER BY message_at DESC, id DESC
         LIMIT $2`,
-      [tenantId, pageSize + 1, pageCursor?.timestamp ?? null, pageCursor?.id ?? null],
+      [tenantId, pageSize + 1, pageCursor?.timestamp ?? null, pageCursor?.id ?? null, fromFilter, toFilter],
     );
   } catch {
     throw sanitizedError('CLOUD_INBOX_LIST_FAILED', 'WhatsApp Cloud conversations lookup failed');

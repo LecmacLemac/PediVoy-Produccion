@@ -1,5 +1,5 @@
 const API_ROOT = '/api/admin/whatsapp-cloud';
-const ALLOWED_QUERY_KEYS = new Set(['role', 'companyId', 'cursor', 'limit', 'tenantInBody']);
+const ALLOWED_QUERY_KEYS = new Set(['role', 'companyId', 'cursor', 'limit', 'tenantInBody', 'from', 'to', 'payment']);
 const MASKED_PARTICIPANT = /^\*{3,11}\d{4}$/;
 
 const STATUS = Object.freeze({
@@ -57,6 +57,18 @@ export function bootstrapInboxState(user = {}) {
   return { access: 'denied', role, companyId: null, needsCompanySelection: false };
 }
 
+function strictIsoUtc(value, field) {
+  if (value == null || value === '') return null;
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) {
+    throw new Error(`${field} de fecha inválido`);
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString() !== value) {
+    throw new Error(`${field} de fecha inválido`);
+  }
+  return value;
+}
+
 export function buildCloudApiUrl(path, options = {}) {
   for (const key of Object.keys(options)) {
     if (!ALLOWED_QUERY_KEYS.has(key)) throw new Error(`Parámetro no permitido: ${key}`);
@@ -73,6 +85,15 @@ export function buildCloudApiUrl(path, options = {}) {
     const cursor = String(options.cursor);
     if (!/^[A-Za-z0-9_-]{1,512}$/.test(cursor)) throw new Error('Cursor inválido');
     params.set('cursor', cursor);
+  }
+  const from = strictIsoUtc(options.from, 'Desde');
+  const to = strictIsoUtc(options.to, 'Hasta');
+  if (from) params.set('from', from);
+  if (to) params.set('to', to);
+  if (from && to && Date.parse(from) >= Date.parse(to)) throw new Error('Rango de fecha inválido');
+  if (options.payment != null && options.payment !== '') {
+    if (options.payment !== 'transferencia') throw new Error('Filtro de pago inválido');
+    params.set('payment', options.payment);
   }
   const query = params.toString();
   return `${API_ROOT}${path}${query ? `?${query}` : ''}`;

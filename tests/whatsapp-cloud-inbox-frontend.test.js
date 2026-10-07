@@ -81,6 +81,20 @@ test('la pantalla declara layout accesible de lista, chat y volver móvil', asyn
   assert.doesNotMatch(html, /<label\s+for="messageInput"[^>]*hidden/);
 });
 
+test('la bandeja declara filtros rápidos de fecha y transferencias', async () => {
+  const html = await source(pageUrl);
+  const controller = await source(controllerUrl);
+  assert.match(html, /id="dateFilter"/);
+  assert.match(html, /value="today"[^>]*>Hoy/);
+  assert.match(html, /value="yesterday"[^>]*>Ayer/);
+  assert.match(html, /value="last7"[^>]*>Últimos 7 días/);
+  assert.match(html, /id="transferFilter"/);
+  assert.match(html, /Ver clientes con transferencia/);
+  assert.match(controller, /resolveDateFilter/);
+  assert.match(controller, /payment:\s*filters\.payment/);
+  assert.match(controller, /state\.conversationsCursor = null/);
+});
+
 function composerDomHarness() {
   const input = { value: '', disabled: true };
   const send = { disabled: true, textContent: 'Enviar' };
@@ -169,8 +183,17 @@ test('URLs Cloud no aceptan tenant global ni campos sensibles', () => {
   assert.equal(buildCloudApiUrl('/conversations', { role: 'admin', companyId: 7, limit: 25 }), '/api/admin/whatsapp-cloud/conversations?limit=25');
   assert.equal(buildCloudApiUrl('/conversations', { role: 'super', companyId: 9, cursor: 'abc_123', limit: 25 }), '/api/admin/whatsapp-cloud/conversations?empresa_id=9&limit=25&cursor=abc_123');
   assert.equal(buildCloudApiUrl('/conversations/44/replies', { role: 'super', companyId: 9, tenantInBody: true }), '/api/admin/whatsapp-cloud/conversations/44/replies');
+  assert.equal(
+    buildCloudApiUrl('/conversations', {
+      role: 'admin', companyId: 7, limit: 25,
+      from: '2026-10-07T00:00:00.000Z', to: '2026-10-08T00:00:00.000Z', payment: 'transferencia',
+    }),
+    '/api/admin/whatsapp-cloud/conversations?limit=25&from=2026-10-07T00%3A00%3A00.000Z&to=2026-10-08T00%3A00%3A00.000Z&payment=transferencia',
+  );
   assert.throws(() => buildCloudApiUrl('/conversations', { role: 'super', companyId: null }), /empresa/i);
   assert.throws(() => buildCloudApiUrl('/conversations', { role: 'super', companyId: 1, phone: '5493515550001' }), /parámetro/i);
+  assert.throws(() => buildCloudApiUrl('/conversations', { role: 'admin', companyId: 7, from: 'hoy' }), /fecha/i);
+  assert.throws(() => buildCloudApiUrl('/conversations', { role: 'admin', companyId: 7, payment: 'efectivo' }), /pago/i);
 });
 
 test('teléfono se acepta sólo si ya viene enmascarado y preview no usa PII cruda', () => {

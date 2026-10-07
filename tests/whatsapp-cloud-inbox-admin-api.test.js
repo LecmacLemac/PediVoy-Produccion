@@ -152,6 +152,44 @@ test('admin queda ligado estrictamente a req.user.empresa_id aunque intente over
   assert.match(calls[0].sql, /WHERE empresa_id = \$1/);
 });
 
+test('conversaciones aceptan filtro por rango de fecha y transferencia sin filtrar sólo en browser', async () => {
+  const { app, calls } = createHarness({ role: 'admin', empresaId: 7 });
+  await withServer(app, async baseUrl => {
+    const qs = new URLSearchParams({
+      from: '2026-10-07T00:00:00.000Z',
+      to: '2026-10-08T00:00:00.000Z',
+      payment: 'transferencia',
+    });
+    const response = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations?${qs}`);
+    assert.equal(response.status, 200);
+  });
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].params.slice(0, 4), [
+    7,
+    26,
+    null,
+    null,
+  ]);
+  assert.equal(calls[0].params[4], '2026-10-07T00:00:00.000Z');
+  assert.equal(calls[0].params[5], '2026-10-08T00:00:00.000Z');
+  assert.match(calls[0].sql, /message_at >= \$5::timestamptz/);
+  assert.match(calls[0].sql, /message_at < \$6::timestamptz/);
+  assert.match(calls[0].sql, /metodo_pago\) = 'transferencia'/);
+  assert.match(calls[0].sql, /COALESCE\(pe\.telefono_normalizado, pe\.telefono/);
+});
+
+test('conversaciones rechazan filtros de fecha o pago inválidos', async () => {
+  const { app, calls } = createHarness({ role: 'admin', empresaId: 7 });
+  await withServer(app, async baseUrl => {
+    for (const queryString of ['from=hoy', 'to=2026-99-99T00%3A00%3A00.000Z', 'payment=efectivo']) {
+      const response = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations?${queryString}`);
+      assert.equal(response.status, 400, queryString);
+      assert.deepEqual(await response.json(), { error: 'filters_invalid' });
+    }
+  });
+  assert.equal(calls.length, 0);
+});
+
 test('super debe seleccionar empresa explícita y no cae a tenant global ni empresa 1', async () => {
   const { app, calls } = createHarness({ role: 'super', empresaId: null });
   await withServer(app, async baseUrl => {

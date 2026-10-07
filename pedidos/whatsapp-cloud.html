@@ -37,7 +37,10 @@
     h1 { font-size:1.15rem; margin:0; }
     .icon-button,.secondary-button,.attachment-action { min-height:44px; border:1px solid var(--border); color:var(--ink); background:rgba(255,255,255,.04); border-radius:9px; padding:.55rem .75rem; cursor:pointer; }
     .icon-button:hover,.secondary-button:hover,.attachment-action:hover { border-color:var(--brand); }
-    .company-field { display:grid; gap:.35rem; color:var(--muted); font-size:.8rem; font-weight:700; }
+    .company-field,.filter-field { display:grid; gap:.35rem; color:var(--muted); font-size:.8rem; font-weight:700; }
+    .filter-row { display:grid; grid-template-columns:minmax(0,1fr); gap:.5rem; }
+    .transfer-toggle { min-height:44px; display:flex; align-items:center; gap:.45rem; color:var(--ink); font-size:.84rem; font-weight:700; border:1px solid var(--border); border-radius:10px; padding:.55rem .7rem; background:rgba(255,255,255,.035); }
+    .transfer-toggle input { width:auto; accent-color:var(--brand); }
     select,textarea { width:100%; color:var(--ink); background:var(--bg-2); border:1px solid var(--border); border-radius:10px; padding:.7rem; }
     .conversation-list { min-height:0; overflow:auto; }
     .conversation-card { width:100%; border:0; border-bottom:1px solid var(--border); background:transparent; color:var(--ink); padding:1rem; text-align:left; cursor:pointer; display:grid; gap:.5rem; }
@@ -120,6 +123,21 @@
         <header class="pane-head">
           <div class="title-row"><h1 id="conversationHeading" tabindex="-1">WhatsApp Cloud</h1><button id="refreshConversations" class="icon-button" type="button" aria-label="Actualizar conversaciones">Actualizar</button></div>
           <div id="companyPicker"></div>
+          <div class="filter-row" aria-label="Filtros de conversaciones">
+            <label class="filter-field" for="dateFilter">Fecha
+              <select id="dateFilter">
+                <option value="all">Todas</option>
+                <option value="today">Hoy</option>
+                <option value="yesterday">Ayer</option>
+                <option value="last7">Últimos 7 días</option>
+                <option value="month">Este mes</option>
+              </select>
+            </label>
+            <label class="transfer-toggle" for="transferFilter">
+              <input id="transferFilter" type="checkbox" value="transferencia">
+              Ver clientes con transferencia
+            </label>
+          </div>
         </header>
         <div id="conversationList" class="conversation-list"></div>
         <div class="more-wrap"><button id="loadMoreConversations" class="secondary-button" type="button" hidden>Cargar más conversaciones</button></div>
