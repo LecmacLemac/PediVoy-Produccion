@@ -272,7 +272,7 @@ browserTest('Task 3 marca leído una vez después de render exitoso y nunca si f
     const read = requests.reads[0];
     assert.equal(read.conversationId, ids.urgent);
     assert.equal(read.method, 'POST');
-    assert.deepEqual(read.body, {});
+    assert.deepEqual(read.body, { lastReadMessageId: '91' });
     assert.equal(read.headers['content-type'], 'application/json');
     assert.equal(read.headers.origin, baseUrl);
     assert.match(read.headers.cookie, /pedivoy_session=browser-test-session/);
@@ -314,6 +314,31 @@ browserTest('Task 3 controles workflow y priority hacen un PATCH CAS por acción
     assert.equal(requests.counts.state, 2);
     assert.equal(await page.$eval('#conversationWorkflow', element => element.textContent), 'Reabrir conversación');
     assert.equal(await page.$eval('#messageInput', element => element.value), 'borrador que debe sobrevivir');
+  });
+});
+
+browserTest('Task 3 mutaciones aplican filtros activos y conservan chat y borrador aunque salga la tarjeta', async () => {
+  const initial = conversation(ids.normal, '0551', { unreadCount: 2, version: 4 });
+  await withInbox({
+    listResponse: async () => ({ body: { conversations: [initial], counters: { total: 1, pending: 1, inProcess: 0, review: 0, resolved: 0 }, nextCursor: null } }),
+    messagesResponse: async () => ({ body: { messages: [message(91, 'render filtrado')], nextCursor: null } }),
+    stateResponse: async ({ body }) => ({ body: { conversationId: ids.normal, workflowStatus: body.workflowStatus || 'pending', priority: body.priority || 'normal', version: 5 } }),
+  }, async ({ page, requests }) => {
+    await page.waitForSelector('.conversation-card');
+    await page.click('#unreadFilter');
+    await waitFor(() => requests.lists.length === 2, 'filtro unread activo');
+    await page.waitForSelector('.conversation-card');
+    await page.click('.conversation-card');
+    await page.waitForSelector('.message-text');
+    await page.type('#messageInput', 'borrador persistente');
+    await waitFor(() => requests.reads.length === 1, 'read filtrado');
+    await page.waitForFunction(() => !document.querySelector('.conversation-card'));
+    assert.equal(await page.$eval('#chatTitle', element => element.textContent), '*********0551');
+    assert.equal(await page.$eval('#messageInput', element => element.value), 'borrador persistente');
+    await page.select('#conversationPriority', 'urgent');
+    await waitFor(() => requests.states.length === 1, 'PATCH fuera de lista');
+    assert.equal(await page.$eval('#messageInput', element => element.value), 'borrador persistente');
+    assert.equal(await page.$eval('#conversationPriority', element => element.value), 'urgent');
   });
 });
 
@@ -408,5 +433,6 @@ browserTest('Task 3 cerca PATCH y read tardíos de tenant A para que no muten te
     assert.equal(requests.states[0].body.empresa_id, 7);
     assert.equal(requests.reads[0].conversationId, ids.urgent);
     assert.equal(requests.reads[0].body.empresa_id, 7);
+    assert.equal(requests.reads[0].body.lastReadMessageId, '1');
   });
 });

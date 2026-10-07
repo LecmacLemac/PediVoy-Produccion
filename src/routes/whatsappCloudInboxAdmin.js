@@ -359,14 +359,22 @@ export function createWhatsAppCloudInboxAdminRouter({
     if (!canonicalUuid(req.params.conversationId)) {
       return res.status(400).json({ error: 'conversation_id_invalid' });
     }
+    const lastReadMessageId = req.body?.lastReadMessageId;
+    if (typeof lastReadMessageId !== 'string' || !/^[1-9][0-9]{0,18}$/.test(lastReadMessageId)
+      || BigInt(lastReadMessageId) > 9223372036854775807n) {
+      return res.status(400).json({ error: 'last_read_message_id_invalid' });
+    }
     try {
       const result = await markCloudConversationRead({
-        pool, empresaId, conversationId: req.params.conversationId, usuarioId,
+        pool, empresaId, conversationId: req.params.conversationId, usuarioId, lastReadMessageId,
       });
       if (!result) return res.status(404).json({ error: 'conversation_not_found' });
       return res.json(result);
     } catch (error) {
-      if (isInvalidArgument(error)) return res.status(400).json({ error: 'conversation_id_invalid' });
+      if (error?.code === 'CLOUD_INBOX_READ_OUTCOME_UNKNOWN') {
+        return res.status(503).json({ error: 'read_outcome_unknown' });
+      }
+      if (isInvalidArgument(error)) return res.status(400).json({ error: 'last_read_message_id_invalid' });
       return res.status(500).json({ error: 'cloud_inbox_unavailable' });
     }
   });

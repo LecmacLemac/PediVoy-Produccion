@@ -5082,6 +5082,22 @@ BEGIN
   IF relation_row.relkind IS DISTINCT FROM 'r'
      OR relation_row.relrowsecurity OR relation_row.relforcerowsecurity
      OR columns IS DISTINCT FROM ARRAY['empresa_id','conversation_id','usuario_id','last_read_message_id','updated_at']::TEXT[]
+     OR EXISTS (
+       SELECT 1
+         FROM pg_catalog.pg_attribute AS attribute_row
+         LEFT JOIN pg_catalog.pg_attrdef AS default_row
+           ON default_row.adrelid = attribute_row.attrelid AND default_row.adnum = attribute_row.attnum
+        WHERE attribute_row.attrelid = relation_row.oid
+          AND attribute_row.attnum > 0 AND NOT attribute_row.attisdropped
+          AND NOT (
+            (attribute_row.attname = 'empresa_id' AND attribute_row.atttypid = 'pg_catalog.int4'::pg_catalog.regtype AND attribute_row.attnotnull AND default_row.oid IS NULL)
+            OR (attribute_row.attname = 'conversation_id' AND attribute_row.atttypid = 'pg_catalog.uuid'::pg_catalog.regtype AND attribute_row.attnotnull AND default_row.oid IS NULL)
+            OR (attribute_row.attname = 'usuario_id' AND attribute_row.atttypid = 'pg_catalog.int4'::pg_catalog.regtype AND attribute_row.attnotnull AND default_row.oid IS NULL)
+            OR (attribute_row.attname = 'last_read_message_id' AND attribute_row.atttypid = 'pg_catalog.int8'::pg_catalog.regtype AND NOT attribute_row.attnotnull AND default_row.oid IS NULL)
+            OR (attribute_row.attname = 'updated_at' AND attribute_row.atttypid = 'pg_catalog.timestamptz'::pg_catalog.regtype AND attribute_row.attnotnull
+                AND pg_catalog.pg_get_expr(default_row.adbin, default_row.adrelid) = 'now()')
+          )
+     )
      OR EXISTS (SELECT 1 FROM pg_catalog.pg_trigger WHERE tgrelid=relation_row.oid AND NOT tgisinternal)
      OR EXISTS (SELECT 1 FROM pg_catalog.pg_policy WHERE polrelid=relation_row.oid)
      OR EXISTS (SELECT 1 FROM pg_catalog.pg_inherits WHERE inhrelid=relation_row.oid OR inhparent=relation_row.oid)
@@ -5109,6 +5125,24 @@ BEGIN
     RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='whatsapp_cloud_conversation_reads_schema_unsafe';
   END IF;
 END $conversation_reads_guard$;
+
+DO $conversation_reads_index_guard$
+DECLARE
+  definition TEXT;
+BEGIN
+  IF pg_catalog.to_regclass('public.idx_whatsapp_cloud_conversation_reads_user') IS NOT NULL THEN
+    SELECT pg_catalog.pg_get_indexdef(pg_catalog.to_regclass('public.idx_whatsapp_cloud_conversation_reads_user')) INTO definition;
+    IF definition IS DISTINCT FROM 'CREATE INDEX idx_whatsapp_cloud_conversation_reads_user ON public.whatsapp_cloud_conversation_reads USING btree (empresa_id, usuario_id, conversation_id, last_read_message_id)' THEN
+      RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='whatsapp_cloud_conversation_reads_schema_unsafe';
+    END IF;
+  END IF;
+  IF pg_catalog.to_regclass('public.idx_whatsapp_cloud_messages_inbound_unread') IS NOT NULL THEN
+    SELECT pg_catalog.pg_get_indexdef(pg_catalog.to_regclass('public.idx_whatsapp_cloud_messages_inbound_unread')) INTO definition;
+    IF definition IS DISTINCT FROM 'CREATE INDEX idx_whatsapp_cloud_messages_inbound_unread ON public.whatsapp_cloud_messages USING btree (empresa_id, participant_wa_id, id) WHERE (direction = ''inbound''::text)' THEN
+      RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='whatsapp_cloud_conversation_reads_schema_unsafe';
+    END IF;
+  END IF;
+END $conversation_reads_index_guard$;
 
 DO $conversation_tenant_identity$
 BEGIN
@@ -5156,6 +5190,9 @@ END $conversation_reads_constraints$;
 
 CREATE INDEX IF NOT EXISTS idx_whatsapp_cloud_conversation_reads_user
   ON public.whatsapp_cloud_conversation_reads (empresa_id, usuario_id, conversation_id, last_read_message_id);
+CREATE INDEX IF NOT EXISTS idx_whatsapp_cloud_messages_inbound_unread
+  ON public.whatsapp_cloud_messages (empresa_id, participant_wa_id, id)
+  WHERE direction = 'inbound';
 COMMIT;
 -- END WHATSAPP CLOUD CONVERSATION READS MIGRATION
 

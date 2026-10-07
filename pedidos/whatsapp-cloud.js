@@ -11,6 +11,7 @@ import {
   formatCloudTimestamp,
   mergeHistoryPage,
   mergeConversationState,
+  reconcileConversationCollection,
   operationalMeta,
   queueCounterItems,
   reduceMobileView,
@@ -344,9 +345,11 @@ async function loadConversations({ append = false } = {}) {
     const known = new Map((append ? state.conversations : []).map(item => [String(item.conversationId), item]));
     for (const item of incoming) known.set(String(item.conversationId), item);
     state.conversations = [...known.values()];
-    state.counters = payload.counters && typeof payload.counters === 'object'
-      ? payload.counters
-      : { total: 0, pending: 0, inProcess: 0, review: 0, resolved: 0 };
+    if (payload.counters && typeof payload.counters === 'object') {
+      state.counters = payload.counters;
+    } else if (!append) {
+      state.counters = { total: 0, pending: 0, inProcess: 0, review: 0, resolved: 0 };
+    }
     state.conversationsCursor = typeof payload.nextCursor === 'string' ? payload.nextCursor : null;
     renderConversations();
     setStatus('');
@@ -368,7 +371,13 @@ async function reloadConversationsFromStart() {
 async function markConversationRead(conversationId, { generation, companyId }) {
   const path = `/conversations/${encodeURIComponent(conversationId)}/read`;
   const url = buildCloudApiUrl(path, { role: state.role, companyId, tenantInBody: true });
-  const body = state.role === 'super' ? { empresa_id: companyId } : {};
+  const inboundIds = state.messages
+    .filter(message => message.direction === 'inbound' && /^[1-9][0-9]*$/.test(String(message.id)))
+    .map(message => BigInt(String(message.id)));
+  if (!inboundIds.length) return false;
+  const lastReadMessageId = String(inboundIds.reduce((maximum, id) => id > maximum ? id : maximum));
+  const body = { lastReadMessageId };
+  if (state.role === 'super') body.empresa_id = companyId;
   const { response, payload } = await request(url, { method: 'POST', body: JSON.stringify(body) });
   if (!historyGate.isCurrent(generation)
     || state.companyId !== companyId
@@ -377,14 +386,16 @@ async function markConversationRead(conversationId, { generation, companyId }) {
     setStatus(sanitizeCloudError(response.status, payload), 'warning');
     return false;
   }
-  const index = state.conversations.findIndex(item => String(item.conversationId) === String(conversationId));
-  if (index >= 0) {
-    state.conversations[index] = { ...state.conversations[index], unreadCount: 0 };
-    if (String(state.activeConversation?.conversationId) === String(conversationId)) {
-      state.activeConversation = state.conversations[index];
-    }
-    renderConversations();
-  }
+  const reconciled = reconcileConversationCollection({
+    conversations: state.conversations,
+    current: { conversationId, unreadCount: 0 },
+    filters: currentFilters(),
+    activeConversationId: state.activeConversation?.conversationId,
+    allowUnread: true,
+  });
+  state.conversations = reconciled.conversations;
+  if (reconciled.activeConversation) state.activeConversation = reconciled.activeConversation;
+  renderConversations();
   return true;
 }
 
@@ -435,20 +446,29 @@ function syncActiveConversationControls() {
 
 function applyConversationState(current) {
   const index = state.conversations.findIndex(item => String(item.conversationId) === String(current?.conversationId));
-  if (index < 0) return;
-  const previous = state.conversations[index];
+  const previous = index >= 0
+    ? state.conversations[index]
+    : (String(state.activeConversation?.conversationId) === String(current?.conversationId)
+      ? state.activeConversation : null);
+  if (!previous) return;
   const merged = mergeConversationState(previous, current);
   const previousCounter = operationalMeta(previous).key;
   const nextCounter = operationalMeta(merged).key;
-  if (previousCounter !== nextCounter) {
+  if (index >= 0 && previousCounter !== nextCounter) {
     if (Number.isInteger(state.counters[previousCounter]) && state.counters[previousCounter] > 0) {
       state.counters[previousCounter] -= 1;
     }
     if (Number.isInteger(state.counters[nextCounter])) state.counters[nextCounter] += 1;
   }
-  state.conversations[index] = merged;
+  const reconciled = reconcileConversationCollection({
+    conversations: state.conversations,
+    current,
+    filters: currentFilters(),
+    activeConversationId: state.activeConversation?.conversationId,
+  });
+  state.conversations = reconciled.conversations;
   if (String(state.activeConversation?.conversationId) === String(current.conversationId)) {
-    state.activeConversation = state.conversations[index];
+    state.activeConversation = reconciled.activeConversation || merged;
     syncActiveConversationControls();
   }
   renderConversations();

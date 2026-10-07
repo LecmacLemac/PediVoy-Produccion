@@ -157,6 +157,51 @@ export function mergeConversationState(local = {}, current = {}) {
   return merged;
 }
 
+function conversationOrderTuple(conversation) {
+  const operation = operationalMeta(conversation).key;
+  const bucket = { pending: 0, review: 1, inProcess: 2, resolved: 3 }[operation] ?? 3;
+  const priority = bucket === 0 ? ({ urgent: 0, high: 1, normal: 2 }[conversation.priority] ?? 2) : 0;
+  const timestamp = Date.parse(conversation.lastMessageAt || 0) || 0;
+  return [bucket, priority, bucket === 0 ? timestamp : -timestamp, String(conversation.conversationId)];
+}
+
+function conversationMatchesFilters(conversation, filters = {}) {
+  if (filters.workflowStatus && conversation.workflowStatus !== filters.workflowStatus) return false;
+  if (filters.priority && conversation.priority !== filters.priority) return false;
+  if (filters.unread === true && Number(conversation.unreadCount) <= 0) return false;
+  return true;
+}
+
+export function reconcileConversationCollection({
+  conversations = [], current = {}, filters = {}, activeConversationId = null, allowUnread = false,
+} = {}) {
+  const currentId = String(current?.conversationId || '');
+  let activeConversation = null;
+  const merged = conversations.map(conversation => {
+    const next = String(conversation.conversationId) === currentId
+      ? {
+          ...mergeConversationState(conversation, current),
+          ...(allowUnread && Number.isInteger(current.unreadCount) && current.unreadCount >= 0
+            ? { unreadCount: current.unreadCount } : {}),
+        }
+      : conversation;
+    if (String(next.conversationId) === String(activeConversationId)) activeConversation = next;
+    return next;
+  });
+  return {
+    conversations: merged.filter(item => conversationMatchesFilters(item, filters)).sort((left, right) => {
+      const a = conversationOrderTuple(left);
+      const b = conversationOrderTuple(right);
+      for (let index = 0; index < a.length; index += 1) {
+        if (a[index] < b[index]) return -1;
+        if (a[index] > b[index]) return 1;
+      }
+      return 0;
+    }),
+    activeConversation,
+  };
+}
+
 export function createRequestGate() {
   let generation = 0;
   return {

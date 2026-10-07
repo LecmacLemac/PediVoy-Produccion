@@ -110,15 +110,59 @@ async function seed(pool) {
 test('migración de watermarks es idempotente y sus FKs compuestas bloquean cruces tenant', async () => {
   await withDatabase(async pool => {
     const ids = await seed(pool);
+    await pool.query(`INSERT INTO whatsapp_cloud_conversation_reads
+      (empresa_id,conversation_id,usuario_id,last_read_message_id) VALUES (1,$1::uuid,11,1)`, [ids.one]);
     const before = (await pool.query(`SELECT conname,oid::text,pg_get_constraintdef(oid,true) definition
       FROM pg_constraint WHERE conrelid='whatsapp_cloud_conversation_reads'::regclass ORDER BY conname`)).rows;
+    const beforeIndexes = (await pool.query(`SELECT indexrelid::text oid, indexrelid::regclass::text name, pg_get_indexdef(indexrelid) definition
+      FROM pg_index WHERE indrelid='whatsapp_cloud_conversation_reads'::regclass ORDER BY name`)).rows;
+    const beforeRow = (await pool.query(`SELECT xmin::text xmin, updated_at FROM whatsapp_cloud_conversation_reads
+      WHERE empresa_id=1 AND conversation_id=$1 AND usuario_id=11`, [ids.one])).rows[0];
     await pool.query(readsSql);
     assert.deepEqual((await pool.query(`SELECT conname,oid::text,pg_get_constraintdef(oid,true) definition
       FROM pg_constraint WHERE conrelid='whatsapp_cloud_conversation_reads'::regclass ORDER BY conname`)).rows, before);
+    assert.deepEqual((await pool.query(`SELECT indexrelid::text oid, indexrelid::regclass::text name, pg_get_indexdef(indexrelid) definition
+      FROM pg_index WHERE indrelid='whatsapp_cloud_conversation_reads'::regclass ORDER BY name`)).rows, beforeIndexes);
+    assert.deepEqual((await pool.query(`SELECT xmin::text xmin, updated_at FROM whatsapp_cloud_conversation_reads
+      WHERE empresa_id=1 AND conversation_id=$1 AND usuario_id=11`, [ids.one])).rows[0], beforeRow);
     await assert.rejects(pool.query(`INSERT INTO whatsapp_cloud_conversation_reads
       (empresa_id,conversation_id,usuario_id) VALUES (1,$1::uuid,11)`, [ids.two]), error => error?.code === '23503');
     await assert.rejects(pool.query(`INSERT INTO whatsapp_cloud_conversation_reads
       (empresa_id,conversation_id,usuario_id) VALUES (1,$1::uuid,999)`, [ids.one]), error => error?.code === '23503');
+  });
+});
+
+test('migración rechaza índice homónimo alien y tipos incompatibles antes de mutar', async () => {
+  await withDatabase(async pool => {
+    await pool.query('DROP INDEX idx_whatsapp_cloud_conversation_reads_user');
+    await pool.query('CREATE INDEX idx_whatsapp_cloud_conversation_reads_user ON whatsapp_cloud_conversation_reads(usuario_id)');
+    const before = (await pool.query(`SELECT c.oid::text oid, pg_get_indexdef(c.oid) definition
+      FROM pg_class c WHERE c.oid='idx_whatsapp_cloud_conversation_reads_user'::regclass`)).rows[0];
+    await assert.rejects(pool.query(readsSql), error => error?.code === 'P0001' && error?.message === 'whatsapp_cloud_conversation_reads_schema_unsafe');
+    assert.deepEqual((await pool.query(`SELECT c.oid::text oid, pg_get_indexdef(c.oid) definition
+      FROM pg_class c WHERE c.oid='idx_whatsapp_cloud_conversation_reads_user'::regclass`)).rows[0], before);
+  });
+  await withDatabase(async pool => {
+    await pool.query('ALTER TABLE whatsapp_cloud_conversation_reads ALTER COLUMN last_read_message_id TYPE numeric');
+    const before = (await pool.query(`SELECT atttypid::regtype::text type FROM pg_attribute
+      WHERE attrelid='whatsapp_cloud_conversation_reads'::regclass AND attname='last_read_message_id'`)).rows[0];
+    await assert.rejects(pool.query(readsSql), error => error?.code === 'P0001' && error?.message === 'whatsapp_cloud_conversation_reads_schema_unsafe');
+    assert.deepEqual((await pool.query(`SELECT atttypid::regtype::text type FROM pg_attribute
+      WHERE attrelid='whatsapp_cloud_conversation_reads'::regclass AND attname='last_read_message_id'`)).rows[0], before);
+  });
+});
+
+test('migración instala índices exactos de reads y unread inbound', async () => {
+  await withDatabase(async pool => {
+    const definitions = (await pool.query(`SELECT indexrelid::regclass::text name, pg_get_indexdef(indexrelid) definition
+      FROM pg_index WHERE indexrelid IN (
+        'idx_whatsapp_cloud_conversation_reads_user'::regclass,
+        'idx_whatsapp_cloud_messages_inbound_unread'::regclass
+      ) ORDER BY name`)).rows;
+    assert.equal(definitions.length, 2);
+    const sql = definitions.map(row => row.definition).join('\n');
+    assert.match(sql, /whatsapp_cloud_messages.*\(empresa_id, participant_wa_id, id\).*WHERE \(direction = 'inbound'::text\)/);
+    assert.match(sql, /whatsapp_cloud_conversation_reads.*\(empresa_id, usuario_id, conversation_id, last_read_message_id\)/);
   });
 });
 
@@ -146,7 +190,8 @@ test('watermarks son independientes por usuario y outbound/status no incrementa 
   await withDatabase(async pool => {
     const ids = await seed(pool);
     const query = async (sql, params, options) => (await pool.query(sql, params, options)).rows;
-    await markCloudConversationRead({ pool, empresaId: 1, conversationId: ids.one, usuarioId: 11 });
+    const renderedId = (await pool.query("SELECT max(id)::text id FROM whatsapp_cloud_messages WHERE empresa_id=1 AND participant_wa_id='5493515550001' AND direction='inbound'")).rows[0].id;
+    await markCloudConversationRead({ pool, empresaId: 1, conversationId: ids.one, usuarioId: 11, lastReadMessageId: renderedId });
     let user11 = await listCloudConversations({ query, empresaId: 1, usuarioId: 11 });
     let user12 = await listCloudConversations({ query, empresaId: 1, usuarioId: 12 });
     assert.equal(user11.conversations[0].unreadCount, 0);
@@ -162,40 +207,40 @@ test('watermarks son independientes por usuario y outbound/status no incrementa 
   });
 });
 
-test('mark-read antes de inbound deja el inbound concurrente no leído; inbound antes queda leído', async () => {
+test('inbound insertado después del GET history permanece unread al confirmar sólo el máximo renderizado', async () => {
   await withDatabase(async pool => {
     const ids = await seed(pool);
     const query = async (sql, params) => (await pool.query(sql, params)).rows;
-
-    const blockerOne = await pool.connect();
-    await blockerOne.query('BEGIN');
-    await blockerOne.query('SELECT whatsapp_cloud_messages_lock_projection(1)');
-    const readFirst = markCloudConversationRead({ pool, empresaId: 1, conversationId: ids.one, usuarioId: 11 });
-    await waitForAdvisoryWaiters(pool, 1);
-    const inboundSecond = pool.query(`INSERT INTO whatsapp_cloud_events
+    const renderedId = (await pool.query("SELECT max(id)::text id FROM whatsapp_cloud_messages WHERE empresa_id=1 AND participant_wa_id='5493515550001' AND direction='inbound'")).rows[0].id;
+    await pool.query(`INSERT INTO whatsapp_cloud_events
       (empresa_id,event_kind,dedupe_key,message_id,sender_id,message_type,event_data,received_at)
-      VALUES (1,'message','after-read','after-read','5493515550001','text','{"text":{"body":"after"}}','2026-10-07T10:04:00Z')`);
-    await waitForAdvisoryWaiters(pool, 2);
-    await blockerOne.query('COMMIT');
-    blockerOne.release();
-    await Promise.all([readFirst, inboundSecond]);
-    let listed = await listCloudConversations({ query, empresaId: 1, usuarioId: 11 });
+      VALUES (1,'message','after-history','after-history','5493515550001','text','{"text":{"body":"after"}}','2026-10-07T10:04:00Z')`);
+    await markCloudConversationRead({
+      pool, empresaId: 1, conversationId: ids.one, usuarioId: 11, lastReadMessageId: renderedId,
+    });
+    const listed = await listCloudConversations({ query, empresaId: 1, usuarioId: 11 });
     assert.equal(listed.conversations[0].unreadCount, 1);
+  });
+});
 
-    const blockerTwo = await pool.connect();
-    await blockerTwo.query('BEGIN');
-    await blockerTwo.query('SELECT whatsapp_cloud_messages_lock_projection(1)');
-    const inboundFirst = pool.query(`INSERT INTO whatsapp_cloud_events
-      (empresa_id,event_kind,dedupe_key,message_id,sender_id,message_type,event_data,received_at)
-      VALUES (1,'message','before-read','before-read','5493515550001','text','{"text":{"body":"before"}}','2026-10-07T10:05:00Z')`);
-    await waitForAdvisoryWaiters(pool, 1);
-    const readSecond = markCloudConversationRead({ pool, empresaId: 1, conversationId: ids.one, usuarioId: 11 });
-    await waitForAdvisoryWaiters(pool, 2);
-    await blockerTwo.query('COMMIT');
-    blockerTwo.release();
-    await Promise.all([inboundFirst, readSecond]);
-    listed = await listCloudConversations({ query, empresaId: 1, usuarioId: 11 });
-    assert.equal(listed.conversations[0].unreadCount, 0);
+test('mark-read rechaza IDs outbound, ajenos y cross-tenant sin mutar watermark', async () => {
+  await withDatabase(async pool => {
+    const ids = await seed(pool);
+    const ownInbound = (await pool.query("SELECT min(id)::text id FROM whatsapp_cloud_messages WHERE empresa_id=1 AND direction='inbound'")).rows[0].id;
+    await markCloudConversationRead({ pool, empresaId: 1, conversationId: ids.one, usuarioId: 11, lastReadMessageId: ownInbound });
+    const before = (await pool.query('SELECT last_read_message_id::text id, xmin::text xmin FROM whatsapp_cloud_conversation_reads WHERE empresa_id=1 AND conversation_id=$1 AND usuario_id=11', [ids.one])).rows[0];
+    const outbound = (await pool.query(`INSERT INTO whatsapp_cloud_messages
+      (empresa_id,direction,participant_wa_id,message_type,text_body,delivery_status,state_rank,message_at,sent_at,created_at,updated_at)
+      VALUES (1,'outbound','5493515550001','text','x','sent',30,NOW(),NOW(),NOW(),NOW()) RETURNING id::text`)).rows[0].id;
+    await pool.query(`INSERT INTO whatsapp_cloud_events (empresa_id,event_kind,dedupe_key,message_id,sender_id,message_type,event_data)
+      VALUES (1,'message','other-participant','other-participant','5493515550099','text','{"text":{"body":"x"}}')`);
+    const other = (await pool.query("SELECT id::text FROM whatsapp_cloud_messages WHERE empresa_id=1 AND participant_wa_id='5493515550099'")).rows[0].id;
+    const crossTenant = (await pool.query("SELECT id::text FROM whatsapp_cloud_messages WHERE empresa_id=2 AND direction='inbound'")).rows[0].id;
+    for (const candidate of [outbound, other, crossTenant]) {
+      await assert.rejects(markCloudConversationRead({ pool, empresaId: 1, conversationId: ids.one, usuarioId: 11, lastReadMessageId: candidate }), error => error?.code === 'CLOUD_INBOX_INVALID_ARGUMENT');
+    }
+    const after = (await pool.query('SELECT last_read_message_id::text id, xmin::text xmin FROM whatsapp_cloud_conversation_reads WHERE empresa_id=1 AND conversation_id=$1 AND usuario_id=11', [ids.one])).rows[0];
+    assert.deepEqual(after, before);
   });
 });
 
@@ -225,6 +270,9 @@ test('listado aplica contadores pre-filtro y orden pending urgent/high/normal, r
     const filtered = await listCloudConversations({ query, empresaId: 1, usuarioId: 11, priority: 'urgent', unread: true });
     assert.equal(filtered.conversations.length, 1);
     assert.deepEqual(filtered.counters, all.counters);
+    const emptyFiltered = await listCloudConversations({ query, empresaId: 1, usuarioId: 11, workflowStatus: 'resolved', priority: 'urgent' });
+    assert.deepEqual(emptyFiltered.conversations, []);
+    assert.deepEqual(emptyFiltered.counters, all.counters);
   });
 });
 
@@ -253,5 +301,46 @@ test('cursor pagina buckets no-pending sin depender de prioridad invisible en el
     const second = await listCloudConversations({ query, empresaId: 1, usuarioId: 11, limit: 1, cursor: first.nextCursor });
     assert.equal(second.conversations[0].participant, `*********${olderUrgent.slice(-4)}`);
     assert.equal(second.nextCursor, null);
+  });
+});
+
+test('plan de listado agrega set-based, pagina antes de hidratar y usa índice unread sin SubPlan correlacionado', async () => {
+  await withDatabase(async pool => {
+    await pool.query("INSERT INTO empresas(id) VALUES (1); INSERT INTO usuarios(id,username,password,role,empresa_id) VALUES (11,'a','x','admin',1)");
+    await pool.query(`INSERT INTO whatsapp_cloud_conversations
+      (id,empresa_id,participant_wa_id,workflow_status,priority,version,created_at,updated_at)
+      SELECT md5(participant::text)::uuid, 1, '549351' || lpad(participant::text, 9, '0'),
+             'pending', 'normal', 1, NOW(), NOW()
+        FROM generate_series(1, 120) participant`);
+    await pool.query(`INSERT INTO whatsapp_cloud_messages
+      (empresa_id,direction,participant_wa_id,message_type,text_body,delivery_status,state_rank,message_at,created_at,updated_at)
+      SELECT 1, 'inbound', '549351' || lpad(participant::text, 9, '0'), 'text', 'fixture', 'received', 0,
+             '2026-10-07T00:00:00Z'::timestamptz + (participant * 100 + message) * interval '1 second', NOW(), NOW()
+        FROM generate_series(1, 120) participant
+        CROSS JOIN generate_series(1, 20) message`);
+    await pool.query('ANALYZE whatsapp_cloud_messages; ANALYZE whatsapp_cloud_conversations');
+    let captured;
+    const query = async (sql, params) => {
+      captured = { sql, params };
+      return (await pool.query(sql, params)).rows;
+    };
+    const first = await listCloudConversations({ query, empresaId: 1, usuarioId: 11, limit: 10 });
+    assert.equal(first.conversations.length, 10);
+    assert.ok(first.counters);
+    assert.match(captured.sql, /array_agg\(message\.id/);
+    assert.ok(captured.sql.indexOf('LIMIT $2') < captured.sql.indexOf('FROM public.puntos_entrega'));
+    const explained = await pool.query(`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${captured.sql}`, captured.params);
+    assert.doesNotMatch(JSON.stringify(explained.rows[0]['QUERY PLAN']), /SubPlan/);
+
+    const second = await listCloudConversations({ query, empresaId: 1, usuarioId: 11, limit: 10, cursor: first.nextCursor });
+    assert.equal(second.counters, null);
+    assert.doesNotMatch(captured.sql, /counters AS/);
+
+    await pool.query('SET enable_seqscan = off');
+    const unreadPlan = await pool.query(`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)
+      SELECT count(*) FROM whatsapp_cloud_messages
+       WHERE empresa_id=1 AND participant_wa_id='549351000000001'
+         AND direction='inbound' AND id > 0`);
+    assert.match(JSON.stringify(unreadPlan.rows[0]['QUERY PLAN']), /idx_whatsapp_cloud_messages_inbound_unread/);
   });
 });
