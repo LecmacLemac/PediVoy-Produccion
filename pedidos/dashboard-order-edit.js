@@ -1,3 +1,25 @@
+export function createPedidoEditCoordinator() {
+  let generation = 0;
+  let active = null;
+  return {
+    begin({ id, finalized }) {
+      active = Object.freeze({ generation: ++generation, id: Number(id), finalized: finalized === true });
+      return active;
+    },
+    isActive(context) {
+      return context === active;
+    },
+    commit(context, apply) {
+      if (context !== active) return false;
+      apply();
+      return true;
+    },
+    capture() {
+      return active;
+    },
+  };
+}
+
 export function isPedidoFinalizado(estado) {
   return estado === 'entregado' || estado === 'cancelado';
 }

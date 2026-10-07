@@ -10,14 +10,29 @@ import { createPedidoEstadoNotifications } from '../services/referenteNotificati
 import { ejecutarPostEntregaUpsell } from '../estrategias.js';
 import { requireCanonicalBackofficeRole } from './canonicalBackofficeRole.js';
 
+const PEDIDO_ESTADOS = new Set(['pendiente', 'en_ruta', 'en_camino', 'entregado', 'cancelado']);
+const PEDIDO_METODOS_PAGO = new Set(['efectivo', 'transferencia', 'cuenta_corriente', 'qr_dinamico']);
+
 function pedidoUpdateError(statusCode, message) {
   return Object.assign(new Error(message), { statusCode });
 }
 
+function hasOwn(object, key) {
+  return Object.hasOwn(object, key);
+}
+
+function requireOptionalPositiveJsonInteger(body, field) {
+  if (!hasOwn(body, field)) return { present: false, value: undefined };
+  const value = body[field];
+  if (value === null) return { present: true, value: null };
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw pedidoUpdateError(400, `${field} inválido`);
+  }
+  return { present: true, value };
+}
+
 export function createUpdatePedidoHandler({
   withTransactionFn = withTransaction,
-  isSuperFn = isSuper,
-  getEmpresaIdFromTokenFn = getEmpresaIdFromToken,
   notifyEstadoFn = createPedidoEstadoNotifications,
   notifyEnRutaFn = notificarEnRuta,
   awardPointsFn = awardPointsForDeliveredOrder,
@@ -30,17 +45,36 @@ export function createUpdatePedidoHandler({
       if (!Number.isSafeInteger(pedidoId) || pedidoId <= 0) {
         throw pedidoUpdateError(400, 'ID de pedido inválido');
       }
-
-      const body = req.body || {};
-      const { estado, metodo_pago, empresa_id, chofer_id, zona_id } = body;
-      const esSuperUser = isSuperFn(req);
-      const myEmpresa = getEmpresaIdFromTokenFn(req);
-      const tenantEmpresa = esSuperUser ? null : Number(myEmpresa);
-      if (!esSuperUser && (!Number.isSafeInteger(tenantEmpresa) || tenantEmpresa <= 0)) {
-        throw pedidoUpdateError(400, 'Falta empresa.');
+      const actorUid = req.user?.uid;
+      if (!Number.isSafeInteger(actorUid) || actorUid <= 0) {
+        throw pedidoUpdateError(403, 'Usuario autenticado inválido');
       }
 
+      const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
       const outcome = await withTransactionFn(async (txQuery) => {
+        const actorRows = await txQuery(
+          `SELECT id, role, empresa_id, activo
+             FROM usuarios
+            WHERE id = $1
+            FOR SHARE`,
+          [actorUid]
+        );
+        if (actorRows.length !== 1) throw pedidoUpdateError(403, 'Actor no autorizado');
+        const actor = actorRows[0];
+        const tokenRole = req.user?.role;
+        const tokenEmpresa = req.user?.empresa_id;
+        const actorRoleValid = actor.role === 'admin' || actor.role === 'super';
+        const adminEmpresa = Number(actor.empresa_id);
+        const adminScopeValid = actor.role !== 'admin'
+          || (Number.isSafeInteger(adminEmpresa) && adminEmpresa > 0
+            && tokenRole === 'admin' && tokenEmpresa === adminEmpresa);
+        const superScopeValid = actor.role !== 'super'
+          || (actor.empresa_id === null && tokenRole === 'super' && tokenEmpresa == null);
+        if (actor.activo !== true || !actorRoleValid || !adminScopeValid || !superScopeValid) {
+          throw pedidoUpdateError(403, 'Actor no autorizado');
+        }
+
+        const tenantEmpresa = actor.role === 'admin' ? adminEmpresa : null;
         const rows = await txQuery(
           `SELECT id, empresa_id, punto_entrega_id, monto, estado
              FROM pedidos
@@ -50,40 +84,80 @@ export function createUpdatePedidoHandler({
           [pedidoId, tenantEmpresa]
         );
         if (rows.length !== 1) throw pedidoUpdateError(404, 'Pedido no encontrado o sin permiso');
-
         const current = rows[0];
+        if (!Number.isSafeInteger(current.empresa_id) || current.empresa_id <= 0) {
+          throw pedidoUpdateError(409, 'El pedido no tiene un tenant canónico');
+        }
+
+        const empresaInput = requireOptionalPositiveJsonInteger(body, 'empresa_id');
+        if (empresaInput.present && empresaInput.value !== null && empresaInput.value !== current.empresa_id) {
+          throw pedidoUpdateError(409, 'empresa_id no coincide con el tenant del pedido');
+        }
+
+        const estadoPresent = hasOwn(body, 'estado');
+        const estado = body.estado;
+        if (estadoPresent && estado !== null && (typeof estado !== 'string' || !PEDIDO_ESTADOS.has(estado))) {
+          throw pedidoUpdateError(400, 'estado inválido');
+        }
+
+        const metodoPresent = hasOwn(body, 'metodo_pago');
+        const metodoPago = body.metodo_pago;
+        if (metodoPresent && metodoPago !== null && metodoPago !== ''
+          && (typeof metodoPago !== 'string' || !PEDIDO_METODOS_PAGO.has(metodoPago))) {
+          throw pedidoUpdateError(400, 'metodo_pago inválido');
+        }
+
+        const choferInput = requireOptionalPositiveJsonInteger(body, 'chofer_id');
+        const zonaInput = requireOptionalPositiveJsonInteger(body, 'zona_id');
         const finalized = current.estado === 'entregado' || current.estado === 'cancelado';
-        const changesFinalizedEstado = estado != null && estado !== current.estado;
-        const sameCanonicalEmpresa = Number.isSafeInteger(empresa_id)
-          && empresa_id > 0
-          && empresa_id === current.empresa_id;
-        const changesFinalizedEmpresa = empresa_id != null && !sameCanonicalEmpresa;
-        if (finalized && (changesFinalizedEstado || changesFinalizedEmpresa)) {
+        if (finalized && estadoPresent && estado !== null && estado !== current.estado) {
           throw pedidoUpdateError(409, 'El pedido finalizado sólo admite correcciones administrativas');
+        }
+
+        // Orden global: actor -> pedido -> chofer -> zona -> pedido UPDATE.
+        if (choferInput.present && choferInput.value !== null) {
+          const choferRows = await txQuery(
+            `SELECT id
+               FROM choferes
+              WHERE id = $1
+                AND empresa_id = $2
+                AND activo IS TRUE
+              FOR SHARE`,
+            [choferInput.value, current.empresa_id]
+          );
+          if (choferRows.length !== 1) throw pedidoUpdateError(400, 'chofer_id inválido para el tenant');
+        }
+        if (zonaInput.present && zonaInput.value !== null) {
+          const zonaRows = await txQuery(
+            `SELECT id
+               FROM zonas_geograficas
+              WHERE id = $1
+                AND empresa_id = $2
+              FOR SHARE`,
+            [zonaInput.value, current.empresa_id]
+          );
+          if (zonaRows.length !== 1) throw pedidoUpdateError(400, 'zona_id inválido para el tenant');
         }
 
         const sets = [];
         const vals = [];
         let idx = 1;
-        if (!finalized && estado) {
+        if (!finalized && estadoPresent && estado !== null && estado !== current.estado) {
           sets.push(`estado = $${idx++}`);
           vals.push(estado);
         }
-        if (metodo_pago) {
+        // Compatibilidad histórica/UI: null y cadena vacía significan “no modificar”.
+        if (metodoPresent && metodoPago !== null && metodoPago !== '') {
           sets.push(`metodo_pago = $${idx++}`);
-          vals.push(metodo_pago);
+          vals.push(metodoPago);
         }
-        if (!finalized && esSuperUser && empresa_id != null) {
-          sets.push(`empresa_id = $${idx++}`);
-          vals.push(Number(empresa_id));
-        }
-        if (chofer_id != null) {
+        if (choferInput.present) {
           sets.push(`chofer_id = $${idx++}`);
-          vals.push(chofer_id);
+          vals.push(choferInput.value);
         }
-        if (zona_id != null) {
+        if (zonaInput.present) {
           sets.push(`zona_id = $${idx++}`);
-          vals.push(zona_id);
+          vals.push(zonaInput.value);
         }
 
         let updated = current;
@@ -95,7 +169,7 @@ export function createUpdatePedidoHandler({
           const updatedRows = await txQuery(
             `UPDATE pedidos SET ${sets.join(', ')}
              WHERE id = $${idPos}
-               AND empresa_id IS NOT DISTINCT FROM $${currentEmpresaPos}
+               AND empresa_id = $${currentEmpresaPos}
              RETURNING id, empresa_id, punto_entrega_id, monto, estado`,
             vals
           );
@@ -107,7 +181,7 @@ export function createUpdatePedidoHandler({
 
         return {
           row: updated,
-          estadoChanged: Boolean(estado) && estado !== current.estado,
+          estadoChanged: !finalized && estadoPresent && estado !== null && estado !== current.estado,
           requestedEstado: estado,
         };
       });

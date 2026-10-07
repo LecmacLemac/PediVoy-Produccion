@@ -12,10 +12,12 @@ function saveHandlerSource() {
   return source.slice(start, end);
 }
 
-function createHarness({ itemsOk = true, finalized = false } = {}) {
+function createHarness({ itemsOk = true, finalized = false, pedidoResponse } = {}) {
   const requests = [];
   const errors = [];
   let closed = false;
+  let activeContext = { id: 42, finalized };
+  const busyStates = [];
 
   const inputs = [
     { value: 'Bidón 20L' },
@@ -44,16 +46,21 @@ function createHarness({ itemsOk = true, finalized = false } = {}) {
     saveBusy: false,
     editingId: 42,
     editingPedidoFinalizado: finalized,
+    pedidoEditCoordinator: {
+      capture: () => activeContext,
+      isActive: context => context === activeContext,
+    },
     dlg_itemsBody: { querySelectorAll: () => [row] },
     btnSaveAll: { textContent: 'Guardar' },
     dlg: { close() { closed = true; } },
     $: selector => fields.get(selector),
     setDialogError(message) { errors.push(message); },
-    setModalBusy() {},
+    setModalBusy(value) { busyStates.push(value); },
     parseErrorResponse: async (_response, fallback) => fallback,
     authFetch: async (url, options) => {
       requests.push({ url, options });
       if (url.endsWith('/items')) return { ok: itemsOk };
+      if (pedidoResponse) return pedidoResponse;
       return { ok: true };
     },
     showToast() {},
@@ -80,7 +87,14 @@ function createHarness({ itemsOk = true, finalized = false } = {}) {
   };
 
   vm.runInNewContext(saveHandlerSource(), context, { filename: 'dashboard-save-handler.js' });
-  return { context, requests, errors, wasClosed: () => closed };
+  return {
+    context,
+    requests,
+    errors,
+    busyStates,
+    replaceActiveContext(next) { activeContext = next; },
+    wasClosed: () => closed,
+  };
 }
 
 test('al finalizar un pedido guarda los ítems antes de enviar estado entregado', async () => {
@@ -118,4 +132,20 @@ test('al corregir un pedido finalizado omite PUT items y envía sólo campos adm
     zona_id: 2,
   });
   assert.equal(harness.wasClosed(), true);
+});
+
+test('respuesta fallida obsoleta no pisa el error ni libera el modal del pedido activo', async () => {
+  let resolvePedido;
+  const pedidoResponse = new Promise(resolve => { resolvePedido = resolve; });
+  const harness = createHarness({ finalized: true, pedidoResponse });
+
+  const staleSave = harness.context.btnSaveAll.onclick();
+  await Promise.resolve();
+  harness.replaceActiveContext({ id: 43, finalized: false });
+  resolvePedido({ ok: false });
+  await staleSave;
+
+  assert.deepEqual(harness.errors, ['']);
+  assert.deepEqual(harness.busyStates, [true]);
+  assert.equal(harness.wasClosed(), false);
 });

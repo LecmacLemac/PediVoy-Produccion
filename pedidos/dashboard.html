@@ -923,6 +923,8 @@
                 <option value="">(Sin definir)</option>
                 <option value="efectivo">Efectivo</option>
                 <option value="transferencia">Transferencia</option>
+                <option value="cuenta_corriente">Cuenta corriente</option>
+                <option value="qr_dinamico">QR dinámico</option>
               </select>
             </div>
           </div>
@@ -1026,7 +1028,7 @@
   <script type="module">
     import { hasValidCoordinates } from './location-utils.js';
     import { applyCloudInboxNavigation } from './dashboard-nav.js';
-    import { applyFinalizedOrderControls, buildPedidoSavePlan, isPedidoFinalizado } from './dashboard-order-edit.js';
+    import { applyFinalizedOrderControls, buildPedidoSavePlan, createPedidoEditCoordinator, isPedidoFinalizado } from './dashboard-order-edit.js';
 
     // ====== Auth (modo seguro: cookie httpOnly) ======
     const authFetch = (url, opts = {}) => {
@@ -1102,6 +1104,7 @@
     let zonasEmpresaId = null;
     let editingId    = null;
     let editingPedidoFinalizado = false;
+    const pedidoEditCoordinator = createPedidoEditCoordinator();
     let saveBusy      = false;
     let deleteBusy    = false;
     let pedidosReqSeq = 0;
@@ -1367,7 +1370,7 @@
       }
     }
 
-    async function populatePedidoRelationSelects(p = {}) {
+    function applyPedidoRelationSelects(p = {}, choferes = [], zonas = []) {
       const empresaId = p.empresa_id != null ? Number(p.empresa_id) : null;
       const choferId = p.chofer_id != null ? Number(p.chofer_id) : null;
       const zonaId = p.zona_id != null ? Number(p.zona_id) : null;
@@ -1381,9 +1384,8 @@
       });
       $('#dlg_empresa_id').value = empresaId || '';
 
-      choferesPedido = await loadChoferesForEmpresa(empresaId);
       $('#dlg_chofer_id').innerHTML = buildRelationOptions({
-        list: choferesPedido,
+        list: choferes,
         selectedId: choferId,
         emptyLabel: 'Sin chofer',
         labelFn: (c) => c.nombre || 'Chofer',
@@ -1391,9 +1393,8 @@
       });
       $('#dlg_chofer_id').value = choferId || '';
 
-      await loadZonasForEmpresa(empresaId);
       $('#dlg_zona_id').innerHTML = buildRelationOptions({
-        list: zonasEmpresa,
+        list: zonas,
         selectedId: zonaId,
         emptyLabel: 'Sin zona',
         labelFn: (z) => z.nombre || 'Zona',
@@ -1916,6 +1917,18 @@
       return zonasEmpresa;
     }
 
+    async function fetchZonasForEmpresa(empresaId = null) {
+      const normalizedEmpresaId = Number(empresaId) || null;
+      const qs = normalizedEmpresaId ? `?empresa_id=${encodeURIComponent(normalizedEmpresaId)}` : '';
+      try {
+        const r = await authFetch('/api/zonas' + qs);
+        const list = r.ok ? await r.json() : [];
+        return Array.isArray(list) ? list : [];
+      } catch {
+        return [];
+      }
+    }
+
     async function initLoad(){
       setDashboardLoading(true);
       try {
@@ -2237,30 +2250,44 @@
     };
 
     window.openPedido = async (id) => {
-      editingId = id;
-      $('#dlg_pid').textContent = id;
       const p = pedidos.find(x => x.id == id) || {};
-      editingPedidoFinalizado = isPedidoFinalizado(p.estado);
+      const editContext = pedidoEditCoordinator.begin({ id, finalized: isPedidoFinalizado(p.estado) });
+      editingId = editContext.id;
+      editingPedidoFinalizado = editContext.finalized;
+      $('#dlg_pid').textContent = editContext.id;
 
-      $('#dlg_estado').value     = p.estado || 'pendiente';
-      $('#dlg_metodo').value     = (p.metodo_pago || '').toLowerCase();
-      await populatePedidoRelationSelects(p);
-      await updatePedidoIdNameHints(p);
+      $('#dlg_estado').value = p.estado || 'pendiente';
+      $('#dlg_metodo').value = (p.metodo_pago || '').toLowerCase();
       setDialogError('');
       setModalBusy(false);
 
       dlg_itemsBody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:1rem; color:var(--muted);">Cargando ítems...</td></tr>';
-      dlg.showModal();
+      if (!dlg.open) dlg.showModal();
 
       try {
-        const r = await authFetch(`/api/pedidos/${id}/items`);
+        const [choferes, zonas, r] = await Promise.all([
+          loadChoferesForEmpresa(p.empresa_id),
+          fetchZonasForEmpresa(p.empresa_id),
+          authFetch(`/api/pedidos/${editContext.id}/items`),
+        ]);
+        if (!pedidoEditCoordinator.isActive(editContext)) return;
         if (!r.ok) throw new Error(await parseErrorResponse(r, 'No se pudieron cargar los ítems del pedido.'));
         const items = await r.json();
-        const list  = Array.isArray(items) && items.length ? items : [{producto:'', cantidad:1, precio_unitario:0}];
+        if (!pedidoEditCoordinator.isActive(editContext)) return;
+
+        choferesPedido = choferes;
+        zonasEmpresa = zonas;
+        zonasEmpresaId = Number(p.empresa_id) || null;
+        applyPedidoRelationSelects(p, choferes, zonas);
+        await updatePedidoIdNameHints(p);
+        if (!pedidoEditCoordinator.isActive(editContext)) return;
+
+        const list = Array.isArray(items) && items.length ? items : [{producto:'', cantidad:1, precio_unitario:0}];
         dlg_itemsBody.innerHTML = list.map(renderItemRow).join('');
         recalcTotal();
         setModalBusy(false);
       } catch (err) {
+        if (!pedidoEditCoordinator.isActive(editContext)) return;
         setDialogError(err?.message || 'Error cargando ítems');
         dlg_itemsBody.innerHTML = renderItemRow({ producto:'', cantidad:1, precio_unitario:0 });
         recalcTotal();
@@ -2357,9 +2384,13 @@
 
     btnSaveAll.onclick = async () => {
       if (saveBusy) return;
+      const saveContext = pedidoEditCoordinator.capture();
+      if (!saveContext) return;
+      const savePedidoId = saveContext.id;
+      const saveFinalized = saveContext.finalized;
       setDialogError('');
 
-      const rowData = editingPedidoFinalizado ? [] : Array.from(dlg_itemsBody.querySelectorAll('tr')).map(tr => {
+      const rowData = saveFinalized ? [] : Array.from(dlg_itemsBody.querySelectorAll('tr')).map(tr => {
         tr.classList.remove('row-invalid');
         const i = tr.querySelectorAll('input');
         return {
@@ -2377,14 +2408,14 @@
       const zonaId    = Number($('#dlg_zona_id').value)    || null;
 
       // Validaciones fuertes
-      if (!editingPedidoFinalizado && !items.length) {
+      if (!saveFinalized && !items.length) {
         setDialogError('Agregá al menos un ítem válido.');
         return;
       }
 
       const invalidRows = rowData.filter(it => it.producto && (!Number.isFinite(it.cantidad) || it.cantidad <= 0 || !Number.isFinite(it.precio_unitario) || it.precio_unitario < 0));
       invalidRows.forEach(it => it.tr.classList.add('row-invalid'));
-      if (!editingPedidoFinalizado && invalidRows.length) {
+      if (!saveFinalized && invalidRows.length) {
         setDialogError('Revisá los ítems marcados: cantidad debe ser mayor a 0 y precio mayor o igual a 0.');
         invalidRows[0]?.tr.querySelector('input')?.focus();
         return;
@@ -2392,20 +2423,20 @@
 
       const estadoVal = String($('#dlg_estado').value || '').trim();
       const estadosPermitidos = ['pendiente', 'en_ruta', 'entregado', 'cancelado'];
-      if (!editingPedidoFinalizado && !estadosPermitidos.includes(estadoVal)) {
+      if (!saveFinalized && !estadosPermitidos.includes(estadoVal)) {
         setDialogError('Estado inválido.');
         return;
       }
 
       const metodoVal = String($('#dlg_metodo').value || '').toLowerCase();
-      const metodosPermitidos = ['', 'efectivo', 'transferencia'];
+      const metodosPermitidos = ['', 'efectivo', 'transferencia', 'cuenta_corriente', 'qr_dinamico'];
       if (!metodosPermitidos.includes(metodoVal)) {
         setDialogError('Método de pago inválido.');
         return;
       }
 
       const savePlan = buildPedidoSavePlan({
-        finalized: editingPedidoFinalizado,
+        finalized: saveFinalized,
         items,
         estado: estadoVal,
         metodoPago: metodoVal,
@@ -2420,7 +2451,7 @@
 
       try {
         if (savePlan.updateItems) {
-          const itemsResp = await authFetch(`/api/pedidos/${editingId}/items`, {
+          const itemsResp = await authFetch(`/api/pedidos/${savePedidoId}/items`, {
             method: 'PUT',
             headers:{
               'Content-Type':'application/json'
@@ -2433,7 +2464,7 @@
           }
         }
 
-        const pedidoResp = await authFetch(`/api/pedidos/${editingId}`, {
+        const pedidoResp = await authFetch(`/api/pedidos/${savePedidoId}`, {
           method: 'PUT',
           headers:{
             'Content-Type':'application/json'
@@ -2445,15 +2476,20 @@
           throw new Error(await parseErrorResponse(pedidoResp, 'No se pudo actualizar el pedido.'));
         }
 
+        if (!pedidoEditCoordinator.isActive(saveContext)) return;
         showToast('Guardado correctamente');
         dlg.close();
         await loadPedidos();
         applyFilters();
       } catch (err) {
-        setDialogError(err?.message || 'Error al guardar');
+        if (pedidoEditCoordinator.isActive(saveContext)) {
+          setDialogError(err?.message || 'Error al guardar');
+        }
       } finally {
-        setModalBusy(false);
-        btnSaveAll.textContent = prevTxt;
+        if (pedidoEditCoordinator.isActive(saveContext)) {
+          setModalBusy(false);
+          btnSaveAll.textContent = prevTxt;
+        }
       }
     };
 

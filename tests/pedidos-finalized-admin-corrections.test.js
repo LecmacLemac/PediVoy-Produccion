@@ -23,7 +23,15 @@ function buildHandler({ currentPedido, onUpdate, sideEffects = {}, superUser = f
   const handler = createUpdatePedidoHandler({
     withTransactionFn: async (work) => work(async (sql, params) => {
       calls.push({ sql, params });
-      if (sql.includes('SELECT') && sql.includes('FOR UPDATE')) return [currentPedido];
+      if (sql.includes('FROM usuarios')) return [{
+        id: superUser ? 6 : 5,
+        role: superUser ? 'super' : 'admin',
+        empresa_id: superUser ? null : 7,
+        activo: true,
+      }];
+      if (sql.includes('FROM pedidos') && sql.includes('FOR UPDATE')) return [currentPedido];
+      if (sql.includes('FROM choferes')) return [{ id: 9 }];
+      if (sql.includes('FROM zonas_geograficas')) return [{ id: 4 }];
       if (sql.includes('UPDATE pedidos')) return onUpdate?.(sql, params) ?? [{ ...currentPedido }];
       throw new Error(`Consulta inesperada: ${sql}`);
     }),
@@ -42,7 +50,7 @@ async function invoke(handler, body, { superUser = false } = {}) {
   const req = {
     params: { id: '42' },
     body,
-    user: superUser ? { role: 'super', empresa_id: null } : { role: 'admin', empresa_id: 7 },
+    user: superUser ? { uid: 6, role: 'super', empresa_id: null } : { uid: 5, role: 'admin', empresa_id: 7 },
   };
   const res = responseHarness();
   await handler(req, res);
@@ -61,7 +69,7 @@ test('backend permite correccion administrativa tenant-scoped de pedido finaliza
     currentPedido,
     onUpdate(sql, params) {
       assert.doesNotMatch(sql, /estado\s*=/);
-      assert.doesNotMatch(sql, /empresa_id\s*=/);
+      assert.doesNotMatch(sql.split('WHERE')[0], /empresa_id\s*=/);
       assert.match(sql, /metodo_pago\s*=/);
       assert.match(sql, /chofer_id\s*=/);
       assert.match(sql, /zona_id\s*=/);
@@ -74,7 +82,7 @@ test('backend permite correccion administrativa tenant-scoped de pedido finaliza
 
   assert.equal(res.statusCode, 200);
   assert.deepEqual(res.payload, { ok: true });
-  const select = calls.find(call => call.sql.includes('FOR UPDATE'));
+  const select = calls.find(call => call.sql.includes('FROM pedidos') && call.sql.includes('FOR UPDATE'));
   assert.deepEqual(select.params, [42, 7]);
 });
 
@@ -104,7 +112,7 @@ for (const superUser of [false, true]) {
         superUser,
         onUpdate(sql, params) {
           assert.doesNotMatch(sql, /estado\s*=/);
-          assert.doesNotMatch(sql, /empresa_id\s*=/);
+          assert.doesNotMatch(sql.split('WHERE')[0], /empresa_id\s*=/);
           assert.match(sql, /metodo_pago\s*=/);
           assert.deepEqual(params, ['transferencia', 42, 7]);
           return [{ ...finalizedPedido, metodo_pago: 'transferencia' }];
@@ -115,7 +123,7 @@ for (const superUser of [false, true]) {
 
       assert.equal(res.statusCode, 200);
       assert.deepEqual(res.payload, { ok: true });
-      const select = calls.find(call => call.sql.includes('FOR UPDATE'));
+      const select = calls.find(call => call.sql.includes('FROM pedidos') && call.sql.includes('FOR UPDATE'));
       assert.deepEqual(select.params, [42, superUser ? null : 7]);
     });
   }
@@ -140,7 +148,7 @@ for (const superUser of [false, true]) {
       );
 
       assert.equal(res.statusCode, 409);
-      assert.match(res.payload.error, /finalizado/i);
+      assert.match(res.payload.error, field === 'estado' ? /finalizado/i : /tenant/i);
       assert.equal(calls.some(call => call.sql.includes('UPDATE pedidos')), false);
     });
   }
@@ -172,8 +180,8 @@ for (const superUser of [false, true]) {
         { superUser }
       );
 
-      assert.equal(res.statusCode, 409);
-      assert.match(res.payload.error, /finalizado/i);
+      assert.equal(res.statusCode, 400);
+      assert.match(res.payload.error, /inválido/i);
       assert.equal(calls.some(call => call.sql.includes('UPDATE pedidos')), false);
     });
   }
@@ -187,11 +195,11 @@ test('pedido no finalizado conserva la actualizacion existente y side effects so
       notifyEstadoFn: () => { notifications += 1; return Promise.resolve(); },
     },
     onUpdate(sql, params) {
-      assert.match(sql, /estado\s*=/);
+      assert.doesNotMatch(sql, /estado\s*=/);
       assert.match(sql, /metodo_pago\s*=/);
       assert.match(sql, /chofer_id\s*=/);
       assert.match(sql, /zona_id\s*=/);
-      assert.deepEqual(params, ['pendiente', 'efectivo', 9, 4, 42, 7]);
+      assert.deepEqual(params, ['efectivo', 9, 4, 42, 7]);
       return [{ id: 42, empresa_id: 7, estado: 'pendiente', monto: 3000, punto_entrega_id: 12 }];
     },
   });
