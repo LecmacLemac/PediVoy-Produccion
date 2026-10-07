@@ -5611,6 +5611,26 @@ CREATE INDEX IF NOT EXISTS idx_pedidos_emp_chofer_fecha ON pedidos (empresa_id, 
 CREATE INDEX IF NOT EXISTS idx_puntos_entrega_empresa ON puntos_entrega (empresa_id);
 CREATE INDEX IF NOT EXISTS idx_puntos_entrega_tel_norm ON puntos_entrega (telefono_normalizado);
 CREATE INDEX IF NOT EXISTS idx_puntos_entrega_cliente_trgm ON puntos_entrega USING gin (cliente gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_puntos_entrega_whatsapp_search_name_trgm
+  ON puntos_entrega USING gin (
+    (pg_catalog.LOWER(COALESCE(NULLIF(BTRIM(nombre), ''), cliente, ''))) gin_trgm_ops
+  );
+CREATE INDEX IF NOT EXISTS idx_puntos_entrega_whatsapp_search_address_trgm
+  ON puntos_entrega USING gin (
+    (pg_catalog.LOWER(COALESCE(direccion_completa, direccion, '') || ' ' || COALESCE(ciudad, ''))) gin_trgm_ops
+  );
+CREATE INDEX IF NOT EXISTS idx_puntos_entrega_whatsapp_phone_suffix
+  ON puntos_entrega (
+    empresa_id,
+    (RIGHT(regexp_replace(COALESCE(telefono_normalizado, telefono, ''), '\\D', '', 'g'), 10))
+  );
+CREATE INDEX IF NOT EXISTS idx_whatsapp_cloud_conversations_phone_suffix
+  ON whatsapp_cloud_conversations (
+    empresa_id,
+    (RIGHT(regexp_replace(participant_wa_id, '\\D', '', 'g'), 10))
+  );
+CREATE INDEX IF NOT EXISTS idx_pedidos_empresa_punto_fecha
+  ON pedidos (empresa_id, punto_entrega_id, fecha DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_usuarios_username ON usuarios (username);
 CREATE INDEX IF NOT EXISTS idx_recompensas_cliente ON cliente_recompensas(cliente_id) WHERE reclamado = FALSE;
 CREATE INDEX IF NOT EXISTS idx_items_pedido_pedido_id ON items_pedido (pedido_id);

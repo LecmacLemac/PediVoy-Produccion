@@ -212,7 +212,7 @@ test('migración de watermarks falla cerrada ante una FK canónica de nombre per
 test('watermarks son independientes por usuario y outbound/status no incrementa unread', async () => {
   await withDatabase(async pool => {
     const ids = await seed(pool);
-    const query = async (sql, params, options) => (await pool.query(sql, params, options)).rows;
+    const query = async (sql, params) => (await pool.query(sql, params)).rows;
     const renderedId = (await pool.query("SELECT max(id)::text id FROM whatsapp_cloud_messages WHERE empresa_id=1 AND participant_wa_id='5493515550001' AND direction='inbound'")).rows[0].id;
     await markCloudConversationRead({ pool, empresaId: 1, conversationId: ids.one, usuarioId: 11, actorRole: 'admin', lastReadMessageId: renderedId });
     let user11 = await listCloudConversations({ query, empresaId: 1, usuarioId: 11 });

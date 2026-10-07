@@ -45,6 +45,20 @@ test('guard de listado acepta sólo la misma revisión de mutación y falla cerr
   assert.equal(isListResponseCurrentForMutation(Number.MAX_SAFE_INTEGER + 1, Number.MAX_SAFE_INTEGER + 1), false);
 });
 
+test('Task 4 declara índices tenant-scoped para búsqueda operativa sin escanear mensajes', async () => {
+  const [schema, repository] = await Promise.all([
+    readFile(new URL('../initDb.sql', import.meta.url), 'utf8'),
+    readFile(new URL('../src/whatsappCloud/inboxRepository.js', import.meta.url), 'utf8'),
+  ]);
+  assert.match(schema, /idx_puntos_entrega_whatsapp_search_name_trgm/);
+  assert.match(schema, /idx_puntos_entrega_whatsapp_search_address_trgm/);
+  assert.match(schema, /idx_puntos_entrega_whatsapp_phone_suffix/);
+  assert.match(schema, /idx_whatsapp_cloud_conversations_phone_suffix/);
+  const searchSection = repository.slice(repository.indexOf('export async function searchCloudConversations'), repository.indexOf('export async function getCloudConversationContext'));
+  assert.doesNotMatch(searchSection, /text_body|media_caption|provider_message_id|media_id|event_data|access_token/i);
+  assert.match(searchSection, /order_row\.id = \$4/);
+});
+
 async function withServer(app, work) {
   const server = app.listen(0, '127.0.0.1');
   await new Promise(resolve => server.once('listening', resolve));
@@ -91,6 +105,30 @@ test('listado valida filtros operativos y deriva usuario autenticado para unread
   assert.match(calls[0].sql, /whatsapp_cloud_conversation_reads/);
   assert.match(calls[0].sql, /queue_bucket/);
   assert.match(calls[0].sql, /pending_count/);
+});
+
+test('Task 4 super exige empresa explícita canónica en body de búsqueda y query de contexto', async () => {
+  const app = express();
+  app.use(express.json());
+  app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+    canonicalOrigin: 'https://admin.pedivoy.test',
+    withAuth(req, _res, next) { req.user = { uid: 41, role: 'super', empresa_id: null }; next(); },
+    async query() { return []; },
+  }));
+  await withServer(app, async baseUrl => {
+    const headers = { Origin: 'https://admin.pedivoy.test', 'Content-Type': 'application/json' };
+    const endpoint = `${baseUrl}/api/admin/whatsapp-cloud/conversations/search`;
+    assert.equal((await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify({ query: 'Ana' }) })).status, 400);
+    assert.equal((await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify({ query: 'Ana', empresa_id: '7' }) })).status, 400);
+    assert.equal((await fetch(`${endpoint}?empresa_id=7`, { method: 'POST', headers, body: JSON.stringify({ query: 'Ana', empresa_id: 7 }) })).status, 400);
+    assert.equal((await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify({ query: 'Ana', empresa_id: 7 }) })).status, 200);
+
+    const contextBase = `${baseUrl}/api/admin/whatsapp-cloud/conversations/${stableId}/context`;
+    assert.equal((await fetch(contextBase)).status, 400);
+    assert.equal((await fetch(`${contextBase}?empresa_id=07`)).status, 400);
+    assert.equal((await fetch(`${contextBase}?empresa_id=7&phone=1`)).status, 400);
+    assert.equal((await fetch(`${contextBase}?empresa_id=7`)).status, 404);
+  });
 });
 
 test('POST read exige JSON, Origin y el máximo inbound renderizado exacto', async () => {

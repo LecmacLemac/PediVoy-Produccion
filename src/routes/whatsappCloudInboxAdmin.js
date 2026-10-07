@@ -6,11 +6,13 @@ import { requireCanonicalBackofficeRole } from './canonicalBackofficeRole.js';
 import { isLoopbackHostname, parseCanonicalPublicOrigin } from '../bootstrap/env.js';
 import {
   getCloudAttachmentMetadata,
+  getCloudConversationContext,
   listCloudConversationMessages,
   listCloudConversations,
   markCloudConversationRead,
   matchesCloudReplyCorrelation,
   resolveCloudConversationParticipant,
+  searchCloudConversations,
   updateCloudConversationState,
 } from '../whatsappCloud/inboxRepository.js';
 
@@ -40,7 +42,8 @@ function configuredCanonicalOrigin(req, override) {
 export function whatsappCloudInboxMutationGuard({ canonicalOrigin } = {}) {
   return function guard(req, res, next) {
     const path = req.path || req.originalUrl || '';
-    const guardedMutation = (req.method === 'POST' && /\/conversations\/[^/]+\/(?:replies|read)\/?$/.test(path))
+    const guardedMutation = (req.method === 'POST' && (/\/conversations\/[^/]+\/(?:replies|read)\/?$/.test(path)
+      || /\/conversations\/search\/?$/.test(path)))
       || (req.method === 'PATCH' && /\/conversations\/[^/]+\/state\/?$/.test(path));
     if (!guardedMutation) {
       return next();
@@ -185,6 +188,52 @@ function conversationFilters(query) {
   return { from, to, payment, workflowStatus, priority, unread };
 }
 
+function validConversationSearch(req) {
+  if (Object.keys(req.query || {}).length !== 0) return null;
+  const body = req.body;
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
+  const allowed = new Set([
+    'query', 'empresa_id', 'limit', 'cursor', 'from', 'to', 'payment',
+    'workflowStatus', 'priority', 'unreadOnly',
+  ]);
+  if (Object.keys(body).some(key => !allowed.has(key))) return null;
+  if (typeof body.query !== 'string') return null;
+  const searchQuery = body.query.trim();
+  if (searchQuery.length < 2 || searchQuery.length > 80) return null;
+  const limit = body.limit == null ? 25 : pgInt4Number(body.limit);
+  if (!limit || limit > 100) return null;
+  const cursor = body.cursor == null ? null : body.cursor;
+  if (cursor != null && (typeof cursor !== 'string' || !/^[A-Za-z0-9_-]{1,512}$/.test(cursor))) return null;
+  const from = strictIsoUtc(body.from);
+  const to = strictIsoUtc(body.to);
+  if (from === undefined || to === undefined || (from && to && Date.parse(from) >= Date.parse(to))) return null;
+  const payment = body.payment == null || body.payment === '' ? null : body.payment;
+  if (payment != null && payment !== 'transferencia') return null;
+  const workflowStatus = body.workflowStatus == null || body.workflowStatus === '' ? null : body.workflowStatus;
+  if (workflowStatus != null && !['pending', 'resolved'].includes(workflowStatus)) return null;
+  const priority = body.priority == null || body.priority === '' ? null : body.priority;
+  if (priority != null && !['normal', 'high', 'urgent'].includes(priority)) return null;
+  const unread = body.unreadOnly == null ? null : body.unreadOnly;
+  if (unread != null && typeof unread !== 'boolean') return null;
+  return { searchQuery, limit, cursor, from, to, payment, workflowStatus, priority, unread };
+}
+
+function resolveSearchTenant(req) {
+  if (req.user?.role === 'admin') {
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, 'empresa_id')) return null;
+    return pgInt4Number(req.user.empresa_id);
+  }
+  if (req.user?.role !== 'super' || !Object.prototype.hasOwnProperty.call(req.body || {}, 'empresa_id')) return null;
+  return pgInt4Number(req.body.empresa_id);
+}
+
+function validContextTenant(req) {
+  const keys = Object.keys(req.query || {});
+  if (req.user?.role === 'admin') return keys.length === 0 ? pgInt4Number(req.user.empresa_id) : null;
+  if (req.user?.role !== 'super' || keys.length !== 1 || keys[0] !== 'empresa_id') return null;
+  return pgInt4Query(req.query.empresa_id);
+}
+
 export function createWhatsAppCloudInboxAdminRouter({
   query = defaultQuery,
   pool = defaultPool,
@@ -212,6 +261,36 @@ export function createWhatsAppCloudInboxAdminRouter({
       return res.json(result);
     } catch (error) {
       if (isInvalidArgument(error)) return res.status(400).json({ error: 'pagination_invalid' });
+      return res.status(500).json({ error: 'cloud_inbox_unavailable' });
+    }
+  });
+  router.post('/conversations/search', whatsappCloudInboxMutationGuard({ canonicalOrigin }), withAuth, requireCanonicalBackofficeRole, async (req, res) => {
+    const search = validConversationSearch(req);
+    if (!search) return res.status(400).json({ error: 'search_invalid' });
+    const empresaId = resolveSearchTenant(req);
+    const usuarioId = pgInt4Number(req.user?.uid);
+    if (!empresaId) return res.status(400).json({ error: 'empresa_id_required' });
+    if (!usuarioId) return res.status(403).json({ error: 'Acceso denegado' });
+    try {
+      const result = await searchCloudConversations({ query, empresaId, usuarioId, ...search });
+      return res.json(result);
+    } catch (error) {
+      if (isInvalidArgument(error)) return res.status(400).json({ error: 'search_invalid' });
+      return res.status(500).json({ error: 'cloud_inbox_unavailable' });
+    }
+  });
+  router.get('/conversations/:conversationId/context', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
+    const empresaId = validContextTenant(req);
+    if (!empresaId) return res.status(400).json({ error: 'empresa_id_required' });
+    if (!canonicalUuid(req.params.conversationId)) return res.status(400).json({ error: 'conversation_id_invalid' });
+    try {
+      const result = await getCloudConversationContext({
+        query, empresaId, conversationId: req.params.conversationId, orderLimit: 5,
+      });
+      if (!result) return res.status(404).json({ error: 'conversation_not_found' });
+      return res.json(result);
+    } catch (error) {
+      if (isInvalidArgument(error)) return res.status(400).json({ error: 'conversation_id_invalid' });
       return res.status(500).json({ error: 'cloud_inbox_unavailable' });
     }
   });

@@ -89,7 +89,7 @@ function endpoint(url) {
   const segments = url.pathname.slice(prefix.length).split('/');
   if (segments.length !== 2) return null;
   const [conversationId, action] = segments;
-  if (!['messages', 'read', 'state'].includes(action)) return null;
+  if (!['messages', 'read', 'state', 'context'].includes(action)) return null;
   return { conversationId: decodeURIComponent(conversationId), action };
 }
 
@@ -101,7 +101,7 @@ async function withInbox(options, work) {
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   let browser;
   const requests = {
-    lists: [], messages: [], reads: [], states: [], counts: { read: 0, state: 0 },
+    lists: [], searches: [], contexts: [], messages: [], reads: [], states: [], counts: { read: 0, state: 0 },
     listInFlight: 0, maxListInFlight: 0,
   };
   try {
@@ -136,7 +136,28 @@ async function withInbox(options, work) {
           }
           return;
         }
+        if (url.pathname === '/api/admin/whatsapp-cloud/conversations/search') {
+          const entry = {
+            url: url.toString(), method: request.method(), headers: request.headers(),
+            body: JSON.parse(request.postData() || '{}'),
+          };
+          requests.searches.push(entry);
+          const response = options.searchResponse
+            ? await options.searchResponse({ ...entry, index: requests.searches.length - 1, requests })
+            : { body: { conversations: [], counters: null, nextCursor: null } };
+          await respondJson(request, response);
+          return;
+        }
         const target = endpoint(url);
+        if (target?.action === 'context') {
+          const entry = { ...target, url: url.toString(), params: Object.fromEntries(url.searchParams.entries()) };
+          requests.contexts.push(entry);
+          const response = options.contextResponse
+            ? await options.contextResponse({ ...entry, index: requests.contexts.length - 1, requests })
+            : { body: { matchStatus: 'none', customer: null, orders: [] } };
+          await respondJson(request, response);
+          return;
+        }
         if (target?.action === 'messages') {
           const entry = { ...target, url: url.toString(), params: Object.fromEntries(url.searchParams.entries()) };
           requests.messages.push(entry);
@@ -705,5 +726,82 @@ browserTest('Task 3 cerca PATCH y read tardíos de tenant A para que no muten te
     assert.equal(requests.reads[0].conversationId, ids.urgent);
     assert.equal(requests.reads[0].body.empresa_id, 7);
     assert.equal(requests.reads[0].body.lastReadMessageId, '1');
+  });
+});
+
+browserTest('Task 4 cerca búsquedas y contextos stale, restaura cola y no persiste query sensible', async () => {
+  const first = conversation(ids.urgent, '0101', { customerName: 'Ana Segura' });
+  const second = conversation(ids.high, '0202', { customerName: 'Beto Actual' });
+  const third = conversation(ids.normal, '0303', { customerName: 'Coincidencia múltiple' });
+  await withInbox({
+    viewport: { width: 700, height: 900, deviceScaleFactor: 1 },
+    async listResponse({ url }) {
+      if (url.searchParams.get('cursor') === 'base-next') {
+        return { body: { conversations: [], counters, nextCursor: null } };
+      }
+      return { body: { conversations: operationalConversations(), counters, nextCursor: 'base-next' } };
+    },
+    async searchResponse({ body }) {
+      if (body.query === 'Ana') return { delayMs: 180, body: { conversations: [first], counters: null, nextCursor: null } };
+      if (body.cursor === 'search-next') return { delayMs: 10, body: { conversations: [], counters: null, nextCursor: null } };
+      return { delayMs: 10, body: { conversations: [first, second, third], counters: null, nextCursor: 'search-next' } };
+    },
+    async contextResponse({ conversationId }) {
+      if (conversationId === ids.urgent) {
+        return { delayMs: 180, body: { matchStatus: 'exact', customer: { name: 'Ana stale', phone: '*********0101', address: 'Vieja 1' }, orders: [{ publicId: '7001', status: 'pendiente', date: '2026-10-07T09:00:00Z', total: '1234.50' }] } };
+      }
+      if (conversationId === ids.normal) {
+        return { delayMs: 10, body: { matchStatus: 'ambiguous', customer: null, orders: [] } };
+      }
+      return { delayMs: 10, body: { matchStatus: 'none', customer: null, orders: [] } };
+    },
+  }, async ({ page, requests }) => {
+    await page.waitForSelector('.conversation-card');
+    const canonicalIds = (await cardSnapshot(page)).map(card => card.id);
+    await page.type('#conversationSearch', 'Ana');
+    await page.click('#conversationSearchSubmit');
+    await waitFor(() => requests.searches.length === 1, 'primera búsqueda');
+    await page.click('#conversationSearchClear');
+    await page.type('#conversationSearch', 'Beto');
+    await page.click('#conversationSearchSubmit');
+    await page.waitForFunction(id => document.querySelectorAll('.conversation-card').length === 3
+      && [...document.querySelectorAll('.conversation-card')].some(card => card.dataset.conversationId === id), {}, ids.high);
+    await delay(220);
+    assert.deepEqual((await cardSnapshot(page)).map(card => card.id), [ids.urgent, ids.high, ids.normal]);
+    assert.deepEqual(requests.searches.slice(0, 2).map(entry => entry.body.query), ['Ana', 'Beto']);
+    assert.ok(requests.searches.every(entry => !entry.url.includes('Ana') && !entry.url.includes('Beto')));
+    assert.equal(await page.$eval('#loadMoreConversations', button => button.hidden), false);
+    await page.$eval('#loadMoreConversations', button => button.click());
+    await waitFor(() => requests.searches.some(entry => entry.body.cursor === 'search-next'), 'paginación de búsqueda');
+    assert.equal(new URL(page.url()).search, '');
+    assert.deepEqual(await page.evaluate(() => ({ local: { ...localStorage }, session: { ...sessionStorage } })), { local: {}, session: {} });
+
+    await page.click(`.conversation-card[data-conversation-id="${ids.urgent}"]`);
+    await waitFor(() => requests.contexts.length === 1, 'contexto A');
+    await waitFor(() => requests.reads.length === 1, 'read A');
+    await page.click('#backToList');
+    await page.click(`.conversation-card[data-conversation-id="${ids.high}"]`);
+    await page.waitForFunction(() => document.querySelector('#conversationContext')?.textContent.includes('Sin coincidencia'));
+    await delay(220);
+    assert.match(await page.$eval('#conversationContext', element => element.textContent), /Sin coincidencia/);
+    assert.doesNotMatch(await page.$eval('#conversationContext', element => element.textContent), /Ana stale|Vieja 1/);
+
+    await page.click('#backToList');
+    await page.click(`.conversation-card[data-conversation-id="${ids.urgent}"]`);
+    await page.waitForFunction(() => document.querySelector('#conversationContext')?.textContent.includes('Cliente identificado'));
+    assert.match(await page.$eval('#conversationContext', element => element.textContent), /Ana stale.*\*{9}0101.*Vieja 1.*Pedido 7001/s);
+
+    await page.click('#backToList');
+    await page.click(`.conversation-card[data-conversation-id="${ids.normal}"]`);
+    await page.waitForFunction(() => document.querySelector('#conversationContext')?.textContent.includes('Coincidencia ambigua'));
+    assert.match(await page.$eval('#conversationContext', element => element.textContent), /Coincidencia ambigua.*Verificá la identidad/s);
+
+    await page.click('#backToList');
+    await page.click('#conversationSearchClear');
+    assert.deepEqual((await cardSnapshot(page)).map(card => card.id), canonicalIds);
+    assert.equal(await page.$eval('#conversationSearch', input => input.value), '');
+    assert.equal(await page.$eval('#loadMoreConversations', button => button.hidden), false);
+    await page.$eval('#loadMoreConversations', button => button.click());
+    await waitFor(() => requests.lists.some(entry => entry.params.cursor === 'base-next'), 'paginación canónica restaurada');
   });
 });

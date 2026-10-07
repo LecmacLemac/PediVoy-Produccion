@@ -26,6 +26,10 @@ const elements = {
   status: document.querySelector('#appStatus'),
   inbox: document.querySelector('#inboxLayout'),
   companyWrap: document.querySelector('#companyPicker'),
+  searchForm: document.querySelector('#conversationSearchForm'),
+  searchInput: document.querySelector('#conversationSearch'),
+  searchSubmit: document.querySelector('#conversationSearchSubmit'),
+  searchClear: document.querySelector('#conversationSearchClear'),
   conversations: document.querySelector('#conversationList'),
   conversationsMore: document.querySelector('#loadMoreConversations'),
   refresh: document.querySelector('#refreshConversations'),
@@ -37,6 +41,7 @@ const elements = {
   queueCounters: document.querySelector('#queueCounters'),
   chatPanel: document.querySelector('#chatPanel'),
   chatTitle: document.querySelector('#chatTitle'),
+  context: document.querySelector('#conversationContext'),
   conversationWorkflow: document.querySelector('#conversationWorkflow'),
   conversationPriority: document.querySelector('#conversationPriority'),
   back: document.querySelector('#backToList'),
@@ -53,8 +58,11 @@ const elements = {
 const state = {
   role: null,
   companyId: null,
+  canonicalConversations: [],
+  canonicalConversationsCursor: null,
   conversations: [],
   conversationsCursor: null,
+  searchQuery: '',
   counters: { total: 0, pending: 0, inProcess: 0, review: 0, resolved: 0 },
   activeConversation: null,
   activeCounterBaselineTrusted: false,
@@ -70,9 +78,13 @@ const state = {
 const composerController = createInboxComposerController({ input: elements.input, send: elements.send });
 
 const conversationGate = createRequestGate();
+const searchGate = createRequestGate();
+const contextGate = createRequestGate();
 const historyGate = createRequestGate();
 const stateMutationGate = createRequestGate();
 let conversationsController = null;
+let searchController = null;
+let contextController = null;
 let historyController = null;
 let returnFocusConversationId = null;
 let conversationLoadPromise = null;
@@ -151,6 +163,9 @@ function syncContextControls() {
   if (elements.workflowFilter) elements.workflowFilter.disabled = locked;
   if (elements.priorityFilter) elements.priorityFilter.disabled = locked;
   if (elements.unreadFilter) elements.unreadFilter.disabled = locked;
+  elements.searchInput.disabled = locked;
+  elements.searchSubmit.disabled = locked;
+  elements.searchClear.disabled = locked;
   elements.refresh.disabled = locked;
   elements.conversationsMore.disabled = locked;
   elements.back.disabled = locked;
@@ -189,6 +204,10 @@ function clearChat({ composerAlreadyReset = false, restoreFocus = true } = {}) {
     return false;
   }
   state.activeConversation = null;
+  contextGate.invalidate();
+  contextController?.abort();
+  elements.context.replaceChildren();
+  elements.context.hidden = true;
   state.activeCounterBaselineTrusted = false;
   state.messages = [];
   state.historyCursor = null;
@@ -282,6 +301,138 @@ function renderConversations() {
   renderCounters();
 }
 
+function renderConversationContext(payload) {
+  const fragment = document.createDocumentFragment();
+  if (payload?.matchStatus === 'exact' && payload.customer) {
+    appendSafeText(document, fragment, 'strong', 'Cliente identificado');
+    const parts = [payload.customer.name, safeParticipant(payload.customer.phone), payload.customer.address]
+      .map(value => String(value || '').trim()).filter(Boolean);
+    if (parts.length) appendSafeText(document, fragment, 'span', parts.join(' · ').slice(0, 340));
+    const orders = Array.isArray(payload.orders) ? payload.orders.slice(0, 5) : [];
+    if (orders.length) {
+      const list = document.createElement('ul');
+      list.className = 'context-orders';
+      for (const order of orders) {
+        const details = [`Pedido ${String(order.publicId || '').slice(0, 40)}`];
+        if (order.status) details.push(String(order.status).slice(0, 60));
+        if (order.date) details.push(formatCloudTimestamp(order.date));
+        if (order.total != null) details.push(`$ ${String(order.total).slice(0, 30)}`);
+        appendSafeText(document, list, 'li', details.join(' · '));
+      }
+      fragment.append(list);
+    }
+  } else if (payload?.matchStatus === 'ambiguous') {
+    appendSafeText(document, fragment, 'strong', 'Coincidencia ambigua');
+    appendSafeText(document, fragment, 'span', 'Hay más de un cliente posible. Verificá la identidad antes de actuar.');
+  } else {
+    appendSafeText(document, fragment, 'strong', 'Sin coincidencia');
+    appendSafeText(document, fragment, 'span', 'No se encontró un cliente inequívoco para esta conversación.');
+  }
+  elements.context.replaceChildren(fragment);
+  elements.context.hidden = false;
+}
+
+async function loadConversationContext(conversationId) {
+  contextController?.abort();
+  contextController = new AbortController();
+  const generation = contextGate.begin();
+  const companyId = state.companyId;
+  elements.context.replaceChildren();
+  appendSafeText(document, elements.context, 'span', 'Cargando contexto…');
+  elements.context.hidden = false;
+  try {
+    const path = `/conversations/${encodeURIComponent(conversationId)}/context`;
+    const url = buildCloudApiUrl(path, { role: state.role, companyId });
+    const { response, payload } = await request(url, { signal: contextController.signal });
+    if (!contextGate.isCurrent(generation)
+      || state.companyId !== companyId
+      || String(state.activeConversation?.conversationId) !== String(conversationId)) return;
+    if (!response.ok) {
+      elements.context.replaceChildren();
+      appendSafeText(document, elements.context, 'span', 'No se pudo cargar el contexto.');
+      return;
+    }
+    renderConversationContext(payload);
+  } catch (error) {
+    if (error?.name !== 'AbortError' && error?.message !== 'session_expired' && contextGate.isCurrent(generation)) {
+      elements.context.replaceChildren();
+      appendSafeText(document, elements.context, 'span', 'No se pudo cargar el contexto.');
+    }
+  }
+}
+
+function clearConversationSearch({ restore = true } = {}) {
+  searchGate.invalidate();
+  searchController?.abort();
+  state.searchQuery = '';
+  elements.searchInput.value = '';
+  if (restore) {
+    state.conversations = [...state.canonicalConversations];
+    state.conversationsCursor = state.canonicalConversationsCursor;
+    renderConversations();
+    setStatus('');
+  }
+}
+
+async function submitConversationSearch(event, { append = false } = {}) {
+  event?.preventDefault();
+  const queryValue = append ? state.searchQuery : elements.searchInput.value.trim();
+  if (!queryValue) {
+    clearConversationSearch();
+    return;
+  }
+  if (queryValue.length < 2 || queryValue.length > 80) {
+    setStatus('Ingresá entre 2 y 80 caracteres para buscar.', 'warning');
+    return;
+  }
+  searchController?.abort();
+  searchController = new AbortController();
+  const generation = searchGate.begin();
+  const companyId = state.companyId;
+  const contextRevision = state.conversationContextRevision;
+  const filters = currentFilters();
+  state.searchQuery = queryValue;
+  setStatus('Buscando conversaciones…');
+  const body = {
+    query: queryValue,
+    limit: 25,
+    ...(append && state.conversationsCursor ? { cursor: state.conversationsCursor } : {}),
+    ...(filters.from ? { from: filters.from } : {}),
+    ...(filters.to ? { to: filters.to } : {}),
+    ...(filters.payment ? { payment: filters.payment } : {}),
+    ...(filters.workflowStatus ? { workflowStatus: filters.workflowStatus } : {}),
+    ...(filters.priority ? { priority: filters.priority } : {}),
+    ...(filters.unread === true ? { unreadOnly: true } : {}),
+  };
+  if (state.role === 'super') body.empresa_id = companyId;
+  try {
+    const url = buildCloudApiUrl('/conversations/search', { role: state.role, companyId, tenantInBody: true });
+    const { response, payload } = await request(url, {
+      method: 'POST', body: JSON.stringify(body), signal: searchController.signal,
+    });
+    if (!searchGate.isCurrent(generation)
+      || state.companyId !== companyId
+      || state.conversationContextRevision !== contextRevision
+      || state.searchQuery !== queryValue) return;
+    if (!response.ok) {
+      setStatus('No se pudo completar la búsqueda.', 'error');
+      return;
+    }
+    const incoming = Array.isArray(payload.conversations) ? payload.conversations : [];
+    const known = new Map((append ? state.conversations : []).map(item => [String(item.conversationId), item]));
+    for (const item of incoming) known.set(String(item.conversationId), item);
+    state.conversations = [...known.values()];
+    state.conversationsCursor = typeof payload.nextCursor === 'string' ? payload.nextCursor : null;
+    renderConversations();
+    setStatus(state.conversations.length ? 'Resultados de búsqueda.' : 'No hay coincidencias.');
+  } catch (error) {
+    if (error?.name !== 'AbortError' && error?.message !== 'session_expired'
+      && searchGate.isCurrent(generation) && state.searchQuery === queryValue) {
+      setStatus('No se pudo completar la búsqueda.', 'error');
+    }
+  }
+}
+
 function renderAttachment(message, container) {
   const attachment = message?.attachment;
   if (!attachment || (message.type !== 'image' && message.type !== 'document')) return;
@@ -340,7 +491,7 @@ async function performConversationLoad({ append = false } = {}) {
     mutationRevision: state.mutationRevision,
     filters,
   };
-  const cursor = append ? state.conversationsCursor : null;
+  const cursor = append ? state.canonicalConversationsCursor : null;
   if (!append) setStatus('Cargando conversaciones…');
   try {
     const url = buildCloudApiUrl('/conversations', {
@@ -373,11 +524,12 @@ async function performConversationLoad({ append = false } = {}) {
     }
     state.conversationContextLoading = false;
     const incoming = Array.isArray(payload.conversations) ? payload.conversations : [];
-    const known = new Map((append ? state.conversations : []).map(item => [String(item.conversationId), item]));
+    const known = new Map((append ? state.canonicalConversations : []).map(item => [String(item.conversationId), item]));
     for (const item of incoming) known.set(String(item.conversationId), item);
-    state.conversations = [...known.values()];
+    state.canonicalConversations = [...known.values()];
+    if (!state.searchQuery) state.conversations = [...state.canonicalConversations];
     if (state.activeConversation) {
-      const refreshedActive = state.conversations.find(item => (
+      const refreshedActive = state.canonicalConversations.find(item => (
         String(item.conversationId) === String(state.activeConversation.conversationId)
       ));
       if (refreshedActive) {
@@ -393,7 +545,8 @@ async function performConversationLoad({ append = false } = {}) {
     } else if (!append) {
       state.counters = { total: 0, pending: 0, inProcess: 0, review: 0, resolved: 0 };
     }
-    state.conversationsCursor = typeof payload.nextCursor === 'string' ? payload.nextCursor : null;
+    state.canonicalConversationsCursor = typeof payload.nextCursor === 'string' ? payload.nextCursor : null;
+    if (!state.searchQuery) state.conversationsCursor = state.canonicalConversationsCursor;
     renderConversations();
     syncContextControls();
     setStatus('');
@@ -443,6 +596,8 @@ async function loadConversations({ append = false } = {}) {
 async function reloadConversationsFromStart({ preserveActiveConversation = false } = {}) {
   state.conversationContextRevision += 1;
   state.conversationContextLoading = true;
+  state.canonicalConversations = [];
+  state.canonicalConversationsCursor = null;
   state.conversations = [];
   state.conversationsCursor = null;
   state.counters = { total: 0, pending: 0, inProcess: 0, review: 0, resolved: 0 };
@@ -620,6 +775,7 @@ function openConversation(conversation) {
   syncContextControls();
   if (isMobileLayout()) window.requestAnimationFrame(() => elements.back.focus());
   loadHistory();
+  loadConversationContext(String(conversation.conversationId));
 }
 
 async function requestAttachmentDownload(conversationId, messageId, button) {
@@ -668,10 +824,18 @@ function renderCompanyPicker(companies) {
     state.conversationContextRevision += 1;
     state.conversationContextLoading = Boolean(nextCompanyId);
     conversationGate.invalidate();
+    searchGate.invalidate();
+    contextGate.invalidate();
     historyGate.invalidate();
     stateMutationGate.invalidate();
     conversationsController?.abort();
+    searchController?.abort();
+    contextController?.abort();
     historyController?.abort();
+    state.searchQuery = '';
+    elements.searchInput.value = '';
+    state.canonicalConversations = [];
+    state.canonicalConversationsCursor = null;
     state.conversations = [];
     state.conversationsCursor = null;
     state.counters = { total: 0, pending: 0, inProcess: 0, review: 0, resolved: 0 };
@@ -779,14 +943,23 @@ async function bootstrap() {
 }
 
 elements.back.addEventListener('click', () => clearChat());
+elements.searchForm.addEventListener('submit', submitConversationSearch);
+elements.searchClear.addEventListener('click', () => clearConversationSearch());
 elements.older.addEventListener('click', () => loadHistory({ older: true }));
-elements.conversationsMore.addEventListener('click', () => loadConversations({ append: true }));
+elements.conversationsMore.addEventListener('click', () => {
+  if (state.searchQuery) submitConversationSearch(null, { append: true });
+  else loadConversations({ append: true });
+});
 elements.refresh.addEventListener('click', () => reloadConversationsFromStart({ preserveActiveConversation: true }));
-elements.dateFilter?.addEventListener('change', () => reloadConversationsFromStart());
-elements.transferFilter?.addEventListener('change', () => reloadConversationsFromStart());
-elements.workflowFilter?.addEventListener('change', () => reloadConversationsFromStart());
-elements.priorityFilter?.addEventListener('change', () => reloadConversationsFromStart());
-elements.unreadFilter?.addEventListener('change', () => reloadConversationsFromStart());
+const reloadForFilterChange = () => {
+  clearConversationSearch({ restore: false });
+  reloadConversationsFromStart();
+};
+elements.dateFilter?.addEventListener('change', reloadForFilterChange);
+elements.transferFilter?.addEventListener('change', reloadForFilterChange);
+elements.workflowFilter?.addEventListener('change', reloadForFilterChange);
+elements.priorityFilter?.addEventListener('change', reloadForFilterChange);
+elements.unreadFilter?.addEventListener('change', reloadForFilterChange);
 elements.conversationWorkflow.addEventListener('click', () => {
   if (!state.activeConversation) return;
   const workflowStatus = state.activeConversation.workflowStatus === 'resolved' ? 'pending' : 'resolved';
@@ -819,6 +992,8 @@ elements.logout.addEventListener('click', async (event) => {
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
     conversationsController?.abort();
+    searchController?.abort();
+    contextController?.abort();
     historyController?.abort();
     replySubmission.abort();
     return;

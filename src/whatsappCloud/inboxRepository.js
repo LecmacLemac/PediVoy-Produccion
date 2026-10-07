@@ -198,6 +198,7 @@ export async function listCloudConversations({
   workflowStatus = null,
   priority = null,
   unread = null,
+  participantWaIds = null,
 } = {}) {
   const runQuery = requireQuery(query);
   const tenantId = requireTenantId(empresaId);
@@ -219,6 +220,13 @@ export async function listCloudConversations({
   }
   if (unread != null && typeof unread !== 'boolean') {
     throw sanitizedError('CLOUD_INBOX_INVALID_ARGUMENT', 'Invalid unread');
+  }
+  if (participantWaIds != null && (!Array.isArray(participantWaIds)
+    || participantWaIds.some(value => typeof value !== 'string' || !/^\d{6,15}$/.test(value)))) {
+    throw sanitizedError('CLOUD_INBOX_INVALID_ARGUMENT', 'Invalid participantWaIds');
+  }
+  if (participantWaIds?.length === 0) {
+    return { conversations: [], counters: null, nextCursor: null };
   }
   const transferCondition = paymentFilter === 'transferencia'
     ? `AND EXISTS (
@@ -304,6 +312,7 @@ export async function listCloudConversations({
            LEFT JOIN inbound_stats AS inbound ON inbound.conversation_id = conversation.id
           WHERE conversation.empresa_id = $1
             AND $3::text IS NULL
+            AND ($15::text[] IS NULL OR conversation.participant_wa_id = ANY($15::text[]))
             ${transferCondition}
        ), classified AS (
          SELECT base.*,
@@ -373,7 +382,9 @@ export async function listCloudConversations({
         actorId, workflowStatus, priority, unread,
         pageCursor?.bucket ?? null, pageCursor?.priorityRank ?? null, pageCursor?.activityKey ?? null,
         pageCursor?.conversationId ?? null,
+        participantWaIds,
       ],
+      { sensitive: true },
     );
   } catch {
     throw sanitizedError('CLOUD_INBOX_LIST_FAILED', 'WhatsApp Cloud conversations lookup failed');
@@ -415,6 +426,144 @@ export async function listCloudConversations({
     } : null,
     nextCursor: conversationRows.length > pageSize ? encodeConversationCursor(page[page.length - 1]) : null,
   };
+}
+
+function requireSearchQuery(value) {
+  if (typeof value !== 'string') throw sanitizedError('CLOUD_INBOX_INVALID_ARGUMENT', 'Invalid search query');
+  const normalized = value.trim();
+  if (normalized.length < 2 || normalized.length > 80) {
+    throw sanitizedError('CLOUD_INBOX_INVALID_ARGUMENT', 'Invalid search query');
+  }
+  return normalized;
+}
+
+export async function searchCloudConversations({ query, empresaId, usuarioId, searchQuery, ...filters } = {}) {
+  const runQuery = requireQuery(query);
+  const tenantId = requireTenantId(empresaId);
+  const normalizedQuery = requireSearchQuery(searchQuery);
+  const textQuery = normalizedQuery.length >= 3 ? normalizedQuery : null;
+  const digits = normalizedQuery.replace(/\D/g, '');
+  const phoneSuffix = digits.length >= 6 ? digits.slice(-10) : null;
+  const publicOrderId = /^[1-9][0-9]{0,9}$/.test(normalizedQuery) ? Number(normalizedQuery) : null;
+  let matches;
+  try {
+    matches = await runQuery(
+      `WITH candidate_points AS MATERIALIZED (
+         SELECT point.id
+           FROM public.puntos_entrega AS point
+          WHERE point.empresa_id = $1
+            AND $2::text IS NOT NULL
+            AND pg_catalog.LOWER(COALESCE(NULLIF(BTRIM(point.nombre), ''), point.cliente, ''))
+                LIKE '%' || pg_catalog.LOWER($2) || '%'
+         UNION
+         SELECT point.id
+           FROM public.puntos_entrega AS point
+          WHERE point.empresa_id = $1
+            AND $2::text IS NOT NULL
+            AND pg_catalog.LOWER(COALESCE(point.direccion_completa, point.direccion, '') || ' ' || COALESCE(point.ciudad, ''))
+                LIKE '%' || pg_catalog.LOWER($2) || '%'
+         UNION
+         SELECT point.id
+           FROM public.puntos_entrega AS point
+          WHERE point.empresa_id = $1
+            AND $3::text IS NOT NULL
+            AND RIGHT(regexp_replace(COALESCE(point.telefono_normalizado, point.telefono, ''), '\\D', '', 'g'), 10) = $3
+         UNION
+         SELECT order_row.punto_entrega_id
+           FROM public.pedidos AS order_row
+          WHERE order_row.empresa_id = $1
+            AND $4::integer IS NOT NULL
+            AND order_row.id = $4::integer
+            AND order_row.punto_entrega_id IS NOT NULL
+       )
+       SELECT DISTINCT conversation.participant_wa_id
+         FROM candidate_points AS candidate
+         JOIN public.puntos_entrega AS point
+           ON point.empresa_id = $1
+          AND point.id = candidate.id
+         JOIN public.whatsapp_cloud_conversations AS conversation
+           ON conversation.empresa_id = point.empresa_id
+          AND RIGHT(regexp_replace(COALESCE(point.telefono_normalizado, point.telefono, ''), '\\D', '', 'g'), 10)
+              = RIGHT(regexp_replace(conversation.participant_wa_id, '\\D', '', 'g'), 10)
+        ORDER BY conversation.participant_wa_id
+        LIMIT 500`,
+      [tenantId, textQuery, phoneSuffix, publicOrderId],
+      { sensitive: true },
+    );
+  } catch {
+    throw sanitizedError('CLOUD_INBOX_SEARCH_FAILED', 'WhatsApp Cloud search failed');
+  }
+  return listCloudConversations({
+    query: runQuery,
+    empresaId: tenantId,
+    usuarioId,
+    ...filters,
+    participantWaIds: matches.map(row => String(row.participant_wa_id)),
+  });
+}
+
+export async function getCloudConversationContext({ query, empresaId, conversationId, orderLimit = 5 } = {}) {
+  const runQuery = requireQuery(query);
+  const tenantId = requireTenantId(empresaId);
+  const stableConversationId = requireConversationId(conversationId);
+  const recentOrderLimit = requirePositiveInteger(orderLimit, 'orderLimit');
+  if (recentOrderLimit > 10) throw sanitizedError('CLOUD_INBOX_INVALID_ARGUMENT', 'Invalid orderLimit');
+  try {
+    const conversations = await runQuery(
+      `SELECT participant_wa_id
+         FROM public.whatsapp_cloud_conversations
+        WHERE empresa_id = $1 AND id = $2::uuid
+        LIMIT 1`,
+      [tenantId, stableConversationId],
+      { sensitive: true },
+    );
+    if (conversations.length !== 1) return null;
+    const participant = String(conversations[0].participant_wa_id);
+    const points = await runQuery(
+      `SELECT id,
+              NULLIF(BTRIM(COALESCE(NULLIF(nombre, ''), cliente)), '') AS customer_name,
+              NULLIF(BTRIM(COALESCE(direccion_completa,
+                NULLIF(CONCAT_WS(', ', NULLIF(direccion, ''), NULLIF(ciudad, '')), '')
+              )), '') AS delivery_address
+         FROM public.puntos_entrega
+        WHERE empresa_id = $1
+          AND RIGHT(regexp_replace(COALESCE(telefono_normalizado, telefono, ''), '\\D', '', 'g'), 10)
+              = RIGHT(regexp_replace($2, '\\D', '', 'g'), 10)
+        ORDER BY id ASC
+        LIMIT 2`,
+      [tenantId, participant],
+      { sensitive: true },
+    );
+    if (points.length === 0) return { matchStatus: 'none', customer: null, orders: [] };
+    if (points.length !== 1) return { matchStatus: 'ambiguous', customer: null, orders: [] };
+    const orders = await runQuery(
+      `SELECT id, estado, fecha, monto, LOWER(NULLIF(BTRIM(metodo_pago), '')) AS payment_method
+         FROM public.pedidos
+        WHERE empresa_id = $1 AND punto_entrega_id = $2
+        ORDER BY fecha DESC NULLS LAST, id DESC
+        LIMIT $3`,
+      [tenantId, points[0].id, recentOrderLimit],
+    );
+    return {
+      matchStatus: 'exact',
+      customer: {
+        name: points[0].customer_name ? String(points[0].customer_name).slice(0, 120) : null,
+        phone: maskParticipant(participant),
+        address: points[0].delivery_address ? String(points[0].delivery_address).slice(0, 180) : null,
+      },
+      orders: orders.map(order => ({
+        publicId: String(order.id),
+        status: order.estado ? String(order.estado).slice(0, 60) : null,
+        date: order.fecha,
+        total: order.monto == null ? null : String(order.monto),
+        paymentMethod: ['efectivo', 'transferencia'].includes(String(order.payment_method || ''))
+          ? String(order.payment_method) : null,
+      })),
+    };
+  } catch (error) {
+    if (error?.code === 'CLOUD_INBOX_INVALID_ARGUMENT') throw error;
+    throw sanitizedError('CLOUD_INBOX_CONTEXT_FAILED', 'WhatsApp Cloud context failed');
+  }
 }
 
 export async function listCloudConversationMessages({

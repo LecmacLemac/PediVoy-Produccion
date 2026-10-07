@@ -370,3 +370,126 @@ test('dos PATCH concurrentes con expectedVersion producen un ganador y un stale 
     });
   });
 });
+
+test('Task 4 busca fuera de la primera página y resuelve context exact, ambiguous y none sin cruces tenant', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id, config_integraciones) VALUES (1,$1::jsonb),(2,$2::jsonb)', [
+      cloudConfig('phone-search-one'), cloudConfig('phone-search-two'),
+    ]);
+    await pool.query("INSERT INTO usuarios(id,username,password,role,empresa_id,activo) VALUES (1,'admin-search','x','admin',1,true)");
+    const points = (await pool.query(`
+      INSERT INTO puntos_entrega
+        (empresa_id,cliente,nombre,direccion,direccion_completa,ciudad,telefono,telefono_normalizado)
+      VALUES
+        (1,'Cliente Exacto','Ana Segura','Ruta 9 123','Ruta 9 123, Córdoba','Córdoba','3515550101','5493515550101'),
+        (1,'Duplicado A','Compartido A','Calle A 1',NULL,'Córdoba','3515550202','5493515550202'),
+        (1,'Duplicado B','Compartido B','Calle B 2',NULL,'Córdoba','3515550202','5493515550202'),
+        (1,'Grupo Buscar Uno','Grupo Buscar Uno','Ruta Grupo 1',NULL,'Córdoba','351553000','549351553000'),
+        (1,'Grupo Buscar Dos','Grupo Buscar Dos','Ruta Grupo 2',NULL,'Córdoba','351553001','549351553001'),
+        (2,'Secreto Tenant Dos','No visible','Oculta 999',NULL,'Córdoba','3515550101','5493515550101')
+      RETURNING id,empresa_id,telefono_normalizado
+    `)).rows;
+    const exactPoint = points.find(row => row.empresa_id === 1 && row.telefono_normalizado.endsWith('0101'));
+    await pool.query(`
+      INSERT INTO pedidos (id,empresa_id,punto_entrega_id,estado,metodo_pago,monto,fecha)
+      VALUES
+        (7001,1,$1,'pendiente','transferencia',1234.50,'2026-10-07T09:00:00Z'),
+        (7002,1,$1,'entregado','efectivo',900.00,'2026-10-06T09:00:00Z'),
+        (8001,2,$2,'pendiente','efectivo',9999.00,'2026-10-07T10:00:00Z')
+    `, [exactPoint.id, points.find(row => row.empresa_id === 2).id]);
+    for (let index = 0; index < 28; index += 1) {
+      const suffix = String(3000 + index);
+      await pool.query(`
+        INSERT INTO whatsapp_cloud_messages
+          (empresa_id,direction,participant_wa_id,message_type,text_body,delivery_status,state_rank,message_at,created_at,updated_at)
+        VALUES (1,'inbound',$1,'text',$2,'received',0,$3,$3,$3)
+      `, [`54935155${suffix}`, `mensaje genérico ${index}`, new Date(Date.UTC(2026, 9, 7, 12, index)).toISOString()]);
+    }
+    await pool.query(`
+      INSERT INTO whatsapp_cloud_messages
+        (empresa_id,direction,participant_wa_id,message_type,text_body,delivery_status,state_rank,message_at,created_at,updated_at)
+      VALUES
+        (1,'inbound','5493515550101','text','texto que no debe buscarse','received',0,'2026-10-01T08:00:00Z','2026-10-01T08:00:00Z','2026-10-01T08:00:00Z'),
+        (1,'inbound','5493515550202','text','ambiguo','received',0,'2026-10-07T08:00:00Z','2026-10-07T08:00:00Z','2026-10-07T08:00:00Z'),
+        (1,'inbound','5493515550303','text','sin cliente','received',0,'2026-10-07T07:00:00Z','2026-10-07T07:00:00Z','2026-10-07T07:00:00Z'),
+        (2,'inbound','5493515550101','text','secreto cross tenant','received',0,'2026-10-07T13:00:00Z','2026-10-07T13:00:00Z','2026-10-07T13:00:00Z')
+    `);
+    await pool.query(`
+      INSERT INTO whatsapp_cloud_conversations (empresa_id,participant_wa_id,created_at,updated_at)
+      SELECT empresa_id,participant_wa_id,MIN(created_at),MAX(updated_at)
+        FROM whatsapp_cloud_messages GROUP BY empresa_id,participant_wa_id
+    `);
+    const idsByPhone = Object.fromEntries((await pool.query(`
+      SELECT participant_wa_id,id::text FROM whatsapp_cloud_conversations WHERE empresa_id=1
+    `)).rows.map(row => [row.participant_wa_id, row.id]));
+
+    const app = express();
+    app.use(express.json());
+    app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+      canonicalOrigin: 'https://admin.pedivoy.test',
+      withAuth(req, _res, next) { req.user = { uid: 1, role: 'admin', empresa_id: 1 }; next(); },
+      query: async (sql, params) => (await pool.query(sql, params)).rows,
+      pool,
+    }));
+
+    await withServer(app, async baseUrl => {
+      const endpoint = `${baseUrl}/api/admin/whatsapp-cloud/conversations/search`;
+      const post = body => fetch(endpoint, {
+        method: 'POST',
+        headers: { Origin: 'https://admin.pedivoy.test', 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      assert.equal((await post({ query: 'A' })).status, 400);
+      const shortSearch = await post({ query: 'zz' });
+      assert.equal(shortSearch.status, 200);
+      assert.deepEqual((await shortSearch.json()).conversations, []);
+      assert.equal((await post({ query: 'x'.repeat(81) })).status, 400);
+      assert.equal((await post({ query: 'Ana', actor_id: 99 })).status, 400);
+      assert.equal((await fetch(`${endpoint}?query=Ana`, {
+        method: 'POST', headers: { Origin: 'https://admin.pedivoy.test', 'Content-Type': 'application/json' }, body: JSON.stringify({ query: 'Ana' }),
+      })).status, 400);
+      assert.equal((await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query: 'Ana' }) })).status, 403);
+
+      const searchResponse = await post({ query: '  Ana Segura  ', limit: 1 });
+      assert.equal(searchResponse.status, 200);
+      const search = await searchResponse.json();
+      assert.equal(search.conversations.length, 1);
+      assert.equal(search.conversations[0].conversationId, idsByPhone['5493515550101']);
+      assert.equal(search.conversations[0].participant, '*********0101');
+      assert.doesNotMatch(JSON.stringify(search), /5493515550101|texto que no debe buscarse|Secreto Tenant Dos|9999|"query"/);
+
+      const groupFirstResponse = await post({ query: 'Grupo Buscar', limit: 1 });
+      assert.equal(groupFirstResponse.status, 200);
+      const groupFirst = await groupFirstResponse.json();
+      assert.equal(groupFirst.conversations.length, 1);
+      assert.equal(typeof groupFirst.nextCursor, 'string');
+      const groupSecondResponse = await post({ query: 'Grupo Buscar', limit: 1, cursor: groupFirst.nextCursor });
+      assert.equal(groupSecondResponse.status, 200);
+      const groupSecond = await groupSecondResponse.json();
+      assert.equal(groupSecond.conversations.length, 1);
+      assert.notEqual(groupSecond.conversations[0].conversationId, groupFirst.conversations[0].conversationId);
+      assert.equal(groupSecond.nextCursor, null);
+
+      const messageOnly = await post({ query: 'texto que no debe buscarse' });
+      assert.equal(messageOnly.status, 200);
+      assert.deepEqual((await messageOnly.json()).conversations, []);
+
+      const forbiddenContextInput = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations/${idsByPhone['5493515550101']}/context?phone=5493515550101`);
+      assert.equal(forbiddenContextInput.status, 400);
+      const context = async phone => {
+        const response = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations/${idsByPhone[phone]}/context`);
+        assert.equal(response.status, 200);
+        return response.json();
+      };
+      const exact = await context('5493515550101');
+      assert.equal(exact.matchStatus, 'exact');
+      assert.deepEqual(exact.customer, {
+        name: 'Ana Segura', phone: '*********0101', address: 'Ruta 9 123, Córdoba',
+      });
+      assert.deepEqual(exact.orders.map(order => order.publicId), ['7001', '7002']);
+      assert.doesNotMatch(JSON.stringify(exact), /Secreto Tenant Dos|9999|tracking|notas|provider/i);
+      assert.deepEqual(await context('5493515550202'), { matchStatus: 'ambiguous', customer: null, orders: [] });
+      assert.deepEqual(await context('5493515550303'), { matchStatus: 'none', customer: null, orders: [] });
+    });
+  });
+});
