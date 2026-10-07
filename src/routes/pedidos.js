@@ -53,14 +53,19 @@ export function createUpdatePedidoHandler({
 
         const current = rows[0];
         const finalized = current.estado === 'entregado' || current.estado === 'cancelado';
-        if (finalized && (Object.hasOwn(body, 'estado') || Object.hasOwn(body, 'empresa_id'))) {
+        const changesFinalizedEstado = estado != null && estado !== current.estado;
+        const sameCanonicalEmpresa = Number.isSafeInteger(empresa_id)
+          && empresa_id > 0
+          && empresa_id === current.empresa_id;
+        const changesFinalizedEmpresa = empresa_id != null && !sameCanonicalEmpresa;
+        if (finalized && (changesFinalizedEstado || changesFinalizedEmpresa)) {
           throw pedidoUpdateError(409, 'El pedido finalizado sólo admite correcciones administrativas');
         }
 
         const sets = [];
         const vals = [];
         let idx = 1;
-        if (estado) {
+        if (!finalized && estado) {
           sets.push(`estado = $${idx++}`);
           vals.push(estado);
         }
@@ -68,7 +73,7 @@ export function createUpdatePedidoHandler({
           sets.push(`metodo_pago = $${idx++}`);
           vals.push(metodo_pago);
         }
-        if (esSuperUser && empresa_id != null) {
+        if (!finalized && esSuperUser && empresa_id != null) {
           sets.push(`empresa_id = $${idx++}`);
           vals.push(Number(empresa_id));
         }

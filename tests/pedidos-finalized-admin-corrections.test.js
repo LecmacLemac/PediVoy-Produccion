@@ -18,7 +18,7 @@ function responseHarness() {
   };
 }
 
-function buildHandler({ currentPedido, onUpdate, sideEffects = {} }) {
+function buildHandler({ currentPedido, onUpdate, sideEffects = {}, superUser = false }) {
   const calls = [];
   const handler = createUpdatePedidoHandler({
     withTransactionFn: async (work) => work(async (sql, params) => {
@@ -27,7 +27,7 @@ function buildHandler({ currentPedido, onUpdate, sideEffects = {} }) {
       if (sql.includes('UPDATE pedidos')) return onUpdate?.(sql, params) ?? [{ ...currentPedido }];
       throw new Error(`Consulta inesperada: ${sql}`);
     }),
-    isSuperFn: () => false,
+    isSuperFn: () => superUser,
     getEmpresaIdFromTokenFn: () => 7,
     notifyEstadoFn: sideEffects.notifyEstadoFn || (() => Promise.resolve()),
     notifyEnRutaFn: sideEffects.notifyEnRutaFn || (() => Promise.resolve()),
@@ -38,8 +38,12 @@ function buildHandler({ currentPedido, onUpdate, sideEffects = {} }) {
   return { handler, calls };
 }
 
-async function invoke(handler, body) {
-  const req = { params: { id: '42' }, body, user: { role: 'admin', empresa_id: 7 } };
+async function invoke(handler, body, { superUser = false } = {}) {
+  const req = {
+    params: { id: '42' },
+    body,
+    user: superUser ? { role: 'super', empresa_id: null } : { role: 'admin', empresa_id: 7 },
+  };
   const res = responseHarness();
   await handler(req, res);
   return res;
@@ -74,21 +78,105 @@ test('backend permite correccion administrativa tenant-scoped de pedido finaliza
   assert.deepEqual(select.params, [42, 7]);
 });
 
-for (const [field, value] of [['estado', 'pendiente'], ['empresa_id', 8]]) {
-  test(`backend rechaza cambiar ${field} de finalizado sin mutacion parcial`, async () => {
-    const { handler, calls } = buildHandler({
-      currentPedido: { id: 42, empresa_id: 7, estado: 'cancelado', monto: 0, punto_entrega_id: null },
-      onUpdate() {
-        assert.fail('no debe ejecutar UPDATE');
-      },
+const finalizedPedido = {
+  id: 42,
+  empresa_id: 7,
+  punto_entrega_id: 12,
+  monto: 3000,
+  estado: 'entregado',
+};
+
+const finalizedNoOps = [
+  ['estado canónico actual', { estado: 'entregado' }],
+  ['estado null', { estado: null }],
+  ['estado omitido', {}],
+  ['empresa_id entero actual', { empresa_id: 7 }],
+  ['empresa_id null', { empresa_id: null }],
+  ['empresa_id omitido', {}],
+];
+
+for (const superUser of [false, true]) {
+  const role = superUser ? 'super' : 'admin';
+  for (const [description, fields] of finalizedNoOps) {
+    test(`${role} permite ${description} en finalizado sin escribir estado ni empresa`, async () => {
+      const { handler, calls } = buildHandler({
+        currentPedido: finalizedPedido,
+        superUser,
+        onUpdate(sql, params) {
+          assert.doesNotMatch(sql, /estado\s*=/);
+          assert.doesNotMatch(sql, /empresa_id\s*=/);
+          assert.match(sql, /metodo_pago\s*=/);
+          assert.deepEqual(params, ['transferencia', 42, 7]);
+          return [{ ...finalizedPedido, metodo_pago: 'transferencia' }];
+        },
+      });
+
+      const res = await invoke(handler, { ...fields, metodo_pago: 'transferencia' }, { superUser });
+
+      assert.equal(res.statusCode, 200);
+      assert.deepEqual(res.payload, { ok: true });
+      const select = calls.find(call => call.sql.includes('FOR UPDATE'));
+      assert.deepEqual(select.params, [42, superUser ? null : 7]);
     });
+  }
+}
 
-    const res = await invoke(handler, { metodo_pago: 'efectivo', chofer_id: 9, zona_id: 4, [field]: value });
+for (const superUser of [false, true]) {
+  const role = superUser ? 'super' : 'admin';
+  for (const [field, value] of [['estado', 'pendiente'], ['empresa_id', 8]]) {
+    test(`${role} rechaza cambiar ${field} de finalizado sin mutacion parcial`, async () => {
+      const { handler, calls } = buildHandler({
+        currentPedido: { id: 42, empresa_id: 7, estado: 'cancelado', monto: 0, punto_entrega_id: null },
+        superUser,
+        onUpdate() {
+          assert.fail('no debe ejecutar UPDATE');
+        },
+      });
 
-    assert.equal(res.statusCode, 409);
-    assert.match(res.payload.error, /finalizado/i);
-    assert.equal(calls.some(call => call.sql.includes('UPDATE pedidos')), false);
-  });
+      const res = await invoke(
+        handler,
+        { metodo_pago: 'efectivo', chofer_id: 9, zona_id: 4, [field]: value },
+        { superUser }
+      );
+
+      assert.equal(res.statusCode, 409);
+      assert.match(res.payload.error, /finalizado/i);
+      assert.equal(calls.some(call => call.sql.includes('UPDATE pedidos')), false);
+    });
+  }
+}
+
+const nonCanonicalFinalizedChanges = [
+  ['estado con mayúsculas', 'estado', 'ENTREGADO'],
+  ['estado con espacios', 'estado', ' entregado '],
+  ['empresa_id string decimal', 'empresa_id', '7'],
+  ['empresa_id string ambiguo', 'empresa_id', '07'],
+  ['empresa_id basura', 'empresa_id', '7x'],
+];
+
+for (const superUser of [false, true]) {
+  const role = superUser ? 'super' : 'admin';
+  for (const [description, field, value] of nonCanonicalFinalizedChanges) {
+    test(`${role} rechaza ${description} en finalizado sin escrituras`, async () => {
+      const { handler, calls } = buildHandler({
+        currentPedido: finalizedPedido,
+        superUser,
+        onUpdate() {
+          assert.fail('no debe ejecutar UPDATE');
+        },
+      });
+
+      const res = await invoke(
+        handler,
+        { metodo_pago: 'efectivo', [field]: value },
+        { superUser }
+      );
+
+      assert.equal(res.statusCode, 409);
+      assert.match(res.payload.error, /finalizado/i);
+      assert.equal(calls.some(call => call.sql.includes('UPDATE pedidos')), false);
+    });
+  }
 }
 
 test('pedido no finalizado conserva la actualizacion existente y side effects solo si cambia estado', async () => {
