@@ -55,7 +55,8 @@ function requireConversationId(value) {
   return normalized;
 }
 
-// Transitional legacy message anchors remain tenant-scoped and unambiguous.
+// Deprecated compatibility for legacy numeric message anchors. Removal is gated by a
+// PII-free counter of legacy-vs-stable resolution; never record the anchor or participant.
 function requireConversationReference(value) {
   try {
     return { kind: 'stable', id: requireConversationId(value) };
@@ -387,6 +388,8 @@ export async function updateCloudConversationState({
               version = version + 1,
               updated_at = pg_catalog.NOW()
         WHERE empresa_id = $1 AND id = $2::uuid AND version = $5
+          AND (workflow_status IS DISTINCT FROM COALESCE($3, workflow_status)
+            OR priority IS DISTINCT FROM COALESCE($4, priority))
       RETURNING id, workflow_status, priority, version`,
       [tenantId, stableConversationId, workflowStatus, priority, normalizedVersion],
     );
@@ -401,7 +404,14 @@ export async function updateCloudConversationState({
       [tenantId, stableConversationId],
     );
     if (current.length === 0) return { outcome: 'not_found', conversation: null };
-    return { outcome: 'stale', conversation: conversationStateDto(current[0]) };
+    const currentConversation = conversationStateDto(current[0]);
+    const isNoOp = currentConversation.version === normalizedVersion
+      && (workflowStatus == null || currentConversation.workflowStatus === workflowStatus)
+      && (priority == null || currentConversation.priority === priority);
+    return {
+      outcome: isNoOp ? 'unchanged' : 'stale',
+      conversation: currentConversation,
+    };
   } catch (error) {
     if (error?.code === 'CLOUD_INBOX_INVALID_ARGUMENT') throw error;
     throw sanitizedError('CLOUD_INBOX_STATE_FAILED', 'WhatsApp Cloud conversation state update failed');

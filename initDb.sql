@@ -2376,6 +2376,21 @@ CREATE TABLE IF NOT EXISTS public.whatsapp_cloud_messages (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW()
 );
 
+DO $conversation_relation_guard$
+DECLARE
+  relation_kind "char";
+BEGIN
+  SELECT class_row.relkind INTO relation_kind
+    FROM pg_catalog.pg_class AS class_row
+    JOIN pg_catalog.pg_namespace AS namespace_row ON namespace_row.oid = class_row.relnamespace
+   WHERE namespace_row.nspname = 'public'
+     AND class_row.relname = 'whatsapp_cloud_conversations';
+  IF FOUND AND relation_kind IS DISTINCT FROM 'r' THEN
+    RAISE EXCEPTION USING ERRCODE = 'P0001',
+      MESSAGE = 'whatsapp_cloud_conversations_schema_unsafe';
+  END IF;
+END $conversation_relation_guard$;
+
 CREATE TABLE IF NOT EXISTS public.whatsapp_cloud_conversations (
   id UUID PRIMARY KEY DEFAULT pg_catalog.gen_random_uuid(),
   empresa_id INTEGER NOT NULL,
@@ -2401,7 +2416,297 @@ CREATE TABLE IF NOT EXISTS public.whatsapp_cloud_conversations (
     CHECK (updated_at >= created_at)
 );
 
-CREATE INDEX IF NOT EXISTS idx_whatsapp_cloud_conversations_queue
+ALTER TABLE public.whatsapp_cloud_conversations
+  ADD COLUMN IF NOT EXISTS id UUID DEFAULT pg_catalog.gen_random_uuid(),
+  ADD COLUMN IF NOT EXISTS empresa_id INTEGER,
+  ADD COLUMN IF NOT EXISTS participant_wa_id TEXT,
+  ADD COLUMN IF NOT EXISTS workflow_status TEXT DEFAULT 'pending',
+  ADD COLUMN IF NOT EXISTS priority TEXT DEFAULT 'normal',
+  ADD COLUMN IF NOT EXISTS version INTEGER DEFAULT 1,
+  ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT pg_catalog.NOW(),
+  ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT pg_catalog.NOW();
+
+DO $conversation_preflight$
+DECLARE
+  conversation_relation RECORD;
+  existing_columns TEXT[];
+BEGIN
+  SELECT class_row.oid, class_row.relkind
+    INTO conversation_relation
+    FROM pg_catalog.pg_class AS class_row
+    JOIN pg_catalog.pg_namespace AS namespace_row
+      ON namespace_row.oid = class_row.relnamespace
+   WHERE namespace_row.nspname = 'public'
+     AND class_row.relname = 'whatsapp_cloud_conversations';
+
+  IF NOT FOUND THEN
+    RETURN;
+  END IF;
+  IF conversation_relation.relkind IS DISTINCT FROM 'r' THEN
+    RAISE EXCEPTION USING ERRCODE = 'P0001',
+      MESSAGE = 'whatsapp_cloud_conversations_schema_unsafe';
+  END IF;
+
+  SELECT pg_catalog.array_agg(attribute_row.attname ORDER BY attribute_row.attnum)
+    INTO existing_columns
+    FROM pg_catalog.pg_attribute AS attribute_row
+   WHERE attribute_row.attrelid = conversation_relation.oid
+     AND attribute_row.attnum > 0
+     AND NOT attribute_row.attisdropped;
+
+  IF EXISTS (
+    SELECT 1 FROM pg_catalog.unnest(COALESCE(existing_columns, ARRAY[]::TEXT[])) AS column_name
+     WHERE column_name <> ALL (ARRAY[
+       'id','empresa_id','participant_wa_id','workflow_status','priority','version','created_at','updated_at'
+     ]::TEXT[])
+  ) OR EXISTS (
+    SELECT 1
+      FROM pg_catalog.pg_constraint AS constraint_row
+     WHERE constraint_row.confrelid = conversation_relation.oid
+  ) THEN
+    RAISE EXCEPTION USING ERRCODE = 'P0001',
+      MESSAGE = 'whatsapp_cloud_conversations_schema_unsafe';
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM public.whatsapp_cloud_conversations LIMIT 1)
+     AND (NOT ('empresa_id' = ANY(existing_columns))
+       OR NOT ('participant_wa_id' = ANY(existing_columns))) THEN
+    RAISE EXCEPTION USING ERRCODE = 'P0001',
+      MESSAGE = 'whatsapp_cloud_conversations_schema_unsafe';
+  END IF;
+
+  IF ('id' = ANY(existing_columns)) THEN
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_catalog.pg_attribute
+       WHERE attrelid = conversation_relation.oid AND attname = 'id' AND NOT attisdropped
+         AND atttypid IN ('pg_catalog.uuid'::pg_catalog.regtype,
+                          'pg_catalog.text'::pg_catalog.regtype,
+                          'pg_catalog.varchar'::pg_catalog.regtype)
+    ) OR EXISTS (
+      SELECT 1 FROM public.whatsapp_cloud_conversations
+       WHERE id IS NULL OR id::TEXT !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+    ) OR EXISTS (
+      SELECT 1 FROM public.whatsapp_cloud_conversations GROUP BY id::TEXT HAVING pg_catalog.count(*) > 1
+    ) THEN
+      RAISE EXCEPTION USING ERRCODE = 'P0001',
+        MESSAGE = 'whatsapp_cloud_conversations_schema_unsafe';
+    END IF;
+  END IF;
+
+  IF ('empresa_id' = ANY(existing_columns)) THEN
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_catalog.pg_attribute
+       WHERE attrelid = conversation_relation.oid AND attname = 'empresa_id' AND NOT attisdropped
+         AND atttypid IN ('pg_catalog.int2'::pg_catalog.regtype,
+                          'pg_catalog.int4'::pg_catalog.regtype,
+                          'pg_catalog.int8'::pg_catalog.regtype,
+                          'pg_catalog.numeric'::pg_catalog.regtype)
+    ) OR EXISTS (
+      SELECT 1 FROM public.whatsapp_cloud_conversations AS conversation
+       WHERE conversation.empresa_id IS NULL
+          OR conversation.empresa_id::NUMERIC <> pg_catalog.trunc(conversation.empresa_id::NUMERIC)
+          OR conversation.empresa_id::NUMERIC NOT BETWEEN 1 AND 2147483647
+          OR NOT EXISTS (SELECT 1 FROM public.empresas AS empresa WHERE empresa.id = conversation.empresa_id::INTEGER)
+    ) THEN
+      RAISE EXCEPTION USING ERRCODE = 'P0001',
+        MESSAGE = 'whatsapp_cloud_conversations_schema_unsafe';
+    END IF;
+  END IF;
+
+  IF ('participant_wa_id' = ANY(existing_columns)) AND (
+    NOT EXISTS (
+      SELECT 1 FROM pg_catalog.pg_attribute
+       WHERE attrelid = conversation_relation.oid AND attname = 'participant_wa_id' AND NOT attisdropped
+         AND atttypid IN ('pg_catalog.text'::pg_catalog.regtype, 'pg_catalog.varchar'::pg_catalog.regtype)
+    ) OR EXISTS (
+      SELECT 1 FROM public.whatsapp_cloud_conversations
+       WHERE participant_wa_id IS NULL OR participant_wa_id::TEXT !~ '^[0-9]{6,15}$'
+    )
+  ) THEN
+    RAISE EXCEPTION USING ERRCODE = 'P0001',
+      MESSAGE = 'whatsapp_cloud_conversations_schema_unsafe';
+  END IF;
+
+  IF ('workflow_status' = ANY(existing_columns)) AND (
+    NOT EXISTS (
+      SELECT 1 FROM pg_catalog.pg_attribute
+       WHERE attrelid = conversation_relation.oid AND attname = 'workflow_status' AND NOT attisdropped
+         AND atttypid IN ('pg_catalog.text'::pg_catalog.regtype, 'pg_catalog.varchar'::pg_catalog.regtype)
+    ) OR EXISTS (
+      SELECT 1 FROM public.whatsapp_cloud_conversations
+       WHERE workflow_status IS NOT NULL AND workflow_status::TEXT NOT IN ('pending', 'resolved')
+    )
+  ) THEN
+    RAISE EXCEPTION USING ERRCODE = 'P0001',
+      MESSAGE = 'whatsapp_cloud_conversations_schema_unsafe';
+  END IF;
+
+  IF ('priority' = ANY(existing_columns)) AND (
+    NOT EXISTS (
+      SELECT 1 FROM pg_catalog.pg_attribute
+       WHERE attrelid = conversation_relation.oid AND attname = 'priority' AND NOT attisdropped
+         AND atttypid IN ('pg_catalog.text'::pg_catalog.regtype, 'pg_catalog.varchar'::pg_catalog.regtype)
+    ) OR EXISTS (
+      SELECT 1 FROM public.whatsapp_cloud_conversations
+       WHERE priority IS NOT NULL AND priority::TEXT NOT IN ('normal', 'high', 'urgent')
+    )
+  ) THEN
+    RAISE EXCEPTION USING ERRCODE = 'P0001',
+      MESSAGE = 'whatsapp_cloud_conversations_schema_unsafe';
+  END IF;
+
+  IF ('version' = ANY(existing_columns)) AND (
+    NOT EXISTS (
+      SELECT 1 FROM pg_catalog.pg_attribute
+       WHERE attrelid = conversation_relation.oid AND attname = 'version' AND NOT attisdropped
+         AND atttypid IN ('pg_catalog.int2'::pg_catalog.regtype,
+                          'pg_catalog.int4'::pg_catalog.regtype,
+                          'pg_catalog.int8'::pg_catalog.regtype,
+                          'pg_catalog.numeric'::pg_catalog.regtype)
+    ) OR EXISTS (
+      SELECT 1 FROM public.whatsapp_cloud_conversations
+       WHERE version IS NOT NULL AND (
+         version::NUMERIC <> pg_catalog.trunc(version::NUMERIC)
+         OR version::NUMERIC NOT BETWEEN 1 AND 2147483647
+       )
+    )
+  ) THEN
+    RAISE EXCEPTION USING ERRCODE = 'P0001',
+      MESSAGE = 'whatsapp_cloud_conversations_schema_unsafe';
+  END IF;
+
+  IF ('created_at' = ANY(existing_columns)) AND NOT EXISTS (
+    SELECT 1 FROM pg_catalog.pg_attribute
+     WHERE attrelid = conversation_relation.oid AND attname = 'created_at' AND NOT attisdropped
+       AND atttypid IN ('pg_catalog.timestamp'::pg_catalog.regtype,
+                        'pg_catalog.timestamptz'::pg_catalog.regtype)
+  ) THEN
+    RAISE EXCEPTION USING ERRCODE = 'P0001',
+      MESSAGE = 'whatsapp_cloud_conversations_schema_unsafe';
+  END IF;
+  IF ('updated_at' = ANY(existing_columns)) AND NOT EXISTS (
+    SELECT 1 FROM pg_catalog.pg_attribute
+     WHERE attrelid = conversation_relation.oid AND attname = 'updated_at' AND NOT attisdropped
+       AND atttypid IN ('pg_catalog.timestamp'::pg_catalog.regtype,
+                        'pg_catalog.timestamptz'::pg_catalog.regtype)
+  ) THEN
+    RAISE EXCEPTION USING ERRCODE = 'P0001',
+      MESSAGE = 'whatsapp_cloud_conversations_schema_unsafe';
+  END IF;
+
+  IF ('empresa_id' = ANY(existing_columns)) AND ('participant_wa_id' = ANY(existing_columns))
+     AND EXISTS (
+       SELECT 1 FROM public.whatsapp_cloud_conversations
+        GROUP BY empresa_id::INTEGER, participant_wa_id::TEXT
+       HAVING pg_catalog.count(*) > 1
+     ) THEN
+    RAISE EXCEPTION USING ERRCODE = 'P0001',
+      MESSAGE = 'whatsapp_cloud_conversations_schema_unsafe';
+  END IF;
+
+  IF ('created_at' = ANY(existing_columns)) AND ('updated_at' = ANY(existing_columns))
+     AND EXISTS (
+       SELECT 1 FROM public.whatsapp_cloud_conversations
+        WHERE created_at IS NOT NULL AND updated_at IS NOT NULL AND updated_at < created_at
+     ) THEN
+    RAISE EXCEPTION USING ERRCODE = 'P0001',
+      MESSAGE = 'whatsapp_cloud_conversations_schema_unsafe';
+  END IF;
+END $conversation_preflight$;
+
+DO $conversation_drop_constraints$
+DECLARE
+  constraint_row RECORD;
+BEGIN
+  FOR constraint_row IN
+    SELECT conname FROM pg_catalog.pg_constraint
+     WHERE conrelid = 'public.whatsapp_cloud_conversations'::pg_catalog.regclass
+     ORDER BY CASE contype WHEN 'p' THEN 0 WHEN 'u' THEN 1 WHEN 'f' THEN 2 WHEN 'c' THEN 3 ELSE 4 END,
+              conname
+  LOOP
+    EXECUTE pg_catalog.format(
+      'ALTER TABLE public.whatsapp_cloud_conversations DROP CONSTRAINT %I', constraint_row.conname
+    );
+  END LOOP;
+END $conversation_drop_constraints$;
+
+DO $conversation_canonicalize$
+DECLARE
+  column_type pg_catalog.OID;
+BEGIN
+  SELECT atttypid INTO column_type FROM pg_catalog.pg_attribute
+   WHERE attrelid='public.whatsapp_cloud_conversations'::pg_catalog.regclass AND attname='id' AND NOT attisdropped;
+  IF column_type IS DISTINCT FROM 'pg_catalog.uuid'::pg_catalog.regtype THEN
+    ALTER TABLE public.whatsapp_cloud_conversations ALTER COLUMN id TYPE UUID USING id::TEXT::UUID;
+  END IF;
+  SELECT atttypid INTO column_type FROM pg_catalog.pg_attribute
+   WHERE attrelid='public.whatsapp_cloud_conversations'::pg_catalog.regclass AND attname='empresa_id' AND NOT attisdropped;
+  IF column_type IS DISTINCT FROM 'pg_catalog.int4'::pg_catalog.regtype THEN
+    ALTER TABLE public.whatsapp_cloud_conversations ALTER COLUMN empresa_id TYPE INTEGER USING empresa_id::INTEGER;
+  END IF;
+  ALTER TABLE public.whatsapp_cloud_conversations
+    ALTER COLUMN participant_wa_id TYPE TEXT USING participant_wa_id::TEXT,
+    ALTER COLUMN workflow_status TYPE TEXT USING workflow_status::TEXT,
+    ALTER COLUMN priority TYPE TEXT USING priority::TEXT,
+    ALTER COLUMN version TYPE INTEGER USING version::INTEGER;
+
+  SELECT atttypid INTO column_type FROM pg_catalog.pg_attribute
+   WHERE attrelid='public.whatsapp_cloud_conversations'::pg_catalog.regclass AND attname='created_at' AND NOT attisdropped;
+  IF column_type IS DISTINCT FROM 'pg_catalog.timestamptz'::pg_catalog.regtype THEN
+    ALTER TABLE public.whatsapp_cloud_conversations
+      ALTER COLUMN created_at TYPE TIMESTAMPTZ USING created_at AT TIME ZONE 'UTC';
+  END IF;
+  SELECT atttypid INTO column_type FROM pg_catalog.pg_attribute
+   WHERE attrelid='public.whatsapp_cloud_conversations'::pg_catalog.regclass AND attname='updated_at' AND NOT attisdropped;
+  IF column_type IS DISTINCT FROM 'pg_catalog.timestamptz'::pg_catalog.regtype THEN
+    ALTER TABLE public.whatsapp_cloud_conversations
+      ALTER COLUMN updated_at TYPE TIMESTAMPTZ USING updated_at AT TIME ZONE 'UTC';
+  END IF;
+
+  UPDATE public.whatsapp_cloud_conversations
+     SET id = COALESCE(id, pg_catalog.gen_random_uuid()),
+         workflow_status = COALESCE(workflow_status, 'pending'),
+         priority = COALESCE(priority, 'normal'),
+         version = COALESCE(version, 1),
+         created_at = COALESCE(created_at, updated_at, pg_catalog.NOW()),
+         updated_at = COALESCE(updated_at, created_at, pg_catalog.NOW());
+
+  ALTER TABLE public.whatsapp_cloud_conversations
+    ALTER COLUMN id SET DEFAULT pg_catalog.gen_random_uuid(),
+    ALTER COLUMN empresa_id DROP DEFAULT,
+    ALTER COLUMN participant_wa_id DROP DEFAULT,
+    ALTER COLUMN workflow_status SET DEFAULT 'pending',
+    ALTER COLUMN priority SET DEFAULT 'normal',
+    ALTER COLUMN version SET DEFAULT 1,
+    ALTER COLUMN created_at SET DEFAULT pg_catalog.NOW(),
+    ALTER COLUMN updated_at SET DEFAULT pg_catalog.NOW(),
+    ALTER COLUMN id SET NOT NULL,
+    ALTER COLUMN empresa_id SET NOT NULL,
+    ALTER COLUMN participant_wa_id SET NOT NULL,
+    ALTER COLUMN workflow_status SET NOT NULL,
+    ALTER COLUMN priority SET NOT NULL,
+    ALTER COLUMN version SET NOT NULL,
+    ALTER COLUMN created_at SET NOT NULL,
+    ALTER COLUMN updated_at SET NOT NULL;
+
+  ALTER TABLE public.whatsapp_cloud_conversations
+    ADD CONSTRAINT whatsapp_cloud_conversations_pkey PRIMARY KEY (id),
+    ADD CONSTRAINT whatsapp_cloud_conversations_empresa_id_fkey
+      FOREIGN KEY (empresa_id) REFERENCES public.empresas(id) ON DELETE CASCADE,
+    ADD CONSTRAINT whatsapp_cloud_conversations_empresa_participant_key
+      UNIQUE (empresa_id, participant_wa_id),
+    ADD CONSTRAINT whatsapp_cloud_conversations_participant_check
+      CHECK (participant_wa_id ~ '^[0-9]{6,15}$'),
+    ADD CONSTRAINT whatsapp_cloud_conversations_workflow_status_check
+      CHECK (workflow_status IN ('pending', 'resolved')),
+    ADD CONSTRAINT whatsapp_cloud_conversations_priority_check
+      CHECK (priority IN ('normal', 'high', 'urgent')),
+    ADD CONSTRAINT whatsapp_cloud_conversations_version_check CHECK (version > 0),
+    ADD CONSTRAINT whatsapp_cloud_conversations_timestamps_check CHECK (updated_at >= created_at);
+END $conversation_canonicalize$;
+
+DROP INDEX IF EXISTS public.idx_whatsapp_cloud_conversations_queue;
+CREATE INDEX idx_whatsapp_cloud_conversations_queue
   ON public.whatsapp_cloud_conversations
   (empresa_id, workflow_status, priority, updated_at DESC, id);
 
@@ -2693,7 +2998,6 @@ BEGIN
         END,
         version = CASE
           WHEN target_is_inbound
-           AND whatsapp_cloud_conversations.workflow_status <> 'pending'
             THEN whatsapp_cloud_conversations.version + 1
           ELSE whatsapp_cloud_conversations.version
         END,

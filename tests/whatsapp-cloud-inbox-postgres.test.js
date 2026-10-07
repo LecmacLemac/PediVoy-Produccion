@@ -6,6 +6,7 @@ import net from 'node:net';
 import { basename, join } from 'node:path';
 import pg from 'pg';
 import { createCloudOps } from '../src/whatsappCloud/opsRepository.js';
+import { updateCloudConversationState } from '../src/whatsappCloud/inboxRepository.js';
 
 let bin;
 try { bin = execFileSync('pg_config', ['--bindir'], { encoding: 'utf8' }).trim(); } catch {}
@@ -4775,6 +4776,166 @@ test('correlación status aplica BTRIM a eventos y outbox legacy con whitespace'
   });
 });
 
+test('migración canonicaliza conversación legacy parcial sin perder id ni estado y es idempotente', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (1)');
+    const stableId = '65cb77fc-72e3-4bc9-87f9-9d484664dd54';
+    await pool.query(`
+      CREATE TABLE whatsapp_cloud_conversations (
+        id TEXT,
+        empresa_id BIGINT,
+        participant_wa_id VARCHAR(32),
+        workflow_status VARCHAR(32),
+        version BIGINT,
+        created_at TIMESTAMP WITHOUT TIME ZONE
+      );
+      INSERT INTO whatsapp_cloud_conversations
+        (id,empresa_id,participant_wa_id,workflow_status,version,created_at)
+      VALUES ('${stableId}',1,'549351555900','resolved',4,'2026-10-06 10:00:00');
+      ALTER TABLE whatsapp_cloud_conversations ADD PRIMARY KEY (participant_wa_id);
+      CREATE INDEX idx_whatsapp_cloud_conversations_queue
+        ON whatsapp_cloud_conversations (empresa_id)
+    `);
+
+    await pool.query(migrationSql);
+    const first = (await pool.query(`SELECT id::text,empresa_id,participant_wa_id,
+      workflow_status,priority,version,created_at,updated_at
+      FROM whatsapp_cloud_conversations`)).rows[0];
+    await pool.query(migrationSql);
+    const second = (await pool.query(`SELECT id::text,empresa_id,participant_wa_id,
+      workflow_status,priority,version,created_at,updated_at
+      FROM whatsapp_cloud_conversations`)).rows[0];
+    assert.deepEqual(second, first);
+    assert.equal(first.id, stableId);
+    assert.equal(first.workflow_status, 'resolved');
+    assert.equal(first.priority, 'normal');
+    assert.equal(first.version, 4);
+
+    const columns = (await pool.query(`
+      SELECT attname,format_type(atttypid,atttypmod) AS data_type,attnotnull,
+             pg_get_expr(default_row.adbin,default_row.adrelid) AS default_expression
+        FROM pg_attribute AS attribute_row
+        LEFT JOIN pg_attrdef AS default_row
+          ON default_row.adrelid=attribute_row.attrelid AND default_row.adnum=attribute_row.attnum
+       WHERE attribute_row.attrelid='whatsapp_cloud_conversations'::regclass
+         AND attribute_row.attnum>0 AND NOT attribute_row.attisdropped
+       ORDER BY attribute_row.attnum
+    `)).rows;
+    assert.deepEqual(columns.map(row => [row.attname, row.data_type, row.attnotnull]), [
+      ['id', 'uuid', true],
+      ['empresa_id', 'integer', true],
+      ['participant_wa_id', 'text', true],
+      ['workflow_status', 'text', true],
+      ['version', 'integer', true],
+      ['created_at', 'timestamp with time zone', true],
+      ['priority', 'text', true],
+      ['updated_at', 'timestamp with time zone', true],
+    ]);
+    const byName = new Map(columns.map(row => [row.attname, row]));
+    assert.equal(byName.get('created_at').data_type, 'timestamp with time zone');
+    assert.equal(byName.get('created_at').attnotnull, true);
+    assert.match(byName.get('id').default_expression, /gen_random_uuid/i);
+    assert.match(byName.get('workflow_status').default_expression, /pending/i);
+    assert.match(byName.get('priority').default_expression, /normal/i);
+    assert.match(byName.get('version').default_expression, /1/);
+    assert.match(byName.get('created_at').default_expression, /now/i);
+    assert.match(byName.get('updated_at').default_expression, /now/i);
+
+    const constraints = (await pool.query(`SELECT conname,contype,pg_get_constraintdef(oid) AS definition
+      FROM pg_constraint WHERE conrelid='whatsapp_cloud_conversations'::regclass ORDER BY conname`)).rows;
+    assert.deepEqual(constraints.map(row => row.conname), [
+      'whatsapp_cloud_conversations_created_at_not_null',
+      'whatsapp_cloud_conversations_empresa_id_fkey',
+      'whatsapp_cloud_conversations_empresa_id_not_null',
+      'whatsapp_cloud_conversations_empresa_participant_key',
+      'whatsapp_cloud_conversations_id_not_null',
+      'whatsapp_cloud_conversations_participant_check',
+      'whatsapp_cloud_conversations_participant_wa_id_not_null',
+      'whatsapp_cloud_conversations_pkey',
+      'whatsapp_cloud_conversations_priority_check',
+      'whatsapp_cloud_conversations_priority_not_null',
+      'whatsapp_cloud_conversations_timestamps_check',
+      'whatsapp_cloud_conversations_updated_at_not_null',
+      'whatsapp_cloud_conversations_version_check',
+      'whatsapp_cloud_conversations_version_not_null',
+      'whatsapp_cloud_conversations_workflow_status_check',
+      'whatsapp_cloud_conversations_workflow_status_not_null',
+    ]);
+    assert.deepEqual(await indexShape(pool, 'idx_whatsapp_cloud_conversations_queue'), {
+      indisunique: false,
+      indnkeyatts: 5,
+      indnatts: 5,
+      has_expressions: false,
+      sort_options: '0 0 0 3 0',
+      key_columns: ['empresa_id', 'workflow_status', 'priority', 'updated_at', 'id'],
+      predicate: null,
+    });
+  });
+});
+
+test('migración aborta esquema de conversaciones inseguro antes del backfill con error constante', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (1)');
+    await pool.query(`
+      CREATE TABLE whatsapp_cloud_conversations (
+        id UUID,
+        empresa_id INTEGER,
+        participant_wa_id TEXT,
+        workflow_status TEXT,
+        priority TEXT,
+        version INTEGER,
+        created_at TIMESTAMPTZ,
+        updated_at TIMESTAMPTZ
+      );
+      INSERT INTO whatsapp_cloud_conversations VALUES
+        ('65cb77fc-72e3-4bc9-87f9-9d484664dd55',1,'549351555899','pending','normal',1,NOW(),NOW()),
+        ('65cb77fc-72e3-4bc9-87f9-9d484664dd56',1,'549351555899','resolved','urgent',2,NOW(),NOW());
+      INSERT INTO whatsapp_cloud_events
+        (empresa_id,event_kind,dedupe_key,message_id,sender_id,message_type,event_data)
+      VALUES (1,'message','unsafe-backfill','wamid.unsafe','549351555898','text',
+              '{"text":{"body":"must not backfill"}}'::jsonb)
+    `);
+
+    await assert.rejects(pool.query(migrationSql), error => {
+      assert.equal(error?.code, 'P0001');
+      assert.equal(error?.message, 'whatsapp_cloud_conversations_schema_unsafe');
+      assert.equal(error?.detail, undefined);
+      assert.equal(error?.hint, undefined);
+      assert.doesNotMatch(JSON.stringify(error), /549351|must not backfill|65cb77fc/i);
+      return true;
+    });
+    assert.equal((await pool.query('SELECT count(*)::int AS count FROM whatsapp_cloud_conversations')).rows[0].count, 2);
+    assert.equal((await pool.query("SELECT to_regclass('public.whatsapp_cloud_messages') AS relation")).rows[0].relation, null);
+  });
+});
+
+test('migración aborta tipos legacy no convertibles sin filtrar valores ni errores PostgreSQL', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (1)');
+    await pool.query(`
+      CREATE TABLE whatsapp_cloud_conversations (
+        id TEXT,
+        empresa_id TEXT,
+        participant_wa_id TEXT
+      );
+      INSERT INTO whatsapp_cloud_conversations
+        (id,empresa_id,participant_wa_id)
+      VALUES ('65cb77fc-72e3-4bc9-87f9-9d484664dd57','tenant-secret','549351555897')
+    `);
+
+    await assert.rejects(pool.query(migrationSql), error => {
+      assert.equal(error?.code, 'P0001');
+      assert.equal(error?.message, 'whatsapp_cloud_conversations_schema_unsafe');
+      assert.equal(error?.detail, undefined);
+      assert.equal(error?.hint, undefined);
+      assert.doesNotMatch(JSON.stringify(error), /tenant-secret|invalid input|empresa_id/i);
+      return true;
+    });
+    assert.deepEqual((await pool.query('SELECT empresa_id FROM whatsapp_cloud_conversations')).rows,
+      [{ empresa_id: 'tenant-secret' }]);
+  });
+});
+
 test('migración crea conversaciones operativas allowlisted y es reejecutable con backfill estable', async () => {
   await withDatabase(async pool => {
     await pool.query('INSERT INTO empresas(id) VALUES (1), (2)');
@@ -4874,6 +5035,150 @@ test('inbound conserva identidad, reabre pending e incrementa version sin degrad
         FROM whatsapp_cloud_conversations
        WHERE empresa_id=1 AND participant_wa_id='549351555902'
     `)).rows[0], reopened);
+  });
+});
+
+test('PATCH no-op PostgreSQL conserva version y updated_at, pero CAS incorrecto queda stale', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (1)');
+    await pool.query(migrationSql);
+    await pool.query(`
+      INSERT INTO whatsapp_cloud_events
+        (empresa_id,event_kind,dedupe_key,message_id,sender_id,message_type,event_data,received_at)
+      VALUES (1,'message','conversation-noop-1','wamid.noop-1','549351555903','text',
+              '{"text":{"body":"primero"}}'::jsonb,'2026-10-07T10:00:00Z')
+    `);
+    const before = (await pool.query(`
+      SELECT id::text,workflow_status,priority,version,updated_at
+        FROM whatsapp_cloud_conversations
+       WHERE empresa_id=1 AND participant_wa_id='549351555903'
+    `)).rows[0];
+    const query = async (sql, params) => (await pool.query(sql, params)).rows;
+
+    const noOp = await updateCloudConversationState({
+      query, empresaId: 1, conversationId: before.id,
+      workflowStatus: 'pending', priority: 'normal', expectedVersion: before.version,
+    });
+    assert.equal(noOp.outcome, 'unchanged');
+    assert.deepEqual(noOp.conversation, {
+      conversationId: before.id, workflowStatus: 'pending', priority: 'normal', version: before.version,
+    });
+    const after = (await pool.query(`
+      SELECT version,updated_at FROM whatsapp_cloud_conversations
+       WHERE empresa_id=1 AND id=$1::uuid
+    `, [before.id])).rows[0];
+    assert.equal(after.version, before.version);
+    assert.equal(after.updated_at.toISOString(), before.updated_at.toISOString());
+
+    const stale = await updateCloudConversationState({
+      query, empresaId: 1, conversationId: before.id,
+      workflowStatus: 'pending', priority: 'normal', expectedVersion: before.version + 1,
+    });
+    assert.equal(stale.outcome, 'stale');
+    assert.equal(stale.conversation.version, before.version);
+  });
+});
+
+test('carrera PATCH primero resuelve y el inbound durable posterior reabre pending', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (1)');
+    await pool.query(migrationSql);
+    await pool.query(`
+      INSERT INTO whatsapp_cloud_events
+        (empresa_id,event_kind,dedupe_key,message_id,sender_id,message_type,event_data,received_at)
+      VALUES (1,'message','conversation-race-patch-seed','wamid.race-patch-seed','549351555904','text',
+              '{"text":{"body":"seed"}}'::jsonb,'2026-10-07T10:00:00Z')
+    `);
+    const initial = (await pool.query(`SELECT id::text,version FROM whatsapp_cloud_conversations
+      WHERE empresa_id=1 AND participant_wa_id='549351555904'`)).rows[0];
+    const patchClient = await pool.connect();
+    const inboundClient = await pool.connect();
+    try {
+      await patchClient.query('BEGIN');
+      const patchPid = (await patchClient.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
+      const patched = await updateCloudConversationState({
+        query: async (sql, params) => (await patchClient.query(sql, params)).rows,
+        empresaId: 1, conversationId: initial.id,
+        workflowStatus: 'resolved', priority: 'urgent', expectedVersion: initial.version,
+      });
+      assert.equal(patched.outcome, 'updated');
+
+      const inboundPid = (await inboundClient.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
+      const inbound = inboundClient.query(`
+        INSERT INTO whatsapp_cloud_events
+          (empresa_id,event_kind,dedupe_key,message_id,sender_id,message_type,event_data,received_at)
+        VALUES (1,'message','conversation-race-patch-inbound','wamid.race-patch-inbound','549351555904','text',
+                '{"text":{"body":"posterior"}}'::jsonb,'2026-10-07T10:01:00Z')
+      `);
+      await waitUntil(async () => {
+        const blockers = (await pool.query('SELECT pg_blocking_pids($1) AS pids', [inboundPid])).rows[0].pids;
+        return blockers.includes(patchPid);
+      }, 'inbound must wait for PATCH row lock');
+      await patchClient.query('COMMIT');
+      await inbound;
+
+      assert.deepEqual((await pool.query(`SELECT workflow_status,priority,version
+        FROM whatsapp_cloud_conversations WHERE empresa_id=1 AND id=$1::uuid`, [initial.id])).rows[0], {
+        workflow_status: 'pending', priority: 'urgent', version: initial.version + 2,
+      });
+    } finally {
+      await patchClient.query('ROLLBACK').catch(() => {});
+      patchClient.release();
+      inboundClient.release();
+    }
+  });
+});
+
+test('carrera inbound primero invalida expectedVersion previo y PATCH queda stale con pending', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (1)');
+    await pool.query(migrationSql);
+    await pool.query(`
+      INSERT INTO whatsapp_cloud_events
+        (empresa_id,event_kind,dedupe_key,message_id,sender_id,message_type,event_data,received_at)
+      VALUES (1,'message','conversation-race-inbound-seed','wamid.race-inbound-seed','549351555905','text',
+              '{"text":{"body":"seed"}}'::jsonb,'2026-10-07T10:00:00Z')
+    `);
+    const initial = (await pool.query(`SELECT id::text,version FROM whatsapp_cloud_conversations
+      WHERE empresa_id=1 AND participant_wa_id='549351555905'`)).rows[0];
+    const inboundClient = await pool.connect();
+    const patchClient = await pool.connect();
+    try {
+      await inboundClient.query('BEGIN');
+      const inboundPid = (await inboundClient.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
+      await inboundClient.query(`
+        INSERT INTO whatsapp_cloud_events
+          (empresa_id,event_kind,dedupe_key,message_id,sender_id,message_type,event_data,received_at)
+        VALUES (1,'message','conversation-race-inbound-wins','wamid.race-inbound-wins','549351555905','text',
+                '{"text":{"body":"nuevo"}}'::jsonb,'2026-10-07T10:01:00Z')
+      `);
+
+      const patchPid = (await patchClient.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
+      const patch = updateCloudConversationState({
+        query: async (sql, params) => (await patchClient.query(sql, params)).rows,
+        empresaId: 1, conversationId: initial.id,
+        workflowStatus: 'resolved', priority: 'high', expectedVersion: initial.version,
+      });
+      await waitUntil(async () => {
+        const blockers = (await pool.query('SELECT pg_blocking_pids($1) AS pids', [patchPid])).rows[0].pids;
+        return blockers.includes(inboundPid);
+      }, 'PATCH must wait for inbound row lock');
+      await inboundClient.query('COMMIT');
+      const result = await patch;
+
+      assert.equal(result.outcome, 'stale');
+      assert.deepEqual(result.conversation, {
+        conversationId: initial.id, workflowStatus: 'pending', priority: 'normal', version: initial.version + 1,
+      });
+      assert.deepEqual((await pool.query(`SELECT workflow_status,priority,version
+        FROM whatsapp_cloud_conversations WHERE empresa_id=1 AND id=$1::uuid`, [initial.id])).rows[0], {
+        workflow_status: 'pending', priority: 'normal', version: initial.version + 1,
+      });
+    } finally {
+      await inboundClient.query('ROLLBACK').catch(() => {});
+      inboundClient.release();
+      patchClient.release();
+    }
   });
 });
 

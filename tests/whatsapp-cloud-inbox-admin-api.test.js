@@ -961,3 +961,49 @@ test('repositorio state devuelve stale sanitizado con estado actual allowlisted'
   });
   assert.doesNotMatch(JSON.stringify(result), /forbidden|participant/i);
 });
+
+test('PATCH state no-op conserva versión y devuelve éxito, pero expectedVersion incorrecta sigue stale', async () => {
+  const stableId = '4ad1a4a8-8877-4dc6-a7a0-e81b87f8e2a1';
+  const calls = [];
+  const app = express();
+  app.use(express.json());
+  app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+    canonicalOrigin: 'https://admin.pedivoy.test',
+    withAuth(req, _res, next) {
+      req.user = { uid: 11, role: 'admin', empresa_id: 7 };
+      next();
+    },
+    async query(sql, params) {
+      calls.push({ sql, params });
+      if (/^UPDATE public\.whatsapp_cloud_conversations/m.test(sql)) return [];
+      return [{ id: stableId, workflow_status: 'pending', priority: 'high', version: 8 }];
+    },
+  }));
+
+  await withServer(app, async baseUrl => {
+    const path = `${baseUrl}/api/admin/whatsapp-cloud/conversations/${stableId}/state`;
+    const noOp = await fetch(path, {
+      method: 'PATCH',
+      headers: { Origin: 'https://admin.pedivoy.test', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workflowStatus: 'pending', priority: 'high', expectedVersion: 8 }),
+    });
+    assert.equal(noOp.status, 200);
+    assert.deepEqual(await noOp.json(), {
+      conversationId: stableId, workflowStatus: 'pending', priority: 'high', version: 8,
+    });
+
+    const stale = await fetch(path, {
+      method: 'PATCH',
+      headers: { Origin: 'https://admin.pedivoy.test', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workflowStatus: 'pending', priority: 'high', expectedVersion: 7 }),
+    });
+    assert.equal(stale.status, 409);
+    assert.deepEqual(await stale.json(), {
+      error: 'stale_conversation_version',
+      current: { conversationId: stableId, workflowStatus: 'pending', priority: 'high', version: 8 },
+    });
+  });
+
+  assert.match(calls[0].sql, /IS DISTINCT FROM/);
+  assert.equal(calls.length, 4);
+});
