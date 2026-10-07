@@ -385,6 +385,45 @@ test('reply replay idempotente responde 200 accepted/deduplicated sin crear otro
   assert.equal(enqueueAttempts, 1);
 });
 
+test('reply replay cuyo lookup de correlación falla responde outcome_unknown sin habilitar reenvío', async () => {
+  let enqueueAttempts = 0;
+  let lookupAttempts = 0;
+  const app = express();
+  app.use(express.json());
+  app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+    canonicalOrigin: 'https://admin.pedivoy.test',
+    withAuth(req, _res, next) {
+      req.user = { uid: 22, role: 'admin', empresa_id: 7 };
+      next();
+    },
+    async query(sql) {
+      if (/FROM public\.whatsapp_cloud_messages/.test(sql)) {
+        return [{ participant_wa_id: '5493515550001' }];
+      }
+      lookupAttempts += 1;
+      throw new Error('private sql lookup transport failure');
+    },
+    async enqueueReply() {
+      enqueueAttempts += 1;
+      return { queued: false, skipped: true, reason: 'duplicate_correlation', id: 501, status: 'pending' };
+    },
+  }));
+
+  await withServer(app, async baseUrl => {
+    const response = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations/44/replies`, {
+      method: 'POST',
+      headers: { Origin: 'https://admin.pedivoy.test', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: 'misma respuesta', idempotency_key: 'same-request-lookup-failed' }),
+    });
+    assert.equal(response.status, 503);
+    const body = await response.json();
+    assert.deepEqual(body, { error: 'reply_enqueue_outcome_unknown' });
+    assert.doesNotMatch(JSON.stringify(body), /private|sql|transport/i);
+  });
+  assert.equal(enqueueAttempts, 1);
+  assert.equal(lookupAttempts, 1);
+});
+
 test('reply informa configuración Cloud inactiva con error público sin filtrar detalles', async () => {
   let attempts = 0;
   const app = express();

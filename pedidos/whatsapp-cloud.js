@@ -7,6 +7,7 @@ import {
   createInboxComposerController,
   createRequestGate,
   createSendDeadline,
+  createSingleFlightSubmission,
   formatCloudTimestamp,
   mergeHistoryPage,
   reduceMobileView,
@@ -56,7 +57,6 @@ const conversationGate = createRequestGate();
 const historyGate = createRequestGate();
 let conversationsController = null;
 let historyController = null;
-let sendController = null;
 let returnFocusConversationId = null;
 
 function isMobileLayout() {
@@ -444,48 +444,58 @@ async function loadCompanies() {
   setStatus('Seleccioná una empresa para ver sus conversaciones.', 'warning');
 }
 
+const replySubmission = createSingleFlightSubmission({
+  start() {
+    if (!state.activeConversation) throw new Error('Seleccioná una conversación');
+    if (composerController.snapshot().composer.reconciliationRequired) {
+      throw new Error('El resultado es incierto y requiere reconciliación');
+    }
+    const submission = composerController.startSend(crypto.randomUUID());
+    syncContextControls();
+    return submission;
+  },
+  async execute(submission, { signal }) {
+    const { conversationId, companyId } = submission.context;
+    const pending = submission.pending;
+    const body = { text: pending.text, idempotency_key: pending.idempotencyKey };
+    if (state.role === 'super') body.empresa_id = companyId;
+    const deadline = createSendDeadline({ parentSignal: signal, timeoutMs: SEND_TIMEOUT_MS });
+    try {
+      const path = `/conversations/${encodeURIComponent(conversationId)}/replies`;
+      const url = buildCloudApiUrl(path, { role: state.role, companyId, tenantInBody: true });
+      const { response, payload } = await request(url, {
+        method: 'POST', body: JSON.stringify(body), signal: deadline.signal,
+      });
+      return { status: response.status, errorCode: payload?.error, payload };
+    } finally {
+      deadline.cleanup();
+    }
+  },
+  settle(submission, result) {
+    if (!composerController.settleSend(submission, result)) return;
+    const composer = composerController.snapshot().composer;
+    const tone = composer.reconciliationRequired
+      ? 'warning'
+      : (result.status === 202 || result.status === 200 ? 'success' : 'error');
+    setComposerNotice(composer.notice, tone);
+  },
+  reject(submission, error) {
+    if (error?.message === 'session_expired') return;
+    if (composerController.settleSend(submission, { status: 0 })) {
+      setComposerNotice(composerController.snapshot().composer.notice, 'warning');
+    }
+  },
+  finish() {
+    syncContextControls();
+  },
+});
+
 async function submitMessage(event) {
   event.preventDefault();
-  if (!state.activeConversation) return;
-  if (composerController.snapshot().composer.reconciliationRequired) return;
-  let submission;
   try {
-    submission = composerController.startSend(crypto.randomUUID());
+    await replySubmission.submit();
   } catch (error) {
     setComposerNotice(error.message, 'error');
-    return;
-  }
-  syncContextControls();
-  const conversationId = submission.context.conversationId;
-  const companyId = submission.context.companyId;
-  const pending = submission.pending;
-  const body = { text: pending.text, idempotency_key: pending.idempotencyKey };
-  if (state.role === 'super') body.empresa_id = companyId;
-  sendController = new AbortController();
-  const deadline = createSendDeadline({ parentSignal: sendController.signal, timeoutMs: SEND_TIMEOUT_MS });
-  try {
-    const path = `/conversations/${encodeURIComponent(conversationId)}/replies`;
-    const url = buildCloudApiUrl(path, { role: state.role, companyId, tenantInBody: true });
-    const { response, payload } = await request(url, {
-      method: 'POST', body: JSON.stringify(body), signal: deadline.signal,
-    });
-    if (!composerController.settleSend(submission, { status: response.status, errorCode: payload?.error })) return;
-    const composer = composerController.snapshot().composer;
-    if (response.status === 202 || response.status === 200) {
-      setComposerNotice(composer.notice, 'success');
-    } else {
-      setComposerNotice(composer.notice, payload?.error === 'reply_enqueue_outcome_unknown' ? 'warning' : 'error');
-    }
-  } catch (error) {
-    if (error?.message !== 'session_expired') {
-      if (composerController.settleSend(submission, { status: 0 })) {
-        setComposerNotice(composerController.snapshot().composer.notice, 'error');
-      }
-    }
-  } finally {
-    deadline.cleanup();
-    sendController = null;
-    syncContextControls();
   }
 }
 
@@ -546,7 +556,7 @@ document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
     conversationsController?.abort();
     historyController?.abort();
-    sendController?.abort();
+    replySubmission.abort();
     return;
   }
   loadConversations();

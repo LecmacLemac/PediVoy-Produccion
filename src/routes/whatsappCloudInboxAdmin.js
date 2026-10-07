@@ -247,14 +247,19 @@ export function createWhatsAppCloudInboxAdminRouter({
         correlationId,
       }, pool);
       if (!result.queued) {
-        const matchesOriginal = await matchesCloudReplyCorrelation({
-          query,
-          empresaId,
-          outboxId: result.id,
-          correlationId,
-          participant: canonicalPayload.phone,
-          message: canonicalPayload.message,
-        });
+        let matchesOriginal;
+        try {
+          matchesOriginal = await matchesCloudReplyCorrelation({
+            query,
+            empresaId,
+            outboxId: result.id,
+            correlationId,
+            participant: canonicalPayload.phone,
+            message: canonicalPayload.message,
+          });
+        } catch {
+          return res.status(503).json({ error: 'reply_enqueue_outcome_unknown' });
+        }
         if (!matchesOriginal) return res.status(409).json({ error: 'idempotency_key_conflict' });
       }
       return res.status(result.queued ? 202 : 200).json({

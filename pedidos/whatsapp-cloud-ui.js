@@ -12,6 +12,7 @@ const STATUS = Object.freeze({
   outcome_unknown: Object.freeze({ label: 'Resultado incierto', tone: 'unknown', help: 'No vuelvas a enviar: el proveedor podría haber aceptado el mensaje.', retrySafe: false }),
   received: Object.freeze({ label: 'Recibido', tone: 'received', help: 'Mensaje entrante recibido.', retrySafe: false }),
 });
+const PUBLIC_REPLY_QUEUE_STATUSES = new Set(['pending', 'queued']);
 
 export function statusMeta(value) {
   return STATUS[String(value || '').toLowerCase()] || Object.freeze({
@@ -149,6 +150,50 @@ export function createSendDeadline({
   };
 }
 
+export function createSingleFlightSubmission({
+  start,
+  execute,
+  settle,
+  reject = () => {},
+  finish = () => {},
+  abortControllerFactory = () => new AbortController(),
+} = {}) {
+  if (typeof start !== 'function' || typeof execute !== 'function' || typeof settle !== 'function') {
+    throw new Error('Callbacks de envío requeridos');
+  }
+  let active = null;
+  return {
+    async submit() {
+      if (active) return false;
+      const submission = start();
+      const abortController = abortControllerFactory();
+      const current = Object.freeze({ submission, abortController });
+      active = current;
+      try {
+        const result = await execute(submission, { signal: abortController.signal });
+        if (active !== current) return false;
+        await settle(submission, result);
+        return true;
+      } catch (error) {
+        if (active !== current) return false;
+        await reject(submission, error);
+        return true;
+      } finally {
+        if (active === current) {
+          active = null;
+          finish(submission);
+        }
+      }
+    },
+    abort(reason) {
+      active?.abortController.abort(reason);
+    },
+    isActive() {
+      return active != null;
+    },
+  };
+}
+
 export function reduceMobileView(state, action) {
   if (action?.type === 'open') {
     return { mobileView: 'detail', activeConversationId: String(action.conversationId) };
@@ -187,8 +232,17 @@ export function startSubmission(state, idempotencyKey) {
   };
 }
 
+function acceptedReplyResult(result = {}) {
+  if (result.status !== 200 && result.status !== 202) return false;
+  const payload = result.payload;
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return false;
+  if (payload.accepted !== true || payload.deduplicated !== (result.status === 200)) return false;
+  if (typeof payload.id !== 'string' || !/^[1-9][0-9]*$/.test(payload.id)) return false;
+  return typeof payload.status === 'string' && PUBLIC_REPLY_QUEUE_STATUSES.has(payload.status);
+}
+
 export function resolveSubmission(state, result = {}) {
-  if (result.status === 202 || result.status === 200) {
+  if (acceptedReplyResult(result)) {
     return {
       ...createComposerState(''),
       notice: result.status === 202
@@ -196,7 +250,9 @@ export function resolveSubmission(state, result = {}) {
         : 'El mensaje ya estaba en cola. No se creó un duplicado.',
     };
   }
-  const outcomeUnknown = result.status === 0 || result.errorCode === 'reply_enqueue_outcome_unknown';
+  const outcomeUnknown = result.status === 0
+    || result.errorCode === 'reply_enqueue_outcome_unknown'
+    || (result.status >= 200 && result.status < 300);
   return {
     draft: String(state?.draft || ''),
     sending: false,
@@ -286,6 +342,7 @@ export function createInboxComposerController({ input, send }) {
     },
     startSend(idempotencyKey) {
       if (context.conversationId == null) throw new Error('Seleccioná una conversación');
+      if (composer.sending || activeSubmission) throw new Error('Ya hay un mensaje en envío');
       if (composer.reconciliationRequired) throw new Error('El resultado es incierto y requiere reconciliación');
       composer = createComposerState(input.value);
       composer = startSubmission(composer, idempotencyKey);

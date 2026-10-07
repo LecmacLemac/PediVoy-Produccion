@@ -11,6 +11,7 @@ import {
   createInboxComposerController,
   createRequestGate,
   createSendDeadline,
+  createSingleFlightSubmission,
   mergeHistoryPage,
   reduceMobileView,
   resolveSubmission,
@@ -149,6 +150,23 @@ test('cambio de conversación exige reescritura y el envío pertenece sólo al d
   assert.equal(submission.pending.text, 'mensaje explícito para B');
 });
 
+test('envío en vuelo rechaza un segundo start sincronizado y conserva la submission original', () => {
+  const { input, controller } = composerDomHarness();
+  controller.changeCompany(7);
+  controller.activateConversation(controller.beginConversationChange('recipient-a'));
+  input.value = 'mensaje A';
+  controller.captureDraft();
+
+  const first = controller.startSend('key-a');
+
+  assert.throws(() => controller.startSend('key-b'), /envío/i);
+  assert.equal(controller.snapshot().composer.pending.idempotencyKey, 'key-a');
+  assert.equal(controller.settleSend(first, {
+    status: 202,
+    payload: { accepted: true, deduplicated: false, id: '501', status: 'pending' },
+  }), true);
+});
+
 test('envío en vuelo bloquea cambios y una respuesta demorada no muta el contexto nuevo', () => {
   const { input, controller } = composerDomHarness();
   controller.changeCompany(7);
@@ -163,7 +181,10 @@ test('envío en vuelo bloquea cambios y una respuesta demorada no muta el contex
   assert.equal(controller.closeConversation(), false);
   assert.deepEqual(controller.snapshot().context, { companyId: 7, conversationId: 'recipient-a' });
 
-  assert.equal(controller.settleSend(delayed, { status: 202 }), true);
+  assert.equal(controller.settleSend(delayed, {
+    status: 202,
+    payload: { accepted: true, deduplicated: false, id: '502', status: 'pending' },
+  }), true);
   assert.equal(controller.changeCompany(9), true);
   const second = controller.beginConversationChange('recipient-b');
   controller.activateConversation(second);
@@ -280,15 +301,44 @@ test('composer conserva borrador en fallas y limpia con 202 nuevo o 200 replay c
   assert.equal(networkUnknown.canRetry, false);
   assert.equal(networkUnknown.reconciliationRequired, true);
 
-  const accepted = resolveSubmission(pending, { status: 202 });
+  const accepted = resolveSubmission(pending, {
+    status: 202,
+    payload: { accepted: true, deduplicated: false, id: '501', status: 'pending' },
+  });
   assert.equal(accepted.draft, '');
   assert.equal(accepted.sending, false);
   assert.equal(accepted.notice, 'Mensaje en cola. No se reenviará automáticamente.');
 
-  const replayed = resolveSubmission(pending, { status: 200 });
+  const replayed = resolveSubmission(pending, {
+    status: 200,
+    payload: { accepted: true, deduplicated: true, id: '501', status: 'pending' },
+  });
   assert.equal(replayed.draft, '');
   assert.equal(replayed.sending, false);
   assert.equal(replayed.notice, 'El mensaje ya estaba en cola. No se creó un duplicado.');
+});
+
+test('2xx vacío, inválido o incoherente conserva draft/key y bloquea reenvío', () => {
+  const invalidResults = [
+    { status: 202, payload: null },
+    { status: 202, payload: {} },
+    { status: 202, payload: { accepted: false, deduplicated: false, id: '501', status: 'pending' } },
+    { status: 202, payload: { accepted: true, deduplicated: true, id: '501', status: 'pending' } },
+    { status: 202, payload: { accepted: true, deduplicated: false, id: null, status: 'pending' } },
+    { status: 202, payload: { accepted: true, deduplicated: false, id: '501', status: 'private-provider-state' } },
+    { status: 200, payload: { accepted: true, deduplicated: false, id: '501', status: 'pending' } },
+    { status: 200, payload: { accepted: true, deduplicated: true, id: 'not-an-id', status: 'pending' } },
+  ];
+
+  for (const result of invalidResults) {
+    const pending = startSubmission(createComposerState(' mensaje durable '), 'durable-key');
+    const resolved = resolveSubmission(pending, result);
+    assert.equal(resolved.draft, ' mensaje durable ', JSON.stringify(result));
+    assert.deepEqual(resolved.pending, { text: 'mensaje durable', idempotencyKey: 'durable-key' }, JSON.stringify(result));
+    assert.equal(resolved.reconciliationRequired, true, JSON.stringify(result));
+    assert.equal(resolved.canRetry, false, JSON.stringify(result));
+    assert.match(resolved.notice, /no vuelvas a enviar/i, JSON.stringify(result));
+  }
 });
 
 test('conflicto idempotente conserva borrador, desbloquea y exige una key nueva en retry manual', () => {
@@ -423,12 +473,49 @@ test('fuentes frontend rechazan persistencia, HTML inseguro, logs sensibles y re
   assert.doesNotMatch(combined, /media_id|provider_url|webhook_filename|access_token/i);
 });
 
-test('controlador usa credenciales same-origin, AbortController y envío único', async () => {
+test('dos submits sincronizados producen exactamente una key, un POST y un settle', async () => {
+  let keyCount = 0;
+  let postCount = 0;
+  let settleCount = 0;
+  let releasePost;
+  const postPending = new Promise(resolve => { releasePost = resolve; });
+  const runner = createSingleFlightSubmission({
+    start() {
+      keyCount += 1;
+      return { pending: { idempotencyKey: `key-${keyCount}` } };
+    },
+    async execute(submission, { signal }) {
+      postCount += 1;
+      assert.equal(submission.pending.idempotencyKey, 'key-1');
+      assert.equal(signal.aborted, false);
+      return postPending;
+    },
+    settle(submission, result) {
+      settleCount += 1;
+      assert.equal(submission.pending.idempotencyKey, 'key-1');
+      assert.deepEqual(result, { status: 202 });
+    },
+  });
+
+  const first = runner.submit();
+  const second = runner.submit();
+
+  assert.equal(await second, false);
+  assert.equal(keyCount, 1);
+  assert.equal(postCount, 1);
+  assert.equal(settleCount, 0);
+  releasePost({ status: 202 });
+  assert.equal(await first, true);
+  assert.equal(settleCount, 1);
+});
+
+test('controlador usa credenciales same-origin, AbortController y contrato de respuesta', async () => {
   const controller = await source(controllerUrl);
   assert.match(controller, /credentials:\s*'same-origin'/);
   assert.match(controller, /new AbortController\(\)/);
   assert.match(controller, /crypto\.randomUUID\(\)/);
-  assert.match(controller, /response\.status === 202 \|\| response\.status === 200/);
+  assert.match(controller, /return \{ status: response\.status, errorCode: payload\?\.error, payload \}/);
+  assert.match(controller, /await replySubmission\.submit\(\)/);
   assert.match(controller, /snapshot\(\)\.composer\.notice/);
   assert.match(controller, /SEND_TIMEOUT_MS/);
   assert.match(controller, /visibilitychange[\s\S]*loadConversations/);
