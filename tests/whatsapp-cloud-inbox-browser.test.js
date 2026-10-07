@@ -115,6 +115,8 @@ async function withBrowserPage(viewport, work, {
           { conversationId: '44', participant: '*********0001', lastMessageAt: '2026-10-06T12:00:00Z', lastMessageType: 'text', lastDirection: 'inbound', lastDeliveryStatus: 'received' },
           { conversationId: '45', participant: '*********0002', lastMessageAt: '2026-10-06T11:00:00Z', lastMessageType: 'text', lastDirection: 'outbound', lastDeliveryStatus: 'sent' },
         ], nextCursor: null }) });
+      } else if (/\/api\/admin\/whatsapp-cloud\/conversations\/\d+\/read/.test(url.pathname)) {
+        request.respond({ status: 200, contentType: 'application/json', body: JSON.stringify({ conversationId: url.pathname.split('/').at(-2), lastReadMessageId: '1' }) });
       } else if (/\/api\/admin\/whatsapp-cloud\/conversations\/\d+\/messages/.test(url.pathname)) {
         counts.messages += 1;
         request.respond({ status: 200, contentType: 'application/json', body: JSON.stringify({ messages: [

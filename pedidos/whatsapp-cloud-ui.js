@@ -1,5 +1,5 @@
 const API_ROOT = '/api/admin/whatsapp-cloud';
-const ALLOWED_QUERY_KEYS = new Set(['role', 'companyId', 'cursor', 'limit', 'tenantInBody', 'from', 'to', 'payment']);
+const ALLOWED_QUERY_KEYS = new Set(['role', 'companyId', 'cursor', 'limit', 'tenantInBody', 'from', 'to', 'payment', 'workflowStatus', 'priority', 'unread']);
 const MASKED_PARTICIPANT = /^\*{3,11}\d{4}$/;
 
 const STATUS = Object.freeze({
@@ -96,6 +96,18 @@ export function buildCloudApiUrl(path, options = {}) {
     if (options.payment !== 'transferencia') throw new Error('Filtro de pago inválido');
     params.set('payment', options.payment);
   }
+  if (options.workflowStatus != null && options.workflowStatus !== '') {
+    if (!['pending', 'resolved'].includes(options.workflowStatus)) throw new Error('Filtro de workflow inválido');
+    params.set('workflowStatus', options.workflowStatus);
+  }
+  if (options.priority != null && options.priority !== '') {
+    if (!['normal', 'high', 'urgent'].includes(options.priority)) throw new Error('Filtro de prioridad inválido');
+    params.set('priority', options.priority);
+  }
+  if (options.unread != null) {
+    if (typeof options.unread !== 'boolean') throw new Error('Filtro de no leídos inválido');
+    params.set('unread', String(options.unread));
+  }
   const query = params.toString();
   return `${API_ROOT}${path}${query ? `?${query}` : ''}`;
 }
@@ -110,6 +122,38 @@ export function mergeHistoryPage(current = [], older = []) {
     if (timeDelta !== 0) return timeDelta;
     return String(left.id).localeCompare(String(right.id), undefined, { numeric: true });
   });
+}
+
+export function operationalMeta(conversation = {}) {
+  if (conversation.workflowStatus === 'resolved') return { key: 'resolved', label: 'Respondida', tone: 'resolved' };
+  const status = String(conversation.lastDeliveryStatus || '').toLowerCase();
+  if (conversation.lastDirection === 'outbound' && ['failed', 'outcome_unknown'].includes(status)) {
+    return { key: 'review', label: 'Revisar', tone: 'failed' };
+  }
+  if (conversation.lastDirection === 'outbound' && ['queued', 'pending', 'sending'].includes(status)) {
+    return { key: 'inProcess', label: 'En proceso', tone: 'pending' };
+  }
+  if (conversation.workflowStatus === 'pending'
+    && (Number(conversation.unreadCount) > 0 || conversation.lastDirection === 'inbound')) {
+    return { key: 'pending', label: 'Por responder', tone: 'pending' };
+  }
+  return { key: 'resolved', label: 'Respondida', tone: 'resolved' };
+}
+
+export function queueCounterItems(counters = {}) {
+  return [
+    ['total', 'Total'], ['pending', 'Por responder'], ['inProcess', 'En proceso'],
+    ['review', 'Revisar'], ['resolved', 'Respondidas'],
+  ].map(([key, label]) => ({ key, label, value: Number(counters[key]) || 0 }));
+}
+
+export function mergeConversationState(local = {}, current = {}) {
+  if (String(local.conversationId) !== String(current.conversationId)) return { ...local };
+  const merged = { ...local };
+  if (['pending', 'resolved'].includes(current.workflowStatus)) merged.workflowStatus = current.workflowStatus;
+  if (['normal', 'high', 'urgent'].includes(current.priority)) merged.priority = current.priority;
+  if (Number.isInteger(current.version) && current.version > 0) merged.version = current.version;
+  return merged;
 }
 
 export function createRequestGate() {

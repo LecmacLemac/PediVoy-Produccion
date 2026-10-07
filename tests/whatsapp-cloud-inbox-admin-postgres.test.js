@@ -22,9 +22,13 @@ const outboxEnd = initSql.indexOf(outboxEndMarker, outboxStart);
 const projectionStart = initSql.indexOf('-- BEGIN WHATSAPP CLOUD MESSAGE PROJECTION MIGRATION');
 const projectionEndMarker = '-- END WHATSAPP CLOUD MESSAGE PROJECTION MIGRATION';
 const projectionEnd = initSql.indexOf(projectionEndMarker, projectionStart);
+const readsStart = initSql.indexOf('-- BEGIN WHATSAPP CLOUD CONVERSATION READS MIGRATION');
+const readsEndMarker = '-- END WHATSAPP CLOUD CONVERSATION READS MIGRATION';
+const readsEnd = initSql.indexOf(readsEndMarker, readsStart);
 assert.ok(outboxStart >= 0 && outboxEnd > outboxStart);
 assert.ok(projectionStart >= 0 && projectionEnd > projectionStart);
-const migrationSql = `${initSql.slice(outboxStart, outboxEnd + outboxEndMarker.length)}\n${initSql.slice(projectionStart, projectionEnd + projectionEndMarker.length)}`;
+assert.ok(readsStart >= 0 && readsEnd > readsStart);
+const migrationSql = `${initSql.slice(outboxStart, outboxEnd + outboxEndMarker.length)}\n${initSql.slice(projectionStart, projectionEnd + projectionEndMarker.length)}\n${initSql.slice(readsStart, readsEnd + readsEndMarker.length)}`;
 const tempPrefix = '.whatsapp-cloud-admin-api-pg-';
 const createdDirectories = new Set();
 
@@ -43,6 +47,15 @@ async function withDatabase(work) {
     started = true;
     pool = new pg.Pool({ host: '127.0.0.1', port, user: 'cloud_admin_test', database: 'postgres', max: 6 });
     await pool.query("CREATE TABLE empresas (id INTEGER PRIMARY KEY, config_integraciones JSONB NOT NULL DEFAULT '{}'::jsonb)");
+    await pool.query(`
+      CREATE TABLE usuarios (
+        id SERIAL PRIMARY KEY,
+        username TEXT NOT NULL UNIQUE,
+        password TEXT NOT NULL,
+        role TEXT NOT NULL,
+        empresa_id INTEGER REFERENCES empresas(id) ON DELETE CASCADE
+      )
+    `);
     await pool.query(`
       CREATE TABLE puntos_entrega (
         id SERIAL PRIMARY KEY,
@@ -127,6 +140,7 @@ test('API admin Cloud conserva tenant, paginación, redacción e idempotencia en
       cloudConfig('phone-one'),
       cloudConfig('phone-two'),
     ]);
+    await pool.query("INSERT INTO usuarios(id,username,password,role,empresa_id) VALUES (1,'admin-one','x','admin',1)");
     await pool.query(`
       INSERT INTO puntos_entrega
         (empresa_id, cliente, nombre, direccion, direccion_completa, ciudad, telefono, telefono_normalizado)
@@ -193,11 +207,10 @@ test('API admin Cloud conserva tenant, paginación, redacción e idempotencia en
       assert.equal(firstPageResponse.status, 200);
       const firstPage = await firstPageResponse.json();
       assert.equal(firstPage.conversations.length, 1);
-      assert.equal(firstPage.conversations[0].conversationId, tenantOneConversation.id);
-      assert.equal(firstPage.conversations[0].participant, '*********0001');
-      assert.equal(firstPage.conversations[0].customerName, 'Cliente Uno');
-      assert.equal(firstPage.conversations[0].customerAddress, 'San Martín 123, Córdoba');
-      assert.equal(firstPage.conversations[0].paymentMethod, 'transferencia');
+      assert.equal(firstPage.conversations[0].participant, '*********0002');
+      assert.equal(firstPage.conversations[0].customerName, 'Nombre Dos');
+      assert.equal(firstPage.conversations[0].customerAddress, 'Belgrano 456, Córdoba');
+      assert.equal(firstPage.conversations[0].paymentMethod, 'efectivo');
       assert.equal(typeof firstPage.nextCursor, 'string');
       assert.doesNotMatch(JSON.stringify(firstPage), /5493515550001|tenant one|tenant two|factura|No visible/i);
 
@@ -205,10 +218,11 @@ test('API admin Cloud conserva tenant, paginación, redacción e idempotencia en
       assert.equal(secondPageResponse.status, 200);
       const secondPage = await secondPageResponse.json();
       assert.equal(secondPage.conversations.length, 1);
-      assert.equal(secondPage.conversations[0].participant, '*********0002');
-      assert.equal(secondPage.conversations[0].customerName, 'Nombre Dos');
-      assert.equal(secondPage.conversations[0].customerAddress, 'Belgrano 456, Córdoba');
-      assert.equal(secondPage.conversations[0].paymentMethod, 'efectivo');
+      assert.equal(secondPage.conversations[0].conversationId, tenantOneConversation.id);
+      assert.equal(secondPage.conversations[0].participant, '*********0001');
+      assert.equal(secondPage.conversations[0].customerName, 'Cliente Uno');
+      assert.equal(secondPage.conversations[0].customerAddress, 'San Martín 123, Córdoba');
+      assert.equal(secondPage.conversations[0].paymentMethod, 'transferencia');
       assert.equal(secondPage.nextCursor, null);
 
       const historyResponse = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations/${tenantOneConversation.id}/messages?limit=1`);

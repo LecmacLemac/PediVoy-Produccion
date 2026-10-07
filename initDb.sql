@@ -2437,6 +2437,12 @@ BEGIN
        SELECT 1
          FROM pg_catalog.pg_constraint AS constraint_row
         WHERE constraint_row.confrelid = conversation_relation.oid
+          AND NOT (
+            constraint_row.conrelid = pg_catalog.to_regclass('public.whatsapp_cloud_conversation_reads')
+            AND constraint_row.conname = 'whatsapp_cloud_conversation_reads_conversation_fkey'
+            AND pg_catalog.pg_get_constraintdef(constraint_row.oid, true)
+              = 'FOREIGN KEY (empresa_id, conversation_id) REFERENCES whatsapp_cloud_conversations(empresa_id, id) ON DELETE CASCADE'
+          )
      )
      OR EXISTS (
        SELECT 1
@@ -2465,6 +2471,8 @@ BEGIN
              AND pg_catalog.pg_get_constraintdef(constraint_row.oid, true) = 'FOREIGN KEY (empresa_id) REFERENCES empresas(id) ON DELETE CASCADE')
             OR (constraint_row.conname = 'whatsapp_cloud_conversations_empresa_participant_key'
              AND pg_catalog.pg_get_constraintdef(constraint_row.oid, true) = 'UNIQUE (empresa_id, participant_wa_id)')
+            OR (constraint_row.conname = 'whatsapp_cloud_conversations_empresa_id_id_key'
+             AND pg_catalog.pg_get_constraintdef(constraint_row.oid, true) = 'UNIQUE (empresa_id, id)')
             OR (constraint_row.conname = 'whatsapp_cloud_conversations_participant_check'
              AND pg_catalog.pg_get_constraintdef(constraint_row.oid, true) = 'CHECK (participant_wa_id ~ ''^[0-9]{6,15}$''::text)')
             OR (constraint_row.conname = 'whatsapp_cloud_conversations_workflow_status_check'
@@ -2604,6 +2612,12 @@ BEGIN
     SELECT 1
       FROM pg_catalog.pg_constraint AS constraint_row
      WHERE constraint_row.confrelid = conversation_relation.oid
+       AND NOT (
+         constraint_row.conrelid = pg_catalog.to_regclass('public.whatsapp_cloud_conversation_reads')
+         AND constraint_row.conname = 'whatsapp_cloud_conversation_reads_conversation_fkey'
+         AND pg_catalog.pg_get_constraintdef(constraint_row.oid, true)
+           = 'FOREIGN KEY (empresa_id, conversation_id) REFERENCES whatsapp_cloud_conversations(empresa_id, id) ON DELETE CASCADE'
+       )
   ) THEN
     RAISE EXCEPTION USING ERRCODE = 'P0001',
       MESSAGE = 'whatsapp_cloud_conversations_schema_unsafe';
@@ -5032,6 +5046,118 @@ BEGIN
 END $backfill$;
 COMMIT;
 -- END WHATSAPP CLOUD MESSAGE PROJECTION MIGRATION
+
+-- BEGIN WHATSAPP CLOUD CONVERSATION READS MIGRATION
+BEGIN;
+SET LOCAL search_path = public;
+SET LOCAL lock_timeout = '30s';
+SET LOCAL statement_timeout = '5min';
+SELECT pg_catalog.pg_advisory_xact_lock(1464550724, 1380275027);
+LOCK TABLE public.whatsapp_cloud_conversations, public.usuarios IN SHARE ROW EXCLUSIVE MODE;
+
+DO $conversation_reads_lock$
+BEGIN
+  IF pg_catalog.to_regclass('public.whatsapp_cloud_conversation_reads') IS NOT NULL THEN
+    LOCK TABLE public.whatsapp_cloud_conversation_reads IN SHARE ROW EXCLUSIVE MODE;
+  END IF;
+END $conversation_reads_lock$;
+
+DO $conversation_reads_guard$
+DECLARE
+  relation_row RECORD;
+  columns TEXT[];
+BEGIN
+  SELECT class_row.oid, class_row.relkind, class_row.relrowsecurity, class_row.relforcerowsecurity
+    INTO relation_row
+    FROM pg_catalog.pg_class AS class_row
+    JOIN pg_catalog.pg_namespace AS namespace_row ON namespace_row.oid = class_row.relnamespace
+   WHERE namespace_row.nspname = 'public'
+     AND class_row.relname = 'whatsapp_cloud_conversation_reads';
+  IF NOT FOUND THEN RETURN; END IF;
+  SELECT pg_catalog.array_agg(attribute_row.attname ORDER BY attribute_row.attnum)
+    INTO columns
+    FROM pg_catalog.pg_attribute AS attribute_row
+   WHERE attribute_row.attrelid = relation_row.oid
+     AND attribute_row.attnum > 0 AND NOT attribute_row.attisdropped;
+  IF relation_row.relkind IS DISTINCT FROM 'r'
+     OR relation_row.relrowsecurity OR relation_row.relforcerowsecurity
+     OR columns IS DISTINCT FROM ARRAY['empresa_id','conversation_id','usuario_id','last_read_message_id','updated_at']::TEXT[]
+     OR EXISTS (SELECT 1 FROM pg_catalog.pg_trigger WHERE tgrelid=relation_row.oid AND NOT tgisinternal)
+     OR EXISTS (SELECT 1 FROM pg_catalog.pg_policy WHERE polrelid=relation_row.oid)
+     OR EXISTS (SELECT 1 FROM pg_catalog.pg_inherits WHERE inhrelid=relation_row.oid OR inhparent=relation_row.oid)
+     OR EXISTS (
+       SELECT 1
+         FROM pg_catalog.pg_constraint AS constraint_row
+        WHERE constraint_row.conrelid = relation_row.oid
+          AND constraint_row.contype IN ('p','f','c','u','x')
+          AND NOT (
+            (constraint_row.conname = 'whatsapp_cloud_conversation_reads_pkey'
+             AND pg_catalog.pg_get_constraintdef(constraint_row.oid, true)
+               = 'PRIMARY KEY (empresa_id, conversation_id, usuario_id)')
+            OR (constraint_row.conname = 'whatsapp_cloud_conversation_reads_conversation_fkey'
+             AND pg_catalog.pg_get_constraintdef(constraint_row.oid, true)
+               = 'FOREIGN KEY (empresa_id, conversation_id) REFERENCES whatsapp_cloud_conversations(empresa_id, id) ON DELETE CASCADE')
+            OR (constraint_row.conname = 'whatsapp_cloud_conversation_reads_usuario_fkey'
+             AND pg_catalog.pg_get_constraintdef(constraint_row.oid, true)
+               = 'FOREIGN KEY (usuario_id) REFERENCES usuarios(id) ON DELETE CASCADE')
+            OR (constraint_row.conname = 'whatsapp_cloud_conversation_reads_message_check'
+             AND pg_catalog.pg_get_constraintdef(constraint_row.oid, true)
+               = 'CHECK (last_read_message_id IS NULL OR last_read_message_id > 0)')
+          )
+     )
+  THEN
+    RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='whatsapp_cloud_conversation_reads_schema_unsafe';
+  END IF;
+END $conversation_reads_guard$;
+
+DO $conversation_tenant_identity$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_catalog.pg_constraint
+     WHERE conrelid='public.whatsapp_cloud_conversations'::pg_catalog.regclass
+       AND conname='whatsapp_cloud_conversations_empresa_id_id_key'
+  ) THEN
+    ALTER TABLE public.whatsapp_cloud_conversations
+      ADD CONSTRAINT whatsapp_cloud_conversations_empresa_id_id_key UNIQUE (empresa_id, id);
+  END IF;
+END $conversation_tenant_identity$;
+
+CREATE TABLE IF NOT EXISTS public.whatsapp_cloud_conversation_reads (
+  empresa_id INTEGER NOT NULL,
+  conversation_id UUID NOT NULL,
+  usuario_id INTEGER NOT NULL,
+  last_read_message_id BIGINT,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW(),
+  CONSTRAINT whatsapp_cloud_conversation_reads_pkey PRIMARY KEY (empresa_id, conversation_id, usuario_id),
+  CONSTRAINT whatsapp_cloud_conversation_reads_conversation_fkey
+    FOREIGN KEY (empresa_id, conversation_id)
+    REFERENCES public.whatsapp_cloud_conversations(empresa_id, id) ON DELETE CASCADE,
+  CONSTRAINT whatsapp_cloud_conversation_reads_usuario_fkey
+    FOREIGN KEY (usuario_id) REFERENCES public.usuarios(id) ON DELETE CASCADE,
+  CONSTRAINT whatsapp_cloud_conversation_reads_message_check
+    CHECK (last_read_message_id IS NULL OR last_read_message_id > 0)
+);
+
+DO $conversation_reads_constraints$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint WHERE conrelid='public.whatsapp_cloud_conversation_reads'::pg_catalog.regclass AND conname='whatsapp_cloud_conversation_reads_pkey') THEN
+    ALTER TABLE public.whatsapp_cloud_conversation_reads ADD CONSTRAINT whatsapp_cloud_conversation_reads_pkey PRIMARY KEY (empresa_id, conversation_id, usuario_id);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint WHERE conrelid='public.whatsapp_cloud_conversation_reads'::pg_catalog.regclass AND conname='whatsapp_cloud_conversation_reads_conversation_fkey') THEN
+    ALTER TABLE public.whatsapp_cloud_conversation_reads ADD CONSTRAINT whatsapp_cloud_conversation_reads_conversation_fkey FOREIGN KEY (empresa_id, conversation_id) REFERENCES public.whatsapp_cloud_conversations(empresa_id, id) ON DELETE CASCADE;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint WHERE conrelid='public.whatsapp_cloud_conversation_reads'::pg_catalog.regclass AND conname='whatsapp_cloud_conversation_reads_usuario_fkey') THEN
+    ALTER TABLE public.whatsapp_cloud_conversation_reads ADD CONSTRAINT whatsapp_cloud_conversation_reads_usuario_fkey FOREIGN KEY (usuario_id) REFERENCES public.usuarios(id) ON DELETE CASCADE;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint WHERE conrelid='public.whatsapp_cloud_conversation_reads'::pg_catalog.regclass AND conname='whatsapp_cloud_conversation_reads_message_check') THEN
+    ALTER TABLE public.whatsapp_cloud_conversation_reads ADD CONSTRAINT whatsapp_cloud_conversation_reads_message_check CHECK (last_read_message_id IS NULL OR last_read_message_id > 0);
+  END IF;
+END $conversation_reads_constraints$;
+
+CREATE INDEX IF NOT EXISTS idx_whatsapp_cloud_conversation_reads_user
+  ON public.whatsapp_cloud_conversation_reads (empresa_id, usuario_id, conversation_id, last_read_message_id);
+COMMIT;
+-- END WHATSAPP CLOUD CONVERSATION READS MIGRATION
 
 BEGIN;
 SET LOCAL search_path = public;

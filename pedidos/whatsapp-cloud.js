@@ -10,6 +10,9 @@ import {
   createSingleFlightSubmission,
   formatCloudTimestamp,
   mergeHistoryPage,
+  mergeConversationState,
+  operationalMeta,
+  queueCounterItems,
   reduceMobileView,
   safeParticipant,
   sanitizeCloudError,
@@ -27,8 +30,14 @@ const elements = {
   refresh: document.querySelector('#refreshConversations'),
   dateFilter: document.querySelector('#dateFilter'),
   transferFilter: document.querySelector('#transferFilter'),
+  workflowFilter: document.querySelector('#workflowFilter'),
+  priorityFilter: document.querySelector('#priorityFilter'),
+  unreadFilter: document.querySelector('#unreadFilter'),
+  queueCounters: document.querySelector('#queueCounters'),
   chatPanel: document.querySelector('#chatPanel'),
   chatTitle: document.querySelector('#chatTitle'),
+  conversationWorkflow: document.querySelector('#conversationWorkflow'),
+  conversationPriority: document.querySelector('#conversationPriority'),
   back: document.querySelector('#backToList'),
   history: document.querySelector('#messageHistory'),
   older: document.querySelector('#loadOlderMessages'),
@@ -45,6 +54,7 @@ const state = {
   companyId: null,
   conversations: [],
   conversationsCursor: null,
+  counters: { total: 0, pending: 0, inProcess: 0, review: 0, resolved: 0 },
   activeConversation: null,
   messages: [],
   historyCursor: null,
@@ -55,6 +65,7 @@ const composerController = createInboxComposerController({ input: elements.input
 
 const conversationGate = createRequestGate();
 const historyGate = createRequestGate();
+const stateMutationGate = createRequestGate();
 let conversationsController = null;
 let historyController = null;
 let returnFocusConversationId = null;
@@ -101,6 +112,9 @@ function currentFilters() {
   return {
     ...dateRange,
     payment: elements.transferFilter?.checked ? 'transferencia' : null,
+    workflowStatus: elements.workflowFilter?.value || null,
+    priority: elements.priorityFilter?.value || null,
+    unread: elements.unreadFilter?.checked ? true : null,
   };
 }
 
@@ -122,9 +136,14 @@ function syncContextControls() {
   if (companySelect) companySelect.disabled = locked;
   if (elements.dateFilter) elements.dateFilter.disabled = locked;
   if (elements.transferFilter) elements.transferFilter.disabled = locked;
+  if (elements.workflowFilter) elements.workflowFilter.disabled = locked;
+  if (elements.priorityFilter) elements.priorityFilter.disabled = locked;
+  if (elements.unreadFilter) elements.unreadFilter.disabled = locked;
   elements.back.disabled = locked;
   elements.conversations.querySelectorAll('button').forEach(button => { button.disabled = locked; });
   elements.newMessage.hidden = !composer.reconciliationRequired;
+  elements.conversationWorkflow.disabled = locked || !state.activeConversation;
+  elements.conversationPriority.disabled = locked || !state.activeConversation;
 }
 
 async function readJson(response) {
@@ -161,6 +180,8 @@ function clearChat({ composerAlreadyReset = false, restoreFocus = true } = {}) {
   state.mobile = reduceMobileView(state.mobile, { type: 'back' });
   elements.inbox.classList.remove('mobile-detail');
   elements.chatTitle.textContent = 'Seleccioná una conversación';
+  elements.conversationWorkflow.textContent = 'Marcar resuelta';
+  elements.conversationPriority.value = 'normal';
   elements.history.replaceChildren();
   elements.older.hidden = true;
   setComposerNotice('');
@@ -181,6 +202,14 @@ function makeBadge(status, direction) {
   badge.textContent = meta.label;
   badge.title = meta.help;
   return badge;
+}
+
+function renderCounters() {
+  const fragment = document.createDocumentFragment();
+  for (const counter of queueCounterItems(state.counters)) {
+    appendSafeText(document, fragment, 'span', `${counter.label}: ${counter.value}`, 'counter-chip');
+  }
+  elements.queueCounters.replaceChildren(fragment);
 }
 
 function renderConversations() {
@@ -209,6 +238,12 @@ function renderConversations() {
     summary.className = 'conversation-summary';
     appendSafeText(document, summary, 'span', conversationPreview(conversation), 'preview');
     summary.append(makeBadge(conversation.lastDeliveryStatus, conversation.lastDirection));
+    const operation = operationalMeta(conversation);
+    appendSafeText(document, summary, 'span', operation.label, `operation-badge status-${operation.tone}`);
+    appendSafeText(document, summary, 'span', `Prioridad ${conversation.priority || 'normal'}`, `operation-badge priority-${conversation.priority || 'normal'}`);
+    if (Number(conversation.unreadCount) > 0) {
+      appendSafeText(document, summary, 'span', `${conversation.unreadCount} sin leer`, 'operation-badge unread-badge');
+    }
     const paymentMethod = String(conversation.paymentMethod || '').toLowerCase();
     if (paymentMethod === 'efectivo' || paymentMethod === 'transferencia') {
       const paymentLabel = paymentMethod === 'transferencia' ? 'Transferencia' : 'Efectivo';
@@ -229,6 +264,7 @@ function renderConversations() {
   }
   elements.conversations.replaceChildren(fragment);
   elements.conversationsMore.hidden = !state.conversationsCursor;
+  renderCounters();
 }
 
 function renderAttachment(message, container) {
@@ -293,6 +329,9 @@ async function loadConversations({ append = false } = {}) {
       from: filters.from,
       to: filters.to,
       payment: filters.payment,
+      workflowStatus: filters.workflowStatus,
+      priority: filters.priority,
+      unread: filters.unread,
       ...(cursor ? { cursor } : {}),
     });
     const { response, payload } = await request(url, { signal: conversationsController.signal });
@@ -305,6 +344,9 @@ async function loadConversations({ append = false } = {}) {
     const known = new Map((append ? state.conversations : []).map(item => [String(item.conversationId), item]));
     for (const item of incoming) known.set(String(item.conversationId), item);
     state.conversations = [...known.values()];
+    state.counters = payload.counters && typeof payload.counters === 'object'
+      ? payload.counters
+      : { total: 0, pending: 0, inProcess: 0, review: 0, resolved: 0 };
     state.conversationsCursor = typeof payload.nextCursor === 'string' ? payload.nextCursor : null;
     renderConversations();
     setStatus('');
@@ -323,11 +365,35 @@ async function reloadConversationsFromStart() {
   await loadConversations();
 }
 
+async function markConversationRead(conversationId, { generation, companyId }) {
+  const path = `/conversations/${encodeURIComponent(conversationId)}/read`;
+  const url = buildCloudApiUrl(path, { role: state.role, companyId, tenantInBody: true });
+  const body = state.role === 'super' ? { empresa_id: companyId } : {};
+  const { response, payload } = await request(url, { method: 'POST', body: JSON.stringify(body) });
+  if (!historyGate.isCurrent(generation)
+    || state.companyId !== companyId
+    || String(state.activeConversation?.conversationId) !== String(conversationId)) return false;
+  if (!response.ok) {
+    setStatus(sanitizeCloudError(response.status, payload), 'warning');
+    return false;
+  }
+  const index = state.conversations.findIndex(item => String(item.conversationId) === String(conversationId));
+  if (index >= 0) {
+    state.conversations[index] = { ...state.conversations[index], unreadCount: 0 };
+    if (String(state.activeConversation?.conversationId) === String(conversationId)) {
+      state.activeConversation = state.conversations[index];
+    }
+    renderConversations();
+  }
+  return true;
+}
+
 async function loadHistory({ older = false } = {}) {
   if (!state.activeConversation) return;
   historyController?.abort();
   historyController = new AbortController();
   const generation = historyGate.begin();
+  const companyId = state.companyId;
   const conversationId = String(state.activeConversation.conversationId);
   const cursor = older ? state.historyCursor : null;
   try {
@@ -348,10 +414,83 @@ async function loadHistory({ older = false } = {}) {
     state.messages = older ? mergeHistoryPage(state.messages, incoming) : mergeHistoryPage([], incoming);
     state.historyCursor = typeof payload.nextCursor === 'string' ? payload.nextCursor : null;
     renderHistory({ preserveScroll: older });
+    if (!older) await markConversationRead(conversationId, { generation, companyId });
   } catch (error) {
     if (error?.name !== 'AbortError' && error?.message !== 'session_expired' && historyGate.isCurrent(generation)) {
       setStatus('No se pudo cargar el historial.', 'error');
     }
+  }
+}
+
+function syncActiveConversationControls() {
+  const conversation = state.activeConversation;
+  if (!conversation) return;
+  elements.conversationWorkflow.textContent = conversation.workflowStatus === 'resolved'
+    ? 'Reabrir conversación'
+    : 'Marcar resuelta';
+  elements.conversationPriority.value = ['normal', 'high', 'urgent'].includes(conversation.priority)
+    ? conversation.priority
+    : 'normal';
+}
+
+function applyConversationState(current) {
+  const index = state.conversations.findIndex(item => String(item.conversationId) === String(current?.conversationId));
+  if (index < 0) return;
+  const previous = state.conversations[index];
+  const merged = mergeConversationState(previous, current);
+  const previousCounter = operationalMeta(previous).key;
+  const nextCounter = operationalMeta(merged).key;
+  if (previousCounter !== nextCounter) {
+    if (Number.isInteger(state.counters[previousCounter]) && state.counters[previousCounter] > 0) {
+      state.counters[previousCounter] -= 1;
+    }
+    if (Number.isInteger(state.counters[nextCounter])) state.counters[nextCounter] += 1;
+  }
+  state.conversations[index] = merged;
+  if (String(state.activeConversation?.conversationId) === String(current.conversationId)) {
+    state.activeConversation = state.conversations[index];
+    syncActiveConversationControls();
+  }
+  renderConversations();
+}
+
+async function patchActiveConversationState(change) {
+  const conversation = state.activeConversation;
+  if (!conversation) return;
+  const generation = stateMutationGate.begin();
+  const companyId = state.companyId;
+  const conversationId = String(conversation.conversationId);
+  const body = { ...change, expectedVersion: conversation.version };
+  if (state.role === 'super') body.empresa_id = state.companyId;
+  const path = `/conversations/${encodeURIComponent(String(conversation.conversationId))}/state`;
+  const url = buildCloudApiUrl(path, { role: state.role, companyId: state.companyId, tenantInBody: true });
+  elements.conversationWorkflow.disabled = true;
+  elements.conversationPriority.disabled = true;
+  try {
+    const { response, payload } = await request(url, { method: 'PATCH', body: JSON.stringify(body) });
+    if (!stateMutationGate.isCurrent(generation)
+      || state.companyId !== companyId
+      || String(state.activeConversation?.conversationId) !== conversationId) return;
+    if (response.status === 409 && payload?.error === 'stale_conversation_version') {
+      applyConversationState(payload.current);
+      setStatus('La conversación cambió en otra sesión. Se mostró el estado actual; revisá antes de volver a intentar.', 'warning');
+      return;
+    }
+    if (!response.ok) {
+      setStatus(sanitizeCloudError(response.status, payload), 'error');
+      return;
+    }
+    applyConversationState(payload);
+    setStatus('Estado operativo actualizado.', 'success');
+  } catch (error) {
+    if (stateMutationGate.isCurrent(generation)
+      && state.companyId === companyId
+      && String(state.activeConversation?.conversationId) === conversationId
+      && error?.message !== 'session_expired') {
+      setStatus('No se pudo actualizar el estado operativo.', 'error');
+    }
+  } finally {
+    if (stateMutationGate.isCurrent(generation)) syncContextControls();
   }
 }
 
@@ -362,6 +501,7 @@ function openConversation(conversation) {
     return;
   }
   historyGate.invalidate();
+  stateMutationGate.invalidate();
   historyController?.abort();
   state.activeConversation = conversation;
   returnFocusConversationId = String(conversation.conversationId);
@@ -370,6 +510,7 @@ function openConversation(conversation) {
   state.mobile = reduceMobileView(state.mobile, { type: 'open', conversationId: conversation.conversationId });
   elements.inbox.classList.add('mobile-detail');
   elements.chatTitle.textContent = safeParticipant(conversation.participant);
+  syncActiveConversationControls();
   elements.history.replaceChildren();
   appendSafeText(document, elements.history, 'p', 'Cargando historial…', 'empty-state');
   composerController.activateConversation(activation);
@@ -425,10 +566,12 @@ function renderCompanyPicker(companies) {
     state.companyId = nextCompanyId;
     conversationGate.invalidate();
     historyGate.invalidate();
+    stateMutationGate.invalidate();
     conversationsController?.abort();
     historyController?.abort();
     state.conversations = [];
     state.conversationsCursor = null;
+    state.counters = { total: 0, pending: 0, inProcess: 0, review: 0, resolved: 0 };
     elements.conversations.replaceChildren();
     clearChat({ composerAlreadyReset: true });
     if (state.companyId) loadConversations();
@@ -536,6 +679,18 @@ elements.conversationsMore.addEventListener('click', () => loadConversations({ a
 elements.refresh.addEventListener('click', () => loadConversations());
 elements.dateFilter?.addEventListener('change', () => reloadConversationsFromStart());
 elements.transferFilter?.addEventListener('change', () => reloadConversationsFromStart());
+elements.workflowFilter?.addEventListener('change', () => reloadConversationsFromStart());
+elements.priorityFilter?.addEventListener('change', () => reloadConversationsFromStart());
+elements.unreadFilter?.addEventListener('change', () => reloadConversationsFromStart());
+elements.conversationWorkflow.addEventListener('click', () => {
+  if (!state.activeConversation) return;
+  const workflowStatus = state.activeConversation.workflowStatus === 'resolved' ? 'pending' : 'resolved';
+  patchActiveConversationState({ workflowStatus });
+});
+elements.conversationPriority.addEventListener('change', () => {
+  const priority = elements.conversationPriority.value;
+  if (['normal', 'high', 'urgent'].includes(priority)) patchActiveConversationState({ priority });
+});
 elements.composer.addEventListener('submit', submitMessage);
 elements.newMessage.addEventListener('click', () => {
   const warning = 'El mensaje anterior puede haberse enviado. Al continuar se descartará el borrador incierto. ¿Iniciar un mensaje distinto?';

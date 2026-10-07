@@ -608,7 +608,7 @@ test('lista de conversaciones pagina por última actividad, enmascara teléfono 
   });
   assert.equal(calls.length, 1);
   assert.deepEqual(calls[0].params.slice(0, 2), [7, 3]);
-  assert.match(calls[0].sql, /ORDER BY latest\.message_at DESC, latest\.id DESC/i);
+  assert.match(calls[0].sql, /ORDER BY queue_bucket ASC/);
   assert.match(calls[0].sql, /LEFT JOIN LATERAL/);
   assert.match(calls[0].sql, /customer_name/);
   assert.match(calls[0].sql, /delivery_address/);
@@ -876,13 +876,14 @@ test('listado e historial usan id UUID estable y metadatos operativos allowliste
     }];
   };
 
-  const listed = await listCloudConversations({ query, empresaId: 7 });
+  const listed = await listCloudConversations({ query, empresaId: 7, usuarioId: 11 });
   assert.deepEqual(listed.conversations[0], {
     conversationId: stableId,
     participant: '*********0001',
     customerName: null,
     customerAddress: null,
     paymentMethod: null,
+    unreadCount: 0,
     workflowStatus: 'pending',
     priority: 'high',
     version: 4,

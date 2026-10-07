@@ -39,6 +39,12 @@
     .icon-button:hover,.secondary-button:hover,.attachment-action:hover { border-color:var(--brand); }
     .company-field,.filter-field { display:grid; gap:.35rem; color:var(--muted); font-size:.8rem; font-weight:700; }
     .filter-row { display:grid; grid-template-columns:minmax(0,1fr); gap:.5rem; }
+    .quick-filters,.queue-counters,.chat-actions { display:flex; flex-wrap:wrap; gap:.4rem; }
+    .quick-filters select,.chat-actions select { width:auto; min-height:44px; }
+    .counter-chip,.operation-badge { display:inline-flex; align-items:center; gap:.3rem; min-height:32px; border:1px solid var(--border); border-radius:999px; padding:.25rem .55rem; color:var(--ink); background:rgba(255,255,255,.04); font-size:.74rem; font-weight:800; }
+    .unread-badge { color:#052e16; background:var(--brand); border-color:var(--brand); }
+    .priority-urgent { color:#fecaca; border-color:rgba(239,68,68,.5); }
+    .priority-high { color:#fde68a; border-color:rgba(245,158,11,.5); }
     .transfer-toggle { min-height:44px; display:flex; align-items:center; gap:.45rem; color:var(--ink); font-size:.84rem; font-weight:700; border:1px solid var(--border); border-radius:10px; padding:.55rem .7rem; background:rgba(255,255,255,.035); }
     .transfer-toggle input { width:auto; accent-color:var(--brand); }
     select,textarea { width:100%; color:var(--ink); background:var(--bg-2); border:1px solid var(--border); border-radius:10px; padding:.7rem; }
@@ -58,6 +64,7 @@
     .secondary-button { width:100%; }
     .chat-pane { min-width:0; display:flex; flex-direction:column; background:radial-gradient(circle at center,rgba(37,211,102,.035),transparent 55%),#0c1424; }
     .chat-head { min-height:66px; padding:.85rem 1rem; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:.75rem; position:static; top:auto; z-index:auto; background:rgba(15,23,42,.78); backdrop-filter:none; }
+    .chat-actions { margin-left:auto; }
     #backToList { display:none; }
     #chatTitle { font-weight:800; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .history-wrap { flex:1; min-height:0; position:relative; display:flex; flex-direction:column; }
@@ -102,6 +109,10 @@
       .inbox.mobile-detail .conversation-pane { display:none; }
       .inbox.mobile-detail .chat-pane { display:flex; }
       .inbox.mobile-detail #backToList { display:inline-flex; }
+      .chat-head { flex-wrap:wrap; align-content:flex-start; }
+      #chatTitle { flex:1 1 0; min-width:0; }
+      .chat-actions { width:100%; margin-left:0; display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); }
+      .chat-actions .icon-button,.chat-actions select { width:100%; }
       .message { max-width:91%; }
       .composer { grid-template-columns:minmax(0,1fr); }
       .send-button { width:100%; }
@@ -127,6 +138,14 @@
         <header class="pane-head">
           <div class="title-row"><h1 id="conversationHeading" tabindex="-1">WhatsApp Cloud</h1><button id="refreshConversations" class="icon-button" type="button" aria-label="Actualizar conversaciones">Actualizar</button></div>
           <div id="companyPicker"></div>
+          <div id="queueCounters" class="queue-counters" aria-label="Contadores de cola"></div>
+          <div class="quick-filters" aria-label="Filtros operativos rápidos">
+            <label class="sr-only" for="workflowFilter">Estado operativo</label>
+            <select id="workflowFilter"><option value="">Todos los estados</option><option value="pending">Pendientes</option><option value="resolved">Resueltas</option></select>
+            <label class="sr-only" for="priorityFilter">Prioridad</label>
+            <select id="priorityFilter"><option value="">Todas las prioridades</option><option value="urgent">Urgente</option><option value="high">Alta</option><option value="normal">Normal</option></select>
+            <label class="transfer-toggle" for="unreadFilter"><input id="unreadFilter" type="checkbox"> Sólo no leídas</label>
+          </div>
           <div class="filter-row" aria-label="Filtros de conversaciones">
             <label class="filter-field" for="dateFilter">Fecha
               <select id="dateFilter">
@@ -147,7 +166,14 @@
         <div class="more-wrap"><button id="loadMoreConversations" class="secondary-button" type="button" hidden>Cargar más conversaciones</button></div>
       </aside>
       <section class="chat-pane" id="chatPanel" aria-label="Chat activo">
-        <header class="chat-head"><button id="backToList" class="icon-button" type="button">← Volver</button><div id="chatTitle">Seleccioná una conversación</div></header>
+        <header class="chat-head">
+          <button id="backToList" class="icon-button" type="button">← Volver</button><div id="chatTitle">Seleccioná una conversación</div>
+          <div class="chat-actions">
+            <button id="conversationWorkflow" class="icon-button" type="button" disabled>Marcar resuelta</button>
+            <label class="sr-only" for="conversationPriority">Prioridad de conversación</label>
+            <select id="conversationPriority" disabled><option value="normal">Prioridad normal</option><option value="high">Prioridad alta</option><option value="urgent">Prioridad urgente</option></select>
+          </div>
+        </header>
         <div class="history-wrap">
           <button id="loadOlderMessages" class="secondary-button" type="button" hidden>Cargar mensajes anteriores</button>
           <div id="messageHistory" class="message-history" aria-live="polite"><p class="empty-state">Elegí una conversación para ver el historial.</p></div>

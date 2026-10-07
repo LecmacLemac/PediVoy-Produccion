@@ -77,13 +77,41 @@ function maskParticipant(value) {
   return `${'*'.repeat(Math.max(3, digits.length - 4))}${digits.slice(-4)}`;
 }
 
-function encodeCursor(row) {
-  const timestamp = row.cursor_message_at || new Date(row.message_at).toISOString();
-  return Buffer.from(JSON.stringify([timestamp, String(row.id)]))
-    .toString('base64url');
+function encodeConversationCursor(row) {
+  return Buffer.from(JSON.stringify([
+    Number(row.queue_bucket),
+    Number(row.cursor_priority_rank),
+    String(row.sort_key),
+    String(row.id),
+  ])).toString('base64url');
 }
 
-function decodeCursor(value) {
+function decodeConversationCursor(value) {
+  if (value == null) return null;
+  if (typeof value !== 'string' || !/^[A-Za-z0-9_-]{1,512}$/.test(value)) {
+    throw sanitizedError('CLOUD_INBOX_INVALID_ARGUMENT', 'Invalid cursor');
+  }
+  try {
+    const parsed = JSON.parse(Buffer.from(value, 'base64url').toString('utf8'));
+    if (!Array.isArray(parsed) || parsed.length !== 4) throw new Error('invalid cursor');
+    const [bucket, priorityRank, sortKey, id] = parsed;
+    if (!Number.isInteger(bucket) || bucket < 0 || bucket > 3
+      || !Number.isInteger(priorityRank) || priorityRank < 0 || priorityRank > 2
+      || typeof sortKey !== 'string' || !/^-?\d+(?:\.\d+)?$/.test(sortKey)) {
+      throw new Error('invalid cursor');
+    }
+    return { bucket, priorityRank, sortKey, id: requirePositiveInteger(id, 'cursorId') };
+  } catch {
+    throw sanitizedError('CLOUD_INBOX_INVALID_ARGUMENT', 'Invalid cursor');
+  }
+}
+
+function encodeMessageCursor(row) {
+  const timestamp = row.cursor_message_at || new Date(row.message_at).toISOString();
+  return Buffer.from(JSON.stringify([timestamp, String(row.id)])).toString('base64url');
+}
+
+function decodeMessageCursor(value) {
   if (value == null) return null;
   if (typeof value !== 'string' || !/^[A-Za-z0-9_-]{1,512}$/.test(value)) {
     throw sanitizedError('CLOUD_INBOX_INVALID_ARGUMENT', 'Invalid cursor');
@@ -107,22 +135,36 @@ function decodeCursor(value) {
 export async function listCloudConversations({
   query,
   empresaId,
+  usuarioId,
   limit = 25,
   cursor = null,
   from = null,
   to = null,
   payment = null,
+  workflowStatus = null,
+  priority = null,
+  unread = null,
 } = {}) {
   const runQuery = requireQuery(query);
   const tenantId = requireTenantId(empresaId);
+  const actorId = requirePositiveInteger(usuarioId, 'usuarioId');
   const pageSize = requirePositiveInteger(limit, 'limit');
   if (pageSize > 100) throw sanitizedError('CLOUD_INBOX_INVALID_ARGUMENT', 'Invalid limit');
-  const pageCursor = decodeCursor(cursor);
+  const pageCursor = decodeConversationCursor(cursor);
   const fromFilter = from == null ? null : requireNonEmptyString(from, 'from');
   const toFilter = to == null ? null : requireNonEmptyString(to, 'to');
   const paymentFilter = payment == null ? null : requireNonEmptyString(payment, 'payment').toLowerCase();
   if (paymentFilter != null && paymentFilter !== 'transferencia') {
     throw sanitizedError('CLOUD_INBOX_INVALID_ARGUMENT', 'Invalid payment');
+  }
+  if (workflowStatus != null && !['pending', 'resolved'].includes(workflowStatus)) {
+    throw sanitizedError('CLOUD_INBOX_INVALID_ARGUMENT', 'Invalid workflowStatus');
+  }
+  if (priority != null && !['normal', 'high', 'urgent'].includes(priority)) {
+    throw sanitizedError('CLOUD_INBOX_INVALID_ARGUMENT', 'Invalid priority');
+  }
+  if (unread != null && typeof unread !== 'boolean') {
+    throw sanitizedError('CLOUD_INBOX_INVALID_ARGUMENT', 'Invalid unread');
   }
   const transferCondition = paymentFilter === 'transferencia'
     ? `AND EXISTS (
@@ -140,64 +182,131 @@ export async function listCloudConversations({
   let rows;
   try {
     rows = await runQuery(
-      `SELECT conversation.id AS conversation_id,
-              conversation.participant_wa_id,
-              conversation.workflow_status,
-              conversation.priority,
-              conversation.version,
-              latest.id, latest.direction, latest.message_type, latest.delivery_status,
-              latest.message_at, latest.cursor_message_at,
-              customer.customer_name, customer.delivery_address, customer.payment_method
-         FROM public.whatsapp_cloud_conversations AS conversation
-         JOIN LATERAL (
-           SELECT message.id, message.direction, message.message_type,
-                  message.delivery_status, message.message_at,
-                  to_char(message.message_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cursor_message_at
-             FROM public.whatsapp_cloud_messages AS message
-            WHERE message.empresa_id = conversation.empresa_id
-              AND message.participant_wa_id = conversation.participant_wa_id
-              AND ($5::timestamptz IS NULL OR message.message_at >= $5::timestamptz)
-              AND ($6::timestamptz IS NULL OR message.message_at < $6::timestamptz)
-            ORDER BY message.message_at DESC, message.id DESC
-            LIMIT 1
-         ) latest ON TRUE
-         LEFT JOIN LATERAL (
-           SELECT
-                  NULLIF(BTRIM(COALESCE(pe.nombre, pe.cliente)), '') AS customer_name,
-                  NULLIF(BTRIM(COALESCE(
-                    pe.direccion_completa,
-                    NULLIF(CONCAT_WS(', ', NULLIF(pe.direccion, ''), NULLIF(pe.ciudad, '')), '')
-                  )), '') AS delivery_address,
-                  payment.payment_method
-             FROM public.puntos_entrega pe
-             LEFT JOIN LATERAL (
-               SELECT LOWER(NULLIF(BTRIM(p.metodo_pago), '')) AS payment_method,
-                      p.fecha,
-                      p.id
-                 FROM public.pedidos p
-                WHERE p.empresa_id = pe.empresa_id
-                  AND p.punto_entrega_id = pe.id
-                  AND LOWER(NULLIF(BTRIM(p.metodo_pago), '')) IN ('efectivo', 'transferencia')
-                ORDER BY p.fecha DESC NULLS LAST, p.id DESC
-                LIMIT 1
-             ) payment ON TRUE
-            WHERE pe.empresa_id = conversation.empresa_id
-              AND RIGHT(regexp_replace(COALESCE(pe.telefono_normalizado, pe.telefono, ''), '\\D', '', 'g'), 10)
-                  = RIGHT(regexp_replace(conversation.participant_wa_id, '\\D', '', 'g'), 10)
-            ORDER BY payment.fecha DESC NULLS LAST, payment.id DESC, pe.id DESC
-            LIMIT 1
-         ) customer ON TRUE
-        WHERE conversation.empresa_id = $1
-          AND ($3::timestamptz IS NULL OR (latest.message_at, latest.id) < ($3::timestamptz, $4::bigint))
-          ${transferCondition}
-        ORDER BY latest.message_at DESC, latest.id DESC
-        LIMIT $2`,
-      [tenantId, pageSize + 1, pageCursor?.timestamp ?? null, pageCursor?.id ?? null, fromFilter, toFilter],
+      `WITH base AS (
+         SELECT conversation.id AS conversation_id,
+                conversation.participant_wa_id,
+                conversation.workflow_status,
+                conversation.priority,
+                conversation.version,
+                latest.id, latest.direction, latest.message_type, latest.delivery_status,
+                latest.message_at,
+                inbound.last_inbound_at,
+                COALESCE(unread.unread_count, 0)::INTEGER AS unread_count,
+                customer.customer_name, customer.delivery_address, customer.payment_method
+           FROM public.whatsapp_cloud_conversations AS conversation
+           JOIN LATERAL (
+             SELECT message.id, message.direction, message.message_type,
+                    message.delivery_status, message.message_at
+               FROM public.whatsapp_cloud_messages AS message
+              WHERE message.empresa_id = conversation.empresa_id
+                AND message.participant_wa_id = conversation.participant_wa_id
+                AND ($5::timestamptz IS NULL OR message.message_at >= $5::timestamptz)
+                AND ($6::timestamptz IS NULL OR message.message_at < $6::timestamptz)
+              ORDER BY message.message_at DESC, message.id DESC
+              LIMIT 1
+           ) latest ON TRUE
+           LEFT JOIN LATERAL (
+             SELECT MAX(message.message_at) AS last_inbound_at
+               FROM public.whatsapp_cloud_messages AS message
+              WHERE message.empresa_id = conversation.empresa_id
+                AND message.participant_wa_id = conversation.participant_wa_id
+                AND message.direction = 'inbound'
+                AND ($5::timestamptz IS NULL OR message.message_at >= $5::timestamptz)
+                AND ($6::timestamptz IS NULL OR message.message_at < $6::timestamptz)
+           ) inbound ON TRUE
+           LEFT JOIN public.whatsapp_cloud_conversation_reads AS read_mark
+             ON read_mark.empresa_id = conversation.empresa_id
+            AND read_mark.conversation_id = conversation.id
+            AND read_mark.usuario_id = $7
+           LEFT JOIN LATERAL (
+             SELECT COUNT(*)::INTEGER AS unread_count
+               FROM public.whatsapp_cloud_messages AS message
+              WHERE message.empresa_id = conversation.empresa_id
+                AND message.participant_wa_id = conversation.participant_wa_id
+                AND message.direction = 'inbound'
+                AND message.id > COALESCE(read_mark.last_read_message_id, 0)
+                AND ($5::timestamptz IS NULL OR message.message_at >= $5::timestamptz)
+                AND ($6::timestamptz IS NULL OR message.message_at < $6::timestamptz)
+           ) unread ON TRUE
+           LEFT JOIN LATERAL (
+             SELECT NULLIF(BTRIM(COALESCE(pe.nombre, pe.cliente)), '') AS customer_name,
+                    NULLIF(BTRIM(COALESCE(pe.direccion_completa,
+                      NULLIF(CONCAT_WS(', ', NULLIF(pe.direccion, ''), NULLIF(pe.ciudad, '')), '')
+                    )), '') AS delivery_address,
+                    payment.payment_method
+               FROM public.puntos_entrega pe
+               LEFT JOIN LATERAL (
+                 SELECT LOWER(NULLIF(BTRIM(p.metodo_pago), '')) AS payment_method, p.fecha, p.id
+                   FROM public.pedidos p
+                  WHERE p.empresa_id = pe.empresa_id AND p.punto_entrega_id = pe.id
+                    AND LOWER(NULLIF(BTRIM(p.metodo_pago), '')) IN ('efectivo', 'transferencia')
+                  ORDER BY p.fecha DESC NULLS LAST, p.id DESC LIMIT 1
+               ) payment ON TRUE
+              WHERE pe.empresa_id = conversation.empresa_id
+                AND RIGHT(regexp_replace(COALESCE(pe.telefono_normalizado, pe.telefono, ''), '\\D', '', 'g'), 10)
+                    = RIGHT(regexp_replace(conversation.participant_wa_id, '\\D', '', 'g'), 10)
+              ORDER BY payment.fecha DESC NULLS LAST, payment.id DESC, pe.id DESC LIMIT 1
+           ) customer ON TRUE
+          WHERE conversation.empresa_id = $1
+            AND $3::text IS NULL
+            ${transferCondition}
+       ), classified AS (
+         SELECT base.*,
+                CASE
+                  WHEN workflow_status = 'resolved' THEN 3
+                  WHEN direction = 'outbound' AND delivery_status IN ('failed','outcome_unknown') THEN 1
+                  WHEN direction = 'outbound' AND delivery_status IN ('queued','pending','sending') THEN 2
+                  WHEN workflow_status = 'pending' AND (unread_count > 0 OR direction = 'inbound') THEN 0
+                  ELSE 3
+                END AS queue_bucket,
+                CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 ELSE 2 END AS priority_rank
+           FROM base
+       ), ordered AS (
+         SELECT classified.*,
+                CASE WHEN queue_bucket = 0 THEN priority_rank ELSE 0 END AS cursor_priority_rank,
+                CASE WHEN queue_bucket = 0
+                     THEN EXTRACT(EPOCH FROM COALESCE(last_inbound_at, message_at))
+                     ELSE -EXTRACT(EPOCH FROM message_at)
+                 END AS sort_key
+           FROM classified
+       ), counters AS (
+         SELECT COUNT(*)::INTEGER AS total_count,
+                COUNT(*) FILTER (WHERE queue_bucket = 0)::INTEGER AS pending_count,
+                COUNT(*) FILTER (WHERE queue_bucket = 2)::INTEGER AS in_process_count,
+                COUNT(*) FILTER (WHERE queue_bucket = 1)::INTEGER AS review_count,
+                COUNT(*) FILTER (WHERE queue_bucket = 3)::INTEGER AS resolved_count
+           FROM ordered
+       ), filtered AS (
+         SELECT * FROM ordered
+          WHERE ($8::text IS NULL OR workflow_status = $8)
+            AND ($9::text IS NULL OR priority = $9)
+            AND ($10::boolean IS NULL OR (unread_count > 0) = $10)
+            AND ($11::integer IS NULL OR (queue_bucket, cursor_priority_rank, sort_key, id)
+                 > ($11::integer, $12::integer, $13::numeric, $4::bigint))
+          ORDER BY queue_bucket ASC,
+                   cursor_priority_rank ASC,
+                   sort_key ASC, id ASC
+          LIMIT $2
+       )
+       SELECT filtered.*, counters.total_count, counters.pending_count,
+              counters.in_process_count, counters.review_count, counters.resolved_count
+         FROM counters
+         LEFT JOIN filtered ON TRUE
+        ORDER BY filtered.queue_bucket ASC,
+                 filtered.cursor_priority_rank ASC,
+                 filtered.sort_key ASC, filtered.id ASC`,
+      [
+        tenantId, pageSize + 1, null, pageCursor?.id ?? null, fromFilter, toFilter,
+        actorId, workflowStatus, priority, unread,
+        pageCursor?.bucket ?? null, pageCursor?.priorityRank ?? null, pageCursor?.sortKey ?? null,
+      ],
     );
   } catch {
     throw sanitizedError('CLOUD_INBOX_LIST_FAILED', 'WhatsApp Cloud conversations lookup failed');
   }
-  const page = rows.slice(0, pageSize);
+  const counterRow = rows[0] || {};
+  const conversationRows = rows.filter(row => row.conversation_id != null);
+  const page = conversationRows.slice(0, pageSize);
   return {
     conversations: page.map(row => ({
       conversationId: String(row.conversation_id),
@@ -207,6 +316,7 @@ export async function listCloudConversations({
       paymentMethod: ['efectivo', 'transferencia'].includes(String(row.payment_method || '').toLowerCase())
         ? String(row.payment_method).toLowerCase()
         : null,
+      unreadCount: Number(row.unread_count) || 0,
       workflowStatus: row.workflow_status,
       priority: row.priority,
       version: row.version,
@@ -215,7 +325,14 @@ export async function listCloudConversations({
       lastDeliveryStatus: row.delivery_status,
       lastMessageAt: row.message_at,
     })),
-    nextCursor: rows.length > pageSize ? encodeCursor(page[page.length - 1]) : null,
+    counters: {
+      total: Number(counterRow.total_count) || 0,
+      pending: Number(counterRow.pending_count) || 0,
+      inProcess: Number(counterRow.in_process_count) || 0,
+      review: Number(counterRow.review_count) || 0,
+      resolved: Number(counterRow.resolved_count) || 0,
+    },
+    nextCursor: conversationRows.length > pageSize ? encodeConversationCursor(page[page.length - 1]) : null,
   };
 }
 
@@ -231,7 +348,7 @@ export async function listCloudConversationMessages({
   const conversationReference = requireConversationReference(conversationId);
   const pageSize = requirePositiveInteger(limit, 'limit');
   if (pageSize > 100) throw sanitizedError('CLOUD_INBOX_INVALID_ARGUMENT', 'Invalid limit');
-  const pageCursor = decodeCursor(cursor);
+  const pageCursor = decodeMessageCursor(cursor);
   try {
     const anchors = await runQuery(
       conversationReference.kind === 'stable'
@@ -266,7 +383,7 @@ export async function listCloudConversationMessages({
       { sensitive: true },
     );
     const page = rows.slice(0, pageSize);
-    const nextCursor = rows.length > pageSize ? encodeCursor(page[page.length - 1]) : null;
+    const nextCursor = rows.length > pageSize ? encodeMessageCursor(page[page.length - 1]) : null;
     return {
       messages: page.reverse().map(row => ({
         id: String(row.id),
@@ -415,6 +532,65 @@ export async function updateCloudConversationState({
   } catch (error) {
     if (error?.code === 'CLOUD_INBOX_INVALID_ARGUMENT') throw error;
     throw sanitizedError('CLOUD_INBOX_STATE_FAILED', 'WhatsApp Cloud conversation state update failed');
+  }
+}
+
+export async function markCloudConversationRead({ pool, empresaId, conversationId, usuarioId } = {}) {
+  if (!pool || typeof pool.connect !== 'function') throw new TypeError('pool es requerido');
+  const tenantId = requireTenantId(empresaId);
+  const stableConversationId = requireConversationId(conversationId);
+  const actorId = requirePositiveInteger(usuarioId, 'usuarioId');
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT public.whatsapp_cloud_messages_lock_projection($1)', [tenantId]);
+    const conversation = await client.query(
+      `SELECT conversation.participant_wa_id
+         FROM public.whatsapp_cloud_conversations AS conversation
+        WHERE conversation.empresa_id = $1 AND conversation.id = $2::uuid
+        LIMIT 1`,
+      [tenantId, stableConversationId],
+    );
+    if (conversation.rows.length !== 1) {
+      await client.query('ROLLBACK');
+      return null;
+    }
+    const maximum = await client.query(
+      `SELECT MAX(message.id)::bigint AS max_inbound_id
+         FROM public.whatsapp_cloud_messages AS message
+        WHERE message.empresa_id = $1
+          AND message.participant_wa_id = $2
+          AND message.direction = 'inbound'`,
+      [tenantId, conversation.rows[0].participant_wa_id],
+    );
+    const maxInboundId = maximum.rows[0]?.max_inbound_id == null
+      ? null
+      : String(maximum.rows[0].max_inbound_id);
+    const updated = await client.query(
+      `INSERT INTO public.whatsapp_cloud_conversation_reads
+         (empresa_id, conversation_id, usuario_id, last_read_message_id, updated_at)
+       VALUES ($1, $2::uuid, $3, $4::bigint, pg_catalog.NOW())
+       ON CONFLICT (empresa_id, conversation_id, usuario_id) DO UPDATE
+         SET last_read_message_id = GREATEST(
+               COALESCE(public.whatsapp_cloud_conversation_reads.last_read_message_id, 0),
+               COALESCE(EXCLUDED.last_read_message_id, 0)
+             ),
+             updated_at = pg_catalog.NOW()
+       RETURNING last_read_message_id`,
+      [tenantId, stableConversationId, actorId, maxInboundId],
+    );
+    await client.query('COMMIT');
+    return {
+      conversationId: stableConversationId,
+      lastReadMessageId: updated.rows[0]?.last_read_message_id == null
+        ? null
+        : String(updated.rows[0].last_read_message_id),
+    };
+  } catch {
+    await client.query('ROLLBACK').catch(() => {});
+    throw sanitizedError('CLOUD_INBOX_READ_FAILED', 'WhatsApp Cloud read watermark failed');
+  } finally {
+    client.release();
   }
 }
 

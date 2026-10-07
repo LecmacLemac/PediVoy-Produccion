@@ -8,6 +8,7 @@ import {
   getCloudAttachmentMetadata,
   listCloudConversationMessages,
   listCloudConversations,
+  markCloudConversationRead,
   matchesCloudReplyCorrelation,
   resolveCloudConversationParticipant,
   updateCloudConversationState,
@@ -39,7 +40,7 @@ function configuredCanonicalOrigin(req, override) {
 export function whatsappCloudInboxMutationGuard({ canonicalOrigin } = {}) {
   return function guard(req, res, next) {
     const path = req.path || req.originalUrl || '';
-    const guardedMutation = (req.method === 'POST' && /\/conversations\/[^/]+\/replies\/?$/.test(path))
+    const guardedMutation = (req.method === 'POST' && /\/conversations\/[^/]+\/(?:replies|read)\/?$/.test(path))
       || (req.method === 'PATCH' && /\/conversations\/[^/]+\/state\/?$/.test(path));
     if (!guardedMutation) {
       return next();
@@ -162,8 +163,17 @@ function conversationFilters(query) {
   if (from === undefined || to === undefined) return null;
   const payment = query?.payment == null || query.payment === '' ? null : String(query.payment);
   if (payment != null && payment !== 'transferencia') return null;
+  const workflowStatus = query?.workflowStatus == null || query.workflowStatus === ''
+    ? null : String(query.workflowStatus);
+  const priority = query?.priority == null || query.priority === '' ? null : String(query.priority);
+  const unread = query?.unread == null || query.unread === ''
+    ? null
+    : query.unread === 'true' ? true : query.unread === 'false' ? false : undefined;
+  if (workflowStatus != null && !['pending', 'resolved'].includes(workflowStatus)) return null;
+  if (priority != null && !['normal', 'high', 'urgent'].includes(priority)) return null;
+  if (unread === undefined) return null;
   if (from && to && Date.parse(from) >= Date.parse(to)) return null;
-  return { from, to, payment };
+  return { from, to, payment, workflowStatus, priority, unread };
 }
 
 export function createWhatsAppCloudInboxAdminRouter({
@@ -181,13 +191,15 @@ export function createWhatsAppCloudInboxAdminRouter({
   });
   router.get('/conversations', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     const empresaId = resolveTenant(req);
+    const usuarioId = pgInt4Number(req.user?.uid);
     if (!empresaId) return res.status(400).json({ error: 'empresa_id_required' });
+    if (!usuarioId) return res.status(403).json({ error: 'Acceso denegado' });
     const page = pagination(req.query, 25);
     if (!page) return res.status(400).json({ error: 'pagination_invalid' });
     const filters = conversationFilters(req.query);
     if (!filters) return res.status(400).json({ error: 'filters_invalid' });
     try {
-      const result = await listCloudConversations({ query, empresaId, ...page, ...filters });
+      const result = await listCloudConversations({ query, empresaId, usuarioId, ...page, ...filters });
       return res.json(result);
     } catch (error) {
       if (isInvalidArgument(error)) return res.status(400).json({ error: 'pagination_invalid' });
@@ -337,6 +349,25 @@ export function createWhatsAppCloudInboxAdminRouter({
         return res.status(409).json({ error: 'cloud_config_inactive' });
       }
       return res.status(502).json({ error: 'reply_enqueue_failed' });
+    }
+  });
+  router.post('/conversations/:conversationId/read', whatsappCloudInboxMutationGuard({ canonicalOrigin }), withAuth, requireCanonicalBackofficeRole, async (req, res) => {
+    const empresaId = resolveTenant(req, { allowBody: true });
+    const usuarioId = pgInt4Number(req.user?.uid);
+    if (!empresaId) return res.status(400).json({ error: 'empresa_id_required' });
+    if (!usuarioId) return res.status(403).json({ error: 'Acceso denegado' });
+    if (!canonicalUuid(req.params.conversationId)) {
+      return res.status(400).json({ error: 'conversation_id_invalid' });
+    }
+    try {
+      const result = await markCloudConversationRead({
+        pool, empresaId, conversationId: req.params.conversationId, usuarioId,
+      });
+      if (!result) return res.status(404).json({ error: 'conversation_not_found' });
+      return res.json(result);
+    } catch (error) {
+      if (isInvalidArgument(error)) return res.status(400).json({ error: 'conversation_id_invalid' });
+      return res.status(500).json({ error: 'cloud_inbox_unavailable' });
     }
   });
   router.patch('/conversations/:conversationId/state', whatsappCloudInboxMutationGuard({ canonicalOrigin }), withAuth, requireCanonicalBackofficeRole, async (req, res) => {
