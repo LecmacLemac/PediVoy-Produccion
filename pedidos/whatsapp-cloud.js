@@ -9,9 +9,9 @@ import {
   createSendDeadline,
   createSingleFlightSubmission,
   formatCloudTimestamp,
+  isListResponseCurrentForMutation,
   mergeHistoryPage,
-  mergeConversationState,
-  reconcileConversationCollection,
+  reconcileConversationMutation,
   operationalMeta,
   queueCounterItems,
   reduceMobileView,
@@ -57,6 +57,8 @@ const state = {
   conversationsCursor: null,
   counters: { total: 0, pending: 0, inProcess: 0, review: 0, resolved: 0 },
   activeConversation: null,
+  activeCounterBaselineTrusted: false,
+  mutationRevision: 0,
   messages: [],
   historyCursor: null,
   mobile: { mobileView: 'list', activeConversationId: null },
@@ -176,6 +178,7 @@ function clearChat({ composerAlreadyReset = false, restoreFocus = true } = {}) {
     return false;
   }
   state.activeConversation = null;
+  state.activeCounterBaselineTrusted = false;
   state.messages = [];
   state.historyCursor = null;
   state.mobile = reduceMobileView(state.mobile, { type: 'back' });
@@ -314,11 +317,12 @@ function renderHistory({ preserveScroll = false } = {}) {
   else elements.history.scrollTop = elements.history.scrollHeight;
 }
 
-async function loadConversations({ append = false } = {}) {
+async function loadConversations({ append = false, refreshAfterMutation = true } = {}) {
   if (state.role === 'super' && !state.companyId) return;
   conversationsController?.abort();
   conversationsController = new AbortController();
   const generation = conversationGate.begin();
+  const startedMutationRevision = state.mutationRevision;
   const cursor = append ? state.conversationsCursor : null;
   if (!append) setStatus('Cargando conversaciones…');
   try {
@@ -341,10 +345,28 @@ async function loadConversations({ append = false } = {}) {
       setStatus(sanitizeCloudError(response.status, payload), 'error');
       return;
     }
+    if (!isListResponseCurrentForMutation(startedMutationRevision, state.mutationRevision)) {
+      if (refreshAfterMutation && conversationGate.isCurrent(generation)) {
+        await loadConversations({ append: false, refreshAfterMutation: false });
+      }
+      return;
+    }
     const incoming = Array.isArray(payload.conversations) ? payload.conversations : [];
     const known = new Map((append ? state.conversations : []).map(item => [String(item.conversationId), item]));
     for (const item of incoming) known.set(String(item.conversationId), item);
     state.conversations = [...known.values()];
+    if (state.activeConversation) {
+      const refreshedActive = state.conversations.find(item => (
+        String(item.conversationId) === String(state.activeConversation.conversationId)
+      ));
+      if (refreshedActive) {
+        state.activeConversation = refreshedActive;
+        state.activeCounterBaselineTrusted = true;
+        syncActiveConversationControls();
+      } else if (!append) {
+        state.activeCounterBaselineTrusted = false;
+      }
+    }
     if (payload.counters && typeof payload.counters === 'object') {
       state.counters = payload.counters;
     } else if (!append) {
@@ -386,16 +408,7 @@ async function markConversationRead(conversationId, { generation, companyId }) {
     setStatus(sanitizeCloudError(response.status, payload), 'warning');
     return false;
   }
-  const reconciled = reconcileConversationCollection({
-    conversations: state.conversations,
-    current: { conversationId, unreadCount: 0 },
-    filters: currentFilters(),
-    activeConversationId: state.activeConversation?.conversationId,
-    allowUnread: true,
-  });
-  state.conversations = reconciled.conversations;
-  if (reconciled.activeConversation) state.activeConversation = reconciled.activeConversation;
-  renderConversations();
+  await loadConversations();
   return true;
 }
 
@@ -445,33 +458,27 @@ function syncActiveConversationControls() {
 }
 
 function applyConversationState(current) {
-  const index = state.conversations.findIndex(item => String(item.conversationId) === String(current?.conversationId));
-  const previous = index >= 0
-    ? state.conversations[index]
-    : (String(state.activeConversation?.conversationId) === String(current?.conversationId)
-      ? state.activeConversation : null);
-  if (!previous) return;
-  const merged = mergeConversationState(previous, current);
-  const previousCounter = operationalMeta(previous).key;
-  const nextCounter = operationalMeta(merged).key;
-  if (index >= 0 && previousCounter !== nextCounter) {
-    if (Number.isInteger(state.counters[previousCounter]) && state.counters[previousCounter] > 0) {
-      state.counters[previousCounter] -= 1;
-    }
-    if (Number.isInteger(state.counters[nextCounter])) state.counters[nextCounter] += 1;
-  }
-  const reconciled = reconcileConversationCollection({
+  const previous = String(state.activeConversation?.conversationId) === String(current?.conversationId)
+    ? state.activeConversation
+    : state.conversations.find(item => String(item.conversationId) === String(current?.conversationId));
+  if (!previous) return false;
+  const reconciled = reconcileConversationMutation({
     conversations: state.conversations,
+    activeConversation: state.activeConversation,
     current,
+    counters: state.counters,
     filters: currentFilters(),
-    activeConversationId: state.activeConversation?.conversationId,
+    counterBaselineTrusted: state.activeCounterBaselineTrusted,
   });
   state.conversations = reconciled.conversations;
+  state.activeConversation = reconciled.activeConversation;
+  state.counters = reconciled.counters;
+  state.mutationRevision += 1;
   if (String(state.activeConversation?.conversationId) === String(current.conversationId)) {
-    state.activeConversation = reconciled.activeConversation || merged;
     syncActiveConversationControls();
   }
   renderConversations();
+  return reconciled.countersNeedReload;
 }
 
 async function patchActiveConversationState(change) {
@@ -492,7 +499,8 @@ async function patchActiveConversationState(change) {
       || state.companyId !== companyId
       || String(state.activeConversation?.conversationId) !== conversationId) return;
     if (response.status === 409 && payload?.error === 'stale_conversation_version') {
-      applyConversationState(payload.current);
+      const countersNeedReload = applyConversationState(payload.current);
+      if (countersNeedReload) await loadConversations();
       setStatus('La conversación cambió en otra sesión. Se mostró el estado actual; revisá antes de volver a intentar.', 'warning');
       return;
     }
@@ -500,7 +508,8 @@ async function patchActiveConversationState(change) {
       setStatus(sanitizeCloudError(response.status, payload), 'error');
       return;
     }
-    applyConversationState(payload);
+    const countersNeedReload = applyConversationState(payload);
+    if (countersNeedReload) await loadConversations();
     setStatus('Estado operativo actualizado.', 'success');
   } catch (error) {
     if (stateMutationGate.isCurrent(generation)
@@ -524,6 +533,7 @@ function openConversation(conversation) {
   stateMutationGate.invalidate();
   historyController?.abort();
   state.activeConversation = conversation;
+  state.activeCounterBaselineTrusted = true;
   returnFocusConversationId = String(conversation.conversationId);
   state.messages = [];
   state.historyCursor = null;

@@ -141,6 +141,33 @@ export function operationalMeta(conversation = {}) {
   return { key: 'resolved', label: 'Respondida', tone: 'resolved' };
 }
 
+function canonicalQueueRanks(conversation = {}) {
+  const operation = operationalMeta(conversation).key;
+  const queueBucket = { pending: 0, review: 1, inProcess: 2, resolved: 3 }[operation] ?? 3;
+  const queuePriorityRank = queueBucket === 0
+    ? ({ urgent: 0, high: 1, normal: 2 }[conversation.priority] ?? 2)
+    : 0;
+  return { queueBucket, queuePriorityRank };
+}
+
+function canonicalActivityKey(conversation, queueBucket) {
+  const latest = String(conversation.lastMessageActivityKey ?? '');
+  const inbound = String(conversation.lastInboundActivityKey ?? '');
+  if (!/^[0-9]+$/.test(latest)) return null;
+  const absolute = queueBucket === 0 && /^[0-9]+$/.test(inbound) ? inbound : latest;
+  return queueBucket === 0 ? absolute : `-${absolute}`;
+}
+
+function withCanonicalQueueRanks(conversation) {
+  const ranks = canonicalQueueRanks(conversation);
+  const queueActivityKey = canonicalActivityKey(conversation, ranks.queueBucket);
+  return {
+    ...conversation,
+    ...ranks,
+    ...(queueActivityKey == null ? {} : { queueActivityKey }),
+  };
+}
+
 export function queueCounterItems(counters = {}) {
   return [
     ['total', 'Total'], ['pending', 'Por responder'], ['inProcess', 'En proceso'],
@@ -157,12 +184,28 @@ export function mergeConversationState(local = {}, current = {}) {
   return merged;
 }
 
+function canonicalIntegerKey(value, fallback) {
+  const rendered = String(value ?? '');
+  if (/^-?[0-9]+$/.test(rendered)) return BigInt(rendered);
+  return BigInt(fallback);
+}
+
 function conversationOrderTuple(conversation) {
-  const operation = operationalMeta(conversation).key;
-  const bucket = { pending: 0, review: 1, inProcess: 2, resolved: 3 }[operation] ?? 3;
-  const priority = bucket === 0 ? ({ urgent: 0, high: 1, normal: 2 }[conversation.priority] ?? 2) : 0;
-  const timestamp = Date.parse(conversation.lastMessageAt || 0) || 0;
-  return [bucket, priority, bucket === 0 ? timestamp : -timestamp, String(conversation.conversationId)];
+  const ranks = canonicalQueueRanks(conversation);
+  const bucket = Number.isInteger(conversation.queueBucket) ? conversation.queueBucket : ranks.queueBucket;
+  const priority = Number.isInteger(conversation.queuePriorityRank)
+    ? conversation.queuePriorityRank
+    : ranks.queuePriorityRank;
+  const timestamp = Date.parse(conversation.effectiveActivityAt || conversation.lastMessageAt || 0) || 0;
+  const fallbackActivity = bucket === 0 ? timestamp * 1000 : -timestamp * 1000;
+  const derivedActivity = canonicalActivityKey(conversation, bucket);
+  return [
+    bucket,
+    priority,
+    canonicalIntegerKey(derivedActivity ?? conversation.queueActivityKey, fallbackActivity),
+    canonicalIntegerKey(conversation.lastMessageId, 0),
+    String(conversation.conversationId),
+  ];
 }
 
 function conversationMatchesFilters(conversation, filters = {}) {
@@ -179,11 +222,11 @@ export function reconcileConversationCollection({
   let activeConversation = null;
   const merged = conversations.map(conversation => {
     const next = String(conversation.conversationId) === currentId
-      ? {
+      ? withCanonicalQueueRanks({
           ...mergeConversationState(conversation, current),
           ...(allowUnread && Number.isInteger(current.unreadCount) && current.unreadCount >= 0
             ? { unreadCount: current.unreadCount } : {}),
-        }
+        })
       : conversation;
     if (String(next.conversationId) === String(activeConversationId)) activeConversation = next;
     return next;
@@ -202,6 +245,45 @@ export function reconcileConversationCollection({
   };
 }
 
+export function reconcileConversationMutation({
+  conversations = [], activeConversation = null, current = {}, counters = {}, filters = {}, allowUnread = false,
+  counterBaselineTrusted = true,
+} = {}) {
+  const currentId = String(current?.conversationId || '');
+  const listed = conversations.find(item => String(item?.conversationId) === currentId) || null;
+  const activeMatch = String(activeConversation?.conversationId) === currentId ? activeConversation : null;
+  const mergeBase = listed || activeMatch;
+  const counterBaseline = listed || activeMatch;
+  if (!mergeBase) {
+    return {
+      conversations: [...conversations], activeConversation, counters: { ...counters }, countersNeedReload: false,
+    };
+  }
+  const merged = withCanonicalQueueRanks({
+    ...mergeConversationState(mergeBase, current),
+    ...(allowUnread && Number.isInteger(current.unreadCount) && current.unreadCount >= 0
+      ? { unreadCount: current.unreadCount } : {}),
+  });
+  const previousCounter = operationalMeta(counterBaseline).key;
+  const nextCounter = operationalMeta(merged).key;
+  const nextCounters = { ...counters };
+  if (counterBaselineTrusted && previousCounter !== nextCounter) {
+    if (Number.isInteger(nextCounters[previousCounter]) && nextCounters[previousCounter] > 0) {
+      nextCounters[previousCounter] -= 1;
+    }
+    if (Number.isInteger(nextCounters[nextCounter])) nextCounters[nextCounter] += 1;
+  }
+  const reconciled = reconcileConversationCollection({
+    conversations, current: merged, filters, activeConversationId: currentId, allowUnread: true,
+  });
+  return {
+    conversations: reconciled.conversations,
+    activeConversation: reconciled.activeConversation || merged,
+    counters: nextCounters,
+    countersNeedReload: !counterBaselineTrusted,
+  };
+}
+
 export function createRequestGate() {
   let generation = 0;
   return {
@@ -209,6 +291,12 @@ export function createRequestGate() {
     invalidate() { generation += 1; },
     isCurrent(value) { return value === generation; },
   };
+}
+
+export function isListResponseCurrentForMutation(startedMutationRevision, currentMutationRevision) {
+  return Number.isSafeInteger(startedMutationRevision)
+    && Number.isSafeInteger(currentMutationRevision)
+    && startedMutationRevision === currentMutationRevision;
 }
 
 export function createSendDeadline({

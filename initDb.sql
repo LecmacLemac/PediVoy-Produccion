@@ -5053,7 +5053,7 @@ SET LOCAL search_path = public;
 SET LOCAL lock_timeout = '30s';
 SET LOCAL statement_timeout = '5min';
 SELECT pg_catalog.pg_advisory_xact_lock(1464550724, 1380275027);
-LOCK TABLE public.whatsapp_cloud_conversations, public.usuarios IN SHARE ROW EXCLUSIVE MODE;
+LOCK TABLE public.whatsapp_cloud_conversations, public.whatsapp_cloud_messages, public.usuarios IN SHARE ROW EXCLUSIVE MODE;
 
 DO $conversation_reads_lock$
 BEGIN
@@ -5128,20 +5128,36 @@ END $conversation_reads_guard$;
 
 DO $conversation_reads_index_guard$
 DECLARE
-  definition TEXT;
+  index_row RECORD;
+  expected_definition TEXT;
 BEGIN
-  IF pg_catalog.to_regclass('public.idx_whatsapp_cloud_conversation_reads_user') IS NOT NULL THEN
-    SELECT pg_catalog.pg_get_indexdef(pg_catalog.to_regclass('public.idx_whatsapp_cloud_conversation_reads_user')) INTO definition;
-    IF definition IS DISTINCT FROM 'CREATE INDEX idx_whatsapp_cloud_conversation_reads_user ON public.whatsapp_cloud_conversation_reads USING btree (empresa_id, usuario_id, conversation_id, last_read_message_id)' THEN
+  FOR index_row IN
+    SELECT * FROM (VALUES
+      ('public.idx_whatsapp_cloud_conversation_reads_user',
+       'CREATE INDEX idx_whatsapp_cloud_conversation_reads_user ON public.whatsapp_cloud_conversation_reads USING btree (empresa_id, usuario_id, conversation_id, last_read_message_id)'),
+      ('public.idx_whatsapp_cloud_messages_inbound_unread',
+       'CREATE INDEX idx_whatsapp_cloud_messages_inbound_unread ON public.whatsapp_cloud_messages USING btree (empresa_id, participant_wa_id, id) WHERE (direction = ''inbound''::text)')
+    ) AS expected(index_name, definition)
+  LOOP
+    IF pg_catalog.to_regclass(index_row.index_name) IS NULL THEN CONTINUE; END IF;
+    SELECT pg_catalog.pg_get_indexdef(index_catalog.indexrelid)
+      INTO expected_definition
+      FROM pg_catalog.pg_index AS index_catalog
+     WHERE index_catalog.indexrelid = pg_catalog.to_regclass(index_row.index_name)
+       AND index_catalog.indisvalid
+       AND index_catalog.indisready
+       AND index_catalog.indislive
+       AND NOT index_catalog.indisunique
+       AND NOT index_catalog.indisprimary
+       AND NOT index_catalog.indisexclusion
+       AND index_catalog.indimmediate
+       AND NOT index_catalog.indisclustered
+       AND NOT index_catalog.indisreplident
+       AND NOT index_catalog.indcheckxmin;
+    IF NOT FOUND OR expected_definition IS DISTINCT FROM index_row.definition THEN
       RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='whatsapp_cloud_conversation_reads_schema_unsafe';
     END IF;
-  END IF;
-  IF pg_catalog.to_regclass('public.idx_whatsapp_cloud_messages_inbound_unread') IS NOT NULL THEN
-    SELECT pg_catalog.pg_get_indexdef(pg_catalog.to_regclass('public.idx_whatsapp_cloud_messages_inbound_unread')) INTO definition;
-    IF definition IS DISTINCT FROM 'CREATE INDEX idx_whatsapp_cloud_messages_inbound_unread ON public.whatsapp_cloud_messages USING btree (empresa_id, participant_wa_id, id) WHERE (direction = ''inbound''::text)' THEN
-      RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='whatsapp_cloud_conversation_reads_schema_unsafe';
-    END IF;
-  END IF;
+  END LOOP;
 END $conversation_reads_index_guard$;
 
 DO $conversation_tenant_identity$

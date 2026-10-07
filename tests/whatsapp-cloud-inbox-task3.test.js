@@ -6,10 +6,19 @@ import { readFile } from 'node:fs/promises';
 import { createWhatsAppCloudInboxAdminRouter } from '../src/routes/whatsappCloudInboxAdmin.js';
 import {
   reconcileConversationCollection,
+  reconcileConversationMutation,
+  isListResponseCurrentForMutation,
   mergeConversationState,
   operationalMeta,
   queueCounterItems,
 } from '../pedidos/whatsapp-cloud-ui.js';
+
+test('guard de listado acepta sólo la misma revisión de mutación y falla cerrado con tokens inválidos', () => {
+  assert.equal(isListResponseCurrentForMutation(4, 4), true);
+  assert.equal(isListResponseCurrentForMutation(4, 5), false);
+  assert.equal(isListResponseCurrentForMutation(undefined, undefined), false);
+  assert.equal(isListResponseCurrentForMutation(Number.MAX_SAFE_INTEGER + 1, Number.MAX_SAFE_INTEGER + 1), false);
+});
 
 async function withServer(app, work) {
   const server = app.listen(0, '127.0.0.1');
@@ -179,8 +188,8 @@ test('helpers operativos exponen aliases y merge stale seguro sin retry', () => 
 });
 
 test('reconciliación local aplica filtros activos, orden canónico y preserva chat fuera de lista', () => {
-  const urgent = { conversationId: stableId, workflowStatus: 'pending', priority: 'urgent', unreadCount: 1, lastDirection: 'inbound', lastDeliveryStatus: 'received', lastMessageAt: '2026-10-07T10:00:00Z' };
-  const normal = { ...urgent, conversationId: '5ad1a4a8-8877-4dc6-a7a0-e81b87f8e2a2', priority: 'normal', lastMessageAt: '2026-10-07T09:00:00Z' };
+  const urgent = { conversationId: stableId, workflowStatus: 'pending', priority: 'urgent', unreadCount: 1, lastDirection: 'inbound', lastDeliveryStatus: 'received', lastMessageAt: '2026-10-07T10:00:00Z', effectiveActivityAt: '2026-10-07T10:00:00Z', lastMessageId: '10' };
+  const normal = { ...urgent, conversationId: '5ad1a4a8-8877-4dc6-a7a0-e81b87f8e2a2', priority: 'normal', lastMessageAt: '2026-10-07T09:00:00Z', effectiveActivityAt: '2026-10-07T09:00:00Z', lastMessageId: '9' };
   const moved = reconcileConversationCollection({
     conversations: [normal, urgent], current: { conversationId: normal.conversationId, priority: 'urgent', version: 2 },
     filters: { workflowStatus: 'pending', priority: null, unread: true }, activeConversationId: normal.conversationId,
@@ -193,6 +202,101 @@ test('reconciliación local aplica filtros activos, orden canónico y preserva c
   });
   assert.deepEqual(removed.conversations.map(item => item.conversationId), [urgent.conversationId]);
   assert.equal(removed.activeConversation.workflowStatus, 'resolved');
+});
+
+test('mutaciones reconcilian contadores desde el chat completo aunque la tarjeta esté filtrada', () => {
+  const active = {
+    conversationId: stableId,
+    workflowStatus: 'pending',
+    priority: 'high',
+    unreadCount: 3,
+    lastDirection: 'outbound',
+    lastDeliveryStatus: 'sent',
+    lastMessageAt: '2026-10-07T12:00:00Z',
+    effectiveActivityAt: '2026-10-07T10:00:00Z',
+    lastMessageId: '12',
+    version: 4,
+  };
+  const read = reconcileConversationMutation({
+    conversations: [], activeConversation: active,
+    current: { conversationId: stableId, unreadCount: 0 },
+    counters: { total: 1, pending: 1, inProcess: 0, review: 0, resolved: 0 },
+    filters: { unread: true }, allowUnread: true,
+  });
+  assert.deepEqual(read.counters, { total: 1, pending: 0, inProcess: 0, review: 0, resolved: 1 });
+  assert.equal(read.activeConversation.unreadCount, 0);
+
+  const priority = reconcileConversationMutation({
+    conversations: [], activeConversation: read.activeConversation,
+    current: { conversationId: stableId, priority: 'urgent', version: 5 },
+    counters: read.counters, filters: { unread: true },
+  });
+  assert.deepEqual(priority.counters, read.counters, 'priority cannot drift bucket counters');
+
+  const reopened = reconcileConversationMutation({
+    conversations: [],
+    activeConversation: { ...priority.activeConversation, workflowStatus: 'resolved', lastDirection: 'inbound' },
+    current: { conversationId: stableId, workflowStatus: 'pending', version: 6 },
+    counters: priority.counters, filters: { workflowStatus: 'resolved' },
+  });
+  assert.deepEqual(reopened.counters, { total: 1, pending: 1, inProcess: 0, review: 0, resolved: 0 });
+  assert.equal(reopened.activeConversation.workflowStatus, 'pending');
+
+  const refreshed = reconcileConversationMutation({
+    conversations: [{ ...active, workflowStatus: 'resolved', unreadCount: 0, version: 8 }],
+    activeConversation: active,
+    current: { conversationId: stableId, workflowStatus: 'resolved', priority: 'high', version: 8 },
+    counters: { total: 1, pending: 0, inProcess: 0, review: 0, resolved: 1 },
+  });
+  assert.deepEqual(refreshed.counters, { total: 1, pending: 0, inProcess: 0, review: 0, resolved: 1 });
+  assert.equal(refreshed.activeConversation.workflowStatus, 'resolved');
+
+  const filteredRefresh = reconcileConversationMutation({
+    conversations: [], activeConversation: active,
+    current: { conversationId: stableId, workflowStatus: 'resolved', priority: 'high', version: 8 },
+    counters: { total: 1, pending: 0, inProcess: 0, review: 0, resolved: 1 },
+    counterBaselineTrusted: false,
+  });
+  assert.deepEqual(filteredRefresh.counters, { total: 1, pending: 0, inProcess: 0, review: 0, resolved: 1 });
+  assert.equal(filteredRefresh.countersNeedReload, true);
+
+  const refreshedUnread = reconcileConversationMutation({
+    conversations: [{ ...active, unreadCount: 2, version: 9 }],
+    activeConversation: { ...active, unreadCount: 0 },
+    current: { conversationId: stableId, priority: 'urgent', version: 10 },
+    counters: { total: 1, pending: 1, inProcess: 0, review: 0, resolved: 0 },
+  });
+  assert.equal(refreshedUnread.activeConversation.unreadCount, 2);
+  assert.deepEqual(refreshedUnread.counters, { total: 1, pending: 1, inProcess: 0, review: 0, resolved: 0 });
+});
+
+test('orden local usa exactamente actividad efectiva, último message ID y UUID canónicos', () => {
+  const laterOutbound = {
+    conversationId: '11111111-1111-4111-8111-111111111111', workflowStatus: 'pending', priority: 'high',
+    unreadCount: 1, lastDirection: 'outbound', lastDeliveryStatus: 'sent',
+    lastMessageAt: '2026-10-07T12:00:00Z', effectiveActivityAt: '2026-10-07T10:00:00Z', lastMessageId: '12',
+    queueBucket: 0, queuePriorityRank: 1, queueActivityKey: '1791367200000000',
+    lastMessageActivityKey: '1791374400000000', lastInboundActivityKey: '1791367200000000', version: 1,
+  };
+  const laterInbound = {
+    ...laterOutbound, conversationId: '22222222-2222-4222-8222-222222222222', priority: 'urgent', queuePriorityRank: 0,
+    lastDirection: 'inbound', lastMessageAt: '2026-10-07T11:00:00Z', effectiveActivityAt: '2026-10-07T11:00:00Z', lastMessageId: '11',
+    queueActivityKey: '1791370800000000', lastMessageActivityKey: '1791370800000000', lastInboundActivityKey: '1791370800000000',
+  };
+  const tiedHigherMessage = {
+    ...laterOutbound, conversationId: '33333333-3333-4333-8333-333333333333', priority: 'urgent', queuePriorityRank: 0,
+    lastMessageId: '13',
+  };
+  const mutated = reconcileConversationMutation({
+    conversations: [laterInbound, tiedHigherMessage, laterOutbound], activeConversation: laterOutbound,
+    current: { conversationId: laterOutbound.conversationId, priority: 'urgent', version: 2 },
+    counters: { total: 3, pending: 3, inProcess: 0, review: 0, resolved: 0 },
+  });
+  assert.deepEqual(mutated.conversations.map(item => item.conversationId), [
+    laterOutbound.conversationId, tiedHigherMessage.conversationId, laterInbound.conversationId,
+  ]);
+  assert.equal(mutated.activeConversation.queuePriorityRank, 0);
+  assert.equal(mutated.activeConversation.queueActivityKey, '1791367200000000');
 });
 
 test('frontend declara chips, contadores y PATCH CAS; marca leído sólo después de render exitoso', async () => {

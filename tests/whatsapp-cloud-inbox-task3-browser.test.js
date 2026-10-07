@@ -35,6 +35,8 @@ function conversation(conversationId, participantSuffix, overrides = {}) {
     priority: 'normal',
     unreadCount: 1,
     version: 4,
+    effectiveActivityAt: '2026-10-07T12:00:00Z',
+    lastMessageId: '1',
     ...overrides,
   };
 }
@@ -286,6 +288,67 @@ browserTest('Task 3 marca leído una vez después de render exitoso y nunca si f
   });
 });
 
+browserTest('Task 3 mark-read recarga unread autoritativo si llega inbound después del history', async () => {
+  const initial = conversation(ids.urgent, '0451', {
+    unreadCount: 2, lastDirection: 'outbound', lastDeliveryStatus: 'sent',
+    effectiveActivityAt: '2026-10-07T10:00:00Z', lastMessageId: '91',
+  });
+  const afterRace = { ...initial, unreadCount: 1, version: 5 };
+  await withInbox({
+    listResponse: async ({ index }) => ({
+      body: {
+        conversations: [index === 0 ? initial : afterRace],
+        counters: { total: 1, pending: 1, inProcess: 0, review: 0, resolved: 0 },
+        nextCursor: null,
+      },
+    }),
+    messagesResponse: async () => ({ body: { messages: [message(91, 'history previo al inbound nuevo')], nextCursor: null } }),
+  }, async ({ page, requests }) => {
+    await page.waitForSelector('.conversation-card');
+    await page.click('.conversation-card');
+    await waitFor(() => requests.reads.length === 1, 'POST read antes del inbound nuevo');
+    await waitFor(() => requests.lists.length === 2, 'recarga autoritativa posterior al read');
+    await page.waitForFunction(() => document.querySelector('.conversation-card')?.textContent.includes('1 sin leer'));
+    assert.deepEqual(await page.$$eval('#queueCounters .counter-chip', chips => chips.map(chip => chip.textContent)), [
+      'Total: 1', 'Por responder: 1', 'En proceso: 0', 'Revisar: 0', 'Respondidas: 0',
+    ]);
+  });
+});
+
+browserTest('Task 3 descarta reload de read si un PATCH exitoso cambia el estado durante el GET', async () => {
+  const initial = conversation(ids.high, '0461', { priority: 'high', unreadCount: 1, version: 4 });
+  const resolved = { ...initial, workflowStatus: 'resolved', unreadCount: 0, version: 5 };
+  await withInbox({
+    listResponse: async ({ index }) => {
+      if (index === 0) {
+        return { body: { conversations: [initial], counters: { total: 1, pending: 1, inProcess: 0, review: 0, resolved: 0 }, nextCursor: null } };
+      }
+      if (index === 1) {
+        return {
+          delayMs: 250,
+          body: { conversations: [initial], counters: { total: 1, pending: 1, inProcess: 0, review: 0, resolved: 0 }, nextCursor: null },
+        };
+      }
+      return { body: { conversations: [resolved], counters: { total: 1, pending: 0, inProcess: 0, review: 0, resolved: 1 }, nextCursor: null } };
+    },
+    messagesResponse: async () => ({ body: { messages: [message(92, 'history que dispara read')], nextCursor: null } }),
+    stateResponse: async () => ({ body: {
+      conversationId: ids.high, workflowStatus: 'resolved', priority: 'high', version: 5,
+    } }),
+  }, async ({ page, requests }) => {
+    await page.waitForSelector('.conversation-card');
+    await page.click('.conversation-card');
+    await waitFor(() => requests.lists.length === 2, 'GET posterior al mark-read en vuelo');
+    await page.click('#conversationWorkflow');
+    await waitFor(() => requests.states.length === 1, 'PATCH durante GET de read');
+    await waitFor(() => requests.lists.length === 3, 'GET canónico posterior al descarte stale');
+    await page.waitForFunction(() => document.querySelector('#conversationWorkflow')?.textContent === 'Reabrir conversación');
+    assert.deepEqual(await page.$$eval('#queueCounters .counter-chip', chips => chips.map(chip => chip.textContent)), [
+      'Total: 1', 'Por responder: 0', 'En proceso: 0', 'Revisar: 0', 'Respondidas: 1',
+    ]);
+  });
+});
+
 browserTest('Task 3 controles workflow y priority hacen un PATCH CAS por acción y preservan el borrador', async () => {
   const initial = conversation(ids.normal, '0501', { unreadCount: 0, version: 4 });
   await withInbox({
@@ -318,9 +381,14 @@ browserTest('Task 3 controles workflow y priority hacen un PATCH CAS por acción
 });
 
 browserTest('Task 3 mutaciones aplican filtros activos y conservan chat y borrador aunque salga la tarjeta', async () => {
-  const initial = conversation(ids.normal, '0551', { unreadCount: 2, version: 4 });
+  const initial = conversation(ids.normal, '0551', {
+    unreadCount: 2, version: 4, lastDirection: 'outbound', lastDeliveryStatus: 'sent',
+    effectiveActivityAt: '2026-10-07T10:00:00Z', lastMessageId: '91',
+  });
   await withInbox({
-    listResponse: async () => ({ body: { conversations: [initial], counters: { total: 1, pending: 1, inProcess: 0, review: 0, resolved: 0 }, nextCursor: null } }),
+    listResponse: async ({ index }) => index < 2
+      ? { body: { conversations: [initial], counters: { total: 1, pending: 1, inProcess: 0, review: 0, resolved: 0 }, nextCursor: null } }
+      : { body: { conversations: [], counters: { total: 1, pending: 0, inProcess: 0, review: 0, resolved: 1 }, nextCursor: null } },
     messagesResponse: async () => ({ body: { messages: [message(91, 'render filtrado')], nextCursor: null } }),
     stateResponse: async ({ body }) => ({ body: { conversationId: ids.normal, workflowStatus: body.workflowStatus || 'pending', priority: body.priority || 'normal', version: 5 } }),
   }, async ({ page, requests }) => {
@@ -333,12 +401,72 @@ browserTest('Task 3 mutaciones aplican filtros activos y conservan chat y borrad
     await page.type('#messageInput', 'borrador persistente');
     await waitFor(() => requests.reads.length === 1, 'read filtrado');
     await page.waitForFunction(() => !document.querySelector('.conversation-card'));
+    assert.deepEqual(await page.$$eval('#queueCounters .counter-chip', chips => chips.map(chip => chip.textContent)), [
+      'Total: 1', 'Por responder: 0', 'En proceso: 0', 'Revisar: 0', 'Respondidas: 1',
+    ]);
     assert.equal(await page.$eval('#chatTitle', element => element.textContent), '*********0551');
     assert.equal(await page.$eval('#messageInput', element => element.value), 'borrador persistente');
     await page.select('#conversationPriority', 'urgent');
     await waitFor(() => requests.states.length === 1, 'PATCH fuera de lista');
     assert.equal(await page.$eval('#messageInput', element => element.value), 'borrador persistente');
     assert.equal(await page.$eval('#conversationPriority', element => element.value), 'urgent');
+    assert.deepEqual(await page.$$eval('#queueCounters .counter-chip', chips => chips.map(chip => chip.textContent)), [
+      'Total: 1', 'Por responder: 0', 'En proceso: 0', 'Revisar: 0', 'Respondidas: 1',
+    ]);
+  });
+});
+
+browserTest('Task 3 PATCH actualiza contadores una vez con el chat activo fuera del filtro', async () => {
+  const initial = conversation(ids.resolved, '0552', { workflowStatus: 'resolved', unreadCount: 0, version: 7 });
+  await withInbox({
+    listResponse: async () => ({ body: { conversations: [initial], counters: { total: 1, pending: 0, inProcess: 0, review: 0, resolved: 1 }, nextCursor: null } }),
+    stateResponse: async () => ({ body: { conversationId: ids.resolved, workflowStatus: 'pending', priority: 'normal', version: 8 } }),
+  }, async ({ page, requests }) => {
+    await page.waitForSelector('.conversation-card');
+    await page.select('#workflowFilter', 'resolved');
+    await waitFor(() => requests.lists.length === 2, 'filtro resolved');
+    await page.waitForSelector('.conversation-card');
+    await page.click('.conversation-card');
+    await page.waitForSelector('.message-text');
+    await page.click('#conversationWorkflow');
+    await waitFor(() => requests.states.length === 1, 'PATCH reopen fuera de filtro');
+    await page.waitForFunction(() => !document.querySelector('.conversation-card'));
+    assert.deepEqual(await page.$$eval('#queueCounters .counter-chip', chips => chips.map(chip => chip.textContent)), [
+      'Total: 1', 'Por responder: 1', 'En proceso: 0', 'Revisar: 0', 'Respondidas: 0',
+    ]);
+    assert.equal(await page.$eval('#conversationWorkflow', element => element.textContent), 'Marcar resuelta');
+  });
+});
+
+browserTest('Task 3 refresh filtrado seguido de PATCH stale recarga contadores sin doble transición', async () => {
+  const initial = conversation(ids.high, '0561', { priority: 'high', unreadCount: 0, version: 7 });
+  const resolvedCounters = { total: 1, pending: 0, inProcess: 0, review: 0, resolved: 1 };
+  await withInbox({
+    listResponse: async ({ index }) => index === 0
+      ? { body: { conversations: [initial], counters: { total: 1, pending: 1, inProcess: 0, review: 0, resolved: 0 }, nextCursor: null } }
+      : { body: { conversations: [], counters: resolvedCounters, nextCursor: null } },
+    messagesResponse: async () => ({ body: { messages: [{ ...message(91), direction: 'outbound' }], nextCursor: null } }),
+    stateResponse: async () => ({
+      status: 409,
+      body: { error: 'stale_conversation_version', current: {
+        conversationId: ids.high, workflowStatus: 'resolved', priority: 'high', version: 8,
+      } },
+    }),
+  }, async ({ page, requests }) => {
+    await page.waitForSelector('.conversation-card');
+    await page.click('.conversation-card');
+    await page.waitForSelector('.message-text');
+    await page.click('#refreshConversations');
+    await waitFor(() => requests.lists.length === 2, 'refresh filtrado sin tarjeta activa');
+    await page.waitForFunction(() => !document.querySelector('.conversation-card'));
+    await page.click('#conversationWorkflow');
+    await waitFor(() => requests.states.length === 1, 'PATCH stale después de refresh');
+    await waitFor(() => requests.lists.length === 3, 'recarga autoritativa de contadores');
+    assert.deepEqual(await page.$$eval('#queueCounters .counter-chip', chips => chips.map(chip => chip.textContent)), [
+      'Total: 1', 'Por responder: 0', 'En proceso: 0', 'Revisar: 0', 'Respondidas: 1',
+    ]);
+    assert.equal(await page.$eval('#chatTitle', element => element.textContent), '*********0561');
+    assert.equal(await page.$eval('#appStatus', element => element.dataset.tone), 'warning');
   });
 });
 
@@ -384,11 +512,19 @@ browserTest('Task 3 cerca PATCH y read tardíos de tenant A para que no muten te
   await withInbox({
     user: { role: 'super', empresa_id: null },
     companies: [{ id: 7, nombre: 'Tenant A' }, { id: 9, nombre: 'Tenant B' }],
-    async listResponse({ url }) {
+    async listResponse({ url, requests }) {
       const companyId = url.searchParams.get('empresa_id');
-      return companyId === '7'
-        ? { body: { conversations: [tenantA], counters: { total: 1, pending: 1, inProcess: 0, review: 0, resolved: 0 }, nextCursor: null } }
-        : { body: { conversations: [tenantB], counters: { total: 1, pending: 1, inProcess: 0, review: 0, resolved: 0 }, nextCursor: null } };
+      if (companyId === '7') {
+        return { body: { conversations: [tenantA], counters: { total: 1, pending: 1, inProcess: 0, review: 0, resolved: 0 }, nextCursor: null } };
+      }
+      const tenantBRead = requests.reads.some(entry => entry.conversationId === ids.tenantB);
+      return {
+        body: {
+          conversations: [{ ...tenantB, unreadCount: tenantBRead ? 0 : tenantB.unreadCount }],
+          counters: { total: 1, pending: 1, inProcess: 0, review: 0, resolved: 0 },
+          nextCursor: null,
+        },
+      };
     },
     readResponse: async ({ conversationId }) => ({
       delayMs: conversationId === ids.urgent ? 250 : 0,

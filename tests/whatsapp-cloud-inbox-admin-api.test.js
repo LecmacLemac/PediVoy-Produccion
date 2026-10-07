@@ -869,6 +869,9 @@ test('listado e historial usan id UUID estable y metadatos operativos allowliste
       participant_wa_id: '5493515550001', workflow_status: 'pending', priority: 'high', version: 4,
       id: '99', direction: 'inbound', message_type: 'text', delivery_status: 'received',
       message_at: new Date('2026-10-07T10:00:00Z'), cursor_message_at: '2026-10-07T10:00:00.000000Z',
+      queue_bucket: 0, cursor_priority_rank: 1, queue_activity_key: '1791367200000000',
+      effective_activity_at: new Date('2026-10-07T10:00:00Z'),
+      last_message_activity_key: '1791367200000000', last_inbound_activity_key: '1791367200000000',
     }];
     return [{
       id: '99', direction: 'inbound', message_type: 'text', text_body: 'hola',
@@ -891,6 +894,13 @@ test('listado e historial usan id UUID estable y metadatos operativos allowliste
     lastMessageType: 'text',
     lastDeliveryStatus: 'received',
     lastMessageAt: new Date('2026-10-07T10:00:00Z'),
+    queueBucket: 0,
+    queuePriorityRank: 1,
+    queueActivityKey: '1791367200000000',
+    effectiveActivityAt: new Date('2026-10-07T10:00:00Z'),
+    lastMessageActivityKey: '1791367200000000',
+    lastInboundActivityKey: '1791367200000000',
+    lastMessageId: '99',
   });
   const history = await listCloudConversationMessages({ query, empresaId: 7, conversationId: stableId });
   assert.equal(history.messages[0].id, '99');

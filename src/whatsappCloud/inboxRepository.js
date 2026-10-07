@@ -88,12 +88,24 @@ function maskParticipant(value) {
   return `${'*'.repeat(Math.max(3, digits.length - 4))}${digits.slice(-4)}`;
 }
 
+function requireSignedCanonicalInt8(value, field) {
+  if (typeof value !== 'string' || !/^-?(?:0|[1-9][0-9]{0,18})$/.test(value)) {
+    throw sanitizedError('CLOUD_INBOX_INVALID_ARGUMENT', `Invalid ${field}`);
+  }
+  const parsed = BigInt(value);
+  if (parsed < -9223372036854775808n || parsed > 9223372036854775807n || String(parsed) !== value) {
+    throw sanitizedError('CLOUD_INBOX_INVALID_ARGUMENT', `Invalid ${field}`);
+  }
+  return value;
+}
+
 function encodeConversationCursor(row) {
   return Buffer.from(JSON.stringify([
     Number(row.queue_bucket),
     Number(row.cursor_priority_rank),
-    String(row.sort_key),
+    String(row.queue_activity_key),
     String(row.id),
+    String(row.conversation_id),
   ])).toString('base64url');
 }
 
@@ -104,14 +116,19 @@ function decodeConversationCursor(value) {
   }
   try {
     const parsed = JSON.parse(Buffer.from(value, 'base64url').toString('utf8'));
-    if (!Array.isArray(parsed) || parsed.length !== 4) throw new Error('invalid cursor');
-    const [bucket, priorityRank, sortKey, id] = parsed;
+    if (!Array.isArray(parsed) || parsed.length !== 5) throw new Error('invalid cursor');
+    const [bucket, priorityRank, activityKey, id, conversationId] = parsed;
     if (!Number.isInteger(bucket) || bucket < 0 || bucket > 3
-      || !Number.isInteger(priorityRank) || priorityRank < 0 || priorityRank > 2
-      || typeof sortKey !== 'string' || !/^-?\d+(?:\.\d+)?$/.test(sortKey)) {
+      || !Number.isInteger(priorityRank) || priorityRank < 0 || priorityRank > 2) {
       throw new Error('invalid cursor');
     }
-    return { bucket, priorityRank, sortKey, id: requirePositiveInteger(id, 'cursorId') };
+    return {
+      bucket,
+      priorityRank,
+      activityKey: requireSignedCanonicalInt8(activityKey, 'cursorActivityKey'),
+      id: requireCanonicalInt8(id, 'cursorId'),
+      conversationId: requireConversationId(conversationId),
+    };
   } catch {
     throw sanitizedError('CLOUD_INBOX_INVALID_ARGUMENT', 'Invalid cursor');
   }
@@ -210,26 +227,30 @@ export async function listCloudConversations({
   let rows;
   try {
     rows = await runQuery(
-      `WITH base AS (
+      `WITH latest_messages AS MATERIALIZED (
+         SELECT DISTINCT ON (message.participant_wa_id)
+                message.participant_wa_id,
+                message.id,
+                message.direction,
+                message.message_type,
+                message.delivery_status,
+                message.message_at
+           FROM public.whatsapp_cloud_messages AS message
+          WHERE message.empresa_id = $1
+            AND ($5::timestamptz IS NULL OR message.message_at >= $5::timestamptz)
+            AND ($6::timestamptz IS NULL OR message.message_at < $6::timestamptz)
+          ORDER BY message.participant_wa_id, message.message_at DESC, message.id DESC
+       ), inbound_stats AS MATERIALIZED (
          SELECT conversation.id AS conversation_id,
-                conversation.participant_wa_id,
-                conversation.workflow_status,
-                conversation.priority,
-                conversation.version,
-                (pg_catalog.array_agg(message.id ORDER BY message.message_at DESC, message.id DESC))[1] AS id,
-                (pg_catalog.array_agg(message.direction ORDER BY message.message_at DESC, message.id DESC))[1] AS direction,
-                (pg_catalog.array_agg(message.message_type ORDER BY message.message_at DESC, message.id DESC))[1] AS message_type,
-                (pg_catalog.array_agg(message.delivery_status ORDER BY message.message_at DESC, message.id DESC))[1] AS delivery_status,
-                (pg_catalog.array_agg(message.message_at ORDER BY message.message_at DESC, message.id DESC))[1] AS message_at,
-                pg_catalog.MAX(message.message_at) FILTER (WHERE message.direction = 'inbound') AS last_inbound_at,
+                pg_catalog.MAX(message.message_at) AS last_inbound_at,
                 COUNT(*) FILTER (
-                  WHERE message.direction = 'inbound'
-                    AND message.id > COALESCE(read_mark.last_read_message_id, 0)
+                  WHERE message.id > COALESCE(read_mark.last_read_message_id, 0)
                 )::INTEGER AS unread_count
            FROM public.whatsapp_cloud_conversations AS conversation
            JOIN public.whatsapp_cloud_messages AS message
              ON message.empresa_id = conversation.empresa_id
             AND message.participant_wa_id = conversation.participant_wa_id
+            AND message.direction = 'inbound'
             AND ($5::timestamptz IS NULL OR message.message_at >= $5::timestamptz)
             AND ($6::timestamptz IS NULL OR message.message_at < $6::timestamptz)
            LEFT JOIN public.whatsapp_cloud_conversation_reads AS read_mark
@@ -237,11 +258,27 @@ export async function listCloudConversations({
             AND read_mark.conversation_id = conversation.id
             AND read_mark.usuario_id = $7
           WHERE conversation.empresa_id = $1
+          GROUP BY conversation.id, read_mark.last_read_message_id
+       ), base AS (
+         SELECT conversation.id AS conversation_id,
+                conversation.participant_wa_id,
+                conversation.workflow_status,
+                conversation.priority,
+                conversation.version,
+                latest.id,
+                latest.direction,
+                latest.message_type,
+                latest.delivery_status,
+                latest.message_at,
+                inbound.last_inbound_at,
+                COALESCE(inbound.unread_count, 0)::INTEGER AS unread_count
+           FROM public.whatsapp_cloud_conversations AS conversation
+           JOIN latest_messages AS latest
+             ON latest.participant_wa_id = conversation.participant_wa_id
+           LEFT JOIN inbound_stats AS inbound ON inbound.conversation_id = conversation.id
+          WHERE conversation.empresa_id = $1
             AND $3::text IS NULL
             ${transferCondition}
-          GROUP BY conversation.id, conversation.participant_wa_id,
-                   conversation.workflow_status, conversation.priority, conversation.version,
-                   read_mark.last_read_message_id
        ), classified AS (
          SELECT base.*,
                 CASE
@@ -256,19 +293,29 @@ export async function listCloudConversations({
        ), ordered AS (
          SELECT classified.*,
                 CASE WHEN queue_bucket = 0 THEN priority_rank ELSE 0 END AS cursor_priority_rank,
-                CASE WHEN queue_bucket = 0
-                     THEN EXTRACT(EPOCH FROM COALESCE(last_inbound_at, message_at))
-                     ELSE -EXTRACT(EPOCH FROM message_at)
-                 END AS sort_key
+                CASE WHEN queue_bucket = 0 THEN COALESCE(last_inbound_at, message_at) ELSE message_at END
+                  AS effective_activity_at,
+                pg_catalog.ROUND(EXTRACT(EPOCH FROM message_at) * 1000000)::BIGINT
+                  AS last_message_activity_key,
+                CASE WHEN last_inbound_at IS NULL THEN NULL
+                     ELSE pg_catalog.ROUND(EXTRACT(EPOCH FROM last_inbound_at) * 1000000)::BIGINT
+                 END AS last_inbound_activity_key,
+                (CASE WHEN queue_bucket = 0 THEN 1 ELSE -1 END
+                  * pg_catalog.ROUND(EXTRACT(EPOCH FROM
+                      CASE WHEN queue_bucket = 0 THEN COALESCE(last_inbound_at, message_at) ELSE message_at END
+                    ) * 1000000))::BIGINT AS queue_activity_key
            FROM classified
        )${countersCte}, filtered AS (
          SELECT * FROM ordered
           WHERE ($8::text IS NULL OR workflow_status = $8)
             AND ($9::text IS NULL OR priority = $9)
             AND ($10::boolean IS NULL OR (unread_count > 0) = $10)
-            AND ($11::integer IS NULL OR (queue_bucket, cursor_priority_rank, sort_key, id)
-                 > ($11::integer, $12::integer, $13::numeric, $4::bigint))
-          ORDER BY queue_bucket ASC, cursor_priority_rank ASC, sort_key ASC, id ASC
+            AND ($11::integer IS NULL OR (
+                  queue_bucket, cursor_priority_rank, queue_activity_key, id, conversation_id
+                ) > (
+                  $11::integer, $12::integer, $13::bigint, $4::bigint, $14::uuid
+                ))
+          ORDER BY queue_bucket ASC, cursor_priority_rank ASC, queue_activity_key ASC, id ASC, conversation_id ASC
           LIMIT $2
        )
        SELECT filtered.*, customer.customer_name, customer.delivery_address, customer.payment_method,
@@ -294,11 +341,12 @@ export async function listCloudConversations({
             ORDER BY payment.fecha DESC NULLS LAST, payment.id DESC, pe.id DESC LIMIT 1
          ) customer ON TRUE
         ORDER BY filtered.queue_bucket ASC, filtered.cursor_priority_rank ASC,
-                 filtered.sort_key ASC, filtered.id ASC`,
+                 filtered.queue_activity_key ASC, filtered.id ASC, filtered.conversation_id ASC`,
       [
         tenantId, pageSize + 1, null, pageCursor?.id ?? null, fromFilter, toFilter,
         actorId, workflowStatus, priority, unread,
-        pageCursor?.bucket ?? null, pageCursor?.priorityRank ?? null, pageCursor?.sortKey ?? null,
+        pageCursor?.bucket ?? null, pageCursor?.priorityRank ?? null, pageCursor?.activityKey ?? null,
+        pageCursor?.conversationId ?? null,
       ],
     );
   } catch {
@@ -324,6 +372,13 @@ export async function listCloudConversations({
       lastMessageType: row.message_type,
       lastDeliveryStatus: row.delivery_status,
       lastMessageAt: row.message_at,
+      queueBucket: Number(row.queue_bucket),
+      queuePriorityRank: Number(row.cursor_priority_rank),
+      queueActivityKey: String(row.queue_activity_key),
+      effectiveActivityAt: row.effective_activity_at,
+      lastMessageActivityKey: String(row.last_message_activity_key),
+      lastInboundActivityKey: row.last_inbound_activity_key == null ? null : String(row.last_inbound_activity_key),
+      lastMessageId: String(row.id),
     })),
     counters: includeCounters ? {
       total: Number(counterRow.total_count) || 0,
