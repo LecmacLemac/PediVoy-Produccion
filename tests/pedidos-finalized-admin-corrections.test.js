@@ -180,8 +180,8 @@ for (const superUser of [false, true]) {
         { superUser }
       );
 
-      assert.equal(res.statusCode, 400);
-      assert.match(res.payload.error, /inválido/i);
+      assert.equal(res.statusCode, 409);
+      assert.match(res.payload.error, /finalizado|tenant/i);
       assert.equal(calls.some(call => call.sql.includes('UPDATE pedidos')), false);
     });
   }

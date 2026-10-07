@@ -3,19 +3,28 @@ export function createPedidoEditCoordinator() {
   let active = null;
   return {
     begin({ id, finalized }) {
-      active = Object.freeze({ generation: ++generation, id: Number(id), finalized: finalized === true });
-      return active;
+      const context = Object.freeze({ generation: ++generation, id: Number(id), finalized: finalized === true });
+      active = { context, ready: false };
+      return context;
     },
     isActive(context) {
-      return context === active;
+      return context === active?.context;
     },
     commit(context, apply) {
-      if (context !== active) return false;
+      if (context !== active?.context) return false;
       apply();
       return true;
     },
+    markReady(context) {
+      if (context !== active?.context) return false;
+      active.ready = true;
+      return true;
+    },
+    canSave(context) {
+      return context === active?.context && active.ready === true;
+    },
     capture() {
-      return active;
+      return active?.context || null;
     },
   };
 }

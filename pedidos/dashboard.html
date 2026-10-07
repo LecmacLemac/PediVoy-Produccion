@@ -1433,7 +1433,7 @@
       await updatePedidoIdNameHints(p);
     }
 
-    async function updatePedidoIdNameHints(p = pedidos.find(x => x.id == editingId) || {}) {
+    function applyPedidoIdNameHints(p = pedidos.find(x => x.id == editingId) || {}) {
       const empresaId = Number($('#dlg_empresa_id').value) || null;
       const choferId = Number($('#dlg_chofer_id').value) || null;
       const zonaId = Number($('#dlg_zona_id').value) || null;
@@ -1454,7 +1454,6 @@
         setIdNameHint('dlg_chofer_name', '', 'muted');
       }
 
-      await loadZonasForEmpresa(empresaId || p?.empresa_id || null);
       const zona = findById(zonasEmpresa, zonaId);
       const zonaName = zona?.nombre || (Number(p?.zona_id) === zonaId ? resolveKnownPedidoField(p, 'zona') : null);
       if (zonaId) {
@@ -1462,6 +1461,12 @@
       } else {
         setIdNameHint('dlg_zona_name', '', 'muted');
       }
+    }
+
+    async function updatePedidoIdNameHints(p = pedidos.find(x => x.id == editingId) || {}) {
+      const empresaId = Number($('#dlg_empresa_id').value) || null;
+      await loadZonasForEmpresa(empresaId || p?.empresa_id || null);
+      applyPedidoIdNameHints(p);
     }
 
     function saveFiltersState(){
@@ -1659,7 +1664,7 @@
 
     function setModalBusy(isBusy) {
       saveBusy = !!isBusy;
-      btnSaveAll.disabled = saveBusy;
+      btnSaveAll.disabled = saveBusy || !pedidoEditCoordinator.canSave(pedidoEditCoordinator.capture());
       btnCloseDlg.disabled = saveBusy;
       btnCloseX.disabled = saveBusy;
       btnAddItem.disabled = saveBusy;
@@ -1920,13 +1925,11 @@
     async function fetchZonasForEmpresa(empresaId = null) {
       const normalizedEmpresaId = Number(empresaId) || null;
       const qs = normalizedEmpresaId ? `?empresa_id=${encodeURIComponent(normalizedEmpresaId)}` : '';
-      try {
-        const r = await authFetch('/api/zonas' + qs);
-        const list = r.ok ? await r.json() : [];
-        return Array.isArray(list) ? list : [];
-      } catch {
-        return [];
-      }
+      const r = await authFetch('/api/zonas' + qs);
+      if (!r.ok) throw new Error(await parseErrorResponse(r, 'No se pudieron cargar las zonas del pedido.'));
+      const list = await r.json();
+      if (!Array.isArray(list)) throw new Error('Respuesta inválida al cargar las zonas del pedido.');
+      return list;
     }
 
     async function initLoad(){
@@ -2254,19 +2257,39 @@
       const editContext = pedidoEditCoordinator.begin({ id, finalized: isPedidoFinalizado(p.estado) });
       editingId = editContext.id;
       editingPedidoFinalizado = editContext.finalized;
+      setModalBusy(true);
       $('#dlg_pid').textContent = editContext.id;
 
       $('#dlg_estado').value = p.estado || 'pendiente';
       $('#dlg_metodo').value = (p.metodo_pago || '').toLowerCase();
+      $('#dlg_empresa_id').innerHTML = '<option value="">Cargando...</option>';
+      $('#dlg_empresa_id').value = '';
+      $('#dlg_chofer_id').innerHTML = '<option value="">Cargando...</option>';
+      $('#dlg_chofer_id').value = '';
+      $('#dlg_zona_id').innerHTML = '<option value="">Cargando...</option>';
+      $('#dlg_zona_id').value = '';
+      setIdNameHint('dlg_empresa_name', '', 'muted');
+      setIdNameHint('dlg_chofer_name', '', 'muted');
+      setIdNameHint('dlg_zona_name', '', 'muted');
+      choferesPedido = [];
+      zonasEmpresa = [];
+      zonasEmpresaId = null;
       setDialogError('');
-      setModalBusy(false);
 
       dlg_itemsBody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:1rem; color:var(--muted);">Cargando ítems...</td></tr>';
       if (!dlg.open) dlg.showModal();
 
       try {
         const [choferes, zonas, r] = await Promise.all([
-          loadChoferesForEmpresa(p.empresa_id),
+          (async () => {
+            const normalizedEmpresaId = Number(p.empresa_id) || null;
+            const qs = normalizedEmpresaId ? `?empresa_id=${encodeURIComponent(normalizedEmpresaId)}` : '';
+            const response = await authFetch('/api/choferes' + qs);
+            if (!response.ok) throw new Error(await parseErrorResponse(response, 'No se pudieron cargar los choferes del pedido.'));
+            const list = await response.json();
+            if (!Array.isArray(list)) throw new Error('Respuesta inválida al cargar los choferes del pedido.');
+            return list;
+          })(),
           fetchZonasForEmpresa(p.empresa_id),
           authFetch(`/api/pedidos/${editContext.id}/items`),
         ]);
@@ -2279,18 +2302,18 @@
         zonasEmpresa = zonas;
         zonasEmpresaId = Number(p.empresa_id) || null;
         applyPedidoRelationSelects(p, choferes, zonas);
-        await updatePedidoIdNameHints(p);
+        applyPedidoIdNameHints(p);
         if (!pedidoEditCoordinator.isActive(editContext)) return;
 
         const list = Array.isArray(items) && items.length ? items : [{producto:'', cantidad:1, precio_unitario:0}];
         dlg_itemsBody.innerHTML = list.map(renderItemRow).join('');
         recalcTotal();
+        pedidoEditCoordinator.markReady(editContext);
         setModalBusy(false);
       } catch (err) {
         if (!pedidoEditCoordinator.isActive(editContext)) return;
         setDialogError(err?.message || 'Error cargando ítems');
-        dlg_itemsBody.innerHTML = renderItemRow({ producto:'', cantidad:1, precio_unitario:0 });
-        recalcTotal();
+        dlg_itemsBody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:1rem; color:var(--danger);">No se pudo cargar el pedido. Cerrá y volvé a intentar.</td></tr>';
         setModalBusy(false);
       }
     };
@@ -2385,7 +2408,7 @@
     btnSaveAll.onclick = async () => {
       if (saveBusy) return;
       const saveContext = pedidoEditCoordinator.capture();
-      if (!saveContext) return;
+      if (!pedidoEditCoordinator.canSave(saveContext)) return;
       const savePedidoId = saveContext.id;
       const saveFinalized = saveContext.finalized;
       setDialogError('');

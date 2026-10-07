@@ -12,6 +12,7 @@ import { requireCanonicalBackofficeRole } from './canonicalBackofficeRole.js';
 
 const PEDIDO_ESTADOS = new Set(['pendiente', 'en_ruta', 'en_camino', 'entregado', 'cancelado']);
 const PEDIDO_METODOS_PAGO = new Set(['efectivo', 'transferencia', 'cuenta_corriente', 'qr_dinamico']);
+const POSTGRES_INT4_MAX = 2147483647;
 
 function pedidoUpdateError(statusCode, message) {
   return Object.assign(new Error(message), { statusCode });
@@ -41,8 +42,12 @@ export function createUpdatePedidoHandler({
 } = {}) {
   return async function updatePedido(req, res) {
     try {
-      const pedidoId = Number(req.params.id);
-      if (!Number.isSafeInteger(pedidoId) || pedidoId <= 0) {
+      const pedidoIdParam = req.params.id;
+      if (typeof pedidoIdParam !== 'string' || !/^[1-9]\d*$/.test(pedidoIdParam)) {
+        throw pedidoUpdateError(400, 'ID de pedido inválido');
+      }
+      const pedidoId = Number(pedidoIdParam);
+      if (!Number.isSafeInteger(pedidoId) || pedidoId > POSTGRES_INT4_MAX) {
         throw pedidoUpdateError(400, 'ID de pedido inválido');
       }
       const actorUid = req.user?.uid;
@@ -89,13 +94,24 @@ export function createUpdatePedidoHandler({
           throw pedidoUpdateError(409, 'El pedido no tiene un tenant canónico');
         }
 
+        const estadoPresent = hasOwn(body, 'estado');
+        const estado = body.estado;
+        const empresaPresent = hasOwn(body, 'empresa_id');
+        const empresaRaw = body.empresa_id;
+        const finalized = current.estado === 'entregado' || current.estado === 'cancelado';
+        if (finalized && estadoPresent && estado !== null && estado !== current.estado) {
+          throw pedidoUpdateError(409, 'El pedido finalizado sólo admite correcciones administrativas');
+        }
+        if (finalized && empresaPresent && empresaRaw !== null
+          && (!Number.isSafeInteger(empresaRaw) || empresaRaw <= 0 || empresaRaw !== current.empresa_id)) {
+          throw pedidoUpdateError(409, 'empresa_id no coincide con el tenant del pedido finalizado');
+        }
+
         const empresaInput = requireOptionalPositiveJsonInteger(body, 'empresa_id');
         if (empresaInput.present && empresaInput.value !== null && empresaInput.value !== current.empresa_id) {
           throw pedidoUpdateError(409, 'empresa_id no coincide con el tenant del pedido');
         }
 
-        const estadoPresent = hasOwn(body, 'estado');
-        const estado = body.estado;
         if (estadoPresent && estado !== null && (typeof estado !== 'string' || !PEDIDO_ESTADOS.has(estado))) {
           throw pedidoUpdateError(400, 'estado inválido');
         }
@@ -109,10 +125,6 @@ export function createUpdatePedidoHandler({
 
         const choferInput = requireOptionalPositiveJsonInteger(body, 'chofer_id');
         const zonaInput = requireOptionalPositiveJsonInteger(body, 'zona_id');
-        const finalized = current.estado === 'entregado' || current.estado === 'cancelado';
-        if (finalized && estadoPresent && estado !== null && estado !== current.estado) {
-          throw pedidoUpdateError(409, 'El pedido finalizado sólo admite correcciones administrativas');
-        }
 
         // Orden global: actor -> pedido -> chofer -> zona -> pedido UPDATE.
         if (choferInput.present && choferInput.value !== null) {

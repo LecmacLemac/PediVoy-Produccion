@@ -38,12 +38,29 @@ function buildHarness({
   return { handler, calls };
 }
 
-async function invoke(handler, body, user = { uid: 5, role: 'admin', empresa_id: 7 }) {
-  const req = { params: { id: '42' }, body, user };
+async function invoke(handler, body, user = { uid: 5, role: 'admin', empresa_id: 7 }, pedidoId = '42') {
+  const req = { params: { id: pedidoId }, body, user };
   const res = responseHarness();
   await handler(req, res);
   return res;
 }
+
+for (const pedidoId of ['042', '42.0', ' 42', '42 ', '4.2e1', '0', '-42', '2147483648']) {
+  test(`rechaza ID de pedido no canónico ${JSON.stringify(pedidoId)} antes de actor/SQL`, async () => {
+    const h = buildHarness();
+    const res = await invoke(h.handler, { metodo_pago: 'efectivo' }, undefined, pedidoId);
+    assert.equal(res.statusCode, 400);
+    assert.match(res.payload.error, /ID de pedido inválido/);
+    assert.deepEqual(h.calls, []);
+  });
+}
+
+test('acepta ID decimal positivo canónico dentro de int4', async () => {
+  const h = buildHarness();
+  const res = await invoke(h.handler, { metodo_pago: 'efectivo' }, undefined, '42');
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(h.calls.find(call => /FROM pedidos/.test(call.sql)).params, [42, 7]);
+});
 
 for (const [label, value] of [
   ['string', '9'], ['cero', 0], ['negativo', -1], ['decimal', 1.5], ['NaN', Number.NaN], ['objeto', {}],
@@ -121,7 +138,10 @@ for (const [label, value, status] of [
   ['diferente', 8, 409], ['string', '7', 400], ['cero', 0, 400], ['decimal', 7.5, 400],
 ]) {
   test(`rechaza empresa_id ${label} sin mutación`, async () => {
-    const h = buildHarness();
+    const pedido = status === 400
+      ? { id: 42, empresa_id: 7, punto_entrega_id: 12, monto: 3000, estado: 'pendiente' }
+      : undefined;
+    const h = buildHarness({ pedido });
     const res = await invoke(h.handler, { empresa_id: value, metodo_pago: 'efectivo' });
     assert.equal(res.statusCode, status);
     assert.equal(h.calls.some(call => /UPDATE pedidos/.test(call.sql)), false);
@@ -162,7 +182,9 @@ for (const [field, value] of [
   ['estado', 'ENTREGADO'], ['estado', 'inventado'], ['metodo_pago', 'bitcoin'], ['metodo_pago', ' EFECTIVO '],
 ]) {
   test(`rechaza payload no canónico ${field}=${JSON.stringify(value)}`, async () => {
-    const h = buildHarness();
+    const h = buildHarness({
+      pedido: { id: 42, empresa_id: 7, punto_entrega_id: 12, monto: 3000, estado: 'pendiente' },
+    });
     const res = await invoke(h.handler, { [field]: value });
     assert.equal(res.statusCode, 400);
     assert.equal(h.calls.some(call => /UPDATE pedidos/.test(call.sql)), false);

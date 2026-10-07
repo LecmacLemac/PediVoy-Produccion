@@ -49,6 +49,7 @@ function createHarness({ itemsOk = true, finalized = false, pedidoResponse } = {
     pedidoEditCoordinator: {
       capture: () => activeContext,
       isActive: context => context === activeContext,
+      canSave: context => context === activeContext,
     },
     dlg_itemsBody: { querySelectorAll: () => [row] },
     btnSaveAll: { textContent: 'Guardar' },
