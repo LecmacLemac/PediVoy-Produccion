@@ -5,6 +5,7 @@ const MASKED_PARTICIPANT = /^\*{3,11}\d{4}$/;
 const STATUS = Object.freeze({
   queued: Object.freeze({ label: 'En cola', tone: 'pending', help: 'El mensaje espera procesamiento.', retrySafe: false }),
   pending: Object.freeze({ label: 'En cola', tone: 'pending', help: 'El mensaje espera procesamiento.', retrySafe: false }),
+  sending: Object.freeze({ label: 'Enviando', tone: 'pending', help: 'El mensaje se está enviando.', retrySafe: false }),
   sent: Object.freeze({ label: 'Enviado', tone: 'sent', help: 'Meta aceptó el mensaje.', retrySafe: false }),
   delivered: Object.freeze({ label: 'Entregado', tone: 'delivered', help: 'El mensaje llegó al dispositivo.', retrySafe: false }),
   read: Object.freeze({ label: 'Leído', tone: 'read', help: 'El destinatario abrió el mensaje.', retrySafe: false }),

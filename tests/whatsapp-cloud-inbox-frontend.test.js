@@ -239,7 +239,7 @@ test('teléfono se acepta sólo si ya viene enmascarado y preview no usa PII cru
 
 test('estados tienen etiquetas españolas y outcome_unknown advierte no reenviar', () => {
   const expected = {
-    queued: 'En cola', sent: 'Enviado', delivered: 'Entregado', read: 'Leído',
+    queued: 'En cola', sending: 'Enviando', sent: 'Enviado', delivered: 'Entregado', read: 'Leído',
     failed: 'Falló', outcome_unknown: 'Resultado incierto', received: 'Recibido',
   };
   for (const [status, label] of Object.entries(expected)) assert.equal(statusMeta(status).label, label);
