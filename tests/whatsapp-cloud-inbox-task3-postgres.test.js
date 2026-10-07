@@ -6,7 +6,11 @@ import net from 'node:net';
 import { join } from 'node:path';
 import pg from 'pg';
 
-import { listCloudConversations, markCloudConversationRead } from '../src/whatsappCloud/inboxRepository.js';
+import {
+  listCloudConversations,
+  markCloudConversationRead,
+  updateCloudConversationState,
+} from '../src/whatsappCloud/inboxRepository.js';
 
 let bin;
 try { bin = execFileSync('pg_config', ['--bindir'], { encoding: 'utf8' }).trim(); } catch {}
@@ -55,7 +59,8 @@ async function withDatabase(work) {
     await pool.query('CREATE TABLE empresas (id INTEGER PRIMARY KEY)');
     await pool.query(`CREATE TABLE usuarios (
       id SERIAL PRIMARY KEY, username TEXT NOT NULL UNIQUE, password TEXT NOT NULL,
-      role TEXT NOT NULL, empresa_id INTEGER REFERENCES empresas(id) ON DELETE CASCADE
+      role TEXT NOT NULL, empresa_id INTEGER REFERENCES empresas(id) ON DELETE CASCADE,
+      activo BOOLEAN NOT NULL DEFAULT TRUE
     )`);
     await pool.query(`CREATE TABLE puntos_entrega (
       id SERIAL PRIMARY KEY, empresa_id INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
@@ -209,7 +214,7 @@ test('watermarks son independientes por usuario y outbound/status no incrementa 
     const ids = await seed(pool);
     const query = async (sql, params, options) => (await pool.query(sql, params, options)).rows;
     const renderedId = (await pool.query("SELECT max(id)::text id FROM whatsapp_cloud_messages WHERE empresa_id=1 AND participant_wa_id='5493515550001' AND direction='inbound'")).rows[0].id;
-    await markCloudConversationRead({ pool, empresaId: 1, conversationId: ids.one, usuarioId: 11, lastReadMessageId: renderedId });
+    await markCloudConversationRead({ pool, empresaId: 1, conversationId: ids.one, usuarioId: 11, actorRole: 'admin', lastReadMessageId: renderedId });
     let user11 = await listCloudConversations({ query, empresaId: 1, usuarioId: 11 });
     let user12 = await listCloudConversations({ query, empresaId: 1, usuarioId: 12 });
     assert.equal(user11.conversations[0].unreadCount, 0);
@@ -234,7 +239,7 @@ test('inbound insertado después del GET history permanece unread al confirmar s
       (empresa_id,event_kind,dedupe_key,message_id,sender_id,message_type,event_data,received_at)
       VALUES (1,'message','after-history','after-history','5493515550001','text','{"text":{"body":"after"}}','2026-10-07T10:04:00Z')`);
     await markCloudConversationRead({
-      pool, empresaId: 1, conversationId: ids.one, usuarioId: 11, lastReadMessageId: renderedId,
+      pool, empresaId: 1, conversationId: ids.one, usuarioId: 11, actorRole: 'admin', lastReadMessageId: renderedId,
     });
     const listed = await listCloudConversations({ query, empresaId: 1, usuarioId: 11 });
     assert.equal(listed.conversations[0].unreadCount, 1);
@@ -245,7 +250,7 @@ test('mark-read rechaza IDs outbound, ajenos y cross-tenant sin mutar watermark'
   await withDatabase(async pool => {
     const ids = await seed(pool);
     const ownInbound = (await pool.query("SELECT min(id)::text id FROM whatsapp_cloud_messages WHERE empresa_id=1 AND direction='inbound'")).rows[0].id;
-    await markCloudConversationRead({ pool, empresaId: 1, conversationId: ids.one, usuarioId: 11, lastReadMessageId: ownInbound });
+    await markCloudConversationRead({ pool, empresaId: 1, conversationId: ids.one, usuarioId: 11, actorRole: 'admin', lastReadMessageId: ownInbound });
     const before = (await pool.query('SELECT last_read_message_id::text id, xmin::text xmin FROM whatsapp_cloud_conversation_reads WHERE empresa_id=1 AND conversation_id=$1 AND usuario_id=11', [ids.one])).rows[0];
     const outbound = (await pool.query(`INSERT INTO whatsapp_cloud_messages
       (empresa_id,direction,participant_wa_id,message_type,text_body,delivery_status,state_rank,message_at,sent_at,created_at,updated_at)
@@ -255,10 +260,222 @@ test('mark-read rechaza IDs outbound, ajenos y cross-tenant sin mutar watermark'
     const other = (await pool.query("SELECT id::text FROM whatsapp_cloud_messages WHERE empresa_id=1 AND participant_wa_id='5493515550099'")).rows[0].id;
     const crossTenant = (await pool.query("SELECT id::text FROM whatsapp_cloud_messages WHERE empresa_id=2 AND direction='inbound'")).rows[0].id;
     for (const candidate of [outbound, other, crossTenant]) {
-      await assert.rejects(markCloudConversationRead({ pool, empresaId: 1, conversationId: ids.one, usuarioId: 11, lastReadMessageId: candidate }), error => error?.code === 'CLOUD_INBOX_INVALID_ARGUMENT');
+      await assert.rejects(markCloudConversationRead({ pool, empresaId: 1, conversationId: ids.one, usuarioId: 11, actorRole: 'admin', lastReadMessageId: candidate }), error => error?.code === 'CLOUD_INBOX_INVALID_ARGUMENT');
     }
     const after = (await pool.query('SELECT last_read_message_id::text id, xmin::text xmin FROM whatsapp_cloud_conversation_reads WHERE empresa_id=1 AND conversation_id=$1 AND usuario_id=11', [ids.one])).rows[0];
     assert.deepEqual(after, before);
+  });
+});
+
+test('actor lock primero: read y PATCH ganan antes de desactivación/reasignación y luego ésta progresa', async () => {
+  await withDatabase(async pool => {
+    const ids = await seed(pool);
+    const renderedId = (await pool.query("SELECT max(id)::text id FROM whatsapp_cloud_messages WHERE empresa_id=1 AND direction='inbound'")).rows[0].id;
+
+    const projectionBlocker = await pool.connect();
+    try {
+      await projectionBlocker.query('BEGIN');
+      await projectionBlocker.query('SELECT public.whatsapp_cloud_messages_lock_projection(1)');
+      const readPromise = markCloudConversationRead({
+        pool, empresaId: 1, conversationId: ids.one, usuarioId: 11, actorRole: 'admin', lastReadMessageId: renderedId,
+      });
+      await waitForAdvisoryWaiters(pool, 1);
+      let actorChangeSettled = false;
+      const actorChange = pool.query('UPDATE usuarios SET activo=false WHERE id=11').finally(() => { actorChangeSettled = true; });
+      await new Promise(resolve => setTimeout(resolve, 60));
+      assert.equal(actorChangeSettled, false, 'actor update must wait behind the mutation actor lock');
+      await projectionBlocker.query('COMMIT');
+      assert.equal((await readPromise).lastReadMessageId, renderedId);
+      await actorChange;
+      assert.equal((await pool.query('SELECT activo FROM usuarios WHERE id=11')).rows[0].activo, false);
+    } finally {
+      await projectionBlocker.query('ROLLBACK').catch(() => {});
+      projectionBlocker.release();
+    }
+
+    await pool.query("UPDATE usuarios SET activo=true, role='admin', empresa_id=1 WHERE id=11");
+    const patchVersion = (await pool.query(
+      'SELECT version FROM whatsapp_cloud_conversations WHERE id=$1::uuid', [ids.one],
+    )).rows[0].version;
+    const conversationBlocker = await pool.connect();
+    try {
+      await conversationBlocker.query('BEGIN');
+      await conversationBlocker.query('SELECT 1 FROM whatsapp_cloud_conversations WHERE empresa_id=1 AND id=$1::uuid FOR UPDATE', [ids.one]);
+      const patchPromise = updateCloudConversationState({
+        pool, empresaId: 1, conversationId: ids.one, usuarioId: 11, actorRole: 'admin',
+        workflowStatus: 'resolved', expectedVersion: patchVersion,
+      });
+      await new Promise(resolve => setTimeout(resolve, 60));
+      let reassignmentSettled = false;
+      const reassignment = pool.query('UPDATE usuarios SET empresa_id=2 WHERE id=11').finally(() => { reassignmentSettled = true; });
+      await new Promise(resolve => setTimeout(resolve, 60));
+      assert.equal(reassignmentSettled, false, 'actor reassignment must wait behind the mutation actor lock');
+      await conversationBlocker.query('COMMIT');
+      assert.equal((await patchPromise).outcome, 'updated');
+      await reassignment;
+      assert.equal((await pool.query('SELECT empresa_id FROM usuarios WHERE id=11')).rows[0].empresa_id, 2);
+    } finally {
+      await conversationBlocker.query('ROLLBACK').catch(() => {});
+      conversationBlocker.release();
+    }
+  });
+});
+
+test('actor change primero: read y PATCH rechazan desactivación/reasignación sin mutar', async () => {
+  await withDatabase(async pool => {
+    const ids = await seed(pool);
+    const renderedId = (await pool.query("SELECT max(id)::text id FROM whatsapp_cloud_messages WHERE empresa_id=1 AND direction='inbound'")).rows[0].id;
+
+    const actorWriter = await pool.connect();
+    try {
+      await actorWriter.query('BEGIN');
+      await actorWriter.query('UPDATE usuarios SET activo=false WHERE id=11');
+      const readPromise = markCloudConversationRead({
+        pool, empresaId: 1, conversationId: ids.one, usuarioId: 11, actorRole: 'admin', lastReadMessageId: renderedId,
+      });
+      await new Promise(resolve => setTimeout(resolve, 60));
+      await actorWriter.query('COMMIT');
+      await assert.rejects(readPromise, error => error?.code === 'CLOUD_INBOX_ACTOR_FORBIDDEN');
+      assert.equal((await pool.query('SELECT count(*)::int count FROM whatsapp_cloud_conversation_reads WHERE usuario_id=11')).rows[0].count, 0);
+    } finally {
+      await actorWriter.query('ROLLBACK').catch(() => {});
+      actorWriter.release();
+    }
+
+    await pool.query("UPDATE usuarios SET activo=true, role='admin', empresa_id=1 WHERE id=11");
+    const beforePatch = (await pool.query(
+      'SELECT workflow_status,version FROM whatsapp_cloud_conversations WHERE id=$1::uuid', [ids.one],
+    )).rows[0];
+    const reassignmentWriter = await pool.connect();
+    try {
+      await reassignmentWriter.query('BEGIN');
+      await reassignmentWriter.query('UPDATE usuarios SET empresa_id=2 WHERE id=11');
+      const patchPromise = updateCloudConversationState({
+        pool, empresaId: 1, conversationId: ids.one, usuarioId: 11, actorRole: 'admin',
+        workflowStatus: 'resolved', expectedVersion: beforePatch.version,
+      });
+      await new Promise(resolve => setTimeout(resolve, 60));
+      await reassignmentWriter.query('COMMIT');
+      await assert.rejects(patchPromise, error => error?.code === 'CLOUD_INBOX_ACTOR_FORBIDDEN');
+      const current = (await pool.query('SELECT workflow_status,version FROM whatsapp_cloud_conversations WHERE id=$1::uuid', [ids.one])).rows[0];
+      assert.deepEqual(current, beforePatch);
+    } finally {
+      await reassignmentWriter.query('ROLLBACK').catch(() => {});
+      reassignmentWriter.release();
+    }
+  });
+});
+
+test('actor races cubren read-reasignación y PATCH-desactivación en ambos ganadores', async () => {
+  await withDatabase(async pool => {
+    const ids = await seed(pool);
+    const renderedId = (await pool.query("SELECT max(id)::text id FROM whatsapp_cloud_messages WHERE empresa_id=1 AND direction='inbound'")).rows[0].id;
+
+    const projectionBlocker = await pool.connect();
+    try {
+      await projectionBlocker.query('BEGIN');
+      await projectionBlocker.query('SELECT public.whatsapp_cloud_messages_lock_projection(1)');
+      const read = markCloudConversationRead({
+        pool, empresaId: 1, conversationId: ids.one, usuarioId: 11, actorRole: 'admin', lastReadMessageId: renderedId,
+      });
+      await waitForAdvisoryWaiters(pool, 1);
+      let reassigned = false;
+      const reassign = pool.query('UPDATE usuarios SET empresa_id=2 WHERE id=11').finally(() => { reassigned = true; });
+      await new Promise(resolve => setTimeout(resolve, 60));
+      assert.equal(reassigned, false);
+      await projectionBlocker.query('COMMIT');
+      await read;
+      await reassign;
+    } finally {
+      await projectionBlocker.query('ROLLBACK').catch(() => {});
+      projectionBlocker.release();
+    }
+
+    await pool.query("UPDATE usuarios SET activo=true, empresa_id=1 WHERE id=11");
+    const patchVersion = (await pool.query('SELECT version FROM whatsapp_cloud_conversations WHERE id=$1::uuid', [ids.one])).rows[0].version;
+    const conversationBlocker = await pool.connect();
+    try {
+      await conversationBlocker.query('BEGIN');
+      await conversationBlocker.query('SELECT 1 FROM whatsapp_cloud_conversations WHERE id=$1::uuid FOR UPDATE', [ids.one]);
+      const patch = updateCloudConversationState({
+        pool, empresaId: 1, conversationId: ids.one, usuarioId: 11, actorRole: 'admin',
+        priority: 'urgent', expectedVersion: patchVersion,
+      });
+      await new Promise(resolve => setTimeout(resolve, 60));
+      let deactivated = false;
+      const deactivate = pool.query('UPDATE usuarios SET activo=false WHERE id=11').finally(() => { deactivated = true; });
+      await new Promise(resolve => setTimeout(resolve, 60));
+      assert.equal(deactivated, false);
+      await conversationBlocker.query('COMMIT');
+      assert.equal((await patch).outcome, 'updated');
+      await deactivate;
+    } finally {
+      await conversationBlocker.query('ROLLBACK').catch(() => {});
+      conversationBlocker.release();
+    }
+
+    await pool.query("UPDATE usuarios SET activo=true, empresa_id=1 WHERE id=11");
+    const reassignmentWriter = await pool.connect();
+    try {
+      await reassignmentWriter.query('BEGIN');
+      await reassignmentWriter.query('UPDATE usuarios SET empresa_id=2 WHERE id=11');
+      const read = markCloudConversationRead({
+        pool, empresaId: 1, conversationId: ids.one, usuarioId: 11, actorRole: 'admin', lastReadMessageId: renderedId,
+      });
+      await new Promise(resolve => setTimeout(resolve, 60));
+      await reassignmentWriter.query('COMMIT');
+      await assert.rejects(read, error => error?.code === 'CLOUD_INBOX_ACTOR_FORBIDDEN');
+    } finally {
+      await reassignmentWriter.query('ROLLBACK').catch(() => {});
+      reassignmentWriter.release();
+    }
+
+    await pool.query("UPDATE usuarios SET activo=true, empresa_id=1 WHERE id=11");
+    const beforePatch = (await pool.query('SELECT workflow_status,priority,version FROM whatsapp_cloud_conversations WHERE id=$1::uuid', [ids.one])).rows[0];
+    const actorWriter = await pool.connect();
+    try {
+      await actorWriter.query('BEGIN');
+      await actorWriter.query('UPDATE usuarios SET activo=false WHERE id=11');
+      const patch = updateCloudConversationState({
+        pool, empresaId: 1, conversationId: ids.one, usuarioId: 11, actorRole: 'admin',
+        workflowStatus: 'resolved', expectedVersion: beforePatch.version,
+      });
+      await new Promise(resolve => setTimeout(resolve, 60));
+      await actorWriter.query('COMMIT');
+      await assert.rejects(patch, error => error?.code === 'CLOUD_INBOX_ACTOR_FORBIDDEN');
+      assert.deepEqual(
+        (await pool.query('SELECT workflow_status,priority,version FROM whatsapp_cloud_conversations WHERE id=$1::uuid', [ids.one])).rows[0],
+        beforePatch,
+      );
+    } finally {
+      await actorWriter.query('ROLLBACK').catch(() => {});
+      actorWriter.release();
+    }
+  });
+});
+
+test('super se revalida exacto, activo y global dentro de la transacción', async () => {
+  await withDatabase(async pool => {
+    const ids = await seed(pool);
+    await pool.query("INSERT INTO usuarios(id,username,password,role,empresa_id,activo) VALUES (31,'super','x','super',NULL,true)");
+    const version = (await pool.query('SELECT version FROM whatsapp_cloud_conversations WHERE id=$1::uuid', [ids.one])).rows[0].version;
+    const updated = await updateCloudConversationState({
+      pool, empresaId: 1, conversationId: ids.one, usuarioId: 31, actorRole: 'super',
+      priority: 'urgent', expectedVersion: version,
+    });
+    assert.equal(updated.outcome, 'updated');
+
+    await pool.query("UPDATE usuarios SET role='admin', empresa_id=1 WHERE id=31");
+    await assert.rejects(updateCloudConversationState({
+      pool, empresaId: 1, conversationId: ids.one, usuarioId: 31, actorRole: 'super',
+      workflowStatus: 'resolved', expectedVersion: updated.conversation.version,
+    }), error => error?.code === 'CLOUD_INBOX_ACTOR_FORBIDDEN');
+
+    await pool.query("UPDATE usuarios SET role='super', empresa_id=NULL, activo=false WHERE id=31");
+    const renderedId = (await pool.query("SELECT max(id)::text id FROM whatsapp_cloud_messages WHERE empresa_id=1 AND direction='inbound'")).rows[0].id;
+    await assert.rejects(markCloudConversationRead({
+      pool, empresaId: 1, conversationId: ids.one, usuarioId: 31, actorRole: 'super', lastReadMessageId: renderedId,
+    }), error => error?.code === 'CLOUD_INBOX_ACTOR_FORBIDDEN');
   });
 });
 
@@ -369,21 +586,33 @@ test('plan de listado agrega set-based, pagina antes de hidratar y usa índice u
     assert.match(captured.sql, /latest_messages AS/);
     assert.match(captured.sql, /inbound_stats AS/);
     assert.ok(captured.sql.indexOf('LIMIT $2') < captured.sql.indexOf('FROM public.puntos_entrega'));
+    const collectPlanNodes = plan => {
+      const nodes = [];
+      const visit = node => {
+        if (!node || typeof node !== 'object') return;
+        if (node['Node Type']) nodes.push(node);
+        for (const child of node.Plans || []) visit(child);
+      };
+      for (const root of plan) visit(root.Plan);
+      return nodes;
+    };
+    const normalExplain = await pool.query(`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${captured.sql}`, captured.params);
+    const normalNodes = collectPlanNodes(normalExplain.rows[0]['QUERY PLAN']);
+    assert.equal(normalNodes.some(node => node['Parent Relationship'] === 'SubPlan'), false);
+    assert.equal(normalNodes.some(node => (
+      node['Relation Name'] === 'whatsapp_cloud_messages' && Number(node['Actual Loops']) > 1
+    )), false, 'productive message scans must stay set-based under the normal planner');
+    assert.equal(normalNodes.some(node => (
+      /Aggregate/.test(String(node['Node Type'])) && Number(node['Actual Loops']) > 1
+    )), false, 'productive aggregates must not run once per conversation');
+
     await pool.query('SET enable_seqscan = off');
     const explained = await pool.query(`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${captured.sql}`, captured.params);
     const productivePlan = explained.rows[0]['QUERY PLAN'];
-    const nodes = [];
-    const visit = node => {
-      if (!node || typeof node !== 'object') return;
-      if (node['Node Type']) nodes.push(node);
-      for (const child of node.Plans || []) visit(child);
-    };
-    for (const root of productivePlan) visit(root.Plan);
+    const nodes = collectPlanNodes(productivePlan);
     assert.equal(nodes.some(node => node['Parent Relationship'] === 'SubPlan'), false);
     assert.equal(nodes.some(node => String(node['Index Name'] || '') === 'idx_whatsapp_cloud_messages_inbound_unread'), true);
     assert.equal(nodes.some(node => /^idx_whatsapp_cloud_messages_(?:timeline|conversations)$/.test(String(node['Index Name'] || ''))), true);
-    const inboundScan = nodes.find(node => node['Index Name'] === 'idx_whatsapp_cloud_messages_inbound_unread');
-    assert.ok(inboundScan['Actual Rows'] <= 2400, `inbound scan must stay bounded, got ${inboundScan['Actual Rows']}`);
 
     const second = await listCloudConversations({ query, empresaId: 1, usuarioId: 11, limit: 10, cursor: first.nextCursor });
     assert.equal(second.counters, null);

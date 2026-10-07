@@ -53,6 +53,12 @@ async function withDatabase(work, { bootstrap = true } = {}) {
     pool = new pg.Pool({ host: '127.0.0.1', port, user: 'cloud_inbox_test', database: 'postgres' });
     if (bootstrap) {
       await pool.query('CREATE TABLE empresas (id INTEGER PRIMARY KEY)');
+      await pool.query(`CREATE TABLE usuarios (
+        id SERIAL PRIMARY KEY,
+        role TEXT NOT NULL,
+        empresa_id INTEGER REFERENCES empresas(id) ON DELETE CASCADE,
+        activo BOOLEAN NOT NULL DEFAULT TRUE
+      )`);
       await pool.query(`
         CREATE TABLE whatsapp_cloud_events (
           id BIGSERIAL PRIMARY KEY,
@@ -5626,7 +5632,7 @@ test('inbound conserva identidad, reabre pending e incrementa version sin degrad
 
 test('PATCH no-op PostgreSQL conserva version y updated_at, pero CAS incorrecto queda stale', async () => {
   await withDatabase(async pool => {
-    await pool.query('INSERT INTO empresas(id) VALUES (1)');
+    await pool.query("INSERT INTO empresas(id) VALUES (1); INSERT INTO usuarios(id,role,empresa_id,activo) VALUES (11,'admin',1,true)");
     await pool.query(migrationSql);
     await pool.query(`
       INSERT INTO whatsapp_cloud_events
@@ -5639,10 +5645,8 @@ test('PATCH no-op PostgreSQL conserva version y updated_at, pero CAS incorrecto 
         FROM whatsapp_cloud_conversations
        WHERE empresa_id=1 AND participant_wa_id='549351555903'
     `)).rows[0];
-    const query = async (sql, params) => (await pool.query(sql, params)).rows;
-
     const noOp = await updateCloudConversationState({
-      query, empresaId: 1, conversationId: before.id,
+      pool, empresaId: 1, usuarioId: 11, actorRole: 'admin', conversationId: before.id,
       workflowStatus: 'pending', priority: 'normal', expectedVersion: before.version,
     });
     assert.equal(noOp.outcome, 'unchanged');
@@ -5657,7 +5661,7 @@ test('PATCH no-op PostgreSQL conserva version y updated_at, pero CAS incorrecto 
     assert.equal(after.updated_at.toISOString(), before.updated_at.toISOString());
 
     const stale = await updateCloudConversationState({
-      query, empresaId: 1, conversationId: before.id,
+      pool, empresaId: 1, usuarioId: 11, actorRole: 'admin', conversationId: before.id,
       workflowStatus: 'pending', priority: 'normal', expectedVersion: before.version + 1,
     });
     assert.equal(stale.outcome, 'stale');
@@ -5667,7 +5671,7 @@ test('PATCH no-op PostgreSQL conserva version y updated_at, pero CAS incorrecto 
 
 test('carrera PATCH primero resuelve y el inbound durable posterior reabre pending', async () => {
   await withDatabase(async pool => {
-    await pool.query('INSERT INTO empresas(id) VALUES (1)');
+    await pool.query("INSERT INTO empresas(id) VALUES (1); INSERT INTO usuarios(id,role,empresa_id,activo) VALUES (11,'admin',1,true)");
     await pool.query(migrationSql);
     await pool.query(`
       INSERT INTO whatsapp_cloud_events
@@ -5683,8 +5687,8 @@ test('carrera PATCH primero resuelve y el inbound durable posterior reabre pendi
       await patchClient.query('BEGIN');
       const patchPid = (await patchClient.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
       const patched = await updateCloudConversationState({
-        query: async (sql, params) => (await patchClient.query(sql, params)).rows,
-        empresaId: 1, conversationId: initial.id,
+        client: patchClient,
+        empresaId: 1, usuarioId: 11, actorRole: 'admin', conversationId: initial.id,
         workflowStatus: 'resolved', priority: 'urgent', expectedVersion: initial.version,
       });
       assert.equal(patched.outcome, 'updated');
@@ -5717,7 +5721,7 @@ test('carrera PATCH primero resuelve y el inbound durable posterior reabre pendi
 
 test('carrera inbound primero invalida expectedVersion previo y PATCH queda stale con pending', async () => {
   await withDatabase(async pool => {
-    await pool.query('INSERT INTO empresas(id) VALUES (1)');
+    await pool.query("INSERT INTO empresas(id) VALUES (1); INSERT INTO usuarios(id,role,empresa_id,activo) VALUES (11,'admin',1,true)");
     await pool.query(migrationSql);
     await pool.query(`
       INSERT INTO whatsapp_cloud_events
@@ -5741,8 +5745,8 @@ test('carrera inbound primero invalida expectedVersion previo y PATCH queda stal
 
       const patchPid = (await patchClient.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
       const patch = updateCloudConversationState({
-        query: async (sql, params) => (await patchClient.query(sql, params)).rows,
-        empresaId: 1, conversationId: initial.id,
+        client: patchClient,
+        empresaId: 1, usuarioId: 11, actorRole: 'admin', conversationId: initial.id,
         workflowStatus: 'resolved', priority: 'high', expectedVersion: initial.version,
       });
       await waitUntil(async () => {
@@ -5769,7 +5773,7 @@ test('carrera inbound primero invalida expectedVersion previo y PATCH queda stal
 });
 
 after(() => {
-  assert.deepEqual([...createdDirectories].map(basename), [], 'all temporary PostgreSQL clusters must be removed');
+  assert.deepEqual([...createdDirectories].map(directory => basename(directory)), [], 'all temporary PostgreSQL clusters must be removed');
   const residual = readdirSync(process.cwd()).filter(name => name.startsWith(tempPrefix));
   assert.deepEqual(residual, [], 'no residual temporary PostgreSQL cluster directories');
 });

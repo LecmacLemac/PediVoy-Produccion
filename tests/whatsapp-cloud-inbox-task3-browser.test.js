@@ -100,7 +100,10 @@ async function withInbox(options, work) {
   await new Promise(resolve => server.once('listening', resolve));
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   let browser;
-  const requests = { lists: [], messages: [], reads: [], states: [], counts: { read: 0, state: 0 } };
+  const requests = {
+    lists: [], messages: [], reads: [], states: [], counts: { read: 0, state: 0 },
+    listInFlight: 0, maxListInFlight: 0,
+  };
   try {
     browser = await puppeteer.launch({ executablePath: chromePath, headless: true, args: ['--no-sandbox'] });
     const page = await browser.newPage();
@@ -121,10 +124,16 @@ async function withInbox(options, work) {
         if (url.pathname === '/api/admin/whatsapp-cloud/conversations') {
           const entry = { url: url.toString(), params: Object.fromEntries(url.searchParams.entries()) };
           requests.lists.push(entry);
-          const response = options.listResponse
-            ? await options.listResponse({ url, index: requests.lists.length - 1, requests })
-            : { body: { conversations: operationalConversations(), counters, nextCursor: null } };
-          await respondJson(request, response);
+          requests.listInFlight += 1;
+          requests.maxListInFlight = Math.max(requests.maxListInFlight, requests.listInFlight);
+          try {
+            const response = options.listResponse
+              ? await options.listResponse({ url, index: requests.lists.length - 1, requests })
+              : { body: { conversations: operationalConversations(), counters, nextCursor: null } };
+            await respondJson(request, response);
+          } finally {
+            requests.listInFlight -= 1;
+          }
           return;
         }
         const target = endpoint(url);
@@ -343,6 +352,44 @@ browserTest('Task 3 descarta reload de read si un PATCH exitoso cambia el estado
     await waitFor(() => requests.states.length === 1, 'PATCH durante GET de read');
     await waitFor(() => requests.lists.length === 3, 'GET canónico posterior al descarte stale');
     await page.waitForFunction(() => document.querySelector('#conversationWorkflow')?.textContent === 'Reabrir conversación');
+    assert.deepEqual(await page.$$eval('#queueCounters .counter-chip', chips => chips.map(chip => chip.textContent)), [
+      'Total: 1', 'Por responder: 0', 'En proceso: 0', 'Revisar: 0', 'Respondidas: 1',
+    ]);
+  });
+});
+
+browserTest('Task 3 coalesce reloads hasta aplicar una revisión estable con un solo GET en vuelo', async () => {
+  const initial = conversation(ids.high, '0462', { priority: 'high', unreadCount: 2, version: 4 });
+  const firstPatch = { ...initial, priority: 'urgent', version: 5 };
+  const secondPatch = { ...firstPatch, workflowStatus: 'resolved', unreadCount: 0, version: 6 };
+  await withInbox({
+    listResponse: async ({ index }) => {
+      if (index === 0) return { body: { conversations: [initial], counters: { total: 1, pending: 1, inProcess: 0, review: 0, resolved: 0 }, nextCursor: null } };
+      if (index === 1) return { delayMs: 180, body: { conversations: [initial], counters: { total: 1, pending: 1, inProcess: 0, review: 0, resolved: 0 }, nextCursor: null } };
+      if (index === 2) return { delayMs: 180, body: { conversations: [firstPatch], counters: { total: 1, pending: 1, inProcess: 0, review: 0, resolved: 0 }, nextCursor: null } };
+      return { body: { conversations: [secondPatch], counters: { total: 1, pending: 0, inProcess: 0, review: 0, resolved: 1 }, nextCursor: null } };
+    },
+    messagesResponse: async () => ({ body: { messages: [message(93, 'history para reload estable')], nextCursor: null } }),
+    stateResponse: async ({ index }) => ({ body: index === 0
+      ? { conversationId: ids.high, workflowStatus: 'pending', priority: 'urgent', version: 5 }
+      : { conversationId: ids.high, workflowStatus: 'resolved', priority: 'urgent', version: 6 } }),
+  }, async ({ page, requests }) => {
+    await page.waitForSelector('.conversation-card');
+    await page.click('.conversation-card');
+    await waitFor(() => requests.lists.length === 2, 'primer GET post-read');
+    await page.select('#conversationPriority', 'urgent');
+    await waitFor(() => requests.states.length === 1, 'primer PATCH durante primer GET');
+    await waitFor(() => requests.lists.length === 3, 'segundo GET coalescido');
+    await page.click('#conversationWorkflow');
+    await waitFor(() => requests.states.length === 2, 'segundo PATCH durante segundo GET');
+    await waitFor(() => requests.lists.length === 4, 'tercer GET estable');
+    await page.waitForFunction(() => document.querySelector('#conversationWorkflow')?.textContent === 'Reabrir conversación');
+    assert.equal(requests.maxListInFlight, 1);
+    assert.equal(requests.lists.length, 4, 'inicial más tres recargas acotadas por revisiones observadas');
+    const cards = await cardSnapshot(page);
+    assert.deepEqual(cards.map(card => card.id), [ids.high]);
+    assert.match(cards[0].text, /Respondida.*Prioridad urgent/);
+    assert.doesNotMatch(cards[0].text, /sin leer/);
     assert.deepEqual(await page.$$eval('#queueCounters .counter-chip', chips => chips.map(chip => chip.textContent)), [
       'Total: 1', 'Por responder: 0', 'En proceso: 0', 'Revisar: 0', 'Respondidas: 1',
     ]);

@@ -72,6 +72,8 @@ const stateMutationGate = createRequestGate();
 let conversationsController = null;
 let historyController = null;
 let returnFocusConversationId = null;
+let conversationLoadPromise = null;
+let conversationReloadRequested = false;
 
 function isMobileLayout() {
   return window.matchMedia('(max-width: 760px)').matches;
@@ -317,9 +319,8 @@ function renderHistory({ preserveScroll = false } = {}) {
   else elements.history.scrollTop = elements.history.scrollHeight;
 }
 
-async function loadConversations({ append = false, refreshAfterMutation = true } = {}) {
+async function performConversationLoad({ append = false } = {}) {
   if (state.role === 'super' && !state.companyId) return;
-  conversationsController?.abort();
   conversationsController = new AbortController();
   const generation = conversationGate.begin();
   const startedMutationRevision = state.mutationRevision;
@@ -346,10 +347,7 @@ async function loadConversations({ append = false, refreshAfterMutation = true }
       return;
     }
     if (!isListResponseCurrentForMutation(startedMutationRevision, state.mutationRevision)) {
-      if (refreshAfterMutation && conversationGate.isCurrent(generation)) {
-        await loadConversations({ append: false, refreshAfterMutation: false });
-      }
-      return;
+      return { staleMutationRevision: true };
     }
     const incoming = Array.isArray(payload.conversations) ? payload.conversations : [];
     const known = new Map((append ? state.conversations : []).map(item => [String(item.conversationId), item]));
@@ -379,6 +377,29 @@ async function loadConversations({ append = false, refreshAfterMutation = true }
     if (error?.name !== 'AbortError' && error?.message !== 'session_expired' && conversationGate.isCurrent(generation)) {
       setStatus('No se pudieron cargar las conversaciones.', 'error');
     }
+  }
+}
+
+async function loadConversations({ append = false } = {}) {
+  if (conversationLoadPromise) {
+    conversationReloadRequested = true;
+    return conversationLoadPromise;
+  }
+  conversationLoadPromise = (async () => {
+    let nextAppend = append;
+    do {
+      conversationReloadRequested = false;
+      const startedMutationRevision = state.mutationRevision;
+      const result = await performConversationLoad({ append: nextAppend });
+      nextAppend = false;
+      if (result?.staleMutationRevision) conversationReloadRequested = true;
+      if (state.mutationRevision !== startedMutationRevision) conversationReloadRequested = true;
+    } while (conversationReloadRequested);
+  })();
+  try {
+    return await conversationLoadPromise;
+  } finally {
+    conversationLoadPromise = null;
   }
 }
 

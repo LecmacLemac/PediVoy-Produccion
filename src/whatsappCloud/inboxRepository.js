@@ -82,6 +82,32 @@ function sanitizedError(code, message) {
   return error;
 }
 
+function requireActorRole(value) {
+  if (value !== 'admin' && value !== 'super') {
+    throw sanitizedError('CLOUD_INBOX_ACTOR_FORBIDDEN', 'WhatsApp Cloud actor forbidden');
+  }
+  return value;
+}
+
+async function lockAndRevalidateMutationActor(client, { usuarioId, actorRole, empresaId }) {
+  const result = await client.query(
+    `SELECT role, empresa_id, activo
+       FROM public.usuarios
+      WHERE id = $1
+      FOR UPDATE`,
+    [usuarioId],
+  );
+  const actor = result.rows[0];
+  const authorized = actor?.activo === true
+    && actor.role === actorRole
+    && (actorRole === 'admin'
+      ? Number(actor.empresa_id) === empresaId
+      : actor.empresa_id == null);
+  if (!authorized) {
+    throw sanitizedError('CLOUD_INBOX_ACTOR_FORBIDDEN', 'WhatsApp Cloud actor forbidden');
+  }
+}
+
 function maskParticipant(value) {
   const digits = String(value || '');
   if (!/^\d{6,15}$/.test(digits)) return '***';
@@ -532,15 +558,22 @@ function conversationStateDto(row) {
 }
 
 export async function updateCloudConversationState({
-  query,
+  pool,
+  client: transactionClient = null,
   empresaId,
+  usuarioId,
+  actorRole,
   conversationId,
   workflowStatus = null,
   priority = null,
   expectedVersion,
 } = {}) {
-  const runQuery = requireQuery(query);
+  const ownsTransaction = transactionClient == null;
+  if (ownsTransaction && (!pool || typeof pool.connect !== 'function')) throw new TypeError('pool es requerido');
+  if (!ownsTransaction && typeof transactionClient?.query !== 'function') throw new TypeError('client es inválido');
   const tenantId = requireTenantId(empresaId);
+  const actorId = requirePositiveInteger(usuarioId, 'usuarioId');
+  const expectedActorRole = requireActorRole(actorRole);
   const stableConversationId = requireConversationId(conversationId);
   const normalizedVersion = requirePositiveInteger(expectedVersion, 'expectedVersion');
   if (workflowStatus != null && !['pending', 'resolved'].includes(workflowStatus)) {
@@ -552,63 +585,96 @@ export async function updateCloudConversationState({
   if (workflowStatus == null && priority == null) {
     throw sanitizedError('CLOUD_INBOX_INVALID_ARGUMENT', 'Conversation state change required');
   }
+  const client = ownsTransaction ? await pool.connect() : transactionClient;
+  let commitAttempted = false;
+  let releaseError;
   try {
-    const updated = await runQuery(
-      `UPDATE public.whatsapp_cloud_conversations
-          SET workflow_status = COALESCE($3, workflow_status),
-              priority = COALESCE($4, priority),
-              version = version + 1,
-              updated_at = pg_catalog.NOW()
-        WHERE empresa_id = $1 AND id = $2::uuid AND version = $5
-          AND (workflow_status IS DISTINCT FROM COALESCE($3, workflow_status)
-            OR priority IS DISTINCT FROM COALESCE($4, priority))
-      RETURNING id, workflow_status, priority, version`,
-      [tenantId, stableConversationId, workflowStatus, priority, normalizedVersion],
-    );
-    if (updated.length === 1) {
-      return { outcome: 'updated', conversation: conversationStateDto(updated[0]) };
-    }
-    const current = await runQuery(
+    if (ownsTransaction) await client.query('BEGIN');
+    // Canonical mutation lock order: actor row -> conversation/projection rows.
+    await lockAndRevalidateMutationActor(client, {
+      usuarioId: actorId, actorRole: expectedActorRole, empresaId: tenantId,
+    });
+    const current = await client.query(
       `SELECT id, workflow_status, priority, version
          FROM public.whatsapp_cloud_conversations
         WHERE empresa_id = $1 AND id = $2::uuid
-        LIMIT 1`,
+        FOR UPDATE`,
       [tenantId, stableConversationId],
     );
-    if (current.length === 0) return { outcome: 'not_found', conversation: null };
-    const currentConversation = conversationStateDto(current[0]);
-    const isNoOp = currentConversation.version === normalizedVersion
-      && (workflowStatus == null || currentConversation.workflowStatus === workflowStatus)
-      && (priority == null || currentConversation.priority === priority);
-    return {
-      outcome: isNoOp ? 'unchanged' : 'stale',
-      conversation: currentConversation,
-    };
+    let result;
+    if (current.rows.length === 0) {
+      result = { outcome: 'not_found', conversation: null };
+    } else {
+      const currentConversation = conversationStateDto(current.rows[0]);
+      const versionMatches = currentConversation.version === normalizedVersion;
+      const isNoOp = versionMatches
+        && (workflowStatus == null || currentConversation.workflowStatus === workflowStatus)
+        && (priority == null || currentConversation.priority === priority);
+      if (!versionMatches) {
+        result = { outcome: 'stale', conversation: currentConversation };
+      } else if (isNoOp) {
+        result = { outcome: 'unchanged', conversation: currentConversation };
+      } else {
+        const updated = await client.query(
+          `UPDATE public.whatsapp_cloud_conversations
+              SET workflow_status = COALESCE($3, workflow_status),
+                  priority = COALESCE($4, priority),
+                  version = version + 1,
+                  updated_at = pg_catalog.NOW()
+            WHERE empresa_id = $1 AND id = $2::uuid AND version = $5
+          RETURNING id, workflow_status, priority, version`,
+          [tenantId, stableConversationId, workflowStatus, priority, normalizedVersion],
+        );
+        if (updated.rows.length !== 1) throw new Error('conversation state write lost locked row');
+        result = { outcome: 'updated', conversation: conversationStateDto(updated.rows[0]) };
+      }
+    }
+    if (ownsTransaction) {
+      commitAttempted = true;
+      await client.query('COMMIT');
+    }
+    return result;
   } catch (error) {
-    if (error?.code === 'CLOUD_INBOX_INVALID_ARGUMENT') throw error;
+    if (ownsTransaction && commitAttempted) {
+      releaseError = sanitizedError('CLOUD_INBOX_STATE_OUTCOME_UNKNOWN', 'WhatsApp Cloud state outcome unknown');
+      throw releaseError;
+    }
+    if (ownsTransaction) {
+      await client.query('ROLLBACK').catch(() => {
+        releaseError = sanitizedError('CLOUD_INBOX_STATE_FAILED', 'WhatsApp Cloud conversation state update failed');
+      });
+    }
+    if (error?.code === 'CLOUD_INBOX_INVALID_ARGUMENT' || error?.code === 'CLOUD_INBOX_ACTOR_FORBIDDEN') throw error;
     throw sanitizedError('CLOUD_INBOX_STATE_FAILED', 'WhatsApp Cloud conversation state update failed');
+  } finally {
+    if (ownsTransaction) client.release(releaseError);
   }
 }
 
 export async function markCloudConversationRead({
-  pool, empresaId, conversationId, usuarioId, lastReadMessageId,
+  pool, empresaId, conversationId, usuarioId, actorRole, lastReadMessageId,
 } = {}) {
   if (!pool || typeof pool.connect !== 'function') throw new TypeError('pool es requerido');
   const tenantId = requireTenantId(empresaId);
   const stableConversationId = requireConversationId(conversationId);
   const actorId = requirePositiveInteger(usuarioId, 'usuarioId');
+  const expectedActorRole = requireActorRole(actorRole);
   const renderedInboundId = requireCanonicalInt8(lastReadMessageId, 'lastReadMessageId');
   const client = await pool.connect();
   let commitAttempted = false;
   let releaseError;
   try {
     await client.query('BEGIN');
+    // Canonical mutation lock order: actor row -> projection namespace -> conversation.
+    await lockAndRevalidateMutationActor(client, {
+      usuarioId: actorId, actorRole: expectedActorRole, empresaId: tenantId,
+    });
     await client.query('SELECT public.whatsapp_cloud_messages_lock_projection($1)', [tenantId]);
     const conversation = await client.query(
       `SELECT conversation.participant_wa_id
          FROM public.whatsapp_cloud_conversations AS conversation
         WHERE conversation.empresa_id = $1 AND conversation.id = $2::uuid
-        LIMIT 1`,
+        FOR UPDATE`,
       [tenantId, stableConversationId],
     );
     if (conversation.rows.length !== 1) {
@@ -656,7 +722,7 @@ export async function markCloudConversationRead({
     if (error?.code !== 'CLOUD_INBOX_INVALID_ARGUMENT') {
       await client.query('ROLLBACK').catch(rollbackError => { releaseError = rollbackError; });
     }
-    if (error?.code === 'CLOUD_INBOX_INVALID_ARGUMENT') throw error;
+    if (error?.code === 'CLOUD_INBOX_INVALID_ARGUMENT' || error?.code === 'CLOUD_INBOX_ACTOR_FORBIDDEN') throw error;
     throw sanitizedError('CLOUD_INBOX_READ_FAILED', 'WhatsApp Cloud read watermark failed');
   } finally {
     client.release(releaseError);

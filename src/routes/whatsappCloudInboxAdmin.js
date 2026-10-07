@@ -140,6 +140,15 @@ function validConversationStateBody(body) {
   return { workflowStatus, priority, expectedVersion };
 }
 
+function validConversationReadBody(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
+  if (Object.keys(body).some(key => !['lastReadMessageId', 'empresa_id'].includes(key))) return null;
+  const lastReadMessageId = body.lastReadMessageId;
+  if (typeof lastReadMessageId !== 'string' || !/^[1-9][0-9]{0,18}$/.test(lastReadMessageId)
+    || BigInt(lastReadMessageId) > 9223372036854775807n) return null;
+  return { lastReadMessageId };
+}
+
 function pagination(query, defaultLimit) {
   const rawLimit = query?.limit;
   const limit = rawLimit == null ? defaultLimit : positiveInteger(rawLimit);
@@ -359,14 +368,14 @@ export function createWhatsAppCloudInboxAdminRouter({
     if (!canonicalUuid(req.params.conversationId)) {
       return res.status(400).json({ error: 'conversation_id_invalid' });
     }
-    const lastReadMessageId = req.body?.lastReadMessageId;
-    if (typeof lastReadMessageId !== 'string' || !/^[1-9][0-9]{0,18}$/.test(lastReadMessageId)
-      || BigInt(lastReadMessageId) > 9223372036854775807n) {
+    const read = validConversationReadBody(req.body);
+    if (!read) {
       return res.status(400).json({ error: 'last_read_message_id_invalid' });
     }
     try {
       const result = await markCloudConversationRead({
-        pool, empresaId, conversationId: req.params.conversationId, usuarioId, lastReadMessageId,
+        pool, empresaId, conversationId: req.params.conversationId, usuarioId,
+        actorRole: req.user.role, lastReadMessageId: read.lastReadMessageId,
       });
       if (!result) return res.status(404).json({ error: 'conversation_not_found' });
       return res.json(result);
@@ -374,13 +383,18 @@ export function createWhatsAppCloudInboxAdminRouter({
       if (error?.code === 'CLOUD_INBOX_READ_OUTCOME_UNKNOWN') {
         return res.status(503).json({ error: 'read_outcome_unknown' });
       }
+      if (error?.code === 'CLOUD_INBOX_ACTOR_FORBIDDEN') {
+        return res.status(403).json({ error: 'actor_forbidden' });
+      }
       if (isInvalidArgument(error)) return res.status(400).json({ error: 'last_read_message_id_invalid' });
       return res.status(500).json({ error: 'cloud_inbox_unavailable' });
     }
   });
   router.patch('/conversations/:conversationId/state', whatsappCloudInboxMutationGuard({ canonicalOrigin }), withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     const empresaId = resolveTenant(req, { allowBody: true });
+    const usuarioId = pgInt4Number(req.user?.uid);
     if (!empresaId) return res.status(400).json({ error: 'empresa_id_required' });
+    if (!usuarioId) return res.status(403).json({ error: 'Acceso denegado' });
     if (!canonicalUuid(req.params.conversationId)) {
       return res.status(400).json({ error: 'conversation_id_invalid' });
     }
@@ -388,8 +402,10 @@ export function createWhatsAppCloudInboxAdminRouter({
     if (!state) return res.status(400).json({ error: 'conversation_state_invalid' });
     try {
       const result = await updateCloudConversationState({
-        query,
+        pool,
         empresaId,
+        usuarioId,
+        actorRole: req.user.role,
         conversationId: req.params.conversationId,
         ...state,
       });
@@ -402,6 +418,12 @@ export function createWhatsAppCloudInboxAdminRouter({
       }
       return res.json(result.conversation);
     } catch (error) {
+      if (error?.code === 'CLOUD_INBOX_STATE_OUTCOME_UNKNOWN') {
+        return res.status(503).json({ error: 'state_outcome_unknown' });
+      }
+      if (error?.code === 'CLOUD_INBOX_ACTOR_FORBIDDEN') {
+        return res.status(403).json({ error: 'actor_forbidden' });
+      }
       if (isInvalidArgument(error)) return res.status(400).json({ error: 'conversation_state_invalid' });
       return res.status(500).json({ error: 'cloud_inbox_unavailable' });
     }

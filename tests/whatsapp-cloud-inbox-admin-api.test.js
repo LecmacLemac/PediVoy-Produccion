@@ -26,6 +26,23 @@ async function withServer(app, work) {
   }
 }
 
+function mutationPool(handler, { role = 'admin', empresaId = 7 } = {}) {
+  return {
+    async connect() {
+      return {
+        async query(sql, params) {
+          if (['BEGIN', 'COMMIT', 'ROLLBACK'].includes(sql)) return { rows: [] };
+          if (/FROM public\.usuarios/.test(sql)) {
+            return { rows: [{ role, empresa_id: role === 'super' ? null : empresaId, activo: true }] };
+          }
+          return { rows: await handler(sql, params) };
+        },
+        release() {},
+      };
+    },
+  };
+}
+
 function createHarness({ role, empresaId = 7 } = {}) {
   const calls = [];
   const app = express();
@@ -919,10 +936,13 @@ test('PATCH state exige JSON, Origin exacto, cambio válido y expectedVersion', 
       req.user = { uid: 11, role: 'admin', empresa_id: 7 };
       next();
     },
-    async query(sql, params) {
+    pool: mutationPool(async (sql, params) => {
       calls.push({ sql, params });
+      if (/^SELECT id, workflow_status/m.test(sql)) {
+        return [{ id: stableId, workflow_status: 'pending', priority: 'normal', version: 4 }];
+      }
       return [{ id: stableId, workflow_status: 'resolved', priority: 'urgent', version: 5 }];
-    },
+    }),
   }));
 
   await withServer(app, async baseUrl => {
@@ -946,21 +966,23 @@ test('PATCH state exige JSON, Origin exacto, cambio válido y expectedVersion', 
       conversationId: stableId, workflowStatus: 'resolved', priority: 'urgent', version: 5,
     });
   });
-  assert.equal(calls.length, 1);
-  assert.deepEqual(calls[0].params, [7, stableId, 'resolved', 'urgent', 4]);
-  assert.match(calls[0].sql, /WHERE empresa_id = \$1 AND id = \$2::uuid AND version = \$5/);
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls[1].params, [7, stableId, 'resolved', 'urgent', 4]);
+  assert.match(calls[0].sql, /WHERE empresa_id = \$1 AND id = \$2::uuid[\s\S]*FOR UPDATE/);
+  assert.match(calls[1].sql, /WHERE empresa_id = \$1 AND id = \$2::uuid AND version = \$5/);
 });
 
 test('repositorio state devuelve stale sanitizado con estado actual allowlisted', async () => {
   const stableId = '4ad1a4a8-8877-4dc6-a7a0-e81b87f8e2a1';
   let attempts = 0;
   const result = await updateCloudConversationState({
-    query: async () => {
+    pool: mutationPool(async () => {
       attempts += 1;
-      if (attempts === 1) return [];
       return [{ id: stableId, workflow_status: 'pending', priority: 'normal', version: 6, participant_wa_id: 'forbidden' }];
-    },
+    }),
     empresaId: 7,
+    usuarioId: 11,
+    actorRole: 'admin',
     conversationId: stableId,
     workflowStatus: 'resolved',
     priority: null,
@@ -984,11 +1006,10 @@ test('PATCH state no-op conserva versión y devuelve éxito, pero expectedVersio
       req.user = { uid: 11, role: 'admin', empresa_id: 7 };
       next();
     },
-    async query(sql, params) {
+    pool: mutationPool(async (sql, params) => {
       calls.push({ sql, params });
-      if (/^UPDATE public\.whatsapp_cloud_conversations/m.test(sql)) return [];
       return [{ id: stableId, workflow_status: 'pending', priority: 'high', version: 8 }];
-    },
+    }),
   }));
 
   await withServer(app, async baseUrl => {
@@ -1015,6 +1036,6 @@ test('PATCH state no-op conserva versión y devuelve éxito, pero expectedVersio
     });
   });
 
-  assert.match(calls[0].sql, /IS DISTINCT FROM/);
-  assert.equal(calls.length, 4);
+  assert.equal(calls.length, 2);
+  assert.ok(calls.every(call => /FOR UPDATE/.test(call.sql)));
 });

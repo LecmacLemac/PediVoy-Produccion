@@ -53,7 +53,8 @@ async function withDatabase(work) {
         username TEXT NOT NULL UNIQUE,
         password TEXT NOT NULL,
         role TEXT NOT NULL,
-        empresa_id INTEGER REFERENCES empresas(id) ON DELETE CASCADE
+        empresa_id INTEGER REFERENCES empresas(id) ON DELETE CASCADE,
+        activo BOOLEAN NOT NULL DEFAULT TRUE
       )
     `);
     await pool.query(`
@@ -310,6 +311,7 @@ test('dos PATCH concurrentes con expectedVersion producen un ganador y un stale 
     await pool.query('INSERT INTO empresas(id, config_integraciones) VALUES (1,$1::jsonb),(2,$2::jsonb)', [
       cloudConfig('phone-one'), cloudConfig('phone-two'),
     ]);
+    await pool.query("INSERT INTO usuarios(id,username,password,role,empresa_id,activo) VALUES (1,'admin-race','x','admin',1,true)");
     await pool.query(`
       INSERT INTO whatsapp_cloud_events
         (empresa_id,event_kind,dedupe_key,message_id,sender_id,message_type,event_data,received_at)

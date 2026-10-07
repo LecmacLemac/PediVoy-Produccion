@@ -83,6 +83,7 @@ test('POST read exige JSON, Origin y el máximo inbound renderizado exacto', asy
         return {
           async query(sql, params) {
             transactions.push({ sql, params });
+            if (/FROM public\.usuarios/.test(sql)) return { rows: [{ role: 'super', empresa_id: null, activo: true }] };
             if (/RETURNING last_read_message_id/.test(sql)) return { rows: [{ last_read_message_id: '91' }] };
             if (/SELECT conversation\.participant_wa_id/.test(sql)) return { rows: [{ participant_wa_id: '5493515550001' }] };
             if (/SELECT message\.id/.test(sql)) return { rows: [{ id: '91' }] };
@@ -98,10 +99,16 @@ test('POST read exige JSON, Origin y el máximo inbound renderizado exacto', asy
     const url = `${baseUrl}/api/admin/whatsapp-cloud/conversations/${stableId}/read?empresa_id=9`;
     const rejected = await fetch(url, { method: 'POST', headers: { Origin: 'https://admin.pedivoy.test', 'Content-Type': 'text/plain' }, body: '{}' });
     assert.equal(rejected.status, 415);
-    const accepted = await fetch(url, {
+    const bodyActorRejected = await fetch(url, {
       method: 'POST',
       headers: { Origin: 'https://admin.pedivoy.test', 'Content-Type': 'application/json' },
       body: JSON.stringify({ usuario_id: 999, empresa_id: 9, lastReadMessageId: '91' }),
+    });
+    assert.equal(bodyActorRejected.status, 400);
+    const accepted = await fetch(url, {
+      method: 'POST',
+      headers: { Origin: 'https://admin.pedivoy.test', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ empresa_id: 9, lastReadMessageId: '91' }),
     });
     assert.equal(accepted.status, 200);
     assert.deepEqual(await accepted.json(), { conversationId: stableId, lastReadMessageId: '91' });
@@ -136,6 +143,38 @@ test('POST read rechaza int8 no canónico antes de abrir transacción', async ()
   assert.equal(connects, 0);
 });
 
+test('read y PATCH exponen 403 sanitizado si el actor fue revocado dentro de la transacción', async () => {
+  let targetStatements = 0;
+  const app = express();
+  app.use(express.json());
+  app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+    canonicalOrigin: 'https://admin.pedivoy.test',
+    withAuth(req, _res, next) { req.user = { uid: 41, role: 'admin', empresa_id: 7 }; next(); },
+    pool: { async connect() { return {
+      async query(sql) {
+        if (/FROM public\.usuarios/.test(sql)) return { rows: [{ role: 'admin', empresa_id: 7, activo: false }] };
+        if (!['BEGIN', 'ROLLBACK'].includes(sql)) targetStatements += 1;
+        return { rows: [] };
+      },
+      release() {},
+    }; } },
+  }));
+  await withServer(app, async baseUrl => {
+    const headers = { Origin: 'https://admin.pedivoy.test', 'Content-Type': 'application/json' };
+    const read = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations/${stableId}/read`, {
+      method: 'POST', headers, body: JSON.stringify({ lastReadMessageId: '91' }),
+    });
+    assert.equal(read.status, 403);
+    assert.deepEqual(await read.json(), { error: 'actor_forbidden' });
+    const patch = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations/${stableId}/state`, {
+      method: 'PATCH', headers, body: JSON.stringify({ priority: 'urgent', expectedVersion: 4 }),
+    });
+    assert.equal(patch.status, 403);
+    assert.deepEqual(await patch.json(), { error: 'actor_forbidden' });
+  });
+  assert.equal(targetStatements, 0);
+});
+
 test('COMMIT ambiguo de read no hace rollback, descarta conexión y expone código sanitizado', async () => {
   const calls = [];
   let releasedWith;
@@ -147,6 +186,7 @@ test('COMMIT ambiguo de read no hace rollback, descarta conexión y expone códi
     pool: { async connect() { return {
       async query(sql) {
         calls.push(sql);
+        if (/FROM public\.usuarios/.test(sql)) return { rows: [{ role: 'admin', empresa_id: 7, activo: true }] };
         if (/SELECT conversation\.participant_wa_id/.test(sql)) return { rows: [{ participant_wa_id: '5493515550001' }] };
         if (/SELECT message\.id/.test(sql)) return { rows: [{ id: '91' }] };
         if (/RETURNING last_read_message_id/.test(sql)) return { rows: [{ last_read_message_id: '91' }] };
