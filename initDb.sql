@@ -2387,7 +2387,10 @@ DO $conversation_relation_guard$
 DECLARE
   conversation_relation RECORD;
 BEGIN
-  SELECT class_row.oid, class_row.relkind
+  SELECT class_row.oid,
+         class_row.relkind,
+         class_row.relrowsecurity,
+         class_row.relforcerowsecurity
     INTO conversation_relation
     FROM pg_catalog.pg_class AS class_row
     JOIN pg_catalog.pg_namespace AS namespace_row ON namespace_row.oid = class_row.relnamespace
@@ -2398,6 +2401,8 @@ BEGIN
     RETURN;
   END IF;
   IF conversation_relation.relkind IS DISTINCT FROM 'r'
+     OR conversation_relation.relrowsecurity
+     OR conversation_relation.relforcerowsecurity
      OR EXISTS (
        SELECT 1
          FROM pg_catalog.pg_trigger AS trigger_row

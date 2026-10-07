@@ -374,6 +374,83 @@ test('migración de conversaciones rechaza policies RLS antes de reparar columna
   });
 });
 
+async function conversationRlsSnapshot(pool) {
+  const [relation, columns, rows] = await Promise.all([
+    pool.query(`
+      SELECT oid::text AS table_oid, relrowsecurity, relforcerowsecurity
+        FROM pg_class
+       WHERE oid = 'whatsapp_cloud_conversations'::regclass
+    `),
+    pool.query(`
+      SELECT attribute_row.attnum,
+             attribute_row.attname,
+             attribute_row.atttypid::regtype::text AS data_type,
+             attribute_row.attnotnull,
+             attribute_row.atthasdef,
+             default_row.oid::text AS default_oid,
+             pg_get_expr(default_row.adbin, default_row.adrelid) AS default_expression
+        FROM pg_attribute AS attribute_row
+        LEFT JOIN pg_attrdef AS default_row
+          ON default_row.adrelid = attribute_row.attrelid
+         AND default_row.adnum = attribute_row.attnum
+       WHERE attribute_row.attrelid = 'whatsapp_cloud_conversations'::regclass
+         AND attribute_row.attnum > 0
+         AND NOT attribute_row.attisdropped
+       ORDER BY attribute_row.attnum
+    `),
+    pool.query(`
+      SELECT id::text, empresa_id, participant_wa_id, workflow_status, priority, version,
+             created_at::text, updated_at::text, xmin::text
+        FROM whatsapp_cloud_conversations
+       ORDER BY id
+    `),
+  ]);
+  return { relation: relation.rows, columns: columns.rows, rows: rows.rows };
+}
+
+async function assertRlsWithoutPoliciesRejected(pool, { force }) {
+  await pool.query('INSERT INTO empresas(id) VALUES (1)');
+  await pool.query(migrationSql);
+  await pool.query(`
+    INSERT INTO whatsapp_cloud_conversations
+      (empresa_id, participant_wa_id, workflow_status, priority, version)
+    VALUES (1, '5493515550008', 'resolved', 'high', 17);
+    ALTER TABLE whatsapp_cloud_conversations ALTER COLUMN priority DROP DEFAULT;
+    ALTER TABLE whatsapp_cloud_conversations ENABLE ROW LEVEL SECURITY;
+    ${force ? 'ALTER TABLE whatsapp_cloud_conversations FORCE ROW LEVEL SECURITY;' : ''}
+  `);
+  assert.equal((await pool.query(`
+    SELECT count(*)::integer AS count
+      FROM pg_policy
+     WHERE polrelid = 'whatsapp_cloud_conversations'::regclass
+  `)).rows[0].count, 0);
+
+  const before = await conversationRlsSnapshot(pool);
+  assert.deepEqual(before.relation, [{
+    table_oid: before.relation[0].table_oid,
+    relrowsecurity: true,
+    relforcerowsecurity: force,
+  }]);
+
+  await assert.rejects(pool.query(projectionSql), error => {
+    assert.equal(error?.code, 'P0001');
+    assert.equal(error?.message, 'whatsapp_cloud_conversations_schema_unsafe');
+    assert.equal(error?.detail, undefined);
+    assert.equal(error?.hint, undefined);
+    assert.doesNotMatch(JSON.stringify(error), /5493515550008|resolved|high/i);
+    return true;
+  });
+  assert.deepEqual(await conversationRlsSnapshot(pool), before);
+}
+
+test('migración de conversaciones rechaza ENABLE RLS sin policies antes de DDL o DML', async () => {
+  await withDatabase(pool => assertRlsWithoutPoliciesRejected(pool, { force: false }));
+});
+
+test('migración de conversaciones rechaza FORCE RLS sin policies y preserva ambos flags', async () => {
+  await withDatabase(pool => assertRlsWithoutPoliciesRejected(pool, { force: true }));
+});
+
 test('migración de conversaciones retiene lock de tabla desde el inventario hasta canonicalizar', async () => {
   await withDatabase(async pool => {
     await pool.query('INSERT INTO empresas(id) VALUES (1)');
