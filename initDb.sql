@@ -2038,45 +2038,123 @@ END $$;
 ALTER TABLE public.wpp_outbox
   DROP CONSTRAINT IF EXISTS wpp_outbox_cloud_dispatch_state_check;
 
-UPDATE public.wpp_outbox
-SET status = CASE WHEN sent_at IS NOT NULL THEN 'sent' ELSE 'error' END,
-    error = CASE
-      WHEN sent_at IS NULL THEN COALESCE(error, 'legacy_status_requires_manual_review')
-      ELSE error
-    END,
-    claim_owner = NULL,
-    claim_epoch = NULL,
-    claim_until = NULL
-WHERE status IS NULL
-   OR status NOT IN ('pending', 'sending', 'sent', 'error', 'skipped');
+DO $repair_wpp_outbox_status$
+DECLARE
+  target_empresa_id INTEGER;
+BEGIN
+  FOR target_empresa_id IN
+    SELECT DISTINCT outbox.empresa_id
+      FROM public.wpp_outbox AS outbox
+     WHERE outbox.empresa_id IS NOT NULL
+       AND (outbox.status IS NULL
+        OR outbox.status NOT IN ('pending', 'sending', 'sent', 'error', 'skipped'))
+     ORDER BY outbox.empresa_id
+  LOOP
+    PERFORM pg_catalog.set_config(
+      'pedivoy.whatsapp_cloud_projection_empresa_id', target_empresa_id::TEXT, TRUE
+    );
+    UPDATE public.wpp_outbox
+    SET status = CASE WHEN sent_at IS NOT NULL THEN 'sent' ELSE 'error' END,
+        error = CASE
+          WHEN sent_at IS NULL THEN COALESCE(error, 'legacy_status_requires_manual_review')
+          ELSE error
+        END,
+        claim_owner = NULL,
+        claim_epoch = NULL,
+        claim_until = NULL
+    WHERE empresa_id = target_empresa_id
+      AND (status IS NULL
+       OR status NOT IN ('pending', 'sending', 'sent', 'error', 'skipped'));
+    PERFORM pg_catalog.set_config('pedivoy.whatsapp_cloud_projection_empresa_id', '', TRUE);
+  END LOOP;
 
-UPDATE public.wpp_outbox
-SET cloud_dispatch_state = CASE
-      WHEN transport_origin IS DISTINCT FROM 'cloud' THEN NULL
-      WHEN status = 'sending' THEN CASE
-        WHEN cloud_dispatch_state IN ('pre_dispatch', 'dispatch_started') THEN cloud_dispatch_state
-        ELSE 'dispatch_started'
+  UPDATE public.wpp_outbox
+  SET status = CASE WHEN sent_at IS NOT NULL THEN 'sent' ELSE 'error' END,
+      error = CASE
+        WHEN sent_at IS NULL THEN COALESCE(error, 'legacy_status_requires_manual_review')
+        ELSE error
+      END,
+      claim_owner = NULL,
+      claim_epoch = NULL,
+      claim_until = NULL
+  WHERE empresa_id IS NULL
+    AND (status IS NULL
+     OR status NOT IN ('pending', 'sending', 'sent', 'error', 'skipped'));
+END $repair_wpp_outbox_status$;
+
+DO $repair_wpp_outbox_cloud_dispatch$
+DECLARE
+  target_empresa_id INTEGER;
+BEGIN
+  FOR target_empresa_id IN
+    SELECT DISTINCT outbox.empresa_id
+      FROM public.wpp_outbox AS outbox
+     WHERE outbox.empresa_id IS NOT NULL
+     ORDER BY outbox.empresa_id
+  LOOP
+    PERFORM pg_catalog.set_config(
+      'pedivoy.whatsapp_cloud_projection_empresa_id', target_empresa_id::TEXT, TRUE
+    );
+    UPDATE public.wpp_outbox
+    SET cloud_dispatch_state = CASE
+          WHEN transport_origin IS DISTINCT FROM 'cloud' THEN NULL
+          WHEN status = 'sending' THEN CASE
+            WHEN cloud_dispatch_state IN ('pre_dispatch', 'dispatch_started') THEN cloud_dispatch_state
+            ELSE 'dispatch_started'
+          END
+          WHEN status = 'sent' THEN 'sent'
+          WHEN status = 'error' THEN CASE
+            WHEN cloud_dispatch_state IN ('definitive_failed', 'manual_retryable', 'outcome_unknown') THEN cloud_dispatch_state
+            ELSE 'outcome_unknown'
+          END
+          ELSE NULL
+        END,
+        dispatch_started_at = CASE
+          WHEN transport_origin = 'cloud'
+           AND (
+             status = 'sent'
+             OR (status = 'sending' AND cloud_dispatch_state IS DISTINCT FROM 'pre_dispatch')
+             OR (status = 'error' AND (
+               cloud_dispatch_state IS NULL
+               OR cloud_dispatch_state IN ('manual_retryable', 'outcome_unknown')
+             ))
+           )
+            THEN COALESCE(dispatch_started_at, created_at, pg_catalog.NOW())
+          ELSE dispatch_started_at
+        END
+    WHERE empresa_id = target_empresa_id;
+    PERFORM pg_catalog.set_config('pedivoy.whatsapp_cloud_projection_empresa_id', '', TRUE);
+  END LOOP;
+
+  UPDATE public.wpp_outbox
+  SET cloud_dispatch_state = CASE
+        WHEN transport_origin IS DISTINCT FROM 'cloud' THEN NULL
+        WHEN status = 'sending' THEN CASE
+          WHEN cloud_dispatch_state IN ('pre_dispatch', 'dispatch_started') THEN cloud_dispatch_state
+          ELSE 'dispatch_started'
+        END
+        WHEN status = 'sent' THEN 'sent'
+        WHEN status = 'error' THEN CASE
+          WHEN cloud_dispatch_state IN ('definitive_failed', 'manual_retryable', 'outcome_unknown') THEN cloud_dispatch_state
+          ELSE 'outcome_unknown'
+        END
+        ELSE NULL
+      END,
+      dispatch_started_at = CASE
+        WHEN transport_origin = 'cloud'
+         AND (
+           status = 'sent'
+           OR (status = 'sending' AND cloud_dispatch_state IS DISTINCT FROM 'pre_dispatch')
+           OR (status = 'error' AND (
+             cloud_dispatch_state IS NULL
+             OR cloud_dispatch_state IN ('manual_retryable', 'outcome_unknown')
+           ))
+         )
+          THEN COALESCE(dispatch_started_at, created_at, pg_catalog.NOW())
+        ELSE dispatch_started_at
       END
-      WHEN status = 'sent' THEN 'sent'
-      WHEN status = 'error' THEN CASE
-        WHEN cloud_dispatch_state IN ('definitive_failed', 'manual_retryable', 'outcome_unknown') THEN cloud_dispatch_state
-        ELSE 'outcome_unknown'
-      END
-      ELSE NULL
-    END,
-    dispatch_started_at = CASE
-      WHEN transport_origin = 'cloud'
-       AND (
-         status = 'sent'
-         OR (status = 'sending' AND cloud_dispatch_state IS DISTINCT FROM 'pre_dispatch')
-         OR (status = 'error' AND (
-           cloud_dispatch_state IS NULL
-           OR cloud_dispatch_state IN ('manual_retryable', 'outcome_unknown')
-         ))
-       )
-        THEN COALESCE(dispatch_started_at, created_at, pg_catalog.NOW())
-      ELSE dispatch_started_at
-    END;
+  WHERE empresa_id IS NULL;
+END $repair_wpp_outbox_cloud_dispatch$;
 
 UPDATE public.wpp_outbox
 SET claim_until = pg_catalog.NOW() - INTERVAL '1 second'
