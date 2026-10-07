@@ -13,6 +13,7 @@ import {
   matchesCloudReplyCorrelation,
   reconcileCloudMessageProjectionStatus,
   resolveCloudConversationParticipant,
+  updateCloudConversationState,
 } from '../src/whatsappCloud/inboxRepository.js';
 
 async function withServer(app, work) {
@@ -149,7 +150,7 @@ test('admin queda ligado estrictamente a req.user.empresa_id aunque intente over
   });
   assert.equal(calls.length, 1);
   assert.equal(calls[0].params[0], 7);
-  assert.match(calls[0].sql, /WHERE empresa_id = \$1/);
+  assert.match(calls[0].sql, /WHERE conversation\.empresa_id = \$1/);
 });
 
 test('conversaciones aceptan filtro por rango de fecha y transferencia sin filtrar sólo en browser', async () => {
@@ -551,19 +552,25 @@ test('lista de conversaciones pagina por última actividad, enmascara teléfono 
   const calls = [];
   const rows = [
     {
+      conversation_id: '4ad1a4a8-8877-4dc6-a7a0-e81b87f8e2a1',
       id: '31', participant_wa_id: '5493515550001', direction: 'inbound', message_type: 'text',
       delivery_status: 'received', message_at: new Date('2026-10-06T12:00:00Z'), text_body: 'secreto uno',
       customer_name: 'Cliente Uno', delivery_address: 'San Martín 123', payment_method: 'transferencia',
+      workflow_status: 'pending', priority: 'normal', version: 1,
     },
     {
+      conversation_id: '6be6f351-3535-48d1-b1a1-cde16f27a9b3',
       id: '21', participant_wa_id: '5493515550002', direction: 'outbound', message_type: 'text',
       delivery_status: 'sent', message_at: new Date('2026-10-06T11:00:00Z'), text_body: 'secreto dos',
       customer_name: 'Cliente Dos', delivery_address: 'Belgrano 456', payment_method: 'efectivo',
+      workflow_status: 'resolved', priority: 'high', version: 3,
     },
     {
+      conversation_id: '97db6aed-a667-47d7-8bc7-3bca34228d49',
       id: '11', participant_wa_id: '5493515550003', direction: 'inbound', message_type: 'document',
       delivery_status: 'received', message_at: new Date('2026-10-06T10:00:00Z'), document_filename: 'secret.pdf',
       customer_name: 'Cliente Tres', delivery_address: 'Mitre 789',
+      workflow_status: 'pending', priority: 'urgent', version: 2,
     },
   ];
   const app = express();
@@ -592,8 +599,8 @@ test('lista de conversaciones pagina por última actividad, enmascara teléfono 
       paymentMethod: item.paymentMethod,
       lastMessageAt: item.lastMessageAt,
     })), [
-      { conversationId: '31', participant: '*********0001', customerName: 'Cliente Uno', customerAddress: 'San Martín 123', paymentMethod: 'transferencia', lastMessageAt: '2026-10-06T12:00:00.000Z' },
-      { conversationId: '21', participant: '*********0002', customerName: 'Cliente Dos', customerAddress: 'Belgrano 456', paymentMethod: 'efectivo', lastMessageAt: '2026-10-06T11:00:00.000Z' },
+      { conversationId: '4ad1a4a8-8877-4dc6-a7a0-e81b87f8e2a1', participant: '*********0001', customerName: 'Cliente Uno', customerAddress: 'San Martín 123', paymentMethod: 'transferencia', lastMessageAt: '2026-10-06T12:00:00.000Z' },
+      { conversationId: '6be6f351-3535-48d1-b1a1-cde16f27a9b3', participant: '*********0002', customerName: 'Cliente Dos', customerAddress: 'Belgrano 456', paymentMethod: 'efectivo', lastMessageAt: '2026-10-06T11:00:00.000Z' },
     ]);
     assert.equal(typeof body.nextCursor, 'string');
     assert.ok(body.nextCursor.length > 10);
@@ -601,7 +608,7 @@ test('lista de conversaciones pagina por última actividad, enmascara teléfono 
   });
   assert.equal(calls.length, 1);
   assert.deepEqual(calls[0].params.slice(0, 2), [7, 3]);
-  assert.match(calls[0].sql, /ORDER BY message_at DESC, id DESC/i);
+  assert.match(calls[0].sql, /ORDER BY latest\.message_at DESC, latest\.id DESC/i);
   assert.match(calls[0].sql, /LEFT JOIN LATERAL/);
   assert.match(calls[0].sql, /customer_name/);
   assert.match(calls[0].sql, /delivery_address/);
@@ -846,4 +853,111 @@ test('repositorio rechaza empresaId fuera de int4 antes de ejecutar SQL', async 
     );
   }
   assert.equal(queries, 0);
+});
+
+test('listado e historial usan id UUID estable y metadatos operativos allowlisted', async () => {
+  const calls = [];
+  const stableId = '4ad1a4a8-8877-4dc6-a7a0-e81b87f8e2a1';
+  const query = async (sql, params) => {
+    calls.push({ sql, params });
+    if (/FROM public\.whatsapp_cloud_conversations AS conversation/.test(sql)
+      && /participant_wa_id/.test(sql) && !/JOIN LATERAL/.test(sql)) {
+      return [{ participant_wa_id: '5493515550001' }];
+    }
+    if (/JOIN LATERAL/.test(sql)) return [{
+      conversation_id: stableId,
+      participant_wa_id: '5493515550001', workflow_status: 'pending', priority: 'high', version: 4,
+      id: '99', direction: 'inbound', message_type: 'text', delivery_status: 'received',
+      message_at: new Date('2026-10-07T10:00:00Z'), cursor_message_at: '2026-10-07T10:00:00.000000Z',
+    }];
+    return [{
+      id: '99', direction: 'inbound', message_type: 'text', text_body: 'hola',
+      delivery_status: 'received', message_at: new Date('2026-10-07T10:00:00Z'),
+    }];
+  };
+
+  const listed = await listCloudConversations({ query, empresaId: 7 });
+  assert.deepEqual(listed.conversations[0], {
+    conversationId: stableId,
+    participant: '*********0001',
+    customerName: null,
+    customerAddress: null,
+    paymentMethod: null,
+    workflowStatus: 'pending',
+    priority: 'high',
+    version: 4,
+    lastDirection: 'inbound',
+    lastMessageType: 'text',
+    lastDeliveryStatus: 'received',
+    lastMessageAt: new Date('2026-10-07T10:00:00Z'),
+  });
+  const history = await listCloudConversationMessages({ query, empresaId: 7, conversationId: stableId });
+  assert.equal(history.messages[0].id, '99');
+  assert.ok(calls.every(call => call.params[0] === 7));
+  assert.match(calls[1].sql, /conversation\.id = \$2::uuid/);
+});
+
+test('PATCH state exige JSON, Origin exacto, cambio válido y expectedVersion', async () => {
+  const calls = [];
+  const stableId = '4ad1a4a8-8877-4dc6-a7a0-e81b87f8e2a1';
+  const app = express();
+  app.use(express.json());
+  app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+    canonicalOrigin: 'https://admin.pedivoy.test',
+    withAuth(req, _res, next) {
+      req.user = { uid: 11, role: 'admin', empresa_id: 7 };
+      next();
+    },
+    async query(sql, params) {
+      calls.push({ sql, params });
+      return [{ id: stableId, workflow_status: 'resolved', priority: 'urgent', version: 5 }];
+    },
+  }));
+
+  await withServer(app, async baseUrl => {
+    const path = `${baseUrl}/api/admin/whatsapp-cloud/conversations/${stableId}/state`;
+    for (const request of [
+      { expected: 415, headers: { Origin: 'https://admin.pedivoy.test', 'Content-Type': 'text/plain' }, body: '{}' },
+      { expected: 403, headers: { Origin: 'https://evil.test', 'Content-Type': 'application/json' }, body: '{}' },
+      { expected: 400, headers: { Origin: 'https://admin.pedivoy.test', 'Content-Type': 'application/json' }, body: JSON.stringify({ expectedVersion: 4 }) },
+      { expected: 400, headers: { Origin: 'https://admin.pedivoy.test', 'Content-Type': 'application/json' }, body: JSON.stringify({ workflowStatus: 'open', expectedVersion: 4 }) },
+    ]) {
+      const response = await fetch(path, { method: 'PATCH', headers: request.headers, body: request.body });
+      assert.equal(response.status, request.expected);
+    }
+    const response = await fetch(path, {
+      method: 'PATCH',
+      headers: { Origin: 'https://admin.pedivoy.test', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workflowStatus: 'resolved', priority: 'urgent', expectedVersion: 4 }),
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      conversationId: stableId, workflowStatus: 'resolved', priority: 'urgent', version: 5,
+    });
+  });
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].params, [7, stableId, 'resolved', 'urgent', 4]);
+  assert.match(calls[0].sql, /WHERE empresa_id = \$1 AND id = \$2::uuid AND version = \$5/);
+});
+
+test('repositorio state devuelve stale sanitizado con estado actual allowlisted', async () => {
+  const stableId = '4ad1a4a8-8877-4dc6-a7a0-e81b87f8e2a1';
+  let attempts = 0;
+  const result = await updateCloudConversationState({
+    query: async () => {
+      attempts += 1;
+      if (attempts === 1) return [];
+      return [{ id: stableId, workflow_status: 'pending', priority: 'normal', version: 6, participant_wa_id: 'forbidden' }];
+    },
+    empresaId: 7,
+    conversationId: stableId,
+    workflowStatus: 'resolved',
+    priority: null,
+    expectedVersion: 5,
+  });
+  assert.deepEqual(result, {
+    outcome: 'stale',
+    conversation: { conversationId: stableId, workflowStatus: 'pending', priority: 'normal', version: 6 },
+  });
+  assert.doesNotMatch(JSON.stringify(result), /forbidden|participant/i);
 });

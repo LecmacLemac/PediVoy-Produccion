@@ -161,6 +161,20 @@ test('API admin Cloud conserva tenant, paginación, redacción e idempotencia en
     `)).rows;
     const tenantOneDoc = inserted.find(row => row.empresa_id === 1 && row.message_type === 'document');
     const tenantTwo = inserted.find(row => row.empresa_id === 2);
+    await pool.query(`
+      INSERT INTO whatsapp_cloud_conversations (empresa_id,participant_wa_id,created_at,updated_at)
+      SELECT empresa_id,participant_wa_id,MIN(created_at),MAX(updated_at)
+        FROM whatsapp_cloud_messages
+       GROUP BY empresa_id,participant_wa_id
+    `);
+    const tenantOneConversation = (await pool.query(`
+      SELECT id::text FROM whatsapp_cloud_conversations
+       WHERE empresa_id=1 AND participant_wa_id='5493515550001'
+    `)).rows[0];
+    const tenantTwoConversation = (await pool.query(`
+      SELECT id::text FROM whatsapp_cloud_conversations
+       WHERE empresa_id=2 AND participant_wa_id='5493515550001'
+    `)).rows[0];
 
     const app = express();
     app.use(express.json());
@@ -179,7 +193,7 @@ test('API admin Cloud conserva tenant, paginación, redacción e idempotencia en
       assert.equal(firstPageResponse.status, 200);
       const firstPage = await firstPageResponse.json();
       assert.equal(firstPage.conversations.length, 1);
-      assert.equal(firstPage.conversations[0].conversationId, String(tenantOneDoc.id));
+      assert.equal(firstPage.conversations[0].conversationId, tenantOneConversation.id);
       assert.equal(firstPage.conversations[0].participant, '*********0001');
       assert.equal(firstPage.conversations[0].customerName, 'Cliente Uno');
       assert.equal(firstPage.conversations[0].customerAddress, 'San Martín 123, Córdoba');
@@ -197,7 +211,7 @@ test('API admin Cloud conserva tenant, paginación, redacción e idempotencia en
       assert.equal(secondPage.conversations[0].paymentMethod, 'efectivo');
       assert.equal(secondPage.nextCursor, null);
 
-      const historyResponse = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations/${tenantOneDoc.id}/messages?limit=1`);
+      const historyResponse = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations/${tenantOneConversation.id}/messages?limit=1`);
       assert.equal(historyResponse.status, 200);
       const history = await historyResponse.json();
       assert.deepEqual(history.messages.map(row => [row.id, row.type, row.attachment?.downloadable]), [
@@ -206,18 +220,18 @@ test('API admin Cloud conserva tenant, paginación, redacción e idempotencia en
       assert.equal(typeof history.nextCursor, 'string');
       assert.doesNotMatch(JSON.stringify(history), /5493515550001|phone-one|secret collision|provider|media_id|sha/i);
 
-      const olderResponse = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations/${tenantOneDoc.id}/messages?limit=1&cursor=${encodeURIComponent(history.nextCursor)}`);
+      const olderResponse = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations/${tenantOneConversation.id}/messages?limit=1&cursor=${encodeURIComponent(history.nextCursor)}`);
       assert.equal(olderResponse.status, 200);
       const older = await olderResponse.json();
       assert.equal(older.messages[0].text, 'tenant one older');
       assert.equal(older.nextCursor, null);
 
-      const crossTenantHistory = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations/${tenantTwo.id}/messages`);
+      const crossTenantHistory = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations/${tenantTwoConversation.id}/messages`);
       assert.equal(crossTenantHistory.status, 404);
-      const crossTenantAttachment = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/messages/${tenantTwo.id}/attachment`);
+      const crossTenantAttachment = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations/${tenantTwoConversation.id}/messages/${tenantTwo.id}/attachment`);
       assert.equal(crossTenantAttachment.status, 404);
 
-      const metadata = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/messages/${tenantOneDoc.id}/attachment`);
+      const metadata = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations/${tenantOneConversation.id}/messages/${tenantOneDoc.id}/attachment`);
       assert.equal(metadata.status, 200);
       assert.deepEqual(await metadata.json(), {
         messageId: String(tenantOneDoc.id),
@@ -227,7 +241,7 @@ test('API admin Cloud conserva tenant, paginación, redacción e idempotencia en
         filename: 'factura.pdf',
         downloadable: false,
       });
-      const download = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/messages/${tenantOneDoc.id}/attachment/download`);
+      const download = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations/${tenantOneConversation.id}/messages/${tenantOneDoc.id}/attachment/download`);
       assert.equal(download.status, 409);
 
       const replyBody = {
@@ -236,14 +250,14 @@ test('API admin Cloud conserva tenant, paginación, redacción e idempotencia en
         idempotency_key: 'pg-reply-1',
         transportOrigin: 'company',
       };
-      const firstReply = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations/${tenantOneDoc.id}/replies`, {
+      const firstReply = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations/${tenantOneConversation.id}/replies`, {
         method: 'POST', headers: { Origin: 'https://admin.pedivoy.test', 'Content-Type': 'application/json' }, body: JSON.stringify(replyBody),
       });
       assert.equal(firstReply.status, 202);
       const firstReplyBody = await firstReply.json();
       assert.equal(firstReplyBody.accepted, true);
       assert.equal(firstReplyBody.deduplicated, false);
-      const replay = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations/${tenantOneDoc.id}/replies`, {
+      const replay = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations/${tenantOneConversation.id}/replies`, {
         method: 'POST', headers: { Origin: 'https://admin.pedivoy.test', 'Content-Type': 'application/json' }, body: JSON.stringify(replyBody),
       });
       assert.equal(replay.status, 200);
@@ -253,7 +267,7 @@ test('API admin Cloud conserva tenant, paginación, redacción e idempotencia en
         id: firstReplyBody.id,
         status: 'accepted',
       });
-      const conflict = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations/${tenantOneDoc.id}/replies`, {
+      const conflict = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations/${tenantOneConversation.id}/replies`, {
         method: 'POST',
         headers: { Origin: 'https://admin.pedivoy.test', 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...replyBody, text: 'texto distinto' }),
@@ -274,5 +288,69 @@ test('API admin Cloud conserva tenant, paginación, redacción e idempotencia en
       reply_correlation_id: 'admin:pg-reply-1',
       status: 'pending',
     }]);
+  });
+});
+
+test('dos PATCH concurrentes con expectedVersion producen un ganador y un stale tenant-scoped', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id, config_integraciones) VALUES (1,$1::jsonb),(2,$2::jsonb)', [
+      cloudConfig('phone-one'), cloudConfig('phone-two'),
+    ]);
+    await pool.query(`
+      INSERT INTO whatsapp_cloud_events
+        (empresa_id,event_kind,dedupe_key,message_id,sender_id,message_type,event_data,received_at)
+      VALUES (1,'message','state-race-one','wamid.state-race-one','549351555777','text',
+              '{"text":{"body":"tenant one"}}'::jsonb,'2026-10-07T12:00:00Z')
+    `);
+    await pool.query(`
+      INSERT INTO whatsapp_cloud_events
+        (empresa_id,event_kind,dedupe_key,message_id,sender_id,message_type,event_data,received_at)
+      VALUES (2,'message','state-race-two','wamid.state-race-two','549351555777','text',
+              '{"text":{"body":"tenant two"}}'::jsonb,'2026-10-07T12:00:00Z')
+    `);
+    const conversation = (await pool.query(`
+      SELECT id::text,version FROM whatsapp_cloud_conversations
+       WHERE empresa_id=1 AND participant_wa_id='549351555777'
+    `)).rows[0];
+    const app = express();
+    app.use(express.json());
+    app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+      canonicalOrigin: 'https://admin.pedivoy.test',
+      withAuth(req, _res, next) {
+        req.user = { uid: 1, role: 'admin', empresa_id: 1 };
+        next();
+      },
+      query: async (sql, params) => (await pool.query(sql, params)).rows,
+      pool,
+    }));
+
+    await withServer(app, async baseUrl => {
+      const url = `${baseUrl}/api/admin/whatsapp-cloud/conversations/${conversation.id}/state`;
+      const options = priority => ({
+        method: 'PATCH',
+        headers: { Origin: 'https://admin.pedivoy.test', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ priority, expectedVersion: conversation.version }),
+      });
+      const responses = await Promise.all([
+        fetch(url, options('high')),
+        fetch(url, options('urgent')),
+      ]);
+      assert.deepEqual(responses.map(response => response.status).sort(), [200, 409]);
+      const bodies = await Promise.all(responses.map(response => response.json()));
+      const stale = bodies.find(body => body.error === 'stale_conversation_version');
+      assert.ok(stale);
+      assert.equal(stale.current.version, conversation.version + 1);
+      assert.ok(['high', 'urgent'].includes(stale.current.priority));
+      assert.doesNotMatch(JSON.stringify(stale), /549351555777|tenant one|tenant two/i);
+    });
+
+    const tenantOne = (await pool.query(`SELECT priority,version FROM whatsapp_cloud_conversations
+      WHERE empresa_id=1 AND id=$1::uuid`, [conversation.id])).rows[0];
+    assert.equal(tenantOne.version, conversation.version + 1);
+    assert.ok(['high', 'urgent'].includes(tenantOne.priority));
+    assert.deepEqual((await pool.query(`SELECT priority,version FROM whatsapp_cloud_conversations
+      WHERE empresa_id=2 AND participant_wa_id='549351555777'`)).rows[0], {
+      priority: 'normal', version: 1,
+    });
   });
 });

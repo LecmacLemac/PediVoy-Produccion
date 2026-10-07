@@ -10,6 +10,7 @@ import {
   listCloudConversations,
   matchesCloudReplyCorrelation,
   resolveCloudConversationParticipant,
+  updateCloudConversationState,
 } from '../whatsappCloud/inboxRepository.js';
 
 const PG_INT4_MAX = 2147483647;
@@ -37,7 +38,10 @@ function configuredCanonicalOrigin(req, override) {
 
 export function whatsappCloudInboxMutationGuard({ canonicalOrigin } = {}) {
   return function guard(req, res, next) {
-    if (req.method !== 'POST' || !/\/conversations\/[^/]+\/replies\/?$/.test(req.path || req.originalUrl || '')) {
+    const path = req.path || req.originalUrl || '';
+    const guardedMutation = (req.method === 'POST' && /\/conversations\/[^/]+\/replies\/?$/.test(path))
+      || (req.method === 'PATCH' && /\/conversations\/[^/]+\/state\/?$/.test(path));
+    if (!guardedMutation) {
       return next();
     }
     const mediaType = String(req.get('content-type') || '').split(';', 1)[0].trim().toLowerCase();
@@ -66,6 +70,13 @@ function positiveInteger(value) {
   if (typeof value !== 'string' || !/^[1-9][0-9]*$/.test(value)) return null;
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) ? parsed : null;
+}
+
+function canonicalUuid(value) {
+  return typeof value === 'string'
+    && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value)
+    ? value
+    : null;
 }
 
 function pgInt4Number(value) {
@@ -109,6 +120,23 @@ function validReplyBody(body) {
   const idempotencyKey = body.idempotency_key;
   if (!/^[A-Za-z0-9._:-]{1,128}$/.test(idempotencyKey)) return null;
   return { message, idempotencyKey };
+}
+
+function validConversationStateBody(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
+  const keys = Object.keys(body);
+  if (keys.some(key => !['workflowStatus', 'priority', 'expectedVersion', 'empresa_id'].includes(key))) return null;
+  const workflowStatus = Object.prototype.hasOwnProperty.call(body, 'workflowStatus')
+    ? body.workflowStatus
+    : null;
+  const priority = Object.prototype.hasOwnProperty.call(body, 'priority') ? body.priority : null;
+  if (workflowStatus != null && !['pending', 'resolved'].includes(workflowStatus)) return null;
+  if (priority != null && !['normal', 'high', 'urgent'].includes(priority)) return null;
+  if (workflowStatus == null && priority == null) return null;
+  if (typeof body.expectedVersion !== 'number') return null;
+  const expectedVersion = pgInt4Number(body.expectedVersion);
+  if (!expectedVersion) return null;
+  return { workflowStatus, priority, expectedVersion };
 }
 
 function pagination(query, defaultLimit) {
@@ -169,7 +197,7 @@ export function createWhatsAppCloudInboxAdminRouter({
   router.get('/conversations/:conversationId/messages', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     const empresaId = resolveTenant(req);
     if (!empresaId) return res.status(400).json({ error: 'empresa_id_required' });
-    if (!positiveInteger(req.params.conversationId)) {
+    if (!canonicalUuid(req.params.conversationId) && !positiveInteger(req.params.conversationId)) {
       return res.status(400).json({ error: 'conversation_id_invalid' });
     }
     const page = pagination(req.query, 50);
@@ -189,6 +217,37 @@ export function createWhatsAppCloudInboxAdminRouter({
     }
   });
   const attachmentGuards = [withAuth, requireCanonicalBackofficeRole];
+  router.get('/conversations/:conversationId/messages/:messageId/attachment', ...attachmentGuards, async (req, res) => {
+    const empresaId = resolveTenant(req);
+    if (!empresaId) return res.status(400).json({ error: 'empresa_id_required' });
+    if (!canonicalUuid(req.params.conversationId)) return res.status(400).json({ error: 'conversation_id_invalid' });
+    if (!positiveInteger(req.params.messageId)) return res.status(400).json({ error: 'message_id_invalid' });
+    try {
+      const metadata = await getCloudAttachmentMetadata({
+        query, empresaId, conversationId: req.params.conversationId, messageId: req.params.messageId,
+      });
+      if (!metadata) return res.status(404).json({ error: 'attachment_not_found' });
+      return res.json(metadata);
+    } catch {
+      return res.status(500).json({ error: 'cloud_inbox_unavailable' });
+    }
+  });
+  router.get('/conversations/:conversationId/messages/:messageId/attachment/download', ...attachmentGuards, async (req, res) => {
+    const empresaId = resolveTenant(req);
+    if (!empresaId) return res.status(400).json({ error: 'empresa_id_required' });
+    if (!canonicalUuid(req.params.conversationId)) return res.status(400).json({ error: 'conversation_id_invalid' });
+    if (!positiveInteger(req.params.messageId)) return res.status(400).json({ error: 'message_id_invalid' });
+    try {
+      const metadata = await getCloudAttachmentMetadata({
+        query, empresaId, conversationId: req.params.conversationId, messageId: req.params.messageId,
+      });
+      if (!metadata) return res.status(404).json({ error: 'attachment_not_found' });
+      return res.status(409).json({ error: 'attachment_download_unavailable' });
+    } catch {
+      return res.status(500).json({ error: 'cloud_inbox_unavailable' });
+    }
+  });
+  // Transitional legacy message-only attachment route: tenant-scoped and non-global.
   router.get('/messages/:messageId/attachment', ...attachmentGuards, async (req, res) => {
     const empresaId = resolveTenant(req);
     if (!empresaId) return res.status(400).json({ error: 'empresa_id_required' });
@@ -224,7 +283,7 @@ export function createWhatsAppCloudInboxAdminRouter({
   router.post('/conversations/:conversationId/replies', whatsappCloudInboxMutationGuard({ canonicalOrigin }), withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     const empresaId = resolveTenant(req, { allowBody: true });
     if (!empresaId) return res.status(400).json({ error: 'empresa_id_required' });
-    if (!positiveInteger(req.params.conversationId)) {
+    if (!canonicalUuid(req.params.conversationId) && !positiveInteger(req.params.conversationId)) {
       return res.status(400).json({ error: 'conversation_id_invalid' });
     }
     const reply = validReplyBody(req.body);
@@ -278,6 +337,34 @@ export function createWhatsAppCloudInboxAdminRouter({
         return res.status(409).json({ error: 'cloud_config_inactive' });
       }
       return res.status(502).json({ error: 'reply_enqueue_failed' });
+    }
+  });
+  router.patch('/conversations/:conversationId/state', whatsappCloudInboxMutationGuard({ canonicalOrigin }), withAuth, requireCanonicalBackofficeRole, async (req, res) => {
+    const empresaId = resolveTenant(req, { allowBody: true });
+    if (!empresaId) return res.status(400).json({ error: 'empresa_id_required' });
+    if (!canonicalUuid(req.params.conversationId)) {
+      return res.status(400).json({ error: 'conversation_id_invalid' });
+    }
+    const state = validConversationStateBody(req.body);
+    if (!state) return res.status(400).json({ error: 'conversation_state_invalid' });
+    try {
+      const result = await updateCloudConversationState({
+        query,
+        empresaId,
+        conversationId: req.params.conversationId,
+        ...state,
+      });
+      if (result.outcome === 'not_found') return res.status(404).json({ error: 'conversation_not_found' });
+      if (result.outcome === 'stale') {
+        return res.status(409).json({
+          error: 'stale_conversation_version',
+          current: result.conversation,
+        });
+      }
+      return res.json(result.conversation);
+    } catch (error) {
+      if (isInvalidArgument(error)) return res.status(400).json({ error: 'conversation_state_invalid' });
+      return res.status(500).json({ error: 'cloud_inbox_unavailable' });
     }
   });
   return router;

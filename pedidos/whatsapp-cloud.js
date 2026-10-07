@@ -244,7 +244,11 @@ function renderAttachment(message, container) {
   action.type = 'button';
   action.className = 'attachment-action';
   action.textContent = attachment.downloadable ? 'Descargar' : 'Consultar descarga';
-  action.addEventListener('click', () => requestAttachmentDownload(message.id, action));
+  action.addEventListener('click', () => requestAttachmentDownload(
+    state.activeConversation?.conversationId,
+    message.id,
+    action,
+  ));
   card.append(action);
   container.append(card);
 }
@@ -376,10 +380,10 @@ function openConversation(conversation) {
   loadHistory();
 }
 
-async function requestAttachmentDownload(messageId, button) {
+async function requestAttachmentDownload(conversationId, messageId, button) {
   button.disabled = true;
   try {
-    const path = `/messages/${encodeURIComponent(String(messageId))}/attachment/download`;
+    const path = `/conversations/${encodeURIComponent(String(conversationId))}/messages/${encodeURIComponent(String(messageId))}/attachment/download`;
     const url = buildCloudApiUrl(path, { role: state.role, companyId: state.companyId });
     const { response } = await request(url);
     setStatus(attachmentDownloadNotice(response.status), response.ok ? 'success' : 'warning');

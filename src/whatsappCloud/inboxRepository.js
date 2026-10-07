@@ -47,6 +47,23 @@ function requireNonEmptyString(value, field) {
   return value.trim();
 }
 
+function requireConversationId(value) {
+  const normalized = requireNonEmptyString(value, 'conversationId').toLowerCase();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(normalized)) {
+    throw sanitizedError('CLOUD_INBOX_INVALID_ARGUMENT', 'Invalid conversationId');
+  }
+  return normalized;
+}
+
+// Transitional legacy message anchors remain tenant-scoped and unambiguous.
+function requireConversationReference(value) {
+  try {
+    return { kind: 'stable', id: requireConversationId(value) };
+  } catch {
+    return { kind: 'legacy', id: requirePositiveInteger(value, 'conversationId') };
+  }
+}
+
 function sanitizedError(code, message) {
   const error = new Error(message);
   error.code = code;
@@ -113,28 +130,36 @@ export async function listCloudConversations({
             JOIN public.puntos_entrega pe
               ON pe.id = p.punto_entrega_id
              AND pe.empresa_id = p.empresa_id
-           WHERE p.empresa_id = latest.empresa_id
+           WHERE p.empresa_id = conversation.empresa_id
              AND LOWER(p.metodo_pago) = 'transferencia'
              AND RIGHT(regexp_replace(COALESCE(pe.telefono_normalizado, pe.telefono, ''), '\\D', '', 'g'), 10)
-                 = RIGHT(regexp_replace(latest.participant_wa_id, '\\D', '', 'g'), 10)
-        )`
+                 = RIGHT(regexp_replace(conversation.participant_wa_id, '\\D', '', 'g'), 10)
+       )`
     : '';
   let rows;
   try {
     rows = await runQuery(
-      `WITH latest AS (
-         SELECT DISTINCT ON (participant_wa_id)
-                id, empresa_id, participant_wa_id, direction, message_type, delivery_status, message_at,
-                to_char(message_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cursor_message_at
-           FROM public.whatsapp_cloud_messages
-          WHERE empresa_id = $1
-            AND ($5::timestamptz IS NULL OR message_at >= $5::timestamptz)
-            AND ($6::timestamptz IS NULL OR message_at < $6::timestamptz)
-          ORDER BY participant_wa_id, message_at DESC, id DESC
-       )
-       SELECT id, participant_wa_id, direction, message_type, delivery_status, message_at,
-              cursor_message_at, customer.customer_name, customer.delivery_address, customer.payment_method
-         FROM latest
+      `SELECT conversation.id AS conversation_id,
+              conversation.participant_wa_id,
+              conversation.workflow_status,
+              conversation.priority,
+              conversation.version,
+              latest.id, latest.direction, latest.message_type, latest.delivery_status,
+              latest.message_at, latest.cursor_message_at,
+              customer.customer_name, customer.delivery_address, customer.payment_method
+         FROM public.whatsapp_cloud_conversations AS conversation
+         JOIN LATERAL (
+           SELECT message.id, message.direction, message.message_type,
+                  message.delivery_status, message.message_at,
+                  to_char(message.message_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cursor_message_at
+             FROM public.whatsapp_cloud_messages AS message
+            WHERE message.empresa_id = conversation.empresa_id
+              AND message.participant_wa_id = conversation.participant_wa_id
+              AND ($5::timestamptz IS NULL OR message.message_at >= $5::timestamptz)
+              AND ($6::timestamptz IS NULL OR message.message_at < $6::timestamptz)
+            ORDER BY message.message_at DESC, message.id DESC
+            LIMIT 1
+         ) latest ON TRUE
          LEFT JOIN LATERAL (
            SELECT
                   NULLIF(BTRIM(COALESCE(pe.nombre, pe.cliente)), '') AS customer_name,
@@ -155,15 +180,16 @@ export async function listCloudConversations({
                 ORDER BY p.fecha DESC NULLS LAST, p.id DESC
                 LIMIT 1
              ) payment ON TRUE
-            WHERE pe.empresa_id = latest.empresa_id
+            WHERE pe.empresa_id = conversation.empresa_id
               AND RIGHT(regexp_replace(COALESCE(pe.telefono_normalizado, pe.telefono, ''), '\\D', '', 'g'), 10)
-                  = RIGHT(regexp_replace(latest.participant_wa_id, '\\D', '', 'g'), 10)
+                  = RIGHT(regexp_replace(conversation.participant_wa_id, '\\D', '', 'g'), 10)
             ORDER BY payment.fecha DESC NULLS LAST, payment.id DESC, pe.id DESC
             LIMIT 1
          ) customer ON TRUE
-        WHERE ($3::timestamptz IS NULL OR (message_at, id) < ($3::timestamptz, $4::bigint))
+        WHERE conversation.empresa_id = $1
+          AND ($3::timestamptz IS NULL OR (latest.message_at, latest.id) < ($3::timestamptz, $4::bigint))
           ${transferCondition}
-        ORDER BY message_at DESC, id DESC
+        ORDER BY latest.message_at DESC, latest.id DESC
         LIMIT $2`,
       [tenantId, pageSize + 1, pageCursor?.timestamp ?? null, pageCursor?.id ?? null, fromFilter, toFilter],
     );
@@ -173,13 +199,16 @@ export async function listCloudConversations({
   const page = rows.slice(0, pageSize);
   return {
     conversations: page.map(row => ({
-      conversationId: String(row.id),
+      conversationId: String(row.conversation_id),
       participant: maskParticipant(row.participant_wa_id),
       customerName: row.customer_name ? String(row.customer_name).slice(0, 120) : null,
       customerAddress: row.delivery_address ? String(row.delivery_address).slice(0, 180) : null,
       paymentMethod: ['efectivo', 'transferencia'].includes(String(row.payment_method || '').toLowerCase())
         ? String(row.payment_method).toLowerCase()
         : null,
+      workflowStatus: row.workflow_status,
+      priority: row.priority,
+      version: row.version,
       lastDirection: row.direction,
       lastMessageType: row.message_type,
       lastDeliveryStatus: row.delivery_status,
@@ -198,17 +227,22 @@ export async function listCloudConversationMessages({
 } = {}) {
   const runQuery = requireQuery(query);
   const tenantId = requireTenantId(empresaId);
-  const anchorId = requirePositiveInteger(conversationId, 'conversationId');
+  const conversationReference = requireConversationReference(conversationId);
   const pageSize = requirePositiveInteger(limit, 'limit');
   if (pageSize > 100) throw sanitizedError('CLOUD_INBOX_INVALID_ARGUMENT', 'Invalid limit');
   const pageCursor = decodeCursor(cursor);
   try {
     const anchors = await runQuery(
-      `SELECT participant_wa_id
-         FROM public.whatsapp_cloud_messages
-        WHERE empresa_id = $1 AND id = $2
-        LIMIT 1`,
-      [tenantId, anchorId],
+      conversationReference.kind === 'stable'
+        ? `SELECT participant_wa_id
+             FROM public.whatsapp_cloud_conversations AS conversation
+            WHERE conversation.empresa_id = $1 AND conversation.id = $2::uuid
+            LIMIT 1`
+        : `SELECT participant_wa_id
+             FROM public.whatsapp_cloud_messages
+            WHERE empresa_id = $1 AND id = $2
+            LIMIT 1`,
+      [tenantId, conversationReference.id],
     );
     if (anchors.length !== 1) return null;
     const rows = await runQuery(
@@ -256,19 +290,27 @@ export async function listCloudConversationMessages({
   }
 }
 
-export async function getCloudAttachmentMetadata({ query, empresaId, messageId } = {}) {
+export async function getCloudAttachmentMetadata({ query, empresaId, conversationId = null, messageId } = {}) {
   const runQuery = requireQuery(query);
   const tenantId = requireTenantId(empresaId);
   const normalizedMessageId = requirePositiveInteger(messageId, 'messageId');
+  const stableConversationId = conversationId == null ? null : requireConversationId(conversationId);
   try {
     const rows = await runQuery(
-      `SELECT id, message_type, media_mime_type, media_caption, document_filename
-         FROM public.whatsapp_cloud_messages
-        WHERE empresa_id = $1
-          AND id = $2
-          AND message_type IN ('image', 'document')
+      `SELECT message.id, message.message_type, message.media_mime_type,
+              message.media_caption, message.document_filename
+         FROM public.whatsapp_cloud_messages AS message
+         ${stableConversationId == null ? '' : `JOIN public.whatsapp_cloud_conversations AS conversation
+           ON conversation.empresa_id = message.empresa_id
+          AND conversation.participant_wa_id = message.participant_wa_id`}
+        WHERE message.empresa_id = $1
+          AND message.id = $2
+          ${stableConversationId == null ? '' : 'AND conversation.id = $3::uuid'}
+          AND message.message_type IN ('image', 'document')
         LIMIT 1`,
-      [tenantId, normalizedMessageId],
+      stableConversationId == null
+        ? [tenantId, normalizedMessageId]
+        : [tenantId, normalizedMessageId, stableConversationId],
     );
     if (rows.length !== 1) return null;
     return {
@@ -287,18 +329,82 @@ export async function getCloudAttachmentMetadata({ query, empresaId, messageId }
 export async function resolveCloudConversationParticipant({ query, empresaId, conversationId } = {}) {
   const runQuery = requireQuery(query);
   const tenantId = requireTenantId(empresaId);
-  const anchorId = requirePositiveInteger(conversationId, 'conversationId');
+  const conversationReference = requireConversationReference(conversationId);
   try {
     const rows = await runQuery(
-      `SELECT participant_wa_id
-         FROM public.whatsapp_cloud_messages
-        WHERE empresa_id = $1 AND id = $2
-        LIMIT 1`,
-      [tenantId, anchorId],
+      conversationReference.kind === 'stable'
+        ? `SELECT participant_wa_id
+             FROM public.whatsapp_cloud_conversations AS conversation
+            WHERE conversation.empresa_id = $1 AND conversation.id = $2::uuid
+            LIMIT 1`
+        : `SELECT participant_wa_id
+             FROM public.whatsapp_cloud_messages
+            WHERE empresa_id = $1 AND id = $2
+            LIMIT 1`,
+      [tenantId, conversationReference.id],
     );
     return rows.length === 1 ? rows[0].participant_wa_id : null;
   } catch {
     throw sanitizedError('CLOUD_INBOX_CONVERSATION_FAILED', 'WhatsApp Cloud conversation lookup failed');
+  }
+}
+
+function conversationStateDto(row) {
+  return {
+    conversationId: String(row.id),
+    workflowStatus: row.workflow_status,
+    priority: row.priority,
+    version: row.version,
+  };
+}
+
+export async function updateCloudConversationState({
+  query,
+  empresaId,
+  conversationId,
+  workflowStatus = null,
+  priority = null,
+  expectedVersion,
+} = {}) {
+  const runQuery = requireQuery(query);
+  const tenantId = requireTenantId(empresaId);
+  const stableConversationId = requireConversationId(conversationId);
+  const normalizedVersion = requirePositiveInteger(expectedVersion, 'expectedVersion');
+  if (workflowStatus != null && !['pending', 'resolved'].includes(workflowStatus)) {
+    throw sanitizedError('CLOUD_INBOX_INVALID_ARGUMENT', 'Invalid workflowStatus');
+  }
+  if (priority != null && !['normal', 'high', 'urgent'].includes(priority)) {
+    throw sanitizedError('CLOUD_INBOX_INVALID_ARGUMENT', 'Invalid priority');
+  }
+  if (workflowStatus == null && priority == null) {
+    throw sanitizedError('CLOUD_INBOX_INVALID_ARGUMENT', 'Conversation state change required');
+  }
+  try {
+    const updated = await runQuery(
+      `UPDATE public.whatsapp_cloud_conversations
+          SET workflow_status = COALESCE($3, workflow_status),
+              priority = COALESCE($4, priority),
+              version = version + 1,
+              updated_at = pg_catalog.NOW()
+        WHERE empresa_id = $1 AND id = $2::uuid AND version = $5
+      RETURNING id, workflow_status, priority, version`,
+      [tenantId, stableConversationId, workflowStatus, priority, normalizedVersion],
+    );
+    if (updated.length === 1) {
+      return { outcome: 'updated', conversation: conversationStateDto(updated[0]) };
+    }
+    const current = await runQuery(
+      `SELECT id, workflow_status, priority, version
+         FROM public.whatsapp_cloud_conversations
+        WHERE empresa_id = $1 AND id = $2::uuid
+        LIMIT 1`,
+      [tenantId, stableConversationId],
+    );
+    if (current.length === 0) return { outcome: 'not_found', conversation: null };
+    return { outcome: 'stale', conversation: conversationStateDto(current[0]) };
+  } catch (error) {
+    if (error?.code === 'CLOUD_INBOX_INVALID_ARGUMENT') throw error;
+    throw sanitizedError('CLOUD_INBOX_STATE_FAILED', 'WhatsApp Cloud conversation state update failed');
   }
 }
 

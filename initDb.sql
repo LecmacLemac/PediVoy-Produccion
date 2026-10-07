@@ -2334,7 +2334,8 @@ BEGIN
       ('public.whatsapp_cloud_messages_provider_message_idx', 'public.whatsapp_cloud_messages'),
       ('public.whatsapp_cloud_events_status_message_idx', 'public.whatsapp_cloud_events'),
       ('public.idx_whatsapp_cloud_messages_conversations', 'public.whatsapp_cloud_messages'),
-      ('public.idx_whatsapp_cloud_messages_timeline', 'public.whatsapp_cloud_messages')
+      ('public.idx_whatsapp_cloud_messages_timeline', 'public.whatsapp_cloud_messages'),
+      ('public.idx_whatsapp_cloud_conversations_queue', 'public.whatsapp_cloud_conversations')
     ) AS canonical(index_name, table_name)
   LOOP
     IF pg_catalog.to_regclass(index_row.index_name) IS NOT NULL THEN
@@ -2374,6 +2375,35 @@ CREATE TABLE IF NOT EXISTS public.whatsapp_cloud_messages (
   created_at TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW()
 );
+
+CREATE TABLE IF NOT EXISTS public.whatsapp_cloud_conversations (
+  id UUID PRIMARY KEY DEFAULT pg_catalog.gen_random_uuid(),
+  empresa_id INTEGER NOT NULL,
+  participant_wa_id TEXT NOT NULL,
+  workflow_status TEXT NOT NULL DEFAULT 'pending',
+  priority TEXT NOT NULL DEFAULT 'normal',
+  version INTEGER NOT NULL DEFAULT 1,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW(),
+  CONSTRAINT whatsapp_cloud_conversations_empresa_id_fkey
+    FOREIGN KEY (empresa_id) REFERENCES public.empresas(id) ON DELETE CASCADE,
+  CONSTRAINT whatsapp_cloud_conversations_empresa_participant_key
+    UNIQUE (empresa_id, participant_wa_id),
+  CONSTRAINT whatsapp_cloud_conversations_participant_check
+    CHECK (participant_wa_id ~ '^[0-9]{6,15}$'),
+  CONSTRAINT whatsapp_cloud_conversations_workflow_status_check
+    CHECK (workflow_status IN ('pending', 'resolved')),
+  CONSTRAINT whatsapp_cloud_conversations_priority_check
+    CHECK (priority IN ('normal', 'high', 'urgent')),
+  CONSTRAINT whatsapp_cloud_conversations_version_check
+    CHECK (version > 0),
+  CONSTRAINT whatsapp_cloud_conversations_timestamps_check
+    CHECK (updated_at >= created_at)
+);
+
+CREATE INDEX IF NOT EXISTS idx_whatsapp_cloud_conversations_queue
+  ON public.whatsapp_cloud_conversations
+  (empresa_id, workflow_status, priority, updated_at DESC, id);
 
 DO $$
 DECLARE
@@ -2630,6 +2660,49 @@ BEGIN
     RETURN;
   END IF;
   PERFORM pg_catalog.pg_advisory_xact_lock(1464550735, target_empresa_id);
+END $$;
+
+CREATE OR REPLACE FUNCTION public.whatsapp_cloud_conversations_touch_locked(
+  target_empresa_id INTEGER,
+  target_participant_wa_id TEXT,
+  target_is_inbound BOOLEAN,
+  target_activity_at TIMESTAMPTZ
+) RETURNS UUID
+LANGUAGE plpgsql
+SET search_path = pg_catalog, public
+AS $$
+DECLARE
+  conversation_id UUID;
+  normalized_activity_at TIMESTAMPTZ := COALESCE(target_activity_at, pg_catalog.NOW());
+BEGIN
+  IF target_empresa_id IS NULL OR target_participant_wa_id !~ '^[0-9]{6,15}$' THEN
+    RETURN NULL;
+  END IF;
+
+  INSERT INTO public.whatsapp_cloud_conversations (
+    empresa_id, participant_wa_id, workflow_status, priority, version,
+    created_at, updated_at
+  ) VALUES (
+    target_empresa_id, target_participant_wa_id, 'pending', 'normal', 1,
+    normalized_activity_at, normalized_activity_at
+  )
+  ON CONFLICT (empresa_id, participant_wa_id) DO UPDATE
+    SET workflow_status = CASE
+          WHEN target_is_inbound THEN 'pending'
+          ELSE whatsapp_cloud_conversations.workflow_status
+        END,
+        version = CASE
+          WHEN target_is_inbound
+           AND whatsapp_cloud_conversations.workflow_status <> 'pending'
+            THEN whatsapp_cloud_conversations.version + 1
+          ELSE whatsapp_cloud_conversations.version
+        END,
+        updated_at = GREATEST(
+          whatsapp_cloud_conversations.updated_at,
+          normalized_activity_at
+        )
+  RETURNING id INTO conversation_id;
+  RETURN conversation_id;
 END $$;
 
 CREATE OR REPLACE FUNCTION public.whatsapp_cloud_messages_lock_projection_cleanup(
@@ -2989,6 +3062,12 @@ BEGIN
       NEW.received_at,
       NEW.received_at
     ) ON CONFLICT DO NOTHING;
+    PERFORM public.whatsapp_cloud_conversations_touch_locked(
+      NEW.empresa_id,
+      NEW.sender_id,
+      TRUE,
+      NEW.received_at
+    );
   ELSIF NEW.event_kind = 'status'
         AND NEW.status IN ('sent', 'delivered', 'read', 'failed')
         AND NULLIF(pg_catalog.BTRIM(NEW.message_id), '') IS NOT NULL THEN
@@ -3165,6 +3244,12 @@ BEGIN
       incoming_provider_message_id
     );
   END IF;
+  PERFORM public.whatsapp_cloud_conversations_touch_locked(
+    target_empresa_id,
+    target_telefono,
+    FALSE,
+    incoming_updated_at
+  );
 END $$;
 
 CREATE OR REPLACE FUNCTION public.whatsapp_cloud_messages_capture_outbox_insert()
@@ -3329,6 +3414,23 @@ BEGIN
        )
      ORDER BY deleted.id
     ON CONFLICT DO NOTHING;
+
+    INSERT INTO public.whatsapp_cloud_conversations (
+      empresa_id, participant_wa_id, workflow_status, priority, version,
+      created_at, updated_at
+    )
+    SELECT message.empresa_id,
+           message.participant_wa_id,
+           'pending',
+           'normal',
+           1,
+           pg_catalog.MIN(message.created_at),
+           pg_catalog.MAX(message.updated_at)
+      FROM public.whatsapp_cloud_messages AS message
+     WHERE message.empresa_id = target_empresa_id
+     GROUP BY message.empresa_id, message.participant_wa_id
+     ORDER BY message.participant_wa_id
+    ON CONFLICT (empresa_id, participant_wa_id) DO NOTHING;
 
     FOR outbox_row IN
       SELECT outbox.*
@@ -4402,6 +4504,23 @@ BEGIN
         message_row.provider_message_id
       );
     END LOOP;
+
+    INSERT INTO public.whatsapp_cloud_conversations (
+      empresa_id, participant_wa_id, workflow_status, priority, version,
+      created_at, updated_at
+    )
+    SELECT message.empresa_id,
+           message.participant_wa_id,
+           'pending',
+           'normal',
+           1,
+           pg_catalog.MIN(message.created_at),
+           pg_catalog.MAX(message.updated_at)
+      FROM public.whatsapp_cloud_messages AS message
+     WHERE message.empresa_id = target_empresa_id
+     GROUP BY message.empresa_id, message.participant_wa_id
+     ORDER BY message.participant_wa_id
+    ON CONFLICT (empresa_id, participant_wa_id) DO NOTHING;
   END LOOP;
 END $backfill$;
 COMMIT;

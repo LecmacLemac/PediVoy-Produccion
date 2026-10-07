@@ -4775,6 +4775,108 @@ test('correlación status aplica BTRIM a eventos y outbox legacy con whitespace'
   });
 });
 
+test('migración crea conversaciones operativas allowlisted y es reejecutable con backfill estable', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (1), (2)');
+    await pool.query(`
+      INSERT INTO whatsapp_cloud_events
+        (empresa_id,event_kind,dedupe_key,message_id,sender_id,message_type,event_data,received_at)
+      VALUES
+        (1,'message','conversation-backfill-1','wamid.backfill-1','549351555901','text',
+         '{"text":{"body":"tenant one"}}'::jsonb,'2026-10-06T10:00:00Z'),
+        (2,'message','conversation-backfill-2','wamid.backfill-2','549351555901','text',
+         '{"text":{"body":"tenant two"}}'::jsonb,'2026-10-06T11:00:00Z')
+    `);
+
+    await pool.query(migrationSql);
+    const before = (await pool.query(`
+      SELECT id::text,empresa_id,participant_wa_id,workflow_status,priority,version,
+             created_at,updated_at
+        FROM public.whatsapp_cloud_conversations
+       ORDER BY empresa_id
+    `)).rows;
+    await pool.query(migrationSql);
+    const afterRows = (await pool.query(`
+      SELECT id::text,empresa_id,participant_wa_id,workflow_status,priority,version,
+             created_at,updated_at
+        FROM public.whatsapp_cloud_conversations
+       ORDER BY empresa_id
+    `)).rows;
+
+    assert.deepEqual(afterRows, before);
+    assert.equal(before.length, 2);
+    assert.notEqual(before[0].id, before[1].id);
+    assert.match(before[0].id, /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    assert.deepEqual(before.map(row => [row.empresa_id, row.participant_wa_id, row.workflow_status, row.priority, row.version]), [
+      [1, '549351555901', 'pending', 'normal', 1],
+      [2, '549351555901', 'pending', 'normal', 1],
+    ]);
+
+    const definitions = new Map((await pool.query(`
+      SELECT conname,pg_get_constraintdef(oid) AS definition
+        FROM pg_constraint
+       WHERE conrelid = 'public.whatsapp_cloud_conversations'::regclass
+    `)).rows.map(row => [row.conname, row.definition]));
+    assert.match(definitions.get('whatsapp_cloud_conversations_empresa_participant_key'), /UNIQUE \(empresa_id, participant_wa_id\)/i);
+    assert.match(definitions.get('whatsapp_cloud_conversations_participant_check'), /\^\[0-9\]\{6,15\}\$/);
+    assert.match(definitions.get('whatsapp_cloud_conversations_workflow_status_check'), /pending.*resolved/i);
+    assert.match(definitions.get('whatsapp_cloud_conversations_priority_check'), /normal.*high.*urgent/i);
+    assert.match(definitions.get('whatsapp_cloud_conversations_version_check'), /version > 0/i);
+    assert.match(definitions.get('whatsapp_cloud_conversations_empresa_id_fkey'), /REFERENCES empresas\(id\) ON DELETE CASCADE/i);
+  });
+});
+
+test('inbound conserva identidad, reabre pending e incrementa version sin degradar priority', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (1)');
+    await pool.query(migrationSql);
+    await pool.query(`
+      INSERT INTO whatsapp_cloud_events
+        (empresa_id,event_kind,dedupe_key,message_id,sender_id,message_type,event_data,received_at)
+      VALUES (1,'message','conversation-live-1','wamid.live-1','549351555902','text',
+              '{"text":{"body":"primero"}}'::jsonb,'2026-10-07T10:00:00Z')
+    `);
+    const initial = (await pool.query(`
+      SELECT id::text,workflow_status,priority,version
+        FROM whatsapp_cloud_conversations
+       WHERE empresa_id=1 AND participant_wa_id='549351555902'
+    `)).rows[0];
+    await pool.query(`
+      UPDATE whatsapp_cloud_conversations
+         SET workflow_status='resolved',priority='urgent',version=version+1
+       WHERE empresa_id=1 AND id=$1::uuid
+    `, [initial.id]);
+    await pool.query(`
+      INSERT INTO whatsapp_cloud_events
+        (empresa_id,event_kind,dedupe_key,message_id,sender_id,message_type,event_data,received_at)
+      VALUES (1,'message','conversation-live-2','wamid.live-2','549351555902','text',
+              '{"text":{"body":"segundo"}}'::jsonb,'2026-10-07T10:05:00Z')
+    `);
+    const reopened = (await pool.query(`
+      SELECT id::text,workflow_status,priority,version
+        FROM whatsapp_cloud_conversations
+       WHERE empresa_id=1 AND participant_wa_id='549351555902'
+    `)).rows[0];
+    assert.equal(reopened.id, initial.id);
+    assert.deepEqual(reopened, {
+      id: initial.id,
+      workflow_status: 'pending',
+      priority: 'urgent',
+      version: 3,
+    });
+
+    await pool.query(`
+      INSERT INTO wpp_outbox (empresa_id,telefono,mensaje,status,transport_origin,created_at)
+      VALUES (1,'549351555902','respuesta','pending','cloud','2026-10-07T10:06:00Z')
+    `);
+    assert.deepEqual((await pool.query(`
+      SELECT id::text,workflow_status,priority,version
+        FROM whatsapp_cloud_conversations
+       WHERE empresa_id=1 AND participant_wa_id='549351555902'
+    `)).rows[0], reopened);
+  });
+});
+
 after(() => {
   assert.deepEqual([...createdDirectories].map(basename), [], 'all temporary PostgreSQL clusters must be removed');
   const residual = readdirSync(process.cwd()).filter(name => name.startsWith(tempPrefix));
