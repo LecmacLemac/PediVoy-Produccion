@@ -2269,8 +2269,15 @@ SET LOCAL lock_timeout = '30s';
 SET LOCAL statement_timeout = '5min';
 -- Stable namespace/key pair for the complete WhatsApp Cloud inbox projection migration.
 SELECT pg_catalog.pg_advisory_xact_lock(1464550724, 1229867347);
--- Establish one heavyweight order for every writer: sources before projection DDL.
+-- Heavyweight lock order: sources first, then the optional conversation projection.
+-- Keep this order aligned with every migration writer to avoid inverse-order deadlocks.
 LOCK TABLE public.whatsapp_cloud_events, public.wpp_outbox IN SHARE ROW EXCLUSIVE MODE;
+DO $conversation_table_lock$
+BEGIN
+  IF pg_catalog.to_regclass('public.whatsapp_cloud_conversations') IS NOT NULL THEN
+    LOCK TABLE public.whatsapp_cloud_conversations IN SHARE ROW EXCLUSIVE MODE;
+  END IF;
+END $conversation_table_lock$;
 
 DO $$
 DECLARE
@@ -2415,6 +2422,40 @@ BEGIN
          FROM pg_catalog.pg_inherits AS inheritance_row
         WHERE inheritance_row.inhrelid = conversation_relation.oid
            OR inheritance_row.inhparent = conversation_relation.oid
+     )
+     OR EXISTS (
+       SELECT 1
+         FROM pg_catalog.pg_policy AS policy_row
+        WHERE policy_row.polrelid = conversation_relation.oid
+     )
+     OR EXISTS (
+       SELECT 1
+         FROM pg_catalog.pg_constraint AS constraint_row
+        WHERE constraint_row.confrelid = conversation_relation.oid
+     )
+     OR EXISTS (
+       SELECT 1
+         FROM pg_catalog.pg_constraint AS constraint_row
+        WHERE constraint_row.conrelid = conversation_relation.oid
+          AND constraint_row.contype IN ('p', 'u', 'f', 'c')
+          AND NOT (
+            (constraint_row.conname = 'whatsapp_cloud_conversations_pkey'
+             AND pg_catalog.pg_get_constraintdef(constraint_row.oid, true) = 'PRIMARY KEY (id)')
+            OR (constraint_row.conname = 'whatsapp_cloud_conversations_empresa_id_fkey'
+             AND pg_catalog.pg_get_constraintdef(constraint_row.oid, true) = 'FOREIGN KEY (empresa_id) REFERENCES empresas(id) ON DELETE CASCADE')
+            OR (constraint_row.conname = 'whatsapp_cloud_conversations_empresa_participant_key'
+             AND pg_catalog.pg_get_constraintdef(constraint_row.oid, true) = 'UNIQUE (empresa_id, participant_wa_id)')
+            OR (constraint_row.conname = 'whatsapp_cloud_conversations_participant_check'
+             AND pg_catalog.pg_get_constraintdef(constraint_row.oid, true) = 'CHECK (participant_wa_id ~ ''^[0-9]{6,15}$''::text)')
+            OR (constraint_row.conname = 'whatsapp_cloud_conversations_workflow_status_check'
+             AND pg_catalog.pg_get_constraintdef(constraint_row.oid, true) = 'CHECK (workflow_status = ANY (ARRAY[''pending''::text, ''resolved''::text]))')
+            OR (constraint_row.conname = 'whatsapp_cloud_conversations_priority_check'
+             AND pg_catalog.pg_get_constraintdef(constraint_row.oid, true) = 'CHECK (priority = ANY (ARRAY[''normal''::text, ''high''::text, ''urgent''::text]))')
+            OR (constraint_row.conname = 'whatsapp_cloud_conversations_version_check'
+             AND pg_catalog.pg_get_constraintdef(constraint_row.oid, true) = 'CHECK (version > 0)')
+            OR (constraint_row.conname = 'whatsapp_cloud_conversations_timestamps_check'
+             AND pg_catalog.pg_get_constraintdef(constraint_row.oid, true) = 'CHECK (updated_at >= created_at)')
+          )
      ) THEN
     RAISE EXCEPTION USING ERRCODE = 'P0001',
       MESSAGE = 'whatsapp_cloud_conversations_schema_unsafe';
@@ -2807,29 +2848,7 @@ BEGIN
 END $conversation_columns$;
 
 DO $conversation_constraints$
-DECLARE
-  constraint_row RECORD;
 BEGIN
-  FOR constraint_row IN
-    SELECT conname, pg_catalog.pg_get_constraintdef(oid, true) AS definition
-      FROM pg_catalog.pg_constraint
-     WHERE conrelid = 'public.whatsapp_cloud_conversations'::pg_catalog.regclass
-       AND contype IN ('p', 'u', 'f', 'c')
-  LOOP
-    IF NOT (
-      (constraint_row.conname = 'whatsapp_cloud_conversations_pkey' AND constraint_row.definition = 'PRIMARY KEY (id)')
-      OR (constraint_row.conname = 'whatsapp_cloud_conversations_empresa_id_fkey' AND constraint_row.definition = 'FOREIGN KEY (empresa_id) REFERENCES empresas(id) ON DELETE CASCADE')
-      OR (constraint_row.conname = 'whatsapp_cloud_conversations_empresa_participant_key' AND constraint_row.definition = 'UNIQUE (empresa_id, participant_wa_id)')
-      OR (constraint_row.conname = 'whatsapp_cloud_conversations_participant_check' AND constraint_row.definition = 'CHECK (participant_wa_id ~ ''^[0-9]{6,15}$''::text)')
-      OR (constraint_row.conname = 'whatsapp_cloud_conversations_workflow_status_check' AND constraint_row.definition = 'CHECK (workflow_status = ANY (ARRAY[''pending''::text, ''resolved''::text]))')
-      OR (constraint_row.conname = 'whatsapp_cloud_conversations_priority_check' AND constraint_row.definition = 'CHECK (priority = ANY (ARRAY[''normal''::text, ''high''::text, ''urgent''::text]))')
-      OR (constraint_row.conname = 'whatsapp_cloud_conversations_version_check' AND constraint_row.definition = 'CHECK (version > 0)')
-      OR (constraint_row.conname = 'whatsapp_cloud_conversations_timestamps_check' AND constraint_row.definition = 'CHECK (updated_at >= created_at)')
-    ) THEN
-      EXECUTE pg_catalog.format('ALTER TABLE public.whatsapp_cloud_conversations DROP CONSTRAINT %I', constraint_row.conname);
-    END IF;
-  END LOOP;
-
   IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint WHERE conrelid='public.whatsapp_cloud_conversations'::pg_catalog.regclass AND conname='whatsapp_cloud_conversations_pkey') THEN
     ALTER TABLE public.whatsapp_cloud_conversations ADD CONSTRAINT whatsapp_cloud_conversations_pkey PRIMARY KEY (id);
   END IF;

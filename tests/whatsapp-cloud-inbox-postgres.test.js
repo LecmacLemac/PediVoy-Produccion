@@ -273,6 +273,204 @@ test('migración de conversaciones rechaza vistas dependientes antes de DDL y si
   });
 });
 
+for (const dependency of [
+  {
+    name: 'rules',
+    install: `CREATE RULE legacy_conversation_update_rule AS
+      ON UPDATE TO whatsapp_cloud_conversations DO ALSO SELECT 1`,
+    snapshot: `SELECT oid::text, rulename, pg_get_ruledef(oid, true) AS definition
+      FROM pg_rewrite
+      WHERE ev_class = 'whatsapp_cloud_conversations'::regclass
+        AND rulename = 'legacy_conversation_update_rule'`,
+  },
+  {
+    name: 'materialized views',
+    install: `CREATE MATERIALIZED VIEW legacy_conversation_priorities AS
+      SELECT id, priority FROM whatsapp_cloud_conversations`,
+    snapshot: `SELECT oid::text, relname, relkind
+      FROM pg_class
+      WHERE oid = 'legacy_conversation_priorities'::regclass`,
+  },
+  {
+    name: 'inheritance',
+    install: `CREATE TABLE legacy_conversation_child ()
+      INHERITS (whatsapp_cloud_conversations)`,
+    snapshot: `SELECT inhrelid::regclass::text AS child, inhparent::regclass::text AS parent
+      FROM pg_inherits
+      WHERE inhparent = 'whatsapp_cloud_conversations'::regclass`,
+  },
+]) {
+  test(`migración de conversaciones rechaza ${dependency.name} antes de DDL`, async () => {
+    await withDatabase(async pool => {
+      await pool.query('INSERT INTO empresas(id) VALUES (1)');
+      await pool.query(migrationSql);
+      await pool.query(`
+        INSERT INTO whatsapp_cloud_conversations(empresa_id, participant_wa_id)
+        VALUES (1, '5493515550007');
+        ${dependency.install}
+      `);
+      const beforeRow = (await pool.query(`
+        SELECT id::text, xmin::text FROM whatsapp_cloud_conversations
+      `)).rows;
+      const beforeDependency = (await pool.query(dependency.snapshot)).rows;
+
+      await assert.rejects(pool.query(projectionSql), error => {
+        assert.equal(error?.code, 'P0001');
+        assert.equal(error?.message, 'whatsapp_cloud_conversations_schema_unsafe');
+        assert.equal(error?.detail, undefined);
+        assert.equal(error?.hint, undefined);
+        return true;
+      });
+      assert.deepEqual((await pool.query(`
+        SELECT id::text, xmin::text FROM whatsapp_cloud_conversations
+      `)).rows, beforeRow);
+      assert.deepEqual((await pool.query(dependency.snapshot)).rows, beforeDependency);
+    });
+  });
+}
+
+test('migración de conversaciones rechaza policies RLS antes de reparar columnas o filas', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (1)');
+    await pool.query(migrationSql);
+    await pool.query(`
+      INSERT INTO whatsapp_cloud_conversations
+        (empresa_id, participant_wa_id, workflow_status, priority, version)
+      VALUES (1, '5493515550005', 'resolved', 'urgent', 9);
+      ALTER TABLE whatsapp_cloud_conversations ALTER COLUMN priority DROP DEFAULT;
+      ALTER TABLE whatsapp_cloud_conversations ENABLE ROW LEVEL SECURITY;
+      CREATE POLICY legacy_priority_visibility ON whatsapp_cloud_conversations
+        USING (priority = 'urgent')
+    `);
+    const snapshot = () => pool.query(`
+      SELECT conversation.id::text, conversation.xmin::text, conversation.priority,
+             table_row.oid::text AS table_oid,
+             policy_row.oid::text AS policy_oid,
+             pg_get_expr(policy_row.polqual, policy_row.polrelid) AS policy_using,
+             pg_get_expr(default_row.adbin, default_row.adrelid) AS priority_default
+        FROM whatsapp_cloud_conversations AS conversation
+        CROSS JOIN pg_class AS table_row
+        CROSS JOIN pg_policy AS policy_row
+        JOIN pg_attribute AS priority_column
+          ON priority_column.attrelid = table_row.oid AND priority_column.attname = 'priority'
+        LEFT JOIN pg_attrdef AS default_row
+          ON default_row.adrelid = priority_column.attrelid
+         AND default_row.adnum = priority_column.attnum
+       WHERE table_row.oid = 'whatsapp_cloud_conversations'::regclass
+         AND policy_row.polrelid = table_row.oid
+         AND policy_row.polname = 'legacy_priority_visibility'
+    `);
+    const before = (await snapshot()).rows;
+
+    await assert.rejects(pool.query(projectionSql), error => {
+      assert.equal(error?.code, 'P0001');
+      assert.equal(error?.message, 'whatsapp_cloud_conversations_schema_unsafe');
+      assert.equal(error?.detail, undefined);
+      assert.equal(error?.hint, undefined);
+      assert.doesNotMatch(JSON.stringify(error), /urgent|priority_visibility/i);
+      return true;
+    });
+    assert.deepEqual((await snapshot()).rows, before);
+  });
+});
+
+test('migración de conversaciones retiene lock de tabla desde el inventario hasta canonicalizar', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (1)');
+    await pool.query(migrationSql);
+    await pool.query(`
+      CREATE FUNCTION concurrent_conversation_trigger() RETURNS trigger
+      LANGUAGE plpgsql AS $fn$
+      BEGIN
+        RETURN NEW;
+      END
+      $fn$
+    `);
+    const pauseMarker = 'END $conversation_relation_guard$;';
+    assert.ok(projectionSql.includes(pauseMarker));
+    const controlledMigrationSql = projectionSql.replace(
+      pauseMarker,
+      `${pauseMarker}\nSELECT pg_catalog.pg_sleep(1);`,
+    );
+    const migrationClient = await pool.connect();
+    const triggerClient = await pool.connect();
+    try {
+      const migration = migrationClient.query(controlledMigrationSql);
+      await waitUntil(async () => (await pool.query(`
+        SELECT wait_event
+          FROM pg_stat_activity
+         WHERE pid = $1
+      `, [migrationClient.processID])).rows[0]?.wait_event === 'PgSleep',
+      'la migración debe alcanzar la pausa controlada después del inventario');
+
+      await triggerClient.query("SET lock_timeout = '200ms'");
+      await assert.rejects(triggerClient.query(`
+        CREATE TRIGGER concurrent_conversation_update
+          BEFORE UPDATE ON whatsapp_cloud_conversations
+          FOR EACH ROW EXECUTE FUNCTION concurrent_conversation_trigger()
+      `), error => {
+        assert.equal(error?.code, '55P03');
+        return true;
+      });
+      await migration;
+      assert.equal((await pool.query(`
+        SELECT count(*)::integer AS count
+          FROM pg_trigger
+         WHERE tgrelid = 'whatsapp_cloud_conversations'::regclass
+           AND tgname = 'concurrent_conversation_update'
+      `)).rows[0].count, 0);
+    } finally {
+      await migrationClient.query('ROLLBACK').catch(() => {});
+      migrationClient.release();
+      triggerClient.release();
+    }
+  });
+});
+
+test('migración de conversaciones rechaza constraints ajenas sin eliminarlas ni mutar filas', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (1)');
+    await pool.query(migrationSql);
+    await pool.query(`
+      INSERT INTO whatsapp_cloud_conversations
+        (empresa_id, participant_wa_id, workflow_status, priority, version)
+      VALUES (1, '5493515550006', 'resolved', 'high', 12);
+      ALTER TABLE whatsapp_cloud_conversations ALTER COLUMN priority DROP DEFAULT;
+      ALTER TABLE whatsapp_cloud_conversations
+        ADD CONSTRAINT legacy_conversation_version_ceiling CHECK (version < 100)
+    `);
+    const snapshot = () => pool.query(`
+      SELECT conversation.id::text, conversation.xmin::text, conversation.version,
+             table_row.oid::text AS table_oid,
+             constraint_row.oid::text AS constraint_oid,
+             pg_get_constraintdef(constraint_row.oid, true) AS constraint_definition,
+             pg_get_expr(default_row.adbin, default_row.adrelid) AS priority_default
+        FROM whatsapp_cloud_conversations AS conversation
+        CROSS JOIN pg_class AS table_row
+        CROSS JOIN pg_constraint AS constraint_row
+        JOIN pg_attribute AS priority_column
+          ON priority_column.attrelid = table_row.oid AND priority_column.attname = 'priority'
+        LEFT JOIN pg_attrdef AS default_row
+          ON default_row.adrelid = priority_column.attrelid
+         AND default_row.adnum = priority_column.attnum
+       WHERE table_row.oid = 'whatsapp_cloud_conversations'::regclass
+         AND constraint_row.conrelid = table_row.oid
+         AND constraint_row.conname = 'legacy_conversation_version_ceiling'
+    `);
+    const before = (await snapshot()).rows;
+
+    await assert.rejects(pool.query(projectionSql), error => {
+      assert.equal(error?.code, 'P0001');
+      assert.equal(error?.message, 'whatsapp_cloud_conversations_schema_unsafe');
+      assert.equal(error?.detail, undefined);
+      assert.equal(error?.hint, undefined);
+      assert.doesNotMatch(JSON.stringify(error), /version_ceiling|version < 100/i);
+      return true;
+    });
+    assert.deepEqual((await snapshot()).rows, before);
+  });
+});
+
 test('migración de conversaciones es estructuralmente idempotente en esquema canónico', async () => {
   await withDatabase(async pool => {
     await pool.query(migrationSql);
@@ -5015,7 +5213,6 @@ test('migración canonicaliza conversación legacy parcial sin perder id ni esta
       INSERT INTO whatsapp_cloud_conversations
         (id,empresa_id,participant_wa_id,workflow_status,version,created_at)
       VALUES ('${stableId}',1,'549351555900','resolved',4,'2026-10-06 10:00:00');
-      ALTER TABLE whatsapp_cloud_conversations ADD PRIMARY KEY (participant_wa_id);
       CREATE INDEX idx_whatsapp_cloud_conversations_queue
         ON whatsapp_cloud_conversations (empresa_id)
     `);
