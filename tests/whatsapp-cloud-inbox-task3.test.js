@@ -5,6 +5,7 @@ import { readFile } from 'node:fs/promises';
 
 import { createWhatsAppCloudInboxAdminRouter } from '../src/routes/whatsappCloudInboxAdmin.js';
 import {
+  isConversationListContextCurrent,
   reconcileConversationCollection,
   reconcileConversationMutation,
   isListResponseCurrentForMutation,
@@ -12,6 +13,30 @@ import {
   operationalMeta,
   queueCounterItems,
 } from '../pedidos/whatsapp-cloud-ui.js';
+
+test('guard de listado exige generation, tenant, revisión y snapshot exacto de filtros', () => {
+  const started = {
+    generation: 7,
+    companyId: 9,
+    contextRevision: 4,
+    mutationRevision: 2,
+    filters: {
+      from: null, to: null, payment: null, workflowStatus: 'pending', priority: null, unread: null,
+    },
+  };
+  assert.equal(isConversationListContextCurrent(started, structuredClone(started)), true);
+  for (const changed of [
+    { generation: 8 },
+    { companyId: 10 },
+    { contextRevision: 5 },
+    { mutationRevision: 3 },
+    { filters: { ...started.filters, priority: 'urgent' } },
+  ]) {
+    assert.equal(isConversationListContextCurrent(started, { ...structuredClone(started), ...changed }), false);
+  }
+  assert.equal(isConversationListContextCurrent(started, null), false);
+  assert.equal(isConversationListContextCurrent({ ...started, contextRevision: Number.MAX_SAFE_INTEGER + 1 }, started), false);
+});
 
 test('guard de listado acepta sólo la misma revisión de mutación y falla cerrado con tokens inválidos', () => {
   assert.equal(isListResponseCurrentForMutation(4, 4), true);

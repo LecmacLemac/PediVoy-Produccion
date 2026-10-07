@@ -299,6 +299,29 @@ export function isListResponseCurrentForMutation(startedMutationRevision, curren
     && startedMutationRevision === currentMutationRevision;
 }
 
+const conversationListFilterKeys = Object.freeze([
+  'from', 'to', 'payment', 'workflowStatus', 'priority', 'unread',
+]);
+
+function validConversationListContext(context) {
+  return Boolean(context && typeof context === 'object'
+    && Number.isSafeInteger(context.generation) && context.generation > 0
+    && Number.isSafeInteger(context.contextRevision) && context.contextRevision >= 0
+    && Number.isSafeInteger(context.mutationRevision) && context.mutationRevision >= 0
+    && (context.companyId === null || (Number.isSafeInteger(context.companyId) && context.companyId > 0))
+    && context.filters && typeof context.filters === 'object');
+}
+
+export function isConversationListContextCurrent(started, current) {
+  return validConversationListContext(started)
+    && validConversationListContext(current)
+    && started.generation === current.generation
+    && started.companyId === current.companyId
+    && started.contextRevision === current.contextRevision
+    && started.mutationRevision === current.mutationRevision
+    && conversationListFilterKeys.every(key => started.filters[key] === current.filters[key]);
+}
+
 export function createSendDeadline({
   parentSignal,
   timeoutMs,

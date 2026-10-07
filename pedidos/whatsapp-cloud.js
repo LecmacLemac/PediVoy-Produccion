@@ -9,7 +9,7 @@ import {
   createSendDeadline,
   createSingleFlightSubmission,
   formatCloudTimestamp,
-  isListResponseCurrentForMutation,
+  isConversationListContextCurrent,
   mergeHistoryPage,
   reconcileConversationMutation,
   operationalMeta,
@@ -59,6 +59,9 @@ const state = {
   activeConversation: null,
   activeCounterBaselineTrusted: false,
   mutationRevision: 0,
+  conversationContextRevision: 0,
+  conversationContextLoading: false,
+  pendingStateMutation: null,
   messages: [],
   historyCursor: null,
   mobile: { mobileView: 'list', activeConversationId: null },
@@ -137,6 +140,10 @@ function setComposerNotice(message, tone = 'neutral') {
 function syncContextControls() {
   const composer = composerController.snapshot().composer;
   const locked = composer.sending || composer.reconciliationRequired;
+  const stateMutationLocked = state.pendingStateMutation
+    && stateMutationGate.isCurrent(state.pendingStateMutation.generation)
+    && state.companyId === state.pendingStateMutation.companyId
+    && String(state.activeConversation?.conversationId) === state.pendingStateMutation.conversationId;
   const companySelect = elements.companyWrap.querySelector('select');
   if (companySelect) companySelect.disabled = locked;
   if (elements.dateFilter) elements.dateFilter.disabled = locked;
@@ -144,11 +151,13 @@ function syncContextControls() {
   if (elements.workflowFilter) elements.workflowFilter.disabled = locked;
   if (elements.priorityFilter) elements.priorityFilter.disabled = locked;
   if (elements.unreadFilter) elements.unreadFilter.disabled = locked;
+  elements.refresh.disabled = locked;
+  elements.conversationsMore.disabled = locked;
   elements.back.disabled = locked;
   elements.conversations.querySelectorAll('button').forEach(button => { button.disabled = locked; });
   elements.newMessage.hidden = !composer.reconciliationRequired;
-  elements.conversationWorkflow.disabled = locked || !state.activeConversation;
-  elements.conversationPriority.disabled = locked || !state.activeConversation;
+  elements.conversationWorkflow.disabled = locked || stateMutationLocked || state.conversationContextLoading || !state.activeConversation;
+  elements.conversationPriority.disabled = locked || stateMutationLocked || state.conversationContextLoading || !state.activeConversation;
 }
 
 async function readJson(response) {
@@ -323,11 +332,17 @@ async function performConversationLoad({ append = false } = {}) {
   if (state.role === 'super' && !state.companyId) return;
   conversationsController = new AbortController();
   const generation = conversationGate.begin();
-  const startedMutationRevision = state.mutationRevision;
+  const filters = currentFilters();
+  const startedContext = {
+    generation,
+    companyId: state.companyId,
+    contextRevision: state.conversationContextRevision,
+    mutationRevision: state.mutationRevision,
+    filters,
+  };
   const cursor = append ? state.conversationsCursor : null;
   if (!append) setStatus('Cargando conversaciones…');
   try {
-    const filters = currentFilters();
     const url = buildCloudApiUrl('/conversations', {
       role: state.role,
       companyId: state.companyId,
@@ -341,14 +356,22 @@ async function performConversationLoad({ append = false } = {}) {
       ...(cursor ? { cursor } : {}),
     });
     const { response, payload } = await request(url, { signal: conversationsController.signal });
-    if (!conversationGate.isCurrent(generation)) return;
+    const currentContext = {
+      generation,
+      companyId: state.companyId,
+      contextRevision: state.conversationContextRevision,
+      mutationRevision: state.mutationRevision,
+      filters: currentFilters(),
+    };
+    if (!conversationGate.isCurrent(generation)
+      || !isConversationListContextCurrent(startedContext, currentContext)) {
+      return { staleContext: true };
+    }
     if (!response.ok) {
       setStatus(sanitizeCloudError(response.status, payload), 'error');
       return;
     }
-    if (!isListResponseCurrentForMutation(startedMutationRevision, state.mutationRevision)) {
-      return { staleMutationRevision: true };
-    }
+    state.conversationContextLoading = false;
     const incoming = Array.isArray(payload.conversations) ? payload.conversations : [];
     const known = new Map((append ? state.conversations : []).map(item => [String(item.conversationId), item]));
     for (const item of incoming) known.set(String(item.conversationId), item);
@@ -372,11 +395,23 @@ async function performConversationLoad({ append = false } = {}) {
     }
     state.conversationsCursor = typeof payload.nextCursor === 'string' ? payload.nextCursor : null;
     renderConversations();
+    syncContextControls();
     setStatus('');
   } catch (error) {
-    if (error?.name !== 'AbortError' && error?.message !== 'session_expired' && conversationGate.isCurrent(generation)) {
+    const currentContext = {
+      generation,
+      companyId: state.companyId,
+      contextRevision: state.conversationContextRevision,
+      mutationRevision: state.mutationRevision,
+      filters: currentFilters(),
+    };
+    if (error?.name !== 'AbortError'
+      && error?.message !== 'session_expired'
+      && conversationGate.isCurrent(generation)
+      && isConversationListContextCurrent(startedContext, currentContext)) {
       setStatus('No se pudieron cargar las conversaciones.', 'error');
     }
+    if (!isConversationListContextCurrent(startedContext, currentContext)) return { staleContext: true };
   }
 }
 
@@ -390,10 +425,12 @@ async function loadConversations({ append = false } = {}) {
     do {
       conversationReloadRequested = false;
       const startedMutationRevision = state.mutationRevision;
+      const startedContextRevision = state.conversationContextRevision;
       const result = await performConversationLoad({ append: nextAppend });
       nextAppend = false;
-      if (result?.staleMutationRevision) conversationReloadRequested = true;
+      if (result?.staleContext) conversationReloadRequested = true;
       if (state.mutationRevision !== startedMutationRevision) conversationReloadRequested = true;
+      if (state.conversationContextRevision !== startedContextRevision) conversationReloadRequested = true;
     } while (conversationReloadRequested);
   })();
   try {
@@ -403,11 +440,22 @@ async function loadConversations({ append = false } = {}) {
   }
 }
 
-async function reloadConversationsFromStart() {
+async function reloadConversationsFromStart({ preserveActiveConversation = false } = {}) {
+  state.conversationContextRevision += 1;
+  state.conversationContextLoading = true;
   state.conversations = [];
   state.conversationsCursor = null;
-  renderConversations();
-  clearChat({ restoreFocus: false });
+  state.counters = { total: 0, pending: 0, inProcess: 0, review: 0, resolved: 0 };
+  elements.conversations.replaceChildren();
+  elements.queueCounters.replaceChildren();
+  elements.conversationsMore.hidden = true;
+  if (preserveActiveConversation) {
+    state.activeCounterBaselineTrusted = false;
+    syncContextControls();
+  } else {
+    clearChat({ restoreFocus: false });
+  }
+  setStatus('Cargando conversaciones…');
   await loadConversations();
 }
 
@@ -512,6 +560,7 @@ async function patchActiveConversationState(change) {
   if (state.role === 'super') body.empresa_id = state.companyId;
   const path = `/conversations/${encodeURIComponent(String(conversation.conversationId))}/state`;
   const url = buildCloudApiUrl(path, { role: state.role, companyId: state.companyId, tenantInBody: true });
+  state.pendingStateMutation = { generation, companyId, conversationId };
   elements.conversationWorkflow.disabled = true;
   elements.conversationPriority.disabled = true;
   try {
@@ -540,6 +589,7 @@ async function patchActiveConversationState(change) {
       setStatus('No se pudo actualizar el estado operativo.', 'error');
     }
   } finally {
+    if (state.pendingStateMutation?.generation === generation) state.pendingStateMutation = null;
     if (stateMutationGate.isCurrent(generation)) syncContextControls();
   }
 }
@@ -615,6 +665,8 @@ function renderCompanyPicker(companies) {
       return;
     }
     state.companyId = nextCompanyId;
+    state.conversationContextRevision += 1;
+    state.conversationContextLoading = Boolean(nextCompanyId);
     conversationGate.invalidate();
     historyGate.invalidate();
     stateMutationGate.invalidate();
@@ -624,6 +676,8 @@ function renderCompanyPicker(companies) {
     state.conversationsCursor = null;
     state.counters = { total: 0, pending: 0, inProcess: 0, review: 0, resolved: 0 };
     elements.conversations.replaceChildren();
+    elements.queueCounters.replaceChildren();
+    elements.conversationsMore.hidden = true;
     clearChat({ composerAlreadyReset: true });
     if (state.companyId) loadConversations();
     else setStatus('Seleccioná una empresa para ver sus conversaciones.', 'warning');
@@ -727,7 +781,7 @@ async function bootstrap() {
 elements.back.addEventListener('click', () => clearChat());
 elements.older.addEventListener('click', () => loadHistory({ older: true }));
 elements.conversationsMore.addEventListener('click', () => loadConversations({ append: true }));
-elements.refresh.addEventListener('click', () => loadConversations());
+elements.refresh.addEventListener('click', () => reloadConversationsFromStart({ preserveActiveConversation: true }));
 elements.dateFilter?.addEventListener('change', () => reloadConversationsFromStart());
 elements.transferFilter?.addEventListener('change', () => reloadConversationsFromStart());
 elements.workflowFilter?.addEventListener('change', () => reloadConversationsFromStart());

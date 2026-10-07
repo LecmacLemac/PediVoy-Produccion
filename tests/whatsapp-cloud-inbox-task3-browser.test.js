@@ -264,6 +264,56 @@ browserTest('Task 3 aplica filtros workflow, priority y unread sin mezclar respu
   });
 });
 
+browserTest('Task 3 invalida contexto de filtros antes de aplicar GET previo y mantiene la lista limpia hasta B', async () => {
+  const stale = conversation(ids.normal, '0350', { priority: 'normal' });
+  const current = conversation(ids.urgent, '0351', { priority: 'urgent', unreadCount: 4 });
+  let releaseA;
+  let releaseB;
+  const waitA = new Promise(resolve => { releaseA = resolve; });
+  const waitB = new Promise(resolve => { releaseB = resolve; });
+  await withInbox({
+    async listResponse({ index }) {
+      if (index === 0) {
+        return { body: { conversations: [stale], counters: { total: 1, pending: 1, inProcess: 0, review: 0, resolved: 0 }, nextCursor: null } };
+      }
+      if (index === 1) {
+        await waitA;
+        return { body: { conversations: [stale], counters: { total: 1, pending: 1, inProcess: 0, review: 0, resolved: 0 }, nextCursor: null } };
+      }
+      await waitB;
+      return { body: { conversations: [current], counters: { total: 1, pending: 1, inProcess: 0, review: 0, resolved: 0 }, nextCursor: null } };
+    },
+  }, async ({ page, requests }) => {
+    await page.waitForSelector(`.conversation-card[data-conversation-id="${ids.normal}"]`);
+    await page.click('#refreshConversations');
+    await waitFor(() => requests.lists.length === 2, 'GET A retenido');
+    await page.select('#priorityFilter', 'urgent');
+    assert.deepEqual(await cardSnapshot(page), []);
+    assert.deepEqual(await page.$$eval('#queueCounters .counter-chip', chips => chips.map(chip => chip.textContent)), []);
+
+    releaseA();
+    await waitFor(() => requests.lists.length === 3, 'GET B coalescido');
+    assert.equal(requests.maxListInFlight, 1);
+    assert.deepEqual(requests.lists[1].params, { limit: '25' });
+    assert.deepEqual(requests.lists[2].params, { limit: '25', priority: 'urgent' });
+    assert.deepEqual(await cardSnapshot(page), [], 'A no debe renderizar tarjetas durante la ventana stale');
+    assert.deepEqual(await page.$$eval('#queueCounters .counter-chip', chips => chips.map(chip => chip.textContent)), [], 'A no debe renderizar contadores stale');
+    assert.equal(await page.$eval('#conversationWorkflow', element => element.disabled), true);
+    assert.equal(await page.$eval('#conversationPriority', element => element.disabled), true);
+    await page.click('#conversationWorkflow');
+    await delay(30);
+    assert.equal(requests.states.length, 0, 'la ventana stale no permite PATCH');
+
+    releaseB();
+    await page.waitForSelector(`.conversation-card[data-conversation-id="${ids.urgent}"]`);
+    assert.deepEqual((await cardSnapshot(page)).map(card => card.id), [ids.urgent]);
+    assert.match((await cardSnapshot(page))[0].text, /Prioridad urgent.*4 sin leer/);
+    assert.deepEqual(await page.$$eval('#queueCounters .counter-chip', chips => chips.map(chip => chip.textContent)), [
+      'Total: 1', 'Por responder: 1', 'En proceso: 0', 'Revisar: 0', 'Respondidas: 0',
+    ]);
+  });
+});
+
 browserTest('Task 3 marca leído una vez después de render exitoso y nunca si falla history', async () => {
   const success = conversation(ids.urgent, '0401', { unreadCount: 2 });
   const failure = conversation(ids.failed, '0402', { unreadCount: 1 });
@@ -393,6 +443,44 @@ browserTest('Task 3 coalesce reloads hasta aplicar una revisión estable con un 
     assert.deepEqual(await page.$$eval('#queueCounters .counter-chip', chips => chips.map(chip => chip.textContent)), [
       'Total: 1', 'Por responder: 0', 'En proceso: 0', 'Revisar: 0', 'Respondidas: 1',
     ]);
+  });
+});
+
+browserTest('Task 3 un GET que termina durante PATCH no rehabilita controles ni duplica la mutación', async () => {
+  const initial = conversation(ids.high, '0463', { priority: 'high', unreadCount: 1, version: 4 });
+  let releaseGet;
+  let releasePatch;
+  const waitGet = new Promise(resolve => { releaseGet = resolve; });
+  const waitPatch = new Promise(resolve => { releasePatch = resolve; });
+  await withInbox({
+    listResponse: async ({ index }) => {
+      if (index === 0) return { body: { conversations: [initial], counters: { total: 1, pending: 1, inProcess: 0, review: 0, resolved: 0 }, nextCursor: null } };
+      await waitGet;
+      return { body: { conversations: [initial], counters: { total: 1, pending: 1, inProcess: 0, review: 0, resolved: 0 }, nextCursor: null } };
+    },
+    messagesResponse: async () => ({ body: { messages: [message(94, 'history para lock de PATCH')], nextCursor: null } }),
+    stateResponse: async () => {
+      await waitPatch;
+      return { body: { conversationId: ids.high, workflowStatus: 'resolved', priority: 'high', version: 5 } };
+    },
+  }, async ({ page, requests }) => {
+    await page.waitForSelector('.conversation-card');
+    await page.click('.conversation-card');
+    await waitFor(() => requests.lists.length === 2, 'GET post-read retenido');
+    await page.click('#conversationWorkflow');
+    await waitFor(() => requests.states.length === 1, 'PATCH retenido');
+
+    releaseGet();
+    await waitFor(() => requests.listInFlight === 0, 'GET completado durante PATCH');
+    assert.equal(await page.$eval('#conversationWorkflow', element => element.disabled), true);
+    assert.equal(await page.$eval('#conversationPriority', element => element.disabled), true);
+    await page.click('#conversationWorkflow');
+    await delay(30);
+    assert.equal(requests.states.length, 1, 'el GET no debe permitir un segundo PATCH');
+
+    releasePatch();
+    await page.waitForFunction(() => document.querySelector('#conversationWorkflow')?.textContent === 'Reabrir conversación');
+    assert.equal(await page.$eval('#conversationWorkflow', element => element.disabled), false);
   });
 });
 
