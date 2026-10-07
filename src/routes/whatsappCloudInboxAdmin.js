@@ -3,6 +3,7 @@ import { query as defaultQuery, pool as defaultPool } from '../db.js';
 import { withAuth as defaultWithAuth } from '../services.js';
 import { enqueueWppOutboxCorrelatedReply, normalizeWppOutboxPayload } from '../wpp/enqueue.js';
 import { requireCanonicalBackofficeRole } from './canonicalBackofficeRole.js';
+import { isLoopbackHostname, parseCanonicalPublicOrigin } from '../bootstrap/env.js';
 import {
   getCloudAttachmentMetadata,
   listCloudConversationMessages,
@@ -13,26 +14,14 @@ import {
 
 const PG_INT4_MAX = 2147483647;
 
-function isLoopbackHostname(hostname) {
-  const value = String(hostname || '').toLowerCase();
-  return value === 'localhost' || value.endsWith('.localhost') || value === '::1'
-    || /^127(?:\.\d{1,3}){3}$/.test(value);
-}
-
 function configuredCanonicalOrigin(req, override) {
-  const configured = String(override || process.env.PUBLIC_BASE_URL || process.env.APP_PUBLIC_URL || '').trim();
+  const configured = override || process.env.PUBLIC_BASE_URL || process.env.APP_PUBLIC_URL || '';
   if (configured) {
-    try {
-      const parsed = new URL(configured);
-      if (parsed.username || parsed.password || !['https:', 'http:'].includes(parsed.protocol)) return null;
-      if (parsed.protocol === 'http:' && !isLoopbackHostname(parsed.hostname)) return null;
-      return parsed.origin;
-    } catch {
-      return null;
-    }
+    const allowLoopbackHttp = String(process.env.LOCAL_HTTP_DEV || '').toLowerCase() === 'true';
+    return parseCanonicalPublicOrigin(configured, { allowLoopbackHttp });
   }
   // Local-only trust boundary: Host is accepted solely for loopback development.
-  if (process.env.NODE_ENV === 'production' && process.env.LOCAL_HTTP_DEV !== 'true') return null;
+  if (process.env.NODE_ENV === 'production') return null;
   try {
     const parsed = new URL(`${req.protocol || 'http'}://${req.get('host') || ''}`);
     return isLoopbackHostname(parsed.hostname) ? parsed.origin : null;

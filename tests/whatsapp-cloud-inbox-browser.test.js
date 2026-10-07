@@ -23,6 +23,54 @@ function overlapArea(first, second) {
   return width * height;
 }
 
+async function measureState(page, selectors) {
+  return page.evaluate(targets => {
+    const boxes = Object.fromEntries(Object.entries(targets).map(([name, selector]) => {
+      const element = document.querySelector(selector);
+      const rect = element.getBoundingClientRect();
+      const style = getComputedStyle(element);
+      return [name, {
+        left: rect.left,
+        top: rect.top,
+        right: rect.right,
+        bottom: rect.bottom,
+        width: rect.width,
+        height: rect.height,
+        scrollWidth: element.scrollWidth,
+        clientWidth: element.clientWidth,
+        scrollHeight: element.scrollHeight,
+        clientHeight: element.clientHeight,
+        visible: !element.hidden && style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0,
+      }];
+    }));
+    return {
+      boxes,
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+      scrollWidth: document.documentElement.scrollWidth,
+      scrollHeight: document.documentElement.scrollHeight,
+    };
+  }, selectors);
+}
+
+function assertVisibleLayout(measured, { touch = [], nonOverlapping = [] } = {}) {
+  const viewport = { width: measured.viewportWidth, height: measured.viewportHeight };
+  assert.ok(measured.scrollWidth <= measured.viewportWidth, 'documento no debe desbordar horizontalmente');
+  assert.ok(measured.scrollHeight <= measured.viewportHeight, 'documento no debe superar el alto del viewport');
+  for (const [label, box] of Object.entries(measured.boxes)) {
+    assert.equal(box.visible, true, `${label} debe estar visible`);
+    assertInsideViewport(box, viewport, label);
+    assert.ok(box.scrollWidth <= box.clientWidth && box.scrollHeight <= box.clientHeight, `${label} no debe recortarse`);
+  }
+  for (const label of touch) {
+    const box = measured.boxes[label];
+    assert.ok(box.width >= 44 && box.height >= 44, `${label} debe medir al menos 44x44`);
+  }
+  for (const [firstLabel, secondLabel] of nonOverlapping) {
+    assert.equal(overlapArea(measured.boxes[firstLabel], measured.boxes[secondLabel]), 0, `${firstLabel} y ${secondLabel} no deben superponerse`);
+  }
+}
+
 async function withBrowserPage(viewport, work) {
   const app = express();
   app.post('/api/admin/whatsapp-cloud/conversations/:id/replies', req => {
@@ -85,65 +133,43 @@ async function withBrowserPage(viewport, work) {
 
 test('browser móvil mantiene composer visible, foco reversible, timeout incierto y resume visible', { skip: !existsSync(chromePath) }, async () => {
   await withBrowserPage({ width: 390, height: 844, deviceScaleFactor: 1 }, async ({ page, counts }) => {
-    const mobileHeader = await page.evaluate(() => {
-      const selectors = {
-        title: '.brand span',
-        status: '#conversationHeading',
-        dashboard: '.cloud-nav a[href="dashboard.html"]',
-        whatsappCloud: '.cloud-nav a[aria-current="page"]',
-        qr: '.cloud-nav a[href="qr.html"]',
-        salir: '#logout',
-      };
-      return Object.fromEntries(Object.entries(selectors).map(([name, selector]) => {
-        const element = document.querySelector(selector);
-        const rect = element.getBoundingClientRect();
-        return [name, {
-          left: rect.left,
-          top: rect.top,
-          right: rect.right,
-          bottom: rect.bottom,
-          width: rect.width,
-          height: rect.height,
-          scrollWidth: element.scrollWidth,
-          clientWidth: element.clientWidth,
-          scrollHeight: element.scrollHeight,
-          clientHeight: element.clientHeight,
-        }];
-      }));
+    const listLayout = await measureState(page, {
+      title: '.brand span', dashboard: '.cloud-nav a[href="dashboard.html"]',
+      whatsappCloud: '.cloud-nav a[aria-current="page"]', qr: '.cloud-nav a[href="qr.html"]', salir: '#logout',
+      listHeading: '#conversationHeading', refresh: '#refreshConversations', firstConversation: '.conversation-card[data-conversation-id="44"]',
     });
+    assertVisibleLayout(listLayout, {
+      touch: ['dashboard', 'whatsappCloud', 'qr', 'salir', 'refresh', 'firstConversation'],
+      nonOverlapping: [['title', 'dashboard'], ['listHeading', 'refresh']],
+    });
+    assert.deepEqual(await page.evaluate(() => ({
+      chatDisplay: getComputedStyle(document.querySelector('#chatPanel')).display,
+      appStatusHidden: document.querySelector('#appStatus').hidden,
+    })), { chatDisplay: 'none', appStatusHidden: true });
+    console.log('MOBILE_LIST_LAYOUT', JSON.stringify(listLayout));
+    await page.screenshot({ path: path.join(screenshotDir, 'whatsapp-cloud-mobile-list-390x844.png') });
+
     await page.click('.conversation-card[data-conversation-id="44"]');
     await page.waitForSelector('#inboxLayout.mobile-detail');
     await page.waitForFunction(() => document.activeElement?.id === 'backToList');
     assert.equal(await page.evaluate(() => document.activeElement?.id), 'backToList');
 
-    const mobileLayout = await page.evaluate(() => {
-      const composer = document.querySelector('#composerForm').getBoundingClientRect();
-      return {
-        scrollHeight: document.documentElement.scrollHeight,
-        viewportHeight: window.innerHeight,
-        viewportWidth: window.innerWidth,
-        composerTop: composer.top,
-        composerBottom: composer.bottom,
-      };
+    const detailLayout = await measureState(page, {
+      title: '.brand span', dashboard: '.cloud-nav a[href="dashboard.html"]',
+      whatsappCloud: '.cloud-nav a[aria-current="page"]', qr: '.cloud-nav a[href="qr.html"]', salir: '#logout',
+      back: '#backToList', chatHeading: '#chatTitle', composer: '#composerForm', messageInput: '#messageInput', send: '#sendButton',
+      status: '#composerNotice',
     });
-    mobileLayout.boxes = mobileHeader;
-    assert.ok(mobileLayout.scrollHeight <= mobileLayout.viewportHeight);
-    assert.ok(mobileLayout.composerTop >= 0 && mobileLayout.composerBottom <= mobileLayout.viewportHeight);
-    const viewport = { width: mobileLayout.viewportWidth, height: mobileLayout.viewportHeight };
-    for (const [label, box] of Object.entries(mobileLayout.boxes)) {
-      assertInsideViewport(box, viewport, label);
-      assert.ok(box.scrollWidth <= box.clientWidth && box.scrollHeight <= box.clientHeight, `${label} no debe recortarse`);
-    }
-    const entries = Object.entries(mobileLayout.boxes);
-    for (let index = 0; index < entries.length; index += 1) {
-      for (let other = index + 1; other < entries.length; other += 1) {
-        const [firstLabel, firstBox] = entries[index];
-        const [secondLabel, secondBox] = entries[other];
-        assert.equal(overlapArea(firstBox, secondBox), 0, `${firstLabel} y ${secondLabel} no deben superponerse`);
-      }
-    }
-    console.log('MOBILE_LAYOUT', JSON.stringify(mobileLayout));
-    await page.screenshot({ path: path.join(screenshotDir, 'whatsapp-cloud-mobile-390x844.png') });
+    assertVisibleLayout(detailLayout, {
+      touch: ['dashboard', 'whatsappCloud', 'qr', 'salir', 'back', 'messageInput', 'send'],
+      nonOverlapping: [['title', 'dashboard'], ['back', 'chatHeading'], ['messageInput', 'send']],
+    });
+    assert.deepEqual(await page.evaluate(() => ({
+      conversationDisplay: getComputedStyle(document.querySelector('.conversation-pane')).display,
+      appStatusHidden: document.querySelector('#appStatus').hidden,
+    })), { conversationDisplay: 'none', appStatusHidden: true });
+    console.log('MOBILE_DETAIL_LAYOUT', JSON.stringify(detailLayout));
+    await page.screenshot({ path: path.join(screenshotDir, 'whatsapp-cloud-mobile-detail-390x844.png') });
 
     await page.click('#backToList');
     assert.equal(await page.evaluate(() => document.activeElement?.dataset?.conversationId), '44');

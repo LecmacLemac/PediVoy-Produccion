@@ -48,6 +48,11 @@ test('production invoice links require a configured canonical origin and ignore 
     );
 
     process.env.PUBLIC_BASE_URL = 'https://www.pedivoy.com/ignored-path';
+    assert.throws(
+      () => buildFacturaPublicUrl(attackerRequest, { id: '10', empresa_id: 7, pdf_url: '/Facturas/private.pdf' }),
+      error => error?.statusCode === 409,
+    );
+    process.env.PUBLIC_BASE_URL = 'https://www.pedivoy.com';
     const url = buildFacturaPublicUrl(attackerRequest, { id: '10', empresa_id: 7, pdf_url: '/Facturas/private.pdf' });
     assert.match(url, /^https:\/\/www\.pedivoy\.com\/public\/facturas\/10\/pdf\?token=/);
     assert.doesNotMatch(url, /attacker\.invalid|ignored-path/);
@@ -59,10 +64,15 @@ test('production invoice links require a configured canonical origin and ignore 
       hostname: 'localhost',
       get: key => key === 'host' ? 'localhost:3000' : null,
     };
-    assert.match(buildFacturaPublicUrl(localRequest, { id: '10', empresa_id: 7, pdf_url: '/Facturas/private.pdf' }), /^http:\/\/localhost:3000\//);
     assert.throws(
-      () => buildFacturaPublicUrl(attackerRequest, { id: '10', empresa_id: 7, pdf_url: '/Facturas/private.pdf' }),
+      () => buildFacturaPublicUrl(localRequest, { id: '10', empresa_id: 7, pdf_url: '/Facturas/private.pdf' }),
       error => error?.statusCode === 409,
+    );
+    process.env.PUBLIC_BASE_URL = 'http://localhost:3000';
+    assert.match(buildFacturaPublicUrl(localRequest, { id: '10', empresa_id: 7, pdf_url: '/Facturas/private.pdf' }), /^http:\/\/localhost:3000\//);
+    assert.match(
+      buildFacturaPublicUrl(attackerRequest, { id: '10', empresa_id: 7, pdf_url: '/Facturas/private.pdf' }),
+      /^http:\/\/localhost:3000\//,
     );
   } finally {
     for (const [key, value] of Object.entries(saved)) {

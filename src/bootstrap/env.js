@@ -8,6 +8,26 @@ export function getServerEnv() {
   };
 }
 
+export function isLoopbackHostname(hostname) {
+  const value = String(hostname || '').toLowerCase();
+  return value === 'localhost' || value.endsWith('.localhost') || value === '::1' || value === '[::1]'
+    || /^127(?:\.\d{1,3}){3}$/.test(value);
+}
+
+export function parseCanonicalPublicOrigin(value, { allowLoopbackHttp = false } = {}) {
+  const configured = String(value || '');
+  if (!configured) return null;
+  try {
+    const parsed = new URL(configured);
+    const transportAllowed = parsed.protocol === 'https:'
+      || (parsed.protocol === 'http:' && allowLoopbackHttp && isLoopbackHostname(parsed.hostname));
+    if (!transportAllowed || parsed.username || parsed.password || configured !== parsed.origin) return null;
+    return parsed.origin;
+  } catch {
+    return null;
+  }
+}
+
 export function assertProductionEnv() {
   if (process.env.NODE_ENV !== 'production') return;
 
@@ -17,19 +37,9 @@ export function assertProductionEnv() {
     process.exit(1);
   }
 
-  const publicBaseUrl = String(process.env.PUBLIC_BASE_URL || process.env.APP_PUBLIC_URL || '').trim();
+  const publicBaseUrl = process.env.PUBLIC_BASE_URL || process.env.APP_PUBLIC_URL || '';
   const localHttpDev = String(process.env.LOCAL_HTTP_DEV || '').toLowerCase() === 'true';
-  if (!publicBaseUrl && localHttpDev) return;
-  try {
-    const parsed = new URL(publicBaseUrl);
-    const hostname = parsed.hostname.toLowerCase();
-    const loopback = hostname === 'localhost' || hostname.endsWith('.localhost')
-      || hostname === '::1' || /^127(?:\.\d{1,3}){3}$/.test(hostname);
-    const transportAllowed = parsed.protocol === 'https:' || (parsed.protocol === 'http:' && localHttpDev && loopback);
-    if (!publicBaseUrl || !transportAllowed || parsed.username || parsed.password) {
-      throw new Error('invalid origin');
-    }
-  } catch {
+  if (!parseCanonicalPublicOrigin(publicBaseUrl, { allowLoopbackHttp: localHttpDev })) {
     console.error('[security] PUBLIC_BASE_URL/APP_PUBLIC_URL ausente o inválida en producción. Inicio abortado.');
     process.exit(1);
   }

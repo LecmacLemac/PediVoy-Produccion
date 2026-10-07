@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import { assertProductionEnv } from '../src/bootstrap/env.js';
 
-test('production startup requires a valid canonical invoice origin', () => {
+test('production startup requires an exact canonical public origin', () => {
   const saved = {
     NODE_ENV: process.env.NODE_ENV,
     JWT_SECRET: process.env.JWT_SECRET,
@@ -21,21 +21,47 @@ test('production startup requires a valid canonical invoice origin', () => {
     process.exit = code => { throw Object.assign(new Error('exit'), { code }); };
     console.error = () => {};
 
-    assert.throws(() => assertProductionEnv(), value => value?.code === 1);
-    process.env.PUBLIC_BASE_URL = 'javascript:alert(1)';
-    assert.throws(() => assertProductionEnv(), value => value?.code === 1);
-    process.env.PUBLIC_BASE_URL = 'http://example.com';
-    assert.throws(() => assertProductionEnv(), value => value?.code === 1);
-    process.env.PUBLIC_BASE_URL = 'http://localhost:3000';
-    assert.throws(() => assertProductionEnv(), value => value?.code === 1);
-    process.env.PUBLIC_BASE_URL = 'https://www.pedivoy.com/facturas';
+    const reject = value => {
+      process.env.PUBLIC_BASE_URL = value;
+      assert.throws(() => assertProductionEnv(), errorValue => errorValue?.code === 1, value || '<missing>');
+    };
+
+    assert.throws(() => assertProductionEnv(), value => value?.code === 1, 'missing origin');
+    for (const value of [
+      'javascript:alert(1)',
+      'http://example.com',
+      'http://localhost:3000',
+      'https://www.pedivoy.com/',
+      'https://www.pedivoy.com/facturas',
+      'https://www.pedivoy.com?tenant=7',
+      'https://www.pedivoy.com#fragment',
+      'https://user:pass@www.pedivoy.com',
+    ]) reject(value);
+    process.env.PUBLIC_BASE_URL = 'https://www.pedivoy.com';
     assert.doesNotThrow(() => assertProductionEnv());
 
     process.env.LOCAL_HTTP_DEV = 'true';
-    process.env.PUBLIC_BASE_URL = 'http://localhost:3000';
-    assert.doesNotThrow(() => assertProductionEnv());
     delete process.env.PUBLIC_BASE_URL;
-    assert.doesNotThrow(() => assertProductionEnv());
+    assert.throws(() => assertProductionEnv(), value => value?.code === 1, 'local flag does not make the origin optional');
+    for (const value of [
+      'http://localhost:3000/',
+      'http://localhost:3000/path',
+      'http://localhost:3000?query=1',
+      'http://localhost:3000#fragment',
+      'http://user:pass@localhost:3000',
+      'http://example.localhost.invalid:3000',
+      'http://127.0.0.1.example.test:3000',
+      'http://192.168.1.10:3000',
+    ]) reject(value);
+    for (const value of [
+      'http://localhost:3000',
+      'http://dev.localhost:3000',
+      'http://127.0.0.1:3000',
+      'http://[::1]:3000',
+    ]) {
+      process.env.PUBLIC_BASE_URL = value;
+      assert.doesNotThrow(() => assertProductionEnv(), value);
+    }
   } finally {
     process.exit = exit;
     console.error = error;

@@ -100,6 +100,34 @@ test('reply exige JSON y Origin canónico exacto antes de query o enqueue', asyn
   assert.equal(enqueues, 1);
 });
 
+test('reply rechaza una configuración canónica con path en vez de reducirla a origin', async () => {
+  let queries = 0;
+  let enqueues = 0;
+  const app = express();
+  app.use(express.json());
+  app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+    canonicalOrigin: 'https://admin.pedivoy.test/inbox',
+    withAuth(req, _res, next) {
+      req.user = { uid: 22, role: 'admin', empresa_id: 7 };
+      next();
+    },
+    async query() { queries += 1; return []; },
+    async enqueueReply() { enqueues += 1; return { queued: true }; },
+  }));
+
+  await withServer(app, async baseUrl => {
+    const response = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations/44/replies`, {
+      method: 'POST',
+      headers: { Origin: 'https://admin.pedivoy.test', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: 'hola', idempotency_key: 'configured-path-1' }),
+    });
+    assert.equal(response.status, 403);
+    assert.deepEqual(await response.json(), { error: 'request_origin_invalid' });
+  });
+  assert.equal(queries, 0);
+  assert.equal(enqueues, 0);
+});
+
 for (const role of ['user', 'repartidor', 'referente', 'facturacion', 'contable', 'Admin', 'super ']) {
   test(`Cloud inbox bloquea rol no autorizado ${JSON.stringify(role)} antes de consultar`, async () => {
     const { app, calls } = createHarness({ role });

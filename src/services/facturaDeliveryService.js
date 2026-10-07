@@ -3,43 +3,21 @@ import nodemailer from 'nodemailer';
 import { signFacturaDownload } from '../facturaCapability.js';
 import { openStorageFile } from '../privateStorage.js';
 import { enqueueWppOutbox } from '../wpp/enqueue.js';
+import { parseCanonicalPublicOrigin } from '../bootstrap/env.js';
 
 function cleanPhone(value) {
   return String(value || '').replace(/\D+/g, '');
 }
 
-function isLoopbackHostname(hostname) {
-  const value = String(hostname || '').toLowerCase();
-  return value === 'localhost' || value.endsWith('.localhost') || value === '::1'
-    || /^127(?:\.\d{1,3}){3}$/.test(value);
-}
-
 function baseUrlFromRequest(req) {
-  const envUrl = String(process.env.PUBLIC_BASE_URL || process.env.APP_PUBLIC_URL || '').trim();
+  const envUrl = process.env.PUBLIC_BASE_URL || process.env.APP_PUBLIC_URL || '';
   if (envUrl) {
-    try {
-      const parsed = new URL(envUrl);
-      const localOverride = String(process.env.LOCAL_HTTP_DEV || '').toLowerCase() === 'true';
-      const transportAllowed = parsed.protocol === 'https:'
-        || (parsed.protocol === 'http:' && localOverride && isLoopbackHostname(parsed.hostname));
-      if (!transportAllowed || parsed.username || parsed.password) throw new Error('invalid origin');
-      return parsed.origin;
-    } catch {
-      throw Object.assign(new Error('PUBLIC_BASE_URL inválida para enlaces de factura'), { statusCode: 409 });
-    }
+    const localOverride = String(process.env.LOCAL_HTTP_DEV || '').toLowerCase() === 'true';
+    const origin = parseCanonicalPublicOrigin(envUrl, { allowLoopbackHttp: localOverride });
+    if (origin) return origin;
+    throw Object.assign(new Error('PUBLIC_BASE_URL inválida para enlaces de factura'), { statusCode: 409 });
   }
   if (process.env.NODE_ENV === 'production') {
-    const localOverride = String(process.env.LOCAL_HTTP_DEV || '').toLowerCase() === 'true';
-    const host = req?.get?.('host');
-    const proto = req?.get?.('x-forwarded-proto') || req?.protocol || 'http';
-    if (localOverride && host) {
-      try {
-        const parsed = new URL(`${proto}://${host}`);
-        if (isLoopbackHostname(parsed.hostname) && parsed.protocol === 'http:') return parsed.origin;
-      } catch {
-        // fail closed below
-      }
-    }
     return '';
   }
   if (!req) return '';

@@ -123,9 +123,9 @@ npm run dev
 # Modo producción
 npm start
 
-En producción, el servicio web requiere `PUBLIC_BASE_URL` (o el alias legado `APP_PUBLIC_URL`) con el origen HTTPS público exacto, por ejemplo `https://pedivoy-web-staging.onrender.com` en el blueprint de staging. Debe coincidir con uno de los valores de `CORS_ALLOWED_ORIGINS`. No agregues rutas, query strings ni fragmentos: las rutas no forman parte del origen canónico y los generadores de enlaces las ignoran.
+En producción, el servicio web requiere `PUBLIC_BASE_URL` (o el alias legado `APP_PUBLIC_URL`) con el origen HTTPS público exacto, por ejemplo `https://pedivoy-web-staging.onrender.com` en el blueprint de staging. Debe coincidir carácter por carácter con `new URL(valor).origin` y con uno de los valores de `CORS_ALLOWED_ORIGINS`: no se aceptan slash final, espacios, credenciales, rutas, query strings ni fragmentos.
 
-Para desarrollo HTTP local, la única excepción es declarar explícitamente `LOCAL_HTTP_DEV=true` y usar un host loopback (`localhost`, `*.localhost`, `127.x.x.x` o `::1`). Los servicios de producción creados manualmente, incluido Hidro-V1, deben configurar antes del deploy su origen canónico real informado por el dashboard del proveedor. No copies el dominio de staging ni supongas una URL de producción. El operador de release debe confirmar esa variable y su coincidencia con CORS antes de desplegar.
+Para una prueba local HTTP, la única excepción es declarar explícitamente `LOCAL_HTTP_DEV=true` y configurar también un origen exacto con host loopback (`localhost`, `*.localhost`, `127.x.x.x` o `::1`), por ejemplo `PUBLIC_BASE_URL=http://localhost:3000`. La bandera nunca vuelve opcional la URL, tampoco con `NODE_ENV=production`, y no habilita HTTP para hosts no loopback. Los servicios de producción creados manualmente, incluido Hidro-V1, deben configurar antes del deploy su origen canónico real informado por el dashboard del proveedor. No copies el dominio de staging ni supongas una URL de producción. El operador de release debe confirmar esa variable y su coincidencia con CORS antes de desplegar.
 
 
 5. Vinculación de WhatsApp
