@@ -165,6 +165,229 @@ function projectionCutoverPhases() {
   };
 }
 
+test('migración de conversaciones rechaza triggers ajenos antes de ejecutar DML', async () => {
+  await withDatabase(async pool => {
+    await pool.query(outboxSql);
+    await pool.query('INSERT INTO empresas(id) VALUES (1)');
+    await pool.query(`
+      CREATE TABLE whatsapp_cloud_conversations (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        empresa_id INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+        participant_wa_id TEXT NOT NULL UNIQUE,
+        workflow_status TEXT NOT NULL DEFAULT 'pending',
+        priority TEXT NOT NULL DEFAULT 'normal',
+        version INTEGER NOT NULL DEFAULT 1,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      )
+    `);
+    await pool.query("INSERT INTO whatsapp_cloud_conversations(empresa_id, participant_wa_id) VALUES (1, '5493515550001')");
+    await pool.query('CREATE SEQUENCE destructive_trigger_probe');
+    await pool.query(`
+      CREATE FUNCTION destructive_conversation_trigger() RETURNS trigger
+      LANGUAGE plpgsql AS $fn$
+      BEGIN
+        PERFORM nextval('destructive_trigger_probe');
+        DELETE FROM whatsapp_cloud_conversations WHERE id = NEW.id;
+        RETURN NULL;
+      END
+      $fn$;
+      CREATE TRIGGER destructive_conversation_update
+        AFTER UPDATE ON whatsapp_cloud_conversations
+        FOR EACH ROW EXECUTE FUNCTION destructive_conversation_trigger()
+    `);
+    const snapshot = () => pool.query(`
+      SELECT table_row.id::text, table_row.participant_wa_id, table_row.xmin::text,
+             table_class.oid::text AS table_oid,
+             trigger_row.oid::text AS trigger_oid,
+             procedure_row.oid::text AS procedure_oid
+        FROM whatsapp_cloud_conversations AS table_row
+        CROSS JOIN pg_class AS table_class
+        CROSS JOIN pg_trigger AS trigger_row
+        CROSS JOIN pg_proc AS procedure_row
+       WHERE table_class.oid = 'whatsapp_cloud_conversations'::regclass
+         AND trigger_row.tgrelid = table_class.oid
+         AND trigger_row.tgname = 'destructive_conversation_update'
+         AND procedure_row.oid = trigger_row.tgfoid
+    `);
+    const before = (await snapshot()).rows;
+
+    await assert.rejects(pool.query(projectionSql), error => {
+      assert.equal(error.code, 'P0001');
+      assert.equal(error.message, 'whatsapp_cloud_conversations_schema_unsafe');
+      assert.equal(error.detail, undefined);
+      assert.equal(error.hint, undefined);
+      return true;
+    });
+
+    assert.deepEqual((await snapshot()).rows, before);
+    assert.deepEqual(
+      (await pool.query('SELECT last_value::text, is_called FROM destructive_trigger_probe')).rows,
+      [{ last_value: '1', is_called: false }],
+      'el trigger destructivo no debe llegar a dispararse',
+    );
+  });
+});
+
+test('migración de conversaciones rechaza vistas dependientes antes de DDL y sin mutar objetos', async () => {
+  await withDatabase(async pool => {
+    await pool.query(outboxSql);
+    await pool.query('INSERT INTO empresas(id) VALUES (1)');
+    await pool.query(`
+      CREATE TABLE whatsapp_cloud_conversations (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        empresa_id INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+        participant_wa_id TEXT NOT NULL,
+        workflow_status TEXT NOT NULL DEFAULT 'pending',
+        priority TEXT NOT NULL DEFAULT 'normal',
+        version INTEGER NOT NULL DEFAULT 1,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+      INSERT INTO whatsapp_cloud_conversations(empresa_id, participant_wa_id)
+      VALUES (1, '5493515550002');
+      CREATE VIEW legacy_conversation_participants AS
+      SELECT id, participant_wa_id FROM whatsapp_cloud_conversations
+    `);
+    const snapshot = () => pool.query(`
+      SELECT conversation.id::text, conversation.participant_wa_id, conversation.xmin::text,
+             table_row.oid::text AS table_oid,
+             view_row.oid::text AS view_oid,
+             pg_get_viewdef(view_row.oid, true) AS view_definition
+        FROM whatsapp_cloud_conversations AS conversation
+        CROSS JOIN pg_class AS table_row
+        CROSS JOIN pg_class AS view_row
+       WHERE table_row.oid = 'whatsapp_cloud_conversations'::regclass
+         AND view_row.oid = 'legacy_conversation_participants'::regclass
+    `);
+    const before = (await snapshot()).rows;
+
+    await assert.rejects(pool.query(projectionSql), error => {
+      assert.equal(error.code, 'P0001');
+      assert.equal(error.message, 'whatsapp_cloud_conversations_schema_unsafe');
+      assert.equal(error.detail, undefined);
+      assert.equal(error.hint, undefined);
+      return true;
+    });
+    assert.deepEqual((await snapshot()).rows, before);
+  });
+});
+
+test('migración de conversaciones es estructuralmente idempotente en esquema canónico', async () => {
+  await withDatabase(async pool => {
+    await pool.query(migrationSql);
+    await pool.query('INSERT INTO empresas(id) VALUES (1)');
+    await pool.query(`
+      INSERT INTO whatsapp_cloud_conversations
+        (empresa_id, participant_wa_id, workflow_status, priority, version, created_at, updated_at)
+      VALUES
+        (1, '5493515550003', 'resolved', 'urgent', 7,
+         '2026-10-01T10:00:00Z', '2026-10-01T11:00:00Z')
+    `);
+    const snapshot = () => pool.query(`
+      SELECT object_type, name, oid, definition
+        FROM (
+          SELECT 'constraint'::text AS object_type,
+                 constraint_row.conname AS name,
+                 constraint_row.oid::text AS oid,
+                 pg_get_constraintdef(constraint_row.oid, true) AS definition
+            FROM pg_constraint AS constraint_row
+           WHERE constraint_row.conrelid = 'whatsapp_cloud_conversations'::regclass
+          UNION ALL
+          SELECT 'index', index_row.indexrelid::regclass::text,
+                 index_row.indexrelid::text, pg_get_indexdef(index_row.indexrelid)
+            FROM pg_index AS index_row
+           WHERE index_row.indrelid = 'whatsapp_cloud_conversations'::regclass
+          UNION ALL
+          SELECT 'column', attribute_row.attname, attribute_row.attnum::text,
+                 concat_ws('|', attribute_row.atttypid::regtype::text,
+                   attribute_row.attnotnull::text,
+                   COALESCE(pg_get_expr(default_row.adbin, default_row.adrelid), '<none>'))
+            FROM pg_attribute AS attribute_row
+            LEFT JOIN pg_attrdef AS default_row
+              ON default_row.adrelid = attribute_row.attrelid
+             AND default_row.adnum = attribute_row.attnum
+           WHERE attribute_row.attrelid = 'whatsapp_cloud_conversations'::regclass
+             AND attribute_row.attnum > 0
+             AND NOT attribute_row.attisdropped
+          UNION ALL
+          SELECT 'row', conversation.id::text, conversation.xmin::text,
+                 concat_ws('|', conversation.empresa_id::text, conversation.participant_wa_id,
+                   conversation.workflow_status, conversation.priority, conversation.version::text,
+                   conversation.created_at::text, conversation.updated_at::text)
+            FROM whatsapp_cloud_conversations AS conversation
+        ) AS snapshot_rows
+       ORDER BY object_type, name
+    `);
+    const before = (await snapshot()).rows;
+
+    await pool.query(projectionSql);
+
+    assert.deepEqual((await snapshot()).rows, before,
+      'segunda ejecución no debe reescribir filas ni reconstruir estructura canónica');
+  });
+});
+
+test('migración de conversaciones repara sólo estructura divergente', async () => {
+  await withDatabase(async pool => {
+    await pool.query(migrationSql);
+    await pool.query('INSERT INTO empresas(id) VALUES (1)');
+    await pool.query("INSERT INTO whatsapp_cloud_conversations(empresa_id, participant_wa_id) VALUES (1, '5493515550004')");
+    const stableSnapshot = () => pool.query(`
+      SELECT conname AS name, oid::text, pg_get_constraintdef(oid, true) AS definition
+        FROM pg_constraint
+       WHERE conrelid = 'whatsapp_cloud_conversations'::regclass
+         AND conname IN (
+           'whatsapp_cloud_conversations_pkey',
+           'whatsapp_cloud_conversations_empresa_id_fkey',
+           'whatsapp_cloud_conversations_empresa_participant_key',
+           'whatsapp_cloud_conversations_participant_check',
+           'whatsapp_cloud_conversations_workflow_status_check',
+           'whatsapp_cloud_conversations_version_check',
+           'whatsapp_cloud_conversations_timestamps_check'
+         )
+       ORDER BY conname
+    `);
+    const beforeStable = (await stableSnapshot()).rows;
+    const beforeRow = (await pool.query(`
+      SELECT id::text, xmin::text, workflow_status, priority, version, updated_at::text
+        FROM whatsapp_cloud_conversations
+    `)).rows;
+
+    await pool.query(`
+      ALTER TABLE whatsapp_cloud_conversations ALTER COLUMN priority DROP DEFAULT;
+      ALTER TABLE whatsapp_cloud_conversations DROP CONSTRAINT whatsapp_cloud_conversations_priority_check;
+      DROP INDEX idx_whatsapp_cloud_conversations_queue
+    `);
+    await pool.query(projectionSql);
+
+    assert.deepEqual((await stableSnapshot()).rows, beforeStable,
+      'objetos correctos no deben reconstruirse durante una reparación parcial');
+    assert.deepEqual((await pool.query(`
+      SELECT id::text, xmin::text, workflow_status, priority, version, updated_at::text
+        FROM whatsapp_cloud_conversations
+    `)).rows, beforeRow, 'la reparación estructural no debe versionar filas');
+    assert.equal((await pool.query(`
+      SELECT pg_get_expr(default_row.adbin, default_row.adrelid) AS expression
+        FROM pg_attribute AS column_row
+        JOIN pg_attrdef AS default_row
+          ON default_row.adrelid = column_row.attrelid AND default_row.adnum = column_row.attnum
+       WHERE column_row.attrelid = 'whatsapp_cloud_conversations'::regclass
+         AND column_row.attname = 'priority'
+    `)).rows[0].expression, "'normal'::text");
+    assert.equal((await pool.query(`
+      SELECT pg_get_constraintdef(oid, true) AS definition
+        FROM pg_constraint
+       WHERE conrelid = 'whatsapp_cloud_conversations'::regclass
+         AND conname = 'whatsapp_cloud_conversations_priority_check'
+    `)).rows[0].definition,
+    "CHECK (priority = ANY (ARRAY['normal'::text, 'high'::text, 'urgent'::text]))");
+    assert.match((await pool.query(`
+      SELECT pg_get_indexdef('idx_whatsapp_cloud_conversations_queue'::regclass) AS definition
+    `)).rows[0].definition, /\(empresa_id, workflow_status, priority, updated_at DESC, id\)$/);
+  });
+});
+
 test('gate estructural fija captura DELETE statement-level antes del commit de instalación', () => {
   const installCommit = projectionSql.indexOf(projectionStructureFixture.installCommitMarker);
   const backfill = projectionSql.indexOf(projectionStructureFixture.backfillMarker);
