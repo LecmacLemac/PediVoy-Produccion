@@ -425,20 +425,23 @@ test('reply duplicado con la misma key pero distinto destinatario o texto respon
   assert.deepEqual(calls[1].options, { sensitive: true });
 });
 
-test('lista de conversaciones pagina por última actividad, enmascara teléfono y no expone PII cruda', async () => {
+test('lista de conversaciones pagina por última actividad, enmascara teléfono y agrega cliente/dirección', async () => {
   const calls = [];
   const rows = [
     {
       id: '31', participant_wa_id: '5493515550001', direction: 'inbound', message_type: 'text',
       delivery_status: 'received', message_at: new Date('2026-10-06T12:00:00Z'), text_body: 'secreto uno',
+      customer_name: 'Cliente Uno', delivery_address: 'San Martín 123',
     },
     {
       id: '21', participant_wa_id: '5493515550002', direction: 'outbound', message_type: 'text',
       delivery_status: 'sent', message_at: new Date('2026-10-06T11:00:00Z'), text_body: 'secreto dos',
+      customer_name: 'Cliente Dos', delivery_address: 'Belgrano 456',
     },
     {
       id: '11', participant_wa_id: '5493515550003', direction: 'inbound', message_type: 'document',
       delivery_status: 'received', message_at: new Date('2026-10-06T10:00:00Z'), document_filename: 'secret.pdf',
+      customer_name: 'Cliente Tres', delivery_address: 'Mitre 789',
     },
   ];
   const app = express();
@@ -462,10 +465,12 @@ test('lista de conversaciones pagina por última actividad, enmascara teléfono 
     assert.deepEqual(body.conversations.map(item => ({
       conversationId: item.conversationId,
       participant: item.participant,
+      customerName: item.customerName,
+      customerAddress: item.customerAddress,
       lastMessageAt: item.lastMessageAt,
     })), [
-      { conversationId: '31', participant: '*********0001', lastMessageAt: '2026-10-06T12:00:00.000Z' },
-      { conversationId: '21', participant: '*********0002', lastMessageAt: '2026-10-06T11:00:00.000Z' },
+      { conversationId: '31', participant: '*********0001', customerName: 'Cliente Uno', customerAddress: 'San Martín 123', lastMessageAt: '2026-10-06T12:00:00.000Z' },
+      { conversationId: '21', participant: '*********0002', customerName: 'Cliente Dos', customerAddress: 'Belgrano 456', lastMessageAt: '2026-10-06T11:00:00.000Z' },
     ]);
     assert.equal(typeof body.nextCursor, 'string');
     assert.ok(body.nextCursor.length > 10);
@@ -474,6 +479,9 @@ test('lista de conversaciones pagina por última actividad, enmascara teléfono 
   assert.equal(calls.length, 1);
   assert.deepEqual(calls[0].params.slice(0, 2), [7, 3]);
   assert.match(calls[0].sql, /ORDER BY message_at DESC, id DESC/i);
+  assert.match(calls[0].sql, /LEFT JOIN LATERAL/);
+  assert.match(calls[0].sql, /customer_name/);
+  assert.match(calls[0].sql, /delivery_address/);
 });
 
 test('historial pagina hacia atrás pero responde cada página en orden cronológico', async () => {

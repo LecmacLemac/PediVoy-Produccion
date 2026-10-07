@@ -95,6 +95,15 @@ test('la bandeja declara filtros rápidos de fecha y transferencias', async () =
   assert.match(controller, /state\.conversationsCursor = null/);
 });
 
+test('la lista de conversaciones muestra nombre y dirección del cliente sin HTML inseguro', async () => {
+  const controller = await source(controllerUrl);
+  assert.match(controller, /customer-line/);
+  assert.match(controller, /conversation\.customerName/);
+  assert.match(controller, /conversation\.customerAddress/);
+  assert.match(controller, /appendSafeText\(document, button, 'span', customerDetail/);
+  assert.doesNotMatch(controller, /customerName[^\n]+innerHTML|customerAddress[^\n]+innerHTML/);
+});
+
 function composerDomHarness() {
   const input = { value: '', disabled: true };
   const send = { disabled: true, textContent: 'Enviar' };

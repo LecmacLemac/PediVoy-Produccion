@@ -44,6 +44,19 @@ async function withDatabase(work) {
     pool = new pg.Pool({ host: '127.0.0.1', port, user: 'cloud_admin_test', database: 'postgres', max: 6 });
     await pool.query("CREATE TABLE empresas (id INTEGER PRIMARY KEY, config_integraciones JSONB NOT NULL DEFAULT '{}'::jsonb)");
     await pool.query(`
+      CREATE TABLE puntos_entrega (
+        id SERIAL PRIMARY KEY,
+        empresa_id INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+        cliente TEXT NOT NULL,
+        nombre TEXT,
+        direccion TEXT,
+        direccion_completa TEXT,
+        ciudad TEXT,
+        telefono TEXT,
+        telefono_normalizado TEXT
+      )
+    `);
+    await pool.query(`
       CREATE TABLE whatsapp_cloud_events (
         id BIGSERIAL PRIMARY KEY,
         empresa_id INTEGER NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
@@ -103,6 +116,14 @@ test('API admin Cloud conserva tenant, paginación, redacción e idempotencia en
       cloudConfig('phone-one'),
       cloudConfig('phone-two'),
     ]);
+    await pool.query(`
+      INSERT INTO puntos_entrega
+        (empresa_id, cliente, nombre, direccion, direccion_completa, ciudad, telefono, telefono_normalizado)
+      VALUES
+        (1, 'Cliente Uno', NULL, 'San Martín 123', NULL, 'Córdoba', '3515550001', '5493515550001'),
+        (1, 'Cliente Dos', 'Nombre Dos', 'Belgrano 456', 'Belgrano 456, Córdoba', 'Córdoba', '3515550002', '5493515550002'),
+        (2, 'Cliente Tenant Dos', NULL, 'No visible 999', NULL, 'Córdoba', '3515550001', '5493515550001')
+    `);
     const inserted = (await pool.query(`
       INSERT INTO whatsapp_cloud_messages
         (empresa_id,direction,participant_wa_id,message_type,text_body,media_mime_type,
@@ -140,14 +161,18 @@ test('API admin Cloud conserva tenant, paginación, redacción e idempotencia en
       assert.equal(firstPage.conversations.length, 1);
       assert.equal(firstPage.conversations[0].conversationId, String(tenantOneDoc.id));
       assert.equal(firstPage.conversations[0].participant, '*********0001');
+      assert.equal(firstPage.conversations[0].customerName, 'Cliente Uno');
+      assert.equal(firstPage.conversations[0].customerAddress, 'San Martín 123, Córdoba');
       assert.equal(typeof firstPage.nextCursor, 'string');
-      assert.doesNotMatch(JSON.stringify(firstPage), /5493515550001|tenant one|tenant two|factura/i);
+      assert.doesNotMatch(JSON.stringify(firstPage), /5493515550001|tenant one|tenant two|factura|No visible/i);
 
       const secondPageResponse = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations?limit=1&cursor=${encodeURIComponent(firstPage.nextCursor)}`);
       assert.equal(secondPageResponse.status, 200);
       const secondPage = await secondPageResponse.json();
       assert.equal(secondPage.conversations.length, 1);
       assert.equal(secondPage.conversations[0].participant, '*********0002');
+      assert.equal(secondPage.conversations[0].customerName, 'Nombre Dos');
+      assert.equal(secondPage.conversations[0].customerAddress, 'Belgrano 456, Córdoba');
       assert.equal(secondPage.nextCursor, null);
 
       const historyResponse = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations/${tenantOneDoc.id}/messages?limit=1`);

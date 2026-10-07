@@ -210,6 +210,15 @@ function renderConversations() {
     appendSafeText(document, summary, 'span', conversationPreview(conversation), 'preview');
     summary.append(makeBadge(conversation.lastDeliveryStatus, conversation.lastDirection));
     button.append(summary);
+
+    const customerParts = [conversation.customerName, conversation.customerAddress]
+      .map(value => String(value || '').trim())
+      .filter(Boolean);
+    if (customerParts.length) {
+      const customerDetail = customerParts.join(' · ').slice(0, 260);
+      appendSafeText(document, button, 'span', customerDetail, 'customer-line');
+    }
+
     button.addEventListener('click', () => openConversation(conversation));
     fragment.append(button);
   }
