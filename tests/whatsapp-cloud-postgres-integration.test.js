@@ -246,6 +246,7 @@ test('migración Cloud exige phone_number_id normalizado único solo para asocia
 
 test('webhook resuelve provider y phone_number_id normalizados sin ambigüedad', options, async () => {
   await withDatabase(async pool => {
+    const messageId = 'wamid.HBgNNTQ5MzUxNTU1MDAwMRUCABIYFDNBQkNERUYwMTIzNDU2Nzg5';
     await pool.query("CREATE TABLE empresas (id SERIAL PRIMARY KEY, config_integraciones JSONB NOT NULL DEFAULT '{}'::jsonb)");
     await pool.query(migrationSql);
     await pool.query('INSERT INTO empresas(config_integraciones) VALUES ($1)', [{
@@ -275,16 +276,17 @@ test('webhook resuelve provider y phone_number_id normalizados sin ambigüedad',
     assert.deepEqual(await handler([{
       kind: 'message',
       phoneNumberId: ' webhook-phone ',
-      message: { id: 'normalized-provider-message', from: '5493515550001', timestamp: '1', type: 'text', text: { body: 'safe' } },
+      message: { id: messageId, from: '5493515550001', timestamp: '1', type: 'text', text: { body: 'safe' } },
     }]), { accepted: 1, duplicates: 0 });
 
     const { rows } = await pool.query('SELECT empresa_id, message_id FROM whatsapp_cloud_events');
-    assert.deepEqual(rows, [{ empresa_id: 1, message_id: 'normalized-provider-message' }]);
+    assert.deepEqual(rows, [{ empresa_id: 1, message_id: messageId }]);
   });
 });
 
 test('webhook resuelve tenant con config_integraciones JSON y omite estructuras inválidas', options, async () => {
   await withDatabase(async pool => {
+    const messageId = 'wamid.HBgNNTQ5MzUxNTU1MDAwMhUCABIYFDNBQkNERUYwMTIzNDU2Nzg5';
     await pool.query("CREATE TABLE empresas (id SERIAL PRIMARY KEY, config_integraciones JSON)");
     await pool.query(migrationSql);
     await pool.query('INSERT INTO empresas(config_integraciones) VALUES ($1::json), ($2::json), ($3::json)', [
@@ -307,8 +309,12 @@ test('webhook resuelve tenant con config_integraciones JSON y omite estructuras 
     const handler = createWhatsAppCloudEventHandler({ withTransaction });
     assert.deepEqual(await handler([{
       kind: 'message', phoneNumberId: 'json-phone',
-      message: { id: 'json-message', from: '5493515550001', timestamp: '1', type: 'text', text: { body: 'safe' } },
+      message: { id: messageId, from: '5493515550001', timestamp: '1', type: 'text', text: { body: 'safe' } },
     }]), { accepted: 1, duplicates: 0 });
+    assert.deepEqual(
+      (await pool.query('SELECT empresa_id, message_id FROM whatsapp_cloud_events')).rows,
+      [{ empresa_id: 1, message_id: messageId }]
+    );
   });
 });
 
@@ -549,6 +555,7 @@ test('migración Cloud repara default de id y FK legacy RESTRICT sin reconstruir
 
 test('lock de atribución serializa la reasignación antes de persistir el evento', options, async () => {
   await withDatabase(async pool => {
+    const messageId = 'wamid.HBgNNTQ5MzUxNTU1MDAwMxUCABIYFDNBQkNERUYwMTIzNDU2Nzg5';
     await pool.query("CREATE TABLE empresas (id SERIAL PRIMARY KEY, config_integraciones JSONB NOT NULL DEFAULT '{}'::jsonb)");
     await pool.query(migrationSql);
     const cloudConfig = phoneNumberId => ({
@@ -591,7 +598,7 @@ test('lock de atribución serializa la reasignación antes de persistir el event
     const handling = handler([{
       kind: 'message',
       phoneNumberId: 'phone-lock',
-      message: { id: 'locked-message', from: '5493515550001', timestamp: '1', type: 'text', text: { body: 'safe' } },
+      message: { id: messageId, from: '5493515550001', timestamp: '1', type: 'text', text: { body: 'safe' } },
     }]);
     await locked;
 
@@ -619,10 +626,10 @@ test('lock de atribución serializa la reasignación antes de persistir el event
     await reassignment;
 
     const { rows: events } = await pool.query(
-      'SELECT empresa_id FROM whatsapp_cloud_events WHERE message_id = $1',
-      ['locked-message']
+      'SELECT empresa_id, message_id FROM whatsapp_cloud_events WHERE message_id = $1',
+      [messageId]
     );
-    assert.deepEqual(events, [{ empresa_id: 1 }]);
+    assert.deepEqual(events, [{ empresa_id: 1, message_id: messageId }]);
     const { rows: currentTenant } = await pool.query(`
       SELECT id
         FROM empresas
