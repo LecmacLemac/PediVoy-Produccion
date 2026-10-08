@@ -44,14 +44,14 @@ test('quick replies admin fija tenant; super exige selector explícito y GET lis
     assert.equal((await fetch(`${base}/api/admin/whatsapp-cloud/quick-replies?empresa_id=99`)).status, 400);
     assert.equal((await fetch(`${base}/api/admin/whatsapp-cloud/quick-replies`)).status, 200);
   });
-  assert.deepEqual(admin.calls, [['list', { empresaId: 7, includeInactive: false }]]);
+  assert.deepEqual(admin.calls, [['list', { empresaId: 7, usuarioId: 11, actorRole: 'admin', includeInactive: false }]]);
 
   const superUser = harness({ role: 'super', empresaId: null });
   await withServer(superUser.app, async base => {
     assert.equal((await fetch(`${base}/api/admin/whatsapp-cloud/quick-replies`)).status, 400);
     assert.equal((await fetch(`${base}/api/admin/whatsapp-cloud/quick-replies?empresa_id=9&include_inactive=true`)).status, 200);
   });
-  assert.deepEqual(superUser.calls, [['list', { empresaId: 9, includeInactive: true }]]);
+  assert.deepEqual(superUser.calls, [['list', { empresaId: 9, usuarioId: 11, actorRole: 'super', includeInactive: true }]]);
 });
 
 test('quick replies mutaciones exigen JSON+Origin, body allowlist y actor server-side', async () => {
@@ -64,6 +64,8 @@ test('quick replies mutaciones exigen JSON+Origin, body allowlist y actor server
       { headers: mutationHeaders, body: JSON.stringify({ shortcut: 'hola', title: 'Hola', body: 'Texto', createdBy: 999 }), expected: 400 },
       { headers: mutationHeaders, body: JSON.stringify({ shortcut: 'á'.repeat(33), title: 'Hola', body: 'Texto' }), expected: 400 },
       { headers: mutationHeaders, body: JSON.stringify({ shortcut: 'hola', title: '', body: 'Texto' }), expected: 400 },
+      { headers: mutationHeaders, body: JSON.stringify({ shortcut: 'hola', title: 'Hola', body: ' \t\n\r' }), expected: 400 },
+      { headers: mutationHeaders, body: JSON.stringify({ shortcut: 'hola', title: 'Hola', body: '\u00a0\u2007\u202f\ufeff' }), expected: 400 },
       { headers: mutationHeaders, body: JSON.stringify({ shortcut: 'hola', title: 'Hola', body: 'x'.repeat(4097) }), expected: 400 },
       { headers: mutationHeaders, body: JSON.stringify({ shortcut: 'hola', title: 'Hola', body: 'Texto', sortOrder: 100001 }), expected: 400 },
     ]) {
@@ -78,6 +80,26 @@ test('quick replies mutaciones exigen JSON+Origin, body allowlist y actor server
     empresaId: 7, usuarioId: 11, actorRole: 'admin', shortcut: 'ayuda.rapida',
     title: 'Ayuda', body: ' Texto plano \n', sortOrder: 2, isActive: true,
   });
+});
+
+test('PATCH rechaza body sólo whitespace Unicode y preserva texto válido sin trim', async () => {
+  const id = '11111111-1111-4111-8111-111111111111';
+  const { app, calls } = harness();
+  await withServer(app, async base => {
+    for (const body of ['\t\n', '\u00a0\u2000\u3000', '\ufeff']) {
+      const response = await fetch(`${base}/api/admin/whatsapp-cloud/quick-replies/${id}`, {
+        method: 'PATCH', headers: mutationHeaders, body: JSON.stringify({ body, expectedVersion: 1 }),
+      });
+      assert.equal(response.status, 400);
+    }
+    const response = await fetch(`${base}/api/admin/whatsapp-cloud/quick-replies/${id}`, {
+      method: 'PATCH', headers: mutationHeaders,
+      body: JSON.stringify({ body: '  texto válido  ', expectedVersion: 1 }),
+    });
+    assert.equal(response.status, 200);
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][1].body, '  texto válido  ');
 });
 
 test('PATCH/DELETE usan CAS, errores públicos allowlisted y no reflejan SQL/body', async () => {

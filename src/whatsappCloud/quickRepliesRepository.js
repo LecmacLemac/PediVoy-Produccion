@@ -90,27 +90,20 @@ async function transaction(pool, input, work) {
   }
 }
 
-export function createQuickRepliesRepository({ pool, query } = {}) {
-  const runQuery = typeof query === 'function'
-    ? query
-    : async (sql, params) => (await pool.query(sql, params)).rows;
+export function createQuickRepliesRepository({ pool } = {}) {
   return {
-    async list({ empresaId, includeInactive = false } = {}) {
-      const id = tenantId(empresaId);
-      try {
-        const rows = await runQuery(
+    async list(input = {}) {
+      return transaction(pool, input, async (client, { empresaId }) => {
+        const result = await client.query(
           `SELECT id, shortcut, title, body, sort_order, is_active, version, updated_at
              FROM public.whatsapp_cloud_quick_replies
             WHERE empresa_id = $1
               AND ($2::boolean OR is_active)
             ORDER BY sort_order ASC, title ASC, id ASC`,
-          [id, includeInactive === true],
-          { sensitive: true },
+          [empresaId, input.includeInactive === true],
         );
-        return rows.map(dto);
-      } catch {
-        throw publicError('QUICK_REPLY_FAILED', 'Quick reply list failed');
-      }
+        return result.rows.map(dto);
+      });
     },
 
     async create(input = {}) {

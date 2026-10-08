@@ -56,7 +56,7 @@ function shortText(value, max) {
 }
 
 function bodyText(value) {
-  return typeof value === 'string' && value.length >= 1 && value.length <= 4096 ? value : null;
+  return typeof value === 'string' && value.length <= 4096 && /\S/u.test(value) ? value : null;
 }
 
 function resolveGetTenant(req) {
@@ -137,11 +137,13 @@ export function createWhatsAppCloudQuickRepliesAdminRouter({
 
   router.get('/', withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     const empresaId = resolveGetTenant(req);
+    const usuarioId = int4(req.user?.uid);
     const rawInactive = req.query?.include_inactive;
     if (!empresaId) return res.status(400).json({ error: 'empresa_id_required' });
+    if (!usuarioId) return res.status(403).json({ error: 'actor_forbidden' });
     if (rawInactive != null && rawInactive !== 'true' && rawInactive !== 'false') return res.status(400).json({ error: 'quick_reply_invalid' });
     try {
-      const quickReplies = await repository.list({ empresaId, includeInactive: rawInactive === 'true' });
+      const quickReplies = await repository.list({ empresaId, usuarioId, actorRole: req.user.role, includeInactive: rawInactive === 'true' });
       return res.json({ quickReplies });
     } catch (error) { return sendFailure(res, error); }
   });
