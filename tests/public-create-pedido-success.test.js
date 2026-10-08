@@ -120,6 +120,7 @@ test('POST /public/pedidos agrega retornables pendientes al WhatsApp del cliente
     }
     if (/ALTER TABLE/i.test(sql)) return [];
     if (sql.includes('FROM puntos_entrega') && sql.includes('RIGHT(REGEXP_REPLACE')) return [{ id: 101, zona_id: 7 }];
+    if (sql.includes('INSERT INTO puntos_entrega')) return [{ id: 101 }];
     if (sql.includes('FROM zona_chofer')) return [];
     if (sql.includes('FROM productos') && sql.includes('promo_config')) {
       return [{ id: 55, nombre: 'Bidón 20L', promo_config: null, config_activo: {}, retornable: false }];
@@ -164,4 +165,13 @@ test('POST /public/pedidos agrega retornables pendientes al WhatsApp del cliente
 
   assert.match(wppMessage, /Retornables pendientes/);
   assert.match(wppMessage, /Recordá entregar 3 Bidón retornable al repartidor/);
+});
+
+test('armarMensajeConfirmado conserva snapshot Web completo', async () => {
+  const { armarMensajeConfirmado } = await import('../src/utils.js');
+  assert.equal(armarMensajeConfirmado({
+    cliente: 'Ana', items: [{ producto: 'Agua', cantidad: 2, precio_unitario: 3500 }],
+    direccion: 'Calle 1', fechaEntrega: new Date(2026, 9, 8, 12),
+    configEntrega: { horarios: '9 a 18hs' }, repartidor: { nombre: 'Juan', telefono: '3871234567' },
+  }), '¡Hola Ana!\n✅ Tu pedido está "Confirmado".\n\n      2 Agua - $ 7.000\nTotal: $ 7.000\n\n🏡 Entrega: Calle 1\n📆 Fecha: Jueves 8\n⏰ Horario: 9 a 18hs\n\nRepartidor: Juan\n📞 3871234567\n\n¡Gracias por elegirnos!');
 });

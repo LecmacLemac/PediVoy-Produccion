@@ -40,6 +40,7 @@ test('notificarEnRuta envia WhatsApp aunque el pedido ya tenga tracking_token', 
   assert.equal(enqueued.length, 1);
   assert.equal(enqueued[0].phone, '3531234567');
   assert.equal(enqueued[0].empresa_id, 1);
+  assert.equal(enqueued[0].message, '🚚 *¡Tu pedido está en camino!*\n\nHola Cliente Test, tu pedido ya salió hacia Calle Test 123.\n\n🗺️ *Seguí al repartidor en vivo aquí:*\nhttps://www.pedivoy.com/pedidos/seguimiento.html?t=tok_123\n\n¡Nos vemos pronto! 👋');
   assert.match(enqueued[0].message, /https:\/\/www\.pedivoy\.com\/pedidos\/seguimiento\.html\?t=tok_123/);
   assert.ok(queries.some((q) => q.sql.includes('SET en_ruta_notificado_at')));
 });
@@ -121,6 +122,7 @@ test('notificarPedidoTransferencia usa la cuenta activa de menor prioridad', asy
   assert.equal(enqueued.length, 1);
   assert.equal(enqueued[0].phone, '3531234567');
   assert.equal(enqueued[0].empresa_id, 1);
+  assert.equal(enqueued[0].message, '🏦 *Pago por transferencia*\n\nHola Cliente Test, tu pedido fue marcado para pagar por *transferencia* ($\u00a07.500,00).\n\n💳 *Datos para transferir:*\nAlias: PRINCIPAL.TEST\nCBU: 0000003100012345678901\nBanco: Banco Principal\nTitular: PediVoy Test\n\nPor favor, adjuntá el *comprobante de transferencia* respondiendo a este mensaje para poder acreditar el pago.\n\n¡Muchas gracias!\nPediVoy Test');
   assert.match(enqueued[0].message, /Alias: PRINCIPAL\.TEST/);
   assert.match(enqueued[0].message, /CBU: 0000003100012345678901/);
   assert.match(enqueued[0].message, /Banco: Banco Principal/);
