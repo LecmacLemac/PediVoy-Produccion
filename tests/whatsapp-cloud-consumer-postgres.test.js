@@ -67,6 +67,129 @@ test('migración agrega lifecycle Cloud canónico e idempotente', options, async
   });
 });
 
+test('rerun canónico no reescribe filas outbox y cada inconsistencia legacy se repara una sola vez', options, async () => {
+  await withDatabase(async pool => {
+    await pool.query(`
+      CREATE TABLE empresas (id INTEGER PRIMARY KEY);
+      INSERT INTO empresas (id) VALUES (1);
+      CREATE TABLE wpp_outbox (
+        id SERIAL PRIMARY KEY,
+        empresa_id INTEGER,
+        telefono TEXT NOT NULL,
+        mensaje TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        sent_at TIMESTAMPTZ,
+        status TEXT NOT NULL DEFAULT 'pending',
+        error TEXT,
+        claim_owner TEXT,
+        claim_epoch BIGINT,
+        claim_until TIMESTAMPTZ,
+        transport_origin TEXT,
+        reply_correlation_id TEXT,
+        notification_correlation_id TEXT,
+        meta_message_id TEXT,
+        cloud_dispatch_state TEXT,
+        dispatch_started_at TIMESTAMPTZ,
+        cloud_template_key TEXT,
+        cloud_template_parameters JSONB
+      );
+    `);
+
+    const canonicalMessages = [
+      'tenant-cloud-pending',
+      'tenant-cloud-pre-dispatch',
+      'tenant-cloud-dispatch-started',
+      'tenant-cloud-sent',
+      'tenant-cloud-definitive-failed',
+      'tenant-cloud-manual-retryable',
+      'tenant-cloud-outcome-unknown',
+      'tenant-company-sending',
+      'general-pending',
+      'general-sent',
+    ];
+    const legacyMessages = [
+      'legacy-tenant-cloud-sending-null',
+      'legacy-tenant-cloud-sent-null',
+      'legacy-tenant-cloud-error-null',
+      'legacy-tenant-company-state',
+      'legacy-general-state',
+    ];
+    await pool.query(`
+      INSERT INTO wpp_outbox (
+        empresa_id, telefono, mensaje, created_at, status, transport_origin,
+        cloud_dispatch_state, dispatch_started_at, claim_until
+      ) VALUES
+        (1, '1', 'tenant-cloud-pending', '2026-10-01T00:00:01Z', 'pending', 'cloud', NULL, NULL, NULL),
+        (1, '1', 'tenant-cloud-pre-dispatch', '2026-10-01T00:00:02Z', 'sending', 'cloud', 'pre_dispatch', NULL, '2099-01-01T00:00:00Z'),
+        (1, '1', 'tenant-cloud-dispatch-started', '2026-10-01T00:00:03Z', 'sending', 'cloud', 'dispatch_started', '2026-10-01T01:00:03Z', NULL),
+        (1, '1', 'tenant-cloud-sent', '2026-10-01T00:00:04Z', 'sent', 'cloud', 'sent', '2026-10-01T01:00:04Z', NULL),
+        (1, '1', 'tenant-cloud-definitive-failed', '2026-10-01T00:00:05Z', 'error', 'cloud', 'definitive_failed', NULL, NULL),
+        (1, '1', 'tenant-cloud-manual-retryable', '2026-10-01T00:00:06Z', 'error', 'cloud', 'manual_retryable', '2026-10-01T01:00:06Z', NULL),
+        (1, '1', 'tenant-cloud-outcome-unknown', '2026-10-01T00:00:07Z', 'error', 'cloud', 'outcome_unknown', '2026-10-01T01:00:07Z', NULL),
+        (1, '1', 'tenant-company-sending', '2026-10-01T00:00:08Z', 'sending', 'company', NULL, '2026-10-01T01:00:08Z', NULL),
+        (NULL, '1', 'general-pending', '2026-10-01T00:00:09Z', 'pending', 'general', NULL, NULL, NULL),
+        (NULL, '1', 'general-sent', '2026-10-01T00:00:10Z', 'sent', 'general', NULL, '2026-10-01T01:00:10Z', NULL),
+        (1, '1', 'legacy-tenant-cloud-sending-null', '2026-10-01T00:00:11Z', 'sending', 'cloud', NULL, NULL, NULL),
+        (1, '1', 'legacy-tenant-cloud-sent-null', '2026-10-01T00:00:12Z', 'sent', 'cloud', NULL, NULL, NULL),
+        (1, '1', 'legacy-tenant-cloud-error-null', '2026-10-01T00:00:13Z', 'error', 'cloud', NULL, NULL, NULL),
+        (1, '1', 'legacy-tenant-company-state', '2026-10-01T00:00:14Z', 'sending', 'company', 'pre_dispatch', NULL, NULL),
+        (NULL, '1', 'legacy-general-state', '2026-10-01T00:00:15Z', 'error', 'general', 'outcome_unknown', NULL, NULL);
+    `);
+
+    const snapshot = async messages => (await pool.query(`
+      SELECT id, mensaje, status, cloud_dispatch_state,
+             created_at::TEXT, dispatch_started_at::TEXT,
+             xmin::TEXT AS xmin, ctid::TEXT AS ctid
+        FROM wpp_outbox
+       WHERE mensaje = ANY($1::TEXT[])
+       ORDER BY id
+    `, [messages])).rows;
+
+    const canonicalBefore = await snapshot(canonicalMessages);
+    const legacyBefore = await snapshot(legacyMessages);
+
+    await pool.query(migrationSql);
+
+    const canonicalAfterFirst = await snapshot(canonicalMessages);
+    const legacyAfterFirst = await snapshot(legacyMessages);
+    assert.deepEqual(canonicalAfterFirst, canonicalBefore);
+    assert.deepEqual(legacyAfterFirst.map(row => ({
+      mensaje: row.mensaje,
+      status: row.status,
+      cloud_dispatch_state: row.cloud_dispatch_state,
+      dispatch_started_at: row.dispatch_started_at,
+    })), [
+      {
+        mensaje: 'legacy-tenant-cloud-sending-null', status: 'sending',
+        cloud_dispatch_state: 'dispatch_started', dispatch_started_at: legacyBefore[0].created_at,
+      },
+      {
+        mensaje: 'legacy-tenant-cloud-sent-null', status: 'sent',
+        cloud_dispatch_state: 'sent', dispatch_started_at: legacyBefore[1].created_at,
+      },
+      {
+        mensaje: 'legacy-tenant-cloud-error-null', status: 'error',
+        cloud_dispatch_state: 'outcome_unknown', dispatch_started_at: legacyBefore[2].created_at,
+      },
+      {
+        mensaje: 'legacy-tenant-company-state', status: 'sending',
+        cloud_dispatch_state: null, dispatch_started_at: null,
+      },
+      {
+        mensaje: 'legacy-general-state', status: 'error',
+        cloud_dispatch_state: null, dispatch_started_at: null,
+      },
+    ]);
+    assert.ok(legacyAfterFirst.every((row, index) =>
+      row.xmin !== legacyBefore[index].xmin && row.ctid !== legacyBefore[index].ctid));
+
+    await pool.query(migrationSql);
+
+    assert.deepEqual(await snapshot(canonicalMessages), canonicalAfterFirst);
+    assert.deepEqual(await snapshot(legacyMessages), legacyAfterFirst);
+  });
+});
+
 test('migración legacy normaliza sending Cloud como dispatch_started no recuperable', options, async () => {
   await withDatabase(async pool => {
     await pool.query(`

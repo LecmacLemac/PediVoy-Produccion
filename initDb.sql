@@ -2249,65 +2249,89 @@ BEGIN
     PERFORM pg_catalog.set_config(
       'pedivoy.whatsapp_cloud_projection_empresa_id', target_empresa_id::TEXT, TRUE
     );
-    UPDATE public.wpp_outbox
-    SET cloud_dispatch_state = CASE
-          WHEN transport_origin IS DISTINCT FROM 'cloud' THEN NULL
-          WHEN status = 'sending' THEN CASE
-            WHEN cloud_dispatch_state IN ('pre_dispatch', 'dispatch_started') THEN cloud_dispatch_state
-            ELSE 'dispatch_started'
-          END
-          WHEN status = 'sent' THEN 'sent'
-          WHEN status = 'error' THEN CASE
-            WHEN cloud_dispatch_state IN ('definitive_failed', 'manual_retryable', 'outcome_unknown') THEN cloud_dispatch_state
-            ELSE 'outcome_unknown'
-          END
-          ELSE NULL
-        END,
-        dispatch_started_at = CASE
-          WHEN transport_origin = 'cloud'
-           AND (
-             status = 'sent'
-             OR (status = 'sending' AND cloud_dispatch_state IS DISTINCT FROM 'pre_dispatch')
-             OR (status = 'error' AND (
-               cloud_dispatch_state IS NULL
-               OR cloud_dispatch_state IN ('manual_retryable', 'outcome_unknown')
-             ))
-           )
-            THEN COALESCE(dispatch_started_at, created_at, pg_catalog.NOW())
-          ELSE dispatch_started_at
-        END
-    WHERE empresa_id = target_empresa_id;
+    WITH target AS (
+      SELECT outbox.id,
+             CASE
+               WHEN outbox.transport_origin IS DISTINCT FROM 'cloud' THEN NULL
+               WHEN outbox.status = 'sending' THEN CASE
+                 WHEN outbox.cloud_dispatch_state IN ('pre_dispatch', 'dispatch_started')
+                   THEN outbox.cloud_dispatch_state
+                 ELSE 'dispatch_started'
+               END
+               WHEN outbox.status = 'sent' THEN 'sent'
+               WHEN outbox.status = 'error' THEN CASE
+                 WHEN outbox.cloud_dispatch_state IN ('definitive_failed', 'manual_retryable', 'outcome_unknown')
+                   THEN outbox.cloud_dispatch_state
+                 ELSE 'outcome_unknown'
+               END
+               ELSE NULL
+             END AS cloud_dispatch_state,
+             CASE
+               WHEN outbox.transport_origin = 'cloud'
+                AND (
+                  outbox.status = 'sent'
+                  OR (outbox.status = 'sending' AND outbox.cloud_dispatch_state IS DISTINCT FROM 'pre_dispatch')
+                  OR (outbox.status = 'error' AND (
+                    outbox.cloud_dispatch_state IS NULL
+                    OR outbox.cloud_dispatch_state IN ('manual_retryable', 'outcome_unknown')
+                  ))
+                )
+                 THEN COALESCE(outbox.dispatch_started_at, outbox.created_at, pg_catalog.NOW())
+               ELSE outbox.dispatch_started_at
+             END AS dispatch_started_at
+        FROM public.wpp_outbox AS outbox
+       WHERE outbox.empresa_id = target_empresa_id
+    )
+    UPDATE public.wpp_outbox AS outbox
+       SET cloud_dispatch_state = target.cloud_dispatch_state,
+           dispatch_started_at = target.dispatch_started_at
+      FROM target
+     WHERE outbox.id = target.id
+       AND (outbox.cloud_dispatch_state, outbox.dispatch_started_at)
+           IS DISTINCT FROM (target.cloud_dispatch_state, target.dispatch_started_at);
     PERFORM pg_catalog.set_config('pedivoy.whatsapp_cloud_projection_empresa_id', '', TRUE);
   END LOOP;
 
-  UPDATE public.wpp_outbox
-  SET cloud_dispatch_state = CASE
-        WHEN transport_origin IS DISTINCT FROM 'cloud' THEN NULL
-        WHEN status = 'sending' THEN CASE
-          WHEN cloud_dispatch_state IN ('pre_dispatch', 'dispatch_started') THEN cloud_dispatch_state
-          ELSE 'dispatch_started'
-        END
-        WHEN status = 'sent' THEN 'sent'
-        WHEN status = 'error' THEN CASE
-          WHEN cloud_dispatch_state IN ('definitive_failed', 'manual_retryable', 'outcome_unknown') THEN cloud_dispatch_state
-          ELSE 'outcome_unknown'
-        END
-        ELSE NULL
-      END,
-      dispatch_started_at = CASE
-        WHEN transport_origin = 'cloud'
-         AND (
-           status = 'sent'
-           OR (status = 'sending' AND cloud_dispatch_state IS DISTINCT FROM 'pre_dispatch')
-           OR (status = 'error' AND (
-             cloud_dispatch_state IS NULL
-             OR cloud_dispatch_state IN ('manual_retryable', 'outcome_unknown')
-           ))
-         )
-          THEN COALESCE(dispatch_started_at, created_at, pg_catalog.NOW())
-        ELSE dispatch_started_at
-      END
-  WHERE empresa_id IS NULL;
+  WITH target AS (
+    SELECT outbox.id,
+           CASE
+             WHEN outbox.transport_origin IS DISTINCT FROM 'cloud' THEN NULL
+             WHEN outbox.status = 'sending' THEN CASE
+               WHEN outbox.cloud_dispatch_state IN ('pre_dispatch', 'dispatch_started')
+                 THEN outbox.cloud_dispatch_state
+               ELSE 'dispatch_started'
+             END
+             WHEN outbox.status = 'sent' THEN 'sent'
+             WHEN outbox.status = 'error' THEN CASE
+               WHEN outbox.cloud_dispatch_state IN ('definitive_failed', 'manual_retryable', 'outcome_unknown')
+                 THEN outbox.cloud_dispatch_state
+               ELSE 'outcome_unknown'
+             END
+             ELSE NULL
+           END AS cloud_dispatch_state,
+           CASE
+             WHEN outbox.transport_origin = 'cloud'
+              AND (
+                outbox.status = 'sent'
+                OR (outbox.status = 'sending' AND outbox.cloud_dispatch_state IS DISTINCT FROM 'pre_dispatch')
+                OR (outbox.status = 'error' AND (
+                  outbox.cloud_dispatch_state IS NULL
+                  OR outbox.cloud_dispatch_state IN ('manual_retryable', 'outcome_unknown')
+                ))
+              )
+               THEN COALESCE(outbox.dispatch_started_at, outbox.created_at, pg_catalog.NOW())
+             ELSE outbox.dispatch_started_at
+           END AS dispatch_started_at
+      FROM public.wpp_outbox AS outbox
+     WHERE outbox.empresa_id IS NULL
+  )
+  UPDATE public.wpp_outbox AS outbox
+     SET cloud_dispatch_state = target.cloud_dispatch_state,
+         dispatch_started_at = target.dispatch_started_at
+    FROM target
+   WHERE outbox.id = target.id
+     AND (outbox.cloud_dispatch_state, outbox.dispatch_started_at)
+         IS DISTINCT FROM (target.cloud_dispatch_state, target.dispatch_started_at);
 END $repair_wpp_outbox_cloud_dispatch$;
 
 UPDATE public.wpp_outbox
