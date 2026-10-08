@@ -1041,3 +1041,139 @@ test('browser desktop no desborda y no mueve foco al botón Volver', { skip: !ex
     await page.screenshot({ path: path.join(screenshotDir, 'whatsapp-cloud-desktop-1440x900.png') });
   });
 });
+
+test('Task 7 usa tres paneles desktop, dos paneles tablet y list-detail mobile sin overflow', { skip: !existsSync(chromePath) }, async () => {
+  for (const viewport of [
+    { width: 320, height: 568, deviceScaleFactor: 1 },
+    { width: 360, height: 800, deviceScaleFactor: 1 },
+    { width: 390, height: 844, deviceScaleFactor: 1 },
+    { width: 768, height: 1024, deviceScaleFactor: 1 },
+    { width: 1024, height: 768, deviceScaleFactor: 1 },
+    { width: 1440, height: 900, deviceScaleFactor: 1 },
+  ]) {
+    await withBrowserPage(viewport, async ({ page }) => {
+      const initial = await page.evaluate(() => ({
+        width: innerWidth,
+        scrollWidth: document.documentElement.scrollWidth,
+        scrollHeight: document.documentElement.scrollHeight,
+        height: innerHeight,
+        queue: getComputedStyle(document.querySelector('.conversation-pane')).display,
+        chat: getComputedStyle(document.querySelector('#chatPanel')).display,
+        context: getComputedStyle(document.querySelector('#contextPanel')).display,
+        safeArea: getComputedStyle(document.querySelector('#composerForm')).paddingBottom,
+      }));
+      assert.ok(initial.scrollWidth <= viewport.width, `${viewport.width}: overflow horizontal inicial`);
+      assert.ok(initial.scrollHeight <= viewport.height, `${viewport.width}: overflow vertical de página inicial`);
+      assert.equal(initial.queue === 'none', false);
+      if (viewport.width < 768) assert.equal(initial.chat, 'none');
+      else assert.equal(initial.chat === 'none', false);
+      if (viewport.width >= 1200) assert.equal(initial.context === 'none', false);
+      else assert.equal(initial.context, 'none');
+      assert.notEqual(initial.safeArea, '0px');
+
+      await page.click('.conversation-card[data-conversation-id="44"]');
+      await page.waitForFunction(() => document.querySelector('#messageInput').disabled === false);
+      const detail = await page.evaluate(() => {
+        const box = selector => {
+          const element = document.querySelector(selector);
+          const rect = element.getBoundingClientRect();
+          return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, width: rect.width, height: rect.height, display: getComputedStyle(element).display };
+        };
+        return {
+          scrollWidth: document.documentElement.scrollWidth,
+          scrollHeight: document.documentElement.scrollHeight,
+          queue: box('.conversation-pane'), chat: box('#chatPanel'), context: box('#contextPanel'),
+          composer: box('#composerForm'), header: box('.topbar'),
+        };
+      });
+      assert.ok(detail.scrollWidth <= viewport.width, `${viewport.width}: overflow horizontal detalle`);
+      assert.ok(detail.scrollHeight <= viewport.height, `${viewport.width}: overflow vertical detalle`);
+      assert.ok(detail.composer.bottom <= viewport.height && detail.composer.height >= 44, `${viewport.width}: composer alcanzable`);
+      if (viewport.width >= 1200) {
+        assert.ok(detail.queue.width >= 360 && detail.queue.width <= 400);
+        assert.ok(detail.context.width >= 300 && detail.context.width <= 340);
+        assert.ok(detail.queue.right <= detail.chat.left && detail.chat.right <= detail.context.left);
+      } else if (viewport.width >= 768) {
+        assert.ok(detail.queue.width >= 300 && detail.chat.width >= 420);
+        assert.equal(detail.context.display, 'none');
+        if (viewport.width === 1024) {
+          await page.click('#contextToggle');
+          await page.waitForSelector('#contextPanel[data-open="true"]');
+          const drawer = await page.$eval('#contextPanel', element => element.getBoundingClientRect().toJSON());
+          const composer = await page.$eval('#composerForm', element => element.getBoundingClientRect().toJSON());
+          assert.ok(drawer.left >= 0 && drawer.right <= viewport.width);
+          assert.equal(overlapArea(drawer, composer), 0, 'drawer tablet no debe cubrir el composer');
+          await page.keyboard.press('Escape');
+          assert.equal(await page.$eval('#contextToggle', button => button.getAttribute('aria-expanded')), 'false');
+          await page.screenshot({ path: path.join(screenshotDir, 'whatsapp-cloud-tablet-1024x768.png') });
+        }
+      } else {
+        assert.equal(detail.queue.display, 'none');
+        assert.notEqual(detail.chat.display, 'none');
+        assert.ok(detail.composer.left >= 0 && detail.composer.right <= viewport.width);
+        const targets = await page.evaluate(() => ['backToList', 'conversationWorkflow', 'conversationPriority', 'contextToggle', 'messageInput', 'sendButton'].map(id => {
+          const rect = document.getElementById(id).getBoundingClientRect();
+          return { id, width: rect.width, height: rect.height };
+        }));
+        for (const target of targets) assert.ok(target.width >= 44 && target.height >= 44, `${viewport.width}: ${target.id} touch target`);
+      }
+    });
+  }
+});
+
+test('Task 7 drawers son accesibles, cierran con Escape y restauran foco sin perder borrador', { skip: !existsSync(chromePath) }, async () => {
+  await withBrowserPage({ width: 390, height: 844, deviceScaleFactor: 1 }, async ({ page }) => {
+    const semantics = await page.evaluate(() => ({
+      main: document.querySelector('main')?.getAttribute('aria-label'),
+      filtersControls: document.querySelector('#filtersToggle')?.getAttribute('aria-controls'),
+      filtersExpanded: document.querySelector('#filtersToggle')?.getAttribute('aria-expanded'),
+      contextControls: document.querySelector('#contextToggle')?.getAttribute('aria-controls'),
+      syncLive: document.querySelector('#syncStatus')?.getAttribute('aria-live'),
+      historyLive: document.querySelector('#messageHistory')?.getAttribute('aria-live'),
+    }));
+    assert.deepEqual(semantics, {
+      main: 'Espacio de trabajo de WhatsApp Cloud', filtersControls: 'queueFilters', filtersExpanded: 'false',
+      contextControls: 'contextPanel', syncLive: 'polite', historyLive: 'polite',
+    });
+    const client = await page.createCDPSession();
+    await client.send('Accessibility.enable');
+    const ax = await client.send('Accessibility.getFullAXTree');
+    const namedRoles = ax.nodes.map(node => ({ role: node.role?.value, name: node.name?.value })).filter(node => node.name);
+    assert.ok(namedRoles.some(node => node.role === 'main' && node.name === 'Espacio de trabajo de WhatsApp Cloud'));
+    assert.ok(namedRoles.some(node => node.role === 'navigation' && node.name === 'Navegación backoffice'));
+    assert.ok(namedRoles.some(node => node.role === 'searchbox' && /Buscar por cliente/.test(node.name)));
+
+    await page.focus('#conversationSearch');
+    await page.type('#conversationSearch', 'borrador búsqueda');
+    await page.click('#filtersToggle');
+    await page.waitForSelector('#queueFilters[data-open="true"]');
+    assert.equal(await page.$eval('#filtersToggle', button => button.getAttribute('aria-expanded')), 'true');
+    assert.equal(await page.evaluate(() => document.activeElement?.id), 'workflowFilter');
+    await page.keyboard.press('Escape');
+    assert.equal(await page.$eval('#filtersToggle', button => button.getAttribute('aria-expanded')), 'false');
+    assert.equal(await page.evaluate(() => document.activeElement?.id), 'filtersToggle');
+    assert.equal(await page.$eval('#conversationSearch', input => input.value), 'borrador búsqueda');
+
+    await page.click('.conversation-card[data-conversation-id="44"]');
+    await page.waitForFunction(() => document.querySelector('#messageInput').disabled === false);
+    await page.type('#messageInput', 'borrador de respuesta');
+    await page.click('#contextToggle');
+    await page.waitForSelector('#contextPanel[data-open="true"]');
+    const open = await page.evaluate(() => ({
+      expanded: document.querySelector('#contextToggle').getAttribute('aria-expanded'),
+      active: document.activeElement?.id,
+      drawerRole: document.querySelector('#contextPanel').getAttribute('role'),
+      modal: document.querySelector('#contextPanel').getAttribute('aria-modal'),
+      closeBox: document.querySelector('#contextClose').getBoundingClientRect().toJSON(),
+    }));
+    assert.equal(open.expanded, 'true');
+    assert.equal(open.active, 'contextClose');
+    assert.equal(open.drawerRole, 'dialog');
+    assert.equal(open.modal, 'true');
+    assert.ok(open.closeBox.width >= 44 && open.closeBox.height >= 44);
+    await page.keyboard.press('Escape');
+    assert.equal(await page.$eval('#contextToggle', button => button.getAttribute('aria-expanded')), 'false');
+    assert.equal(await page.evaluate(() => document.activeElement?.id), 'contextToggle');
+    assert.equal(await page.$eval('#messageInput', input => input.value), 'borrador de respuesta');
+  });
+});

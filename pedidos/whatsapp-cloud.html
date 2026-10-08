@@ -2,136 +2,206 @@
 <html lang="es">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>WhatsApp Cloud – PediVoy</title>
   <link rel="stylesheet" href="theme-base.css">
   <style>
     :root {
-      --bg:#0b1020; --bg-2:#0f172a; --surface:rgba(30,41,59,.78); --border:rgba(148,163,184,.18);
-      --ink:#f1f5f9; --muted:#94a3b8; --brand:#25d366; --brand-dark:#128c4a; --danger:#ef4444;
-      --warning:#f59e0b; --info:#60a5fa; --radius:16px;
+      --wc-bg:#0b1020; --wc-panel:#101827; --wc-panel-2:#151f31; --wc-raised:#1a2639;
+      --wc-border:rgba(148,163,184,.2); --wc-border-strong:rgba(148,163,184,.34);
+      --wc-text:#eef2f7; --wc-muted:#9ba9bc; --wc-accent:#25d366; --wc-accent-ink:#052e16;
+      --wc-danger:#f87171; --wc-warning:#fbbf24; --wc-info:#7dd3fc; --wc-radius:12px;
+      --wc-header-offset:0px;
     }
     * { box-sizing:border-box; }
-    html { height:100%; }
-    body { margin:0; padding-bottom:0; display:flex; flex-direction:column; min-height:100vh; min-height:100dvh; overflow:hidden; background:radial-gradient(circle at 85% 15%,rgba(37,211,102,.08),transparent 28%),var(--bg); color:var(--ink); font-family:system-ui,-apple-system,sans-serif; }
+    html,body { width:100%; height:100%; overflow:hidden; }
+    body { margin:0; padding:0; display:flex; flex-direction:column; min-height:100vh; min-height:100dvh; background:var(--wc-bg); color:var(--wc-text); font:14px/1.4 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
     button,input,textarea,select { font:inherit; }
+    button,input,textarea,select,a { -webkit-tap-highlight-color:transparent; }
+    button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible,a:focus-visible,summary:focus-visible { outline:3px solid color-mix(in srgb,var(--wc-accent) 62%,transparent); outline-offset:2px; }
     .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
-    button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible,a:focus-visible { outline:3px solid rgba(37,211,102,.5); outline-offset:2px; }
-    .topbar { flex:0 0 auto; padding:0; border-bottom:1px solid var(--border); background:rgba(15,23,42,.96); position:relative; top:auto; z-index:20; backdrop-filter:blur(12px); }
-    .topbar-inner { max-width:1400px; margin:auto; padding:.75rem 1rem; display:flex; align-items:center; justify-content:space-between; gap:1rem; }
-    .brand { display:flex; align-items:center; gap:.7rem; color:#fff; text-decoration:none; font-weight:800; }
-    .brand img { width:auto; height:30px; }
-    .cloud-nav { display:flex; flex-direction:row; justify-content:flex-start; gap:1rem; align-items:center; }
-    .cloud-nav a { color:var(--muted); text-decoration:none; white-space:nowrap; min-height:44px; display:flex; align-items:center; }
-    .cloud-nav a[aria-current="page"] { color:var(--brand); font-weight:700; }
+    [hidden] { display:none!important; }
+
+    .topbar { flex:0 0 auto; border-bottom:1px solid var(--wc-border); background:var(--wc-panel); z-index:40; }
+    .topbar-inner { max-width:1600px; margin:auto; min-height:56px; padding:0 16px; display:flex; align-items:center; justify-content:space-between; gap:24px; }
+    .brand { min-width:0; display:flex; align-items:center; gap:10px; color:var(--wc-text); text-decoration:none; font-weight:750; letter-spacing:-.01em; }
+    .brand img { width:auto; height:28px; }
+    .brand span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .cloud-nav { display:flex; align-items:center; gap:4px; }
+    .cloud-nav a { min-height:40px; padding:0 10px; display:flex; align-items:center; border-radius:8px; color:var(--wc-muted); text-decoration:none; white-space:nowrap; }
+    .cloud-nav a:hover { color:var(--wc-text); background:rgba(255,255,255,.05); }
+    .cloud-nav a[aria-current="page"] { color:var(--wc-text); background:rgba(37,211,102,.1); box-shadow:inset 0 0 0 1px rgba(37,211,102,.22); }
     .cloud-nav .logout { color:#fca5a5; }
-    .shell { width:100%; max-width:1400px; margin:0 auto; padding:1rem; flex:1 1 auto; min-height:0; display:flex; flex-direction:column; gap:0; }
-    #appStatus { padding:.75rem 1rem; margin-bottom:.75rem; border-radius:12px; border:1px solid var(--border); background:var(--surface); }
-    #appStatus[data-tone="error"] { color:#fecaca; border-color:rgba(239,68,68,.45); }
-    #appStatus[data-tone="warning"] { color:#fde68a; border-color:rgba(245,158,11,.45); }
-    #appStatus[data-tone="success"] { color:#bbf7d0; border-color:rgba(37,211,102,.45); }
-    .inbox { display:grid; grid-template-columns:minmax(300px,380px) minmax(0,1fr); flex:1 1 auto; min-height:0; border:1px solid var(--border); border-radius:var(--radius); overflow:hidden; background:var(--surface); box-shadow:0 22px 60px rgba(0,0,0,.28); }
-    .conversation-pane { min-width:0; display:flex; flex-direction:column; border-right:1px solid var(--border); background:rgba(15,23,42,.78); }
-    .pane-head { padding:1rem; border-bottom:1px solid var(--border); display:grid; gap:.75rem; position:static; top:auto; z-index:auto; background:transparent; backdrop-filter:none; }
-    .title-row { display:flex; align-items:center; justify-content:space-between; gap:.75rem; }
-    .title-tools { display:flex; align-items:center; gap:.5rem; }
-    .sync-status { color:var(--muted); font-size:.75rem; white-space:nowrap; }
+
+    .shell { width:100%; max-width:1600px; margin:0 auto; padding:12px; flex:1 1 auto; min-height:0; display:flex; flex-direction:column; overflow:hidden; }
+    #appStatus { flex:0 0 auto; margin-bottom:8px; padding:9px 12px; border:1px solid var(--wc-border); border-radius:9px; background:var(--wc-panel-2); }
+    #appStatus[data-tone="error"] { color:#fecaca; border-color:rgba(248,113,113,.48); }
+    #appStatus[data-tone="warning"] { color:#fde68a; border-color:rgba(251,191,36,.48); }
+    #appStatus[data-tone="success"] { color:#bbf7d0; border-color:rgba(37,211,102,.48); }
+
+    .inbox { flex:1 1 auto; min-height:0; display:grid; grid-template-columns:minmax(360px,390px) minmax(420px,1fr) minmax(300px,320px); border:1px solid var(--wc-border); border-radius:var(--wc-radius); overflow:hidden; background:var(--wc-panel); box-shadow:0 18px 50px rgba(0,0,0,.2); }
+    .inbox.context-collapsed { grid-template-columns:minmax(360px,390px) minmax(420px,1fr); }
+    .inbox.context-collapsed .context-panel { display:none; }
+    .conversation-pane,.chat-pane,.context-panel { min-width:0; min-height:0; display:flex; flex-direction:column; background:var(--wc-panel); }
+    .conversation-pane { border-right:1px solid var(--wc-border); }
+    .chat-pane { background:#0d1625; }
+    .context-panel { border-left:1px solid var(--wc-border); background:var(--wc-panel-2); }
+    .pane-head,.chat-head,.context-head { flex:0 0 auto; position:sticky; top:0; z-index:3; border-bottom:1px solid var(--wc-border); background:color-mix(in srgb,var(--wc-panel) 96%,transparent); }
+    .pane-head { padding:12px; display:grid; gap:10px; }
+    .title-row,.conversation-top,.message-meta,.context-head { display:flex; align-items:center; justify-content:space-between; gap:8px; min-width:0; }
+    .title-tools,.chat-actions,.quick-filters,.queue-counters { display:flex; align-items:center; flex-wrap:wrap; gap:6px; }
+    h1,h2 { margin:0; font-size:15px; line-height:1.25; letter-spacing:-.01em; }
+    .sync-status { color:var(--wc-muted); font-size:12px; white-space:nowrap; }
     .sync-status[data-state="stale"] { color:#fde68a; }
-    h1 { font-size:1.15rem; margin:0; }
-    .icon-button,.secondary-button,.attachment-action { min-height:44px; border:1px solid var(--border); color:var(--ink); background:rgba(255,255,255,.04); border-radius:9px; padding:.55rem .75rem; cursor:pointer; }
-    .icon-button:hover,.secondary-button:hover,.attachment-action:hover { border-color:var(--brand); }
-    .company-field,.filter-field { display:grid; gap:.35rem; color:var(--muted); font-size:.8rem; font-weight:700; }
-    .filter-row { display:grid; grid-template-columns:minmax(0,1fr); gap:.5rem; }
-    .search-form { display:grid; grid-template-columns:minmax(0,1fr) auto auto; gap:.4rem; }
-    .search-form input { min-width:0; color:var(--ink); background:var(--bg-2); border:1px solid var(--border); border-radius:10px; padding:.7rem; }
-    .search-form button { min-height:44px; }
-    .quick-filters,.queue-counters,.chat-actions { display:flex; flex-wrap:wrap; gap:.4rem; }
-    .quick-filters select,.chat-actions select { width:auto; min-height:44px; }
-    .counter-chip,.operation-badge { display:inline-flex; align-items:center; gap:.3rem; min-height:32px; border:1px solid var(--border); border-radius:999px; padding:.25rem .55rem; color:var(--ink); background:rgba(255,255,255,.04); font-size:.74rem; font-weight:800; }
-    .unread-badge { color:#052e16; background:var(--brand); border-color:var(--brand); }
-    .priority-urgent { color:#fecaca; border-color:rgba(239,68,68,.5); }
-    .priority-high { color:#fde68a; border-color:rgba(245,158,11,.5); }
-    .transfer-toggle { min-height:44px; display:flex; align-items:center; gap:.45rem; color:var(--ink); font-size:.84rem; font-weight:700; border:1px solid var(--border); border-radius:10px; padding:.55rem .7rem; background:rgba(255,255,255,.035); }
-    .transfer-toggle input { width:auto; accent-color:var(--brand); }
-    select,textarea { width:100%; color:var(--ink); background:var(--bg-2); border:1px solid var(--border); border-radius:10px; padding:.7rem; }
-    .conversation-list { min-height:0; overflow:auto; }
-    .conversation-card { width:100%; border:0; border-bottom:1px solid var(--border); background:transparent; color:var(--ink); padding:1rem; text-align:left; cursor:pointer; display:grid; gap:.5rem; }
-    .conversation-card:hover,.conversation-card.active { background:rgba(37,211,102,.08); }
-    .conversation-card.active { box-shadow:inset 3px 0 var(--brand); }
-    .conversation-top,.conversation-summary,.message-meta { display:flex; align-items:center; justify-content:space-between; gap:.75rem; min-width:0; }
-    .participant,.preview,.customer-line { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    .customer-line { color:#cbd5e1; font-size:.82rem; }
-    .payment-label { display:inline-flex; align-items:center; border-radius:999px; padding:.16rem .46rem; font-size:.66rem; font-weight:900; white-space:nowrap; }
-    .payment-transferencia { color:#bbf7d0; background:rgba(34,197,94,.16); border:1px solid rgba(34,197,94,.32); }
-    .payment-efectivo { color:#fde68a; background:rgba(245,158,11,.15); border:1px solid rgba(245,158,11,.32); }
-    .timestamp,time { color:var(--muted); font-size:.75rem; white-space:nowrap; }
-    .preview { color:var(--muted); font-size:.86rem; }
-    .more-wrap { padding:.75rem; border-top:1px solid var(--border); }
-    .secondary-button { width:100%; }
-    .chat-pane { min-width:0; display:flex; flex-direction:column; background:radial-gradient(circle at center,rgba(37,211,102,.035),transparent 55%),#0c1424; }
-    .chat-head { min-height:66px; padding:.85rem 1rem; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:.75rem; position:static; top:auto; z-index:auto; background:rgba(15,23,42,.78); backdrop-filter:none; }
-    .conversation-context { padding:.75rem 1rem; border-bottom:1px solid var(--border); background:rgba(2,6,23,.28); display:grid; gap:.35rem; color:#cbd5e1; }
-    .conversation-context strong { color:var(--ink); }
-    .context-orders { margin:.25rem 0 0; padding-left:1.2rem; display:grid; gap:.25rem; }
-    .chat-actions { margin-left:auto; }
+
+    .icon-button,.secondary-button,.attachment-action,.quick-reply-item { min-height:36px; border:1px solid var(--wc-border); border-radius:8px; padding:7px 10px; color:var(--wc-text); background:rgba(255,255,255,.035); cursor:pointer; }
+    .icon-button:hover,.secondary-button:hover,.attachment-action:hover,.quick-reply-item:hover { border-color:var(--wc-border-strong); background:rgba(255,255,255,.065); }
+    .icon-button:disabled,.secondary-button:disabled,.attachment-action:disabled { cursor:not-allowed; opacity:.5; }
+    .mobile-only { display:none; }
+    .company-field,.filter-field { display:grid; gap:4px; color:var(--wc-muted); font-size:12px; font-weight:650; }
+    select,textarea,input[type="search"] { width:100%; min-width:0; color:var(--wc-text); background:#0b1321; border:1px solid var(--wc-border); border-radius:8px; padding:8px 10px; }
+    select { min-height:36px; }
+    .search-form { display:grid; grid-template-columns:minmax(0,1fr) auto auto; gap:6px; }
+    .queue-filters { display:grid; gap:8px; }
+    .quick-filters { align-items:stretch; }
+    .quick-filters select { flex:1 1 120px; width:auto; }
+    .filter-row { display:grid; grid-template-columns:1fr; gap:8px; }
+    .transfer-toggle { min-height:36px; display:flex; align-items:center; gap:7px; padding:7px 9px; border:1px solid var(--wc-border); border-radius:8px; color:var(--wc-text); font-size:12px; font-weight:650; background:rgba(255,255,255,.025); }
+    .transfer-toggle input { width:auto; accent-color:var(--wc-accent); }
+    .counter-chip,.operation-badge,.payment-label,.status-badge { display:inline-flex; align-items:center; gap:4px; min-height:26px; border:1px solid var(--wc-border); border-radius:999px; padding:3px 7px; color:var(--wc-text); background:rgba(255,255,255,.035); font-size:11px; font-weight:750; white-space:nowrap; }
+    .unread-badge { color:var(--wc-accent-ink); background:var(--wc-accent); border-color:var(--wc-accent); }
+    .priority-urgent,.status-failed,.status-unknown { color:#fecaca; border-color:rgba(248,113,113,.42); }
+    .priority-high,.status-pending { color:#fde68a; border-color:rgba(251,191,36,.4); }
+    .status-sent,.status-delivered,.status-read { color:#bae6fd; border-color:rgba(125,211,252,.36); }
+    .status-received,.payment-transferencia { color:#bbf7d0; border-color:rgba(37,211,102,.36); }
+    .payment-efectivo { color:#fde68a; border-color:rgba(251,191,36,.35); }
+
+    .conversation-list { flex:1 1 auto; min-height:0; overflow:auto; overscroll-behavior:contain; scrollbar-gutter:stable; }
+    .conversation-card { width:100%; min-height:88px; border:0; border-bottom:1px solid var(--wc-border); padding:12px; display:grid; gap:7px; color:var(--wc-text); background:transparent; text-align:left; cursor:pointer; }
+    .conversation-card:hover { background:rgba(255,255,255,.035); }
+    .conversation-card.active { background:rgba(37,211,102,.075); box-shadow:inset 3px 0 var(--wc-accent); }
+    .conversation-summary { display:flex; align-items:center; flex-wrap:wrap; gap:5px; min-width:0; }
+    .participant,.preview,.customer-line,#chatTitle { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .preview,.timestamp,time,.customer-line { color:var(--wc-muted); font-size:12px; }
+    .preview { margin-right:auto; }
+    .customer-line { color:#cbd5e1; }
+    .more-wrap { flex:0 0 auto; padding:8px; border-top:1px solid var(--wc-border); }
+    .more-wrap .secondary-button { width:100%; }
+
+    .chat-head { min-height:58px; padding:9px 12px; display:flex; align-items:center; gap:8px; }
     #backToList { display:none; }
-    #chatTitle { font-weight:800; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    .history-wrap { flex:1; min-height:0; position:relative; display:flex; flex-direction:column; }
-    #loadOlderMessages { align-self:center; width:auto; margin:.65rem; }
-    #newMessagesIndicator { position:absolute; z-index:2; left:50%; bottom:.75rem; transform:translateX(-50%); width:auto; }
-    .message-history { flex:1; overflow:auto; padding:1rem clamp(.75rem,3vw,2rem); display:flex; flex-direction:column; gap:.75rem; }
-    .message { max-width:min(78%,720px); border:1px solid var(--border); border-radius:14px; padding:.75rem; box-shadow:0 8px 18px rgba(0,0,0,.14); }
-    .message-inbound { align-self:flex-start; background:#172238; border-bottom-left-radius:4px; }
-    .message-outbound { align-self:flex-end; background:#123523; border-color:rgba(37,211,102,.22); border-bottom-right-radius:4px; }
-    .message-meta { justify-content:flex-end; margin-bottom:.35rem; }
-    .message-text { margin:.25rem 0 0; white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word; line-height:1.45; }
-    .status-badge { display:inline-flex; align-items:center; border:1px solid transparent; border-radius:999px; padding:.18rem .48rem; font-size:.68rem; font-weight:800; white-space:nowrap; }
-    .status-pending { color:#fde68a; background:rgba(245,158,11,.12); border-color:rgba(245,158,11,.25); }
-    .status-sent,.status-delivered,.status-read { color:#bfdbfe; background:rgba(96,165,250,.12); border-color:rgba(96,165,250,.25); }
-    .status-received { color:#bbf7d0; background:rgba(37,211,102,.12); border-color:rgba(37,211,102,.25); }
-    .status-failed,.status-unknown { color:#fecaca; background:rgba(239,68,68,.12); border-color:rgba(239,68,68,.28); }
-    .attachment-card { display:grid; gap:.35rem; margin-top:.65rem; padding:.7rem; border:1px solid var(--border); border-radius:10px; background:rgba(2,6,23,.24); overflow:hidden; }
+    #chatTitle { min-width:80px; font-weight:750; }
+    .chat-actions { margin-left:auto; justify-content:flex-end; flex-wrap:nowrap; }
+    .chat-actions select { width:auto; max-width:180px; }
+    #contextToggle { white-space:nowrap; }
+    .history-wrap { flex:1 1 auto; min-height:0; position:relative; display:flex; flex-direction:column; overflow:hidden; }
+    #loadOlderMessages { align-self:center; width:auto; margin:8px; }
+    #newMessagesIndicator { position:absolute; z-index:2; left:50%; bottom:10px; transform:translateX(-50%); width:auto; }
+    .message-history { flex:1 1 auto; min-height:0; overflow:auto; padding:16px clamp(12px,3vw,32px); display:flex; flex-direction:column; gap:10px; overscroll-behavior:contain; scrollbar-gutter:stable; }
+    .message { max-width:min(78%,720px); padding:10px 12px; border:1px solid var(--wc-border); border-radius:12px; box-shadow:0 4px 12px rgba(0,0,0,.12); }
+    .message-inbound { align-self:flex-start; background:#172338; border-bottom-left-radius:4px; }
+    .message-outbound { align-self:flex-end; background:#123523; border-color:rgba(37,211,102,.24); border-bottom-right-radius:4px; }
+    .message-meta { justify-content:flex-end; margin-bottom:4px; }
+    .message-text { margin:4px 0 0; white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word; line-height:1.5; }
+    .attachment-card { display:grid; gap:5px; margin-top:8px; padding:8px; border:1px solid var(--wc-border); border-radius:8px; background:rgba(2,6,23,.24); overflow:hidden; }
     .attachment-name,.attachment-caption,.attachment-type { overflow-wrap:anywhere; word-break:break-word; }
     .attachment-caption { white-space:pre-wrap; }
-    .attachment-type { color:var(--muted); }
+    .attachment-type { color:var(--wc-muted); }
     .attachment-action { justify-self:start; }
-    .composer { position:sticky; bottom:0; display:grid; grid-template-columns:minmax(0,1fr) auto; gap:.65rem; padding:.85rem 1rem max(.85rem,env(safe-area-inset-bottom)); border-top:1px solid var(--border); background:rgba(15,23,42,.97); }
-    .quick-replies { grid-column:1/-1; border:1px solid var(--border); border-radius:10px; background:rgba(2,6,23,.32); }
-    .quick-replies summary { min-height:44px; padding:.65rem .75rem; cursor:pointer; font-weight:800; }
-    .quick-reply-list { display:flex; flex-wrap:wrap; gap:.45rem; padding:0 .65rem .65rem; }
-    .quick-reply-item { min-height:40px; border:1px solid var(--border); border-radius:9px; color:var(--ink); background:rgba(255,255,255,.04); padding:.45rem .65rem; cursor:pointer; text-align:left; }
+
+    .composer { flex:0 0 auto; position:sticky; bottom:0; z-index:4; display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; padding:10px 12px max(10px,env(safe-area-inset-bottom,1px)); border-top:1px solid var(--wc-border); background:var(--wc-panel); }
+    .quick-replies { grid-column:1/-1; border:1px solid var(--wc-border); border-radius:8px; background:rgba(2,6,23,.3); }
+    .quick-replies summary { min-height:36px; padding:8px 10px; cursor:pointer; font-weight:700; }
+    .quick-reply-list { display:flex; flex-wrap:wrap; gap:6px; padding:0 8px 8px; }
+    .quick-reply-item { min-height:36px; text-align:left; }
     .quick-reply-item strong,.quick-reply-item span { display:block; }
-    .quick-reply-item span { color:var(--muted); font-size:.75rem; }
-    .composer textarea { min-height:48px; max-height:150px; resize:vertical; white-space:pre-wrap; overflow-wrap:anywhere; }
-    .send-button { align-self:end; min-height:48px; border:0; border-radius:10px; padding:.7rem 1.15rem; background:var(--brand); color:#052e16; font-weight:900; cursor:pointer; }
-    .send-button:disabled,.attachment-action:disabled { cursor:not-allowed; opacity:.55; }
-    #composerNotice { grid-column:1/-1; min-height:1.2rem; color:var(--muted); font-size:.82rem; }
+    .quick-reply-item span { color:var(--wc-muted); font-size:11px; }
+    .composer textarea { min-height:44px; max-height:128px; resize:none; white-space:pre-wrap; overflow-wrap:anywhere; }
+    .send-button { align-self:end; min-height:44px; border:0; border-radius:8px; padding:9px 16px; color:var(--wc-accent-ink); background:var(--wc-accent); font-weight:800; cursor:pointer; }
+    .send-button:disabled { cursor:not-allowed; opacity:.5; }
+    #composerNotice { grid-column:1/-1; min-height:18px; color:var(--wc-muted); font-size:12px; }
     #startNewMessage { grid-column:1/-1; width:auto; justify-self:start; }
     #composerNotice[data-tone="error"] { color:#fecaca; }
     #composerNotice[data-tone="warning"] { color:#fde68a; }
     #composerNotice[data-tone="success"] { color:#bbf7d0; }
-    .empty-state { margin:auto; padding:1.25rem; color:var(--muted); text-align:center; }
-    [hidden] { display:none!important; }
-    @media (max-width:760px) {
-      .topbar-inner { display:grid; grid-template-columns:minmax(0,1fr); gap:.45rem; padding:.55rem 1rem .65rem; }
-      .brand { min-width:0; }
-      .brand span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-      .cloud-nav { width:100%; display:grid; grid-template-columns:1fr 1.45fr .55fr .65fr; gap:.25rem; align-items:stretch; overflow:visible; max-width:none; padding:0; }
-      .cloud-nav a { justify-content:center; min-width:0; padding:.45rem .2rem; text-align:center; white-space:normal; line-height:1.15; overflow-wrap:anywhere; }
-      .shell { padding:.5rem; }
-      .inbox { display:block; min-height:0; border-radius:12px; }
-      .conversation-pane { height:100%; border-right:0; }
-      .chat-pane { display:none; height:100%; }
+
+    .context-head { min-height:58px; padding:9px 12px; }
+    .context-body { flex:1 1 auto; min-height:0; overflow:auto; padding:12px; }
+    .conversation-context { display:grid; gap:8px; color:#cbd5e1; }
+    .conversation-context strong { color:var(--wc-text); }
+    .context-orders { margin:4px 0 0; padding:0; list-style:none; display:grid; gap:8px; }
+    .context-orders li { padding:9px; border:1px solid var(--wc-border); border-radius:8px; background:rgba(255,255,255,.025); overflow-wrap:anywhere; }
+    .empty-state { margin:auto; padding:20px; color:var(--wc-muted); text-align:center; }
+    .skeleton { display:grid; gap:8px; padding:12px; }
+    .skeleton span { height:12px; border-radius:5px; background:rgba(148,163,184,.12); }
+    .overlay-backdrop { display:none; position:fixed; inset:0; z-index:49; background:rgba(2,6,23,.6); }
+    body.keyboard-open .shell { height:var(--wc-viewport-height); }
+    body.keyboard-open .composer { padding-bottom:8px; }
+
+    @media (max-width:1199px) {
+      .inbox { grid-template-columns:minmax(300px,36%) minmax(420px,1fr); }
+      .context-panel { display:none; position:fixed; z-index:51; top:var(--wc-header-offset); right:0; bottom:0; width:min(340px,92vw); box-shadow:-18px 0 45px rgba(0,0,0,.35); }
+      .context-panel[data-open="true"] { display:flex; }
+      .context-panel[data-open="true"] + .overlay-backdrop,.inbox[data-overlay-open="true"] .overlay-backdrop { display:block; }
+      .desktop-only { display:none; }
+    }
+
+    @media (min-width:768px) and (max-width:1199px) {
+      .context-panel[data-open="true"] { bottom:var(--wc-composer-clearance,0px); }
+    }
+
+    @media (max-width:760px) { /* legacy behavior contract; responsive rules continue at 767px */ }
+
+    @media (max-width:767px) {
+      .topbar-inner { min-height:auto; padding:6px 8px; display:grid; gap:5px; }
+      .brand { justify-self:center; font-size:13px; }
+      .brand img { height:24px; }
+      .cloud-nav { width:100%; display:grid; grid-template-columns:1fr 1.35fr .65fr .65fr; gap:3px; }
+      .cloud-nav a { min-width:0; min-height:44px; padding:5px 3px; justify-content:center; text-align:center; white-space:normal; line-height:1.15; font-size:12px; overflow-wrap:anywhere; }
+      .shell { padding:6px; }
+      #appStatus { margin-bottom:6px; }
+      .inbox { display:block; border-radius:10px; }
+      .conversation-pane,.chat-pane { height:100%; border:0; }
+      .chat-pane { display:none; }
       .inbox.mobile-detail .conversation-pane { display:none; }
       .inbox.mobile-detail .chat-pane { display:flex; }
       .inbox.mobile-detail #backToList { display:inline-flex; }
-      .chat-head { flex-wrap:wrap; align-content:flex-start; }
-      #chatTitle { flex:1 1 0; min-width:0; }
-      .chat-actions { width:100%; margin-left:0; display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); }
-      .chat-actions .icon-button,.chat-actions select { width:100%; }
-      .message { max-width:91%; }
-      .composer { grid-template-columns:minmax(0,1fr); }
-      .send-button { width:100%; }
+      .mobile-only { display:inline-flex; }
+      .pane-head { padding:9px; gap:8px; }
+      .title-row { min-height:44px; }
+      .title-tools .sync-status { display:none; }
+      .icon-button,.secondary-button,.attachment-action,.quick-reply-item,select,.transfer-toggle { min-height:44px; }
+      .queue-filters { display:none; position:fixed; z-index:51; left:8px; right:8px; bottom:max(8px,env(safe-area-inset-bottom)); max-height:min(72dvh,620px); overflow:auto; padding:12px; border:1px solid var(--wc-border-strong); border-radius:12px; background:var(--wc-panel-2); box-shadow:0 -16px 45px rgba(0,0,0,.4); }
+      .queue-filters[data-open="true"] { display:grid; }
+      .quick-filters { display:grid; grid-template-columns:1fr; }
+      .search-form { grid-template-columns:minmax(0,1fr) auto; }
+      #conversationSearchClear { grid-column:1/-1; width:100%; }
+      .conversation-card { min-height:92px; padding:11px; }
+      .chat-head { min-height:54px; padding:5px 7px; flex-wrap:wrap; align-content:flex-start; }
+      #backToList { flex:0 0 auto; }
+      #chatTitle { flex:1 1 auto; }
+      .chat-actions { width:100%; margin-left:0; display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto; gap:5px; }
+      .chat-actions #conversationWorkflow,.chat-actions #conversationPriority { position:static; width:100%; height:auto; overflow:visible; clip:auto; min-width:0; font-size:11px; }
+      #contextToggle { min-width:44px; padding:6px 8px; font-size:11px; }
+      .message-history { padding:10px 8px; }
+      .message { max-width:92%; }
+      .composer { grid-template-columns:minmax(0,1fr) auto; padding:8px 8px max(8px,env(safe-area-inset-bottom,1px)); }
+      .quick-replies { grid-column:1/-1; }
+      .composer textarea { min-height:44px; }
+      .send-button { min-width:68px; min-height:44px; padding:8px 12px; }
+      .context-panel { top:30dvh; width:100%; border-left:0; border-top:1px solid var(--wc-border-strong); border-radius:14px 14px 0 0; }
+      .context-head { min-height:52px; }
+    }
+
+    @media (max-width:340px) {
+      .brand span { max-width:180px; }
+      .cloud-nav a { font-size:11px; }
+      #chatTitle { font-size:12px; }
+      .send-button { min-width:62px; padding-inline:9px; }
+    }
+
+    @media (prefers-reduced-motion:reduce) {
+      *,*::before,*::after { scroll-behavior:auto!important; transition:none!important; animation:none!important; }
     }
   </style>
 </head>
@@ -140,80 +210,69 @@
     <div class="topbar-inner">
       <a class="brand" href="dashboard.html"><img src="img/brand/pedivoy-logo-horizontal-white.png" alt="PediVoy"><span>Bandeja Cloud</span></a>
       <nav class="cloud-nav" aria-label="Navegación backoffice">
-        <a href="dashboard.html">Dashboard</a>
-        <a href="whatsapp-cloud.html" aria-current="page">WhatsApp Cloud</a>
-        <a href="qr.html">QR</a>
-        <a class="logout" href="login.html" id="logout">Salir</a>
+        <a href="dashboard.html">Dashboard</a><a href="whatsapp-cloud.html" aria-current="page">WhatsApp Cloud</a><a href="qr.html">QR</a><a class="logout" href="login.html" id="logout">Salir</a>
       </nav>
     </div>
   </header>
-  <main class="shell">
+  <main class="shell" aria-label="Espacio de trabajo de WhatsApp Cloud">
     <div id="appStatus" role="status" aria-live="polite"></div>
     <section class="inbox" id="inboxLayout" aria-label="Bandeja de WhatsApp Cloud">
-      <aside class="conversation-pane" aria-label="Conversaciones">
+      <aside class="conversation-pane" aria-labelledby="conversationHeading">
         <header class="pane-head">
-          <div class="title-row"><h1 id="conversationHeading" tabindex="-1">WhatsApp Cloud</h1><div class="title-tools"><span id="syncStatus" class="sync-status" data-state="updated" aria-live="polite">Actualizado</span><button id="refreshConversations" class="icon-button" type="button" aria-label="Actualizar conversaciones">Actualizar</button></div></div>
+          <div class="title-row">
+            <h1 id="conversationHeading" tabindex="-1">Conversaciones</h1>
+            <div class="title-tools"><span id="syncStatus" class="sync-status" data-state="updated" aria-live="polite">Actualizado</span><button id="filtersToggle" class="icon-button mobile-only" type="button" aria-controls="queueFilters" aria-expanded="false">Filtros</button><button id="refreshConversations" class="icon-button" type="button" aria-label="Actualizar conversaciones">Actualizar</button></div>
+          </div>
           <div id="companyPicker"></div>
           <form id="conversationSearchForm" class="search-form" role="search">
             <label class="sr-only" for="conversationSearch">Buscar por cliente, dirección, teléfono o pedido</label>
             <input id="conversationSearch" type="search" minlength="2" maxlength="80" autocomplete="off" placeholder="Buscar cliente o pedido">
-            <button id="conversationSearchSubmit" class="icon-button" type="submit">Buscar</button>
-            <button id="conversationSearchClear" class="icon-button" type="button">Limpiar</button>
+            <button id="conversationSearchSubmit" class="icon-button" type="submit">Buscar</button><button id="conversationSearchClear" class="icon-button" type="button">Limpiar</button>
           </form>
           <div id="queueCounters" class="queue-counters" aria-label="Contadores de cola"></div>
-          <div class="quick-filters" aria-label="Filtros operativos rápidos">
-            <label class="sr-only" for="workflowFilter">Estado operativo</label>
-            <select id="workflowFilter"><option value="">Todos los estados</option><option value="pending">Pendientes</option><option value="resolved">Resueltas</option></select>
-            <label class="sr-only" for="priorityFilter">Prioridad</label>
-            <select id="priorityFilter"><option value="">Todas las prioridades</option><option value="urgent">Urgente</option><option value="high">Alta</option><option value="normal">Normal</option></select>
-            <label class="transfer-toggle" for="unreadFilter"><input id="unreadFilter" type="checkbox"> Sólo no leídas</label>
-          </div>
-          <div class="filter-row" aria-label="Filtros de conversaciones">
-            <label class="filter-field" for="dateFilter">Fecha
-              <select id="dateFilter">
-                <option value="all">Todas</option>
-                <option value="today">Hoy</option>
-                <option value="yesterday">Ayer</option>
-                <option value="last7">Últimos 7 días</option>
-                <option value="month">Este mes</option>
-              </select>
-            </label>
-            <label class="transfer-toggle" for="transferFilter">
-              <input id="transferFilter" type="checkbox" value="transferencia">
-              Ver clientes con transferencia
-            </label>
+          <div id="queueFilters" class="queue-filters" aria-label="Filtros de conversaciones" data-open="false">
+            <div class="quick-filters">
+              <label class="sr-only" for="workflowFilter">Estado operativo</label><select id="workflowFilter"><option value="">Todos los estados</option><option value="pending">Pendientes</option><option value="resolved">Resueltas</option></select>
+              <label class="sr-only" for="priorityFilter">Prioridad</label><select id="priorityFilter"><option value="">Todas las prioridades</option><option value="urgent">Urgente</option><option value="high">Alta</option><option value="normal">Normal</option></select>
+              <label class="transfer-toggle" for="unreadFilter"><input id="unreadFilter" type="checkbox"> Sólo no leídas</label>
+            </div>
+            <div class="filter-row">
+              <label class="filter-field" for="dateFilter">Fecha<select id="dateFilter"><option value="all">Todas</option><option value="today">Hoy</option><option value="yesterday">Ayer</option><option value="last7">Últimos 7 días</option><option value="month">Este mes</option></select></label>
+              <label class="transfer-toggle" for="transferFilter"><input id="transferFilter" type="checkbox" value="transferencia"> Ver clientes con transferencia</label>
+            </div>
           </div>
         </header>
-        <div id="conversationList" class="conversation-list"></div>
+        <div id="conversationList" class="conversation-list" role="list" aria-label="Cola de conversaciones"></div>
         <div class="more-wrap"><button id="loadMoreConversations" class="secondary-button" type="button" hidden>Cargar más conversaciones</button></div>
       </aside>
-      <section class="chat-pane" id="chatPanel" aria-label="Chat activo">
+
+      <section class="chat-pane" id="chatPanel" aria-labelledby="chatTitle">
         <header class="chat-head">
-          <button id="backToList" class="icon-button" type="button">← Volver</button><div id="chatTitle">Seleccioná una conversación</div>
+          <button id="backToList" class="icon-button" type="button" aria-label="Volver a conversaciones">← Volver</button>
+          <h2 id="chatTitle">Seleccioná una conversación</h2>
           <div class="chat-actions">
             <button id="conversationWorkflow" class="icon-button" type="button" disabled>Marcar resuelta</button>
-            <label class="sr-only" for="conversationPriority">Prioridad de conversación</label>
-            <select id="conversationPriority" disabled><option value="normal">Prioridad normal</option><option value="high">Prioridad alta</option><option value="urgent">Prioridad urgente</option></select>
+            <label class="sr-only" for="conversationPriority">Prioridad de conversación</label><select id="conversationPriority" disabled><option value="normal">Prioridad normal</option><option value="high">Prioridad alta</option><option value="urgent">Prioridad urgente</option></select>
+            <button id="contextToggle" class="icon-button" type="button" aria-controls="contextPanel" aria-expanded="false">Contexto</button>
           </div>
         </header>
-        <section id="conversationContext" class="conversation-context" aria-live="polite" hidden></section>
         <div class="history-wrap">
           <button id="loadOlderMessages" class="secondary-button" type="button" hidden>Cargar mensajes anteriores</button>
-          <div id="messageHistory" class="message-history" aria-live="polite"><p class="empty-state">Elegí una conversación para ver el historial.</p></div>
+          <div id="messageHistory" class="message-history" aria-live="polite" aria-label="Historial de mensajes"><p class="empty-state">Elegí una conversación para ver el historial.</p></div>
           <button id="newMessagesIndicator" class="secondary-button" type="button" hidden></button>
         </div>
-        <form id="composerForm" class="composer">
-          <details id="quickReplyPanel" class="quick-replies">
-            <summary>Respuestas rápidas</summary>
-            <div id="quickReplyList" class="quick-reply-list" role="group" aria-label="Respuestas rápidas"></div>
-          </details>
-          <label for="messageInput" class="sr-only">Mensaje</label>
-          <textarea id="messageInput" maxlength="4096" placeholder="Escribí un mensaje" disabled></textarea>
-          <button id="sendButton" class="send-button" type="submit" disabled>Enviar</button>
-          <div id="composerNotice" role="status" aria-live="polite"></div>
-          <button id="startNewMessage" class="secondary-button" type="button" hidden>Iniciar mensaje distinto</button>
+        <form id="composerForm" class="composer" aria-label="Redactar respuesta">
+          <details id="quickReplyPanel" class="quick-replies"><summary>Respuestas rápidas</summary><div id="quickReplyList" class="quick-reply-list" role="group" aria-label="Respuestas rápidas"></div></details>
+          <label for="messageInput" class="sr-only">Mensaje</label><textarea id="messageInput" maxlength="4096" placeholder="Escribí un mensaje" disabled></textarea><button id="sendButton" class="send-button" type="submit" disabled>Enviar</button>
+          <div id="composerNotice" role="status" aria-live="polite"></div><button id="startNewMessage" class="secondary-button" type="button" hidden>Iniciar mensaje distinto</button>
         </form>
       </section>
+
+      <aside id="contextPanel" class="context-panel" aria-labelledby="contextHeading" data-open="false">
+        <header class="context-head"><h2 id="contextHeading">Contexto del cliente</h2><button id="contextClose" class="icon-button" type="button" aria-label="Cerrar contexto">Cerrar</button></header>
+        <div class="context-body"><section id="conversationContext" class="conversation-context" aria-live="polite"><p class="empty-state">Seleccioná una conversación para consultar el contexto.</p></section></div>
+      </aside>
+      <div id="overlayBackdrop" class="overlay-backdrop" aria-hidden="true"></div>
     </section>
   </main>
   <script type="module" src="whatsapp-cloud.js"></script>
