@@ -685,13 +685,77 @@ test('utility migration is idempotent, preserves legacy and enforces nullable Cl
   });
 });
 
-test('proactive correlation migration enforces canonical INTEGER identity and preserves constraint OID on rerun', async () => {
+test('proactive correlation migration repairs a weakened marked constraint and preserves only the canonical OID', async () => {
   const { withIsolatedPostgres } = await import('./support/isolated-postgres.js');
   await withIsolatedPostgres(async pool => {
     await pool.query(migrationSql);
     await pool.query("INSERT INTO wpp_outbox (telefono, mensaje) VALUES ('1', 'legacy-null')");
     await pool.query("INSERT INTO wpp_outbox (empresa_id, telefono, mensaje, notification_correlation_id) VALUES (7, '1', 'max', 'order_en_route:2147483647')");
-    const oidBefore = (await pool.query("SELECT oid::text FROM pg_constraint WHERE conrelid = 'wpp_outbox'::regclass AND conname = 'wpp_outbox_notification_correlation_check'")).rows[0].oid;
+    const canonical = (await pool.query(`
+      SELECT constraint_row.oid::text AS oid,
+             constraint_row.contype,
+             constraint_row.convalidated,
+             namespace_row.nspname AS schema_name,
+             table_row.relname AS table_name,
+             pg_catalog.pg_get_constraintdef(constraint_row.oid, true) AS definition
+        FROM pg_catalog.pg_constraint AS constraint_row
+        JOIN pg_catalog.pg_class AS table_row ON table_row.oid = constraint_row.conrelid
+        JOIN pg_catalog.pg_namespace AS namespace_row ON namespace_row.oid = table_row.relnamespace
+       WHERE constraint_row.conrelid = 'public.wpp_outbox'::regclass
+         AND constraint_row.conname = 'wpp_outbox_notification_correlation_check'
+    `)).rows[0];
+    assert.deepEqual(
+      { contype: canonical.contype, convalidated: canonical.convalidated, schema_name: canonical.schema_name, table_name: canonical.table_name },
+      { contype: 'c', convalidated: true, schema_name: 'public', table_name: 'wpp_outbox' },
+    );
+
+    await pool.query(`
+      ALTER TABLE public.wpp_outbox DROP CONSTRAINT wpp_outbox_notification_correlation_check;
+      ALTER TABLE public.wpp_outbox ADD CONSTRAINT wpp_outbox_notification_correlation_check
+        CHECK (notification_correlation_id IS NULL OR notification_correlation_id ~ '^[a-z_]+:[1-9][0-9]*$') NOT VALID;
+      COMMENT ON CONSTRAINT wpp_outbox_notification_correlation_check ON public.wpp_outbox
+        IS 'pedivoy:proactive-correlation:v1';
+    `);
+    const weakenedOid = (await pool.query("SELECT oid::text FROM pg_catalog.pg_constraint WHERE conrelid = 'public.wpp_outbox'::regclass AND conname = 'wpp_outbox_notification_correlation_check'")).rows[0].oid;
+    await pool.query("INSERT INTO wpp_outbox (empresa_id, telefono, mensaje, notification_correlation_id) VALUES (7, '1', 'weakened', 'unknown:1')");
+    await pool.query("DELETE FROM wpp_outbox WHERE mensaje = 'weakened'");
+
+    await pool.query(migrationSql);
+    const repairedRows = (await pool.query(`
+      SELECT constraint_row.oid::text AS oid,
+             constraint_row.contype,
+             constraint_row.convalidated,
+             namespace_row.nspname AS schema_name,
+             table_row.relname AS table_name,
+             pg_catalog.pg_get_constraintdef(constraint_row.oid, true) AS definition,
+             pg_catalog.obj_description(constraint_row.oid, 'pg_constraint') AS marker
+        FROM pg_catalog.pg_constraint AS constraint_row
+        JOIN pg_catalog.pg_class AS table_row ON table_row.oid = constraint_row.conrelid
+        JOIN pg_catalog.pg_namespace AS namespace_row ON namespace_row.oid = table_row.relnamespace
+       WHERE constraint_row.conrelid = 'public.wpp_outbox'::regclass
+         AND constraint_row.conname = 'wpp_outbox_notification_correlation_check'
+    `)).rows;
+    assert.equal(repairedRows.length, 1);
+    assert.deepEqual(
+      {
+        contype: repairedRows[0].contype,
+        convalidated: repairedRows[0].convalidated,
+        schema_name: repairedRows[0].schema_name,
+        table_name: repairedRows[0].table_name,
+        definition: repairedRows[0].definition,
+        marker: repairedRows[0].marker,
+      },
+      {
+        contype: 'c',
+        convalidated: true,
+        schema_name: 'public',
+        table_name: 'wpp_outbox',
+        definition: canonical.definition,
+        marker: 'pedivoy:proactive-correlation:v1',
+      },
+    );
+    assert.notEqual(repairedRows[0].oid, weakenedOid);
+
     for (const value of ['order_en_route:01', ' order_en_route:1', 'order_en_route:+1', 'order_en_route:0', 'order_en_route:-1', 'order_en_route:1.0', 'order_en_route:1e2', 'order_en_route:2147483648', 'order_en_route:1:2', 'order_en_route:1#x', 'unknown:1', 'order_en_route:١', 'order_en_route:1' + String.fromCharCode(1)]) {
       await assert.rejects(
         pool.query("INSERT INTO wpp_outbox (empresa_id, telefono, mensaje, notification_correlation_id) VALUES (7, '1', 'bad', $1)", [value]),
@@ -703,8 +767,8 @@ test('proactive correlation migration enforces canonical INTEGER identity and pr
       { code: '23514' },
     );
     await pool.query(migrationSql);
-    const oidAfter = (await pool.query("SELECT oid::text FROM pg_constraint WHERE conrelid = 'wpp_outbox'::regclass AND conname = 'wpp_outbox_notification_correlation_check'")).rows[0].oid;
-    assert.equal(oidAfter, oidBefore);
+    const oidAfterCanonicalRerun = (await pool.query("SELECT oid::text FROM pg_catalog.pg_constraint WHERE conrelid = 'public.wpp_outbox'::regclass AND conname = 'wpp_outbox_notification_correlation_check'")).rows[0].oid;
+    assert.equal(oidAfterCanonicalRerun, repairedRows[0].oid);
     assert.equal((await pool.query('SELECT count(*)::int AS total FROM wpp_outbox')).rows[0].total, 2);
   });
 });

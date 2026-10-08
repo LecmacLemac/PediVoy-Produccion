@@ -1976,8 +1976,13 @@ ALTER TABLE public.wpp_outbox
 
 DO $$
 DECLARE
-  correlation_constraint_oid OID;
-  correlation_constraint_marker TEXT;
+  correlation_constraint RECORD;
+  canonical_constraint RECORD;
+  correlation_probe_name TEXT := pg_catalog.format(
+    'wpp_outbox_corr_probe_%s_%s',
+    pg_catalog.pg_backend_pid(),
+    pg_catalog.txid_current()
+  );
 BEGIN
   IF EXISTS (
     SELECT 1
@@ -2001,15 +2006,84 @@ BEGIN
       MESSAGE = 'wpp_outbox_notification_correlation_invalid_legacy';
   END IF;
 
+  IF EXISTS (
+    SELECT 1
+      FROM pg_catalog.pg_constraint
+     WHERE conrelid = 'public.wpp_outbox'::regclass
+       AND conname = correlation_probe_name
+  ) THEN
+    RAISE EXCEPTION USING
+      ERRCODE = '55000',
+      MESSAGE = 'wpp_outbox_notification_correlation_probe_conflict';
+  END IF;
+
+  EXECUTE pg_catalog.format(
+    'ALTER TABLE public.wpp_outbox ADD CONSTRAINT %I CHECK (
+       notification_correlation_id IS NULL
+       OR (
+         empresa_id IS NOT NULL
+         AND CASE
+           WHEN notification_correlation_id ~ ''^(order_confirmation|order_en_route|transfer_payment):[1-9][0-9]{0,9}$''
+             THEN pg_catalog.split_part(notification_correlation_id, '':'', 2)::BIGINT <= 2147483647
+           ELSE FALSE
+         END
+         AND (
+           cloud_template_key IS NULL
+           OR pg_catalog.split_part(notification_correlation_id, '':'', 1) = cloud_template_key
+         )
+       )
+     ) NOT VALID',
+    correlation_probe_name
+  );
+
+  SELECT constraint_row.contype,
+         constraint_row.conbin,
+         constraint_row.conkey,
+         constraint_row.condeferrable,
+         constraint_row.condeferred,
+         constraint_row.connoinherit,
+         constraint_row.conislocal,
+         constraint_row.coninhcount,
+         constraint_row.conparentid
+    INTO canonical_constraint
+    FROM pg_catalog.pg_constraint AS constraint_row
+   WHERE constraint_row.conrelid = 'public.wpp_outbox'::regclass
+     AND constraint_row.conname = correlation_probe_name;
+
+  EXECUTE pg_catalog.format(
+    'ALTER TABLE public.wpp_outbox DROP CONSTRAINT %I',
+    correlation_probe_name
+  );
+
   SELECT constraint_row.oid,
-         pg_catalog.obj_description(constraint_row.oid, 'pg_constraint')
-    INTO correlation_constraint_oid, correlation_constraint_marker
+         constraint_row.contype,
+         constraint_row.conbin,
+         constraint_row.conkey,
+         constraint_row.convalidated,
+         constraint_row.condeferrable,
+         constraint_row.condeferred,
+         constraint_row.connoinherit,
+         constraint_row.conislocal,
+         constraint_row.coninhcount,
+         constraint_row.conparentid,
+         pg_catalog.obj_description(constraint_row.oid, 'pg_constraint') AS marker
+    INTO correlation_constraint
     FROM pg_catalog.pg_constraint AS constraint_row
    WHERE constraint_row.conrelid = 'public.wpp_outbox'::regclass
      AND constraint_row.conname = 'wpp_outbox_notification_correlation_check';
 
-  IF correlation_constraint_oid IS NULL
-     OR correlation_constraint_marker IS DISTINCT FROM 'pedivoy:proactive-correlation:v1' THEN
+  IF correlation_constraint.oid IS NULL
+     OR correlation_constraint.contype IS DISTINCT FROM canonical_constraint.contype
+     OR correlation_constraint.conbin IS DISTINCT FROM canonical_constraint.conbin
+     OR correlation_constraint.conkey IS DISTINCT FROM canonical_constraint.conkey
+     OR correlation_constraint.convalidated IS DISTINCT FROM TRUE
+     OR correlation_constraint.condeferrable IS DISTINCT FROM canonical_constraint.condeferrable
+     OR correlation_constraint.condeferred IS DISTINCT FROM canonical_constraint.condeferred
+     OR correlation_constraint.connoinherit IS DISTINCT FROM canonical_constraint.connoinherit
+     OR correlation_constraint.conislocal IS DISTINCT FROM canonical_constraint.conislocal
+     OR correlation_constraint.coninhcount IS DISTINCT FROM canonical_constraint.coninhcount
+     OR correlation_constraint.conparentid IS DISTINCT FROM canonical_constraint.conparentid
+     OR correlation_constraint.marker IS DISTINCT FROM 'pedivoy:proactive-correlation:v1' THEN
     ALTER TABLE public.wpp_outbox
       DROP CONSTRAINT IF EXISTS wpp_outbox_notification_correlation_check;
     ALTER TABLE public.wpp_outbox
@@ -2027,9 +2101,11 @@ BEGIN
             OR pg_catalog.split_part(notification_correlation_id, ':', 1) = cloud_template_key
           )
         )
-      );
+      ) NOT VALID;
     COMMENT ON CONSTRAINT wpp_outbox_notification_correlation_check ON public.wpp_outbox
       IS 'pedivoy:proactive-correlation:v1';
+    ALTER TABLE public.wpp_outbox
+      VALIDATE CONSTRAINT wpp_outbox_notification_correlation_check;
   END IF;
 END
 $$;
