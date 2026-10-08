@@ -257,19 +257,26 @@ export async function listCloudConversations({
   const resultFrom = includeCounters
     ? 'FROM counters LEFT JOIN filtered ON TRUE'
     : 'FROM filtered';
-  const textMatch = searchMode === 'prefix'
-    ? "pg_catalog.LOWER($15::text) || '%'"
-    : "'%' || pg_catalog.LOWER($15::text) || '%'";
+  const textMatch = "pg_catalog.LOWER($15::text) || '%'";
+  const tenantTextMatch = "($1::integer)::text || ':' || '%' || pg_catalog.LOWER($15::text) || '%'";
+  const candidateTextQueries = searchMode === 'prefix'
+    ? `SELECT point.id
+         FROM public.puntos_entrega AS point
+        WHERE point.empresa_id = $1
+          AND pg_catalog.LOWER(COALESCE(NULLIF(BTRIM(point.nombre), ''), point.cliente, '')) LIKE ${textMatch}
+       UNION
+       SELECT point.id
+         FROM public.puntos_entrega AS point
+        WHERE point.empresa_id = $1
+          AND pg_catalog.LOWER(COALESCE(point.direccion_completa, point.direccion, '') || ' ' || COALESCE(point.ciudad, '')) LIKE ${textMatch}`
+    : `SELECT point.id
+         FROM public.puntos_entrega AS point
+        WHERE (point.empresa_id::text || ':' || pg_catalog.LOWER(
+          COALESCE(NULLIF(BTRIM(point.nombre), ''), point.cliente, '') || ' ' ||
+          COALESCE(point.direccion_completa, point.direccion, '') || ' ' || COALESCE(point.ciudad, '')
+        )) LIKE ${tenantTextMatch}`;
   const searchCtes = searchMode == null ? '' : `candidate_points AS MATERIALIZED (
-         SELECT point.id
-           FROM public.puntos_entrega AS point
-          WHERE point.empresa_id = $1
-            AND pg_catalog.LOWER(COALESCE(NULLIF(BTRIM(point.nombre), ''), point.cliente, '')) LIKE ${textMatch}
-         UNION
-         SELECT point.id
-           FROM public.puntos_entrega AS point
-          WHERE point.empresa_id = $1
-            AND pg_catalog.LOWER(COALESCE(point.direccion_completa, point.direccion, '') || ' ' || COALESCE(point.ciudad, '')) LIKE ${textMatch}
+         ${candidateTextQueries}
          UNION
          SELECT point.id
            FROM public.puntos_entrega AS point
@@ -297,14 +304,18 @@ export async function listCloudConversations({
            JOIN public.puntos_entrega AS point
              ON point.empresa_id = $1 AND point.id = candidate.id
        ), candidate_conversations AS MATERIALIZED (
-         SELECT DISTINCT conversation.id
+         SELECT DISTINCT conversation.id, conversation.participant_wa_id
            FROM candidate_phone_suffixes AS candidate
            JOIN public.whatsapp_cloud_conversations AS conversation
              ON conversation.empresa_id = $1
             AND RIGHT(conversation.participant_wa_id, 10) = candidate.phone_suffix
        ), `;
-  const searchJoin = searchMode == null ? '' : `JOIN candidate_conversations AS candidate_conversation
-             ON candidate_conversation.id = conversation.id`;
+  const scopedConversationSource = searchMode == null
+    ? `SELECT conversation.* FROM public.whatsapp_cloud_conversations AS conversation WHERE conversation.empresa_id = $1`
+    : `SELECT conversation.*
+         FROM candidate_conversations AS candidate
+         JOIN public.whatsapp_cloud_conversations AS conversation
+           ON conversation.empresa_id = $1 AND conversation.id = candidate.id`;
   const queryParams = [
     tenantId, pageSize + 1, null, pageCursor?.id ?? null, fromFilter, toFilter,
     actorId, workflowStatus, priority, unread,
@@ -315,7 +326,9 @@ export async function listCloudConversations({
   let rows;
   try {
     rows = await runQuery(
-      `WITH ${searchCtes}latest_messages AS MATERIALIZED (
+      `WITH ${searchCtes}scoped_conversations AS MATERIALIZED (
+         ${scopedConversationSource}
+       ), latest_messages AS MATERIALIZED (
          SELECT DISTINCT ON (message.participant_wa_id)
                 message.participant_wa_id,
                 message.id,
@@ -323,7 +336,10 @@ export async function listCloudConversations({
                 message.message_type,
                 message.delivery_status,
                 message.message_at
-           FROM public.whatsapp_cloud_messages AS message
+           FROM scoped_conversations AS conversation
+           JOIN public.whatsapp_cloud_messages AS message
+             ON message.empresa_id = conversation.empresa_id
+            AND message.participant_wa_id = conversation.participant_wa_id
           WHERE message.empresa_id = $1
             AND ($5::timestamptz IS NULL OR message.message_at >= $5::timestamptz)
             AND ($6::timestamptz IS NULL OR message.message_at < $6::timestamptz)
@@ -334,7 +350,7 @@ export async function listCloudConversations({
                 COUNT(*) FILTER (
                   WHERE message.id > COALESCE(read_mark.last_read_message_id, 0)
                 )::INTEGER AS unread_count
-           FROM public.whatsapp_cloud_conversations AS conversation
+           FROM scoped_conversations AS conversation
            JOIN public.whatsapp_cloud_messages AS message
              ON message.empresa_id = conversation.empresa_id
             AND message.participant_wa_id = conversation.participant_wa_id
@@ -360,8 +376,7 @@ export async function listCloudConversations({
                 latest.message_at,
                 inbound.last_inbound_at,
                 COALESCE(inbound.unread_count, 0)::INTEGER AS unread_count
-           FROM public.whatsapp_cloud_conversations AS conversation
-           ${searchJoin}
+           FROM scoped_conversations AS conversation
            JOIN latest_messages AS latest
              ON latest.participant_wa_id = conversation.participant_wa_id
            LEFT JOIN inbound_stats AS inbound ON inbound.conversation_id = conversation.id
@@ -517,7 +532,10 @@ export async function searchCloudConversations({ query, empresaId, usuarioId, se
   const normalizedQuery = requireSearchQuery(searchQuery);
   const digits = normalizedQuery.replace(/\D/g, '');
   const phoneSuffix = digits.length >= 6 ? digits.slice(-10) : null;
-  const publicOrderId = /^[1-9][0-9]{0,9}$/.test(normalizedQuery) ? Number(normalizedQuery) : null;
+  const publicOrderId = /^[1-9][0-9]{0,9}$/.test(normalizedQuery)
+    && Number(normalizedQuery) <= 2147483647
+    ? Number(normalizedQuery)
+    : null;
   const searchMode = normalizedQuery.length === 2 ? 'prefix' : 'substring';
   return listCloudConversations({
     query: runQuery,
@@ -538,53 +556,72 @@ export async function getCloudConversationContext({ query, empresaId, conversati
   const recentOrderLimit = requirePositiveInteger(orderLimit, 'orderLimit');
   if (recentOrderLimit > 10) throw sanitizedError('CLOUD_INBOX_INVALID_ARGUMENT', 'Invalid orderLimit');
   try {
-    const conversations = await runQuery(
-      `SELECT participant_wa_id
-         FROM public.whatsapp_cloud_conversations
-        WHERE empresa_id = $1 AND id = $2::uuid
-        LIMIT 1`,
-      [tenantId, stableConversationId],
+    const rows = await runQuery(
+      `WITH conversation AS MATERIALIZED (
+         SELECT participant_wa_id
+           FROM public.whatsapp_cloud_conversations
+          WHERE empresa_id = $1 AND id = $2::uuid
+       ), candidate_points AS MATERIALIZED (
+         SELECT point.id,
+                NULLIF(BTRIM(COALESCE(NULLIF(point.nombre, ''), point.cliente)), '') AS customer_name,
+                NULLIF(BTRIM(COALESCE(point.direccion_completa,
+                  NULLIF(CONCAT_WS(', ', NULLIF(point.direccion, ''), NULLIF(point.ciudad, '')), '')
+                )), '') AS delivery_address
+           FROM conversation
+           JOIN public.puntos_entrega AS point
+             ON point.empresa_id = $1
+            AND RIGHT(regexp_replace(COALESCE(point.telefono_normalizado, point.telefono, ''), '\\D', '', 'g'), 10)
+                = RIGHT(regexp_replace(conversation.participant_wa_id, '\\D', '', 'g'), 10)
+       ), match_summary AS MATERIALIZED (
+         SELECT COUNT(*)::integer AS match_count, MIN(id) AS exact_point_id FROM candidate_points
+       ), exact_point AS MATERIALIZED (
+         SELECT point.* FROM candidate_points AS point
+         JOIN match_summary AS summary ON summary.match_count = 1 AND summary.exact_point_id = point.id
+       ), recent_orders AS MATERIALIZED (
+         SELECT order_row.id, order_row.estado, order_row.fecha, order_row.monto,
+                LOWER(NULLIF(BTRIM(order_row.metodo_pago), '')) AS payment_method
+           FROM exact_point AS point
+           JOIN public.pedidos AS order_row
+             ON order_row.empresa_id = $1 AND order_row.punto_entrega_id = point.id
+          ORDER BY order_row.fecha DESC NULLS LAST, order_row.id DESC
+          LIMIT $3
+       )
+       SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM conversation) THEN 'missing'
+                   WHEN summary.match_count = 0 THEN 'none'
+                   WHEN summary.match_count = 1 THEN 'exact'
+                   ELSE 'ambiguous' END AS match_status,
+              CASE WHEN summary.match_count = 1 THEN point.customer_name END AS customer_name,
+              CASE WHEN summary.match_count = 1 THEN point.delivery_address END AS delivery_address,
+              CASE WHEN summary.match_count = 1 THEN conversation.participant_wa_id END AS participant_wa_id,
+              CASE WHEN summary.match_count = 1 THEN COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                  'id', recent.id, 'status', recent.estado, 'date', recent.fecha,
+                  'total', recent.monto, 'payment_method', recent.payment_method
+                ) ORDER BY recent.fecha DESC NULLS LAST, recent.id DESC)
+                  FROM recent_orders AS recent
+              ), '[]'::jsonb) ELSE '[]'::jsonb END AS orders
+         FROM match_summary AS summary
+         LEFT JOIN exact_point AS point ON summary.match_count = 1
+         LEFT JOIN conversation ON TRUE`,
+      [tenantId, stableConversationId, recentOrderLimit],
       { sensitive: true },
     );
-    if (conversations.length !== 1) return null;
-    const participant = String(conversations[0].participant_wa_id);
-    const points = await runQuery(
-      `SELECT id,
-              NULLIF(BTRIM(COALESCE(NULLIF(nombre, ''), cliente)), '') AS customer_name,
-              NULLIF(BTRIM(COALESCE(direccion_completa,
-                NULLIF(CONCAT_WS(', ', NULLIF(direccion, ''), NULLIF(ciudad, '')), '')
-              )), '') AS delivery_address
-         FROM public.puntos_entrega
-        WHERE empresa_id = $1
-          AND RIGHT(regexp_replace(COALESCE(telefono_normalizado, telefono, ''), '\\D', '', 'g'), 10)
-              = RIGHT(regexp_replace($2, '\\D', '', 'g'), 10)
-        ORDER BY id ASC
-        LIMIT 2`,
-      [tenantId, participant],
-      { sensitive: true },
-    );
-    if (points.length === 0) return { matchStatus: 'none', customer: null, orders: [] };
-    if (points.length !== 1) return { matchStatus: 'ambiguous', customer: null, orders: [] };
-    const orders = await runQuery(
-      `SELECT id, estado, fecha, monto, LOWER(NULLIF(BTRIM(metodo_pago), '')) AS payment_method
-         FROM public.pedidos
-        WHERE empresa_id = $1 AND punto_entrega_id = $2
-        ORDER BY fecha DESC NULLS LAST, id DESC
-        LIMIT $3`,
-      [tenantId, points[0].id, recentOrderLimit],
-    );
+    const row = rows[0];
+    if (!row || row.match_status === 'missing') return null;
+    if (row.match_status !== 'exact') return { matchStatus: row.match_status, customer: null, orders: [] };
+    const orders = Array.isArray(row.orders) ? row.orders : [];
     return {
       matchStatus: 'exact',
       customer: {
-        name: points[0].customer_name ? String(points[0].customer_name).slice(0, 120) : null,
-        phone: maskParticipant(participant),
-        address: points[0].delivery_address ? String(points[0].delivery_address).slice(0, 180) : null,
+        name: row.customer_name ? String(row.customer_name).slice(0, 120) : null,
+        phone: maskParticipant(row.participant_wa_id),
+        address: row.delivery_address ? String(row.delivery_address).slice(0, 180) : null,
       },
       orders: orders.map(order => ({
         publicId: String(order.id),
-        status: order.estado ? String(order.estado).slice(0, 60) : null,
-        date: order.fecha,
-        total: order.monto == null ? null : String(order.monto),
+        status: order.status ? String(order.status).slice(0, 60) : null,
+        date: order.date,
+        total: order.total == null ? null : String(order.total),
         paymentMethod: ['efectivo', 'transferencia'].includes(String(order.payment_method || ''))
           ? String(order.payment_method) : null,
       })),

@@ -805,3 +805,41 @@ browserTest('Task 4 cerca búsquedas y contextos stale, restaura cola y no persi
     await waitFor(() => requests.lists.some(entry => entry.params.cursor === 'base-next'), 'paginación canónica restaurada');
   });
 });
+
+browserTest('Task 4 descarta search anterior a PATCH y clear conserva estado canónico nuevo', async () => {
+  const initial = conversation(ids.urgent, '0101', { customerName: 'Ana Segura', priority: 'urgent', version: 3 });
+  const patched = { ...initial, workflowStatus: 'resolved', priority: 'urgent', version: 4 };
+  await withInbox({
+    viewport: { width: 700, height: 900, deviceScaleFactor: 1 },
+    async listResponse({ requests }) {
+      const current = requests.states.length ? patched : initial;
+      return { body: { conversations: [current], counters: requests.states.length
+        ? { total: 1, pending: 0, inProcess: 0, review: 0, resolved: 1 }
+        : { total: 1, pending: 1, inProcess: 0, review: 0, resolved: 0 }, nextCursor: null } };
+    },
+    async searchResponse() {
+      return { delayMs: 1200, body: { conversations: [{ ...initial, priority: 'normal', version: 3 }], counters: null, nextCursor: null } };
+    },
+    async stateResponse() {
+      return { body: { conversationId: ids.urgent, workflowStatus: 'resolved', priority: 'urgent', version: 4 } };
+    },
+  }, async ({ page, requests }) => {
+    await page.waitForSelector(`.conversation-card[data-conversation-id="${ids.urgent}"]`);
+    await page.type('#conversationSearch', 'Ana');
+    await page.click('#conversationSearchSubmit');
+    await waitFor(() => requests.searches.length === 1, 'search en vuelo');
+    await page.click(`.conversation-card[data-conversation-id="${ids.urgent}"]`);
+    await page.waitForFunction(() => document.querySelector('#conversationWorkflow')?.disabled === false);
+    await page.click('#conversationWorkflow');
+    await waitFor(() => requests.states.length === 1, 'PATCH aplicado');
+    await delay(1300);
+    await page.click('#backToList');
+    await page.click('#conversationSearchClear');
+    const cards = await cardSnapshot(page);
+    assert.deepEqual(cards.map(card => card.id), [ids.urgent]);
+    assert.match(cards[0].text, /Respondida.*Prioridad urgent/s);
+    assert.doesNotMatch(cards[0].text, /Prioridad normal/);
+    assert.equal(requests.searches.length, 1);
+    assert.equal(requests.states.length, 1);
+  });
+});

@@ -33,7 +33,7 @@ const migrationSql = `${initSql.slice(outboxStart, outboxEnd + outboxEndMarker.l
 const tempPrefix = '.whatsapp-cloud-admin-api-pg-';
 const createdDirectories = new Set();
 
-async function withDatabase(work) {
+async function withDatabase(work, { beforeMigration } = {}) {
   const directory = mkdtempSync(join(process.cwd(), tempPrefix));
   createdDirectories.add(directory);
   const listener = net.createServer();
@@ -99,6 +99,7 @@ async function withDatabase(work) {
         UNIQUE (empresa_id, dedupe_key)
       )
     `);
+    if (beforeMigration) await beforeMigration(pool);
     await pool.query(migrationSql);
     await work(pool);
   } finally {
@@ -465,6 +466,10 @@ test('Task 4 busca fuera de la primera página y resuelve context exact, ambiguo
       assert.equal(Object.hasOwn(search, 'query'), false);
       assert.equal(search.conversations.some(row => row.customerName === 'Secreto Tenant Dos'), false);
 
+      const overflowPhone = await post({ query: '9999999999' });
+      assert.equal(overflowPhone.status, 200);
+      assert.deepEqual((await overflowPhone.json()).conversations, []);
+
       const shortName = await (await post({ query: 'Al' })).json();
       assert.deepEqual(shortName.conversations.map(row => row.conversationId), [idsByPhone['5493515550404']]);
       const shortAddress = await (await post({ query: 'Zo' })).json();
@@ -553,15 +558,21 @@ test('Task 4 pagina más de 500 coincidencias y prioriza urgent fuera del orden 
 
 test('Task 4 EXPLAIN ANALYZE ejecuta SQL productivo sin SubPlan, arrays ni truncamiento', async () => {
   await withDatabase(async pool => {
-    await pool.query('INSERT INTO empresas(id, config_integraciones) VALUES (1,$1::jsonb)', [cloudConfig('phone-plan')]);
+    await pool.query('INSERT INTO empresas(id, config_integraciones) VALUES (1,$1::jsonb),(2,$2::jsonb)', [cloudConfig('phone-plan'), cloudConfig('phone-plan-foreign')]);
     await pool.query("INSERT INTO usuarios(id,username,password,role,empresa_id) VALUES (1,'admin-plan','x','admin',1)");
     await pool.query(`INSERT INTO puntos_entrega (empresa_id,cliente,nombre,direccion,direccion_completa,ciudad,telefono,telefono_normalizado)
       SELECT 1,CASE WHEN v=17777 THEN 'Al Plan Exacto' ELSE 'Cliente '||v END,CASE WHEN v=17777 THEN 'Al Plan Exacto' ELSE 'Cliente '||v END,
         CASE WHEN v=18888 THEN 'Zo Índice' ELSE 'Ruta '||v END,CASE WHEN v=18888 THEN 'Zo Índice' ELSE 'Ruta '||v END,'Córdoba',
         '351'||LPAD(v::text,7,'0'),'549351'||LPAD(v::text,7,'0') FROM generate_series(1,20000) v`);
+    await pool.query(`INSERT INTO puntos_entrega (empresa_id,cliente,nombre,direccion,direccion_completa,ciudad,telefono,telefono_normalizado)
+      SELECT 2,'Foreign '||v,'Foreign '||v,'Oculta '||v,'Oculta '||v,'Córdoba',
+        '352'||LPAD(v::text,7,'0'),'549352'||LPAD(v::text,7,'0') FROM generate_series(1,20000) v`);
     await pool.query(`INSERT INTO whatsapp_cloud_messages
       (empresa_id,direction,participant_wa_id,message_type,text_body,delivery_status,state_rank,message_at,created_at,updated_at)
       SELECT 1,'inbound','549351'||LPAD(v::text,7,'0'),'text','plan','received',0,'2026-10-07T10:00:00Z','2026-10-07T10:00:00Z','2026-10-07T10:00:00Z' FROM generate_series(1,20000) v`);
+    await pool.query(`INSERT INTO whatsapp_cloud_messages
+      (empresa_id,direction,participant_wa_id,message_type,text_body,delivery_status,state_rank,message_at,created_at,updated_at)
+      SELECT 2,'inbound','549352'||LPAD(v::text,7,'0'),'text','foreign','received',0,'2026-10-07T10:00:00Z','2026-10-07T10:00:00Z','2026-10-07T10:00:00Z' FROM generate_series(1,20000) v`);
     await pool.query(`INSERT INTO whatsapp_cloud_conversations (empresa_id,participant_wa_id,created_at,updated_at)
       SELECT empresa_id,participant_wa_id,MIN(created_at),MAX(updated_at) FROM whatsapp_cloud_messages GROUP BY empresa_id,participant_wa_id`);
     await pool.query(`INSERT INTO pedidos(id,empresa_id,punto_entrega_id)
@@ -570,7 +581,7 @@ test('Task 4 EXPLAIN ANALYZE ejecuta SQL productivo sin SubPlan, arrays ni trunc
     for (const table of ['puntos_entrega','whatsapp_cloud_conversations','whatsapp_cloud_messages','pedidos']) await pool.query(`ANALYZE ${table}`);
     const cases = [
       ['prefix',/idx_puntos_entrega_whatsapp_search_name_prefix/],
-      ['substring',/idx_puntos_entrega_whatsapp_search_name_trgm/],
+      ['substring',/idx_puntos_entrega_whatsapp_search_text_tenant_trgm/],
       ['phone',/idx_puntos_entrega_whatsapp_phone_lookup/],
       ['order',/pedidos_pkey/],
     ];
@@ -583,6 +594,63 @@ test('Task 4 EXPLAIN ANALYZE ejecuta SQL productivo sin SubPlan, arrays ni trunc
       assert.doesNotMatch(plan, /SubPlan/);
       assert.match(plan, expectedIndex);
       assert.equal(Number.isFinite(Number(root.Plan['Total Cost'])), true);
+      if (searchMode === 'substring') assert.match(plan, /idx_puntos_entrega_whatsapp_search_text_tenant_trgm/);
+      const nodes = [];
+      const visit = node => { nodes.push(node); for (const child of node.Plans || []) visit(child); };
+      visit(root.Plan);
+      const messageScans = nodes.filter(node => String(node['Relation Name'] || '') === 'whatsapp_cloud_messages');
+      assert.ok(messageScans.length > 0);
+      assert.ok(messageScans.every(node => Number(node['Actual Rows']) < 100), `message history was not candidate-scoped: ${plan}`);
     }
+  });
+});
+
+test('Task 4 migration rechaza índice homónimo alien antes de crear índices canónicos', async () => {
+  await assert.rejects(
+    withDatabase(async () => {}, {
+      beforeMigration: async pool => {
+        await pool.query('CREATE INDEX idx_puntos_entrega_whatsapp_phone_lookup ON puntos_entrega (empresa_id, id)');
+      },
+    }),
+    error => error?.code === 'P0001' && error?.message === 'whatsapp_cloud_conversation_reads_schema_unsafe',
+  );
+});
+
+test('Task 4 migration rechaza índice canónico inválido y rerun preserva OID/xmin', async () => {
+  await assert.rejects(
+    withDatabase(async () => {}, {
+      beforeMigration: async pool => {
+        await pool.query('CREATE EXTENSION IF NOT EXISTS pg_trgm');
+        await pool.query(`CREATE INDEX idx_puntos_entrega_whatsapp_search_text_tenant_trgm
+          ON puntos_entrega USING gin (((empresa_id::text || ':' || lower(
+            coalesce(nullif(btrim(nombre), ''), cliente, '') || ' ' ||
+            coalesce(direccion_completa, direccion, '') || ' ' || coalesce(ciudad, '')
+          ))) gin_trgm_ops)`);
+        await pool.query(`UPDATE pg_catalog.pg_index SET indisvalid=false
+          WHERE indexrelid='idx_puntos_entrega_whatsapp_search_text_tenant_trgm'::regclass`);
+      },
+    }),
+    error => error?.code === 'P0001' && error?.message === 'whatsapp_cloud_conversation_reads_schema_unsafe',
+  );
+
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id) VALUES (1)');
+    await pool.query("INSERT INTO puntos_entrega(empresa_id,cliente) VALUES (1,'estable')");
+    const before = (await pool.query(`
+      SELECT c.oid::text AS oid, i.indisvalid, i.indisready, i.indislive
+        FROM pg_catalog.pg_class c JOIN pg_catalog.pg_index i ON i.indexrelid=c.oid
+       WHERE c.relname='idx_puntos_entrega_whatsapp_search_text_tenant_trgm'
+    `)).rows[0];
+    const rowBefore = (await pool.query("SELECT xmin::text FROM puntos_entrega WHERE cliente='estable'")).rows[0];
+
+    await pool.query(migrationSql);
+    const after = (await pool.query(`
+      SELECT c.oid::text AS oid, i.indisvalid, i.indisready, i.indislive
+        FROM pg_catalog.pg_class c JOIN pg_catalog.pg_index i ON i.indexrelid=c.oid
+       WHERE c.relname='idx_puntos_entrega_whatsapp_search_text_tenant_trgm'
+    `)).rows[0];
+    const rowAfter = (await pool.query("SELECT xmin::text FROM puntos_entrega WHERE cliente='estable'")).rows[0];
+    assert.deepEqual(after, before);
+    assert.deepEqual(rowAfter, rowBefore);
   });
 });

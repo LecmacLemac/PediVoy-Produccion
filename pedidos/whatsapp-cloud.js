@@ -390,7 +390,9 @@ async function submitConversationSearch(event, { append = false } = {}) {
   const generation = searchGate.begin();
   const companyId = state.companyId;
   const contextRevision = state.conversationContextRevision;
+  const mutationRevision = state.mutationRevision;
   const filters = currentFilters();
+  const startedContext = { generation, companyId, contextRevision, mutationRevision, filters };
   state.searchQuery = queryValue;
   setStatus('Buscando conversaciones…');
   const body = {
@@ -410,9 +412,15 @@ async function submitConversationSearch(event, { append = false } = {}) {
     const { response, payload } = await request(url, {
       method: 'POST', body: JSON.stringify(body), signal: searchController.signal,
     });
+    const currentContext = {
+      generation,
+      companyId: state.companyId,
+      contextRevision: state.conversationContextRevision,
+      mutationRevision: state.mutationRevision,
+      filters: currentFilters(),
+    };
     if (!searchGate.isCurrent(generation)
-      || state.companyId !== companyId
-      || state.conversationContextRevision !== contextRevision
+      || !isConversationListContextCurrent(startedContext, currentContext)
       || state.searchQuery !== queryValue) return;
     if (!response.ok) {
       setStatus('No se pudo completar la búsqueda.', 'error');
@@ -427,7 +435,15 @@ async function submitConversationSearch(event, { append = false } = {}) {
     setStatus(state.conversations.length ? 'Resultados de búsqueda.' : 'No hay coincidencias.');
   } catch (error) {
     if (error?.name !== 'AbortError' && error?.message !== 'session_expired'
-      && searchGate.isCurrent(generation) && state.searchQuery === queryValue) {
+      && searchGate.isCurrent(generation)
+      && isConversationListContextCurrent(startedContext, {
+        generation,
+        companyId: state.companyId,
+        contextRevision: state.conversationContextRevision,
+        mutationRevision: state.mutationRevision,
+        filters: currentFilters(),
+      })
+      && state.searchQuery === queryValue) {
       setStatus('No se pudo completar la búsqueda.', 'error');
     }
   }
@@ -684,25 +700,35 @@ function syncActiveConversationControls() {
 function applyConversationState(current) {
   const previous = String(state.activeConversation?.conversationId) === String(current?.conversationId)
     ? state.activeConversation
-    : state.conversations.find(item => String(item.conversationId) === String(current?.conversationId));
+    : state.conversations.find(item => String(item.conversationId) === String(current?.conversationId))
+      || state.canonicalConversations.find(item => String(item.conversationId) === String(current?.conversationId));
   if (!previous) return false;
-  const reconciled = reconcileConversationMutation({
-    conversations: state.conversations,
+  const canonical = reconcileConversationMutation({
+    conversations: state.canonicalConversations,
     activeConversation: state.activeConversation,
     current,
     counters: state.counters,
     filters: currentFilters(),
     counterBaselineTrusted: state.activeCounterBaselineTrusted,
   });
-  state.conversations = reconciled.conversations;
-  state.activeConversation = reconciled.activeConversation;
-  state.counters = reconciled.counters;
+  const visible = reconcileConversationMutation({
+    conversations: state.conversations,
+    activeConversation: state.activeConversation,
+    current,
+    counters: canonical.counters,
+    filters: currentFilters(),
+    counterBaselineTrusted: false,
+  });
+  state.canonicalConversations = canonical.conversations;
+  state.conversations = visible.conversations;
+  state.activeConversation = visible.activeConversation || canonical.activeConversation;
+  state.counters = canonical.counters;
   state.mutationRevision += 1;
   if (String(state.activeConversation?.conversationId) === String(current.conversationId)) {
     syncActiveConversationControls();
   }
   renderConversations();
-  return reconciled.countersNeedReload;
+  return canonical.countersNeedReload;
 }
 
 async function patchActiveConversationState(change) {

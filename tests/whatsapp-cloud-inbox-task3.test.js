@@ -4,6 +4,7 @@ import express from 'express';
 import { readFile } from 'node:fs/promises';
 
 import { createWhatsAppCloudInboxAdminRouter } from '../src/routes/whatsappCloudInboxAdmin.js';
+import { pool as dbPool, query as dbQuery } from '../src/db.js';
 import {
   isConversationListContextCurrent,
   reconcileConversationCollection,
@@ -50,16 +51,77 @@ test('Task 4 declara índices tenant-scoped para búsqueda operativa sin escanea
     readFile(new URL('../initDb.sql', import.meta.url), 'utf8'),
     readFile(new URL('../src/whatsappCloud/inboxRepository.js', import.meta.url), 'utf8'),
   ]);
-  assert.match(schema, /idx_puntos_entrega_whatsapp_search_name_trgm/);
-  assert.match(schema, /idx_puntos_entrega_whatsapp_search_address_trgm/);
+  assert.match(schema, /idx_puntos_entrega_whatsapp_search_text_tenant_trgm/);
   assert.match(schema, /idx_puntos_entrega_whatsapp_search_name_prefix/);
   assert.match(schema, /idx_puntos_entrega_whatsapp_search_address_prefix/);
-  assert.match(schema, /idx_puntos_entrega_whatsapp_phone_suffix/);
-  assert.match(schema, /idx_whatsapp_cloud_conversations_phone_suffix/);
+  assert.match(schema, /idx_puntos_entrega_whatsapp_phone_lookup/);
+  assert.match(schema, /idx_whatsapp_cloud_conversations_phone_lookup/);
   const searchSection = repository.slice(repository.indexOf('export async function searchCloudConversations'), repository.indexOf('export async function getCloudConversationContext'));
   assert.doesNotMatch(searchSection, /text_body|media_caption|provider_message_id|media_id|event_data|access_token/i);
   assert.doesNotMatch(searchSection, /LIMIT 500|ANY\s*\(|participantWaIds/i);
   assert.match(searchSection, /searchMode/);
+});
+
+test('Task 4 trata un número canónico fuera de int4 sólo como teléfono', async () => {
+  const calls = [];
+  const app = express();
+  app.use(express.json());
+  app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+    canonicalOrigin: 'https://admin.pedivoy.test',
+    withAuth(req, _res, next) { req.user = { uid: 41, role: 'admin', empresa_id: 7 }; next(); },
+    async query(sql, params, options) { calls.push({ sql, params, options }); return []; },
+  }));
+  await withServer(app, async baseUrl => {
+    const response = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations/search`, {
+      method: 'POST',
+      headers: { Origin: 'https://admin.pedivoy.test', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: '9999999999' }),
+    });
+    assert.equal(response.status, 200);
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].params[15], '9999999999');
+  assert.equal(calls[0].params[16], null);
+  assert.equal(calls[0].options?.sensitive, true);
+});
+
+test('Task 4 contexto usa una sola sentencia sensible y nunca consulta pedidos tras ambigüedad', async () => {
+  const calls = [];
+  const app = express();
+  app.use(express.json());
+  app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+    withAuth(req, _res, next) { req.user = { uid: 41, role: 'admin', empresa_id: 7 }; next(); },
+    async query(sql, params, options) {
+      calls.push({ sql, params, options });
+      return [{ match_status: 'ambiguous', customer_name: null, delivery_address: null, participant_wa_id: null, orders: [] }];
+    },
+  }));
+  await withServer(app, async baseUrl => {
+    const response = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations/${stableId}/context`);
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { matchStatus: 'ambiguous', customer: null, orders: [] });
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].options?.sensitive, true);
+  assert.match(calls[0].sql, /candidate_points AS MATERIALIZED/);
+  assert.match(calls[0].sql, /match_summary/);
+});
+
+test('Task 4 fallo de query sensible no registra teléfono ni datos financieros', async () => {
+  const originalConnect = dbPool.connect;
+  const originalError = console.error;
+  const logs = [];
+  dbPool.connect = async () => { throw new Error('driver leaked 5493515550101 total 1234.50'); };
+  console.error = (...args) => logs.push(args);
+  try {
+    await assert.rejects(dbQuery('SELECT $1::text', ['5493515550101 total 1234.50'], { sensitive: true }));
+  } finally {
+    dbPool.connect = originalConnect;
+    console.error = originalError;
+  }
+  const rendered = JSON.stringify(logs);
+  assert.match(rendered, /Consulta sensible fallida/);
+  assert.doesNotMatch(rendered, /5493515550101|1234\.50|SELECT \$1/);
 });
 
 async function withServer(app, work) {

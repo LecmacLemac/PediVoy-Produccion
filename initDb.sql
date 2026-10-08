@@ -5053,7 +5053,8 @@ SET LOCAL search_path = public;
 SET LOCAL lock_timeout = '30s';
 SET LOCAL statement_timeout = '5min';
 SELECT pg_catalog.pg_advisory_xact_lock(1464550724, 1380275027);
-LOCK TABLE public.whatsapp_cloud_conversations, public.whatsapp_cloud_messages, public.usuarios IN SHARE ROW EXCLUSIVE MODE;
+LOCK TABLE public.whatsapp_cloud_conversations, public.whatsapp_cloud_messages, public.usuarios,
+  public.puntos_entrega, public.pedidos IN SHARE ROW EXCLUSIVE MODE;
 
 DO $conversation_reads_lock$
 BEGIN
@@ -5136,7 +5137,21 @@ BEGIN
       ('public.idx_whatsapp_cloud_conversation_reads_user',
        'CREATE INDEX idx_whatsapp_cloud_conversation_reads_user ON public.whatsapp_cloud_conversation_reads USING btree (empresa_id, usuario_id, conversation_id, last_read_message_id)'),
       ('public.idx_whatsapp_cloud_messages_inbound_unread',
-       'CREATE INDEX idx_whatsapp_cloud_messages_inbound_unread ON public.whatsapp_cloud_messages USING btree (empresa_id, participant_wa_id, id) WHERE (direction = ''inbound''::text)')
+       'CREATE INDEX idx_whatsapp_cloud_messages_inbound_unread ON public.whatsapp_cloud_messages USING btree (empresa_id, participant_wa_id, id) WHERE (direction = ''inbound''::text)'),
+      ('public.idx_puntos_entrega_whatsapp_search_text_tenant_trgm',
+       'CREATE INDEX idx_puntos_entrega_whatsapp_search_text_tenant_trgm ON public.puntos_entrega USING gin (((((empresa_id)::text || '':''::text) || lower(((((COALESCE(NULLIF(btrim(nombre), ''''::text), cliente, ''''::text) || '' ''::text) || COALESCE(direccion_completa, direccion, ''''::text)) || '' ''::text) || COALESCE(ciudad, ''''::text))))) gin_trgm_ops)'),
+      ('public.idx_puntos_entrega_whatsapp_search_name_prefix',
+       'CREATE INDEX idx_puntos_entrega_whatsapp_search_name_prefix ON public.puntos_entrega USING btree (empresa_id, lower(COALESCE(NULLIF(btrim(nombre), ''''::text), cliente, ''''::text)) text_pattern_ops)'),
+      ('public.idx_puntos_entrega_whatsapp_search_address_prefix',
+       'CREATE INDEX idx_puntos_entrega_whatsapp_search_address_prefix ON public.puntos_entrega USING btree (empresa_id, lower(((COALESCE(direccion_completa, direccion, ''''::text) || '' ''::text) || COALESCE(ciudad, ''''::text))) text_pattern_ops)'),
+      ('public.idx_puntos_entrega_whatsapp_phone_lookup',
+       'CREATE INDEX idx_puntos_entrega_whatsapp_phone_lookup ON public.puntos_entrega USING btree (empresa_id, "right"(telefono_normalizado, 10))'),
+      ('public.idx_puntos_entrega_whatsapp_phone_fallback',
+       'CREATE INDEX idx_puntos_entrega_whatsapp_phone_fallback ON public.puntos_entrega USING btree (empresa_id, "right"(regexp_replace(COALESCE(telefono, ''''::text), ''\\D''::text, ''''::text, ''g''::text), 10)) WHERE (telefono_normalizado IS NULL)'),
+      ('public.idx_whatsapp_cloud_conversations_phone_lookup',
+       'CREATE INDEX idx_whatsapp_cloud_conversations_phone_lookup ON public.whatsapp_cloud_conversations USING btree (empresa_id, "right"(participant_wa_id, 10))'),
+      ('public.idx_pedidos_empresa_punto_fecha',
+       'CREATE INDEX idx_pedidos_empresa_punto_fecha ON public.pedidos USING btree (empresa_id, punto_entrega_id, fecha DESC, id DESC)')
     ) AS expected(index_name, definition)
   LOOP
     IF pg_catalog.to_regclass(index_row.index_name) IS NULL THEN CONTINUE; END IF;
@@ -5210,13 +5225,12 @@ CREATE INDEX IF NOT EXISTS idx_whatsapp_cloud_messages_inbound_unread
   ON public.whatsapp_cloud_messages (empresa_id, participant_wa_id, id)
   WHERE direction = 'inbound';
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
-CREATE INDEX IF NOT EXISTS idx_puntos_entrega_whatsapp_search_name_trgm
+CREATE INDEX IF NOT EXISTS idx_puntos_entrega_whatsapp_search_text_tenant_trgm
   ON public.puntos_entrega USING gin (
-    (pg_catalog.LOWER(COALESCE(NULLIF(BTRIM(nombre), ''), cliente, ''))) gin_trgm_ops
-  );
-CREATE INDEX IF NOT EXISTS idx_puntos_entrega_whatsapp_search_address_trgm
-  ON public.puntos_entrega USING gin (
-    (pg_catalog.LOWER(COALESCE(direccion_completa, direccion, '') || ' ' || COALESCE(ciudad, ''))) gin_trgm_ops
+    ((empresa_id::text || ':' || pg_catalog.LOWER(
+      COALESCE(NULLIF(BTRIM(nombre), ''), cliente, '') || ' ' ||
+      COALESCE(direccion_completa, direccion, '') || ' ' || COALESCE(ciudad, '')
+    ))) gin_trgm_ops
   );
 CREATE INDEX IF NOT EXISTS idx_puntos_entrega_whatsapp_search_name_prefix
   ON public.puntos_entrega (
@@ -5228,16 +5242,7 @@ CREATE INDEX IF NOT EXISTS idx_puntos_entrega_whatsapp_search_address_prefix
     empresa_id,
     (pg_catalog.LOWER(COALESCE(direccion_completa, direccion, '') || ' ' || COALESCE(ciudad, ''))) text_pattern_ops
   );
-CREATE INDEX IF NOT EXISTS idx_puntos_entrega_whatsapp_phone_suffix
-  ON public.puntos_entrega (
-    empresa_id,
-    (RIGHT(regexp_replace(COALESCE(telefono_normalizado, telefono, ''), '\\D', '', 'g'), 10))
-  );
-CREATE INDEX IF NOT EXISTS idx_whatsapp_cloud_conversations_phone_suffix
-  ON public.whatsapp_cloud_conversations (
-    empresa_id,
-    (RIGHT(regexp_replace(participant_wa_id, '\\D', '', 'g'), 10))
-  );
+
 CREATE INDEX IF NOT EXISTS idx_puntos_entrega_whatsapp_phone_lookup
   ON public.puntos_entrega (
     empresa_id,
@@ -5657,26 +5662,7 @@ CREATE INDEX IF NOT EXISTS idx_pedidos_emp_chofer_fecha ON pedidos (empresa_id, 
 CREATE INDEX IF NOT EXISTS idx_puntos_entrega_empresa ON puntos_entrega (empresa_id);
 CREATE INDEX IF NOT EXISTS idx_puntos_entrega_tel_norm ON puntos_entrega (telefono_normalizado);
 CREATE INDEX IF NOT EXISTS idx_puntos_entrega_cliente_trgm ON puntos_entrega USING gin (cliente gin_trgm_ops);
-CREATE INDEX IF NOT EXISTS idx_puntos_entrega_whatsapp_search_name_trgm
-  ON puntos_entrega USING gin (
-    (pg_catalog.LOWER(COALESCE(NULLIF(BTRIM(nombre), ''), cliente, ''))) gin_trgm_ops
-  );
-CREATE INDEX IF NOT EXISTS idx_puntos_entrega_whatsapp_search_address_trgm
-  ON puntos_entrega USING gin (
-    (pg_catalog.LOWER(COALESCE(direccion_completa, direccion, '') || ' ' || COALESCE(ciudad, ''))) gin_trgm_ops
-  );
-CREATE INDEX IF NOT EXISTS idx_puntos_entrega_whatsapp_phone_suffix
-  ON puntos_entrega (
-    empresa_id,
-    (RIGHT(regexp_replace(COALESCE(telefono_normalizado, telefono, ''), '\\D', '', 'g'), 10))
-  );
-CREATE INDEX IF NOT EXISTS idx_whatsapp_cloud_conversations_phone_suffix
-  ON whatsapp_cloud_conversations (
-    empresa_id,
-    (RIGHT(regexp_replace(participant_wa_id, '\\D', '', 'g'), 10))
-  );
-CREATE INDEX IF NOT EXISTS idx_pedidos_empresa_punto_fecha
-  ON pedidos (empresa_id, punto_entrega_id, fecha DESC, id DESC);
+
 CREATE INDEX IF NOT EXISTS idx_usuarios_username ON usuarios (username);
 CREATE INDEX IF NOT EXISTS idx_recompensas_cliente ON cliente_recompensas(cliente_id) WHERE reclamado = FALSE;
 CREATE INDEX IF NOT EXISTS idx_items_pedido_pedido_id ON items_pedido (pedido_id);
