@@ -34,6 +34,9 @@
     .conversation-pane { min-width:0; display:flex; flex-direction:column; border-right:1px solid var(--border); background:rgba(15,23,42,.78); }
     .pane-head { padding:1rem; border-bottom:1px solid var(--border); display:grid; gap:.75rem; position:static; top:auto; z-index:auto; background:transparent; backdrop-filter:none; }
     .title-row { display:flex; align-items:center; justify-content:space-between; gap:.75rem; }
+    .title-tools { display:flex; align-items:center; gap:.5rem; }
+    .sync-status { color:var(--muted); font-size:.75rem; white-space:nowrap; }
+    .sync-status[data-state="stale"] { color:#fde68a; }
     h1 { font-size:1.15rem; margin:0; }
     .icon-button,.secondary-button,.attachment-action { min-height:44px; border:1px solid var(--border); color:var(--ink); background:rgba(255,255,255,.04); border-radius:9px; padding:.55rem .75rem; cursor:pointer; }
     .icon-button:hover,.secondary-button:hover,.attachment-action:hover { border-color:var(--brand); }
@@ -75,6 +78,7 @@
     #chatTitle { font-weight:800; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .history-wrap { flex:1; min-height:0; position:relative; display:flex; flex-direction:column; }
     #loadOlderMessages { align-self:center; width:auto; margin:.65rem; }
+    #newMessagesIndicator { position:absolute; z-index:2; left:50%; bottom:.75rem; transform:translateX(-50%); width:auto; }
     .message-history { flex:1; overflow:auto; padding:1rem clamp(.75rem,3vw,2rem); display:flex; flex-direction:column; gap:.75rem; }
     .message { max-width:min(78%,720px); border:1px solid var(--border); border-radius:14px; padding:.75rem; box-shadow:0 8px 18px rgba(0,0,0,.14); }
     .message-inbound { align-self:flex-start; background:#172238; border-bottom-left-radius:4px; }
@@ -148,7 +152,7 @@
     <section class="inbox" id="inboxLayout" aria-label="Bandeja de WhatsApp Cloud">
       <aside class="conversation-pane" aria-label="Conversaciones">
         <header class="pane-head">
-          <div class="title-row"><h1 id="conversationHeading" tabindex="-1">WhatsApp Cloud</h1><button id="refreshConversations" class="icon-button" type="button" aria-label="Actualizar conversaciones">Actualizar</button></div>
+          <div class="title-row"><h1 id="conversationHeading" tabindex="-1">WhatsApp Cloud</h1><div class="title-tools"><span id="syncStatus" class="sync-status" data-state="updated" aria-live="polite">Actualizado</span><button id="refreshConversations" class="icon-button" type="button" aria-label="Actualizar conversaciones">Actualizar</button></div></div>
           <div id="companyPicker"></div>
           <form id="conversationSearchForm" class="search-form" role="search">
             <label class="sr-only" for="conversationSearch">Buscar por cliente, dirección, teléfono o pedido</label>
@@ -196,6 +200,7 @@
         <div class="history-wrap">
           <button id="loadOlderMessages" class="secondary-button" type="button" hidden>Cargar mensajes anteriores</button>
           <div id="messageHistory" class="message-history" aria-live="polite"><p class="empty-state">Elegí una conversación para ver el historial.</p></div>
+          <button id="newMessagesIndicator" class="secondary-button" type="button" hidden></button>
         </div>
         <form id="composerForm" class="composer">
           <details id="quickReplyPanel" class="quick-replies">

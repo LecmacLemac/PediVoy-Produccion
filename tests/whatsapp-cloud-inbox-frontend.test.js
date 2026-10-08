@@ -538,7 +538,8 @@ test('controlador usa credenciales same-origin, AbortController y contrato de re
   assert.match(controller, /await replySubmission\.submit\(\)/);
   assert.match(controller, /snapshot\(\)\.composer\.notice/);
   assert.match(controller, /SEND_TIMEOUT_MS/);
-  assert.match(controller, /visibilitychange[\s\S]*loadConversations/);
+  assert.match(controller, /visibilitychange[\s\S]*autoRefreshScheduler\.resume\(\)/);
+  assert.match(controller, /document\.visibilityState\s*!==\s*'visible'/);
   assert.match(controller, /matchMedia\(['"]\(max-width:\s*760px\)['"]\)/);
   assert.doesNotMatch(controller, /window\.location\.search|URLSearchParams\(location\.search/);
 });

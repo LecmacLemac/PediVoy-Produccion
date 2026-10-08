@@ -215,6 +215,103 @@ function conversationMatchesFilters(conversation, filters = {}) {
   return true;
 }
 
+const CONVERSATION_REFRESH_FIELDS = Object.freeze([
+  'conversationId', 'participant', 'customerName', 'customerAddress', 'paymentMethod', 'unreadCount',
+  'workflowStatus', 'priority', 'version', 'lastDirection', 'lastMessageType', 'lastDeliveryStatus',
+  'lastMessageAt', 'queueBucket', 'queuePriorityRank', 'queueActivityKey', 'effectiveActivityAt',
+  'lastMessageActivityKey', 'lastInboundActivityKey', 'lastMessageId',
+]);
+
+function allowlistedConversation(conversation = {}) {
+  const clean = {};
+  for (const field of CONVERSATION_REFRESH_FIELDS) {
+    if (Object.hasOwn(conversation, field)) clean[field] = conversation[field];
+  }
+  return clean;
+}
+
+export function mergeCanonicalConversationRefresh({
+  current = [], incomingFirstPage = [], previousFirstPageIds = [], authoritativeRemovedIds = [],
+} = {}) {
+  const removed = new Set(authoritativeRemovedIds.map(String));
+  const byId = new Map();
+  for (const item of current) {
+    const id = String(item?.conversationId || '');
+    if (id && !removed.has(id)) byId.set(id, allowlistedConversation(item));
+  }
+  const firstPageIds = [];
+  for (const item of incomingFirstPage) {
+    const clean = allowlistedConversation(item);
+    const id = String(clean.conversationId || '');
+    if (!id || firstPageIds.includes(id)) continue;
+    firstPageIds.push(id);
+    byId.set(id, clean);
+  }
+  const conversations = [...byId.values()].sort((left, right) => {
+    const a = conversationOrderTuple(left);
+    const b = conversationOrderTuple(right);
+    for (let index = 0; index < a.length; index += 1) {
+      if (a[index] < b[index]) return -1;
+      if (a[index] > b[index]) return 1;
+    }
+    return 0;
+  });
+  return { conversations, firstPageIds, previousFirstPageIds: previousFirstPageIds.map(String) };
+}
+
+const DELIVERY_STATUS_RANK = Object.freeze({ queued: 0, pending: 0, sending: 1, sent: 2, delivered: 3, read: 4 });
+const TERMINAL_DELIVERY_STATUSES = new Set(['failed', 'error', 'outcome_unknown']);
+
+function messageCorrelationKeys(message = {}) {
+  const keys = [];
+  if (message.id != null) keys.push(`id:${String(message.id)}`);
+  if (message.providerMessageId) keys.push(`provider:${String(message.providerMessageId)}`);
+  if (message.idempotencyKey) keys.push(`idempotency:${String(message.idempotencyKey)}`);
+  return keys;
+}
+
+function monotonicDeliveryStatus(previous, incoming) {
+  const oldStatus = String(previous || '').toLowerCase();
+  const nextStatus = String(incoming || '').toLowerCase();
+  if (TERMINAL_DELIVERY_STATUSES.has(oldStatus)) return previous;
+  if (TERMINAL_DELIVERY_STATUSES.has(nextStatus)) return incoming;
+  return (DELIVERY_STATUS_RANK[nextStatus] ?? -1) >= (DELIVERY_STATUS_RANK[oldStatus] ?? -1)
+    ? incoming : previous;
+}
+
+export function mergeLiveHistory(current = [], incoming = []) {
+  const messages = [];
+  const keyToIndex = new Map();
+  const originalIds = new Set(current.map(item => String(item?.id ?? '')));
+  for (const candidate of [...current, ...incoming]) {
+    if (!candidate || candidate.id == null) continue;
+    const keys = messageCorrelationKeys(candidate);
+    const existingIndex = keys.map(key => keyToIndex.get(key)).find(index => index != null);
+    if (existingIndex == null) {
+      const index = messages.length;
+      messages.push({ ...candidate });
+      for (const key of keys) keyToIndex.set(key, index);
+      continue;
+    }
+    const previous = messages[existingIndex];
+    messages[existingIndex] = {
+      ...previous,
+      ...candidate,
+      id: previous.id,
+      deliveryStatus: monotonicDeliveryStatus(previous.deliveryStatus, candidate.deliveryStatus),
+    };
+    for (const key of messageCorrelationKeys(messages[existingIndex])) keyToIndex.set(key, existingIndex);
+  }
+  messages.sort((left, right) => {
+    const delta = Date.parse(left.messageAt || 0) - Date.parse(right.messageAt || 0);
+    return delta || String(left.id).localeCompare(String(right.id), undefined, { numeric: true });
+  });
+  return {
+    messages,
+    newMessageIds: messages.map(item => String(item.id)).filter(id => !originalIds.has(id)),
+  };
+}
+
 export function reconcileConversationCollection({
   conversations = [], current = {}, filters = {}, activeConversationId = null, allowUnread = false,
 } = {}) {
@@ -290,6 +387,124 @@ export function createRequestGate() {
     begin() { generation += 1; return generation; },
     invalidate() { generation += 1; },
     isCurrent(value) { return value === generation; },
+  };
+}
+
+export function createChainedRefreshScheduler({
+  isVisible,
+  canRun,
+  cycle,
+  baseDelayMs,
+  maxDelayMs,
+  jitter = () => 0,
+  setTimeoutFn = globalThis.setTimeout,
+  clearTimeoutFn = globalThis.clearTimeout,
+} = {}) {
+  if (typeof isVisible !== 'function' || typeof canRun !== 'function' || typeof cycle !== 'function') {
+    throw new Error('Callbacks de auto-refresh requeridos');
+  }
+  if (!Number.isFinite(baseDelayMs) || baseDelayMs <= 0
+    || !Number.isFinite(maxDelayMs) || maxDelayMs < baseDelayMs) {
+    throw new Error('Intervalo de auto-refresh inválido');
+  }
+  let running = false;
+  let stopped = false;
+  let inFlight = null;
+  let timer = null;
+  let failures = 0;
+  let generation = 0;
+
+  function clearTimer() {
+    if (timer == null) return;
+    clearTimeoutFn(timer);
+    timer = null;
+  }
+
+  function eligible() {
+    return running && !stopped && isVisible() && canRun();
+  }
+
+  function nextDelay() {
+    const exponential = Math.min(maxDelayMs, baseDelayMs * (2 ** failures));
+    const adjustment = Number(jitter({ failures, delayMs: exponential })) || 0;
+    return Math.max(0, Math.min(maxDelayMs, exponential + adjustment));
+  }
+
+  function schedule() {
+    clearTimer();
+    if (!eligible() || inFlight) return;
+    const delay = nextDelay();
+    timer = setTimeoutFn(() => {
+      timer = null;
+      runCycle()?.catch(() => {});
+    }, delay);
+  }
+
+  function runCycle() {
+    if (!eligible() || inFlight) return inFlight?.promise || null;
+    generation += 1;
+    const cycleGeneration = generation;
+    const controller = new AbortController();
+    let promise;
+    try {
+      promise = Promise.resolve(cycle({ signal: controller.signal, generation: cycleGeneration }));
+    } catch (error) {
+      promise = Promise.reject(error);
+    }
+    const current = { promise, controller, generation: cycleGeneration };
+    inFlight = current;
+    promise.then(
+      () => {
+        if (generation === cycleGeneration) failures = 0;
+      },
+      error => {
+        if (generation === cycleGeneration && error?.name !== 'AbortError') {
+          failures = Math.min(failures + 1, 30);
+        }
+      },
+    ).finally(() => {
+      if (inFlight === current) {
+        inFlight = null;
+        schedule();
+      }
+    });
+    return promise;
+  }
+
+  return {
+    start({ immediate = true } = {}) {
+      if (stopped) return null;
+      running = true;
+      if (!immediate) {
+        schedule();
+        return null;
+      }
+      return runCycle();
+    },
+    resume() {
+      if (stopped) return null;
+      running = true;
+      clearTimer();
+      return runCycle();
+    },
+    pause() {
+      running = false;
+      clearTimer();
+      generation += 1;
+      inFlight?.controller.abort(new DOMException('Auto-refresh pausado', 'AbortError'));
+      inFlight = null;
+    },
+    stop() {
+      stopped = true;
+      running = false;
+      clearTimer();
+      generation += 1;
+      inFlight?.controller.abort(new DOMException('Auto-refresh detenido', 'AbortError'));
+      inFlight = null;
+    },
+    snapshot() {
+      return { running, stopped, inFlight: inFlight != null, failures, generation, timerScheduled: timer != null };
+    },
   };
 }
 

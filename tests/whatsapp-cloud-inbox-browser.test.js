@@ -75,6 +75,8 @@ async function withBrowserPage(viewport, work, {
   replyResponse = null,
   replyDelayMs = 0,
   sendTimeoutMs = 30,
+  refreshDelayMs = 8_000,
+  messagesResponse = null,
 } = {}) {
   const app = express();
   app.post('/api/admin/whatsapp-cloud/conversations/:id/replies', req => {
@@ -82,10 +84,9 @@ async function withBrowserPage(viewport, work, {
   });
   app.get('/pedidos/whatsapp-cloud.js', async (_req, res) => {
     const controller = await readFile(path.join(root, 'pedidos/whatsapp-cloud.js'), 'utf8');
-    res.type('text/javascript').send(controller.replace(
-      'const SEND_TIMEOUT_MS = 25_000;',
-      `const SEND_TIMEOUT_MS = ${sendTimeoutMs};`,
-    ));
+    res.type('text/javascript').send(controller
+      .replace('const SEND_TIMEOUT_MS = 25_000;', `const SEND_TIMEOUT_MS = ${sendTimeoutMs};`)
+      .replace('baseDelayMs: 8_000,', `baseDelayMs: ${refreshDelayMs},`));
   });
   app.use('/pedidos', express.static(path.join(root, 'pedidos')));
   const server = app.listen(0, '127.0.0.1');
@@ -104,9 +105,10 @@ async function withBrowserPage(viewport, work, {
       };
     });
     await page.setRequestInterception(true);
-    const counts = { conversations: 0, messages: 0, replies: 0, replyKeys: [] };
+    const counts = { conversations: 0, messages: 0, replies: 0, replyKeys: [], apiRequests: [] };
     page.on('request', request => {
       const url = new URL(request.url());
+      if (url.pathname.startsWith('/api/')) counts.apiRequests.push({ path: url.pathname, method: request.method() });
       if (url.pathname === '/api/me') {
         request.respond({ status: 200, contentType: 'application/json', body: JSON.stringify({ user: { role: 'admin', empresa_id: 7 } }) });
       } else if (url.pathname === '/api/admin/whatsapp-cloud/conversations') {
@@ -119,9 +121,12 @@ async function withBrowserPage(viewport, work, {
         request.respond({ status: 200, contentType: 'application/json', body: JSON.stringify({ conversationId: url.pathname.split('/').at(-2), lastReadMessageId: '1' }) });
       } else if (/\/api\/admin\/whatsapp-cloud\/conversations\/\d+\/messages/.test(url.pathname)) {
         counts.messages += 1;
-        request.respond({ status: 200, contentType: 'application/json', body: JSON.stringify({ messages: [
-          { id: '1', direction: 'inbound', type: 'text', text: 'hola', deliveryStatus: 'received', messageAt: '2026-10-06T12:00:00Z' },
-        ], nextCursor: null }) });
+        const body = messagesResponse
+          ? messagesResponse({ index: counts.messages - 1, counts })
+          : { messages: [
+              { id: '1', direction: 'inbound', type: 'text', text: 'hola', deliveryStatus: 'received', messageAt: '2026-10-06T12:00:00Z' },
+            ], nextCursor: null };
+        request.respond({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
       } else if (/\/api\/admin\/whatsapp-cloud\/conversations\/\d+\/replies/.test(url.pathname)) {
         counts.replies += 1;
         try {
@@ -144,7 +149,9 @@ async function withBrowserPage(viewport, work, {
         request.continue();
       }
     });
-    await page.goto(`http://127.0.0.1:${server.address().port}/pedidos/whatsapp-cloud.html`, { waitUntil: 'networkidle0' });
+    await page.goto(`http://127.0.0.1:${server.address().port}/pedidos/whatsapp-cloud.html`, {
+      waitUntil: refreshDelayMs < 1_000 ? 'domcontentloaded' : 'networkidle0',
+    });
     await page.waitForSelector('.conversation-card');
     await work({ page, counts });
   } finally {
@@ -215,14 +222,14 @@ test('browser móvil mantiene composer visible, foco reversible, timeout inciert
 
     const before = { ...counts };
     await page.evaluate(() => {
-      Object.defineProperty(document, 'hidden', { configurable: true, value: true });
+      Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
       document.dispatchEvent(new Event('visibilitychange'));
-      Object.defineProperty(document, 'hidden', { configurable: true, value: false });
+      Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
       document.dispatchEvent(new Event('visibilitychange'));
     });
     await new Promise(resolve => setTimeout(resolve, 50));
     assert.ok(counts.conversations > before.conversations);
-    assert.ok(counts.messages > before.messages);
+    assert.equal(counts.messages, before.messages, 'un resultado incierto pausa el refresh de historial');
     assert.deepEqual(await page.evaluate(() => ({
       inputDisabled: document.querySelector('#messageInput').disabled,
       sendDisabled: document.querySelector('#sendButton').disabled,
@@ -284,6 +291,35 @@ test('browser conecta doble submit sincronizado a una sola key, un POST y un set
         body: { accepted: true, deduplicated: false, id: '501', status: 'accepted' },
       },
     },
+  );
+});
+
+test('Task 6 browser auto-refresh visible emite sólo GET y preserva borrador y foco', { skip: !existsSync(chromePath) }, async () => {
+  await withBrowserPage(
+    { width: 1280, height: 800, deviceScaleFactor: 1 },
+    async ({ page, counts }) => {
+      await page.click('.conversation-card[data-conversation-id="44"]');
+      await page.waitForFunction(() => document.querySelector('#messageHistory')?.textContent.includes('hola'));
+      await page.click('#messageInput');
+      await page.type('#messageInput', 'borrador preservado');
+      await new Promise(resolve => setTimeout(resolve, 30));
+      const baseline = counts.apiRequests.length;
+      const listBefore = counts.conversations;
+      const historyBefore = counts.messages;
+      await new Promise(resolve => setTimeout(resolve, 140));
+      assert.ok(counts.conversations > listBefore);
+      assert.ok(counts.messages > historyBefore);
+      const automatic = counts.apiRequests.slice(baseline);
+      assert.ok(automatic.length >= 2);
+      assert.deepEqual([...new Set(automatic.map(entry => entry.method))], ['GET']);
+      assert.equal(automatic.some(entry => /read|replies|search|state|quick-replies/.test(entry.path)), false);
+      assert.deepEqual(await page.evaluate(() => ({
+        draft: document.querySelector('#messageInput').value,
+        focus: document.activeElement?.id,
+        sync: document.querySelector('#syncStatus').dataset.state,
+      })), { draft: 'borrador preservado', focus: 'messageInput', sync: 'updated' });
+    },
+    { refreshDelayMs: 40, sendTimeoutMs: 1_000 },
   );
 });
 

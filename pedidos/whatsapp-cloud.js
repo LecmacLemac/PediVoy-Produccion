@@ -5,13 +5,16 @@ import {
   buildCloudApiUrl,
   conversationPreview,
   createInboxComposerController,
+  createChainedRefreshScheduler,
   createRequestGate,
   createSendDeadline,
   createSingleFlightSubmission,
   formatCloudTimestamp,
   isConversationListContextCurrent,
   insertQuickReplyAtSelection,
+  mergeCanonicalConversationRefresh,
   mergeHistoryPage,
+  mergeLiveHistory,
   normalizeQuickReplyCatalog,
   reconcileConversationMutation,
   operationalMeta,
@@ -26,6 +29,7 @@ const SEND_TIMEOUT_MS = 25_000;
 
 const elements = {
   status: document.querySelector('#appStatus'),
+  sync: document.querySelector('#syncStatus'),
   inbox: document.querySelector('#inboxLayout'),
   companyWrap: document.querySelector('#companyPicker'),
   searchForm: document.querySelector('#conversationSearchForm'),
@@ -49,6 +53,7 @@ const elements = {
   back: document.querySelector('#backToList'),
   history: document.querySelector('#messageHistory'),
   older: document.querySelector('#loadOlderMessages'),
+  newMessages: document.querySelector('#newMessagesIndicator'),
   composer: document.querySelector('#composerForm'),
   quickReplyPanel: document.querySelector('#quickReplyPanel'),
   quickReplies: document.querySelector('#quickReplyList'),
@@ -63,6 +68,7 @@ const state = {
   role: null,
   companyId: null,
   canonicalConversations: [],
+  canonicalFirstPageIds: [],
   canonicalConversationsCursor: null,
   conversations: [],
   conversationsCursor: null,
@@ -76,6 +82,8 @@ const state = {
   pendingStateMutation: null,
   messages: [],
   historyCursor: null,
+  newMessageCount: 0,
+  syncState: 'updated',
   quickReplies: [],
   mobile: { mobileView: 'list', activeConversationId: null },
 };
@@ -96,6 +104,8 @@ let quickReplyController = null;
 let returnFocusConversationId = null;
 let conversationLoadPromise = null;
 let conversationReloadRequested = false;
+let manualHistoryInFlight = 0;
+let autoRefreshAllowed = true;
 
 function isMobileLayout() {
   return window.matchMedia('(max-width: 760px)').matches;
@@ -149,6 +159,14 @@ function setStatus(message, tone = 'neutral') {
   elements.status.textContent = message;
   elements.status.dataset.tone = tone;
   elements.status.hidden = !message;
+}
+
+function setSyncState(value) {
+  const allowed = new Set(['updating', 'updated', 'stale']);
+  state.syncState = allowed.has(value) ? value : 'stale';
+  const labels = { updating: 'Actualizando…', updated: 'Actualizado', stale: 'Datos desactualizados' };
+  elements.sync.textContent = labels[state.syncState];
+  elements.sync.dataset.state = state.syncState;
 }
 
 function setComposerNotice(message, tone = 'neutral') {
@@ -540,7 +558,7 @@ function renderAttachment(message, container) {
   container.append(card);
 }
 
-function renderHistory({ preserveScroll = false } = {}) {
+function renderHistory({ preserveScroll = false, live = false, wasAtBottom = true, newMessageCount = 0 } = {}) {
   const previousHeight = elements.history.scrollHeight;
   const previousTop = elements.history.scrollTop;
   const fragment = document.createDocumentFragment();
@@ -561,7 +579,12 @@ function renderHistory({ preserveScroll = false } = {}) {
   elements.history.replaceChildren(fragment);
   elements.older.hidden = !state.historyCursor;
   if (preserveScroll) elements.history.scrollTop = elements.history.scrollHeight - previousHeight + previousTop;
+  else if (live && !wasAtBottom) elements.history.scrollTop = previousTop;
   else elements.history.scrollTop = elements.history.scrollHeight;
+  if (live && !wasAtBottom && newMessageCount > 0) state.newMessageCount += newMessageCount;
+  else if (wasAtBottom) state.newMessageCount = 0;
+  elements.newMessages.textContent = state.newMessageCount > 0 ? `${state.newMessageCount} mensajes nuevos` : '';
+  elements.newMessages.hidden = state.newMessageCount <= 0;
 }
 
 async function performConversationLoad({ append = false } = {}) {
@@ -612,6 +635,7 @@ async function performConversationLoad({ append = false } = {}) {
     const known = new Map((append ? state.canonicalConversations : []).map(item => [String(item.conversationId), item]));
     for (const item of incoming) known.set(String(item.conversationId), item);
     state.canonicalConversations = [...known.values()];
+    if (!append) state.canonicalFirstPageIds = incoming.map(item => String(item.conversationId));
     if (!state.searchQuery) state.conversations = [...state.canonicalConversations];
     if (state.activeConversation) {
       const refreshedActive = state.canonicalConversations.find(item => (
@@ -682,6 +706,7 @@ async function reloadConversationsFromStart({ preserveActiveConversation = false
   state.conversationContextRevision += 1;
   state.conversationContextLoading = true;
   state.canonicalConversations = [];
+  state.canonicalFirstPageIds = [];
   state.canonicalConversationsCursor = null;
   state.conversations = [];
   state.conversationsCursor = null;
@@ -725,6 +750,7 @@ async function markConversationRead(conversationId, { generation, companyId }) {
 
 async function loadHistory({ older = false } = {}) {
   if (!state.activeConversation) return;
+  manualHistoryInFlight += 1;
   historyController?.abort();
   historyController = new AbortController();
   const generation = historyGate.begin();
@@ -754,6 +780,94 @@ async function loadHistory({ older = false } = {}) {
     if (error?.name !== 'AbortError' && error?.message !== 'session_expired' && historyGate.isCurrent(generation)) {
       setStatus('No se pudo cargar el historial.', 'error');
     }
+  } finally {
+    manualHistoryInFlight = Math.max(0, manualHistoryInFlight - 1);
+  }
+}
+
+async function autoRefreshConversations(signal) {
+  if (conversationLoadPromise || !state.companyId) return;
+  const filters = currentFilters();
+  const started = {
+    companyId: state.companyId,
+    contextRevision: state.conversationContextRevision,
+    mutationRevision: state.mutationRevision,
+    filters,
+  };
+  const url = buildCloudApiUrl('/conversations', {
+    role: state.role, companyId: state.companyId, limit: 25,
+    from: filters.from, to: filters.to, payment: filters.payment,
+    workflowStatus: filters.workflowStatus, priority: filters.priority, unread: filters.unread,
+  });
+  const { response, payload } = await request(url, { signal });
+  if (response.status === 403) throw Object.assign(new Error('refresh_forbidden'), { stopRefresh: true });
+  if (!response.ok) throw new Error('refresh_list_failed');
+  if (signal.aborted
+    || state.companyId !== started.companyId
+    || state.conversationContextRevision !== started.contextRevision
+    || state.mutationRevision !== started.mutationRevision
+    || JSON.stringify(currentFilters()) !== JSON.stringify(started.filters)) return;
+  const merged = mergeCanonicalConversationRefresh({
+    current: state.canonicalConversations,
+    incomingFirstPage: Array.isArray(payload.conversations) ? payload.conversations : [],
+    previousFirstPageIds: state.canonicalFirstPageIds,
+  });
+  state.canonicalConversations = merged.conversations;
+  state.canonicalFirstPageIds = merged.firstPageIds;
+  if (!state.searchQuery) {
+    state.conversations = [...state.canonicalConversations];
+    state.conversationsCursor = state.canonicalConversationsCursor;
+  }
+  if (payload.counters && typeof payload.counters === 'object') state.counters = payload.counters;
+  if (state.activeConversation) {
+    const refreshed = state.canonicalConversations.find(item => String(item.conversationId) === String(state.activeConversation.conversationId));
+    if (refreshed) {
+      state.activeConversation = refreshed;
+      syncActiveConversationControls();
+    }
+  }
+  renderConversations();
+}
+
+async function autoRefreshHistory(signal) {
+  if (!state.activeConversation || manualHistoryInFlight > 0 || replySubmission.isActive()) return;
+  const composer = composerController.snapshot().composer;
+  if (composer.reconciliationRequired) return;
+  const started = {
+    companyId: state.companyId,
+    conversationId: String(state.activeConversation.conversationId),
+    contextRevision: state.conversationContextRevision,
+    mutationRevision: state.mutationRevision,
+  };
+  const path = `/conversations/${encodeURIComponent(started.conversationId)}/messages`;
+  const url = buildCloudApiUrl(path, { role: state.role, companyId: state.companyId, limit: 50 });
+  const wasAtBottom = elements.history.scrollHeight - elements.history.scrollTop - elements.history.clientHeight <= 24;
+  const { response, payload } = await request(url, { signal });
+  if (response.status === 403) throw Object.assign(new Error('refresh_forbidden'), { stopRefresh: true });
+  if (!response.ok) throw new Error('refresh_history_failed');
+  if (signal.aborted
+    || state.companyId !== started.companyId
+    || String(state.activeConversation?.conversationId) !== started.conversationId
+    || state.conversationContextRevision !== started.contextRevision
+    || state.mutationRevision !== started.mutationRevision) return;
+  const merged = mergeLiveHistory(state.messages, Array.isArray(payload.messages) ? payload.messages : []);
+  state.messages = merged.messages;
+  renderHistory({ live: true, wasAtBottom, newMessageCount: merged.newMessageIds.length });
+}
+
+async function runAutoRefreshCycle({ signal }) {
+  setSyncState('updating');
+  try {
+    await Promise.all([autoRefreshConversations(signal), autoRefreshHistory(signal)]);
+    if (!signal.aborted) setSyncState('updated');
+  } catch (error) {
+    if (error?.name === 'AbortError' || signal.aborted) return;
+    setSyncState('stale');
+    if (error?.stopRefresh || error?.message === 'session_expired') {
+      autoRefreshAllowed = false;
+      autoRefreshScheduler.pause();
+    }
+    throw error;
   }
 }
 
@@ -852,6 +966,7 @@ function openConversation(conversation) {
     setComposerNotice('Esperá a que termine el envío antes de cambiar de conversación.', 'warning');
     return;
   }
+  autoRefreshScheduler.pause();
   historyGate.invalidate();
   stateMutationGate.invalidate();
   historyController?.abort();
@@ -871,8 +986,9 @@ function openConversation(conversation) {
   renderConversations();
   syncContextControls();
   if (isMobileLayout()) window.requestAnimationFrame(() => elements.back.focus());
-  loadHistory();
-  loadConversationContext(String(conversation.conversationId));
+  const historyLoad = loadHistory();
+  const contextLoad = loadConversationContext(String(conversation.conversationId));
+  Promise.allSettled([historyLoad, contextLoad]).finally(() => autoRefreshScheduler.start({ immediate: false }));
 }
 
 async function requestAttachmentDownload(conversationId, messageId, button) {
@@ -917,6 +1033,7 @@ function renderCompanyPicker(companies) {
       setComposerNotice('Esperá a que termine el envío antes de cambiar de empresa.', 'warning');
       return;
     }
+    autoRefreshScheduler.pause();
     state.companyId = nextCompanyId;
     clearQuickReplies();
     state.conversationContextRevision += 1;
@@ -933,6 +1050,7 @@ function renderCompanyPicker(companies) {
     state.searchQuery = '';
     elements.searchInput.value = '';
     state.canonicalConversations = [];
+    state.canonicalFirstPageIds = [];
     state.canonicalConversationsCursor = null;
     state.conversations = [];
     state.conversationsCursor = null;
@@ -942,8 +1060,7 @@ function renderCompanyPicker(companies) {
     elements.conversationsMore.hidden = true;
     clearChat({ composerAlreadyReset: true });
     if (state.companyId) {
-      loadConversations();
-      loadQuickReplies();
+      Promise.all([loadConversations(), loadQuickReplies()]).finally(() => autoRefreshScheduler.resume());
     }
     else setStatus('Seleccioná una empresa para ver sus conversaciones.', 'warning');
   });
@@ -1007,6 +1124,15 @@ const replySubmission = createSingleFlightSubmission({
   },
 });
 
+const autoRefreshScheduler = createChainedRefreshScheduler({
+  isVisible: () => document.visibilityState === 'visible',
+  canRun: () => Boolean(autoRefreshAllowed && state.role && state.companyId),
+  cycle: runAutoRefreshCycle,
+  baseDelayMs: 8_000,
+  maxDelayMs: 60_000,
+  jitter: ({ failures }) => (failures % 3) * 250,
+});
+
 async function submitMessage(event) {
   event.preventDefault();
   try {
@@ -1037,6 +1163,7 @@ async function bootstrap() {
     else {
       elements.companyWrap.replaceChildren();
       await Promise.all([loadConversations(), loadQuickReplies()]);
+      autoRefreshScheduler.start({ immediate: false });
     }
   } catch (error) {
     if (error?.message !== 'session_expired') setStatus('No se pudo validar la sesión.', 'error');
@@ -1086,21 +1213,22 @@ elements.input.addEventListener('input', () => {
 });
 elements.logout.addEventListener('click', async (event) => {
   event.preventDefault();
+  autoRefreshScheduler.stop();
   try { await request('/api/logout', { method: 'POST' }); } catch {}
   window.location.assign('/pedidos/login.html');
 });
 
-document.addEventListener('visibilitychange', () => {
-  if (document.hidden) {
-    conversationsController?.abort();
-    searchController?.abort();
-    contextController?.abort();
-    historyController?.abort();
-    replySubmission.abort();
-    return;
-  }
-  loadConversations();
-  if (state.activeConversation) loadHistory();
+elements.newMessages.addEventListener('click', () => {
+  state.newMessageCount = 0;
+  elements.newMessages.hidden = true;
+  elements.history.scrollTop = elements.history.scrollHeight;
 });
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') autoRefreshScheduler.pause();
+  else autoRefreshScheduler.resume();
+});
+window.addEventListener('pagehide', () => autoRefreshScheduler.stop());
+window.addEventListener('beforeunload', () => autoRefreshScheduler.stop());
 
 bootstrap();
