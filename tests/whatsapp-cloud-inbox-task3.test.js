@@ -52,11 +52,14 @@ test('Task 4 declara índices tenant-scoped para búsqueda operativa sin escanea
   ]);
   assert.match(schema, /idx_puntos_entrega_whatsapp_search_name_trgm/);
   assert.match(schema, /idx_puntos_entrega_whatsapp_search_address_trgm/);
+  assert.match(schema, /idx_puntos_entrega_whatsapp_search_name_prefix/);
+  assert.match(schema, /idx_puntos_entrega_whatsapp_search_address_prefix/);
   assert.match(schema, /idx_puntos_entrega_whatsapp_phone_suffix/);
   assert.match(schema, /idx_whatsapp_cloud_conversations_phone_suffix/);
   const searchSection = repository.slice(repository.indexOf('export async function searchCloudConversations'), repository.indexOf('export async function getCloudConversationContext'));
   assert.doesNotMatch(searchSection, /text_body|media_caption|provider_message_id|media_id|event_data|access_token/i);
-  assert.match(searchSection, /order_row\.id = \$4/);
+  assert.doesNotMatch(searchSection, /LIMIT 500|ANY\s*\(|participantWaIds/i);
+  assert.match(searchSection, /searchMode/);
 });
 
 async function withServer(app, work) {

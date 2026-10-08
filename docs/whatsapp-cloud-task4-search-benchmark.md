@@ -1,16 +1,14 @@
 # WhatsApp Cloud Task 4 search benchmark
 
-Measured on October 7, 2026 with PostgreSQL using 100,000 delivery points, 100,000 tenant-scoped conversations, and 20,000 orders.
+Validated on October 7, 2026 with the executable PostgreSQL gate in `tests/whatsapp-cloud-inbox-admin-postgres.test.js`.
 
-Query: operational customer-name search using the same `candidate_points` union and tenant/phone-suffix join as `searchCloudConversations`.
+Search semantics:
 
-Observed `EXPLAIN (ANALYZE, BUFFERS)`:
+- Queries are trimmed and accept 2–80 characters.
+- Exactly two characters use a normalized, case-insensitive **prefix** match for customer name and delivery address. This is consistent for both fields and uses tenant-first `text_pattern_ops` expression indexes.
+- Queries of three or more characters use case-insensitive substring matching through the `pg_trgm` expression indexes.
+- Eligible phone suffix and public-order matches are unioned with text matches; none of the branches truncates candidates before canonical queue ordering, cursor filtering, or final page limiting.
 
-- Execution time: 3.676 ms.
-- Customer name: `Bitmap Index Scan` on `idx_puntos_entrega_whatsapp_search_name_trgm`.
-- Address: `Bitmap Index Scan` on `idx_puntos_entrega_whatsapp_search_address_trgm`.
-- Conversation resolution: `Index Scan` on `idx_whatsapp_cloud_conversations_phone_suffix`.
-- Point lookup: primary-key index scan.
-- No correlated `SubPlan`; phone and order branches with null parameters were removed by one-time filters.
+The executable gate builds a representative fixture and runs `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` against the exact SQL captured from `listCloudConversations`. It covers two-character prefix, trigram text, phone, and order paths with the normal planner. The gate rejects correlated `SubPlan`, array-based candidate transport, and arbitrary `LIMIT 500`, checks the expected lookup indexes, and requires a finite planner cost without a latency threshold.
 
-This is an engineering sanity check, not a latency SLO. It verifies that representative cardinality does not force full-table `%LIKE%` scans or a correlated per-conversation lookup.
+The >500-match integration fixture separately verifies that an urgent conversation outside telephone order is returned first and that cursor pagination reaches every matching conversation exactly once.

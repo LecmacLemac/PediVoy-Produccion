@@ -5209,6 +5209,52 @@ CREATE INDEX IF NOT EXISTS idx_whatsapp_cloud_conversation_reads_user
 CREATE INDEX IF NOT EXISTS idx_whatsapp_cloud_messages_inbound_unread
   ON public.whatsapp_cloud_messages (empresa_id, participant_wa_id, id)
   WHERE direction = 'inbound';
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE INDEX IF NOT EXISTS idx_puntos_entrega_whatsapp_search_name_trgm
+  ON public.puntos_entrega USING gin (
+    (pg_catalog.LOWER(COALESCE(NULLIF(BTRIM(nombre), ''), cliente, ''))) gin_trgm_ops
+  );
+CREATE INDEX IF NOT EXISTS idx_puntos_entrega_whatsapp_search_address_trgm
+  ON public.puntos_entrega USING gin (
+    (pg_catalog.LOWER(COALESCE(direccion_completa, direccion, '') || ' ' || COALESCE(ciudad, ''))) gin_trgm_ops
+  );
+CREATE INDEX IF NOT EXISTS idx_puntos_entrega_whatsapp_search_name_prefix
+  ON public.puntos_entrega (
+    empresa_id,
+    (pg_catalog.LOWER(COALESCE(NULLIF(BTRIM(nombre), ''), cliente, ''))) text_pattern_ops
+  );
+CREATE INDEX IF NOT EXISTS idx_puntos_entrega_whatsapp_search_address_prefix
+  ON public.puntos_entrega (
+    empresa_id,
+    (pg_catalog.LOWER(COALESCE(direccion_completa, direccion, '') || ' ' || COALESCE(ciudad, ''))) text_pattern_ops
+  );
+CREATE INDEX IF NOT EXISTS idx_puntos_entrega_whatsapp_phone_suffix
+  ON public.puntos_entrega (
+    empresa_id,
+    (RIGHT(regexp_replace(COALESCE(telefono_normalizado, telefono, ''), '\\D', '', 'g'), 10))
+  );
+CREATE INDEX IF NOT EXISTS idx_whatsapp_cloud_conversations_phone_suffix
+  ON public.whatsapp_cloud_conversations (
+    empresa_id,
+    (RIGHT(regexp_replace(participant_wa_id, '\\D', '', 'g'), 10))
+  );
+CREATE INDEX IF NOT EXISTS idx_puntos_entrega_whatsapp_phone_lookup
+  ON public.puntos_entrega (
+    empresa_id,
+    (RIGHT(telefono_normalizado, 10))
+  );
+CREATE INDEX IF NOT EXISTS idx_puntos_entrega_whatsapp_phone_fallback
+  ON public.puntos_entrega (
+    empresa_id,
+    (RIGHT(regexp_replace(COALESCE(telefono, ''), '\\D', '', 'g'), 10))
+  ) WHERE telefono_normalizado IS NULL;
+CREATE INDEX IF NOT EXISTS idx_whatsapp_cloud_conversations_phone_lookup
+  ON public.whatsapp_cloud_conversations (
+    empresa_id,
+    (RIGHT(participant_wa_id, 10))
+  );
+CREATE INDEX IF NOT EXISTS idx_pedidos_empresa_punto_fecha
+  ON public.pedidos (empresa_id, punto_entrega_id, fecha DESC, id DESC);
 COMMIT;
 -- END WHATSAPP CLOUD CONVERSATION READS MIGRATION
 

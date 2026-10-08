@@ -198,7 +198,10 @@ export async function listCloudConversations({
   workflowStatus = null,
   priority = null,
   unread = null,
-  participantWaIds = null,
+  searchMode = null,
+  searchText = null,
+  searchPhoneSuffix = null,
+  searchOrderId = null,
 } = {}) {
   const runQuery = requireQuery(query);
   const tenantId = requireTenantId(empresaId);
@@ -221,12 +224,8 @@ export async function listCloudConversations({
   if (unread != null && typeof unread !== 'boolean') {
     throw sanitizedError('CLOUD_INBOX_INVALID_ARGUMENT', 'Invalid unread');
   }
-  if (participantWaIds != null && (!Array.isArray(participantWaIds)
-    || participantWaIds.some(value => typeof value !== 'string' || !/^\d{6,15}$/.test(value)))) {
-    throw sanitizedError('CLOUD_INBOX_INVALID_ARGUMENT', 'Invalid participantWaIds');
-  }
-  if (participantWaIds?.length === 0) {
-    return { conversations: [], counters: null, nextCursor: null };
+  if (searchMode != null && !['prefix', 'substring'].includes(searchMode)) {
+    throw sanitizedError('CLOUD_INBOX_INVALID_ARGUMENT', 'Invalid searchMode');
   }
   const transferCondition = paymentFilter === 'transferencia'
     ? `AND EXISTS (
@@ -258,10 +257,65 @@ export async function listCloudConversations({
   const resultFrom = includeCounters
     ? 'FROM counters LEFT JOIN filtered ON TRUE'
     : 'FROM filtered';
+  const textMatch = searchMode === 'prefix'
+    ? "pg_catalog.LOWER($15::text) || '%'"
+    : "'%' || pg_catalog.LOWER($15::text) || '%'";
+  const searchCtes = searchMode == null ? '' : `candidate_points AS MATERIALIZED (
+         SELECT point.id
+           FROM public.puntos_entrega AS point
+          WHERE point.empresa_id = $1
+            AND pg_catalog.LOWER(COALESCE(NULLIF(BTRIM(point.nombre), ''), point.cliente, '')) LIKE ${textMatch}
+         UNION
+         SELECT point.id
+           FROM public.puntos_entrega AS point
+          WHERE point.empresa_id = $1
+            AND pg_catalog.LOWER(COALESCE(point.direccion_completa, point.direccion, '') || ' ' || COALESCE(point.ciudad, '')) LIKE ${textMatch}
+         UNION
+         SELECT point.id
+           FROM public.puntos_entrega AS point
+          WHERE point.empresa_id = $1
+            AND $16::text IS NOT NULL
+            AND RIGHT(point.telefono_normalizado, 10) = $16::text
+         UNION
+         SELECT point.id
+           FROM public.puntos_entrega AS point
+          WHERE point.empresa_id = $1
+            AND $16::text IS NOT NULL
+            AND point.telefono_normalizado IS NULL
+            AND RIGHT(regexp_replace(COALESCE(point.telefono, ''), '\\D', '', 'g'), 10) = $16::text
+         UNION
+         SELECT order_row.punto_entrega_id AS id
+           FROM public.pedidos AS order_row
+          WHERE order_row.empresa_id = $1
+            AND $17::integer IS NOT NULL
+            AND order_row.id = $17::integer
+            AND order_row.punto_entrega_id IS NOT NULL
+       ), candidate_phone_suffixes AS MATERIALIZED (
+         SELECT DISTINCT COALESCE(NULLIF(RIGHT(point.telefono_normalizado, 10), ''),
+                                  RIGHT(regexp_replace(COALESCE(point.telefono, ''), '\\D', '', 'g'), 10)) AS phone_suffix
+           FROM candidate_points AS candidate
+           JOIN public.puntos_entrega AS point
+             ON point.empresa_id = $1 AND point.id = candidate.id
+       ), candidate_conversations AS MATERIALIZED (
+         SELECT DISTINCT conversation.id
+           FROM candidate_phone_suffixes AS candidate
+           JOIN public.whatsapp_cloud_conversations AS conversation
+             ON conversation.empresa_id = $1
+            AND RIGHT(conversation.participant_wa_id, 10) = candidate.phone_suffix
+       ), `;
+  const searchJoin = searchMode == null ? '' : `JOIN candidate_conversations AS candidate_conversation
+             ON candidate_conversation.id = conversation.id`;
+  const queryParams = [
+    tenantId, pageSize + 1, null, pageCursor?.id ?? null, fromFilter, toFilter,
+    actorId, workflowStatus, priority, unread,
+    pageCursor?.bucket ?? null, pageCursor?.priorityRank ?? null, pageCursor?.activityKey ?? null,
+    pageCursor?.conversationId ?? null,
+  ];
+  if (searchMode != null) queryParams.push(searchText, searchPhoneSuffix, searchOrderId);
   let rows;
   try {
     rows = await runQuery(
-      `WITH latest_messages AS MATERIALIZED (
+      `WITH ${searchCtes}latest_messages AS MATERIALIZED (
          SELECT DISTINCT ON (message.participant_wa_id)
                 message.participant_wa_id,
                 message.id,
@@ -307,12 +361,12 @@ export async function listCloudConversations({
                 inbound.last_inbound_at,
                 COALESCE(inbound.unread_count, 0)::INTEGER AS unread_count
            FROM public.whatsapp_cloud_conversations AS conversation
+           ${searchJoin}
            JOIN latest_messages AS latest
              ON latest.participant_wa_id = conversation.participant_wa_id
            LEFT JOIN inbound_stats AS inbound ON inbound.conversation_id = conversation.id
           WHERE conversation.empresa_id = $1
             AND $3::text IS NULL
-            AND ($15::text[] IS NULL OR conversation.participant_wa_id = ANY($15::text[]))
             ${transferCondition}
        ), classified AS (
          SELECT base.*,
@@ -377,13 +431,7 @@ export async function listCloudConversations({
          ) customer ON TRUE
         ORDER BY filtered.queue_bucket ASC, filtered.cursor_priority_rank ASC,
                  filtered.queue_activity_key ASC, filtered.id ASC, filtered.conversation_id ASC`,
-      [
-        tenantId, pageSize + 1, null, pageCursor?.id ?? null, fromFilter, toFilter,
-        actorId, workflowStatus, priority, unread,
-        pageCursor?.bucket ?? null, pageCursor?.priorityRank ?? null, pageCursor?.activityKey ?? null,
-        pageCursor?.conversationId ?? null,
-        participantWaIds,
-      ],
+      queryParams,
       { sensitive: true },
     );
   } catch {
@@ -428,6 +476,32 @@ export async function listCloudConversations({
   };
 }
 
+export async function buildCloudConversationListSql({
+  includeCounters = true,
+  transferOnly = false,
+  searchMode = null,
+} = {}) {
+  let captured = null;
+  await listCloudConversations({
+    query: async (sql, params) => {
+      captured = { sql, params };
+      return [];
+    },
+    empresaId: 1,
+    usuarioId: 1,
+    limit: 25,
+    cursor: includeCounters ? null : Buffer.from(JSON.stringify([
+      0, 0, '0', '1', '00000000-0000-4000-8000-000000000001',
+    ])).toString('base64url'),
+    payment: transferOnly ? 'transferencia' : null,
+    searchMode: searchMode === 'prefix' ? 'prefix' : searchMode == null ? null : 'substring',
+    searchText: searchMode === 'prefix' ? 'al' : searchMode === 'substring' ? 'plan exacto' : 'probe-no-text-match',
+    searchPhoneSuffix: searchMode === 'phone' ? '3510017777' : null,
+    searchOrderId: searchMode === 'order' ? 777777 : null,
+  });
+  return captured;
+}
+
 function requireSearchQuery(value) {
   if (typeof value !== 'string') throw sanitizedError('CLOUD_INBOX_INVALID_ARGUMENT', 'Invalid search query');
   const normalized = value.trim();
@@ -441,64 +515,19 @@ export async function searchCloudConversations({ query, empresaId, usuarioId, se
   const runQuery = requireQuery(query);
   const tenantId = requireTenantId(empresaId);
   const normalizedQuery = requireSearchQuery(searchQuery);
-  const textQuery = normalizedQuery.length >= 3 ? normalizedQuery : null;
   const digits = normalizedQuery.replace(/\D/g, '');
   const phoneSuffix = digits.length >= 6 ? digits.slice(-10) : null;
   const publicOrderId = /^[1-9][0-9]{0,9}$/.test(normalizedQuery) ? Number(normalizedQuery) : null;
-  let matches;
-  try {
-    matches = await runQuery(
-      `WITH candidate_points AS MATERIALIZED (
-         SELECT point.id
-           FROM public.puntos_entrega AS point
-          WHERE point.empresa_id = $1
-            AND $2::text IS NOT NULL
-            AND pg_catalog.LOWER(COALESCE(NULLIF(BTRIM(point.nombre), ''), point.cliente, ''))
-                LIKE '%' || pg_catalog.LOWER($2) || '%'
-         UNION
-         SELECT point.id
-           FROM public.puntos_entrega AS point
-          WHERE point.empresa_id = $1
-            AND $2::text IS NOT NULL
-            AND pg_catalog.LOWER(COALESCE(point.direccion_completa, point.direccion, '') || ' ' || COALESCE(point.ciudad, ''))
-                LIKE '%' || pg_catalog.LOWER($2) || '%'
-         UNION
-         SELECT point.id
-           FROM public.puntos_entrega AS point
-          WHERE point.empresa_id = $1
-            AND $3::text IS NOT NULL
-            AND RIGHT(regexp_replace(COALESCE(point.telefono_normalizado, point.telefono, ''), '\\D', '', 'g'), 10) = $3
-         UNION
-         SELECT order_row.punto_entrega_id
-           FROM public.pedidos AS order_row
-          WHERE order_row.empresa_id = $1
-            AND $4::integer IS NOT NULL
-            AND order_row.id = $4::integer
-            AND order_row.punto_entrega_id IS NOT NULL
-       )
-       SELECT DISTINCT conversation.participant_wa_id
-         FROM candidate_points AS candidate
-         JOIN public.puntos_entrega AS point
-           ON point.empresa_id = $1
-          AND point.id = candidate.id
-         JOIN public.whatsapp_cloud_conversations AS conversation
-           ON conversation.empresa_id = point.empresa_id
-          AND RIGHT(regexp_replace(COALESCE(point.telefono_normalizado, point.telefono, ''), '\\D', '', 'g'), 10)
-              = RIGHT(regexp_replace(conversation.participant_wa_id, '\\D', '', 'g'), 10)
-        ORDER BY conversation.participant_wa_id
-        LIMIT 500`,
-      [tenantId, textQuery, phoneSuffix, publicOrderId],
-      { sensitive: true },
-    );
-  } catch {
-    throw sanitizedError('CLOUD_INBOX_SEARCH_FAILED', 'WhatsApp Cloud search failed');
-  }
+  const searchMode = normalizedQuery.length === 2 ? 'prefix' : 'substring';
   return listCloudConversations({
     query: runQuery,
     empresaId: tenantId,
     usuarioId,
     ...filters,
-    participantWaIds: matches.map(row => String(row.participant_wa_id)),
+    searchMode,
+    searchText: normalizedQuery,
+    searchPhoneSuffix: phoneSuffix,
+    searchOrderId: publicOrderId,
   });
 }
 

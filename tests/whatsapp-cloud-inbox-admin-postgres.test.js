@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import pg from 'pg';
 
 import { createWhatsAppCloudInboxAdminRouter } from '../src/routes/whatsappCloudInboxAdmin.js';
+import { buildCloudConversationListSql } from '../src/whatsappCloud/inboxRepository.js';
 
 let bin;
 try { bin = execFileSync('pg_config', ['--bindir'], { encoding: 'utf8' }).trim(); } catch {}
@@ -386,6 +387,8 @@ test('Task 4 busca fuera de la primera página y resuelve context exact, ambiguo
         (1,'Duplicado B','Compartido B','Calle B 2',NULL,'Córdoba','3515550202','5493515550202'),
         (1,'Grupo Buscar Uno','Grupo Buscar Uno','Ruta Grupo 1',NULL,'Córdoba','351553000','549351553000'),
         (1,'Grupo Buscar Dos','Grupo Buscar Dos','Ruta Grupo 2',NULL,'Córdoba','351553001','549351553001'),
+        (1,'Al Norte','Al Norte','Camino Norte 1',NULL,'Córdoba','3515550404','5493515550404'),
+        (1,'Destino Breve','Destino Breve','Zo Sur 2',NULL,'Córdoba','3515550505','5493515550505'),
         (2,'Secreto Tenant Dos','No visible','Oculta 999',NULL,'Córdoba','3515550101','5493515550101')
       RETURNING id,empresa_id,telefono_normalizado
     `)).rows;
@@ -412,6 +415,8 @@ test('Task 4 busca fuera de la primera página y resuelve context exact, ambiguo
         (1,'inbound','5493515550101','text','texto que no debe buscarse','received',0,'2026-10-01T08:00:00Z','2026-10-01T08:00:00Z','2026-10-01T08:00:00Z'),
         (1,'inbound','5493515550202','text','ambiguo','received',0,'2026-10-07T08:00:00Z','2026-10-07T08:00:00Z','2026-10-07T08:00:00Z'),
         (1,'inbound','5493515550303','text','sin cliente','received',0,'2026-10-07T07:00:00Z','2026-10-07T07:00:00Z','2026-10-07T07:00:00Z'),
+        (1,'inbound','5493515550404','text','nombre corto','received',0,'2026-10-07T06:00:00Z','2026-10-07T06:00:00Z','2026-10-07T06:00:00Z'),
+        (1,'inbound','5493515550505','text','dirección corta','received',0,'2026-10-07T05:00:00Z','2026-10-07T05:00:00Z','2026-10-07T05:00:00Z'),
         (2,'inbound','5493515550101','text','secreto cross tenant','received',0,'2026-10-07T13:00:00Z','2026-10-07T13:00:00Z','2026-10-07T13:00:00Z')
     `);
     await pool.query(`
@@ -456,7 +461,14 @@ test('Task 4 busca fuera de la primera página y resuelve context exact, ambiguo
       assert.equal(search.conversations.length, 1);
       assert.equal(search.conversations[0].conversationId, idsByPhone['5493515550101']);
       assert.equal(search.conversations[0].participant, '*********0101');
-      assert.doesNotMatch(JSON.stringify(search), /5493515550101|texto que no debe buscarse|Secreto Tenant Dos|9999|"query"/);
+      assert.equal(search.conversations[0].participant.includes('5493515550101'), false);
+      assert.equal(Object.hasOwn(search, 'query'), false);
+      assert.equal(search.conversations.some(row => row.customerName === 'Secreto Tenant Dos'), false);
+
+      const shortName = await (await post({ query: 'Al' })).json();
+      assert.deepEqual(shortName.conversations.map(row => row.conversationId), [idsByPhone['5493515550404']]);
+      const shortAddress = await (await post({ query: 'Zo' })).json();
+      assert.deepEqual(shortAddress.conversations.map(row => row.conversationId), [idsByPhone['5493515550505']]);
 
       const groupFirstResponse = await post({ query: 'Grupo Buscar', limit: 1 });
       assert.equal(groupFirstResponse.status, 200);
@@ -487,9 +499,90 @@ test('Task 4 busca fuera de la primera página y resuelve context exact, ambiguo
         name: 'Ana Segura', phone: '*********0101', address: 'Ruta 9 123, Córdoba',
       });
       assert.deepEqual(exact.orders.map(order => order.publicId), ['7001', '7002']);
-      assert.doesNotMatch(JSON.stringify(exact), /Secreto Tenant Dos|9999|tracking|notas|provider/i);
+      assert.equal(exact.customer.phone, '*********0101');
+      assert.equal(exact.orders.some(order => order.total === '9999.00'), false);
+      assert.equal(Object.hasOwn(exact, 'tracking'), false);
+      assert.equal(Object.hasOwn(exact, 'provider'), false);
       assert.deepEqual(await context('5493515550202'), { matchStatus: 'ambiguous', customer: null, orders: [] });
       assert.deepEqual(await context('5493515550303'), { matchStatus: 'none', customer: null, orders: [] });
     });
+  });
+});
+
+test('Task 4 pagina más de 500 coincidencias y prioriza urgent fuera del orden telefónico', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id, config_integraciones) VALUES (1,$1::jsonb)', [cloudConfig('phone-many')]);
+    await pool.query("INSERT INTO usuarios(id,username,password,role,empresa_id) VALUES (1,'admin-many','x','admin',1)");
+    await pool.query(`INSERT INTO puntos_entrega (empresa_id,cliente,nombre,direccion,ciudad,telefono,telefono_normalizado)
+      SELECT 1,'Mass Match '||v,'Mass Match '||v,'Ruta '||v,'Córdoba','351'||LPAD(v::text,7,'0'),'549351'||LPAD(v::text,7,'0') FROM generate_series(1,505) v`);
+    await pool.query(`INSERT INTO whatsapp_cloud_messages
+      (empresa_id,direction,participant_wa_id,message_type,text_body,delivery_status,state_rank,message_at,created_at,updated_at)
+      SELECT 1,'inbound','549351'||LPAD(v::text,7,'0'),'text','bulk','received',0,
+        '2026-10-07T10:00:00Z'::timestamptz-v*interval '1 second','2026-10-07T10:00:00Z'::timestamptz-v*interval '1 second','2026-10-07T10:00:00Z'::timestamptz-v*interval '1 second'
+      FROM generate_series(1,505) v`);
+    await pool.query(`INSERT INTO whatsapp_cloud_conversations (empresa_id,participant_wa_id,created_at,updated_at)
+      SELECT empresa_id,participant_wa_id,MIN(created_at),MAX(updated_at) FROM whatsapp_cloud_messages GROUP BY empresa_id,participant_wa_id`);
+    await pool.query("UPDATE whatsapp_cloud_conversations SET priority='urgent' WHERE participant_wa_id='5493510000505'");
+    const urgent = (await pool.query("SELECT id::text FROM whatsapp_cloud_conversations WHERE participant_wa_id='5493510000505'")).rows[0].id;
+    const app = express();
+    app.use(express.json());
+    app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+      canonicalOrigin: 'https://admin.pedivoy.test',
+      withAuth(req, _res, next) { req.user = { uid: 1, role: 'admin', empresa_id: 1 }; next(); },
+      query: async (sql, params) => (await pool.query(sql, params)).rows, pool,
+    }));
+    await withServer(app, async base => {
+      let cursor = null;
+      const ids = [];
+      do {
+        const response = await fetch(`${base}/api/admin/whatsapp-cloud/conversations/search`, {
+          method: 'POST', headers: { Origin: 'https://admin.pedivoy.test', 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: 'Mass Match', limit: 100, ...(cursor ? { cursor } : {}) }),
+        });
+        assert.equal(response.status, 200);
+        const body = await response.json();
+        ids.push(...body.conversations.map(row => row.conversationId));
+        cursor = body.nextCursor;
+      } while (cursor);
+      assert.equal(ids.length, 505);
+      assert.equal(new Set(ids).size, 505);
+      assert.equal(ids[0], urgent);
+    });
+  });
+});
+
+test('Task 4 EXPLAIN ANALYZE ejecuta SQL productivo sin SubPlan, arrays ni truncamiento', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id, config_integraciones) VALUES (1,$1::jsonb)', [cloudConfig('phone-plan')]);
+    await pool.query("INSERT INTO usuarios(id,username,password,role,empresa_id) VALUES (1,'admin-plan','x','admin',1)");
+    await pool.query(`INSERT INTO puntos_entrega (empresa_id,cliente,nombre,direccion,direccion_completa,ciudad,telefono,telefono_normalizado)
+      SELECT 1,CASE WHEN v=17777 THEN 'Al Plan Exacto' ELSE 'Cliente '||v END,CASE WHEN v=17777 THEN 'Al Plan Exacto' ELSE 'Cliente '||v END,
+        CASE WHEN v=18888 THEN 'Zo Índice' ELSE 'Ruta '||v END,CASE WHEN v=18888 THEN 'Zo Índice' ELSE 'Ruta '||v END,'Córdoba',
+        '351'||LPAD(v::text,7,'0'),'549351'||LPAD(v::text,7,'0') FROM generate_series(1,20000) v`);
+    await pool.query(`INSERT INTO whatsapp_cloud_messages
+      (empresa_id,direction,participant_wa_id,message_type,text_body,delivery_status,state_rank,message_at,created_at,updated_at)
+      SELECT 1,'inbound','549351'||LPAD(v::text,7,'0'),'text','plan','received',0,'2026-10-07T10:00:00Z','2026-10-07T10:00:00Z','2026-10-07T10:00:00Z' FROM generate_series(1,20000) v`);
+    await pool.query(`INSERT INTO whatsapp_cloud_conversations (empresa_id,participant_wa_id,created_at,updated_at)
+      SELECT empresa_id,participant_wa_id,MIN(created_at),MAX(updated_at) FROM whatsapp_cloud_messages GROUP BY empresa_id,participant_wa_id`);
+    await pool.query(`INSERT INTO pedidos(id,empresa_id,punto_entrega_id)
+      SELECT v,1,(SELECT MIN(id) FROM puntos_entrega) FROM generate_series(1,5000) v`);
+    await pool.query(`INSERT INTO pedidos(id,empresa_id,punto_entrega_id) SELECT 777777,1,id FROM puntos_entrega WHERE nombre='Cliente 18000'`);
+    for (const table of ['puntos_entrega','whatsapp_cloud_conversations','whatsapp_cloud_messages','pedidos']) await pool.query(`ANALYZE ${table}`);
+    const cases = [
+      ['prefix',/idx_puntos_entrega_whatsapp_search_name_prefix/],
+      ['substring',/idx_puntos_entrega_whatsapp_search_name_trgm/],
+      ['phone',/idx_puntos_entrega_whatsapp_phone_lookup/],
+      ['order',/pedidos_pkey/],
+    ];
+    for (const [searchMode, expectedIndex] of cases) {
+      const statement = await buildCloudConversationListSql({ searchMode });
+      assert.doesNotMatch(statement.sql, /LIMIT 500|ANY\s*\(|ARRAY\s*\[/i);
+      const explained = await pool.query(`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${statement.sql}`, statement.params);
+      const root = explained.rows[0]['QUERY PLAN'][0];
+      const plan = JSON.stringify(root);
+      assert.doesNotMatch(plan, /SubPlan/);
+      assert.match(plan, expectedIndex);
+      assert.equal(Number.isFinite(Number(root.Plan['Total Cost'])), true);
+    }
   });
 });
