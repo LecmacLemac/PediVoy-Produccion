@@ -338,6 +338,7 @@ export function securePaymentIntegraciones(configIntegraciones, existingIntegrac
   if (hasIncomingWhatsapp || hasExistingWhatsapp) {
     const incomingWhatsapp = objectOrEmpty(incoming.whatsapp);
     const existingWhatsapp = objectOrEmpty(existing.whatsapp);
+    let mergedTemplates;
     if (Object.hasOwn(incomingWhatsapp, 'templates')) {
       const templates = incomingWhatsapp.templates;
       if (!templates || typeof templates !== 'object' || Array.isArray(templates)
@@ -345,7 +346,11 @@ export function securePaymentIntegraciones(configIntegraciones, existingIntegrac
           || Object.keys(templates).some(key => !UTILITY_TEMPLATE_KEYS.includes(key))) {
         throw Object.assign(new Error('cloud_template_config_invalid'), { code: 'cloud_template_config_invalid' });
       }
-      for (const mapping of Object.values(templates)) validateTemplateMapping(mapping);
+      mergedTemplates = safeTemplateMappings(existingWhatsapp.templates);
+      for (const [key, mapping] of Object.entries(templates)) {
+        if (mapping === null) delete mergedTemplates[key];
+        else mergedTemplates[key] = validateTemplateMapping(mapping);
+      }
     }
     const encryptedWhatsappToken = secureValue(
       incomingWhatsapp.access_token,
@@ -356,7 +361,7 @@ export function securePaymentIntegraciones(configIntegraciones, existingIntegrac
       ...allowlistedWhatsappConfig(existingWhatsapp),
       ...allowlistedWhatsappConfig(incomingWhatsapp),
       ...(Object.hasOwn(existingWhatsapp, 'templates') || Object.hasOwn(incomingWhatsapp, 'templates')
-        ? { templates: { ...safeTemplateMappings(existingWhatsapp.templates), ...safeTemplateMappings(incomingWhatsapp.templates) } } : {}),
+        ? { templates: mergedTemplates ?? safeTemplateMappings(existingWhatsapp.templates) } : {}),
       ...(encryptedWhatsappToken ? { access_token_encrypted: encryptedWhatsappToken } : {}),
     };
   }

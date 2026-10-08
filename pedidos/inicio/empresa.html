@@ -1480,7 +1480,21 @@
       };
     }
 
-    function buildWhatsappConfigPayload(formConfig) {
+    function buildWhatsappTemplateChanges(formTemplates, baselineTemplates) {
+      const before = normalizeWhatsappTemplates(baselineTemplates);
+      const after = normalizeWhatsappTemplates(formTemplates);
+      const changes = {};
+      for (const key of ['order_confirmation', 'order_en_route', 'transfer_payment']) {
+        const previous = before[key];
+        const next = after[key];
+        if (JSON.stringify(previous) === JSON.stringify(next)) continue;
+        changes[key] = next || null;
+      }
+      return changes;
+    }
+
+    function buildWhatsappConfigPayload(formConfig, baselineConfig) {
+      const baseline = baselineConfig || {};
       const provider = String(formConfig?.provider || 'web').trim().toLowerCase() === 'cloud'
         ? 'cloud'
         : 'web';
@@ -1492,7 +1506,8 @@
         enabled: formConfig?.enabled === true,
         phone_number_id: String(formConfig?.phone_number_id || '').trim(),
       };
-      if (formConfig?.templates) payload.templates = normalizeWhatsappTemplates(formConfig.templates);
+      const templateChanges = buildWhatsappTemplateChanges(formConfig?.templates, baseline?.templates);
+      if (Object.keys(templateChanges).length) payload.templates = templateChanges;
       const token = String(formConfig?.access_token || '').trim();
       if (token && token !== '********') payload.access_token = token;
       return payload;
@@ -2555,8 +2570,12 @@ if (logoutLink) {
 
     function needsWhatsappTemplateConfirmation(previous, next) {
       const before = normalizeWhatsappTemplates(previous?.templates);
-      const after = normalizeWhatsappTemplates(next?.templates);
-      return Object.keys(after).some(key => JSON.stringify(before[key]) !== JSON.stringify(after[key]));
+      const changes = next?.templates && typeof next.templates === 'object' ? next.templates : {};
+      return Object.entries(changes).some(([key, mapping]) => {
+        if (mapping === null) return Object.hasOwn(before, key);
+        const normalized = normalizeWhatsappTemplates({ [key]: mapping });
+        return JSON.stringify(before[key]) !== JSON.stringify(normalized[key]);
+      });
     }
 
     function refreshWhatsappTemplateReadiness() {
@@ -2979,9 +2998,13 @@ if (logoutLink) {
           toast('❌ Revisá los nombres de las plantillas.');
           return;
         }
-        const whatsappCfg = buildWhatsappConfigPayload(whatsappFormConfig);
+        const whatsappCfg = buildWhatsappConfigPayload(whatsappFormConfig, currentWhatsappPanelConfig);
         if (needsWhatsappTemplateConfirmation(currentWhatsappPanelConfig, whatsappCfg)) {
-          if (!confirm('Confirmá que estas plantillas Utility están aprobadas en Meta con el contenido e idioma correspondientes. ¿Continuar?')) return;
+          const removesTemplate = Object.values(whatsappCfg.templates || {}).some(mapping => mapping === null);
+          const templateConfirmation = removesTemplate
+            ? 'Confirmá que querés quitar o reemplazar estas plantillas Utility. Las nuevas plantillas deben estar aprobadas en Meta. ¿Continuar?'
+            : 'Confirmá que estas plantillas Utility están aprobadas en Meta con el contenido e idioma correspondientes. ¿Continuar?';
+          if (!confirm(templateConfirmation)) return;
         }
         if (needsWhatsappCloudActivationConfirmation(currentWhatsappPanelConfig, whatsappCfg)) {
           const accepted = confirm(

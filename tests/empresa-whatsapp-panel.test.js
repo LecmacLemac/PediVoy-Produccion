@@ -43,6 +43,7 @@ async function loadPanelHelpers() {
   const names = [
     'normalizeWhatsappTemplates',
     'normalizeWhatsappPanelConfig',
+    'buildWhatsappTemplateChanges',
     'buildWhatsappConfigPayload',
     'validateWhatsappCloudActivation',
     'needsWhatsappCloudActivationConfirmation',
@@ -204,4 +205,37 @@ test('utility form loads/saves mapping, reports readiness and confirms activatio
   assert.match(html, /if \(needsWhatsappTemplateConfirmation\(currentWhatsappPanelConfig, whatsappCfg\)\)/);
   assert.match(html, /Confirmo|aprobadas en Meta/);
   for (const n of names) assert.doesNotMatch(extractFunction(html, n), /localStorage|sessionStorage/);
+});
+
+test('utility payload sends only dirty mappings and explicit null for a cleared mapping', async () => {
+  const html = await readHtml();
+  const names = ['normalizeWhatsappTemplates', 'buildWhatsappTemplateChanges', 'buildWhatsappConfigPayload', 'needsWhatsappTemplateConfirmation'];
+  const context = vm.createContext({});
+  vm.runInContext(names.map(name => extractFunction(html, name)).join('\n') + `;globalThis.h = {${names.join(',')}};`, context);
+  const baseline = {
+    provider: 'cloud', enabled: true, phone_number_id: 'phone-7', access_token_configured: true,
+    templates: {
+      order_confirmation: { name: 'confirm_a', language: 'es_AR' },
+      order_en_route: { name: 'route_a', language: 'es_AR' },
+      transfer_payment: { name: 'transfer_a', language: 'es_AR' },
+    },
+  };
+  const noOp = context.h.buildWhatsappConfigPayload(structuredClone(baseline), baseline);
+  assert.equal(Object.hasOwn(noOp, 'templates'), false);
+
+  const cleared = structuredClone(baseline);
+  delete cleared.templates.order_confirmation;
+  const removal = context.h.buildWhatsappConfigPayload(cleared, baseline);
+  assert.deepEqual(structuredClone(removal.templates), { order_confirmation: null });
+  assert.equal(context.h.needsWhatsappTemplateConfirmation(baseline, removal), true);
+
+  const editorB = structuredClone(baseline);
+  editorB.templates.transfer_payment = { name: 'transfer_b', language: 'es_AR' };
+  const dirtyOnly = context.h.buildWhatsappConfigPayload(editorB, baseline);
+  assert.deepEqual(structuredClone(dirtyOnly.templates), {
+    transfer_payment: { name: 'transfer_b', language: 'es_AR' },
+  });
+  assert.equal(Object.hasOwn(dirtyOnly.templates, 'order_confirmation'), false);
+  assert.match(html, /buildWhatsappConfigPayload\(whatsappFormConfig, currentWhatsappPanelConfig\)/);
+  assert.match(html, /quitar|eliminar|desvincular/i);
 });

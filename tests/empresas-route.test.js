@@ -1791,3 +1791,153 @@ test('utility mapping rejects hostile keys and invalid values before persistence
     assert.equal(JSON.stringify(await response.json()).includes('PRIVATE'), false);
   });
 });
+
+test('utility mapping null removes only that mapping and preserves token, siblings and other integrations', async () => {
+  let persisted = {
+    analytics: { enabled: true },
+    whatsapp: {
+      provider: 'cloud',
+      enabled: true,
+      phone_number_id: 'phone-7',
+      access_token_encrypted: 'v1:encrypted',
+      templates: {
+        order_confirmation: { name: 'confirm_v1', language: 'es_AR' },
+        order_en_route: { name: 'route_v1', language: 'es_AR' },
+        transfer_payment: { name: 'transfer_v1', language: 'es_AR' },
+      },
+    },
+  };
+  const app = buildApp({
+    user: { role: 'super', empresa_id: null },
+    query: async (sql, params = []) => {
+      if (String(sql).includes('FOR UPDATE')) {
+        return [{ id: 7, config_integraciones: structuredClone(persisted) }];
+      }
+      if (String(sql).includes('UPDATE empresas')) {
+        persisted = JSON.parse(params[21]);
+        return [{ id: 7, config_integraciones: structuredClone(persisted) }];
+      }
+      throw new Error(`SQL inesperado: ${sql}`);
+    },
+  });
+
+  await withServer(app, async baseUrl => {
+    const response = await fetch(`${baseUrl}/api/empresas/7`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        config_integraciones: { whatsapp: { templates: { order_confirmation: null } } },
+      }),
+    });
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.deepEqual(body.config_integraciones.whatsapp.templates, {
+      order_en_route: { name: 'route_v1', language: 'es_AR' },
+      transfer_payment: { name: 'transfer_v1', language: 'es_AR' },
+    });
+  });
+
+  assert.deepEqual(persisted.analytics, { enabled: true });
+  assert.equal(persisted.whatsapp.access_token_encrypted, 'v1:encrypted');
+  assert.deepEqual(persisted.whatsapp.templates, {
+    order_en_route: { name: 'route_v1', language: 'es_AR' },
+    transfer_payment: { name: 'transfer_v1', language: 'es_AR' },
+  });
+});
+
+test('stale editor changing only transfer mapping cannot revert a newer confirmation mapping', async () => {
+  let persisted = {
+    whatsapp: {
+      provider: 'cloud', enabled: true, phone_number_id: 'phone-7', access_token_encrypted: 'v1:encrypted',
+      templates: {
+        order_confirmation: { name: 'confirm_old', language: 'es_AR' },
+        transfer_payment: { name: 'transfer_old', language: 'es_AR' },
+      },
+    },
+  };
+  const transactionQuery = async (sql, params = []) => {
+    if (String(sql).includes('FOR UPDATE')) return [{ id: 7, config_integraciones: structuredClone(persisted) }];
+    if (String(sql).includes('UPDATE empresas')) {
+      persisted = JSON.parse(params[21]);
+      return [{ id: 7, config_integraciones: structuredClone(persisted) }];
+    }
+    throw new Error(`SQL inesperado: ${sql}`);
+  };
+  const lock = createSerializedLockPool([], transactionQuery);
+  const app = buildApp({
+    query: async () => assert.fail('debe usar el client bajo lock'),
+    pool: lock.pool,
+    user: { role: 'super', empresa_id: null },
+  });
+
+  await withServer(app, async baseUrl => {
+    const editorA = await fetch(`${baseUrl}/api/empresas/7`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ config_integraciones: { whatsapp: { templates: {
+        order_confirmation: { name: 'confirm_new', language: 'es_AR' },
+      } } } }),
+    });
+    assert.equal(editorA.status, 200);
+
+    const editorB = await fetch(`${baseUrl}/api/empresas/7`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ config_integraciones: { whatsapp: { templates: {
+        transfer_payment: { name: 'transfer_new', language: 'es_AR' },
+      } } } }),
+    });
+    assert.equal(editorB.status, 200);
+    assert.deepEqual((await editorB.json()).config_integraciones.whatsapp.templates, {
+      order_confirmation: { name: 'confirm_new', language: 'es_AR' },
+      transfer_payment: { name: 'transfer_new', language: 'es_AR' },
+    });
+  });
+
+  assert.equal(lock.maxActive, 1);
+  assert.deepEqual(persisted.whatsapp.templates, {
+    order_confirmation: { name: 'confirm_new', language: 'es_AR' },
+    transfer_payment: { name: 'transfer_new', language: 'es_AR' },
+  });
+});
+
+test('simultaneous same-key template edits serialize without losing sibling mappings', async () => {
+  let persisted = {
+    whatsapp: {
+      provider: 'cloud', enabled: true, phone_number_id: 'phone-7', access_token_encrypted: 'v1:encrypted',
+      templates: {
+        order_confirmation: { name: 'confirm_stable', language: 'es_AR' },
+        order_en_route: { name: 'route_old', language: 'es_AR' },
+      },
+    },
+  };
+  const accepted = [];
+  const transactionQuery = async (sql, params = []) => {
+    if (String(sql).includes('FOR UPDATE')) return [{ id: 7, config_integraciones: structuredClone(persisted) }];
+    if (String(sql).includes('UPDATE empresas')) {
+      persisted = JSON.parse(params[21]);
+      accepted.push(persisted.whatsapp.templates.order_en_route.name);
+      return [{ id: 7, config_integraciones: structuredClone(persisted) }];
+    }
+    throw new Error(`SQL inesperado: ${sql}`);
+  };
+  const lock = createSerializedLockPool([], transactionQuery);
+  const app = buildApp({
+    query: async () => assert.fail('debe usar el client bajo lock'),
+    pool: lock.pool,
+    user: { role: 'super', empresa_id: null },
+  });
+
+  await withServer(app, async baseUrl => {
+    const responses = await Promise.all(['route_a', 'route_b'].map(name => fetch(`${baseUrl}/api/empresas/7`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ config_integraciones: { whatsapp: { templates: {
+        order_en_route: { name, language: 'es_AR' },
+      } } } }),
+    })));
+    assert.deepEqual(responses.map(response => response.status), [200, 200]);
+  });
+
+  assert.equal(lock.maxActive, 1);
+  assert.equal(accepted.length, 2);
+  assert.equal(persisted.whatsapp.templates.order_en_route.name, accepted.at(-1));
+  assert.deepEqual(persisted.whatsapp.templates.order_confirmation, { name: 'confirm_stable', language: 'es_AR' });
+});
