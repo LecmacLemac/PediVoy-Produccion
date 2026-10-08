@@ -30,6 +30,73 @@ function overlapArea(first, second) {
   return width * height;
 }
 
+async function clickCurrent(page, selector) {
+  const clicked = await page.evaluate(target => {
+    const element = document.querySelector(target);
+    if (!(element instanceof HTMLElement) || element.matches(':disabled') || element.inert) return false;
+    element.click();
+    return true;
+  }, selector);
+  assert.equal(clicked, true, `${selector} debe existir y aceptar interacción`);
+}
+
+async function openConversationAndWait(page, conversationId = '44') {
+  const selector = `.conversation-card[data-conversation-id="${conversationId}"]`;
+  await page.waitForFunction(target => {
+    const element = document.querySelector(target);
+    return element instanceof HTMLElement && !element.matches(':disabled') && !element.inert;
+  }, {}, selector);
+  await clickCurrent(page, selector);
+  await page.waitForFunction(id => {
+    const active = document.querySelector(`.conversation-card[data-conversation-id="${id}"]`);
+    const input = document.querySelector('#messageInput');
+    const history = document.querySelector('#messageHistory');
+    const context = document.querySelector('#conversationContext');
+    const toggle = document.querySelector('#contextToggle');
+    return active?.getAttribute('aria-current') === 'true'
+      && input?.disabled === false
+      && Boolean(history?.querySelector('.message'))
+      && !context?.querySelector('.skeleton')
+      && Boolean(context?.querySelector('strong'))
+      && toggle instanceof HTMLElement
+      && !toggle.matches(':disabled')
+      && !toggle.inert;
+  }, {}, String(conversationId));
+}
+
+async function openOverlayAndWait(page, triggerSelector, panelSelector) {
+  await page.waitForFunction(target => {
+    const trigger = document.querySelector(target);
+    return trigger instanceof HTMLElement
+      && !trigger.matches(':disabled')
+      && !trigger.inert
+      && trigger.getClientRects().length > 0
+      && document.querySelector('#inboxLayout')?.dataset.overlayOpen !== 'true';
+  }, {}, triggerSelector);
+  const opened = await page.evaluate(({ triggerSelector: triggerTarget, panelSelector: panelTarget }) => {
+    const trigger = document.querySelector(triggerTarget);
+    const panel = document.querySelector(panelTarget);
+    if (!(trigger instanceof HTMLElement) || !(panel instanceof HTMLElement)) return null;
+    trigger.click();
+    return {
+      panelOpen: panel.dataset.open,
+      expanded: trigger.getAttribute('aria-expanded'),
+      overlayOpen: document.querySelector('#inboxLayout')?.dataset.overlayOpen,
+      backdropHidden: document.querySelector('#overlayBackdrop')?.getAttribute('aria-hidden'),
+    };
+  }, { triggerSelector, panelSelector });
+  assert.deepEqual(opened, {
+    panelOpen: 'true', expanded: 'true', overlayOpen: 'true', backdropHidden: 'false',
+  });
+  await page.waitForFunction(target => {
+    const panel = document.querySelector(target);
+    return panel?.dataset.open === 'true'
+      && panel.getAttribute('role') === 'dialog'
+      && panel.getAttribute('aria-modal') === 'true'
+      && panel.contains(document.activeElement);
+  }, {}, panelSelector);
+}
+
 async function measureState(page, selectors) {
   return page.evaluate(targets => {
     const boxes = Object.fromEntries(Object.entries(targets).map(([name, selector]) => {
@@ -1109,8 +1176,7 @@ test('Task 7 usa tres paneles desktop, dos paneles tablet y list-detail mobile s
       else assert.equal(initial.context, 'none');
       assert.notEqual(initial.safeArea, '0px');
 
-      await page.click('.conversation-card[data-conversation-id="44"]');
-      await page.waitForFunction(() => document.querySelector('#messageInput').disabled === false);
+      await openConversationAndWait(page);
       const detail = await page.evaluate(() => {
         const box = selector => {
           const element = document.querySelector(selector);
@@ -1135,8 +1201,7 @@ test('Task 7 usa tres paneles desktop, dos paneles tablet y list-detail mobile s
         assert.ok(detail.queue.width >= 300 && detail.chat.width >= 420);
         assert.equal(detail.context.display, 'none');
         if (viewport.width === 1024) {
-          await page.click('#contextToggle');
-          await page.waitForSelector('#contextPanel[data-open="true"]');
+          await openOverlayAndWait(page, '#contextToggle', '#contextPanel');
           const drawer = await page.$eval('#contextPanel', element => element.getBoundingClientRect().toJSON());
           const composer = await page.$eval('#composerForm', element => element.getBoundingClientRect().toJSON());
           assert.ok(drawer.left >= 0 && drawer.right <= viewport.width);
@@ -1183,8 +1248,7 @@ test('Task 7 drawers son accesibles, cierran con Escape y restauran foco sin per
 
     await page.focus('#conversationSearch');
     await page.type('#conversationSearch', 'borrador búsqueda');
-    await page.click('#filtersToggle');
-    await page.waitForSelector('#queueFilters[data-open="true"]');
+    await openOverlayAndWait(page, '#filtersToggle', '#queueFilters');
     assert.equal(await page.$eval('#filtersToggle', button => button.getAttribute('aria-expanded')), 'true');
     assert.equal(await page.evaluate(() => document.activeElement?.id), 'workflowFilter');
     await page.keyboard.press('Escape');
@@ -1192,11 +1256,9 @@ test('Task 7 drawers son accesibles, cierran con Escape y restauran foco sin per
     assert.equal(await page.evaluate(() => document.activeElement?.id), 'filtersToggle');
     assert.equal(await page.$eval('#conversationSearch', input => input.value), 'borrador búsqueda');
 
-    await page.click('.conversation-card[data-conversation-id="44"]');
-    await page.waitForFunction(() => document.querySelector('#messageInput').disabled === false);
+    await openConversationAndWait(page);
     await page.type('#messageInput', 'borrador de respuesta');
-    await page.click('#contextToggle');
-    await page.waitForSelector('#contextPanel[data-open="true"]');
+    await openOverlayAndWait(page, '#contextToggle', '#contextPanel');
     const open = await page.evaluate(() => ({
       expanded: document.querySelector('#contextToggle').getAttribute('aria-expanded'),
       active: document.activeElement?.id,
@@ -1219,8 +1281,7 @@ test('Task 7 drawers son accesibles, cierran con Escape y restauran foco sin per
 test('Task 7 usa 767px como único límite mobile para foco, volver y restauración', { skip: !existsSync(chromePath) }, async () => {
   for (const width of [760, 761, 767, 768]) {
     await withBrowserPage({ width, height: 800, deviceScaleFactor: 1 }, async ({ page }) => {
-      await page.click('.conversation-card[data-conversation-id="44"]');
-      await page.waitForFunction(() => document.querySelector('#messageInput').disabled === false);
+      await openConversationAndWait(page);
       const detail = await page.evaluate(() => ({
         queue: getComputedStyle(document.querySelector('.conversation-pane')).display,
         chat: getComputedStyle(document.querySelector('#chatPanel')).display,
@@ -1249,8 +1310,7 @@ test('Task 7 ajusta detalle y composer al visualViewport y restaura al cerrar te
   for (const width of [320, 360, 390]) {
     const layoutHeight = width === 320 ? 568 : 844;
     await withBrowserPage({ width, height: layoutHeight, deviceScaleFactor: 1 }, async ({ page }) => {
-      await page.click('.conversation-card[data-conversation-id="44"]');
-      await page.waitForFunction(() => document.querySelector('#messageInput').disabled === false);
+      await openConversationAndWait(page);
       for (const [height, offsetTop] of [[500, 0], [420, 18]]) {
         await page.evaluate(({ height: nextHeight, offsetTop: nextOffset }) => window.__setVisualViewport({ height: nextHeight, offsetTop: nextOffset }), { height, offsetTop });
         await page.waitForFunction(() => document.body.classList.contains('keyboard-open'));
@@ -1308,8 +1368,7 @@ test('Task 7 ajusta detalle y composer al visualViewport y restaura al cerrar te
 
 test('Task 7 filtros y contexto son diálogos modales nombrados sólo mientras son overlays', { skip: !existsSync(chromePath) }, async () => {
   await withBrowserPage({ width: 768, height: 900, deviceScaleFactor: 1 }, async ({ page }) => {
-    await page.click('#filtersToggle');
-    await page.waitForSelector('#queueFilters[data-open="true"]');
+    await openOverlayAndWait(page, '#filtersToggle', '#queueFilters');
     const filters = await page.evaluate(() => {
       const panel = document.querySelector('#queueFilters');
       return {
@@ -1327,8 +1386,7 @@ test('Task 7 filtros y contexto son diálogos modales nombrados sólo mientras s
   });
 
   await withBrowserPage({ width: 768, height: 900, deviceScaleFactor: 1 }, async ({ page }) => {
-    await page.click('.conversation-card[data-conversation-id="44"]');
-    await page.waitForFunction(() => document.querySelector('#messageInput').disabled === false);
+    await openConversationAndWait(page);
     await page.waitForFunction(() => {
       const button = document.querySelector('#contextToggle');
       const rect = button.getBoundingClientRect();
@@ -1339,8 +1397,7 @@ test('Task 7 filtros y contexto son diálogos modales nombrados sólo mientras s
       return document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)?.id || '';
     });
     assert.equal(contextHitTarget, 'contextToggle', 'el disparador de contexto tablet no debe quedar cubierto');
-    await page.click('#contextToggle');
-    await page.waitForSelector('#contextPanel[data-open="true"]');
+    await openOverlayAndWait(page, '#contextToggle', '#contextPanel');
     const context = await page.evaluate(() => ({
       role: document.querySelector('#contextPanel').getAttribute('role'),
       modal: document.querySelector('#contextPanel').getAttribute('aria-modal'),
@@ -1362,26 +1419,24 @@ test('Task 7 filtros y contexto son diálogos modales nombrados sólo mientras s
 test('Task 7 reintenta contexto visible con GET cercado y limpia el error', { skip: !existsSync(chromePath) }, async () => {
   const staleRetry = deferred();
   await withBrowserPage({ width: 390, height: 844, deviceScaleFactor: 1 }, async ({ page, counts }) => {
-    await page.click('.conversation-card[data-conversation-id="44"]');
+    await openConversationAndWait(page);
     await page.waitForFunction(() => document.querySelector('#contextRetry'));
-    await page.click('#contextToggle');
-    await page.waitForSelector('#contextPanel[data-open="true"]');
+    await openOverlayAndWait(page, '#contextToggle', '#contextPanel');
     assert.match(await page.$eval('#conversationContext', element => element.textContent), /No se pudo cargar.*Reintentar/s);
-    await page.click('#contextRetry');
+    await clickCurrent(page, '#contextRetry');
     await page.waitForFunction(() => document.querySelector('#conversationContext')?.textContent.includes('Cliente identificado'));
     assert.equal(counts.contexts, 2);
     assert.doesNotMatch(await page.$eval('#conversationContext', element => element.textContent), /No se pudo cargar/);
 
     await page.keyboard.press('Escape');
     await page.click('#backToList');
-    await page.click('.conversation-card[data-conversation-id="45"]');
+    await openConversationAndWait(page, '45');
     await page.waitForFunction(() => document.querySelector('#contextRetry'));
-    await page.click('#contextToggle');
-    await page.waitForSelector('#contextPanel[data-open="true"]');
-    await page.click('#contextRetry');
+    await openOverlayAndWait(page, '#contextToggle', '#contextPanel');
+    await clickCurrent(page, '#contextRetry');
     await page.keyboard.press('Escape');
     await page.click('#backToList');
-    await page.click('.conversation-card[data-conversation-id="44"]');
+    await clickCurrent(page, '.conversation-card[data-conversation-id="44"]');
     staleRetry.resolve();
     await page.waitForFunction(() => document.querySelector('#conversationContext')?.textContent.includes('Cliente identificado'));
     assert.doesNotMatch(await page.$eval('#conversationContext', element => element.textContent), /STALE 45/);
