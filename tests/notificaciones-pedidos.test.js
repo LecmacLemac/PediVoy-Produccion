@@ -32,7 +32,10 @@ test('notificarEnRuta envia WhatsApp aunque el pedido ya tenga tracking_token', 
       if (sql.includes('SET en_ruta_notificado_at')) return [];
       throw new Error(`SQL no esperado: ${sql}`);
     },
-    enqueueWppMessageFn: async (msg) => enqueued.push(msg),
+    enqueueWppMessageFn: async (msg) => {
+      enqueued.push(msg);
+      return { queued: true, id: 91, status: 'pending', transportOrigin: 'company' };
+    },
   });
 
   await notificarEnRuta(42, 1);
@@ -83,7 +86,10 @@ test('notificarEnRuta genera token si falta y envia link con token nuevo', async
       if (sql.includes('SET en_ruta_notificado_at')) return [];
       throw new Error(`SQL no esperado: ${sql}`);
     },
-    enqueueWppMessageFn: async (msg) => enqueued.push(msg),
+    enqueueWppMessageFn: async (msg) => {
+      enqueued.push(msg);
+      return { queued: true, id: 92, status: 'pending', transportOrigin: 'company' };
+    },
     randomBytes: () => ({ toString: () => 'tok_nuevo' }),
   });
 
@@ -95,7 +101,33 @@ test('notificarEnRuta genera token si falta y envia link con token nuevo', async
   assert.doesNotMatch(enqueued[0].message, /tok_nuevo/);
 });
 
-test('notificarEnRuta rechaza tokens no opacos y no marca la notificación', async () => {
+test('notificarEnRuta preserva texto Web con dirección fuera del límite Cloud', async () => {
+  const address = 'Calle histórica ' + 'A'.repeat(600);
+  const enqueued = [];
+  const marks = [];
+  const notificarEnRuta = createNotificarEnRuta({
+    queryFn: async (sql) => {
+      if (sql.includes('ALTER TABLE pedidos')) return [];
+      if (sql.includes('SELECT') && sql.includes('FROM pedidos')) return [buildPedido({ direccion: address })];
+      if (sql.includes('SET en_ruta_notificado_at')) { marks.push(sql); return []; }
+      throw new Error(`SQL no esperado: ${sql}`);
+    },
+    enqueueWppMessageFn: async payload => {
+      enqueued.push(payload);
+      return { queued: true, id: 91, status: 'pending', transportOrigin: 'company' };
+    },
+  });
+
+  await notificarEnRuta(42, 1);
+
+  assert.equal(enqueued.length, 1);
+  assert.ok(enqueued[0].message.includes(address));
+  assert.equal(enqueued[0].utility_template.parameters.address, address);
+  assert.equal(Object.hasOwn(enqueued[0], 'require_utility_template'), false);
+  assert.equal(marks.length, 1);
+});
+
+test('notificarEnRuta delega validación opaca a Cloud y no marca si enqueue falla', async () => {
   for (const token of ['', 'https://evil.test/x', 'tok?x=1', 'tok con espacio', 'tok\ncontrol', 'x'.repeat(201)]) {
     const enqueued = [];
     const marks = [];
@@ -107,10 +139,13 @@ test('notificarEnRuta rechaza tokens no opacos y no marca la notificación', asy
         if (sql.includes('SET en_ruta_notificado_at')) { marks.push(sql); return []; }
         throw new Error(`SQL no esperado: ${sql}`);
       },
-      enqueueWppMessageFn: async payload => { enqueued.push(payload); },
+      enqueueWppMessageFn: async payload => {
+        enqueued.push(payload);
+        throw Object.assign(new Error('private invalid token'), { code: 'cloud_template_payload_invalid' });
+      },
     });
     await assert.rejects(notificarEnRuta(42, 1), { code: 'cloud_template_payload_invalid' });
-    assert.equal(enqueued.length, 0);
+    assert.equal(enqueued.length, 1);
     assert.equal(marks.length, 0);
   }
 });
@@ -136,6 +171,58 @@ test('notificarEnRuta propaga error sanitizado y marca sólo después de enqueue
     return true;
   });
   assert.deepEqual(events, ['enqueue']);
+});
+
+test('notificarEnRuta no marca resultados de enqueue omitidos o no durables', async () => {
+  for (const result of [
+    undefined,
+    { queued: false, skipped: true, reason: 'invalid_payload' },
+    { queued: false, skipped: true, reason: 'missing_phone_or_message' },
+    { queued: false },
+    { queued: true },
+    { queued: true, id: 91 },
+    { queued: true, id: null, status: 'pending', transportOrigin: 'company' },
+    { queued: false, skipped: true, reason: 'duplicate_5m', id: 91 },
+  ]) {
+    const events = [];
+    const notificarEnRuta = createNotificarEnRuta({
+      queryFn: async (sql) => {
+        if (sql.includes('ALTER TABLE pedidos')) return [];
+        if (sql.includes('SELECT') && sql.includes('FROM pedidos')) return [buildPedido()];
+        if (sql.includes('SET en_ruta_notificado_at')) { events.push('marked'); return []; }
+        throw new Error(`SQL no esperado: ${sql}`);
+      },
+      enqueueWppMessageFn: async () => result,
+    });
+
+    await assert.rejects(notificarEnRuta(42, 1), error => {
+      assert.equal(error.code, 'notification_enqueue_not_accepted');
+      assert.doesNotMatch(JSON.stringify(error), /Cliente Test|tok_123|3531234567/);
+      return true;
+    });
+    assert.deepEqual(events, []);
+  }
+});
+
+test('notificarEnRuta marca sólo resultados durables insertados o deduplicados', async () => {
+  for (const result of [
+    { queued: true, id: 91, status: 'pending', transportOrigin: 'company' },
+    { queued: false, skipped: true, reason: 'duplicate_5m', id: 91, status: 'pending', transportOrigin: 'cloud' },
+  ]) {
+    const events = [];
+    const notificarEnRuta = createNotificarEnRuta({
+      queryFn: async (sql) => {
+        if (sql.includes('ALTER TABLE pedidos')) return [];
+        if (sql.includes('SELECT') && sql.includes('FROM pedidos')) return [buildPedido()];
+        if (sql.includes('SET en_ruta_notificado_at')) { events.push('marked'); return []; }
+        throw new Error(`SQL no esperado: ${sql}`);
+      },
+      enqueueWppMessageFn: async () => result,
+    });
+
+    await notificarEnRuta(42, 1);
+    assert.deepEqual(events, ['marked']);
+  }
 });
 
 test('notificarPedidoTransferencia usa la cuenta activa de menor prioridad', async () => {
@@ -215,8 +302,40 @@ test('notificarPedidoTransferencia conserva texto Web sin cuenta y delega fail-c
 
   assert.equal(enqueued.length, 1);
   assert.equal(enqueued[0].utility_template, null);
-  assert.equal(enqueued[0].require_utility_template, true);
+  assert.equal(Object.hasOwn(enqueued[0], 'require_utility_template'), false);
   assert.equal(enqueued[0].message, '🏦 *Pago por transferencia*\n\nHola Cliente Test, tu pedido fue marcado para pagar por *transferencia* ($\u00a07.500,00).\n\nPor favor, adjuntá el *comprobante de transferencia* respondiendo a este mensaje para poder acreditar el pago.\n\n¡Muchas gracias!\nPediVoy Test');
+});
+
+test('notificarPedidoTransferencia preserva texto Web con datos fuera de límites Cloud', async () => {
+  const alias = 'ALIAS.' + 'X'.repeat(250);
+  const banco = 'Banco ' + 'B'.repeat(250);
+  const titular = 'Titular ' + 'T'.repeat(250);
+  const enqueued = [];
+  const notificarPedidoTransferencia = createNotificarPedidoTransferencia({
+    queryFn: async (sql) => {
+      if (sql.includes('FROM pedidos')) return [{
+        id: 42, monto: 7500, cliente: 'Cliente ' + 'C'.repeat(250), telefono: '3531234567',
+        direccion: 'Dirección', empresa_nombre: 'Empresa ' + 'E'.repeat(250), empresa_id: 1,
+      }];
+      if (sql.includes('FROM empresa_cuentas_bancarias')) return [{
+        alias, banco, cbu: '0000003100012345678901', titular, prioridad: 1,
+      }];
+      throw new Error(`SQL no esperado: ${sql}`);
+    },
+    enqueueWppMessageFn: async payload => {
+      enqueued.push(payload);
+      return { queued: true, id: 92, status: 'pending', transportOrigin: 'company' };
+    },
+  });
+
+  await notificarPedidoTransferencia(42, 1);
+
+  assert.equal(enqueued.length, 1);
+  assert.ok(enqueued[0].message.includes(alias));
+  assert.ok(enqueued[0].message.includes(banco));
+  assert.equal(enqueued[0].utility_template.parameters.alias, alias);
+  assert.equal(enqueued[0].utility_template.parameters.bank, banco);
+  assert.equal(Object.hasOwn(enqueued[0], 'require_utility_template'), false);
 });
 
 test('notificarPedidoTransferencia no filtra datos si Cloud rechaza una cuenta incompleta', async () => {
@@ -238,7 +357,7 @@ test('notificarPedidoTransferencia no filtra datos si Cloud rechaza una cuenta i
       },
       enqueueWppMessageFn: async payload => {
         assert.equal(payload.utility_template, null);
-        assert.equal(payload.require_utility_template, true);
+        assert.equal(Object.hasOwn(payload, 'require_utility_template'), false);
         throw Object.assign(new Error(privateValues.join('|')), { code: 'cloud_template_payload_invalid', token: privateValues[5] });
       },
     });

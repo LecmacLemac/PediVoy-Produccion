@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 
 const fixture = new URL('./support/public-pedido-app-wpp-wiring.mjs', import.meta.url);
 
-test('createApp conecta wpp.enqueueWppMessage con la creación pública de pedidos', () => {
+test('createApp conecta el productor privado de confirmación con la creación pública de pedidos', () => {
   const result = spawnSync(process.execPath, [fixture.pathname], {
     cwd: new URL('..', import.meta.url).pathname,
     env: { ...process.env, NODE_ENV: 'test' },

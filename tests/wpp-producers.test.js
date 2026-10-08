@@ -97,3 +97,38 @@ test('messaging forwards logical utility intent and rejects caller Graph metadat
     assert.equal(pool.calls.length, before);
   }
 });
+
+test('messaging exposes producer-specific required-template wrappers without a policy token', async () => {
+  const messaging = await import('../src/services/messaging.js');
+  const cases = [
+    ['enqueueOrderConfirmationWppMessage', 'order_confirmation', {
+      customer_name: 'Ana', items_block: '1 x Agua — $ 1', total: '$ 1', address: 'A',
+      delivery_date: 'Jueves 8', delivery_window: 'A coordinar', driver_name: 'A asignar', driver_phone: 'No informado',
+    }],
+    ['enqueueOrderEnRouteWppMessage', 'order_en_route', { customer_name: 'Ana', address: 'A', tracking_token: 'tok' }],
+    ['enqueueTransferPaymentWppMessage', 'transfer_payment', {
+      customer_name: 'Ana', amount: '$ 1', alias: 'A', cbu: '1', bank: 'B', holder: 'H', company_name: 'E',
+    }],
+  ];
+  for (const [name, key, parameters] of cases) {
+    assert.equal(typeof messaging[name], 'function');
+    const pool = createWppEnqueueTestPool({
+      configIntegraciones: { whatsapp: { provider: 'cloud', enabled: true, phone_number_id: 'p', access_token_encrypted: 'e' } },
+    });
+    await messaging[name]({ empresa_id: 7, phone: '3515550000', message: 'Web', utility_template: { key, parameters } }, pool);
+    assert.equal(pool.calls.find(call => /INSERT INTO/.test(call.text)).values[5], key);
+  }
+  assert.equal(Object.keys(messaging).some(name => /capability|token/i.test(name)), false);
+});
+
+test('messaging generic API rejects caller-controlled required-template flags before DB', async () => {
+  const { enqueueWppMessage } = await import('../src/services/messaging.js');
+  for (const extra of [{ require_utility_template: true }, { requireUtilityTemplate: true }]) {
+    const pool = createWppEnqueueTestPool();
+    await assert.rejects(
+      enqueueWppMessage({ empresa_id: 7, phone: '3515550000', message: 'Web', ...extra }, pool),
+      { code: 'cloud_template_payload_invalid' },
+    );
+    assert.equal(pool.calls.length, 0);
+  }
+});

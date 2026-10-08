@@ -17,6 +17,7 @@ function buildTestApp(overrides = {}) {
     geocodeIfNeeded: overrides.geocodeIfNeeded || noop,
     normalizePhone: overrides.normalizePhone || ((v) => String(v || '').replace(/\D+/g, '')),
     pointInAnyZone: overrides.pointInAnyZone || (async () => null),
+    enqueueOrderConfirmationWppMessage: overrides.enqueueWppMessage || noop,
     enqueueWppMessage: overrides.enqueueWppMessage || noop,
     toNum,
     inRange,

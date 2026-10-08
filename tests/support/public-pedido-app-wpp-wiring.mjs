@@ -63,6 +63,7 @@ const app = createApp({
   wpp: {
     checkLicencia: (_req, _res, next) => next(),
     enqueueWppMessage: async () => { wppCalls += 1; },
+    enqueueOrderConfirmationWppMessage: async () => { wppCalls += 1; },
   },
   ejecutarEstrategiaVecinos: noop,
   ejecutarPostEntregaUpsell: noop,

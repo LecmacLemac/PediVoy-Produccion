@@ -55,6 +55,7 @@ test('POST /public/pedidos con mismo submission_id no duplica pedido', async () 
     geocodeIfNeeded: async () => null,
     normalizePhone: (v) => String(v || '').replace(/\D+/g, ''),
     pointInAnyZone: async () => null,
+    enqueueOrderConfirmationWppMessage: async () => null,
     enqueueWppMessage: async () => null,
     toNum,
     inRange,

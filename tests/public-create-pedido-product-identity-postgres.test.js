@@ -136,6 +136,7 @@ function buildApp(pool, overrides = {}) {
     geocodeIfNeeded: overrides.geocodeIfNeeded || (async () => null),
     normalizePhone: value => String(value || '').replace(/\D+/g, ''),
     pointInAnyZone: async () => null,
+    enqueueOrderConfirmationWppMessage: overrides.enqueueWppMessage || (async () => null),
     enqueueWppMessage: overrides.enqueueWppMessage || (async () => null),
     sendSmsViaIfttt: async () => null,
     toNum,

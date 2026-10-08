@@ -3,7 +3,13 @@ import assert from 'node:assert/strict';
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { enqueueWppOutbox, enqueueWppOutboxInTransaction } from '../src/wpp/enqueue.js';
+import {
+  enqueueWppOutbox,
+  enqueueWppOutboxInTransaction,
+  enqueueWppOrderConfirmationNotification,
+  enqueueWppOrderEnRouteNotification,
+  enqueueWppTransferPaymentNotification,
+} from '../src/wpp/enqueue.js';
 
 function createPool(handler) {
   const calls = [];
@@ -377,18 +383,21 @@ test('utility intent persists only for resolved Cloud and keeps original message
   }
 });
 
-test('required utility intent fails closed only for resolved Cloud transport', async () => {
+test('required producer wrapper validates Cloud strictly only after resolving transport', async () => {
+  const overlongCandidate = {
+    key: 'order_en_route',
+    parameters: { customer_name: 'Ana', address: 'A'.repeat(501), tracking_token: 'https://legacy.example/t?id=1' },
+  };
   for (const transport of ['cloud', 'company']) {
     const tx = createPool(async ({ text }) => {
       if (text.includes('SELECT config_integraciones')) return { rows: [{ config_integraciones: transport === 'cloud' ? { whatsapp: { provider: 'cloud', enabled: true, phone_number_id: 'p', access_token_encrypted: 'e' } } : {} }] };
       return { rows: text.includes('INSERT INTO') ? [{ id: 1, status: 'pending' }] : [] };
     });
-    const operation = enqueueWppOutbox({
+    const operation = enqueueWppOrderEnRouteNotification({
       empresaId: 7,
       phone: '3515550000',
-      message: 'Web tolerante sin cuenta',
-      utility_template: null,
-      require_utility_template: true,
+      message: 'Web tolerante exacto con dirección histórica ' + 'A'.repeat(501),
+      utility_template: overlongCandidate,
     }, tx);
     if (transport === 'cloud') {
       await assert.rejects(operation, { code: 'cloud_template_payload_invalid' });
@@ -396,9 +405,86 @@ test('required utility intent fails closed only for resolved Cloud transport', a
     } else {
       await operation;
       const insert = tx.calls.find(call => call.text.includes('INSERT INTO'));
+      assert.equal(insert.values[2], 'Web tolerante exacto con dirección histórica ' + 'A'.repeat(501));
       assert.deepEqual(insert.values.slice(5), [null, null]);
     }
   }
+});
+
+test('required producer wrappers fail closed on Cloud without their exact intent and preserve Web text', async () => {
+  const cases = [
+    [enqueueWppOrderConfirmationNotification, 'order_confirmation'],
+    [enqueueWppOrderEnRouteNotification, 'order_en_route'],
+    [enqueueWppTransferPaymentNotification, 'transfer_payment'],
+  ];
+  for (const [enqueue, key] of cases) {
+    for (const transport of ['cloud', 'company']) {
+      const tx = createPool(async ({ text }) => {
+        if (text.includes('SELECT config_integraciones')) return { rows: [{ config_integraciones: transport === 'cloud' ? { whatsapp: { provider: 'cloud', enabled: true, phone_number_id: 'p', access_token_encrypted: 'e' } } : {} }] };
+        return { rows: text.includes('INSERT INTO') ? [{ id: 1, status: 'pending' }] : [] };
+      });
+      const operation = enqueue({
+        empresaId: 7,
+        phone: '3515550000',
+        message: `texto Web ${key}`,
+        utility_template: null,
+      }, tx);
+      if (transport === 'cloud') {
+        await assert.rejects(operation, { code: 'cloud_template_payload_invalid' });
+        assert.equal(tx.calls.some(call => call.text.includes('INSERT INTO')), false);
+      } else {
+        await operation;
+        const insert = tx.calls.find(call => call.text.includes('INSERT INTO'));
+        assert.equal(insert.values[2], `texto Web ${key}`);
+        assert.deepEqual(insert.values.slice(5), [null, null]);
+      }
+    }
+  }
+});
+
+test('generic callers cannot set or alias required-template policy before DB', async () => {
+  for (const extra of [
+    { require_utility_template: true },
+    { requireUtilityTemplate: true },
+    { required_template: true },
+    { template_required: true },
+  ]) {
+    const tx = enterpriseSuccessPool();
+    await assert.rejects(
+      enqueueWppOutbox({ empresaId: 7, phone: '3515550000', message: 'Web', ...extra }, tx),
+      { code: 'cloud_template_payload_invalid' },
+    );
+    assert.equal(tx.calls.length, 0);
+  }
+});
+
+test('generic Cloud enqueue without intent remains allowed for conversational paths', async () => {
+  const tx = enterpriseSuccessPool();
+  const result = await enqueueWppOutbox({ empresaId: 7, phone: '3515550000', message: 'reply libre' }, tx);
+  assert.equal(result.queued, true);
+  const insert = tx.calls.find(call => call.text.includes('INSERT INTO'));
+  assert.deepEqual(insert.values.slice(5), [null, null]);
+});
+
+test('logical candidates reject hostile shapes before DB without reading accessors', async () => {
+  let getterReads = 0;
+  const accessorParameters = {};
+  Object.defineProperty(accessorParameters, 'customer_name', { enumerable: true, get() { getterReads += 1; return 'Ana'; } });
+  Object.assign(accessorParameters, { address: 'A', tracking_token: 'tok' });
+  const hostile = [
+    { key: 'order_en_route', parameters: [] },
+    { key: 'order_en_route', parameters: Object.create({ customer_name: 'Ana', address: 'A', tracking_token: 'tok' }) },
+    { key: 'order_en_route', parameters: accessorParameters },
+  ];
+  for (const utility_template of hostile) {
+    const tx = enterpriseSuccessPool();
+    await assert.rejects(
+      enqueueWppOrderEnRouteNotification({ empresaId: 7, phone: '3515550000', message: 'Web', utility_template }, tx),
+      { code: 'cloud_template_payload_invalid' },
+    );
+    assert.equal(tx.calls.length, 0);
+  }
+  assert.equal(getterReads, 0);
 });
 
 test('utility intent rejects invalid metadata and caller-selected Graph/transport before any query', async () => {

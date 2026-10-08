@@ -1,7 +1,11 @@
 import pkg from 'whatsapp-web.js';
 import qrcode from 'qrcode';
 
-import { enqueueWppMessage, checkLicencia } from '../services.js';
+import {
+  enqueueWppMessage,
+  enqueueOrderConfirmationWppMessage,
+  checkLicencia,
+} from '../services.js';
 import handlers from '../handlers.js';
 
 const { Client, LocalAuth } = pkg;
@@ -21,6 +25,7 @@ export function createWppDeps(wppOverrides = {}) {
       qrcode,
       handlers,
       enqueueWppMessage,
+      enqueueOrderConfirmationWppMessage,
       checkLicencia,
       ...wppOverrides,
     },

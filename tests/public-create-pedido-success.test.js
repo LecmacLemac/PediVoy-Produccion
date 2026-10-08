@@ -14,6 +14,7 @@ function buildApp({ query, enqueueWppMessage } = {}) {
     geocodeIfNeeded: async () => ({ lat: -24.8, lng: -65.4 }),
     normalizePhone: (v) => String(v || '').replace(/\D+/g, ''),
     pointInAnyZone: async () => 7,
+    enqueueOrderConfirmationWppMessage: enqueueWppMessage || (async () => null),
     enqueueWppMessage: enqueueWppMessage || (async () => null),
     toNum,
     inRange,
@@ -37,6 +38,7 @@ async function withServer(app, fn) {
 }
 
 test('POST /public/pedidos crea pedido válido', async () => {
+  const legacyLongCustomer = 'Hidro Cliente ' + 'C'.repeat(210);
   const calls = [];
   const query = async (sql, params = []) => {
     calls.push(String(sql));
@@ -80,7 +82,7 @@ test('POST /public/pedidos crea pedido válido', async () => {
       headers: { 'content-type': 'application/json', 'x-forwarded-for': '1.1.1.1' },
       body: JSON.stringify({
         empresa_id: 1,
-        cliente: 'Hidro Cliente',
+        cliente: legacyLongCustomer,
         telefono: '387-555-1122',
         direccion: 'Calle Falsa 123',
         ciudad: 'Salta',
@@ -107,7 +109,7 @@ test('POST /public/pedidos crea pedido válido', async () => {
     assert.deepEqual(wppCalls[0].utility_template, {
       key: 'order_confirmation',
       parameters: {
-        customer_name: 'Hidro Cliente',
+        customer_name: legacyLongCustomer,
         items_block: '2 x Bidón 20L — $ 7.000',
         total: '$ 7.000',
         address: 'Calle Falsa 123, Salta, Salta',

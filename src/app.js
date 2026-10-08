@@ -130,6 +130,7 @@ export function createApp(deps) {
     wpp: {
       checkLicencia,
       enqueueWppMessage,
+      enqueueOrderConfirmationWppMessage,
     } = {},
 
   } = deps || {};
@@ -384,6 +385,7 @@ export function createApp(deps) {
     geocodeIfNeeded: deps?.geocodeIfNeeded,
     normalizePhone: deps?.normalizePhone,
     pointInAnyZone: deps?.pointInAnyZone,
+    enqueueOrderConfirmationWppMessage,
     enqueueWppMessage,
     sendSmsViaIfttt: deps?.sendSmsViaIfttt,
     toNum,

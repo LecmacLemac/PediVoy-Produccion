@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { z } from 'zod';
 import { armarMensajeConfirmado, calcularFechaEntregaReal, formatARS } from '../utils.js';
-import { buildOrderConfirmationIntent, boundOrderItemsBlock } from '../whatsappCloud/utilityTemplates.js';
+import { boundOrderItemsBlock } from '../whatsappCloud/utilityTemplates.js';
 import { ejecutarEstrategiaVecinos } from '../estrategias.js';
 import { associateClienteWithReferente, normalizeReferenteCode } from '../services/referentesService.js';
 import { resolveProductIdentityItems } from '../services/productIdentityNamespace.js';
@@ -89,6 +89,7 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
     geocodeIfNeeded,
     normalizePhone,
     pointInAnyZone,
+    enqueueOrderConfirmationWppMessage,
     enqueueWppMessage,
     sendSmsViaIfttt,
     toNum,
@@ -916,18 +917,21 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
           current.subtotal += quantity * unitPrice;
           groupedItems.set(key, current);
         }
-        const utilityTemplate = buildOrderConfirmationIntent({
-          customer_name: String(cliente || 'Cliente'),
-          items_block: boundOrderItemsBlock([...groupedItems.values()].map((item) => (
-            `${item.quantity} x ${item.product} — ${formatARS(item.subtotal)}`
-          ))),
-          total: formatARS(pedido.monto),
-          address: deliveryAddress,
-          delivery_date: deliveryDateLabel,
-          delivery_window: String(configEntregaFinal?.horarios || 'A coordinar'),
-          driver_name: String(repData?.nombre || 'A asignar'),
-          driver_phone: String(repData?.telefono || 'No informado'),
-        });
+        const utilityTemplate = {
+          key: 'order_confirmation',
+          parameters: {
+            customer_name: String(cliente || 'Cliente'),
+            items_block: boundOrderItemsBlock([...groupedItems.values()].map((item) => (
+              `${item.quantity} x ${item.product} — ${formatARS(item.subtotal)}`
+            ))),
+            total: formatARS(pedido.monto),
+            address: deliveryAddress,
+            delivery_date: deliveryDateLabel,
+            delivery_window: String(configEntregaFinal?.horarios || 'A coordinar'),
+            driver_name: String(repData?.nombre || 'A asignar'),
+            driver_phone: String(repData?.telefono || 'No informado'),
+          },
+        };
 
         let mensaje = armarMensajeConfirmado({
           cliente,
@@ -955,7 +959,7 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
         }
 
         postCommitTasks.push(async () => {
-          await enqueueWppMessage({
+          await enqueueOrderConfirmationWppMessage({
             phone: telefono,
             message: mensaje,
             empresa_id: empId,

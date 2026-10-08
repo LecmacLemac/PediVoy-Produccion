@@ -1,8 +1,10 @@
 // src/services/notificacionesPedidos.js
 import crypto from 'node:crypto';
 import { query } from '../db.js';
-import { enqueueWppMessage } from '../services.js';
-import { buildOrderEnRouteIntent, buildTransferPaymentIntent } from '../whatsappCloud/utilityTemplates.js';
+import {
+  enqueueOrderEnRouteWppMessage,
+  enqueueTransferPaymentWppMessage,
+} from './messaging.js';
 
 let pedidosNotificationSchemaReady = false;
 
@@ -11,6 +13,17 @@ function sanitizedNotificationError(error) {
     ? error.code
     : 'notification_failed';
   return Object.assign(new Error(code), { code });
+}
+
+function isDurableEnqueueAcceptance(result) {
+  if (!result || typeof result !== 'object' || !Number.isSafeInteger(result.id) || result.id <= 0
+      || typeof result.status !== 'string'
+      || !['general', 'company', 'cloud'].includes(result.transportOrigin)) return false;
+  if (result.queued === true) return true;
+  return result.queued === false
+    && result.skipped === true
+    && typeof result.reason === 'string'
+    && (result.reason.startsWith('duplicate_') || result.reason === 'duplicate_correlation');
 }
 
 async function ensurePedidosNotificationSchema(queryFn) {
@@ -34,7 +47,7 @@ function buildTrackingUrl({ landingDomain, token }) {
  */
 export function createNotificarEnRuta({
   queryFn = query,
-  enqueueWppMessageFn = enqueueWppMessage,
+  enqueueWppMessageFn = enqueueOrderEnRouteWppMessage,
   randomBytes = crypto.randomBytes,
 } = {}) {
   return async function notificarEnRutaHandler(pedidoId, empresaId) {
@@ -89,16 +102,24 @@ export function createNotificarEnRuta({
         `¡Nos vemos pronto! 👋`
       );
 
-      await enqueueWppMessageFn({
+      const enqueueResult = await enqueueWppMessageFn({
         phone: datos.telefono,
         message: mensaje,
         empresa_id: empresaId,
-        utility_template: buildOrderEnRouteIntent({
-          customer_name: String(datos.cliente || 'Cliente'),
-          address: String(datos.direccion || 'No informada'),
-          tracking_token: token,
-        }),
+        utility_template: {
+          key: 'order_en_route',
+          parameters: {
+            customer_name: String(datos.cliente || 'Cliente'),
+            address: String(datos.direccion || 'No informada'),
+            tracking_token: String(token ?? ''),
+          },
+        },
       });
+      if (!isDurableEnqueueAcceptance(enqueueResult)) {
+        throw Object.assign(new Error('notification_enqueue_not_accepted'), {
+          code: 'notification_enqueue_not_accepted',
+        });
+      }
 
       await queryFn(
         `UPDATE pedidos
@@ -119,7 +140,7 @@ export const notificarEnRuta = createNotificarEnRuta();
 
 export function createNotificarPedidoTransferencia({
   queryFn = query,
-  enqueueWppMessageFn = enqueueWppMessage,
+  enqueueWppMessageFn = enqueueTransferPaymentWppMessage,
 } = {}) {
   return async function notificarPedidoTransferenciaHandler(pedidoId, empresaId) {
     try {
@@ -192,15 +213,18 @@ export function createNotificarPedidoTransferencia({
         `¡Muchas gracias!\n${empresaLabel}`;
 
       const utilityTemplate = alias && cbu && banco && titular
-        ? buildTransferPaymentIntent({
-            customer_name: String(datos.cliente || 'Cliente'),
-            amount: montoFmt,
-            alias,
-            cbu,
-            bank: banco,
-            holder: titular,
-            company_name: empresaLabel,
-          })
+        ? {
+            key: 'transfer_payment',
+            parameters: {
+              customer_name: String(datos.cliente || 'Cliente'),
+              amount: montoFmt,
+              alias,
+              cbu,
+              bank: banco,
+              holder: titular,
+              company_name: String(empresaLabel),
+            },
+          }
         : null;
 
       await enqueueWppMessageFn({
@@ -208,7 +232,6 @@ export function createNotificarPedidoTransferencia({
         message: mensaje,
         empresa_id: empresaId,
         utility_template: utilityTemplate,
-        require_utility_template: true,
       });
 
     } catch (e) {

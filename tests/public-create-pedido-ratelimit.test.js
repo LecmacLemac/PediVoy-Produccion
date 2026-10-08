@@ -24,6 +24,7 @@ test('POST /public/pedidos aplica rate limit por IP', async () => {
     geocodeIfNeeded: async () => null,
     normalizePhone: (v) => String(v || '').replace(/\D+/g, ''),
     pointInAnyZone: async () => null,
+    enqueueOrderConfirmationWppMessage: async () => null,
     enqueueWppMessage: async () => null,
     toNum,
     inRange,

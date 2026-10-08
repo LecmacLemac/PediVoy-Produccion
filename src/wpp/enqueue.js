@@ -1,4 +1,7 @@
-import { validateUtilityTemplateIntent } from '../whatsappCloud/utilityTemplates.js';
+import {
+  UTILITY_TEMPLATE_FIELDS,
+  validateUtilityTemplateIntent,
+} from '../whatsappCloud/utilityTemplates.js';
 import { createHash } from 'node:crypto';
 import { pool as defaultPool } from '../db.js';
 import { normalizeWhatsappPhone } from '../core/format.js';
@@ -6,6 +9,9 @@ import { empresaWhatsappConfigLockNamespace } from './companyConfigLock.js';
 import { isWhatsappCloudActive as matchesCanonicalCloudPolicy } from './companyWebPolicy.js';
 
 const VALID_REPLY_JID = /^[^\s@]+@(c\.us|lid)$/i;
+const REQUIRED_UTILITY_TEMPLATE_CAPABILITY = Symbol('required-utility-template-capability');
+const MAX_CANDIDATE_FIELD_LENGTH = 16_384;
+const MAX_CANDIDATE_TOTAL_LENGTH = 65_536;
 
 export function normalizeWppOutboxPayload({ phone, message }) {
   if (!phone || !message) return null;
@@ -71,13 +77,51 @@ function resolveTransactionPool(transactionPool) {
   throw new WppTransportConfigError('transaction_pool_requerido');
 }
 
+function prepareUtilityTemplateCandidate(value) {
+  if (value == null) return null;
+  if (typeof value !== 'object' || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) {
+    throw new WppTransportConfigError('cloud_template_payload_invalid');
+  }
+  const intentDescriptors = Object.getOwnPropertyDescriptors(value);
+  if (Reflect.ownKeys(intentDescriptors).length !== 2
+      || !Object.hasOwn(intentDescriptors, 'key') || !Object.hasOwn(intentDescriptors.key, 'value')
+      || !Object.hasOwn(intentDescriptors, 'parameters') || !Object.hasOwn(intentDescriptors.parameters, 'value')) {
+    throw new WppTransportConfigError('cloud_template_payload_invalid');
+  }
+  const key = intentDescriptors.key.value;
+  const fields = UTILITY_TEMPLATE_FIELDS[key];
+  const inputParameters = intentDescriptors.parameters.value;
+  if (!fields || !inputParameters || typeof inputParameters !== 'object'
+      || ![Object.prototype, null].includes(Object.getPrototypeOf(inputParameters))) {
+    throw new WppTransportConfigError('cloud_template_payload_invalid');
+  }
+  const descriptors = Object.getOwnPropertyDescriptors(inputParameters);
+  if (Reflect.ownKeys(descriptors).length !== fields.length) {
+    throw new WppTransportConfigError('cloud_template_payload_invalid');
+  }
+  const parameters = {};
+  let totalLength = 0;
+  for (const field of fields) {
+    const descriptor = descriptors[field];
+    if (!descriptor || !Object.hasOwn(descriptor, 'value') || typeof descriptor.value !== 'string'
+        || !descriptor.value.isWellFormed() || descriptor.value.length > MAX_CANDIDATE_FIELD_LENGTH) {
+      throw new WppTransportConfigError('cloud_template_payload_invalid');
+    }
+    totalLength += descriptor.value.length;
+    if (totalLength > MAX_CANDIDATE_TOTAL_LENGTH) {
+      throw new WppTransportConfigError('cloud_template_payload_invalid');
+    }
+    parameters[field] = descriptor.value;
+  }
+  return { key, parameters };
+}
+
 function prepareEnqueue({
   empresaId = null,
   phone,
   message,
   dedupeWindowMinutes = 5,
   utility_template = null,
-  require_utility_template = false,
   queryOptions, // Legacy producers request sensitivity; all payload queries are always sensitive.
   ...extra
 }, { correlatedTransportOrigin = null, correlationId = null } = {}) {
@@ -105,13 +149,9 @@ function prepareEnqueue({
     throw new WppTransportConfigError('correlation_id_invalido');
   }
 
-  if (typeof require_utility_template !== 'boolean') {
-    throw new WppTransportConfigError('cloud_template_payload_invalid');
-  }
-  const utilityTemplate = utility_template == null ? null : validateUtilityTemplateIntent(utility_template);
+  const utilityTemplateCandidate = prepareUtilityTemplateCandidate(utility_template);
   return {
-    utilityTemplate,
-    requireUtilityTemplate: require_utility_template,
+    utilityTemplateCandidate,
     payload,
     windowMinutes,
     normalizedEmpresaId,
@@ -121,13 +161,14 @@ function prepareEnqueue({
 }
 
 async function enqueuePreparedWithClient({
-  utilityTemplate,
-  requireUtilityTemplate,
+  utilityTemplateCandidate,
   payload,
   windowMinutes,
   normalizedEmpresaId,
   correlatedTransportOrigin = null,
   correlationId = null,
+  requiredUtilityTemplateKey = null,
+  requiredUtilityTemplateCapability = null,
 }, client) {
   let transportOrigin = correlatedTransportOrigin || 'general';
   if (normalizedEmpresaId !== null && correlatedTransportOrigin !== 'general') {
@@ -150,8 +191,20 @@ async function enqueuePreparedWithClient({
       ? 'cloud'
       : cloudActive ? 'cloud' : 'company';
   }
-  if (transportOrigin === 'cloud' && requireUtilityTemplate && !utilityTemplate) {
-    throw new WppTransportConfigError('cloud_template_payload_invalid');
+  let utilityTemplate = null;
+  if (transportOrigin === 'cloud') {
+    try {
+      utilityTemplate = utilityTemplateCandidate == null
+        ? null
+        : validateUtilityTemplateIntent(utilityTemplateCandidate);
+    } catch {
+      throw new WppTransportConfigError('cloud_template_payload_invalid');
+    }
+    const requiresUtilityTemplate = requiredUtilityTemplateCapability === REQUIRED_UTILITY_TEMPLATE_CAPABILITY;
+    if (requiresUtilityTemplate
+        && (!utilityTemplate || utilityTemplate.key !== requiredUtilityTemplateKey)) {
+      throw new WppTransportConfigError('cloud_template_payload_invalid');
+    }
   }
 
   const dedupeKey = correlationId
@@ -250,6 +303,25 @@ export async function enqueueWppOutbox(input, transactionPool = defaultPool) {
   return enqueueWppOutboxWithPolicy(input, transactionPool);
 }
 
+function enqueueRequiredUtilityNotification(input, transactionPool, requiredUtilityTemplateKey) {
+  return enqueueWppOutboxWithPolicy(input, transactionPool, {
+    requiredUtilityTemplateCapability: REQUIRED_UTILITY_TEMPLATE_CAPABILITY,
+    requiredUtilityTemplateKey,
+  });
+}
+
+export function enqueueWppOrderConfirmationNotification(input, transactionPool = defaultPool) {
+  return enqueueRequiredUtilityNotification(input, transactionPool, 'order_confirmation');
+}
+
+export function enqueueWppOrderEnRouteNotification(input, transactionPool = defaultPool) {
+  return enqueueRequiredUtilityNotification(input, transactionPool, 'order_en_route');
+}
+
+export function enqueueWppTransferPaymentNotification(input, transactionPool = defaultPool) {
+  return enqueueRequiredUtilityNotification(input, transactionPool, 'transfer_payment');
+}
+
 export async function enqueueWppOutboxCorrelatedReply({
   empresaId = null,
   phone,
@@ -303,6 +375,11 @@ async function enqueueWppOutboxWithPolicy(input, transactionPool, policy = {}) {
         }
         prepared = prepareEnqueue({ ...input, phone: transactionInput.phone }, policy);
         if (prepared.skippedResult) throw new WppTransportConfigError('before_enqueue_invalido');
+      }
+
+      if (policy.requiredUtilityTemplateCapability === REQUIRED_UTILITY_TEMPLATE_CAPABILITY) {
+        prepared.requiredUtilityTemplateCapability = policy.requiredUtilityTemplateCapability;
+        prepared.requiredUtilityTemplateKey = policy.requiredUtilityTemplateKey;
       }
 
       result = await enqueuePreparedWithClient(prepared, client);
