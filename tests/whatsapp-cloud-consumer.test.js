@@ -482,3 +482,42 @@ test('shutdown deja de reclamar y espera drain acotado', async () => {
   await active;
   assert.equal(claims, 1);
 });
+
+test('Graph sends exact approved utility payloads for all three intents without Web text', async () => {
+  const { UTILITY_TEMPLATE_FIELDS, buildMetaTemplateComponents } = await import('../src/whatsappCloud/utilityTemplates.js');
+  const requests = [];
+  const client = createWhatsAppCloudGraphClient({ fetchImpl: async (_url, options) => { requests.push(JSON.parse(options.body)); return jsonResponse(200, { messages: [{ id: 'wamid.exact==' }] }); } });
+  for (const [key, fields] of Object.entries(UTILITY_TEMPLATE_FIELDS)) {
+    const intent = { key, parameters: Object.fromEntries(fields.map(f => [f, f])) };
+    const components = buildMetaTemplateComponents(intent);
+    const template = { name: `approved_${key}`, language: 'es_AR', components };
+    const result = await client.sendTemplate({ phoneNumberId: '123', accessToken: 'secret', to: '3515550000', template });
+    assert.deepEqual(result, { outcome: 'sent', messageId: 'wamid.exact==' });
+    assert.deepEqual(requests.at(-1), { messaging_product: 'whatsapp', recipient_type: 'individual', to: '5493515550000', type: 'template', template: { name: template.name, language: { code: 'es_AR' }, components } });
+  }
+});
+
+test('Graph rejects unvalidated template names, language, components or extra fields before network', async () => {
+  let calls = 0;
+  const client = createWhatsAppCloudGraphClient({ fetchImpl: async () => { calls++; return jsonResponse(200, { messages: [{ id: 'wamid.x' }] }); } });
+  const template = { name: 'route', language: 'es_AR', components: [{ type: 'body', parameters: [{ type: 'text', text: 'Ana' }, { type: 'text', text: 'A' }] }, { type: 'button', sub_type: 'url', index: '0', parameters: [{ type: 'text', text: 'tok' }] }] };
+  for (const bad of [null, {}, { ...template, name: 'BAD' }, { ...template, language: 'en_US' }, { ...template, secret: 'no' }, { ...template, components: [] }, { ...template, components: [{ type: 'body', parameters: [{ type: 'text', text: '' }] }] }, { ...template, components: [template.components[0], { ...template.components[1], parameters: [{ type: 'text', text: 'https://evil.test' }] }] }, { ...template, components: [{ ...template.components[0], extra: 'no' }] }]) {
+    assert.deepEqual(await client.sendTemplate({ phoneNumberId: '123', accessToken: 'secret', to: '3515550000', template: bad }), { outcome: 'definitive_failure', errorCode: 'cloud_payload_invalid' });
+  }
+  assert.equal(calls, 0);
+});
+
+test('Graph template uses existing HTTP/network classifications without parsing rejection bodies or fallback', async () => {
+  const template = { name: 'route', language: 'es_AR', components: [{ type: 'body', parameters: [{ type: 'text', text: 'Ana' }, { type: 'text', text: 'A' }] }, { type: 'button', sub_type: 'url', index: '0', parameters: [{ type: 'text', text: 'tok' }] }] };
+  for (const [status, outcome, errorCode] of [[400, 'definitive_failure', 'cloud_remote_rejected'], [429, 'retryable_rejected', 'cloud_rate_limited'], [408, 'unknown', 'cloud_dispatch_unknown'], [500, 'unknown', 'cloud_dispatch_unknown'], ['network', 'unknown', 'cloud_dispatch_unknown']]) {
+    let calls = 0;
+    const client = createWhatsAppCloudGraphClient({ fetchImpl: async (_url, options) => {
+      calls++;
+      assert.equal(JSON.parse(options.body).type, 'template');
+      if (status === 'network') throw new Error('private remote details');
+      return { ok: false, status, json() { assert.fail('must not parse error bodies'); }, body: { cancel: async () => {} } };
+    } });
+    assert.deepEqual(await client.sendTemplate({ phoneNumberId: '123', accessToken: 'secret', to: '3515550000', template }), { outcome, errorCode });
+    assert.equal(calls, 1);
+  }
+});

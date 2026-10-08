@@ -1,3 +1,4 @@
+import { UTILITY_TEMPLATE_FIELDS, validateTemplateMapping, buildMetaTemplateComponents } from './utilityTemplates.js';
 import { normalizeCloudDeadline, unrefTimer } from './deadlines.js';
 import { validateMetaWamid } from './messageId.js';
 
@@ -50,12 +51,11 @@ export function createWhatsAppCloudGraphClient({
   const graphTimeoutMs = normalizeCloudDeadline('graph', timeoutMs);
   const bodyCancelTimeoutMs = normalizeCloudDeadline('cancel', cancelTimeoutMs);
 
-  async function sendText({ phoneNumberId, accessToken, to, text }) {
+  async function postMessage({ phoneNumberId, accessToken, to }, content) {
     const safePhoneNumberId = normalizeRequired(phoneNumberId);
     const safeAccessToken = normalizeRequired(accessToken);
     const recipient = normalizeRecipient(to);
-    const body = String(text || '');
-    if (!safePhoneNumberId || !safeAccessToken || !recipient || !body) {
+    if (!safePhoneNumberId || !safeAccessToken || !recipient || !content) {
       return { outcome: CloudDeliveryOutcome.DEFINITIVE_FAILURE, errorCode: 'cloud_payload_invalid' };
     }
 
@@ -74,8 +74,7 @@ export function createWhatsAppCloudGraphClient({
             messaging_product: 'whatsapp',
             recipient_type: 'individual',
             to: recipient,
-            type: 'text',
-            text: { preview_url: false, body },
+            ...content,
           }),
           signal: controller.signal,
         },
@@ -108,5 +107,41 @@ export function createWhatsAppCloudGraphClient({
     }
   }
 
-  return { sendText };
+  function sendText(input) {
+    const body = String(input.text || '');
+    return postMessage(input, body ? { type: 'text', text: { preview_url: false, body } } : null);
+  }
+
+  function sendTemplate(input) {
+    try {
+      const template = input.template;
+      const closed = (value, keys) => value && Object.getPrototypeOf(value) === Object.prototype
+        && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
+      if (!closed(template, ['name', 'language', 'components'])) throw new Error();
+      const { name, language } = validateTemplateMapping({ name: template.name, language: template.language });
+      const supplied = template.components;
+      const body = supplied?.[0];
+      if (!Array.isArray(supplied) || !closed(body, ['type', 'parameters']) || body.type !== 'body'
+          || !Array.isArray(body.parameters)) throw new Error();
+      const key = Object.keys(UTILITY_TEMPLATE_FIELDS).find(candidate =>
+        UTILITY_TEMPLATE_FIELDS[candidate].filter(field => field !== 'tracking_token').length === body.parameters.length);
+      if (!key || supplied.length !== (key === 'order_en_route' ? 2 : 1)) throw new Error();
+      const values = [...body.parameters];
+      if (key === 'order_en_route') {
+        const button = supplied[1];
+        if (!closed(button, ['type', 'sub_type', 'index', 'parameters']) || button.type !== 'button'
+            || button.sub_type !== 'url' || button.index !== '0' || !Array.isArray(button.parameters)
+            || button.parameters.length !== 1) throw new Error();
+        values.push(button.parameters[0]);
+      }
+      if (values.some(value => !closed(value, ['type', 'text']) || value.type !== 'text')) throw new Error();
+      const parameters = Object.fromEntries(UTILITY_TEMPLATE_FIELDS[key].map((field, i) => [field, values[i].text]));
+      const components = buildMetaTemplateComponents({ key, parameters });
+      return postMessage(input, { type: 'template', template: { name, language: { code: language }, components } });
+    } catch {
+      return Promise.resolve({ outcome: CloudDeliveryOutcome.DEFINITIVE_FAILURE, errorCode: 'cloud_payload_invalid' });
+    }
+  }
+
+  return { sendText, sendTemplate };
 }
