@@ -2,8 +2,16 @@
 import crypto from 'node:crypto';
 import { query } from '../db.js';
 import { enqueueWppMessage } from '../services.js';
+import { buildOrderEnRouteIntent, buildTransferPaymentIntent } from '../whatsappCloud/utilityTemplates.js';
 
 let pedidosNotificationSchemaReady = false;
+
+function sanitizedNotificationError(error) {
+  const code = typeof error?.code === 'string' && /^[a-zA-Z0-9_]+$/.test(error.code)
+    ? error.code
+    : 'notification_failed';
+  return Object.assign(new Error(code), { code });
+}
 
 async function ensurePedidosNotificationSchema(queryFn) {
   if (pedidosNotificationSchemaReady) return;
@@ -69,7 +77,7 @@ export function createNotificarEnRuta({
           RETURNING tracking_token`,
           [token, pedidoId, empresaId]
         );
-        token = tokenRows[0]?.tracking_token || token;
+        token = tokenRows[0]?.tracking_token;
       }
 
       const trackingUrl = buildTrackingUrl({ landingDomain: datos.landing_domain, token });
@@ -84,7 +92,12 @@ export function createNotificarEnRuta({
       await enqueueWppMessageFn({
         phone: datos.telefono,
         message: mensaje,
-        empresa_id: empresaId
+        empresa_id: empresaId,
+        utility_template: buildOrderEnRouteIntent({
+          customer_name: String(datos.cliente || 'Cliente'),
+          address: String(datos.direccion || 'No informada'),
+          tracking_token: token,
+        }),
       });
 
       await queryFn(
@@ -95,7 +108,9 @@ export function createNotificarEnRuta({
       );
 
     } catch (e) {
-      console.error('Error enviando notificación en ruta:', e);
+      const error = sanitizedNotificationError(e);
+      console.error('Error enviando notificación en ruta:', error.code);
+      throw error;
     }
   };
 }

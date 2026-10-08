@@ -41,6 +41,14 @@ test('notificarEnRuta envia WhatsApp aunque el pedido ya tenga tracking_token', 
   assert.equal(enqueued[0].phone, '3531234567');
   assert.equal(enqueued[0].empresa_id, 1);
   assert.equal(enqueued[0].message, '🚚 *¡Tu pedido está en camino!*\n\nHola Cliente Test, tu pedido ya salió hacia Calle Test 123.\n\n🗺️ *Seguí al repartidor en vivo aquí:*\nhttps://www.pedivoy.com/pedidos/seguimiento.html?t=tok_123\n\n¡Nos vemos pronto! 👋');
+  assert.deepEqual(enqueued[0].utility_template, {
+    key: 'order_en_route',
+    parameters: {
+      customer_name: 'Cliente Test',
+      address: 'Calle Test 123',
+      tracking_token: 'tok_123',
+    },
+  });
   assert.match(enqueued[0].message, /https:\/\/www\.pedivoy\.com\/pedidos\/seguimiento\.html\?t=tok_123/);
   assert.ok(queries.some((q) => q.sql.includes('SET en_ruta_notificado_at')));
 });
@@ -71,7 +79,7 @@ test('notificarEnRuta genera token si falta y envia link con token nuevo', async
       if (sql.includes('SELECT') && sql.includes('FROM pedidos')) {
         return [buildPedido({ tracking_token: null, landing_domain: 'clientes.pedivoy.test' })];
       }
-      if (sql.includes('SET tracking_token')) return [{ tracking_token: 'tok_nuevo' }];
+      if (sql.includes('SET tracking_token')) return [{ tracking_token: 'winner_token' }];
       if (sql.includes('SET en_ruta_notificado_at')) return [];
       throw new Error(`SQL no esperado: ${sql}`);
     },
@@ -82,7 +90,52 @@ test('notificarEnRuta genera token si falta y envia link con token nuevo', async
   await notificarEnRuta(42, 1);
 
   assert.equal(enqueued.length, 1);
-  assert.match(enqueued[0].message, /https:\/\/clientes\.pedivoy\.test\/pedidos\/seguimiento\.html\?t=tok_nuevo/);
+  assert.match(enqueued[0].message, /https:\/\/clientes\.pedivoy\.test\/pedidos\/seguimiento\.html\?t=winner_token/);
+  assert.equal(enqueued[0].utility_template.parameters.tracking_token, 'winner_token');
+  assert.doesNotMatch(enqueued[0].message, /tok_nuevo/);
+});
+
+test('notificarEnRuta rechaza tokens no opacos y no marca la notificación', async () => {
+  for (const token of ['', 'https://evil.test/x', 'tok?x=1', 'tok con espacio', 'tok\ncontrol', 'x'.repeat(201)]) {
+    const enqueued = [];
+    const marks = [];
+    const notificarEnRuta = createNotificarEnRuta({
+      queryFn: async (sql) => {
+        if (sql.includes('ALTER TABLE pedidos')) return [];
+        if (sql.includes('SELECT') && sql.includes('FROM pedidos')) return [buildPedido({ tracking_token: token })];
+        if (sql.includes('SET tracking_token')) return [{ tracking_token: token }];
+        if (sql.includes('SET en_ruta_notificado_at')) { marks.push(sql); return []; }
+        throw new Error(`SQL no esperado: ${sql}`);
+      },
+      enqueueWppMessageFn: async payload => { enqueued.push(payload); },
+    });
+    await assert.rejects(notificarEnRuta(42, 1), { code: 'cloud_template_payload_invalid' });
+    assert.equal(enqueued.length, 0);
+    assert.equal(marks.length, 0);
+  }
+});
+
+test('notificarEnRuta propaga error sanitizado y marca sólo después de enqueue confirmado', async () => {
+  const events = [];
+  const notificarEnRuta = createNotificarEnRuta({
+    queryFn: async (sql) => {
+      if (sql.includes('ALTER TABLE pedidos')) return [];
+      if (sql.includes('SELECT') && sql.includes('FROM pedidos')) return [buildPedido()];
+      if (sql.includes('SET en_ruta_notificado_at')) { events.push('marked'); return []; }
+      throw new Error(`SQL no esperado: ${sql}`);
+    },
+    enqueueWppMessageFn: async () => {
+      events.push('enqueue');
+      throw Object.assign(new Error('private token tok_123 customer Cliente Test'), { code: 'enqueue_fallido' });
+    },
+  });
+
+  await assert.rejects(notificarEnRuta(42, 1), error => {
+    assert.equal(error.code, 'enqueue_fallido');
+    assert.doesNotMatch(JSON.stringify(error), /tok_123|Cliente Test|private/);
+    return true;
+  });
+  assert.deepEqual(events, ['enqueue']);
 });
 
 test('notificarPedidoTransferencia usa la cuenta activa de menor prioridad', async () => {
