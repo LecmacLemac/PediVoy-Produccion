@@ -1,3 +1,4 @@
+import { validateUtilityTemplateIntent } from '../whatsappCloud/utilityTemplates.js';
 import { createHash } from 'node:crypto';
 import { pool as defaultPool } from '../db.js';
 import { normalizeWhatsappPhone } from '../core/format.js';
@@ -75,7 +76,11 @@ function prepareEnqueue({
   phone,
   message,
   dedupeWindowMinutes = 5,
+  utility_template = null,
+  queryOptions, // Legacy producers request sensitivity; all payload queries are always sensitive.
+  ...extra
 }, { correlatedTransportOrigin = null, correlationId = null } = {}) {
+  if (Object.keys(extra).length) throw new WppTransportConfigError('cloud_template_payload_invalid');
   const payload = normalizeWppOutboxPayload({ phone, message });
   if (!payload) return { skippedResult: { queued: false, skipped: true, reason: 'invalid_payload' } };
 
@@ -99,10 +104,12 @@ function prepareEnqueue({
     throw new WppTransportConfigError('correlation_id_invalido');
   }
 
-  return { payload, windowMinutes, normalizedEmpresaId, correlatedTransportOrigin, correlationId: normalizedCorrelationId };
+  const utilityTemplate = utility_template == null ? null : validateUtilityTemplateIntent(utility_template);
+  return { utilityTemplate, payload, windowMinutes, normalizedEmpresaId, correlatedTransportOrigin, correlationId: normalizedCorrelationId };
 }
 
 async function enqueuePreparedWithClient({
+  utilityTemplate,
   payload,
   windowMinutes,
   normalizedEmpresaId,
@@ -182,10 +189,12 @@ async function enqueuePreparedWithClient({
   const inserted = await clientRows(
     client,
     `INSERT INTO wpp_outbox
-       (empresa_id, telefono, mensaje, transport_origin, reply_correlation_id, status, created_at)
-     VALUES ($1::integer, $2, $3, $4, $5, 'pending', NOW())
+       (empresa_id, telefono, mensaje, transport_origin, reply_correlation_id, cloud_template_key, cloud_template_parameters, status, created_at)
+     VALUES ($1::integer, $2, $3, $4, $5, $6, $7::jsonb, 'pending', NOW())
      RETURNING id, status, transport_origin`,
-    [normalizedEmpresaId, payload.phone, payload.message, transportOrigin, correlationId],
+    [normalizedEmpresaId, payload.phone, payload.message, transportOrigin, correlationId,
+      transportOrigin === 'cloud' ? utilityTemplate?.key ?? null : null,
+      transportOrigin === 'cloud' && utilityTemplate ? JSON.stringify(utilityTemplate.parameters) : null],
     { sensitive: true },
   );
   if (inserted.length !== 1) throw new WppTransportConfigError('enqueue_sin_resultado');

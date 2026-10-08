@@ -1954,7 +1954,23 @@ ALTER TABLE public.wpp_outbox
   ADD COLUMN IF NOT EXISTS reply_correlation_id TEXT,
   ADD COLUMN IF NOT EXISTS meta_message_id TEXT,
   ADD COLUMN IF NOT EXISTS cloud_dispatch_state TEXT,
-  ADD COLUMN IF NOT EXISTS dispatch_started_at TIMESTAMPTZ;
+  ADD COLUMN IF NOT EXISTS dispatch_started_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS cloud_template_key TEXT,
+  ADD COLUMN IF NOT EXISTS cloud_template_parameters JSONB;
+
+ALTER TABLE public.wpp_outbox
+  DROP CONSTRAINT IF EXISTS wpp_outbox_utility_template_check;
+ALTER TABLE public.wpp_outbox
+  ADD CONSTRAINT wpp_outbox_utility_template_check CHECK (
+    (cloud_template_key IS NULL AND cloud_template_parameters IS NULL)
+    OR (
+      transport_origin = 'cloud'
+      AND cloud_template_key IS NOT NULL
+      AND cloud_template_key IN ('order_confirmation', 'order_en_route', 'transfer_payment')
+      AND cloud_template_parameters IS NOT NULL
+      AND jsonb_typeof(cloud_template_parameters) = 'object'
+    )
+  );
 
 DO $$
 DECLARE

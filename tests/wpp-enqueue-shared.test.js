@@ -196,7 +196,6 @@ test('enqueue falla cerrado para empresa desconocida y hace rollback/release', a
     empresaId: 404,
     phone: '3515550000',
     message: 'no insertar',
-    transportOrigin: 'general',
   }, txPool), error => error?.code === 'empresa_no_encontrada');
   assert.deepEqual(txPool.calls.map(call => call.text === 'BEGIN' || call.text === 'ROLLBACK'
     ? call.text
@@ -360,4 +359,32 @@ test('inventario: existe un solo INSERT productivo a wpp_outbox y vive en la fro
 
   assert.equal(productiveInsertCount, 1);
   assert.deepEqual(offenders.sort(), []);
+});
+
+test('utility intent persists only for resolved Cloud and keeps original message and sensitive query', async () => {
+  const utility_template = { key: 'order_en_route', parameters: { customer_name: 'Ana', address: 'A', tracking_token: 'tok' } };
+  for (const transport of ['cloud', 'company', 'general']) {
+    const tx = createPool(async ({ text }) => {
+      if (text.includes('SELECT config_integraciones')) return { rows: [{ config_integraciones: transport === 'cloud' ? { whatsapp: { provider: 'cloud', enabled: true, phone_number_id: 'p', access_token_encrypted: 'e' } } : {} }] };
+      return { rows: text.includes('INSERT INTO') ? [{ id: 1, status: 'pending' }] : [] };
+    });
+    await enqueueWppOutbox({ empresaId: transport === 'general' ? null : 7, phone: '3515550000', message: 'Web\nexacto', utility_template }, tx);
+    const insert = tx.calls.find(c => c.text.includes('INSERT INTO'));
+    assert.match(insert.text, /cloud_template_key, cloud_template_parameters/);
+    assert.equal(insert.values[2], 'Web\nexacto');
+    assert.deepEqual(insert.values.slice(5), transport === 'cloud' ? [utility_template.key, JSON.stringify(utility_template.parameters)] : [null, null]);
+    assert.equal(insert.sensitive, true);
+  }
+});
+
+test('utility intent rejects invalid metadata and caller-selected Graph/transport before any query', async () => {
+  for (const extra of [
+    { utility_template: { key: 'bad', parameters: {} } },
+    { utility_template: { key: 'order_en_route', parameters: {}, name: 'physical' } },
+    { name: 'physical' }, { language: 'es_AR' }, { components: [] }, { transport_origin: 'cloud' }, { transportOrigin: 'cloud' },
+  ]) {
+    const tx = enterpriseSuccessPool();
+    await assert.rejects(enqueueWppOutbox({ empresaId: 7, phone: '3515550000', message: 'Web', ...extra }, tx), { code: 'cloud_template_payload_invalid' });
+    assert.equal(tx.calls.length, 0);
+  }
 });
