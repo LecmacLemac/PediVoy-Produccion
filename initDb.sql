@@ -1964,11 +1964,11 @@ ALTER TABLE public.wpp_outbox
   ADD CONSTRAINT wpp_outbox_utility_template_check CHECK (
     (cloud_template_key IS NULL AND cloud_template_parameters IS NULL)
     OR (
-      transport_origin = 'cloud'
+      transport_origin IS NOT DISTINCT FROM 'cloud'
       AND cloud_template_key IS NOT NULL
       AND cloud_template_key IN ('order_confirmation', 'order_en_route', 'transfer_payment')
       AND cloud_template_parameters IS NOT NULL
-      AND jsonb_typeof(cloud_template_parameters) = 'object'
+      AND pg_catalog.jsonb_typeof(cloud_template_parameters) = 'object'
     )
   );
 

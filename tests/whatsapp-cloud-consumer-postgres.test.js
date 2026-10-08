@@ -348,3 +348,30 @@ test('fila sent conserva WAMID Meta exacto, rechaza inválidos y no puede finali
     assert.deepEqual(stored, { status: 'sent', cloud_dispatch_state: 'sent', meta_message_id: paddedWamid, claim_owner: null });
   });
 });
+
+test('claim returns durable utility intent through a sensitive query without affecting Web rows', options, async () => {
+  await withDatabase(async pool => {
+    await pool.query(migrationSql);
+    const parameters = { customer_name: 'Ana', address: 'A', tracking_token: 'tok' };
+    await pool.query("INSERT INTO wpp_outbox (empresa_id, telefono, mensaje, transport_origin, cloud_template_key, cloud_template_parameters) VALUES (7, '1', 'Web', 'cloud', 'order_en_route', $1)", [JSON.stringify(parameters)]);
+    const row = await claimNextCloudOutboxRow({ owner: 'owner', query: async (sql, params, opts) => {
+      assert.equal(opts.sensitive, true);
+      return (await pool.query(sql, params)).rows;
+    } });
+    assert.equal(row.cloud_template_key, 'order_en_route');
+    assert.deepEqual(row.cloud_template_parameters, parameters);
+  });
+});
+
+test('durable config loads only this tenant validated independent mappings and encrypted credentials', options, async () => {
+  const { loadDurableCloudConfig } = await import('../src/whatsappCloud/outboxRepository.js');
+  await withDatabase(async pool => {
+    await pool.query('CREATE TABLE empresas (id INTEGER PRIMARY KEY, config_integraciones JSONB)');
+    await pool.query('INSERT INTO empresas VALUES (7, $1), (8, $2)', [JSON.stringify({ whatsapp: { provider: 'cloud', enabled: true, phone_number_id: 'p7', access_token_encrypted: 'encrypted7', access_token: 'private', templates: { order_en_route: { name: ' route7 ', language: 'es_AR' }, transfer_payment: { name: 'bad', language: 'en_US' }, unknown: { name: 'private' } } } }), JSON.stringify({ whatsapp: { provider: 'cloud', enabled: true, phone_number_id: 'p8', access_token_encrypted: 'encrypted8', templates: { order_en_route: { name: 'route8', language: 'es_AR' } } } })]);
+    const query = async (sql, params, opts) => { assert.equal(opts.sensitive, true); return (await pool.query(sql, params)).rows; };
+    const config = await loadDurableCloudConfig({ query, empresaId: 7 });
+    assert.deepEqual(config, { phoneNumberId: 'p7', accessTokenEncrypted: 'encrypted7', templates: { order_en_route: { name: 'route7', language: 'es_AR' } } });
+    assert.equal((await loadDurableCloudConfig({ query, empresaId: 8 })).templates.order_en_route.name, 'route8');
+    assert.equal(await loadDurableCloudConfig({ query, empresaId: 9 }), null);
+  });
+});

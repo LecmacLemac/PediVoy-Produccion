@@ -1,3 +1,4 @@
+import { validateTemplateMapping, validateUtilityTemplateIntent, buildMetaTemplateComponents } from './utilityTemplates.js';
 import { CloudDeliveryOutcome } from './graphClient.js';
 import { normalizeCloudDeadline, unrefTimer } from './deadlines.js';
 import { CloudDispatchState } from './outboxRepository.js';
@@ -45,6 +46,21 @@ export function createWhatsAppCloudConsumer({
       return { outcome: CloudDeliveryOutcome.DEFINITIVE_FAILURE, errorCode: 'cloud_config_invalid' };
     }
 
+    let template = null;
+    if (row.cloud_template_key != null || row.cloud_template_parameters != null) {
+      let errorCode = 'cloud_template_payload_invalid';
+      try {
+        const intent = validateUtilityTemplateIntent({ key: row.cloud_template_key, parameters: row.cloud_template_parameters });
+        errorCode = 'cloud_template_config_invalid';
+        const mapping = validateTemplateMapping(config.templates?.[intent.key]);
+        template = { ...mapping, components: buildMetaTemplateComponents(intent) };
+      } catch {
+        row.cloud_template_parameters = null;
+        await finish({ id: row.id, owner, status: 'error', dispatchState: CloudDispatchState.DEFINITIVE_FAILED, errorCode });
+        return { outcome: CloudDeliveryOutcome.DEFINITIVE_FAILURE, errorCode };
+      }
+    }
+
     let accessToken;
     try {
       accessToken = String(decryptToken(config.accessTokenEncrypted) || '').trim();
@@ -61,14 +77,25 @@ export function createWhatsAppCloudConsumer({
       return { outcome: CloudDeliveryOutcome.DEFINITIVE_FAILURE, errorCode: 'cloud_token_invalid' };
     }
 
-    await startDispatch({ id: row.id, owner });
-    const result = await graphClient.sendText({
-      phoneNumberId: config.phoneNumberId,
-      accessToken,
-      to: row.telefono,
-      text: row.mensaje,
-    });
-    accessToken = null;
+    const request = { phoneNumberId: config.phoneNumberId, accessToken, to: row.telefono,
+      ...(template ? { template } : { text: row.mensaje }) };
+    let result;
+    try {
+      await startDispatch({ id: row.id, owner });
+      try {
+        result = template ? await graphClient.sendTemplate(request) : await graphClient.sendText(request);
+      } catch {
+        result = { outcome: CloudDeliveryOutcome.UNKNOWN, errorCode: 'cloud_dispatch_unknown' };
+      }
+    } finally {
+      accessToken = null;
+      template = null;
+      request.accessToken = null;
+      request.to = null;
+      if (Object.hasOwn(request, 'template')) request.template = null;
+      if (Object.hasOwn(request, 'text')) request.text = null;
+      row.cloud_template_parameters = null;
+    }
 
     if (result.outcome === CloudDeliveryOutcome.SENT) {
       await finish({

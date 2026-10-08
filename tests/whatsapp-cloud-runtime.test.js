@@ -283,3 +283,35 @@ test('worker real sigue vivo y reintenta ante PostgreSQL inaccesible', async (t)
   assert.equal(signal, null);
   assert.equal(code, 0);
 });
+
+test('runtime drains template timeout with durable unknown and no retry or sensitive logs', async () => {
+  const { createWhatsAppCloudConsumer } = await import('../src/whatsappCloud/consumer.js');
+  const { createWhatsAppCloudGraphClient } = await import('../src/whatsappCloud/graphClient.js');
+  let claimed = false;
+  let dispatches = 0;
+  let finished;
+  const logs = [];
+  const logger = Object.fromEntries(['info', 'warn', 'error'].map(level => [level, (...args) => logs.push(args)]));
+  const graphClient = createWhatsAppCloudGraphClient({
+    setTimeoutImpl: callback => { queueMicrotask(callback); return { unref() {} }; }, clearTimeoutImpl() {},
+    fetchImpl: async (_url, options) => {
+      dispatches++;
+      assert.equal(JSON.parse(options.body).type, 'template');
+      return new Promise((_resolve, reject) => options.signal.addEventListener('abort', () => reject(new Error('private-timeout'))));
+    },
+  });
+  const consumer = createWhatsAppCloudConsumer({ owner: 'worker', logger,
+    claimNext: async () => { if (claimed) return null; claimed = true; return { id: 1, empresa_id: 7, telefono: '3515550000', cloud_template_key: 'order_en_route', cloud_template_parameters: { customer_name: 'private-name', address: 'private-address', tracking_token: 'private_token' } }; },
+    loadConfig: async () => ({ phoneNumberId: 'p', accessTokenEncrypted: 'private-cipher', templates: { order_en_route: { name: 'route', language: 'es_AR' } } }),
+    decryptToken: () => 'private-secret', startDispatch: async () => {}, finish: async value => { finished = value; }, graphClient,
+  });
+  let exitCode;
+  const runtime = createWhatsAppCloudWorkerRuntime({ consumer, closePool: async () => {}, exit: code => { exitCode = code; }, logger });
+  assert.deepEqual(await runtime.tick(), { outcome: 'unknown', errorCode: 'cloud_dispatch_unknown' });
+  assert.equal(finished.dispatchState, 'outcome_unknown');
+  assert.deepEqual(await runtime.tick(), { outcome: 'idle' });
+  assert.equal(dispatches, 1);
+  assert.equal(await runtime.shutdown(), true);
+  assert.equal(exitCode, 0);
+  assert.equal(JSON.stringify(logs).includes('private'), false);
+});

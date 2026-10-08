@@ -521,3 +521,62 @@ test('Graph template uses existing HTTP/network classifications without parsing 
     assert.equal(calls, 1);
   }
 });
+
+test('consumer resolves tenant template once after config and dispatch marker, never text', async () => {
+  const events = [];
+  let sent;
+  const consumer = createWhatsAppCloudConsumer({ owner: 'worker',
+    claimNext: async () => ({ id: 1, empresa_id: 7, telefono: '3515550000', mensaje: 'Web-only', cloud_template_key: 'order_en_route', cloud_template_parameters: { customer_name: 'Ana', address: 'A', tracking_token: 'tok' } }),
+    loadConfig: async ({ empresaId }) => { assert.equal(empresaId, 7); events.push('config'); return { phoneNumberId: 'p7', accessTokenEncrypted: 'e7', templates: { order_en_route: { name: 'route7', language: 'es_AR' } } }; },
+    decryptToken: () => 'secret', startDispatch: async () => events.push('dispatch'),
+    finish: async value => { events.push('finish'); assert.equal(value.messageId, 'wamid.safe=='); },
+    graphClient: { sendText: async () => assert.fail('no text fallback'), sendTemplate: async input => { sent = structuredClone(input); events.push('template'); return { outcome: 'sent', messageId: 'wamid.safe==' }; } },
+  });
+  assert.deepEqual(await consumer.processOnce(), { outcome: 'sent', messageId: 'wamid.safe==' });
+  assert.deepEqual(events, ['config', 'dispatch', 'template', 'finish']);
+  assert.deepEqual(sent, { phoneNumberId: 'p7', accessToken: 'secret', to: '3515550000', template: { name: 'route7', language: 'es_AR', components: [{ type: 'body', parameters: [{ type: 'text', text: 'Ana' }, { type: 'text', text: 'A' }] }, { type: 'button', sub_type: 'url', index: '0', parameters: [{ type: 'text', text: 'tok' }] }] } });
+});
+
+test('consumer fails closed for missing or invalid mapping and invalid durable intent before decrypt/dispatch', async () => {
+  const valid = { customer_name: 'Ana', address: 'A', tracking_token: 'tok' };
+  for (const [key, parameters, mapping, errorCode] of [
+    ['order_en_route', valid, undefined, 'cloud_template_config_invalid'],
+    ['order_en_route', valid, { name: 'BAD', language: 'es_AR' }, 'cloud_template_config_invalid'],
+    ['order_en_route', { ...valid, name: 'private' }, { name: 'route', language: 'es_AR' }, 'cloud_template_payload_invalid'],
+    [null, valid, undefined, 'cloud_template_payload_invalid'],
+    ['unknown', valid, undefined, 'cloud_template_payload_invalid'],
+  ]) {
+    let finished;
+    const consumer = createWhatsAppCloudConsumer({ owner: 'worker',
+      claimNext: async () => ({ id: 1, empresa_id: 7, cloud_template_key: key, cloud_template_parameters: parameters }),
+      loadConfig: async () => ({ phoneNumberId: 'p', accessTokenEncrypted: 'secret', templates: { order_en_route: mapping } }),
+      decryptToken: () => assert.fail('no decrypt'), startDispatch: async () => assert.fail('no dispatch'),
+      graphClient: { sendText: async () => assert.fail('no fallback'), sendTemplate: async () => assert.fail('no Graph') },
+      finish: async value => { finished = value; },
+    });
+    assert.deepEqual(await consumer.processOnce(), { outcome: 'definitive_failure', errorCode });
+    assert.deepEqual(finished, { id: 1, owner: 'worker', status: 'error', dispatchState: 'definitive_failed', errorCode });
+  }
+});
+
+test('consumer dispatch rejection is durable unknown, clears sensitive references and never retries or falls back', async () => {
+  let input;
+  let finished;
+  let sends = 0;
+  let claimed = false;
+  const row = { id: 1, empresa_id: 7, telefono: '3515550000', mensaje: 'Web', cloud_template_key: 'order_en_route', cloud_template_parameters: { customer_name: 'Ana', address: 'A', tracking_token: 'tok' } };
+  const consumer = createWhatsAppCloudConsumer({ owner: 'worker',
+    claimNext: async () => { if (claimed) return null; claimed = true; return row; },
+    loadConfig: async () => ({ phoneNumberId: 'p', accessTokenEncrypted: 'e', templates: { order_en_route: { name: 'route', language: 'es_AR' } } }),
+    decryptToken: () => 'secret', startDispatch: async () => {}, finish: async value => { finished = value; },
+    graphClient: { sendText: async () => assert.fail('no text'), sendTemplate: async value => { input = value; sends++; throw new Error('timeout private-token'); } },
+  });
+  assert.deepEqual(await consumer.processOnce(), { outcome: 'unknown', errorCode: 'cloud_dispatch_unknown' });
+  assert.equal(finished.dispatchState, 'outcome_unknown');
+  assert.equal(finished.errorCode, 'cloud_dispatch_unknown');
+  assert.equal(input.accessToken, null);
+  assert.equal(input.template, null);
+  assert.equal(row.cloud_template_parameters, null);
+  assert.deepEqual(await consumer.processOnce(), { outcome: 'idle' });
+  assert.equal(sends, 1);
+});

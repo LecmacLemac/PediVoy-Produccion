@@ -676,7 +676,7 @@ test('utility migration is idempotent, preserves legacy and enforces nullable Cl
     assert.deepEqual(legacy, [{ cloud_template_key: null, cloud_template_parameters: null }]);
     const parameters = { customer_name: 'Ana', address: 'A', tracking_token: 'tok' };
     for (const [transport, key, params] of [
-      ['company', 'order_en_route', parameters], ['general', 'order_en_route', parameters],
+      [null, 'order_en_route', parameters], ['company', 'order_en_route', parameters], ['general', 'order_en_route', parameters],
       ['cloud', 'bad', parameters], ['cloud', 'order_en_route', []], ['cloud', 'order_en_route', 'text'],
       ['cloud', null, parameters], ['cloud', 'order_en_route', null],
     ]) await assert.rejects(pool.query('INSERT INTO wpp_outbox (empresa_id, telefono, mensaje, transport_origin, cloud_template_key, cloud_template_parameters) VALUES ($1, $2, $3, $4, $5, $6)', [transport === 'general' ? null : 7, '1', 'test', transport, key, params === null ? null : JSON.stringify(params)]), { code: '23514' });

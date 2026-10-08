@@ -33,7 +33,7 @@ for (const [name, enqueue] of enqueuers) {
     assert.equal(pool.calls.some(call => /FROM empresas/.test(call.text)), false);
   });
 
-  test(`${name}: resuelve company y cloud desde la empresa e ignora transporte forzado`, async () => {
+  test(`${name}: resuelve company y cloud desde la empresa sin aceptar transporte forzado`, async () => {
     const cases = [
       [{}, 'company'],
       [{ whatsapp: { provider: 'cloud', enabled: true, phone_number_id: 'phone-7', access_token_encrypted: 'v1:token' } }, 'cloud'],
@@ -42,11 +42,15 @@ for (const [name, enqueue] of enqueuers) {
     for (const [configIntegraciones, expected] of cases) {
       for (const forced of ['general', 'company', 'cloud', 'arbitrario']) {
         const pool = createWppEnqueueTestPool({ configIntegraciones });
+        if (name === 'messaging') {
+          await assert.rejects(enqueue({ phone: '123456789012345@lid', message: 'hola', empresa_id: 7, transport_origin: forced }, pool), { code: 'cloud_template_payload_invalid' });
+          assert.equal(pool.calls.length, 0);
+        }
         const result = await enqueue({
           phone: '123456789012345@lid',
           message: `hola-${expected}-${forced}`,
           empresa_id: 7,
-          transport_origin: forced,
+          ...(name === 'messaging' ? {} : { transport_origin: forced }),
         }, pool);
         const insert = pool.calls.find(call => /INSERT INTO wpp_outbox/.test(call.text));
         assert.equal(insert.values[0], 7);
@@ -65,7 +69,7 @@ for (const [name, enqueue] of enqueuers) {
     ];
     for (const pool of cases) {
       await assert.rejects(enqueue({
-        phone: '3515550000', message: 'no insertar', empresa_id: 404, transport_origin: 'general',
+        phone: '3515550000', message: 'no insertar', empresa_id: 404,
       }, pool));
       assert.equal(pool.calls.some(call => /INSERT INTO wpp_outbox/.test(call.text)), false);
       assert.equal(pool.calls.at(-1).text, 'ROLLBACK');

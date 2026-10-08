@@ -1,3 +1,4 @@
+import { UTILITY_TEMPLATE_KEYS, validateTemplateMapping } from './utilityTemplates.js';
 import { normalizeCloudDeadline } from './deadlines.js';
 import { validateMetaWamid } from './messageId.js';
 
@@ -42,7 +43,8 @@ export async function claimNextCloudOutboxRow({ query, owner, leaseMs } = {}) {
            error = NULL
       FROM candidate c
      WHERE o.id = c.id
-    RETURNING o.id, o.empresa_id, o.telefono, o.mensaje, o.created_at
+    RETURNING o.id, o.empresa_id, o.telefono, o.mensaje, o.created_at,
+              o.cloud_template_key, o.cloud_template_parameters
   `, [owner, normalizedLeaseMs], { sensitive: true });
   return rows[0] ?? null;
 }
@@ -69,7 +71,8 @@ export async function markCloudDispatchStarted({ query, id, owner }) {
 export async function loadDurableCloudConfig({ query, empresaId }) {
   const rows = await query(`
     SELECT BTRIM(config_integraciones::jsonb #>> '{whatsapp,phone_number_id}') AS phone_number_id,
-           BTRIM(config_integraciones::jsonb #>> '{whatsapp,access_token_encrypted}') AS access_token_encrypted
+           BTRIM(config_integraciones::jsonb #>> '{whatsapp,access_token_encrypted}') AS access_token_encrypted,
+           config_integraciones::jsonb #> '{whatsapp,templates}' AS templates
       FROM empresas
      WHERE id = $1
        AND jsonb_typeof(config_integraciones::jsonb) = 'object'
@@ -87,7 +90,14 @@ export async function loadDurableCloudConfig({ query, empresaId }) {
      LIMIT 1
   `, [empresaId], { sensitive: true });
   if (!rows.length) return null;
+  const templates = {};
+  for (const key of UTILITY_TEMPLATE_KEYS) {
+    try {
+      if (Object.hasOwn(rows[0].templates || {}, key)) templates[key] = validateTemplateMapping(rows[0].templates[key]);
+    } catch { /* Each invalid mapping disables only its own intent. */ }
+  }
   return {
+    templates,
     phoneNumberId: rows[0].phone_number_id,
     accessTokenEncrypted: rows[0].access_token_encrypted,
   };
