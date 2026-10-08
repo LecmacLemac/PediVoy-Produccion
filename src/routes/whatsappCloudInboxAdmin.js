@@ -1,7 +1,11 @@
 import { Router } from 'express';
 import { query as defaultQuery, pool as defaultPool } from '../db.js';
 import { withAuth as defaultWithAuth } from '../services.js';
-import { enqueueWppOutboxCorrelatedReply, normalizeWppOutboxPayload } from '../wpp/enqueue.js';
+import {
+  enqueueWppOutboxCorrelatedReply,
+  normalizeWppOutboxPayload,
+  WppTransportConfigError,
+} from '../wpp/enqueue.js';
 import { requireCanonicalBackofficeRole } from './canonicalBackofficeRole.js';
 import { isLoopbackHostname, parseCanonicalPublicOrigin } from '../bootstrap/env.js';
 import {
@@ -9,6 +13,7 @@ import {
   getCloudConversationContext,
   listCloudConversationMessages,
   listCloudConversations,
+  lockAndRevalidateMutationActor,
   markCloudConversationRead,
   matchesCloudReplyCorrelation,
   resolveCloudConversationParticipant,
@@ -392,30 +397,49 @@ export function createWhatsAppCloudInboxAdminRouter({
   });
   router.post('/conversations/:conversationId/replies', whatsappCloudInboxMutationGuard({ canonicalOrigin }), withAuth, requireCanonicalBackofficeRole, async (req, res) => {
     const empresaId = resolveTenant(req, { allowBody: true });
+    const usuarioId = pgInt4Number(req.user?.uid);
     if (!empresaId) return res.status(400).json({ error: 'empresa_id_required' });
+    if (!usuarioId) return res.status(403).json({ error: 'Acceso denegado' });
     if (!canonicalUuid(req.params.conversationId) && !positiveInteger(req.params.conversationId)) {
       return res.status(400).json({ error: 'conversation_id_invalid' });
     }
     const reply = validReplyBody(req.body);
     if (!reply) return res.status(400).json({ error: 'reply_invalid' });
     try {
-      const participant = await resolveCloudConversationParticipant({
-        query,
-        empresaId,
-        conversationId: req.params.conversationId,
-      });
-      if (!participant) return res.status(404).json({ error: 'conversation_not_found' });
-      const canonicalPayload = normalizeWppOutboxPayload({ phone: participant, message: reply.message });
-      if (!canonicalPayload) return res.status(502).json({ error: 'reply_enqueue_failed' });
+      let participant = null;
       const correlationId = `admin:${reply.idempotencyKey}`;
       const result = await enqueueReply({
         empresaId,
-        phone: participant,
         message: reply.message,
         transportOrigin: 'cloud',
         correlationId,
-      }, pool);
+      }, pool, {
+        beforeEnqueue: async ({ client }) => {
+          try {
+            await lockAndRevalidateMutationActor(client, {
+              usuarioId,
+              actorRole: req.user.role,
+              empresaId,
+            });
+          } catch (error) {
+            if (error?.code === 'CLOUD_INBOX_ACTOR_FORBIDDEN') {
+              throw new WppTransportConfigError('CLOUD_INBOX_ACTOR_FORBIDDEN');
+            }
+            throw error;
+          }
+          participant = await resolveCloudConversationParticipant({
+            query: async (sql, params) => (await client.query({ text: sql, values: params, sensitive: true })).rows,
+            empresaId,
+            conversationId: req.params.conversationId,
+            lock: true,
+          });
+          if (!participant) throw new WppTransportConfigError('CLOUD_INBOX_CONVERSATION_NOT_FOUND');
+          return { phone: participant };
+        },
+      });
       if (!result.queued) {
+        const canonicalPayload = normalizeWppOutboxPayload({ phone: participant, message: reply.message });
+        if (!canonicalPayload) return res.status(503).json({ error: 'reply_enqueue_outcome_unknown' });
         let matchesOriginal;
         try {
           matchesOriginal = await matchesCloudReplyCorrelation({
@@ -442,6 +466,12 @@ export function createWhatsAppCloudInboxAdminRouter({
     } catch (error) {
       if (error?.code === 'WPP_ENQUEUE_TRANSACTION_OUTCOME_UNKNOWN') {
         return res.status(503).json({ error: 'reply_enqueue_outcome_unknown' });
+      }
+      if (error?.code === 'CLOUD_INBOX_ACTOR_FORBIDDEN') {
+        return res.status(403).json({ error: 'actor_forbidden' });
+      }
+      if (error?.code === 'CLOUD_INBOX_CONVERSATION_NOT_FOUND') {
+        return res.status(404).json({ error: 'conversation_not_found' });
       }
       if (INACTIVE_CLOUD_CONFIG_CODES.has(error?.code)) {
         return res.status(409).json({ error: 'cloud_config_inactive' });

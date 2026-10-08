@@ -232,7 +232,7 @@ export async function enqueueWppOutboxCorrelatedReply({
   dedupeWindowMinutes = 5,
   transportOrigin,
   correlationId = null,
-}, transactionPool = defaultPool) {
+}, transactionPool = defaultPool, { beforeEnqueue = null } = {}) {
   if (transportOrigin !== 'general' && transportOrigin !== 'cloud') {
     throw new WppTransportConfigError('transport_origin_correlacionado_no_permitido');
   }
@@ -241,12 +241,16 @@ export async function enqueueWppOutboxCorrelatedReply({
     phone,
     message,
     dedupeWindowMinutes,
-  }, transactionPool, { correlatedTransportOrigin: transportOrigin, correlationId });
+  }, transactionPool, { correlatedTransportOrigin: transportOrigin, correlationId, beforeEnqueue });
 }
 
 async function enqueueWppOutboxWithPolicy(input, transactionPool, policy = {}) {
-  const prepared = prepareEnqueue(input, policy);
-  if (prepared.skippedResult) return prepared.skippedResult;
+  const beforeEnqueue = policy.beforeEnqueue;
+  if (beforeEnqueue != null && typeof beforeEnqueue !== 'function') {
+    throw new WppTransportConfigError('before_enqueue_invalido');
+  }
+  let prepared = beforeEnqueue ? null : prepareEnqueue(input, policy);
+  if (prepared?.skippedResult) return prepared.skippedResult;
 
   const pool = resolveTransactionPool(transactionPool);
   let client;
@@ -265,6 +269,16 @@ async function enqueueWppOutboxWithPolicy(input, transactionPool, policy = {}) {
     try {
       await client.query('BEGIN');
       transactionOpen = true;
+
+      if (beforeEnqueue) {
+        const transactionInput = await beforeEnqueue({ client });
+        if (!transactionInput || typeof transactionInput !== 'object' || Array.isArray(transactionInput)
+          || Object.keys(transactionInput).length !== 1 || !Object.hasOwn(transactionInput, 'phone')) {
+          throw new WppTransportConfigError('before_enqueue_invalido');
+        }
+        prepared = prepareEnqueue({ ...input, phone: transactionInput.phone }, policy);
+        if (prepared.skippedResult) throw new WppTransportConfigError('before_enqueue_invalido');
+      }
 
       result = await enqueuePreparedWithClient(prepared, client);
 

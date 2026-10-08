@@ -89,7 +89,7 @@ function requireActorRole(value) {
   return value;
 }
 
-async function lockAndRevalidateMutationActor(client, { usuarioId, actorRole, empresaId }) {
+export async function lockAndRevalidateMutationActor(client, { usuarioId, actorRole, empresaId }) {
   const result = await client.query(
     `SELECT role, empresa_id, activo
        FROM public.usuarios
@@ -772,7 +772,7 @@ export async function getCloudAttachmentMetadata({ query, empresaId, conversatio
   }
 }
 
-export async function resolveCloudConversationParticipant({ query, empresaId, conversationId } = {}) {
+export async function resolveCloudConversationParticipant({ query, empresaId, conversationId, lock = false } = {}) {
   const runQuery = requireQuery(query);
   const tenantId = requireTenantId(empresaId);
   const conversationReference = requireConversationReference(conversationId);
@@ -782,11 +782,11 @@ export async function resolveCloudConversationParticipant({ query, empresaId, co
         ? `SELECT participant_wa_id
              FROM public.whatsapp_cloud_conversations AS conversation
             WHERE conversation.empresa_id = $1 AND conversation.id = $2::uuid
-            LIMIT 1`
+            LIMIT 1${lock ? '\n            FOR UPDATE' : ''}`
         : `SELECT participant_wa_id
              FROM public.whatsapp_cloud_messages
             WHERE empresa_id = $1 AND id = $2
-            LIMIT 1`,
+            LIMIT 1${lock ? '\n            FOR UPDATE' : ''}`,
       [tenantId, conversationReference.id],
     );
     return rows.length === 1 ? rows[0].participant_wa_id : null;

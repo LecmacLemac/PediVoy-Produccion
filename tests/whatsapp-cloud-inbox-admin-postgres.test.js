@@ -308,6 +308,159 @@ test('API admin Cloud conserva tenant, paginación, redacción e idempotencia en
   });
 });
 
+test('reply serializa revocación/reasignación/degradación con actor→participante→outbox', async () => {
+  await withDatabase(async pool => {
+    await pool.query('INSERT INTO empresas(id, config_integraciones) VALUES (1,$1::jsonb),(2,$2::jsonb)', [
+      cloudConfig('phone-race-one'), cloudConfig('phone-race-two'),
+    ]);
+    await pool.query(`
+      INSERT INTO usuarios(id,username,password,role,empresa_id,activo) VALUES
+        (1,'admin-reply-race','x','admin',1,true),
+        (2,'super-reply-race','x','super',NULL,true)
+    `);
+    const messages = (await pool.query(`
+      INSERT INTO whatsapp_cloud_messages
+        (empresa_id,direction,participant_wa_id,message_type,text_body,delivery_status,state_rank,message_at,created_at,updated_at)
+      VALUES
+        (1,'inbound','5493515557001','text','tenant one','received',0,NOW(),NOW(),NOW()),
+        (2,'inbound','5493515557002','text','tenant two','received',0,NOW(),NOW(),NOW())
+      RETURNING id,empresa_id
+    `)).rows;
+    const tenantOneMessageId = String(messages.find(row => row.empresa_id === 1).id);
+    const tenantTwoMessageId = String(messages.find(row => row.empresa_id === 2).id);
+
+    let actorLockedResolve = null;
+    const routePool = {
+      async connect() {
+        const client = await pool.connect();
+        return {
+          async query(input, params) {
+            const text = typeof input === 'string' ? input : input.text;
+            const result = await client.query(input, params);
+            if (/FROM public\.usuarios/.test(text)) actorLockedResolve?.();
+            return result;
+          },
+          release(error) { client.release(error); },
+        };
+      },
+    };
+    const app = express();
+    app.use(express.json());
+    app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+      canonicalOrigin: 'https://admin.pedivoy.test',
+      withAuth(req, _res, next) {
+        req.user = req.get('x-test-actor') === 'super'
+          ? { uid: 2, role: 'super', empresa_id: null }
+          : { uid: 1, role: 'admin', empresa_id: 1 };
+        next();
+      },
+      query: async (sql, params) => (await pool.query(sql, params)).rows,
+      pool: routePool,
+    }));
+    const request = (baseUrl, { actor = 'admin', key, messageId = tenantOneMessageId }) => fetch(
+      `${baseUrl}/api/admin/whatsapp-cloud/conversations/${messageId}/replies${actor === 'super' ? '?empresa_id=1' : ''}`,
+      {
+        method: 'POST',
+        headers: {
+          Origin: 'https://admin.pedivoy.test',
+          'Content-Type': 'application/json',
+          'x-test-actor': actor,
+        },
+        body: JSON.stringify({ text: `respuesta ${key}`, idempotency_key: key }),
+      },
+    );
+
+    await withServer(app, async baseUrl => {
+      const losingChanges = [
+        ['admin-deactivated', 1, 'UPDATE usuarios SET activo=false WHERE id=1'],
+        ['admin-reassigned', 1, 'UPDATE usuarios SET empresa_id=2 WHERE id=1'],
+        ['admin-demoted', 1, "UPDATE usuarios SET role='user' WHERE id=1"],
+        ['super-deactivated', 2, 'UPDATE usuarios SET activo=false WHERE id=2'],
+        ['super-demoted', 2, "UPDATE usuarios SET role='admin', empresa_id=1 WHERE id=2"],
+      ];
+      for (const [name, actorId, changeSql] of losingChanges) {
+        await pool.query(`UPDATE usuarios SET
+          role=CASE WHEN id=1 THEN 'admin' ELSE 'super' END,
+          empresa_id=CASE WHEN id=1 THEN 1 ELSE NULL END,
+          activo=true WHERE id=$1`, [actorId]);
+        await pool.query('DELETE FROM wpp_outbox');
+        const changer = await pool.connect();
+        try {
+          await changer.query('BEGIN');
+          await changer.query(changeSql);
+          let settled = false;
+          const pending = request(baseUrl, {
+            actor: actorId === 2 ? 'super' : 'admin',
+            key: `revocation-wins-${name}`,
+          }).then(response => { settled = true; return response; });
+          await new Promise(resolve => setTimeout(resolve, 60));
+          assert.equal(settled, false, `${name}: reply debe esperar el lock del actor`);
+          await changer.query('COMMIT');
+          const response = await pending;
+          assert.equal(response.status, 403, name);
+          assert.deepEqual(await response.json(), { error: 'actor_forbidden' }, name);
+          assert.equal((await pool.query('SELECT COUNT(*)::integer AS count FROM wpp_outbox')).rows[0].count, 0, name);
+        } finally {
+          await changer.query('ROLLBACK').catch(() => {});
+          changer.release();
+        }
+      }
+
+      await pool.query("UPDATE usuarios SET role='admin',empresa_id=1,activo=true WHERE id=1");
+      await pool.query('DELETE FROM wpp_outbox');
+      const crossTenant = await request(baseUrl, {
+        key: 'cross-tenant-reply', messageId: tenantTwoMessageId,
+      });
+      assert.equal(crossTenant.status, 404);
+      assert.equal((await pool.query('SELECT COUNT(*)::integer AS count FROM wpp_outbox')).rows[0].count, 0);
+
+      await pool.query("UPDATE usuarios SET role='admin',empresa_id=1,activo=true WHERE id=1");
+      await pool.query('DELETE FROM wpp_outbox');
+      const participantBlocker = await pool.connect();
+      const changer = await pool.connect();
+      try {
+        await participantBlocker.query('BEGIN');
+        await participantBlocker.query(
+          'SELECT id FROM whatsapp_cloud_messages WHERE empresa_id=1 AND id=$1::bigint FOR UPDATE',
+          [tenantOneMessageId],
+        );
+        const actorLocked = new Promise(resolve => { actorLockedResolve = resolve; });
+        const pending = request(baseUrl, { key: 'reply-wins-admin-deactivation' });
+        await actorLocked;
+
+        await changer.query('BEGIN');
+        let changeSettled = false;
+        const change = changer.query('UPDATE usuarios SET activo=false WHERE id=1')
+          .then(() => { changeSettled = true; });
+        await new Promise(resolve => setTimeout(resolve, 60));
+        assert.equal(changeSettled, false, 'revocación debe esperar el lock transaccional del reply');
+
+        await participantBlocker.query('COMMIT');
+        const response = await pending;
+        assert.equal(response.status, 202);
+        await change;
+        await changer.query('COMMIT');
+        assert.deepEqual((await pool.query(`
+          SELECT empresa_id,telefono,mensaje,transport_origin,reply_correlation_id
+            FROM wpp_outbox
+        `)).rows, [{
+          empresa_id: 1,
+          telefono: '5493515557001',
+          mensaje: 'respuesta reply-wins-admin-deactivation',
+          transport_origin: 'cloud',
+          reply_correlation_id: 'admin:reply-wins-admin-deactivation',
+        }]);
+      } finally {
+        actorLockedResolve = null;
+        await participantBlocker.query('ROLLBACK').catch(() => {});
+        await changer.query('ROLLBACK').catch(() => {});
+        participantBlocker.release();
+        changer.release();
+      }
+    });
+  });
+});
+
 test('dos PATCH concurrentes con expectedVersion producen un ganador y un stale tenant-scoped', async () => {
   await withDatabase(async pool => {
     await pool.query('INSERT INTO empresas(id, config_integraciones) VALUES (1,$1::jsonb),(2,$2::jsonb)', [

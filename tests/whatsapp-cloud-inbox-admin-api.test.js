@@ -43,6 +43,26 @@ function mutationPool(handler, { role = 'admin', empresaId = 7 } = {}) {
   };
 }
 
+async function completeReplyPreEnqueue(options, {
+  role = 'admin', empresaId = 7, participant = '5493515550001',
+} = {}) {
+  assert.equal(typeof options?.beforeEnqueue, 'function');
+  return options.beforeEnqueue({
+    client: {
+      async query(input) {
+        const text = typeof input === 'string' ? input : input.text;
+        if (/FROM public\.usuarios/.test(text)) {
+          return { rows: [{ role, empresa_id: role === 'super' ? null : empresaId, activo: true }] };
+        }
+        if (/FROM public\.whatsapp_cloud_(?:messages|conversations)/.test(text)) {
+          return { rows: [{ participant_wa_id: participant }] };
+        }
+        throw new Error(`SQL inesperado en pre-enqueue: ${text}`);
+      },
+    },
+  });
+}
+
 function createHarness({ role, empresaId = 7 } = {}) {
   const calls = [];
   const app = express();
@@ -78,7 +98,8 @@ test('reply exige JSON y Origin canónico exacto antes de query o enqueue', asyn
       queries += 1;
       return [{ participant_wa_id: '5493515550001' }];
     },
-    async enqueueReply() {
+    async enqueueReply(_input, _pool, options) {
+      await completeReplyPreEnqueue(options, { role: 'admin', empresaId: 7 });
       enqueues += 1;
       return { queued: true, id: 1, status: 'pending' };
     },
@@ -114,7 +135,7 @@ test('reply exige JSON y Origin canónico exacto antes de query o enqueue', asyn
     });
     assert.equal(accepted.status, 202);
   });
-  assert.equal(queries, 1);
+  assert.equal(queries, 0);
   assert.equal(enqueues, 1);
 });
 
@@ -327,8 +348,9 @@ test('reply manual usa sólo enqueue correlacionado Cloud, ignora transport del 
       queryCalls.push({ sql, params });
       return [{ participant_wa_id: '5493515550001' }];
     },
-    async enqueueReply(input, pool) {
-      enqueueCalls.push({ input, pool });
+    async enqueueReply(input, pool, options) {
+      const transactionInput = await completeReplyPreEnqueue(options, { role: 'admin', empresaId: 7 });
+      enqueueCalls.push({ input: { ...input, ...transactionInput }, pool });
       return { queued: true, id: 501, status: 'pending', transportOrigin: 'cloud' };
     },
     pool: { marker: 'canonical-pool' },
@@ -352,9 +374,7 @@ test('reply manual usa sólo enqueue correlacionado Cloud, ignora transport del 
     });
   });
 
-  assert.equal(queryCalls.length, 1);
-  assert.deepEqual(queryCalls[0].params, [7, 44]);
-  assert.match(queryCalls[0].sql, /empresa_id = \$1/);
+  assert.equal(queryCalls.length, 0);
   assert.deepEqual(enqueueCalls, [{
     input: {
       empresaId: 7,
@@ -365,6 +385,109 @@ test('reply manual usa sólo enqueue correlacionado Cloud, ignora transport del 
     },
     pool: { marker: 'canonical-pool' },
   }]);
+});
+
+test('reply revalida actor y participante con el mismo client antes del único INSERT', async () => {
+  const calls = [];
+  const client = {
+    async query(input, params = []) {
+      const config = typeof input === 'string' ? { text: input, values: params } : input;
+      calls.push(config);
+      const { text } = config;
+      if (['BEGIN', 'COMMIT', 'ROLLBACK'].includes(text)) return { rows: [] };
+      if (/FROM public\.usuarios/.test(text)) {
+        return { rows: [{ role: 'admin', empresa_id: 7, activo: true }] };
+      }
+      if (/FROM public\.whatsapp_cloud_messages/.test(text)) {
+        return { rows: [{ participant_wa_id: '5493515550001' }] };
+      }
+      if (/pg_advisory_xact_lock\(\$1::integer, \$2::integer\)/.test(text)) return { rows: [{ locked: null }] };
+      if (/SELECT config_integraciones FROM empresas/.test(text)) {
+        return { rows: [{ config_integraciones: { whatsapp: {
+          provider: 'cloud', enabled: true, phone_number_id: 'phone-7', access_token_encrypted: 'v1:test',
+        } } }] };
+      }
+      if (/hashtextextended/.test(text)) return { rows: [{ locked: null }] };
+      if (/FROM wpp_outbox/.test(text) && !/INSERT INTO/.test(text)) return { rows: [] };
+      if (/INSERT INTO wpp_outbox/.test(text)) {
+        return { rows: [{ id: 501, status: 'pending', transport_origin: 'cloud' }] };
+      }
+      throw new Error(`SQL inesperado: ${text}`);
+    },
+    release() {},
+  };
+  const app = express();
+  app.use(express.json());
+  app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+    canonicalOrigin: 'https://admin.pedivoy.test',
+    withAuth(req, _res, next) {
+      req.user = { uid: 22, role: 'admin', empresa_id: 7 };
+      next();
+    },
+    async query() { assert.fail('reply no debe usar una conexión fuera de la transacción'); },
+    pool: { async connect() { return client; } },
+  }));
+
+  await withServer(app, async baseUrl => {
+    const response = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations/44/replies`, {
+      method: 'POST',
+      headers: { Origin: 'https://admin.pedivoy.test', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: 'respuesta segura', idempotency_key: 'same-client-1' }),
+    });
+    assert.equal(response.status, 202);
+  });
+
+  const order = calls.map(({ text }) => {
+    if (text === 'BEGIN' || text === 'COMMIT') return text;
+    if (/FROM public\.usuarios/.test(text)) return 'ACTOR';
+    if (/FROM public\.whatsapp_cloud_messages/.test(text)) return 'PARTICIPANT';
+    if (/INSERT INTO wpp_outbox/.test(text)) return 'INSERT';
+    return 'QUEUE';
+  });
+  assert.ok(/FOR UPDATE/.test(calls.find(({ text }) => /FROM public\.usuarios/.test(text)).text));
+  assert.ok(/FOR UPDATE/.test(calls.find(({ text }) => /FROM public\.whatsapp_cloud_messages/.test(text)).text));
+  assert.ok(order.indexOf('ACTOR') < order.indexOf('PARTICIPANT'));
+  assert.ok(order.indexOf('PARTICIPANT') < order.indexOf('INSERT'));
+  assert.equal(order.filter(step => step === 'INSERT').length, 1);
+});
+
+test('reply con JWT stale pierde tras revalidación transaccional y no llega a participante ni INSERT', async () => {
+  const calls = [];
+  const client = {
+    async query(input, params = []) {
+      const config = typeof input === 'string' ? { text: input, values: params } : input;
+      calls.push(config);
+      if (['BEGIN', 'ROLLBACK'].includes(config.text)) return { rows: [] };
+      if (/FROM public\.usuarios/.test(config.text)) {
+        return { rows: [{ role: 'user', empresa_id: 7, activo: true }] };
+      }
+      throw new Error(`consulta posterior prohibida: ${config.text}`);
+    },
+    release() {},
+  };
+  const app = express();
+  app.use(express.json());
+  app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+    canonicalOrigin: 'https://admin.pedivoy.test',
+    withAuth(req, _res, next) {
+      req.user = { uid: 22, role: 'admin', empresa_id: 7 };
+      next();
+    },
+    async query() { assert.fail('reply no debe usar query fuera de la transacción'); },
+    pool: { async connect() { return client; } },
+  }));
+
+  await withServer(app, async baseUrl => {
+    const response = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations/44/replies`, {
+      method: 'POST',
+      headers: { Origin: 'https://admin.pedivoy.test', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: 'no insertar', idempotency_key: 'stale-jwt-1' }),
+    });
+    assert.equal(response.status, 403);
+    assert.deepEqual(await response.json(), { error: 'actor_forbidden' });
+  });
+  assert.equal(calls.filter(({ text }) => /FROM public\.usuarios/.test(text)).length, 1);
+  assert.equal(calls.some(({ text }) => /whatsapp_cloud_(?:messages|conversations)|INSERT INTO wpp_outbox/.test(text)), false);
 });
 
 test('reply replay normaliza todo lifecycle durable a aceptación pública sin afirmar entrega', async () => {
@@ -385,7 +508,8 @@ test('reply replay normaliza todo lifecycle durable a aceptación pública sin a
         }
         return [{ id: 501, status: durableStatus, same_phone: true, same_message: true }];
       },
-      async enqueueReply() {
+      async enqueueReply(_input, _pool, options) {
+        await completeReplyPreEnqueue(options, { role: 'admin', empresaId: 7 });
         enqueueAttempts += 1;
         return {
           queued: false,
@@ -430,7 +554,8 @@ test('reply replay cuyo lookup de correlación falla responde outcome_unknown si
       lookupAttempts += 1;
       throw new Error('private sql lookup transport failure');
     },
-    async enqueueReply() {
+    async enqueueReply(_input, _pool, options) {
+      await completeReplyPreEnqueue(options, { role: 'admin', empresaId: 7 });
       enqueueAttempts += 1;
       return { queued: false, skipped: true, reason: 'duplicate_correlation', id: 501, status: 'pending' };
     },
@@ -545,7 +670,10 @@ test('reply duplicado con la misma key pero distinto destinatario o texto respon
       }
       return [{ id: 501, status: 'pending', same_phone: false, same_message: false }];
     },
-    async enqueueReply() {
+    async enqueueReply(_input, _pool, options) {
+      await completeReplyPreEnqueue(options, {
+        role: 'admin', empresaId: 7, participant: '541155550001',
+      });
       return { queued: false, skipped: true, reason: 'duplicate_correlation', id: 501, status: 'pending' };
     },
   }));
@@ -559,10 +687,10 @@ test('reply duplicado con la misma key pero distinto destinatario o texto respon
     assert.equal(response.status, 409);
     assert.deepEqual(await response.json(), { error: 'idempotency_key_conflict' });
   });
-  assert.equal(calls.length, 2);
-  assert.match(calls[1].sql, /FROM public\.wpp_outbox/);
-  assert.deepEqual(calls[1].params, [7, 501, 'admin:same-key', '5491155550001', 'texto cambiado']);
-  assert.deepEqual(calls[1].options, { sensitive: true });
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].sql, /FROM public\.wpp_outbox/);
+  assert.deepEqual(calls[0].params, [7, 501, 'admin:same-key', '5491155550001', 'texto cambiado']);
+  assert.deepEqual(calls[0].options, { sensitive: true });
 });
 
 test('lista de conversaciones pagina por última actividad, enmascara teléfono y agrega cliente/dirección', async () => {
@@ -808,7 +936,9 @@ test('reply super acepta un selector query único y duplicados concordantes', as
       selectedTenants.push(params[0]);
       return [{ participant_wa_id: '5493515550001' }];
     },
-    async enqueueReply(input) {
+    async enqueueReply(input, _pool, options) {
+      selectedTenants.push(input.empresaId);
+      await completeReplyPreEnqueue(options, { role: 'super', empresaId: null });
       selectedTenants.push(input.empresaId);
       return { queued: true, id: selectedTenants.length, status: 'pending' };
     },
