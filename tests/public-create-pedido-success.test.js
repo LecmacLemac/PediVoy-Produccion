@@ -106,6 +106,8 @@ test('POST /public/pedidos crea pedido válido', async () => {
     assert.equal(body.pedido.tracking_token, 'tok_9001');
     assert.equal(body.pedido.tracking_url, '/pedidos/seguimiento.html?t=tok_9001');
     assert.equal(wppCalls.length, 1);
+    assert.equal(wppCalls[0].pedido_id, 9001);
+    assert.equal(Object.hasOwn(wppCalls[0], 'notification_correlation_id'), false);
     assert.deepEqual(wppCalls[0].utility_template, {
       key: 'order_confirmation',
       parameters: {

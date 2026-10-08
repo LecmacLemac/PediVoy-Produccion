@@ -242,6 +242,35 @@ test('wrappers proactivos exigen identidad durable antes de abrir conexión', as
   }
 });
 
+test('wrappers proactivos atan identidad canónica al tipo antes de abrir conexión', async () => {
+  const parameters = { customer_name: 'Ana', address: 'A', tracking_token: 'tok' };
+  const invalid = [
+    'order_confirmation:42', 'order_en_route:042', ' order_en_route:42', 'order_en_route:42 ',
+    'order_en_route:+42', 'order_en_route:0', 'order_en_route:-1', 'order_en_route:42.0',
+    'order_en_route:1e2', 'order_en_route:2147483648', 'order_en_route:42:extra',
+    'order_en_route:42#hostile', 'order_en_route:٤٢', 'order_en_route:42\u0000hostile', 'unknown:42',
+  ];
+  for (const notificationCorrelationId of invalid) {
+    let connects = 0;
+    await assert.rejects(enqueueWppOrderEnRouteNotification({
+      empresaId: 7, phone: '3515550000', message: 'Web', notificationCorrelationId,
+      utility_template: { key: 'order_en_route', parameters },
+    }, { async connect() { connects += 1; } }), { code: 'notification_correlation_id_invalido' });
+    assert.equal(connects, 0, notificationCorrelationId);
+  }
+});
+
+test('wrapper proactivo acepta el máximo INTEGER canónico', async () => {
+  const txPool = enterpriseSuccessPool();
+  await enqueueWppOrderEnRouteNotification({
+    empresaId: 7, phone: '3515550000', message: 'Web',
+    notificationCorrelationId: 'order_en_route:2147483647',
+    utility_template: { key: 'order_en_route', parameters: { customer_name: 'Ana', address: 'A', tracking_token: 'tok' } },
+  }, txPool);
+  const insert = txPool.calls.find(call => /INSERT INTO wpp_outbox/.test(call.text));
+  assert.equal(insert.values[5], 'order_en_route:2147483647');
+});
+
 test('enqueue falla cerrado para empresa desconocida y hace rollback/release', async () => {
   const txPool = createPool(async ({ text }) => {
     if (text === 'BEGIN' || text === 'ROLLBACK') return { rows: [] };

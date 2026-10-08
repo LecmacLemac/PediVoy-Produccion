@@ -142,7 +142,7 @@ export function createNotificarEnRuta({
             tracking_token: String(token ?? ''),
           },
         },
-        notification_correlation_id: `order_en_route:${pedidoId}`,
+        pedido_id: datos.id,
       });
       if (!isDurableEnqueueAcceptance(enqueueResult)) {
         throw Object.assign(new Error('notification_enqueue_not_accepted'), {
@@ -261,7 +261,7 @@ export function createNotificarPedidoTransferencia({
         message: mensaje,
         empresa_id: empresaId,
         utility_template: utilityTemplate,
-        notification_correlation_id: `transfer_payment:${pedidoId}`,
+        pedido_id: datos.id,
       });
 
     } catch (e) {

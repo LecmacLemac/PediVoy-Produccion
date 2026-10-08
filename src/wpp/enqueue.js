@@ -7,6 +7,7 @@ import { pool as defaultPool } from '../db.js';
 import { normalizeWhatsappPhone } from '../core/format.js';
 import { empresaWhatsappConfigLockNamespace } from './companyConfigLock.js';
 import { isWhatsappCloudActive as matchesCanonicalCloudPolicy } from './companyWebPolicy.js';
+import { parseProactiveNotificationCorrelationId } from './proactiveCorrelation.js';
 
 const VALID_REPLY_JID = /^[^\s@]+@(c\.us|lid)$/i;
 const REQUIRED_UTILITY_TEMPLATE_CAPABILITY = Symbol('required-utility-template-capability');
@@ -153,9 +154,7 @@ function prepareEnqueue({
   if (correlationId != null && (!normalizedCorrelationId || normalizedCorrelationId.length > 512)) {
     throw new WppTransportConfigError('correlation_id_invalido');
   }
-  const normalizedNotificationCorrelationId = notificationCorrelationId == null
-    ? null
-    : String(notificationCorrelationId).trim();
+  const normalizedNotificationCorrelationId = notificationCorrelationId;
   if (requireNotificationCorrelation && !normalizedNotificationCorrelationId) {
     throw new WppTransportConfigError('notification_correlation_id_requerido');
   }
@@ -335,15 +334,22 @@ export async function enqueueWppOutbox(input, transactionPool = defaultPool) {
   return enqueueWppOutboxWithPolicy(input, transactionPool);
 }
 
-function enqueueRequiredUtilityNotification(input, transactionPool, requiredUtilityTemplateKey) {
+async function enqueueRequiredUtilityNotification(input, transactionPool, requiredUtilityTemplateKey) {
   const notificationCorrelationId = input?.notificationCorrelationId;
+  if (notificationCorrelationId == null || notificationCorrelationId === '') {
+    throw new WppTransportConfigError('notification_correlation_id_requerido');
+  }
+  const parsedCorrelation = parseProactiveNotificationCorrelationId(notificationCorrelationId);
+  if (!parsedCorrelation || parsedCorrelation.templateKey !== requiredUtilityTemplateKey) {
+    throw new WppTransportConfigError('notification_correlation_id_invalido');
+  }
   const enqueueInput = input && typeof input === 'object' && !Array.isArray(input)
     ? Object.fromEntries(Object.entries(input).filter(([key]) => key !== 'notificationCorrelationId'))
     : input;
   return enqueueWppOutboxWithPolicy(enqueueInput, transactionPool, {
     requiredUtilityTemplateCapability: REQUIRED_UTILITY_TEMPLATE_CAPABILITY,
     requiredUtilityTemplateKey,
-    notificationCorrelationId,
+    notificationCorrelationId: parsedCorrelation.canonical,
     requireNotificationCorrelation: true,
   });
 }

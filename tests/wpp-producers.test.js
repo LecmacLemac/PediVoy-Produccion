@@ -137,7 +137,7 @@ test('messaging exposes producer-specific required-template wrappers without a p
       empresa_id: 7,
       phone: '3515550000',
       message: 'Web',
-      notification_correlation_id: notificationCorrelationId,
+      pedido_id: notificationCorrelationId.split(':')[1],
       utility_template: { key, parameters },
     }, pool);
     const inserted = getInsertValuesByColumn(pool.calls.find(call => /INSERT INTO/.test(call.text)));
@@ -161,6 +161,22 @@ test('messaging proactive wrappers reject a missing durable notification identit
     );
     assert.equal(pool.calls.length, 0);
   }
+});
+
+test('messaging proactive wrappers derive correlation and reject caller-supplied correlation before DB', async () => {
+  const messaging = await import('../src/services/messaging.js');
+  const pool = createWppEnqueueTestPool();
+  await assert.rejects(
+    messaging.enqueueOrderEnRouteWppMessage({
+      empresa_id: 7,
+      pedido_id: 42,
+      phone: '3515550000',
+      message: 'Web',
+      notification_correlation_id: 'transfer_payment:42',
+    }, pool),
+    { code: 'cloud_template_payload_invalid' },
+  );
+  assert.equal(pool.calls.length, 0);
 });
 
 test('messaging generic API rejects caller-controlled required-template flags before DB', async () => {

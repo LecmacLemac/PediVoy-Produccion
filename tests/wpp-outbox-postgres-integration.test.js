@@ -685,6 +685,57 @@ test('utility migration is idempotent, preserves legacy and enforces nullable Cl
   });
 });
 
+test('proactive correlation migration enforces canonical INTEGER identity and preserves constraint OID on rerun', async () => {
+  const { withIsolatedPostgres } = await import('./support/isolated-postgres.js');
+  await withIsolatedPostgres(async pool => {
+    await pool.query(migrationSql);
+    await pool.query("INSERT INTO wpp_outbox (telefono, mensaje) VALUES ('1', 'legacy-null')");
+    await pool.query("INSERT INTO wpp_outbox (empresa_id, telefono, mensaje, notification_correlation_id) VALUES (7, '1', 'max', 'order_en_route:2147483647')");
+    const oidBefore = (await pool.query("SELECT oid::text FROM pg_constraint WHERE conrelid = 'wpp_outbox'::regclass AND conname = 'wpp_outbox_notification_correlation_check'")).rows[0].oid;
+    for (const value of ['order_en_route:01', ' order_en_route:1', 'order_en_route:+1', 'order_en_route:0', 'order_en_route:-1', 'order_en_route:1.0', 'order_en_route:1e2', 'order_en_route:2147483648', 'order_en_route:1:2', 'order_en_route:1#x', 'unknown:1', 'order_en_route:١', 'order_en_route:1' + String.fromCharCode(1)]) {
+      await assert.rejects(
+        pool.query("INSERT INTO wpp_outbox (empresa_id, telefono, mensaje, notification_correlation_id) VALUES (7, '1', 'bad', $1)", [value]),
+        { code: '23514' },
+      );
+    }
+    await assert.rejects(
+      pool.query("INSERT INTO wpp_outbox (empresa_id, telefono, mensaje, transport_origin, notification_correlation_id, cloud_template_key, cloud_template_parameters) VALUES (7, '1', 'cross-type', 'cloud', 'transfer_payment:1', 'order_en_route', $1::jsonb)", [JSON.stringify({ customer_name: 'Ana', address: 'A', tracking_token: 'tok' })]),
+      { code: '23514' },
+    );
+    await pool.query(migrationSql);
+    const oidAfter = (await pool.query("SELECT oid::text FROM pg_constraint WHERE conrelid = 'wpp_outbox'::regclass AND conname = 'wpp_outbox_notification_correlation_check'")).rows[0].oid;
+    assert.equal(oidAfter, oidBefore);
+    assert.equal((await pool.query('SELECT count(*)::int AS total FROM wpp_outbox')).rows[0].total, 2);
+  });
+});
+
+test('proactive correlation migration fails closed on invalid candidate rows without leaking their value', async () => {
+  const { withIsolatedPostgres } = await import('./support/isolated-postgres.js');
+  await withIsolatedPostgres(async pool => {
+    const hostile = 'private-hostile-correlation';
+    await pool.query(`
+      CREATE TABLE wpp_outbox (
+        id SERIAL PRIMARY KEY,
+        empresa_id INTEGER,
+        telefono TEXT NOT NULL,
+        mensaje TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        status TEXT NOT NULL DEFAULT 'pending',
+        notification_correlation_id TEXT
+      );
+      ALTER TABLE wpp_outbox ADD CONSTRAINT wpp_outbox_notification_correlation_check
+        CHECK (notification_correlation_id IS NULL OR length(notification_correlation_id) > 0);
+    `);
+    await pool.query("INSERT INTO wpp_outbox (empresa_id, telefono, mensaje, notification_correlation_id) VALUES (7, '1', 'legacy', $1)", [hostile]);
+    await assert.rejects(pool.query(migrationSql), error => {
+      assert.equal(error.code, '23514');
+      assert.equal(error.message, 'wpp_outbox_notification_correlation_invalid_legacy');
+      assert.equal(JSON.stringify(error).includes(hostile), false);
+      return true;
+    });
+  });
+});
+
 test('proactive notification identity survives ambiguous COMMIT and isolates tenants beyond five minutes', async () => {
   const { withIsolatedPostgres } = await import('./support/isolated-postgres.js');
   await withIsolatedPostgres(async pool => {

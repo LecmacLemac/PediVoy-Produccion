@@ -1974,17 +1974,65 @@ ALTER TABLE public.wpp_outbox
     )
   );
 
-ALTER TABLE public.wpp_outbox
-  DROP CONSTRAINT IF EXISTS wpp_outbox_notification_correlation_check;
-ALTER TABLE public.wpp_outbox
-  ADD CONSTRAINT wpp_outbox_notification_correlation_check CHECK (
-    notification_correlation_id IS NULL
-    OR (
-      empresa_id IS NOT NULL
-      AND notification_correlation_id = pg_catalog.btrim(notification_correlation_id)
-      AND pg_catalog.length(notification_correlation_id) BETWEEN 1 AND 512
-    )
-  );
+DO $$
+DECLARE
+  correlation_constraint_oid OID;
+  correlation_constraint_marker TEXT;
+BEGIN
+  IF EXISTS (
+    SELECT 1
+      FROM public.wpp_outbox
+     WHERE notification_correlation_id IS NOT NULL
+       AND NOT (
+         empresa_id IS NOT NULL
+         AND CASE
+           WHEN notification_correlation_id ~ '^(order_confirmation|order_en_route|transfer_payment):[1-9][0-9]{0,9}$'
+             THEN pg_catalog.split_part(notification_correlation_id, ':', 2)::BIGINT <= 2147483647
+           ELSE FALSE
+         END
+         AND (
+           cloud_template_key IS NULL
+           OR pg_catalog.split_part(notification_correlation_id, ':', 1) = cloud_template_key
+         )
+       )
+  ) THEN
+    RAISE EXCEPTION USING
+      ERRCODE = '23514',
+      MESSAGE = 'wpp_outbox_notification_correlation_invalid_legacy';
+  END IF;
+
+  SELECT constraint_row.oid,
+         pg_catalog.obj_description(constraint_row.oid, 'pg_constraint')
+    INTO correlation_constraint_oid, correlation_constraint_marker
+    FROM pg_catalog.pg_constraint AS constraint_row
+   WHERE constraint_row.conrelid = 'public.wpp_outbox'::regclass
+     AND constraint_row.conname = 'wpp_outbox_notification_correlation_check';
+
+  IF correlation_constraint_oid IS NULL
+     OR correlation_constraint_marker IS DISTINCT FROM 'pedivoy:proactive-correlation:v1' THEN
+    ALTER TABLE public.wpp_outbox
+      DROP CONSTRAINT IF EXISTS wpp_outbox_notification_correlation_check;
+    ALTER TABLE public.wpp_outbox
+      ADD CONSTRAINT wpp_outbox_notification_correlation_check CHECK (
+        notification_correlation_id IS NULL
+        OR (
+          empresa_id IS NOT NULL
+          AND CASE
+            WHEN notification_correlation_id ~ '^(order_confirmation|order_en_route|transfer_payment):[1-9][0-9]{0,9}$'
+              THEN pg_catalog.split_part(notification_correlation_id, ':', 2)::BIGINT <= 2147483647
+            ELSE FALSE
+          END
+          AND (
+            cloud_template_key IS NULL
+            OR pg_catalog.split_part(notification_correlation_id, ':', 1) = cloud_template_key
+          )
+        )
+      );
+    COMMENT ON CONSTRAINT wpp_outbox_notification_correlation_check ON public.wpp_outbox
+      IS 'pedivoy:proactive-correlation:v1';
+  END IF;
+END
+$$;
 
 DO $$
 DECLARE

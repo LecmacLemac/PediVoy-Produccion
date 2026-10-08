@@ -7,6 +7,7 @@ import {
   enqueueWppTransferPaymentNotification,
   WppTransportConfigError,
 } from '../wpp/enqueue.js';
+import { buildProactiveNotificationCorrelationId } from '../wpp/proactiveCorrelation.js';
 
 export async function enqueueWppMessage({
   phone, message, empresa_id = null, utility_template = null, ...extra
@@ -20,34 +21,38 @@ export async function enqueueWppMessage({
   }, transactionPool);
 }
 
-function enqueueRequiredNotification(enqueue, {
+async function enqueueRequiredNotification(enqueue, requiredUtilityTemplateKey, {
   phone,
   message,
   empresa_id = null,
   utility_template = null,
-  notification_correlation_id = null,
+  pedido_id = null,
   ...extra
 }, transactionPool) {
   if (Object.keys(extra).length) throw new WppTransportConfigError('cloud_template_payload_invalid');
+  const notificationCorrelationId = buildProactiveNotificationCorrelationId(requiredUtilityTemplateKey, pedido_id);
+  if (pedido_id != null && !notificationCorrelationId) {
+    throw new WppTransportConfigError('notification_correlation_id_invalido');
+  }
   return enqueue({
     empresaId: empresa_id,
     phone,
     message,
     utility_template,
-    notificationCorrelationId: notification_correlation_id,
+    notificationCorrelationId,
   }, transactionPool);
 }
 
 export function enqueueOrderConfirmationWppMessage(input, transactionPool = pool) {
-  return enqueueRequiredNotification(enqueueWppOrderConfirmationNotification, input, transactionPool);
+  return enqueueRequiredNotification(enqueueWppOrderConfirmationNotification, 'order_confirmation', input, transactionPool);
 }
 
 export function enqueueOrderEnRouteWppMessage(input, transactionPool = pool) {
-  return enqueueRequiredNotification(enqueueWppOrderEnRouteNotification, input, transactionPool);
+  return enqueueRequiredNotification(enqueueWppOrderEnRouteNotification, 'order_en_route', input, transactionPool);
 }
 
 export function enqueueTransferPaymentWppMessage(input, transactionPool = pool) {
-  return enqueueRequiredNotification(enqueueWppTransferPaymentNotification, input, transactionPool);
+  return enqueueRequiredNotification(enqueueWppTransferPaymentNotification, 'transfer_payment', input, transactionPool);
 }
 
 export async function enqueueCorrelatedWppMessage({
