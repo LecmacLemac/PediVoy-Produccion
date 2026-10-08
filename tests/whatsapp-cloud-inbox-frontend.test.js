@@ -257,6 +257,9 @@ test('estados tienen etiquetas españolas y los estados de revisión bloquean re
   assert.match(statusMeta('manual_retry').help, /manual/i);
   assert.equal(statusMeta('manual_retry').retrySafe, false);
   assert.equal(operationalMeta({ workflowStatus: 'pending', unreadCount: 0, lastDirection: 'outbound', lastDeliveryStatus: 'manual_retry' }).key, 'review');
+  assert.equal(operationalMeta({ workflowStatus: 'pending', unreadCount: 0, lastDirection: 'outbound', lastDeliveryStatus: 'failed' }).key, 'review');
+  assert.equal(operationalMeta({ workflowStatus: 'pending', unreadCount: 0, lastDirection: 'outbound', lastDeliveryStatus: 'delivered' }).key, 'resolved');
+  assert.equal(operationalMeta({ workflowStatus: 'pending', unreadCount: 0, lastDirection: 'outbound', lastDeliveryStatus: 'read' }).key, 'resolved');
 });
 
 test('historial pagina hacia atrás, deduplica y mantiene cronología', () => {

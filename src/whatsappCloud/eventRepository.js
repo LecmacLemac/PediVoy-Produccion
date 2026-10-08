@@ -1,4 +1,5 @@
 import { normalizeWhatsAppWaId } from './waId.js';
+import { validateMetaWamid } from './messageId.js';
 
 function requireNonEmptyString(value, field) {
   if (typeof value !== 'string' || !value.trim()) {
@@ -11,6 +12,12 @@ function requireWaId(value) {
   const waId = normalizeWhatsAppWaId(value);
   if (!waId) throw new WhatsAppCloudEventError('invalid_event', 'Invalid message sender');
   return waId;
+}
+
+function requireMetaWamid(value, field) {
+  const wamid = validateMetaWamid(value);
+  if (!wamid) throw new WhatsAppCloudEventError('invalid_event', `Invalid ${field}`);
+  return wamid;
 }
 
 function sanitizeMessage(message) {
@@ -35,7 +42,7 @@ function sanitizeMessage(message) {
     };
   }
   return {
-    messageId: requireNonEmptyString(message?.id, 'message id'),
+    messageId: requireMetaWamid(message?.id, 'message id'),
     senderId: requireWaId(message?.from),
     recipientId: null,
     messageType: type,
@@ -49,7 +56,7 @@ function sanitizeStatus(status) {
   const normalizedStatus = requireNonEmptyString(status?.status, 'status');
   const sourceTimestamp = requireNonEmptyString(status?.timestamp, 'status timestamp');
   return {
-    messageId: requireNonEmptyString(status?.id, 'status message id'),
+    messageId: requireMetaWamid(status?.id, 'status message id'),
     senderId: null,
     recipientId: typeof status?.recipient_id === 'string' && status.recipient_id.trim()
       ? status.recipient_id.trim()

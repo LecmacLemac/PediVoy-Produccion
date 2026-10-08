@@ -1,4 +1,5 @@
 import { normalizeCloudDeadline, unrefTimer } from './deadlines.js';
+import { validateMetaWamid } from './messageId.js';
 
 export const CloudDeliveryOutcome = Object.freeze({
   SENT: 'sent',
@@ -83,7 +84,7 @@ export function createWhatsAppCloudGraphClient({
       if (response.ok) {
         let payload;
         try { payload = await response.json(); } catch { payload = null; }
-        const messageId = normalizeRequired(payload?.messages?.[0]?.id);
+        const messageId = validateMetaWamid(payload?.messages?.[0]?.id);
         if (!messageId) {
           return { outcome: CloudDeliveryOutcome.UNKNOWN, errorCode: 'cloud_dispatch_unknown' };
         }

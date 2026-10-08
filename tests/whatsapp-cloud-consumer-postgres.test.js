@@ -320,7 +320,7 @@ test('PostgreSQL normaliza matriz hostil de leases, respeta límites y conserva 
   });
 });
 
-test('fila sent registra id Meta sanitizado y no puede finalizarse por otro owner', options, async () => {
+test('fila sent conserva WAMID Meta exacto, rechaza inválidos y no puede finalizarse por otro owner', options, async () => {
   await withDatabase(async pool => {
     await pool.query(migrationSql);
     const { rows: inserted } = await pool.query(`
@@ -335,15 +335,16 @@ test('fila sent registra id Meta sanitizado y no puede finalizarse por otro owne
       finishCloudOutboxRow({ query, id: row.id, owner: 'owner-ajeno', status: 'sent', dispatchState: 'sent', messageId: 'wamid.bad' }),
       error => error?.code === 'CLOUD_OUTBOX_CLAIM_LOST',
     );
-    await finishCloudOutboxRow({
-      query,
-      id: row.id,
-      owner: 'owner-real',
-      status: 'sent',
-      dispatchState: 'sent',
+    await assert.rejects(finishCloudOutboxRow({
+      query, id: row.id, owner: 'owner-real', status: 'sent', dispatchState: 'sent',
       messageId: 'wamid.safe\nheader',
+    }), error => error?.code === 'CLOUD_OUTBOX_PROVIDER_IDENTITY_INVALID');
+    const paddedWamid = 'wamid.HBgMNTQ5MzUxNTU1MDAwMBUCABIYFjNFQjA4Q0UxQUQyNUQxRjkwM0U2AA==';
+    await finishCloudOutboxRow({
+      query, id: row.id, owner: 'owner-real', status: 'sent', dispatchState: 'sent',
+      messageId: paddedWamid,
     });
     const stored = (await pool.query('SELECT status, cloud_dispatch_state, meta_message_id, claim_owner FROM wpp_outbox WHERE id = $1', [row.id])).rows[0];
-    assert.deepEqual(stored, { status: 'sent', cloud_dispatch_state: 'sent', meta_message_id: 'wamid.safeheader', claim_owner: null });
+    assert.deepEqual(stored, { status: 'sent', cloud_dispatch_state: 'sent', meta_message_id: paddedWamid, claim_owner: null });
   });
 });

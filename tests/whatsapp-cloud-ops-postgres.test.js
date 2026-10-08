@@ -133,7 +133,7 @@ test('listado filtra estados Cloud y nunca devuelve PII, payload ni errores libr
   await insertCloud({ state: 'dispatch_started', error: 'token=secret teléfono 5493512345678' });
   const unknownId = await insertCloud({
     empresaId: 8, status: 'error', state: 'outcome_unknown',
-    error: 'cloud_dispatch_unknown', metaMessageId: 'wamid.safe\nheader',
+    error: 'cloud_dispatch_unknown', metaMessageId: 'wamid.HBgMNTQ5MzUxNTU1MDAwAA==',
   });
   await insertCloud({ status: 'error', state: 'definitive_failed', error: 'meta_rejected' });
   await pool.query(`
@@ -152,10 +152,9 @@ test('listado filtra estados Cloud y nunca devuelve PII, payload ni errores libr
     dispatch_started_at: rows[0].dispatch_started_at,
     sent_at: null,
     error_code: 'cloud_dispatch_unknown',
-    meta_message_id: 'wamid.safeheader',
   });
   const serialized = JSON.stringify(rows);
-  assert.doesNotMatch(serialized, /telefono|mensaje|token|549351|contenido|otro secreto/i);
+  assert.doesNotMatch(serialized, /telefono|mensaje|token|549351|wamid\.|contenido|otro secreto/i);
 
   const defaults = await ops.list({});
   assert.deepEqual(new Set(defaults.map(row => row.cloud_dispatch_state)), new Set(['dispatch_started', 'outcome_unknown']));

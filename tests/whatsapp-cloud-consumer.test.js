@@ -6,6 +6,7 @@ import {
   createWhatsAppCloudConsumer,
 } from '../src/whatsappCloud/consumer.js';
 import { createWhatsAppCloudGraphClient } from '../src/whatsappCloud/graphClient.js';
+import { validateMetaWamid } from '../src/whatsappCloud/messageId.js';
 import {
   claimNextCloudOutboxRow,
   finishCloudOutboxRow,
@@ -88,6 +89,27 @@ test('Graph success usa v26.0, Bearer y payload text sin filtrar token', async (
     text: { preview_url: false, body: 'Hola' },
   });
   assert.equal(JSON.stringify(result).includes('secret-token'), false);
+});
+
+test('validador WAMID acepta padding final exacto y rechaza normalización destructiva', () => {
+  const valid = [
+    'wamid.HBgMNTQ5MzUxNTU1MDAwAA',
+    'wamid.HBgMNTQ5MzUxNTU1MDAwAA=',
+    'wamid.HBgMNTQ5MzUxNTU1MDAwAA==',
+    'wamid.safe_ABC-123:xyz',
+  ];
+  for (const value of valid) assert.equal(validateMetaWamid(value), value);
+
+  for (const value of [
+    '', null, {}, [], 7,
+    ' wamid.HBgMNTQ5MzUxNTU1MDAwAA==',
+    'wamid.HBgMNTQ5MzUxNTU1MDAwAA== ',
+    'wamid.HBgMNTQ5MzUxNTU1MDAwAA==\n',
+    'wamid.HBgMNTQ5=MzUxNTU1MDAwAA=',
+    'wamid.HBgMNTQ5MzUxNTU1MDAwAA===',
+    'message.HBgMNTQ5MzUxNTU1MDAwAA==',
+    'wamid.' + 'A'.repeat(250),
+  ]) assert.equal(validateMetaWamid(value), null, JSON.stringify(value));
 });
 
 test('consumer preserva leaseMs decimal string hasta el normalizador del repository', async () => {
@@ -357,19 +379,37 @@ test('5xx se trata como unknown para evitar duplicados', async () => {
   assert.deepEqual(result, { outcome: CloudDeliveryOutcome.UNKNOWN, errorCode: 'cloud_dispatch_unknown' });
 });
 
-test('message id se sanitiza antes de persistir', async () => {
+test('WAMID Meta con padding se persiste byte por byte', async () => {
   const calls = [];
+  const paddedWamid = 'wamid.HBgMNTQ5MzUxNTU1MDAwMBUCABIYFjNFQjA4Q0UxQUQyNUQxRjkwM0U2AA==';
   await finishCloudOutboxRow({
     query: async (sql, params) => { calls.push({ sql, params }); return [{ id: 4 }]; },
     id: 4,
     owner: 'worker',
     status: 'sent',
     dispatchState: 'sent',
-    messageId: ' wamid.safe_ABC-123:xyz\nBearer secret ',
+    messageId: paddedWamid,
   });
 
-  assert.equal(calls[0].params[3], 'wamid.safe_ABC-123:xyzBearersecret');
-  assert.equal(calls[0].params[3].includes('\n'), false);
+  assert.equal(calls[0].params[3], paddedWamid);
+});
+
+test('Graph rechaza WAMID alterado en vez de recortarlo o compactarlo', async () => {
+  for (const id of [
+    ' wamid.HBgMNTQ5MzUxNTU1MDAwAA==',
+    'wamid.HBgMNTQ5MzUxNTU1MDAwAA==\n',
+    'wamid.HBgMNTQ5=MzUxNTU1MDAwAA=',
+    'message.HBgMNTQ5MzUxNTU1MDAwAA==',
+  ]) {
+    const client = createWhatsAppCloudGraphClient({
+      fetchImpl: async () => jsonResponse(200, { messages: [{ id }] }),
+    });
+    assert.deepEqual(
+      await client.sendText({ phoneNumberId: '123', accessToken: 'secret', to: '3515550000', text: 'hola' }),
+      { outcome: CloudDeliveryOutcome.UNKNOWN, errorCode: 'cloud_dispatch_unknown' },
+      JSON.stringify(id),
+    );
+  }
 });
 
 test('dispatch_started usa fencing por owner y sólo parte de pre_dispatch', async () => {

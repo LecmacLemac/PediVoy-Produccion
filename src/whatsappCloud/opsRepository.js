@@ -1,4 +1,4 @@
-import { sanitizeMetaMessageId } from './outboxRepository.js';
+import { validateMetaWamid } from './messageId.js';
 
 const LIST_STATES = Object.freeze(['dispatch_started', 'outcome_unknown', 'manual_retryable']);
 const ERROR_CODES = Object.freeze([
@@ -55,10 +55,8 @@ function requireReason(reason, allowed) {
 }
 
 function requireMetaMessageId(messageId) {
-  const value = String(messageId || '');
-  if (!/^wamid\.[A-Za-z0-9._:-]{1,248}$/.test(value) || sanitizeMetaMessageId(value) !== value) {
-    throw opsError('OPS_INVALID_ARGUMENT');
-  }
+  const value = validateMetaWamid(messageId);
+  if (!value) throw opsError('OPS_INVALID_ARGUMENT');
   return value;
 }
 
@@ -148,8 +146,7 @@ export function createCloudOps({ pool } = {}) {
                created_at,
                dispatch_started_at,
                sent_at,
-               CASE WHEN error = ANY($3::text[]) THEN error ELSE NULL END AS error_code,
-               meta_message_id
+               CASE WHEN error = ANY($3::text[]) THEN error ELSE NULL END AS error_code
           FROM wpp_outbox
          WHERE transport_origin = 'cloud'
            AND cloud_dispatch_state = ANY($1::text[])
@@ -157,10 +154,7 @@ export function createCloudOps({ pool } = {}) {
          ORDER BY created_at, id
          LIMIT $4
       `, [selectedStates, empresaId ?? null, ERROR_CODES, limit]);
-      return rows.map(row => ({
-        ...row,
-        meta_message_id: sanitizeMetaMessageId(row.meta_message_id),
-      }));
+      return rows;
     },
 
     async markSent({ id, actor, metaMessageId } = {}) {

@@ -1,6 +1,5 @@
 import { normalizeCloudDeadline } from './deadlines.js';
-
-const MESSAGE_ID_MAX_LENGTH = 255;
+import { validateMetaWamid } from './messageId.js';
 
 export const CloudDispatchState = Object.freeze({
   PRE_DISPATCH: 'pre_dispatch',
@@ -10,11 +9,6 @@ export const CloudDispatchState = Object.freeze({
   MANUAL_RETRYABLE: 'manual_retryable',
   OUTCOME_UNKNOWN: 'outcome_unknown',
 });
-
-export function sanitizeMetaMessageId(value) {
-  const compact = String(value || '').replace(/[^A-Za-z0-9._:-]/g, '');
-  return compact ? compact.slice(0, MESSAGE_ID_MAX_LENGTH) : null;
-}
 
 export async function claimNextCloudOutboxRow({ query, owner, leaseMs } = {}) {
   if (typeof query !== 'function') throw new TypeError('query requerido');
@@ -123,6 +117,15 @@ export async function finishCloudOutboxRow({
   const allowedSourceStates = dispatchState === CloudDispatchState.DEFINITIVE_FAILED
     ? [CloudDispatchState.PRE_DISPATCH, CloudDispatchState.DISPATCH_STARTED]
     : [CloudDispatchState.DISPATCH_STARTED];
+  const validatedMessageId = messageId == null ? null : validateMetaWamid(messageId);
+  if (messageId != null && validatedMessageId == null) {
+    throw Object.assign(new Error('cloud outbox provider identity invalid'), {
+      code: 'CLOUD_OUTBOX_PROVIDER_IDENTITY_INVALID',
+    });
+  }
+  if (dispatchState === CloudDispatchState.SENT && validatedMessageId == null) {
+    throw new TypeError('provider identity requerida');
+  }
   let rows;
   try {
     rows = await query(`
@@ -141,7 +144,7 @@ export async function finishCloudOutboxRow({
          AND claim_owner = $5
          AND cloud_dispatch_state = ANY($7::text[])
       RETURNING id
-    `, [status, errorCode, id, sanitizeMetaMessageId(messageId), owner, dispatchState, allowedSourceStates], { sensitive: true });
+    `, [status, errorCode, id, validatedMessageId, owner, dispatchState, allowedSourceStates], { sensitive: true });
   } catch (error) {
     const identityConflict = error?.code === '23505';
     throw Object.assign(

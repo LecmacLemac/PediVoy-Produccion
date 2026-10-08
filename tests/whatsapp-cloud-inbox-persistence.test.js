@@ -34,10 +34,12 @@ assert.ok(outboxStart >= 0 && outboxEnd > outboxStart);
 assert.ok(inboxStart >= 0 && inboxEnd > inboxStart);
 assert.ok(projectionStart >= 0 && projectionEnd > projectionStart);
 const migrationSql = `${initSql.slice(outboxStart, outboxEnd + outboxEndMarker.length)}\n${initSql.slice(inboxStart, inboxEnd + inboxEndMarker.length)}\n${initSql.slice(projectionStart, projectionEnd + projectionEndMarker.length)}`;
+const preProjectionMigrationSql = `${initSql.slice(outboxStart, outboxEnd + outboxEndMarker.length)}\n${initSql.slice(inboxStart, inboxEnd + inboxEndMarker.length)}`;
+const projectionSql = initSql.slice(projectionStart, projectionEnd + projectionEndMarker.length);
 const tempPrefix = '.whatsapp-cloud-inbox-persistence-pg-';
 const createdDirectories = new Set();
 
-async function withDatabase(work) {
+async function withDatabase(work, { sql = migrationSql } = {}) {
   const directory = mkdtempSync(join(process.cwd(), tempPrefix));
   createdDirectories.add(directory);
   const listener = net.createServer();
@@ -52,7 +54,7 @@ async function withDatabase(work) {
     started = true;
     pool = new pg.Pool({ host: '127.0.0.1', port, user: 'cloud_persistence_test', database: 'postgres', max: 4 });
     await pool.query("CREATE TABLE empresas (id INTEGER PRIMARY KEY, config_integraciones JSONB NOT NULL DEFAULT '{}'::jsonb)");
-    await pool.query(migrationSql);
+    await pool.query(sql);
     await work(pool);
   } finally {
     if (pool) await pool.end();
@@ -152,8 +154,8 @@ test('inbound image/document produce exactamente una proyección allowlisted sin
     await seedTenant(pool);
     const handler = handlerFor(pool);
     assert.deepEqual(await handler([
-      inbound({ id: ' wamid.image-1 ', type: ' image ' }),
-      inbound({ id: ' wamid.document-1 ', type: ' document ' }),
+      inbound({ id: 'wamid.image-1', type: ' image ' }),
+      inbound({ id: 'wamid.document-1', type: ' document ' }),
     ]), { accepted: 2, duplicates: 0 });
 
     const rows = (await pool.query(`
@@ -202,13 +204,84 @@ test('replay del mismo evento es idempotente y conserva una sola proyección', a
   await withDatabase(async pool => {
     await seedTenant(pool);
     const handler = handlerFor(pool);
-    assert.deepEqual(await handler([inbound({ id: ' wamid.duplicate ' })]), { accepted: 1, duplicates: 0 });
+    assert.deepEqual(await handler([inbound({ id: 'wamid.duplicate' })]), { accepted: 1, duplicates: 0 });
     assert.deepEqual(await handler([inbound({ id: 'wamid.duplicate' })]), { accepted: 0, duplicates: 1 });
     assert.deepEqual((await pool.query(`SELECT
       (SELECT count(*)::int FROM whatsapp_cloud_events) AS events,
       (SELECT count(*)::int FROM whatsapp_cloud_messages) AS projections
     `)).rows[0], { events: 1, projections: 1 });
   });
+});
+
+test('migración repara sólo correlaciones históricas padding-only únicas 1↔1 y same-tenant', async () => {
+  await withDatabase(async pool => {
+    for (let empresaId = 1; empresaId <= 6; empresaId += 1) {
+      await seedTenant(pool, { empresaId, phoneNumberId: `phone-${empresaId}` });
+    }
+    const insertOutbox = async (empresaId, wamid, message) => {
+      const result = await pool.query(`
+        INSERT INTO wpp_outbox
+          (empresa_id, telefono, mensaje, status, transport_origin, cloud_dispatch_state,
+           meta_message_id, created_at, sent_at)
+        VALUES ($1, '5493515550001', $3, 'sent', 'cloud', 'sent', $2,
+                '2026-10-06T10:00:00Z', '2026-10-06T10:00:01Z')
+        RETURNING id
+      `, [empresaId, wamid, message]);
+      return result.rows[0].id;
+    };
+    const insertStatus = (empresaId, wamid, suffix) => pool.query(`
+      INSERT INTO whatsapp_cloud_events
+        (empresa_id,event_kind,dedupe_key,message_id,recipient_id,status,source_timestamp,event_data,phone_number_id)
+      VALUES ($1,'status',$3,$2,'5493515550001','delivered','1760000020','{}'::jsonb,$4)
+    `, [empresaId, wamid, `status:${suffix}`, `phone-${empresaId}`]);
+
+    const repairOne = await insertOutbox(1, 'wamid.repair-one', 'repair-one');
+    await insertStatus(1, 'wamid.repair-one=', 'repair-one');
+    const repairTwo = await insertOutbox(2, 'wamid.repair-two', 'repair-two');
+    await insertStatus(2, 'wamid.repair-two==', 'repair-two');
+
+    const ambiguousStatus = await insertOutbox(3, 'wamid.ambiguous-status', 'ambiguous-status');
+    await insertStatus(3, 'wamid.ambiguous-status=', 'ambiguous-status-one');
+    await insertStatus(3, 'wamid.ambiguous-status==', 'ambiguous-status-two');
+
+    const ambiguousLegacyA = await insertOutbox(4, 'wamid.ambiguous-legacy', 'ambiguous-legacy-a');
+    const ambiguousLegacyB = await insertOutbox(4, 'wamid.ambiguous-legacy=', 'ambiguous-legacy-b');
+    await insertStatus(4, 'wamid.ambiguous-legacy==', 'ambiguous-legacy');
+
+    const collisionLegacy = await insertOutbox(5, 'wamid.collision', 'collision-legacy');
+    const collisionExact = await insertOutbox(5, 'wamid.collision=', 'collision-exact');
+    await insertStatus(5, 'wamid.collision=', 'collision');
+
+    const internalDifference = await insertOutbox(6, 'wamid.internal-A', 'internal-difference');
+    await insertStatus(6, 'wamid.internal-B=', 'internal-difference');
+
+    await pool.query(projectionSql);
+    const expected = [
+      [repairOne, 'wamid.repair-one='],
+      [repairTwo, 'wamid.repair-two=='],
+      [ambiguousStatus, 'wamid.ambiguous-status'],
+      [ambiguousLegacyA, 'wamid.ambiguous-legacy'],
+      [ambiguousLegacyB, 'wamid.ambiguous-legacy='],
+      [collisionLegacy, 'wamid.collision'],
+      [collisionExact, 'wamid.collision='],
+      [internalDifference, 'wamid.internal-A'],
+    ].sort((a, b) => a[0] - b[0]);
+    const snapshot = async () => (await pool.query(`
+      SELECT outbox.id::integer, outbox.meta_message_id, outbox.xmin::text AS outbox_xmin,
+             projection.provider_message_id, projection.xmin::text AS projection_xmin
+        FROM wpp_outbox AS outbox
+        JOIN whatsapp_cloud_messages AS projection
+          ON projection.empresa_id = outbox.empresa_id
+         AND projection.source_outbox_id = outbox.id
+       ORDER BY outbox.id
+    `)).rows;
+    const first = await snapshot();
+    assert.deepEqual(first.map(row => [row.id, row.meta_message_id]), expected);
+    assert.deepEqual(first.map(row => [row.id, row.provider_message_id]), expected);
+
+    await pool.query(projectionSql);
+    assert.deepEqual(await snapshot(), first, 'rerun must not rewrite or further repair rows');
+  }, { sql: preProjectionMigrationSql });
 });
 
 async function seedOutbound(pool, {
@@ -239,7 +312,7 @@ function statusEvent(status, timestamp, {
   return {
     kind: 'status', entryId: 'private-status-entry', phoneNumberId,
     status: {
-      id: ` ${id} `, status: ` ${status} `, timestamp: ` ${timestamp} `,
+      id, status: ` ${status} `, timestamp: ` ${timestamp} `,
       recipient_id: recipientId,
       conversation: { id: 'private-conversation' },
       pricing: { category: 'utility' },
@@ -247,6 +320,8 @@ function statusEvent(status, timestamp, {
     },
   };
 }
+
+const PADDED_WAMID = 'wamid.HBgMNTQ5MzUxNTU1MDAwMBUCABIYFjNFQjA4Q0UxQUQyNUQxRjkwM0U2AA==';
 
 for (const [status, timestamp, rank] of [
   ['sent', '1760000010', 30],
@@ -257,23 +332,28 @@ for (const [status, timestamp, rank] of [
   test(`status ${status} correlaciona por tenant/provider y actualiza proyección sin DTO privado`, async () => {
     await withDatabase(async pool => {
       await seedTenant(pool);
-      await seedOutbound(pool, { status: status === 'failed' ? 'pending' : 'sent' });
+      await seedOutbound(pool, {
+        providerMessageId: PADDED_WAMID,
+        status: status === 'failed' ? 'pending' : 'sent',
+      });
       const handler = handlerFor(pool);
-      assert.deepEqual(await handler([statusEvent(status, timestamp)]), { accepted: 1, duplicates: 0 });
+      assert.deepEqual(await handler([
+        statusEvent(status, timestamp, { id: PADDED_WAMID }),
+      ]), { accepted: 1, duplicates: 0 });
       const dto = await findCloudMessageProjectionByProviderMessageId({
         query: async (sql, params) => (await pool.query(sql, params)).rows,
         empresaId: 1,
-        providerMessageId: ' wamid.out-1 ',
+        providerMessageId: PADDED_WAMID,
       });
       assert.equal(dto.deliveryStatus, status);
       assert.equal((await pool.query(`SELECT state_rank FROM whatsapp_cloud_messages
-        WHERE empresa_id=1 AND provider_message_id='wamid.out-1'`)).rows[0].state_rank, rank);
+        WHERE empresa_id=1 AND provider_message_id=$1`, [PADDED_WAMID])).rows[0].state_rank, rank);
       assert.doesNotMatch(JSON.stringify(dto),
         /5493515550001|phone-one|private-status-entry|private-conversation|provider failure|utility/);
       const statusRow = (await pool.query(`SELECT message_id,status,source_timestamp,recipient_id,event_data
         FROM whatsapp_cloud_events WHERE event_kind='status'`)).rows[0];
       assert.deepEqual(statusRow, {
-        message_id: 'wamid.out-1', status, source_timestamp: timestamp,
+        message_id: PADDED_WAMID, status, source_timestamp: timestamp,
         recipient_id: '5493515550001',
         event_data: { conversationId: 'private-conversation', pricingCategory: 'utility' },
       });

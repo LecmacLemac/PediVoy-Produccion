@@ -1107,11 +1107,11 @@ test('migración rechaza identidad provider combinada entre proyección y outbox
       INSERT INTO public.whatsapp_cloud_messages
         (empresa_id,direction,participant_wa_id,provider_message_id,message_type,text_body,
          delivery_status,state_rank,message_at,created_at,updated_at)
-      VALUES (1,'outbound','549351555010',' wamid.combined-duplicate ','text','projection secret',
+      VALUES (1,'outbound','549351555010','wamid.combined-duplicate==','text','projection secret',
               'queued',10,'2026-10-06T10:00:00Z','2026-10-06T10:00:00Z','2026-10-06T10:00:00Z');
       INSERT INTO public.wpp_outbox
         (empresa_id,telefono,mensaje,status,transport_origin,meta_message_id,created_at)
-      VALUES (1,'549351555011','outbox secret','sent','cloud','wamid.combined-duplicate',
+      VALUES (1,'549351555011','outbox secret','sent','cloud','wamid.combined-duplicate==',
               '2026-10-06T10:01:00Z')
     `);
     const beforeProjection = (await pool.query(`SELECT id::text,provider_message_id,text_body
@@ -1119,7 +1119,7 @@ test('migración rechaza identidad provider combinada entre proyección y outbox
     const beforeOutbox = (await pool.query(`SELECT id::text,meta_message_id,mensaje
       FROM public.wpp_outbox ORDER BY id`)).rows;
     await assert.rejects(pool.query(projectionSql), error => assertSanitizedProviderIdentityDuplicate(
-      error, ['wamid.combined-duplicate', '549351', 'projection secret', 'outbox secret'],
+      error, ['wamid.combined-duplicate==', '549351', 'projection secret', 'outbox secret'],
     ));
     assert.deepEqual((await pool.query(`SELECT id::text,provider_message_id,text_body
       FROM public.whatsapp_cloud_messages ORDER BY id`)).rows, beforeProjection);
@@ -1141,7 +1141,7 @@ test('precheck rechaza la identidad provider efectiva posterior al backfill ante
       INSERT INTO public.wpp_outbox
         (empresa_id,telefono,mensaje,status,transport_origin,meta_message_id,created_at)
       VALUES (1,'549351555020','linked source secret','sent','cloud',
-              '  wamid.target-owned  ','2026-10-06T10:00:00Z')
+              'wamid.target-owned==','2026-10-06T10:00:00Z')
       RETURNING id
     `)).rows[0].id;
     await pool.query(`
@@ -1153,7 +1153,7 @@ test('precheck rechaza la identidad provider efectiva posterior al backfill ante
         (1,'outbound','549351555020',$1,$1,'wamid.old-provider','text',
          'projection A secret','sent',30,'2026-10-06T10:00:00Z','2026-10-06T10:00:00Z',
          '2026-10-06T10:00:00Z','2026-10-06T10:00:00Z'),
-        (1,'outbound','549351555021',NULL,NULL,'wamid.target-owned','text',
+        (1,'outbound','549351555021',NULL,NULL,'wamid.target-owned==','text',
          'projection B secret','sent',30,'2026-10-06T10:01:00Z','2026-10-06T10:01:00Z',
          '2026-10-06T10:01:00Z','2026-10-06T10:01:00Z')
     `, [outboxId]);
@@ -1167,7 +1167,7 @@ test('precheck rechaza la identidad provider efectiva posterior al backfill ante
 
     await assert.rejects(pool.query(projectionSql), error => assertSanitizedProviderIdentityDuplicate(
       error,
-      ['wamid.target-owned', 'wamid.old-provider', '549351', 'linked source secret',
+      ['wamid.target-owned==', 'wamid.old-provider', '549351', 'linked source secret',
         'projection A secret', 'projection B secret'],
     ));
 
@@ -1197,13 +1197,13 @@ test('precheck cuenta cada fuente outbound efectiva una vez y respeta elegibilid
       INSERT INTO public.wpp_outbox
         (empresa_id,telefono,mensaje,status,transport_origin,meta_message_id,created_at)
       VALUES
-        (1,'549351555030','same source','pending','cloud','  wamid.same-source  ',
+        (1,'549351555030','same source','pending','cloud','wamid.same-source==',
          '2026-10-06T11:00:00Z'),
-        (1,'549351555031','replacement source','pending','cloud','  wamid.replaced  ',
+        (1,'549351555031','replacement source','pending','cloud','wamid.replaced==',
          '2026-10-06T11:01:00Z'),
-        (1,'549351555032','fallback source','pending','cloud','   ',
+        (1,'549351555032','fallback source','pending','cloud',NULL,
          '2026-10-06T11:02:00Z'),
-        (1,'549351555033','outbox only','pending','cloud',' wamid.outbox-only ',
+        (1,'549351555033','outbox only','pending','cloud','wamid.outbox-only==',
          '2026-10-06T11:03:00Z'),
         (1,'bad phone','ineligible source','pending','cloud','wamid.ignored-source',
          '2026-10-06T11:04:00Z'),
@@ -1220,15 +1220,15 @@ test('precheck cuenta cada fuente outbound efectiva una vez y respeta elegibilid
          provider_message_id,message_type,text_body,delivery_status,state_rank,
          message_at,created_at,updated_at)
       VALUES
-        (1,'outbound','549351555030',$1,$1,'wamid.same-source','text','same projection',
+        (1,'outbound','549351555030',$1,$1,'wamid.same-source==','text','same projection',
          'queued',10,'2026-10-06T11:00:00Z','2026-10-06T11:00:00Z','2026-10-06T11:00:00Z'),
-        (1,'outbound','549351555031',$2,$2,'  wamid.old-replaced  ','text','replacement projection',
+        (1,'outbound','549351555031',$2,$2,'wamid.old-replaced==','text','replacement projection',
          'queued',10,'2026-10-06T11:01:00Z','2026-10-06T11:01:00Z','2026-10-06T11:01:00Z'),
-        (1,'outbound','549351555032',$3,$3,'  wamid.fallback  ','text','fallback projection',
+        (1,'outbound','549351555032',$3,$3,'wamid.fallback==','text','fallback projection',
          'queued',10,'2026-10-06T11:02:00Z','2026-10-06T11:02:00Z','2026-10-06T11:02:00Z'),
         (1,'outbound','549351555036',NULL,NULL,'wamid.ignored-source','text','standalone projection',
          'queued',10,'2026-10-06T11:07:00Z','2026-10-06T11:07:00Z','2026-10-06T11:07:00Z'),
-        (1,'outbound','549351555037',NULL,NULL,'   ','text','null projection',
+        (1,'outbound','549351555037',NULL,NULL,NULL,'text','null projection',
          'queued',10,'2026-10-06T11:08:00Z','2026-10-06T11:08:00Z','2026-10-06T11:08:00Z')
     `, [
       idByMessage.get('same source'),
@@ -1251,10 +1251,10 @@ test('precheck cuenta cada fuente outbound efectiva una vez y respeta elegibilid
       idByMessage.get('null source'),
     ]])).rows;
     assert.deepEqual(projectedSources, [
-      { source_outbox_id: String(idByMessage.get('same source')), provider_message_id: 'wamid.same-source' },
-      { source_outbox_id: String(idByMessage.get('replacement source')), provider_message_id: 'wamid.replaced' },
-      { source_outbox_id: String(idByMessage.get('fallback source')), provider_message_id: 'wamid.fallback' },
-      { source_outbox_id: String(idByMessage.get('outbox only')), provider_message_id: 'wamid.outbox-only' },
+      { source_outbox_id: String(idByMessage.get('same source')), provider_message_id: 'wamid.same-source==' },
+      { source_outbox_id: String(idByMessage.get('replacement source')), provider_message_id: 'wamid.replaced==' },
+      { source_outbox_id: String(idByMessage.get('fallback source')), provider_message_id: 'wamid.fallback==' },
+      { source_outbox_id: String(idByMessage.get('outbox only')), provider_message_id: 'wamid.outbox-only==' },
       { source_outbox_id: String(idByMessage.get('null source')), provider_message_id: null },
     ]);
     assert.equal((await pool.query(`
@@ -5004,10 +5004,10 @@ test('trigger UPDATE e índice status canónicos se reparan exactos y preservan 
     assert.deepEqual(index, {
       index_schema: 'public', table_schema: 'public', table_name: 'whatsapp_cloud_events', amname: 'btree',
       indisvalid: true, indisready: true, indisunique: false, indnkeyatts: 2, indnatts: 5,
-      has_expressions: true, expressions: 'btrim(message_id)', sort_options: '0 0',
-      key_columns: ['empresa_id', null],
+      has_expressions: false, expressions: null, sort_options: '0 0',
+      key_columns: ['empresa_id', 'message_id'],
       include_columns: ['status', 'source_timestamp', 'received_at'],
-      predicate: "((event_kind = 'status'::text) AND (status = ANY (ARRAY['sent'::text, 'delivered'::text, 'read'::text, 'failed'::text])) AND (NULLIF(btrim(message_id), ''::text) IS NOT NULL))",
+      predicate: "((event_kind = 'status'::text) AND (status = ANY (ARRAY['sent'::text, 'delivered'::text, 'read'::text, 'failed'::text])) AND (NULLIF(message_id, ''::text) IS NOT NULL))",
     });
   });
 
@@ -5086,7 +5086,7 @@ test('backfill y UPDATE outbox serializan ambos ganadores y convergen una sola f
   }
 });
 
-test('consulta productiva status normalizada usa índice parcial canónico con 200k filas', async () => {
+test('consulta productiva status exacta usa índice parcial canónico con 200k filas', async () => {
   await withDatabase(async pool => {
     await pool.query('INSERT INTO empresas(id) VALUES (1), (2)');
     await pool.query(outboxSql);
@@ -5117,10 +5117,10 @@ test('consulta productiva status normalizada usa índice parcial canónico con 2
              END AS status_at
         FROM public.whatsapp_cloud_events AS event
        WHERE event.empresa_id = 1
-         AND BTRIM(event.message_id) = NULLIF(BTRIM('  wamid.benchmark.200000  '), '')
+         AND event.message_id = 'wamid.benchmark.200000'
          AND event.event_kind = 'status'
          AND event.status IN ('sent', 'delivered', 'read', 'failed')
-         AND NULLIF(BTRIM(event.message_id), '') IS NOT NULL
+         AND NULLIF(event.message_id, '') IS NOT NULL
     `)).rows[0]['QUERY PLAN'][0];
     const serialized = JSON.stringify(plan);
     assert.match(serialized, /whatsapp_cloud_events_status_message_idx/);
@@ -5130,7 +5130,7 @@ test('consulta productiva status normalizada usa índice parcial canónico con 2
   });
 });
 
-test('lookup productivo de mensaje normaliza una vez y usa índice provider canónico con 200k filas', async () => {
+test('lookup productivo de mensaje preserva identidad exacta y usa índice provider canónico con 200k filas', async () => {
   await withDatabase(async pool => {
     await pool.query('INSERT INTO empresas(id) VALUES (1), (2)');
     await pool.query(migrationSql);
@@ -5146,7 +5146,7 @@ test('lookup productivo de mensaje normaliza una vez y usa índice provider can�
         FROM generate_series(1, 200000) AS series
     `);
     await pool.query('ANALYZE public.whatsapp_cloud_messages');
-    const normalizedProviderMessageId = '  wamid.message-benchmark.200000  '.trim();
+    const exactProviderMessageId = 'wamid.message-benchmark.200000';
     const plan = (await pool.query(`
       EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)
       SELECT message.id
@@ -5155,7 +5155,7 @@ test('lookup productivo de mensaje normaliza una vez y usa índice provider can�
          AND message.provider_message_id = $2
          AND message.direction = 'outbound'
        LIMIT 2
-    `, [1, normalizedProviderMessageId])).rows[0]['QUERY PLAN'][0];
+    `, [1, exactProviderMessageId])).rows[0]['QUERY PLAN'][0];
     const serialized = JSON.stringify(plan);
     assert.match(serialized, /whatsapp_cloud_messages_provider_message_idx/);
     assert.match(serialized, /(?:Index Scan|Index Only Scan)/);
@@ -5171,7 +5171,7 @@ test('lookup productivo de mensaje normaliza una vez y usa índice provider can�
     assert.doesNotMatch(reconciliationFunction, /BTRIM\(message\.provider_message_id\)/i);
     assert.match(reconciliationFunction, /message\.provider_message_id = normalized_provider_message_id/i);
     assert.equal((await pool.query(
-      "SELECT public.whatsapp_cloud_messages_reconcile_status(1, '  wamid.message-benchmark.200000  ') AS result",
+      "SELECT public.whatsapp_cloud_messages_reconcile_status(1, 'wamid.message-benchmark.200000') AS result",
     )).rows[0].result, 'unchanged');
   });
 });
@@ -5351,7 +5351,7 @@ test('UPDATE de tenant/transport Cloud falla cerrado, revierte y permite updates
   });
 });
 
-test('correlación status aplica BTRIM a eventos y outbox legacy con whitespace', async () => {
+test('correlación status no recorta ni une identidades legacy con whitespace', async () => {
   await withDatabase(async pool => {
     await pool.query('INSERT INTO empresas(id) VALUES (1)');
     await pool.query(migrationSql);
@@ -5365,7 +5365,7 @@ test('correlación status aplica BTRIM a eventos y outbox legacy con whitespace'
     assert.deepEqual((await pool.query(`SELECT provider_message_id, delivery_status, state_rank,
       delivered_at IS NOT NULL AS delivered, read_at IS NOT NULL AS read
       FROM whatsapp_cloud_messages WHERE source_outbox_id=$1`, [id])).rows[0],
-      { provider_message_id: 'wamid.trim', delivery_status: 'read', state_rank: 50, delivered: true, read: true });
+      { provider_message_id: '  wamid.trim  ', delivery_status: 'sent', state_rank: 30, delivered: false, read: false });
   });
 });
 

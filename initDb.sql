@@ -3369,7 +3369,7 @@ AS $$
 DECLARE
   matching_messages INTEGER;
   updated_messages INTEGER;
-  normalized_provider_message_id TEXT := NULLIF(pg_catalog.BTRIM(target_provider_message_id), '');
+  normalized_provider_message_id TEXT := NULLIF(target_provider_message_id, '');
 BEGIN
   SELECT pg_catalog.COUNT(*)::INTEGER
     INTO matching_messages
@@ -3400,10 +3400,10 @@ BEGIN
            END AS status_at
       FROM public.whatsapp_cloud_events AS event
      WHERE event.empresa_id = target_empresa_id
-       AND pg_catalog.BTRIM(event.message_id) = normalized_provider_message_id
+       AND event.message_id = normalized_provider_message_id
        AND event.event_kind = 'status'
        AND event.status IN ('sent', 'delivered', 'read', 'failed')
-       AND NULLIF(pg_catalog.BTRIM(event.message_id), '') IS NOT NULL
+       AND NULLIF(event.message_id, '') IS NOT NULL
   ), status_summary AS (
     SELECT (pg_catalog.array_agg(status ORDER BY
              CASE status WHEN 'read' THEN 50 WHEN 'delivered' THEN 40
@@ -3554,7 +3554,7 @@ BEGIN
       'inbound',
       NEW.sender_id,
       NEW.id,
-      NULLIF(pg_catalog.BTRIM(NEW.message_id), ''),
+      NULLIF(NEW.message_id, ''),
       NEW.message_type,
       CASE WHEN NEW.message_type = 'text'
              AND pg_catalog.jsonb_typeof(NEW.event_data->'text'->'body') = 'string'
@@ -3591,10 +3591,10 @@ BEGIN
     );
   ELSIF NEW.event_kind = 'status'
         AND NEW.status IN ('sent', 'delivered', 'read', 'failed')
-        AND NULLIF(pg_catalog.BTRIM(NEW.message_id), '') IS NOT NULL THEN
+        AND NULLIF(NEW.message_id, '') IS NOT NULL THEN
     PERFORM public.whatsapp_cloud_messages_reconcile_status(
       NEW.empresa_id,
-      NULLIF(pg_catalog.BTRIM(NEW.message_id), '')
+      NULLIF(NEW.message_id, '')
     );
   END IF;
   RETURN NEW;
@@ -3621,7 +3621,7 @@ LANGUAGE plpgsql
 SET search_path = pg_catalog, public
 AS $$
 DECLARE
-  incoming_provider_message_id TEXT := NULLIF(pg_catalog.BTRIM(target_meta_message_id), '');
+  incoming_provider_message_id TEXT := NULLIF(target_meta_message_id, '');
   incoming_status TEXT;
   incoming_rank SMALLINT;
   incoming_sent_at TIMESTAMPTZ;
@@ -3879,7 +3879,7 @@ BEGIN
            'inbound',
            deleted.sender_id,
            NULL,
-           NULLIF(pg_catalog.BTRIM(deleted.message_id), ''),
+           NULLIF(deleted.message_id, ''),
            deleted.message_type,
            CASE WHEN deleted.message_type = 'text'
                   AND pg_catalog.jsonb_typeof(deleted.event_data->'text'->'body') = 'string'
@@ -3920,7 +3920,7 @@ BEGIN
           WHERE projected.empresa_id = deleted.empresa_id
             AND projected.direction = 'inbound'
             AND projected.participant_wa_id = deleted.sender_id
-            AND projected.provider_message_id IS NOT DISTINCT FROM NULLIF(pg_catalog.BTRIM(deleted.message_id), '')
+            AND projected.provider_message_id IS NOT DISTINCT FROM NULLIF(deleted.message_id, '')
             AND projected.message_type = deleted.message_type
             AND projected.message_at = CASE
               WHEN deleted.source_timestamp ~ '^[0-9]{1,12}$'
@@ -3962,7 +3962,7 @@ BEGIN
             WHERE deleted.empresa_id = outbox.empresa_id
               AND deleted.event_kind = 'status'
               AND deleted.status IN ('sent', 'delivered', 'read', 'failed')
-              AND NULLIF(pg_catalog.BTRIM(deleted.message_id), '') = NULLIF(pg_catalog.BTRIM(outbox.meta_message_id), '')
+              AND NULLIF(deleted.message_id, '') = NULLIF(outbox.meta_message_id, '')
          )
        ORDER BY outbox.id
     LOOP
@@ -3974,7 +3974,7 @@ BEGIN
     END LOOP;
 
     FOR status_row IN
-      SELECT NULLIF(pg_catalog.BTRIM(deleted.message_id), '') AS provider_message_id,
+      SELECT NULLIF(deleted.message_id, '') AS provider_message_id,
              (pg_catalog.array_agg(deleted.status ORDER BY
                CASE deleted.status WHEN 'read' THEN 50 WHEN 'delivered' THEN 40
                                    WHEN 'sent' THEN 30 WHEN 'failed' THEN 25 ELSE 0 END DESC,
@@ -4044,9 +4044,9 @@ BEGIN
        WHERE deleted.empresa_id = target_empresa_id
          AND deleted.event_kind = 'status'
          AND deleted.status IN ('sent', 'delivered', 'read', 'failed')
-         AND NULLIF(pg_catalog.BTRIM(deleted.message_id), '') IS NOT NULL
-       GROUP BY NULLIF(pg_catalog.BTRIM(deleted.message_id), '')
-       ORDER BY NULLIF(pg_catalog.BTRIM(deleted.message_id), '')
+         AND NULLIF(deleted.message_id, '') IS NOT NULL
+       GROUP BY NULLIF(deleted.message_id, '')
+       ORDER BY NULLIF(deleted.message_id, '')
     LOOP
       WITH locked AS (
         SELECT message.*,
@@ -4066,7 +4066,7 @@ BEGIN
           FROM public.whatsapp_cloud_messages AS message
          WHERE message.empresa_id = target_empresa_id
            AND message.direction = 'outbound'
-           AND pg_catalog.BTRIM(message.provider_message_id) = status_row.provider_message_id
+           AND message.provider_message_id = status_row.provider_message_id
          FOR UPDATE OF message
       ), sent_timeline AS (
         SELECT locked.*,
@@ -4504,7 +4504,7 @@ BEGIN
     WITH eligible_outboxes AS (
       SELECT source.id,
              source.empresa_id,
-             NULLIF(pg_catalog.BTRIM(source.meta_message_id), '') AS provider_message_id
+             NULLIF(source.meta_message_id, '') AS provider_message_id
         FROM public.wpp_outbox AS source
        WHERE source.transport_origin = 'cloud'
          AND source.empresa_id IS NOT NULL
@@ -4514,7 +4514,7 @@ BEGIN
       SELECT message.empresa_id,
              COALESCE(
                source.provider_message_id,
-               NULLIF(pg_catalog.BTRIM(message.provider_message_id), '')
+               NULLIF(message.provider_message_id, '')
              ) AS provider_message_id
         FROM public.whatsapp_cloud_messages AS message
         LEFT JOIN eligible_outboxes AS source
@@ -4543,10 +4543,6 @@ BEGIN
       ERRCODE = 'P0001',
       MESSAGE = 'whatsapp_cloud_messages_provider_identity_duplicates';
   END IF;
-
-  UPDATE public.whatsapp_cloud_messages
-     SET provider_message_id = NULLIF(pg_catalog.BTRIM(provider_message_id), '')
-   WHERE provider_message_id IS DISTINCT FROM NULLIF(pg_catalog.BTRIM(provider_message_id), '');
 
   IF canonical_index IS NOT NULL AND NOT EXISTS (
     SELECT 1
@@ -4711,13 +4707,12 @@ BEGIN
                 )
            FROM pg_catalog.unnest(candidate.indkey) WITH ORDINALITY
              AS index_column(attnum, ordinality)
-           LEFT JOIN pg_catalog.pg_attribute AS attribute_row
+           JOIN pg_catalog.pg_attribute AS attribute_row
              ON attribute_row.attrelid = candidate.indrelid
             AND attribute_row.attnum = index_column.attnum
           WHERE index_column.ordinality <= candidate.indnkeyatts
-       ) IS NOT DISTINCT FROM ARRAY['empresa_id', NULL]::TEXT[]
-       AND pg_catalog.pg_get_expr(candidate.indexprs, candidate.indrelid) =
-         'btrim(message_id)'
+       ) = ARRAY['empresa_id', 'message_id']::TEXT[]
+       AND candidate.indexprs IS NULL
        AND (
          SELECT pg_catalog.array_agg(
                   attribute_row.attname::TEXT ORDER BY index_column.ordinality
@@ -4730,7 +4725,7 @@ BEGIN
           WHERE index_column.ordinality > candidate.indnkeyatts
        ) = ARRAY['status', 'source_timestamp', 'received_at']::TEXT[]
        AND pg_catalog.pg_get_expr(candidate.indpred, candidate.indrelid) =
-         '((event_kind = ''status''::text) AND (status = ANY (ARRAY[''sent''::text, ''delivered''::text, ''read''::text, ''failed''::text])) AND (NULLIF(btrim(message_id), ''''::text) IS NOT NULL))'
+         '((event_kind = ''status''::text) AND (status = ANY (ARRAY[''sent''::text, ''delivered''::text, ''read''::text, ''failed''::text])) AND (NULLIF(message_id, ''''::text) IS NOT NULL))'
   ) THEN
     DROP INDEX public.whatsapp_cloud_events_status_message_idx;
     canonical_index := NULL;
@@ -4738,14 +4733,14 @@ BEGIN
 
   IF canonical_index IS NULL THEN
     -- The productive reconciliation CTE reads these three values after the
-    -- normalized tenant/message lookup, so INCLUDE keeps that lookup covered.
+    -- exact tenant/message lookup, so INCLUDE keeps that lookup covered.
     CREATE INDEX whatsapp_cloud_events_status_message_idx
       ON public.whatsapp_cloud_events USING btree
-        (empresa_id, (pg_catalog.btrim(message_id)))
+        (empresa_id, message_id)
       INCLUDE (status, source_timestamp, received_at)
       WHERE event_kind = 'status'
         AND status IN ('sent', 'delivered', 'read', 'failed')
-        AND NULLIF(pg_catalog.BTRIM(message_id), '') IS NOT NULL;
+        AND NULLIF(message_id, '') IS NOT NULL;
   END IF;
 END $$;
 
@@ -4944,7 +4939,7 @@ BEGIN
            'inbound',
            event.sender_id,
            event.id,
-           NULLIF(pg_catalog.BTRIM(event.message_id), ''),
+           NULLIF(event.message_id, ''),
            event.message_type,
            CASE WHEN event.message_type = 'text'
                   AND pg_catalog.jsonb_typeof(event.event_data->'text'->'body') = 'string'
@@ -5012,10 +5007,10 @@ BEGIN
            SELECT 1
              FROM public.whatsapp_cloud_events AS event
             WHERE event.empresa_id = target_empresa_id
-              AND pg_catalog.BTRIM(event.message_id) = pg_catalog.BTRIM(message.provider_message_id)
+              AND event.message_id = message.provider_message_id
               AND event.event_kind = 'status'
               AND event.status IN ('sent', 'delivered', 'read', 'failed')
-              AND NULLIF(pg_catalog.BTRIM(event.message_id), '') IS NOT NULL
+              AND NULLIF(event.message_id, '') IS NOT NULL
          )
        ORDER BY message.id
        FOR UPDATE OF message
@@ -5044,6 +5039,113 @@ BEGIN
     ON CONFLICT (empresa_id, participant_wa_id) DO NOTHING;
   END LOOP;
 END $backfill$;
+
+DO $repair_unique_padded_wamids$
+DECLARE
+  repair_candidates JSONB;
+  repaired RECORD;
+BEGIN
+  WITH exact_status_ids AS (
+    SELECT DISTINCT event.empresa_id, event.message_id AS exact_message_id
+      FROM public.whatsapp_cloud_events AS event
+     WHERE event.event_kind = 'status'
+       AND event.status IN ('sent', 'delivered', 'read', 'failed')
+       AND pg_catalog.length(event.message_id) <= 255
+       AND event.message_id ~ '^wamid\.[A-Za-z0-9._:-]+={1,2}$'
+  ), raw_candidates AS (
+    SELECT outbox.id AS outbox_id,
+           outbox.empresa_id,
+           outbox.meta_message_id AS legacy_message_id,
+           status_id.exact_message_id
+      FROM public.wpp_outbox AS outbox
+      JOIN exact_status_ids AS status_id
+        ON status_id.empresa_id = outbox.empresa_id
+       AND status_id.exact_message_id IN (
+         outbox.meta_message_id || '=',
+         outbox.meta_message_id || '=='
+       )
+     WHERE outbox.transport_origin = 'cloud'
+       AND outbox.empresa_id IS NOT NULL
+       AND outbox.meta_message_id IS NOT NULL
+       AND pg_catalog.length(outbox.meta_message_id) <= 254
+       AND outbox.meta_message_id ~ '^wamid\.[A-Za-z0-9._:-]+={0,1}$'
+  ), candidate_cardinality AS (
+    SELECT candidate.*,
+           pg_catalog.COUNT(*) OVER (
+             PARTITION BY candidate.empresa_id, candidate.outbox_id
+           ) AS exact_candidates,
+           pg_catalog.COUNT(*) OVER (
+             PARTITION BY candidate.empresa_id, candidate.exact_message_id
+           ) AS legacy_candidates
+      FROM raw_candidates AS candidate
+  )
+  SELECT COALESCE(
+           pg_catalog.jsonb_agg(
+             pg_catalog.jsonb_build_object(
+               'outbox_id', candidate.outbox_id,
+               'empresa_id', candidate.empresa_id,
+               'legacy_message_id', candidate.legacy_message_id,
+               'exact_message_id', candidate.exact_message_id
+             ) ORDER BY candidate.empresa_id, candidate.outbox_id
+           ),
+           '[]'::JSONB
+         )
+    INTO repair_candidates
+    FROM candidate_cardinality AS candidate
+   WHERE candidate.exact_candidates = 1
+     AND candidate.legacy_candidates = 1
+     AND NOT EXISTS (
+       SELECT 1
+         FROM public.wpp_outbox AS collision
+        WHERE collision.empresa_id = candidate.empresa_id
+          AND collision.id <> candidate.outbox_id
+          AND collision.meta_message_id = candidate.exact_message_id
+     )
+     AND NOT EXISTS (
+       SELECT 1
+         FROM public.whatsapp_cloud_messages AS collision
+        WHERE collision.empresa_id = candidate.empresa_id
+          AND collision.provider_message_id = candidate.exact_message_id
+          AND collision.source_outbox_id IS DISTINCT FROM candidate.outbox_id
+     );
+
+  IF pg_catalog.jsonb_array_length(repair_candidates) > 0 THEN
+    FOR repaired IN
+      SELECT (entry.value->>'outbox_id')::BIGINT AS outbox_id,
+             (entry.value->>'empresa_id')::INTEGER AS empresa_id,
+             entry.value->>'legacy_message_id' AS legacy_message_id,
+             entry.value->>'exact_message_id' AS exact_message_id
+        FROM pg_catalog.jsonb_array_elements(repair_candidates) AS entry
+       ORDER BY empresa_id, outbox_id
+    LOOP
+      UPDATE public.whatsapp_cloud_messages AS message
+         SET provider_message_id = repaired.exact_message_id
+       WHERE message.empresa_id = repaired.empresa_id
+         AND message.source_outbox_id = repaired.outbox_id
+         AND message.direction = 'outbound'
+         AND message.provider_message_id = repaired.legacy_message_id;
+
+      PERFORM pg_catalog.set_config(
+        'pedivoy.whatsapp_cloud_projection_empresa_id', repaired.empresa_id::TEXT, TRUE
+      );
+
+      UPDATE public.wpp_outbox AS outbox
+         SET meta_message_id = repaired.exact_message_id
+       WHERE outbox.id = repaired.outbox_id
+         AND outbox.empresa_id = repaired.empresa_id
+         AND outbox.meta_message_id = repaired.legacy_message_id;
+
+      PERFORM pg_catalog.set_config(
+        'pedivoy.whatsapp_cloud_projection_empresa_id', '', TRUE
+      );
+
+      PERFORM public.whatsapp_cloud_messages_reconcile_status_locked(
+        repaired.empresa_id,
+        repaired.exact_message_id
+      );
+    END LOOP;
+  END IF;
+END $repair_unique_padded_wamids$;
 COMMIT;
 -- END WHATSAPP CLOUD MESSAGE PROJECTION MIGRATION
 
