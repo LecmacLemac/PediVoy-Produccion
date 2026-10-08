@@ -327,14 +327,13 @@ for (const [status, timestamp, rank] of [
   ['sent', '1760000010', 30],
   ['delivered', '1760000020', 40],
   ['read', '1760000030', 50],
-  ['failed', '1760000040', 25],
 ]) {
   test(`status ${status} correlaciona por tenant/provider y actualiza proyección sin DTO privado`, async () => {
     await withDatabase(async pool => {
       await seedTenant(pool);
       await seedOutbound(pool, {
         providerMessageId: PADDED_WAMID,
-        status: status === 'failed' ? 'pending' : 'sent',
+        status: 'sent',
       });
       const handler = handlerFor(pool);
       assert.deepEqual(await handler([
@@ -360,6 +359,93 @@ for (const [status, timestamp, rank] of [
     });
   });
 }
+
+test('failed final exacto con WAMID padded transiciona sent a failed y conserva la línea temporal', async () => {
+  await withDatabase(async pool => {
+    await seedTenant(pool);
+    await seedOutbound(pool, { providerMessageId: PADDED_WAMID, status: 'sent' });
+    const before = (await pool.query(`
+      SELECT sent_at FROM whatsapp_cloud_messages
+       WHERE empresa_id=1 AND provider_message_id=$1
+    `, [PADDED_WAMID])).rows[0];
+    const handler = handlerFor(pool);
+
+    assert.deepEqual(await handler([
+      statusEvent('failed', '1760000040', { id: PADDED_WAMID }),
+    ]), { accepted: 1, duplicates: 0 });
+
+    const row = (await pool.query(`
+      SELECT delivery_status, state_rank, sent_at, delivered_at, read_at,
+             failed_at IS NOT NULL AS failed
+        FROM whatsapp_cloud_messages
+       WHERE empresa_id=1 AND provider_message_id=$1
+    `, [PADDED_WAMID])).rows[0];
+    assert.deepEqual(row, {
+      delivery_status: 'failed', state_rank: 35, sent_at: before.sent_at,
+      delivered_at: null, read_at: null, failed: true,
+    });
+    const dto = await findCloudMessageProjectionByProviderMessageId({
+      query: async (sql, params) => (await pool.query(sql, params)).rows,
+      empresaId: 1,
+      providerMessageId: PADDED_WAMID,
+    });
+    assert.equal(dto.deliveryStatus, 'failed');
+  });
+});
+
+for (const [terminalStatus, timestamp, rank] of [
+  ['delivered', '1760000020', 40],
+  ['read', '1760000030', 50],
+]) {
+  test(`failed tardío no degrada ${terminalStatus}`, async () => {
+    await withDatabase(async pool => {
+      await seedTenant(pool);
+      await seedOutbound(pool);
+      const handler = handlerFor(pool);
+      await handler([statusEvent(terminalStatus, timestamp)]);
+      const before = (await pool.query(`
+        SELECT delivery_status, state_rank, sent_at, delivered_at, read_at, failed_at
+          FROM whatsapp_cloud_messages
+         WHERE empresa_id=1 AND provider_message_id='wamid.out-1'
+      `)).rows[0];
+
+      assert.deepEqual(await handler([
+        statusEvent('failed', '1760000050'),
+      ]), { accepted: 1, duplicates: 0 });
+      const after = (await pool.query(`
+        SELECT delivery_status, state_rank, sent_at, delivered_at, read_at, failed_at
+          FROM whatsapp_cloud_messages
+         WHERE empresa_id=1 AND provider_message_id='wamid.out-1'
+      `)).rows[0];
+      assert.equal(after.delivery_status, terminalStatus);
+      assert.equal(after.state_rank, rank);
+      assert.deepEqual(after, before);
+    });
+  });
+}
+
+test('failed duplicado es idempotente después de sent', async () => {
+  await withDatabase(async pool => {
+    await seedTenant(pool);
+    await seedOutbound(pool);
+    const handler = handlerFor(pool);
+    const failed = statusEvent('failed', '1760000040');
+    assert.deepEqual(await handler([failed]), { accepted: 1, duplicates: 0 });
+    const before = (await pool.query(`
+      SELECT delivery_status, state_rank, sent_at, failed_at, updated_at, xmin::text AS xmin
+        FROM whatsapp_cloud_messages
+       WHERE empresa_id=1 AND provider_message_id='wamid.out-1'
+    `)).rows[0];
+
+    assert.deepEqual(await handler([failed]), { accepted: 0, duplicates: 1 });
+    const after = (await pool.query(`
+      SELECT delivery_status, state_rank, sent_at, failed_at, updated_at, xmin::text AS xmin
+        FROM whatsapp_cloud_messages
+       WHERE empresa_id=1 AND provider_message_id='wamid.out-1'
+    `)).rows[0];
+    assert.deepEqual(after, before);
+  });
+});
 
 test('status duplicado, fuera de orden y desconocido no degrada el estado monotónico', async () => {
   await withDatabase(async pool => {

@@ -3407,10 +3407,10 @@ BEGIN
   ), status_summary AS (
     SELECT (pg_catalog.array_agg(status ORDER BY
              CASE status WHEN 'read' THEN 50 WHEN 'delivered' THEN 40
-                         WHEN 'sent' THEN 30 WHEN 'failed' THEN 25 ELSE 0 END DESC,
+                         WHEN 'sent' THEN 30 WHEN 'failed' THEN 35 ELSE 0 END DESC,
              status_at DESC))[1] AS latest_status,
            pg_catalog.MAX(CASE status WHEN 'read' THEN 50 WHEN 'delivered' THEN 40
-                           WHEN 'sent' THEN 30 WHEN 'failed' THEN 25 ELSE 0 END) AS latest_rank,
+                           WHEN 'sent' THEN 30 WHEN 'failed' THEN 35 ELSE 0 END) AS latest_rank,
            pg_catalog.MIN(status_at) FILTER (WHERE status = 'sent') AS sent_at,
            pg_catalog.MIN(status_at) FILTER (WHERE status = 'delivered') AS delivered_at,
            pg_catalog.MIN(status_at) FILTER (WHERE status = 'read') AS read_at,
@@ -3647,7 +3647,7 @@ BEGIN
   END;
   incoming_rank := CASE incoming_status
     WHEN 'queued' THEN 10 WHEN 'manual_retry' THEN 15 WHEN 'sending' THEN 20
-    WHEN 'failed' THEN 25 WHEN 'outcome_unknown' THEN 25 WHEN 'sent' THEN 30
+    WHEN 'failed' THEN 35 WHEN 'outcome_unknown' THEN 25 WHEN 'sent' THEN 30
   END;
   incoming_sent_at := CASE
     WHEN incoming_status = 'sent'
@@ -3977,7 +3977,7 @@ BEGIN
       SELECT NULLIF(deleted.message_id, '') AS provider_message_id,
              (pg_catalog.array_agg(deleted.status ORDER BY
                CASE deleted.status WHEN 'read' THEN 50 WHEN 'delivered' THEN 40
-                                   WHEN 'sent' THEN 30 WHEN 'failed' THEN 25 ELSE 0 END DESC,
+                                   WHEN 'sent' THEN 30 WHEN 'failed' THEN 35 ELSE 0 END DESC,
                CASE
                  WHEN deleted.source_timestamp ~ '^[0-9]{1,12}$'
                   AND deleted.source_timestamp::NUMERIC > 0
@@ -3989,7 +3989,7 @@ BEGIN
                  ELSE deleted.received_at
                END DESC))[1] AS latest_status,
              pg_catalog.MAX(CASE deleted.status WHEN 'read' THEN 50 WHEN 'delivered' THEN 40
-                                     WHEN 'sent' THEN 30 WHEN 'failed' THEN 25 ELSE 0 END) AS latest_rank,
+                                     WHEN 'sent' THEN 30 WHEN 'failed' THEN 35 ELSE 0 END) AS latest_rank,
              pg_catalog.MIN(CASE
                WHEN deleted.source_timestamp ~ '^[0-9]{1,12}$'
                 AND deleted.source_timestamp::NUMERIC > 0
@@ -4300,6 +4300,23 @@ BEGIN
      AND source_outbox_id IS DISTINCT FROM outbox_id;
 END $repair_source_outbox_identity$;
 
+DO $prepare_state_rank_constraint$
+DECLARE
+  current_definition TEXT;
+BEGIN
+  SELECT pg_catalog.regexp_replace(pg_catalog.pg_get_constraintdef(oid), '\s+', ' ', 'g')
+    INTO current_definition
+    FROM pg_catalog.pg_constraint
+   WHERE conrelid = 'public.whatsapp_cloud_messages'::pg_catalog.regclass
+     AND conname = 'whatsapp_cloud_messages_state_rank_check';
+
+  IF FOUND AND current_definition <>
+    'CHECK ((state_rank = CASE delivery_status WHEN ''received''::text THEN 0 WHEN ''queued''::text THEN 10 WHEN ''manual_retry''::text THEN 15 WHEN ''sending''::text THEN 20 WHEN ''failed''::text THEN 35 WHEN ''outcome_unknown''::text THEN 25 WHEN ''sent''::text THEN 30 WHEN ''delivered''::text THEN 40 WHEN ''read''::text THEN 50 ELSE NULL::integer END))' THEN
+    ALTER TABLE public.whatsapp_cloud_messages
+      DROP CONSTRAINT whatsapp_cloud_messages_state_rank_check;
+  END IF;
+END $prepare_state_rank_constraint$;
+
 DO $repair_state_rank$
 DECLARE
   target_empresa_id INTEGER;
@@ -4317,7 +4334,7 @@ BEGIN
              WHEN 'queued' THEN 10
              WHEN 'manual_retry' THEN 15
              WHEN 'sending' THEN 20
-             WHEN 'failed' THEN 25
+             WHEN 'failed' THEN 35
              WHEN 'outcome_unknown' THEN 25
              WHEN 'sent' THEN 30
              WHEN 'delivered' THEN 40
@@ -4332,7 +4349,7 @@ BEGIN
              WHEN 'queued' THEN 10
              WHEN 'manual_retry' THEN 15
              WHEN 'sending' THEN 20
-             WHEN 'failed' THEN 25
+             WHEN 'failed' THEN 35
              WHEN 'outcome_unknown' THEN 25
              WHEN 'sent' THEN 30
              WHEN 'delivered' THEN 40
@@ -4382,7 +4399,9 @@ BEGIN
     WITH sent_timeline AS (
       SELECT id,
              CASE
-               WHEN direction = 'inbound' OR delivery_status IN ('queued', 'failed') THEN NULL
+               WHEN direction = 'inbound' OR delivery_status = 'queued' THEN NULL
+               WHEN delivery_status = 'failed' AND sent_at IS NOT NULL
+                 THEN GREATEST(message_at, sent_at)
                WHEN delivery_status IN ('sent', 'delivered', 'read') THEN GREATEST(
                  message_at,
                  CASE delivery_status
@@ -4774,9 +4793,9 @@ BEGIN
       ('whatsapp_cloud_messages_direction_status_check',
        'CHECK (((direction = ''inbound'' AND delivery_status = ''received'') OR (direction = ''outbound'' AND delivery_status IN (''queued'', ''sending'', ''sent'', ''delivered'', ''read'', ''failed'', ''manual_retry'', ''outcome_unknown''))))'),
       ('whatsapp_cloud_messages_state_rank_check',
-       'CHECK (state_rank = CASE delivery_status WHEN ''received'' THEN 0 WHEN ''queued'' THEN 10 WHEN ''manual_retry'' THEN 15 WHEN ''sending'' THEN 20 WHEN ''failed'' THEN 25 WHEN ''outcome_unknown'' THEN 25 WHEN ''sent'' THEN 30 WHEN ''delivered'' THEN 40 WHEN ''read'' THEN 50 END)'),
+       'CHECK (state_rank = CASE delivery_status WHEN ''received'' THEN 0 WHEN ''queued'' THEN 10 WHEN ''manual_retry'' THEN 15 WHEN ''sending'' THEN 20 WHEN ''failed'' THEN 35 WHEN ''outcome_unknown'' THEN 25 WHEN ''sent'' THEN 30 WHEN ''delivered'' THEN 40 WHEN ''read'' THEN 50 END)'),
       ('whatsapp_cloud_messages_timestamps_check',
-       'CHECK (((direction = ''inbound'' AND sent_at IS NULL AND delivered_at IS NULL AND read_at IS NULL AND failed_at IS NULL) OR (direction = ''outbound'' AND (sent_at IS NULL OR sent_at >= message_at) AND (delivered_at IS NULL OR (sent_at IS NOT NULL AND delivered_at >= sent_at)) AND (read_at IS NULL OR (delivered_at IS NOT NULL AND read_at >= delivered_at)) AND (failed_at IS NULL OR failed_at >= message_at) AND (CASE delivery_status WHEN ''queued'' THEN (sent_at IS NULL AND delivered_at IS NULL AND read_at IS NULL AND failed_at IS NULL) WHEN ''sending'' THEN (delivered_at IS NULL AND read_at IS NULL AND failed_at IS NULL) WHEN ''manual_retry'' THEN (delivered_at IS NULL AND read_at IS NULL AND failed_at IS NULL) WHEN ''outcome_unknown'' THEN (delivered_at IS NULL AND read_at IS NULL AND failed_at IS NULL) WHEN ''sent'' THEN (sent_at IS NOT NULL AND delivered_at IS NULL AND read_at IS NULL AND failed_at IS NULL) WHEN ''delivered'' THEN (sent_at IS NOT NULL AND delivered_at IS NOT NULL AND read_at IS NULL AND failed_at IS NULL) WHEN ''read'' THEN (sent_at IS NOT NULL AND delivered_at IS NOT NULL AND read_at IS NOT NULL AND failed_at IS NULL) WHEN ''failed'' THEN (sent_at IS NULL AND delivered_at IS NULL AND read_at IS NULL AND failed_at IS NOT NULL) ELSE FALSE END))))'),
+       'CHECK (((direction = ''inbound'' AND sent_at IS NULL AND delivered_at IS NULL AND read_at IS NULL AND failed_at IS NULL) OR (direction = ''outbound'' AND (sent_at IS NULL OR sent_at >= message_at) AND (delivered_at IS NULL OR (sent_at IS NOT NULL AND delivered_at >= sent_at)) AND (read_at IS NULL OR (delivered_at IS NOT NULL AND read_at >= delivered_at)) AND (failed_at IS NULL OR failed_at >= message_at) AND (CASE delivery_status WHEN ''queued'' THEN (sent_at IS NULL AND delivered_at IS NULL AND read_at IS NULL AND failed_at IS NULL) WHEN ''sending'' THEN (delivered_at IS NULL AND read_at IS NULL AND failed_at IS NULL) WHEN ''manual_retry'' THEN (delivered_at IS NULL AND read_at IS NULL AND failed_at IS NULL) WHEN ''outcome_unknown'' THEN (delivered_at IS NULL AND read_at IS NULL AND failed_at IS NULL) WHEN ''sent'' THEN (sent_at IS NOT NULL AND delivered_at IS NULL AND read_at IS NULL AND failed_at IS NULL) WHEN ''delivered'' THEN (sent_at IS NOT NULL AND delivered_at IS NOT NULL AND read_at IS NULL AND failed_at IS NULL) WHEN ''read'' THEN (sent_at IS NOT NULL AND delivered_at IS NOT NULL AND read_at IS NOT NULL AND failed_at IS NULL) WHEN ''failed'' THEN (delivered_at IS NULL AND read_at IS NULL AND failed_at IS NOT NULL) ELSE FALSE END))))'),
       ('whatsapp_cloud_messages_source_direction_check',
        'CHECK (source_event_id IS NULL OR (direction = ''inbound'' AND outbox_id IS NULL))'),
       ('whatsapp_cloud_messages_outbox_direction_check',
@@ -4807,9 +4826,9 @@ BEGIN
       WHEN 'whatsapp_cloud_messages_direction_status_check'
         THEN 'CHECK ((((direction = ''inbound''::text) AND (delivery_status = ''received''::text)) OR ((direction = ''outbound''::text) AND (delivery_status = ANY (ARRAY[''queued''::text, ''sending''::text, ''sent''::text, ''delivered''::text, ''read''::text, ''failed''::text, ''manual_retry''::text, ''outcome_unknown''::text])))))'
       WHEN 'whatsapp_cloud_messages_state_rank_check'
-        THEN 'CHECK ((state_rank = CASE delivery_status WHEN ''received''::text THEN 0 WHEN ''queued''::text THEN 10 WHEN ''manual_retry''::text THEN 15 WHEN ''sending''::text THEN 20 WHEN ''failed''::text THEN 25 WHEN ''outcome_unknown''::text THEN 25 WHEN ''sent''::text THEN 30 WHEN ''delivered''::text THEN 40 WHEN ''read''::text THEN 50 ELSE NULL::integer END))'
+        THEN 'CHECK ((state_rank = CASE delivery_status WHEN ''received''::text THEN 0 WHEN ''queued''::text THEN 10 WHEN ''manual_retry''::text THEN 15 WHEN ''sending''::text THEN 20 WHEN ''failed''::text THEN 35 WHEN ''outcome_unknown''::text THEN 25 WHEN ''sent''::text THEN 30 WHEN ''delivered''::text THEN 40 WHEN ''read''::text THEN 50 ELSE NULL::integer END))'
       WHEN 'whatsapp_cloud_messages_timestamps_check'
-        THEN 'CHECK ((((direction = ''inbound''::text) AND (sent_at IS NULL) AND (delivered_at IS NULL) AND (read_at IS NULL) AND (failed_at IS NULL)) OR ((direction = ''outbound''::text) AND ((sent_at IS NULL) OR (sent_at >= message_at)) AND ((delivered_at IS NULL) OR ((sent_at IS NOT NULL) AND (delivered_at >= sent_at))) AND ((read_at IS NULL) OR ((delivered_at IS NOT NULL) AND (read_at >= delivered_at))) AND ((failed_at IS NULL) OR (failed_at >= message_at)) AND CASE delivery_status WHEN ''queued''::text THEN ((sent_at IS NULL) AND (delivered_at IS NULL) AND (read_at IS NULL) AND (failed_at IS NULL)) WHEN ''sending''::text THEN ((delivered_at IS NULL) AND (read_at IS NULL) AND (failed_at IS NULL)) WHEN ''manual_retry''::text THEN ((delivered_at IS NULL) AND (read_at IS NULL) AND (failed_at IS NULL)) WHEN ''outcome_unknown''::text THEN ((delivered_at IS NULL) AND (read_at IS NULL) AND (failed_at IS NULL)) WHEN ''sent''::text THEN ((sent_at IS NOT NULL) AND (delivered_at IS NULL) AND (read_at IS NULL) AND (failed_at IS NULL)) WHEN ''delivered''::text THEN ((sent_at IS NOT NULL) AND (delivered_at IS NOT NULL) AND (read_at IS NULL) AND (failed_at IS NULL)) WHEN ''read''::text THEN ((sent_at IS NOT NULL) AND (delivered_at IS NOT NULL) AND (read_at IS NOT NULL) AND (failed_at IS NULL)) WHEN ''failed''::text THEN ((sent_at IS NULL) AND (delivered_at IS NULL) AND (read_at IS NULL) AND (failed_at IS NOT NULL)) ELSE false END)))'
+        THEN 'CHECK ((((direction = ''inbound''::text) AND (sent_at IS NULL) AND (delivered_at IS NULL) AND (read_at IS NULL) AND (failed_at IS NULL)) OR ((direction = ''outbound''::text) AND ((sent_at IS NULL) OR (sent_at >= message_at)) AND ((delivered_at IS NULL) OR ((sent_at IS NOT NULL) AND (delivered_at >= sent_at))) AND ((read_at IS NULL) OR ((delivered_at IS NOT NULL) AND (read_at >= delivered_at))) AND ((failed_at IS NULL) OR (failed_at >= message_at)) AND CASE delivery_status WHEN ''queued''::text THEN ((sent_at IS NULL) AND (delivered_at IS NULL) AND (read_at IS NULL) AND (failed_at IS NULL)) WHEN ''sending''::text THEN ((delivered_at IS NULL) AND (read_at IS NULL) AND (failed_at IS NULL)) WHEN ''manual_retry''::text THEN ((delivered_at IS NULL) AND (read_at IS NULL) AND (failed_at IS NULL)) WHEN ''outcome_unknown''::text THEN ((delivered_at IS NULL) AND (read_at IS NULL) AND (failed_at IS NULL)) WHEN ''sent''::text THEN ((sent_at IS NOT NULL) AND (delivered_at IS NULL) AND (read_at IS NULL) AND (failed_at IS NULL)) WHEN ''delivered''::text THEN ((sent_at IS NOT NULL) AND (delivered_at IS NOT NULL) AND (read_at IS NULL) AND (failed_at IS NULL)) WHEN ''read''::text THEN ((sent_at IS NOT NULL) AND (delivered_at IS NOT NULL) AND (read_at IS NOT NULL) AND (failed_at IS NULL)) WHEN ''failed''::text THEN ((delivered_at IS NULL) AND (read_at IS NULL) AND (failed_at IS NOT NULL)) ELSE false END)))'
       WHEN 'whatsapp_cloud_messages_source_direction_check'
         THEN 'CHECK (((source_event_id IS NULL) OR ((direction = ''inbound''::text) AND (outbox_id IS NULL))))'
       WHEN 'whatsapp_cloud_messages_outbox_direction_check'

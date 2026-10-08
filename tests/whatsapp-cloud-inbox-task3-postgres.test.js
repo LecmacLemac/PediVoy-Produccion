@@ -493,7 +493,7 @@ test('listado aplica contadores pre-filtro y orden pending urgent/high/normal, r
     await pool.query(`UPDATE whatsapp_cloud_conversations SET priority='high' WHERE participant_wa_id=$1`, [participants[1]]);
     await pool.query(`INSERT INTO whatsapp_cloud_messages
       (empresa_id,direction,participant_wa_id,message_type,text_body,delivery_status,state_rank,message_at,failed_at,created_at,updated_at)
-      VALUES (1,'outbound',$1,'text','failed','failed',25,'2026-10-07T08:00:00Z','2026-10-07T08:00:00Z','2026-10-07T08:00:00Z','2026-10-07T08:00:00Z')`, [participants[3]]);
+      VALUES (1,'outbound',$1,'text','failed','failed',35,'2026-10-07T08:00:00Z','2026-10-07T08:00:00Z','2026-10-07T08:00:00Z','2026-10-07T08:00:00Z')`, [participants[3]]);
     await pool.query(`INSERT INTO whatsapp_cloud_messages
       (empresa_id,direction,participant_wa_id,message_type,text_body,delivery_status,state_rank,message_at,created_at,updated_at)
       VALUES (1,'outbound',$1,'text','manual','manual_retry',15,'2026-10-07T08:30:00Z','2026-10-07T08:30:00Z','2026-10-07T08:30:00Z')`, [participants[6]]);
@@ -537,7 +537,7 @@ test('cursor pagina buckets no-pending sin depender de prioridad invisible en el
       [`cursor-in-${index}`, `cursor-in-${index}`, participant, `2026-10-07T0${index + 1}:00:00Z`]);
       await pool.query(`INSERT INTO whatsapp_cloud_messages
         (empresa_id,direction,participant_wa_id,message_type,text_body,delivery_status,state_rank,message_at,failed_at,created_at,updated_at)
-        VALUES (1,'outbound',$1,'text','failed','failed',25,$2::timestamptz,$2::timestamptz,$2::timestamptz,$2::timestamptz)`,
+        VALUES (1,'outbound',$1,'text','failed','failed',35,$2::timestamptz,$2::timestamptz,$2::timestamptz,$2::timestamptz)`,
       [participant, `2026-10-07T0${index + 3}:00:00Z`]);
     }
     await pool.query("UPDATE whatsapp_cloud_conversations SET priority='urgent' WHERE participant_wa_id=$1", [olderUrgent]);

@@ -374,6 +374,9 @@ test('helpers operativos exponen aliases y merge stale seguro sin retry', () => 
     key: 'pending', label: 'Por responder', tone: 'pending',
   });
   assert.equal(operationalMeta({ workflowStatus: 'pending', unreadCount: 0, lastDirection: 'outbound', lastDeliveryStatus: 'outcome_unknown' }).key, 'review');
+  assert.deepEqual(operationalMeta({ workflowStatus: 'pending', unreadCount: 0, lastDirection: 'outbound', lastDeliveryStatus: 'failed' }), {
+    key: 'review', label: 'Revisar', tone: 'failed',
+  });
   assert.equal(operationalMeta({ workflowStatus: 'pending', unreadCount: 0, lastDirection: 'outbound', lastDeliveryStatus: 'queued' }).key, 'inProcess');
   assert.equal(operationalMeta({ workflowStatus: 'resolved', unreadCount: 3, lastDirection: 'inbound', lastDeliveryStatus: 'received' }).key, 'resolved');
   assert.deepEqual(queueCounterItems({ total: 9, pending: 3, inProcess: 2, review: 1, resolved: 3 }).map(item => item.label), [

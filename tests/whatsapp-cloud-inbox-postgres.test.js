@@ -2716,14 +2716,14 @@ test('backfill canoniza cronologías irregulares sin abortar ni violar constrain
         delivered_at: '2026-10-01T10:05:00Z', read_at: null, failed_at: null,
       },
       {
-        provider_message_id: 'irregular-failed', delivery_status: 'failed', state_rank: 25,
+        provider_message_id: 'irregular-failed', delivery_status: 'failed', state_rank: 35,
         message_at: '2026-10-01T13:00:00Z', sent_at: null, delivered_at: null,
         read_at: null, failed_at: '2026-10-01T13:02:00Z',
       },
       {
-        provider_message_id: 'irregular-sent-failed', delivery_status: 'sent', state_rank: 30,
+        provider_message_id: 'irregular-sent-failed', delivery_status: 'failed', state_rank: 35,
         message_at: '2026-10-01T12:00:00Z', sent_at: '2026-10-01T12:02:00Z',
-        delivered_at: null, read_at: null, failed_at: null,
+        delivered_at: null, read_at: null, failed_at: '2026-10-01T12:04:00Z',
       },
     ]);
   });
@@ -3098,7 +3098,14 @@ test('reparación canónica reemplaza sólo timestamps legacy y sanea filas ante
     await pool.query(migrationSql);
     await pool.query(`
       ALTER TABLE whatsapp_cloud_messages
-        DROP CONSTRAINT whatsapp_cloud_messages_timestamps_check;
+        DROP CONSTRAINT whatsapp_cloud_messages_timestamps_check,
+        DROP CONSTRAINT whatsapp_cloud_messages_state_rank_check;
+      ALTER TABLE whatsapp_cloud_messages
+        ADD CONSTRAINT whatsapp_cloud_messages_state_rank_check
+        CHECK (state_rank = CASE delivery_status
+          WHEN 'received' THEN 0 WHEN 'queued' THEN 10 WHEN 'manual_retry' THEN 15
+          WHEN 'sending' THEN 20 WHEN 'failed' THEN 25 WHEN 'outcome_unknown' THEN 25
+          WHEN 'sent' THEN 30 WHEN 'delivered' THEN 40 WHEN 'read' THEN 50 END);
       ALTER TABLE whatsapp_cloud_messages
         ADD CONSTRAINT whatsapp_cloud_messages_timestamps_check
         CHECK (
@@ -3122,20 +3129,35 @@ test('reparación canónica reemplaza sólo timestamps legacy y sanea filas ante
 
     await pool.query(projectionSql);
 
+    const constraintIdentity = async () => (await pool.query(`
+      SELECT conname, oid::text
+        FROM pg_constraint
+       WHERE conrelid = 'whatsapp_cloud_messages'::regclass
+         AND conname IN ('whatsapp_cloud_messages_state_rank_check',
+                         'whatsapp_cloud_messages_timestamps_check')
+       ORDER BY conname
+    `)).rows;
+    const firstConstraintIdentity = await constraintIdentity();
+    await pool.query(projectionSql);
+
     assert.deepEqual((await pool.query(`
-      SELECT sent_at, delivered_at, read_at, failed_at IS NOT NULL AS has_failed_at
+      SELECT state_rank, sent_at, delivered_at, read_at, failed_at IS NOT NULL AS has_failed_at
         FROM whatsapp_cloud_messages
        WHERE text_body = 'legacy permitido'
     `)).rows[0], {
-      sent_at: null, delivered_at: null, read_at: null, has_failed_at: true,
+      state_rank: 35, sent_at: new Date('2026-10-01T14:01:00Z'),
+      delivered_at: null, read_at: null, has_failed_at: true,
     });
+    assert.deepEqual(await constraintIdentity(), firstConstraintIdentity,
+      'canonical rerun must not rebuild already exact state/timestamp constraints');
     const definition = (await pool.query(`
       SELECT lower(pg_get_constraintdef(oid)) AS definition
         FROM pg_constraint
        WHERE conrelid = 'whatsapp_cloud_messages'::regclass
          AND conname = 'whatsapp_cloud_messages_timestamps_check'
     `)).rows[0].definition;
-    assert.match(definition, /when 'failed'::text then .*sent_at is null.*failed_at is not null/i);
+    assert.match(definition, /when 'failed'::text then .*delivered_at is null.*failed_at is not null/i);
+    assert.doesNotMatch(definition, /when 'failed'::text then .*sent_at is null/i);
   });
 });
 
@@ -4869,7 +4891,7 @@ test('cutover captura UPDATE outbox antes y después del backfill y cleanup no d
   });
 });
 
-test('UPDATE outbox converge failed/success, ignora columnas ajenas y retries son idempotentes', async () => {
+test('UPDATE outbox mantiene failed terminal, ignora columnas ajenas y retries son idempotentes', async () => {
   await withDatabase(async pool => {
     await pool.query('INSERT INTO empresas(id) VALUES (1)');
     await pool.query(migrationSql);
@@ -4917,8 +4939,8 @@ test('UPDATE outbox converge failed/success, ignora columnas ajenas y retries so
         FROM public.whatsapp_cloud_messages
        WHERE empresa_id = 1 AND outbox_id = $1
     `, [id])).rows[0], {
-      total: 1, provider_message_id: 'wamid.retry-exacto', delivery_status: 'sent',
-      state_rank: 30, has_sent_at: true, no_failed_at: true,
+      total: 1, provider_message_id: 'wamid.retry-exacto', delivery_status: 'failed',
+      state_rank: 35, has_sent_at: false, no_failed_at: false,
     });
   });
 });
@@ -5215,7 +5237,7 @@ test('transiciones autorizadas reabren outcome_unknown sin degradar terminales n
     await ops.markFailed({ id: Number(id), actor: 'ops-test', reason: 'meta_rejected' });
     assert.deepEqual((await pool.query(`SELECT delivery_status, state_rank, failed_at IS NOT NULL AS failed,
       sent_at, delivered_at, read_at FROM whatsapp_cloud_messages WHERE source_outbox_id=$1`, [id])).rows[0],
-    { delivery_status: 'failed', state_rank: 25, failed: true, sent_at: null, delivered_at: null, read_at: null });
+    { delivery_status: 'failed', state_rank: 35, failed: true, sent_at: null, delivered_at: null, read_at: null });
 
     const replayId = (await pool.query(`INSERT INTO public.wpp_outbox
       (empresa_id, telefono, mensaje, status, transport_origin, cloud_dispatch_state,
@@ -5241,31 +5263,31 @@ test('transiciones autorizadas reabren outcome_unknown sin degradar terminales n
   });
 });
 
-test('failed vence outcome_unknown a igual rank en ambos órdenes, cleanup/backfill, carreras y callbacks tardíos', async () => {
+test('failed terminal vence outcome_unknown en ambos órdenes, cleanup/backfill, carreras y callbacks tardíos', async () => {
   const failedSql = `INSERT INTO whatsapp_cloud_events
     (empresa_id,event_kind,dedupe_key,message_id,recipient_id,status,source_timestamp,event_data,received_at)
     VALUES (1,'status',$1,$2,$3,'failed',extract(epoch from $4::timestamptz)::bigint::text,'{}',$4::timestamptz + interval '1 second')`;
   const unknownSql = `INSERT INTO wpp_outbox
     (empresa_id,telefono,mensaje,status,transport_origin,cloud_dispatch_state,meta_message_id,created_at,sent_at)
     VALUES (1,$1,$2,'error','cloud','outcome_unknown',$3,$4,$4)`;
-  const assertFailed = async (pool, providerId, at) => assert.deepEqual((await pool.query(`
+  const assertFailed = async (pool, providerId, at, sentAt) => assert.deepEqual((await pool.query(`
     SELECT delivery_status,state_rank,sent_at,delivered_at,read_at,
            to_char(failed_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"') failed_at
       FROM whatsapp_cloud_messages WHERE empresa_id=1 AND provider_message_id=$1`, [providerId])).rows[0],
-  { delivery_status: 'failed', state_rank: 25, sent_at: null, delivered_at: null, read_at: null, failed_at: at });
+  { delivery_status: 'failed', state_rank: 35, sent_at: new Date(sentAt), delivered_at: null, read_at: null, failed_at: at });
 
   await withDatabase(async pool => {
     await pool.query('INSERT INTO empresas(id) VALUES (1)');
     await pool.query(migrationSql);
     await pool.query(unknownSql, ['5493515999101', 'after', 'wamid.failed-after', '2026-10-06T08:00:00Z']);
     await pool.query(failedSql, ['failed:after', 'wamid.failed-after', '5493515999101', '2026-10-06T08:01:00Z']);
-    await assertFailed(pool, 'wamid.failed-after', '2026-10-06T08:01:00Z');
+    await assertFailed(pool, 'wamid.failed-after', '2026-10-06T08:01:00Z', '2026-10-06T08:00:00Z');
     await pool.query("UPDATE wpp_outbox SET sent_at='2026-10-06T08:02:00Z' WHERE meta_message_id='wamid.failed-after'");
-    await assertFailed(pool, 'wamid.failed-after', '2026-10-06T08:01:00Z');
+    await assertFailed(pool, 'wamid.failed-after', '2026-10-06T08:01:00Z', '2026-10-06T08:00:00Z');
 
     await pool.query(failedSql, ['failed:before', 'wamid.failed-before', '5493515999102', '2026-10-06T09:01:00Z']);
     await pool.query(unknownSql, ['5493515999102', 'before', 'wamid.failed-before', '2026-10-06T09:00:00Z']);
-    await assertFailed(pool, 'wamid.failed-before', '2026-10-06T09:01:00Z');
+    await assertFailed(pool, 'wamid.failed-before', '2026-10-06T09:01:00Z', '2026-10-06T09:00:00Z');
 
     for (const winner of ['outbox-first', 'status-first']) {
       const providerId = `wamid.failed-${winner}`;
@@ -5290,7 +5312,7 @@ test('failed vence outcome_unknown a igual rank en ambos órdenes, cleanup/backf
         first.release();
         second.release();
       }
-      await assertFailed(pool, providerId, '2026-10-06T10:01:00Z');
+      await assertFailed(pool, providerId, '2026-10-06T10:01:00Z', '2026-10-06T10:00:00Z');
     }
 
     for (const [status, rank] of [['sent', 30], ['delivered', 40], ['read', 50]]) {
@@ -5304,8 +5326,11 @@ test('failed vence outcome_unknown a igual rank en ambos órdenes, cleanup/backf
         VALUES (1,'status',$1,$2,$3,'{}')`, [`late:${status}`, providerId, status]);
       await pool.query(failedSql,
         [`late:${status}:failed`, providerId, `54935159993${rank}`, '2026-10-06T11:03:00Z']);
+      const expected = status === 'sent'
+        ? { delivery_status: 'failed', state_rank: 35 }
+        : { delivery_status: status, state_rank: rank };
       assert.deepEqual((await pool.query(`SELECT delivery_status,state_rank FROM whatsapp_cloud_messages
-        WHERE provider_message_id=$1`, [providerId])).rows[0], { delivery_status: status, state_rank: rank });
+        WHERE provider_message_id=$1`, [providerId])).rows[0], expected);
     }
   });
 
@@ -5320,8 +5345,8 @@ test('failed vence outcome_unknown a igual rank en ambos órdenes, cleanup/backf
     await pool.query(installSql);
     await pool.query("DELETE FROM whatsapp_cloud_events WHERE dedupe_key='failed:cleanup'");
     await pool.query(backfillSql);
-    await assertFailed(pool, 'wamid.failed-cleanup', '2026-10-06T12:01:00Z');
-    await assertFailed(pool, 'wamid.failed-backfill', '2026-10-06T13:01:00Z');
+    await assertFailed(pool, 'wamid.failed-cleanup', '2026-10-06T12:01:00Z', '2026-10-06T12:00:00Z');
+    await assertFailed(pool, 'wamid.failed-backfill', '2026-10-06T13:01:00Z', '2026-10-06T13:00:00Z');
   });
 });
 

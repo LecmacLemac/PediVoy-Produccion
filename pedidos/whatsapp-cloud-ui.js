@@ -338,7 +338,9 @@ function monotonicDeliveryStatus(previous, incoming) {
   const nextStatus = String(incoming || '').toLowerCase();
   const oldSuccess = Object.hasOwn(DELIVERY_STATUS_RANK, oldStatus);
   const nextSuccess = Object.hasOwn(DELIVERY_STATUS_RANK, nextStatus);
-  if (oldSuccess && TERMINAL_DELIVERY_STATUSES.has(nextStatus)) return previous;
+  if (oldSuccess && TERMINAL_DELIVERY_STATUSES.has(nextStatus)) {
+    return oldStatus === 'sent' && nextStatus === 'failed' ? incoming : previous;
+  }
   if (TERMINAL_DELIVERY_STATUSES.has(oldStatus) && nextSuccess) {
     return DELIVERY_STATUS_RANK[nextStatus] >= DELIVERY_STATUS_RANK.sent ? incoming : previous;
   }

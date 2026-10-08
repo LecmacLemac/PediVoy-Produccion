@@ -158,7 +158,12 @@ test('Task 6 lattice delivery preserva éxitos ante revisión tardía y permite 
         [{ id: '1', deliveryStatus: provisional, messageAt: '2026-10-08T10:00:00Z' }],
       ).messages[0].deliveryStatus, failure, `${provisional} público/provisional no reemplaza ${failure}`);
     }
-    for (const success of ['sent', 'delivered', 'read']) {
+    const expectedAfterSent = failure === 'failed' ? 'failed' : 'sent';
+    assert.equal(mergeLiveHistory(
+      [{ id: '1', deliveryStatus: 'sent', messageAt: '2026-10-08T10:00:00Z' }],
+      [{ id: '1', deliveryStatus: failure, messageAt: '2026-10-08T10:00:00Z' }],
+    ).messages[0].deliveryStatus, expectedAfterSent, `sent reconcilia estado ${failure}`);
+    for (const success of ['delivered', 'read']) {
       assert.equal(mergeLiveHistory(
         [{ id: '1', deliveryStatus: success, messageAt: '2026-10-08T10:00:00Z' }],
         [{ id: '1', deliveryStatus: failure, messageAt: '2026-10-08T10:00:00Z' }],
