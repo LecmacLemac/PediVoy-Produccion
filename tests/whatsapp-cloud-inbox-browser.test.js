@@ -1224,6 +1224,78 @@ test('Task 7 usa tres paneles desktop, dos paneles tablet y list-detail mobile s
   }
 });
 
+test('Task 7 tablet mantiene todos los controles táctiles visibles en al menos 44x44', { skip: !existsSync(chromePath) }, async () => {
+  const viewports = [
+    { width: 768, height: 800, deviceScaleFactor: 1 },
+    { width: 768, height: 1024, deviceScaleFactor: 1 },
+    { width: 1024, height: 768, deviceScaleFactor: 1 },
+  ];
+
+  for (const viewport of viewports) {
+    await withBrowserPage(viewport, async ({ page }) => {
+      const assertTouchTargets = async (rootSelector, phase) => {
+        const measured = await page.evaluate(rootTarget => {
+          const root = document.querySelector(rootTarget);
+          const candidates = [...root.querySelectorAll('button,select,input,textarea,summary,a[href]')];
+          const seen = new Set();
+          return candidates.flatMap(element => {
+            const style = getComputedStyle(element);
+            if (element.matches(':disabled') || element.inert || element.getAttribute('aria-disabled') === 'true'
+              || style.display === 'none' || style.visibility === 'hidden' || style.pointerEvents === 'none') return [];
+            let target = element;
+            if (element.matches('input[type="checkbox"],input[type="radio"]')) {
+              target = element.closest('label') || document.querySelector(`label[for="${CSS.escape(element.id)}"]`) || element;
+            }
+            const rect = target.getBoundingClientRect();
+            if (rect.width <= 0 || rect.height <= 0) return [];
+            const key = `${target.id || target.tagName}:${rect.left}:${rect.top}:${rect.width}:${rect.height}`;
+            if (seen.has(key)) return [];
+            seen.add(key);
+            return [{
+              id: element.id || target.id || element.textContent.trim().slice(0, 32) || element.tagName,
+              width: rect.width,
+              height: rect.height,
+              left: rect.left,
+              right: rect.right,
+              top: rect.top,
+              bottom: rect.bottom,
+            }];
+          });
+        }, rootSelector);
+        assert.ok(measured.length > 0, `${viewport.width}x${viewport.height} ${phase}: debe medir controles visibles`);
+        for (const target of measured) {
+          assert.ok(target.width >= 44 && target.height >= 44,
+            `${viewport.width}x${viewport.height} ${phase}: ${target.id} mide ${target.width}x${target.height}`);
+          assertInsideViewport(target, viewport, `${viewport.width}x${viewport.height} ${phase}: ${target.id}`);
+        }
+        return measured;
+      };
+
+      await assertTouchTargets('.shell', 'lista');
+      await openOverlayAndWait(page, '#filtersToggle', '#queueFilters');
+      await assertTouchTargets('#queueFilters', 'filtros');
+      await page.keyboard.press('Escape');
+
+      await openConversationAndWait(page);
+      await page.type('#messageInput', 'respuesta tablet');
+      await page.waitForFunction(() => document.querySelector('#sendButton')?.disabled === false);
+      await assertTouchTargets('.shell', 'conversación');
+
+      await openOverlayAndWait(page, '#contextToggle', '#contextPanel');
+      await assertTouchTargets('#contextPanel', 'contexto');
+      const layout = await page.evaluate(() => ({
+        scrollWidth: document.documentElement.scrollWidth,
+        scrollHeight: document.documentElement.scrollHeight,
+        composer: document.querySelector('#composerForm').getBoundingClientRect().toJSON(),
+        context: document.querySelector('#contextPanel').getBoundingClientRect().toJSON(),
+      }));
+      assert.ok(layout.scrollWidth <= viewport.width, `${viewport.width}x${viewport.height}: sin overflow horizontal`);
+      assert.ok(layout.scrollHeight <= viewport.height, `${viewport.width}x${viewport.height}: sin overflow vertical`);
+      assert.equal(overlapArea(layout.context, layout.composer), 0, `${viewport.width}x${viewport.height}: contexto despeja composer`);
+    });
+  }
+});
+
 test('Task 7 drawers son accesibles, cierran con Escape y restauran foco sin perder borrador', { skip: !existsSync(chromePath) }, async () => {
   await withBrowserPage({ width: 390, height: 844, deviceScaleFactor: 1 }, async ({ page }) => {
     const semantics = await page.evaluate(() => ({
