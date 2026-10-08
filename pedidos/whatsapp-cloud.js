@@ -3,6 +3,7 @@ import {
   attachmentDownloadNotice,
   bootstrapInboxState,
   buildCloudApiUrl,
+  captureVisibleScrollAnchor,
   conversationPreview,
   createInboxComposerController,
   createChainedRefreshScheduler,
@@ -20,6 +21,7 @@ import {
   operationalMeta,
   queueCounterItems,
   reduceMobileView,
+  restoreVisibleScrollAnchor,
   safeParticipant,
   sanitizeCloudError,
   statusMeta,
@@ -561,12 +563,14 @@ function renderAttachment(message, container) {
 function renderHistory({ preserveScroll = false, live = false, wasAtBottom = true, newMessageCount = 0 } = {}) {
   const previousHeight = elements.history.scrollHeight;
   const previousTop = elements.history.scrollTop;
+  const liveAnchor = live && !wasAtBottom ? captureVisibleScrollAnchor(elements.history) : null;
   const fragment = document.createDocumentFragment();
   if (!state.messages.length) appendSafeText(document, fragment, 'p', 'Todavía no hay mensajes.', 'empty-state');
   for (const message of state.messages) {
     const article = document.createElement('article');
     const direction = message.direction === 'outbound' ? 'outbound' : 'inbound';
     article.className = `message message-${direction}`;
+    article.dataset.messageId = String(message.id);
     const header = document.createElement('div');
     header.className = 'message-meta';
     appendSafeText(document, header, 'time', formatCloudTimestamp(message.messageAt));
@@ -579,8 +583,10 @@ function renderHistory({ preserveScroll = false, live = false, wasAtBottom = tru
   elements.history.replaceChildren(fragment);
   elements.older.hidden = !state.historyCursor;
   if (preserveScroll) elements.history.scrollTop = elements.history.scrollHeight - previousHeight + previousTop;
-  else if (live && !wasAtBottom) elements.history.scrollTop = previousTop;
-  else elements.history.scrollTop = elements.history.scrollHeight;
+  else if (live && !wasAtBottom) {
+    if (liveAnchor) restoreVisibleScrollAnchor(elements.history, liveAnchor);
+    else elements.history.scrollTop = previousTop;
+  } else elements.history.scrollTop = elements.history.scrollHeight;
   if (live && !wasAtBottom && newMessageCount > 0) state.newMessageCount += newMessageCount;
   else if (wasAtBottom) state.newMessageCount = 0;
   elements.newMessages.textContent = state.newMessageCount > 0 ? `${state.newMessageCount} mensajes nuevos` : '';

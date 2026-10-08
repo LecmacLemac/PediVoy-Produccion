@@ -259,6 +259,39 @@ export function mergeCanonicalConversationRefresh({
   return { conversations, firstPageIds, previousFirstPageIds: previousFirstPageIds.map(String) };
 }
 
+export function captureVisibleScrollAnchor(container) {
+  if (!container || typeof container.getBoundingClientRect !== 'function') return null;
+  const containerRect = container.getBoundingClientRect();
+  const messages = container.querySelectorAll?.('[data-message-id]') || [];
+  for (const message of messages) {
+    const messageId = String(message?.dataset?.messageId || '');
+    if (!messageId || typeof message.getBoundingClientRect !== 'function') continue;
+    const rect = message.getBoundingClientRect();
+    if (rect.bottom > containerRect.top && rect.top < containerRect.bottom) {
+      return {
+        messageId,
+        offsetTop: rect.top - containerRect.top,
+        previousTop: container.scrollTop,
+      };
+    }
+  }
+  return null;
+}
+
+export function restoreVisibleScrollAnchor(container, anchor) {
+  if (!container || !anchor) return false;
+  const messages = container.querySelectorAll?.('[data-message-id]') || [];
+  const target = [...messages].find(message => String(message?.dataset?.messageId || '') === anchor.messageId);
+  if (!target || typeof target.getBoundingClientRect !== 'function') {
+    container.scrollTop = anchor.previousTop;
+    return false;
+  }
+  const containerTop = container.getBoundingClientRect().top;
+  const currentOffset = target.getBoundingClientRect().top - containerTop;
+  container.scrollTop += currentOffset - anchor.offsetTop;
+  return true;
+}
+
 const DELIVERY_STATUS_RANK = Object.freeze({ queued: 0, pending: 0, sending: 1, sent: 2, delivered: 3, read: 4 });
 const TERMINAL_DELIVERY_STATUSES = new Set(['failed', 'error', 'outcome_unknown']);
 

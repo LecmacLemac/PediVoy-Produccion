@@ -2,9 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  captureVisibleScrollAnchor,
   createChainedRefreshScheduler,
   mergeCanonicalConversationRefresh,
   mergeLiveHistory,
+  restoreVisibleScrollAnchor,
 } from '../pedidos/whatsapp-cloud-ui.js';
 
 function deferred() {
@@ -35,6 +37,41 @@ function fakeClock() {
     },
   };
 }
+
+function fakeScrollContainer({ top = 100, bottom = 400, scrollTop = 240, messages = [] } = {}) {
+  return {
+    scrollTop,
+    getBoundingClientRect: () => ({ top, bottom }),
+    querySelectorAll: () => messages.map(message => ({
+      dataset: { messageId: message.id },
+      getBoundingClientRect: () => ({ top: message.top, bottom: message.bottom }),
+    })),
+  };
+}
+
+test('Task 6 captura el primer mensaje parcial o visible como ancla opaca', () => {
+  const container = fakeScrollContainer({ messages: [
+    { id: 'dto-oculto', top: 20, bottom: 90 },
+    { id: 'dto-parcial', top: 80, bottom: 130 },
+    { id: 'dto-visible', top: 140, bottom: 190 },
+  ] });
+  assert.deepEqual(captureVisibleScrollAnchor(container), {
+    messageId: 'dto-parcial', offsetTop: -20, previousTop: 240,
+  });
+});
+
+test('Task 6 restaura el mismo píxel del ancla y usa previousTop si desaparece', () => {
+  const anchor = { messageId: 'dto-ancla', offsetTop: 15, previousTop: 240 };
+  const moved = fakeScrollContainer({ scrollTop: 240, messages: [
+    { id: 'dto-ancla', top: 175, bottom: 225 },
+  ] });
+  assert.equal(restoreVisibleScrollAnchor(moved, anchor), true);
+  assert.equal(moved.scrollTop, 300, 'compensa los 60 px agregados antes del ancla');
+
+  const missing = fakeScrollContainer({ scrollTop: 999, messages: [] });
+  assert.equal(restoreVisibleScrollAnchor(missing, anchor), false);
+  assert.equal(missing.scrollTop, 240);
+});
 
 test('Task 6 merge canónico actualiza e inserta sin duplicar ni perder páginas antiguas', () => {
   const oldFirst = { conversationId: 'a', participant: '*********0001', version: 1, priority: 'normal', queueBucket: 0, queuePriorityRank: 2, queueActivityKey: '10', lastMessageId: '10' };

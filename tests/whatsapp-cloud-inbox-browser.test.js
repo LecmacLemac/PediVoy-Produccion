@@ -11,6 +11,13 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const chromePath = '/usr/bin/google-chrome';
 const screenshotDir = process.env.TMPDIR || root;
 
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
+
 function assertInsideViewport(box, viewport, label) {
   assert.ok(box.width > 0 && box.height > 0, `${label} debe tener tamaño positivo`);
   assert.ok(box.left >= 0 && box.top >= 0, `${label} debe comenzar dentro del viewport`);
@@ -77,6 +84,10 @@ async function withBrowserPage(viewport, work, {
   sendTimeoutMs = 30,
   refreshDelayMs = 8_000,
   messagesResponse = null,
+  conversationsResponse = null,
+  userResponse = { user: { role: 'admin', empresa_id: 7 } },
+  companiesResponse = [{ id: 1, nombre: 'Empresa A' }, { id: 2, nombre: 'Empresa B' }],
+  waitForConversation = true,
 } = {}) {
   const app = express();
   app.post('/api/admin/whatsapp-cloud/conversations/:id/replies', req => {
@@ -106,27 +117,43 @@ async function withBrowserPage(viewport, work, {
     });
     await page.setRequestInterception(true);
     const counts = { conversations: 0, messages: 0, replies: 0, replyKeys: [], apiRequests: [] };
-    page.on('request', request => {
+    page.on('request', async request => {
       const url = new URL(request.url());
-      if (url.pathname.startsWith('/api/')) counts.apiRequests.push({ path: url.pathname, method: request.method() });
+      if (url.pathname.startsWith('/api/')) counts.apiRequests.push({ path: url.pathname, method: request.method(), query: url.search });
       if (url.pathname === '/api/me') {
-        request.respond({ status: 200, contentType: 'application/json', body: JSON.stringify({ user: { role: 'admin', empresa_id: 7 } }) });
+        await request.respond({ status: 200, contentType: 'application/json', body: JSON.stringify(userResponse) });
+      } else if (url.pathname === '/api/empresas') {
+        await request.respond({ status: 200, contentType: 'application/json', body: JSON.stringify(companiesResponse) });
       } else if (url.pathname === '/api/admin/whatsapp-cloud/conversations') {
         counts.conversations += 1;
-        request.respond({ status: 200, contentType: 'application/json', body: JSON.stringify({ conversations: [
+        const fallback = { conversations: [
           { conversationId: '44', participant: '*********0001', lastMessageAt: '2026-10-06T12:00:00Z', lastMessageType: 'text', lastDirection: 'inbound', lastDeliveryStatus: 'received' },
           { conversationId: '45', participant: '*********0002', lastMessageAt: '2026-10-06T11:00:00Z', lastMessageType: 'text', lastDirection: 'outbound', lastDeliveryStatus: 'sent' },
-        ], nextCursor: null }) });
+        ], nextCursor: null };
+        const result = conversationsResponse
+          ? await conversationsResponse({ index: counts.conversations - 1, counts, url, request })
+          : fallback;
+        const status = result?.status || 200;
+        const body = Object.hasOwn(result || {}, 'body') ? result.body : result;
+        if (!request.isInterceptResolutionHandled()) {
+          await request.respond({ status, contentType: 'application/json', body: JSON.stringify(body) });
+        }
       } else if (/\/api\/admin\/whatsapp-cloud\/conversations\/\d+\/read/.test(url.pathname)) {
         request.respond({ status: 200, contentType: 'application/json', body: JSON.stringify({ conversationId: url.pathname.split('/').at(-2), lastReadMessageId: '1' }) });
       } else if (/\/api\/admin\/whatsapp-cloud\/conversations\/\d+\/messages/.test(url.pathname)) {
         counts.messages += 1;
-        const body = messagesResponse
-          ? messagesResponse({ index: counts.messages - 1, counts })
+        const result = messagesResponse
+          ? await messagesResponse({ index: counts.messages - 1, counts, url, request })
           : { messages: [
               { id: '1', direction: 'inbound', type: 'text', text: 'hola', deliveryStatus: 'received', messageAt: '2026-10-06T12:00:00Z' },
             ], nextCursor: null };
-        request.respond({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+        const status = result?.status || 200;
+        const body = Object.hasOwn(result || {}, 'body') ? result.body : result;
+        if (!request.isInterceptResolutionHandled()) {
+          await request.respond({ status, contentType: 'application/json', body: JSON.stringify(body) });
+        }
+      } else if (url.pathname === '/api/admin/whatsapp-cloud/quick-replies') {
+        await request.respond({ status: 200, contentType: 'application/json', body: JSON.stringify({ quickReplies: [] }) });
       } else if (/\/api\/admin\/whatsapp-cloud\/conversations\/\d+\/replies/.test(url.pathname)) {
         counts.replies += 1;
         try {
@@ -152,7 +179,7 @@ async function withBrowserPage(viewport, work, {
     await page.goto(`http://127.0.0.1:${server.address().port}/pedidos/whatsapp-cloud.html`, {
       waitUntil: refreshDelayMs < 1_000 ? 'domcontentloaded' : 'networkidle0',
     });
-    await page.waitForSelector('.conversation-card');
+    if (waitForConversation) await page.waitForSelector('.conversation-card');
     await work({ page, counts });
   } finally {
     await browser?.close();
@@ -181,6 +208,7 @@ test('browser móvil mantiene composer visible, foco reversible, timeout inciert
     await page.click('.conversation-card[data-conversation-id="44"]');
     await page.waitForSelector('#inboxLayout.mobile-detail');
     await page.waitForFunction(() => document.activeElement?.id === 'backToList');
+    await page.waitForFunction(() => document.querySelector('#appStatus').hidden === true);
     assert.equal(await page.evaluate(() => document.activeElement?.id), 'backToList');
 
     const detailLayout = await measureState(page, {
@@ -294,6 +322,60 @@ test('browser conecta doble submit sincronizado a una sola key, un POST y un set
   );
 });
 
+test('Task 6 browser pausa history durante submission y outcome_unknown sin POST automático', { skip: !existsSync(chromePath) }, async () => {
+  const firstListCycle = deferred();
+  const secondListCycle = deferred();
+  let liveListCalls = 0;
+  await withBrowserPage(
+    { width: 1280, height: 800, deviceScaleFactor: 1 },
+    async ({ page, counts }) => {
+      await page.evaluate(() => {
+        Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      await page.click('.conversation-card[data-conversation-id="44"]');
+      await page.waitForFunction(() => document.querySelector('#messageHistory')?.textContent.includes('hola'));
+      await page.type('#messageInput', 'envío en curso');
+      const historyBefore = counts.messages;
+      await page.click('#sendButton');
+      await page.waitForFunction(() => document.querySelector('#sendButton').disabled === true);
+      await page.evaluate(() => {
+        Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      await firstListCycle.promise;
+      assert.equal(counts.replies, 1);
+      assert.equal(counts.messages, historyBefore, 'history GET se pausa mientras el POST está en vuelo');
+      await page.waitForFunction(() => document.querySelector('#composerNotice').textContent.includes('Resultado incierto'), { timeout: 2_000 });
+      await secondListCycle.promise;
+      assert.equal(counts.replies, 1, 'outcome_unknown nunca dispara reenvío automático');
+      assert.equal(counts.messages, historyBefore, 'outcome_unknown mantiene history GET pausado');
+      const replyRequests = counts.apiRequests.filter(entry => entry.path.endsWith('/replies'));
+      assert.deepEqual(replyRequests.map(entry => entry.method), ['POST']);
+    },
+    {
+      refreshDelayMs: 40,
+      sendTimeoutMs: 80,
+      replyDelayMs: 300,
+      replyResponse: { status: 202, body: { accepted: true, id: '501', status: 'accepted' } },
+      conversationsResponse: ({ index }) => {
+        if (index > 0) {
+          liveListCalls += 1;
+          if (liveListCalls === 1) firstListCycle.resolve();
+          if (liveListCalls === 2) secondListCycle.resolve();
+        }
+        return { conversations: [
+          { conversationId: '44', participant: '*********0001', lastMessageAt: '2026-10-06T12:00:00Z', lastMessageType: 'text', lastDirection: 'inbound', lastDeliveryStatus: 'received' },
+          { conversationId: '45', participant: '*********0002', lastMessageAt: '2026-10-06T11:00:00Z', lastMessageType: 'text', lastDirection: 'outbound', lastDeliveryStatus: 'sent' },
+        ], nextCursor: null };
+      },
+      messagesResponse: () => ({ messages: [
+        { id: '1', direction: 'outbound', type: 'text', text: 'hola', deliveryStatus: 'sent', messageAt: '2026-10-06T12:00:00Z' },
+      ], nextCursor: null }),
+    },
+  );
+});
+
 test('Task 6 browser auto-refresh visible emite sólo GET y preserva borrador y foco', { skip: !existsSync(chromePath) }, async () => {
   await withBrowserPage(
     { width: 1280, height: 800, deviceScaleFactor: 1 },
@@ -320,6 +402,452 @@ test('Task 6 browser auto-refresh visible emite sólo GET y preserva borrador y 
       })), { draft: 'borrador preservado', focus: 'messageInput', sync: 'updated' });
     },
     { refreshDelayMs: 40, sendTimeoutMs: 1_000 },
+  );
+});
+
+test('Task 6 browser 401 redirige y corta todo tráfico automático posterior', { skip: !existsSync(chromePath) }, async () => {
+  let unauthorized = false;
+  const unauthorizedSeen = deferred();
+  await withBrowserPage(
+    { width: 1280, height: 800, deviceScaleFactor: 1 },
+    async ({ page, counts }) => {
+      await page.evaluate(() => {
+        Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      await page.click('.conversation-card[data-conversation-id="44"]');
+      await page.waitForFunction(() => document.querySelector('#messageHistory')?.textContent.includes('hola'));
+      unauthorized = true;
+      await page.evaluate(() => {
+        Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      await unauthorizedSeen.promise;
+      await new Promise(resolve => setTimeout(resolve, 80));
+      const stoppedAt = counts.apiRequests.filter(entry => entry.path.startsWith('/api/admin/whatsapp-cloud')).length;
+      await new Promise(resolve => setTimeout(resolve, 180));
+      const cloudTraffic = counts.apiRequests.filter(entry => entry.path.startsWith('/api/admin/whatsapp-cloud'));
+      assert.equal(cloudTraffic.length, stoppedAt, JSON.stringify(cloudTraffic.slice(stoppedAt)));
+    },
+    {
+      refreshDelayMs: 40,
+      conversationsResponse: () => {
+        if (unauthorized) {
+          unauthorizedSeen.resolve();
+          return { status: 401, body: { error: 'session_expired' } };
+        }
+        return { conversations: [
+          { conversationId: '44', participant: '*********0001', lastMessageAt: '2026-10-06T12:00:00Z', lastMessageType: 'text', lastDirection: 'inbound', lastDeliveryStatus: 'received' },
+          { conversationId: '45', participant: '*********0002', lastMessageAt: '2026-10-06T11:00:00Z', lastMessageType: 'text', lastDirection: 'outbound', lastDeliveryStatus: 'sent' },
+        ], nextCursor: null };
+      },
+      messagesResponse: () => ({ messages: [
+        { id: '1', direction: 'outbound', type: 'text', text: 'hola', deliveryStatus: 'sent', messageAt: '2026-10-06T12:00:00Z' },
+      ], nextCursor: null }),
+    },
+  );
+});
+
+test('Task 6 browser 403 detiene scheduler y error transitorio conserva DOM con stale/backoff', { skip: !existsSync(chromePath) }, async () => {
+  let mode = 'initial';
+  const forbiddenSeen = deferred();
+  await withBrowserPage(
+    { width: 1280, height: 800, deviceScaleFactor: 1 },
+    async ({ page, counts }) => {
+      await page.evaluate(() => {
+        Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      await page.click('.conversation-card[data-conversation-id="44"]');
+      await page.waitForFunction(() => document.querySelector('#messageHistory')?.textContent.includes('hola'));
+      mode = 'forbidden';
+      await page.evaluate(() => {
+        Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      await forbiddenSeen.promise;
+      await page.waitForFunction(() => document.querySelector('#syncStatus').dataset.state === 'stale', { polling: 5, timeout: 1_000 });
+      const stoppedAt = { conversations: counts.conversations, messages: counts.messages };
+      await new Promise(resolve => setTimeout(resolve, 180));
+      assert.deepEqual({ conversations: counts.conversations, messages: counts.messages }, stoppedAt);
+      assert.deepEqual(await page.evaluate(() => ({
+        ids: [...document.querySelectorAll('.conversation-card')].map(item => item.dataset.conversationId),
+        history: document.querySelector('#messageHistory').textContent.includes('hola'),
+      })), { ids: ['44', '45'], history: true });
+    },
+    {
+      refreshDelayMs: 40,
+      conversationsResponse: () => {
+        if (mode === 'forbidden') {
+          forbiddenSeen.resolve();
+          return { status: 403, body: { error: 'forbidden' } };
+        }
+        return { conversations: [
+          { conversationId: '44', participant: '*********0001', lastMessageAt: '2026-10-06T12:00:00Z', lastMessageType: 'text', lastDirection: 'inbound', lastDeliveryStatus: 'received' },
+          { conversationId: '45', participant: '*********0002', lastMessageAt: '2026-10-06T11:00:00Z', lastMessageType: 'text', lastDirection: 'outbound', lastDeliveryStatus: 'sent' },
+        ], nextCursor: null };
+      },
+      messagesResponse: () => ({ messages: [
+        { id: '1', direction: 'outbound', type: 'text', text: 'hola', deliveryStatus: 'sent', messageAt: '2026-10-06T12:00:00Z' },
+      ], nextCursor: null }),
+    },
+  );
+
+  const failureSeen = deferred();
+  const recoverySeen = deferred();
+  const requestTimes = [];
+  let transientCalls = 0;
+  await withBrowserPage(
+    { width: 1280, height: 800, deviceScaleFactor: 1 },
+    async ({ page }) => {
+      await page.evaluate(() => {
+        Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      await page.click('.conversation-card[data-conversation-id="44"]');
+      await page.waitForFunction(() => document.querySelector('#messageHistory')?.textContent.includes('hola'));
+      await page.evaluate(() => {
+        Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      await failureSeen.promise;
+      await page.waitForFunction(() => document.querySelector('#syncStatus').dataset.state === 'stale', { polling: 5, timeout: 1_000 });
+      assert.equal(await page.evaluate(() => document.querySelectorAll('.conversation-card').length), 2);
+      await recoverySeen.promise;
+      await page.waitForFunction(() => document.querySelector('#syncStatus').dataset.state === 'updated');
+      assert.ok(requestTimes[1] - requestTimes[0] >= 60, `backoff real insuficiente: ${requestTimes[1] - requestTimes[0]}ms`);
+      assert.equal(await page.evaluate(() => document.querySelector('#messageHistory').textContent.includes('hola')), true);
+    },
+    {
+      refreshDelayMs: 40,
+      conversationsResponse: ({ index }) => {
+        if (index === 0) return { conversations: [
+          { conversationId: '44', participant: '*********0001', lastMessageAt: '2026-10-06T12:00:00Z', lastMessageType: 'text', lastDirection: 'inbound', lastDeliveryStatus: 'received' },
+          { conversationId: '45', participant: '*********0002', lastMessageAt: '2026-10-06T11:00:00Z', lastMessageType: 'text', lastDirection: 'outbound', lastDeliveryStatus: 'sent' },
+        ], nextCursor: null };
+        requestTimes.push(Date.now());
+        transientCalls += 1;
+        if (transientCalls === 1) {
+          failureSeen.resolve();
+          return { status: 503, body: { error: 'temporary' } };
+        }
+        recoverySeen.resolve();
+        return { conversations: [
+          { conversationId: '44', participant: '*********0001', lastMessageAt: '2026-10-06T12:00:00Z', lastMessageType: 'text', lastDirection: 'inbound', lastDeliveryStatus: 'received' },
+          { conversationId: '45', participant: '*********0002', lastMessageAt: '2026-10-06T11:00:00Z', lastMessageType: 'text', lastDirection: 'outbound', lastDeliveryStatus: 'sent' },
+        ], nextCursor: null };
+      },
+      messagesResponse: () => ({ messages: [
+        { id: '1', direction: 'outbound', type: 'text', text: 'hola', deliveryStatus: 'sent', messageAt: '2026-10-06T12:00:00Z' },
+      ], nextCursor: null }),
+    },
+  );
+});
+
+test('Task 6 browser mergea lista e historial reales sin perder páginas, activo, borradores ni cursores', { skip: !existsSync(chromePath) }, async () => {
+  const liveListSeen = deferred();
+  const liveHistorySeen = deferred();
+  await withBrowserPage(
+    { width: 1280, height: 800, deviceScaleFactor: 1 },
+    async ({ page }) => {
+      await page.evaluate(() => {
+        Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      await page.click('#loadMoreConversations');
+      await page.waitForSelector('.conversation-card[data-conversation-id="40"]');
+      await page.click('.conversation-card[data-conversation-id="40"]');
+      await page.waitForFunction(() => document.querySelector('#messageHistory')?.textContent.includes('actual-1'));
+      await page.click('#loadOlderMessages');
+      await page.waitForFunction(() => document.querySelector('#messageHistory')?.textContent.includes('antiguo-0'));
+      await page.type('#messageInput', 'borrador intacto');
+      await page.type('#conversationSearch', 'busqueda sin enviar');
+
+      await page.evaluate(() => {
+        Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      await Promise.all([liveListSeen.promise, liveHistorySeen.promise]);
+      await page.waitForFunction(() => document.querySelector('#messageHistory')?.textContent.includes('nuevo-3'));
+
+      const state = await page.evaluate(() => ({
+        ids: [...document.querySelectorAll('.conversation-card')].map(item => item.dataset.conversationId),
+        active: document.querySelector('.conversation-card.active')?.dataset.conversationId,
+        draft: document.querySelector('#messageInput').value,
+        searchDraft: document.querySelector('#conversationSearch').value,
+        moreConversations: !document.querySelector('#loadMoreConversations').hidden,
+        moreHistory: !document.querySelector('#loadOlderMessages').hidden,
+        messageIds: [...document.querySelectorAll('#messageHistory .message')].map(item => item.dataset.messageId),
+        firstStatus: [...document.querySelectorAll('#messageHistory .message')]
+          .find(item => item.dataset.messageId === '1')?.querySelector('.status-badge')?.textContent,
+      }));
+      assert.deepEqual(state.ids.sort(), ['40', '44', '45', '46']);
+      assert.equal(new Set(state.ids).size, state.ids.length);
+      assert.equal(state.active, '40');
+      assert.equal(state.draft, 'borrador intacto');
+      assert.equal(state.searchDraft, 'busqueda sin enviar');
+      assert.equal(state.moreConversations, true);
+      assert.equal(state.moreHistory, true);
+      assert.deepEqual(state.messageIds, ['0', '1', '2', '3']);
+      assert.equal(state.firstStatus, 'Entregado', 'el estado delivered no retrocede a sent');
+    },
+    {
+      refreshDelayMs: 10_000,
+      conversationsResponse: ({ index, url }) => {
+        if (url.searchParams.has('cursor')) return { conversations: [
+          { conversationId: '40', participant: '*********0040', lastMessageAt: '2026-10-06T08:00:00Z', lastMessageType: 'text', lastDirection: 'outbound', lastDeliveryStatus: 'sent' },
+        ], nextCursor: 'conv-cursor-2' };
+        if (index > 1) {
+          liveListSeen.resolve();
+          return { conversations: [
+            { conversationId: '46', participant: '*********0046', lastMessageAt: '2026-10-08T13:00:00Z', lastMessageType: 'text', lastDirection: 'inbound', lastDeliveryStatus: 'received' },
+            { conversationId: '44', participant: '*********0001', lastMessageAt: '2026-10-08T12:30:00Z', lastMessageType: 'text', lastDirection: 'inbound', lastDeliveryStatus: 'received' },
+            { conversationId: '44', participant: '*********0001', lastMessageAt: '2026-10-08T12:30:00Z', lastMessageType: 'text', lastDirection: 'inbound', lastDeliveryStatus: 'received' },
+          ], nextCursor: null };
+        }
+        return { conversations: [
+          { conversationId: '44', participant: '*********0001', lastMessageAt: '2026-10-06T12:00:00Z', lastMessageType: 'text', lastDirection: 'inbound', lastDeliveryStatus: 'received' },
+          { conversationId: '45', participant: '*********0002', lastMessageAt: '2026-10-06T11:00:00Z', lastMessageType: 'text', lastDirection: 'outbound', lastDeliveryStatus: 'sent' },
+        ], nextCursor: 'conv-cursor' };
+      },
+      messagesResponse: ({ index, url }) => {
+        if (url.searchParams.has('cursor')) return { messages: [
+          { id: '0', direction: 'outbound', type: 'text', text: 'antiguo-0', deliveryStatus: 'sent', messageAt: '2026-10-06T09:00:00Z' },
+        ], nextCursor: 'history-cursor' };
+        if (index > 1) {
+          liveHistorySeen.resolve();
+          return { messages: [
+            { id: '1', direction: 'outbound', type: 'text', text: 'actual-1 stale', deliveryStatus: 'sent', messageAt: '2026-10-06T10:00:00Z' },
+            { id: '3', direction: 'inbound', type: 'text', text: 'nuevo-3', deliveryStatus: 'received', messageAt: '2026-10-06T12:00:00Z' },
+            { id: '3', direction: 'inbound', type: 'text', text: 'nuevo-3', deliveryStatus: 'received', messageAt: '2026-10-06T12:00:00Z' },
+          ], nextCursor: null };
+        }
+        return { messages: [
+          { id: '1', direction: 'outbound', type: 'text', text: 'actual-1', deliveryStatus: 'delivered', messageAt: '2026-10-06T10:00:00Z' },
+          { id: '2', direction: 'outbound', type: 'text', text: 'actual-2', deliveryStatus: 'sent', messageAt: '2026-10-06T11:00:00Z' },
+        ], nextCursor: 'history-cursor' };
+      },
+    },
+  );
+});
+
+test('Task 6 browser descarta GET demorados al cambiar tenant y conversación', { skip: !existsSync(chromePath) }, async () => {
+  const releaseOldList = deferred();
+  const releaseOldHistory = deferred();
+  const oldListStarted = deferred();
+  const oldHistoryStarted = deferred();
+  let delayOld = false;
+  await withBrowserPage(
+    { width: 1280, height: 800, deviceScaleFactor: 1 },
+    async ({ page }) => {
+      await page.evaluate(() => {
+        Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      await page.select('#companySelect', '1');
+      await page.waitForSelector('.conversation-card[data-conversation-id="44"]');
+      await page.click('.conversation-card[data-conversation-id="44"]');
+      await page.waitForFunction(() => document.querySelector('#messageHistory')?.textContent.includes('tenant-A inicial'));
+      delayOld = true;
+      await page.evaluate(() => {
+        Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      await Promise.all([oldListStarted.promise, oldHistoryStarted.promise]);
+
+      await page.select('#companySelect', '2');
+      await page.waitForSelector('.conversation-card[data-conversation-id="244"]');
+      await page.click('.conversation-card[data-conversation-id="244"]');
+      await page.waitForFunction(() => document.querySelector('#messageHistory')?.textContent.includes('tenant-B vigente'));
+      releaseOldList.resolve();
+      releaseOldHistory.resolve();
+      await page.waitForFunction(() => document.querySelector('#syncStatus').dataset.state === 'updated');
+
+      const finalState = await page.evaluate(() => ({
+        ids: [...document.querySelectorAll('.conversation-card')].map(item => item.dataset.conversationId),
+        title: document.querySelector('#chatTitle').textContent,
+        history: document.querySelector('#messageHistory').textContent,
+      }));
+      assert.deepEqual(finalState.ids, ['244']);
+      assert.equal(finalState.title, '*********0202');
+      assert.match(finalState.history, /tenant-B vigente/);
+      assert.doesNotMatch(finalState.history, /tenant-A/);
+    },
+    {
+      waitForConversation: false,
+      refreshDelayMs: 10_000,
+      userResponse: { user: { role: 'super', empresa_id: null } },
+      conversationsResponse: async ({ url }) => {
+        const companyId = url.searchParams.get('empresa_id');
+        if (companyId === '1' && delayOld) {
+          oldListStarted.resolve();
+          await releaseOldList.promise;
+          return { conversations: [
+            { conversationId: '99', participant: '*********0099', lastMessageAt: '2026-10-08T13:00:00Z', lastMessageType: 'text', lastDirection: 'inbound', lastDeliveryStatus: 'received' },
+          ], nextCursor: null };
+        }
+        if (companyId === '2') return { conversations: [
+          { conversationId: '244', participant: '*********0202', lastMessageAt: '2026-10-08T12:00:00Z', lastMessageType: 'text', lastDirection: 'inbound', lastDeliveryStatus: 'received' },
+        ], nextCursor: null };
+        return { conversations: [
+          { conversationId: '44', participant: '*********0101', lastMessageAt: '2026-10-08T11:00:00Z', lastMessageType: 'text', lastDirection: 'inbound', lastDeliveryStatus: 'received' },
+        ], nextCursor: null };
+      },
+      messagesResponse: async ({ url }) => {
+        const conversationId = url.pathname.split('/').at(-2);
+        const companyId = url.searchParams.get('empresa_id');
+        if (companyId === '1' && conversationId === '44' && delayOld) {
+          oldHistoryStarted.resolve();
+          await releaseOldHistory.promise;
+          return { messages: [
+            { id: '99', direction: 'inbound', type: 'text', text: 'tenant-A tardío', deliveryStatus: 'received', messageAt: '2026-10-08T13:00:00Z' },
+          ], nextCursor: null };
+        }
+        const text = companyId === '2' ? 'tenant-B vigente' : 'tenant-A inicial';
+        return { messages: [
+          { id: companyId === '2' ? '202' : '101', direction: 'inbound', type: 'text', text, deliveryStatus: 'received', messageAt: '2026-10-08T12:00:00Z' },
+        ], nextCursor: null };
+      },
+    },
+  );
+});
+
+test('Task 6 browser hidden sostenido no trafica y visible reanuda un solo ciclo sin duplicar timers', { skip: !existsSync(chromePath) }, async () => {
+  let listBarrier = null;
+  let historyBarrier = null;
+  await withBrowserPage(
+    { width: 1280, height: 800, deviceScaleFactor: 1 },
+    async ({ page, counts }) => {
+      await page.click('.conversation-card[data-conversation-id="44"]');
+      await page.waitForFunction(() => document.querySelector('#messageHistory')?.textContent.includes('hola'));
+      await page.evaluate(() => {
+        Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      const hiddenBaseline = { conversations: counts.conversations, messages: counts.messages };
+      await new Promise(resolve => setTimeout(resolve, 260));
+      assert.deepEqual({ conversations: counts.conversations, messages: counts.messages }, hiddenBaseline);
+
+      for (let cycle = 0; cycle < 2; cycle += 1) {
+        const before = { conversations: counts.conversations, messages: counts.messages };
+        listBarrier = deferred();
+        historyBarrier = deferred();
+        await page.evaluate(() => {
+          Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+          document.dispatchEvent(new Event('visibilitychange'));
+        });
+        await Promise.all([listBarrier.promise, historyBarrier.promise]);
+        await page.evaluate(() => {
+          Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+          document.dispatchEvent(new Event('visibilitychange'));
+        });
+        assert.deepEqual(
+          { conversations: counts.conversations - before.conversations, messages: counts.messages - before.messages },
+          { conversations: 1, messages: 1 },
+          'cada reanudación visible ejecuta exactamente un ciclo',
+        );
+      }
+    },
+    {
+      refreshDelayMs: 60,
+      conversationsResponse: ({ counts }) => {
+        listBarrier?.resolve();
+        return { conversations: [
+          { conversationId: '44', participant: '*********0001', lastMessageAt: '2026-10-06T12:00:00Z', lastMessageType: 'text', lastDirection: 'inbound', lastDeliveryStatus: 'received' },
+          { conversationId: '45', participant: '*********0002', lastMessageAt: '2026-10-06T11:00:00Z', lastMessageType: 'text', lastDirection: 'outbound', lastDeliveryStatus: 'sent' },
+        ], nextCursor: null, counters: { total: counts.conversations } };
+      },
+      messagesResponse: () => {
+        historyBarrier?.resolve();
+        return { messages: [
+          { id: '1', direction: 'inbound', type: 'text', text: 'hola', deliveryStatus: 'received', messageAt: '2026-10-06T12:00:00Z' },
+        ], nextCursor: null };
+      },
+    },
+  );
+});
+
+test('Task 6 browser conserva ancla geométrica al expandir contenido previo y autoscroll al fondo', { skip: !existsSync(chromePath) }, async () => {
+  const baseMessages = Array.from({ length: 40 }, (_, index) => ({
+    id: String(index + 1),
+    direction: index % 2 ? 'outbound' : 'inbound',
+    type: 'text',
+    text: `msg-${index + 1} corto`,
+    deliveryStatus: index % 2 ? 'sent' : 'received',
+    messageAt: `2026-10-06T12:${String(index).padStart(2, '0')}:00Z`,
+  }));
+  let secondLiveRequestedResolve;
+  const secondLiveRequested = new Promise(resolve => { secondLiveRequestedResolve = resolve; });
+  await withBrowserPage(
+    { width: 1280, height: 800, deviceScaleFactor: 1 },
+    async ({ page, counts }) => {
+      await page.addStyleTag({ content: '#messageHistory { height: 300px; flex: none; } #messageHistory .message { flex: none; min-height: 48px; }' });
+      await page.evaluate(() => {
+        Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      await page.click('.conversation-card[data-conversation-id="44"]');
+      await page.waitForFunction(() => document.querySelectorAll('#messageHistory .message').length === 40);
+      await page.waitForFunction(() => document.querySelector('#messageHistory').scrollHeight > document.querySelector('#messageHistory').clientHeight);
+      const before = await page.evaluate(() => {
+        const history = document.querySelector('#messageHistory');
+        const anchor = [...history.querySelectorAll('.message')].find(item => item.textContent.includes('msg-20'));
+        history.scrollTop = anchor.offsetTop - 35;
+        const rect = anchor.getBoundingClientRect();
+        return {
+          id: anchor.dataset.messageId,
+          offset: rect.top - history.getBoundingClientRect().top,
+        };
+      });
+      assert.equal(before.id, '20', 'cada mensaje usa el ID opaco del DTO como ancla DOM');
+      await page.evaluate(() => {
+        Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      await page.waitForFunction(() => document.querySelector('#newMessagesIndicator').hidden === false, { timeout: 2_000 });
+      const after = await page.evaluate(anchorId => {
+        const history = document.querySelector('#messageHistory');
+        const anchor = [...history.querySelectorAll('.message')].find(item => item.dataset.messageId === anchorId);
+        return {
+          offset: anchor.getBoundingClientRect().top - history.getBoundingClientRect().top,
+          scrollTop: history.scrollTop,
+          indicator: document.querySelector('#newMessagesIndicator').textContent,
+        };
+      }, before.id);
+      assert.ok(Math.abs(after.offset - before.offset) <= 2, `ancla se movió ${after.offset - before.offset}px`);
+      assert.ok(after.scrollTop > 0);
+      assert.equal(after.indicator, '1 mensajes nuevos');
+
+      await page.evaluate(() => {
+        const history = document.querySelector('#messageHistory');
+        history.scrollTop = history.scrollHeight;
+      });
+      await secondLiveRequested;
+      await page.waitForFunction(() => document.querySelectorAll('#messageHistory .message').length === 42);
+      await page.waitForFunction(() => document.querySelector('#newMessagesIndicator').hidden === true);
+      assert.equal(await page.evaluate(() => {
+        const history = document.querySelector('#messageHistory');
+        return history.scrollHeight - history.scrollTop - history.clientHeight <= 2;
+      }), true);
+    },
+    {
+      refreshDelayMs: 120,
+      sendTimeoutMs: 1_000,
+      messagesResponse: ({ index }) => {
+        if (index === 0) return { messages: baseMessages, nextCursor: 'older-cursor' };
+        if (index === 2) secondLiveRequestedResolve();
+        const expanded = baseMessages.map((message, messageIndex) => messageIndex < 12
+          ? { ...message, text: `${message.text} ${'contenido expandido '.repeat(12)}` }
+          : message);
+        const extra = index === 1
+          ? [{ id: '41', direction: 'inbound', type: 'text', text: 'nuevo-41', deliveryStatus: 'received', messageAt: '2026-10-06T13:00:00Z' }]
+          : [
+              { id: '41', direction: 'inbound', type: 'text', text: 'nuevo-41', deliveryStatus: 'received', messageAt: '2026-10-06T13:00:00Z' },
+              { id: '42', direction: 'inbound', type: 'text', text: 'nuevo-42', deliveryStatus: 'received', messageAt: '2026-10-06T13:01:00Z' },
+            ];
+        return { messages: [...expanded, ...extra], nextCursor: null };
+      },
+    },
   );
 });
 
