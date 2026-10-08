@@ -77,7 +77,8 @@ test('la pantalla declara layout accesible de lista, chat y volver móvil', asyn
   assert.match(html, /id="chatPanel"/);
   assert.match(html, /id="backToList"/);
   assert.match(html, /aria-live="polite"/);
-  assert.match(html, /@media\s*\(max-width:\s*760px\)/);
+  assert.match(html, /@media\s*\(max-width:\s*767px\)/);
+  assert.doesNotMatch(html, /max-width:\s*760px/);
   assert.match(html, /<label\s+for="messageInput"\s+class="sr-only">Mensaje<\/label>/);
   assert.match(html, /\.sr-only\s*\{/);
   assert.doesNotMatch(html, /<label\s+for="messageInput"[^>]*hidden/);
@@ -541,7 +542,7 @@ test('dos submits sincronizados producen exactamente una key, un POST y un settl
 });
 
 test('controlador usa credenciales same-origin, AbortController y contrato de respuesta', async () => {
-  const controller = await source(controllerUrl);
+  const [controller, html] = await Promise.all([source(controllerUrl), source(pageUrl)]);
   assert.match(controller, /credentials:\s*'same-origin'/);
   assert.match(controller, /new AbortController\(\)/);
   assert.match(controller, /crypto\.randomUUID\(\)/);
@@ -551,7 +552,9 @@ test('controlador usa credenciales same-origin, AbortController y contrato de re
   assert.match(controller, /SEND_TIMEOUT_MS/);
   assert.match(controller, /visibilitychange[\s\S]*autoRefreshScheduler\.resume\(\)/);
   assert.match(controller, /document\.visibilityState\s*!==\s*'visible'/);
-  assert.match(controller, /matchMedia\(['"]\(max-width:\s*760px\)['"]\)/);
+  assert.match(controller, /MOBILE_LAYOUT_QUERY\s*=\s*['"]\(max-width:\s*767px\)['"]/);
+  assert.match(controller, /matchMedia\(MOBILE_LAYOUT_QUERY\)/);
+  assert.doesNotMatch(controller, /max-width:\s*760px/);
   assert.doesNotMatch(controller, /window\.location\.search|URLSearchParams\(location\.search/);
 });
 

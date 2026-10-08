@@ -29,6 +29,7 @@ import {
 } from './whatsapp-cloud-ui.js';
 
 const SEND_TIMEOUT_MS = 25_000;
+const MOBILE_LAYOUT_QUERY = '(max-width: 767px)';
 
 const elements = {
   status: document.querySelector('#appStatus'),
@@ -119,7 +120,7 @@ let activeOverlay = null;
 let overlayReturnFocus = null;
 
 function isMobileLayout() {
-  return window.matchMedia('(max-width: 760px)').matches;
+  return window.matchMedia(MOBILE_LAYOUT_QUERY).matches;
 }
 
 function isDesktopLayout() {
@@ -129,13 +130,46 @@ function isDesktopLayout() {
 function updateViewportMetrics() {
   const topbarHeight = document.querySelector('.topbar')?.getBoundingClientRect().height || 0;
   document.documentElement.style.setProperty('--wc-header-offset', `${Math.round(topbarHeight)}px`);
-  const viewportHeight = window.visualViewport?.height || window.innerHeight;
-  document.documentElement.style.setProperty('--wc-viewport-height', `${Math.round(viewportHeight)}px`);
+  const viewport = window.visualViewport;
+  const viewportHeight = viewport?.height || window.innerHeight;
+  const viewportOffset = viewport?.offsetTop || 0;
+  document.documentElement.style.setProperty('--app-visual-height', `${Math.round(viewportHeight)}px`);
+  document.documentElement.style.setProperty('--app-visual-offset', `${Math.round(viewportOffset)}px`);
+  const keyboardOpen = Boolean(viewport && isMobileLayout()
+    && (window.innerHeight - viewportHeight > 48 || viewportOffset > 0));
+  document.body.classList.toggle('keyboard-open', keyboardOpen);
 }
 
 function overlayFocusable(container) {
   return [...container.querySelectorAll('button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),a[href],[tabindex]:not([tabindex="-1"])')]
     .filter(element => element.getClientRects().length > 0);
+}
+
+function clearOverlayInert() {
+  document.querySelectorAll('[data-overlay-inert="true"]').forEach(element => {
+    element.inert = false;
+    element.removeAttribute('data-overlay-inert');
+  });
+}
+
+function setOverlayInert(kind) {
+  clearOverlayInert();
+  const targets = kind === 'filters'
+    ? [
+        document.querySelector('.topbar'), elements.conversations, elements.conversationsMore.parentElement,
+        elements.chatPanel, elements.contextPanel,
+        ...[...elements.queueFilters.parentElement.children].filter(element => element !== elements.queueFilters),
+      ]
+    : [document.querySelector('.topbar'), document.querySelector('.conversation-pane'), elements.chatPanel];
+  targets.filter(Boolean).forEach(element => {
+    element.inert = true;
+    element.dataset.overlayInert = 'true';
+  });
+}
+
+function clearDialogSemantics(panel) {
+  panel.removeAttribute('role');
+  panel.removeAttribute('aria-modal');
 }
 
 function closeOverlay({ restoreFocus = true } = {}) {
@@ -145,12 +179,13 @@ function closeOverlay({ restoreFocus = true } = {}) {
   if (closing === 'filters') {
     elements.queueFilters.dataset.open = 'false';
     elements.filtersToggle.setAttribute('aria-expanded', 'false');
+    clearDialogSemantics(elements.queueFilters);
   } else {
     elements.contextPanel.dataset.open = 'false';
     elements.contextToggle.setAttribute('aria-expanded', 'false');
-    elements.contextPanel.removeAttribute('role');
-    elements.contextPanel.removeAttribute('aria-modal');
+    clearDialogSemantics(elements.contextPanel);
   }
+  clearOverlayInert();
   elements.inbox.dataset.overlayOpen = 'false';
   elements.overlayBackdrop.setAttribute('aria-hidden', 'true');
   if (restoreFocus) overlayReturnFocus?.focus({ preventScroll: true });
@@ -171,9 +206,10 @@ function openOverlay(kind, trigger) {
     const tablet = window.matchMedia('(min-width: 768px) and (max-width: 1199px)').matches;
     const composerHeight = tablet ? elements.composer.getBoundingClientRect().height : 0;
     panel.style.setProperty('--wc-composer-clearance', `${Math.ceil(composerHeight) + (tablet ? 16 : 0)}px`);
-    panel.setAttribute('role', 'dialog');
-    panel.setAttribute('aria-modal', 'true');
   }
+  panel.setAttribute('role', 'dialog');
+  panel.setAttribute('aria-modal', 'true');
+  setOverlayInert(kind);
   overlayFocusable(panel)[0]?.focus({ preventScroll: true });
 }
 
@@ -563,6 +599,24 @@ function renderConversationContext(payload) {
   elements.context.hidden = false;
 }
 
+function renderContextLoadError(conversationId) {
+  elements.context.replaceChildren();
+  appendSafeText(document, elements.context, 'strong', 'No se pudo cargar el contexto.');
+  appendSafeText(document, elements.context, 'span', 'Reintentá sin cerrar la conversación.');
+  const retry = document.createElement('button');
+  retry.id = 'contextRetry';
+  retry.type = 'button';
+  retry.className = 'secondary-button';
+  retry.textContent = 'Reintentar contexto';
+  retry.addEventListener('click', () => {
+    if (String(state.activeConversation?.conversationId) !== String(conversationId)) return;
+    retry.disabled = true;
+    loadConversationContext(conversationId);
+  });
+  elements.context.append(retry);
+  elements.context.hidden = false;
+}
+
 async function loadConversationContext(conversationId) {
   contextController?.abort();
   contextController = new AbortController();
@@ -583,17 +637,16 @@ async function loadConversationContext(conversationId) {
       || state.companyId !== companyId
       || String(state.activeConversation?.conversationId) !== String(conversationId)) return;
     if (!response.ok) {
-      elements.context.replaceChildren();
-      appendSafeText(document, elements.context, 'strong', 'No se pudo cargar el contexto.');
-      appendSafeText(document, elements.context, 'span', 'Actualizá la conversación para volver a intentar.');
+      renderContextLoadError(conversationId);
       return;
     }
     renderConversationContext(payload);
   } catch (error) {
-    if (error?.name !== 'AbortError' && error?.message !== 'session_expired' && contextGate.isCurrent(generation)) {
-      elements.context.replaceChildren();
-      appendSafeText(document, elements.context, 'strong', 'No se pudo cargar el contexto.');
-      appendSafeText(document, elements.context, 'span', 'Actualizá la conversación para volver a intentar.');
+    if (error?.name !== 'AbortError' && error?.message !== 'session_expired'
+      && contextGate.isCurrent(generation)
+      && state.companyId === companyId
+      && String(state.activeConversation?.conversationId) === String(conversationId)) {
+      renderContextLoadError(conversationId);
     }
   }
 }
@@ -1440,11 +1493,14 @@ function syncResponsiveChrome() {
   updateViewportMetrics();
   if (isDesktopLayout()) {
     closeOverlay({ restoreFocus: false });
+    clearOverlayInert();
+    clearDialogSemantics(elements.queueFilters);
+    clearDialogSemantics(elements.contextPanel);
+    elements.queueFilters.dataset.open = 'false';
+    elements.filtersToggle.setAttribute('aria-expanded', 'false');
     const expanded = !elements.inbox.classList.contains('context-collapsed');
     elements.contextPanel.dataset.open = String(expanded);
     elements.contextToggle.setAttribute('aria-expanded', String(expanded));
-    elements.contextPanel.removeAttribute('role');
-    elements.contextPanel.removeAttribute('aria-modal');
   } else {
     elements.inbox.classList.remove('context-collapsed');
     if (activeOverlay !== 'context') elements.contextPanel.dataset.open = 'false';
@@ -1453,10 +1509,8 @@ function syncResponsiveChrome() {
 }
 
 window.addEventListener('resize', syncResponsiveChrome);
-window.visualViewport?.addEventListener('resize', () => {
-  updateViewportMetrics();
-  document.body.classList.toggle('keyboard-open', window.visualViewport.height < window.innerHeight * .82);
-});
+window.visualViewport?.addEventListener('resize', updateViewportMetrics);
+window.visualViewport?.addEventListener('scroll', updateViewportMetrics);
 window.addEventListener('pagehide', () => autoRefreshScheduler.stop());
 window.addEventListener('beforeunload', () => autoRefreshScheduler.stop());
 

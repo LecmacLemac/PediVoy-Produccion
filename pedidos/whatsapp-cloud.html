@@ -12,6 +12,8 @@
       --wc-text:#eef2f7; --wc-muted:#9ba9bc; --wc-accent:#25d366; --wc-accent-ink:#052e16;
       --wc-danger:#f87171; --wc-warning:#fbbf24; --wc-info:#7dd3fc; --wc-radius:12px;
       --wc-header-offset:0px;
+      --app-visual-height:100dvh; --app-visual-offset:0px;
+
     }
     * { box-sizing:border-box; }
     html,body { width:100%; height:100%; overflow:hidden; }
@@ -135,7 +137,12 @@
     .skeleton { display:grid; gap:8px; padding:12px; }
     .skeleton span { height:12px; border-radius:5px; background:rgba(148,163,184,.12); }
     .overlay-backdrop { display:none; position:fixed; inset:0; z-index:49; background:rgba(2,6,23,.6); }
-    body.keyboard-open .shell { height:var(--wc-viewport-height); }
+    body.keyboard-open .shell {
+      flex:none;
+      height:max(0px,calc(var(--app-visual-offset) + var(--app-visual-height) - var(--wc-header-offset)));
+      max-height:max(0px,calc(var(--app-visual-offset) + var(--app-visual-height) - var(--wc-header-offset)));
+    }
+    body.keyboard-open .inbox,body.keyboard-open .chat-pane { min-height:0; }
     body.keyboard-open .composer { padding-bottom:8px; }
 
     @media (max-width:1199px) {
@@ -144,13 +151,20 @@
       .context-panel[data-open="true"] { display:flex; }
       .context-panel[data-open="true"] + .overlay-backdrop,.inbox[data-overlay-open="true"] .overlay-backdrop { display:block; }
       .desktop-only { display:none; }
+      #filtersToggle { display:inline-flex; }
+      .queue-filters { display:none; position:fixed; z-index:51; left:8px; right:8px; bottom:max(8px,env(safe-area-inset-bottom)); max-height:min(72dvh,620px); overflow:auto; padding:12px; border:1px solid var(--wc-border-strong); border-radius:12px; background:var(--wc-panel-2); box-shadow:0 -16px 45px rgba(0,0,0,.4); }
+      .queue-filters[data-open="true"] { display:grid; }
     }
 
     @media (min-width:768px) and (max-width:1199px) {
       .context-panel[data-open="true"] { bottom:var(--wc-composer-clearance,0px); }
     }
 
-    @media (max-width:760px) { /* legacy behavior contract; responsive rules continue at 767px */ }
+    @media (min-width:768px) and (max-width:800px) {
+      .chat-head { flex-wrap:wrap; }
+      .chat-actions { width:100%; margin-left:0; display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto; gap:5px; }
+      .chat-actions #conversationWorkflow,.chat-actions #conversationPriority { width:100%; min-width:0; }
+    }
 
     @media (max-width:767px) {
       .topbar-inner { min-height:auto; padding:6px 8px; display:grid; gap:5px; }
@@ -171,8 +185,6 @@
       .title-row { min-height:44px; }
       .title-tools .sync-status { display:none; }
       .icon-button,.secondary-button,.attachment-action,.quick-reply-item,select,.transfer-toggle { min-height:44px; }
-      .queue-filters { display:none; position:fixed; z-index:51; left:8px; right:8px; bottom:max(8px,env(safe-area-inset-bottom)); max-height:min(72dvh,620px); overflow:auto; padding:12px; border:1px solid var(--wc-border-strong); border-radius:12px; background:var(--wc-panel-2); box-shadow:0 -16px 45px rgba(0,0,0,.4); }
-      .queue-filters[data-open="true"] { display:grid; }
       .quick-filters { display:grid; grid-template-columns:1fr; }
       .search-form { grid-template-columns:minmax(0,1fr) auto; }
       #conversationSearchClear { grid-column:1/-1; width:100%; }
@@ -230,7 +242,8 @@
             <button id="conversationSearchSubmit" class="icon-button" type="submit">Buscar</button><button id="conversationSearchClear" class="icon-button" type="button">Limpiar</button>
           </form>
           <div id="queueCounters" class="queue-counters" aria-label="Contadores de cola"></div>
-          <div id="queueFilters" class="queue-filters" aria-label="Filtros de conversaciones" data-open="false">
+          <div id="queueFilters" class="queue-filters" aria-labelledby="filtersHeading" data-open="false">
+            <h2 id="filtersHeading" class="sr-only">Filtros de conversaciones</h2>
             <div class="quick-filters">
               <label class="sr-only" for="workflowFilter">Estado operativo</label><select id="workflowFilter"><option value="">Todos los estados</option><option value="pending">Pendientes</option><option value="resolved">Resueltas</option></select>
               <label class="sr-only" for="priorityFilter">Prioridad</label><select id="priorityFilter"><option value="">Todas las prioridades</option><option value="urgent">Urgente</option><option value="high">Alta</option><option value="normal">Normal</option></select>

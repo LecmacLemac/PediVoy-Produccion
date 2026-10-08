@@ -86,6 +86,8 @@ async function withBrowserPage(viewport, work, {
   messagesResponse = null,
   conversationsResponse = null,
   searchResponse = null,
+  contextResponse = null,
+  simulatedVisualViewport = null,
   userResponse = { user: { role: 'admin', empresa_id: 7 } },
   companiesResponse = [{ id: 1, nombre: 'Empresa A' }, { id: 2, nombre: 'Empresa B' }],
   waitForConversation = true,
@@ -108,17 +110,43 @@ async function withBrowserPage(viewport, work, {
     browser = await puppeteer.launch({ executablePath: chromePath, headless: true, args: ['--no-sandbox'] });
     const page = await browser.newPage();
     await page.setViewport(viewport);
-    await page.evaluateOnNewDocument(() => {
+    await page.evaluateOnNewDocument(initialVisualViewport => {
       const nativeRandomUUID = crypto.randomUUID.bind(crypto);
       window.__uuidCalls = 0;
       crypto.randomUUID = () => {
         window.__uuidCalls += 1;
         return nativeRandomUUID();
       };
-    });
+      if (initialVisualViewport) {
+        const listeners = new Map();
+        const viewportState = { ...initialVisualViewport };
+        const fakeVisualViewport = {
+          get width() { return viewportState.width; },
+          get height() { return viewportState.height; },
+          get offsetTop() { return viewportState.offsetTop || 0; },
+          get offsetLeft() { return 0; },
+          get pageTop() { return viewportState.offsetTop || 0; },
+          get pageLeft() { return 0; },
+          get scale() { return 1; },
+          addEventListener(type, listener) {
+            const registered = listeners.get(type) || new Set();
+            registered.add(listener);
+            listeners.set(type, registered);
+          },
+          removeEventListener(type, listener) { listeners.get(type)?.delete(listener); },
+        };
+        Object.defineProperty(window, 'visualViewport', { configurable: true, value: fakeVisualViewport });
+        window.__setVisualViewport = next => {
+          Object.assign(viewportState, next);
+          for (const type of ['resize', 'scroll']) {
+            for (const listener of listeners.get(type) || []) listener(new Event(type));
+          }
+        };
+      }
+    }, simulatedVisualViewport);
     await page.setRequestInterception(true);
     const counts = {
-      conversations: 0, messages: 0, replies: 0, replyKeys: [], apiRequests: [],
+      conversations: 0, messages: 0, contexts: 0, replies: 0, replyKeys: [], apiRequests: [],
       activeConversations: 0, activeMessages: 0, maxActiveConversations: 0, maxActiveMessages: 0,
     };
     page.on('request', async request => {
@@ -169,6 +197,16 @@ async function withBrowserPage(viewport, work, {
           await request.respond({ status, contentType: 'application/json', body: JSON.stringify(body) });
         }
         counts.activeMessages -= 1;
+      } else if (/\/api\/admin\/whatsapp-cloud\/conversations\/\d+\/context/.test(url.pathname)) {
+        counts.contexts += 1;
+        const result = contextResponse
+          ? await contextResponse({ index: counts.contexts - 1, counts, url, request })
+          : { matchStatus: 'none', customer: null, orders: [] };
+        const status = result?.status || 200;
+        const body = Object.hasOwn(result || {}, 'body') ? result.body : result;
+        if (!request.isInterceptResolutionHandled()) {
+          await request.respond({ status, contentType: 'application/json', body: JSON.stringify(body) });
+        }
       } else if (url.pathname === '/api/admin/whatsapp-cloud/quick-replies') {
         await request.respond({ status: 200, contentType: 'application/json', body: JSON.stringify({ quickReplies: [] }) });
       } else if (/\/api\/admin\/whatsapp-cloud\/conversations\/\d+\/replies/.test(url.pathname)) {
@@ -1175,5 +1213,188 @@ test('Task 7 drawers son accesibles, cierran con Escape y restauran foco sin per
     assert.equal(await page.$eval('#contextToggle', button => button.getAttribute('aria-expanded')), 'false');
     assert.equal(await page.evaluate(() => document.activeElement?.id), 'contextToggle');
     assert.equal(await page.$eval('#messageInput', input => input.value), 'borrador de respuesta');
+  });
+});
+
+test('Task 7 usa 767px como único límite mobile para foco, volver y restauración', { skip: !existsSync(chromePath) }, async () => {
+  for (const width of [760, 761, 767, 768]) {
+    await withBrowserPage({ width, height: 800, deviceScaleFactor: 1 }, async ({ page }) => {
+      await page.click('.conversation-card[data-conversation-id="44"]');
+      await page.waitForFunction(() => document.querySelector('#messageInput').disabled === false);
+      const detail = await page.evaluate(() => ({
+        queue: getComputedStyle(document.querySelector('.conversation-pane')).display,
+        chat: getComputedStyle(document.querySelector('#chatPanel')).display,
+        back: getComputedStyle(document.querySelector('#backToList')).display,
+        active: document.activeElement?.id || '',
+      }));
+      if (width <= 767) {
+        assert.equal(detail.queue, 'none', `${width}: lista oculta en detalle mobile`);
+        assert.notEqual(detail.chat, 'none', `${width}: chat visible en detalle mobile`);
+        assert.notEqual(detail.back, 'none', `${width}: volver visible en mobile`);
+        assert.equal(detail.active, 'backToList', `${width}: foco entra al volver mobile`);
+        await page.click('#backToList');
+        assert.notEqual(await page.$eval('.conversation-pane', element => getComputedStyle(element).display), 'none');
+        assert.equal(await page.evaluate(() => document.activeElement?.dataset.conversationId), '44');
+      } else {
+        assert.notEqual(detail.queue, 'none', '768: lista permanece visible en tablet');
+        assert.notEqual(detail.chat, 'none', '768: chat permanece visible en tablet');
+        assert.equal(detail.back, 'none', '768: volver mobile permanece oculto');
+        assert.notEqual(detail.active, 'backToList', '768: no mueve foco a un control oculto');
+      }
+    });
+  }
+});
+
+test('Task 7 ajusta detalle y composer al visualViewport y restaura al cerrar teclado u orientar', { skip: !existsSync(chromePath) }, async () => {
+  for (const width of [320, 360, 390]) {
+    const layoutHeight = width === 320 ? 568 : 844;
+    await withBrowserPage({ width, height: layoutHeight, deviceScaleFactor: 1 }, async ({ page }) => {
+      await page.click('.conversation-card[data-conversation-id="44"]');
+      await page.waitForFunction(() => document.querySelector('#messageInput').disabled === false);
+      for (const [height, offsetTop] of [[500, 0], [420, 18]]) {
+        await page.evaluate(({ height: nextHeight, offsetTop: nextOffset }) => window.__setVisualViewport({ height: nextHeight, offsetTop: nextOffset }), { height, offsetTop });
+        await page.waitForFunction(() => document.body.classList.contains('keyboard-open'));
+        const measured = await page.evaluate(() => {
+          const rect = selector => document.querySelector(selector).getBoundingClientRect().toJSON();
+          const vv = visualViewport;
+          return {
+            visualTop: vv.offsetTop,
+            visualBottom: vv.offsetTop + vv.height,
+            shell: rect('.shell'), inbox: rect('#inboxLayout'), chat: rect('#chatPanel'), composer: rect('#composerForm'),
+            input: rect('#messageInput'), send: rect('#sendButton'),
+            documentScrollHeight: document.documentElement.scrollHeight,
+            bodyOverflow: getComputedStyle(document.body).overflow,
+            historyOverflow: getComputedStyle(document.querySelector('#messageHistory')).overflowY,
+          };
+        });
+        for (const target of ['shell', 'inbox', 'chat', 'composer', 'input', 'send']) {
+          assert.ok(measured[target].top >= measured.visualTop - 2, `${width}x${height}: ${target} comienza dentro de visualViewport`);
+          assert.ok(measured[target].bottom <= measured.visualBottom + 2, `${width}x${height}: ${target} termina dentro de visualViewport`);
+        }
+        assert.ok(measured.input.width > 0 && measured.input.height >= 44, `${width}x${height}: input visible`);
+        assert.ok(measured.send.width >= 44 && measured.send.height >= 44, `${width}x${height}: enviar visible`);
+        assert.equal(measured.bodyOverflow, 'hidden');
+        assert.equal(measured.historyOverflow, 'auto', 'el historial conserva su scroll interno');
+        assert.ok(measured.documentScrollHeight <= layoutHeight, 'no crea scroll trap de documento');
+      }
+
+      await page.evaluate(height => window.__setVisualViewport({ height, offsetTop: 0 }), layoutHeight);
+      await page.waitForFunction(() => !document.body.classList.contains('keyboard-open'));
+      const restored = await page.evaluate(() => ({
+        shellHeight: document.querySelector('.shell').getBoundingClientRect().height,
+        visualHeight: visualViewport.height,
+        customHeight: getComputedStyle(document.documentElement).getPropertyValue('--app-visual-height').trim(),
+      }));
+      assert.ok(restored.shellHeight < restored.visualHeight, 'la topbar vuelve a ocupar su espacio normal');
+      assert.equal(restored.customHeight, `${layoutHeight}px`);
+
+      await page.setViewport({ width: layoutHeight, height: width, deviceScaleFactor: 1 });
+      await page.evaluate(height => window.__setVisualViewport({ height, offsetTop: 0 }), width);
+      await page.waitForFunction(() => !document.body.classList.contains('keyboard-open'));
+      const oriented = await page.evaluate(() => ({
+        composerBottom: document.querySelector('#composerForm').getBoundingClientRect().bottom,
+        documentScrollHeight: document.documentElement.scrollHeight,
+        innerHeight,
+      }));
+      assert.ok(oriented.composerBottom <= oriented.innerHeight + 2, `${width}: composer visible tras orientación`);
+      assert.ok(oriented.documentScrollHeight <= oriented.innerHeight, `${width}: sin scroll trap tras orientación`);
+
+      await page.setViewport({ width, height: layoutHeight, deviceScaleFactor: 1 });
+      await page.evaluate(height => window.__setVisualViewport({ height, offsetTop: 0 }), layoutHeight);
+      await page.waitForFunction(() => document.querySelector('#composerForm').getBoundingClientRect().bottom <= innerHeight + 2);
+    }, { simulatedVisualViewport: { width, height: layoutHeight, offsetTop: 0 } });
+  }
+});
+
+test('Task 7 filtros y contexto son diálogos modales nombrados sólo mientras son overlays', { skip: !existsSync(chromePath) }, async () => {
+  await withBrowserPage({ width: 768, height: 900, deviceScaleFactor: 1 }, async ({ page }) => {
+    await page.click('#filtersToggle');
+    await page.waitForSelector('#queueFilters[data-open="true"]');
+    const filters = await page.evaluate(() => {
+      const panel = document.querySelector('#queueFilters');
+      return {
+        role: panel.getAttribute('role'), modal: panel.getAttribute('aria-modal'), labelledby: panel.getAttribute('aria-labelledby'),
+        otherModal: document.querySelector('#contextPanel').getAttribute('aria-modal'),
+      };
+    });
+    assert.deepEqual(filters, { role: 'dialog', modal: 'true', labelledby: 'filtersHeading', otherModal: null });
+    const client = await page.createCDPSession();
+    await client.send('Accessibility.enable');
+    const ax = await client.send('Accessibility.getFullAXTree');
+    assert.ok(ax.nodes.some(node => node.role?.value === 'dialog' && node.name?.value === 'Filtros de conversaciones'));
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => document.querySelector('#queueFilters').dataset.open === 'false');
+  });
+
+  await withBrowserPage({ width: 768, height: 900, deviceScaleFactor: 1 }, async ({ page }) => {
+    await page.click('.conversation-card[data-conversation-id="44"]');
+    await page.waitForFunction(() => document.querySelector('#messageInput').disabled === false);
+    await page.waitForFunction(() => {
+      const button = document.querySelector('#contextToggle');
+      const rect = button.getBoundingClientRect();
+      return document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2) === button;
+    });
+    const contextHitTarget = await page.$eval('#contextToggle', button => {
+      const rect = button.getBoundingClientRect();
+      return document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)?.id || '';
+    });
+    assert.equal(contextHitTarget, 'contextToggle', 'el disparador de contexto tablet no debe quedar cubierto');
+    await page.click('#contextToggle');
+    await page.waitForSelector('#contextPanel[data-open="true"]');
+    const context = await page.evaluate(() => ({
+      role: document.querySelector('#contextPanel').getAttribute('role'),
+      modal: document.querySelector('#contextPanel').getAttribute('aria-modal'),
+      labelledby: document.querySelector('#contextPanel').getAttribute('aria-labelledby'),
+      filtersModal: document.querySelector('#queueFilters').getAttribute('aria-modal'),
+    }));
+    assert.deepEqual(context, { role: 'dialog', modal: 'true', labelledby: 'contextHeading', filtersModal: null });
+    await page.setViewport({ width: 1200, height: 900, deviceScaleFactor: 1 });
+    await page.waitForFunction(() => document.querySelector('#contextPanel').getAttribute('role') === null);
+    assert.deepEqual(await page.evaluate(() => ({
+      contextRole: document.querySelector('#contextPanel').getAttribute('role'),
+      contextModal: document.querySelector('#contextPanel').getAttribute('aria-modal'),
+      filtersRole: document.querySelector('#queueFilters').getAttribute('role'),
+      filtersModal: document.querySelector('#queueFilters').getAttribute('aria-modal'),
+    })), { contextRole: null, contextModal: null, filtersRole: null, filtersModal: null });
+  });
+});
+
+test('Task 7 reintenta contexto visible con GET cercado y limpia el error', { skip: !existsSync(chromePath) }, async () => {
+  const staleRetry = deferred();
+  await withBrowserPage({ width: 390, height: 844, deviceScaleFactor: 1 }, async ({ page, counts }) => {
+    await page.click('.conversation-card[data-conversation-id="44"]');
+    await page.waitForFunction(() => document.querySelector('#contextRetry'));
+    await page.click('#contextToggle');
+    await page.waitForSelector('#contextPanel[data-open="true"]');
+    assert.match(await page.$eval('#conversationContext', element => element.textContent), /No se pudo cargar.*Reintentar/s);
+    await page.click('#contextRetry');
+    await page.waitForFunction(() => document.querySelector('#conversationContext')?.textContent.includes('Cliente identificado'));
+    assert.equal(counts.contexts, 2);
+    assert.doesNotMatch(await page.$eval('#conversationContext', element => element.textContent), /No se pudo cargar/);
+
+    await page.keyboard.press('Escape');
+    await page.click('#backToList');
+    await page.click('.conversation-card[data-conversation-id="45"]');
+    await page.waitForFunction(() => document.querySelector('#contextRetry'));
+    await page.click('#contextToggle');
+    await page.waitForSelector('#contextPanel[data-open="true"]');
+    await page.click('#contextRetry');
+    await page.keyboard.press('Escape');
+    await page.click('#backToList');
+    await page.click('.conversation-card[data-conversation-id="44"]');
+    staleRetry.resolve();
+    await page.waitForFunction(() => document.querySelector('#conversationContext')?.textContent.includes('Cliente identificado'));
+    assert.doesNotMatch(await page.$eval('#conversationContext', element => element.textContent), /STALE 45/);
+    assert.equal(counts.apiRequests.filter(entry => entry.path.endsWith('/context')).every(entry => entry.method === 'GET'), true);
+  }, {
+    async contextResponse({ index, url }) {
+      const id = url.pathname.split('/').at(-2);
+      if (index === 0 || index === 2) return { status: 500, body: { error: 'temporary' } };
+      if (index === 3) {
+        await staleRetry.promise;
+        return { matchStatus: 'exact', customer: { name: 'STALE 45', phone: '*********0045', address: 'Vieja' }, orders: [] };
+      }
+      return { matchStatus: 'exact', customer: { name: `Cliente ${id}`, phone: '*********0001', address: 'Actual' }, orders: [] };
+    },
   });
 });
