@@ -8,22 +8,50 @@ import {
 
 let pedidosNotificationSchemaReady = false;
 
+const SAFE_NOTIFICATION_ERROR_CODES = new Set([
+  'WPP_ENQUEUE_TRANSACTION_OUTCOME_UNKNOWN',
+  'before_enqueue_invalido',
+  'cloud_config_invalida',
+  'cloud_template_payload_invalid',
+  'config_integraciones_invalida',
+  'config_whatsapp_invalida',
+  'dedupe_window_invalida',
+  'empresa_id_invalido',
+  'empresa_no_encontrada',
+  'enqueue_fallido',
+  'enqueue_sin_resultado',
+  'notification_correlation_id_invalido',
+  'notification_correlation_id_requerido',
+  'notification_enqueue_not_accepted',
+  'query_requerida',
+  'transaction_client_requerido',
+  'transaction_pool_requerido',
+  'transport_origin_correlacionado_no_permitido',
+]);
+const MAX_NOTIFICATION_ERROR_CODE_LENGTH = 64;
+
 function sanitizedNotificationError(error) {
-  const code = typeof error?.code === 'string' && /^[a-zA-Z0-9_]+$/.test(error.code)
+  const candidate = typeof error?.code === 'string' && error.code.length <= MAX_NOTIFICATION_ERROR_CODE_LENGTH
     ? error.code
-    : 'notification_failed';
+    : '';
+  const code = SAFE_NOTIFICATION_ERROR_CODES.has(candidate) ? candidate : 'notification_failed';
   return Object.assign(new Error(code), { code });
 }
 
 function isDurableEnqueueAcceptance(result) {
-  if (!result || typeof result !== 'object' || !Number.isSafeInteger(result.id) || result.id <= 0
-      || typeof result.status !== 'string'
+  if (!result || typeof result !== 'object' || Array.isArray(result)
+      || !Number.isSafeInteger(result.id) || result.id <= 0
       || !['general', 'company', 'cloud'].includes(result.transportOrigin)) return false;
-  if (result.queued === true) return true;
+  const keys = Object.keys(result).sort();
+  if (result.queued === true) {
+    return result.status === 'pending'
+      && JSON.stringify(keys) === JSON.stringify(['id', 'queued', 'status', 'transportOrigin']);
+  }
   return result.queued === false
     && result.skipped === true
-    && typeof result.reason === 'string'
-    && (result.reason.startsWith('duplicate_') || result.reason === 'duplicate_correlation');
+    && result.reason === 'duplicate_notification'
+    && ['pending', 'sending', 'sent', 'error', 'skipped'].includes(result.status)
+    && JSON.stringify(keys) === JSON.stringify(['id', 'queued', 'reason', 'skipped', 'status', 'transportOrigin']);
 }
 
 async function ensurePedidosNotificationSchema(queryFn) {
@@ -114,6 +142,7 @@ export function createNotificarEnRuta({
             tracking_token: String(token ?? ''),
           },
         },
+        notification_correlation_id: `order_en_route:${pedidoId}`,
       });
       if (!isDurableEnqueueAcceptance(enqueueResult)) {
         throw Object.assign(new Error('notification_enqueue_not_accepted'), {
@@ -227,11 +256,12 @@ export function createNotificarPedidoTransferencia({
           }
         : null;
 
-      await enqueueWppMessageFn({
+      return await enqueueWppMessageFn({
         phone: datos.telefono,
         message: mensaje,
         empresa_id: empresaId,
         utility_template: utilityTemplate,
+        notification_correlation_id: `transfer_payment:${pedidoId}`,
       });
 
     } catch (e) {

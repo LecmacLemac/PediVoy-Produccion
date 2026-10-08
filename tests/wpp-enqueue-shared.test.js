@@ -190,6 +190,58 @@ test('enqueue conserva resultado duplicate y ventana de dedupe', async () => {
   assert.equal(txPool.calls.at(-1).text, 'COMMIT');
 });
 
+test('notificación proactiva deduplica por identidad durable sin ventana ni transporte actual', async () => {
+  const txPool = enterpriseSuccessPool({ duplicate: true });
+  const result = await enqueueWppTransferPaymentNotification({
+    empresaId: 7,
+    phone: '3515550000',
+    message: 'transferencia durable',
+    notificationCorrelationId: 'transfer_payment:42',
+    utility_template: {
+      key: 'transfer_payment',
+      parameters: {
+        customer_name: 'Ana', amount: '$ 1.000,00', alias: 'ANA.TEST',
+        cbu: '0000000000000000000000', bank: 'Banco', holder: 'Ana', company_name: 'Empresa',
+      },
+    },
+  }, txPool);
+
+  assert.deepEqual(result, {
+    queued: false,
+    skipped: true,
+    reason: 'duplicate_notification',
+    id: 81,
+    status: 'pending',
+    transportOrigin: 'cloud',
+  });
+  const recent = txPool.calls.find(call => /FROM wpp_outbox/i.test(call.text) && !/INSERT INTO/i.test(call.text));
+  assert.match(recent.text, /notification_correlation_id = \$2/);
+  assert.doesNotMatch(recent.text, /created_at|INTERVAL/);
+  assert.deepEqual(recent.values, [7, 'transfer_payment:42']);
+});
+
+test('wrappers proactivos exigen identidad durable antes de abrir conexión', async () => {
+  for (const [enqueue, key, parameters] of [
+    [enqueueWppOrderConfirmationNotification, 'order_confirmation', {
+      customer_name: 'Ana', items_block: '1 x Agua', total: '$ 1.000', address: 'A',
+      delivery_date: 'Hoy', delivery_window: '9-12', driver_name: 'R', driver_phone: '1',
+    }],
+    [enqueueWppOrderEnRouteNotification, 'order_en_route', { customer_name: 'Ana', address: 'A', tracking_token: 'tok' }],
+    [enqueueWppTransferPaymentNotification, 'transfer_payment', {
+      customer_name: 'Ana', amount: '$ 1.000', alias: 'A', cbu: '1', bank: 'B', holder: 'H', company_name: 'E',
+    }],
+  ]) {
+    let connects = 0;
+    await assert.rejects(enqueue({
+      empresaId: 7,
+      phone: '3515550000',
+      message: key,
+      utility_template: { key, parameters },
+    }, { async connect() { connects += 1; } }), { code: 'notification_correlation_id_requerido' });
+    assert.equal(connects, 0);
+  }
+});
+
 test('enqueue falla cerrado para empresa desconocida y hace rollback/release', async () => {
   const txPool = createPool(async ({ text }) => {
     if (text === 'BEGIN' || text === 'ROLLBACK') return { rows: [] };
@@ -378,7 +430,9 @@ test('utility intent persists only for resolved Cloud and keeps original message
     const insert = tx.calls.find(c => c.text.includes('INSERT INTO'));
     assert.match(insert.text, /cloud_template_key, cloud_template_parameters/);
     assert.equal(insert.values[2], 'Web\nexacto');
-    assert.deepEqual(insert.values.slice(5), transport === 'cloud' ? [utility_template.key, JSON.stringify(utility_template.parameters)] : [null, null]);
+    assert.deepEqual(insert.values.slice(5), transport === 'cloud'
+      ? [null, utility_template.key, JSON.stringify(utility_template.parameters)]
+      : [null, null, null]);
     assert.equal(insert.sensitive, true);
   }
 });
@@ -397,6 +451,7 @@ test('required producer wrapper validates Cloud strictly only after resolving tr
       empresaId: 7,
       phone: '3515550000',
       message: 'Web tolerante exacto con dirección histórica ' + 'A'.repeat(501),
+      notificationCorrelationId: 'order_en_route:42',
       utility_template: overlongCandidate,
     }, tx);
     if (transport === 'cloud') {
@@ -406,7 +461,7 @@ test('required producer wrapper validates Cloud strictly only after resolving tr
       await operation;
       const insert = tx.calls.find(call => call.text.includes('INSERT INTO'));
       assert.equal(insert.values[2], 'Web tolerante exacto con dirección histórica ' + 'A'.repeat(501));
-      assert.deepEqual(insert.values.slice(5), [null, null]);
+      assert.deepEqual(insert.values.slice(5), ['order_en_route:42', null, null]);
     }
   }
 });
@@ -427,6 +482,7 @@ test('required producer wrappers fail closed on Cloud without their exact intent
         empresaId: 7,
         phone: '3515550000',
         message: `texto Web ${key}`,
+        notificationCorrelationId: `${key}:42`,
         utility_template: null,
       }, tx);
       if (transport === 'cloud') {
@@ -436,7 +492,7 @@ test('required producer wrappers fail closed on Cloud without their exact intent
         await operation;
         const insert = tx.calls.find(call => call.text.includes('INSERT INTO'));
         assert.equal(insert.values[2], `texto Web ${key}`);
-        assert.deepEqual(insert.values.slice(5), [null, null]);
+        assert.deepEqual(insert.values.slice(5), [`${key}:42`, null, null]);
       }
     }
   }
@@ -463,7 +519,7 @@ test('generic Cloud enqueue without intent remains allowed for conversational pa
   const result = await enqueueWppOutbox({ empresaId: 7, phone: '3515550000', message: 'reply libre' }, tx);
   assert.equal(result.queued, true);
   const insert = tx.calls.find(call => call.text.includes('INSERT INTO'));
-  assert.deepEqual(insert.values.slice(5), [null, null]);
+  assert.deepEqual(insert.values.slice(5), [null, null, null]);
 });
 
 test('logical candidates reject hostile shapes before DB without reading accessors', async () => {
@@ -479,7 +535,13 @@ test('logical candidates reject hostile shapes before DB without reading accesso
   for (const utility_template of hostile) {
     const tx = enterpriseSuccessPool();
     await assert.rejects(
-      enqueueWppOrderEnRouteNotification({ empresaId: 7, phone: '3515550000', message: 'Web', utility_template }, tx),
+      enqueueWppOrderEnRouteNotification({
+        empresaId: 7,
+        phone: '3515550000',
+        message: 'Web',
+        notificationCorrelationId: 'order_en_route:42',
+        utility_template,
+      }, tx),
       { code: 'cloud_template_payload_invalid' },
     );
     assert.equal(tx.calls.length, 0);

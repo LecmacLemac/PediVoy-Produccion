@@ -1927,6 +1927,7 @@ CREATE TABLE IF NOT EXISTS wpp_outbox (
   claim_until TIMESTAMPTZ,
   transport_origin TEXT,
   reply_correlation_id TEXT,
+  notification_correlation_id TEXT,
   meta_message_id TEXT,
   cloud_dispatch_state TEXT,
   dispatch_started_at TIMESTAMPTZ,
@@ -1952,6 +1953,7 @@ ALTER TABLE public.wpp_outbox
   ADD COLUMN IF NOT EXISTS claim_until TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS transport_origin TEXT,
   ADD COLUMN IF NOT EXISTS reply_correlation_id TEXT,
+  ADD COLUMN IF NOT EXISTS notification_correlation_id TEXT,
   ADD COLUMN IF NOT EXISTS meta_message_id TEXT,
   ADD COLUMN IF NOT EXISTS cloud_dispatch_state TEXT,
   ADD COLUMN IF NOT EXISTS dispatch_started_at TIMESTAMPTZ,
@@ -1969,6 +1971,18 @@ ALTER TABLE public.wpp_outbox
       AND cloud_template_key IN ('order_confirmation', 'order_en_route', 'transfer_payment')
       AND cloud_template_parameters IS NOT NULL
       AND pg_catalog.jsonb_typeof(cloud_template_parameters) = 'object'
+    )
+  );
+
+ALTER TABLE public.wpp_outbox
+  DROP CONSTRAINT IF EXISTS wpp_outbox_notification_correlation_check;
+ALTER TABLE public.wpp_outbox
+  ADD CONSTRAINT wpp_outbox_notification_correlation_check CHECK (
+    notification_correlation_id IS NULL
+    OR (
+      empresa_id IS NOT NULL
+      AND notification_correlation_id = pg_catalog.btrim(notification_correlation_id)
+      AND pg_catalog.length(notification_correlation_id) BETWEEN 1 AND 512
     )
   );
 
@@ -2215,6 +2229,11 @@ DROP INDEX IF EXISTS public.wpp_outbox_reply_correlation_uidx;
 CREATE UNIQUE INDEX wpp_outbox_reply_correlation_uidx
   ON public.wpp_outbox (COALESCE(empresa_id, 0), transport_origin, reply_correlation_id)
   WHERE reply_correlation_id IS NOT NULL;
+
+DROP INDEX IF EXISTS public.wpp_outbox_notification_correlation_uidx;
+CREATE UNIQUE INDEX wpp_outbox_notification_correlation_uidx
+  ON public.wpp_outbox (empresa_id, notification_correlation_id)
+  WHERE notification_correlation_id IS NOT NULL;
 
 DROP INDEX IF EXISTS public.wpp_outbox_cloud_pre_dispatch_recovery_idx;
 CREATE INDEX wpp_outbox_cloud_pre_dispatch_recovery_idx

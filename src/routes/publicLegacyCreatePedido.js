@@ -963,6 +963,7 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
             phone: telefono,
             message: mensaje,
             empresa_id: empId,
+            notification_correlation_id: `order_confirmation:${pedido.id}`,
             utility_template: utilityTemplate,
           });
 

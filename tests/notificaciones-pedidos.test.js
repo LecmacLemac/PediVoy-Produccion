@@ -207,7 +207,7 @@ test('notificarEnRuta no marca resultados de enqueue omitidos o no durables', as
 test('notificarEnRuta marca sólo resultados durables insertados o deduplicados', async () => {
   for (const result of [
     { queued: true, id: 91, status: 'pending', transportOrigin: 'company' },
-    { queued: false, skipped: true, reason: 'duplicate_5m', id: 91, status: 'pending', transportOrigin: 'cloud' },
+    { queued: false, skipped: true, reason: 'duplicate_notification', id: 91, status: 'pending', transportOrigin: 'cloud' },
   ]) {
     const events = [];
     const notificarEnRuta = createNotificarEnRuta({
@@ -223,6 +223,59 @@ test('notificarEnRuta marca sólo resultados durables insertados o deduplicados'
     await notificarEnRuta(42, 1);
     assert.deepEqual(events, ['marked']);
   }
+});
+
+test('notificarEnRuta rechaza resultados contradictorios o fuera de la unión exacta', async () => {
+  const malformedResults = [
+    { queued: true, skipped: true, id: 91, status: 'pending', transportOrigin: 'company' },
+    { queued: true, reason: 'duplicate_5m', id: 91, status: 'pending', transportOrigin: 'company' },
+    { queued: true, id: 91, status: 'unknown', transportOrigin: 'company' },
+    { queued: true, id: 91, status: 'pending', transportOrigin: 'carrier-pigeon' },
+    { queued: false, skipped: true, reason: 'duplicate_unknown', id: 91, status: 'pending', transportOrigin: 'company' },
+    { queued: true, id: 91, status: 'pending' },
+    { queued: true, id: 91, status: 'pending', transportOrigin: 'company', reason: 'inserted' },
+    { queued: false, skipped: true, reason: 'duplicate_5m', id: 91, status: 'pending', transportOrigin: 'company', extra: true },
+  ];
+
+  for (const result of malformedResults) {
+    const marks = [];
+    const notificarEnRuta = createNotificarEnRuta({
+      queryFn: async (sql) => {
+        if (sql.includes('ALTER TABLE pedidos')) return [];
+        if (sql.includes('SELECT') && sql.includes('FROM pedidos')) return [buildPedido()];
+        if (sql.includes('SET en_ruta_notificado_at')) { marks.push(sql); return []; }
+        throw new Error(`SQL no esperado: ${sql}`);
+      },
+      enqueueWppMessageFn: async () => result,
+    });
+
+    await assert.rejects(notificarEnRuta(42, 1), { code: 'notification_enqueue_not_accepted' });
+    assert.deepEqual(marks, []);
+  }
+});
+
+test('notificarEnRuta nunca marca outcome_unknown', async () => {
+  const marks = [];
+  const notificarEnRuta = createNotificarEnRuta({
+    queryFn: async (sql) => {
+      if (sql.includes('ALTER TABLE pedidos')) return [];
+      if (sql.includes('SELECT') && sql.includes('FROM pedidos')) return [buildPedido()];
+      if (sql.includes('SET en_ruta_notificado_at')) { marks.push(sql); return []; }
+      throw new Error(`SQL no esperado: ${sql}`);
+    },
+    enqueueWppMessageFn: async () => {
+      throw Object.assign(new Error('private commit detail tok_123 3531234567'), {
+        code: 'WPP_ENQUEUE_TRANSACTION_OUTCOME_UNKNOWN',
+      });
+    },
+  });
+
+  await assert.rejects(notificarEnRuta(42, 1), error => {
+    assert.equal(error.code, 'WPP_ENQUEUE_TRANSACTION_OUTCOME_UNKNOWN');
+    assert.doesNotMatch(JSON.stringify(error), /tok_123|3531234567|private/);
+    return true;
+  });
+  assert.deepEqual(marks, []);
 });
 
 test('notificarPedidoTransferencia usa la cuenta activa de menor prioridad', async () => {
@@ -372,5 +425,44 @@ test('notificarPedidoTransferencia no filtra datos si Cloud rechaza una cuenta i
     for (const value of privateValues) assert.doesNotMatch(serializedLogs, new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   } finally {
     console.error = originalError;
+  }
+});
+
+test('notificaciones cierran códigos desconocidos, numéricos o demasiado largos sin filtrar secretos', async () => {
+  const privateValues = ['0000003100012345678901', '3539999999', 'private-token', 'provider-secret'];
+  for (const code of ['provider_secret_code', 50042, 'X'.repeat(200)]) {
+    const logs = [];
+    const originalError = console.error;
+    console.error = (...args) => { logs.push(args); };
+    try {
+      const notificarPedidoTransferencia = createNotificarPedidoTransferencia({
+        queryFn: async (sql) => {
+          if (sql.includes('FROM pedidos')) return [{
+            id: 42, monto: 7500, cliente: 'Cliente Secreto', telefono: privateValues[1],
+            direccion: 'Dirección secreta', empresa_nombre: 'PediVoy Test', empresa_id: 1,
+          }];
+          if (sql.includes('FROM empresa_cuentas_bancarias')) return [{
+            alias: 'ALIAS.SECRETO', banco: 'Banco Secreto', cbu: privateValues[0], titular: 'Titular Secreto', prioridad: 1,
+          }];
+          throw new Error(`SQL no esperado: ${sql}`);
+        },
+        enqueueWppMessageFn: async () => {
+          throw Object.assign(new Error(privateValues.join('|')), { code, token: privateValues[2], provider: privateValues[3] });
+        },
+      });
+
+      await assert.rejects(notificarPedidoTransferencia(42, 1), error => {
+        assert.equal(error.code, 'notification_failed');
+        assert.equal(error.message, 'notification_failed');
+        const serialized = JSON.stringify(Object.getOwnPropertyDescriptors(error));
+        for (const value of privateValues) assert.doesNotMatch(serialized, new RegExp(value));
+        return true;
+      });
+      const serializedLogs = JSON.stringify(logs);
+      assert.match(serializedLogs, /notification_failed/);
+      for (const value of privateValues) assert.doesNotMatch(serializedLogs, new RegExp(value));
+    } finally {
+      console.error = originalError;
+    }
   }
 });

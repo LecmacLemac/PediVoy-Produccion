@@ -23,11 +23,12 @@ function tokenFor(user) {
   return Buffer.from(JSON.stringify(user)).toString('base64url');
 }
 
-async function buildApp({ approveManualFn, associateReceiptFn } = {}) {
+async function buildApp({ approveManualFn, associateReceiptFn, notifyTransferFn, queryOverride } = {}) {
   const transferDir = await mkdtemp(path.join(tmpdir(), 'pedivoy-transfer-auth-'));
   const calls = [];
   const queryFn = async (sql, params = []) => {
     calls.push({ sql, params });
+    if (queryOverride) return queryOverride(sql, params);
     if (/ALTER TABLE|CREATE INDEX/i.test(sql)) return [];
     if (sql.includes('FROM empresa_cuentas_bancarias')) return [];
     if (sql.includes('FROM comprobantes_transferencia ct')) return [];
@@ -60,6 +61,7 @@ async function buildApp({ approveManualFn, associateReceiptFn } = {}) {
     checkLicenciaFn,
     approveManualFn,
     associateReceiptFn,
+    notifyTransferFn,
   }));
   return {
     app,
@@ -415,6 +417,57 @@ test('conflictos deterministas de asociación y aprobación conservan HTTP 409',
       assert.equal(approval.status, 409);
     });
   } finally {
+    await cleanup();
+  }
+});
+
+test('solicitar comprobante devuelve 503 outcome_unknown sanitizado sin retry del servidor', async () => {
+  let notifyCalls = 0;
+  const privateValues = ['3539999999', 'private-token', 'socket-detail'];
+  const { app, cleanup } = await buildApp({
+    queryOverride: async (sql) => {
+      if (/ALTER TABLE|CREATE INDEX/i.test(sql)) return [];
+      if (sql.includes('FROM pedidos p')) return [{
+        id: 42,
+        empresa_id: 3,
+        metodo_pago: 'transferencia',
+        telefono: privateValues[0],
+      }];
+      throw new Error(`Consulta inesperada: ${sql}`);
+    },
+    notifyTransferFn: async () => {
+      notifyCalls += 1;
+      throw Object.assign(new Error(privateValues.join('|')), {
+        code: 'WPP_ENQUEUE_TRANSACTION_OUTCOME_UNKNOWN',
+        token: privateValues[1],
+      });
+    },
+  });
+  const logs = [];
+  const originalError = console.error;
+  console.error = (...args) => { logs.push(args); };
+  try {
+    await withServer(app, async baseUrl => {
+      const response = await fetch(`${baseUrl}/api/transferencias/pedidos/42/solicitar-comprobante`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${tokenFor({ uid: 10, role: 'admin', empresa_id: 3 })}`,
+          'x-test-license': 'active',
+        },
+      });
+      assert.equal(response.status, 503);
+      assert.deepEqual(await response.json(), {
+        ok: false,
+        code: 'WPP_ENQUEUE_TRANSACTION_OUTCOME_UNKNOWN',
+        status: 'outcome_unknown',
+        reconciliation_required: true,
+      });
+    });
+    assert.equal(notifyCalls, 1);
+    const serializedLogs = JSON.stringify(logs);
+    for (const value of privateValues) assert.doesNotMatch(serializedLogs, new RegExp(value));
+  } finally {
+    console.error = originalError;
     await cleanup();
   }
 });

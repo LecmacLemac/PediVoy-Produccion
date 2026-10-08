@@ -230,6 +230,7 @@ export function createTransferenciasRouter({
   getEmpresaIdFromTokenFn = getEmpresaIdFromToken,
   approveManualFn = aprobarComprobanteManualAtomicoPg,
   associateReceiptFn = asociarComprobantePedidoPg,
+  notifyTransferFn = notificarPedidoTransferencia,
 } = {}) {
   if (!TRANSF_DIR) throw new Error('createTransferenciasRouter requiere TRANSF_DIR');
 
@@ -240,6 +241,7 @@ export function createTransferenciasRouter({
   const getEmpresaIdFromToken = getEmpresaIdFromTokenFn;
   const aprobarComprobanteManualAtomicoPg = approveManualFn;
   const asociarComprobantePedidoPg = associateReceiptFn;
+  const notifyTransfer = notifyTransferFn;
   const router = express.Router();
   const VERIFY_TOLERANCE = Number(process.env.TRANSFER_VERIFY_TOLERANCE || 1);
 
@@ -599,10 +601,19 @@ export function createTransferenciasRouter({
         return res.status(409).json({ error: 'El cliente no tiene WhatsApp cargado' });
       }
 
-      await notificarPedidoTransferencia(pedidoId, Number(pedido.empresa_id));
+      await notifyTransfer(pedidoId, Number(pedido.empresa_id));
       return res.json({ ok: true });
     } catch (e) {
-      console.error('Error solicitando comprobante de transferencia:', e);
+      if (e?.code === 'WPP_ENQUEUE_TRANSACTION_OUTCOME_UNKNOWN') {
+        console.error('Error solicitando comprobante de transferencia:', e.code);
+        return res.status(503).json({
+          ok: false,
+          code: 'WPP_ENQUEUE_TRANSACTION_OUTCOME_UNKNOWN',
+          status: 'outcome_unknown',
+          reconciliation_required: true,
+        });
+      }
+      console.error('Error solicitando comprobante de transferencia:', 'notification_failed');
       return res.status(500).json({ error: 'Error enviando solicitud de comprobante' });
     }
   });

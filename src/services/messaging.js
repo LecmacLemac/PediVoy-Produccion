@@ -21,10 +21,21 @@ export async function enqueueWppMessage({
 }
 
 function enqueueRequiredNotification(enqueue, {
-  phone, message, empresa_id = null, utility_template = null, ...extra
+  phone,
+  message,
+  empresa_id = null,
+  utility_template = null,
+  notification_correlation_id = null,
+  ...extra
 }, transactionPool) {
   if (Object.keys(extra).length) throw new WppTransportConfigError('cloud_template_payload_invalid');
-  return enqueue({ empresaId: empresa_id, phone, message, utility_template }, transactionPool);
+  return enqueue({
+    empresaId: empresa_id,
+    phone,
+    message,
+    utility_template,
+    notificationCorrelationId: notification_correlation_id,
+  }, transactionPool);
 }
 
 export function enqueueOrderConfirmationWppMessage(input, transactionPool = pool) {

@@ -124,7 +124,12 @@ function prepareEnqueue({
   utility_template = null,
   queryOptions, // Legacy producers request sensitivity; all payload queries are always sensitive.
   ...extra
-}, { correlatedTransportOrigin = null, correlationId = null } = {}) {
+}, {
+  correlatedTransportOrigin = null,
+  correlationId = null,
+  notificationCorrelationId = null,
+  requireNotificationCorrelation = false,
+} = {}) {
   if (Object.keys(extra).length) throw new WppTransportConfigError('cloud_template_payload_invalid');
   const payload = normalizeWppOutboxPayload({ phone, message });
   if (!payload) return { skippedResult: { queued: false, skipped: true, reason: 'invalid_payload' } };
@@ -148,6 +153,19 @@ function prepareEnqueue({
   if (correlationId != null && (!normalizedCorrelationId || normalizedCorrelationId.length > 512)) {
     throw new WppTransportConfigError('correlation_id_invalido');
   }
+  const normalizedNotificationCorrelationId = notificationCorrelationId == null
+    ? null
+    : String(notificationCorrelationId).trim();
+  if (requireNotificationCorrelation && !normalizedNotificationCorrelationId) {
+    throw new WppTransportConfigError('notification_correlation_id_requerido');
+  }
+  if (notificationCorrelationId != null
+      && (!normalizedNotificationCorrelationId || normalizedNotificationCorrelationId.length > 512)) {
+    throw new WppTransportConfigError('notification_correlation_id_invalido');
+  }
+  if (normalizedNotificationCorrelationId && normalizedEmpresaId === null) {
+    throw new WppTransportConfigError('empresa_id_invalido');
+  }
 
   const utilityTemplateCandidate = prepareUtilityTemplateCandidate(utility_template);
   return {
@@ -157,6 +175,7 @@ function prepareEnqueue({
     normalizedEmpresaId,
     correlatedTransportOrigin,
     correlationId: normalizedCorrelationId,
+    notificationCorrelationId: normalizedNotificationCorrelationId,
   };
 }
 
@@ -167,6 +186,7 @@ async function enqueuePreparedWithClient({
   normalizedEmpresaId,
   correlatedTransportOrigin = null,
   correlationId = null,
+  notificationCorrelationId = null,
   requiredUtilityTemplateKey = null,
   requiredUtilityTemplateCapability = null,
 }, client) {
@@ -207,7 +227,9 @@ async function enqueuePreparedWithClient({
     }
   }
 
-  const dedupeKey = correlationId
+  const dedupeKey = notificationCorrelationId
+    ? `notification:${normalizedEmpresaId}:${notificationCorrelationId}`
+    : correlationId
     ? `reply:${normalizedEmpresaId ?? 0}:${transportOrigin}:${correlationId}`
     : stableDedupeKey({
         empresaId: normalizedEmpresaId,
@@ -221,7 +243,13 @@ async function enqueuePreparedWithClient({
     [dedupeKey],
   );
 
-  const recent = await clientRows(client, correlationId
+  const recent = await clientRows(client, notificationCorrelationId
+    ? `SELECT id, status, transport_origin
+       FROM wpp_outbox
+      WHERE empresa_id = $1::integer
+        AND notification_correlation_id = $2
+      LIMIT 1`
+    : correlationId
     ? `SELECT id, status, transport_origin
        FROM wpp_outbox
       WHERE empresa_id IS NOT DISTINCT FROM $1::integer
@@ -237,7 +265,9 @@ async function enqueuePreparedWithClient({
         AND created_at > (NOW() - ($5 * INTERVAL '1 minute'))
       ORDER BY created_at DESC, id DESC
       LIMIT 1`,
-    correlationId
+    notificationCorrelationId
+      ? [normalizedEmpresaId, notificationCorrelationId]
+      : correlationId
       ? [normalizedEmpresaId, transportOrigin, correlationId]
       : [payload.phone, payload.message, normalizedEmpresaId, transportOrigin, windowMinutes],
     { sensitive: true },
@@ -248,20 +278,22 @@ async function enqueuePreparedWithClient({
     return {
       queued: false,
       skipped: true,
-      reason: correlationId ? 'duplicate_correlation' : `duplicate_${windowMinutes}m`,
+      reason: notificationCorrelationId
+        ? 'duplicate_notification'
+        : correlationId ? 'duplicate_correlation' : `duplicate_${windowMinutes}m`,
       id: row.id || null,
       status: row.status || null,
-      transportOrigin,
+      transportOrigin: notificationCorrelationId ? row.transport_origin : transportOrigin,
     };
   }
 
   const inserted = await clientRows(
     client,
     `INSERT INTO wpp_outbox
-       (empresa_id, telefono, mensaje, transport_origin, reply_correlation_id, cloud_template_key, cloud_template_parameters, status, created_at)
-     VALUES ($1::integer, $2, $3, $4, $5, $6, $7::jsonb, 'pending', NOW())
+       (empresa_id, telefono, mensaje, transport_origin, reply_correlation_id, notification_correlation_id, cloud_template_key, cloud_template_parameters, status, created_at)
+     VALUES ($1::integer, $2, $3, $4, $5, $6, $7, $8::jsonb, 'pending', NOW())
      RETURNING id, status, transport_origin`,
-    [normalizedEmpresaId, payload.phone, payload.message, transportOrigin, correlationId,
+    [normalizedEmpresaId, payload.phone, payload.message, transportOrigin, correlationId, notificationCorrelationId,
       transportOrigin === 'cloud' ? utilityTemplate?.key ?? null : null,
       transportOrigin === 'cloud' && utilityTemplate ? JSON.stringify(utilityTemplate.parameters) : null],
     { sensitive: true },
@@ -304,9 +336,15 @@ export async function enqueueWppOutbox(input, transactionPool = defaultPool) {
 }
 
 function enqueueRequiredUtilityNotification(input, transactionPool, requiredUtilityTemplateKey) {
-  return enqueueWppOutboxWithPolicy(input, transactionPool, {
+  const notificationCorrelationId = input?.notificationCorrelationId;
+  const enqueueInput = input && typeof input === 'object' && !Array.isArray(input)
+    ? Object.fromEntries(Object.entries(input).filter(([key]) => key !== 'notificationCorrelationId'))
+    : input;
+  return enqueueWppOutboxWithPolicy(enqueueInput, transactionPool, {
     requiredUtilityTemplateCapability: REQUIRED_UTILITY_TEMPLATE_CAPABILITY,
     requiredUtilityTemplateKey,
+    notificationCorrelationId,
+    requireNotificationCorrelation: true,
   });
 }
 

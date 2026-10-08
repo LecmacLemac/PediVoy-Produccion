@@ -11,6 +11,7 @@ import {
   enqueueWppOutbox,
   enqueueWppOutboxCorrelatedReply,
   enqueueWppOutboxInTransaction,
+  enqueueWppTransferPaymentNotification,
 } from '../src/wpp/enqueue.js';
 
 const initSql = readFileSync(new URL('../initDb.sql', import.meta.url), 'utf8');
@@ -681,5 +682,60 @@ test('utility migration is idempotent, preserves legacy and enforces nullable Cl
       ['cloud', null, parameters], ['cloud', 'order_en_route', null],
     ]) await assert.rejects(pool.query('INSERT INTO wpp_outbox (empresa_id, telefono, mensaje, transport_origin, cloud_template_key, cloud_template_parameters) VALUES ($1, $2, $3, $4, $5, $6)', [transport === 'general' ? null : 7, '1', 'test', transport, key, params === null ? null : JSON.stringify(params)]), { code: '23514' });
     await pool.query("INSERT INTO wpp_outbox (empresa_id, telefono, mensaje, transport_origin, cloud_template_key, cloud_template_parameters) VALUES (7, '1', 'valid', 'cloud', 'order_en_route', $1)", [JSON.stringify(parameters)]);
+  });
+});
+
+test('proactive notification identity survives ambiguous COMMIT and isolates tenants beyond five minutes', async () => {
+  const { withIsolatedPostgres } = await import('./support/isolated-postgres.js');
+  await withIsolatedPostgres(async pool => {
+    await pool.query("CREATE TABLE empresas (id INTEGER PRIMARY KEY, config_integraciones JSONB NOT NULL DEFAULT '{}'::jsonb)");
+    await pool.query(migrationSql);
+    await pool.query(migrationSql);
+    await pool.query("INSERT INTO empresas(id) VALUES (1), (2)");
+
+    const payload = empresaId => ({
+      empresaId,
+      phone: '3515550000',
+      message: `transferencia tenant ${empresaId}`,
+      notificationCorrelationId: 'transfer_payment:42',
+      utility_template: null,
+    });
+    const commitAppliedThenErrorPool = {
+      async connect() {
+        const raw = await pool.connect();
+        return {
+          async query(input, params) {
+            const text = typeof input === 'string' ? input : input.text;
+            if (text === 'COMMIT') {
+              await raw.query(input, params);
+              throw new Error('private socket lost after commit');
+            }
+            return raw.query(input, params);
+          },
+          release(error) { raw.release(error); },
+        };
+      },
+    };
+
+    await assert.rejects(
+      enqueueWppTransferPaymentNotification(payload(1), commitAppliedThenErrorPool),
+      { code: 'WPP_ENQUEUE_TRANSACTION_OUTCOME_UNKNOWN' },
+    );
+    await pool.query("UPDATE wpp_outbox SET created_at = NOW() - INTERVAL '10 minutes'");
+    const retry = await enqueueWppTransferPaymentNotification(payload(1), pool);
+    const otherTenant = await enqueueWppTransferPaymentNotification(payload(2), pool);
+
+    assert.equal(retry.reason, 'duplicate_notification');
+    assert.equal(otherTenant.queued, true);
+    const rows = (await pool.query(`
+      SELECT empresa_id, notification_correlation_id, count(*)::int AS total
+        FROM wpp_outbox
+       GROUP BY empresa_id, notification_correlation_id
+       ORDER BY empresa_id
+    `)).rows;
+    assert.deepEqual(rows, [
+      { empresa_id: 1, notification_correlation_id: 'transfer_payment:42', total: 1 },
+      { empresa_id: 2, notification_correlation_id: 'transfer_payment:42', total: 1 },
+    ]);
   });
 });

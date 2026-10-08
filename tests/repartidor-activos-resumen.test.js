@@ -402,6 +402,51 @@ test('repartidor puede disparar WhatsApp de transferencia desde modal QR', async
   assert.deepEqual(notificaciones, [{ pedidoId: 42, empresaId: 1 }]);
 });
 
+test('repartidor devuelve 503 outcome_unknown sanitizado sin retry al notificar transferencia', async () => {
+  let notifyCalls = 0;
+  const privateValues = ['private-phone', 'private-token', 'socket-detail'];
+  const app = buildTestAppWithDeps({
+    query: async (sql) => {
+      if (sql.includes('FROM pedidos p') && sql.includes('p.empresa_id = $2')) {
+        return [{ id: 42, empresa_id: 1, chofer_id: 7, estado: 'en_ruta', metodo_pago: 'transferencia' }];
+      }
+      throw new Error(`Consulta inesperada: ${sql}`);
+    },
+    notificarPedidoTransferencia: async () => {
+      notifyCalls += 1;
+      throw Object.assign(new Error(privateValues.join('|')), {
+        code: 'WPP_ENQUEUE_TRANSACTION_OUTCOME_UNKNOWN',
+        token: privateValues[1],
+      });
+    },
+    withAuth: (req, res, next) => {
+      req.user = { chofer_id: 7, empresa_id: 1, username: 'chofer-test', role: 'repartidor' };
+      next();
+    },
+    getEmpresaIdFromToken: () => 1,
+  });
+  const logs = [];
+  const originalError = console.error;
+  console.error = (...args) => { logs.push(args); };
+  try {
+    await withServer(app, async baseUrl => {
+      const response = await fetch(`${baseUrl}/api/repartidor/pedidos/42/transferencia/notificar`, { method: 'POST' });
+      assert.equal(response.status, 503);
+      assert.deepEqual(await response.json(), {
+        ok: false,
+        code: 'WPP_ENQUEUE_TRANSACTION_OUTCOME_UNKNOWN',
+        status: 'outcome_unknown',
+        reconciliation_required: true,
+      });
+    });
+    assert.equal(notifyCalls, 1);
+    const serializedLogs = JSON.stringify(logs);
+    for (const value of privateValues) assert.doesNotMatch(serializedLogs, new RegExp(value));
+  } finally {
+    console.error = originalError;
+  }
+});
+
 test('cambiar pedido a transferencia no envia WhatsApp antes del modal QR', async () => {
   const notificaciones = [];
   const app = buildTestAppWithDeps({

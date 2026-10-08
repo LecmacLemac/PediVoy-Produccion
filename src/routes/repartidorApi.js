@@ -640,7 +640,16 @@ export function createRepartidorApiRouter(deps) {
      await notificarPedidoTransferencia(pedidoId, empresaId);
      return res.json({ ok: true });
    } catch (e) {
-     console.error('REPARTIDOR NOTIFICAR TRANSFERENCIA ERROR:', e);
+     if (e?.code === 'WPP_ENQUEUE_TRANSACTION_OUTCOME_UNKNOWN') {
+       console.error('REPARTIDOR NOTIFICAR TRANSFERENCIA ERROR:', e.code);
+       return res.status(503).json({
+         ok: false,
+         code: 'WPP_ENQUEUE_TRANSACTION_OUTCOME_UNKNOWN',
+         status: 'outcome_unknown',
+         reconciliation_required: true,
+       });
+     }
+     console.error('REPARTIDOR NOTIFICAR TRANSFERENCIA ERROR:', 'notification_failed');
      return res.status(500).json({ error: 'Error enviando WhatsApp de transferencia' });
    }
 });
