@@ -85,6 +85,38 @@ test('Task 4 trata un número canónico fuera de int4 sólo como teléfono', asy
   assert.equal(calls[0].options?.sensitive, true);
 });
 
+test('Task 4 acepta sólo sufijos telefónicos de 6 a 10 dígitos sin truncarlos', async () => {
+  const cases = [
+    ['550101', '550101'],
+    ['515550101', '515550101'],
+    ['3515550101', '3515550101'],
+    ['50101', null],
+    ['93515550101', null],
+  ];
+  for (const [searchQuery, expectedPhoneSuffix] of cases) {
+    const calls = [];
+    const app = express();
+    app.use(express.json());
+    app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+      canonicalOrigin: 'https://admin.pedivoy.test',
+      withAuth(req, _res, next) { req.user = { uid: 41, role: 'admin', empresa_id: 7 }; next(); },
+      async query(sql, params, options) { calls.push({ sql, params, options }); return []; },
+    }));
+    await withServer(app, async baseUrl => {
+      const response = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations/search`, {
+        method: 'POST',
+        headers: { Origin: 'https://admin.pedivoy.test', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: searchQuery }),
+      });
+      assert.equal(response.status, 200);
+    });
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].params[15], expectedPhoneSuffix, searchQuery);
+    assert.match(calls[0].sql, /RIGHT\(point\.telefono_normalizado,\s*LENGTH\(\$16::text\)\)\s*=\s*\$16::text/);
+    assert.equal(calls[0].options?.sensitive, true);
+  }
+});
+
 test('Task 4 contexto usa una sola sentencia sensible y nunca consulta pedidos tras ambigüedad', async () => {
   const calls = [];
   const app = express();

@@ -470,6 +470,17 @@ test('Task 4 busca fuera de la primera página y resuelve context exact, ambiguo
       assert.equal(overflowPhone.status, 200);
       assert.deepEqual((await overflowPhone.json()).conversations, []);
 
+      for (const suffix of ['550101', '515550101', '3515550101']) {
+        const phoneSearch = await post({ query: suffix });
+        assert.equal(phoneSearch.status, 200, suffix);
+        assert.deepEqual((await phoneSearch.json()).conversations.map(row => row.conversationId), [idsByPhone['5493515550101']], suffix);
+      }
+      for (const outOfRange of ['50101', '93515550101']) {
+        const phoneSearch = await post({ query: outOfRange });
+        assert.equal(phoneSearch.status, 200, outOfRange);
+        assert.deepEqual((await phoneSearch.json()).conversations, [], outOfRange);
+      }
+
       const shortName = await (await post({ query: 'Al' })).json();
       assert.deepEqual(shortName.conversations.map(row => row.conversationId), [idsByPhone['5493515550404']]);
       const shortAddress = await (await post({ query: 'Zo' })).json();
@@ -588,20 +599,48 @@ test('Task 4 EXPLAIN ANALYZE ejecuta SQL productivo sin SubPlan, arrays ni trunc
     for (const [searchMode, expectedIndex] of cases) {
       const statement = await buildCloudConversationListSql({ searchMode });
       assert.doesNotMatch(statement.sql, /LIMIT 500|ANY\s*\(|ARRAY\s*\[/i);
-      const explained = await pool.query(`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${statement.sql}`, statement.params);
-      const root = explained.rows[0]['QUERY PLAN'][0];
-      const plan = JSON.stringify(root);
-      assert.doesNotMatch(plan, /SubPlan/);
-      assert.match(plan, expectedIndex);
-      assert.equal(Number.isFinite(Number(root.Plan['Total Cost'])), true);
-      if (searchMode === 'substring') assert.match(plan, /idx_puntos_entrega_whatsapp_search_text_tenant_trgm/);
-      const nodes = [];
-      const visit = node => { nodes.push(node); for (const child of node.Plans || []) visit(child); };
-      visit(root.Plan);
-      const messageScans = nodes.filter(node => String(node['Relation Name'] || '') === 'whatsapp_cloud_messages');
-      assert.ok(messageScans.length > 0);
-      assert.ok(messageScans.every(node => Number(node['Actual Rows']) < 100), `message history was not candidate-scoped: ${plan}`);
+      const phoneSuffixes = searchMode === 'phone' ? ['017777', '510017777', '3510017777'] : [statement.params[15]];
+      for (const phoneSuffix of phoneSuffixes) {
+        const params = [...statement.params];
+        if (searchMode === 'phone') params[15] = phoneSuffix;
+        const explained = await pool.query(`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${statement.sql}`, params);
+        const root = explained.rows[0]['QUERY PLAN'][0];
+        const plan = JSON.stringify(root);
+        assert.doesNotMatch(plan, /SubPlan/);
+        assert.match(plan, expectedIndex, `${searchMode}:${phoneSuffix || 'n/a'}`);
+        assert.equal(Number.isFinite(Number(root.Plan['Total Cost'])), true);
+        if (searchMode === 'substring') assert.match(plan, /idx_puntos_entrega_whatsapp_search_text_tenant_trgm/);
+        const nodes = [];
+        const visit = node => { nodes.push(node); for (const child of node.Plans || []) visit(child); };
+        visit(root.Plan);
+        const messageScans = nodes.filter(node => String(node['Relation Name'] || '') === 'whatsapp_cloud_messages');
+        assert.ok(messageScans.length > 0);
+        assert.ok(messageScans.every(node => Number(node['Actual Rows']) < 100), `message history was not candidate-scoped: ${plan}`);
+      }
     }
+  });
+});
+
+test('Task 4 migration actualiza índices telefónicos legacy al contrato de sufijo variable', async () => {
+  await withDatabase(async pool => {
+    const definitions = (await pool.query(`
+      SELECT c.relname, pg_catalog.pg_get_indexdef(c.oid) AS definition
+        FROM pg_catalog.pg_class AS c
+       WHERE c.relname IN ('idx_puntos_entrega_whatsapp_phone_lookup', 'idx_puntos_entrega_whatsapp_phone_fallback')
+       ORDER BY c.relname
+    `)).rows;
+    assert.equal(definitions.length, 2);
+    assert.ok(definitions.every(row => /reverse\(/.test(row.definition)));
+    assert.ok(definitions.every(row => /text_pattern_ops/.test(row.definition)));
+    assert.ok(definitions.every(row => !/"right"\(/.test(row.definition)));
+  }, {
+    beforeMigration: async pool => {
+      await pool.query(`CREATE INDEX idx_puntos_entrega_whatsapp_phone_lookup
+        ON puntos_entrega (empresa_id, (RIGHT(telefono_normalizado, 10)))`);
+      await pool.query(`CREATE INDEX idx_puntos_entrega_whatsapp_phone_fallback
+        ON puntos_entrega (empresa_id, (RIGHT(regexp_replace(COALESCE(telefono, ''), '\\\\D', '', 'g'), 10)))
+        WHERE telefono_normalizado IS NULL`);
+    },
   });
 });
 

@@ -806,6 +806,58 @@ browserTest('Task 4 cerca búsquedas y contextos stale, restaura cola y no persi
   });
 });
 
+browserTest('Task 4 cerca search anterior a read y aplica una recarga canónica estable', async () => {
+  const initial = conversation(ids.urgent, '0109', { customerName: 'Ana Read', priority: 'urgent', unreadCount: 3, version: 3 });
+  const peer = conversation(ids.high, '0209', { customerName: 'Beto Sigue', priority: 'high', unreadCount: 1, version: 7 });
+  const readCanonical = { ...initial, unreadCount: 0, version: 4 };
+  let releaseSearch;
+  const heldSearch = new Promise(resolve => { releaseSearch = resolve; });
+  await withInbox({
+    viewport: { width: 700, height: 900, deviceScaleFactor: 1 },
+    async listResponse({ index }) {
+      return index === 0
+        ? { body: { conversations: [initial, peer], counters: { total: 2, pending: 2, inProcess: 0, review: 0, resolved: 0 }, nextCursor: null } }
+        : { body: { conversations: [peer, readCanonical], counters: { total: 2, pending: 1, inProcess: 0, review: 0, resolved: 1 }, nextCursor: null } };
+    },
+    async searchResponse() {
+      await heldSearch;
+      return { body: { conversations: [{ ...initial, priority: 'normal', unreadCount: 3, version: 3 }], counters: null, nextCursor: null } };
+    },
+    async messagesResponse() {
+      return { body: { messages: [message(109, 'history visible antes del read')], nextCursor: null } };
+    },
+  }, async ({ page, requests }) => {
+    await page.waitForSelector(`.conversation-card[data-conversation-id="${ids.urgent}"]`);
+    await page.type('#conversationSearch', 'Ana');
+    await page.click('#conversationSearchSubmit');
+    await waitFor(() => requests.searches.length === 1, 'search A retenida');
+    await page.click(`.conversation-card[data-conversation-id="${ids.urgent}"]`);
+    await page.waitForFunction(() => document.querySelector('#messageHistory')?.textContent.includes('history visible antes del read'));
+    await page.type('#messageInput', 'borrador preservado por read');
+    await waitFor(() => requests.reads.length === 1, 'read confirmado');
+    await waitFor(() => requests.lists.length === 2, 'recarga canónica posterior al read');
+    await page.waitForFunction(id => document.querySelector('.conversation-card')?.dataset.conversationId === id, {}, ids.high);
+
+    const beforeRelease = await cardSnapshot(page);
+    assert.deepEqual(beforeRelease.map(card => card.id), [ids.high, ids.urgent]);
+    assert.doesNotMatch(beforeRelease[1].text, /sin leer/);
+    assert.match(beforeRelease[1].text, /Prioridad urgent/);
+    assert.deepEqual(await page.$$eval('#queueCounters .counter-chip', chips => chips.map(chip => chip.textContent)), [
+      'Total: 2', 'Por responder: 1', 'En proceso: 0', 'Revisar: 0', 'Respondidas: 1',
+    ]);
+
+    releaseSearch();
+    await delay(100);
+    assert.deepEqual(await cardSnapshot(page), beforeRelease);
+    assert.equal(await page.$eval('#chatTitle', element => element.textContent), '*********0109');
+    assert.equal(await page.$eval('#messageInput', element => element.value), 'borrador preservado por read');
+    assert.equal(requests.searches.length, 1);
+    assert.equal(requests.reads.length, 1);
+    assert.equal(requests.lists.length, 2);
+    assert.equal(requests.maxListInFlight, 1);
+  });
+});
+
 browserTest('Task 4 descarta search anterior a PATCH y clear conserva estado canónico nuevo', async () => {
   const initial = conversation(ids.urgent, '0101', { customerName: 'Ana Segura', priority: 'urgent', version: 3 });
   const patched = { ...initial, workflowStatus: 'resolved', priority: 'urgent', version: 4 };

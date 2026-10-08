@@ -648,6 +648,8 @@ async function markConversationRead(conversationId, { generation, companyId }) {
     setStatus(sanitizeCloudError(response.status, payload), 'warning');
     return false;
   }
+  state.mutationRevision += 1;
+  clearConversationSearch({ restore: false });
   await loadConversations();
   return true;
 }

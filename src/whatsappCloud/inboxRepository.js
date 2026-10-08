@@ -282,14 +282,18 @@ export async function listCloudConversations({
            FROM public.puntos_entrega AS point
           WHERE point.empresa_id = $1
             AND $16::text IS NOT NULL
-            AND RIGHT(point.telefono_normalizado, 10) = $16::text
+            AND pg_catalog.REVERSE(point.telefono_normalizado)
+                LIKE pg_catalog.REVERSE($16::text) || '%'
+            AND RIGHT(point.telefono_normalizado, LENGTH($16::text)) = $16::text
          UNION
          SELECT point.id
            FROM public.puntos_entrega AS point
           WHERE point.empresa_id = $1
             AND $16::text IS NOT NULL
             AND point.telefono_normalizado IS NULL
-            AND RIGHT(regexp_replace(COALESCE(point.telefono, ''), '\\D', '', 'g'), 10) = $16::text
+            AND pg_catalog.REVERSE(regexp_replace(COALESCE(point.telefono, ''), '\\D', '', 'g'))
+                LIKE pg_catalog.REVERSE($16::text) || '%'
+            AND RIGHT(regexp_replace(COALESCE(point.telefono, ''), '\\D', '', 'g'), LENGTH($16::text)) = $16::text
          UNION
          SELECT order_row.punto_entrega_id AS id
            FROM public.pedidos AS order_row
@@ -531,7 +535,7 @@ export async function searchCloudConversations({ query, empresaId, usuarioId, se
   const tenantId = requireTenantId(empresaId);
   const normalizedQuery = requireSearchQuery(searchQuery);
   const digits = normalizedQuery.replace(/\D/g, '');
-  const phoneSuffix = digits.length >= 6 ? digits.slice(-10) : null;
+  const phoneSuffix = digits.length >= 6 && digits.length <= 10 ? digits : null;
   const publicOrderId = /^[1-9][0-9]{0,9}$/.test(normalizedQuery)
     && Number(normalizedQuery) <= 2147483647
     ? Number(normalizedQuery)

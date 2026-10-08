@@ -5127,6 +5127,40 @@ BEGIN
   END IF;
 END $conversation_reads_guard$;
 
+DO $conversation_reads_legacy_phone_indexes$
+DECLARE
+  index_row RECORD;
+  actual_definition TEXT;
+BEGIN
+  FOR index_row IN
+    SELECT * FROM (VALUES
+      ('public.idx_puntos_entrega_whatsapp_phone_lookup',
+       'CREATE INDEX idx_puntos_entrega_whatsapp_phone_lookup ON public.puntos_entrega USING btree (empresa_id, "right"(telefono_normalizado, 10))'),
+      ('public.idx_puntos_entrega_whatsapp_phone_fallback',
+       'CREATE INDEX idx_puntos_entrega_whatsapp_phone_fallback ON public.puntos_entrega USING btree (empresa_id, "right"(regexp_replace(COALESCE(telefono, ''''::text), ''\\D''::text, ''''::text, ''g''::text), 10)) WHERE (telefono_normalizado IS NULL)')
+    ) AS legacy(index_name, definition)
+  LOOP
+    IF pg_catalog.to_regclass(index_row.index_name) IS NULL THEN CONTINUE; END IF;
+    SELECT pg_catalog.pg_get_indexdef(index_catalog.indexrelid)
+      INTO actual_definition
+      FROM pg_catalog.pg_index AS index_catalog
+     WHERE index_catalog.indexrelid = pg_catalog.to_regclass(index_row.index_name)
+       AND index_catalog.indisvalid
+       AND index_catalog.indisready
+       AND index_catalog.indislive
+       AND NOT index_catalog.indisunique
+       AND NOT index_catalog.indisprimary
+       AND NOT index_catalog.indisexclusion
+       AND index_catalog.indimmediate
+       AND NOT index_catalog.indisclustered
+       AND NOT index_catalog.indisreplident
+       AND NOT index_catalog.indcheckxmin;
+    IF FOUND AND actual_definition = index_row.definition THEN
+      EXECUTE pg_catalog.format('DROP INDEX %s', index_row.index_name);
+    END IF;
+  END LOOP;
+END $conversation_reads_legacy_phone_indexes$;
+
 DO $conversation_reads_index_guard$
 DECLARE
   index_row RECORD;
@@ -5145,9 +5179,9 @@ BEGIN
       ('public.idx_puntos_entrega_whatsapp_search_address_prefix',
        'CREATE INDEX idx_puntos_entrega_whatsapp_search_address_prefix ON public.puntos_entrega USING btree (empresa_id, lower(((COALESCE(direccion_completa, direccion, ''''::text) || '' ''::text) || COALESCE(ciudad, ''''::text))) text_pattern_ops)'),
       ('public.idx_puntos_entrega_whatsapp_phone_lookup',
-       'CREATE INDEX idx_puntos_entrega_whatsapp_phone_lookup ON public.puntos_entrega USING btree (empresa_id, "right"(telefono_normalizado, 10))'),
+       'CREATE INDEX idx_puntos_entrega_whatsapp_phone_lookup ON public.puntos_entrega USING btree (empresa_id, reverse(telefono_normalizado) text_pattern_ops)'),
       ('public.idx_puntos_entrega_whatsapp_phone_fallback',
-       'CREATE INDEX idx_puntos_entrega_whatsapp_phone_fallback ON public.puntos_entrega USING btree (empresa_id, "right"(regexp_replace(COALESCE(telefono, ''''::text), ''\\D''::text, ''''::text, ''g''::text), 10)) WHERE (telefono_normalizado IS NULL)'),
+       'CREATE INDEX idx_puntos_entrega_whatsapp_phone_fallback ON public.puntos_entrega USING btree (empresa_id, reverse(regexp_replace(COALESCE(telefono, ''''::text), ''\\D''::text, ''''::text, ''g''::text)) text_pattern_ops) WHERE (telefono_normalizado IS NULL)'),
       ('public.idx_whatsapp_cloud_conversations_phone_lookup',
        'CREATE INDEX idx_whatsapp_cloud_conversations_phone_lookup ON public.whatsapp_cloud_conversations USING btree (empresa_id, "right"(participant_wa_id, 10))'),
       ('public.idx_pedidos_empresa_punto_fecha',
@@ -5246,12 +5280,12 @@ CREATE INDEX IF NOT EXISTS idx_puntos_entrega_whatsapp_search_address_prefix
 CREATE INDEX IF NOT EXISTS idx_puntos_entrega_whatsapp_phone_lookup
   ON public.puntos_entrega (
     empresa_id,
-    (RIGHT(telefono_normalizado, 10))
+    (pg_catalog.REVERSE(telefono_normalizado)) text_pattern_ops
   );
 CREATE INDEX IF NOT EXISTS idx_puntos_entrega_whatsapp_phone_fallback
   ON public.puntos_entrega (
     empresa_id,
-    (RIGHT(regexp_replace(COALESCE(telefono, ''), '\\D', '', 'g'), 10))
+    (pg_catalog.REVERSE(regexp_replace(COALESCE(telefono, ''), '\\D', '', 'g'))) text_pattern_ops
   ) WHERE telefono_normalizado IS NULL;
 CREATE INDEX IF NOT EXISTS idx_whatsapp_cloud_conversations_phone_lookup
   ON public.whatsapp_cloud_conversations (
