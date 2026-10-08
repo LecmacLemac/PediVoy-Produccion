@@ -524,7 +524,7 @@ test('rol de migración no resuelve funciones homónimas maliciosas de public',
 for (const [phase, marker] of [
   ['temprano', 'SET LOCAL search_path = public;'],
   ['medio', 'LOCK TABLE public.wpp_outbox IN ACCESS EXCLUSIVE MODE;'],
-  ['tardío', '-- END WHATSAPP CLOUD MESSAGE PROJECTION MIGRATION\n\nBEGIN;\nSET LOCAL search_path = public;'],
+  ['tardío', '-- END WHATSAPP CLOUD QUICK REPLIES MIGRATION\n\nBEGIN;\nSET LOCAL search_path = public;'],
 ]) {
   test(`initDb restaura search_path original tras error ${phase}, rollback y query posterior`,
     { timeout: 180_000 }, async () => {

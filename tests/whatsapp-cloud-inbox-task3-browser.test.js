@@ -101,7 +101,7 @@ async function withInbox(options, work) {
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   let browser;
   const requests = {
-    lists: [], searches: [], contexts: [], messages: [], reads: [], states: [], counts: { read: 0, state: 0 },
+    lists: [], searches: [], contexts: [], messages: [], reads: [], states: [], quickReplies: [], replies: [], counts: { read: 0, state: 0 },
     listInFlight: 0, maxListInFlight: 0,
   };
   try {
@@ -119,6 +119,15 @@ async function withInbox(options, work) {
         }
         if (url.pathname === '/api/empresas') {
           await respondJson(request, { body: options.companies || [] });
+          return;
+        }
+        if (url.pathname === '/api/admin/whatsapp-cloud/quick-replies') {
+          const entry = { url: url.toString(), params: Object.fromEntries(url.searchParams.entries()) };
+          requests.quickReplies.push(entry);
+          const response = options.quickRepliesResponse
+            ? await options.quickRepliesResponse({ ...entry, index: requests.quickReplies.length - 1, requests })
+            : { body: { quickReplies: [] } };
+          await respondJson(request, response);
           return;
         }
         if (url.pathname === '/api/admin/whatsapp-cloud/conversations') {
@@ -146,6 +155,11 @@ async function withInbox(options, work) {
             ? await options.searchResponse({ ...entry, index: requests.searches.length - 1, requests })
             : { body: { conversations: [], counters: null, nextCursor: null } };
           await respondJson(request, response);
+          return;
+        }
+        if (/^\/api\/admin\/whatsapp-cloud\/conversations\/[^/]+\/replies$/.test(url.pathname)) {
+          requests.replies.push({ url: url.toString(), method: request.method(), body: JSON.parse(request.postData() || '{}') });
+          await respondJson(request, { status: 202, body: { accepted: true, deduplicated: false, id: '501', status: 'accepted' } });
           return;
         }
         const target = endpoint(url);
@@ -345,7 +359,7 @@ browserTest('Task 3 marca leído una vez después de render exitoso y nunca si f
       : { status: 500, body: { error: 'cloud_inbox_unavailable' } },
   }, async ({ page, requests, baseUrl }) => {
     await page.waitForSelector(`.conversation-card[data-conversation-id="${ids.urgent}"]`);
-    await page.click(`.conversation-card[data-conversation-id="${ids.urgent}"]`);
+    await page.$eval(`.conversation-card[data-conversation-id="${ids.urgent}"]`, button => button.click());
     await page.waitForFunction(() => document.querySelector('#messageHistory')?.textContent.includes('historial renderizado'));
     await waitFor(() => requests.reads.length === 1, 'POST read exitoso');
     await delay(80);
@@ -694,7 +708,7 @@ browserTest('Task 3 cerca PATCH y read tardíos de tenant A para que no muten te
     await page.waitForSelector('#companySelect');
     await page.select('#companySelect', '7');
     await page.waitForSelector(`.conversation-card[data-conversation-id="${ids.urgent}"]`);
-    await page.click(`.conversation-card[data-conversation-id="${ids.urgent}"]`);
+    await page.$eval(`.conversation-card[data-conversation-id="${ids.urgent}"]`, button => button.click());
     await page.waitForSelector('.message-text');
     await waitFor(() => requests.reads.length === 1, 'read tenant A');
     await page.click('#conversationWorkflow');
@@ -776,23 +790,23 @@ browserTest('Task 4 cerca búsquedas y contextos stale, restaura cola y no persi
     assert.equal(new URL(page.url()).search, '');
     assert.deepEqual(await page.evaluate(() => ({ local: { ...localStorage }, session: { ...sessionStorage } })), { local: {}, session: {} });
 
-    await page.click(`.conversation-card[data-conversation-id="${ids.urgent}"]`);
+    await page.$eval(`.conversation-card[data-conversation-id="${ids.urgent}"]`, button => button.click());
     await waitFor(() => requests.contexts.length === 1, 'contexto A');
     await waitFor(() => requests.reads.length === 1, 'read A');
     await page.click('#backToList');
-    await page.click(`.conversation-card[data-conversation-id="${ids.high}"]`);
+    await page.$eval(`.conversation-card[data-conversation-id="${ids.high}"]`, button => button.click());
     await page.waitForFunction(() => document.querySelector('#conversationContext')?.textContent.includes('Sin coincidencia'));
     await delay(220);
     assert.match(await page.$eval('#conversationContext', element => element.textContent), /Sin coincidencia/);
     assert.doesNotMatch(await page.$eval('#conversationContext', element => element.textContent), /Ana stale|Vieja 1/);
 
     await page.click('#backToList');
-    await page.click(`.conversation-card[data-conversation-id="${ids.urgent}"]`);
+    await page.$eval(`.conversation-card[data-conversation-id="${ids.urgent}"]`, button => button.click());
     await page.waitForFunction(() => document.querySelector('#conversationContext')?.textContent.includes('Cliente identificado'));
     assert.match(await page.$eval('#conversationContext', element => element.textContent), /Ana stale.*\*{9}0101.*Vieja 1.*Pedido 7001/s);
 
     await page.click('#backToList');
-    await page.click(`.conversation-card[data-conversation-id="${ids.normal}"]`);
+    await page.$eval(`.conversation-card[data-conversation-id="${ids.normal}"]`, button => button.click());
     await page.waitForFunction(() => document.querySelector('#conversationContext')?.textContent.includes('Coincidencia ambigua'));
     assert.match(await page.$eval('#conversationContext', element => element.textContent), /Coincidencia ambigua.*Verificá la identidad/s);
 
@@ -831,7 +845,7 @@ browserTest('Task 4 cerca search anterior a read y aplica una recarga canónica 
     await page.type('#conversationSearch', 'Ana');
     await page.click('#conversationSearchSubmit');
     await waitFor(() => requests.searches.length === 1, 'search A retenida');
-    await page.click(`.conversation-card[data-conversation-id="${ids.urgent}"]`);
+    await page.$eval(`.conversation-card[data-conversation-id="${ids.urgent}"]`, button => button.click());
     await page.waitForFunction(() => document.querySelector('#messageHistory')?.textContent.includes('history visible antes del read'));
     await page.type('#messageInput', 'borrador preservado por read');
     await waitFor(() => requests.reads.length === 1, 'read confirmado');
@@ -880,7 +894,7 @@ browserTest('Task 4 descarta search anterior a PATCH y clear conserva estado can
     await page.type('#conversationSearch', 'Ana');
     await page.click('#conversationSearchSubmit');
     await waitFor(() => requests.searches.length === 1, 'search en vuelo');
-    await page.click(`.conversation-card[data-conversation-id="${ids.urgent}"]`);
+    await page.$eval(`.conversation-card[data-conversation-id="${ids.urgent}"]`, button => button.click());
     await page.waitForFunction(() => document.querySelector('#conversationWorkflow')?.disabled === false);
     await page.click('#conversationWorkflow');
     await waitFor(() => requests.states.length === 1, 'PATCH aplicado');
@@ -893,5 +907,60 @@ browserTest('Task 4 descarta search anterior a PATCH y clear conserva estado can
     assert.doesNotMatch(cards[0].text, /Prioridad normal/);
     assert.equal(requests.searches.length, 1);
     assert.equal(requests.states.length, 1);
+  });
+});
+
+browserTest('Task 5 cerca catálogo por tenant e inserta al cursor sin enviar ni truncar', async () => {
+  const tenantA = conversation(ids.urgent, '0711');
+  const tenantB = conversation(ids.tenantB, '0911');
+  await withInbox({
+    user: { role: 'super', empresa_id: null },
+    companies: [{ id: 7, nombre: 'Tenant A' }, { id: 9, nombre: 'Tenant B' }],
+    async listResponse({ url }) {
+      const selected = url.searchParams.get('empresa_id');
+      return { body: { conversations: [selected === '7' ? tenantA : tenantB], counters: { total: 1, pending: 1, inProcess: 0, review: 0, resolved: 0 }, nextCursor: null } };
+    },
+    async quickRepliesResponse({ params }) {
+      if (params.empresa_id === '7') {
+        return { delayMs: 220, body: { quickReplies: [{ id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', shortcut: 'tenant-a', title: 'Sólo A', body: 'SECRETO A', sortOrder: 0, isActive: true, version: 1 }] } };
+      }
+      return { delayMs: 10, body: { quickReplies: [
+        { id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', shortcut: 'off', title: 'Inactiva', body: 'OFF', sortOrder: 0, isActive: false, version: 1 },
+        { id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', shortcut: 'segunda', title: 'Segunda', body: 'respuesta B ', sortOrder: 2, isActive: true, version: 1 },
+        { id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', shortcut: 'primera', title: 'Primera', body: 'primera ', sortOrder: 1, isActive: true, version: 1 },
+      ] } };
+    },
+  }, async ({ page, requests }) => {
+    await page.waitForSelector('#companySelect');
+    await page.select('#companySelect', '7');
+    await waitFor(() => requests.quickReplies.length === 1, 'catálogo tenant A');
+    await page.select('#companySelect', '9');
+    await page.waitForSelector(`.conversation-card[data-conversation-id="${ids.tenantB}"]`);
+    await page.waitForFunction(() => document.querySelectorAll('.quick-reply-item').length === 2);
+    await delay(260);
+    assert.deepEqual(await page.$$eval('.quick-reply-item', buttons => buttons.map(button => button.textContent.replace(/\s+/g, ' ').trim())), [
+      '/primeraPrimera', '/segundaSegunda',
+    ]);
+    assert.doesNotMatch(await page.$eval('#quickReplyList', element => element.textContent), /Sólo A|Inactiva|SECRETO A|OFF/);
+
+    await page.$eval(`.conversation-card[data-conversation-id="${ids.tenantB}"]`, button => button.click());
+    await page.waitForFunction(() => document.querySelector('#messageInput')?.disabled === false);
+    await page.type('#messageInput', 'Inicio fin');
+    await page.$eval('#messageInput', input => input.setSelectionRange(7, 7));
+    await page.$eval('#quickReplyPanel', panel => { panel.open = true; });
+    await page.focus('.quick-reply-item[data-quick-reply-id="bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"]');
+    await page.keyboard.press('Enter');
+    assert.equal(await page.$eval('#messageInput', input => input.value), 'Inicio respuesta B fin');
+    assert.equal(await page.evaluate(() => document.activeElement?.id), 'messageInput');
+    await page.type('#messageInput', '!');
+    assert.equal(await page.$eval('#messageInput', input => input.value), 'Inicio respuesta B !fin');
+    assert.equal(requests.replies.length, 0, 'seleccionar respuesta rápida nunca envía');
+
+    await page.$eval('#messageInput', input => { input.value = 'x'.repeat(4096); input.setSelectionRange(4096, 4096); });
+    await page.$eval('.quick-reply-item', button => button.click());
+    assert.equal(await page.$eval('#messageInput', input => input.value.length), 4096);
+    assert.match(await page.$eval('#composerNotice', element => element.textContent), /límite de 4096/);
+    assert.equal(requests.replies.length, 0);
+    assert.deepEqual(requests.quickReplies.map(entry => entry.params.empresa_id), ['7', '9']);
   });
 });

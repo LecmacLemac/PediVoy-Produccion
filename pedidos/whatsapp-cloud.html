@@ -92,6 +92,12 @@
     .attachment-type { color:var(--muted); }
     .attachment-action { justify-self:start; }
     .composer { position:sticky; bottom:0; display:grid; grid-template-columns:minmax(0,1fr) auto; gap:.65rem; padding:.85rem 1rem max(.85rem,env(safe-area-inset-bottom)); border-top:1px solid var(--border); background:rgba(15,23,42,.97); }
+    .quick-replies { grid-column:1/-1; border:1px solid var(--border); border-radius:10px; background:rgba(2,6,23,.32); }
+    .quick-replies summary { min-height:44px; padding:.65rem .75rem; cursor:pointer; font-weight:800; }
+    .quick-reply-list { display:flex; flex-wrap:wrap; gap:.45rem; padding:0 .65rem .65rem; }
+    .quick-reply-item { min-height:40px; border:1px solid var(--border); border-radius:9px; color:var(--ink); background:rgba(255,255,255,.04); padding:.45rem .65rem; cursor:pointer; text-align:left; }
+    .quick-reply-item strong,.quick-reply-item span { display:block; }
+    .quick-reply-item span { color:var(--muted); font-size:.75rem; }
     .composer textarea { min-height:48px; max-height:150px; resize:vertical; white-space:pre-wrap; overflow-wrap:anywhere; }
     .send-button { align-self:end; min-height:48px; border:0; border-radius:10px; padding:.7rem 1.15rem; background:var(--brand); color:#052e16; font-weight:900; cursor:pointer; }
     .send-button:disabled,.attachment-action:disabled { cursor:not-allowed; opacity:.55; }
@@ -192,6 +198,10 @@
           <div id="messageHistory" class="message-history" aria-live="polite"><p class="empty-state">Elegí una conversación para ver el historial.</p></div>
         </div>
         <form id="composerForm" class="composer">
+          <details id="quickReplyPanel" class="quick-replies">
+            <summary>Respuestas rápidas</summary>
+            <div id="quickReplyList" class="quick-reply-list" role="group" aria-label="Respuestas rápidas"></div>
+          </details>
           <label for="messageInput" class="sr-only">Mensaje</label>
           <textarea id="messageInput" maxlength="4096" placeholder="Escribí un mensaje" disabled></textarea>
           <button id="sendButton" class="send-button" type="submit" disabled>Enviar</button>

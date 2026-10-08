@@ -603,6 +603,52 @@ export function sanitizeCloudError(status, payload = {}) {
   return 'No se pudo completar la operación. Intentá nuevamente más tarde.';
 }
 
+export function normalizeQuickReplyCatalog(items = []) {
+  if (!Array.isArray(items)) return [];
+  return items.filter(item => (
+    item && typeof item === 'object'
+    && typeof item.id === 'string'
+    && typeof item.shortcut === 'string'
+    && typeof item.title === 'string'
+    && typeof item.body === 'string'
+    && item.body.length >= 1 && item.body.length <= 4096
+    && Number.isInteger(item.sortOrder) && item.sortOrder >= 0 && item.sortOrder <= 100000
+    && item.isActive === true
+  )).map(item => ({
+    id: item.id,
+    shortcut: item.shortcut.slice(0, 32),
+    title: item.title.slice(0, 80),
+    body: item.body,
+    sortOrder: item.sortOrder,
+    isActive: true,
+    version: Number.isInteger(item.version) ? item.version : null,
+  })).sort((left, right) => (
+    left.sortOrder - right.sortOrder
+    || left.title.localeCompare(right.title, 'es', { sensitivity: 'base' })
+    || left.id.localeCompare(right.id)
+  ));
+}
+
+export function insertQuickReplyAtSelection(input, body, maxLength = 4096) {
+  if (!input || input.disabled || typeof input.value !== 'string' || typeof body !== 'string') {
+    return { inserted: false, reason: 'unavailable' };
+  }
+  const start = Number.isInteger(input.selectionStart) ? input.selectionStart : input.value.length;
+  const end = Number.isInteger(input.selectionEnd) ? input.selectionEnd : start;
+  const next = `${input.value.slice(0, start)}${body}${input.value.slice(end)}`;
+  if (next.length > maxLength) return { inserted: false, reason: 'max_length' };
+  const cursor = start + body.length;
+  input.value = next;
+  if (typeof input.setSelectionRange === 'function') input.setSelectionRange(cursor, cursor);
+  else {
+    input.selectionStart = cursor;
+    input.selectionEnd = cursor;
+  }
+  input.dispatchEvent?.(new Event('input', { bubbles: true }));
+  input.focus?.({ preventScroll: true });
+  return { inserted: true, value: next, cursor };
+}
+
 export function appendSafeText(documentLike, parent, tag, value, className = '') {
   const node = documentLike.createElement(tag);
   node.className = className;

@@ -10,7 +10,9 @@ import {
   createSingleFlightSubmission,
   formatCloudTimestamp,
   isConversationListContextCurrent,
+  insertQuickReplyAtSelection,
   mergeHistoryPage,
+  normalizeQuickReplyCatalog,
   reconcileConversationMutation,
   operationalMeta,
   queueCounterItems,
@@ -48,6 +50,8 @@ const elements = {
   history: document.querySelector('#messageHistory'),
   older: document.querySelector('#loadOlderMessages'),
   composer: document.querySelector('#composerForm'),
+  quickReplyPanel: document.querySelector('#quickReplyPanel'),
+  quickReplies: document.querySelector('#quickReplyList'),
   input: document.querySelector('#messageInput'),
   send: document.querySelector('#sendButton'),
   composerNotice: document.querySelector('#composerNotice'),
@@ -72,6 +76,7 @@ const state = {
   pendingStateMutation: null,
   messages: [],
   historyCursor: null,
+  quickReplies: [],
   mobile: { mobileView: 'list', activeConversationId: null },
 };
 
@@ -82,10 +87,12 @@ const searchGate = createRequestGate();
 const contextGate = createRequestGate();
 const historyGate = createRequestGate();
 const stateMutationGate = createRequestGate();
+const quickReplyGate = createRequestGate();
 let conversationsController = null;
 let searchController = null;
 let contextController = null;
 let historyController = null;
+let quickReplyController = null;
 let returnFocusConversationId = null;
 let conversationLoadPromise = null;
 let conversationReloadRequested = false;
@@ -149,6 +156,67 @@ function setComposerNotice(message, tone = 'neutral') {
   elements.composerNotice.dataset.tone = tone;
 }
 
+function renderQuickReplies() {
+  const fragment = document.createDocumentFragment();
+  if (!state.quickReplies.length) appendSafeText(document, fragment, 'span', 'No hay respuestas rápidas activas.', 'preview');
+  for (const quickReply of state.quickReplies) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'quick-reply-item';
+    button.dataset.quickReplyId = quickReply.id;
+    appendSafeText(document, button, 'strong', `/${quickReply.shortcut}`);
+    appendSafeText(document, button, 'span', quickReply.title);
+    button.disabled = !state.activeConversation || composerController.snapshot().composer.sending;
+    button.addEventListener('click', () => {
+      const result = insertQuickReplyAtSelection(elements.input, quickReply.body);
+      if (!result.inserted) {
+        setComposerNotice(result.reason === 'max_length'
+          ? 'La respuesta rápida supera el límite de 4096 caracteres con el borrador actual.'
+          : 'Seleccioná una conversación antes de insertar una respuesta.', 'warning');
+        return;
+      }
+      composerController.captureDraft();
+      setComposerNotice('Respuesta insertada. Podés editarla antes de enviar.', 'success');
+    });
+    fragment.append(button);
+  }
+  elements.quickReplies.replaceChildren(fragment);
+}
+
+function clearQuickReplies() {
+  quickReplyGate.invalidate();
+  quickReplyController?.abort();
+  state.quickReplies = [];
+  elements.quickReplies.replaceChildren();
+  elements.quickReplyPanel.open = false;
+}
+
+async function loadQuickReplies() {
+  if (!state.companyId) return;
+  quickReplyController?.abort();
+  quickReplyController = new AbortController();
+  const generation = quickReplyGate.begin();
+  const companyId = state.companyId;
+  try {
+    const url = buildCloudApiUrl('/quick-replies', { role: state.role, companyId });
+    const { response, payload } = await request(url, { signal: quickReplyController.signal });
+    if (!quickReplyGate.isCurrent(generation) || state.companyId !== companyId) return;
+    if (!response.ok) {
+      state.quickReplies = [];
+      renderQuickReplies();
+      return;
+    }
+    state.quickReplies = normalizeQuickReplyCatalog(payload.quickReplies);
+    renderQuickReplies();
+  } catch (error) {
+    if (error?.name !== 'AbortError' && error?.message !== 'session_expired'
+      && quickReplyGate.isCurrent(generation) && state.companyId === companyId) {
+      state.quickReplies = [];
+      renderQuickReplies();
+    }
+  }
+}
+
 function syncContextControls() {
   const composer = composerController.snapshot().composer;
   const locked = composer.sending || composer.reconciliationRequired;
@@ -170,6 +238,7 @@ function syncContextControls() {
   elements.conversationsMore.disabled = locked;
   elements.back.disabled = locked;
   elements.conversations.querySelectorAll('button').forEach(button => { button.disabled = locked; });
+  elements.quickReplies.querySelectorAll('button').forEach(button => { button.disabled = locked || !state.activeConversation; });
   elements.newMessage.hidden = !composer.reconciliationRequired;
   elements.conversationWorkflow.disabled = locked || stateMutationLocked || state.conversationContextLoading || !state.activeConversation;
   elements.conversationPriority.disabled = locked || stateMutationLocked || state.conversationContextLoading || !state.activeConversation;
@@ -849,6 +918,7 @@ function renderCompanyPicker(companies) {
       return;
     }
     state.companyId = nextCompanyId;
+    clearQuickReplies();
     state.conversationContextRevision += 1;
     state.conversationContextLoading = Boolean(nextCompanyId);
     conversationGate.invalidate();
@@ -871,7 +941,10 @@ function renderCompanyPicker(companies) {
     elements.queueCounters.replaceChildren();
     elements.conversationsMore.hidden = true;
     clearChat({ composerAlreadyReset: true });
-    if (state.companyId) loadConversations();
+    if (state.companyId) {
+      loadConversations();
+      loadQuickReplies();
+    }
     else setStatus('Seleccioná una empresa para ver sus conversaciones.', 'warning');
   });
   label.append(select);
@@ -963,7 +1036,7 @@ async function bootstrap() {
     if (access.needsCompanySelection) await loadCompanies();
     else {
       elements.companyWrap.replaceChildren();
-      await loadConversations();
+      await Promise.all([loadConversations(), loadQuickReplies()]);
     }
   } catch (error) {
     if (error?.message !== 'session_expired') setStatus('No se pudo validar la sesión.', 'error');

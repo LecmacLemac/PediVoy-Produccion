@@ -5138,7 +5138,7 @@ BEGIN
        'CREATE INDEX idx_puntos_entrega_whatsapp_phone_lookup ON public.puntos_entrega USING btree (empresa_id, "right"(telefono_normalizado, 10))'),
       ('public.idx_puntos_entrega_whatsapp_phone_fallback',
        'CREATE INDEX idx_puntos_entrega_whatsapp_phone_fallback ON public.puntos_entrega USING btree (empresa_id, "right"(regexp_replace(COALESCE(telefono, ''''::text), ''\\D''::text, ''''::text, ''g''::text), 10)) WHERE (telefono_normalizado IS NULL)')
-    ) AS legacy(index_name, definition)
+    ) AS expected(index_name, definition)
   LOOP
     IF pg_catalog.to_regclass(index_row.index_name) IS NULL THEN CONTINUE; END IF;
     SELECT pg_catalog.pg_get_indexdef(index_catalog.indexrelid)
@@ -5262,14 +5262,14 @@ CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE INDEX IF NOT EXISTS idx_puntos_entrega_whatsapp_search_text_tenant_trgm
   ON public.puntos_entrega USING gin (
     ((empresa_id::text || ':' || pg_catalog.LOWER(
-      COALESCE(NULLIF(BTRIM(nombre), ''), cliente, '') || ' ' ||
+      COALESCE(NULLIF(pg_catalog.btrim(nombre), ''), cliente, '') || ' ' ||
       COALESCE(direccion_completa, direccion, '') || ' ' || COALESCE(ciudad, '')
     ))) gin_trgm_ops
   );
 CREATE INDEX IF NOT EXISTS idx_puntos_entrega_whatsapp_search_name_prefix
   ON public.puntos_entrega (
     empresa_id,
-    (pg_catalog.LOWER(COALESCE(NULLIF(BTRIM(nombre), ''), cliente, ''))) text_pattern_ops
+    (pg_catalog.LOWER(COALESCE(NULLIF(pg_catalog.btrim(nombre), ''), cliente, ''))) text_pattern_ops
   );
 CREATE INDEX IF NOT EXISTS idx_puntos_entrega_whatsapp_search_address_prefix
   ON public.puntos_entrega (
@@ -5285,17 +5285,142 @@ CREATE INDEX IF NOT EXISTS idx_puntos_entrega_whatsapp_phone_lookup
 CREATE INDEX IF NOT EXISTS idx_puntos_entrega_whatsapp_phone_fallback
   ON public.puntos_entrega (
     empresa_id,
-    (pg_catalog.REVERSE(regexp_replace(COALESCE(telefono, ''), '\\D', '', 'g'))) text_pattern_ops
+    (pg_catalog.REVERSE(pg_catalog.regexp_replace(COALESCE(telefono, ''), '\\D', '', 'g'))) text_pattern_ops
   ) WHERE telefono_normalizado IS NULL;
 CREATE INDEX IF NOT EXISTS idx_whatsapp_cloud_conversations_phone_lookup
   ON public.whatsapp_cloud_conversations (
     empresa_id,
-    (RIGHT(participant_wa_id, 10))
+    (pg_catalog.right(participant_wa_id, 10))
   );
 CREATE INDEX IF NOT EXISTS idx_pedidos_empresa_punto_fecha
   ON public.pedidos (empresa_id, punto_entrega_id, fecha DESC, id DESC);
 COMMIT;
 -- END WHATSAPP CLOUD CONVERSATION READS MIGRATION
+
+-- BEGIN WHATSAPP CLOUD QUICK REPLIES MIGRATION
+BEGIN;
+SET LOCAL search_path = public;
+SET LOCAL lock_timeout = '30s';
+SET LOCAL statement_timeout = '5min';
+SELECT pg_catalog.pg_advisory_xact_lock(1464550725, 1380275028);
+LOCK TABLE public.empresas, public.usuarios IN SHARE ROW EXCLUSIVE MODE;
+
+DO $quick_replies_lock$
+BEGIN
+  IF pg_catalog.to_regclass('public.whatsapp_cloud_quick_replies') IS NOT NULL THEN
+    LOCK TABLE public.whatsapp_cloud_quick_replies IN SHARE ROW EXCLUSIVE MODE;
+  END IF;
+END $quick_replies_lock$;
+
+DO $quick_replies_guard$
+DECLARE
+  relation_row RECORD;
+  columns TEXT[];
+BEGIN
+  SELECT class_row.oid, class_row.relkind, class_row.relrowsecurity, class_row.relforcerowsecurity
+    INTO relation_row
+    FROM pg_catalog.pg_class AS class_row
+    JOIN pg_catalog.pg_namespace AS namespace_row ON namespace_row.oid=class_row.relnamespace
+   WHERE namespace_row.nspname='public' AND class_row.relname='whatsapp_cloud_quick_replies';
+  IF NOT FOUND THEN RETURN; END IF;
+  SELECT pg_catalog.array_agg(attribute_row.attname ORDER BY attribute_row.attnum)
+    INTO columns FROM pg_catalog.pg_attribute AS attribute_row
+   WHERE attribute_row.attrelid=relation_row.oid AND attribute_row.attnum>0 AND NOT attribute_row.attisdropped;
+  IF relation_row.relkind IS DISTINCT FROM 'r'
+     OR relation_row.relrowsecurity OR relation_row.relforcerowsecurity
+     OR columns IS DISTINCT FROM ARRAY['id','empresa_id','shortcut','title','body','sort_order','is_active','version','created_by','updated_by','created_at','updated_at']::TEXT[]
+     OR EXISTS (
+       SELECT 1 FROM pg_catalog.pg_attribute AS attribute_row
+       LEFT JOIN pg_catalog.pg_attrdef AS default_row
+         ON default_row.adrelid=attribute_row.attrelid AND default_row.adnum=attribute_row.attnum
+       WHERE attribute_row.attrelid=relation_row.oid AND attribute_row.attnum>0 AND NOT attribute_row.attisdropped
+         AND NOT (
+           (attribute_row.attname='id' AND attribute_row.atttypid='pg_catalog.uuid'::pg_catalog.regtype AND attribute_row.attnotnull AND pg_catalog.pg_get_expr(default_row.adbin,default_row.adrelid)='gen_random_uuid()')
+           OR (attribute_row.attname='empresa_id' AND attribute_row.atttypid='pg_catalog.int4'::pg_catalog.regtype AND attribute_row.attnotnull AND default_row.oid IS NULL)
+           OR (attribute_row.attname IN ('shortcut','title','body') AND attribute_row.atttypid='pg_catalog.text'::pg_catalog.regtype AND attribute_row.attnotnull AND default_row.oid IS NULL)
+           OR (attribute_row.attname='sort_order' AND attribute_row.atttypid='pg_catalog.int4'::pg_catalog.regtype AND attribute_row.attnotnull AND pg_catalog.pg_get_expr(default_row.adbin,default_row.adrelid)='0')
+           OR (attribute_row.attname='is_active' AND attribute_row.atttypid='pg_catalog.bool'::pg_catalog.regtype AND attribute_row.attnotnull AND pg_catalog.pg_get_expr(default_row.adbin,default_row.adrelid)='true')
+           OR (attribute_row.attname='version' AND attribute_row.atttypid='pg_catalog.int4'::pg_catalog.regtype AND attribute_row.attnotnull AND pg_catalog.pg_get_expr(default_row.adbin,default_row.adrelid)='1')
+           OR (attribute_row.attname IN ('created_by','updated_by') AND attribute_row.atttypid='pg_catalog.int4'::pg_catalog.regtype AND attribute_row.attnotnull AND default_row.oid IS NULL)
+           OR (attribute_row.attname IN ('created_at','updated_at') AND attribute_row.atttypid='pg_catalog.timestamptz'::pg_catalog.regtype AND attribute_row.attnotnull AND pg_catalog.pg_get_expr(default_row.adbin,default_row.adrelid)='now()')
+         )
+     )
+     OR EXISTS (SELECT 1 FROM pg_catalog.pg_trigger WHERE tgrelid=relation_row.oid AND NOT tgisinternal)
+     OR EXISTS (SELECT 1 FROM pg_catalog.pg_policy WHERE polrelid=relation_row.oid)
+     OR EXISTS (SELECT 1 FROM pg_catalog.pg_inherits WHERE inhrelid=relation_row.oid OR inhparent=relation_row.oid)
+     OR EXISTS (
+       SELECT 1 FROM pg_catalog.pg_constraint AS constraint_row
+        WHERE constraint_row.conrelid=relation_row.oid AND constraint_row.contype IN ('p','f','c','u','x')
+          AND NOT (
+            (constraint_row.conname='whatsapp_cloud_quick_replies_pkey' AND pg_catalog.pg_get_constraintdef(constraint_row.oid,true)='PRIMARY KEY (id)')
+            OR (constraint_row.conname='whatsapp_cloud_quick_replies_empresa_fkey' AND pg_catalog.pg_get_constraintdef(constraint_row.oid,true)='FOREIGN KEY (empresa_id) REFERENCES empresas(id) ON DELETE CASCADE')
+            OR (constraint_row.conname='whatsapp_cloud_quick_replies_created_by_fkey' AND pg_catalog.pg_get_constraintdef(constraint_row.oid,true)='FOREIGN KEY (created_by) REFERENCES usuarios(id) ON DELETE RESTRICT')
+            OR (constraint_row.conname='whatsapp_cloud_quick_replies_updated_by_fkey' AND pg_catalog.pg_get_constraintdef(constraint_row.oid,true)='FOREIGN KEY (updated_by) REFERENCES usuarios(id) ON DELETE RESTRICT')
+            OR (constraint_row.conname='whatsapp_cloud_quick_replies_shortcut_check' AND pg_catalog.pg_get_constraintdef(constraint_row.oid,true)='CHECK (char_length(shortcut) >= 2 AND char_length(shortcut) <= 32 AND shortcut ~ ''^[a-z0-9][a-z0-9._-]{1,31}$''::text)')
+            OR (constraint_row.conname='whatsapp_cloud_quick_replies_title_check' AND pg_catalog.pg_get_constraintdef(constraint_row.oid,true)='CHECK (char_length(title) >= 1 AND char_length(title) <= 80)')
+            OR (constraint_row.conname='whatsapp_cloud_quick_replies_body_check' AND pg_catalog.pg_get_constraintdef(constraint_row.oid,true)='CHECK (char_length(body) >= 1 AND char_length(body) <= 4096)')
+            OR (constraint_row.conname='whatsapp_cloud_quick_replies_sort_check' AND pg_catalog.pg_get_constraintdef(constraint_row.oid,true)='CHECK (sort_order >= 0 AND sort_order <= 100000)')
+            OR (constraint_row.conname='whatsapp_cloud_quick_replies_version_check' AND pg_catalog.pg_get_constraintdef(constraint_row.oid,true)='CHECK (version > 0)')
+          )
+     )
+  THEN
+    RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='whatsapp_cloud_quick_replies_schema_unsafe';
+  END IF;
+END $quick_replies_guard$;
+
+DO $quick_replies_index_guard$
+DECLARE
+  expected RECORD;
+  actual TEXT;
+BEGIN
+  FOR expected IN SELECT * FROM (VALUES
+    ('public.idx_whatsapp_cloud_quick_replies_tenant_shortcut', 'CREATE UNIQUE INDEX idx_whatsapp_cloud_quick_replies_tenant_shortcut ON public.whatsapp_cloud_quick_replies USING btree (empresa_id, shortcut)', true),
+    ('public.idx_whatsapp_cloud_quick_replies_list', 'CREATE INDEX idx_whatsapp_cloud_quick_replies_list ON public.whatsapp_cloud_quick_replies USING btree (empresa_id, is_active, sort_order, title, id)', false)
+  ) AS expected(index_name, definition, unique_flag)
+  LOOP
+    IF pg_catalog.to_regclass(expected.index_name) IS NULL THEN CONTINUE; END IF;
+    SELECT pg_catalog.pg_get_indexdef(index_row.indexrelid) INTO actual
+      FROM pg_catalog.pg_index AS index_row
+     WHERE index_row.indexrelid=pg_catalog.to_regclass(expected.index_name)
+       AND index_row.indisvalid AND index_row.indisready AND index_row.indislive
+       AND index_row.indisunique=expected.unique_flag AND NOT index_row.indisprimary
+       AND NOT index_row.indisexclusion AND index_row.indimmediate
+       AND NOT index_row.indisclustered AND NOT index_row.indisreplident AND NOT index_row.indcheckxmin;
+    IF NOT FOUND OR actual IS DISTINCT FROM expected.definition THEN
+      RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='whatsapp_cloud_quick_replies_schema_unsafe';
+    END IF;
+  END LOOP;
+END $quick_replies_index_guard$;
+
+CREATE TABLE IF NOT EXISTS public.whatsapp_cloud_quick_replies (
+  id UUID NOT NULL DEFAULT pg_catalog.gen_random_uuid(),
+  empresa_id INTEGER NOT NULL,
+  shortcut TEXT NOT NULL,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  version INTEGER NOT NULL DEFAULT 1,
+  created_by INTEGER NOT NULL,
+  updated_by INTEGER NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT pg_catalog.NOW(),
+  CONSTRAINT whatsapp_cloud_quick_replies_pkey PRIMARY KEY (id),
+  CONSTRAINT whatsapp_cloud_quick_replies_empresa_fkey FOREIGN KEY (empresa_id) REFERENCES public.empresas(id) ON DELETE CASCADE,
+  CONSTRAINT whatsapp_cloud_quick_replies_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.usuarios(id) ON DELETE RESTRICT,
+  CONSTRAINT whatsapp_cloud_quick_replies_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.usuarios(id) ON DELETE RESTRICT,
+  CONSTRAINT whatsapp_cloud_quick_replies_shortcut_check CHECK (pg_catalog.char_length(shortcut) >= 2 AND pg_catalog.char_length(shortcut) <= 32 AND shortcut ~ '^[a-z0-9][a-z0-9._-]{1,31}$'),
+  CONSTRAINT whatsapp_cloud_quick_replies_title_check CHECK (pg_catalog.char_length(title) >= 1 AND pg_catalog.char_length(title) <= 80),
+  CONSTRAINT whatsapp_cloud_quick_replies_body_check CHECK (pg_catalog.char_length(body) >= 1 AND pg_catalog.char_length(body) <= 4096),
+  CONSTRAINT whatsapp_cloud_quick_replies_sort_check CHECK (sort_order >= 0 AND sort_order <= 100000),
+  CONSTRAINT whatsapp_cloud_quick_replies_version_check CHECK (version > 0)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_whatsapp_cloud_quick_replies_tenant_shortcut
+  ON public.whatsapp_cloud_quick_replies (empresa_id, shortcut);
+CREATE INDEX IF NOT EXISTS idx_whatsapp_cloud_quick_replies_list
+  ON public.whatsapp_cloud_quick_replies (empresa_id, is_active, sort_order, title, id);
+COMMIT;
+-- END WHATSAPP CLOUD QUICK REPLIES MIGRATION
 
 BEGIN;
 SET LOCAL search_path = public;
