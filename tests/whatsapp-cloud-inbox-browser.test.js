@@ -1235,7 +1235,7 @@ test('Task 7 tablet mantiene todos los controles táctiles visibles en al menos 
     await withBrowserPage(viewport, async ({ page }) => {
       const assertTouchTargets = async (rootSelector, phase) => {
         const measured = await page.evaluate(rootTarget => {
-          const root = document.querySelector(rootTarget);
+          const root = rootTarget === 'document' ? document : document.querySelector(rootTarget);
           const candidates = [...root.querySelectorAll('button,select,input,textarea,summary,a[href]')];
           const seen = new Set();
           return candidates.flatMap(element => {
@@ -1247,7 +1247,8 @@ test('Task 7 tablet mantiene todos los controles táctiles visibles en al menos 
               target = element.closest('label') || document.querySelector(`label[for="${CSS.escape(element.id)}"]`) || element;
             }
             const rect = target.getBoundingClientRect();
-            if (rect.width <= 0 || rect.height <= 0) return [];
+            if (rect.width <= 0 || rect.height <= 0 || rect.right <= 0 || rect.bottom <= 0
+              || rect.left >= innerWidth || rect.top >= innerHeight) return [];
             const key = `${target.id || target.tagName}:${rect.left}:${rect.top}:${rect.width}:${rect.height}`;
             if (seen.has(key)) return [];
             seen.add(key);
@@ -1271,7 +1272,40 @@ test('Task 7 tablet mantiene todos los controles táctiles visibles en al menos 
         return measured;
       };
 
-      await assertTouchTargets('.shell', 'lista');
+      const initialLayout = await page.evaluate(() => {
+        const box = selector => document.querySelector(selector).getBoundingClientRect().toJSON();
+        const nav = document.querySelector('.cloud-nav');
+        const topbarInner = document.querySelector('.topbar-inner');
+        return {
+          scrollWidth: document.documentElement.scrollWidth,
+          scrollHeight: document.documentElement.scrollHeight,
+          navDirection: getComputedStyle(nav).flexDirection,
+          topbarDirection: getComputedStyle(topbarInner).flexDirection,
+          topbar: box('.topbar'),
+          brand: box('.brand'),
+          brandImage: box('.brand img'),
+          shell: box('.shell'),
+          inbox: box('#inboxLayout'),
+          queue: box('.conversation-pane'),
+          chat: box('#chatPanel'),
+          contextDisplay: getComputedStyle(document.querySelector('#contextPanel')).display,
+        };
+      });
+      assert.ok(initialLayout.scrollWidth <= viewport.width, `${viewport.width}x${viewport.height}: documento sin overflow horizontal`);
+      assert.ok(initialLayout.scrollHeight <= viewport.height, `${viewport.width}x${viewport.height}: documento sin overflow vertical`);
+      assert.equal(initialLayout.navDirection, 'row', `${viewport.width}x${viewport.height}: navegación tablet horizontal`);
+      assert.equal(initialLayout.topbarDirection, 'row', `${viewport.width}x${viewport.height}: topbar tablet horizontal`);
+      assert.ok(initialLayout.topbar.height <= 72, `${viewport.width}x${viewport.height}: topbar compacta`);
+      assert.ok(initialLayout.brandImage.height <= 32, `${viewport.width}x${viewport.height}: logo sin sobredimensionar`);
+      assert.ok(initialLayout.shell.top >= initialLayout.topbar.bottom, `${viewport.width}x${viewport.height}: workspace despejado bajo topbar`);
+      assert.ok(initialLayout.shell.left >= 0 && initialLayout.shell.right <= viewport.width, `${viewport.width}x${viewport.height}: shell dentro del viewport`);
+      assert.ok(initialLayout.inbox.left >= initialLayout.shell.left && initialLayout.inbox.right <= initialLayout.shell.right,
+        `${viewport.width}x${viewport.height}: inbox contenido en shell`);
+      assert.ok(initialLayout.queue.width >= 300 && initialLayout.chat.width >= 420,
+        `${viewport.width}x${viewport.height}: workspace conserva dos paneles tablet`);
+      assert.equal(initialLayout.contextDisplay, 'none', `${viewport.width}x${viewport.height}: contexto inicia como drawer`);
+
+      await assertTouchTargets('document', 'lista');
       await openOverlayAndWait(page, '#filtersToggle', '#queueFilters');
       await assertTouchTargets('#queueFilters', 'filtros');
       await page.keyboard.press('Escape');

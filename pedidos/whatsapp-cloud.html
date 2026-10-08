@@ -157,6 +157,11 @@
     }
 
     @media (min-width:768px) and (max-width:1199px) {
+      .topbar { padding:0; }
+      .topbar-inner { flex-direction:row; }
+      .brand { min-height:44px; padding-inline:4px; justify-content:flex-start; }
+      .cloud-nav { flex-direction:row; align-items:center; gap:4px; }
+      .cloud-nav a { min-width:44px; min-height:44px; justify-content:center; }
       .icon-button,.secondary-button,.attachment-action,.quick-reply-item { min-width:44px; min-height:44px; }
       select,input[type="search"],textarea,.transfer-toggle,.quick-replies summary { min-height:44px; }
       .context-panel[data-open="true"] { bottom:var(--wc-composer-clearance,0px); }
