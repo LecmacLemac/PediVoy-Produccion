@@ -202,17 +202,27 @@ function revokeSensitiveInboxState({ redirect = false } = {}) {
   state.searchQuery = '';
   state.counters = { total: 0, pending: 0, inProcess: 0, review: 0, resolved: 0 };
   state.activeConversation = null;
+  state.activeCounterBaselineTrusted = false;
+  state.mutationRevision += 1;
+  state.conversationContextRevision += 1;
+  state.conversationContextLoading = false;
   state.pendingStateMutation = null;
   state.messages = [];
   state.historyCursor = null;
+  state.newMessageCount = 0;
   state.quickReplies = [];
+  state.mobile = { mobileView: 'list', activeConversationId: null };
   composerController.revokeAccess();
+  elements.companyWrap.replaceChildren();
+  elements.companyWrap.hidden = true;
   elements.searchInput.value = '';
   elements.conversations.replaceChildren();
   elements.queueCounters.replaceChildren();
   elements.history.replaceChildren();
   elements.context.replaceChildren();
   elements.quickReplies.replaceChildren();
+  elements.newMessages.replaceChildren();
+  elements.newMessages.hidden = true;
   elements.context.hidden = true;
   elements.older.hidden = true;
   elements.conversationsMore.hidden = true;
@@ -748,6 +758,7 @@ async function loadConversations({ append = false } = {}) {
       const startedMutationRevision = state.mutationRevision;
       const startedContextRevision = state.conversationContextRevision;
       const result = await performConversationLoad({ append: nextAppend });
+      if (!autoRefreshAllowed) return;
       nextAppend = false;
       if (result?.staleContext) conversationReloadRequested = true;
       if (state.mutationRevision !== startedMutationRevision) conversationReloadRequested = true;
@@ -1140,6 +1151,7 @@ function renderCompanyPicker(companies) {
   });
   label.append(select);
   elements.companyWrap.replaceChildren(label);
+  elements.companyWrap.hidden = false;
 }
 
 async function loadCompanies() {

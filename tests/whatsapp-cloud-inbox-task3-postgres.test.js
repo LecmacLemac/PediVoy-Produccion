@@ -479,10 +479,10 @@ test('super se revalida exacto, activo y global dentro de la transacción', asyn
   });
 });
 
-test('listado aplica contadores pre-filtro y orden pending urgent/high/normal, review, inProcess, resolved', async () => {
+test('listado aplica contadores pre-filtro y orden pending urgent/high/normal, review incluido manual_retry, inProcess, resolved', async () => {
   await withDatabase(async pool => {
     await pool.query("INSERT INTO empresas(id) VALUES (1); INSERT INTO usuarios(id,username,password,role,empresa_id) VALUES (11,'a','x','admin',1)");
-    const participants = ['5493515550101','5493515550102','5493515550103','5493515550104','5493515550105','5493515550106'];
+    const participants = ['5493515550101','5493515550102','5493515550103','5493515550104','5493515550105','5493515550106','5493515550107'];
     for (let index = 0; index < participants.length; index += 1) {
       await pool.query(`INSERT INTO whatsapp_cloud_events
         (empresa_id,event_kind,dedupe_key,message_id,sender_id,message_type,event_data,received_at)
@@ -496,12 +496,17 @@ test('listado aplica contadores pre-filtro y orden pending urgent/high/normal, r
       VALUES (1,'outbound',$1,'text','failed','failed',25,'2026-10-07T08:00:00Z','2026-10-07T08:00:00Z','2026-10-07T08:00:00Z','2026-10-07T08:00:00Z')`, [participants[3]]);
     await pool.query(`INSERT INTO whatsapp_cloud_messages
       (empresa_id,direction,participant_wa_id,message_type,text_body,delivery_status,state_rank,message_at,created_at,updated_at)
+      VALUES (1,'outbound',$1,'text','manual','manual_retry',15,'2026-10-07T08:30:00Z','2026-10-07T08:30:00Z','2026-10-07T08:30:00Z')`, [participants[6]]);
+    await pool.query(`INSERT INTO whatsapp_cloud_messages
+      (empresa_id,direction,participant_wa_id,message_type,text_body,delivery_status,state_rank,message_at,created_at,updated_at)
       VALUES (1,'outbound',$1,'text','queued','queued',10,'2026-10-07T09:00:00Z','2026-10-07T09:00:00Z','2026-10-07T09:00:00Z')`, [participants[4]]);
     await pool.query(`UPDATE whatsapp_cloud_conversations SET workflow_status='resolved' WHERE participant_wa_id=$1`, [participants[5]]);
     const query = async (sql, params) => (await pool.query(sql, params)).rows;
     const all = await listCloudConversations({ query, empresaId: 1, usuarioId: 11 });
-    assert.deepEqual(all.conversations.map(item => item.participant), participants.map(value => `*********${value.slice(-4)}`));
-    assert.deepEqual(all.counters, { total: 6, pending: 3, inProcess: 1, review: 1, resolved: 1 });
+    assert.deepEqual(all.conversations.map(item => item.participant), [
+      ...participants.slice(0, 3), participants[6], ...participants.slice(3, 6),
+    ].map(value => `*********${value.slice(-4)}`));
+    assert.deepEqual(all.counters, { total: 7, pending: 3, inProcess: 1, review: 2, resolved: 1 });
     for (const item of all.conversations) {
       assert.ok(Number.isInteger(item.queueBucket));
       assert.ok(Number.isInteger(item.queuePriorityRank));

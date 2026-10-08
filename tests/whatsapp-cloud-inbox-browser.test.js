@@ -484,6 +484,12 @@ test('Task 6 browser 403 detiene scheduler y error transitorio conserva DOM con 
       });
       await page.click('.conversation-card[data-conversation-id="44"]');
       await page.waitForFunction(() => document.querySelector('#messageHistory')?.textContent.includes('hola'));
+      await page.type('#messageInput', 'borrador admin');
+      await page.evaluate(() => {
+        const indicator = document.querySelector('#newMessagesIndicator');
+        indicator.hidden = false;
+        indicator.textContent = '2 mensajes nuevos';
+      });
       mode = 'forbidden';
       await page.evaluate(() => {
         Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
@@ -501,10 +507,13 @@ test('Task 6 browser 403 detiene scheduler y error transitorio conserva DOM con 
         context: document.querySelector('#conversationContext').textContent,
         quickReplies: document.querySelector('#quickReplyList').textContent,
         draft: document.querySelector('#messageInput').value,
+        newMessages: document.querySelector('#newMessagesIndicator').textContent,
+        newMessagesHidden: document.querySelector('#newMessagesIndicator').hidden,
         composerBlocked: document.querySelector('#messageInput').disabled && document.querySelector('#sendButton').disabled,
         unauthorized: document.querySelector('#appStatus').textContent,
       })), {
         ids: [], history: '', title: 'Acceso no autorizado', context: '', quickReplies: '', draft: '',
+        newMessages: '', newMessagesHidden: true,
         composerBlocked: true, unauthorized: 'No tenés acceso a esta bandeja.',
       });
     },
@@ -572,6 +581,75 @@ test('Task 6 browser 403 detiene scheduler y error transitorio conserva DOM con 
       },
       messagesResponse: () => ({ messages: [
         { id: '1', direction: 'outbound', type: 'text', text: 'hola', deliveryStatus: 'sent', messageAt: '2026-10-06T12:00:00Z' },
+      ], nextCursor: null }),
+    },
+  );
+});
+
+test('Task 6 browser super revocado borra selector, tenant y toda metadata sensible sin tráfico posterior', { skip: !existsSync(chromePath) }, async () => {
+  let mode = 'initial';
+  const forbiddenSeen = deferred();
+  await withBrowserPage(
+    { width: 1280, height: 800, deviceScaleFactor: 1 },
+    async ({ page, counts }) => {
+      await page.waitForSelector('#companySelect');
+      assert.match(await page.evaluate(() => document.querySelector('#companyPicker').textContent), /Empresa Alfa.*Empresa Beta/s);
+      await page.select('#companySelect', '1');
+      await page.waitForSelector('.conversation-card[data-conversation-id="44"]');
+      await page.click('.conversation-card[data-conversation-id="44"]');
+      await page.waitForFunction(() => document.querySelector('#messageHistory')?.textContent.includes('hola sensible'));
+      await page.type('#messageInput', 'borrador sensible');
+      await page.evaluate(() => {
+        const indicator = document.querySelector('#newMessagesIndicator');
+        indicator.hidden = false;
+        indicator.textContent = '3 mensajes nuevos';
+      });
+      mode = 'forbidden';
+      await page.click('#refreshConversations');
+      await forbiddenSeen.promise;
+      await page.waitForFunction(() => document.querySelector('#appStatus').textContent.includes('No tenés acceso'));
+      const stoppedAt = counts.apiRequests.filter(entry => entry.path.startsWith('/api/admin/whatsapp-cloud')).length;
+      await new Promise(resolve => setTimeout(resolve, 180));
+      assert.equal(counts.apiRequests.filter(entry => entry.path.startsWith('/api/admin/whatsapp-cloud')).length, stoppedAt);
+      const revoked = await page.evaluate(() => ({
+        body: document.body.textContent,
+        companyHtml: document.querySelector('#companyPicker').innerHTML,
+        options: [...document.querySelectorAll('#companyPicker option')].map(option => option.textContent),
+        history: document.querySelector('#messageHistory').textContent,
+        context: document.querySelector('#conversationContext').textContent,
+        quickReplies: document.querySelector('#quickReplyList').textContent,
+        draft: document.querySelector('#messageInput').value,
+        newMessages: document.querySelector('#newMessagesIndicator').textContent,
+        newMessagesHidden: document.querySelector('#newMessagesIndicator').hidden,
+        composerBlocked: document.querySelector('#messageInput').disabled && document.querySelector('#sendButton').disabled,
+      }));
+      assert.doesNotMatch(revoked.body, /Empresa Alfa|Empresa Beta|hola sensible|borrador sensible/);
+      assert.deepEqual(revoked.options, []);
+      assert.equal(revoked.companyHtml, '');
+      assert.equal(revoked.history, '');
+      assert.equal(revoked.context, '');
+      assert.equal(revoked.quickReplies, '');
+      assert.equal(revoked.draft, '');
+      assert.equal(revoked.newMessages, '');
+      assert.equal(revoked.newMessagesHidden, true);
+      assert.equal(revoked.composerBlocked, true);
+    },
+    {
+      userResponse: { user: { role: 'super' } },
+      companiesResponse: [{ id: 1, nombre: 'Empresa Alfa' }, { id: 2, nombre: 'Empresa Beta' }],
+      waitForConversation: false,
+      refreshDelayMs: 10_000,
+      conversationsResponse: () => {
+        if (mode === 'forbidden') {
+          forbiddenSeen.resolve();
+          return { status: 403, body: { error: 'actor_forbidden' } };
+        }
+        return { conversations: [
+          { conversationId: '44', participant: '*********0001', lastMessageAt: '2026-10-08T12:00:00Z', lastMessageType: 'text', lastDirection: 'inbound', lastDeliveryStatus: 'received' },
+        ], nextCursor: null };
+      },
+      messagesResponse: () => ({ messages: [
+        { id: '1', direction: 'inbound', type: 'text', text: 'hola sensible', deliveryStatus: 'received', messageAt: '2026-10-08T12:00:00Z' },
       ], nextCursor: null }),
     },
   );

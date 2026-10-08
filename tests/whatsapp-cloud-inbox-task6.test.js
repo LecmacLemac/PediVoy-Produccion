@@ -140,7 +140,7 @@ test('Task 6 merge history deduplica correlaciones y nunca retrocede estados', (
   assert.equal(merged.changed, true);
 });
 
-test('Task 6 lattice delivery preserva éxitos ante fallos tardíos y permite éxito posterior al fallo', () => {
+test('Task 6 lattice delivery preserva éxitos ante revisión tardía y permite éxito posterior', () => {
   const statuses = ['queued', 'pending', 'accepted', 'sending', 'sent', 'delivered', 'read'];
   for (let index = 1; index < statuses.length; index += 1) {
     const previous = statuses[index];
@@ -151,7 +151,13 @@ test('Task 6 lattice delivery preserva éxitos ante fallos tardíos y permite é
     );
     assert.equal(merged.messages[0].deliveryStatus, previous, `${previous} no retrocede a ${stale}`);
   }
-  for (const failure of ['failed', 'error', 'outcome_unknown']) {
+  for (const failure of ['failed', 'error', 'manual_retry', 'outcome_unknown']) {
+    for (const provisional of ['queued', 'pending', 'accepted', 'sending']) {
+      assert.equal(mergeLiveHistory(
+        [{ id: '1', deliveryStatus: failure, messageAt: '2026-10-08T10:00:00Z' }],
+        [{ id: '1', deliveryStatus: provisional, messageAt: '2026-10-08T10:00:00Z' }],
+      ).messages[0].deliveryStatus, failure, `${provisional} público/provisional no reemplaza ${failure}`);
+    }
     for (const success of ['sent', 'delivered', 'read']) {
       assert.equal(mergeLiveHistory(
         [{ id: '1', deliveryStatus: success, messageAt: '2026-10-08T10:00:00Z' }],
@@ -162,6 +168,18 @@ test('Task 6 lattice delivery preserva éxitos ante fallos tardíos y permite é
         [{ id: '1', deliveryStatus: success, messageAt: '2026-10-08T10:00:00Z' }],
       ).messages[0].deliveryStatus, success);
     }
+  }
+  for (const [previous, incoming, expected] of [
+    ['failed', 'manual_retry', 'manual_retry'],
+    ['manual_retry', 'failed', 'manual_retry'],
+    ['outcome_unknown', 'manual_retry', 'manual_retry'],
+    ['manual_retry', 'outcome_unknown', 'manual_retry'],
+    ['error', 'manual_retry', 'manual_retry'],
+  ]) {
+    assert.equal(mergeLiveHistory(
+      [{ id: '1', deliveryStatus: previous, messageAt: '2026-10-08T10:00:00Z' }],
+      [{ id: '1', deliveryStatus: incoming, messageAt: '2026-10-08T10:00:00Z' }],
+    ).messages[0].deliveryStatus, expected, `${previous} + ${incoming}`);
   }
 });
 

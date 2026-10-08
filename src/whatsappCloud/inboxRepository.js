@@ -400,7 +400,7 @@ export async function listCloudConversations({
          SELECT base.*,
                 CASE
                   WHEN workflow_status = 'resolved' THEN 3
-                  WHEN direction = 'outbound' AND delivery_status IN ('failed','outcome_unknown') THEN 1
+                  WHEN direction = 'outbound' AND delivery_status IN ('failed','manual_retry','outcome_unknown') THEN 1
                   WHEN direction = 'outbound' AND delivery_status IN ('queued','pending','sending') THEN 2
                   WHEN workflow_status = 'pending' AND (unread_count > 0 OR direction = 'inbound') THEN 0
                   ELSE 3

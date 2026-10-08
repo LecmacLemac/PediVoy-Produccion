@@ -11,6 +11,7 @@ const STATUS = Object.freeze({
   delivered: Object.freeze({ label: 'Entregado', tone: 'delivered', help: 'El mensaje llegó al dispositivo.', retrySafe: false }),
   read: Object.freeze({ label: 'Leído', tone: 'read', help: 'El destinatario abrió el mensaje.', retrySafe: false }),
   failed: Object.freeze({ label: 'Falló', tone: 'failed', help: 'El envío falló. Revisá el estado antes de crear un mensaje nuevo.', retrySafe: false }),
+  manual_retry: Object.freeze({ label: 'Requiere reintento manual', tone: 'failed', help: 'Requiere revisión y una acción manual; nunca se reintenta automáticamente.', retrySafe: false }),
   outcome_unknown: Object.freeze({ label: 'Resultado incierto', tone: 'unknown', help: 'No vuelvas a enviar: el proveedor podría haber aceptado el mensaje.', retrySafe: false }),
   received: Object.freeze({ label: 'Recibido', tone: 'received', help: 'Mensaje entrante recibido.', retrySafe: false }),
 });
@@ -139,7 +140,7 @@ export function mergeHistoryPage(current = [], older = []) {
 export function operationalMeta(conversation = {}) {
   if (conversation.workflowStatus === 'resolved') return { key: 'resolved', label: 'Respondida', tone: 'resolved' };
   const status = String(conversation.lastDeliveryStatus || '').toLowerCase();
-  if (conversation.lastDirection === 'outbound' && ['failed', 'outcome_unknown'].includes(status)) {
+  if (conversation.lastDirection === 'outbound' && ['failed', 'manual_retry', 'outcome_unknown'].includes(status)) {
     return { key: 'review', label: 'Revisar', tone: 'failed' };
   }
   if (conversation.lastDirection === 'outbound' && ['queued', 'pending', 'sending'].includes(status)) {
@@ -319,7 +320,10 @@ export function restoreVisibleScrollAnchor(container, anchor) {
 const DELIVERY_STATUS_RANK = Object.freeze({
   queued: 0, pending: 0, accepted: 1, sending: 1, sent: 2, delivered: 3, read: 4,
 });
-const TERMINAL_DELIVERY_STATUSES = new Set(['failed', 'error', 'outcome_unknown']);
+const REVIEW_DELIVERY_STATUS_RANK = Object.freeze({
+  error: 0, outcome_unknown: 1, failed: 2, manual_retry: 3,
+});
+const TERMINAL_DELIVERY_STATUSES = new Set(Object.keys(REVIEW_DELIVERY_STATUS_RANK));
 
 function messageCorrelationKeys(message = {}) {
   const keys = [];
@@ -335,7 +339,13 @@ function monotonicDeliveryStatus(previous, incoming) {
   const oldSuccess = Object.hasOwn(DELIVERY_STATUS_RANK, oldStatus);
   const nextSuccess = Object.hasOwn(DELIVERY_STATUS_RANK, nextStatus);
   if (oldSuccess && TERMINAL_DELIVERY_STATUSES.has(nextStatus)) return previous;
-  if (TERMINAL_DELIVERY_STATUSES.has(oldStatus) && nextSuccess) return incoming;
+  if (TERMINAL_DELIVERY_STATUSES.has(oldStatus) && nextSuccess) {
+    return DELIVERY_STATUS_RANK[nextStatus] >= DELIVERY_STATUS_RANK.sent ? incoming : previous;
+  }
+  if (TERMINAL_DELIVERY_STATUSES.has(oldStatus) && TERMINAL_DELIVERY_STATUSES.has(nextStatus)) {
+    return REVIEW_DELIVERY_STATUS_RANK[nextStatus] > REVIEW_DELIVERY_STATUS_RANK[oldStatus]
+      ? incoming : previous;
+  }
   if (TERMINAL_DELIVERY_STATUSES.has(oldStatus)) return previous;
   if (TERMINAL_DELIVERY_STATUSES.has(nextStatus)) return incoming;
   if (!nextSuccess) return previous || incoming;

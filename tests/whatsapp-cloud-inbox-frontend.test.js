@@ -13,6 +13,7 @@ import {
   createSendDeadline,
   createSingleFlightSubmission,
   mergeHistoryPage,
+  operationalMeta,
   reduceMobileView,
   resolveSubmission,
   safeParticipant,
@@ -244,14 +245,17 @@ test('teléfono se acepta sólo si ya viene enmascarado y preview no usa PII cru
   assert.equal(conversationPreview({ lastMessageType: 'document', filename: 'privado.pdf' }), 'Documento');
 });
 
-test('estados tienen etiquetas españolas y outcome_unknown advierte no reenviar', () => {
+test('estados tienen etiquetas españolas y los estados de revisión bloquean retry automático', () => {
   const expected = {
     queued: 'En cola', sending: 'Enviando', sent: 'Enviado', delivered: 'Entregado', read: 'Leído',
-    failed: 'Falló', outcome_unknown: 'Resultado incierto', received: 'Recibido',
+    failed: 'Falló', manual_retry: 'Requiere reintento manual', outcome_unknown: 'Resultado incierto', received: 'Recibido',
   };
   for (const [status, label] of Object.entries(expected)) assert.equal(statusMeta(status).label, label);
   assert.match(statusMeta('outcome_unknown').help, /no vuelvas a enviar/i);
   assert.equal(statusMeta('outcome_unknown').retrySafe, false);
+  assert.match(statusMeta('manual_retry').help, /manual/i);
+  assert.equal(statusMeta('manual_retry').retrySafe, false);
+  assert.equal(operationalMeta({ workflowStatus: 'pending', unreadCount: 0, lastDirection: 'outbound', lastDeliveryStatus: 'manual_retry' }).key, 'review');
 });
 
 test('historial pagina hacia atrás, deduplica y mantiene cronología', () => {
