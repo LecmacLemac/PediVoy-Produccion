@@ -202,6 +202,7 @@ export async function listCloudConversations({
   searchText = null,
   searchPhoneSuffix = null,
   searchOrderId = null,
+  revalidateIds = [],
 } = {}) {
   const runQuery = requireQuery(query);
   const tenantId = requireTenantId(empresaId);
@@ -227,6 +228,12 @@ export async function listCloudConversations({
   if (searchMode != null && !['prefix', 'substring'].includes(searchMode)) {
     throw sanitizedError('CLOUD_INBOX_INVALID_ARGUMENT', 'Invalid searchMode');
   }
+  if (!Array.isArray(revalidateIds) || revalidateIds.length > 100
+    || revalidateIds.some(id => typeof id !== 'string'
+      || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(id))) {
+    throw sanitizedError('CLOUD_INBOX_INVALID_ARGUMENT', 'Invalid revalidateIds');
+  }
+  const membershipIds = [...new Set(revalidateIds)];
   const transferCondition = paymentFilter === 'transferencia'
     ? `AND EXISTS (
           SELECT 1
@@ -255,8 +262,8 @@ export async function listCloudConversations({
     ? 'counters.total_count, counters.pending_count, counters.in_process_count, counters.review_count, counters.resolved_count'
     : 'NULL::INTEGER AS total_count, NULL::INTEGER AS pending_count, NULL::INTEGER AS in_process_count, NULL::INTEGER AS review_count, NULL::INTEGER AS resolved_count';
   const resultFrom = includeCounters
-    ? 'FROM counters LEFT JOIN filtered ON TRUE'
-    : 'FROM filtered';
+    ? 'FROM authoritative_removed CROSS JOIN counters LEFT JOIN filtered ON TRUE'
+    : 'FROM authoritative_removed LEFT JOIN filtered ON TRUE';
   const textMatch = "pg_catalog.LOWER($15::text) || '%'";
   const tenantTextMatch = "($1::integer)::text || ':' || '%' || pg_catalog.LOWER($15::text) || '%'";
   const candidateTextQueries = searchMode === 'prefix'
@@ -320,6 +327,7 @@ export async function listCloudConversations({
          FROM candidate_conversations AS candidate
          JOIN public.whatsapp_cloud_conversations AS conversation
            ON conversation.empresa_id = $1 AND conversation.id = candidate.id`;
+  const membershipParameter = searchMode == null ? '$15' : '$18';
   const queryParams = [
     tenantId, pageSize + 1, null, pageCursor?.id ?? null, fromFilter, toFilter,
     actorId, workflowStatus, priority, unread,
@@ -327,6 +335,7 @@ export async function listCloudConversations({
     pageCursor?.conversationId ?? null,
   ];
   if (searchMode != null) queryParams.push(searchText, searchPhoneSuffix, searchOrderId);
+  queryParams.push(JSON.stringify(membershipIds));
   let rows;
   try {
     rows = await runQuery(
@@ -413,6 +422,21 @@ export async function listCloudConversations({
                       CASE WHEN queue_bucket = 0 THEN COALESCE(last_inbound_at, message_at) ELSE message_at END
                     ) * 1000000))::BIGINT AS queue_activity_key
            FROM classified
+       ), authoritative_removed AS (
+         SELECT COALESCE(
+                  jsonb_agg(requested.id::text ORDER BY requested.id)
+                    FILTER (WHERE ordered.conversation_id IS NULL),
+                  '[]'::jsonb
+                ) AS ids
+           FROM (
+             SELECT value::uuid AS id
+               FROM jsonb_array_elements_text(${membershipParameter}::jsonb)
+           ) AS requested
+           LEFT JOIN ordered
+             ON ordered.conversation_id = requested.id
+            AND ($8::text IS NULL OR ordered.workflow_status = $8)
+            AND ($9::text IS NULL OR ordered.priority = $9)
+            AND ($10::boolean IS NULL OR (ordered.unread_count > 0) = $10)
        )${countersCte}, filtered AS (
          SELECT * FROM ordered
           WHERE ($8::text IS NULL OR workflow_status = $8)
@@ -427,6 +451,7 @@ export async function listCloudConversations({
           LIMIT $2
        )
        SELECT filtered.*, customer.customer_name, customer.delivery_address, customer.payment_method,
+              authoritative_removed.ids AS authoritative_removed_ids,
               ${counterSelect}
          ${resultFrom}
          LEFT JOIN LATERAL (
@@ -492,6 +517,9 @@ export async function listCloudConversations({
       resolved: Number(counterRow.resolved_count) || 0,
     } : null,
     nextCursor: conversationRows.length > pageSize ? encodeConversationCursor(page[page.length - 1]) : null,
+    authoritativeRemovedIds: Array.isArray(counterRow.authoritative_removed_ids)
+      ? counterRow.authoritative_removed_ids.map(String)
+      : [],
   };
 }
 

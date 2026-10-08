@@ -1,10 +1,11 @@
 const API_ROOT = '/api/admin/whatsapp-cloud';
-const ALLOWED_QUERY_KEYS = new Set(['role', 'companyId', 'cursor', 'limit', 'tenantInBody', 'from', 'to', 'payment', 'workflowStatus', 'priority', 'unread']);
+const ALLOWED_QUERY_KEYS = new Set(['role', 'companyId', 'cursor', 'limit', 'tenantInBody', 'from', 'to', 'payment', 'workflowStatus', 'priority', 'unread', 'revalidateIds']);
 const MASKED_PARTICIPANT = /^\*{3,11}\d{4}$/;
 
 const STATUS = Object.freeze({
   queued: Object.freeze({ label: 'En cola', tone: 'pending', help: 'El mensaje espera procesamiento.', retrySafe: false }),
   pending: Object.freeze({ label: 'En cola', tone: 'pending', help: 'El mensaje espera procesamiento.', retrySafe: false }),
+  accepted: Object.freeze({ label: 'Aceptado', tone: 'sent', help: 'El proveedor aceptó el mensaje.', retrySafe: false }),
   sending: Object.freeze({ label: 'Enviando', tone: 'pending', help: 'El mensaje se está enviando.', retrySafe: false }),
   sent: Object.freeze({ label: 'Enviado', tone: 'sent', help: 'Meta aceptó el mensaje.', retrySafe: false }),
   delivered: Object.freeze({ label: 'Entregado', tone: 'delivered', help: 'El mensaje llegó al dispositivo.', retrySafe: false }),
@@ -108,6 +109,16 @@ export function buildCloudApiUrl(path, options = {}) {
   if (options.unread != null) {
     if (typeof options.unread !== 'boolean') throw new Error('Filtro de no leídos inválido');
     params.set('unread', String(options.unread));
+  }
+  if (options.revalidateIds != null) {
+    if (!Array.isArray(options.revalidateIds) || options.revalidateIds.length > 100) {
+      throw new Error('IDs para revalidar inválidos');
+    }
+    const ids = [...new Set(options.revalidateIds.map(String))];
+    if (ids.some(id => !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(id))) {
+      throw new Error('IDs para revalidar inválidos');
+    }
+    if (ids.length) params.set('revalidateIds', ids.join(','));
   }
   const query = params.toString();
   return `${API_ROOT}${path}${query ? `?${query}` : ''}`;
@@ -259,6 +270,19 @@ export function mergeCanonicalConversationRefresh({
   return { conversations, firstPageIds, previousFirstPageIds: previousFirstPageIds.map(String) };
 }
 
+export function reconcileSearchConversationRefresh({
+  searchResults = [], canonical = [], authoritativeRemovedIds = [],
+} = {}) {
+  const removed = new Set(authoritativeRemovedIds.map(String));
+  const canonicalById = new Map(canonical.map(item => [String(item?.conversationId || ''), item]));
+  return searchResults.flatMap(item => {
+    const id = String(item?.conversationId || '');
+    if (!id || removed.has(id)) return [];
+    const refreshed = canonicalById.get(id);
+    return [{ ...(refreshed || item), searchStale: !refreshed }];
+  });
+}
+
 export function captureVisibleScrollAnchor(container) {
   if (!container || typeof container.getBoundingClientRect !== 'function') return null;
   const containerRect = container.getBoundingClientRect();
@@ -292,7 +316,9 @@ export function restoreVisibleScrollAnchor(container, anchor) {
   return true;
 }
 
-const DELIVERY_STATUS_RANK = Object.freeze({ queued: 0, pending: 0, sending: 1, sent: 2, delivered: 3, read: 4 });
+const DELIVERY_STATUS_RANK = Object.freeze({
+  queued: 0, pending: 0, accepted: 1, sending: 1, sent: 2, delivered: 3, read: 4,
+});
 const TERMINAL_DELIVERY_STATUSES = new Set(['failed', 'error', 'outcome_unknown']);
 
 function messageCorrelationKeys(message = {}) {
@@ -306,13 +332,27 @@ function messageCorrelationKeys(message = {}) {
 function monotonicDeliveryStatus(previous, incoming) {
   const oldStatus = String(previous || '').toLowerCase();
   const nextStatus = String(incoming || '').toLowerCase();
+  const oldSuccess = Object.hasOwn(DELIVERY_STATUS_RANK, oldStatus);
+  const nextSuccess = Object.hasOwn(DELIVERY_STATUS_RANK, nextStatus);
+  if (oldSuccess && TERMINAL_DELIVERY_STATUSES.has(nextStatus)) return previous;
+  if (TERMINAL_DELIVERY_STATUSES.has(oldStatus) && nextSuccess) return incoming;
   if (TERMINAL_DELIVERY_STATUSES.has(oldStatus)) return previous;
   if (TERMINAL_DELIVERY_STATUSES.has(nextStatus)) return incoming;
-  return (DELIVERY_STATUS_RANK[nextStatus] ?? -1) >= (DELIVERY_STATUS_RANK[oldStatus] ?? -1)
+  if (!nextSuccess) return previous || incoming;
+  return (DELIVERY_STATUS_RANK[nextStatus] ?? -1) > (DELIVERY_STATUS_RANK[oldStatus] ?? -1)
     ? incoming : previous;
 }
 
+function historyFingerprint(messages) {
+  return JSON.stringify(messages.map(message => ({
+    id: message.id, providerMessageId: message.providerMessageId, idempotencyKey: message.idempotencyKey,
+    direction: message.direction, deliveryStatus: message.deliveryStatus, messageAt: message.messageAt,
+    type: message.type, text: message.text, attachment: message.attachment,
+  })));
+}
+
 export function mergeLiveHistory(current = [], incoming = []) {
+  const beforeFingerprint = historyFingerprint(current);
   const messages = [];
   const keyToIndex = new Map();
   const originalIds = new Set(current.map(item => String(item?.id ?? '')));
@@ -342,6 +382,7 @@ export function mergeLiveHistory(current = [], incoming = []) {
   return {
     messages,
     newMessageIds: messages.map(item => String(item.id)).filter(id => !originalIds.has(id)),
+    changed: historyFingerprint(messages) !== beforeFingerprint,
   };
 }
 
@@ -446,6 +487,7 @@ export function createChainedRefreshScheduler({
   let timer = null;
   let failures = 0;
   let generation = 0;
+  let immediateAfterSettlement = false;
 
   function clearTimer() {
     if (timer == null) return;
@@ -498,7 +540,13 @@ export function createChainedRefreshScheduler({
     ).finally(() => {
       if (inFlight === current) {
         inFlight = null;
-        schedule();
+        if (immediateAfterSettlement && eligible()) {
+          immediateAfterSettlement = false;
+          runCycle()?.catch(() => {});
+        } else {
+          immediateAfterSettlement = false;
+          schedule();
+        }
       }
     });
     return promise;
@@ -516,8 +564,13 @@ export function createChainedRefreshScheduler({
     },
     resume() {
       if (stopped) return null;
+      const wasPaused = !running;
       running = true;
       clearTimer();
+      if (inFlight) {
+        if (wasPaused) immediateAfterSettlement = true;
+        return inFlight.promise;
+      }
       return runCycle();
     },
     pause() {
@@ -525,15 +578,15 @@ export function createChainedRefreshScheduler({
       clearTimer();
       generation += 1;
       inFlight?.controller.abort(new DOMException('Auto-refresh pausado', 'AbortError'));
-      inFlight = null;
+      return inFlight?.promise || null;
     },
     stop() {
       stopped = true;
       running = false;
       clearTimer();
       generation += 1;
+      immediateAfterSettlement = false;
       inFlight?.controller.abort(new DOMException('Auto-refresh detenido', 'AbortError'));
-      inFlight = null;
     },
     snapshot() {
       return { running, stopped, inFlight: inFlight != null, failures, generation, timerScheduled: timer != null };
@@ -818,6 +871,10 @@ export function createInboxComposerController({ input, send }) {
       if (!composer.reconciliationRequired || composer.sending) return false;
       resetComposer();
       return true;
+    },
+    revokeAccess() {
+      context = { companyId: null, conversationId: null };
+      resetComposer();
     },
   };
 }

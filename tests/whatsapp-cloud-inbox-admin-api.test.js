@@ -632,6 +632,50 @@ test('lista de conversaciones pagina por última actividad, enmascara teléfono 
   assert.match(calls[0].sql, /payment_method/);
 });
 
+test('refresh GET revalida membresía en lote tenant-scoped y devuelve bajas autoritativas', async () => {
+  const keep = '4ad1a4a8-8877-4dc6-a7a0-e81b87f8e2a1';
+  const remove = '6be6f351-3535-48d1-b1a1-cde16f27a9b3';
+  const calls = [];
+  const app = express();
+  app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+    withAuth(req, _res, next) { req.user = { uid: 11, role: 'admin', empresa_id: 7 }; next(); },
+    async query(sql, params) {
+      calls.push({ sql, params });
+      return [{
+        conversation_id: keep, id: '31', participant_wa_id: '5493515550001', direction: 'inbound',
+        message_type: 'text', delivery_status: 'received', message_at: new Date('2026-10-08T12:00:00Z'),
+        workflow_status: 'pending', priority: 'normal', version: 1, unread_count: 1,
+        queue_bucket: 0, cursor_priority_rank: 2, queue_activity_key: '1',
+        last_message_activity_key: '1', last_inbound_activity_key: '1', authoritative_removed_ids: [remove],
+      }];
+    },
+  }));
+  await withServer(app, async baseUrl => {
+    const response = await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations?limit=25&revalidateIds=${keep},${remove}`);
+    assert.equal(response.status, 200);
+    assert.deepEqual((await response.json()).authoritativeRemovedIds, [remove]);
+  });
+  assert.equal(calls.length, 1, 'revalidación debe compartir una sola query con la primera página');
+  assert.deepEqual(JSON.parse(calls[0].params[14]), [keep, remove]);
+  assert.match(calls[0].sql, /authoritative_removed_ids/);
+  assert.match(calls[0].sql, /empresa_id = \$1/);
+});
+
+test('refresh GET rechaza IDs de revalidación inválidos antes de consultar', async () => {
+  let queries = 0;
+  const app = express();
+  app.use('/api/admin/whatsapp-cloud', createWhatsAppCloudInboxAdminRouter({
+    withAuth(req, _res, next) { req.user = { uid: 11, role: 'admin', empresa_id: 7 }; next(); },
+    async query() { queries += 1; return []; },
+  }));
+  await withServer(app, async baseUrl => {
+    for (const value of ['44', 'not-a-uuid', `${'4ad1a4a8-8877-4dc6-a7a0-e81b87f8e2a1,'.repeat(101)}x`]) {
+      assert.equal((await fetch(`${baseUrl}/api/admin/whatsapp-cloud/conversations?revalidateIds=${encodeURIComponent(value)}`)).status, 400);
+    }
+  });
+  assert.equal(queries, 0);
+});
+
 test('historial pagina hacia atrás pero responde cada página en orden cronológico', async () => {
   const calls = [];
   const app = express();

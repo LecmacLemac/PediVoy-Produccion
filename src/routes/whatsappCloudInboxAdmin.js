@@ -188,6 +188,14 @@ function conversationFilters(query) {
   return { from, to, payment, workflowStatus, priority, unread };
 }
 
+function conversationRevalidateIds(query) {
+  if (query?.revalidateIds == null || query.revalidateIds === '') return [];
+  if (typeof query.revalidateIds !== 'string') return null;
+  const ids = [...new Set(query.revalidateIds.split(','))];
+  if (!ids.length || ids.length > 100 || ids.some(id => !canonicalUuid(id))) return null;
+  return ids;
+}
+
 function validConversationSearch(req) {
   if (Object.keys(req.query || {}).length !== 0) return null;
   const body = req.body;
@@ -256,8 +264,10 @@ export function createWhatsAppCloudInboxAdminRouter({
     if (!page) return res.status(400).json({ error: 'pagination_invalid' });
     const filters = conversationFilters(req.query);
     if (!filters) return res.status(400).json({ error: 'filters_invalid' });
+    const revalidateIds = conversationRevalidateIds(req.query);
+    if (!revalidateIds) return res.status(400).json({ error: 'revalidate_ids_invalid' });
     try {
-      const result = await listCloudConversations({ query, empresaId, usuarioId, ...page, ...filters });
+      const result = await listCloudConversations({ query, empresaId, usuarioId, ...page, ...filters, revalidateIds });
       return res.json(result);
     } catch (error) {
       if (isInvalidArgument(error)) return res.status(400).json({ error: 'pagination_invalid' });

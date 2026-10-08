@@ -6,6 +6,7 @@ import {
   createChainedRefreshScheduler,
   mergeCanonicalConversationRefresh,
   mergeLiveHistory,
+  reconcileSearchConversationRefresh,
   restoreVisibleScrollAnchor,
 } from '../pedidos/whatsapp-cloud-ui.js';
 
@@ -89,6 +90,37 @@ test('Task 6 merge canónico actualiza e inserta sin duplicar ni perder páginas
   assert.deepEqual(result.firstPageIds, ['c', 'a']);
 });
 
+test('Task 6 merge canónico retira sólo bajas autoritativas y preserva páginas no revalidadas', () => {
+  const current = ['a', 'b', 'old'].map((conversationId, index) => ({
+    conversationId, participant: `*********000${index + 1}`, workflowStatus: 'pending', priority: 'normal',
+    unreadCount: 1, lastMessageId: String(30 - index), lastMessageAt: `2026-10-08T10:0${index}:00Z`,
+  }));
+  const result = mergeCanonicalConversationRefresh({
+    current,
+    incomingFirstPage: [{ ...current[1], unreadCount: 2 }],
+    previousFirstPageIds: ['a', 'b'],
+    authoritativeRemovedIds: ['a'],
+  });
+  assert.deepEqual(result.conversations.map(item => item.conversationId).sort(), ['b', 'old']);
+  assert.equal(result.conversations.find(item => item.conversationId === 'b').unreadCount, 2);
+});
+
+test('Task 6 search activo usa canónico coincidente, marca ausentes stale y quita filtros incumplidos', () => {
+  const result = reconcileSearchConversationRefresh({
+    searchResults: [
+      { conversationId: 'a', unreadCount: 1, priority: 'normal', workflowStatus: 'pending', version: 1 },
+      { conversationId: 'b', unreadCount: 2, priority: 'high', workflowStatus: 'pending', version: 1 },
+      { conversationId: 'c', unreadCount: 3, priority: 'normal', workflowStatus: 'pending', version: 1 },
+    ],
+    canonical: [{ conversationId: 'a', unreadCount: 0, priority: 'urgent', workflowStatus: 'resolved', version: 4 }],
+    authoritativeRemovedIds: ['c'],
+  });
+  assert.deepEqual(result.map(item => [item.conversationId, item.searchStale]), [['a', false], ['b', true]]);
+  assert.deepEqual(result[0], {
+    conversationId: 'a', unreadCount: 0, priority: 'urgent', workflowStatus: 'resolved', version: 4, searchStale: false,
+  });
+});
+
 test('Task 6 merge history deduplica correlaciones y nunca retrocede estados', () => {
   const current = [
     { id: '1', providerMessageId: 'wamid-a', direction: 'outbound', deliveryStatus: 'delivered', messageAt: '2026-10-08T10:00:00Z', text: 'uno' },
@@ -103,8 +135,41 @@ test('Task 6 merge history deduplica correlaciones y nunca retrocede estados', (
   const merged = mergeLiveHistory(current, incoming);
   assert.deepEqual(merged.messages.map(item => item.id), ['1', '2', '3', '4']);
   assert.equal(merged.messages[0].deliveryStatus, 'delivered');
-  assert.equal(merged.messages[1].deliveryStatus, 'failed');
+  assert.equal(merged.messages[1].deliveryStatus, 'sent');
   assert.deepEqual(merged.newMessageIds, ['4']);
+  assert.equal(merged.changed, true);
+});
+
+test('Task 6 lattice delivery preserva éxitos ante fallos tardíos y permite éxito posterior al fallo', () => {
+  const statuses = ['queued', 'pending', 'accepted', 'sending', 'sent', 'delivered', 'read'];
+  for (let index = 1; index < statuses.length; index += 1) {
+    const previous = statuses[index];
+    const stale = statuses[index - 1];
+    const merged = mergeLiveHistory(
+      [{ id: '1', direction: 'outbound', deliveryStatus: previous, messageAt: '2026-10-08T10:00:00Z' }],
+      [{ id: '1', direction: 'outbound', deliveryStatus: stale, messageAt: '2026-10-08T10:00:00Z' }],
+    );
+    assert.equal(merged.messages[0].deliveryStatus, previous, `${previous} no retrocede a ${stale}`);
+  }
+  for (const failure of ['failed', 'error', 'outcome_unknown']) {
+    for (const success of ['sent', 'delivered', 'read']) {
+      assert.equal(mergeLiveHistory(
+        [{ id: '1', deliveryStatus: success, messageAt: '2026-10-08T10:00:00Z' }],
+        [{ id: '1', deliveryStatus: failure, messageAt: '2026-10-08T10:00:00Z' }],
+      ).messages[0].deliveryStatus, success);
+      assert.equal(mergeLiveHistory(
+        [{ id: '1', deliveryStatus: failure, messageAt: '2026-10-08T10:00:00Z' }],
+        [{ id: '1', deliveryStatus: success, messageAt: '2026-10-08T10:00:00Z' }],
+      ).messages[0].deliveryStatus, success);
+    }
+  }
+});
+
+test('Task 6 merge history idéntico informa unchanged', () => {
+  const message = { id: '1', direction: 'outbound', deliveryStatus: 'delivered', messageAt: '2026-10-08T10:00:00Z', text: 'igual' };
+  const merged = mergeLiveHistory([message], [{ ...message }]);
+  assert.equal(merged.changed, false);
+  assert.deepEqual(merged.newMessageIds, []);
 });
 
 test('Task 6 scheduler aplica backoff acotado con jitter inyectable y resetea tras éxito', async () => {
@@ -135,7 +200,7 @@ test('Task 6 scheduler aplica backoff acotado con jitter inyectable y resetea tr
   assert.equal(await clock.runOnly(), 1_000, 'éxito resetea backoff');
 });
 
-test('Task 6 pause aborta el ciclo actual, invalida su generación y no duplica timer al reanudar', async () => {
+test('Task 6 pause conserva single-flight hasta settlement y reanuda inmediatamente después', async () => {
   const clock = fakeClock();
   const signals = [];
   const pending = deferred();
@@ -161,11 +226,12 @@ test('Task 6 pause aborta el ciclo actual, invalida su generación y no duplica 
   assert.equal(signals[0].signal.aborted, true);
   scheduler.resume();
   scheduler.resume();
-  assert.equal(calls, 2);
-  assert.ok(signals[1].generation > signals[0].generation);
+  assert.equal(calls, 1, 'abort ignorado no habilita un segundo ciclo concurrente');
   pending.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(calls, 2, 'resume pendiente corre al asentarse el ciclo abortado');
+  assert.ok(signals[1].generation > signals[0].generation);
+  await new Promise(resolve => setImmediate(resolve));
   assert.equal(clock.timers.size, 1);
 });
 

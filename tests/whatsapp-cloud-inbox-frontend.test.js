@@ -214,6 +214,12 @@ test('bootstrap fija admin a su empresa y obliga selección explícita para supe
 
 test('URLs Cloud no aceptan tenant global ni campos sensibles', () => {
   assert.equal(buildCloudApiUrl('/conversations', { role: 'admin', companyId: 7, limit: 25 }), '/api/admin/whatsapp-cloud/conversations?limit=25');
+  assert.equal(
+    buildCloudApiUrl('/conversations', { role: 'admin', companyId: 7, limit: 25, revalidateIds: [
+      '4ad1a4a8-8877-4dc6-a7a0-e81b87f8e2a1', '6be6f351-3535-48d1-b1a1-cde16f27a9b3',
+    ] }),
+    '/api/admin/whatsapp-cloud/conversations?limit=25&revalidateIds=4ad1a4a8-8877-4dc6-a7a0-e81b87f8e2a1%2C6be6f351-3535-48d1-b1a1-cde16f27a9b3',
+  );
   assert.equal(buildCloudApiUrl('/conversations', { role: 'super', companyId: 9, cursor: 'abc_123', limit: 25 }), '/api/admin/whatsapp-cloud/conversations?empresa_id=9&limit=25&cursor=abc_123');
   assert.equal(buildCloudApiUrl('/conversations/44/replies', { role: 'super', companyId: 9, tenantInBody: true }), '/api/admin/whatsapp-cloud/conversations/44/replies');
   assert.equal(
@@ -227,6 +233,7 @@ test('URLs Cloud no aceptan tenant global ni campos sensibles', () => {
   assert.throws(() => buildCloudApiUrl('/conversations', { role: 'super', companyId: 1, phone: '5493515550001' }), /parámetro/i);
   assert.throws(() => buildCloudApiUrl('/conversations', { role: 'admin', companyId: 7, from: 'hoy' }), /fecha/i);
   assert.throws(() => buildCloudApiUrl('/conversations', { role: 'admin', companyId: 7, payment: 'efectivo' }), /pago/i);
+  assert.throws(() => buildCloudApiUrl('/conversations', { role: 'admin', companyId: 7, revalidateIds: ['44'] }), /revalidar/i);
 });
 
 test('teléfono se acepta sólo si ya viene enmascarado y preview no usa PII cruda', () => {
