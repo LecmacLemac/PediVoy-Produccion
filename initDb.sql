@@ -5351,8 +5351,11 @@ BEGIN
      OR EXISTS (
        SELECT 1 FROM pg_catalog.pg_constraint AS constraint_row
         WHERE constraint_row.conrelid=relation_row.oid AND constraint_row.contype IN ('p','f','c','u','x')
-          AND NOT (
-            (constraint_row.conname='whatsapp_cloud_quick_replies_pkey' AND pg_catalog.pg_get_constraintdef(constraint_row.oid,true)='PRIMARY KEY (id)')
+           AND (
+             NOT constraint_row.convalidated OR constraint_row.condeferrable OR constraint_row.condeferred
+             OR NOT constraint_row.conislocal OR constraint_row.coninhcount<>0
+             OR NOT (
+             (constraint_row.conname='whatsapp_cloud_quick_replies_pkey' AND pg_catalog.pg_get_constraintdef(constraint_row.oid,true)='PRIMARY KEY (id)')
             OR (constraint_row.conname='whatsapp_cloud_quick_replies_empresa_fkey' AND pg_catalog.pg_get_constraintdef(constraint_row.oid,true)='FOREIGN KEY (empresa_id) REFERENCES empresas(id) ON DELETE CASCADE')
             OR (constraint_row.conname='whatsapp_cloud_quick_replies_created_by_fkey' AND pg_catalog.pg_get_constraintdef(constraint_row.oid,true)='FOREIGN KEY (created_by) REFERENCES usuarios(id) ON DELETE RESTRICT')
             OR (constraint_row.conname='whatsapp_cloud_quick_replies_updated_by_fkey' AND pg_catalog.pg_get_constraintdef(constraint_row.oid,true)='FOREIGN KEY (updated_by) REFERENCES usuarios(id) ON DELETE RESTRICT')
@@ -5360,9 +5363,17 @@ BEGIN
             OR (constraint_row.conname='whatsapp_cloud_quick_replies_title_check' AND pg_catalog.pg_get_constraintdef(constraint_row.oid,true)='CHECK (char_length(title) >= 1 AND char_length(title) <= 80)')
             OR (constraint_row.conname='whatsapp_cloud_quick_replies_body_check' AND pg_catalog.pg_get_constraintdef(constraint_row.oid,true)='CHECK (char_length(body) >= 1 AND char_length(body) <= 4096)')
             OR (constraint_row.conname='whatsapp_cloud_quick_replies_sort_check' AND pg_catalog.pg_get_constraintdef(constraint_row.oid,true)='CHECK (sort_order >= 0 AND sort_order <= 100000)')
+            OR (constraint_row.conname='whatsapp_cloud_quick_replies_is_active_check' AND pg_catalog.pg_get_constraintdef(constraint_row.oid,true)='CHECK (is_active OR NOT is_active)')
             OR (constraint_row.conname='whatsapp_cloud_quick_replies_version_check' AND pg_catalog.pg_get_constraintdef(constraint_row.oid,true)='CHECK (version > 0)')
+            )
           )
      )
+  THEN
+    RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='whatsapp_cloud_quick_replies_schema_unsafe';
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.whatsapp_cloud_quick_replies)
+     AND (SELECT pg_catalog.count(*) FROM pg_catalog.pg_constraint AS constraint_row
+           WHERE constraint_row.conrelid=relation_row.oid AND constraint_row.contype IN ('p','f','c','u','x')) <> 10
   THEN
     RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='whatsapp_cloud_quick_replies_schema_unsafe';
   END IF;
@@ -5390,7 +5401,48 @@ BEGIN
       RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='whatsapp_cloud_quick_replies_schema_unsafe';
     END IF;
   END LOOP;
+  IF pg_catalog.to_regclass('public.whatsapp_cloud_quick_replies') IS NOT NULL
+     AND EXISTS (
+       SELECT 1
+         FROM pg_catalog.pg_index AS index_row
+         JOIN pg_catalog.pg_class AS index_class ON index_class.oid=index_row.indexrelid
+        WHERE index_row.indrelid=pg_catalog.to_regclass('public.whatsapp_cloud_quick_replies')
+          AND NOT index_row.indisprimary
+          AND index_class.relname NOT IN ('idx_whatsapp_cloud_quick_replies_tenant_shortcut','idx_whatsapp_cloud_quick_replies_list')
+     )
+  THEN
+    RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='whatsapp_cloud_quick_replies_schema_unsafe';
+  END IF;
 END $quick_replies_index_guard$;
+
+DO $quick_replies_canonicalize_constraints$
+DECLARE
+  expected RECORD;
+BEGIN
+  IF pg_catalog.to_regclass('public.whatsapp_cloud_quick_replies') IS NULL THEN RETURN; END IF;
+  FOR expected IN SELECT * FROM (VALUES
+    ('whatsapp_cloud_quick_replies_pkey', 'PRIMARY KEY (id)'),
+    ('whatsapp_cloud_quick_replies_empresa_fkey', 'FOREIGN KEY (empresa_id) REFERENCES public.empresas(id) ON DELETE CASCADE'),
+    ('whatsapp_cloud_quick_replies_created_by_fkey', 'FOREIGN KEY (created_by) REFERENCES public.usuarios(id) ON DELETE RESTRICT'),
+    ('whatsapp_cloud_quick_replies_updated_by_fkey', 'FOREIGN KEY (updated_by) REFERENCES public.usuarios(id) ON DELETE RESTRICT'),
+    ('whatsapp_cloud_quick_replies_shortcut_check', 'CHECK (pg_catalog.char_length(shortcut) >= 2 AND pg_catalog.char_length(shortcut) <= 32 AND shortcut ~ ''^[a-z0-9][a-z0-9._-]{1,31}$'')'),
+    ('whatsapp_cloud_quick_replies_title_check', 'CHECK (pg_catalog.char_length(title) >= 1 AND pg_catalog.char_length(title) <= 80)'),
+    ('whatsapp_cloud_quick_replies_body_check', 'CHECK (pg_catalog.char_length(body) >= 1 AND pg_catalog.char_length(body) <= 4096)'),
+    ('whatsapp_cloud_quick_replies_sort_check', 'CHECK (sort_order >= 0 AND sort_order <= 100000)'),
+    ('whatsapp_cloud_quick_replies_is_active_check', 'CHECK (is_active OR NOT is_active)'),
+    ('whatsapp_cloud_quick_replies_version_check', 'CHECK (version > 0)')
+  ) AS expected(constraint_name, definition)
+  LOOP
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_catalog.pg_constraint
+       WHERE conrelid='public.whatsapp_cloud_quick_replies'::pg_catalog.regclass
+         AND conname=expected.constraint_name
+    )
+    THEN
+      EXECUTE pg_catalog.format('ALTER TABLE public.whatsapp_cloud_quick_replies ADD CONSTRAINT %I %s', expected.constraint_name, expected.definition);
+    END IF;
+  END LOOP;
+END $quick_replies_canonicalize_constraints$;
 
 CREATE TABLE IF NOT EXISTS public.whatsapp_cloud_quick_replies (
   id UUID NOT NULL DEFAULT pg_catalog.gen_random_uuid(),
@@ -5413,12 +5465,71 @@ CREATE TABLE IF NOT EXISTS public.whatsapp_cloud_quick_replies (
   CONSTRAINT whatsapp_cloud_quick_replies_title_check CHECK (pg_catalog.char_length(title) >= 1 AND pg_catalog.char_length(title) <= 80),
   CONSTRAINT whatsapp_cloud_quick_replies_body_check CHECK (pg_catalog.char_length(body) >= 1 AND pg_catalog.char_length(body) <= 4096),
   CONSTRAINT whatsapp_cloud_quick_replies_sort_check CHECK (sort_order >= 0 AND sort_order <= 100000),
+  CONSTRAINT whatsapp_cloud_quick_replies_is_active_check CHECK (is_active OR NOT is_active),
   CONSTRAINT whatsapp_cloud_quick_replies_version_check CHECK (version > 0)
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_whatsapp_cloud_quick_replies_tenant_shortcut
   ON public.whatsapp_cloud_quick_replies (empresa_id, shortcut);
 CREATE INDEX IF NOT EXISTS idx_whatsapp_cloud_quick_replies_list
   ON public.whatsapp_cloud_quick_replies (empresa_id, is_active, sort_order, title, id);
+
+DO $quick_replies_postflight$
+DECLARE
+  expected RECORD;
+  actual TEXT;
+BEGIN
+  FOR expected IN SELECT * FROM (VALUES
+    ('whatsapp_cloud_quick_replies_pkey', 'PRIMARY KEY (id)'),
+    ('whatsapp_cloud_quick_replies_empresa_fkey', 'FOREIGN KEY (empresa_id) REFERENCES empresas(id) ON DELETE CASCADE'),
+    ('whatsapp_cloud_quick_replies_created_by_fkey', 'FOREIGN KEY (created_by) REFERENCES usuarios(id) ON DELETE RESTRICT'),
+    ('whatsapp_cloud_quick_replies_updated_by_fkey', 'FOREIGN KEY (updated_by) REFERENCES usuarios(id) ON DELETE RESTRICT'),
+    ('whatsapp_cloud_quick_replies_shortcut_check', 'CHECK (char_length(shortcut) >= 2 AND char_length(shortcut) <= 32 AND shortcut ~ ''^[a-z0-9][a-z0-9._-]{1,31}$''::text)'),
+    ('whatsapp_cloud_quick_replies_title_check', 'CHECK (char_length(title) >= 1 AND char_length(title) <= 80)'),
+    ('whatsapp_cloud_quick_replies_body_check', 'CHECK (char_length(body) >= 1 AND char_length(body) <= 4096)'),
+    ('whatsapp_cloud_quick_replies_sort_check', 'CHECK (sort_order >= 0 AND sort_order <= 100000)'),
+    ('whatsapp_cloud_quick_replies_is_active_check', 'CHECK (is_active OR NOT is_active)'),
+    ('whatsapp_cloud_quick_replies_version_check', 'CHECK (version > 0)')
+  ) AS expected(constraint_name, definition)
+  LOOP
+    SELECT pg_catalog.pg_get_constraintdef(constraint_row.oid,true) INTO actual
+      FROM pg_catalog.pg_constraint AS constraint_row
+     WHERE constraint_row.conrelid='public.whatsapp_cloud_quick_replies'::pg_catalog.regclass
+       AND constraint_row.conname=expected.constraint_name
+       AND constraint_row.convalidated AND NOT constraint_row.condeferrable AND NOT constraint_row.condeferred
+       AND constraint_row.conislocal AND constraint_row.coninhcount=0;
+    IF NOT FOUND OR actual IS DISTINCT FROM expected.definition THEN
+      RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='whatsapp_cloud_quick_replies_schema_unsafe';
+    END IF;
+  END LOOP;
+  IF (SELECT pg_catalog.count(*) FROM pg_catalog.pg_constraint
+       WHERE conrelid='public.whatsapp_cloud_quick_replies'::pg_catalog.regclass AND contype IN ('p','f','c','u','x')) <> 10
+  THEN
+    RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='whatsapp_cloud_quick_replies_schema_unsafe';
+  END IF;
+  FOR expected IN SELECT * FROM (VALUES
+    ('idx_whatsapp_cloud_quick_replies_tenant_shortcut', 'CREATE UNIQUE INDEX idx_whatsapp_cloud_quick_replies_tenant_shortcut ON public.whatsapp_cloud_quick_replies USING btree (empresa_id, shortcut)', true),
+    ('idx_whatsapp_cloud_quick_replies_list', 'CREATE INDEX idx_whatsapp_cloud_quick_replies_list ON public.whatsapp_cloud_quick_replies USING btree (empresa_id, is_active, sort_order, title, id)', false)
+  ) AS expected(index_name, definition, unique_flag)
+  LOOP
+    SELECT pg_catalog.pg_get_indexdef(index_row.indexrelid) INTO actual
+      FROM pg_catalog.pg_index AS index_row
+      JOIN pg_catalog.pg_class AS index_class ON index_class.oid=index_row.indexrelid
+     WHERE index_row.indrelid='public.whatsapp_cloud_quick_replies'::pg_catalog.regclass
+       AND index_class.relname=expected.index_name
+       AND index_row.indisvalid AND index_row.indisready AND index_row.indislive
+       AND index_row.indisunique=expected.unique_flag AND NOT index_row.indisprimary
+       AND NOT index_row.indisexclusion AND index_row.indimmediate
+       AND NOT index_row.indisclustered AND NOT index_row.indisreplident AND NOT index_row.indcheckxmin;
+    IF NOT FOUND OR actual IS DISTINCT FROM expected.definition THEN
+      RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='whatsapp_cloud_quick_replies_schema_unsafe';
+    END IF;
+  END LOOP;
+  IF (SELECT pg_catalog.count(*) FROM pg_catalog.pg_index
+       WHERE indrelid='public.whatsapp_cloud_quick_replies'::pg_catalog.regclass AND NOT indisprimary) <> 2
+  THEN
+    RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='whatsapp_cloud_quick_replies_schema_unsafe';
+  END IF;
+END $quick_replies_postflight$;
 COMMIT;
 -- END WHATSAPP CLOUD QUICK REPLIES MIGRATION
 
