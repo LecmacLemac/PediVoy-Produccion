@@ -85,7 +85,15 @@ test('messaging forwards logical utility intent and rejects caller Graph metadat
   const utility_template = { key: 'order_en_route', parameters: { customer_name: 'Ana', address: 'A', tracking_token: 'tok' } };
   await enqueueWppMessage({ empresa_id: 7, phone: '3515550000', message: 'Web', utility_template }, pool);
   assert.equal(pool.calls.find(c => /INSERT INTO/.test(c.text)).values[5], 'order_en_route');
-  for (const extra of [{ name: 'physical' }, { language: 'es_AR' }, { transport_origin: 'cloud' }, { components: [] }]) {
+  for (const extra of [
+    { name: 'physical' },
+    { language: 'es_AR' },
+    { transport_origin: 'cloud' },
+    { components: [] },
+    { empresaId: 8 },
+  ]) {
+    const before = pool.calls.length;
     await assert.rejects(enqueueWppMessage({ empresa_id: 7, phone: '3515550000', message: 'Web', ...extra }, pool), { code: 'cloud_template_payload_invalid' });
+    assert.equal(pool.calls.length, before);
   }
 });
