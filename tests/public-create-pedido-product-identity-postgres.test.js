@@ -32,6 +32,7 @@ async function createFixture(pool) {
       id integer PRIMARY KEY,
       empresa_id integer NOT NULL REFERENCES empresas(id),
       nombre text NOT NULL,
+      precio numeric DEFAULT 0,
       activo boolean DEFAULT true,
       deleted_at timestamptz,
       promo_config jsonb,
@@ -438,6 +439,30 @@ test('POST /public/pedidos guarda notas sólo en el pedido y permite borrarlas e
   });
 });
 
+test('POST /public/pedidos usa precio canónico server-side en pedido e intención Cloud', postgresOptions, async () => {
+  await withIsolatedPostgres(async pool => {
+    await createFixture(pool);
+    await pool.query("INSERT INTO productos (id, empresa_id, nombre, precio) VALUES (55, 1, 'Bidón canónico', 1200)");
+    const enqueued = [];
+    const app = buildApp(pool, { enqueueWppMessage: async payload => { enqueued.push(payload); } });
+
+    await withServer(app, async baseUrl => {
+      const result = await postPedido(baseUrl, {
+        ...payload({ producto_id: 55, producto: 'Nombre manipulado' }, 9010),
+        items: [{ producto_id: 55, producto: 'Nombre manipulado', cantidad: 2, precio_unitario: 999999 }],
+      }, 94);
+      assert.equal(result.status, 200);
+      assert.equal(result.body.pedido.monto, '2400');
+    });
+
+    const saved = await pool.query('SELECT producto, cantidad, precio_unitario FROM items_pedido');
+    assert.deepEqual(saved.rows, [{ producto: 'Bidón canónico', cantidad: '2', precio_unitario: '1200' }]);
+    assert.equal(enqueued.length, 1);
+    assert.equal(enqueued[0].utility_template.parameters.items_block, '2 x Bidón canónico — $ 2.400');
+    assert.equal(enqueued[0].utility_template.parameters.total, '$ 2.400');
+  });
+});
+
 test('POST /public/pedidos usa identidad de producto autoritativa con PostgreSQL real', postgresOptions, async t => {
   await withIsolatedPostgres(async pool => {
     await createFixture(pool);
@@ -446,7 +471,7 @@ test('POST /public/pedidos usa identidad de producto autoritativa con PostgreSQL
     await withServer(app, async baseUrl => {
       await t.test('rechaza ID inexistente aunque el nombre coincida localmente, sin mutaciones', async () => {
         await resetData(pool);
-        await pool.query("INSERT INTO productos VALUES (55, 1, 'Bidón', true, NULL, NULL)");
+        await pool.query("INSERT INTO productos (id, empresa_id, nombre, activo, deleted_at, promo_config) VALUES (55, 1, 'Bidón', true, NULL, NULL)");
         const result = await postPedido(baseUrl, payload({ producto_id: 999, producto: 'BIDÓN' }, 1), 1);
         assert.equal(result.status, 400);
         assert.deepEqual(await mutationCounts(pool), { pedidos: 0, items: 0, promociones: 0, puntos_entrega: 0 });
@@ -454,7 +479,7 @@ test('POST /public/pedidos usa identidad de producto autoritativa con PostgreSQL
 
       await t.test('rechaza ID cross-tenant aunque el nombre coincida localmente, sin fuga ni fallback', async () => {
         await resetData(pool);
-        await pool.query(`INSERT INTO productos VALUES
+        await pool.query(`INSERT INTO productos (id, empresa_id, nombre, activo, deleted_at, promo_config) VALUES
           (55, 1, 'Bidón', true, NULL, NULL),
           (77, 2, 'Bidón ajeno', true, NULL, NULL)`);
         const result = await postPedido(baseUrl, payload({ producto_id: 77, producto: 'Bidón' }, 2), 2);
@@ -468,7 +493,7 @@ test('POST /public/pedidos usa identidad de producto autoritativa con PostgreSQL
 
       await t.test('rechaza dos homónimos normalizados para un item legacy, sin mutaciones', async () => {
         await resetData(pool);
-        await pool.query(`INSERT INTO productos VALUES
+        await pool.query(`INSERT INTO productos (id, empresa_id, nombre, activo, deleted_at, promo_config) VALUES
           (55, 1, 'Bidón', true, NULL, NULL),
           (56, 1, ' bidón ', true, NULL, NULL)`);
         const result = await postPedido(baseUrl, payload({ producto: ' BIDÓN ' }, 3), 3);
@@ -478,7 +503,7 @@ test('POST /public/pedidos usa identidad de producto autoritativa con PostgreSQL
 
       await t.test('nombre legacy único con case/espacios persiste ID y nombre canónicos', async () => {
         await resetData(pool);
-        await pool.query("INSERT INTO productos VALUES (55, 1, 'Bidón Premium', true, NULL, NULL)");
+        await pool.query("INSERT INTO productos (id, empresa_id, nombre, activo, deleted_at, promo_config) VALUES (55, 1, 'Bidón Premium', true, NULL, NULL)");
         const result = await postPedido(baseUrl, payload({ producto: '  BIDÓN PREMIUM  ' }, 4), 4);
         assert.equal(result.status, 200);
         const items = await pool.query('SELECT producto_id, producto FROM items_pedido ORDER BY id');
@@ -487,7 +512,7 @@ test('POST /public/pedidos usa identidad de producto autoritativa con PostgreSQL
 
       await t.test('ID canónico válido gana aunque el nombre apunte a un homónimo', async () => {
         await resetData(pool);
-        await pool.query(`INSERT INTO productos VALUES
+        await pool.query(`INSERT INTO productos (id, empresa_id, nombre, activo, deleted_at, promo_config) VALUES
           (55, 1, 'Bidón A', true, NULL, NULL),
           (56, 1, 'Bidón B', true, NULL, NULL)`);
         const result = await postPedido(baseUrl, payload({ producto_id: 55, producto: 'Bidón B' }, 5), 5);
@@ -498,7 +523,7 @@ test('POST /public/pedidos usa identidad de producto autoritativa con PostgreSQL
 
       await t.test('rechaza producto inactivo por ID sin fallback', async () => {
         await resetData(pool);
-        await pool.query("INSERT INTO productos VALUES (55, 1, 'Bidón', false, NULL, NULL)");
+        await pool.query("INSERT INTO productos (id, empresa_id, nombre, activo, deleted_at, promo_config) VALUES (55, 1, 'Bidón', false, NULL, NULL)");
         const result = await postPedido(baseUrl, payload({ producto_id: 55, producto: 'Bidón' }, 7), 7);
         assert.equal(result.status, 400);
         assert.deepEqual(await mutationCounts(pool), { pedidos: 0, items: 0, promociones: 0, puntos_entrega: 0 });
@@ -506,7 +531,7 @@ test('POST /public/pedidos usa identidad de producto autoritativa con PostgreSQL
 
       await t.test('retry idempotente conserva el pedido aunque el producto se inactive después', async () => {
         await resetData(pool);
-        await pool.query("INSERT INTO productos VALUES (55, 1, 'Bidón', true, NULL, NULL)");
+        await pool.query("INSERT INTO productos (id, empresa_id, nombre, activo, deleted_at, promo_config) VALUES (55, 1, 'Bidón', true, NULL, NULL)");
         const body = { ...payload({ producto_id: 55, producto: 'Bidón' }, 9), submission_id: 'idem-product-9' };
         const first = await postPedido(baseUrl, body, 9);
         assert.equal(first.status, 200);
@@ -529,7 +554,7 @@ test('POST /public/pedidos usa identidad de producto autoritativa con PostgreSQL
       ]) {
         await t.test(`rechaza producto_id ${label} y nunca hace fallback por nombre`, async () => {
           await resetData(pool);
-          await pool.query("INSERT INTO productos VALUES (55, 1, 'Bidón', true, NULL, NULL)");
+          await pool.query("INSERT INTO productos (id, empresa_id, nombre, activo, deleted_at, promo_config) VALUES (55, 1, 'Bidón', true, NULL, NULL)");
           const result = await postPedido(baseUrl, payload({ producto_id, producto: 'Bidón' }, `6-${label}`), 10 + Math.floor(Math.random() * 100));
           assert.equal(result.status, 400);
           assert.deepEqual(await mutationCounts(pool), { pedidos: 0, items: 0, promociones: 0, puntos_entrega: 0 });
@@ -542,7 +567,7 @@ test('POST /public/pedidos usa identidad de producto autoritativa con PostgreSQL
 test('POST /public/pedidos serializa submission_id antes de crear puntos_entrega', postgresOptions, async () => {
   await withIsolatedPostgres(async pool => {
     await createFixture(pool);
-    await pool.query("INSERT INTO productos VALUES (55, 1, 'Bidón', true, NULL, NULL)");
+    await pool.query("INSERT INTO productos (id, empresa_id, nombre, activo, deleted_at, promo_config) VALUES (55, 1, 'Bidón', true, NULL, NULL)");
 
     const bothReachedSubmissionLock = deferred();
     const releaseSubmissionLocks = deferred();
@@ -608,7 +633,7 @@ test('POST /public/pedidos serializa submission_id antes de crear puntos_entrega
 test('POST /public/pedidos retry secuencial no vuelve a tocar el punto ni repite postcommit', postgresOptions, async () => {
   await withIsolatedPostgres(async pool => {
     await createFixture(pool);
-    await pool.query("INSERT INTO productos VALUES (55, 1, 'Bidón', true, NULL, NULL)");
+    await pool.query("INSERT INTO productos (id, empresa_id, nombre, activo, deleted_at, promo_config) VALUES (55, 1, 'Bidón', true, NULL, NULL)");
     let pointStatements = 0;
     const observedPool = {
       async connect() {
@@ -654,7 +679,7 @@ test('POST /public/pedidos retry secuencial no vuelve a tocar el punto ni repite
 test('POST /public/pedidos aísla submission_id por tenant resuelto por servidor', postgresOptions, async () => {
   await withIsolatedPostgres(async pool => {
     await createFixture(pool);
-    await pool.query("INSERT INTO productos VALUES (55,1,'Bidón 1',true,NULL,NULL),(77,2,'Bidón 2',true,NULL,NULL)");
+    await pool.query("INSERT INTO productos (id, empresa_id, nombre, activo, deleted_at, promo_config) VALUES (55,1,'Bidón 1',true,NULL,NULL),(77,2,'Bidón 2',true,NULL,NULL)");
     const app = buildApp(pool, {
       resolveEmpresaIdFn: async req => Number(req.headers['x-test-tenant']),
     });
@@ -704,7 +729,7 @@ test('POST /public/pedidos aísla submission_id por tenant resuelto por servidor
 test('POST /public/pedidos revierte el punto si falla antes de insertar el pedido', postgresOptions, async () => {
   await withIsolatedPostgres(async pool => {
     await createFixture(pool);
-    await pool.query("INSERT INTO productos VALUES (55, 1, 'Bidón', true, NULL, NULL)");
+    await pool.query("INSERT INTO productos (id, empresa_id, nombre, activo, deleted_at, promo_config) VALUES (55, 1, 'Bidón', true, NULL, NULL)");
     let failNextPedidoInsert = true;
     const failingPool = {
       async connect() {
@@ -741,7 +766,7 @@ test('POST /public/pedidos revierte el punto si falla antes de insertar el pedid
 test('POST /public/pedidos mantiene orden submission-producto y nombres estable para evitar deadlock', postgresOptions, async () => {
   await withIsolatedPostgres(async pool => {
     await createFixture(pool);
-    await pool.query("INSERT INTO productos VALUES (55,1,'Alpha',true,NULL,NULL),(56,1,'Beta',true,NULL,NULL)");
+    await pool.query("INSERT INTO productos (id, empresa_id, nombre, activo, deleted_at, promo_config) VALUES (55,1,'Alpha',true,NULL,NULL),(56,1,'Beta',true,NULL,NULL)");
     const lockOrders = [];
     const observedPool = {
       async connect() {
@@ -794,7 +819,7 @@ test('POST /public/pedidos mantiene orden submission-producto y nombres estable 
 test('POST /public/pedidos no ejecuta postcommit ni reintenta ante COMMIT ambiguo', postgresOptions, async () => {
   await withIsolatedPostgres(async pool => {
     await createFixture(pool);
-    await pool.query("INSERT INTO productos VALUES (55, 1, 'Bidón', true, NULL, NULL)");
+    await pool.query("INSERT INTO productos (id, empresa_id, nombre, activo, deleted_at, promo_config) VALUES (55, 1, 'Bidón', true, NULL, NULL)");
     let connectCalls = 0;
     let rollbackAfterCommit = 0;
     let releasedWithError = false;
@@ -851,7 +876,7 @@ test('POST /public/pedidos serializa identidad legacy con writers y aísla tenan
 
     await t.test('writer que crea ambigüedad primero hace esperar y fallar cerrado al POST', async () => {
       await resetData(pool);
-      await pool.query("INSERT INTO productos VALUES (55,1,'Bidón',true,NULL,NULL),(56,1,'Otro',true,NULL,NULL)");
+      await pool.query("INSERT INTO productos (id, empresa_id, nombre, activo, deleted_at, promo_config) VALUES (55,1,'Bidón',true,NULL,NULL),(56,1,'Otro',true,NULL,NULL)");
       const writer = await pool.connect();
       try {
         await writer.query('BEGIN');
@@ -878,7 +903,7 @@ test('POST /public/pedidos serializa identidad legacy con writers y aísla tenan
 
     await t.test('POST que gana conserva identidad estable y el rename espera', async () => {
       await resetData(pool);
-      await pool.query("INSERT INTO productos VALUES (55,1,'Bidón',true,NULL,NULL),(56,1,'Otro',true,NULL,NULL)");
+      await pool.query("INSERT INTO productos (id, empresa_id, nombre, activo, deleted_at, promo_config) VALUES (55,1,'Bidón',true,NULL,NULL),(56,1,'Otro',true,NULL,NULL)");
       const productLocked = deferred();
       const continuePost = deferred();
       const instrumentedPool = {
@@ -929,7 +954,7 @@ test('POST /public/pedidos serializa identidad legacy con writers y aísla tenan
 
     await t.test('mismo nombre en tenants distintos no se bloquea', async () => {
       await resetData(pool);
-      await pool.query("INSERT INTO productos VALUES (55,1,'Bidón',true,NULL,NULL),(77,2,'Bidón',true,NULL,NULL)");
+      await pool.query("INSERT INTO productos (id, empresa_id, nombre, activo, deleted_at, promo_config) VALUES (55,1,'Bidón',true,NULL,NULL),(77,2,'Bidón',true,NULL,NULL)");
       const tenant2 = await pool.connect();
       try {
         await tenant2.query('BEGIN');
@@ -955,7 +980,7 @@ test('POST /public/pedidos serializa identidad legacy con writers y aísla tenan
 test('POST /public/pedidos resuelve tenant por canal público y nunca por body', postgresOptions, async t => {
   await withIsolatedPostgres(async pool => {
     await createFixture(pool);
-    await pool.query("INSERT INTO productos VALUES (55,1,'Bidón 1',true,NULL,NULL),(77,2,'Bidón 2',true,NULL,NULL)");
+    await pool.query("INSERT INTO productos (id, empresa_id, nombre, activo, deleted_at, promo_config) VALUES (55,1,'Bidón 1',true,NULL,NULL),(77,2,'Bidón 2',true,NULL,NULL)");
     const app = buildApp(pool);
 
     await withServer(app, async baseUrl => {
@@ -1024,7 +1049,7 @@ test('POST /public/pedidos resuelve tenant por canal público y nunca por body',
 test('POST /public/pedidos comparte un único punto para submissions concurrentes distintas', postgresOptions, async () => {
   await withIsolatedPostgres(async pool => {
     await createFixture(pool);
-    await pool.query("INSERT INTO productos VALUES (55,1,'Bidón',true,NULL,NULL)");
+    await pool.query("INSERT INTO productos (id, empresa_id, nombre, activo, deleted_at, promo_config) VALUES (55,1,'Bidón',true,NULL,NULL)");
     const app = buildApp(pool);
 
     await withServer(app, async baseUrl => {
@@ -1051,7 +1076,7 @@ test('POST /public/pedidos comparte un único punto para submissions concurrente
 test('POST /public/pedidos bloquea productos antes del namespace de punto y no toca punto antes', postgresOptions, async () => {
   await withIsolatedPostgres(async pool => {
     await createFixture(pool);
-    await pool.query("INSERT INTO productos VALUES (55,1,'Bidón',true,NULL,NULL)");
+    await pool.query("INSERT INTO productos (id, empresa_id, nombre, activo, deleted_at, promo_config) VALUES (55,1,'Bidón',true,NULL,NULL)");
     const events = [];
     const observedPool = {
       async connect() {
@@ -1084,7 +1109,7 @@ test('POST /public/pedidos bloquea productos antes del namespace de punto y no t
 test('POST /public/pedidos falla cerrado si el resolver productivo está ausente o devuelve inválido', postgresOptions, async () => {
   await withIsolatedPostgres(async pool => {
     await createFixture(pool);
-    await pool.query("INSERT INTO productos VALUES (55,1,'Bidón',true,NULL,NULL)");
+    await pool.query("INSERT INTO productos (id, empresa_id, nombre, activo, deleted_at, promo_config) VALUES (55,1,'Bidón',true,NULL,NULL)");
     for (const resolver of [null, async () => null]) {
       const app = buildApp(pool, { resolveEmpresaIdFn: resolver });
       await withServer(app, async baseUrl => {
@@ -1100,7 +1125,7 @@ test('POST /public/pedidos falla cerrado si el resolver productivo está ausente
 test('namespace de punto está aislado por tenant para la misma identidad', postgresOptions, async () => {
   await withIsolatedPostgres(async pool => {
     await createFixture(pool);
-    await pool.query("INSERT INTO productos VALUES (55,1,'Bidón 1',true,NULL,NULL),(77,2,'Bidón 2',true,NULL,NULL)");
+    await pool.query("INSERT INTO productos (id, empresa_id, nombre, activo, deleted_at, promo_config) VALUES (55,1,'Bidón 1',true,NULL,NULL),(77,2,'Bidón 2',true,NULL,NULL)");
     const blocker = await pool.connect();
     try {
       await blocker.query('BEGIN');
@@ -1132,7 +1157,7 @@ test('namespace de punto está aislado por tenant para la misma identidad', post
 test('rollback posterior al punto conserva un punto preexistente sin corrupción', postgresOptions, async () => {
   await withIsolatedPostgres(async pool => {
     await createFixture(pool);
-    await pool.query("INSERT INTO productos VALUES (55,1,'Bidón',true,NULL,NULL)");
+    await pool.query("INSERT INTO productos (id, empresa_id, nombre, activo, deleted_at, promo_config) VALUES (55,1,'Bidón',true,NULL,NULL)");
     await pool.query(`INSERT INTO puntos_entrega
       (empresa_id, cliente, telefono, telefono_normalizado, direccion, notas)
       VALUES (1, 'Original', '3515550000', '3515550000', 'Calle Persistente 1', 'sin cambios')`);
@@ -1172,7 +1197,7 @@ test('POST /public/pedidos limita referral VECINO al tenant y a una cadena pedid
 
     async function seedOrigin({ pedidoId, pedidoEmpresaId, puntoId, puntoEmpresaId }) {
       await resetData(pool);
-      await pool.query("INSERT INTO productos VALUES (55, 1, 'Bidón', true, NULL, NULL)");
+      await pool.query("INSERT INTO productos (id, empresa_id, nombre, activo, deleted_at, promo_config) VALUES (55, 1, 'Bidón', true, NULL, NULL)");
       await pool.query(
         `INSERT INTO puntos_entrega (id, empresa_id, cliente, telefono, telefono_normalizado, direccion)
          VALUES ($1, $2, $3, $4, $4, $5)`,

@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { z } from 'zod';
-import { armarMensajeConfirmado, calcularFechaEntregaReal } from '../utils.js';
+import { armarMensajeConfirmado, calcularFechaEntregaReal, formatARS } from '../utils.js';
+import { buildOrderConfirmationIntent, boundOrderItemsBlock } from '../whatsappCloud/utilityTemplates.js';
 import { ejecutarEstrategiaVecinos } from '../estrategias.js';
 import { associateClienteWithReferente, normalizeReferenteCode } from '../services/referentesService.js';
 import { resolveProductIdentityItems } from '../services/productIdentityNamespace.js';
@@ -397,6 +398,7 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
       const resolvedIdentityItems = await resolveProductIdentityItems(txQuery, {
         empresaId: empId,
         items: normItems,
+        includePrice: true,
         includePromoConfig: true,
         requirePublicActive: true,
       });
@@ -404,6 +406,7 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
         const resolved = resolvedIdentityItems[index];
         normItems[index].producto_id = resolved.producto_resuelto_id;
         normItems[index].producto = String(resolved.producto_resuelto.nombre);
+        normItems[index].precio_unitario = Number(resolved.producto_resuelto.precio);
       }
 
       await lockDeliveryPointIdentity(txQuery, {
@@ -898,10 +901,38 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
           }
         }
 
+        const deliveryAddress = [direccion, ciudad, provincia].filter(Boolean).join(', ');
+        const deliveryDayName = new Intl.DateTimeFormat('es-AR', { weekday: 'long' }).format(fechaEntregaEstimada);
+        const deliveryDateLabel = `${deliveryDayName.charAt(0).toUpperCase()}${deliveryDayName.slice(1)} ${fechaEntregaEstimada.getDate()}`;
+        const groupedItems = new Map();
+        for (const item of normItems) {
+          const product = String(item?.producto || '').trim();
+          if (!product) continue;
+          const key = product.toLocaleLowerCase('es-AR');
+          const current = groupedItems.get(key) || { product, quantity: 0, subtotal: 0 };
+          const quantity = Math.max(0, Number(item?.cantidad || 0));
+          const unitPrice = Math.max(0, Number(item?.precio_unitario || 0));
+          current.quantity += quantity;
+          current.subtotal += quantity * unitPrice;
+          groupedItems.set(key, current);
+        }
+        const utilityTemplate = buildOrderConfirmationIntent({
+          customer_name: String(cliente || 'Cliente'),
+          items_block: boundOrderItemsBlock([...groupedItems.values()].map((item) => (
+            `${item.quantity} x ${item.product} — ${formatARS(item.subtotal)}`
+          ))),
+          total: formatARS(pedido.monto),
+          address: deliveryAddress,
+          delivery_date: deliveryDateLabel,
+          delivery_window: String(configEntregaFinal?.horarios || 'A coordinar'),
+          driver_name: String(repData?.nombre || 'A asignar'),
+          driver_phone: String(repData?.telefono || 'No informado'),
+        });
+
         let mensaje = armarMensajeConfirmado({
           cliente,
           items: normItems,
-          direccion: [direccion, ciudad, provincia].filter(Boolean).join(', '),
+          direccion: deliveryAddress,
           fecha: new Date(),
           fechaEntrega: fechaEntregaEstimada,
           repartidor: repData,
@@ -924,7 +955,12 @@ export function registerPublicLegacyCreatePedidoRoute(app, deps) {
         }
 
         postCommitTasks.push(async () => {
-          await enqueueWppMessage({ phone: telefono, message: mensaje, empresa_id: empId });
+          await enqueueWppMessage({
+            phone: telefono,
+            message: mensaje,
+            empresa_id: empId,
+            utility_template: utilityTemplate,
+          });
 
           const smsEnabled = String(process.env.IFTTT_SMS_ENABLED || '0') === '1';
           if (smsEnabled && typeof sendSmsViaIfttt === 'function') {

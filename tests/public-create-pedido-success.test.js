@@ -53,7 +53,7 @@ test('POST /public/pedidos crea pedido válido', async () => {
     if (sql.includes('INSERT INTO puntos_entrega')) return [{ id: 101 }];
     if (sql.includes('FROM zona_chofer')) return [{ id: 55 }];
     if (sql.includes('FROM productos') && sql.includes('promo_config')) {
-      return [{ id: 55, nombre: 'Bidón 20L', promo_config: null, config_activo: {}, retornable: false }];
+      return [{ id: 55, nombre: 'Bidón 20L', precio: 3500, promo_config: null, config_activo: {}, retornable: false }];
     }
     if (sql.includes('FROM cliente_recompensas')) return [];
     if (sql.includes('SELECT pg_advisory_xact_lock')) return [{ pg_advisory_xact_lock: null }];
@@ -68,10 +68,10 @@ test('POST /public/pedidos crea pedido válido', async () => {
     throw new Error(`SQL inesperado en test: ${sql.slice(0, 90)}`);
   };
 
-  let wppCalls = 0;
+  const wppCalls = [];
   const app = buildApp({
     query,
-    enqueueWppMessage: async () => { wppCalls += 1; },
+    enqueueWppMessage: async (payload) => { wppCalls.push(payload); },
   });
 
   await withServer(app, async (baseUrl) => {
@@ -103,7 +103,22 @@ test('POST /public/pedidos crea pedido válido', async () => {
     assert.equal(body.pedido.monto, 7000);
     assert.equal(body.pedido.tracking_token, 'tok_9001');
     assert.equal(body.pedido.tracking_url, '/pedidos/seguimiento.html?t=tok_9001');
-    assert.equal(wppCalls, 1);
+    assert.equal(wppCalls.length, 1);
+    assert.deepEqual(wppCalls[0].utility_template, {
+      key: 'order_confirmation',
+      parameters: {
+        customer_name: 'Hidro Cliente',
+        items_block: '2 x Bidón 20L — $ 7.000',
+        total: '$ 7.000',
+        address: 'Calle Falsa 123, Salta, Salta',
+        delivery_date: 'Jueves 8',
+        delivery_window: 'A coordinar',
+        driver_name: 'Juan',
+        driver_phone: '3871234567',
+      },
+    });
+    assert.equal(Object.hasOwn(wppCalls[0], 'transport_origin'), false);
+    assert.equal(Object.hasOwn(wppCalls[0].utility_template, 'name'), false);
     assert.ok(calls.some((s) => s.includes('INSERT INTO pedidos')));
   });
 });
@@ -123,7 +138,7 @@ test('POST /public/pedidos agrega retornables pendientes al WhatsApp del cliente
     if (sql.includes('INSERT INTO puntos_entrega')) return [{ id: 101 }];
     if (sql.includes('FROM zona_chofer')) return [];
     if (sql.includes('FROM productos') && sql.includes('promo_config')) {
-      return [{ id: 55, nombre: 'Bidón 20L', promo_config: null, config_activo: {}, retornable: false }];
+      return [{ id: 55, nombre: 'Bidón 20L', precio: 3500, promo_config: null, config_activo: {}, retornable: false }];
     }
     if (sql.includes('FROM cliente_recompensas')) return [];
     if (sql.includes('SELECT pg_advisory_xact_lock')) return [{ pg_advisory_xact_lock: null }];
