@@ -1011,6 +1011,31 @@
               </small>
             </div>
           </div>
+          <fieldset id="e_whatsapp_templates">
+            <legend>Plantillas Utility aprobadas</legend>
+            <small>Configurá cada plantilla con el nombre aprobado en Meta. Cada una se habilita de forma independiente.</small>
+            <div>
+              <label for="e_template_order_confirmation_name">Confirmación de pedido</label>
+              <input id="e_template_order_confirmation_name" type="text" maxlength="512" autocomplete="off" pattern="[a-z0-9_]{1,512}">
+              <label for="e_template_order_confirmation_language">Idioma</label>
+              <select id="e_template_order_confirmation_language"><option value="es_AR">Español (Argentina)</option></select>
+              <small id="e_template_order_confirmation_status">Sin configurar</small>
+            </div>
+            <div>
+              <label for="e_template_order_en_route_name">Pedido en camino</label>
+              <input id="e_template_order_en_route_name" type="text" maxlength="512" autocomplete="off" pattern="[a-z0-9_]{1,512}">
+              <label for="e_template_order_en_route_language">Idioma</label>
+              <select id="e_template_order_en_route_language"><option value="es_AR">Español (Argentina)</option></select>
+              <small id="e_template_order_en_route_status">Sin configurar</small>
+            </div>
+            <div>
+              <label for="e_template_transfer_payment_name">Pago por transferencia</label>
+              <input id="e_template_transfer_payment_name" type="text" maxlength="512" autocomplete="off" pattern="[a-z0-9_]{1,512}">
+              <label for="e_template_transfer_payment_language">Idioma</label>
+              <select id="e_template_transfer_payment_language"><option value="es_AR">Español (Argentina)</option></select>
+              <small id="e_template_transfer_payment_status">Sin configurar</small>
+            </div>
+          </fieldset>
           <div id="e_whatsapp_mode_help" style="color:var(--muted); font-size:0.82rem; margin-top:6px;">
             Volver a WhatsApp Web conserva el token Cloud cifrado y restaura la elegibilidad del worker, sin iniciarlo automáticamente.
           </div>
@@ -1423,6 +1448,18 @@
       return {};
     }
 
+    function normalizeWhatsappTemplates(value) {
+      const templates = {};
+      for (const key of ['order_confirmation', 'order_en_route', 'transfer_payment']) {
+        const mapping = value?.[key];
+        if (typeof mapping?.name !== 'string' || typeof mapping?.language !== 'string') continue;
+        const name = mapping.name.trim();
+        const language = mapping.language.trim();
+        if (/^[a-z0-9_]{1,512}$/.test(name) && language === 'es_AR') templates[key] = { name, language };
+      }
+      return templates;
+    }
+
     function normalizeWhatsappPanelConfig(configIntegraciones) {
       const root = configIntegraciones && typeof configIntegraciones === 'object'
         ? configIntegraciones
@@ -1439,6 +1476,7 @@
         phone_number_id: String(whatsapp.phone_number_id || '').trim(),
         access_token_configured: whatsapp.access_token_configured === true,
         access_token: '',
+        ...(whatsapp.templates ? { templates: normalizeWhatsappTemplates(whatsapp.templates) } : {}),
       };
     }
 
@@ -1454,6 +1492,7 @@
         enabled: formConfig?.enabled === true,
         phone_number_id: String(formConfig?.phone_number_id || '').trim(),
       };
+      if (formConfig?.templates) payload.templates = normalizeWhatsappTemplates(formConfig.templates);
       const token = String(formConfig?.access_token || '').trim();
       if (token && token !== '********') payload.access_token = token;
       return payload;
@@ -1697,6 +1736,7 @@ if (logoutLink) {
       });
     }
 
+    document.getElementById('e_whatsapp_templates')?.addEventListener('input', refreshWhatsappTemplateReadiness);
     const whatsappProviderSelect = document.getElementById('e_whatsapp_provider');
     if (whatsappProviderSelect) {
       whatsappProviderSelect.addEventListener('change', refreshWhatsappPanelVisibility);
@@ -2513,6 +2553,20 @@ if (logoutLink) {
       if (enabled && !isCloud) enabled.checked = false;
     }
 
+    function needsWhatsappTemplateConfirmation(previous, next) {
+      const before = normalizeWhatsappTemplates(previous?.templates);
+      const after = normalizeWhatsappTemplates(next?.templates);
+      return Object.keys(after).some(key => JSON.stringify(before[key]) !== JSON.stringify(after[key]));
+    }
+
+    function refreshWhatsappTemplateReadiness() {
+      for (const key of ['order_confirmation', 'order_en_route', 'transfer_payment']) {
+        const name = document.getElementById('e_template_' + key + '_name')?.value.trim() || '';
+        const status = document.getElementById('e_template_' + key + '_status');
+        if (status) status.textContent = !name ? 'Sin configurar' : /^[a-z0-9_]{1,512}$/.test(name) ? 'Configurada' : 'Nombre inválido';
+      }
+    }
+
     function setWhatsappConfigInForm(configIntegraciones) {
       currentWhatsappPanelConfig = normalizeWhatsappPanelConfig(configIntegraciones);
       const provider = document.getElementById('e_whatsapp_provider');
@@ -2532,11 +2586,24 @@ if (logoutLink) {
           ? 'var(--success)'
           : 'var(--muted)';
       }
+      for (const key of ['order_confirmation', 'order_en_route', 'transfer_payment']) {
+        const name = document.getElementById('e_template_' + key + '_name');
+        const language = document.getElementById('e_template_' + key + '_language');
+        if (name) name.value = currentWhatsappPanelConfig.templates?.[key]?.name || '';
+        if (language) language.value = 'es_AR';
+      }
+      refreshWhatsappTemplateReadiness();
       refreshWhatsappPanelVisibility();
     }
 
     function getWhatsappConfigFromForm() {
+      const templates = {};
+      for (const key of ['order_confirmation', 'order_en_route', 'transfer_payment']) {
+        const name = document.getElementById('e_template_' + key + '_name')?.value.trim() || '';
+        if (name) templates[key] = { name, language: document.getElementById('e_template_' + key + '_language')?.value || 'es_AR' };
+      }
       return {
+        templates,
         provider: document.getElementById('e_whatsapp_provider')?.value || 'web',
         enabled: document.getElementById('e_whatsapp_enabled')?.checked === true,
         phone_number_id: document.getElementById('e_whatsapp_phone_number_id')?.value || '',
@@ -2908,7 +2975,14 @@ if (logoutLink) {
           return;
         }
 
+        if (Object.values(whatsappFormConfig.templates).some(mapping => !/^[a-z0-9_]{1,512}$/.test(mapping.name))) {
+          toast('❌ Revisá los nombres de las plantillas.');
+          return;
+        }
         const whatsappCfg = buildWhatsappConfigPayload(whatsappFormConfig);
+        if (needsWhatsappTemplateConfirmation(currentWhatsappPanelConfig, whatsappCfg)) {
+          if (!confirm('Confirmá que estas plantillas Utility están aprobadas en Meta con el contenido e idioma correspondientes. ¿Continuar?')) return;
+        }
         if (needsWhatsappCloudActivationConfirmation(currentWhatsappPanelConfig, whatsappCfg)) {
           const accepted = confirm(
             'Activar WhatsApp Cloud detendrá el worker de WhatsApp Web de esta empresa. ' +

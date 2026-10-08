@@ -41,6 +41,7 @@ function extractFunction(source, name) {
 async function loadPanelHelpers() {
   const html = await readHtml();
   const names = [
+    'normalizeWhatsappTemplates',
     'normalizeWhatsappPanelConfig',
     'buildWhatsappConfigPayload',
     'validateWhatsappCloudActivation',
@@ -167,4 +168,40 @@ test('guardado preserva pagos y todas las integraciones hermanas', async () => {
     codigo_externo: 'ERP-7',
     webhook_url: 'https://example.test/hook',
   });
+});
+
+test('utility panel has three super-only groups and independent safe mapping readiness', async () => {
+  const html = await readHtml();
+  const source = extractFunction(html, 'normalizeWhatsappTemplates');
+  const context = vm.createContext({});
+  vm.runInContext(`${source}; globalThis.normalize = normalizeWhatsappTemplates;`, context);
+  const normalized = context.normalize({ order_en_route: { name: ' route ', language: ' es_AR ', payload: 'private' }, transfer_payment: { name: '', language: 'es_AR' }, arbitrary: {} });
+  assert.deepEqual(structuredClone(normalized), { order_en_route: { name: 'route', language: 'es_AR' } });
+  const panelStart = html.indexOf('id="panelWhatsappEmpresa"');
+  for (const key of ['order_confirmation', 'order_en_route', 'transfer_payment']) {
+    for (const suffix of ['name', 'language', 'status']) assert.ok(html.indexOf(`id="e_template_${key}_${suffix}"`, panelStart) > panelStart);
+  }
+  const { normalizeWhatsappPanelConfig, buildWhatsappConfigPayload } = await loadPanelHelpers();
+  const templates = { order_en_route: { name: 'route', language: 'es_AR' } };
+  assert.deepEqual(structuredClone(normalizeWhatsappPanelConfig({ whatsapp: { templates } }).templates), templates);
+  assert.deepEqual(structuredClone(buildWhatsappConfigPayload({ provider: 'cloud', templates }).templates), templates);
+});
+
+test('utility form loads/saves mapping, reports readiness and confirms activation or replacement', async () => {
+  const html = await readHtml();
+  const names = ['normalizeWhatsappTemplates', 'normalizeWhatsappPanelConfig', 'getWhatsappConfigFromForm', 'setWhatsappConfigInForm', 'needsWhatsappTemplateConfirmation', 'refreshWhatsappTemplateReadiness'];
+  const elements = Object.fromEntries(['order_confirmation', 'order_en_route', 'transfer_payment'].flatMap(key => ['name', 'language', 'status'].map(suffix => [`e_template_${key}_${suffix}`, { value: '', textContent: '' }])));
+  const context = vm.createContext({ document: { getElementById: id => elements[id] }, currentWhatsappPanelConfig: {}, refreshWhatsappPanelVisibility() {} });
+  vm.runInContext(names.map(n => extractFunction(html, n)).join('\n') + `;globalThis.h = {${names.join(',')}};`, context);
+  const templates = { order_en_route: { name: 'route', language: 'es_AR' } };
+  context.h.setWhatsappConfigInForm({ whatsapp: { templates } });
+  assert.equal(elements.e_template_order_en_route_name.value, 'route');
+  assert.equal(elements.e_template_order_en_route_status.textContent, 'Configurada');
+  assert.equal(elements.e_template_transfer_payment_status.textContent, 'Sin configurar');
+  assert.deepEqual(structuredClone(context.h.getWhatsappConfigFromForm().templates), templates);
+  assert.equal(context.h.needsWhatsappTemplateConfirmation({}, { templates }), true);
+  assert.equal(context.h.needsWhatsappTemplateConfirmation({ templates }, { templates }), false);
+  assert.match(html, /if \(needsWhatsappTemplateConfirmation\(currentWhatsappPanelConfig, whatsappCfg\)\)/);
+  assert.match(html, /Confirmo|aprobadas en Meta/);
+  for (const n of names) assert.doesNotMatch(extractFunction(html, n), /localStorage|sessionStorage/);
 });

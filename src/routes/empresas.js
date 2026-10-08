@@ -1,3 +1,4 @@
+import { UTILITY_TEMPLATE_KEYS, validateTemplateMapping } from '../whatsappCloud/utilityTemplates.js';
 // src/routes/empresas.js
 // CRUD de empresas + cuentas bancarias (extraído desde server.js)
 
@@ -22,9 +23,19 @@ function objectOrEmpty(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 }
 
+function safeTemplateMappings(value) {
+  const safe = {};
+  for (const key of UTILITY_TEMPLATE_KEYS) {
+    if (!Object.hasOwn(objectOrEmpty(value), key)) continue;
+    try { safe[key] = validateTemplateMapping(value[key]); } catch { /* Omit invalid durable configuration. */ }
+  }
+  return safe;
+}
+
 function allowlistedWhatsappConfig(value) {
   const whatsapp = objectOrEmpty(value);
   return {
+    ...(Object.hasOwn(whatsapp, 'templates') ? { templates: safeTemplateMappings(whatsapp.templates) } : {}),
     ...(Object.hasOwn(whatsapp, 'provider')
       ? { provider: String(whatsapp.provider || '').trim().toLowerCase() }
       : {}),
@@ -327,6 +338,15 @@ export function securePaymentIntegraciones(configIntegraciones, existingIntegrac
   if (hasIncomingWhatsapp || hasExistingWhatsapp) {
     const incomingWhatsapp = objectOrEmpty(incoming.whatsapp);
     const existingWhatsapp = objectOrEmpty(existing.whatsapp);
+    if (Object.hasOwn(incomingWhatsapp, 'templates')) {
+      const templates = incomingWhatsapp.templates;
+      if (!templates || typeof templates !== 'object' || Array.isArray(templates)
+          || ![Object.prototype, null].includes(Object.getPrototypeOf(templates))
+          || Object.keys(templates).some(key => !UTILITY_TEMPLATE_KEYS.includes(key))) {
+        throw Object.assign(new Error('cloud_template_config_invalid'), { code: 'cloud_template_config_invalid' });
+      }
+      for (const mapping of Object.values(templates)) validateTemplateMapping(mapping);
+    }
     const encryptedWhatsappToken = secureValue(
       incomingWhatsapp.access_token,
       existingWhatsapp.access_token_encrypted,
@@ -335,6 +355,8 @@ export function securePaymentIntegraciones(configIntegraciones, existingIntegrac
     merged.whatsapp = {
       ...allowlistedWhatsappConfig(existingWhatsapp),
       ...allowlistedWhatsappConfig(incomingWhatsapp),
+      ...(Object.hasOwn(existingWhatsapp, 'templates') || Object.hasOwn(incomingWhatsapp, 'templates')
+        ? { templates: { ...safeTemplateMappings(existingWhatsapp.templates), ...safeTemplateMappings(incomingWhatsapp.templates) } } : {}),
       ...(encryptedWhatsappToken ? { access_token_encrypted: encryptedWhatsappToken } : {}),
     };
   }
@@ -636,6 +658,9 @@ export function createEmpresasRouter(deps) {
 
       return res.json(redactEmpresaPaymentSecrets(nuevaEmpresa));
     } catch (e) {
+      if (e.code === 'cloud_template_config_invalid') {
+        return res.status(422).json({ error: 'cloud_template_config_invalid' });
+      }
       if (e.code === 'WPP_CLOUD_CONFIG_INCOMPLETE') {
         return res.status(422).json({ error: 'La activación de WhatsApp Cloud está incompleta.' });
       }
@@ -886,6 +911,9 @@ export function createEmpresasRouter(deps) {
       if (!updatedEmpresa) return res.status(404).json({ error: 'Empresa no encontrada' });
       return res.json(redactEmpresaPaymentSecrets(updatedEmpresa));
     } catch (e) {
+      if (e.code === 'cloud_template_config_invalid') {
+        return res.status(422).json({ error: 'cloud_template_config_invalid' });
+      }
       if (e.code === 'WPP_CLOUD_CONFIG_INCOMPLETE') {
         return res.status(422).json({ error: 'La activación de WhatsApp Cloud está incompleta.' });
       }

@@ -230,7 +230,7 @@ test('admin puede editar perfil de su propia empresa sin cambiar campos superadm
         landing_slug: 'slug-atacante',
         plan_estado: 'expired',
         plan_tipo: 'enterprise',
-        config_integraciones: { pagos: { access_token: 'secreto' } },
+        config_integraciones: { pagos: { access_token: 'secreto' }, whatsapp: { templates: { order_en_route: { name: 'route', language: 'es_AR' } } } },
       }),
     });
 
@@ -262,7 +262,7 @@ test('admin no puede editar una empresa ajena', async () => {
     const resp = await fetch(`${baseUrl}/api/empresas/4`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ nombre: 'Empresa Ajena' }),
+      body: JSON.stringify({ nombre: 'Empresa Ajena', config_integraciones: { whatsapp: { templates: { order_en_route: { name: 'route', language: 'es_AR' } } } } }),
     });
 
     assert.equal(resp.status, 403);
@@ -569,6 +569,7 @@ test('superadmin no persiste ni recibe secretos de configuracion WhatsApp Cloud'
       body: JSON.stringify({
         config_integraciones: {
           whatsapp: {
+            templates: { order_en_route: { name: 'route', language: 'es_AR' } },
             provider: 'cloud',
             enabled: true,
             phone_number_id: 'phone-safe',
@@ -583,6 +584,7 @@ test('superadmin no persiste ni recibe secretos de configuracion WhatsApp Cloud'
     assert.equal(resp.status, 200);
     const body = await resp.json();
     assert.deepEqual(body.config_integraciones.whatsapp, {
+      templates: { order_en_route: { name: 'route', language: 'es_AR' } },
       provider: 'cloud',
       enabled: true,
       phone_number_id: 'phone-safe',
@@ -1763,4 +1765,29 @@ test('dos updates no-WhatsApp se serializan, preservan WhatsApp y no reconcilian
   assert.equal(persisted.pagos.proveedor, 'mercado_pago');
   assert.equal(persisted.envios.proveedor, 'correo');
   assert.equal(reconciles, 0);
+});
+
+test('utility mapping merges independently, normalizes safe fields and preserves encrypted token and siblings', async () => {
+  const { securePaymentIntegraciones } = await import('../src/routes/empresas.js');
+  const previous = { analytics: { enabled: true }, whatsapp: { provider: 'cloud', access_token_encrypted: 'v1:encrypted', templates: { order_confirmation: { name: 'confirm', language: 'es_AR' } } } };
+  const merged = securePaymentIntegraciones({ whatsapp: { templates: { order_en_route: { name: ' route_v1 ', language: ' es_AR ' } } } }, previous);
+  assert.deepEqual(merged.whatsapp.templates, { order_confirmation: { name: 'confirm', language: 'es_AR' }, order_en_route: { name: 'route_v1', language: 'es_AR' } });
+  assert.equal(merged.whatsapp.access_token_encrypted, 'v1:encrypted');
+  assert.deepEqual(merged.analytics, previous.analytics);
+  const safe = redactEmpresaPaymentSecrets({ config_integraciones: merged }).config_integraciones.whatsapp;
+  assert.deepEqual(safe.templates, merged.whatsapp.templates);
+  assert.equal(JSON.stringify(safe).includes('v1:encrypted'), false);
+});
+
+test('utility mapping rejects hostile keys and invalid values before persistence with sanitized HTTP 422', async () => {
+  const { securePaymentIntegraciones } = await import('../src/routes/empresas.js');
+  for (const templates of [null, [], { unknown: { name: 'x', language: 'es_AR' } }, { order_en_route: { name: 'UPPER', language: 'es_AR' } }, { order_en_route: { name: 'x', language: 'en_US' } }, { order_en_route: { name: 'x', language: 'es_AR', payload: 'private' } }]) {
+    assert.throws(() => securePaymentIntegraciones({ whatsapp: { templates } }), { code: 'cloud_template_config_invalid' });
+  }
+  const app = buildApp({ user: { role: 'super' }, query: async () => assert.fail('must reject before persistence') });
+  await withServer(app, async base => {
+    const response = await fetch(`${base}/api/empresas`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nombre: 'Test', config_integraciones: { whatsapp: { templates: { order_en_route: { name: 'PRIVATE!', language: 'es_AR' } } } } }) });
+    assert.equal(response.status, 422);
+    assert.equal(JSON.stringify(await response.json()).includes('PRIVATE'), false);
+  });
 });

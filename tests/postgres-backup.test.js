@@ -244,3 +244,13 @@ test('restore smoke fails before cluster startup on a bad checksum', () => {
     assert.equal(existsSync(f.calls), false);
   } finally { f.cleanup(); }
 });
+
+test('company export redacts secrets and emits only validated utility mappings', async () => {
+  const { redactEmpresaPaymentSecrets } = await import('../src/routes/empresas.js');
+  const safe = redactEmpresaPaymentSecrets({ config_integraciones: { whatsapp: {
+    access_token: 'private-plain', access_token_encrypted: 'private-cipher', app_secret: 'private-secret', arbitrary: 'private-extra',
+    templates: { order_en_route: { name: 'route', language: 'es_AR' }, transfer_payment: { name: 'transfer', language: 'es_AR', payload: 'private-payload' }, arbitrary: 'private-template' },
+  } } });
+  assert.deepEqual(safe.config_integraciones.whatsapp, { access_token_configured: true, templates: { order_en_route: { name: 'route', language: 'es_AR' } } });
+  assert.equal(JSON.stringify(safe).includes('private'), false);
+});
