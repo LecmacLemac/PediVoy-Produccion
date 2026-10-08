@@ -377,6 +377,30 @@ test('utility intent persists only for resolved Cloud and keeps original message
   }
 });
 
+test('required utility intent fails closed only for resolved Cloud transport', async () => {
+  for (const transport of ['cloud', 'company']) {
+    const tx = createPool(async ({ text }) => {
+      if (text.includes('SELECT config_integraciones')) return { rows: [{ config_integraciones: transport === 'cloud' ? { whatsapp: { provider: 'cloud', enabled: true, phone_number_id: 'p', access_token_encrypted: 'e' } } : {} }] };
+      return { rows: text.includes('INSERT INTO') ? [{ id: 1, status: 'pending' }] : [] };
+    });
+    const operation = enqueueWppOutbox({
+      empresaId: 7,
+      phone: '3515550000',
+      message: 'Web tolerante sin cuenta',
+      utility_template: null,
+      require_utility_template: true,
+    }, tx);
+    if (transport === 'cloud') {
+      await assert.rejects(operation, { code: 'cloud_template_payload_invalid' });
+      assert.equal(tx.calls.some(call => call.text.includes('INSERT INTO')), false);
+    } else {
+      await operation;
+      const insert = tx.calls.find(call => call.text.includes('INSERT INTO'));
+      assert.deepEqual(insert.values.slice(5), [null, null]);
+    }
+  }
+});
+
 test('utility intent rejects invalid metadata and caller-selected Graph/transport before any query', async () => {
   for (const extra of [
     { utility_template: { key: 'bad', parameters: {} } },

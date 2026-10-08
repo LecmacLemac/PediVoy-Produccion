@@ -176,8 +176,82 @@ test('notificarPedidoTransferencia usa la cuenta activa de menor prioridad', asy
   assert.equal(enqueued[0].phone, '3531234567');
   assert.equal(enqueued[0].empresa_id, 1);
   assert.equal(enqueued[0].message, '🏦 *Pago por transferencia*\n\nHola Cliente Test, tu pedido fue marcado para pagar por *transferencia* ($\u00a07.500,00).\n\n💳 *Datos para transferir:*\nAlias: PRINCIPAL.TEST\nCBU: 0000003100012345678901\nBanco: Banco Principal\nTitular: PediVoy Test\n\nPor favor, adjuntá el *comprobante de transferencia* respondiendo a este mensaje para poder acreditar el pago.\n\n¡Muchas gracias!\nPediVoy Test');
+  assert.deepEqual(enqueued[0].utility_template, {
+    key: 'transfer_payment',
+    parameters: {
+      customer_name: 'Cliente Test',
+      amount: '$\u00a07.500,00',
+      alias: 'PRINCIPAL.TEST',
+      cbu: '0000003100012345678901',
+      bank: 'Banco Principal',
+      holder: 'PediVoy Test',
+      company_name: 'PediVoy Test',
+    },
+  });
   assert.match(enqueued[0].message, /Alias: PRINCIPAL\.TEST/);
   assert.match(enqueued[0].message, /CBU: 0000003100012345678901/);
   assert.match(enqueued[0].message, /Banco: Banco Principal/);
   assert.ok(queries.some((q) => q.sql.includes('FROM empresa_cuentas_bancarias')));
+});
+
+test('notificarPedidoTransferencia conserva texto Web sin cuenta y delega fail-closed Cloud', async () => {
+  const enqueued = [];
+  const notificarPedidoTransferencia = createNotificarPedidoTransferencia({
+    queryFn: async (sql, params = []) => {
+      if (sql.includes('FROM pedidos')) return [{
+        id: 42, monto: 7500, cliente: 'Cliente Test', telefono: '3531234567',
+        direccion: 'Calle Test 123', empresa_nombre: 'PediVoy Test', empresa_id: 1,
+      }];
+      if (sql.includes('FROM empresa_cuentas_bancarias')) {
+        assert.deepEqual(params, [1]);
+        return [];
+      }
+      throw new Error(`SQL no esperado: ${sql}`);
+    },
+    enqueueWppMessageFn: async payload => { enqueued.push(payload); return { queued: true, transportOrigin: 'company' }; },
+  });
+
+  await notificarPedidoTransferencia(42, 1);
+
+  assert.equal(enqueued.length, 1);
+  assert.equal(enqueued[0].utility_template, null);
+  assert.equal(enqueued[0].require_utility_template, true);
+  assert.equal(enqueued[0].message, '🏦 *Pago por transferencia*\n\nHola Cliente Test, tu pedido fue marcado para pagar por *transferencia* ($\u00a07.500,00).\n\nPor favor, adjuntá el *comprobante de transferencia* respondiendo a este mensaje para poder acreditar el pago.\n\n¡Muchas gracias!\nPediVoy Test');
+});
+
+test('notificarPedidoTransferencia no filtra datos si Cloud rechaza una cuenta incompleta', async () => {
+  const privateValues = ['ALIAS.SECRETO', '0000003100012345678901', 'Titular Secreto', 'Cliente Secreto', '3539999999', 'private-token'];
+  const logs = [];
+  const originalError = console.error;
+  console.error = (...args) => { logs.push(args); };
+  try {
+    const notificarPedidoTransferencia = createNotificarPedidoTransferencia({
+      queryFn: async (sql) => {
+        if (sql.includes('FROM pedidos')) return [{
+          id: 42, monto: 7500, cliente: privateValues[3], telefono: privateValues[4],
+          direccion: 'Dirección secreta', empresa_nombre: 'PediVoy Test', empresa_id: 1,
+        }];
+        if (sql.includes('FROM empresa_cuentas_bancarias')) return [{
+          alias: privateValues[0], banco: '', cbu: privateValues[1], titular: privateValues[2], prioridad: 1,
+        }];
+        throw new Error(`SQL no esperado: ${sql}`);
+      },
+      enqueueWppMessageFn: async payload => {
+        assert.equal(payload.utility_template, null);
+        assert.equal(payload.require_utility_template, true);
+        throw Object.assign(new Error(privateValues.join('|')), { code: 'cloud_template_payload_invalid', token: privateValues[5] });
+      },
+    });
+
+    await assert.rejects(notificarPedidoTransferencia(42, 1), error => {
+      assert.equal(error.code, 'cloud_template_payload_invalid');
+      const serialized = JSON.stringify(error);
+      for (const value of privateValues) assert.doesNotMatch(serialized, new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+      return true;
+    });
+    const serializedLogs = JSON.stringify(logs);
+    for (const value of privateValues) assert.doesNotMatch(serializedLogs, new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  } finally {
+    console.error = originalError;
+  }
 });

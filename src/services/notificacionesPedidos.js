@@ -159,6 +159,10 @@ export function createNotificarPedidoTransferencia({
       );
 
       const cuenta = cuentas[0];
+      const alias = String(cuenta?.alias || '').trim();
+      const banco = String(cuenta?.banco || '').trim();
+      const cbu = String(cuenta?.cbu || '').trim();
+      const titular = String(cuenta?.titular || '').trim();
 
       const montoNumber = Number(datos.monto || 0);
       const montoFmt = new Intl.NumberFormat('es-AR', {
@@ -174,11 +178,6 @@ export function createNotificarPedidoTransferencia({
         `Hola ${datos.cliente || ''}, tu pedido fue marcado para pagar por *transferencia* (${montoFmt}).\n\n`;
 
       if (cuenta) {
-        const alias = (cuenta.alias || '').trim();
-        const banco = (cuenta.banco || '').trim();
-        const cbu = (cuenta.cbu || '').trim();
-        const titular = (cuenta.titular || '').trim();
-
         mensaje += `💳 *Datos para transferir:*\n`;
         if (alias) mensaje += `Alias: ${alias}\n`;
         if (cbu) mensaje += `CBU: ${cbu}\n`;
@@ -192,14 +191,30 @@ export function createNotificarPedidoTransferencia({
         `para poder acreditar el pago.\n\n` +
         `¡Muchas gracias!\n${empresaLabel}`;
 
+      const utilityTemplate = alias && cbu && banco && titular
+        ? buildTransferPaymentIntent({
+            customer_name: String(datos.cliente || 'Cliente'),
+            amount: montoFmt,
+            alias,
+            cbu,
+            bank: banco,
+            holder: titular,
+            company_name: empresaLabel,
+          })
+        : null;
+
       await enqueueWppMessageFn({
         phone: datos.telefono,
         message: mensaje,
-        empresa_id: empresaId
+        empresa_id: empresaId,
+        utility_template: utilityTemplate,
+        require_utility_template: true,
       });
 
     } catch (e) {
-      console.error('Error enviando notificación de pago por transferencia:', e);
+      const error = sanitizedNotificationError(e);
+      console.error('Error enviando notificación de pago por transferencia:', error.code);
+      throw error;
     }
   };
 }

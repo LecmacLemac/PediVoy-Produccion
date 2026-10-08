@@ -77,6 +77,7 @@ function prepareEnqueue({
   message,
   dedupeWindowMinutes = 5,
   utility_template = null,
+  require_utility_template = false,
   queryOptions, // Legacy producers request sensitivity; all payload queries are always sensitive.
   ...extra
 }, { correlatedTransportOrigin = null, correlationId = null } = {}) {
@@ -104,12 +105,24 @@ function prepareEnqueue({
     throw new WppTransportConfigError('correlation_id_invalido');
   }
 
+  if (typeof require_utility_template !== 'boolean') {
+    throw new WppTransportConfigError('cloud_template_payload_invalid');
+  }
   const utilityTemplate = utility_template == null ? null : validateUtilityTemplateIntent(utility_template);
-  return { utilityTemplate, payload, windowMinutes, normalizedEmpresaId, correlatedTransportOrigin, correlationId: normalizedCorrelationId };
+  return {
+    utilityTemplate,
+    requireUtilityTemplate: require_utility_template,
+    payload,
+    windowMinutes,
+    normalizedEmpresaId,
+    correlatedTransportOrigin,
+    correlationId: normalizedCorrelationId,
+  };
 }
 
 async function enqueuePreparedWithClient({
   utilityTemplate,
+  requireUtilityTemplate,
   payload,
   windowMinutes,
   normalizedEmpresaId,
@@ -136,6 +149,9 @@ async function enqueuePreparedWithClient({
     transportOrigin = correlatedTransportOrigin === 'cloud'
       ? 'cloud'
       : cloudActive ? 'cloud' : 'company';
+  }
+  if (transportOrigin === 'cloud' && requireUtilityTemplate && !utilityTemplate) {
+    throw new WppTransportConfigError('cloud_template_payload_invalid');
   }
 
   const dedupeKey = correlationId

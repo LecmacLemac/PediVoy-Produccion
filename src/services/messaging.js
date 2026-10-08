@@ -6,10 +6,16 @@ import {
 } from '../wpp/enqueue.js';
 
 export async function enqueueWppMessage({
-  phone, message, empresa_id = null, utility_template = null, ...extra
+  phone, message, empresa_id = null, utility_template = null, require_utility_template = false, ...extra
 }, transactionPool = pool) {
   if (Object.keys(extra).length) throw new WppTransportConfigError('cloud_template_payload_invalid');
-  return enqueueWppOutbox({ empresaId: empresa_id, phone, message, utility_template }, transactionPool);
+  return enqueueWppOutbox({
+    empresaId: empresa_id,
+    phone,
+    message,
+    utility_template,
+    require_utility_template,
+  }, transactionPool);
 }
 
 export async function enqueueCorrelatedWppMessage({
