@@ -5383,7 +5383,14 @@ DO $quick_replies_index_guard$
 DECLARE
   expected RECORD;
   actual TEXT;
+  relation_oid pg_catalog.regclass;
+  table_populated BOOLEAN := false;
+  canonical_indexes INTEGER := 0;
 BEGIN
+  relation_oid := pg_catalog.to_regclass('public.whatsapp_cloud_quick_replies');
+  IF relation_oid IS NOT NULL THEN
+    EXECUTE 'SELECT EXISTS (SELECT 1 FROM public.whatsapp_cloud_quick_replies)' INTO table_populated;
+  END IF;
   FOR expected IN SELECT * FROM (VALUES
     ('public.idx_whatsapp_cloud_quick_replies_tenant_shortcut', 'CREATE UNIQUE INDEX idx_whatsapp_cloud_quick_replies_tenant_shortcut ON public.whatsapp_cloud_quick_replies USING btree (empresa_id, shortcut)', true),
     ('public.idx_whatsapp_cloud_quick_replies_list', 'CREATE INDEX idx_whatsapp_cloud_quick_replies_list ON public.whatsapp_cloud_quick_replies USING btree (empresa_id, is_active, sort_order, title, id)', false)
@@ -5400,8 +5407,9 @@ BEGIN
     IF NOT FOUND OR actual IS DISTINCT FROM expected.definition THEN
       RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='whatsapp_cloud_quick_replies_schema_unsafe';
     END IF;
+    canonical_indexes := canonical_indexes + 1;
   END LOOP;
-  IF pg_catalog.to_regclass('public.whatsapp_cloud_quick_replies') IS NOT NULL
+  IF relation_oid IS NOT NULL
      AND EXISTS (
        SELECT 1
          FROM pg_catalog.pg_index AS index_row
@@ -5410,6 +5418,10 @@ BEGIN
           AND NOT index_row.indisprimary
           AND index_class.relname NOT IN ('idx_whatsapp_cloud_quick_replies_tenant_shortcut','idx_whatsapp_cloud_quick_replies_list')
      )
+  THEN
+    RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='whatsapp_cloud_quick_replies_schema_unsafe';
+  END IF;
+  IF table_populated AND canonical_indexes <> 2
   THEN
     RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='whatsapp_cloud_quick_replies_schema_unsafe';
   END IF;
@@ -5468,10 +5480,23 @@ CREATE TABLE IF NOT EXISTS public.whatsapp_cloud_quick_replies (
   CONSTRAINT whatsapp_cloud_quick_replies_is_active_check CHECK (is_active OR NOT is_active),
   CONSTRAINT whatsapp_cloud_quick_replies_version_check CHECK (version > 0)
 );
-CREATE UNIQUE INDEX IF NOT EXISTS idx_whatsapp_cloud_quick_replies_tenant_shortcut
-  ON public.whatsapp_cloud_quick_replies (empresa_id, shortcut);
-CREATE INDEX IF NOT EXISTS idx_whatsapp_cloud_quick_replies_list
-  ON public.whatsapp_cloud_quick_replies (empresa_id, is_active, sort_order, title, id);
+DO $quick_replies_canonicalize_indexes$
+BEGIN
+  IF pg_catalog.to_regclass('public.idx_whatsapp_cloud_quick_replies_tenant_shortcut') IS NULL THEN
+    IF EXISTS (SELECT 1 FROM public.whatsapp_cloud_quick_replies) THEN
+      RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='whatsapp_cloud_quick_replies_schema_unsafe';
+    END IF;
+    CREATE UNIQUE INDEX idx_whatsapp_cloud_quick_replies_tenant_shortcut
+      ON public.whatsapp_cloud_quick_replies (empresa_id, shortcut);
+  END IF;
+  IF pg_catalog.to_regclass('public.idx_whatsapp_cloud_quick_replies_list') IS NULL THEN
+    IF EXISTS (SELECT 1 FROM public.whatsapp_cloud_quick_replies) THEN
+      RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='whatsapp_cloud_quick_replies_schema_unsafe';
+    END IF;
+    CREATE INDEX idx_whatsapp_cloud_quick_replies_list
+      ON public.whatsapp_cloud_quick_replies (empresa_id, is_active, sort_order, title, id);
+  END IF;
+END $quick_replies_canonicalize_indexes$;
 
 DO $quick_replies_postflight$
 DECLARE

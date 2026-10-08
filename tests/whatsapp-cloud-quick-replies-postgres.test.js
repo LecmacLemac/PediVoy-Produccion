@@ -96,6 +96,28 @@ async function constraintCatalog(pool) {
   return new Map(result.rows.map(row => [row.conname, row.definition]));
 }
 
+async function indexCatalog(pool) {
+  return (await pool.query(`SELECT c.oid::text oid,c.xmin::text xmin,c.relname,
+      pg_catalog.pg_get_indexdef(c.oid) definition,i.indisvalid,i.indisready,i.indislive
+    FROM pg_catalog.pg_class c JOIN pg_catalog.pg_index i ON i.indexrelid=c.oid
+    WHERE i.indrelid='whatsapp_cloud_quick_replies'::regclass AND NOT i.indisprimary
+    ORDER BY c.relname`)).rows;
+}
+
+async function tableSnapshot(pool) {
+  return {
+    relation: (await pool.query(`SELECT oid::text oid,xmin::text xmin
+      FROM pg_catalog.pg_class WHERE oid='whatsapp_cloud_quick_replies'::regclass`)).rows[0],
+    constraints: (await pool.query(`SELECT oid::text oid,xmin::text xmin,conname,
+        pg_catalog.pg_get_constraintdef(oid,true) definition
+      FROM pg_catalog.pg_constraint
+      WHERE conrelid='whatsapp_cloud_quick_replies'::regclass AND contype IN ('p','f','c','u','x')
+      ORDER BY conname`)).rows,
+    indexes: await indexCatalog(pool),
+    rows: (await pool.query(`SELECT xmin::text xmin,* FROM whatsapp_cloud_quick_replies ORDER BY id`)).rows,
+  };
+}
+
 async function assertCanonicalCatalog(pool) {
   assert.deepEqual(await constraintCatalog(pool), canonicalConstraints);
   assert.deepEqual((await pool.query(`SELECT c.relname,pg_catalog.pg_get_indexdef(c.oid) definition
@@ -120,6 +142,41 @@ test('migración canonicaliza tabla vacía compatible sin constraints y postflig
       FROM pg_catalog.pg_constraint WHERE conrelid='whatsapp_cloud_quick_replies'::regclass ORDER BY conname`)).rows, constraints);
     await assertCanonicalCatalog(pool);
   }, { prepare: pool => pool.query(bareQuickRepliesTableSql), migrate: false });
+});
+
+test('migración canonicaliza tabla vacía si falta uno o ambos índices requeridos', async () => {
+  for (const indexesToDrop of [
+    ['idx_whatsapp_cloud_quick_replies_tenant_shortcut'],
+    ['idx_whatsapp_cloud_quick_replies_list'],
+    ['idx_whatsapp_cloud_quick_replies_tenant_shortcut', 'idx_whatsapp_cloud_quick_replies_list'],
+  ]) {
+    await withDatabase(async pool => {
+      const relationBefore = (await pool.query(`SELECT oid::text oid,xmin::text xmin
+        FROM pg_catalog.pg_class WHERE oid='whatsapp_cloud_quick_replies'::regclass`)).rows[0];
+      for (const indexName of indexesToDrop) await pool.query(`DROP INDEX ${indexName}`);
+      await pool.query(migrationSql);
+      assert.deepEqual((await pool.query(`SELECT oid::text oid,xmin::text xmin
+        FROM pg_catalog.pg_class WHERE oid='whatsapp_cloud_quick_replies'::regclass`)).rows[0], relationBefore);
+      await assertCanonicalCatalog(pool);
+    });
+  }
+});
+
+test('migración rechaza tabla poblada si falta cualquiera de los índices y preserva catálogo y filas', async () => {
+  for (const indexName of [
+    'idx_whatsapp_cloud_quick_replies_tenant_shortcut',
+    'idx_whatsapp_cloud_quick_replies_list',
+  ]) {
+    await withDatabase(async pool => {
+      await seed(pool);
+      await pool.query(`INSERT INTO whatsapp_cloud_quick_replies
+        (empresa_id,shortcut,title,body,created_by,updated_by) VALUES (1,'segura','Segura','Texto',11,11)`);
+      await pool.query(`DROP INDEX ${indexName}`);
+      const before = await tableSnapshot(pool);
+      await assert.rejects(pool.query(migrationSql), error => error?.code === 'P0001' && error?.message === 'whatsapp_cloud_quick_replies_schema_unsafe');
+      assert.deepEqual(await tableSnapshot(pool), before);
+    });
+  }
 });
 
 test('migración rechaza tabla poblada sin constraints antes de mutar aunque la fila sea válida', async () => {
@@ -185,11 +242,9 @@ test('migración quick replies es idempotente, conserva OID/xmin y falla cerrada
     await seed(pool);
     await pool.query(`INSERT INTO whatsapp_cloud_quick_replies
       (empresa_id,shortcut,title,body,created_by,updated_by) VALUES (1,'hola','Hola','Texto',11,11)`);
-    const before = (await pool.query(`SELECT c.oid::text oid,c.xmin::text xmin FROM pg_class c WHERE c.oid='whatsapp_cloud_quick_replies'::regclass`)).rows[0];
-    const rowBefore = (await pool.query(`SELECT xmin::text xmin,* FROM whatsapp_cloud_quick_replies WHERE empresa_id=1 AND shortcut='hola'`)).rows[0];
+    const before = await tableSnapshot(pool);
     await pool.query(migrationSql);
-    assert.deepEqual((await pool.query(`SELECT c.oid::text oid,c.xmin::text xmin FROM pg_class c WHERE c.oid='whatsapp_cloud_quick_replies'::regclass`)).rows[0], before);
-    assert.deepEqual((await pool.query(`SELECT xmin::text xmin,* FROM whatsapp_cloud_quick_replies WHERE empresa_id=1 AND shortcut='hola'`)).rows[0], rowBefore);
+    assert.deepEqual(await tableSnapshot(pool), before);
 
     await pool.query('DROP INDEX idx_whatsapp_cloud_quick_replies_list');
     await pool.query('CREATE INDEX idx_whatsapp_cloud_quick_replies_list ON whatsapp_cloud_quick_replies(title)');
