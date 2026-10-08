@@ -1632,8 +1632,8 @@ CREATE TABLE IF NOT EXISTS pedido_pagos (
   CONSTRAINT uq_pedido_pagos_pedido_proveedor UNIQUE (pedido_id, proveedor)
 );
 
--- BEGIN COMPROBANTE CONCURRENCY MIGRATION
 COMMIT;
+-- BEGIN COMPROBANTE CONCURRENCY MIGRATION
 BEGIN;
 SET LOCAL search_path = public;
 SET LOCAL lock_timeout = '30s';

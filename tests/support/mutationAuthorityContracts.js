@@ -37,6 +37,7 @@ const PUBLIC_CASES = new Set([
   'src/routes/publicClientApp.js|POST|/auth/verify-otp',
   'src/routes/publicClientApp.js|POST|/profile',
   'src/routes/publicClientApp.js|POST|/auth/logout',
+  'src/routes/publicLegacyCatalog.js|POST|/contacto',
   'src/routes/publicLegacyPedidos.js|POST|/push/subscribe',
   'src/routes/publicLegacyPedidos.js|POST|/push/unsubscribe',
   'src/routes/tracking.js|POST|/update',
@@ -368,6 +369,25 @@ export function publicAuthorityContract({ root, caseId, endpointKey, row, eviden
     return proofResult({ caseId, endpointKey, testCase: `executed:${caseId}:source-contract`, assertions: [
       { name: 'tenant resolver used', ok: true }, { name: 'idempotency used', ok: true }, { name: 'transactional insert used', ok: true },
     ], results: { matchedRules: 3 } });
+  }
+
+  if (caseId === 'src/routes/publicLegacyCatalog.js|POST|/contacto') {
+    const required = [
+      /resolvePublicPedidoEmpresaId\s*\(/,
+      /consumeContactLookup\s*\(/,
+      /runInTransaction\s*\(\s*async\s+txQuery/,
+      /lockGeneralPhoneIdentity\s*\(\s*txQuery/,
+      /resolveTenantDeliveryPointByPhone\s*\(\s*txQuery/,
+    ];
+    const readOnly = !/\b(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\b/i.test(live);
+    if (!readOnly || !hasAll(live, required)) {
+      return result(false, 'lookup público POST sin tenant, rate limit, lock o contrato read-only', '');
+    }
+    return proofResult({ caseId, endpointKey, testCase: `executed:${caseId}:source-contract`,
+      assertions: [
+        ...required.map((pattern, index) => ({ name: `required public read assertion ${index + 1}`, ok: pattern.test(live) })),
+        { name: 'handler is read-only', ok: readOnly },
+      ], results: { matchedRules: required.length, readOnly } });
   }
 
   const required = rules.get(caseId);

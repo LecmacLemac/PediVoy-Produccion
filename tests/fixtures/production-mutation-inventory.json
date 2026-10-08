@@ -693,6 +693,17 @@
     }
   },
   {
+    "source": "src/routes/publicLegacyCatalog.js",
+    "method": "POST",
+    "path": "/contacto",
+    "classification": "publico_capability_explicita",
+    "authorityEvidence": {
+      "module": "tests/support/mutationAuthorityContracts.js",
+      "export": "publicAuthorityContract",
+      "case": "src/routes/publicLegacyCatalog.js|POST|/contacto"
+    }
+  },
+  {
     "source": "src/routes/publicLegacyPedidos.js",
     "method": "POST",
     "path": "/push/subscribe",
@@ -1176,6 +1187,48 @@
   },
   {
     "source": "src/routes/transferencias.js",
+    "method": "DELETE",
+    "path": "/:id",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/whatsappCloudInboxAdmin.js",
+    "method": "POST",
+    "path": "/conversations/search",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/whatsappCloudInboxAdmin.js",
+    "method": "POST",
+    "path": "/conversations/:conversationId/replies",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/whatsappCloudInboxAdmin.js",
+    "method": "POST",
+    "path": "/conversations/:conversationId/read",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/whatsappCloudInboxAdmin.js",
+    "method": "PATCH",
+    "path": "/conversations/:conversationId/state",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/whatsappCloudQuickRepliesAdmin.js",
+    "method": "POST",
+    "path": "/",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/whatsappCloudQuickRepliesAdmin.js",
+    "method": "PATCH",
+    "path": "/:id",
+    "classification": "admin_exacto"
+  },
+  {
+    "source": "src/routes/whatsappCloudQuickRepliesAdmin.js",
     "method": "DELETE",
     "path": "/:id",
     "classification": "admin_exacto"

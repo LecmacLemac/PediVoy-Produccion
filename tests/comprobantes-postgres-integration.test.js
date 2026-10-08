@@ -25,21 +25,21 @@ async function migrationSql() {
 
 test('migración declara claims persistentes y triggers de comprobantes/pagos', async () => {
   const sql = await migrationSql();
-  assert.match(sql, /CREATE OR REPLACE FUNCTION normalizar_comprobante_operacion/i);
+  assert.match(sql, /CREATE OR REPLACE FUNCTION public\.normalizar_comprobante_operacion/i);
   assert.match(sql, /PRIMARY KEY \(tenant_key, operacion_key\)/i);
   assert.match(sql, /LOCK TABLE comprobantes_transferencia/i);
   assert.match(sql, /ERRCODE\s*=\s*'23505'/i);
   assert.match(sql, /BEFORE INSERT OR UPDATE OF nro_operacion, empresa_id/i);
   assert.match(sql, /BEFORE INSERT OR UPDATE OR DELETE ON pedido_pagos/i);
   assert.match(sql, /FOR UPDATE/i);
-  assert.match(sql, /CREATE OR REPLACE FUNCTION validar_aprobacion_comprobante/i);
+  assert.match(sql, /CREATE OR REPLACE FUNCTION public\.validar_aprobacion_comprobante/i);
   assert.match(sql, /claim\.comprobante_id\s*=\s*NEW\.id/i);
   assert.match(sql, /BEFORE INSERT OR UPDATE\s+ON comprobantes_transferencia/i);
   assert.match(sql, /CREATE TABLE IF NOT EXISTS comprobante_pedido_aprobado_claims/i);
   assert.match(sql, /PRIMARY KEY \(tenant_key, pedido_id\)/i);
   assert.match(sql, /CONSTRAINT\s*=\s*'ct_one_approved_per_order'/i);
   assert.match(sql, /COALESCE\(NEW\.procesado, FALSE\)\s*=\s*TRUE/i);
-  assert.match(sql, /CREATE OR REPLACE FUNCTION serializar_pedido_pago_con_comprobante\(\)[\s\S]*COALESCE\(ct\.procesado, FALSE\)\s*=\s*TRUE/i);
+  assert.match(sql, /CREATE OR REPLACE FUNCTION public\.serializar_pedido_pago_con_comprobante\(\)[\s\S]*COALESCE\(ct\.procesado, FALSE\)\s*=\s*TRUE/i);
   assert.match(sql, /BEFORE INSERT OR UPDATE\s+ON comprobantes_transferencia/i);
   assert.doesNotMatch(sql, /IF NOT new_approved OR old_approved THEN/i);
   assert.doesNotMatch(sql, /OLD\.(?:estado_revision|validado|procesado)[\s\S]{0,300}RETURN NEW/i);
@@ -48,7 +48,7 @@ test('migración declara claims persistentes y triggers de comprobantes/pagos', 
 test('bloque de migración ejecutable envuelve lock, seed y triggers en transacción explícita', async () => {
   const sql = (await migrationSql()).trim();
   assert.match(sql, /^BEGIN;/i);
-  assert.match(sql, /^BEGIN;\s*SET LOCAL lock_timeout = '30s';\s*SET LOCAL statement_timeout = '5min';/i);
+  assert.match(sql, /^BEGIN;\s*SET LOCAL search_path = public;\s*SET LOCAL lock_timeout = '30s';\s*SET LOCAL statement_timeout = '5min';/i);
   assert.match(sql, /COMMIT;$/i);
   assert.ok(sql.indexOf('BEGIN;') < sql.indexOf('LOCK TABLE comprobantes_transferencia'));
   assert.ok(sql.indexOf('COMMIT;') > sql.indexOf('CREATE TRIGGER trg_serializar_pedido_pago_comprobante'));

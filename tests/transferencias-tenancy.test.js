@@ -158,7 +158,7 @@ test('migración runtime instala sin drift el bloque completo marcado de initDb.
   assert.match(sql, /WHERE source_message_id IS NOT NULL/);
   assert.doesNotMatch(sql, /UPDATE comprobantes_transferencia SET (?:dedupe|approval)/);
   assert.ok(statements.some(statement => statement.trim() === expectedBlock));
-  assert.match(sql, /CREATE OR REPLACE FUNCTION normalizar_comprobante_operacion/);
+  assert.match(sql, /CREATE OR REPLACE FUNCTION public\.normalizar_comprobante_operacion/);
   assert.match(sql, /CREATE TABLE IF NOT EXISTS comprobante_operacion_claims/);
   assert.match(sql, /CREATE TRIGGER trg_validar_aprobacion_comprobante/);
   assert.match(sql, /CREATE TRIGGER trg_serializar_pedido_pago_comprobante/);

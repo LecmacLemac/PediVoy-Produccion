@@ -47,7 +47,7 @@ test('authority evidence ownership/public es ejecutable, completa y falla ante d
     'publico_capability_explicita',
   ]);
   const protectedRows = inventory.filter(row => executableClasses.has(row.classification));
-  assert.equal(protectedRows.length, 32);
+  assert.equal(protectedRows.length, 33);
   for (const row of protectedRows) {
     assert.equal(row.authorityEvidence?.module, 'tests/support/mutationAuthorityContracts.js', key(row));
     assert.match(row.authorityEvidence?.export || '', /^(?:ownership|public)AuthorityContract$/, key(row));

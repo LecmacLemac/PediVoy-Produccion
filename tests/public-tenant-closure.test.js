@@ -73,15 +73,30 @@ test('legacy públicos exigen selector común antes de toda query de negocio y n
     app.use(mount === 'legacy' ? '/public' : '/api/public', mount === 'legacy'
       ? createPublicLegacyCatalogRouter({ query: fixture.query, withTransaction })
       : createPublicLandingRouter({ query: fixture.query, withTransaction }));
-    const paths = mount === 'legacy'
-      ? ['/productos', '/contacto?telefono=3531234567', '/ultimo-pedido?telefono=3531234567']
-      : ['/productos', '/pedidos/ultimo?telefono=3531234567'];
+    const requests = mount === 'legacy'
+      ? [
+          { path: '/productos' },
+          {
+            path: '/contacto',
+            options: {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ telefono: '3531234567' }),
+            },
+          },
+          { path: '/ultimo-pedido?telefono=3531234567' },
+        ]
+      : [{ path: '/productos' }, { path: '/pedidos/ultimo?telefono=3531234567' }];
 
     await serve(app, async (base) => {
-      for (const path of paths) {
-        const { response, body } = await jsonRequest(base, `${mount === 'legacy' ? '/public' : '/api/public'}${path}`);
-        assert.equal(response.status, 400, path);
-        assert.equal(body.code, 'PUBLIC_TENANT_UNRESOLVED', path);
+      for (const request of requests) {
+        const { response, body } = await jsonRequest(
+          base,
+          `${mount === 'legacy' ? '/public' : '/api/public'}${request.path}`,
+          request.options,
+        );
+        assert.equal(response.status, 400, request.path);
+        assert.equal(body.code, 'PUBLIC_TENANT_UNRESOLVED', request.path);
       }
     });
     assert.equal(businessCalls(fixture.calls).length, 0);

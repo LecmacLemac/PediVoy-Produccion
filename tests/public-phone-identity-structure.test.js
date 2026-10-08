@@ -21,7 +21,7 @@ test('estructura: resolución, lock global y consulta de negocio usan txQuery en
   assert.match(landing, /falta withTransaction\(fn\)/);
   assert.doesNotMatch(legacy, /work\(query\)/);
   assert.doesNotMatch(landing, /work\(query\)/);
-  assert.match(legacy, /router\.get\('\/contacto'[\s\S]*runInTransaction\(async txQuery[\s\S]*lockGeneralPhoneIdentity\(txQuery[\s\S]*resolveTenantDeliveryPointByPhone\(txQuery[\s\S]*const rows = await txQuery/);
+  assert.match(legacy, /router\.post\('\/contacto'[\s\S]*runInTransaction\(async txQuery[\s\S]*lockGeneralPhoneIdentity\(txQuery[\s\S]*resolveTenantDeliveryPointByPhone\(txQuery[\s\S]*const rows = await txQuery/);
   assert.match(legacy, /router\.get\('\/ultimo-pedido'[\s\S]*runInTransaction\(async txQuery[\s\S]*lockGeneralPhoneIdentity\(txQuery[\s\S]*resolveTenantDeliveryPointByPhone\(txQuery[\s\S]*let pedRows = await txQuery/);
   assert.match(landing, /router\.get\('\/pedidos\/ultimo'[\s\S]*runInTransaction\(async txQuery[\s\S]*lockGeneralPhoneIdentity\(txQuery[\s\S]*resolveTenantDeliveryPointByPhone\(txQuery[\s\S]*const rows = await txQuery/);
 

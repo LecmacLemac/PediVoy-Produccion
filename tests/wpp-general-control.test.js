@@ -329,7 +329,7 @@ function assertLegacyUpgradeContract(sql) {
     assert.match(sql, new RegExp(`ALTER COLUMN ${column} SET DEFAULT[\\s\\S]*ALTER COLUMN ${column} SET NOT NULL`, 'i'));
   }
   assert.match(sql, /ALTER COLUMN id SET DEFAULT TRUE[\s\S]*ALTER COLUMN id SET NOT NULL/i);
-  assert.match(sql, /ALTER COLUMN updated_at SET DEFAULT NOW\(\)[\s\S]*ALTER COLUMN updated_at SET NOT NULL/i);
+  assert.match(sql, /ALTER COLUMN updated_at SET DEFAULT (?:pg_catalog\.)?NOW\(\)[\s\S]*ALTER COLUMN updated_at SET NOT NULL/i);
   assert.match(sql, /CREATE UNIQUE INDEX IF NOT EXISTS wpp_general_control_singleton_id_uidx[\s\S]*\(id\)/i);
   assert.match(sql, /wpp_general_control_singleton_id[\s\S]*pg_get_constraintdef\s*\(\s*oid\s*\)[\s\S]*DROP CONSTRAINT IF EXISTS wpp_general_control_singleton_id/i);
   assert.match(sql, /IF NOT EXISTS[\s\S]*wpp_general_reset_sequence_order[\s\S]*reset_failed_seq\s*<=\s*reset_started_seq/i);

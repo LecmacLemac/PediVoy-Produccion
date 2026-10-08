@@ -232,7 +232,7 @@ test('esquema canónico declara y migra chat y transporte de comprobantes y outb
   assert.match(receiptsCreate, /ALTER TABLE comprobantes_transferencia[\s\S]*ADD COLUMN IF NOT EXISTS source_chat_jid TEXT/i);
   assert.match(receiptsCreate, /ADD COLUMN IF NOT EXISTS transport_origin TEXT/i);
   assert.match(outboxCreate, /transport_origin\s+TEXT/i);
-  assert.match(outboxCreate, /ALTER TABLE wpp_outbox[\s\S]*ADD COLUMN IF NOT EXISTS transport_origin TEXT/i);
+  assert.match(outboxCreate, /ALTER TABLE public\.wpp_outbox[\s\S]*ADD COLUMN IF NOT EXISTS transport_origin TEXT/i);
 });
 
 test('mensaje profesional detalla solo datos confiables del comprobante', () => {
