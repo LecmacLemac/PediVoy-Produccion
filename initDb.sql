@@ -1592,6 +1592,79 @@ ALTER TABLE comprobantes_transferencia
   ADD COLUMN IF NOT EXISTS archivo_size BIGINT,
   ADD COLUMN IF NOT EXISTS archivo_sha256 TEXT;
 
+-- BEGIN COMPROBANTE DURABLE STORAGE MIGRATION
+COMMIT;
+BEGIN;
+SET LOCAL search_path = public;
+SET LOCAL lock_timeout = '30s';
+SET LOCAL statement_timeout = '5min';
+DO $durable_receipt_constraints$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conrelid = 'comprobantes_transferencia'::regclass
+       AND conname = 'ck_ct_archivo_metadata_consistente'
+  ) THEN
+    ALTER TABLE comprobantes_transferencia
+      ADD CONSTRAINT ck_ct_archivo_metadata_consistente CHECK (
+        (archivo_binario IS NULL AND archivo_mimetype IS NULL AND archivo_size IS NULL AND archivo_sha256 IS NULL)
+        OR
+        (archivo_binario IS NOT NULL AND archivo_mimetype IS NOT NULL AND archivo_size IS NOT NULL
+          AND archivo_sha256 IS NOT NULL AND empresa_id IS NOT NULL AND empresa_id > 0)
+      ) NOT VALID;
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conrelid = 'comprobantes_transferencia'::regclass
+       AND conname = 'ck_ct_archivo_size_real'
+  ) THEN
+    ALTER TABLE comprobantes_transferencia
+      ADD CONSTRAINT ck_ct_archivo_size_real CHECK (
+        archivo_binario IS NULL OR archivo_size = pg_catalog.octet_length(archivo_binario)
+      ) NOT VALID;
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conrelid = 'comprobantes_transferencia'::regclass
+       AND conname = 'ck_ct_archivo_size_cap'
+  ) THEN
+    ALTER TABLE comprobantes_transferencia
+      ADD CONSTRAINT ck_ct_archivo_size_cap CHECK (
+        archivo_binario IS NULL OR (archivo_size > 0 AND archivo_size <= 10485760)
+      ) NOT VALID;
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conrelid = 'comprobantes_transferencia'::regclass
+       AND conname = 'ck_ct_archivo_mimetype'
+  ) THEN
+    ALTER TABLE comprobantes_transferencia
+      ADD CONSTRAINT ck_ct_archivo_mimetype CHECK (
+        archivo_binario IS NULL OR archivo_mimetype IN ('application/pdf', 'image/jpeg', 'image/png', 'image/webp')
+      ) NOT VALID;
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conrelid = 'comprobantes_transferencia'::regclass
+       AND conname = 'ck_ct_archivo_sha256'
+  ) THEN
+    ALTER TABLE comprobantes_transferencia
+      ADD CONSTRAINT ck_ct_archivo_sha256 CHECK (
+        archivo_binario IS NULL OR archivo_sha256 ~ '^[a-f0-9]{64}$'
+      ) NOT VALID;
+  END IF;
+END
+$durable_receipt_constraints$;
+ALTER TABLE comprobantes_transferencia VALIDATE CONSTRAINT ck_ct_archivo_metadata_consistente;
+ALTER TABLE comprobantes_transferencia VALIDATE CONSTRAINT ck_ct_archivo_size_real;
+ALTER TABLE comprobantes_transferencia VALIDATE CONSTRAINT ck_ct_archivo_size_cap;
+ALTER TABLE comprobantes_transferencia VALIDATE CONSTRAINT ck_ct_archivo_mimetype;
+ALTER TABLE comprobantes_transferencia VALIDATE CONSTRAINT ck_ct_archivo_sha256;
+COMMIT;
+-- END COMPROBANTE DURABLE STORAGE MIGRATION
+BEGIN;
+SET LOCAL search_path = public;
+
 
 CREATE TABLE IF NOT EXISTS pedido_pagos (
   id                  SERIAL PRIMARY KEY,

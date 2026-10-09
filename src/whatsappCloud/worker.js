@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { pool, query, runWithSensitiveDbQueries } from '../db.js';
 import { createWhatsAppContextResolver } from '../handlers.js';
 import { decryptSecret } from '../services/facturacionService.js';
-import { ensureComprobantesTransferenciaSchema } from '../transferenciasServices.js';
+
 import { enqueueWppOutboxCorrelatedReply } from '../wpp/enqueue.js';
 import { createCloudInboundBotAdapter } from './botAdapter.js';
 import { createWhatsAppCloudCombinedConsumer } from './combinedConsumer.js';
@@ -73,20 +73,9 @@ const combinedConsumer = createWhatsAppCloudCombinedConsumer({
   outbound: outboundConsumer,
   logger: console,
 });
-let receiptSchemaReady = false;
-const schemaReadyConsumer = {
-  async processOnce(options) {
-    if (!receiptSchemaReady) {
-      await ensureComprobantesTransferenciaSchema(query);
-      receiptSchemaReady = true;
-    }
-    return combinedConsumer.processOnce(options);
-  },
-  shutdown: options => combinedConsumer.shutdown(options),
-};
 
 const runtime = createWhatsAppCloudWorkerRuntime({
-  consumer: schemaReadyConsumer,
+  consumer: combinedConsumer,
   closePool: () => pool.end(),
   intervalMs: process.env.WHATSAPP_CLOUD_POLL_MS,
   shutdownTimeoutMs: process.env.WHATSAPP_CLOUD_SHUTDOWN_MS,

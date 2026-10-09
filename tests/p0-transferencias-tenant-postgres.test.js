@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 
 import { asociarComprobantePedidoPg, insertarComprobantePg } from '../src/transferenciasServices.js';
 import { withIsolatedPostgres, postgresOptions } from './support/isolated-postgres.js';
@@ -122,12 +123,12 @@ test('PostgreSQL real: asociación manual/automática cierra tenant, es transacc
 
     await t.test('Cloud persiste bytea y metadatos en la misma fila transaccional', async () => {
       const bytes = Buffer.from('%PDF-real-durable');
-      const hash = 'e'.repeat(64);
+      const actualHash = createHash('sha256').update(bytes).digest('hex');
       const result = await insertarComprobantePg({
         telefono: '5493510000000', imagen_path: '/Transferencia/cloud.pdf',
         fecha: new Date('2026-10-09T12:00:00Z'), empresaId: 2,
-        sourceMessageId: 'cloud-durable-real', fileHash: hash,
-        archivoBinario: bytes, mimetype: 'application/pdf', bytes: bytes.length,
+        sourceMessageId: 'cloud-durable-real', fileHash: 'e'.repeat(64), transportOrigin: 'cloud',
+        archivoBinario: bytes, mimetype: 'application/pdf', bytes: 999999,
       }, async (sql, params = []) => (await pool.query(sql, params)).rows, { withTransaction });
 
       const stored = (await pool.query(`
@@ -138,7 +139,27 @@ test('PostgreSQL real: asociación manual/automática cierra tenant, es transacc
       assert.deepEqual(stored.archivo_binario, bytes);
       assert.equal(stored.archivo_mimetype, 'application/pdf');
       assert.equal(Number(stored.archivo_size), bytes.length);
-      assert.equal(stored.archivo_sha256, hash);
+      assert.equal(stored.archivo_sha256, actualHash);
+    });
+
+    await t.test('Cloud serializa cuota por tenant y rechaza superar 1 GiB dentro de la transacción', async () => {
+      await pool.query(`
+        INSERT INTO comprobantes_transferencia
+          (telefono, empresa_id, archivo_binario, archivo_mimetype, archivo_size, archivo_sha256)
+        VALUES ('seed', 2, decode('00', 'hex'), 'image/jpeg', $1, $2)
+      `, [1024 * 1024 * 1024, '0'.repeat(64)]);
+      await assert.rejects(insertarComprobantePg({
+        telefono: '5493510000000', imagen_path: '/Transferencia/quota-real.pdf',
+        fecha: new Date(), empresaId: 2, transportOrigin: 'cloud',
+        sourceMessageId: 'cloud-quota-real', archivoBinario: Buffer.from('%PDF-more'),
+        mimetype: 'application/pdf',
+      }, async (sql, params = []) => (await pool.query(sql, params)).rows, { withTransaction }),
+      error => error?.code === 'cuota_comprobantes_durables_excedida');
+      const rows = await pool.query(
+        'SELECT COUNT(*)::int AS c FROM comprobantes_transferencia WHERE source_message_id=$1',
+        ['cloud-quota-real'],
+      );
+      assert.equal(rows.rows[0].c, 0);
     });
 
     await t.test('dos vinculaciones automáticas del mismo evento reservan una sola fila durable', async () => {

@@ -1,10 +1,18 @@
 // src/transferenciasServices.js — PostgreSQL (Versión Final Completa)
 import { pool, query, withTransaction as dbWithTransaction } from './db.js';
 import { readFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { enqueueWppOutbox, enqueueWppOutboxCorrelatedReply } from './wpp/enqueue.js';
 
 const MIGRATION_START = '-- BEGIN COMPROBANTE CONCURRENCY MIGRATION';
 const MIGRATION_END = '-- END COMPROBANTE CONCURRENCY MIGRATION';
+const DURABLE_MIGRATION_START = '-- BEGIN COMPROBANTE DURABLE STORAGE MIGRATION';
+const DURABLE_MIGRATION_END = '-- END COMPROBANTE DURABLE STORAGE MIGRATION';
+const DURABLE_RECEIPT_MAX_BYTES = 10 * 1024 * 1024;
+const DURABLE_RECEIPT_TENANT_QUOTA_BYTES = 1024 * 1024 * 1024;
+const DURABLE_RECEIPT_MIME_TYPES = new Set([
+  'application/pdf', 'image/jpeg', 'image/png', 'image/webp',
+]);
 
 export async function readComprobanteConcurrencyMigration() {
   const initSql = await readFile(new URL('../initDb.sql', import.meta.url), 'utf8');
@@ -12,6 +20,14 @@ export async function readComprobanteConcurrencyMigration() {
   const end = initSql.indexOf(MIGRATION_END);
   if (start < 0 || end <= start) throw new Error('Bloque de migración de comprobantes ausente en initDb.sql');
   return initSql.slice(start + MIGRATION_START.length, end).trim();
+}
+
+async function readComprobanteDurableStorageMigration() {
+  const initSql = await readFile(new URL('../initDb.sql', import.meta.url), 'utf8');
+  const start = initSql.indexOf(DURABLE_MIGRATION_START);
+  const end = initSql.indexOf(DURABLE_MIGRATION_END);
+  if (start < 0 || end <= start) throw new Error('Bloque durable de comprobantes ausente en initDb.sql');
+  return initSql.slice(start + DURABLE_MIGRATION_START.length, end).trim();
 }
 
 export async function ensureComprobantesTransferenciaSchema(queryFn = query) {
@@ -31,6 +47,7 @@ export async function ensureComprobantesTransferenciaSchema(queryFn = query) {
   await queryFn(`CREATE UNIQUE INDEX IF NOT EXISTS uq_ct_file_hash_new
     ON comprobantes_transferencia ((COALESCE(empresa_id, 0)), dedupe_file_hash)
     WHERE dedupe_file_hash IS NOT NULL`);
+  await queryFn(await readComprobanteDurableStorageMigration());
   await queryFn(await readComprobanteConcurrencyMigration());
 }
 
@@ -633,21 +650,41 @@ async function insertarComprobantePgWork({
   const telClean = digitsOnly(telefono) || null;
   const durableBytes = archivoBinario == null ? null : archivoBinario;
   const durableMime = durableBytes == null ? null : String(mimetype || '').trim().toLowerCase();
-  const durableSize = durableBytes == null ? null : Number(bytes);
-  const durableHash = durableBytes == null ? null : String(fileHash || '').trim().toLowerCase();
-  const configuredMaxBytes = Number(process.env.TRANSFERENCIA_MAX_BYTES || 10 * 1024 * 1024);
-  const maxBytes = Number.isSafeInteger(configuredMaxBytes) && configuredMaxBytes > 0
-    ? configuredMaxBytes
-    : 10 * 1024 * 1024;
+  const durableSize = Buffer.isBuffer(durableBytes) ? durableBytes.length : null;
+  const durableHash = Buffer.isBuffer(durableBytes)
+    ? createHash('sha256').update(durableBytes).digest('hex')
+    : null;
+  const normalizedTransportOrigin = ['general', 'company', 'cloud'].includes(String(transportOrigin || '').trim())
+    ? String(transportOrigin).trim()
+    : null;
+  const explicitEmpresaId = Number(empresaId || 0) || null;
   if (durableBytes != null && (
     !Buffer.isBuffer(durableBytes)
-    || !['application/pdf', 'image/jpeg', 'image/png', 'image/webp'].includes(durableMime)
-    || !Number.isSafeInteger(durableSize)
-    || durableSize !== durableBytes.length
+    || !DURABLE_RECEIPT_MIME_TYPES.has(durableMime)
     || durableSize <= 0
-    || durableSize > maxBytes
-    || !/^[a-f0-9]{64}$/.test(durableHash)
+    || durableSize > DURABLE_RECEIPT_MAX_BYTES
   )) approvalFailure('archivo_comprobante_invalido');
+  if (normalizedTransportOrigin === 'cloud' && !explicitEmpresaId) {
+    approvalFailure('empresa_comprobante_invalida');
+  }
+  const effectiveFileHash = durableHash || (fileHash ? String(fileHash).trim().toLowerCase() : null);
+
+  if (durableBytes != null) {
+    await queryFn('SELECT pg_catalog.pg_advisory_xact_lock($1, $2)', [1129270868, explicitEmpresaId]);
+    const quotaRows = await queryFn(
+      `SELECT COALESCE(SUM(archivo_size), 0)::BIGINT AS durable_bytes
+         FROM comprobantes_transferencia
+        WHERE empresa_id = $1
+          AND archivo_binario IS NOT NULL`,
+      [explicitEmpresaId],
+    );
+    const usedBytes = Number(quotaRows[0]?.durable_bytes || 0);
+    if (!Number.isSafeInteger(usedBytes)
+        || usedBytes < 0
+        || usedBytes + durableSize > DURABLE_RECEIPT_TENANT_QUOTA_BYTES) {
+      approvalFailure('cuota_comprobantes_durables_excedida');
+    }
+  }
   // Usamos los últimos 10 dígitos para mejorar el "match" (evita problemas con 549 vs 0)
   const telSuffix = telClean ? telClean.slice(-10) : null;
 
@@ -655,7 +692,6 @@ async function insertarComprobantePgWork({
   // Buscamos el último pedido asociado a este teléfono.
   // Prioridad: El más reciente (ORDER BY id DESC).
   // Estados: Incluimos 'entregado' para clientes que pagan post-entrega.
-  const explicitEmpresaId = Number(empresaId || 0) || null;
   const sqlMatch = explicitEmpresaId ? `
     SELECT 
       p.id AS pedido_id, 
@@ -785,11 +821,9 @@ async function insertarComprobantePgWork({
         pendingReason ? (ambiguous ? 100 : 70) : 0,
         pendingReason, pendingReason,
         sourceMessageId ? String(sourceMessageId) : null,
-        fileHash ? String(fileHash).toLowerCase() : null,
+        effectiveFileHash,
         /^[^\s@]+@(c\.us|lid)$/i.test(String(replyJid || '').trim()) ? String(replyJid).trim() : null,
-        ['general', 'company', 'cloud'].includes(String(transportOrigin || '').trim())
-          ? String(transportOrigin).trim()
-          : null,
+        normalizedTransportOrigin,
         durableBytes,
         durableMime,
         durableSize,
@@ -807,7 +841,7 @@ async function insertarComprobantePgWork({
        WHERE empresa_id IS NOT DISTINCT FROM $1
          AND ${bySource ? 'source_message_id = $2' : 'dedupe_file_hash = $2'}
        ORDER BY id DESC LIMIT 1`,
-      [eid, bySource ? String(sourceMessageId) : String(fileHash).toLowerCase()],
+      [eid, bySource ? String(sourceMessageId) : effectiveFileHash],
     );
     return {
       duplicate: true,
@@ -822,7 +856,7 @@ async function insertarComprobantePgWork({
     pedido_monto: pedidoEncontrado.monto == null ? null : Number(pedidoEncontrado.monto),
     pedido_metodo_pago: pedidoEncontrado.metodo_pago || null,
     pedido_pago_acreditado: pedidoEncontrado.pago_acreditado === true,
-    file_hash: fileHash ? String(fileHash).toLowerCase() : null,
+    file_hash: effectiveFileHash,
     ambiguous,
     association_reason: pendingReason,
   };

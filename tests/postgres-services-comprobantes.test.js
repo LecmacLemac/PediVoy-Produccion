@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 
 import { saveComprobante } from '../src/postgresServices.js';
-import { insertarComprobantePg } from '../src/transferenciasServices.js';
+import { ensureComprobantesTransferenciaSchema, insertarComprobantePg } from '../src/transferenciasServices.js';
 
 test('saveComprobante deriva tenant del pedido y deja la operación al trigger de claims', async () => {
   const calls = [];
@@ -79,9 +81,10 @@ test('insertarComprobante solo deduplica constraints esperadas y busca por tenan
   );
 });
 
-test('insertarComprobante persiste binario Cloud y metadatos en la misma fila', async () => {
+test('insertarComprobante deriva hash y tamaño del Buffer durable dentro del servicio', async () => {
   const bytes = Buffer.from('%PDF-durable');
-  const hash = 'c'.repeat(64);
+  const callerHash = 'c'.repeat(64);
+  const actualHash = createHash('sha256').update(bytes).digest('hex');
   let insertCall;
   const result = await insertarComprobantePg({
     telefono: '3510000000',
@@ -89,11 +92,13 @@ test('insertarComprobante persiste binario Cloud y metadatos en la misma fila', 
     fecha: new Date('2026-10-09T12:00:00Z'),
     empresaId: 7,
     sourceMessageId: 'wamid.durable-row',
-    fileHash: hash,
+    fileHash: callerHash,
     archivoBinario: bytes,
     mimetype: 'application/pdf',
-    bytes: bytes.length,
+    bytes: 999999,
   }, async (sql, params) => {
+    if (sql.includes('pg_advisory_xact_lock')) return [];
+    if (sql.includes('SUM(archivo_size)')) return [{ durable_bytes: 0 }];
     if (sql.includes('FROM pedidos')) return [];
     if (sql.includes('INSERT INTO comprobantes_transferencia')) {
       insertCall = { sql, params };
@@ -107,12 +112,13 @@ test('insertarComprobante persiste binario Cloud y metadatos en la misma fila', 
   assert.match(insertCall.sql, /archivo_mimetype/);
   assert.match(insertCall.sql, /archivo_size/);
   assert.match(insertCall.sql, /archivo_sha256/);
-  assert.deepEqual(insertCall.params.slice(-4), [bytes, 'application/pdf', bytes.length, hash]);
+  assert.deepEqual(insertCall.params.slice(-4), [bytes, 'application/pdf', bytes.length, actualHash]);
+  assert.equal(insertCall.params[11], actualHash);
 });
 
-test('insertarComprobante rechaza el binario durable sobredimensionado antes de consultar PostgreSQL', async () => {
+test('insertarComprobante usa cap absoluto de 10 MiB aunque el entorno intente ampliarlo', async () => {
   const previous = process.env.TRANSFERENCIA_MAX_BYTES;
-  process.env.TRANSFERENCIA_MAX_BYTES = '3';
+  process.env.TRANSFERENCIA_MAX_BYTES = String(100 * 1024 * 1024);
   let queries = 0;
   try {
     await assert.rejects(insertarComprobantePg({
@@ -121,9 +127,9 @@ test('insertarComprobante rechaza el binario durable sobredimensionado antes de 
       fecha: new Date(),
       empresaId: 7,
       fileHash: 'd'.repeat(64),
-      archivoBinario: Buffer.alloc(4),
+      archivoBinario: Buffer.alloc(10 * 1024 * 1024 + 1),
       mimetype: 'image/jpeg',
-      bytes: 4,
+      bytes: 1,
     }, async () => {
       queries += 1;
       return [];
@@ -133,4 +139,50 @@ test('insertarComprobante rechaza el binario durable sobredimensionado antes de 
     if (previous === undefined) delete process.env.TRANSFERENCIA_MAX_BYTES;
     else process.env.TRANSFERENCIA_MAX_BYTES = previous;
   }
+});
+
+test('Cloud durable exige tenant positivo y aplica lock antes de cuota e INSERT', async () => {
+  const bytes = Buffer.from('%PDF-quota');
+  await assert.rejects(insertarComprobantePg({
+    telefono: '351', imagen_path: '/Transferencia/no-tenant.pdf', fecha: new Date(),
+    transportOrigin: 'cloud', archivoBinario: bytes, mimetype: 'application/pdf',
+  }, async () => []), error => error?.code === 'empresa_comprobante_invalida');
+
+  const calls = [];
+  await assert.rejects(insertarComprobantePg({
+    telefono: '351', imagen_path: '/Transferencia/quota.pdf', fecha: new Date(), empresaId: 7,
+    transportOrigin: 'cloud', archivoBinario: bytes, mimetype: 'application/pdf',
+  }, async (sql, params) => {
+    calls.push({ sql, params });
+    if (sql.includes('pg_advisory_xact_lock')) return [];
+    if (sql.includes('SUM(archivo_size)')) return [{ durable_bytes: 1024 * 1024 * 1024 }];
+    throw new Error('no debe superar la cuota');
+  }), error => error?.code === 'cuota_comprobantes_durables_excedida');
+
+  assert.match(calls[0].sql, /pg_advisory_xact_lock/i);
+  assert.match(calls[1].sql, /SUM\(archivo_size\)/i);
+  assert.equal(calls.some(call => /INSERT INTO comprobantes_transferencia/i.test(call.sql)), false);
+});
+
+test('initDb y ensure instalan constraints durables idempotentes y validados', async () => {
+  const initSql = await readFile(new URL('../initDb.sql', import.meta.url), 'utf8');
+  for (const constraint of [
+    'ck_ct_archivo_metadata_consistente',
+    'ck_ct_archivo_size_real',
+    'ck_ct_archivo_size_cap',
+    'ck_ct_archivo_mimetype',
+    'ck_ct_archivo_sha256',
+  ]) {
+    assert.match(initSql, new RegExp(`ADD CONSTRAINT ${constraint}[\\s\\S]+NOT VALID`, 'i'));
+    assert.match(initSql, new RegExp(`VALIDATE CONSTRAINT ${constraint}`, 'i'));
+  }
+  assert.match(initSql, /octet_length\(archivo_binario\)/i);
+  assert.match(initSql, /archivo_size\s*<=\s*10485760/i);
+  assert.match(initSql, /application\/pdf[\s\S]+image\/jpeg[\s\S]+image\/png[\s\S]+image\/webp/i);
+
+  const calls = [];
+  await ensureComprobantesTransferenciaSchema(async sql => { calls.push(sql); return []; });
+  const combined = calls.join('\n');
+  assert.match(combined, /ck_ct_archivo_metadata_consistente/i);
+  assert.match(combined, /VALIDATE CONSTRAINT ck_ct_archivo_sha256/i);
 });

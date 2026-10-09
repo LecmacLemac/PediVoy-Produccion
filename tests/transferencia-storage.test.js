@@ -179,7 +179,43 @@ test('descarga el binario durable desde PostgreSQL aunque el archivo local no ex
     assert.equal(response.headers.get('content-type'), 'application/pdf');
     assert.equal(response.headers.get('content-length'), String(bytes.length));
     assert.match(response.headers.get('content-disposition'), /^attachment;/);
+    assert.equal(response.headers.get('cache-control'), 'private, no-store');
+    assert.equal(response.headers.get('referrer-policy'), 'no-referrer');
+    assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
     assert.deepEqual(Buffer.from(await response.arrayBuffer()), bytes);
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('no materializa ni sirve un BYTEA durable mayor al hard cap', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pedivoy-transfer-db-oversized-'));
+  const app = express();
+  app.use('/Transferencia', createTransferenciaStorageRouter({
+    storageDir: dir,
+    withAuth: (req, _res, next) => { req.user = { role: 'admin', empresa_id: 7 }; next(); },
+    checkLicencia: (_req, _res, next) => next(),
+    query: async sql => {
+      assert.match(sql, /CASE[\s\S]+octet_length\(archivo_binario\)[\s\S]+archivo_binario/is);
+      return [{
+        id: 10,
+        archivo_binario: null,
+        archivo_binario_presente: true,
+        archivo_size_real: 10 * 1024 * 1024 + 1,
+        archivo_mimetype: 'application/pdf',
+        archivo_size: 10 * 1024 * 1024 + 1,
+        archivo_sha256: 'a'.repeat(64),
+      }];
+    },
+    isSuper: () => false,
+  }));
+  const server = http.createServer(app);
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/Transferencia/receipt.pdf`);
+    assert.equal(response.status, 500);
+    assert.deepEqual(await response.json(), { error: 'Archivo durable inválido' });
   } finally {
     await new Promise(resolve => server.close(resolve));
     fs.rmSync(dir, { recursive: true, force: true });
@@ -270,4 +306,35 @@ test('WhatsApp Cloud entrega bytes y metadatos al INSERT durable del comprobante
   assert.equal(insertInput.mimetype, 'image/jpeg');
   assert.equal(insertInput.bytes, bytes.length);
   assert.match(insertInput.fileHash, /^[a-f0-9]{64}$/);
+});
+
+test('WhatsApp Cloud no escribe copia local y persiste aunque el filesystem sea read-only', async () => {
+  const bytes = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
+  let diskWrites = 0;
+  let insertInput;
+  const result = await procesarArchivoTransferenciaPg(
+    { buffer: bytes, mimetype: 'image/jpeg' },
+    '3510000000',
+    {
+      empresaId: 7,
+      sourceMessageId: 'wamid.no-local-copy',
+      transportOrigin: 'cloud',
+      deps: {
+        saveFileToDisk: async () => {
+          diskWrites += 1;
+          throw Object.assign(new Error('read-only filesystem'), { code: 'EROFS' });
+        },
+        insertarComprobantePg: async input => {
+          insertInput = input;
+          return { duplicate: true };
+        },
+      },
+    }
+  );
+
+  assert.equal(result.reason, 'duplicate_event_or_file');
+  assert.equal(diskWrites, 0);
+  assert.equal(insertInput.archivoBinario, bytes);
+  assert.equal(insertInput.bytes, bytes.length);
+  assert.match(insertInput.imagen_path, /^\/Transferencia\/comp-[0-9a-f-]{36}\.jpg$/i);
 });

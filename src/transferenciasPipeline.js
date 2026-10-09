@@ -509,6 +509,19 @@ export async function saveFileToDisk({ buffer, base64, originalName, mimetype },
   throw new Error('No se pudo reservar un nombre de comprobante único');
 }
 
+function createDurableFileDescriptor({ buffer, mimetype }, randomId = randomUUID) {
+  const ext = receiptExtensionForMime(mimetype);
+  const filename = `comp-${randomId()}.${ext}`;
+  return {
+    absolutePath: null,
+    relativePath: `/${CONFIG.DIR_NAME}/${filename}`,
+    filename,
+    mimetype,
+    ext,
+    size: buffer.length,
+  };
+}
+
 async function convertPdfFirstPageWithPdftoppm({ buffer, validation }, {
   execFileImpl = execFileAsync,
   scratchRoot = os.tmpdir(),
@@ -597,7 +610,9 @@ async function prepareImageForAI(fileData, {
     }
 
     // Si ya es imagen, la leemos en base64
-    const raw = await fs.promises.readFile(fileData.absolutePath);
+    const raw = Buffer.isBuffer(fileData.buffer)
+      ? fileData.buffer
+      : await fs.promises.readFile(fileData.absolutePath);
     return {
       base64: raw.toString('base64'),
       mimeType: fileData.mimetype?.startsWith('image/') ? fileData.mimetype : 'image/jpeg'
@@ -670,9 +685,12 @@ export async function procesarArchivoTransferenciaPg(filePayload, telefono, {
   };
 
   try {
-    // 1. Guardar archivo
+    // 1. Cloud usa PostgreSQL como almacenamiento durable; sólo los transportes
+    // históricos conservan el fallback de filesystem.
     await assertLease();
-    savedFile = await services.saveFileToDisk(filePayload, telefono);
+    savedFile = transportOrigin === 'cloud'
+      ? createDurableFileDescriptor(filePayload)
+      : await services.saveFileToDisk(filePayload, telefono);
     const fileHash = createHash('sha256').update(filePayload.buffer).digest('hex');
 
     // 2. Registrar en DB (Con Vinculación Automática)
@@ -693,7 +711,7 @@ export async function procesarArchivoTransferenciaPg(filePayload, telefono, {
     });
 
     if (registroDB?.duplicate) {
-      await fs.promises.unlink(savedFile.absolutePath).catch(() => {});
+      if (savedFile.absolutePath) await fs.promises.unlink(savedFile.absolutePath).catch(() => {});
       if (CONFIG.DEBUG) console.timeEnd(logPrefix);
       return { ok: false, handled: true, saved: true, duplicate: true, reason: 'duplicate_event_or_file' };
     }
@@ -786,7 +804,7 @@ export async function procesarArchivoTransferenciaPg(filePayload, telefono, {
     } else {
       console.error(`${logPrefix} ERROR FATAL:`, error);
     }
-    if (savedFile && !registroDB?.id) {
+    if (savedFile?.absolutePath && !registroDB?.id) {
       await fs.promises.unlink(savedFile.absolutePath).catch(() => {});
     }
     try {

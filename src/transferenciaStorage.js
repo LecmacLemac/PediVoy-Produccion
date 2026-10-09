@@ -6,6 +6,17 @@ import { isSafeStorageFilename, downloadStorageFile } from './privateStorage.js'
 const DURABLE_RECEIPT_MIME_TYPES = new Set([
   'application/pdf', 'image/jpeg', 'image/png', 'image/webp',
 ]);
+const DURABLE_RECEIPT_MAX_BYTES = 10 * 1024 * 1024;
+const DURABLE_RECEIPT_SELECT = `id,
+  CASE
+    WHEN archivo_binario IS NOT NULL
+     AND octet_length(archivo_binario) <= ${DURABLE_RECEIPT_MAX_BYTES}
+    THEN archivo_binario
+    ELSE NULL
+  END AS archivo_binario,
+  archivo_binario IS NOT NULL AS archivo_binario_presente,
+  CASE WHEN archivo_binario IS NULL THEN NULL ELSE octet_length(archivo_binario) END AS archivo_size_real,
+  archivo_mimetype, archivo_size, archivo_sha256`;
 
 export function resolveTransferenciaStorageDir({ projectDir, env = process.env } = {}) {
   if (!projectDir) throw new Error('resolveTransferenciaStorageDir: falta projectDir');
@@ -49,7 +60,7 @@ export function createTransferenciaStorageRouter({ storageDir, withAuth, checkLi
 
       const rows = superUser
         ? await query(
-            `SELECT id, archivo_binario, archivo_mimetype, archivo_size, archivo_sha256
+            `SELECT ${DURABLE_RECEIPT_SELECT}
                FROM comprobantes_transferencia
               WHERE empresa_id IS NOT NULL
                 AND (
@@ -60,7 +71,7 @@ export function createTransferenciaStorageRouter({ storageDir, withAuth, checkLi
             [filename],
           )
         : await query(
-            `SELECT id, archivo_binario, archivo_mimetype, archivo_size, archivo_sha256
+            `SELECT ${DURABLE_RECEIPT_SELECT}
                FROM comprobantes_transferencia
               WHERE empresa_id = $2
                 AND (
@@ -73,13 +84,21 @@ export function createTransferenciaStorageRouter({ storageDir, withAuth, checkLi
       if (!rows.length) return res.status(404).json({ error: 'Archivo no encontrado' });
 
       const receipt = rows[0];
+      if (receipt.archivo_binario_presente === true && !Buffer.isBuffer(receipt.archivo_binario)) {
+        return res.status(500).json({ error: 'Archivo durable inválido' });
+      }
       if (Buffer.isBuffer(receipt.archivo_binario)) {
         const mimeType = String(receipt.archivo_mimetype || '').trim().toLowerCase();
         const declaredSize = Number(receipt.archivo_size);
+        const actualSize = Number(receipt.archivo_size_real ?? receipt.archivo_binario.length);
         const declaredHash = String(receipt.archivo_sha256 || '').trim().toLowerCase();
         if (!DURABLE_RECEIPT_MIME_TYPES.has(mimeType)
             || !Number.isSafeInteger(declaredSize)
-            || declaredSize !== receipt.archivo_binario.length
+            || !Number.isSafeInteger(actualSize)
+            || actualSize <= 0
+            || actualSize > DURABLE_RECEIPT_MAX_BYTES
+            || declaredSize !== actualSize
+            || actualSize !== receipt.archivo_binario.length
             || !/^[a-f0-9]{64}$/.test(declaredHash)) {
           return res.status(500).json({ error: 'Archivo durable inválido' });
         }
@@ -91,6 +110,8 @@ export function createTransferenciaStorageRouter({ storageDir, withAuth, checkLi
         res.setHeader('Content-Type', mimeType);
         res.setHeader('Content-Length', String(declaredSize));
         res.setHeader('X-Content-Type-Options', 'nosniff');
+        res.setHeader('Cache-Control', 'private, no-store');
+        res.setHeader('Referrer-Policy', 'no-referrer');
         return res.status(200).send(receipt.archivo_binario);
       }
 
