@@ -214,6 +214,30 @@ test('replay con source y hash apuntando a filas distintas falla cerrado', async
   }), error => error?.code === 'comprobante_idempotencia_conflictiva');
 });
 
+test('replay durable exige que source y hash coincidan exactamente en la misma fila', async () => {
+  const bytes = Buffer.from('%PDF-source-hash-consistency');
+  const actualHash = createHash('sha256').update(bytes).digest('hex');
+
+  for (const existing of [
+    { id: 77, source_message_id: 'wamid.same-source', dedupe_file_hash: 'a'.repeat(64) },
+    { id: 78, source_message_id: 'wamid.other-source', dedupe_file_hash: actualHash },
+  ]) {
+    const calls = [];
+    await assert.rejects(insertarComprobantePg({
+      telefono: '351', imagen_path: '/Transferencia/conflict.pdf', fecha: new Date(), empresaId: 7,
+      transportOrigin: 'cloud', sourceMessageId: 'wamid.same-source',
+      archivoBinario: bytes, mimetype: 'application/pdf',
+    }, async sql => {
+      calls.push(sql);
+      if (sql.includes('pg_advisory_xact_lock')) return [];
+      if (sql.includes('source_message_id = $2') && sql.includes('dedupe_file_hash = $3')) return [existing];
+      throw new Error('conflicto no debe consultar cuota ni insertar');
+    }), error => error?.code === 'comprobante_idempotencia_conflictiva');
+    assert.equal(calls.some(sql => sql.includes('SUM(archivo_size)')), false);
+    assert.equal(calls.some(sql => sql.includes('INSERT INTO comprobantes_transferencia')), false);
+  }
+});
+
 test('initDb y ensure instalan constraints durables idempotentes y validados', async () => {
   const initSql = await readFile(new URL('../initDb.sql', import.meta.url), 'utf8');
   for (const constraint of [
@@ -232,9 +256,15 @@ test('initDb y ensure instalan constraints durables idempotentes y validados', a
   assert.match(initSql, /application\/pdf[\s\S]+image\/jpeg[\s\S]+image\/png[\s\S]+image\/webp/i);
 
   const calls = [];
-  await ensureComprobantesTransferenciaSchema(async sql => {
-    calls.push(sql);
-    return sql.includes('expected_constraints') ? [{ ready: true }] : [];
+  const client = {
+    async query(sql) {
+      calls.push(sql);
+      return { rows: sql.includes('expected_constraints') ? [{ ready: true }] : [] };
+    },
+    release() {},
+  };
+  await ensureComprobantesTransferenciaSchema({
+    pool: { async connect() { return client; } },
   });
   const combined = calls.join('\n');
   assert.match(combined, /ck_ct_archivo_metadata_consistente/i);

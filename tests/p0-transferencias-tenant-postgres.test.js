@@ -186,6 +186,40 @@ test('PostgreSQL real: asociación manual/automática cierra tenant, es transacc
       assert.equal(replay.existing.id, first.id);
     });
 
+    await t.test('source y hash deben resolver exactamente la misma fila durable', async () => {
+      await pool.query("DELETE FROM comprobantes_transferencia WHERE empresa_id=1 AND telefono='quota-fill'");
+      const firstBytes = Buffer.from('%PDF-idempotency-original');
+      const differentBytes = Buffer.from('%PDF-idempotency-different');
+      const first = await insertarComprobantePg({
+        telefono: '5493510000000', imagen_path: '/Transferencia/idempotency.pdf',
+        fecha: new Date(), empresaId: 1, transportOrigin: 'cloud',
+        sourceMessageId: 'cloud-idempotency-exact', archivoBinario: firstBytes,
+        mimetype: 'application/pdf',
+      }, async (sql, params = []) => (await pool.query(sql, params)).rows, { withTransaction });
+
+      await assert.rejects(insertarComprobantePg({
+        telefono: '5493510000000', imagen_path: '/Transferencia/idempotency.pdf',
+        fecha: new Date(), empresaId: 1, transportOrigin: 'cloud',
+        sourceMessageId: 'cloud-idempotency-exact', archivoBinario: differentBytes,
+        mimetype: 'application/pdf',
+      }, async (sql, params = []) => (await pool.query(sql, params)).rows, { withTransaction }),
+      error => error?.code === 'comprobante_idempotencia_conflictiva');
+
+      await assert.rejects(insertarComprobantePg({
+        telefono: '5493510000000', imagen_path: '/Transferencia/idempotency.pdf',
+        fecha: new Date(), empresaId: 1, transportOrigin: 'cloud',
+        sourceMessageId: 'cloud-idempotency-other-source', archivoBinario: firstBytes,
+        mimetype: 'application/pdf',
+      }, async (sql, params = []) => (await pool.query(sql, params)).rows, { withTransaction }),
+      error => error?.code === 'comprobante_idempotencia_conflictiva');
+
+      const stored = await pool.query(
+        'SELECT id, source_message_id FROM comprobantes_transferencia WHERE id=$1',
+        [first.id],
+      );
+      assert.deepEqual(stored.rows, [{ id: first.id, source_message_id: 'cloud-idempotency-exact' }]);
+    });
+
     await t.test('dos vinculaciones automáticas del mismo evento reservan una sola fila durable', async () => {
       const input = {
         telefono: '5493510000000', imagen_path: '/Transferencia/retry.jpg',

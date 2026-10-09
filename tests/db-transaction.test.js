@@ -26,7 +26,7 @@ function poolWithClients(scenarios) {
   };
 }
 
-test('query revierte un batch BEGIN fallido antes de devolver la conexión al pool', async t => {
+test('query no infiere transacciones desde SQL ni ejecuta rollback genérico', async t => {
   const failure = Object.assign(new Error('lock timeout'), { code: '55P03' });
   const calls = [];
   let releasedWith;
@@ -40,7 +40,7 @@ test('query revierte un batch BEGIN fallido antes de devolver la conexión al po
   }));
 
   await assert.rejects(query('BEGIN; SELECT 1; COMMIT;'), error => error === failure);
-  assert.deepEqual(calls, ['BEGIN; SELECT 1; COMMIT;', 'ROLLBACK']);
+  assert.deepEqual(calls, ['BEGIN; SELECT 1; COMMIT;']);
   assert.equal(releasedWith, undefined);
 });
 

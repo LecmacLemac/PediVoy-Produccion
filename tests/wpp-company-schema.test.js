@@ -201,6 +201,62 @@ test('company schema migration discards the client when rollback cleanup fails',
   ]);
 });
 
+test('company schema no duplica rollback si la migración dedicada ya cerró su transacción', async () => {
+  const calls = [];
+  const failure = Object.assign(new Error('migration failed'), { schemaTransactionFinalized: true });
+  const pool = {
+    async connect() {
+      return {
+        async query(sql) {
+          calls.push(sql);
+          if (/pg_advisory_unlock/.test(sql)) return { rows: [{ unlocked: true }] };
+          return { rows: [] };
+        },
+        release() { calls.push('RELEASE'); },
+      };
+    },
+  };
+  await assert.rejects(withCompanySchemaLock({
+    pool,
+    migrate: async () => { throw failure; },
+  }), error => error === failure);
+  assert.equal(calls.includes('ROLLBACK'), false);
+  assert.equal(calls.some(sql => /pg_advisory_unlock/.test(sql)), true);
+});
+
+test('company schema descarta sin rollback ni unlock ante COMMIT ambiguo de migración dedicada', async () => {
+  const calls = [];
+  const outcomeUnknown = Object.assign(new Error('resultado indeterminado sanitizado'), {
+    code: 'COMPROBANTE_SCHEMA_TRANSACTION_OUTCOME_UNKNOWN',
+    discardConnection: true,
+  });
+  let releasedWith;
+  const pool = {
+    async connect() {
+      return {
+        async query(sql) {
+          calls.push(sql);
+          return { rows: [] };
+        },
+        release(error) {
+          releasedWith = error;
+          calls.push('RELEASE');
+        },
+      };
+    },
+  };
+
+  await assert.rejects(withCompanySchemaLock({
+    pool,
+    migrate: async () => { throw outcomeUnknown; },
+  }), error => error === outcomeUnknown);
+
+  assert.equal(calls.includes('ROLLBACK'), false);
+  assert.equal(calls.some(sql => /pg_advisory_unlock/.test(sql)), false);
+  assert.equal(releasedWith, outcomeUnknown);
+  assert.equal(calls.at(-1), 'RELEASE');
+});
+
 test('company worker runs every schema prerequisite through the locked dedicated client', async () => {
   const calls = [];
   let connectCount = 0;
@@ -227,7 +283,7 @@ test('company worker runs every schema prerequisite through the locked dedicated
   assert.match(sql, /ALTER TABLE empresas[\s\S]*wpp_qr_code/i);
   assert.match(sql, /ALTER TABLE wpp_outbox[\s\S]*claim_owner/i);
   assert.match(sql, /ALTER TABLE comprobantes_transferencia[\s\S]*source_message_id/i);
-  assert.match(sql, /BEGIN;[\s\S]*comprobante_operacion_claims[\s\S]*COMMIT;/i);
+  assert.match(sql, /BEGIN[\s\S]*comprobante_operacion_claims[\s\S]*COMMIT/i);
   assert.deepEqual(calls.slice(-2).map(call => call.sql), [
     'SELECT pg_advisory_unlock($1::bigint) AS unlocked',
     'RELEASE',

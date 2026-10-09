@@ -37,16 +37,18 @@ export async function withCompanySchemaLock({ pool, migrate } = {}) {
       [COMPANY_SCHEMA_ADVISORY_LOCK_KEY],
     );
     locked = true;
-    result = await migrate(clientQuery(client));
+    result = await migrate(clientQuery(client), client);
   } catch (error) {
     primaryError = error;
-    try {
-      await client.query('ROLLBACK');
-    } catch (error) {
-      rollbackError = error;
+    if (!error?.discardConnection && !error?.schemaTransactionFinalized) {
+      try {
+        await client.query('ROLLBACK');
+      } catch (error) {
+        rollbackError = error;
+      }
     }
   } finally {
-    if (locked) {
+    if (locked && !primaryError?.discardConnection) {
       try {
         const unlocked = await client.query(
           'SELECT pg_advisory_unlock($1::bigint) AS unlocked',
@@ -60,7 +62,7 @@ export async function withCompanySchemaLock({ pool, migrate } = {}) {
       }
     }
 
-    const discardError = rollbackError || unlockError;
+    const discardError = primaryError?.discardConnection ? primaryError : (rollbackError || unlockError);
     try {
       client.release(discardError);
     } catch (error) {
@@ -77,10 +79,10 @@ export async function withCompanySchemaLock({ pool, migrate } = {}) {
 export async function ensureCompanyWorkerSchema({ pool = dbPool } = {}) {
   return withCompanySchemaLock({
     pool,
-    migrate: async query => {
+    migrate: async (query, client) => {
       await query(EMPRESA_WHATSAPP_SCHEMA_SQL);
       await ensureWppDeliverySchema(query);
-      await ensureComprobantesTransferenciaSchema(query);
+      await ensureComprobantesTransferenciaSchema({ client });
     },
   });
 }

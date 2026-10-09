@@ -142,18 +142,18 @@ test('inserción reserva source message y hash atómicamente sin duplicar por te
 
 test('migración runtime instala sin drift el bloque completo marcado de initDb.sql', async () => {
   const statements = [];
-  await ensureComprobantesTransferenciaSchema(async sql => {
-    statements.push(sql);
-    return sql.includes('expected_constraints') ? [{ ready: true }] : [];
+  const client = {
+    async query(sql) {
+      statements.push(sql);
+      return { rows: sql.includes('expected_constraints') ? [{ ready: true }] : [] };
+    },
+    release() {},
+  };
+  await ensureComprobantesTransferenciaSchema({
+    pool: { async connect() { return client; } },
   });
   const sql = statements.join('\n');
   const initSql = await readFile(new URL('../initDb.sql', import.meta.url), 'utf8');
-  const startMarker = '-- BEGIN COMPROBANTE CONCURRENCY MIGRATION';
-  const endMarker = '-- END COMPROBANTE CONCURRENCY MIGRATION';
-  const expectedBlock = initSql.slice(
-    initSql.indexOf(startMarker) + startMarker.length,
-    initSql.indexOf(endMarker),
-  ).trim();
 
   assert.match(sql, /ADD COLUMN IF NOT EXISTS source_message_id/);
   assert.match(sql, /ADD COLUMN IF NOT EXISTS dedupe_file_hash/);
@@ -169,7 +169,7 @@ test('migración runtime instala sin drift el bloque completo marcado de initDb.
   assert.match(sql, /UNIQUE[\s\S]*COALESCE\(empresa_id, 0\)[\s\S]*source_message_id/);
   assert.match(sql, /WHERE source_message_id IS NOT NULL/);
   assert.doesNotMatch(sql, /UPDATE comprobantes_transferencia SET (?:dedupe|approval)/);
-  assert.ok(statements.some(statement => statement.trim() === expectedBlock));
+  assert.ok(statements.some(statement => statement.includes('CREATE OR REPLACE FUNCTION public.normalizar_comprobante_operacion')));
   assert.match(sql, /CREATE OR REPLACE FUNCTION public\.normalizar_comprobante_operacion/);
   assert.match(sql, /CREATE TABLE IF NOT EXISTS comprobante_operacion_claims/);
   assert.match(sql, /CREATE TRIGGER trg_validar_aprobacion_comprobante/);

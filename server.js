@@ -15,7 +15,7 @@ const __dirname = path.dirname(__filename);
 const { PORT } = getServerEnv();
 
 const deps = createServerDeps({ projectDir: __dirname });
-await ensureComprobantesTransferenciaSchema(deps.query);
+await ensureComprobantesTransferenciaSchema({ pool: deps.pool });
 const app = createApp(deps);
 
 startServer(app, { PORT });

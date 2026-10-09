@@ -46,8 +46,21 @@ async function readComprobanteDurableStorageMigration() {
   const start = initSql.indexOf(DURABLE_MIGRATION_START);
   const end = initSql.indexOf(DURABLE_MIGRATION_END);
   if (start < 0 || end <= start) throw new Error('Bloque durable de comprobantes ausente en initDb.sql');
-  return initSql.slice(start + DURABLE_MIGRATION_START.length, end).trim()
-    .replace(/^COMMIT;\s*/i, '');
+  return initSql.slice(start + DURABLE_MIGRATION_START.length, end).trim();
+}
+
+function migrationWork(sql) {
+  return String(sql)
+    .replaceAll('\r\n', '\n')
+    .replace(/^COMMIT;\s*/i, '')
+    .replace(/^BEGIN;\s*/i, '')
+    .replace(/^SET LOCAL search_path = public;\s*/im, '')
+    .replace(/^SET LOCAL lock_timeout = '[^']+';\s*/im, '')
+    .replace(/^SET LOCAL statement_timeout = '[^']+';\s*/im, '')
+    .replace(/^SELECT pg_catalog\.pg_advisory_xact_lock\([^;]+;\s*/im, '')
+    .replace(/^LOCK TABLE comprobantes_transferencia IN ACCESS EXCLUSIVE MODE;\s*/im, '')
+    .replace(/COMMIT;\s*$/i, '')
+    .trim();
 }
 
 function schemaTimeout(value, fallback) {
@@ -55,24 +68,22 @@ function schemaTimeout(value, fallback) {
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-async function runSchemaTransactionBatch(queryFn, sql) {
-  try {
-    return await queryFn(sql);
-  } catch (error) {
-    try { await queryFn('ROLLBACK'); } catch {}
-    throw error;
-  }
-}
-
 export async function checkComprobantesTransferenciaSchemaReady(queryFn = query) {
   const expectedColumns = DURABLE_RECEIPT_COLUMNS.map(([name, typeName]) => ({ name, typeName }));
   const expectedConstraints = DURABLE_RECEIPT_CONSTRAINTS.map(([name, definition]) => ({ name, definition }));
+  const expectedIndexes = [
+    { name: 'uq_ct_source_message_new', key1: 'COALESCE(empresa_id, 0)', key2: 'source_message_id', predicate: 'source_message_id IS NOT NULL' },
+    { name: 'uq_ct_file_hash_new', key1: 'COALESCE(empresa_id, 0)', key2: 'dedupe_file_hash', predicate: 'dedupe_file_hash IS NOT NULL' },
+  ];
   const rows = await queryFn(`
     WITH expected_columns(name, type_name) AS (
       SELECT expected.name, expected."typeName"
         FROM pg_catalog.jsonb_to_recordset($1::jsonb) AS expected(name text, "typeName" text)
     ), expected_constraints(name, definition) AS (
       SELECT * FROM pg_catalog.jsonb_to_recordset($2::jsonb) AS expected(name text, definition text)
+    ), expected_indexes(name, key1, key2, predicate) AS (
+      SELECT * FROM pg_catalog.jsonb_to_recordset($3::jsonb)
+        AS expected(name text, key1 text, key2 text, predicate text)
     )
     SELECT
       pg_catalog.to_regclass('public.comprobantes_transferencia') IS NOT NULL
@@ -98,46 +109,90 @@ export async function checkComprobantesTransferenciaSchemaReady(queryFn = query)
             pg_catalog.regexp_replace(pg_catalog.pg_get_constraintdef(constraint_row.oid, true), '[[:space:]]+', '', 'g')
             = pg_catalog.regexp_replace(expected.definition, '[[:space:]]+', '', 'g')
           ) IS NOT TRUE
+      )
+      AND NOT EXISTS (
+        SELECT 1
+          FROM expected_indexes expected
+          LEFT JOIN pg_catalog.pg_namespace index_namespace
+            ON index_namespace.nspname = 'public'
+          LEFT JOIN pg_catalog.pg_class index_class
+            ON index_class.relnamespace = index_namespace.oid
+           AND index_class.relname = expected.name
+          LEFT JOIN pg_catalog.pg_index index_row
+            ON index_row.indexrelid = index_class.oid
+          LEFT JOIN pg_catalog.pg_class table_class
+            ON table_class.oid = index_row.indrelid
+          LEFT JOIN pg_catalog.pg_namespace table_namespace
+            ON table_namespace.oid = table_class.relnamespace
+          LEFT JOIN pg_catalog.pg_am access_method
+            ON access_method.oid = index_class.relam
+         GROUP BY expected.name, expected.key1, expected.key2, expected.predicate
+        HAVING pg_catalog.count(index_class.oid) <> 1
+          OR pg_catalog.bool_and(index_class.relkind IN ('i', 'I')) IS NOT TRUE
+          OR pg_catalog.bool_and(table_namespace.nspname = 'public'
+            AND table_class.relname = 'comprobantes_transferencia') IS NOT TRUE
+          OR pg_catalog.bool_and(access_method.amname = 'btree') IS NOT TRUE
+          OR pg_catalog.bool_and(index_row.indisunique
+            AND index_row.indisvalid AND index_row.indisready AND index_row.indislive) IS NOT TRUE
+          OR pg_catalog.bool_and(index_row.indnkeyatts = 2 AND index_row.indnatts = 2) IS NOT TRUE
+          OR pg_catalog.bool_and(pg_catalog.pg_get_indexdef(index_row.indexrelid, 1, true) = expected.key1) IS NOT TRUE
+          OR pg_catalog.bool_and(pg_catalog.pg_get_indexdef(index_row.indexrelid, 2, true) = expected.key2) IS NOT TRUE
+          OR pg_catalog.bool_and(pg_catalog.pg_get_expr(index_row.indpred, index_row.indrelid, true) = expected.predicate) IS NOT TRUE
       ) AS ready
   `, [
     JSON.stringify(expectedColumns),
     JSON.stringify(expectedConstraints),
+    JSON.stringify(expectedIndexes),
   ]);
   return rows.length === 1 && rows[0]?.ready === true;
 }
 
-export async function ensureComprobantesTransferenciaSchema(queryFn = query, options = {}) {
+export async function ensureComprobantesTransferenciaSchema(capability, options = {}) {
+  const suppliedPool = capability?.pool;
+  const suppliedClient = capability?.client;
+  if ((typeof suppliedPool?.connect !== 'function') === (typeof suppliedClient?.query !== 'function')) {
+    throw new TypeError('ensureComprobantesTransferenciaSchema requiere exactamente pool o client dedicado');
+  }
   const lockTimeoutMs = schemaTimeout(options.lockTimeoutMs, 30_000);
   const statementTimeoutMs = schemaTimeout(options.statementTimeoutMs, 300_000);
-  await runSchemaTransactionBatch(queryFn, `BEGIN;
-SET LOCAL search_path = public;
-SET LOCAL lock_timeout = '${lockTimeoutMs}ms';
-SET LOCAL statement_timeout = '${statementTimeoutMs}ms';
-SELECT pg_catalog.pg_advisory_xact_lock(${COMPANY_SCHEMA_ADVISORY_LOCK_KEY}::bigint);
-LOCK TABLE comprobantes_transferencia IN ACCESS EXCLUSIVE MODE;
-ALTER TABLE comprobantes_transferencia
-  ADD COLUMN IF NOT EXISTS source_message_id TEXT,
-  ADD COLUMN IF NOT EXISTS dedupe_file_hash TEXT,
-  ADD COLUMN IF NOT EXISTS approval_dedupe_key TEXT,
-  ADD COLUMN IF NOT EXISTS source_chat_jid TEXT,
-  ADD COLUMN IF NOT EXISTS transport_origin TEXT,
-  ADD COLUMN IF NOT EXISTS archivo_binario BYTEA,
-  ADD COLUMN IF NOT EXISTS archivo_mimetype TEXT,
-  ADD COLUMN IF NOT EXISTS archivo_size BIGINT,
-  ADD COLUMN IF NOT EXISTS archivo_sha256 TEXT;
-CREATE UNIQUE INDEX IF NOT EXISTS uq_ct_source_message_new
-  ON comprobantes_transferencia ((COALESCE(empresa_id, 0)), source_message_id)
-  WHERE source_message_id IS NOT NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS uq_ct_file_hash_new
-  ON comprobantes_transferencia ((COALESCE(empresa_id, 0)), dedupe_file_hash)
-  WHERE dedupe_file_hash IS NOT NULL;
-COMMIT;`);
-  await runSchemaTransactionBatch(queryFn, (await readComprobanteDurableStorageMigration())
-    .replace("SET LOCAL lock_timeout = '30s';", `SET LOCAL lock_timeout = '${lockTimeoutMs}ms';`)
-    .replace("SET LOCAL statement_timeout = '5min';", `SET LOCAL statement_timeout = '${statementTimeoutMs}ms';`));
-  await queryFn(await readComprobanteConcurrencyMigration());
-  if (!await checkComprobantesTransferenciaSchemaReady(queryFn)) {
-    throw new Error('Canonical comprobantes_transferencia schema verification failed');
+  const ownsClient = !!suppliedPool;
+  const client = suppliedClient || await suppliedPool.connect();
+  let phase = 'BEGIN';
+  let releaseError;
+  try {
+    await client.query('BEGIN');
+    phase = 'WORK';
+    await client.query('SET LOCAL search_path = public');
+    await client.query(`SET LOCAL lock_timeout = '${lockTimeoutMs}ms'`);
+    await client.query(`SET LOCAL statement_timeout = '${statementTimeoutMs}ms'`);
+    await client.query('SELECT pg_catalog.pg_advisory_xact_lock($1::bigint)', [COMPANY_SCHEMA_ADVISORY_LOCK_KEY]);
+    await client.query('LOCK TABLE public.comprobantes_transferencia IN ACCESS EXCLUSIVE MODE');
+    await client.query(migrationWork(await readComprobanteDurableStorageMigration()));
+    await client.query(migrationWork(await readComprobanteConcurrencyMigration()));
+    const clientQuery = async (sql, params = []) => (await client.query(sql, params)).rows || [];
+    if (!await checkComprobantesTransferenciaSchemaReady(clientQuery)) {
+      throw new Error('Canonical comprobantes_transferencia schema verification failed');
+    }
+    phase = 'COMMIT';
+    await client.query('COMMIT');
+  } catch (error) {
+    if (phase === 'COMMIT') {
+      releaseError = error;
+      const outcomeUnknown = new Error('No se pudo confirmar la migración de comprobantes');
+      outcomeUnknown.code = 'COMPROBANTE_SCHEMA_TRANSACTION_OUTCOME_UNKNOWN';
+      outcomeUnknown.discardConnection = true;
+      throw outcomeUnknown;
+    }
+    try {
+      await client.query('ROLLBACK');
+      error.schemaTransactionFinalized = true;
+    } catch (rollbackError) {
+      releaseError = rollbackError;
+      error.discardConnection = true;
+    }
+    throw error;
+  } finally {
+    if (ownsClient) client.release(releaseError);
   }
 }
 
@@ -780,7 +835,10 @@ async function insertarComprobantePgWork({
           && existing.source_message_id === normalizedSourceMessageId;
         const hashMatches = effectiveFileHash != null
           && existing.dedupe_file_hash === effectiveFileHash;
-        if (!sourceMatches && !hashMatches) approvalFailure('comprobante_idempotencia_conflictiva');
+        const exactReplay = normalizedSourceMessageId != null && effectiveFileHash != null
+          ? sourceMatches && hashMatches
+          : sourceMatches || hashMatches;
+        if (!exactReplay) approvalFailure('comprobante_idempotencia_conflictiva');
         return {
           duplicate: true,
           reason: sourceMatches ? 'duplicate_source_message' : 'duplicate_file_hash',
@@ -968,7 +1026,10 @@ async function insertarComprobantePgWork({
       && existing.source_message_id === String(sourceMessageId);
     const hashMatches = effectiveFileHash != null
       && existing.dedupe_file_hash === effectiveFileHash;
-    if (!sourceMatches && !hashMatches) approvalFailure('comprobante_idempotencia_conflictiva');
+    const exactReplay = sourceMessageId != null && effectiveFileHash != null
+      ? sourceMatches && hashMatches
+      : sourceMatches || hashMatches;
+    if (!exactReplay) approvalFailure('comprobante_idempotencia_conflictiva');
     return {
       duplicate: true,
       reason: sourceMatches ? 'duplicate_source_message' : 'duplicate_file_hash',

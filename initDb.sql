@@ -1599,6 +1599,99 @@ ALTER TABLE comprobantes_transferencia
   ADD COLUMN IF NOT EXISTS archivo_mimetype TEXT,
   ADD COLUMN IF NOT EXISTS archivo_size BIGINT,
   ADD COLUMN IF NOT EXISTS archivo_sha256 TEXT;
+DO $durable_receipt_indexes$
+DECLARE
+  expected RECORD;
+  actual_count INTEGER;
+  actual_matches BOOLEAN;
+BEGIN
+  FOR expected IN
+    SELECT * FROM (VALUES
+      ('uq_ct_source_message_new', 'source_message_id', 'source_message_id IS NOT NULL',
+       'CREATE UNIQUE INDEX uq_ct_source_message_new ON public.comprobantes_transferencia USING btree ((COALESCE(empresa_id, 0)), source_message_id) WHERE source_message_id IS NOT NULL'),
+      ('uq_ct_file_hash_new', 'dedupe_file_hash', 'dedupe_file_hash IS NOT NULL',
+       'CREATE UNIQUE INDEX uq_ct_file_hash_new ON public.comprobantes_transferencia USING btree ((COALESCE(empresa_id, 0)), dedupe_file_hash) WHERE dedupe_file_hash IS NOT NULL')
+    ) AS definitions(name, key2, predicate, create_sql)
+  LOOP
+    SELECT pg_catalog.count(*)::INTEGER,
+           pg_catalog.bool_and(
+             index_class.relkind = 'i'
+             AND table_namespace.nspname = 'public'
+             AND table_class.relname = 'comprobantes_transferencia'
+             AND access_method.amname = 'btree'
+             AND index_row.indisunique
+             AND index_row.indisvalid
+             AND index_row.indisready
+             AND index_row.indislive
+             AND index_row.indnkeyatts = 2
+             AND index_row.indnatts = 2
+             AND pg_catalog.pg_get_indexdef(index_row.indexrelid, 1, true) = 'COALESCE(empresa_id, 0)'
+             AND pg_catalog.pg_get_indexdef(index_row.indexrelid, 2, true) = expected.key2
+             AND pg_catalog.pg_get_expr(index_row.indpred, index_row.indrelid, true) = expected.predicate
+           )
+      INTO actual_count, actual_matches
+      FROM pg_catalog.pg_class index_class
+      JOIN pg_catalog.pg_namespace index_namespace ON index_namespace.oid = index_class.relnamespace
+      LEFT JOIN pg_catalog.pg_index index_row ON index_row.indexrelid = index_class.oid
+      LEFT JOIN pg_catalog.pg_class table_class ON table_class.oid = index_row.indrelid
+      LEFT JOIN pg_catalog.pg_namespace table_namespace ON table_namespace.oid = table_class.relnamespace
+      LEFT JOIN pg_catalog.pg_am access_method ON access_method.oid = index_class.relam
+     WHERE index_namespace.nspname = 'public'
+       AND index_class.relname = expected.name;
+
+    IF actual_count <> 1 OR actual_matches IS NOT TRUE THEN
+      IF EXISTS (
+        SELECT 1
+          FROM pg_catalog.pg_class object_class
+          JOIN pg_catalog.pg_namespace object_namespace ON object_namespace.oid = object_class.relnamespace
+         WHERE object_namespace.nspname = 'public'
+           AND object_class.relname = expected.name
+           AND object_class.relkind <> 'i'
+      ) THEN
+        RAISE EXCEPTION 'canonical durable receipt index repair failed: %', expected.name
+          USING ERRCODE = '55000';
+      END IF;
+      BEGIN
+        EXECUTE pg_catalog.format('DROP INDEX IF EXISTS public.%I', expected.name);
+        EXECUTE expected.create_sql;
+      EXCEPTION WHEN OTHERS THEN
+        RAISE EXCEPTION 'canonical durable receipt index repair failed: %', expected.name
+          USING ERRCODE = '55000';
+      END;
+    END IF;
+
+    SELECT pg_catalog.count(*)::INTEGER,
+           pg_catalog.bool_and(
+             index_class.relkind = 'i'
+             AND table_namespace.nspname = 'public'
+             AND table_class.relname = 'comprobantes_transferencia'
+             AND access_method.amname = 'btree'
+             AND index_row.indisunique
+             AND index_row.indisvalid
+             AND index_row.indisready
+             AND index_row.indislive
+             AND index_row.indnkeyatts = 2
+             AND index_row.indnatts = 2
+             AND pg_catalog.pg_get_indexdef(index_row.indexrelid, 1, true) = 'COALESCE(empresa_id, 0)'
+             AND pg_catalog.pg_get_indexdef(index_row.indexrelid, 2, true) = expected.key2
+             AND pg_catalog.pg_get_expr(index_row.indpred, index_row.indrelid, true) = expected.predicate
+           )
+      INTO actual_count, actual_matches
+      FROM pg_catalog.pg_class index_class
+      JOIN pg_catalog.pg_namespace index_namespace ON index_namespace.oid = index_class.relnamespace
+      LEFT JOIN pg_catalog.pg_index index_row ON index_row.indexrelid = index_class.oid
+      LEFT JOIN pg_catalog.pg_class table_class ON table_class.oid = index_row.indrelid
+      LEFT JOIN pg_catalog.pg_namespace table_namespace ON table_namespace.oid = table_class.relnamespace
+      LEFT JOIN pg_catalog.pg_am access_method ON access_method.oid = index_class.relam
+     WHERE index_namespace.nspname = 'public'
+       AND index_class.relname = expected.name;
+    IF actual_count <> 1 OR actual_matches IS NOT TRUE THEN
+      RAISE EXCEPTION 'canonical durable receipt index verification failed: %', expected.name
+        USING ERRCODE = '55000';
+    END IF;
+  END LOOP;
+END
+$durable_receipt_indexes$;
 DO $durable_receipt_constraints$
 DECLARE
   expected RECORD;
@@ -6398,12 +6491,6 @@ CREATE INDEX IF NOT EXISTS idx_pedidos_chofer_estado ON pedidos (chofer_id, esta
 CREATE INDEX IF NOT EXISTS idx_zonas_geom ON zonas_geograficas USING GIST (geom);
 CREATE INDEX IF NOT EXISTS idx_ct_procesado ON comprobantes_transferencia (procesado, fecha);
 CREATE INDEX IF NOT EXISTS idx_ct_empresa_file_hash ON comprobantes_transferencia (empresa_id, file_hash);
-CREATE UNIQUE INDEX IF NOT EXISTS uq_ct_source_message_new
-  ON comprobantes_transferencia ((COALESCE(empresa_id, 0)), source_message_id)
-  WHERE source_message_id IS NOT NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS uq_ct_file_hash_new
-  ON comprobantes_transferencia ((COALESCE(empresa_id, 0)), dedupe_file_hash)
-  WHERE dedupe_file_hash IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_ct_estado_revision ON comprobantes_transferencia (estado_revision);
 CREATE INDEX IF NOT EXISTS idx_pedido_track_points_pedido_ts ON pedido_track_points (pedido_id, timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_hist_prod_fecha ON historial_costos_precios (producto_id, fecha_registro DESC);
