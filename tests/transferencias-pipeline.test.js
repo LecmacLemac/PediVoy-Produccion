@@ -301,10 +301,7 @@ test('pipeline Cloud fencea efectos y responde por callback correlacionable por 
       assert.equal(transportOrigin, 'cloud');
     },
     deps: {
-      saveFileToDisk: async () => {
-        events.push('write');
-        return { absolutePath: '/tmp/not-created', relativePath: '/Transferencia/x.jpg', mimetype: 'image/jpeg', size: buffer.length };
-      },
+      saveFileToDisk: async () => assert.fail('Cloud no debe escribir en filesystem'),
       insertarComprobantePg: async input => {
         events.push('insert');
         assert.equal(input.empresaId, 2);
@@ -324,7 +321,7 @@ test('pipeline Cloud fencea efectos y responde por callback correlacionable por 
   assert.equal(result.saved, true);
   assert.equal(result.handled, true);
   assert.deepEqual(events, [
-    'lease', 'write', 'lease', 'insert', 'lease', 'reply:received',
+    'lease', 'lease', 'insert', 'lease', 'reply:received',
     'lease', 'prepare', 'lease', 'ai', 'lease', 'update', 'lease', 'reply:pending',
   ]);
 });
