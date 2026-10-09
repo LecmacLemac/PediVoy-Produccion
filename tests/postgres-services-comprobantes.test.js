@@ -33,7 +33,10 @@ test('insertarComprobante solo deduplica constraints esperadas y busca por tenan
     }
     if (sql.includes('FROM comprobantes_transferencia')) {
       assert.match(sql, /empresa_id\s+IS NOT DISTINCT FROM\s+\$1/i);
-      return [{ id: 99, empresa_id: 7, pedido_id: 20 }];
+      assert.match(sql, /source_message_id\s*=\s*\$2/i);
+      assert.match(sql, /dedupe_file_hash\s*=\s*\$3/i);
+      return [{ id: 99, empresa_id: 7, pedido_id: 20,
+        source_message_id: 'msg-1', dedupe_file_hash: 'a'.repeat(64) }];
     }
     throw new Error('inesperado');
   };
@@ -52,9 +55,10 @@ test('insertarComprobante solo deduplica constraints esperadas y busca por tenan
     if (sql.includes('INSERT INTO comprobantes_transferencia')) {
       throw Object.assign(new Error('hash duplicado'), { code: '23505', constraint: 'uq_ct_file_hash_new' });
     }
-    assert.match(sql, /dedupe_file_hash\s*=\s*\$2/i);
-    assert.deepEqual(params, [7, 'b'.repeat(64)]);
-    return [{ id: 100, empresa_id: 7, pedido_id: null }];
+    assert.match(sql, /dedupe_file_hash\s*=\s*\$3/i);
+    assert.deepEqual(params, [7, null, 'b'.repeat(64)]);
+    return [{ id: 100, empresa_id: 7, pedido_id: null,
+      source_message_id: null, dedupe_file_hash: 'b'.repeat(64) }];
   });
   assert.equal(hashResult.duplicate, true);
   assert.equal(hashResult.reason, 'duplicate_file_hash');
@@ -98,6 +102,7 @@ test('insertarComprobante deriva hash y tamaño del Buffer durable dentro del se
     bytes: 999999,
   }, async (sql, params) => {
     if (sql.includes('pg_advisory_xact_lock')) return [];
+    if (sql.includes('source_message_id = $2') && sql.includes('dedupe_file_hash = $3')) return [];
     if (sql.includes('SUM(archivo_size)')) return [{ durable_bytes: 0 }];
     if (sql.includes('FROM pedidos')) return [];
     if (sql.includes('INSERT INTO comprobantes_transferencia')) {
@@ -155,13 +160,58 @@ test('Cloud durable exige tenant positivo y aplica lock antes de cuota e INSERT'
   }, async (sql, params) => {
     calls.push({ sql, params });
     if (sql.includes('pg_advisory_xact_lock')) return [];
+    if (sql.includes('source_message_id = $2') && sql.includes('dedupe_file_hash = $3')) return [];
     if (sql.includes('SUM(archivo_size)')) return [{ durable_bytes: 1024 * 1024 * 1024 }];
     throw new Error('no debe superar la cuota');
   }), error => error?.code === 'cuota_comprobantes_durables_excedida');
 
   assert.match(calls[0].sql, /pg_advisory_xact_lock/i);
-  assert.match(calls[1].sql, /SUM\(archivo_size\)/i);
+  assert.match(calls[1].sql, /source_message_id\s*=\s*\$2/i);
+  assert.match(calls[2].sql, /SUM\(archivo_size\)/i);
   assert.equal(calls.some(call => /INSERT INTO comprobantes_transferencia/i.test(call.sql)), false);
+});
+
+test('replay durable se resuelve bajo lock antes de consultar cuota', async () => {
+  const bytes = Buffer.from('%PDF-replay');
+  const actualHash = createHash('sha256').update(bytes).digest('hex');
+  const calls = [];
+  const result = await insertarComprobantePg({
+    telefono: '351', imagen_path: '/Transferencia/replay.pdf', fecha: new Date(), empresaId: 7,
+    transportOrigin: 'cloud', sourceMessageId: 'wamid.replay',
+    archivoBinario: bytes, mimetype: 'application/pdf',
+  }, async (sql, params) => {
+    calls.push({ sql, params });
+    if (sql.includes('pg_advisory_xact_lock')) return [];
+    if (sql.includes('source_message_id = $2') && sql.includes('dedupe_file_hash = $3')) {
+      assert.deepEqual(params, [7, 'wamid.replay', actualHash]);
+      return [{ id: 77, empresa_id: 7, pedido_id: null,
+        source_message_id: 'wamid.replay', dedupe_file_hash: actualHash }];
+    }
+    throw new Error('replay no debe consultar cuota ni insertar');
+  });
+
+  assert.equal(result.duplicate, true);
+  assert.equal(result.existing.id, 77);
+  assert.equal(calls.some(call => call.sql.includes('SUM(archivo_size)')), false);
+  assert.equal(calls.some(call => call.sql.includes('INSERT INTO comprobantes_transferencia')), false);
+});
+
+test('replay con source y hash apuntando a filas distintas falla cerrado', async () => {
+  const bytes = Buffer.from('%PDF-split-brain');
+  await assert.rejects(insertarComprobantePg({
+    telefono: '351', imagen_path: '/Transferencia/conflict.pdf', fecha: new Date(), empresaId: 7,
+    transportOrigin: 'cloud', sourceMessageId: 'wamid.conflict',
+    archivoBinario: bytes, mimetype: 'application/pdf',
+  }, async sql => {
+    if (sql.includes('pg_advisory_xact_lock')) return [];
+    if (sql.includes('source_message_id = $2') && sql.includes('dedupe_file_hash = $3')) {
+      return [
+        { id: 77, source_message_id: 'wamid.conflict', dedupe_file_hash: 'a'.repeat(64) },
+        { id: 78, source_message_id: 'other', dedupe_file_hash: createHash('sha256').update(bytes).digest('hex') },
+      ];
+    }
+    throw new Error('conflicto no debe continuar');
+  }), error => error?.code === 'comprobante_idempotencia_conflictiva');
 });
 
 test('initDb y ensure instalan constraints durables idempotentes y validados', async () => {
@@ -173,7 +223,8 @@ test('initDb y ensure instalan constraints durables idempotentes y validados', a
     'ck_ct_archivo_mimetype',
     'ck_ct_archivo_sha256',
   ]) {
-    assert.match(initSql, new RegExp(`ADD CONSTRAINT ${constraint}[\\s\\S]+NOT VALID`, 'i'));
+    assert.match(initSql, new RegExp(`['\"]${constraint}['\"]`, 'i'));
+    assert.match(initSql, /ADD CONSTRAINT %I %s NOT VALID/i);
     assert.match(initSql, new RegExp(`VALIDATE CONSTRAINT ${constraint}`, 'i'));
   }
   assert.match(initSql, /octet_length\(archivo_binario\)/i);
@@ -181,7 +232,10 @@ test('initDb y ensure instalan constraints durables idempotentes y validados', a
   assert.match(initSql, /application\/pdf[\s\S]+image\/jpeg[\s\S]+image\/png[\s\S]+image\/webp/i);
 
   const calls = [];
-  await ensureComprobantesTransferenciaSchema(async sql => { calls.push(sql); return []; });
+  await ensureComprobantesTransferenciaSchema(async sql => {
+    calls.push(sql);
+    return sql.includes('expected_constraints') ? [{ ready: true }] : [];
+  });
   const combined = calls.join('\n');
   assert.match(combined, /ck_ct_archivo_metadata_consistente/i);
   assert.match(combined, /VALIDATE CONSTRAINT ck_ct_archivo_sha256/i);

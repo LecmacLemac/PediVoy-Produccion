@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
+import { checkComprobantesTransferenciaSchemaReady } from '../transferenciasServices.js';
+
 import { pool, query, runWithSensitiveDbQueries } from '../db.js';
 import { createWhatsAppContextResolver } from '../handlers.js';
 import { decryptSecret } from '../services/facturacionService.js';
@@ -12,6 +14,7 @@ import { createWhatsAppCloudGraphClient } from './graphClient.js';
 import { createWhatsAppCloudInboundConsumer } from './inboundConsumer.js';
 import { createWhatsAppCloudMediaClient } from './mediaClient.js';
 import { createWhatsAppCloudReceiptProcessor } from './receiptProcessor.js';
+import { createSchemaReadyConsumer } from './schemaReadyConsumer.js';
 import {
   claimNextCloudInboundEvent,
   finishCloudInboundEvent,
@@ -68,8 +71,13 @@ const inboundConsumer = createWhatsAppCloudInboundConsumer({
   processReceipt: input => runWithSensitiveDbQueries(() => receiptProcessor.processPrepared(input)),
   logger: console,
 });
+const schemaReadyInboundConsumer = createSchemaReadyConsumer({
+  consumer: inboundConsumer,
+  checkReady: () => checkComprobantesTransferenciaSchemaReady(sensitiveQuery),
+  logger: console,
+});
 const combinedConsumer = createWhatsAppCloudCombinedConsumer({
-  inbound: inboundConsumer,
+  inbound: schemaReadyInboundConsumer,
   outbound: outboundConsumer,
   logger: console,
 });

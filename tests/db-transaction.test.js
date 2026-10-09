@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { pool, withTransaction } from '../src/db.js';
+import { pool, query, withTransaction } from '../src/db.js';
 
 function poolWithClients(scenarios) {
   const clients = [];
@@ -25,6 +25,24 @@ function poolWithClients(scenarios) {
     },
   };
 }
+
+test('query revierte un batch BEGIN fallido antes de devolver la conexión al pool', async t => {
+  const failure = Object.assign(new Error('lock timeout'), { code: '55P03' });
+  const calls = [];
+  let releasedWith;
+  t.mock.method(pool, 'connect', async () => ({
+    async query(sql) {
+      calls.push(sql);
+      if (/^BEGIN;/i.test(sql)) throw failure;
+      return { rows: [] };
+    },
+    release(error) { releasedWith = error; },
+  }));
+
+  await assert.rejects(query('BEGIN; SELECT 1; COMMIT;'), error => error === failure);
+  assert.deepEqual(calls, ['BEGIN; SELECT 1; COMMIT;', 'ROLLBACK']);
+  assert.equal(releasedWith, undefined);
+});
 
 test('withTransaction usa una sola conexión y confirma el resultado', async () => {
   const transactionPool = poolWithClients([{

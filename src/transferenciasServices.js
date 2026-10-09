@@ -10,6 +10,25 @@ const DURABLE_MIGRATION_START = '-- BEGIN COMPROBANTE DURABLE STORAGE MIGRATION'
 const DURABLE_MIGRATION_END = '-- END COMPROBANTE DURABLE STORAGE MIGRATION';
 const DURABLE_RECEIPT_MAX_BYTES = 10 * 1024 * 1024;
 const DURABLE_RECEIPT_TENANT_QUOTA_BYTES = 1024 * 1024 * 1024;
+const COMPANY_SCHEMA_ADVISORY_LOCK_KEY = '5928237161131906375';
+const DURABLE_RECEIPT_COLUMNS = Object.freeze([
+  ['source_message_id', 'text'],
+  ['dedupe_file_hash', 'text'],
+  ['approval_dedupe_key', 'text'],
+  ['source_chat_jid', 'text'],
+  ['transport_origin', 'text'],
+  ['archivo_binario', 'bytea'],
+  ['archivo_mimetype', 'text'],
+  ['archivo_size', 'bigint'],
+  ['archivo_sha256', 'text'],
+]);
+const DURABLE_RECEIPT_CONSTRAINTS = Object.freeze([
+  ['ck_ct_archivo_metadata_consistente', "CHECK (archivo_binario IS NULL AND archivo_mimetype IS NULL AND archivo_size IS NULL AND archivo_sha256 IS NULL OR archivo_binario IS NOT NULL AND archivo_mimetype IS NOT NULL AND archivo_size IS NOT NULL AND archivo_sha256 IS NOT NULL AND empresa_id IS NOT NULL AND empresa_id > 0)"],
+  ['ck_ct_archivo_size_real', 'CHECK (archivo_binario IS NULL OR archivo_size = octet_length(archivo_binario))'],
+  ['ck_ct_archivo_size_cap', 'CHECK (archivo_binario IS NULL OR archivo_size > 0 AND archivo_size <= 10485760)'],
+  ['ck_ct_archivo_mimetype', "CHECK (archivo_binario IS NULL OR (archivo_mimetype = ANY (ARRAY['application/pdf'::text, 'image/jpeg'::text, 'image/png'::text, 'image/webp'::text])))"],
+  ['ck_ct_archivo_sha256', "CHECK (archivo_binario IS NULL OR archivo_sha256 ~ '^[a-f0-9]{64}$'::text)"],
+]);
 const DURABLE_RECEIPT_MIME_TYPES = new Set([
   'application/pdf', 'image/jpeg', 'image/png', 'image/webp',
 ]);
@@ -27,28 +46,99 @@ async function readComprobanteDurableStorageMigration() {
   const start = initSql.indexOf(DURABLE_MIGRATION_START);
   const end = initSql.indexOf(DURABLE_MIGRATION_END);
   if (start < 0 || end <= start) throw new Error('Bloque durable de comprobantes ausente en initDb.sql');
-  return initSql.slice(start + DURABLE_MIGRATION_START.length, end).trim();
+  return initSql.slice(start + DURABLE_MIGRATION_START.length, end).trim()
+    .replace(/^COMMIT;\s*/i, '');
 }
 
-export async function ensureComprobantesTransferenciaSchema(queryFn = query) {
-  await queryFn(`ALTER TABLE comprobantes_transferencia
-    ADD COLUMN IF NOT EXISTS source_message_id TEXT,
-    ADD COLUMN IF NOT EXISTS dedupe_file_hash TEXT,
-    ADD COLUMN IF NOT EXISTS approval_dedupe_key TEXT,
-    ADD COLUMN IF NOT EXISTS source_chat_jid TEXT,
-    ADD COLUMN IF NOT EXISTS transport_origin TEXT,
-    ADD COLUMN IF NOT EXISTS archivo_binario BYTEA,
-    ADD COLUMN IF NOT EXISTS archivo_mimetype TEXT,
-    ADD COLUMN IF NOT EXISTS archivo_size BIGINT,
-    ADD COLUMN IF NOT EXISTS archivo_sha256 TEXT`);
-  await queryFn(`CREATE UNIQUE INDEX IF NOT EXISTS uq_ct_source_message_new
-    ON comprobantes_transferencia ((COALESCE(empresa_id, 0)), source_message_id)
-    WHERE source_message_id IS NOT NULL`);
-  await queryFn(`CREATE UNIQUE INDEX IF NOT EXISTS uq_ct_file_hash_new
-    ON comprobantes_transferencia ((COALESCE(empresa_id, 0)), dedupe_file_hash)
-    WHERE dedupe_file_hash IS NOT NULL`);
-  await queryFn(await readComprobanteDurableStorageMigration());
+function schemaTimeout(value, fallback) {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+async function runSchemaTransactionBatch(queryFn, sql) {
+  try {
+    return await queryFn(sql);
+  } catch (error) {
+    try { await queryFn('ROLLBACK'); } catch {}
+    throw error;
+  }
+}
+
+export async function checkComprobantesTransferenciaSchemaReady(queryFn = query) {
+  const expectedColumns = DURABLE_RECEIPT_COLUMNS.map(([name, typeName]) => ({ name, typeName }));
+  const expectedConstraints = DURABLE_RECEIPT_CONSTRAINTS.map(([name, definition]) => ({ name, definition }));
+  const rows = await queryFn(`
+    WITH expected_columns(name, type_name) AS (
+      SELECT expected.name, expected."typeName"
+        FROM pg_catalog.jsonb_to_recordset($1::jsonb) AS expected(name text, "typeName" text)
+    ), expected_constraints(name, definition) AS (
+      SELECT * FROM pg_catalog.jsonb_to_recordset($2::jsonb) AS expected(name text, definition text)
+    )
+    SELECT
+      pg_catalog.to_regclass('public.comprobantes_transferencia') IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM expected_columns expected
+        LEFT JOIN pg_catalog.pg_attribute attribute_row
+          ON attribute_row.attrelid = pg_catalog.to_regclass('public.comprobantes_transferencia')
+         AND attribute_row.attname = expected.name
+         AND NOT attribute_row.attisdropped
+        WHERE attribute_row.attname IS NULL
+           OR pg_catalog.format_type(attribute_row.atttypid, attribute_row.atttypmod) <> expected.type_name
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM expected_constraints expected
+        LEFT JOIN pg_catalog.pg_constraint constraint_row
+          ON constraint_row.conrelid = pg_catalog.to_regclass('public.comprobantes_transferencia')
+         AND constraint_row.conname = expected.name
+        GROUP BY expected.name, expected.definition
+        HAVING pg_catalog.count(constraint_row.oid) <> 1
+          OR pg_catalog.bool_and(constraint_row.contype = 'c') IS NOT TRUE
+          OR pg_catalog.bool_and(constraint_row.convalidated) IS NOT TRUE
+          OR pg_catalog.bool_and(
+            pg_catalog.regexp_replace(pg_catalog.pg_get_constraintdef(constraint_row.oid, true), '[[:space:]]+', '', 'g')
+            = pg_catalog.regexp_replace(expected.definition, '[[:space:]]+', '', 'g')
+          ) IS NOT TRUE
+      ) AS ready
+  `, [
+    JSON.stringify(expectedColumns),
+    JSON.stringify(expectedConstraints),
+  ]);
+  return rows.length === 1 && rows[0]?.ready === true;
+}
+
+export async function ensureComprobantesTransferenciaSchema(queryFn = query, options = {}) {
+  const lockTimeoutMs = schemaTimeout(options.lockTimeoutMs, 30_000);
+  const statementTimeoutMs = schemaTimeout(options.statementTimeoutMs, 300_000);
+  await runSchemaTransactionBatch(queryFn, `BEGIN;
+SET LOCAL search_path = public;
+SET LOCAL lock_timeout = '${lockTimeoutMs}ms';
+SET LOCAL statement_timeout = '${statementTimeoutMs}ms';
+SELECT pg_catalog.pg_advisory_xact_lock(${COMPANY_SCHEMA_ADVISORY_LOCK_KEY}::bigint);
+LOCK TABLE comprobantes_transferencia IN ACCESS EXCLUSIVE MODE;
+ALTER TABLE comprobantes_transferencia
+  ADD COLUMN IF NOT EXISTS source_message_id TEXT,
+  ADD COLUMN IF NOT EXISTS dedupe_file_hash TEXT,
+  ADD COLUMN IF NOT EXISTS approval_dedupe_key TEXT,
+  ADD COLUMN IF NOT EXISTS source_chat_jid TEXT,
+  ADD COLUMN IF NOT EXISTS transport_origin TEXT,
+  ADD COLUMN IF NOT EXISTS archivo_binario BYTEA,
+  ADD COLUMN IF NOT EXISTS archivo_mimetype TEXT,
+  ADD COLUMN IF NOT EXISTS archivo_size BIGINT,
+  ADD COLUMN IF NOT EXISTS archivo_sha256 TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_ct_source_message_new
+  ON comprobantes_transferencia ((COALESCE(empresa_id, 0)), source_message_id)
+  WHERE source_message_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_ct_file_hash_new
+  ON comprobantes_transferencia ((COALESCE(empresa_id, 0)), dedupe_file_hash)
+  WHERE dedupe_file_hash IS NOT NULL;
+COMMIT;`);
+  await runSchemaTransactionBatch(queryFn, (await readComprobanteDurableStorageMigration())
+    .replace("SET LOCAL lock_timeout = '30s';", `SET LOCAL lock_timeout = '${lockTimeoutMs}ms';`)
+    .replace("SET LOCAL statement_timeout = '5min';", `SET LOCAL statement_timeout = '${statementTimeoutMs}ms';`));
   await queryFn(await readComprobanteConcurrencyMigration());
+  if (!await checkComprobantesTransferenciaSchemaReady(queryFn)) {
+    throw new Error('Canonical comprobantes_transferencia schema verification failed');
+  }
 }
 
 function digitsOnly(v) {
@@ -671,6 +761,33 @@ async function insertarComprobantePgWork({
 
   if (durableBytes != null) {
     await queryFn('SELECT pg_catalog.pg_advisory_xact_lock($1, $2)', [1129270868, explicitEmpresaId]);
+    if (sourceMessageId || effectiveFileHash) {
+      const normalizedSourceMessageId = sourceMessageId ? String(sourceMessageId) : null;
+      const existingRows = await queryFn(
+        `SELECT id, empresa_id, pedido_id, source_message_id, dedupe_file_hash
+           FROM comprobantes_transferencia
+          WHERE empresa_id IS NOT DISTINCT FROM $1
+            AND (($2::text IS NOT NULL AND source_message_id = $2)
+              OR ($3::text IS NOT NULL AND dedupe_file_hash = $3))
+          ORDER BY id
+          LIMIT 2`,
+        [explicitEmpresaId, normalizedSourceMessageId, effectiveFileHash],
+      );
+      if (existingRows.length > 1) approvalFailure('comprobante_idempotencia_conflictiva');
+      if (existingRows.length === 1) {
+        const existing = existingRows[0];
+        const sourceMatches = normalizedSourceMessageId != null
+          && existing.source_message_id === normalizedSourceMessageId;
+        const hashMatches = effectiveFileHash != null
+          && existing.dedupe_file_hash === effectiveFileHash;
+        if (!sourceMatches && !hashMatches) approvalFailure('comprobante_idempotencia_conflictiva');
+        return {
+          duplicate: true,
+          reason: sourceMatches ? 'duplicate_source_message' : 'duplicate_file_hash',
+          existing,
+        };
+      }
+    }
     const quotaRows = await queryFn(
       `SELECT COALESCE(SUM(archivo_size), 0)::BIGINT AS durable_bytes
          FROM comprobantes_transferencia
@@ -835,18 +952,27 @@ async function insertarComprobantePgWork({
       && ['uq_ct_source_message_new', 'uq_ct_file_hash_new'].includes(error?.constraint);
     if (!isExpectedDuplicate) throw error;
     if (transactional) await queryFn('ROLLBACK TO SAVEPOINT comprobante_insert');
-    const bySource = error.constraint === 'uq_ct_source_message_new';
-    const existing = await queryFn(
-      `SELECT id, empresa_id, pedido_id FROM comprobantes_transferencia
-       WHERE empresa_id IS NOT DISTINCT FROM $1
-         AND ${bySource ? 'source_message_id = $2' : 'dedupe_file_hash = $2'}
-       ORDER BY id DESC LIMIT 1`,
-      [eid, bySource ? String(sourceMessageId) : effectiveFileHash],
+    const existingRows = await queryFn(
+      `SELECT id, empresa_id, pedido_id, source_message_id, dedupe_file_hash
+         FROM comprobantes_transferencia
+        WHERE empresa_id IS NOT DISTINCT FROM $1
+          AND (($2::text IS NOT NULL AND source_message_id = $2)
+            OR ($3::text IS NOT NULL AND dedupe_file_hash = $3))
+        ORDER BY id
+        LIMIT 2`,
+      [eid, sourceMessageId ? String(sourceMessageId) : null, effectiveFileHash],
     );
+    if (existingRows.length !== 1) approvalFailure('comprobante_idempotencia_conflictiva');
+    const existing = existingRows[0];
+    const sourceMatches = sourceMessageId != null
+      && existing.source_message_id === String(sourceMessageId);
+    const hashMatches = effectiveFileHash != null
+      && existing.dedupe_file_hash === effectiveFileHash;
+    if (!sourceMatches && !hashMatches) approvalFailure('comprobante_idempotencia_conflictiva');
     return {
       duplicate: true,
-      reason: bySource ? 'duplicate_source_message' : 'duplicate_file_hash',
-      existing: existing[0],
+      reason: sourceMatches ? 'duplicate_source_message' : 'duplicate_file_hash',
+      existing,
     };
   }
   if (rows.length !== 1) throw new Error('No se pudo insertar exactamente un comprobante');

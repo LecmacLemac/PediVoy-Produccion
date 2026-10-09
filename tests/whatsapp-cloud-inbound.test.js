@@ -16,6 +16,7 @@ import {
   startCloudInboundProcessing,
 } from '../src/whatsappCloud/inboundRepository.js';
 import { createWhatsAppCloudCombinedConsumer } from '../src/whatsappCloud/combinedConsumer.js';
+import { createSchemaReadyConsumer } from '../src/whatsappCloud/schemaReadyConsumer.js';
 import { createWhatsAppCloudReceiptProcessor } from '../src/whatsappCloud/receiptProcessor.js';
 import { enqueueWppOutboxCorrelatedReply } from '../src/wpp/enqueue.js';
 import { pool as dbPool, query as dbQuery, runWithSensitiveDbQueries } from '../src/db.js';
@@ -658,6 +659,39 @@ test('coordinador aísla fallo inbound y siempre intenta outbound con resultado 
   assert.equal(JSON.stringify(logs).includes('private'), false);
 });
 
+test('readiness ausente evita claim inbound y no bloquea outbound; luego reintenta', async () => {
+  let checks = 0;
+  let claims = 0;
+  let outboundRuns = 0;
+  const inbound = createSchemaReadyConsumer({
+    consumer: {
+      async processOnce() { claims += 1; return { outcome: 'processed' }; },
+      async shutdown() { return true; },
+    },
+    checkReady: async () => { checks += 1; return checks > 1; },
+  });
+  const combined = createWhatsAppCloudCombinedConsumer({
+    inbound,
+    outbound: {
+      async processOnce() { outboundRuns += 1; return { outcome: 'sent' }; },
+      async shutdown() { return true; },
+    },
+  });
+
+  assert.deepEqual(await combined.processOnce(), {
+    outcome: 'tick', inbound: { outcome: 'schema_not_ready' }, outbound: { outcome: 'sent' },
+  });
+  assert.equal(claims, 0);
+  assert.deepEqual(await combined.processOnce(), {
+    outcome: 'tick', inbound: { outcome: 'processed' }, outbound: { outcome: 'sent' },
+  });
+  assert.equal(claims, 1);
+  assert.equal(outboundRuns, 2);
+  assert.equal(checks, 2);
+  await combined.processOnce();
+  assert.equal(checks, 2, 'ready se cachea sólo después de validar');
+});
+
 test('coordinador aísla fallo outbound y siempre intenta inbound', async () => {
   const calls = [];
   const combined = createWhatsAppCloudCombinedConsumer({
@@ -817,6 +851,7 @@ test('worker Cloud cablea inbound y outbound en el mismo runtime', () => {
   assert.match(source, /enqueueWppOutboxCorrelatedReply/);
   assert.match(source, /createWhatsAppCloudCombinedConsumer/);
   assert.doesNotMatch(source, /ensureComprobantesTransferenciaSchema/);
-  assert.doesNotMatch(source, /schemaReadyConsumer/);
+  assert.match(source, /createSchemaReadyConsumer/);
+  assert.match(source, /checkComprobantesTransferenciaSchemaReady/);
   assert.match(source, /consumer:\s*combinedConsumer/);
 });

@@ -208,6 +208,7 @@ test('company worker runs every schema prerequisite through the locked dedicated
     async query(sql, params = []) {
       calls.push({ sql, params });
       if (/pg_advisory_unlock/.test(sql)) return { rows: [{ unlocked: true }] };
+      if (sql.includes('expected_constraints')) return { rows: [{ ready: true }] };
       return { rows: [] };
     },
     release(error) { calls.push({ sql: 'RELEASE', error }); },

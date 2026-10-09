@@ -1581,6 +1581,14 @@ CREATE TABLE IF NOT EXISTS comprobantes_transferencia (
   updated_at       TIMESTAMPTZ DEFAULT pg_catalog.NOW()
 );
 
+-- BEGIN COMPROBANTE DURABLE STORAGE MIGRATION
+COMMIT;
+BEGIN;
+SET LOCAL search_path = public;
+SET LOCAL lock_timeout = '30s';
+SET LOCAL statement_timeout = '5min';
+SELECT pg_catalog.pg_advisory_xact_lock(5928237161131906375::bigint);
+LOCK TABLE comprobantes_transferencia IN ACCESS EXCLUSIVE MODE;
 ALTER TABLE comprobantes_transferencia
   ADD COLUMN IF NOT EXISTS source_message_id TEXT,
   ADD COLUMN IF NOT EXISTS dedupe_file_hash TEXT,
@@ -1591,68 +1599,55 @@ ALTER TABLE comprobantes_transferencia
   ADD COLUMN IF NOT EXISTS archivo_mimetype TEXT,
   ADD COLUMN IF NOT EXISTS archivo_size BIGINT,
   ADD COLUMN IF NOT EXISTS archivo_sha256 TEXT;
-
--- BEGIN COMPROBANTE DURABLE STORAGE MIGRATION
-COMMIT;
-BEGIN;
-SET LOCAL search_path = public;
-SET LOCAL lock_timeout = '30s';
-SET LOCAL statement_timeout = '5min';
 DO $durable_receipt_constraints$
+DECLARE
+  expected RECORD;
+  actual_count INTEGER;
+  actual_matches BOOLEAN;
 BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint
-     WHERE conrelid = 'comprobantes_transferencia'::regclass
-       AND conname = 'ck_ct_archivo_metadata_consistente'
-  ) THEN
-    ALTER TABLE comprobantes_transferencia
-      ADD CONSTRAINT ck_ct_archivo_metadata_consistente CHECK (
-        (archivo_binario IS NULL AND archivo_mimetype IS NULL AND archivo_size IS NULL AND archivo_sha256 IS NULL)
-        OR
-        (archivo_binario IS NOT NULL AND archivo_mimetype IS NOT NULL AND archivo_size IS NOT NULL
-          AND archivo_sha256 IS NOT NULL AND empresa_id IS NOT NULL AND empresa_id > 0)
-      ) NOT VALID;
-  END IF;
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint
-     WHERE conrelid = 'comprobantes_transferencia'::regclass
-       AND conname = 'ck_ct_archivo_size_real'
-  ) THEN
-    ALTER TABLE comprobantes_transferencia
-      ADD CONSTRAINT ck_ct_archivo_size_real CHECK (
-        archivo_binario IS NULL OR archivo_size = pg_catalog.octet_length(archivo_binario)
-      ) NOT VALID;
-  END IF;
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint
-     WHERE conrelid = 'comprobantes_transferencia'::regclass
-       AND conname = 'ck_ct_archivo_size_cap'
-  ) THEN
-    ALTER TABLE comprobantes_transferencia
-      ADD CONSTRAINT ck_ct_archivo_size_cap CHECK (
-        archivo_binario IS NULL OR (archivo_size > 0 AND archivo_size <= 10485760)
-      ) NOT VALID;
-  END IF;
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint
-     WHERE conrelid = 'comprobantes_transferencia'::regclass
-       AND conname = 'ck_ct_archivo_mimetype'
-  ) THEN
-    ALTER TABLE comprobantes_transferencia
-      ADD CONSTRAINT ck_ct_archivo_mimetype CHECK (
-        archivo_binario IS NULL OR archivo_mimetype IN ('application/pdf', 'image/jpeg', 'image/png', 'image/webp')
-      ) NOT VALID;
-  END IF;
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint
-     WHERE conrelid = 'comprobantes_transferencia'::regclass
-       AND conname = 'ck_ct_archivo_sha256'
-  ) THEN
-    ALTER TABLE comprobantes_transferencia
-      ADD CONSTRAINT ck_ct_archivo_sha256 CHECK (
-        archivo_binario IS NULL OR archivo_sha256 ~ '^[a-f0-9]{64}$'
-      ) NOT VALID;
-  END IF;
+  FOR expected IN
+    SELECT * FROM (VALUES
+      ('ck_ct_archivo_metadata_consistente',
+       'CHECK (archivo_binario IS NULL AND archivo_mimetype IS NULL AND archivo_size IS NULL AND archivo_sha256 IS NULL OR archivo_binario IS NOT NULL AND archivo_mimetype IS NOT NULL AND archivo_size IS NOT NULL AND archivo_sha256 IS NOT NULL AND empresa_id IS NOT NULL AND empresa_id > 0)',
+       'CHECK ((archivo_binario IS NULL AND archivo_mimetype IS NULL AND archivo_size IS NULL AND archivo_sha256 IS NULL) OR (archivo_binario IS NOT NULL AND archivo_mimetype IS NOT NULL AND archivo_size IS NOT NULL AND archivo_sha256 IS NOT NULL AND empresa_id IS NOT NULL AND empresa_id > 0))'),
+      ('ck_ct_archivo_size_real',
+       'CHECK (archivo_binario IS NULL OR archivo_size = octet_length(archivo_binario))',
+       'CHECK (archivo_binario IS NULL OR archivo_size = pg_catalog.octet_length(archivo_binario))'),
+      ('ck_ct_archivo_size_cap',
+       'CHECK (archivo_binario IS NULL OR archivo_size > 0 AND archivo_size <= 10485760)',
+       'CHECK (archivo_binario IS NULL OR (archivo_size > 0 AND archivo_size <= 10485760))'),
+      ('ck_ct_archivo_mimetype',
+       'CHECK (archivo_binario IS NULL OR (archivo_mimetype = ANY (ARRAY[''application/pdf''::text, ''image/jpeg''::text, ''image/png''::text, ''image/webp''::text])))',
+       'CHECK (archivo_binario IS NULL OR archivo_mimetype IN (''application/pdf'', ''image/jpeg'', ''image/png'', ''image/webp''))'),
+      ('ck_ct_archivo_sha256',
+       'CHECK (archivo_binario IS NULL OR archivo_sha256 ~ ''^[a-f0-9]{64}$''::text)',
+       'CHECK (archivo_binario IS NULL OR archivo_sha256 ~ ''^[a-f0-9]{64}$'')')
+    ) AS definitions(name, canonical_definition, add_expression)
+  LOOP
+    SELECT pg_catalog.count(*)::INTEGER,
+           pg_catalog.bool_and(
+             constraint_row.contype = 'c'
+             AND pg_catalog.regexp_replace(
+               pg_catalog.pg_get_constraintdef(constraint_row.oid, true),
+               '[[:space:]]+', '', 'g'
+             ) = pg_catalog.regexp_replace(expected.canonical_definition, '[[:space:]]+', '', 'g')
+           )
+      INTO actual_count, actual_matches
+      FROM pg_catalog.pg_constraint AS constraint_row
+     WHERE constraint_row.conrelid = 'public.comprobantes_transferencia'::pg_catalog.regclass
+       AND constraint_row.conname = expected.name;
+
+    IF actual_count <> 1 OR actual_matches IS NOT TRUE THEN
+      EXECUTE pg_catalog.format(
+        'ALTER TABLE public.comprobantes_transferencia DROP CONSTRAINT IF EXISTS %I',
+        expected.name
+      );
+      EXECUTE pg_catalog.format(
+        'ALTER TABLE public.comprobantes_transferencia ADD CONSTRAINT %I %s NOT VALID',
+        expected.name, expected.add_expression
+      );
+    END IF;
+  END LOOP;
 END
 $durable_receipt_constraints$;
 ALTER TABLE comprobantes_transferencia VALIDATE CONSTRAINT ck_ct_archivo_metadata_consistente;
@@ -1660,6 +1655,40 @@ ALTER TABLE comprobantes_transferencia VALIDATE CONSTRAINT ck_ct_archivo_size_re
 ALTER TABLE comprobantes_transferencia VALIDATE CONSTRAINT ck_ct_archivo_size_cap;
 ALTER TABLE comprobantes_transferencia VALIDATE CONSTRAINT ck_ct_archivo_mimetype;
 ALTER TABLE comprobantes_transferencia VALIDATE CONSTRAINT ck_ct_archivo_sha256;
+DO $durable_receipt_postflight$
+DECLARE
+  expected RECORD;
+  actual_count INTEGER;
+  actual_matches BOOLEAN;
+BEGIN
+  FOR expected IN
+    SELECT * FROM (VALUES
+      ('ck_ct_archivo_metadata_consistente', 'CHECK (archivo_binario IS NULL AND archivo_mimetype IS NULL AND archivo_size IS NULL AND archivo_sha256 IS NULL OR archivo_binario IS NOT NULL AND archivo_mimetype IS NOT NULL AND archivo_size IS NOT NULL AND archivo_sha256 IS NOT NULL AND empresa_id IS NOT NULL AND empresa_id > 0)'),
+      ('ck_ct_archivo_size_real', 'CHECK (archivo_binario IS NULL OR archivo_size = octet_length(archivo_binario))'),
+      ('ck_ct_archivo_size_cap', 'CHECK (archivo_binario IS NULL OR archivo_size > 0 AND archivo_size <= 10485760)'),
+      ('ck_ct_archivo_mimetype', 'CHECK (archivo_binario IS NULL OR (archivo_mimetype = ANY (ARRAY[''application/pdf''::text, ''image/jpeg''::text, ''image/png''::text, ''image/webp''::text])))'),
+      ('ck_ct_archivo_sha256', 'CHECK (archivo_binario IS NULL OR archivo_sha256 ~ ''^[a-f0-9]{64}$''::text)')
+    ) AS definitions(name, canonical_definition)
+  LOOP
+    SELECT pg_catalog.count(*)::INTEGER,
+           pg_catalog.bool_and(
+             constraint_row.contype = 'c'
+             AND constraint_row.convalidated
+             AND pg_catalog.regexp_replace(
+               pg_catalog.pg_get_constraintdef(constraint_row.oid, true),
+               '[[:space:]]+', '', 'g'
+             ) = pg_catalog.regexp_replace(expected.canonical_definition, '[[:space:]]+', '', 'g')
+           )
+      INTO actual_count, actual_matches
+      FROM pg_catalog.pg_constraint AS constraint_row
+     WHERE constraint_row.conrelid = 'public.comprobantes_transferencia'::pg_catalog.regclass
+       AND constraint_row.conname = expected.name;
+    IF actual_count <> 1 OR actual_matches IS NOT TRUE THEN
+      RAISE EXCEPTION 'canonical durable receipt constraint verification failed: %', expected.name;
+    END IF;
+  END LOOP;
+END
+$durable_receipt_postflight$;
 COMMIT;
 -- END COMPROBANTE DURABLE STORAGE MIGRATION
 BEGIN;

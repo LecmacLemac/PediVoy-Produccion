@@ -186,6 +186,31 @@ test('rechaza URL no HTTPS, origen no Meta, redirects, oversize y hash mismatch'
   }
 });
 
+test('maxBytes configurado no puede ampliar el hard cap Cloud de 10 MiB', async () => {
+  let calls = 0;
+  const oversizedLength = 10 * 1024 * 1024 + 1;
+  const client = createWhatsAppCloudMediaClient({
+    maxBytes: 50 * 1024 * 1024,
+    fetchImpl: async () => {
+      calls += 1;
+      if (calls === 1) return jsonResponse({
+        id: 'media-hard-cap', mime_type: 'image/jpeg', sha256,
+        file_size: oversizedLength,
+        url: 'https://lookaside.fbsbx.com/hard-cap',
+      });
+      return new Response(jpeg, {
+        status: 200,
+        headers: { 'content-type': 'image/jpeg', 'content-length': String(oversizedLength) },
+      });
+    },
+  });
+
+  await assert.rejects(client.download({
+    mediaId: 'media-hard-cap', phoneNumberId: 'phone-2', accessToken: 'token',
+  }), error => error?.code === 'cloud_media_too_large');
+  assert.equal(calls, 2);
+});
+
 test('404 de URL refresca metadata una vez; 401/403 son terminales y 429/5xx retryable', async () => {
   let metadataCalls = 0;
   let byteCalls = 0;

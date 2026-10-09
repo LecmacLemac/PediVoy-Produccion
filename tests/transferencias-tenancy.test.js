@@ -122,7 +122,8 @@ test('inserción reserva source message y hash atómicamente sin duplicar por te
     }
     assert.match(sql, /FROM comprobantes_transferencia/);
     assert.match(sql, /empresa_id IS NOT DISTINCT FROM \$1/);
-    return [{ id: 99, empresa_id: 7, pedido_id: 202 }];
+    return [{ id: 99, empresa_id: 7, pedido_id: 202,
+      source_message_id: 'false_wa_msg_1', dedupe_file_hash: 'b'.repeat(64) }];
   };
   const input = {
     telefono: '5493510000000', imagen_path: '/Transferencia/seguro.jpg',
@@ -141,7 +142,10 @@ test('inserción reserva source message y hash atómicamente sin duplicar por te
 
 test('migración runtime instala sin drift el bloque completo marcado de initDb.sql', async () => {
   const statements = [];
-  await ensureComprobantesTransferenciaSchema(async sql => { statements.push(sql); return []; });
+  await ensureComprobantesTransferenciaSchema(async sql => {
+    statements.push(sql);
+    return sql.includes('expected_constraints') ? [{ ready: true }] : [];
+  });
   const sql = statements.join('\n');
   const initSql = await readFile(new URL('../initDb.sql', import.meta.url), 'utf8');
   const startMarker = '-- BEGIN COMPROBANTE CONCURRENCY MIGRATION';

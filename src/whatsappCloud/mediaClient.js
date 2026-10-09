@@ -3,6 +3,7 @@ import { normalizeCloudDeadline, unrefTimer } from './deadlines.js';
 import { normalizeReceiptMimeType, receiptExtensionForMime } from '../receiptMediaValidation.js';
 
 const META_HOSTS = ['facebook.com', 'fbcdn.net', 'fbsbx.com'];
+const CLOUD_MEDIA_HARD_MAX_BYTES = 10 * 1024 * 1024;
 
 export class WhatsAppCloudMediaError extends Error {
   constructor(code, { retryable = false } = {}) {
@@ -102,8 +103,9 @@ export function createWhatsAppCloudMediaClient({
 } = {}) {
   if (typeof fetchImpl !== 'function') throw new TypeError('fetch requerido');
   const deadline = normalizeCloudDeadline('graph', timeoutMs);
-  const byteLimit = Number(maxBytes);
-  if (!Number.isSafeInteger(byteLimit) || byteLimit <= 0) throw new TypeError('maxBytes inválido');
+  const configuredByteLimit = Number(maxBytes);
+  if (!Number.isSafeInteger(configuredByteLimit) || configuredByteLimit <= 0) throw new TypeError('maxBytes inválido');
+  const byteLimit = Math.min(configuredByteLimit, CLOUD_MEDIA_HARD_MAX_BYTES);
 
   async function loadMetadata({ mediaId, phoneNumberId, accessToken }) {
     return withDeadline(fetchImpl,

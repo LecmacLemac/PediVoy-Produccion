@@ -43,6 +43,7 @@ pool.on('error', (err) => {
 export async function query(sql, params = [], { sensitive = false } = {}) {
   const start = Date.now();
   let client;
+  let releaseError;
 
   try {
     client = await pool.connect();
@@ -56,6 +57,13 @@ export async function query(sql, params = [], { sensitive = false } = {}) {
 
     return res.rows;
   } catch (error) {
+    if (client && /^\s*BEGIN\s*;/i.test(String(sql))) {
+      try {
+        await client.query('ROLLBACK');
+      } catch (rollbackError) {
+        releaseError = rollbackError;
+      }
+    }
     const context = dbQueryContext.getStore();
     const effectiveSensitive = sensitive || context?.sensitive === true;
     if (context?.suppressErrors !== true) {
@@ -69,7 +77,7 @@ export async function query(sql, params = [], { sensitive = false } = {}) {
     }
     throw error;
   } finally {
-    if (client) client.release();
+    if (client) client.release(releaseError);
   }
 }
 

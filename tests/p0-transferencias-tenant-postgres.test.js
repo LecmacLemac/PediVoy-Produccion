@@ -162,6 +162,30 @@ test('PostgreSQL real: asociación manual/automática cierra tenant, es transacc
       assert.equal(rows.rows[0].c, 0);
     });
 
+    await t.test('replay durable cerca de 1 GiB devuelve duplicate antes de cuota', async () => {
+      const bytes = Buffer.from('%PDF-replay-near-quota');
+      const first = await insertarComprobantePg({
+        telefono: '5493510000000', imagen_path: '/Transferencia/replay-near-quota.pdf',
+        fecha: new Date(), empresaId: 1, transportOrigin: 'cloud',
+        sourceMessageId: 'cloud-replay-near-quota', archivoBinario: bytes,
+        mimetype: 'application/pdf',
+      }, async (sql, params = []) => (await pool.query(sql, params)).rows, { withTransaction });
+      await pool.query(`
+        INSERT INTO comprobantes_transferencia
+          (telefono, empresa_id, archivo_binario, archivo_mimetype, archivo_size, archivo_sha256)
+        VALUES ('quota-fill', 1, decode('00', 'hex'), 'image/jpeg', $1, $2)
+      `, [1024 * 1024 * 1024 - bytes.length, '0'.repeat(64)]);
+
+      const replay = await insertarComprobantePg({
+        telefono: '5493510000000', imagen_path: '/Transferencia/replay-near-quota.pdf',
+        fecha: new Date(), empresaId: 1, transportOrigin: 'cloud',
+        sourceMessageId: 'cloud-replay-near-quota', archivoBinario: bytes,
+        mimetype: 'application/pdf',
+      }, async (sql, params = []) => (await pool.query(sql, params)).rows, { withTransaction });
+      assert.equal(replay.duplicate, true);
+      assert.equal(replay.existing.id, first.id);
+    });
+
     await t.test('dos vinculaciones automáticas del mismo evento reservan una sola fila durable', async () => {
       const input = {
         telefono: '5493510000000', imagen_path: '/Transferencia/retry.jpg',

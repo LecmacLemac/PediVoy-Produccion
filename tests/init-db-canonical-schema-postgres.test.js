@@ -18,7 +18,7 @@ const createdDirectories = new Set();
 
 const nonFunctionCallIdentifiers = new Set([
   'and', 'any', 'array', 'as', 'btree', 'canonical', 'check', 'coalesce', 'conflict',
-  'default', 'exists', 'expected', 'filter', 'from', 'geometry', 'gin', 'gist', 'greatest',
+  'default', 'definitions', 'exists', 'expected', 'filter', 'from', 'geometry', 'gin', 'gist', 'greatest',
   'if', 'in', 'include', 'index_column', 'key', 'key_column', 'least', 'not', 'nullif',
   'numeric', 'nvarchar', 'or', 'over', 'position', 'requested', 'required', 'required_columns',
   'varchar',
