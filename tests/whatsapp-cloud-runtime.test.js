@@ -268,7 +268,7 @@ test('worker real sigue vivo y reintenta ante PostgreSQL inaccesible', async (t)
     if (worker.exitCode === null && worker.signalCode === null) worker.kill('SIGKILL');
   });
 
-  await new Promise(resolve => setTimeout(resolve, 350));
+  await new Promise(resolve => setTimeout(resolve, 1200));
   assert.equal(worker.exitCode, null, `worker terminó antes de reintentar; stdout=${stdout}; stderr=${stderr}`);
   assert.equal(worker.signalCode, null);
   assert.match(stderr, /error operativo sanitizado/);
