@@ -1,6 +1,11 @@
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import express from 'express';
 import { isSafeStorageFilename, downloadStorageFile } from './privateStorage.js';
+
+const DURABLE_RECEIPT_MIME_TYPES = new Set([
+  'application/pdf', 'image/jpeg', 'image/png', 'image/webp',
+]);
 
 export function resolveTransferenciaStorageDir({ projectDir, env = process.env } = {}) {
   if (!projectDir) throw new Error('resolveTransferenciaStorageDir: falta projectDir');
@@ -44,7 +49,7 @@ export function createTransferenciaStorageRouter({ storageDir, withAuth, checkLi
 
       const rows = superUser
         ? await query(
-            `SELECT id
+            `SELECT id, archivo_binario, archivo_mimetype, archivo_size, archivo_sha256
                FROM comprobantes_transferencia
               WHERE empresa_id IS NOT NULL
                 AND (
@@ -55,7 +60,7 @@ export function createTransferenciaStorageRouter({ storageDir, withAuth, checkLi
             [filename],
           )
         : await query(
-            `SELECT id
+            `SELECT id, archivo_binario, archivo_mimetype, archivo_size, archivo_sha256
                FROM comprobantes_transferencia
               WHERE empresa_id = $2
                 AND (
@@ -66,6 +71,28 @@ export function createTransferenciaStorageRouter({ storageDir, withAuth, checkLi
             [filename, empresaId],
           );
       if (!rows.length) return res.status(404).json({ error: 'Archivo no encontrado' });
+
+      const receipt = rows[0];
+      if (Buffer.isBuffer(receipt.archivo_binario)) {
+        const mimeType = String(receipt.archivo_mimetype || '').trim().toLowerCase();
+        const declaredSize = Number(receipt.archivo_size);
+        const declaredHash = String(receipt.archivo_sha256 || '').trim().toLowerCase();
+        if (!DURABLE_RECEIPT_MIME_TYPES.has(mimeType)
+            || !Number.isSafeInteger(declaredSize)
+            || declaredSize !== receipt.archivo_binario.length
+            || !/^[a-f0-9]{64}$/.test(declaredHash)) {
+          return res.status(500).json({ error: 'Archivo durable inválido' });
+        }
+        const actualHash = createHash('sha256').update(receipt.archivo_binario).digest('hex');
+        if (declaredHash !== actualHash) {
+          return res.status(500).json({ error: 'Archivo durable inválido' });
+        }
+        res.attachment(filename);
+        res.setHeader('Content-Type', mimeType);
+        res.setHeader('Content-Length', String(declaredSize));
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+        return res.status(200).send(receipt.archivo_binario);
+      }
 
       return downloadStorageFile(res, storageDir, filename, next);
     } catch (error) {

@@ -689,10 +689,12 @@ export async function procesarArchivoTransferenciaPg(filePayload, telefono, {
       bytes: savedFile.size,
       sourceMessageId,
       fileHash,
+      archivoBinario: transportOrigin === 'cloud' ? filePayload.buffer : null,
     });
 
     if (registroDB?.duplicate) {
       await fs.promises.unlink(savedFile.absolutePath).catch(() => {});
+      if (CONFIG.DEBUG) console.timeEnd(logPrefix);
       return { ok: false, handled: true, saved: true, duplicate: true, reason: 'duplicate_event_or_file' };
     }
 

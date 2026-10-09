@@ -4,6 +4,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
 import http from 'node:http';
+import { createHash } from 'node:crypto';
 import express from 'express';
 
 import { resolveTransferenciaStorageDir, createTransferenciaStorageRouter } from '../src/transferenciaStorage.js';
@@ -148,6 +149,71 @@ test('super user administrativo conserva descarga cross-tenant', async () => {
   }
 });
 
+test('descarga el binario durable desde PostgreSQL aunque el archivo local no exista', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pedivoy-transfer-db-'));
+  const bytes = Buffer.from('%PDF-durable');
+  const app = express();
+  app.use('/Transferencia', createTransferenciaStorageRouter({
+    storageDir: dir,
+    withAuth: (req, _res, next) => { req.user = { role: 'admin', empresa_id: 7 }; next(); },
+    checkLicencia: (_req, _res, next) => next(),
+    query: async (sql, params) => {
+      assert.match(sql, /archivo_binario/);
+      assert.match(sql, /empresa_id\s*=\s*\$2/);
+      assert.deepEqual(params, ['receipt.pdf', 7]);
+      return [{
+        id: 10,
+        archivo_binario: bytes,
+        archivo_mimetype: 'application/pdf',
+        archivo_size: bytes.length,
+        archivo_sha256: createHash('sha256').update(bytes).digest('hex'),
+      }];
+    },
+    isSuper: req => req.user.role === 'super',
+  }));
+  const server = http.createServer(app);
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/Transferencia/receipt.pdf`);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('content-type'), 'application/pdf');
+    assert.equal(response.headers.get('content-length'), String(bytes.length));
+    assert.match(response.headers.get('content-disposition'), /^attachment;/);
+    assert.deepEqual(Buffer.from(await response.arrayBuffer()), bytes);
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('rechaza un binario durable cuyo hash no coincide', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pedivoy-transfer-db-corrupt-'));
+  const app = express();
+  app.use('/Transferencia', createTransferenciaStorageRouter({
+    storageDir: dir,
+    withAuth: (req, _res, next) => { req.user = { role: 'admin', empresa_id: 7 }; next(); },
+    checkLicencia: (_req, _res, next) => next(),
+    query: async () => [{
+      id: 10,
+      archivo_binario: Buffer.from('%PDF-corrupt'),
+      archivo_mimetype: 'application/pdf',
+      archivo_size: Buffer.byteLength('%PDF-corrupt'),
+      archivo_sha256: '0'.repeat(64),
+    }],
+    isSuper: () => false,
+  }));
+  const server = http.createServer(app);
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/Transferencia/receipt.pdf`);
+    assert.equal(response.status, 500);
+    assert.deepEqual(await response.json(), { error: 'Archivo durable inválido' });
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('elimina el archivo propio cuando la reserva DB informa evento duplicado', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pedivoy-transfer-clean-'));
   const absolutePath = path.join(dir, 'duplicate.jpg');
@@ -172,4 +238,36 @@ test('elimina el archivo propio cuando la reserva DB informa evento duplicado', 
   assert.equal(result.reason, 'duplicate_event_or_file');
   assert.equal(fs.existsSync(absolutePath), false);
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('WhatsApp Cloud entrega bytes y metadatos al INSERT durable del comprobante', async () => {
+  const bytes = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
+  let insertInput;
+  const result = await procesarArchivoTransferenciaPg(
+    { buffer: bytes, mimetype: 'image/jpeg' },
+    '3510000000',
+    {
+      empresaId: 7,
+      sourceMessageId: 'wamid.durable',
+      transportOrigin: 'cloud',
+      deps: {
+        saveFileToDisk: async () => ({
+          absolutePath: '/tmp/not-created-durable.jpg',
+          relativePath: '/Transferencia/durable.jpg',
+          mimetype: 'image/jpeg',
+          size: bytes.length,
+        }),
+        insertarComprobantePg: async input => {
+          insertInput = input;
+          return { duplicate: true };
+        },
+      },
+    }
+  );
+
+  assert.equal(result.reason, 'duplicate_event_or_file');
+  assert.equal(insertInput.archivoBinario, bytes);
+  assert.equal(insertInput.mimetype, 'image/jpeg');
+  assert.equal(insertInput.bytes, bytes.length);
+  assert.match(insertInput.fileHash, /^[a-f0-9]{64}$/);
 });

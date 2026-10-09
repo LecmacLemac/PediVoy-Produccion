@@ -816,5 +816,12 @@ test('worker Cloud cablea inbound y outbound en el mismo runtime', () => {
   assert.match(source, /processReceipt:\s*input\s*=>\s*runWithSensitiveDbQueries/);
   assert.match(source, /enqueueWppOutboxCorrelatedReply/);
   assert.match(source, /createWhatsAppCloudCombinedConsumer/);
-  assert.match(source, /consumer:\s*combinedConsumer/);
+  assert.match(source, /ensureComprobantesTransferenciaSchema/);
+  assert.match(source, /const schemaReadyConsumer/);
+  assert.ok(
+    source.indexOf('await ensureComprobantesTransferenciaSchema(query)')
+      < source.indexOf('return combinedConsumer.processOnce(options)'),
+    'el worker debe instalar el schema durable antes de consumir comprobantes',
+  );
+  assert.match(source, /consumer:\s*schemaReadyConsumer/);
 });

@@ -46,7 +46,8 @@ async function fixture(pool) {
       validado integer DEFAULT 0, procesado boolean DEFAULT false,
       estado_revision text DEFAULT 'pendiente', riesgo_score integer, riesgo_flags text,
       verified_reason text, source_message_id text, file_hash text, dedupe_file_hash text,
-      source_chat_jid text, transport_origin text, verified_by integer, verified_at timestamptz
+      source_chat_jid text, transport_origin text, verified_by integer, verified_at timestamptz,
+      archivo_binario bytea, archivo_mimetype text, archivo_size bigint, archivo_sha256 text
     );
     CREATE UNIQUE INDEX uq_ct_source_message_new
       ON comprobantes_transferencia ((COALESCE(empresa_id, 0)), source_message_id)
@@ -117,6 +118,27 @@ test('PostgreSQL real: asociación manual/automática cierra tenant, es transacc
       assert.equal(result.empresa_id, 2);
       assert.equal(result.pedido_id, 200);
       assert.equal(result.pedido_monto, 2000);
+    });
+
+    await t.test('Cloud persiste bytea y metadatos en la misma fila transaccional', async () => {
+      const bytes = Buffer.from('%PDF-real-durable');
+      const hash = 'e'.repeat(64);
+      const result = await insertarComprobantePg({
+        telefono: '5493510000000', imagen_path: '/Transferencia/cloud.pdf',
+        fecha: new Date('2026-10-09T12:00:00Z'), empresaId: 2,
+        sourceMessageId: 'cloud-durable-real', fileHash: hash,
+        archivoBinario: bytes, mimetype: 'application/pdf', bytes: bytes.length,
+      }, async (sql, params = []) => (await pool.query(sql, params)).rows, { withTransaction });
+
+      const stored = (await pool.query(`
+        SELECT archivo_binario, archivo_mimetype, archivo_size, archivo_sha256
+          FROM comprobantes_transferencia
+         WHERE id = $1 AND empresa_id = $2
+      `, [result.id, 2])).rows[0];
+      assert.deepEqual(stored.archivo_binario, bytes);
+      assert.equal(stored.archivo_mimetype, 'application/pdf');
+      assert.equal(Number(stored.archivo_size), bytes.length);
+      assert.equal(stored.archivo_sha256, hash);
     });
 
     await t.test('dos vinculaciones automáticas del mismo evento reservan una sola fila durable', async () => {

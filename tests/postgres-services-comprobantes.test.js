@@ -78,3 +78,59 @@ test('insertarComprobante solo deduplica constraints esperadas y busca por tenan
     error => error?.constraint === 'ct_fk',
   );
 });
+
+test('insertarComprobante persiste binario Cloud y metadatos en la misma fila', async () => {
+  const bytes = Buffer.from('%PDF-durable');
+  const hash = 'c'.repeat(64);
+  let insertCall;
+  const result = await insertarComprobantePg({
+    telefono: '3510000000',
+    imagen_path: '/Transferencia/durable.pdf',
+    fecha: new Date('2026-10-09T12:00:00Z'),
+    empresaId: 7,
+    sourceMessageId: 'wamid.durable-row',
+    fileHash: hash,
+    archivoBinario: bytes,
+    mimetype: 'application/pdf',
+    bytes: bytes.length,
+  }, async (sql, params) => {
+    if (sql.includes('FROM pedidos')) return [];
+    if (sql.includes('INSERT INTO comprobantes_transferencia')) {
+      insertCall = { sql, params };
+      return [{ id: 101, empresa_id: 7, pedido_id: null }];
+    }
+    throw new Error('consulta inesperada');
+  });
+
+  assert.equal(result.id, 101);
+  assert.match(insertCall.sql, /archivo_binario/);
+  assert.match(insertCall.sql, /archivo_mimetype/);
+  assert.match(insertCall.sql, /archivo_size/);
+  assert.match(insertCall.sql, /archivo_sha256/);
+  assert.deepEqual(insertCall.params.slice(-4), [bytes, 'application/pdf', bytes.length, hash]);
+});
+
+test('insertarComprobante rechaza el binario durable sobredimensionado antes de consultar PostgreSQL', async () => {
+  const previous = process.env.TRANSFERENCIA_MAX_BYTES;
+  process.env.TRANSFERENCIA_MAX_BYTES = '3';
+  let queries = 0;
+  try {
+    await assert.rejects(insertarComprobantePg({
+      telefono: '3510000000',
+      imagen_path: '/Transferencia/too-large.jpg',
+      fecha: new Date(),
+      empresaId: 7,
+      fileHash: 'd'.repeat(64),
+      archivoBinario: Buffer.alloc(4),
+      mimetype: 'image/jpeg',
+      bytes: 4,
+    }, async () => {
+      queries += 1;
+      return [];
+    }), error => error?.code === 'archivo_comprobante_invalido');
+    assert.equal(queries, 0);
+  } finally {
+    if (previous === undefined) delete process.env.TRANSFERENCIA_MAX_BYTES;
+    else process.env.TRANSFERENCIA_MAX_BYTES = previous;
+  }
+});

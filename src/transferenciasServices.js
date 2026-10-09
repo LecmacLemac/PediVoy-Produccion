@@ -20,7 +20,11 @@ export async function ensureComprobantesTransferenciaSchema(queryFn = query) {
     ADD COLUMN IF NOT EXISTS dedupe_file_hash TEXT,
     ADD COLUMN IF NOT EXISTS approval_dedupe_key TEXT,
     ADD COLUMN IF NOT EXISTS source_chat_jid TEXT,
-    ADD COLUMN IF NOT EXISTS transport_origin TEXT`);
+    ADD COLUMN IF NOT EXISTS transport_origin TEXT,
+    ADD COLUMN IF NOT EXISTS archivo_binario BYTEA,
+    ADD COLUMN IF NOT EXISTS archivo_mimetype TEXT,
+    ADD COLUMN IF NOT EXISTS archivo_size BIGINT,
+    ADD COLUMN IF NOT EXISTS archivo_sha256 TEXT`);
   await queryFn(`CREATE UNIQUE INDEX IF NOT EXISTS uq_ct_source_message_new
     ON comprobantes_transferencia ((COALESCE(empresa_id, 0)), source_message_id)
     WHERE source_message_id IS NOT NULL`);
@@ -622,10 +626,28 @@ async function insertarComprobantePgWork({
   empresaId = null,
   sourceMessageId = null,
   fileHash = null,
-  mimetype, // (por ahora no se usa, pero lo dejamos por si se loguea a futuro)
-  bytes     // (idem)
+  archivoBinario = null,
+  mimetype,
+  bytes
 }, queryFn = query, { transactional = false } = {}) {
   const telClean = digitsOnly(telefono) || null;
+  const durableBytes = archivoBinario == null ? null : archivoBinario;
+  const durableMime = durableBytes == null ? null : String(mimetype || '').trim().toLowerCase();
+  const durableSize = durableBytes == null ? null : Number(bytes);
+  const durableHash = durableBytes == null ? null : String(fileHash || '').trim().toLowerCase();
+  const configuredMaxBytes = Number(process.env.TRANSFERENCIA_MAX_BYTES || 10 * 1024 * 1024);
+  const maxBytes = Number.isSafeInteger(configuredMaxBytes) && configuredMaxBytes > 0
+    ? configuredMaxBytes
+    : 10 * 1024 * 1024;
+  if (durableBytes != null && (
+    !Buffer.isBuffer(durableBytes)
+    || !['application/pdf', 'image/jpeg', 'image/png', 'image/webp'].includes(durableMime)
+    || !Number.isSafeInteger(durableSize)
+    || durableSize !== durableBytes.length
+    || durableSize <= 0
+    || durableSize > maxBytes
+    || !/^[a-f0-9]{64}$/.test(durableHash)
+  )) approvalFailure('archivo_comprobante_invalido');
   // Usamos los últimos 10 dígitos para mejorar el "match" (evita problemas con 549 vs 0)
   const telSuffix = telClean ? telClean.slice(-10) : null;
 
@@ -749,11 +771,13 @@ async function insertarComprobantePgWork({
        pedido_id, empresa_id, chofer_id,
        created_at, updated_at, validado, procesado,
        estado_revision, riesgo_score, riesgo_flags, verified_reason,
-       source_message_id, file_hash, dedupe_file_hash, source_chat_jid, transport_origin)
+       source_message_id, file_hash, dedupe_file_hash, source_chat_jid, transport_origin,
+       archivo_binario, archivo_mimetype, archivo_size, archivo_sha256)
     VALUES ($1, $2, $3, $4, 
             $5, $6, $7,
             NOW(), NOW(), 0, FALSE,
-            'pendiente', $8, $9, $10, $11, $12, $12, $13, $14)
+            'pendiente', $8, $9, $10, $11, $12, $12, $13, $14,
+            $15, $16, $17, $18)
     RETURNING id, empresa_id, pedido_id, source_chat_jid, transport_origin
     `,
       [
@@ -766,6 +790,10 @@ async function insertarComprobantePgWork({
         ['general', 'company', 'cloud'].includes(String(transportOrigin || '').trim())
           ? String(transportOrigin).trim()
           : null,
+        durableBytes,
+        durableMime,
+        durableSize,
+        durableHash,
       ],
     );
   } catch (error) {

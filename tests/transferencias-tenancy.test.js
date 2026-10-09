@@ -154,6 +154,14 @@ test('migración runtime instala sin drift el bloque completo marcado de initDb.
   assert.match(sql, /ADD COLUMN IF NOT EXISTS source_message_id/);
   assert.match(sql, /ADD COLUMN IF NOT EXISTS dedupe_file_hash/);
   assert.match(sql, /ADD COLUMN IF NOT EXISTS approval_dedupe_key/);
+  assert.match(sql, /ADD COLUMN IF NOT EXISTS archivo_binario BYTEA/);
+  assert.match(sql, /ADD COLUMN IF NOT EXISTS archivo_mimetype TEXT/);
+  assert.match(sql, /ADD COLUMN IF NOT EXISTS archivo_size BIGINT/);
+  assert.match(sql, /ADD COLUMN IF NOT EXISTS archivo_sha256 TEXT/);
+  assert.match(initSql, /archivo_binario\s+BYTEA/);
+  assert.match(initSql, /archivo_mimetype\s+TEXT/);
+  assert.match(initSql, /archivo_size\s+BIGINT/);
+  assert.match(initSql, /archivo_sha256\s+TEXT/);
   assert.match(sql, /UNIQUE[\s\S]*COALESCE\(empresa_id, 0\)[\s\S]*source_message_id/);
   assert.match(sql, /WHERE source_message_id IS NOT NULL/);
   assert.doesNotMatch(sql, /UPDATE comprobantes_transferencia SET (?:dedupe|approval)/);

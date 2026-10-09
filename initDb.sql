@@ -1567,6 +1567,10 @@ CREATE TABLE IF NOT EXISTS comprobantes_transferencia (
   approval_dedupe_key TEXT,
   source_chat_jid  TEXT,
   transport_origin TEXT,
+  archivo_binario  BYTEA,
+  archivo_mimetype TEXT,
+  archivo_size     BIGINT,
+  archivo_sha256   TEXT,
   estado_revision  TEXT DEFAULT 'pendiente',
   riesgo_score     INTEGER DEFAULT 0,
   riesgo_flags     TEXT,
@@ -1582,7 +1586,11 @@ ALTER TABLE comprobantes_transferencia
   ADD COLUMN IF NOT EXISTS dedupe_file_hash TEXT,
   ADD COLUMN IF NOT EXISTS approval_dedupe_key TEXT,
   ADD COLUMN IF NOT EXISTS source_chat_jid TEXT,
-  ADD COLUMN IF NOT EXISTS transport_origin TEXT;
+  ADD COLUMN IF NOT EXISTS transport_origin TEXT,
+  ADD COLUMN IF NOT EXISTS archivo_binario BYTEA,
+  ADD COLUMN IF NOT EXISTS archivo_mimetype TEXT,
+  ADD COLUMN IF NOT EXISTS archivo_size BIGINT,
+  ADD COLUMN IF NOT EXISTS archivo_sha256 TEXT;
 
 
 CREATE TABLE IF NOT EXISTS pedido_pagos (
