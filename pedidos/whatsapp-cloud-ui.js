@@ -265,6 +265,14 @@ function allowlistedConversation(conversation = {}) {
   return clean;
 }
 
+export function resolveConversationRefreshCursors({ nextCursor, searchActive = false, visibleCursor = null } = {}) {
+  const canonicalCursor = typeof nextCursor === 'string' ? nextCursor : null;
+  return {
+    canonicalCursor,
+    visibleCursor: searchActive ? visibleCursor : canonicalCursor,
+  };
+}
+
 export function mergeCanonicalConversationRefresh({
   current = [], incomingFirstPage = [], previousFirstPageIds = [], authoritativeRemovedIds = [],
   sort = 'desc',
@@ -496,6 +504,7 @@ export function createRequestGate() {
   return {
     begin() { generation += 1; return generation; },
     invalidate() { generation += 1; },
+    current() { return generation; },
     isCurrent(value) { return value === generation; },
   };
 }

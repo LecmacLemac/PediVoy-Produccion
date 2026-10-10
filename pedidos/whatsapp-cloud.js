@@ -18,10 +18,10 @@ import {
   mergeLiveHistory,
   normalizeQuickReplyCatalog,
   reconcileConversationMutation,
-  reconcileSearchConversationRefresh,
   operationalMeta,
   queueCounterItems,
   reduceMobileView,
+  resolveConversationRefreshCursors,
   restoreVisibleScrollAnchor,
   safeParticipant,
   sanitizeCloudError,
@@ -120,6 +120,7 @@ let returnFocusConversationId = null;
 let conversationLoadPromise = null;
 let conversationReloadRequested = false;
 let manualHistoryInFlight = 0;
+let manualSearchInFlight = 0;
 let autoRefreshAllowed = true;
 let activeOverlay = null;
 let overlayReturnFocus = null;
@@ -701,6 +702,25 @@ function clearConversationSearch({ restore = true } = {}) {
   }
 }
 
+function conversationSearchBody({ query, filters, cursor = null, companyId = state.companyId } = {}) {
+  const body = {
+    query,
+    limit: 25,
+    ...(cursor ? { cursor } : {}),
+    ...(filters.from ? { from: filters.from } : {}),
+    ...(filters.to ? { to: filters.to } : {}),
+    ...(filters.payment ? { payment: filters.payment } : {}),
+    sort: filters.sort,
+    ...(filters.direction ? { direction: filters.direction } : {}),
+    ...(filters.messageType ? { messageType: filters.messageType } : {}),
+    ...(filters.workflowStatus ? { workflowStatus: filters.workflowStatus } : {}),
+    ...(filters.priority ? { priority: filters.priority } : {}),
+    ...(filters.unread === true ? { unreadOnly: true } : {}),
+  };
+  if (state.role === 'super') body.empresa_id = companyId;
+  return body;
+}
+
 async function submitConversationSearch(event, { append = false } = {}) {
   event?.preventDefault();
   const queryValue = append ? state.searchQuery : elements.searchInput.value.trim();
@@ -722,21 +742,13 @@ async function submitConversationSearch(event, { append = false } = {}) {
   const startedContext = { generation, companyId, contextRevision, mutationRevision, filters };
   state.searchQuery = queryValue;
   setStatus('Buscando conversaciones…');
-  const body = {
+  const body = conversationSearchBody({
     query: queryValue,
-    limit: 25,
-    ...(append && state.conversationsCursor ? { cursor: state.conversationsCursor } : {}),
-    ...(filters.from ? { from: filters.from } : {}),
-    ...(filters.to ? { to: filters.to } : {}),
-    ...(filters.payment ? { payment: filters.payment } : {}),
-    sort: filters.sort,
-    ...(filters.direction ? { direction: filters.direction } : {}),
-    ...(filters.messageType ? { messageType: filters.messageType } : {}),
-    ...(filters.workflowStatus ? { workflowStatus: filters.workflowStatus } : {}),
-    ...(filters.priority ? { priority: filters.priority } : {}),
-    ...(filters.unread === true ? { unreadOnly: true } : {}),
-  };
-  if (state.role === 'super') body.empresa_id = companyId;
+    filters,
+    cursor: append ? state.conversationsCursor : null,
+    companyId,
+  });
+  manualSearchInFlight += 1;
   try {
     const url = buildCloudApiUrl('/conversations/search', { role: state.role, companyId, tenantInBody: true });
     const { response, payload } = await request(url, {
@@ -776,6 +788,8 @@ async function submitConversationSearch(event, { append = false } = {}) {
       && state.searchQuery === queryValue) {
       setStatus('No se pudo completar la búsqueda.', 'error');
     }
+  } finally {
+    manualSearchInFlight = Math.max(0, manualSearchInFlight - 1);
   }
 }
 
@@ -1063,6 +1077,8 @@ async function autoRefreshConversations(signal) {
     contextRevision: state.conversationContextRevision,
     mutationRevision: state.mutationRevision,
     filters,
+    searchQuery: state.searchQuery,
+    searchGeneration: searchGate.current(),
   };
   const url = buildCloudApiUrl('/conversations', {
     role: state.role, companyId: state.companyId, limit: 25,
@@ -1074,37 +1090,67 @@ async function autoRefreshConversations(signal) {
       ...(state.searchQuery ? state.conversations.map(item => String(item.conversationId)) : []),
     ])].filter(id => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(id)).slice(0, 100),
   });
-  const { response, payload } = await request(url);
+  const listRequest = request(url);
+  const searchRequest = started.searchQuery && manualSearchInFlight === 0
+    ? request(
+      buildCloudApiUrl('/conversations/search', {
+        role: state.role, companyId: started.companyId, tenantInBody: true,
+      }),
+      {
+        method: 'POST',
+        body: JSON.stringify(conversationSearchBody({
+          query: started.searchQuery, filters: started.filters, companyId: started.companyId,
+        })),
+        signal,
+      },
+    ).catch(error => {
+      if (signal.aborted || error?.name === 'AbortError') return null;
+      throw error;
+    })
+    : null;
+  const [{ response, payload }, searchResult] = await Promise.all([listRequest, searchRequest]);
   if (response.status === 403) throw Object.assign(new Error('refresh_forbidden'), { stopRefresh: true });
   if (!response.ok) throw new Error('refresh_list_failed');
+  if (searchResult && !searchResult.response.ok) throw new Error('refresh_search_failed');
   if (signal.aborted
     || state.companyId !== started.companyId
     || state.conversationContextRevision !== started.contextRevision
     || state.mutationRevision !== started.mutationRevision
-    || JSON.stringify(currentFilters()) !== JSON.stringify(started.filters)) return;
+    || JSON.stringify(currentFilters()) !== JSON.stringify(started.filters)
+    || state.searchQuery !== started.searchQuery
+    || !searchGate.isCurrent(started.searchGeneration)
+    || manualSearchInFlight > 0) return;
+  const incomingFirstPage = Array.isArray(payload.conversations) ? payload.conversations : [];
   const merged = mergeCanonicalConversationRefresh({
     current: state.canonicalConversations,
-    incomingFirstPage: Array.isArray(payload.conversations) ? payload.conversations : [],
+    incomingFirstPage,
     previousFirstPageIds: state.canonicalFirstPageIds,
     authoritativeRemovedIds: Array.isArray(payload.authoritativeRemovedIds) ? payload.authoritativeRemovedIds : [],
     sort: filters.sort,
   });
+  const cursors = resolveConversationRefreshCursors({
+    nextCursor: payload.nextCursor,
+    searchActive: Boolean(started.searchQuery),
+    visibleCursor: state.conversationsCursor,
+  });
   state.canonicalConversations = merged.conversations;
   state.canonicalFirstPageIds = merged.firstPageIds;
-  if (!state.searchQuery) {
+  state.canonicalConversationsCursor = cursors.canonicalCursor;
+  state.conversationsCursor = cursors.visibleCursor;
+  if (!started.searchQuery) {
     state.conversations = [...state.canonicalConversations];
-    state.conversationsCursor = state.canonicalConversationsCursor;
-  } else {
-    state.conversations = reconcileSearchConversationRefresh({
-      searchResults: state.conversations,
-      canonical: Array.isArray(payload.conversations) ? payload.conversations : [],
-      authoritativeRemovedIds: Array.isArray(payload.authoritativeRemovedIds) ? payload.authoritativeRemovedIds : [],
-      sort: filters.sort,
-    });
+  } else if (searchResult) {
+    state.conversations = Array.isArray(searchResult.payload.conversations)
+      ? searchResult.payload.conversations
+      : [];
+    state.conversationsCursor = typeof searchResult.payload.nextCursor === 'string'
+      ? searchResult.payload.nextCursor
+      : null;
   }
   if (payload.counters && typeof payload.counters === 'object') state.counters = payload.counters;
   if (state.activeConversation) {
-    const refreshed = state.canonicalConversations.find(item => String(item.conversationId) === String(state.activeConversation.conversationId));
+    const refreshed = state.canonicalConversations.find(item => String(item.conversationId) === String(state.activeConversation.conversationId))
+      || state.conversations.find(item => String(item.conversationId) === String(state.activeConversation.conversationId));
     if (refreshed) {
       state.activeConversation = refreshed;
       syncActiveConversationControls();

@@ -6,6 +6,7 @@ import {
   createChainedRefreshScheduler,
   mergeCanonicalConversationRefresh,
   mergeLiveHistory,
+  resolveConversationRefreshCursors,
   reconcileSearchConversationRefresh,
   restoreVisibleScrollAnchor,
 } from '../pedidos/whatsapp-cloud-ui.js';
@@ -132,6 +133,21 @@ test('Task 6 refresh reemplaza membresía de primera página sin retener desplaz
     sort: 'asc',
   });
   assert.deepEqual(ascending.conversations.map(item => item.conversationId), ['c', 'd', 'e']);
+});
+
+test('Task 6 cursor de refresh reemplaza atómicamente null, valor nuevo y null con o sin búsqueda', () => {
+  assert.deepEqual(resolveConversationRefreshCursors({
+    nextCursor: 'cursor-a', searchActive: false, visibleCursor: null,
+  }), { canonicalCursor: 'cursor-a', visibleCursor: 'cursor-a' });
+  assert.deepEqual(resolveConversationRefreshCursors({
+    nextCursor: 'cursor-b', searchActive: false, visibleCursor: 'cursor-a',
+  }), { canonicalCursor: 'cursor-b', visibleCursor: 'cursor-b' });
+  assert.deepEqual(resolveConversationRefreshCursors({
+    nextCursor: null, searchActive: false, visibleCursor: 'cursor-b',
+  }), { canonicalCursor: null, visibleCursor: null });
+  assert.deepEqual(resolveConversationRefreshCursors({
+    nextCursor: 'canonical-next', searchActive: true, visibleCursor: 'search-next',
+  }), { canonicalCursor: 'canonical-next', visibleCursor: 'search-next' });
 });
 
 test('Task 6 search activo usa canónico coincidente, marca ausentes stale y quita filtros incumplidos', () => {

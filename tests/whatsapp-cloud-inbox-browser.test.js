@@ -498,7 +498,7 @@ test('Task 6 browser pausa history durante submission y outcome_unknown sin POST
   );
 });
 
-test('Task 6 browser auto-refresh visible emite sólo GET y preserva borrador y foco', { skip: !existsSync(chromePath) }, async () => {
+test('Task 6 browser auto-refresh sin búsqueda activa emite sólo GET y preserva borrador y foco', { skip: !existsSync(chromePath) }, async () => {
   await withBrowserPage(
     { width: 1280, height: 800, deviceScaleFactor: 1 },
     async ({ page, counts }) => {
@@ -532,6 +532,63 @@ test('Task 6 browser auto-refresh visible emite sólo GET y preserva borrador y 
     },
     { refreshDelayMs: 40, sendTimeoutMs: 1_000 },
   );
+});
+
+test('Task 6 browser auto-refresh reemplaza cursor canónico null→valor→nuevo→null en asc y desc', { skip: !existsSync(chromePath) }, async () => {
+  for (const sort of ['desc', 'asc']) {
+    const refreshes = [deferred(), deferred(), deferred()];
+    let firstPageCalls = 0;
+    await withBrowserPage(
+      { width: 1280, height: 800, deviceScaleFactor: 1 },
+      async ({ page, counts }) => {
+        if (sort === 'asc') {
+          await page.select('#sortFilter', 'asc');
+          await page.waitForFunction(() => document.querySelectorAll('.conversation-card').length === 1);
+        }
+        assert.equal(await page.$eval('#loadMoreConversations', element => element.hidden), true);
+
+        const triggerRefresh = async index => {
+          await page.evaluate(() => {
+            Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+            document.dispatchEvent(new Event('visibilitychange'));
+            Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+            document.dispatchEvent(new Event('visibilitychange'));
+          });
+          await refreshes[index].promise;
+          await page.waitForSelector(`.conversation-card[data-conversation-id="refresh-${index + 2}"]`);
+        };
+
+        await triggerRefresh(0);
+        await page.waitForFunction(() => document.querySelector('#loadMoreConversations').hidden === false);
+        await triggerRefresh(1);
+        await clickCurrent(page, '#loadMoreConversations');
+        await page.waitForFunction(() => document.querySelector('#loadMoreConversations').hidden === false);
+        const cursorRequest = counts.apiRequests.findLast(entry => (
+          entry.path === '/api/admin/whatsapp-cloud/conversations' && entry.query.includes('cursor=cursor-new')
+        ));
+        assert.ok(cursorRequest, `${sort} debe usar el cursor nuevo en Cargar más`);
+
+        await triggerRefresh(2);
+        await page.waitForFunction(() => document.querySelector('#loadMoreConversations').hidden === true);
+      },
+      {
+        refreshDelayMs: 10_000,
+        conversationsResponse: ({ url }) => {
+          const requestSort = url.searchParams.get('sort') || 'desc';
+          if (sort === 'asc' && requestSort !== 'asc') {
+            return { conversations: [{ conversationId: '40', participant: '*********0040', lastMessageAt: '2026-10-06T08:00:00Z' }], nextCursor: null };
+          }
+          if (url.searchParams.has('cursor')) {
+            return { conversations: [{ conversationId: '39', participant: '*********0039', lastMessageAt: '2026-10-06T07:00:00Z' }], nextCursor: 'cursor-after-more' };
+          }
+          firstPageCalls += 1;
+          const cursor = [null, 'cursor-first', 'cursor-new', null][firstPageCalls - 1];
+          if (firstPageCalls > 1) refreshes[firstPageCalls - 2]?.resolve();
+          return { conversations: [{ conversationId: `refresh-${firstPageCalls}`, participant: '*********0044', lastMessageAt: '2026-10-06T12:00:00Z' }], nextCursor: cursor };
+        },
+      },
+    );
+  }
 });
 
 test('Task 6 browser 401 redirige y corta todo tráfico automático posterior', { skip: !existsSync(chromePath) }, async () => {
@@ -760,7 +817,7 @@ test('Task 6 browser super revocado borra selector, tenant y toda metadata sensi
   );
 });
 
-test('Task 6 browser mergea lista e historial preservando páginas adicionales, activo, borradores y cursores', { skip: !existsSync(chromePath) }, async () => {
+test('Task 6 browser mergea lista e historial, preserva páginas, activo y borradores, y reemplaza cursores', { skip: !existsSync(chromePath) }, async () => {
   const liveListSeen = deferred();
   const liveHistorySeen = deferred();
   await withBrowserPage(
@@ -802,7 +859,7 @@ test('Task 6 browser mergea lista e historial preservando páginas adicionales, 
       assert.equal(state.active, '40');
       assert.equal(state.draft, 'borrador intacto');
       assert.equal(state.searchDraft, 'busqueda sin enviar');
-      assert.equal(state.moreConversations, true);
+      assert.equal(state.moreConversations, false);
       assert.equal(state.moreHistory, true);
       assert.deepEqual(state.messageIds, ['0', '1', '2', '3']);
       assert.equal(state.firstStatus, 'Leído', 'el estado read no retrocede a failed tardío');
@@ -847,56 +904,96 @@ test('Task 6 browser mergea lista e historial preservando páginas adicionales, 
   );
 });
 
-test('Task 6 browser reconcilia búsqueda activa sin POST automático y clear conserva canónico nuevo', { skip: !existsSync(chromePath) }, async () => {
+test('Task 6 browser revalida búsqueda activa por POST protegido, reemplaza membresía y cursor sin perder activo, borrador ni foco', { skip: !existsSync(chromePath) }, async () => {
   const a = '4ad1a4a8-8877-4dc6-a7a0-e81b87f8e2a1';
   const b = '6be6f351-3535-48d1-b1a1-cde16f27a9b3';
   const c = '97db6aed-a667-47d7-8bc7-3bca34228d49';
   const refreshed = deferred();
+  const searchRequests = [];
+  let ascListCalls = 0;
   await withBrowserPage(
     { width: 1280, height: 800, deviceScaleFactor: 1 },
     async ({ page, counts }) => {
+      await page.waitForSelector('#companySelect');
+      await page.select('#companySelect', '7');
+      await page.waitForSelector(`.conversation-card[data-conversation-id="${a}"]`);
       await page.select('#sortFilter', 'asc');
       await page.waitForFunction(() => document.querySelectorAll('.conversation-card').length === 2);
       await page.type('#conversationSearch', 'cliente');
       await page.click('#conversationSearchSubmit');
-      await page.waitForFunction(() => document.querySelectorAll('.conversation-card').length === 3);
-      const searchPostsBefore = counts.apiRequests.filter(entry => entry.path.endsWith('/search')).length;
+      await page.waitForFunction(() => (
+        document.querySelectorAll('.conversation-card').length === 2
+        && document.querySelector('#appStatus')?.textContent === 'Resultados de búsqueda.'
+      ));
+      await clickCurrent(page, `.conversation-card[data-conversation-id="${a}"]`);
+      await page.waitForFunction(() => document.querySelector('#messageInput')?.disabled === false);
+      await page.click('#messageInput');
+      await page.type('#messageInput', 'borrador búsqueda');
+      const searchPostsBefore = searchRequests.length;
+      const baseline = counts.apiRequests.length;
       await page.evaluate(() => {
         Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
         document.dispatchEvent(new Event('visibilitychange'));
       });
       await refreshed.promise;
-      await page.waitForFunction(id => !document.querySelector(`.conversation-card[data-conversation-id="${id}"]`), {}, c);
-      assert.deepEqual(await page.evaluate(ids => ({
+      await page.waitForFunction(id => document.querySelector(`.conversation-card[data-conversation-id="${id}"]`), {}, c);
+      assert.deepEqual(await page.evaluate(id => ({
         order: [...document.querySelectorAll('.conversation-card')].map(item => item.dataset.conversationId),
-        aPriority: document.querySelector(`.conversation-card[data-conversation-id="${ids.a}"]`)?.textContent.includes('Prioridad urgent'),
-        bStale: document.querySelector(`.conversation-card[data-conversation-id="${ids.b}"]`)?.dataset.searchStale,
-      }), { a, b }), { order: [b, a], aPriority: true, bStale: 'true' });
-      assert.equal(counts.apiRequests.filter(entry => entry.path.endsWith('/search')).length, searchPostsBefore);
-      await page.click('#conversationSearchClear');
-      assert.equal(await page.evaluate(id => (
-        document.querySelector(`.conversation-card[data-conversation-id="${id}"]`)?.textContent.includes('Prioridad urgent')
-      ), a), true);
+        active: document.querySelector('.conversation-card.active')?.dataset.conversationId,
+        draft: document.querySelector('#messageInput').value,
+        focus: document.activeElement?.id,
+        more: !document.querySelector('#loadMoreConversations').hidden,
+      }), a), { order: [a, c], active: a, draft: 'borrador búsqueda', focus: 'messageInput', more: true });
+      assert.equal(searchRequests.length, searchPostsBefore + 1);
+      const automatic = searchRequests.at(-1);
+      assert.equal(new URL(automatic.url).search, '');
+      assert.equal(automatic.method, 'POST');
+      assert.equal(automatic.headers.origin, new URL(automatic.url).origin);
+      assert.match(automatic.headers['content-type'], /^application\/json/);
+      assert.deepEqual(automatic.body, { query: 'cliente', limit: 25, sort: 'asc', empresa_id: 7 });
+      const forbiddenWrites = counts.apiRequests.slice(baseline).filter(entry => (
+        entry.method !== 'GET'
+        && !(entry.method === 'POST' && entry.path === '/api/admin/whatsapp-cloud/conversations/search')
+      ));
+      assert.deepEqual(forbiddenWrites, []);
+
+      await clickCurrent(page, '#loadMoreConversations');
+      await page.waitForFunction(() => document.querySelector('#loadMoreConversations').hidden === true);
+      assert.equal(searchRequests.at(-1).body.cursor, 'search-new');
     },
     {
+      userResponse: { user: { role: 'super' } },
+      companiesResponse: [{ id: 7, nombre: 'Tenant seguro' }],
+      waitForConversation: false,
       refreshDelayMs: 10_000,
-      conversationsResponse: ({ index, url }) => {
-        if (url.searchParams.get('sort') === 'asc' && index > 1) {
-          refreshed.resolve();
-          return { conversations: [
-            { conversationId: a, participant: '*********0001', priority: 'urgent', workflowStatus: 'resolved', version: 4, unreadCount: 0, lastMessageAt: '2026-10-08T12:30:00Z', lastMessageType: 'text', lastDirection: 'outbound', lastDeliveryStatus: 'read', lastMessageId: '40' },
-          ], nextCursor: null, authoritativeRemovedIds: [c] };
+      conversationsResponse: ({ url }) => {
+        if (url.searchParams.get('sort') === 'asc') {
+          ascListCalls += 1;
+          if (ascListCalls > 1) return { conversations: [
+              { conversationId: a, participant: '*********0001', priority: 'urgent', workflowStatus: 'resolved', version: 4, unreadCount: 0, lastMessageAt: '2026-10-08T12:30:00Z', lastMessageType: 'text', lastDirection: 'outbound', lastDeliveryStatus: 'read', lastMessageId: '40' },
+            ], nextCursor: 'canonical-new', authoritativeRemovedIds: [] };
         }
         return { conversations: [
           { conversationId: a, participant: '*********0001', priority: 'normal', workflowStatus: 'pending', version: 1, unreadCount: 1, lastMessageAt: '2026-10-06T12:00:00Z', lastMessageType: 'text', lastDirection: 'inbound', lastDeliveryStatus: 'received', lastMessageId: '10' },
           { conversationId: b, participant: '*********0002', priority: 'high', workflowStatus: 'pending', version: 1, unreadCount: 2, lastMessageAt: '2026-10-06T11:00:00Z', lastMessageType: 'text', lastDirection: 'inbound', lastDeliveryStatus: 'received', lastMessageId: '9' },
         ], nextCursor: null };
       },
-      searchResponse: () => ({ conversations: [
-        { conversationId: a, participant: '*********0001', priority: 'normal', workflowStatus: 'pending', version: 1, unreadCount: 1, lastMessageAt: '2026-10-06T10:00:00Z', lastMessageType: 'text', lastDirection: 'inbound', lastDeliveryStatus: 'received', lastMessageId: '10' },
-        { conversationId: b, participant: '*********0002', priority: 'high', workflowStatus: 'pending', version: 1, unreadCount: 2, lastMessageAt: '2026-10-06T11:00:00Z', lastMessageType: 'text', lastDirection: 'inbound', lastDeliveryStatus: 'received', lastMessageId: '20' },
-        { conversationId: c, participant: '*********0003', priority: 'normal', workflowStatus: 'pending', version: 1, unreadCount: 1, lastMessageAt: '2026-10-06T12:00:00Z', lastMessageType: 'text', lastDirection: 'inbound', lastDeliveryStatus: 'received', lastMessageId: '30' },
-      ], nextCursor: null }),
+      searchResponse: ({ request }) => {
+        searchRequests.push({
+          url: request.url(), method: request.method(), headers: request.headers(),
+          body: JSON.parse(request.postData() || '{}'),
+        });
+        if (searchRequests.length === 1) return { conversations: [
+          { conversationId: a, participant: '*********0001', priority: 'normal', workflowStatus: 'pending', version: 1, unreadCount: 1, lastMessageAt: '2026-10-06T10:00:00Z', lastMessageType: 'text', lastDirection: 'inbound', lastDeliveryStatus: 'received', lastMessageId: '10' },
+          { conversationId: b, participant: '*********0002', priority: 'high', workflowStatus: 'pending', version: 1, unreadCount: 2, lastMessageAt: '2026-10-06T11:00:00Z', lastMessageType: 'text', lastDirection: 'inbound', lastDeliveryStatus: 'received', lastMessageId: '20' },
+        ], nextCursor: 'search-old' };
+        if (searchRequests.at(-1).body.cursor) return { conversations: [], nextCursor: null };
+        refreshed.resolve();
+        return { conversations: [
+          { conversationId: a, participant: '*********0001', priority: 'urgent', workflowStatus: 'resolved', version: 4, unreadCount: 0, lastMessageAt: '2026-10-08T12:30:00Z', lastMessageType: 'text', lastDirection: 'outbound', lastDeliveryStatus: 'read', lastMessageId: '40' },
+          { conversationId: c, participant: '*********0003', priority: 'normal', workflowStatus: 'pending', version: 1, unreadCount: 1, lastMessageAt: '2026-10-08T13:00:00Z', lastMessageType: 'text', lastDirection: 'inbound', lastDeliveryStatus: 'received', lastMessageId: '50' },
+        ], nextCursor: 'search-new' };
+      },
     },
   );
 });
